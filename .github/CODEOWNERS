@@ -1,5 +1,9 @@
-# Tillitsankeret (RUTINER pkt: menneskelig port): endringer her krever
-# Eiers godkjenning i GitHub før merge — alt annet kan pipelinen merge selv.
+# Tillitsankeret. MERK (2026-08-01): denne filen BLOKKERER IKKE MERGE lenger.
+# Eiers beslutning er at merge-porten driftes av pipelinen uten Eier, så
+# `require_code_owner_reviews` er slått AV i branch protection. GitHub ber
+# fortsatt automatisk om review fra @moka1980 på stiene under — det er et
+# varsel, ikke en sperre. Se docs/RUTINER.md pkt. 8 for hvordan sperren
+# eventuelt skrus på igjen.
 /platform/core/policy_validator/  @moka1980
 /platform/core/registry.py        @moka1980
 /policies/policy-schema-*.yaml    @moka1980

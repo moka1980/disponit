@@ -35,11 +35,14 @@ git push -u origin chore/disponit-rebrand
 
 ## B. Aktiver branch protection (Eier — én gang, 3 minutter)
 
-GitHub → Settings → Branches → Add rule for `main`:
-1. ✅ Require a pull request before merging
-2. ✅ Require status checks to pass → velg `CI / test`
-3. ✅ Require review from Code Owners
-4. ✅ Require linear history · ❌ Allow force pushes
+**Utført — ikke gjør dette på nytt.** Slik står den nå, etter Eiers beslutning om at
+merge-porten driftes av pipelinen uten Eier:
+
+1. ✅ Require a pull request before merging — **0 påkrevde godkjenninger**
+2. ✅ Require status checks to pass → `test` (strict)
+3. ❌ Require review from Code Owners — **slått av med vilje**, se RUTINER pkt. 8
+4. ✅ Require linear history · ❌ Allow force pushes · ❌ Allow deletions
+5. ✅ **Include administrators** — reglene gjelder også repo-eier
 
 Uten dette er CODEOWNERS og CI bare pynt — med dette nekter GitHub feil.
 

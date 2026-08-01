@@ -34,6 +34,8 @@ Foreslått pipeline, med kvalitetsporter som gjør den trygg:
 3. Dekning av akseptansekriteriene dokumentert i PR
 4. Ingen secrets, ingen direkte skrivetilgang utenom policymotoren
 
+> ⛔ **Status 2026-08-01: anbefalingen under er IKKE fulgt.** Eier har bestemt at merge-porten driftes av Claude Code og Codex uten Eier, også på tillitsankeret. Avsnittet står igjen fordi begrunnelsen fortsatt er gyldig og bør kunne leses opp igjen den dagen noen vurderer å gjeninnføre porten — se `docs/RUTINER.md` pkt. 8 for hva som faktisk er slått på.
+
 **Én menneskelig port anbefales beholdt:** endringer i selve policymotoren (M-1), revisjonsloggen (M-2) og unntaksmotoren (M-37) bør kreve menneskelig godkjenning av merge. Begrunnelsen er deres egen arkitektur: disse tre er tillitsankeret alle andre moduler hviler på. Å la AI merge endringer i sikkerhetsfundamentet uten menneske er samme feil som «null menneskelig innblanding»-påstanden dere allerede har forlatt — helautomatisk normaldrift, policybasert unntakshåndtering. Utviklingspipelinen bør følge samme prinsipp som produktet.
 
 ## Utrullingsløype — ingenting rett i produksjon
