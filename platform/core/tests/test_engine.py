@@ -675,3 +675,86 @@ def test_skriv_holder_fillaasen_rundt_hele_skrivingen(tjeneste, tmp_path,
 
     assert kall, "skriv() gikk utenom den serialiserte skrivingen"
     assert logg.read_text(encoding="utf-8").count("\n") == 1
+
+
+# ---------- Codex-review runde 5: os.write er ikke write-all -------------
+
+def test_delvis_skriving_fullfores(tjeneste, tmp_path, monkeypatch):
+    """P1 (Codex runde 5): os.write kan skrive færre bytes enn bedt om uten
+    å kaste. Ignoreres returverdien, blir en avkortet loggpost behandlet som
+    vellykket — den ser ut som evidens, men er en halv post."""
+    ekte_write = os.write
+
+    def kort_write(fd, data):
+        return ekte_write(fd, data[:7])       # skriver alltid maks 7 bytes
+
+    monkeypatch.setattr(os, "write", kort_write)
+
+    logg = tmp_path / "audit.jsonl"
+    d = sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+    monkeypatch.undo()
+
+    assert d.beslutning == TILLAT
+    innhold = logg.read_text(encoding="utf-8")
+    assert innhold.endswith("\n"), "loggposten mangler avsluttende linjeskift"
+    linjer = [l for l in innhold.splitlines() if l]
+    assert len(linjer) == 1
+    import json as _json
+    post = _json.loads(linjer[0])             # kaster hvis posten er avkortet
+    assert post["beslutning"] == TILLAT and post["aktor"] == "agent"
+
+
+def test_null_bytes_skrevet_gir_stopp_og_ingen_evig_lokke(tjeneste, tmp_path,
+                                                          monkeypatch):
+    """Null bytes skrevet er ingen fremgang. Da skal det kastes — ikke
+    løkkes evig — og sikker_beslutning skal gjøre det til STOPP."""
+    ekte_write = os.write
+
+    def null_write(fd, data):
+        return 0
+
+    monkeypatch.setattr(os, "write", null_write)
+    logg = tmp_path / "audit.jsonl"
+    d = sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+    monkeypatch.setattr(os, "write", ekte_write)
+
+    assert d.beslutning == STOPP
+    assert d.begrunnelse[-1].kode == "logging_feilet"
+
+
+def test_avkortet_post_sluker_ikke_neste_post(tjeneste, tmp_path, monkeypatch):
+    """Feiler skrivingen etter delvis fremgang, står det en halv linje i
+    filen. Den skal ikke kunne smelte sammen med NESTE post og gjøre to
+    poster uleselige i stedet for én."""
+    ekte_write = os.write
+    tilstand = {"bytes_igjen": 30}
+
+    def sviktende_write(fd, data):
+        if tilstand["bytes_igjen"] <= 0:
+            raise OSError("disken er full")
+        n = min(len(data), tilstand["bytes_igjen"])
+        tilstand["bytes_igjen"] -= n
+        return ekte_write(fd, data[:n])
+
+    logg = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(os, "write", sviktende_write)
+    d1 = sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+    monkeypatch.setattr(os, "write", ekte_write)
+    assert d1.beslutning == STOPP             # fail-closed
+
+    d2 = sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+    assert d2.beslutning == TILLAT
+
+    import json as _json
+    linjer = [l for l in logg.read_text(encoding="utf-8").splitlines() if l]
+    gyldige = [l for l in linjer if _lesbar(l, _json)]
+    assert len(gyldige) == 1, f"den hele posten er uleselig: {linjer!r}"
+    assert gyldige[0].count('"beslutning"') == 1
+
+
+def _lesbar(linje, _json):
+    try:
+        _json.loads(linje)
+        return True
+    except ValueError:
+        return False

@@ -72,15 +72,53 @@ def _fillaas(sti: Path) -> threading.Lock:
 
 
 def _skriv_raa(fd: int, data: bytes) -> None:
-    """Skriver hele bufferet i ett kall.
+    """Skriver HELE bufferet, eller kaster.
 
-    Egen funksjon fordi den er sømmen testene trenger: en test erstatter
-    denne med en variant som deler skrivingen i to med en pause imellom, og
-    beviser dermed at låsen holder rundt HELE operasjonen. Uten en slik søm
-    blir samtidighetstesten tidsavhengig — og en tidsavhengig test godkjente
-    allerede én gang koden som ble underkjent i review.
+    `os.write` er ikke write-all: den kan returnere færre bytes enn bedt om
+    uten å kaste. Ignorerer man returverdien, blir en avkortet loggpost
+    behandlet som vellykket — Codex demonstrerte nettopp det på `7ea2955`
+    (240 bytes skrevet, linjen manglet avsluttende linjeskift). En halv
+    loggpost er verre enn ingen: den ser ut som evidens.
+
+    Null bytes skrevet er ingen fremgang; da kastes det i stedet for å
+    spinne i en evig løkke. `InterruptedError` (EINTR) er derimot normal
+    signalhåndtering og forsøkes på nytt.
+
+    Egen funksjon fordi den også er sømmen testene trenger: de erstatter den
+    for å bevise at fillåsen holder rundt hele operasjonen.
     """
-    os.write(fd, data)
+    skrevet = 0
+    n_data = len(data)
+    while skrevet < n_data:
+        try:
+            n = os.write(fd, data[skrevet:])
+        except InterruptedError:      # EINTR — ikke en feil, prøv igjen
+            continue
+        if n <= 0:                    # ingen fremgang: kast, aldri løkk evig
+            raise OSError(
+                f"os.write skrev {n} bytes av {n_data - skrevet} gjenstående "
+                f"— revisjonsposten er ufullstendig")
+        skrevet += n
+
+
+def _mangler_avsluttende_linjeskift(fd: int) -> bool:
+    """Er filen ikke-tom OG slutter på noe annet enn linjeskift?
+
+    Da ble forrige post avkortet (delvis skriving som feilet), og neste post
+    ville smeltet sammen med den. Én uleselig post er ille nok; to er verre.
+    """
+    try:
+        storrelse = os.fstat(fd).st_size
+        if storrelse == 0:
+            return False
+        if hasattr(os, "pread"):
+            siste = os.pread(fd, 1, storrelse - 1)
+        else:                       # Windows
+            os.lseek(fd, storrelse - 1, os.SEEK_SET)
+            siste = os.read(fd, 1)
+        return siste != b"\n"
+    except OSError:
+        return False                # kan vi ikke lese, gjetter vi ikke
 
 
 def skriv(loggfil: Path, post: dict) -> None:
@@ -106,10 +144,21 @@ def skriv(loggfil: Path, post: dict) -> None:
     loggfil = Path(loggfil)
     loggfil.parent.mkdir(parents=True, exist_ok=True)
     with _fillaas(loggfil):
-        fd = os.open(loggfil, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        # O_RDWR fordi vi må kunne LESE siste byte, se _avslutt_halv_linje.
+        # O_APPEND gjelder uansett: skrivinger går alltid til slutten,
+        # uavhengig av hvor lesingen har flyttet posisjonen.
+        fd = os.open(loggfil, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
         try:
             if fcntl is not None:
                 fcntl.flock(fd, fcntl.LOCK_EX)
+            if _mangler_avsluttende_linjeskift(fd):
+                # Forrige skriving stoppet midtveis. Reparasjonen skjer HER,
+                # i den neste skrivingen som faktisk lykkes — ikke i
+                # feilhåndteringen til den som feilet. Det var mitt første
+                # forsøk, og testen viste hvorfor det ikke holder: når
+                # skrivingen feiler fordi disken er full, feiler også det
+                # ekstra linjeskiftet, og den halve posten slukte den neste.
+                linje = b"\n" + linje
             _skriv_raa(fd, linje)
             os.fsync(fd)
         finally:
