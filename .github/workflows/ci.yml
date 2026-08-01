@@ -40,6 +40,6 @@ jobs:
           if s.feil: print(s.feil); sys.exit(1)
           print("register ok:", s.aktive or "(ingen aktive ennå)", s.inaktive)
           PY
-      - name: Syntetisk kjøring (invariant: blokkert blir aldri TILLAT)
+      - name: "Syntetisk kjøring (invariant: blokkert blir aldri TILLAT)"
         run: python platform/core/examples/run_synthetic.py
       # WCAG-port (axe-core) aktiveres i PR-005 når første UI-modul kommer
