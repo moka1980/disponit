@@ -1,6 +1,12 @@
 {
-  "_meta": {"sprak": "en", "navn": "English", "retning": "ltr",
-            "dato_format": "YYYY-MM-DD", "valuta_standard": "EUR"},
+  "_meta": {
+    "sprak": "en",
+    "navn": "English",
+    "retning": "ltr",
+    "dato_format": "YYYY-MM-DD",
+    "valuta_standard": "EUR"
+  },
+  "app.navn": "Disponit",
   "beslutning.TILLAT": "Allowed",
   "beslutning.STOPP": "Stopped",
   "beslutning.UNNTAK": "Sent to exception queue",

@@ -1,6 +1,12 @@
 {
-  "_meta": {"sprak": "nb", "navn": "Norsk bokmål", "retning": "ltr",
-            "dato_format": "DD.MM.YYYY", "valuta_standard": "NOK"},
+  "_meta": {
+    "sprak": "nb",
+    "navn": "Norsk bokmål",
+    "retning": "ltr",
+    "dato_format": "DD.MM.YYYY",
+    "valuta_standard": "NOK"
+  },
+  "app.navn": "Disponit",
   "beslutning.TILLAT": "Tillatt",
   "beslutning.STOPP": "Stoppet",
   "beslutning.UNNTAK": "Til unntakskø",
