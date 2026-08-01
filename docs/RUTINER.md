@@ -64,6 +64,8 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 
 **Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
 
+> ⚠️ **Status 2026-08-01: branch protection er IKKE aktiv.** GitHub avviser både classic protection og rulesets med HTTP 403 på privat repo uten Pro. Til Eier har bestemt (Pro / offentlig repo / fortsatt uhåndhevet) er punktene under en *avtale*, ikke en sperre — GitHub blokkerer ingenting, og CODEOWNERS-porten har ingen effekt. Som midlertidig erstatning feiler CI-jobben `pr-porten` etterskuddsvis på enhver commit som havnet på `main` uten pull request. Den oppdager brudd; den hindrer dem ikke.
+
 **Branch protection på `main` (Eier aktiverer én gang under Settings → Branches):**
 - Require pull request before merging (ingen direkte push — gjelder alle)
 - Require status checks to pass: `CI / test`

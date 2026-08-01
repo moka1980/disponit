@@ -43,3 +43,27 @@ jobs:
       - name: "Syntetisk kjøring (invariant: blokkert blir aldri TILLAT)"
         run: python platform/core/examples/run_synthetic.py
       # WCAG-port (axe-core) aktiveres i PR-005 når første UI-modul kommer
+
+  # PR-porten (RUTINER pkt. 8) som ERSTATNING for branch protection.
+  # GitHub nekter branch protection på privat repo uten Pro, så regelen
+  # «ingen direkte push til main» kan ikke blokkeres — den oppdages her i
+  # stedet, høylytt og etterpå. Slettes den dagen ekte porter slås på.
+  pr-porten:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions: {contents: read, pull-requests: read}
+    steps:
+      - name: "Kom denne commiten inn via pull request?"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          antall=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+            -H "Accept: application/vnd.github.groot-preview+json" --jq 'length')
+          if [ "$antall" -eq 0 ]; then
+            echo "::error::Direkte push til main. RUTINER pkt. 8 krever branch + PR + Codex-merge."
+            echo "Commit $SHA har ingen tilhørende pull request."
+            exit 1
+          fi
+          echo "OK — commiten kom via $antall pull request(er)."
