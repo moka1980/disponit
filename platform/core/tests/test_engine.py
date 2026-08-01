@@ -446,3 +446,79 @@ def test_alle_filkall_har_eksplisitt_utf8():
                     and not binaer.search(linje):
                 synder.append(f"{fil.relative_to(rot)}:{nr}: {linje.strip()}")
     assert not synder, "filkall uten eksplisitt encoding:\n" + "\n".join(synder)
+
+
+# ---------- Codex-review runde 2: ved_brudd ved tapt reservasjon ----------
+
+def _med_ved_brudd(policy, handling_id, verdi):
+    """Kopi av policyen der én handling får et annet ved_brudd."""
+    import copy
+    p = copy.deepcopy(policy)
+    for h in p["handlinger"]:
+        if h["id"] == handling_id:
+            h["ved_brudd"] = verdi
+    return p
+
+
+class TaptKapplopTeller(MinneTellerLager):
+    """Simulerer at kappløpet ble tapt MELLOM evaluering og reservasjon.
+
+    Dette er den eneste måten å treffe reservasjonsgrenen på: det rådgivende
+    oppslaget må se ledig plass (ellers blokkerer `evaluate` først og grenen
+    nås aldri), mens den bindende reservasjonen må feile.
+
+    Første forsøk på denne testen brukte to ekte kall mot et vanlig lager.
+    Den passerte — men den passerte OGSÅ med den hardkodede UNNTAK-en Codex
+    fant, fordi `evaluate` allerede hadde blokkert på det rådgivende
+    oppslaget. Den testet altså feil kodevei.
+    """
+
+    def antall(self, nokkel, siden):
+        return 0                      # rådgivende: ser ledig plass
+
+    def reserver(self, nokkel, siden, maks, tidspunkt):
+        return False                  # bindende: plassen ble tatt av en annen
+
+
+@pytest.mark.parametrize("ved_brudd,forventet,effekt", [
+    ("stopp_og_varsle", STOPP, "varsle"),
+    ("frys", STOPP, "frys"),
+    ("unntakskø", UNNTAK, None),
+])
+def test_tapt_reservasjon_folger_ved_brudd(tjeneste, tmp_path,
+                                           ved_brudd, forventet, effekt):
+    """P1 (Codex runde 2): reservasjonsgrenen hardkodet UNNTAK, så en
+    handling med stopp_og_varsle eller frys ble nedgradert til unntakskø
+    nettopp når den tapte kappløpet om siste plass — der den strengeste
+    håndteringen er mest påkrevd."""
+    policy = _med_ved_brudd(tjeneste, "purring.send", ved_brudd)
+    d = sikker_beslutning(policy, CTX, purrehendelse(), tmp_path / "a.jsonl",
+                          teller=TaptKapplopTeller(), naa=NAA)
+    assert d.beslutning == forventet
+    assert d.effekt == effekt
+    assert d.begrunnelse[-1].kode == "frekvensgrense_naadd_ved_reservasjon"
+    if forventet == UNNTAK:
+        assert d.unntak_kategori == "over_grense"
+    else:
+        assert d.unntak_kategori is None
+
+
+@pytest.mark.parametrize("ved_brudd", ["stopp_og_varsle", "frys", "unntakskø"])
+def test_reservasjonstap_og_vanlig_frekvensbrudd_gir_samme_utfall(tjeneste,
+                                                                  tmp_path,
+                                                                  ved_brudd):
+    """Invariant: uansett om grensen fanges av det rådgivende oppslaget
+    eller av den bindende reservasjonen, skal beslutning og effekt være
+    identiske. Ellers finnes det to sannheter om samme regel."""
+    policy = _med_ved_brudd(tjeneste, "purring.send", ved_brudd)
+
+    via_reservasjon = sikker_beslutning(policy, CTX, purrehendelse(),
+                                        tmp_path / "a.jsonl",
+                                        teller=TaptKapplopTeller(), naa=NAA)
+
+    brukt = MinneTellerLager()                 # grensen alt nådd i oppslaget
+    brukt.registrer(("t1", "purring.send", "faktura_id", "fak-7"), NAA)
+    via_oppslag = evaluate(policy, CTX, purrehendelse(), teller=brukt, naa=NAA)
+
+    assert (via_reservasjon.beslutning, via_reservasjon.effekt) == \
+           (via_oppslag.beslutning, via_oppslag.effekt), ved_brudd

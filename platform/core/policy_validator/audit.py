@@ -64,8 +64,8 @@ def skriv(loggfil: Path, post: dict) -> None:
 # PR-002: logg-før-utførelse-kontrakten (review spm. 3: revisjonsloggfeil
 # og «bare TILLAT kan utløse sideeffekt»).
 # ---------------------------------------------------------------------------
-from .engine import (STOPP, UNNTAK, Decision, EvaluationContext, Grunn,  # noqa: E402
-                     TellerLager)
+from .engine import (STOPP, UNNTAK, Decision, EvaluationContext,  # noqa: E402
+                     Grunn, TellerLager, brudd_utfall)
 
 
 def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
@@ -116,11 +116,17 @@ def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
                              d.begrunnelse + [Grunn(
                                  "tellerfeil", {"type": type(e).__name__})])
             if fikk_plass is False:
-                d = Decision(UNNTAK, d.handling, d.policy_id,
+                # Samme ved_brudd-håndtering som evaluate() ville gitt.
+                # Hardkodet UNNTAK her nedgraderte stopp_og_varsle og frys
+                # (Codex P1, runde 2) — nettopp i konkurransetilfellet.
+                beslutning, effekt = brudd_utfall(policy, d.handling)
+                d = Decision(beslutning, d.handling, d.policy_id,
                              d.begrunnelse + [Grunn(
                                  "frekvensgrense_naadd_ved_reservasjon",
                                  {"maks": maks})],
-                             unntak_kategori="over_grense")
+                             unntak_kategori=("over_grense"
+                                              if beslutning == UNNTAK else None),
+                             effekt=effekt)
 
     try:
         skriv(loggfil, lag_loggpost(d, event, policy, context))

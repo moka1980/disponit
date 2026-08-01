@@ -145,6 +145,21 @@ def _pid(policy: dict, handling_id: str) -> str:
     return f"{meta.get('policy_id', 'ukjent')}@{meta.get('versjon', '?')}/{handling_id}"
 
 
+def brudd_utfall(policy: dict, handling_id: str) -> tuple[str, str | None]:
+    """Handlingens `ved_brudd` oversatt til (beslutning, effekt).
+
+    ÉN kilde for hele motoren. Codex fant at reservasjonsgrenen i
+    `sikker_beslutning` hardkodet UNNTAK: en handling med `stopp_og_varsle`
+    eller `frys` ble dermed nedgradert til unntakskø når den tapte kappløpet
+    om siste frekvensplass — altså akkurat i konkurransetilfellet, der den
+    strengeste håndteringen er mest påkrevd. Alle blokkerende grener skal
+    slå opp her, aldri gjenskape mappingen lokalt.
+    """
+    h = next((x for x in (policy.get("handlinger") or [])
+              if isinstance(x, dict) and x.get("id") == handling_id), None)
+    return _VED_BRUDD.get((h or {}).get("ved_brudd", "unntakskø"), (UNNTAK, None))
+
+
 def parse_belop(verdi: Any) -> Decimal | None:
     """Decimal eller None ved ugyldig. bool avvises eksplisitt (bool er
     subtype av int i Python — review-funn D). Maks 2 desimaler, >= 0."""
@@ -212,7 +227,7 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
     def blokker(kategori: str, grunn: Grunn,
                 tving_stopp: bool = False) -> Decision:
         beslutning, effekt = (STOPP, None) if tving_stopp else \
-            _VED_BRUDD.get(h.get("ved_brudd", "unntakskø"), (UNNTAK, None))
+            brudd_utfall(policy, handling_id)
         return Decision(beslutning, handling_id, pid, ok_grunner + [grunn],
                         unntak_kategori=kategori if beslutning == UNNTAK else None,
                         effekt=effekt)
