@@ -12,9 +12,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:                        # POSIX: gir oss lås også mellom prosesser
+    import fcntl
+except ImportError:         # Windows: kun prosesslokal lås (se skriv())
+    fcntl = None            # type: ignore[assignment]
 
 from .engine import Decision
 
@@ -53,11 +60,65 @@ def lag_loggpost(decision: Decision, event: dict, policy: dict,
     }
 
 
+_FILLAASER: dict[str, threading.Lock] = {}
+_FILLAASER_LAAS = threading.Lock()
+
+
+def _fillaas(sti: Path) -> threading.Lock:
+    """Én lås per loggfil, delt av alle tråder i prosessen."""
+    nokkel = str(Path(sti).resolve())
+    with _FILLAASER_LAAS:
+        return _FILLAASER.setdefault(nokkel, threading.Lock())
+
+
+def _skriv_raa(fd: int, data: bytes) -> None:
+    """Skriver hele bufferet i ett kall.
+
+    Egen funksjon fordi den er sømmen testene trenger: en test erstatter
+    denne med en variant som deler skrivingen i to med en pause imellom, og
+    beviser dermed at låsen holder rundt HELE operasjonen. Uten en slik søm
+    blir samtidighetstesten tidsavhengig — og en tidsavhengig test godkjente
+    allerede én gang koden som ble underkjent i review.
+    """
+    os.write(fd, data)
+
+
 def skriv(loggfil: Path, post: dict) -> None:
-    """Append-only. Filen åpnes i append-modus; ingenting overskrives."""
+    """Append-only, og serialisert.
+
+    Codex fant at 20 samtidige beslutninger ga 19 loggposter: hvert kall
+    åpnet sin egen bufrede filhåndtak, så to skrivinger kunne flettes inn i
+    hverandre og ødelegge en linje. Da kan TILLAT returneres uten en
+    tilhørende revisjonspost — brudd på 1:1-kontrakten, som er selve
+    beviset M-2 skal levere.
+
+    Tre lag nå:
+      1. prosesslokal lås per fil — serialiserer trådene
+      2. `flock` der plattformen har det — serialiserer også prosesser
+      3. ett `os.write` med hele linjen, uten Pythons bufring, etterfulgt av
+         `fsync` slik at posten faktisk står på disk før kallet returnerer
+
+    Uten `fcntl` (Windows) faller den tilbake til lag 1 og 3. Det dekker én
+    prosess; flere prosesser mot samme fil krever lag 2, og produksjons-
+    loggen i PR-004 bør uansett være en database med samme garanti.
+    """
+    linje = (json.dumps(post, ensure_ascii=False) + "\n").encode("utf-8")
+    loggfil = Path(loggfil)
     loggfil.parent.mkdir(parents=True, exist_ok=True)
-    with loggfil.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(post, ensure_ascii=False) + "\n")
+    with _fillaas(loggfil):
+        fd = os.open(loggfil, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            _skriv_raa(fd, linje)
+            os.fsync(fd)
+        finally:
+            if fcntl is not None:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            os.close(fd)
 
 
 # ---------------------------------------------------------------------------

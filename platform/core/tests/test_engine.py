@@ -1,5 +1,6 @@
 """Tester v0.2 — hver seksjon mapper til et funn i ChatGPT-review PR-001.
 Negative tester er obligatoriske i CI og kan aldri fjernes/svekkes."""
+import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -436,6 +437,10 @@ def test_alle_filkall_har_eksplisitt_utf8():
     import re
     tekstkall = re.compile(r"\.(read_text|write_text|open)\(")
     binaer = re.compile(r"""["'][rwa]b\+?["']""")   # binærmodus tar ikke encoding
+    # os.open gir en rå fildeskriptor og har ingen encoding-parameter i det
+    # hele tatt — revisjonsloggen skriver ferdig UTF-8-kodede bytes dit med
+    # vilje, for å styre skrivingen selv (se audit.skriv).
+    raa_fd = re.compile(r"\bos\.(open|write|fdopen)\(")
     rot = Path(__file__).resolve().parents[3]
     synder = []
     for fil in (rot / "platform").rglob("*.py"):
@@ -443,7 +448,7 @@ def test_alle_filkall_har_eksplisitt_utf8():
             continue
         for nr, linje in enumerate(fil.read_text(encoding="utf-8").splitlines(), 1):
             if tekstkall.search(linje) and "encoding" not in linje \
-                    and not binaer.search(linje):
+                    and not binaer.search(linje) and not raa_fd.search(linje):
                 synder.append(f"{fil.relative_to(rot)}:{nr}: {linje.strip()}")
     assert not synder, "filkall uten eksplisitt encoding:\n" + "\n".join(synder)
 
@@ -558,3 +563,115 @@ def test_ekte_true_reserverer_og_gir_tillat(tjeneste, tmp_path):
                           tmp_path / "audit.jsonl",
                           teller=MinneTellerLager(), naa=NAA)
     assert d.beslutning == TILLAT
+
+
+# ---------- Codex-review runde 4: 1:1-kontrakten under samtidighet -------
+
+def test_loggskriving_serialiseres_selv_naar_skrivingen_deles(tjeneste,
+                                                              tmp_path,
+                                                              monkeypatch):
+    """P1 (Codex runde 4): 20 samtidige beslutninger ga 19 loggposter. Hvert
+    kall åpnet sitt eget bufrede filhåndtak, så to skrivinger kunne flettes
+    inn i hverandre og ødelegge en linje — og da kan TILLAT returneres uten
+    tilhørende revisjonspost. Det er brudd på selve 1:1-kontrakten.
+
+    DETERMINISTISK, ikke tidsavhengig: Codex' egen reproduksjon feilet 16 av
+    20 kjøringer, altså ville den ha «bestått» i 4 av 20. Her deles hver
+    skriving i to med en pause imellom, slik at en userialisert
+    implementasjon GARANTERT fletter. Holder låsen rundt hele operasjonen,
+    er delingen uten betydning."""
+    import json as _json
+    import threading
+    import time
+    from policy_validator import audit as audit_modul
+
+    def delt_skriving(fd, data):
+        midt = len(data) // 2
+        os.write(fd, data[:midt])
+        time.sleep(0.01)          # vindu der en annen tråd kan flette seg inn
+        os.write(fd, data[midt:])
+
+    monkeypatch.setattr(audit_modul, "_skriv_raa", delt_skriving)
+
+    logg = tmp_path / "audit.jsonl"
+    antall = 20
+    start = threading.Barrier(antall)
+
+    def kjor():
+        start.wait()
+        sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+
+    traader = [threading.Thread(target=kjor) for _ in range(antall)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join()
+
+    linjer = [l for l in logg.read_text(encoding="utf-8").splitlines() if l]
+    assert len(linjer) == antall, f"{len(linjer)} loggposter for {antall} beslutninger"
+    for nr, linje in enumerate(linjer, 1):
+        try:
+            post = _json.loads(linje)
+        except ValueError:
+            raise AssertionError(f"loggpost {nr} er ødelagt av fletting: {linje[:120]!r}")
+        assert post["beslutning"] == TILLAT and post["aktor"] == "agent"
+
+
+def test_hver_beslutning_har_noeyaktig_en_loggpost(tjeneste, tmp_path):
+    """1:1-kontrakten uten kunstig deling — fanger tap som skjer av andre
+    grunner enn fletting (f.eks. at en gren returnerer uten å logge)."""
+    import threading
+    logg = tmp_path / "audit.jsonl"
+    beslutninger: list[str] = []
+    laas = threading.Lock()
+    start = threading.Barrier(20)
+
+    def kjor():
+        start.wait()
+        d = sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+        with laas:
+            beslutninger.append(d.beslutning)
+
+    traader = [threading.Thread(target=kjor) for _ in range(20)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join()
+
+    linjer = [l for l in logg.read_text(encoding="utf-8").splitlines() if l]
+    assert len(beslutninger) == 20
+    assert len(linjer) == len(beslutninger), \
+        f"{len(linjer)} loggposter for {len(beslutninger)} beslutninger"
+
+
+def test_skriv_holder_fillaasen_rundt_hele_skrivingen(tjeneste, tmp_path,
+                                                      monkeypatch):
+    """Kontrakttest for serialiseringen — og den eneste av disse som er
+    plattformuavhengig.
+
+    Bakgrunn: de rene samtidighetstestene over fanget IKKE at låsen ble
+    fjernet, fordi pytest sin tmp_path ligger på ext4, der kjernen holder
+    O_APPEND-skrivinger atomiske uansett. På `/mnt/c` (drvfs) — der dette
+    repoet faktisk bor — mistet den gamle implementasjonen 16 av 20 poster.
+    Feilen er altså usynlig på ett filsystem og katastrofal på et annet.
+    Derfor testes egenskapen direkte i stedet for å håpe på et kappløp:
+
+      1. skrivingen SKAL gå gjennom `_skriv_raa` (den serialiserte veien)
+      2. fillåsen SKAL være holdt mens den skjer
+    """
+    from policy_validator import audit as audit_modul
+
+    logg = tmp_path / "audit.jsonl"
+    kall = []
+
+    def kontrollert(fd, data):
+        kall.append(len(data))
+        assert audit_modul._fillaas(logg).locked(), \
+            "skriv() holdt ikke fillåsen mens den skrev"
+        os.write(fd, data)
+
+    monkeypatch.setattr(audit_modul, "_skriv_raa", kontrollert)
+    sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
+
+    assert kall, "skriv() gikk utenom den serialiserte skrivingen"
+    assert logg.read_text(encoding="utf-8").count("\n") == 1
