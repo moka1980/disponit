@@ -1,92 +1,152 @@
 # ============================================================
-# BRANSJEMAL · NETTHANDEL / E-COMMERCE
-# Status: UTKAST bygget på åpne kilder — skal valideres i pilot.
-# Særtrekk vs. tjenestebedrift: høyt transaksjonsvolum, angrerett,
-# lager, refusjoner og markedsføringssamtykke dominerer regelbildet.
+# BRANSJEMAL v0.2 · NETTHANDEL / E-COMMERCE
+# Oppgradert etter ChatGPT-review PR-001.
 # ============================================================
-schema_version: "0.1"
+schema_version: "0.2"
 meta:
-  bransjemal: netthandel-no-v0.1
+  policy_id: netthandel-no
+  versjon: 0.2.0
+  bransjemal: netthandel-no
   kilder:
     - "Angrerettloven (14 dagers angrerett ved fjernsalg)"
     - "Forbrukerkjøpsloven (reklamasjon)"
     - "Markedsføringsloven §15 (samtykke e-postmarkedsføring)"
-    - "Typiske vilkårssider hos norske nettbutikker (leverings- og returvilkår)"
   status: utkast
+
+tidssone: Europe/Oslo
 
 roller:
   - {id: daglig_leder}
   - {id: butikksjef, beskrivelse: "Priser, kampanjer, sortiment"}
   - {id: kundeservice}
-  - {id: agent}
+  - {id: agent, beskrivelse: "Automatisert utførelse innen denne policyen"}
+
+dataklasser: [offentlig, intern, persondata, finansiell]
+
+verifikatorer:
+  v_betaling:
+    beskrivelse: "M-41 betalings- og abonnementsstatus"
+    betrodd_for: [betaling_autorisert, samme_betalingsmiddel]
+  v_lager:
+    beskrivelse: "M-27 lager og logistikk"
+    betrodd_for: [lager_reservert, retur_registrert]
+  v_adresse:
+    beskrivelse: "M-11 adressevalidering"
+    betrodd_for: [adresse_validert]
+  v_rett:
+    beskrivelse: "M-34 regelverkssjekk angrerett/reklamasjon"
+    betrodd_for: [innenfor_angrerett_eller_reklamasjon]
+  v_kunnskap:
+    beskrivelse: "M-9 kunnskapsbase"
+    betrodd_for: [svar_fra_kunnskapsbase, ingen_juridiske_innrommelser]
+  v_register:
+    beskrivelse: "M-24 leverandørregister og avtaler"
+    betrodd_for: [leverandor_i_register, pris_innen_avtale]
+  v_prognose:
+    beskrivelse: "M-27 etterspørselsprognose"
+    betrodd_for: [prognose_konfidens]
+  v_samtykke:
+    beskrivelse: "M-30 samtykkeregister"
+    betrodd_for: [samtykke_gyldig, avmeldingslenke]
+  v_prisbok:
+    beskrivelse: "M-26 prisbok"
+    betrodd_for: [priser_fra_prisbok]
 
 handlinger:
-  # ---------- Ordre og kunde ----------
   - id: ordre.bekreft_og_fakturer
     modul: M-25
-    tillatt_for: [agent]
     modus: auto
-    vilkaar: [betaling_autorisert, lager_reservert, adresse_validert]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell, persondata]
+    vilkaar:
+      - {navn: betaling_autorisert, verifikator: v_betaling}
+      - {navn: lager_reservert, verifikator: v_lager}
+      - {navn: adresse_validert, verifikator: v_adresse}
+    reversering: {type: kompenserende, handling: ordre.kanseller_og_krediter,
+                  frist_sekunder: 3600}
 
   - id: refusjon.utfor
     modul: M-41
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 5000}
-    vilkaar: [innenfor_angrerett_eller_reklamasjon, retur_registrert,
-              samme_betalingsmiddel]
     ved_brudd: unntakskø
-    reversibel: false
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell]
+    grenser: {belop_maks: "5000.00", valuta: [NOK]}
+    vilkaar:
+      - {navn: innenfor_angrerett_eller_reklamasjon, verifikator: v_rett}
+      - {navn: retur_registrert, verifikator: v_lager}
+      - {navn: samme_betalingsmiddel, verifikator: v_betaling}
+    reversering: {type: irreversibel}
 
   - id: refusjon.stor
     modul: M-41
-    modus: alltid_stopp        # Over 5000 kr -> unntakskø med full kontekst
+    modus: alltid_stopp
     ved_brudd: unntakskø
+    reversering: {type: irreversibel}
+    grenser: {belop_maks: "0.00"}
 
   - id: kundeservice.svar
     modul: M-17
-    tillatt_for: [agent]
     modus: auto
-    vilkaar: [svar_fra_kunnskapsbase, ingen_juridiske_innrommelser]
     ved_brudd: unntakskø
-    reversibel: false
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, intern, persondata]
+    vilkaar:
+      - {navn: svar_fra_kunnskapsbase, verifikator: v_kunnskap}
+      - {navn: ingen_juridiske_innrommelser, verifikator: v_kunnskap}
+    reversering: {type: kompenserende, handling: kundeservice.korriger_svar}
 
-  # ---------- Lager og innkjøp ----------
   - id: lager.bestill_pafyll
     modul: M-27
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 50000, frekvens_maks: "per leverandør per uke"}
-    vilkaar: [leverandor_i_register, pris_innen_avtale,
-              prognose_konfidens_min: 0.8]
     ved_brudd: unntakskø
-    reversibel: true            # Bestilling kan kanselleres innen frist
+    tillatt_for: [agent]
+    dataklasser_tillatt: [intern, finansiell]
+    grenser:
+      belop_maks: "50000.00"
+      valuta: [NOK]
+      frekvens:
+        maks: 1
+        periode_antall: 1
+        periode_enhet: uker
+        grupperingsnokkel: leverandor_id
+    vilkaar:
+      - {navn: leverandor_i_register, verifikator: v_register}
+      - {navn: pris_innen_avtale, verifikator: v_register}
+      - {navn: prognose_konfidens, verifikator: v_prognose, min: 0.8}
+    reversering: {type: kompenserende, handling: lager.kanseller_bestilling,
+                  frist_sekunder: 86400}
 
-  # ---------- Markedsføring ----------
   - id: kampanje.send
     modul: M-44
-    tillatt_for: [agent]
     modus: auto
-    grenser: {frekvens_maks: "2 per mottaker per uke"}
-    vilkaar: [samtykke_gyldig, avmeldingslenke, priser_fra_prisbok]
-    dataklasser_tillatt: [offentlig, persondata]
     ved_brudd: unntakskø
-    reversibel: false
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, persondata]
+    grenser:
+      frekvens:
+        maks: 2
+        periode_antall: 1
+        periode_enhet: uker
+        grupperingsnokkel: mottaker_id
+    vilkaar:
+      - {navn: samtykke_gyldig, verifikator: v_samtykke}
+      - {navn: avmeldingslenke, verifikator: v_samtykke}
+      - {navn: priser_fra_prisbok, verifikator: v_prisbok}
+    reversering: {type: kompenserende, handling: kampanje.send_korreksjon}
 
   - id: pris.endre
     modul: M-26
-    modus: alltid_stopp        # Prisendring er butikksjefens policyendring,
-    ved_brudd: unntakskø       # ikke en agenthandling i denne malen
+    modus: alltid_stopp
+    ved_brudd: unntakskø
+    reversering: {type: direkte}
 
 frister:
   - {id: mva_melding, kilde: "Skatteetaten", frekvens: "6 terminer/år",
      varsling_dager_for: [30, 14, 7, 1]}
   - {id: a_melding, kilde: "Skatteetaten", frekvens: "månedlig, den 5.",
      varsling_dager_for: [7, 3, 1]}
-  - {id: saeravgifter_evt, kilde: "avhengig av sortiment", frekvens: "varierer",
-     varsling_dager_for: [30, 14]}
 
 retention:
   - {dataklasse: finansiell, aar_min: 5, sletting: aldri_automatisk_for_frist}
@@ -94,6 +154,6 @@ retention:
 
 unntak:
   kategorier: [manglende_data, over_grense, ukjent_motpart, svindelmistanke,
-               regelkonflikt, teknisk_feil, ukjent]
+               regelkonflikt, teknisk_feil, ugyldig_data, ukjent]
   maks_auto_forsok: 3
   eskalering: unntakskø

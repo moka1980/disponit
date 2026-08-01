@@ -1,53 +1,87 @@
-"""Strukturell validering av en policyfil mot skjema v0.1.
+"""Formell policyvalidering v0.2 (ChatGPT-review PR-001, funn B og spm. 3).
 
-Kjøres FØR en policy tas i bruk (port i utrullingsløypen, steg 3):
-en policy som ikke består, kan aldri aktiveres for en kunde.
+To lag:
+  1. JSON Schema (policies/policy-schema-v0.2.json) med
+     additionalProperties: false — datatyper, enums, mønstre, påkrevde felt.
+  2. Semantiske kontroller skjemaspråket ikke dekker: tidssone finnes i
+     IANA-databasen, rolle-/dataklasse-/verifikator-referanser er gyldige,
+     unike handlings-IDer, irreversible handlinger har harde rammer.
+
+Alt er kontrollert: funksjonen kaster ALDRI — feilformet policy gir
+feilliste, ikke exception (review: «AttributeError i validatoren»).
 """
 from __future__ import annotations
 
-GYLDIG_MODUS = {"auto", "auto_med_vilkaar", "alltid_stopp"}
-GYLDIG_VED_BRUDD = {"unntakskø", "stopp_og_varsle", "frys"}
-PAKREVDE_TOPPNIVAA = ["schema_version", "meta", "roller", "handlinger", "unntak"]
+import json
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import jsonschema
+
+_SKJEMA_STI = Path(__file__).resolve().parents[3] / "policies" / "policy-schema-v0.2.json"
 
 
-def valider_policy(policy: dict) -> list[str]:
-    """Returnerer liste av feil. Tom liste == gyldig."""
-    feil: list[str] = []
+def _last_skjema() -> dict:
+    return json.loads(_SKJEMA_STI.read_text(encoding="utf-8"))
+
+
+def valider_policy(policy: object) -> list[str]:
+    """Returnerer komplett feilliste. Tom liste == gyldig. Kaster aldri."""
+    try:
+        return _valider(policy)
+    except Exception as e:  # siste skanse — aldri ukontrollert exception
+        return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
+
+
+def _valider(policy: object) -> list[str]:
     if not isinstance(policy, dict):
         return ["policy er ikke et objekt"]
 
-    for k in PAKREVDE_TOPPNIVAA:
-        if k not in policy:
-            feil.append(f"mangler toppnivåfelt '{k}'")
+    # Lag 1: formelt JSON Schema — samle ALLE brudd, ikke bare første
+    skjema = _last_skjema()
+    validator = jsonschema.Draft202012Validator(skjema)
+    feil = [f"skjema: {'/'.join(str(p) for p in e.absolute_path) or '<rot>'}: "
+            f"{e.message}" for e in validator.iter_errors(policy)]
+    if feil:
+        return sorted(feil)  # strukturfeil først; semantikk krever gyldig struktur
 
-    handlinger = policy.get("handlinger") or []
-    sett_ider: set[str] = set()
-    for i, h in enumerate(handlinger):
-        ref = f"handlinger[{i}]"
-        hid = h.get("id")
-        if not hid:
-            feil.append(f"{ref}: mangler id")
-            continue
-        if hid in sett_ider:
-            feil.append(f"{ref}: duplisert id '{hid}'")
-        sett_ider.add(hid)
-        if h.get("modus") not in GYLDIG_MODUS:
-            feil.append(f"{ref} '{hid}': ugyldig modus '{h.get('modus')}'")
-        if h.get("ved_brudd", "unntakskø") not in GYLDIG_VED_BRUDD:
-            feil.append(f"{ref} '{hid}': ugyldig ved_brudd '{h.get('ved_brudd')}'")
-        if h.get("modus") in {"auto", "auto_med_vilkaar"} and not h.get("tillatt_for"):
-            feil.append(f"{ref} '{hid}': auto-modus krever tillatt_for")
-        if "reversibel" not in h and h.get("modus") != "alltid_stopp":
-            feil.append(f"{ref} '{hid}': mangler eksplisitt 'reversibel'")
-        if h.get("reversibel") is False:
-            # Irreversible handlinger må ha harde rammer (v7-prinsipp)
-            if not (h.get("grenser") or h.get("vilkaar")):
-                feil.append(f"{ref} '{hid}': irreversibel handling uten "
-                            "grenser eller vilkår er ikke tillatt")
+    # Lag 2: semantikk
+    try:
+        ZoneInfo(policy["tidssone"])
+    except Exception:
+        feil.append(f"tidssone: '{policy['tidssone']}' finnes ikke i IANA-databasen")
 
-    roller = {r.get("id") for r in (policy.get("roller") or [])}
-    for h in handlinger:
+    roller = {r["id"] for r in policy["roller"]}
+    klasser = set(policy["dataklasser"])
+    verifikatorer = policy["verifikatorer"]
+
+    sett: set[str] = set()
+    for h in policy["handlinger"]:
+        hid = h["id"]
+        if hid in sett:
+            feil.append(f"handling '{hid}': duplisert id")
+        sett.add(hid)
         for rolle in h.get("tillatt_for") or []:
             if rolle not in roller:
-                feil.append(f"handling '{h.get('id')}': ukjent rolle '{rolle}'")
+                feil.append(f"handling '{hid}': ukjent rolle '{rolle}'")
+        for k in h.get("dataklasser_tillatt") or []:
+            if k not in klasser:
+                feil.append(f"handling '{hid}': ukjent dataklasse '{k}'")
+        for vk in h.get("vilkaar") or []:
+            vid = vk["verifikator"]
+            if vid not in verifikatorer:
+                feil.append(f"handling '{hid}': vilkår '{vk['navn']}' peker på "
+                            f"uregistrert verifikator '{vid}'")
+            elif vk["navn"] not in verifikatorer[vid]["betrodd_for"]:
+                feil.append(f"handling '{hid}': verifikator '{vid}' er ikke "
+                            f"betrodd for vilkår '{vk['navn']}'")
+        if h["reversering"]["type"] == "irreversibel" \
+                and not (h.get("grenser") or h.get("vilkaar")):
+            feil.append(f"handling '{hid}': irreversibel uten grenser/vilkår")
+
+    kategorier = set(policy["unntak"]["kategorier"])
+    for obligatorisk in ("manglende_data", "over_grense", "regelkonflikt",
+                         "teknisk_feil", "ugyldig_data", "ukjent"):
+        if obligatorisk not in kategorier:
+            feil.append(f"unntak.kategorier mangler obligatorisk '{obligatorisk}'")
     return feil

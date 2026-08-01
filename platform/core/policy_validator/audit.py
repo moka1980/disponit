@@ -38,7 +38,7 @@ def lag_loggpost(decision: Decision, event: dict, policy: dict) -> dict[str, Any
         "beslutning": decision.beslutning,
         "unntak_kategori": decision.unntak_kategori,
         "effekt": decision.effekt,
-        "begrunnelse": decision.begrunnelse,
+        "begrunnelse": [g.to_dict() for g in decision.begrunnelse],
     }
 
 
@@ -47,3 +47,43 @@ def skriv(loggfil: Path, post: dict) -> None:
     loggfil.parent.mkdir(parents=True, exist_ok=True)
     with loggfil.open("a", encoding="utf-8") as f:
         f.write(json.dumps(post, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# PR-002: logg-før-utførelse-kontrakten (review spm. 3: revisjonsloggfeil
+# og «bare TILLAT kan utløse sideeffekt»).
+# ---------------------------------------------------------------------------
+from .engine import STOPP, Decision, EvaluationContext, Grunn, TellerLager  # noqa: E402
+
+
+def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
+                      teller: "TellerLager | None" = None,
+                      naa=None) -> Decision:
+    """ENESTE lovlige inngang for moduler som skal utføre skrivehandlinger.
+
+    Kontrakt (fail-closed i alle grener):
+      1. evaluate() kastes aldri videre — uventet exception => STOPP.
+      2. Beslutningen logges FØR den returneres. Kan loggen ikke skrives,
+         returneres STOPP (teknisk_feil) — en skrivehandling uten sikret
+         revisjonslogg er forbudt (M-1-aksept).
+      3. Frekvensforekomst registreres i det betrodde telleret KUN ved
+         TILLAT med sikret logg.
+      4. Kalleren får utføre sideeffekten HVIS OG BARE HVIS returverdien
+         er TILLAT. STOPP, UNNTAK, exception og timeout er alle nei.
+    """
+    from .engine import evaluate  # lokal import unngår sirkularitet
+    from datetime import datetime, timezone
+    naa = naa or datetime.now(timezone.utc)
+    try:
+        d = evaluate(policy, context, event, teller=teller, naa=naa)
+    except Exception as e:  # fail-closed, aldri gjetting
+        d = Decision(STOPP, str(event.get("handling")), "ukjent",
+                     [Grunn("motor_exception", {"type": type(e).__name__})])
+    try:
+        skriv(loggfil, lag_loggpost(d, event, policy))
+    except Exception:
+        return Decision(STOPP, d.handling, d.policy_id,
+                        d.begrunnelse + [Grunn("logging_feilet")])
+    if d.beslutning == "TILLAT" and d.frekvensnokkel and teller is not None:
+        teller.registrer(d.frekvensnokkel, naa)
+    return d
