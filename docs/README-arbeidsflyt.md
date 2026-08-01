@@ -6,7 +6,7 @@ Denne pakken er startpunktet for M-1 (Policy- og fullmaktsmotor) bygget på åpn
 
 | Fil | Hva den er |
 |---|---|
-| `policy-schema-v0.1.yaml` | Det generiske formatet M-1 leser. Likt for alle bedrifter. Dette er kontrakten motoren kodes mot. |
+| `policy-schema-v0.2.json` | Det generiske formatet M-1 leser — JSON Schema 2020-12, `additionalProperties: false`. Likt for alle bedrifter. Dette er kontrakten motoren kodes mot. Erstattet `policy-schema-v0.1.yaml` i PR-002; den gamle filen slettes i PR-003. |
 | `bransjemal-tjenestebedrift.yaml` | Startpolicy for tjeneste-/rådgivningsbedrifter |
 | `bransjemal-netthandel.yaml` | Startpolicy for netthandel (angrerett, refusjon, samtykke) |
 | `bransjemal-handverk-bygg.yaml` | Startpolicy for håndverk/bygg (prosjekt, underleverandør, HMS) |

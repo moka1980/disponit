@@ -1,16 +1,19 @@
 # ============================================================
-# BRANSJEMAL · TJENESTEBEDRIFT / RÅDGIVNING / REGNSKAPSBYRÅ
-# Status: UTKAST bygget på åpne kilder — skal valideres i pilot.
-# Alle beløpsgrenser er forsiktige startverdier kunden justerer.
+# BRANSJEMAL v0.2 · TJENESTEBEDRIFT / RÅDGIVNING / REGNSKAPSBYRÅ
+# Oppgradert etter ChatGPT-review PR-001: strukturert frekvens,
+# reverseringsmodell, betrodde verifikatorer, eksplisitt tidssone.
 # ============================================================
-schema_version: "0.1"
+schema_version: "0.2"
 meta:
-  bransjemal: tjenestebedrift-no-v0.1
+  policy_id: tjenestebedrift-no
+  versjon: 0.2.0
+  bransjemal: tjenestebedrift-no
   kilder:
     - "Bokføringsloven (oppbevaringskrav regnskapsmateriale)"
     - "Skatteetaten: mva-melding, a-melding, skattemelding (frister)"
-    - "Typiske betalingsbetingelser observert i bransjen: 14 dager netto"
   status: utkast
+
+tidssone: Europe/Oslo
 
 roller:
   - {id: daglig_leder, beskrivelse: "Full fullmakt innen styrevedtak"}
@@ -18,69 +21,120 @@ roller:
   - {id: konsulent, beskrivelse: "Timeføring, utlegg, kundekontakt"}
   - {id: agent, beskrivelse: "Automatisert utførelse innen denne policyen"}
 
+dataklasser: [offentlig, intern, persondata, sensitiv, finansiell]
+
+# Betrodde verifikatorer — KUN disse kan attestere vilkår (aldri innsender)
+verifikatorer:
+  v_regnskap:
+    beskrivelse: "M-14 fakturakontroll"
+    betrodd_for: [dublettsjekk, mva_validert, faktura_godkjent]
+  v_register:
+    beskrivelse: "M-24 leverandørregister"
+    betrodd_for: [leverandor_i_register]
+  v_bank:
+    beskrivelse: "M-42 kontoverifikasjon via uavhengig kanal"
+    betrodd_for: [konto_verifisert]
+  v_svindel:
+    beskrivelse: "M-42 transaksjonsvakt"
+    betrodd_for: [svindelsjekk_bestatt]
+  v_fordring:
+    beskrivelse: "M-23 fordringsstatus"
+    betrodd_for: [forfall_passert_dager, ingen_aktiv_tvist]
+  v_dlp:
+    beskrivelse: "M-6 innholdskontroll"
+    betrodd_for: [mottaker_i_kontaktregister, dlp_sjekk, ingen_okonomiske_lofter]
+  v_prisbok:
+    beskrivelse: "M-26 prisbok og maler"
+    betrodd_for: [priser_fra_prisbok, laste_klausuler_uendret]
+
 handlinger:
-  # ---------- Økonomi ----------
   - id: faktura.bokfor
     modul: M-14
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 25000, valuta: [NOK]}
-    vilkaar: [dublettsjekk, leverandor_i_register, mva_validert]
-    dataklasser_tillatt: [finansiell]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell]
+    grenser: {belop_maks: "25000.00", valuta: [NOK]}
+    vilkaar:
+      - {navn: dublettsjekk, verifikator: v_regnskap}
+      - {navn: leverandor_i_register, verifikator: v_register}
+      - {navn: mva_validert, verifikator: v_regnskap}
+    reversering: {type: direkte}
 
   - id: faktura.bokfor_stor
     modul: M-14
-    tillatt_for: [agent]
     modus: auto_med_vilkaar
-    grenser: {belop_maks: 100000}
-    vilkaar: [dublettsjekk, po_match_eller_avtale, leverandor_i_register]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell]
+    grenser: {belop_maks: "100000.00", valuta: [NOK]}
+    vilkaar:
+      - {navn: dublettsjekk, verifikator: v_regnskap}
+      - {navn: leverandor_i_register, verifikator: v_register}
+    reversering: {type: direkte}
 
   - id: betaling.utfor
     modul: M-24
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 25000, tidsvindu: "man-fre 07:00-17:00"}
-    vilkaar: [faktura_godkjent, konto_verifisert, svindelsjekk_bestatt]  # M-42
     ved_brudd: frys
-    reversibel: false          # => derfor lav grense og harde vilkår
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell]
+    grenser:
+      belop_maks: "25000.00"
+      valuta: [NOK]
+      tidsvindu: "man-fre 07:00-17:00"
+    vilkaar:
+      - {navn: faktura_godkjent, verifikator: v_regnskap}
+      - {navn: konto_verifisert, verifikator: v_bank}
+      - {navn: svindelsjekk_bestatt, verifikator: v_svindel}
+    reversering: {type: irreversibel}
 
   - id: purring.send
     modul: M-23
-    tillatt_for: [agent]
     modus: auto
-    grenser: {frekvens_maks: "1 per faktura per 14 dager"}
-    vilkaar: [forfall_passert_dager: 14, ingen_aktiv_tvist]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell, persondata]
+    grenser:
+      frekvens:
+        maks: 1
+        periode_antall: 14
+        periode_enhet: dager
+        grupperingsnokkel: faktura_id
+    vilkaar:
+      - {navn: forfall_passert_dager, verifikator: v_fordring, min: 14}
+      - {navn: ingen_aktiv_tvist, verifikator: v_fordring}
+    reversering: {type: kompenserende, handling: purring.beklag_og_korriger}
 
-  # ---------- Kommunikasjon ----------
   - id: epost.send_kjent_mottaker
     modul: M-6
-    tillatt_for: [agent]
     modus: auto
-    vilkaar: [mottaker_i_kontaktregister, dlp_sjekk, ingen_okonomiske_lofter]
-    dataklasser_tillatt: [offentlig, intern]
     ved_brudd: unntakskø
-    reversibel: false
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, intern]
+    vilkaar:
+      - {navn: mottaker_i_kontaktregister, verifikator: v_dlp}
+      - {navn: dlp_sjekk, verifikator: v_dlp}
+      - {navn: ingen_okonomiske_lofter, verifikator: v_dlp}
+    reversering: {type: kompenserende, handling: epost.send_korreksjon}
 
   - id: epost.send_ny_mottaker
     modul: M-6
-    modus: alltid_stopp        # Går alltid i unntakskø i denne malen
+    modus: alltid_stopp
     ved_brudd: unntakskø
+    reversering: {type: kompenserende, handling: epost.send_korreksjon}
 
-  # ---------- Dokument ----------
   - id: tilbud.generer
     modul: M-26
-    tillatt_for: [agent]
     modus: auto
-    vilkaar: [priser_fra_prisbok, laste_klausuler_uendret]
-    grenser: {belop_maks: 150000}
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, intern, finansiell]
+    grenser: {belop_maks: "150000.00", valuta: [NOK]}
+    vilkaar:
+      - {navn: priser_fra_prisbok, verifikator: v_prisbok}
+      - {navn: laste_klausuler_uendret, verifikator: v_prisbok}
+    reversering: {type: direkte}
 
 frister:
   - {id: mva_melding, kilde: "Skatteetaten", frekvens: "6 terminer/år",
@@ -97,7 +151,7 @@ retention:
   - {dataklasse: persondata, regel: formaalsbegrenset}
 
 unntak:
-  kategorier: [manglende_data, over_grense, ukjent_motpart,
-               regelkonflikt, teknisk_feil, ukjent]
+  kategorier: [manglende_data, over_grense, ukjent_motpart, regelkonflikt,
+               teknisk_feil, ugyldig_data, ukjent]
   maks_auto_forsok: 3
   eskalering: unntakskø

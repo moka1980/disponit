@@ -1,88 +1,136 @@
 # ============================================================
-# BRANSJEMAL · HÅNDVERK / BYGG / ANLEGG (SMB)
-# Status: UTKAST bygget på åpne kilder — skal valideres i pilot.
-# Særtrekk: prosjektbasert økonomi, timelister på byggeplass,
-# underleverandører, HMS-krav og offentlige registre.
+# BRANSJEMAL v0.2 · HÅNDVERK / BYGG / ANLEGG (SMB)
+# Oppgradert etter ChatGPT-review PR-001.
 # ============================================================
-schema_version: "0.1"
+schema_version: "0.2"
 meta:
-  bransjemal: handverk-bygg-no-v0.1
+  policy_id: handverk-bygg-no
+  versjon: 0.2.0
+  bransjemal: handverk-bygg-no
   kilder:
-    - "Byggherreforskriften / HMS-kortplikt på byggeplass"
-    - "Bustadoppføringslova og håndverkertjenesteloven (forbrukerprosjekter)"
-    - "Typiske vilkår hos norske håndverksbedrifter (befaring, tilbud, endringsordre)"
-    - "StartBANK/leverandørregister-praksis for underleverandører"
+    - "Byggherreforskriften / HMS-kortplikt"
+    - "Bustadoppføringslova og håndverkertjenesteloven"
+    - "StartBANK/leverandørregister-praksis"
   status: utkast
+
+tidssone: Europe/Oslo
 
 roller:
   - {id: daglig_leder}
   - {id: prosjektleder, beskrivelse: "Ansvar per prosjekt og endringsordrer"}
-  - {id: handverker, beskrivelse: "Timeføring, materiell, bilder/dokumentasjon"}
-  - {id: agent}
+  - {id: handverker, beskrivelse: "Timeføring, materiell, dokumentasjon"}
+  - {id: agent, beskrivelse: "Automatisert utførelse innen denne policyen"}
+
+dataklasser: [offentlig, intern, persondata, finansiell]
+
+verifikatorer:
+  v_lonn:
+    beskrivelse: "M-39 lønnsgrunnlag"
+    betrodd_for: [timer_mot_arbeidsplan, prosjektkode_gyldig, overtid_flagget]
+  v_prosjekt:
+    beskrivelse: "M-25 prosjekt- og kontraktstatus"
+    betrodd_for: [milepael_dokumentert, kontraktsfestet_betalingsplan,
+                  prosjektbudsjett_ok, arbeid_dokumentert, befaring_dokumentert]
+  v_register:
+    beskrivelse: "M-24 leverandørregister"
+    betrodd_for: [leverandor_i_register, pris_innen_avtale, orgnr_validert,
+                  mva_registrert, hms_kort_dokumentert, forsikring_dokumentert]
+  v_bank:
+    beskrivelse: "M-42 kontoverifikasjon via uavhengig kanal"
+    betrodd_for: [konto_verifisert_uavhengig]
+  v_svindel:
+    beskrivelse: "M-42 transaksjonsvakt"
+    betrodd_for: [svindelsjekk_bestatt, faktura_godkjent]
+  v_prisbok:
+    beskrivelse: "M-26 prisbok og standardforbehold"
+    betrodd_for: [priser_fra_prisbok, standard_forbehold_inkludert]
 
 handlinger:
-  # ---------- Prosjektøkonomi ----------
   - id: timeliste.samle_og_valider
     modul: M-39
-    tillatt_for: [agent]
     modus: auto
-    vilkaar: [timer_mot_arbeidsplan, prosjektkode_gyldig,
-              overtid_flagges_ikke_godkjennes]
-    dataklasser_tillatt: [persondata, finansiell]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [persondata, finansiell]
+    vilkaar:
+      - {navn: timer_mot_arbeidsplan, verifikator: v_lonn}
+      - {navn: prosjektkode_gyldig, verifikator: v_lonn}
+      - {navn: overtid_flagget, verifikator: v_lonn}
+    reversering: {type: direkte}
 
   - id: faktura.delfakturer_prosjekt
     modul: M-23
-    tillatt_for: [agent]
     modus: auto
-    vilkaar: [milepael_dokumentert, kontraktsfestet_betalingsplan]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell]
+    vilkaar:
+      - {navn: milepael_dokumentert, verifikator: v_prosjekt}
+      - {navn: kontraktsfestet_betalingsplan, verifikator: v_prosjekt}
+    reversering: {type: kompenserende, handling: faktura.krediter}
 
   - id: materiell.bestill
     modul: M-27
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 30000, tidsvindu: "man-fre 06:00-18:00"}
-    vilkaar: [leverandor_i_register, pris_innen_avtale, prosjektbudsjett_ok]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [intern, finansiell]
+    grenser:
+      belop_maks: "30000.00"
+      valuta: [NOK]
+      tidsvindu: "man-fre 06:00-18:00"
+    vilkaar:
+      - {navn: leverandor_i_register, verifikator: v_register}
+      - {navn: pris_innen_avtale, verifikator: v_register}
+      - {navn: prosjektbudsjett_ok, verifikator: v_prosjekt}
+    reversering: {type: kompenserende, handling: materiell.kanseller,
+                  frist_sekunder: 43200}
 
-  # ---------- Underleverandører ----------
   - id: underleverandor.onboard
     modul: M-24
-    tillatt_for: [agent]
     modus: auto_med_vilkaar
-    vilkaar: [orgnr_validert, mva_registrert, konto_verifisert_uavhengig,
-              hms_kort_dokumentert, forsikring_dokumentert]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [intern, finansiell, persondata]
+    vilkaar:
+      - {navn: orgnr_validert, verifikator: v_register}
+      - {navn: mva_registrert, verifikator: v_register}
+      - {navn: konto_verifisert_uavhengig, verifikator: v_bank}
+      - {navn: hms_kort_dokumentert, verifikator: v_register}
+      - {navn: forsikring_dokumentert, verifikator: v_register}
+    reversering: {type: direkte}
 
   - id: underleverandor.betal
     modul: M-24
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 25000}
-    vilkaar: [faktura_godkjent, arbeid_dokumentert, svindelsjekk_bestatt]
     ved_brudd: frys
-    reversibel: false
+    tillatt_for: [agent]
+    dataklasser_tillatt: [finansiell]
+    grenser: {belop_maks: "25000.00", valuta: [NOK]}
+    vilkaar:
+      - {navn: faktura_godkjent, verifikator: v_svindel}
+      - {navn: arbeid_dokumentert, verifikator: v_prosjekt}
+      - {navn: svindelsjekk_bestatt, verifikator: v_svindel}
+    reversering: {type: irreversibel}
 
-  # ---------- Kunde og tilbud ----------
   - id: tilbud.generer_standardjobb
     modul: M-26
-    tillatt_for: [agent]
     modus: auto
-    grenser: {belop_maks: 100000}
-    vilkaar: [priser_fra_prisbok, standard_forbehold_inkludert,
-              befaring_dokumentert_eller_flagget]
     ved_brudd: unntakskø
-    reversibel: true
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, intern, finansiell]
+    grenser: {belop_maks: "100000.00", valuta: [NOK]}
+    vilkaar:
+      - {navn: priser_fra_prisbok, verifikator: v_prisbok}
+      - {navn: standard_forbehold_inkludert, verifikator: v_prisbok}
+      - {navn: befaring_dokumentert, verifikator: v_prosjekt}
+    reversering: {type: direkte}
 
   - id: endringsordre.opprett
     modul: M-25
-    modus: alltid_stopp        # Endringsordre binder kunden økonomisk —
-    ved_brudd: unntakskø       # dokumenteres av agent, besluttes etter policy
+    modus: alltid_stopp
+    ved_brudd: unntakskø
+    reversering: {type: direkte}
 
 frister:
   - {id: mva_melding, kilde: "Skatteetaten", frekvens: "6 terminer/år",
@@ -101,6 +149,6 @@ retention:
 
 unntak:
   kategorier: [manglende_data, over_grense, ukjent_motpart, hms_avvik,
-               regelkonflikt, teknisk_feil, ukjent]
+               regelkonflikt, teknisk_feil, ugyldig_data, ukjent]
   maks_auto_forsok: 3
   eskalering: unntakskø

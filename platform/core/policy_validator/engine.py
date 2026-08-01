@@ -1,31 +1,62 @@
-"""M-1 Policy- og fullmaktsmotor — beslutningsmotor v0.1.
+"""M-1 Policy- og fullmaktsmotor — beslutningsmotor v0.2.
 
-Deterministisk. Ingen LLM, ingen integrasjoner, ingen sideeffekter.
-Evaluerer én hendelse mot én policy og svarer TILLAT / STOPP / UNNTAK
-med maskinlesbar begrunnelse.
+Endringer fra v0.1 (ChatGPT-review PR-001, alle funn adressert):
+  1  Autentisert EvaluationContext — rolle leses ALDRI fra hendelsen.
+  2  Vilkår bevises med attestasjoner fra betrodde verifikatorer
+     (policy-allowlist), med ressursbinding og utløpstid.
+     Innsender kan ikke attestere egne vilkår.
+  3  Beløp er Decimal: bool, negative, ikke-endelige og for presise
+     verdier avvises som ugyldig_data.
+  4  Frekvens er strukturert og telles i et betrodd, atomisk lager —
+     aldri levert av hendelsen. Regel uten lager => STOPP (fail-closed).
+  5  Dataklasser er fail-closed: mangler klassifisering eller betrodd
+     kilde => UNNTAK.
+  6  Tidsvinduer evalueres i policyens IANA-tidssone; naive tidsstempler
+     avvises.
+  7  Begrunnelser er maskinkoder + parametre (i18n: locales/ oversetter).
 
-Designregler (fra prototype v7.2, M-1):
-  - Deny by default: udefinert handling er forbudt.
-  - Konflikt eller tvil gir alltid stopp, aldri gjetting.
-  - Hver beslutning har policy-ID og begrunnelse (kravet i M-1 aksept).
+Kontrakt: KUN beslutningen TILLAT kan utløse sideeffekt — og kun via
+audit.sikker_beslutning, som garanterer logg-før-utførelse. STOPP,
+UNNTAK, exception og timeout er alle fail-closed.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
+from zoneinfo import ZoneInfo
 
 TILLAT = "TILLAT"
 STOPP = "STOPP"
 UNNTAK = "UNNTAK"
 
-_VED_BRUDD_TIL_BESLUTNING = {
-    "unntakskø": (UNNTAK, None),
-    "stopp_og_varsle": (STOPP, "varsle"),
-    "frys": (STOPP, "frys"),
-}
-
+_VED_BRUDD = {"unntakskø": (UNNTAK, None),
+              "stopp_og_varsle": (STOPP, "varsle"),
+              "frys": (STOPP, "frys")}
 _DAGER = ["man", "tir", "ons", "tor", "fre", "lor", "son"]
+_PERIODE = {"minutter": 60, "timer": 3600, "dager": 86400, "uker": 604800}
+BETRODDE_DATAKLASSE_KILDER = {"connector", "ressurs"}
+
+
+@dataclass(frozen=True)
+class EvaluationContext:
+    """Autentisert kontekst — settes av plattformens sesjonslag etter
+    verifisert innlogging/tokenvalidering, aldri av innkommende data."""
+    tenant_id: str
+    aktor_rolle: str
+    autentisert: bool
+    kilde: str  # f.eks. "api_token", "system_jobb"
+
+
+@dataclass
+class Grunn:
+    kode: str
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kode": self.kode, "params": self.params}
 
 
 @dataclass
@@ -33,160 +64,310 @@ class Decision:
     beslutning: str
     handling: str
     policy_id: str
-    begrunnelse: list[str] = field(default_factory=list)
+    begrunnelse: list[Grunn] = field(default_factory=list)
     unntak_kategori: str | None = None
-    effekt: str | None = None  # "frys" | "varsle" | None
+    effekt: str | None = None
+    frekvensnokkel: tuple[str, ...] | None = None  # settes ved TILLAT m/frekvens
+    # Reservasjonsordre til det betrodde telleret: (nokkel, vindu_start, maks).
+    # evaluate() sitt teller-oppslag er RÅDGIVENDE; den bindende kontrollen er
+    # den atomiske reserver()-en i sikker_beslutning (Codex P1: TOCTOU).
+    frekvensreservasjon: tuple[tuple[str, ...], datetime, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "beslutning": self.beslutning,
-            "handling": self.handling,
-            "policy_id": self.policy_id,
-            "begrunnelse": self.begrunnelse,
-            "unntak_kategori": self.unntak_kategori,
-            "effekt": self.effekt,
-        }
+        return {"beslutning": self.beslutning, "handling": self.handling,
+                "policy_id": self.policy_id,
+                "begrunnelse": [g.to_dict() for g in self.begrunnelse],
+                "unntak_kategori": self.unntak_kategori, "effekt": self.effekt}
 
 
-def _policy_id(policy: dict, handling_id: str) -> str:
-    mal = (policy.get("meta") or {}).get("bransjemal") or "ukjent-mal"
-    ver = policy.get("schema_version", "?")
-    return f"{mal}/{handling_id}@{ver}"
+class TellerLager:
+    """Betrodd frekvensteller. Hendelsen kan aldri levere telleren.
 
-
-def _i_tidsvindu(vindu: str, tidspunkt: datetime) -> bool:
-    """Tolker f.eks. 'man-fre 07:00-17:00'. Ukjent format => False (stopp)."""
-    try:
-        dager_del, klokke_del = vindu.strip().split()
-        start_dag, slutt_dag = dager_del.split("-")
-        d0, d1 = _DAGER.index(start_dag), _DAGER.index(slutt_dag)
-        if not (d0 <= tidspunkt.weekday() <= d1):
-            return False
-        start_kl, slutt_kl = klokke_del.split("-")
-        t = tidspunkt.strftime("%H:%M")
-        return start_kl <= t <= slutt_kl
-    except (ValueError, IndexError):
-        return False  # uleselig vindu skal aldri åpne for handling
-
-
-def _sjekk_vilkaar(krav: Any, oppgitt: dict) -> tuple[bool, str | None, str]:
-    """Ett vilkår. Returnerer (ok, unntak_kategori, tekst)."""
-    if isinstance(krav, str):
-        if krav not in oppgitt:
-            return False, "manglende_data", f"vilkår '{krav}' mangler i hendelsen"
-        if oppgitt[krav] is not True:
-            return False, "regelkonflikt", f"vilkår '{krav}' er ikke oppfylt"
-        return True, None, f"vilkår '{krav}' oppfylt"
-    if isinstance(krav, dict) and len(krav) == 1:
-        navn, terskel = next(iter(krav.items()))
-        if navn not in oppgitt:
-            return False, "manglende_data", f"vilkår '{navn}' mangler i hendelsen"
-        verdi = oppgitt[navn]
-        if not isinstance(verdi, (int, float)) or verdi < terskel:
-            return False, "regelkonflikt", (
-                f"vilkår '{navn}'={verdi} under terskel {terskel}")
-        return True, None, f"vilkår '{navn}'={verdi} >= {terskel}"
-    return False, "regelkonflikt", f"uleselig vilkår: {krav!r}"
-
-
-def evaluate(policy: dict, event: dict) -> Decision:
-    """Evaluerer en hendelse. `event` er ren data — motoren stoler aldri
-    på den utover å lese felt; manglende felt gir stopp, aldri antakelse.
-
-    Forventede event-felt:
-      handling (str, påkrevd), aktor_rolle (str), belop (tall), valuta (str),
-      tidspunkt (ISO 8601-str), dataklasser (list), vilkaar (dict),
-      frekvens_teller (int, antall allerede utført i vinduet)
+    `reserver` er den BINDENDE kontrollen og MÅ være atomisk: den skal lese
+    antallet og registrere forekomsten i én udelelig operasjon. Å tilby
+    `antall` + `registrer` hver for seg som håndhevingsvei er nettopp
+    TOCTOU-en Codex fant — to samtidige forespørsler rekker begge å lese
+    «under grensen» før noen av dem registrerer. `antall` er derfor kun
+    rådgivende (til beslutningsgrunnlag og logg), aldri til håndheving.
     """
-    handling_id = event.get("handling") or "<mangler>"
-    handlinger = {h.get("id"): h for h in (policy.get("handlinger") or [])}
 
-    # 1) Deny by default
+    def antall(self, nokkel: tuple[str, ...], siden: datetime) -> int:
+        """Rådgivende oppslag. Ikke bruk til håndheving."""
+        raise NotImplementedError
+
+    def reserver(self, nokkel: tuple[str, ...], siden: datetime, maks: int,
+                 tidspunkt: datetime) -> bool:
+        """Atomisk: registrer forekomsten HVIS antallet siden `siden` er < maks.
+
+        MÅ returnere en ekte bool: `True` = plassen er reservert, `False` =
+        grensen er nådd. Ingen annen returverdi er lovlig. `sikker_beslutning`
+        sjekker identitet (`is True` / `is False`) og behandler alt annet —
+        inkludert `None` fra en implementasjon som glemmer å returnere — som
+        tellerfeil og STOPP. Sannhetsverdier som `1` eller `"ja"` teller altså
+        ikke som suksess; det er med vilje, så en slurvete implementasjon
+        feiler lukket i stedet for å slippe gjennom uten reservasjon.
+
+        Implementasjoner MÅ gjøre lesing og skriving i én transaksjon/lås.
+        """
+        raise NotImplementedError
+
+    def registrer(self, nokkel: tuple[str, ...], tidspunkt: datetime) -> None:
+        """Ubetinget registrering — kun for testoppsett og migrering av
+        historikk. ALDRI en håndhevingsvei; bruk `reserver`."""
+        raise NotImplementedError
+
+
+class MinneTellerLager(TellerLager):
+    """For tester og staging. PostgreSQL-implementasjon kommer i PR-004.
+
+    Atomisiteten her hviler på en prosesslokal lås, som holder så lenge alt
+    kjører i én prosess. Flere prosesser eller pods deler ikke låsen —
+    derfor er dette lageret eksplisitt ikke produksjonsklart, og PR-004 må
+    gjøre `reserver` atomisk i databasen (én SQL-setning eller transaksjon
+    med riktig isolasjonsnivå), ikke bare bytte lagringssted.
+    """
+
+    def __init__(self) -> None:
+        self._hendelser: dict[tuple[str, ...], list[datetime]] = {}
+        self._laas = threading.Lock()
+
+    def antall(self, nokkel, siden):
+        with self._laas:
+            return sum(1 for t in self._hendelser.get(nokkel, []) if t >= siden)
+
+    def reserver(self, nokkel, siden, maks, tidspunkt):
+        with self._laas:
+            if sum(1 for t in self._hendelser.get(nokkel, []) if t >= siden) >= maks:
+                return False
+            self._hendelser.setdefault(nokkel, []).append(tidspunkt)
+            return True
+
+    def registrer(self, nokkel, tidspunkt):
+        with self._laas:
+            self._hendelser.setdefault(nokkel, []).append(tidspunkt)
+
+
+def _pid(policy: dict, handling_id: str) -> str:
+    meta = policy.get("meta") or {}
+    return f"{meta.get('policy_id', 'ukjent')}@{meta.get('versjon', '?')}/{handling_id}"
+
+
+def brudd_utfall(policy: dict, handling_id: str) -> tuple[str, str | None]:
+    """Handlingens `ved_brudd` oversatt til (beslutning, effekt).
+
+    ÉN kilde for hele motoren. Codex fant at reservasjonsgrenen i
+    `sikker_beslutning` hardkodet UNNTAK: en handling med `stopp_og_varsle`
+    eller `frys` ble dermed nedgradert til unntakskø når den tapte kappløpet
+    om siste frekvensplass — altså akkurat i konkurransetilfellet, der den
+    strengeste håndteringen er mest påkrevd. Alle blokkerende grener skal
+    slå opp her, aldri gjenskape mappingen lokalt.
+    """
+    h = next((x for x in (policy.get("handlinger") or [])
+              if isinstance(x, dict) and x.get("id") == handling_id), None)
+    return _VED_BRUDD.get((h or {}).get("ved_brudd", "unntakskø"), (UNNTAK, None))
+
+
+def parse_belop(verdi: Any) -> Decimal | None:
+    """Decimal eller None ved ugyldig. bool avvises eksplisitt (bool er
+    subtype av int i Python — review-funn D). Maks 2 desimaler, >= 0."""
+    if isinstance(verdi, bool) or verdi is None:
+        return None
+    if not isinstance(verdi, (int, str)):
+        return None  # float avvises: binær flyttall er upresist for penger
+    try:
+        d = Decimal(str(verdi))
+    except InvalidOperation:
+        return None
+    if not d.is_finite() or d < 0:
+        return None
+    if -d.as_tuple().exponent > 2:
+        return None
+    return d
+
+
+def _aware(ts: Any) -> datetime | None:
+    """ISO 8601 MED tidssoneinfo. Naive tidsstempler avvises (funn: DST)."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        t = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
+
+
+def _i_vindu(vindu: str, t: datetime, sone: ZoneInfo) -> bool:
+    lokal = t.astimezone(sone)
+    dager, klokke = vindu.split()
+    d0, d1 = (_DAGER.index(x) for x in dager.split("-"))
+    if not (d0 <= lokal.weekday() <= d1):
+        return False
+    start, slutt = klokke.split("-")
+    return start <= lokal.strftime("%H:%M") <= slutt
+
+
+def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
+             teller: TellerLager | None = None,
+             naa: datetime | None = None) -> Decision:
+    naa = naa or datetime.now(timezone.utc)
+    handling_id = event.get("handling") if isinstance(event.get("handling"), str) \
+        else "<mangler>"
+
+    # 0) Autentisert kontekst — før alt annet (funn 2/uautentisert rolle)
+    if (context is None or not context.autentisert
+            or not context.tenant_id or not context.aktor_rolle):
+        return Decision(STOPP, handling_id, _pid(policy, handling_id),
+                        [Grunn("uautentisert_kontekst")])
+
+    handlinger = {h.get("id"): h for h in (policy.get("handlinger") or [])}
     h = handlinger.get(handling_id)
-    if h is None:
-        return Decision(UNNTAK, handling_id, _policy_id(policy, handling_id),
-                        ["handlingen er ikke definert i policy (deny by default)"],
+    if h is None:  # 1) deny by default
+        return Decision(UNNTAK, handling_id, _pid(policy, handling_id),
+                        [Grunn("ukjent_handling", {"handling": handling_id})],
                         unntak_kategori="ukjent")
 
-    pid = _policy_id(policy, handling_id)
-    grunner: list[str] = []
+    pid = _pid(policy, handling_id)
+    ok_grunner: list[Grunn] = []
+    frekvensnokkel: tuple[str, ...] | None = None
+    frekvensreservasjon: tuple[tuple[str, ...], datetime, int] | None = None
 
-    def blokker(kategori: str, tekst: str) -> Decision:
-        ved_brudd = h.get("ved_brudd", "unntakskø")
-        beslutning, effekt = _VED_BRUDD_TIL_BESLUTNING.get(
-            ved_brudd, (UNNTAK, None))
-        return Decision(beslutning, handling_id, pid, grunner + [tekst],
+    def blokker(kategori: str, grunn: Grunn,
+                tving_stopp: bool = False) -> Decision:
+        beslutning, effekt = (STOPP, None) if tving_stopp else \
+            brudd_utfall(policy, handling_id)
+        return Decision(beslutning, handling_id, pid, ok_grunner + [grunn],
                         unntak_kategori=kategori if beslutning == UNNTAK else None,
                         effekt=effekt)
 
     # 2) Modus
-    modus = h.get("modus", "alltid_stopp")
-    if modus == "alltid_stopp":
-        return blokker("regelkonflikt", "modus er alltid_stopp for denne handlingen")
+    if h.get("modus", "alltid_stopp") == "alltid_stopp":
+        return blokker("regelkonflikt", Grunn("modus_alltid_stopp"))
 
-    # 3) Rolle
-    tillatt_for = h.get("tillatt_for") or []
-    rolle = event.get("aktor_rolle")
-    if rolle not in tillatt_for:
+    # 3) Rolle — fra autentisert kontekst, aldri fra event
+    if context.aktor_rolle not in (h.get("tillatt_for") or []):
         return blokker("regelkonflikt",
-                       f"rolle '{rolle}' er ikke i tillatt_for {tillatt_for}")
-    grunner.append(f"rolle '{rolle}' tillatt")
+                       Grunn("rolle_ikke_tillatt", {"rolle": context.aktor_rolle}))
+    ok_grunner.append(Grunn("rolle_ok", {"rolle": context.aktor_rolle}))
 
-    # 4) Grenser
     grenser = h.get("grenser") or {}
-    belop_maks = grenser.get("belop_maks")
-    if belop_maks is not None:
-        belop = event.get("belop")
-        if not isinstance(belop, (int, float)):
-            return blokker("manglende_data", "beløp mangler, men grense er satt")
-        if belop > belop_maks:
-            return blokker("over_grense", f"beløp {belop} > grense {belop_maks}")
-        grunner.append(f"beløp {belop} <= grense {belop_maks}")
-    valutaer = grenser.get("valuta")
-    if valutaer:
-        if event.get("valuta") not in valutaer:
-            return blokker("regelkonflikt",
-                           f"valuta '{event.get('valuta')}' ikke i {valutaer}")
-        grunner.append(f"valuta '{event.get('valuta')}' godkjent")
-    vindu = grenser.get("tidsvindu")
-    if vindu:
-        ts = event.get("tidspunkt")
+
+    # 4) Beløp (Decimal, funn D)
+    if grenser.get("belop_maks") is not None:
+        maks = parse_belop(grenser["belop_maks"])
+        belop = parse_belop(event.get("belop"))
+        if maks is None:
+            return blokker("teknisk_feil", Grunn("policy_belopsgrense_ugyldig"),
+                           tving_stopp=True)
+        if belop is None:
+            return blokker("ugyldig_data",
+                           Grunn("belop_ugyldig", {"verdi": repr(event.get("belop"))}))
+        if belop > maks:
+            return blokker("over_grense", Grunn(
+                "belop_over_grense", {"belop": str(belop), "grense": str(maks)}))
+        ok_grunner.append(Grunn("belop_ok", {"belop": str(belop)}))
+
+    # 5) Valuta
+    if grenser.get("valuta"):
+        if event.get("valuta") not in grenser["valuta"]:
+            return blokker("regelkonflikt", Grunn(
+                "valuta_ikke_tillatt", {"valuta": str(event.get("valuta"))}))
+        ok_grunner.append(Grunn("valuta_ok", {"valuta": event["valuta"]}))
+
+    # 6) Tidsvindu — i policyens IANA-sone; naive tidsstempler avvises
+    if grenser.get("tidsvindu"):
         try:
-            tid = datetime.fromisoformat(ts)
-        except (TypeError, ValueError):
-            return blokker("manglende_data",
-                           "tidspunkt mangler/uleselig, men tidsvindu er satt")
-        if not _i_tidsvindu(vindu, tid):
-            return blokker("over_grense", f"tidspunkt {ts} utenfor vindu '{vindu}'")
-        grunner.append(f"innenfor tidsvindu '{vindu}'")
-    frekvens = grenser.get("frekvens_maks")
-    if isinstance(frekvens, int):
-        teller = event.get("frekvens_teller")
-        if not isinstance(teller, int):
-            return blokker("manglende_data",
-                           "frekvens_teller mangler, men frekvensgrense er satt")
-        if teller >= frekvens:
-            return blokker("over_grense",
-                           f"frekvens {teller} har nådd grensen {frekvens}")
-        grunner.append(f"frekvens {teller} < {frekvens}")
+            sone = ZoneInfo(str(policy.get("tidssone")))
+        except Exception:
+            return blokker("teknisk_feil", Grunn("policy_tidssone_ugyldig"),
+                           tving_stopp=True)
+        t = _aware(event.get("tidspunkt"))
+        if t is None:
+            return blokker("ugyldig_data", Grunn("tidspunkt_ugyldig_eller_naivt"))
+        if not _i_vindu(grenser["tidsvindu"], t, sone):
+            return blokker("over_grense", Grunn(
+                "utenfor_tidsvindu", {"vindu": grenser["tidsvindu"]}))
+        ok_grunner.append(Grunn("tidsvindu_ok"))
 
-    # 5) Dataklasser
-    tillatte_klasser = h.get("dataklasser_tillatt")
-    if tillatte_klasser:
-        brukte = set(event.get("dataklasser") or [])
-        ulovlige = brukte - set(tillatte_klasser)
+    # 7) Frekvens — strukturert regel + betrodd teller (funn A)
+    fr = grenser.get("frekvens")
+    if fr:
+        if teller is None:
+            return blokker("teknisk_feil", Grunn("frekvens_uten_tellerlager"),
+                           tving_stopp=True)
+        nokkel_felt = fr["grupperingsnokkel"]
+        gruppe = event.get(nokkel_felt)
+        if not isinstance(gruppe, str) or not gruppe:
+            return blokker("manglende_data", Grunn(
+                "frekvens_grupperingsverdi_mangler", {"felt": nokkel_felt}))
+        frekvensnokkel = (context.tenant_id, handling_id, nokkel_felt, gruppe)
+        vindu_start = naa - timedelta(
+            seconds=fr["periode_antall"] * _PERIODE[fr["periode_enhet"]])
+        # Rådgivende oppslag: avviser det åpenbare tidlig og gir loggen tall.
+        # Den BINDENDE kontrollen er reservasjonen under, som sikker_beslutning
+        # utfører atomisk før noen sideeffekt kan skje.
+        antall = teller.antall(frekvensnokkel, vindu_start)
+        if antall >= fr["maks"]:
+            return blokker("over_grense", Grunn(
+                "frekvensgrense_naadd", {"antall": antall, "maks": fr["maks"]}))
+        frekvensreservasjon = (frekvensnokkel, vindu_start, fr["maks"])
+        ok_grunner.append(Grunn("frekvens_ok", {"antall": antall, "maks": fr["maks"]}))
+
+    # 8) Dataklasser — fail-closed (funn C)
+    tillatt = h.get("dataklasser_tillatt") or []
+    if tillatt:
+        brukte = event.get("dataklasser")
+        kilde = event.get("dataklasser_kilde")
+        if not brukte or not isinstance(brukte, list):
+            return blokker("manglende_data", Grunn("dataklassifisering_mangler"))
+        if kilde not in BETRODDE_DATAKLASSE_KILDER:
+            return blokker("manglende_data", Grunn(
+                "dataklassifisering_ubetrodd_kilde", {"kilde": str(kilde)}))
+        ulovlige = set(brukte) - set(tillatt)
         if ulovlige:
-            return blokker("regelkonflikt",
-                           f"dataklasser {sorted(ulovlige)} ikke tillatt")
-        grunner.append("dataklasser godkjent")
+            return blokker("regelkonflikt", Grunn(
+                "dataklasse_ikke_tillatt", {"klasser": sorted(ulovlige)}))
+        ok_grunner.append(Grunn("dataklasser_ok"))
 
-    # 6) Vilkår — alle må bestå; første brudd stopper
-    oppgitt = event.get("vilkaar") or {}
-    for krav in h.get("vilkaar") or []:
-        ok, kategori, tekst = _sjekk_vilkaar(krav, oppgitt)
-        if not ok:
-            return blokker(kategori, tekst)
-        grunner.append(tekst)
+    # 9) Vilkår — attestasjoner fra betrodde verifikatorer (funn 2)
+    verifikatorer = policy.get("verifikatorer") or {}
+    attester = event.get("attestasjoner") or {}
+    ressurs = event.get("ressurs_id")
+    for vk in h.get("vilkaar") or []:
+        navn = vk["navn"]
+        att = attester.get(navn)
+        if not isinstance(att, dict):
+            return blokker("manglende_data", Grunn(
+                "attestasjon_mangler", {"vilkaar": navn}))
+        vid = att.get("verifikator")
+        betrodd = verifikatorer.get(vid)
+        if not betrodd or navn not in betrodd.get("betrodd_for", []):
+            return blokker("regelkonflikt", Grunn(
+                "verifikator_ikke_betrodd", {"vilkaar": navn,
+                                             "verifikator": str(vid)}),
+                tving_stopp=True)
+        if not isinstance(ressurs, str) or not ressurs \
+                or att.get("ressurs_id") != ressurs:
+            return blokker("regelkonflikt", Grunn(
+                "attestasjon_feil_ressurs", {"vilkaar": navn}))
+        utloper = _aware(att.get("utloper"))
+        if utloper is None or utloper <= naa:
+            return blokker("manglende_data", Grunn(
+                "attestasjon_utlopt", {"vilkaar": navn}))
+        if "min" in vk:
+            verdi = att.get("verdi")
+            if isinstance(verdi, bool) or not isinstance(verdi, (int, float)):
+                return blokker("ugyldig_data", Grunn(
+                    "attestasjon_verdi_ugyldig", {"vilkaar": navn}))
+            if verdi < vk["min"]:
+                return blokker("regelkonflikt", Grunn(
+                    "attestasjon_under_terskel",
+                    {"vilkaar": navn, "verdi": verdi, "min": vk["min"]}))
+        elif att.get("resultat") is not True:
+            return blokker("regelkonflikt", Grunn(
+                "attestasjon_negativ", {"vilkaar": navn}))
+        ok_grunner.append(Grunn("vilkaar_ok", {"vilkaar": navn}))
 
-    grunner.append("alle policykontroller bestått")
-    return Decision(TILLAT, handling_id, pid, grunner)
+    ok_grunner.append(Grunn("alle_kontroller_bestatt"))
+    return Decision(TILLAT, handling_id, pid, ok_grunner,
+                    frekvensnokkel=frekvensnokkel,
+                    frekvensreservasjon=frekvensreservasjon)
