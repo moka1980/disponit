@@ -522,3 +522,39 @@ def test_reservasjonstap_og_vanlig_frekvensbrudd_gir_samme_utfall(tjeneste,
 
     assert (via_reservasjon.beslutning, via_reservasjon.effekt) == \
            (via_oppslag.beslutning, via_oppslag.effekt), ved_brudd
+
+
+# ---------- Codex-review runde 3: kun True er en gyldig reservasjon -------
+
+@pytest.mark.parametrize("returverdi", [None, 1, "ja", [], 0, object()])
+def test_ugyldig_returverdi_fra_reserver_gir_stopp(tjeneste, tmp_path,
+                                                   returverdi):
+    """P1 (Codex runde 3): grenen behandlet «ikke False» som suksess. En
+    implementasjon som glemmer å returnere gir None — og None ga TILLAT uten
+    at noen plass var reservert. Nøyaktig tre utfall er lovlige:
+    True => reservert, False => frekvensbrudd, alt annet => STOPP tellerfeil.
+
+    Sannhetsverdier som 1 og "ja" er også STOPP, med vilje: en slurvete
+    implementasjon skal feile lukket, ikke slippe gjennom."""
+    class RarTeller(MinneTellerLager):
+        def antall(self, nokkel, siden):
+            return 0                       # rådgivende: ledig plass
+        def reserver(self, nokkel, siden, maks, tidspunkt):
+            return returverdi
+
+    logg = tmp_path / "audit.jsonl"
+    d = sikker_beslutning(tjeneste, CTX, purrehendelse(), logg,
+                          teller=RarTeller(), naa=NAA)
+    assert d.beslutning == STOPP, f"{returverdi!r} ble behandlet som suksess"
+    assert d.begrunnelse[-1].kode == "tellerfeil"
+    assert d.begrunnelse[-1].params["type"] == "ugyldig_returverdi"
+    assert '"beslutning": "STOPP"' in logg.read_text(encoding="utf-8")
+
+
+def test_ekte_true_reserverer_og_gir_tillat(tjeneste, tmp_path):
+    """Motstykket: en korrekt implementasjon som returnerer ekte True skal
+    gi TILLAT. Uten denne kunne fiksen over «bestås» ved å alltid stoppe."""
+    d = sikker_beslutning(tjeneste, CTX, purrehendelse(),
+                          tmp_path / "audit.jsonl",
+                          teller=MinneTellerLager(), naa=NAA)
+    assert d.beslutning == TILLAT

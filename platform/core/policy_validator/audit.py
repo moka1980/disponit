@@ -111,22 +111,35 @@ def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
             try:
                 fikk_plass = teller.reserver(nokkel, vindu_start, maks, naa)
             except Exception as e:
-                fikk_plass = None
                 d = Decision(STOPP, d.handling, d.policy_id,
                              d.begrunnelse + [Grunn(
                                  "tellerfeil", {"type": type(e).__name__})])
-            if fikk_plass is False:
-                # Samme ved_brudd-håndtering som evaluate() ville gitt.
-                # Hardkodet UNNTAK her nedgraderte stopp_og_varsle og frys
-                # (Codex P1, runde 2) — nettopp i konkurransetilfellet.
-                beslutning, effekt = brudd_utfall(policy, d.handling)
-                d = Decision(beslutning, d.handling, d.policy_id,
-                             d.begrunnelse + [Grunn(
-                                 "frekvensgrense_naadd_ved_reservasjon",
-                                 {"maks": maks})],
-                             unntak_kategori=("over_grense"
-                                              if beslutning == UNNTAK else None),
-                             effekt=effekt)
+            else:
+                # Nøyaktig tre utfall er lovlige. Å behandle «ikke False» som
+                # suksess er fail-OPEN: en implementasjon som glemmer å
+                # returnere gir None, og None ville gitt TILLAT uten at noen
+                # plass faktisk ble reservert (Codex P1, runde 3).
+                if fikk_plass is True:
+                    pass                       # plassen er bekreftet reservert
+                elif fikk_plass is False:
+                    # Samme ved_brudd-håndtering som evaluate() ville gitt.
+                    # Hardkodet UNNTAK her nedgraderte stopp_og_varsle og frys
+                    # (Codex P1, runde 2) — nettopp i konkurransetilfellet.
+                    beslutning, effekt = brudd_utfall(policy, d.handling)
+                    d = Decision(beslutning, d.handling, d.policy_id,
+                                 d.begrunnelse + [Grunn(
+                                     "frekvensgrense_naadd_ved_reservasjon",
+                                     {"maks": maks})],
+                                 unntak_kategori=("over_grense"
+                                                  if beslutning == UNNTAK
+                                                  else None),
+                                 effekt=effekt)
+                else:
+                    d = Decision(STOPP, d.handling, d.policy_id,
+                                 d.begrunnelse + [Grunn(
+                                     "tellerfeil",
+                                     {"type": "ugyldig_returverdi",
+                                      "verdi": repr(fikk_plass)})])
 
     try:
         skriv(loggfil, lag_loggpost(d, event, policy, context))

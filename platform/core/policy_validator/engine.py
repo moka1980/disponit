@@ -99,8 +99,15 @@ class TellerLager:
                  tidspunkt: datetime) -> bool:
         """Atomisk: registrer forekomsten HVIS antallet siden `siden` er < maks.
 
-        Returnerer True hvis plassen ble reservert, False hvis grensen alt er
-        nådd. Implementasjoner MÅ gjøre dette i én transaksjon/lås.
+        MÅ returnere en ekte bool: `True` = plassen er reservert, `False` =
+        grensen er nådd. Ingen annen returverdi er lovlig. `sikker_beslutning`
+        sjekker identitet (`is True` / `is False`) og behandler alt annet —
+        inkludert `None` fra en implementasjon som glemmer å returnere — som
+        tellerfeil og STOPP. Sannhetsverdier som `1` eller `"ja"` teller altså
+        ikke som suksess; det er med vilje, så en slurvete implementasjon
+        feiler lukket i stedet for å slippe gjennom uten reservasjon.
+
+        Implementasjoner MÅ gjøre lesing og skriving i én transaksjon/lås.
         """
         raise NotImplementedError
 
