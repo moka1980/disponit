@@ -77,7 +77,7 @@ def main() -> int:
     LOGG.unlink(missing_ok=True)
     total = Counter()
     for fil in sorted(POLICIES.glob("bransjemal-*.yaml")):
-        policy = yaml.safe_load(fil.read_text())
+        policy = yaml.safe_load(fil.read_text(encoding="utf-8"))
         feil = valider_policy(policy)
         if feil:
             print(f"AVVIST: {fil.name}: {feil[:3]}"); return 1
@@ -94,7 +94,7 @@ def main() -> int:
     print("-" * 58)
     print(f"{'TOTALT (180 hendelser)':24s} TILLAT={total['TILLAT']:3d} "
           f"STOPP={total['STOPP']:3d} UNNTAK={total['UNNTAK']:3d}")
-    n_logg = LOGG.read_text().count("\n")
+    n_logg = LOGG.read_text(encoding="utf-8").count("\n")
     assert n_logg == sum(total.values()), "hver beslutning skal ha loggpost"
     print(f"M-2-logg: {n_logg} poster — 1:1 med beslutninger (logg-før-utførelse)")
     return 0

@@ -21,6 +21,7 @@ UNNTAK, exception og timeout er alle fail-closed.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -67,6 +68,10 @@ class Decision:
     unntak_kategori: str | None = None
     effekt: str | None = None
     frekvensnokkel: tuple[str, ...] | None = None  # settes ved TILLAT m/frekvens
+    # Reservasjonsordre til det betrodde telleret: (nokkel, vindu_start, maks).
+    # evaluate() sitt teller-oppslag er RÅDGIVENDE; den bindende kontrollen er
+    # den atomiske reserver()-en i sikker_beslutning (Codex P1: TOCTOU).
+    frekvensreservasjon: tuple[tuple[str, ...], datetime, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"beslutning": self.beslutning, "handling": self.handling,
@@ -76,26 +81,63 @@ class Decision:
 
 
 class TellerLager:
-    """Betrodd, atomisk frekvensteller. Hendelsen kan aldri levere telleren."""
+    """Betrodd frekvensteller. Hendelsen kan aldri levere telleren.
+
+    `reserver` er den BINDENDE kontrollen og MÅ være atomisk: den skal lese
+    antallet og registrere forekomsten i én udelelig operasjon. Å tilby
+    `antall` + `registrer` hver for seg som håndhevingsvei er nettopp
+    TOCTOU-en Codex fant — to samtidige forespørsler rekker begge å lese
+    «under grensen» før noen av dem registrerer. `antall` er derfor kun
+    rådgivende (til beslutningsgrunnlag og logg), aldri til håndheving.
+    """
 
     def antall(self, nokkel: tuple[str, ...], siden: datetime) -> int:
+        """Rådgivende oppslag. Ikke bruk til håndheving."""
+        raise NotImplementedError
+
+    def reserver(self, nokkel: tuple[str, ...], siden: datetime, maks: int,
+                 tidspunkt: datetime) -> bool:
+        """Atomisk: registrer forekomsten HVIS antallet siden `siden` er < maks.
+
+        Returnerer True hvis plassen ble reservert, False hvis grensen alt er
+        nådd. Implementasjoner MÅ gjøre dette i én transaksjon/lås.
+        """
         raise NotImplementedError
 
     def registrer(self, nokkel: tuple[str, ...], tidspunkt: datetime) -> None:
+        """Ubetinget registrering — kun for testoppsett og migrering av
+        historikk. ALDRI en håndhevingsvei; bruk `reserver`."""
         raise NotImplementedError
 
 
 class MinneTellerLager(TellerLager):
-    """For tester og staging. PostgreSQL-implementasjon kommer i PR-004."""
+    """For tester og staging. PostgreSQL-implementasjon kommer i PR-004.
+
+    Atomisiteten her hviler på en prosesslokal lås, som holder så lenge alt
+    kjører i én prosess. Flere prosesser eller pods deler ikke låsen —
+    derfor er dette lageret eksplisitt ikke produksjonsklart, og PR-004 må
+    gjøre `reserver` atomisk i databasen (én SQL-setning eller transaksjon
+    med riktig isolasjonsnivå), ikke bare bytte lagringssted.
+    """
 
     def __init__(self) -> None:
         self._hendelser: dict[tuple[str, ...], list[datetime]] = {}
+        self._laas = threading.Lock()
 
     def antall(self, nokkel, siden):
-        return sum(1 for t in self._hendelser.get(nokkel, []) if t >= siden)
+        with self._laas:
+            return sum(1 for t in self._hendelser.get(nokkel, []) if t >= siden)
+
+    def reserver(self, nokkel, siden, maks, tidspunkt):
+        with self._laas:
+            if sum(1 for t in self._hendelser.get(nokkel, []) if t >= siden) >= maks:
+                return False
+            self._hendelser.setdefault(nokkel, []).append(tidspunkt)
+            return True
 
     def registrer(self, nokkel, tidspunkt):
-        self._hendelser.setdefault(nokkel, []).append(tidspunkt)
+        with self._laas:
+            self._hendelser.setdefault(nokkel, []).append(tidspunkt)
 
 
 def _pid(policy: dict, handling_id: str) -> str:
@@ -165,6 +207,7 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
     pid = _pid(policy, handling_id)
     ok_grunner: list[Grunn] = []
     frekvensnokkel: tuple[str, ...] | None = None
+    frekvensreservasjon: tuple[tuple[str, ...], datetime, int] | None = None
 
     def blokker(kategori: str, grunn: Grunn,
                 tving_stopp: bool = False) -> Decision:
@@ -237,10 +280,14 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
         frekvensnokkel = (context.tenant_id, handling_id, nokkel_felt, gruppe)
         vindu_start = naa - timedelta(
             seconds=fr["periode_antall"] * _PERIODE[fr["periode_enhet"]])
+        # Rådgivende oppslag: avviser det åpenbare tidlig og gir loggen tall.
+        # Den BINDENDE kontrollen er reservasjonen under, som sikker_beslutning
+        # utfører atomisk før noen sideeffekt kan skje.
         antall = teller.antall(frekvensnokkel, vindu_start)
         if antall >= fr["maks"]:
             return blokker("over_grense", Grunn(
                 "frekvensgrense_naadd", {"antall": antall, "maks": fr["maks"]}))
+        frekvensreservasjon = (frekvensnokkel, vindu_start, fr["maks"])
         ok_grunner.append(Grunn("frekvens_ok", {"antall": antall, "maks": fr["maks"]}))
 
     # 8) Dataklasser — fail-closed (funn C)
@@ -300,4 +347,5 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
 
     ok_grunner.append(Grunn("alle_kontroller_bestatt"))
     return Decision(TILLAT, handling_id, pid, ok_grunner,
-                    frekvensnokkel=frekvensnokkel)
+                    frekvensnokkel=frekvensnokkel,
+                    frekvensreservasjon=frekvensreservasjon)

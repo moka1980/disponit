@@ -25,12 +25,23 @@ def input_hash(event: dict) -> str:
     return hashlib.sha256(kanonisk.encode("utf-8")).hexdigest()
 
 
-def lag_loggpost(decision: Decision, event: dict, policy: dict) -> dict[str, Any]:
+def lag_loggpost(decision: Decision, event: dict, policy: dict,
+                 context=None) -> dict[str, Any]:
+    """Loggposten for M-2.
+
+    `aktor`, `tenant` og `kilde` hentes fra den AUTENTISERTE konteksten —
+    aldri fra hendelsen (Codex P1). Motoren nektet allerede å lese rollen
+    fra payloaden; gjorde loggen det, kunne en innsender skrive hvilken som
+    helst aktør inn i revisjonssporet og dermed peke skylden et annet sted.
+    Uten kontekst logges `null`, ikke en selvrapportert verdi.
+    """
     meta = policy.get("meta") or {}
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
         "input_hash": input_hash(event),
-        "aktor": event.get("aktor_rolle"),
+        "aktor": getattr(context, "aktor_rolle", None),
+        "tenant": getattr(context, "tenant_id", None),
+        "kilde": getattr(context, "kilde", None),
         "policy_id": decision.policy_id,
         "bransjemal": meta.get("bransjemal"),
         "mal_status": meta.get("status"),
@@ -53,7 +64,8 @@ def skriv(loggfil: Path, post: dict) -> None:
 # PR-002: logg-før-utførelse-kontrakten (review spm. 3: revisjonsloggfeil
 # og «bare TILLAT kan utløse sideeffekt»).
 # ---------------------------------------------------------------------------
-from .engine import STOPP, Decision, EvaluationContext, Grunn, TellerLager  # noqa: E402
+from .engine import (STOPP, UNNTAK, Decision, EvaluationContext, Grunn,  # noqa: E402
+                     TellerLager)
 
 
 def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
@@ -66,10 +78,19 @@ def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
       2. Beslutningen logges FØR den returneres. Kan loggen ikke skrives,
          returneres STOPP (teknisk_feil) — en skrivehandling uten sikret
          revisjonslogg er forbudt (M-1-aksept).
-      3. Frekvensforekomst registreres i det betrodde telleret KUN ved
-         TILLAT med sikret logg.
+      3. Frekvensplassen reserveres ATOMISK i det betrodde telleret FØR
+         loggen skrives og før TILLAT returneres. Rekkefølgen er bevisst:
+         reserver -> logg -> retur. Taper hendelsen kappløpet om siste
+         plass, blir beslutningen blokkert og LOGGEN VISER det som faktisk
+         ble bestemt. Feiler telleret, er det STOPP — aldri gjetting
+         (Codex P1: registreringen lå utenfor try og kunne kaste etter at
+         TILLAT allerede var logget).
       4. Kalleren får utføre sideeffekten HVIS OG BARE HVIS returverdien
          er TILLAT. STOPP, UNNTAK, exception og timeout er alle nei.
+
+    Kjent skjevhet, bevisst valgt: feiler loggskrivingen ETTER en vellykket
+    reservasjon, returneres STOPP mens plassen er brukt opp. Det teller for
+    strengt, aldri for mildt — riktig vei å bomme for en fullmaktsmotor.
     """
     from .engine import evaluate  # lokal import unngår sirkularitet
     from datetime import datetime, timezone
@@ -79,11 +100,31 @@ def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
     except Exception as e:  # fail-closed, aldri gjetting
         d = Decision(STOPP, str(event.get("handling")), "ukjent",
                      [Grunn("motor_exception", {"type": type(e).__name__})])
+
+    # Bindende frekvenskontroll: atomisk, før logg og retur.
+    if d.beslutning == "TILLAT" and d.frekvensreservasjon is not None:
+        nokkel, vindu_start, maks = d.frekvensreservasjon
+        if teller is None:
+            d = Decision(STOPP, d.handling, d.policy_id,
+                         d.begrunnelse + [Grunn("frekvens_uten_tellerlager")])
+        else:
+            try:
+                fikk_plass = teller.reserver(nokkel, vindu_start, maks, naa)
+            except Exception as e:
+                fikk_plass = None
+                d = Decision(STOPP, d.handling, d.policy_id,
+                             d.begrunnelse + [Grunn(
+                                 "tellerfeil", {"type": type(e).__name__})])
+            if fikk_plass is False:
+                d = Decision(UNNTAK, d.handling, d.policy_id,
+                             d.begrunnelse + [Grunn(
+                                 "frekvensgrense_naadd_ved_reservasjon",
+                                 {"maks": maks})],
+                             unntak_kategori="over_grense")
+
     try:
-        skriv(loggfil, lag_loggpost(d, event, policy))
+        skriv(loggfil, lag_loggpost(d, event, policy, context))
     except Exception:
         return Decision(STOPP, d.handling, d.policy_id,
                         d.begrunnelse + [Grunn("logging_feilet")])
-    if d.beslutning == "TILLAT" and d.frekvensnokkel and teller is not None:
-        teller.registrer(d.frekvensnokkel, naa)
     return d

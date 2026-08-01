@@ -21,12 +21,12 @@ CTX = EvaluationContext(tenant_id="t1", aktor_rolle="agent",
 
 @pytest.fixture(scope="module")
 def tjeneste():
-    return yaml.safe_load((POLICIES / "bransjemal-tjenestebedrift.yaml").read_text())
+    return yaml.safe_load((POLICIES / "bransjemal-tjenestebedrift.yaml").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def netthandel():
-    return yaml.safe_load((POLICIES / "bransjemal-netthandel.yaml").read_text())
+    return yaml.safe_load((POLICIES / "bransjemal-netthandel.yaml").read_text(encoding="utf-8"))
 
 
 def att(verifikator, ressurs="fak-1", resultat=True, verdi=None, timer=1):
@@ -55,7 +55,7 @@ def hendelse(**over):
 
 def test_alle_maler_gyldige():
     for f in POLICIES.glob("bransjemal-*.yaml"):
-        assert valider_policy(yaml.safe_load(f.read_text())) == [], f.name
+        assert valider_policy(yaml.safe_load(f.read_text(encoding="utf-8"))) == [], f.name
 
 
 def test_ukjente_felter_avvises(tjeneste):
@@ -297,12 +297,12 @@ def test_sikker_beslutning_logger_for_tillat(tjeneste, tmp_path):
     logg = tmp_path / "audit.jsonl"
     d = sikker_beslutning(tjeneste, CTX, hendelse(), logg, naa=NAA)
     assert d.beslutning == TILLAT
-    assert logg.exists() and logg.read_text().count("\n") == 1
+    assert logg.exists() and logg.read_text(encoding="utf-8").count("\n") == 1
 
 
 def test_loggfeil_gir_stopp_aldri_utforelse(tjeneste, tmp_path):
     ulovlig = tmp_path / "finnes_ikke"
-    ulovlig.write_text("")  # fil der katalog forventes -> OSError ved skriv
+    ulovlig.write_text("", encoding="utf-8")  # fil der katalog forventes -> OSError
     d = sikker_beslutning(tjeneste, CTX, hendelse(),
                           ulovlig / "audit.jsonl", naa=NAA)
     assert d.beslutning == STOPP
@@ -321,3 +321,128 @@ def test_loggpost_strukturert_begrunnelse(tjeneste):
     post = lag_loggpost(d, hendelse(), tjeneste)
     assert all("kode" in g for g in post["begrunnelse"])
     assert post["input_hash"] and post["policy_id"]
+
+
+# ---------- Codex-review PR-002: tre P1-funn ------------------------------
+# Alle tre testene under er negative: de skal falle hvis fiksen rulles
+# tilbake. De kan aldri fjernes eller svekkes (merge-port nr. 1).
+
+def test_reservasjonen_taaler_at_skrivingen_er_treg(tjeneste, tmp_path,
+                                                    monkeypatch):
+    """P1, DETERMINISTISK bevis på atomisitet.
+
+    En ren trådtest beviser ingenting her: kjørte jeg mutasjonen «reserver =
+    antall() så registrer()» mot 20 tråder med barriere, passerte suiten
+    likevel — kappløpet oppsto bare ikke. Testen ville altså ha godkjent
+    nøyaktig den koden Codex underkjente.
+
+    Derfor tvinges vinduet åpent i stedet: `registrer` gjøres treg. En
+    implementasjon som leser og skriver i to trinn slipper da garantert to
+    tråder forbi grensen. Den ekte implementasjonen kaller aldri `registrer`
+    fra `reserver` — den skriver inne i låsen — så den er upåvirket av at
+    `registrer` er treg, og slipper gjennom nøyaktig én."""
+    import threading
+    import time
+    original = MinneTellerLager.registrer
+
+    def treg_registrer(self, nokkel, tidspunkt):
+        time.sleep(0.05)          # holder vinduet åpent utenfor låsen
+        original(self, nokkel, tidspunkt)
+
+    monkeypatch.setattr(MinneTellerLager, "registrer", treg_registrer)
+
+    lager = MinneTellerLager()
+    logg = tmp_path / "audit.jsonl"
+    start = threading.Barrier(2)
+    resultat: list[str] = []
+    laas = threading.Lock()
+
+    def kjor():
+        start.wait()
+        d = sikker_beslutning(tjeneste, CTX, purrehendelse(), logg,
+                              teller=lager, naa=NAA)
+        with laas:
+            resultat.append(d.beslutning)
+
+    traader = [threading.Thread(target=kjor) for _ in range(2)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join()
+
+    assert resultat.count(TILLAT) == 1, resultat
+
+
+def test_frekvensreservasjon_under_samtidighet_royktest(tjeneste, tmp_path):
+    """Røyktest, ikke atomisitetsbevis (se testen over for det).
+    Maks er 1 purring per faktura per 14 dager; med 20 tråder skal nøyaktig
+    ÉN få TILLAT, og loggen skal ha én post per beslutning — også de tapte."""
+    import threading
+    lager = MinneTellerLager()
+    logg = tmp_path / "audit.jsonl"
+    start = threading.Barrier(20)
+    resultat: list[str] = []
+    laas = threading.Lock()
+
+    def kjor():
+        start.wait()  # maksimer sjansen for ekte kappløp
+        d = sikker_beslutning(tjeneste, CTX, purrehendelse(), logg,
+                              teller=lager, naa=NAA)
+        with laas:
+            resultat.append(d.beslutning)
+
+    traader = [threading.Thread(target=kjor) for _ in range(20)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join()
+
+    assert resultat.count(TILLAT) == 1, resultat
+    assert len(resultat) == 20
+    # Loggen skal ha én post per beslutning — også de tapte kappløpene
+    assert logg.read_text(encoding="utf-8").count("\n") == 20
+
+
+def test_loggen_bruker_autentisert_aktor_ikke_payload(tjeneste):
+    """P1: loggposten hentet aktør fra hendelsen. En innsender kunne dermed
+    skrive hvilken som helst aktør inn i revisjonssporet."""
+    d = evaluate(tjeneste, CTX, hendelse(), naa=NAA)
+    e = hendelse()
+    e["aktor_rolle"] = "daglig_leder"        # forfalsket i payloaden
+    post = lag_loggpost(d, e, tjeneste, CTX)
+    assert post["aktor"] == "agent"          # fra EvaluationContext
+    assert post["tenant"] == "t1" and post["kilde"] == "api_token"
+
+
+def test_tellerfeil_gir_stopp_og_aldri_tillat(tjeneste, tmp_path):
+    """P1: teller.registrer() lå utenfor try og kunne kaste ETTER at TILLAT
+    var logget — exception unnslapp fail-closed-kontrakten."""
+    class OedelagtTeller(MinneTellerLager):
+        def reserver(self, *a, **k):
+            raise RuntimeError("teller nede")
+
+    logg = tmp_path / "audit.jsonl"
+    d = sikker_beslutning(tjeneste, CTX, purrehendelse(), logg,
+                          teller=OedelagtTeller(), naa=NAA)
+    assert d.beslutning == STOPP
+    assert d.begrunnelse[-1].kode == "tellerfeil"
+    assert '"beslutning": "STOPP"' in logg.read_text(encoding="utf-8")
+
+
+def test_alle_filkall_har_eksplisitt_utf8():
+    """P2: policyfiler ble lest uten encoding og feilet på Windows der
+    standardkodingen ikke er UTF-8. Denne testen hindrer at det siger inn
+    igjen."""
+    import re
+    tekstkall = re.compile(r"\.(read_text|write_text|open)\(")
+    binaer = re.compile(r"""["'][rwa]b\+?["']""")   # binærmodus tar ikke encoding
+    rot = Path(__file__).resolve().parents[3]
+    synder = []
+    for fil in (rot / "platform").rglob("*.py"):
+        if "_v01_deprecated" in fil.name:
+            continue
+        for nr, linje in enumerate(fil.read_text(encoding="utf-8").splitlines(), 1):
+            if tekstkall.search(linje) and "encoding" not in linje \
+                    and not binaer.search(linje):
+                synder.append(f"{fil.relative_to(rot)}:{nr}: {linje.strip()}")
+    assert not synder, "filkall uten eksplisitt encoding:\n" + "\n".join(synder)
