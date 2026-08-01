@@ -1,8 +1,8 @@
-# AI Bedriftsagent — monorepo
+# Disponit — selvdrivende operasjonsplattform
 
 Selvdrivende operasjonsplattform. Start her:
 
-1. **Hva bygger vi:** docs/spesifikasjon/AI-bedriftsagent-prototype-v7.html (v7.2 — sannhetskilden)
+1. **Hva bygger vi:** docs/spesifikasjon/disponit-prototype-v7.html (v7.2 — sannhetskilden)
 2. **Hvordan vi jobber:** docs/RUTINER.md (roller, NÅ/NESTE-blokk, modulrutine)
 3. **Hvor ting bor:** docs/STRUKTUR.md
 4. **Servere og miljøer:** docs/DEPLOY.md

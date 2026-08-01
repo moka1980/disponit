@@ -64,9 +64,9 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 
 **Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
 
-> ✅ **Status 2026-08-01: branch protection ER aktiv.** Repoet ble gjort offentlig (Eiers beslutning), og da er portene gratis. Alle fire punktene under håndheves nå av GitHub, ikke av disiplin.
+> ✅ **Status 2026-08-01: branch protection ER aktiv — punktene under er allerede slått på** (av Claude Code via GitHub-API-et, ikke i Settings-menyen). Del B i `docs/PUSH-INSTRUKS.md` er dermed utført; verifiser med `gh api repos/moka1980/disponit/branches/main/protection` framfor å sette dem opp på nytt.
 >
-> ⚠️ **Ett hull står igjen: `enforce_admins` er av, og alle tre AI-rollene kjører foreløpig som Eiers egen konto (`moka1980`, admin).** Admin får lov til å pushe forbi portene, så for den kontoen er reglene fortsatt bare en avtale. Fikses ved rolle-kontoer, se nederst i dette punktet. CI-jobben `pr-porten` beholdes til da: den feiler etterskuddsvis på enhver commit som havnet på `main` uten pull request, og fanger nettopp admin-forbikjøringen.
+> ⚠️ **Ett hull står igjen: `enforce_admins` er av, og alle AI-rollene kjører foreløpig som Eiers egen konto (`moka1980`, admin).** Det er bevist, ikke antatt: en direkte push til `main` ble sluppet gjennom med «Bypassed rule violations». For den kontoen er reglene fortsatt bare en avtale. Fikses av rolle-kontoene nederst i dette punktet — **først når de finnes kan `enforce_admins` slås på**, for med bare én konto låser `main` seg (GitHub lar ingen godkjenne sin egen PR). Til da fanger CI-jobben `pr-porten` forbikjøringen etterskuddsvis.
 
 **Branch protection på `main` (Eier aktiverer én gang under Settings → Branches):**
 - Require pull request before merging (ingen direkte push — gjelder alle)
@@ -74,4 +74,4 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 - Require review from Code Owners (aktiverer tillitsanker-porten i .github/CODEOWNERS: policymotor, register, policy-skjema og CI-oppsettet krever Eiers godkjenning; alt annet merger Codex selv)
 - Require linear history + ingen force-push
 
-**Rolle-kontoer:** Claude Code og Codex bruker egne GitHub-kontoer/tokens med skrivetilgang til brancher, aldri til main. Eier eier repoet og er @EIER i CODEOWNERS (bytt til ditt faktiske brukernavn).
+**Rolle-kontoer:** Claude Code og Codex bruker egne GitHub-kontoer/tokens med skrivetilgang til brancher, aldri til main. Eier eier repoet og er @EIER i CODEOWNERS (@moka1980).
