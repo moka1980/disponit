@@ -3,7 +3,7 @@
 Alle filer i prosjektet hører hjemme her. Ny fil uten klar plass = strukturspørsmål til Claude.ai først.
 
 ```
-bedriftsagent/                      ← repo-rot (main-branch)
+disponit/                           ← repo-rot (main-branch), github.com/moka1980/disponit
 ├── README.md                       ← inngang: hva, hvordan kjøre, pekere
 ├── docs/
 │   ├── RUTINER.md                  ← roller, arbeidsflyt, avslutningsblokk
