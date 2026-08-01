@@ -1,4 +1,4 @@
-# Policy-pakke v0.1 — arbeidsflyt og kvalitetsporter
+# Arbeidsflyt og kvalitetsporter
 
 Denne pakken er startpunktet for M-1 (Policy- og fullmaktsmotor) bygget på åpne kilder, slik at plattformutviklingen kan starte uten å vente på pilotkunder. Pilotene kommer inn senere som validering — de endrer data (malene og skjemaet), ikke motorens kode.
 
@@ -6,7 +6,7 @@ Denne pakken er startpunktet for M-1 (Policy- og fullmaktsmotor) bygget på åpn
 
 | Fil | Hva den er |
 |---|---|
-| `policy-schema-v0.2.json` | Det generiske formatet M-1 leser — JSON Schema 2020-12, `additionalProperties: false`. Likt for alle bedrifter. Dette er kontrakten motoren kodes mot. Erstattet `policy-schema-v0.1.yaml` i PR-002; den gamle filen slettes i PR-003. |
+| `policy-schema-v0.2.json` | Det generiske formatet M-1 leser — JSON Schema 2020-12, `additionalProperties: false`. Likt for alle bedrifter. Dette er kontrakten motoren kodes mot. Innført i PR-002. |
 | `bransjemal-tjenestebedrift.yaml` | Startpolicy for tjeneste-/rådgivningsbedrifter |
 | `bransjemal-netthandel.yaml` | Startpolicy for netthandel (angrerett, refusjon, samtykke) |
 | `bransjemal-handverk-bygg.yaml` | Startpolicy for håndverk/bygg (prosjekt, underleverandør, HMS) |
@@ -42,12 +42,27 @@ Foreslått pipeline, med kvalitetsporter som gjør den trygg:
 
 Merge til main er ikke deploy. Etter merge går hver endring gjennom en automatisert løype der hvert steg blokkerer neste: (1) CI med enhetstester, negative policytester og WCAG-test, (2) isolert testmiljø med syntetiske data og sandkasse-integrasjoner (aldri kundedata, aldri ekte systemer), (3) modell-/agentevaluering (M-31) mot regresjonssett, (4) kanarikjøring der kunde null alltid får versjonen først, deretter en liten andel tenants, (5) gradvis blå/grønn-utrulling til 100 %, og (6) automatisk rollback ved avvik, logget i M-2 og klassifisert i M-37. Endringer i policy-skjema og bransjemaler følger nøyaktig samme løype som kode: valideres, testes mot syntetiske hendelser, versjoneres med rollback — først da aktiveres de for kunder. Full spesifikasjon står i prototype v7.2, seksjonen «Utrulling».
 
-## Første konkrete byggeoppgave
+## Status og neste steg
 
-1. Skriv en **policy-validator**: et lite bibliotek som laster en YAML-fil mot skjemaet og svarer `TILLAT / STOPP / UNNTAK` + begrunnelse for en gitt handling. Ingen integrasjoner, ingen LLM — ren deterministisk kode. Dette er kjernen i M-1 og kan bygges og testes på dager.
-2. Kjør validatoren mot de tre bransjemalene med syntetiske hendelser (100 fakturaer, 50 e-poster, 20 bestillinger — noen innenfor, noen utenfor grensene).
-3. Logg hver beslutning i M-2-format (policy-ID, input-hash, begrunnelse) fra dag én.
-4. Utvid med flere bransjemaler (10–15 stk kan produseres fra åpne kilder med samme metode) mens motoren bygges.
-5. Når motoren står: koble første pilotkunde i skyggemodus og oppgrader malstatus.
+**Gjennomført:** PR-001 (validator-kjernen) og PR-002 (sikkerhets- og
+skjemakontrakt etter ChatGPT-review: autentisert kontekst, betrodde
+attestasjoner, Decimal-beløp, strukturert frekvens med atomisk
+reservasjon, fail-closed dataklasser, IANA-tidssoner,
+logg-før-utførelse). 62 tester på main. Punkt 1–3 i den opprinnelige
+byggeplanen er dermed levert.
 
-Slik starter dere nå, bygger generisk, og lar virkeligheten korrigere data — ikke arkitektur.
+**Neste:**
+1. **PR-003 (rydding):** slett `*_v01_deprecated.py` og
+   `policy-schema-v0.1.yaml`, oppdater dette dokumentet, vedta ADR-001.
+2. **PR-004 (tilstandslag):** PostgreSQL for revisjonslogg og
+   frekvensteller + kryptografisk attestasjonsverifikasjon — bindende
+   krav i `docs/beslutninger/ADR-001-revisjonslogg-i-postgresql.md`.
+   Krever PostgreSQL på staging (Cloud Server S) først.
+3. **PR-005 (M-37 unntakskø):** strukturert kø for alt som stoppes,
+   inkl. utførelse av kompenserende reversering.
+4. **Bransjemaler:** utvid fra 3 til 10–15 fra åpne kilder mens
+   tilstandslaget bygges; deretter første pilotkunde i skyggemodus og
+   malstatus `utkast → validert_pilot`.
+
+Prinsippet står: bygg generisk, la virkeligheten korrigere data — ikke
+arkitektur.
