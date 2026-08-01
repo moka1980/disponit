@@ -12,6 +12,7 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 │   ├── README-arbeidsflyt.md       ← AI-pipeline og utrullingsløype
 │   ├── PUSH-INSTRUKS.md            ← repo-oppsett og tilgang for AI-rollene
 │   ├── pr/                         ← én fil per PR: PR-NNN.md = PR-beskrivelsen
+│   ├── beslutninger/               ← ADR-er: hvorfor, ikke bare hva. ADR-NNN-*.md
 │   └── spesifikasjon/
 │       └── disponit-prototype-v7.html      ← sannhetskilden (v7.2)
 ├── platform/
@@ -26,7 +27,6 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 │           └── README.md           ← modulens egen dokumentasjon
 ├── policies/                       ← DATA, ikke kode: skjema + bransjemaler
 │   ├── policy-schema-v0.2.json     ← gjeldende kontrakt (JSON Schema 2020-12)
-│   ├── policy-schema-v0.1.yaml     ← utgått, slettes i PR-003
 │   └── bransjemal-*.yaml
 ├── locales/                        ← ETT språk = ÉN fil. nb.json, en.json, …
 ├── design/

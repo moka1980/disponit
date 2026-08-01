@@ -34,3 +34,7 @@ platform/core/examples/audit.jsonl
 # Windows
 Thumbs.db
 desktop.ini
+
+# Draft-pakker fra claude.ai hoerer ikke hjemme i repoet.
+# De sikres av ~/tools/disponit_backup.sh fra Downloads-mappen.
+*.zip
