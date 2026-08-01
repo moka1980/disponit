@@ -64,14 +64,19 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 
 **Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
 
-> ✅ **Status 2026-08-01: branch protection ER aktiv — punktene under er allerede slått på** (av Claude Code via GitHub-API-et, ikke i Settings-menyen). Del B i `docs/PUSH-INSTRUKS.md` er dermed utført; verifiser med `gh api repos/moka1980/disponit/branches/main/protection` framfor å sette dem opp på nytt.
->
-> ⚠️ **Ett hull står igjen: `enforce_admins` er av, og alle AI-rollene kjører foreløpig som Eiers egen konto (`moka1980`, admin).** Det er bevist, ikke antatt: en direkte push til `main` ble sluppet gjennom med «Bypassed rule violations». For den kontoen er reglene fortsatt bare en avtale. Fikses av rolle-kontoene nederst i dette punktet — **først når de finnes kan `enforce_admins` slås på**, for med bare én konto låser `main` seg (GitHub lar ingen godkjenne sin egen PR). Til da fanger CI-jobben `pr-porten` forbikjøringen etterskuddsvis.
+> ✅ **Status 2026-08-01: branch protection er aktiv og satt opp av Claude Code via GitHub-API-et** (ikke i Settings-menyen). Del B i `docs/PUSH-INSTRUKS.md` er utført; verifiser med `gh api repos/moka1980/disponit/branches/main/protection` framfor å sette den opp på nytt.
 
-**Branch protection på `main` (Eier aktiverer én gang under Settings → Branches):**
-- Require pull request before merging (ingen direkte push — gjelder alle)
-- Require status checks to pass: `CI / test`
-- Require review from Code Owners (aktiverer tillitsanker-porten i .github/CODEOWNERS: policymotor, register, policy-skjema og CI-oppsettet krever Eiers godkjenning; alt annet merger Codex selv)
-- Require linear history + ingen force-push
+**Eiers beslutning 2026-08-01: merge-porten driftes av pipelinen (Claude Code / Codex) uten Eier.** Det endrer to ting fra det opprinnelige oppsettet, og begge er bevisste:
 
-**Rolle-kontoer:** Claude Code og Codex bruker egne GitHub-kontoer/tokens med skrivetilgang til brancher, aldri til main. Eier eier repoet og er @EIER i CODEOWNERS (@moka1980).
+- **Ingen menneskelig godkjenning kreves lenger** — heller ikke på tillitsankeret (M-1 policymotor, M-2 revisjonslogg, M-37 unntaksmotor). Anbefalingen i `docs/README-arbeidsflyt.md` om å beholde én menneskelig port er dermed **forlatt med vitende og vilje**. Porten som er igjen er maskinell: ingenting når `main` uten grønn CI, og CI inneholder de negative policytestene som beviser at handling utenfor policy faktisk stoppes. Svekkes en test, svekkes porten — derfor er «ingen fjernet/svekket negativ test» merge-port nr. 1.
+- **`enforce_admins` er nå PÅ.** Det kunne den ikke være før: så lenge en godkjenning var påkrevd og det bare finnes én konto, ville `main` låst seg helt (GitHub lar ingen godkjenne sin egen PR). Med null påkrevde godkjenninger er det ingen låsing — og da forsvinner admin-forbikjøringen som tidligere ble bevist med «Bypassed rule violations». **Ingen kan lenger pushe direkte til `main`. Ikke Codex, ikke Claude Code, ikke Eier.**
+
+**Branch protection på `main` (aktiv nå):**
+- Require pull request before merging — 0 påkrevde godkjenninger, ingen direkte push
+- Require status checks to pass: `CI / test`, strict (branchen må være oppdatert mot `main`)
+- Require linear history · ingen force-push · ingen sletting av `main`
+- `enforce_admins: true` — reglene gjelder også repo-eier
+
+**CODEOWNERS er ikke lenger en sperre.** Filen beholdes fordi GitHub fortsatt automatisk ber om review fra eier på de fire stiene, men den **blokkerer ingen merge**. Skal tillitsanker-porten gjeninnføres senere, er det ett API-kall: `require_code_owner_reviews: true` + `required_approving_review_count: 1` — og da må rolle-kontoene under finnes først.
+
+**Rolle-kontoer (fortsatt anbefalt, nå av en annen grunn):** egne GitHub-kontoer for Claude Code og Codex gir sporbarhet — hvem gjorde hva — og gjør det mulig å kreve at Codex faktisk godkjenner Claude Codes PR før merge, uten at Eier involveres. Så lenge begge kjører som `moka1980` er «Codex reviewet» kun en påstand i PR-beskrivelsen, ikke noe GitHub kan bekrefte.
