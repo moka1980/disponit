@@ -64,7 +64,9 @@ Repoet bor på github.com. Reglene under er ikke anbefalinger — de konfigurere
 
 **Flyt:** Claude Code lager branch `pr-XXX-mNN-kortnavn` → åpner PR med malen (.github/PULL_REQUEST_TEMPLATE.md) → CI kjører automatisk (.github/workflows/ci.yml) → ChatGPT-review limes inn i PR-beskrivelsen → Codex reviewer i PR-en og merger når portene er grønne → merge til main trigger staging-deploy (PR-004).
 
-> ⚠️ **Status 2026-08-01: branch protection er IKKE aktiv.** GitHub avviser både classic protection og rulesets med HTTP 403 på privat repo uten Pro. Til Eier har bestemt (Pro / offentlig repo / fortsatt uhåndhevet) er punktene under en *avtale*, ikke en sperre — GitHub blokkerer ingenting, og CODEOWNERS-porten har ingen effekt. Som midlertidig erstatning feiler CI-jobben `pr-porten` etterskuddsvis på enhver commit som havnet på `main` uten pull request. Den oppdager brudd; den hindrer dem ikke.
+> ✅ **Status 2026-08-01: branch protection ER aktiv.** Repoet ble gjort offentlig (Eiers beslutning), og da er portene gratis. Alle fire punktene under håndheves nå av GitHub, ikke av disiplin.
+>
+> ⚠️ **Ett hull står igjen: `enforce_admins` er av, og alle tre AI-rollene kjører foreløpig som Eiers egen konto (`moka1980`, admin).** Admin får lov til å pushe forbi portene, så for den kontoen er reglene fortsatt bare en avtale. Fikses ved rolle-kontoer, se nederst i dette punktet. CI-jobben `pr-porten` beholdes til da: den feiler etterskuddsvis på enhver commit som havnet på `main` uten pull request, og fanger nettopp admin-forbikjøringen.
 
 **Branch protection på `main` (Eier aktiverer én gang under Settings → Branches):**
 - Require pull request before merging (ingen direkte push — gjelder alle)
