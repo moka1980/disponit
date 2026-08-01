@@ -1,0 +1,99 @@
+# ============================================================
+# BRANSJEMAL · NETTHANDEL / E-COMMERCE
+# Status: UTKAST bygget på åpne kilder — skal valideres i pilot.
+# Særtrekk vs. tjenestebedrift: høyt transaksjonsvolum, angrerett,
+# lager, refusjoner og markedsføringssamtykke dominerer regelbildet.
+# ============================================================
+schema_version: "0.1"
+meta:
+  bransjemal: netthandel-no-v0.1
+  kilder:
+    - "Angrerettloven (14 dagers angrerett ved fjernsalg)"
+    - "Forbrukerkjøpsloven (reklamasjon)"
+    - "Markedsføringsloven §15 (samtykke e-postmarkedsføring)"
+    - "Typiske vilkårssider hos norske nettbutikker (leverings- og returvilkår)"
+  status: utkast
+
+roller:
+  - {id: daglig_leder}
+  - {id: butikksjef, beskrivelse: "Priser, kampanjer, sortiment"}
+  - {id: kundeservice}
+  - {id: agent}
+
+handlinger:
+  # ---------- Ordre og kunde ----------
+  - id: ordre.bekreft_og_fakturer
+    modul: M-25
+    tillatt_for: [agent]
+    modus: auto
+    vilkaar: [betaling_autorisert, lager_reservert, adresse_validert]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: refusjon.utfor
+    modul: M-41
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 5000}
+    vilkaar: [innenfor_angrerett_eller_reklamasjon, retur_registrert,
+              samme_betalingsmiddel]
+    ved_brudd: unntakskø
+    reversibel: false
+
+  - id: refusjon.stor
+    modul: M-41
+    modus: alltid_stopp        # Over 5000 kr -> unntakskø med full kontekst
+    ved_brudd: unntakskø
+
+  - id: kundeservice.svar
+    modul: M-17
+    tillatt_for: [agent]
+    modus: auto
+    vilkaar: [svar_fra_kunnskapsbase, ingen_juridiske_innrommelser]
+    ved_brudd: unntakskø
+    reversibel: false
+
+  # ---------- Lager og innkjøp ----------
+  - id: lager.bestill_pafyll
+    modul: M-27
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 50000, frekvens_maks: "per leverandør per uke"}
+    vilkaar: [leverandor_i_register, pris_innen_avtale,
+              prognose_konfidens_min: 0.8]
+    ved_brudd: unntakskø
+    reversibel: true            # Bestilling kan kanselleres innen frist
+
+  # ---------- Markedsføring ----------
+  - id: kampanje.send
+    modul: M-44
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {frekvens_maks: "2 per mottaker per uke"}
+    vilkaar: [samtykke_gyldig, avmeldingslenke, priser_fra_prisbok]
+    dataklasser_tillatt: [offentlig, persondata]
+    ved_brudd: unntakskø
+    reversibel: false
+
+  - id: pris.endre
+    modul: M-26
+    modus: alltid_stopp        # Prisendring er butikksjefens policyendring,
+    ved_brudd: unntakskø       # ikke en agenthandling i denne malen
+
+frister:
+  - {id: mva_melding, kilde: "Skatteetaten", frekvens: "6 terminer/år",
+     varsling_dager_for: [30, 14, 7, 1]}
+  - {id: a_melding, kilde: "Skatteetaten", frekvens: "månedlig, den 5.",
+     varsling_dager_for: [7, 3, 1]}
+  - {id: saeravgifter_evt, kilde: "avhengig av sortiment", frekvens: "varierer",
+     varsling_dager_for: [30, 14]}
+
+retention:
+  - {dataklasse: finansiell, aar_min: 5, sletting: aldri_automatisk_for_frist}
+  - {dataklasse: persondata, regel: formaalsbegrenset}
+
+unntak:
+  kategorier: [manglende_data, over_grense, ukjent_motpart, svindelmistanke,
+               regelkonflikt, teknisk_feil, ukjent]
+  maks_auto_forsok: 3
+  eskalering: unntakskø

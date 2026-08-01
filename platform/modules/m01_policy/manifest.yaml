@@ -1,0 +1,15 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+id: m01_policy
+navn: Policy- og fullmaktsmotor (M-1)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+avhengigheter: []              # M-1 er roten — ingen avhengigheter
+kjerne: platform/core/policy_validator   # hvor koden bor
+i18n_prefiks: m01              # alle modulens tekstnøkler starter slik
+staging_sjekkliste:            # fra docs/DEPLOY.md — alle må være JA før aktiv
+  tester_gronne_pa_staging: nei
+  syntetisk_datasett_likt_lokalt: nei
+  revisjonslogg_korrekt: nei
+  feilinjisering_til_unntakskø: nei
+  ytelse_bestatt: nei
+  rollback_testet: nei

@@ -1,0 +1,106 @@
+# ============================================================
+# BRANSJEMAL · HÅNDVERK / BYGG / ANLEGG (SMB)
+# Status: UTKAST bygget på åpne kilder — skal valideres i pilot.
+# Særtrekk: prosjektbasert økonomi, timelister på byggeplass,
+# underleverandører, HMS-krav og offentlige registre.
+# ============================================================
+schema_version: "0.1"
+meta:
+  bransjemal: handverk-bygg-no-v0.1
+  kilder:
+    - "Byggherreforskriften / HMS-kortplikt på byggeplass"
+    - "Bustadoppføringslova og håndverkertjenesteloven (forbrukerprosjekter)"
+    - "Typiske vilkår hos norske håndverksbedrifter (befaring, tilbud, endringsordre)"
+    - "StartBANK/leverandørregister-praksis for underleverandører"
+  status: utkast
+
+roller:
+  - {id: daglig_leder}
+  - {id: prosjektleder, beskrivelse: "Ansvar per prosjekt og endringsordrer"}
+  - {id: handverker, beskrivelse: "Timeføring, materiell, bilder/dokumentasjon"}
+  - {id: agent}
+
+handlinger:
+  # ---------- Prosjektøkonomi ----------
+  - id: timeliste.samle_og_valider
+    modul: M-39
+    tillatt_for: [agent]
+    modus: auto
+    vilkaar: [timer_mot_arbeidsplan, prosjektkode_gyldig,
+              overtid_flagges_ikke_godkjennes]
+    dataklasser_tillatt: [persondata, finansiell]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: faktura.delfakturer_prosjekt
+    modul: M-23
+    tillatt_for: [agent]
+    modus: auto
+    vilkaar: [milepael_dokumentert, kontraktsfestet_betalingsplan]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: materiell.bestill
+    modul: M-27
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 30000, tidsvindu: "man-fre 06:00-18:00"}
+    vilkaar: [leverandor_i_register, pris_innen_avtale, prosjektbudsjett_ok]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  # ---------- Underleverandører ----------
+  - id: underleverandor.onboard
+    modul: M-24
+    tillatt_for: [agent]
+    modus: auto_med_vilkaar
+    vilkaar: [orgnr_validert, mva_registrert, konto_verifisert_uavhengig,
+              hms_kort_dokumentert, forsikring_dokumentert]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: underleverandor.betal
+    modul: M-24
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 25000}
+    vilkaar: [faktura_godkjent, arbeid_dokumentert, svindelsjekk_bestatt]
+    ved_brudd: frys
+    reversibel: false
+
+  # ---------- Kunde og tilbud ----------
+  - id: tilbud.generer_standardjobb
+    modul: M-26
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 100000}
+    vilkaar: [priser_fra_prisbok, standard_forbehold_inkludert,
+              befaring_dokumentert_eller_flagget]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: endringsordre.opprett
+    modul: M-25
+    modus: alltid_stopp        # Endringsordre binder kunden økonomisk —
+    ved_brudd: unntakskø       # dokumenteres av agent, besluttes etter policy
+
+frister:
+  - {id: mva_melding, kilde: "Skatteetaten", frekvens: "6 terminer/år",
+     varsling_dager_for: [30, 14, 7, 1]}
+  - {id: a_melding, kilde: "Skatteetaten", frekvens: "månedlig, den 5.",
+     varsling_dager_for: [7, 3, 1]}
+  - {id: forsikring_fornyelse, kilde: "intern", frekvens: "årlig",
+     varsling_dager_for: [60, 30, 14]}
+  - {id: sertifikat_utlop, kilde: "intern (sentral godkjenning m.m.)",
+     frekvens: "varierer", varsling_dager_for: [90, 30, 14]}
+
+retention:
+  - {dataklasse: finansiell, aar_min: 5, sletting: aldri_automatisk_for_frist}
+  - {dataklasse: persondata, regel: formaalsbegrenset}
+  - {dataklasse: intern, regel: "prosjektdokumentasjon følger reklamasjonstid"}
+
+unntak:
+  kategorier: [manglende_data, over_grense, ukjent_motpart, hms_avvik,
+               regelkonflikt, teknisk_feil, ukjent]
+  maks_auto_forsok: 3
+  eskalering: unntakskø

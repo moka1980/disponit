@@ -1,0 +1,19 @@
+{
+  "_meta": {"sprak": "en", "navn": "English", "retning": "ltr",
+            "dato_format": "YYYY-MM-DD", "valuta_standard": "EUR"},
+  "beslutning.TILLAT": "Allowed",
+  "beslutning.STOPP": "Stopped",
+  "beslutning.UNNTAK": "Sent to exception queue",
+  "effekt.frys": "Transaction frozen",
+  "effekt.varsle": "Notification sent",
+  "unntak.manglende_data": "Required data is missing",
+  "unntak.over_grense": "Outside policy limit",
+  "unntak.ukjent_motpart": "Unknown counterparty",
+  "unntak.regelkonflikt": "Conflicts with a policy rule",
+  "unntak.teknisk_feil": "Technical error",
+  "unntak.ukjent": "Action is not defined in the policy",
+  "unntak.svindelmistanke": "Suspected fraud",
+  "unntak.hms_avvik": "HSE deviation",
+  "m01.tittel": "Policy and mandates",
+  "m01.handling_stoppet": "The action was stopped by your policy"
+}

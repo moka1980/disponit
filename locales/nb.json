@@ -1,0 +1,19 @@
+{
+  "_meta": {"sprak": "nb", "navn": "Norsk bokmål", "retning": "ltr",
+            "dato_format": "DD.MM.YYYY", "valuta_standard": "NOK"},
+  "beslutning.TILLAT": "Tillatt",
+  "beslutning.STOPP": "Stoppet",
+  "beslutning.UNNTAK": "Til unntakskø",
+  "effekt.frys": "Transaksjon frosset",
+  "effekt.varsle": "Varsel sendt",
+  "unntak.manglende_data": "Nødvendige data mangler",
+  "unntak.over_grense": "Utenfor policygrense",
+  "unntak.ukjent_motpart": "Ukjent motpart",
+  "unntak.regelkonflikt": "I strid med policyregel",
+  "unntak.teknisk_feil": "Teknisk feil",
+  "unntak.ukjent": "Handlingen er ikke definert i policy",
+  "unntak.svindelmistanke": "Mistanke om svindel",
+  "unntak.hms_avvik": "HMS-avvik",
+  "m01.tittel": "Policy og fullmakter",
+  "m01.handling_stoppet": "Handlingen ble stoppet av policyen din"
+}

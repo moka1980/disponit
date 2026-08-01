@@ -1,0 +1,45 @@
+# CI — port 2 i utrullingsløypen (v7.2). Rød CI = merge umulig.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Installer avhengigheter
+        run: pip install pytest pyyaml
+      - name: Enhetstester + negative policytester
+        run: python -m pytest platform/core/tests -q
+      - name: Skjemavalidering av alle policyer og bransjemaler
+        run: |
+          python - << 'PY'
+          import sys, yaml
+          from pathlib import Path
+          sys.path.insert(0, "platform/core")
+          from policy_validator.schema import valider_policy
+          feil = []
+          for f in Path("policies").glob("bransjemal-*.yaml"):
+              e = valider_policy(yaml.safe_load(f.read_text()))
+              if e: feil.append((f.name, e))
+          if feil: print(feil); sys.exit(1)
+          print("alle policyer gyldige")
+          PY
+      - name: Modulregister konsistent
+        run: |
+          python - << 'PY'
+          import sys
+          sys.path.insert(0, "platform/core")
+          from pathlib import Path
+          from registry import les_manifester, valider
+          s = valider(les_manifester(Path("platform/modules")))
+          if s.feil: print(s.feil); sys.exit(1)
+          print("register ok:", s.aktive or "(ingen aktive ennå)", s.inaktive)
+          PY
+      - name: Syntetisk kjøring (invariant: blokkert blir aldri TILLAT)
+        run: python platform/core/examples/run_synthetic.py
+      # WCAG-port (axe-core) aktiveres i PR-005 når første UI-modul kommer

@@ -1,0 +1,103 @@
+# ============================================================
+# BRANSJEMAL · TJENESTEBEDRIFT / RÅDGIVNING / REGNSKAPSBYRÅ
+# Status: UTKAST bygget på åpne kilder — skal valideres i pilot.
+# Alle beløpsgrenser er forsiktige startverdier kunden justerer.
+# ============================================================
+schema_version: "0.1"
+meta:
+  bransjemal: tjenestebedrift-no-v0.1
+  kilder:
+    - "Bokføringsloven (oppbevaringskrav regnskapsmateriale)"
+    - "Skatteetaten: mva-melding, a-melding, skattemelding (frister)"
+    - "Typiske betalingsbetingelser observert i bransjen: 14 dager netto"
+  status: utkast
+
+roller:
+  - {id: daglig_leder, beskrivelse: "Full fullmakt innen styrevedtak"}
+  - {id: okonomiansvarlig, beskrivelse: "Bokføring, betaling, avstemming"}
+  - {id: konsulent, beskrivelse: "Timeføring, utlegg, kundekontakt"}
+  - {id: agent, beskrivelse: "Automatisert utførelse innen denne policyen"}
+
+handlinger:
+  # ---------- Økonomi ----------
+  - id: faktura.bokfor
+    modul: M-14
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 25000, valuta: [NOK]}
+    vilkaar: [dublettsjekk, leverandor_i_register, mva_validert]
+    dataklasser_tillatt: [finansiell]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: faktura.bokfor_stor
+    modul: M-14
+    tillatt_for: [agent]
+    modus: auto_med_vilkaar
+    grenser: {belop_maks: 100000}
+    vilkaar: [dublettsjekk, po_match_eller_avtale, leverandor_i_register]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  - id: betaling.utfor
+    modul: M-24
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {belop_maks: 25000, tidsvindu: "man-fre 07:00-17:00"}
+    vilkaar: [faktura_godkjent, konto_verifisert, svindelsjekk_bestatt]  # M-42
+    ved_brudd: frys
+    reversibel: false          # => derfor lav grense og harde vilkår
+
+  - id: purring.send
+    modul: M-23
+    tillatt_for: [agent]
+    modus: auto
+    grenser: {frekvens_maks: "1 per faktura per 14 dager"}
+    vilkaar: [forfall_passert_dager: 14, ingen_aktiv_tvist]
+    ved_brudd: unntakskø
+    reversibel: true
+
+  # ---------- Kommunikasjon ----------
+  - id: epost.send_kjent_mottaker
+    modul: M-6
+    tillatt_for: [agent]
+    modus: auto
+    vilkaar: [mottaker_i_kontaktregister, dlp_sjekk, ingen_okonomiske_lofter]
+    dataklasser_tillatt: [offentlig, intern]
+    ved_brudd: unntakskø
+    reversibel: false
+
+  - id: epost.send_ny_mottaker
+    modul: M-6
+    modus: alltid_stopp        # Går alltid i unntakskø i denne malen
+    ved_brudd: unntakskø
+
+  # ---------- Dokument ----------
+  - id: tilbud.generer
+    modul: M-26
+    tillatt_for: [agent]
+    modus: auto
+    vilkaar: [priser_fra_prisbok, laste_klausuler_uendret]
+    grenser: {belop_maks: 150000}
+    ved_brudd: unntakskø
+    reversibel: true
+
+frister:
+  - {id: mva_melding, kilde: "Skatteetaten", frekvens: "6 terminer/år",
+     varsling_dager_for: [30, 14, 7, 1]}
+  - {id: a_melding, kilde: "Skatteetaten", frekvens: "månedlig, den 5.",
+     varsling_dager_for: [7, 3, 1]}
+  - {id: skattemelding_as, kilde: "Skatteetaten", frekvens: "årlig 31. mai",
+     varsling_dager_for: [60, 30, 14, 7]}
+  - {id: arsregnskap, kilde: "Regnskapsregisteret", frekvens: "årlig",
+     varsling_dager_for: [60, 30, 14]}
+
+retention:
+  - {dataklasse: finansiell, aar_min: 5, sletting: aldri_automatisk_for_frist}
+  - {dataklasse: persondata, regel: formaalsbegrenset}
+
+unntak:
+  kategorier: [manglende_data, over_grense, ukjent_motpart,
+               regelkonflikt, teknisk_feil, ukjent]
+  maks_auto_forsok: 3
+  eskalering: unntakskø

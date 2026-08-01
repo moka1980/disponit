@@ -27,4 +27,10 @@ npm-debug.log*
 # Logger og data
 *.log
 *.sqlite3
-jobs/
+
+# Generert av run_synthetic.py — M-2-logg er kjøreartefakt, ikke kilde
+platform/core/examples/audit.jsonl
+
+# Windows
+Thumbs.db
+desktop.ini

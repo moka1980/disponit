@@ -1,0 +1,6 @@
+# Tillitsankeret (RUTINER pkt: menneskelig port): endringer her krever
+# Eiers godkjenning i GitHub før merge — alt annet kan pipelinen merge selv.
+/platform/core/policy_validator/  @moka1980
+/platform/core/registry.py        @moka1980
+/policies/policy-schema-*.yaml    @moka1980
+/.github/                         @moka1980

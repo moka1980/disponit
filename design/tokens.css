@@ -1,0 +1,29 @@
+/* ============================================================
+   DESIGN TOKENS — eneste kilde til utseende i hele plattformen.
+   Endre her = endres overalt. Komponenter definerer ALDRI egne
+   farger, fonter eller avstander. (docs/RUTINER.md pkt. 6)
+   WCAG: alle tekst/bakgrunn-par her skal holde >= 4.5:1.
+   ============================================================ */
+:root {
+  /* Flater og tekst */
+  --paper:#F6F8F7; --card:#FFFFFF; --ink:#14232B; --muted:#5A6E77;
+  --line:#D5DEDD;
+  /* Semantikk: automatisert/ok og policy/stopp */
+  --auto:#0F7A5C; --auto-bg:#E8F3EE;
+  --guard:#A05A00; --guard-bg:#FBF2E3;
+  --danger:#9A2B2B; --danger-bg:#F8E9E9;
+  --info:#1D6FA5;  --info-bg:#E5EFF6;
+  /* Typografi */
+  --font-sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","JetBrains Mono",monospace;
+  --fs-base:1rem; --lh-base:1.55;
+  /* Avstander og form */
+  --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem;
+  --sp-6:1.5rem; --sp-8:2rem;
+  --radius:8px; --radius-sm:4px;
+  /* Fokus (WCAG 2.4.7) — brukes på ALT interaktivt */
+  --focus:3px solid var(--info); --focus-offset:2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

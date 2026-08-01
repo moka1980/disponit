@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Bedriftsagent - Komplett Prototype v5.0</title>
+    <style>
+        @page { margin: 10mm; size: A4; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; color: #1a1a1a; line-height: 1.5; font-size: 10px; }
+        :root { --primary: #1a56db; --primary-dark: #1243a8; --success: #166534; --warning: #92400e; --danger: #991b1b; --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb; --gray-700: #374151; --gray-900: #111827; --white: #ffffff; --focus: #2563eb; }
+        h1 { font-size: 24px; color: var(--primary-dark); text-align: center; margin-bottom: 4px; }
+        h2 { font-size: 16px; color: var(--primary-dark); margin-top: 25px; border-bottom: 2px solid var(--primary); padding-bottom: 5px; page-break-before: always; }
+        h2:first-of-type { page-break-before: avoid; }
+        h3 { font-size: 13px; color: var(--primary); margin-top: 14px; }
+        h4 { font-size: 11px; color: var(--gray-900); margin-top: 10px; }
+        p { margin: 5px 0; }
+        table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 9px; page-break-inside: avoid; }
+        th { background: var(--primary); color: var(--white); padding: 6px 8px; text-align: left; font-weight: 600; }
+        td { padding: 5px 8px; border-bottom: 1px solid var(--gray-200); vertical-align: top; }
+        tr:nth-child(even) { background: var(--gray-50); }
+        .card { border: 1px solid var(--gray-200); border-radius: 6px; padding: 10px; margin: 10px 0; page-break-inside: avoid; background: var(--white); }
+        .card.unik { border-left: 3px solid #16a34a; }
+        .card.eksisterer { border-left: 3px solid #f59e0b; }
+        .card-title { font-size: 12px; font-weight: bold; color: var(--primary); margin-bottom: 2px; }
+        .card-subtitle { color: var(--gray-700); font-size: 9px; margin-bottom: 6px; }
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 8px; font-size: 8px; font-weight: 600; }
+        .badge-unik { background: #dcfce7; color: #166534; }
+        .badge-delvis { background: #fef3c7; color: #92400e; }
+        .badge-lett { background: #dbeafe; color: #1e40af; }
+        .badge-medium { background: #fef3c7; color: #92400e; }
+        .badge-vanskelig { background: #fee2e2; color: #991b1b; }
+        .summary-box { background: #eff6ff; border: 2px solid var(--primary); border-radius: 6px; padding: 14px; margin: 14px 0; page-break-inside: avoid; }
+        .info-box { background: var(--gray-100); border-left: 3px solid var(--primary); padding: 10px; margin: 10px 0; page-break-inside: avoid; }
+        .priority-1 { background: #dcfce7 !important; }
+        .priority-2 { background: #dbeafe !important; }
+        .priority-3 { background: #fef3c7 !important; }
+        .priority-4 { background: #fee2e2 !important; }
+        .toc { background: var(--gray-50); padding: 15px; border-radius: 6px; margin: 14px 0; border: 1px solid var(--gray-200); }
+        .toc ol { margin-left: 20px; line-height: 1.8; font-size: 9px; }
+        .toc a { color: var(--primary); }
+        ul { margin: 5px 0 5px 16px; }
+        li { margin: 2px 0; }
+        @media print { body { font-size: 9px; } h2 { page-break-before: always; } h2:first-of-type { page-break-before: avoid; } }
+    </style>
+</head>
+<body>
+
+<!-- FORSIDE -->
+<div style="text-align:center; padding:40px 0;">
+    <h1 style="font-size:30px;">🤖 AI BEDRIFTSAGENT</h1>
+    <p style="font-size:15px; color:var(--primary); margin:6px 0;">Komplett Prototype v5.0</p>
+    <p style="font-size:12px; color:var(--gray-700);">100 moduler · 511 automatiserte oppgaver · ~80% unike</p>
+    <p style="font-size:12px; color:var(--gray-700);">100% autonom · WCAG 2.1 AA · Ingen API-kostnader</p>
+    <p style="margin-top:30px; color:var(--gray-700);">Konfidensielt · 31. juli 2026</p>
+</div>
+
+<!-- SAMMENDRAG -->
+<div class="summary-box">
+    <h3 style="margin-top:0;">📋 SAMMENDRAG</h3>
+    <p>Verdens mest komplette AI-bedriftsagent — et horisontalt system som automatiserer repeterende arbeidsoppgaver på tvers av <strong>alle avdelinger</strong>. 100% autonomt. Ingen API-kostnader. Universelt utformet.</p>
+    <table>
+        <tr><th>Egenskap</th><th>Vår agent</th><th>Markedet</th></tr>
+        <tr><td>Horisontal</td><td>✅ 100 moduler</td><td>❌ Fragmentert</td></tr>
+        <tr><td>Proaktiv</td><td>✅ Forutsier</td><td>❌ Reaktiv</td></tr>
+        <tr><td>Autonom</td><td>✅ 511 oppgaver</td><td>❌ Manuell</td></tr>
+        <tr><td>WCAG 2.1 AA</td><td>✅ Innebygd</td><td>⚠️ Få</td></tr>
+        <tr><td>Ingen API-kost</td><td>✅ Lokale modeller</td><td>❌ API-avhengig</td></tr>
+    </table>
+</div>
+
+<!-- INNHOLD -->
+<div class="toc">
+    <h3 style="margin-top:0;">📑 INNHOLD</h3>
+    <ol>
+        <li><a href="#s1">Visjon</a></li>
+        <li><a href="#s2">WCAG 2.1 AA og design</a></li>
+        <li><a href="#s3">Teknisk arkitektur</a></li>
+        <li><a href="#s4">Prioriteringsliste 1-100</a></li>
+        <li><a href="#s5">Fase 1: Modul 1-25</a></li>
+        <li><a href="#s6">Fase 2: Modul 26-50</a></li>
+        <li><a href="#s7">Fase 3: Modul 51-75</a></li>
+        <li><a href="#s8">Fase 4: Modul 76-100</a></li>
+        <li><a href="#s9">Forretningsmodell</a></li>
+        <li><a href="#s10">Implementeringsplan</a></li>
+        <li><a href="#s11">Konkurransefortrinn</a></li>
+    </ol>
+</div>
+
+<!-- SEKSJON 1 -->
+<h2 id="s1">1. VISJON OG MÅLSETTING</h2>
+<p>Norske bedrifter bruker <strong>87% av arbeidsdagen</strong> på repetitive oppgaver. Kun <strong>13%</strong> på verdiskapende arbeid. Vår løsning: <strong>Én universell AI-agent</strong> som automatiserer alle repetitive oppgaver — proaktivt, autonomt, universelt utformet.</p>
+<table>
+    <tr><th>Fase</th><th>Mål</th><th>Moduler</th><th>Tidslinje</th></tr>
+    <tr><td>Fase 1</td><td>MVP — Enkle moduler</td><td>25</td><td>Q3-Q4 2026</td></tr>
+    <tr><td>Fase 2</td><td>Utvidet beta</td><td>50</td><td>Q1-Q2 2027</td></tr>
+    <tr><td>Fase 3</td><td>Komplett agent</td><td>75</td><td>Q3-Q4 2027</td></tr>
+    <tr><td>Fase 4</td><td>Fullskala + internasjonal</td><td>100</td><td>2028</td></tr>
+</table>
+
+<!-- SEKSJON 2 -->
+<h2 id="s2">2. WCAG 2.1 AA OG DESIGNPRINSIPPER</h2>
+<h3>2.1 Designprinsipper</h3>
+<div class="card"><div class="card-title">🧹 Minimalistisk — "Ingen støy"</div><p>Kun nødvendig innhold. Rikelig negativ plass. Maks 3 handlingsvalg per skjermbilde. Ingen popups uten kritisk behov. Ingen auto-spillende media.</p></div>
+<div class="card"><div class="card-title">🎯 Brukervennlig — "Enkelt å bruke"</div><p>All hovedfunksjonalitet innen 2 klikk. Konsistent navigasjon. Tekstbaserte knapper. Forutsigbar plassering.</p></div>
+<h3>2.2 WCAG 2.1 AA Krav</h3>
+<table>
+    <tr><th>Kriterium</th><th>Krav</th><th>Implementering</th></tr>
+    <tr><td>1.1.1</td><td>Alt-tekst på bilder</td><td>Alt-attributter. Dekorative: alt=""</td></tr>
+    <tr><td>1.3.1</td><td>Korrekt semantikk</td><td>h1-h6, ul/ol, th med scope</td></tr>
+    <tr><td>1.4.1</td><td>Farge ikke eneste informasjon</td><td>Farge + ikon + tekst</td></tr>
+    <tr><td>1.4.3</td><td>Kontrast 4.5:1</td><td>#1a1a1a på #ffffff = 13.6:1</td></tr>
+    <tr><td>1.4.4</td><td>200% zoom</td><td>Alle størrelser i rem/em</td></tr>
+    <tr><td>2.1.1</td><td>Tastaturnavigasjon</td><td>Logisk tab-rekkefølge</td></tr>
+    <tr><td>2.4.7</td><td>Synlig fokus</td><td>3px solid #2563eb + 2px offset</td></tr>
+    <tr><td>3.3.1</td><td>Feilidentifisering</td><td>Feilmelding med forslag til retting</td></tr>
+    <tr><td>3.3.2</td><td>Label på input</td><td>label med for-attributt</td></tr>
+    <tr><td>4.1.2</td><td>ARIA-attributter</td><td>role, aria-label, aria-live</td></tr>
+</table>
+<h3>2.3 Layout</h3>
+<table>
+    <tr><th>Område</th><th>Innhold</th></tr>
+    <tr><td>Topp</td><td>Skip-to-content + Hovednavigasjon (5-7 elementer) + Søk</td></tr>
+    <tr><td>Venstre</td><td>Modulmeny (gruppert etter avdeling) — kan skjules</td></tr>
+    <tr><td>Sentrum</td><td>Dashboard: KPI-kort + prioriterte varsler + siste aktiviteter</td></tr>
+    <tr><td>Høyre</td><td>Kontekst-panel (detaljer om valgt modul)</td></tr>
+    <tr><td>Bunn</td><td>Statuslinje: "45 moduler aktive · 3 varsler · Sist synkronisert: 09:42"</td></tr>
+</table>
+
+<!-- SEKSJON 3 -->
+<h2 id="s3">3. TEKNISK ARKITEKTUR</h2>
+<table>
+    <tr><th>Lag</th><th>Teknologi</th><th>Begrunnelse</th></tr>
+    <tr><td>Frontend</td><td>HTML5 + CSS3 + JavaScript</td><td>Statisk, lynraskt, WCAG</td></tr>
+    <tr><td>Backend API</td><td>Python (FastAPI)</td><td>Raskt, AI-integrasjon</td></tr>
+    <tr><td>AI-modeller</td><td>Ollama + Mistral 7B / Llama 3.1</td><td>Lokalt, gratis</td></tr>
+    <tr><td>Database</td><td>SQLite → PostgreSQL</td><td>Enkel start</td></tr>
+    <tr><td>Server</td><td>Ubuntu VPS (16 GB RAM)</td><td>For AI-modeller</td></tr>
+    <tr><td>Webserver</td><td>Nginx</td><td>Matcher stack</td></tr>
+</table>
+<h3>Systemdiagram</h3>
+<div class="info-box">
+<pre style="font-size:8px;">
+BRUKER (Nettleser)
+       │ HTTPS
+NGINX (Port 443/80) — Reverse proxy · SSL · Statiske filer
+       │
+FASTAPI (Python) Port 5000 — API · Autentisering · Modul-orkestrering
+       │
+├─ SQLite/PostgreSQL (Data)
+├─ OLLAMA + Mistral 7B/Llama 3.1 (AI)
+└─ Fil-lagring + rsync (Dokumenter)
+</pre>
+</div>
+
+<!-- SEKSJON 4 -->
+<h2 id="s4">4. KOMPLETT PRIORITERINGSLISTE 1-100</h2>
+<p><span style="background:#dcfce7;padding:2px 6px;">Fase 1 — Lett</span> <span style="background:#dbeafe;padding:2px 6px;">Fase 2 — Medium</span> <span style="background:#fef3c7;padding:2px 6px;">Fase 3 — Vanskelig</span> <span style="background:#fee2e2;padding:2px 6px;">Fase 4 — Strategisk</span></p>
+<table>
+    <tr><th>#</th><th>Modul</th><th>Fase</th><th>Status</th></tr>
+    <tr class="priority-1"><td>27</td><td>🧹 Data-rydde-agent</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>58</td><td>📋 Forkortelses-ordliste</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>56</td><td>📑 Årshjul-generator</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>35</td><td>📑 Dokument-mal-generator</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>70</td><td>🧹 E-post-rydde-agent</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>61</td><td>📎 Vedlegg-finner</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>50</td><td>📸 Bilde-organisator</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>91</td><td>🎂 Jubileums-agent</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>28</td><td>📋 Offentlige-frister-vakt</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>77</td><td>🎯 Mål-oppfølger</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>25</td><td>🔄 Backup-verifiserer</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>9</td><td>✉️ E-post-agent</td><td>1</td><td>Delvis</td></tr>
+    <tr class="priority-1"><td>33</td><td>🗣️ Intern-kommunikasjon</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>38</td><td>🔤 Tekst-tilpasser</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>47</td><td>📰 Nyhetsbrev-forfatter</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>8</td><td>📋 Møte-agent</td><td>1</td><td>Delvis</td></tr>
+    <tr class="priority-1"><td>64</td><td>🎤 Lydfil-transkriberer</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>68</td><td>📸 Visittkort-skanner</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>75</td><td>📄 Dokument-sammenligner</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>93</td><td>🔐 Passord-administrator</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>69</td><td>📅 Ferie-planlegger</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>98</td><td>🧹 Sky-rydder</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>21</td><td>📅 Kalender-optimalisator</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>51</td><td>📋 Oppgave-fordeler</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-1"><td>60</td><td>🚪 Sluttbruker-avvikler</td><td>1</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>41</td><td>💳 Utlegg-automat</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>23</td><td>📸 Kvittering-skanner</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>5</td><td>📊 Automatisk rapportering</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>1</td><td>💰 Likviditet-vakt</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>6</td><td>💡 Kostnadsbesparelse</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>49</td><td>🧾 Faktura-kontrollør</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>42</td><td>📊 KPI-overvåker</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>43</td><td>📝 Møte-effektivitet</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>32</td><td>📊 Ansatt-tilfredshet</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>40</td><td>🏥 Sykefravær-forebygger</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>71</td><td>📊 Kundehelse-indeks</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>39</td><td>📆 Sesong-forbereder</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>24</td><td>🌐 Nettside-vedlikeholder</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>48</td><td>🏷️ Produktkatalog-vedlikehold</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>34</td><td>🔗 Integrasjon-overvåker</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>92</td><td>📋 Referansekunde-admin</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>29</td><td>🏢 Kontor-administrator</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>87</td><td>🎫 Reise- og utleggs-rapport</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>55</td><td>📞 Tilbakeringings-agent</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>17</td><td>🎯 Kundeservice-agent</td><td>2</td><td>Delvis</td></tr>
+    <tr class="priority-2"><td>10</td><td>👥 HR-agent</td><td>2</td><td>Delvis</td></tr>
+    <tr class="priority-2"><td>13</td><td>🛒 Innkjøp-agent</td><td>2</td><td>Delvis</td></tr>
+    <tr class="priority-2"><td>80</td><td>📞 Språk-trener</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>97</td><td>📋 Leverandør-kvalitet-agent</td><td>2</td><td>⭐</td></tr>
+    <tr class="priority-2"><td>12</td><td>📈 Markedsføring-agent</td><td>2</td><td>Delvis</td></tr>
+    <tr class="priority-3"><td>2</td><td>📄 Tilbudsgenerator</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>11</td><td>💼 Salg-agent</td><td>3</td><td>Delvis</td></tr>
+    <tr class="priority-3"><td>16</td><td>⚖️ Juridisk-agent</td><td>3</td><td>Delvis</td></tr>
+    <tr class="priority-3"><td>26</td><td>📝 Avtale-vakt</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>52</td><td>📊 Pris-overvåker</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>53</td><td>📝 Kundekrav-analysator</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>4</td><td>🔍 Konkurrent-monitor</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>65</td><td>📊 Bransjerapport-generator</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>57</td><td>🔍 Innsikt-graver</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>73</td><td>📊 Segmenterings-agent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>96</td><td>🏷️ Rabatt- og kampanje-agent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>3</td><td>🤝 Leverandør-forhandler</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>31</td><td>📦 Pakke- og logistikk-agent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>22</td><td>📞 Telefon-assistent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>46</td><td>📞 Oppringning-agent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>67</td><td>📞 Telefonkø-administrator</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>62</td><td>📞 Telefon-tolk</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>94</td><td>📞 Samtale-analysator</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>14</td><td>🏭 Drift-agent</td><td>3</td><td>Delvis</td></tr>
+    <tr class="priority-3"><td>15</td><td>🔐 Sikkerhet-agent</td><td>3</td><td>Delvis</td></tr>
+    <tr class="priority-3"><td>36</td><td>🎤 Presentasjon-trener</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>72</td><td>📝 Forhandlings-trener</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>74</td><td>🧠 Lærings-agent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>95</td><td>📊 Ansatt-produktivitet</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-3"><td>81</td><td>📋 Byggesaks-agent</td><td>3</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>7</td><td>🔧 Prosedyr-dokumentator</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>18</td><td>🔮 Prediksjon-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>20</td><td>💬 Kunnskaps-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>19</td><td>🏆 Sertifisering-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>30</td><td>🚨 Kriseplan-generator</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>44</td><td>🌱 Bærekraft-rapportør</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>45</td><td>🧠 Beslutningsstøtte-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>59</td><td>🎯 Strategi-implementerer</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>66</td><td>🖼️ Presentasjons-bygger</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>76</td><td>📆 Deadline-forhandler</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>78</td><td>📋 Styrereferat-generator</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>79</td><td>🏢 Lokasjons-analysator</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>82</td><td>🚛 Transport-optimalisator</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>83</td><td>🔌 Strøm-optimalisator</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>84</td><td>📊 Valuta-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>85</td><td>📝 Ansettelseskontrakt-gen</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>86</td><td>📋 Varetelling-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>88</td><td>📞 Kunde-onboarding-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>89</td><td>🧪 Produkttest-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>90</td><td>🏆 Medarbeider-anerkjenner</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>37</td><td>🧪 A/B-test-automat</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>54</td><td>🧪 Selvtest-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>63</td><td>📋 Saksbehandlings-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>99</td><td>📞 VIP-kunde-agent</td><td>4</td><td>⭐</td></tr>
+    <tr class="priority-4"><td>100</td><td>🎯 Bedrifts-optimalisator</td><td>4</td><td>⭐</td></tr>
+</table>
+
+<!-- SEKSJON 5 -->
+<h2 id="s5">5. FASE 1: MODUL 1-25 — LETTE (MVP)</h2>
+<p>Fase 1 inneholder de 25 enkleste modulene å implementere. De krever minimalt med AI, ingen eksterne integrasjoner, og bygges med eksisterende stack.</p>
+
+<div class="card unik"><div class="card-title">1. 🧹 Data-rydde-agent ⭐</div><div class="card-subtitle">5 oppgaver · Rang #1 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Går gjennom alle bedriftens filer. Finner duplikater via hash-sammenligning. Identifiserer utdaterte dokumenter. Søker etter personopplysninger i gamle filer (GDPR). Organiserer i fornuftig mappestruktur. Genererer rydderapport: "12 430 filer, 3 200 duplikater, 15 GB kan frigjøres."</p>
+</div>
+
+<div class="card unik"><div class="card-title">2. 📋 Forkortelses-ordliste ⭐</div><div class="card-subtitle">5 oppgaver · Rang #2 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Scanner all kommunikasjon for forkortelser og faguttrykk. Bygger automatisk en bedrifts-spesifikk ordliste med definisjoner. Nye ansatte får ordlisten ved onboarding. Ved hover over forkortelser vises forklaring.</p>
+</div>
+
+<div class="card unik"><div class="card-title">3. 📑 Årshjul-generator ⭐</div><div class="card-subtitle">5 oppgaver · Rang #3 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Identifiserer alle faste aktiviteter fra kalendere, regnskap, og e-poster. Genererer komplett årshjul. Varsler ansvarlige 90/30/14/7/1 dager før hver aktivitet. Oppdateres automatisk.</p>
+</div>
+
+<div class="card unik"><div class="card-title">4. 📑 Dokument-mal-generator ⭐</div><div class="card-subtitle">5 oppgaver · Rang #4 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Analyserer alle eksisterende dokumenter. Identifiserer mønstre og genererer automatisk maler for tilbud, kontrakter, rapporter, brev. Oppdaterer maler når logo eller vilkår endres.</p>
+</div>
+
+<div class="card unik"><div class="card-title">5. 🧹 E-post-rydde-agent ⭐</div><div class="card-subtitle">5 oppgaver · Rang #5 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Rydder innboksen hver natt. Sletter spam. Arkiverer ferdig håndterte e-poster. Kategoriserer resten. Morgenrapport: "3 e-poster haster. 7 kan vente. 42 er ryddet i natt."</p>
+</div>
+
+<div class="card unik"><div class="card-title">6. 📎 Vedlegg-finner ⭐</div><div class="card-subtitle">5 oppgaver · Rang #6 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Forstår hvilket dokument du trenger basert på kontekst. Søker gjennom alle filer, e-poster, og sky-lagring. Finner riktig versjon. Legger ved automatisk i e-post.</p>
+</div>
+
+<div class="card unik"><div class="card-title">7. 📸 Bilde-organisator ⭐</div><div class="card-subtitle">5 oppgaver · Rang #7 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Kategoriserer alle bilder automatisk. Identifiserer dårlige bilder. Finner de beste for markedsføring. Genererer alt-tekst for universell utforming. Optimaliserer bildestørrelser.</p>
+</div>
+
+<div class="card unik"><div class="card-title">8. 🎂 Jubileums-agent ⭐</div><div class="card-subtitle">5 oppgaver · Rang #8 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Holder oversikt over ansattes og kunders merkedager. Genererer personlige hilsener. Bestiller gaver automatisk. Sender til rett tid.</p>
+</div>
+
+<div class="card unik"><div class="card-title">9. 📋 Offentlige-frister-vakt ⭐</div><div class="card-subtitle">5 oppgaver · Rang #9 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Kartlegger alle offentlige frister for bedriften. Varsler i god tid. Forbereder automatisk alt som trengs for innsending. Dokumenterer at alt er levert i tide.</p>
+</div>
+
+<div class="card unik"><div class="card-title">10. 🎯 Mål-oppfølger ⭐</div><div class="card-subtitle">5 oppgaver · Rang #10 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Holder oversikt over alle ansattes mål. Følger opp fremdrift automatisk. Varsler når noen er bak plan. Feirer når mål nås.</p>
+</div>
+
+<div class="card unik"><div class="card-title">11. 🔄 Backup-verifiserer ⭐</div><div class="card-subtitle">5 oppgaver · Rang #11 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Tester backup-integritet ukentlig. Verifiserer at alle systemer inkluderes. Varsler umiddelbart ved feil. Genererer revisjonsklar dokumentasjon.</p>
+</div>
+
+<div class="card eksisterer"><div class="card-title">12. ✉️ E-post-agent (Delvis)</div><div class="card-subtitle">5 oppgaver · Rang #12 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Prioriterer innboks. Oppsummerer lange tråder. Skriver utkast til svar. Identifiserer e-poster som ikke er besvart. Arkiverer automatisk.</p>
+</div>
+
+<div class="card unik"><div class="card-title">13. 🗣️ Intern-kommunikasjon-agent ⭐</div><div class="card-subtitle">5 oppgaver · Rang #13 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Skriver ukentlig intern-nyhetsbrev. Genererer velkomstmeldinger. Sender bursdagshilsener. Formidler viktige beskjeder i rett kanal.</p>
+</div>
+
+<div class="card unik"><div class="card-title">14. 🔤 Tekst-tilpasser ⭐</div><div class="card-subtitle">5 oppgaver · Rang #14 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Tar én tekst og tilpasser automatisk til ALLE kanaler: LinkedIn, Instagram, e-post, intern kommunikasjon. Tilpasser språk, lengde, og tone.</p>
+</div>
+
+<div class="card unik"><div class="card-title">15. 📰 Nyhetsbrev-forfatter ⭐</div><div class="card-subtitle">5 oppgaver · Rang #15 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Finner relevante temaer. Genererer komplett nyhetsbrev. Sender til optimalt tidspunkt. Analyserer resultater og forbedrer automatisk.</p>
+</div>
+
+<div class="card eksisterer"><div class="card-title">16. 📋 Møte-agent (Delvis)</div><div class="card-subtitle">6 oppgaver · Rang #16 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Forbereder møter automatisk. Genererer agenda. Skriver referat i sanntid. Trekker ut aksjonspunkter. Følger opp frister.</p>
+</div>
+
+<div class="card unik"><div class="card-title">17. 🎤 Lydfil-transkriberer ⭐</div><div class="card-subtitle">5 oppgaver · Rang #17 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Oppdager nye lydfiler automatisk. Transkriberer til tekst. Identifiserer talere. Kategoriserer. Gjør alt søkbart.</p>
+</div>
+
+<div class="card unik"><div class="card-title">18. 📸 Visittkort-skanner ⭐</div><div class="card-subtitle">5 oppgaver · Rang #18 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Analyserer visittkort-bilde. Trekker ut all informasjon. Oppretter kontakt i CRM. Finner LinkedIn-profil. Sender oppfølgingsmail.</p>
+</div>
+
+<div class="card unik"><div class="card-title">19. 📄 Dokument-sammenligner ⭐</div><div class="card-subtitle">5 oppgaver · Rang #19 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Sammenligner to dokumentversjoner. Finner ALLE endringer. Identifiserer betydningsendringer (ikke bare tekst). Varsler om vesentlige endringer.</p>
+</div>
+
+<div class="card unik"><div class="card-title">20. 🔐 Passord-administrator ⭐</div><div class="card-subtitle">5 oppgaver · Rang #20 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Oppdager svake passord. Tvinger bytte ved sikkerhetsbrudd. Genererer sikre passord. Roterer automatisk for kritiske systemer.</p>
+</div>
+
+<div class="card unik"><div class="card-title">21. 📅 Ferie-planlegger ⭐</div><div class="card-subtitle">5 oppgaver · Rang #21 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Samler ferieønsker. Optimaliserer for bemanning. Fordeler rettferdig. Genererer komplett ferieplan. Håndterer konflikter automatisk.</p>
+</div>
+
+<div class="card unik"><div class="card-title">22. 🧹 Sky-rydder ⭐</div><div class="card-subtitle">5 oppgaver · Rang #22 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Analyserer sky-lagring på tvers av plattformer. Identifiserer duplikater og ubrukte filer. Optimaliserer lagring. Foreslår riktig abonnementsnivå.</p>
+</div>
+
+<div class="card unik"><div class="card-title">23. 📅 Kalender-optimalisator ⭐</div><div class="card-subtitle">6 oppgaver · Rang #23 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Analyserer kalendere. Blokkerer tid for fokusarbeid. Grupperer møter. Finner optimal møtetid basert på energinivå. Ombooker automatisk ved sykdom.</p>
+</div>
+
+<div class="card unik"><div class="card-title">24. 📋 Oppgave-fordeler ⭐</div><div class="card-subtitle">5 oppgaver · Rang #24 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Analyserer innkommende oppgaver. Identifiserer rett person basert på kompetanse og kapasitet. Tilordner automatisk med frist. Omfordeler ved overbelastning.</p>
+</div>
+
+<div class="card unik"><div class="card-title">25. 🚪 Sluttbruker-avvikler ⭐</div><div class="card-subtitle">5 oppgaver · Rang #25 · Fase 1 · <span class="badge badge-lett">Lett</span></div>
+<p>Inndrar alle systemtilganger automatisk. Videresender e-post. Overfører filer. Informerer kunder. Genererer sluttattest og feriepenge-oppgjør.</p>
+</div>
+
+<!-- SEKSJON 6 -->
+<h2 id="s6">6. FASE 2: MODUL 26-50 — MEDIUM</h2>
+<p>Disse modulene krever noe mer AI-prosessering og enkelte integrasjoner, men er fortsatt godt innenfor rekkevidde med lokale modeller.</p>
+
+<div class="card unik"><div class="card-title">29. 💰 Likviditet-vakt ⭐ — HØYEST VERDI I FASE 2</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Overvåker kontinuerlig bankkonto, fakturaer, forfallsdatoer. Varsler PROAKTIVT: "Du går tom for penger om 18 dager." Simulerer 3 scenarier. Foreslår konkrete tiltak. Dette er #1 verktøy for å forhindre likviditetskrise — den vanligste årsaken til konkurs i SMB.</p>
+</div>
+
+<div class="card unik"><div class="card-title">28. 📊 Automatisk rapportering ⭐</div><div class="card-subtitle">7 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Samler data fra alle systemer. Genererer automatisk månedsrapport, kvartalsrapport, styrerapport. Forklarer avvik. Foreslår tiltak. Genererer ferdig PowerPoint til styremøtet. Sparer 10-20 timer per måned.</p>
+</div>
+
+<div class="card unik"><div class="card-title">30. 💡 Kostnadsbesparelse ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Analyserer ALLE utgifter. Finner ubrukte abonnementer, doble betalinger, unormalt forbruk. Foreslår konkrete besparelser med ROI-beregning. Identifiserer 50 000-200 000 kr i årlige besparelser for en typisk SMB.</p>
+</div>
+
+<div class="card unik"><div class="card-title">31. 🧾 Faktura-kontrollør ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Går gjennom ALLE innkommende fakturaer. Sammenligner mot avtaler og bestillinger. Oppdager feil, dobbelfakturering, manglende rabatter. Genererer automatisk kreditnota-forespørsel. "Fant 3 feil denne måneden. Sparte 18 500 kr."</p>
+</div>
+
+<div class="card unik"><div class="card-title">32. 📊 KPI-overvåker ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Definerer automatisk relevante KPI-er basert på bransje og strategi. Overvåker kontinuerlig. Varsler ved avvik. Analyserer rotårsak. Foreslår tiltak.</p>
+</div>
+
+<div class="card unik"><div class="card-title">33. 📝 Møte-effektivitet-analysator ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Analyserer ALLE møter. Identifiserer unødvendige møter. Beregner kostnad per møte. Foreslår: "Dette møtet kunne vært en e-post. Spar 12 000 kr/uke."</p>
+</div>
+
+<div class="card unik"><div class="card-title">34. 📊 Ansatt-tilfredshet-måler ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Gjennomfører automatisk pulsmålinger. Analyserer trender. Oppdager faresignaler FØR noen slutter. Foreslår tiltak.</p>
+</div>
+
+<div class="card unik"><div class="card-title">35. 🏥 Sykefravær-forebygger ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Analyserer fraværsmønstre. Varsler ved unormale trender. Foreslår forebyggende tiltak. Genererer oppfølgingsplaner automatisk.</p>
+</div>
+
+<div class="card unik"><div class="card-title">36. 📊 Kundehelse-indeks ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Beregner helsescore (0-100) for hver kunde basert på betalingshistorikk, kjøpsfrekvens, support-saker. Varsler når score synker. Foreslår tiltak for å redde kunden.</p>
+</div>
+
+<div class="card unik"><div class="card-title">37. 📆 Sesong-forbereder ⭐</div><div class="card-subtitle">5 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Analyserer historiske sesongdata. Varsler 8-12 uker før sesongstart. Genererer innkjøpsplan, bemanningsplan, kampanjeplan.</p>
+</div>
+
+<div class="card unik"><div class="card-title">38. 🌐 Nettside-vedlikeholder ⭐</div><div class="card-subtitle">6 oppgaver · Fase 2 · <span class="badge badge-medium">Medium</span></div>
+<p>Skaner nettsiden daglig. Finner døde lenker. Oppdager utdatert innhold. Sjekker SSL-sertifikat. Fikser enkle problemer automatisk.</p>
+</div>
+
+<div class="info-box"><p><strong>Resterende Fase 2 moduler (39-50):</strong> Produktkatalog-vedlikeholder, Integrasjon-overvåker, Referansekunde-administrator, Kontor-administrator, Reise- og utleggs-rapportør, Tilbakeringings-agent, Kundeservice-agent, HR-agent, Innkjøp-agent, Språk-trener, Leverandør-kvalitet-agent, Markedsføring-agent. Alle med fullstendige beskrivelser i den digitale prototypen.</p></div>
+
+<!-- SEKSJON 7 -->
+<h2 id="s7">7. FASE 3: MODUL 51-75 — VANSKELIGE</h2>
+
+<div class="card unik"><div class="card-title">51. 📄 Tilbudsgenerator ⭐ — STRATEGISK VIKTIG</div><div class="card-subtitle">4 oppgaver · Fase 3 · <span class="badge badge-vanskelig">Vanskelig</span></div>
+<p>Lærer av ALLE tidligere tilbud og vunne kontrakter. Forstår prisstruktur, rabattmønstre, og kundesegmenter. Genererer automatisk skreddersydde tilbud. Optimaliserer prising. Øker vinnrate med 20-40%. Sparer 3-5 timer per tilbud.</p>
+</div>
+
+<div class="card unik"><div class="card-title">57. 🔍 Konkurrent-monitor ⭐</div><div class="card-subtitle">4 oppgaver · Fase 3 · <span class="badge badge-vanskelig">Vanskelig</span></div>
+<p>Overvåker konkurrenters nettsider, priser, produkter, nyheter 24/7. Varsler ved endringer. Analyserer betydningen. Foreslår konkrete mottrekk. "Konkurrent X har ansatt 3 selgere i ditt område."</p>
+</div>
+
+<div class="card unik"><div class="card-title">62. 🤝 Leverandør-forhandler ⭐</div><div class="card-subtitle">6 oppgaver · Fase 3 · <span class="badge badge-vanskelig">Vanskelig</span></div>
+<p>Holder oversikt over ALLE leverandøravtaler. Varsler 90/60/30 dager før utløp. Innhenter automatisk tilbud fra alternativer. Forhandler automatisk via e-post. Anbefaler bytte. 15-25% besparelse.</p>
+</div>
+
+<div class="info-box"><p><strong>Resterende Fase 3 moduler (52-75):</strong> Salg-agent, Juridisk-agent, Avtale-vakt, Pris-overvåker, Kundekrav-analysator, Bransjerapport-generator, Innsikt-graver, Segmenterings-agent, Rabatt- og kampanje-agent, Pakke- og logistikk-agent, Telefon-assistent, Oppringning-agent, Telefonkø-administrator, Telefon-tolk, Samtale-analysator, Drift-agent, Sikkerhet-agent, Presentasjon-trener, Forhandlings-trener, Lærings-agent, Ansatt-produktivitet-agent, Byggesaks-agent.</p></div>
+
+<!-- SEKSJON 8 -->
+<h2 id="s8">8. FASE 4: MODUL 76-100 — STRATEGISKE</h2>
+
+<div class="card unik"><div class="card-title">76. 🔧 Prosedyr-dokumentator ⭐</div><div class="card-subtitle">4 oppgaver · Fase 4 · <span class="badge badge-vanskelig">Vanskelig</span></div>
+<p>Observerer digitale arbeidsflyter. Dokumenterer automatisk alle prosedyrer. Oppdaterer når systemer endres. Bygger komplett bedrifts-wiki automatisk. Eliminerer 100% av manuell prosedyreskriving.</p>
+</div>
+
+<div class="card unik"><div class="card-title">77. 🔮 Prediksjon-agent ⭐</div><div class="card-subtitle">6 oppgaver · Fase 4 · <span class="badge badge-vanskelig">Vanskelig</span></div>
+<p>Predikerer: kundeavgang, salg 30/60/90 dager, bemanningsbehov, vedlikeholdsbehov, likviditetskrise, markedstrender. Forhindrer problemer FØR de oppstår.</p>
+</div>
+
+<div class="card unik"><div class="card-title">100. 🎯 Bedrifts-optimalisator ⭐ — KRONEN PÅ VERKET</div><div class="card-subtitle">5 oppgaver · Fase 4 · <span class="badge badge-vanskelig">Vanskelig</span></div>
+<p>Den overordnede agenten. Analyserer ALLE 99 andre moduler. Finner årsakssammenhenger på tvers av avdelinger. "Likviditetsvarslingen din henger sammen med 3 tapte tilbud. Prioriter innkreving av utestående." Gir daglig leder et fugleperspektiv ingen andre systemer kan tilby.</p>
+</div>
+
+<div class="info-box"><p><strong>Resterende Fase 4 moduler (78-99):</strong> Kunnskaps-agent, Sertifisering-agent, Kriseplan-generator, Bærekraft-rapportør, Beslutningsstøtte-agent, Strategi-implementerer, Presentasjons-bygger, Deadline-forhandler, Styrereferat-generator, Lokasjons-analysator, Transport-optimalisator, Strøm-optimalisator, Valuta-agent, Ansettelseskontrakt-generator, Varetelling-agent, Kunde-onboarding-agent, Produkttest-agent, Medarbeider-anerkjenner, A/B-test-automat, Selvtest-agent, Saksbehandlings-agent, VIP-kunde-agent.</p></div>
+
+<!-- SEKSJON 9 -->
+<h2 id="s9">9. FORRETNINGSMODELL</h2>
+<table>
+    <tr><th>Plan</th><th>Pris/mnd</th><th>Moduler</th><th>Brukere</th><th>Målgruppe</th></tr>
+    <tr><td>Start</td><td>499 kr</td><td>10</td><td>3</td><td>ENK, 1-5 ansatte</td></tr>
+    <tr><td>Business</td><td>1 499 kr</td><td>30</td><td>15</td><td>SMB 5-50 ansatte</td></tr>
+    <tr><td>Enterprise</td><td>3 999 kr</td><td>100</td><td>Ubegrenset</td><td>50+ ansatte</td></tr>
+</table>
+<h3>Inntjeningspotensial — Norge</h3>
+<table>
+    <tr><th>Segment</th><th>Bedrifter</th><th>%</th><th>Kunder</th><th>Snitt/mnd</th><th>Årlig</th></tr>
+    <tr><td>ENK</td><td>350 000</td><td>1%</td><td>3 500</td><td>499 kr</td><td>21 MNOK</td></tr>
+    <tr><td>SMB 1-10</td><td>120 000</td><td>3%</td><td>3 600</td><td>1 499 kr</td><td>65 MNOK</td></tr>
+    <tr><td>SMB 10-50</td><td>25 000</td><td>5%</td><td>1 250</td><td>1 499 kr</td><td>22 MNOK</td></tr>
+    <tr><td>50+</td><td>5 000</td><td>10%</td><td>500</td><td>3 999 kr</td><td>24 MNOK</td></tr>
+    <tr style="font-weight:bold;"><td colspan="5">TOTALT</td><td>~132 MNOK/år</td></tr>
+</table>
+<h3>Internasjonalt</h3>
+<table>
+    <tr><th>Region</th><th>Bedrifter</th><th>%</th><th>Inntekt</th></tr>
+    <tr><td>Norden</td><td>1,2M</td><td>2%</td><td>~500 MNOK</td></tr>
+    <tr><td>Europa</td><td>25M</td><td>0,5%</td><td>~2 MRD</td></tr>
+    <tr><td>Globalt</td><td>330M</td><td>0,1%</td><td>~5 MRD</td></tr>
+</table>
+
+<!-- SEKSJON 10 -->
+<h2 id="s10">10. IMPLEMENTERINGSPLAN</h2>
+<table>
+    <tr><th>Fase</th><th>Tidslinje</th><th>Moduler</th><th>Milepæler</th></tr>
+    <tr><td>1</td><td>Q3-Q4 2026</td><td>25</td><td>MVP lansert, 10 pilotkunder, feedback-loop</td></tr>
+    <tr><td>2</td><td>Q1-Q2 2027</td><td>50</td><td>Kommersiell lansering Norge, 500+ kunder, team 5-8</td></tr>
+    <tr><td>3</td><td>Q3-Q4 2027</td><td>75</td><td>Nordisk ekspansjon, 2 000+ kunder, team 15-20</td></tr>
+    <tr><td>4</td><td>2028</td><td>100</td><td>Europeisk lansering, 10 000+ kunder, Serie A</td></tr>
+</table>
+
+<!-- SEKSJON 11 -->
+<h2 id="s11">11. KONKURRANSEFORTRINN</h2>
+<table>
+    <tr><th>#</th><th>Fortrinn</th><th>Beskrivelse</th></tr>
+    <tr><td>1</td><td>Horisontal</td><td>100 moduler i én plattform. Ingen andre gjør dette.</td></tr>
+    <tr><td>2</td><td>Proaktiv</td><td>Varsler FØR problemer oppstår. Konkurrenter er reaktive.</td></tr>
+    <tr><td>3</td><td>Selvlærende</td><td>Tilpasser seg bedriftens data. Blir bedre over tid.</td></tr>
+    <tr><td>4</td><td>Autonom</td><td>511 oppgaver helautomatisk. Null menneskelig innblanding.</td></tr>
+    <tr><td>5</td><td>Ingen API-kost</td><td>85-90% margin. Konkurrenter har 40-60%.</td></tr>
+    <tr><td>6</td><td>SMB-fokus</td><td>Bygget for de 99%. Konkurrenter sikter mot enterprise.</td></tr>
+    <tr><td>7</td><td>WCAG 2.1 AA</td><td>Universell utforming fra dag én. Ingen andre kan si det samme.</td></tr>
+</table>
+
+<div class="summary-box" style="margin-top:30px;">
+    <h3 style="margin-top:0;">🎯 SLUTTORD</h3>
+    <p style="font-size:12px;"><strong>Dette er ikke et verktøy. Dette er en ny måte å drive bedrift på.</strong></p>
+    <p>100 moduler. 511 automatiserte oppgaver. 100% autonom. WCAG 2.1 AA. Ingen API-kostnader.</p>
+    <p><strong>Målet:</strong> Bygge verdens første komplette, proaktive, autonome AI-bedriftsagent.</p>
+</div>
+
+<p style="text-align:center; color:var(--gray-700); margin-top:30px; font-size:9px;">© 2026 Konfidensielt. AI Bedriftsagent Prototype v5.0. 31. juli 2026.</p>
+
+</body>
+</html>
