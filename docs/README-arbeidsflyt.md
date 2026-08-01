@@ -51,16 +51,18 @@ reservasjon, fail-closed dataklasser, IANA-tidssoner,
 logg-før-utførelse). 62 tester på main. Punkt 1–3 i den opprinnelige
 byggeplanen er dermed levert.
 
+**PR-003 (denne endringen):** de utgåtte v0.1-filene er slettet, ADR-001 er
+vedtatt, og dette dokumentet beskriver nå faktisk tilstand.
+
 **Neste:**
-1. **PR-003 (rydding):** slett `*_v01_deprecated.py` og
-   `policy-schema-v0.1.yaml`, oppdater dette dokumentet, vedta ADR-001.
-2. **PR-004 (tilstandslag):** PostgreSQL for revisjonslogg og
+1. **PR-004 (tilstandslag):** PostgreSQL for revisjonslogg og
    frekvensteller + kryptografisk attestasjonsverifikasjon — bindende
    krav i `docs/beslutninger/ADR-001-revisjonslogg-i-postgresql.md`.
-   Krever PostgreSQL på staging (Cloud Server S) først.
-3. **PR-005 (M-37 unntakskø):** strukturert kø for alt som stoppes,
+   PostgreSQL 18 er installert på staging (Cloud Server S) og røyktestet;
+   tilkoblingsstrengen ligger i `~/disponit-staging/.env` på serveren.
+2. **PR-005 (M-37 unntakskø):** strukturert kø for alt som stoppes,
    inkl. utførelse av kompenserende reversering.
-4. **Bransjemaler:** utvid fra 3 til 10–15 fra åpne kilder mens
+3. **Bransjemaler:** utvid fra 3 til 10–15 fra åpne kilder mens
    tilstandslaget bygges; deretter første pilotkunde i skyggemodus og
    malstatus `utkast → validert_pilot`.
 
