@@ -9,6 +9,7 @@ DB=disponit
 BRUKER=disponit              # RUNTIME — kun DML, eier ingenting
 MIGRATOR=disponit_migrator   # eier skjemaet, kjører migrasjoner
 AUTH=disponit_authenticator  # eier api_tokener; runtime naar den aldri direkte
+TOKENADMIN=disponit_token_admin  # administrerer tokens, eier ingenting
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -23,7 +24,7 @@ systemctl enable --now postgresql
 # Roller er KLYNGEobjekter og opprettes her, med superbrukeren — aldri i en
 # migrasjon. Draften til PR-005 gjorde det siste, og det feiler i vaart
 # oppsett fordi migratorrollen verken har eller skal ha CREATEROLE.
-for r in "$BRUKER" "$MIGRATOR"; do
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -54,10 +55,18 @@ touch "$MILJOFIL" && chmod 600 "$MILJOFIL"
 
 RUNTIME_DSN=("DATABASE_URL=$DB" "DISPONIT_TEST_DSN=${DB}_test")
 MIGRATOR_DSN=("DISPONIT_MIGRATOR_URL=$DB" "DISPONIT_TEST_MIGRATOR_DSN=${DB}_test")
+TOKENADMIN_DSN=("DISPONIT_TOKEN_ADMIN_URL=$DB"
+                "DISPONIT_TEST_TOKEN_ADMIN_DSN=${DB}_test")
 
-sikre_rolle_dsn "$BRUKER"   "${RUNTIME_DSN[@]}"
-sikre_rolle_dsn "$MIGRATOR" "${MIGRATOR_DSN[@]}"
+sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
+sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
+sikre_rolle_dsn "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 sikre_attestasjonsnokler
+# KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
+# ble innfoert, men ingen deploy-vei satte noekkelen — API-et nekter aa starte
+# uten den, og det er slik feilen skal oppdages, ikke i foerste unntaksrad.
+sikre_hex_hemmelighet DISPONIT_KEK 32
+sikre_hex_hemmelighet DISPONIT_TOKEN_PEPPER 32
 
 # Sannhetsprøve FØR noen DSN tas i bruk.
 #
@@ -66,8 +75,9 @@ sikre_attestasjonsnokler
 # rollen ikke lenger hadde — migrasjonen feilet, `set -e` avsluttet skriptet,
 # og reparasjonen ble aldri nådd. Reparasjonen var altså utilgjengelig
 # nøyaktig i den tilstanden den fantes for. Den må kjøre før første bruk.
-verifiser_og_reparer "$BRUKER"   "${RUNTIME_DSN[@]}"
-verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
+verifiser_og_reparer "$BRUKER"     "${RUNTIME_DSN[@]}"
+verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
+verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -157,7 +167,8 @@ if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q --upgrade pip
 fi
-"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema
+"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema \
+  starlette uvicorn httpx
 
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
   DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \
@@ -165,8 +176,9 @@ for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
 done
 
 # Sluttkontroll: alt skal fortsatt virke etter migrasjoner og rettigheter.
-verifiser_og_reparer "$BRUKER"   "${RUNTIME_DSN[@]}"
-verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
+verifiser_og_reparer "$BRUKER"     "${RUNTIME_DSN[@]}"
+verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
+verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
-echo "Verifiser: python3 -m pytest platform/core/tests -q  (94 forventet)"
+echo "Verifiser: python3 -m pytest platform/core/tests -q"

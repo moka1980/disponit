@@ -1,4 +1,5 @@
 # Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
 id: m01_policy
 navn: Policy- og fullmaktsmotor (M-1)
 versjon: 0.1.0
@@ -6,18 +7,50 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 avhengigheter: []              # M-1 er roten — ingen avhengigheter
 kjerne: platform/core/policy_validator   # hvor koden bor
 i18n_prefiks: m01              # alle modulens tekstnøkler starter slik
-staging_sjekkliste:            # fra docs/DEPLOY.md — alle må være JA før aktiv
-  # Kjørt av Claude Code på Cloud Server S 2026-08-02, PR-004-branchen.
-  # Kun punkter med faktisk målt bevis er satt til ja.
-  tester_gronne_pa_staging: ja        # 74 passed på serveren, /etc/disponit/staging.env lastet
-  syntetisk_datasett_likt_lokalt: ja  # 180 hendelser: 84 TILLAT / 3 STOPP / 93 UNNTAK — identisk med lokalt
-  revisjonslogg_korrekt: ja           # ekte beslutning gjennom sikker_beslutning_pg lagret med
-                                      # tenant/aktor/kilde fra kontekst; UPDATE og DELETE avvist av
-                                      # databasetriggeren («append-only ... forbudt»)
-  feilinjisering_til_unntakskø: nei   # BLOKKERT: unntakskøen (M-37) finnes ikke før PR-005.
-                                      # Motoren produserer UNNTAK-beslutninger, men det finnes
-                                      # ingen kø å havne i — punktet kan ikke bestås ennå.
-  ytelse_bestatt: nei                 # ingen lastgrense definert for m01 ennå; må settes før måling
-  rollback_testet: nei                # registeret rapporterer m01 som inaktiv og nekter aktivering
-                                      # ved manglende avhengigheter, men full deaktivering under
-                                      # drift er ikke prøvd — hører til PR-005 med API-et
+
+# Strukturert format (v2 Del 7 + v3-delta pkt. 7). Gyldige verdier er
+# ja | nei | blokkert; `blokkert` KREVER `blokkert_av`. Et punkt uten
+# definert, målbar grense regnes som `nei` — en port man ikke kan måle er
+# ingen port.
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: ja
+    notat: >-
+      Kjørt av Claude Code på Cloud Server S. PR-004: 74 passed.
+      PR-005a: 155 passed med /etc/disponit/staging.env lastet.
+      Oppdateres av PR-005b-kjøringen.
+  syntetisk_datasett_likt_lokalt:
+    status: ja
+    notat: >-
+      180 hendelser: 84 TILLAT / 3 STOPP / 93 UNNTAK — identisk med lokalt.
+  revisjonslogg_korrekt:
+    status: ja
+    notat: >-
+      Ekte beslutning gjennom sikker_beslutning_pg lagret med
+      tenant/aktor/kilde fra konteksten; UPDATE og DELETE avvist av
+      databasetriggeren. PR-005b legger til evidensfeltene (handling,
+      request_id, idempotency_key, policy_content_hash,
+      attestation_set_hash).
+  feilinjisering_til_unntakskø:
+    # PR-005b bygger LAGRINGEN (M-37-tabellene, routing, kryptering), men
+    # ikke behandlingsmotoren. Punktet krever at en injisert feil faktisk
+    # BEHANDLES i køen, og det er PR-006. Derfor fortsatt blokkert — ikke
+    # «ja» fordi halve veien nå finnes.
+    status: blokkert
+    blokkert_av: m37
+  ytelse_bestatt:
+    # Grensen ER definert og målbar (perf-m01-v1): 100 beslutninger/sekund,
+    # 20 samtidige, p95 < 150 ms, null feil, 1:1 mellom beslutning og
+    # loggpost. Skriptet finnes: deploy/staging/lasttest-m01.py.
+    # Står som `nei` til kjøringen på staging har produsert artefaktet —
+    # og da settes `artefakt` til stien. Skjemaet håndhever at et `ja` med
+    # krav_id MÅ ha artefakt: manifestfeltet er aldri selv beviset.
+    status: nei
+    krav_id: perf-m01-v1
+  rollback_testet:
+    # Splittet per review D2: den TEKNISKE deaktiveringen via registeret kan
+    # bevises nå og er derfor `nei` (ikke gjort ennå), ikke `blokkert`.
+    # Ende-til-ende-varianten dekkes av feilinjiseringspunktet over, som ER
+    # blokkert av m37.
+    status: nei
+    krav_id: rollback-m01-v1

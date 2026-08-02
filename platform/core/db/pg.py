@@ -13,6 +13,7 @@ exception gir STOPP — aldri «fortsett uten logg».
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,6 +63,30 @@ def sett_tenant(conn: psycopg.Connection, tenant: str | None) -> str:
     return t
 
 
+def sett_kontekst(conn: psycopg.Connection, tenant: str | None,
+                  aktor: str, request_id: str) -> str:
+    """Setter ALLE tre sesjonsvariablene for gjeldende transaksjon.
+
+    `disponit.tenant` styrer row level security (migrasjon 002/003).
+    `disponit.aktor` kreves av historikktriggeren på `unntak` — mangler
+    den, feiler transaksjonen, og det er med vilje: en unntakshistorikk
+    uten aktør er ikke et revisjonsspor.
+    `disponit.request_id` følger med i historikken for sporing.
+
+    Alle tre er SET LOCAL (`set_config(..., true)`), så de forsvinner ved
+    commit/rollback og kan aldri lekke fra én forespørsel til den neste i
+    en gjenbrukt tilkobling.
+
+    Aktør og request_id kommer fra pre-auth-resultatet og fra serveren —
+    aldri fra payloaden (PR-005b korreksjon 3).
+    """
+    t = sett_tenant(conn, tenant)
+    conn.execute("SELECT set_config('disponit.aktor', %s, true),"
+                 "       set_config('disponit.request_id', %s, true)",
+                 (aktor, request_id))
+    return t
+
+
 def _forsok_reservasjon(conn: psycopg.Connection, nokkel: tuple[str, ...],
                         siden: datetime, maks: int,
                         tidspunkt: datetime) -> bool:
@@ -102,10 +127,17 @@ class PgTellerLager(TellerLager):
     konkurrerende reservasjoner, deretter telles og skrives det udelelig.
     Låsen slippes automatisk ved commit/rollback (xact-variant) — ingen
     opprydding å glemme, ingen foreldreløse låser ved krasj.
+
+    `ytre_transaksjon=True` sier at en eier (api.kjerne.behandle) allerede
+    har åpnet transaksjonen og er ENESTE sted commit/rollback skjer
+    (PR-005b korreksjon 1). Da må dette lageret holde fingrene fra
+    transaksjonsstyringen — se `antall()`.
     """
 
-    def __init__(self, conn: psycopg.Connection) -> None:
+    def __init__(self, conn: psycopg.Connection,
+                 ytre_transaksjon: bool = False) -> None:
         self._conn = conn
+        self._ytre = ytre_transaksjon
 
     def antall(self, nokkel: tuple[str, ...], siden: datetime) -> int:
         """Rådgivende — aldri håndheving (TellerLager-kontrakten)."""
@@ -116,7 +148,16 @@ class PgTellerLager(TellerLager):
             " WHERE tenant=%s AND handling=%s AND nokkel_felt=%s"
             "   AND gruppe=%s AND tidspunkt >= %s",
             (tenant, handling, felt, gruppe, siden)).fetchone()
-        self._conn.rollback()  # ren lesing — ikke hold transaksjon åpen
+        if not self._ytre:
+            # Frittstående bruk: `with conn.transaction()` lenger nede
+            # committer bare når den er YTTERST. Lot vi transaksjonen fra
+            # denne lesingen stå åpen, ble den blokken en savepoint og
+            # loggposten ville aldri blitt committet.
+            self._conn.rollback()
+        # Med ytre transaksjon ville nøyaktig samme rollback vært en
+        # katastrofe: den kaster eierens SET LOCAL, slipper
+        # pg_advisory_xact_lock-en på idempotensnøkkelen og annullerer
+        # idempotens-claimet — midt i flyten, uten at noe feiler høylytt.
         return int(rad[0])
 
     def reserver(self, nokkel: tuple[str, ...], siden: datetime, maks: int,
@@ -139,27 +180,80 @@ class PgTellerLager(TellerLager):
                 (tenant, handling, felt, gruppe, tidspunkt))
 
 
-def _skriv_loggpost(conn: psycopg.Connection, post: dict) -> None:
-    """Skriver loggposten. Tenant settes både som kolonne og som
-    sesjonsvariabel, ellers avviser row level security-policyen raden."""
+@dataclass
+class Portbrudd:
+    """Et brudd som er avgjort FØR motoren, og som bare skal logges.
+
+    Signaturporten under var opprinnelig den eneste av sitt slag. PR-005b
+    trenger tre til — bindingsbrudd, jti-replay og korrupt policy — og alle
+    har nøyaktig samme form: STOPP er allerede bestemt, det som gjenstår er
+    en loggpost.
+
+    Alternativet var å la `api.kjerne` skrive de loggpostene selv. Det ville
+    gitt revisjonsloggen to skriveveier, og nøyaktig den duplikatformen ga
+    P1 nr. 4 i PR-002: `ved_brudd`-mappingen fantes to steder, og bare den
+    ene ble rettet.
+    """
+    grunn: Grunn
+    policy_id: str = "signaturport"
+
+
+@dataclass
+class Evidens:
+    """Evidensidentiteten migrasjon 003 la til i revisjonsloggen (v2 1.2).
+
+    Inn: de fem feltene API-veien alltid setter. Ut: `loggpost_id`, som
+    unntaksraden trenger for den tenantkonsistente fremmednøkkelen
+    (tenant, loggpost_id) -> revisjonslogg (tenant, id).
+
+    At id-en kommer TILBAKE gjennom dette objektet, og ikke ved at
+    api.kjerne skriver sin egen loggpost, er hele poenget: det finnes
+    fortsatt nøyaktig ÉN kodevei som skriver revisjonsloggen. To
+    skriveveier ville vært samme duplikatform som ga P1 nr. 4 i PR-002.
+    """
+    handling: str | None = None
+    request_id: str | None = None
+    idempotency_key: str | None = None
+    policy_content_hash: str | None = None
+    attestation_set_hash: str | None = None
+    loggpost_id: int | None = None     # settes av _skriv_loggpost
+
+
+def _skriv_loggpost(conn: psycopg.Connection, post: dict,
+                    evidens: "Evidens | None" = None) -> int:
+    """Skriver loggposten og returnerer id-en. Tenant settes både som
+    kolonne og som sesjonsvariabel, ellers avviser row level
+    security-policyen raden."""
     post = dict(post)
     post["tenant"] = sett_tenant(conn, post.get("tenant"))
-    conn.execute(
+    e = evidens or Evidens()
+    rad = conn.execute(
         "INSERT INTO revisjonslogg (ts, tenant, aktor, kilde, input_hash,"
         " policy_id, bransjemal, mal_status, schema_version, beslutning,"
-        " unntak_kategori, effekt, begrunnelse)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        " unntak_kategori, effekt, begrunnelse,"
+        " handling, request_id, idempotency_key, policy_content_hash,"
+        " attestation_set_hash)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+        " RETURNING id",
         (post["ts"], post["tenant"], post["aktor"], post["kilde"],
          post["input_hash"], post["policy_id"], post["bransjemal"],
          post["mal_status"], post["schema_version"], post["beslutning"],
          post["unntak_kategori"], post["effekt"],
-         json.dumps(post["begrunnelse"], ensure_ascii=False)))
+         json.dumps(post["begrunnelse"], ensure_ascii=False),
+         e.handling, e.request_id, e.idempotency_key,
+         e.policy_content_hash, e.attestation_set_hash)).fetchone()
+    if evidens is not None:
+        evidens.loggpost_id = int(rad[0])
+    return int(rad[0])
 
 
 def sikker_beslutning_pg(policy: dict, context, event: dict,
                          conn: psycopg.Connection,
                          naa: datetime | None = None,
-                         nokler: dict | None = None) -> Decision:
+                         nokler: dict | None = None,
+                         evidens: "Evidens | None" = None,
+                         ytre_transaksjon: bool = False,
+                         portbrudd: "Portbrudd | None" = None) -> Decision:
     """PostgreSQL-varianten av logg-før-utførelse-kontrakten.
 
     Forskjeller fra filvarianten:
@@ -176,26 +270,51 @@ def sikker_beslutning_pg(policy: dict, context, event: dict,
     Kontrakt uendret: sideeffekt HVIS OG BARE HVIS retur er TILLAT.
     Alle feilveier — DB nede, commit feilet, motor-exception, signatur-
     brudd — er STOPP.
+
+    `ytre_transaksjon=True` (PR-005b korreksjon 1) sier at
+    `api.kjerne.behandle()` eier transaksjonen og er eneste sted
+    commit/rollback skjer. To ting endres da, og bare de to:
+
+      * `PgTellerLager` slutter å rulle tilbake etter det rådgivende
+        oppslaget — se `antall()`.
+      * En DATABASEFEIL under skrivingen PROPAGERER i stedet for å bli
+        gjort om til en ordinær STOPP med `logging_feilet`. Grunnen er at
+        `with conn.transaction()` her er en savepoint: å svelge feilen
+        ville rullet savepointet tilbake og latt eieren committe en
+        transaksjon uten loggpost, mens svaret så ut som en normal,
+        auditert beslutning. Eieren må se feilen for å kunne rulle hele
+        forespørselen tilbake og svare etter 4.1-kontrakten.
+        `motor_exception` er noe annet og konverteres fortsatt: der
+        feilet EVALUERINGEN, ikke skrivingen — det er et resultat
+        (STOPP), ikke en rollback.
     """
     from policy_validator import attestering
     naa = naa or datetime.now(timezone.utc)
     handling = event.get("handling") if isinstance(event.get("handling"), str) \
         else "<mangler>"
 
-    if nokler is not None:
-        brudd = attestering.kontroller_hendelse(event, nokler)
-        if brudd is not None:
-            d = Decision(STOPP, handling, "signaturport", [brudd])
-            try:
-                with conn.transaction():
-                    _skriv_loggpost(conn, lag_loggpost(d, event, policy, context))
-            except Exception as e:
-                return Decision(STOPP, handling, "signaturport",
-                                d.begrunnelse + [Grunn(
-                                    "logging_feilet", {"type": type(e).__name__})])
-            return d
+    # Porten: enten et brudd kalleren allerede har avgjort, eller
+    # signaturkontrollen. Begge ender i samme loggskriving.
+    brudd = portbrudd
+    if brudd is None and nokler is not None:
+        grunn = attestering.kontroller_hendelse(event, nokler)
+        if grunn is not None:
+            brudd = Portbrudd(grunn)
+    if brudd is not None:
+        d = Decision(STOPP, handling, brudd.policy_id, [brudd.grunn])
+        try:
+            with conn.transaction():
+                _skriv_loggpost(conn, lag_loggpost(d, event, policy, context),
+                                evidens)
+        except Exception as e:
+            if ytre_transaksjon:
+                raise
+            return Decision(STOPP, handling, brudd.policy_id,
+                            d.begrunnelse + [Grunn(
+                                "logging_feilet", {"type": type(e).__name__})])
+        return d
 
-    teller = PgTellerLager(conn)
+    teller = PgTellerLager(conn, ytre_transaksjon=ytre_transaksjon)
     try:
         d = evaluate(policy, context, event, teller=teller, naa=naa)
     except Exception as e:  # fail-closed
@@ -218,11 +337,15 @@ def sikker_beslutning_pg(policy: dict, context, event: dict,
                                                   if beslutning == UNNTAK
                                                   else None),
                                  effekt=effekt)
-                _skriv_loggpost(conn, lag_loggpost(d, event, policy, context))
+                _skriv_loggpost(conn, lag_loggpost(d, event, policy, context),
+                                evidens)
         else:
             with conn.transaction():
-                _skriv_loggpost(conn, lag_loggpost(d, event, policy, context))
+                _skriv_loggpost(conn, lag_loggpost(d, event, policy, context),
+                                evidens)
     except Exception as e:
+        if ytre_transaksjon:
+            raise
         return Decision(STOPP, d.handling, d.policy_id,
                         d.begrunnelse + [Grunn(
                             "logging_feilet", {"type": type(e).__name__})])

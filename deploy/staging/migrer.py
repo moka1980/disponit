@@ -40,6 +40,29 @@ GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+-- api_tokener står bevisst IKKE i listen over, og REVOKE-en på toppen
+-- fjerner den hvis en tidligere kjøring ga den bort. Runtime skal nå
+-- tokentabellen KUN gjennom SECURITY DEFINER-funksjonen (korreksjon 2):
+-- da kan en full lesing av runtimes tilgjengelige tabeller aldri gi
+-- secret_mac, og pepperet finnes uansett bare i API-prosessen.
+GRANT EXECUTE ON FUNCTION verifiser_token(TEXT, TEXT) TO {rolle};
+"""
+
+# Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
+# Kolonnenivå med vilje: `secret_mac` er ikke med i SELECT-listen, så en
+# kompromittert token-admin kan opprette og deaktivere tokens, men ikke lese
+# ut de eksisterende hemmelighetenes MAC. UPDATE er begrenset til de tre
+# feltene rotasjon og deaktivering faktisk trenger.
+TOKEN_ADMIN_RETTIGHETER = """
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {rolle};
+REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
+GRANT USAGE ON SCHEMA public TO {rolle};
+GRANT SELECT (token_id, tenant, rolle, scopes, aktiv, utloper, last_used_at,
+              opprettet) ON api_tokener TO {rolle};
+GRANT INSERT ON api_tokener TO {rolle};
+GRANT UPDATE (aktiv, utloper, secret_mac) ON api_tokener TO {rolle};
+GRANT INSERT ON revisjonslogg TO {rolle};
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 """
 
 
@@ -103,6 +126,24 @@ def main(argv: list[str] | None = None) -> int:
         conn.execute(RETTIGHETER.format(rolle=rolle))
         conn.commit()
         print(f"rettigheter satt for {rolle}")
+        # Token-admin er valgfri på eldre installasjoner: rollen opprettes av
+        # oppsett-skriptet, og en GRANT til en rolle som ikke finnes er en
+        # hard feil — ikke en advarsel. Betinget, som 003 gjør for runtime.
+        token_admin = os.environ.get("DISPONIT_TOKEN_ADMIN_ROLLE",
+                                     "disponit_token_admin")
+        if not token_admin.replace("_", "").isalnum():
+            print(f"AVBRUTT: ugyldig rollenavn {token_admin!r}")
+            return 2
+        finnes = conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                              (token_admin,)).fetchone()
+        if finnes:
+            conn.execute(TOKEN_ADMIN_RETTIGHETER.format(rolle=token_admin))
+            conn.commit()
+            print(f"rettigheter satt for {token_admin}")
+        else:
+            conn.rollback()
+            print(f"hopper over {token_admin}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.
         versjoner = conn.execute(

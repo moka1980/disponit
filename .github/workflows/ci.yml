@@ -29,18 +29,24 @@ jobs:
       # gjort tenant-testene meningsløse.
       DISPONIT_TEST_DSN: postgresql://disponit:kjor@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_MIGRATOR_DSN: postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_test
+      # Token-admin er en TREDJE rolle (PR-005b korreksjon 2). Uten den i CI
+      # kan rolleskillet ikke bevises der det betyr noe: at den kan
+      # administrere tokens og likevel ikke lese secret_mac eller kalle
+      # verifiser_token.
+      DISPONIT_TEST_TOKEN_ADMIN_DSN: postgresql://disponit_token_admin:tok@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: Installer avhengigheter
-        run: pip install pytest pyyaml jsonschema "psycopg[binary]" cryptography
+        run: pip install pytest pyyaml jsonschema "psycopg[binary]" cryptography starlette uvicorn httpx
       - name: "Databaseroller (speiler deploy/staging/oppsett-postgresql.sh)"
         env: {PGPASSWORD: postgres}
         run: |
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit LOGIN PASSWORD 'kjor'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_migrator LOGIN PASSWORD 'mig'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_authenticator NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_authenticator TO disponit_migrator"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
@@ -77,6 +83,30 @@ jobs:
           if feil: print(feil); sys.exit(1)
           print("alle policyer gyldige")
           PY
+      - name: "Manifestskjema (v2 Del 7): alle manifester validerer"
+        # Uten dette er staging-sjekklisten fritekst, og et `nei` kan bli et
+        # `ja` uten at noen port merker det. Skjemaet krever i tillegg at et
+        # `ja` med krav_id peker paa et artefakt — manifestfeltet er aldri
+        # selv beviset (v2 Del 6).
+        run: |
+          python - << 'PY'
+          import sys
+          sys.path.insert(0, "platform/core")
+          from pathlib import Path
+          from manifestskjema import aktiv_uten_bevis, valider_alle
+          import yaml
+          feil = {n: f for n, f in valider_alle(Path("platform/modules")).items() if f}
+          if feil:
+              print(feil); sys.exit(1)
+          for fil in Path("platform/modules").glob("*/manifest.yaml"):
+              m = yaml.safe_load(fil.read_text(encoding="utf-8"))
+              uten = aktiv_uten_bevis(m)
+              if uten:
+                  print(f"{fil}: status=aktiv med uavklarte punkter {uten}")
+                  sys.exit(1)
+          print("alle manifester gyldige")
+          PY
+
       - name: Modulregister konsistent
         run: |
           python - << 'PY'

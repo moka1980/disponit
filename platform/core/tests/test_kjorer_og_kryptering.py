@@ -18,6 +18,21 @@ NAA = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
 KEK = "a" * 64
 
 
+def alle_versjoner() -> list[int]:
+    """Versjonene som FINNES i repoet, lest fra mappa.
+
+    Sto tidligere hardkodet som `[1, 2, 3]` fem steder. Da PR-005b la til
+    004, falt seks tester på en gang — uten at noen av dem hadde noe med
+    innholdet i 004 å gjøre. En test som må endres hver gang en migrasjon
+    legges til, måler filnavn, ikke kontrakt. Kontrakten er: kjøreren
+    registrerer NØYAKTIG de versjonene som finnes, alle med checksum.
+    """
+    from pathlib import Path
+    mig = Path(__file__).resolve().parents[1] / "db/migrations"
+    return sorted(int(f.name[:3])
+                  for f in mig.glob("[0-9][0-9][0-9]_*.sql"))
+
+
 @pytest.fixture()
 def migrator():
     from db.pg import koble
@@ -61,10 +76,12 @@ def test_nye_migrasjoner_faar_alltid_checksum(migrator):
     rader = dict(migrator.execute(
         "SELECT versjon, checksum FROM migrasjoner ORDER BY versjon").fetchall())
     migrator.rollback()
-    assert set(rader) == {1, 2, 3}
-    assert rader[3], "migrasjon 003 ble kjørt av kjøreren og skal ha checksum"
-    for legacy in (1, 2):
-        assert rader[legacy] is None or len(rader[legacy]) == 64
+    assert set(rader) == set(alle_versjoner())
+    for v in alle_versjoner():
+        if v in (1, 2):     # legacy: kan stå med NULL til bootstrap har kjørt
+            assert rader[v] is None or len(rader[v]) == 64
+        else:
+            assert rader[v], f"migrasjon {v:03d} ble kjørt av kjøreren og skal ha checksum"
 
 
 @pg
@@ -389,7 +406,12 @@ def test_kjoreren_avviser_fil_som_eier_egen_transaksjon(migrator, tmp_path,
     legger inn en fil med egen BEGIN — og mutasjonstest viste nettopp at
     vakten kunne fjernes uten at én test falt."""
     from db import kjorer
-    (tmp_path / "004_med_egen_tx.sql").write_text(
+    # Versjonsnummeret må være HØYERE enn alt som finnes i repoet. Filen het
+    # opprinnelig 004, og da PR-005b la til en ekte 004 traff testen
+    # checksum-vakten i stedet for BEGIN-vakten — den ville fortsatt
+    # «bestått» med `raises(RuntimeError)`, men bevist feil kontrakt.
+    ny = max(alle_versjoner()) + 1
+    (tmp_path / f"{ny:03d}_med_egen_tx.sql").write_text(
         "BEGIN;\nCREATE TABLE bare_tull (x int);\nCOMMIT;\n", encoding="utf-8")
     monkeypatch.setattr(kjorer, "_MIG", tmp_path)
     with pytest.raises(RuntimeError, match="transaksjonen|BEGIN"):
@@ -467,7 +489,8 @@ def test_migrasjonen_er_faktisk_lagret_etter_kjoring():
         c2.rollback()
     finally:
         c2.close()
-    assert versjoner == [1, 2, 3], f"registeret overlevde ikke tilkoblingen: {versjoner}"
+    assert versjoner == alle_versjoner(), \
+        f"registeret overlevde ikke tilkoblingen: {versjoner}"
 
 
 # ---------- Codex-krav: herding skjer FØR 003, på begge veier ------------
@@ -565,7 +588,7 @@ def test_herding_skjer_for_003_paa_begge_veier(migrator, monkeypatch,
     migrator.rollback()
     assert nullable[0] == "NO", "checksum er fortsatt nullable"
     assert uten == [], f"migrasjoner uten checksum: {uten}"
-    assert versjoner == [1, 2, 3]
+    assert versjoner == alle_versjoner()
 
 
 @pg
@@ -657,4 +680,4 @@ def test_ingen_annen_prosess_naar_003_for_herdingen_er_ferdig(migrator,
     versjoner = [r[0] for r in migrator.execute(
         "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()]
     migrator.rollback()
-    assert nullable[0] == "NO" and versjoner == [1, 2, 3]
+    assert nullable[0] == "NO" and versjoner == alle_versjoner()

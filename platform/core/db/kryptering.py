@@ -24,8 +24,42 @@ def _kek() -> AESGCM:
     return AESGCM(bytes.fromhex(raa[:64]))
 
 
+def krev_kek() -> None:
+    """Boot-sjekk: KEK-en finnes og lar seg bruke. Kaster ellers.
+
+    Kalles av `api.app` FØR prosessen begynner å ta imot forespørsler. Uten
+    denne oppdages en manglende KEK først når den første unntaksraden skal
+    krypteres — altså midt i en beslutning, med en halvferdig transaksjon
+    og en klient som venter. En prosess som ikke kan kryptere skal ikke
+    starte.
+    """
+    _kek()
+
+
+def _pakk_ut(rad, tenant: str) -> tuple[str, bytes]:
+    key_id, wrapped = rad
+    nonce, ct = bytes(wrapped[:12]), bytes(wrapped[12:])
+    return key_id, _kek().decrypt(nonce, ct, tenant.encode())
+
+
 def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
                                  tenant: str) -> tuple[str, bytes]:
+    """Den aktive DEK-en for tenanten, opprettet ved første behov.
+
+    Opprettelsen er serialisert per tenant. Uten det taper 19 av 20
+    samtidige førstegangs-skrivinger kappløpet mot delindeksen
+    `en_aktiv_dek_per_tenant`: alle ser «ingen aktiv DEK», alle forsøker å
+    lage en, én vinner og resten får unikbrudd — som i API-veien blir
+    `unntaksskriv_feilet` og ruller HELE beslutningen.
+
+    Funnet av lasttesten, ikke av lesing: feilen finnes bare i det ene
+    øyeblikket en tenant får sin aller første sak, og bare når flere
+    forespørsler treffer samtidig. Alle enkelttester passerte.
+
+    Låsen tas KUN når det faktisk mangler en DEK. Å låse per tenant på
+    hver eneste unntaksrad ville serialisert hele køskrivingen for en
+    kunde, og bootstrap skjer én gang i en tenants levetid.
+    """
     # RLS: uten sesjonsvariabelen ser vi null rader og ville laget en NY
     # DEK for en tenant som allerede har en — og da blir gamle unntak
     # uleselige uten at noe feiler høylytt.
@@ -35,9 +69,18 @@ def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
         "SELECT key_id, wrapped_dek FROM tenant_nokler"
         " WHERE tenant=%s AND aktiv", (tenant,)).fetchone()
     if rad:
-        key_id, wrapped = rad
-        nonce, ct = bytes(wrapped[:12]), bytes(wrapped[12:])
-        return key_id, _kek().decrypt(nonce, ct, tenant.encode())
+        return _pakk_ut(rad, tenant)
+
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fdek-bootstrap",))
+    # Dobbeltsjekk UNDER låsen: vant noen andre mens vi ventet, er deres
+    # DEK nå committet og synlig, og vi skal bruke den — ikke lage enda en.
+    rad = conn.execute(
+        "SELECT key_id, wrapped_dek FROM tenant_nokler"
+        " WHERE tenant=%s AND aktiv", (tenant,)).fetchone()
+    if rad:
+        return _pakk_ut(rad, tenant)
+
     dek = AESGCM.generate_key(256)
     nonce = secrets.token_bytes(12)
     wrapped = nonce + _kek().encrypt(nonce, dek, tenant.encode())
