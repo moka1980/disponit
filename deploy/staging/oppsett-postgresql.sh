@@ -125,6 +125,22 @@ for base in $DB ${DB}_test; do
         AND NOT EXISTS (SELECT 1 FROM pg_depend d
                          WHERE d.objid=p.oid AND d.deptype='e')" \
     | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
+
+  # Selvhelbredelse: den forrige versjonen av dette skriptet rakk å ta
+  # eierskap over extension-funksjoner UTEN argumenter (på staging traff den
+  # pgcrypto sine `fips_mode()` og `gen_random_uuid()`). Gi dem tilbake til
+  # extensionens egen eier, ellers henger skaden igjen på enhver maskin der
+  # den gamle versjonen har kjørt.
+  sudo -u postgres psql -qtAd "$base" -c \
+    "SELECT format('ALTER FUNCTION %s OWNER TO %I;', p.oid::regprocedure,
+                   pg_get_userbyid(e.extowner))
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid=p.pronamespace
+       JOIN pg_depend d ON d.objid=p.oid AND d.deptype='e'
+       JOIN pg_extension e ON e.oid=d.refobjid
+      WHERE n.nspname='public'
+        AND pg_get_userbyid(p.proowner) <> pg_get_userbyid(e.extowner)" \
+    | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
 done
 
