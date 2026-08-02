@@ -446,9 +446,23 @@ def test_alle_filkall_har_eksplisitt_utf8():
     for fil in (rot / "platform").rglob("*.py"):
         if "_v01_deprecated" in fil.name:
             continue
-        for nr, linje in enumerate(fil.read_text(encoding="utf-8").splitlines(), 1):
-            if tekstkall.search(linje) and "encoding" not in linje \
-                    and not binaer.search(linje) and not raa_fd.search(linje):
+        linjer = fil.read_text(encoding="utf-8").splitlines()
+        for nr, linje in enumerate(linjer, 1):
+            if not tekstkall.search(linje) or binaer.search(linje) \
+                    or raa_fd.search(linje):
+                continue
+            # Kallet kan gå over flere linjer, og `encoding=` kan stå på en
+            # senere. Se på hele setningen: samle linjer til parentesene går
+            # opp. Uten dette gir vakten falskt utslag på ethvert pent
+            # formatert kall — den ville tvunget fram stygg kode i stedet
+            # for å fange en ekte feil.
+            setning, balanse = "", 0
+            for videre in linjer[nr - 1:nr + 9]:
+                setning += videre
+                balanse += videre.count("(") - videre.count(")")
+                if balanse <= 0:
+                    break
+            if "encoding" not in setning:
                 synder.append(f"{fil.relative_to(rot)}:{nr}: {linje.strip()}")
     assert not synder, "filkall uten eksplisitt encoding:\n" + "\n".join(synder)
 

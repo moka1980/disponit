@@ -48,6 +48,90 @@ objektlagring / kø. Håndheves fra PR-004 (API-skjelettet).
 | 3 | 10 000–100 000 | Load balancer + flere stateless API-noder, PostgreSQL-replika, dedikerte GPU-inferensnoder eksternt (M-38 styrer kø/ruting), regional datalagring. |
 | 4 | 100 000–1 000 000 | Multi-region, sharding per tenant-gruppe, autoskalering av workers, katastrofegjenoppretting (M-35). |
 
+## Staging-databasen — faktisk oppsett (PR-004)
+
+Satt opp av `deploy/staging/oppsett-postgresql.sh` (idempotent) og verifisert
+på Cloud Server S 2026-08-02.
+
+| | |
+|---|---|
+| Versjon | PostgreSQL **18.4** (skriptet installerer distroens `postgresql`) |
+| Lytter på | `127.0.0.1:5432` **kun loopback** — ingen 5432 utad |
+| Tuning | `shared_buffers=192MB`, `max_connections=40`, `work_mem=4MB`, `effective_cache_size=512MB` |
+| Roller | **To, med vilje.** `disponit_migrator` eier skjemaet og kjører migrasjonene. `disponit` er runtime og har **kun SELECT + INSERT** — eier ingenting, kan verken slette eller deaktivere append-only-triggerne eller RLS-policyene. Superbrukeren `postgres` brukes bare til å opprette rollene. |
+| Tenant-isolasjon | Row level security med `FORCE` på begge tabeller. Policyen sammenligner radens tenant med sesjonsvariabelen `disponit.tenant`, som `db.pg.sett_tenant()` setter per transaksjon. Er den ikke satt: null rader synlige, ingen rader skrivbare. |
+| Databaser | `disponit` (staging) og `disponit_test` (testkjøringer) |
+| Hemmeligheter | `/etc/disponit/staging.env`, `chmod 600`, katalog `chmod 700`. DSN-er + attestasjonsnøkler. **Aldri i repoet, aldri i chat.** |
+| Repo på serveren | `/opt/disponit`, med venv i `/opt/disponit/.venv` |
+| Sikret originalkonfig | `/etc/postgresql/18/main/postgresql.conf.bak.20260801` |
+
+**Kjør staging-porten:**
+
+```bash
+cd /opt/disponit && git pull
+sudo bash deploy/staging/oppsett-postgresql.sh
+sudo bash -c 'set -a; . /etc/disponit/staging.env; set +a; \
+  cd /opt/disponit && ./.venv/bin/python -m pytest platform/core/tests -q'
+```
+
+> 🔑 **Gjenopprett aldri en gammel `staging.env`.** Fila er kilden til
+> sannhet for hemmelighetene, og skriptet roterer et passord i det en nøkkel
+> mangler. Legger du tilbake en eldre kopi, peker DSN-en på et passord rollen
+> ikke lenger har, og alt feiler med `password authentication failed`.
+> Skal en hemmelighet fornyes: **slett én av rollens DSN-linjer** og kjør
+> skriptet. Da roteres rollens passord og **alle** dens DSN-er skrives på
+> nytt samlet — søskenlinja blir aldri stående igjen med det gamle passordet.
+> Mangler ingen nøkler, roteres ingenting: fila er da bit for bit uendret.
+>
+> Rollenes DSN-par: `DATABASE_URL` + `DISPONIT_TEST_DSN` (runtime) og
+> `DISPONIT_MIGRATOR_URL` + `DISPONIT_TEST_MIGRATOR_DSN` (migrator).
+
+> ✅ **Tilstandsmaskinen for hemmelighetene er nå testet i CI.** Den ligger i
+> `deploy/staging/lib-miljofil.sh` og dekkes av
+> `platform/core/tests/test_deploy_miljofil.py` (11 tester): ny installasjon,
+> oppgradering, rotasjon per DSN, ingen rotasjon uten grunn, avbrutt
+> rotasjon, midlertidig fil i målkatalogen, ingen dupliserte nøkler.
+> Codex' krav etter at fem feil på rad ble funnet her: manuell staging-prøve
+> er ikke en port.
+
+Sju feil ble funnet nettopp fordi skriptet ble kjørt på ekte server eller
+testet — alle er rettet:
+
+1. **Miljøfila var ugyldig shell.** DSN-ene inneholder mellomrom, og uten
+   anførselstegn tolker `set -a; . fila` bare første ord som verdi.
+   `DISPONIT_TEST_DSN` ble `host=127.0.0.1`, passordet forsvant, og psycopg
+   feilet med «no password supplied».
+2. **Migrasjonene kjørte som `postgres`.** Da eies tabellene av
+   superbrukeren, og applikasjonen kan ikke migrere sitt eget skjema:
+   «must be owner of table revisjonslogg».
+3. **Miljøfila ble bare skrevet når den ikke fantes.** En oppgradering fikk
+   dermed aldri migrator-nøklene, og eneste vei videre var å slette fila og
+   rotere alt for hånd. Fila skrives nå per nøkkel.
+4. **Rotasjon brakk søskenlinja.** Manglet én av en rolles to DSN-er, ble
+   passordet rotert mens bare den manglende linja ble skrevet — den andre
+   sto igjen med gammelt passord. Prosedyren over ledet altså rett i fella.
+   Alle rollens DSN-er skrives nå samlet.
+5. **Avbrudd mellom passordrotasjon og filskriving kunne ikke oppdages**,
+   fordi maskinen bare så etter nøkkelnavn. Skriptet prøver nå å koble til
+   med hver DSN og reparerer rollen når den ikke virker.
+6. **`mktemp` i `/tmp` etterfulgt av `mv` til `/etc`** krysser
+   filsystemgrenser, og da er `mv` ikke atomisk. Temp-fila lages nå ved
+   siden av målet.
+7. **Eierskapsreparasjonen tok eierskap over `pgcrypto`-funksjoner.** Den
+   skrev `ALTER FUNCTION public.navn()` uten argumenttyper, som traff
+   funksjoner uten parametre — `fips_mode()` og `gen_random_uuid()` ble
+   faktisk flyttet til migrator-rollen på denne serveren. Skriptet bruker nå
+   full signatur, hopper over alt som tilhører en extension, og gir tilbake
+   det den gamle versjonen tok.
+
+> ⚠️ **Cloud Server S er ikke en dedikert maskin.** Den kjører også et annet
+> produkt (WCAGvakt) med egen produksjonstjeneste, teststed og tre bots.
+> Eier har godkjent samlokaliseringen **midlertidig**, fordi det andre
+> produktet ennå ikke har kunder. Derfor er PostgreSQL tunet konservativt.
+> Den dagen naboproduktet tar imot sin første kunde, bryter dette
+> miljøprinsippet lenger oppe i dokumentet, og disponit-staging må flytte
+> til egen maskin.
+
 ## Modulens staging-sjekkliste (mal — kopieres inn i hvert manifest)
 
 - [ ] Alle enhetstester og negative policytester grønne på staging
