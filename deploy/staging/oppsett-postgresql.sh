@@ -8,6 +8,7 @@ set -euo pipefail
 DB=disponit
 BRUKER=disponit              # RUNTIME — kun DML, eier ingenting
 MIGRATOR=disponit_migrator   # eier skjemaet, kjører migrasjoner
+AUTH=disponit_authenticator  # eier api_tokener; runtime naar den aldri direkte
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -19,11 +20,20 @@ apt-get install -y -q postgresql postgresql-contrib
 systemctl enable --now postgresql
 
 # Roller + database (idempotent)
+# Roller er KLYNGEobjekter og opprettes her, med superbrukeren — aldri i en
+# migrasjon. Draften til PR-005 gjorde det siste, og det feiler i vaart
+# oppsett fordi migratorrollen verken har eller skal ha CREATEROLE.
 for r in "$BRUKER" "$MIGRATOR"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$AUTH'" \
+  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $AUTH NOLOGIN"
+# Migrator maa vaere MEDLEM av authenticator for aa kunne sette eierskap
+# (OWNER TO) paa api_tokener i migrasjon 003.
+sudo -u postgres psql -qc "GRANT $AUTH TO $MIGRATOR"
+
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
 
@@ -140,6 +150,9 @@ psql "$DISPONIT_TEST_MIGRATOR_DSN" -q -v ON_ERROR_STOP=1 \
 
 # Rettigheter til runtime: kun det den trenger, aldri mer.
 for base in $DB ${DB}_test; do
+  # PG15+: public-skjemaet gir ikke lenger CREATE til alle. Authenticator
+  # trenger det for aa kunne eie api_tokener.
+  sudo -u postgres psql -q -d "$base" -c "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH"
   sudo -u postgres psql -q -d "$base" <<GRANTS
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM $BRUKER;
 GRANT USAGE ON SCHEMA public TO $BRUKER;
