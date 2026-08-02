@@ -309,3 +309,154 @@ def test_ukjent_krav_id_har_ingen_grenser_og_avvises(m01):
     m["staging_sjekkliste"]["ytelse_bestatt"]["krav_id"] = "perf-oppdiktet"
     feil = valider_artefakter(m)
     assert feil and "ukjent krav_id" in " ".join(feil), feil
+
+
+# ---------------------------------------------------------------------------
+# Lastprofil, interne invarianter og fail-closed talltyper
+# ---------------------------------------------------------------------------
+#
+# Codex' P1 nr. 3 på PR #8. Den forrige validatoren leste SAMMENDRAGSBOOLENE
+# (`en_til_en`, `routing_stemmer`) og rørte aldri lastprofilen. To muterte
+# artefakter passerte derfor porten:
+#   * rate 1/s og samtidighet 1 — altså 6 000 forespørsler sendt på 100
+#     minutter, som ikke er kravet i det hele tatt, og
+#   * `normal = 0` med `forventede_normalsaker = 9999`, der flagget sa true
+#     mens tallene motsa hverandre.
+# Begge står som egne tester nedenfor, med NAVN etter det de en gang slapp
+# gjennom, slik at ingen fjerner dem i vanvare.
+
+
+@pytest.mark.parametrize("navn,endring,forventet", [
+    # --- lastprofil ---
+    ("rate_i_oppsettet", lambda d: d["oppsett"].update(rate_per_sek=1.0),
+     "oppsett.rate_per_sek"),
+    ("oppnadd_rate", lambda d: d["maalt"].update(oppnadd_rate=1.0),
+     "maalt.oppnadd_rate"),
+    ("samtidighet", lambda d: d["oppsett"].update(samtidige=1),
+     "oppsett.samtidige"),
+    ("varighet_uten_dekning", lambda d: d["maalt"].update(varighet_sek=3600.0),
+     "passer ikke med"),
+    # --- interne invarianter ---
+    ("beslutningssum", lambda d: d["maalt"]["beslutninger"].update(UNNTAK=0),
+     "summen av beslutningene"),
+    ("auditerte_svar_avviker",
+     lambda d: d["etterkontroll"].update(auditerte_svar=12000),
+     "alle tre må være like"),
+    ("routing_normal_null",
+     lambda d: d["etterkontroll"]["unntaksrader_per_sakstype"].update(normal=0),
+     "normal-kørader"),
+    ("routing_forventet_lyver",
+     lambda d: d["etterkontroll"].update(forventede_normalsaker=9999),
+     "forventede normalsaker"),
+    # --- fail-closed talltyper ---
+    ("feil_som_bool", lambda d: d["maalt"].update(feil=False),
+     "er ikke et tall"),
+    ("antall_som_bool", lambda d: d["maalt"].update(antall=True),
+     "er ikke et tall"),
+    ("p95_som_nan",
+     lambda d: d["maalt"]["svartid_ms"].update(p95=float("nan")),
+     "er ikke et endelig tall"),
+    ("rate_som_nan", lambda d: d["maalt"].update(oppnadd_rate=float("nan")),
+     "er ikke et endelig tall"),
+    ("p95_som_streng", lambda d: d["maalt"]["svartid_ms"].update(p95="0"),
+     "er ikke et tall"),
+    # --- manglende blokker ---
+    ("oppsett_borte", lambda d: d.pop("oppsett"), "mangler `oppsett`"),
+    ("beslutninger_borte", lambda d: d["maalt"].pop("beslutninger"),
+     "mangler `beslutninger`"),
+])
+def test_lastprofil_og_invarianter_gir_roedt(m01, artefakt_sti, navn, endring,
+                                             forventet):
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti, endring)
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert feil, f"mutasjonen {navn!r} slapp gjennom porten"
+        assert any(forventet in f for f in feil), (navn, feil)
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_codex_mutasjon_rate_1_og_samtidighet_1(m01, artefakt_sti):
+    """Nøyaktig mutasjonen Codex bekreftet at passerte forrige runde.
+
+    6 000 forespørsler er ikke kravet. 6 000 forespørsler PÅ ETT MINUTT
+    med 20 samtidige er kravet. Uten lastprofilen kunne den samme mengden
+    vært sendt over hundre minutter og fortsatt sett ut som en bestått
+    ytelsesport.
+    """
+    def endre(d):
+        d["oppsett"].update(rate_per_sek=1.0, samtidige=1)
+        d["maalt"].update(oppnadd_rate=1.0, varighet_sek=6000.0)
+
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti, endre)
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert any("rate_per_sek" in f for f in feil), feil
+        assert any("samtidige" in f for f in feil), feil
+        assert any("oppnadd_rate" in f for f in feil), feil
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_codex_mutasjon_null_normalsaker_med_forventet_9999(m01, artefakt_sti):
+    """Den andre mutasjonen Codex bekreftet: flagget sa true, tallene løy.
+
+    `routing_stemmer` er produsentens egen påstand — nøyaktig som
+    `bestatt`. Porten må regne ut invarianten, ikke lese konklusjonen.
+    """
+    def endre(d):
+        d["etterkontroll"]["unntaksrader_per_sakstype"]["normal"] = 0
+        d["etterkontroll"]["forventede_normalsaker"] = 9999
+        d["etterkontroll"]["routing_stemmer"] = True      # flagget lyver
+
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti, endre)
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert any("9999" in f for f in feil), feil
+        assert any("UNNTAK-beslutninger" in f for f in feil), feil
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_bool_er_ikke_et_tall_i_noen_maaling(m01, artefakt_sti):
+    """Python-fella som gjorde det nødvendig: `isinstance(False, int)` er
+    True, så en boolsk `feil` ville blitt lest som 0 feil."""
+    assert isinstance(False, int), "forutsetningen for testen er borte"
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti,
+                            lambda d: d["maalt"].update(rate_begrenset=False))
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        assert any("er ikke et tall" in f for f in valider_artefakter(m))
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_kravgrenser_og_lasttesten_kan_ikke_gli_fra_hverandre():
+    """Porten og produsenten må håndheve SAMME tall.
+
+    `lasttest-m01.py` setter `bestatt` selv, og `KRAVGRENSER` avgjør om
+    artefaktet godtas. Sklir de to fra hverandre, får vi enten kjøringer
+    som rapporterer bestått og avvises av porten, eller — verre — det
+    motsatte. Samme grep som
+    test_rategrensen_star_ikke_i_veien_for_ytelsesporten: to tall som er
+    avhengige av hverandre bindes sammen i en test.
+    """
+    import importlib.util
+    from manifestskjema import KRAVGRENSER
+    spek = importlib.util.spec_from_file_location(
+        "lasttest2", REPOROT / "deploy/staging/lasttest-m01.py")
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+
+    g = KRAVGRENSER["perf-m01-v1"]
+    assert g["min_antall"] == modul.MALTE
+    assert g["maks_p95_ms"] == modul.P95_KRAV_MS
+    assert g["min_rate_per_sek"] == modul.RATE
+    assert g["min_samtidige"] == modul.SAMTIDIGE

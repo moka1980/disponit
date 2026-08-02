@@ -27,8 +27,15 @@ KRAVGRENSER: dict[str, dict] = {
         "maks_feil": 0,
         "maks_rate_begrenset": 0,
         "maks_p95_ms": 150.0,
-        "krev_en_til_en": True,
-        "krev_routing": True,
+        # Lastprofilen er en del av kravet, ikke pynt. 6 000 forespørsler
+        # sier ingenting om de ble sendt på ett minutt eller på to timer.
+        "min_rate_per_sek": 100.0,
+        "min_samtidige": 20,
+        # Open-loop-generatoren treffer ikke nominell rate på desimalen, og
+        # artefaktet runder til én desimal. 1 % gir rom for det uten å gi
+        # rom for en kjøring på halv fart.
+        "rate_slingringsmonn": 0.01,
+        "varighet_slingringsmonn": 0.05,
     },
 }
 
@@ -80,12 +87,44 @@ def _les_artefakt(sti: Path) -> tuple[dict | None, str | None, str]:
     return data, sha, ""
 
 
+def _tall(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
+    """Fail-closed avlesning av en numerisk måling. -> (verdi, feilmelding).
+
+    To feller dette finnes for, begge fant Codex i PR #8:
+
+    * `bool` er en SUBKLASSE av `int` i Python. En `isinstance(x, int)`-test
+      slipper derfor `feil: false` gjennom og leser den som 0 — altså
+      «ingen feil» fordi feltet var en boolsk verdi, ikke et tall.
+    * NaN gjør enhver sammenligning False. `p95: NaN` ville passert
+      `p95 >= 150` og dermed ethvert tak vi setter. Et tak man ikke kan
+      bryte er ikke et tak.
+    """
+    if not isinstance(kilde, dict):
+        return None, f"{navn}: mangler (ingen `{felt}`-blokk)"
+    verdi = kilde.get(felt)
+    if isinstance(verdi, bool) or not isinstance(verdi, (int, float)):
+        return None, f"{navn}={verdi!r} er ikke et tall"
+    tall = float(verdi)
+    if tall != tall or tall in (float("inf"), float("-inf")):
+        return None, f"{navn}={verdi!r} er ikke et endelig tall"
+    return tall, ""
+
+
 def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
-    """Håndhever KRAVGRENSER mot tallene i artefaktet.
+    """Håndhever KRAVGRENSER og artefaktets INTERNE invarianter.
 
     Dette er selve poenget med porten: `bestatt: true` inne i artefaktet er
-    produsentens EGEN påstand. Uten en uavhengig kontroll av tallene ville
-    en kjøring som skrev `bestatt: true` over 6 000 feilsvar passert.
+    produsentens EGEN påstand, og det samme gjelder `en_til_en` og
+    `routing_stemmer`. Codex' P1 nr. 3 på PR #8 viste hvorfor det ikke
+    holder å lese sammendragsboolene: et artefakt med
+    `unntaksrader_per_sakstype.normal = 0`, `forventede_normalsaker = 9999`
+    og `routing_stemmer: true` passerte porten. Tallene motsa flagget, og
+    bare flagget ble lest.
+
+    Derfor REGNES invariantene ut på nytt her, og lastprofilen håndheves:
+    6 000 forespørsler sier ingenting om de ble sendt på ett minutt eller
+    på to timer, og en kjøring med rate 1/s og samtidighet 1 er ikke den
+    porten kravet beskriver.
     """
     grense = KRAVGRENSER.get(krav_id)
     if grense is None:
@@ -100,36 +139,121 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     m = art.get("maalt")
     if not isinstance(m, dict):
         return feil + ["artefaktet mangler `maalt`"]
+    oppsett = art.get("oppsett")
+    if not isinstance(oppsett, dict):
+        return feil + ["artefaktet mangler `oppsett` — lastprofilen er ukjent"]
 
-    antall = m.get("antall")
-    if not isinstance(antall, int) or antall < grense["min_antall"]:
-        feil.append(f"antall={antall}, krever >= {grense['min_antall']}")
+    # --- Volum, feil og svartid -------------------------------------------
+    antall, m_feil = _tall(m, "antall", "antall")
+    if m_feil:
+        feil.append(m_feil)
+    elif antall < grense["min_antall"]:
+        feil.append(f"antall={antall:.0f}, krever >= {grense['min_antall']}")
+
     for felt, tak in (("feil", grense["maks_feil"]),
                       ("rate_begrenset", grense["maks_rate_begrenset"])):
-        verdi = m.get(felt)
-        if not isinstance(verdi, int) or verdi > tak:
-            feil.append(f"{felt}={verdi}, krever <= {tak}")
+        verdi, m_feil = _tall(m, felt, felt)
+        if m_feil:
+            feil.append(m_feil)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi:.0f}, krever <= {tak}")
     if m.get("feiltyper"):
         feil.append(f"artefaktet har feiltyper: {m.get('feiltyper')}")
 
-    svartid = m.get("svartid_ms")
-    p95 = svartid.get("p95") if isinstance(svartid, dict) else None
-    if not isinstance(p95, (int, float)) or p95 >= grense["maks_p95_ms"]:
+    p95, m_feil = _tall(m.get("svartid_ms"), "p95", "p95")
+    if m_feil:
+        feil.append(m_feil)
+    elif p95 >= grense["maks_p95_ms"]:
         feil.append(f"p95={p95} ms, krever < {grense['maks_p95_ms']} ms")
+
+    # --- Lastprofilen: rate, samtidighet, varighet ------------------------
+    krevd_rate = grense["min_rate_per_sek"]
+    nedre_rate = krevd_rate * (1.0 - grense["rate_slingringsmonn"])
+    for kilde, navn, felt, nedre in (
+            (oppsett, "oppsett.rate_per_sek", "rate_per_sek", krevd_rate),
+            (m, "maalt.oppnadd_rate", "oppnadd_rate", nedre_rate),
+            (oppsett, "oppsett.samtidige", "samtidige",
+             grense["min_samtidige"])):
+        verdi, m_feil = _tall(kilde, navn, felt)
+        if m_feil:
+            feil.append(m_feil)
+        elif verdi < nedre:
+            feil.append(f"{navn}={verdi:g}, krever >= {nedre:g}")
+
+    varighet, m_feil = _tall(m, "maalt.varighet_sek", "varighet_sek")
+    if m_feil:
+        feil.append(m_feil)
+    elif antall is not None and varighet > 0:
+        # Varigheten MÅ stemme med antall/rate. Uten denne kunne et
+        # artefakt oppgi 6 000 forespørsler, rate 100 og varighet 3 600 s:
+        # hvert enkelt tall består sin egen grense, mens kjøringen i
+        # virkeligheten gikk på 1,7/s.
+        forventet = antall / krevd_rate
+        avvik = abs(varighet - forventet) / forventet
+        if avvik > grense["varighet_slingringsmonn"]:
+            feil.append(
+                f"varighet_sek={varighet:g} passer ikke med antall={antall:.0f}"
+                f" @ {krevd_rate:g}/s (forventet ~{forventet:g} s,"
+                f" avvik {avvik * 100:.0f} %)")
+
+    # --- Interne invarianter: tallene mot hverandre, ikke mot flagg -------
+    b = m.get("beslutninger")
+    unntak_besluttet = None
+    if not isinstance(b, dict) or not b:
+        feil.append("artefaktet mangler `beslutninger`")
+    else:
+        sum_b = 0.0
+        gyldig = True
+        for utfall in ("TILLAT", "STOPP", "UNNTAK"):
+            verdi, m_feil = _tall(b, f"beslutninger.{utfall}", utfall)
+            if m_feil:
+                feil.append(m_feil)
+                gyldig = False
+            else:
+                sum_b += verdi
+                if utfall == "UNNTAK":
+                    unntak_besluttet = verdi
+        if gyldig and antall is not None and sum_b != antall:
+            feil.append(f"summen av beslutningene ({sum_b:.0f}) er ikke lik"
+                        f" antall ({antall:.0f})")
 
     k = art.get("etterkontroll")
     if not isinstance(k, dict):
         feil.append("artefaktet mangler `etterkontroll`")
+        return feil
+
+    svar, f1 = _tall(k, "auditerte_svar", "auditerte_svar")
+    rader, f2 = _tall(k, "revisjonsrader", "revisjonsrader")
+    for m_feil in (f1, f2):
+        if m_feil:
+            feil.append(m_feil)
+    if not f1 and not f2 and antall is not None:
+        if not (svar == rader == antall):
+            feil.append(f"auditerte_svar={svar:.0f}, revisjonsrader={rader:.0f},"
+                        f" antall={antall:.0f} — alle tre må være like")
+    if k.get("en_til_en") is not True:
+        feil.append("etterkontroll: en_til_en er ikke true")
+
+    # Routing: sammenlign TALLENE. Flagget leses i tillegg, aldri i stedet.
+    per_sakstype = k.get("unntaksrader_per_sakstype")
+    if not isinstance(per_sakstype, dict):
+        feil.append("etterkontroll mangler `unntaksrader_per_sakstype`")
     else:
-        if grense["krev_en_til_en"]:
-            if k.get("en_til_en") is not True:
-                feil.append("etterkontroll: en_til_en er ikke true")
-            svar, rader = k.get("auditerte_svar"), k.get("revisjonsrader")
-            if svar != rader or not isinstance(svar, int) or svar < grense["min_antall"]:
-                feil.append(f"auditerte_svar={svar} vs revisjonsrader={rader}, "
-                            f"krever like og >= {grense['min_antall']}")
-        if grense["krev_routing"] and k.get("routing_stemmer") is not True:
-            feil.append("etterkontroll: routing_stemmer er ikke true")
+        normale, f3 = _tall(per_sakstype, "unntaksrader normal", "normal")
+        forventet, f4 = _tall(k, "forventede_normalsaker",
+                              "forventede_normalsaker")
+        for m_feil in (f3, f4):
+            if m_feil:
+                feil.append(m_feil)
+        if not f3 and not f4:
+            if normale != forventet:
+                feil.append(f"normal-kørader ({normale:.0f}) != forventede"
+                            f" normalsaker ({forventet:.0f})")
+            if unntak_besluttet is not None and normale != unntak_besluttet:
+                feil.append(f"normal-kørader ({normale:.0f}) != antall"
+                            f" UNNTAK-beslutninger ({unntak_besluttet:.0f})")
+    if k.get("routing_stemmer") is not True:
+        feil.append("etterkontroll: routing_stemmer er ikke true")
     return feil
 
 
