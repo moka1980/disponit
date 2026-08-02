@@ -21,7 +21,15 @@ BEGIN;
 --    append-only, og historikk som ikke lar seg henføre skal være
 --    synlig som nettopp det.
 -- ------------------------------------------------------------
+-- Append-only-triggeren blokkerer ogsaa denne UPDATE-en — den skiller ikke
+-- mellom en angriper og en migrasjon. Den slaas derfor av og paa igjen
+-- INNENFOR transaksjonen: feiler noe, ruller alt tilbake og triggeren er
+-- fortsatt paa. Dette krever eierskap, og er nettopp derfor migrator er en
+-- annen rolle enn runtime: runtime kan aldri gjoere dette.
+ALTER TABLE revisjonslogg DISABLE TRIGGER revisjonslogg_ingen_endring;
 UPDATE revisjonslogg SET tenant = '<ukjent>' WHERE tenant IS NULL;
+ALTER TABLE revisjonslogg ENABLE TRIGGER revisjonslogg_ingen_endring;
+
 ALTER TABLE revisjonslogg ALTER COLUMN tenant SET NOT NULL;
 
 ALTER TABLE revisjonslogg DROP CONSTRAINT IF EXISTS revisjonslogg_tenant_ikke_tom;

@@ -338,3 +338,25 @@ def test_ogsaa_skjemaeieren_er_underlagt_tenant_isolasjonen(migrator):
     migrator.rollback()
     assert [r[0] for r in synlige] in ([], ["tenant-b"]), \
         f"skjemaeieren omgaar tenant-isolasjonen: {synlige}"
+
+
+@pg
+def test_append_only_triggeren_star_paa_etter_migrasjon(migrator):
+    """Migrasjon 002 slår triggeren AV for å bakfylle tenant, og PÅ igjen.
+    Glemmes det siste, er revisjonsloggen ikke lenger append-only — og den
+    vanlige append-only-testen ville ikke merket det, fordi den kjører som
+    runtime, som mangler UPDATE-rettighet uansett. Den ville altså bestått
+    av feil grunn. Denne kjører som eier, der bare triggeren stopper oss."""
+    import psycopg
+    from db.pg import migrer, sett_tenant
+    migrer(migrator)
+    sett_tenant(migrator, "tenant-a")
+    migrator.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                     " beslutning, begrunnelse)"
+                     " VALUES ('tenant-a','h-trig','p','TILLAT','[]')")
+    migrator.commit()
+    sett_tenant(migrator, "tenant-a")
+    with pytest.raises(psycopg.Error):
+        migrator.execute("UPDATE revisjonslogg SET beslutning='STOPP'"
+                         " WHERE input_hash='h-trig'")
+    migrator.rollback()
