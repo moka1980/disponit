@@ -49,6 +49,10 @@ def migrer(conn: psycopg.Connection) -> list[int]:
                     f"migrasjon {v:03d}: filer >= 003 skal ikke eie "
                     f"transaksjonen (BEGIN/COMMIT funnet)")
             if v in _LEGACY_MED_EGEN_TX:
+                # psycopg nekter å endre autocommit midt i en transaksjon,
+                # og advisory_lock/SELECT over har allerede åpnet en. Lås på
+                # SESJONSnivå overlever commit, så låsen holdes fortsatt.
+                conn.commit()
                 conn.autocommit = True
                 try:
                     conn.execute(sql)

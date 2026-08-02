@@ -58,7 +58,8 @@ på Cloud Server S 2026-08-02.
 | Versjon | PostgreSQL **18.4** (skriptet installerer distroens `postgresql`) |
 | Lytter på | `127.0.0.1:5432` **kun loopback** — ingen 5432 utad |
 | Tuning | `shared_buffers=192MB`, `max_connections=40`, `work_mem=4MB`, `effective_cache_size=512MB` |
-| Roller | **To, med vilje.** `disponit_migrator` eier skjemaet og kjører migrasjonene. `disponit` er runtime og har **kun SELECT + INSERT** — eier ingenting, kan verken slette eller deaktivere append-only-triggerne eller RLS-policyene. Superbrukeren `postgres` brukes bare til å opprette rollene. |
+| Roller | **Tre, med vilje.** `disponit_migrator` eier skjemaet og kjører migrasjonene. `disponit` er runtime — eier ingenting, kan verken slette eller deaktivere append-only-triggerne eller RLS-policyene. `disponit_authenticator` (NOLOGIN, PR-005) eier `api_tokener`; runtime når den aldri direkte, kun via `verifiser_token` som er SECURITY DEFINER med låst `search_path`. Superbrukeren `postgres` brukes bare til å opprette roller. |
+| `DISPONIT_KEK` | KEK for envelope-kryptering av unntaks-payload (PR-005). Ligger i miljøfila. **Roteres aldri av oppsettskriptet:** mistes den, er alle krypterte payloads uleselige for alltid, og rotasjon krever rewrapping av samtlige DEK-er først. |
 | Tenant-isolasjon | Row level security med `FORCE` på begge tabeller. Policyen sammenligner radens tenant med sesjonsvariabelen `disponit.tenant`, som `db.pg.sett_tenant()` setter per transaksjon. Er den ikke satt: null rader synlige, ingen rader skrivbare. |
 | Databaser | `disponit` (staging) og `disponit_test` (testkjøringer) |
 | Hemmeligheter | `/etc/disponit/staging.env`, `chmod 600`, katalog `chmod 700`. DSN-er + attestasjonsnøkler. **Aldri i repoet, aldri i chat.** |

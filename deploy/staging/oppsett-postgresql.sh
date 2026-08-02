@@ -158,6 +158,13 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM $BRUKER;
 GRANT USAGE ON SCHEMA public TO $BRUKER;
 GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO $BRUKER;
 GRANT SELECT ON migrasjoner TO $BRUKER;
+-- PR-005: runtime faar noeyaktig det den trenger, ikke mer.
+-- unntak_historikk er INSERT-only: historikken skal aldri kunne endres.
+-- policyer er lesetilgang: policyer endres av en egen vei, ikke av API-et.
+GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO $BRUKER;
+GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO $BRUKER;
+GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO $BRUKER;
+GRANT SELECT ON policyer TO $BRUKER;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $BRUKER;
 GRANTS
 done

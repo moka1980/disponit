@@ -19,7 +19,9 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 │   ├── core/                       ← plattformkjernen. Importerer ALDRI fra modules/
 │   │   ├── policy_validator/       ← M-1-kjernen: engine.py, schema.py, audit.py,
 │   │   │                              attestering.py (HMAC på attestasjoner)
-│   │   ├── db/                     ← tilstandslaget (ADR-001): pg.py + migrations/
+│   │   ├── db/                     ← tilstandslaget (ADR-001):
+│   │   │                              pg.py, kjorer.py (herdet migrasjons-
+│   │   │                              kjører), kryptering.py, migrations/
 │   │   ├── registry.py             ← modulregister: oppdag, aktiver, deaktiver
 │   │   ├── tests/                  ← core-tester (kjør: pytest platform/core/tests)
 │   │   └── examples/               ← run_synthetic.py m.m.

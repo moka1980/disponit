@@ -26,6 +26,11 @@ def _kek() -> AESGCM:
 
 def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
                                  tenant: str) -> tuple[str, bytes]:
+    # RLS: uten sesjonsvariabelen ser vi null rader og ville laget en NY
+    # DEK for en tenant som allerede har en — og da blir gamle unntak
+    # uleselige uten at noe feiler høylytt.
+    from .pg import sett_tenant
+    sett_tenant(conn, tenant)
     rad = conn.execute(
         "SELECT key_id, wrapped_dek FROM tenant_nokler"
         " WHERE tenant=%s AND aktiv", (tenant,)).fetchone()
@@ -42,21 +47,45 @@ def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
     return key_id, dek
 
 
-def krypter(dek: bytes, payload: dict) -> tuple[bytes, bytes]:
+def _aad(tenant: str, key_id: str) -> bytes:
+    """Tilleggsdata som bindes inn i GCM-taggen.
+
+    Uten AAD er et ciphertext bare en pose bytes: flyttes raden til en annen
+    tenant, dekrypterer den fint så lenge nøkkelen er den samme. Med tenant
+    og key_id som AAD feiler dekrypteringen i det konteksten er en annen enn
+    da det ble kryptert. Det koster ingenting og lukker en stille
+    kryss-tenant-vei som RLS alene ikke dekker (RLS beskytter raden, ikke
+    bytene hvis de kopieres).
+    """
+    return f"{tenant}|{key_id}".encode("utf-8")
+
+
+def krypter(dek: bytes, payload: dict, tenant: str,
+            key_id: str) -> tuple[bytes, bytes]:
     """-> (payload_kryptert = ct||tag, nonce)"""
     nonce = secrets.token_bytes(12)
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":")).encode()
-    return AESGCM(dek).encrypt(nonce, data, None), nonce
+    return AESGCM(dek).encrypt(nonce, data, _aad(tenant, key_id)), nonce
 
 
-def dekrypter(dek: bytes, ct_og_tag: bytes, nonce: bytes) -> dict:
-    return json.loads(AESGCM(dek).decrypt(bytes(nonce), bytes(ct_og_tag), None))
+def dekrypter(dek: bytes, ct_og_tag: bytes, nonce: bytes, tenant: str,
+              key_id: str) -> dict:
+    return json.loads(AESGCM(dek).decrypt(bytes(nonce), bytes(ct_og_tag),
+                                          _aad(tenant, key_id)))
 
 
 def destruer(conn: psycopg.Connection, tenant: str, key_id: str) -> None:
     """Crypto-shredding — logging av handlingen gjøres av kalleren
     (revisjonslogg + unntak_historikk per berørt sak)."""
-    conn.execute("UPDATE tenant_nokler SET wrapped_dek=NULL,"
-                 " destruert_ts=now(), aktiv=false"
-                 " WHERE tenant=%s AND key_id=%s", (tenant, key_id))
+    from .pg import sett_tenant
+    sett_tenant(conn, tenant)
+    res = conn.execute("UPDATE tenant_nokler SET wrapped_dek=NULL,"
+                       " destruert_ts=now(), aktiv=false"
+                       " WHERE tenant=%s AND key_id=%s", (tenant, key_id))
+    if res.rowcount != 1:
+        # Stille no-op her ville betydd at sletting av persondata IKKE
+        # skjedde, mens kalleren logget at den gjorde det.
+        raise RuntimeError(
+            f"crypto-shredding traff {res.rowcount} rader for {tenant}/{key_id}"
+            " — forventet nøyaktig 1")
