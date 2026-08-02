@@ -47,14 +47,54 @@ def test_kjorer_er_idempotent_og_kjorer_kun_manglende(migrator):
 
 
 @pg
-def test_alle_migrasjoner_har_checksum_etter_kjoring(migrator):
+def test_nye_migrasjoner_faar_alltid_checksum(migrator):
+    """Kjøreren registrerer checksum for alt DEN kjører.
+
+    Rader fra før checksum-æraen (001/002 registrerte seg selv i sin egen
+    SQL) kan stå med NULL til bootstrap-skriptet har kjørt — det er hele
+    grunnen til at bootstrap finnes. Testen sa opprinnelig at ALLE rader
+    måtte ha checksum, og det var sant kun på en database jeg selv hadde
+    droppet på forhånd. CI, som bygger databasen slik staging er bygget,
+    avslørte antakelsen."""
     from db.kjorer import migrer
     migrer(migrator)
-    rader = migrator.execute(
-        "SELECT versjon, checksum FROM migrasjoner ORDER BY versjon").fetchall()
+    rader = dict(migrator.execute(
+        "SELECT versjon, checksum FROM migrasjoner ORDER BY versjon").fetchall())
     migrator.rollback()
-    assert [r[0] for r in rader] == [1, 2, 3]
-    assert all(r[1] for r in rader), "en migrasjon står uten checksum"
+    assert set(rader) == {1, 2, 3}
+    assert rader[3], "migrasjon 003 ble kjørt av kjøreren og skal ha checksum"
+    for legacy in (1, 2):
+        assert rader[legacy] is None or len(rader[legacy]) == 64
+
+
+@pg
+def test_bootstrap_laaser_historikken(migrator):
+    """Etter bootstrap har alle rader checksum, og kolonnen er NOT NULL —
+    da kan ingen legge inn en migrasjonsrad uten å binde seg til innhold."""
+    import hashlib
+    import importlib.util
+    from pathlib import Path
+    import psycopg
+    rot = Path(__file__).resolve().parents[3]
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap", rot / "deploy/staging/migrasjon-bootstrap.py")
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+
+    for versjon, forventet in modul.REVIEWEDE_CHECKSUMS.items():
+        migrator.execute("UPDATE migrasjoner SET checksum=%s"
+                         " WHERE versjon=%s AND checksum IS NULL",
+                         (forventet, versjon))
+    migrator.execute("ALTER TABLE migrasjoner"
+                     " ALTER COLUMN checksum SET NOT NULL")
+    migrator.commit()
+
+    mangler = migrator.execute(
+        "SELECT count(*) FROM migrasjoner WHERE checksum IS NULL").fetchone()[0]
+    assert mangler == 0
+    with pytest.raises(psycopg.Error):
+        migrator.execute("INSERT INTO migrasjoner (versjon) VALUES (999)")
+    migrator.rollback()
 
 
 @pg
@@ -367,20 +407,24 @@ def test_kjoreren_virker_paa_database_migrert_med_forrige_versjon(migrator,
     database som er migrert med PR-004 — altså på staging og i produksjon,
     men ikke på en fersk testdatabase."""
     from db import kjorer
-    migrator.execute("DROP TABLE IF EXISTS oppgrader_proeve")
-    migrator.execute("CREATE TABLE IF NOT EXISTS oppgrader_proeve (x int)")
-    migrator.commit()
-    # etterlign gammelt skjema: fjern kolonnen og kjør på nytt
+    # Ta vare på tilstanden: å droppe kolonnen sletter checksummene for ALLE
+    # versjoner, ikke bare de legacy. Uten gjenoppretting ødelegger denne
+    # testen tilstanden for de andre — som den gjorde i første utgave.
+    foer = dict(migrator.execute(
+        "SELECT versjon, checksum FROM migrasjoner").fetchall())
+    migrator.execute("ALTER TABLE migrasjoner ALTER COLUMN checksum DROP NOT NULL")
     migrator.execute("ALTER TABLE migrasjoner DROP COLUMN IF EXISTS checksum")
     migrator.commit()
     try:
         kjorer.migrer(migrator)      # skal legge til kolonnen, ikke kaste
-        rad = migrator.execute(
+        antall = migrator.execute(
             "SELECT count(*) FROM information_schema.columns"
             " WHERE table_name='migrasjoner' AND column_name='checksum'"
         ).fetchone()[0]
-        assert rad == 1, "checksum-kolonnen ble ikke lagt til"
+        assert antall == 1, "checksum-kolonnen ble ikke lagt til"
     finally:
         migrator.rollback()
-        migrator.execute("DROP TABLE IF EXISTS oppgrader_proeve")
+        for versjon, cs in foer.items():
+            migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
+                             (cs, versjon))
         migrator.commit()
