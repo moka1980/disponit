@@ -42,11 +42,30 @@ fi
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'" \
   | grep -q 1 || sudo -u postgres createdb -O $BRUKER ${DB}_test
 
-# Kjør migrasjoner mot begge databaser
+# Kjør migrasjoner SOM APPLIKASJONSROLLEN, ikke som postgres.
+#
+# Kjøres de som superbruker, eies tabellene av postgres, og appen kan ikke
+# migrere sitt eget skjema: `DROP TRIGGER` i migrasjonen feiler med
+# "must be owner of table revisjonslogg". Funnet ved faktisk kjøring på
+# Cloud Server S — det ser riktig ut helt til noe annet enn superbrukeren
+# skal endre skjemaet.
 cd /opt/disponit || cd "$(dirname "$0")/../.."
+
+# Reparerer eldre installasjoner der objektene allerede eies av postgres.
 for base in $DB ${DB}_test; do
-  sudo -u postgres psql -d $base -f platform/core/db/migrations/001_init.sql
+  sudo -u postgres psql -qtAd "$base" -c \
+    "SELECT 'ALTER TABLE public.'||quote_ident(tablename)||' OWNER TO $BRUKER;'
+       FROM pg_tables WHERE schemaname='public' AND tableowner <> '$BRUKER'
+     UNION ALL
+     SELECT 'ALTER FUNCTION public.'||quote_ident(p.proname)||'() OWNER TO $BRUKER;'
+       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname='public' AND pg_get_userbyid(p.proowner) <> '$BRUKER'" \
+    | sudo -u postgres psql -q -d "$base" -f -
 done
+
+set -a; . "$MILJOFIL"; set +a
+psql "$DATABASE_URL"      -q -f platform/core/db/migrations/001_init.sql
+psql "$DISPONIT_TEST_DSN" -q -f platform/core/db/migrations/001_init.sql
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q  (74 forventet)"
