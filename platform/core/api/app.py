@@ -33,7 +33,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from db import kryptering
-from db.pg import koble
+from db.pg import koble, sett_kontekst
 from policy_validator.attestering import last_nokler
 from policy_validator.engine import EvaluationContext
 
@@ -620,41 +620,60 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
         except kjerne.Feilsvar as f:
             return _feilsvar(f.kode, rid)
 
-        sakstype = request.query_params.get("sakstype", "normal")
-        if sakstype not in ("normal", "sikkerhet", "drift"):
-            return _feilsvar("request_feilformet", rid)
-        if sakstype != "normal" and "security:read" not in auth.scopes:
-            # v3-delta pkt. 5: sikkerhets- og driftskøene er egne køer med
-            # eget scope. `exceptions:read` alene ser dem aldri.
-            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
-                                   scope="security:read")
-            return _feilsvar("scope_mangler", rid)
-
-        status = request.query_params.get("status")
-        if status is not None and status not in ("ny", "under_behandling",
-                                                 "løst", "avvist"):
-            return _feilsvar("request_feilformet", rid)
         try:
-            grense = min(int(request.query_params.get("limit", SIDE_STANDARD)),
-                         SIDE_MAKS)
-            if grense < 1:
-                raise ValueError
-        except ValueError:
-            return _feilsvar("request_feilformet", rid)
+            # --- Sesjonskontekst FØRST i den autentiserte transaksjonen ----
+            # NØYAKTIG samme inngang som beslutningsveien bruker i
+            # `kjerne._flyt` steg 1, og av samme grunn: pre-auth er ferdig og
+            # committet, tenanten er verifisert, og aktør og request-id kommer
+            # fra tokenet og fra serveren — aldri fra klienten.
+            #
+            # Her sto det tidligere en `sett_tenant()` rett før SELECT-en.
+            # Den satte én av tre sesjonsvariabler, og plasseringen gjorde at
+            # enhver databaseoperasjon som senere ble lagt til OVENFOR ville
+            # kjørt helt uten kontekst. En delvis kontekstsetting er ikke en
+            # svakere utgave av porten — den er en ANNEN port enn den
+            # beslutningsveien har, og to utgaver av samme kontroll er
+            # duplikatformen som ga P1 nr. 4 i PR-002.
+            #
+            # Kravet «første databaseoperasjon etter preauth» er derfor
+            # plassert her og ikke rett før lesingen: alt under er ren
+            # parametervalidering i minnet, og den dagen noen legger inn et
+            # oppslag der, ligger konteksten allerede foran det.
+            sett_kontekst(conn, auth.tenant, auth.aktor, rid)
 
-        etter = None
-        raa_cursor = request.query_params.get("cursor")
-        if raa_cursor:
+            sakstype = request.query_params.get("sakstype", "normal")
+            if sakstype not in ("normal", "sikkerhet", "drift"):
+                return _feilsvar("request_feilformet", rid)
+            if sakstype != "normal" and "security:read" not in auth.scopes:
+                # v3-delta pkt. 5: sikkerhets- og driftskøene er egne køer med
+                # eget scope. `exceptions:read` alene ser dem aldri.
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope="security:read")
+                return _feilsvar("scope_mangler", rid)
+
+            status = request.query_params.get("status")
+            if status is not None and status not in ("ny", "under_behandling",
+                                                     "løst", "avvist"):
+                return _feilsvar("request_feilformet", rid)
             try:
-                etter = cursormodul.les(raa_cursor, auth.tenant,
-                                        tjeneste.cursorpepper)
-            except cursormodul.CursorUgyldig:
-                tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
-                return _feilsvar("cursor_ugyldig", rid)
+                grense = min(
+                    int(request.query_params.get("limit", SIDE_STANDARD)),
+                    SIDE_MAKS)
+                if grense < 1:
+                    raise ValueError
+            except ValueError:
+                return _feilsvar("request_feilformet", rid)
 
-        from db.pg import sett_tenant
-        try:
-            sett_tenant(conn, auth.tenant)
+            etter = None
+            raa_cursor = request.query_params.get("cursor")
+            if raa_cursor:
+                try:
+                    etter = cursormodul.les(raa_cursor, auth.tenant,
+                                            tjeneste.cursorpepper)
+                except cursormodul.CursorUgyldig:
+                    tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
+                    return _feilsvar("cursor_ugyldig", rid)
+
             sql = ("SELECT id, ts, handling, kategori, prioritet, status,"
                    " sakstype FROM unntak"
                    " WHERE tenant=%s AND sakstype=%s")

@@ -586,16 +586,49 @@ TENANTTABELLER = ("revisjonslogg", "unntak", "unntak_historikk", "idempotens",
                   "frekvens_hendelser")
 
 
+class Statement:
+    """Ett statement slik det faktisk ble sendt.
+
+    `art` skiller vanlige statements fra transaksjonsgrensene, slik at en
+    test kan si «dette skjedde i pre-auth-transaksjonen» og ikke bare
+    «dette skjedde en gang i løpet av forespørselen».
+    """
+
+    __slots__ = ("sql", "params", "art")
+
+    def __init__(self, sql: str, params=None, art: str = "sql") -> None:
+        self.sql, self.params, self.art = sql, params, art
+
+    def __repr__(self) -> str:
+        return f"<{self.art} {self.sql[:90]!r} {self.params!r}>"
+
+
 class SporendeTilkobling:
-    """Registrerer hvert eneste statement som sendes."""
+    """Registrerer hvert eneste statement som sendes.
+
+    Parametrene og commit/rollback er ikke pynt. Uten parametrene kan en
+    test bare se AT `set_config('disponit.aktor', ...)` ble sendt, ikke
+    HVILKEN aktør som ble satt — og da ville en implementasjon som tok
+    aktøren fra payloaden bestått like fint som en som tar den fra tokenet.
+    Uten transaksjonsgrensene kan den ikke skille pre-auth-transaksjonen fra
+    den autentiserte, og «pre-auth rører ingenting annet» blir umålbart.
+    """
 
     def __init__(self, conn, logg):
         object.__setattr__(self, "_conn", conn)
         object.__setattr__(self, "_logg", logg)
 
-    def execute(self, sql, *a, **kw):
-        self._logg.append(str(sql))
-        return self._conn.execute(sql, *a, **kw)
+    def execute(self, sql, params=None, *a, **kw):
+        self._logg.append(Statement(str(sql), params))
+        return self._conn.execute(sql, params, *a, **kw)
+
+    def commit(self):
+        self._logg.append(Statement("COMMIT", art="commit"))
+        return self._conn.commit()
+
+    def rollback(self):
+        self._logg.append(Statement("ROLLBACK", art="rollback"))
+        return self._conn.rollback()
 
     def transaction(self, *a, **kw):
         return self._conn.transaction(*a, **kw)
@@ -615,7 +648,7 @@ def test_uautentisert_request_rorer_ingen_tenanttabeller(app, klient,
     havne på reservetenanten `<ukjent>` og fylle tabeller med søppel fra
     hvem som helst.
     """
-    logg: list[str] = []
+    logg: list[Statement] = []
     ekte_hent = app.tjeneste.pool.hent
 
     def sporende_hent(*a, **kw):
@@ -629,13 +662,13 @@ def test_uautentisert_request_rorer_ingen_tenanttabeller(app, klient,
                              "idempotency-key": "i"})
     assert r.status_code == 401
     assert logg, "ingen statements ble sporet — testen måler ingenting"
-    samlet = " ".join(logg).lower()
+    samlet = " ".join(s.sql for s in logg).lower()
     for tabell in TENANTTABELLER:
         assert tabell not in samlet, \
             f"uautentisert forespørsel rørte {tabell}: {logg}"
     assert "disponit.tenant" not in samlet, \
         f"tenantkontekst ble satt uten gyldig token: {logg}"
-    assert any("verifiser_token" in s for s in logg), \
+    assert any("verifiser_token" in s.sql for s in logg), \
         "pre-auth kalte ikke verifiser_token — sporingen fanget feil vei"
 
 
@@ -645,7 +678,7 @@ def test_autentisert_request_setter_kontekst_forst(app, klient, policy,
     """Speilbildet: med gyldig token SKAL konteksten settes, og den skal
     settes FØR noe tenantbundet røres. Uten denne ville testen over
     bestått på et API som ikke gjorde noe som helst."""
-    logg: list[str] = []
+    logg: list[Statement] = []
     ekte_hent = app.tjeneste.pool.hent
     monkeypatch.setattr(app.tjeneste.pool, "hent",
                         lambda *a, **kw: SporendeTilkobling(
@@ -654,14 +687,105 @@ def test_autentisert_request_setter_kontekst_forst(app, klient, policy,
     assert felles.post(klient, policy, hendelse(policy), tok).status_code == 200
 
     forste_kontekst = next(i for i, s in enumerate(logg)
-                           if "disponit.tenant" in s)
+                           if "disponit.tenant" in s.sql)
     forste_tabell = next(
         (i for i, s in enumerate(logg)
-         if any(t in s.lower() for t in TENANTTABELLER)), len(logg))
+         if any(t in s.sql.lower() for t in TENANTTABELLER)), len(logg))
     assert forste_kontekst < forste_tabell, \
         f"tenanttabell ble rørt før SET LOCAL: {logg[:5]}"
-    assert "verifiser_token" in logg[0], \
+    assert "verifiser_token" in logg[0].sql, \
         f"første statement var ikke pre-auth: {logg[0]}"
+
+
+KONTEKSTVARIABLER = ("disponit.tenant", "disponit.aktor",
+                     "disponit.request_id")
+
+
+@pg
+def test_unntaksliste_gar_gjennom_samme_kontekstport_som_beslutningsveien(
+        app, klient, policy, token, monkeypatch):
+    """GET /v1/unntak: HELE konteksten, som første operasjon etter pre-auth.
+
+    Listeveien satte tidligere bare `disponit.tenant`, og gjorde det rett
+    før SELECT-en. Den leste altså en tenantbundet tabell i en transaksjon
+    uten `disponit.aktor` og uten `disponit.request_id` — to av de tre
+    sesjonsvariablene korreksjon 3 innførte. Row level security holdt
+    fortsatt, så ingenting lakk; det som manglet var sporet. En port som
+    gjelder på én av to veier inn er ikke en port, den er en tilfeldighet.
+
+    Testen er en statement-logg og måler rekkefølgen direkte, ikke via
+    ettervirkninger:
+
+      1. pre-auth-transaksjonen gjør ÉN ting — verifiserer tokenet — og
+         lukkes,
+      2. den NESTE transaksjonen setter tenant, aktør og request-id FØR
+         `unntak` leses,
+      3. aktøren er tokenidentiteten og request-id-en er serverens, ikke
+         klientens.
+
+    Muteres kallet tilbake til `sett_tenant(conn, auth.tenant)`, faller
+    punkt 2 og 3: `etter[1]` blir da selve lesingen, og det finnes ingen
+    parametre å måle aktør og request-id mot.
+    """
+    tok, token_id = token()
+    # Én sak å faktisk lese — kravet gjelder et VELLYKKET GET. Med tom liste
+    # ville testen bestått på en spørring som aldri traff en rad.
+    r_sak = felles.post(klient, policy,
+                        hendelse_uten_attestasjoner(ressurs="fak-ktx",
+                                                    handling="finnes.ikke"),
+                        tok, nokkel="ktx-1")
+    assert r_sak.status_code == 200 and "unntak_id" in r_sak.json()
+
+    # Sporingen settes på FØRST nå, slik at loggen inneholder nøyaktig
+    # statements fra GET-en og ingenting fra oppsettet.
+    logg: list[Statement] = []
+    ekte_hent = app.tjeneste.pool.hent
+    monkeypatch.setattr(app.tjeneste.pool, "hent",
+                        lambda *a, **kw: SporendeTilkobling(
+                            ekte_hent(*a, **kw), logg))
+
+    klientens_rid = "rid-klienten-forsokte-aa-styre"
+    r = klient.get("/v1/unntak", headers={"authorization": f"Bearer {tok}",
+                                          "x-request-id": klientens_rid})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["saker"]) == 1, r.text
+    assert logg, "ingen statements ble sporet — testen måler ingenting"
+
+    # --- 1. Pre-auth: kun tokenverifisering, så commit --------------------
+    forste_commit = next((i for i, s in enumerate(logg) if s.art == "commit"),
+                         None)
+    assert forste_commit is not None, \
+        f"pre-auth-transaksjonen ble aldri lukket: {logg}"
+    assert "verifiser_token" in logg[0].sql, \
+        f"første statement var ikke tokenverifisering: {logg[0]}"
+    assert forste_commit == 1, \
+        ("pre-auth kjørte mer enn tokenverifiseringen: "
+         f"{logg[:forste_commit]}")
+
+    # --- 2. Den autentiserte transaksjonen: kontekst før lesing -----------
+    etter = logg[forste_commit + 1:]
+    lesing = next((i for i, s in enumerate(etter)
+                   if "from unntak" in s.sql.lower()), None)
+    assert lesing is not None, f"unntakstabellen ble aldri lest: {etter}"
+    satt_for_lesing = " ".join(s.sql for s in etter[:lesing])
+    for variabel in KONTEKSTVARIABLER:
+        assert variabel in satt_for_lesing, \
+            f"{variabel} var ikke satt før unntak ble lest: {etter[:lesing]}"
+    # Og de skal ligge FØRST, ikke bare et sted foran: den dagen noen legger
+    # inn et oppslag over kontekstsettingen, skal denne si fra.
+    assert lesing == 2, \
+        f"kontekst var ikke de to første operasjonene: {etter[:lesing]}"
+
+    # --- 3. Aktør fra tokenet, request-id fra serveren --------------------
+    assert etter[0].params == (TENANT,), \
+        f"tenant kom ikke fra det verifiserte tokenet: {etter[0]}"
+    aktor, satt_rid = etter[1].params
+    assert aktor == f"token:{token_id}", \
+        f"aktøren er ikke tokenidentiteten: {etter[1]}"
+    assert satt_rid == r.headers["x-request-id"] == r.json()["request_id"], \
+        f"request-id i konteksten er ikke den serveren svarte med: {etter[1]}"
+    assert satt_rid != klientens_rid, \
+        "klienten fikk styre request-id — den skal alltid komme fra serveren"
 
 
 # ---------------------------------------------------------------------------
