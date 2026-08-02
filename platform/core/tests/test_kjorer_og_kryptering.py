@@ -468,3 +468,118 @@ def test_migrasjonen_er_faktisk_lagret_etter_kjoring():
     finally:
         c2.close()
     assert versjoner == [1, 2, 3], f"registeret overlevde ikke tilkoblingen: {versjoner}"
+
+
+# ---------- Codex-krav: herding skjer FØR 003, på begge veier ------------
+
+def _bootstrap_modul():
+    import importlib.util
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    spek = importlib.util.spec_from_file_location(
+        "migrasjon_bootstrap", rot / "deploy/staging/migrasjon-bootstrap.py")
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+    return modul
+
+
+def _migrer_modul():
+    import importlib.util
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    spek = importlib.util.spec_from_file_location(
+        "deploy_migrer", rot / "deploy/staging/migrer.py")
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+    return modul
+
+
+def _nullstill(migrator, med_legacy_uten_checksum: bool):
+    """Bygger utgangstilstanden testen skal måle fra.
+
+    med_legacy_uten_checksum=True etterligner en PR-004-database: 001 og 002
+    er kjørt og registrert, checksum-kolonnen finnes ikke, 003 er ukjent.
+    False gir en helt fersk database.
+    """
+    migrator.execute("DROP TABLE IF EXISTS unntak_historikk, unntak,"
+                     " idempotens, policyer, tenant_nokler, attestasjon_jti,"
+                     " api_tokener, revisjonslogg, frekvens_hendelser,"
+                     " migrasjoner CASCADE")
+    migrator.commit()
+    if med_legacy_uten_checksum:
+        from pathlib import Path
+        mig = Path(__file__).resolve().parents[1] / "db/migrations"
+        for v in (1, 2):
+            fil = next(mig.glob(f"{v:03d}_*.sql"))
+            migrator.execute(fil.read_text(encoding="utf-8"))
+        migrator.commit()
+        # PR-004-tilstand: ingen checksum-kolonne i det hele tatt
+        migrator.execute("ALTER TABLE migrasjoner DROP COLUMN IF EXISTS checksum")
+        migrator.commit()
+
+
+@pg
+@pytest.mark.parametrize("oppgradering", [False, True],
+                         ids=["fersk_database", "pr004_oppgradering"])
+def test_herding_skjer_for_003_paa_begge_veier(migrator, monkeypatch,
+                                               oppgradering):
+    """Codex' P1: oppsettet kjørte aldri checksum-bootstrapen. Både fersk
+    CI og oppgraderinger kunne bli grønne med `migrasjoner.checksum`
+    fortsatt nullable, og 003 kjørt før historikken var herdet — i strid
+    med den bindende kontrakten i v3-delta.
+
+    Testen måler rekkefølgen direkte: den noterer når checksum-kolonnen ble
+    NOT NULL, og når 003 ble registrert."""
+    _nullstill(migrator, oppgradering)
+    modul = _migrer_modul()
+    monkeypatch.setenv("DISPONIT_MIGRATOR_URL", MIGRATOR_DSN)
+
+    rekkefolge = []
+    bootstrap = _bootstrap_modul()
+    ekte_herd = bootstrap.herd_historikk
+
+    def spionert_herd(conn):
+        registrerte = [r[0] for r in conn.execute(
+            "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()]
+        rekkefolge.append(("herding", registrerte))
+        return ekte_herd(conn)
+
+    bootstrap.herd_historikk = spionert_herd
+    monkeypatch.setattr(modul, "last_bootstrap", lambda: bootstrap)
+
+    assert modul.main(["disponit"]) == 0
+
+    assert rekkefolge, "herd_historikk ble aldri kalt — historikken er ikke låst"
+    _, ved_herding = rekkefolge[0]
+    assert 3 not in ved_herding, (
+        f"003 var registrert allerede da herdingen skjedde: {ved_herding} — "
+        f"kontrakten krever backfill + NOT NULL FØR 003")
+
+    nullable = migrator.execute(
+        "SELECT is_nullable FROM information_schema.columns"
+        " WHERE table_name='migrasjoner' AND column_name='checksum'").fetchone()
+    uten = migrator.execute(
+        "SELECT versjon FROM migrasjoner WHERE checksum IS NULL").fetchall()
+    versjoner = [r[0] for r in migrator.execute(
+        "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()]
+    migrator.rollback()
+    assert nullable[0] == "NO", "checksum er fortsatt nullable"
+    assert uten == [], f"migrasjoner uten checksum: {uten}"
+    assert versjoner == [1, 2, 3]
+
+
+@pg
+def test_migrer_feiler_hardt_hvis_historikken_ikke_er_laast(migrator,
+                                                            monkeypatch):
+    """En advarsel med exit 0 er ingen port. Blir herdingen en no-op, skal
+    inngangen returnere feil — ikke skrive en beskjed og gå videre."""
+    _nullstill(migrator, med_legacy_uten_checksum=True)
+    modul = _migrer_modul()
+    monkeypatch.setenv("DISPONIT_MIGRATOR_URL", MIGRATOR_DSN)
+
+    bootstrap = _bootstrap_modul()
+    bootstrap.herd_historikk = lambda conn: None      # herding gjøres til no-op
+    monkeypatch.setattr(modul, "last_bootstrap", lambda: bootstrap)
+
+    assert modul.main(["disponit"]) != 0, "inngangen godtok en ulåst historikk"
+    migrator.rollback()

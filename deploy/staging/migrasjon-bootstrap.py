@@ -29,6 +29,51 @@ REVIEWEDE_CHECKSUMS = {
 }
 MIG = Path(__file__).resolve().parents[2] / "platform/core/db/migrations"
 
+class HerdingFeilet(RuntimeError):
+    """Historikken kunne ikke låses. Alltid hard feil — en advarsel med
+    exit 0 er ingen port."""
+
+
+def herd_historikk(conn) -> None:
+    """Backfill av reviewede checksums + NOT NULL. Idempotent.
+
+    Kalles av deploy/staging/migrer.py FØR migrasjon 003, slik den bindende
+    spesifikasjonen krever. Kjøres den etterpå — eller ikke i det hele tatt
+    — er historikken fortsatt muterbar selv om oppsettet rapporterer
+    suksess. Det var Codex' P1 i andre review-runde.
+    """
+    for versjon, forventet in REVIEWEDE_CHECKSUMS.items():
+        fil = next(MIG.glob(f"{versjon:03d}_*.sql"))
+        faktisk = hashlib.sha256(fil.read_bytes()).hexdigest()
+        if faktisk != forventet:
+            raise HerdingFeilet(
+                f"{fil.name} matcher ikke reviewet checksum — historikken"
+                f" skal bindes til det som er gjennomgått, ikke til disk")
+        conn.execute("UPDATE migrasjoner SET checksum=%s"
+                     " WHERE versjon=%s AND checksum IS NULL",
+                     (forventet, versjon))
+
+    mangler = conn.execute(
+        "SELECT versjon FROM migrasjoner WHERE checksum IS NULL"
+        " ORDER BY versjon").fetchall()
+    if mangler:
+        raise HerdingFeilet(
+            f"registrerte migrasjoner uten checksum: {[m[0] for m in mangler]}"
+            " — kan ikke låse historikken")
+
+    conn.execute("ALTER TABLE migrasjoner"
+                 " ALTER COLUMN checksum SET NOT NULL")
+    conn.commit()
+
+    nullable = conn.execute(
+        "SELECT is_nullable FROM information_schema.columns"
+        " WHERE table_name='migrasjoner' AND column_name='checksum'"
+    ).fetchone()
+    conn.rollback()
+    if not nullable or nullable[0] != "NO":
+        raise HerdingFeilet("checksum er fortsatt nullable etter herding")
+
+
 def main() -> int:
     dsn = os.environ.get("DISPONIT_MIGRATOR_URL")
     if not dsn:
@@ -38,18 +83,17 @@ def main() -> int:
         return 2
     conn = psycopg.connect(dsn)
     conn.execute("SELECT pg_advisory_lock(748291337)")
-    for v, forventet in REVIEWEDE_CHECKSUMS.items():
-        fil = next(MIG.glob(f"{v:03d}_*.sql"))
-        faktisk = hashlib.sha256(fil.read_bytes()).hexdigest()
-        if faktisk != forventet:
-            print(f"AVBRUTT: {fil.name} matcher ikke reviewet checksum")
-            return 1
-        conn.execute("UPDATE migrasjoner SET checksum=%s"
-                     " WHERE versjon=%s AND checksum IS NULL", (forventet, v))
-    conn.execute("ALTER TABLE migrasjoner ALTER COLUMN checksum SET NOT NULL")
-    conn.commit()
+    try:
+        herd_historikk(conn)
+    except HerdingFeilet as e:
+        print(f"AVBRUTT: {e}")
+        return 1
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(748291337)")
+        conn.commit()
     print("Bootstrap OK — migrasjonshistorikken er nå immutable")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -22,7 +22,15 @@ def _sha(fil: Path) -> str:
     return hashlib.sha256(fil.read_bytes()).hexdigest()
 
 
-def migrer(conn: psycopg.Connection) -> list[int]:
+LEGACY_MAKS = max(_LEGACY_MED_EGEN_TX)   # siste versjon før checksum-æraen
+
+
+def migrer(conn: psycopg.Connection,
+           til_og_med: int | None = None) -> list[int]:
+    """Kjører manglende migrasjoner. `til_og_med` stopper etter en gitt
+    versjon — brukt av deploy/staging/migrer.py for å kjøre legacy først,
+    herde historikken, og deretter resten. Spesifikasjonen krever at
+    backfill + NOT NULL skjer FØR 003."""
     kjort: list[int] = []
     conn.execute("SELECT pg_advisory_lock(%s)", (_LAAS,))
     try:
@@ -44,6 +52,8 @@ def migrer(conn: psycopg.Connection) -> list[int]:
             "SELECT versjon, checksum FROM migrasjoner").fetchall())
         for fil in sorted(_MIG.glob("[0-9][0-9][0-9]_*.sql")):
             v = int(fil.name[:3])
+            if til_og_med is not None and v > til_og_med:
+                break
             sql = fil.read_text(encoding="utf-8")
             cs = _sha(fil)
             if v in reg:

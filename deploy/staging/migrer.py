@@ -18,6 +18,7 @@ tabellene og kan derfor dele ut rettigheter selv; superbruker trengs ikke.
 
 BRUK:  DISPONIT_MIGRATOR_URL=... python3 deploy/staging/migrer.py [runtime-rolle]
 """
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -42,34 +43,69 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 """
 
 
-def main() -> int:
+def last_bootstrap():
+    """Bootstrap-modulen har bindestrek i navnet og kan ikke importeres
+    vanlig. Egen funksjon på modulnivå slik at tester kan bytte den ut —
+    herdingen skal finnes ett sted, og den er samme fil som kjøres manuelt.
+    """
+    spek = importlib.util.spec_from_file_location(
+        "migrasjon_bootstrap",
+        Path(__file__).with_name("migrasjon-bootstrap.py"))
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+    return modul
+
+
+def main(argv: list[str] | None = None) -> int:
+    # argv som parameter, ikke sys.argv direkte: da kan tester kalle
+    # inngangen som den kalles i drift, uten å rote med prosessens argumenter.
+    argv = sys.argv[1:] if argv is None else argv
     dsn = os.environ.get("DISPONIT_MIGRATOR_URL")
     if not dsn:
         print("AVBRUTT: DISPONIT_MIGRATOR_URL mangler — migrasjoner kjøres"
               " av skjemaeieren, aldri av runtime.")
         return 2
-    rolle = sys.argv[1] if len(sys.argv) > 1 else "disponit"
+    rolle = argv[0] if argv else "disponit"
     if not rolle.replace("_", "").isalnum():
         print(f"AVBRUTT: ugyldig rollenavn {rolle!r}")
         return 2
 
-    from db.kjorer import migrer
+    from db.kjorer import LEGACY_MAKS, migrer
     from db.pg import koble
 
+    bootstrap = last_bootstrap()
     conn = koble(dsn)
     try:
-        kjort = migrer(conn)
+        # Kontraktens rekkefølge (v3-delta): legacy først, så herding av
+        # historikken, så resten. Kjøres 003 før checksum-kolonnen er
+        # NOT NULL, er historikken fortsatt muterbar mens den nye
+        # migrasjonen legges oppå — og oppsettet ville rapportert suksess.
+        legacy = migrer(conn, til_og_med=LEGACY_MAKS)
+        print(f"legacy-migrasjoner: {legacy or 'ingen'}")
+        bootstrap.herd_historikk(conn)
+        print("historikk herdet: checksum er NOT NULL")
+        kjort = legacy + migrer(conn)
         print(f"migrasjoner kjørt: {kjort or 'ingen — alt var oppdatert'}")
         conn.execute(RETTIGHETER.format(rolle=rolle))
         conn.commit()
         print(f"rettigheter satt for {rolle}")
+        # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
+        # ikke å bevise at historikken er låst, skal oppsettet feile.
         versjoner = conn.execute(
             "SELECT versjon, checksum IS NOT NULL FROM migrasjoner"
             " ORDER BY versjon").fetchall()
+        nullable = conn.execute(
+            "SELECT is_nullable FROM information_schema.columns"
+            " WHERE table_name='migrasjoner' AND column_name='checksum'"
+        ).fetchone()
         conn.rollback()
-        print("register: " + ", ".join(
-            f"{v}{'' if cs else ' (uten checksum — kjør bootstrap)'}"
-            for v, cs in versjoner))
+        uten = [v for v, cs in versjoner if not cs]
+        if uten or not nullable or nullable[0] != "NO":
+            print(f"AVBRUTT: historikken er ikke låst — uten checksum: {uten},"
+                  f" kolonne nullable: {nullable and nullable[0]}")
+            return 1
+        print("register: " + ", ".join(str(v) for v, _ in versjoner)
+              + "  (alle med checksum, kolonnen er NOT NULL)")
     finally:
         conn.close()
     return 0
