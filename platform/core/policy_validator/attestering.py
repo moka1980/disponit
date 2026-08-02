@@ -136,9 +136,15 @@ BINDINGSFELT = ("tenant_id", "handling", "vilkaar", "ressurs_id",
                 "policy_id", "utstedt", "utloper", "jti")
 
 
-def _tid(verdi: object):
+def tid_med_sone(verdi: object):
     """ISO 8601 MED tidssone, ellers None. Naive tidsstempler avvises —
-    samme regel som motoren (PR-002-funn 3a)."""
+    samme regel som motoren (PR-002-funn 3a).
+
+    Offentlig fordi API-veien (api.kjerne) trenger nøyaktig samme tolkning
+    når den regner ut hvor lenge en konsumert jti må stå i replay-tabellen.
+    En egen parser der ville vært en andre kopi av en tidsregel som
+    allerede har kostet oss ett funn.
+    """
     from datetime import datetime
     if not isinstance(verdi, str):
         return None
@@ -147,6 +153,9 @@ def _tid(verdi: object):
     except ValueError:
         return None
     return t if t.tzinfo is not None else None
+
+
+_tid = tid_med_sone       # internt navn, brukt av kontroller_binding
 
 
 def kontroller_binding(event: dict, context, handling: str, policy_id: str,

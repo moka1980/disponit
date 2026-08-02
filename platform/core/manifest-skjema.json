@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/modulmanifest-v1.json",
+  "title": "Disponit modulmanifest v1",
+  "description": "Formatet registeret og staging-sjekklisten leser. Gyldige sjekklistestatuser er ja | nei | blokkert, og 'blokkert' KREVER blokkert_av. Uten skjemaet er et sjekklistepunkt bare fritekst, og 'nei' kan bli til 'ja' uten at noen merker det.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "navn", "versjon", "status", "avhengigheter", "kjerne",
+               "i18n_prefiks", "staging_sjekkliste"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "navn": {"type": "string", "minLength": 1},
+    "versjon": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "status": {"enum": ["aktiv", "inaktiv", "under_utvikling"]},
+    "avhengigheter": {"type": "array", "items": {"type": "string"}},
+    "kjerne": {"type": "string", "minLength": 1},
+    "i18n_prefiks": {"type": "string", "pattern": "^[a-z][a-z0-9]*$"},
+    "staging_sjekkliste": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tester_gronne_pa_staging", "syntetisk_datasett_likt_lokalt",
+                   "revisjonslogg_korrekt", "feilinjisering_til_unntakskø",
+                   "ytelse_bestatt", "rollback_testet"],
+      "properties": {
+        "tester_gronne_pa_staging": {"$ref": "#/$defs/punkt"},
+        "syntetisk_datasett_likt_lokalt": {"$ref": "#/$defs/punkt"},
+        "revisjonslogg_korrekt": {"$ref": "#/$defs/punkt"},
+        "feilinjisering_til_unntakskø": {"$ref": "#/$defs/punkt"},
+        "ytelse_bestatt": {"$ref": "#/$defs/punkt"},
+        "rollback_testet": {"$ref": "#/$defs/punkt"}
+      }
+    }
+  },
+  "$defs": {
+    "punkt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["ja", "nei", "blokkert"]},
+        "blokkert_av": {"type": "string", "minLength": 1},
+        "krav_id": {"type": "string", "minLength": 1},
+        "artefakt": {"type": "string", "minLength": 1},
+        "notat": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "comment": "blokkert KREVER blokkert_av — ellers er 'blokkert' bare en penere måte å si nei på, uten å si av hva.",
+          "if": {"properties": {"status": {"const": "blokkert"}},
+                 "required": ["status"]},
+          "then": {"required": ["blokkert_av"]}
+        },
+        {
+          "comment": "blokkert_av gir bare mening når punktet ER blokkert.",
+          "if": {"required": ["blokkert_av"]},
+          "then": {"properties": {"status": {"const": "blokkert"}}}
+        },
+        {
+          "comment": "Et ja på et punkt med krav_id må peke på artefaktet som beviser det. Manifestfeltet er aldri selv beviset (v2 Del 6).",
+          "if": {"allOf": [{"properties": {"status": {"const": "ja"}},
+                            "required": ["status"]},
+                           {"required": ["krav_id"]}]},
+          "then": {"required": ["artefakt"]}
+        }
+      ]
+    }
+  }
+}

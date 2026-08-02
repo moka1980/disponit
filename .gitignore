@@ -38,3 +38,9 @@ desktop.ini
 # Draft-pakker fra claude.ai hoerer ikke hjemme i repoet.
 # De sikres av ~/tools/disponit_backup.sh fra Downloads-mappen.
 *.zip
+
+# Lasttest-artefakter (perf-m01-v1). Selve MÅLINGEN hører hjemme som
+# CI-/staging-artefakt, ikke i historikken: en JSON fra en tilfeldig
+# utviklermaskin ser ut som et bevis uten å være det. Manifestet peker på
+# artefaktet fra kjøringen på staging (v2 Del 6).
+deploy/staging/artefakter/*.json

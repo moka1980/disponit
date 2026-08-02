@@ -101,6 +101,22 @@ verifiser_og_reparer() {
   return 0
 }
 
+# Én hemmelighet, generert én gang og aldri rotert automatisk.
+#
+# Rotasjon MÅ være en bevisst handling for disse to: bytter man DISPONIT_KEK,
+# blir hver eneste lagrede unntaks-payload uleselig (DEK-ene er pakket med
+# den), og bytter man DISPONIT_TOKEN_PEPPER, slutter alle utstedte tokens å
+# virke samtidig. Derfor er det ingen TVING_ROTASJON her — i motsetning til
+# DSN-ene, der rotasjon er billig og reparerende.
+sikre_hex_hemmelighet() {
+  local navn="$1" bytes="${2:-32}"
+  if har_nokkel "$navn"; then
+    return 0
+  fi
+  sett_nokkel "$navn" "$(openssl rand -hex "$bytes")"
+  echo "  genererte $navn ($bytes byte)"
+}
+
 sikre_attestasjonsnokler() {
   if har_nokkel DISPONIT_ATT_NOKLER; then
     return 0

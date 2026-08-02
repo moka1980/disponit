@@ -20,9 +20,40 @@ import jsonschema
 
 _SKJEMA_STI = Path(__file__).resolve().parents[3] / "policies" / "policy-schema-v0.2.json"
 
+# Validatoren bygges ÉN gang per skjemaversjon, ikke per kall.
+#
+# Målt på PR-005b-lasttesten: `valider_policy` brukte ~20 ms median, og
+# nesten alt var fillesing + rekompilering av JSON Schema-validatoren.
+# API-veien revaliderer policyen ved HVER forespørsel (v2 1.5, fail-closed
+# mot DB-korrupsjon), så 20 ms per request ble ~1,6 CPU-sekunder per sekund
+# ved ytelseskravet på 100/s — mer enn hele Cloud Server S sine 2 vCPU, på
+# revalideringen alene.
+#
+# Merk hva som IKKE caches: POLICYEN. Den leses fortsatt fra databasen og
+# valideres på nytt for hver eneste forespørsel — kontrakten er uendret.
+# Det som caches er selve skjemaet, som er kode og følger utrullingen.
+# Nøkkelen inkluderer mtime og størrelse, så en endret skjemafil plukkes
+# opp uten omstart og cachen aldri kan servere et utdatert skjema.
+_VALIDATOR_CACHE: dict[tuple, object] = {}
+
 
 def _last_skjema() -> dict:
     return json.loads(_SKJEMA_STI.read_text(encoding="utf-8"))
+
+
+def _validator():
+    import jsonschema
+    try:
+        st = _SKJEMA_STI.stat()
+        nokkel = (str(_SKJEMA_STI), st.st_mtime_ns, st.st_size)
+    except OSError:
+        nokkel = (str(_SKJEMA_STI), None, None)
+    v = _VALIDATOR_CACHE.get(nokkel)
+    if v is None:
+        v = jsonschema.Draft202012Validator(_last_skjema())
+        _VALIDATOR_CACHE.clear()      # kun én versjon om gangen
+        _VALIDATOR_CACHE[nokkel] = v
+    return v
 
 
 def valider_policy(policy: object) -> list[str]:
@@ -38,8 +69,7 @@ def _valider(policy: object) -> list[str]:
         return ["policy er ikke et objekt"]
 
     # Lag 1: formelt JSON Schema — samle ALLE brudd, ikke bare første
-    skjema = _last_skjema()
-    validator = jsonschema.Draft202012Validator(skjema)
+    validator = _validator()
     feil = [f"skjema: {'/'.join(str(p) for p in e.absolute_path) or '<rot>'}: "
             f"{e.message}" for e in validator.iter_errors(policy)]
     if feil:
