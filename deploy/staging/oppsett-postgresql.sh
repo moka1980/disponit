@@ -27,27 +27,55 @@ done
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
 
-# Miljøfil med hemmeligheter — 0600, aldri i repo (RUTINER/ADR-001)
+# ------------------------------------------------------------
+# Miljøfil med hemmeligheter — 0600, aldri i repo (RUTINER/ADR-001).
+#
+# Skrives PER NØKKEL, ikke som en alt-eller-ingenting-fil. Codex' P1:
+# skriptet skrev bare fila når den ikke fantes, så en oppgradering fra en
+# eldre installasjon fikk aldri migrator-DSN-ene — og krevde at et menneske
+# slettet fila og dermed roterte alle hemmeligheter for hånd. En
+# oppgraderingsvei som krever manuell hemmelighetsendring er ingen
+# oppgraderingsvei.
+#
+# Eksisterende verdier røres ikke: passord roteres aldri som bieffekt av at
+# skriptet kjøres på nytt.
+# ------------------------------------------------------------
 mkdir -p /etc/disponit && chmod 700 /etc/disponit
-if [ ! -f "$MILJOFIL" ]; then
+touch "$MILJOFIL" && chmod 600 "$MILJOFIL"
+
+har_nokkel() { grep -q "^$1=" "$MILJOFIL"; }
+legg_til()   { printf "%s='%s'\n" "$1" "$2" >> "$MILJOFIL"; }
+
+# Runtime-rollen
+if ! har_nokkel DATABASE_URL || ! har_nokkel DISPONIT_TEST_DSN; then
   PASSORD=$(openssl rand -hex 24)
-  MIGPASSORD=$(openssl rand -hex 24)
-  sudo -u postgres psql -c "ALTER ROLE $BRUKER PASSWORD '$PASSORD'"
-  sudo -u postgres psql -c "ALTER ROLE $MIGRATOR PASSWORD '$MIGPASSORD'"
-  # Verdiene MAA vaere i anfoerselstegn: DSN-ene inneholder mellomrom, og
-  # `set -a; . fila` tolker da bare foerste ord som verdi. Uten dette blir
-  # DISPONIT_TEST_DSN til "host=127.0.0.1" og passordet forsvinner —
-  # psycopg feiler med "no password supplied". Funnet ved faktisk kjoering
-  # paa Cloud Server S, ikke ved lesing.
-  cat > "$MILJOFIL" << MILJO
-DATABASE_URL='host=127.0.0.1 dbname=$DB user=$BRUKER password=$PASSORD'
-DISPONIT_TEST_DSN='host=127.0.0.1 dbname=${DB}_test user=$BRUKER password=$PASSORD'
-DISPONIT_MIGRATOR_URL='host=127.0.0.1 dbname=$DB user=$MIGRATOR password=$MIGPASSORD'
-DISPONIT_TEST_MIGRATOR_DSN='host=127.0.0.1 dbname=${DB}_test user=$MIGRATOR password=$MIGPASSORD'
-DISPONIT_ATT_NOKLER='{"v_regnskap":{"k1":"$(openssl rand -hex 32)"},"v_register":{"k1":"$(openssl rand -hex 32)"},"v_bank":{"k1":"$(openssl rand -hex 32)"},"v_svindel":{"k1":"$(openssl rand -hex 32)"},"v_fordring":{"k1":"$(openssl rand -hex 32)"},"v_dlp":{"k1":"$(openssl rand -hex 32)"},"v_prisbok":{"k1":"$(openssl rand -hex 32)"}}'
-MILJO
-  chmod 600 "$MILJOFIL"
+  sudo -u postgres psql -qc "ALTER ROLE $BRUKER PASSWORD '$PASSORD'"
+  har_nokkel DATABASE_URL || \
+    legg_til DATABASE_URL "host=127.0.0.1 dbname=$DB user=$BRUKER password=$PASSORD"
+  har_nokkel DISPONIT_TEST_DSN || \
+    legg_til DISPONIT_TEST_DSN "host=127.0.0.1 dbname=${DB}_test user=$BRUKER password=$PASSORD"
 fi
+
+# Migrator-rollen — dette er nøkkelen som manglet ved oppgradering
+if ! har_nokkel DISPONIT_MIGRATOR_URL || ! har_nokkel DISPONIT_TEST_MIGRATOR_DSN; then
+  MIGPASSORD=$(openssl rand -hex 24)
+  sudo -u postgres psql -qc "ALTER ROLE $MIGRATOR PASSWORD '$MIGPASSORD'"
+  har_nokkel DISPONIT_MIGRATOR_URL || \
+    legg_til DISPONIT_MIGRATOR_URL "host=127.0.0.1 dbname=$DB user=$MIGRATOR password=$MIGPASSORD"
+  har_nokkel DISPONIT_TEST_MIGRATOR_DSN || \
+    legg_til DISPONIT_TEST_MIGRATOR_DSN "host=127.0.0.1 dbname=${DB}_test user=$MIGRATOR password=$MIGPASSORD"
+fi
+
+# Attestasjonsnøkler
+if ! har_nokkel DISPONIT_ATT_NOKLER; then
+  NOKLER='{'
+  for v in v_regnskap v_register v_bank v_svindel v_fordring v_dlp v_prisbok; do
+    NOKLER="$NOKLER\"$v\":{\"k1\":\"$(openssl rand -hex 32)\"},"
+  done
+  legg_til DISPONIT_ATT_NOKLER "${NOKLER%,}}"
+fi
+
+chmod 600 "$MILJOFIL"
 
 # Test-database for staging-kjøringer
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'" \
@@ -72,14 +100,31 @@ set -a; . "$MILJOFIL"; set +a
 for base in $DB ${DB}_test; do
   # Flytt eierskap til migrator (reparerer tidligere installasjoner der
   # objektene ble eid av postgres eller av runtime-rollen).
+  # Codex' P1: forrige versjon skrev «ALTER FUNCTION public.navn()» uten
+  # argumenttyper. Det er feil for enhver funksjon med parametre, og det
+  # ville i tillegg forsøkt å ta eierskap over funksjoner som tilhører en
+  # EXTENSION — pgcrypto er allerede tilgjengelig her og trengs til
+  # attestasjonssignaturene. Å endre eier på extension-objekter er både
+  # unødvendig og skadelig.
+  #
+  # Nå: `oid::regprocedure` gir full signatur med argumenttyper, kun
+  # vanlige funksjoner (prokind='f'), og alt som henger på en extension
+  # (pg_depend.deptype='e') er utelatt — for tabeller også.
   sudo -u postgres psql -qtAd "$base" -c \
-    "SELECT 'ALTER TABLE public.'||quote_ident(tablename)||' OWNER TO $MIGRATOR;'
-       FROM pg_tables WHERE schemaname='public' AND tableowner <> '$MIGRATOR'
+    "SELECT format('ALTER TABLE %s OWNER TO %I;', c.oid::regclass, '$MIGRATOR')
+       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','p')
+        AND pg_get_userbyid(c.relowner) <> '$MIGRATOR'
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                         WHERE d.objid=c.oid AND d.deptype='e')
      UNION ALL
-     SELECT 'ALTER FUNCTION public.'||quote_ident(p.proname)||'() OWNER TO $MIGRATOR;'
+     SELECT format('ALTER FUNCTION %s OWNER TO %I;', p.oid::regprocedure, '$MIGRATOR')
        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-      WHERE n.nspname='public' AND pg_get_userbyid(p.proowner) <> '$MIGRATOR'" \
-    | sudo -u postgres psql -q -d "$base" -f -
+      WHERE n.nspname='public' AND p.prokind='f'
+        AND pg_get_userbyid(p.proowner) <> '$MIGRATOR'
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                         WHERE d.objid=p.oid AND d.deptype='e')" \
+    | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
 done
 
