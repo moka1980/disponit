@@ -29,72 +29,21 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
 
 # ------------------------------------------------------------
 # Miljøfil med hemmeligheter — 0600, aldri i repo (RUTINER/ADR-001).
-#
-# Skrives PER NØKKEL, ikke som en alt-eller-ingenting-fil. Codex' P1:
-# skriptet skrev bare fila når den ikke fantes, så en oppgradering fra en
-# eldre installasjon fikk aldri migrator-DSN-ene — og krevde at et menneske
-# slettet fila og dermed roterte alle hemmeligheter for hånd. En
-# oppgraderingsvei som krever manuell hemmelighetsendring er ingen
-# oppgraderingsvei.
-#
-# Eksisterende verdier røres ikke: passord roteres aldri som bieffekt av at
-# skriptet kjøres på nytt.
+# Tilstandsmaskinen ligger i lib-miljofil.sh og testes i CI; her kalles den
+# bare. Alle fem feilene som er funnet i dette oppsettet satt i den logikken,
+# og manuell staging-prøve er ingen port.
 # ------------------------------------------------------------
 mkdir -p /etc/disponit && chmod 700 /etc/disponit
 touch "$MILJOFIL" && chmod 600 "$MILJOFIL"
 
-har_nokkel() { grep -q "^$1=" "$MILJOFIL"; }
+. "$(dirname "$0")/lib-miljofil.sh"
 
-# Setter en nøkkel: fjerner en eventuell gammel linje først, så verdien
-# ikke finnes i to utgaver.
-sett_nokkel() {
-  local n="$1" v="$2" tmp
-  tmp=$(mktemp) && chmod 600 "$tmp"
-  grep -v "^$n=" "$MILJOFIL" > "$tmp" || true
-  printf "%s='%s'\n" "$n" "$v" >> "$tmp"
-  mv "$tmp" "$MILJOFIL" && chmod 600 "$MILJOFIL"
-}
+RUNTIME_DSN=("DATABASE_URL=$DB" "DISPONIT_TEST_DSN=${DB}_test")
+MIGRATOR_DSN=("DISPONIT_MIGRATOR_URL=$DB" "DISPONIT_TEST_MIGRATOR_DSN=${DB}_test")
 
-# En rolles DSN-er hører sammen: de deler ETT passord i databasen.
-#
-# Codex' P1: forrige versjon roterte passordet så snart ÉN av dem manglet,
-# men skrev bare den manglende linjen. Søskenlinja beholdt da det gamle
-# passordet og sluttet å virke. Verst av alt gjaldt det nøyaktig den
-# rotasjonsprosedyren jeg selv hadde skrevet i DEPLOY.md — «slett den ene
-# linjen og kjør skriptet» — så dokumentasjonen ledet rett i fella.
-#
-# Nå: mangler én, skrives ALLE rollens DSN-er på nytt med det nye passordet.
-# Mangler ingen, røres ingenting og passordet roteres ikke.
-sikre_rolle_dsn() {
-  local rolle="$1"; shift          # deretter: NØKKEL=dbnavn NØKKEL=dbnavn ...
-  local mangler=0 par n
-  for par in "$@"; do
-    har_nokkel "${par%%=*}" || mangler=1
-  done
-  [ "$mangler" -eq 0 ] && return 0
-
-  local pw; pw=$(openssl rand -hex 24)
-  sudo -u postgres psql -qc "ALTER ROLE $rolle PASSWORD '$pw'"
-  for par in "$@"; do
-    n="${par%%=*}"
-    sett_nokkel "$n" "host=127.0.0.1 dbname=${par#*=} user=$rolle password=$pw"
-  done
-  echo "  roterte passord for $rolle og skrev ${#@} DSN-er samlet"
-}
-
-sikre_rolle_dsn "$BRUKER"   "DATABASE_URL=$DB"          "DISPONIT_TEST_DSN=${DB}_test"
-sikre_rolle_dsn "$MIGRATOR" "DISPONIT_MIGRATOR_URL=$DB" "DISPONIT_TEST_MIGRATOR_DSN=${DB}_test"
-
-# Attestasjonsnøkler
-if ! har_nokkel DISPONIT_ATT_NOKLER; then
-  NOKLER='{'
-  for v in v_regnskap v_register v_bank v_svindel v_fordring v_dlp v_prisbok; do
-    NOKLER="$NOKLER\"$v\":{\"k1\":\"$(openssl rand -hex 32)\"},"
-  done
-  legg_til DISPONIT_ATT_NOKLER "${NOKLER%,}}"
-fi
-
-chmod 600 "$MILJOFIL"
+sikre_rolle_dsn "$BRUKER"   "${RUNTIME_DSN[@]}"
+sikre_rolle_dsn "$MIGRATOR" "${MIGRATOR_DSN[@]}"
+sikre_attestasjonsnokler
 
 # Test-database for staging-kjøringer
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'" \
@@ -189,6 +138,12 @@ GRANT SELECT ON migrasjoner TO $BRUKER;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $BRUKER;
 GRANTS
 done
+
+# Sannhetsprøve til slutt: virker DSN-ene faktisk? Et avbrudd mellom
+# passordrotasjon og filskriving etterlater rolle og fil ute av takt, og det
+# kan ikke oppdages ved å se etter nøkkelnavn — bare ved å koble til.
+verifiser_og_reparer "$BRUKER"   "${RUNTIME_DSN[@]}"
+verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q  (74 forventet)"
