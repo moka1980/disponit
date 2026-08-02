@@ -40,6 +40,28 @@ def migrer(conn: psycopg.Connection) -> list[int]:
     return kjort
 
 
+UKJENT_TENANT = "<ukjent>"
+
+
+def sett_tenant(conn: psycopg.Connection, tenant: str | None) -> str:
+    """Setter `disponit.tenant` for GJELDENDE transaksjon (row level security).
+
+    Migrasjon 002 håndhever tenant-isolasjon i databasegrensen: policyen
+    sammenligner radens tenant med denne variabelen. Er den ikke satt, gir
+    `current_setting(..., true)` NULL, og både lesing og skriving blir tomt
+    — fail-closed. Glemmer koden å sette tenant, stopper databasen den, i
+    stedet for å vise alle tenanters rader.
+
+    Uautentiserte forsøk har ingen tenant, men skal fortsatt havne i
+    revisjonsloggen — de føres på den reserverte verdien `<ukjent>`, aldri
+    på en ekte kundes tenant. En avvist forespørsel som ikke logges er verre
+    enn en som logges på feil sted.
+    """
+    t = tenant if isinstance(tenant, str) and tenant.strip() else UKJENT_TENANT
+    conn.execute("SELECT set_config('disponit.tenant', %s, true)", (t,))
+    return t
+
+
 def _forsok_reservasjon(conn: psycopg.Connection, nokkel: tuple[str, ...],
                         siden: datetime, maks: int,
                         tidspunkt: datetime) -> bool:
@@ -56,6 +78,7 @@ def _forsok_reservasjon(conn: psycopg.Connection, nokkel: tuple[str, ...],
     venter på å bli innført, ikke en stilsak.
     """
     tenant, handling, felt, gruppe = nokkel
+    sett_tenant(conn, tenant)   # RLS — samme sted som selve reservasjonen
     conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                  ("\x1f".join(nokkel),))
     rad = conn.execute(
@@ -87,6 +110,7 @@ class PgTellerLager(TellerLager):
     def antall(self, nokkel: tuple[str, ...], siden: datetime) -> int:
         """Rådgivende — aldri håndheving (TellerLager-kontrakten)."""
         tenant, handling, felt, gruppe = nokkel
+        sett_tenant(self._conn, tenant)   # RLS: ellers ser vi ingenting
         rad = self._conn.execute(
             "SELECT count(*) FROM frekvens_hendelser"
             " WHERE tenant=%s AND handling=%s AND nokkel_felt=%s"
@@ -107,6 +131,7 @@ class PgTellerLager(TellerLager):
         """KUN testoppsett/migrering — aldri håndheving."""
         tenant, handling, felt, gruppe = nokkel
         with self._conn.transaction():
+            sett_tenant(self._conn, tenant)
             self._conn.execute(
                 "INSERT INTO frekvens_hendelser"
                 " (tenant, handling, nokkel_felt, gruppe, tidspunkt)"
@@ -115,6 +140,10 @@ class PgTellerLager(TellerLager):
 
 
 def _skriv_loggpost(conn: psycopg.Connection, post: dict) -> None:
+    """Skriver loggposten. Tenant settes både som kolonne og som
+    sesjonsvariabel, ellers avviser row level security-policyen raden."""
+    post = dict(post)
+    post["tenant"] = sett_tenant(conn, post.get("tenant"))
     conn.execute(
         "INSERT INTO revisjonslogg (ts, tenant, aktor, kilde, input_hash,"
         " policy_id, bransjemal, mal_status, schema_version, beslutning,"

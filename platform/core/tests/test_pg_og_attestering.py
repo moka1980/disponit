@@ -16,6 +16,10 @@ from policy_validator import attestering
 from policy_validator.engine import STOPP, TILLAT, UNNTAK, EvaluationContext, Grunn
 
 DSN = os.environ.get("DISPONIT_TEST_DSN")
+# Migrator er en ANNEN rolle enn runtime (Codex P1): runtime eier ingenting
+# og kan derfor ikke skru av sine egne append-only-triggere. Faller tilbake
+# til runtime-DSN kun for eldre lokale oppsett med én rolle.
+MIGRATOR_DSN = os.environ.get("DISPONIT_TEST_MIGRATOR_DSN") or DSN
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 NAA = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
 CTX = EvaluationContext("t-pg", "agent", True, "api_token")
@@ -64,6 +68,8 @@ def test_nokkelregister_avviser_svake_nokler():
         attestering._valider_register({"v_x": {"k1": "kort"}})
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="POSIX-modusbiter finnes ikke paa Windows; vakten i koden gjelder fortsatt, men kan ikke testes likt der")
 def test_nokkelfil_med_apne_rettigheter_avvises(tmp_path):
     fil = tmp_path / "nokler.json"
     fil.write_text('{"v_x": {"k1": "' + "a" * 40 + '"}}', encoding="utf-8")
@@ -77,11 +83,22 @@ def test_nokkelfil_med_apne_rettigheter_avvises(tmp_path):
 # ---------------- PostgreSQL (ADR-001) -----------------------------------
 
 @pytest.fixture()
-def conn():
+def migrator():
+    """Skjemaeier — migrasjoner og opprydding. Aldri runtime-veien."""
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    yield c
+    c.close()
+
+
+@pytest.fixture()
+def conn(migrator):
+    """RUNTIME-tilkoblingen: kun SELECT og INSERT, eier ingenting."""
     from db.pg import koble, migrer
+    migrer(migrator)
+    migrator.execute("TRUNCATE frekvens_hendelser")   # RLS gjelder ikke TRUNCATE
+    migrator.commit()
     c = koble(DSN)
-    migrer(c)
-    c.execute("DELETE FROM frekvens_hendelser"); c.commit()
     yield c
     c.close()
 
@@ -104,16 +121,18 @@ def purrehendelse(fak="fak-pg-1", signert=True):
 
 
 @pg
-def test_migrasjon_er_idempotent(conn):
+def test_migrasjon_er_idempotent(migrator):
     from db.pg import migrer
-    assert migrer(conn) == [1]  # andre kjøring — ingen feil
+    assert migrer(migrator) == [1, 2]  # andre kjøring — ingen feil
 
 
 @pg
 def test_revisjonslogg_er_append_only_i_databasen(conn):
     import psycopg
-    conn.execute("INSERT INTO revisjonslogg (input_hash, policy_id,"
-                 " beslutning, begrunnelse) VALUES ('h','p','STOPP','[]')")
+    from db.pg import sett_tenant
+    sett_tenant(conn, "t-pg")
+    conn.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                 " beslutning, begrunnelse) VALUES ('t-pg','h','p','STOPP','[]')")
     conn.commit()
     for sql in ("UPDATE revisjonslogg SET beslutning='TILLAT'",
                 "DELETE FROM revisjonslogg",
@@ -155,6 +174,8 @@ def test_reservasjon_og_logg_i_samme_transaksjon(conn, tjeneste):
     d2 = sikker_beslutning_pg(tjeneste, CTX, purrehendelse(), conn,
                               naa=NAA + timedelta(days=3), nokler=NOKLER)
     assert d2.beslutning == UNNTAK  # frekvensgrense (maks 1 per 14 dager)
+    from db.pg import sett_tenant
+    sett_tenant(conn, "t-pg")
     ant = conn.execute("SELECT count(*) FROM frekvens_hendelser").fetchone()[0]
     logg = conn.execute("SELECT beslutning FROM revisjonslogg"
                         " WHERE tenant='t-pg' ORDER BY id").fetchall()
@@ -170,6 +191,8 @@ def test_signaturport_stopper_usignert_hendelse(conn, tjeneste):
                              conn, naa=NAA, nokler=NOKLER)
     assert d.beslutning == STOPP
     assert d.begrunnelse[-1].kode == "attestasjon_uten_signatur"
+    from db.pg import sett_tenant
+    sett_tenant(conn, "t-pg")
     siste = conn.execute("SELECT beslutning FROM revisjonslogg"
                          " ORDER BY id DESC LIMIT 1").fetchone()[0]
     conn.rollback()
@@ -184,3 +207,134 @@ def test_db_nede_gir_stopp_aldri_sideeffekt(tjeneste):
     d = sikker_beslutning_pg(tjeneste, CTX, purrehendelse(), c,
                              naa=NAA, nokler=NOKLER)
     assert d.beslutning == STOPP
+
+
+# ---------- Codex-review PR-004: rolleskille og tenant-isolasjon ---------
+
+@pg
+def test_runtime_kan_ikke_skru_av_append_only(conn):
+    """P1: eide runtime-rollen tabellene, kunne den slette eller deaktivere
+    sine egne append-only-triggere. En vakt du kan fjerne er ingen vakt."""
+    import psycopg
+    for sql in ("ALTER TABLE revisjonslogg DISABLE TRIGGER revisjonslogg_ingen_endring",
+                "ALTER TABLE revisjonslogg DISABLE TRIGGER ALL",
+                "DROP TRIGGER revisjonslogg_ingen_endring ON revisjonslogg",
+                "ALTER TABLE revisjonslogg DROP CONSTRAINT revisjonslogg_tenant_ikke_tom",
+                "DROP TABLE revisjonslogg",
+                "ALTER TABLE revisjonslogg DISABLE ROW LEVEL SECURITY",
+                "DROP POLICY tenant_isolasjon ON revisjonslogg"):
+        with pytest.raises(psycopg.Error):
+            conn.execute(sql)
+        conn.rollback()
+
+
+@pg
+def test_runtime_eier_ingenting(conn):
+    """Eierskap er selve forskjellen: eier man tabellen, kan man endre den."""
+    rad = conn.execute(
+        "SELECT count(*) FROM pg_tables WHERE schemaname='public'"
+        " AND tableowner = current_user").fetchone()[0]
+    conn.rollback()
+    assert rad == 0, "runtime-rollen eier tabeller — da kan den fjerne vaktene"
+
+
+@pg
+def test_tenant_isolasjon_leser_ikke_paa_tvers(conn):
+    """P1: en indeks er ikke isolasjon. Databasegrensen skal nekte lesing av
+    en annen tenants rader, ikke bare gjøre den rask."""
+    from db.pg import sett_tenant
+    sett_tenant(conn, "tenant-a")
+    conn.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                 " beslutning, begrunnelse)"
+                 " VALUES ('tenant-a','h-a','p','TILLAT','[]')")
+    conn.commit()
+    sett_tenant(conn, "tenant-b")
+    conn.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                 " beslutning, begrunnelse)"
+                 " VALUES ('tenant-b','h-b','p','TILLAT','[]')")
+    conn.commit()
+
+    sett_tenant(conn, "tenant-a")
+    synlige = conn.execute("SELECT DISTINCT tenant FROM revisjonslogg").fetchall()
+    conn.rollback()
+    assert [r[0] for r in synlige] == ["tenant-a"], \
+        f"tenant-a ser andre tenanters rader: {synlige}"
+
+
+@pg
+def test_tenant_isolasjon_skriver_ikke_paa_tvers(conn):
+    """Å skrive en rad merket med en ANNEN tenant enn sesjonens skal avvises
+    av WITH CHECK — ellers kan en tenant plante rader hos en annen."""
+    import psycopg
+    from db.pg import sett_tenant
+    sett_tenant(conn, "tenant-a")
+    with pytest.raises(psycopg.Error):
+        conn.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                     " beslutning, begrunnelse)"
+                     " VALUES ('tenant-b','h-x','p','TILLAT','[]')")
+    conn.rollback()
+
+
+@pg
+def test_uten_tenant_er_alt_stengt(conn):
+    """Fail-closed: glemmer koden å sette tenant, skal databasen vise null
+    rader og nekte skriving — ikke vise alle tenanters data."""
+    import psycopg
+    conn.execute("SELECT set_config('disponit.tenant', '', true)")
+    conn.execute("RESET disponit.tenant")
+    antall = conn.execute("SELECT count(*) FROM revisjonslogg").fetchone()[0]
+    assert antall == 0, "uten tenant er hele loggen synlig — isolasjonen er av"
+    with pytest.raises(psycopg.Error):
+        conn.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                     " beslutning, begrunnelse)"
+                     " VALUES ('tenant-a','h-y','p','TILLAT','[]')")
+    conn.rollback()
+
+
+@pg
+def test_tenant_kan_ikke_vaere_null_eller_tom(migrator):
+    """P1: kolonnen tillot NULL. En loggpost uten tenant kan ikke isoleres,
+    og da er isolasjonen hullete uansett hvor god policyen er."""
+    import psycopg
+    from db.pg import sett_tenant
+    sett_tenant(migrator, "tenant-a")
+    for tenant in (None, "", "   "):
+        with pytest.raises(psycopg.Error):
+            migrator.execute(
+                "INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                " beslutning, begrunnelse) VALUES (%s,'h','p','TILLAT','[]')",
+                (tenant,))
+        migrator.rollback()
+
+
+@pg
+def test_uautentisert_forsok_logges_paa_reservert_tenant(conn, tjeneste):
+    """Uten kontekst finnes ingen tenant — men forsøket skal likevel stå i
+    revisjonsloggen, på den reserverte verdien, aldri hos en ekte kunde."""
+    from db.pg import UKJENT_TENANT, sett_tenant, sikker_beslutning_pg
+    d = sikker_beslutning_pg(tjeneste, None, purrehendelse(), conn, naa=NAA)
+    assert d.beslutning == STOPP
+    sett_tenant(conn, UKJENT_TENANT)
+    siste = conn.execute("SELECT tenant, beslutning FROM revisjonslogg"
+                         " ORDER BY id DESC LIMIT 1").fetchone()
+    conn.rollback()
+    assert siste == (UKJENT_TENANT, "STOPP")
+
+
+@pg
+def test_ogsaa_skjemaeieren_er_underlagt_tenant_isolasjonen(migrator):
+    """FORCE ROW LEVEL SECURITY. Uten FORCE er tabelleieren unntatt policyen,
+    og da forsvinner isolasjonen i det migrator-rollen — eller en
+    feilkonfigurert runtime som eier tabellene — kobler seg på."""
+    from db.pg import sett_tenant
+    sett_tenant(migrator, "tenant-a")
+    migrator.execute("INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
+                     " beslutning, begrunnelse)"
+                     " VALUES ('tenant-a','h-eier','p','TILLAT','[]')")
+    migrator.commit()
+    sett_tenant(migrator, "tenant-b")
+    synlige = migrator.execute(
+        "SELECT DISTINCT tenant FROM revisjonslogg").fetchall()
+    migrator.rollback()
+    assert [r[0] for r in synlige] in ([], ["tenant-b"]), \
+        f"skjemaeieren omgaar tenant-isolasjonen: {synlige}"

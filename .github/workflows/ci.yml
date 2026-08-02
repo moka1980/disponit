@@ -15,21 +15,43 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: disponit
-          POSTGRES_PASSWORD: disponit
-          POSTGRES_DB: disponit_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U disponit"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DISPONIT_TEST_DSN: postgresql://disponit:disponit@127.0.0.1:5432/disponit_test
+      # To roller, som i staging: runtime eier ingenting og kan derfor ikke
+      # skru av sine egne append-only-triggere eller RLS-policyer.
+      # Superbrukeren brukes KUN til oppsett — den omgaar RLS og ville
+      # gjort tenant-testene meningsløse.
+      DISPONIT_TEST_DSN: postgresql://disponit:kjor@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_MIGRATOR_DSN: postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: Installer avhengigheter
         run: pip install pytest pyyaml jsonschema "psycopg[binary]"
+      - name: "Databaseroller (speiler deploy/staging/oppsett-postgresql.sh)"
+        env: {PGPASSWORD: postgres}
+        run: |
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit LOGIN PASSWORD 'kjor'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_migrator LOGIN PASSWORD 'mig'"
+          createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
+          PGPASSWORD=mig psql -h 127.0.0.1 -U disponit_migrator -d disponit_test -q -v ON_ERROR_STOP=1 \
+            -f platform/core/db/migrations/001_init.sql \
+            -f platform/core/db/migrations/002_roller_og_tenant_isolasjon.sql
+          psql -h 127.0.0.1 -U postgres -d disponit_test -q <<'GRANTS'
+          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM disponit;
+          GRANT USAGE ON SCHEMA public TO disponit;
+          GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO disponit;
+          GRANT SELECT ON migrasjoner TO disponit;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO disponit;
+          GRANTS
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"
