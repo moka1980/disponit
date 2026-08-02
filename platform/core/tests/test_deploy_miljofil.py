@@ -267,3 +267,27 @@ def test_verifikasjonen_kjores_for_dsn_ene_tas_i_bruk():
         f"verifiser_og_reparer (linje {verifikasjon + 1}) kjører etter første "
         f"bruk av en migrator-DSN (linje {bruk + 1}) — ved avbrudd stopper "
         f"set -e skriptet før reparasjonen nås")
+
+
+def test_oppsettskriptet_kjorer_alle_migrasjonsfiler():
+    """Skriptet listet migrasjonsfilene enkeltvis, og 003 ble glemt da den
+    kom til. Tabellene fantes derfor ikke da GRANT-ene ble satt, og runtime
+    møtte «permission denied» først når koden kjørte — på staging, ikke i
+    CI. Nå brukes et glob, så en ny fil ikke kan bli glemt.
+
+    Trenger ingen bash og kjører derfor overalt."""
+    rot = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    with open(rot + "/deploy/staging/oppsett-postgresql.sh",
+              encoding="utf-8") as f:
+        skript = f.read()
+    migrasjoner = sorted(
+        f for f in os.listdir(rot + "/platform/core/db/migrations")
+        if f.endswith(".sql"))
+    assert migrasjoner, "fant ingen migrasjonsfiler"
+    if "migrations/[0-9][0-9][0-9]_*.sql" in skript:
+        return                      # glob dekker alle framtidige filer
+    for fil in migrasjoner:
+        assert fil in skript, (
+            f"{fil} kjøres ikke av oppsettskriptet — tabellene finnes da "
+            f"ikke når GRANT-ene settes")

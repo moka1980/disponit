@@ -141,12 +141,18 @@ for base in $DB ${DB}_test; do
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
 done
 
-psql "$DISPONIT_MIGRATOR_URL"      -q -v ON_ERROR_STOP=1 \
-     -f platform/core/db/migrations/001_init.sql \
-     -f platform/core/db/migrations/002_roller_og_tenant_isolasjon.sql
-psql "$DISPONIT_TEST_MIGRATOR_DSN" -q -v ON_ERROR_STOP=1 \
-     -f platform/core/db/migrations/001_init.sql \
-     -f platform/core/db/migrations/002_roller_og_tenant_isolasjon.sql
+# Alle migrasjonsfiler kjøres her, slik at tabellene finnes FØR
+# rettighetene settes under. Glemmes en fil, blir GRANT-ene stille
+# virkningsløse for den tabellen — den finnes jo ikke ennå — og runtime
+# møter «permission denied» først når koden kjører. Det skjedde med 003.
+#
+# Filene er idempotente. Checksum-registreringen gjøres av
+# `db.kjorer` ved første applikasjonsstart; her handler det bare om at
+# skjemaet er på plass.
+for _mig in platform/core/db/migrations/[0-9][0-9][0-9]_*.sql; do
+  psql "$DISPONIT_MIGRATOR_URL"      -q -v ON_ERROR_STOP=1 -f "$_mig"
+  psql "$DISPONIT_TEST_MIGRATOR_DSN" -q -v ON_ERROR_STOP=1 -f "$_mig"
+done
 
 # Rettigheter til runtime: kun det den trenger, aldri mer.
 for base in $DB ${DB}_test; do
