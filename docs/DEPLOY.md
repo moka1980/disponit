@@ -48,6 +48,30 @@ objektlagring / kø. Håndheves fra PR-004 (API-skjelettet).
 | 3 | 10 000–100 000 | Load balancer + flere stateless API-noder, PostgreSQL-replika, dedikerte GPU-inferensnoder eksternt (M-38 styrer kø/ruting), regional datalagring. |
 | 4 | 100 000–1 000 000 | Multi-region, sharding per tenant-gruppe, autoskalering av workers, katastrofegjenoppretting (M-35). |
 
+## Staging-databasen — faktisk oppsett (PR-004)
+
+PostgreSQL **18.4** er installert på Cloud Server S 2026-08-01 og røyktestet.
+
+| | |
+|---|---|
+| Lytter på | `127.0.0.1:5432` **kun loopback** — ingen 5432 utad |
+| Tuning | `shared_buffers=192MB`, `max_connections=40`, `work_mem=4MB`, `effective_cache_size=512MB` |
+| Rolle / database | `disponit_staging` / `disponit_staging` |
+| Tilkoblingsstreng | `~/disponit-staging/.env` på serveren, `chmod 600`. **Aldri i repoet, aldri i chat.** |
+| Utvidelser | `pgcrypto`, `uuid-ossp` tilgjengelig |
+| Sikret originalkonfig | `/etc/postgresql/18/main/postgresql.conf.bak.20260801` |
+
+`deploy/staging/oppsett-postgresql.sh` er idempotent og kan kjøres på nytt;
+den oppretter også `/etc/disponit/staging.env` med DSN og attestasjonsnøkler.
+
+> ⚠️ **Cloud Server S er ikke en dedikert maskin.** Den kjører også et annet
+> produkt (WCAGvakt) med egen produksjonstjeneste, teststed og tre bots.
+> Eier har godkjent samlokaliseringen **midlertidig**, fordi det andre
+> produktet ennå ikke har kunder. Derfor er PostgreSQL tunet konservativt.
+> Den dagen naboproduktet tar imot sin første kunde, bryter dette
+> miljøprinsippet lenger oppe i dokumentet, og disponit-staging må flytte
+> til egen maskin.
+
 ## Modulens staging-sjekkliste (mal — kopieres inn i hvert manifest)
 
 - [ ] Alle enhetstester og negative policytester grønne på staging

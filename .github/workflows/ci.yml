@@ -7,14 +7,41 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # PostgreSQL i CI, ikke bare på staging. Uten den hopper DB-testene
+    # over, og da dekker merge-port 1 ikke ADR-001s bindende krav i det
+    # hele tatt: nettopp de negative testene som beviser atomisk
+    # reservasjon og samme-transaksjon ville aldri kjørt før merge.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: disponit
+          POSTGRES_PASSWORD: disponit
+          POSTGRES_DB: disponit_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U disponit"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DISPONIT_TEST_DSN: postgresql://disponit:disponit@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: Installer avhengigheter
-        run: pip install pytest pyyaml jsonschema
+        run: pip install pytest pyyaml jsonschema "psycopg[binary]"
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
+      - name: "Port: ingen DB-tester ble hoppet over"
+        # En hoppet test er ikke en bestått test. Feiler hvis DSN mangler
+        # eller pg-markerte tester skippes.
+        run: |
+          python -m pytest platform/core/tests -q -rs 2>&1 | tee /tmp/ut.txt
+          if grep -qiE "skipped" /tmp/ut.txt; then
+            echo "::error::Tester ble hoppet over i CI — DB-portene er da ikke bevist."
+            grep -iE "skipped|SKIPPED" /tmp/ut.txt
+            exit 1
+          fi
       - name: Skjemavalidering av alle policyer og bransjemaler
         run: |
           python - << 'PY'

@@ -17,7 +17,9 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 │       └── disponit-prototype-v7.html      ← sannhetskilden (v7.2)
 ├── platform/
 │   ├── core/                       ← plattformkjernen. Importerer ALDRI fra modules/
-│   │   ├── policy_validator/       ← M-1-kjernen: engine.py, schema.py, audit.py
+│   │   ├── policy_validator/       ← M-1-kjernen: engine.py, schema.py, audit.py,
+│   │   │                              attestering.py (HMAC på attestasjoner)
+│   │   ├── db/                     ← tilstandslaget (ADR-001): pg.py + migrations/
 │   │   ├── registry.py             ← modulregister: oppdag, aktiver, deaktiver
 │   │   ├── tests/                  ← core-tester (kjør: pytest platform/core/tests)
 │   │   └── examples/               ← run_synthetic.py m.m.
@@ -32,7 +34,8 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 ├── design/
 │   └── tokens.css                  ← ALT utseende defineres her, kun her
 ├── prototype/                      ← historisk arkiv: v5, v6, v7 (endres aldri)
-└── deploy/                         ← deploy-skript og miljøkonfig (kommer med PR-004)
+└── deploy/
+    └── staging/                    ← oppsett-postgresql.sh (idempotent serveroppsett)
 ```
 
 ## Reglene

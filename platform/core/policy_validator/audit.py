@@ -122,7 +122,13 @@ def _mangler_avsluttende_linjeskift(fd: int) -> bool:
 
 
 def skriv(loggfil: Path, post: dict) -> None:
-    """Append-only, og serialisert.
+    """Append-only, og serialisert. **KUN UTVIKLING** (ADR-001).
+
+    Denne filbaserte loggen er utviklingsverktøy: lokal kjøring og
+    `run_synthetic.py`. Produksjons- og stagingveien er PostgreSQL, se
+    `platform/core/db/pg.py`. ADR-001 slår fast at nye feilklasser her
+    lukkes ved å henvise til databasevarianten, ikke ved å lappe filen
+    videre — fire av seks P1-funn i PR-002 lå nettopp her.
 
     Codex fant at 20 samtidige beslutninger ga 19 loggposter: hvert kall
     åpnet sin egen bufrede filhåndtak, så to skrivinger kunne flettes inn i
@@ -181,7 +187,12 @@ from .engine import (STOPP, UNNTAK, Decision, EvaluationContext,  # noqa: E402
 def sikker_beslutning(policy: dict, context, event: dict, loggfil: Path,
                       teller: "TellerLager | None" = None,
                       naa=None) -> Decision:
-    """ENESTE lovlige inngang for moduler som skal utføre skrivehandlinger.
+    """ENESTE lovlige inngang for skrivehandlinger — **KUN UTVIKLING**.
+
+    ADR-001: på staging og i produksjon er inngangen
+    `platform.core.db.pg.sikker_beslutning_pg`, som i tillegg gir
+    reservasjon og loggpost i samme transaksjon og håndhever
+    attestasjonssignaturer. Denne varianten beholdes for lokal kjøring.
 
     Kontrakt (fail-closed i alle grener):
       1. evaluate() kastes aldri videre — uventet exception => STOPP.
