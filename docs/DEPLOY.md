@@ -50,19 +50,39 @@ objektlagring / kø. Håndheves fra PR-004 (API-skjelettet).
 
 ## Staging-databasen — faktisk oppsett (PR-004)
 
-PostgreSQL **18.4** er installert på Cloud Server S 2026-08-01 og røyktestet.
+Satt opp av `deploy/staging/oppsett-postgresql.sh` (idempotent) og verifisert
+på Cloud Server S 2026-08-02.
 
 | | |
 |---|---|
+| Versjon | PostgreSQL **18.4** (skriptet installerer distroens `postgresql`) |
 | Lytter på | `127.0.0.1:5432` **kun loopback** — ingen 5432 utad |
 | Tuning | `shared_buffers=192MB`, `max_connections=40`, `work_mem=4MB`, `effective_cache_size=512MB` |
-| Rolle / database | `disponit_staging` / `disponit_staging` |
-| Tilkoblingsstreng | `~/disponit-staging/.env` på serveren, `chmod 600`. **Aldri i repoet, aldri i chat.** |
-| Utvidelser | `pgcrypto`, `uuid-ossp` tilgjengelig |
+| Rolle | `disponit` — **eier tabellene**, migrasjonene kjøres som denne, ikke som `postgres` |
+| Databaser | `disponit` (staging) og `disponit_test` (testkjøringer) |
+| Hemmeligheter | `/etc/disponit/staging.env`, `chmod 600`, katalog `chmod 700`. DSN-er + attestasjonsnøkler. **Aldri i repoet, aldri i chat.** |
+| Repo på serveren | `/opt/disponit`, med venv i `/opt/disponit/.venv` |
 | Sikret originalkonfig | `/etc/postgresql/18/main/postgresql.conf.bak.20260801` |
 
-`deploy/staging/oppsett-postgresql.sh` er idempotent og kan kjøres på nytt;
-den oppretter også `/etc/disponit/staging.env` med DSN og attestasjonsnøkler.
+**Kjør staging-porten:**
+
+```bash
+cd /opt/disponit && git pull
+sudo bash deploy/staging/oppsett-postgresql.sh
+sudo bash -c 'set -a; . /etc/disponit/staging.env; set +a; \
+  cd /opt/disponit && ./.venv/bin/python -m pytest platform/core/tests -q'
+```
+
+To feil ble funnet nettopp fordi skriptet ble kjørt på ekte server og ikke
+bare lest — begge er rettet i skriptet:
+
+1. **Miljøfila var ugyldig shell.** DSN-ene inneholder mellomrom, og uten
+   anførselstegn tolker `set -a; . fila` bare første ord som verdi.
+   `DISPONIT_TEST_DSN` ble `host=127.0.0.1`, passordet forsvant, og psycopg
+   feilet med «no password supplied».
+2. **Migrasjonene kjørte som `postgres`.** Da eies tabellene av
+   superbrukeren, og applikasjonen kan ikke migrere sitt eget skjema:
+   «must be owner of table revisjonslogg».
 
 > ⚠️ **Cloud Server S er ikke en dedikert maskin.** Den kjører også et annet
 > produkt (WCAGvakt) med egen produksjonstjeneste, teststed og tre bots.

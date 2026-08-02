@@ -7,9 +7,17 @@ avhengigheter: []              # M-1 er roten — ingen avhengigheter
 kjerne: platform/core/policy_validator   # hvor koden bor
 i18n_prefiks: m01              # alle modulens tekstnøkler starter slik
 staging_sjekkliste:            # fra docs/DEPLOY.md — alle må være JA før aktiv
-  tester_gronne_pa_staging: nei
-  syntetisk_datasett_likt_lokalt: nei
-  revisjonslogg_korrekt: nei
-  feilinjisering_til_unntakskø: nei
-  ytelse_bestatt: nei
-  rollback_testet: nei
+  # Kjørt av Claude Code på Cloud Server S 2026-08-02, PR-004-branchen.
+  # Kun punkter med faktisk målt bevis er satt til ja.
+  tester_gronne_pa_staging: ja        # 74 passed på serveren, /etc/disponit/staging.env lastet
+  syntetisk_datasett_likt_lokalt: ja  # 180 hendelser: 84 TILLAT / 3 STOPP / 93 UNNTAK — identisk med lokalt
+  revisjonslogg_korrekt: ja           # ekte beslutning gjennom sikker_beslutning_pg lagret med
+                                      # tenant/aktor/kilde fra kontekst; UPDATE og DELETE avvist av
+                                      # databasetriggeren («append-only ... forbudt»)
+  feilinjisering_til_unntakskø: nei   # BLOKKERT: unntakskøen (M-37) finnes ikke før PR-005.
+                                      # Motoren produserer UNNTAK-beslutninger, men det finnes
+                                      # ingen kø å havne i — punktet kan ikke bestås ennå.
+  ytelse_bestatt: nei                 # ingen lastgrense definert for m01 ennå; må settes før måling
+  rollback_testet: nei                # registeret rapporterer m01 som inaktiv og nekter aktivering
+                                      # ved manglende avhengigheter, men full deaktivering under
+                                      # drift er ikke prøvd — hører til PR-005 med API-et
