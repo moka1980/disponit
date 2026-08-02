@@ -44,27 +44,46 @@ mkdir -p /etc/disponit && chmod 700 /etc/disponit
 touch "$MILJOFIL" && chmod 600 "$MILJOFIL"
 
 har_nokkel() { grep -q "^$1=" "$MILJOFIL"; }
-legg_til()   { printf "%s='%s'\n" "$1" "$2" >> "$MILJOFIL"; }
 
-# Runtime-rollen
-if ! har_nokkel DATABASE_URL || ! har_nokkel DISPONIT_TEST_DSN; then
-  PASSORD=$(openssl rand -hex 24)
-  sudo -u postgres psql -qc "ALTER ROLE $BRUKER PASSWORD '$PASSORD'"
-  har_nokkel DATABASE_URL || \
-    legg_til DATABASE_URL "host=127.0.0.1 dbname=$DB user=$BRUKER password=$PASSORD"
-  har_nokkel DISPONIT_TEST_DSN || \
-    legg_til DISPONIT_TEST_DSN "host=127.0.0.1 dbname=${DB}_test user=$BRUKER password=$PASSORD"
-fi
+# Setter en nøkkel: fjerner en eventuell gammel linje først, så verdien
+# ikke finnes i to utgaver.
+sett_nokkel() {
+  local n="$1" v="$2" tmp
+  tmp=$(mktemp) && chmod 600 "$tmp"
+  grep -v "^$n=" "$MILJOFIL" > "$tmp" || true
+  printf "%s='%s'\n" "$n" "$v" >> "$tmp"
+  mv "$tmp" "$MILJOFIL" && chmod 600 "$MILJOFIL"
+}
 
-# Migrator-rollen — dette er nøkkelen som manglet ved oppgradering
-if ! har_nokkel DISPONIT_MIGRATOR_URL || ! har_nokkel DISPONIT_TEST_MIGRATOR_DSN; then
-  MIGPASSORD=$(openssl rand -hex 24)
-  sudo -u postgres psql -qc "ALTER ROLE $MIGRATOR PASSWORD '$MIGPASSORD'"
-  har_nokkel DISPONIT_MIGRATOR_URL || \
-    legg_til DISPONIT_MIGRATOR_URL "host=127.0.0.1 dbname=$DB user=$MIGRATOR password=$MIGPASSORD"
-  har_nokkel DISPONIT_TEST_MIGRATOR_DSN || \
-    legg_til DISPONIT_TEST_MIGRATOR_DSN "host=127.0.0.1 dbname=${DB}_test user=$MIGRATOR password=$MIGPASSORD"
-fi
+# En rolles DSN-er hører sammen: de deler ETT passord i databasen.
+#
+# Codex' P1: forrige versjon roterte passordet så snart ÉN av dem manglet,
+# men skrev bare den manglende linjen. Søskenlinja beholdt da det gamle
+# passordet og sluttet å virke. Verst av alt gjaldt det nøyaktig den
+# rotasjonsprosedyren jeg selv hadde skrevet i DEPLOY.md — «slett den ene
+# linjen og kjør skriptet» — så dokumentasjonen ledet rett i fella.
+#
+# Nå: mangler én, skrives ALLE rollens DSN-er på nytt med det nye passordet.
+# Mangler ingen, røres ingenting og passordet roteres ikke.
+sikre_rolle_dsn() {
+  local rolle="$1"; shift          # deretter: NØKKEL=dbnavn NØKKEL=dbnavn ...
+  local mangler=0 par n
+  for par in "$@"; do
+    har_nokkel "${par%%=*}" || mangler=1
+  done
+  [ "$mangler" -eq 0 ] && return 0
+
+  local pw; pw=$(openssl rand -hex 24)
+  sudo -u postgres psql -qc "ALTER ROLE $rolle PASSWORD '$pw'"
+  for par in "$@"; do
+    n="${par%%=*}"
+    sett_nokkel "$n" "host=127.0.0.1 dbname=${par#*=} user=$rolle password=$pw"
+  done
+  echo "  roterte passord for $rolle og skrev ${#@} DSN-er samlet"
+}
+
+sikre_rolle_dsn "$BRUKER"   "DATABASE_URL=$DB"          "DISPONIT_TEST_DSN=${DB}_test"
+sikre_rolle_dsn "$MIGRATOR" "DISPONIT_MIGRATOR_URL=$DB" "DISPONIT_TEST_MIGRATOR_DSN=${DB}_test"
 
 # Attestasjonsnøkler
 if ! har_nokkel DISPONIT_ATT_NOKLER; then
@@ -116,14 +135,20 @@ for base in $DB ${DB}_test; do
       WHERE n.nspname='public' AND c.relkind IN ('r','p')
         AND pg_get_userbyid(c.relowner) <> '$MIGRATOR'
         AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                         WHERE d.objid=c.oid AND d.deptype='e')
+                         WHERE d.classid='pg_class'::regclass
+                           AND d.objid=c.oid
+                           AND d.refclassid='pg_extension'::regclass
+                           AND d.deptype='e')
      UNION ALL
      SELECT format('ALTER FUNCTION %s OWNER TO %I;', p.oid::regprocedure, '$MIGRATOR')
        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname='public' AND p.prokind='f'
         AND pg_get_userbyid(p.proowner) <> '$MIGRATOR'
         AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                         WHERE d.objid=p.oid AND d.deptype='e')" \
+                         WHERE d.classid='pg_proc'::regclass
+                           AND d.objid=p.oid
+                           AND d.refclassid='pg_extension'::regclass
+                           AND d.deptype='e')" \
     | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
 
   # Selvhelbredelse: den forrige versjonen av dette skriptet rakk å ta
@@ -136,7 +161,10 @@ for base in $DB ${DB}_test; do
                    pg_get_userbyid(e.extowner))
        FROM pg_proc p
        JOIN pg_namespace n ON n.oid=p.pronamespace
-       JOIN pg_depend d ON d.objid=p.oid AND d.deptype='e'
+       JOIN pg_depend d ON d.classid='pg_proc'::regclass
+                       AND d.objid=p.oid
+                       AND d.refclassid='pg_extension'::regclass
+                       AND d.deptype='e'
        JOIN pg_extension e ON e.oid=d.refobjid
       WHERE n.nspname='public'
         AND pg_get_userbyid(p.proowner) <> pg_get_userbyid(e.extowner)" \
