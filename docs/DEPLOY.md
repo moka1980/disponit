@@ -74,8 +74,15 @@ sudo bash -c 'set -a; . /etc/disponit/staging.env; set +a; \
   cd /opt/disponit && ./.venv/bin/python -m pytest platform/core/tests -q'
 ```
 
-To feil ble funnet nettopp fordi skriptet ble kjørt på ekte server og ikke
-bare lest — begge er rettet i skriptet:
+> 🔑 **Gjenopprett aldri en gammel `staging.env`.** Fila er kilden til
+> sannhet for hemmelighetene, og skriptet roterer et passord i det en nøkkel
+> mangler. Legger du tilbake en eldre kopi, peker DSN-en på et passord rollen
+> ikke lenger har, og alt feiler med `password authentication failed`.
+> Skal en hemmelighet fornyes: **slett den ene linjen** og kjør skriptet —
+> det legger til det som mangler og rører aldri resten.
+
+Fire feil ble funnet nettopp fordi skriptet ble kjørt på ekte server og ikke
+bare lest — alle er rettet i skriptet:
 
 1. **Miljøfila var ugyldig shell.** DSN-ene inneholder mellomrom, og uten
    anførselstegn tolker `set -a; . fila` bare første ord som verdi.
@@ -84,6 +91,15 @@ bare lest — begge er rettet i skriptet:
 2. **Migrasjonene kjørte som `postgres`.** Da eies tabellene av
    superbrukeren, og applikasjonen kan ikke migrere sitt eget skjema:
    «must be owner of table revisjonslogg».
+3. **Miljøfila ble bare skrevet når den ikke fantes.** En oppgradering fikk
+   dermed aldri migrator-nøklene, og eneste vei videre var å slette fila og
+   rotere alt for hånd. Fila skrives nå per nøkkel.
+4. **Eierskapsreparasjonen tok eierskap over `pgcrypto`-funksjoner.** Den
+   skrev `ALTER FUNCTION public.navn()` uten argumenttyper, som traff
+   funksjoner uten parametre — `fips_mode()` og `gen_random_uuid()` ble
+   faktisk flyttet til migrator-rollen på denne serveren. Skriptet bruker nå
+   full signatur, hopper over alt som tilhører en extension, og gir tilbake
+   det den gamle versjonen tok.
 
 > ⚠️ **Cloud Server S er ikke en dedikert maskin.** Den kjører også et annet
 > produkt (WCAGvakt) med egen produksjonstjeneste, teststed og tre bots.
