@@ -93,7 +93,8 @@ jobs:
           import sys
           sys.path.insert(0, "platform/core")
           from pathlib import Path
-          from manifestskjema import aktiv_uten_bevis, valider_alle
+          from manifestskjema import (aktiv_uten_bevis, valider_alle,
+                                      valider_artefakter)
           import yaml
           feil = {n: f for n, f in valider_alle(Path("platform/modules")).items() if f}
           if feil:
@@ -104,7 +105,17 @@ jobs:
               if uten:
                   print(f"{fil}: status=aktiv med uavklarte punkter {uten}")
                   sys.exit(1)
-          print("alle manifester gyldige")
+              # Evidenskjeden: aapne artefaktet, verifiser sha256 mot
+              # innholdet og maal tallene mot KRAVGRENSER. Uten dette er
+              # `artefakt` bare en streng, og `bestatt: true` inne i
+              # artefaktet er produsentens egen paastand.
+              brudd = valider_artefakter(m, rot=Path("."))
+              if brudd:
+                  print(f"::error::{fil}: evidenskjeden holder ikke")
+                  for b in brudd:
+                      print(f"  - {b}")
+                  sys.exit(1)
+          print("alle manifester gyldige, artefakter verifisert")
           PY
 
       - name: Modulregister konsistent

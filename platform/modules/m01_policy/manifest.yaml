@@ -46,13 +46,27 @@ staging_sjekkliste:
     # loggpost. Skriptet finnes: deploy/staging/lasttest-m01.py.
     # Kjørt på staging (Cloud Server S) 2026-08-02 etter at PR-005b var
     # merget: 6 000 målte forespørsler @ 100/s, 20 samtidige, 0 feil,
-    # p95 24,1 ms mot kravet 150 ms. Etterkontrollen mot databasen ga
+    # p95 82,3 ms mot kravet 150 ms. Etterkontrollen mot databasen ga
     # 6 000 auditerte svar = 6 000 revisjonsrader (1:1) og 1 200
     # unntaksrader i normal kø, som er det routingreglene forventer.
-    # Manifestfeltet er ikke beviset — artefaktet er.
+    # Manifestfeltet er ikke beviset — artefaktet er, og det ligger i
+    # repoet (.gitignore-unntak) fordi en sti uten fil ikke er en
+    # evidenskjede. `manifestskjema.valider_artefakter` åpner filen,
+    # verifiserer sha256 mot innholdet og måler tallene mot KRAVGRENSER,
+    # så et oppdiktet artefakt hjelper ikke.
+    #
+    # TRE kjøringer, p95 24,1 / 82,3 / 24,3 ms — alle bestått. Artefaktet
+    # som ligger her er den DÅRLIGSTE (82,3 ms), ikke den beste: evidens
+    # skal ikke plukke det peneste tallet. Utslaget er IKKE forklart av
+    # datamengde — kjøringen med størst base (52 MB) var den raskeste, så
+    # den hypotesen er testet og forkastet. Mest sannsynlig kontensjon på
+    # en delt 2-kjerners boks (WCAGvakt-produksjon + to trading-bots).
+    # Marginen er dermed tynnere enn ett enkelt tall antyder: verste
+    # kjøring brukte 55 % av budsjettet og hadde p99 på 207 ms.
     status: ja
     krav_id: perf-m01-v1
-    artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T203540.json
+    artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
+    artefakt_sha256: 12e3ec3e5d3ad931b0ff27ee71ef0b9ecebf7542e022d0a6a62a90caed9b8cc4
   rollback_testet:
     # Splittet per review D2: den TEKNISKE deaktiveringen via registeret kan
     # bevises nå og er derfor `nei` (ikke gjort ennå), ikke `blokkert`.

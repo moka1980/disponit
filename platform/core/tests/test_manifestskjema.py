@@ -6,15 +6,18 @@ konstruert overtredelse som MÅ avvises. En skjematest som bare validerer
 den gyldige filen beviser at filen er gyldig, ikke at skjemaet virker.
 """
 import copy
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 
-from manifestskjema import (aktiv_uten_bevis, valider_alle, valider_manifest,
-                            uavklarte_punkter)
+from manifestskjema import (aktiv_uten_bevis, valider_alle, valider_artefakter,
+                            valider_manifest, uavklarte_punkter)
 
 MODULROT = Path(__file__).resolve().parents[1].parent / "modules"
+REPOROT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module")
@@ -64,8 +67,13 @@ def test_ja_med_krav_id_uten_artefakt_avvises(m01):
     feil = valider_manifest(m)
     assert feil, "et ja med krav_id slapp gjennom uten artefakt"
 
+    # Sti alene holder ikke lenger: hashen er like påkrevd, ellers er
+    # pekeren ubundet til innhold (Codex' P1 på PR #8).
     m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt"] = \
         "deploy/staging/artefakter/perf-m01-v1-20260802.json"
+    assert valider_manifest(m), "sti uten sha256 slapp gjennom"
+
+    m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt_sha256"] = "a" * 64
     assert valider_manifest(m) == []
 
 
@@ -177,3 +185,127 @@ def test_skjemacachen_serverer_aldri_et_utdatert_skjema(tmp_path, monkeypatch):
     assert not any(f.startswith("skjema:") for f in feil), \
         f"cachen serverte det gamle skjemaet: {feil}"
     skjemamodul._VALIDATOR_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
+# Evidenskjeden: artefaktet må FINNES, stemme med hashen og bestå grensene
+# ---------------------------------------------------------------------------
+#
+# Codex' P1 på PR #8: skjemaet krevde bare at `artefakt` var en ikke-tom
+# streng, så `artefakt: tull.json` passerte like fint som en ekte måling.
+# Testene under muterer hvert ledd i kjeden og krever RØDT. En port som bare
+# er prøvd med den gyldige filen er ikke prøvd.
+
+
+@pytest.fixture()
+def artefakt_sti(m01):
+    p = m01["staging_sjekkliste"]["ytelse_bestatt"]
+    return REPOROT / p["artefakt"]
+
+
+def test_ekte_manifest_har_intakt_evidenskjede(m01):
+    """Positiv kontroll. Uten den ville alle mutasjonene under kunne vært
+    røde av en helt annen grunn — f.eks. at stien alltid er feil."""
+    assert valider_artefakter(m01) == []
+
+
+def test_artefaktet_ligger_faktisk_i_repoet(artefakt_sti):
+    """`.gitignore` har et eksplisitt unntak for nettopp denne filen. Blir
+    unntaket fjernet, forsvinner beviset og denne testen sier fra."""
+    assert artefakt_sti.is_file(), f"artefaktet mangler: {artefakt_sti}"
+
+
+def test_mutert_sti_gir_roedt(m01):
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt"] = \
+        "deploy/staging/artefakter/finnes-ikke.json"
+    feil = valider_artefakter(m)
+    assert feil and "kan ikke åpnes" in feil[0], feil
+
+
+def test_sti_utenfor_repoet_avvises(m01):
+    """Ellers kunne manifestet pekt på /tmp/noe-jeg-nettopp-skrev.json."""
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt"] = "../../../tmp/x.json"
+    feil = valider_artefakter(m)
+    assert feil and "utenfor repoet" in feil[0], feil
+
+
+def test_mutert_hash_gir_roedt(m01):
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt_sha256"] = "0" * 64
+    feil = valider_artefakter(m)
+    assert feil and "sha256 stemmer ikke" in feil[0], feil
+
+
+def test_ja_med_krav_id_uten_sha256_avvises_av_skjemaet(m01):
+    """Skjemanivået: hash er like påkrevd som sti når punktet er `ja`."""
+    m = copy.deepcopy(m01)
+    del m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt_sha256"]
+    assert valider_manifest(m), "ja med krav_id slapp gjennom uten sha256"
+
+
+def _muter_artefakt(artefakt_sti, endre) -> dict:
+    """Skriver et mutert artefakt og returnerer et punkt som peker på det,
+    med KORREKT hash — slik at det er innholdskontrollen som må ta det,
+    ikke hashen. Ellers ville alle mutasjonene under blitt fanget av
+    sha256-sjekken og innholdsvalideringen aldri vært prøvd."""
+    data = json.loads(artefakt_sti.read_text(encoding="utf-8"))
+    endre(data)
+    raa = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    mappe = REPOROT / "deploy/staging/artefakter"
+    fil = mappe / f"mutant-{abs(hash(raa)) % 10**12}.json"
+    fil.write_bytes(raa)
+    return {"fil": fil,
+            "punkt": {"status": "ja", "krav_id": "perf-m01-v1",
+                      "artefakt": str(fil.relative_to(REPOROT)).replace("\\", "/"),
+                      "artefakt_sha256": hashlib.sha256(raa).hexdigest()}}
+
+
+@pytest.mark.parametrize("navn,endring,forventet", [
+    ("bestatt", lambda d: d.update(bestatt=False), "bestatt: true"),
+    ("feil", lambda d: d["maalt"].update(feil=17, feiltyper=["500"]),
+     "feil=17"),
+    ("http_fordeling", lambda d: d["maalt"].update(feiltyper=["404"]),
+     "feiltyper"),
+    ("p95", lambda d: d["maalt"]["svartid_ms"].update(p95=151.0),
+     "p95=151.0"),
+    ("antall", lambda d: d["maalt"].update(antall=600), "antall=600"),
+    ("rate_begrenset", lambda d: d["maalt"].update(rate_begrenset=5),
+     "rate_begrenset=5"),
+    ("en_til_en", lambda d: d["etterkontroll"].update(en_til_en=False),
+     "en_til_en"),
+    ("revisjonsrader", lambda d: d["etterkontroll"].update(revisjonsrader=5999),
+     "revisjonsrader=5999"),
+    ("routing", lambda d: d["etterkontroll"].update(routing_stemmer=False),
+     "routing_stemmer"),
+    ("feil_krav_id", lambda d: d.update(krav_id="perf-noe-annet"),
+     "manifestet påstår"),
+])
+def test_mutert_artefaktinnhold_gir_roedt(m01, artefakt_sti, navn, endring,
+                                          forventet):
+    """Selve poenget med innholdsvalideringen.
+
+    `bestatt: true` inne i artefaktet er produsentens EGEN påstand. Uten
+    disse kontrollene ville en kjøring som skrev `bestatt: true` over 6 000
+    feilsvar passert porten — nøyaktig 404-kjøringen fra denne PR-en, bare
+    med ett felt endret.
+    """
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti, endring)
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert feil, f"mutasjonen {navn!r} slapp gjennom porten"
+        assert any(forventet in f for f in feil), (navn, feil)
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_ukjent_krav_id_har_ingen_grenser_og_avvises(m01):
+    """Et krav_id uten rad i KRAVGRENSER kan ikke håndheves — og da skal
+    det ikke kunne stå som bevist heller."""
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["krav_id"] = "perf-oppdiktet"
+    feil = valider_artefakter(m)
+    assert feil and "ukjent krav_id" in " ".join(feil), feil

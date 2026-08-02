@@ -39,8 +39,15 @@ desktop.ini
 # De sikres av ~/tools/disponit_backup.sh fra Downloads-mappen.
 *.zip
 
-# Lasttest-artefakter (perf-m01-v1). Selve MÅLINGEN hører hjemme som
-# CI-/staging-artefakt, ikke i historikken: en JSON fra en tilfeldig
-# utviklermaskin ser ut som et bevis uten å være det. Manifestet peker på
-# artefaktet fra kjøringen på staging (v2 Del 6).
+# Lasttest-artefakter (perf-m01-v1). Ad hoc-kjøringer holdes ute av
+# historikken: en JSON fra en tilfeldig utviklermaskin ser ut som et bevis
+# uten å være det.
 deploy/staging/artefakter/*.json
+
+# UNNTAK: artefaktet et manifest FAKTISK peker på må ligge i repoet.
+# Codex' P1 på PR #8: en sti uten fil er ingen evidenskjede, og en sha256
+# uten filen er bare beviset på at noen kjenner en streng. Bekymringen over
+# løses ikke av å utestenge filen, men av `manifestskjema.valider_artefakter`,
+# som åpner den, verifiserer hashen og måler tallene mot KRAVGRENSER — da
+# hjelper det ikke å legge inn en oppdiktet JSON.
+!deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
