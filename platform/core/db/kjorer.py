@@ -77,7 +77,16 @@ def migrer(conn: psycopg.Connection) -> list[int]:
                     conn.execute(sql)
                     conn.execute("INSERT INTO migrasjoner (versjon, checksum)"
                                  " VALUES (%s,%s)", (v, cs))
+                # `with conn.transaction()` blir en SAVEPOINT når det alt
+                # finnes en åpen transaksjon — og advisory-låsen over har
+                # åpnet en. Uten denne commiten rulles både DDL og
+                # registrering tilbake når tilkoblingen lukkes, mens
+                # kjøreren har RAPPORTERT at migrasjonen er kjørt.
+                # Oppdaget på staging: `migrer()` svarte [3], og etterpå
+                # fantes ingen rad for versjon 3 i registeret.
+                conn.commit()
             kjort.append(v)
     finally:
         conn.execute("SELECT pg_advisory_unlock(%s)", (_LAAS,))
+        conn.commit()
     return kjort

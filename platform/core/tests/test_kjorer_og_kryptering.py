@@ -428,3 +428,43 @@ def test_kjoreren_virker_paa_database_migrert_med_forrige_versjon(migrator,
             migrator.execute("UPDATE migrasjoner SET checksum=%s WHERE versjon=%s",
                              (cs, versjon))
         migrator.commit()
+
+
+@pg
+def test_migrasjonen_er_faktisk_lagret_etter_kjoring():
+    """Persistens, ikke bare returverdi.
+
+    `with conn.transaction()` blir en SAVEPOINT når det allerede finnes en
+    åpen transaksjon — og advisory-låsen åpner en. Uten en eksplisitt
+    commit rulles både DDL og registrering tilbake når tilkoblingen lukkes,
+    mens kjøreren har rapportert at migrasjonen er kjørt.
+
+    Oppdaget på staging: `migrer()` svarte `[3]`, og etterpå fantes ingen
+    rad for versjon 3. Alle de andre kjører-testene passerte, fordi de leser
+    fra SAMME tilkobling der den uncommitede raden er synlig — de bevises
+    for feil grunn. Denne åpner en NY tilkobling."""
+    from db.kjorer import migrer
+    from db.pg import koble
+    # Testen MÅ starte fra en tilstand der noe faktisk mangler. Første
+    # utgave kjørte mot et ferdig register, der migrer() ikke gjør noe — og
+    # da passerte den også med commiten fjernet. Mutasjonstest avslørte det.
+    opprydd = koble(MIGRATOR_DSN)
+    try:
+        opprydd.execute("DELETE FROM migrasjoner WHERE versjon=3")
+        opprydd.commit()
+    finally:
+        opprydd.close()
+
+    c1 = koble(MIGRATOR_DSN)
+    try:
+        assert migrer(c1) == [3], "det var ingenting å kjøre — testen ville bestått uansett"
+    finally:
+        c1.close()
+    c2 = koble(MIGRATOR_DSN)
+    try:
+        versjoner = [r[0] for r in c2.execute(
+            "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()]
+        c2.rollback()
+    finally:
+        c2.close()
+    assert versjoner == [1, 2, 3], f"registeret overlevde ikke tilkoblingen: {versjoner}"
