@@ -1,0 +1,103 @@
+"""Herdet migrasjonskjører (v3-delta pkt. 1). Erstatter migrer() i pg.py.
+
+Kontrakt: advisory-lås rundt hele kjøringen; kjører KUN manglende
+versjoner; checksum (SHA-256) registreres og verifiseres — endret
+historisk fil er hard feil; kjøreren eier transaksjonen for versjon >= 3;
+versjon 1-2 er legacy med egne BEGIN/COMMIT og kjøres rått, men er
+immutable via checksum som alle andre.
+"""
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import psycopg
+
+_MIG = Path(__file__).resolve().parent / "migrations"
+LAAS = 748_291_337   # fast advisory-nøkkel for migrasjonskjøring
+_LAAS = LAAS         # bakoverkompatibelt internt navn
+_LEGACY_MED_EGEN_TX = {1, 2}
+
+
+def _sha(fil: Path) -> str:
+    return hashlib.sha256(fil.read_bytes()).hexdigest()
+
+
+LEGACY_MAKS = max(_LEGACY_MED_EGEN_TX)   # siste versjon før checksum-æraen
+
+
+def migrer(conn: psycopg.Connection,
+           til_og_med: int | None = None) -> list[int]:
+    """Kjører manglende migrasjoner. `til_og_med` stopper etter en gitt
+    versjon — brukt av deploy/staging/migrer.py for å kjøre legacy først,
+    herde historikken, og deretter resten. Spesifikasjonen krever at
+    backfill + NOT NULL skjer FØR 003."""
+    kjort: list[int] = []
+    conn.execute("SELECT pg_advisory_lock(%s)", (_LAAS,))
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS migrasjoner (
+            versjon INT PRIMARY KEY,
+            kjort_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+            checksum TEXT)""")
+        # CREATE TABLE IF NOT EXISTS gjør INGENTING når tabellen finnes fra
+        # før — og den gjør det på enhver database som er migrert med
+        # PR-004-kjøreren, der `migrasjoner` ble laget av 001_init.sql uten
+        # checksum-kolonne. Uten denne linja feiler kjøreren med
+        # «column "checksum" does not exist» på alt annet enn en helt fersk
+        # database. Funnet av CI, som kjører mot en database bygget slik
+        # staging faktisk er bygget.
+        conn.execute("ALTER TABLE migrasjoner"
+                     " ADD COLUMN IF NOT EXISTS checksum TEXT")
+        conn.commit()
+        reg = dict(conn.execute(
+            "SELECT versjon, checksum FROM migrasjoner").fetchall())
+        for fil in sorted(_MIG.glob("[0-9][0-9][0-9]_*.sql")):
+            v = int(fil.name[:3])
+            if til_og_med is not None and v > til_og_med:
+                break
+            sql = fil.read_text(encoding="utf-8")
+            cs = _sha(fil)
+            if v in reg:
+                if reg[v] is not None and reg[v] != cs:
+                    raise RuntimeError(
+                        f"migrasjon {v:03d} er endret etter kjøring "
+                        f"(checksum-avvik) — historikk er immutable")
+                continue
+            if v not in _LEGACY_MED_EGEN_TX and (
+                    "BEGIN;" in sql or "COMMIT;" in sql):
+                raise RuntimeError(
+                    f"migrasjon {v:03d}: filer >= 003 skal ikke eie "
+                    f"transaksjonen (BEGIN/COMMIT funnet)")
+            if v in _LEGACY_MED_EGEN_TX:
+                # psycopg nekter å endre autocommit midt i en transaksjon,
+                # og advisory_lock/SELECT over har allerede åpnet en. Lås på
+                # SESJONSnivå overlever commit, så låsen holdes fortsatt.
+                conn.commit()
+                conn.autocommit = True
+                try:
+                    conn.execute(sql)
+                finally:
+                    conn.autocommit = False
+                conn.execute(
+                    "INSERT INTO migrasjoner (versjon, checksum) VALUES (%s,%s)"
+                    " ON CONFLICT (versjon) DO UPDATE SET checksum=EXCLUDED.checksum"
+                    " WHERE migrasjoner.checksum IS NULL", (v, cs))
+                conn.commit()
+            else:
+                with conn.transaction():
+                    conn.execute(sql)
+                    conn.execute("INSERT INTO migrasjoner (versjon, checksum)"
+                                 " VALUES (%s,%s)", (v, cs))
+                # `with conn.transaction()` blir en SAVEPOINT når det alt
+                # finnes en åpen transaksjon — og advisory-låsen over har
+                # åpnet en. Uten denne commiten rulles både DDL og
+                # registrering tilbake når tilkoblingen lukkes, mens
+                # kjøreren har RAPPORTERT at migrasjonen er kjørt.
+                # Oppdaget på staging: `migrer()` svarte [3], og etterpå
+                # fantes ingen rad for versjon 3 i registeret.
+                conn.commit()
+            kjort.append(v)
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(%s)", (_LAAS,))
+        conn.commit()
+    return kjort

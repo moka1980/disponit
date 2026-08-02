@@ -31,13 +31,13 @@ def koble(dsn: str) -> psycopg.Connection:
 
 
 def migrer(conn: psycopg.Connection) -> list[int]:
-    """Kjører alle migrasjoner i rekkefølge. Idempotent."""
-    kjort: list[int] = []
-    for fil in sorted(_MIGRASJONER.glob("[0-9][0-9][0-9]_*.sql")):
-        conn.execute(fil.read_text(encoding="utf-8"))
-        conn.commit()
-        kjort.append(int(fil.name[:3]))
-    return kjort
+    """Kjører manglende migrasjoner. Beholdt som navn av hensyn til
+    kallstedene; selve kjøringen er flyttet til `db.kjorer`, som legger til
+    advisory-lås, checksum-verifisering og avvisning av endret historikk
+    (PR-005). Den gamle varianten kjørte ALLE filer på nytt hver gang og
+    hadde ingen anelse om at en historisk fil var endret."""
+    from .kjorer import migrer as _kjor
+    return _kjor(conn)
 
 
 UKJENT_TENANT = "<ukjent>"

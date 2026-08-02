@@ -121,3 +121,103 @@ def _valider_register(reg: object) -> dict:
                 raise ValueError(
                     f"nøkkel '{vid}/{nid}' må være streng på minst 32 tegn")
     return reg
+
+
+# ---------------------------------------------------------------------------
+# v2: bindingsfelter (PR-005). En gyldig signatur beviser at attestasjonen
+# er UTSTEDT av en betrodd verifikator — den beviser ikke at den gjelder
+# DENNE forespørselen. Uten binding kan en ekte, signert attestasjon
+# gjenbrukes på en annen tenant, en annen handling, en annen ressurs eller
+# på et senere tidspunkt. Bindingsfeltene ligger inne i de signerte bytene,
+# så de kan ikke endres uten at signaturen ryker.
+# ---------------------------------------------------------------------------
+
+BINDINGSFELT = ("tenant_id", "handling", "vilkaar", "ressurs_id",
+                "policy_id", "utstedt", "utloper", "jti")
+
+
+def _tid(verdi: object):
+    """ISO 8601 MED tidssone, ellers None. Naive tidsstempler avvises —
+    samme regel som motoren (PR-002-funn 3a)."""
+    from datetime import datetime
+    if not isinstance(verdi, str):
+        return None
+    try:
+        t = datetime.fromisoformat(verdi)
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
+
+
+def kontroller_binding(event: dict, context, handling: str, policy_id: str,
+                       naa) -> Grunn | None:
+    """None == alle attestasjoner er bundet til DENNE forespørselen.
+
+    Kalles av API-veien ETTER signaturkontrollen. Rekkefølgen er ikke
+    tilfeldig: er signaturen ugyldig, er feltene ikke til å stole på, og da
+    er det meningsløst å sammenligne dem.
+
+    En attestasjon i PR-004-format mangler bindingsfeltene og avvises her —
+    det er den tiltenkte måten å nekte gammelt format på nettverksveien.
+    """
+    attester = event.get("attestasjoner")
+    if attester is None:
+        return None
+    if not isinstance(attester, dict):
+        return Grunn("attestasjoner_feilformet")
+
+    for navn, att in attester.items():
+        if not isinstance(att, dict):
+            return Grunn("attestasjon_feilformet", {"vilkaar": str(navn)})
+
+        mangler = [f for f in BINDINGSFELT if f not in att]
+        if mangler:
+            return Grunn("attestasjon_mangler_binding",
+                         {"vilkaar": str(navn), "felt": mangler})
+
+        forventet = (
+            ("tenant_id", getattr(context, "tenant_id", None),
+             "attestasjon_feil_tenant"),
+            ("handling", handling, "attestasjon_feil_handling"),
+            ("vilkaar", navn, "attestasjon_feil_vilkaar"),
+            ("policy_id", policy_id, "attestasjon_feil_policy"),
+            ("ressurs_id", event.get("ressurs_id"),
+             "attestasjon_feil_ressurs"),
+        )
+        for felt, fasit, kode in forventet:
+            if att.get(felt) != fasit:
+                return Grunn(kode, {"vilkaar": str(navn),
+                                    "i_attestasjon": str(att.get(felt)),
+                                    "i_forespoersel": str(fasit)})
+
+        utstedt, utloper = _tid(att.get("utstedt")), _tid(att.get("utloper"))
+        if utstedt is None or utloper is None:
+            return Grunn("attestasjon_tid_ugyldig", {"vilkaar": str(navn)})
+        if utloper <= utstedt:
+            return Grunn("attestasjon_tid_ugyldig", {"vilkaar": str(navn)})
+        if not (utstedt <= naa < utloper):
+            return Grunn("attestasjon_utenfor_gyldighet",
+                         {"vilkaar": str(navn)})
+
+        # Minstelengden er 22 fordi tabellen attestasjon_jti har
+        # CHECK (length(jti) >= 22). Var koden mildere enn databasen, ville
+        # en for kort jti passert porten og feilet nede i INSERT-en i stedet
+        # — sen, stygg feil i stedet for ren STOPP med begrunnelse.
+        jti = att.get("jti")
+        if not isinstance(jti, str) or len(jti.strip()) < 22:
+            return Grunn("attestasjon_jti_ugyldig", {"vilkaar": str(navn)})
+
+    return None
+
+
+def jti_liste(event: dict) -> list[tuple[str, str]]:
+    """(vilkaar, jti) for hver attestasjon — det API-veien konsumerer mot
+    tabellen `attestasjon_jti` for å hindre replay av irreversible
+    handlinger. Rekkefølgen er stabil (sortert) så to samtidige
+    forespørsler tar låsene i samme rekkefølge og ikke kan vranglåse."""
+    attester = event.get("attestasjoner") or {}
+    if not isinstance(attester, dict):
+        return []
+    ut = [(str(n), a.get("jti")) for n, a in attester.items()
+          if isinstance(a, dict) and isinstance(a.get("jti"), str)]
+    return sorted(ut, key=lambda p: (p[1], p[0]))

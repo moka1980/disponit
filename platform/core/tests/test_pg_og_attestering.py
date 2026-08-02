@@ -122,8 +122,12 @@ def purrehendelse(fak="fak-pg-1", signert=True):
 
 @pg
 def test_migrasjon_er_idempotent(migrator):
+    """PR-005 endret semantikken: kjøreren kjører KUN manglende versjoner
+    og returnerer dem. Er alt kjørt, er svaret tomt. Den gamle varianten
+    kjørte alle filene på nytt hver gang — idempotent i praksis, men den
+    ville ikke oppdaget at en historisk fil var endret."""
     from db.pg import migrer
-    assert migrer(migrator) == [1, 2]  # andre kjøring — ingen feil
+    assert migrer(migrator) == []
 
 
 @pg

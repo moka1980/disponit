@@ -8,6 +8,7 @@ set -euo pipefail
 DB=disponit
 BRUKER=disponit              # RUNTIME — kun DML, eier ingenting
 MIGRATOR=disponit_migrator   # eier skjemaet, kjører migrasjoner
+AUTH=disponit_authenticator  # eier api_tokener; runtime naar den aldri direkte
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -19,11 +20,20 @@ apt-get install -y -q postgresql postgresql-contrib
 systemctl enable --now postgresql
 
 # Roller + database (idempotent)
+# Roller er KLYNGEobjekter og opprettes her, med superbrukeren — aldri i en
+# migrasjon. Draften til PR-005 gjorde det siste, og det feiler i vaart
+# oppsett fordi migratorrollen verken har eller skal ha CREATEROLE.
 for r in "$BRUKER" "$MIGRATOR"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$AUTH'" \
+  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $AUTH NOLOGIN"
+# Migrator maa vaere MEDLEM av authenticator for aa kunne sette eierskap
+# (OWNER TO) paa api_tokener i migrasjon 003.
+sudo -u postgres psql -qc "GRANT $AUTH TO $MIGRATOR"
+
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
 
@@ -131,22 +141,27 @@ for base in $DB ${DB}_test; do
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
 done
 
-psql "$DISPONIT_MIGRATOR_URL"      -q -v ON_ERROR_STOP=1 \
-     -f platform/core/db/migrations/001_init.sql \
-     -f platform/core/db/migrations/002_roller_og_tenant_isolasjon.sql
-psql "$DISPONIT_TEST_MIGRATOR_DSN" -q -v ON_ERROR_STOP=1 \
-     -f platform/core/db/migrations/001_init.sql \
-     -f platform/core/db/migrations/002_roller_og_tenant_isolasjon.sql
+# ------------------------------------------------------------
+# Migrasjoner OG rettigheter kjøres av den herdede kjøreren, ikke av psql.
+#
+# Codex' P1: forrige versjon kjørte filene med `psql -f`. Det omgår
+# advisory-låsen, transaksjonen kjøreren eier fra versjon 3, checksum-
+# registreringen og avvisningen av endret historikk. En herdet kjører som
+# omgås av sitt eget oppsettskript er ikke en kjører, den er en anbefaling.
+#
+# Rettighetene settes av samme skript, ETTER migrasjonene: en GRANT på en
+# tabell som ikke finnes ennå er stille virkningsløs (det var feil nr. 6).
+# ------------------------------------------------------------
+VENV="/opt/disponit/.venv"
+if [ ! -x "$VENV/bin/python" ]; then
+  python3 -m venv "$VENV"
+  "$VENV/bin/pip" install -q --upgrade pip
+fi
+"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema
 
-# Rettigheter til runtime: kun det den trenger, aldri mer.
-for base in $DB ${DB}_test; do
-  sudo -u postgres psql -q -d "$base" <<GRANTS
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM $BRUKER;
-GRANT USAGE ON SCHEMA public TO $BRUKER;
-GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO $BRUKER;
-GRANT SELECT ON migrasjoner TO $BRUKER;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $BRUKER;
-GRANTS
+for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
+  DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \
+    "$(dirname "$0")/migrer.py" "$BRUKER"
 done
 
 # Sluttkontroll: alt skal fortsatt virke etter migrasjoner og rettigheter.
