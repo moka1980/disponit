@@ -14,7 +14,8 @@ from pathlib import Path
 import psycopg
 
 _MIG = Path(__file__).resolve().parent / "migrations"
-_LAAS = 748_291_337  # fast advisory-nøkkel for migrasjonskjøring
+LAAS = 748_291_337   # fast advisory-nøkkel for migrasjonskjøring
+_LAAS = LAAS         # bakoverkompatibelt internt navn
 _LEGACY_MED_EGEN_TX = {1, 2}
 
 

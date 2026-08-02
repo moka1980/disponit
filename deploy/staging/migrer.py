@@ -70,12 +70,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"AVBRUTT: ugyldig rollenavn {rolle!r}")
         return 2
 
-    from db.kjorer import LEGACY_MAKS, migrer
+    from db.kjorer import LAAS, LEGACY_MAKS, migrer
     from db.pg import koble
 
     bootstrap = last_bootstrap()
     conn = koble(dsn)
     try:
+        # YTTERLÅS rundt HELE overgangen legacy -> herding -> 003.
+        #
+        # Codex' P1: hvert `migrer()`-kall tok og slapp låsen selv, og
+        # `herd_historikk()` tok ingen. «Herding før 003» var derfor bare
+        # sant inne i én prosess: to samtidige oppsett kunne rekke å kjøre
+        # 003 i vinduet mellom stegene, og da er den bindende rekkefølgen
+        # brutt selv om hvert enkelt steg var låst.
+        #
+        # PostgreSQL teller session-låser per sesjon, så kjørerens egne
+        # lock/unlock inne i denne blokken er reentrante og holder låsen
+        # oppe hele veien. Antall lås og opplås må balansere — derfor
+        # slippes ytterlåsen i finally, uansett utfall.
+        conn.execute("SELECT pg_advisory_lock(%s)", (LAAS,))
+        conn.commit()
         # Kontraktens rekkefølge (v3-delta): legacy først, så herding av
         # historikken, så resten. Kjøres 003 før checksum-kolonnen er
         # NOT NULL, er historikken fortsatt muterbar mens den nye
@@ -107,7 +121,11 @@ def main(argv: list[str] | None = None) -> int:
         print("register: " + ", ".join(str(v) for v, _ in versjoner)
               + "  (alle med checksum, kolonnen er NOT NULL)")
     finally:
-        conn.close()
+        try:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (LAAS,))
+            conn.commit()
+        finally:
+            conn.close()
     return 0
 
 

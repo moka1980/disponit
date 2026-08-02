@@ -583,3 +583,78 @@ def test_migrer_feiler_hardt_hvis_historikken_ikke_er_laast(migrator,
 
     assert modul.main(["disponit"]) != 0, "inngangen godtok en ulåst historikk"
     migrator.rollback()
+
+
+@pg
+def test_ingen_annen_prosess_naar_003_for_herdingen_er_ferdig(migrator,
+                                                              monkeypatch):
+    """Codex' P1: ytterlåsen manglet, så «herding før 003» var bare sant
+    inne i én prosess.
+
+    Deterministisk, uten sleep: prosess A stanses INNE i herdingen mens den
+    holder ytterlåsen. Prosess B — en helt annen tilkobling — forsøker å
+    kjøre migrasjonene og skal ikke komme til 003. B får `lock_timeout`, så
+    den feiler raskt i stedet for å henge, og testen måler faktisk
+    blokkering framfor å håpe på en rekkefølge."""
+    import threading
+    import psycopg
+    from db.pg import koble
+
+    _nullstill(migrator, med_legacy_uten_checksum=True)
+    modul = _migrer_modul()
+    monkeypatch.setenv("DISPONIT_MIGRATOR_URL", MIGRATOR_DSN)
+
+    bootstrap = _bootstrap_modul()
+    ekte_herd = bootstrap.herd_historikk
+    a_er_inne = threading.Event()
+    b_er_ferdig = threading.Event()
+
+    def herd_med_pause(conn):
+        a_er_inne.set()
+        assert b_er_ferdig.wait(30), "B ble aldri ferdig"
+        return ekte_herd(conn)
+
+    bootstrap.herd_historikk = herd_med_pause
+    monkeypatch.setattr(modul, "last_bootstrap", lambda: bootstrap)
+
+    a_resultat = {}
+
+    def kjor_a():
+        a_resultat["kode"] = modul.main(["disponit"])
+
+    a = threading.Thread(target=kjor_a)
+    a.start()
+    try:
+        assert a_er_inne.wait(30), "A nådde aldri herdingen"
+
+        # B: egen tilkobling, kort lock_timeout. Ytterlåsen A holder skal
+        # stoppe den før den rekker å registrere 003.
+        from db.kjorer import migrer as kjorer_migrer
+        b = koble(MIGRATOR_DSN)
+        try:
+            b.execute("SET lock_timeout = '750ms'")
+            b.commit()
+            with pytest.raises(psycopg.Error) as feil:
+                kjorer_migrer(b)
+            assert "lock" in str(feil.value).lower(), str(feil.value)
+        finally:
+            b.close()
+
+        registrert_mens_a_venter = [r[0] for r in migrator.execute(
+            "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()]
+        migrator.rollback()
+        assert 3 not in registrert_mens_a_venter, (
+            "003 ble registrert av en annen prosess før herdingen var ferdig: "
+            f"{registrert_mens_a_venter}")
+    finally:
+        b_er_ferdig.set()
+        a.join(60)
+
+    assert a_resultat.get("kode") == 0
+    nullable = migrator.execute(
+        "SELECT is_nullable FROM information_schema.columns"
+        " WHERE table_name='migrasjoner' AND column_name='checksum'").fetchone()
+    versjoner = [r[0] for r in migrator.execute(
+        "SELECT versjon FROM migrasjoner ORDER BY versjon").fetchall()]
+    migrator.rollback()
+    assert nullable[0] == "NO" and versjoner == [1, 2, 3]
