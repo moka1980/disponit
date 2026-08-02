@@ -30,6 +30,15 @@ def migrer(conn: psycopg.Connection) -> list[int]:
             versjon INT PRIMARY KEY,
             kjort_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
             checksum TEXT)""")
+        # CREATE TABLE IF NOT EXISTS gjør INGENTING når tabellen finnes fra
+        # før — og den gjør det på enhver database som er migrert med
+        # PR-004-kjøreren, der `migrasjoner` ble laget av 001_init.sql uten
+        # checksum-kolonne. Uten denne linja feiler kjøreren med
+        # «column "checksum" does not exist» på alt annet enn en helt fersk
+        # database. Funnet av CI, som kjører mot en database bygget slik
+        # staging faktisk er bygget.
+        conn.execute("ALTER TABLE migrasjoner"
+                     " ADD COLUMN IF NOT EXISTS checksum TEXT")
         conn.commit()
         reg = dict(conn.execute(
             "SELECT versjon, checksum FROM migrasjoner").fetchall())

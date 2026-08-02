@@ -355,3 +355,32 @@ def test_kjoreren_avviser_fil_som_eier_egen_transaksjon(migrator, tmp_path,
     with pytest.raises(RuntimeError, match="transaksjonen|BEGIN"):
         kjorer.migrer(migrator)
     migrator.rollback()
+
+
+@pg
+def test_kjoreren_virker_paa_database_migrert_med_forrige_versjon(migrator,
+                                                                  tmp_path,
+                                                                  monkeypatch):
+    """Oppgraderingsveien. `migrasjoner`-tabellen ble laget av 001_init.sql
+    UTEN checksum-kolonne, og `CREATE TABLE IF NOT EXISTS` gjør ingenting
+    når tabellen finnes. Uten en eksplisitt ALTER feiler kjøreren på enhver
+    database som er migrert med PR-004 — altså på staging og i produksjon,
+    men ikke på en fersk testdatabase."""
+    from db import kjorer
+    migrator.execute("DROP TABLE IF EXISTS oppgrader_proeve")
+    migrator.execute("CREATE TABLE IF NOT EXISTS oppgrader_proeve (x int)")
+    migrator.commit()
+    # etterlign gammelt skjema: fjern kolonnen og kjør på nytt
+    migrator.execute("ALTER TABLE migrasjoner DROP COLUMN IF EXISTS checksum")
+    migrator.commit()
+    try:
+        kjorer.migrer(migrator)      # skal legge til kolonnen, ikke kaste
+        rad = migrator.execute(
+            "SELECT count(*) FROM information_schema.columns"
+            " WHERE table_name='migrasjoner' AND column_name='checksum'"
+        ).fetchone()[0]
+        assert rad == 1, "checksum-kolonnen ble ikke lagt til"
+    finally:
+        migrator.rollback()
+        migrator.execute("DROP TABLE IF EXISTS oppgrader_proeve")
+        migrator.commit()
