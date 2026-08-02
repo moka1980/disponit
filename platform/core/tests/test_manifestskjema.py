@@ -88,8 +88,13 @@ def test_manglende_punkt_avvises(m01):
 
 
 def test_uavklarte_punkter_og_aktiv_uten_bevis(m01):
+    # `ytelse_bestatt` gikk til `ja` 2026-08-02 da lasttesten faktisk var
+    # kjørt på staging og artefaktet fantes. Settet krymper derfor med ett
+    # punkt — porten selv står uendret: et `ja` med krav_id uten artefakt
+    # avvises fortsatt av skjemaet, og `aktiv` med uavklarte punkter av
+    # testen nedenfor.
     assert set(uavklarte_punkter(m01)) == {
-        "feilinjisering_til_unntakskø", "ytelse_bestatt", "rollback_testet"}
+        "feilinjisering_til_unntakskø", "rollback_testet"}
     # m01 er `under_utvikling`, ikke `aktiv` — da er uavklarte punkter greit.
     assert aktiv_uten_bevis(m01) == []
     aktiv = copy.deepcopy(m01)

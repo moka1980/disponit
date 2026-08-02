@@ -18,7 +18,9 @@ staging_sjekkliste:
     notat: >-
       Kjørt av Claude Code på Cloud Server S. PR-004: 74 passed.
       PR-005a: 155 passed med /etc/disponit/staging.env lastet.
-      Oppdateres av PR-005b-kjøringen.
+      PR-005b (main 2340849): 230 passed, INGEN hoppet, tre kjøringer på
+      rad. Miljøfila er chmod 600/root — uten sudo blir 101 tester stille
+      hoppet over, og en hoppet test er ikke en bestått test.
   syntetisk_datasett_likt_lokalt:
     status: ja
     notat: >-
@@ -42,11 +44,15 @@ staging_sjekkliste:
     # Grensen ER definert og målbar (perf-m01-v1): 100 beslutninger/sekund,
     # 20 samtidige, p95 < 150 ms, null feil, 1:1 mellom beslutning og
     # loggpost. Skriptet finnes: deploy/staging/lasttest-m01.py.
-    # Står som `nei` til kjøringen på staging har produsert artefaktet —
-    # og da settes `artefakt` til stien. Skjemaet håndhever at et `ja` med
-    # krav_id MÅ ha artefakt: manifestfeltet er aldri selv beviset.
-    status: nei
+    # Kjørt på staging (Cloud Server S) 2026-08-02 etter at PR-005b var
+    # merget: 6 000 målte forespørsler @ 100/s, 20 samtidige, 0 feil,
+    # p95 24,1 ms mot kravet 150 ms. Etterkontrollen mot databasen ga
+    # 6 000 auditerte svar = 6 000 revisjonsrader (1:1) og 1 200
+    # unntaksrader i normal kø, som er det routingreglene forventer.
+    # Manifestfeltet er ikke beviset — artefaktet er.
+    status: ja
     krav_id: perf-m01-v1
+    artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T203540.json
   rollback_testet:
     # Splittet per review D2: den TEKNISKE deaktiveringen via registeret kan
     # bevises nå og er derfor `nei` (ikke gjort ennå), ikke `blokkert`.
