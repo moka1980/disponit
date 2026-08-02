@@ -78,10 +78,15 @@ sudo bash -c 'set -a; . /etc/disponit/staging.env; set +a; \
 > sannhet for hemmelighetene, og skriptet roterer et passord i det en nøkkel
 > mangler. Legger du tilbake en eldre kopi, peker DSN-en på et passord rollen
 > ikke lenger har, og alt feiler med `password authentication failed`.
-> Skal en hemmelighet fornyes: **slett den ene linjen** og kjør skriptet —
-> det legger til det som mangler og rører aldri resten.
+> Skal en hemmelighet fornyes: **slett én av rollens DSN-linjer** og kjør
+> skriptet. Da roteres rollens passord og **alle** dens DSN-er skrives på
+> nytt samlet — søskenlinja blir aldri stående igjen med det gamle passordet.
+> Mangler ingen nøkler, roteres ingenting: fila er da bit for bit uendret.
+>
+> Rollenes DSN-par: `DATABASE_URL` + `DISPONIT_TEST_DSN` (runtime) og
+> `DISPONIT_MIGRATOR_URL` + `DISPONIT_TEST_MIGRATOR_DSN` (migrator).
 
-Fire feil ble funnet nettopp fordi skriptet ble kjørt på ekte server og ikke
+Fem feil ble funnet nettopp fordi skriptet ble kjørt på ekte server og ikke
 bare lest — alle er rettet i skriptet:
 
 1. **Miljøfila var ugyldig shell.** DSN-ene inneholder mellomrom, og uten
@@ -94,7 +99,11 @@ bare lest — alle er rettet i skriptet:
 3. **Miljøfila ble bare skrevet når den ikke fantes.** En oppgradering fikk
    dermed aldri migrator-nøklene, og eneste vei videre var å slette fila og
    rotere alt for hånd. Fila skrives nå per nøkkel.
-4. **Eierskapsreparasjonen tok eierskap over `pgcrypto`-funksjoner.** Den
+4. **Rotasjon brakk søskenlinja.** Manglet én av en rolles to DSN-er, ble
+   passordet rotert mens bare den manglende linja ble skrevet — den andre
+   sto igjen med gammelt passord. Prosedyren over ledet altså rett i fella.
+   Alle rollens DSN-er skrives nå samlet.
+5. **Eierskapsreparasjonen tok eierskap over `pgcrypto`-funksjoner.** Den
    skrev `ALTER FUNCTION public.navn()` uten argumenttyper, som traff
    funksjoner uten parametre — `fips_mode()` og `gen_random_uuid()` ble
    faktisk flyttet til migrator-rollen på denne serveren. Skriptet bruker nå
