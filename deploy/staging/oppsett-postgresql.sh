@@ -25,10 +25,15 @@ mkdir -p /etc/disponit && chmod 700 /etc/disponit
 if [ ! -f "$MILJOFIL" ]; then
   PASSORD=$(openssl rand -hex 24)
   sudo -u postgres psql -c "ALTER ROLE $BRUKER PASSWORD '$PASSORD'"
+  # Verdiene MAA vaere i anfoerselstegn: DSN-ene inneholder mellomrom, og
+  # `set -a; . fila` tolker da bare foerste ord som verdi. Uten dette blir
+  # DISPONIT_TEST_DSN til "host=127.0.0.1" og passordet forsvinner —
+  # psycopg feiler med "no password supplied". Funnet ved faktisk kjoering
+  # paa Cloud Server S, ikke ved lesing.
   cat > "$MILJOFIL" << MILJO
-DATABASE_URL=host=127.0.0.1 dbname=$DB user=$BRUKER password=$PASSORD
-DISPONIT_TEST_DSN=host=127.0.0.1 dbname=${DB}_test user=$BRUKER password=$PASSORD
-DISPONIT_ATT_NOKLER={"v_regnskap":{"k1":"$(openssl rand -hex 32)"},"v_register":{"k1":"$(openssl rand -hex 32)"},"v_bank":{"k1":"$(openssl rand -hex 32)"},"v_svindel":{"k1":"$(openssl rand -hex 32)"},"v_fordring":{"k1":"$(openssl rand -hex 32)"},"v_dlp":{"k1":"$(openssl rand -hex 32)"},"v_prisbok":{"k1":"$(openssl rand -hex 32)"}}
+DATABASE_URL='host=127.0.0.1 dbname=$DB user=$BRUKER password=$PASSORD'
+DISPONIT_TEST_DSN='host=127.0.0.1 dbname=${DB}_test user=$BRUKER password=$PASSORD'
+DISPONIT_ATT_NOKLER='{"v_regnskap":{"k1":"$(openssl rand -hex 32)"},"v_register":{"k1":"$(openssl rand -hex 32)"},"v_bank":{"k1":"$(openssl rand -hex 32)"},"v_svindel":{"k1":"$(openssl rand -hex 32)"},"v_fordring":{"k1":"$(openssl rand -hex 32)"},"v_dlp":{"k1":"$(openssl rand -hex 32)"},"v_prisbok":{"k1":"$(openssl rand -hex 32)"}}'
 MILJO
   chmod 600 "$MILJOFIL"
 fi
