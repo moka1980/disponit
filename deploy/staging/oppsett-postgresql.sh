@@ -146,4 +146,4 @@ verifiser_og_reparer "$BRUKER"   "${RUNTIME_DSN[@]}"
 verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
-echo "Verifiser: python3 -m pytest platform/core/tests -q  (74 forventet)"
+echo "Verifiser: python3 -m pytest platform/core/tests -q  (94 forventet)"

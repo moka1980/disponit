@@ -86,8 +86,16 @@ sudo bash -c 'set -a; . /etc/disponit/staging.env; set +a; \
 > Rollenes DSN-par: `DATABASE_URL` + `DISPONIT_TEST_DSN` (runtime) og
 > `DISPONIT_MIGRATOR_URL` + `DISPONIT_TEST_MIGRATOR_DSN` (migrator).
 
-Fem feil ble funnet nettopp fordi skriptet ble kjørt på ekte server og ikke
-bare lest — alle er rettet i skriptet:
+> ✅ **Tilstandsmaskinen for hemmelighetene er nå testet i CI.** Den ligger i
+> `deploy/staging/lib-miljofil.sh` og dekkes av
+> `platform/core/tests/test_deploy_miljofil.py` (11 tester): ny installasjon,
+> oppgradering, rotasjon per DSN, ingen rotasjon uten grunn, avbrutt
+> rotasjon, midlertidig fil i målkatalogen, ingen dupliserte nøkler.
+> Codex' krav etter at fem feil på rad ble funnet her: manuell staging-prøve
+> er ikke en port.
+
+Sju feil ble funnet nettopp fordi skriptet ble kjørt på ekte server eller
+testet — alle er rettet:
 
 1. **Miljøfila var ugyldig shell.** DSN-ene inneholder mellomrom, og uten
    anførselstegn tolker `set -a; . fila` bare første ord som verdi.
@@ -103,7 +111,13 @@ bare lest — alle er rettet i skriptet:
    passordet rotert mens bare den manglende linja ble skrevet — den andre
    sto igjen med gammelt passord. Prosedyren over ledet altså rett i fella.
    Alle rollens DSN-er skrives nå samlet.
-5. **Eierskapsreparasjonen tok eierskap over `pgcrypto`-funksjoner.** Den
+5. **Avbrudd mellom passordrotasjon og filskriving kunne ikke oppdages**,
+   fordi maskinen bare så etter nøkkelnavn. Skriptet prøver nå å koble til
+   med hver DSN og reparerer rollen når den ikke virker.
+6. **`mktemp` i `/tmp` etterfulgt av `mv` til `/etc`** krysser
+   filsystemgrenser, og da er `mv` ikke atomisk. Temp-fila lages nå ved
+   siden av målet.
+7. **Eierskapsreparasjonen tok eierskap over `pgcrypto`-funksjoner.** Den
    skrev `ALTER FUNCTION public.navn()` uten argumenttyper, som traff
    funksjoner uten parametre — `fips_mode()` og `gen_random_uuid()` ble
    faktisk flyttet til migrator-rollen på denne serveren. Skriptet bruker nå
