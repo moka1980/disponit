@@ -45,21 +45,12 @@ jobs:
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
-          PGPASSWORD=mig psql -h 127.0.0.1 -U disponit_migrator -d disponit_test -q -v ON_ERROR_STOP=1 \
-            -f platform/core/db/migrations/001_init.sql \
-            -f platform/core/db/migrations/002_roller_og_tenant_isolasjon.sql \
-            -f platform/core/db/migrations/003_unntak_api_policy.sql
-          psql -h 127.0.0.1 -U postgres -d disponit_test -q <<'GRANTS'
-          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM disponit;
-          GRANT USAGE ON SCHEMA public TO disponit;
-          GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO disponit;
-          GRANT SELECT ON migrasjoner TO disponit;
-          GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO disponit;
-          GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO disponit;
-          GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO disponit;
-          GRANT SELECT ON policyer TO disponit;
-          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO disponit;
-          GRANTS
+          # Migrasjoner kjøres av den HERDEDE KJØREREN, ikke med psql -f.
+          # Codex' P1: psql omgår advisory-lås, kjørerens transaksjon,
+          # checksum-registrering og avvisning av endret historikk — og da
+          # tester CI en annen vei enn den staging og produksjon bruker.
+          DISPONIT_MIGRATOR_URL="postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_test" \
+            python deploy/staging/migrer.py disponit
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"

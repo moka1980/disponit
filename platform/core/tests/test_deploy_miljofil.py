@@ -259,9 +259,15 @@ def test_verifikasjonen_kjores_for_dsn_ene_tas_i_bruk():
         return None
 
     verifikasjon = forste("verifiser_og_reparer")
-    bruk = min(n for n in (forste('psql "$DISPONIT_MIGRATOR_URL"'),
-                           forste('psql "$DISPONIT_TEST_MIGRATOR_DSN"'))
-               if n is not None)
+    # Første bruk av en migrator-DSN er nå kallet til migrasjonskjøreren
+    # (`migrer.py`), ikke en psql-kommando. Testen følger etter flyttingen —
+    # egenskapen den vokter er den samme: verifiser før bruk.
+    kandidater = [n for n in (forste("migrer.py"),
+                              forste('psql "$DISPONIT_MIGRATOR_URL"'),
+                              forste('psql "$DISPONIT_TEST_MIGRATOR_DSN"'))
+                  if n is not None]
+    assert kandidater, "fant ingen bruk av migrator-DSN i skriptet"
+    bruk = min(kandidater)
     assert verifikasjon is not None, "skriptet verifiserer ikke DSN-ene i det hele tatt"
     assert verifikasjon < bruk, (
         f"verifiser_og_reparer (linje {verifikasjon + 1}) kjører etter første "
@@ -269,25 +275,41 @@ def test_verifikasjonen_kjores_for_dsn_ene_tas_i_bruk():
         f"set -e skriptet før reparasjonen nås")
 
 
-def test_oppsettskriptet_kjorer_alle_migrasjonsfiler():
-    """Skriptet listet migrasjonsfilene enkeltvis, og 003 ble glemt da den
-    kom til. Tabellene fantes derfor ikke da GRANT-ene ble satt, og runtime
-    møtte «permission denied» først når koden kjørte — på staging, ikke i
-    CI. Nå brukes et glob, så en ny fil ikke kan bli glemt.
+def test_ingen_kjorer_migrasjoner_utenom_den_herdede_kjoreren():
+    """Codex' P1: oppsettskriptet og CI kjørte migrasjonsfilene med
+    `psql -f`. Filene er idempotente, så det ser uskyldig ut — men det
+    omgår advisory-låsen, transaksjonen kjøreren eier fra versjon 3,
+    checksum-registreringen og avvisningen av endret historikk. Og verre:
+    CI testet da en annen vei enn den staging og produksjon bruker.
 
-    Trenger ingen bash og kjører derfor overalt."""
+    En herdet kjører som kan omgås av oppsettet sitt eget skript er ingen
+    kjører. Denne testen låser at det bare finnes én vei inn."""
+    import re
+    rot = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    mistenkt = re.compile(r"-f\s+\S*migrations/|migrations/\S*\.sql")
+    for sti in ("deploy/staging/oppsett-postgresql.sh",
+                ".github/workflows/ci.yml"):
+        with open(os.path.join(rot, sti), encoding="utf-8") as f:
+            for nr, linje in enumerate(f, 1):
+                if linje.lstrip().startswith("#"):
+                    continue
+                assert not mistenkt.search(linje), (
+                    f"{sti}:{nr} kjører en migrasjonsfil direkte:\n  "
+                    f"{linje.strip()}\nBruk deploy/staging/migrer.py")
+
+
+def test_oppsettskriptet_setter_rettigheter_etter_migrasjonene():
+    """Feil nr. 6: GRANT på en tabell som ikke finnes ennå er stille
+    virkningsløs. Rettighetene settes derfor av `migrer.py`, etter at
+    kjøreren har opprettet tabellene — ikke i en egen psql-blokk i
+    skriptet."""
     rot = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))))
     with open(rot + "/deploy/staging/oppsett-postgresql.sh",
               encoding="utf-8") as f:
         skript = f.read()
-    migrasjoner = sorted(
-        f for f in os.listdir(rot + "/platform/core/db/migrations")
-        if f.endswith(".sql"))
-    assert migrasjoner, "fant ingen migrasjonsfiler"
-    if "migrations/[0-9][0-9][0-9]_*.sql" in skript:
-        return                      # glob dekker alle framtidige filer
-    for fil in migrasjoner:
-        assert fil in skript, (
-            f"{fil} kjøres ikke av oppsettskriptet — tabellene finnes da "
-            f"ikke når GRANT-ene settes")
+    assert "migrer.py" in skript, "skriptet kaller ikke migrasjonskjøreren"
+    assert "GRANT SELECT, INSERT ON revisjonslogg" not in skript, (
+        "rettighetene settes fortsatt i skriptet — de hører i migrer.py, "
+        "etter migrasjonene")

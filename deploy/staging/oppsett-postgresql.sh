@@ -141,38 +141,27 @@ for base in $DB ${DB}_test; do
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
 done
 
-# Alle migrasjonsfiler kjøres her, slik at tabellene finnes FØR
-# rettighetene settes under. Glemmes en fil, blir GRANT-ene stille
-# virkningsløse for den tabellen — den finnes jo ikke ennå — og runtime
-# møter «permission denied» først når koden kjører. Det skjedde med 003.
+# ------------------------------------------------------------
+# Migrasjoner OG rettigheter kjøres av den herdede kjøreren, ikke av psql.
 #
-# Filene er idempotente. Checksum-registreringen gjøres av
-# `db.kjorer` ved første applikasjonsstart; her handler det bare om at
-# skjemaet er på plass.
-for _mig in platform/core/db/migrations/[0-9][0-9][0-9]_*.sql; do
-  psql "$DISPONIT_MIGRATOR_URL"      -q -v ON_ERROR_STOP=1 -f "$_mig"
-  psql "$DISPONIT_TEST_MIGRATOR_DSN" -q -v ON_ERROR_STOP=1 -f "$_mig"
-done
+# Codex' P1: forrige versjon kjørte filene med `psql -f`. Det omgår
+# advisory-låsen, transaksjonen kjøreren eier fra versjon 3, checksum-
+# registreringen og avvisningen av endret historikk. En herdet kjører som
+# omgås av sitt eget oppsettskript er ikke en kjører, den er en anbefaling.
+#
+# Rettighetene settes av samme skript, ETTER migrasjonene: en GRANT på en
+# tabell som ikke finnes ennå er stille virkningsløs (det var feil nr. 6).
+# ------------------------------------------------------------
+VENV="/opt/disponit/.venv"
+if [ ! -x "$VENV/bin/python" ]; then
+  python3 -m venv "$VENV"
+  "$VENV/bin/pip" install -q --upgrade pip
+fi
+"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema
 
-# Rettigheter til runtime: kun det den trenger, aldri mer.
-for base in $DB ${DB}_test; do
-  # PG15+: public-skjemaet gir ikke lenger CREATE til alle. Authenticator
-  # trenger det for aa kunne eie api_tokener.
-  sudo -u postgres psql -q -d "$base" -c "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH"
-  sudo -u postgres psql -q -d "$base" <<GRANTS
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM $BRUKER;
-GRANT USAGE ON SCHEMA public TO $BRUKER;
-GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO $BRUKER;
-GRANT SELECT ON migrasjoner TO $BRUKER;
--- PR-005: runtime faar noeyaktig det den trenger, ikke mer.
--- unntak_historikk er INSERT-only: historikken skal aldri kunne endres.
--- policyer er lesetilgang: policyer endres av en egen vei, ikke av API-et.
-GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO $BRUKER;
-GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO $BRUKER;
-GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO $BRUKER;
-GRANT SELECT ON policyer TO $BRUKER;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $BRUKER;
-GRANTS
+for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
+  DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \
+    "$(dirname "$0")/migrer.py" "$BRUKER"
 done
 
 # Sluttkontroll: alt skal fortsatt virke etter migrasjoner og rettigheter.

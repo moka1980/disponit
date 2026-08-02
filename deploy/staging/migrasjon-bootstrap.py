@@ -5,7 +5,9 @@ FASTE, reviewede checksums for 001/002 fra main 679ee9e. Skriptet feiler
 hardt hvis diskfilene ikke matcher konstantene — vi stoler på review,
 ikke på disk. Kjøres av migrator én gang; deretter SET NOT NULL.
 
-BRUK: DATABASE_URL i miljø. Claude Code fyller inn konstantene under fra
+BRUK: DISPONIT_MIGRATOR_URL i miljø. Skriptet gjør ALTER TABLE og krever
+derfor eierrettigheter — runtime-rollen har dem ikke og skal ikke ha dem.
+Claude Code fyller inn konstantene under fra
 `sha256sum platform/core/db/migrations/00{1,2}_*.sql` på main 679ee9e og
 verifiserer dem i PR-review (merge-port).
 """
@@ -28,7 +30,13 @@ REVIEWEDE_CHECKSUMS = {
 MIG = Path(__file__).resolve().parents[2] / "platform/core/db/migrations"
 
 def main() -> int:
-    conn = psycopg.connect(os.environ["DATABASE_URL"])
+    dsn = os.environ.get("DISPONIT_MIGRATOR_URL")
+    if not dsn:
+        print("AVBRUTT: DISPONIT_MIGRATOR_URL mangler. Bootstrap gjør"
+              " ALTER TABLE og må kjøre som skjemaeier — runtime-rollen"
+              " (DATABASE_URL) har ikke rettighetene og skal ikke ha dem.")
+        return 2
+    conn = psycopg.connect(dsn)
     conn.execute("SELECT pg_advisory_lock(748291337)")
     for v, forventet in REVIEWEDE_CHECKSUMS.items():
         fil = next(MIG.glob(f"{v:03d}_*.sql"))
