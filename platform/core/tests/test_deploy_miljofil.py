@@ -13,10 +13,21 @@ tilstander som er upraktiske å fremkalle på en ekte server — særlig avbrudd
 midt i en rotasjon.
 """
 import os
+import shutil
 import subprocess
 import textwrap
 
 import pytest
+
+# Testene driver et bash-skript med Unix-stier. På Windows kjenner verken
+# stiene eller `bash` seg igjen — WSL-bash forstår ikke «C:\Users\...», og
+# hele fila feilet der (Codex P2). Vi hopper eksplisitt i stedet for å late
+# som: skriptet er et Linux-serveroppsett, og CI kjører på Linux, så porten
+# er uendret.
+kun_posix = pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="deploy-skriptet er Linux-only; bash mangler eller stiene er "
+           "Windows-stier. Kjøres i CI og på staging.")
 
 LIB = (os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))) +
@@ -88,6 +99,7 @@ ALLE = ["DATABASE_URL", "DISPONIT_TEST_DSN",
         "DISPONIT_MIGRATOR_URL", "DISPONIT_TEST_MIGRATOR_DSN"]
 
 
+@kun_posix
 def test_ny_installasjon_gir_alle_nokler(tmp_path):
     r = kjor(tmp_path, OPPSETT)
     assert r.returncode == 0, r.stderr
@@ -97,6 +109,7 @@ def test_ny_installasjon_gir_alle_nokler(tmp_path):
     assert oct((tmp_path / "staging.env").stat().st_mode)[-3:] == "600"
 
 
+@kun_posix
 def test_oppgradering_legger_til_migrator_uten_aa_roere_runtime(tmp_path):
     """Codex P1: en eldre installasjon hadde bare runtime-nøklene, og
     skriptet skrev fila kun når den ikke fantes."""
@@ -122,6 +135,7 @@ def test_oppgradering_legger_til_migrator_uten_aa_roere_runtime(tmp_path):
     ("DISPONIT_TEST_MIGRATOR_DSN",
      ("DISPONIT_MIGRATOR_URL", "DISPONIT_TEST_MIGRATOR_DSN")),
 ])
+@kun_posix
 def test_rotasjon_skriver_soesken_samlet(tmp_path, slettet, rolle_dsn):
     """Codex P1: roterte passordet, men skrev bare den manglende linja —
     søskenlinja sto igjen med det gamle passordet. Dette er nøyaktig den
@@ -145,6 +159,7 @@ def test_rotasjon_skriver_soesken_samlet(tmp_path, slettet, rolle_dsn):
         assert etter[n] == foer[n], f"{n} ble rotert uten grunn"
 
 
+@kun_posix
 def test_ingen_rotasjon_naar_ingenting_mangler(tmp_path):
     kjor(tmp_path, OPPSETT)
     foer = (tmp_path / "staging.env").read_text(encoding="utf-8")
@@ -154,6 +169,7 @@ def test_ingen_rotasjon_naar_ingenting_mangler(tmp_path):
         "andre kjøring endret fila — passord roteres uten grunn"
 
 
+@kun_posix
 def test_avbrutt_rotasjon_oppdages_og_repareres(tmp_path):
     """Codex P1: passordet roteres FØR fila skrives. Blir vi avbrutt imellom,
     har rollen nytt passord mens fila har gammelt — og nøkkelnavnene finnes
@@ -181,6 +197,7 @@ def test_avbrutt_rotasjon_oppdages_og_repareres(tmp_path):
     assert etter["DISPONIT_MIGRATOR_URL"] == foer["DISPONIT_MIGRATOR_URL"]
 
 
+@kun_posix
 def test_midlertidig_fil_lages_i_samme_katalog(tmp_path):
     """Codex P1: mktemp i /tmp etterfulgt av mv til /etc krysser
     filsystemgrenser, og da er `mv` ikke atomisk. Den midlertidige fila skal
@@ -193,12 +210,14 @@ def test_midlertidig_fil_lages_i_samme_katalog(tmp_path):
         f"mktemp ble ikke kalt med målkatalogen: {r.stderr!r}"
 
 
+@kun_posix
 def test_ingen_rester_etter_skriving(tmp_path):
     kjor(tmp_path, OPPSETT)
     rester = [f.name for f in tmp_path.iterdir() if f.name.startswith(".staging.env.")]
     assert rester == [], f"midlertidige filer ble liggende: {rester}"
 
 
+@kun_posix
 def test_ingen_noekkel_finnes_i_to_utgaver(tmp_path):
     """Skrives en nøkkel uten å fjerne den gamle linja, virker alt: shell tar
     den siste verdien. Men da blir utdaterte passord liggende i klartekst i
@@ -216,3 +235,35 @@ def test_ingen_noekkel_finnes_i_to_utgaver(tmp_path):
             (tmp_path / "staging.env").read_text(encoding="utf-8").splitlines() if "=" in l]
     duplikater = {n for n in navn if navn.count(n) > 1}
     assert not duplikater, f"utdaterte hemmeligheter ligger igjen i fila: {duplikater}"
+
+
+def test_verifikasjonen_kjores_for_dsn_ene_tas_i_bruk():
+    """Codex P1: `verifiser_og_reparer` sto bare til slutt. Var forrige
+    kjøring avbrutt, pekte migrator-DSN-en på feil passord, migrasjonen
+    feilet, og `set -e` avsluttet skriptet FØR reparasjonen ble nådd —
+    reparasjonen var utilgjengelig nøyaktig i tilstanden den fantes for.
+
+    Rekkefølgen er en egenskap ved skriptet, ikke ved biblioteket, og låses
+    derfor her: første verifikasjon skal komme før første bruk av en DSN.
+    Denne testen trenger ingen bash og kjører derfor overalt."""
+    skript = (os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))) +
+        "/deploy/staging/oppsett-postgresql.sh")
+    with open(skript, encoding="utf-8") as f:
+        linjer = f.read().splitlines()
+
+    def forste(nal):
+        for nr, l in enumerate(linjer):
+            if nal in l and not l.strip().startswith("#"):
+                return nr
+        return None
+
+    verifikasjon = forste("verifiser_og_reparer")
+    bruk = min(n for n in (forste('psql "$DISPONIT_MIGRATOR_URL"'),
+                           forste('psql "$DISPONIT_TEST_MIGRATOR_DSN"'))
+               if n is not None)
+    assert verifikasjon is not None, "skriptet verifiserer ikke DSN-ene i det hele tatt"
+    assert verifikasjon < bruk, (
+        f"verifiser_og_reparer (linje {verifikasjon + 1}) kjører etter første "
+        f"bruk av en migrator-DSN (linje {bruk + 1}) — ved avbrudd stopper "
+        f"set -e skriptet før reparasjonen nås")

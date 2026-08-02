@@ -27,6 +27,10 @@ done
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
 
+# Test-database for staging-kjøringer
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'" \
+  | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR ${DB}_test
+
 # ------------------------------------------------------------
 # Miljøfil med hemmeligheter — 0600, aldri i repo (RUTINER/ADR-001).
 # Tilstandsmaskinen ligger i lib-miljofil.sh og testes i CI; her kalles den
@@ -45,9 +49,15 @@ sikre_rolle_dsn "$BRUKER"   "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 sikre_attestasjonsnokler
 
-# Test-database for staging-kjøringer
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'" \
-  | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR ${DB}_test
+# Sannhetsprøve FØR noen DSN tas i bruk.
+#
+# Codex' P1: denne sto tidligere bare til slutt. Var forrige kjøring avbrutt
+# mellom passordrotasjon og filskriving, pekte migrator-DSN-en på et passord
+# rollen ikke lenger hadde — migrasjonen feilet, `set -e` avsluttet skriptet,
+# og reparasjonen ble aldri nådd. Reparasjonen var altså utilgjengelig
+# nøyaktig i den tilstanden den fantes for. Den må kjøre før første bruk.
+verifiser_og_reparer "$BRUKER"   "${RUNTIME_DSN[@]}"
+verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -139,9 +149,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $BRUKER;
 GRANTS
 done
 
-# Sannhetsprøve til slutt: virker DSN-ene faktisk? Et avbrudd mellom
-# passordrotasjon og filskriving etterlater rolle og fil ute av takt, og det
-# kan ikke oppdages ved å se etter nøkkelnavn — bare ved å koble til.
+# Sluttkontroll: alt skal fortsatt virke etter migrasjoner og rettigheter.
 verifiser_og_reparer "$BRUKER"   "${RUNTIME_DSN[@]}"
 verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 
