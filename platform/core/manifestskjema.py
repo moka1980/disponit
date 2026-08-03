@@ -110,6 +110,48 @@ def _tall(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
     return tall, ""
 
 
+def _teller(kilde: object, navn: str, felt: str) -> tuple[int | None, str]:
+    """En TELLING: heltall >= 0. -> (verdi, feilmelding).
+
+    Codex' P1 nr. 4 på PR #8: `_tall()` håndhevet at verdien var et endelig
+    tall, men ikke hva tallet BETYR. Fire umulige artefakter passerte:
+    negativt antall feil (−5 er «<= 0» og besto taket), negative
+    beslutningstellinger som matematisk utlignet hverandre til riktig sum,
+    og brøkdeler av forespørsler.
+
+    Ingen av dem kan oppstå i en ekte kjøring. En validator som godtar dem
+    validerer aritmetikk, ikke virkelighet.
+
+    Flyttall avvises helt, også `6000.0`: produsenten teller med `len()` og
+    heltallsaddisjon, så en float i et telle-felt betyr at noe har regnet
+    der det skulle telt.
+    """
+    if not isinstance(kilde, dict):
+        return None, f"{navn}: mangler (ingen `{felt}`-blokk)"
+    verdi = kilde.get(felt)
+    if isinstance(verdi, bool) or not isinstance(verdi, int):
+        return None, (f"{navn}={verdi!r} er ikke en heltallstelling"
+                      f" ({type(verdi).__name__})")
+    if verdi < 0:
+        return None, f"{navn}={verdi} er negativ — en telling kan ikke være det"
+    return verdi, ""
+
+
+def _positiv(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
+    """En STØRRELSE som må være strengt positiv: tid, rate, svartid.
+
+    Null er ikke en gyldig måling her. En kjøring som varte 0 sekunder har
+    ikke skjedd, og en rate på 0 er ingen last. Kravet er skilt fra
+    `_teller` fordi disse ER kontinuerlige — 60,03 sekunder er riktig.
+    """
+    tall, feil = _tall(kilde, navn, felt)
+    if feil:
+        return None, feil
+    if tall <= 0:
+        return None, f"{navn}={tall:g} må være > 0"
+    return tall, ""
+
+
 def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     """Håndhever KRAVGRENSER og artefaktets INTERNE invarianter.
 
@@ -144,23 +186,34 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + ["artefaktet mangler `oppsett` — lastprofilen er ukjent"]
 
     # --- Volum, feil og svartid -------------------------------------------
-    antall, m_feil = _tall(m, "antall", "antall")
+    # Alt som TELLES leses med `_teller`: heltall >= 0. Alt som MÅLES med
+    # `_positiv`: endelig og > 0.
+    antall, m_feil = _teller(m, "antall", "antall")
     if m_feil:
         feil.append(m_feil)
     elif antall < grense["min_antall"]:
-        feil.append(f"antall={antall:.0f}, krever >= {grense['min_antall']}")
+        feil.append(f"antall={antall}, krever >= {grense['min_antall']}")
+
+    # Konfigurert antall må stemme med målt antall. Feltet lå i artefaktet
+    # og ble aldri lest: et oppsett som ba om 6 000 og en måling som
+    # rapporterte noe annet, er to ulike kjøringer i samme fil.
+    oppsett_antall, m_feil = _teller(oppsett, "oppsett.antall", "antall")
+    if m_feil:
+        feil.append(m_feil)
+    elif antall is not None and oppsett_antall != antall:
+        feil.append(f"oppsett.antall={oppsett_antall} != maalt.antall={antall}")
 
     for felt, tak in (("feil", grense["maks_feil"]),
                       ("rate_begrenset", grense["maks_rate_begrenset"])):
-        verdi, m_feil = _tall(m, felt, felt)
+        verdi, m_feil = _teller(m, felt, felt)
         if m_feil:
             feil.append(m_feil)
         elif verdi > tak:
-            feil.append(f"{felt}={verdi:.0f}, krever <= {tak}")
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
     if m.get("feiltyper"):
         feil.append(f"artefaktet har feiltyper: {m.get('feiltyper')}")
 
-    p95, m_feil = _tall(m.get("svartid_ms"), "p95", "p95")
+    p95, m_feil = _positiv(m.get("svartid_ms"), "p95", "p95")
     if m_feil:
         feil.append(m_feil)
     elif p95 >= grense["maks_p95_ms"]:
@@ -169,21 +222,26 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # --- Lastprofilen: rate, samtidighet, varighet ------------------------
     krevd_rate = grense["min_rate_per_sek"]
     nedre_rate = krevd_rate * (1.0 - grense["rate_slingringsmonn"])
-    for kilde, navn, felt, nedre in (
-            (oppsett, "oppsett.rate_per_sek", "rate_per_sek", krevd_rate),
-            (m, "maalt.oppnadd_rate", "oppnadd_rate", nedre_rate),
-            (oppsett, "oppsett.samtidige", "samtidige",
+    for leser, kilde, navn, felt, nedre in (
+            (_positiv, oppsett, "oppsett.rate_per_sek", "rate_per_sek",
+             krevd_rate),
+            (_positiv, m, "maalt.oppnadd_rate", "oppnadd_rate", nedre_rate),
+            (_teller, oppsett, "oppsett.samtidige", "samtidige",
              grense["min_samtidige"])):
-        verdi, m_feil = _tall(kilde, navn, felt)
+        verdi, m_feil = leser(kilde, navn, felt)
         if m_feil:
             feil.append(m_feil)
         elif verdi < nedre:
             feil.append(f"{navn}={verdi:g}, krever >= {nedre:g}")
 
-    varighet, m_feil = _tall(m, "maalt.varighet_sek", "varighet_sek")
+    # `_positiv` avviser 0 og negativ FØR sammenligningen under. Tidligere
+    # sto det `elif antall is not None and varighet > 0:` — altså hoppet en
+    # varighet på 0 over sin egen kontroll. En vakt som lar ugyldige verdier
+    # slippe forbi kontrollen sin, er fail-open.
+    varighet, m_feil = _positiv(m, "maalt.varighet_sek", "varighet_sek")
     if m_feil:
         feil.append(m_feil)
-    elif antall is not None and varighet > 0:
+    elif antall is not None:
         # Varigheten MÅ stemme med antall/rate. Uten denne kunne et
         # artefakt oppgi 6 000 forespørsler, rate 100 og varighet 3 600 s:
         # hvert enkelt tall består sin egen grense, mens kjøringen i
@@ -202,10 +260,14 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if not isinstance(b, dict) or not b:
         feil.append("artefaktet mangler `beslutninger`")
     else:
-        sum_b = 0.0
+        # `_teller` er avgjørende her: med `_tall` kunne TILLAT=6000,
+        # STOPP=-1200 og UNNTAK=1200 summere seg til 6 000 og bestå. En
+        # negativ beslutningstelling finnes ikke, men aritmetikken bryr seg
+        # ikke — den utligner bare.
+        sum_b = 0
         gyldig = True
         for utfall in ("TILLAT", "STOPP", "UNNTAK"):
-            verdi, m_feil = _tall(b, f"beslutninger.{utfall}", utfall)
+            verdi, m_feil = _teller(b, f"beslutninger.{utfall}", utfall)
             if m_feil:
                 feil.append(m_feil)
                 gyldig = False
@@ -214,23 +276,23 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                 if utfall == "UNNTAK":
                     unntak_besluttet = verdi
         if gyldig and antall is not None and sum_b != antall:
-            feil.append(f"summen av beslutningene ({sum_b:.0f}) er ikke lik"
-                        f" antall ({antall:.0f})")
+            feil.append(f"summen av beslutningene ({sum_b}) er ikke lik"
+                        f" antall ({antall})")
 
     k = art.get("etterkontroll")
     if not isinstance(k, dict):
         feil.append("artefaktet mangler `etterkontroll`")
         return feil
 
-    svar, f1 = _tall(k, "auditerte_svar", "auditerte_svar")
-    rader, f2 = _tall(k, "revisjonsrader", "revisjonsrader")
+    svar, f1 = _teller(k, "auditerte_svar", "auditerte_svar")
+    rader, f2 = _teller(k, "revisjonsrader", "revisjonsrader")
     for m_feil in (f1, f2):
         if m_feil:
             feil.append(m_feil)
     if not f1 and not f2 and antall is not None:
         if not (svar == rader == antall):
-            feil.append(f"auditerte_svar={svar:.0f}, revisjonsrader={rader:.0f},"
-                        f" antall={antall:.0f} — alle tre må være like")
+            feil.append(f"auditerte_svar={svar}, revisjonsrader={rader},"
+                        f" antall={antall} — alle tre må være like")
     if k.get("en_til_en") is not True:
         feil.append("etterkontroll: en_til_en er ikke true")
 
@@ -239,19 +301,19 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if not isinstance(per_sakstype, dict):
         feil.append("etterkontroll mangler `unntaksrader_per_sakstype`")
     else:
-        normale, f3 = _tall(per_sakstype, "unntaksrader normal", "normal")
-        forventet, f4 = _tall(k, "forventede_normalsaker",
-                              "forventede_normalsaker")
+        normale, f3 = _teller(per_sakstype, "unntaksrader normal", "normal")
+        forventet, f4 = _teller(k, "forventede_normalsaker",
+                                "forventede_normalsaker")
         for m_feil in (f3, f4):
             if m_feil:
                 feil.append(m_feil)
         if not f3 and not f4:
             if normale != forventet:
-                feil.append(f"normal-kørader ({normale:.0f}) != forventede"
-                            f" normalsaker ({forventet:.0f})")
+                feil.append(f"normal-kørader ({normale}) != forventede"
+                            f" normalsaker ({forventet})")
             if unntak_besluttet is not None and normale != unntak_besluttet:
-                feil.append(f"normal-kørader ({normale:.0f}) != antall"
-                            f" UNNTAK-beslutninger ({unntak_besluttet:.0f})")
+                feil.append(f"normal-kørader ({normale}) != antall"
+                            f" UNNTAK-beslutninger ({unntak_besluttet})")
     if k.get("routing_stemmer") is not True:
         feil.append("etterkontroll: routing_stemmer er ikke true")
     return feil

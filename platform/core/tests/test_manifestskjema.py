@@ -349,10 +349,13 @@ def test_ukjent_krav_id_har_ingen_grenser_og_avvises(m01):
      lambda d: d["etterkontroll"].update(forventede_normalsaker=9999),
      "forventede normalsaker"),
     # --- fail-closed talltyper ---
+    # Telle-felt gaar gjennom `_teller`, som er strengere enn `_tall`:
+    # den avviser bool BAADE fordi det ikke er et tall og fordi det ikke er
+    # en heltallstelling. Meldingen er derfor den fra domenekontrakten.
     ("feil_som_bool", lambda d: d["maalt"].update(feil=False),
-     "er ikke et tall"),
+     "er ikke en heltallstelling"),
     ("antall_som_bool", lambda d: d["maalt"].update(antall=True),
-     "er ikke et tall"),
+     "er ikke en heltallstelling"),
     ("p95_som_nan",
      lambda d: d["maalt"]["svartid_ms"].update(p95=float("nan")),
      "er ikke et endelig tall"),
@@ -433,7 +436,8 @@ def test_bool_er_ikke_et_tall_i_noen_maaling(m01, artefakt_sti):
                             lambda d: d["maalt"].update(rate_begrenset=False))
     try:
         m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
-        assert any("er ikke et tall" in f for f in valider_artefakter(m))
+        # `rate_begrenset` er en telling => `_teller` avviser den som bool.
+        assert any("heltallstelling" in f for f in valider_artefakter(m))
     finally:
         laget["fil"].unlink(missing_ok=True)
 
@@ -460,3 +464,113 @@ def test_kravgrenser_og_lasttesten_kan_ikke_gli_fra_hverandre():
     assert g["maks_p95_ms"] == modul.P95_KRAV_MS
     assert g["min_rate_per_sek"] == modul.RATE
     assert g["min_samtidige"] == modul.SAMTIDIGE
+
+
+# ---------------------------------------------------------------------------
+# Domenet tallene representerer — ikke bare at de er endelige
+# ---------------------------------------------------------------------------
+#
+# Codex' P1 nr. 4 på PR #8. Runde 3 håndhevet at hver måling var et endelig
+# tall, men ikke hva tallet BETYR. Fire umulige artefakter passerte:
+#   * varighet 0 s — og verre: kontrollen `elif varighet > 0` gjorde at en
+#     nullvarighet HOPPET OVER sin egen kontroll. Fail-open i vakten selv.
+#   * negative feil-/rate_begrenset-tellinger — −5 er «<= 0» og besto taket.
+#   * negative beslutnings- og routingtellinger som utlignet hverandre til
+#     riktig sum. Aritmetikken stemmer; virkeligheten gjør det ikke.
+#   * brøkdeler av forespørsler, beslutninger og revisjonsrader.
+#
+# Skillet som løser alle fire: `_teller` (heltall >= 0) for det som TELLES,
+# `_positiv` (endelig > 0) for det som MÅLES.
+
+
+@pytest.mark.parametrize("navn,endring,forventet", [
+    # --- Codex' fire ---
+    ("null_varighet", lambda d: d["maalt"].update(varighet_sek=0),
+     "må være > 0"),
+    ("negative_feil", lambda d: d["maalt"].update(feil=-5),
+     "er negativ"),
+    ("negativ_rate_begrenset", lambda d: d["maalt"].update(rate_begrenset=-3),
+     "er negativ"),
+    ("negative_beslutninger_utligner",
+     lambda d: d["maalt"]["beslutninger"].update(TILLAT=6000, STOPP=-1200,
+                                                 UNNTAK=1200),
+     "beslutninger.STOPP=-1200 er negativ"),
+    ("negativ_routing_utligner",
+     lambda d: (d["etterkontroll"]["unntaksrader_per_sakstype"]
+                .update(normal=-1200)),
+     "unntaksrader normal=-1200 er negativ"),
+    ("fraksjonelt_antall", lambda d: d["maalt"].update(antall=6000.5),
+     "er ikke en heltallstelling"),
+    ("fraksjonelle_revisjonsrader",
+     lambda d: d["etterkontroll"].update(revisjonsrader=6000.5),
+     "er ikke en heltallstelling"),
+    ("fraksjonelle_beslutninger",
+     lambda d: d["maalt"]["beslutninger"].update(TILLAT=4800.5),
+     "er ikke en heltallstelling"),
+    # --- de tre Codex ba om i tillegg ---
+    ("negativ_samtidighet", lambda d: d["oppsett"].update(samtidige=-20),
+     "er negativ"),
+    ("negativ_p95", lambda d: d["maalt"]["svartid_ms"].update(p95=-1.0),
+     "må være > 0"),
+    ("oppsett_antall_avviker", lambda d: d["oppsett"].update(antall=3000),
+     "oppsett.antall=3000 != maalt.antall=6000"),
+    # --- nabotilfeller samme skille dekker ---
+    ("null_rate", lambda d: d["oppsett"].update(rate_per_sek=0),
+     "må være > 0"),
+    ("negativ_oppnadd_rate", lambda d: d["maalt"].update(oppnadd_rate=-100.0),
+     "må være > 0"),
+    ("negativ_varighet", lambda d: d["maalt"].update(varighet_sek=-60.0),
+     "må være > 0"),
+    ("fraksjonell_samtidighet", lambda d: d["oppsett"].update(samtidige=20.5),
+     "er ikke en heltallstelling"),
+])
+def test_domenegrenser_gir_roedt(m01, artefakt_sti, navn, endring, forventet):
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti, endring)
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert feil, f"mutasjonen {navn!r} slapp gjennom porten"
+        assert any(forventet in f for f in feil), (navn, feil)
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_null_varighet_hopper_ikke_over_sin_egen_kontroll(m01, artefakt_sti):
+    """Regresjonstest på selve fail-open-formen.
+
+    Kontrollen sto som `elif antall is not None and varighet > 0:` — altså
+    ble varighetsinvarianten hoppet over nettopp for de verdiene som var
+    ugyldige. Samme form som `feilinjisering`-fellene i PR-005a: en vakt
+    som lar det ugyldige passere forbi seg selv.
+    """
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti,
+                            lambda d: d["maalt"].update(varighet_sek=0))
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert any("varighet_sek" in f and "> 0" in f for f in feil), feil
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_tellere_og_maalinger_leses_med_hver_sin_kontrakt():
+    """Enhetsnivå: `_teller` og `_positiv` direkte.
+
+    Uten denne ville alle testene over vært avhengige av at et helt
+    artefakt bygges riktig — og en feil i hjelperen kunne se ut som en
+    feil i domenet.
+    """
+    from manifestskjema import _positiv, _teller
+
+    assert _teller({"n": 6000}, "n", "n") == (6000, "")
+    assert _teller({"n": 0}, "n", "n") == (0, "")          # 0 er en gyldig telling
+    for ugyldig in (-1, 6000.5, 6000.0, True, False, "6000", None):
+        verdi, feil = _teller({"n": ugyldig}, "n", "n")
+        assert verdi is None and feil, f"{ugyldig!r} ble godtatt som telling"
+
+    assert _positiv({"t": 60.03}, "t", "t") == (60.03, "")
+    for ugyldig in (0, -1.0, float("nan"), float("inf"), True, "60", None):
+        verdi, feil = _positiv({"t": ugyldig}, "t", "t")
+        assert verdi is None and feil, f"{ugyldig!r} ble godtatt som måling"
