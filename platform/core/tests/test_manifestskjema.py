@@ -574,3 +574,126 @@ def test_tellere_og_maalinger_leses_med_hver_sin_kontrakt():
     for ugyldig in (0, -1.0, float("nan"), float("inf"), True, "60", None):
         verdi, feil = _positiv({"t": ugyldig}, "t", "t")
         assert verdi is None and feil, f"{ugyldig!r} ble godtatt som måling"
+
+
+# ---------------------------------------------------------------------------
+# Lukket artefaktformat — ukjente nøkler er en FEIL, ikke stillhet
+# ---------------------------------------------------------------------------
+#
+# Codex' P1 nr. 5 på PR #8. `_sjekk_grenser` leste feltene den kjente til og
+# var blind for alt annet, så tre artefakter passerte:
+#   * `sikkerhet: 500` blant kø-tellingene
+#   * `UKJENT: 500` blant beslutningsutfallene
+#   * `feiltyper: false` i stedet for en liste (falsy ⇒ «ingen feiltyper»)
+#
+# To lag, og de fanger ULIKE ting — derfor står begge:
+#   * artefakt-skjema.json med additionalProperties:false tar UKJENTE nøkler
+#     (`UKJENT`, en oppdiktet sakstype, en ekstra toppnøkkel) og feil TYPER.
+#   * summen over alle sakstyper tar en KJENT nøkkel med uventet antall.
+#     `sikkerhet` ER en lovlig sakstype, så skjemaet kan ikke avvise den —
+#     bare tallet avslører at kjøringen gjorde noe annet enn den rapporterer.
+
+
+def test_ekte_artefakt_er_gyldig_mot_det_lukkede_skjemaet(artefakt_sti):
+    """Positiv kontroll: skjemaet må slippe gjennom en ekte måling.
+    Uten den kunne alle mutasjonene under vært røde fordi skjemaet er feil."""
+    from manifestskjema import valider_artefaktformat
+    data = json.loads(artefakt_sti.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(data) == []
+
+
+@pytest.mark.parametrize("navn,endring,forventet", [
+    ("ukjent_beslutningsutfall",
+     lambda d: d["maalt"]["beslutninger"].update(UKJENT=500),
+     "'UKJENT' was unexpected"),
+    ("ukjent_sakstype",
+     lambda d: d["etterkontroll"]["unntaksrader_per_sakstype"].update(
+         finnesikke=1),
+     "'finnesikke' was unexpected"),
+    ("ukjent_toppnokkel", lambda d: d.update(bestatt_egentlig=True),
+     "'bestatt_egentlig' was unexpected"),
+    ("ukjent_maalt_felt", lambda d: d["maalt"].update(p95_egentlig=1.0),
+     "'p95_egentlig' was unexpected"),
+    ("feiltyper_som_bool", lambda d: d["maalt"].update(feiltyper=False),
+     "is not of type 'array'"),
+    ("feiltyper_som_streng", lambda d: d["maalt"].update(feiltyper="404"),
+     "is not of type 'array'"),
+    ("bestatt_som_streng", lambda d: d.update(bestatt="true"),
+     "is not of type 'boolean'"),
+    ("manglende_beslutninger", lambda d: d["maalt"].pop("beslutninger"),
+     "'beslutninger' is a required property"),
+])
+def test_lukket_format_gir_roedt(m01, artefakt_sti, navn, endring, forventet):
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(artefakt_sti, endring)
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert feil, f"mutasjonen {navn!r} slapp gjennom porten"
+        assert any(forventet in f for f in feil), (navn, feil)
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_codex_mutasjon_ekstra_sikkerhetskoerader(m01, artefakt_sti):
+    """`sikkerhet: 500` — den ene av de tre som skjemaet IKKE kan ta.
+
+    `sikkerhet` er en lovlig sakstype (feiltabellen definerer den), så
+    `additionalProperties: false` slipper den gjennom med rette. Det som
+    avslører den er summen: 1 200 normalsaker + 500 sikkerhetssaker er
+    1 700 kø-rader for 1 200 UNNTAK-beslutninger. Kjøringen gjorde altså
+    noe annet enn den rapporterer.
+
+    Derfor er skjemaet ikke nok alene, og derfor står begge lagene.
+    """
+    m = copy.deepcopy(m01)
+    laget = _muter_artefakt(
+        artefakt_sti,
+        lambda d: d["etterkontroll"]["unntaksrader_per_sakstype"].update(
+            sikkerhet=500))
+    try:
+        m["staging_sjekkliste"]["ytelse_bestatt"] = laget["punkt"]
+        feil = valider_artefakter(m)
+        assert any("summen av alle kø-rader (1700)" in f for f in feil), feil
+    finally:
+        laget["fil"].unlink(missing_ok=True)
+
+
+def test_skjemaet_alene_ville_ikke_tatt_sikkerhetsradene(artefakt_sti):
+    """Ærlig avgrensning av hvert lag.
+
+    Testen dokumenterer at skjemaet BEVISST slipper `sikkerhet` gjennom, og
+    at det er sumkontrollen som tar den. Uten dette skillet skrevet ned
+    ville neste person kunne fjerne sumkontrollen i den tro at
+    `additionalProperties: false` dekker alt.
+    """
+    from manifestskjema import valider_artefaktformat
+    data = json.loads(artefakt_sti.read_text(encoding="utf-8"))
+    data["etterkontroll"]["unntaksrader_per_sakstype"]["sikkerhet"] = 500
+    assert valider_artefaktformat(data) == [], \
+        "skjemaet avviser nå sikkerhet — da er kommentaren over utdatert"
+
+
+def test_alle_objekter_i_artefaktskjemaet_er_lukket():
+    """Porten på skjemaet selv.
+
+    Legger noen til et nytt objekt uten `additionalProperties: false`, er
+    det hullet tilbake — i akkurat den delen som er ny og minst gjennomgått.
+    """
+    from manifestskjema import ARTEFAKTSKJEMA_STI
+    skjema = json.loads(ARTEFAKTSKJEMA_STI.read_text(encoding="utf-8"))
+    aapne = []
+
+    def gaa(node, sti="<rot>"):
+        if isinstance(node, dict):
+            if node.get("type") == "object" \
+                    and node.get("additionalProperties") is not False:
+                aapne.append(sti)
+            for nokkel, verdi in node.items():
+                gaa(verdi, f"{sti}/{nokkel}")
+        elif isinstance(node, list):
+            for i, verdi in enumerate(node):
+                gaa(verdi, f"{sti}[{i}]")
+
+    gaa(skjema)
+    assert aapne == [], f"objekter uten additionalProperties:false: {aapne}"

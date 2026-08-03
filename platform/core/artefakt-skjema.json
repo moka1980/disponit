@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/ytelsesartefakt-v1.json",
+  "title": "Ytelsesartefakt (perf-m01-v1)",
+  "comment": "LUKKET format. Codex' P1 nr. 5 paa PR #8: validatoren leste kun feltene den kjente til, saa ukjente noekler var usynlige. `sikkerhet: 500` i koe-tellingene, `UKJENT: 500` blant beslutningsutfallene og `feiltyper: false` passerte alle. additionalProperties:false overalt gjoer ukjente noekler til en FEIL i stedet for til stillhet — og da maa den som utvider artefaktformatet ogsaa utvide porten.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "krav", "maalt", "etterkontroll"],
+  "properties": {
+    "krav_id": { "type": "string", "minLength": 1 },
+    "ts": { "type": "string", "minLength": 1 },
+    "bestatt": { "type": "boolean" },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["antall", "rate_per_sek", "samtidige", "warmup_sek", "tenant"],
+      "properties": {
+        "base": { "type": "string" },
+        "antall": { "$ref": "#/$defs/telling" },
+        "rate_per_sek": { "$ref": "#/$defs/positiv" },
+        "samtidige": { "$ref": "#/$defs/telling" },
+        "warmup_sek": { "type": "number", "minimum": 0 },
+        "tenant": { "type": "string", "minLength": 1 },
+        "merkelapp": { "type": "string" },
+        "warm_merkelapp": { "type": "string" },
+        "andel_unntak": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "krav": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "p95_svartid_ms": { "$ref": "#/$defs/positiv" },
+        "null_feil": { "type": "boolean" },
+        "en_til_en_loggposter": { "type": "boolean" }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["antall", "varighet_sek", "oppnadd_rate", "feil", "feiltyper",
+                   "rate_begrenset", "svartid_ms", "beslutninger"],
+      "properties": {
+        "antall": { "$ref": "#/$defs/telling" },
+        "varighet_sek": { "$ref": "#/$defs/positiv" },
+        "oppnadd_rate": { "$ref": "#/$defs/positiv" },
+        "feil": { "$ref": "#/$defs/telling" },
+        "feiltyper": {
+          "comment": "MAA vaere en liste. `feiltyper: false` var falsy og ble lest som «ingen feiltyper».",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rate_begrenset": { "$ref": "#/$defs/telling" },
+        "svartid_ms": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["p50", "p95", "p99", "maks", "snitt"],
+          "properties": {
+            "p50": { "$ref": "#/$defs/positiv" },
+            "p95": { "$ref": "#/$defs/positiv" },
+            "p99": { "$ref": "#/$defs/positiv" },
+            "maks": { "$ref": "#/$defs/positiv" },
+            "snitt": { "$ref": "#/$defs/positiv" }
+          }
+        },
+        "total_ms_p95": { "$ref": "#/$defs/positiv" },
+        "beslutninger": {
+          "comment": "De TRE utfallene motoren kan gi. Et fjerde utfall er enten en motorendring som porten maa oppdateres for, eller et oppdiktet tall.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["TILLAT", "STOPP", "UNNTAK"],
+          "properties": {
+            "TILLAT": { "$ref": "#/$defs/telling" },
+            "STOPP": { "$ref": "#/$defs/telling" },
+            "UNNTAK": { "$ref": "#/$defs/telling" }
+          }
+        }
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auditerte_svar", "revisjonsrader", "en_til_en",
+                   "unntaksrader_per_sakstype", "forventede_normalsaker",
+                   "routing_stemmer"],
+      "properties": {
+        "auditerte_svar": { "$ref": "#/$defs/telling" },
+        "revisjonsrader": { "$ref": "#/$defs/telling" },
+        "en_til_en": { "type": "boolean" },
+        "unntaksrader_per_sakstype": {
+          "comment": "Kun de tre sakstypene feiltabellen definerer. En ukjent sakstype er en routingfeil, ikke en ny kolonne.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "normal": { "$ref": "#/$defs/telling" },
+            "sikkerhet": { "$ref": "#/$defs/telling" },
+            "drift": { "$ref": "#/$defs/telling" }
+          }
+        },
+        "forventede_normalsaker": { "$ref": "#/$defs/telling" },
+        "routing_stemmer": { "type": "boolean" }
+      }
+    },
+    "ressursproever": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "t": { "type": "number" },
+          "loadavg": { "type": "number", "minimum": 0 },
+          "MemTotal": { "$ref": "#/$defs/telling" },
+          "MemAvailable": { "$ref": "#/$defs/telling" },
+          "db_tilkoblinger": { "$ref": "#/$defs/telling" },
+          "db_venter_paa_laas": { "$ref": "#/$defs/telling" },
+          "db_ikke_innvilgede_laaser": { "$ref": "#/$defs/telling" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "telling": {
+      "comment": "Heltall >= 0. Python-siden (`_teller`) avviser i tillegg float som 6000.0, som JSON Schema regner som integer.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "positiv": {
+      "comment": "Endelig maaling > 0. Null varighet eller null rate betyr at kjoeringen ikke skjedde.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    }
+  }
+}

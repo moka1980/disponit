@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 SKJEMA_STI = Path(__file__).resolve().parent / "manifest-skjema.json"
+ARTEFAKTSKJEMA_STI = Path(__file__).resolve().parent / "artefakt-skjema.json"
 REPOROT = Path(__file__).resolve().parents[2]
 
 #: Grensene ytelsesporten faktisk krever (v2 Del 6). De står HER, som data
@@ -152,6 +153,30 @@ def _positiv(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
     return tall, ""
 
 
+def valider_artefaktformat(art: object) -> list[str]:
+    """Artefaktet mot det LUKKEDE skjemaet. Tom liste == gyldig.
+
+    Codex' P1 nr. 5 på PR #8: `_sjekk_grenser` leste feltene den kjente til
+    og var blind for alt annet. Tre artefakter passerte derfor:
+    `sikkerhet: 500` blant kø-tellingene, `UKJENT: 500` blant
+    beslutningsutfallene, og `feiltyper: false` i stedet for en liste (falsy
+    ⇒ «ingen feiltyper»).
+
+    `additionalProperties: false` snur standarden: en ukjent nøkkel er en
+    FEIL, ikke stillhet. Utvider noen artefaktformatet, må de utvide porten
+    i samme slengen — det er hele poenget.
+    """
+    try:
+        import jsonschema
+        skjema = json.loads(ARTEFAKTSKJEMA_STI.read_text(encoding="utf-8"))
+        validator = jsonschema.Draft202012Validator(skjema)
+        return sorted(
+            f"{'/'.join(str(p) for p in e.absolute_path) or '<rot>'}: {e.message}"
+            for e in validator.iter_errors(art))
+    except Exception as e:
+        return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
+
+
 def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     """Håndhever KRAVGRENSER og artefaktets INTERNE invarianter.
 
@@ -210,8 +235,14 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
             feil.append(m_feil)
         elif verdi > tak:
             feil.append(f"{felt}={verdi}, krever <= {tak}")
-    if m.get("feiltyper"):
-        feil.append(f"artefaktet har feiltyper: {m.get('feiltyper')}")
+    # `feiltyper` MÅ være en liste. `false` er falsy og ble lest som «ingen
+    # feiltyper» — skjemaet tar det nå, men kontrollen står også her, fordi
+    # denne funksjonen kalles direkte fra testene.
+    feiltyper = m.get("feiltyper")
+    if not isinstance(feiltyper, list):
+        feil.append(f"feiltyper={feiltyper!r} er ikke en liste")
+    elif feiltyper:
+        feil.append(f"artefaktet har feiltyper: {feiltyper}")
 
     p95, m_feil = _positiv(m.get("svartid_ms"), "p95", "p95")
     if m_feil:
@@ -314,6 +345,28 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
             if unntak_besluttet is not None and normale != unntak_besluttet:
                 feil.append(f"normal-kørader ({normale}) != antall"
                             f" UNNTAK-beslutninger ({unntak_besluttet})")
+        # ALLE sakstyper telles med, ikke bare `normal`. `sikkerhet` og
+        # `drift` er lovlige sakstyper — men den syntetiske miksen i
+        # perf-m01-v1 produserer bare normalsaker, så en rad i en annen kø
+        # betyr at kjøringen gjorde noe annet enn den rapporterer.
+        # Skjemaet stopper en UKJENT sakstype; dette stopper en kjent
+        # sakstype med et uventet antall.
+        sum_koer = 0
+        alle_gyldige = True
+        for sakstype in sorted(per_sakstype):
+            verdi, m_feil = _teller(per_sakstype, f"unntaksrader {sakstype}",
+                                    sakstype)
+            if m_feil:
+                if sakstype != "normal":       # normal er alt rapportert over
+                    feil.append(m_feil)
+                alle_gyldige = False
+            else:
+                sum_koer += verdi
+        if alle_gyldige and unntak_besluttet is not None \
+                and sum_koer != unntak_besluttet:
+            feil.append(f"summen av alle kø-rader ({sum_koer}) != antall"
+                        f" UNNTAK-beslutninger ({unntak_besluttet})"
+                        f" — fordeling: {dict(sorted(per_sakstype.items()))}")
     if k.get("routing_stemmer") is not True:
         feil.append("etterkontroll: routing_stemmer er ikke true")
     return feil
@@ -356,6 +409,15 @@ def valider_artefakter(manifest: dict, rot: Path | None = None) -> list[str]:
             feil.append(f"{navn}: sha256 stemmer ikke — manifestet sier "
                         f"{forventet[:12]}…, filen er {sha[:12]}…")
             continue
+        # BEGGE lag kjører, alltid — formatet stopper ikke måletallene.
+        #
+        # Første utkast gjorde `continue` ved formatfeil. Det så ryddig ut,
+        # men maskerte domenekontrollene: en negativ varighet bryter både
+        # skjemaet (`exclusiveMinimum: 0`) og `_positiv`, og med et tidlig
+        # avbrudd var det bare skjemaet som ble prøvd. Svekkes skjemaet
+        # senere, ville domenetestene fortsatt vært grønne uten å ha kjørt.
+        # To uavhengige lag er bare uavhengige hvis begge faktisk måles.
+        feil += [f"{navn}: format — {m}" for m in valider_artefaktformat(data)]
         feil += [f"{navn}: {m}" for m in _sjekk_grenser(krav_id, data)]
     return feil
 
