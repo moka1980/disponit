@@ -1,0 +1,153 @@
+{
+  "krav_id": "perf-m01-v1",
+  "ts": "2026-08-02T21:00:26.085725+00:00",
+  "bestatt": true,
+  "oppsett": {
+    "base": "http://127.0.0.1:8099",
+    "antall": 6000,
+    "rate_per_sek": 100.0,
+    "samtidige": 20,
+    "warmup_sek": 10,
+    "tenant": "t-repro",
+    "merkelapp": "maal-20260802T205915",
+    "warm_merkelapp": "warm-20260802T205915",
+    "andel_unntak": 0.2
+  },
+  "krav": {
+    "p95_svartid_ms": 150.0,
+    "null_feil": true,
+    "en_til_en_loggposter": true
+  },
+  "maalt": {
+    "antall": 6000,
+    "varighet_sek": 60.03,
+    "oppnadd_rate": 100.0,
+    "feil": 0,
+    "feiltyper": [],
+    "rate_begrenset": 0,
+    "svartid_ms": {
+      "p50": 10.1,
+      "p95": 82.3,
+      "p99": 207.6,
+      "maks": 299.7,
+      "snitt": 21.6
+    },
+    "total_ms_p95": 83.4,
+    "beslutninger": {
+      "TILLAT": 4800,
+      "STOPP": 0,
+      "UNNTAK": 1200
+    }
+  },
+  "etterkontroll": {
+    "auditerte_svar": 6000,
+    "revisjonsrader": 6000,
+    "en_til_en": true,
+    "unntaksrader_per_sakstype": {
+      "normal": 1200
+    },
+    "forventede_normalsaker": 1200,
+    "routing_stemmer": true
+  },
+  "ressursproever": [
+    {
+      "t": 2144451.61,
+      "loadavg": 0.37,
+      "MemTotal": 4004632,
+      "MemAvailable": 2820844,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144456.62,
+      "loadavg": 0.43,
+      "MemTotal": 4004632,
+      "MemAvailable": 2807092,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144461.62,
+      "loadavg": 0.55,
+      "MemTotal": 4004632,
+      "MemAvailable": 2801476,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144466.62,
+      "loadavg": 0.59,
+      "MemTotal": 4004632,
+      "MemAvailable": 2792196,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144471.63,
+      "loadavg": 0.62,
+      "MemTotal": 4004632,
+      "MemAvailable": 2786496,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144476.63,
+      "loadavg": 0.65,
+      "MemTotal": 4004632,
+      "MemAvailable": 2779612,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144481.63,
+      "loadavg": 0.6,
+      "MemTotal": 4004632,
+      "MemAvailable": 2777276,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144486.64,
+      "loadavg": 0.63,
+      "MemTotal": 4004632,
+      "MemAvailable": 2771644,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144491.64,
+      "loadavg": 0.74,
+      "MemTotal": 4004632,
+      "MemAvailable": 2766224,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144496.64,
+      "loadavg": 0.84,
+      "MemTotal": 4004632,
+      "MemAvailable": 2763128,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    },
+    {
+      "t": 2144501.64,
+      "loadavg": 0.86,
+      "MemTotal": 4004632,
+      "MemAvailable": 2763316,
+      "db_tilkoblinger": 1,
+      "db_venter_paa_laas": 0,
+      "db_ikke_innvilgede_laaser": 0
+    }
+  ]
+}

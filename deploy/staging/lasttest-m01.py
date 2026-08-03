@@ -20,10 +20,21 @@ Kontrakten, punkt for punkt:
 Resultatet skrives som JSON-artefakt. Manifestfeltet peker på artefaktet,
 og er aldri selv beviset (v2 Del 6).
 
+FORUTSETNINGER (håndhevet i preflight, ikke bare dokumentert):
+  1. API-et kjører på --base.
+  2. Tenanten har policyen registrert, med SAMME innholds-hash som fila
+     --policy peker på. Mangler den, avbrytes kjøringen FØR warmup —
+     ellers svarer API-et 404 på alt, og «p95 6,3 ms» blir en måling av
+     feilveien i stedet for av plattformen.
+     Kjør med --registrer-policy for å la lasttesten registrere den selv.
+  3. Tokenet lages på forhånd med deploy/staging/token-cli.py. Lasttesten
+     oppretter ikke tokens — den skal ikke ha den rettigheten.
+
 BRUK:
   DISPONIT_TOKEN_PEPPER=... DISPONIT_ATT_NOKLER=... \\
   DISPONIT_TEST_MIGRATOR_DSN=... \\
-    python3 deploy/staging/lasttest-m01.py --base http://127.0.0.1:8099
+    python3 deploy/staging/lasttest-m01.py --base http://127.0.0.1:8099 \\
+      --token tk_xxx.yyy --registrer-policy
 """
 import argparse
 import json
@@ -299,6 +310,53 @@ def etterkontroll(dsn: str, tenant: str, merkelapp: str,
 # Inngang
 # ---------------------------------------------------------------------------
 
+def preflight_policy(dsn: str, tenant: str, policy: dict,
+                     registrer: bool) -> int:
+    """0 = klar til å måle. Alt annet avbryter FØR warmup.
+
+    Verifiserer at tenanten har NØYAKTIG den policyen payloadene er bygget
+    mot — ikke bare at det finnes en rad med samme id. Innholds-hashen er
+    den bindende sammenligningen: en tenant med en eldre utgave av samme
+    policy_id ville ellers gitt beslutninger som ikke svarer til det
+    lasttesten tror den måler.
+    """
+    import psycopg
+    from api import policyregister
+
+    pid = policy["meta"]["policy_id"]
+    forventet = policyregister.innholds_hash(policy)
+    with psycopg.connect(dsn) as conn:
+        conn.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+        rad = conn.execute(
+            "SELECT innholds_hash FROM policyer"
+            " WHERE tenant=%s AND policy_id=%s AND status IN ('utkast','aktiv')",
+            (tenant, pid)).fetchone()
+
+        if rad is None and registrer:
+            policyregister.registrer(conn, tenant, policy,
+                                     policy["meta"]["status"])
+            conn.commit()
+            print(f"preflight: registrerte {pid} for {tenant}")
+            return 0
+        if rad is None:
+            print(f"AVBRUTT (preflight): tenanten {tenant!r} har ingen policy"
+                  f" {pid!r}. Uten den svarer API-et 404 på hver forespørsel,"
+                  f" og målingen blir responstid på en feilvei — ikke ytelse."
+                  f"\n  Fiks: kjør på nytt med --registrer-policy, eller"
+                  f" registrer den selv med api.policyregister.registrer().")
+            return 3
+        if rad[0] != forventet:
+            print(f"AVBRUTT (preflight): {tenant!r} har {pid!r}, men med et"
+                  f" ANNET innhold enn payloadene er bygget mot."
+                  f"\n  registrert: {rad[0][:16]}…   forventet: {forventet[:16]}…"
+                  f"\n  Målingen ville gjeldt en annen policy enn den som"
+                  f" rapporteres.")
+            return 4
+    print(f"preflight: {tenant} har {pid} med riktig innholds-hash"
+          f" ({forventet[:16]}…)")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--base", default="http://127.0.0.1:8099")
@@ -311,6 +369,9 @@ def main(argv=None) -> int:
     p.add_argument("--samtidige", type=int, default=SAMTIDIGE)
     p.add_argument("--warmup", type=float, default=WARMUP_SEK)
     p.add_argument("--token", help="token_id.secret; lages ellers via CLI-en")
+    p.add_argument("--registrer-policy", action="store_true",
+                   help="registrer policyen for tenanten hvis den mangler"
+                        " (ellers avbrytes kjøringen i preflight)")
     p.add_argument("--ut", default=None)
     args = p.parse_args(argv)
 
@@ -331,6 +392,21 @@ def main(argv=None) -> int:
     # — den fanget dermed warmupens egne rader og rapporterte 1 181
     # revisjonsrader for 600 målte svar. Feilen var i TESTEN, ikke i
     # plattformen, og den ville sett ut som et brudd på 1:1-garantien.
+    # --- PREFLIGHT: policyen MÅ være registrert, og være DENNE policyen ---
+    # Codex' P1 på PR #8. Første kjøring ga 6 000 × HTTP 404
+    # (`policy_ukjent`) fordi tenanten ikke hadde policyen registrert — og
+    # rapporterte p95 6,3 ms, som ser ut som et glimrende resultat og i
+    # virkeligheten var måling av en feilvei. Verre: den beståtte kjøringen
+    # etterpå avhang av at jeg registrerte policyen MANUELT, altså et steg
+    # ingen annen operatør kunne gjenskape fra dokumentasjonen.
+    #
+    # Derfor: kontrollen kjører FØR warmup og avbryter. En lasttest som
+    # måler responstid på 404-svar er ikke en ytelsesmåling, uansett hva
+    # `bestatt` til slutt settes til.
+    kode = preflight_policy(args.dsn, args.tenant, policy, args.registrer_policy)
+    if kode:
+        return kode
+
     stempel = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     merkelapp = "maal-" + stempel
     warm_merkelapp = "warm-" + stempel
