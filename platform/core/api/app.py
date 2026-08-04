@@ -1060,6 +1060,55 @@ def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
         tjeneste.pool.gi_tilbake(conn)
 
 
+def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
+                         tenant: str, unntak_id: int, oppdrag_id: int,
+                         rid: str) -> Response | None:
+    """Forbruker kapabiliteten, eller klassifiserer hvorfor vi ikke kunne.
+
+    -> None betyr «kapabiliteten er VÅR, fortsett». Alt annet er et ferdig
+    svar, og transaksjonen er avsluttet.
+
+    Delt av BEGGE veiene — den avsluttende og sen-evidensveien. Det er ikke
+    en stilsak: forrige runde viste hva som skjer når en regel bare er
+    implementert i den ene av to grener, og runden før det viste det samme.
+    Med én funksjon kan de to veiene ikke lenger gli fra hverandre.
+
+    Klassifiseringen selv gjøres ATOMISK i databasen (se
+    `bruk_kvitteringskapabilitet`). Å lese tilstanden herfra etterpå ville
+    vært et nytt kappløp for å avgjøre utfallet av det første.
+    """
+    utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                          (jti, ny_hash)).fetchone()[0]
+    if utfall == "brukt":
+        return None
+
+    if utfall == "idempotent":
+        # Vi tapte kappløpet mot en IDENTISK kvittering. Vinneren har
+        # skrevet evidensraden; vi skal ikke skrive en til.
+        conn.rollback()
+        return kanonisk_json({"status": "idempotent",
+                              "oppdrag_id": oppdrag_id, "request_id": rid},
+                             200, {"x-request-id": rid})
+
+    if utfall == "konflikt":
+        # To ULIKE resultater levert samtidig. Uten denne grenen forsvant
+        # forsøket på motstridende evidens som et generisk auth-avvik —
+        # altså nøyaktig den hendelsen sikkerhetssaken finnes for.
+        _sikkerhetssak_kvittering(conn, tenant, unntak_id,
+                                  "motstridende_kvittering",
+                                  {"kilde": "kapplop", "ny": ny_hash,
+                                   "oppdrag_id": oppdrag_id}, rid)
+        conn.commit()
+        tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
+                               oppdrag_id=oppdrag_id, kapplop=True)
+        return _feilsvar("kvittering_konflikt", rid)
+
+    conn.rollback()
+    tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                           oppdrag_id=oppdrag_id, utfall=utfall)
+    return _feilsvar("kapabilitet_ugyldig", rid)
+
+
 def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                        kvittering: dict, rid: str) -> Response:
     """Innløser kvitteringskapabiliteten, verifiserer signaturen, og
@@ -1187,16 +1236,14 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # Forbruket skjer i SAMME commit som evidensraden. Statusen på
         # oppdraget og saken røres ikke — en sen kvittering er evidens, og
         # skal aldri avslutte noe.
-        brukt = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                             (jti, ny_hash)).fetchone()
-        if not brukt or brukt[0] is not True:
-            # Kapabiliteten ble forbrukt av noen andre mellom innløsningen
-            # og nå. Da skal ingen evidensrad skrives — den ville vært en
-            # andre rad for samme jti, som er nøyaktig det vi lukker.
-            conn.rollback()
-            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
-                                   oppdrag_id=oppdrag_id)
-            return _feilsvar("kapabilitet_ugyldig", rid)
+        svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash,
+                                    tenant=tenant, unntak_id=unntak_id,
+                                    oppdrag_id=oppdrag_id, rid=rid)
+        if svar is not None:
+            # Taperen av kappløpet skriver INGEN evidensrad. Den ville vært
+            # den andre raden for samme jti — og om utfallet var idempotent
+            # eller konflikt, avgjøres atomisk i databasen, ikke her.
+            return svar
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
@@ -1212,12 +1259,11 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
 
     # Forbruk av kapabiliteten i SAMME commit som statusskiftet. Feiler
     # den, har noen andre rukket å bruke den, og da skal ingenting skje.
-    brukt = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                         (jti, ny_hash)).fetchone()
-    if not brukt or brukt[0] is not True:
-        conn.rollback()
-        tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant)
-        return _feilsvar("kapabilitet_ugyldig", rid)
+    svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash, tenant=tenant,
+                                unntak_id=unntak_id, oppdrag_id=oppdrag_id,
+                                rid=rid)
+    if svar is not None:
+        return svar
 
     vellykket = kvittering.get("resultat") == "utfort"
     conn.execute(

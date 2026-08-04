@@ -1036,15 +1036,38 @@ $$;
 REVOKE ALL ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) FROM PUBLIC;
 
 -- Forbrukes i SAMME commit som statusskiftet på oppdraget og saken.
--- Resultathashen lagres, slik at en senere re-post kan skilles fra et
--- motstridende resultat uten å slå opp i oppdragsraden.
-CREATE OR REPLACE FUNCTION bruk_kvitteringskapabilitet(p_jti TEXT,
-                                                       p_resultathash TEXT)
-RETURNS BOOLEAN
+--
+-- Funksjonen returnerer UTFALLET, ikke en boolean, og det er Codex' P1 fra
+-- runde 3: to transaksjoner kan begge lese kapabiliteten som
+-- `utstedt/resultathash=NULL`, begge passere hashkontrollene i app-laget,
+-- og så kappes om denne UPDATE-en. Vinneren committer; TAPEREN blokkerte
+-- på radlåsen og fikk `false`.
+--
+-- Med en boolean hadde kalleren ingenting å klassifisere på, og svarte
+-- `kapabilitet_ugyldig`. Da ble to identiske samtidige kvitteringer til
+-- «202 + 401» i stedet for «202 + idempotent», og to MOTSTRIDENDE
+-- samtidige kvitteringer forsvant som et generisk auth-avvik i stedet for
+-- å bli en sikkerhetssak. Kontrakten «identisk => idempotent, to hasher =>
+-- sikkerhetssak» gjaldt altså bare når postene kom etter hverandre.
+--
+-- Klassifiseringen hører hjemme HER og ikke i app-laget: taperens UPDATE
+-- blokkerer til vinneren committer, og først da finnes svaret. Et oppslag
+-- fra kalleren etterpå ville vært en andre lesing i et nytt vindu — altså
+-- et nytt kappløp for å avgjøre utfallet av det første.
+--
+-- Under READ COMMITTED får hver setning sin egen snapshot: SELECT-en under
+-- kjører ETTER at UPDATE-en slapp låsen, og ser derfor vinnerens
+-- committede rad.
+DROP FUNCTION IF EXISTS bruk_kvitteringskapabilitet(TEXT, TEXT);
+CREATE FUNCTION bruk_kvitteringskapabilitet(p_jti TEXT, p_resultathash TEXT)
+RETURNS TEXT
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
-DECLARE v_treff INT;
+DECLARE
+    v_treff  INT;
+    v_status TEXT;
+    v_hash   TEXT;
 BEGIN
     UPDATE public.kvitteringskapabiliteter k
        SET status = 'brukt', resultathash = p_resultathash,
@@ -1053,7 +1076,30 @@ BEGIN
        AND k.status = 'utstedt'
        AND k.utloper > pg_catalog.now();
     GET DIAGNOSTICS v_treff = ROW_COUNT;
-    RETURN v_treff = 1;
+    IF v_treff = 1 THEN
+        RETURN 'brukt';
+    END IF;
+
+    -- Vi tapte kappløpet, eller kapabiliteten var alt brukt/utløpt.
+    SELECT k.status, k.resultathash INTO v_status, v_hash
+      FROM public.kvitteringskapabiliteter k
+     WHERE k.jti = p_jti;
+    IF NOT FOUND THEN
+        RETURN 'ugyldig';
+    END IF;
+    IF v_status = 'brukt' THEN
+        -- `IS NOT DISTINCT FROM` og ikke `=`: en NULL-hash ville gjort
+        -- sammenligningen NULL, og en NULL i en IF er usann — altså ville
+        -- en uventet tilstand blitt klassifisert som konflikt i stedet for
+        -- som ugyldig. CHECK-en garanterer riktig nok at `brukt` har hash,
+        -- men en vakt som stoler på en annen vakt er én endring unna å
+        -- være feil.
+        IF v_hash IS NOT DISTINCT FROM p_resultathash THEN
+            RETURN 'idempotent';
+        END IF;
+        RETURN 'konflikt';
+    END IF;
+    RETURN 'ugyldig';   -- feilet, utløpt eller ukjent tilstand: fail-closed
 END $$;
 REVOKE ALL ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) FROM PUBLIC;
 

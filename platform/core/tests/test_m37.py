@@ -9,6 +9,7 @@ Testene som ikke trenger database står først, slik at en kjøring uten
 `DISPONIT_TEST_DSN` fortsatt sier noe. De er merket i navnet.
 """
 import ast
+import time
 import json
 import os
 import secrets
@@ -473,10 +474,13 @@ def test_port1_kapabilitet_forblir_reservert_ved_krasj_og_kan_gjenopptas(migrato
     migrator.commit()
 
     # Tellingen er GLOBAL — funksjonen rydder alle hengende reservasjoner,
-    # ikke bare vår. Assertionen må derfor gjelde DENNE kapabiliteten, ikke
-    # et tall som avhenger av hva andre tester har lagt igjen. En assertion
-    # som varierer med kjørerekkefølgen er ingen assertion.
-    assert _rt("SELECT frigi_hengende_kapabiliteter()")[0] >= 1
+    # ikke bare vår, og `arbeidskapabiliteter` ryddes ikke mellom tester
+    # (tabellen eies av NOLOGIN-rollen, og migrator har ikke DELETE der).
+    # Derfor sier vi ingenting om TALLET, bare om DENNE jti-en. En
+    # assertion som varierer med hva andre tester la igjen, er ingen
+    # assertion — og jeg gjorde nøyaktig den feilen i kappløpstesten
+    # tidligere i samme PR.
+    _rt("SELECT frigi_hengende_kapabiliteter()")
     migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
     assert migrator.execute(
         "SELECT status FROM arbeidskapabiliteter WHERE jti=%s",
@@ -515,10 +519,15 @@ def test_port1_kapabilitet_forblir_reservert_ved_krasj_og_kan_gjenopptas(migrato
     migrator.execute("RESET ROLE")
     migrator.commit()
 
-    assert _rt("SELECT frigi_hengende_kapabiliteter()")[0] == 0, (
+    _rt("SELECT frigi_hengende_kapabiliteter()")
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    assert migrator.execute(
+        "SELECT status FROM arbeidskapabiliteter WHERE jti=%s",
+        (jti2,)).fetchone()[0] == "reservert", (
         "en reservasjon med auditert beslutning ble frigjort — den treige"
         " men vellykkede transaksjonen ville mistet fullmakten sin")
-    migrator.commit()
+    migrator.execute("RESET ROLE")
+    migrator.rollback()
 
 
 @pg
@@ -1348,10 +1357,14 @@ def test_P1_kvitteringskapabilitet_bindes_og_innloses(migrator):
     assert _rt("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,%s,%s)",
                (opp, cid, a[1] - 1, secrets.token_hex(16))) is None
 
-    # Forbruk er engangs: andre gang med samme jti gir False.
+    # Forbruk er engangs — og etter runde 3 returnerer funksjonen UTFALLET,
+    # ikke en boolean. Det er nettopp forskjellen taperen i et kappløp
+    # trenger for å skille idempotens fra konflikt.
     h = "a" * 64
-    assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)", (jti, h))[0] is True
-    assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)", (jti, h))[0] is False
+    assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+               (jti, h))[0] == "brukt"
+    assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+               (jti, h))[0] == "idempotent"
 
 
 @pg
@@ -1644,5 +1657,258 @@ def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
             r = c.post("/v1/oppdrag/kvittering", json=feil_oppdrag, headers=h)
             assert r.status_code == 401, r.text
             assert r.json()["feil"] == "kapabilitet_ugyldig"
+    finally:
+        app.tjeneste.pool.lukk()
+
+
+# ===========================================================================
+# Codex runde 3 — taperen i forbrukskappløpet må klassifiseres riktig
+# ===========================================================================
+
+def _oppsett_stale_kapabilitet(migrator, klient, token_h):
+    """A claimer, mister leasen, B reclaimer. -> (opp, sak, a, b)
+
+    Etter dette går ALLE A sine kvitteringer sen-evidensveien: gyldig
+    signert, men fra en utdatert generasjon.
+    """
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    a = klient.post("/v1/oppdrag/claim", json={}, headers=token_h).json()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE oppdrag SET owner_lease_utloper=now()"
+                     " - interval '1 s' WHERE tenant=%s AND id=%s",
+                     (TENANT, opp))
+    migrator.commit()
+    b = klient.post("/v1/oppdrag/claim", json={}, headers=token_h).json()
+    assert b["owner_generation"] == 2
+    return opp, sak, a, b
+
+
+def _kvitteringskropp(kap, opp, resultat):
+    return _signer_kvittering({
+        "oppdrag_id": opp, "tenant": TENANT,
+        "kvittering_jti": kap["kvittering_jti"],
+        "repair_operation_id": kap["repair_operation_id"],
+        "owner_claim_id": kap["owner_claim_id"],
+        "owner_generation": kap["owner_generation"],
+        "resultat": resultat, "ressurs_id": "fak-1"})
+
+
+def _vinner_holder_laasen(migrator_dsn, tenant, sak, opp, jti, vinnerhash):
+    """En transaksjon som gjør NØYAKTIG det vinneren gjør — og holder igjen.
+
+    Radlåsen på kapabiliteten holdes til vi committer. Taperen blokkerer
+    på `bruk_kvitteringskapabilitet` og får først svar etterpå.
+
+    Merk hvorfor dette IKKE er en timing-test: blokkerer taperen, klassifi-
+    seres den mot vinnerens committede rad; kommer den etter commiten,
+    klassifiseres den mot nøyaktig den samme raden. Begge interleavinger gir
+    samme utfall, så assertionene kan ikke bli flaky — i motsetning til to
+    tråder som kappes fritt (samme felle som trådtesten i PR-002).
+    """
+    from db.pg import koble
+    h = koble(migrator_dsn)
+    h.execute("SELECT set_config('disponit.tenant',%s,true),"
+              "       set_config('disponit.aktor','vinner',true),"
+              "       set_config('disponit.request_id','vinner',true)",
+              (tenant,))
+    h.execute(
+        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+        " request_id, detalj) VALUES (%s,%s,'sen_kvittering','vinner',"
+        " 'vinner',%s)",
+        (tenant, sak, json.dumps({"oppdrag_id": opp,
+                                  "resultathash": vinnerhash})))
+    h.execute("SET LOCAL ROLE disponit_m37_claimer")
+    h.execute("UPDATE kvitteringskapabiliteter SET status='brukt',"
+              " resultathash=%s, brukt_ts=now() WHERE jti=%s",
+              (vinnerhash, jti))
+    h.execute("RESET ROLE")
+    return h                       # IKKE committet — låsen holdes
+
+
+@pg
+def test_P1_samtidig_identisk_repost_blir_idempotent_ikke_auth_feil(
+        migrator, miljo, token):
+    """Codex P1 runde 3, tilfelle 1.
+
+    Taperen av forbrukskappløpet fikk `kapabilitet_ugyldig` (401) uten å
+    lese hashen som vant. To identiske samtidige kvitteringer ble dermed
+    «202 + 401» i stedet for «202 + idempotent 200».
+
+    MUTASJONEN SOM DREPER DENNE: la `bruk_kvitteringskapabilitet` returnere
+    `'ugyldig'` i stedet for `'idempotent'` — eller la kalleren svare
+    generisk `kapabilitet_ugyldig` når forbruket taper.
+    """
+    import threading
+    from starlette.testclient import TestClient
+    from api.app import lag_app, _resultathash
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+
+            kropp = _kvitteringskropp(a, opp, "utfort")
+            vinnerhash = _resultathash(kropp)
+            holder = _vinner_holder_laasen(MIGRATOR_DSN, TENANT, sak, opp,
+                                           a["kvittering_jti"], vinnerhash)
+            svar = {}
+
+            def taper():
+                svar["r"] = c.post("/v1/oppdrag/kvittering", json=kropp,
+                                   headers=h)
+
+            t = threading.Thread(target=taper)
+            t.start()
+            time.sleep(0.5)          # la taperen rekke fram til låsen
+            holder.commit()
+            holder.close()
+            t.join(timeout=30)
+            assert not t.is_alive(), "taperen hang på låsen"
+
+            r = svar["r"]
+            assert r.status_code == 200, r.text
+            assert r.json()["status"] == "idempotent", r.text
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak)).fetchall())
+    status = migrator.execute(
+        "SELECT o.status, u.status FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"NØYAKTIG én sen evidensrad forventet, fikk {hendelser}")
+    assert "motstridende_kvittering" not in hendelser, (
+        f"identisk resultat ble feilklassifisert som konflikt: {hendelser}")
+    # Tilfelle 3 fra reviewen: stale-generation-veien endrer ingen status.
+    assert status == ("plukket", "venter_utførelse"), status
+
+
+@pg
+def test_P1_samtidig_motstridende_repost_blir_sikkerhetssak(migrator, miljo,
+                                                            token):
+    """Codex P1 runde 3, tilfelle 2 — den alvorlige.
+
+    To ULIKE resultater levert samtidig forsvant som et generisk
+    auth-avvik. Det er nøyaktig den hendelsen sikkerhetssaken finnes for,
+    og den ble aldri registrert.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `konflikt`-grenen i
+    `_forbruk_kapabilitet`, eller la SQL-funksjonen returnere `'ugyldig'`
+    ved ulik hash.
+    """
+    import threading
+    from starlette.testclient import TestClient
+    from api.app import lag_app, _resultathash
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+
+            # Vinneren leverte `utfort`; taperen leverer `feilet` med SAMME
+            # kapabilitet. Ulike resultathasher.
+            vinnerhash = _resultathash(_kvitteringskropp(a, opp, "utfort"))
+            taperkropp = _kvitteringskropp(a, opp, "feilet")
+            assert _resultathash(taperkropp) != vinnerhash
+
+            holder = _vinner_holder_laasen(MIGRATOR_DSN, TENANT, sak, opp,
+                                           a["kvittering_jti"], vinnerhash)
+            svar = {}
+
+            def taper():
+                svar["r"] = c.post("/v1/oppdrag/kvittering", json=taperkropp,
+                                   headers=h)
+
+            t = threading.Thread(target=taper)
+            t.start()
+            time.sleep(0.5)
+            holder.commit()
+            holder.close()
+            t.join(timeout=30)
+            assert not t.is_alive(), "taperen hang på låsen"
+
+            r = svar["r"]
+            assert r.status_code == 409, r.text
+            assert r.json()["feil"] == "kvittering_konflikt", r.text
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak)).fetchall())
+    status = migrator.execute(
+        "SELECT o.status, u.status FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"taperen skrev en ordinær evidensrad: {hendelser}")
+    assert hendelser.get("motstridende_kvittering") == 1, (
+        f"motstridende samtidig kvittering ble ikke sikkerhetssak: {hendelser}")
+    assert status == ("plukket", "venter_utførelse"), status
+
+
+@pg
+def test_P1_forbrukets_fire_utfall_er_uttommende(migrator, miljo, token):
+    """`brukt | idempotent | konflikt | ugyldig` — alle fire nås.
+
+    Uten denne kunne `ugyldig`-grenen vært død kode, og fail-closed-veien
+    ville aldri vært prøvd. En gren uten vitne er ikke en gren med dekning.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            jti = a["kvittering_jti"]
+
+            assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                       (jti, "a" * 64))[0] == "brukt"
+            assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                       (jti, "a" * 64))[0] == "idempotent"
+            assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                       (jti, "b" * 64))[0] == "konflikt"
+            assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                       (secrets.token_hex(16), "a" * 64))[0] == "ugyldig"
+
+            # Og `feilet` er også ugyldig — ikke konflikt.
+            jti_b = b["kvittering_jti"]
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            migrator.execute("UPDATE kvitteringskapabiliteter SET"
+                             " status='feilet' WHERE jti=%s", (jti_b,))
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                       (jti_b, "c" * 64))[0] == "ugyldig"
     finally:
         app.tjeneste.pool.lukk()
