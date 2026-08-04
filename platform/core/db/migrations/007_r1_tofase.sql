@@ -139,8 +139,14 @@ BEGIN
 
     IF NOT (
         (OLD.status = 'ny'               AND NEW.status IN ('under_behandling','manuell')) OR
+        -- `verifikasjon_retry_klar` HERFRA er fase 2s vei tilbake: den
+        -- fenced claimen fant et utløpt bevis eller et skjerpet kravsett,
+        -- og settet må verifiseres på nytt i en NY generasjon. Uten dette
+        -- leddet kastet triggeren, arbeideren mistet saken, og fase 2s
+        -- retry-vei var uoppnåelig — MÅLT, ikke resonnert frem.
         (OLD.status = 'under_behandling' AND NEW.status IN
-             ('løst','avvist','manuell','venter_utførelse','venter_verifikasjon')) OR
+             ('løst','avvist','manuell','venter_utførelse',
+              'venter_verifikasjon','verifikasjon_retry_klar')) OR
         (OLD.status = 'under_behandling' AND NEW.status = 'ny'
              AND OLD.claim_utloper IS NOT NULL AND OLD.claim_utloper < now()) OR
         (OLD.status = 'venter_utførelse' AND NEW.status IN ('løst','manuell')) OR
@@ -740,7 +746,12 @@ REVOKE ALL ON FUNCTION claim_neste_sak(TEXT, INT) FROM PUBLIC;
 --
 -- Monoton +1, og aldri fra en terminal tilstand.
 -- ------------------------------------------------------------
+-- Begge signaturene droppes: den GAMLE (5 argumenter) fordi returtypen
+-- endres, og den NYE fordi migrasjonen må kunne kjøres to ganger. Bare den
+-- gamle sto her først, og en gjenkjøring falt på «already exists with same
+-- argument types» — samme idempotensfelle som kostet 80 tester i PR-006.
 DROP FUNCTION IF EXISTS start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, TEXT);
+DROP FUNCTION IF EXISTS start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, JSONB, TEXT, TEXT, TEXT);
 CREATE FUNCTION start_verifikasjonsgenerasjon(
         p_tenant TEXT, p_unntak_id BIGINT, p_claim_id TEXT,
         p_claim_generation INT, p_krav_sett JSONB, p_krav_sett_hash TEXT,
@@ -811,5 +822,169 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT)
     FROM PUBLIC;
+
+-- ===========================================================================
+-- 9. Kapabiliteten bærer den ORIGINALE aktørrollen — M-37 har ingen egen
+-- ===========================================================================
+--
+-- MÅLT, ikke antatt: fire-prosess-rundturen kom hele veien til fase 2, bygde
+-- hendelsen med det komplette settet, spurte motoren — og fikk `UNNTAK` med
+-- `rolle_ikke_tillatt`. Grunnen var at pre-auth ga arbeidskapabiliteten
+-- rollen `'m37'`, og ingen policy har `m37` i `tillatt_for`. Det var ikke en
+-- skrivefeil: `m37` var en rolle systemet fant på for seg selv.
+--
+-- Å legge `m37` inn i kundenes policyer ville løst symptomet ved å gi M-37
+-- en EGEN fullmakt — nøyaktig det invarianten «null egne fullmakter»
+-- forbyr. Riktig retning er motsatt: reparasjonen er den SAMME handlingen
+-- den opprinnelige aktøren allerede hadde fullmakt til, og M-37 utfører den
+-- på dens vegne. Rollen skal derfor komme fra sakens egen reviderte
+-- loggpost, fryses ved utstedelsen og aldri kunne velges av arbeideren.
+--
+-- Kolonnen er NULLBAR med vilje: gamle kapabiliteter (utstedt før denne
+-- migrasjonen) har ingen rolle, og en DEFAULT ville gitt dem en oppdiktet
+-- én. Pre-auth feiler i stedet lukket på NULL — en fullmakt uten en
+-- registrert rolle kan ikke brukes til noe.
+ALTER TABLE arbeidskapabiliteter ADD COLUMN IF NOT EXISTS aktor_rolle TEXT;
+
+-- Rollen er et BINDINGSFELT: like uforanderlig som handlingen og claimen.
+-- Kunne den endres etter utstedelse, ville hele poenget falt bort.
+CREATE OR REPLACE FUNCTION kapabilitet_statusmaskin()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.jti IS DISTINCT FROM OLD.jti
+       OR NEW.tenant IS DISTINCT FROM OLD.tenant
+       OR NEW.unntak_id IS DISTINCT FROM OLD.unntak_id
+       OR NEW.claim_id IS DISTINCT FROM OLD.claim_id
+       OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation
+       OR NEW.repair_operation_id IS DISTINCT FROM OLD.repair_operation_id
+       OR NEW.tillatt_handling IS DISTINCT FROM OLD.tillatt_handling
+       OR NEW.aktor_rolle IS DISTINCT FROM OLD.aktor_rolle
+       OR NEW.utloper IS DISTINCT FROM OLD.utloper
+       OR NEW.utstedt IS DISTINCT FROM OLD.utstedt THEN
+        RAISE EXCEPTION 'arbeidskapabiliteter: identitets- og bindingsfelter er uforanderlige';
+    END IF;
+    IF NOT (
+        (OLD.status = 'utstedt'   AND NEW.status IN ('reservert','feilet')) OR
+        (OLD.status = 'reservert' AND NEW.status IN ('brukt','feilet','reservert')) OR
+        (OLD.status = NEW.status)
+    ) THEN
+        RAISE EXCEPTION 'arbeidskapabiliteter: ulovlig overgang % -> %',
+            OLD.status, NEW.status;
+    END IF;
+    IF OLD.status IN ('brukt','feilet') AND NEW.status <> OLD.status THEN
+        RAISE EXCEPTION 'arbeidskapabiliteter: % er terminal', OLD.status;
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- Utstedelsen henter rollen fra sakens EGEN loggpost. Ikke fra en parameter
+-- — arbeideren skal ikke kunne uttrykke ønsket rolle i det hele tatt, av
+-- samme grunn som handlingen ikke er en parameter (v4-delta pkt. 1).
+-- Returtypen får en kolonne til (`aktor_rolle`), og `CREATE OR REPLACE`
+-- kan ikke endre den. DROP først — signaturen er uendret, så den nye
+-- droppes like godt som den gamle, og migrasjonen tåler en gjenkjøring.
+DROP FUNCTION IF EXISTS utsted_arbeidskapabilitet(TEXT, INT, TEXT, INT);
+CREATE FUNCTION utsted_arbeidskapabilitet(
+        p_claim_id TEXT, p_claim_generation INT, p_jti TEXT,
+        p_levetid_s INT DEFAULT 60)
+RETURNS TABLE (jti TEXT, tenant TEXT, unntak_id BIGINT,
+               tillatt_handling TEXT, repair_operation_id TEXT,
+               utloper TIMESTAMPTZ, aktor_rolle TEXT)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    r RECORD;
+    v_utloper TIMESTAMPTZ;
+BEGIN
+    IF p_jti IS NULL OR p_jti !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'utsted_arbeidskapabilitet: ugyldig jti-format';
+    END IF;
+    IF p_claim_id IS NULL OR p_claim_id !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'utsted_arbeidskapabilitet: ugyldig claim_id-format';
+    END IF;
+
+    SELECT u.tenant, u.id, u.claim_utloper, o.repair_operation_id,
+           o.maalhandling, l.aktor AS opprinnelig_rolle
+      INTO r
+      FROM public.unntak u
+      JOIN public.reparasjonsoperasjoner o
+        ON o.tenant = u.tenant AND o.unntak_id = u.id AND o.status = 'aktiv'
+      JOIN public.revisjonslogg l
+        ON l.tenant = u.tenant AND l.id = u.loggpost_id
+     WHERE u.claim_id = p_claim_id
+       AND u.claim_generation = p_claim_generation
+       AND u.status = 'under_behandling'
+       AND u.claim_utloper > pg_catalog.now();
+    IF NOT FOUND THEN
+        RETURN;   -- tapt lease eller ingen klassifisering: ingen kapabilitet
+    END IF;
+    IF r.opprinnelig_rolle IS NULL OR btrim(r.opprinnelig_rolle) = '' THEN
+        -- Saken har ingen registrert opprinnelig rolle. Da finnes det ingen
+        -- fullmakt å handle på vegne av, og en oppdiktet er verre enn ingen.
+        RETURN;
+    END IF;
+
+    v_utloper := least(
+        pg_catalog.now() + (least(greatest(
+            coalesce(p_levetid_s, 60), 5), 300) || ' seconds')::INTERVAL,
+        r.claim_utloper);
+
+    INSERT INTO public.arbeidskapabiliteter
+        (jti, tenant, unntak_id, claim_id, claim_generation,
+         repair_operation_id, tillatt_handling, aktor_rolle, utloper)
+    VALUES (p_jti, r.tenant, r.id, p_claim_id, p_claim_generation,
+            r.repair_operation_id, r.maalhandling, r.opprinnelig_rolle,
+            v_utloper);
+
+    jti := p_jti;
+    tenant := r.tenant;
+    unntak_id := r.id;
+    tillatt_handling := r.maalhandling;
+    repair_operation_id := r.repair_operation_id;
+    utloper := v_utloper;
+    aktor_rolle := r.opprinnelig_rolle;
+    RETURN NEXT;
+END $$;
+REVOKE ALL ON FUNCTION utsted_arbeidskapabilitet(TEXT, INT, TEXT, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION utsted_arbeidskapabilitet(TEXT, INT, TEXT, INT)
+    TO disponit;
+
+DROP FUNCTION IF EXISTS reserver_kapabilitet(TEXT, TEXT, INT);
+CREATE FUNCTION reserver_kapabilitet(p_jti TEXT, p_request_id TEXT,
+                                     p_reservasjon_s INT DEFAULT 300)
+RETURNS TABLE (tenant TEXT, unntak_id BIGINT, tillatt_handling TEXT,
+               repair_operation_id TEXT, claim_id TEXT, claim_generation INT,
+               aktor_rolle TEXT)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF p_jti IS NULL OR p_request_id IS NULL OR length(btrim(p_request_id)) = 0 THEN
+        RETURN;
+    END IF;
+    RETURN QUERY
+    UPDATE public.arbeidskapabiliteter k
+       SET status = 'reservert',
+           request_id = p_request_id,
+           reservert_ts = pg_catalog.now(),
+           reservasjon_utloper = least(
+               pg_catalog.now() + (least(greatest(
+                   coalesce(p_reservasjon_s, 300), 30), 300)
+                   || ' seconds')::INTERVAL,
+               k.utloper)
+     WHERE k.jti = p_jti
+       AND k.utloper > pg_catalog.now()
+       -- Fail-closed på en kapabilitet uten registrert rolle: den er
+       -- utstedt før rollen ble et bindingsfelt, og kan ikke brukes.
+       AND k.aktor_rolle IS NOT NULL
+       AND (k.status = 'utstedt'
+            OR (k.status = 'reservert' AND k.request_id = p_request_id))
+    RETURNING k.tenant, k.unntak_id, k.tillatt_handling,
+              k.repair_operation_id, k.claim_id, k.claim_generation,
+              k.aktor_rolle;
+END $$;
+REVOKE ALL ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) TO disponit;
 
 RESET ROLE;

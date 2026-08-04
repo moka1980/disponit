@@ -78,9 +78,23 @@ def _kildereferanser(raa: object) -> list[dict] | None:
 VILKAARSFELT = "manglende_vilkaar"
 
 
+#: Policyens EGEN grupperingsnøkkel for handlingen (`frekvens.
+#: grupperingsnokkel`). Ikke et fast feltnavn — kunden bestemmer det.
+#:
+#: MÅLT: uten den svarte motoren `frekvens_grupperingsverdi_mangler` på
+#: hver eneste fase-2-beslutning, og saken gikk til manuell. Payloaden
+#: bar `handling` og `ressurs_id`, men ikke `faktura_id`, og en hendelse
+#: uten gruppeverdi kan frekvensregelen ikke evaluere.
+#:
+#: Å slippe den gjennom utvider ikke hva systemet lagrer: telleren
+#: (`frekvens_hendelser`) lagrer ALLEREDE nøyaktig denne verdien for samme
+#: tenant og handling, skrevet av motoren selv. Feltet er kundens eget
+#: valg i sin egen policy, og verdien beholdes kun når den er en enkel
+#: streng.
 def minimer_payload(event: dict, kategori: str | None,
                     begrunnelse: list[str], *,
-                    vilkaar: str | None = None) -> dict:
+                    vilkaar: str | None = None,
+                    grupperingsnokkel: str | None = None) -> dict:
     """Saksgrunnlaget som skal krypteres og lagres.
 
     `begrunnelse` er KODER, ikke parametre: parametrene kan inneholde
@@ -107,4 +121,8 @@ def minimer_payload(event: dict, kategori: str | None,
     ut["kategori"] = kategori
     if isinstance(vilkaar, str) and vilkaar.strip():
         ut[VILKAARSFELT] = vilkaar
+    if isinstance(grupperingsnokkel, str) and grupperingsnokkel.strip():
+        verdi = event.get(grupperingsnokkel)
+        if isinstance(verdi, str) and verdi.strip():
+            ut[grupperingsnokkel] = verdi
     return ut

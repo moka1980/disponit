@@ -624,16 +624,26 @@ def fase1_id(tenant: str, unntak_id: int, krav_sett_hash: str,
     return hashlib.sha256(raa.encode("utf-8")).hexdigest()
 
 
-def fase2_id(tenant: str, unntak_id: int, maalhandling: str,
-             bevis_id: int) -> str:
-    """SHA-256(tenant ‖ unntak_id ‖ 'beslutning' ‖ målhandling ‖ bevis_id).
+def fase2_id(tenant: str, unntak_id: int, maalhandling: str, generation: int,
+             aktiv_policy_hash: str, autoritetsregister_hash_: str,
+             krav_sett_hash_: str) -> str:
+    """Bundet til TRE hasher, ikke bare generasjonen (GO-vilkår V1).
 
-    Binder til det KONKRETE beviset: en ny verifikasjonsgenerasjon gir et
-    nytt bevis og dermed en ny fase-2-identitet. Uten den bindingen kunne
-    en beslutning tatt på ett bevis vært replayet med et annet.
+    ```
+    SHA-256(tenant ‖ unntak_id ‖ 'beslutning' ‖ målhandling ‖ generation
+            ‖ aktiv_policy_hash ‖ aktiv_autoritetsregister_hash
+            ‖ krav_sett_hash)
+    ```
+
+    Autoritetsregisterets hash er den som gjør arbeidet: trekkes en
+    verifikators fullmakt tilbake, endres den hashen — og dermed
+    `fase2_id` — SELV om policyinnholdet ellers er uendret. Uten det leddet
+    kunne en gammel fase-2-identitet gjenbrukes med en fullmakt som ikke
+    lenger finnes.
     """
     raa = "\x1f".join((tenant, str(unntak_id), "beslutning", maalhandling,
-                       str(bevis_id)))
+                       str(generation), aktiv_policy_hash,
+                       autoritetsregister_hash_, krav_sett_hash_))
     return hashlib.sha256(raa.encode("utf-8")).hexdigest()
 
 

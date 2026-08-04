@@ -173,7 +173,11 @@ def main() -> int:
         # --- 2b. VERIFIKATOREN (fase 1) ----------------------------
         ver = subprocess.run(
             [sys.executable, str(REPO / "deploy/staging/syntetisk-verifikator.py"),
-             "--api", BASIS, "--runder", "0"],
+             "--api", BASIS, "--runder", "0",
+             # `forfall_passert_dager` har `min: 14` i bransjemalen: en
+             # attestasjon uten MÅLT verdi gir `attestasjon_verdi_ugyldig`
+             # i fase 2. Verifikatoren måler; M-37 bestemmer ikke.
+             "--verdi", "forfall_passert_dager=30"],
             env=dict(miljo, DISPONIT_VERIFIKATOR_TOKEN=verifikatortoken,
                      DISPONIT_VERIFIKATOR_NOKKEL="e" * 40,
                      DISPONIT_VERIFIKATOR_ID="v_fordring",

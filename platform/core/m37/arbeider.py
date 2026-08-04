@@ -558,6 +558,9 @@ def utsted_kapabilitet(conn: psycopg.Connection, sak: Sak, claim_id: str,
     triviell fordi angrepet ikke lar seg uttrykke i signaturen.
     """
     jti = secrets.token_hex(16)
+    # Legg merke til hva som IKKE er parameter nummer to heller: ROLLEN.
+    # Funksjonen henter den fra sakens egen loggpost, slik at arbeideren
+    # ikke kan uttrykke «gjør dette som daglig leder».
     rad = conn.execute(
         "SELECT jti FROM utsted_arbeidskapabilitet(%s,%s,%s,%s)",
         (claim_id, sak.claim_generation, jti, levetid_s)).fetchone()
@@ -814,123 +817,198 @@ def _start_fase1(conn, vakt, sak: Sak, claim_id: str, kl,
 
 def _fase2(conn, vakt, sak: Sak,
            claim_id: str) -> tuple["reparasjoner.Reparasjonsplan", str | None]:
-    """Bygg den nye hendelsen = minimert payload + VERIFISERT attestasjon.
+    """Bygg den nye hendelsen av minimert payload + HELE det verifiserte settet.
 
-    Beviset hentes VIA generasjonsraden (GO-vilkår V4): den `positiv`
-    generasjonen med matchende kontekst. Ikke via en ubundet peker på
-    saken — den finnes ikke, med vilje.
+    Fire porter før hendelsen bygges, i denne rekkefølgen:
 
-    Modell (b): originalhendelsen er minimert bort og finnes ikke. Det er
-    nettopp derfor tofaseveien er avgrenset til saker der det manglende ER
-    en attestasjon; en manglende VERDI kan ikke rekonstrueres, og de
-    sakene gikk til `manuell` allerede i klassifiseringen.
+      1. **Komplett sett.** Alle bevis i generasjonen hentes VIA
+         generasjonsraden (GO-vilkår V4 — det finnes ingen `ventet_bevis_id`).
+         Mangler ett, eller er ett utløpt, bygges INGEN hendelse: saken går
+         til retry eller manuell. Fase 2 sender aldri et delvis sett.
+      2. **Aktiv autoritet** (GO-vilkår V1). Den valgte verifikatoren må
+         FORTSATT være betrodd for hvert vilkår, målt mot aktiv policy —
+         ikke mot snapshotet. Snapshotet beviser forsøket; en tilbaketrukket
+         fullmakt må fanges på nåtid.
+      3. **Aktiv policy** (GO-vilkår V3). Har policyen fjernet et vilkår,
+         sendes den gamle attestasjonen ALDRI videre. Har den lagt til
+         eller skjerpet noe, er settet utdatert og saken re-klassifiseres.
+      4. **Utførelsesklassen** slås opp som DATA. Ukjent par ⇒ manuell.
+
+    Motoren er likevel siste ord (v7 pkt. 1): kontrollene her er billige
+    forhåndssjekker, ikke den autoritative avgjørelsen. En attestasjon kan
+    bli ugyldig før den utløper, og bare policyporten ser det.
     """
     sett_kontekst(vakt, sak.tenant, AKTOR, claim_id)
 
-    rad = vakt.execute(
-        "SELECT vg.vilkaar, vg.generation, b.id, b.attestasjon_kryptert,"
-        " b.key_id, b.nonce, b.gyldig_til"
-        "  FROM verifikasjonsgenerasjon vg"
-        "  JOIN verifikasjonsbevis b"
-        "    ON b.tenant = vg.tenant AND b.unntak_id = vg.unntak_id"
-        "   AND b.vilkaar = vg.vilkaar AND b.generation = vg.generation"
-        "   AND b.id = vg.bevis_id"
-        " WHERE vg.tenant=%s AND vg.unntak_id=%s AND vg.status='positiv'"
-        " ORDER BY vg.generation DESC LIMIT 1",
+    gen = vakt.execute(
+        "SELECT generation, krav_sett_hash, valgt_verifikator"
+        "  FROM verifikasjonsgenerasjon"
+        " WHERE tenant=%s AND unntak_id=%s AND vilkaar='*sett*'"
+        "   AND status='positiv' ORDER BY generation DESC LIMIT 1",
         (sak.tenant, sak.id)).fetchone()
-    if rad is None:
-        _historikk(vakt, sak, "frist_utlopt", {"grunn": "intet_positivt_bevis"},
-                   claim_id=claim_id)
-        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
-        conn.commit()
-        return reparasjoner.Reparasjonsplan("manuell", "intet_positivt_bevis"), None
+    if gen is None:
+        return _fase2_stopp(conn, vakt, sak, claim_id, "intet_positivt_bevis",
+                            "frist_utlopt")
+    generasjon, sett_hash, valgt_verifikator = gen
 
-    vilkaar, generasjon, bevis_id, ct, key_id, nonce, gyldig_til = rad
-    if gyldig_til <= datetime.now(timezone.utc):
-        # Et utløpt bevis starter ikke fase 2. Attestasjonen hadde en
-        # gyldighetstid, og å bruke den etterpå ville vært å behandle et
-        # utløpt bevis som gyldig fordi vi tilfeldigvis rakk å lagre det.
-        _historikk(vakt, sak, "verifikasjon_utlopt",
-                   {"vilkaar": vilkaar, "generation": generasjon},
-                   claim_id=claim_id)
-        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
-        conn.commit()
-        return reparasjoner.Reparasjonsplan("manuell", "bevis_utlopt"), None
+    bevis = vakt.execute(
+        "SELECT bevis_vilkaar, attestasjon_kryptert, key_id, nonce, gyldig_til"
+        "  FROM verifikasjonsbevis"
+        " WHERE tenant=%s AND unntak_id=%s AND vilkaar='*sett*'"
+        "   AND generation=%s ORDER BY bevis_vilkaar",
+        (sak.tenant, sak.id, generasjon)).fetchall()
+    if not bevis:
+        return _fase2_stopp(conn, vakt, sak, claim_id, "ingen_bevis_i_generasjon",
+                            "frist_utlopt")
+
+    naa = datetime.now(timezone.utc)
+    utlopte = [b[0] for b in bevis if b[4] <= naa]
+    if utlopte:
+        # Ett utløpt bevis ⇒ hele settet re-verifiseres i en NY generasjon.
+        # Vi patcher aldri et gammelt sett (v7 pkt. 3) — en ny generasjon
+        # er et friskt løp fra bunnen.
+        return _fase2_retry(conn, vakt, sak, claim_id,
+                            {"grunn": "bevis_utlopt", "vilkaar": utlopte,
+                             "generation": generasjon})
+
+    # --- Port 2 og 3: aktiv policy og aktiv autoritet -------------------
+    aktiv = _aktiv_policy(vakt, sak)
+    if aktiv is None:
+        return _fase2_stopp(conn, vakt, sak, claim_id,
+                            "aktiv_policy_utilgjengelig", "frist_utlopt")
+    policy, aktiv_policy_hash = aktiv
+    krav_sett = vakt.execute(
+        "SELECT krav_sett FROM unntak WHERE tenant=%s AND id=%s",
+        (sak.tenant, sak.id)).fetchone()[0]
+    if not krav_sett:
+        return _fase2_stopp(conn, vakt, sak, claim_id, "krav_sett_mangler",
+                            "frist_utlopt")
+
+    maal = (vakt.execute("SELECT handling FROM unntak WHERE tenant=%s AND id=%s",
+                         (sak.tenant, sak.id)).fetchone() or [None])[0]
+    # Hvilke vilkår krever den AKTIVE policyen nå?
+    aktive_vilkaar = {
+        vk["navn"] for h in (policy.get("handlinger") or [])
+        if isinstance(h, dict) and h.get("id") == maal
+        for vk in (h.get("vilkaar") or [])
+        if isinstance(vk, dict) and isinstance(vk.get("navn"), str)}
+    frosne_vilkaar = {e["vilkaar"] for e in krav_sett.get("krav") or []}
+
+    if aktive_vilkaar - frosne_vilkaar:
+        # STRENGERE: policyen krever noe settet aldri dekket. Saken må
+        # re-klassifiseres mot det nye settet — fase 2 bygger ALDRI mot et
+        # utdatert kravsett (Scope v2 pkt. 2).
+        return _fase2_retry(conn, vakt, sak, claim_id,
+                            {"grunn": "policy_skjerpet",
+                             "nye_vilkaar": sorted(aktive_vilkaar - frosne_vilkaar)})
+
+    # GO-vilkår V1: er den valgte verifikatoren FORTSATT betrodd for hvert
+    # vilkår vi faktisk skal sende? Mot AKTIV policy, ikke mot snapshotet.
+    sendes = sorted(aktive_vilkaar & {b[0] for b in bevis})
+    for vilkaar in sendes:
+        if valgt_verifikator not in reparasjoner.betrodde_for(policy, vilkaar):
+            _historikk(vakt, sak, "sikkerhetsfrysing",
+                       {"grunn": "autoritet_tilbakekalt_for_fase2",
+                        "verifikator": valgt_verifikator, "vilkaar": vilkaar},
+                       claim_id=claim_id)
+            _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+            conn.commit()
+            return reparasjoner.Reparasjonsplan(
+                "manuell", "autoritet_tilbakekalt"), None
+
+    # --- Dekrypter det settet som faktisk skal sendes -------------------
+    attestasjoner = {}
+    for bevis_vilkaar, ct, key_id, nonce, _gyldig in bevis:
+        if bevis_vilkaar not in sendes:
+            # GO-vilkår V3: policyen har FJERNET vilkåret. Den gamle
+            # attestasjonen sendes aldri videre — en overflødig attestasjon
+            # er evidens for et krav som ikke finnes.
+            _historikk(vakt, sak, "policy_endret_siden_opprettelse",
+                       {"grunn": "vilkaar_fjernet_i_aktiv_policy",
+                        "vilkaar": bevis_vilkaar}, claim_id=claim_id)
+            continue
+        nokkel = vakt.execute(
+            "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s AND key_id=%s",
+            (sak.tenant, key_id)).fetchone()
+        if nokkel is None or nokkel[0] is None:
+            return _fase2_stopp(conn, vakt, sak, claim_id, "bevis_dek_borte",
+                                "dek_utilgjengelig")
+        try:
+            dek = kryptering._pakk_ut((key_id, nokkel[0]), sak.tenant)[1]
+            attestasjoner[bevis_vilkaar] = kryptering.dekrypter(
+                dek, ct, nonce, sak.tenant, key_id)
+        except Exception:
+            return _fase2_stopp(conn, vakt, sak, claim_id, "bevis_uleselig",
+                                "dek_utilgjengelig")
+
+    if not attestasjoner:
+        return _fase2_stopp(conn, vakt, sak, claim_id, "intet_gyldig_bevis",
+                            "frist_utlopt")
 
     payload = _hent_payload(vakt, sak)
     if payload is None:
-        _historikk(vakt, sak, "dek_utilgjengelig", claim_id=claim_id)
-        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
-        conn.commit()
-        return reparasjoner.Reparasjonsplan("manuell", "dek_utilgjengelig"), None
+        return _fase2_stopp(conn, vakt, sak, claim_id, "dek_utilgjengelig",
+                            "dek_utilgjengelig")
 
-    nokkel = vakt.execute(
-        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s AND key_id=%s",
-        (sak.tenant, key_id)).fetchone()
-    if nokkel is None or nokkel[0] is None:
-        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
-        conn.commit()
-        return reparasjoner.Reparasjonsplan("manuell", "bevis_dek_borte"), None
-    dek = kryptering._pakk_ut((key_id, nokkel[0]), sak.tenant)[1]
-    try:
-        attestasjon = kryptering.dekrypter(dek, ct, nonce, sak.tenant, key_id)
-    except Exception:
-        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
-        conn.commit()
-        return reparasjoner.Reparasjonsplan("manuell", "bevis_uleselig"), None
-
-    # Utførelsesklassen er DATA som slås opp (v3-delta pkt. 4) — M-37 kan
-    # verken velge eller overstyre den. Ukjent par → fail-closed manuell.
-    maal = payload.get("handling")
     klasse = vakt.execute(
         "SELECT klasse FROM utforelsesklasser WHERE handler_id=%s"
-        "   AND target_action=%s",
-        (reparasjoner.R1.handler_id, maal)).fetchone()
+        "   AND target_action=%s", (reparasjoner.R1.handler_id, maal)).fetchone()
     if klasse is None:
-        _historikk(vakt, sak, "frist_utlopt",
-                   {"grunn": "ukjent_utforelsesklasse", "maalhandling": maal},
-                   claim_id=claim_id)
-        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
-        conn.commit()
-        return reparasjoner.Reparasjonsplan("manuell",
-                                            "ukjent_utforelsesklasse"), None
+        return _fase2_stopp(conn, vakt, sak, claim_id, "ukjent_utforelsesklasse",
+                            "frist_utlopt")
 
-    # Den nye hendelsen: minimert payload + den verifiserte attestasjonen.
     hendelse = {k: v for k, v in payload.items()
                 if k not in ("begrunnelse", "kategori", "manglende_vilkaar")}
-    hendelse["attestasjoner"] = {vilkaar: attestasjon}
+    hendelse["attestasjoner"] = attestasjoner
 
-    # FASE 1 MÅ VÆRE TERMINAL FØR FASE 2 (v1 §1). Verifikasjonen er
-    # ferdig — generasjonen er `positiv` og beviset lagret — så fase 1s
-    # reparasjonsoperasjon avsluttes her.
-    #
-    # Uten dette kolliderte fase 2 med delindeksen
-    # `en_aktiv_reparasjon_per_sak`: `_registrer_reparasjon` så en aktiv
-    # operasjon med et FERDIG verifikasjonsoppdrag, tolket det som «en
-    # utførelse pågår» og avbrøt. Saken ble stående i `under_behandling`
-    # for alltid. Målt på den levende firekjeden, ikke lest.
-    #
-    # Delindeksen består uendret — det er nettopp SEKVENSIALITETEN mellom
-    # fasene som gjør at den kan bestå.
-    vakt.execute(
-        "UPDATE reparasjonsoperasjoner SET status='superseded'"
-        " WHERE tenant=%s AND unntak_id=%s AND status='aktiv'",
-        (sak.tenant, sak.id))
-
-    rid = reparasjoner.fase2_id(sak.tenant, sak.id, maal, bevis_id)
+    rid = reparasjoner.fase2_id(
+        sak.tenant, sak.id, maal, generasjon, aktiv_policy_hash,
+        reparasjoner.autoritetsregister_hash(policy), sett_hash)
     plan = reparasjoner.Reparasjonsplan(
         "oppdrag" if klasse[0] == "krever_outbox" else "lost",
         f"fase2_{klasse[0]}", maalhandling=maal,
         oppdragstype="reinnsending", reparasjonsinput=hendelse)
 
+    # Fase 1 er terminal før fase 2 registreres (v1 §1) — det er
+    # sekvensialiteten som lar `en_aktiv_reparasjon_per_sak` bestå.
+    vakt.execute(
+        "UPDATE reparasjonsoperasjoner SET status='superseded'"
+        " WHERE tenant=%s AND unntak_id=%s AND status='aktiv'",
+        (sak.tenant, sak.id))
     _registrer_reparasjon(vakt, sak, _FASE2KLASSE, plan, rid,
                           reparasjoner.input_hash(hendelse), claim_id)
     _historikk(vakt, sak, "verifikasjon_positiv",
-               {"vilkaar": vilkaar, "generation": generasjon,
-                "bevis_id": bevis_id, "utforelsesklasse": klasse[0]},
-               claim_id=claim_id)
+               {"generation": generasjon, "vilkaar": sendes,
+                "utforelsesklasse": klasse[0]}, claim_id=claim_id)
     conn.commit()
     return plan, rid
+
+
+def _fase2_stopp(conn, vakt, sak: Sak, claim_id: str, grunn: str,
+                 hendelse: str):
+    """Fase 2 kan ikke bygge en hendelse. Saken går manuelt."""
+    _historikk(vakt, sak, hendelse, {"grunn": grunn}, claim_id=claim_id)
+    _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+    conn.commit()
+    return reparasjoner.Reparasjonsplan("manuell", grunn), None
+
+
+def _fase2_retry(conn, vakt, sak: Sak, claim_id: str, detalj: dict):
+    """Settet må verifiseres på nytt — ny generasjon, ikke lapping.
+
+    Budsjettet teller RUNDER over hele settet (v5 pkt. 5): et vilkår som
+    gjentatte ganger ikke lar seg attestere bruker budsjett på vegne av
+    settet, fordi saken uansett ikke kan løses uten det.
+    """
+    ny = sak.verification_generation < min(sak.maks_auto_forsok_snapshot or 0, 3)
+    _historikk(vakt, sak, "verifikasjon_retry" if ny else "frist_utlopt",
+               detalj, claim_id=claim_id)
+    _krev_fencing(vakt, sak, claim_id,
+                  "status='verifikasjon_retry_klar'" if ny
+                  else "status='manuell'")
+    conn.commit()
+    return reparasjoner.Reparasjonsplan(
+        "manuell", detalj.get("grunn", "retry")), None
 
 
 class _Fase2klasse:

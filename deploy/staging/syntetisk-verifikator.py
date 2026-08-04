@@ -51,44 +51,94 @@ def krev_staging() -> None:
             " vilkår ingen har kontrollert")
 
 
-def bygg_konvolutt(o: dict, *, verifikator: str, resultat: str,
-                   levetid_min: int = 60) -> dict:
-    """Den signerte konvolutten. Den ER attestasjonen.
+def bygg_attestasjon(o: dict, vilkaar: str, *, verifikator: str,
+                     positiv: bool, levetid_min: int = 60,
+                     alder_s: int = 5,
+                     verdier: dict | None = None) -> dict:
+    """ÉN indre attestasjon — ett vilkår, ett faktum, én signatur.
 
-    Feltnavnene er motorens (`tenant_id`, `handling`, `policy_id`,
-    `verifikator`, `resultat`), ikke noen egen dialekt — nettopp fordi
-    fase 2 sender dette objektet rett inn i policymotoren. Hadde
-    konvolutten hatt sine egne navn, måtte API-et bygget om og signert på
-    nytt, og API-et er ingen verifikator.
+    Feltnavnene er MOTORENS (`tenant_id`, `handling`, `vilkaar`,
+    `ressurs_id`, `policy_id`, `verifikator`, `resultat`), ikke en egen
+    dialekt: fase 2 sender dette objektet uendret inn i policymotoren.
+    Hadde attestasjonen hatt egne navn, måtte API-et bygget om og signert
+    på nytt — og API-et er ingen verifikator.
 
-    `handling` er MÅLHANDLINGEN fra oppdraget, ikke verifikasjonshandlingen.
-    Attestasjonen skal binde til det fase 2 ber om.
+    `handling` er MÅLHANDLINGEN, ikke verifikasjonshandlingen. Beviset
+    skal binde til det fase 2 faktisk ber om; bandt det til
+    `verifiser.<vilkår>`, ville motoren gitt `attestasjon_feil_handling`.
     """
     p = o["payload"]
     naa = datetime.now(timezone.utc)
-    positiv = resultat == "positiv"
     return {
-        "protokollversjon": oppdragskontrakt.PROTOKOLLVERSJON,
-        "kvitteringstype": "verifikasjonskvittering_v1",
-        # --- motorens bindingsfelter ---------------------------------
         "tenant_id": o["tenant"],
         "handling": p["maalhandling"],
-        "vilkaar": p["vilkaar"],
+        "vilkaar": vilkaar,
         "ressurs_id": p["ressurs_id"],
         "policy_id": p["policy_id"],
-        "utstedt": (naa - timedelta(seconds=5)).isoformat(),
+        "utstedt": (naa - timedelta(seconds=alder_s)).isoformat(),
         "utloper": (naa + timedelta(minutes=levetid_min)).isoformat(),
         "jti": secrets.token_hex(16),
         "verifikator": verifikator,
         "resultat": positiv,
-        # --- fase-1-bindingene ---------------------------------------
+        # Et vilkår med `min:` i policyen krever en MÅLT verdi, ikke bare et
+        # ja. Verdien kommer fra kommandolinjen, ikke fra oppdraget: en
+        # verifikator som lot den som bestiller kontrollen bestemme hva
+        # svaret skal bli, ville ikke vært en verifikator. I produksjon er
+        # dette modulens egen måling mot den autoritative kilden.
+        **({"verdi": verdier[vilkaar]} if verdier and vilkaar in verdier else {}),
+    }
+
+
+def bygg_konvolutt(o: dict, *, verifikator: str, nokkel_id: str,
+                   hemmelighet: str, resultat: str = "positiv",
+                   permanent: bool = False, levetid_min: int = 60,
+                   alder_s: int = 5, verdier: dict | None = None) -> dict:
+    """ÉN ytre konvolutt over HELE settet (Scope v2 pkt. 3.1).
+
+    To lag med hvert sitt formål, og de er ikke utbyttbare:
+
+    - Den YTRE signaturen binder settet til oppdraget, saken og
+      generasjonen. Den er kvitteringens integritet — det er den API-et
+      verifiserer, og den som gjør at et vilkår ikke kan legges til eller
+      fjernes underveis.
+    - De INDRE signaturene gjør hver attestasjon brukbar som bevis for
+      policymotoren i fase 2, som verifiserer hver enkelt for seg.
+
+    Verifikatoren sender ALLE vilkårene i settet i én kvittering. Sender
+    den færre, blir generasjonen `negativ` og ingen bevis lagres — et
+    delvis sett er ikke et sett.
+    """
+    p = o["payload"]
+    positiv = resultat == "positiv"
+    status = {"positiv": "attestert", "negativ": "negativ",
+              "ikke_attesterbar": "ikke_attesterbar"}[resultat]
+    elementer = []
+    for vilkaar in p["vilkaar_sett"]:
+        e = {"vilkaar": vilkaar, "status": status, "permanent": permanent}
+        if status == "attestert":
+            e["attestasjon"] = attestering.signer(
+                bygg_attestasjon(o, vilkaar, verifikator=verifikator,
+                                 positiv=positiv, levetid_min=levetid_min,
+                                 alder_s=alder_s, verdier=verdier),
+                nokkel_id, hemmelighet)
+        else:
+            e["attestasjon"] = None
+        elementer.append(e)
+
+    return attestering.signer({
+        "protokollversjon": oppdragskontrakt.PROTOKOLLVERSJON,
+        "kvitteringstype": "verifikasjonskvittering_v1",
+        "tenant_id": o["tenant"],
         "oppdrag_id": o["oppdrag_id"],
         "unntak_id": o["unntak_id"],
         "fase1_repair_operation_id": o["repair_operation_id"],
         "verification_generation": o["verification_generation"],
-        "attestert_resultat": resultat,
-        "nokkel_id": o["_nokkel_id"],
-    }
+        "krav_sett_hash": p["krav_sett_hash"],
+        "verifikator": verifikator,
+        "nokkel_id": nokkel_id,
+        "utstedt": datetime.now(timezone.utc).isoformat(),
+        "attestasjoner": elementer,
+    }, nokkel_id, hemmelighet)
 
 
 def _post(api: str, sti: str, token: str, kropp: dict):
@@ -101,11 +151,13 @@ def _post(api: str, sti: str, token: str, kropp: dict):
 
 
 def verifiser_ett(api: str, token: str, verifikator: str, nokkel_id: str,
-                  hemmelighet: str, *, resultat: str = "positiv") -> dict | None:
-    """Én runde: claim ett verifikasjonsoppdrag, post én signert attestasjon.
+                  hemmelighet: str, *, resultat: str = "positiv",
+                  permanent: bool = False, alder_s: int = 5,
+                  verdier: dict | None = None) -> dict | None:
+    """Én runde: claim ett verifikasjonsoppdrag, post HELE settet én gang.
 
-    Returnerer metadata, eller None når køen er tom. Attestasjonens innhold
-    logges ALDRI — bare id-er.
+    Returnerer metadata, eller None når køen er tom. Attestasjonenes
+    innhold logges ALDRI — bare id-er og vilkårsnavn.
     """
     r = _post(api, "/v1/oppdrag/claim", token, {})
     if r.status_code == 204:
@@ -113,23 +165,27 @@ def verifiser_ett(api: str, token: str, verifikator: str, nokkel_id: str,
     if r.status_code != 200:
         raise RuntimeError(f"claim feilet: {r.status_code} {r.text[:200]}")
     o = r.json()
-    o["_nokkel_id"] = nokkel_id
     if o.get("verification_generation") is None:
         raise RuntimeError(
             "claim-responsen mangler verification_generation — uten den kan"
-            " attestasjonen ikke bindes til generasjonen som bestilte den")
+            " kvitteringen ikke bindes til generasjonen som bestilte den")
+    if not (o.get("payload") or {}).get("vilkaar_sett"):
+        raise RuntimeError(
+            "oppdraget bærer intet vilkaar_sett — form A krever at HELE"
+            " settet står i oppdraget, ellers kan fase 2 aldri bli komplett")
 
-    konvolutt = attestering.signer(
-        bygg_konvolutt(o, verifikator=verifikator, resultat=resultat),
-        nokkel_id, hemmelighet)
+    konvolutt = bygg_konvolutt(o, verifikator=verifikator, nokkel_id=nokkel_id,
+                               hemmelighet=hemmelighet, resultat=resultat,
+                               permanent=permanent, alder_s=alder_s,
+                               verdier=verdier)
 
     k = _post(api, "/v1/oppdrag/kvittering", token,
               {"kvittering_jti": o["kvittering_jti"], "konvolutt": konvolutt})
     if k.status_code not in (200, 202):
-        raise RuntimeError(f"attestasjon avvist: {k.status_code} {k.text[:300]}")
+        raise RuntimeError(f"kvittering avvist: {k.status_code} {k.text[:300]}")
     return {"oppdrag_id": o["oppdrag_id"], "unntak_id": o["unntak_id"],
-            "vilkaar": o["payload"]["vilkaar"], "svar": k.status_code,
-            "status": k.json().get("status")}
+            "vilkaar": list(o["payload"]["vilkaar_sett"]),
+            "svar": k.status_code, "status": k.json().get("status")}
 
 
 def main(argv=None) -> int:
@@ -139,7 +195,16 @@ def main(argv=None) -> int:
     p.add_argument("--runder", type=int, default=0, help="0 = til køen er tom")
     p.add_argument("--intervall", type=float, default=0.5)
     p.add_argument("--resultat", default="positiv",
-                   choices=("positiv", "negativ"))
+                   choices=("positiv", "negativ", "ikke_attesterbar"))
+    p.add_argument("--permanent", action="store_true", help=(
+        "verifikatoren påstår PRINSIPIELL u-innhentbarhet. Påstanden er"
+        " bare bindende hvis policyen har gitt den kan_fastsla_permanent"))
+    p.add_argument("--verdi", action="append", default=[], metavar="VILKAAR=N",
+                   help=("målt verdi for et vilkår med `min:` i policyen,"
+                         " f.eks. --verdi forfall_passert_dager=30"))
+    p.add_argument("--alder-s", type=int, default=5, help=(
+        "hvor gammel attestasjonen skal utstedes — for å måle policyens"
+        " maks_attestasjon_alder_s-tak"))
     a = p.parse_args(argv)
 
     krev_staging()
@@ -152,11 +217,22 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
+    verdier = {}
+    for par in a.verdi:
+        navn, _, raa = par.partition("=")
+        try:
+            verdier[navn] = int(raa) if raa.strip().lstrip("-").isdigit() \
+                else float(raa)
+        except ValueError:
+            print(f"AVBRUTT: --verdi {par!r} er ikke et tall", file=sys.stderr)
+            return 2
+
     behandlet, runde = 0, 0
     while a.runder == 0 or runde < a.runder:
         runde += 1
         res = verifiser_ett(a.api, token, verifikator, nokkel_id, hemmelighet,
-                            resultat=a.resultat)
+                            resultat=a.resultat, permanent=a.permanent,
+                            alder_s=a.alder_s, verdier=verdier)
         if res is None:
             if a.runder == 0:
                 break
@@ -164,7 +240,7 @@ def main(argv=None) -> int:
             continue
         behandlet += 1
         print(json.dumps(res, ensure_ascii=False), flush=True)
-    print(f"ferdig: {behandlet} vilkår attestert", file=sys.stderr)
+    print(f"ferdig: {behandlet} sett attestert", file=sys.stderr)
     return 0
 
 

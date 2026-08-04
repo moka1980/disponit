@@ -482,14 +482,27 @@ def _preauth_kapabilitet(conn: psycopg.Connection, jti: str,
         return None
     rad = conn.execute(
         "SELECT tenant, unntak_id, tillatt_handling, repair_operation_id,"
-        " claim_id, claim_generation FROM reserver_kapabilitet(%s, %s)",
+        " claim_id, claim_generation, aktor_rolle"
+        "  FROM reserver_kapabilitet(%s, %s)",
         (jti, request_id)).fetchone()
     if rad is None:
         return None
     kap = Kapabilitet(jti, rad[0], rad[1], rad[2], rad[3], rad[4], rad[5])
-    # `token_id` blir jti-en: aktøren i revisjonsloggen peker da på nøyaktig
-    # denne engangsfullmakten, ikke på «M-37» som kategori.
-    return Autentisert(kap.tenant, "m37", KAPABILITETSSCOPES, jti, kap)
+    # Rollen er sakens OPPRINNELIGE aktørrolle, frosset ved utstedelsen fra
+    # den reviderte loggposten — ikke en rolle M-37 har. Sto det `"m37"` her,
+    # ville reparasjonen krevd at kunden ga M-37 en egen fullmakt i policyen,
+    # og «null egne fullmakter» hadde vært en påstand uten mekanisme.
+    #
+    # MÅLT: med `"m37"` svarte motoren `rolle_ikke_tillatt` på hver eneste
+    # fase-2-beslutning, og saken gikk til manuell. Porten fantes; det var
+    # identiteten som ikke gjorde det.
+    #
+    # `token_id` blir fortsatt jti-en, så unntakshistorikken peker på nøyaktig
+    # denne engangsfullmakten, og `kilde='arbeidskapabilitet'` skiller
+    # reparasjonen fra den opprinnelige beslutningen i revisjonsloggen.
+    if not rad[6]:
+        return None
+    return Autentisert(kap.tenant, rad[6], KAPABILITETSSCOPES, jti, kap)
 
 
 def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
@@ -1359,26 +1372,25 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
                          kvittering: dict, rid: str, *, tenant: str,
                          oppdrag_id: int, unntak_id: int, jti: str,
                          owner_claim: str, owner_gen: int) -> Response:
-    """Lagrer et VERIFISERT bevis. Utfører aldri noe forretningsmessig.
+    """Lagrer HELE settet av verifiserte bevis. Utfører aldri noe.
 
-    Rekkefølgen, og hvorfor:
+    Rekkefølgen, og hvorfor hvert steg må ligge der det ligger:
 
-      1. FORM. Konvolutten må ha nøyaktig den deklarerte formen. Et ukjent
-         felt er en feil, ikke stillhet.
-      2. SIGNATUR. Verifisert i APP-LAGET, der nøkkelregisteret bor —
-         databasen ser aldri en nøkkel. `attestering.verifiser` slår opp
-         nøkkelen på konvoluttens `verifikator`-felt, så et selvrapportert
-         verifikator-navn som ikke eier nøkkelen faller her. Det er DEN
-         bindingen v2-delta pkt. 4 krever, og den er gratis fordi
-         signaturen allerede dekker feltet.
-      3. KRYPTERING. Attestasjonen er saksinnhold og lagres med tenantens
-         DEK, som alt annet. `integritet_hash` er over CIPHERTEXT — en hash
-         over klartekst ville vært et orakel, siden attestasjonen har få
-         utfall (v3-delta pkt. 3).
-      4. DATABASEN AVGJØR. `registrer_verifikasjonsbevis` er eneste
-         skrivevei og eneste serialiseringspunkt (GO-vilkår V1): den låser
-         generasjonsraden `FOR UPDATE`, og første committede resultat
-         vinner. App-laget gjør ALDRI statusskiftet selv.
+      1. **FORM.** Konvolutten må ha nøyaktig den deklarerte formen —
+         ukjent felt er en feil, ikke stillhet.
+      2. **SIGNATUR**, i APP-LAGET der nøkkelregisteret bor. Databasen ser
+         aldri en nøkkel. `attestering.verifiser` slår opp nøkkelen på
+         konvoluttens `verifikator`-felt, så en selvrapportert identitet
+         som ikke eier nøkkelen faller her.
+      3. **AKTIV AUTORITET** (Scope v2 pkt. 2). Verifikatoren må FORTSATT
+         være betrodd for HVERT vilkår i settet, målt mot aktiv policy —
+         ikke mot snapshotet. Snapshotet beviser forsøket; en tilbakekalt
+         fullmakt må fanges på nåtid.
+      4. **KRYPTERING** per attestasjon, med `integritet_hash` over
+         CIPHERTEXT. En hash over klartekst ville vært et orakel: en
+         attestasjon har få utfall, og en dump kunne gjettet innholdet.
+      5. **DATABASEN AVGJØR.** `registrer_verifikasjonsbevis` er eneste
+         skrivevei og eneste serialiseringspunkt (GO-vilkår V1).
     """
     from policy_validator import attestering
 
@@ -1396,9 +1408,14 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdrag_id=oppdrag_id)
         return _feilsvar("kvittering_signatur_ugyldig", rid)
 
-    # Konvolutten er SAMMENLIGNINGSGRUNNLAG, ikke autoritativ kilde: de
-    # DB-bundne feltene kontrolleres inne i funksjonen mot radene. Her
-    # stopper vi bare det som er billig og åpenbart galt.
+    if konvolutt.get("nokkel_id") != (konvolutt.get("signatur") or {}).get(
+            "nokkel_id"):
+        # Toppfeltet er det vi LAGRER som bevisets nøkkel-id; signaturens er
+        # den vi faktisk verifiserte med. Spriker de, ville revisjonssporet
+        # pekt på en annen nøkkel enn den som beviste noe.
+        conn.rollback()
+        return _feilsvar("kvittering_signatur_ugyldig", rid)
+
     if konvolutt.get("tenant_id") != tenant \
             or konvolutt.get("oppdrag_id") != oppdrag_id \
             or konvolutt.get("unntak_id") != unntak_id:
@@ -1407,26 +1424,107 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdrag_id=oppdrag_id, grunn="binding")
         return _feilsvar("kvittering_signatur_ugyldig", rid)
 
+    # --- 3. Aktiv autoritet, per vilkår ---------------------------------
+    sett_kontekst(conn, tenant, auth.aktor, rid)
+    try:
+        policy_ref = conn.execute(
+            "SELECT r.policy_id, u.handling FROM revisjonslogg r JOIN unntak u"
+            "   ON u.tenant=r.tenant AND u.loggpost_id=r.id"
+            " WHERE u.tenant=%s AND u.id=%s", (tenant, unntak_id)).fetchone()
+        from policy_validator.engine import les_policyref
+        ref = les_policyref(policy_ref[0]) if policy_ref else None
+        prad = conn.execute(
+            "SELECT innhold FROM policyer WHERE tenant=%s AND policy_id=%s"
+            "   AND aktiv", (tenant, ref[0])).fetchone() if ref else None
+    except psycopg.Error:
+        raise
+    if prad is None or not isinstance(prad[0], dict):
+        conn.rollback()
+        return _feilsvar("policy_ukjent", rid)
+    policy = prad[0]
+
+    verifikator = konvolutt["verifikator"]
+    betrodd_alle = True
+    for e in konvolutt["attestasjoner"]:
+        trusted = {vid for vid, v in (policy.get("verifikatorer") or {}).items()
+                   if isinstance(v, dict)
+                   and e["vilkaar"] in (v.get("betrodd_for") or [])}
+        if verifikator not in trusted:
+            betrodd_alle = False
+            break
+    if not betrodd_alle:
+        # Tilbakekalt eller aldri gitt fullmakt for ett av vilkårene ⇒ HELE
+        # kvitteringen avvises. Et delvis betrodd sett er ikke et sett.
+        conn.rollback()
+        tjeneste.logg.hendelse("kvittering_signatur_ugyldig", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="autoritet_tilbakekalt_ved_ingest")
+        return _feilsvar("kvittering_signatur_ugyldig", rid)
+
+    # v7 pkt. 1: policyen kan sette et TAK på attestasjonslevetid for
+    # handlingen. Taket overstyrer verifikatorens eget `utloper` — en
+    # verifikator som setter utløp ett år frem kan ikke selv utvide hvor
+    # gammelt et faktum tenanten godtar.
+    # MÅLHANDLINGEN kommer fra saken, ikke fra policyreferansen:
+    # `les_policyref` returnerer (policy_id, VERSJON), ikke handlingen.
+    # Med `ref[1]` sto det «1.0.0» der en handlings-id skulle stå, oppslaget
+    # traff ingenting, og taket var stille fraværende — altså en kontroll
+    # som så ut til å finnes og aldri kunne fyre.
+    handling_def = next(
+        (h for h in (policy.get("handlinger") or [])
+         if isinstance(h, dict) and h.get("id") == policy_ref[1]), {})
+    tak = handling_def.get("maks_attestasjon_alder_s")
+    tak = tak if isinstance(tak, int) and not isinstance(tak, bool) \
+        and tak > 0 else None
+
+    # Scope v2 pkt. 5: `betrodd_for` gir rett til å ATTESTERE et vilkår.
+    # Å erklære det prinsipielt uinnhentbart er en annen og større fullmakt
+    # — uten den behandles `permanent` som en forbigående negativ, og saken
+    # bruker retry-budsjett i stedet for å låses manuelt av en påstand
+    # verifikatoren ikke hadde rett til å fremsette.
+    kan_permanent = bool(
+        ((policy.get("verifikatorer") or {}).get(verifikator) or {})
+        .get("kan_fastsla_permanent"))
+
+    # --- 4. Krypter hver attestasjon ------------------------------------
     try:
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
-        ct, nonce = kryptering.krypter(dek, konvolutt, tenant, key_id)
     except psycopg.Error:
         raise
     except Exception:
         conn.rollback()
         return _feilsvar("tenantnokkel_mangler", rid)
-    integritet = hashlib.sha256(bytes(ct)).hexdigest()
+
+    naa = datetime.now(timezone.utc)
+    resultater = []
+    for e in konvolutt["attestasjoner"]:
+        att = e.get("attestasjon") or {}
+        utstedt = attestering.tid_med_sone(att.get("utstedt")) if att else None
+        if att and (utstedt is None
+                    or (tak is not None
+                        and (naa - utstedt).total_seconds() > tak)):
+            conn.rollback()
+            tjeneste.logg.hendelse("attestasjon_for_gammel", rid, tenant,
+                                   oppdrag_id=oppdrag_id,
+                                   vilkaar=e["vilkaar"], tak=tak)
+            return _feilsvar("attestasjon_for_gammel", rid)
+        ct, nonce = kryptering.krypter(dek, att or {}, tenant, key_id)
+        gyldig = attestering.tid_med_sone(att.get("utloper")) if att else naa
+        resultater.append({
+            "vilkaar": e["vilkaar"], "status": e["status"],
+            "permanent": bool(e.get("permanent")) and kan_permanent,
+            "attestasjon_kryptert": bytes(ct).hex(),
+            "key_id": key_id, "nonce": bytes(nonce).hex(),
+            "integritet_hash": hashlib.sha256(bytes(ct)).hexdigest(),
+            "gyldig_til": (gyldig or naa).isoformat(),
+        })
 
     utfall = conn.execute(
-        "SELECT registrer_verifikasjonsbevis(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-        "%s,%s,%s,%s)",
-        (oppdrag_id, _resultathash(konvolutt),
-         konvolutt["attestert_resultat"],
-         attestering.tid_med_sone(konvolutt.get("utloper")),
-         konvolutt["verifikator"], konvolutt["nokkel_id"],
+        "SELECT registrer_verifikasjonsbevis(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (oppdrag_id, oppdragskontrakt.resultathash_verifikasjon(konvolutt),
+         konvolutt["krav_sett_hash"], verifikator, konvolutt["nokkel_id"],
          (konvolutt.get("signatur") or {}).get("verdi"),
-         konvolutt["vilkaar"], ct, key_id, nonce, integritet,
-         owner_claim, owner_gen)).fetchone()[0]
+         json.dumps(resultater), owner_claim, owner_gen)).fetchone()[0]
 
     if utfall == "avvist":
         conn.rollback()
@@ -1434,7 +1532,7 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdrag_id=oppdrag_id, grunn="db_binding")
         return _feilsvar("kvittering_signatur_ugyldig", rid)
     if utfall == "konflikt":
-        conn.commit()          # konfliktevidensen er skrevet
+        conn.commit()
         tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
                                oppdrag_id=oppdrag_id, fase="verifikasjon")
         return _feilsvar("kvittering_konflikt", rid)
@@ -1443,9 +1541,10 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
         return kanonisk_json({"status": "idempotent", "oppdrag_id": oppdrag_id,
                               "request_id": rid}, 200, {"x-request-id": rid})
 
-    # Kapabiliteten forbrukes i SAMME commit som beviset.
-    brukt = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                         (jti, _resultathash(konvolutt))).fetchone()[0]
+    brukt = conn.execute(
+        "SELECT bruk_kvitteringskapabilitet(%s,%s)",
+        (jti, oppdragskontrakt.resultathash_verifikasjon(konvolutt))
+    ).fetchone()[0]
     if brukt not in ("brukt", "idempotent"):
         conn.rollback()
         tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant)
@@ -1457,10 +1556,10 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
         (tenant, unntak_id,
          "verifikasjon_positiv" if utfall == "positiv" else "verifikasjon_negativ",
          auth.aktor, rid,
-         json.dumps({"oppdrag_id": oppdrag_id,
-                     "vilkaar": konvolutt["vilkaar"],
-                     "generation": konvolutt["verification_generation"],
-                     "utfall": utfall}, ensure_ascii=False)))
+         json.dumps({"oppdrag_id": oppdrag_id, "utfall": utfall,
+                     "vilkaar": [e["vilkaar"] for e in resultater],
+                     "generation": konvolutt["verification_generation"]},
+                    ensure_ascii=False)))
     conn.commit()
     return kanonisk_json({"status": utfall, "oppdrag_id": oppdrag_id,
                           "unntak_id": unntak_id, "request_id": rid},

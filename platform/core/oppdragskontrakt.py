@@ -265,10 +265,16 @@ def krav_sett_hash(krav_sett: dict) -> str:
 #: i fase 2. To lag med hvert sitt formål: den ytre binder settet til
 #: oppdraget og generasjonen, de indre gjør hver attestasjon brukbar som
 #: bevis for policyporten.
+#: AVVIK FRA SPEKKEN, bevisst: feltet heter `verifikator`, ikke
+#: `verifikator_id` (v2-delta pkt. 4). `attestering.verifiser` slår opp
+#: nøkkelen på `att["verifikator"]`, og det er den ENE signaturverifiseringen
+#: i systemet. Å kalle feltet noe annet her ville krevd en andre kopi av
+#: HMAC-koden bare for konvolutten — en signaturkontroll nr. 2 er nøyaktig
+#: den typen duplikat som gir divergerende sikkerhet.
 VERIFIKASJONSKVITTERING_FELTER = frozenset({
     "protokollversjon", "kvitteringstype", "tenant_id", "oppdrag_id",
     "unntak_id", "fase1_repair_operation_id", "verification_generation",
-    "krav_sett_hash", "verifikator_id", "nokkel_id", "utstedt",
+    "krav_sett_hash", "verifikator", "nokkel_id", "utstedt",
     "attestasjoner", "kanonisering", "signatur",
 })
 VERIFIKASJONSKVITTERING_PAAKREVDE = frozenset(
@@ -314,7 +320,7 @@ def valider_verifikasjonskvittering(kropp: object) -> list[str]:
     if kropp.get("protokollversjon") != PROTOKOLLVERSJON:
         feil.append(f"protokollversjon={kropp.get('protokollversjon')!r},"
                     f" krever {PROTOKOLLVERSJON}")
-    for felt in ("tenant_id", "verifikator_id", "nokkel_id", "utstedt",
+    for felt in ("tenant_id", "verifikator", "nokkel_id", "utstedt",
                  "krav_sett_hash"):
         if not isinstance(kropp.get(felt), str) or not str(kropp.get(felt)).strip():
             feil.append(f"{felt} må være en ikke-tom streng")

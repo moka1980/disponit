@@ -100,6 +100,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "To ulike resultathasher for samme oppdrag. Aldri «siste vinner».")),
     Feilvei("kvittering_for_sen", 410, ("avvis",), None, notat=(
         "Etter evidensfristen. Administrativ import er utenfor PR-006.")),
+    # --- PR-007: verifikasjonskvitteringen ------------------------------
+    Feilvei("attestasjon_for_gammel", 403, ("sikkerhet",), "sikkerhet", notat=(
+        "Policyens `maks_attestasjon_alder_s` er et TAK verifikatoren ikke"
+        " kan heve med sitt eget `utloper` (v7 pkt. 1). Sikkerhetssak fordi"
+        " en for gammel attestasjon som slipper gjennom er et faktum ingen"
+        " lenger står inne for.")),
     Feilvei("modul_inaktiv", 503, ("drift",), None, notat=(
         "Rollback-kontrakten (rollback-m01-v1): modulen er deaktivert i"
         " registeret, og API-et svarer definert i stedet for å feile.")),

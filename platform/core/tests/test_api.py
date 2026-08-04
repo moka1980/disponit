@@ -125,6 +125,11 @@ def _rydd(migrator, *tenanter: str) -> None:
             migrator.execute(f"DELETE FROM {tabell} WHERE tenant=%s", (tenant,))
     migrator.execute("DELETE FROM api_tokener WHERE tenant = ANY(%s)",
                      (list(tenanter),))
+    # PR-007: `verifikasjonsgenerasjon.bevis_id` er en UTSATT fremmednøkkel
+    # (DEFERRABLE INITIALLY DEFERRED). Slettingen over etterlater ventende
+    # hendelser helt til commit, og `ALTER TABLE ... ENABLE TRIGGER` nekter
+    # da med «pending trigger events». Her tvinges de til å fyre først.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} ENABLE TRIGGER {trigger}")
     migrator.commit()
