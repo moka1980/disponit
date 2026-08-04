@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 
 import psycopg
 
+from policy_validator.engine import les_policyref
+
 LEGACY = "legacy"
 AKTOR = "migrasjon:m37-backfill"
 
@@ -64,7 +66,8 @@ class Resultat:
 
 
 def _historisk_policy(conn: psycopg.Connection, tenant: str, policy_id: str,
-                      logg_hash: str) -> tuple[str, int] | str:
+                      logg_hash: str, *, forventet_versjon: str | None = None
+                      ) -> tuple[str, int] | str:
     """-> (versjon, maks_auto_forsok) eller en grunnkode som streng.
 
     Hele identiteten brukes (GO-vilkår V2): tenant + policy_id +
@@ -97,6 +100,11 @@ def _historisk_policy(conn: psycopg.Connection, tenant: str, policy_id: str,
     meta = innhold.get("meta") or {}
     if meta.get("versjon") != versjon or meta.get("policy_id") != policy_id:
         return "meta_avvik"
+    # HELE identiteten (GO-vilkår V2): versjonen fra revisjonsloggens egen
+    # referanse må stemme med registerraden vi fant. Uten dette ville
+    # tenant+policy_id+hash pekt ut en rad hvis versjon vi aldri sjekket.
+    if forventet_versjon is not None and versjon != forventet_versjon:
+        return "versjonsavvik"
     if valider_policy(innhold):
         return "policy_ugyldig"
 
@@ -123,10 +131,16 @@ def _backfill_tenant(conn: psycopg.Connection, tenant: str,
 
     for unntak_id, status, policy_id, logg_hash in rader:
         utfall: tuple[str, int] | str
-        if not policy_id or not logg_hash:
+        # `revisjonslogg.policy_id` er en POLICYREFERANSE
+        # (`<policy_id>@<versjon>/<handling>`), ikke en policy-id. Å slå opp
+        # `WHERE policy_id = <referanse>` traff aldri noe, og HVER rad ble
+        # legacy + manuell. Oppdaget på staging: 4200 av 4200.
+        ref = les_policyref(policy_id)
+        if ref is None or not logg_hash:
             utfall = "loggpost_uten_policyidentitet"
         else:
-            utfall = _historisk_policy(conn, tenant, policy_id, logg_hash)
+            utfall = _historisk_policy(conn, tenant, ref[0], logg_hash,
+                                       forventet_versjon=ref[1])
 
         if isinstance(utfall, tuple):
             versjon, maks = utfall

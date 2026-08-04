@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import CORE
+from .conftest import CORE, POLICIES
 from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, NOKLER, TENANT, _lag_token, _rydd,
                        attestasjon, dekker, hendelse, migrator, miljo,  # noqa: F401
                        malpolicy, policy, post, token)                  # noqa: F401
@@ -250,15 +250,37 @@ def _sett_kontekst(conn, tenant, aktor="test", rid="r"):
                  (tenant, aktor, rid))
 
 
+#: Policy-id-en fixturene later som saken ble besluttet under.
+FIXTURE_POLICY_ID = "tjenestebedrift-no"
+
+
+def _policyref(policy_id=FIXTURE_POLICY_ID, versjon="1.0.0",
+               handling="purring.send"):
+    """NØYAKTIG det motoren skriver i `revisjonslogg.policy_id`.
+
+    Fixturene skrev tidligere en bar `'p'` her. Den forskjellen mot
+    produksjonsformen `<policy_id>@<versjon>/<handling>` er hele grunnen
+    til at tre kallsteder kunne lese kolonnen som en policy-id og bestå 341
+    tester — mens arbeideren i virkeligheten klassifiserte HVER sak som
+    `manuell`. En fixture uten produksjonens FORM beviser transport, ikke
+    produksjon.
+    """
+    from policy_validator.engine import _pid
+    return _pid({"meta": {"policy_id": policy_id, "versjon": versjon}},
+                handling)
+
+
 def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send",
-             snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal"):
+             snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal",
+             policy_id=FIXTURE_POLICY_ID):
     """En unntaksrad med policysnapshot, som API-veien ville laget den."""
     _sett_kontekst(conn, tenant)
     logg = conn.execute(
         "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash, policy_id,"
         " beslutning, begrunnelse, policy_content_hash)"
-        " VALUES (%s,'test','test','ih','p','UNNTAK','[]',%s) RETURNING id",
-        (tenant, hash_)).fetchone()[0]
+        " VALUES (%s,'test','test','ih',%s,'UNNTAK','[]',%s) RETURNING id",
+        (tenant, _policyref(policy_id, versjon, handling),
+         hash_)).fetchone()[0]
     from db import kryptering
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
     ct, nonce = kryptering.krypter(
@@ -827,9 +849,9 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
     migrator.execute("ALTER TABLE revisjonslogg DISABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
     migrator.execute(
-        "UPDATE revisjonslogg SET policy_id='pbf' WHERE tenant=%s AND id="
+        "UPDATE revisjonslogg SET policy_id=%s WHERE tenant=%s AND id="
         "(SELECT loggpost_id FROM unntak WHERE tenant=%s AND id=%s)",
-        (TENANT, TENANT, med_evidens))
+        (_policyref("pbf", "2.0.0"), TENANT, TENANT, med_evidens))
     migrator.execute("ALTER TABLE revisjonslogg ENABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
@@ -1912,3 +1934,126 @@ def test_P1_forbrukets_fire_utfall_er_uttommende(migrator, miljo, token):
                        (jti_b, "c" * 64))[0] == "ugyldig"
     finally:
         app.tjeneste.pool.lukk()
+
+
+# ===========================================================================
+# Post-merge P1: revisjonslogg.policy_id er en REFERANSE, ikke en policy-id
+# ===========================================================================
+
+def test_policyref_rundtur_bygger_og_leser_samme_format():
+    """`_pid` bygger, `les_policyref` leser. De må aldri gli fra hverandre.
+
+    Skjemaet gjør formatet entydig: `policy_id` er `^[a-z0-9-]+$` og
+    `versjon` er `^\\d+\\.\\d+\\.\\d+$`, så verken `@` eller `/` kan
+    forekomme i dem. Handlingen kan inneholde begge deler uten at det gjør
+    noe — og det er nettopp derfor parsingen er trygg.
+    """
+    from policy_validator.engine import _pid, les_policyref
+    pol = {"meta": {"policy_id": "tjenestebedrift-no", "versjon": "0.2.0"}}
+    for handling in ("purring.send", "a-b.c", "x/y@z", "ukjent"):
+        assert les_policyref(_pid(pol, handling)) == ("tjenestebedrift-no",
+                                                      "0.2.0"), handling
+    # Fail-closed: aldri en gjetning når formen ikke stemmer.
+    for ugyldig in ("tjenestebedrift-no", "", None, 12, "a@b/c",
+                    "STORE@0.2.0/x", "a@0.2/x"):
+        assert les_policyref(ugyldig) is None, ugyldig
+
+
+@pg
+def test_arbeideren_finner_policyen_paa_produksjonsformet_loggpost(migrator):
+    """Regresjonstesten for P1-et som overlevde 341 grønne tester.
+
+    Saken her er skrevet slik API-VEIEN faktisk skriver den — med
+    `<policy_id>@<versjon>/<handling>` i `revisjonslogg.policy_id`. Før
+    fiksen ga `_aktiv_policy` None, og arbeideren klassifiserte saken som
+    `manuell` med `aktiv_policy_utilgjengelig`. M-37 behandlet altså
+    INGENTING på ekte data, og ingen test merket det — fordi fixturene
+    skrev en bar `'p'` i den kolonnen.
+
+    MUTASJONEN SOM DREPER DENNE: la `_aktiv_policy` bruke `rad[0]` direkte
+    i stedet for `les_policyref(rad[0])[0]`.
+    """
+    import yaml
+    from api.policyregister import innholds_hash, registrer
+    from db.pg import koble
+    from m37 import arbeider
+
+    pol = yaml.safe_load(
+        (POLICIES / "bransjemal-tjenestebedrift.yaml").read_text(
+            encoding="utf-8"))
+    _sett_kontekst(migrator, TENANT)
+    registrer(migrator, TENANT, pol, pol["meta"]["status"])
+    migrator.commit()
+
+    sak, _ = _lag_sak(migrator, TENANT, hash_=innholds_hash(pol),
+                      policy_id=pol["meta"]["policy_id"],
+                      versjon=pol["meta"]["versjon"])
+
+    rt = koble(DSN)
+    try:
+        cid = arbeider._claim_id()
+        s = arbeider.claim(rt, cid)
+        assert s is not None and s.id == sak
+        plan, _ = arbeider.planlegg(rt, s, cid)
+        assert plan.grunn != "aktiv_policy_utilgjengelig", (
+            "arbeideren fant ikke den aktive policyen på en"
+            " produksjonsformet loggpost — M-37 ville klassifisert HVER sak"
+            " som manuell")
+        assert plan.utfall == "oppdrag", f"{plan.utfall}: {plan.grunn}"
+    finally:
+        rt.close()
+
+
+@pg
+def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
+                                                                malpolicy):
+    """Samme rotårsak, andre kallsted.
+
+    På staging ga den 0 av 4200 fra evidens — samtlige rader ble legacy +
+    manuell, og snapshotkolonnene er kolonnelåste etterpå. En feil som
+    degraderer data permanent, i stillhet.
+    """
+    import copy
+    from api.policyregister import innholds_hash
+    from db import m37_backfill
+
+    ekte = copy.deepcopy(malpolicy)
+    ekte["meta"] = dict(ekte["meta"], policy_id="bfref", versjon="3.0.0")
+    h = innholds_hash(ekte)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
+        " status, innhold, aktiv) VALUES (%s,'bfref','3.0.0',%s,%s,%s,false)"
+        " ON CONFLICT DO NOTHING",
+        (TENANT, h, ekte["meta"]["status"], json.dumps(ekte)))
+    migrator.commit()
+
+    sak, _ = _lag_sak(migrator, TENANT, hash_=h, policy_id="bfref",
+                      versjon="3.0.0")
+    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
+                     " maks_auto_forsok_snapshot DROP NOT NULL,"
+                     " ALTER COLUMN policy_versjon DROP NOT NULL,"
+                     " ALTER COLUMN policy_content_hash DROP NOT NULL")
+    migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE unntak SET maks_auto_forsok_snapshot=NULL, policy_versjon=NULL,"
+        " policy_content_hash=NULL WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
+    migrator.commit()
+
+    res = m37_backfill.backfill(migrator)
+    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
+                     " maks_auto_forsok_snapshot SET NOT NULL,"
+                     " ALTER COLUMN policy_versjon SET NOT NULL,"
+                     " ALTER COLUMN policy_content_hash SET NOT NULL")
+    migrator.commit()
+
+    assert res.fra_evidens >= 1, (
+        f"backfillen fant ingen evidens på en produksjonsformet loggpost: {res}")
+    _sett_kontekst(migrator, TENANT)
+    rad = migrator.execute(
+        "SELECT policy_versjon, status FROM unntak WHERE tenant=%s AND id=%s",
+        (TENANT, sak)).fetchone()
+    migrator.rollback()
+    assert rad == ("3.0.0", "ny"), rad

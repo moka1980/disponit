@@ -66,7 +66,14 @@ APPEND_ONLY_TRIGGERE = (
 #: Ryddes noe i feil rekkefølge, feiler slettingen på en fremmednøkkel —
 #: og fixturen ville rapportert en «feil» som i virkeligheten er databasen
 #: som gjør jobben sin.
-RYDDETABELLER = ("oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
+#: Kapabilitetene ryddes FØRST og per tenant. De har ingen fremmednøkkel
+#: til `unntak` (bindingen håndheves av en trigger ved INSERT), men de
+#: refererer saker som er i ferd med å bli slettet — og viktigere: uten
+#: opprydding hoper de seg opp på tvers av kjøringer, mens
+#: `frigi_hengende_kapabiliteter()` er GLOBAL. Da feiler suiten på ulikt
+#: sted mellom kjøringer, og måler tilfeldigheter i stedet for kode.
+RYDDETABELLER = ("arbeidskapabiliteter", "kvitteringskapabiliteter",
+                 "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
                  "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
                  "policyer", "tenant_nokler", "frekvens_hendelser")
 

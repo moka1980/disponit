@@ -1274,6 +1274,21 @@ REVOKE ALL ON FUNCTION tenanter_uten_policysnapshot() FROM PUBLIC;
 -- virkningsløst på samme tid.
 GRANT EXECUTE ON FUNCTION tenanter_uten_policysnapshot() TO SESSION_USER;
 
+-- Skjemaeieren får rydde kapabilitetstabellene.
+--
+-- Det svekker ingenting: kapabilitetsmodellen beskytter mot RUNTIME, som
+-- verken har tabelltilgang eller kan SET ROLE hit. Migrator eier skjemaet
+-- og kunne uansett droppe tabellene — å nekte den DELETE var derfor ikke
+-- en kontroll, bare en ulempe.
+--
+-- Ulempen var reell: testsuiten kunne ikke rydde radene, de hopet seg opp
+-- på tvers av kjøringer, og `frigi_hengende_kapabiliteter()` er global.
+-- Resultatet var tester som feilet på ULIKT sted mellom kjøringer. En
+-- suite som ikke er hermetisk, måler tilfeldigheter.
+-- SELECT trengs også: en `DELETE ... WHERE tenant=…` må lese kolonnen.
+GRANT SELECT, DELETE ON public.arbeidskapabiliteter TO SESSION_USER;
+GRANT SELECT, DELETE ON public.kvitteringskapabiliteter TO SESSION_USER;
+
 -- Tilbake til migrator for resten av filen. Uten denne linjen ville
 -- kjøreren forsøkt å skrive sin egen `migrasjoner`-rad som eierrollen,
 -- som ikke har rettigheter på den tabellen.
