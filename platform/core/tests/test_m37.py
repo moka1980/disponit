@@ -2146,3 +2146,38 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
         (TENANT, sak)).fetchone()
     migrator.rollback()
     assert rad == ("3.0.0", "ny"), rad
+
+
+@pg
+def test_policy_id_setter_sin_egen_tenantkontekst(migrator):
+    """P1 funnet ved å kjøre HELE kjeden som tre prosesser.
+
+    `_policy_id` kalles ETTER at `planlegg()` har committet, og `SET LOCAL`
+    forsvinner ved commit. Uten egen kontekst så row level security null
+    rader, funksjonen ga `''`, og API-et svarte 404 `policy_ukjent` på HVER
+    reparasjon — outbox-veien var uoppnåelig i produksjon.
+
+    Testen kaller den på en tilkobling som BEVISST mangler kontekst. Det er
+    hele poenget: enhetstestene så aldri feilen fordi de arbeider på en
+    tilkobling der konteksten alt er satt av noe annet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `sett_kontekst(...)` fra `_policy_id`.
+    """
+    from db.pg import koble
+    from m37 import arbeider
+
+    sak_id, logg = _lag_sak(migrator, TENANT)
+    sak = arbeider.Sak(TENANT, sak_id, "purring.send", "manglende_data",
+                       logg, 1, None, 1, 3)
+
+    rt = koble(DSN)
+    try:
+        # Ingen `disponit.tenant` her — nøyaktig som etter en commit.
+        assert rt.execute(
+            "SELECT count(*) FROM revisjonslogg").fetchone()[0] == 0, \
+            "tilkoblingen har kontekst; da måler testen ikke det den skal"
+        assert arbeider._policy_id(rt, sak) == FIXTURE_POLICY_ID, (
+            "_policy_id fant ikke policyen på en tilkobling uten kontekst —"
+            " hver reparasjon ville fått 404 policy_ukjent")
+    finally:
+        rt.close()
