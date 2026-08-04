@@ -654,7 +654,19 @@ def _policy_id(conn: psycopg.Connection, sak: Sak) -> str:
 
     Sendte vi referansen videre til `/v1/beslutning`, ville hver eneste
     reparasjon fått 404 `policy_ukjent`.
+
+    KONTEKSTEN SETTES HER. Funksjonen kalles ETTER at `planlegg()` har
+    committet, og `SET LOCAL` forsvinner ved commit — så tilkoblingen har
+    ingen `disponit.tenant` på dette tidspunktet. Uten den ser row level
+    security null rader, oppslaget ga `''`, og API-et svarte 404
+    `policy_ukjent` på HVER reparasjon. Outbox-veien var dermed uoppnåelig
+    i produksjon: ingen oppdrag kunne noensinne opprettes.
+
+    Funnet ved å kjøre hele kjeden som tre prosesser — API, arbeider og
+    eiermodul — ikke ved å lese. Enhetstestene så det aldri, fordi de
+    kaller funksjonene på en tilkobling der konteksten alt er satt.
     """
+    sett_kontekst(conn, sak.tenant, AKTOR, "policyoppslag")
     rad = conn.execute(
         "SELECT policy_id FROM revisjonslogg WHERE tenant=%s AND id=%s",
         (sak.tenant, sak.loggpost_id)).fetchone()
