@@ -186,9 +186,54 @@ def _svarkropp(d, policy_content_hash: str | None, request_id: str,
 # Unntaksraden
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class Policysnapshot:
+    """Policykonteksten saken FØDES med (PR-006 v2 pkt. 6).
+
+    Uten snapshot bestemmes en gammel saks retrysemantikk av policyen slik
+    den ser ut NÅ. Da kan en redigering i dag endre hvor mange automatiske
+    forsøk en sak fra i fjor får — altså i ettertid, uten spor. Snapshotet
+    fryser tre ting på saken: hvilken policyversjon som gjaldt, hashen av
+    innholdet, og forsøksgrensen.
+
+    Behandlingen re-evaluerer likevel alltid mot AKTIV policy; snapshotet
+    styrer bare retry og gjør avvik synlige (historikkhendelsen
+    `policy_endret_siden_opprettelse`).
+    """
+    versjon: str
+    innholds_hash: str
+    maks_auto_forsok: int
+
+    @classmethod
+    def fra_policy(cls, policy: dict, innholds_hash: str) -> "Policysnapshot":
+        meta = policy.get("meta") or {}
+        maks = (policy.get("unntak") or {}).get("maks_auto_forsok")
+        # `bool` er subklasse av `int` — samme felle som i manifestporten.
+        if isinstance(maks, bool) or not isinstance(maks, int) or maks < 0:
+            return UKJENT_SNAPSHOT
+        versjon = meta.get("versjon")
+        if not isinstance(versjon, str) or not versjon:
+            return UKJENT_SNAPSHOT
+        return cls(versjon, innholds_hash, maks)
+
+
+#: Saker som oppstår FØR policyen er lastet — attestasjonsbrudd i steg 4 —
+#: har ingen policykontekst å fryse. De får en reservert verdi og
+#: forsøksgrense 0.
+#:
+#: Null er ikke en tilfeldig standardverdi: claim-funksjonen krever
+#: `forsok < LEAST(snapshot, 3)`, som er usann for enhver forsok-verdi når
+#: snapshotet er 0. En sak uten kjent policykontekst kan altså ikke
+#: behandles automatisk — ikke fordi noen husket å sjekke, men fordi
+#: aritmetikken gjør det umulig. (De er dessuten `sakstype='sikkerhet'`,
+#: som normal-arbeideren aldri claimer. To uavhengige grunner.)
+UKJENT_SNAPSHOT = Policysnapshot("<ukjent>", "<ukjent>", 0)
+
+
 def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
                   handling: str, kategori: str, sakstype: str,
-                  prioritet: str, payload: dict) -> int:
+                  prioritet: str, payload: dict,
+                  snapshot: "Policysnapshot") -> int:
     """Kryptert unntaksrad i SAMME transaksjon som loggposten.
 
     Rekkefølgen er tvungen av databasen: fremmednøkkelen
@@ -208,10 +253,13 @@ def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
     ct, nonce = kryptering.krypter(dek, payload, tenant, key_id)
     rad = conn.execute(
         "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
-        " sakstype, prioritet, payload_kryptert, key_id, alg, nonce)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s) RETURNING id",
+        " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
+        " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s)"
+        " RETURNING id",
         (tenant, loggpost_id, handling, kategori, sakstype, prioritet,
-         ct, key_id, nonce)).fetchone()
+         ct, key_id, nonce, snapshot.maks_auto_forsok, snapshot.versjon,
+         snapshot.innholds_hash)).fetchone()
     return int(rad[0])
 
 
@@ -219,10 +267,41 @@ def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
 # Hovedflyten
 # ---------------------------------------------------------------------------
 
+def _krev_kapabilitet(conn: psycopg.Connection, kap, event: dict,
+                      idempotency_key: str, handling: str) -> None:
+    """Revalider arbeidskapabiliteten mot UNNTAKSRADEN (v4-delta pkt. 1.2).
+
+    Utstedelsesverdiene alene er ikke nok, og det er hele forskjellen på en
+    kapabilitet og et bearer-token. Mellom utstedelse og bruk kan leasen ha
+    gått tapt, saken kan ha fått ny generasjon, og en annen arbeider kan ha
+    overtatt. Sjekker vi bare det kapabiliteten SIER om seg selv, godkjenner
+    vi en påstand fra utstedelsestidspunktet som om den var sann nå.
+
+    Tre bindinger håndheves i tillegg, alle fra v3-delta pkt. 1:
+      * handlingen må være NØYAKTIG den kapabiliteten ble utstedt for,
+      * idempotensnøkkelen må VÆRE repair_operation_id — ellers kan én
+        kapabilitet gi to ulike forretningshandlinger,
+      * tenanten kommer fra kapabiliteten, aldri fra kroppen.
+    """
+    if handling != kap.tillatt_handling:
+        raise Feilsvar("kapabilitet_feil_handling",
+                       f"{handling} != {kap.tillatt_handling}")
+    if idempotency_key != kap.repair_operation_id:
+        raise Feilsvar("kapabilitet_feil_idempotensnokkel")
+    rad = conn.execute(
+        "SELECT 1 FROM unntak WHERE tenant=%s AND id=%s AND claim_id=%s"
+        "   AND claim_generation=%s AND status='under_behandling'"
+        "   AND claim_utloper > now()",
+        (kap.tenant, kap.unntak_id, kap.claim_id,
+         kap.claim_generation)).fetchone()
+    if rad is None:
+        raise Feilsvar("kapabilitet_fencing_tapt")
+
+
 def behandle(conn: psycopg.Connection, ctx, *, policy_id: str, event: dict,
              idempotency_key: str, request_id: str, aktor: str,
              nokler: dict, naa: datetime | None = None,
-             sporing: Sporing | None = None) -> Svar:
+             sporing: Sporing | None = None, kapabilitet=None) -> Svar:
     """De elleve stegene. Én transaksjon, ett commit-punkt.
 
     Kaller aldri `conn.commit()`/`conn.rollback()` andre steder enn her, og
@@ -241,7 +320,8 @@ def behandle(conn: psycopg.Connection, ctx, *, policy_id: str, event: dict,
         svar = _flyt(vakt, ctx, tenant=tenant, policy_id=policy_id, event=event,
                      handling=handling, idempotency_key=idempotency_key,
                      request_id=request_id, aktor=aktor, nokler=nokler,
-                     naa=naa, ih=ih, sporing=sporing)
+                     naa=naa, ih=ih, sporing=sporing,
+                     kapabilitet=kapabilitet)
         conn.commit()
         return svar
     except Feilsvar:
@@ -258,7 +338,7 @@ def behandle(conn: psycopg.Connection, ctx, *, policy_id: str, event: dict,
 def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
           event: dict, handling: str, idempotency_key: str, request_id: str,
           aktor: str, nokler: dict, naa: datetime, ih: str,
-          sporing: Sporing) -> Svar:
+          sporing: Sporing, kapabilitet=None) -> Svar:
     steg = sporing.steg
 
     # --- 1. Sesjonskontekst FØRST i den autentiserte transaksjonen -------
@@ -266,6 +346,19 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
     # committet; tenanten er kjent og verifisert, og kommer aldri fra body.
     sett_kontekst(conn, tenant, aktor, request_id)
     steg.append("kontekst")
+
+    # --- 1b. Arbeidskapabilitet: revalider FØR idempotens-claimet --------
+    # Rekkefølgen er ikke smakssak. Claimer vi idempotensnøkkelen først og
+    # kapabiliteten så viser seg ugyldig, har en avvist forespørsel likevel
+    # lagt beslag på repair_operation_id — og arbeiderens neste, gyldige
+    # forsøk ville møtt sitt eget spøkelse.
+    #
+    # Den må derimot ligge ETTER `sett_kontekst`: oppslaget mot
+    # `unntak` treffer row level security, og uten tenant i konteksten ser
+    # den null rader og ville avvist enhver gyldig kapabilitet.
+    if kapabilitet is not None:
+        _krev_kapabilitet(conn, kapabilitet, event, idempotency_key, handling)
+        steg.append("kapabilitet_revalidert")
 
     # --- 2. Serialiser per idempotensnøkkel ------------------------------
     # Xact-varianten: låsen slippes av commit/rollback i `behandle`, aldri
@@ -318,11 +411,17 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
 
     def portstopp(grunn: Grunn, policy: dict, label: str,
                   hash_: str | None = None, http: int = 200,
-                  feilkode: str | None = None) -> Svar:
+                  feilkode: str | None = None,
+                  snapshot: Policysnapshot = UKJENT_SNAPSHOT) -> Svar:
         """Felles utgang for alt som er avgjort før motoren.
 
         Loggposten skrives av `sikker_beslutning_pg` — den samme ene
         skriveveien som alle andre beslutninger bruker.
+
+        Standardverdien for `snapshot` er UKJENT med vilje: portstopp
+        brukes både før og etter at policyen er lastet, og den eneste
+        trygge standarden er den som gjør saken uclaimbar. Kallestedene
+        som HAR en policy sender den inn eksplisitt.
         """
         evidens.policy_content_hash = hash_
         d = sikker_beslutning_pg(policy, ctx, event, conn, naa=naa,
@@ -331,7 +430,8 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
                                  portbrudd=Portbrudd(grunn, label))
         return _avslutt(conn, d, event, tenant, handling, evidens,
                         idempotency_key, request_id, hash_, sporing,
-                        http=http, feilkode=feilkode)
+                        snapshot, http=http, feilkode=feilkode,
+                        kapabilitet=kapabilitet)
 
     # --- 4. Attestasjonsporten: signatur FØR binding ----------------------
     # Rekkefølgen er ikke smakssak. Er signaturen ugyldig, er feltene i
@@ -375,6 +475,7 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
         svar.driftshendelse = "policy_korrupt"
         return svar
     evidens.policy_content_hash = policy_hash
+    snapshot = Policysnapshot.fra_policy(policy, policy_hash)
     steg.append("policy")
 
     # --- 5b. jti-replay: LÅS først, sjekk så ------------------------------
@@ -398,7 +499,7 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
         if brukt is not None:
             steg.append("jti_replay")
             return portstopp(Grunn("attestasjon_replay", {"jti_prefiks": jti[:8]}),
-                             policy, policy_id, policy_hash)
+                             policy, policy_id, policy_hash, snapshot=snapshot)
     steg.append("jti_ok")
 
     # --- 6. Motoren, via den ene lovlige inngangen ------------------------
@@ -423,7 +524,7 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
 
     return _avslutt(conn, d, event, tenant, handling, evidens,
                     idempotency_key, request_id, evidens.policy_content_hash,
-                    sporing)
+                    sporing, snapshot, kapabilitet=kapabilitet)
 
 
 def _utlop_for(event: dict, vilkaar: str, naa: datetime) -> datetime:
@@ -446,8 +547,9 @@ def _utlop_for(event: dict, vilkaar: str, naa: datetime) -> datetime:
 def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
              handling: str, evidens: Evidens, idempotency_key: str,
              request_id: str, policy_hash: str | None,
-             sporing: Sporing, http: int = 200,
-             feilkode: str | None = None) -> Svar:
+             sporing: Sporing, snapshot: "Policysnapshot",
+             http: int = 200, feilkode: str | None = None,
+             kapabilitet=None) -> Svar:
     """Steg 9-11: routing, unntaksrad, idempotens ferdig."""
     sporing.loggpost_id = evidens.loggpost_id
     siste = d.begrunnelse[-1].kode if d.begrunnelse else None
@@ -466,7 +568,7 @@ def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
         try:
             unntak_id = _skriv_unntak(conn, tenant, evidens.loggpost_id,
                                       handling, kategori, sakstype, prioritet,
-                                      payload)
+                                      payload, snapshot)
         except Feilsvar:
             raise
         except psycopg.Error as e:
@@ -494,6 +596,29 @@ def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
         " WHERE tenant=%s AND nokkel=%s",
         (json.dumps(kropp, ensure_ascii=False), tenant, idempotency_key))
     sporing.steg.append("idempotens_ferdig")
+
+    # --- 12. Brenn arbeidskapabiliteten — SAMME COMMIT ------------------
+    # v4-delta pkt. 1 punkt 3, og rekkefølgen er bindende på begge sider:
+    #
+    #   FØR loggposten  => en brent engangsfullmakt uten evidens for hva
+    #                      den ble brukt til. Arbeideren kan ikke gjenoppta
+    #                      (kapabiliteten er borte) og revisor kan ikke
+    #                      rekonstruere (loggposten finnes ikke).
+    #   ETTER commit    => to forespørsler kan rekke å bruke den samme
+    #                      kapabiliteten, og engangsegenskapen er en
+    #                      påstand snarere enn en egenskap.
+    #
+    # Her ligger den inne i den ene transaksjonen `behandle()` eier, etter
+    # at loggpost, sak og idempotenssvar er skrevet. Feiler forbruket, er
+    # kapabiliteten enten utløpt eller overtatt av noen andre midt i flyten
+    # — og da skal HELE forespørselen rulles, ikke fullføres med et svar
+    # som ser auditert ut.
+    if kapabilitet is not None:
+        ok = conn.execute("SELECT bruk_kapabilitet(%s, %s)",
+                          (kapabilitet.jti, request_id)).fetchone()
+        if not ok or ok[0] is not True:
+            raise Feilsvar("kapabilitet_ugyldig", "forbruk feilet i commit")
+        sporing.steg.append("kapabilitet_brukt")
 
     svar = Svar(http, kropp, unntak_id)
     if sakstype == "sikkerhet" or siste in feiltabell.SIKKERHETSKODER:

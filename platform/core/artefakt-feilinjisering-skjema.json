@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/feilinjiseringsartefakt-v1.json",
+  "title": "Feilinjiseringsartefakt (feilinjisering-m01-v1)",
+  "comment": "LUKKET format, samme regel som ytelsesartefaktet: additionalProperties:false paa HVERT objekt. Grunnen staar i PR #8 runde 5 — en validator som leser feltene den kjenner til er blind for alt annet, og en ukjent noekkel blir stillhet i stedet for en feil. Andelene er egne typer med [0,1]-grense: en 'andel' paa 1.5 er ikke et hoeyt tall, det er en umulig maaling.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "maalt", "etterkontroll"],
+  "properties": {
+    "krav_id": {"const": "feilinjisering-m01-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["injisert_antall", "tenant", "api_pid", "m37_pid"],
+      "properties": {
+        "injisert_antall": {"$ref": "#/$defs/telling"},
+        "tenant": {"type": "string", "minLength": 1},
+        "base": {"type": "string"},
+        "merkelapp": {"type": "string"},
+        "api_pid": {"$ref": "#/$defs/telling"},
+        "m37_pid": {"$ref": "#/$defs/telling"},
+        "api_cgroup": {"type": "string"},
+        "m37_cgroup": {"type": "string"}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kategorier_dekket", "terminal_antall", "terminal_andel",
+                   "reparerbare", "lost_antall", "lost_andel",
+                   "ikke_reparerbare", "manuell_antall", "manuell_andel",
+                   "varighet_sek", "p95_api_under_last_ms",
+                   "lease_tap_re_claim"],
+      "properties": {
+        "kategorier_dekket": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "terminal_antall": {"$ref": "#/$defs/telling"},
+        "terminal_andel": {"$ref": "#/$defs/andel"},
+        "reparerbare": {"$ref": "#/$defs/telling"},
+        "lost_antall": {"$ref": "#/$defs/telling"},
+        "lost_andel": {"$ref": "#/$defs/andel"},
+        "ikke_reparerbare": {"$ref": "#/$defs/telling"},
+        "manuell_antall": {"$ref": "#/$defs/telling"},
+        "manuell_andel": {"$ref": "#/$defs/andel"},
+        "varighet_sek": {"$ref": "#/$defs/positiv"},
+        "p95_api_under_last_ms": {"$ref": "#/$defs/positiv"},
+        "lease_tap_re_claim": {"$ref": "#/$defs/telling"}
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["historikk_komplett", "klartekst_payload_funnet",
+                   "canary_verdier", "eiermodul_kun_api", "status_fordeling"],
+      "properties": {
+        "historikk_komplett": {"type": "boolean"},
+        "klartekst_payload_funnet": {"type": "boolean"},
+        "canary_verdier": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "eiermodul_kun_api": {"type": "boolean"},
+        "eiermodul_db_skrivinger": {"$ref": "#/$defs/telling"},
+        "status_fordeling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ny": {"$ref": "#/$defs/telling"},
+            "under_behandling": {"$ref": "#/$defs/telling"},
+            "løst": {"$ref": "#/$defs/telling"},
+            "avvist": {"$ref": "#/$defs/telling"},
+            "manuell": {"$ref": "#/$defs/telling"},
+            "venter_utførelse": {"$ref": "#/$defs/telling"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "telling": {"type": "integer", "minimum": 0},
+    "positiv": {"type": "number", "exclusiveMinimum": 0},
+    "andel": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}

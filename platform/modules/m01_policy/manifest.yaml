@@ -34,10 +34,15 @@ staging_sjekkliste:
       request_id, idempotency_key, policy_content_hash,
       attestation_set_hash).
   feilinjisering_til_unntakskø:
-    # PR-005b bygger LAGRINGEN (M-37-tabellene, routing, kryptering), men
-    # ikke behandlingsmotoren. Punktet krever at en injisert feil faktisk
-    # BEHANDLES i køen, og det er PR-006. Derfor fortsatt blokkert — ikke
-    # «ja» fordi halve veien nå finnes.
+    # PR-006 bygger BEHANDLINGSMOTOREN (claim, reparasjonsregister, outbox,
+    # arbeidskapabiliteter). Punktet krever likevel et MÅLT artefakt gjennom
+    # evidensporten, og den kjøringen skjer på staging ETTER merge —
+    # rekkefølgen fra klarsignalet. Grensene er nå definert i KRAVGRENSER
+    # (`feilinjisering-m01-v1`), slik at den som gjør kjøringen har en fasit
+    # før arbeidet, ikke etter.
+    #
+    # Fortsatt `blokkert` og ikke `ja`: koden finnes, målingen gjør det
+    # ikke. Et manifestfelt er aldri selv beviset.
     status: blokkert
     blokkert_av: m37
   ytelse_bestatt:

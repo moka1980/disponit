@@ -10,6 +10,7 @@ BRUKER=disponit              # RUNTIME — kun DML, eier ingenting
 MIGRATOR=disponit_migrator   # eier skjemaet, kjører migrasjoner
 AUTH=disponit_authenticator  # eier api_tokener; runtime naar den aldri direkte
 TOKENADMIN=disponit_token_admin  # administrerer tokens, eier ingenting
+M37=disponit_m37_claimer     # PR-006: eier arbeidskapabiliteter + claim-funksjonene
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -29,11 +30,22 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN"; do
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$AUTH'" \
-  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $AUTH NOLOGIN"
-# Migrator maa vaere MEDLEM av authenticator for aa kunne sette eierskap
-# (OWNER TO) paa api_tokener i migrasjon 003.
+for r in "$AUTH" "$M37"; do
+  sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
+    | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
+done
+# Migrator maa vaere MEDLEM av begge for aa kunne sette eierskap (OWNER TO)
+# paa api_tokener (003) og paa arbeidskapabiliteter + M-37-funksjonene (005).
 sudo -u postgres psql -qc "GRANT $AUTH TO $MIGRATOR"
+# WITH INHERIT FALSE er ikke pynt. Migrator maa vaere MEDLEM for aa kunne
+# gjoere OWNER TO, men et vanlig medlemskap gir ogsaa ARVEDE rettigheter —
+# og RLS-policyer med TO-klausul matcher paa arvet medlemskap. Uten dette
+# arvet migrator M-37-dispatcherens policy paa revisjonslogg og unntak, og
+# saa igjen alle tenanters rader. Det er Codex' P1 nr. 2 fra PR-004 paa
+# nytt, gjeninnfoert av en GRANT som saa ut som en formalitet.
+# (PostgreSQL 16+. SET ROLE er fortsatt mulig for migrator — det er en
+# eksplisitt, sporbar handling, ikke stille arv.)
+sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
@@ -173,6 +185,53 @@ fi
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
   DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \
     "$(dirname "$0")/migrer.py" "$BRUKER"
+done
+
+# ------------------------------------------------------------
+# GO-vilkaar V3, siste lag: migrator kan ikke DEAKTIVERE retention-vakten.
+#
+# BEFORE DELETE-triggeren i migrasjon 005 binder ENHVER rolle som gjoer
+# DELETE — ogsaa migrator og skjemaeieren. Det finnes noeyaktig to veier
+# forbi en radtrigger i PostgreSQL:
+#
+#   1. ALTER TABLE ... DISABLE TRIGGER   (kun eier — altsaa migrator)
+#   2. session_replication_role='replica' (kun superbruker)
+#
+# Vei 2 krever en superbruker ingen tjeneste har. Vei 1 lukkes her, med en
+# EVENT TRIGGER: den kan bare opprettes av superbrukeren, og migrator kan
+# derfor verken fjerne den eller endre den. Den paastaar ingenting om
+# syntaks — den sjekker TILSTANDEN etter enhver ALTER TABLE, saa den kan
+# ikke omgaas ved aa formulere kommandoen annerledes.
+#
+# Residual, sagt rett ut: en bar `DROP TRIGGER policy_retention` fanges
+# ikke her (da finnes ikke triggeren aa sjekke, og migrasjon 005 dropper og
+# gjenoppretter den selv paa hver kjoering). Den veien fanges av
+# sluttkontrollen i migrer.py, som nekter aa fullfoere et deploy uten en
+# aktiv retention-vakt.
+# ------------------------------------------------------------
+for base in $DB ${DB}_test; do
+  sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" <<'SQL'
+CREATE OR REPLACE FUNCTION disponit_vern_policy_retention()
+RETURNS event_trigger LANGUAGE plpgsql AS $$
+DECLARE v_status "char";
+BEGIN
+    IF to_regclass('public.policyer') IS NULL THEN
+        RETURN;                      -- tabellen finnes ikke ennaa
+    END IF;
+    SELECT t.tgenabled INTO v_status
+      FROM pg_trigger t
+     WHERE t.tgrelid = 'public.policyer'::regclass
+       AND t.tgname = 'policy_retention';
+    IF FOUND AND v_status = 'D' THEN
+        RAISE EXCEPTION
+            'policy_retention er deaktivert — GO-vilkaar V3 forbyr det, ogsaa for migratorrollen. Bruk arkiver_policyversjon().';
+    END IF;
+END $$;
+DROP EVENT TRIGGER IF EXISTS disponit_policy_retention_vern;
+CREATE EVENT TRIGGER disponit_policy_retention_vern
+    ON ddl_command_end WHEN TAG IN ('ALTER TABLE')
+    EXECUTE FUNCTION disponit_vern_policy_retention();
+SQL
 done
 
 # Sluttkontroll: alt skal fortsatt virke etter migrasjoner og rettigheter.

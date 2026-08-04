@@ -72,6 +72,37 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "Rollback, STOPP — ALDRI klartekstlagring.")),
     Feilvei("rate_grense", 429, ("sikkerhet",), None, aggregert=True),
     Feilvei("cursor_ugyldig", 400, ("sikkerhet",), None),
+
+    # --- PR-006: arbeidskapabiliteter og oppdrag ------------------------
+    # Kapabilitetsfeil er 401/403 og IKKE beslutningssvar. En kapabilitet
+    # som ikke holder er en autentiseringsfeil, ikke en beslutning om en
+    # handling — og en sak her ville dessuten vært på en tenant vi ikke har
+    # verifisert at forespørselen tilhører.
+    Feilvei("kapabilitet_ugyldig", 401, ("sikkerhet",), None, notat=(
+        "Ukjent, utløpt, allerede brukt, eller reservert av en ANNEN"
+        " request_id. Samme svar i alle fire tilfellene: en klient som kan"
+        " skille dem fra hverandre har et orakel.")),
+    Feilvei("kapabilitet_feil_handling", 403, ("sikkerhet",), None, notat=(
+        "event.handling != kapabilitetens tillatt_handling. Kapabiliteten"
+        " er bundet til ÉN handling ved utstedelse.")),
+    Feilvei("kapabilitet_feil_idempotensnokkel", 403, ("sikkerhet",), None,
+            notat=("Idempotency-Key må VÆRE repair_operation_id. Ellers kan"
+                   " samme kapabilitet gi to ulike forretningshandlinger.")),
+    Feilvei("kapabilitet_fencing_tapt", 409, ("drift",), None, notat=(
+        "Kapabiliteten var gyldig, men sakens claim/generasjon/lease holder"
+        " ikke lenger. Revalidering mot unntaksraden, ikke bare mot"
+        " utstedelsesverdiene (v4-delta pkt. 1.2).")),
+    Feilvei("oppdrag_tomt", 204, ("avvis",), None, notat=(
+        "Ingen oppdrag å plukke. 204 og ikke 404: køen finnes, den er tom.")),
+    Feilvei("kvittering_signatur_ugyldig", 403, ("sikkerhet",), "sikkerhet",
+            notat="Ugyldig signatur => sikkerhetssak, INGEN statusendring."),
+    Feilvei("kvittering_konflikt", 409, ("sikkerhet",), "sikkerhet", notat=(
+        "To ulike resultathasher for samme oppdrag. Aldri «siste vinner».")),
+    Feilvei("kvittering_for_sen", 410, ("avvis",), None, notat=(
+        "Etter evidensfristen. Administrativ import er utenfor PR-006.")),
+    Feilvei("modul_inaktiv", 503, ("drift",), None, notat=(
+        "Rollback-kontrakten (rollback-m01-v1): modulen er deaktivert i"
+        " registeret, og API-et svarer definert i stedet for å feile.")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}
@@ -95,6 +126,10 @@ SIKKERHETSKODER = frozenset({
     "attestasjon_tid_ugyldig", "attestasjon_utenfor_gyldighet",
     "attestasjon_jti_ugyldig", "attestasjon_replay",
     "verifikator_ikke_betrodd",
+    # PR-006 §4: lukket kanoniseringsformat. En attestasjon signert med en
+    # ANNEN kanonisering er ikke en formfeil å rette — det er noen som har
+    # signert andre bytes enn vi verifiserer.
+    "attestasjon_kanonisering_ukjent",
 })
 
 #: Feil i plattformen selv, ikke i forespørselen.

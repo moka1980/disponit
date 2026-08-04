@@ -47,10 +47,43 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_migrator LOGIN PASSWORD 'mig'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_authenticator NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
+          # PR-006: NOLOGIN-eieren av arbeidskapabiliteter og claim-funksjonene.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_m37_claimer NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_authenticator TO disponit_migrator"
+          # WITH INHERIT FALSE: medlemskap for OWNER TO, men ingen ARVEDE
+          # rettigheter. RLS-policyer med TO-klausul matcher paa arvet
+          # medlemskap, saa et vanlig GRANT ville gitt migrator
+          # M-37-dispatcherens policy paa revisjonslogg og unntak — altsaa
+          # alle tenanters rader, som er Codex' P1 nr. 2 fra PR-004 igjen.
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_m37_claimer TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_m37_claimer"
+          # GO-vilkaar V3: event-triggeren som hindrer at retention-vakten
+          # DEAKTIVERES. Den kan bare lages av superbruker — derfor her og
+          # ikke i en migrasjon, noeyaktig som rollene. CI maa speile
+          # staging, ellers testes en annen base enn den som driftes.
+          psql -h 127.0.0.1 -U postgres -d disponit_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE OR REPLACE FUNCTION disponit_vern_policy_retention()
+          RETURNS event_trigger LANGUAGE plpgsql AS $$
+          DECLARE v_status "char";
+          BEGIN
+              IF to_regclass('public.policyer') IS NULL THEN
+                  RETURN;
+              END IF;
+              SELECT t.tgenabled INTO v_status FROM pg_trigger t
+               WHERE t.tgrelid = 'public.policyer'::regclass
+                 AND t.tgname = 'policy_retention';
+              IF FOUND AND v_status = 'D' THEN
+                  RAISE EXCEPTION 'policy_retention er deaktivert — GO-vilkaar V3 forbyr det, ogsaa for migratorrollen.';
+              END IF;
+          END $$;
+          DROP EVENT TRIGGER IF EXISTS disponit_policy_retention_vern;
+          CREATE EVENT TRIGGER disponit_policy_retention_vern
+              ON ddl_command_end WHEN TAG IN ('ALTER TABLE')
+              EXECUTE FUNCTION disponit_vern_policy_retention();
+          SQL
           # Migrasjoner kjøres av den HERDEDE KJØREREN, ikke med psql -f.
           # Codex' P1: psql omgår advisory-lås, kjørerens transaksjon,
           # checksum-registrering og avvisning av endret historikk — og da

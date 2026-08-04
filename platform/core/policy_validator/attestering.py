@@ -24,27 +24,49 @@ import os
 import stat
 from pathlib import Path
 
+from . import jcs
 from .engine import Grunn
 
 _SIGNATURFELT = "signatur"
 _ALG = "HMAC-SHA256"
 
+#: Feltet som sier hvilken kanonisering signaturen ble laget over.
+#: LUKKET format fra PR-006: manglende eller ukjent verdi avvises på
+#: nettverksveien. Uten feltet måtte verifikatoren gjette hvilke bytes
+#: avsenderen signerte, og «prøv begge» er ikke en kontroll — det er to
+#: sjanser til å slippe gjennom.
+KANONISERINGSFELT = "kanonisering"
+
 
 def kanonisk_bytes(att: dict) -> bytes:
-    """Deterministisk serialisering av attestasjonen UTEN signaturfeltet.
-    Samme innhold gir samme bytes — på tvers av prosesser og språk med
-    samme regler (sorterte nøkler, ingen mellomrom, UTF-8)."""
+    """RFC 8785-kanoniske bytes av attestasjonen UTEN signaturfeltet.
+
+    PR-006 §4: byttet fra `json.dumps(..., default=str)` til ekte JCS.
+    Forskjellen er ikke kosmetisk — se `jcs`-modulen for de tre stedene de
+    to avviker (nøkkelsortering på UTF-16, ES6-talformat, og at
+    `default=str` gjorde en ikke-JSON-type til en streng i stillhet i
+    stedet for å være en feil).
+
+    Kaster `jcs.Ikkekanoniserbar` på verdier JSON ikke kan uttrykke. Det er
+    den tiltenkte oppførselen: en signatur over en gjetning er verdiløs.
+    """
     uten = {k: v for k, v in att.items() if k != _SIGNATURFELT}
-    return json.dumps(uten, sort_keys=True, ensure_ascii=False,
-                      separators=(",", ":"), default=str).encode("utf-8")
+    return jcs.kanoniske_bytes(uten)
 
 
 def signer(att: dict, nokkel_id: str, hemmelighet: str) -> dict:
     """Returnerer kopi av attestasjonen med signatur. Brukes av
-    verifikator-modulene (M-14, M-42, …) når de utsteder attestasjoner."""
-    mac = hmac.new(hemmelighet.encode("utf-8"), kanonisk_bytes(att),
-                   hashlib.sha256).hexdigest()
+    verifikator-modulene (M-14, M-42, …) når de utsteder attestasjoner.
+
+    `kanonisering` stemples PÅ attestasjonen FØR signeringen, slik at
+    feltet ligger INNE i de signerte bytene. Sto det utenfor, kunne
+    hvem som helst endre det uten at signaturen røk — og et
+    format-felt man kan endre fritt er ingen formatkontroll.
+    """
     ut = dict(att)
+    ut[KANONISERINGSFELT] = jcs.KANONISERING
+    mac = hmac.new(hemmelighet.encode("utf-8"), kanonisk_bytes(ut),
+                   hashlib.sha256).hexdigest()
     ut[_SIGNATURFELT] = {"alg": _ALG, "nokkel_id": nokkel_id, "verdi": mac}
     return ut
 
@@ -55,6 +77,13 @@ def verifiser(att: dict, nokler: dict) -> bool:
     try:
         sig = att.get(_SIGNATURFELT)
         if not isinstance(sig, dict) or sig.get("alg") != _ALG:
+            return False
+        # Lukket format. En ukjent kanonisering er ikke «prøv standarden» —
+        # den er et avslag. Feltet ligger inne i de signerte bytene, så en
+        # angriper kan ikke bytte det uten å ødelegge signaturen; denne
+        # kontrollen stopper den som signerer med en ANNEN kanonisering og
+        # håper vi tolker bytene likt.
+        if att.get(KANONISERINGSFELT) != jcs.KANONISERING:
             return False
         verifikator = att.get("verifikator")
         hemmelighet = (nokler.get(verifikator) or {}).get(sig.get("nokkel_id"))
@@ -83,6 +112,15 @@ def kontroller_hendelse(event: dict, nokler: dict) -> Grunn | None:
             return Grunn("attestasjon_feilformet", {"vilkaar": str(navn)})
         if _SIGNATURFELT not in att:
             return Grunn("attestasjon_uten_signatur", {"vilkaar": str(navn)})
+        if att.get(KANONISERINGSFELT) != jcs.KANONISERING:
+            # Egen grunnkode, ikke bare «signatur ugyldig». Forskjellen er
+            # diagnostisk viktig: en verifikator som fortsatt bruker gammelt
+            # format skal kunne se AT det er formatet, ikke lete etter en
+            # nøkkelfeil som ikke finnes.
+            return Grunn("attestasjon_kanonisering_ukjent",
+                         {"vilkaar": str(navn),
+                          "oppgitt": str(att.get(KANONISERINGSFELT)),
+                          "kreves": jcs.KANONISERING})
         if not verifiser(att, nokler):
             return Grunn("attestasjon_signatur_ugyldig", {"vilkaar": str(navn)})
     return None

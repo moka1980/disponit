@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import oppdragskontrakt
 import psycopg
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -384,6 +385,18 @@ class Tjeneste:
         self.rate = Rategrense(rate_per_min if rate_per_min is not None
                                else int(os.environ.get("DISPONIT_RATE_PER_MIN",
                                                        STANDARD_RATE_PER_MIN)))
+        # Rollback-kontrakten (rollback-m01-v1). Deaktivering av en modul
+        # skal gi et DEFINERT svar, ikke en tilfeldig 500 eller en hengende
+        # forespørsel — det er forskjellen på en rollback og et utfall.
+        #
+        # Lest ved BOOT, ikke per forespørsel. En fillesing i request-path
+        # ville kostet av en ytelsesmargin som allerede er tynn (p99 207 ms),
+        # og deaktivering er uansett en operasjon som restarter prosessen.
+        # `deaktivering_effektiv_s` i artefaktet måler nettopp den runden.
+        self.inaktive_moduler = frozenset(
+            m.strip() for m in
+            os.environ.get("DISPONIT_INAKTIVE_MODULER", "").split(",")
+            if m.strip())
         self.pool = Tilkoblingspool(dsn, poolstorrelse)
         conn = self.pool.hent()
         try:
@@ -392,24 +405,48 @@ class Tjeneste:
             self.pool.gi_tilbake(conn)
 
 
-class Autentisert:
-    __slots__ = ("tenant", "rolle", "scopes", "token_id")
+class Kapabilitet:
+    """En reservert arbeidskapabilitet (PR-006 v3-delta pkt. 1, v4 pkt. 1).
 
-    def __init__(self, tenant, rolle, scopes, token_id):
+    Bæres gjennom forespørselen slik at `kjerne.behandle()` kan REVALIDERE
+    mot unntaksraden og brenne den i samme commit som beslutningen. Feltene
+    her er utstedelsesverdiene — de er IKKE fasit alene, og det er poenget
+    med revalideringen.
+    """
+    __slots__ = ("jti", "tenant", "unntak_id", "tillatt_handling",
+                 "repair_operation_id", "claim_id", "claim_generation")
+
+    def __init__(self, jti, tenant, unntak_id, tillatt_handling,
+                 repair_operation_id, claim_id, claim_generation):
+        self.jti, self.tenant = jti, tenant
+        self.unntak_id, self.tillatt_handling = unntak_id, tillatt_handling
+        self.repair_operation_id = repair_operation_id
+        self.claim_id, self.claim_generation = claim_id, claim_generation
+
+
+class Autentisert:
+    __slots__ = ("tenant", "rolle", "scopes", "token_id", "kapabilitet")
+
+    def __init__(self, tenant, rolle, scopes, token_id, kapabilitet=None):
         self.tenant, self.rolle = tenant, rolle
         self.scopes, self.token_id = set(scopes or ()), token_id
+        self.kapabilitet = kapabilitet
 
     @property
     def aktor(self) -> str:
         """Aktøren som havner i revisjonsloggen og unntakshistorikken.
 
-        Token-ID-en, ikke hemmeligheten, og aldri noe fra payloaden.
+        Token-ID-en, ikke hemmeligheten, og aldri noe fra payloaden. For en
+        arbeidskapabilitet er det jti-en: da kan man i ettertid se nøyaktig
+        hvilken engangsfullmakt som bar beslutningen, ikke bare at «M-37
+        gjorde det».
         """
         return f"token:{self.token_id}"
 
     def kontekst(self) -> EvaluationContext:
-        return EvaluationContext(tenant_id=self.tenant, aktor_rolle=self.rolle,
-                                 autentisert=True, kilde="api_token")
+        return EvaluationContext(
+            tenant_id=self.tenant, aktor_rolle=self.rolle, autentisert=True,
+            kilde="arbeidskapabilitet" if self.kapabilitet else "api_token")
 
 
 def _mac(pepper: str, secret: str) -> str:
@@ -417,8 +454,46 @@ def _mac(pepper: str, secret: str) -> str:
                     hashlib.sha256).hexdigest()
 
 
+#: Scopene en arbeidskapabilitet gir. NØYAKTIG ett, og ikke konfigurerbart.
+#:
+#: M-37 skal kunne be om én beslutning og ingenting annet. Ga kapabiliteten
+#: `exceptions:read`, kunne en kompromittert arbeider lest hele køen for
+#: tenanten; ga den `exceptions:manage`, kunne den lukket saker uten
+#: evidens. Mengden står som en frozenset i koden og ikke som en kolonne,
+#: fordi en kolonne kan endres av den som kan skrive til tabellen.
+KAPABILITETSSCOPES = frozenset({"decision:write"})
+
+
+def _preauth_kapabilitet(conn: psycopg.Connection, jti: str,
+                         request_id: str) -> Autentisert | None:
+    """Innløser en arbeidskapabilitet: `utstedt -> reservert`, atomisk.
+
+    Reservasjonen — ikke forbruket. Kapabiliteten brennes først i SAMME
+    commit som den auditerte beslutningen (`kjerne._avslutt`). Skillet er
+    v4-delta pkt. 1 punkt 3 og 5, og grunnen er konkret: brennes den her,
+    og transaksjonen ruller etterpå, er engangsfullmakten borte uten at det
+    finnes en loggpost som viser hva den ble brukt til. Da kan verken
+    arbeideren gjenoppta eller revisor rekonstruere.
+
+    Gjenopptak er bundet til request_id: samme forespørsel kan ta opp igjen
+    en reservasjon den selv eier, enhver annen avvises.
+    """
+    if not jti:
+        return None
+    rad = conn.execute(
+        "SELECT tenant, unntak_id, tillatt_handling, repair_operation_id,"
+        " claim_id, claim_generation FROM reserver_kapabilitet(%s, %s)",
+        (jti, request_id)).fetchone()
+    if rad is None:
+        return None
+    kap = Kapabilitet(jti, rad[0], rad[1], rad[2], rad[3], rad[4], rad[5])
+    # `token_id` blir jti-en: aktøren i revisjonsloggen peker da på nøyaktig
+    # denne engangsfullmakten, ikke på «M-37» som kategori.
+    return Autentisert(kap.tenant, "m37", KAPABILITETSSCOPES, jti, kap)
+
+
 def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
-            authorization: str | None) -> Autentisert | None:
+            authorization: str | None, request_id: str = "") -> Autentisert | None:
     """PRE-AUTH-TRANSAKSJONEN (korreksjon 3).
 
     Den kjenner ingen tenant og rører ingen tenantbundne tabeller — kun
@@ -431,6 +506,9 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
     SET LOCAL fra resultatet.
     """
     try:
+        if authorization and authorization.startswith("Kapabilitet "):
+            return _preauth_kapabilitet(conn, authorization[12:].strip(),
+                                        request_id)
         if not authorization or not authorization.startswith("Bearer "):
             return None
         raa = authorization[7:].strip()
@@ -501,9 +579,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def ready(request: Request) -> Response:
         return _ready(tjeneste, request)
 
+    def oppdrag_claim(request: Request) -> Response:
+        return _oppdrag_claim(tjeneste, request)
+
+    def oppdrag_kvittering(request: Request) -> Response:
+        return _oppdrag_kvittering(tjeneste, request)
+
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
         Route("/v1/unntak", unntak, methods=["GET"]),
+        # PR-006: outbox-protokollen. Den syntetiske eiermodulen på staging
+        # bruker NØYAKTIG disse to endepunktene og skriver aldri i
+        # databasen direkte — det er en av de åtte evidensbevisene, og en
+        # statisk sjekk i testsuiten håndhever den.
+        Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
+        Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
         Route("/live", live, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
     ])
@@ -527,7 +617,7 @@ def _rid(request: Request) -> str:
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
                 paakrevd_scope: str) -> Autentisert:
-    auth = preauth(tjeneste, conn, request.headers.get("authorization"))
+    auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
     if auth is None:
         tjeneste.logg.hendelse("token_ugyldig", rid)
         raise kjerne.Feilsvar("token_ugyldig")
@@ -541,8 +631,21 @@ def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
     return auth
 
 
+#: Modulen beslutningsveien tilhører. Deaktiveres den, er hele
+#: `/v1/beslutning` ute — og svaret skal si det, ikke feile tilfeldig.
+BESLUTNINGSMODUL = "m01_policy"
+
+
 def _beslutning(tjeneste: Tjeneste, request: Request) -> Response:
     rid = _rid(request)
+    if BESLUTNINGSMODUL in tjeneste.inaktive_moduler:
+        # FØR tilkoblingen hentes: en deaktivert modul skal ikke bruke en
+        # poolplass, og den skal ikke rekke å åpne en transaksjon som må
+        # rulles. `halvferdige_transaksjoner = 0` i rollback-artefaktet er
+        # en egenskap ved at avvisningen skjer her, ikke lenger nede.
+        tjeneste.logg.hendelse("modul_inaktiv", rid, art="drift",
+                               modul=BESLUTNINGSMODUL)
+        return _feilsvar("modul_inaktiv", rid)
     try:
         conn = tjeneste.pool.hent()
     except (TimeoutError, psycopg.Error):
@@ -573,7 +676,8 @@ def _beslutning(tjeneste: Tjeneste, request: Request) -> Response:
             svar = kjerne.behandle(
                 conn, auth.kontekst(), policy_id=data["policy_id"],
                 event=data["event"], idempotency_key=nokkel.strip(),
-                request_id=rid, aktor=auth.aktor, nokler=tjeneste.nokler)
+                request_id=rid, aktor=auth.aktor, nokler=tjeneste.nokler,
+                kapabilitet=auth.kapabilitet)
         except kjerne.Feilsvar as f:
             art = "drift" if "drift" in f.rad.routing else "sikkerhet"
             tjeneste.logg.hendelse(f.kode, rid, auth.tenant, art=art)
@@ -736,3 +840,466 @@ def _ready(tjeneste: Tjeneste, request: Request) -> Response:
         return kanonisk_json({"status": "ikke_klar"}, 503)
     finally:
         tjeneste.pool.gi_tilbake(conn)
+
+
+# ---------------------------------------------------------------------------
+# PR-006: oppdrags-endepunktene (v3-delta pkt. 2, v4-delta pkt. 3-4)
+# ---------------------------------------------------------------------------
+
+ORDRESCOPE = "orders:execute:"
+
+
+def _modulscope(auth: Autentisert) -> list[str]:
+    """Handlingsprefiksene modulen har fullmakt for.
+
+    Scope-formatet er `orders:execute:<handlingsprefiks>`, og LISTEN ER
+    LUKKET: er den tom, treffer `claim_neste_oppdrag` ingenting. Det er
+    fail-closed og ikke en detalj — en tom prefiksliste tolket som «alle»
+    ville gjort et token uten fullmakter til det mektigste i systemet.
+    """
+    return sorted(s[len(ORDRESCOPE):] for s in auth.scopes
+                  if s.startswith(ORDRESCOPE) and len(s) > len(ORDRESCOPE))
+
+
+def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
+    """Eiermodulen plukker ett oppdrag. Dekryptering skjer HER, ikke der.
+
+    DEK og KEK forlater aldri API-/kryptolaget (v4-delta pkt. 4).
+    Eiermodulen ser verken ciphertext eller nøkkel — den får minimert
+    klartekst, filtrert mot oppdragstypens LUKKEDE feltskjema. Prefikset
+    alene gir aldri feltbredde: to oppdrag med samme prefiks kan ha helt
+    ulike behov, og lot vi navnet styre hva som slipper ut, ville
+    feltbredden vært en funksjon av en streng.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
+        if auth is None or auth.kapabilitet is not None:
+            # En ARBEIDSkapabilitet gir aldri tilgang hit. Den er utstedt
+            # for én beslutning på én sak; kunne den plukke oppdrag, ville
+            # M-37 kunnet utføre sine egne oppdrag — altså akkurat den
+            # sammenblandingen null-fullmaktsprinsippet finnes for.
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        prefikser = _modulscope(auth)
+        if not prefikser:
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+
+        claim_id = secrets.token_hex(16)
+        try:
+            rad = conn.execute(
+                "SELECT id, tenant, unntak_id, oppdragstype, handling,"
+                " repair_operation_id, payload_kryptert, key_id, nonce,"
+                " owner_generation, utforelsesfrist, evidensfrist"
+                "  FROM claim_neste_oppdrag(%s, %s, %s, %s)",
+                (auth.rolle, prefikser, claim_id, 300)).fetchone()
+            if rad is None:
+                conn.rollback()
+                return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,
+                                     {"x-request-id": rid})
+
+            (opp_id, tenant, unntak_id, oppdragstype, handling, repair_id,
+             ct, key_id, nonce, owner_gen, uf, ef) = rad
+
+            # Dekrypteringen krever tenantkontekst — samme port som alle
+            # andre veier inn. Konteksten settes ETTER claimen fordi
+            # oppdragskøen er på tvers av tenanter (modulen betjener mange),
+            # og tenanten er ukjent til claimen har skjedd.
+            sett_kontekst(conn, tenant, auth.aktor, rid)
+            nokkelrad = conn.execute(
+                "SELECT wrapped_dek FROM tenant_nokler"
+                " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
+            if nokkelrad is None or nokkelrad[0] is None:
+                conn.rollback()
+                return _feilsvar("tenantnokkel_mangler", rid)
+            dek = kryptering._pakk_ut((key_id, nokkelrad[0]), tenant)[1]
+            payload = kryptering.dekrypter(dek, ct, nonce, tenant, key_id)
+
+            # MINIMERINGEN SKJER FØR COMMIT (Codex P1, runde 1).
+            #
+            # Første leveranse committet claimen først og minimerte etterpå.
+            # En ukjent oppdragstype eller en feil i minimeringen etterlot da
+            # oppdraget permanent `plukket` med en eier som aldri kom
+            # tilbake — samme hengende tilstand som en krasjet eiermodul.
+            # Her rulles hele claimen i stedet, og oppdraget står fortsatt
+            # `opprettet` for neste plukk.
+            #
+            # `oppdragskontrakt` ligger på core-nivå og ikke i `m37/`
+            # NETTOPP fordi begge sider trenger den: arbeideren for å
+            # planlegge, API-et for å minimere. Den statiske porten
+            # «api/ importerer aldri m37/» skal stoppe ARBEID i
+            # forespørselsveien, ikke en delt kontrakt.
+            try:
+                minimert = oppdragskontrakt.minimer(oppdragstype, payload)
+            except oppdragskontrakt.Oppdragstypeukjent:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                                       oppdragstype=oppdragstype)
+                return _feilsvar("request_feilformet", rid)
+
+            # Kvitteringskapabiliteten utstedes i SAMME transaksjon som
+            # claimen. Feiler utstedelsen, finnes heller ingen claim —
+            # alternativet ville vært et plukket oppdrag ingen kan kvittere
+            # for, altså den hengende tilstanden i en annen forkledning.
+            kvittering_jti = secrets.token_hex(16)
+            kap = conn.execute(
+                "SELECT jti, utloper FROM utsted_kvitteringskapabilitet("
+                "%s,%s,%s,%s)",
+                (opp_id, claim_id, owner_gen, kvittering_jti)).fetchone()
+            if kap is None:
+                conn.rollback()
+                tjeneste.logg.hendelse("db_utilgjengelig", rid, tenant,
+                                       art="drift",
+                                       feiltype="kvitteringskapabilitet")
+                return _feilsvar("db_utilgjengelig", rid)
+            conn.commit()
+        except psycopg.Error as e:
+            conn.rollback()
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                                   feiltype=type(e).__name__)
+            return _feilsvar("db_utilgjengelig", rid)
+        # Klartekst logges ALDRI. Sikkerhetsloggen får id-er, ikke innhold —
+        # canary-testen i suiten planter en kjent verdi i payloaden og
+        # feiler hvis den dukker opp i logg eller på disk.
+        return kanonisk_json({
+            "oppdrag_id": opp_id, "tenant": tenant, "unntak_id": unntak_id,
+            "oppdragstype": oppdragstype, "handling": handling,
+            "repair_operation_id": repair_id, "owner_claim_id": claim_id,
+            "owner_generation": owner_gen,
+            "utforelsesfrist": uf.isoformat(), "evidensfrist": ef.isoformat(),
+            # Kvitteringskapabiliteten er modulens ENESTE adgang til
+            # kvitteringsporten for DETTE oppdraget. Et langlivet modultoken
+            # alene ville gitt adgang til å kvittere for hvilket som helst
+            # oppdrag modulen noensinne har hatt.
+            "kvittering_jti": kap[0],
+            "kvittering_utloper": kap[1].isoformat(),
+            "payload": minimert, "request_id": rid}, 200,
+            {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def _resultathash(kvittering: dict) -> str:
+    """Kanonisk hash over RESULTATET, ikke over hele kvitteringen.
+
+    Skillet avgjør hva som er «samme kvittering»: to leveringer av det
+    samme resultatet skal være idempotente selv om tidsstempel og signatur
+    er nye, mens to ULIKE resultater må kollidere og bli en sikkerhetssak.
+    Hashet vi hele kvitteringen, ville en re-post med nytt tidsstempel sett
+    ut som et motstridende resultat.
+    """
+    kjerne_felt = {k: kvittering.get(k) for k in
+                   ("oppdrag_id", "repair_operation_id", "resultat",
+                    "ressurs_id")}
+    return hashlib.sha256(json.dumps(
+        kjerne_felt, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
+    """Signert, ressursbundet resultatkvittering. Én tenantbundet transaksjon.
+
+    Reglene fra v3-delta pkt. 3 og v4-delta pkt. 2-3, ordrett:
+      * gyldig og innenfor utførelsesfristen, med GJELDENDE owner-fencing
+        => oppdraget og saken kan avsluttes automatisk,
+      * etter utførelsesfristen, eller fra utdatert generasjon => LAGRES
+        som `sen_kvittering`, uten statusendring,
+      * to ulike resultathasher for samme oppdrag => sikkerhetssak,
+      * identisk kvittering => idempotent no-op,
+      * ugyldig signatur => sikkerhetssak, ingen statusendring,
+      * etter evidensfristen => avvises.
+
+    Signaturen verifiseres i APP-LAGET mot modulens registrerte
+    verifikatornøkkel. Nøkkelregisteret bor i app-state (lastet ved boot),
+    aldri i databasen: en angriper med full DB-lesing skal ikke kunne lage
+    en gyldig kvittering.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not _modulscope(auth):
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kvittering = json.loads(raa.decode("utf-8"))
+        except Exception:
+            kvittering = None
+        if not isinstance(kvittering, dict):
+            tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant)
+            return _feilsvar("request_feilformet", rid)
+
+        try:
+            return _ingest_kvittering(tjeneste, conn, auth, kvittering, rid)
+        except psycopg.Error as e:
+            conn.rollback()
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                                   feiltype=type(e).__name__)
+            return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
+                         tenant: str, unntak_id: int, oppdrag_id: int,
+                         rid: str) -> Response | None:
+    """Forbruker kapabiliteten, eller klassifiserer hvorfor vi ikke kunne.
+
+    -> None betyr «kapabiliteten er VÅR, fortsett». Alt annet er et ferdig
+    svar, og transaksjonen er avsluttet.
+
+    Delt av BEGGE veiene — den avsluttende og sen-evidensveien. Det er ikke
+    en stilsak: forrige runde viste hva som skjer når en regel bare er
+    implementert i den ene av to grener, og runden før det viste det samme.
+    Med én funksjon kan de to veiene ikke lenger gli fra hverandre.
+
+    Klassifiseringen selv gjøres ATOMISK i databasen (se
+    `bruk_kvitteringskapabilitet`). Å lese tilstanden herfra etterpå ville
+    vært et nytt kappløp for å avgjøre utfallet av det første.
+    """
+    utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                          (jti, ny_hash)).fetchone()[0]
+    if utfall == "brukt":
+        return None
+
+    if utfall == "idempotent":
+        # Vi tapte kappløpet mot en IDENTISK kvittering. Vinneren har
+        # skrevet evidensraden; vi skal ikke skrive en til.
+        conn.rollback()
+        return kanonisk_json({"status": "idempotent",
+                              "oppdrag_id": oppdrag_id, "request_id": rid},
+                             200, {"x-request-id": rid})
+
+    if utfall == "konflikt":
+        # To ULIKE resultater levert samtidig. Uten denne grenen forsvant
+        # forsøket på motstridende evidens som et generisk auth-avvik —
+        # altså nøyaktig den hendelsen sikkerhetssaken finnes for.
+        _sikkerhetssak_kvittering(conn, tenant, unntak_id,
+                                  "motstridende_kvittering",
+                                  {"kilde": "kapplop", "ny": ny_hash,
+                                   "oppdrag_id": oppdrag_id}, rid)
+        conn.commit()
+        tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
+                               oppdrag_id=oppdrag_id, kapplop=True)
+        return _feilsvar("kvittering_konflikt", rid)
+
+    conn.rollback()
+    tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                           oppdrag_id=oppdrag_id, utfall=utfall)
+    return _feilsvar("kapabilitet_ugyldig", rid)
+
+
+def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
+                       kvittering: dict, rid: str) -> Response:
+    """Innløser kvitteringskapabiliteten, verifiserer signaturen, og
+    committer alt i ÉN tenantbundet transaksjon.
+
+    Rekkefølgen er bindende, og hvert steg har en grunn:
+
+      1. KAPABILITETEN FØRST. Den er serverbundet og gir tenant, oppdrag,
+         modul og owner-fencing. Uten den ville tenanten kommet fra
+         kroppen — altså fra den som skriver kvitteringen.
+      2. SIGNATUREN. Er den ugyldig, er feltene ikke til å stole på, og da
+         er det meningsløst å sammenligne dem med noe. Samme rekkefølge og
+         samme begrunnelse som attestasjonsporten i `kjerne._flyt` steg 4.
+      3. FRISTENE. Evidensfristen avviser; utførelsesfristen avgjør bare om
+         kvitteringen kan LUKKE noe.
+      4. RESULTATET. Identisk => idempotent. Motstridende => sikkerhetssak,
+         aldri «siste vinner».
+
+    Merk hva som IKKE lagres på oppdragsraden: en kvittering som ikke kan
+    avslutte. Den går i historikken som `sen_kvittering`. Skrev vi den til
+    `oppdrag.kvittering`, ville kolonnelåsen (kvitteringen er uforanderlig)
+    gjort det umulig for den NYE eieren å levere sin — altså ville en
+    utdatert kvittering blokkert den gjeldende.
+    """
+    from policy_validator import attestering
+
+    jti = kvittering.get("kvittering_jti")
+    oppgitt_oppdrag = kvittering.get("oppdrag_id")
+    if not isinstance(jti, str) or not jti \
+            or not isinstance(oppgitt_oppdrag, int):
+        return _feilsvar("request_feilformet", rid)
+
+    # 1. Kapabiliteten. `modul_id` sammenlignes inne i funksjonen, så en
+    #    annen modul kan ikke innløse en kapabilitet den har fått tak i.
+    kap = conn.execute(
+        "SELECT tenant, oppdrag_id, owner_claim_id, owner_generation, status,"
+        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s)",
+        (jti, auth.rolle)).fetchone()
+    if kap is None:
+        conn.rollback()
+        tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, auth.tenant)
+        return _feilsvar("kapabilitet_ugyldig", rid)
+    (tenant, oppdrag_id, kap_claim, kap_gen, kap_status,
+     kap_hash) = kap
+    if oppgitt_oppdrag != oppdrag_id:
+        # Kapabiliteten er bundet til ETT oppdrag. En kropp som peker på et
+        # annet er enten en feil eller et forsøk — begge avvises likt.
+        conn.rollback()
+        tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                               oppgitt=oppgitt_oppdrag, bundet=oppdrag_id)
+        return _feilsvar("kapabilitet_ugyldig", rid)
+
+    # Kontekst FØRST i den autentiserte transaksjonen, og tenanten kommer
+    # fra KAPABILITETEN — aldri fra kvitteringskroppen.
+    sett_kontekst(conn, tenant, auth.aktor, rid)
+
+    rad = conn.execute(
+        "SELECT o.status, o.owner_claim_id, o.owner_generation,"
+        " o.utforelsesfrist, o.evidensfrist, o.resultathash, o.unntak_id"
+        "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+        (tenant, oppdrag_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        return _feilsvar("kapabilitet_ugyldig", rid)
+    (status, owner_claim, owner_gen, uf, ef, lagret_hash, unntak_id) = rad
+
+    # 2. Signaturen.
+    if not attestering.verifiser(kvittering, tjeneste.nokler):
+        conn.rollback()
+        tjeneste.logg.hendelse("kvittering_signatur_ugyldig", rid, tenant,
+                               oppdrag_id=oppdrag_id)
+        return _feilsvar("kvittering_signatur_ugyldig", rid)
+
+    naa = datetime.now(timezone.utc)
+    if naa > ef:
+        conn.rollback()
+        return _feilsvar("kvittering_for_sen", rid)
+
+    ny_hash = _resultathash(kvittering)
+
+    # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
+    #    husker hva DEN ble brukt til; oppdraget husker hva som avsluttet
+    #    det. En re-post treffer den første, en annen utfører den andre.
+    for kilde, hash_ in (("kapabilitet", kap_hash), ("oppdrag", lagret_hash)):
+        if hash_ is None:
+            continue
+        if hash_ == ny_hash:
+            conn.rollback()
+            return kanonisk_json({"status": "idempotent",
+                                  "oppdrag_id": oppdrag_id,
+                                  "request_id": rid}, 200,
+                                 {"x-request-id": rid})
+        _sikkerhetssak_kvittering(conn, tenant, unntak_id,
+                                  "motstridende_kvittering",
+                                  {"kilde": kilde, "lagret": hash_,
+                                   "ny": ny_hash}, rid)
+        conn.commit()
+        tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
+                               oppdrag_id=oppdrag_id)
+        return _feilsvar("kvittering_konflikt", rid)
+
+    # 3b. Owner-fencing: kapabilitetens generasjon mot oppdragets GJELDENDE.
+    #     En kapabilitet fra en utdatert generasjon er fortsatt gyldig
+    #     EVIDENS, men den vinner aldri over den nye eieren.
+    gjeldende = (kap_claim == owner_claim and kap_gen == owner_gen
+                 and status == "plukket")
+    kan_avslutte = gjeldende and naa <= uf and kap_status == "utstedt"
+
+    if not kan_avslutte:
+        # KAPABILITETEN FORBRUKES OGSÅ HER (Codex P1, runde 2).
+        #
+        # Første utgave skrev bare historikkraden og lot kapabiliteten stå
+        # `utstedt` med `resultathash = NULL`. Konsekvensen var større enn
+        # duplikatlogging: samme jti kunne poste ubegrenset mange sene
+        # kvitteringer, og siden ingenting hadde lagret den FØRSTE hashen,
+        # ble et MOTSTRIDENDE resultat lagret som ordinær evidens i stedet
+        # for å bli en sikkerhetssak.
+        #
+        # Reglene «identisk kvittering => idempotent no-op» og «to ulike
+        # resultathasher => sikkerhetssak» gjaldt altså bare den
+        # avsluttende veien — nettopp ikke stale-generation/etter-frist-
+        # veien de er til for. Samme funnfamilie som resten av dette
+        # prosjektet: porten fantes, men dekket ikke det den ga inntrykk av.
+        #
+        # Forbruket skjer i SAMME commit som evidensraden. Statusen på
+        # oppdraget og saken røres ikke — en sen kvittering er evidens, og
+        # skal aldri avslutte noe.
+        svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash,
+                                    tenant=tenant, unntak_id=unntak_id,
+                                    oppdrag_id=oppdrag_id, rid=rid)
+        if svar is not None:
+            # Taperen av kappløpet skriver INGEN evidensrad. Den ville vært
+            # den andre raden for samme jti — og om utfallet var idempotent
+            # eller konflikt, avgjøres atomisk i databasen, ikke her.
+            return svar
+        conn.execute(
+            "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+            " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
+            (tenant, unntak_id, auth.aktor, rid,
+             json.dumps({"oppdrag_id": oppdrag_id,
+                         "gjeldende_fencing": gjeldende,
+                         "etter_utforelsesfrist": naa > uf,
+                         "resultathash": ny_hash}, ensure_ascii=False)))
+        conn.commit()
+        return kanonisk_json({"status": "lagret_uten_statusendring",
+                              "oppdrag_id": oppdrag_id, "request_id": rid},
+                             202, {"x-request-id": rid})
+
+    # Forbruk av kapabiliteten i SAMME commit som statusskiftet. Feiler
+    # den, har noen andre rukket å bruke den, og da skal ingenting skje.
+    svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash, tenant=tenant,
+                                unntak_id=unntak_id, oppdrag_id=oppdrag_id,
+                                rid=rid)
+    if svar is not None:
+        return svar
+
+    vellykket = kvittering.get("resultat") == "utfort"
+    conn.execute(
+        "UPDATE oppdrag SET kvittering=%s, kvittering_signatur=%s,"
+        " resultathash=%s, status=%s WHERE tenant=%s AND id=%s",
+        (json.dumps(kvittering, ensure_ascii=False),
+         (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
+         "utfort" if vellykket else "feilet", tenant, oppdrag_id))
+    conn.execute(
+        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+        " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
+        (tenant, unntak_id, auth.aktor, rid,
+         json.dumps({"oppdrag_id": oppdrag_id,
+                     "resultat": kvittering.get("resultat"),
+                     "ressurs_id": kvittering.get("ressurs_id")},
+                    ensure_ascii=False)))
+    conn.execute(
+        "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
+        "   AND status='venter_utførelse'",
+        ("løst" if vellykket else "manuell", tenant, unntak_id))
+    conn.commit()
+    return kanonisk_json({"status": "utfort" if vellykket else "feilet",
+                          "oppdrag_id": oppdrag_id, "unntak_id": unntak_id,
+                          "request_id": rid}, 200, {"x-request-id": rid})
+
+
+def _sikkerhetssak_kvittering(conn, tenant: str, unntak_id: int,
+                              hendelse: str, detalj: dict, rid: str) -> None:
+    """Historikkrad for kvitteringsavvik. INGEN statusendring.
+
+    v3-delta pkt. 3 er tydelig: et motstridende resultat skal ikke avgjøre
+    noe. Det skal SES. En automatisk statusendring her ville betydd at den
+    som klarer å sende to ulike kvitteringer bestemmer utfallet.
+    """
+    conn.execute(
+        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+        " request_id, detalj) VALUES (%s,%s,%s,'kvitteringsport',%s,%s)",
+        (tenant, unntak_id, hendelse, rid,
+         json.dumps(detalj, ensure_ascii=False)))
