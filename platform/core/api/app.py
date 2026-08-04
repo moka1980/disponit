@@ -1169,6 +1169,34 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     kan_avslutte = gjeldende and naa <= uf and kap_status == "utstedt"
 
     if not kan_avslutte:
+        # KAPABILITETEN FORBRUKES OGSÅ HER (Codex P1, runde 2).
+        #
+        # Første utgave skrev bare historikkraden og lot kapabiliteten stå
+        # `utstedt` med `resultathash = NULL`. Konsekvensen var større enn
+        # duplikatlogging: samme jti kunne poste ubegrenset mange sene
+        # kvitteringer, og siden ingenting hadde lagret den FØRSTE hashen,
+        # ble et MOTSTRIDENDE resultat lagret som ordinær evidens i stedet
+        # for å bli en sikkerhetssak.
+        #
+        # Reglene «identisk kvittering => idempotent no-op» og «to ulike
+        # resultathasher => sikkerhetssak» gjaldt altså bare den
+        # avsluttende veien — nettopp ikke stale-generation/etter-frist-
+        # veien de er til for. Samme funnfamilie som resten av dette
+        # prosjektet: porten fantes, men dekket ikke det den ga inntrykk av.
+        #
+        # Forbruket skjer i SAMME commit som evidensraden. Statusen på
+        # oppdraget og saken røres ikke — en sen kvittering er evidens, og
+        # skal aldri avslutte noe.
+        brukt = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                             (jti, ny_hash)).fetchone()
+        if not brukt or brukt[0] is not True:
+            # Kapabiliteten ble forbrukt av noen andre mellom innløsningen
+            # og nå. Da skal ingen evidensrad skrives — den ville vært en
+            # andre rad for samme jti, som er nøyaktig det vi lukker.
+            conn.rollback()
+            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                                   oppdrag_id=oppdrag_id)
+            return _feilsvar("kapabilitet_ugyldig", rid)
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",

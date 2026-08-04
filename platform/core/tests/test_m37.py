@@ -1477,3 +1477,172 @@ def test_P1_kompensasjon_utloses_kun_av_eksplisitt_markor():
     for ikke in ({}, {"delvis_utfort": False}, {"delvis_utfort": "ja"},
                  {"delvis_utfort": 1}, {"handling": "purring.send"}):
         assert reparasjoner.krever_kompensasjon(ikke) is False, ikke
+
+
+# ===========================================================================
+# Codex runde 2 — sen kvittering forbruker kapabiliteten
+# ===========================================================================
+
+def _signer_kvittering(kropp: dict, verifikator="v_fordring", nokkel="k1"):
+    from policy_validator import attestering
+    return attestering.signer({**kropp, "verifikator": verifikator},
+                              nokkel, NOKLER[verifikator][nokkel])
+
+
+@pg
+def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
+    """Codex P1 runde 2 — HELE kjeden, deterministisk.
+
+    Den sene veien skrev evidensraden og lot kapabiliteten stå `utstedt`
+    med `resultathash = NULL`. Da gjaldt reglene «identisk => idempotent»
+    og «to ulike hasher => sikkerhetssak» bare den AVSLUTTENDE veien —
+    altså nettopp ikke stale-generation/etter-frist-veien de er til for.
+
+    Samme jti kunne dermed levere resultat etter resultat, og et
+    motstridende resultat ble lagret som ordinær evidens.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `bruk_kvitteringskapabilitet(...)`-kallet i `not kan_avslutte`-grenen.
+    Da blir R2 en ny `sen_kvittering` i stedet for en konflikt.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, rid_rep = _lag_oppdrag(migrator, TENANT, sak, logg)
+    # Saken settes i `venter_utførelse`, som er der en sak med utestående
+    # oppdrag faktisk står.
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+
+            # --- A claimer ---------------------------------------------
+            ra = c.post("/v1/oppdrag/claim", json={}, headers=h)
+            assert ra.status_code == 200, ra.text
+            a = ra.json()
+            assert a["oppdrag_id"] == opp and a["owner_generation"] == 1
+
+            # --- A mister leasen, B reclaimer ---------------------------
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("UPDATE oppdrag SET owner_lease_utloper=now()"
+                             " - interval '1 s' WHERE tenant=%s AND id=%s",
+                             (TENANT, opp))
+            migrator.commit()
+
+            rb = c.post("/v1/oppdrag/claim", json={}, headers=h)
+            assert rb.status_code == 200, rb.text
+            b = rb.json()
+            assert b["owner_generation"] == 2, "B fikk ikke ny generasjon"
+            assert b["kvittering_jti"] != a["kvittering_jti"]
+
+            def kvittering(kap, resultat):
+                return _signer_kvittering({
+                    "oppdrag_id": opp, "tenant": TENANT,
+                    "kvittering_jti": kap["kvittering_jti"],
+                    "repair_operation_id": kap["repair_operation_id"],
+                    "owner_claim_id": kap["owner_claim_id"],
+                    "owner_generation": kap["owner_generation"],
+                    "resultat": resultat, "ressurs_id": "fak-1"})
+
+            # --- A poster R1: sen evidens, INGEN terminalstatus ---------
+            r1 = c.post("/v1/oppdrag/kvittering",
+                        json=kvittering(a, "utfort"), headers=h)
+            assert r1.status_code == 202, r1.text
+            assert r1.json()["status"] == "lagret_uten_statusendring"
+
+            # --- A poster R1 igjen: IDEMPOTENT, ingen ny evidensrad -----
+            r1b = c.post("/v1/oppdrag/kvittering",
+                         json=kvittering(a, "utfort"), headers=h)
+            assert r1b.status_code == 200, r1b.text
+            assert r1b.json()["status"] == "idempotent"
+
+            # --- A poster R2 med SAMME kapabilitet: KONFLIKT ------------
+            r2 = c.post("/v1/oppdrag/kvittering",
+                        json=kvittering(a, "feilet"), headers=h)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kvittering_konflikt"
+
+            # --- B kan fortsatt avslutte med SIN kapabilitet ------------
+            rb2 = c.post("/v1/oppdrag/kvittering",
+                         json=kvittering(b, "utfort"), headers=h)
+            assert rb2.status_code == 200, rb2.text
+            assert rb2.json()["status"] == "utfort"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    # --- Evidensen: NØYAKTIG én sen kvittering, én konflikt ------------
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak)).fetchall())
+    status = migrator.execute(
+        "SELECT o.status, u.status FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        f"forventet NØYAKTIG én sen evidensrad, fikk {hendelser}"
+        " — en re-post eller en konflikt lagde en ordinær evidensrad")
+    assert hendelser.get("motstridende_kvittering") == 1, (
+        f"motstridende resultat ble ikke registrert som konflikt: {hendelser}")
+    assert status == ("utfort", "løst"), (
+        f"B fikk ikke avsluttet: {status}")
+
+
+@pg
+def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
+                                                                   miljo, token):
+    """En forbrukt kapabilitet er forbrukt — også for et annet oppdrag.
+
+    Uten dette ville «forbruket» vært en bokføring uten virkning: den
+    samme jti-en kunne båret et resultat til et oppdrag den aldri ble
+    utstedt for.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    # TO saker, ikke to oppdrag på én: delindeksen
+    # `en_aktiv_reparasjon_per_sak` tillater kun én aktiv reparasjon per
+    # sak, og den gjorde riktig i å stoppe førsteutkastet av denne testen.
+    sak1, logg1 = _lag_sak(migrator, TENANT)
+    sak2, logg2 = _lag_sak(migrator, TENANT)
+    opp1, _ = _lag_oppdrag(migrator, TENANT, sak1, logg1)
+    opp2, _ = _lag_oppdrag(migrator, TENANT, sak2, logg2)
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+
+            # Kapabiliteten er bundet til ETT oppdrag. En kropp som peker
+            # på et annet avvises — uansett hvor gyldig signaturen er.
+            feil_oppdrag = _signer_kvittering({
+                "oppdrag_id": opp2 if a["oppdrag_id"] == opp1 else opp1,
+                "tenant": TENANT, "kvittering_jti": a["kvittering_jti"],
+                "repair_operation_id": a["repair_operation_id"],
+                "owner_claim_id": a["owner_claim_id"],
+                "owner_generation": a["owner_generation"],
+                "resultat": "utfort", "ressurs_id": "fak-1"})
+            r = c.post("/v1/oppdrag/kvittering", json=feil_oppdrag, headers=h)
+            assert r.status_code == 401, r.text
+            assert r.json()["feil"] == "kapabilitet_ugyldig"
+    finally:
+        app.tjeneste.pool.lukk()
