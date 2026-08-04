@@ -4,457 +4,156 @@
   "description": "Formelt skjema (ChatGPT-review PR-001, funn B). additionalProperties: false overalt — ukjente felter avvises.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "meta",
-    "tidssone",
-    "roller",
-    "dataklasser",
-    "verifikatorer",
-    "handlinger",
-    "unntak"
-  ],
+  "required": ["schema_version", "meta", "tidssone", "roller", "dataklasser", "verifikatorer", "handlinger", "unntak"],
   "properties": {
-    "schema_version": {
-      "const": "0.2"
-    },
+    "schema_version": {"const": "0.2"},
     "meta": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "policy_id",
-        "versjon",
-        "bransjemal",
-        "status"
-      ],
+      "required": ["policy_id", "versjon", "bransjemal", "status"],
       "properties": {
-        "policy_id": {
-          "type": "string",
-          "minLength": 3,
-          "pattern": "^[a-z0-9-]+$"
-        },
-        "versjon": {
-          "type": "string",
-          "pattern": "^\\d+\\.\\d+\\.\\d+$"
-        },
-        "bedrift": {
-          "type": "string"
-        },
-        "bransjemal": {
-          "type": "string",
-          "minLength": 3
-        },
-        "kilder": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "status": {
-          "enum": [
-            "utkast",
-            "validert_pilot",
-            "produksjon"
-          ]
-        },
-        "sist_endret": {
-          "type": "string"
-        },
-        "endret_av": {
-          "type": "string"
-        }
+        "policy_id": {"type": "string", "minLength": 3, "pattern": "^[a-z0-9-]+$"},
+        "versjon": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "bedrift": {"type": "string"},
+        "bransjemal": {"type": "string", "minLength": 3},
+        "kilder": {"type": "array", "items": {"type": "string"}},
+        "status": {"enum": ["utkast", "validert_pilot", "produksjon"]},
+        "sist_endret": {"type": "string"},
+        "endret_av": {"type": "string"}
       }
     },
-    "tidssone": {
-      "type": "string",
-      "minLength": 3,
-      "pattern": "^[A-Za-z]+/[A-Za-z_+-]+$"
-    },
+    "tidssone": {"type": "string", "minLength": 3, "pattern": "^[A-Za-z]+/[A-Za-z_+-]+$"},
     "roller": {
-      "type": "array",
-      "minItems": 1,
+      "type": "array", "minItems": 1,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[a-z0-9_]+$"
-          },
-          "beskrivelse": {
-            "type": "string"
-          }
-        }
+        "type": "object", "additionalProperties": false, "required": ["id"],
+        "properties": {"id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+                       "beskrivelse": {"type": "string"}}
       }
     },
     "dataklasser": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "pattern": "^[a-z0-9_]+$"
-      }
+      "type": "array", "minItems": 1,
+      "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}
     },
     "verifikatorer": {
-      "type": "object",
-      "minProperties": 1,
+      "type": "object", "minProperties": 1,
       "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "betrodd_for"
-        ],
+        "type": "object", "additionalProperties": false, "required": ["betrodd_for"],
         "properties": {
-          "beskrivelse": {
-            "type": "string"
-          },
-          "betrodd_for": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z0-9_]+$"
-            }
-          },
-          "kan_fastsla_permanent": {
-            "type": "boolean",
-            "description": "Rett til å erklære et vilkår permanent uinnhentbart. `betrodd_for` alene er IKKE nok: en verifikator som kan attestere et vilkår er ikke dermed betrodd for å erklære det prinsipielt uoppnåelig. Uten denne behandles `permanent` som en forbigående negativ."
-          }
-        }
-      }
-    },
-    "handlinger": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "$ref": "#/$defs/handling"
-      }
-    },
-    "frister": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "kilde",
-          "frekvens"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kilde": {
-            "type": "string"
-          },
-          "frekvens": {
-            "type": "string"
-          },
-          "varsling_dager_for": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        }
-      }
-    },
-    "retention": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "dataklasse"
-        ],
-        "properties": {
-          "dataklasse": {
-            "type": "string"
-          },
-          "aar_min": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "regel": {
-            "type": "string"
-          },
-          "sletting": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "unntak": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kategorier",
-        "maks_auto_forsok",
-        "eskalering"
-      ],
-      "properties": {
-        "kategorier": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z0-9_]+$"
-          }
-        },
-        "maks_auto_forsok": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 10
-        },
-        "eskalering": {
-          "const": "unntakskø"
+          "beskrivelse": {"type": "string"},
+          "betrodd_for": {"type": "array", "minItems": 1,
+                          "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+          "kan_fastsla_permanent": {"type": "boolean",
+                                    "description": "PR-007 / Scope v2 pkt. 5: retten til å erklære et vilkår PRINSIPIELT uinnhentbart. `betrodd_for` alene er ikke nok — en verifikator som kan attestere et vilkår er ikke dermed betrodd for å erklære det uoppnåelig. Uten denne behandles `permanent` som en forbigående negativ."}
         }
       }
     },
     "verifikator_prioritet": {
       "type": "object",
-      "description": "Eksplisitt prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden.",
-      "additionalProperties": {
-        "type": "integer"
+      "description": "PR-007 / Scope v2 pkt. 1: prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden.",
+      "additionalProperties": {"type": "integer"}
+    },
+    "handlinger": {
+      "type": "array", "minItems": 1,
+      "items": {"$ref": "#/$defs/handling"}
+    },
+    "frister": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "kilde", "frekvens"],
+        "properties": {"id": {"type": "string"}, "kilde": {"type": "string"},
+                       "frekvens": {"type": "string"},
+                       "varsling_dager_for": {"type": "array", "items": {"type": "integer", "minimum": 0}}}
+      }
+    },
+    "retention": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["dataklasse"],
+        "properties": {"dataklasse": {"type": "string"},
+                       "aar_min": {"type": "integer", "minimum": 0},
+                       "regel": {"type": "string"}, "sletting": {"type": "string"}}
+      }
+    },
+    "unntak": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kategorier", "maks_auto_forsok", "eskalering"],
+      "properties": {
+        "kategorier": {"type": "array", "minItems": 1,
+                       "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+        "maks_auto_forsok": {"type": "integer", "minimum": 0, "maximum": 10},
+        "eskalering": {"const": "unntakskø"}
       }
     }
   },
   "$defs": {
     "handling": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "modul",
-        "modus",
-        "ved_brudd",
-        "reversering"
-      ],
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "modul", "modus", "ved_brudd", "reversering"],
       "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"
-        },
-        "modul": {
-          "type": "string",
-          "pattern": "^M-\\d{1,2}$"
-        },
-        "modus": {
-          "enum": [
-            "auto",
-            "auto_med_vilkaar",
-            "alltid_stopp"
-          ]
-        },
-        "ved_brudd": {
-          "enum": [
-            "unntakskø",
-            "stopp_og_varsle",
-            "frys"
-          ]
-        },
-        "tillatt_for": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z0-9_]+$"
-          }
-        },
-        "dataklasser_tillatt": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z0-9_]+$"
-          }
-        },
+        "id": {"type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"},
+        "modul": {"type": "string", "pattern": "^M-\\d{1,2}$"},
+        "modus": {"enum": ["auto", "auto_med_vilkaar", "alltid_stopp"]},
+        "ved_brudd": {"enum": ["unntakskø", "stopp_og_varsle", "frys"]},
+        "tillatt_for": {"type": "array", "minItems": 1,
+                        "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+        "dataklasser_tillatt": {"type": "array", "minItems": 1,
+                                "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+        "maks_attestasjon_alder_s": {"type": "integer", "minimum": 1,
+                                     "description": "PR-007 / v7 pkt. 1: tak på hvor gammel en attestasjon kan være for DENNE handlingen, uavhengig av verifikatorens eget `utloper`. Fravær = kun `utloper` gjelder."},
         "grenser": {
-          "type": "object",
-          "additionalProperties": false,
+          "type": "object", "additionalProperties": false,
           "properties": {
-            "belop_maks": {
-              "type": [
-                "number",
-                "string"
-              ],
-              "pattern": "^\\d+(\\.\\d{1,2})?$",
-              "minimum": 0
-            },
-            "valuta": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "string",
-                "pattern": "^[A-Z]{3}$"
-              }
-            },
-            "tidsvindu": {
-              "type": "string",
-              "pattern": "^(man|tir|ons|tor|fre|lor|son)-(man|tir|ons|tor|fre|lor|son) ([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d$"
-            },
+            "belop_maks": {"type": ["number", "string"],
+                           "pattern": "^\\d+(\\.\\d{1,2})?$", "minimum": 0},
+            "valuta": {"type": "array", "minItems": 1,
+                       "items": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+            "tidsvindu": {"type": "string",
+                          "pattern": "^(man|tir|ons|tor|fre|lor|son)-(man|tir|ons|tor|fre|lor|son) ([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d$"},
             "frekvens": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "maks",
-                "periode_antall",
-                "periode_enhet",
-                "grupperingsnokkel"
-              ],
+              "type": "object", "additionalProperties": false,
+              "required": ["maks", "periode_antall", "periode_enhet", "grupperingsnokkel"],
               "properties": {
-                "maks": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "periode_antall": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "periode_enhet": {
-                  "enum": [
-                    "minutter",
-                    "timer",
-                    "dager",
-                    "uker"
-                  ]
-                },
-                "grupperingsnokkel": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9_]+$"
-                }
+                "maks": {"type": "integer", "minimum": 1},
+                "periode_antall": {"type": "integer", "minimum": 1},
+                "periode_enhet": {"enum": ["minutter", "timer", "dager", "uker"]},
+                "grupperingsnokkel": {"type": "string", "pattern": "^[a-z0-9_]+$"}
               }
             }
           }
         },
         "vilkaar": {
-          "type": "array",
-          "minItems": 1,
+          "type": "array", "minItems": 1,
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "navn",
-              "verifikator"
-            ],
+            "type": "object", "additionalProperties": false,
+            "required": ["navn", "verifikator"],
             "properties": {
-              "navn": {
-                "type": "string",
-                "pattern": "^[a-z0-9_]+$"
-              },
-              "verifikator": {
-                "type": "string"
-              },
-              "min": {
-                "type": "number"
-              }
+              "navn": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+              "verifikator": {"type": "string"},
+              "min": {"type": "number"}
             }
           }
         },
         "reversering": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ],
+          "type": "object", "additionalProperties": false, "required": ["type"],
           "properties": {
-            "type": {
-              "enum": [
-                "direkte",
-                "kompenserende",
-                "irreversibel"
-              ]
-            },
-            "frist_sekunder": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "handling": {
-              "type": "string"
-            }
+            "type": {"enum": ["direkte", "kompenserende", "irreversibel"]},
+            "frist_sekunder": {"type": "integer", "minimum": 0},
+            "handling": {"type": "string"}
           },
           "allOf": [
-            {
-              "if": {
-                "properties": {
-                  "type": {
-                    "const": "kompenserende"
-                  }
-                }
-              },
-              "then": {
-                "required": [
-                  "type",
-                  "handling"
-                ]
-              }
-            }
+            {"if": {"properties": {"type": {"const": "kompenserende"}}},
+             "then": {"required": ["type", "handling"]}}
           ]
-        },
-        "maks_attestasjon_alder_s": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Tak på hvor gammel en attestasjon kan være for DENNE handlingen, uavhengig av verifikatorens eget `utloper`. Fravær = kun `utloper` gjelder."
         }
       },
       "allOf": [
-        {
-          "if": {
-            "properties": {
-              "modus": {
-                "enum": [
-                  "auto",
-                  "auto_med_vilkaar"
-                ]
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "id",
-              "modul",
-              "modus",
-              "ved_brudd",
-              "reversering",
-              "tillatt_for",
-              "dataklasser_tillatt"
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "reversering": {
-                "properties": {
-                  "type": {
-                    "const": "irreversibel"
-                  }
-                }
-              }
-            },
-            "required": [
-              "reversering"
-            ]
-          },
-          "then": {
-            "anyOf": [
-              {
-                "required": [
-                  "grenser"
-                ]
-              },
-              {
-                "required": [
-                  "vilkaar"
-                ]
-              }
-            ]
-          }
-        }
+        {"if": {"properties": {"modus": {"enum": ["auto", "auto_med_vilkaar"]}}},
+         "then": {"required": ["id", "modul", "modus", "ved_brudd", "reversering",
+                               "tillatt_for", "dataklasser_tillatt"]}},
+        {"if": {"properties": {"reversering": {"properties": {"type": {"const": "irreversibel"}}}},
+                "required": ["reversering"]},
+         "then": {"anyOf": [{"required": ["grenser"]}, {"required": ["vilkaar"]}]}}
       ]
     }
   }
