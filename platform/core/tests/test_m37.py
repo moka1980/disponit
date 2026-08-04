@@ -1240,6 +1240,17 @@ def test_kvitteringsportens_tre_avvisninger(migrator, miljo, token):
 # Codex runde 1 — de tre P1-ene
 # ===========================================================================
 
+def _unik_eiermodul() -> str:
+    """Egen kø per test.
+
+    `claim_neste_oppdrag` filtrerer på EIERMODUL, ikke på tenant. Deler to
+    tester modulnavn, deler de kø — og en test som antar at den er alene om
+    å plukke, måler kjørerekkefølgen. Samme lærdom som den globale
+    saks-køen ga tidligere i denne PR-en, i en annen dimensjon.
+    """
+    return "eiermodul:test-" + secrets.token_hex(4)
+
+
 def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
                  handling="purring.send", eiermodul="eiermodul:reinnsending",
                  utforelsesfrist="1 hour", evidensfrist="30 days"):
@@ -1687,14 +1698,14 @@ def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
 # Codex runde 3 — taperen i forbrukskappløpet må klassifiseres riktig
 # ===========================================================================
 
-def _oppsett_stale_kapabilitet(migrator, klient, token_h):
+def _oppsett_stale_kapabilitet(migrator, klient, token_h, eiermodul):
     """A claimer, mister leasen, B reclaimer. -> (opp, sak, a, b)
 
     Etter dette går ALLE A sine kvitteringer sen-evidensveien: gyldig
     signert, men fra en utdatert generasjon.
     """
     sak, logg = _lag_sak(migrator, TENANT)
-    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg, eiermodul=eiermodul)
     cid = secrets.token_hex(16)
     _sett_kontekst(migrator, TENANT, "m37-arbeider", cid)
     migrator.execute(
@@ -1705,14 +1716,19 @@ def _oppsett_stale_kapabilitet(migrator, klient, token_h):
                      " WHERE tenant=%s AND id=%s", (TENANT, sak))
     migrator.commit()
 
-    a = klient.post("/v1/oppdrag/claim", json={}, headers=token_h).json()
+    ra = klient.post("/v1/oppdrag/claim", json={}, headers=token_h)
+    assert ra.status_code == 200, ra.text
+    a = ra.json()
+    assert a["oppdrag_id"] == opp, "A fikk et annet oppdrag enn vårt"
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE oppdrag SET owner_lease_utloper=now()"
                      " - interval '1 s' WHERE tenant=%s AND id=%s",
                      (TENANT, opp))
     migrator.commit()
-    b = klient.post("/v1/oppdrag/claim", json={}, headers=token_h).json()
-    assert b["owner_generation"] == 2
+    rb = klient.post("/v1/oppdrag/claim", json={}, headers=token_h)
+    assert rb.status_code == 200, rb.text
+    b = rb.json()
+    assert b["oppdrag_id"] == opp and b["owner_generation"] == 2
     return opp, sak, a, b
 
 
@@ -1778,10 +1794,11 @@ def test_P1_samtidig_identisk_repost_blir_idempotent_ikke_auth_feil(
     app = lag_app(DSN)
     try:
         with TestClient(app) as c:
-            tok, _ = token(rolle="eiermodul:reinnsending",
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
                            scopes=("orders:execute:purring.",))
             h = {"authorization": f"Bearer {tok}"}
-            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h, modul)
 
             kropp = _kvitteringskropp(a, opp, "utfort")
             vinnerhash = _resultathash(kropp)
@@ -1845,10 +1862,11 @@ def test_P1_samtidig_motstridende_repost_blir_sikkerhetssak(migrator, miljo,
     app = lag_app(DSN)
     try:
         with TestClient(app) as c:
-            tok, _ = token(rolle="eiermodul:reinnsending",
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
                            scopes=("orders:execute:purring.",))
             h = {"authorization": f"Bearer {tok}"}
-            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h, modul)
 
             # Vinneren leverte `utfort`; taperen leverer `feilet` med SAMME
             # kapabilitet. Ulike resultathasher.
@@ -1908,10 +1926,11 @@ def test_P1_forbrukets_fire_utfall_er_uttommende(migrator, miljo, token):
     app = lag_app(DSN)
     try:
         with TestClient(app) as c:
-            tok, _ = token(rolle="eiermodul:reinnsending",
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
                            scopes=("orders:execute:purring.",))
             h = {"authorization": f"Bearer {tok}"}
-            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h, modul)
             jti = a["kvittering_jti"]
 
             assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
@@ -1950,13 +1969,83 @@ def test_policyref_rundtur_bygger_og_leser_samme_format():
     """
     from policy_validator.engine import _pid, les_policyref
     pol = {"meta": {"policy_id": "tjenestebedrift-no", "versjon": "0.2.0"}}
-    for handling in ("purring.send", "a-b.c", "x/y@z", "ukjent"):
+    # Handlingene her er SKJEMAGYLDIGE (`^[a-z0-9_]+(\.[a-z0-9_]+)+$`).
+    # Etter innstrammingen er det nettopp poenget: rundturen skal holde for
+    # alt `_pid` faktisk kan produsere fra en gyldig policy, og ikke for
+    # noe annet.
+    for handling in ("purring.send", "faktura.krediter", "a_b.c_d",
+                     "x.y.z"):
         assert les_policyref(_pid(pol, handling)) == ("tjenestebedrift-no",
                                                       "0.2.0"), handling
     # Fail-closed: aldri en gjetning når formen ikke stemmer.
-    for ugyldig in ("tjenestebedrift-no", "", None, 12, "a@b/c",
-                    "STORE@0.2.0/x", "a@0.2/x"):
+    for ugyldig in (
+            "tjenestebedrift-no", "", None, 12,
+            "STORE@0.2.0/purring.send",       # policy_id har store bokstaver
+            "a@0.2/purring.send",             # versjon er ikke x.y.z
+            # AVKORTEDE former — Codex' P1 på hotfixen. `_pid` kan aldri
+            # produsere dem, så å godta dem er å stole på en identitet som
+            # ikke finnes. Parseren godtok begge før.
+            "a@1.2.3",                        # ingen skråstrek
+            "a@1.2.3/",                       # tom handling
+            "a@1.2.3/purring.send/noe",       # handling med skråstrek
+            "a@1.2.3/UKJENT",                 # handling med store bokstaver
+            "a@1.2.3/ukjent",                 # handling uten punktum
+            "a@1.2.3/.send",                  # handling starter med punktum
+            "a1.2.3/purring.send",            # ingen krøllalfa
+    ):
         assert les_policyref(ugyldig) is None, ugyldig
+
+
+def test_policyref_monstre_speiler_policyskjemaet():
+    """Parserens mønstre er KOPIER av skjemaets. De må ikke gli fra hverandre.
+
+    Uten denne kunne skjemaet utvidet `handling.id` — f.eks. med bindestrek
+    — og parseren ville avvist helt lovlige referanser som «korrupt
+    evidens», altså sendt gyldige saker til manuell kø i stillhet.
+    """
+    import json
+    from policy_validator import engine
+    skjema = json.loads(
+        (POLICIES.parent / "policies" / "policy-schema-v0.2.json").read_text(
+            encoding="utf-8"))
+    meta = skjema["properties"]["meta"]["properties"]
+    handling = skjema["$defs"]["handling"]["properties"]["id"]
+    for monster, fasit, navn in (
+            (engine._POLICY_ID_MONSTER, meta["policy_id"]["pattern"], "policy_id"),
+            (engine._VERSJON_MONSTER, meta["versjon"]["pattern"], "versjon"),
+            (engine._HANDLING_MONSTER, handling["pattern"], "handling.id")):
+        assert monster.pattern == fasit.strip("^$"), (
+            f"{navn}: parseren har {monster.pattern!r}, skjemaet har"
+            f" {fasit!r} — de har glidd fra hverandre")
+
+
+@pg
+def test_migrator_naar_ikke_kapabilitetene_uten_set_role(migrator):
+    """Rettighetsmodellen står: migrator har INGEN direkte vei til
+    kapabilitetstabellene.
+
+    Første forsøk på å gjøre testsuiten hermetisk ga migrator varig
+    `SELECT, DELETE` gjennom en migrasjon. Det ville lagt en direkte,
+    destruktiv datapassasje i alle kundebaser for å løse fixture-isolasjon.
+    Oppryddingen skjer nå under eksplisitt `SET LOCAL ROLE` i
+    testoppsettet, og DENNE testen beviser at rettigheten ikke ble igjen.
+
+    MUTASJONEN SOM DREPER DENNE: legg GRANT-ene tilbake i en migrasjon.
+    """
+    import psycopg
+    for tabell in ("arbeidskapabiliteter", "kvitteringskapabiliteter"):
+        for sql in (f"SELECT count(*) FROM {tabell}",
+                    f"DELETE FROM {tabell} WHERE tenant='x'"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                migrator.execute(sql)
+            migrator.rollback()
+
+    # Og motstykket: MED SET ROLE virker det — ellers ville testen bestått
+    # selv om tabellene var utilgjengelige for alle, og fixturen ødelagt.
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    migrator.execute("SELECT count(*) FROM arbeidskapabiliteter").fetchone()
+    migrator.execute("RESET ROLE")
+    migrator.rollback()
 
 
 @pg

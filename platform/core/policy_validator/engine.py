@@ -177,18 +177,35 @@ def les_policyref(ref: object) -> tuple[str, str] | None:
     Kallerne behandler None som «ingen verifiserbar policyidentitet», og
     det er den fail-closed veien som allerede finnes.
     """
-    if not isinstance(ref, str) or "@" not in ref:
+    if not isinstance(ref, str):
         return None
-    pid, _, resten = ref.partition("@")
-    versjon = resten.partition("/")[0]
+    pid, sep, resten = ref.partition("@")
+    if not sep:
+        return None
+    # `partition` gir HELE resten etter FØRSTE skråstrek som handlingsdel.
+    # Det er med vilje: `a@1.2.3/purring.send/noe` skal avvises, ikke
+    # avkortes til `purring.send`. Tar vi bare første ledd, godtar vi en
+    # streng `_pid` aldri kunne produsert.
+    versjon, sep2, handling = resten.partition("/")
+    if not sep2 or not handling:
+        # Avkortet form. `a@1.2.3` og `a@1.2.3/` er ikke policyreferanser —
+        # de er evidens som mangler et ledd, og en parser som fyller inn
+        # det manglende leddet med stillhet er ikke fail-closed.
+        return None
     if not _POLICY_ID_MONSTER.fullmatch(pid) \
-            or not _VERSJON_MONSTER.fullmatch(versjon):
+            or not _VERSJON_MONSTER.fullmatch(versjon) \
+            or not _HANDLING_MONSTER.fullmatch(handling):
         return None
     return pid, versjon
 
 
+#: Mønstrene er KOPIER av policy-skjemaets egne (`policies/
+#: policy-schema-v0.2.json`): `meta.policy_id`, `meta.versjon` og
+#: `handlinger[].id`. `test_policyref_monstre_speiler_skjemaet` binder dem
+#: sammen, så en endring i skjemaet ikke kan gli fra parseren.
 _POLICY_ID_MONSTER = re.compile(r"[a-z0-9-]+")
 _VERSJON_MONSTER = re.compile(r"\d+\.\d+\.\d+")
+_HANDLING_MONSTER = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)+")
 
 
 def brudd_utfall(policy: dict, handling_id: str) -> tuple[str, str | None]:
