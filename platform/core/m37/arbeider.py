@@ -287,9 +287,17 @@ def _hent_payload(conn, sak: Sak) -> dict | None:
         (sak.tenant, key_id)).fetchone()
     if nokkel is None or nokkel[0] is None:
         return None            # crypto-shredding har vært her
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
-    dek = kryptering._pakk_ut((key_id, nokkel[0]), sak.tenant)[1]
+    # HELE dekrypteringen i ett try. Første utgave fanget bare
+    # `dekrypter` og lot `_pakk_ut` (KEK-utpakkingen) stå bar — og en
+    # `InvalidTag` derfra propagerte helt ut av arbeiderprosessen og DREPTE
+    # den. Én sak plattformen ikke kan lese, f.eks. etter en KEK-rotasjon
+    # eller crypto-shredding, ville dermed stoppet hele køen; systemd
+    # restarter fem ganger og gir opp.
+    #
+    # Riktig oppførsel er den koden allerede sikter mot: saken går til
+    # `manuell` med `dek_utilgjengelig`, og arbeideren går videre.
     try:
+        dek = kryptering._pakk_ut((key_id, nokkel[0]), sak.tenant)[1]
         return kryptering.dekrypter(dek, ct, nonce, sak.tenant, key_id)
     except Exception:
         return None
@@ -410,7 +418,8 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
     # utførelses-outbox som først opprettes ETTER en TILLAT.
     if kl.utfall == "behandle" and kl.handler is not None \
             and kl.handler.handler_id == reparasjoner.R1.handler_id:
-        plan = reparasjoner.planlegg_verifikasjon(kl, payload)
+        plan = reparasjoner.planlegg_verifikasjon(
+            kl, payload, policy_id=(policy.get("meta") or {}).get("policy_id", ""))
         if plan.utfall == "verifikasjon":
             return _start_fase1(conn, vakt, sak, claim_id, kl, plan)
         _historikk(vakt, sak, "klassifisert",
@@ -477,6 +486,14 @@ def _registrer_reparasjon(conn, sak: Sak, kl, plan, rid: str, inp_hash: str,
     v4-delta pkt. 1 — arbeideren kan ikke sende inn ønsket handling, den
     kan bare registrere en klassifisering og be om å få utføre DEN.
     """
+    # Generasjonsnummeret telles fra ALLE tidligere operasjoner, ikke bare
+    # den aktive. Fase 2 kommer etter at fase 1 er supersedet, og med et
+    # oppslag som bare ser aktive rader ville den fått generasjon 0 på
+    # nytt og kollidert med fase 1 i `reparasjon_generasjon_unik`.
+    # Målt på firekjeden: `duplicate key value violates ...`.
+    siste = conn.execute(
+        "SELECT max(repair_generation) FROM reparasjonsoperasjoner"
+        " WHERE tenant=%s AND unntak_id=%s", (sak.tenant, sak.id)).fetchone()[0]
     eksisterende = conn.execute(
         "SELECT repair_operation_id, repair_generation FROM"
         " reparasjonsoperasjoner WHERE tenant=%s AND unntak_id=%s"
@@ -507,9 +524,9 @@ def _registrer_reparasjon(conn, sak: Sak, kl, plan, rid: str, inp_hash: str,
             (sak.tenant, eksisterende[0]))
         _historikk(conn, sak, "repair_generation_ny",
                    {"gammel": eksisterende[0], "ny": rid}, claim_id=claim_id)
-        generasjon = eksisterende[1] + 1
+        generasjon = (siste if siste is not None else -1) + 1
     else:
-        generasjon = 0
+        generasjon = (siste + 1) if siste is not None else 0
 
     conn.execute(
         "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
@@ -609,6 +626,17 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int) -> int:
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, sak.tenant)
     ct, nonce = kryptering.krypter(dek, plan.reparasjonsinput, sak.tenant,
                                    key_id)
+    # Oppdragets EGEN handling, ikke målhandlingen.
+    #
+    # For et verifikasjonsoppdrag er de to forskjellige: oppdraget ber om
+    # `verifiser.<vilkaar>`, mens målhandlingen er det fase 2 senere skal
+    # be om (`purring.send`). Brukte vi målhandlingen her, ville
+    # verifikasjonsoppdraget fått prefikset til forretningshandlingen — og
+    # havnet i UTFØRER-modulens kø i stedet for verifikatorens.
+    #
+    # Målt: oppdraget fikk `eiermodul:reinnsending`, den syntetiske
+    # eiermodulen plukket det, og verifikatoren fant en tom kø.
+    oppdragshandling = plan.reparasjonsinput.get("handling") or plan.maalhandling
     naa = datetime.now(timezone.utc)
     rad = conn.execute(
         "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
@@ -616,7 +644,7 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int) -> int:
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist)"
         " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (sak.tenant, sak.id, loggpost_id, rid, plan.oppdragstype,
-         plan.maalhandling, _eiermodul_for(plan.maalhandling), ct, key_id,
+         oppdragshandling, _eiermodul_for(oppdragshandling), ct, key_id,
          nonce, naa + timedelta(seconds=UTFORELSESFRIST_S),
          naa + timedelta(seconds=EVIDENSFRIST_S))).fetchone()
     return int(rad[0])
@@ -728,14 +756,6 @@ def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
     return behandlet
 
 
-if __name__ == "__main__":       # pragma: no cover — systemd-inngangen
-    import sys
-    dsn = os.environ.get("DATABASE_URL") or ""
-    url = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
-    if not dsn:
-        print("DATABASE_URL mangler", file=sys.stderr)
-        raise SystemExit(2)
-    raise SystemExit(0 if kjor(dsn, url) >= 0 else 1)
 
 
 # ---------------------------------------------------------------------------
@@ -876,6 +896,23 @@ def _fase2(conn, vakt, sak: Sak,
                 if k not in ("begrunnelse", "kategori", "manglende_vilkaar")}
     hendelse["attestasjoner"] = {vilkaar: attestasjon}
 
+    # FASE 1 MÅ VÆRE TERMINAL FØR FASE 2 (v1 §1). Verifikasjonen er
+    # ferdig — generasjonen er `positiv` og beviset lagret — så fase 1s
+    # reparasjonsoperasjon avsluttes her.
+    #
+    # Uten dette kolliderte fase 2 med delindeksen
+    # `en_aktiv_reparasjon_per_sak`: `_registrer_reparasjon` så en aktiv
+    # operasjon med et FERDIG verifikasjonsoppdrag, tolket det som «en
+    # utførelse pågår» og avbrøt. Saken ble stående i `under_behandling`
+    # for alltid. Målt på den levende firekjeden, ikke lest.
+    #
+    # Delindeksen består uendret — det er nettopp SEKVENSIALITETEN mellom
+    # fasene som gjør at den kan bestå.
+    vakt.execute(
+        "UPDATE reparasjonsoperasjoner SET status='superseded'"
+        " WHERE tenant=%s AND unntak_id=%s AND status='aktiv'",
+        (sak.tenant, sak.id))
+
     rid = reparasjoner.fase2_id(sak.tenant, sak.id, maal, bevis_id)
     plan = reparasjoner.Reparasjonsplan(
         "oppdrag" if klasse[0] == "krever_outbox" else "lost",
@@ -906,3 +943,23 @@ class _Fase2klasse:
 
 
 _FASE2KLASSE = _Klasse(_Fase2klasse(), "manglende_data", "attestasjon_verifisert")
+
+
+# ---------------------------------------------------------------------------
+# Systemd-inngangen — MÅ staa sist i filen.
+#
+# Den laa tidligere midt i modulen, og da kjoerte den FOER definisjonene
+# under: `python -m m37.arbeider` gav `NameError: _start_fase1`. Moduler
+# kjoeres topp til bunn, saa en `__main__`-blokk som ikke staar sist ser en
+# halvferdig modul. Enhetstestene merket ingenting — de importerer, og en
+# import kjoerer ikke `__main__`.
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":       # pragma: no cover — systemd-inngangen
+    import sys
+    dsn = os.environ.get("DATABASE_URL") or ""
+    url = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
+    if not dsn:
+        print("DATABASE_URL mangler", file=sys.stderr)
+        raise SystemExit(2)
+    raise SystemExit(0 if kjor(dsn, url) >= 0 else 1)

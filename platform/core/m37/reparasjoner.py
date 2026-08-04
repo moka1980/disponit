@@ -502,7 +502,8 @@ def rut_r1(grunnkode: str | None, payload: dict) -> Faserute:
     return Faserute("tofase", "attestasjonsmangel", vilkaar=vilkaar)
 
 
-def planlegg_verifikasjon(kl, payload: dict) -> Reparasjonsplan:
+def planlegg_verifikasjon(kl, payload: dict,
+                          policy_id: str = "") -> Reparasjonsplan:
     """Fase 1: be om verifikasjon av det manglende vilkåret.
 
     Returnerer en PLAN, som alle handlere. Fase 1 har null
@@ -532,6 +533,10 @@ def planlegg_verifikasjon(kl, payload: dict) -> Reparasjonsplan:
             "ressurs_id": ressurs,
             "vilkaar": rute.vilkaar,
             "kategori": kl.kategori,
+            # Det attestasjonen skal BINDE til — ikke det verifikatoren
+            # gjør, men det fase 2 skal be om.
+            "maalhandling": handling,
+            "policy_id": policy_id,
         })
 
 

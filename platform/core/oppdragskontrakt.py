@@ -79,9 +79,16 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # HVILKET krav som skal verifiseres. Uten det måtte verifikatoren
         # gjette ut fra handlingen, og en verifikator som gjetter hva den
         # skal attestere, attesterer noe annet enn det saken manglet.
+        # `maalhandling` og `policy_id` er IKKE pynt: attestasjonen
+        # verifikatoren produserer må BINDE til den handlingen og den
+        # policyen fase 2 skal evalueres mot. `handling` her er
+        # verifikasjonshandlingen (`verifiser.<vilkaar>`) — bruker
+        # verifikatoren den i attestasjonen, faller `kontroller_binding`
+        # i fase 2 med `attestasjon_feil_handling`, og beviset er verdiløst.
         felter=frozenset({"handling", "ressurs_id", "kildereferanser",
-                          "kategori", "vilkaar"}),
-        paakrevde=frozenset({"handling", "ressurs_id", "vilkaar"}),
+                          "kategori", "vilkaar", "maalhandling", "policy_id"}),
+        paakrevde=frozenset({"handling", "ressurs_id", "vilkaar",
+                             "maalhandling", "policy_id"}),
         beskrivelse=("v3-delta pkt. 5: alle oppslag mot autoritative kilder"
                      " er sideeffektfrie oppdrag utført av en modul med egne"
                      " fullmakter. M-37 rører aldri ERP/bank/CRM selv.")),
