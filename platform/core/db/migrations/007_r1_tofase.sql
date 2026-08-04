@@ -1,0 +1,748 @@
+-- ============================================================
+-- Disponit migrasjon 007 — R1 som tofaseprotokoll.
+-- Spesifisert i PR-007 v1 + v2/v3/v4-delta + de fem GO-vilkårene.
+--
+-- HVORFOR DENNE FINNES: R1 kunne aldri lykkes. Den sendte den MINIMERTE
+-- payloaden som ny beslutning, og minimeringen har ingen `attestasjoner`
+-- — så saken manglet nøyaktig det som gjorde den til et unntak, og ble
+-- UNNTAK igjen. Målt på en levende trekjede (API + arbeider + eiermodul),
+-- ikke resonnert.
+--
+-- Løsningen er en FASE FØR beslutningen: en verifikator attesterer det
+-- manglende vilkåret sideeffektfritt, og først da bygges den nye
+-- hendelsen. Fase 1 har null forretningsfullmakter; fase 2 går gjennom
+-- hele policyporten som enhver annen beslutning.
+--
+-- INGEN BEGIN/COMMIT: kjøreren eier transaksjonen. Kjøres av MIGRATOR.
+-- ============================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_m37_claimer') THEN
+        RAISE EXCEPTION
+            'rollen disponit_m37_claimer mangler — kjør deploy/staging/oppsett-postgresql.sh først';
+    END IF;
+    IF NOT pg_has_role(current_user, 'disponit_m37_claimer', 'MEMBER') THEN
+        RAISE EXCEPTION
+            'migratorrollen % er ikke medlem av disponit_m37_claimer', current_user;
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------
+-- 1. Tre nye IKKE-TERMINALE statuser + veien tilbake
+--
+-- `venter_verifikasjon` er den eneste tilstanden i hele modellen som har
+-- en vei TILBAKE til behandling. Det er bevisst og avgrenset: den nås kun
+-- fra `under_behandling`, og den forlates kun gjennom en fenced overgang
+-- som krever et positivt, ikke-utløpt bevis.
+--
+-- `verifikasjon_klar` og `verifikasjon_retry_klar` er egne statuser og
+-- ikke en utledning fra «finnes det en bevisrad». v2-delta pkt. 2:
+-- fasen SKAL være eksplisitt i databasen. En fase man må gjette seg til
+-- ved å telle rader i en annen tabell, er ikke en tilstand — den er en
+-- rekonstruksjon, og to lesere kan rekonstruere ulikt.
+-- ------------------------------------------------------------
+ALTER TABLE unntak DROP CONSTRAINT IF EXISTS unntak_status_check;
+ALTER TABLE unntak ADD CONSTRAINT unntak_status_check CHECK (
+    status IN ('ny','under_behandling','løst','avvist','manuell',
+               'venter_utførelse','venter_verifikasjon','verifikasjon_klar',
+               'verifikasjon_retry_klar'));
+
+-- GO-vilkår V5: maskinell nummerering starter på 1. Første generasjon er
+-- `1`, ikke `0` — og kolonnen starter på 0 nettopp for at «ingen
+-- verifikasjon startet» skal være forskjellig fra «første generasjon».
+-- Ny generasjon tillates når `generation < maks_auto_forsok_snapshot`,
+-- så totalt antall verifikasjonsoppdrag er nøyaktig snapshotet.
+ALTER TABLE unntak
+    ADD COLUMN IF NOT EXISTS verification_generation INT NOT NULL DEFAULT 0;
+ALTER TABLE unntak DROP CONSTRAINT IF EXISTS unntak_verifikasjonsgenerasjon;
+ALTER TABLE unntak ADD CONSTRAINT unntak_verifikasjonsgenerasjon
+    CHECK (verification_generation >= 0);
+
+-- GO-vilkår V4: `ventet_bevis_id` opprettes ALDRI.
+--
+-- v2-delta foreslo den som peker fra saken til beviset fase 2 skal bruke.
+-- v4-delta viste at en slik peker enten må bindes med kompositt-FK eller
+-- er en ubundet bekvemmelighet som tillater kryss-tenant-referanser
+-- utenfor funksjonskoden. Valget er å FJERNE den: generasjonsraden bærer
+-- allerede bindingen med full kontekst, og fase 2 henter beviset derfra.
+-- En ubundet peker i tillitsankeret er mer kode for null gevinst.
+--
+-- Kolonnen finnes ikke i noen base (den ble aldri skipet), så det er
+-- ingenting å droppe. Dette er en NEGATIV kontrakt: den skal aldri
+-- opprettes, og `test_ventet_bevis_id_finnes_ikke` håndhever det.
+
+-- ------------------------------------------------------------
+-- 2. Statusmaskinen — komplett etter v4-delta pkt. 1
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION unntak_kolonnelaas()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.tenant IS DISTINCT FROM OLD.tenant
+       OR NEW.loggpost_id IS DISTINCT FROM OLD.loggpost_id
+       OR NEW.handling IS DISTINCT FROM OLD.handling
+       OR NEW.kategori IS DISTINCT FROM OLD.kategori
+       OR NEW.sakstype IS DISTINCT FROM OLD.sakstype
+       OR NEW.prioritet IS DISTINCT FROM OLD.prioritet
+       OR NEW.payload_kryptert IS DISTINCT FROM OLD.payload_kryptert
+       OR NEW.key_id IS DISTINCT FROM OLD.key_id
+       OR NEW.alg IS DISTINCT FROM OLD.alg
+       OR NEW.nonce IS DISTINCT FROM OLD.nonce
+       OR NEW.ts IS DISTINCT FROM OLD.ts THEN
+        RAISE EXCEPTION 'unntak: kun status/status_ts/forsok/claim-felter kan endres';
+    END IF;
+
+    IF OLD.maks_auto_forsok_snapshot IS NOT NULL
+       AND NEW.maks_auto_forsok_snapshot IS DISTINCT FROM OLD.maks_auto_forsok_snapshot THEN
+        RAISE EXCEPTION 'unntak: maks_auto_forsok_snapshot er uforanderlig etter at den er satt';
+    END IF;
+    IF OLD.policy_versjon IS NOT NULL
+       AND NEW.policy_versjon IS DISTINCT FROM OLD.policy_versjon THEN
+        RAISE EXCEPTION 'unntak: policy_versjon er uforanderlig etter at den er satt';
+    END IF;
+    IF OLD.policy_content_hash IS NOT NULL
+       AND NEW.policy_content_hash IS DISTINCT FROM OLD.policy_content_hash THEN
+        RAISE EXCEPTION 'unntak: policy_content_hash er uforanderlig etter at den er satt';
+    END IF;
+
+    IF NEW.claim_generation < OLD.claim_generation THEN
+        RAISE EXCEPTION 'unntak: claim_generation kan aldri reduseres (% -> %)',
+            OLD.claim_generation, NEW.claim_generation;
+    END IF;
+    -- Verifikasjonsgenerasjonen er like monoton som claim-generasjonen, og
+    -- av samme grunn: den inngår i `fase1_id`, så en reduksjon ville gjort
+    -- en gammel fase-1-identitet gyldig igjen.
+    IF NEW.verification_generation < OLD.verification_generation THEN
+        RAISE EXCEPTION 'unntak: verification_generation kan aldri reduseres (% -> %)',
+            OLD.verification_generation, NEW.verification_generation;
+    END IF;
+
+    IF NOT (
+        (OLD.status = 'ny'               AND NEW.status IN ('under_behandling','manuell')) OR
+        (OLD.status = 'under_behandling' AND NEW.status IN
+             ('løst','avvist','manuell','venter_utførelse','venter_verifikasjon')) OR
+        (OLD.status = 'under_behandling' AND NEW.status = 'ny'
+             AND OLD.claim_utloper IS NOT NULL AND OLD.claim_utloper < now()) OR
+        (OLD.status = 'venter_utførelse' AND NEW.status IN ('løst','manuell')) OR
+        -- Fase 1s utfall. `verifikasjon_klar` = positivt bevis foreligger;
+        -- `verifikasjon_retry_klar` = negativt/utløpt MED budsjett igjen;
+        -- `manuell` = negativt/utløpt UTEN budsjett.
+        (OLD.status = 'venter_verifikasjon' AND NEW.status IN
+             ('verifikasjon_klar','verifikasjon_retry_klar','manuell')) OR
+        -- Begge klar-tilstandene claimes av arbeideren og går tilbake til
+        -- behandling. `verifikasjon_klar` -> fase 2; `retry_klar` -> ny
+        -- generasjon + nytt verifikasjonsoppdrag.
+        (OLD.status IN ('verifikasjon_klar','verifikasjon_retry_klar')
+             AND NEW.status IN ('under_behandling','manuell')) OR
+        (OLD.status = NEW.status)  -- forsok/claim-oppdatering uten statusskifte
+    ) THEN
+        RAISE EXCEPTION 'unntak: ulovlig statusovergang % -> %', OLD.status, NEW.status;
+    END IF;
+
+    -- Codex-port 9: `manuell` gjenåpnes ALDRI automatisk. Administrativ
+    -- gjenåpning er eksplisitt utenfor PR-007 (v3-delta pkt. 1) og krever
+    -- en egen auditert prosedyre som ikke finnes ennå.
+    IF OLD.status IN ('løst','avvist','manuell') AND NEW.status <> OLD.status THEN
+        RAISE EXCEPTION 'unntak: % er terminal og kan ikke forlates', OLD.status;
+    END IF;
+
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+        NEW.status_ts := now();
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- ------------------------------------------------------------
+-- 3. Historikk: nye hendelser
+-- ------------------------------------------------------------
+ALTER TABLE unntak_historikk DROP CONSTRAINT IF EXISTS unntak_historikk_hendelse_check;
+ALTER TABLE unntak_historikk ADD CONSTRAINT unntak_historikk_hendelse_check CHECK (
+    hendelse IN (
+        'opprettet','statusendring','claim','claim_utlopt','dek_destruert',
+        'claim_fornyet','klassifisert','repair_generation_ny',
+        'generation_blokkert_aktiv_utforelse','kapabilitet_utstedt',
+        'kapabilitet_brukt','oppdrag_opprettet','oppdrag_kansellert',
+        'kvittering','sen_kvittering','motstridende_kvittering',
+        'policy_endret_siden_opprettelse','legacy_uten_snapshot',
+        'dek_utilgjengelig','verifikator_utilgjengelig','frist_utlopt',
+        -- PR-007
+        'verifikasjon_bestilt','verifikasjon_positiv','verifikasjon_negativ',
+        'verifikasjon_utlopt','verifikasjon_konflikt','verifikasjon_retry',
+        'sikkerhetsfrysing'));
+
+-- ------------------------------------------------------------
+-- 4. Generasjonstilstand — MUTERBAR, auditert (v3-delta pkt. 1)
+--
+-- Skilt fra beviset med vilje. v2 hadde begge deler i én append-only
+-- tabell med en `WHERE status='aktiv'`-delindeks, og da ville den FØRSTE
+-- generasjonen blokkert alle fremtidige for alltid: en append-only rad
+-- kan ikke slutte å være aktiv.
+--
+-- FIRE statuser, ikke fem. `konflikt` finnes IKKE som generasjonsstatus
+-- (v4-delta pkt. 2): en terminal generasjonsstatus endres aldri etter
+-- første aksepterte resultat. En motstridende kvittering er append-only
+-- EVIDENS, ikke en tilstandsendring — ellers kunne en sen forfalskning
+-- ugyldiggjort et bevis fase 2 allerede bruker.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS verifikasjonsgenerasjon (
+    tenant     TEXT NOT NULL,
+    unntak_id  BIGINT NOT NULL,
+    vilkaar    TEXT NOT NULL,
+    generation INT  NOT NULL CHECK (generation >= 1),
+    status     TEXT NOT NULL DEFAULT 'aktiv'
+               CHECK (status IN ('aktiv','positiv','negativ','utlopt')),
+    bevis_id   BIGINT,
+    oppdrag_id BIGINT,
+    opprettet  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status_ts  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, unntak_id, vilkaar, generation),
+    -- `positiv` uten bevis er en selvmotsigelse: statusen BETYR at det
+    -- finnes et bevis, og en status som kan lyve om sin egen forutsetning
+    -- er ingen status.
+    CONSTRAINT positiv_krever_bevis CHECK (status <> 'positiv' OR bevis_id IS NOT NULL),
+    FOREIGN KEY (tenant, unntak_id) REFERENCES unntak (tenant, id)
+);
+
+-- Maks ÉN aktiv generasjon per (sak, vilkår) — men nye generasjoner er
+-- tillatt sekvensielt. Delindeksen ligger her og ikke på beviset, som er
+-- hele poenget med å skille tabellene.
+CREATE UNIQUE INDEX IF NOT EXISTS en_aktiv_generasjon_per_sak_vilkaar
+    ON verifikasjonsgenerasjon (tenant, unntak_id, vilkaar) WHERE status = 'aktiv';
+
+CREATE OR REPLACE FUNCTION verifikasjonsgenerasjon_vakt()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, public AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'verifikasjonsgenerasjon: DELETE er forbudt';
+    END IF;
+    IF NEW.tenant IS DISTINCT FROM OLD.tenant
+       OR NEW.unntak_id IS DISTINCT FROM OLD.unntak_id
+       OR NEW.vilkaar IS DISTINCT FROM OLD.vilkaar
+       OR NEW.generation IS DISTINCT FROM OLD.generation
+       OR NEW.opprettet IS DISTINCT FROM OLD.opprettet THEN
+        RAISE EXCEPTION 'verifikasjonsgenerasjon: identitetsfelter er uforanderlige';
+    END IF;
+    -- GO-vilkår V1 + v4-delta pkt. 2: KUN aktiv kan endres, og aldri til
+    -- noe annet enn de tre terminale. Ingen kodevei kan uttrykke
+    -- `positiv -> negativ` eller `positiv -> konflikt`, fordi overgangen
+    -- ikke finnes.
+    IF OLD.status <> 'aktiv' THEN
+        IF NEW.status IS DISTINCT FROM OLD.status THEN
+            RAISE EXCEPTION
+                'verifikasjonsgenerasjon: % er terminal — første committede resultat vinner',
+                OLD.status;
+        END IF;
+        IF NEW.bevis_id IS DISTINCT FROM OLD.bevis_id THEN
+            RAISE EXCEPTION 'verifikasjonsgenerasjon: beviset kan ikke byttes etter terminal status';
+        END IF;
+    ELSIF NEW.status NOT IN ('aktiv','positiv','negativ','utlopt') THEN
+        RAISE EXCEPTION 'verifikasjonsgenerasjon: ulovlig status %', NEW.status;
+    END IF;
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+        NEW.status_ts := now();
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS verifikasjonsgenerasjon_overgang ON verifikasjonsgenerasjon;
+CREATE TRIGGER verifikasjonsgenerasjon_overgang
+    BEFORE UPDATE OR DELETE ON verifikasjonsgenerasjon
+    FOR EACH ROW EXECUTE FUNCTION verifikasjonsgenerasjon_vakt();
+
+-- ------------------------------------------------------------
+-- 5. Verifikasjonsbevis — APPEND-ONLY og KRYPTERT (v2-delta pkt. 7)
+--
+-- Samme envelope som `unntak.payload_kryptert`: tenant-DEK, AES-256-GCM,
+-- nonce i egen kolonne. Attestasjonen er saksinnhold og skal ikke ligge i
+-- klartekst i en database noen kan dumpe.
+--
+-- `integritet_hash` er over CIPHERTEXT, ikke klartekst (v3-delta pkt. 3).
+-- En hash over klartekst ville vært et ORAKEL: attestasjonens resultat har
+-- få utfall, så en dump kunne gjettet innholdet ved å prøve dem.
+-- GCM-taggen autentiserer klarteksten ved dekryptering; denne hashen
+-- beskytter mot bit-flipping i lagring og lekker ingenting.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS verifikasjonsbevis (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant        TEXT NOT NULL,
+    unntak_id     BIGINT NOT NULL,
+    vilkaar       TEXT NOT NULL,
+    generation    INT  NOT NULL CHECK (generation >= 1),
+    oppdrag_id    BIGINT NOT NULL,
+    fase1_repair_operation_id TEXT NOT NULL
+                  CHECK (fase1_repair_operation_id ~ '^[0-9a-f]{64}$'),
+    -- Verifikatoren kommer fra den VERIFISERTE NØKKELEN, ikke fra et
+    -- selvrapportert felt i konvolutten (v2-delta pkt. 4).
+    verifikator   TEXT NOT NULL,
+    nokkel_id     TEXT NOT NULL,
+    signatur      TEXT NOT NULL,
+    attestasjon_kryptert BYTEA NOT NULL,
+    key_id        TEXT NOT NULL,
+    alg           TEXT NOT NULL DEFAULT 'AES-256-GCM',
+    nonce         BYTEA NOT NULL,
+    integritet_hash TEXT NOT NULL CHECK (integritet_hash ~ '^[0-9a-f]{64}$'),
+    gyldig_til    TIMESTAMPTZ NOT NULL,
+    opprettet     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- v4-delta pkt. 3: sammensatt unik nøkkel, slik at generasjonsraden
+    -- kan binde til beviset med FULL kontekst.
+    CONSTRAINT bevis_komposittnokkel
+        UNIQUE (tenant, unntak_id, vilkaar, generation, id),
+    -- Ett bevis per (sak, vilkår, generasjon). Idempotens i databasen,
+    -- ikke bare i funksjonen.
+    CONSTRAINT bevis_en_per_generasjon
+        UNIQUE (tenant, unntak_id, vilkaar, generation),
+    FOREIGN KEY (tenant, unntak_id) REFERENCES unntak (tenant, id),
+    FOREIGN KEY (tenant, key_id)    REFERENCES tenant_nokler (tenant, key_id)
+);
+
+CREATE OR REPLACE FUNCTION verifikasjonsbevis_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'verifikasjonsbevis er append-only: % er forbudt', TG_OP;
+END $$;
+DROP TRIGGER IF EXISTS bevis_ingen_endring ON verifikasjonsbevis;
+CREATE TRIGGER bevis_ingen_endring BEFORE UPDATE OR DELETE ON verifikasjonsbevis
+    FOR EACH ROW EXECUTE FUNCTION verifikasjonsbevis_append_only();
+DROP TRIGGER IF EXISTS bevis_ingen_truncate ON verifikasjonsbevis;
+CREATE TRIGGER bevis_ingen_truncate BEFORE TRUNCATE ON verifikasjonsbevis
+    FOR EACH STATEMENT EXECUTE FUNCTION verifikasjonsbevis_append_only();
+
+-- v4-delta pkt. 3: generasjonsraden binder til beviset med FULL kontekst.
+-- `bevis_id` alene ville tillatt en referanse på tvers av tenant, sak,
+-- vilkår eller generasjon — og da ville integriteten hvilt på at
+-- funksjonskoden er riktig, i stedet for på databasen.
+--
+-- DEFERRABLE INITIALLY DEFERRED fordi ingest setter inn beviset OG
+-- oppdaterer generasjonsraden i samme transaksjon; uten utsettelse ville
+-- rekkefølgen inne i den ene atomiske operasjonen blitt et problem.
+ALTER TABLE verifikasjonsgenerasjon
+    DROP CONSTRAINT IF EXISTS gen_bevis_fk;
+ALTER TABLE verifikasjonsgenerasjon
+    ADD CONSTRAINT gen_bevis_fk
+    FOREIGN KEY (tenant, unntak_id, vilkaar, generation, bevis_id)
+    REFERENCES verifikasjonsbevis (tenant, unntak_id, vilkaar, generation, id)
+    DEFERRABLE INITIALLY DEFERRED;
+
+-- ------------------------------------------------------------
+-- 6. Konfliktevidens — append-only, ENDRER ALDRI NOE (v4-delta pkt. 2)
+--
+-- En motstridende kvittering etter et akseptert resultat er en
+-- SIKKERHETSHENDELSE, ikke en tilstandsendring. Den lagres her, og
+-- generasjonens terminale status står urørt. Var det motsatt, kunne den
+-- som klarer å sende to ulike kvitteringer bestemme utfallet — og en sen
+-- forfalskning kunne ugyldiggjort et bevis fase 2 alt har brukt.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS verifikasjonskonflikt (
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant       TEXT NOT NULL,
+    unntak_id    BIGINT NOT NULL,
+    vilkaar      TEXT NOT NULL,
+    generation   INT  NOT NULL,
+    oppdrag_id   BIGINT,
+    akseptert_resultathash TEXT,
+    ny_resultathash        TEXT NOT NULL,
+    generasjonsstatus_ved_konflikt TEXT NOT NULL,
+    fase2_utfort BOOLEAN NOT NULL DEFAULT false,
+    detalj       JSONB,
+    opprettet    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (tenant, unntak_id) REFERENCES unntak (tenant, id)
+);
+DROP TRIGGER IF EXISTS konflikt_ingen_endring ON verifikasjonskonflikt;
+CREATE TRIGGER konflikt_ingen_endring
+    BEFORE UPDATE OR DELETE ON verifikasjonskonflikt
+    FOR EACH ROW EXECUTE FUNCTION verifikasjonsbevis_append_only();
+
+-- ------------------------------------------------------------
+-- 7. Utførelsesklasse per (handler, målhandling) — v3-delta pkt. 4
+--
+-- Klassen er DATA som slås opp, ikke noe M-37 kan velge eller overstyre.
+-- Ett enkelt kolonneuttrykk gir XOR-en gratis: en rad kan ikke være både
+-- `sideeffektfri` og `krever_outbox`, fordi den bare har én verdi.
+-- Ukjent par slås ikke opp til noe → fail-closed `manuell`.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS utforelsesklasser (
+    handler_id    TEXT NOT NULL,
+    target_action TEXT NOT NULL,
+    klasse        TEXT NOT NULL CHECK (klasse IN ('sideeffektfri','krever_outbox')),
+    opprettet     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (handler_id, target_action)
+);
+
+INSERT INTO utforelsesklasser (handler_id, target_action, klasse) VALUES
+    -- R1s målhandlinger er forretningshandlinger: de MÅ gjennom outboxen,
+    -- og kan aldri gå direkte til `løst` (Codex-port 10).
+    ('r1_reinnsending', 'purring.send',      'krever_outbox'),
+    ('r1_reinnsending', 'faktura.krediter',  'krever_outbox'),
+    ('r1_reinnsending', 'melding.send',      'krever_outbox'),
+    -- R2 er per definisjon lokale kontroller uten sideeffekt.
+    ('r2_lokal_kontroll', 'kontroll.revalider', 'sideeffektfri'),
+    ('r2_lokal_kontroll', 'kontroll.reparser',  'sideeffektfri')
+ON CONFLICT (handler_id, target_action) DO NOTHING;
+
+-- ------------------------------------------------------------
+-- 8. RLS + FORCE på de nye tenant-tabellene
+-- ------------------------------------------------------------
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['verifikasjonsgenerasjon','verifikasjonsbevis',
+                             'verifikasjonskonflikt']
+    LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('ALTER TABLE %I FORCE  ROW LEVEL SECURITY', t);
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolasjon ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY tenant_isolasjon ON %I
+                USING      (tenant = current_setting(''disponit.tenant'', true))
+                WITH CHECK (tenant = current_setting(''disponit.tenant'', true))', t);
+        EXECUTE format('DROP POLICY IF EXISTS m37_dispatcher ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY m37_dispatcher ON %I TO disponit_m37_claimer
+                USING      (current_user = ''disponit_m37_claimer'')
+                WITH CHECK (current_user = ''disponit_m37_claimer'')', t);
+    END LOOP;
+END $$;
+
+GRANT SELECT, UPDATE ON verifikasjonsgenerasjon TO disponit_m37_claimer;
+GRANT SELECT, INSERT ON verifikasjonsbevis      TO disponit_m37_claimer;
+GRANT SELECT, INSERT ON verifikasjonskonflikt   TO disponit_m37_claimer;
+GRANT SELECT, INSERT ON verifikasjonsgenerasjon TO disponit_m37_claimer;
+GRANT SELECT           ON utforelsesklasser     TO disponit_m37_claimer;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO disponit_m37_claimer;
+
+-- ============================================================
+-- FRA HER OG UT KJØRER VI SOM `disponit_m37_claimer` (mønster fra 005).
+-- Objektene opprettes SOM riktig eier — ingen eierskifter, og hver
+-- kjøring gjør nøyaktig det samme. `RESET ROLE` til slutt, ellers ville
+-- kjøreren skrevet sin egen `migrasjoner`-rad som feil rolle.
+-- ============================================================
+SET LOCAL ROLE disponit_m37_claimer;
+
+-- ------------------------------------------------------------
+-- 9. GO-VILKÅR V2: FAST LÅSEREKKEFØLGE
+--
+--        unntak → verifikasjonsgenerasjon → oppdrag → kapabilitet
+--
+-- ALLE veier som låser mer enn én rad følger den. Claim, ingest og
+-- utløpsjobb er tre uavhengige veier inn i de samme radene, og to av dem
+-- som låser i motsatt rekkefølge er en vranglås som venter på nok last.
+--
+-- Rekkefølgen er ikke vilkårlig valgt: den går fra det mest generelle
+-- (saken) til det mest spesifikke (kapabiliteten), så en vei som bare
+-- trenger de første leddene aldri må «hoppe over» et ledd en annen
+-- allerede holder.
+-- ------------------------------------------------------------
+
+-- Bevis-ingest. ALT eller INGENTING (v3-delta pkt. 2).
+--
+-- Den signerte konvolutten er SAMMENLIGNINGSGRUNNLAG, ikke autoritativ
+-- kilde: hvert felt matches mot databasen, og avvik gir sikkerhetssak
+-- uten bevisrad. Signaturen er allerede verifisert i app-laget, der
+-- nøkkelregisteret bor — databasen ser aldri en nøkkel.
+CREATE OR REPLACE FUNCTION registrer_verifikasjonsbevis(
+        p_oppdrag_id BIGINT, p_resultathash TEXT, p_attestert_resultat TEXT,
+        p_utloper TIMESTAMPTZ, p_verifikator TEXT, p_nokkel_id TEXT,
+        p_signatur TEXT, p_vilkaar TEXT, p_attestasjon_kryptert BYTEA,
+        p_key_id TEXT, p_nonce BYTEA, p_integritet_hash TEXT,
+        p_owner_claim_id TEXT, p_owner_generation INT)
+RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    o          RECORD;
+    g          RECORD;
+    v_sak      RECORD;
+    v_bevis_id BIGINT;
+    v_nystatus TEXT;
+BEGIN
+    -- Oppdraget er inngangen: derfra utledes tenant, sak og generasjon.
+    SELECT d.tenant, d.unntak_id, d.status, d.owner_claim_id,
+           d.owner_generation, d.oppdragstype, d.utforelsesfrist,
+           d.evidensfrist, d.resultathash
+      INTO o
+      FROM public.oppdrag d
+     WHERE d.id = p_oppdrag_id;
+    IF NOT FOUND THEN
+        RETURN 'avvist';
+    END IF;
+    IF o.oppdragstype <> 'verifikasjon' THEN
+        -- En utførelseskvittering kan aldri bære en attestasjon
+        -- (v2-delta pkt. 5). Feil oppdragstype er ikke en formfeil å
+        -- rette — det er noen som prøver å levere bevis gjennom feil port.
+        RETURN 'avvist';
+    END IF;
+
+    -- ---- LÅSEREKKEFØLGE, ledd 1: saken -------------------------------
+    SELECT u.status, u.verification_generation, u.maks_auto_forsok_snapshot
+      INTO v_sak
+      FROM public.unntak u
+     WHERE u.tenant = o.tenant AND u.id = o.unntak_id
+       FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN 'avvist';
+    END IF;
+
+    -- ---- LÅSEREKKEFØLGE, ledd 2: generasjonsraden --------------------
+    -- GO-vilkår V1: FOR UPDATE her er hele serialiseringen. To samtidige
+    -- kvitteringer blokkerer på denne raden, og den som committer først
+    -- avgjør terminal status. Den andre ser resultatet og klassifiseres
+    -- som idempotent eller konflikt — aldri som «prøv igjen».
+    SELECT vg.generation, vg.status, vg.bevis_id, vg.oppdrag_id
+      INTO g
+      FROM public.verifikasjonsgenerasjon vg
+     WHERE vg.tenant = o.tenant AND vg.unntak_id = o.unntak_id
+       AND vg.vilkaar = p_vilkaar
+       AND vg.generation = v_sak.verification_generation
+       FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN 'avvist';
+    END IF;
+    -- Beviset må komme fra NØYAKTIG det oppdraget generasjonen bestilte.
+    IF g.oppdrag_id IS DISTINCT FROM p_oppdrag_id THEN
+        RETURN 'avvist';
+    END IF;
+
+    -- ---- Owner-fencing (samme mekanisme som utførelseskvitteringen) ---
+    IF o.owner_claim_id IS DISTINCT FROM p_owner_claim_id
+       OR o.owner_generation IS DISTINCT FROM p_owner_generation THEN
+        -- Utdatert eier. Beviset er fortsatt EVIDENS, men det kan aldri
+        -- avgjøre noe (Codex-port 2/4).
+        INSERT INTO public.verifikasjonskonflikt
+            (tenant, unntak_id, vilkaar, generation, oppdrag_id,
+             akseptert_resultathash, ny_resultathash,
+             generasjonsstatus_ved_konflikt, detalj)
+        VALUES (o.tenant, o.unntak_id, p_vilkaar, g.generation, p_oppdrag_id,
+                NULL, p_resultathash, g.status,
+                jsonb_build_object('grunn', 'utdatert_owner_fencing'));
+        RETURN 'avvist';
+    END IF;
+
+    -- ---- Evidensfrist ------------------------------------------------
+    IF now() > o.evidensfrist THEN
+        RETURN 'avvist';
+    END IF;
+
+    -- ---- Idempotens og konflikt --------------------------------------
+    IF o.resultathash IS NOT NULL THEN
+        IF o.resultathash = p_resultathash THEN
+            RETURN 'idempotent';
+        END IF;
+        -- v4-delta pkt. 2: terminal generasjonsstatus endres ALDRI.
+        -- Konflikten lagres som append-only evidens; tilstanden står.
+        INSERT INTO public.verifikasjonskonflikt
+            (tenant, unntak_id, vilkaar, generation, oppdrag_id,
+             akseptert_resultathash, ny_resultathash,
+             generasjonsstatus_ved_konflikt, fase2_utfort, detalj)
+        VALUES (o.tenant, o.unntak_id, p_vilkaar, g.generation, p_oppdrag_id,
+                o.resultathash, p_resultathash, g.status,
+                v_sak.status IN ('løst','venter_utførelse'),
+                jsonb_build_object('grunn', 'motstridende_resultat'));
+        RETURN 'konflikt';
+    END IF;
+
+    -- Generasjonen er alt avgjort av en annen vei (f.eks. utløpsjobben som
+    -- vant kappløpet). Codex-port 2: nøyaktig én terminal beslutning.
+    IF g.status <> 'aktiv' THEN
+        RETURN 'idempotent';
+    END IF;
+
+    -- ---- Utfallet ----------------------------------------------------
+    IF p_attestert_resultat = 'positiv' AND now() < p_utloper THEN
+        INSERT INTO public.verifikasjonsbevis
+            (tenant, unntak_id, vilkaar, generation, oppdrag_id,
+             fase1_repair_operation_id, verifikator, nokkel_id, signatur,
+             attestasjon_kryptert, key_id, nonce, integritet_hash, gyldig_til)
+        SELECT o.tenant, o.unntak_id, p_vilkaar, g.generation, p_oppdrag_id,
+               d.repair_operation_id, p_verifikator, p_nokkel_id, p_signatur,
+               p_attestasjon_kryptert, p_key_id, p_nonce, p_integritet_hash,
+               p_utloper
+          FROM public.oppdrag d WHERE d.id = p_oppdrag_id
+        RETURNING id INTO v_bevis_id;
+
+        UPDATE public.verifikasjonsgenerasjon vg
+           SET status = 'positiv', bevis_id = v_bevis_id
+         WHERE vg.tenant = o.tenant AND vg.unntak_id = o.unntak_id
+           AND vg.vilkaar = p_vilkaar AND vg.generation = g.generation;
+        v_nystatus := 'verifikasjon_klar';
+    ELSE
+        UPDATE public.verifikasjonsgenerasjon vg
+           SET status = CASE WHEN p_attestert_resultat = 'positiv'
+                             THEN 'utlopt' ELSE 'negativ' END
+         WHERE vg.tenant = o.tenant AND vg.unntak_id = o.unntak_id
+           AND vg.vilkaar = p_vilkaar AND vg.generation = g.generation;
+        -- GO-vilkår V5: ny generasjon tillates når
+        -- `generation < maks_auto_forsok_snapshot`. Er budsjettet brukt,
+        -- er saken manuell — ingest oppretter ALDRI et oppdrag selv.
+        IF g.generation < least(v_sak.maks_auto_forsok_snapshot, 3) THEN
+            v_nystatus := 'verifikasjon_retry_klar';
+        ELSE
+            v_nystatus := 'manuell';
+        END IF;
+    END IF;
+
+    -- ---- LÅSEREKKEFØLGE, ledd 3: oppdraget ---------------------------
+    UPDATE public.oppdrag d
+       SET status = 'utfort', resultathash = p_resultathash
+     WHERE d.id = p_oppdrag_id AND d.status = 'plukket';
+
+    UPDATE public.unntak u
+       SET status = v_nystatus
+     WHERE u.tenant = o.tenant AND u.id = o.unntak_id
+       AND u.status = 'venter_verifikasjon';
+
+    RETURN CASE WHEN v_nystatus = 'verifikasjon_klar' THEN 'positiv'
+                WHEN v_nystatus = 'verifikasjon_retry_klar' THEN 'negativ'
+                ELSE 'negativ_uten_budsjett' END;
+END $$;
+REVOKE ALL ON FUNCTION registrer_verifikasjonsbevis(
+    BIGINT, TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, TEXT, BYTEA, TEXT,
+    BYTEA, TEXT, TEXT, INT) FROM PUBLIC;
+
+-- ------------------------------------------------------------
+-- 10. Claim utvidet: de to klar-tilstandene (v2-delta pkt. 1)
+--
+-- Fase 2 RE-CLAIMES alltid. Kvitteringsingest opptrer aldri som arbeider
+-- og forlenger aldri en lease; når beviset er lagret er fase 1 terminal og
+-- all lease sluppet. Først en NY claim — ny claim_id, inkrementert
+-- claim_generation — starter fase 2.
+--
+-- Samme claim gjennom begge asynkrone faser er forbudt, og det er ikke en
+-- stilregel: fase 1 kan ta timer, og en lease som overlever den er en
+-- lease som ikke lenger beviser at noen jobber.
+-- ------------------------------------------------------------
+-- DROP først: funksjonen får to nye OUT-kolonner (`fase`,
+-- `verification_generation`), og `CREATE OR REPLACE` kan ikke endre
+-- returtypen. Rettighetene settes uansett på nytt av
+-- `deploy/staging/migrer.py` etter migrasjonene — den er eneste vei inn.
+DROP FUNCTION IF EXISTS claim_neste_sak(TEXT, INT);
+CREATE FUNCTION claim_neste_sak(p_claim_id TEXT, p_lease_s INT DEFAULT 120)
+RETURNS TABLE (tenant TEXT, id BIGINT, handling TEXT, kategori TEXT,
+               loggpost_id BIGINT, claim_generation INT, claim_utloper TIMESTAMPTZ,
+               forsok INT, maks_auto_forsok_snapshot INT, fase TEXT,
+               verification_generation INT)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_lease INT;
+BEGIN
+    IF p_claim_id IS NULL OR p_claim_id !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'claim_neste_sak: ugyldig claim_id-format';
+    END IF;
+    v_lease := least(greatest(coalesce(p_lease_s, 120), 30), 600);
+
+    RETURN QUERY
+    UPDATE public.unntak u
+       SET status = 'under_behandling',
+           claim_id = p_claim_id,
+           claim_generation = u.claim_generation + 1,
+           claim_utloper = pg_catalog.now() + (v_lease || ' seconds')::INTERVAL,
+           -- Forsøkstelleren teller BEHANDLINGSforsøk. En fase-2-claim er
+           -- ikke et nytt forsøk på saken — den er andre halvdel av det
+           -- samme. Uten dette skillet ville en tofasesak brukt opp
+           -- budsjettet sitt dobbelt så fort som en enfasesak.
+           forsok = u.forsok + CASE WHEN u.status = 'ny' THEN 1 ELSE 0 END
+     WHERE (u.tenant, u.id) = (
+        SELECT k.tenant, k.id
+          FROM public.unntak k
+         WHERE k.sakstype = 'normal'
+           AND k.status IN ('ny','verifikasjon_klar','verifikasjon_retry_klar')
+           AND (k.status <> 'ny'
+                OR k.forsok < least(coalesce(k.maks_auto_forsok_snapshot, 0), 3))
+           AND (SELECT pg_catalog.count(*) FROM public.unntak b
+                 WHERE b.tenant = k.tenant
+                   AND b.status = 'under_behandling'
+                   AND b.claim_utloper > pg_catalog.now()) < 5
+         -- Klar-tilstandene går FØRST: en sak som har ventet på en
+         -- verifikator har allerede brukt tid, og å la den stå bak ferske
+         -- saker ville gjort tofaseveien systematisk tregere enn enfase.
+         ORDER BY (CASE WHEN k.status <> 'ny' THEN 0 ELSE 1 END),
+                  (CASE k.prioritet WHEN 'hoy' THEN 0 ELSE 1 END), k.ts, k.id
+           FOR UPDATE SKIP LOCKED
+         LIMIT 1)
+    RETURNING u.tenant, u.id, u.handling, u.kategori, u.loggpost_id,
+              u.claim_generation, u.claim_utloper, u.forsok,
+              u.maks_auto_forsok_snapshot,
+              CASE WHEN u.verification_generation = 0 THEN 'ny'
+                   ELSE 'fase2' END,
+              u.verification_generation;
+END $$;
+REVOKE ALL ON FUNCTION claim_neste_sak(TEXT, INT) FROM PUBLIC;
+
+-- ------------------------------------------------------------
+-- 11. Start en verifikasjonsgenerasjon — KUN arbeideren (v4-delta pkt. 1)
+--
+-- Ingest oppretter ALDRI et oppdrag. Utløpsjobben heller ikke. Bare den
+-- claimede arbeideren, og bare under gyldig fencing. Uten det skillet
+-- ville to komponenter kunnet opprette hvert sitt oppdrag for samme
+-- generasjon, og delindeksen ville avvist den ene med en unikfeil i
+-- stedet for at rekkefølgen var riktig i utgangspunktet.
+--
+-- Monoton +1, og aldri fra en terminal tilstand.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION start_verifikasjonsgenerasjon(
+        p_tenant TEXT, p_unntak_id BIGINT, p_claim_id TEXT,
+        p_claim_generation INT, p_vilkaar TEXT)
+RETURNS INT
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_ny  INT;
+    v_sak RECORD;
+BEGIN
+    -- LÅSEREKKEFØLGE ledd 1: saken. Full fencing-WHERE.
+    SELECT u.verification_generation, u.maks_auto_forsok_snapshot, u.status
+      INTO v_sak
+      FROM public.unntak u
+     WHERE u.tenant = p_tenant AND u.id = p_unntak_id
+       AND u.claim_id = p_claim_id
+       AND u.claim_generation = p_claim_generation
+       AND u.status = 'under_behandling'
+       AND u.claim_utloper > pg_catalog.now()
+       FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN NULL;               -- tapt lease: ingen generasjon
+    END IF;
+
+    v_ny := v_sak.verification_generation + 1;
+    -- GO-vilkår V5: totalt maks `maks_auto_forsok_snapshot` generasjoner.
+    IF v_ny > least(coalesce(v_sak.maks_auto_forsok_snapshot, 0), 3) THEN
+        RETURN NULL;
+    END IF;
+
+    INSERT INTO public.verifikasjonsgenerasjon
+        (tenant, unntak_id, vilkaar, generation)
+    VALUES (p_tenant, p_unntak_id, p_vilkaar, v_ny);
+
+    UPDATE public.unntak u
+       SET verification_generation = v_ny
+     WHERE u.tenant = p_tenant AND u.id = p_unntak_id;
+    RETURN v_ny;
+END $$;
+REVOKE ALL ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, TEXT)
+    FROM PUBLIC;
+
+-- Knytt generasjonen til oppdraget den bestilte (fenced).
+CREATE OR REPLACE FUNCTION knytt_verifikasjonsoppdrag(
+        p_tenant TEXT, p_unntak_id BIGINT, p_vilkaar TEXT, p_generation INT,
+        p_oppdrag_id BIGINT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE v_treff INT;
+BEGIN
+    UPDATE public.verifikasjonsgenerasjon vg
+       SET oppdrag_id = p_oppdrag_id
+     WHERE vg.tenant = p_tenant AND vg.unntak_id = p_unntak_id
+       AND vg.vilkaar = p_vilkaar AND vg.generation = p_generation
+       AND vg.status = 'aktiv' AND vg.oppdrag_id IS NULL;
+    GET DIAGNOSTICS v_treff = ROW_COUNT;
+    RETURN v_treff = 1;
+END $$;
+REVOKE ALL ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT)
+    FROM PUBLIC;
+
+RESET ROLE;

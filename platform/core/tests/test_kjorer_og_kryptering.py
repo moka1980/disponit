@@ -524,10 +524,42 @@ def _nullstill(migrator, med_legacy_uten_checksum: bool):
     er kjørt og registrert, checksum-kolonnen finnes ikke, 003 er ukjent.
     False gir en helt fersk database.
     """
-    migrator.execute("DROP TABLE IF EXISTS unntak_historikk, unntak,"
-                     " idempotens, policyer, tenant_nokler, attestasjon_jti,"
-                     " api_tokener, revisjonslogg, frekvens_hendelser,"
-                     " migrasjoner CASCADE")
+    # DYNAMISK, ikke en liste. En håndholdt tabelliste må vedlikeholdes av
+    # hver eneste migrasjon som legger til noe, og den ble ikke det:
+    # PR-006 og PR-007 la til ni tabeller som denne hjelperen aldri ryddet.
+    #
+    # FUNKSJONENE må også bort. Uten dem overlever `claim_neste_sak` med
+    # PR-007s signatur, og migrasjon 005 — som gjenskaper den med sin egen,
+    # eldre signatur — feiler med «cannot change return type». En reset som
+    # etterlater objekter er ingen reset; den bygger bare en tilstand som
+    # ikke finnes noe sted i virkeligheten.
+    #
+    # Event-trigger-funksjonen `disponit_vern_policy_retention` spares:
+    # den eies av superbrukeren, migrator kan ikke gjenskape den, og en
+    # drop her ville stille fjernet GO-vilkår V3 for resten av kjøringen.
+    migrator.execute("""
+        DO $$
+        DECLARE r RECORD;
+        BEGIN
+            FOR r IN SELECT c.oid::regclass AS t FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+            LOOP
+                EXECUTE format('DROP TABLE IF EXISTS %s CASCADE', r.t);
+            END LOOP;
+            FOR r IN SELECT p.oid::regprocedure AS f FROM pg_proc p
+                       JOIN pg_namespace n ON n.oid = p.pronamespace
+                      WHERE n.nspname = 'public' AND p.prokind = 'f'
+                        AND p.proname <> 'disponit_vern_policy_retention'
+                        AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                                         WHERE d.classid = 'pg_proc'::regclass
+                                           AND d.objid = p.oid
+                                           AND d.refclassid = 'pg_extension'::regclass
+                                           AND d.deptype = 'e')
+            LOOP
+                EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', r.f);
+            END LOOP;
+        END $$;""")
     migrator.commit()
     if med_legacy_uten_checksum:
         from pathlib import Path

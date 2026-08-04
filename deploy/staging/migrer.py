@@ -70,6 +70,8 @@ GRANT SELECT ON policyer TO {rolle};
 -- runtime kunne satt `status='brukt'` selv, eller utstedt seg en
 -- kapabilitet til en handling saken aldri ble klassifisert for.
 GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
+GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 -- api_tokener står bevisst IKKE i listen over, og REVOKE-en på toppen
 -- fjerner den hvis en tidligere kjøring ga den bort. Runtime skal nå
@@ -105,6 +107,10 @@ GRANT EXECUTE ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kapabilitet(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION frigi_hengende_kapabiliteter() TO {rolle};
 GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT) TO {rolle};
+-- PR-007: tofaseprotokollen.
+GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TEXT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT) TO {rolle};
 GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
