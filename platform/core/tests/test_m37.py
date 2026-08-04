@@ -2097,8 +2097,15 @@ def test_arbeideren_finner_policyen_paa_produksjonsformet_loggpost(migrator):
             " som manuell")
         # Etter PR-007 bestiller R1 VERIFIKASJON, ikke re-innsending: en ny
         # beslutning kan ikke bli TILLAT før det manglende beviset finnes.
+        # Form A: fase 1 dekker HELE settet av påkrevde vilkår i én
+        # generasjon — ikke bare det som manglet. Fase 2 kan bare bevise
+        # det fase 1 har verifisert, siden originalens attestasjoner er
+        # minimert bort.
         assert plan.utfall == "verifikasjon", f"{plan.utfall}: {plan.grunn}"
-        assert plan.vilkaar == "forfall_passert_dager"
+        assert sorted(plan.reparasjonsinput["vilkaar_sett"]) == [
+            "forfall_passert_dager", "ingen_aktiv_tvist"]
+        assert plan.valgt_verifikator, "ingen verifikator valgt"
+        assert plan.krav_sett_hash and plan.autoritetsversjon
     finally:
         rt.close()
 

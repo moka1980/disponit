@@ -16,6 +16,7 @@ gjort feltbredden til en funksjon av navnet på handlingen.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 
@@ -85,10 +86,15 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         # verifikasjonshandlingen (`verifiser.<vilkaar>`) — bruker
         # verifikatoren den i attestasjonen, faller `kontroller_binding`
         # i fase 2 med `attestasjon_feil_handling`, og beviset er verdiløst.
+        # `vilkaar_sett` (array), ikke `vilkaar` (skalar): form A fra
+        # v5-delta. Fase 1 dekker HELE settet av påkrevde vilkår i ÉN
+        # generasjon — ellers kan fase 2 aldri bygge en komplett hendelse,
+        # siden originalens attestasjoner er minimert bort.
         felter=frozenset({"handling", "ressurs_id", "kildereferanser",
-                          "kategori", "vilkaar", "maalhandling", "policy_id"}),
-        paakrevde=frozenset({"handling", "ressurs_id", "vilkaar",
-                             "maalhandling", "policy_id"}),
+                          "kategori", "vilkaar_sett", "maalhandling",
+                          "policy_id", "krav_sett_hash"}),
+        paakrevde=frozenset({"handling", "ressurs_id", "vilkaar_sett",
+                             "maalhandling", "policy_id", "krav_sett_hash"}),
         beskrivelse=("v3-delta pkt. 5: alle oppslag mot autoritative kilder"
                      " er sideeffektfrie oppdrag utført av en modul med egne"
                      " fullmakter. M-37 rører aldri ERP/bank/CRM selv.")),
@@ -128,6 +134,12 @@ def minimer(oppdragstype: str, payload: dict) -> dict:
         verdi = payload[felt]
         if isinstance(verdi, (str, int, float, bool)) or verdi is None:
             ut[felt] = verdi
+        elif felt == "vilkaar_sett" and isinstance(verdi, list):
+            # Ren liste av vilkårsnavn. Navnene står i kundens policy og er
+            # ikke persondata; alt annet enn strenger droppes.
+            rene = [v for v in verdi if isinstance(v, str) and v.strip()]
+            if rene:
+                ut[felt] = sorted(rene)
         elif felt == "kildereferanser" and isinstance(verdi, list):
             # Kildereferanser er allerede normalisert til nøyaktig tre
             # nøkler av `api.minimering._kildereferanser`. Vi gjentar
@@ -169,49 +181,107 @@ def mangler_paakrevde(oppdragstype: str, minimert: dict) -> list[str]:
 
 KVITTERINGSTYPER = ("utforelseskvittering_v1", "verifikasjonskvittering_v1")
 
-#: Konvoluttens felter. Rekkefølgen er uten betydning (JCS sorterer), men
-#: mengden er bindende.
+#: `krav_sett`-elementets LUKKEDE, versjonerte skjema (Scope v2 pkt. 3.3).
+#: Ukjent felt er en valideringsfeil, ikke stillhet — samme prinsipp som
+#: artefaktskjemaet og resten av plattformen.
+KRAV_SETT_SKJEMAVERSJON = 1
+KRAV_ELEMENT_FELTER = frozenset({"vilkaar", "ressurs_id", "innhentbar"})
+
+
+def valider_krav_sett(krav_sett: object) -> list[str]:
+    """Tom liste == gyldig. Kaster aldri.
+
+    Settet er SAKSBUNDET og frosset ved klassifisering (v6 pkt. 1): det
+    slås aldri opp på nytt mot aktiv policy under fase 1 eller 2. Endrer
+    policyen vilkårene etterpå, påvirker det aldri en pågående sak.
+    """
+    if not isinstance(krav_sett, dict):
+        return ["krav_sett er ikke et objekt"]
+    ukjente = sorted(set(krav_sett) - {"skjemaversjon", "krav"})
+    if ukjente:
+        return [f"krav_sett har ukjente felter: {ukjente}"]
+    if krav_sett.get("skjemaversjon") != KRAV_SETT_SKJEMAVERSJON:
+        return [f"krav_sett.skjemaversjon={krav_sett.get('skjemaversjon')!r},"
+                f" krever {KRAV_SETT_SKJEMAVERSJON}"]
+    krav = krav_sett.get("krav")
+    if not isinstance(krav, list) or not krav:
+        return ["krav_sett.krav må være en ikke-tom liste"]
+
+    feil: list[str] = []
+    sett: set[str] = set()
+    for i, e in enumerate(krav):
+        if not isinstance(e, dict):
+            feil.append(f"krav[{i}] er ikke et objekt")
+            continue
+        ukjente = sorted(set(e) - KRAV_ELEMENT_FELTER)
+        if ukjente:
+            feil.append(f"krav[{i}] har ukjente felter: {ukjente}")
+        mangler = sorted(KRAV_ELEMENT_FELTER - set(e))
+        if mangler:
+            feil.append(f"krav[{i}] mangler {mangler}")
+            continue
+        if not isinstance(e["vilkaar"], str) or not e["vilkaar"].strip():
+            feil.append(f"krav[{i}].vilkaar må være en ikke-tom streng")
+        elif e["vilkaar"] in sett:
+            # Et duplisert vilkår ville gitt to bevis for samme krav i
+            # samme generasjon, som `bevis_vilkaar`-UNIQUE uansett stopper
+            # — men da som en databasefeil i stedet for som en klar
+            # valideringsmelding.
+            feil.append(f"krav[{i}].vilkaar={e['vilkaar']!r} er duplisert")
+        else:
+            sett.add(e["vilkaar"])
+        if not isinstance(e["ressurs_id"], str) or not e["ressurs_id"].strip():
+            feil.append(f"krav[{i}].ressurs_id må være en ikke-tom streng")
+        if not isinstance(e["innhentbar"], bool):
+            feil.append(f"krav[{i}].innhentbar må være boolsk")
+    return feil
+
+
+def krav_sett_hash(krav_sett: dict) -> str:
+    """SHA-256 over KANONISK SORTERT krav_sett (v6 pkt. 3).
+
+    Binder oppdraget, kvitteringen og generasjonsraden til NØYAKTIG det
+    settet saken ble klassifisert mot. En kvittering for et annet sett er
+    ikke en formfeil å rette — den gjelder en annen sak enn den vi ser på.
+    """
+    import hashlib
+    kanonisk = {
+        "skjemaversjon": krav_sett.get("skjemaversjon"),
+        "krav": sorted(
+            ({"vilkaar": e["vilkaar"], "ressurs_id": e["ressurs_id"],
+              "innhentbar": bool(e["innhentbar"])}
+             for e in krav_sett.get("krav") or []),
+            key=lambda e: e["vilkaar"]),
+    }
+    return hashlib.sha256(json.dumps(
+        kanonisk, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+#: Den YTRE konvoluttens felter (Scope v2 pkt. 3.1). Lukket.
 #:
-#: 🔴 AVVIK FRA v2-DELTA pkt. 4, og grunnen er målt:
-#: spesifikasjonen lister `tenant`, `verifikator_id` og `attestert_resultat`,
-#: og har verken `handling` eller `policy_id`. Med den formen kan
-#: konvolutten IKKE brukes som attestasjon i fase 2 — motorens
-#: `kontroller_binding` krever `('tenant_id','handling','vilkaar',
-#: 'ressurs_id','policy_id','utstedt','utloper','jti')`, og `verifiser`
-#: slår opp nøkkelen på feltet `verifikator`.
-#:
-#: Da ville hele bæremekanismen falt: «beviset bæres av verifikatorens
-#: signatur» krever at det signerte objektet ER attestasjonen. Skulle
-#: API-et i stedet bygge en attestasjon FRA konvolutten, måtte det signere
-#: den — og API-et er ingen verifikator.
-#:
-#: Konvolutten er derfor et SUPERSETT: motorens bindingsfelter med motorens
-#: navn, pluss fase-1-bindingene. Ekstra felter er uproblematiske for
-#: motoren (den leser de den krever), og de inngår i de signerte bytene.
+#: Kvitteringen bærer HELE settet i én signert konvolutt. De enkelte
+#: attestasjonene er i tillegg individuelt signert — ikke som primær
+#: integritet for kvitteringen, men fordi MOTOREN verifiserer hver enkelt
+#: i fase 2. To lag med hvert sitt formål: den ytre binder settet til
+#: oppdraget og generasjonen, de indre gjør hver attestasjon brukbar som
+#: bevis for policyporten.
 VERIFIKASJONSKVITTERING_FELTER = frozenset({
-    # --- det motoren krever av en attestasjon (samme navn) -------------
-    "tenant_id", "handling", "vilkaar", "ressurs_id", "policy_id",
-    "utstedt", "utloper", "jti", "verifikator", "resultat",
-    # --- fase-1-bindingene ---------------------------------------------
-    "protokollversjon", "kvitteringstype", "oppdrag_id", "unntak_id",
-    "fase1_repair_operation_id", "verification_generation",
-    "attestert_resultat", "vilkaarsverdier", "nokkel_id",
-    # `kanonisering` og `signatur` legges på av signeringen selv
-    # (`policy_validator.attestering.signer`), og hører derfor til
-    # konvolutten selv om de ikke er noe verifikatoren fyller ut.
-    "kanonisering", "signatur",
+    "protokollversjon", "kvitteringstype", "tenant_id", "oppdrag_id",
+    "unntak_id", "fase1_repair_operation_id", "verification_generation",
+    "krav_sett_hash", "verifikator_id", "nokkel_id", "utstedt",
+    "attestasjoner", "kanonisering", "signatur",
 })
-
-#: Alt som IKKE er valgfritt. `vilkaarsverdier` er den eneste som er det —
-#: noen vilkår attesteres med en verdi (f.eks. antall dager), andre er rent
-#: boolske.
 VERIFIKASJONSKVITTERING_PAAKREVDE = frozenset(
-    VERIFIKASJONSKVITTERING_FELTER - {"vilkaarsverdier"})
+    VERIFIKASJONSKVITTERING_FELTER - {"kanonisering", "signatur"})
 
-#: De to eneste lovlige utfallene. `positiv` betyr at vilkåret KAN
-#: attesteres; `negativ` at det ikke kan. Det finnes ingen tredje verdi —
-#: «vet ikke» er `negativ`, fordi fail-closed er retningen.
-ATTESTERTE_RESULTATER = ("positiv", "negativ")
+#: Ett element per vilkår i settet.
+VERIFIKASJONSELEMENT_FELTER = frozenset({
+    "vilkaar", "status", "permanent", "attestasjon"})
+
+#: v6 pkt. 4 + v7 pkt. 2. `attestert` er det eneste positive utfallet.
+#: `ikke_attesterbar` med `permanent: true` betyr prinsipiell
+#: u-innhentbarhet; uten `permanent` er den forbigående og teller budsjett.
+ELEMENTSTATUSER = ("attestert", "ikke_attesterbar", "negativ")
 
 PROTOKOLLVERSJON = 1
 
@@ -223,13 +293,9 @@ class Konvoluttfeil(ValueError):
 def valider_verifikasjonskvittering(kropp: object) -> list[str]:
     """Tom liste == konvolutten har NØYAKTIG den deklarerte formen.
 
-    Kaster aldri — samme kontrakt som `valider_policy` og
-    `valider_manifest`. Kalleren avgjør hva et brudd skal bli (her:
-    sikkerhetslogg, ingen bevisrad).
-
-    Merk at dette KUN er formkontroll. At feltene stemmer med databasen —
-    tenant, sak, vilkår, generasjon, oppdrag — kontrolleres server-side i
-    `registrer_verifikasjonsbevis`, mot radene og ikke mot konvolutten.
+    Kaster aldri. KUN formkontroll: at feltene stemmer med databasen —
+    tenant, sak, generasjon, oppdrag, sett-hash — kontrolleres server-side
+    i `registrer_verifikasjonsbevis`, mot radene og ikke mot konvolutten.
     Konvolutten er sammenligningsgrunnlag, aldri autoritativ kilde.
     """
     if not isinstance(kropp, dict):
@@ -242,40 +308,76 @@ def valider_verifikasjonskvittering(kropp: object) -> list[str]:
     mangler = sorted(VERIFIKASJONSKVITTERING_PAAKREVDE - set(kropp))
     if mangler:
         feil.append(f"manglende felter: {mangler}")
-
     if kropp.get("kvitteringstype") != "verifikasjonskvittering_v1":
         feil.append(f"kvitteringstype={kropp.get('kvitteringstype')!r}"
-                    " — kun verifikasjonskvittering_v1 kan bære en attestasjon")
+                    " — kun verifikasjonskvittering_v1 kan bære attestasjoner")
     if kropp.get("protokollversjon") != PROTOKOLLVERSJON:
         feil.append(f"protokollversjon={kropp.get('protokollversjon')!r},"
                     f" krever {PROTOKOLLVERSJON}")
-    if kropp.get("attestert_resultat") not in ATTESTERTE_RESULTATER:
-        feil.append(f"attestert_resultat={kropp.get('attestert_resultat')!r}"
-                    f" — lovlige: {list(ATTESTERTE_RESULTATER)}")
-    # `resultat` er motorens felt og MÅ stemme med `attestert_resultat`.
-    # To felter som sier det samme kan si ulikt, og da ville motoren og
-    # M-37 lest hver sin sannhet ut av det samme signerte objektet.
-    forventet = kropp.get("attestert_resultat") == "positiv"
-    if kropp.get("resultat") is not forventet:
-        feil.append(f"resultat={kropp.get('resultat')!r} motsier"
-                    f" attestert_resultat={kropp.get('attestert_resultat')!r}")
-
-    for felt in ("tenant_id", "vilkaar", "ressurs_id", "verifikator",
-                 "handling", "policy_id", "nokkel_id", "jti"):
-        verdi = kropp.get(felt)
-        if not isinstance(verdi, str) or not verdi.strip():
+    for felt in ("tenant_id", "verifikator_id", "nokkel_id", "utstedt",
+                 "krav_sett_hash"):
+        if not isinstance(kropp.get(felt), str) or not str(kropp.get(felt)).strip():
             feil.append(f"{felt} må være en ikke-tom streng")
     for felt in ("oppdrag_id", "unntak_id", "verification_generation"):
-        verdi = kropp.get(felt)
-        # `bool` er subklasse av `int` — samme felle som i manifestporten.
-        if isinstance(verdi, bool) or not isinstance(verdi, int):
+        v = kropp.get(felt)
+        if isinstance(v, bool) or not isinstance(v, int):
             feil.append(f"{felt} må være et heltall")
-    if kropp.get("verification_generation") is not None \
-            and isinstance(kropp.get("verification_generation"), int) \
-            and not isinstance(kropp.get("verification_generation"), bool) \
-            and kropp["verification_generation"] < 1:
-        feil.append("verification_generation starter på 1")
+
+    elementer = kropp.get("attestasjoner")
+    if not isinstance(elementer, list) or not elementer:
+        return feil + ["attestasjoner må være en ikke-tom liste"]
+    sett: set[str] = set()
+    for i, e in enumerate(elementer):
+        if not isinstance(e, dict):
+            feil.append(f"attestasjoner[{i}] er ikke et objekt")
+            continue
+        ukjente = sorted(set(e) - VERIFIKASJONSELEMENT_FELTER)
+        if ukjente:
+            feil.append(f"attestasjoner[{i}] har ukjente felter: {ukjente}")
+        vilkaar = e.get("vilkaar")
+        if not isinstance(vilkaar, str) or not vilkaar.strip():
+            feil.append(f"attestasjoner[{i}].vilkaar må være en ikke-tom streng")
+        elif vilkaar in sett:
+            feil.append(f"attestasjoner[{i}].vilkaar={vilkaar!r} er duplisert")
+        else:
+            sett.add(vilkaar)
+        if e.get("status") not in ELEMENTSTATUSER:
+            feil.append(f"attestasjoner[{i}].status={e.get('status')!r}"
+                        f" — lovlige: {list(ELEMENTSTATUSER)}")
+        if "permanent" in e and not isinstance(e["permanent"], bool):
+            feil.append(f"attestasjoner[{i}].permanent må være boolsk")
+        if e.get("status") == "attestert":
+            att = e.get("attestasjon")
+            if not isinstance(att, dict):
+                feil.append(f"attestasjoner[{i}]: status=attestert krever en"
+                            " attestasjon")
+            elif att.get("vilkaar") != vilkaar:
+                # Elementet og attestasjonen må gjelde SAMME vilkår. Ellers
+                # kunne et element merket `a` båret et bevis for `b`, og
+                # settkontrollen ville telt feil krav som dekket.
+                feil.append(f"attestasjoner[{i}]: attestasjonen gjelder"
+                            f" {att.get('vilkaar')!r}, elementet {vilkaar!r}")
+        elif e.get("attestasjon") is not None:
+            feil.append(f"attestasjoner[{i}]: kun status=attestert kan bære"
+                        " en attestasjon")
     return feil
+
+
+def resultathash_verifikasjon(konvolutt: dict) -> str:
+    """SHA-256 over den KANONISKE konvolutten UTEN den ytre signaturen.
+
+    Scope v2 pkt. 3.2 og Codex-port 7: signer over innhold, hash over
+    SAMME innhold, aldri over signaturen. Byttes den ytre signaturen ut
+    uten at innholdet endres, er det den samme kvitteringen — og en
+    idempotensnøkkel som endret seg med signaturen ville gjort hver
+    re-signering til et «motstridende resultat».
+
+    Samme mønster som attesterings-MAC-en fra PR-002.
+    """
+    from policy_validator import jcs
+    uten = {k: v for k, v in konvolutt.items() if k != "signatur"}
+    import hashlib
+    return hashlib.sha256(jcs.kanoniske_bytes(uten)).hexdigest()
 
 
 def er_utforelseskvittering(kropp: object) -> bool:

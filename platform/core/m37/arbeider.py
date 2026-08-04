@@ -419,7 +419,8 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
     if kl.utfall == "behandle" and kl.handler is not None \
             and kl.handler.handler_id == reparasjoner.R1.handler_id:
         plan = reparasjoner.planlegg_verifikasjon(
-            kl, payload, policy_id=(policy.get("meta") or {}).get("policy_id", ""))
+            kl, payload, policy,
+            policy_id=(policy.get("meta") or {}).get("policy_id", ""))
         if plan.utfall == "verifikasjon":
             return _start_fase1(conn, vakt, sak, claim_id, kl, plan)
         _historikk(vakt, sak, "klassifisert",
@@ -773,9 +774,10 @@ def _start_fase1(conn, vakt, sak: Sak, claim_id: str, kl,
     rekkefølgen var riktig i utgangspunktet.
     """
     generasjon = vakt.execute(
-        "SELECT start_verifikasjonsgenerasjon(%s,%s,%s,%s,%s)",
+        "SELECT start_verifikasjonsgenerasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
         (sak.tenant, sak.id, claim_id, sak.claim_generation,
-         plan.vilkaar)).fetchone()[0]
+         json.dumps(plan.krav_sett), plan.krav_sett_hash,
+         plan.valgt_verifikator, plan.autoritetsversjon)).fetchone()[0]
     if generasjon is None:
         # Enten tapt lease, eller retry-budsjettet er brukt opp. Begge
         # ender samme sted, og fail-closed er retningen.
@@ -787,22 +789,24 @@ def _start_fase1(conn, vakt, sak: Sak, claim_id: str, kl,
         return reparasjoner.Reparasjonsplan(
             "manuell", "verifikasjonsbudsjett_brukt"), None
 
-    rid = reparasjoner.fase1_id(sak.tenant, sak.id, plan.vilkaar,
+    rid = reparasjoner.fase1_id(sak.tenant, sak.id, plan.krav_sett_hash,
                                 kl.handler.id_med_versjon, generasjon)
     inp_hash = reparasjoner.input_hash(plan.reparasjonsinput)
     _registrer_reparasjon(vakt, sak, kl, plan, rid, inp_hash, claim_id)
 
     oppdrag_id = _opprett_oppdrag(vakt, sak, plan, rid, sak.loggpost_id)
     if vakt.execute("SELECT knytt_verifikasjonsoppdrag(%s,%s,%s,%s,%s)",
-                    (sak.tenant, sak.id, plan.vilkaar, generasjon,
+                    (sak.tenant, sak.id, "*sett*", generasjon,
                      oppdrag_id)).fetchone()[0] is not True:
         # Generasjonen har alt et oppdrag, eller er ikke lenger aktiv.
         # Da har noen andre vunnet, og vi skal ikke skrive noe.
         raise Leasetap("verifikasjonsgenerasjonen kunne ikke knyttes")
 
     _historikk(vakt, sak, "verifikasjon_bestilt",
-               {"vilkaar": plan.vilkaar, "generation": generasjon,
-                "oppdrag_id": oppdrag_id}, claim_id=claim_id)
+               {"vilkaar_sett": plan.reparasjonsinput.get("vilkaar_sett"),
+                "verifikator": plan.valgt_verifikator,
+                "generation": generasjon, "oppdrag_id": oppdrag_id},
+               claim_id=claim_id)
     _krev_fencing(vakt, sak, claim_id, "status='venter_verifikasjon'")
     conn.commit()
     return plan, rid
