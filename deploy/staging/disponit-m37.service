@@ -1,0 +1,59 @@
+# M-37 behandlingsmotor — EGEN PROSESS, aldri i API-prosessen.
+#
+# PR-006 §0: ytelsesporten perf-m01-v1 er målt med 3,4× spredning
+# (p95 24–82 ms) og p99 207 ms, og verste kjøring brukte 55 % av budsjettet.
+# Legges M-37-arbeid inn i forespørselsveien, spises nøyaktig den marginen.
+# Derfor en egen unit, og derfor en statisk sjekk i testsuiten på at
+# `api/` aldri importerer `m37/`.
+#
+# Installeres med:
+#   install -m 644 deploy/staging/disponit-m37.service \
+#       /etc/systemd/system/disponit-m37.service
+#   systemctl daemon-reload && systemctl enable --now disponit-m37
+
+[Unit]
+Description=Disponit M-37 behandlingsmotor (unntakskøen)
+# API-et må være oppe: arbeideren ber om nye policystyrte beslutninger
+# gjennom det, og har ingen annen vei til en handling.
+After=network-online.target postgresql.service disponit-api.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=disponit
+Group=disponit
+WorkingDirectory=/opt/disponit
+# Hemmelighetene ligger i 0600/root-fila, aldri i unit-filen og aldri i
+# repoet. Mangler den, starter ikke prosessen — som er riktig: en arbeider
+# uten KEK kan ikke dekryptere en eneste sak.
+EnvironmentFile=/etc/disponit/staging.env
+Environment=DISPONIT_API_URL=http://127.0.0.1:8099
+ExecStart=/opt/disponit/.venv/bin/python -m m37.arbeider
+
+# Restart, men ikke i evig løkke: kommer den ikke opp fem ganger på ett
+# minutt, er det en feil et menneske må se på. En tjeneste som restarter
+# uendelig skjuler nettopp den feilen.
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Herding. Arbeideren trenger nettverk til loopback-API-et og en
+# databasetilkobling — ingenting annet.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/disponit
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Dekryptert payload skal ALDRI til disk. Kjernedump ville skrevet den dit.
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

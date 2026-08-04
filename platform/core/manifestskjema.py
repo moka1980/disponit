@@ -38,6 +38,47 @@ KRAVGRENSER: dict[str, dict] = {
         "rate_slingringsmonn": 0.01,
         "varighet_slingringsmonn": 0.05,
     },
+    # --- PR-006 -----------------------------------------------------------
+    # Begge grensene defineres FØR arbeidet som skal måles (brief §5).
+    # Rekkefølgen er ikke pedanteri: `rollback-m01-v1` har manglet i denne
+    # dict-en helt siden PR-005c, og et `ja` ble derfor avvist med «ukjent
+    # krav_id». Fail-closed var riktig, men det betød at den som skulle
+    # gjøre rollback-arbeidet ikke hadde noen fasit å måle mot.
+    "feilinjisering-m01-v1": {
+        "min_injisert": 20,
+        "min_kategorier": 3,
+        # Andelene er 1.0 og ikke «minst 0.95». En injisert feil som ikke
+        # ble behandlet, er nettopp den tilstanden punktet
+        # `feilinjisering_til_unntakskø` skal bevise at ikke finnes.
+        "krev_terminal_andel": 1.0,
+        "krev_lost_andel": 1.0,
+        "krev_manuell_andel": 1.0,
+        "maks_varighet_sek": 300.0,
+        # Målt MENS arbeideren kjører. Det er hele beviset for
+        # prosessisolasjonen: er tallet innenfor mens M-37 maler på samme
+        # boks, spiste ikke behandlingen ytelsesmarginen.
+        "maks_p95_api_under_last_ms": 150.0,
+        # Minst én sak SKAL gjennom lease-tap + re-claim (v2-delta pkt. 8).
+        # Uten den er gjenopptaksveien udokumentert — og en gjenopptaksvei
+        # som aldri er kjørt er en hypotese.
+        "min_lease_tap_re_claim": 1,
+    },
+    "rollback-m01-v1": {
+        "maks_deaktivering_s": 5.0,
+        "maks_reaktivering_s": 5.0,
+        "maks_tapte_loggposter": 0,
+        "krev_avvist_andel": 1.0,
+        "maks_halvferdige": 0,
+    },
+}
+
+#: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
+#: alle artefakter blitt målt mot ytelsesskjemaet, og et feilinjiserings-
+#: artefakt ville feilet på «mangler `krav`» i stedet for å bli validert.
+ARTEFAKTSKJEMAER: dict[str, str] = {
+    "perf-m01-v1": "artefakt-skjema.json",
+    "feilinjisering-m01-v1": "artefakt-feilinjisering-skjema.json",
+    "rollback-m01-v1": "artefakt-rollback-skjema.json",
 }
 
 
@@ -153,7 +194,24 @@ def _positiv(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
     return tall, ""
 
 
-def valider_artefaktformat(art: object) -> list[str]:
+def _andel(kilde: object, navn: str, felt: str) -> tuple[float | None, str]:
+    """En ANDEL: endelig tall i [0, 1]. -> (verdi, feilmelding).
+
+    Egen leser fordi `_tall` ville sluppet gjennom 1.5 og −0.2. En andel på
+    1.5 er ikke et høyt tall — det er en umulig måling, på samme måte som
+    en negativ telling er det. Samme lærdom som ga `_teller` og `_positiv`
+    i PR #8 runde 4: spør hva tallet ER, ikke bare hvor stort det er.
+    """
+    tall, feil = _tall(kilde, navn, felt)
+    if feil:
+        return None, feil
+    if not (0.0 <= tall <= 1.0):
+        return None, f"{navn}={tall:g} er ikke en andel i [0, 1]"
+    return tall, ""
+
+
+def valider_artefaktformat(art: object,
+                           krav_id: str | None = None) -> list[str]:
     """Artefaktet mot det LUKKEDE skjemaet. Tom liste == gyldig.
 
     Codex' P1 nr. 5 på PR #8: `_sjekk_grenser` leste feltene den kjente til
@@ -168,7 +226,10 @@ def valider_artefaktformat(art: object) -> list[str]:
     """
     try:
         import jsonschema
-        skjema = json.loads(ARTEFAKTSKJEMA_STI.read_text(encoding="utf-8"))
+        filnavn = ARTEFAKTSKJEMAER.get(krav_id or "")
+        sti = (ARTEFAKTSKJEMA_STI.parent / filnavn) if filnavn \
+            else ARTEFAKTSKJEMA_STI
+        skjema = json.loads(sti.read_text(encoding="utf-8"))
         validator = jsonschema.Draft202012Validator(skjema)
         return sorted(
             f"{'/'.join(str(p) for p in e.absolute_path) or '<rot>'}: {e.message}"
@@ -202,6 +263,15 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                     f"manifestet påstår {krav_id!r}")
     if art.get("bestatt") is not True:
         feil.append("artefaktet sier ikke bestatt: true")
+
+    # Hvert krav har sine egne domenegrenser. Felleskontrollene over
+    # (krav_id stemmer, bestatt er true) gjelder alle; alt under er
+    # kravspesifikt, og en felles «les tallene»-rutine ville uansett måttet
+    # kjenne hvert felt for å kunne si noe om hva det BETYR.
+    if krav_id == "feilinjisering-m01-v1":
+        return feil + _grenser_feilinjisering(grense, art)
+    if krav_id == "rollback-m01-v1":
+        return feil + _grenser_rollback(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -372,6 +442,214 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     return feil
 
 
+def _grenser_feilinjisering(grense: dict, art: dict) -> list[str]:
+    """`feilinjisering-m01-v1` — de ni målene fra v1 §5 og v2-delta pkt. 8.
+
+    Invariantene REGNES UT på nytt her, aldri lest ut av et flagg. Det er
+    lærdommen fra PR #8 runde 3: `bestatt`, `en_til_en` og `routing_stemmer`
+    er alle produsentens EGEN påstand, og en port som leser konklusjonen
+    validerer ingenting. Her betyr det at `terminal_andel` sjekkes mot
+    `terminal_antall / injisert_antall`, ikke bare mot 1.0.
+    """
+    feil: list[str] = []
+    m, oppsett = art.get("maalt"), art.get("oppsett")
+    if not isinstance(m, dict) or not isinstance(oppsett, dict):
+        return ["artefaktet mangler `maalt` og/eller `oppsett`"]
+    k = art.get("etterkontroll")
+    if not isinstance(k, dict):
+        return ["artefaktet mangler `etterkontroll`"]
+
+    injisert, f = _teller(oppsett, "oppsett.injisert_antall", "injisert_antall")
+    if f:
+        feil.append(f)
+    elif injisert < grense["min_injisert"]:
+        feil.append(f"injisert_antall={injisert},"
+                    f" krever >= {grense['min_injisert']}")
+
+    kategorier = m.get("kategorier_dekket")
+    if not isinstance(kategorier, list):
+        feil.append(f"kategorier_dekket={kategorier!r} er ikke en liste")
+    elif len(set(kategorier)) < grense["min_kategorier"]:
+        feil.append(f"kategorier_dekket har {len(set(kategorier))} unike,"
+                    f" krever >= {grense['min_kategorier']}")
+
+    # Andelene mot tellingene. En andel oppgitt som 1.0 mens tellingene
+    # sier noe annet, er to ulike kjøringer i samme fil.
+    for andelsfelt, antallsfelt, nevnerfelt, krav in (
+            ("terminal_andel", "terminal_antall", None,
+             grense["krev_terminal_andel"]),
+            ("lost_andel", "lost_antall", "reparerbare",
+             grense["krev_lost_andel"]),
+            ("manuell_andel", "manuell_antall", "ikke_reparerbare",
+             grense["krev_manuell_andel"])):
+        andel, f1 = _andel(m, andelsfelt, andelsfelt)
+        antall, f2 = _teller(m, antallsfelt, antallsfelt)
+        nevner, f3 = ((injisert, "") if nevnerfelt is None
+                      else _teller(m, nevnerfelt, nevnerfelt))
+        for melding in (f1, f2, f3):
+            if melding:
+                feil.append(melding)
+        if f1 or f2 or f3:
+            continue
+        if andel < krav:
+            feil.append(f"{andelsfelt}={andel:g}, krever >= {krav:g}")
+        if nevner == 0:
+            # 0/0 er ikke 1.0. Et testsett uten reparerbare saker beviser
+            # ikke at reparerbare saker blir løst — det beviser at ingen
+            # ble prøvd. Uten denne kunne artefaktet oppgitt
+            # reparerbare=0, lost=0, andel=1.0 og bestått.
+            if antall == 0 and krav > 0:
+                feil.append(f"{andelsfelt}: nevneren ({nevnerfelt or 'injisert'})"
+                            f" er 0 — andelen er udefinert, ikke oppfylt")
+            continue
+        utregnet = antall / nevner
+        if abs(utregnet - andel) > 1e-9:
+            feil.append(f"{andelsfelt}={andel:g} stemmer ikke med"
+                        f" {antallsfelt}/{nevnerfelt or 'injisert_antall'}"
+                        f" = {antall}/{nevner} = {utregnet:g}")
+
+    varighet, f = _positiv(m, "maalt.varighet_sek", "varighet_sek")
+    if f:
+        feil.append(f)
+    elif varighet > grense["maks_varighet_sek"]:
+        feil.append(f"varighet_sek={varighet:g},"
+                    f" krever <= {grense['maks_varighet_sek']:g}")
+
+    p95, f = _positiv(m, "p95_api_under_last_ms", "p95_api_under_last_ms")
+    if f:
+        feil.append(f)
+    elif p95 >= grense["maks_p95_api_under_last_ms"]:
+        feil.append(f"p95_api_under_last_ms={p95:g}, krever <"
+                    f" {grense['maks_p95_api_under_last_ms']:g} — målt MENS"
+                    " arbeideren kjører, ellers beviser tallet ingenting om"
+                    " prosessisolasjonen")
+
+    reclaim, f = _teller(m, "lease_tap_re_claim", "lease_tap_re_claim")
+    if f:
+        feil.append(f)
+    elif reclaim < grense["min_lease_tap_re_claim"]:
+        feil.append(f"lease_tap_re_claim={reclaim}, krever >="
+                    f" {grense['min_lease_tap_re_claim']} — gjenopptaksveien"
+                    " må være KJØRT, ikke bare implementert")
+
+    if k.get("historikk_komplett") is not True:
+        feil.append("etterkontroll: historikk_komplett er ikke true")
+    if k.get("klartekst_payload_funnet") is not False:
+        feil.append("etterkontroll: klartekst_payload_funnet er ikke false")
+    if k.get("eiermodul_kun_api") is not True:
+        feil.append("etterkontroll: eiermodul_kun_api er ikke true")
+    canary = k.get("canary_verdier")
+    if not isinstance(canary, list) or not canary:
+        # Et grep uten kjente kanarifugler beviser bare at grep-mønsteret
+        # ikke traff noe — ikke at klarteksten ikke var der (v2-delta pkt. 8).
+        feil.append("etterkontroll: canary_verdier mangler — et grep uten"
+                    " kjente verdier beviser ingenting om klartekst")
+
+    # PID-ene er separat-prosess-beviset. Er de like, kjørte arbeideren
+    # inne i API-prosessen, og hele arkitekturbeslutningen fra §0 er brutt
+    # uten at noe annet tall ville avslørt det.
+    api_pid, f1 = _teller(oppsett, "oppsett.api_pid", "api_pid")
+    m37_pid, f2 = _teller(oppsett, "oppsett.m37_pid", "m37_pid")
+    for melding in (f1, f2):
+        if melding:
+            feil.append(melding)
+    if not f1 and not f2 and api_pid == m37_pid:
+        feil.append(f"api_pid == m37_pid ({api_pid}) — arbeideren kjørte i"
+                    " API-prosessen, i strid med PR-006 §0")
+
+    fordeling = k.get("status_fordeling")
+    if not isinstance(fordeling, dict):
+        feil.append("etterkontroll mangler `status_fordeling`")
+    else:
+        sum_alle, gyldig = 0, True
+        for status in sorted(fordeling):
+            verdi, melding = _teller(fordeling, f"status_fordeling.{status}",
+                                     status)
+            if melding:
+                feil.append(melding)
+                gyldig = False
+            else:
+                sum_alle += verdi
+        if gyldig and injisert is not None and sum_alle != injisert:
+            feil.append(f"summen av status_fordeling ({sum_alle}) !="
+                        f" injisert_antall ({injisert})"
+                        f" — fordeling: {dict(sorted(fordeling.items()))}")
+        # Terminal er `løst|avvist|manuell` og INGENTING annet.
+        # `venter_utførelse` er en sak som venter på en kvittering, og en
+        # sak som venter er ikke en sak som er behandlet ferdig.
+        terminale = sum(fordeling.get(s, 0) for s in
+                        ("løst", "avvist", "manuell")
+                        if isinstance(fordeling.get(s), int)
+                        and not isinstance(fordeling.get(s), bool))
+        terminal_antall = m.get("terminal_antall")
+        if isinstance(terminal_antall, int) \
+                and not isinstance(terminal_antall, bool) \
+                and terminale != terminal_antall:
+            feil.append(f"terminal_antall={terminal_antall} != summen av"
+                        f" løst/avvist/manuell i status_fordeling ({terminale})")
+    return feil
+
+
+def _grenser_rollback(grense: dict, art: dict) -> list[str]:
+    """`rollback-m01-v1` — grensene som har manglet siden PR-005c.
+
+    Den bindende delen er ikke tidene, men `halvferdige_transaksjoner = 0`
+    og at radtellingene for de ANDRE tabellene er uendret. En rollback som
+    er rask og etterlater en halv transaksjon er verre enn en treg som
+    ikke gjør det.
+    """
+    feil: list[str] = []
+    m, k = art.get("maalt"), art.get("etterkontroll")
+    if not isinstance(m, dict) or not isinstance(k, dict):
+        return ["artefaktet mangler `maalt` og/eller `etterkontroll`"]
+
+    for felt, tak in (("deaktivering_effektiv_s", grense["maks_deaktivering_s"]),
+                      ("reaktivering_effektiv_s", grense["maks_reaktivering_s"])):
+        verdi, melding = _positiv(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi:g}, krever <= {tak:g}")
+
+    for felt, tak in (("tapte_loggposter", grense["maks_tapte_loggposter"]),
+                      ("halvferdige_transaksjoner", grense["maks_halvferdige"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+
+    andel, melding = _andel(m, "paagaaende_requests_korrekt_avvist",
+                            "paagaaende_requests_korrekt_avvist")
+    if melding:
+        feil.append(melding)
+    elif andel < grense["krev_avvist_andel"]:
+        feil.append(f"paagaaende_requests_korrekt_avvist={andel:g},"
+                    f" krever >= {grense['krev_avvist_andel']:g}")
+
+    if k.get("andre_tabeller_uendret") is not True:
+        feil.append("etterkontroll: andre_tabeller_uendret er ikke true")
+
+    # Flagget over er produsentens påstand. Tallene er beviset — og de
+    # sammenlignes her, ikke bare oppgis.
+    for_, etter = k.get("radtelling_for"), k.get("radtelling_etter")
+    if not isinstance(for_, dict) or not isinstance(etter, dict):
+        feil.append("etterkontroll mangler radtelling_for/radtelling_etter")
+    elif sorted(for_) != sorted(etter):
+        feil.append(f"radtellingene dekker ulike tabeller: {sorted(for_)}"
+                    f" vs {sorted(etter)}")
+    else:
+        for tabell in sorted(for_):
+            a, f1 = _teller(for_, f"radtelling_for.{tabell}", tabell)
+            b, f2 = _teller(etter, f"radtelling_etter.{tabell}", tabell)
+            if f1 or f2:
+                feil += [x for x in (f1, f2) if x]
+            elif a != b:
+                feil.append(f"{tabell}: {a} rader før, {b} etter —"
+                            " rollbacken rørte en tabell den ikke skulle")
+    return feil
+
+
 def valider_artefakter(manifest: dict, rot: Path | None = None) -> list[str]:
     """Håndhever evidenskjeden for hvert `ja` med krav_id. Tom liste == ok.
 
@@ -417,7 +695,8 @@ def valider_artefakter(manifest: dict, rot: Path | None = None) -> list[str]:
         # avbrudd var det bare skjemaet som ble prøvd. Svekkes skjemaet
         # senere, ville domenetestene fortsatt vært grønne uten å ha kjørt.
         # To uavhengige lag er bare uavhengige hvis begge faktisk måles.
-        feil += [f"{navn}: format — {m}" for m in valider_artefaktformat(data)]
+        feil += [f"{navn}: format — {m}"
+                 for m in valider_artefaktformat(data, krav_id)]
         feil += [f"{navn}: {m}" for m in _sjekk_grenser(krav_id, data)]
     return feil
 

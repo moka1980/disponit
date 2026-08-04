@@ -53,7 +53,22 @@ APPEND_ONLY_TRIGGERE = (
     ("unntak", "unntak_historikkforing"),
     ("revisjonslogg", "revisjonslogg_ingen_endring"),
     ("tenant_nokler", "tenant_nokler_ingen_delete"),
+    # PR-006: outbox-tabellene er append+status som `unntak`, og de har
+    # samme DELETE-sperre. Uten dem her feiler oppryddingen — noe som i seg
+    # selv er en bekreftelse på at sperrene virker.
+    ("oppdrag", "oppdrag_ingen_delete"),
+    ("reparasjonsoperasjoner", "reparasjon_vakt"),
 )
+
+#: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
+#: `oppdrag` peker på både `unntak` og `reparasjonsoperasjoner`, som igjen
+#: peker på `unntak`, som peker på `revisjonslogg` og `tenant_nokler`.
+#: Ryddes noe i feil rekkefølge, feiler slettingen på en fremmednøkkel —
+#: og fixturen ville rapportert en «feil» som i virkeligheten er databasen
+#: som gjør jobben sin.
+RYDDETABELLER = ("oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
+                 "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
+                 "policyer", "tenant_nokler", "frekvens_hendelser")
 
 
 def _rydd(migrator, *tenanter: str) -> None:
@@ -69,9 +84,7 @@ def _rydd(migrator, *tenanter: str) -> None:
         migrator.execute(
             "SELECT set_config('disponit.tenant',%s,true),"
             "       set_config('disponit.aktor','test',true)", (tenant,))
-        for tabell in ("unntak_historikk", "unntak", "revisjonslogg",
-                       "attestasjon_jti", "idempotens", "policyer",
-                       "tenant_nokler", "frekvens_hendelser"):
+        for tabell in RYDDETABELLER:
             migrator.execute(f"DELETE FROM {tabell} WHERE tenant=%s", (tenant,))
     migrator.execute("DELETE FROM api_tokener WHERE tenant = ANY(%s)",
                      (list(tenanter),))

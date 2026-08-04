@@ -30,8 +30,31 @@ sys.path.insert(0, str(ROT / "platform/core"))
 #   unntak_historikk  INSERT-only — historikken skal aldri kunne endres
 #   policyer          lesetilgang — policyer endres av en egen vei
 #   revisjonslogg     INSERT+SELECT — append-only håndheves i tillegg av trigger
+#: `REVOKE ALL ON ALL TABLES IN SCHEMA public` var riktig helt til PR-006:
+#: `arbeidskapabiliteter` eies av `disponit_m37_claimer`, og migrator
+#: verken eier den eller arver eierrollens rettigheter (`WITH INHERIT
+#: FALSE`). Da feiler hele rettighetsblokken på «permission denied» — altså
+#: setter deployet INGEN rettigheter, etter å ha kjørt alle migrasjonene.
+#:
+#: Nullstillingen gjelder derfor tabellene migrator FAKTISK eier. Det er
+#: ikke en innsnevring av kontrollen: tabeller migrator ikke eier, kan den
+#: uansett ikke ha gitt bort.
+NULLSTILL_TABELLER = """
+DO $$
+DECLARE t regclass;
+BEGIN
+    FOR t IN SELECT c.oid::regclass
+               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+                AND c.relowner = (SELECT r.oid FROM pg_roles r
+                                   WHERE r.rolname = current_user)
+    LOOP
+        EXECUTE format('REVOKE ALL ON %s FROM %I', t, '{rolle}');
+    END LOOP;
+END $$;
+"""
+
 RETTIGHETER = """
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
 GRANT SELECT, INSERT ON revisjonslogg, frekvens_hendelser TO {rolle};
 GRANT SELECT ON migrasjoner TO {rolle};
@@ -39,6 +62,14 @@ GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
+-- PR-006: outbox-protokollen. `oppdrag` og `reparasjonsoperasjoner` er
+-- append+status som `unntak` — INSERT og status-UPDATE, aldri DELETE.
+-- `arbeidskapabiliteter` står bevisst IKKE her: den eies av
+-- disponit_m37_claimer og nås KUN gjennom SECURITY DEFINER-funksjonene.
+-- Et bordgrant der ville gjort hele kapabilitetsmodellen til pynt —
+-- runtime kunne satt `status='brukt'` selv, eller utstedt seg en
+-- kapabilitet til en handling saken aldri ble klassifisert for.
+GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 -- api_tokener står bevisst IKKE i listen over, og REVOKE-en på toppen
 -- fjerner den hvis en tidligere kjøring ga den bort. Runtime skal nå
@@ -48,13 +79,42 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 GRANT EXECUTE ON FUNCTION verifiser_token(TEXT, TEXT) TO {rolle};
 """
 
+# PR-006: de herdede M-37-funksjonene. Hver av dem eies av NOLOGIN-rollen
+# `disponit_m37_claimer` og er den ENESTE veien til rettigheten den
+# innkapsler. Uten EXECUTE her kan verken arbeideren eller API-veien claime,
+# utstede eller innløse noe som helst — og med EXECUTE kan de fortsatt bare
+# gjøre nøyaktig det funksjonens signatur tillater.
+#
+# Hvorfor `SET LOCAL ROLE` og ikke bare en GRANT som resten: bare EIEREN kan
+# gi bort rettigheter på et objekt, og migrator eier ikke disse funksjonene.
+# Den er MEDLEM av eierrollen (kreves for OWNER TO i migrasjon 005), men
+# medlemskapet er `WITH INHERIT FALSE` — nettopp for at migrator ikke skal
+# arve dispatcher-rollens tilgang til alle tenanters rader. Medlemskapet gir
+# fortsatt SET ROLE, og den muligheten brukes her, eksplisitt og avgrenset
+# til disse syv GRANT-ene.
+#
+# `SET LOCAL` gjelder til transaksjonen avsluttes; commiten rett etter
+# lukker den, og rollen er tilbake til migrator uansett utfall.
+M37_RETTIGHETER = """
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION claim_neste_sak(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION forny_claim(TEXT, BIGINT, TEXT, INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION frigi_utlopte_claims() TO {rolle};
+GRANT EXECUTE ON FUNCTION utsted_arbeidskapabilitet(TEXT, INT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION bruk_kapabilitet(TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION frigi_hengende_kapabiliteter() TO {rolle};
+GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT) TO {rolle};
+-- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
+-- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
+"""
+
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
 # Kolonnenivå med vilje: `secret_mac` er ikke med i SELECT-listen, så en
 # kompromittert token-admin kan opprette og deaktivere tokens, men ikke lese
 # ut de eksisterende hemmelighetenes MAC. UPDATE er begrenset til de tre
 # feltene rotasjon og deaktivering faktisk trenger.
 TOKEN_ADMIN_RETTIGHETER = """
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {rolle};
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
 GRANT SELECT (token_id, tenant, rolle, scopes, aktiv, utloper, last_used_at,
@@ -121,10 +181,31 @@ def main(argv: list[str] | None = None) -> int:
         print(f"legacy-migrasjoner: {legacy or 'ingen'}")
         bootstrap.herd_historikk(conn)
         print("historikk herdet: checksum er NOT NULL")
-        kjort = legacy + migrer(conn)
+
+        # PR-006: backfillen av policysnapshotet må ligge MELLOM 005 (som
+        # legger kolonnene nullable) og 006 (som setter NOT NULL). Samme
+        # grep som legacy/herding over, og av samme grunn: et steg som må
+        # skje i en bestemt rekkefølge håndheves av rekkefølgen, ikke av et
+        # notat. Gjør noen dette i feil rekkefølge, feiler 006 med en
+        # melding som sier hva som mangler.
+        #
+        # Migrasjonene kjøres altså i tre etapper, ikke to. Se
+        # `db.m37_backfill.KJOR_ETTER_MIGRASJON` — tallet står der og ikke
+        # her, fordi det er backfillens kontrakt og ikke deployens valg.
+        from db import m37_backfill
+        for_backfill = migrer(conn, til_og_med=m37_backfill.KJOR_ETTER_MIGRASJON)
+        res = m37_backfill.backfill(conn)
+        print(f"m37-backfill: {res.fra_evidens} fra evidens, {res.legacy}"
+              f" legacy->manuell, {res.tenanter} tenanter"
+              + (f", grunner: {dict(sorted(res.grunner.items()))}"
+                 if res.grunner else ""))
+        kjort = legacy + for_backfill + migrer(conn)
         print(f"migrasjoner kjørt: {kjort or 'ingen — alt var oppdatert'}")
+        conn.execute(NULLSTILL_TABELLER.format(rolle=rolle))
         conn.execute(RETTIGHETER.format(rolle=rolle))
         conn.commit()
+        conn.execute(M37_RETTIGHETER.format(rolle=rolle))
+        conn.commit()      # avslutter SET LOCAL ROLE
         print(f"rettigheter satt for {rolle}")
         # Token-admin er valgfri på eldre installasjoner: rollen opprettes av
         # oppsett-skriptet, og en GRANT til en rolle som ikke finnes er en
@@ -137,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         finnes = conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                               (token_admin,)).fetchone()
         if finnes:
+            conn.execute(NULLSTILL_TABELLER.format(rolle=token_admin))
             conn.execute(TOKEN_ADMIN_RETTIGHETER.format(rolle=token_admin))
             conn.commit()
             print(f"rettigheter satt for {token_admin}")
@@ -159,10 +241,37 @@ def main(argv: list[str] | None = None) -> int:
             print(f"AVBRUTT: historikken er ikke låst — uten checksum: {uten},"
                   f" kolonne nullable: {nullable and nullable[0]}")
             return 1
+
+        # GO-vilkår V3: retention-vakten skal finnes OG være aktiv når
+        # deployet er ferdig. Event-triggeren i oppsett-skriptet hindrer at
+        # den DEAKTIVERES; denne kontrollen fanger at den er FJERNET.
+        # Uten begge er «referert policyversjon kan ikke slettes» en
+        # egenskap ved en trigger noen kan droppe i en migrasjon.
+        vakt = conn.execute(
+            "SELECT t.tgenabled FROM pg_trigger t"
+            " WHERE t.tgrelid='public.policyer'::regclass"
+            "   AND t.tgname='policy_retention'").fetchone()
+        conn.rollback()
+        if vakt is None or vakt[0] == "D":
+            print("AVBRUTT: policy_retention mangler eller er deaktivert —"
+                  " GO-vilkår V3 er ikke håndhevet i denne basen.")
+            return 1
+        print("policy_retention: aktiv (GO-vilkår V3)")
         print("register: " + ", ".join(str(v) for v, _ in versjoner)
               + "  (alle med checksum, kolonnen er NOT NULL)")
     finally:
         try:
+            # ROLLBACK FØRST. Feiler noe over, står transaksjonen i
+            # «aborted», og da avvises ENHVER setning — inkludert
+            # opplåsingen. Uten denne linjen kastet `finally` en
+            # `InFailedSqlTransaction` som ERSTATTET den opprinnelige
+            # feilen, og enhver migrasjonsfeil så ut som det samme
+            # innholdsløse problemet. Feilsøkingen av 005 gikk i sirkel på
+            # nettopp det: den ekte meldingen fantes aldri i utskriften.
+            #
+            # Advisory-låsen er på SESJONSnivå og overlever rollback, så
+            # opplåsingen er fortsatt både nødvendig og korrekt her.
+            conn.rollback()
             conn.execute("SELECT pg_advisory_unlock(%s)", (LAAS,))
             conn.commit()
         finally:

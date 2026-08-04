@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/rollbackartefakt-v1.json",
+  "title": "Rollbackartefakt (rollback-m01-v1)",
+  "comment": "Grensene for rollback-m01-v1 har manglet helt i KRAVGRENSER siden PR-005c, og et `ja` ble derfor avvist med «ukjent krav_id». Riktig fail-closed, men det betydde at den som gjoer rollback-arbeidet ikke hadde en fasit. Skjemaet og grensene defineres derfor HER, FOER arbeidet som skal maales — samme rekkefoelge som brief §5 krever.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "maalt", "etterkontroll"],
+  "properties": {
+    "krav_id": {"const": "rollback-m01-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modul", "tenant", "requests_under_rollback"],
+      "properties": {
+        "modul": {"type": "string", "minLength": 1},
+        "tenant": {"type": "string", "minLength": 1},
+        "base": {"type": "string"},
+        "merkelapp": {"type": "string"},
+        "requests_under_rollback": {"$ref": "#/$defs/telling"}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deaktivering_effektiv_s", "reaktivering_effektiv_s",
+                   "tapte_loggposter", "avviste_requests",
+                   "paagaaende_requests_korrekt_avvist",
+                   "halvferdige_transaksjoner"],
+      "properties": {
+        "deaktivering_effektiv_s": {"$ref": "#/$defs/positiv"},
+        "reaktivering_effektiv_s": {"$ref": "#/$defs/positiv"},
+        "tapte_loggposter": {"$ref": "#/$defs/telling"},
+        "avviste_requests": {"$ref": "#/$defs/telling"},
+        "paagaaende_requests_korrekt_avvist": {"$ref": "#/$defs/andel"},
+        "halvferdige_transaksjoner": {"$ref": "#/$defs/telling"},
+        "avvisningskode": {"type": "string"}
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["andre_tabeller_uendret", "radtelling_for",
+                   "radtelling_etter"],
+      "properties": {
+        "andre_tabeller_uendret": {"type": "boolean"},
+        "radtelling_for": {"$ref": "#/$defs/tabelltelling"},
+        "radtelling_etter": {"$ref": "#/$defs/tabelltelling"}
+      }
+    }
+  },
+  "$defs": {
+    "telling": {"type": "integer", "minimum": 0},
+    "positiv": {"type": "number", "exclusiveMinimum": 0},
+    "andel": {"type": "number", "minimum": 0, "maximum": 1},
+    "tabelltelling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "revisjonslogg": {"$ref": "#/$defs/telling"},
+        "unntak": {"$ref": "#/$defs/telling"},
+        "unntak_historikk": {"$ref": "#/$defs/telling"},
+        "oppdrag": {"$ref": "#/$defs/telling"},
+        "reparasjonsoperasjoner": {"$ref": "#/$defs/telling"},
+        "idempotens": {"$ref": "#/$defs/telling"},
+        "policyer": {"$ref": "#/$defs/telling"},
+        "tenant_nokler": {"$ref": "#/$defs/telling"}
+      }
+    }
+  }
+}
