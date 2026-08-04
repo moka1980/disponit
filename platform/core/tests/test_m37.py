@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from .conftest import CORE
-from .test_api import (DSN, MIGRATOR_DSN, NOKLER, TENANT, _lag_token, _rydd,
+from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, NOKLER, TENANT, _lag_token, _rydd,
                        attestasjon, dekker, hendelse, migrator, miljo,  # noqa: F401
                        malpolicy, policy, post, token)                  # noqa: F401
 
@@ -531,7 +531,18 @@ def test_kappløp_tjue_arbeidere_gir_noyaktig_en_claim_per_sak(migrator):
     triggeren skriver én rad per faktisk statusskifte.
     """
     import threading
-    saker = [_lag_sak(migrator, TENANT)[0] for _ in range(10)]
+    # FIRE saker per tenant, ikke ti på én. Anti-dominansregelen i
+    # `claim_neste_sak` hopper over tenanter med >= 5 saker allerede under
+    # behandling, og ingenting i denne testen avslutter en sak — så ti
+    # saker hos ÉN tenant kan per konstruksjon ikke alle claimes.
+    #
+    # Den forrige utgaven gjorde nettopp det og var grønn LOKALT fordi
+    # kappløpet mot telle-subspørringen gikk vår vei. I CI gikk det andre
+    # veien og ga 9 av 10. Testen bestod altså av feil grunn, og det er den
+    # samme fellen som trådtesten i PR-002 og `ved_brudd`-testen i PR #8.
+    # Fairness-regelen har sin EGEN test rett under.
+    saker = ([_lag_sak(migrator, TENANT)[0] for _ in range(4)]
+             + [_lag_sak(migrator, ANNEN_TENANT)[0] for _ in range(4)])
     from db.pg import koble
 
     resultat: list[int] = []
@@ -568,13 +579,60 @@ def test_kappløp_tjue_arbeidere_gir_noyaktig_en_claim_per_sak(migrator):
     assert len(resultat) == len(set(resultat)), (
         f"en sak ble claimet to ganger: {resultat}")
 
+    for t in (TENANT, ANNEN_TENANT):
+        _sett_kontekst(migrator, t)
+        claims = migrator.execute(
+            "SELECT unntak_id, count(*) FROM unntak_historikk"
+            " WHERE tenant=%s AND hendelse='claim' GROUP BY unntak_id",
+            (t,)).fetchall()
+        migrator.rollback()
+        assert all(n == 1 for _, n in claims), \
+            f"dobbel claim i historikken for {t}: {claims}"
+
+
+@pg
+def test_anti_dominans_stopper_en_tenant_paa_fem_samtidige(migrator):
+    """v3-delta pkt. 6: en tenant med fem saker under behandling får ikke
+    ta den sjette før noe frigjøres.
+
+    Regelen hadde INGEN test før nå — og det var den som gjorde
+    kappløpstesten over grønn av feil grunn. En regel ingen måler, er en
+    regel som styrer utfallet av andre tester i stillhet.
+
+    Mutasjonen som dreper denne: fjern telle-subspørringen fra
+    `claim_neste_sak`. Da claimes alle åtte.
+    """
+    for _ in range(8):
+        _lag_sak(migrator, TENANT)
+
+    claimet = []
+    for _ in range(8):
+        cid = secrets.token_hex(16)
+        rad = _rt("SELECT id FROM claim_neste_sak(%s,120)", (cid,), rid=cid)
+        if rad is None:
+            break
+        claimet.append(rad[0])
+
+    assert len(claimet) == 5, (
+        f"claimet {len(claimet)} saker for én tenant, taket er 5: {claimet}")
+
     _sett_kontekst(migrator, TENANT)
-    claims = migrator.execute(
-        "SELECT unntak_id, count(*) FROM unntak_historikk"
-        " WHERE tenant=%s AND hendelse='claim' GROUP BY unntak_id",
-        (TENANT,)).fetchall()
+    aktive = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s"
+        "   AND status='under_behandling' AND claim_utloper > now()",
+        (TENANT,)).fetchone()[0]
     migrator.rollback()
-    assert all(n == 1 for _, n in claims), f"dobbel claim i historikken: {claims}"
+    assert aktive == 5
+
+    # Og motstykket: frigjøres én, slipper den neste inn. Uten dette ville
+    # testen bestått selv om claim-veien var permanent stengt etter fem.
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", "opprydd")
+    migrator.execute("UPDATE unntak SET status='manuell' WHERE tenant=%s"
+                     " AND id=%s", (TENANT, claimet[0]))
+    migrator.commit()
+    cid = secrets.token_hex(16)
+    assert _rt("SELECT id FROM claim_neste_sak(%s,120)", (cid,), rid=cid) \
+        is not None, "ingen slapp inn etter at en sak ble avsluttet"
 
 
 @pg
