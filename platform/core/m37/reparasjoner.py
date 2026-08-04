@@ -311,3 +311,120 @@ def planlegg(kl: Klassifisering, payload: dict) -> Reparasjonsplan:
     if handler is None:
         return Reparasjonsplan("manuell", "handler_uten_implementasjon")
     return handler(payload, kl)
+
+
+# ---------------------------------------------------------------------------
+# Kompenserende reversering (hovedspesifikasjon §3)
+# ---------------------------------------------------------------------------
+#
+# Codex P1 runde 1: første leveranse hadde bare fail-closed-veien (alt gikk
+# til `manuell`) og flagget den positive veien som restscope. Det er ikke
+# staging-evidens eller senere operasjonalisering — det er
+# behandlingsmotorens forretningslivssyklus, og den hører til her.
+#
+# Prinsippet er det samme som for R1, og det er hele poenget: KOMPENSASJONEN
+# ER SELV EN POLICYSTYRT HANDLING. M-37 utfører den aldri; den ber om en ny
+# beslutning gjennom `kjerne.behandle()`, og policyporten avgjør på nytt.
+# Uten det ville «reverser» vært en fullmakt M-37 hadde og ingen hadde gitt
+# den.
+
+#: Idempotensnøkkelens KANONISKE form (v2-delta pkt. 4). Den hashes før
+#: bruk fordi databasen krever `^[0-9a-f]{64}$` på repair_operation_id, men
+#: det er DENNE strengen som definerer identiteten — og den inneholder
+#: verken `forsok` eller `claim_id`.
+KOMPENSASJON_NOKKEL = "compensation:{unntak_id}:{handling}:{loggpost_id}"
+
+
+def kompensasjonsnokkel(unntak_id: int, handling: str,
+                        original_loggpost_id: int) -> str:
+    return KOMPENSASJON_NOKKEL.format(unntak_id=unntak_id, handling=handling,
+                                      loggpost_id=original_loggpost_id)
+
+
+def _reversering(policy: dict, handling_id: str) -> dict:
+    for h in policy.get("handlinger") or []:
+        if isinstance(h, dict) and h.get("id") == handling_id:
+            return h.get("reversering") or {}
+    return {}
+
+
+def planlegg_kompensasjon(policy: dict, *, opprinnelig_handling: str,
+                          unntak_id: int, loggpost_id: int,
+                          sak_ts, naa, payload: dict) -> Reparasjonsplan:
+    """Den positive kompensasjonsveien, med sine tre negative porter.
+
+    Portene i rekkefølge, og hver av dem er fail-closed:
+
+      1. IRREVERSIBEL KOMPENSERES ALDRI AUTOMATISK. Ikke «sjelden», ikke
+         «med ekstra kontroll» — aldri. En handling policyen har erklært
+         irreversibel er per definisjon en handling ingen maskin kan gjøre
+         om.
+      2. UDEFINERT KOMPENSASJONSHANDLING => `manuell`, aldri gjetting.
+         Står det ikke i kundens policy hva som reverserer handlingen, har
+         ingen bestemt det — og da er det ikke vår oppgave å finne på noe.
+      3. UTLØPT `frist_sekunder` => `manuell`. En kompensasjon som kommer
+         for sent kan gjøre mer skade enn den reparerer.
+
+    Returnerer en PLAN. Som alle handlere kan denne funksjonen ikke utføre
+    noe: den har ingen tilkobling og ingen klient. Arbeideren sender planen
+    gjennom API-et som en ny beslutning, og policyporten evaluerer
+    kompensasjonshandlingen som enhver annen handling.
+    """
+    rev = _reversering(policy, opprinnelig_handling)
+    type_ = rev.get("type")
+
+    if type_ == "irreversibel":
+        return Reparasjonsplan("manuell", "irreversibel_kompenseres_aldri")
+    if type_ != "kompenserende":
+        # `direkte` betyr at handlingen reverseres av seg selv; da finnes
+        # det ingen kompensasjon å be om. Ukjent type er en policyfeil.
+        return Reparasjonsplan("manuell",
+                               f"reversering_ikke_kompenserende:{type_}")
+
+    maalhandling = rev.get("handling")
+    if not isinstance(maalhandling, str) or not maalhandling:
+        return Reparasjonsplan("manuell", "kompensasjonshandling_udefinert")
+    # Handlingen må FINNES i policyen. En `reversering.handling` som peker
+    # på noe som ikke er definert, ville gått til motoren og blitt avvist
+    # der — men da med en loggpost som ser ut som et policybrudd i stedet
+    # for som en policyfeil.
+    if _handling_finnes(policy, maalhandling) is False:
+        return Reparasjonsplan("manuell", "kompensasjonshandling_ukjent")
+
+    frist = rev.get("frist_sekunder")
+    if isinstance(frist, int) and not isinstance(frist, bool) and frist >= 0:
+        if sak_ts is not None and (naa - sak_ts).total_seconds() > frist:
+            return Reparasjonsplan("manuell", "kompensasjonsfrist_utlopt")
+
+    t = oppdragsskjema.type_for_handling(maalhandling)
+    if t is None:
+        return Reparasjonsplan("manuell", "ingen_oppdragstype_for_kompensasjon")
+    minimert = oppdragsskjema.minimer(t.navn, {**payload,
+                                               "handling": maalhandling})
+    mangler = oppdragsskjema.mangler_paakrevde(t.navn, minimert)
+    if mangler:
+        return Reparasjonsplan("manuell", f"kompensasjon_ufullstendig:{mangler}")
+
+    return Reparasjonsplan(
+        "oppdrag", "kompensasjon_planlagt", maalhandling=maalhandling,
+        oppdragstype=t.navn,
+        reparasjonsinput={**minimert,
+                          "kompenserer": opprinnelig_handling,
+                          "kompensasjonsnokkel": kompensasjonsnokkel(
+                              unntak_id, maalhandling, loggpost_id)})
+
+
+def _handling_finnes(policy: dict, handling_id: str) -> bool:
+    return any(isinstance(h, dict) and h.get("id") == handling_id
+               for h in policy.get("handlinger") or [])
+
+
+def krever_kompensasjon(payload: dict) -> bool:
+    """Bærer saken et spor av en DELVIS UTFØRT handling?
+
+    Feltet settes av connectoren/motoren når en handling rakk å få effekt
+    før den ble stoppet. Det er en eksplisitt markør og ikke en utledning:
+    å gjette at «denne saken ser ut som den trenger reversering» ville vært
+    å starte forretningshandlinger på en mistanke.
+    """
+    return payload.get("delvis_utfort") is True

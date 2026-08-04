@@ -103,6 +103,11 @@ def plukk_og_kvitter(api: str, token: str, verifikator: str, nokkel_id: str,
     kvittering = signer_kvittering({
         "oppdrag_id": o["oppdrag_id"],
         "tenant": o["tenant"],
+        # Kvitteringskapabiliteten fra claim-responsen. Uten den slipper vi
+        # ikke inn i kvitteringsporten i det hele tatt — modultokenet alene
+        # er ikke nok, og skal ikke være det: det er langlivet og gjelder
+        # alle modulens oppdrag, mens denne gjelder DETTE.
+        "kvittering_jti": o["kvittering_jti"],
         "repair_operation_id": o["repair_operation_id"],
         # Owner-fencing (v4-delta pkt. 3): kvitteringen bærer den
         # GJELDENDE owner-claimen. Uten disse to feltene kan en utdatert

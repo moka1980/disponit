@@ -873,7 +873,27 @@ BEGIN
            owner_lease_utloper = pg_catalog.now() + (v_lease || ' seconds')::INTERVAL
      WHERE o.id = (
         SELECT k.id FROM public.oppdrag k
-         WHERE k.status = 'opprettet'
+         WHERE (
+                 k.status = 'opprettet'
+                 -- RECLAIM AV UTLØPT EIER-LEASE (Codex P1, runde 1).
+                 --
+                 -- Uten denne grenen var et `plukket` oppdrag PERMANENT
+                 -- uclaimbart: ingenting førte det tilbake til `opprettet`,
+                 -- selv om statusmaskinen tillot overgangen. Et krasj i
+                 -- eiermodulen mellom claim-commit og kvittering parkerte
+                 -- dermed saken for alltid, og owner-fencingen hadde ingen
+                 -- reell gjenopptaksvei — den kunne bare nekte den gamle
+                 -- eieren, aldri slippe til en ny.
+                 --
+                 -- Reclaim skjer i SAMME atomiske setning som en vanlig
+                 -- claim, med ny owner_claim_id og ØKT owner_generation.
+                 -- Det er nettopp generasjonsøkningen som gjør den gamle
+                 -- eierens sene kvittering til evidens i stedet for til en
+                 -- avslutning.
+                 OR (k.status = 'plukket'
+                     AND k.owner_lease_utloper IS NOT NULL
+                     AND k.owner_lease_utloper < pg_catalog.now())
+               )
            AND k.eiermodul = p_modul_id
            -- Prefikslisten er modulens scope. Er den tom eller NULL,
            -- treffer ingenting — fail-closed, ikke «alle».
@@ -890,6 +910,152 @@ BEGIN
               o.owner_generation, o.utforelsesfrist, o.evidensfrist;
 END $$;
 REVOKE ALL ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT) FROM PUBLIC;
+
+-- ------------------------------------------------------------
+-- 9b. Kvitteringskapabilitet (v3-delta pkt. 2, v4-delta pkt. 2)
+--
+-- Codex P1 runde 1: første leveranse hoppet over denne og lot
+-- modultokenet være hele adgangsbilletten til kvitteringsporten. Et
+-- langlivet token som kan kvittere for HVILKET SOM HELST oppdrag modulen
+-- noensinne har hatt, er ikke den per-oppdrag-bindingen spesifikasjonen
+-- krever — og en merknad i en PR-beskrivelse kan ikke oppheve en kontrakt.
+--
+-- Symmetrisk med arbeidskapabiliteten: DB-backet, serverbundet identitet,
+-- ingen nøkkeldistribusjon. Forskjellen er levetiden — den følger
+-- EVIDENSFRISTEN (v4 pkt. 2), ikke eier-leasen, fordi en kvittering som
+-- kommer etter at leasen gikk ut fortsatt er gyldig EVIDENS. Den binder
+-- til oppdraget, ikke til claimen.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS kvitteringskapabiliteter (
+    jti              TEXT PRIMARY KEY CHECK (jti ~ '^[0-9a-f]{32,}$'),
+    tenant           TEXT NOT NULL,
+    oppdrag_id       BIGINT NOT NULL,
+    modul_id         TEXT NOT NULL,
+    owner_claim_id   TEXT NOT NULL,
+    owner_generation INT  NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'utstedt'
+                     CHECK (status IN ('utstedt','brukt','feilet')),
+    resultathash     TEXT,
+    utstedt          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    utloper          TIMESTAMPTZ NOT NULL,
+    brukt_ts         TIMESTAMPTZ,
+    -- En brukt kapabilitet MÅ bære resultatet den ble brukt til. Uten det
+    -- kan ikke en re-post skilles fra et motstridende resultat, og
+    -- «identisk kvittering er idempotent» blir umulig å håndheve.
+    CONSTRAINT kvitteringskapabilitet_brukt_har_hash CHECK (
+        status <> 'brukt' OR resultathash IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS kvitteringskapabilitet_oppdrag
+    ON kvitteringskapabiliteter (tenant, oppdrag_id);
+
+CREATE OR REPLACE FUNCTION kvitteringskapabilitet_statusmaskin()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.jti IS DISTINCT FROM OLD.jti
+       OR NEW.tenant IS DISTINCT FROM OLD.tenant
+       OR NEW.oppdrag_id IS DISTINCT FROM OLD.oppdrag_id
+       OR NEW.modul_id IS DISTINCT FROM OLD.modul_id
+       OR NEW.owner_claim_id IS DISTINCT FROM OLD.owner_claim_id
+       OR NEW.owner_generation IS DISTINCT FROM OLD.owner_generation
+       OR NEW.utloper IS DISTINCT FROM OLD.utloper
+       OR NEW.utstedt IS DISTINCT FROM OLD.utstedt THEN
+        RAISE EXCEPTION 'kvitteringskapabiliteter: bindingsfelter er uforanderlige';
+    END IF;
+    IF OLD.resultathash IS NOT NULL
+       AND NEW.resultathash IS DISTINCT FROM OLD.resultathash THEN
+        RAISE EXCEPTION 'kvitteringskapabiliteter: resultatet er uforanderlig';
+    END IF;
+    IF OLD.status = 'feilet' AND NEW.status <> 'feilet' THEN
+        RAISE EXCEPTION 'kvitteringskapabiliteter: feilet er terminal';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS kvitteringskapabilitet_overgang ON kvitteringskapabiliteter;
+CREATE TRIGGER kvitteringskapabilitet_overgang BEFORE UPDATE
+    ON kvitteringskapabiliteter
+    FOR EACH ROW EXECUTE FUNCTION kvitteringskapabilitet_statusmaskin();
+
+REVOKE ALL ON kvitteringskapabiliteter FROM PUBLIC;
+
+-- Utstedes av claim-veien. Parameterherdet på samme måte som
+-- arbeidskapabiliteten: tenant, modul og frist UTLEDES fra oppdragsraden,
+-- og kalleren kan derfor ikke be om en kapabilitet for et oppdrag den ikke
+-- nettopp har claimet.
+CREATE OR REPLACE FUNCTION utsted_kvitteringskapabilitet(
+        p_oppdrag_id BIGINT, p_owner_claim_id TEXT, p_owner_generation INT,
+        p_jti TEXT)
+RETURNS TABLE (jti TEXT, utloper TIMESTAMPTZ)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE r RECORD;
+BEGIN
+    IF p_jti IS NULL OR p_jti !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'utsted_kvitteringskapabilitet: ugyldig jti-format';
+    END IF;
+    SELECT o.tenant, o.eiermodul, o.evidensfrist INTO r
+      FROM public.oppdrag o
+     WHERE o.id = p_oppdrag_id
+       AND o.owner_claim_id = p_owner_claim_id
+       AND o.owner_generation = p_owner_generation
+       AND o.status = 'plukket';
+    IF NOT FOUND THEN
+        RETURN;   -- ikke vår claim: ingen kapabilitet
+    END IF;
+    INSERT INTO public.kvitteringskapabiliteter
+        (jti, tenant, oppdrag_id, modul_id, owner_claim_id, owner_generation,
+         utloper)
+    VALUES (p_jti, r.tenant, p_oppdrag_id, r.eiermodul, p_owner_claim_id,
+            p_owner_generation, r.evidensfrist);
+    jti := p_jti;
+    utloper := r.evidensfrist;
+    RETURN NEXT;
+END $$;
+REVOKE ALL ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT)
+    FROM PUBLIC;
+
+-- Innløses i pre-auth på kvitteringsveien. BRENNER IKKE — en kvittering er
+-- idempotent, og en modul som mistet svaret sitt skal kunne re-poste.
+-- `modul_id` sammenlignes med den innloggede modulens identitet, så en
+-- annen modul aldri kan innløse en kapabilitet den har fått tak i.
+CREATE OR REPLACE FUNCTION innlos_kvitteringskapabilitet(p_jti TEXT,
+                                                         p_modul_id TEXT)
+RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, owner_claim_id TEXT,
+               owner_generation INT, status TEXT, resultathash TEXT)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+    SELECT k.tenant, k.oppdrag_id, k.owner_claim_id, k.owner_generation,
+           k.status, k.resultathash
+      FROM public.kvitteringskapabiliteter k
+     WHERE k.jti = p_jti
+       AND k.modul_id = p_modul_id
+       AND k.status <> 'feilet'
+       AND k.utloper > pg_catalog.now()
+$$;
+REVOKE ALL ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) FROM PUBLIC;
+
+-- Forbrukes i SAMME commit som statusskiftet på oppdraget og saken.
+-- Resultathashen lagres, slik at en senere re-post kan skilles fra et
+-- motstridende resultat uten å slå opp i oppdragsraden.
+CREATE OR REPLACE FUNCTION bruk_kvitteringskapabilitet(p_jti TEXT,
+                                                       p_resultathash TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE v_treff INT;
+BEGIN
+    UPDATE public.kvitteringskapabiliteter k
+       SET status = 'brukt', resultathash = p_resultathash,
+           brukt_ts = pg_catalog.now()
+     WHERE k.jti = p_jti
+       AND k.status = 'utstedt'
+       AND k.utloper > pg_catalog.now();
+    GET DIAGNOSTICS v_treff = ROW_COUNT;
+    RETURN v_treff = 1;
+END $$;
+REVOKE ALL ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) FROM PUBLIC;
 
 -- Tilbake til migrator: `policyer` eies av skjemaeieren, og bare eieren
 -- kan legge en trigger på den.

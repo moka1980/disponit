@@ -105,6 +105,9 @@ GRANT EXECUTE ON FUNCTION reserver_kapabilitet(TEXT, TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kapabilitet(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION frigi_hengende_kapabiliteter() TO {rolle};
 GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 -- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
 """

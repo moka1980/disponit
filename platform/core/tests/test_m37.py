@@ -1107,13 +1107,25 @@ def test_kvitteringsportens_tre_avvisninger(migrator, miljo, token):
         with TestClient(a) as c:
             tok, _ = token(rolle="eiermodul:reinnsending",
                            scopes=("orders:execute:purring.",))
-            usignert = {"oppdrag_id": 1, "tenant": TENANT, "resultat": "utfort"}
-            r = c.post("/v1/oppdrag/kvittering", json=usignert,
+            # UTEN kvitteringskapabilitet slipper man ikke inn i det hele
+            # tatt. Det er den nye kontrakten etter Codex' P1: et langlivet
+            # modultoken er ikke lenger adgangsbilletten alene.
+            uten_kap = {"oppdrag_id": 1, "tenant": TENANT,
+                        "resultat": "utfort"}
+            r = c.post("/v1/oppdrag/kvittering", json=uten_kap,
                        headers={"authorization": f"Bearer {tok}"})
-            # Oppdraget finnes ikke -> 404 før signaturen. At oppslaget kommer
-            # først er riktig: uten oppdrag finnes det ingen tenant å binde
-            # kvitteringen til.
-            assert r.status_code in (403, 404), r.text
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Med en UKJENT kapabilitet: avvist, og med samme svar som en
+            # utløpt eller brukt. En klient som kan skille dem fra hverandre
+            # har et orakel over hvilke jti-er som finnes.
+            ukjent = {"oppdrag_id": 1, "tenant": TENANT, "resultat": "utfort",
+                      "kvittering_jti": secrets.token_hex(16)}
+            r2 = c.post("/v1/oppdrag/kvittering", json=ukjent,
+                        headers={"authorization": f"Bearer {tok}"})
+            assert r2.status_code == 401, r2.text
+            assert r2.json()["feil"] == "kapabilitet_ugyldig"
     finally:
         a.tjeneste.pool.lukk()
 
@@ -1133,3 +1145,277 @@ def test_kvitteringsportens_tre_avvisninger(migrator, miljo, token):
     assert _resultathash({**grunn, "ts": "1"}) == _resultathash({**grunn, "ts": "2"}), \
         "tidsstempel endret hashen — en re-post ville sett ut som konflikt"
     assert _resultathash(grunn) != _resultathash({**grunn, "resultat": "feilet"})
+
+
+# ===========================================================================
+# Codex runde 1 — de tre P1-ene
+# ===========================================================================
+
+def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
+                 handling="purring.send", eiermodul="eiermodul:reinnsending",
+                 utforelsesfrist="1 hour", evidensfrist="30 days"):
+    """Et oppdrag slik arbeideren ville lagt det ut."""
+    from db import kryptering
+    rid = rid or secrets.token_hex(32)
+    _sett_kontekst(conn, tenant)
+    conn.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
+        " repair_operation_id, repair_generation, handler_id, handler_versjon,"
+        " maalhandling, input_hash, kategori)"
+        " VALUES (%s,%s,%s,0,'r1_reinnsending','1',%s,%s,'manglende_data')"
+        " ON CONFLICT DO NOTHING",
+        (tenant, sak_id, rid, handling, secrets.token_hex(32)))
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+    ct, nonce = kryptering.krypter(
+        dek, {"handling": handling, "ressurs_id": "fak-1"}, tenant, key_id)
+    opp = conn.execute(
+        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        " repair_operation_id, oppdragstype, handling, eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist)"
+        " VALUES (%s,%s,%s,%s,'reinnsending',%s,%s,%s,%s,%s,"
+        f" now()+interval '{utforelsesfrist}', now()+interval '{evidensfrist}')"
+        " RETURNING id",
+        (tenant, sak_id, loggpost_id, rid, handling, eiermodul, ct, key_id,
+         nonce)).fetchone()[0]
+    conn.commit()
+    return int(opp), rid
+
+
+@pg
+def test_P1_utlopt_eierlease_gjor_oppdraget_reclaimbart(migrator):
+    """Codex P1 runde 1: et `plukket` oppdrag var PERMANENT uclaimbart.
+
+    Ingenting førte det tilbake i køen når eier-leasen gikk ut, selv om
+    statusmaskinen tillot overgangen. Et krasj i eiermodulen mellom
+    claim-commit og kvittering parkerte saken for alltid, og
+    owner-fencingen hadde ingen reell gjenopptaksvei — den kunne bare nekte
+    den gamle eieren, aldri slippe til en ny.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `OR (k.status = 'plukket' AND
+    k.owner_lease_utloper < now())` fra `claim_neste_oppdrag`. Da får B
+    ingen oppdrag, og assertionen under faller.
+    """
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+
+    cid_a = secrets.token_hex(16)
+    a = _rt("SELECT id, owner_generation FROM claim_neste_oppdrag("
+            "%s,%s,%s,300)",
+            ("eiermodul:reinnsending", ["purring."], cid_a))
+    assert a is not None and a[0] == opp, "A fikk ikke oppdraget"
+    assert a[1] == 1, f"owner_generation skulle vært 1, var {a[1]}"
+
+    # Ingen andre får det mens leasen lever — ellers ville «reclaim»
+    # egentlig vært «alle kan ta alt», og testen bevist noe annet.
+    assert _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+               ("eiermodul:reinnsending", ["purring."],
+                secrets.token_hex(16))) is None, \
+        "et LEVENDE plukket oppdrag ble claimet av en annen"
+
+    # Leasen tvinges utløpt — som om eiermodulen krasjet.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE oppdrag SET owner_lease_utloper=now()"
+                     " - interval '1 s' WHERE tenant=%s AND id=%s",
+                     (TENANT, opp))
+    migrator.commit()
+
+    cid_b = secrets.token_hex(16)
+    b = _rt("SELECT id, owner_generation FROM claim_neste_oppdrag("
+            "%s,%s,%s,300)",
+            ("eiermodul:reinnsending", ["purring."], cid_b))
+    assert b is not None and b[0] == opp, "utløpt lease ga ikke reclaim"
+    assert b[1] == 2, f"generasjonen ble ikke økt ved reclaim: {b[1]}"
+
+
+@pg
+def test_P1_annen_eiermodul_kan_aldri_claime_oppdraget(migrator):
+    """Oppdraget er BUNDET til én eiermodul ved opprettelsen.
+
+    Mutasjonen som dreper denne: fjern `AND k.eiermodul = p_modul_id`.
+    """
+    sak, logg = _lag_sak(migrator, TENANT)
+    _lag_oppdrag(migrator, TENANT, sak, logg)
+    assert _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+               ("eiermodul:en-annen", ["purring."],
+                secrets.token_hex(16))) is None
+    # Og tom prefiksliste treffer ingenting — fail-closed, ikke «alle».
+    assert _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+               ("eiermodul:reinnsending", [], secrets.token_hex(16))) is None
+
+
+@pg
+def test_P1_kvitteringskapabilitet_bindes_og_innloses(migrator):
+    """Codex P1 runde 1: kapabiliteten var ikke implementert, og
+    modultokenet var alene adgangsbilletten til kvitteringsporten.
+
+    Måler de fem bindingene v3-delta pkt. 2 krever: oppdrag, tenant, modul,
+    owner-claim/generation og frist. Hver av dem avvises UTEN statusendring.
+
+    Mutasjonen som dreper denne: fjern `AND k.modul_id = p_modul_id` fra
+    `innlos_kvitteringskapabilitet` — da kan en hvilken som helst modul
+    innløse en kapabilitet den har fått tak i.
+    """
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid = secrets.token_hex(16)
+    a = _rt("SELECT id, owner_generation FROM claim_neste_oppdrag(%s,%s,%s,300)",
+            ("eiermodul:reinnsending", ["purring."], cid))
+    assert a is not None
+
+    jti = secrets.token_hex(16)
+    kap = _rt("SELECT jti, utloper FROM utsted_kvitteringskapabilitet("
+              "%s,%s,%s,%s)", (opp, cid, a[1], jti))
+    assert kap is not None, "kapabiliteten ble ikke utstedt"
+
+    # Riktig modul: innløses.
+    assert _rt("SELECT tenant, oppdrag_id FROM innlos_kvitteringskapabilitet("
+               "%s,%s)", (jti, "eiermodul:reinnsending")) is not None
+
+    # FREMMED MODUL: avvises. Dette er den bindingen som gjør at et
+    # langlivet modultoken ikke lenger er nok alene.
+    assert _rt("SELECT tenant FROM innlos_kvitteringskapabilitet(%s,%s)",
+               (jti, "eiermodul:en-annen")) is None
+
+    # UKJENT jti: avvises.
+    assert _rt("SELECT tenant FROM innlos_kvitteringskapabilitet(%s,%s)",
+               (secrets.token_hex(16), "eiermodul:reinnsending")) is None
+
+    # Utstedelse for en claim vi IKKE eier: ingen kapabilitet.
+    assert _rt("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,%s,%s)",
+               (opp, secrets.token_hex(16), a[1],
+                secrets.token_hex(16))) is None, \
+        "kapabilitet utstedt for en fremmed owner-claim"
+
+    # Utdatert generation: heller ikke.
+    assert _rt("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,%s,%s)",
+               (opp, cid, a[1] - 1, secrets.token_hex(16))) is None
+
+    # Forbruk er engangs: andre gang med samme jti gir False.
+    h = "a" * 64
+    assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)", (jti, h))[0] is True
+    assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)", (jti, h))[0] is False
+
+
+@pg
+def test_P1_kvitteringskapabilitetens_bindingsfelter_er_uforanderlige(migrator):
+    """Kunne owner_generation endres på kapabiliteten, ville fencingen vært
+    et forslag. Vakten gjør den til en egenskap."""
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid = secrets.token_hex(16)
+    a = _rt("SELECT id, owner_generation FROM claim_neste_oppdrag(%s,%s,%s,300)",
+            ("eiermodul:reinnsending", ["purring."], cid))
+    jti = secrets.token_hex(16)
+    _rt("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,%s,%s)",
+        (opp, cid, a[1], jti))
+
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    with pytest.raises(Exception) as feil:
+        migrator.execute("UPDATE kvitteringskapabiliteter SET"
+                         " owner_generation=99 WHERE jti=%s", (jti,))
+    assert "bindingsfelter er uforanderlige" in str(feil.value)
+    migrator.rollback()
+
+
+def test_P1_kompensasjon_positiv_vei_gaar_gjennom_policyporten():
+    """Hovedspesifikasjon §3, positiv vei.
+
+    Det avgjørende er RETURTYPEN: `planlegg_kompensasjon` gir en PLAN med
+    `utfall='oppdrag'`. Den har ingen databasetilkobling og ingen klient, og
+    kan derfor ikke utføre kompensasjonen selv. Arbeideren sender den
+    gjennom `kjerne.behandle()` som en NY beslutning, og policyporten
+    evaluerer den som enhver annen handling.
+
+    MUTASJONEN SOM DREPER DENNE: la funksjonen utføre kompensasjonen selv,
+    eller returnere `lost` i stedet for `oppdrag`. Begge betyr at M-37 har
+    en fullmakt ingen har gitt den.
+    """
+    from datetime import timedelta
+    from m37 import reparasjoner
+    naa = datetime.now(timezone.utc)
+    policy = {"handlinger": [
+        {"id": "purring.send", "reversering": {
+            "type": "kompenserende", "handling": "purring.krediter",
+            "frist_sekunder": 3600}},
+        {"id": "purring.krediter", "reversering": {"type": "direkte"}}]}
+    payload = {"handling": "purring.send", "ressurs_id": "fak-1",
+               "delvis_utfort": True}
+
+    plan = reparasjoner.planlegg_kompensasjon(
+        policy, opprinnelig_handling="purring.send", unntak_id=7,
+        loggpost_id=3, sak_ts=naa, naa=naa, payload=payload)
+    assert plan.utfall == "oppdrag", "kompensasjonen ble ikke sendt via API-veien"
+    assert plan.maalhandling == "purring.krediter"
+    # Idempotensnøkkelen har den kanoniske formen fra v2-delta pkt. 4, og
+    # inneholder verken forsok eller claim_id.
+    assert plan.reparasjonsinput["kompensasjonsnokkel"] == \
+        "compensation:7:purring.krediter:3"
+
+    # Og den er STABIL over forsøk — samme sak gir samme nøkkel.
+    plan2 = reparasjoner.planlegg_kompensasjon(
+        policy, opprinnelig_handling="purring.send", unntak_id=7,
+        loggpost_id=3, sak_ts=naa, naa=naa + timedelta(seconds=30),
+        payload=payload)
+    assert plan2.reparasjonsinput == plan.reparasjonsinput
+
+
+def test_P1_kompensasjonens_tre_negative_porter():
+    """De tre portene fra §3, hver for seg.
+
+    Irreversibel er den viktigste: en handling policyen har erklært
+    irreversibel kompenseres ALDRI automatisk — ikke sjelden, ikke med
+    ekstra kontroll, aldri.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if type_ == "irreversibel"`-grenen.
+    Da faller den gjennom til `!= "kompenserende"` og gir fortsatt
+    `manuell` — men med FEIL grunn, og en senere endring som gjør
+    `irreversibel` til en kompenserbar type ville passert. Derfor
+    sammenlignes grunnkoden, ikke bare utfallet.
+    """
+    from datetime import timedelta
+    from m37 import reparasjoner
+    naa = datetime.now(timezone.utc)
+    payload = {"handling": "purring.send", "ressurs_id": "fak-1",
+               "delvis_utfort": True}
+
+    def plan(policy, sak_ts=None):
+        return reparasjoner.planlegg_kompensasjon(
+            policy, opprinnelig_handling="purring.send", unntak_id=1,
+            loggpost_id=1, sak_ts=sak_ts or naa, naa=naa, payload=payload)
+
+    irreversibel = {"handlinger": [{"id": "purring.send",
+                                    "reversering": {"type": "irreversibel"}}]}
+    p = plan(irreversibel)
+    assert p.utfall == "manuell" and p.grunn == "irreversibel_kompenseres_aldri"
+
+    udefinert = {"handlinger": [{"id": "purring.send",
+                                 "reversering": {"type": "kompenserende"}}]}
+    assert plan(udefinert).grunn == "kompensasjonshandling_udefinert"
+
+    ukjent = {"handlinger": [{"id": "purring.send", "reversering": {
+        "type": "kompenserende", "handling": "finnes.ikke.i.policyen"}}]}
+    assert plan(ukjent).grunn == "kompensasjonshandling_ukjent"
+
+    med_frist = {"handlinger": [
+        {"id": "purring.send", "reversering": {
+            "type": "kompenserende", "handling": "purring.krediter",
+            "frist_sekunder": 60}},
+        {"id": "purring.krediter", "reversering": {"type": "direkte"}}]}
+    assert plan(med_frist, sak_ts=naa - timedelta(hours=2)).grunn == \
+        "kompensasjonsfrist_utlopt"
+    # Innenfor fristen skal den fortsatt gå gjennom — ellers ville testen
+    # bestått selv om kompensasjon var permanent avslått.
+    assert plan(med_frist).utfall == "oppdrag"
+
+
+def test_P1_kompensasjon_utloses_kun_av_eksplisitt_markor():
+    """`delvis_utfort` er en MARKØR, ikke en utledning.
+
+    Å gjette at «denne saken ser ut som den trenger reversering» ville
+    betydd å starte forretningshandlinger på en mistanke.
+    """
+    from m37 import reparasjoner
+    assert reparasjoner.krever_kompensasjon({"delvis_utfort": True}) is True
+    for ikke in ({}, {"delvis_utfort": False}, {"delvis_utfort": "ja"},
+                 {"delvis_utfort": 1}, {"handling": "purring.send"}):
+        assert reparasjoner.krever_kompensasjon(ikke) is False, ikke

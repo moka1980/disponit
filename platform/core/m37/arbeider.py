@@ -69,6 +69,33 @@ class Leasetap(RuntimeError):
     """Fencing-WHERE traff null rader. Alt arbeid på saken avbrytes."""
 
 
+class _Kompensasjonsklasse:
+    """Klassifiseringen kompensasjonsveien registreres under.
+
+    Kompensasjon går ikke gjennom reparasjonsregisteret — den er ikke en
+    reparasjon av en feil, men en reversering av en effekt. Den trenger
+    likevel en registrert klassifisering, fordi det er DEN
+    `utsted_arbeidskapabilitet` utleder `tillatt_handling` fra. Uten den
+    ville arbeideren måttet sende ønsket handling som parameter, og hele
+    parameterherdingen fra v4-delta pkt. 1 ville vært borte.
+    """
+    handler_id = "kompensasjon"
+    versjon = "1"
+    id_med_versjon = "kompensasjon@1"
+
+
+class _Klasse:
+    __slots__ = ("handler", "kategori", "grunnkode")
+
+    def __init__(self, handler, kategori, grunnkode):
+        self.handler, self.kategori = handler, kategori
+        self.grunnkode = grunnkode
+
+
+_KOMPENSASJONSKLASSE = _Klasse(_Kompensasjonsklasse(), "ukjent",
+                               "kompenserende_reversering")
+
+
 @dataclass
 class Beslutningssvar:
     """Svaret fra `POST /v1/beslutning`, slik arbeideren trenger det."""
@@ -326,6 +353,33 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
                    {"ved_opprettelse": lagret_hash, "aktiv": aktiv_hash},
                    claim_id=claim_id)
 
+    # --- Kompenserende reversering FØR ordinær klassifisering -----------
+    # Rekkefølgen er bindende: bærer saken spor av en DELVIS UTFØRT
+    # handling, er det ikke en reparasjon som mangler — det er en effekt
+    # som må nulles. Kjørte vi R1 først, ville vi bedt om å utføre
+    # handlingen på nytt oppå en halvveis utført handling.
+    if reparasjoner.krever_kompensasjon(payload):
+        plan = reparasjoner.planlegg_kompensasjon(
+            policy, opprinnelig_handling=sak.handling, unntak_id=sak.id,
+            loggpost_id=sak.loggpost_id, sak_ts=_sak_ts(vakt, sak),
+            naa=datetime.now(timezone.utc), payload=payload)
+        _historikk(vakt, sak, "klassifisert",
+                   {"vei": "kompensasjon", "utfall": plan.utfall,
+                    "grunn": plan.grunn}, claim_id=claim_id)
+        if plan.utfall != "oppdrag":
+            _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+            conn.commit()
+            return plan, None
+        # Kompensasjonen har sin EGEN stabile identitet (v2-delta pkt. 4),
+        # avledet av kompensasjonsnøkkelen og ikke av en handler.
+        inp_hash = reparasjoner.input_hash(plan.reparasjonsinput)
+        rid = reparasjoner.repair_operation_id(
+            sak.tenant, sak.id, "kompensasjon@1", plan.maalhandling, inp_hash)
+        _registrer_reparasjon(vakt, sak, _KOMPENSASJONSKLASSE, plan, rid,
+                              inp_hash, claim_id)
+        conn.commit()
+        return plan, rid
+
     grunnkode = grunnkode_for(sak.kategori, payload.get("begrunnelse") or [])
     kl = reparasjoner.klassifiser(
         sak.kategori, grunnkode,
@@ -366,6 +420,20 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
     _registrer_reparasjon(vakt, sak, kl, plan, rid, inp_hash, claim_id)
     conn.commit()
     return plan, rid
+
+
+def _sak_ts(conn, sak: Sak):
+    """Sakens opprettelsestidspunkt — fasit for `frist_sekunder`.
+
+    Leses fra raden og ikke fra `claim_utloper` eller `now()`: fristen
+    løper fra da hendelsen skjedde, ikke fra da vi rakk å se på den. Med
+    claim-tidspunktet som utgangspunkt ville en sak som lå lenge i kø fått
+    forlenget kompensasjonsfrist — altså det motsatte av hva fristen er til
+    for.
+    """
+    rad = conn.execute("SELECT ts FROM unntak WHERE tenant=%s AND id=%s",
+                       (sak.tenant, sak.id)).fetchone()
+    return rad[0] if rad else None
 
 
 def _registrer_reparasjon(conn, sak: Sak, kl, plan, rid: str, inp_hash: str,
