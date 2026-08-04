@@ -63,13 +63,30 @@ def _kildereferanser(raa: object) -> list[dict] | None:
     return ut or None
 
 
+#: Det ENESTE parameteret som slippes gjennom fra en Grunn.
+#:
+#: Regelen ellers er at parametre droppes: de kan inneholde beløpet,
+#: gruppeverdien eller andre biter av hendelsen som utløste bruddet.
+#: Vilkårets NAVN er noe annet — det står allerede i kundens policy, det er
+#: ikke avledet av hendelsen, og det er ikke persondata.
+#:
+#: Uten det kan M-37 ikke handle. `purring.send` har to vilkår i
+#: bransjemalen, og en sak som bare sier «attestasjon_mangler» sier ikke
+#: HVILKEN. Fase 1 måtte da enten gjette eller be om verifikasjon av alt —
+#: og en verifikator som attesterer noe annet enn det saken manglet, har
+#: ikke verifisert saken.
+VILKAARSFELT = "manglende_vilkaar"
+
+
 def minimer_payload(event: dict, kategori: str | None,
-                    begrunnelse: list[str]) -> dict:
+                    begrunnelse: list[str], *,
+                    vilkaar: str | None = None) -> dict:
     """Saksgrunnlaget som skal krypteres og lagres.
 
     `begrunnelse` er KODER, ikke parametre: parametrene kan inneholde
     verdiene som utløste bruddet (f.eks. beløpet), og de hører hjemme i
-    payloaden bare hvis feltet står i allowlisten.
+    payloaden bare hvis feltet står i allowlisten. Eneste unntak er
+    `vilkaar` — se `VILKAARSFELT`.
     """
     tillatt = set(FELLESFELT) | set(PER_KATEGORI.get(kategori or "", ()))
     ut: dict[str, object] = {}
@@ -88,4 +105,6 @@ def minimer_payload(event: dict, kategori: str | None,
         ut[KILDEREFERANSEFELT] = referanser
     ut["begrunnelse"] = list(begrunnelse)
     ut["kategori"] = kategori
+    if isinstance(vilkaar, str) and vilkaar.strip():
+        ut[VILKAARSFELT] = vilkaar
     return ut

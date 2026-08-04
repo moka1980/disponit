@@ -563,8 +563,15 @@ def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
             # betyr at loggskrivingen ble hoppet over — en programmeringsfeil.
             raise RuntimeError("sak uten loggpost — evidenskjeden er brutt")
         kategori = d.unntak_kategori or (siste or "ukjent")
+        # Vilkåret hentes fra den BLOKKERENDE grunnen — den siste, ikke en
+        # vilkårlig av dem. Motorens `blokker()` legger alltid den
+        # blokkerende sist; alt foran er `*_ok`-kvitteringer. Leser man en
+        # tilfeldig grunn, får M-37 navnet på et vilkår som gikk BRA.
+        blokkerende = d.begrunnelse[-1] if d.begrunnelse else None
         payload = minimering.minimer_payload(
-            event, d.unntak_kategori, [g.kode for g in d.begrunnelse])
+            event, d.unntak_kategori, [g.kode for g in d.begrunnelse],
+            vilkaar=(blokkerende.params or {}).get("vilkaar")
+            if blokkerende is not None else None)
         try:
             unntak_id = _skriv_unntak(conn, tenant, evidens.loggpost_id,
                                       handling, kategori, sakstype, prioritet,

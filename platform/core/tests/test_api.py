@@ -58,6 +58,11 @@ APPEND_ONLY_TRIGGERE = (
     # selv er en bekreftelse på at sperrene virker.
     ("oppdrag", "oppdrag_ingen_delete"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
+    # PR-007: bevis og konflikt er append-only, generasjonen har
+    # overgangsvakt. Alle tre nekter DELETE — som de skal.
+    ("verifikasjonsbevis", "bevis_ingen_endring"),
+    ("verifikasjonskonflikt", "konflikt_ingen_endring"),
+    ("verifikasjonsgenerasjon", "verifikasjonsgenerasjon_overgang"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -72,7 +77,12 @@ APPEND_ONLY_TRIGGERE = (
 #: `SELECT, DELETE` gjennom en migrasjon; det ville lagt en direkte,
 #: destruktiv datapassasje i ALLE kundebaser for å løse fixture-isolasjon.
 #: Testoppsettet skal ikke kunne endre produksjonens rettighetsmodell.
-RYDDETABELLER = ("oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
+#: PR-007-tabellene FØRST: `verifikasjonsgenerasjon` og
+#: `verifikasjonsbevis` har fremmednøkler til `unntak`, og generasjonen
+#: peker i tillegg på beviset.
+RYDDETABELLER = ("verifikasjonskonflikt", "verifikasjonsgenerasjon",
+                 "verifikasjonsbevis",
+                 "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
                  "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
                  "policyer", "tenant_nokler", "frekvens_hendelser")
 

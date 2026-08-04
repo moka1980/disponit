@@ -148,6 +148,11 @@ class Sak:
     claim_utloper: datetime
     forsok: int
     maks_auto_forsok_snapshot: int
+    #: 'ny' = første behandling, 'fase2' = saken har en verifikasjons-
+    #: generasjon bak seg. Kommer fra claim-funksjonen, ikke fra en
+    #: utledning her — fasen er eksplisitt tilstand i databasen.
+    fase: str = "ny"
+    verification_generation: int = 0
 
 
 @dataclass
@@ -233,7 +238,8 @@ def claim(conn: psycopg.Connection, claim_id: str,
                  (AKTOR, claim_id))
     rad = conn.execute(
         "SELECT tenant, id, handling, kategori, loggpost_id, claim_generation,"
-        " claim_utloper, forsok, maks_auto_forsok_snapshot"
+        " claim_utloper, forsok, maks_auto_forsok_snapshot, fase,"
+        " verification_generation"
         "  FROM claim_neste_sak(%s, %s)", (claim_id, lease_s)).fetchone()
     conn.commit()
     return Sak(*rad) if rad else None
@@ -331,6 +337,9 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
     vakt = Transaksjonsvakt(conn)
     sett_kontekst(vakt, sak.tenant, AKTOR, claim_id)
 
+    if sak.fase == "fase2":
+        return _fase2(conn, vakt, sak, claim_id)
+
     payload = _hent_payload(vakt, sak)
     if payload is None:
         _historikk(vakt, sak, "dek_utilgjengelig", claim_id=claim_id)
@@ -394,6 +403,22 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
                {"utfall": kl.utfall, "grunn": kl.grunn,
                 "handler": kl.handler.id_med_versjon if kl.handler else None,
                 "grunnkode": grunnkode}, claim_id=claim_id)
+
+    # --- Tofaseveien: R1 ber om VERIFIKASJON før noen ny beslutning ----
+    # Rekkefølgen er hele PR-007: en ny beslutning kan ikke bli TILLAT før
+    # det manglende beviset finnes, og beviset kan ikke skaffes gjennom en
+    # utførelses-outbox som først opprettes ETTER en TILLAT.
+    if kl.utfall == "behandle" and kl.handler is not None \
+            and kl.handler.handler_id == reparasjoner.R1.handler_id:
+        plan = reparasjoner.planlegg_verifikasjon(kl, payload)
+        if plan.utfall == "verifikasjon":
+            return _start_fase1(conn, vakt, sak, claim_id, kl, plan)
+        _historikk(vakt, sak, "klassifisert",
+                   {"vei": "r1_avvist", "grunn": plan.grunn},
+                   claim_id=claim_id)
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return plan, None
 
     plan = reparasjoner.planlegg(kl, payload)
     if plan.utfall == "manuell":
@@ -711,3 +736,173 @@ if __name__ == "__main__":       # pragma: no cover — systemd-inngangen
         print("DATABASE_URL mangler", file=sys.stderr)
         raise SystemExit(2)
     raise SystemExit(0 if kjor(dsn, url) >= 0 else 1)
+
+
+# ---------------------------------------------------------------------------
+# PR-007: fase 1 (verifikasjon) og fase 2 (ny beslutning)
+# ---------------------------------------------------------------------------
+
+def _start_fase1(conn, vakt, sak: Sak, claim_id: str, kl,
+                 plan) -> tuple["reparasjoner.Reparasjonsplan", str | None]:
+    """Bestill verifikasjon av det manglende vilkåret.
+
+    KUN arbeideren oppretter generasjoner og oppdrag (v4-delta pkt. 1).
+    Ingest og utløpsjobben gjør det aldri — hadde de kunnet, ville to
+    komponenter kunnet bestille hver sin verifikasjon for samme generasjon,
+    og delindeksen ville avvist den ene med en unikfeil i stedet for at
+    rekkefølgen var riktig i utgangspunktet.
+    """
+    generasjon = vakt.execute(
+        "SELECT start_verifikasjonsgenerasjon(%s,%s,%s,%s,%s)",
+        (sak.tenant, sak.id, claim_id, sak.claim_generation,
+         plan.vilkaar)).fetchone()[0]
+    if generasjon is None:
+        # Enten tapt lease, eller retry-budsjettet er brukt opp. Begge
+        # ender samme sted, og fail-closed er retningen.
+        _historikk(vakt, sak, "frist_utlopt",
+                   {"grunn": "ingen_verifikasjonsgenerasjon",
+                    "vilkaar": plan.vilkaar}, claim_id=claim_id)
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan(
+            "manuell", "verifikasjonsbudsjett_brukt"), None
+
+    rid = reparasjoner.fase1_id(sak.tenant, sak.id, plan.vilkaar,
+                                kl.handler.id_med_versjon, generasjon)
+    inp_hash = reparasjoner.input_hash(plan.reparasjonsinput)
+    _registrer_reparasjon(vakt, sak, kl, plan, rid, inp_hash, claim_id)
+
+    oppdrag_id = _opprett_oppdrag(vakt, sak, plan, rid, sak.loggpost_id)
+    if vakt.execute("SELECT knytt_verifikasjonsoppdrag(%s,%s,%s,%s,%s)",
+                    (sak.tenant, sak.id, plan.vilkaar, generasjon,
+                     oppdrag_id)).fetchone()[0] is not True:
+        # Generasjonen har alt et oppdrag, eller er ikke lenger aktiv.
+        # Da har noen andre vunnet, og vi skal ikke skrive noe.
+        raise Leasetap("verifikasjonsgenerasjonen kunne ikke knyttes")
+
+    _historikk(vakt, sak, "verifikasjon_bestilt",
+               {"vilkaar": plan.vilkaar, "generation": generasjon,
+                "oppdrag_id": oppdrag_id}, claim_id=claim_id)
+    _krev_fencing(vakt, sak, claim_id, "status='venter_verifikasjon'")
+    conn.commit()
+    return plan, rid
+
+
+def _fase2(conn, vakt, sak: Sak,
+           claim_id: str) -> tuple["reparasjoner.Reparasjonsplan", str | None]:
+    """Bygg den nye hendelsen = minimert payload + VERIFISERT attestasjon.
+
+    Beviset hentes VIA generasjonsraden (GO-vilkår V4): den `positiv`
+    generasjonen med matchende kontekst. Ikke via en ubundet peker på
+    saken — den finnes ikke, med vilje.
+
+    Modell (b): originalhendelsen er minimert bort og finnes ikke. Det er
+    nettopp derfor tofaseveien er avgrenset til saker der det manglende ER
+    en attestasjon; en manglende VERDI kan ikke rekonstrueres, og de
+    sakene gikk til `manuell` allerede i klassifiseringen.
+    """
+    sett_kontekst(vakt, sak.tenant, AKTOR, claim_id)
+
+    rad = vakt.execute(
+        "SELECT vg.vilkaar, vg.generation, b.id, b.attestasjon_kryptert,"
+        " b.key_id, b.nonce, b.gyldig_til"
+        "  FROM verifikasjonsgenerasjon vg"
+        "  JOIN verifikasjonsbevis b"
+        "    ON b.tenant = vg.tenant AND b.unntak_id = vg.unntak_id"
+        "   AND b.vilkaar = vg.vilkaar AND b.generation = vg.generation"
+        "   AND b.id = vg.bevis_id"
+        " WHERE vg.tenant=%s AND vg.unntak_id=%s AND vg.status='positiv'"
+        " ORDER BY vg.generation DESC LIMIT 1",
+        (sak.tenant, sak.id)).fetchone()
+    if rad is None:
+        _historikk(vakt, sak, "frist_utlopt", {"grunn": "intet_positivt_bevis"},
+                   claim_id=claim_id)
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan("manuell", "intet_positivt_bevis"), None
+
+    vilkaar, generasjon, bevis_id, ct, key_id, nonce, gyldig_til = rad
+    if gyldig_til <= datetime.now(timezone.utc):
+        # Et utløpt bevis starter ikke fase 2. Attestasjonen hadde en
+        # gyldighetstid, og å bruke den etterpå ville vært å behandle et
+        # utløpt bevis som gyldig fordi vi tilfeldigvis rakk å lagre det.
+        _historikk(vakt, sak, "verifikasjon_utlopt",
+                   {"vilkaar": vilkaar, "generation": generasjon},
+                   claim_id=claim_id)
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan("manuell", "bevis_utlopt"), None
+
+    payload = _hent_payload(vakt, sak)
+    if payload is None:
+        _historikk(vakt, sak, "dek_utilgjengelig", claim_id=claim_id)
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan("manuell", "dek_utilgjengelig"), None
+
+    nokkel = vakt.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s AND key_id=%s",
+        (sak.tenant, key_id)).fetchone()
+    if nokkel is None or nokkel[0] is None:
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan("manuell", "bevis_dek_borte"), None
+    dek = kryptering._pakk_ut((key_id, nokkel[0]), sak.tenant)[1]
+    try:
+        attestasjon = kryptering.dekrypter(dek, ct, nonce, sak.tenant, key_id)
+    except Exception:
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan("manuell", "bevis_uleselig"), None
+
+    # Utførelsesklassen er DATA som slås opp (v3-delta pkt. 4) — M-37 kan
+    # verken velge eller overstyre den. Ukjent par → fail-closed manuell.
+    maal = payload.get("handling")
+    klasse = vakt.execute(
+        "SELECT klasse FROM utforelsesklasser WHERE handler_id=%s"
+        "   AND target_action=%s",
+        (reparasjoner.R1.handler_id, maal)).fetchone()
+    if klasse is None:
+        _historikk(vakt, sak, "frist_utlopt",
+                   {"grunn": "ukjent_utforelsesklasse", "maalhandling": maal},
+                   claim_id=claim_id)
+        _krev_fencing(vakt, sak, claim_id, "status='manuell'")
+        conn.commit()
+        return reparasjoner.Reparasjonsplan("manuell",
+                                            "ukjent_utforelsesklasse"), None
+
+    # Den nye hendelsen: minimert payload + den verifiserte attestasjonen.
+    hendelse = {k: v for k, v in payload.items()
+                if k not in ("begrunnelse", "kategori", "manglende_vilkaar")}
+    hendelse["attestasjoner"] = {vilkaar: attestasjon}
+
+    rid = reparasjoner.fase2_id(sak.tenant, sak.id, maal, bevis_id)
+    plan = reparasjoner.Reparasjonsplan(
+        "oppdrag" if klasse[0] == "krever_outbox" else "lost",
+        f"fase2_{klasse[0]}", maalhandling=maal,
+        oppdragstype="reinnsending", reparasjonsinput=hendelse)
+
+    _registrer_reparasjon(vakt, sak, _FASE2KLASSE, plan, rid,
+                          reparasjoner.input_hash(hendelse), claim_id)
+    _historikk(vakt, sak, "verifikasjon_positiv",
+               {"vilkaar": vilkaar, "generation": generasjon,
+                "bevis_id": bevis_id, "utforelsesklasse": klasse[0]},
+               claim_id=claim_id)
+    conn.commit()
+    return plan, rid
+
+
+class _Fase2klasse:
+    """Klassifiseringen fase 2 registreres under.
+
+    Egen identitet fordi `utsted_arbeidskapabilitet` utleder
+    `tillatt_handling` fra den registrerte klassifiseringen — arbeideren
+    kan aldri sende ønsket handling som parameter (v4-delta pkt. 1 i
+    PR-006). Fase 2 er en annen operasjon enn fase 1 og skal ha sin egen.
+    """
+    handler_id = "r1_fase2"
+    versjon = "1"
+    id_med_versjon = "r1_fase2@1"
+
+
+_FASE2KLASSE = _Klasse(_Fase2klasse(), "manglende_data", "attestasjon_verifisert")

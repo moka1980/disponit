@@ -36,7 +36,7 @@ from .taksonomi import (Handlerdeklarasjon, Klassifisering,
 #: De fire eneste utfallene. `ko` betyr «tilbake til køen, prøv igjen
 #: senere»; forsøkstelleren i databasen sørger for at det ikke kan pågå i
 #: det uendelige.
-UTFALL = ("oppdrag", "lost", "manuell", "ko")
+UTFALL = ("oppdrag", "lost", "manuell", "ko", "verifikasjon")
 
 
 @dataclass(frozen=True)
@@ -54,12 +54,18 @@ class Reparasjonsplan:
     #: er idempotensen borte og hvert forsøk blir en ny forretningshandling.
     reparasjonsinput: dict = field(default_factory=dict)
 
+    #: Kun for `utfall='verifikasjon'`: hvilket vilkår fase 1 skal be om.
+    vilkaar: str | None = None
+
     def __post_init__(self) -> None:
         if self.utfall not in UTFALL:
             raise ValueError(f"ukjent utfall {self.utfall!r}")
         if self.utfall == "oppdrag" and not (self.maalhandling
                                              and self.oppdragstype):
             raise ValueError("oppdrag krever både målhandling og oppdragstype")
+        if self.utfall == "verifikasjon" and not self.vilkaar:
+            raise ValueError("verifikasjon krever et vilkår — en fase 1 uten"
+                             " vilkår ville bedt om å få verifisert ingenting")
 
 
 def input_hash(reparasjonsinput: dict) -> str:
@@ -428,3 +434,128 @@ def krever_kompensasjon(payload: dict) -> bool:
     å starte forretningshandlinger på en mistanke.
     """
     return payload.get("delvis_utfort") is True
+
+
+# ---------------------------------------------------------------------------
+# PR-007: tofaseruting — tre eksplisitte ruter, fail-closed (v2-delta)
+# ---------------------------------------------------------------------------
+#
+# Klassifisereren ruter på GRUNN-KODE, ikke på kategori. `manglende_data`
+# dekker to helt ulike situasjoner, og bare den ene kan repareres:
+#
+#   * en ATTESTASJON mangler  -> en verifikator kan skaffe den. Tofase.
+#   * en VERDI mangler        -> den fantes i originalhendelsen, som er
+#                                minimert bort. Kan ikke rekonstrueres.
+#                                Manuell.
+#
+# Skillet er hele grunnen til at PR-007 finnes: modell (b) — bygg den nye
+# hendelsen av minimert payload + verifisert attestasjon — holder KUN for
+# den første klassen. For den andre ville vi bygget en hendelse som fortsatt
+# mangler det den manglet, og fått UNNTAK igjen. Det var nøyaktig feilen
+# som ble målt på en levende trekjede før PR-007.
+
+#: Grunn-koder der det manglende er en ATTESTASJON en verifikator kan
+#: skaffe autoritativt. Disse — og kun disse — går tofasevegen.
+ATTESTASJONSMANGEL = frozenset({
+    "attestasjon_mangler",
+    "vilkaar_mangler_attestasjon",
+    "attestasjon_utlopt",
+})
+
+#: Grunn-koder der det manglende er en FORRETNINGSVERDI fra
+#: originalhendelsen. Ingen verifikator kan attestere et beløp som aldri
+#: ble lagret — dette er `manuell`, og det er ikke en begrensning vi kan
+#: kode oss ut av uten å utvide datalagringen (egen spesifikasjon).
+VERDIMANGEL = frozenset({
+    "manglende_felt",
+    "manglende_dataklasse_kilde",
+})
+
+
+@dataclass(frozen=True)
+class Faserute:
+    """Hvilken vei en R1-sak skal ta. `vilkaar` kun for tofase."""
+    rute: str            # 'tofase' | 'manuell'
+    grunn: str
+    vilkaar: str | None = None
+
+
+def rut_r1(grunnkode: str | None, payload: dict) -> Faserute:
+    """De tre rutene. Alt som ikke er BEVIST attestasjonsmangel → manuell.
+
+    Den tredje ruten — «ukjent eller sammensatt årsak» — er den viktigste,
+    og den er fail-closed med vilje: å gjette at en sak er reparerbar
+    starter en verifikasjonsrunde på noe ingen har bekreftet at kan
+    verifiseres.
+    """
+    if grunnkode in VERDIMANGEL:
+        return Faserute("manuell", f"verdimangel:{grunnkode}")
+    if grunnkode not in ATTESTASJONSMANGEL:
+        return Faserute("manuell", f"ukjent_eller_sammensatt:{grunnkode}")
+
+    vilkaar = payload.get("manglende_vilkaar")
+    if not isinstance(vilkaar, str) or not vilkaar.strip():
+        # Koden sier «attestasjon mangler», men ikke HVILKEN. Uten vilkåret
+        # måtte fase 1 gjettet, og en verifikator som attesterer noe annet
+        # enn det saken manglet, har ikke verifisert saken.
+        return Faserute("manuell", "vilkaar_ukjent")
+    return Faserute("tofase", "attestasjonsmangel", vilkaar=vilkaar)
+
+
+def planlegg_verifikasjon(kl, payload: dict) -> Reparasjonsplan:
+    """Fase 1: be om verifikasjon av det manglende vilkåret.
+
+    Returnerer en PLAN, som alle handlere. Fase 1 har null
+    forretningsfullmakter: den ber en registrert verifikator KONTROLLERE og
+    ATTESTERE, aldri utføre.
+    """
+    grunnkode = kl.grunnkode
+    rute = rut_r1(grunnkode, payload)
+    if rute.rute != "tofase":
+        return Reparasjonsplan("manuell", rute.grunn)
+
+    handling = payload.get("handling")
+    if not isinstance(handling, str) or not handling:
+        return Reparasjonsplan("manuell", "handling_mangler_i_payload")
+    ressurs = payload.get("ressurs_id")
+    if not isinstance(ressurs, str) or not ressurs:
+        # Verifikasjonen er RESSURSBUNDET. Uten ressursen ville
+        # attestasjonen gjeldt «noe hos denne kunden», og en attestasjon
+        # uten ressursbinding kan gjenbrukes på en annen sak.
+        return Reparasjonsplan("manuell", "ressurs_id_mangler")
+
+    return Reparasjonsplan(
+        "verifikasjon", "verifikasjon_bestilt", vilkaar=rute.vilkaar,
+        maalhandling=handling, oppdragstype="verifikasjon",
+        reparasjonsinput={
+            "handling": f"verifiser.{rute.vilkaar}",
+            "ressurs_id": ressurs,
+            "vilkaar": rute.vilkaar,
+            "kategori": kl.kategori,
+        })
+
+
+def fase1_id(tenant: str, unntak_id: int, vilkaar: str,
+             handler_id_med_versjon: str, generation: int) -> str:
+    """SHA-256(tenant ‖ unntak_id ‖ 'verifikasjon' ‖ vilkaar ‖ handler ‖ gen).
+
+    Generasjonen inngår (v2-delta pkt. 3): retry av SAMME generasjon gir
+    samme id og er idempotent, mens en NY generasjon er en ny bestilling.
+    `forsok` og `claim_id` inngår aldri — uendret prinsipp.
+    """
+    raa = "\x1f".join((tenant, str(unntak_id), "verifikasjon", vilkaar,
+                       handler_id_med_versjon, str(generation)))
+    return hashlib.sha256(raa.encode("utf-8")).hexdigest()
+
+
+def fase2_id(tenant: str, unntak_id: int, maalhandling: str,
+             bevis_id: int) -> str:
+    """SHA-256(tenant ‖ unntak_id ‖ 'beslutning' ‖ målhandling ‖ bevis_id).
+
+    Binder til det KONKRETE beviset: en ny verifikasjonsgenerasjon gir et
+    nytt bevis og dermed en ny fase-2-identitet. Uten den bindingen kunne
+    en beslutning tatt på ett bevis vært replayet med et annet.
+    """
+    raa = "\x1f".join((tenant, str(unntak_id), "beslutning", maalhandling,
+                       str(bevis_id)))
+    return hashlib.sha256(raa.encode("utf-8")).hexdigest()
