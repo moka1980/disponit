@@ -40,6 +40,7 @@ import psycopg
 from api.kjerne import Transaksjonsvakt
 from db import kryptering
 from db.pg import koble, sett_kontekst
+from policy_validator.engine import les_policyref
 from policy_validator.schema import valider_policy
 
 import oppdragskontrakt as oppdragsskjema
@@ -300,12 +301,17 @@ def _aktiv_policy(conn, sak: Sak) -> tuple[dict, str] | None:
         "SELECT r.policy_id FROM revisjonslogg r"
         " WHERE r.tenant=%s AND r.id=%s", (sak.tenant, sak.loggpost_id)
     ).fetchone()
-    if rad is None or not rad[0]:
+    # Kolonnen bærer en POLICYREFERANSE, ikke en policy-id. Uten
+    # `les_policyref` traff oppslaget aldri noe, og arbeideren
+    # klassifiserte HVER sak som `manuell` med `aktiv_policy_utilgjengelig`
+    # — altså behandlet den ingenting i det hele tatt.
+    ref = les_policyref(rad[0]) if rad else None
+    if ref is None:
         return None
     p = conn.execute(
         "SELECT innhold, innholds_hash FROM policyer"
         " WHERE tenant=%s AND policy_id=%s AND aktiv",
-        (sak.tenant, rad[0])).fetchone()
+        (sak.tenant, ref[0])).fetchone()
     if p is None or not isinstance(p[0], dict):
         return None
     if valider_policy(p[0]):
@@ -644,11 +650,17 @@ def behandle_en(conn: psycopg.Connection, klient: Beslutningsklient,
 
 
 def _policy_id(conn: psycopg.Connection, sak: Sak) -> str:
+    """Policy-id-en API-et skal få — ikke referansen loggen bærer.
+
+    Sendte vi referansen videre til `/v1/beslutning`, ville hver eneste
+    reparasjon fått 404 `policy_ukjent`.
+    """
     rad = conn.execute(
         "SELECT policy_id FROM revisjonslogg WHERE tenant=%s AND id=%s",
         (sak.tenant, sak.loggpost_id)).fetchone()
     conn.rollback()
-    return rad[0] if rad else ""
+    ref = les_policyref(rad[0]) if rad else None
+    return ref[0] if ref else ""
 
 
 def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,

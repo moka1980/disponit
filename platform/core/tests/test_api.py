@@ -66,9 +66,35 @@ APPEND_ONLY_TRIGGERE = (
 #: Ryddes noe i feil rekkefølge, feiler slettingen på en fremmednøkkel —
 #: og fixturen ville rapportert en «feil» som i virkeligheten er databasen
 #: som gjør jobben sin.
+#: Kapabilitetstabellene eies av NOLOGIN-rollen `disponit_m37_claimer` og
+#: står derfor IKKE her — de ryddes av `_rydd_kapabiliteter` under
+#: eksplisitt `SET LOCAL ROLE`. Første forsøk ga migrator varig
+#: `SELECT, DELETE` gjennom en migrasjon; det ville lagt en direkte,
+#: destruktiv datapassasje i ALLE kundebaser for å løse fixture-isolasjon.
+#: Testoppsettet skal ikke kunne endre produksjonens rettighetsmodell.
 RYDDETABELLER = ("oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
                  "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
                  "policyer", "tenant_nokler", "frekvens_hendelser")
+
+
+def _rydd_kapabiliteter(migrator, tenanter) -> None:
+    """Rydder kapabilitetene SOM EIEREN, ikke ved å gi migrator rettigheter.
+
+    Migrator er medlem av `disponit_m37_claimer` (kreves for OWNER TO i
+    migrasjon 005), men medlemskapet er `WITH INHERIT FALSE` — det gir
+    SET ROLE og ingenting annet. Her brukes nøyaktig den muligheten, i
+    testoppsettet, avgrenset til to DELETE-er.
+
+    Alternativet jeg først valgte var å GI migrator `SELECT, DELETE` i en
+    migrasjon. Det ville løst fixture-isolasjon ved å svekke
+    rettighetsmodellen i alle kundebaser — en produksjonsendring for et
+    testproblem. `SET LOCAL` faller uansett bort ved commit.
+    """
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    for tabell in ("arbeidskapabiliteter", "kvitteringskapabiliteter"):
+        migrator.execute(f"DELETE FROM {tabell} WHERE tenant = ANY(%s)",
+                         (list(tenanter),))
+    migrator.execute("RESET ROLE")
 
 
 def _rydd(migrator, *tenanter: str) -> None:
@@ -78,6 +104,7 @@ def _rydd(migrator, *tenanter: str) -> None:
     er i seg selv et bevis: runtime-rollen kan ikke slette noe av dette,
     uansett hvor mye den skulle ønske det.
     """
+    _rydd_kapabiliteter(migrator, tenanter)
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
     for tenant in tenanter:

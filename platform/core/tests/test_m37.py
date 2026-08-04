@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import CORE
+from .conftest import CORE, POLICIES
 from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, NOKLER, TENANT, _lag_token, _rydd,
                        attestasjon, dekker, hendelse, migrator, miljo,  # noqa: F401
                        malpolicy, policy, post, token)                  # noqa: F401
@@ -250,15 +250,37 @@ def _sett_kontekst(conn, tenant, aktor="test", rid="r"):
                  (tenant, aktor, rid))
 
 
+#: Policy-id-en fixturene later som saken ble besluttet under.
+FIXTURE_POLICY_ID = "tjenestebedrift-no"
+
+
+def _policyref(policy_id=FIXTURE_POLICY_ID, versjon="1.0.0",
+               handling="purring.send"):
+    """NØYAKTIG det motoren skriver i `revisjonslogg.policy_id`.
+
+    Fixturene skrev tidligere en bar `'p'` her. Den forskjellen mot
+    produksjonsformen `<policy_id>@<versjon>/<handling>` er hele grunnen
+    til at tre kallsteder kunne lese kolonnen som en policy-id og bestå 341
+    tester — mens arbeideren i virkeligheten klassifiserte HVER sak som
+    `manuell`. En fixture uten produksjonens FORM beviser transport, ikke
+    produksjon.
+    """
+    from policy_validator.engine import _pid
+    return _pid({"meta": {"policy_id": policy_id, "versjon": versjon}},
+                handling)
+
+
 def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send",
-             snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal"):
+             snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal",
+             policy_id=FIXTURE_POLICY_ID):
     """En unntaksrad med policysnapshot, som API-veien ville laget den."""
     _sett_kontekst(conn, tenant)
     logg = conn.execute(
         "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash, policy_id,"
         " beslutning, begrunnelse, policy_content_hash)"
-        " VALUES (%s,'test','test','ih','p','UNNTAK','[]',%s) RETURNING id",
-        (tenant, hash_)).fetchone()[0]
+        " VALUES (%s,'test','test','ih',%s,'UNNTAK','[]',%s) RETURNING id",
+        (tenant, _policyref(policy_id, versjon, handling),
+         hash_)).fetchone()[0]
     from db import kryptering
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
     ct, nonce = kryptering.krypter(
@@ -827,9 +849,9 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
     migrator.execute("ALTER TABLE revisjonslogg DISABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
     migrator.execute(
-        "UPDATE revisjonslogg SET policy_id='pbf' WHERE tenant=%s AND id="
+        "UPDATE revisjonslogg SET policy_id=%s WHERE tenant=%s AND id="
         "(SELECT loggpost_id FROM unntak WHERE tenant=%s AND id=%s)",
-        (TENANT, TENANT, med_evidens))
+        (_policyref("pbf", "2.0.0"), TENANT, TENANT, med_evidens))
     migrator.execute("ALTER TABLE revisjonslogg ENABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
     migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
@@ -1217,6 +1239,17 @@ def test_kvitteringsportens_tre_avvisninger(migrator, miljo, token):
 # ===========================================================================
 # Codex runde 1 — de tre P1-ene
 # ===========================================================================
+
+def _unik_eiermodul() -> str:
+    """Egen kø per test.
+
+    `claim_neste_oppdrag` filtrerer på EIERMODUL, ikke på tenant. Deler to
+    tester modulnavn, deler de kø — og en test som antar at den er alene om
+    å plukke, måler kjørerekkefølgen. Samme lærdom som den globale
+    saks-køen ga tidligere i denne PR-en, i en annen dimensjon.
+    """
+    return "eiermodul:test-" + secrets.token_hex(4)
+
 
 def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
                  handling="purring.send", eiermodul="eiermodul:reinnsending",
@@ -1665,14 +1698,14 @@ def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
 # Codex runde 3 — taperen i forbrukskappløpet må klassifiseres riktig
 # ===========================================================================
 
-def _oppsett_stale_kapabilitet(migrator, klient, token_h):
+def _oppsett_stale_kapabilitet(migrator, klient, token_h, eiermodul):
     """A claimer, mister leasen, B reclaimer. -> (opp, sak, a, b)
 
     Etter dette går ALLE A sine kvitteringer sen-evidensveien: gyldig
     signert, men fra en utdatert generasjon.
     """
     sak, logg = _lag_sak(migrator, TENANT)
-    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg, eiermodul=eiermodul)
     cid = secrets.token_hex(16)
     _sett_kontekst(migrator, TENANT, "m37-arbeider", cid)
     migrator.execute(
@@ -1683,14 +1716,19 @@ def _oppsett_stale_kapabilitet(migrator, klient, token_h):
                      " WHERE tenant=%s AND id=%s", (TENANT, sak))
     migrator.commit()
 
-    a = klient.post("/v1/oppdrag/claim", json={}, headers=token_h).json()
+    ra = klient.post("/v1/oppdrag/claim", json={}, headers=token_h)
+    assert ra.status_code == 200, ra.text
+    a = ra.json()
+    assert a["oppdrag_id"] == opp, "A fikk et annet oppdrag enn vårt"
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE oppdrag SET owner_lease_utloper=now()"
                      " - interval '1 s' WHERE tenant=%s AND id=%s",
                      (TENANT, opp))
     migrator.commit()
-    b = klient.post("/v1/oppdrag/claim", json={}, headers=token_h).json()
-    assert b["owner_generation"] == 2
+    rb = klient.post("/v1/oppdrag/claim", json={}, headers=token_h)
+    assert rb.status_code == 200, rb.text
+    b = rb.json()
+    assert b["oppdrag_id"] == opp and b["owner_generation"] == 2
     return opp, sak, a, b
 
 
@@ -1756,10 +1794,11 @@ def test_P1_samtidig_identisk_repost_blir_idempotent_ikke_auth_feil(
     app = lag_app(DSN)
     try:
         with TestClient(app) as c:
-            tok, _ = token(rolle="eiermodul:reinnsending",
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
                            scopes=("orders:execute:purring.",))
             h = {"authorization": f"Bearer {tok}"}
-            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h, modul)
 
             kropp = _kvitteringskropp(a, opp, "utfort")
             vinnerhash = _resultathash(kropp)
@@ -1823,10 +1862,11 @@ def test_P1_samtidig_motstridende_repost_blir_sikkerhetssak(migrator, miljo,
     app = lag_app(DSN)
     try:
         with TestClient(app) as c:
-            tok, _ = token(rolle="eiermodul:reinnsending",
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
                            scopes=("orders:execute:purring.",))
             h = {"authorization": f"Bearer {tok}"}
-            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h, modul)
 
             # Vinneren leverte `utfort`; taperen leverer `feilet` med SAMME
             # kapabilitet. Ulike resultathasher.
@@ -1886,10 +1926,11 @@ def test_P1_forbrukets_fire_utfall_er_uttommende(migrator, miljo, token):
     app = lag_app(DSN)
     try:
         with TestClient(app) as c:
-            tok, _ = token(rolle="eiermodul:reinnsending",
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
                            scopes=("orders:execute:purring.",))
             h = {"authorization": f"Bearer {tok}"}
-            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h)
+            opp, sak, a, b = _oppsett_stale_kapabilitet(migrator, c, h, modul)
             jti = a["kvittering_jti"]
 
             assert _rt("SELECT bruk_kvitteringskapabilitet(%s,%s)",
@@ -1912,3 +1953,196 @@ def test_P1_forbrukets_fire_utfall_er_uttommende(migrator, miljo, token):
                        (jti_b, "c" * 64))[0] == "ugyldig"
     finally:
         app.tjeneste.pool.lukk()
+
+
+# ===========================================================================
+# Post-merge P1: revisjonslogg.policy_id er en REFERANSE, ikke en policy-id
+# ===========================================================================
+
+def test_policyref_rundtur_bygger_og_leser_samme_format():
+    """`_pid` bygger, `les_policyref` leser. De må aldri gli fra hverandre.
+
+    Skjemaet gjør formatet entydig: `policy_id` er `^[a-z0-9-]+$` og
+    `versjon` er `^\\d+\\.\\d+\\.\\d+$`, så verken `@` eller `/` kan
+    forekomme i dem. Handlingen kan inneholde begge deler uten at det gjør
+    noe — og det er nettopp derfor parsingen er trygg.
+    """
+    from policy_validator.engine import _pid, les_policyref
+    pol = {"meta": {"policy_id": "tjenestebedrift-no", "versjon": "0.2.0"}}
+    # Handlingene her er SKJEMAGYLDIGE (`^[a-z0-9_]+(\.[a-z0-9_]+)+$`).
+    # Etter innstrammingen er det nettopp poenget: rundturen skal holde for
+    # alt `_pid` faktisk kan produsere fra en gyldig policy, og ikke for
+    # noe annet.
+    for handling in ("purring.send", "faktura.krediter", "a_b.c_d",
+                     "x.y.z"):
+        assert les_policyref(_pid(pol, handling)) == ("tjenestebedrift-no",
+                                                      "0.2.0"), handling
+    # Fail-closed: aldri en gjetning når formen ikke stemmer.
+    for ugyldig in (
+            "tjenestebedrift-no", "", None, 12,
+            "STORE@0.2.0/purring.send",       # policy_id har store bokstaver
+            "a@0.2/purring.send",             # versjon er ikke x.y.z
+            # AVKORTEDE former — Codex' P1 på hotfixen. `_pid` kan aldri
+            # produsere dem, så å godta dem er å stole på en identitet som
+            # ikke finnes. Parseren godtok begge før.
+            "a@1.2.3",                        # ingen skråstrek
+            "a@1.2.3/",                       # tom handling
+            "a@1.2.3/purring.send/noe",       # handling med skråstrek
+            "a@1.2.3/UKJENT",                 # handling med store bokstaver
+            "a@1.2.3/ukjent",                 # handling uten punktum
+            "a@1.2.3/.send",                  # handling starter med punktum
+            "a1.2.3/purring.send",            # ingen krøllalfa
+    ):
+        assert les_policyref(ugyldig) is None, ugyldig
+
+
+def test_policyref_monstre_speiler_policyskjemaet():
+    """Parserens mønstre er KOPIER av skjemaets. De må ikke gli fra hverandre.
+
+    Uten denne kunne skjemaet utvidet `handling.id` — f.eks. med bindestrek
+    — og parseren ville avvist helt lovlige referanser som «korrupt
+    evidens», altså sendt gyldige saker til manuell kø i stillhet.
+    """
+    import json
+    from policy_validator import engine
+    skjema = json.loads(
+        (POLICIES.parent / "policies" / "policy-schema-v0.2.json").read_text(
+            encoding="utf-8"))
+    meta = skjema["properties"]["meta"]["properties"]
+    handling = skjema["$defs"]["handling"]["properties"]["id"]
+    for monster, fasit, navn in (
+            (engine._POLICY_ID_MONSTER, meta["policy_id"]["pattern"], "policy_id"),
+            (engine._VERSJON_MONSTER, meta["versjon"]["pattern"], "versjon"),
+            (engine._HANDLING_MONSTER, handling["pattern"], "handling.id")):
+        assert monster.pattern == fasit.strip("^$"), (
+            f"{navn}: parseren har {monster.pattern!r}, skjemaet har"
+            f" {fasit!r} — de har glidd fra hverandre")
+
+
+@pg
+def test_migrator_naar_ikke_kapabilitetene_uten_set_role(migrator):
+    """Rettighetsmodellen står: migrator har INGEN direkte vei til
+    kapabilitetstabellene.
+
+    Første forsøk på å gjøre testsuiten hermetisk ga migrator varig
+    `SELECT, DELETE` gjennom en migrasjon. Det ville lagt en direkte,
+    destruktiv datapassasje i alle kundebaser for å løse fixture-isolasjon.
+    Oppryddingen skjer nå under eksplisitt `SET LOCAL ROLE` i
+    testoppsettet, og DENNE testen beviser at rettigheten ikke ble igjen.
+
+    MUTASJONEN SOM DREPER DENNE: legg GRANT-ene tilbake i en migrasjon.
+    """
+    import psycopg
+    for tabell in ("arbeidskapabiliteter", "kvitteringskapabiliteter"):
+        for sql in (f"SELECT count(*) FROM {tabell}",
+                    f"DELETE FROM {tabell} WHERE tenant='x'"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                migrator.execute(sql)
+            migrator.rollback()
+
+    # Og motstykket: MED SET ROLE virker det — ellers ville testen bestått
+    # selv om tabellene var utilgjengelige for alle, og fixturen ødelagt.
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    migrator.execute("SELECT count(*) FROM arbeidskapabiliteter").fetchone()
+    migrator.execute("RESET ROLE")
+    migrator.rollback()
+
+
+@pg
+def test_arbeideren_finner_policyen_paa_produksjonsformet_loggpost(migrator):
+    """Regresjonstesten for P1-et som overlevde 341 grønne tester.
+
+    Saken her er skrevet slik API-VEIEN faktisk skriver den — med
+    `<policy_id>@<versjon>/<handling>` i `revisjonslogg.policy_id`. Før
+    fiksen ga `_aktiv_policy` None, og arbeideren klassifiserte saken som
+    `manuell` med `aktiv_policy_utilgjengelig`. M-37 behandlet altså
+    INGENTING på ekte data, og ingen test merket det — fordi fixturene
+    skrev en bar `'p'` i den kolonnen.
+
+    MUTASJONEN SOM DREPER DENNE: la `_aktiv_policy` bruke `rad[0]` direkte
+    i stedet for `les_policyref(rad[0])[0]`.
+    """
+    import yaml
+    from api.policyregister import innholds_hash, registrer
+    from db.pg import koble
+    from m37 import arbeider
+
+    pol = yaml.safe_load(
+        (POLICIES / "bransjemal-tjenestebedrift.yaml").read_text(
+            encoding="utf-8"))
+    _sett_kontekst(migrator, TENANT)
+    registrer(migrator, TENANT, pol, pol["meta"]["status"])
+    migrator.commit()
+
+    sak, _ = _lag_sak(migrator, TENANT, hash_=innholds_hash(pol),
+                      policy_id=pol["meta"]["policy_id"],
+                      versjon=pol["meta"]["versjon"])
+
+    rt = koble(DSN)
+    try:
+        cid = arbeider._claim_id()
+        s = arbeider.claim(rt, cid)
+        assert s is not None and s.id == sak
+        plan, _ = arbeider.planlegg(rt, s, cid)
+        assert plan.grunn != "aktiv_policy_utilgjengelig", (
+            "arbeideren fant ikke den aktive policyen på en"
+            " produksjonsformet loggpost — M-37 ville klassifisert HVER sak"
+            " som manuell")
+        assert plan.utfall == "oppdrag", f"{plan.utfall}: {plan.grunn}"
+    finally:
+        rt.close()
+
+
+@pg
+def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
+                                                                malpolicy):
+    """Samme rotårsak, andre kallsted.
+
+    På staging ga den 0 av 4200 fra evidens — samtlige rader ble legacy +
+    manuell, og snapshotkolonnene er kolonnelåste etterpå. En feil som
+    degraderer data permanent, i stillhet.
+    """
+    import copy
+    from api.policyregister import innholds_hash
+    from db import m37_backfill
+
+    ekte = copy.deepcopy(malpolicy)
+    ekte["meta"] = dict(ekte["meta"], policy_id="bfref", versjon="3.0.0")
+    h = innholds_hash(ekte)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
+        " status, innhold, aktiv) VALUES (%s,'bfref','3.0.0',%s,%s,%s,false)"
+        " ON CONFLICT DO NOTHING",
+        (TENANT, h, ekte["meta"]["status"], json.dumps(ekte)))
+    migrator.commit()
+
+    sak, _ = _lag_sak(migrator, TENANT, hash_=h, policy_id="bfref",
+                      versjon="3.0.0")
+    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
+                     " maks_auto_forsok_snapshot DROP NOT NULL,"
+                     " ALTER COLUMN policy_versjon DROP NOT NULL,"
+                     " ALTER COLUMN policy_content_hash DROP NOT NULL")
+    migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE unntak SET maks_auto_forsok_snapshot=NULL, policy_versjon=NULL,"
+        " policy_content_hash=NULL WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
+    migrator.commit()
+
+    res = m37_backfill.backfill(migrator)
+    migrator.execute("ALTER TABLE unntak ALTER COLUMN"
+                     " maks_auto_forsok_snapshot SET NOT NULL,"
+                     " ALTER COLUMN policy_versjon SET NOT NULL,"
+                     " ALTER COLUMN policy_content_hash SET NOT NULL")
+    migrator.commit()
+
+    assert res.fra_evidens >= 1, (
+        f"backfillen fant ingen evidens på en produksjonsformet loggpost: {res}")
+    _sett_kontekst(migrator, TENANT)
+    rad = migrator.execute(
+        "SELECT policy_versjon, status FROM unntak WHERE tenant=%s AND id=%s",
+        (TENANT, sak)).fetchone()
+    migrator.rollback()
+    assert rad == ("3.0.0", "ny"), rad

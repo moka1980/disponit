@@ -21,6 +21,8 @@ UNNTAK, exception og timeout er alle fail-closed.
 """
 from __future__ import annotations
 
+import re
+
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -148,8 +150,62 @@ class MinneTellerLager(TellerLager):
 
 
 def _pid(policy: dict, handling_id: str) -> str:
+    """Beslutningens POLICYREFERANSE: `<policy_id>@<versjon>/<handling>`.
+
+    Dette er en ETIKETT, ikke en policy-id — og forskjellen kostet oss et
+    P1 etter at PR-006 var merget. Verdien havner i
+    `revisjonslogg.policy_id`, og tre steder i M-37 leste den kolonnen som
+    om den var en ren policy-id. Oppslaget `WHERE policy_id = <etikett>`
+    traff da aldri noe, og HVER eneste sak ble klassifisert `manuell`.
+
+    Parseren står rett under, med vilje: bygger og leser hører sammen, og
+    en endring i formatet skal være umulig å gjøre uten å se begge.
+    """
     meta = policy.get("meta") or {}
     return f"{meta.get('policy_id', 'ukjent')}@{meta.get('versjon', '?')}/{handling_id}"
+
+
+def les_policyref(ref: object) -> tuple[str, str] | None:
+    """`<policy_id>@<versjon>/<handling>` -> (policy_id, versjon), ellers None.
+
+    Formatet er entydig fordi skjemaet gjør det: `policy_id` matcher
+    `^[a-z0-9-]+$` og `versjon` matcher `^\\d+\\.\\d+\\.\\d+$`. Verken `@`
+    eller `/` kan forekomme i noen av dem, så første `@` og første `/`
+    etter den deler strengen riktig uansett hva handlingen heter.
+
+    Returnerer None — aldri en gjetning — når strengen ikke har formen.
+    Kallerne behandler None som «ingen verifiserbar policyidentitet», og
+    det er den fail-closed veien som allerede finnes.
+    """
+    if not isinstance(ref, str):
+        return None
+    pid, sep, resten = ref.partition("@")
+    if not sep:
+        return None
+    # `partition` gir HELE resten etter FØRSTE skråstrek som handlingsdel.
+    # Det er med vilje: `a@1.2.3/purring.send/noe` skal avvises, ikke
+    # avkortes til `purring.send`. Tar vi bare første ledd, godtar vi en
+    # streng `_pid` aldri kunne produsert.
+    versjon, sep2, handling = resten.partition("/")
+    if not sep2 or not handling:
+        # Avkortet form. `a@1.2.3` og `a@1.2.3/` er ikke policyreferanser —
+        # de er evidens som mangler et ledd, og en parser som fyller inn
+        # det manglende leddet med stillhet er ikke fail-closed.
+        return None
+    if not _POLICY_ID_MONSTER.fullmatch(pid) \
+            or not _VERSJON_MONSTER.fullmatch(versjon) \
+            or not _HANDLING_MONSTER.fullmatch(handling):
+        return None
+    return pid, versjon
+
+
+#: Mønstrene er KOPIER av policy-skjemaets egne (`policies/
+#: policy-schema-v0.2.json`): `meta.policy_id`, `meta.versjon` og
+#: `handlinger[].id`. `test_policyref_monstre_speiler_skjemaet` binder dem
+#: sammen, så en endring i skjemaet ikke kan gli fra parseren.
+_POLICY_ID_MONSTER = re.compile(r"[a-z0-9-]+")
+_VERSJON_MONSTER = re.compile(r"\d+\.\d+\.\d+")
+_HANDLING_MONSTER = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)+")
 
 
 def brudd_utfall(policy: dict, handling_id: str) -> tuple[str, str | None]:
