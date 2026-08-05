@@ -81,6 +81,13 @@ def test_ja_med_krav_id_uten_artefakt_avvises(m01):
     assert valider_manifest(m), "sti uten sha256 slapp gjennom"
 
     m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt_sha256"] = "a" * 64
+    # Og fra PR #15: en peker med hash sier fortsatt ikke HVA i artefaktet
+    # som beviser punktet. Tredje trinn i samme trapp — peker, så innhold,
+    # så måling.
+    assert valider_manifest(m), "artefakt uten bevismaalinger slapp gjennom"
+
+    m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"] = [
+        "maalt.svartid_ms.p95"]
     assert valider_manifest(m) == []
 
 
@@ -952,30 +959,111 @@ def test_delt_artefakt_gaar_gjennom_porten_for_hvert_manifest():
         assert valider_artefakter(man, REPOROT) == [], navn
 
 
-def test_hvert_delte_punkt_navngir_sin_egen_maaling():
-    """Betingelsen for deling, målt.
+def test_hvert_punkt_med_artefakt_binder_seg_til_maalinger_som_FINNES():
+    """Betingelsen for deling, målt mot RÅDATAENE.
 
-    Peker to manifester på samme artefakt, må hvert av dem si hvilken
-    MÅLING som beviser punktet for nettopp den modulen. «Samme artefakt»
-    uten «samme måling» er å låne en konklusjon — og et notat som bare
-    gjentar naboens ville vært nettopp det.
+    Første versjon håndhevet «notatet er ikke tomt» og «ikke identisk med
+    naboens». Det består av `notat: "banan_maaling = true"` — ikke-tom og
+    unik fritekst er ingen binding til data. Nå er henvisningen strukturert
+    (`bevismaalinger`), og porten åpner det hash-verifiserte artefaktet og
+    krever at hver oppgitte sti finnes.
+
+    Dette beviser ikke at målingen er RELEVANT for modulen; det er
+    reviewansvar. Det beviser at den påberopte målingen finnes i evidensen
+    — og det gjorde ikke den forrige testen engang.
     """
-    per_artefakt: dict = {}
+    from manifestskjema import valider_artefakter
+    minst_ett = 0
     for navn, man in _manifester().items():
         for punkt, pkt in (man.get("staging_sjekkliste") or {}).items():
             if isinstance(pkt, dict) and pkt.get("artefakt"):
+                assert pkt.get("bevismaalinger"), f"{navn}/{punkt}"
+                minst_ett += 1
+        assert valider_artefakter(man, REPOROT) == [], navn
+    assert minst_ett >= 3, "testen måler for få punkter til å bevise noe"
+
+
+def test_oppdiktet_maalesti_avvises(m01):
+    """Codex' negative test 2: en sti som ikke finnes i artefaktet."""
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"] = [
+        "maalt.banan_maaling"]
+    feil = valider_artefakter(m, REPOROT)
+    assert any("finnes ikke i artefaktet" in f for f in feil), feil
+
+
+def test_maalesti_fra_et_ANNET_artefakt_avvises(m01):
+    """Codex' negative test 3: stien finnes — i feil fil.
+
+    `maalt.lease_tap_re_claim` er ekte, men den bor i
+    feilinjiseringsartefaktet. Påberopt under `ytelse_bestatt`, som er bundet
+    til ytelsesartefaktet, peker den ingen steder. Uten denne kontrollen
+    kunne et manifest låne en sti fra nabofilen og se korrekt ut.
+    """
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"] = [
+        "maalt.lease_tap_re_claim"]
+    feil = valider_artefakter(m, REPOROT)
+    assert any("finnes ikke i artefaktet" in f for f in feil), feil
+
+
+def test_artefakt_uten_bevismaalinger_avvises(m01):
+    """Codex' negative test 1, i BEGGE lag.
+
+    Skjemaet krever `bevismaalinger` når `artefakt` er satt, og porten
+    krever det uavhengig av skjemaet — `valider_artefakter` kalles også uten
+    formatvalidering, og en betingelse som bare håndheves ett sted er
+    håndhevet i ett tilfelle.
+    """
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    del m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"]
+    assert valider_manifest(m), "skjemaet godtok artefakt uten bevismaalinger"
+    feil = valider_artefakter(m, REPOROT)
+    assert any("uten å navngi hvilken måling" in f for f in feil), feil
+
+
+def test_notat_forklarer_men_beviser_ikke(m01):
+    """Codex' negative test 5: fritekst alene er ikke en binding.
+
+    Et notat kan si hva som helst. Porten skal ikke bli grønn av at teksten
+    er unik og ikke-tom — den skal bli grønn av at stien finnes.
+    """
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    p = m["staging_sjekkliste"]["ytelse_bestatt"]
+    p["notat"] = "banan_maaling = true, helt unik tekst"
+    p["bevismaalinger"] = ["maalt.banan_maaling"]
+    assert valider_artefakter(m, REPOROT), (
+        "unik, ikke-tom fritekst gjorde porten grønn uten at målingen finnes")
+
+
+def test_delte_artefakter_gir_ulike_maalinger_per_modul(m01):
+    """Den positive kontrollen (Codex' test 4): riktig binding er grønn,
+    og de tre modulene henter FORSKJELLIGE tall ut av samme fil.
+
+    Uten denne ville de negative testene bestått også hvis porten avviste
+    alt — og uten sammenligningen ville «delt artefakt» kunnet bety at tre
+    manifester påberopte seg nøyaktig samme måling, altså samme konklusjon.
+    """
+    from manifestskjema import valider_artefakter
+    per_artefakt: dict = {}
+    for navn, man in _manifester().items():
+        assert valider_artefakter(man, REPOROT) == [], navn
+        for punkt, pkt in (man.get("staging_sjekkliste") or {}).items():
+            if isinstance(pkt, dict) and pkt.get("artefakt"):
                 per_artefakt.setdefault(pkt["artefakt"], []).append(
-                    (navn, punkt, (pkt.get("notat") or "").strip()))
+                    (navn, frozenset(pkt["bevismaalinger"])))
 
     delte = {a: v for a, v in per_artefakt.items() if len(v) > 1}
     assert delte, "ingen delte artefakter — testen måler ikke noe"
     for artefakt, brukere in delte.items():
-        for navn, punkt, notat in brukere:
-            assert notat, f"{navn}/{punkt} deler {artefakt} uten notat"
-        notater = [n for _, _, n in brukere]
-        assert len(set(notater)) == len(notater), (
-            f"to punkter bruker IDENTISK notat for {artefakt} — da er"
-            " målingen ikke navngitt for hver modul, bare kopiert")
+        sett = [m for _, m in brukere]
+        assert len(set(sett)) == len(sett), (
+            f"to punkter påberoper seg IDENTISKE målinger i {artefakt} —"
+            " da er det samme konklusjon, ikke to målinger")
 
 
 def test_m37_laaner_ikke_m01s_rollbackkonklusjon():

@@ -46,6 +46,9 @@ staging_sjekkliste:
   feilinjisering_til_unntakskø:
     status: ja
     krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - etterkontroll.historikk_komplett
+      - etterkontroll.klartekst_payload_funnet
     artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
     artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
     notat: >-
@@ -59,6 +62,10 @@ staging_sjekkliste:
   ytelse_bestatt:
     status: ja
     krav_id: perf-m01-v1
+    bevismaalinger:
+      - etterkontroll.en_til_en
+      - etterkontroll.auditerte_svar
+      - etterkontroll.revisjonsrader
     artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
     artefakt_sha256: 12e3ec3e5d3ad931b0ff27ee71ef0b9ecebf7542e022d0a6a62a90caed9b8cc4
     notat: >-
@@ -69,6 +76,10 @@ staging_sjekkliste:
   rollback_testet:
     status: ja
     krav_id: rollback-m01-v1
+    bevismaalinger:
+      - maalt.tapte_loggposter
+      - etterkontroll.radtelling_for.revisjonslogg
+      - etterkontroll.radtelling_etter.revisjonslogg
     artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
     artefakt_sha256: 0e973fb1d227b450b38ac8e84bde1e96b41b50373bd92893f55cc563c36eb15e
     notat: >-

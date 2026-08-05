@@ -96,6 +96,9 @@ staging_sjekkliste:
     # den som bare leste tallet.
     status: ja
     krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - maalt.terminal_andel
+      - maalt.manuell_andel
     notat: >-
       Målingen som beviser punktet for M-1: 24/24 injiserte feil endte
       terminalt, og 12/12 ikke-reparerbare gikk til manuell kø. Det er
@@ -128,6 +131,9 @@ staging_sjekkliste:
     # kjøring brukte 55 % av budsjettet og hadde p99 på 207 ms.
     status: ja
     krav_id: perf-m01-v1
+    bevismaalinger:
+      - maalt.svartid_ms.p95
+      - maalt.feil
     notat: >-
       Målingen som beviser punktet for M-1: p95 82,3 ms mot kravet 150, over
       6 000 forespørsler @ 100/s med 20 samtidige — altså beslutningsveiens
@@ -161,6 +167,9 @@ staging_sjekkliste:
     # `deaktivering_effektiv_s`, som inkluderer hele restartvinduet.
     status: ja
     krav_id: rollback-m01-v1
+    bevismaalinger:
+      - maalt.paagaaende_requests_korrekt_avvist
+      - maalt.deaktivering_effektiv_s
     notat: >-
       Målingen som beviser punktet for M-1: 114/114 forespørsler i av-vinduet
       fikk 503 `modul_inaktiv` — det DEFINERTE svaret, ikke en tilfeldig 500

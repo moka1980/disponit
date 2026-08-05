@@ -42,6 +42,9 @@ staging_sjekkliste:
     # M-37s kjernepunkt. Artefaktet er motorens egen måling.
     status: ja
     krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - maalt.lost_andel
+      - maalt.lease_tap_re_claim
     artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
     artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
     notat: >-
@@ -53,6 +56,9 @@ staging_sjekkliste:
   ytelse_bestatt:
     status: ja
     krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - maalt.p95_api_under_last_ms
+      - maalt.varighet_sek
     artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
     artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
     notat: >-
