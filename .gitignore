@@ -52,3 +52,4 @@ deploy/staging/artefakter/*.json
 # hjelper det ikke å legge inn en oppdiktet JSON.
 !deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
 !deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
+!deploy/staging/artefakter/rollback-m01-v1-20260805T075341.json

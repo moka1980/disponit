@@ -103,17 +103,28 @@ def test_manglende_punkt_avvises(m01):
 
 
 def test_uavklarte_punkter_og_aktiv_uten_bevis(m01):
-    # `ytelse_bestatt` gikk til `ja` 2026-08-02, og
-    # `feilinjisering_til_unntakskø` 2026-08-05 — begge da kjøringen faktisk
-    # var gjort på staging og artefaktet fantes. Settet krymper derfor med
-    # ett punkt om gangen — porten selv står uendret: et `ja` med krav_id
-    # uten artefakt avvises fortsatt av skjemaet, og `aktiv` med uavklarte
-    # punkter av testen nedenfor.
-    assert set(uavklarte_punkter(m01)) == {"rollback_testet"}
-    # m01 er `under_utvikling`, ikke `aktiv` — da er uavklarte punkter greit.
+    # Settet er TOMT fra 2026-08-05: `ytelse_bestatt` gikk til `ja`
+    # 2026-08-02, og `feilinjisering_til_unntakskø` og `rollback_testet`
+    # samme dag i august — hver gang fordi kjøringen faktisk var gjort på
+    # staging og artefaktet fantes.
+    #
+    # Et tomt sett er den STRENGESTE varianten av denne testen, ikke den
+    # svakeste: nå faller den hvis ETT punkt går tilbake til nei eller
+    # blokkert, og porten under er ikke lenger dekket av at m01 uansett
+    # hadde uavklarte punkter. Derfor står de to kontrollene på hver sin
+    # kopi: `aktiv_uten_bevis` måles med et innsatt uavklart punkt, slik at
+    # den fortsatt kan feile.
+    assert set(uavklarte_punkter(m01)) == set()
     assert aktiv_uten_bevis(m01) == []
     aktiv = copy.deepcopy(m01)
     aktiv["status"] = "aktiv"
+    # Alle punktene er `ja` nå, så en aktiv m01 er lovlig — og da måler
+    # ikke porten noe. Ett punkt settes derfor tilbake til `nei`: det er
+    # den tilstanden regelen finnes for.
+    assert aktiv_uten_bevis(aktiv) == [], (
+        "alle sjekklistepunkter er ja — en aktiv modul skal da godtas")
+    aktiv["staging_sjekkliste"]["rollback_testet"] = {
+        "status": "nei", "krav_id": "rollback-m01-v1"}
     assert aktiv_uten_bevis(aktiv), \
         "en modul kan settes aktiv med uavklarte sjekklistepunkter"
 

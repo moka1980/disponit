@@ -1,0 +1,44 @@
+{
+  "krav_id": "rollback-m01-v1",
+  "ts": "2026-08-05T07:53:41.069075+00:00",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m01_policy",
+    "tenant": "t-rb-51d505",
+    "requests_under_rollback": 113,
+    "merkelapp": "rollback-m01",
+    "base": "disponit_test"
+  },
+  "maalt": {
+    "deaktivering_effektiv_s": 0.465,
+    "reaktivering_effektiv_s": 0.561,
+    "tapte_loggposter": 0,
+    "avviste_requests": 113,
+    "paagaaende_requests_korrekt_avvist": 1.0,
+    "halvferdige_transaksjoner": 0,
+    "avvisningskode": "modul_inaktiv"
+  },
+  "etterkontroll": {
+    "andre_tabeller_uendret": true,
+    "radtelling_for": {
+      "revisjonslogg": 93,
+      "unntak": 0,
+      "unntak_historikk": 0,
+      "oppdrag": 0,
+      "reparasjonsoperasjoner": 0,
+      "idempotens": 93,
+      "policyer": 1,
+      "tenant_nokler": 0
+    },
+    "radtelling_etter": {
+      "revisjonslogg": 93,
+      "unntak": 0,
+      "unntak_historikk": 0,
+      "oppdrag": 0,
+      "reparasjonsoperasjoner": 0,
+      "idempotens": 93,
+      "policyer": 1,
+      "tenant_nokler": 0
+    }
+  }
+}

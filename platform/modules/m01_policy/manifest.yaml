@@ -97,9 +97,29 @@ staging_sjekkliste:
     artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
     artefakt_sha256: 12e3ec3e5d3ad931b0ff27ee71ef0b9ecebf7542e022d0a6a62a90caed9b8cc4
   rollback_testet:
-    # Splittet per review D2: den TEKNISKE deaktiveringen via registeret kan
-    # bevises nå og er derfor `nei` (ikke gjort ennå), ikke `blokkert`.
-    # Ende-til-ende-varianten dekkes av feilinjiseringspunktet over, som ER
-    # blokkert av m37.
-    status: nei
+    # Splittet per review D2: den TEKNISKE deaktiveringen via registeret er
+    # den som måles her. Ende-til-ende-varianten dekkes av
+    # feilinjiseringspunktet over.
+    #
+    # MÅLT på staging 2026-08-05 med deploy/staging/rollback-m01.py:
+    # modulen deaktivert MENS trafikk pågikk, 113 forespørsler sendt i
+    # vinduet der modulen beviselig var av — ALLE fikk 503 `modul_inaktiv`,
+    # ingen 500 og ingen hengende forbindelse. Null tapte loggposter, null
+    # halvferdige transaksjoner, og radtellingen for de åtte tabellene var
+    # identisk ved starten og slutten av av-vinduet.
+    #
+    # Deaktivering effektiv etter 0,465 s, reaktivering etter 0,561 s (tak
+    # 5,0 s begge veier). TRE kjøringer: 0,479/0,447, 0,465/0,561,
+    # 0,418/0,521 — artefaktet her har det STØRSTE enkelttallet, ikke det
+    # peneste snittet.
+    #
+    # Første kjøring ga 0,96 og var min egen målefeil: den merket
+    # forespørsler som «av» i det øyeblikket kommandoen ble gitt. De som
+    # rakk den gamle prosessen før den var nede fikk et normalt 200 — riktig
+    # svar fra en modul som fortsatt var på. Andelen regnes nå kun over
+    # perioden der modulen beviselig var av; overgangens kostnad står i
+    # `deaktivering_effektiv_s`, som inkluderer hele restartvinduet.
+    status: ja
     krav_id: rollback-m01-v1
+    artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T075341.json
+    artefakt_sha256: 33104868221c8ca6a160f39e1b24c2a72fbaa4db2fe0d8daaffb810d067811fd
