@@ -1519,15 +1519,27 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
             "gyldig_til": (gyldig or naa).isoformat(),
         })
 
+    # De to SIGNERTE bindingene sendes med — de sammenlignes mot databasen
+    # inne i den serialiserte porten, ikke her. Et felt konvolutten krever
+    # og verifikatoren signerer, men ingen leser, er dekorasjon.
     utfall = conn.execute(
-        "SELECT registrer_verifikasjonsbevis(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        "SELECT registrer_verifikasjonsbevis(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (oppdrag_id, oppdragskontrakt.resultathash_verifikasjon(konvolutt),
          konvolutt["krav_sett_hash"], verifikator, konvolutt["nokkel_id"],
          (konvolutt.get("signatur") or {}).get("verdi"),
-         json.dumps(resultater), owner_claim, owner_gen)).fetchone()[0]
+         json.dumps(resultater), owner_claim, owner_gen,
+         konvolutt["verification_generation"],
+         konvolutt["fase1_repair_operation_id"])).fetchone()[0]
 
     if utfall == "avvist":
-        conn.rollback()
+        # COMMIT, ikke rollback. Porten har skrevet en `verifikasjonskonflikt`
+        # -rad om HVILKEN binding som ikke stemte, og den raden er hele
+        # poenget: et avvik som ruller bort etterlater ingen evidens for at
+        # noen leverte en signert konvolutt med feil generasjon eller feil
+        # fase-1-id. Ingen bevis, ingen generasjons- eller saksstatus er
+        # rørt på denne veien, og kapabiliteten brennes ikke — den brennes
+        # først lenger nede, på den aksepterte veien.
+        conn.commit()
         tjeneste.logg.hendelse("kvittering_signatur_ugyldig", rid, tenant,
                                oppdrag_id=oppdrag_id, grunn="db_binding")
         return _feilsvar("kvittering_signatur_ugyldig", rid)

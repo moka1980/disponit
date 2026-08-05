@@ -108,7 +108,7 @@ GRANT EXECUTE ON FUNCTION bruk_kapabilitet(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION frigi_hengende_kapabiliteter() TO {rolle};
 GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT) TO {rolle};
 -- PR-007: tofaseprotokollen.
-GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, JSONB, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT) TO {rolle};
 GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT) TO {rolle};

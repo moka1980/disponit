@@ -853,6 +853,356 @@ def test_scope_v2_pkt2_tilbakekalt_autoritet_avviser_kvitteringen(migrator,
     assert antall == 0, "bevis lagret tross tilbakekalt fullmakt"
 
 
+# ===========================================================================
+# Codex runde 4 — den ene serialiseringsporten
+# ===========================================================================
+
+def _oppsett_ingest(migrator, tenant, *, vilkaar=("a", "b")):
+    """Sak → fase 1 → oppdraget PLUKKET. -> (sak, oppdrag_id, claim-svaret).
+
+    Stopper der kvitteringen skal leveres, slik at testene under kan styre
+    NØYAKTIG hvem som leverer hva, og i hvilken rekkefølge.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    p = _policy({"v_fordring": list(vilkaar)}, list(vilkaar))
+    sak, opp, plan = _fase1(migrator, tenant, p, vilkaar=vilkaar[0])
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            tok = _verifikatortoken(migrator, tenant)
+            o = _claim_oppdrag(c, tok)
+            assert o is not None and o["oppdrag_id"] == opp, o
+    finally:
+        a.tjeneste.pool.lukk()
+    return sak, opp, o, tok
+
+
+def _vinner_holder_generasjonslaasen(tenant, sak, oppdrag_id, konvolutt,
+                                     resultathash, migrator):
+    """En transaksjon som gjør NØYAKTIG det vinneren gjør — og holder igjen.
+
+    Vinneren kaller den ENE skriveveien som RUNTIME-rollen og lar være å
+    committe. Taperen blokkerer da på `unntak`/generasjonslåsen og får
+    først svar etter at vinneren har committet.
+
+    Dette er ikke en timing-test: blokkerer taperen, klassifiseres den mot
+    vinnerens committede rader; kommer den etter commiten, klassifiseres
+    den mot nøyaktig de samme radene. Begge interleavinger gir samme
+    utfall.
+    """
+    from db.pg import koble
+
+    _sett_kontekst(migrator, tenant)
+    eier = migrator.execute(
+        "SELECT owner_claim_id, owner_generation, repair_operation_id"
+        "  FROM oppdrag WHERE tenant=%s AND id=%s",
+        (tenant, oppdrag_id)).fetchone()
+    gen = migrator.execute(
+        "SELECT verification_generation FROM unntak WHERE tenant=%s AND id=%s",
+        (tenant, sak)).fetchone()[0]
+    migrator.rollback()
+
+    # Bevisraden har fremmednøkkel til `tenant_nokler`: en key_id som ikke
+    # finnes er ikke en gyldig krypteringsnøkkel, og en bevisrad som peker
+    # på ingenting er ikke dekrypterbar evidens. Vinneren bruker derfor
+    # tenantens ekte, aktive DEK — som den ordinære veien ville gjort.
+    from db import kryptering
+    _sett_kontekst(migrator, tenant)
+    key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, tenant)
+    migrator.commit()
+
+    naa = datetime.now(timezone.utc)
+    resultater = [
+        {"vilkaar": e["vilkaar"], "status": "attestert", "permanent": False,
+         "attestasjon_kryptert": "00", "key_id": key_id, "nonce": "00",
+         "integritet_hash": secrets.token_hex(32),
+         "gyldig_til": (naa + timedelta(hours=1)).isoformat()}
+        for e in konvolutt["attestasjoner"]]
+
+    h = koble(DSN)
+    h.execute("SELECT set_config('disponit.tenant',%s,true),"
+              "       set_config('disponit.aktor','vinner',true),"
+              "       set_config('disponit.request_id','vinner',true)",
+              (tenant,))
+    utfall = h.execute(
+        "SELECT registrer_verifikasjonsbevis(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (oppdrag_id, resultathash, konvolutt["krav_sett_hash"],
+         konvolutt["verifikator"], "vinner", "vinner-sig",
+         json.dumps(resultater), eier[0], eier[1], gen, eier[2])).fetchone()[0]
+    assert utfall == "positiv", f"vinneren vant ikke: {utfall}"
+    return h                        # IKKE committet — låsen holdes
+
+
+def _lever_i_traad(tenant, token_str, o, konvolutt):
+    """Poster kvitteringen i en egen tråd, så hovedtråden kan committe
+    vinneren mens taperen står på låsen."""
+    import threading
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    svar = {}
+    app = lag_app(DSN)
+    klient = TestClient(app)
+    klient.__enter__()
+
+    def poster():
+        try:
+            svar["r"] = klient.post(
+                "/v1/oppdrag/kvittering",
+                json={"kvittering_jti": o["kvittering_jti"],
+                      "konvolutt": konvolutt},
+                headers={"authorization": f"Bearer {token_str}"})
+        except Exception as e:                     # pragma: no cover
+            svar["feil"] = e
+
+    t = threading.Thread(target=poster)
+    t.start()
+    return t, svar, (klient, app)
+
+
+def _avslutt_traad(t, ressurser, holder):
+    import time as _t
+    _t.sleep(0.7)                  # la taperen rekke fram til låsen
+    holder.commit()
+    holder.close()
+    t.join(timeout=30)
+    klient, app = ressurser
+    try:
+        klient.__exit__(None, None, None)
+    finally:
+        app.tjeneste.pool.lukk()
+    assert not t.is_alive(), "taperen hang på låsen"
+
+
+def _tilstand(migrator, tenant, sak, opp):
+    _sett_kontekst(migrator, tenant)
+    bevis = migrator.execute(
+        "SELECT count(*) FROM verifikasjonsbevis WHERE tenant=%s AND unntak_id=%s",
+        (tenant, sak)).fetchone()[0]
+    konflikt = migrator.execute(
+        "SELECT count(*) FROM verifikasjonskonflikt"
+        " WHERE tenant=%s AND unntak_id=%s", (tenant, sak)).fetchone()[0]
+    gen = migrator.execute(
+        "SELECT status FROM verifikasjonsgenerasjon"
+        " WHERE tenant=%s AND unntak_id=%s ORDER BY generation DESC LIMIT 1",
+        (tenant, sak)).fetchone()
+    rest = migrator.execute(
+        "SELECT o.status, u.status, o.resultathash FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (tenant, opp)).fetchone()
+    migrator.rollback()
+    return {"bevis": bevis, "konflikt": konflikt,
+            "generasjon": gen[0] if gen else None,
+            "oppdrag": rest[0], "sak": rest[1], "resultathash": rest[2]}
+
+
+@pg
+def test_P1_samtidig_identisk_settkvittering_blir_idempotent(migrator, miljo,
+                                                             token):
+    """Codex P1 runde 4, tilfelle 1: SAMME hash levert samtidig.
+
+    Taperen skal se vinnerens committede resultathash og svare
+    `idempotent` — ikke `avvist`, og ikke ved å skrive et bevis til.
+    """
+    t = "t-samtid1-" + secrets.token_hex(3)
+    _rydd_tenant(migrator, t)
+    sak, opp, o, tok = _oppsett_ingest(migrator, t)
+    konvolutt = _verifikatorkvittering(o, verifikator="v_fordring")
+
+    import oppdragskontrakt
+    vinnerhash = oppdragskontrakt.resultathash_verifikasjon(konvolutt)
+    holder = _vinner_holder_generasjonslaasen(t, sak, opp, konvolutt,
+                                              vinnerhash, migrator)
+    tr, svar, res = _lever_i_traad(t, tok, o, konvolutt)
+    _avslutt_traad(tr, res, holder)
+
+    r = svar.get("r")
+    assert r is not None, svar
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "idempotent", r.text
+
+    st = _tilstand(migrator, t, sak, opp)
+    assert st["bevis"] == 2, f"taperen skrev flere bevis: {st}"
+    assert st["konflikt"] == 0, f"identisk resultat ble kalt konflikt: {st}"
+    assert st["generasjon"] == "positiv" and st["oppdrag"] == "utfort", st
+
+
+@pg
+def test_P1_samtidig_motstridende_settkvittering_blir_konflikt(migrator, miljo,
+                                                                token):
+    """Codex P1 runde 4, tilfelle 2: ULIK hash levert samtidig.
+
+    Den forrige versjonen leste oppdragsraden ULÅST, før begge låsene.
+    To samtidige kall frøs derfor begge `resultathash = NULL`; vinneren
+    skrev bevis og hash, taperen våknet på generasjonslåsen med et
+    FORELDET record, så `g.status <> 'aktiv'` og returnerte ubetinget
+    `idempotent`. To ULIKE konvolutter ble «positiv + idempotent» — og
+    forsøket på motstridende evidens forsvant sporløst.
+
+    MUTASJONEN SOM DREPER DENNE: les oppdraget kun én gang, ULÅST, før
+    låsene — eller gjeninnfør `IF g.status <> 'aktiv' THEN RETURN
+    'idempotent'` uten hash-sammenligning.
+    """
+    t = "t-samtid2-" + secrets.token_hex(3)
+    _rydd_tenant(migrator, t)
+    sak, opp, o, tok = _oppsett_ingest(migrator, t)
+    konvolutt = _verifikatorkvittering(o, verifikator="v_fordring")
+
+    # Vinneren leverer et ANNET resultat enn taperen.
+    holder = _vinner_holder_generasjonslaasen(t, sak, opp, konvolutt,
+                                              "f" * 64, migrator)
+    tr, svar, res = _lever_i_traad(t, tok, o, konvolutt)
+    _avslutt_traad(tr, res, holder)
+
+    r = svar.get("r")
+    assert r is not None, svar
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "kvittering_konflikt", r.text
+
+    st = _tilstand(migrator, t, sak, opp)
+    assert st["bevis"] == 2, f"taperen skrev bevis: {st}"
+    assert st["konflikt"] == 1, (
+        f"nøyaktig ÉN konfliktrad forventet, fikk {st['konflikt']}")
+    assert st["generasjon"] == "positiv", st
+    assert st["oppdrag"] == "utfort" and st["resultathash"] == "f" * 64, (
+        f"taperen endret vinnerens tilstand: {st}")
+
+
+@pg
+def test_P1_signert_generasjon_valideres_mot_databasen(migrator, miljo, token):
+    """Codex P1 runde 4: `verification_generation` er signert OG bindende.
+
+    Feltet er obligatorisk i konvolutten og ligger inne i de signerte
+    bytene — men ingen sammenlignet det med noe. En ellers gyldig,
+    ekte signert konvolutt kunne dermed lyve om hvilken runde den gjaldt
+    og likevel bli akseptert som positivt bevis.
+
+    Bindingen går OPPDRAG → FROSSET GENERASJONSRAD, ikke via sakens
+    nåværende generasjon: den kan ha rykket videre.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `p_verification_generation` fra
+    sammenligningen i `registrer_verifikasjonsbevis`.
+    """
+    _binding_avvises(migrator, "t-genbind-", {"verification_generation": 99})
+
+
+@pg
+def test_P1_signert_fase1_id_valideres_mot_databasen(migrator, miljo, token):
+    """Samme port, det andre feltet: `fase1_repair_operation_id`.
+
+    Egen test og egen mutasjon — to felter som valideres av samme `IF`
+    ville ellers vært dekket av én test, og den dagen noen deler opp
+    betingelsen ville halve bindingen kunnet forsvinne i stillhet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `p_fase1_repair_operation_id` fra
+    sammenligningen.
+    """
+    _binding_avvises(migrator, "t-fasebind-",
+                     {"fase1_repair_operation_id": "0" * 64})
+
+
+def _binding_avvises(migrator, prefiks: str, overstyr: dict):
+    """Signer en ellers gyldig konvolutt med ÉN løgn, og krev at porten
+    avviser den ETTER ekte signaturverifikasjon — uten å brenne
+    kapabiliteten og uten å endre noen tilstand."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from policy_validator import attestering
+
+    t = prefiks + secrets.token_hex(3)
+    _rydd_tenant(migrator, t)
+    sak, opp, o, tok = _oppsett_ingest(migrator, t)
+
+    raa = _verifikatorkvittering(o, verifikator="v_fordring")
+    løgn = {k: v for k, v in raa.items()
+            if k not in ("signatur", "kanonisering")}
+    løgn.update(overstyr)
+    # SIGNERES PÅ NYTT. Ville vi bare byttet feltet etterpå, hadde
+    # signaturkontrollen fanget det, og testen målt signaturen i stedet for
+    # bindingen — den ville bestått også uten noen bindingskontroll.
+    konvolutt = attestering.signer(løgn, "k1", NOKLER["v_fordring"]["k1"])
+    assert attestering.verifiser(konvolutt, NOKLER), (
+        "testen måler ikke bindingen hvis signaturen ikke holder")
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            r = c.post("/v1/oppdrag/kvittering",
+                       json={"kvittering_jti": o["kvittering_jti"],
+                             "konvolutt": konvolutt},
+                       headers={"authorization": f"Bearer {tok}"})
+    finally:
+        app.tjeneste.pool.lukk()
+    assert r.status_code == 403, r.text
+    assert r.json()["feil"] == "kvittering_signatur_ugyldig", r.text
+
+    st = _tilstand(migrator, t, sak, opp)
+    assert st["bevis"] == 0, f"bevis lagret tross feil binding: {st}"
+    assert st["generasjon"] == "aktiv", st
+    assert st["oppdrag"] == "plukket" and st["sak"] == "venter_verifikasjon", st
+    assert st["resultathash"] is None, st
+    assert st["konflikt"] == 1, (
+        "avviket etterlot ingen sikkerhetsevidens — en signert konvolutt med"
+        f" feil binding skal alltid gi ett spor, fikk {st['konflikt']}")
+
+    # Kapabiliteten skal IKKE være brent: avviket er ikke et resultat.
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    status = migrator.execute(
+        "SELECT status FROM kvitteringskapabiliteter WHERE jti=%s",
+        (o["kvittering_jti"],)).fetchone()
+    migrator.rollback()
+    assert status is not None and status[0] != "brukt", (
+        f"kapabiliteten ble brent av et avvist forsøk: {status}")
+
+
+@pg
+def test_akseptert_kvittering_krever_plukket_oppdrag_og_ventende_sak(
+        migrator, miljo, token):
+    """Codex, tillegg: «positiv» er ÉN atomisk tilstand.
+
+    Er oppdraget ikke lenger `plukket` — eller saken ikke lenger
+    `venter_verifikasjon` — kan kvitteringen ikke bli gyldig evidens. Uten
+    kontrollen kunne funksjonen sette generasjonen positiv og returnere
+    `positiv` mens status-UPDATE-en traff null rader: et DELVIS resultat
+    med et helt navn.
+
+    MUTASJONEN SOM DREPER DENNE: fjern statuskontrollen, eller fjern
+    `GET DIAGNOSTICS`-sjekken på saken.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    t = "t-status-" + secrets.token_hex(3)
+    _rydd_tenant(migrator, t)
+    sak, opp, o, tok = _oppsett_ingest(migrator, t)
+
+    # Saken flyttes ut av `venter_verifikasjon` mens oppdraget står plukket
+    # — nøyaktig den tilstanden en samtidig utløpsjobb ville laget.
+    _sett_kontekst(migrator, t)
+    migrator.execute("UPDATE unntak SET status='manuell'"
+                     " WHERE tenant=%s AND id=%s", (t, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            r = c.post("/v1/oppdrag/kvittering",
+                       json={"kvittering_jti": o["kvittering_jti"],
+                             "konvolutt": _verifikatorkvittering(
+                                 o, verifikator="v_fordring")},
+                       headers={"authorization": f"Bearer {tok}"})
+    finally:
+        app.tjeneste.pool.lukk()
+    assert r.status_code == 403, r.text
+
+    st = _tilstand(migrator, t, sak, opp)
+    assert st["bevis"] == 0, st
+    assert st["generasjon"] == "aktiv", st
+    assert st["sak"] == "manuell" and st["oppdrag"] == "plukket", st
+
+
 # ---------------------------------------------------------------------------
 # Små API-hjelpere for testene over
 # ---------------------------------------------------------------------------

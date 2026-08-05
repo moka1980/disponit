@@ -470,6 +470,11 @@ SET LOCAL ROLE disponit_m37_claimer;
 --
 --        unntak → verifikasjonsgenerasjon → oppdrag → kapabilitet
 --
+-- `verifikasjonsbevis` står ikke i rekkefølgen fordi ingen vei LÅSER en
+-- bevisrad: tabellen er append-only, og en INSERT av en ny rad kan ikke
+-- vente på en annen transaksjons rad. Bevisene skrives derfor etter at
+-- oppdraget er låst, uten at det er et brudd på rekkefølgen.
+--
 -- ALLE veier som låser mer enn én rad følger den. Claim, ingest og
 -- utløpsjobb er tre uavhengige veier inn i de samme radene, og to av dem
 -- som låser i motsatt rekkefølge er en vranglås som venter på nok last.
@@ -502,10 +507,23 @@ SET LOCAL ROLE disponit_m37_claimer;
 -- generasjon `positiv`, eller ingen bevis lagres i det hele tatt.
 -- Tilstanden «bevis for ett vilkår finnes, resten mangler» er strukturelt
 -- umulig, ikke bare uønsket.
-CREATE OR REPLACE FUNCTION registrer_verifikasjonsbevis(
+-- SIGNATUREN ER NI ARGUMENTER + TO BINDINGER (Codex P1, runde 4).
+--
+-- `p_verification_generation` og `p_fase1_repair_operation_id` kommer fra
+-- den SIGNERTE konvolutten. De sto tidligere ikke i signaturen i det hele
+-- tatt: konvolutten krevde dem, verifikatoren signerte dem, og ingen leste
+-- dem. Et obligatorisk signert felt som ingen sammenligner er dekorasjon,
+-- ikke binding — en ellers gyldig konvolutt kunne lyve om begge og
+-- fortsatt bli akseptert som positivt bevis.
+DROP FUNCTION IF EXISTS registrer_verifikasjonsbevis(
+    BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT);
+DROP FUNCTION IF EXISTS registrer_verifikasjonsbevis(
+    BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT);
+CREATE FUNCTION registrer_verifikasjonsbevis(
         p_oppdrag_id BIGINT, p_resultathash TEXT, p_krav_sett_hash TEXT,
         p_verifikator TEXT, p_nokkel_id TEXT, p_signatur TEXT,
-        p_resultater JSONB, p_owner_claim_id TEXT, p_owner_generation INT)
+        p_resultater JSONB, p_owner_claim_id TEXT, p_owner_generation INT,
+        p_verification_generation INT, p_fase1_repair_operation_id TEXT)
 RETURNS TEXT
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog
@@ -522,12 +540,25 @@ DECLARE
     v_nystatus TEXT;
     v_permanent BOOLEAN := false;
     v_alle_ok  BOOLEAN := true;
+    v_treff    INT;
 BEGIN
-    SELECT d.tenant, d.unntak_id, d.status, d.owner_claim_id,
-           d.owner_generation, d.oppdragstype, d.evidensfrist, d.resultathash,
-           d.repair_operation_id
-      INTO o FROM public.oppdrag d WHERE d.id = p_oppdrag_id;
-    IF NOT FOUND OR o.oppdragstype <> 'verifikasjon' THEN
+    -- Et FØRSTE, ULÅST oppslag — og det brukes til ÉN ting: å finne hvilken
+    -- sak og hvilken generasjon som skal låses. Ingen klassifisering skjer
+    -- på disse verdiene.
+    --
+    -- Codex P1, runde 4: den forrige versjonen leste `resultathash` her og
+    -- klassifiserte på den etter å ha tatt låsene. To samtidige kall frøs
+    -- da begge `resultathash = NULL`; vinneren skrev bevis og hash, mens
+    -- taperen våknet på generasjonslåsen med et FORELDET oppdragsrecord,
+    -- så `g.status <> 'aktiv'` og returnerte ubetinget `idempotent`. To
+    -- ULIKE konvolutter ble dermed «positiv + idempotent» i stedet for
+    -- «positiv + konflikt», og forsøket på motstridende evidens forsvant.
+    --
+    -- Samme kappløpsklasse som ble lukket for kvitteringskapabiliteten i
+    -- PR #9. En lås som tas ETTER at verdien er lest, verner ingenting.
+    SELECT d.tenant, d.unntak_id INTO o
+      FROM public.oppdrag d WHERE d.id = p_oppdrag_id;
+    IF NOT FOUND THEN
         RETURN 'avvist';
     END IF;
 
@@ -540,9 +571,9 @@ BEGIN
         RETURN 'avvist';
     END IF;
 
-    -- LÅSEREKKEFØLGE ledd 2: generasjonsraden. GO-vilkår V1 — dette er
-    -- hele serialiseringen. To samtidige kvitteringer blokkerer her, og
-    -- den som committer først avgjør.
+    -- LÅSEREKKEFØLGE ledd 2: generasjonsraden. Dette er serialiseringen —
+    -- to samtidige kvitteringer blokkerer her, og den som committer først
+    -- avgjør.
     SELECT vg.generation, vg.status, vg.oppdrag_id, vg.krav_sett_hash,
            vg.valgt_verifikator
       INTO g FROM public.verifikasjonsgenerasjon vg
@@ -550,6 +581,41 @@ BEGIN
        AND vg.vilkaar = '*sett*'
        AND vg.generation = v_sak.verification_generation FOR UPDATE;
     IF NOT FOUND OR g.oppdrag_id IS DISTINCT FROM p_oppdrag_id THEN
+        RETURN 'avvist';
+    END IF;
+
+    -- LÅSEREKKEFØLGE ledd 3: oppdraget — låst, og lest PÅ NYTT.
+    --
+    -- Alt som klassifiserer under står på DENNE raden, ikke på det uåste
+    -- oppslaget øverst. Taperen av kappløpet ser her vinnerens committede
+    -- `resultathash`, ikke NULL.
+    SELECT d.tenant, d.unntak_id, d.status, d.owner_claim_id,
+           d.owner_generation, d.oppdragstype, d.evidensfrist, d.resultathash,
+           d.repair_operation_id
+      INTO o FROM public.oppdrag d WHERE d.id = p_oppdrag_id FOR UPDATE;
+    IF NOT FOUND OR o.oppdragstype <> 'verifikasjon' THEN
+        RETURN 'avvist';
+    END IF;
+
+    -- DE TO SIGNERTE BINDINGENE (Codex P1, runde 4).
+    --
+    -- Bindingen går OPPDRAG → FROSSET GENERASJONSRAD, ikke via sakens
+    -- nåværende generasjon: den kan ha rykket videre, og da ville en
+    -- sammenligning mot «nå» godtatt en konvolutt for feil runde.
+    IF p_verification_generation IS DISTINCT FROM g.generation
+       OR p_fase1_repair_operation_id IS DISTINCT FROM o.repair_operation_id THEN
+        INSERT INTO public.verifikasjonskonflikt
+            (tenant, unntak_id, vilkaar, generation, oppdrag_id,
+             ny_resultathash, generasjonsstatus_ved_konflikt, detalj)
+        VALUES (o.tenant, o.unntak_id, '*sett*', g.generation, p_oppdrag_id,
+                p_resultathash, g.status,
+                jsonb_build_object(
+                    'grunn', 'signert_binding_avvik',
+                    'konvolutt_generation', p_verification_generation,
+                    'faktisk_generation', g.generation,
+                    'konvolutt_fase1_id_stemmer',
+                        p_fase1_repair_operation_id IS NOT DISTINCT FROM
+                        o.repair_operation_id));
         RETURN 'avvist';
     END IF;
 
@@ -566,12 +632,20 @@ BEGIN
         RETURN 'avvist';
     END IF;
 
+    -- Eier-fencing og evidensfrist. STATUSENE står IKKE her, og det er
+    -- med vilje: etter en akseptert kvittering er oppdraget `utfort` og
+    -- saken har gått videre. En re-post skal da klassifiseres som
+    -- `idempotent` eller `konflikt` — sto statuskontrollen foran, ville
+    -- begge blitt `avvist`, og idempotensen forsvunnet i det øyeblikket
+    -- den ble relevant. Statusene kontrolleres rett før den ASEPTERENDE
+    -- skrivingen, der de faktisk er en forutsetning.
     IF o.owner_claim_id IS DISTINCT FROM p_owner_claim_id
        OR o.owner_generation IS DISTINCT FROM p_owner_generation
        OR now() > o.evidensfrist THEN
         RETURN 'avvist';
     END IF;
 
+    -- IDEMPOTENS OG KONFLIKT — alltid mot den LÅSTE raden.
     IF o.resultathash IS NOT NULL THEN
         IF o.resultathash = p_resultathash THEN
             RETURN 'idempotent';
@@ -586,8 +660,28 @@ BEGIN
                 jsonb_build_object('grunn', 'motstridende_resultat'));
         RETURN 'konflikt';
     END IF;
+
     IF g.status <> 'aktiv' THEN
-        RETURN 'idempotent';
+        -- Terminal generasjon UTEN en akseptert hash på dette oppdraget.
+        -- Den ENESTE skriveveien setter begge i samme transaksjon, så
+        -- dette skal ikke kunne oppstå — og nettopp derfor er `idempotent`
+        -- feil svar. `idempotent` betyr «dette er den samme kvitteringen»,
+        -- og her finnes det ingen hash å si det om.
+        INSERT INTO public.verifikasjonskonflikt
+            (tenant, unntak_id, vilkaar, generation, oppdrag_id,
+             ny_resultathash, generasjonsstatus_ved_konflikt, detalj)
+        VALUES (o.tenant, o.unntak_id, '*sett*', g.generation, p_oppdrag_id,
+                p_resultathash, g.status,
+                jsonb_build_object('grunn', 'terminal_generasjon_uten_hash'));
+        RETURN 'konflikt';
+    END IF;
+
+    -- STATUSFENCING for den aksepterende veien (Codex, runde 4).
+    -- «Positiv» skal være ÉN atomisk tilstand: et oppdrag som ikke er
+    -- plukket, eller en sak som ikke venter på verifikasjon, kan ikke bli
+    -- gyldig evidens ved at vi later som om den er det.
+    IF o.status <> 'plukket' OR v_sak.status <> 'venter_verifikasjon' THEN
+        RETURN 'avvist';
     END IF;
 
     -- Settet må dekkes NØYAKTIG: verken færre eller flere. Et ekstra,
@@ -615,7 +709,7 @@ BEGIN
     END LOOP;
 
     IF v_alle_ok THEN
-        -- LÅSEREKKEFØLGE ledd 3: bevisene. Hele settet, i én transaksjon.
+        -- LÅSEREKKEFØLGE ledd 4: bevisene. Hele settet, i én transaksjon.
         FOR e IN SELECT * FROM jsonb_array_elements(p_resultater) LOOP
             INSERT INTO public.verifikasjonsbevis
                 (tenant, unntak_id, vilkaar, bevis_vilkaar, generation,
@@ -634,12 +728,22 @@ BEGIN
         UPDATE public.verifikasjonsgenerasjon vg
            SET status = 'positiv', bevis_id = v_siste
          WHERE vg.tenant = o.tenant AND vg.unntak_id = o.unntak_id
-           AND vg.vilkaar = '*sett*' AND vg.generation = g.generation;
+           AND vg.vilkaar = '*sett*' AND vg.generation = g.generation
+           AND vg.status = 'aktiv';
+        GET DIAGNOSTICS v_treff = ROW_COUNT;
+        IF v_treff <> 1 THEN
+            RAISE EXCEPTION 'registrer_verifikasjonsbevis: generasjonen kunne ikke settes positiv (traff % rader)', v_treff;
+        END IF;
         v_nystatus := 'verifikasjon_klar';
     ELSE
         UPDATE public.verifikasjonsgenerasjon vg SET status = 'negativ'
          WHERE vg.tenant = o.tenant AND vg.unntak_id = o.unntak_id
-           AND vg.vilkaar = '*sett*' AND vg.generation = g.generation;
+           AND vg.vilkaar = '*sett*' AND vg.generation = g.generation
+           AND vg.status = 'aktiv';
+        GET DIAGNOSTICS v_treff = ROW_COUNT;
+        IF v_treff <> 1 THEN
+            RAISE EXCEPTION 'registrer_verifikasjonsbevis: generasjonen kunne ikke settes negativ (traff % rader)', v_treff;
+        END IF;
         IF v_permanent THEN
             v_nystatus := 'manuell';        -- prinsipielt uinnhentbart
         ELSIF g.generation < least(v_sak.maks_auto_forsok_snapshot, 3) THEN
@@ -649,12 +753,27 @@ BEGIN
         END IF;
     END IF;
 
-    -- LÅSEREKKEFØLGE ledd 4: oppdraget.
+    -- LÅSEREKKEFØLGE ledd 5: oppdraget og saken lukkes.
+    --
+    -- BEGGE må treffe NØYAKTIG én rad. Sto det ingen kontroll her, kunne
+    -- funksjonen sette generasjonen positiv, returnere `positiv`, og
+    -- likevel etterlate oppdraget eller saken uendret — «positiv» ville
+    -- vært et DELVIS resultat, og alt-eller-ingenting-kontrakten en
+    -- påstand om koden framfor en egenskap ved den.
     UPDATE public.oppdrag d SET status = 'utfort', resultathash = p_resultathash
      WHERE d.id = p_oppdrag_id AND d.status = 'plukket';
+    GET DIAGNOSTICS v_treff = ROW_COUNT;
+    IF v_treff <> 1 THEN
+        RAISE EXCEPTION 'registrer_verifikasjonsbevis: oppdraget kunne ikke lukkes (traff % rader)', v_treff;
+    END IF;
+
     UPDATE public.unntak u SET status = v_nystatus
      WHERE u.tenant = o.tenant AND u.id = o.unntak_id
        AND u.status = 'venter_verifikasjon';
+    GET DIAGNOSTICS v_treff = ROW_COUNT;
+    IF v_treff <> 1 THEN
+        RAISE EXCEPTION 'registrer_verifikasjonsbevis: saken kunne ikke settes % (traff % rader)', v_nystatus, v_treff;
+    END IF;
 
     RETURN CASE WHEN v_nystatus = 'verifikasjon_klar' THEN 'positiv'
                 WHEN v_permanent THEN 'permanent_uinnhentbar'
@@ -662,7 +781,11 @@ BEGIN
                 ELSE 'negativ_uten_budsjett' END;
 END $$;
 REVOKE ALL ON FUNCTION registrer_verifikasjonsbevis(
-    BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT) FROM PUBLIC;
+    BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(
+    BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT)
+    TO disponit;
 
 -- ------------------------------------------------------------
 -- 10. Claim utvidet: de to klar-tilstandene (v2-delta pkt. 1)
