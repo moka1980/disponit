@@ -41,10 +41,34 @@ staging_sjekkliste:
     # (`feilinjisering-m01-v1`), slik at den som gjør kjøringen har en fasit
     # før arbeidet, ikke etter.
     #
-    # Fortsatt `blokkert` og ikke `ja`: koden finnes, målingen gjør det
-    # ikke. Et manifestfelt er aldri selv beviset.
-    status: blokkert
-    blokkert_av: m37
+    # MÅLT på staging 2026-08-05, etter at PR-007 (R1 som tofaseprotokoll)
+    # var merget som `de1c05a`. Selen er deploy/staging/feilinjisering-m01.py:
+    # 24 ekte feil injisert gjennom det ordinære API-et over FIRE kategorier
+    # (manglende_data, over_grense, regelkonflikt, ukjent), behandlet av
+    # M-37 som EGEN PROSESS, med syntetisk verifikator og eiermodul som to
+    # ytterligere prosesser. Ingen unntaksrad er skrevet av selen — sakene
+    # oppstår fordi motoren blokkerer dem.
+    #
+    # Resultat: 24/24 terminale, 12/12 reparerbare LØST, 12/12 ikke-
+    # reparerbare til manuell, p95 64,6 ms under 400 samtidige beslutninger
+    # MENS arbeideren behandlet, 2 lease-tap med re-claim, og null treff på
+    # de 24 kanarifuglene — verken i databasen eller i arbeiderloggen.
+    #
+    # FIRE kjøringer: p95 64,6 / 57,0 / 60,2 / 51,5 ms. Artefaktet som
+    # ligger her er den DÅRLIGSTE, ikke den beste — evidens skal ikke plukke
+    # det peneste tallet (samme regel som for ytelsespunktet over).
+    #
+    # Første kjøring var RØD og er verdt å huske: selen signerte
+    # lastforespørslene med en hardkodet nøkkel som ikke fantes i stagings
+    # nøkkelregister. Hver forespørsel ble da en
+    # `attestasjon_signatur_ugyldig`-SIKKERHETSSAK, 313 slike fløt inn i køen
+    # ved siden av de 24 injiserte, og terminalandelen sto på 0,5. Feilen lå
+    # i selen, ikke i M-37 — men den ville sett ut som en produktfeil for
+    # den som bare leste tallet.
+    status: ja
+    krav_id: feilinjisering-m01-v1
+    artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
+    artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
   ytelse_bestatt:
     # Grensen ER definert og målbar (perf-m01-v1): 100 beslutninger/sekund,
     # 20 samtidige, p95 < 150 ms, null feil, 1:1 mellom beslutning og

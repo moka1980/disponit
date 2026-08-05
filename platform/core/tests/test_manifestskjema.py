@@ -36,8 +36,15 @@ def test_m01_har_strukturerte_punkter(m01):
     assert all(isinstance(p, dict) and "status" in p
                for p in sjekkliste.values()), \
         "et punkt står fortsatt i det gamle flate formatet"
-    assert sjekkliste["feilinjisering_til_unntakskø"] == {
-        "status": "blokkert", "blokkert_av": "m37"}
+    # `feilinjisering_til_unntakskø` gikk fra `blokkert_av: m37` til `ja`
+    # 2026-08-05, da M-37 fantes OG kjøringen var gjort på staging. Testen
+    # pinner den nye formen: et `ja` UTEN krav_id og artefakt er nettopp
+    # det manifestfeltet-som-eget-bevis skjemaet finnes for å hindre.
+    fi = sjekkliste["feilinjisering_til_unntakskø"]
+    assert fi["status"] == "ja", fi
+    assert fi["krav_id"] == "feilinjisering-m01-v1"
+    assert fi["artefakt"] and fi["artefakt_sha256"]
+    assert "blokkert_av" not in fi, "punktet er ja og blokkert samtidig"
     assert sjekkliste["ytelse_bestatt"]["krav_id"] == "perf-m01-v1"
 
 
@@ -96,13 +103,13 @@ def test_manglende_punkt_avvises(m01):
 
 
 def test_uavklarte_punkter_og_aktiv_uten_bevis(m01):
-    # `ytelse_bestatt` gikk til `ja` 2026-08-02 da lasttesten faktisk var
-    # kjørt på staging og artefaktet fantes. Settet krymper derfor med ett
-    # punkt — porten selv står uendret: et `ja` med krav_id uten artefakt
-    # avvises fortsatt av skjemaet, og `aktiv` med uavklarte punkter av
-    # testen nedenfor.
-    assert set(uavklarte_punkter(m01)) == {
-        "feilinjisering_til_unntakskø", "rollback_testet"}
+    # `ytelse_bestatt` gikk til `ja` 2026-08-02, og
+    # `feilinjisering_til_unntakskø` 2026-08-05 — begge da kjøringen faktisk
+    # var gjort på staging og artefaktet fantes. Settet krymper derfor med
+    # ett punkt om gangen — porten selv står uendret: et `ja` med krav_id
+    # uten artefakt avvises fortsatt av skjemaet, og `aktiv` med uavklarte
+    # punkter av testen nedenfor.
+    assert set(uavklarte_punkter(m01)) == {"rollback_testet"}
     # m01 er `under_utvikling`, ikke `aktiv` — da er uavklarte punkter greit.
     assert aktiv_uten_bevis(m01) == []
     aktiv = copy.deepcopy(m01)
