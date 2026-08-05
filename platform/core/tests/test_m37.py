@@ -272,7 +272,9 @@ def _policyref(policy_id=FIXTURE_POLICY_ID, versjon="1.0.0",
 
 def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send",
              snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal",
-             policy_id=FIXTURE_POLICY_ID):
+             policy_id=FIXTURE_POLICY_ID,
+             grunnkode="attestasjon_mangler",
+             vilkaar="forfall_passert_dager"):
     """En unntaksrad med policysnapshot, som API-veien ville laget den."""
     _sett_kontekst(conn, tenant)
     logg = conn.execute(
@@ -283,9 +285,14 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
          hash_)).fetchone()[0]
     from db import kryptering
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+    # Standardsaken er en ATTESTASJONSmangel — den klassen R1 faktisk kan
+    # reparere etter PR-007. `manglende_felt` er en VERDImangel og går til
+    # `manuell`; en fixture som brukte den ville målt den negative veien
+    # og kalt det hovedveien.
     ct, nonce = kryptering.krypter(
         dek, {"handling": handling, "ressurs_id": "fak-1",
-              "kategori": kategori, "begrunnelse": ["manglende_felt"]},
+              "kategori": kategori, "begrunnelse": [grunnkode],
+              **({"manglende_vilkaar": vilkaar} if vilkaar else {})},
         tenant, key_id)
     sak = conn.execute(
         "INSERT INTO unntak (tenant, loggpost_id, handling, kategori, sakstype,"
@@ -2088,7 +2095,17 @@ def test_arbeideren_finner_policyen_paa_produksjonsformet_loggpost(migrator):
             "arbeideren fant ikke den aktive policyen på en"
             " produksjonsformet loggpost — M-37 ville klassifisert HVER sak"
             " som manuell")
-        assert plan.utfall == "oppdrag", f"{plan.utfall}: {plan.grunn}"
+        # Etter PR-007 bestiller R1 VERIFIKASJON, ikke re-innsending: en ny
+        # beslutning kan ikke bli TILLAT før det manglende beviset finnes.
+        # Form A: fase 1 dekker HELE settet av påkrevde vilkår i én
+        # generasjon — ikke bare det som manglet. Fase 2 kan bare bevise
+        # det fase 1 har verifisert, siden originalens attestasjoner er
+        # minimert bort.
+        assert plan.utfall == "verifikasjon", f"{plan.utfall}: {plan.grunn}"
+        assert sorted(plan.reparasjonsinput["vilkaar_sett"]) == [
+            "forfall_passert_dager", "ingen_aktiv_tvist"]
+        assert plan.valgt_verifikator, "ingen verifikator valgt"
+        assert plan.krav_sett_hash and plan.autoritetsversjon
     finally:
         rt.close()
 

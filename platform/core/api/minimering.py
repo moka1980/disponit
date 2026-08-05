@@ -63,13 +63,44 @@ def _kildereferanser(raa: object) -> list[dict] | None:
     return ut or None
 
 
+#: Det ENESTE parameteret som slippes gjennom fra en Grunn.
+#:
+#: Regelen ellers er at parametre droppes: de kan inneholde beløpet,
+#: gruppeverdien eller andre biter av hendelsen som utløste bruddet.
+#: Vilkårets NAVN er noe annet — det står allerede i kundens policy, det er
+#: ikke avledet av hendelsen, og det er ikke persondata.
+#:
+#: Uten det kan M-37 ikke handle. `purring.send` har to vilkår i
+#: bransjemalen, og en sak som bare sier «attestasjon_mangler» sier ikke
+#: HVILKEN. Fase 1 måtte da enten gjette eller be om verifikasjon av alt —
+#: og en verifikator som attesterer noe annet enn det saken manglet, har
+#: ikke verifisert saken.
+VILKAARSFELT = "manglende_vilkaar"
+
+
+#: Policyens EGEN grupperingsnøkkel for handlingen (`frekvens.
+#: grupperingsnokkel`). Ikke et fast feltnavn — kunden bestemmer det.
+#:
+#: MÅLT: uten den svarte motoren `frekvens_grupperingsverdi_mangler` på
+#: hver eneste fase-2-beslutning, og saken gikk til manuell. Payloaden
+#: bar `handling` og `ressurs_id`, men ikke `faktura_id`, og en hendelse
+#: uten gruppeverdi kan frekvensregelen ikke evaluere.
+#:
+#: Å slippe den gjennom utvider ikke hva systemet lagrer: telleren
+#: (`frekvens_hendelser`) lagrer ALLEREDE nøyaktig denne verdien for samme
+#: tenant og handling, skrevet av motoren selv. Feltet er kundens eget
+#: valg i sin egen policy, og verdien beholdes kun når den er en enkel
+#: streng.
 def minimer_payload(event: dict, kategori: str | None,
-                    begrunnelse: list[str]) -> dict:
+                    begrunnelse: list[str], *,
+                    vilkaar: str | None = None,
+                    grupperingsnokkel: str | None = None) -> dict:
     """Saksgrunnlaget som skal krypteres og lagres.
 
     `begrunnelse` er KODER, ikke parametre: parametrene kan inneholde
     verdiene som utløste bruddet (f.eks. beløpet), og de hører hjemme i
-    payloaden bare hvis feltet står i allowlisten.
+    payloaden bare hvis feltet står i allowlisten. Eneste unntak er
+    `vilkaar` — se `VILKAARSFELT`.
     """
     tillatt = set(FELLESFELT) | set(PER_KATEGORI.get(kategori or "", ()))
     ut: dict[str, object] = {}
@@ -88,4 +119,10 @@ def minimer_payload(event: dict, kategori: str | None,
         ut[KILDEREFERANSEFELT] = referanser
     ut["begrunnelse"] = list(begrunnelse)
     ut["kategori"] = kategori
+    if isinstance(vilkaar, str) and vilkaar.strip():
+        ut[VILKAARSFELT] = vilkaar
+    if isinstance(grupperingsnokkel, str) and grupperingsnokkel.strip():
+        verdi = event.get(grupperingsnokkel)
+        if isinstance(verdi, str) and verdi.strip():
+            ut[grupperingsnokkel] = verdi
     return ut

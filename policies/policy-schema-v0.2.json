@@ -42,9 +42,16 @@
         "properties": {
           "beskrivelse": {"type": "string"},
           "betrodd_for": {"type": "array", "minItems": 1,
-                          "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}}
+                          "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+          "kan_fastsla_permanent": {"type": "boolean",
+                                    "description": "PR-007 / Scope v2 pkt. 5: retten til å erklære et vilkår PRINSIPIELT uinnhentbart. `betrodd_for` alene er ikke nok — en verifikator som kan attestere et vilkår er ikke dermed betrodd for å erklære det uoppnåelig. Uten denne behandles `permanent` som en forbigående negativ."}
         }
       }
+    },
+    "verifikator_prioritet": {
+      "type": "object",
+      "description": "PR-007 / Scope v2 pkt. 1: prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden.",
+      "additionalProperties": {"type": "integer"}
     },
     "handlinger": {
       "type": "array", "minItems": 1,
@@ -92,6 +99,8 @@
                         "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
         "dataklasser_tillatt": {"type": "array", "minItems": 1,
                                 "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}},
+        "maks_attestasjon_alder_s": {"type": "integer", "minimum": 1,
+                                     "description": "PR-007 / v7 pkt. 1: tak på hvor gammel en attestasjon kan være for DENNE handlingen, uavhengig av verifikatorens eget `utloper`. Fravær = kun `utloper` gjelder."},
         "grenser": {
           "type": "object", "additionalProperties": false,
           "properties": {

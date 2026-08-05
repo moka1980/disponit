@@ -58,6 +58,11 @@ APPEND_ONLY_TRIGGERE = (
     # selv er en bekreftelse på at sperrene virker.
     ("oppdrag", "oppdrag_ingen_delete"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
+    # PR-007: bevis og konflikt er append-only, generasjonen har
+    # overgangsvakt. Alle tre nekter DELETE — som de skal.
+    ("verifikasjonsbevis", "bevis_ingen_endring"),
+    ("verifikasjonskonflikt", "konflikt_ingen_endring"),
+    ("verifikasjonsgenerasjon", "verifikasjonsgenerasjon_overgang"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -72,7 +77,12 @@ APPEND_ONLY_TRIGGERE = (
 #: `SELECT, DELETE` gjennom en migrasjon; det ville lagt en direkte,
 #: destruktiv datapassasje i ALLE kundebaser for å løse fixture-isolasjon.
 #: Testoppsettet skal ikke kunne endre produksjonens rettighetsmodell.
-RYDDETABELLER = ("oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
+#: PR-007-tabellene FØRST: `verifikasjonsgenerasjon` og
+#: `verifikasjonsbevis` har fremmednøkler til `unntak`, og generasjonen
+#: peker i tillegg på beviset.
+RYDDETABELLER = ("verifikasjonskonflikt", "verifikasjonsgenerasjon",
+                 "verifikasjonsbevis",
+                 "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
                  "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
                  "policyer", "tenant_nokler", "frekvens_hendelser")
 
@@ -115,6 +125,11 @@ def _rydd(migrator, *tenanter: str) -> None:
             migrator.execute(f"DELETE FROM {tabell} WHERE tenant=%s", (tenant,))
     migrator.execute("DELETE FROM api_tokener WHERE tenant = ANY(%s)",
                      (list(tenanter),))
+    # PR-007: `verifikasjonsgenerasjon.bevis_id` er en UTSATT fremmednøkkel
+    # (DEFERRABLE INITIALLY DEFERRED). Slettingen over etterlater ventende
+    # hendelser helt til commit, og `ALTER TABLE ... ENABLE TRIGGER` nekter
+    # da med «pending trigger events». Her tvinges de til å fyre først.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} ENABLE TRIGGER {trigger}")
     migrator.commit()

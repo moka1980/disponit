@@ -431,7 +431,7 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
         return _avslutt(conn, d, event, tenant, handling, evidens,
                         idempotency_key, request_id, hash_, sporing,
                         snapshot, http=http, feilkode=feilkode,
-                        kapabilitet=kapabilitet)
+                        kapabilitet=kapabilitet, policy=policy)
 
     # --- 4. Attestasjonsporten: signatur FØR binding ----------------------
     # Rekkefølgen er ikke smakssak. Er signaturen ugyldig, er feltene i
@@ -524,7 +524,7 @@ def _flyt(conn: psycopg.Connection, ctx, *, tenant: str, policy_id: str,
 
     return _avslutt(conn, d, event, tenant, handling, evidens,
                     idempotency_key, request_id, evidens.policy_content_hash,
-                    sporing, snapshot, kapabilitet=kapabilitet)
+                    sporing, snapshot, kapabilitet=kapabilitet, policy=policy)
 
 
 def _utlop_for(event: dict, vilkaar: str, naa: datetime) -> datetime:
@@ -544,12 +544,29 @@ def _utlop_for(event: dict, vilkaar: str, naa: datetime) -> datetime:
     return t if t is not None else naa + timedelta(days=1)
 
 
+def _grupperingsnokkel(policy: object, handling: str) -> str | None:
+    """Hvilket felt policyen grupperer frekvensregelen på for handlingen.
+
+    Leses fra POLICYEN, aldri fra hendelsen: skulle en innsender kunne
+    peke ut feltet selv, kunne den valgt et felt den vil ha bevart og
+    brukt minimeringen som en lagringskanal.
+    """
+    if not isinstance(policy, dict):
+        return None
+    for h in policy.get("handlinger") or []:
+        if isinstance(h, dict) and h.get("id") == handling:
+            fr = (h.get("grenser") or {}).get("frekvens")
+            n = fr.get("grupperingsnokkel") if isinstance(fr, dict) else None
+            return n if isinstance(n, str) and n.strip() else None
+    return None
+
+
 def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
              handling: str, evidens: Evidens, idempotency_key: str,
              request_id: str, policy_hash: str | None,
              sporing: Sporing, snapshot: "Policysnapshot",
              http: int = 200, feilkode: str | None = None,
-             kapabilitet=None) -> Svar:
+             kapabilitet=None, policy: dict | None = None) -> Svar:
     """Steg 9-11: routing, unntaksrad, idempotens ferdig."""
     sporing.loggpost_id = evidens.loggpost_id
     siste = d.begrunnelse[-1].kode if d.begrunnelse else None
@@ -563,8 +580,16 @@ def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
             # betyr at loggskrivingen ble hoppet over — en programmeringsfeil.
             raise RuntimeError("sak uten loggpost — evidenskjeden er brutt")
         kategori = d.unntak_kategori or (siste or "ukjent")
+        # Vilkåret hentes fra den BLOKKERENDE grunnen — den siste, ikke en
+        # vilkårlig av dem. Motorens `blokker()` legger alltid den
+        # blokkerende sist; alt foran er `*_ok`-kvitteringer. Leser man en
+        # tilfeldig grunn, får M-37 navnet på et vilkår som gikk BRA.
+        blokkerende = d.begrunnelse[-1] if d.begrunnelse else None
         payload = minimering.minimer_payload(
-            event, d.unntak_kategori, [g.kode for g in d.begrunnelse])
+            event, d.unntak_kategori, [g.kode for g in d.begrunnelse],
+            vilkaar=(blokkerende.params or {}).get("vilkaar")
+            if blokkerende is not None else None,
+            grupperingsnokkel=_grupperingsnokkel(policy, handling))
         try:
             unntak_id = _skriv_unntak(conn, tenant, evidens.loggpost_id,
                                       handling, kategori, sakstype, prioritet,

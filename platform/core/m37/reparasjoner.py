@@ -36,7 +36,7 @@ from .taksonomi import (Handlerdeklarasjon, Klassifisering,
 #: De fire eneste utfallene. `ko` betyr «tilbake til køen, prøv igjen
 #: senere»; forsøkstelleren i databasen sørger for at det ikke kan pågå i
 #: det uendelige.
-UTFALL = ("oppdrag", "lost", "manuell", "ko")
+UTFALL = ("oppdrag", "lost", "manuell", "ko", "verifikasjon")
 
 
 @dataclass(frozen=True)
@@ -54,12 +54,28 @@ class Reparasjonsplan:
     #: er idempotensen borte og hvert forsøk blir en ny forretningshandling.
     reparasjonsinput: dict = field(default_factory=dict)
 
+    #: Kun for `utfall='verifikasjon'` (form A): HELE settet fase 1 skal
+    #: dekke, hashen som binder det, og den deterministisk valgte
+    #: verifikatoren med autoritetsversjonen valget ble gjort mot.
+    vilkaar: str | None = None
+    krav_sett: dict | None = None
+    krav_sett_hash: str | None = None
+    valgt_verifikator: str | None = None
+    autoritetsversjon: str | None = None
+
     def __post_init__(self) -> None:
         if self.utfall not in UTFALL:
             raise ValueError(f"ukjent utfall {self.utfall!r}")
         if self.utfall == "oppdrag" and not (self.maalhandling
                                              and self.oppdragstype):
             raise ValueError("oppdrag krever både målhandling og oppdragstype")
+        if self.utfall == "verifikasjon" and not (
+                self.krav_sett and self.krav_sett_hash
+                and self.valgt_verifikator and self.autoritetsversjon):
+            raise ValueError(
+                "verifikasjon krever krav_sett, hash, valgt verifikator og"
+                " autoritetsversjon — en fase 1 uten dem ville bedt om å få"
+                " verifisert ingenting, av ingen, mot ingenting")
 
 
 def input_hash(reparasjonsinput: dict) -> str:
@@ -428,3 +444,316 @@ def krever_kompensasjon(payload: dict) -> bool:
     å starte forretningshandlinger på en mistanke.
     """
     return payload.get("delvis_utfort") is True
+
+
+# ---------------------------------------------------------------------------
+# PR-007: tofaseruting — tre eksplisitte ruter, fail-closed (v2-delta)
+# ---------------------------------------------------------------------------
+#
+# Klassifisereren ruter på GRUNN-KODE, ikke på kategori. `manglende_data`
+# dekker to helt ulike situasjoner, og bare den ene kan repareres:
+#
+#   * en ATTESTASJON mangler  -> en verifikator kan skaffe den. Tofase.
+#   * en VERDI mangler        -> den fantes i originalhendelsen, som er
+#                                minimert bort. Kan ikke rekonstrueres.
+#                                Manuell.
+#
+# Skillet er hele grunnen til at PR-007 finnes: modell (b) — bygg den nye
+# hendelsen av minimert payload + verifisert attestasjon — holder KUN for
+# den første klassen. For den andre ville vi bygget en hendelse som fortsatt
+# mangler det den manglet, og fått UNNTAK igjen. Det var nøyaktig feilen
+# som ble målt på en levende trekjede før PR-007.
+
+#: Grunn-koder der det manglende er en ATTESTASJON en verifikator kan
+#: skaffe autoritativt. Disse — og kun disse — går tofasevegen.
+ATTESTASJONSMANGEL = frozenset({
+    "attestasjon_mangler",
+    "vilkaar_mangler_attestasjon",
+    "attestasjon_utlopt",
+})
+
+#: Grunn-koder der det manglende er en FORRETNINGSVERDI fra
+#: originalhendelsen. Ingen verifikator kan attestere et beløp som aldri
+#: ble lagret — dette er `manuell`, og det er ikke en begrensning vi kan
+#: kode oss ut av uten å utvide datalagringen (egen spesifikasjon).
+VERDIMANGEL = frozenset({
+    "manglende_felt",
+    "manglende_dataklasse_kilde",
+})
+
+
+@dataclass(frozen=True)
+class Faserute:
+    """Hvilken vei en R1-sak skal ta. `vilkaar` kun for tofase."""
+    rute: str            # 'tofase' | 'manuell'
+    grunn: str
+    vilkaar: str | None = None
+
+
+def rut_r1(grunnkode: str | None, payload: dict) -> Faserute:
+    """De tre rutene. Alt som ikke er BEVIST attestasjonsmangel → manuell.
+
+    Den tredje ruten — «ukjent eller sammensatt årsak» — er den viktigste,
+    og den er fail-closed med vilje: å gjette at en sak er reparerbar
+    starter en verifikasjonsrunde på noe ingen har bekreftet at kan
+    verifiseres.
+    """
+    if grunnkode in VERDIMANGEL:
+        return Faserute("manuell", f"verdimangel:{grunnkode}")
+    if grunnkode not in ATTESTASJONSMANGEL:
+        return Faserute("manuell", f"ukjent_eller_sammensatt:{grunnkode}")
+
+    vilkaar = payload.get("manglende_vilkaar")
+    if not isinstance(vilkaar, str) or not vilkaar.strip():
+        # Koden sier «attestasjon mangler», men ikke HVILKEN. Uten vilkåret
+        # måtte fase 1 gjettet, og en verifikator som attesterer noe annet
+        # enn det saken manglet, har ikke verifisert saken.
+        return Faserute("manuell", "vilkaar_ukjent")
+    return Faserute("tofase", "attestasjonsmangel", vilkaar=vilkaar)
+
+
+def planlegg_verifikasjon(kl, payload: dict, policy: dict,
+                          policy_id: str = "") -> Reparasjonsplan:
+    """Fase 1 for HELE settet (form A).
+
+    Rekkefølgen er fail-closed hele veien:
+
+      1. Er dette i det hele tatt en attestasjonsmangel? Ellers manuell.
+      2. Bygg det komplette settet fra policyen og frys det.
+      3. **Ett eneste ikke-innhentbart vilkår ⇒ manuell UMIDDELBART**, uten
+         fase 1. En sak der noe prinsipielt ikke kan skaffes, er ikke
+         reparerbar — og skal ikke bruke en verifikasjonsrunde på å
+         oppdage det (v5 pkt. 1).
+      4. Skjæringsmengden må gi minst én verifikator som dekker HELE
+         settet. Tom skjæring ⇒ manuell; fler-verifikator er utenfor
+         PR-007.
+
+    Returnerer en PLAN. Fase 1 har null forretningsfullmakter: den ber en
+    registrert verifikator KONTROLLERE og ATTESTERE, aldri utføre.
+    """
+    from oppdragskontrakt import krav_sett_hash as _hash
+
+    rute = rut_r1(kl.grunnkode, payload)
+    if rute.rute != "tofase":
+        return Reparasjonsplan("manuell", rute.grunn)
+
+    handling = payload.get("handling")
+    ressurs = payload.get("ressurs_id")
+    if not isinstance(handling, str) or not handling:
+        return Reparasjonsplan("manuell", "handling_mangler_i_payload")
+    if not isinstance(ressurs, str) or not ressurs:
+        # Verifikasjonen er RESSURSBUNDET. Uten ressursen ville
+        # attestasjonen gjeldt «noe hos denne kunden», og en attestasjon
+        # uten ressursbinding kan gjenbrukes på en annen sak.
+        return Reparasjonsplan("manuell", "ressurs_id_mangler")
+
+    # Alle vilkår som mangler en ATTESTASJON er innhentbare. I dag kjenner
+    # vi ett sikkert (det blokkerende); resten av settet antas innhentbart
+    # med mindre payloaden sier noe annet. Er noe ikke-innhentbart, stopper
+    # pkt. 3 saken før fase 1.
+    krav_sett = bygg_krav_sett(policy, handling, ressurs,
+                               innhentbare_vilkaar=_innhentbare(payload,
+                                                                policy,
+                                                                handling))
+    if not krav_sett["krav"]:
+        return Reparasjonsplan("manuell", "handlingen_har_ingen_vilkaar")
+    ikke_innhentbare = [e["vilkaar"] for e in krav_sett["krav"]
+                        if not e["innhentbar"]]
+    if ikke_innhentbare:
+        return Reparasjonsplan(
+            "manuell", f"ikke_innhentbare_vilkaar:{sorted(ikke_innhentbare)}")
+
+    innhentbare = [e["vilkaar"] for e in krav_sett["krav"]]
+    valg = velg_verifikator(policy, innhentbare)
+    if valg.verifikator is None:
+        return Reparasjonsplan("manuell", valg.grunn)
+
+    h = _hash(krav_sett)
+    return Reparasjonsplan(
+        "verifikasjon", "verifikasjon_bestilt", vilkaar=None,
+        krav_sett=krav_sett, krav_sett_hash=h,
+        valgt_verifikator=valg.verifikator,
+        autoritetsversjon=autoritetsregister_hash(policy),
+        maalhandling=handling, oppdragstype="verifikasjon",
+        reparasjonsinput={
+            "handling": f"verifiser.{krav_sett['krav'][0]['vilkaar']}",
+            "ressurs_id": ressurs,
+            "vilkaar_sett": innhentbare,
+            "kategori": kl.kategori,
+            "maalhandling": handling,
+            "policy_id": policy_id,
+            "krav_sett_hash": h,
+        })
+
+
+def _innhentbare(payload: dict, policy: dict, handling: str) -> set[str]:
+    """Hvilke av handlingens vilkår som kan skaffes autoritativt.
+
+    Et vilkår er innhentbart når det som mangler er en ATTESTASJON. Er det
+    en forretningsverdi som manglet, er den minimert bort og ingen
+    verifikator kan attestere den.
+
+    I v1 er alle handlingens vilkår innhentbare med mindre payloaden
+    eksplisitt merker noe annet — grunnkoden har alt bevist at det er en
+    attestasjonsmangel (`rut_r1`), og verdi-mangler er rutet til `manuell`
+    før vi kommer hit.
+    """
+    ikke = payload.get("ikke_innhentbare_vilkaar")
+    ikke_sett = set(ikke) if isinstance(ikke, list) else set()
+    alle = set()
+    for h in policy.get("handlinger") or []:
+        if isinstance(h, dict) and h.get("id") == handling:
+            for vk in h.get("vilkaar") or []:
+                if isinstance(vk, dict) and isinstance(vk.get("navn"), str):
+                    alle.add(vk["navn"])
+            break
+    return alle - ikke_sett
+
+
+def fase1_id(tenant: str, unntak_id: int, krav_sett_hash: str,
+             handler_id_med_versjon: str, generation: int) -> str:
+    """SHA-256(tenant ‖ unntak_id ‖ 'verifikasjon' ‖ vilkaar ‖ handler ‖ gen).
+
+    Generasjonen inngår (v2-delta pkt. 3): retry av SAMME generasjon gir
+    samme id og er idempotent, mens en NY generasjon er en ny bestilling.
+    `forsok` og `claim_id` inngår aldri — uendret prinsipp.
+    """
+    raa = "\x1f".join((tenant, str(unntak_id), "verifikasjon",
+                       krav_sett_hash, handler_id_med_versjon,
+                       str(generation)))
+    return hashlib.sha256(raa.encode("utf-8")).hexdigest()
+
+
+def fase2_id(tenant: str, unntak_id: int, maalhandling: str, generation: int,
+             aktiv_policy_hash: str, autoritetsregister_hash_: str,
+             krav_sett_hash_: str) -> str:
+    """Bundet til TRE hasher, ikke bare generasjonen (GO-vilkår V1).
+
+    ```
+    SHA-256(tenant ‖ unntak_id ‖ 'beslutning' ‖ målhandling ‖ generation
+            ‖ aktiv_policy_hash ‖ aktiv_autoritetsregister_hash
+            ‖ krav_sett_hash)
+    ```
+
+    Autoritetsregisterets hash er den som gjør arbeidet: trekkes en
+    verifikators fullmakt tilbake, endres den hashen — og dermed
+    `fase2_id` — SELV om policyinnholdet ellers er uendret. Uten det leddet
+    kunne en gammel fase-2-identitet gjenbrukes med en fullmakt som ikke
+    lenger finnes.
+    """
+    raa = "\x1f".join((tenant, str(unntak_id), "beslutning", maalhandling,
+                       str(generation), aktiv_policy_hash,
+                       autoritetsregister_hash_, krav_sett_hash_))
+    return hashlib.sha256(raa.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# PR-007 form A: vilkårssettet, skjæringsmengden og verifikatorvalget
+# ---------------------------------------------------------------------------
+
+def bygg_krav_sett(policy: dict, handling_id: str, ressurs_id: str,
+                   innhentbare_vilkaar: set[str] | None = None) -> dict:
+    """Det KOMPLETTE settet påkrevde vilkår for handlingen (v5 pkt. 1).
+
+    Settet bestemmes ÉN gang ved første klassifisering og fryses på saken.
+    Det slås aldri opp på nytt — endrer policyen vilkårene etterpå,
+    påvirker det aldri en pågående sak (v6 pkt. 1).
+
+    `innhentbare_vilkaar` er de som mangler en ATTESTASJON og derfor kan
+    skaffes autoritativt. Alt annet er ikke-innhentbart: en manglende
+    forretningsverdi kan ingen verifikator attestere, fordi den aldri ble
+    lagret.
+    """
+    from oppdragskontrakt import KRAV_SETT_SKJEMAVERSJON
+    innhentbare = innhentbare_vilkaar if innhentbare_vilkaar is not None else set()
+    krav = []
+    for h in policy.get("handlinger") or []:
+        if isinstance(h, dict) and h.get("id") == handling_id:
+            for vk in h.get("vilkaar") or []:
+                navn = vk.get("navn") if isinstance(vk, dict) else None
+                if isinstance(navn, str) and navn:
+                    krav.append({"vilkaar": navn, "ressurs_id": ressurs_id,
+                                 "innhentbar": navn in innhentbare})
+            break
+    return {"skjemaversjon": KRAV_SETT_SKJEMAVERSJON,
+            "krav": sorted(krav, key=lambda e: e["vilkaar"])}
+
+
+def betrodde_for(policy: dict, vilkaar: str) -> frozenset[str]:
+    """Verifikatorene policyen har betrodd for ETT vilkår.
+
+    Relasjonen finnes fra PR-002 (`verifikatorer.<id>.betrodd_for`) — den
+    er ikke noe PR-007 innfører.
+    """
+    ut = set()
+    for vid, v in (policy.get("verifikatorer") or {}).items():
+        if isinstance(v, dict) and vilkaar in (v.get("betrodd_for") or []):
+            ut.add(vid)
+    return frozenset(ut)
+
+
+def autoritetsregister_hash(policy: dict) -> str:
+    """Hash over `betrodd_for`-relasjonen slik den er NÅ.
+
+    GO-vilkår V1: `fase2_id` binder til denne, ikke bare til policyinnholdet.
+    En tilbaketrukket verifikatorfullmakt endrer hashen — og dermed
+    `fase2_id` — SELV om resten av policyen er uendret. Uten den bindingen
+    kunne en gammel fase2-identitet gjenbrukes med en fullmakt som ikke
+    lenger finnes.
+    """
+    reg = {vid: sorted((v.get("betrodd_for") or []))
+           for vid, v in sorted((policy.get("verifikatorer") or {}).items())
+           if isinstance(v, dict)}
+    return hashlib.sha256(json.dumps(
+        reg, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class Verifikatorvalg:
+    """Utfallet av skjæringsmengde-regelen. `verifikator` None => manuell."""
+    verifikator: str | None
+    grunn: str
+    kandidater: tuple[str, ...] = ()
+
+
+def velg_verifikator(policy: dict, innhentbare: list[str]) -> Verifikatorvalg:
+    """SKJÆRINGSMENGDE, ikke union (Scope v2 pkt. 1).
+
+    Den første formelen — «flere enn én distinkt verifikator ⇒ manuell» —
+    var feil: vilkår A betrodd {V1,V2} og vilkår B betrodd {V1} gir union
+    {V1,V2}, men V1 dekker HELE settet alene og saken er innenfor scope.
+
+    ```
+    kandidater = ⋂ betrodd_for(vilkår)   for alle innhentbare vilkår
+    ```
+
+    Tom skjæring betyr at ingen ENKELT verifikator dekker settet. Da går
+    saken `manuell` uten fase 1 — fler-verifikator-akkumulering er
+    eksplisitt utenfor PR-007 (v7 pkt. 4 og v8 er ute av scope).
+
+    Valget er DETERMINISTISK og totalt (GO-vilkår V4): eksplisitt
+    `verifikator_prioritet` hvis satt, ellers laveste `verifikator_id` som
+    sekundærnøkkel. Aldri avhengig av databaseorden — samme sak gir samme
+    verifikator hver eneste kjøring.
+    """
+    if not innhentbare:
+        return Verifikatorvalg(None, "ingen_innhentbare_vilkaar")
+    kandidater: frozenset[str] | None = None
+    for vilkaar in innhentbare:
+        b = betrodde_for(policy, vilkaar)
+        if not b:
+            return Verifikatorvalg(None, f"ingen_betrodd_for:{vilkaar}")
+        kandidater = b if kandidater is None else (kandidater & b)
+    if not kandidater:
+        return Verifikatorvalg(None, "krever_flere_verifikatorer")
+
+    prioritet = policy.get("verifikator_prioritet") or {}
+    def nokkel(vid: str):
+        p = prioritet.get(vid)
+        # Ugyldig prioritering skal ikke gi en tilfeldig vinner: den
+        # sorteres bakerst, og `verifikator_id` avgjør — fortsatt totalt.
+        return (p if isinstance(p, int) and not isinstance(p, bool) else 10**9,
+                vid)
+    valgt = sorted(kandidater, key=nokkel)[0]
+    return Verifikatorvalg(valgt, "valgt", tuple(sorted(kandidater)))
