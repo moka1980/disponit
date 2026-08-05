@@ -148,9 +148,15 @@ class Sak:
     claim_utloper: datetime
     forsok: int
     maks_auto_forsok_snapshot: int
-    #: 'ny' = første behandling, 'fase2' = saken har en verifikasjons-
-    #: generasjon bak seg. Kommer fra claim-funksjonen, ikke fra en
-    #: utledning her — fasen er eksplisitt tilstand i databasen.
+    #: Hvilken halvdel av tofaseprotokollen saken står i. Kommer fra
+    #: STATUSEN i databasen, ikke fra generasjonstelleren:
+    #:
+    #:   'ny'    — første behandling (eller en sak uten verifikasjonsledd)
+    #:   'fase2' — `verifikasjon_klar`: et positivt bevis foreligger
+    #:   'retry' — `verifikasjon_retry_klar`: forrige runde slo feil, og
+    #:             en NY generasjon skal åpnes. Behandles som fase 1.
+    #:
+    #: Ingen utledning her — fasen er eksplisitt tilstand i databasen.
     fase: str = "ny"
     verification_generation: int = 0
 
@@ -347,6 +353,9 @@ def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
 
     if sak.fase == "fase2":
         return _fase2(conn, vakt, sak, claim_id)
+    # 'retry' faller gjennom til ordinær klassifisering. En ny generasjon
+    # er et FRISKT løp fra bunnen (v7 pkt. 3) — ikke en lapping av det
+    # forrige — så den går nøyaktig samme vei som første gang.
 
     payload = _hent_payload(vakt, sak)
     if payload is None:
@@ -506,9 +515,28 @@ def _registrer_reparasjon(conn, sak: Sak, kl, plan, rid: str, inp_hash: str,
         # supersedes FØR den nye opprettes (v2-delta pkt. 4), og har den
         # gamle allerede et oppdrag som er plukket, kan utførelse pågå —
         # da opprettes ingen ny generasjon i det hele tatt (v3 pkt. 4).
+        # Et AVSLUTTET VERIFIKASJONSOPPDRAG blokkerer ikke (PR-007).
+        #
+        # Regelen fra v3 pkt. 4 verner mot å starte en ny reparasjon oppå en
+        # forretningshandling som kan være delvis utført. Et
+        # verifikasjonsoppdrag har per definisjon INGEN forretnings-
+        # fullmakter — fase 1 kontrollerer og attesterer, den utfører aldri
+        # noe — så et `utfort` verifikasjonsoppdrag har ingen effekt å
+        # kollidere med. Det er tvert imot nøyaktig forutsetningen for
+        # `verifikasjon_retry_klar`.
+        #
+        # `plukket` blokkerer fortsatt, uansett type: da er oppdraget ute
+        # hos en modul, og to samtidige verifikasjonsrunder på samme sak er
+        # like uønsket som to samtidige utførelser.
+        #
+        # MÅLT: uten skillet ga hver eneste retry `manuell:
+        # generation_blokkert_aktiv_utforelse`, og retry-veien var
+        # uoppnåelig — andre halvdel av den samme feilen som gjorde at
+        # `fase` ble utledet fra generasjonstelleren.
         aktivt = conn.execute(
             "SELECT 1 FROM oppdrag WHERE tenant=%s AND repair_operation_id=%s"
-            "   AND status IN ('plukket','utfort')",
+            "   AND (status = 'plukket'"
+            "        OR (status = 'utfort' AND oppdragstype <> 'verifikasjon'))",
             (sak.tenant, eksisterende[0])).fetchone()
         if aktivt is not None:
             _historikk(conn, sak, "generation_blokkert_aktiv_utforelse",

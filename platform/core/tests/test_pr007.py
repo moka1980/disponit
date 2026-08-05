@@ -619,13 +619,22 @@ def _rydd_tenant(migrator, tenant):
     der modulnavnet ikke kan velges fritt: prefikset følger handlingen.
     """
     from .test_api import _rydd
-    # Køen ryddes for ALLE tenanter som har et verifikasjonsoppdrag
-    # liggende — ikke bare for den nye. Restene overlever pytest-sesjoner,
-    # så en modulnivå-liste hadde ikke holdt.
+    # BEGGE køene ryddes for ALLE tenanter som har noe liggende — ikke bare
+    # for den nye. Restene overlever pytest-sesjoner, så en modulnivå-liste
+    # hadde ikke holdt.
+    #
+    # Sakskøen er like delt som oppdragskøen: `claim_neste_sak` filtrerer
+    # på sakstype og status, aldri på tenant, og sorterer eldst først. En
+    # etterlatt `ny`-sak fra en tidligere test blir derfor claimet FØR den
+    # denne testen nettopp laget — og testen måler en annen sak enn den tror.
     migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
     andre = [r[0] for r in migrator.execute(
         "SELECT DISTINCT tenant FROM oppdrag"
         " WHERE oppdragstype='verifikasjon'").fetchall()]
+    andre += [r[0] for r in migrator.execute(
+        "SELECT DISTINCT tenant FROM unntak WHERE sakstype='normal'"
+        "   AND status IN ('ny','verifikasjon_klar','verifikasjon_retry_klar')"
+    ).fetchall()]
     migrator.execute("RESET ROLE")
     migrator.rollback()
     # ÉN tenant per `_rydd`-kall, ikke alle i én transaksjon: sletting av
@@ -1201,6 +1210,164 @@ def test_akseptert_kvittering_krever_plukket_oppdrag_og_ventende_sak(
     assert st["bevis"] == 0, st
     assert st["generasjon"] == "aktiv", st
     assert st["sak"] == "manuell" and st["oppdrag"] == "plukket", st
+
+
+# ===========================================================================
+# Codex runde 5 — riktig RAD, ikke bare riktig felt
+# ===========================================================================
+
+def _til_neste_generasjon(migrator, tenant, o, tok):
+    """Kjør saken ÉN hel runde til: negativt sett → retry → generasjon N+1.
+
+    Bare ekte overganger brukes. `unntak.verification_generation` er
+    kolonnelåst og lar seg ikke flytte med en UPDATE — og en test som
+    hadde slått av låsen for å komme dit, ville målt en tilstand
+    produksjon ikke kan havne i.
+    """
+    from db.pg import koble
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from m37 import arbeider
+
+    negativ = _verifikatorkvittering(o, verifikator="v_fordring",
+                                     status="negativ")
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            r = c.post("/v1/oppdrag/kvittering",
+                       json={"kvittering_jti": o["kvittering_jti"],
+                             "konvolutt": negativ},
+                       headers={"authorization": f"Bearer {tok}"})
+            assert r.status_code == 200 and r.json()["status"] == "negativ", r.text
+    finally:
+        app.tjeneste.pool.lukk()
+
+    # Arbeideren plukker retry-saken og åpner generasjon 2.
+    rt = koble(DSN)
+    try:
+        cid = arbeider._claim_id()
+        sak2 = arbeider.claim(rt, cid)
+        assert sak2 is not None, "retry-saken lå ikke i køen"
+        plan, _ = arbeider.planlegg(rt, sak2, cid)
+        assert plan.utfall == "verifikasjon", f"{plan.utfall}: {plan.grunn}"
+    finally:
+        rt.close()
+
+    _sett_kontekst(migrator, tenant)
+    ny_gen = migrator.execute(
+        "SELECT verification_generation FROM unntak WHERE tenant=%s AND id=%s",
+        (tenant, o["unntak_id"])).fetchone()[0]
+    migrator.rollback()
+    assert ny_gen == 2, f"saken rykket ikke videre: generasjon {ny_gen}"
+    return negativ
+
+
+def _repost(tenant, tok, o, konvolutt):
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            return c.post("/v1/oppdrag/kvittering",
+                          json={"kvittering_jti": o["kvittering_jti"],
+                                "konvolutt": konvolutt},
+                          headers={"authorization": f"Bearer {tok}"})
+    finally:
+        app.tjeneste.pool.lukk()
+
+
+@pg
+def test_P1_repost_for_eldre_generasjon_er_fortsatt_idempotent(migrator, miljo,
+                                                                token):
+    """Codex P1 runde 5, tilfelle 1.
+
+    Generasjonsraden ble valgt via sakens MUTABLE
+    `unntak.verification_generation`, og oppdraget var bare en
+    etterkontroll. Når saken hadde rykket til N+1, kunne en re-post for
+    oppdraget som tilhører N ikke lenger finne sin egen rad: den ble
+    `avvist` FØR den fikk klassifisert den committede hashen. Terminal-
+    klassifiseringen var altså bare korrekt så lenge saken tilfeldigvis
+    fortsatt pekte på samme generasjon.
+
+    Runde 4s bindingstester avslørte det ikke: de endret det signerte
+    feltet mens sakens generasjon sto stille. De beviste feltlikhet mot
+    raden som ble valgt — ikke at RIKTIG rad ble valgt.
+
+    MUTASJONEN SOM DREPER DENNE: velg `g` på
+    `vg.generation = v_sak.verification_generation` igjen.
+    """
+    t = "t-genN-" + secrets.token_hex(3)
+    _rydd_tenant(migrator, t)
+    sak, opp, o, tok = _oppsett_ingest(migrator, t)
+    negativ = _til_neste_generasjon(migrator, t, o, tok)
+
+    foer = _tilstand(migrator, t, sak, opp)
+    r = _repost(t, tok, o, negativ)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "idempotent", r.text
+
+    etter = _tilstand(migrator, t, sak, opp)
+    assert etter["konflikt"] == foer["konflikt"] == 0, (foer, etter)
+    assert etter["bevis"] == foer["bevis"], (foer, etter)
+    assert etter["sak"] == foer["sak"], (foer, etter)
+
+
+@pg
+def test_P1_motstridende_repost_for_eldre_generasjon_gir_konflikt(migrator,
+                                                                   miljo, token):
+    """Codex P1 runde 5, tilfelle 2: samme oppsett, ANNET resultat.
+
+    Et motstridende resultat for en avsluttet generasjon er evidens, ikke
+    et nytt forsøk. Det skal gi nøyaktig én konfliktrad, og ikke røre den
+    generasjonen saken har gått videre til.
+
+    MUTASJONEN SOM DREPER DENNE: den samme — velges raden via sakens
+    peker, blir dette `avvist`, og et motstridende resultat forsvinner
+    uten spor.
+    """
+    t = "t-genK-" + secrets.token_hex(3)
+    _rydd_tenant(migrator, t)
+    sak, opp, o, tok = _oppsett_ingest(migrator, t)
+    _til_neste_generasjon(migrator, t, o, tok)
+
+    # Samme oppdrag, samme signerte bindinger — annet innhold.
+    motstridende = _verifikatorkvittering(o, verifikator="v_fordring",
+                                          status="attestert")
+    foer = _tilstand(migrator, t, sak, opp)
+    r = _repost(t, tok, o, motstridende)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "kvittering_konflikt", r.text
+
+    etter = _tilstand(migrator, t, sak, opp)
+    assert etter["konflikt"] == 1, (
+        f"nøyaktig ÉN konfliktrad forventet: {foer} → {etter}")
+    assert etter["bevis"] == foer["bevis"] == 0, (foer, etter)
+
+    _sett_kontekst(migrator, t)
+    gen2 = migrator.execute(
+        "SELECT status, oppdrag_id FROM verifikasjonsgenerasjon"
+        " WHERE tenant=%s AND unntak_id=%s AND generation=2",
+        (t, sak)).fetchone()
+    sakstatus = migrator.execute(
+        "SELECT status FROM unntak WHERE tenant=%s AND id=%s",
+        (t, sak)).fetchone()[0]
+    migrator.rollback()
+    assert gen2 is not None and gen2[0] == "aktiv", gen2
+    assert gen2[1] != opp, "generasjon 2 peker på det gamle oppdraget"
+    assert sakstatus == "venter_verifikasjon", sakstatus
+
+
+def test_ett_oppdrag_hoerer_til_noeyaktig_en_generasjon():
+    """Entydigheten ingest-oppslaget hviler på, er STRUKTURELL.
+
+    Slås generasjonsraden opp på oppdraget, må det finnes én rad — ikke
+    «i praksis én». Et oppslag som kan returnere feil rad er ingen binding.
+    """
+    sql = (CORE / "db/migrations/007_r1_tofase.sql").read_text(encoding="utf-8")
+    assert "en_generasjon_per_oppdrag" in sql, (
+        "delindeksen som gjør oppdrag→generasjon entydig finnes ikke")
+    assert "vg.oppdrag_id = p_oppdrag_id FOR UPDATE" in sql, (
+        "generasjonsraden slås ikke opp på oppdraget")
 
 
 # ---------------------------------------------------------------------------

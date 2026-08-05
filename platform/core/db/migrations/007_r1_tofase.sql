@@ -242,6 +242,16 @@ CREATE TABLE IF NOT EXISTS verifikasjonsgenerasjon (
 -- Maks ÉN aktiv generasjon per (sak, vilkår) — men nye generasjoner er
 -- tillatt sekvensielt. Delindeksen ligger her og ikke på beviset, som er
 -- hele poenget med å skille tabellene.
+-- Ett oppdrag hører til NØYAKTIG én generasjon (Codex P1, runde 5).
+--
+-- Ingest slår opp generasjonsraden PÅ oppdraget. Kunne to rader delt
+-- oppdrag, ville «den frosne generasjonen» vært flertydig — og et oppslag
+-- som kan returnere feil rad er ingen binding. Delindeksen gjør entydig-
+-- heten strukturell i stedet for en antakelse om skrivemønsteret.
+CREATE UNIQUE INDEX IF NOT EXISTS en_generasjon_per_oppdrag
+    ON verifikasjonsgenerasjon (tenant, unntak_id, vilkaar, oppdrag_id)
+    WHERE oppdrag_id IS NOT NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS en_aktiv_generasjon_per_sak_vilkaar
     ON verifikasjonsgenerasjon (tenant, unntak_id, vilkaar) WHERE status = 'aktiv';
 
@@ -574,13 +584,27 @@ BEGIN
     -- LÅSEREKKEFØLGE ledd 2: generasjonsraden. Dette er serialiseringen —
     -- to samtidige kvitteringer blokkerer her, og den som committer først
     -- avgjør.
+    --
+    -- RADEN VELGES FRA OPPDRAGET, ikke fra `unntak.verification_generation`
+    -- (Codex P1, runde 5). Sakens peker er MUTABEL: går saken fra
+    -- generasjon N til N+1, ville et oppslag på den ikke lenger funnet
+    -- raden som hører til oppdraget kvitteringen faktisk gjelder. En
+    -- re-post for N returnerte da `avvist` FØR den fikk klassifisert den
+    -- committede hashen som `idempotent` eller `konflikt` — altså var
+    -- terminalklassifiseringen bare korrekt så lenge saken tilfeldigvis
+    -- fortsatt pekte på samme generasjon.
+    --
+    -- Oppdraget er FROSSET og peker på nøyaktig én generasjonsrad
+    -- (delindeksen `en_generasjon_per_oppdrag` gjør det strukturelt).
+    -- Sakens peker brukes fortsatt til statusmaskinen — men aldri til å
+    -- velge hvilken historisk binding kvitteringen gjelder.
     SELECT vg.generation, vg.status, vg.oppdrag_id, vg.krav_sett_hash,
            vg.valgt_verifikator
       INTO g FROM public.verifikasjonsgenerasjon vg
      WHERE vg.tenant = o.tenant AND vg.unntak_id = o.unntak_id
        AND vg.vilkaar = '*sett*'
-       AND vg.generation = v_sak.verification_generation FOR UPDATE;
-    IF NOT FOUND OR g.oppdrag_id IS DISTINCT FROM p_oppdrag_id THEN
+       AND vg.oppdrag_id = p_oppdrag_id FOR UPDATE;
+    IF NOT FOUND THEN
         RETURN 'avvist';
     END IF;
 
@@ -831,8 +855,8 @@ BEGIN
            -- samme. Uten dette skillet ville en tofasesak brukt opp
            -- budsjettet sitt dobbelt så fort som en enfasesak.
            forsok = u.forsok + CASE WHEN u.status = 'ny' THEN 1 ELSE 0 END
-     WHERE (u.tenant, u.id) = (
-        SELECT k.tenant, k.id
+      FROM (
+        SELECT k.tenant, k.id, k.status
           FROM public.unntak k
          WHERE k.sakstype = 'normal'
            AND k.status IN ('ny','verifikasjon_klar','verifikasjon_retry_klar')
@@ -848,12 +872,30 @@ BEGIN
          ORDER BY (CASE WHEN k.status <> 'ny' THEN 0 ELSE 1 END),
                   (CASE k.prioritet WHEN 'hoy' THEN 0 ELSE 1 END), k.ts, k.id
            FOR UPDATE SKIP LOCKED
-         LIMIT 1)
+         LIMIT 1) k
+     WHERE u.tenant = k.tenant AND u.id = k.id
     RETURNING u.tenant, u.id, u.handling, u.kategori, u.loggpost_id,
               u.claim_generation, u.claim_utloper, u.forsok,
               u.maks_auto_forsok_snapshot,
-              CASE WHEN u.verification_generation = 0 THEN 'ny'
-                   ELSE 'fase2' END,
+              -- FASEN FØLGER STATUSEN, ikke generasjonstelleren.
+              --
+              -- MÅLT: med `verification_generation = 0 => ny, ellers fase2`
+              -- rapporterte en sak i `verifikasjon_retry_klar` fase2, og
+              -- arbeideren lette etter et positivt bevis som per definisjon
+              -- ikke fantes — retryen ga `manuell: intet_positivt_bevis`.
+              -- Retry-veien kunne dermed ALDRI åpne en ny generasjon, selv
+              -- om både statusmaskinen og kommentarene sa at den skulle.
+              --
+              -- Statusen er den autoritative fasen: `verifikasjon_klar`
+              -- betyr «et bevis foreligger», `verifikasjon_retry_klar`
+              -- betyr «forrige runde slo feil, kjør en ny». Telleren sier
+              -- bare hvor mange runder som har vært.
+              --
+              -- `k` er raden slik den var FØR UPDATE-en; `u` ville gitt
+              -- `under_behandling` for alle tre.
+              CASE k.status WHEN 'verifikasjon_klar' THEN 'fase2'
+                            WHEN 'verifikasjon_retry_klar' THEN 'retry'
+                            ELSE 'ny' END,
               u.verification_generation;
 END $$;
 REVOKE ALL ON FUNCTION claim_neste_sak(TEXT, INT) FROM PUBLIC;
