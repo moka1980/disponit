@@ -1,0 +1,68 @@
+{
+  "krav_id": "feilinjisering-m01-v1",
+  "ts": "2026-08-05T07:41:09.883326+00:00",
+  "bestatt": true,
+  "oppsett": {
+    "injisert_antall": 24,
+    "tenant": "t-fi-725c5f",
+    "api_pid": 837938,
+    "m37_pid": 837942,
+    "base": "disponit_test",
+    "merkelapp": "feilinjisering-m01"
+  },
+  "maalt": {
+    "kategorier_dekket": [
+      "manglende_data",
+      "over_grense",
+      "regelkonflikt",
+      "ukjent"
+    ],
+    "terminal_antall": 24,
+    "terminal_andel": 1.0,
+    "reparerbare": 12,
+    "lost_antall": 12,
+    "lost_andel": 1.0,
+    "ikke_reparerbare": 12,
+    "manuell_antall": 12,
+    "manuell_andel": 1.0,
+    "varighet_sek": 10.059,
+    "p95_api_under_last_ms": 64.571,
+    "lease_tap_re_claim": 2
+  },
+  "etterkontroll": {
+    "historikk_komplett": true,
+    "klartekst_payload_funnet": false,
+    "canary_verdier": [
+      "KANARIFUGL-520e4780c647-rep-0",
+      "KANARIFUGL-520e4780c647-rep-1",
+      "KANARIFUGL-520e4780c647-rep-2",
+      "KANARIFUGL-520e4780c647-rep-3",
+      "KANARIFUGL-520e4780c647-rep-4",
+      "KANARIFUGL-520e4780c647-rep-5",
+      "KANARIFUGL-520e4780c647-rep-6",
+      "KANARIFUGL-520e4780c647-rep-7",
+      "KANARIFUGL-520e4780c647-rep-8",
+      "KANARIFUGL-520e4780c647-rep-9",
+      "KANARIFUGL-520e4780c647-rep-10",
+      "KANARIFUGL-520e4780c647-rep-11",
+      "KANARIFUGL-520e4780c647-grense-0",
+      "KANARIFUGL-520e4780c647-grense-1",
+      "KANARIFUGL-520e4780c647-grense-2",
+      "KANARIFUGL-520e4780c647-grense-3",
+      "KANARIFUGL-520e4780c647-stopp-0",
+      "KANARIFUGL-520e4780c647-stopp-1",
+      "KANARIFUGL-520e4780c647-stopp-2",
+      "KANARIFUGL-520e4780c647-stopp-3",
+      "KANARIFUGL-520e4780c647-ukjent-0",
+      "KANARIFUGL-520e4780c647-ukjent-1",
+      "KANARIFUGL-520e4780c647-ukjent-2",
+      "KANARIFUGL-520e4780c647-ukjent-3"
+    ],
+    "eiermodul_kun_api": true,
+    "eiermodul_db_skrivinger": 0,
+    "status_fordeling": {
+      "løst": 12,
+      "manuell": 12
+    }
+  }
+}

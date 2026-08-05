@@ -36,8 +36,15 @@ def test_m01_har_strukturerte_punkter(m01):
     assert all(isinstance(p, dict) and "status" in p
                for p in sjekkliste.values()), \
         "et punkt står fortsatt i det gamle flate formatet"
-    assert sjekkliste["feilinjisering_til_unntakskø"] == {
-        "status": "blokkert", "blokkert_av": "m37"}
+    # `feilinjisering_til_unntakskø` gikk fra `blokkert_av: m37` til `ja`
+    # 2026-08-05, da M-37 fantes OG kjøringen var gjort på staging. Testen
+    # pinner den nye formen: et `ja` UTEN krav_id og artefakt er nettopp
+    # det manifestfeltet-som-eget-bevis skjemaet finnes for å hindre.
+    fi = sjekkliste["feilinjisering_til_unntakskø"]
+    assert fi["status"] == "ja", fi
+    assert fi["krav_id"] == "feilinjisering-m01-v1"
+    assert fi["artefakt"] and fi["artefakt_sha256"]
+    assert "blokkert_av" not in fi, "punktet er ja og blokkert samtidig"
     assert sjekkliste["ytelse_bestatt"]["krav_id"] == "perf-m01-v1"
 
 
@@ -96,17 +103,28 @@ def test_manglende_punkt_avvises(m01):
 
 
 def test_uavklarte_punkter_og_aktiv_uten_bevis(m01):
-    # `ytelse_bestatt` gikk til `ja` 2026-08-02 da lasttesten faktisk var
-    # kjørt på staging og artefaktet fantes. Settet krymper derfor med ett
-    # punkt — porten selv står uendret: et `ja` med krav_id uten artefakt
-    # avvises fortsatt av skjemaet, og `aktiv` med uavklarte punkter av
-    # testen nedenfor.
-    assert set(uavklarte_punkter(m01)) == {
-        "feilinjisering_til_unntakskø", "rollback_testet"}
-    # m01 er `under_utvikling`, ikke `aktiv` — da er uavklarte punkter greit.
+    # Settet er TOMT fra 2026-08-05: `ytelse_bestatt` gikk til `ja`
+    # 2026-08-02, og `feilinjisering_til_unntakskø` og `rollback_testet`
+    # samme dag i august — hver gang fordi kjøringen faktisk var gjort på
+    # staging og artefaktet fantes.
+    #
+    # Et tomt sett er den STRENGESTE varianten av denne testen, ikke den
+    # svakeste: nå faller den hvis ETT punkt går tilbake til nei eller
+    # blokkert, og porten under er ikke lenger dekket av at m01 uansett
+    # hadde uavklarte punkter. Derfor står de to kontrollene på hver sin
+    # kopi: `aktiv_uten_bevis` måles med et innsatt uavklart punkt, slik at
+    # den fortsatt kan feile.
+    assert set(uavklarte_punkter(m01)) == set()
     assert aktiv_uten_bevis(m01) == []
     aktiv = copy.deepcopy(m01)
     aktiv["status"] = "aktiv"
+    # Alle punktene er `ja` nå, så en aktiv m01 er lovlig — og da måler
+    # ikke porten noe. Ett punkt settes derfor tilbake til `nei`: det er
+    # den tilstanden regelen finnes for.
+    assert aktiv_uten_bevis(aktiv) == [], (
+        "alle sjekklistepunkter er ja — en aktiv modul skal da godtas")
+    aktiv["staging_sjekkliste"]["rollback_testet"] = {
+        "status": "nei", "krav_id": "rollback-m01-v1"}
     assert aktiv_uten_bevis(aktiv), \
         "en modul kan settes aktiv med uavklarte sjekklistepunkter"
 
@@ -697,3 +715,120 @@ def test_alle_objekter_i_artefaktskjemaet_er_lukket():
 
     gaa(skjema)
     assert aapne == [], f"objekter uten additionalProperties:false: {aapne}"
+
+
+# ===========================================================================
+# Codex runde 6 — rollbackporten regner selv
+# ===========================================================================
+
+ROLLBACKARTEFAKT = (REPOROT / "deploy/staging/artefakter"
+                    / "rollback-m01-v1-20260805T081921.json")
+
+
+def _rollback(**overstyr):
+    """Det EKTE artefaktet fra staging, med én verdi endret om gangen.
+
+    Testene bygger ikke sin egen JSON: da ville de målt en oppdiktet form,
+    og den dagen artefaktformen endrer seg ville de fortsatt bestått. Her
+    er utgangspunktet nøyaktig fila manifestet peker på.
+    """
+    art = json.loads(ROLLBACKARTEFAKT.read_text(encoding="utf-8"))
+    for sti, verdi in overstyr.items():
+        blokk, felt = sti.split(".", 1)
+        art[blokk][felt] = verdi
+    return art
+
+
+def test_ekte_rollbackartefakt_bestaar_porten():
+    """Kontrollen til alle mutasjonene under.
+
+    Uten denne ville de bestått også hvis porten avviste ALT — «endringen
+    gjør artefaktet rødt» er trivielt sant når utgangspunktet er rødt.
+    """
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _rollback()
+    assert valider_artefaktformat(art, "rollback-m01-v1") == []
+    assert _sjekk_grenser("rollback-m01-v1", art) == []
+
+
+def test_flere_forespoersler_enn_avvisninger_avvises():
+    """Én forespørsel mer i nevneren, resten urørt.
+
+    Andelen står fortsatt på 1.0, men n/(n+1) er ikke 1.0. Leste porten
+    bare det oppgitte tallet, ville den ikke sett forskjell.
+
+    Tallet UTLEDES av artefaktet, ikke hardkodes: første versjon skrev 114
+    fast, og da et nytt artefakt kom med nøyaktig 114 forespørsler ble
+    mutasjonen en no-op og testen bestod uten å måle noe. En negativ test
+    som kan bli identisk med utgangspunktet, tester ingenting.
+    """
+    from manifestskjema import _sjekk_grenser
+    n = _rollback()["oppsett"]["requests_under_rollback"]
+    feil = _sjekk_grenser("rollback-m01-v1", _rollback(
+        **{"oppsett.requests_under_rollback": n + 1}))
+    assert any("stemmer ikke med" in f for f in feil), feil
+
+
+def test_faerre_avvisninger_enn_oppgitt_andel_avvises():
+    """Én avvisning mindre, andel fortsatt 1.0. Samme utledning som over."""
+    from manifestskjema import _sjekk_grenser
+    a = _rollback()["maalt"]["avviste_requests"]
+    feil = _sjekk_grenser("rollback-m01-v1", _rollback(
+        **{"maalt.avviste_requests": a - 1}))
+    assert any("stemmer ikke med" in f for f in feil), feil
+
+
+def test_null_forespoersler_er_ikke_bestaatt_rollback():
+    """0/0 er ikke 1.0.
+
+    En rollback uten en eneste forespørsel i av-vinduet beviser ikke at
+    forespørsler blir avvist — den beviser at ingen ble prøvd. Samme regel
+    som `reparerbare = 0` i feilinjiseringen.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("rollback-m01-v1", _rollback(
+        **{"oppsett.requests_under_rollback": 0, "maalt.avviste_requests": 0}))
+    assert any("requests_under_rollback=0" in f for f in feil), feil
+
+
+def test_annen_avvisningskode_beviser_ikke_kontrakten():
+    """Kontrakten er 503 `modul_inaktiv`, ikke «en eller annen feil».
+
+    Feltet var en fri streng i skjemaet og ble ikke lest av gaten. Et
+    artefakt kunne dermed påstå `annen_feil` og likevel bli lest som bevis
+    for at deaktiveringen gir det DEFINERTE svaret.
+    """
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _rollback(**{"maalt.avvisningskode": "annen_feil"})
+    assert any("avvisningskode" in f
+               for f in _sjekk_grenser("rollback-m01-v1", art))
+    # Låst BEGGE steder: skjemaet og gaten. En kontrakt som bare håndheves
+    # ett sted er håndhevet i ett tilfelle.
+    assert valider_artefaktformat(art, "rollback-m01-v1")
+
+
+def test_manglende_avvisningskode_avvises():
+    """Feltet er påkrevd nå. Var det valgfritt, kunne det utelates i stedet
+    for å endres — samme bypass, én tast mindre."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = json.loads(ROLLBACKARTEFAKT.read_text(encoding="utf-8"))
+    del art["maalt"]["avvisningskode"]
+    assert valider_artefaktformat(art, "rollback-m01-v1")
+    assert _sjekk_grenser("rollback-m01-v1", art)
+
+
+def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
+    """Selens egen nevner, målt statisk.
+
+    Den var `med_svar` — de som fikk et HTTP-svar. En lukket forbindelse
+    forsvant da ut av regnestykket i stedet for å telle som feil, og
+    andelen kunne bli 1,0 mens halve trafikken falt på gulvet.
+
+    MUTASJONEN SOM DREPER DENNE: sett nevneren tilbake til `med_svar`.
+    """
+    sele = (REPOROT / "deploy/staging/rollback-m01.py").read_text(
+        encoding="utf-8")
+    assert "andel = (len(korrekt) / len(i_av)) if i_av else 0.0" in sele, (
+        "rollbackselen regner andelen over noe annet enn alle forespørslene"
+        " i av-vinduet")
+    assert "len(korrekt) / len(med_svar)" not in sele

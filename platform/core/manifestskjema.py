@@ -619,13 +619,59 @@ def _grenser_rollback(grense: dict, art: dict) -> list[str]:
         elif verdi > tak:
             feil.append(f"{felt}={verdi}, krever <= {tak}")
 
-    andel, melding = _andel(m, "paagaaende_requests_korrekt_avvist",
-                            "paagaaende_requests_korrekt_avvist")
-    if melding:
-        feil.append(melding)
-    elif andel < grense["krev_avvist_andel"]:
-        feil.append(f"paagaaende_requests_korrekt_avvist={andel:g},"
-                    f" krever >= {grense['krev_avvist_andel']:g}")
+    # ANDELEN REGNES UT PÅ NYTT FRA RÅTALLENE (Codex P1, runde 6).
+    #
+    # Porten leste tidligere bare det ferdigregnede tallet. Da besto blant
+    # annet disse umulige artefaktene:
+    #   requests_under_rollback=113, avviste_requests=1,  andel=1.0
+    #   requests_under_rollback=0,   avviste_requests=0,  andel=1.0
+    # Begge er «>= 1.0» og ingen av dem kan oppstå i en ekte kjøring.
+    # Samme prinsipp som `bestatt` fra PR #8: når råtallene ligger i
+    # artefaktet, er produsentens konklusjon ikke beviset.
+    oppsett = art.get("oppsett")
+    n, f1 = _teller(oppsett, "oppsett.requests_under_rollback",
+                    "requests_under_rollback")
+    avvist, f2 = _teller(m, "avviste_requests", "avviste_requests")
+    andel, f3 = _andel(m, "paagaaende_requests_korrekt_avvist",
+                       "paagaaende_requests_korrekt_avvist")
+    for melding in (f1, f2, f3):
+        if melding:
+            feil.append(melding)
+    if not (f1 or f2 or f3):
+        if n == 0:
+            # 0/0 er ikke 1.0. En rollback uten en eneste forespørsel i
+            # av-vinduet beviser ikke at forespørsler blir avvist — den
+            # beviser at ingen ble prøvd. Samme regel som for
+            # `reparerbare = 0` i feilinjiseringen.
+            feil.append("requests_under_rollback=0 — en rollback uten"
+                        " trafikk i av-vinduet beviser ingen avvisning")
+        elif avvist > n:
+            feil.append(f"avviste_requests={avvist} >"
+                        f" requests_under_rollback={n} — flere avvisninger"
+                        " enn forespørsler")
+        else:
+            # Toleransen er halvparten av siste siffer produsenten runder
+            # til (6 desimaler). Eksakt likhet ville gjort 1/3 umulig å
+            # rapportere; en større slingring ville gjort kontrollen
+            # meningsløs.
+            faktisk = avvist / n
+            if abs(andel - faktisk) > 5e-7:
+                feil.append(
+                    f"paagaaende_requests_korrekt_avvist={andel:g} stemmer"
+                    f" ikke med {avvist}/{n}={faktisk:.6f} — andelen er"
+                    " regnet ut, ikke lest")
+            elif faktisk < grense["krev_avvist_andel"]:
+                feil.append(f"paagaaende_requests_korrekt_avvist={faktisk:g},"
+                            f" krever >= {grense['krev_avvist_andel']:g}")
+
+    # AVVISNINGSKODEN er en del av kontrakten, ikke en fritekstetikett.
+    # Skjemaet låser den også (`const`), men gaten kontrollerer den selv:
+    # `_sjekk_grenser` kalles også uten formatvalidering, og en kontrakt som
+    # bare håndheves ett sted er håndhevet i ett tilfelle.
+    if m.get("avvisningskode") != "modul_inaktiv":
+        feil.append(f"avvisningskode={m.get('avvisningskode')!r} —"
+                    " kontrakten er 503 `modul_inaktiv`, og et artefakt kan"
+                    " ikke bevise den med en annen kode")
 
     if k.get("andre_tabeller_uendret") is not True:
         feil.append("etterkontroll: andre_tabeller_uendret er ikke true")

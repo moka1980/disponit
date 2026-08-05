@@ -41,10 +41,34 @@ staging_sjekkliste:
     # (`feilinjisering-m01-v1`), slik at den som gjør kjøringen har en fasit
     # før arbeidet, ikke etter.
     #
-    # Fortsatt `blokkert` og ikke `ja`: koden finnes, målingen gjør det
-    # ikke. Et manifestfelt er aldri selv beviset.
-    status: blokkert
-    blokkert_av: m37
+    # MÅLT på staging 2026-08-05, etter at PR-007 (R1 som tofaseprotokoll)
+    # var merget som `de1c05a`. Selen er deploy/staging/feilinjisering-m01.py:
+    # 24 ekte feil injisert gjennom det ordinære API-et over FIRE kategorier
+    # (manglende_data, over_grense, regelkonflikt, ukjent), behandlet av
+    # M-37 som EGEN PROSESS, med syntetisk verifikator og eiermodul som to
+    # ytterligere prosesser. Ingen unntaksrad er skrevet av selen — sakene
+    # oppstår fordi motoren blokkerer dem.
+    #
+    # Resultat: 24/24 terminale, 12/12 reparerbare LØST, 12/12 ikke-
+    # reparerbare til manuell, p95 64,6 ms under 400 samtidige beslutninger
+    # MENS arbeideren behandlet, 2 lease-tap med re-claim, og null treff på
+    # de 24 kanarifuglene — verken i databasen eller i arbeiderloggen.
+    #
+    # FIRE kjøringer: p95 64,6 / 57,0 / 60,2 / 51,5 ms. Artefaktet som
+    # ligger her er den DÅRLIGSTE, ikke den beste — evidens skal ikke plukke
+    # det peneste tallet (samme regel som for ytelsespunktet over).
+    #
+    # Første kjøring var RØD og er verdt å huske: selen signerte
+    # lastforespørslene med en hardkodet nøkkel som ikke fantes i stagings
+    # nøkkelregister. Hver forespørsel ble da en
+    # `attestasjon_signatur_ugyldig`-SIKKERHETSSAK, 313 slike fløt inn i køen
+    # ved siden av de 24 injiserte, og terminalandelen sto på 0,5. Feilen lå
+    # i selen, ikke i M-37 — men den ville sett ut som en produktfeil for
+    # den som bare leste tallet.
+    status: ja
+    krav_id: feilinjisering-m01-v1
+    artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
+    artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
   ytelse_bestatt:
     # Grensen ER definert og målbar (perf-m01-v1): 100 beslutninger/sekund,
     # 20 samtidige, p95 < 150 ms, null feil, 1:1 mellom beslutning og
@@ -73,9 +97,31 @@ staging_sjekkliste:
     artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
     artefakt_sha256: 12e3ec3e5d3ad931b0ff27ee71ef0b9ecebf7542e022d0a6a62a90caed9b8cc4
   rollback_testet:
-    # Splittet per review D2: den TEKNISKE deaktiveringen via registeret kan
-    # bevises nå og er derfor `nei` (ikke gjort ennå), ikke `blokkert`.
-    # Ende-til-ende-varianten dekkes av feilinjiseringspunktet over, som ER
-    # blokkert av m37.
-    status: nei
+    # Splittet per review D2: den TEKNISKE deaktiveringen via registeret er
+    # den som måles her. Ende-til-ende-varianten dekkes av
+    # feilinjiseringspunktet over.
+    #
+    # MÅLT på staging 2026-08-05 med deploy/staging/rollback-m01.py:
+    # modulen deaktivert MENS trafikk pågikk, 114 forespørsler sendt i
+    # vinduet der modulen beviselig var av — ALLE fikk 503 `modul_inaktiv`,
+    # ingen 500 og ingen hengende forbindelse. Null tapte loggposter, null
+    # halvferdige transaksjoner, og radtellingen for de åtte tabellene var
+    # identisk ved starten og slutten av av-vinduet.
+    #
+    # Deaktivering effektiv etter 0,598 s, reaktivering etter 0,593 s (tak
+    # 5,0 s begge veier). TRE kjøringer med den GJELDENDE selen (etter at
+    # nevneren ble rettet til alle forespørsler i av-vinduet):
+    # 0,482/0,579, 0,471/0,542, 0,598/0,593 — artefaktet her er kjøringen
+    # med de STØRSTE tallene, ikke det peneste snittet. 114 forespørsler i
+    # av-vinduet, alle avvist med 503 `modul_inaktiv`.
+    #
+    # Første kjøring ga 0,96 og var min egen målefeil: den merket
+    # forespørsler som «av» i det øyeblikket kommandoen ble gitt. De som
+    # rakk den gamle prosessen før den var nede fikk et normalt 200 — riktig
+    # svar fra en modul som fortsatt var på. Andelen regnes nå kun over
+    # perioden der modulen beviselig var av; overgangens kostnad står i
+    # `deaktivering_effektiv_s`, som inkluderer hele restartvinduet.
+    status: ja
     krav_id: rollback-m01-v1
+    artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
+    artefakt_sha256: 0e973fb1d227b450b38ac8e84bde1e96b41b50373bd92893f55cc563c36eb15e
