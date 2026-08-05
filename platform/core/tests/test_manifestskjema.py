@@ -115,18 +115,31 @@ def test_uavklarte_punkter_og_aktiv_uten_bevis(m01):
     # kopi: `aktiv_uten_bevis` måles med et innsatt uavklart punkt, slik at
     # den fortsatt kan feile.
     assert set(uavklarte_punkter(m01)) == set()
+    assert m01["status"] == "aktiv", (
+        "m01 ble aktivert 2026-08-05 — går den tilbake, skal denne falle")
     assert aktiv_uten_bevis(m01) == []
-    aktiv = copy.deepcopy(m01)
-    aktiv["status"] = "aktiv"
-    # Alle punktene er `ja` nå, så en aktiv m01 er lovlig — og da måler
-    # ikke porten noe. Ett punkt settes derfor tilbake til `nei`: det er
-    # den tilstanden regelen finnes for.
-    assert aktiv_uten_bevis(aktiv) == [], (
-        "alle sjekklistepunkter er ja — en aktiv modul skal da godtas")
-    aktiv["staging_sjekkliste"]["rollback_testet"] = {
+
+    # PORTEN MÅ FORTSATT KUNNE FEILE.
+    #
+    # Testen satte tidligere `status = "aktiv"` på en kopi. Da m01 SELV ble
+    # aktiv, ble den linjen en no-op, og det som skulle være den negative
+    # halvdelen målte ingenting. Nøyaktig samme felle som den hardkodede
+    # `114`-en i rollbacktestene: en mutasjon som kan bli lik utgangspunktet
+    # tester ikke noe. Derfor settes BEGGE feltene eksplisitt her, uansett
+    # hva manifestet måtte stå på i framtiden.
+    negativ = copy.deepcopy(m01)
+    negativ["status"] = "aktiv"
+    negativ["staging_sjekkliste"]["rollback_testet"] = {
         "status": "nei", "krav_id": "rollback-m01-v1"}
-    assert aktiv_uten_bevis(aktiv), \
+    assert aktiv_uten_bevis(negativ), \
         "en modul kan settes aktiv med uavklarte sjekklistepunkter"
+
+    # Og den positive kontrollen, like eksplisitt: en modul som er aktiv
+    # MED alle punkter ja skal godtas.
+    positiv = copy.deepcopy(m01)
+    positiv["status"] = "aktiv"
+    assert aktiv_uten_bevis(positiv) == [], (
+        "alle sjekklistepunkter er ja — en aktiv modul skal da godtas")
 
 
 def test_registeret_leser_fortsatt_manifestet(m01):
@@ -134,9 +147,15 @@ def test_registeret_leser_fortsatt_manifestet(m01):
     leser id/status/avhengigheter og bryr seg ikke om sjekklisten."""
     from registry import les_manifester, valider
     moduler = les_manifester(MODULROT)
-    assert any(m.id == "m01_policy" and m.status == "under_utvikling"
+    assert any(m.id == "m01_policy" and m.status == "aktiv"
                for m in moduler)
-    assert valider(moduler).feil == []
+    # `valider` er streng FØRST når en modul er aktiv: den kontrollerer at
+    # hver avhengighet finnes og selv er aktiv. m01 er roten og har ingen,
+    # så listen er tom — men fra og med nå er m01 faktisk INNE i den
+    # kontrollen, og ikke lenger hoppet over på `status != aktiv`.
+    status = valider(moduler)
+    assert status.feil == [], status.feil
+    assert "m01_policy" in status.aktive, status
 
 
 def test_rategrensen_star_ikke_i_veien_for_ytelsesporten():
@@ -832,3 +851,69 @@ def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
         "rollbackselen regner andelen over noe annet enn alle forespørslene"
         " i av-vinduet")
     assert "len(korrekt) / len(med_svar)" not in sele
+
+
+# ===========================================================================
+# To akser: godkjent (`status`) og utrullet (`driftstilstand`)
+# ===========================================================================
+
+def test_m01_er_godkjent_men_ikke_i_drift(m01):
+    """Arkitektbeslutningen 2026-08-05, pinnet på begge akser.
+
+    Begge feltene leses EKSPLISITT. Å utlede det ene av det andre ville
+    gjort testen blind for nettopp den forvekslingen feltet ble innført for
+    å hindre.
+    """
+    assert m01["status"] == "aktiv"
+    assert m01["driftstilstand"] == "ikke_i_drift", (
+        "m01 kjører ingen steder: staging har ingen installerte units, og"
+        " det finnes ikke engang en unit for API-et")
+
+
+def test_registeret_skiller_godkjent_fra_utrullet(m01):
+    """`aktive` og `i_drift` er to lister, ikke to navn på det samme."""
+    from registry import les_manifester, valider
+    st = valider(les_manifester(MODULROT))
+    assert st.aktive == ["m01_policy"], st
+    assert st.i_drift == [], (
+        f"registeret påstår at noe kjører: {st.i_drift}")
+    assert st.feil == [], st.feil
+
+
+def test_drift_uten_aktiv_status_er_en_registerfeil():
+    """Den nye invarianten: en modul kan ikke kjøre uten å være godkjent.
+
+    Uten denne kontrollen ville `driftstilstand` vært en etikett uten
+    konsekvens — og et felt ingen håndhever er dekorasjon, ikke en akse.
+    Samme lærdom som `avvisningskode` i rollbackporten.
+
+    MUTASJONEN SOM DREPER DENNE: fjern kontrollen i `registry.valider`.
+    """
+    from registry import Modul, valider
+    m = Modul(id="m99", navn="Test", versjon="0.1.0",
+              status="under_utvikling", driftstilstand="produksjon")
+    feil = valider([m]).feil
+    assert any("drift krever aktiv" in f for f in feil), feil
+
+    # Kontrollen: samme modul, godkjent — da er drift lovlig.
+    m2 = Modul(id="m99", navn="Test", versjon="0.1.0",
+               status="aktiv", driftstilstand="produksjon")
+    assert valider([m2]).feil == []
+
+
+def test_driftstilstand_er_paakrevd_i_manifestskjemaet(m01):
+    """Utelates feltet, later manifestet som spørsmålet ikke finnes.
+
+    Var det valgfritt, kunne et nytt manifest droppe det i stedet for å
+    svare — samme bypass som en valgfri `avvisningskode`, én tast mindre.
+    """
+    m = copy.deepcopy(m01)
+    del m["driftstilstand"]
+    assert valider_manifest(m), "skjemaet godtok et manifest uten driftstilstand"
+
+
+def test_ukjent_driftstilstand_avvises(m01):
+    """Lukket enum. «snart» og «nesten» er ikke driftstilstander."""
+    m = copy.deepcopy(m01)
+    m["driftstilstand"] = "snart"
+    assert valider_manifest(m)
