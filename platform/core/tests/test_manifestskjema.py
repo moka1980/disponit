@@ -851,3 +851,69 @@ def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
         "rollbackselen regner andelen over noe annet enn alle forespørslene"
         " i av-vinduet")
     assert "len(korrekt) / len(med_svar)" not in sele
+
+
+# ===========================================================================
+# To akser: godkjent (`status`) og utrullet (`driftstilstand`)
+# ===========================================================================
+
+def test_m01_er_godkjent_men_ikke_i_drift(m01):
+    """Arkitektbeslutningen 2026-08-05, pinnet på begge akser.
+
+    Begge feltene leses EKSPLISITT. Å utlede det ene av det andre ville
+    gjort testen blind for nettopp den forvekslingen feltet ble innført for
+    å hindre.
+    """
+    assert m01["status"] == "aktiv"
+    assert m01["driftstilstand"] == "ikke_i_drift", (
+        "m01 kjører ingen steder: staging har ingen installerte units, og"
+        " det finnes ikke engang en unit for API-et")
+
+
+def test_registeret_skiller_godkjent_fra_utrullet(m01):
+    """`aktive` og `i_drift` er to lister, ikke to navn på det samme."""
+    from registry import les_manifester, valider
+    st = valider(les_manifester(MODULROT))
+    assert st.aktive == ["m01_policy"], st
+    assert st.i_drift == [], (
+        f"registeret påstår at noe kjører: {st.i_drift}")
+    assert st.feil == [], st.feil
+
+
+def test_drift_uten_aktiv_status_er_en_registerfeil():
+    """Den nye invarianten: en modul kan ikke kjøre uten å være godkjent.
+
+    Uten denne kontrollen ville `driftstilstand` vært en etikett uten
+    konsekvens — og et felt ingen håndhever er dekorasjon, ikke en akse.
+    Samme lærdom som `avvisningskode` i rollbackporten.
+
+    MUTASJONEN SOM DREPER DENNE: fjern kontrollen i `registry.valider`.
+    """
+    from registry import Modul, valider
+    m = Modul(id="m99", navn="Test", versjon="0.1.0",
+              status="under_utvikling", driftstilstand="produksjon")
+    feil = valider([m]).feil
+    assert any("drift krever aktiv" in f for f in feil), feil
+
+    # Kontrollen: samme modul, godkjent — da er drift lovlig.
+    m2 = Modul(id="m99", navn="Test", versjon="0.1.0",
+               status="aktiv", driftstilstand="produksjon")
+    assert valider([m2]).feil == []
+
+
+def test_driftstilstand_er_paakrevd_i_manifestskjemaet(m01):
+    """Utelates feltet, later manifestet som spørsmålet ikke finnes.
+
+    Var det valgfritt, kunne et nytt manifest droppe det i stedet for å
+    svare — samme bypass som en valgfri `avvisningskode`, én tast mindre.
+    """
+    m = copy.deepcopy(m01)
+    del m["driftstilstand"]
+    assert valider_manifest(m), "skjemaet godtok et manifest uten driftstilstand"
+
+
+def test_ukjent_driftstilstand_avvises(m01):
+    """Lukket enum. «snart» og «nesten» er ikke driftstilstander."""
+    m = copy.deepcopy(m01)
+    m["driftstilstand"] = "snart"
+    assert valider_manifest(m)

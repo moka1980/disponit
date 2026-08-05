@@ -4,6 +4,17 @@ id: m01_policy
 navn: Policy- og fullmaktsmotor (M-1)
 versjon: 0.1.0
 status: aktiv                  # aktiv | inaktiv | under_utvikling
+# TO AKSER, ikke ett tvetydig ord (arkitektbeslutning 2026-08-05).
+#
+# `status` sier om modulen er GODKJENT: sjekklisten er bestått og den er
+# klarert for bruk. `driftstilstand` sier hvor den FAKTISK kjører. Uten det
+# andre feltet leses `aktiv` som «ute hos kunder», og det er noe helt annet
+# enn det sjekklisten har bevist.
+#
+# M-1 er godkjent og kjører ingen steder: staging har ingen installerte
+# units, og det finnes ikke engang en unit for API-et. `registry.valider`
+# nekter motsatt tilstand — drift uten aktiv status er en feil.
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 # AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
 #
 # Grunnlaget er MASKINVERIFISERT, ikke et flagg noen satte: alle punktene i

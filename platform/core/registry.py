@@ -20,6 +20,11 @@ class Modul:
     navn: str
     versjon: str
     status: str                      # aktiv | inaktiv | under_utvikling
+    #: HVOR modulen kjører. Egen akse fra `status`, som sier om den er
+    #: GODKJENT. `aktiv` + `ikke_i_drift` er den vanligste tilstanden rett
+    #: etter aksept — og uten dette feltet leses `aktiv` som «ute hos
+    #: kunder», som er noe helt annet.
+    driftstilstand: str = "ikke_i_drift"
     avhengigheter: list[str] = field(default_factory=list)
     sti: Path | None = None
 
@@ -28,6 +33,9 @@ class Modul:
 class RegisterStatus:
     aktive: list[str]
     inaktive: list[str]
+    #: Modulene som faktisk kjører et sted. Skilt fra `aktive` med vilje:
+    #: en liste over godkjente moduler svarer ikke på hva som er utrullet.
+    i_drift: list[str]
     feil: list[str]                  # tomme == konsistent register
 
 
@@ -42,6 +50,7 @@ def les_manifester(modul_rot: Path) -> list[Modul]:
             navn=str(data.get("navn", "")),
             versjon=str(data.get("versjon", "0")),
             status=str(data.get("status", "under_utvikling")),
+            driftstilstand=str(data.get("driftstilstand", "ikke_i_drift")),
             avhengigheter=[str(a) for a in (data.get("avhengigheter") or [])],
             sti=manifest.parent,
         ))
@@ -59,6 +68,13 @@ def valider(moduler: list[Modul]) -> RegisterStatus:
                 feil.append(f"duplisert modul-id '{m.id}'")
             sett.add(m.id)
     for m in moduler:
+        # DRIFT KREVER AKSEPT. En modul som kjører et sted uten å ha bestått
+        # sin egen sjekkliste er nøyaktig den tilstanden hele
+        # manifestrutinen finnes for å hindre — og uten denne kontrollen
+        # ville det nye feltet vært en etikett uten konsekvens.
+        if m.driftstilstand != "ikke_i_drift" and m.status != "aktiv":
+            feil.append(f"'{m.id}' har driftstilstand '{m.driftstilstand}'"
+                        f" men status '{m.status}' — drift krever aktiv")
         if m.status != "aktiv":
             continue
         for dep in m.avhengigheter:
@@ -70,5 +86,7 @@ def valider(moduler: list[Modul]) -> RegisterStatus:
     return RegisterStatus(
         aktive=sorted(m.id for m in moduler if m.status == "aktiv"),
         inaktive=sorted(m.id for m in moduler if m.status != "aktiv"),
+        i_drift=sorted(m.id for m in moduler
+                       if m.driftstilstand != "ikke_i_drift"),
         feil=feil,
     )

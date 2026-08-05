@@ -13,7 +13,8 @@
     "avhengigheter",
     "kjerne",
     "i18n_prefiks",
-    "staging_sjekkliste"
+    "staging_sjekkliste",
+    "driftstilstand"
   ],
   "properties": {
     "id": {
@@ -80,6 +81,14 @@
           "$ref": "#/$defs/punkt"
         }
       }
+    },
+    "driftstilstand": {
+      "enum": [
+        "ikke_i_drift",
+        "staging",
+        "produksjon"
+      ],
+      "description": "HVOR modulen faktisk kjører. Egen akse fra `status`, som sier om modulen er GODKJENT (bestått sjekkliste). En modul kan være `aktiv` og `ikke_i_drift` samtidig — det er den vanligste tilstanden rett etter aksept, og uten dette feltet leses `aktiv` som «ute hos kunder». Påkrevd: en modul som ikke sier hvor den kjører, later som spørsmålet ikke finnes."
     }
   },
   "$defs": {
