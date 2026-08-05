@@ -96,6 +96,11 @@ staging_sjekkliste:
     # den som bare leste tallet.
     status: ja
     krav_id: feilinjisering-m01-v1
+    notat: >-
+      Målingen som beviser punktet for M-1: 24/24 injiserte feil endte
+      terminalt, og 12/12 ikke-reparerbare gikk til manuell kø. Det er
+      policyportens routing som er målt — at det motoren blokkerer, faktisk
+      havner i unntakskøen og ikke forsvinner.
     artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
     artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
   ytelse_bestatt:
@@ -123,6 +128,10 @@ staging_sjekkliste:
     # kjøring brukte 55 % av budsjettet og hadde p99 på 207 ms.
     status: ja
     krav_id: perf-m01-v1
+    notat: >-
+      Målingen som beviser punktet for M-1: p95 82,3 ms mot kravet 150, over
+      6 000 forespørsler @ 100/s med 20 samtidige — altså beslutningsveiens
+      egen svartid under den lasten kontrakten spesifiserer.
     artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
     artefakt_sha256: 12e3ec3e5d3ad931b0ff27ee71ef0b9ecebf7542e022d0a6a62a90caed9b8cc4
   rollback_testet:
@@ -152,5 +161,10 @@ staging_sjekkliste:
     # `deaktivering_effektiv_s`, som inkluderer hele restartvinduet.
     status: ja
     krav_id: rollback-m01-v1
+    notat: >-
+      Målingen som beviser punktet for M-1: 114/114 forespørsler i av-vinduet
+      fikk 503 `modul_inaktiv` — det DEFINERTE svaret, ikke en tilfeldig 500
+      eller en hengende forbindelse — og deaktiveringen var effektiv etter
+      0,598 s mot taket på 5,0.
     artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
     artefakt_sha256: 0e973fb1d227b450b38ac8e84bde1e96b41b50373bd92893f55cc563c36eb15e

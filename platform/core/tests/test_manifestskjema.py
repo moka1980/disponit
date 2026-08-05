@@ -917,3 +917,101 @@ def test_ukjent_driftstilstand_avvises(m01):
     m = copy.deepcopy(m01)
     m["driftstilstand"] = "snart"
     assert valider_manifest(m)
+
+
+# ===========================================================================
+# Delt evidens mellom plattformmodulene (RUTINER.md, presisering 2026-08-05)
+# ===========================================================================
+
+def _manifester() -> dict:
+    import yaml
+    return {sti.parent.name: yaml.safe_load(sti.read_text(encoding="utf-8"))
+            for sti in sorted(MODULROT.glob("*/manifest.yaml"))}
+
+
+def test_de_tre_plattformmodulene_har_manifest():
+    """Bootstrap-regelen var UOPPFYLLBAR som skrevet: den krevde at fire
+    moduler besto hver sin sjekkliste, mens tre av dem ikke hadde manifest.
+
+    M-38 mangler fortsatt — men den er ikke bygget, og et manifest for kode
+    som ikke finnes ville vært verre enn ingenting.
+    """
+    navn = set(_manifester())
+    assert {"m01_policy", "m02_revisjonslogg", "m37_unntak"} <= navn, navn
+
+
+def test_delt_artefakt_gaar_gjennom_porten_for_hvert_manifest():
+    """Et delt artefakt slipper gjennom nøyaktig like mange porter som et eget.
+
+    `valider_artefakter` åpner filen, verifiserer sha256 mot innholdet og
+    regner tallene ut på nytt — for HVERT manifest som peker på den. Deling
+    sparer en kjøring, ikke en kontroll.
+    """
+    from manifestskjema import valider_artefakter
+    for navn, man in _manifester().items():
+        assert valider_artefakter(man, REPOROT) == [], navn
+
+
+def test_hvert_delte_punkt_navngir_sin_egen_maaling():
+    """Betingelsen for deling, målt.
+
+    Peker to manifester på samme artefakt, må hvert av dem si hvilken
+    MÅLING som beviser punktet for nettopp den modulen. «Samme artefakt»
+    uten «samme måling» er å låne en konklusjon — og et notat som bare
+    gjentar naboens ville vært nettopp det.
+    """
+    per_artefakt: dict = {}
+    for navn, man in _manifester().items():
+        for punkt, pkt in (man.get("staging_sjekkliste") or {}).items():
+            if isinstance(pkt, dict) and pkt.get("artefakt"):
+                per_artefakt.setdefault(pkt["artefakt"], []).append(
+                    (navn, punkt, (pkt.get("notat") or "").strip()))
+
+    delte = {a: v for a, v in per_artefakt.items() if len(v) > 1}
+    assert delte, "ingen delte artefakter — testen måler ikke noe"
+    for artefakt, brukere in delte.items():
+        for navn, punkt, notat in brukere:
+            assert notat, f"{navn}/{punkt} deler {artefakt} uten notat"
+        notater = [n for _, _, n in brukere]
+        assert len(set(notater)) == len(notater), (
+            f"to punkter bruker IDENTISK notat for {artefakt} — da er"
+            " målingen ikke navngitt for hver modul, bare kopiert")
+
+
+def test_m37_laaner_ikke_m01s_rollbackkonklusjon():
+    """Den ene delingen som IKKE er lovlig, pinnet.
+
+    `rollback-m01-v1` deaktiverte beslutningsmodulen og målte at M-37s
+    tabeller sto urørt. Det er evidens for at M-37s tilstand overlevde m01s
+    rollback — ikke for at M-37 selv kan rulles tilbake. Arbeideren er en
+    egen prosess med egen unit, og den unitten er ikke engang installert.
+
+    MUTASJONEN SOM DREPER DENNE: sett `rollback_testet` til `ja` i
+    m37-manifestet med m01s artefakt.
+    """
+    m37 = _manifester()["m37_unntak"]
+    punkt = m37["staging_sjekkliste"]["rollback_testet"]
+    assert punkt["status"] == "nei", punkt
+    assert "artefakt" not in punkt, (
+        "m37 peker på et rollbackartefakt uten å ha kjørt en rollback")
+    assert m37["status"] != "aktiv", (
+        "m37 er aktiv med et uavklart sjekklistepunkt")
+
+
+def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
+    """Registerets egen regel, målt på den nye kjeden.
+
+    m37 avhenger av m01 og m02. Settes m37 aktiv før m02 er det, skal
+    registeret si fra — det er hele poenget med avhengighetslisten.
+    """
+    from registry import Modul, valider
+    moduler = [
+        Modul(id="m01_policy", navn="", versjon="0.1.0", status="aktiv"),
+        Modul(id="m02_revisjonslogg", navn="", versjon="0.1.0",
+              status="under_utvikling"),
+        Modul(id="m37_unntak", navn="", versjon="0.1.0", status="aktiv",
+              avhengigheter=["m01_policy", "m02_revisjonslogg"]),
+    ]
+    feil = valider(moduler).feil
+    assert any("m02_revisjonslogg" in f and "ikke er aktiv" in f
+               for f in feil), feil
