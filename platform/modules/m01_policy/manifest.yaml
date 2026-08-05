@@ -3,7 +3,25 @@
 id: m01_policy
 navn: Policy- og fullmaktsmotor (M-1)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+# AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
+#
+# Grunnlaget er MASKINVERIFISERT, ikke et flagg noen satte: alle punktene i
+# `staging_sjekkliste` er `ja`, de tre som har en målbar grense har hver sitt
+# artefakt i repoet, og `manifestskjema.valider_artefakter` åpner filene,
+# verifiserer sha256 mot innholdet og regner samtlige tall ut på nytt mot
+# `KRAVGRENSER`. `uavklarte_punkter(m01)` er tom og `aktiv_uten_bevis(m01)`
+# gir ingen treff.
+#
+# HVEM BESLUTTET: eier, direkte. `docs/RUTINER.md` pkt. 6 legger aksepten til
+# claude.ai med eier informert; her gikk beslutningen andre veien. Det står
+# her fordi et manifest skal kunne leses uten å kjenne samtalen den kom fra.
+#
+# HVA AKTIVERINGEN IKKE BETYR: den starter ingen fase 2-modul.
+# Bootstrap-unntaket i RUTINER.md krever at M-1, M-2, M-37 OG M-38 alle har
+# bestått hele sin staging-sjekkliste før noen fase 2-modul startes — og av
+# de fire har bare denne et manifest i det hele tatt. M-2 og M-37 finnes som
+# kode i `platform/core/` uten manifest; M-38 finnes ikke.
 avhengigheter: []              # M-1 er roten — ingen avhengigheter
 kjerne: platform/core/policy_validator   # hvor koden bor
 i18n_prefiks: m01              # alle modulens tekstnøkler starter slik
