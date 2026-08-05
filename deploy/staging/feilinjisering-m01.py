@@ -51,7 +51,28 @@ TENANT = "t-fi-" + secrets.token_hex(3)
 #: kan spores til nøyaktig hvilken sak som lekket.
 CANARY_BASE = "KANARIFUGL-" + secrets.token_hex(6)
 
-VERIFIKATORNOKKEL = "e" * 40
+#: Verifikatorens nøkkel LESES fra registeret — den hardkodes ikke.
+#:
+#: MÅLT på staging: med en hardkodet `"e" * 40` slo signaturen feil, hver
+#: lastforespørsel ble en `attestasjon_signatur_ugyldig`-SIKKERHETSSAK, og
+#: 313 slike saker fløt inn i køen ved siden av de 24 injiserte. Terminal-
+#: andelen ble 0.5 fordi arbeideren aldri kom gjennom — og målingen sa
+#: ingenting om det den skulle måle. En nøkkel som stemmer på min maskin er
+#: ikke en nøkkel.
+VERIFIKATORNOKKEL = ""
+
+
+def _verifikatornokkel(verifikator: str = "v_fordring",
+                       nokkel_id: str = "k1") -> str:
+    from policy_validator import attestering
+    reg = attestering.last_nokler()
+    hemmelig = (reg.get(verifikator) or {}).get(nokkel_id)
+    if not isinstance(hemmelig, str) or len(hemmelig) < 32:
+        raise SystemExit(
+            f"AVBRUTT: nøkkelregisteret har ingen brukbar {verifikator}/"
+            f"{nokkel_id}. Uten den signerer selen med feil nøkkel, og"
+            " hver lastforespørsel blir en sikkerhetssak.")
+    return hemmelig
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +267,8 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
 
     t_start = time.monotonic()
+    global VERIFIKATORNOKKEL
+    VERIFIKATORNOKKEL = _verifikatornokkel()
     mig = koble(MIGRATOR)
     pol = yaml.safe_load(
         (REPO / "policies/bransjemal-tjenestebedrift.yaml").read_text(
@@ -361,9 +384,15 @@ def main(argv=None) -> int:
         maalt = {}
 
         def last():
-            maalt["p95"], maalt["feil"] = (
-                maal_p95_under_last(beslutter, policy_id, a.last)
-                if a.last else (0.0, 0))
+            # Uten dette forsvinner en feil i tråden i stillhet, og p95
+            # rapporteres som NaN uten at noen får vite hvorfor. Målt: det
+            # skjedde på staging i første kjøring.
+            try:
+                maalt["p95"], maalt["feil"] = (
+                    maal_p95_under_last(beslutter, policy_id, a.last)
+                    if a.last else (0.0, 0))
+            except Exception as e:
+                maalt["exception"] = f"{type(e).__name__}: {e}"
 
         lasttraad = threading.Thread(target=last, daemon=True)
         lasttraad.start()
@@ -400,6 +429,9 @@ def main(argv=None) -> int:
                 break
             time.sleep(2)
         lasttraad.join(300)
+        if maalt.get("exception"):
+            print("[last] TRÅDEN FEILET:", maalt["exception"])
+            return 1
         p95, lastfeil = maalt.get("p95", float("nan")), maalt.get("feil", -1)
         print(f"[last] p95={p95:.1f} ms over {a.last} beslutninger,"
               f" feil={lastfeil}")
