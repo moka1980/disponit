@@ -125,6 +125,15 @@
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "comment": "SHA-256 av artefaktfilen. Binder pekeren til INNHOLD: uten den beviser en sti bare at noen kjenner et filnavn."
+        },
+        "bevismaalinger": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zæøå_][a-zæøå0-9_]*(\\.[a-zæøå_][a-zæøå0-9_]*)+$"
+          },
+          "description": "Hvilke MÅLINGER i artefaktet som beviser punktet for DENNE modulen, som punktseparerte stier (`etterkontroll.historikk_komplett`). Porten åpner det hash-verifiserte artefaktet og krever at hver sti finnes. `notat` forklarer hvorfor målingen er relevant; denne listen beviser hvilken måling forklaringen gjelder — en fritekst kan navngi en måling som ikke finnes."
         }
       },
       "allOf": [
@@ -199,6 +208,19 @@
           "then": {
             "required": [
               "artefakt"
+            ]
+          }
+        },
+        {
+          "comment": "Et punkt som peker på et artefakt må navngi hvilken måling i det som beviser punktet. Ellers er «delt artefakt» en påstand uten binding.",
+          "if": {
+            "required": [
+              "artefakt"
+            ]
+          },
+          "then": {
+            "required": [
+              "bevismaalinger"
             ]
           }
         }

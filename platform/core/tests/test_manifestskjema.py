@@ -81,6 +81,13 @@ def test_ja_med_krav_id_uten_artefakt_avvises(m01):
     assert valider_manifest(m), "sti uten sha256 slapp gjennom"
 
     m["staging_sjekkliste"]["ytelse_bestatt"]["artefakt_sha256"] = "a" * 64
+    # Og fra PR #15: en peker med hash sier fortsatt ikke HVA i artefaktet
+    # som beviser punktet. Tredje trinn i samme trapp — peker, så innhold,
+    # så måling.
+    assert valider_manifest(m), "artefakt uten bevismaalinger slapp gjennom"
+
+    m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"] = [
+        "maalt.svartid_ms.p95"]
     assert valider_manifest(m) == []
 
 
@@ -917,3 +924,182 @@ def test_ukjent_driftstilstand_avvises(m01):
     m = copy.deepcopy(m01)
     m["driftstilstand"] = "snart"
     assert valider_manifest(m)
+
+
+# ===========================================================================
+# Delt evidens mellom plattformmodulene (RUTINER.md, presisering 2026-08-05)
+# ===========================================================================
+
+def _manifester() -> dict:
+    import yaml
+    return {sti.parent.name: yaml.safe_load(sti.read_text(encoding="utf-8"))
+            for sti in sorted(MODULROT.glob("*/manifest.yaml"))}
+
+
+def test_de_tre_plattformmodulene_har_manifest():
+    """Bootstrap-regelen var UOPPFYLLBAR som skrevet: den krevde at fire
+    moduler besto hver sin sjekkliste, mens tre av dem ikke hadde manifest.
+
+    M-38 mangler fortsatt — men den er ikke bygget, og et manifest for kode
+    som ikke finnes ville vært verre enn ingenting.
+    """
+    navn = set(_manifester())
+    assert {"m01_policy", "m02_revisjonslogg", "m37_unntak"} <= navn, navn
+
+
+def test_delt_artefakt_gaar_gjennom_porten_for_hvert_manifest():
+    """Et delt artefakt slipper gjennom nøyaktig like mange porter som et eget.
+
+    `valider_artefakter` åpner filen, verifiserer sha256 mot innholdet og
+    regner tallene ut på nytt — for HVERT manifest som peker på den. Deling
+    sparer en kjøring, ikke en kontroll.
+    """
+    from manifestskjema import valider_artefakter
+    for navn, man in _manifester().items():
+        assert valider_artefakter(man, REPOROT) == [], navn
+
+
+def test_hvert_punkt_med_artefakt_binder_seg_til_maalinger_som_FINNES():
+    """Betingelsen for deling, målt mot RÅDATAENE.
+
+    Første versjon håndhevet «notatet er ikke tomt» og «ikke identisk med
+    naboens». Det består av `notat: "banan_maaling = true"` — ikke-tom og
+    unik fritekst er ingen binding til data. Nå er henvisningen strukturert
+    (`bevismaalinger`), og porten åpner det hash-verifiserte artefaktet og
+    krever at hver oppgitte sti finnes.
+
+    Dette beviser ikke at målingen er RELEVANT for modulen; det er
+    reviewansvar. Det beviser at den påberopte målingen finnes i evidensen
+    — og det gjorde ikke den forrige testen engang.
+    """
+    from manifestskjema import valider_artefakter
+    minst_ett = 0
+    for navn, man in _manifester().items():
+        for punkt, pkt in (man.get("staging_sjekkliste") or {}).items():
+            if isinstance(pkt, dict) and pkt.get("artefakt"):
+                assert pkt.get("bevismaalinger"), f"{navn}/{punkt}"
+                minst_ett += 1
+        assert valider_artefakter(man, REPOROT) == [], navn
+    assert minst_ett >= 3, "testen måler for få punkter til å bevise noe"
+
+
+def test_oppdiktet_maalesti_avvises(m01):
+    """Codex' negative test 2: en sti som ikke finnes i artefaktet."""
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"] = [
+        "maalt.banan_maaling"]
+    feil = valider_artefakter(m, REPOROT)
+    assert any("finnes ikke i artefaktet" in f for f in feil), feil
+
+
+def test_maalesti_fra_et_ANNET_artefakt_avvises(m01):
+    """Codex' negative test 3: stien finnes — i feil fil.
+
+    `maalt.lease_tap_re_claim` er ekte, men den bor i
+    feilinjiseringsartefaktet. Påberopt under `ytelse_bestatt`, som er bundet
+    til ytelsesartefaktet, peker den ingen steder. Uten denne kontrollen
+    kunne et manifest låne en sti fra nabofilen og se korrekt ut.
+    """
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"] = [
+        "maalt.lease_tap_re_claim"]
+    feil = valider_artefakter(m, REPOROT)
+    assert any("finnes ikke i artefaktet" in f for f in feil), feil
+
+
+def test_artefakt_uten_bevismaalinger_avvises(m01):
+    """Codex' negative test 1, i BEGGE lag.
+
+    Skjemaet krever `bevismaalinger` når `artefakt` er satt, og porten
+    krever det uavhengig av skjemaet — `valider_artefakter` kalles også uten
+    formatvalidering, og en betingelse som bare håndheves ett sted er
+    håndhevet i ett tilfelle.
+    """
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    del m["staging_sjekkliste"]["ytelse_bestatt"]["bevismaalinger"]
+    assert valider_manifest(m), "skjemaet godtok artefakt uten bevismaalinger"
+    feil = valider_artefakter(m, REPOROT)
+    assert any("uten å navngi hvilken måling" in f for f in feil), feil
+
+
+def test_notat_forklarer_men_beviser_ikke(m01):
+    """Codex' negative test 5: fritekst alene er ikke en binding.
+
+    Et notat kan si hva som helst. Porten skal ikke bli grønn av at teksten
+    er unik og ikke-tom — den skal bli grønn av at stien finnes.
+    """
+    from manifestskjema import valider_artefakter
+    m = copy.deepcopy(m01)
+    p = m["staging_sjekkliste"]["ytelse_bestatt"]
+    p["notat"] = "banan_maaling = true, helt unik tekst"
+    p["bevismaalinger"] = ["maalt.banan_maaling"]
+    assert valider_artefakter(m, REPOROT), (
+        "unik, ikke-tom fritekst gjorde porten grønn uten at målingen finnes")
+
+
+def test_delte_artefakter_gir_ulike_maalinger_per_modul(m01):
+    """Den positive kontrollen (Codex' test 4): riktig binding er grønn,
+    og de tre modulene henter FORSKJELLIGE tall ut av samme fil.
+
+    Uten denne ville de negative testene bestått også hvis porten avviste
+    alt — og uten sammenligningen ville «delt artefakt» kunnet bety at tre
+    manifester påberopte seg nøyaktig samme måling, altså samme konklusjon.
+    """
+    from manifestskjema import valider_artefakter
+    per_artefakt: dict = {}
+    for navn, man in _manifester().items():
+        assert valider_artefakter(man, REPOROT) == [], navn
+        for punkt, pkt in (man.get("staging_sjekkliste") or {}).items():
+            if isinstance(pkt, dict) and pkt.get("artefakt"):
+                per_artefakt.setdefault(pkt["artefakt"], []).append(
+                    (navn, frozenset(pkt["bevismaalinger"])))
+
+    delte = {a: v for a, v in per_artefakt.items() if len(v) > 1}
+    assert delte, "ingen delte artefakter — testen måler ikke noe"
+    for artefakt, brukere in delte.items():
+        sett = [m for _, m in brukere]
+        assert len(set(sett)) == len(sett), (
+            f"to punkter påberoper seg IDENTISKE målinger i {artefakt} —"
+            " da er det samme konklusjon, ikke to målinger")
+
+
+def test_m37_laaner_ikke_m01s_rollbackkonklusjon():
+    """Den ene delingen som IKKE er lovlig, pinnet.
+
+    `rollback-m01-v1` deaktiverte beslutningsmodulen og målte at M-37s
+    tabeller sto urørt. Det er evidens for at M-37s tilstand overlevde m01s
+    rollback — ikke for at M-37 selv kan rulles tilbake. Arbeideren er en
+    egen prosess med egen unit, og den unitten er ikke engang installert.
+
+    MUTASJONEN SOM DREPER DENNE: sett `rollback_testet` til `ja` i
+    m37-manifestet med m01s artefakt.
+    """
+    m37 = _manifester()["m37_unntak"]
+    punkt = m37["staging_sjekkliste"]["rollback_testet"]
+    assert punkt["status"] == "nei", punkt
+    assert "artefakt" not in punkt, (
+        "m37 peker på et rollbackartefakt uten å ha kjørt en rollback")
+    assert m37["status"] != "aktiv", (
+        "m37 er aktiv med et uavklart sjekklistepunkt")
+
+
+def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
+    """Registerets egen regel, målt på den nye kjeden.
+
+    m37 avhenger av m01 og m02. Settes m37 aktiv før m02 er det, skal
+    registeret si fra — det er hele poenget med avhengighetslisten.
+    """
+    from registry import Modul, valider
+    moduler = [
+        Modul(id="m01_policy", navn="", versjon="0.1.0", status="aktiv"),
+        Modul(id="m02_revisjonslogg", navn="", versjon="0.1.0",
+              status="under_utvikling"),
+        Modul(id="m37_unntak", navn="", versjon="0.1.0", status="aktiv",
+              avhengigheter=["m01_policy", "m02_revisjonslogg"]),
+    ]
+    feil = valider(moduler).feil
+    assert any("m02_revisjonslogg" in f and "ikke er aktiv" in f
+               for f in feil), feil

@@ -1,0 +1,84 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+id: m37_unntak
+navn: Unntaks- og behandlingsmotor (M-37)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+# IKKE klar for aksept: `rollback_testet` er `nei`, og det er en ekte
+# mangel, ikke en formalitet. Se punktet nederst.
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+avhengigheter:
+  - m01_policy                 # all reparasjon går gjennom policyporten
+  - m02_revisjonslogg          # én skrivevei til evidenskjeden
+kjerne: platform/core/m37
+i18n_prefiks: m37
+
+# DELT EVIDENS (bootstrap-unntaket, RUTINER.md).
+#
+# Feilinjiseringsartefaktet er ikke lånt fra m01 — det MÅLER M-37. Selen
+# injiserer feil gjennom API-et og lar M-37 behandle dem som egen prosess;
+# tallene er motorens egne. Punktene under sier hvilket tall som beviser
+# hva, slik at «delt artefakt» aldri blir «lånt konklusjon».
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: ja
+    notat: >-
+      Samme suite som m01. M-37s egne porter ligger i test_m37.py (de ti
+      Codex-portene fra PR-006) og test_pr007.py (tofaseprotokollen:
+      skjæringsmengde, aktiv autoritet, settbinding, samtidighet).
+  syntetisk_datasett_likt_lokalt:
+    status: ja
+    notat: >-
+      93 UNNTAK av 180 hendelser, identisk lokalt og på staging. Det er
+      M-37s INNDATA som er verifisert lik — køen motoren behandler.
+  revisjonslogg_korrekt:
+    status: ja
+    notat: >-
+      M-37 har ÉN skrivevei til evidenskjeden, og hver statusendring krever
+      aktør og request_id fra sesjonskonteksten — historikktriggeren nekter
+      en rad uten aktør. Målt i feilinjiseringen: historikk_komplett = true
+      for alle 24 saker.
+  feilinjisering_til_unntakskø:
+    # M-37s kjernepunkt. Artefaktet er motorens egen måling.
+    status: ja
+    krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - maalt.lost_andel
+      - maalt.lease_tap_re_claim
+    artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
+    artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
+    notat: >-
+      24 ekte feil over fire kategorier, behandlet av M-37 som EGEN PROSESS
+      med syntetisk verifikator og eiermodul som to ytterligere prosesser.
+      24/24 terminale, 12/12 reparerbare LØST gjennom R1s tofaseprotokoll,
+      12/12 ikke-reparerbare til manuell, og 2 lease-tap med re-claim —
+      gjenopptaksveien er kjørt, ikke antatt.
+  ytelse_bestatt:
+    status: ja
+    krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - maalt.p95_api_under_last_ms
+      - maalt.varighet_sek
+    artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
+    artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
+    notat: >-
+      DELT ARTEFAKT, egen måling: p95_api_under_last_ms = 64,6 mot kravet
+      150, målt MENS M-37 behandlet på samme maskin. Det er nettopp
+      prosessisolasjonen som er spørsmålet for M-37 — ikke motorens
+      gjennomstrømning alene, men at behandlingen ikke spiser API-ets
+      ytelsesmargin. Hele kjøringen tok 10,1 s mot taket på 300.
+  rollback_testet:
+    # NEI, og det er en reell mangel.
+    #
+    # `rollback-m01-v1` deaktiverte BESLUTNINGSMODULEN og målte at
+    # oppdrag/reparasjonsoperasjoner sto urørt gjennom av-vinduet. Det er
+    # evidens for at M-37s tilstand overlevde m01s rollback — ikke for at
+    # M-37 SELV kan rulles tilbake. Arbeideren er en egen prosess med egen
+    # unit (`deploy/staging/disponit-m37.service`), og den unitten er ikke
+    # engang installert på staging.
+    #
+    # Å dele m01-artefaktet her ville vært å låne en konklusjon fra en
+    # måling som stilte et annet spørsmål. Punktet står `nei` til en
+    # rollback av arbeideren faktisk er kjørt og målt.
+    status: nei
+    krav_id: rollback-m01-v1

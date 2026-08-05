@@ -1,0 +1,91 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+id: m02_revisjonslogg
+navn: Revisjonslogg (M-2)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+# Aksepten (RUTINER.md pkt. 6) er claude.ai sitt steg. Denne PR-en oppretter
+# manifestet og fester evidensen; aktiveringen er en egen beslutning.
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
+kjerne: platform/core/policy_validator/audit.py
+i18n_prefiks: m02
+
+# DELT EVIDENS (bootstrap-unntaket, RUTINER.md).
+#
+# M-2 ble bygget som del av m01-kjeden, og de samme kjøringene som beviste
+# M-1 måler også M-2 — direkte, ikke ved analogi. Derfor peker punktene
+# under på de SAMME artefaktene m01 alt har, og hvert notat sier NØYAKTIG
+# hvilket tall i artefaktet som beviser punktet for M-2.
+#
+# Uten den presiseringen ville deling vært et smutthull: «samme artefakt»
+# uten «samme måling» er å låne en konklusjon.
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: ja
+    notat: >-
+      Samme suite som m01, kjørt på staging etter hver merge. Revisjons-
+      loggens egne porter ligger i test_api.py (evidensfelter, aktør fra
+      serverkontekst, idempotent replay uten ny loggpost) og i
+      test_kjorer_og_kryptering.py (append-only-triggerne).
+  syntetisk_datasett_likt_lokalt:
+    status: ja
+    notat: >-
+      Den samme kjøringen på 180 hendelser ga identisk fordeling lokalt og
+      på staging — og fordelingen ER loggen: 84 TILLAT / 3 STOPP / 93 UNNTAK
+      er 180 loggposter med samme beslutningsfelt.
+  revisjonslogg_korrekt:
+    # M-2s kjernepunkt. Her er M-2 ikke en delt måling, men hovedsaken.
+    status: ja
+    notat: >-
+      Ekte beslutning gjennom sikker_beslutning_pg lagret med tenant, aktør
+      og kilde fra konteksten — aldri fra payloaden. UPDATE og DELETE
+      avvises av databasetriggeren, ikke av applikasjonskode. Evidensfeltene
+      (handling, request_id, idempotency_key, policy_content_hash,
+      attestation_set_hash) kom i PR-005b.
+  feilinjisering_til_unntakskø:
+    status: ja
+    krav_id: feilinjisering-m01-v1
+    bevismaalinger:
+      - etterkontroll.historikk_komplett
+      - etterkontroll.klartekst_payload_funnet
+    artefakt: deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
+    artefakt_sha256: 9315e345a5a000b6f06a229cf6fb7a44de0bd93f5f1551b0a8047ad378a13cbe
+    notat: >-
+      DELT ARTEFAKT. Målingen som beviser punktet for M-2 er
+      etterkontroll.historikk_komplett = true: hver av de 24 injiserte
+      sakene har både opprettelse og statusendring i historikken. En sak
+      uten spor er en sak ingen kan etterprøve, og det er nettopp den
+      tilstanden loggen finnes for å utelukke. I tillegg:
+      klartekst_payload_funnet = false over 24 kanarifugler — loggen bærer
+      ingen klartekst fra hendelsene den beskriver.
+  ytelse_bestatt:
+    status: ja
+    krav_id: perf-m01-v1
+    bevismaalinger:
+      - etterkontroll.en_til_en
+      - etterkontroll.auditerte_svar
+      - etterkontroll.revisjonsrader
+    artefakt: deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
+    artefakt_sha256: 12e3ec3e5d3ad931b0ff27ee71ef0b9ecebf7542e022d0a6a62a90caed9b8cc4
+    notat: >-
+      DELT ARTEFAKT. Målingen som beviser punktet for M-2 er 1:1 mellom
+      auditerte svar og revisjonsrader: 6 000 forespørsler @ 100/s ga 6 000
+      loggposter, null tapte. Det er loggens gjennomstrømning som er målt,
+      ikke bare API-ets svartid.
+  rollback_testet:
+    status: ja
+    krav_id: rollback-m01-v1
+    bevismaalinger:
+      - maalt.tapte_loggposter
+      - etterkontroll.radtelling_for.revisjonslogg
+      - etterkontroll.radtelling_etter.revisjonslogg
+    artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
+    artefakt_sha256: 0e973fb1d227b450b38ac8e84bde1e96b41b50373bd92893f55cc563c36eb15e
+    notat: >-
+      DELT ARTEFAKT. Målingen som beviser punktet for M-2 er
+      tapte_loggposter = 0 og halvferdige_transaksjoner = 0 gjennom en
+      deaktivering med 114 forespørsler i av-vinduet, samt at radtellingen
+      for revisjonslogg var IDENTISK ved starten og slutten av av-vinduet.
+      Det er loggens konsistens under rollback som er spørsmålet, og det er
+      det som er målt.

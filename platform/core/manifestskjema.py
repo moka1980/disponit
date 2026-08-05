@@ -696,6 +696,52 @@ def _grenser_rollback(grense: dict, art: dict) -> list[str]:
     return feil
 
 
+def _slaa_opp(art: object, sti: str):
+    """Følg en punktseparert sti inn i artefaktet. -> (verdi, funnet).
+
+    Bevisst enkel: bare oppslag i objekter. En sti som må indeksere lister
+    eller gjøre betingede valg for å treffe, er ikke en peker til én måling
+    — den er et lite program, og et program i et manifest kan ikke leses av
+    den som skal etterprøve påstanden.
+    """
+    node = art
+    for ledd in sti.split("."):
+        if not isinstance(node, dict) or ledd not in node:
+            return None, False
+        node = node[ledd]
+    return node, True
+
+
+def _bevismaalinger_finnes(art: dict, punkt: dict, navn: str) -> list[str]:
+    """Hver oppgitte måling må FINNES i artefaktet (Codex P1, PR #15).
+
+    Delingsregelen i RUTINER.md krever at et manifest navngir hvilken måling
+    i et delt artefakt som beviser punktet for nettopp den modulen. Den ble
+    først håndhevet som «notatet er ikke tomt og ikke identisk med naboens»
+    — og det består av `notat: "banan_maaling = true"`. Ikke-tom og unik
+    fritekst er ingen binding til data.
+
+    Dette beviser ikke at målingen er RELEVANT for modulen; det er
+    reviewansvar. Det beviser at den påberopte målingen finnes i evidensen,
+    og det er minstekravet en maskin kan og skal holde.
+    """
+    stier = punkt.get("bevismaalinger")
+    if not isinstance(stier, list) or not stier:
+        return [f"{navn}: peker på et artefakt uten å navngi hvilken måling"
+                f" som beviser punktet (`bevismaalinger`)"]
+    feil = []
+    for sti in stier:
+        if not isinstance(sti, str):
+            feil.append(f"{navn}: bevismaaling {sti!r} er ikke en streng")
+            continue
+        _, funnet = _slaa_opp(art, sti)
+        if not funnet:
+            feil.append(f"{navn}: bevismaaling '{sti}' finnes ikke i"
+                        f" artefaktet — en påstand om en måling som ikke er"
+                        f" der, er ikke evidens")
+    return feil
+
+
 def valider_artefakter(manifest: dict, rot: Path | None = None) -> list[str]:
     """Håndhever evidenskjeden for hvert `ja` med krav_id. Tom liste == ok.
 
@@ -744,6 +790,15 @@ def valider_artefakter(manifest: dict, rot: Path | None = None) -> list[str]:
         feil += [f"{navn}: format — {m}"
                  for m in valider_artefaktformat(data, krav_id)]
         feil += [f"{navn}: {m}" for m in _sjekk_grenser(krav_id, data)]
+        # TREDJE LAG: hvilken måling manifestet PÅBEROPER SEG (PR #15).
+        #
+        # De to over spør om artefaktet er gyldig og består grensene — det
+        # samme svaret for alle moduler som deler filen. Dette laget spør
+        # hva NETTOPP DETTE manifestet henter ut av den, og det er den
+        # eneste kontrollen som skiller legitim deling fra en lånt
+        # konklusjon. Kjøres etter hashkontrollen, så stien slås opp i en
+        # fil vi har bevist er den manifestet mener.
+        feil += _bevismaalinger_finnes(data, p, navn)
     return feil
 
 
