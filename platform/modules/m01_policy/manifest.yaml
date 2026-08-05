@@ -102,16 +102,18 @@ staging_sjekkliste:
     # feilinjiseringspunktet over.
     #
     # MÅLT på staging 2026-08-05 med deploy/staging/rollback-m01.py:
-    # modulen deaktivert MENS trafikk pågikk, 113 forespørsler sendt i
+    # modulen deaktivert MENS trafikk pågikk, 114 forespørsler sendt i
     # vinduet der modulen beviselig var av — ALLE fikk 503 `modul_inaktiv`,
     # ingen 500 og ingen hengende forbindelse. Null tapte loggposter, null
     # halvferdige transaksjoner, og radtellingen for de åtte tabellene var
     # identisk ved starten og slutten av av-vinduet.
     #
-    # Deaktivering effektiv etter 0,465 s, reaktivering etter 0,561 s (tak
-    # 5,0 s begge veier). TRE kjøringer: 0,479/0,447, 0,465/0,561,
-    # 0,418/0,521 — artefaktet her har det STØRSTE enkelttallet, ikke det
-    # peneste snittet.
+    # Deaktivering effektiv etter 0,598 s, reaktivering etter 0,593 s (tak
+    # 5,0 s begge veier). TRE kjøringer med den GJELDENDE selen (etter at
+    # nevneren ble rettet til alle forespørsler i av-vinduet):
+    # 0,482/0,579, 0,471/0,542, 0,598/0,593 — artefaktet her er kjøringen
+    # med de STØRSTE tallene, ikke det peneste snittet. 114 forespørsler i
+    # av-vinduet, alle avvist med 503 `modul_inaktiv`.
     #
     # Første kjøring ga 0,96 og var min egen målefeil: den merket
     # forespørsler som «av» i det øyeblikket kommandoen ble gitt. De som
@@ -121,5 +123,5 @@ staging_sjekkliste:
     # `deaktivering_effektiv_s`, som inkluderer hele restartvinduet.
     status: ja
     krav_id: rollback-m01-v1
-    artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T075341.json
-    artefakt_sha256: 33104868221c8ca6a160f39e1b24c2a72fbaa4db2fe0d8daaffb810d067811fd
+    artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
+    artefakt_sha256: 0e973fb1d227b450b38ac8e84bde1e96b41b50373bd92893f55cc563c36eb15e

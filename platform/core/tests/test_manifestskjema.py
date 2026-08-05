@@ -722,7 +722,7 @@ def test_alle_objekter_i_artefaktskjemaet_er_lukket():
 # ===========================================================================
 
 ROLLBACKARTEFAKT = (REPOROT / "deploy/staging/artefakter"
-                    / "rollback-m01-v1-20260805T075341.json")
+                    / "rollback-m01-v1-20260805T081921.json")
 
 
 def _rollback(**overstyr):
@@ -752,22 +752,29 @@ def test_ekte_rollbackartefakt_bestaar_porten():
 
 
 def test_flere_forespoersler_enn_avvisninger_avvises():
-    """`requests_under_rollback` 113 -> 114, resten urørt.
+    """Én forespørsel mer i nevneren, resten urørt.
 
-    Andelen står fortsatt på 1.0, men 113/114 er ikke 1.0. Leste porten
+    Andelen står fortsatt på 1.0, men n/(n+1) er ikke 1.0. Leste porten
     bare det oppgitte tallet, ville den ikke sett forskjell.
+
+    Tallet UTLEDES av artefaktet, ikke hardkodes: første versjon skrev 114
+    fast, og da et nytt artefakt kom med nøyaktig 114 forespørsler ble
+    mutasjonen en no-op og testen bestod uten å måle noe. En negativ test
+    som kan bli identisk med utgangspunktet, tester ingenting.
     """
     from manifestskjema import _sjekk_grenser
+    n = _rollback()["oppsett"]["requests_under_rollback"]
     feil = _sjekk_grenser("rollback-m01-v1", _rollback(
-        **{"oppsett.requests_under_rollback": 114}))
+        **{"oppsett.requests_under_rollback": n + 1}))
     assert any("stemmer ikke med" in f for f in feil), feil
 
 
 def test_faerre_avvisninger_enn_oppgitt_andel_avvises():
-    """`avviste_requests` 113 -> 112, andel fortsatt 1.0."""
+    """Én avvisning mindre, andel fortsatt 1.0. Samme utledning som over."""
     from manifestskjema import _sjekk_grenser
+    a = _rollback()["maalt"]["avviste_requests"]
     feil = _sjekk_grenser("rollback-m01-v1", _rollback(
-        **{"maalt.avviste_requests": 112}))
+        **{"maalt.avviste_requests": a - 1}))
     assert any("stemmer ikke med" in f for f in feil), feil
 
 

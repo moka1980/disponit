@@ -1,19 +1,19 @@
 {
   "krav_id": "rollback-m01-v1",
-  "ts": "2026-08-05T07:53:41.069075+00:00",
+  "ts": "2026-08-05T08:19:21.818131+00:00",
   "bestatt": true,
   "oppsett": {
     "modul": "m01_policy",
-    "tenant": "t-rb-51d505",
-    "requests_under_rollback": 113,
+    "tenant": "t-rb-23e330",
+    "requests_under_rollback": 114,
     "merkelapp": "rollback-m01",
     "base": "disponit_test"
   },
   "maalt": {
-    "deaktivering_effektiv_s": 0.465,
-    "reaktivering_effektiv_s": 0.561,
+    "deaktivering_effektiv_s": 0.598,
+    "reaktivering_effektiv_s": 0.593,
     "tapte_loggposter": 0,
-    "avviste_requests": 113,
+    "avviste_requests": 114,
     "paagaaende_requests_korrekt_avvist": 1.0,
     "halvferdige_transaksjoner": 0,
     "avvisningskode": "modul_inaktiv"
