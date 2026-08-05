@@ -715,3 +715,113 @@ def test_alle_objekter_i_artefaktskjemaet_er_lukket():
 
     gaa(skjema)
     assert aapne == [], f"objekter uten additionalProperties:false: {aapne}"
+
+
+# ===========================================================================
+# Codex runde 6 — rollbackporten regner selv
+# ===========================================================================
+
+ROLLBACKARTEFAKT = (REPOROT / "deploy/staging/artefakter"
+                    / "rollback-m01-v1-20260805T075341.json")
+
+
+def _rollback(**overstyr):
+    """Det EKTE artefaktet fra staging, med én verdi endret om gangen.
+
+    Testene bygger ikke sin egen JSON: da ville de målt en oppdiktet form,
+    og den dagen artefaktformen endrer seg ville de fortsatt bestått. Her
+    er utgangspunktet nøyaktig fila manifestet peker på.
+    """
+    art = json.loads(ROLLBACKARTEFAKT.read_text(encoding="utf-8"))
+    for sti, verdi in overstyr.items():
+        blokk, felt = sti.split(".", 1)
+        art[blokk][felt] = verdi
+    return art
+
+
+def test_ekte_rollbackartefakt_bestaar_porten():
+    """Kontrollen til alle mutasjonene under.
+
+    Uten denne ville de bestått også hvis porten avviste ALT — «endringen
+    gjør artefaktet rødt» er trivielt sant når utgangspunktet er rødt.
+    """
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _rollback()
+    assert valider_artefaktformat(art, "rollback-m01-v1") == []
+    assert _sjekk_grenser("rollback-m01-v1", art) == []
+
+
+def test_flere_forespoersler_enn_avvisninger_avvises():
+    """`requests_under_rollback` 113 -> 114, resten urørt.
+
+    Andelen står fortsatt på 1.0, men 113/114 er ikke 1.0. Leste porten
+    bare det oppgitte tallet, ville den ikke sett forskjell.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("rollback-m01-v1", _rollback(
+        **{"oppsett.requests_under_rollback": 114}))
+    assert any("stemmer ikke med" in f for f in feil), feil
+
+
+def test_faerre_avvisninger_enn_oppgitt_andel_avvises():
+    """`avviste_requests` 113 -> 112, andel fortsatt 1.0."""
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("rollback-m01-v1", _rollback(
+        **{"maalt.avviste_requests": 112}))
+    assert any("stemmer ikke med" in f for f in feil), feil
+
+
+def test_null_forespoersler_er_ikke_bestaatt_rollback():
+    """0/0 er ikke 1.0.
+
+    En rollback uten en eneste forespørsel i av-vinduet beviser ikke at
+    forespørsler blir avvist — den beviser at ingen ble prøvd. Samme regel
+    som `reparerbare = 0` i feilinjiseringen.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("rollback-m01-v1", _rollback(
+        **{"oppsett.requests_under_rollback": 0, "maalt.avviste_requests": 0}))
+    assert any("requests_under_rollback=0" in f for f in feil), feil
+
+
+def test_annen_avvisningskode_beviser_ikke_kontrakten():
+    """Kontrakten er 503 `modul_inaktiv`, ikke «en eller annen feil».
+
+    Feltet var en fri streng i skjemaet og ble ikke lest av gaten. Et
+    artefakt kunne dermed påstå `annen_feil` og likevel bli lest som bevis
+    for at deaktiveringen gir det DEFINERTE svaret.
+    """
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _rollback(**{"maalt.avvisningskode": "annen_feil"})
+    assert any("avvisningskode" in f
+               for f in _sjekk_grenser("rollback-m01-v1", art))
+    # Låst BEGGE steder: skjemaet og gaten. En kontrakt som bare håndheves
+    # ett sted er håndhevet i ett tilfelle.
+    assert valider_artefaktformat(art, "rollback-m01-v1")
+
+
+def test_manglende_avvisningskode_avvises():
+    """Feltet er påkrevd nå. Var det valgfritt, kunne det utelates i stedet
+    for å endres — samme bypass, én tast mindre."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = json.loads(ROLLBACKARTEFAKT.read_text(encoding="utf-8"))
+    del art["maalt"]["avvisningskode"]
+    assert valider_artefaktformat(art, "rollback-m01-v1")
+    assert _sjekk_grenser("rollback-m01-v1", art)
+
+
+def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
+    """Selens egen nevner, målt statisk.
+
+    Den var `med_svar` — de som fikk et HTTP-svar. En lukket forbindelse
+    forsvant da ut av regnestykket i stedet for å telle som feil, og
+    andelen kunne bli 1,0 mens halve trafikken falt på gulvet.
+
+    MUTASJONEN SOM DREPER DENNE: sett nevneren tilbake til `med_svar`.
+    """
+    sele = (REPOROT / "deploy/staging/rollback-m01.py").read_text(
+        encoding="utf-8")
+    assert "andel = (len(korrekt) / len(i_av)) if i_av else 0.0" in sele, (
+        "rollbackselen regner andelen over noe annet enn alle forespørslene"
+        " i av-vinduet")
+    assert "len(korrekt) / len(med_svar)" not in sele

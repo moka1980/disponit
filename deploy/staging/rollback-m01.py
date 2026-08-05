@@ -284,11 +284,18 @@ def main(argv=None) -> int:
         tr.join(20)
 
         # --- ETTERKONTROLL -------------------------------------------------
+        # NEVNEREN ER ALLE forespørslene i av-vinduet (Codex P1, runde 6).
+        #
+        # Den var tidligere `med_svar` — de som fikk et HTTP-svar. Da
+        # forsvant en lukket forbindelse ut av regnestykket i stedet for å
+        # telle som feil, og andelen kunne bli 1,0 mens halve trafikken
+        # falt på gulvet. En manglende avvisning ER en manglende avvisning,
+        # uansett om den skyldes feil kode eller ingen kode.
         i_av = [s for s in svar if s["fase"] == "av"]
         med_svar = [s for s in i_av if s["status"] is not None]
-        korrekt = [s for s in med_svar
+        korrekt = [s for s in i_av
                    if s["status"] == 503 and s["feil"] == "modul_inaktiv"]
-        andel = (len(korrekt) / len(med_svar)) if med_svar else 0.0
+        andel = (len(korrekt) / len(i_av)) if i_av else 0.0
 
         # TAPTE LOGGPOSTER: hver forespørsel som fikk et AUDITERT svar (200)
         # skal ha nøyaktig én revisjonsrad. Idempotensnøkkelen er unik per
