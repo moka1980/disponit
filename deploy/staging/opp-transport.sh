@@ -54,6 +54,10 @@ usermod -aG disponit-proxy "$NGINX_BRUKER"
 
 install -d -o "$NGINX_BRUKER" -g "$NGINX_BRUKER" -m 0755 /var/www/acme
 
+# Fornyelses-hooken må være kjørbar — certbot validerer det FØR utstedelse.
+# En fersk git-checkout kan mangle x-biten avhengig av core.filemode.
+chmod +x "$KILDE/deploy/staging/nginx-fornyelse-hook.sh"
+
 # --- Rate-soner + log_format i http-kontekst (conf.d, FØR site) -----------
 install -m 644 "$MAL/rate-soner.conf" /etc/nginx/conf.d/disponit-rate.conf
 
