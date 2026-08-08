@@ -188,7 +188,7 @@ if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q --upgrade pip
 fi
-"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema \
+"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema pytest \
   starlette uvicorn httpx
 
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
