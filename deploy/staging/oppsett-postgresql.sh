@@ -117,41 +117,22 @@ for base in $DB ${DB}_test; do
   # attestasjonssignaturene. Å endre eier på extension-objekter er både
   # unødvendig og skadelig.
   #
-  # Nå: `oid::regprocedure` gir full signatur med argumenttyper, kun
-  # vanlige funksjoner (prokind='f'), og alt som henger på en extension
-  # (pg_depend.deptype='e') er utelatt — for tabeller også.
+  # PR-008-staging fant NESTE hull i den gamle reparasjonen: den flyttet
+  # OGSÅ objektene migrasjonene BEVISST eier med andre roller, og på en
+  # allerede migrert base flatet en re-kjøring rollemodellen ut. Første
+  # fiks allowlistet ROLLENE — Codex' P1: da bevares også FEILPLASSERTE
+  # ordinære objekter hos de privilegerte rollene, og manglende
+  # designobjekter (staging manglet fem claimer-funksjoner) synes aldri.
   #
-  # PR-008-staging fant NESTE hull i samme reparasjon: den flyttet OGSÅ
-  # objektene migrasjonene BEVISST eier med andre roller — `api_tokener`/
-  # `verifiser_token` (authenticator, 003/004) og hele M-37-flaten
-  # (m37_claimer, 005 seksjon 6–9). På en fersk base er det usynlig
-  # (migrasjonene kjører ETTERPÅ og setter eierskapet), men en RE-kjøring
-  # av dette skriptet på en allerede migrert base flatet eierskapet ut —
-  # og deretter feilet migrer.py sitt `SET LOCAL ROLE`-grantsteg fordi
-  # claimer ikke lenger eide funksjonene sine. Reparasjonen skal reparere
-  # postgres-/runtime-eierskap, aldri redesigne rollemodellen: alt som
-  # allerede eies av en av de DESIGNEDE eierne står urørt.
-  sudo -u postgres psql -qtAd "$base" -c \
-    "SELECT format('ALTER TABLE %s OWNER TO %I;', c.oid::regclass, '$MIGRATOR')
-       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname='public' AND c.relkind IN ('r','p')
-        AND pg_get_userbyid(c.relowner) NOT IN ('$MIGRATOR', '$AUTH', '$M37')
-        AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                         WHERE d.classid='pg_class'::regclass
-                           AND d.objid=c.oid
-                           AND d.refclassid='pg_extension'::regclass
-                           AND d.deptype='e')
-     UNION ALL
-     SELECT format('ALTER FUNCTION %s OWNER TO %I;', p.oid::regprocedure, '$MIGRATOR')
-       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-      WHERE n.nspname='public' AND p.prokind='f'
-        AND pg_get_userbyid(p.proowner) NOT IN ('$MIGRATOR', '$AUTH', '$M37')
-        AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                         WHERE d.classid='pg_proc'::regclass
-                           AND d.objid=p.oid
-                           AND d.refclassid='pg_extension'::regclass
-                           AND d.deptype='e')" \
-    | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
+  # Reparasjonen er nå OBJEKTSPESIFIKK og bor i eierskap-reparasjon.sql:
+  # designtabellen der lister nøyaktig hva authenticator og m37_claimer
+  # skal eie (speilet fra 003/004/005/007), alt annet går til migrator,
+  # og en sluttkontroll feiler hardt hvis noe står utenfor modellen.
+  # Testene i platform/core/tests/test_eierskap.py kjører NØYAKTIG samme
+  # fil begge veier (flatet designobjekt -> designeier, feilplassert
+  # objekt hos privilegert rolle -> migrator).
+  sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" \
+    -f "$(dirname "$0")/eierskap-reparasjon.sql"
 
   # Selvhelbredelse: den forrige versjonen av dette skriptet rakk å ta
   # eierskap over extension-funksjoner UTEN argumenter (på staging traff den
