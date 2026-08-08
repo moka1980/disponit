@@ -180,9 +180,16 @@ def backfill(conn: psycopg.Connection) -> Resultat:
     oppsettet stopper og 006 nekter å kjøre.
     """
     res = Resultat()
+    # `tenanter_uten_policysnapshot` eies av disponit_m37_claimer (005s
+    # SET ROLE-seksjon) og gir aldri EXECUTE til andre. Kallet virket
+    # historisk bare fordi eierskapet var FLATET UT til migrator — med
+    # FIX-009s designmodell på plass må migrator EKSPLISITT ta rollen
+    # (SET LOCAL, medlemskapet finnes nettopp for dette). Funnet ved å
+    # kjøre oppsettet mot en riktig eid base, ikke ved å lese.
+    conn.execute("SET LOCAL ROLE disponit_m37_claimer")
     tenanter = [r[0] for r in conn.execute(
         "SELECT tenant, antall FROM tenanter_uten_policysnapshot()").fetchall()]
-    conn.commit()
+    conn.commit()                      # avslutter også SET LOCAL ROLE
     for tenant in tenanter:
         _backfill_tenant(conn, tenant, res)
         conn.commit()
