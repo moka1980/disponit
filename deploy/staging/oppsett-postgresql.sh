@@ -120,11 +120,22 @@ for base in $DB ${DB}_test; do
   # Nå: `oid::regprocedure` gir full signatur med argumenttyper, kun
   # vanlige funksjoner (prokind='f'), og alt som henger på en extension
   # (pg_depend.deptype='e') er utelatt — for tabeller også.
+  #
+  # PR-008-staging fant NESTE hull i samme reparasjon: den flyttet OGSÅ
+  # objektene migrasjonene BEVISST eier med andre roller — `api_tokener`/
+  # `verifiser_token` (authenticator, 003/004) og hele M-37-flaten
+  # (m37_claimer, 005 seksjon 6–9). På en fersk base er det usynlig
+  # (migrasjonene kjører ETTERPÅ og setter eierskapet), men en RE-kjøring
+  # av dette skriptet på en allerede migrert base flatet eierskapet ut —
+  # og deretter feilet migrer.py sitt `SET LOCAL ROLE`-grantsteg fordi
+  # claimer ikke lenger eide funksjonene sine. Reparasjonen skal reparere
+  # postgres-/runtime-eierskap, aldri redesigne rollemodellen: alt som
+  # allerede eies av en av de DESIGNEDE eierne står urørt.
   sudo -u postgres psql -qtAd "$base" -c \
     "SELECT format('ALTER TABLE %s OWNER TO %I;', c.oid::regclass, '$MIGRATOR')
        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','p')
-        AND pg_get_userbyid(c.relowner) <> '$MIGRATOR'
+        AND pg_get_userbyid(c.relowner) NOT IN ('$MIGRATOR', '$AUTH', '$M37')
         AND NOT EXISTS (SELECT 1 FROM pg_depend d
                          WHERE d.classid='pg_class'::regclass
                            AND d.objid=c.oid
@@ -134,7 +145,7 @@ for base in $DB ${DB}_test; do
      SELECT format('ALTER FUNCTION %s OWNER TO %I;', p.oid::regprocedure, '$MIGRATOR')
        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname='public' AND p.prokind='f'
-        AND pg_get_userbyid(p.proowner) <> '$MIGRATOR'
+        AND pg_get_userbyid(p.proowner) NOT IN ('$MIGRATOR', '$AUTH', '$M37')
         AND NOT EXISTS (SELECT 1 FROM pg_depend d
                          WHERE d.classid='pg_proc'::regclass
                            AND d.objid=p.oid
