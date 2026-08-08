@@ -11,6 +11,11 @@ server {
     listen [::]:443 ssl default_server;
     http2 on;
     ssl_reject_handshake on;
+    # Kjent SNI (håndtrykk fullført mot den ekte verten) MEN en Host-header
+    # som ikke matcher noe server_name rutes hit av Host-utvelgelsen. Da er
+    # håndtrykket alt gjort, og svaret skal være 421 (v2 §1), ikke nginx'
+    # default 404. Ukjent SNI stoppes fortsatt i håndtrykket over.
+    return 421;
 }
 
 server {
@@ -31,8 +36,11 @@ server {
     ssl_session_cache shared:disponit_tls:10m;
     ssl_session_timeout 1d;
     ssl_session_tickets off;
-    ssl_stapling on;
-    ssl_stapling_verify on;
+    # AVVIK fra v1 §2 «OCSP stapling on», flagget: Let's Encrypt RETIRERTE
+    # OCSP i 2025 — sertifikatene har ingen responder-URL å staple, og
+    # `ssl_stapling on` er da en no-op som bare logger en advarsel ved hver
+    # reload (målt på disponit.com). Utelatt bevisst; revurderes hvis
+    # sertifikatutstederen får OCSP igjen.
 
     # --- Grenser (v1 §5) ------------------------------------------------
     client_max_body_size 256k;          # app-lagets 256 KiB som andre linje

@@ -64,6 +64,10 @@ install -m 644 "$MAL/rate-soner.conf" /etc/nginx/conf.d/disponit-rate.conf
 rendr() {  # <template> <mål>
   sed "s/\${DISPONIT_HOST}/$HOST/g" "$1" > "$2"
 }
+rendr_ut() {  # <template> -> stdout (uten redirect — `> /dev/stdout` i en
+              # gruppe-redirect gjør O_TRUNC på fila og sletter forrige blokk)
+  sed "s/\${DISPONIT_HOST}/$HOST/g" "$1"
+}
 
 # --- 1. HTTP-konfig ALENE → validér → reload ------------------------------
 install -d /etc/nginx/sites-available /etc/nginx/sites-enabled
@@ -91,9 +95,9 @@ fi
 
 # --- 3. HTTPS-konfig i tillegg → validér → reload -------------------------
 {
-  rendr "$MAL/disponit-http.conf.template" /dev/stdout
+  rendr_ut "$MAL/disponit-http.conf.template"
   echo
-  rendr "$MAL/disponit-https.conf.template" /dev/stdout
+  rendr_ut "$MAL/disponit-https.conf.template"
 } > /etc/nginx/sites-available/disponit.conf
 if ! nginx -t; then
   echo "AVBRUTT: HTTPS-konfig validerte ikke — beholder forrige (HTTP)." >&2
