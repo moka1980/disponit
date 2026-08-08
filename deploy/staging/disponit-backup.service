@@ -1,0 +1,13 @@
+# PR-009 v1 §5 + v2 §7: daglig kryptert DB-backup med
+# gjenopprettingsverifisering til isolert base. Kjøres som root
+# (pg_dump via migrator-DSN + createdb/dropdb via postgres).
+
+[Unit]
+Description=Disponit DB-backup (kryptert, restore-verifisert)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/disponit/aktiv/deploy/staging/backup-db.sh
+
+[Install]
+WantedBy=multi-user.target

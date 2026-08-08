@@ -1,0 +1,12 @@
+# Daglig backup (PR-009 v1 §5), 03:15 UTC + jitter.
+
+[Unit]
+Description=Disponit backup-timer
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

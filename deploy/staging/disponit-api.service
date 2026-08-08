@@ -1,0 +1,70 @@
+# Disponit API — socket-aktivert uvicorn (PR-009 v1 §1 + v2 §2–3,
+# ENDRET av PR-009b §0: INGEN TCP-port, noensinne).
+#
+# API-et lytter KUN på Unix-socketen fra disponit-api.socket
+# (/run/disponit/api.sock, gruppe disponit-proxy). systemd leverer den som
+# fd 3 (SD_LISTEN_FDS_START); uvicorn overtar med `fd=3`. `/ready`-polling
+# i opp.sh skjer med `curl --unix-socket` — som root, ikke som et
+# gruppemedlem, så pollingen aldri blir en grunn til å utvide gruppen.
+#
+# Boot-sjekken `krev_lovlig_bind` står urørt: Tjeneste-verten er fortsatt
+# loopback (rate-grensens prosesslokale premiss), og socketen er strengere
+# enn loopback — den har en EIER.
+#
+# `Type=simple`, IKKE `notify`: prosessen implementerer ikke sd_notify, og
+# å påstå det ville vært en port vi ikke kan måle. Restart-på-hengning er
+# disponit-helse.timer mot /live over socketen.
+#
+# Installeres av opp.sh — aldri for hånd.
+
+[Unit]
+Description=Disponit M-1 API (Unix-socket, aldri TCP)
+Requires=disponit-api.socket
+After=network-online.target postgresql.service disponit-api.socket
+Wants=postgresql.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=disponit-api
+Group=disponit-api
+WorkingDirectory=/opt/disponit/aktiv/platform/core
+
+# Hemmeligheter via systemd-credentials (v3 §5) — root-eide filer under
+# /etc/disponit/api/, synlige KUN for denne unitens $CREDENTIALS_DIRECTORY.
+# Et kompromittert API kan ikke lese arbeiderens credential-filer.
+LoadCredential=DATABASE_URL:/etc/disponit/api/DATABASE_URL
+LoadCredential=DISPONIT_KEK:/etc/disponit/api/DISPONIT_KEK
+LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/api/DISPONIT_TOKEN_PEPPER
+LoadCredential=DISPONIT_ATT_NOKLER:/etc/disponit/api/DISPONIT_ATT_NOKLER
+
+ExecStart=/opt/disponit/.venv/bin/python -c 'import uvicorn; \
+from api.app import lag_app; \
+uvicorn.run(lag_app(), fd=3, log_level="info")'
+
+Restart=on-failure
+RestartSec=5
+
+# Delt vert (DEPLOY.md: samlokalisert med annet produkt) => per-unit
+# loggbrems, aldri global journald-omskriving (v2 §7).
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
+
+# Herding (v1 §1).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Dekryptert innhold skal aldri til disk — heller ikke som kjernedump.
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

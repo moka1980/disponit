@@ -1,0 +1,12 @@
+# PR-009 V3: kjøres hvert 10. minutt — TTL er 30; et foreldreløst
+# PENDING-token lever dermed maks ~40 minutter, autentiserer aldri.
+
+[Unit]
+Description=Disponit PENDING-oppryddingstimer
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

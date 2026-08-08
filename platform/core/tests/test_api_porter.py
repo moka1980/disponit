@@ -379,12 +379,13 @@ def test_token_admin_kan_administrere_men_ikke_verifisere(miljo, migrator,
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             admin.execute("SELECT * FROM verifiser_token('x','y')").fetchall()
         admin.rollback()
-        # Det den SKAL kunne: lese metadata og deaktivere.
-        rad = admin.execute("SELECT tenant, aktiv FROM api_tokener"
+        # Det den SKAL kunne: lese metadata og tilbakekalle (PR-009:
+        # `status` er eneste autoritet).
+        rad = admin.execute("SELECT tenant, status FROM api_tokener"
                             " WHERE token_id=%s", (token_id,)).fetchone()
-        assert rad == (TENANT, True)
-        admin.execute("UPDATE api_tokener SET aktiv=false WHERE token_id=%s",
-                      (token_id,))
+        assert rad == (TENANT, "AKTIV")
+        admin.execute("UPDATE api_tokener SET status='TILBAKEKALT'"
+                      " WHERE token_id=%s", (token_id,))
         admin.commit()
     finally:
         admin.close()
@@ -877,14 +878,25 @@ def _cli():
 @pg
 def test_cli_oppretter_token_som_faktisk_virker(miljo, migrator, klient,
                                                 policy):
-    """Rundtur: CLI-et lager tokenet, API-et godtar det, og hemmeligheten
-    finnes ikke i databasen."""
+    """Rundtur PR-009: CLI-et lager tokenet som PENDING (avvist av API-et —
+    Codex-port 4), lokal verifisering består, aktivering gjør det gyldig —
+    og hemmeligheten finnes aldri i databasen."""
     from db.pg import koble
     cli = _cli()
     admin = koble(TOKEN_ADMIN_DSN)
     try:
         token_id, secret = cli.opprett(admin, PEPPER, TENANT, "agent",
                                        ["decision:write", "exceptions:read"])
+        admin.commit()
+
+        # Port 4: PENDING er ALDRI en API-principal.
+        r = felles.post(klient, policy, hendelse(policy),
+                        f"{token_id}.{secret}", nokkel="cli-p")
+        assert r.status_code == 401, "PENDING-token slapp gjennom preauth"
+
+        # V2: lokal verifisering virker på PENDING, uten API.
+        cli.verifiser_pending(admin, PEPPER, token_id, secret)
+        cli.aktiver(admin, token_id)
         admin.commit()
     finally:
         admin.close()
@@ -910,38 +922,34 @@ def test_cli_oppretter_token_som_faktisk_virker(miljo, migrator, klient,
 
 @pg
 def test_cli_rotasjon_lager_ny_for_gammel_deaktiveres(miljo, migrator, klient,
-                                                       policy, monkeypatch):
-    """Rekkefølgen ER kontrakten: feiler deaktiveringen, virker den gamle
-    fortsatt. Testen sprekker deaktiveringen med vilje og krever at BEGGE
-    tokens da er brukbare — aldri null."""
+                                                      policy):
+    """Rekkefølgen ER kontrakten (korreksjon 2 + PR-009): `roter` lager den
+    nye som PENDING og RØRER IKKE den gamle. Stopper alt her — krasj,
+    avbrutt visning, manglende bekreftelse — virker den gamle fortsatt, og
+    den nye kan ingenting. Kunden er aldri tokenløs."""
     from db.pg import koble
     cli = _cli()
     admin = koble(TOKEN_ADMIN_DSN)
     try:
         gammel_id, gammel_secret = cli.opprett(
             admin, PEPPER, TENANT, "agent", ["decision:write"])
+        cli.aktiver(admin, gammel_id)
         admin.commit()
-
-        def sprekk(conn, token_id):
-            raise psycopg.errors.InsufficientPrivilege("konstruert feil")
-
-        monkeypatch.setattr(cli, "deaktiver", sprekk)
-        with pytest.raises(psycopg.Error):
-            cli.roter(admin, PEPPER, gammel_id)
-        admin.rollback()
+        ny_id, ny_secret, _ = cli.roter(admin, PEPPER, gammel_id)
     finally:
         admin.close()
 
-    # Den gamle virker fortsatt — kunden er ikke låst ute.
     r = felles.post(klient, policy, hendelse(policy),
                     f"{gammel_id}.{gammel_secret}", nokkel="rot-gammel")
-    assert r.status_code == 200, r.text
-    # Og den nye ble committet i transaksjon 1, altså FØR forsøket over.
-    nye = migrator.execute(
-        "SELECT count(*) FROM api_tokener WHERE tenant=%s AND aktiv",
+    assert r.status_code == 200, "gammel skal virke til den nye ER aktiv"
+    assert felles.post(klient, policy, hendelse(policy),
+                       f"{ny_id}.{ny_secret}",
+                       nokkel="rot-p").status_code == 401
+    aktive = migrator.execute(
+        "SELECT count(*) FROM api_tokener WHERE tenant=%s AND status='AKTIV'",
         (TENANT,)).fetchone()[0]
     migrator.rollback()
-    assert nye == 2, f"{nye} aktive tokens — ny skal være committet først"
+    assert aktive == 1, f"{aktive} aktive — den nye skal stå PENDING"
 
 
 @pg
@@ -953,8 +961,14 @@ def test_cli_rotasjon_fullfort_deaktiverer_gammel(miljo, migrator, klient,
     try:
         gammel_id, gammel_secret = cli.opprett(
             admin, PEPPER, TENANT, "agent", ["decision:write"])
+        cli.aktiver(admin, gammel_id)
         admin.commit()
         ny_id, ny_secret, _ = cli.roter(admin, PEPPER, gammel_id)
+        # Seremoniens sluttsteg: aktiver ny FØRST, deaktiver gammel ETTERPÅ.
+        cli.aktiver(admin, ny_id)
+        admin.commit()
+        cli.deaktiver(admin, gammel_id)
+        admin.commit()
     finally:
         admin.close()
     assert felles.post(klient, policy, hendelse(policy),

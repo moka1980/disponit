@@ -25,7 +25,12 @@ systemctl enable --now postgresql
 # Roller er KLYNGEobjekter og opprettes her, med superbrukeren — aldri i en
 # migrasjon. Draften til PR-005 gjorde det siste, og det feiler i vaart
 # oppsett fordi migratorrollen verken har eller skal ha CREATEROLE.
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN"; do
+# PR-009 v2 §3: arbeideren har EGEN DB-rolle — et kompromittert API har
+# ikke arbeiderens fullmakter, og omvendt. Rollen får runtime-grantsettet
+# MINUS verifiser_token (API-autentisering er ikke arbeiderens jobb);
+# skillet settes i migrer.py.
+ARBEIDER=disponit_arbeider
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -69,10 +74,13 @@ RUNTIME_DSN=("DATABASE_URL=$DB" "DISPONIT_TEST_DSN=${DB}_test")
 MIGRATOR_DSN=("DISPONIT_MIGRATOR_URL=$DB" "DISPONIT_TEST_MIGRATOR_DSN=${DB}_test")
 TOKENADMIN_DSN=("DISPONIT_TOKEN_ADMIN_URL=$DB"
                 "DISPONIT_TEST_TOKEN_ADMIN_DSN=${DB}_test")
+ARBEIDER_DSN=("DISPONIT_ARBEIDER_URL=$DB"
+              "DISPONIT_TEST_ARBEIDER_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 sikre_rolle_dsn "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
+sikre_rolle_dsn "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 sikre_attestasjonsnokler
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
 # ble innfoert, men ingen deploy-vei satte noekkelen — API-et nekter aa starte
@@ -90,6 +98,7 @@ sikre_hex_hemmelighet DISPONIT_TOKEN_PEPPER 32
 verifiser_og_reparer "$BRUKER"     "${RUNTIME_DSN[@]}"
 verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
+verifiser_og_reparer "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -153,6 +162,14 @@ for base in $DB ${DB}_test; do
         AND pg_get_userbyid(p.proowner) <> pg_get_userbyid(e.extowner)" \
     | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
+  # FERSK-SERVER-FUNN (disponit.com-maskinen): PostgreSQL ≥ 15 gir ingen
+  # CREATE på public til andre enn skjemaeieren. 003/005/007 oppretter
+  # objekter UNDER SET ROLE authenticator/m37_claimer — de rollene må ha
+  # CREATE, ellers dør første migrasjonskjøring med «permission denied for
+  # schema public». Gamle staging hadde grantene fra en manuell æra;
+  # førstegangsveien hadde aldri satt dem selv.
+  sudo -u postgres psql -q -d "$base" -c \
+    "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37"
 done
 
 # ------------------------------------------------------------
@@ -171,7 +188,7 @@ if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q --upgrade pip
 fi
-"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema \
+"$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema pytest \
   starlette uvicorn httpx
 
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do

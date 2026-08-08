@@ -6,37 +6,53 @@
 # Derfor en egen unit, og derfor en statisk sjekk i testsuiten på at
 # `api/` aldri importerer `m37/`.
 #
-# Installeres med:
-#   install -m 644 deploy/staging/disponit-m37.service \
-#       /etc/systemd/system/disponit-m37.service
-#   systemctl daemon-reload && systemctl enable --now disponit-m37
+# PR-009 v2 §3: egen Unix-bruker, egne credentials — et kompromittert API
+# får ikke arbeiderens fullmakter, og omvendt. v3 §1: hovedløkken skriver
+# atomisk heartbeat til RuntimeDirectory; disponit-helse.timer leser den.
+#
+# Installeres av opp.sh — aldri for hånd.
 
 [Unit]
 Description=Disponit M-37 behandlingsmotor (unntakskøen)
-# API-et må være oppe: arbeideren ber om nye policystyrte beslutninger
-# gjennom det, og har ingen annen vei til en handling.
+# API-et bør være oppe (arbeideren ber om beslutninger gjennom det), men
+# ingen Requires: de skal kunne restartes uavhengig, og claim-leasen tåler
+# at API-et er borte et øyeblikk.
 After=network-online.target postgresql.service disponit-api.service
 Wants=postgresql.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
-User=disponit
-Group=disponit
-WorkingDirectory=/opt/disponit
-# Hemmelighetene ligger i 0600/root-fila, aldri i unit-filen og aldri i
-# repoet. Mangler den, starter ikke prosessen — som er riktig: en arbeider
-# uten KEK kan ikke dekryptere en eneste sak.
-EnvironmentFile=/etc/disponit/staging.env
-Environment=DISPONIT_API_URL=http://127.0.0.1:8099
+User=disponit-m37
+Group=disponit-m37
+WorkingDirectory=/opt/disponit/aktiv/platform/core
+RuntimeDirectory=disponit-m37
+RuntimeDirectoryMode=0755
+
+LoadCredential=DATABASE_URL:/etc/disponit/m37/DATABASE_URL
+LoadCredential=DISPONIT_KEK:/etc/disponit/m37/DISPONIT_KEK
+# DISPONIT_API_URL settes i konfigfilen — og med PR-009b finnes INGEN
+# TCP-port: arbeiderens fase-2-kall går gjennom nginx over HTTPS, som
+# enhver annen klient. API-socketen er eksplisitt UTILGJENGELIG for denne
+# brukeren (tillitsgrensen, målt med EACCES-porten). Frem til PR-009b er
+# merget kan fase 2 derfor ikke fullføre — claim, heartbeat og restart
+# måles; det er PR-009s ærlige omfang.
+EnvironmentFile=-/etc/disponit/m37/konfig
+
 ExecStart=/opt/disponit/.venv/bin/python -m m37.arbeider
 
-# Restart, men ikke i evig løkke: kommer den ikke opp fem ganger på ett
-# minutt, er det en feil et menneske må se på. En tjeneste som restarter
-# uendelig skjuler nettopp den feilen.
-Restart=on-failure
+# Restart=always (v2 §2): arbeideren skal ALLTID tilbake — claim-leasen
+# tåler krasj og re-claim, og en ren exit (kode 0) er også en stopp den
+# skal reise seg fra. StartLimit sørger for at en permanent
+# feilkonfigurasjon ender i tydelig `failed`, ikke uendelig støy.
+Restart=always
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
+
+# Delt vert (DEPLOY.md) => per-unit loggbrems, aldri global journald-
+# omskriving (v2 §7).
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
 
 # Herding. Arbeideren trenger nettverk til loopback-API-et og en
 # databasetilkobling — ingenting annet.
@@ -44,7 +60,6 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/disponit
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

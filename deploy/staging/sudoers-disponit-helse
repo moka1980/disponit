@@ -1,0 +1,5 @@
+# PR-009 v3 §2: helsetimerens kontrollprosess (disponit-helse.service,
+# User=disponit-helse) får sudo til NØYAKTIG én kommando — helperen med
+# lukket unit-allowlist. Aldri generell systemctl-fullmakt. Helperen
+# validerer unitnavnet selv i tillegg; dette er lag én av to.
+disponit-helse ALL=(root) NOPASSWD: /usr/local/lib/disponit-restart-helper disponit-api.service, /usr/local/lib/disponit-restart-helper disponit-m37.service

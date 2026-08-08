@@ -1,0 +1,22 @@
+# Helsesjekken (PR-009 v2 §1) — kjøres av disponit-helse.timer.
+# Uprivilegert kontrollprosess; restartfullmakten ligger utelukkende i
+# sudoers-regelen mot den lukkede helperen.
+
+[Unit]
+Description=Disponit helsesjekk (API /live + M-37 heartbeat)
+
+[Service]
+Type=oneshot
+User=disponit-helse
+Group=disponit-helse
+# Trenger å lese socketen? NEI — /live-kallet går via curl --unix-socket,
+# og det krever skrivetilgang til socketen. Kontrollprosessen er derfor
+# medlem av disponit-proxy — den er en TILSYNSKLIENT på linje med nginx,
+# og det er en bevisst, dokumentert utvidelse av gruppen (DEPLOY.md).
+SupplementaryGroups=disponit-proxy
+ExecStart=/usr/local/lib/disponit-helse-sjekk
+# Én kjøring kan melde feil uten at unit-en skal regnes som havarert.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target
