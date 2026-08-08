@@ -29,7 +29,7 @@ StartLimitBurst=5
 Type=simple
 User=disponit-api
 Group=disponit-api
-WorkingDirectory=/opt/disponit/platform/core
+WorkingDirectory=/opt/disponit/aktiv/platform/core
 
 # Hemmeligheter via systemd-credentials (v3 §5) — root-eide filer under
 # /etc/disponit/api/, synlige KUN for denne unitens $CREDENTIALS_DIRECTORY.
@@ -45,6 +45,11 @@ uvicorn.run(lag_app(), fd=3, log_level="info")'
 
 Restart=on-failure
 RestartSec=5
+
+# Delt vert (DEPLOY.md: samlokalisert med annet produkt) => per-unit
+# loggbrems, aldri global journald-omskriving (v2 §7).
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
 
 # Herding (v1 §1).
 NoNewPrivileges=true

@@ -1,5 +1,55 @@
 # DEPLOY — miljøer, servere og skaleringsvei
 
+## Staging-DRIFT (PR-009): én kommando
+
+```sh
+sudo deploy/staging/opp.sh          # utrulling — uten TTY, uten tokens
+sudo deploy/staging/init-tenant.sh demo-a      # DEK + policy, idempotent
+sudo deploy/staging/bootstrap-token.sh demo-a  # interaktiv, KREVER TTY
+```
+
+| Enhet | Identitet | Hemmeligheter | Rolle |
+|---|---|---|---|
+| `disponit-api.socket` + `.service` | Unix `disponit-api`, DB `disponit` | `LoadCredential` fra `/etc/disponit/api/` | M-1 API, socket-aktivert |
+| `disponit-m37.service` | Unix `disponit-m37`, DB `disponit_arbeider` | `/etc/disponit/m37/` | unntakskø-arbeider |
+| `disponit-helse.timer` | Unix `disponit-helse` (medlem `disponit-proxy`) | ingen | /live + heartbeat-tilsyn, restart via lukket helper |
+| `disponit-rydd-pending.timer` | `disponit-helse`, DB `disponit_token_admin` | `/etc/disponit/tokenadmin/` | PENDING-TTL (30 min) |
+| `disponit-backup.timer` | root | `backup-mottaker.pub` (age) | kryptert dump + restore-verifisering mot isolert base |
+
+**Ingen TCP-port (PR-009b §0).** API-et lytter KUN på
+`/run/disponit/api.sock`: eier `disponit-api`, gruppe `disponit-proxy`,
+0660; katalogen 0750. Tillitsgrensen er filsystemrettigheter — loopback
+beviser hvor, ikke hvem. Gruppemedlemmer: nginx-brukeren (PR-009b) og
+`disponit-helse` (tilsynsklient — bevisst, synlig utvidelse).
+M-37-brukeren får EACCES (målt port); arbeiderens fase-2-kall går gjennom
+nginx over HTTPS fra PR-009b — frem til den er merget fullfører ikke
+fase 2 på staging.
+
+**Forward-only (V1).** Migrasjonene har ingen nedvei; 009 dropper
+`api_tokener.aktiv`. opp.sh kjører vedlikeholdsvindu (stopp → migrér →
+aktiver release → start), og statusrapporten sier eksplisitt at rollback
+til forrige kode er FORBUDT når nye migrasjoner er kjørt. Gammel kode mot
+nytt skjema stoppes av boot-sjekkens eksakte migrasjonsmatch.
+
+**Tokenseremonien** (token-cli): TTY bekreftes FØR generering → `PENDING`
+→ lokal MAC-verifisering (pepper aldri i DB, aldri funksjonsargument) →
+visning → operatørbekreftelse → atomisk aktivering. Enhver feil
+tilbakekaller; `PENDING` autentiserer aldri; timeren rydder rester innen
+TTL. Mistet hemmelighet → `roter-token.sh` (ny aktiveres FØR gammel
+tilbakekalles).
+
+**Helse.** API: `/live` over socketen (aldri DB). M-37: atomisk
+heartbeat fra hovedløkken; `db_utilgjengelig` i fersk heartbeat er IKKE
+hengt. Teller under `/run/disponit-health/` (flock), 3 feil → restart via
+privilegert helper med lukket unit-allowlist; telleren nullstilles av
+RESULTAT, aldri av at en kommando ble sendt.
+
+**journald:** verten er DELT (se samlokaliserings-advarselen nederst) —
+derfor per-unit `LogRateLimit`, aldri global `SystemMaxUse` (v2 §7s regel
+for delt vert; klarsignalets dedikert-vert-premiss stemmer ikke med denne
+maskinen, flagget i PR-en).
+
+
 ## Server: one.com Cloud Server (VPS) — Eiers eksisterende oppsett
 
 Vi har allerede en **one.com Cloud Server S** med Ubuntu: 2 vCPU, 4 GB RAM,

@@ -1,0 +1,19 @@
+# PR-009 V3: PENDING-opprydding. Avbrutt tokenseremoni etterlater maks
+# ett inaktivt PENDING-token; timeren tilbakekaller alt eldre enn TTL.
+# Korrektheten avhenger ALDRI av at seremoniens egen feilhåndtering rakk
+# å kjøre.
+
+[Unit]
+Description=Disponit PENDING-tokenopprydding
+
+[Service]
+Type=oneshot
+User=disponit-helse
+Group=disponit-helse
+WorkingDirectory=/opt/disponit/aktiv
+LoadCredential=DISPONIT_TOKEN_ADMIN_URL:/etc/disponit/tokenadmin/DISPONIT_TOKEN_ADMIN_URL
+LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/tokenadmin/DISPONIT_TOKEN_PEPPER
+ExecStart=/opt/disponit/.venv/bin/python deploy/staging/token-cli.py rydd-pending --ttl-minutter 30
+
+[Install]
+WantedBy=multi-user.target

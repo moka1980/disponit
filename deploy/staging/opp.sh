@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# ============================================================
+# Disponit opp.sh — automatisert utrulling (PR-009 v2 §4 + v3 §3 + V1).
+#
+# Én kommando: fra «ingenting kjører» eller «forrige versjon kjører» til
+# «API (socket-aktivert) og M-37 kjører, overvåkes og restartes». Kjøres
+# som root, UTEN TTY-krav (v5 §3) — utsteder ALDRI tokens; det gjør
+# bootstrap-token.sh, interaktivt.
+#
+# FORWARD-ONLY (V1): migrasjonene har ingen nedvei, og 009 dropper
+# `aktiv` — forrige applikasjonsversjon KAN IKKE startes mot nytt schema.
+# Sekvensen er derfor vedlikeholdsvindu: stopp tjenester → migrér →
+# aktiver ny release → start → verifiser. Rapporten til slutt sier
+# eksplisitt hva som IKKE kan rulles tilbake, i stedet for å love en
+# rollback som ikke finnes.
+# ============================================================
+set -euo pipefail
+
+ROT=/opt/disponit
+MILJOFIL=/etc/disponit/staging.env
+LAAS=/var/lock/disponit-deploy.lock
+
+# --- Deploylås: fail-fast, aldri kø (v2 §4) --------------------------------
+exec 9>"$LAAS"
+if ! flock -n 9; then
+  echo "AVBRUTT: en annen utrulling holder $LAAS" >&2
+  exit 1
+fi
+
+SHA=$(git -C "$ROT" rev-parse HEAD)
+KILDE="$ROT/releases/$SHA"
+AKTIV="$ROT/aktiv"
+FORRIGE=$(readlink -f "$AKTIV" 2>/dev/null || true)
+
+echo "== opp.sh: utrulling av $SHA =="
+
+# --- 1. Unix-identiteter (idempotent; v2 §3 + PR-009b V1) ------------------
+getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
+for b in disponit-api disponit-m37 disponit-helse; do
+  getent passwd "$b" >/dev/null || \
+    useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
+done
+# nginx-brukeren meldes inn i disponit-proxy av PR-009b — ALDRI her, og
+# aldri M-37: gruppen ER tillitsgrensen. Helsesjekkeren er medlem som
+# TILSYNSKLIENT (/live over socketen) — en bevisst, synlig utvidelse,
+# dokumentert i DEPLOY.md og flagget i PR-beskrivelsen.
+usermod -aG disponit-proxy disponit-helse
+
+# --- 2. Versjonert release-katalog (v3 §3) ---------------------------------
+mkdir -p "$ROT/releases"
+if [ ! -d "$KILDE" ]; then
+  git -C "$ROT" archive --format=tar "$SHA" | \
+    ( mkdir -p "$KILDE" && tar -x -C "$KILDE" )
+fi
+
+# --- 3. Credentials per tjeneste (v3 §5): root-eide filer ------------------
+# Kilden er staging.env (lib-miljofil eier livssyklusen); her MATERIALISERES
+# de per unit, slik at LoadCredential gir hver prosess kun sine egne.
+set -a; . "$MILJOFIL"; set +a
+install -d -m 700 /etc/disponit/api /etc/disponit/m37
+skriv_cred() {  # katalog navn verdi
+  printf '%s' "$3" > "/etc/disponit/$1/$2"
+  chmod 600 "/etc/disponit/$1/$2"
+}
+skriv_cred api DATABASE_URL          "$DATABASE_URL"
+skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
+skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
+skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
+# Arbeideren får sin EGEN DB-rolle (v2 §3) når DISPONIT_ARBEIDER_URL er
+# satt av oppsett-postgresql.sh; ellers deler den runtime-DSN-en og det
+# rapporteres som avvik nederst.
+skriv_cred m37 DATABASE_URL "${DISPONIT_ARBEIDER_URL:-$DATABASE_URL}"
+skriv_cred m37 DISPONIT_KEK "$DISPONIT_KEK"
+install -d -m 700 /etc/disponit/tokenadmin
+skriv_cred tokenadmin DISPONIT_TOKEN_ADMIN_URL "$DISPONIT_TOKEN_ADMIN_URL"
+skriv_cred tokenadmin DISPONIT_TOKEN_PEPPER    "$DISPONIT_TOKEN_PEPPER"
+
+# --- 4. Unitfiler verifiseres FØR installasjon (v2 §4) ---------------------
+UNITS="disponit-api.socket disponit-api.service disponit-m37.service
+disponit-helse.service disponit-helse.timer
+disponit-rydd-pending.service disponit-rydd-pending.timer
+disponit-backup.service disponit-backup.timer"
+for u in $UNITS; do
+  systemd-analyze verify "$KILDE/deploy/staging/$u" 2>&1 | grep -v '^$' || true
+  test -f "$KILDE/deploy/staging/$u"
+done
+
+# --- 5. VEDLIKEHOLDSVINDU: stopp tjenestene FØR migrasjonen (V1) -----------
+KJORTE_FOR=$(systemctl is-active disponit-api.service disponit-m37.service \
+             2>/dev/null | grep -c '^active' || true)
+systemctl stop disponit-m37.service disponit-api.service \
+    disponit-api.socket 2>/dev/null || true
+
+# --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
+SCHEMA_RAPPORT=""
+for url in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
+  UT=$(cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
+       "$ROT/.venv/bin/python" deploy/staging/migrer.py disponit) || {
+    echo "AVBRUTT: migrasjon feilet — tjenestene er STOPPET og forrige"
+    echo "release står urørt på $FORRIGE. Fremoverrettet retting kreves."
+    exit 1
+  }
+  SCHEMA_RAPPORT="$UT"
+done
+NYE_MIGRASJONER=$(printf '%s\n' "$SCHEMA_RAPPORT" \
+  | sed -n 's/^migrasjoner kjørt: //p' | tail -1)
+
+# --- 7. Atomisk release-bytte + units --------------------------------------
+ln -sfn "$KILDE" "$AKTIV"
+for u in $UNITS; do
+  install -m 644 "$KILDE/deploy/staging/$u" "/etc/systemd/system/$u"
+done
+install -m 755 "$KILDE/deploy/staging/helse-sjekk.sh" \
+    /usr/local/lib/disponit-helse-sjekk
+install -m 755 "$KILDE/deploy/staging/restart-helper.sh" \
+    /usr/local/lib/disponit-restart-helper
+install -m 440 "$KILDE/deploy/staging/sudoers-disponit-helse" \
+    /etc/sudoers.d/disponit-helse
+visudo -cf /etc/sudoers.d/disponit-helse >/dev/null
+# journald: IKKE noe globalt tak. Klarsignalet forutsatte dedikert vert,
+# men DEPLOY.md sier eksplisitt at Cloud Server S deler maskin med et
+# annet produkt — og v2 §7s egen regel for delt vert er per-unit
+# LogRateLimit (satt i unit-filene). Global SystemMaxUse ville skrevet om
+# naboproduktets loggretensjon. Flagget som avvik i PR-beskrivelsen.
+systemctl daemon-reload
+
+# --- 8. Start + readiness over SOCKETEN (PR-009b §0: ingen TCP) ------------
+systemctl enable --now disponit-api.socket
+systemctl enable --now disponit-api.service disponit-m37.service
+systemctl enable --now disponit-helse.timer disponit-rydd-pending.timer \
+    disponit-backup.timer
+
+KLAR=nei
+for _ in $(seq 1 30); do
+  if curl -fsS --unix-socket /run/disponit/api.sock \
+       http://disponit/ready >/dev/null 2>&1; then KLAR=ja; break; fi
+  sleep 1
+done
+
+API=$(systemctl is-active disponit-api.service || true)
+M37=$(systemctl is-active disponit-m37.service || true)
+
+# --- 9. TREDELT STATUSRAPPORT (v3 §3) — ærlig, aldri en lovet rollback -----
+echo
+echo "== statusrapport =="
+echo "(a) schema:    ${NYE_MIGRASJONER:-ukjent} (register: se migrer-utskrift over)"
+echo "(b) kandidat:  api=$API m37=$M37 /ready=$KLAR (release $SHA)"
+if [ -z "${NYE_MIGRASJONER##*ingen*}" ]; then
+  echo "(c) rollback:  ingen nye migrasjoner — forrige kode ($FORRIGE)"
+  echo "               er fortsatt kompatibel med skjemaet."
+else
+  echo "(c) rollback:  FORBUDT. Migrasjonene [$NYE_MIGRASJONER] er"
+  echo "               forward-only (009 dropper 'aktiv'); forrige kode kan"
+  echo "               IKKE startes mot dette skjemaet. Feil rettes"
+  echo "               FREMOVER — det finnes ingen nedmigrering."
+fi
+if [ -z "${DISPONIT_ARBEIDER_URL:-}" ]; then
+  echo "AVVIK: DISPONIT_ARBEIDER_URL er ikke satt — arbeideren deler"
+  echo "       runtime-DSN. Kjør oppsett-postgresql.sh for rolleskillet."
+fi
+
+[ "$API" = active ] && [ "$M37" = active ] && [ "$KLAR" = ja ]

@@ -26,7 +26,7 @@ StartLimitBurst=5
 Type=simple
 User=disponit-m37
 Group=disponit-m37
-WorkingDirectory=/opt/disponit/platform/core
+WorkingDirectory=/opt/disponit/aktiv/platform/core
 RuntimeDirectory=disponit-m37
 RuntimeDirectoryMode=0755
 
@@ -48,6 +48,11 @@ ExecStart=/opt/disponit/.venv/bin/python -m m37.arbeider
 # feilkonfigurasjon ender i tydelig `failed`, ikke uendelig støy.
 Restart=always
 RestartSec=5
+
+# Delt vert (DEPLOY.md) => per-unit loggbrems, aldri global journald-
+# omskriving (v2 §7).
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
 
 # Herding. Arbeideren trenger nettverk til loopback-API-et og en
 # databasetilkobling — ingenting annet.
