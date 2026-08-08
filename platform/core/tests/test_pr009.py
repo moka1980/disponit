@@ -244,6 +244,67 @@ def test_avbrutt_bekreftelse_tilbakekaller_pending(migrator, miljo,
         admin.close()
 
 
+# ---------------------------------------------------------------------------
+# Review-runde 1, to P1 i opp.sh — logikken bor nå i lib-opp.sh og måles her
+# (samme mønster som lib-miljofil.sh: inline-bash ingen test så, feilet).
+# ---------------------------------------------------------------------------
+
+LIB_OPP = ROT / "deploy/staging/lib-opp.sh"
+
+
+def _bash(skript: str) -> "subprocess.CompletedProcess":
+    import subprocess
+    return subprocess.run(["bash", "-c", skript], capture_output=True,
+                          text=True)
+
+
+def test_p1_rollback_dommen_felles_over_unionen(tmp_path):
+    """P1-scenarioet ordrett: ny migrasjon KUN i runtime-basen, testbasen
+    sier «ingen» sist — dommen skal være FORBUDT, aldri kompatibel."""
+    runtime = tmp_path / "runtime"
+    testbase = tmp_path / "test"
+
+    def dom(runtime_tekst, test_tekst):
+        runtime.write_text(f"migrasjoner kjørt: {runtime_tekst}\n")
+        testbase.write_text(f"migrasjoner kjørt: {test_tekst}\n")
+        r = _bash(f". {LIB_OPP}; vurder_migrasjoner runtime {runtime} "
+                  f"test {testbase}; printf 'NYE=%s' \"$NYE_MIGRASJONER\"")
+        assert r.returncode == 0, r.stderr
+        return r.stdout.split("NYE=", 1)[1]
+
+    assert dom("[9]", "ingen — alt var oppdatert") != "", \
+        "runtime-only migrasjon skal gi FORBUDT (selve P1-en)"
+    assert dom("ingen — alt var oppdatert", "[9]") != "", \
+        "test-only skal også gi FORBUDT — unionen, ikke en av dem"
+    assert dom("ingen — alt var oppdatert",
+               "ingen — alt var oppdatert") == "", \
+        "ingen nye noe sted er den ENESTE kompatible dommen"
+
+
+def test_p1_unitverifisering_gater_pa_feil(tmp_path):
+    """`|| true`-formen slapp ugyldige units gjennom — nå skal en unit med
+    feil STOPPE, en manglende fil STOPPE, og en gyldig slippe gjennom."""
+    import shutil
+    if shutil.which("systemd-analyze") is None:
+        pytest.skip("systemd-analyze finnes ikke i dette miljøet")
+
+    (tmp_path / "gyldig.service").write_text(
+        "[Unit]\nDescription=t\n[Service]\nExecStart=/bin/true\n")
+    (tmp_path / "ugyldig.service").write_text(
+        "[Unit]\nDescription=t\n[Service]\nExecStart=/finnes/ikke/abc\n")
+
+    ok = _bash(f". {LIB_OPP}; verifiser_units {tmp_path} gyldig.service")
+    assert ok.returncode == 0, ok.stderr
+
+    daarlig = _bash(f". {LIB_OPP}; verifiser_units {tmp_path} "
+                    "ugyldig.service gyldig.service")
+    assert daarlig.returncode != 0, \
+        "en unit med ikke-eksekverbar ExecStart skal stoppe deployen"
+
+    borte = _bash(f". {LIB_OPP}; verifiser_units {tmp_path} mangler.service")
+    assert borte.returncode != 0 and "finnes ikke" in borte.stderr
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):

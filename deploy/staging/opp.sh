@@ -75,15 +75,24 @@ install -d -m 700 /etc/disponit/tokenadmin
 skriv_cred tokenadmin DISPONIT_TOKEN_ADMIN_URL "$DISPONIT_TOKEN_ADMIN_URL"
 skriv_cred tokenadmin DISPONIT_TOKEN_PEPPER    "$DISPONIT_TOKEN_PEPPER"
 
-# --- 4. Unitfiler verifiseres FØR installasjon (v2 §4) ---------------------
+# --- 4. Unitfiler verifiseres FØR installasjon (v2 §4; P1 runde 1) --------
+# Hjelperskriptene installeres FØRST: verify løser ExecStart-stier ved
+# lasting, og «not executable» skal være en EKTE feil som stopper — ikke
+# støy fra at verifiseringen kjørte før filene fantes.
+. "$KILDE/deploy/staging/lib-opp.sh"
+install -m 755 "$KILDE/deploy/staging/helse-sjekk.sh" \
+    /usr/local/lib/disponit-helse-sjekk
+install -m 755 "$KILDE/deploy/staging/restart-helper.sh" \
+    /usr/local/lib/disponit-restart-helper
 UNITS="disponit-api.socket disponit-api.service disponit-m37.service
 disponit-helse.service disponit-helse.timer
 disponit-rydd-pending.service disponit-rydd-pending.timer
 disponit-backup.service disponit-backup.timer"
-for u in $UNITS; do
-  systemd-analyze verify "$KILDE/deploy/staging/$u" 2>&1 | grep -v '^$' || true
-  test -f "$KILDE/deploy/staging/$u"
-done
+if ! verifiser_units "$KILDE/deploy/staging" $UNITS; then
+  echo "AVBRUTT: unit-verifisering feilet — ingenting er installert eller"
+  echo "stoppet; forrige release kjører urørt."
+  exit 1
+fi
 
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenestene FØR migrasjonen (V1) -----------
 KJORTE_FOR=$(systemctl is-active disponit-api.service disponit-m37.service \
@@ -92,28 +101,28 @@ systemctl stop disponit-m37.service disponit-api.service \
     disponit-api.socket 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
-SCHEMA_RAPPORT=""
-for url in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
-  UT=$(cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
-       "$ROT/.venv/bin/python" deploy/staging/migrer.py disponit) || {
-    echo "AVBRUTT: migrasjon feilet — tjenestene er STOPPET og forrige"
-    echo "release står urørt på $FORRIGE. Fremoverrettet retting kreves."
+# P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
+# iterasjon (TESTbasen) overskrive resultatet — en forward-only-migrasjon
+# kjørt kun i runtime-basen ville blitt rapportert rollback-kompatibel.
+RAPPORT_KATALOG=$(mktemp -d)
+trap 'rm -rf "$RAPPORT_KATALOG"' EXIT
+for par in "runtime:$DISPONIT_MIGRATOR_URL" "test:$DISPONIT_TEST_MIGRATOR_DSN"; do
+  base=${par%%:*}; url=${par#*:}
+  (cd "$KILDE" && DISPONIT_MIGRATOR_URL="$url" \
+     "$ROT/.venv/bin/python" deploy/staging/migrer.py disponit) \
+     | tee "$RAPPORT_KATALOG/$base" || {
+    echo "AVBRUTT: migrasjon ($base) feilet — tjenestene er STOPPET og"
+    echo "forrige release står urørt på $FORRIGE. Fremoverrettet retting."
     exit 1
   }
-  SCHEMA_RAPPORT="$UT"
 done
-NYE_MIGRASJONER=$(printf '%s\n' "$SCHEMA_RAPPORT" \
-  | sed -n 's/^migrasjoner kjørt: //p' | tail -1)
 
 # --- 7. Atomisk release-bytte + units --------------------------------------
 ln -sfn "$KILDE" "$AKTIV"
 for u in $UNITS; do
   install -m 644 "$KILDE/deploy/staging/$u" "/etc/systemd/system/$u"
 done
-install -m 755 "$KILDE/deploy/staging/helse-sjekk.sh" \
-    /usr/local/lib/disponit-helse-sjekk
-install -m 755 "$KILDE/deploy/staging/restart-helper.sh" \
-    /usr/local/lib/disponit-restart-helper
+# (helse-sjekk og restart-helper er alt installert — FØR verifiseringen.)
 install -m 440 "$KILDE/deploy/staging/sudoers-disponit-helse" \
     /etc/sudoers.d/disponit-helse
 visudo -cf /etc/sudoers.d/disponit-helse >/dev/null
@@ -143,16 +152,18 @@ M37=$(systemctl is-active disponit-m37.service || true)
 # --- 9. TREDELT STATUSRAPPORT (v3 §3) — ærlig, aldri en lovet rollback -----
 echo
 echo "== statusrapport =="
-echo "(a) schema:    ${NYE_MIGRASJONER:-ukjent} (register: se migrer-utskrift over)"
+echo "(a) schema, per base:"
+vurder_migrasjoner runtime "$RAPPORT_KATALOG/runtime" \
+                   test    "$RAPPORT_KATALOG/test"
 echo "(b) kandidat:  api=$API m37=$M37 /ready=$KLAR (release $SHA)"
-if [ -z "${NYE_MIGRASJONER##*ingen*}" ]; then
-  echo "(c) rollback:  ingen nye migrasjoner — forrige kode ($FORRIGE)"
-  echo "               er fortsatt kompatibel med skjemaet."
+if [ -z "$NYE_MIGRASJONER" ]; then
+  echo "(c) rollback:  ingen nye migrasjoner i NOEN base — forrige kode"
+  echo "               ($FORRIGE) er fortsatt kompatibel med skjemaet."
 else
-  echo "(c) rollback:  FORBUDT. Migrasjonene [$NYE_MIGRASJONER] er"
-  echo "               forward-only (009 dropper 'aktiv'); forrige kode kan"
-  echo "               IKKE startes mot dette skjemaet. Feil rettes"
-  echo "               FREMOVER — det finnes ingen nedmigrering."
+  echo "(c) rollback:  FORBUDT. Nye migrasjoner [$NYE_MIGRASJONER] er"
+  echo "               forward-only; forrige kode kan IKKE startes mot"
+  echo "               dette skjemaet. Dommen felles over UNIONEN av"
+  echo "               basene — én base er nok. Feil rettes FREMOVER."
 fi
 if [ -z "${DISPONIT_ARBEIDER_URL:-}" ]; then
   echo "AVVIK: DISPONIT_ARBEIDER_URL er ikke satt — arbeideren deler"
