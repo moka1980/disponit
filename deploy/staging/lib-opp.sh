@@ -42,6 +42,11 @@ preflight_units() {  # <kilde-katalog> <venv-sti> <unit...>
   # egne skript finnes og er kjørbare; at venv-en finnes på ekte sjekkes
   # av opp.sh som egen, lesende forhåndssjekk.
   cp -a /usr/lib/systemd/system "$rot/usr/lib/systemd/system"
+  # Vertens systemd-tre kan inneholde DØDE alias-symlinker (staging har
+  # dracut-*-lenker uten mål). Kjørende systemd ignorerer dem; verify i
+  # den falske roten nekter å laste grafen og feiler VÅRE units på
+  # naboens lik. De beskjæres fra KOPIEN — aldri fra verten.
+  find "$rot/usr/lib/systemd/system" -xtype l -delete
   stub() { install -D -m 755 /dev/null "$rot$1"; }
   stub /opt/disponit/.venv/bin/python
   stub /usr/bin/install
