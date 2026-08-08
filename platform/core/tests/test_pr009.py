@@ -1,0 +1,283 @@
+"""PR-009: tokenstatus-migrasjonen og PENDING-seremonien.
+
+Klarsignalets syv Codex-porter for kodelaget. Driftslaget (units, opp.sh,
+helsetimer) måles på staging — det som KAN måles i suiten, måles her.
+"""
+import importlib.util
+import io
+import secrets
+from pathlib import Path
+
+import pytest
+
+from .test_api import (DSN, MIGRATOR_DSN, PEPPER, TENANT,  # noqa: F401
+                       _lag_token, _rydd, migrator, miljo, token)
+from .test_kjorer_og_kryptering import _nullstill  # noqa: F401
+from .test_pr008 import _gjenopprett_rettigheter  # noqa: F401
+
+pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+
+ROT = Path(__file__).resolve().parents[3]
+
+
+def _cli():
+    spek = importlib.util.spec_from_file_location(
+        "token_cli", ROT / "deploy/staging/token-cli.py")
+    modul = importlib.util.module_from_spec(spek)
+    spek.loader.exec_module(modul)
+    return modul
+
+
+# ---------------------------------------------------------------------------
+# Port 1: ingen tokenkode leser/skriver gammel `aktiv`
+# ---------------------------------------------------------------------------
+
+def test_port1_ingen_tokenvei_bruker_aktiv():
+    """Grep-porten. `aktiv` på api_tokener finnes ikke lenger; enhver
+    kodevei som fortsatt refererer den ville lest en kolonne som ikke
+    eksisterer. Policyregisterets `policyer.aktiv` er en ANNEN kolonne og
+    unntas via kontekst (api_tokener-nærhet)."""
+    # Migrasjon 009 er UNNTATT: backfillen dens LESER `aktiv` med vilje,
+    # før den dropper kolonnen — porten gjelder runtime-veiene etterpå.
+    filer = [ROT / "deploy/staging/token-cli.py",
+             ROT / "deploy/staging/migrer.py",
+             ROT / "platform/core/api/app.py"]
+    for fil in filer:
+        tekst = fil.read_text(encoding="utf-8")
+        for i, linje in enumerate(tekst.splitlines(), 1):
+            if "api_tokener" in linje and "aktiv" in linje \
+                    and "DROP COLUMN" not in linje and "--" != linje.strip()[:2]:
+                # api_tokener og aktiv på samme linje er den farlige formen.
+                raise AssertionError(f"{fil.name}:{i}: {linje.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# Port 3: migrasjonen bevarer status for eksisterende tokens
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port3_migrasjonen_bevarer_aktive_og_tilbakekalte(migrator, miljo):
+    """Oppgraderingsvei: base på 008 med et aktivt og et deaktivert token
+    (gammel `aktiv`-kolonne) → migrasjon 009 → AKTIV/TILBAKEKALT, og det
+    aktive tokenet autentiserer ETTER migrasjonen. En samlet DEFAULT
+    'PENDING' ville sperret hver kunde — det er nettopp det trinnene
+    hindrer."""
+    from db import kjorer
+    _nullstill(migrator, med_legacy_uten_checksum=False)
+    kjorer.migrer(migrator, til_og_med=8)
+
+    import hashlib
+    import hmac as hmaclib
+    secret = "s" * 43
+    mac = hmaclib.new(PEPPER.encode(), secret.encode(),
+                      hashlib.sha256).hexdigest()
+    migrator.execute(
+        "INSERT INTO api_tokener (token_id, tenant, rolle, scopes,"
+        " secret_mac, aktiv) VALUES ('tk_gammelaktiv',%s,'agent',"
+        " ARRAY['decision:write'],%s,true)", (TENANT, mac))
+    migrator.execute(
+        "INSERT INTO api_tokener (token_id, tenant, rolle, scopes,"
+        " secret_mac, aktiv) VALUES ('tk_gammeldod',%s,'agent',"
+        " ARRAY['decision:write'],%s,false)", (TENANT, mac))
+    migrator.commit()
+
+    kjort = kjorer.migrer(migrator)
+    assert 9 in kjort
+    _gjenopprett_rettigheter(migrator)
+
+    rader = dict(migrator.execute(
+        "SELECT token_id, status FROM api_tokener WHERE token_id LIKE"
+        " 'tk_gammel%'").fetchall())
+    assert rader == {"tk_gammelaktiv": "AKTIV", "tk_gammeldod": "TILBAKEKALT"}
+    kolonner = {r[0] for r in migrator.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_name='api_tokener'").fetchall()}
+    assert "aktiv" not in kolonner, "v5 §1: aktiv skal være borte"
+    migrator.rollback()
+
+    # Det gamle aktive tokenet VIRKER etter migrasjonen (via runtime-veien).
+    from db.pg import koble
+    runtime = koble(DSN)
+    try:
+        rad = runtime.execute("SELECT tenant FROM verifiser_token(%s,%s)",
+                              ("tk_gammelaktiv", mac)).fetchone()
+        assert rad == (TENANT,)
+        assert runtime.execute("SELECT tenant FROM verifiser_token(%s,%s)",
+                               ("tk_gammeldod", mac)).fetchone() is None
+    finally:
+        runtime.close()
+
+
+# ---------------------------------------------------------------------------
+# Port 4 (DB-laget) + V2: PENDING
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port4_pending_avvises_av_verifikatoren(migrator, miljo):
+    """PENDING er aldri en API-principal — målt direkte på verifikatoren
+    (API-laget måles i test_api_porter sin CLI-rundtur)."""
+    import hashlib
+    import hmac as hmaclib
+    secret = "p" * 43
+    mac = hmaclib.new(PEPPER.encode(), secret.encode(),
+                      hashlib.sha256).hexdigest()
+    migrator.execute(
+        "INSERT INTO api_tokener (token_id, tenant, rolle, scopes,"
+        " secret_mac) VALUES ('tk_pendingtest',%s,'agent',"
+        " ARRAY['decision:write'],%s)", (TENANT, mac))
+    migrator.commit()
+    status = migrator.execute(
+        "SELECT status FROM api_tokener WHERE token_id='tk_pendingtest'"
+    ).fetchone()[0]
+    assert status == "PENDING", "default skal være PENDING"
+    from db.pg import koble
+    runtime = koble(DSN)
+    try:
+        assert runtime.execute(
+            "SELECT tenant FROM verifiser_token('tk_pendingtest',%s)",
+            (mac,)).fetchone() is None
+    finally:
+        runtime.close()
+
+
+# ---------------------------------------------------------------------------
+# Port 5: pepper finnes ikke i DB og er aldri funksjonsargument
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port5_pepper_aldri_i_databasen(migrator, miljo):
+    argnavn = migrator.execute(
+        "SELECT p.proname, pg_get_function_identity_arguments(p.oid)"
+        "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+        " WHERE n.nspname='public' AND lower(pg_get_function_identity_"
+        "arguments(p.oid)) LIKE '%pepper%'").fetchall()
+    assert argnavn == [], f"pepper som funksjonsargument: {argnavn}"
+    kolonner = migrator.execute(
+        "SELECT table_name, column_name FROM information_schema.columns"
+        " WHERE table_schema='public' AND column_name ILIKE '%pepper%'"
+    ).fetchall()
+    assert kolonner == [], f"pepper som kolonne: {kolonner}"
+    migrator.rollback()
+
+
+@pg
+def test_v2_hent_pending_token_gir_kun_pending(migrator, miljo, token):
+    """Den avgrensede funksjonen svarer for PENDING og TIER for AKTIV —
+    et aktivt tokens MAC skal ikke kunne leses ut via CLI-veien."""
+    from db.pg import koble
+    cli = _cli()
+    from .test_api_porter import TOKEN_ADMIN_DSN
+    admin = koble(TOKEN_ADMIN_DSN)
+    try:
+        token_id, secret = cli.opprett(admin, PEPPER, TENANT, "agent",
+                                       ["decision:write"])
+        admin.commit()
+        assert admin.execute("SELECT tenant FROM hent_pending_token(%s)",
+                             (token_id,)).fetchone() == (TENANT,)
+        cli.verifiser_pending(admin, PEPPER, token_id, secret)
+        cli.aktiver(admin, token_id)
+        admin.commit()
+        assert admin.execute("SELECT tenant FROM hent_pending_token(%s)",
+                             (token_id,)).fetchone() is None, \
+            "AKTIV skal aldri kunne leses via PENDING-veien"
+    finally:
+        admin.close()
+
+
+# ---------------------------------------------------------------------------
+# Port 6/7 (CLI-laget): TTY-regler + V3 rydd-pending
+# ---------------------------------------------------------------------------
+
+@pg
+def test_seremonien_uten_tty_produserer_ingen_hemmelighet(migrator, miljo,
+                                                          monkeypatch):
+    """v4 §1.1: TTY bekreftes FØR token genereres — avbruddet skjer før
+    det finnes noe å miste."""
+    from db.pg import koble
+    cli = _cli()
+    from .test_api_porter import TOKEN_ADMIN_DSN
+    admin = koble(TOKEN_ADMIN_DSN)
+    try:
+        antall_for = admin.execute(
+            "SELECT count(*) FROM api_tokener WHERE tenant=%s",
+            (TENANT,)).fetchone()[0]
+        admin.rollback()
+        monkeypatch.setattr("sys.stdout.isatty", lambda: False,
+                            raising=False)
+        with pytest.raises(SystemExit, match="terminal"):
+            cli._seremoni_ny(admin, PEPPER, False,
+                             lambda: cli.opprett(admin, PEPPER, TENANT,
+                                                 "agent", ["decision:write"]))
+        antall_etter = admin.execute(
+            "SELECT count(*) FROM api_tokener WHERE tenant=%s",
+            (TENANT,)).fetchone()[0]
+        admin.rollback()
+        assert antall_for == antall_etter, \
+            "ingen rad skal fødes når hemmeligheten ikke kan leveres"
+    finally:
+        admin.close()
+
+
+@pg
+def test_avbrutt_bekreftelse_tilbakekaller_pending(migrator, miljo,
+                                                   monkeypatch):
+    """v4-krasjmatrisen: bekreftes ikke lagringen, tilbakekalles tokenet —
+    ingen foreldreløs hemmelighet, ingen aktiv rad."""
+    from db.pg import koble
+    cli = _cli()
+    from .test_api_porter import TOKEN_ADMIN_DSN
+    admin = koble(TOKEN_ADMIN_DSN)
+    try:
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True, raising=False)
+        monkeypatch.setattr("builtins.input", lambda *_: "nei")
+        with pytest.raises(SystemExit, match="ikke bekreftet"):
+            cli._seremoni_ny(admin, PEPPER, False,
+                             lambda: cli.opprett(admin, PEPPER, TENANT,
+                                                 "agent", ["decision:write"]))
+        statuser = [r[0] for r in admin.execute(
+            "SELECT status FROM api_tokener WHERE tenant=%s",
+            (TENANT,)).fetchall()]
+        admin.rollback()
+        assert "PENDING" not in statuser and "AKTIV" not in statuser, \
+            f"etterlatt token: {statuser}"
+    finally:
+        admin.close()
+
+
+@pg
+def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
+                                        capsys):
+    """V3: timeren rydder PENDING eldre enn TTL — aldri ferske, aldri
+    aktive. Målt gjennom CLI-ens EGEN kommando (samme vei som timeren),
+    ikke en reimplementert spørring."""
+    from db.pg import koble
+    cli = _cli()
+    from .test_api_porter import TOKEN_ADMIN_DSN
+    admin = koble(TOKEN_ADMIN_DSN)
+    try:
+        gammel, _ = cli.opprett(admin, PEPPER, TENANT, "agent",
+                                ["decision:write"])
+        fersk, _ = cli.opprett(admin, PEPPER, TENANT, "agent",
+                               ["decision:write"])
+        admin.commit()
+    finally:
+        admin.close()
+    # Alder fabrikkeres som skjemaeier — `opprettet` er ikke skrivbar for
+    # token-admin, og det er poenget.
+    migrator.execute("UPDATE api_tokener SET opprettet ="
+                     " opprettet - interval '45 minutes'"
+                     " WHERE token_id=%s", (gammel,))
+    migrator.commit()
+
+    import os
+    monkeypatch.setenv("DISPONIT_TOKEN_ADMIN_URL",
+                       os.environ["DISPONIT_TEST_TOKEN_ADMIN_DSN"])
+    monkeypatch.setenv("DISPONIT_TOKEN_PEPPER", PEPPER)
+    assert cli.main(["rydd-pending", "--ttl-minutter", "30"]) == 0
+    assert "ryddet: 1" in capsys.readouterr().out
+
+    statuser = dict(migrator.execute(
+        "SELECT token_id, status FROM api_tokener WHERE token_id IN (%s,%s)",
+        (gammel, fersk)).fetchall())
+    migrator.rollback()
+    assert statuser == {gammel: "TILBAKEKALT", fersk: "PENDING"}

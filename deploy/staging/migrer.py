@@ -126,12 +126,15 @@ GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
-GRANT SELECT (token_id, tenant, rolle, scopes, aktiv, utloper, last_used_at,
+GRANT SELECT (token_id, tenant, rolle, scopes, status, utloper, last_used_at,
               opprettet) ON api_tokener TO {rolle};
 GRANT INSERT ON api_tokener TO {rolle};
-GRANT UPDATE (aktiv, utloper, secret_mac) ON api_tokener TO {rolle};
+GRANT UPDATE (status, utloper, secret_mac) ON api_tokener TO {rolle};
 GRANT INSERT ON revisjonslogg TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+-- PR-009 V2: PENDING-verifikasjonen — metadata + MAC for et PENDING-token,
+-- aldri pepper (pepperet er aldri i databasen og aldri funksjonsargument).
+GRANT EXECUTE ON FUNCTION hent_pending_token(TEXT) TO {rolle};
 """
 
 

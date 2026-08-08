@@ -185,10 +185,14 @@ def _lag_token(conn, tenant, rolle, scopes, aktiv=True, utloper=None):
     token_id = "tk_" + s.token_hex(8)
     secret = s.token_urlsafe(32)
     mac = hmac.new(PEPPER.encode(), secret.encode(), hashlib.sha256).hexdigest()
+    # PR-009: `status` er eneste autoritet. Signaturen beholder `aktiv`-
+    # navnet for kallerne — semantikken er «kan autentisere» (AKTIV) mot
+    # «tilbakekalt» (TILBAKEKALT).
     conn.execute(
         "INSERT INTO api_tokener (token_id, tenant, rolle, scopes, secret_mac,"
-        " aktiv, utloper) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-        (token_id, tenant, rolle, scopes, mac, aktiv, utloper))
+        " status, utloper) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (token_id, tenant, rolle, scopes, mac,
+         "AKTIV" if aktiv else "TILBAKEKALT", utloper))
     conn.commit()
     return f"{token_id}.{secret}", token_id
 

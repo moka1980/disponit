@@ -572,6 +572,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     som kan konstrueres uten sjekkene, blir før eller siden konstruert uten
     dem.
     """
+    # PR-009: systemd-credentials hydreres FØR noen env-lesing. Utenfor
+    # systemd er dette en no-op, og en allerede satt variabel vinner alltid.
+    from db.hemmeligheter import last_credentials
+    last_credentials()
     dsn = dsn or os.environ.get("DATABASE_URL") or ""
     if not dsn:
         raise BootNekt("DATABASE_URL mangler")

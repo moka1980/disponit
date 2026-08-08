@@ -1,0 +1,28 @@
+# Disponit API-socket — TILLITSGRENSEN (PR-009b §0/V1, bindende for PR-009).
+#
+# Loopback beviser hvor forbindelsen kom fra, ikke hvem som åpnet den: en
+# kompromittert M-37-arbeider kjører nettopp der og kunne sendt falske
+# proxy-headere til API-et over TCP. Derfor finnes ingen TCP-port — grensen
+# er FILSYSTEMRETTIGHETER: kun medlemmer av `disponit-proxy` (nginx-brukeren,
+# og bare den) kan koble til. ACL-porten testes i BEGGE retninger
+# (PR-009b V2): nginx fullfører en hel request; M-37-brukeren og en
+# ordinær lokal bruker får EACCES.
+#
+# Socket-unit og ikke app-opprettet socket (V1): systemd eier livssyklusen,
+# rettighetene settes FØR tjenesten finnes, og en API-restart mister ingen
+# innkommende forbindelser.
+
+[Unit]
+Description=Disponit M-1 API-socket (Unix, gruppe disponit-proxy)
+
+[Socket]
+ListenStream=/run/disponit/api.sock
+SocketUser=disponit-api
+SocketGroup=disponit-proxy
+SocketMode=0660
+# Katalogen: eier disponit-api, gruppe disponit-proxy, 0750 — traversal
+# kun via gruppen (PR-009b V1).
+ExecStartPre=/usr/bin/install -d -o disponit-api -g disponit-proxy -m 0750 /run/disponit
+
+[Install]
+WantedBy=sockets.target

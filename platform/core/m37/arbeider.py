@@ -805,23 +805,54 @@ def _policy_id(conn: psycopg.Connection, sak: Sak) -> str:
     return ref[0] if ref else ""
 
 
+def skriv_heartbeat(sti: str, syklus_nr: int, siste_status: str) -> None:
+    """Atomisk heartbeat for helsetimeren (PR-009 v3 §1).
+
+    Skrives av HOVEDLØKKEN — aldri av en egen tråd som kan leve videre
+    mens arbeidet henger; da ville heartbeaten målt trådplanleggeren, ikke
+    arbeideren. `.tmp` + `rename()` gjør at leseren aldri ser en halv fil.
+    Innholdet er drift, ikke saksdata.
+    """
+    import os
+    tmp = sti + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"ts": time.time(), "syklus_nr": syklus_nr,
+                   "siste_status": siste_status}, f)
+    os.replace(tmp, sti)
+
+
 def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
-         maks_runder: int | None = None) -> int:
+         maks_runder: int | None = None,
+         heartbeat_sti: str | None = None) -> int:
     """Arbeiderprosessens hovedløkke. Kalles av systemd-unitten.
 
     `maks_runder` finnes for testene og for engangskjøringer i
     feilinjiseringen. I drift står den på None og løkken går til prosessen
-    stoppes.
+    stoppes. `heartbeat_sti` settes av unitten (RuntimeDirectory) —
+    heartbeat skrives etter HVER syklus, også når køen er tom, og med
+    `db_utilgjengelig` når databasen er borte: en DB-feil er ikke en hengt
+    worker, og skal aldri utløse en restart som ikke løser noe.
     """
-    conn = koble(dsn)
+    conn = None
     klient = Beslutningsklient(basis_url)
     behandlet = 0
     runder = 0
     try:
         while maks_runder is None or runder < maks_runder:
             runder += 1
-            frigi_utlopte(conn)
-            res = behandle_en(conn, klient)
+            status = "ok"
+            try:
+                if conn is None or conn.closed:
+                    conn = koble(dsn)
+                frigi_utlopte(conn)
+                res = behandle_en(conn, klient)
+            except psycopg.OperationalError:
+                status, res = "db_utilgjengelig", None
+                if conn is not None and not conn.closed:
+                    conn.close()
+                conn = None
+            if heartbeat_sti:
+                skriv_heartbeat(heartbeat_sti, runder, status)
             if res is None:
                 if maks_runder is not None:
                     break
@@ -829,7 +860,8 @@ def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
                 continue
             behandlet += 1
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     return behandlet
 
 
@@ -1112,9 +1144,15 @@ _FASE2KLASSE = _Klasse(_Fase2klasse(), "manglende_data", "attestasjon_verifisert
 
 if __name__ == "__main__":       # pragma: no cover — systemd-inngangen
     import sys
+    from db.hemmeligheter import last_credentials
+    last_credentials()           # PR-009: LoadCredential før env-lesing
     dsn = os.environ.get("DATABASE_URL") or ""
     url = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
+    # Heartbeat-sti fra unitens RuntimeDirectory (v3 §1) — utenfor systemd
+    # settes den ikke, og løkken skriver da ingen heartbeat.
+    rt = os.environ.get("RUNTIME_DIRECTORY", "").split(":")[0]
+    hb = os.path.join(rt, "heartbeat") if rt else None
     if not dsn:
         print("DATABASE_URL mangler", file=sys.stderr)
         raise SystemExit(2)
-    raise SystemExit(0 if kjor(dsn, url) >= 0 else 1)
+    raise SystemExit(0 if kjor(dsn, url, heartbeat_sti=hb) >= 0 else 1)

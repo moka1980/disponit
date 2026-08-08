@@ -48,13 +48,17 @@ def krev_miljo() -> tuple[str, str]:
 
 
 def vis_hemmelighet(token_id: str, secret: str, bootstrap: bool,
-                    ut=None) -> None:
+                    ut=None) -> bool:
     """Én visning, kun på TTY — med mindre --bootstrap er gitt.
 
     Uten TTY-kravet havner hemmeligheten i den filen noen tilfeldigvis
     omdirigerte stdout til, eller i CI-loggen. `--bootstrap` er den
     eksplisitte, loggede unntaksveien for førstegangsoppsett der det ikke
     FINNES en terminal — den skal være et bevisst valg, ikke standarden.
+
+    -> True hvis hemmeligheten faktisk ble levert. PR-009: tokenet er
+    PENDING til dette har skjedd — en hemmelighet ingen har sett skal
+    aldri bli et aktivt token.
     """
     ut = ut or sys.stdout
     interaktiv = bool(getattr(ut, "isatty", lambda: False)())
@@ -63,11 +67,12 @@ def vis_hemmelighet(token_id: str, secret: str, bootstrap: bool,
         print("HEMMELIGHETEN BLE IKKE VIST: stdout er ikke en terminal."
               " Kjør på nytt fra et terminalvindu, eller bruk --bootstrap"
               " hvis dette er et maskinelt førstegangsoppsett.", file=ut)
-        print("Tokenet er opprettet og hemmeligheten er tapt — deaktiver det"
-              f" og lag et nytt: token-cli.py deaktiver {token_id}", file=ut)
-        return
+        print("Tokenet forblir PENDING og tilbakekalles nå — lag et nytt.",
+              file=ut)
+        return False
     print(f"\n  {token_id}.{secret}\n", file=ut)
     print("Vises kun denne ene gangen. Databasen har bare HMAC-en.", file=ut)
+    return True
 
 
 def _logg(conn, tenant: str, handling: str, detalj: dict) -> None:
@@ -93,7 +98,12 @@ def _logg(conn, tenant: str, handling: str, detalj: dict) -> None:
 
 def opprett(conn, pepper: str, tenant: str, rolle: str, scopes: list[str],
             utloper=None) -> tuple[str, str]:
-    """-> (token_id, secret). Én transaksjon: token + revisjonsloggpost."""
+    """-> (token_id, secret). Én transaksjon: token + revisjonsloggpost.
+
+    PR-009: raden fødes som PENDING (kolonnens default) og kan ikke
+    autentisere. Aktivering er et EGET, eksplisitt steg som først skjer
+    når hemmeligheten beviselig er levert (v4 §1).
+    """
     token_id = "tk_" + secrets.token_hex(8)
     secret = secrets.token_urlsafe(32)          # >= 256 bits CSPRNG
     conn.execute(
@@ -105,15 +115,45 @@ def opprett(conn, pepper: str, tenant: str, rolle: str, scopes: list[str],
     return token_id, secret
 
 
-def deaktiver(conn, token_id: str) -> str:
-    """-> tenant. Reversering: direkte (sett aktiv=true igjen)."""
-    rad = conn.execute("SELECT tenant FROM api_tokener WHERE token_id=%s"
-                       " AND aktiv", (token_id,)).fetchone()
+def verifiser_pending(conn, pepper: str, token_id: str, secret: str) -> None:
+    """Lokal verifisering (klarsignalets V2): hemmeligheten i minnet matcher
+    lagret MAC — beregnet HER med pepperet, sammenlignet konstant-tid.
+    Databasen ser aldri pepperet; `hent_pending_token` gir kun metadata og
+    MAC for et PENDING-token, og gjør det aldri til en API-principal."""
+    rad = conn.execute("SELECT secret_mac FROM hent_pending_token(%s)",
+                       (token_id,)).fetchone()
     if rad is None:
-        raise SystemExit(f"AVBRUTT: ukjent eller allerede inaktivt token"
+        raise SystemExit(f"AVBRUTT: {token_id!r} er ikke PENDING — kan ikke"
+                         " verifiseres")
+    if not hmac.compare_digest(rad[0], _mac(pepper, secret)):
+        raise SystemExit("AVBRUTT: lagret MAC matcher ikke hemmeligheten —"
+                         " tokenet tilbakekalles")
+
+
+def aktiver(conn, token_id: str) -> str:
+    """PENDING -> AKTIV, atomisk. -> tenant."""
+    rad = conn.execute(
+        "UPDATE api_tokener SET status='AKTIV'"
+        " WHERE token_id=%s AND status='PENDING' RETURNING tenant",
+        (token_id,)).fetchone()
+    if rad is None:
+        raise SystemExit(f"AVBRUTT: {token_id!r} er ikke PENDING — ingen"
+                         " aktivering")
+    _logg(conn, rad[0], "token.aktiver", {"token_id": token_id})
+    return rad[0]
+
+
+def deaktiver(conn, token_id: str) -> str:
+    """-> tenant. `status` er eneste autoritet (v5 §1) — tilbakekalling er
+    en statusovergang, og den sperrer umiddelbart uansett utgangspunkt
+    (PENDING eller AKTIV)."""
+    rad = conn.execute(
+        "UPDATE api_tokener SET status='TILBAKEKALT'"
+        " WHERE token_id=%s AND status <> 'TILBAKEKALT' RETURNING tenant",
+        (token_id,)).fetchone()
+    if rad is None:
+        raise SystemExit(f"AVBRUTT: ukjent eller allerede tilbakekalt token"
                          f" {token_id!r}")
-    conn.execute("UPDATE api_tokener SET aktiv=false WHERE token_id=%s",
-                 (token_id,))
     _logg(conn, rad[0], HANDLINGER["deaktiver"], {"token_id": token_id})
     return rad[0]
 
@@ -126,20 +166,62 @@ def roter(conn, pepper: str, gammel_id: str) -> tuple[str, str, str]:
     i én transaksjon der den nye hemmeligheten skrives over den gamle —
     gir et vindu, eller en tilstand, der ingen av dem virker og kunden er
     låst ute uten mulighet til å be om et nytt.
+
+    PR-009: den nye fødes PENDING og aktiveres av kalleren ETTER levert
+    hemmelighet — den gamle deaktiveres først når den nye ER aktiv, ellers
+    står kunden tokenløs i vinduet.
     """
-    rad = conn.execute("SELECT tenant, rolle, scopes, utloper FROM api_tokener"
-                       " WHERE token_id=%s AND aktiv", (gammel_id,)).fetchone()
+    rad = conn.execute(
+        "SELECT tenant, rolle, scopes, utloper FROM api_tokener"
+        " WHERE token_id=%s AND status='AKTIV'", (gammel_id,)).fetchone()
     if rad is None:
         raise SystemExit(f"AVBRUTT: ukjent eller inaktivt token {gammel_id!r}")
     tenant, rolle, scopes, utloper = rad
     ny_id, secret = opprett(conn, pepper, tenant, rolle, list(scopes), utloper)
     _logg(conn, tenant, HANDLINGER["roter"],
           {"fra": gammel_id, "til": ny_id})
-    conn.commit()                       # TRANSAKSJON 1: den nye finnes nå
-
-    deaktiver(conn, gammel_id)          # TRANSAKSJON 2
-    conn.commit()
+    conn.commit()                       # TRANSAKSJON 1: den nye finnes (PENDING)
     return ny_id, secret, tenant
+
+
+def _seremoni_ny(conn, pepper: str, bootstrap: bool, lag) -> tuple[str, str]:
+    """v4 §1-sekvensen for et nytt token, felles for opprett og roter:
+
+      TTY bekreftes FØR noe genereres → PENDING opprettes → LOKAL
+      verifisering (MAC via `hent_pending_token`, pepper kun i minnet) →
+      visning → operatørbekreftelse → atomisk aktivering.
+
+    Enhver feil underveis tilbakekaller PENDING-tokenet — det finnes ingen
+    vei til et aktivt token ingen holder hemmeligheten til. `--bootstrap`
+    er den eksplisitte maskinveien (ingen TTY, ingen bekreftelse); den
+    LEVERER hemmeligheten på stdout og aktiverer, og er valgt inn, aldri
+    standard.
+    """
+    if not bootstrap and not sys.stdout.isatty():
+        # FØR generering (v4 §1.1): ingen hemmelighet produseres hvis den
+        # ikke kan leveres.
+        raise SystemExit("AVBRUTT: stdout er ikke en terminal — kjør fra et"
+                         " terminalvindu, eller bruk --bootstrap for et"
+                         " maskinelt førstegangsoppsett")
+    token_id, secret = lag()
+    conn.commit()                       # PENDING finnes — kan ikke autentisere
+    try:
+        verifiser_pending(conn, pepper, token_id, secret)
+        if not vis_hemmelighet(token_id, secret, bootstrap):
+            raise SystemExit("AVBRUTT: hemmeligheten ble ikke levert")
+        if not bootstrap:
+            svar = input("Bekreft at hemmeligheten er lagret [ja/N]: ")
+            if svar.strip().lower() != "ja":
+                raise SystemExit("AVBRUTT: ikke bekreftet — tokenet"
+                                 " tilbakekalles")
+        aktiver(conn, token_id)
+        conn.commit()
+        return token_id, secret
+    except BaseException:
+        conn.rollback()
+        deaktiver(conn, token_id)
+        conn.commit()
+        raise
 
 
 def main(argv=None) -> int:
@@ -164,13 +246,23 @@ def main(argv=None) -> int:
     l = under.add_parser("list")
     l.add_argument("--tenant")
 
+    # PR-009 V3: opprydding av foreldede PENDING-rader — kjøres av
+    # systemd-timeren, og korrektheten avhenger ALDRI av at en
+    # signalhandler i den interaktive flyten rakk å rydde selv.
+    ry = under.add_parser("rydd-pending")
+    ry.add_argument("--ttl-minutter", type=int, default=30)
+
     # Ingen `--secret`. Hemmeligheter tas aldri fra kommandolinjen: de blir
     # stående i shell-historikken, i `ps`-utskriften og i `set -x`-loggen.
     args = p.parse_args(argv)
-    dsn, pepper = krev_miljo()
 
     sys.path.insert(0, str(__import__("pathlib").Path(__file__)
                            .resolve().parents[2] / "platform/core"))
+    # PR-009: systemd-credentials (LoadCredential) hydreres før env-lesing —
+    # rydd-pending-timeren kjører uten EnvironmentFile-hemmeligheter.
+    from db.hemmeligheter import last_credentials
+    last_credentials()
+    dsn, pepper = krev_miljo()
     from db.pg import koble
 
     conn = koble(dsn)
@@ -178,19 +270,40 @@ def main(argv=None) -> int:
         if args.kommando == "opprett":
             if not args.scopes:
                 raise SystemExit("AVBRUTT: minst ett --scope kreves")
-            token_id, secret = opprett(conn, pepper, args.tenant, args.rolle,
-                                       args.scopes)
-            conn.commit()
-            vis_hemmelighet(token_id, secret, args.bootstrap)
+            token_id, secret = _seremoni_ny(conn, pepper, args.bootstrap,
+                                            lambda: opprett(
+                                                conn, pepper, args.tenant,
+                                                args.rolle, args.scopes))
+            print(f"aktivert: {token_id}")
         elif args.kommando == "roter":
-            ny_id, secret, _ = roter(conn, pepper, args.token_id)
-            vis_hemmelighet(ny_id, secret, args.bootstrap)
+            boks: dict = {}
+
+            def _lag():
+                ny_id, secret, tenant = roter(conn, pepper, args.token_id)
+                boks["gammel"] = args.token_id
+                return ny_id, secret
+            ny_id, _ = _seremoni_ny(conn, pepper, args.bootstrap, _lag)
+            # Gammel deaktiveres FØRST NÅR den nye er aktiv — ellers står
+            # kunden tokenløs hvis noe over feilet (korreksjon 2).
+            deaktiver(conn, boks["gammel"])
+            conn.commit()
+            print(f"aktivert: {ny_id} · tilbakekalt: {boks['gammel']}")
         elif args.kommando == "deaktiver":
             tenant = deaktiver(conn, args.token_id)
             conn.commit()
-            print(f"deaktivert: {args.token_id} (tenant {tenant})")
+            print(f"tilbakekalt: {args.token_id} (tenant {tenant})")
+        elif args.kommando == "rydd-pending":
+            rader = conn.execute(
+                "UPDATE api_tokener SET status='TILBAKEKALT'"
+                " WHERE status='PENDING'"
+                "   AND opprettet < now() - make_interval(mins => %s)"
+                " RETURNING token_id, tenant", (args.ttl_minutter,)).fetchall()
+            for tid, tenant in rader:
+                _logg(conn, tenant, "token.pending_utlopt", {"token_id": tid})
+            conn.commit()
+            print(f"ryddet: {len(rader)} foreldede PENDING-tokens")
         elif args.kommando == "list":
-            sql = ("SELECT token_id, tenant, rolle, scopes, aktiv, utloper,"
+            sql = ("SELECT token_id, tenant, rolle, scopes, status, utloper,"
                    " last_used_at FROM api_tokener")
             arg = ()
             if args.tenant:
