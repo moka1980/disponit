@@ -62,6 +62,10 @@ preflight_units() {  # <kilde-katalog> <venv-sti> <unit...>
     install -m 755 "$kilde/deploy/staging/restart-helper.sh" \
         "$rot/usr/local/lib/disponit-restart-helper"
   fi
+  # ALLE kandidat-units kopieres inn FØR noen verifiseres: en .socket
+  # verifiseres mot sin parede .service, og grafen må se hele settet —
+  # funnet av gaten selv på staging (socket felt fordi tjenesten manglet
+  # i roten).
   for u in "$@"; do
     if [ ! -f "$kilde/deploy/staging/$u" ]; then
       echo "PREFLIGHT FEILET: $kilde/deploy/staging/$u finnes ikke" >&2
@@ -69,6 +73,9 @@ preflight_units() {  # <kilde-katalog> <venv-sti> <unit...>
       continue
     fi
     cp "$kilde/deploy/staging/$u" "$rot/etc/systemd/system/$u"
+  done
+  [ $rc -eq 0 ] || { rm -rf "$rot"; return $rc; }
+  for u in "$@"; do
     if ! systemd-analyze verify --root="$rot" \
          "$rot/etc/systemd/system/$u"; then
       echo "PREFLIGHT FEILET: $u" >&2
