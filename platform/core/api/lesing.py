@@ -1,0 +1,771 @@
+"""Lese-API-et for M-1-kundeflaten (PR-008, spesifikasjon v1–v6).
+
+Seks endepunkter, rent lesende: oversikt, beslutningsliste, beslutnings-
+detalj, unntaksdetalj, unntakshistorikk og aktiv policy. Ingen mutasjon,
+ingen ny forretningslogikk — modulen UTLEDER alt fra radene de skrivende
+veiene allerede har committet, og hver utledning går via en eksplisitt
+nøkkel (FK, loggpost-id, repair_operation_id), aldri via tidsnærhet eller
+«siste rad» (v3 pkt. 1–2).
+
+Tre ortogonale akser i beslutningsdetaljen (v2 pkt. 1):
+  resultat        — policybeslutning + ordinær utførelsestilstand (union)
+  evidensstatus   — IKKE_RELEVANT | MANGLER | GYLDIG, med `sen_evidens` og
+                    `konflikt_evidens` som AVLEDEDE flagg (v5 pkt. 2)
+  sikkerhet       — scope-styrt; FRAVÆR er en del av skjemaet, aldri false
+
+Alle handlerne arver nettverksinngangens porter: pre-auth i egen
+transaksjon, `sett_kontekst` som FØRSTE operasjon i den autentiserte
+transaksjonen, RLS+FORCE, identisk 404 for ukjent og annen tenants ID.
+"""
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
+
+import psycopg
+from starlette.requests import Request
+from starlette.responses import Response
+
+from db.pg import sett_kontekst
+from policy_validator.engine import les_policyref
+
+from . import cursor as cursormodul
+from . import kjerne
+
+# Importeres av `app.lag_app()` ETTER at hjelperne under er definert —
+# modulnivå-importen her er derfor trygg selv om `app` importerer oss.
+from .app import (kanonisk_json, _feilsvar, _rid, _autentiser,
+                  SIDE_STANDARD, LESESCOPES)
+
+#: PR-008-listene har eget tak (spesifikasjonen: limit <= 100, default 50).
+#: `SIDE_MAKS` (200) gjelder det eksisterende `/v1/unntak` og røres ikke.
+LISTE_MAKS = 100
+
+
+# ---------------------------------------------------------------------------
+# Felles handler-ramme: pool, pre-auth, kontekst, feiloversettelse.
+# ---------------------------------------------------------------------------
+
+def _les(tjeneste, request: Request, scope: str, fn) -> Response:
+    """Rammen rundt hvert leseendepunkt.
+
+    `fn(conn, auth, rid)` kjører med tenantkontekst satt og skal returnere
+    en Response. Transaksjonen rulles alltid tilbake — et leseendepunkt som
+    kan committe er ett refaktoreringsuhell unna å bli et skrivende.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid, scope)
+        except kjerne.Feilsvar as f:
+            return _feilsvar(f.kode, rid)
+        try:
+            # Kontekst FØRST i den autentiserte transaksjonen — nøyaktig
+            # samme inngang som beslutningsveien og `/v1/unntak`.
+            sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+            return fn(conn, auth, rid)
+        except kjerne.Feilsvar as f:
+            tjeneste.logg.hendelse(f.kode, rid, auth.tenant)
+            return _feilsvar(f.kode, rid)
+        except psycopg.Error as e:
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, auth.tenant,
+                                   art="drift", feiltype=type(e).__name__)
+            return _feilsvar("db_utilgjengelig", rid)
+        finally:
+            try:
+                conn.rollback()
+            except psycopg.Error:
+                pass
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def _koder(begrunnelse) -> list[str]:
+    """Begrunnelsen som display-safe KODER — aldri params (v2 Del 3.1)."""
+    if not isinstance(begrunnelse, list):
+        return []
+    return [g["kode"] for g in begrunnelse
+            if isinstance(g, dict) and isinstance(g.get("kode"), str)]
+
+
+def _grense(request: Request) -> int | None:
+    try:
+        grense = int(request.query_params.get("limit", SIDE_STANDARD))
+    except ValueError:
+        return None
+    if grense < 1 or grense > LISTE_MAKS:
+        return None
+    return grense
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/oversikt — scope decisions:read
+# ---------------------------------------------------------------------------
+
+def oversikt(tjeneste, request: Request) -> Response:
+    def _fn(conn, auth, rid):
+        slutt = datetime.now(timezone.utc)
+        start = slutt - timedelta(hours=24)
+        # Én spørring, ett snapshot: invarianten
+        # `tillatt + stoppet + unntak = totalt` holder per konstruksjon
+        # fordi alle fire tallene telles i samme skann. Beregningen er UTC
+        # (v2 svar 2) — tidssone er presentasjon og gjøres i UI-et.
+        rad = conn.execute(
+            "SELECT COUNT(*) FILTER (WHERE beslutning='TILLAT'),"
+            "       COUNT(*) FILTER (WHERE beslutning='STOPP'),"
+            "       COUNT(*) FILTER (WHERE beslutning='UNNTAK'),"
+            "       COUNT(*)"
+            "  FROM revisjonslogg WHERE tenant=%s AND ts >= %s AND ts < %s",
+            (auth.tenant, start, slutt)).fetchone()
+        return kanonisk_json(
+            {"vindu_start": start.isoformat(), "vindu_slutt": slutt.isoformat(),
+             "tidssone": "UTC", "tillatt": rad[0], "stoppet": rad[1],
+             "unntak": rad[2], "totalt": rad[3], "request_id": rid},
+            200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/beslutninger — scope decisions:read, keyset DESC, filterbundet
+# ---------------------------------------------------------------------------
+
+def beslutninger(tjeneste, request: Request) -> Response:
+    def _fn(conn, auth, rid):
+        grense = _grense(request)
+        if grense is None:
+            return _feilsvar("request_feilformet", rid)
+        filter_beslutning = request.query_params.get("policybeslutning")
+        if filter_beslutning is not None \
+                and filter_beslutning not in ("TILLAT", "STOPP", "UNNTAK"):
+            return _feilsvar("request_feilformet", rid)
+        filtre = {} if filter_beslutning is None \
+            else {"policybeslutning": filter_beslutning}
+
+        etter = None
+        raa = request.query_params.get("cursor")
+        if raa:
+            try:
+                etter = cursormodul.les_v2(
+                    raa, tjeneste.cursorpepper, tenant=auth.tenant,
+                    endepunkt="beslutninger", retning="desc", filtre=filtre)
+            except cursormodul.CursorUgyldig:
+                tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
+                return _feilsvar("cursor_ugyldig", rid)
+
+        sql = ("SELECT id, ts, handling, beslutning, begrunnelse"
+               "  FROM revisjonslogg WHERE tenant=%s")
+        args: list = [auth.tenant]
+        if filter_beslutning is not None:
+            sql += " AND beslutning=%s"
+            args.append(filter_beslutning)
+        if etter is not None:
+            # Ærlig keyset (v4 pkt. 3): ingen duplikater for uendrede rader;
+            # samtidig innsetting KAN bli synlig eller utelatt mellom sider.
+            # Det er dokumentert semantikk, ikke et snapshotløfte.
+            sql += " AND (ts, id) < (%s, %s)"
+            args += [etter[0], etter[1]]
+        sql += " ORDER BY ts DESC, id DESC LIMIT %s"
+        args.append(grense)
+        rader = conn.execute(sql, tuple(args)).fetchall()
+
+        ut = [{"id": r[0], "ts": r[1].isoformat(), "handling": r[2],
+               "policybeslutning": r[3], "begrunnelse": _koder(r[4])}
+              for r in rader]
+        neste = None
+        if len(rader) == grense:
+            neste = cursormodul.lag_v2(
+                tjeneste.cursorpepper, tenant=auth.tenant,
+                endepunkt="beslutninger", retning="desc", filtre=filtre,
+                ts=rader[-1][1], rad_id=rader[-1][0])
+        return kanonisk_json({"rader": ut, "neste_cursor": neste,
+                              "request_id": rid}, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/beslutninger/{id} — de tre aksene
+# ---------------------------------------------------------------------------
+
+#: Oppdragsstatus -> resultat.art. Lukket — en ny status i databasen skal
+#: gi KeyError her (og dermed sanitert 500), aldri en gjettet art.
+_ART_FOR_STATUS = {"opprettet": "outbox_opprettet",
+                   "plukket": "outbox_plukket",
+                   "utfort": "outbox_utfort",
+                   "feilet": "outbox_feilet",
+                   "kansellert": "outbox_kansellert"}
+
+
+def _kombinasjon_lovlig(art: str, ev: str, sen: bool, konflikt: bool) -> bool:
+    """Den TOTALE matrisen (v4 pkt. 2 + v5 pkt. 2). Alt utenfor avvises.
+
+    Dette er servermodellens egen vakt: utledningen over skal per
+    konstruksjon aldri produsere noe utenfor matrisen, og nettopp derfor
+    måles den — en utledning som ikke kan feile trenger ingen vakt, men en
+    vakt som aldri kan utløses beviser at utledningen holder.
+    """
+    if art in ("policy_stoppet", "sideeffektfri_tillatt", "til_unntak",
+               "utforelsesdata_ikke_tilgjengelig"):
+        return ev == "IKKE_RELEVANT" and not sen and not konflikt
+    if art in ("outbox_opprettet", "outbox_plukket"):
+        return ev == "MANGLER"
+    if art == "outbox_utfort":
+        # v5: identisk sen replay er no-op, så en registrert sen kvittering
+        # på et utført oppdrag MÅ være avvikende — sen uten konflikt har
+        # ingen legitim databasevei.
+        return ev == "GYLDIG" and (konflikt or not sen)
+    if art == "outbox_feilet":
+        return ev in ("GYLDIG", "MANGLER")
+    if art == "outbox_kansellert":
+        return ev in ("IKKE_RELEVANT", "GYLDIG")
+    return False
+
+
+def beslutning_detalj(tjeneste, request: Request) -> Response:
+    def _fn(conn, auth, rid):
+        try:
+            bid = int(request.path_params["id"])
+        except (KeyError, ValueError):
+            return _feilsvar("request_feilformet", rid)
+
+        rad = conn.execute(
+            "SELECT id, ts, handling, beslutning, begrunnelse, kilde,"
+            " policy_id, policy_content_hash"
+            "  FROM revisjonslogg WHERE tenant=%s AND id=%s",
+            (auth.tenant, bid)).fetchone()
+        if rad is None:
+            # RLS gjør annen tenants rad til null rader — ukjent og
+            # kryss-tenant er dermed IDENTISKE her, uten egen kodevei.
+            return _feilsvar("ikke_funnet", rid)
+        (_, ts, handling, beslutning, begrunnelse, kilde,
+         policyref, policy_hash) = rad
+
+        resultat: dict = {}
+        evidens, sen, konflikt = "IKKE_RELEVANT", False, False
+        sak_finnes = False
+
+        if beslutning == "STOPP":
+            resultat = {"art": "policy_stoppet"}
+        elif beslutning == "UNNTAK":
+            u = conn.execute(
+                "SELECT id, kategori, status FROM unntak"
+                " WHERE tenant=%s AND loggpost_id=%s AND sakstype='normal'",
+                (auth.tenant, bid)).fetchall()
+            if len(u) != 1:
+                # En UNNTAK-beslutning uten (eller med flere) saksrader
+                # bryter skrivekontrakten fra `kjerne._avslutt`. Det er en
+                # servertilstand, aldri noe klienten skal tolke.
+                tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                       art="drift", loggpost=bid,
+                                       unntaksrader=len(u))
+                return _feilsvar("intern_feil", rid)
+            resultat = {"art": "til_unntak", "unntak_id": u[0][0],
+                        "kategori": u[0][1], "status": u[0][2]}
+        else:  # TILLAT
+            o = conn.execute(
+                "SELECT id, status, kvittering IS NOT NULL, unntak_id,"
+                " repair_operation_id FROM oppdrag"
+                " WHERE tenant=%s AND beslutning_loggpost_id=%s",
+                (auth.tenant, bid)).fetchone()
+            if o is None:
+                if kilde == "arbeidskapabilitet":
+                    # Beslutningsraden SELV beviser at utførelse var
+                    # relevant: en fase-2-TILLAT bestiller alltid et
+                    # oppdrag. Uten entydig koblet oppdrag (LEGACY_UKJENT,
+                    # eller krasj før opprettelsen) konstruerer vi ALDRI et
+                    # resultat (vilkår V4).
+                    resultat = {"art": "utforelsesdata_ikke_tilgjengelig"}
+                else:
+                    resultat = {"art": "sideeffektfri_tillatt"}
+            else:
+                oid, ostatus, har_kvittering, ounntak, rep_id = o
+                resultat = {"art": _ART_FOR_STATUS[ostatus],
+                            "oppdrag_id": oid}
+                if ostatus == "kansellert":
+                    sup = conn.execute(
+                        "SELECT status='superseded'"
+                        "  FROM reparasjonsoperasjoner"
+                        " WHERE tenant=%s AND repair_operation_id=%s",
+                        (auth.tenant, rep_id)).fetchone()
+                    resultat["superseded"] = bool(sup and sup[0])
+                if ostatus in ("opprettet", "plukket"):
+                    evidens = "MANGLER"
+                elif ostatus == "utfort":
+                    evidens = "GYLDIG"
+                elif ostatus == "feilet":
+                    # GYLDIG = signert feilresultat; MANGLER = timeout/
+                    # systemfeil uten kvittering. `feil_aarsak` skiller
+                    # (v3 pkt. 3).
+                    evidens = "GYLDIG" if har_kvittering else "MANGLER"
+                    resultat["feil_aarsak"] = \
+                        "signert" if har_kvittering else "timeout"
+                else:  # kansellert
+                    evidens = "GYLDIG" if har_kvittering else "IKKE_RELEVANT"
+
+                # Flaggene AVLEDES av append-only-evidensen (v5 pkt. 2):
+                # historikkradene kvitteringsporten skrev. Et identisk
+                # replay skrev ALDRI en rad, så det setter heller aldri et
+                # flagg. `motstridende_kvittering`-raden fra
+                # `_ingest_kvittering`s hasj-sammenligning bærer ikke alltid
+                # oppdrag_id i detaljene; en rad uten oppdrag_id på sakens
+                # historikk regnes derfor med — heller ett konfliktflagg for
+                # mye enn en konflikt som forsvinner.
+                flagg = conn.execute(
+                    "SELECT"
+                    " EXISTS(SELECT 1 FROM unntak_historikk h"
+                    "         WHERE h.tenant=%s AND h.unntak_id=%s"
+                    "           AND h.hendelse='sen_kvittering'"
+                    "           AND (h.detalj->>'oppdrag_id')::bigint=%s),"
+                    " EXISTS(SELECT 1 FROM unntak_historikk h"
+                    "         WHERE h.tenant=%s AND h.unntak_id=%s"
+                    "           AND h.hendelse='motstridende_kvittering'"
+                    "           AND (h.detalj->>'oppdrag_id' IS NULL"
+                    "                OR (h.detalj->>'oppdrag_id')::bigint=%s))",
+                    (auth.tenant, ounntak, oid,
+                     auth.tenant, ounntak, oid)).fetchone()
+                sen, konflikt = bool(flagg[0]), bool(flagg[1])
+
+        # Sikkerhetsaksen (v2 pkt. 3): en sak beslutningen selv fødte
+        # (sakstype sikkerhet/drift via loggpost-FK-en), eller registrert
+        # konfliktevidens på det FK-bundne oppdraget. Konflikt UTEN
+        # sikkerhetsregistrering kan dermed ikke forekomme — invarianten
+        # fra v4 pkt. 2 holder per konstruksjon og måles i testene.
+        egen_sak = conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM unntak WHERE tenant=%s"
+            " AND loggpost_id=%s AND sakstype IN ('sikkerhet','drift'))",
+            (auth.tenant, bid)).fetchone()[0]
+        sak_finnes = bool(egen_sak) or konflikt
+
+        art = resultat["art"]
+        if not _kombinasjon_lovlig(art, evidens, sen, konflikt):
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", loggpost=bid,
+                                   kombinasjon=f"{art}/{evidens}/{sen}/{konflikt}")
+            return _feilsvar("intern_feil", rid)
+
+        ref = les_policyref(policyref)
+        kropp = {
+            "id": bid,
+            "handling": handling,
+            "begrunnelse": _koder(begrunnelse),
+            "policy_versjon": ref[1] if ref else None,
+            "policy_hash": policy_hash,
+            "beslutning_ts": ts.isoformat(),
+            "resultat": resultat,
+            "evidensstatus": evidens,
+            "sen_evidens": sen,
+            "konflikt_evidens": konflikt,
+            "request_id": rid,
+        }
+        if "security:read" in auth.scopes:
+            kropp["sikkerhet"] = {"sak_finnes": sak_finnes}
+        # Uten scopet er feltet FRAVÆRENDE — fravær betyr «ikke synlig for
+        # deg», aldri false (v1 pkt. 5).
+        return kanonisk_json(kropp, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/unntak/{id} — scope exceptions:read (+security:read utenfor normal)
+# ---------------------------------------------------------------------------
+
+def _hent_unntak(conn, auth, uid: int):
+    """Saksraden + scope-regelen for sakstype.
+
+    Sikkerhets- og driftssaker svarer `ikke_funnet` — ikke 403 — for et
+    token uten `security:read`: en 403 på en konkret ID bekrefter at det
+    FINNES en sikkerhetssak der, og det er nøyaktig informasjonen scopet
+    skal verne. Identisk 404-prinsippet gjelder altså også her.
+    """
+    rad = conn.execute(
+        "SELECT u.id, u.ts, u.handling, u.kategori, u.sakstype, u.status,"
+        " u.prioritet, r.begrunnelse"
+        "  FROM unntak u JOIN revisjonslogg r"
+        "    ON r.tenant = u.tenant AND r.id = u.loggpost_id"
+        " WHERE u.tenant=%s AND u.id=%s", (auth.tenant, uid)).fetchone()
+    if rad is None:
+        return None
+    if rad[4] != "normal" and "security:read" not in auth.scopes:
+        return None
+    return rad
+
+
+def unntak_detalj(tjeneste, request: Request) -> Response:
+    def _fn(conn, auth, rid):
+        try:
+            uid = int(request.path_params["id"])
+        except (KeyError, ValueError):
+            return _feilsvar("request_feilformet", rid)
+        rad = _hent_unntak(conn, auth, uid)
+        if rad is None:
+            return _feilsvar("ikke_funnet", rid)
+        # Historikken er et EGET endepunkt (v2 pkt. 7) — aldri inline her.
+        # Payload/attestasjoner/nøkler hentes ikke engang fra databasen.
+        return kanonisk_json(
+            {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
+             "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
+             "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
+             "request_id": rid}, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "exceptions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/unntak/{id}/historikk — kronologisk keyset (ts ASC, id ASC)
+# ---------------------------------------------------------------------------
+
+def unntak_historikk(tjeneste, request: Request) -> Response:
+    def _fn(conn, auth, rid):
+        try:
+            uid = int(request.path_params["id"])
+        except (KeyError, ValueError):
+            return _feilsvar("request_feilformet", rid)
+        grense = _grense(request)
+        if grense is None:
+            return _feilsvar("request_feilformet", rid)
+        # Samme eksistens- og scoperegel som detaljen: historikken til en
+        # sak man ikke kan se, finnes ikke.
+        if _hent_unntak(conn, auth, uid) is None:
+            return _feilsvar("ikke_funnet", rid)
+
+        filtre = {"unntak_id": uid}
+        etter = None
+        raa = request.query_params.get("cursor")
+        if raa:
+            try:
+                etter = cursormodul.les_v2(
+                    raa, tjeneste.cursorpepper, tenant=auth.tenant,
+                    endepunkt="unntak_historikk", retning="asc",
+                    filtre=filtre)
+            except cursormodul.CursorUgyldig:
+                tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
+                return _feilsvar("cursor_ugyldig", rid)
+
+        sql = ("SELECT id, hendelse, fra_status, til_status, ts"
+               "  FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s")
+        args: list = [auth.tenant, uid]
+        if etter is not None:
+            # `>`-predikatet — kronologisk fortsettelse (v3 bindende test).
+            sql += " AND (ts, id) > (%s, %s)"
+            args += [etter[0], etter[1]]
+        sql += " ORDER BY ts ASC, id ASC LIMIT %s"
+        args.append(grense)
+        rader = conn.execute(sql, tuple(args)).fetchall()
+
+        ut = [{"id": r[0], "hendelse": r[1], "fra_status": r[2],
+               "til_status": r[3], "ts": r[4].isoformat()} for r in rader]
+        neste = None
+        if len(rader) == grense:
+            neste = cursormodul.lag_v2(
+                tjeneste.cursorpepper, tenant=auth.tenant,
+                endepunkt="unntak_historikk", retning="asc", filtre=filtre,
+                ts=rader[-1][4], rad_id=rader[-1][0])
+        return kanonisk_json({"rader": ut, "neste_cursor": neste,
+                              "request_id": rid}, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "exceptions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/policy/aktiv — scope policy:read. Lukket, redigert DTO (v2 pkt. 8,
+# v4 pkt. 4, v5 pkt. 3, v6 pkt. 3).
+# ---------------------------------------------------------------------------
+
+#: ISO 4217, aktive koder (vilkår V5: validert mot register, ikke bare
+#: ^[A-Z]{3}$ — «XXX» er tre store bokstaver, men ingen valuta man kan
+#: sette en beløpsgrense i).
+ISO4217 = frozenset("""
+AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB
+BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CNY COP CRC CUP CVE CZK DJF DKK DOP
+DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF
+IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK
+LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN
+NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF
+SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND
+TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF
+YER ZAR ZMW ZWG
+""".split())
+
+_BELOP_MONSTER = re.compile(r"^\d{1,13}\.\d{2}$")
+_KLOKKE_MONSTER = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_HASH_MONSTER = re.compile(r"^[0-9a-f]{64}$")
+
+#: Kildeskjemaets ukedagskoder, i rekkefølge (0=mandag … 6=søndag).
+_DAGER = ("man", "tir", "ons", "tor", "fre", "lor", "son")
+
+#: AVVIK FRA v4-SPESIFIKASJONEN, flagget i PR-en: kildeskjemaet
+#: (policy-schema-v0.2) har enheten `minutter` og INGEN `maaned`.
+#: Spesifikasjonens enum [time|dag|uke|maaned] kan ikke representere
+#: eksisterende, gyldige policyer — DTO-en bærer derfor kildens LUKKEDE
+#: enum uendret i stedet for å oversette til en mengde med hull.
+_VINDU_ENHETER = ("minutter", "timer", "dager", "uker")
+
+_MODI = ("auto", "auto_med_vilkaar", "alltid_stopp")
+
+
+def _tidsvindu_dto(raa: str, tidssone: str) -> dict:
+    """`man-fre 08:00-16:00` -> TidsvinduDTO. Kaster ValueError ved avvik.
+
+    Kilden er en STRENG (policy-skjemaet), DTO-en er strukturert (v4). Et
+    vindu som krysser uken (`fre-man`) rulles rundt — dagene er en MENGDE i
+    DTO-en, og rekkefølgen i kilden er bare notasjon.
+    """
+    dager_del, _, klokke_del = raa.partition(" ")
+    fra_dag, _, til_dag = dager_del.partition("-")
+    fra_kl, _, til_kl = klokke_del.partition("-")
+    i, j = _DAGER.index(fra_dag), _DAGER.index(til_dag)
+    ukedager = list(range(i, j + 1)) if i <= j else \
+        list(range(i, 7)) + list(range(0, j + 1))
+    if not _KLOKKE_MONSTER.fullmatch(fra_kl) \
+            or not _KLOKKE_MONSTER.fullmatch(til_kl):
+        raise ValueError(f"ugyldig klokkeslett i tidsvindu: {raa!r}")
+    return {"ukedager": ukedager, "fra": fra_kl, "til": til_kl,
+            "tidssone": tidssone}
+
+
+def _grenser_dto(g: dict | None, tidssone: str) -> dict | None:
+    """Grensene som faste felt. Tomt objekt og null betyr det samme og
+    normaliseres til null (v4/v5) — serveren returnerer ALDRI `{}`."""
+    if not g:
+        return None
+    ut: dict = {"belop_maks": None, "valuta": None, "tidsvindu": None,
+                "frekvens": None}
+    if g.get("belop_maks") is not None:
+        # Kanonisk decimal-STRENG med nøyaktig to desimaler (v4) — aldri
+        # float, aldri kildens råform.
+        ut["belop_maks"] = str(
+            Decimal(str(g["belop_maks"])).quantize(Decimal("0.01")))
+    if g.get("valuta"):
+        # AVVIK FRA v4, flagget i PR-en: kildeskjemaet tillater FLERE
+        # valutaer per grense. En DTO med én ville valgt for kunden;
+        # feltet er derfor en liste.
+        ut["valuta"] = list(g["valuta"])
+    if g.get("tidsvindu"):
+        ut["tidsvindu"] = _tidsvindu_dto(g["tidsvindu"], tidssone)
+    if g.get("frekvens"):
+        f = g["frekvens"]
+        # `grupperingsnokkel` er et feltnavn fra tenantens payload-domene
+        # og står IKKE i DTO-en — allowlist, ikke passthrough.
+        ut["frekvens"] = {"maks": f["maks"],
+                          "vindu_enhet": f["periode_enhet"],
+                          "vindu_antall": f["periode_antall"]}
+    if all(v is None for v in ut.values()):
+        return None
+    return ut
+
+
+def bygg_policy_dto(policy_id: str, versjon: str, innholds_hash: str,
+                    innhold: dict) -> dict:
+    """Policyregisterraden -> lukket DTO. KUN allowlistede felt.
+
+    ALDRI: tokenhash, pepper, nøkler, krypteringsmetadata, interne
+    DB-felt, rå YAML, `dataklasser`, `retention`, `frister`, `meta` — det
+    som ikke bygges her, finnes ikke i responsen.
+    """
+    tidssone = innhold.get("tidssone", "UTC")
+    roller = [{"id": r["id"],
+               # Stabil oversettelsesKODE, aldri fritekst (v2 pkt. 8:
+               # maskin-DTO — UI oversetter, API-et leverer ikke
+               # presentasjonstekst). Kildens `beskrivelse` er fritekst og
+               # slipper derfor aldri ut.
+               "beskrivelse_kode": f"rolle.{r['id']}"}
+              for r in innhold.get("roller", [])]
+    handlinger = [{"navn": h["id"], "modus": h["modus"],
+                   "grenser": _grenser_dto(h.get("grenser"), tidssone),
+                   "vilkaar": [vk["navn"] for vk in h.get("vilkaar") or []]}
+                  for h in innhold.get("handlinger", [])]
+    verifikatorer = [{"offentlig_id": vid,
+                      "betrodd_for": list(v.get("betrodd_for", [])),
+                      "kan_fastsla_permanent":
+                          bool(v.get("kan_fastsla_permanent", False))}
+                     for vid, v in sorted(
+                         (innhold.get("verifikatorer") or {}).items())]
+    return {"skjemaversjon": 1, "policy_id": policy_id, "versjon": versjon,
+            "innholds_hash": innholds_hash, "roller": roller,
+            "handlinger": handlinger, "verifikatorer": verifikatorer}
+
+
+def _unik(verdier, feil: list[str], hva: str) -> None:
+    if len(set(verdier)) != len(list(verdier)):
+        feil.append(f"{hva}: duplikater")
+
+
+def valider_policy_dto(dto: dict) -> list[str]:
+    """Servermodellens egen kontroll av DTO-en FØR den forlater huset.
+
+    Grensene er v6 pkt. 3s eksakte konstanter. Alle nivåer er lukkede —
+    et felt som ikke står i fasiten er en byggefeil, aldri passthrough.
+    Tom liste == gyldig.
+    """
+    feil: list[str] = []
+
+    def _n(navn, verdi, maks=128):
+        if not isinstance(verdi, str) or not verdi or len(verdi) > maks:
+            feil.append(f"{navn}: ugyldig eller for lang (maks {maks})")
+
+    if set(dto) != {"skjemaversjon", "policy_id", "versjon", "innholds_hash",
+                    "roller", "handlinger", "verifikatorer"}:
+        return ["PolicyDTO: feil feltmengde"]
+    if dto["skjemaversjon"] != 1:
+        feil.append("skjemaversjon: må være 1")
+    _n("policy_id", dto["policy_id"])
+    _n("versjon", dto["versjon"], 64)
+    if not isinstance(dto["innholds_hash"], str) \
+            or not _HASH_MONSTER.fullmatch(dto["innholds_hash"]):
+        feil.append("innholds_hash: må være 64 hex-tegn")
+
+    if len(dto["roller"]) > 50:
+        feil.append("roller: flere enn 50")
+    _unik([r.get("id") for r in dto["roller"]], feil, "roller")
+    for r in dto["roller"]:
+        if set(r) != {"id", "beskrivelse_kode"}:
+            feil.append("RolleDTO: feil feltmengde")
+            continue
+        _n("rolle.id", r["id"], 64)
+        _n("rolle.beskrivelse_kode", r["beskrivelse_kode"])
+
+    if len(dto["handlinger"]) > 200:
+        feil.append("handlinger: flere enn 200")
+    _unik([h.get("navn") for h in dto["handlinger"]], feil, "handlinger")
+    for h in dto["handlinger"]:
+        if set(h) != {"navn", "modus", "grenser", "vilkaar"}:
+            feil.append("HandlingDTO: feil feltmengde")
+            continue
+        _n("handling.navn", h["navn"])
+        if h["modus"] not in _MODI:
+            feil.append(f"handling.modus: ukjent ({h['modus']!r})")
+        if len(h["vilkaar"]) > 50:
+            feil.append("handling.vilkaar: flere enn 50")
+        _unik(h["vilkaar"], feil, "handling.vilkaar")
+        for v in h["vilkaar"]:
+            _n("vilkaar", v)
+        feil.extend(_valider_grenser(h["grenser"]))
+
+    if len(dto["verifikatorer"]) > 100:
+        feil.append("verifikatorer: flere enn 100")
+    _unik([v.get("offentlig_id") for v in dto["verifikatorer"]], feil,
+          "verifikatorer")
+    for v in dto["verifikatorer"]:
+        if set(v) != {"offentlig_id", "betrodd_for", "kan_fastsla_permanent"}:
+            feil.append("VerifikatorDTO: feil feltmengde")
+            continue
+        _n("verifikator.offentlig_id", v["offentlig_id"])
+        if len(v["betrodd_for"]) > 50:
+            feil.append("verifikator.betrodd_for: flere enn 50")
+        _unik(v["betrodd_for"], feil, "verifikator.betrodd_for")
+        for b in v["betrodd_for"]:
+            _n("betrodd_for", b)
+        if not isinstance(v["kan_fastsla_permanent"], bool):
+            feil.append("verifikator.kan_fastsla_permanent: må være bool")
+    return feil
+
+
+def _valider_grenser(g: dict | None) -> list[str]:
+    feil: list[str] = []
+    if g is None:
+        return feil
+    if set(g) != {"belop_maks", "valuta", "tidsvindu", "frekvens"}:
+        return ["GrenserDTO: feil feltmengde"]
+    if all(v is None for v in g.values()):
+        feil.append("GrenserDTO: tomt objekt skal være normalisert til null")
+    if g["belop_maks"] is not None:
+        if not isinstance(g["belop_maks"], str) \
+                or not _BELOP_MONSTER.fullmatch(g["belop_maks"]):
+            feil.append("belop_maks: må være kanonisk decimal-streng"
+                        " med to desimaler")
+        else:
+            try:
+                if Decimal(g["belop_maks"]) <= 0:
+                    feil.append("belop_maks: må være positiv")
+            except InvalidOperation:
+                feil.append("belop_maks: uleselig")
+        # v5: valuta er PÅKREVD når belop_maks finnes — en beløpsgrense
+        # uten valuta er ikke en grense, den er et tall.
+        if not g["valuta"]:
+            feil.append("valuta: påkrevd når belop_maks er satt")
+    if g["valuta"] is not None:
+        if not isinstance(g["valuta"], list) or not g["valuta"] \
+                or len(g["valuta"]) > 10:
+            feil.append("valuta: liste med 1–10 koder")
+        else:
+            _unik(g["valuta"], feil, "valuta")
+            for v in g["valuta"]:
+                if v not in ISO4217:
+                    feil.append(f"valuta: {v!r} er ikke en ISO 4217-kode")
+    if g["tidsvindu"] is not None:
+        t = g["tidsvindu"]
+        if set(t) != {"ukedager", "fra", "til", "tidssone"}:
+            feil.append("TidsvinduDTO: feil feltmengde")
+        else:
+            if not t["ukedager"] or len(t["ukedager"]) > 7 \
+                    or len(set(t["ukedager"])) != len(t["ukedager"]) \
+                    or not all(isinstance(d, int) and 0 <= d <= 6
+                               for d in t["ukedager"]):
+                feil.append("ukedager: 1–7 unike heltall 0–6")
+            for navn in ("fra", "til"):
+                if not isinstance(t[navn], str) \
+                        or not _KLOKKE_MONSTER.fullmatch(t[navn]):
+                    feil.append(f"tidsvindu.{navn}: ugyldig klokkeslett")
+            try:
+                ZoneInfo(t["tidssone"])
+            except Exception:
+                feil.append(f"tidssone: {t['tidssone']!r} finnes ikke i"
+                            " IANA-databasen")
+    if g["frekvens"] is not None:
+        f = g["frekvens"]
+        if set(f) != {"maks", "vindu_enhet", "vindu_antall"}:
+            feil.append("FrekvensDTO: feil feltmengde")
+        else:
+            if not isinstance(f["maks"], int) \
+                    or not 1 <= f["maks"] <= 100_000:
+                feil.append("frekvens.maks: 1–100000")
+            if not isinstance(f["vindu_antall"], int) \
+                    or not 1 <= f["vindu_antall"] <= 10_000:
+                feil.append("frekvens.vindu_antall: 1–10000")
+            if f["vindu_enhet"] not in _VINDU_ENHETER:
+                feil.append(f"frekvens.vindu_enhet: ukjent"
+                            f" ({f['vindu_enhet']!r})")
+    return feil
+
+
+def policy_aktiv(tjeneste, request: Request) -> Response:
+    def _fn(conn, auth, rid):
+        rader = conn.execute(
+            "SELECT policy_id, versjon, innholds_hash, innhold"
+            "  FROM policyer WHERE tenant=%s AND aktiv", (auth.tenant,)
+        ).fetchall()
+        if not rader:
+            return _feilsvar("ikke_funnet", rid)
+        if len(rader) > 1:
+            # Registeret tillater én aktiv per policy_id, altså flere per
+            # tenant. Endepunktets kontrakt er ÉN. Å velge en av dem ville
+            # vært å bestemme kundens gjeldende policy i et leseendepunkt —
+            # fail-closed, og flagget som åpent spesifikasjonspunkt.
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", aktive=len(rader))
+            return _feilsvar("intern_feil", rid)
+        policy_id, versjon, innholds_hash, innhold = rader[0]
+        if isinstance(innhold, str):
+            innhold = json.loads(innhold)
+        try:
+            dto = bygg_policy_dto(policy_id, versjon, innholds_hash, innhold)
+        except (KeyError, ValueError, TypeError, InvalidOperation) as e:
+            tjeneste.logg.hendelse("policy_korrupt", rid, auth.tenant,
+                                   art="drift", feiltype=type(e).__name__)
+            return _feilsvar("policy_korrupt", rid)
+        feil = valider_policy_dto(dto)
+        if feil:
+            # Sanitert: fullstendig feilliste til driftsloggen, aldri til
+            # klienten (samme fail-closed-retning som revalideringen i
+            # beslutningsveien).
+            tjeneste.logg.hendelse("policy_korrupt", rid, auth.tenant,
+                                   art="drift", feil=feil[:5])
+            return _feilsvar("policy_korrupt", rid)
+        dto["request_id"] = rid
+        return kanonisk_json(dto, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "policy:read", _fn)

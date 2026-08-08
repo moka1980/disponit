@@ -109,6 +109,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     Feilvei("modul_inaktiv", 503, ("drift",), None, notat=(
         "Rollback-kontrakten (rollback-m01-v1): modulen er deaktivert i"
         " registeret, og API-et svarer definert i stedet for å feile.")),
+    # --- PR-008: lese-API ----------------------------------------------
+    Feilvei("ikke_funnet", 404, ("avvis",), None, notat=(
+        "Detalj-ID som ikke finnes OG detalj-ID hos en annen tenant gir"
+        " NØYAKTIG samme svar — ellers er 404/403 et oppslagsverk over"
+        " andres saker (samme prinsipp som policy_ukjent).")),
+    Feilvei("intern_feil", 500, ("drift",), None, notat=(
+        "Sanitert 500 med korrelasjons-ID. Brukes når lese-API-ets"
+        " servermodell møter en tilstand matrisen forbyr — den skal SES i"
+        " driftsloggen, aldri forklares for klienten.")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}
