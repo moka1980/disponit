@@ -20,9 +20,12 @@ set -euo pipefail
 HOST="${DISPONIT_HOST:-disponit.com}"
 ACME_EPOST="${DISPONIT_ACME_EPOST:-eliassi@gmail.com}"
 ROT=/opt/disponit
-KILDE="$ROT/aktiv"
-[ -d "$KILDE" ] || KILDE="$ROT"
-MAL="$KILDE/deploy/staging/nginx"
+# Filene tas fra DENNE scriptets eget tre — ikke fra `aktiv`-symlinken,
+# som kan peke på en eldre release uten transport-malene. Fornyelses-hooken
+# refereres med absolutt sti under samme tre.
+HER=$(cd "$(dirname "$0")" && pwd)
+KILDE=$(cd "$HER/../.." && pwd)
+MAL="$HER/nginx"
 LAAS=/var/lock/disponit-transport.lock
 
 exec 9>"$LAAS"
