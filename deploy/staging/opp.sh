@@ -34,7 +34,35 @@ FORRIGE=$(readlink -f "$AKTIV" 2>/dev/null || true)
 
 echo "== opp.sh: utrulling av $SHA =="
 
-# --- 1. Unix-identiteter (idempotent; v2 §3 + PR-009b V1) ------------------
+# --- 1. Release-katalogen STAGES (inert — endrer ingen levende sti) --------
+mkdir -p "$ROT/releases"
+if [ ! -d "$KILDE" ]; then
+  git -C "$ROT" archive --format=tar "$SHA" | \
+    ( mkdir -p "$KILDE" && tar -x -C "$KILDE" )
+fi
+
+# --- 2. PREFLIGHT — SIDEEFFEKTFRI, FØR FØRSTE AKTIVE MUTASJON (P1 rd. 2) ---
+# Verifiseringen skjer i en temporær falsk rot (verify --root) med
+# KANDIDATENS units og skript: /usr/local/lib røres ikke, ingen bruker
+# opprettes, ingen credential skrives, ingenting stoppes. Feiler gaten,
+# er systemet BEVISELIG uendret — en gammel timer kan aldri ha sett
+# kandidatkode.
+. "$KILDE/deploy/staging/lib-opp.sh"
+UNITS="disponit-api.socket disponit-api.service disponit-m37.service
+disponit-helse.service disponit-helse.timer
+disponit-rydd-pending.service disponit-rydd-pending.timer
+disponit-backup.service disponit-backup.timer"
+if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
+  echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
+  echo "kjører som før."
+  exit 1
+fi
+
+# ============================================================
+# HERFRA MUTERES SYSTEMET — gaten over er passert.
+# ============================================================
+
+# --- 3. Unix-identiteter (idempotent; v2 §3 + PR-009b V1) ------------------
 getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
 for b in disponit-api disponit-m37 disponit-helse; do
   getent passwd "$b" >/dev/null || \
@@ -46,14 +74,7 @@ done
 # dokumentert i DEPLOY.md og flagget i PR-beskrivelsen.
 usermod -aG disponit-proxy disponit-helse
 
-# --- 2. Versjonert release-katalog (v3 §3) ---------------------------------
-mkdir -p "$ROT/releases"
-if [ ! -d "$KILDE" ]; then
-  git -C "$ROT" archive --format=tar "$SHA" | \
-    ( mkdir -p "$KILDE" && tar -x -C "$KILDE" )
-fi
-
-# --- 3. Credentials per tjeneste (v3 §5): root-eide filer ------------------
+# --- 4. Credentials per tjeneste (v3 §5): root-eide filer ------------------
 # Kilden er staging.env (lib-miljofil eier livssyklusen); her MATERIALISERES
 # de per unit, slik at LoadCredential gir hver prosess kun sine egne.
 set -a; . "$MILJOFIL"; set +a
@@ -75,30 +96,11 @@ install -d -m 700 /etc/disponit/tokenadmin
 skriv_cred tokenadmin DISPONIT_TOKEN_ADMIN_URL "$DISPONIT_TOKEN_ADMIN_URL"
 skriv_cred tokenadmin DISPONIT_TOKEN_PEPPER    "$DISPONIT_TOKEN_PEPPER"
 
-# --- 4. Unitfiler verifiseres FØR installasjon (v2 §4; P1 runde 1) --------
-# Hjelperskriptene installeres FØRST: verify løser ExecStart-stier ved
-# lasting, og «not executable» skal være en EKTE feil som stopper — ikke
-# støy fra at verifiseringen kjørte før filene fantes.
-. "$KILDE/deploy/staging/lib-opp.sh"
-install -m 755 "$KILDE/deploy/staging/helse-sjekk.sh" \
-    /usr/local/lib/disponit-helse-sjekk
-install -m 755 "$KILDE/deploy/staging/restart-helper.sh" \
-    /usr/local/lib/disponit-restart-helper
-UNITS="disponit-api.socket disponit-api.service disponit-m37.service
-disponit-helse.service disponit-helse.timer
-disponit-rydd-pending.service disponit-rydd-pending.timer
-disponit-backup.service disponit-backup.timer"
-if ! verifiser_units "$KILDE/deploy/staging" $UNITS; then
-  echo "AVBRUTT: unit-verifisering feilet — ingenting er installert eller"
-  echo "stoppet; forrige release kjører urørt."
-  exit 1
-fi
-
-# --- 5. VEDLIKEHOLDSVINDU: stopp tjenestene FØR migrasjonen (V1) -----------
-KJORTE_FOR=$(systemctl is-active disponit-api.service disponit-m37.service \
-             2>/dev/null | grep -c '^active' || true)
-systemctl stop disponit-m37.service disponit-api.service \
-    disponit-api.socket 2>/dev/null || true
+# --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
+# Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
+# eller utløse en restart midt i migrasjonsvinduet.
+systemctl stop disponit-helse.timer disponit-m37.service \
+    disponit-api.service disponit-api.socket 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
@@ -122,7 +124,14 @@ ln -sfn "$KILDE" "$AKTIV"
 for u in $UNITS; do
   install -m 644 "$KILDE/deploy/staging/$u" "/etc/systemd/system/$u"
 done
-# (helse-sjekk og restart-helper er alt installert — FØR verifiseringen.)
+# Hjelperskriptene installeres HER — i mutasjonsfasen, etter gaten og
+# mens tjenestene og helsetimeren er stoppet. Preflighten verifiserte
+# nøyaktig disse filene i den falske roten; ingen gammel timer kan ha
+# kjørt kandidatkode før dette punktet.
+install -m 755 "$KILDE/deploy/staging/helse-sjekk.sh" \
+    /usr/local/lib/disponit-helse-sjekk
+install -m 755 "$KILDE/deploy/staging/restart-helper.sh" \
+    /usr/local/lib/disponit-restart-helper
 install -m 440 "$KILDE/deploy/staging/sudoers-disponit-helse" \
     /etc/sudoers.d/disponit-helse
 visudo -cf /etc/sudoers.d/disponit-helse >/dev/null

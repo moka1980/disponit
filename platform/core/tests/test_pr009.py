@@ -281,28 +281,71 @@ def test_p1_rollback_dommen_felles_over_unionen(tmp_path):
         "ingen nye noe sted er den ENESTE kompatible dommen"
 
 
-def test_p1_unitverifisering_gater_pa_feil(tmp_path):
-    """`|| true`-formen slapp ugyldige units gjennom — nå skal en unit med
-    feil STOPPE, en manglende fil STOPPE, og en gyldig slippe gjennom."""
+def test_p1_preflight_gater_og_er_sideeffektfri(tmp_path):
+    """Runde 1: `|| true` slapp ugyldige units gjennom. Runde 2: fiksen
+    installerte hjelperskript FØR gaten — en mutasjon i preflighten. Nå:
+    verifiseringen skjer i en temporær falsk rot (`verify --root`), og
+    testen måler BEGGE egenskapene — gaten OG at ingenting utenfor
+    temp-roten røres, heller ikke når gaten avviser."""
     import shutil
     if shutil.which("systemd-analyze") is None:
         pytest.skip("systemd-analyze finnes ikke i dette miljøet")
 
-    (tmp_path / "gyldig.service").write_text(
-        "[Unit]\nDescription=t\n[Service]\nExecStart=/bin/true\n")
-    (tmp_path / "ugyldig.service").write_text(
+    kilde = tmp_path / "kilde"
+    (kilde / "deploy/staging").mkdir(parents=True)
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin/python").write_text("#!/bin/sh\n")
+    (venv / "bin/python").chmod(0o755)
+    for navn in ("helse-sjekk.sh", "restart-helper.sh"):
+        (kilde / "deploy/staging" / navn).write_text("#!/bin/sh\nexit 0\n")
+    (kilde / "deploy/staging/gyldig.service").write_text(
+        "[Unit]\nDescription=t\n[Service]\n"
+        "ExecStart=/opt/disponit/.venv/bin/python -c pass\n")
+    (kilde / "deploy/staging/hjelper.service").write_text(
+        "[Unit]\nDescription=t\n[Service]\n"
+        "ExecStart=/usr/local/lib/disponit-helse-sjekk\n")
+    (kilde / "deploy/staging/ugyldig.service").write_text(
         "[Unit]\nDescription=t\n[Service]\nExecStart=/finnes/ikke/abc\n")
 
-    ok = _bash(f". {LIB_OPP}; verifiser_units {tmp_path} gyldig.service")
-    assert ok.returncode == 0, ok.stderr
+    live = [Path("/usr/local/lib/disponit-helse-sjekk"),
+            Path("/usr/local/lib/disponit-restart-helper")]
+    for_tilstand = [(p.exists(), p.stat().st_mtime if p.exists() else None)
+                    for p in live]
 
-    daarlig = _bash(f". {LIB_OPP}; verifiser_units {tmp_path} "
+    ok = _bash(f". {LIB_OPP}; preflight_units {kilde} {venv} "
+               "gyldig.service hjelper.service")
+    assert ok.returncode == 0, ok.stderr + ok.stdout
+    # hjelper.service verifiserte mot KANDIDATENS skript i den falske
+    # roten — uten at /usr/local/lib ble rørt (målingen under).
+
+    daarlig = _bash(f". {LIB_OPP}; preflight_units {kilde} {venv} "
                     "ugyldig.service gyldig.service")
     assert daarlig.returncode != 0, \
         "en unit med ikke-eksekverbar ExecStart skal stoppe deployen"
 
-    borte = _bash(f". {LIB_OPP}; verifiser_units {tmp_path} mangler.service")
+    borte = _bash(f". {LIB_OPP}; preflight_units {kilde} {venv} "
+                  "mangler.service")
     assert borte.returncode != 0 and "finnes ikke" in borte.stderr
+
+    etter_tilstand = [(p.exists(), p.stat().st_mtime if p.exists() else None)
+                      for p in live]
+    assert for_tilstand == etter_tilstand, \
+        "preflighten rørte levende stier — den skal være sideeffektfri"
+
+
+def test_p1_preflight_skjer_for_forste_mutasjon():
+    """Rekkefølgen ER kontrakten (runde 2): preflight-kallet i opp.sh står
+    FØR hver muterende kommando — målt på kilden, så en omflytting ikke
+    kan skje stille."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    gate = opp.index("preflight_units")
+    for mutasjon in ("groupadd", "useradd", "usermod", "skriv_cred api",
+                     "systemctl stop", "install -m 755", "install -m 644",
+                     "install -m 440", "ln -sfn"):
+        pos = opp.index(mutasjon)
+        assert gate < pos, \
+            f"mutasjonen {mutasjon!r} står FØR preflight-gaten"
 
 
 @pg

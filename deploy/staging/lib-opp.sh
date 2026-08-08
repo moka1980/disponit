@@ -6,27 +6,71 @@
 # opp.sh kaller den. Begge P1-ene satt i inline-bash ingen test så.
 # ============================================================
 
-# P1-1: unit-verifisering som FEILER. Første utgave slukte alt med
-# `|| true` — og den observerte staging-kjøringen beviste konsekvensen:
-# «Command /usr/local/lib/disponit-helse-sjekk is not executable» rant
-# forbi som støy, og en ugyldig unit kunne blitt deployet. Nå:
-# systemd-analyze sin exit-kode GATER, og utskriften vises alltid.
-# (Støy fra ANDRE units på verten — f.eks. xfs_scrub sine
-# CPUAccounting-advarsler — er warnings og endrer ikke exit-koden.)
-verifiser_units() {  # <katalog> <unit...>  -> 0 kun hvis ALLE verifiserer
-  local katalog=$1; shift
-  local u rc=0
+# P1-1 (runde 1) + P1 (runde 2): unit-preflight som FEILER og som er
+# HELT SIDEEFFEKTFRI.
+#
+# Runde 1 slukte feil med `|| true`. Runde 1-fiksen installerte
+# hjelperskriptene i /usr/local/lib FØR verifiseringen — og gjorde dermed
+# preflighten selv til en mutasjon: en gammel, aktiv helse-timer kunne
+# kjøre KANDIDATENS skript mot GAMMEL release, og et avvist deploy
+# etterlot systemet delvis endret. Runde 2: verifiseringen skjer mot en
+# TEMPORÆR FALSK ROT (`systemd-analyze verify --root`, systemd ≥ 252) der
+# kandidatens units, kandidatens hjelperskript og en pekepinn til venv-en
+# ligger — ingenting utenfor temp-katalogen røres, og roten fjernes
+# uansett utfall. Målt på staging (systemd 259): gyldig unit → 0, ødelagt
+# ExecStart → 1.
+preflight_units() {  # <kilde-katalog> <venv-sti> <unit...>
+  local kilde=$1 venv=$2; shift 2
+  local rot u rc=0
+  # venv-en sjekkes LESENDE her (stubben i den falske roten beviser bare
+  # unit-formen, ikke at tolken finnes på ekte).
+  if [ ! -x "$venv/bin/python" ]; then
+    echo "PREFLIGHT FEILET: $venv/bin/python finnes ikke eller er ikke kjørbar" >&2
+    return 1
+  fi
+  rot=$(mktemp -d) || return 1
+  # Falsk rot: systemd-skjelettet (targets) som symlink, kandidatens
+  # hjelperskript der unitene forventer dem, venv-en som symlink slik at
+  # ExecStart-stiene løses — alt lesende mot kilden, aldri mot systemet.
+  mkdir -p "$rot/etc/systemd/system" "$rot/usr/local/lib" \
+           "$rot/opt/disponit" "$rot/usr/lib/systemd"
+  # ABSOLUTTE symlinker inn i en falsk rot løses PÅ NYTT inne i roten og
+  # blir selv-løkker («too many levels») — målt lokalt. Derfor: systemd-
+  # skjelettet KOPIERES (interne alias-lenker er relative og forblir
+  # inne i treet), og ExecStart-målene utenfor kandidaten STUBBES som
+  # tomme kjørbare filer — preflighten beviser unit-form + at kandidatens
+  # egne skript finnes og er kjørbare; at venv-en finnes på ekte sjekkes
+  # av opp.sh som egen, lesende forhåndssjekk.
+  cp -a /usr/lib/systemd/system "$rot/usr/lib/systemd/system"
+  stub() { install -D -m 755 /dev/null "$rot$1"; }
+  stub /opt/disponit/.venv/bin/python
+  stub /usr/bin/install
+  # Kandidatens deploy-tre KOPIERES (absolutt symlink ville løkket, som
+  # over) — backup-unitens ExecStart peker på aktiv/deploy/staging/.
+  mkdir -p "$rot/opt/disponit/aktiv/deploy"
+  cp -a "$kilde/deploy/staging" "$rot/opt/disponit/aktiv/deploy/staging"
+  if [ -f "$kilde/deploy/staging/helse-sjekk.sh" ]; then
+    install -m 755 "$kilde/deploy/staging/helse-sjekk.sh" \
+        "$rot/usr/local/lib/disponit-helse-sjekk"
+  fi
+  if [ -f "$kilde/deploy/staging/restart-helper.sh" ]; then
+    install -m 755 "$kilde/deploy/staging/restart-helper.sh" \
+        "$rot/usr/local/lib/disponit-restart-helper"
+  fi
   for u in "$@"; do
-    if [ ! -f "$katalog/$u" ]; then
-      echo "VERIFISERING FEILET: $katalog/$u finnes ikke" >&2
+    if [ ! -f "$kilde/deploy/staging/$u" ]; then
+      echo "PREFLIGHT FEILET: $kilde/deploy/staging/$u finnes ikke" >&2
       rc=1
       continue
     fi
-    if ! systemd-analyze verify "$katalog/$u"; then
-      echo "VERIFISERING FEILET: $u" >&2
+    cp "$kilde/deploy/staging/$u" "$rot/etc/systemd/system/$u"
+    if ! systemd-analyze verify --root="$rot" \
+         "$rot/etc/systemd/system/$u"; then
+      echo "PREFLIGHT FEILET: $u" >&2
       rc=1
     fi
   done
+  rm -rf "$rot"
   return $rc
 }
 
