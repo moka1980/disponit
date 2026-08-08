@@ -35,6 +35,10 @@ INSERT INTO _design VALUES
     -- runtime når tabellen KUN gjennom SECURITY DEFINER-funksjonen.
     ('TABLE',    'api_tokener',                    'disponit_authenticator'),
     ('FUNCTION', 'verifiser_token(text,text)',     'disponit_authenticator'),
+    -- 009: PENDING-verifikasjonen for token-CLI-en (PR-009 V2).
+    -- Paritetstesten fanget selv at denne manglet da 009 landet — nøyaktig
+    -- jobben dens: en ny privilegert eid funksjon kan ikke bli stille udekket.
+    ('FUNCTION', 'hent_pending_token(text)',       'disponit_authenticator'),
     -- 005 §6–9 + 007: M-37-flaten eies av NOLOGIN-rollen m37_claimer.
     ('TABLE',    'arbeidskapabiliteter',           'disponit_m37_claimer'),
     ('TABLE',    'kvitteringskapabiliteter',       'disponit_m37_claimer'),
