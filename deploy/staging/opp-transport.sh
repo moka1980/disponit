@@ -36,7 +36,16 @@ apt-get install -y -q nginx certbot >/dev/null
 # Tillitsgrensen (PR-009b §0 / V1): nginx-brukeren inn i disponit-proxy —
 # ellers kan den ikke koble til /run/disponit/api.sock. ACL-porten (V2)
 # måler BEGGE veier: nginx fullfører en hel request; M-37 får EACCES.
-NGINX_BRUKER=$(id -un www-data 2>/dev/null && echo www-data || echo nginx)
+# nginx-brukeren: www-data på Debian/Ubuntu, ellers nginx. Utledes fra
+# hvilken bruker som faktisk finnes — ikke gjettet.
+if getent passwd www-data >/dev/null; then
+  NGINX_BRUKER=www-data
+elif getent passwd nginx >/dev/null; then
+  NGINX_BRUKER=nginx
+else
+  echo "AVBRUTT: fant verken www-data eller nginx som bruker" >&2
+  exit 1
+fi
 getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
 usermod -aG disponit-proxy "$NGINX_BRUKER"
 
