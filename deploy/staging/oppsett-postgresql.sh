@@ -162,6 +162,14 @@ for base in $DB ${DB}_test; do
         AND pg_get_userbyid(p.proowner) <> pg_get_userbyid(e.extowner)" \
     | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" -f -
   sudo -u postgres psql -q -d "$base" -c "ALTER SCHEMA public OWNER TO $MIGRATOR"
+  # FERSK-SERVER-FUNN (disponit.com-maskinen): PostgreSQL ≥ 15 gir ingen
+  # CREATE på public til andre enn skjemaeieren. 003/005/007 oppretter
+  # objekter UNDER SET ROLE authenticator/m37_claimer — de rollene må ha
+  # CREATE, ellers dør første migrasjonskjøring med «permission denied for
+  # schema public». Gamle staging hadde grantene fra en manuell æra;
+  # førstegangsveien hadde aldri satt dem selv.
+  sudo -u postgres psql -q -d "$base" -c \
+    "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37"
 done
 
 # ------------------------------------------------------------
