@@ -120,14 +120,19 @@ if [ -d /etc/disponit/api ]; then
 fi
 
 # --- 5. EKSTERN HTTPS-probe (v2 §3.6) — fra utsiden, ikke localhost --------
-# Løser navnet mot den offentlige IP-en og krever 2xx/3xx/4xx (et svar,
-# ikke en tilkoblingsfeil). En probe mot localhost ville ikke bevist at
-# den eksterne veien virker.
-echo "-- ekstern HTTPS-probe --"
+# Løser navnet mot den offentlige IP-en og krever EKSAKT 200 (P1
+# review-runde 1). Å bare avvise 000 slapp 421/500/502/503 gjennom — de
+# transport- og upstream-feilene proben nettopp skal fange. `/live` svarer
+# 200 med event-loopen oppe; alt annet er en feil deployen ikke skal
+# rapportere som grønn.
+. "$HER/lib-opp.sh"
+FORVENTET_HELSE=200
+echo "-- ekstern HTTPS-probe (krever $FORVENTET_HELSE) --"
 KODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
        "https://$HOST/live" || echo 000)
-if [ "$KODE" = 000 ]; then
-  echo "AVBRUTT: ekstern HTTPS-probe fikk ingen respons ($KODE)." >&2
+if ! vurder_helsekode "$KODE" "$FORVENTET_HELSE"; then
+  echo "AVBRUTT: ekstern HTTPS-probe ga $KODE, forventet $FORVENTET_HELSE." >&2
+  echo "(000=ingen tilkobling · 421=Host/SNI · 502/503=upstream nede/socket)" >&2
   exit 1
 fi
 echo "== transport oppe: https://$HOST/live → $KODE =="

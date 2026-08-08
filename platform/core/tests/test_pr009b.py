@@ -215,6 +215,30 @@ def test_acme_sekvens_henter_cert_for_https_konfig():
     assert i_t < i_reload
 
 
+def test_p1_helseprobe_krever_eksakt_200_ikke_bare_ikke_000():
+    """P1 review-runde 1: proben avviste bare `000`, så 421/500/502/503 ble
+    godkjent som «transport oppe». Verdikten skal kreve EKSAKT forventet
+    status. Matrisen kjøres mot den rene funksjonen i lib-opp.sh."""
+    import subprocess
+    lib = ROT / "deploy/staging/lib-opp.sh"
+
+    def verdikt(kode, forventet="200"):
+        r = subprocess.run(
+            ["bash", "-c",
+             f'. {lib}; vurder_helsekode "{kode}" "{forventet}"'],
+            capture_output=True, text=True)
+        return r.returncode
+
+    assert verdikt("200") == 0, "200 skal godkjennes"
+    # Nøyaktig feilene proben finnes for — ALLE skal avvises:
+    for feil in ("000", "421", "500", "502", "503", "404", "301", ""):
+        assert verdikt(feil) != 0, f"{feil!r} skal avvises, ikke godkjennes"
+    # Og at opp-transport faktisk BRUKER verdikten mot 200, ikke != 000.
+    opp = (ROT / "deploy/staging/opp-transport.sh").read_text(encoding="utf-8")
+    assert "vurder_helsekode" in opp
+    assert 'if [ "$KODE" = 000 ]' not in opp, "den gamle svake sjekken er borte"
+
+
 def test_nginx_bruker_i_proxy_gruppe_m37_aldri():
     """V2 (ACL-porten forberedt): opp-transport melder nginx-brukeren inn i
     disponit-proxy; ingenting her rører M-37 (den skal ha EACCES)."""
