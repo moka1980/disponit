@@ -203,6 +203,34 @@ BEGIN
             RAISE EXCEPTION 'oppdrag: ukjent koblingsstatus %',
                 NEW.koblingsstatus;
         END IF;
+        -- Codex P1 (review-runde 1): FK-en beviser at LOGGPOSTEN FINNES,
+        -- ikke at den er RIKTIG beslutning. Uten dette kunne en KOBLET rad
+        -- peke på en vilkårlig revisjonsrad hos samme tenant — og
+        -- lese-API-et ville vist en fremmed beslutnings «utførelse» med
+        -- full FK-integritet. Porten er SEMANTISK og ligger i databasen:
+        -- loggposten må være nøyaktig fase-2-TILLAT-beslutningen for
+        -- DETTE oppdragets reparasjonsidentitet — samme tre predikater som
+        -- backfillen og arbeiderens oppslag, håndhevet der raden fødes.
+        -- Kjøres under kallerens RLS: en innsetting uten tenantkontekst
+        -- ser ingen loggpost og avvises — fail-closed, ikke en bypass.
+        -- NULL-FK-en overlates til CHECK-en `oppdrag_kobling_konsistent`
+        -- (BEFORE-triggere kjører FØR CHECK; uten IS NOT NULL her ville
+        -- den navngitte constrainten aldri fått rapportere sitt eget brudd).
+        IF NEW.koblingsstatus = 'KOBLET'
+           AND NEW.beslutning_loggpost_id IS NOT NULL
+           AND NOT EXISTS (
+            SELECT 1 FROM public.revisjonslogg r
+             WHERE r.tenant = NEW.tenant
+               AND r.id = NEW.beslutning_loggpost_id
+               AND r.idempotency_key = NEW.repair_operation_id
+               AND r.kilde = 'arbeidskapabilitet'
+               AND r.beslutning = 'TILLAT') THEN
+            RAISE EXCEPTION
+                'oppdrag: beslutning_loggpost_id % er ikke fase-2-TILLAT-'
+                'beslutningen for repair_operation_id % (semantisk kobling '
+                'kreves: idempotency_key + kilde + beslutning)',
+                NEW.beslutning_loggpost_id, NEW.repair_operation_id;
+        END IF;
         RETURN NEW;
     END IF;
     -- UPDATE: koblingen er uforanderlig etter innsetting (v5 pkt. 1).

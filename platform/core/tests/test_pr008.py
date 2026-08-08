@@ -314,7 +314,13 @@ def test_koblingsstatus_er_toveis_bundet_til_oppdragstypen(migrator, policy):
             " 'VERIFIKASJON' FROM unntak WHERE tenant=%s AND id=%s",
             (TENANT, sak, loggpost, secrets.token_hex(32), TENANT, sak))
     migrator.rollback()
+    # KOBLET verifikasjonsoppdrag: den semantiske porten passeres med en
+    # EKTE fase-2-loggpost, slik at det er CHECK-ens typebinding — ikke
+    # semantikkvakten — som beviselig avviser raden.
     sak2, loggpost2 = _lag_sak(migrator, TENANT)
+    rid2 = secrets.token_hex(32)
+    fase2 = _beslutningslogg(migrator, TENANT, kilde="arbeidskapabilitet",
+                             idem=rid2)
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(Exception, match="oppdrag_kobling_konsistent"):
         migrator.execute(
@@ -326,32 +332,140 @@ def test_koblingsstatus_er_toveis_bundet_til_oppdragstypen(migrator, policy):
             " 'eiermodul:verifisering', payload_kryptert, key_id, nonce,"
             " now()+interval '1 hour', now()+interval '30 days',"
             " %s, 'KOBLET' FROM unntak WHERE tenant=%s AND id=%s",
-            (TENANT, sak2, loggpost2, secrets.token_hex(32), loggpost2,
-             TENANT, sak2))
+            (TENANT, sak2, loggpost2, rid2, fase2, TENANT, sak2))
     migrator.rollback()
 
 
 @pg
 def test_port5_to_oppdrag_for_samme_beslutning_avvises(migrator, policy):
     """Codex-port 5: UNIQUE (tenant, beslutning_loggpost_id) — partiell,
-    så LEGACY/VERIFIKASJON (NULL) deltar ikke."""
+    så LEGACY/VERIFIKASJON (NULL) deltar ikke.
+
+    Etter den semantiske porten (review-runde 1) er indeksen ANDRE
+    forsvarslinje: en semantisk gyldig duplikatkobling må bære samme
+    `repair_operation_id` som loggposten, og da fyrer `oppdrag_repair_unik`
+    først. Indeksens eget lag måles derfor med koblingsvakten midlertidig
+    av — det beviser at duplikatvernet står SELV OM triggeren skulle
+    falle, i stedet for å anta det.
+    """
     sak, loggpost = _lag_sak(migrator, TENANT)
     opp, rid = _lag_oppdrag(migrator, TENANT, sak, loggpost)
     _sett_kontekst(migrator, TENANT)
     fk = migrator.execute(
         "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
         (TENANT, opp)).fetchone()[0]
-    with pytest.raises(Exception, match="oppdrag_en_per_beslutning"):
+    migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER oppdrag_koblingslaas")
+    try:
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(Exception, match="oppdrag_en_per_beslutning"):
+            migrator.execute(
+                "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+                " repair_operation_id, oppdragstype, handling, eiermodul,"
+                " payload_kryptert, key_id, nonce, utforelsesfrist,"
+                " evidensfrist, beslutning_loggpost_id, koblingsstatus)"
+                " SELECT tenant, unntak_id, loggpost_id, %s, oppdragstype,"
+                " handling, eiermodul, payload_kryptert, key_id, nonce,"
+                " utforelsesfrist, evidensfrist, %s, 'KOBLET'"
+                "  FROM oppdrag WHERE tenant=%s AND id=%s",
+                (secrets.token_hex(32), fk, TENANT, opp))
+    finally:
+        migrator.rollback()
+        migrator.execute(
+            "ALTER TABLE oppdrag ENABLE TRIGGER oppdrag_koblingslaas")
+        migrator.commit()
+
+
+@pg
+def test_P1_koblingen_er_semantisk_ikke_bare_en_fk(migrator, policy):
+    """Codex P1 review-runde 1: FK-en beviser at loggposten FINNES, ikke at
+    den er riktig beslutning. Databaseporten må kreve at den refererte
+    raden er nøyaktig fase-2-TILLAT-beslutningen for oppdragets
+    `repair_operation_id` — hvert av de tre predikatene måles negativt,
+    og den positive kontrollen beviser at porten slipper riktig rad
+    gjennom (en vakt ingen gyldig rad passerer er en annen feil)."""
+
+    def _forsok(rid, fk):
+        sak, sakslogg = _lag_sak(migrator, TENANT)
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
+            " repair_operation_id, repair_generation, handler_id,"
+            " handler_versjon, maalhandling, input_hash, kategori) VALUES"
+            " (%s,%s,%s,0,'r1','1','purring.send',%s,'manglende_data')",
+            (TENANT, sak, rid, secrets.token_hex(32)))
+        return migrator.execute(
+            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            " repair_operation_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
+            " beslutning_loggpost_id, koblingsstatus)"
+            " SELECT %s, %s, %s, %s, 'reinnsending', 'purring.send',"
+            " 'eiermodul:reinnsending', payload_kryptert, key_id, nonce,"
+            " now()+interval '1 hour', now()+interval '30 days', %s, 'KOBLET'"
+            "  FROM unntak WHERE tenant=%s AND id=%s RETURNING id",
+            (TENANT, sak, sakslogg, rid, fk, TENANT, sak)).fetchone()
+
+    # Negativ 1 — FEIL idempotency_key: gyldig fase-2-loggpost, men den
+    # tilhører en ANNEN reparasjonsidentitet.
+    rid = secrets.token_hex(32)
+    fremmed = _beslutningslogg(migrator, TENANT, kilde="arbeidskapabilitet",
+                               idem=secrets.token_hex(32))
+    with pytest.raises(Exception, match="semantisk"):
+        _forsok(rid, fremmed)
+    migrator.rollback()
+
+    # Negativ 2 — FEIL kilde: riktig nøkkel og TILLAT, men en ordinær
+    # API-beslutning, ikke en fase-2-beslutning.
+    rid = secrets.token_hex(32)
+    feil_kilde = _beslutningslogg(migrator, TENANT, kilde="test", idem=rid)
+    with pytest.raises(Exception, match="semantisk"):
+        _forsok(rid, feil_kilde)
+    migrator.rollback()
+
+    # Negativ 3 — FEIL beslutning: fase-2-loggpost med riktig nøkkel som
+    # ble STOPP — en avvist reparasjon skaper aldri et oppdrag.
+    rid = secrets.token_hex(32)
+    stopp = _beslutningslogg(migrator, TENANT, kilde="arbeidskapabilitet",
+                             idem=rid, beslutning="STOPP")
+    with pytest.raises(Exception, match="semantisk"):
+        _forsok(rid, stopp)
+    migrator.rollback()
+
+    # Positiv kontroll — nøyaktig riktig rad: aksepteres.
+    rid = secrets.token_hex(32)
+    riktig = _beslutningslogg(migrator, TENANT, kilde="arbeidskapabilitet",
+                              idem=rid)
+    assert _forsok(rid, riktig) is not None
+    migrator.rollback()
+
+    # Og RLS-flanken: samme innsetting UTEN tenantkontekst ser ingen
+    # loggpost og avvises — porten er fail-closed, ikke omgåelig ved å
+    # utelate konteksten.
+    rid = secrets.token_hex(32)
+    riktig2 = _beslutningslogg(migrator, TENANT, kilde="arbeidskapabilitet",
+                               idem=rid)
+    sak, sakslogg = _lag_sak(migrator, TENANT)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
+        " repair_operation_id, repair_generation, handler_id,"
+        " handler_versjon, maalhandling, input_hash, kategori) VALUES"
+        " (%s,%s,%s,0,'r1','1','purring.send',%s,'manglende_data')",
+        (TENANT, sak, rid, secrets.token_hex(32)))
+    ct_rad = migrator.execute(
+        "SELECT payload_kryptert, key_id, nonce FROM unntak"
+        " WHERE tenant=%s AND id=%s", (TENANT, sak)).fetchone()
+    migrator.commit()   # kontekst borte ved commit — neste INSERT er naken
+    with pytest.raises(Exception):
         migrator.execute(
             "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
             " beslutning_loggpost_id, koblingsstatus)"
-            " SELECT tenant, unntak_id, loggpost_id, %s, oppdragstype,"
-            " handling, eiermodul, payload_kryptert, key_id, nonce,"
-            " utforelsesfrist, evidensfrist, %s, 'KOBLET'"
-            "  FROM oppdrag WHERE tenant=%s AND id=%s",
-            (secrets.token_hex(32), fk, TENANT, opp))
+            " VALUES (%s,%s,%s,%s,'reinnsending','purring.send',"
+            " 'eiermodul:reinnsending',%s,%s,%s, now()+interval '1 hour',"
+            " now()+interval '30 days', %s, 'KOBLET')",
+            (TENANT, sak, sakslogg, rid, ct_rad[0], ct_rad[1], ct_rad[2],
+             riktig2))
     migrator.rollback()
 
 
