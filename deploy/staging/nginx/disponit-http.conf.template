@@ -1,0 +1,37 @@
+# PR-009b — HTTP (80): ACME + redirect. Steg 1 i ACME-tilstandsmaskinen
+# (v2 §3): denne konfigen kan ikke peke på et sertifikat som ikke finnes
+# ennå, så den installeres ALENE først, sertifikatet hentes, DERETTER
+# legges HTTPS-blokken til. `${DISPONIT_HOST}` rendres av opp-transport.sh.
+
+# Default: ukjent Host på port 80 → 421, ALDRI en redirect bygget fra
+# angriperens Host-header (redirect-injeksjon). ACME-stien svarer likevel,
+# så første sertifikat kan hentes før den kanoniske verten er bevist.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    server_tokens off;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme;
+    }
+    location / {
+        return 421;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DISPONIT_HOST};
+    server_tokens off;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme;
+    }
+    # Redirect bygges fra den KANONISKE verten (konfigverdien), aldri fra
+    # $host — ingen redirect-injeksjon.
+    location / {
+        return 301 https://${DISPONIT_HOST}$request_uri;
+    }
+}

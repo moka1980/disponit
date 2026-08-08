@@ -86,6 +86,15 @@ preflight_units() {  # <kilde-katalog> <venv-sti> <unit...>
   return $rc
 }
 
+# PR-009b review-runde 1: den eksterne helseproben må kreve EKSAKT forventet
+# status (normalt 200). Første utgave avviste bare `000` (ingen tilkobling),
+# så 421/500/502/503 — nettopp de transport- og upstream-feilene proben
+# finnes for — ble godkjent som «transport oppe». Verdikten er skilt ut som
+# en ren funksjon slik at matrisen kan måles uten en server.
+vurder_helsekode() {  # <kode> <forventet> -> 0 kun ved EKSAKT match
+  [ -n "$1" ] && [ "$1" = "$2" ]
+}
+
 # P1-2: rollback-dommen felles over UNIONEN av basene. Første utgave lot
 # siste iterasjon (TESTbasen) overskrive rapporten — en forward-only-
 # migrasjon kjørt KUN i runtime-basen ville dermed blitt rapportert som

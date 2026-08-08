@@ -39,9 +39,15 @@ LoadCredential=DISPONIT_KEK:/etc/disponit/api/DISPONIT_KEK
 LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/api/DISPONIT_TOKEN_PEPPER
 LoadCredential=DISPONIT_ATT_NOKLER:/etc/disponit/api/DISPONIT_ATT_NOKLER
 
+# access_log=False: uvicorns ASGI-access-logg skriver hele request-linjen
+# — inkludert en callback-query — til journald. Det er den FEMTE logglag-
+# lekkasjen PR-009b v2 §5 forbyr (målt: query nådde journald før dette).
+# nginx er access-loggen av record (redigert), og appens egen Sikkerhetslogg
+# er strukturert uten payload/query. ASGI-access-loggen er ren duplikat +
+# lekkasjevektor, og slås av.
 ExecStart=/opt/disponit/.venv/bin/python -c 'import uvicorn; \
 from api.app import lag_app; \
-uvicorn.run(lag_app(), fd=3, log_level="info")'
+uvicorn.run(lag_app(), fd=3, log_level="info", access_log=False)'
 
 Restart=on-failure
 RestartSec=5

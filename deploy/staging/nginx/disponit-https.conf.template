@@ -1,0 +1,113 @@
+# PR-009b — HTTPS (443). Steg 3 i ACME-tilstandsmaskinen: legges til FØRST
+# etter at sertifikatet finnes. `${DISPONIT_HOST}` rendres av
+# opp-transport.sh. HTTP-blokken (redirect + ACME) beholdes fra
+# disponit-http.conf.
+
+# Ukjent SNI → handshake avvises (v3 §3): klienten stopper på
+# sertifikatfeil og ser ALDRI en HTTP-respons. Ingen upstream, ingen
+# tenant-lekkasje via feil vert.
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    ssl_reject_handshake on;
+    # Kjent SNI (håndtrykk fullført mot den ekte verten) MEN en Host-header
+    # som ikke matcher noe server_name rutes hit av Host-utvelgelsen. Da er
+    # håndtrykket alt gjort, og svaret skal være 421 (v2 §1), ikke nginx'
+    # default 404. Ukjent SNI stoppes fortsatt i håndtrykket over.
+    return 421;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DISPONIT_HOST};
+    server_tokens off;
+
+    # --- TLS (v2 §6 / v3 §4): TLS 1.2+1.3 KUN, eksplisitte ciphers -------
+    ssl_certificate     /etc/letsencrypt/live/${DISPONIT_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DISPONIT_HOST}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_conf_command Ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256;
+    ssl_ecdh_curve X25519:prime256v1;
+    ssl_session_cache shared:disponit_tls:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+    # AVVIK fra v1 §2 «OCSP stapling on», flagget: Let's Encrypt RETIRERTE
+    # OCSP i 2025 — sertifikatene har ingen responder-URL å staple, og
+    # `ssl_stapling on` er da en no-op som bare logger en advarsel ved hver
+    # reload (målt på disponit.com). Utelatt bevisst; revurderes hvis
+    # sertifikatutstederen får OCSP igjen.
+
+    # --- Grenser (v1 §5) ------------------------------------------------
+    client_max_body_size 256k;          # app-lagets 256 KiB som andre linje
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    keepalive_timeout 65s;
+
+    # --- Logg: hovedformat uten query (v2 §5) ---------------------------
+    access_log /var/log/nginx/disponit-access.log disponit_main;
+    error_log  /var/log/nginx/disponit-error.log warn;
+
+    # --- Responsheadere (v1 §4). HSTS er BEVISST utelatt (v2 §6:
+    #     separat auditert aktiveringsport etter stabil TLS). ------------
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    # API-CSP nå (v2 §6): API svarer JSON, ingen ressurser. UI-ets CSP
+    # kommer i UI-leveransen — en global CSP skrevet før UI-ressursene er
+    # kjent ville blokkert den godkjente UI-leveransen.
+    add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+
+    # --- Host = SNI (v2 §1): server_name gated SNI; her gates Host. En
+    #     request som nådde denne blokken med avvikende Host → 421,
+    #     aldri upstream. ---------------------------------------------------
+    if ($host != ${DISPONIT_HOST}) {
+        return 421;
+    }
+
+    # --- Proxy-hygiene (v2 §2 + §4) -------------------------------------
+    proxy_http_version 1.1;
+    # Hop-by-hop mot upstream fjernes; ingen websocket-oppgradering.
+    proxy_set_header Connection "";
+    proxy_set_header Upgrade "";
+    # TLS-beviset er HARDKODET fra proxyen (ikke $scheme): API-et er bak
+    # denne, og alt som når socketen kom gjennom her.
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Host ${DISPONIT_HOST};
+    # Kanonisk host (v2 §1) — PR-010 utleder workspace fra DENNE, aldri fra
+    # rå Host. proxy_set_header ERSTATTER enhver klientsendt verdi.
+    proxy_set_header X-Disponit-Host ${DISPONIT_HOST};
+    proxy_set_header Host $host;
+    # Klientsendte infrastruktur-varianter nulles eksplisitt (v2 §2).
+    proxy_set_header X-Real-IP "";
+    proxy_set_header Forwarded "";
+
+    # OIDC-rutene: KUN sin egen sone (klarsignal V3) — den generelle
+    # gjelder dem aldri. Callback har i tillegg redigert access-logg.
+    location = /v1/oidc/callback {
+        access_log /var/log/nginx/disponit-callback.log disponit_callback;
+        error_log  /var/log/nginx/disponit-callback-error.log crit;
+        limit_req zone=disponit_oidc burst=30 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+    location = /v1/oidc/start {
+        limit_req zone=disponit_oidc burst=30 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
+    location / {
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        # Tillitsgrensen (PR-009b §0): Unix-socket, aldri TCP. Gruppen
+        # disponit-proxy gir nginx-brukeren tilgang; ingen annen lokal
+        # prosess når den.
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+}
