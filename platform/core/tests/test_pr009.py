@@ -265,8 +265,8 @@ def test_p1_rollback_dommen_felles_over_unionen(tmp_path):
     testbase = tmp_path / "test"
 
     def dom(runtime_tekst, test_tekst):
-        runtime.write_text(f"migrasjoner kjørt: {runtime_tekst}\n")
-        testbase.write_text(f"migrasjoner kjørt: {test_tekst}\n")
+        runtime.write_text(f"migrasjoner kjørt: {runtime_tekst}\n", encoding="utf-8")
+        testbase.write_text(f"migrasjoner kjørt: {test_tekst}\n", encoding="utf-8")
         r = _bash(f". {LIB_OPP}; vurder_migrasjoner runtime {runtime} "
                   f"test {testbase}; printf 'NYE=%s' \"$NYE_MIGRASJONER\"")
         assert r.returncode == 0, r.stderr
@@ -295,18 +295,18 @@ def test_p1_preflight_gater_og_er_sideeffektfri(tmp_path):
     (kilde / "deploy/staging").mkdir(parents=True)
     venv = tmp_path / "venv"
     (venv / "bin").mkdir(parents=True)
-    (venv / "bin/python").write_text("#!/bin/sh\n")
+    (venv / "bin/python").write_text("#!/bin/sh\n", encoding="utf-8")
     (venv / "bin/python").chmod(0o755)
     for navn in ("helse-sjekk.sh", "restart-helper.sh"):
-        (kilde / "deploy/staging" / navn).write_text("#!/bin/sh\nexit 0\n")
+        (kilde / "deploy/staging" / navn).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (kilde / "deploy/staging/gyldig.service").write_text(
         "[Unit]\nDescription=t\n[Service]\n"
-        "ExecStart=/opt/disponit/.venv/bin/python -c pass\n")
+        "ExecStart=/opt/disponit/.venv/bin/python -c pass\n", encoding="utf-8")
     (kilde / "deploy/staging/hjelper.service").write_text(
         "[Unit]\nDescription=t\n[Service]\n"
-        "ExecStart=/usr/local/lib/disponit-helse-sjekk\n")
+        "ExecStart=/usr/local/lib/disponit-helse-sjekk\n", encoding="utf-8")
     (kilde / "deploy/staging/ugyldig.service").write_text(
-        "[Unit]\nDescription=t\n[Service]\nExecStart=/finnes/ikke/abc\n")
+        "[Unit]\nDescription=t\n[Service]\nExecStart=/finnes/ikke/abc\n", encoding="utf-8")
 
     live = [Path("/usr/local/lib/disponit-helse-sjekk"),
             Path("/usr/local/lib/disponit-restart-helper")]
