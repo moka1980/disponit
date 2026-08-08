@@ -598,6 +598,28 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oppdrag_kvittering(request: Request) -> Response:
         return _oppdrag_kvittering(tjeneste, request)
 
+    # PR-008: lese-endepunktene. Importen ligger her — ETTER at modulens
+    # hjelpere er definert — fordi `lesing` importerer dem på modulnivå.
+    from . import lesing
+
+    def oversikt(request: Request) -> Response:
+        return lesing.oversikt(tjeneste, request)
+
+    def beslutninger(request: Request) -> Response:
+        return lesing.beslutninger(tjeneste, request)
+
+    def beslutning_detalj(request: Request) -> Response:
+        return lesing.beslutning_detalj(tjeneste, request)
+
+    def unntak_detalj(request: Request) -> Response:
+        return lesing.unntak_detalj(tjeneste, request)
+
+    def unntak_historikk(request: Request) -> Response:
+        return lesing.unntak_historikk(tjeneste, request)
+
+    def policy_aktiv(request: Request) -> Response:
+        return lesing.policy_aktiv(tjeneste, request)
+
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
         Route("/v1/unntak", unntak, methods=["GET"]),
@@ -607,6 +629,17 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk sjekk i testsuiten håndhever den.
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
+        # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
+        # `/v1/policy/aktiv` registreres FØR mønsterruter kunne ha slukt
+        # den, og detaljrutene bruker {id:int} så en ikke-numerisk sti er
+        # 404 fra routeren, ikke en kodevei.
+        Route("/v1/oversikt", oversikt, methods=["GET"]),
+        Route("/v1/beslutninger", beslutninger, methods=["GET"]),
+        Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
+        Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
+        Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
+              methods=["GET"]),
+        Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
         Route("/live", live, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
     ])
@@ -628,6 +661,17 @@ def _rid(request: Request) -> str:
     return rid
 
 
+#: PR-008: de fire lese-scopene brukersesjonen kan holde.
+LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
+                        "security:read"})
+
+#: Roller som er ALLOWLISTET til kun lesing. `bruker`-rollen når aldri et
+#: muterende endepunkt — selv om noen skulle utstede et bruker-token med
+#: `decision:write` i scopes-kolonnen, stopper rollen her (default-deny i
+#: KODEN, ikke bare i utstedelsen — v2 pkt. 9).
+LESEROLLER = frozenset({"bruker"})
+
+
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
                 paakrevd_scope: str) -> Autentisert:
     auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
@@ -640,6 +684,10 @@ def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
     if paakrevd_scope not in auth.scopes:
         tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                scope=paakrevd_scope)
+        raise kjerne.Feilsvar("scope_mangler")
+    if auth.rolle in LESEROLLER and paakrevd_scope not in LESESCOPES:
+        tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                               scope=paakrevd_scope, rolle=auth.rolle)
         raise kjerne.Feilsvar("scope_mangler")
     return auth
 
@@ -860,6 +908,26 @@ def _ready(tjeneste: Tjeneste, request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 ORDRESCOPE = "orders:execute:"
+
+#: PR-008 (v2 pkt. 9): ruteregisteret. HVER rute i appen skal stå her med
+#: sitt påkrevde scope — `None` er KUN lovlig for de uautentiserte
+#: helsesjekkene. Testsuiten binder registeret mot `lag_app()`s faktiske
+#: ruteliste begge veier: en rute uten deklarasjon er en testfeil
+#: (fail-closed), og en deklarasjon uten rute er en død regel.
+RUTESCOPE: dict[tuple[str, str], str | None] = {
+    ("POST", "/v1/beslutning"):              "decision:write",
+    ("GET",  "/v1/unntak"):                  "exceptions:read",
+    ("POST", "/v1/oppdrag/claim"):           ORDRESCOPE + "<prefiks>",
+    ("POST", "/v1/oppdrag/kvittering"):      ORDRESCOPE + "<prefiks>",
+    ("GET",  "/v1/oversikt"):                "decisions:read",
+    ("GET",  "/v1/beslutninger"):            "decisions:read",
+    ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
+    ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
+    ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
+    ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    ("GET",  "/live"):                       None,
+    ("GET",  "/ready"):                      None,
+}
 
 
 def _modulscope(auth: Autentisert) -> list[str]:

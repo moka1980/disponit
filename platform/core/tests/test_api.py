@@ -915,3 +915,40 @@ def _med_irreversibel(migrator, malpolicy):
     policyregister.registrer(migrator, TENANT, p, p["meta"]["status"])
     migrator.commit()
     return p
+
+
+# ---------------------------------------------------------------------------
+# PR-008: de to nye feilveiradene. Endepunktenes fulle testdekning bor i
+# test_pr008.py — radene dekkes HER fordi dekningsporten teller dette
+# registeret.
+# ---------------------------------------------------------------------------
+
+@pg
+@dekker("ikke_funnet")
+def test_ukjent_detalj_id_gir_lukket_404(klient, migrator):
+    tok, _ = _lag_token(migrator, TENANT, "bruker", ["decisions:read"])
+    r = klient.get("/v1/beslutninger/999999999",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 404
+    assert r.json()["feil"] == "ikke_funnet"
+
+
+@pg
+@dekker("intern_feil")
+def test_flere_aktive_policyer_er_sanitert_500(klient, migrator, malpolicy):
+    """`/v1/policy/aktiv` lover ÉN policy. Registeret tillater én aktiv PER
+    policy_id — altså flere per tenant. Endepunktet velger aldri: sanitert
+    500 med korrelasjons-id, aldri en gjettet policy og aldri intern info."""
+    from api import policyregister
+    for pid in ("p-a", "p-b"):
+        p = yaml.safe_load(yaml.safe_dump(malpolicy))
+        p["meta"]["policy_id"] = pid
+        policyregister.registrer(migrator, TENANT, p, p["meta"]["status"])
+    migrator.commit()
+    tok, _ = _lag_token(migrator, TENANT, "bruker", ["policy:read"])
+    r = klient.get("/v1/policy/aktiv",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 500
+    kropp = r.json()
+    assert kropp["feil"] == "intern_feil" and "request_id" in kropp
+    assert "p-a" not in r.text and "p-b" not in r.text

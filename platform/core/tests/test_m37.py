@@ -1261,7 +1261,14 @@ def _unik_eiermodul() -> str:
 def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
                  handling="purring.send", eiermodul="eiermodul:reinnsending",
                  utforelsesfrist="1 hour", evidensfrist="30 days"):
-    """Et oppdrag slik arbeideren ville lagt det ut."""
+    """Et oppdrag slik arbeideren ville lagt det ut.
+
+    PR-008: PRODUKSJONSFORMEN har en fase-2-beslutningsloggpost bak seg
+    (`kilde='arbeidskapabilitet'`, TILLAT, `idempotency_key = rid`), og
+    oppdraget bærer FK-en til den (`koblingsstatus='KOBLET'`). En fixture
+    uten den ville testet en rad koblingsvakten ikke lenger tillater — og
+    dermed en tilstand som ikke finnes noe sted i virkeligheten.
+    """
     from db import kryptering
     rid = rid or secrets.token_hex(32)
     _sett_kontekst(conn, tenant)
@@ -1272,18 +1279,24 @@ def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
         " VALUES (%s,%s,%s,0,'r1_reinnsending','1',%s,%s,'manglende_data')"
         " ON CONFLICT DO NOTHING",
         (tenant, sak_id, rid, handling, secrets.token_hex(32)))
+    beslutning_loggpost = conn.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'test','arbeidskapabilitet','ih2','p@1.0.0/x.y',"
+        " 'TILLAT','[]',%s) RETURNING id", (tenant, rid)).fetchone()[0]
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
     ct, nonce = kryptering.krypter(
         dek, {"handling": handling, "ressurs_id": "fak-1"}, tenant, key_id)
     opp = conn.execute(
         "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
-        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist)"
+        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
+        " beslutning_loggpost_id, koblingsstatus)"
         " VALUES (%s,%s,%s,%s,'reinnsending',%s,%s,%s,%s,%s,"
-        f" now()+interval '{utforelsesfrist}', now()+interval '{evidensfrist}')"
-        " RETURNING id",
+        f" now()+interval '{utforelsesfrist}', now()+interval '{evidensfrist}',"
+        " %s,'KOBLET') RETURNING id",
         (tenant, sak_id, loggpost_id, rid, handling, eiermodul, ct, key_id,
-         nonce)).fetchone()[0]
+         nonce, beslutning_loggpost)).fetchone()[0]
     conn.commit()
     return int(opp), rid
 

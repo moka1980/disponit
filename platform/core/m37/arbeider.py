@@ -633,8 +633,9 @@ def fullfor(conn: psycopg.Connection, sak: Sak, claim_id: str,
     if finnes is not None:
         oppdrag_id = int(finnes[0])
     else:
-        loggpost_id = svar.kropp.get("loggpost_id") or sak.loggpost_id
-        oppdrag_id = _opprett_oppdrag(vakt, sak, plan, rid, loggpost_id)
+        oppdrag_id = _opprett_oppdrag(vakt, sak, plan, rid, sak.loggpost_id,
+                                      beslutning_loggpost_id=
+                                      _beslutningsloggpost(vakt, sak, rid))
         _historikk(vakt, sak, "oppdrag_opprettet",
                    {"oppdrag_id": oppdrag_id, "repair_operation_id": rid},
                    claim_id=claim_id)
@@ -645,7 +646,38 @@ def fullfor(conn: psycopg.Connection, sak: Sak, claim_id: str,
                                rid, oppdrag_id)
 
 
-def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int) -> int:
+def _beslutningsloggpost(conn, sak: Sak, rid: str) -> int:
+    """Loggposten til beslutningen som skapte DETTE oppdraget (PR-008 V1).
+
+    Slås opp i databasen — aldri fra svarkroppen, aldri fra sakens egen
+    loggpost. Sakens `loggpost_id` peker på beslutningen som skapte
+    UNNTAKET; fase 2-beslutningen som faktisk bestilte oppdraget er en
+    ANNEN loggpost, og en kobling via tidsnærhet eller «nærmeste rad» er
+    forbudt (v3 pkt. 1). Nøkkelen er den samme som migrasjon 008s backfill
+    bruker: `idempotency_key = repair_operation_id`, `kilde =
+    'arbeidskapabilitet'`, TILLAT.
+
+    NØYAKTIG ÉN rad er kontrakten. Null rader betyr at API-svaret vi
+    nettopp fikk ikke har noen committet loggpost — en beslutning uten
+    revisjonsspor er ingen beslutning, og da skal det heller ikke finnes
+    et oppdrag. Flere rader skal være umulig (idempotensporten skriver
+    loggpost og idempotensrad i samme transaksjon); står det likevel to
+    der, velger vi ALDRI en av dem.
+    """
+    rader = conn.execute(
+        "SELECT id FROM revisjonslogg"
+        " WHERE tenant=%s AND idempotency_key=%s"
+        "   AND kilde='arbeidskapabilitet' AND beslutning='TILLAT'",
+        (sak.tenant, rid)).fetchall()
+    if len(rader) != 1:
+        raise RuntimeError(
+            f"beslutningsloggpost for {rid}: fant {len(rader)} kandidater, "
+            "krever nøyaktig 1 — oppdrag opprettes ikke")
+    return int(rader[0][0])
+
+
+def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int, *,
+                     beslutning_loggpost_id: int | None = None) -> int:
     """Oppdragsraden — kryptert, som alt annet saksinnhold.
 
     Eiermodulen får ALDRI ciphertext og aldri en nøkkel (v4-delta pkt. 4).
@@ -655,6 +687,17 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int) -> int:
     databasen i mellomtiden, og en outbox i klartekst ville vært en kopi av
     saksgrunnlaget uten kryptering.
     """
+    # PR-008: koblingsstatusen er lukket og toveis-bundet til oppdragstypen.
+    # Sjekken står FØR kryptering og DEK-oppslag — et oppdrag som ikke kan
+    # skrives skal heller ikke rekke å opprette en tenantnøkkel.
+    if plan.oppdragstype == "verifikasjon":
+        kobling, beslutning_loggpost_id = "VERIFIKASJON", None
+    else:
+        kobling = "KOBLET"
+        if beslutning_loggpost_id is None:
+            raise RuntimeError(
+                "forretningsoppdrag uten beslutning_loggpost_id — V1 "
+                "forbyr det")
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, sak.tenant)
     ct, nonce = kryptering.krypter(dek, plan.reparasjonsinput, sak.tenant,
                                    key_id)
@@ -673,12 +716,14 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int) -> int:
     rad = conn.execute(
         "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
-        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
+        " beslutning_loggpost_id, koblingsstatus)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (sak.tenant, sak.id, loggpost_id, rid, plan.oppdragstype,
          oppdragshandling, _eiermodul_for(oppdragshandling), ct, key_id,
          nonce, naa + timedelta(seconds=UTFORELSESFRIST_S),
-         naa + timedelta(seconds=EVIDENSFRIST_S))).fetchone()
+         naa + timedelta(seconds=EVIDENSFRIST_S),
+         beslutning_loggpost_id, kobling)).fetchone()
     return int(rad[0])
 
 

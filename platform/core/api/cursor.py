@@ -66,3 +66,73 @@ def les(raa: str, tenant: str, pepper: str) -> tuple[datetime, int]:
     if ts.tzinfo is None:
         raise CursorUgyldig("tidsstempelet mangler tidssone")
     return ts, sak_id
+
+
+# ---------------------------------------------------------------------------
+# v2-cursor (PR-008, v4 §3): binder versjon, tenant, endepunkt,
+# sorteringsretning, aktive filtre, siste (ts, id) og utløp. IKKE noe
+# snapshot-tak — det er den ÆRLIGE keyset-semantikken: ingen duplikater for
+# uendrede rader, men samtidig innsetting kan bli synlig eller utelatt
+# mellom sider. Et falskt snapshotløfte ble vurdert og forkastet i v4
+# (sekvenser er ikke transaksjonelle; REPEATABLE READ lever ikke mellom
+# HTTP-kall).
+#
+# Enhver binding som spriker gir samme svar: `400 cursor_ugyldig`. En
+# cursor fra et annet endepunkt, en annen retning eller et endret filter er
+# ikke en «nesten riktig» cursor — den peker inn i en annen spørring.
+# ---------------------------------------------------------------------------
+
+#: Cursorlevetid. Lang nok til et arbeidsøkt-langt gjennomsyn, kort nok til
+#: at en lekket cursor ikke er et varig artefakt.
+LEVETID_S = 24 * 3600
+
+
+def lag_v2(pepper: str, *, tenant: str, endepunkt: str, retning: str,
+           filtre: dict, ts: datetime, rad_id: int,
+           naa: datetime | None = None) -> str:
+    naa = naa or datetime.now(timezone.utc)
+    kropp = json.dumps(
+        {"v": 2, "t": tenant, "e": endepunkt, "r": retning,
+         "f": dict(sorted((filtre or {}).items())),
+         "ts": ts.astimezone(timezone.utc).isoformat(), "id": int(rad_id),
+         "x": int(naa.timestamp()) + LEVETID_S},
+        sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"{_b64(kropp)}.{_mac(pepper, kropp)}"
+
+
+def les_v2(raa: str, pepper: str, *, tenant: str, endepunkt: str,
+           retning: str, filtre: dict,
+           naa: datetime | None = None) -> tuple[datetime, int]:
+    """-> (ts, id) for keyset-fortsettelsen. Kaster CursorUgyldig."""
+    naa = naa or datetime.now(timezone.utc)
+    try:
+        del_b64, signatur = raa.split(".", 1)
+        kropp = _avb64(del_b64)
+    except Exception as e:
+        raise CursorUgyldig("kunne ikke dekodes") from e
+    if not hmac.compare_digest(_mac(pepper, kropp), signatur):
+        raise CursorUgyldig("signaturen stemmer ikke")
+    try:
+        data = json.loads(kropp)
+        ts = datetime.fromisoformat(data["ts"])
+        rad_id = int(data["id"])
+        utlop = int(data["x"])
+    except Exception as e:
+        raise CursorUgyldig("innholdet er feilformet") from e
+    if data.get("v") != 2:
+        raise CursorUgyldig("feil cursorversjon")
+    if data.get("t") != tenant:
+        raise CursorUgyldig("cursoren tilhører en annen tenant")
+    if data.get("e") != endepunkt:
+        raise CursorUgyldig("cursoren tilhører et annet endepunkt")
+    if data.get("r") != retning:
+        raise CursorUgyldig("cursoren har en annen sorteringsretning")
+    if data.get("f") != dict(sorted((filtre or {}).items())):
+        # Endret filter gjør cursoren ugyldig (v2 §5) — den peker på en
+        # posisjon i en ANNEN resultatmengde.
+        raise CursorUgyldig("cursorens filtre stemmer ikke")
+    if int(naa.timestamp()) > utlop:
+        raise CursorUgyldig("cursoren er utløpt")
+    if ts.tzinfo is None:
+        raise CursorUgyldig("tidsstempelet mangler tidssone")
+    return ts, rad_id
