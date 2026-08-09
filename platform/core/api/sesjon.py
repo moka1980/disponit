@@ -52,6 +52,50 @@ def _hash(v: str) -> str:
     return hashlib.sha256(v.encode("utf-8")).hexdigest()
 
 
+def er_forventet_origin(origin: str, host: str) -> bool:
+    """EKSAKT same-origin (P1): scheme https, host == forventet host, ingen
+    userinfo/path/query/fragment, og port default (443) eller udefinert.
+    En substringtest ville sluppet `disponit.com.evil.example` og
+    `https://disponit.com@evil` gjennom."""
+    from urllib.parse import urlsplit
+    if not origin:
+        return False
+    try:
+        d = urlsplit(origin)
+    except ValueError:
+        return False
+    if d.scheme != "https" or d.username or d.password:
+        return False
+    if d.path or d.query or d.fragment:
+        return False
+    if (d.hostname or "").lower() != host.lower():
+        return False
+    # Port må være 443 (https-default) eller uoppgitt — aldri en avvikende.
+    if d.port not in (None, 443):
+        return False
+    return True
+
+
+def trygg_retursti(raa) -> str:
+    """En LOKAL absolute-path-referanse (P1): nøyaktig én ledende skråstrek,
+    ingen scheme/netloc, ingen backslash eller kontrolltegn. `startswith('/')`
+    slapp `//evil.example/phish` gjennom — en scheme-relativ URL som
+    navigerer browseren til et fremmed vertsnavn. Ugyldig → '/'."""
+    from urllib.parse import urlsplit
+    if not isinstance(raa, str) or not raa.startswith("/"):
+        return "/"
+    # `//x` (scheme-relativ) og `/\x` (backslash-triks) må avvises.
+    if raa.startswith("//") or raa.startswith("/\\") or "\\" in raa:
+        return "/"
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in raa):   # CR/LF/kontroll
+        return "/"
+    d = urlsplit(raa)
+    # En ren path-referanse har verken scheme eller netloc.
+    if d.scheme or d.netloc:
+        return "/"
+    return d.path + (("?" + d.query) if d.query else "")
+
+
 def _naa() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -179,8 +223,12 @@ def oidc_start(tjeneste, request: Request) -> Response:
         if sfs not in ("same-origin", "same-site", "none"):
             return _feilsvar("request_feilformet", rid)
     else:
-        origin = request.headers.get("origin", "")
-        if not origin or (host and host not in origin):
+        # P1 (Codex): en substringtest (`host in origin`) er IKKE same-origin
+        # — `Origin: https://disponit.com.evil.example` inneholder host-navnet.
+        # Krev EKSAKT forventet origin: https://<kanonisk host>, riktig/default
+        # port, ingen userinfo/path/query/fragment.
+        if not host or not er_forventet_origin(request.headers.get("origin", ""),
+                                               host):
             return _feilsvar("request_feilformet", rid)
 
     try:
@@ -219,7 +267,8 @@ def oidc_start(tjeneste, request: Request) -> Response:
                 " tenant_kandidat, retursti, utloper) VALUES"
                 " (%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + make_interval(mins => %s))",
                 (_hash(sv.state), _hash(binding), sv.nonce, ct, nonce, key_id,
-                 provider_id, tenant, data.get("retursti", "/"), LOGIN_TX_MIN))
+                 provider_id, tenant, trygg_retursti(data.get("retursti")),
+                 LOGIN_TX_MIN))
             conn.commit()
         except SesjonFeil as f:
             conn.rollback()
@@ -314,7 +363,8 @@ def oidc_callback(tjeneste, request: Request) -> Response:
 
         # Ren, relativ redirect (v5 §6) — fjerner code/state fra historikken.
         r = Response(status_code=303, headers={
-            "Location": retursti if retursti.startswith("/") else "/",
+            # Validert alt ved /start; revalideres her (forsvar i dybden).
+            "Location": trygg_retursti(retursti),
             "Referrer-Policy": "no-referrer", "x-request-id": rid})
         for c in (sesjon_cookie, csrf_cookie,
                   _slett_cookie(C_BINDING)):

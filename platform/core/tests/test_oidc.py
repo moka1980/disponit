@@ -198,6 +198,32 @@ def test_signert_med_fremmed_nokkel_avvises(monkeypatch):
                                tok, "n0", naa=None)
 
 
+@pytest.mark.parametrize("aud,azp,ok", [
+    (CLIENT_ID, None, True),                          # enkelt aud
+    ([CLIENT_ID], None, True),                        # enkelt aud i liste
+    ([CLIENT_ID, "annen"], CLIENT_ID, True),          # multi + riktig azp
+    ([CLIENT_ID, "annen"], "annen", False),           # multi + fremmed azp
+    ([CLIENT_ID, "annen"], None, False),              # multi uten azp
+    (CLIENT_ID, "annen", False),                      # single + fremmed azp
+])
+def test_p1_azp_kreves_ved_multi_audience(monkeypatch, aud, azp, ok):
+    """P1 (Codex): flere audiences krever korrekt azp; finnes azp uansett,
+    må den matche. Ekte signatur."""
+    _mock_nett(monkeypatch)
+    ekstra = {"aud": aud}
+    if azp is not None:
+        ekstra["azp"] = azp
+    tok = _id_token(nonce="n0", **ekstra)
+    if ok:
+        ident = oidc._valider_id_token(_provider(), oidc.Discovery(**DISCOVERY),
+                                       tok, "n0", naa=None)
+        assert ident.sub == "bruker-123"
+    else:
+        with pytest.raises(oidc.OidcFeil, match="azp"):
+            oidc._valider_id_token(_provider(), oidc.Discovery(**DISCOVERY),
+                                   tok, "n0", naa=None)
+
+
 def test_profil_er_lukket_ukjent_claim_forkastes(monkeypatch):
     _mock_nett(monkeypatch)
     tok = _id_token(nonce="n", name="Ada Lovelace", email="ada@x.no",

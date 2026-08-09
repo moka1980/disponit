@@ -20,6 +20,47 @@ TFLYT = "t-oidc-flyt"
 HOST = f"{TFLYT}.example"
 
 
+# ---------------------------------------------------------------------------
+# P1 (Codex review-runde 1): rene funksjoner — Origin + retursti
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("origin,host,ok", [
+    ("https://disponit.com", "disponit.com", True),
+    ("https://disponit.com:443", "disponit.com", True),
+    ("https://DISPONIT.com", "disponit.com", True),          # case-insensitiv
+    ("https://disponit.com.evil.example", "disponit.com", False),  # suffiks
+    ("https://evil-disponit.com", "disponit.com", False),    # prefiks
+    ("https://disponit.com@evil", "disponit.com", False),    # userinfo
+    ("http://disponit.com", "disponit.com", False),          # ikke https
+    ("https://disponit.com:8443", "disponit.com", False),    # feil port
+    ("https://disponit.com/path", "disponit.com", False),    # path
+    ("https://disponit.com?q=1", "disponit.com", False),     # query
+    ("ikke-en-url", "disponit.com", False),
+    ("", "disponit.com", False),
+])
+def test_p1_origin_er_eksakt_ikke_substring(origin, host, ok):
+    from api.sesjon import er_forventet_origin
+    assert er_forventet_origin(origin, host) is ok
+
+
+@pytest.mark.parametrize("raa,forventet", [
+    ("/oversikt", "/oversikt"),
+    ("/", "/"),
+    ("/a/b?c=1", "/a/b?c=1"),
+    ("//evil.example/phish", "/"),        # scheme-relativ → fremmed vert
+    ("/\\evil.example", "/"),             # backslash-triks
+    ("\\\\evil.example", "/"),
+    ("https://evil.example/x", "/"),      # absolutt URL
+    ("/x\r\nSet-Cookie: y", "/"),         # CR/LF-injeksjon
+    ("ingen-slash", "/"),
+    (None, "/"),
+    (123, "/"),
+])
+def test_p1_retursti_kun_lokal_absolutte_path(raa, forventet):
+    from api.sesjon import trygg_retursti
+    assert trygg_retursti(raa) == forventet
+
+
 def _seed(migrator, roller=("leser",)):
     """Provider + tenant-binding + identitet + medlemskap for TFLYT."""
     _ctx(migrator, TFLYT)

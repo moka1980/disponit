@@ -244,6 +244,19 @@ def _valider_id_token(provider: Provider, d: Discovery, id_token: str,
     except Exception as e:
         raise OidcFeil(f"id_token-claims ugyldige: {type(e).__name__}") from e
 
+    # P1 (Codex): `aud` som inneholder klienten er IKKE nok når det er FLERE
+    # audiences — OIDC krever da at `azp` finnes og identifiserer DENNE
+    # klienten. Uten dette autentiserer et token utstedt til en annen part
+    # (aud=[oss, annen], azp=annen) mot oss. Og finnes `azp` overhodet, må
+    # den matche uansett antall audiences.
+    aud = claims.get("aud")
+    azp = claims.get("azp")
+    if isinstance(aud, (list, tuple)) and len(aud) > 1:
+        if azp != provider.client_id:
+            raise OidcFeil("multi-audience id_token uten korrekt azp")
+    elif azp is not None and azp != provider.client_id:
+        raise OidcFeil("azp identifiserer en annen klient")
+
     if claims.get("nonce") != nonce:
         raise OidcFeil("nonce-mismatch")
     sub = claims.get("sub")
