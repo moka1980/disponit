@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="nb" data-sprak="nb">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Disponit</title>
+  <!-- Én tokenkilde (RUTINER pkt. 6), deretter base + komponenter. Ingen
+       inline stil: CSP style-src 'self' (klarsignal V4). -->
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/css/base.css">
+  <link rel="stylesheet" href="/ui/css/komponenter.css">
+</head>
+<body>
+  <!-- Hopp-til-innhold (WCAG 2.4.1). Målet #hovedinnhold bygges av skallet. -->
+  <a class="hoppelenke" href="#hovedinnhold">Hopp til innhold</a>
+
+  <!-- Skallet (AppShell: header/nav/main) bygges av app.js. Ingen inline
+       script, ingen on*-handler: CSP script-src 'self'. -->
+  <div id="app" aria-busy="true"></div>
+
+  <noscript>
+    <p class="noscript">Disponit krever JavaScript for å vise kundeflaten.</p>
+  </noscript>
+
+  <script type="module" src="/ui/js/app.js"></script>
+</body>
+</html>

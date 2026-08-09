@@ -102,6 +102,27 @@ server {
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
+    # PR-011: M-1 kundeflate. UI-svar trenger en ÅPNERE CSP enn API-ets
+    # `default-src 'none'` (klarsignal V4) — den ville ellers blokkert egne
+    # ressurser. Appen setter UI-CSP-en selv (målbar i CI, gate 5); her
+    # skjuler vi den oppstrøms og re-setter den, så UI-svaret bærer NØYAKTIG
+    # én CSP og API-ets strenge CSP aldri lekker inn på UI-stiene. De øvrige
+    # sikkerhetsheaderne (Referrer/XCTO/XFO) kommer uendret fra appen.
+    location = / {
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_hide_header Content-Security-Policy;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'; upgrade-insecure-requests" always;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+    location /ui/ {
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_hide_header Content-Security-Policy;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'; upgrade-insecure-requests" always;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
     location / {
         limit_req zone=disponit_general burst=100 nodelay;
         limit_req_status 429;

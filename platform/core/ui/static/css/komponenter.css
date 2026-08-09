@@ -1,0 +1,45 @@
+/* ============================================================
+   KOMPONENTER — det varige, token-drevne settet (v1 §3 + v2 §7).
+   Vokser gjennom PR-011s sjekkpunkter. Ingen farge/avstand utenom
+   var(--token).
+   ============================================================ */
+
+/* Knapper */
+.knapp {
+  font: inherit; cursor: pointer;
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink);
+}
+.knapp.primar { background: var(--info); color: var(--card);
+  border-color: var(--info); }
+.knapp.fare { background: var(--danger); color: var(--card);
+  border-color: var(--danger); }
+.knapp:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Kort / seksjoner */
+.kort {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-4);
+  box-shadow: var(--skygge);
+}
+
+/* Skjermtilstander (SideStatus): laster / tom / feil / uautorisert */
+.tilstand {
+  padding: var(--sp-8) var(--sp-4); text-align: center; color: var(--muted);
+}
+.tilstand.feil { color: var(--danger); }
+.tilstand h2 { color: var(--ink); margin: 0 0 var(--sp-2); }
+
+/* Lasteskjelett — respekterer reduced-motion via tokens.css */
+.skjelett {
+  height: 1rem; border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--line), var(--paper), var(--line));
+  background-size: 200% 100%;
+  animation: skjelett-glid 1.2s ease-in-out infinite;
+}
+@keyframes skjelett-glid {
+  0% { background-position: 200% 0; } 100% { background-position: -200% 0; }
+}
+
+.mono { font-family: var(--font-mono); }
