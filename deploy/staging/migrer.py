@@ -90,6 +90,14 @@ GRANT SELECT ON brukermedlemskap TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON oidc_logintransaksjon, brukersesjon TO {rolle};
 GRANT SELECT, INSERT, UPDATE, DELETE ON oidc_rate TO {rolle};
 GRANT EXECUTE ON FUNCTION slaa_opp_sesjon(TEXT) TO {rolle};
+-- PR-012: unntaksbehandling. `menneskelig_attestasjon` og
+-- `godkjenningsutfall` er append-only (INSERT; UPDATE/DELETE stoppes uansett
+-- av trigger). `godkjenningsrunde` trenger status-UPDATE (apen→klar→brukt/
+-- utlopt/kansellert), aldri DELETE. Skriving skjer kun fra den herdede
+-- behandle_unntakshandling-veien; bindings-/append-only-/kolonnelås-triggere
+-- + RLS gjør direkte grant trygt (runtime kan ikke forfalske tilhørighet).
+GRANT SELECT, INSERT ON menneskelig_attestasjon, godkjenningsutfall TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON godkjenningsrunde TO {rolle};
 """
 
 # PR-006: de herdede M-37-funksjonene. Hver av dem eies av NOLOGIN-rollen
