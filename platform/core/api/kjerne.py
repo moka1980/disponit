@@ -233,13 +233,22 @@ UKJENT_SNAPSHOT = Policysnapshot("<ukjent>", "<ukjent>", 0)
 def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
                   handling: str, kategori: str, sakstype: str,
                   prioritet: str, payload: dict,
-                  snapshot: "Policysnapshot") -> int:
+                  snapshot: "Policysnapshot",
+                  intensjon: dict | None = None) -> int:
     """Kryptert unntaksrad i SAMME transaksjon som loggposten.
 
     Rekkefølgen er tvungen av databasen: fremmednøkkelen
     (tenant, loggpost_id) -> revisjonslogg (tenant, id) betyr at loggposten
     må være skrevet først. Det er samme rekkefølge som kontrakten krever —
     evidensen finnes før saken som viser til den.
+
+    Er `intensjon` gitt (handlingen er menneskelig godkjennbar, PR-012 §1),
+    krypteres handlingsintensjonen i SAMME transaksjon, bundet i AAD til
+    (unntak_id, handling, hi_skjemaversjon, intensjon_policy_hash). Alle
+    hi_*-feltene er kolonnelåst SET-ONCE, så de MÅ settes ved INSERT — og
+    fordi AAD-en trenger unntak_id, preallokeres id-en fra sekvensen FØR
+    krypteringen (ingen mellomtilstand med ukryptert eller manglende
+    intensjon er mulig, v3 §7).
     """
     try:
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
@@ -251,16 +260,57 @@ def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
         raise Feilsvar("tenantnokkel_mangler", type(e).__name__) from e
 
     ct, nonce = kryptering.krypter(dek, payload, tenant, key_id)
+    if intensjon is None:
+        rad = conn.execute(
+            "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
+            " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
+            " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s)"
+            " RETURNING id",
+            (tenant, loggpost_id, handling, kategori, sakstype, prioritet,
+             ct, key_id, nonce, snapshot.maks_auto_forsok, snapshot.versjon,
+             snapshot.innholds_hash)).fetchone()
+        return int(rad[0])
+
+    # Preallokér id-en så intensjonens AAD kan bindes til den. `unntak.id` er
+    # GENERATED ALWAYS => eksplisitt id krever OVERRIDING SYSTEM VALUE.
+    nid = int(conn.execute(
+        "SELECT nextval(pg_get_serial_sequence('unntak','id'))").fetchone()[0])
+    intensjon_policy_hash = snapshot.innholds_hash
+    aad = kryptering.intensjon_aad(nid, handling, minimering.HI_SKJEMAVERSJON,
+                                   intensjon_policy_hash)
+    hi_ct, hi_nonce = kryptering.krypter(dek, intensjon, tenant, key_id,
+                                         ekstra_aad=aad)
+    hi_hash = hashlib.sha256(hi_ct).hexdigest()   # over CIPHERTEXT (v2 §1)
     rad = conn.execute(
-        "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
+        "INSERT INTO unntak (id, tenant, loggpost_id, handling, kategori,"
         " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
-        " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s)"
+        " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
+        " handlingsintensjon_kryptert, hi_key_id, hi_nonce, hi_integritet_hash,"
+        " hi_skjemaversjon, intensjon_policy_hash, intensjon_pakrevd)"
+        " OVERRIDING SYSTEM VALUE"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s,"
+        "         %s,%s,%s,%s,%s,%s,true)"
         " RETURNING id",
-        (tenant, loggpost_id, handling, kategori, sakstype, prioritet,
+        (nid, tenant, loggpost_id, handling, kategori, sakstype, prioritet,
          ct, key_id, nonce, snapshot.maks_auto_forsok, snapshot.versjon,
-         snapshot.innholds_hash)).fetchone()
+         snapshot.innholds_hash, hi_ct, key_id, hi_nonce, hi_hash,
+         minimering.HI_SKJEMAVERSJON, intensjon_policy_hash)).fetchone()
     return int(rad[0])
+
+
+def _godkjennbar_handling(policy: object, handling: str) -> bool:
+    """Har policyen en `menneskelig_overstyring`-oppføring for handlingen?
+    Da SKAL saken bære en handlingsintensjon (v2 §1) — kun da er godkjenn en
+    mulig senere handling. Ingen oppføring => ingen intensjon, minimeringen
+    består der den kan."""
+    if not isinstance(policy, dict):
+        return False
+    mo = policy.get("menneskelig_overstyring")
+    if not isinstance(mo, dict):
+        return False
+    return any(isinstance(e, dict) and e.get("handling") == handling
+               for e in mo.get("godkjennbare") or [])
 
 
 # ---------------------------------------------------------------------------
@@ -590,10 +640,15 @@ def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
             vilkaar=(blokkerende.params or {}).get("vilkaar")
             if blokkerende is not None else None,
             grupperingsnokkel=_grupperingsnokkel(policy, handling))
+        # PR-012 §1: er handlingen menneskelig godkjennbar, bæres en lukket,
+        # kryptert handlingsintensjon i SAMME transaksjon — ellers kan motoren
+        # aldri re-evaluere over_grense-saken et menneske skal godkjenne.
+        intensjon = (minimering.bygg_handlingsintensjon(event)
+                     if _godkjennbar_handling(policy, handling) else None)
         try:
             unntak_id = _skriv_unntak(conn, tenant, evidens.loggpost_id,
                                       handling, kategori, sakstype, prioritet,
-                                      payload, snapshot)
+                                      payload, snapshot, intensjon)
         except Feilsvar:
             raise
         except psycopg.Error as e:
