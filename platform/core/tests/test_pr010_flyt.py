@@ -212,6 +212,15 @@ def _sesjon_cookie(callback_respons):
     return None
 
 
+def _csrf_cookie(callback_respons):
+    """CSRF-tokenet (JS-lesbar cookie) fra callback-responsen — UI-et sender
+    det i X-Disponit-CSRF på logout."""
+    for c in callback_respons.headers.get_list("set-cookie"):
+        if "__Host-disponit_csrf=" in c:
+            return c.split("__Host-disponit_csrf=")[1].split(";")[0]
+    return None
+
+
 @pg
 def test_callback_oppretter_sesjon_og_konsumerer_state(klient, migrator,
                                                        monkeypatch):
@@ -321,17 +330,64 @@ def test_sesjon_hvem_og_cookie_naar_lese_endepunkt(klient, migrator,
 def test_logout_gjor_sesjon_ugyldig_idempotent(klient, migrator, monkeypatch):
     cb = _fullfor_callback(klient, migrator, monkeypatch, _seed(migrator))
     sc = {"__Host-disponit_sesjon": _sesjon_cookie(cb)}
+    csrf = _csrf_cookie(cb)
     assert klient.get("/v1/oversikt", headers={"host": HOST},
                       cookies=sc).status_code == 200
-    r = klient.request("DELETE", "/v1/sesjon", headers={"host": HOST},
+    r = klient.request("DELETE", "/v1/sesjon",
+                       headers={"host": HOST, "x-disponit-csrf": csrf},
                        cookies=sc, content=b"")
     assert r.status_code == 204
     # Etter logout er sesjonen tilbakekalt → 401 med SAMME cookie.
     r2 = klient.get("/v1/oversikt", headers={"host": HOST}, cookies=sc)
     assert r2.status_code == 401 and r2.json()["feil"] == "sesjon_ugyldig"
-    # Idempotent: ny logout ok.
+    # Idempotent: ingen levende økt igjen → 204 selv UTEN csrf (ingenting å verne).
     assert klient.request("DELETE", "/v1/sesjon", headers={"host": HOST},
                           cookies=sc, content=b"").status_code == 204
+
+
+@pg
+@dekker("csrf_ugyldig")
+def test_logout_krever_gyldig_csrf_ellers_staar_okten(klient, migrator,
+                                                      monkeypatch):
+    """P1 (Codex): logout MÅ håndheve CSRF. Manglende, feil og en ANNEN økts
+    token skal alle avvises med 403 og la økten stå — ellers er logout en
+    CSRF-vektor. Kun riktig token tilbakekaller."""
+    # En ANNEN økts EKTE token (til kryss-sesjon-caset) FØRST, så DENNE økten
+    # SIST — TestClient-jaren ender dermed med sesjon1 (samme __Host--
+    # cookienavn ville ellers blandet de to øktene).
+    cb2 = _fullfor_callback(klient, migrator, monkeypatch, _seed(migrator))
+    annen = _csrf_cookie(cb2)
+    cb = _fullfor_callback(klient, migrator, monkeypatch, _seed(migrator))
+    sesj = _sesjon_cookie(cb)
+    csrf = _csrf_cookie(cb)
+    sc = {"__Host-disponit_sesjon": sesj}
+    assert annen and annen != csrf
+
+    def lever(csrf_verdi):
+        h = {"host": HOST}
+        if csrf_verdi is not None:
+            h["x-disponit-csrf"] = csrf_verdi
+        return klient.request("DELETE", "/v1/sesjon", headers=h, cookies=sc,
+                              content=b"")
+
+    def okt_lever():
+        return klient.get("/v1/oversikt", headers={"host": HOST},
+                          cookies=sc).status_code == 200
+
+    # (a) MANGLENDE token → 403, økten URØRT.
+    r = lever(None)
+    assert r.status_code == 403 and r.json()["feil"] == "csrf_ugyldig"
+    assert okt_lever(), "manglende csrf skal ikke tilbakekalle økten"
+    # (b) FEIL token → 403, urørt.
+    assert lever("helt-feil-token").status_code == 403
+    assert okt_lever()
+    # (c) EN ANNEN økts EKTE token → 403, urørt (kryss-sesjon).
+    assert lever(annen).status_code == 403
+    assert okt_lever(), "en annen økts token skal aldri logge DENNE ut"
+    # (d) RIKTIG token → 204, nå tilbakekalt.
+    assert lever(csrf).status_code == 204
+    assert klient.get("/v1/oversikt", headers={"host": HOST},
+                      cookies=sc).status_code == 401
 
 
 @pg

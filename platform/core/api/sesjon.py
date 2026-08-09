@@ -9,6 +9,7 @@ rate-grensene (v4 §4) og at cookie XOR Bearer (v2 §8).
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -490,18 +491,37 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
 
 
 def sesjon_logout(tjeneste, request: Request) -> Response:
-    from .app import _rid
+    """Logout tilbakekaller økten — men KUN mot gyldig CSRF (dobbel-innsending,
+    v2 §8-ånd). UI-et sender X-Disponit-CSRF fra den JS-lesbare csrf-cookien;
+    serveren sammenligner hashen mot øktens lagrede `csrf_hash` i konstant tid.
+    En manglende, feil eller ANNEN økts token skal ALDRI kunne logge brukeren
+    ut (ellers er logout en CSRF-vektor). Uten CSRF-porten forblir økten urørt.
+    """
+    from .app import _rid, _feilsvar
     rid = _rid(request)
     sesjon = request.cookies.get(C_SESJON)
+    csrf = request.headers.get("x-disponit-csrf")
     conn = tjeneste.pool.hent()
     try:
         if sesjon:
-            # Idempotent: tilbakekall om den finnes; RLS-fri tabell via hash.
-            sett_tenant(conn, "_oidc")
-            conn.execute("UPDATE brukersesjon SET tilbakekalt=true"
-                         " WHERE sesjon_id_hash=%s AND NOT tilbakekalt",
-                         (_hash(sesjon),))
-            conn.commit()
+            # Finn en LEVENDE økt (den herdede funksjonen skjuler tilbakekalte/
+            # utløpte). Ingen levende økt → ingenting å verne, idempotent 204.
+            rad = conn.execute(
+                "SELECT csrf_hash FROM slaa_opp_sesjon(%s)",
+                (_hash(sesjon),)).fetchone()
+            conn.rollback()
+            if rad is not None:
+                lagret = rad[0]
+                if not csrf or not lagret \
+                        or not hmac.compare_digest(_hash(csrf), lagret):
+                    # Forget-forsøk med feil/uten token: ØKTEN URØRT, 403.
+                    tjeneste.logg.hendelse("csrf_ugyldig", rid)
+                    return _feilsvar("csrf_ugyldig", rid)
+                sett_tenant(conn, "_oidc")
+                conn.execute("UPDATE brukersesjon SET tilbakekalt=true"
+                             " WHERE sesjon_id_hash=%s AND NOT tilbakekalt",
+                             (_hash(sesjon),))
+                conn.commit()
         r = Response(status_code=204, headers={"x-request-id": rid})
         for c in (_slett_cookie(C_SESJON), _slett_cookie(C_CSRF, False),
                   _slett_cookie(C_BINDING)):
