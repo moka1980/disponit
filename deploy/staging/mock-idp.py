@@ -49,7 +49,10 @@ async def authorize(request):
 
 
 async def token(request):
-    form = await request.form()
+    # Parse form-urlencoded body uten python-multipart-avhengighet.
+    from urllib.parse import parse_qs
+    raa = (await request.body()).decode("utf-8")
+    form = {k: v[0] for k, v in parse_qs(raa).items()}
     code = form.get("code")
     lagret = _KODER.pop(code, None)
     if lagret is None:
