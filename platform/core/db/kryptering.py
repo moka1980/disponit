@@ -90,6 +90,21 @@ def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
     return key_id, dek
 
 
+def hent_dek(conn: psycopg.Connection, tenant: str, key_id: str) -> bytes:
+    """DEK for en SPESIFIKK key_id — også en rotert/ikke-aktiv nøkkel. Brukes
+    til å dekryptere data som ble kryptert under en tidligere aktiv DEK (f.eks.
+    en handlingsintensjon hvis tenanten har rotert nøkkel siden). Kaster hvis
+    nøkkelen ikke finnes eller er crypto-shreddet (wrapped_dek = NULL)."""
+    from .pg import sett_tenant
+    sett_tenant(conn, tenant)
+    rad = conn.execute(
+        "SELECT key_id, wrapped_dek FROM tenant_nokler"
+        " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
+    if rad is None or rad[1] is None:
+        raise RuntimeError("dek utilgjengelig for key_id")
+    return _pakk_ut(rad, tenant)[1]
+
+
 def _aad(tenant: str, key_id: str, ekstra_aad: bytes | None = None) -> bytes:
     """Tilleggsdata som bindes inn i GCM-taggen.
 

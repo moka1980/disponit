@@ -642,9 +642,15 @@ def _avslutt(conn: psycopg.Connection, d, event: dict, tenant: str,
             grupperingsnokkel=_grupperingsnokkel(policy, handling))
         # PR-012 §1: er handlingen menneskelig godkjennbar, bæres en lukket,
         # kryptert handlingsintensjon i SAMME transaksjon — ellers kan motoren
-        # aldri re-evaluere over_grense-saken et menneske skal godkjenne.
-        intensjon = (minimering.bygg_handlingsintensjon(event)
-                     if _godkjennbar_handling(policy, handling) else None)
+        # aldri re-evaluere over_grense-saken et menneske skal godkjenne. Den
+        # autentiserte rollen tas fra `rolle_ok`-grunnen (motoren har alt
+        # bevist den), aldri fra hendelsen.
+        if _godkjennbar_handling(policy, handling):
+            aktor_rolle = next((g.params.get("rolle") for g in d.begrunnelse
+                                if g.kode == "rolle_ok"), None)
+            intensjon = minimering.bygg_handlingsintensjon(event, aktor_rolle)
+        else:
+            intensjon = None
         try:
             unntak_id = _skriv_unntak(conn, tenant, evidens.loggpost_id,
                                       handling, kategori, sakstype, prioritet,

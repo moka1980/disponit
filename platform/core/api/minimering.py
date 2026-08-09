@@ -170,17 +170,26 @@ class IntensjonForStor(ValueError):
     """Klartekst-intensjonen overstiger `HI_MAKS_KLARTEKST` (v3 §7)."""
 
 
-def bygg_handlingsintensjon(event: dict) -> dict:
+def bygg_handlingsintensjon(event: dict, aktor_rolle: str | None = None) -> dict:
     """Den lukkede, minimerte handlingsintensjonen (v2 §1, v3 §7).
 
     Bygges fra den ORIGINALE hendelsen, aldri fra klient-tidsnærhet eller
     «siste rad». Kun de deklarerte feltene slippes gjennom — samme _rent- og
     referanseregler som `minimer_payload`. Kaster `IntensjonForStor` over
     taket. Kalleren krypterer resultatet i SAMME transaksjon som unntaket.
+
+    `aktor_rolle` er den AUTENTISERTE rollen den opprinnelige beslutningen ble
+    tatt med (fra `rolle_ok`-grunnen, ikke fra hendelsen). Den er en
+    systemrolle, ikke persondata, og trengs for at motoren skal kunne
+    rekonstruere den samme `EvaluationContext` ved menneskelig re-evaluering —
+    ellers ville re-evalueringen stoppet på rollekontrollen (steg 3), som ikke
+    er den bundne grunnkoden.
     """
     import json
 
     ut: dict[str, object] = {}
+    if isinstance(aktor_rolle, str) and aktor_rolle:
+        ut["aktor_rolle"] = aktor_rolle
     for felt in _INTENSJONSSKALARER:
         v = _rent(event.get(felt))
         if isinstance(v, (str, int, float, bool)):

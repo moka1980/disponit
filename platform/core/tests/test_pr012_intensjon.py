@@ -40,9 +40,15 @@ def test_lukket_feltliste_og_referanser_uten_verdi():
     assert hi["attestasjoner_referanser"] == [
         {"vilkaar": "dublettsjekk", "verifikator": "v_x"}]
     # Ingen fri passthrough.
-    assert set(hi) <= {"handling", "ressurs_id", "belop", "valuta", "tidspunkt",
-                       "dataklasser", "dataklasser_kilde",
+    assert set(hi) <= {"aktor_rolle", "handling", "ressurs_id", "belop",
+                       "valuta", "tidspunkt", "dataklasser", "dataklasser_kilde",
                        "attestasjoner_referanser"}
+
+
+def test_aktor_rolle_tas_med_naar_gitt():
+    assert "aktor_rolle" not in bygg_handlingsintensjon(_event())
+    hi = bygg_handlingsintensjon(_event(), "agent")
+    assert hi["aktor_rolle"] == "agent"
 
 
 def test_ukjent_felt_slippes_ikke_gjennom():
