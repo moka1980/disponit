@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from starlette.requests import Request
 from starlette.responses import Response
@@ -49,12 +51,73 @@ _CT = {
 # form-action MÅ derfor tillate providerens autorisasjons-origin. Origin(ene)
 # er deploy-spesifikke → env `DISPONIT_UI_IDP_ORIGINS` (mellomrom-separert),
 # tom = kun 'self' (utvikling/CI). Ingen hardkodet provider i repoet.
+# --- Kanonisk HTTPS-origin-parser/serializer (P1, Codex) -------------------
+# `DISPONIT_UI_IDP_ORIGINS` er deploy-config, men MÅ IKKE interpoleres rått i
+# en CSP-header eller nginx-konfig: et semikolon, anførselstegn, linjeskift
+# eller sed-metategn kunne ellers endret sikkerhetspolicyen. Vi parser hver
+# token til en KANONISK https-origin (https://host[:port]) — utdata kan per
+# konstruksjon aldri inneholde CSP-/sed-metategn.
+
+#: DNS-vertsnavn: punktseparerte labels, hver 1–63 tegn [a-z0-9-], ikke ledende/
+#: etterfølgende bindestrek.
+_HOST_RE = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$", re.IGNORECASE)
+
+
+def _kanon_origin(token: str) -> str | None:
+    """Én token → `https://host[:port]` eller None. Avviser alt annet: annet
+    skjema, userinfo, path/query/fragment, ugyldig vert eller port."""
+    try:
+        d = urlsplit(token)
+    except ValueError:
+        return None
+    if d.scheme != "https" or d.username or d.password:
+        return None
+    if d.path or d.query or d.fragment:
+        return None
+    host = d.hostname or ""
+    if not _HOST_RE.fullmatch(host):
+        return None
+    try:
+        port = d.port
+    except ValueError:            # ikke-numerisk/utenfor u16
+        return None
+    if port is not None and not (1 <= port <= 65535):
+        return None
+    return "https://" + host.lower() + (f":{port}" if port else "")
+
+
+def kanoniske_idp_origins(raa, *, streng: bool = False) -> list[str]:
+    """Mellomrom-separerte HTTPS-origins → validert, kanonisk, dedup-liste.
+    Ugyldige tokens FORKASTES (fail-closed: de kan aldri utvide policyen);
+    `streng=True` KASTER i stedet — brukt av deploy for fail-closed utrulling."""
+    ut: list[str] = []
+    sett: set[str] = set()
+    for token in (raa or "").split():
+        o = _kanon_origin(token)
+        if o is None:
+            if streng:
+                raise ValueError(f"ugyldig HTTPS-origin: {token!r}")
+            continue
+        if o not in sett:
+            sett.add(o)
+            ut.append(o)
+    return ut
+
+
+def kanoniske_idp_origins_streng(raa: str) -> str:
+    """For deploy: kanonisk, mellomrom-joinet streng. KASTER ved ugyldig
+    token (fail-closed) — deploy skal avbryte, ikke rendre en svekket policy."""
+    return " ".join(kanoniske_idp_origins(raa, streng=True))
+
+
 def bygg_ui_csp(idp_origins: str) -> str:
-    """UI-CSP med form-action = 'self' + deploy-satte IdP-origins. Samme
-    funksjon brukes av appen og av parity-testen mot nginx-malen, så de kan
-    ikke drive fra hverandre."""
-    origins = (idp_origins or "").strip()
-    form_action = "form-action 'self'" + (f" {origins}" if origins else "")
+    """UI-CSP med form-action = 'self' + KANONISERTE IdP-origins. Samme
+    funksjon brukes av appen og av parity-testen mot nginx-malen. Rå input
+    kan aldri injisere en direktiv — kun validerte origins slipper gjennom."""
+    origins = kanoniske_idp_origins(idp_origins)
+    form_action = "form-action 'self'" + "".join(f" {o}" for o in origins)
     return (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
         "connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; "
@@ -63,8 +126,11 @@ def bygg_ui_csp(idp_origins: str) -> str:
     )
 
 
-_IDP_ORIGINS = os.environ.get("DISPONIT_UI_IDP_ORIGINS", "").strip()
+_IDP_ORIGINS = os.environ.get("DISPONIT_UI_IDP_ORIGINS", "")
 UI_CSP = bygg_ui_csp(_IDP_ORIGINS)
+
+#: Provider-ID: samme lukkede mønster som backendens oidc_provider-check.
+_PROVIDER_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
 #: Speiler nginx' øvrige responsheadere (PR-009b) — settes her fordi UI-svar
 #: forlater appen, og UI-location i nginx bevisst IKKE re-erklærer CSP.
@@ -157,5 +223,10 @@ def ui_locale(request: Request) -> Response:
 
 def ui_oppsett(request: Request) -> Response:
     provider = os.environ.get("DISPONIT_UI_PROVIDER", "").strip()
+    # json.dumps gjør verdien injeksjonstrygg i svaret; i tillegg fail-closed
+    # mot samme lukkede mønster som backenden — ugyldig → tom (flaten sier
+    # «ikke konfigurert» i stedet for å poste en umulig provider).
+    if not _PROVIDER_RE.match(provider):
+        provider = ""
     data = json.dumps({"provider_id": provider}).encode("utf-8")
     return _svar(data, _CT[".json"])

@@ -24,7 +24,7 @@ ACME_EPOST="${DISPONIT_ACME_EPOST:-eliassi@gmail.com}"
 MILJOFIL=/etc/disponit/staging.env
 [ -f "$MILJOFIL" ] && { set -a; . "$MILJOFIL"; set +a; }
 HOST="${DISPONIT_HOST:-$HOST}"
-IDP_ORIGINS="${DISPONIT_UI_IDP_ORIGINS:-}"
+IDP_ORIGINS_RAA="${DISPONIT_UI_IDP_ORIGINS:-}"
 ROT=/opt/disponit
 # Filene tas fra DENNE scriptets eget tre — ikke fra `aktiv`-symlinken,
 # som kan peke på en eldre release uten transport-malene. Fornyelses-hooken
@@ -32,6 +32,18 @@ ROT=/opt/disponit
 HER=$(cd "$(dirname "$0")" && pwd)
 KILDE=$(cd "$HER/../.." && pwd)
 MAL="$HER/nginx"
+
+# P1 (Codex): IdP-origins interpoleres i nginx-konfig — MÅ kanoniseres og
+# valideres FØR substitusjon, ellers kunne et sed-/CSP-metategn endret
+# konfigurasjonen. Samme parser som appen (ui.server), STRENG-modus: en
+# ugyldig origin AVBRYTER utrullingen (fail-closed), i stedet for å rendre
+# en svekket policy. Utdata er kun `https://host[:port]` mellomrom-joinet.
+IDP_ORIGINS=$(PYTHONPATH="$KILDE/platform/core" "$ROT/.venv/bin/python" -c \
+  'import sys; from ui.server import kanoniske_idp_origins_streng as k; sys.stdout.write(k(sys.argv[1]))' \
+  "$IDP_ORIGINS_RAA") || {
+    echo "AVBRUTT: DISPONIT_UI_IDP_ORIGINS har en ugyldig HTTPS-origin — rendrer ikke nginx (fail-closed)." >&2
+    exit 1
+  }
 LAAS=/var/lock/disponit-transport.lock
 
 exec 9>"$LAAS"

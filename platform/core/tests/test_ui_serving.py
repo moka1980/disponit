@@ -163,6 +163,70 @@ def test_form_action_er_env_drevet():
     assert "form-action 'self' https://accounts.google.com;" in csp
 
 
+@pytest.mark.parametrize("ondt", [
+    "https://ok.example; script-src *",          # CSP-direktiv-injeksjon
+    'https://ok.example" ; add_header Evil x',   # anførsel + nginx-direktiv
+    "https://ok.example\nadd_header Evil x",     # linjeskift-injeksjon
+    "https://a|b",                               # sed-metategn
+    "https://a&b.example",                       # sed &
+    "http://ok.example",                         # feil skjema
+    "javascript:alert(1)",                       # farlig skjema
+    "https://user:pw@ok.example",                # userinfo
+    "https://ok.example/path",                   # path
+    "https://ok.example?q=1",                    # query
+    "https://ok.example#frag",                   # fragment
+    "https://ok.example:99999",                  # port utenfor u16
+    "https://ok.example:abc",                    # ikke-numerisk port
+    "https://-leading.example",                  # ugyldig label
+    "'self'",                                    # CSP-nøkkelord, ikke origin
+    "*",
+])
+def test_idp_origins_injeksjon_forkastes(ondt):
+    # Fail-closed: kun rene kanoniske origins kan overleve; ingen metategn og
+    # ingen fremmed direktiv slipper inn i CSP-en. (Noen input har en gyldig
+    # origin FØR søppelet — den delen beholdes, injeksjonen forkastes.)
+    for o in uiserver.kanoniske_idp_origins(ondt):
+        # Kanonisk origin har KUN https://host[:port] — ingen av disse metategn
+        # (/ og : er lovlige i selve origin-strengen).
+        assert o.startswith("https://")
+        assert not (set(o) & set(' ";\n\t|&*\\<>#?@')), f"metategn i {o!r}"
+    csp = uiserver.bygg_ui_csp(ondt)
+    for forbudt in ("script-src *", "add_header", "\n", '"', ";add", "|", "&",
+                    "javascript:", "*;", "user:pw"):
+        assert forbudt not in csp.replace("script-src 'self'", ""), \
+            f"{forbudt!r} lekket inn i CSP fra {ondt!r}"
+    # streng-modus (deploy) KASTER på ethvert ugyldig token (fail-closed).
+    with pytest.raises(ValueError):
+        uiserver.kanoniske_idp_origins_streng(ondt)
+
+
+def test_idp_origins_gyldige_kanoniseres_og_dedupes():
+    assert uiserver.kanoniske_idp_origins("https://accounts.google.com") \
+        == ["https://accounts.google.com"]
+    # skjema/vert lowercases; port beholdes
+    assert uiserver.kanoniske_idp_origins("HTTPS://Accounts.Google.COM:443") \
+        == ["https://accounts.google.com:443"]
+    # flere + dedup, stabil rekkefølge
+    assert uiserver.kanoniske_idp_origins(
+        "https://a.example https://a.example https://b.example") \
+        == ["https://a.example", "https://b.example"]
+    # streng-serializer joiner med mellomrom (trygt for sed/CSP)
+    assert uiserver.kanoniske_idp_origins_streng(
+        "https://a.example https://b.example:8443") \
+        == "https://a.example https://b.example:8443"
+    # bygg_ui_csp legger dem i form-action
+    csp = uiserver.bygg_ui_csp("https://accounts.google.com")
+    assert "form-action 'self' https://accounts.google.com;" in csp
+
+
+def test_oppsett_provider_id_fail_closed(monkeypatch):
+    # Ugyldig provider (injeksjonsforsøk / rare tegn) → tom, ikke rå passthrough.
+    for ondt in ('a"b', "a b", "a;b", "../x", "A".ljust(65, "A")):
+        monkeypatch.setenv("DISPONIT_UI_PROVIDER", ondt)
+        assert json.loads(_klient().get("/ui/oppsett.json").text) \
+            == {"provider_id": ""}, ondt
+
+
 def test_oppsett_json_er_env_drevet(monkeypatch):
     # provider_id kommer fra DISPONIT_UI_PROVIDER (deploy-satt), aldri en
     # statisk fil i repoet — så en redeploy ikke resetter den.
