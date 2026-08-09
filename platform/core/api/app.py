@@ -36,6 +36,7 @@ from starlette.routing import Route
 from db import kryptering
 from db.pg import koble, sett_kontekst
 from policy_validator.attestering import last_nokler
+from .mac_register import last_mac_register
 from policy_validator.engine import EvaluationContext
 
 from . import cursor as cursormodul
@@ -385,6 +386,10 @@ class Tjeneste:
         self.nokler = last_nokler()            # kaster => prosessen starter ikke
         if not self.nokler:
             raise BootNekt("nøkkelregisteret er tomt")
+        # MAC-register for menneskelige godkjenningskonvolutter (PR-012). Samme
+        # oppstartsperre som attestasjonsnøklene: mangler/ugyldig register →
+        # prosessen nekter start, så porten aldri kjører uten en signeringsnøkkel.
+        self.mac_register = last_mac_register()
         self.bind_vert = bind_vert
         self.logg = logg or Sikkerhetslogg()
         self.rate = Rategrense(rate_per_min if rate_per_min is not None
