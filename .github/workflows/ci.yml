@@ -164,7 +164,24 @@ jobs:
           PY
       - name: "Syntetisk kjøring (invariant: blokkert blir aldri TILLAT)"
         run: python platform/core/examples/run_synthetic.py
-      # WCAG-port (axe-core) aktiveres i PR-005 når første UI-modul kommer
+      - name: "UI-kontrakt (V1): backend leverer feltene M-1-flaten leser"
+        run: python -m pytest platform/core/tests/test_ui_kontrakt.py -q
+
+  # PR-011: M-1 kundeflate — egen node-jobb. axe-core + komponent-/flate-/
+  # kontraktstester (gate 1/6/7/9/10/11 + no-hardkodet-tekst + V3). WCAG-
+  # porten som PR-005-kommentaren lovet, nå som UI-et finnes.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - name: Installer UI-avhengigheter
+        working-directory: platform/core/ui
+        run: npm ci
+      - name: "UI: axe + komponent-/flate-/kontraktstester (node --test)"
+        working-directory: platform/core/ui
+        run: npm test
 
   # PR-porten (RUTINER pkt. 8) som ERSTATNING for branch protection.
   # GitHub nekter branch protection på privat repo uten Pro, så regelen
