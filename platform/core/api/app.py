@@ -293,7 +293,12 @@ class KroppsgrenseMiddleware:
         self.logg = logg
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["method"] in ("GET", "HEAD"):
+        # GET/HEAD/DELETE bærer ingen kropp i dette API-et (DELETE /v1/sesjon
+        # er ren logout). Kroppsgrensen gjelder de metodene som FAKTISK tar
+        # imot data — å kreve Content-Length på en bodyless DELETE ville
+        # avvist en helt vanlig `fetch(url,{method:'DELETE'})`.
+        if scope["type"] != "http" or scope["method"] in ("GET", "HEAD",
+                                                           "DELETE"):
             return await self.app(scope, receive, send)
 
         headere = {k.decode("latin-1").lower(): v.decode("latin-1")
@@ -624,6 +629,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
+    # PR-010: OIDC-sesjonsrutene.
+    from . import sesjon as sesjonmodul
+
+    def oidc_start(request: Request) -> Response:
+        return sesjonmodul.oidc_start(tjeneste, request)
+
+    def oidc_callback(request: Request) -> Response:
+        return sesjonmodul.oidc_callback(tjeneste, request)
+
+    def sesjon_hvem(request: Request) -> Response:
+        return sesjonmodul.sesjon_hvem(tjeneste, request)
+
+    def sesjon_logout(request: Request) -> Response:
+        return sesjonmodul.sesjon_logout(tjeneste, request)
+
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
         Route("/v1/unntak", unntak, methods=["GET"]),
@@ -644,6 +664,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        # PR-010: OIDC-sesjon. /start er POST (v5 §1), callback er GET
+        # (navigasjon fra IdP), /v1/sesjon er GET (hvem) + DELETE (logout).
+        Route("/v1/oidc/start", oidc_start, methods=["POST"]),
+        Route("/v1/oidc/callback", oidc_callback, methods=["GET"]),
+        Route("/v1/sesjon", sesjon_hvem, methods=["GET"]),
+        Route("/v1/sesjon", sesjon_logout, methods=["DELETE"]),
         Route("/live", live, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
     ])
@@ -678,6 +704,33 @@ LESEROLLER = frozenset({"bruker"})
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
                 paakrevd_scope: str) -> Autentisert:
+    # PR-010: ÉN autorisasjonsvei for BÅDE browsersesjon (cookie) og
+    # maskin-token (Bearer). Begge samtidig → 400 (v2 §8), ingen fallback.
+    from . import sesjon as sesjonmodul
+    har_cookie = bool(request.cookies.get(sesjonmodul.C_SESJON))
+    har_bearer = bool(request.headers.get("authorization"))
+    if har_cookie and har_bearer:
+        tjeneste.logg.hendelse("dobbel_principal", rid)
+        raise kjerne.Feilsvar("dobbel_principal")
+
+    if har_cookie:
+        prin = sesjonmodul.slaa_opp_prinsipal(tjeneste, conn, request, rid)
+        if prin is None:
+            tjeneste.logg.hendelse("sesjon_ugyldig", rid)
+            raise kjerne.Feilsvar("sesjon_ugyldig")
+        tenant, bid, scopes, _utloper = prin
+        auth = Autentisert(tenant, "bruker", scopes, f"sesjon:{bid}")
+        if paakrevd_scope not in scopes:
+            tjeneste.logg.hendelse("scope_mangler", rid, tenant,
+                                   scope=paakrevd_scope, rolle="bruker")
+            raise kjerne.Feilsvar("scope_mangler")
+        if paakrevd_scope not in LESESCOPES:
+            # En browsersesjon når ALDRI et muterende scope.
+            tjeneste.logg.hendelse("scope_mangler", rid, tenant,
+                                   scope=paakrevd_scope, rolle="bruker")
+            raise kjerne.Feilsvar("scope_mangler")
+        return auth
+
     auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
     if auth is None:
         tjeneste.logg.hendelse("token_ugyldig", rid)
@@ -929,6 +982,13 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    # PR-010: OIDC-sesjon. /start og /callback er uautentiserte (de
+    # ETABLERER sesjonen); /v1/sesjon GET/DELETE gjelder sesjonen selv og
+    # scope-gates ikke — de er sesjonshåndtering, ikke lese-data.
+    ("POST", "/v1/oidc/start"):              None,
+    ("GET",  "/v1/oidc/callback"):           None,
+    ("GET",  "/v1/sesjon"):                  None,
+    ("DELETE", "/v1/sesjon"):                None,
     ("GET",  "/live"):                       None,
     ("GET",  "/ready"):                      None,
 }

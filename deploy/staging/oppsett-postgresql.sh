@@ -188,8 +188,12 @@ if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q --upgrade pip
 fi
+# PR-010: Authlib eier OIDC-protokollmekanikken (authorization code + PKCE,
+# JWS/ID-token-validering, JWKS-rotasjon) — Disponit skriver ingen egen
+# JWT-parser (v6 §3). joserfc er Authlibs JOSE-backend. Pinnes med hash i
+# et lockfil som egen driftsoppgave; her installeres de i venv-en.
 "$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema pytest \
-  starlette uvicorn httpx
+  starlette uvicorn httpx "authlib>=1.6,<2" joserfc
 
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
   DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \

@@ -79,6 +79,17 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 -- da kan en full lesing av runtimes tilgjengelige tabeller aldri gi
 -- secret_mac, og pepperet finnes uansett bare i API-prosessen.
 GRANT EXECUTE ON FUNCTION verifiser_token(TEXT, TEXT) TO {rolle};
+-- PR-010: OIDC-sesjon. NULLSTILL over har fjernet migrasjon 010s inline-
+-- grants; DETTE er den autoritative runtime-tilgangen som overlever.
+-- `oidc_provider`/`tenant_oidc_provider`: KUN SELECT (provider skrives
+-- aldri av runtime). `brukersesjon` nås for skriving (login/logout), men
+-- LESES via SECURITY DEFINER `slaa_opp_sesjon` (som over: aldri hasher ut).
+GRANT SELECT ON oidc_provider, tenant_oidc_provider TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON brukeridentitet TO {rolle};
+GRANT SELECT ON brukermedlemskap TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON oidc_logintransaksjon, brukersesjon TO {rolle};
+GRANT SELECT, INSERT, UPDATE, DELETE ON oidc_rate TO {rolle};
+GRANT EXECUTE ON FUNCTION slaa_opp_sesjon(TEXT) TO {rolle};
 """
 
 # PR-006: de herdede M-37-funksjonene. Hver av dem eies av NOLOGIN-rollen

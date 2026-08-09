@@ -39,6 +39,9 @@ INSERT INTO _design VALUES
     -- Paritetstesten fanget selv at denne manglet da 009 landet — nøyaktig
     -- jobben dens: en ny privilegert eid funksjon kan ikke bli stille udekket.
     ('FUNCTION', 'hent_pending_token(text)',       'disponit_authenticator'),
+    -- 010: herdet sesjonsoppslag (PR-010 §1). Definer-funksjon eid av
+    -- authenticator, fanget av paritetstesten som hent_pending_token.
+    ('FUNCTION', 'slaa_opp_sesjon(text)',          'disponit_authenticator'),
     -- 005 §6–9 + 007: M-37-flaten eies av NOLOGIN-rollen m37_claimer.
     ('TABLE',    'arbeidskapabiliteter',           'disponit_m37_claimer'),
     ('TABLE',    'kvitteringskapabiliteter',       'disponit_m37_claimer'),

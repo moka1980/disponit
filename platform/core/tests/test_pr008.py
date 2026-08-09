@@ -932,10 +932,16 @@ def test_rutescope_registeret_dekker_alle_ruter():
     assert ruter == deklarert, (
         f"udeklarert: {sorted(ruter - deklarert)} / "
         f"død deklarasjon: {sorted(deklarert - ruter)}")
+    # None-scope er lovlig KUN for helsesjekkene og OIDC-/sesjonsrutene:
+    # de to første etablerer en sesjon (kan ikke kreve en), og /v1/sesjon
+    # er sesjonshåndtering (GET hvem / DELETE logout), ikke scope-gatet
+    # lese-data. Alt annet UTEN scope ville vært en åpen dør.
+    UAUTENTISERT_OK = {"/live", "/ready", "/v1/oidc/start",
+                       "/v1/oidc/callback", "/v1/sesjon"}
     for (metode, sti), scope in RUTESCOPE.items():
         if scope is None:
-            assert sti in ("/live", "/ready"), \
-                f"{sti}: kun helsesjekkene er uautentiserte"
+            assert sti in UAUTENTISERT_OK, \
+                f"{sti}: uventet uautentisert rute"
         elif sti.startswith("/v1/") and metode == "GET" \
                 and "oppdrag" not in sti:
             assert scope in LESESCOPES, f"{sti}: leserute med ikke-lese-scope"

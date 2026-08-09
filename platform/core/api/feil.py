@@ -118,6 +118,27 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "Sanitert 500 med korrelasjons-ID. Brukes når lese-API-ets"
         " servermodell møter en tilstand matrisen forbyr — den skal SES i"
         " driftsloggen, aldri forklares for klienten.")),
+    # --- PR-010: OIDC-sesjon -------------------------------------------
+    Feilvei("sesjon_ugyldig", 401, ("avvis",), None, notat=(
+        "Utløpt/inaktiv/tilbakekalt sesjon, eller authz_version-avvik. UI"
+        " viser innloggingsflaten. Lukket kode, aldri hvorfor.")),
+    Feilvei("dobbel_principal", 400, ("sikkerhet",), None, notat=(
+        "BÅDE sesjonscookie og Authorization-header. Ingen automatisk"
+        " fallback mellom mekanismene (v2 §8) — requesten avvises.")),
+    Feilvei("ukjent_provider", 400, ("avvis",), None, notat=(
+        "Ukjent workspace ELLER provider → samme generiske feil, ingen"
+        " eksistenslekkasje (v2 §5).")),
+    Feilvei("provider_utilgjengelig", 400, ("drift",), None, notat=(
+        "Manglende credential eller discovery-/egress-feil → KUN denne"
+        " provideren markeres utilgjengelig, fail-closed (v6 §4).")),
+    Feilvei("ingen_tilgang", 401, ("sikkerhet",), None, notat=(
+        "Autentisert identitet uten forhåndsmedlemskap. Ingen JIT (v3 §2);"
+        " samme generiske avvisning som ukjent identitet.")),
+    Feilvei("rate_grense_login", 429, ("sikkerhet",), None, aggregert=True,
+            notat="Login-fase over grensen. Retry-After i sekunder (v4 §4)."),
+    Feilvei("innlogging_feilet", 400, ("sikkerhet",), None, aggregert=True,
+            notat=("Generisk callback-feilside. Gjengir ALDRI"
+                   " URL-parametere (v5 §6).")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}
