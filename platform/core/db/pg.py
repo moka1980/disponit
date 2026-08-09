@@ -21,7 +21,8 @@ import psycopg
 
 from policy_validator.audit import lag_loggpost
 from policy_validator.engine import (
-    STOPP, TILLAT, UNNTAK, Decision, Grunn, TellerLager, brudd_utfall, evaluate)
+    STOPP, TILLAT, UNNTAK, Decision, Grunn, MenneskeligGodkjenning, TellerLager,
+    brudd_utfall, evaluate)
 
 _MIGRASJONER = Path(__file__).resolve().parent / "migrations"
 
@@ -253,7 +254,9 @@ def sikker_beslutning_pg(policy: dict, context, event: dict,
                          nokler: dict | None = None,
                          evidens: "Evidens | None" = None,
                          ytre_transaksjon: bool = False,
-                         portbrudd: "Portbrudd | None" = None) -> Decision:
+                         portbrudd: "Portbrudd | None" = None,
+                         menneskelig_godkjenning: MenneskeligGodkjenning | None
+                         = None) -> Decision:
     """PostgreSQL-varianten av logg-før-utførelse-kontrakten.
 
     Forskjeller fra filvarianten:
@@ -316,7 +319,12 @@ def sikker_beslutning_pg(policy: dict, context, event: dict,
 
     teller = PgTellerLager(conn, ytre_transaksjon=ytre_transaksjon)
     try:
-        d = evaluate(policy, context, event, teller=teller, naa=naa)
+        # PR-012 (C): en verifisert menneskelig godkjenning mates som en egen
+        # additiv motorinngang — ALDRI via event["attestasjoner"]. Uten den er
+        # kallet bit-identisk med i dag. Porten (behandle_unntakshandling) har
+        # MAC-verifisert konvolutten FØR dette; motoren gjør det aldri.
+        d = evaluate(policy, context, event, teller=teller, naa=naa,
+                     menneskelig_godkjenning=menneskelig_godkjenning)
     except Exception as e:  # fail-closed
         d = Decision(STOPP, handling, "ukjent",
                      [Grunn("motor_exception", {"type": type(e).__name__})])
