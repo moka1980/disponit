@@ -629,6 +629,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
+    # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
+    # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
+    # de refereres direkte i rutelisten.
+    from ui import server as uiserver
+
     # PR-010: OIDC-sesjonsrutene.
     from . import sesjon as sesjonmodul
 
@@ -672,6 +677,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/sesjon", sesjon_logout, methods=["DELETE"]),
         Route("/live", live, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
+        # PR-011: M-1 kundeflate. Skallet på "/", ressurser under /ui/.
+        # Locale-ruten registreres FØR den generelle asset-ruten, ellers
+        # ville {sti:path} slukt "locale/nb".
+        Route("/", uiserver.ui_index, methods=["GET"]),
+        Route("/ui/locale/{sprak}", uiserver.ui_locale, methods=["GET"]),
+        Route("/ui/{sti:path}", uiserver.ui_asset, methods=["GET"]),
     ])
     app.state.tjeneste = tjeneste
     ytre = KroppsgrenseMiddleware(app, logg=tjeneste.logg)

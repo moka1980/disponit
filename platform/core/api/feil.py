@@ -125,6 +125,11 @@ FEILVEIER: tuple[Feilvei, ...] = (
     Feilvei("dobbel_principal", 400, ("sikkerhet",), None, notat=(
         "BÅDE sesjonscookie og Authorization-header. Ingen automatisk"
         " fallback mellom mekanismene (v2 §8) — requesten avvises.")),
+    Feilvei("csrf_ugyldig", 403, ("sikkerhet",), None, notat=(
+        "Mutasjon (logout m.fl.) med manglende/feil X-Disponit-CSRF mot"
+        " sesjonens lagrede csrf_hash. Dobbel-innsending håndheves server-"
+        " side: en fremmed eller fraværende token tilbakekaller ALDRI"
+        " økten. Økten forblir urørt.")),
     Feilvei("ukjent_provider", 400, ("avvis",), None, notat=(
         "Ukjent workspace ELLER provider → samme generiske feil, ingen"
         " eksistenslekkasje (v2 §5).")),

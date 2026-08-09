@@ -9,6 +9,7 @@ rate-grensene (v4 §4) og at cookie XOR Bearer (v2 §8).
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -211,6 +212,21 @@ def _cred_env() -> dict:
 # POST /v1/oidc/start (v5 §1) → 303
 # ---------------------------------------------------------------------------
 
+def les_startkropp(content_type: str, raa: bytes) -> dict:
+    """Parse /oidc/start-kroppen. V2 (PR-011): innlogging skjer som TOPPNIVÅ-
+    navigasjon via et ordinært <form method="post">, som sender
+    application/x-www-form-urlencoded — ikke JSON. Vi tar imot begge:
+    JSON-veien er uendret (byte-for-byte), form-veien er additiv. Begge
+    kroppene går gjennom NØYAKTIG samme Origin/Sec-Fetch- og
+    provider-validering i handleren. Kaster ValueError ved uleselig kropp.
+    """
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct == "application/x-www-form-urlencoded":
+        from urllib.parse import parse_qsl
+        return dict(parse_qsl(raa.decode("utf-8"), keep_blank_values=True))
+    return json.loads(raa.decode("utf-8")) if raa else {}
+
+
 def oidc_start(tjeneste, request: Request) -> Response:
     from .app import _rid, _feilsvar, kanonisk_json
     rid = _rid(request)
@@ -239,8 +255,8 @@ def oidc_start(tjeneste, request: Request) -> Response:
         tenant = _tenant_fra_host(tjeneste, request)
         raa = request.scope.get("state", {}).get("kropp", b"")
         try:
-            data = json.loads(raa.decode("utf-8")) if raa else {}
-        except Exception:
+            data = les_startkropp(request.headers.get("content-type", ""), raa)
+        except ValueError:
             return _feilsvar("request_feilformet", rid)
         provider_id = data.get("provider_id")
         if not isinstance(provider_id, str) or not tenant:
@@ -475,18 +491,37 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
 
 
 def sesjon_logout(tjeneste, request: Request) -> Response:
-    from .app import _rid
+    """Logout tilbakekaller økten — men KUN mot gyldig CSRF (dobbel-innsending,
+    v2 §8-ånd). UI-et sender X-Disponit-CSRF fra den JS-lesbare csrf-cookien;
+    serveren sammenligner hashen mot øktens lagrede `csrf_hash` i konstant tid.
+    En manglende, feil eller ANNEN økts token skal ALDRI kunne logge brukeren
+    ut (ellers er logout en CSRF-vektor). Uten CSRF-porten forblir økten urørt.
+    """
+    from .app import _rid, _feilsvar
     rid = _rid(request)
     sesjon = request.cookies.get(C_SESJON)
+    csrf = request.headers.get("x-disponit-csrf")
     conn = tjeneste.pool.hent()
     try:
         if sesjon:
-            # Idempotent: tilbakekall om den finnes; RLS-fri tabell via hash.
-            sett_tenant(conn, "_oidc")
-            conn.execute("UPDATE brukersesjon SET tilbakekalt=true"
-                         " WHERE sesjon_id_hash=%s AND NOT tilbakekalt",
-                         (_hash(sesjon),))
-            conn.commit()
+            # Finn en LEVENDE økt (den herdede funksjonen skjuler tilbakekalte/
+            # utløpte). Ingen levende økt → ingenting å verne, idempotent 204.
+            rad = conn.execute(
+                "SELECT csrf_hash FROM slaa_opp_sesjon(%s)",
+                (_hash(sesjon),)).fetchone()
+            conn.rollback()
+            if rad is not None:
+                lagret = rad[0]
+                if not csrf or not lagret \
+                        or not hmac.compare_digest(_hash(csrf), lagret):
+                    # Forget-forsøk med feil/uten token: ØKTEN URØRT, 403.
+                    tjeneste.logg.hendelse("csrf_ugyldig", rid)
+                    return _feilsvar("csrf_ugyldig", rid)
+                sett_tenant(conn, "_oidc")
+                conn.execute("UPDATE brukersesjon SET tilbakekalt=true"
+                             " WHERE sesjon_id_hash=%s AND NOT tilbakekalt",
+                             (_hash(sesjon),))
+                conn.commit()
         r = Response(status_code=204, headers={"x-request-id": rid})
         for c in (_slett_cookie(C_SESJON), _slett_cookie(C_CSRF, False),
                   _slett_cookie(C_BINDING)):

@@ -23,6 +23,16 @@
   --radius:8px; --radius-sm:4px;
   /* Fokus (WCAG 2.4.7) — brukes på ALT interaktivt */
   --focus:3px solid var(--info); --focus-offset:2px;
+  /* UI-lag (M-1): skygge, lagdeling og breakpoint hører hjemme HER, aldri
+     inline i en komponent (RUTINER pkt. 6). Lagt til i UI-leveransen —
+     tokenkilden er fortsatt den ENESTE. */
+  --skygge:0 1px 2px rgba(20,35,43,.08), 0 2px 8px rgba(20,35,43,.10);
+  --skygge-skuff:-6px 0 28px rgba(20,35,43,.20);
+  --teppe:rgba(20,35,43,.45);
+
+  --z-innhold:0; --z-topplinje:10; --z-overlegg:30; --z-skuff:40;
+  --bp-smal:720px;
+  --innhold-maks:1100px;
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

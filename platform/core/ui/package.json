@@ -1,0 +1,14 @@
+{
+  "name": "disponit-m01-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M-1 kundeflate — komponentbibliotek og flater (PR-011).",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.2",
+    "jsdom": "^25.0.1"
+  }
+}
