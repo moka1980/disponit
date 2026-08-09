@@ -631,6 +631,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def unntak_historikk(request: Request) -> Response:
         return lesing.unntak_historikk(tjeneste, request)
 
+    def unntak_handling(request: Request) -> Response:
+        from . import unntaksbehandling
+        return unntaksbehandling.handling_endepunkt(
+            tjeneste, request, request.path_params["id"])
+
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
@@ -673,6 +678,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
+        Route("/v1/unntak/{id:int}/handling", unntak_handling,
+              methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
         # PR-010: OIDC-sesjon. /start er POST (v5 §1), callback er GET
         # (navigasjon fra IdP), /v1/sesjon er GET (hvem) + DELETE (logout).
@@ -720,6 +727,13 @@ LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
 #: KODEN, ikke bare i utstedelsen — v2 pkt. 9).
 LESEROLLER = frozenset({"bruker"})
 
+#: PR-012: de ENESTE muterende scopene en browsersesjon får nå — den
+#: menneskelige unntaksbehandlingen. CSRF håndheves i selve endepunktet
+#: (dobbel-innsending); carve-outen her slipper dem bare forbi den generelle
+#: «browsersesjon når aldri et muterende scope»-porten.
+BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
+                                     "exceptions:escalate"})
+
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
                 paakrevd_scope: str) -> Autentisert:
@@ -743,8 +757,11 @@ def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
             tjeneste.logg.hendelse("scope_mangler", rid, tenant,
                                    scope=paakrevd_scope, rolle="bruker")
             raise kjerne.Feilsvar("scope_mangler")
-        if paakrevd_scope not in LESESCOPES:
-            # En browsersesjon når ALDRI et muterende scope.
+        if paakrevd_scope not in LESESCOPES \
+                and paakrevd_scope not in BROWSER_MUTASJONSSCOPES:
+            # En browsersesjon når ALDRI et muterende scope — UNNTATT den
+            # CSRF-håndhevede unntaksbehandlingen (PR-012), som endepunktet
+            # selv verner med dobbel-innsending.
             tjeneste.logg.hendelse("scope_mangler", rid, tenant,
                                    scope=paakrevd_scope, rolle="bruker")
             raise kjerne.Feilsvar("scope_mangler")
@@ -1000,6 +1017,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
     ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
+    ("POST", "/v1/unntak/{id:int}/handling"): "exceptions:approve",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
     # PR-010: OIDC-sesjon. /start og /callback er uautentiserte (de
     # ETABLERER sesjonen); /v1/sesjon GET/DELETE gjelder sesjonen selv og

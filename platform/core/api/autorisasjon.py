@@ -24,6 +24,12 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # Administrator: alt lesende (v1 er rent lese-API; mutasjon er senere).
     "admin": frozenset({"decisions:read", "exceptions:read", "policy:read",
                         "security:read"}),
+    # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
+    # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
+    # reject-scope aldri kan godkjenne (v3-test).
+    "godkjenner": frozenset({"decisions:read", "exceptions:read",
+                             "exceptions:approve", "exceptions:reject",
+                             "exceptions:escalate"}),
 }
 
 

@@ -102,14 +102,20 @@ def _er_godkjennbar(policy: object, grunnkode: str, handling: str) -> bool:
 
 def opprett_godkjenningsrunde(conn: psycopg.Connection, *, tenant: str,
                               unntak_id: int, aktor: str, request_id: str,
-                              policy: dict, policy_hash: str, naa) -> int:
-    """Åpne en godkjenningsrunde for en manuell, menneskelig godkjennbar sak.
+                              policy: dict, policy_hash: str, naa,
+                              krev_godkjennbar: bool = True) -> int:
+    """Åpne en godkjenningsrunde for en manuell sak.
 
     Server-utleder `bundet_grunnkode` fra sakens begrunnelseskjede (aldri
     klientvalgt), åpner en `apen` runde med den aktive policyens hash frosset
     per runde, og gjør den kontrollerte overgangen `manuell →
     venter_godkjenning`. Returnerer rundenummeret. Kaster `Godkjenningsfeil`.
     Kalleren eier transaksjonen.
+
+    `krev_godkjennbar` (default True): for GODKJENN må saken ha en komplett
+    handlingsintensjon OG en godkjennbar blokkerende grunnkode. For
+    avvis/eskaler er ingen av delene nødvendig — et menneske kan alltid avvise
+    eller eskalere en manuell sak — så endepunktet åpner runden med False.
     """
     sett_kontekst(conn, tenant, aktor, request_id)
     rad = conn.execute(
@@ -120,9 +126,9 @@ def opprett_godkjenningsrunde(conn: psycopg.Connection, *, tenant: str,
     status, handling, loggpost_id, intensjon_pakrevd = rad
     if status != "manuell":
         raise Godkjenningsfeil("runde_ulovlig_tilstand", f"status={status}")
-    # Godkjenn krever en komplett handlingsintensjon (v2 §1) — ellers kan
-    # motoren ikke re-evaluere, og godkjenn er ikke en mulig handling.
-    if not intensjon_pakrevd:
+    if krev_godkjennbar and not intensjon_pakrevd:
+        # Godkjenn krever en komplett handlingsintensjon (v2 §1) — ellers kan
+        # motoren ikke re-evaluere, og godkjenn er ikke en mulig handling.
         raise Godkjenningsfeil("godkjenn_utilgjengelig", "ingen intensjon")
 
     lp = conn.execute(
@@ -131,7 +137,7 @@ def opprett_godkjenningsrunde(conn: psycopg.Connection, *, tenant: str,
     bundet = _siste_grunnkode(lp[0] if lp else None)
     if bundet is None:
         raise Godkjenningsfeil("godkjenn_utilgjengelig", "ingen blokkerende grunn")
-    if not _er_godkjennbar(policy, bundet, handling):
+    if krev_godkjennbar and not _er_godkjennbar(policy, bundet, handling):
         raise Godkjenningsfeil("godkjenn_utilgjengelig", f"grunnkode={bundet}")
 
     meta = policy.get("meta") if isinstance(policy.get("meta"), dict) else {}
@@ -408,3 +414,166 @@ def _sikkerhetsstopp(conn, pool, tenant, unntak_id, aktor, request_id,
                             detalj={"grunn": grunn}, aktor=aktor,
                             request_id=request_id)
     return {"utfall": "STOPP", "sikkerhet": grunn, "unntak_id": unntak_id}
+
+
+# --------------------------------------------------------------------------
+# HTTP-endepunktet (CP5): POST /v1/unntak/{id}/handling
+# --------------------------------------------------------------------------
+
+_HANDLING_SCOPE = {"godkjenn": "exceptions:approve",
+                   "avvis": "exceptions:reject",
+                   "eskaler": "exceptions:escalate"}
+
+#: Godkjenningsfeil-kode → HTTP. Ukjent kode → 409 (tilstandskonflikt).
+_FEIL_HTTP = {"unntak_ukjent": 404, "ingen_aktiv_runde": 409,
+              "runde_utlopt": 409, "feil_runde": 409,
+              "runde_ulovlig_tilstand": 409, "godkjenn_utilgjengelig": 409,
+              "allerede_attestert": 409, "ukjent_operatorhandling": 400,
+              "policy_id_ukjent": 409, "mangler_rolle": 403,
+              "runde_allerede_aapen": 409}
+
+
+def handling_endepunkt(tjeneste, request, unntak_id: int):
+    """POST /v1/unntak/{id}/handling — en autentisert, CSRF-vernet menneskelig
+    handling. Bygger konvolutten SERVER-side fra den autentiserte sesjonen +
+    den låste saken/runden, MAC-signerer den, og kjører den gjennom porten."""
+    from starlette.responses import JSONResponse
+
+    from . import kjerne
+    from . import sesjon as sesjonmodul
+    from .app import _autentiser, _feilsvar, _rid
+
+    rid = _rid(request)
+    raa = request.scope.get("state", {}).get("kropp", b"")
+    try:
+        body = json.loads(raa.decode("utf-8"))
+    except Exception:
+        return _feilsvar("request_feilformet", rid)
+    oh = body.get("operatorhandling") if isinstance(body, dict) else None
+    scope = _HANDLING_SCOPE.get(oh)
+    if scope is None:
+        return _feilsvar("request_feilformet", rid)
+
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid, scope)
+        except kjerne.Feilsvar as f:
+            return _feilsvar(f.kode, rid)
+
+        # CSRF (dobbel-innsending) — browsersesjonens muterende vei.
+        sesjon_cookie = request.cookies.get(sesjonmodul.C_SESJON)
+        rad = conn.execute("SELECT csrf_hash FROM slaa_opp_sesjon(%s)",
+                           (sesjonmodul._hash(sesjon_cookie),)).fetchone() \
+            if sesjon_cookie else None
+        conn.rollback()
+        if rad is None or not sesjonmodul.csrf_matcher(rad[0], request):
+            tjeneste.logg.hendelse("csrf_ugyldig", rid)
+            return _feilsvar("csrf_ugyldig", rid)
+
+        tenant = auth.tenant
+        bid = auth.token_id.split("sesjon:", 1)[-1]
+        try:
+            konvolutt = _bygg_signert_konvolutt(conn, tjeneste, tenant, bid,
+                                                unntak_id, oh, rid, _naa(request))
+            res = behandle_unntakshandling(
+                conn, tjeneste.pool, tjeneste.mac_register, tenant=tenant,
+                aktor=bid, request_id=rid, konvolutt=konvolutt,
+                naa=_naa(request))
+        except Godkjenningsfeil as g:
+            conn.rollback()
+            return _feilsvar_kode(g.kode, rid)
+        return JSONResponse(res, headers={"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def _feilsvar_kode(kode: str, rid: str):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"feil": kode, "request_id": rid},
+                        status_code=_FEIL_HTTP.get(kode, 409),
+                        headers={"x-request-id": rid})
+
+
+def _naa(request):
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+def _bygg_signert_konvolutt(conn, tjeneste, tenant, bid, unntak_id, oh, rid, naa):
+    """Les saken/runden, åpne runde ved behov, og bygg + MAC-signer konvolutten
+    fra autentiske serverdata. Kaster `Godkjenningsfeil`."""
+    sett_kontekst(conn, tenant, bid, rid)
+    sak = conn.execute(
+        "SELECT status, handling, loggpost_id, hi_integritet_hash,"
+        " intensjon_pakrevd, handlingsintensjon_kryptert, hi_key_id, hi_nonce,"
+        " hi_skjemaversjon, intensjon_policy_hash FROM unntak"
+        " WHERE tenant=%s AND id=%s", (tenant, unntak_id)).fetchone()
+    if sak is None:
+        raise Godkjenningsfeil("unntak_ukjent")
+    (status, handling, loggpost_id, hi_hash, intensjon_pakrevd, hi_ct, hi_key_id,
+     hi_nonce, hi_ver, intensjon_policy_hash) = sak
+
+    policy, policy_hash = policyregister.hent_aktiv(
+        conn, tenant, _policy_id(loggpost_id, conn, tenant))
+    krever_rolle = (policy.get("menneskelig_overstyring") or {}).get(
+        "krever_rolle")
+
+    # Operatørens medlemskap: forretningsrolle + authz_version.
+    med = conn.execute(
+        "SELECT roller, authz_version FROM brukermedlemskap WHERE tenant=%s"
+        " AND bruker_id=%s AND aktiv", (tenant, bid)).fetchone()
+    roller = list(med[0]) if med else []
+    authz_version = med[1] if med else 0
+    if oh == "godkjenn":
+        if not krever_rolle or krever_rolle not in roller:
+            raise Godkjenningsfeil("mangler_rolle", str(krever_rolle))
+        rolle = krever_rolle
+    else:
+        rolle = krever_rolle if krever_rolle in roller else (
+            roller[0] if roller else "godkjenner")
+
+    # Ingen aktiv runde på en manuell sak → åpne én (godkjenn krever
+    # godkjennbar; avvis/eskaler gjør ikke).
+    aktiv = conn.execute(
+        "SELECT runde, bundet_grunnkode, godkjennings_policy_hash FROM"
+        " godkjenningsrunde WHERE tenant=%s AND unntak_id=%s AND status IN"
+        " ('apen','klar')", (tenant, unntak_id)).fetchone()
+    if aktiv is None:
+        if status != "manuell":
+            raise Godkjenningsfeil("runde_ulovlig_tilstand", f"status={status}")
+        opprett_godkjenningsrunde(conn, tenant=tenant, unntak_id=unntak_id,
+                                  aktor=bid, request_id=rid, policy=policy,
+                                  policy_hash=policy_hash, naa=naa,
+                                  krev_godkjennbar=(oh == "godkjenn"))
+        aktiv = conn.execute(
+            "SELECT runde, bundet_grunnkode, godkjennings_policy_hash FROM"
+            " godkjenningsrunde WHERE tenant=%s AND unntak_id=%s AND status IN"
+            " ('apen','klar')", (tenant, unntak_id)).fetchone()
+    runde, bundet_grunnkode, godkj_policy_hash = aktiv
+
+    belop = valuta = ressurs_id = None
+    if oh == "godkjenn" and intensjon_pakrevd and hi_ct is not None:
+        dek = kryptering.hent_dek(conn, tenant, hi_key_id)
+        aad = kryptering.intensjon_aad(unntak_id, handling, hi_ver,
+                                       intensjon_policy_hash)
+        intensjon = kryptering.dekrypter(dek, bytes(hi_ct), bytes(hi_nonce),
+                                         tenant, hi_key_id, ekstra_aad=aad)
+        belop, valuta = intensjon.get("belop"), intensjon.get("valuta")
+        ressurs_id = intensjon.get("ressurs_id")
+
+    konvolutt = {
+        "konvoluttversjon": 2, "operatorhandling": oh, "tenant": tenant,
+        "unntak_id": unntak_id, "runde": runde, "target_action": handling,
+        "ressurs_id": ressurs_id, "belop": belop, "valuta": valuta,
+        "hi_integritet_hash": hi_hash, "bundet_grunnkode": bundet_grunnkode,
+        "godkjennings_policy_hash": godkj_policy_hash, "bruker_id": bid,
+        "rolle": rolle, "authz_version": authz_version,
+        "jti": f"{bid}-{unntak_id}-r{runde}-{oh}".ljust(22, "j"),
+        "utloper": (naa + RUNDE_TTL).isoformat()}
+    mac_key_id, mac = tjeneste.mac_register.signer(konvolutt)
+    return {**konvolutt, "mac": mac, "mac_key_id": mac_key_id}
