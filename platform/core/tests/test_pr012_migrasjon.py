@@ -67,6 +67,32 @@ def test_manuell_gjenapning_krever_apen_runde(migrator):
 
 
 @pg
+def test_saksversjon_optimistisk_laas(migrator):
+    uid, _ = _oppsett(migrator)
+    v0 = migrator.execute("SELECT saksversjon FROM unntak WHERE id=%s",
+                          (uid,)).fetchone()[0]
+    assert v0 == 0
+    # Statusendring bumper automatisk (via apen runde).
+    migrator.execute(
+        "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
+        "godkjennings_policy_hash,policy_versjon,utloper) VALUES"
+        " (%s,%s,1,'apen','g','0.2.0',now()+interval '1 hour')", (TEN, uid))
+    migrator.execute("UPDATE unntak SET status='venter_godkjenning' WHERE id=%s",
+                     (uid,))
+    v1 = migrator.execute("SELECT saksversjon FROM unntak WHERE id=%s",
+                          (uid,)).fetchone()[0]
+    assert v1 == 1
+    # Kan aldri reduseres.
+    assert _raises(migrator, "UPDATE unntak SET saksversjon=0 WHERE id=%s", (uid,))
+    # Kalleren kan bumpe uten statusskifte (eskaler-mønsteret).
+    migrator.execute("UPDATE unntak SET saksversjon=saksversjon+1 WHERE id=%s",
+                     (uid,))
+    assert migrator.execute("SELECT saksversjon FROM unntak WHERE id=%s",
+                            (uid,)).fetchone()[0] == 2
+    migrator.rollback()
+
+
+@pg
 def test_intensjonsfelt_uforanderlige(migrator):
     uid, _ = _oppsett(migrator)
     for felt in ("intensjon_pakrevd=true", "hi_integritet_hash='x'",

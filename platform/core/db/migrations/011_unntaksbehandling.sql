@@ -30,7 +30,12 @@ ALTER TABLE unntak
     ADD COLUMN IF NOT EXISTS intensjon_policy_hash TEXT,
     -- Snapshot satt av beslutningsveien (en CHECK kan ikke lese policyraden,
     -- v4 §3). Uforanderlig.
-    ADD COLUMN IF NOT EXISTS intensjon_pakrevd     BOOLEAN NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS intensjon_pakrevd     BOOLEAN NOT NULL DEFAULT false,
+    -- Optimistisk lås (v1 §7): POST /handling må bære sakens nåværende
+    -- versjon, ellers 409 `saksversjon_utdatert`. Monotont voksende; bumpes
+    -- av triggeren på HVER statusendring, og av kalleren for endringer uten
+    -- statusskifte (eskaler, v2 §7). Aldri redusert.
+    ADD COLUMN IF NOT EXISTS saksversjon           INT NOT NULL DEFAULT 0;
 
 -- Tenantkonsistent FK til nøkkelregisteret (v3 §7). NULL hi_key_id → ikke
 -- håndhevet (saker uten intensjon).
@@ -194,8 +199,16 @@ BEGIN
         RAISE EXCEPTION 'unntak: % er terminal og kan ikke forlates', OLD.status;
     END IF;
 
+    -- Optimistisk lås: aldri redusert. Kalleren kan bumpe den for endringer
+    -- uten statusskifte (eskaler); statusendringer bumper automatisk under.
+    IF NEW.saksversjon < OLD.saksversjon THEN
+        RAISE EXCEPTION 'unntak: saksversjon kan aldri reduseres (% -> %)',
+            OLD.saksversjon, NEW.saksversjon;
+    END IF;
+
     IF NEW.status IS DISTINCT FROM OLD.status THEN
         NEW.status_ts := now();
+        NEW.saksversjon := OLD.saksversjon + 1;   -- hver statusendring = ny versjon
     END IF;
     RETURN NEW;
 END $$;
