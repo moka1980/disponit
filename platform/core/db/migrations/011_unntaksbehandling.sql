@@ -227,10 +227,11 @@ CREATE TABLE IF NOT EXISTS menneskelig_attestasjon (
     operatorhandling TEXT NOT NULL
         CHECK (operatorhandling IN ('godkjenn','avvis','eskaler')),
     target_action  TEXT,                         -- NULL for avvis/eskaler
+    bundet_grunnkode TEXT,                        -- konvoluttfelt (v8 §2); NULL for avvis/eskaler
     bruker_id      TEXT NOT NULL,
     rolle          TEXT NOT NULL,
     authz_version  INT  NOT NULL,
-    konvoluttversjon INT NOT NULL,               -- 1 = disponit_human_approval_v1
+    konvoluttversjon INT NOT NULL,               -- 2 = disponit_human_approval_v2 (m/ bundet_grunnkode)
     konvolutt_hash TEXT NOT NULL,                -- SHA-256 over kanonisk JCS-konvolutt
     mac            TEXT NOT NULL,
     mac_key_id     TEXT NOT NULL,                -- referanse til app-state-register
@@ -270,6 +271,10 @@ CREATE TABLE IF NOT EXISTS godkjenningsrunde (
         CHECK (status IN ('apen','klar','brukt','utlopt','kansellert')),
     godkjennings_policy_hash TEXT NOT NULL,
     policy_versjon TEXT NOT NULL,
+    -- Den ENE grunnkoden runden (og dermed godkjenningen) binder seg til.
+    -- Server-utledet fra sakens begrunnelseskjede ved åpning (v8 §2), aldri
+    -- klientvalgt; uforanderlig etterpå. Motoren kan løfte KUN denne.
+    bundet_grunnkode TEXT NOT NULL CHECK (bundet_grunnkode ~ '^[a-z0-9_]+$'),
     decision_operation_id TEXT,                  -- settes ved klar→brukt
     apnet        TIMESTAMPTZ NOT NULL DEFAULT now(),
     utloper      TIMESTAMPTZ NOT NULL,
@@ -291,7 +296,8 @@ BEGIN
        OR NEW.runde IS DISTINCT FROM OLD.runde
        OR NEW.apnet IS DISTINCT FROM OLD.apnet
        OR NEW.godkjennings_policy_hash IS DISTINCT FROM OLD.godkjennings_policy_hash
-       OR NEW.policy_versjon IS DISTINCT FROM OLD.policy_versjon THEN
+       OR NEW.policy_versjon IS DISTINCT FROM OLD.policy_versjon
+       OR NEW.bundet_grunnkode IS DISTINCT FROM OLD.bundet_grunnkode THEN
         RAISE EXCEPTION 'godkjenningsrunde: identitets-/policyfelt er uforanderlige';
     END IF;
     -- decision_operation_id settes ÉN gang og kan aldri endres etterpå.

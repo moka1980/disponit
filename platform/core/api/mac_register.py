@@ -30,7 +30,10 @@ from pathlib import Path
 from policy_validator import jcs
 
 _ALG = "HMAC-SHA256"
-KONVOLUTTVERSJON = 1                       # disponit_human_approval_v1
+# v2 bandt inn `bundet_grunnkode` (v8 §2) — konvolutten binder nøyaktig ÉN
+# (grunnkode, target_action). `kanonisk_konvolutt` er feltagnostisk, så den
+# nye nøkkelen inngår i de signerte bytene uten videre.
+KONVOLUTTVERSJON = 2                       # disponit_human_approval_v2
 _ROLLER = ("signerer", "verifiserer", "pensjonert")
 _MAC_FELT = ("mac", "mac_key_id")
 

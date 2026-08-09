@@ -56,8 +56,9 @@ def test_manuell_gjenapning_krever_apen_runde(migrator):
     # Med en apen runde tillates den kontrollerte gjenåpningen.
     migrator.execute(
         "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
-        "godkjennings_policy_hash,policy_versjon,utloper) VALUES"
-        " (%s,%s,1,'apen','gph','0.2.0',now()+interval '1 hour')", (TEN, uid))
+        "bundet_grunnkode,godkjennings_policy_hash,policy_versjon,utloper) VALUES"
+        " (%s,%s,1,'apen','belop_over_grense','gph','0.2.0',now()+interval '1 hour')",
+        (TEN, uid))
     migrator.execute("UPDATE unntak SET status='venter_godkjenning' WHERE id=%s",
                      (uid,))
     # Ulovlig menneskeflyt-overgang avvises.
@@ -75,8 +76,9 @@ def test_saksversjon_optimistisk_laas(migrator):
     # Statusendring bumper automatisk (via apen runde).
     migrator.execute(
         "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
-        "godkjennings_policy_hash,policy_versjon,utloper) VALUES"
-        " (%s,%s,1,'apen','g','0.2.0',now()+interval '1 hour')", (TEN, uid))
+        "bundet_grunnkode,godkjennings_policy_hash,policy_versjon,utloper) VALUES"
+        " (%s,%s,1,'apen','belop_over_grense','g','0.2.0',now()+interval '1 hour')",
+        (TEN, uid))
     migrator.execute("UPDATE unntak SET status='venter_godkjenning' WHERE id=%s",
                      (uid,))
     v1 = migrator.execute("SELECT saksversjon FROM unntak WHERE id=%s",
@@ -89,6 +91,26 @@ def test_saksversjon_optimistisk_laas(migrator):
                      (uid,))
     assert migrator.execute("SELECT saksversjon FROM unntak WHERE id=%s",
                             (uid,)).fetchone()[0] == 2
+    migrator.rollback()
+
+
+@pg
+def test_bundet_grunnkode_paakrevd_og_uforanderlig(migrator):
+    uid, _ = _oppsett(migrator)
+    # NOT NULL: en runde uten bunden grunnkode avvises.
+    assert _raises(migrator, "INSERT INTO godkjenningsrunde (tenant,unntak_id,"
+                   "runde,status,godkjennings_policy_hash,policy_versjon,utloper)"
+                   " VALUES (%s,%s,9,'apen','g','0.2.0',now()+interval '1 hour')",
+                   (TEN, uid))
+    migrator.execute(
+        "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
+        "bundet_grunnkode,godkjennings_policy_hash,policy_versjon,utloper) VALUES"
+        " (%s,%s,1,'apen','belop_over_grense','g','0.2.0',now()+interval '1 hour')",
+        (TEN, uid))
+    # Uforanderlig etter opprettelse (server-utledet, aldri redigerbar).
+    assert _raises(migrator, "UPDATE godkjenningsrunde SET bundet_grunnkode="
+                   "'valuta_ikke_tillatt' WHERE tenant=%s AND unntak_id=%s AND"
+                   " runde=1", (TEN, uid))
     migrator.rollback()
 
 
@@ -107,8 +129,9 @@ def test_runde_livssyklus(migrator):
     uid, _ = _oppsett(migrator)
     migrator.execute(
         "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
-        "godkjennings_policy_hash,policy_versjon,utloper) VALUES"
-        " (%s,%s,1,'klar','gph','0.2.0',now()+interval '1 hour')", (TEN, uid))
+        "bundet_grunnkode,godkjennings_policy_hash,policy_versjon,utloper) VALUES"
+        " (%s,%s,1,'klar','belop_over_grense','gph','0.2.0',now()+interval '1 hour')",
+        (TEN, uid))
     # brukt uten decision_operation_id avvises.
     assert _raises(migrator, "UPDATE godkjenningsrunde SET status='brukt'"
                    " WHERE tenant=%s AND unntak_id=%s AND runde=1", (TEN, uid))
@@ -123,9 +146,10 @@ def test_runde_livssyklus(migrator):
                    " unntak_id=%s AND runde=1", (TEN, uid))
     # to aktive runder samtidig avvises (delindeks en_aktiv_runde).
     assert _raises(migrator, "INSERT INTO godkjenningsrunde (tenant,unntak_id,"
-                   "runde,status,godkjennings_policy_hash,policy_versjon,utloper)"
-                   " VALUES (%s,%s,2,'apen','g','0.2.0',now()+interval '1 hour'),"
-                   " (%s,%s,3,'apen','g','0.2.0',now()+interval '1 hour')",
+                   "runde,status,bundet_grunnkode,godkjennings_policy_hash,"
+                   "policy_versjon,utloper)"
+                   " VALUES (%s,%s,2,'apen','belop_over_grense','g','0.2.0',now()+interval '1 hour'),"
+                   " (%s,%s,3,'apen','belop_over_grense','g','0.2.0',now()+interval '1 hour')",
                    (TEN, uid, TEN, uid))
     migrator.rollback()
 
@@ -136,8 +160,10 @@ def test_godkjenningsutfall_binding(migrator):
     # brukt runde med op-1
     migrator.execute(
         "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
-        "godkjennings_policy_hash,policy_versjon,utloper,decision_operation_id)"
-        " VALUES (%s,%s,1,'brukt','gph','0.2.0',now()+interval '1 hour','op-1')",
+        "bundet_grunnkode,godkjennings_policy_hash,policy_versjon,utloper,"
+        "decision_operation_id)"
+        " VALUES (%s,%s,1,'brukt','belop_over_grense','gph','0.2.0',"
+        "now()+interval '1 hour','op-1')",
         (TEN, uid))
     riktig = migrator.execute(
         "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
@@ -182,8 +208,9 @@ def test_attestasjon_append_only_og_fire_oyne(migrator):
     uid, _ = _oppsett(migrator)
     migrator.execute(
         "INSERT INTO godkjenningsrunde (tenant,unntak_id,runde,status,"
-        "godkjennings_policy_hash,policy_versjon,utloper) VALUES"
-        " (%s,%s,1,'apen','gph','0.2.0',now()+interval '1 hour')", (TEN, uid))
+        "bundet_grunnkode,godkjennings_policy_hash,policy_versjon,utloper) VALUES"
+        " (%s,%s,1,'apen','belop_over_grense','gph','0.2.0',now()+interval '1 hour')",
+        (TEN, uid))
 
     def att(jti, bruker="u1"):
         return ("INSERT INTO menneskelig_attestasjon (tenant,unntak_id,runde,"
