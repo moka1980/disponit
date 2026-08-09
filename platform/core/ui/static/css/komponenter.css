@@ -43,3 +43,141 @@
 }
 
 .mono { font-family: var(--font-mono); }
+.muted { color: var(--muted); }
+
+/* BeslutningBadge — farge + glyf + tekst (aldri farge alene) */
+.merke {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3); border-radius: var(--radius-sm);
+  font-weight: 600; border: 1px solid transparent;
+}
+.merke-glyf { font-weight: 700; }
+.merke.tillat { background: var(--auto-bg); color: var(--auto);
+  border-color: var(--auto); }
+.merke.stopp  { background: var(--danger-bg); color: var(--danger);
+  border-color: var(--danger); }
+.merke.unntak { background: var(--guard-bg); color: var(--guard);
+  border-color: var(--guard); }
+
+/* KategoriTag */
+.tag {
+  display: inline-block; padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm); background: var(--info-bg);
+  color: var(--info);
+}
+
+/* BegrunnelseKjede / KodeForklaring */
+.kjede { margin: 0; padding-left: var(--sp-6); display: grid;
+  gap: var(--sp-2); }
+.kode-raa { color: var(--muted); }
+
+/* StatusTidslinje */
+.tidslinje { list-style: none; margin: 0; padding: 0; display: grid;
+  gap: var(--sp-4); }
+.tidslinje-steg { display: flex; gap: var(--sp-3); align-items: flex-start; }
+.tidslinje-glyf { color: var(--info); }
+.tidslinje-hendelse { font-weight: 600; }
+
+/* VarselBanner */
+.banner {
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--info-bg);
+  color: var(--info); margin-bottom: var(--sp-4);
+}
+.banner.guard { background: var(--guard-bg); color: var(--guard); }
+.banner.fare  { background: var(--danger-bg); color: var(--danger); }
+
+/* DataTabell */
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+caption { text-align: left; }
+th, td {
+  text-align: left; padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line); vertical-align: top;
+}
+th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.sort-knapp {
+  font: inherit; font-weight: 600; color: var(--muted);
+  background: none; border: 0; cursor: pointer; padding: 0;
+}
+th[aria-sort="ascending"] .sort-knapp::after { content: " ▲"; }
+th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
+.lenkeknapp {
+  background: none; border: 0; color: var(--info); cursor: pointer;
+  font: inherit; padding: 0; text-decoration: underline;
+}
+
+/* CursorNavigasjon */
+.cursornav { display: flex; gap: var(--sp-2); margin-top: var(--sp-4); }
+
+/* Språkvelger */
+.sprakvelger {
+  font: inherit; padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink);
+}
+
+/* Nøkkel/verdi-liste (detaljpanel) */
+.kv { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr;
+  gap: var(--sp-2) var(--sp-4); margin: 0; }
+.kv dt { color: var(--muted); font-weight: 600; }
+.kv dd { margin: 0; }
+
+/* Overlegg + Dialog (Detaljpanel / Bekreftelse) */
+.overlegg {
+  position: fixed; inset: 0; z-index: var(--z-overlegg);
+  background: var(--teppe);
+  display: flex; justify-content: flex-end;
+}
+.dialog {
+  background: var(--card); color: var(--ink);
+  box-shadow: var(--skygge-skuff); display: flex; flex-direction: column;
+  max-height: 100%;
+}
+.dialog.skuff { width: min(30rem, 100%); height: 100%; }
+.dialog.bekreft {
+  margin: auto; width: min(28rem, 92%); height: auto;
+  border-radius: var(--radius); box-shadow: var(--skygge);
+}
+.overlegg:has(.bekreft) { align-items: center; justify-content: center; }
+.dialog-topp {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-4); padding: var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+.dialog-tittel { margin: 0; font-size: 1.1rem; }
+.dialog-lukk {
+  background: none; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); cursor: pointer; padding: var(--sp-1) var(--sp-2);
+  color: var(--ink);
+}
+.dialog-kropp { padding: var(--sp-4); overflow-y: auto; display: grid;
+  gap: var(--sp-4); }
+.dialog-bunn { display: flex; gap: var(--sp-2); justify-content: flex-end;
+  padding: var(--sp-4); border-top: 1px solid var(--line); }
+
+/* Oversikt-kort */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--sp-4); margin-bottom: var(--sp-6); }
+.stat { background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-4); box-shadow: var(--skygge); }
+.stat b { display: block; font-size: 1.8rem; }
+.stat span { color: var(--muted); }
+.stat.tillat b { color: var(--auto); }
+.stat.stopp b { color: var(--danger); }
+.stat.unntak b { color: var(--guard); }
+
+/* Policy-visning */
+.policy-sec { margin-bottom: var(--sp-6); }
+.rule { padding: var(--sp-3); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); margin-bottom: var(--sp-2); }
+
+/* Filterbar (beslutninger) */
+.filterbar { display: flex; gap: var(--sp-2); flex-wrap: wrap;
+  margin-bottom: var(--sp-4); }
+.filterbar button[aria-pressed="true"] {
+  background: var(--info); color: var(--card); border-color: var(--info);
+}
+
+h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
+.sub { color: var(--muted); margin: 0 0 var(--sp-6); }
