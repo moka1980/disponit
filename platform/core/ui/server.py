@@ -13,6 +13,8 @@ en pool er tom. Rene funksjoner, ren lesing fra disk, lukket filallowlist.
 """
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 from starlette.requests import Request
@@ -39,13 +41,30 @@ _CT = {
     ".woff2": "font/woff2",
 }
 
-# --- UI-CSP (klarsignal V4, ordrett) ---------------------------------------
-UI_CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; "
-    "connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; "
-    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
-    "manifest-src 'self'; upgrade-insecure-requests"
-)
+# --- UI-CSP (klarsignal V4 + PR-011b-korreksjon) ---------------------------
+# V4 spesifiserte `form-action 'self'`. Men innloggingen er en native-form-POST
+# til /v1/oidc/start som 303-redirecter til IdP-en (accounts.google.com m.fl.);
+# `form-action 'self'` BLOKKERER den redirecten i browseren (funnet da eier
+# klikket — E2E-en brukte injisert øktcookie og traff aldri den ekte veien).
+# form-action MÅ derfor tillate providerens autorisasjons-origin. Origin(ene)
+# er deploy-spesifikke → env `DISPONIT_UI_IDP_ORIGINS` (mellomrom-separert),
+# tom = kun 'self' (utvikling/CI). Ingen hardkodet provider i repoet.
+def bygg_ui_csp(idp_origins: str) -> str:
+    """UI-CSP med form-action = 'self' + deploy-satte IdP-origins. Samme
+    funksjon brukes av appen og av parity-testen mot nginx-malen, så de kan
+    ikke drive fra hverandre."""
+    origins = (idp_origins or "").strip()
+    form_action = "form-action 'self'" + (f" {origins}" if origins else "")
+    return (
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; "
+        f"base-uri 'none'; frame-ancestors 'none'; {form_action}; "
+        "manifest-src 'self'; upgrade-insecure-requests"
+    )
+
+
+_IDP_ORIGINS = os.environ.get("DISPONIT_UI_IDP_ORIGINS", "").strip()
+UI_CSP = bygg_ui_csp(_IDP_ORIGINS)
 
 #: Speiler nginx' øvrige responsheadere (PR-009b) — settes her fordi UI-svar
 #: forlater appen, og UI-location i nginx bevisst IKKE re-erklærer CSP.
@@ -126,4 +145,17 @@ def ui_locale(request: Request) -> Response:
     data = _les_trygt(LOCALES, LOCALES / f"{sprak}.json")
     if data is None:
         return Response("Not Found", status_code=404)
+    return _svar(data, _CT[".json"])
+
+
+# ---------------------------------------------------------------------------
+# GET /ui/oppsett.json — provider-valg for innloggingsformen (deploy-satt).
+# DYNAMISK, ikke statisk fil: `DISPONIT_UI_PROVIDER` settes ved deploy, så en
+# redeploy aldri resetter provideren til en test-verdi. Tom → innloggings-
+# flaten viser «ikke konfigurert» i stedet for å poste en ugyldig provider.
+# ---------------------------------------------------------------------------
+
+def ui_oppsett(request: Request) -> Response:
+    provider = os.environ.get("DISPONIT_UI_PROVIDER", "").strip()
+    data = json.dumps({"provider_id": provider}).encode("utf-8")
     return _svar(data, _CT[".json"])

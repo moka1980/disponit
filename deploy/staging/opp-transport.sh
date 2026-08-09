@@ -19,6 +19,12 @@ set -euo pipefail
 
 HOST="${DISPONIT_HOST:-disponit.com}"
 ACME_EPOST="${DISPONIT_ACME_EPOST:-eliassi@gmail.com}"
+# PR-011b: IdP-origins for UI-ets form-action-CSP hentes fra staging.env
+# (deploy-satt, aldri hardkodet i malen). Tom → kun 'self'.
+MILJOFIL=/etc/disponit/staging.env
+[ -f "$MILJOFIL" ] && { set -a; . "$MILJOFIL"; set +a; }
+HOST="${DISPONIT_HOST:-$HOST}"
+IDP_ORIGINS="${DISPONIT_UI_IDP_ORIGINS:-}"
 ROT=/opt/disponit
 # Filene tas fra DENNE scriptets eget tre — ikke fra `aktiv`-symlinken,
 # som kan peke på en eldre release uten transport-malene. Fornyelses-hooken
@@ -62,11 +68,13 @@ chmod +x "$KILDE/deploy/staging/nginx-fornyelse-hook.sh"
 install -m 644 "$MAL/rate-soner.conf" /etc/nginx/conf.d/disponit-rate.conf
 
 rendr() {  # <template> <mål>
-  sed "s/\${DISPONIT_HOST}/$HOST/g" "$1" > "$2"
+  sed -e "s/\${DISPONIT_HOST}/$HOST/g" \
+      -e "s|\${DISPONIT_UI_IDP_ORIGINS}|$IDP_ORIGINS|g" "$1" > "$2"
 }
 rendr_ut() {  # <template> -> stdout (uten redirect — `> /dev/stdout` i en
               # gruppe-redirect gjør O_TRUNC på fila og sletter forrige blokk)
-  sed "s/\${DISPONIT_HOST}/$HOST/g" "$1"
+  sed -e "s/\${DISPONIT_HOST}/$HOST/g" \
+      -e "s|\${DISPONIT_UI_IDP_ORIGINS}|$IDP_ORIGINS|g" "$1"
 }
 
 # --- 1. HTTP-konfig ALENE → validér → reload ------------------------------

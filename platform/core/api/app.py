@@ -682,6 +682,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # ville {sti:path} slukt "locale/nb".
         Route("/", uiserver.ui_index, methods=["GET"]),
         Route("/ui/locale/{sprak}", uiserver.ui_locale, methods=["GET"]),
+        # /ui/oppsett.json er DYNAMISK (deploy-satt provider), registreres FØR
+        # den generelle asset-ruten som ellers ville slukt den.
+        Route("/ui/oppsett.json", uiserver.ui_oppsett, methods=["GET"]),
         Route("/ui/{sti:path}", uiserver.ui_asset, methods=["GET"]),
     ])
     app.state.tjeneste = tjeneste

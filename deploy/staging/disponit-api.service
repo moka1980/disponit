@@ -38,6 +38,10 @@ LoadCredential=DATABASE_URL:/etc/disponit/api/DATABASE_URL
 LoadCredential=DISPONIT_KEK:/etc/disponit/api/DISPONIT_KEK
 LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/api/DISPONIT_TOKEN_PEPPER
 LoadCredential=DISPONIT_ATT_NOKLER:/etc/disponit/api/DISPONIT_ATT_NOKLER
+# PR-011b: UI-provider + IdP-origins (deploy-config, ikke hemmeligheter, men
+# samme LoadCredential-hydrering til os.environ). Tomme filer = trygg default.
+LoadCredential=DISPONIT_UI_PROVIDER:/etc/disponit/api/DISPONIT_UI_PROVIDER
+LoadCredential=DISPONIT_UI_IDP_ORIGINS:/etc/disponit/api/DISPONIT_UI_IDP_ORIGINS
 
 # access_log=False: uvicorns ASGI-access-logg skriver hele request-linjen
 # — inkludert en callback-query — til journald. Det er den FEMTE logglag-

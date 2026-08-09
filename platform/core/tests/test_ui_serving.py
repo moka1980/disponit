@@ -22,6 +22,7 @@ def _klient() -> TestClient:
     app = Starlette(routes=[
         Route("/", uiserver.ui_index, methods=["GET"]),
         Route("/ui/locale/{sprak}", uiserver.ui_locale, methods=["GET"]),
+        Route("/ui/oppsett.json", uiserver.ui_oppsett, methods=["GET"]),
         Route("/ui/{sti:path}", uiserver.ui_asset, methods=["GET"]),
     ])
     return TestClient(app)
@@ -137,17 +138,43 @@ def test_ingen_innerhtml_eller_eval_i_js():
 
 
 def test_nginx_ui_location_setter_samme_ui_csp_og_skjuler_oppstrom():
-    # UI-CSP-en i nginx-malen må være ORDRETT lik appens konstant — ellers
-    # kan de to drive fra hverandre uten at noe merker det. Og hver UI-
-    # location må skjule oppstrøms-CSP så UI-svaret bærer nøyaktig én.
+    # Nginx-malen bruker ${DISPONIT_UI_IDP_ORIGINS}-plassholder for form-action
+    # (deploy-substituert). Med SAMME origins må rendret nginx-CSP være ORDRETT
+    # lik appens bygg_ui_csp(origins) — bygget av samme funksjon, så de ikke
+    # kan drive fra hverandre.
     mal = (Path(uiserver._ROT) / "deploy" / "staging" / "nginx"
            / "disponit-https.conf.template").read_text(encoding="utf-8")
     assert "location = / {" in mal and "location /ui/ {" in mal
     assert mal.count("proxy_hide_header Content-Security-Policy;") >= 2
-    assert mal.count(f'"{uiserver.UI_CSP}"') >= 2, \
-        "nginx UI-CSP matcher ikke uiserver.UI_CSP ordrett"
+    assert "${DISPONIT_UI_IDP_ORIGINS}" in mal, "form-action ikke plassholder-drevet"
+    origins = "https://accounts.google.com"
+    rendret = mal.replace("${DISPONIT_UI_IDP_ORIGINS}", origins)
+    forventet = uiserver.bygg_ui_csp(origins)
+    assert rendret.count(f'"{forventet}"') >= 2, \
+        "rendret nginx UI-CSP matcher ikke bygg_ui_csp(origins)"
     # API-ets strenge CSP står fortsatt (server-nivå) for /v1-stiene.
     assert "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" in mal
+
+
+def test_form_action_er_env_drevet():
+    # Uten env: kun 'self'. Med IdP-origin: den er lagt til (V4-korreksjon).
+    assert uiserver.bygg_ui_csp("") .count("form-action 'self';") == 1
+    csp = uiserver.bygg_ui_csp("https://accounts.google.com")
+    assert "form-action 'self' https://accounts.google.com;" in csp
+
+
+def test_oppsett_json_er_env_drevet(monkeypatch):
+    # provider_id kommer fra DISPONIT_UI_PROVIDER (deploy-satt), aldri en
+    # statisk fil i repoet — så en redeploy ikke resetter den.
+    monkeypatch.setenv("DISPONIT_UI_PROVIDER", "google")
+    r = _klient().get("/ui/oppsett.json")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/json; charset=utf-8"
+    assert json.loads(r.text) == {"provider_id": "google"}
+    monkeypatch.delenv("DISPONIT_UI_PROVIDER", raising=False)
+    assert json.loads(_klient().get("/ui/oppsett.json").text) == {"provider_id": ""}
+    # ingen statisk oppsett.json igjen i repoet
+    assert not (uiserver.STATISK / "oppsett.json").exists()
 
 
 def test_ingen_hardkodet_farge_eller_avstand_i_ui_css():
