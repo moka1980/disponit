@@ -200,5 +200,15 @@
   "hendelse.sen_kvittering": "Late receipt",
   "hendelse.motstridende_kvittering": "Conflicting receipt",
   "hendelse.verifikasjon": "Verification",
-  "hendelse.terminal": "Closed"
+  "hendelse.terminal": "Closed",
+  "hendelse.statusendring": "Status change",
+  "hendelse.dek_utilgjengelig": "Encryption key unavailable",
+  "hendelse.retry": "Retry",
+  "hendelse.verifikasjon_bestilt": "Verification requested",
+  "hendelse.verifikasjon_klar": "Verification ready",
+  "hendelse.verifikasjon_positiv": "Verification positive",
+  "hendelse.verifikasjon_negativ": "Verification negative",
+  "hendelse.verifikasjon_retry": "Verification — retry",
+  "hendelse.verifikasjon_utlopt": "Verification expired",
+  "hendelse.verifikasjon_konflikt": "Verification conflict"
 }

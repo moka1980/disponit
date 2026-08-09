@@ -200,5 +200,15 @@
   "hendelse.sen_kvittering": "Sen kvittering",
   "hendelse.motstridende_kvittering": "Motstridende kvittering",
   "hendelse.verifikasjon": "Verifikasjon",
-  "hendelse.terminal": "Avsluttet"
+  "hendelse.terminal": "Avsluttet",
+  "hendelse.statusendring": "Statusendring",
+  "hendelse.dek_utilgjengelig": "Krypteringsnøkkel utilgjengelig",
+  "hendelse.retry": "Nytt forsøk",
+  "hendelse.verifikasjon_bestilt": "Verifikasjon bestilt",
+  "hendelse.verifikasjon_klar": "Verifikasjon klar",
+  "hendelse.verifikasjon_positiv": "Verifikasjon positiv",
+  "hendelse.verifikasjon_negativ": "Verifikasjon negativ",
+  "hendelse.verifikasjon_retry": "Verifikasjon — nytt forsøk",
+  "hendelse.verifikasjon_utlopt": "Verifikasjon utløpt",
+  "hendelse.verifikasjon_konflikt": "Verifikasjon i konflikt"
 }
