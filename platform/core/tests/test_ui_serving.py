@@ -22,6 +22,7 @@ def _klient() -> TestClient:
     app = Starlette(routes=[
         Route("/", uiserver.ui_index, methods=["GET"]),
         Route("/ui/locale/{sprak}", uiserver.ui_locale, methods=["GET"]),
+        Route("/ui/oppsett.json", uiserver.ui_oppsett, methods=["GET"]),
         Route("/ui/{sti:path}", uiserver.ui_asset, methods=["GET"]),
     ])
     return TestClient(app)
@@ -137,17 +138,107 @@ def test_ingen_innerhtml_eller_eval_i_js():
 
 
 def test_nginx_ui_location_setter_samme_ui_csp_og_skjuler_oppstrom():
-    # UI-CSP-en i nginx-malen må være ORDRETT lik appens konstant — ellers
-    # kan de to drive fra hverandre uten at noe merker det. Og hver UI-
-    # location må skjule oppstrøms-CSP så UI-svaret bærer nøyaktig én.
+    # Nginx-malen bruker ${DISPONIT_UI_IDP_ORIGINS}-plassholder for form-action
+    # (deploy-substituert). Med SAMME origins må rendret nginx-CSP være ORDRETT
+    # lik appens bygg_ui_csp(origins) — bygget av samme funksjon, så de ikke
+    # kan drive fra hverandre.
     mal = (Path(uiserver._ROT) / "deploy" / "staging" / "nginx"
            / "disponit-https.conf.template").read_text(encoding="utf-8")
     assert "location = / {" in mal and "location /ui/ {" in mal
     assert mal.count("proxy_hide_header Content-Security-Policy;") >= 2
-    assert mal.count(f'"{uiserver.UI_CSP}"') >= 2, \
-        "nginx UI-CSP matcher ikke uiserver.UI_CSP ordrett"
+    assert "${DISPONIT_UI_IDP_ORIGINS}" in mal, "form-action ikke plassholder-drevet"
+    origins = "https://accounts.google.com"
+    rendret = mal.replace("${DISPONIT_UI_IDP_ORIGINS}", origins)
+    forventet = uiserver.bygg_ui_csp(origins)
+    assert rendret.count(f'"{forventet}"') >= 2, \
+        "rendret nginx UI-CSP matcher ikke bygg_ui_csp(origins)"
     # API-ets strenge CSP står fortsatt (server-nivå) for /v1-stiene.
     assert "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" in mal
+
+
+def test_form_action_er_env_drevet():
+    # Uten env: kun 'self'. Med IdP-origin: den er lagt til (V4-korreksjon).
+    assert uiserver.bygg_ui_csp("") .count("form-action 'self';") == 1
+    csp = uiserver.bygg_ui_csp("https://accounts.google.com")
+    assert "form-action 'self' https://accounts.google.com;" in csp
+
+
+@pytest.mark.parametrize("ondt", [
+    "https://ok.example; script-src *",          # CSP-direktiv-injeksjon
+    'https://ok.example" ; add_header Evil x',   # anførsel + nginx-direktiv
+    "https://ok.example\nadd_header Evil x",     # linjeskift-injeksjon
+    "https://a|b",                               # sed-metategn
+    "https://a&b.example",                       # sed &
+    "http://ok.example",                         # feil skjema
+    "javascript:alert(1)",                       # farlig skjema
+    "https://user:pw@ok.example",                # userinfo
+    "https://ok.example/path",                   # path
+    "https://ok.example?q=1",                    # query
+    "https://ok.example#frag",                   # fragment
+    "https://ok.example:99999",                  # port utenfor u16
+    "https://ok.example:abc",                    # ikke-numerisk port
+    "https://-leading.example",                  # ugyldig label
+    "'self'",                                    # CSP-nøkkelord, ikke origin
+    "*",
+])
+def test_idp_origins_injeksjon_forkastes(ondt):
+    # Fail-closed: kun rene kanoniske origins kan overleve; ingen metategn og
+    # ingen fremmed direktiv slipper inn i CSP-en. (Noen input har en gyldig
+    # origin FØR søppelet — den delen beholdes, injeksjonen forkastes.)
+    for o in uiserver.kanoniske_idp_origins(ondt):
+        # Kanonisk origin har KUN https://host[:port] — ingen av disse metategn
+        # (/ og : er lovlige i selve origin-strengen).
+        assert o.startswith("https://")
+        assert not (set(o) & set(' ";\n\t|&*\\<>#?@')), f"metategn i {o!r}"
+    csp = uiserver.bygg_ui_csp(ondt)
+    for forbudt in ("script-src *", "add_header", "\n", '"', ";add", "|", "&",
+                    "javascript:", "*;", "user:pw"):
+        assert forbudt not in csp.replace("script-src 'self'", ""), \
+            f"{forbudt!r} lekket inn i CSP fra {ondt!r}"
+    # streng-modus (deploy) KASTER på ethvert ugyldig token (fail-closed).
+    with pytest.raises(ValueError):
+        uiserver.kanoniske_idp_origins_streng(ondt)
+
+
+def test_idp_origins_gyldige_kanoniseres_og_dedupes():
+    assert uiserver.kanoniske_idp_origins("https://accounts.google.com") \
+        == ["https://accounts.google.com"]
+    # skjema/vert lowercases; port beholdes
+    assert uiserver.kanoniske_idp_origins("HTTPS://Accounts.Google.COM:443") \
+        == ["https://accounts.google.com:443"]
+    # flere + dedup, stabil rekkefølge
+    assert uiserver.kanoniske_idp_origins(
+        "https://a.example https://a.example https://b.example") \
+        == ["https://a.example", "https://b.example"]
+    # streng-serializer joiner med mellomrom (trygt for sed/CSP)
+    assert uiserver.kanoniske_idp_origins_streng(
+        "https://a.example https://b.example:8443") \
+        == "https://a.example https://b.example:8443"
+    # bygg_ui_csp legger dem i form-action
+    csp = uiserver.bygg_ui_csp("https://accounts.google.com")
+    assert "form-action 'self' https://accounts.google.com;" in csp
+
+
+def test_oppsett_provider_id_fail_closed(monkeypatch):
+    # Ugyldig provider (injeksjonsforsøk / rare tegn) → tom, ikke rå passthrough.
+    for ondt in ('a"b', "a b", "a;b", "../x", "A".ljust(65, "A")):
+        monkeypatch.setenv("DISPONIT_UI_PROVIDER", ondt)
+        assert json.loads(_klient().get("/ui/oppsett.json").text) \
+            == {"provider_id": ""}, ondt
+
+
+def test_oppsett_json_er_env_drevet(monkeypatch):
+    # provider_id kommer fra DISPONIT_UI_PROVIDER (deploy-satt), aldri en
+    # statisk fil i repoet — så en redeploy ikke resetter den.
+    monkeypatch.setenv("DISPONIT_UI_PROVIDER", "google")
+    r = _klient().get("/ui/oppsett.json")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/json; charset=utf-8"
+    assert json.loads(r.text) == {"provider_id": "google"}
+    monkeypatch.delenv("DISPONIT_UI_PROVIDER", raising=False)
+    assert json.loads(_klient().get("/ui/oppsett.json").text) == {"provider_id": ""}
+    # ingen statisk oppsett.json igjen i repoet
+    assert not (uiserver.STATISK / "oppsett.json").exists()
 
 
 def test_ingen_hardkodet_farge_eller_avstand_i_ui_css():

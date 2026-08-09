@@ -19,6 +19,12 @@ set -euo pipefail
 
 HOST="${DISPONIT_HOST:-disponit.com}"
 ACME_EPOST="${DISPONIT_ACME_EPOST:-eliassi@gmail.com}"
+# PR-011b: IdP-origins for UI-ets form-action-CSP hentes fra staging.env
+# (deploy-satt, aldri hardkodet i malen). Tom → kun 'self'.
+MILJOFIL=/etc/disponit/staging.env
+[ -f "$MILJOFIL" ] && { set -a; . "$MILJOFIL"; set +a; }
+HOST="${DISPONIT_HOST:-$HOST}"
+IDP_ORIGINS_RAA="${DISPONIT_UI_IDP_ORIGINS:-}"
 ROT=/opt/disponit
 # Filene tas fra DENNE scriptets eget tre — ikke fra `aktiv`-symlinken,
 # som kan peke på en eldre release uten transport-malene. Fornyelses-hooken
@@ -26,6 +32,18 @@ ROT=/opt/disponit
 HER=$(cd "$(dirname "$0")" && pwd)
 KILDE=$(cd "$HER/../.." && pwd)
 MAL="$HER/nginx"
+
+# P1 (Codex): IdP-origins interpoleres i nginx-konfig — MÅ kanoniseres og
+# valideres FØR substitusjon, ellers kunne et sed-/CSP-metategn endret
+# konfigurasjonen. Samme parser som appen (ui.server), STRENG-modus: en
+# ugyldig origin AVBRYTER utrullingen (fail-closed), i stedet for å rendre
+# en svekket policy. Utdata er kun `https://host[:port]` mellomrom-joinet.
+IDP_ORIGINS=$(PYTHONPATH="$KILDE/platform/core" "$ROT/.venv/bin/python" -c \
+  'import sys; from ui.server import kanoniske_idp_origins_streng as k; sys.stdout.write(k(sys.argv[1]))' \
+  "$IDP_ORIGINS_RAA") || {
+    echo "AVBRUTT: DISPONIT_UI_IDP_ORIGINS har en ugyldig HTTPS-origin — rendrer ikke nginx (fail-closed)." >&2
+    exit 1
+  }
 LAAS=/var/lock/disponit-transport.lock
 
 exec 9>"$LAAS"
@@ -62,11 +80,13 @@ chmod +x "$KILDE/deploy/staging/nginx-fornyelse-hook.sh"
 install -m 644 "$MAL/rate-soner.conf" /etc/nginx/conf.d/disponit-rate.conf
 
 rendr() {  # <template> <mål>
-  sed "s/\${DISPONIT_HOST}/$HOST/g" "$1" > "$2"
+  sed -e "s/\${DISPONIT_HOST}/$HOST/g" \
+      -e "s|\${DISPONIT_UI_IDP_ORIGINS}|$IDP_ORIGINS|g" "$1" > "$2"
 }
 rendr_ut() {  # <template> -> stdout (uten redirect — `> /dev/stdout` i en
               # gruppe-redirect gjør O_TRUNC på fila og sletter forrige blokk)
-  sed "s/\${DISPONIT_HOST}/$HOST/g" "$1"
+  sed -e "s/\${DISPONIT_HOST}/$HOST/g" \
+      -e "s|\${DISPONIT_UI_IDP_ORIGINS}|$IDP_ORIGINS|g" "$1"
 }
 
 # --- 1. HTTP-konfig ALENE → validér → reload ------------------------------

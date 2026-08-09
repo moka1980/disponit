@@ -87,6 +87,10 @@ skriv_cred api DATABASE_URL          "$DATABASE_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
+# PR-011b: UI-deploy-config (provider-valg + IdP-origins). Ikke hemmeligheter,
+# men hydreres til os.environ via samme LoadCredential-vei. Tomme = default.
+skriv_cred api DISPONIT_UI_PROVIDER    "${DISPONIT_UI_PROVIDER:-}"
+skriv_cred api DISPONIT_UI_IDP_ORIGINS "${DISPONIT_UI_IDP_ORIGINS:-}"
 # Arbeideren får sin EGEN DB-rolle (v2 §3) når DISPONIT_ARBEIDER_URL er
 # satt av oppsett-postgresql.sh; ellers deler den runtime-DSN-en og det
 # rapporteres som avvik nederst.
