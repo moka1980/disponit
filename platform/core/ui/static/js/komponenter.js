@@ -189,16 +189,28 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     tenant ? el("span", { class: "skall-tenant", text: tenant }) : null,
     el("div", { class: "skall-hoyre" }, velger, loggUt));
 
+  const lenker = new Map();
   const nav = el("nav", { class: "skall-nav", "aria-label": t("app.navn") },
     ruter.map((r) => {
       const attrs = { href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) };
       if (r.nokkel === aktiv) attrs["aria-current"] = "page";
-      return el("a", attrs);
+      const a = el("a", attrs);
+      lenker.set(r.nokkel, a);
+      return a;
     }));
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved",
     tabindex: "-1" });
 
+  // Oppdater aktiv nav-lenke på plass (aria-current) — rebygger ikke nav, så
+  // fokus og referanser holder.
+  function settAktiv(nokkel) {
+    for (const [k, a] of lenker) {
+      if (k === nokkel) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    }
+  }
+
   const rot = el("div", { class: "skall" }, topp, nav, hoved);
-  return { rot, hoved };
+  return { rot, hoved, settAktiv };
 }

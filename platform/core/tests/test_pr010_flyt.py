@@ -61,6 +61,23 @@ def test_p1_retursti_kun_lokal_absolutte_path(raa, forventet):
     assert trygg_retursti(raa) == forventet
 
 
+def test_les_startkropp_godtar_bade_json_og_form():
+    """V2 (PR-011): native <form> sender urlencoded; JSON-veien er uendret."""
+    import json as _j
+    from api.sesjon import les_startkropp
+    assert les_startkropp("application/json",
+                          _j.dumps({"provider_id": "e2e"}).encode()) \
+        == {"provider_id": "e2e"}
+    assert les_startkropp("", b"") == {}
+    assert les_startkropp("application/x-www-form-urlencoded",
+                          b"provider_id=e2e&retursti=%2F") \
+        == {"provider_id": "e2e", "retursti": "/"}
+    assert les_startkropp("application/x-www-form-urlencoded; charset=utf-8",
+                          b"provider_id=e2e") == {"provider_id": "e2e"}
+    with pytest.raises(ValueError):
+        les_startkropp("application/json", b"{ikke json")
+
+
 def _seed(migrator, roller=("leser",)):
     """Provider + tenant-binding + identitet + medlemskap for TFLYT."""
     _ctx(migrator, TFLYT)

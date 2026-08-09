@@ -181,3 +181,12 @@ th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
 
 h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .sub { color: var(--muted); margin: 0 0 var(--sp-6); }
+.legend { margin-top: var(--sp-4); }
+
+/* Lister (policy, roller) */
+.liste, .grenser { margin: 0; padding-left: var(--sp-6); display: grid;
+  gap: var(--sp-1); }
+
+/* Innloggingsflate */
+.innlogging { max-width: 28rem; }
+.innlogging-form { margin-top: var(--sp-6); }

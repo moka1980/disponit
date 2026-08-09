@@ -211,6 +211,21 @@ def _cred_env() -> dict:
 # POST /v1/oidc/start (v5 §1) → 303
 # ---------------------------------------------------------------------------
 
+def les_startkropp(content_type: str, raa: bytes) -> dict:
+    """Parse /oidc/start-kroppen. V2 (PR-011): innlogging skjer som TOPPNIVÅ-
+    navigasjon via et ordinært <form method="post">, som sender
+    application/x-www-form-urlencoded — ikke JSON. Vi tar imot begge:
+    JSON-veien er uendret (byte-for-byte), form-veien er additiv. Begge
+    kroppene går gjennom NØYAKTIG samme Origin/Sec-Fetch- og
+    provider-validering i handleren. Kaster ValueError ved uleselig kropp.
+    """
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct == "application/x-www-form-urlencoded":
+        from urllib.parse import parse_qsl
+        return dict(parse_qsl(raa.decode("utf-8"), keep_blank_values=True))
+    return json.loads(raa.decode("utf-8")) if raa else {}
+
+
 def oidc_start(tjeneste, request: Request) -> Response:
     from .app import _rid, _feilsvar, kanonisk_json
     rid = _rid(request)
@@ -239,8 +254,8 @@ def oidc_start(tjeneste, request: Request) -> Response:
         tenant = _tenant_fra_host(tjeneste, request)
         raa = request.scope.get("state", {}).get("kropp", b"")
         try:
-            data = json.loads(raa.decode("utf-8")) if raa else {}
-        except Exception:
+            data = les_startkropp(request.headers.get("content-type", ""), raa)
+        except ValueError:
             return _feilsvar("request_feilformet", rid)
         provider_id = data.get("provider_id")
         if not isinstance(provider_id, str) or not tenant:
