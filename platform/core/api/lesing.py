@@ -442,6 +442,16 @@ def _tillatte_handlinger(conn, tenant, handling, status, begrunnelse,
     return handlinger, "ikke_godkjennbar_grunn"
 
 
+def _har_utestaaende(conn, tenant: str, uid: int) -> bool:
+    """Gate 14a (presentasjon): har saken et LEVENDE oppdrag/kapabilitet?
+    Leser gjennom NØYAKTIG samme autoritative DB-funksjon som POST-vakten
+    (`sak_utestaaende`, SECURITY DEFINER), så lese-API-et aldri inviterer til
+    en `avvis` serverkontrakten allerede vet er utilgjengelig."""
+    rad = conn.execute("SELECT 1 FROM sak_utestaaende(%s,%s) LIMIT 1",
+                       (tenant, uid)).fetchone()
+    return rad is not None
+
+
 def unntak_detalj(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         try:
@@ -455,6 +465,13 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
         # Payload/attestasjoner/nøkler hentes ikke engang fra databasen.
         handlinger, aarsak = _tillatte_handlinger(
             conn, auth.tenant, rad[2], rad[5], rad[7], rad[8], rad[10])
+        # Gate 14a: er et oppdrag/kapabilitet utestående, er `avvis` utilgjengelig
+        # (POST-vakten svarer 409 `utestaaende_oppdrag`) — skjul den her med den
+        # lukkede årsaken, så UI-et forklarer det FØR brukeren prøver.
+        avvis_aarsak = None
+        if "avvis" in handlinger and _har_utestaaende(conn, auth.tenant, uid):
+            handlinger = [h for h in handlinger if h != "avvis"]
+            avvis_aarsak = "utestaaende_oppdrag"
         kropp = {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
                  "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
                  "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
@@ -462,6 +479,8 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
                  "request_id": rid}
         if aarsak is not None:
             kropp["godkjenn_utilgjengelig"] = aarsak
+        if avvis_aarsak is not None:
+            kropp["avvis_utilgjengelig"] = avvis_aarsak
         return kanonisk_json(kropp, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "exceptions:read", _fn)
 

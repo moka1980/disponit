@@ -193,6 +193,76 @@ def _handle(conn, reg, uid, oh, bid, *, sv=None, idem=None):
         idempotency_key=idem, input_hash=ih, naa=NAA)
 
 
+def _claimet_oppdrag_med_kvittering(conn, uid: int) -> str:
+    """Plukket, owner-claimet oppdrag + EKTE utstedt kvitteringskapabilitet
+    (M-37s faktiske kvitteringsvei). Returnerer kvitterings-jti."""
+    sett_tenant(conn, TENANT)
+    lid, key_id = conn.execute("SELECT loggpost_id, key_id FROM unntak WHERE"
+                               " tenant=%s AND id=%s", (TENANT, uid)).fetchone()
+    conn.rollback()
+    m = koble(MIGRATOR)
+    sett_kontekst(m, TENANT, "sys", "r0")
+    rop, cid = secrets.token_hex(32), secrets.token_hex(16)
+    m.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant,unntak_id,"
+        "repair_operation_id,repair_generation,handler_id,handler_versjon,"
+        "maalhandling,input_hash,kategori,status) VALUES (%s,%s,%s,0,'h','v',"
+        "'faktura.bokfor',%s,'over_grense','aktiv')",
+        (TENANT, uid, rop, secrets.token_hex(32)))
+    blid = m.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,idempotency_key,kilde) VALUES (%s,'h','p','TILLAT',"
+        "'[]'::jsonb,%s,'arbeidskapabilitet') RETURNING id",
+        (TENANT, rop)).fetchone()[0]
+    opp = m.execute(
+        "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+        "oppdragstype,handling,eiermodul,status,payload_kryptert,key_id,nonce,"
+        "utforelsesfrist,evidensfrist,koblingsstatus,beslutning_loggpost_id,"
+        "owner_claim_id,owner_generation,owner_lease_utloper) VALUES (%s,%s,%s,"
+        "%s,'reparasjon','faktura.bokfor','eier:reinns','plukket',%s,%s,%s,"
+        "now()+interval '1 hour',now()+interval '2 hour','KOBLET',%s,%s,0,"
+        "now()+interval '1 hour') RETURNING id",
+        (TENANT, uid, lid, rop, b"\x00", key_id, b"\x00" * 12, blid, cid)
+    ).fetchone()[0]
+    m.commit()
+    m.close()
+    r = koble(DSN)
+    sett_kontekst(r, TENANT, "sys", "r0")
+    jti = secrets.token_hex(16)
+    r.execute("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,0,%s)",
+              (opp, cid, jti))
+    r.commit()
+    r.close()
+    return jti
+
+
+def _kvitter(jti: str) -> str:
+    """Eiermodulens EKTE kvittering (`bruk_kvitteringskapabilitet`). -> utfall."""
+    r = koble(DSN)
+    sett_kontekst(r, TENANT, "sys", "r0")
+    try:
+        return r.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                         (jti, "a" * 64)).fetchone()[0]
+    finally:
+        r.commit()
+        r.close()
+
+
+def _kap_brukt(jti: str) -> bool:
+    # kvitteringskapabiliteter er m37_claimer-eid; migrator SET ROLE for lesning.
+    m = koble(MIGRATOR)
+    sett_kontekst(m, TENANT, "sys", "r0")
+    try:
+        m.execute("SET ROLE disponit_m37_claimer")
+        rad = m.execute("SELECT status FROM kvitteringskapabiliteter WHERE"
+                        " tenant=%s AND jti=%s", (TENANT, jti)).fetchone()
+        m.execute("RESET ROLE")
+        return rad is not None and rad[0] == "brukt"
+    finally:
+        m.rollback()
+        m.close()
+
+
 def _canary_treff(conn) -> int:
     """Teller forekomster av canary-frasen i det som IKKE skal bære klartekst:
     revisjonsloggens begrunnelse, unntakshistorikken og de krypterte
@@ -366,6 +436,49 @@ def main(argv=None) -> int:
     samtidig_vinnere = sum(1 for v in ut.values() if v == "vant")
     samtidig_tapere = sum(1 for v in ut.values() if v == "tapte")
 
+    # --- Scope-beslutningen §3: EKTE kvittering-vs-avvis-race -------------
+    # Eiermodulens faktiske kvittering (`bruk_kvitteringskapabilitet`) mot et
+    # menneskelig avvis på SAMME sak. En kvittering gjør oppdraget mer utført,
+    # ALDRI kansellert — så avvis flagger avklaring (409) og påstår aldri
+    # `avvist`, mens kvitteringen bevares. Begge tråder må fullføre.
+    kr_uid = _injiser(conn, "kvitt-race", "beh-mg", POL_HASH)
+    kr_jti = _claimet_oppdrag_med_kvittering(conn, kr_uid)
+    kr_sv = _saksversjon(conn, kr_uid)
+    kr_ut = {}
+
+    def kr_avvis():
+        c = koble(DSN)
+        try:
+            r = _handle(c, reg, kr_uid, "avvis", op1, sv=kr_sv,
+                        idem=f"kvrace-{kr_uid}")
+            with laas:
+                kr_ut["avvis"] = r.get("utfall")
+        except Exception as e:                  # pragma: no cover
+            with laas:
+                kr_ut["avvis"] = f"feil:{type(e).__name__}"
+        finally:
+            c.close()
+
+    def kr_kvitter():
+        u = _kvitter(kr_jti)
+        with laas:
+            kr_ut["kvitter"] = u
+
+    krt = [threading.Thread(target=kr_avvis), threading.Thread(target=kr_kvitter)]
+    for t in krt:
+        t.start()
+    for t in krt:
+        t.join(timeout=30)
+    if any(t.is_alive() for t in krt):
+        raise SystemExit("AVBRUTT: en kvittering-race-tråd henger etter join")
+    kvitteringsrace_konkurranser = 1
+    kvitteringsrace_fullfort = len(kr_ut)
+    kvitteringsrace_avvis_flagget = 1 if kr_ut.get("avvis") == "utestaaende_oppdrag" else 0
+    kvitteringsrace_kvittering_brukt = 1 if _kap_brukt(kr_jti) else 0
+    # Den harde invarianten: saken påstår ALDRI «ikke utført» mens oppdraget
+    # lever. Måles direkte mot sakstilstanden, ikke en påstand.
+    kvitteringsrace_falskt_avvist = 1 if _status(conn, kr_uid) == "avvist" else 0
+
     canary = _canary_treff(conn)
     med, tot = _handlinger_med_aktor(conn)
     conn.close()
@@ -384,6 +497,11 @@ def main(argv=None) -> int:
         "samtidig_fullfort": samtidig_fullfort,
         "samtidig_vinnere": samtidig_vinnere,
         "samtidig_tapere": samtidig_tapere,
+        "kvitteringsrace_konkurranser": kvitteringsrace_konkurranser,
+        "kvitteringsrace_fullfort": kvitteringsrace_fullfort,
+        "kvitteringsrace_avvis_flagget": kvitteringsrace_avvis_flagget,
+        "kvitteringsrace_kvittering_brukt": kvitteringsrace_kvittering_brukt,
+        "kvitteringsrace_falskt_avvist": kvitteringsrace_falskt_avvist,
         "klartekst_treff": canary,
         "handlinger_med_aktor": med, "handlinger_totalt": tot,
         "varighet_sek": round(time.monotonic() - t0, 3),

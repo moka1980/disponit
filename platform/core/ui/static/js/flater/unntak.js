@@ -87,6 +87,12 @@ function behandlingsHandlinger(detalj, id, ctx, paaFerdig) {
     knapper.append(knapp);
   }
   boks.append(knapper);
+  // Gate 14a: serveren har utelatt `avvis` fordi saken har et utestående
+  // oppdrag — forklar det, så operatøren ser hvorfor knappen mangler.
+  if (detalj.avvis_utilgjengelig === "utestaaende_oppdrag") {
+    boks.append(el("p", { class: "muted",
+      text: t("ui.unntak.utestaaende_oppdrag") }));
+  }
   return boks;
 }
 

@@ -70,6 +70,8 @@ staging_sjekkliste:
       - maalt.sideeffekt.til_utforelse
       - maalt.fire_oyne.fullfort
       - maalt.samtidig_vinnere
+      - maalt.kvitteringsrace_kvittering_brukt
+      - maalt.kvitteringsrace_falskt_avvist
       - maalt.klartekst_treff
       - maalt.handlinger_med_aktor
     artefakt: deploy/staging/artefakter/behandling-m37-v1-20260810T160624.json

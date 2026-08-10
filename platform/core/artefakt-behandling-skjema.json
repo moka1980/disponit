@@ -26,7 +26,10 @@
         "kategorier_dekket", "avvis", "godkjenn", "sideeffekt", "fire_oyne",
         "saksversjonskonflikt_409", "saksversjonskonflikt_sideeffekt",
         "samtidig_konkurranser", "samtidig_startet", "samtidig_fullfort",
-        "samtidig_vinnere", "samtidig_tapere", "klartekst_treff",
+        "samtidig_vinnere", "samtidig_tapere",
+        "kvitteringsrace_konkurranser", "kvitteringsrace_fullfort",
+        "kvitteringsrace_avvis_flagget", "kvitteringsrace_kvittering_brukt",
+        "kvitteringsrace_falskt_avvist", "klartekst_treff",
         "handlinger_med_aktor", "handlinger_totalt", "varighet_sek"
       ],
       "properties": {
@@ -42,6 +45,11 @@
         "samtidig_fullfort": {"type": "integer", "minimum": 0},
         "samtidig_vinnere": {"type": "integer", "minimum": 0},
         "samtidig_tapere": {"type": "integer", "minimum": 0},
+        "kvitteringsrace_konkurranser": {"type": "integer", "minimum": 0},
+        "kvitteringsrace_fullfort": {"type": "integer", "minimum": 0},
+        "kvitteringsrace_avvis_flagget": {"type": "integer", "minimum": 0},
+        "kvitteringsrace_kvittering_brukt": {"type": "integer", "minimum": 0},
+        "kvitteringsrace_falskt_avvist": {"type": "integer", "minimum": 0},
         "klartekst_treff": {"type": "integer", "minimum": 0},
         "handlinger_med_aktor": {"type": "integer", "minimum": 0},
         "handlinger_totalt": {"type": "integer", "minimum": 0},

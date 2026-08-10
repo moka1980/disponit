@@ -96,6 +96,13 @@ KRAVGRENSER: dict[str, dict] = {
         # Minst én ekte konkurranse; «nøyaktig én vinner» håndheves fra
         # råtellinger (startet/fullført/vinnere/tapere), ikke et flagg.
         "min_samtidig_konkurranse": 1,
+        # Scope-beslutningen §3: den EKTE kvitterings-vs-avvis-rasen (ikke to
+        # menneskelige godkjenn). Minst én kjøring; begge tråder fullfører;
+        # avvis flagger avklaring og kvitteringen (`bruk_kvitteringskapabilitet`)
+        # bevares — og saken påstår ALDRI `avvist` mens et oppdrag lever
+        # (`falskt_avvist` = 0, ikke «lite»).
+        "min_kvitteringsrace": 1,
+        "maks_kvitteringsrace_falskt_avvist": 0,
         # Ingen klartekst-begrunnelse i logg eller DB-dump — 0, ikke «lite».
         "maks_klartekst_treff": 0,
         "maks_varighet_sek": 300.0,
@@ -563,6 +570,38 @@ def _grenser_behandling(grense: dict, art: dict) -> list[str]:
         if tapere != startet - vinnere:
             feil.append(f"samtidig_tapere={tapere} != startet-vinnere"
                         f" ({startet - vinnere})")
+
+    # Kvitterings-vs-avvis-rasen (scope-beslutningen §3): begge tråder
+    # fullfører, avvis flagger avklaring, kvitteringen bevares — og INGEN sak
+    # påstår `avvist` mens et oppdrag lever. Alt fra råtellinger.
+    krace, fkr = _teller(m, "kvitteringsrace_konkurranser",
+                         "kvitteringsrace_konkurranser")
+    kfull, fkf = _teller(m, "kvitteringsrace_fullfort", "kvitteringsrace_fullfort")
+    kflagg, fkfl = _teller(m, "kvitteringsrace_avvis_flagget",
+                           "kvitteringsrace_avvis_flagget")
+    kbrukt, fkb = _teller(m, "kvitteringsrace_kvittering_brukt",
+                          "kvitteringsrace_kvittering_brukt")
+    kfalsk, fkfa = _teller(m, "kvitteringsrace_falskt_avvist",
+                           "kvitteringsrace_falskt_avvist")
+    if any((fkr, fkf, fkfl, fkb, fkfa)):
+        feil.extend(x for x in (fkr, fkf, fkfl, fkb, fkfa) if x)
+    else:
+        if krace < grense["min_kvitteringsrace"]:
+            feil.append(f"kvitteringsrace_konkurranser={krace}, krever >="
+                        f" {grense['min_kvitteringsrace']}")
+        if kfull != 2 * krace:
+            feil.append(f"kvitteringsrace_fullfort={kfull} != 2*konkurranser"
+                        f" ({2 * krace}) — avvis-tråd + kvittering-tråd må begge fullføre")
+        if kflagg != krace:
+            feil.append(f"kvitteringsrace_avvis_flagget={kflagg} != konkurranser"
+                        f" ({krace}) — avvis skal flagge avklaring hver gang")
+        if kbrukt != krace:
+            feil.append(f"kvitteringsrace_kvittering_brukt={kbrukt} != konkurranser"
+                        f" ({krace}) — kvitteringen skal bevares hver gang")
+        if kfalsk > grense["maks_kvitteringsrace_falskt_avvist"]:
+            feil.append(f"kvitteringsrace_falskt_avvist={kfalsk}, krever <="
+                        f" {grense['maks_kvitteringsrace_falskt_avvist']} —"
+                        f" saken påsto `avvist` mens et oppdrag levde")
 
     for felt, tak, notat in (
             ("saksversjonskonflikt_sideeffekt",

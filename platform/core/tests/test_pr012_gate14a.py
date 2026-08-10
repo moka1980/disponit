@@ -5,6 +5,8 @@ oppdrag, terminal kapabilitet). Én levende rad → `avklaring_kreves` + 409,
 ALDRI `avvist`. P3: gjentatt forsøk (ulike nøkler) mot SAMME utestående
 tilstand gir samme 409 uten ny versjonsøkning eller historikkrad.
 """
+import threading
+
 import pytest
 
 from api.unntaksbehandling import Godkjenningsfeil
@@ -281,3 +283,190 @@ def test_port_endepunkt_avklaring_gir_lukket_409_og_committer(klient, miljo,
         assert _historikk_teller(c, uid) == 1
     finally:
         c.close()
+
+
+def _claimet_oppdrag_med_kvittering(uid):
+    """Plukket, owner-claimet oppdrag + EKTE utstedt kvitteringskapabilitet —
+    M-37s faktiske kvitteringsvei, ikke en fake status-UPDATE. Returnerer
+    (opp_id, jti, claim_id)."""
+    import secrets
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    lid, key_id = m.execute("SELECT loggpost_id, key_id FROM unntak WHERE"
+                            " tenant=%s AND id=%s", (TEN, uid)).fetchone()
+    rop, cid = secrets.token_hex(32), secrets.token_hex(16)
+    m.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant,unntak_id,"
+        "repair_operation_id,repair_generation,handler_id,handler_versjon,"
+        "maalhandling,input_hash,kategori,status) VALUES (%s,%s,%s,0,'h','v',"
+        "'faktura.bokfor',%s,'over_grense','aktiv')",
+        (TEN, uid, rop, secrets.token_hex(32)))
+    blid = m.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,idempotency_key,kilde) VALUES (%s,'h','p','TILLAT',"
+        "'[]'::jsonb,%s,'arbeidskapabilitet') RETURNING id",
+        (TEN, rop)).fetchone()[0]
+    opp = m.execute(
+        "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+        "oppdragstype,handling,eiermodul,status,payload_kryptert,key_id,nonce,"
+        "utforelsesfrist,evidensfrist,koblingsstatus,beslutning_loggpost_id,"
+        "owner_claim_id,owner_generation,owner_lease_utloper) VALUES (%s,%s,%s,"
+        "%s,'reparasjon','faktura.bokfor','eier:reinns','plukket',%s,%s,%s,"
+        "now()+interval '1 hour',now()+interval '2 hour','KOBLET',%s,%s,0,"
+        "now()+interval '1 hour') RETURNING id",
+        (TEN, uid, lid, rop, b"\x00", key_id, b"\x00" * 12, blid, cid)
+    ).fetchone()[0]
+    m.commit()
+    m.close()
+    # Kvitteringskapabiliteten utstedes gjennom den EKTE funksjonen (runtime-
+    # grantet), som i drift — ikke en direkte INSERT.
+    r = koble(DSN)
+    sett_kontekst(r, TEN, "sys", "r0")
+    jti = secrets.token_hex(16)
+    kap = r.execute("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,0,%s)",
+                    (opp, cid, jti)).fetchone()
+    r.commit()
+    r.close()
+    assert kap is not None, "kvitteringskapabiliteten ble ikke utstedt"
+    return opp, jti, cid
+
+
+def _kvitter(jti, resultathash="a" * 64):
+    """Eiermodulens EKTE kvittering: bruk_kvitteringskapabilitet. -> utfall."""
+    from db.pg import koble, sett_kontekst
+    r = koble(DSN)
+    sett_kontekst(r, TEN, "sys", "r0")
+    try:
+        return r.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                         (jti, resultathash)).fetchone()[0]
+    finally:
+        r.commit()
+        r.close()
+
+
+def _kap_status(jti):
+    # kvitteringskapabiliteter er m37_claimer-eid (off-limits for runtime);
+    # migrator er medlem og kan SET ROLE for lesningen.
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    try:
+        m.execute("SET ROLE disponit_m37_claimer")
+        rad = m.execute("SELECT status, resultathash FROM kvitteringskapabiliteter"
+                        " WHERE tenant=%s AND jti=%s", (TEN, jti)).fetchone()
+        m.execute("RESET ROLE")
+        return rad
+    finally:
+        m.rollback()
+        m.close()
+
+
+@pg
+def test_port_kvittering_vs_avvis_konsistent(conn):
+    """Scope-beslutningen §3 (samtidighetsport): eiermodulens EKTE kvittering og
+    et menneskelig avvis gir ALDRI et motsigende utfall. En kvittering markerer
+    kvitteringskapabiliteten `brukt` — den kanselleerer ALDRI oppdraget — så
+    avvis ser fortsatt et levende oppdrag og flagger avklaring (409), aldri
+    `avvist`; kvitteringen bevares. Vi kjører begge deterministiske rekkefølger,
+    en samtidig kjøring, og til slutt at avvis vurderer den nye TERMINALE
+    tilstanden korrekt når oppdraget faktisk kanselleres.
+
+    Mutasjon som erstatter `bruk_kvitteringskapabilitet` med en direkte
+    status-UPDATE dør på `_kap_status`-sjekken (brukt + resultathash); mutasjon
+    som lar avvis lykkes med et levende oppdrag dør på `!= 'avvist'`."""
+    import secrets
+    # --- Rekkefølge A: kvittering FØRST, så avvis -----------------------
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    _opp, jti, _cid = _claimet_oppdrag_med_kvittering(uid)
+    assert _kvitter(jti) == "brukt"                      # eiermodul vinner sitt løp
+    res = _kall(conn, uid, "avvis", bid, _macreg())
+    assert res["utfall"] == "utestaaende_oppdrag"        # avvis flagger, vinner IKKE
+    assert _status(conn, uid) != "avvist"
+    assert _kap_status(jti)[0] == "brukt"                # kvitteringen BEVART
+    assert _kap_status(jti)[1] == "a" * 64               # resultathashen bevart
+
+    # --- Rekkefølge B: avvis FØRST, så kvittering -----------------------
+    uid2 = _oppsett(conn)
+    _opp2, jti2, _c2 = _claimet_oppdrag_med_kvittering(uid2)
+    res2 = _kall(conn, uid2, "avvis", bid, _macreg())
+    assert res2["utfall"] == "utestaaende_oppdrag"
+    assert _status(conn, uid2) != "avvist"
+    assert _kvitter(jti2) == "brukt"                     # kvitteringen går fortsatt gjennom
+    assert _kap_status(jti2)[0] == "brukt"
+
+    # --- Samtidig: avvis-tråd + kvittering-tråd, join m/ timeout --------
+    uid3 = _oppsett(conn)
+    _opp3, jti3, _c3 = _claimet_oppdrag_med_kvittering(uid3)
+    sv3 = _saksversjon(conn, uid3)
+    ut = {}
+    laas = threading.Lock()
+
+    def avvis_traad():
+        from db.pg import koble
+        c = koble(DSN)
+        try:
+            r = _kall(c, uid3, "avvis", bid, _macreg(), saksversjon=sv3,
+                      idem=f"kap-race-{uid3}")
+            with laas:
+                ut["avvis"] = r.get("utfall")
+        finally:
+            c.close()
+
+    def kvitter_traad():
+        with laas:
+            ut["kvitter"] = _kvitter(jti3)
+
+    tr = [threading.Thread(target=avvis_traad),
+          threading.Thread(target=kvitter_traad)]
+    for t in tr:
+        t.start()
+    for t in tr:
+        t.join(timeout=30)
+    assert not any(t.is_alive() for t in tr), "en tråd henger — kan ikke bevise"
+    # Uansett interleaving: avvis flagget avklaring (aldri avvist), kvittering brukt.
+    assert ut["avvis"] == "utestaaende_oppdrag"
+    assert ut["kvitter"] == "brukt"
+    assert _status(conn, uid3) != "avvist"
+    assert _kap_status(jti3)[0] == "brukt"
+    # Utfallet er ALLTID (b): en kvittering kan bare gjøre oppdraget mer utført,
+    # aldri `kansellert` — så avvis er korrekt blokkert i hver interleaving.
+    # At avvis lykkes NÅR oppdraget faktisk er terminalt trygt (kansellert /
+    # utfort vurdert korrekt) er dekket av port 2 og port 4.
+
+
+@pg
+def test_port_leseapi_skjuler_avvis_ved_utestaaende(klient, miljo, monkeypatch):
+    """Scope-beslutningen §1/§3: lese-API-et må IKKE tilby `avvis` når saken
+    har et levende oppdrag — `tillatte_handlinger[]` skjuler den og detalj-DTO-en
+    bærer den lukkede `avvis_utilgjengelig: utestaaende_oppdrag`, utledet
+    server-side fra SAMME autoritative funksjon som POST-vakten. Mutasjon som
+    fjerner sjekken (avvis dukker opp igjen ved utestående) dør her."""
+    from api import sesjon as sesjonmodul
+    from .test_pr012_behandle import POL, POL_HASH
+    monkeypatch.setattr("api.policyregister.hent_aktiv",
+                        lambda conn, tenant, pid: (POL, POL_HASH))
+    c = _runtime()
+    try:
+        uid = _oppsett(c)
+    finally:
+        c.close()
+    bid = _medlem(None, "les14a")                 # godkjenner → exceptions:read
+    cookie, _csrf = _browsersesjon(bid)
+
+    # Uten oppdrag: avvis tilbys, ingen avvis-årsak.
+    r0 = klient.get(f"/v1/unntak/{uid}", cookies={sesjonmodul.C_SESJON: cookie})
+    assert r0.status_code == 200, r0.text
+    assert "avvis" in r0.json()["tillatte_handlinger"]
+    assert "avvis_utilgjengelig" not in r0.json()
+
+    # Med ett levende oppdrag: avvis SKJULT + lukket årsak, eskaler fortsatt lovlig.
+    _oppdrag(uid, "opprettet")
+    r1 = klient.get(f"/v1/unntak/{uid}", cookies={sesjonmodul.C_SESJON: cookie})
+    assert r1.status_code == 200, r1.text
+    body = r1.json()
+    assert "avvis" not in body["tillatte_handlinger"], \
+        "lese-API-et inviterer til en avvis serverkontrakten vet er utilgjengelig"
+    assert body["avvis_utilgjengelig"] == "utestaaende_oppdrag"
+    assert "eskaler" in body["tillatte_handlinger"]

@@ -321,6 +321,26 @@ test("Unntak: 409 utestaaende_oppdrag → avklaringstekst, ingen blind retry (ga
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 
+test("Unntak: avvis skjult ved utestaaende oppdrag, m/ forklaring (gate 14a)", async () => {
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 2, tillatte_handlinger: ["godkjenn", "eskaler"],
+    avvis_utilgjengelig: "utestaaende_oppdrag" } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  const knapper = [...dlg.querySelectorAll("button")].map((b) => b.textContent.trim());
+  assert.ok(!knapper.includes(t("ui.unntak.handling.avvis")),
+    "avvis-knappen skal ikke vises når serveren har utelatt den");
+  assert.ok(knapper.includes(t("ui.unntak.handling.eskaler")), "eskaler skal vises");
+  assert.ok(dlg.textContent.includes(t("ui.unntak.utestaaende_oppdrag")),
+    "forklaringen på hvorfor avvis mangler skal vises");
+});
+
 test("Tom liste → TomTilstand", async () => {
   SVAR = { ...STD, "/v1/beslutninger": { rader: [], neste_cursor: null } };
   const h = nyHoved();
