@@ -90,7 +90,22 @@ def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
     return key_id, dek
 
 
-def _aad(tenant: str, key_id: str) -> bytes:
+def hent_dek(conn: psycopg.Connection, tenant: str, key_id: str) -> bytes:
+    """DEK for en SPESIFIKK key_id — også en rotert/ikke-aktiv nøkkel. Brukes
+    til å dekryptere data som ble kryptert under en tidligere aktiv DEK (f.eks.
+    en handlingsintensjon hvis tenanten har rotert nøkkel siden). Kaster hvis
+    nøkkelen ikke finnes eller er crypto-shreddet (wrapped_dek = NULL)."""
+    from .pg import sett_tenant
+    sett_tenant(conn, tenant)
+    rad = conn.execute(
+        "SELECT key_id, wrapped_dek FROM tenant_nokler"
+        " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
+    if rad is None or rad[1] is None:
+        raise RuntimeError("dek utilgjengelig for key_id")
+    return _pakk_ut(rad, tenant)[1]
+
+
+def _aad(tenant: str, key_id: str, ekstra_aad: bytes | None = None) -> bytes:
     """Tilleggsdata som bindes inn i GCM-taggen.
 
     Uten AAD er et ciphertext bare en pose bytes: flyttes raden til en annen
@@ -99,23 +114,38 @@ def _aad(tenant: str, key_id: str) -> bytes:
     da det ble kryptert. Det koster ingenting og lukker en stille
     kryss-tenant-vei som RLS alene ikke dekker (RLS beskytter raden, ikke
     bytene hvis de kopieres).
+
+    `ekstra_aad` (PR-012): valgfri tilleggsbinding. Uten den er resultatet
+    BYTE-IDENTISK med før — eksisterende ciphertext er uendret. Med den kan
+    handlingsintensjonen bindes til (unntak_id, target_action, hi_skjemaversjon,
+    intensjon_policy_hash) så et ciphertext ikke kan flyttes mellom saker.
     """
-    return f"{tenant}|{key_id}".encode("utf-8")
+    base = f"{tenant}|{key_id}".encode("utf-8")
+    return base if ekstra_aad is None else base + b"|" + ekstra_aad
 
 
-def krypter(dek: bytes, payload: dict, tenant: str,
-            key_id: str) -> tuple[bytes, bytes]:
+def intensjon_aad(unntak_id: int, target_action: str, hi_skjemaversjon: int,
+                  intensjon_policy_hash: str) -> bytes:
+    """Kanonisk `ekstra_aad` for handlingsintensjon (v6 §3). Alle komponenter
+    hentes av kalleren fra UFORANDERLIGE saksfelt (aldri klient/ciphertext).
+    Brukes IDENTISK ved kryptering og all senere dekryptering."""
+    return "|".join((str(unntak_id), target_action, str(hi_skjemaversjon),
+                     intensjon_policy_hash)).encode("utf-8")
+
+
+def krypter(dek: bytes, payload: dict, tenant: str, key_id: str,
+            *, ekstra_aad: bytes | None = None) -> tuple[bytes, bytes]:
     """-> (payload_kryptert = ct||tag, nonce)"""
     nonce = secrets.token_bytes(12)
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":")).encode()
-    return AESGCM(dek).encrypt(nonce, data, _aad(tenant, key_id)), nonce
+    return AESGCM(dek).encrypt(nonce, data, _aad(tenant, key_id, ekstra_aad)), nonce
 
 
 def dekrypter(dek: bytes, ct_og_tag: bytes, nonce: bytes, tenant: str,
-              key_id: str) -> dict:
+              key_id: str, *, ekstra_aad: bytes | None = None) -> dict:
     return json.loads(AESGCM(dek).decrypt(bytes(nonce), bytes(ct_og_tag),
-                                          _aad(tenant, key_id)))
+                                          _aad(tenant, key_id, ekstra_aad)))
 
 
 def destruer(conn: psycopg.Connection, tenant: str, key_id: str) -> None:

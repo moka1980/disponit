@@ -127,3 +127,16 @@ sikre_attestasjonsnokler() {
   done
   sett_nokkel DISPONIT_ATT_NOKLER "${nokler%,}}"
 }
+
+# PR-012: MAC-registeret for menneskelige godkjenningskonvolutter. Registeret
+# er en OPPSTARTSPERRE (`last_mac_register` i Tjeneste.__init__) — uten det
+# nekter API-et å starte, akkurat som KEK. NØYAKTIG én 'signerer', og
+# hemmeligheten må være >= 32 tegn (openssl rand -hex 32 = 64 hex-tegn).
+sikre_mac_nokler() {
+  if har_nokkel DISPONIT_MAC_NOKLER; then
+    return 0
+  fi
+  sett_nokkel DISPONIT_MAC_NOKLER \
+    "{\"mk1\":{\"rolle\":\"signerer\",\"hemmelighet\":\"$(openssl rand -hex 32)\"}}"
+  echo "  genererte DISPONIT_MAC_NOKLER (1 signerer)"
+}

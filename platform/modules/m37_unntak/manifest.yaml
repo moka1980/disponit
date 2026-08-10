@@ -53,6 +53,40 @@ staging_sjekkliste:
       24/24 terminale, 12/12 reparerbare LØST gjennom R1s tofaseprotokoll,
       12/12 ikke-reparerbare til manuell, og 2 lease-tap med re-claim —
       gjenopptaksveien er kjørt, ikke antatt.
+  menneskelig_behandling_bestatt:
+    # PR-012: den menneskelige unntaksbehandlingen (godkjenn/avvis/eskaler som
+    # MAC-signert attestasjon → ny beslutning gjennom motoren). EGET artefakt,
+    # EGEN måling — ikke lånt fra feilinjisering-m01. Deploy-verifisert på
+    # onecom-staging (opp.sh forward-only, schema v11, ekte roller/tjenester,
+    # /ready=ok), dårligste av fire kjøringer. valider_artefakter åpner filen,
+    # verifiserer sha256 og RE-DERIVERER invariantene mot KRAVGRENSER
+    # (_grenser_behandling) — `bestatt: true` inne i fila er produsentens
+    # påstand og teller ikke.
+    status: ja
+    krav_id: behandling-m37-v1
+    bevismaalinger:
+      - maalt.avvis.terminal
+      - maalt.godkjenn.ny_beslutning
+      - maalt.sideeffekt.til_utforelse
+      - maalt.fire_oyne.fullfort
+      - maalt.samtidig_vinnere
+      - maalt.kvitteringsrace_kvittering_brukt
+      - maalt.kvitteringsrace_falskt_avvist
+      - maalt.klartekst_treff
+      - maalt.handlinger_med_aktor
+    artefakt: deploy/staging/artefakter/behandling-m37-v1-20260810T172407.json
+    artefakt_sha256: 3198d2967482af8489d0fc7bb81760c628e4ca487af1d4e427a305b608f254ec
+    notat: >-
+      12 saker over fire kategorier: avvis terminal 3/3, godkjenn ny beslutning
+      3/3, sideeffekt → venter_utførelse 3/3, fire-øyne (to brukere) 3/3. Harde
+      invarianter: 1 saksversjonskonflikt uten sideeffekt, 1 samtidighets-
+      konkurranse med NØYAKTIG én vinner, og eiermodulens FULLE signerte
+      kvitteringsflyt (`_ingest_kvittering`: oppdrag→utfort + sak→løst) mot avvis
+      i et deterministisk vindu rundt saks­låsen: den fulle kvitteringen
+      fullførte, avvis vant aldri avvisningen, og saken påsto ALDRI `avvist` mens
+      oppdraget levde (falskt_avvist = 0). 0 klartekst-treff, 89/89 handlinger med
+      aktør. Kjørt på den deploy-verifiserte staging-releasen, ikke lokal docker —
+      det var den ekte deploy-veien som avdekket MAC-boot-perren.
   ytelse_bestatt:
     status: ja
     krav_id: feilinjisering-m01-v1

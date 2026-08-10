@@ -266,10 +266,15 @@ def test_provider_avviser_none_algoritme_og_sti_i_credential_ref(migrator):
 
 def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     from api.autorisasjon import scopes_for_roller, ROLLE_TIL_SCOPES
-    from api.app import LESESCOPES
-    # Ingen rolle kan gi et scope utenfor den kanoniske lese-mengden.
+    from api.app import BROWSER_MUTASJONSSCOPES, LESESCOPES
+    # Ingen rolle kan gi et scope utenfor lese-mengden + PR-012s muterende
+    # unntaksbehandlingsscopes (de eneste browser-mutasjonene).
+    kjente = LESESCOPES | BROWSER_MUTASJONSSCOPES
     for scopes in ROLLE_TIL_SCOPES.values():
-        assert scopes <= LESESCOPES, f"ukjent scope: {scopes - LESESCOPES}"
+        assert scopes <= kjente, f"ukjent scope: {scopes - kjente}"
+    # Kun leseroller er rene lese-roller; godkjenner er den muterende.
+    for rolle in ("leser", "sikkerhet", "admin"):
+        assert ROLLE_TIL_SCOPES[rolle] <= LESESCOPES
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read"}
     assert "security:read" not in scopes_for_roller(["leser"])

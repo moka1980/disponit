@@ -70,6 +70,43 @@ KRAVGRENSER: dict[str, dict] = {
         "krev_avvist_andel": 1.0,
         "maks_halvferdige": 0,
     },
+    # --- PR-012 (menneskelig unntaksbehandling) -------------------------
+    # 12 saker over 4 kategorier (spec §10 + v2-delta): avvis-vei terminal ·
+    # godkjenn-vei ny beslutning · sideeffekt → venter_utførelse → løst ·
+    # fire-øyne to brukere. Pluss de harde invariantene: saksversjonskonflikt
+    # gir 409 UTEN sideeffekt · samtidig arbeider + menneske → nøyaktig én
+    # vinner · ingen klartekst i logg/dump · alle handlinger med aktør.
+    # Andelene er 1.0: en injisert sak som ikke nådde sin terminaltilstand er
+    # nettopp hullet artefaktet skal bevise at ikke finnes.
+    "behandling-m37-v1": {
+        "min_injisert": 12,
+        # Kategorimengden må være EKSAKT de fire kontraktskategoriene (avvis,
+        # godkjenn, sideeffekt, fire_oyne) — håndheves som settlikhet, ikke
+        # som «minst fire» — og hver kategori krever `utfall == injisert > 0`.
+        "krev_avvis_terminal_andel": 1.0,
+        "krev_godkjenn_beslutning_andel": 1.0,
+        # PR-012s menneskelige vei ender ved `venter_utførelse` (levert til
+        # M-37-outboxen); →løst tilhører M-37 og bevises av `feilinjisering-m01`.
+        "krev_sideeffekt_utforelse_andel": 1.0,
+        "krev_fire_oyne_andel": 1.0,
+        # Minst én saksversjonskonflikt SKAL kjøres — en 409-vei som aldri er
+        # utløst er en hypotese — og den skal ALDRI ha en sideeffekt.
+        "min_saksversjonskonflikt": 1,
+        "maks_saksversjonskonflikt_sideeffekt": 0,
+        # Minst én ekte konkurranse; «nøyaktig én vinner» håndheves fra
+        # råtellinger (startet/fullført/vinnere/tapere), ikke et flagg.
+        "min_samtidig_konkurranse": 1,
+        # Scope-beslutningen §3: den EKTE kvitterings-vs-avvis-rasen (ikke to
+        # menneskelige godkjenn). Minst én kjøring; begge tråder fullfører;
+        # avvis flagger avklaring og kvitteringen (`bruk_kvitteringskapabilitet`)
+        # bevares — og saken påstår ALDRI `avvist` mens et oppdrag lever
+        # (`falskt_avvist` = 0, ikke «lite»).
+        "min_kvitteringsrace": 1,
+        "maks_kvitteringsrace_falskt_avvist": 0,
+        # Ingen klartekst-begrunnelse i logg eller DB-dump — 0, ikke «lite».
+        "maks_klartekst_treff": 0,
+        "maks_varighet_sek": 300.0,
+    },
 }
 
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
@@ -79,6 +116,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "perf-m01-v1": "artefakt-skjema.json",
     "feilinjisering-m01-v1": "artefakt-feilinjisering-skjema.json",
     "rollback-m01-v1": "artefakt-rollback-skjema.json",
+    "behandling-m37-v1": "artefakt-behandling-skjema.json",
 }
 
 
@@ -272,6 +310,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
         return feil + _grenser_rollback(grense, art)
+    if krav_id == "behandling-m37-v1":
+        return feil + _grenser_behandling(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -439,6 +479,163 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                         f" — fordeling: {dict(sorted(per_sakstype.items()))}")
     if k.get("routing_stemmer") is not True:
         feil.append("etterkontroll: routing_stemmer er ikke true")
+    return feil
+
+
+def _grenser_behandling(grense: dict, art: dict) -> list[str]:
+    """`behandling-m37-v1` — de fire kategori-veiene + de harde invariantene.
+
+    Invariantene REGNES UT på nytt her, aldri lest ut av et flagg (lærdommen
+    fra PR #8 runde 3): hver kategori-andel sjekkes mot `antall/injisert`, og
+    en kategori med `injisert = 0` er en vei som aldri ble prøvd — ikke en
+    bestått. De harde grensene (saksversjonskonflikt uten sideeffekt, nøyaktig
+    én vinner, ingen klartekst) måles mot råtellingene.
+    """
+    feil: list[str] = []
+    m, oppsett = art.get("maalt"), art.get("oppsett")
+    if not isinstance(m, dict) or not isinstance(oppsett, dict):
+        return ["artefaktet mangler `maalt` og/eller `oppsett`"]
+
+    injisert, f = _teller(oppsett, "oppsett.injisert_antall", "injisert_antall")
+    if f:
+        feil.append(f)
+    elif injisert < grense["min_injisert"]:
+        feil.append(f"injisert_antall={injisert},"
+                    f" krever >= {grense['min_injisert']}")
+
+    # Kategorimengden må være EKSAKT de fire kontraktskategoriene — ikke bare
+    # «minst fire». Ellers består et sett med en oppdiktet kategori som fyller
+    # tallet mens en ekte mangler.
+    KONTRAKT = {"avvis", "godkjenn", "sideeffekt", "fire_oyne"}
+    for navn, verdi in (("oppsett.kategorier", oppsett.get("kategorier")),
+                        ("kategorier_dekket", m.get("kategorier_dekket"))):
+        if not isinstance(verdi, list) or set(verdi) != KONTRAKT \
+                or len(verdi) != len(KONTRAKT):
+            feil.append(f"{navn}={verdi!r}, krever NØYAKTIG {sorted(KONTRAKT)}")
+
+    # Hver kategori: andelen er 1.0, så kravet er EKSAKT `utfall == injisert`
+    # med `injisert > 0`. `utfall/injisert >= 1.0` alene godtar teller > nevner
+    # (2 av 1 = 200 %); det er en umulig måling, ikke en høy andel.
+    sum_inj = 0
+    for grp, antallsfelt in (("avvis", "terminal"),
+                             ("godkjenn", "ny_beslutning"),
+                             ("sideeffekt", "til_utforelse"),
+                             ("fire_oyne", "fullfort")):
+        u = m.get(grp)
+        if not isinstance(u, dict):
+            feil.append(f"maalt.{grp} mangler")
+            continue
+        inj, f1 = _teller(u, f"{grp}.injisert", "injisert")
+        ant, f2 = _teller(u, f"{grp}.{antallsfelt}", antallsfelt)
+        if f1 or f2:
+            feil.extend(x for x in (f1, f2) if x)
+            continue
+        sum_inj += inj
+        if inj == 0:
+            feil.append(f"{grp}.injisert er 0 — veien ble aldri prøvd")
+        elif ant != inj:
+            feil.append(f"{grp}: {antallsfelt}={ant} != injisert={inj}"
+                        f" — krever eksakt likhet (andel 1.0; teller > nevner"
+                        f" er umulig)")
+
+    # Summen av kategori-nevnerne MÅ være totalen: ellers består total=12 med
+    # fire kategorier på 1/1 (bare fire faktiske forsøk).
+    if sum_inj != injisert:
+        feil.append(f"sum av kategori-injisert ({sum_inj}) != total"
+                    f" injisert_antall ({injisert})")
+
+    # «Nøyaktig én vinner» fra RÅTELLINGER, ikke et flagg: begge tråder må ha
+    # FULLFØRT (ingen henger), og det skal være akkurat én vinner og resten
+    # tapere per konkurranse. Null vinnere eller en hengende tråd = rødt.
+    konk, fk = _teller(m, "samtidig_konkurranser", "samtidig_konkurranser")
+    startet, fs = _teller(m, "samtidig_startet", "samtidig_startet")
+    fullfort, ff = _teller(m, "samtidig_fullfort", "samtidig_fullfort")
+    vinnere, fv = _teller(m, "samtidig_vinnere", "samtidig_vinnere")
+    tapere, ft = _teller(m, "samtidig_tapere", "samtidig_tapere")
+    if any((fk, fs, ff, fv, ft)):
+        feil.extend(x for x in (fk, fs, ff, fv, ft) if x)
+    else:
+        if konk < grense["min_samtidig_konkurranse"]:
+            feil.append(f"samtidig_konkurranser={konk}, krever >="
+                        f" {grense['min_samtidig_konkurranse']}")
+        if startet != 2 * konk:
+            feil.append(f"samtidig_startet={startet} != 2*konkurranser"
+                        f" ({2 * konk}) — to tråder per konkurranse")
+        if fullfort != startet:
+            feil.append(f"samtidig_fullfort={fullfort} != startet={startet}"
+                        f" — en tråd fullførte ikke (hang / manglende resultat)")
+        if vinnere != konk:
+            feil.append(f"samtidig_vinnere={vinnere} != konkurranser={konk}"
+                        f" — krever NØYAKTIG én vinner per konkurranse")
+        if tapere != startet - vinnere:
+            feil.append(f"samtidig_tapere={tapere} != startet-vinnere"
+                        f" ({startet - vinnere})")
+
+    # Kvitterings-vs-avvis-rasen (scope-beslutningen §3): begge tråder
+    # fullfører, avvis flagger avklaring, kvitteringen bevares — og INGEN sak
+    # påstår `avvist` mens et oppdrag lever. Alt fra råtellinger.
+    krace, fkr = _teller(m, "kvitteringsrace_konkurranser",
+                         "kvitteringsrace_konkurranser")
+    kfull, fkf = _teller(m, "kvitteringsrace_fullfort", "kvitteringsrace_fullfort")
+    kflagg, fkfl = _teller(m, "kvitteringsrace_avvis_flagget",
+                           "kvitteringsrace_avvis_flagget")
+    kbrukt, fkb = _teller(m, "kvitteringsrace_kvittering_brukt",
+                          "kvitteringsrace_kvittering_brukt")
+    kfalsk, fkfa = _teller(m, "kvitteringsrace_falskt_avvist",
+                           "kvitteringsrace_falskt_avvist")
+    if any((fkr, fkf, fkfl, fkb, fkfa)):
+        feil.extend(x for x in (fkr, fkf, fkfl, fkb, fkfa) if x)
+    else:
+        if krace < grense["min_kvitteringsrace"]:
+            feil.append(f"kvitteringsrace_konkurranser={krace}, krever >="
+                        f" {grense['min_kvitteringsrace']}")
+        if kfull != 2 * krace:
+            feil.append(f"kvitteringsrace_fullfort={kfull} != 2*konkurranser"
+                        f" ({2 * krace}) — avvis-tråd + kvittering-tråd må begge fullføre")
+        if kflagg != krace:
+            feil.append(f"kvitteringsrace_avvis_flagget={kflagg} != konkurranser"
+                        f" ({krace}) — avvis skal flagge avklaring hver gang")
+        if kbrukt != krace:
+            feil.append(f"kvitteringsrace_kvittering_brukt={kbrukt} != konkurranser"
+                        f" ({krace}) — kvitteringen skal bevares hver gang")
+        if kfalsk > grense["maks_kvitteringsrace_falskt_avvist"]:
+            feil.append(f"kvitteringsrace_falskt_avvist={kfalsk}, krever <="
+                        f" {grense['maks_kvitteringsrace_falskt_avvist']} —"
+                        f" saken påsto `avvist` mens et oppdrag levde")
+
+    for felt, tak, notat in (
+            ("saksversjonskonflikt_sideeffekt",
+             grense["maks_saksversjonskonflikt_sideeffekt"],
+             "en konflikt skal ALDRI ha sideeffekt"),
+            ("klartekst_treff", grense["maks_klartekst_treff"],
+             "ingen klartekst i logg/dump")):
+        v, f = _teller(m, felt, felt)
+        if f:
+            feil.append(f)
+        elif v > tak:
+            feil.append(f"{felt}={v}, krever <= {tak} ({notat})")
+
+    v409, f = _teller(m, "saksversjonskonflikt_409", "saksversjonskonflikt_409")
+    if f:
+        feil.append(f)
+    elif v409 < grense["min_saksversjonskonflikt"]:
+        feil.append(f"saksversjonskonflikt_409={v409}, krever >="
+                    f" {grense['min_saksversjonskonflikt']}")
+
+    med, f1 = _teller(m, "handlinger_med_aktor", "handlinger_med_aktor")
+    tot, f2 = _teller(m, "handlinger_totalt", "handlinger_totalt")
+    if f1 or f2:
+        feil.extend(x for x in (f1, f2) if x)
+    elif tot == 0 or med != tot:
+        feil.append(f"handlinger_med_aktor={med} != handlinger_totalt={tot}"
+                    f" — alle handlinger i revisjonsloggen MÅ ha aktør")
+
+    varighet, f = _positiv(m, "maalt.varighet_sek", "varighet_sek")
+    if f:
+        feil.append(f)
+    elif varighet > grense["maks_varighet_sek"]:
+        feil.append(f"varighet_sek={varighet:g},"
+                    f" krever <= {grense['maks_varighet_sek']:g}")
     return feil
 
 

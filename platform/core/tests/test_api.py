@@ -30,6 +30,9 @@ ANNEN_TENANT = "t-api-annen"
 PEPPER = "p" * 40
 KEK = "b" * 64
 NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40}}
+#: MAC-signeringsregister for menneskelige godkjenningskonvolutter (PR-012):
+#: nøyaktig én `signerer`, hemmelighet >= 32 tegn.
+MAC_NOKLER = {"mk1": {"rolle": "signerer", "hemmelighet": "m" * 40}}
 
 #: Hvilken feilveirad hver test dekker. Fylles av @dekker.
 DEKNING: dict[str, list[str]] = {}
@@ -140,6 +143,7 @@ def miljo(monkeypatch):
     monkeypatch.setenv("DISPONIT_TOKEN_PEPPER", PEPPER)
     monkeypatch.setenv("DISPONIT_KEK", KEK)
     monkeypatch.setenv("DISPONIT_ATT_NOKLER", json.dumps(NOKLER))
+    monkeypatch.setenv("DISPONIT_MAC_NOKLER", json.dumps(MAC_NOKLER))
     monkeypatch.setenv("DISPONIT_RATE_PER_MIN", "10000")
     monkeypatch.delenv("DISPONIT_MILJO", raising=False)
     monkeypatch.delenv("DISPONIT_TLS_AKTIV", raising=False)

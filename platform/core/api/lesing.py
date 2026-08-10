@@ -386,7 +386,8 @@ def _hent_unntak(conn, auth, uid: int):
     """
     rad = conn.execute(
         "SELECT u.id, u.ts, u.handling, u.kategori, u.sakstype, u.status,"
-        " u.prioritet, r.begrunnelse"
+        " u.prioritet, r.begrunnelse, u.intensjon_pakrevd, u.saksversjon,"
+        " r.policy_id"
         "  FROM unntak u JOIN revisjonslogg r"
         "    ON r.tenant = u.tenant AND r.id = u.loggpost_id"
         " WHERE u.tenant=%s AND u.id=%s", (auth.tenant, uid)).fetchone()
@@ -395,6 +396,60 @@ def _hent_unntak(conn, auth, uid: int):
     if rad[4] != "normal" and "security:read" not in auth.scopes:
         return None
     return rad
+
+
+#: Statusene der et menneske kan handle på saken (PR-012).
+_HANDTERBARE_STATUS = frozenset({"manuell", "venter_godkjenning",
+                                 "venter_andre_godkjenner", "godkjenning_klar"})
+
+
+def _tillatte_handlinger(conn, tenant, handling, status, begrunnelse,
+                         intensjon_pakrevd, policy_id_label):
+    """(tillatte_handlinger[], aarsak_godkjenn_utilgjengelig|None).
+
+    avvis/eskaler er alltid mulig på en håndterbar sak. godkjenn KUN når saken
+    har en komplett handlingsintensjon OG en godkjennbar blokkerende grunnkode
+    (mengden blokkerende grunner er motorens — her brukes den lagrede
+    begrunnelseskjedens siste, blokkerende kode; motoren er den endelige
+    autoriteten ved selve godkjenningen)."""
+    from . import policyregister
+    if status not in _HANDTERBARE_STATUS:
+        return [], None
+    handlinger = ["avvis", "eskaler"]
+    if not intensjon_pakrevd:
+        return handlinger, "ingen_intensjon"
+    # Den blokkerende grunnkoden er den SISTE i begrunnelseskjeden.
+    bundet = None
+    if isinstance(begrunnelse, list) and begrunnelse \
+            and isinstance(begrunnelse[-1], dict):
+        bundet = begrunnelse[-1].get("kode")
+    if not isinstance(bundet, str):
+        return handlinger, "blokkerende_grunner_uavklart"
+    from policy_validator.engine import les_policyref
+    from policy_validator.schema import IKKE_MENNESKELIG_GODKJENNBARE
+    ref = les_policyref(policy_id_label)
+    try:
+        policy, _ = policyregister.hent_aktiv(conn, tenant, ref[0]) if ref \
+            else (None, None)
+    except Exception:
+        policy = None
+    mo = (policy or {}).get("menneskelig_overstyring") or {}
+    godkjennbar = bundet not in IKKE_MENNESKELIG_GODKJENNBARE and any(
+        isinstance(e, dict) and e.get("grunnkode") == bundet
+        and e.get("handling") == handling for e in mo.get("godkjennbare") or [])
+    if godkjennbar:
+        return ["godkjenn", *handlinger], None
+    return handlinger, "ikke_godkjennbar_grunn"
+
+
+def _har_utestaaende(conn, tenant: str, uid: int) -> bool:
+    """Gate 14a (presentasjon): har saken et LEVENDE oppdrag/kapabilitet?
+    Leser gjennom NØYAKTIG samme autoritative DB-funksjon som POST-vakten
+    (`sak_utestaaende`, SECURITY DEFINER), så lese-API-et aldri inviterer til
+    en `avvis` serverkontrakten allerede vet er utilgjengelig."""
+    rad = conn.execute("SELECT 1 FROM sak_utestaaende(%s,%s) LIMIT 1",
+                       (tenant, uid)).fetchone()
+    return rad is not None
 
 
 def unntak_detalj(tjeneste, request: Request) -> Response:
@@ -408,11 +463,25 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
             return _feilsvar("ikke_funnet", rid)
         # Historikken er et EGET endepunkt (v2 pkt. 7) — aldri inline her.
         # Payload/attestasjoner/nøkler hentes ikke engang fra databasen.
-        return kanonisk_json(
-            {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
-             "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
-             "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
-             "request_id": rid}, 200, {"x-request-id": rid})
+        handlinger, aarsak = _tillatte_handlinger(
+            conn, auth.tenant, rad[2], rad[5], rad[7], rad[8], rad[10])
+        # Gate 14a: er et oppdrag/kapabilitet utestående, er `avvis` utilgjengelig
+        # (POST-vakten svarer 409 `utestaaende_oppdrag`) — skjul den her med den
+        # lukkede årsaken, så UI-et forklarer det FØR brukeren prøver.
+        avvis_aarsak = None
+        if "avvis" in handlinger and _har_utestaaende(conn, auth.tenant, uid):
+            handlinger = [h for h in handlinger if h != "avvis"]
+            avvis_aarsak = "utestaaende_oppdrag"
+        kropp = {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
+                 "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
+                 "prioritet": rad[6], "begrunnelse": _koder(rad[7]),
+                 "saksversjon": rad[9], "tillatte_handlinger": handlinger,
+                 "request_id": rid}
+        if aarsak is not None:
+            kropp["godkjenn_utilgjengelig"] = aarsak
+        if avvis_aarsak is not None:
+            kropp["avvis_utilgjengelig"] = avvis_aarsak
+        return kanonisk_json(kropp, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "exceptions:read", _fn)
 
 

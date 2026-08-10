@@ -68,3 +68,40 @@ export async function loggUt() {
   // 204 forventet; 401 betyr allerede utlogget — begge er «du er ute».
   return r.status === 204 || r.status === 401;
 }
+
+export function nyIdempotensnokkel() {
+  if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
+// (dobbel-innsending). Klienten sender handlingen, `saksversjon` (den den
+// VISTE, for den optimistiske låsen) og en `Idempotency-Key`. Nøkkelen
+// GENERERES AV KALLEREN og gjenbrukes ved retry — ellers ville en
+// nettverksretry blitt en ny operasjon (server-idempotensen ville aldri sett
+// samme nøkkel). Konvolutten bygges og MAC-signeres SERVER-side.
+export async function postHandling(uid, operatorhandling, saksversjon,
+                                   idempotensnokkel) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  let r;
+  try {
+    r = await fetch(`/v1/unntak/${uid}/handling`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "Idempotency-Key": idempotensnokkel,
+        ...(csrf ? { "X-Disponit-CSRF": csrf } : {}),
+      },
+      body: JSON.stringify({ operatorhandling, saksversjon }),
+      redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let kropp = null;
+  try { kropp = await r.json(); } catch { kropp = null; }
+  if (!r.ok) _kast(r.status, kropp && kropp.feil);
+  return kropp;
+}

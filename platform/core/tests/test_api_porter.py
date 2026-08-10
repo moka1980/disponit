@@ -287,7 +287,7 @@ def test_live_svarer_uten_database(server, app, monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pg
-@pytest.mark.parametrize("mangel", ["nokler", "kek", "pepper", "bind"])
+@pytest.mark.parametrize("mangel", ["nokler", "kek", "pepper", "bind", "mac"])
 def test_boot_nekter(miljo, monkeypatch, mangel):
     """Prosessen skal ikke starte. En advarsel med exit 0 er ingen port —
     samme lærdom som migrasjonskjøreren i 005a."""
@@ -299,6 +299,10 @@ def test_boot_nekter(miljo, monkeypatch, mangel):
         monkeypatch.delenv("DISPONIT_KEK", raising=False)
     elif mangel == "pepper":
         monkeypatch.setenv("DISPONIT_TOKEN_PEPPER", "kort")
+    elif mangel == "mac":
+        # PR-012: manglende MAC-register er også en oppstartsperre.
+        monkeypatch.delenv("DISPONIT_MAC_NOKLER", raising=False)
+        monkeypatch.setenv("DISPONIT_MAC_NOKLER_FIL", "/finnes/ikke")
     with pytest.raises((BootNekt, RuntimeError, FileNotFoundError)):
         if mangel == "bind":
             lag_app(DSN, bind_vert="0.0.0.0")

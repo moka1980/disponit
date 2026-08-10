@@ -1,0 +1,54 @@
+{
+  "krav_id": "behandling-m37-v1",
+  "ts": "2026-08-10T17:24:07.148545+00:00",
+  "bestatt": true,
+  "oppsett": {
+    "injisert_antall": 12,
+    "kategorier": [
+      "avvis",
+      "godkjenn",
+      "sideeffekt",
+      "fire_oyne"
+    ]
+  },
+  "maalt": {
+    "avvis": {
+      "injisert": 3,
+      "terminal": 3
+    },
+    "godkjenn": {
+      "injisert": 3,
+      "ny_beslutning": 3
+    },
+    "sideeffekt": {
+      "injisert": 3,
+      "til_utforelse": 3
+    },
+    "fire_oyne": {
+      "injisert": 3,
+      "fullfort": 3
+    },
+    "kategorier_dekket": [
+      "avvis",
+      "godkjenn",
+      "sideeffekt",
+      "fire_oyne"
+    ],
+    "saksversjonskonflikt_409": 1,
+    "saksversjonskonflikt_sideeffekt": 0,
+    "samtidig_konkurranser": 1,
+    "samtidig_startet": 2,
+    "samtidig_fullfort": 2,
+    "samtidig_vinnere": 1,
+    "samtidig_tapere": 1,
+    "kvitteringsrace_konkurranser": 1,
+    "kvitteringsrace_fullfort": 2,
+    "kvitteringsrace_avvis_flagget": 1,
+    "kvitteringsrace_kvittering_brukt": 1,
+    "kvitteringsrace_falskt_avvist": 0,
+    "klartekst_treff": 0,
+    "handlinger_med_aktor": 89,
+    "handlinger_totalt": 89,
+    "varighet_sek": 1.448
+  }
+}

@@ -114,4 +114,37 @@ def _valider(policy: object) -> list[str]:
                          "teknisk_feil", "ugyldig_data", "ukjent"):
         if obligatorisk not in kategorier:
             feil.append(f"unntak.kategorier mangler obligatorisk '{obligatorisk}'")
+
+    # PR-012: menneskelig_overstyring — LUKKET (grunnkode, handling)-mapping.
+    # Et menneske kan ikke «godkjenne bort» en teknisk feil eller dikte
+    # manglende data; kun eksplisitt godkjennbare vilkår. Deny-by-default:
+    # mangler feltet, er ingen menneskelig godkjenning mulig (håndheves i
+    # beslutningsveien, ikke her).
+    if "menneskelig_overstyring" in policy:
+        mo = policy["menneskelig_overstyring"]
+        if mo.get("krever_rolle") not in roller:
+            feil.append(f"menneskelig_overstyring: ukjent rolle "
+                        f"'{mo.get('krever_rolle')}'")
+        par: set[tuple[str, str]] = set()
+        for i, e in enumerate(mo["godkjennbare"]):
+            gk, hn = e["grunnkode"], e["handling"]
+            if hn not in sett:
+                feil.append(f"menneskelig_overstyring[{i}]: ukjent handling "
+                            f"'{hn}'")
+            if gk in IKKE_MENNESKELIG_GODKJENNBARE:
+                feil.append(f"menneskelig_overstyring[{i}]: grunnkode '{gk}' "
+                            f"kan aldri godkjennes menneskelig")
+            if (gk, hn) in par:
+                feil.append(f"menneskelig_overstyring[{i}]: duplisert "
+                            f"(grunnkode, handling) ({gk}, {hn})")
+            par.add((gk, hn))
     return feil
+
+
+#: Grunnkoder et menneske ALDRI kan godkjenne (v6 §6): tekniske/data-feil
+#: løses av M-37 eller avvises, ikke «godkjennes bort». Lukket deny-liste.
+IKKE_MENNESKELIG_GODKJENNBARE = frozenset({
+    "teknisk_feil", "manglende_data", "ugyldig_data", "motor_exception",
+    "logging_feilet", "uautentisert_kontekst", "dataklassifisering_mangler",
+    "dataklassifisering_ubetrodd_kilde",
+})

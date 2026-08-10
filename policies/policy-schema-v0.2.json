@@ -84,6 +84,29 @@
         "maks_auto_forsok": {"type": "integer", "minimum": 0, "maximum": 10},
         "eskalering": {"const": "unntakskø"}
       }
+    },
+    "menneskelig_overstyring": {
+      "type": "object", "additionalProperties": false,
+      "required": ["godkjennbare", "krever_rolle"],
+      "properties": {
+        "godkjennbare": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["grunnkode", "handling"],
+            "dependentRequired": {"belop_maks": ["valuta"]},
+            "properties": {
+              "grunnkode": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+              "handling": {"type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"},
+              "belop_maks": {"type": "string", "pattern": "^\\d+(\\.\\d{1,2})?$"},
+              "valuta": {"type": "string", "pattern": "^[A-Z]{3}$"}
+            }
+          }
+        },
+        "krever_rolle": {"type": "string"},
+        "krever_fire_oyne": {"type": "boolean"},
+        "begrunnelse_pakrevd": {"type": "boolean"}
+      }
     }
   },
   "$defs": {

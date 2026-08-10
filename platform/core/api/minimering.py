@@ -126,3 +126,79 @@ def minimer_payload(event: dict, kategori: str | None,
         if isinstance(verdi, str) and verdi.strip():
             ut[grupperingsnokkel] = verdi
     return ut
+
+
+# ---------------------------------------------------------------------------
+# PR-012 §1: handlingsintensjon — formell utvidelse av minimeringskontrakten
+#
+# Den minimerte payloaden mangler `belop` (PR-005b-allowlisten), så motoren
+# kan ikke re-evaluere en over_grense-sak — og det er nettopp den saken et
+# menneske vil godkjenne. Handlingsintensjonen er en EGEN, LUKKET, minimert
+# struktur med kun det motoren trenger for å re-evaluere godkjennbare vilkår.
+# Ingen fri passthrough; attestasjoner beholdes KUN som referanser (vilkår +
+# verifikator), ALDRI verdien/resultatet — det ville vært en råverdi.
+# ---------------------------------------------------------------------------
+
+#: Lukket konstant. Ukjent versjon ved lesing => godkjenn utilgjengelig
+#: (fail-closed), aldri gjetting (v3 §7).
+HI_SKJEMAVERSJON = 1
+
+#: 8 KiB klartekst-tak (v3 §7). Intensjonen er noen få skalarer + referanser;
+#: taket er et vern mot en uventet oppblåsning, ikke en forventet grense.
+HI_MAKS_KLARTEKST = 8 * 1024
+
+#: Skalarfeltene motoren re-evaluerer på (v2 §1). Alle er metadata, ikke
+#: råverdier: `ressurs_id` er en ugjennomsiktig id, `dataklasser` er
+#: KLASSENAVN (ikke selve dataene), resten er beløp/valuta/tid/handling.
+_INTENSJONSSKALARER = ("handling", "ressurs_id", "belop", "valuta",
+                       "tidspunkt", "dataklasser_kilde")
+
+
+def _attestasjon_referanser(raa: object) -> list[dict]:
+    """Referanse = vilkårsnavn + verifikator, sortert. ALDRI `verdi`/
+    `resultat` (kan være persondata-avledet) og aldri signaturen."""
+    if not isinstance(raa, dict):
+        return []
+    ut = []
+    for navn, att in sorted(raa.items()):
+        if isinstance(att, dict) and isinstance(att.get("verifikator"), str):
+            ut.append({"vilkaar": navn, "verifikator": att["verifikator"]})
+    return ut
+
+
+class IntensjonForStor(ValueError):
+    """Klartekst-intensjonen overstiger `HI_MAKS_KLARTEKST` (v3 §7)."""
+
+
+def bygg_handlingsintensjon(event: dict, aktor_rolle: str | None = None) -> dict:
+    """Den lukkede, minimerte handlingsintensjonen (v2 §1, v3 §7).
+
+    Bygges fra den ORIGINALE hendelsen, aldri fra klient-tidsnærhet eller
+    «siste rad». Kun de deklarerte feltene slippes gjennom — samme _rent- og
+    referanseregler som `minimer_payload`. Kaster `IntensjonForStor` over
+    taket. Kalleren krypterer resultatet i SAMME transaksjon som unntaket.
+
+    `aktor_rolle` er den AUTENTISERTE rollen den opprinnelige beslutningen ble
+    tatt med (fra `rolle_ok`-grunnen, ikke fra hendelsen). Den er en
+    systemrolle, ikke persondata, og trengs for at motoren skal kunne
+    rekonstruere den samme `EvaluationContext` ved menneskelig re-evaluering —
+    ellers ville re-evalueringen stoppet på rollekontrollen (steg 3), som ikke
+    er den bundne grunnkoden.
+    """
+    import json
+
+    ut: dict[str, object] = {}
+    if isinstance(aktor_rolle, str) and aktor_rolle:
+        ut["aktor_rolle"] = aktor_rolle
+    for felt in _INTENSJONSSKALARER:
+        v = _rent(event.get(felt))
+        if isinstance(v, (str, int, float, bool)):
+            ut[felt] = v
+    dk = _rent(event.get("dataklasser"))
+    if isinstance(dk, list) and all(isinstance(x, str) for x in dk):
+        ut["dataklasser"] = dk
+    ut["attestasjoner_referanser"] = _attestasjon_referanser(
+        event.get("attestasjoner"))
+    if len(json.dumps(ut, ensure_ascii=False).encode("utf-8")) > HI_MAKS_KLARTEKST:
+        raise IntensjonForStor(str(HI_MAKS_KLARTEKST))
+    return ut

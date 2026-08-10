@@ -74,6 +74,9 @@
         "feilinjisering_til_unntakskø": {
           "$ref": "#/$defs/punkt"
         },
+        "menneskelig_behandling_bestatt": {
+          "$ref": "#/$defs/punkt"
+        },
         "ytelse_bestatt": {
           "$ref": "#/$defs/punkt"
         },

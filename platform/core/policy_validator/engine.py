@@ -21,6 +21,9 @@ UNNTAK, exception og timeout er alle fail-closed.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import re
 
 import threading
@@ -52,6 +55,37 @@ class EvaluationContext:
     kilde: str  # f.eks. "api_token", "system_jobb"
 
 
+@dataclass(frozen=True)
+class MenneskeligGodkjenning:
+    """Et ALLEREDE MAC-verifisert menneskelig godkjenningsfaktum.
+
+    PR-012 form (C): motorens EGEN, separate inngang for verifiserte
+    menneskefakta. Den ligger ALDRI i `event["attestasjoner"]` — att-nøkkelen
+    kan dermed aldri prege en menneskelig godkjenning, og en verifikator kan
+    aldri utgi seg for et menneske (v7 §1). Motoren verifiserer ALDRI MAC-en
+    selv; `behandle_unntakshandling` (porten) gjør det FØR kallet og
+    populerer denne strukturen. Ingen API-rute, arbeider eller klient kan nå
+    den (Codex-port 5).
+
+    Feltene er de MAC-signerte konvoluttfeltene. `tenant` ligger eksplisitt i
+    typen (ikke bare i konvolutten) fordi motorens likhetskontroll trenger den.
+    `bundet_grunnkode` binder godkjenningen til nøyaktig ÉN blokkerende
+    grunnkode (v8 §2) — motoren kan løfte KUN den.
+    """
+    tenant: str
+    target_action: str
+    ressurs_id: str | None
+    belop: Decimal | None
+    valuta: str | None
+    hi_integritet_hash: str
+    bundet_grunnkode: str
+    unntak_id: int
+    runde: int
+    godkjennere: tuple[tuple[str, str, int], ...]  # (bruker_id, rolle, authz_version)
+    godkjennings_policy_hash: str
+    utloper: datetime | None
+
+
 @dataclass
 class Grunn:
     kode: str
@@ -74,6 +108,11 @@ class Decision:
     # evaluate() sitt teller-oppslag er RÅDGIVENDE; den bindende kontrollen er
     # den atomiske reserver()-en i sikker_beslutning (Codex P1: TOCTOU).
     frekvensreservasjon: tuple[tuple[str, ...], datetime, int] | None = None
+    # Settes KUN av den menneskelige godkjenningsgrenen når et konvoluttfelt
+    # ikke stemmer med hendelsen (v8 §1): porten skal da rute sikkerhetsevidens
+    # på egen forbindelse, ikke stille avvise. Default False => eksisterende
+    # beslutninger uendret; feltet er ikke med i to_dict (bit-identisk logg).
+    krever_sikkerhetsrouting: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {"beslutning": self.beslutning, "handling": self.handling,
@@ -262,7 +301,7 @@ def _i_vindu(vindu: str, t: datetime, sone: ZoneInfo) -> bool:
     return start <= lokal.strftime("%H:%M") <= slutt
 
 
-def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
+def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
              teller: TellerLager | None = None,
              naa: datetime | None = None) -> Decision:
     naa = naa or datetime.now(timezone.utc)
@@ -427,3 +466,212 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
     return Decision(TILLAT, handling_id, pid, ok_grunner,
                     frekvensnokkel=frekvensnokkel,
                     frekvensreservasjon=frekvensreservasjon)
+
+
+# --------------------------------------------------------------------------
+# PR-012 (C): motorens EGEN inngang for verifiserte menneskefakta.
+#
+# Presisering 3 (den skarpeste): den nye grenen legger seg ETTER den ordinære
+# evalueringen og endrer den ALDRI. `evaluate` uten `menneskelig_godkjenning`
+# er nøyaktig `_evaluer` — samme beslutning OG samme begrunnelseskjede,
+# bit-identisk (regresjonsport 6). Fristelsen ved «samle alle blokkerende
+# grunner» er å restrukturere evalueringsløkken; det ville endret
+# begrunnelseskjeden for HVER beslutning i systemet. Derfor kjører vi den
+# ordinære veien uendret, og — kun ved en godkjenning — kjører vi den EN GANG
+# TIL mot en policy der nøyaktig den ene bundne kontrollen er hevet. «Flere
+# blokkerende grunner» faller da naturlig ut: pass 2 treffer neste blokk og
+# gir ingen TILLAT.
+# --------------------------------------------------------------------------
+
+def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
+             teller: TellerLager | None = None, naa: datetime | None = None,
+             *, menneskelig_godkjenning: "MenneskeligGodkjenning | None" = None
+             ) -> Decision:
+    """Motorens ene inngang.
+
+    Uten `menneskelig_godkjenning`: identisk med `_evaluer` (samme utfall og
+    begrunnelseskjede — PR-012 P3/port 6). Parameteren kan KUN settes av
+    `behandle_unntakshandling`, som har MAC-verifisert konvolutten på forhånd;
+    motoren verifiserer aldri MAC-en selv.
+    """
+    naa = naa or datetime.now(timezone.utc)
+    grunnvedtak = _evaluer(policy, context, event, teller, naa)
+    if menneskelig_godkjenning is None:
+        return grunnvedtak
+    return _anvend_menneskelig_godkjenning(
+        policy, context, event, teller, naa, grunnvedtak, menneskelig_godkjenning)
+
+
+def _policy_innholds_hash(policy: dict) -> str:
+    """Kanonisk SHA-256 over policyen. MÅ være bit-identisk med
+    `api.policyregister.innholds_hash`. Duplisert her — ikke importert —
+    fordi `policy_validator` ikke skal avhenge av `api`;
+    `test_policy_innholds_hash_speiler_registeret` binder de to sammen så en
+    endring ikke kan gli fra hverandre."""
+    return hashlib.sha256(json.dumps(
+        policy, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def _menneskelig_feltavvik(mg: "MenneskeligGodkjenning",
+                           context: EvaluationContext | None,
+                           event: dict) -> str | None:
+    """Navnet på det FØRSTE konvoluttfeltet som ikke stemmer med hendelsen,
+    ellers None. Alle seks må være eksakt like (v8 §1) — et avvik betyr at
+    konvolutten forsøkes brukt på noe annet enn den ble gitt for."""
+    handling = event.get("handling") if isinstance(event.get("handling"), str) \
+        else None
+    if mg.tenant != (context.tenant_id if context else None):
+        return "tenant"
+    if mg.target_action != handling:
+        return "target_action"
+    if mg.ressurs_id != event.get("ressurs_id"):
+        return "ressurs_id"
+    if mg.belop != parse_belop(event.get("belop")):
+        return "belop"
+    if mg.valuta != event.get("valuta"):
+        return "valuta"
+    if mg.hi_integritet_hash != event.get("hi_integritet_hash"):
+        return "hi_integritet_hash"
+    return None
+
+
+def _finn_godkjennbar(policy: dict, grunnkode: str,
+                      handling_id: str) -> tuple[dict | None, dict]:
+    """(godkjennbar-oppføring for (grunnkode, handling), menneskelig_overstyring).
+    Oppføringen er None når paret ikke er godkjennbart — da er godkjenningen
+    usynlig for motoren."""
+    mo = policy.get("menneskelig_overstyring")
+    if not isinstance(mo, dict):
+        return None, {}
+    for e in mo.get("godkjennbare") or []:
+        if isinstance(e, dict) and e.get("grunnkode") == grunnkode \
+                and e.get("handling") == handling_id:
+            return e, mo
+    return None, mo
+
+
+def _loft_policy(policy: dict, handling_id: str, grunnkode: str,
+                 entry: dict) -> dict | None:
+    """Kopi av policyen der NØYAKTIG den kontrollen som ga `grunnkode` er
+    hevet for `handling_id` — resten uendret. None hvis grunnkoden ikke lar
+    seg uttrykke som et løft (fail-closed: ingen overstyring).
+
+    Motoren løfter kun det schemaet kan uttrykke (belop_maks / valuta). En
+    grunnkode fra en kontroll uten et slikt uttrykk (tidsvindu, frekvens,
+    dataklasse) gir None og dermed ingen TILLAT — presis den fail-closed
+    oppførselen v8 §2 krever."""
+    ny = dict(policy)
+    handlinger = []
+    truffet = False
+    for h in policy.get("handlinger") or []:
+        if isinstance(h, dict) and h.get("id") == handling_id:
+            h = copy.deepcopy(h)
+            grenser = h.setdefault("grenser", {})
+            if grunnkode == "belop_over_grense":
+                if entry.get("belop_maks") is None:
+                    return None
+                grenser["belop_maks"] = entry["belop_maks"]
+            elif grunnkode == "valuta_ikke_tillatt":
+                if entry.get("valuta") is None:
+                    return None
+                vs = list(grenser.get("valuta") or [])
+                if entry["valuta"] not in vs:
+                    vs.append(entry["valuta"])
+                grenser["valuta"] = vs
+            else:
+                return None
+            truffet = True
+        handlinger.append(h)
+    if not truffet:
+        return None
+    ny["handlinger"] = handlinger
+    return ny
+
+
+def _anvend_menneskelig_godkjenning(
+        policy: dict, context: EvaluationContext | None, event: dict,
+        teller: TellerLager | None, naa: datetime,
+        grunnvedtak: Decision, mg: "MenneskeligGodkjenning") -> Decision:
+    handling_id = event.get("handling") if isinstance(event.get("handling"), str) \
+        else "<mangler>"
+    pid = _pid(policy, handling_id)
+
+    def stopp(grunn: Grunn, *, sikkerhet: bool = False) -> Decision:
+        return Decision(STOPP, handling_id, pid, [grunn],
+                        krever_sikkerhetsrouting=sikkerhet)
+
+    # Var saken TILLAT allerede? Da er den bundne grunnen ikke blokkerende
+    # lenger (v8 §2) — dagens utfall står, godkjenningen er usynlig.
+    if grunnvedtak.beslutning == TILLAT:
+        return grunnvedtak
+    blokk_grunn = grunnvedtak.begrunnelse[-1].kode if grunnvedtak.begrunnelse \
+        else None
+
+    # 1) Eksakt likhet på alle seks konvoluttfelt (v8 §1). Ett avvik =>
+    #    STOPP + sikkerhetsrouting.
+    avvik = _menneskelig_feltavvik(mg, context, event)
+    if avvik is not None:
+        return stopp(Grunn("godkjenning_feltavvik", {"felt": avvik}),
+                     sikkerhet=True)
+
+    # 2) Policyhash: godkjenningen ble gitt mot en bestemt policy (v7 §4).
+    if mg.godkjennings_policy_hash != _policy_innholds_hash(policy):
+        return stopp(Grunn("godkjenning_policy_avvik"), sikkerhet=True)
+
+    # 3) Utløp — porten sjekker også, men motoren stoler ikke blindt.
+    if mg.utloper is None or mg.utloper <= naa:
+        return stopp(Grunn("godkjenning_utlopt"))
+
+    # 4) Er den bundne grunnkoden faktisk den saken stoppet på? Ellers er
+    #    situasjonen en annen enn den mennesket vurderte => ingen overstyring.
+    if mg.bundet_grunnkode != blokk_grunn:
+        return grunnvedtak
+
+    # 5) Er (grunnkode, handling) godkjennbart? Ellers usynlig for motoren.
+    entry, mo = _finn_godkjennbar(policy, mg.bundet_grunnkode, handling_id)
+    if entry is None:
+        return grunnvedtak
+
+    # 6) krever_rolle: minst én godkjenner må ha den påkrevde rollen.
+    krever_rolle = mo.get("krever_rolle")
+    if krever_rolle and not any(r == krever_rolle for _, r, _ in mg.godkjennere):
+        return stopp(Grunn("godkjenning_rolle_mangler",
+                           {"krever_rolle": krever_rolle}), sikkerhet=True)
+
+    # 7) Grensen EIES av motoren (v7 §2), mot hendelsens autoritative verdier
+    #    (likheten er bevist i steg 1).
+    if entry.get("valuta") is not None and event.get("valuta") != entry["valuta"]:
+        return stopp(Grunn("godkjenning_valuta_avvik",
+                           {"valuta": str(event.get("valuta"))}))
+    maks = entry.get("belop_maks")
+    if maks is not None:
+        maksd = parse_belop(maks)
+        if maksd is None:
+            return stopp(Grunn("godkjenning_belopsgrense_ugyldig"),
+                         sikkerhet=True)
+        belop = parse_belop(event.get("belop"))
+        if belop is None or belop > maksd:
+            return stopp(Grunn("godkjenning_belop_over_maks",
+                               {"belop": repr(event.get("belop")),
+                                "grense": str(maksd)}))
+
+    # 8) Løft KUN den bundne grunnkoden og kjør den ordinære veien på nytt.
+    loftet = _loft_policy(policy, handling_id, mg.bundet_grunnkode, entry)
+    if loftet is None:
+        return grunnvedtak
+    nytt = _evaluer(loftet, context, event, teller, naa)
+    if nytt.beslutning != TILLAT:
+        return nytt  # flere blokkerende grunner => ingen TILLAT (v8 §2)
+
+    # 9) TILLAT: loggfør den BUNDNE grunnkoden fra konvolutten (v8 §2), ikke
+    #    den motoren tilfeldigvis anvendte etterpå.
+    grunner = list(nytt.begrunnelse) + [Grunn("menneskelig_godkjenning_anvendt", {
+        "runde": mg.runde,
+        "godkjennere": [b for b, _, _ in mg.godkjennere],
+        "bundet_grunnkode": mg.bundet_grunnkode,
+        "belop_maks": str(parse_belop(maks)) if maks is not None else None,
+        "godkjennings_policy_hash": mg.godkjennings_policy_hash})]
+    return Decision(TILLAT, handling_id, pid, grunner,
+                    frekvensnokkel=nytt.frekvensnokkel,
+                    frekvensreservasjon=nytt.frekvensreservasjon)

@@ -490,6 +490,17 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
         tjeneste.pool.gi_tilbake(conn)
 
 
+def csrf_matcher(lagret_hash: str | None, request: Request) -> bool:
+    """True hvis X-Disponit-CSRF-headeren matcher øktens lagrede `csrf_hash` i
+    KONSTANT tid. Manglende header eller hash → False. Dobbel-innsending
+    (v2 §8): CSRF-verdien er JS-lesbar (`__Host-disponit_csrf`) og speiles i
+    headeren; en fremmed eller fraværende token matcher aldri. Gjenbrukes av
+    logout OG browser-mutasjoner (PR-012 /handling)."""
+    csrf = request.headers.get("x-disponit-csrf")
+    return bool(csrf) and bool(lagret_hash) \
+        and hmac.compare_digest(_hash(csrf), lagret_hash)
+
+
 def sesjon_logout(tjeneste, request: Request) -> Response:
     """Logout tilbakekaller økten — men KUN mot gyldig CSRF (dobbel-innsending,
     v2 §8-ånd). UI-et sender X-Disponit-CSRF fra den JS-lesbare csrf-cookien;
@@ -500,7 +511,6 @@ def sesjon_logout(tjeneste, request: Request) -> Response:
     from .app import _rid, _feilsvar
     rid = _rid(request)
     sesjon = request.cookies.get(C_SESJON)
-    csrf = request.headers.get("x-disponit-csrf")
     conn = tjeneste.pool.hent()
     try:
         if sesjon:
@@ -511,9 +521,7 @@ def sesjon_logout(tjeneste, request: Request) -> Response:
                 (_hash(sesjon),)).fetchone()
             conn.rollback()
             if rad is not None:
-                lagret = rad[0]
-                if not csrf or not lagret \
-                        or not hmac.compare_digest(_hash(csrf), lagret):
+                if not csrf_matcher(rad[0], request):
                     # Forget-forsøk med feil/uten token: ØKTEN URØRT, 403.
                     tjeneste.logg.hendelse("csrf_ugyldig", rid)
                     return _feilsvar("csrf_ugyldig", rid)

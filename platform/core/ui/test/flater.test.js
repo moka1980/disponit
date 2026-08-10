@@ -167,6 +167,180 @@ test("Unntak: liste + detalj med begrunnelse og historikk", async () => {
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
 
+test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", async () => {
+  const kalt = [];
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") {
+      kalt.push({ url, opts });
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "TILLAT", unntak_id: 1 }) };
+    }
+    return ekte(url, opts);
+  };
+  // jsdom dropper __Host--cookies (krever Secure); overstyr getteren så
+  // lesCookie ser den (klientens jobb er kun å videresende tokenet).
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 0, tillatte_handlinger: ["godkjenn", "avvis", "eskaler"] } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  assert.ok(dlg.textContent.includes(t("ui.unntak.behandle")));
+  const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === tekst);
+  assert.ok(finn(dlg, t("ui.unntak.handling.godkjenn")), "godkjenn-knapp mangler");
+  assert.equal((await alvorligeBrudd(dlg, { fragment: true })).length, 0);
+
+  // Godkjenn → bekreftelse med KONKRET grunn i klartekst (v8 §3).
+  finn(dlg, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.unntak.du_godkjenner"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.unntak.du_godkjenner")));
+  assert.ok(bek.textContent.includes(t("grunn.belop_over_grense")));
+
+  // Bekreft → POST med X-Disponit-CSRF (dobbel-innsending).
+  finn(bek, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length > 0);
+  assert.equal(kalt[0].opts.method, "POST");
+  assert.ok(kalt[0].url.includes("/v1/unntak/1/handling"));
+  assert.equal(kalt[0].opts.headers["X-Disponit-CSRF"], "tok123");
+  assert.ok(kalt[0].opts.headers["Idempotency-Key"], "mangler Idempotency-Key");
+  const sendt = JSON.parse(kalt[0].opts.body);
+  assert.equal(sendt.operatorhandling, "godkjenn");
+  assert.equal(sendt.saksversjon, 0);   // versjonen dialogen viste
+  globalThis.fetch = ekte;
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+test("Unntak: nettverksretry GJENBRUKER samme Idempotency-Key (PR-012)", async () => {
+  const kalt = [];
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");  // nettverksfeil
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "TILLAT", unntak_id: 1 }) };
+    }
+    return ekte(url, opts);
+  };
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 3, tillatte_handlinger: ["godkjenn", "avvis", "eskaler"] } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === tekst);
+  finn(dlg, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.unntak.du_godkjenner"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.unntak.du_godkjenner")));
+  finn(bek, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nettverksfeil skal gi nøyaktig én retry");
+  assert.ok(kalt[0].opts.headers["Idempotency-Key"]);
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "retry MÅ gjenbruke samme idempotensnøkkel");
+  assert.equal(JSON.parse(kalt[0].opts.body).saksversjon, 3);
+  globalThis.fetch = ekte;
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+test("Unntak: 409 utestaaende_oppdrag → avklaringstekst, ingen blind retry (gate 14a)", async () => {
+  const kalt = [];
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") {
+      kalt.push({ url, opts });
+      // Den LUKKEDE 14a-koden (ikke rå DTO): UI-et må skille den fra en
+      // generisk 409 / stale saksversjon og vise avklaringsteksten.
+      return { ok: false, status: 409,
+        json: async () => ({ feil: "utestaaende_oppdrag", request_id: "r" }) };
+    }
+    return ekte(url, opts);
+  };
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 2, tillatte_handlinger: ["godkjenn", "avvis", "eskaler"] } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === tekst);
+  // Avvis → bekreftelsesdialog → bekreft.
+  finn(document.querySelector('[role="dialog"]'), t("ui.unntak.handling.avvis"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.unntak.bekreft.avvis"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.unntak.bekreft.avvis")));
+  finn(bek, t("ui.unntak.handling.avvis"))
+    .dispatchEvent(new window.Event("click"));
+
+  await vent(() => document.querySelector('[role="status"]')
+    && document.querySelector('[role="status"]').textContent.length > 0);
+  const live = document.querySelector('[role="status"]').textContent;
+  // Den KONKRETE avklaringsteksten, ALDRI den generiske feilen.
+  assert.equal(live, t("ui.unntak.utestaaende_oppdrag"));
+  assert.notEqual(live, t("ui.unntak.behandling_feilet"));
+  // Nøyaktig ett POST-kall: en konflikt retries ALDRI blindt.
+  assert.equal(kalt.length, 1, "409 skal ikke gi retry");
+  globalThis.fetch = ekte;
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+test("Unntak: avvis skjult ved utestaaende oppdrag, m/ forklaring (gate 14a)", async () => {
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 2, tillatte_handlinger: ["godkjenn", "eskaler"],
+    avvis_utilgjengelig: "utestaaende_oppdrag" } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  const knapper = [...dlg.querySelectorAll("button")].map((b) => b.textContent.trim());
+  assert.ok(!knapper.includes(t("ui.unntak.handling.avvis")),
+    "avvis-knappen skal ikke vises når serveren har utelatt den");
+  assert.ok(knapper.includes(t("ui.unntak.handling.eskaler")), "eskaler skal vises");
+  assert.ok(dlg.textContent.includes(t("ui.unntak.utestaaende_oppdrag")),
+    "forklaringen på hvorfor avvis mangler skal vises");
+});
+
 test("Tom liste → TomTilstand", async () => {
   SVAR = { ...STD, "/v1/beslutninger": { rader: [], neste_cursor: null } };
   const h = nyHoved();
