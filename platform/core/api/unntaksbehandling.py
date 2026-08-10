@@ -552,9 +552,12 @@ def _flagg_avklaring(conn, tenant, unntak_id, utestaaende_hash, aktor,
             " request_id, detalj) VALUES (%s,%s,'avklaring_kreves',%s,%s,%s)",
             (tenant, unntak_id, aktor, request_id,
              json.dumps({"utestaaende_hash": utestaaende_hash})))
+    # Committet resultat: saken er flagget for avklaring, IKKE avvist. Bæres
+    # som `utfall`-diskriminator (ikke et rått `http`-DTO-felt); endepunktet
+    # oversetter dette til det LUKKEDE feilobjektet `{"feil": ...}` med 409,
+    # slik at UI-et skiller avklaring fra generisk 409 og viser rett tekst.
     return _fullfor(conn, tenant, idempotency_key,
-                    {"utfall": "utestaaende_oppdrag", "unntak_id": unntak_id,
-                     "http": 409})
+                    {"utfall": "utestaaende_oppdrag", "unntak_id": unntak_id})
 
 
 def _historikk(conn, tenant, unntak_id, hendelse, aktor, request_id) -> None:
@@ -602,7 +605,9 @@ _FEIL_HTTP = {"unntak_ukjent": 404, "ingen_aktiv_runde": 409,
               "allerede_attestert": 409, "ukjent_operatorhandling": 400,
               "policy_id_ukjent": 409, "mangler_rolle": 403,
               "mangler_medlemskap": 403, "scope_mangler": 403,
-              "saksversjon_utdatert": 409, "runde_allerede_aapen": 409}
+              "saksversjon_utdatert": 409, "runde_allerede_aapen": 409,
+              # 14a: committet avklaringsflagg (ikke en kastet feil).
+              "utestaaende_oppdrag": 409}
 
 
 def handling_endepunkt(tjeneste, request, unntak_id: int):
@@ -679,9 +684,14 @@ def handling_endepunkt(tjeneste, request, unntak_id: int):
         except Godkjenningsfeil as g:
             conn.rollback()
             return _feilsvar_kode(g.kode, rid)
-        # 14a: et committet `utestaaende_oppdrag`-flagg bæres som 409 i selve
-        # resultatet (ikke en Godkjenningsfeil — flagget SKAL være committet).
-        return JSONResponse(res, status_code=res.get("http", 200),
+        # 14a: avklaringsflagget er alt COMMITTET (kan ikke kastes+rulles
+        # tilbake som en vanlig feil). Oversett det til det LUKKEDE feilobjektet
+        # `{"feil": "utestaaende_oppdrag", "request_id": ...}` med 409 — samme
+        # wire-format som resten av API-et, så `postHandling` leser `kropp.feil`
+        # og UI-et viser avklaringsteksten i stedet for en generisk 409.
+        if res.get("utfall") == "utestaaende_oppdrag":
+            return _feilsvar_kode("utestaaende_oppdrag", rid)
+        return JSONResponse(res, status_code=200,
                             headers={"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)

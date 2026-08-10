@@ -194,6 +194,7 @@
   "ui.unntak.behandle": "Behandle sak",
   "ui.unntak.behandlet": "behandlet",
   "ui.unntak.behandling_feilet": "Behandlingen kunne ikke fullføres",
+  "ui.unntak.utestaaende_oppdrag": "Saken har utestående oppdrag eller arbeidskapabilitet og kan ikke avvises. Den er flagget for avklaring — se oppdraget før du behandler.",
   "ui.unntak.ikke_behandlbar": "Saken kan ikke behandles nå",
   "ui.unntak.du_godkjenner": "Du godkjenner",
   "ui.unntak.bekreft_generisk": "Bekreft handlingen",

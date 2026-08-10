@@ -194,6 +194,7 @@
   "ui.unntak.behandle": "Handle case",
   "ui.unntak.behandlet": "handled",
   "ui.unntak.behandling_feilet": "The action could not be completed",
+  "ui.unntak.utestaaende_oppdrag": "The case has an outstanding task or work capability and cannot be rejected. It has been flagged for clarification — review the task before handling it.",
   "ui.unntak.ikke_behandlbar": "This case cannot be handled now",
   "ui.unntak.du_godkjenner": "You are approving",
   "ui.unntak.bekreft_generisk": "Confirm the action",

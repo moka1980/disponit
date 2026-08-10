@@ -34,6 +34,15 @@ function utfoer(id, oh, saksversjon, ctx, paaFerdig) {
       if (e instanceof ApiFeil && e.status === 0 && attempt === 0) {
         return forsok(1);
       }
+      // Gate 14a (V9/v2): saken har utestående oppdrag/kapabilitet og er
+      // flagget for avklaring — IKKE avvist. Serveren svarer med den lukkede
+      // koden `utestaaende_oppdrag`; vis den KONKRETE avklaringsteksten (ikke
+      // den generiske feilen), og last saken på nytt uten blind retry.
+      if (e instanceof ApiFeil && e.kode === "utestaaende_oppdrag") {
+        meldLive(t("ui.unntak.utestaaende_oppdrag"));
+        if (paaFerdig) paaFerdig();
+        return;
+      }
       meldLive(t("ui.unntak.behandling_feilet"));
       if (paaFerdig) paaFerdig();
     });

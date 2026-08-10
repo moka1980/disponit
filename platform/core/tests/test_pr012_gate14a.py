@@ -8,7 +8,7 @@ tilstand gir samme 409 uten ny versjonsøkning eller historikkrad.
 import pytest
 
 from api.unntaksbehandling import Godkjenningsfeil
-from .test_api import DSN, KEK, MIGRATOR_DSN  # noqa: F401
+from .test_api import DSN, KEK, MIGRATOR_DSN, app, klient, miljo  # noqa: F401
 from .test_pr012_behandle import (conn, _oppsett, _medlem, _macreg, _kall,  # noqa: F401,E501
                                   _status, _sv as _saksversjon, TEN)
 
@@ -126,7 +126,7 @@ def test_port3_levende_oppdrag_gir_409_og_avklaring(conn):
     _oppdrag(uid, "opprettet")
     sv0 = _saksversjon(conn, uid)
     res = _kall(conn, uid, "avvis", bid, _macreg())
-    assert res["utfall"] == "utestaaende_oppdrag" and res["http"] == 409
+    assert res["utfall"] == "utestaaende_oppdrag"   # http-koden settes i endepunktet
     # avklaring_kreves committet, saksversjon økt, saken IKKE avvist.
     assert _status(conn, uid) != "avvist"
     assert _saksversjon(conn, uid) == sv0 + 1
@@ -177,7 +177,7 @@ def test_port4_utfort_oppdrag_default_deny_gir_409(conn):
     bid = _medlem(conn, "op1")
     _oppdrag(uid, "utfort")
     res = _kall(conn, uid, "avvis", bid, _macreg())
-    assert res["utfall"] == "utestaaende_oppdrag" and res["http"] == 409
+    assert res["utfall"] == "utestaaende_oppdrag"   # http-koden settes i endepunktet
 
 
 @pg
@@ -205,3 +205,79 @@ def test_port9_gjentatt_ulik_noekkel_samme_409_ingen_ny_versjon_eller_historikk(
     assert r2["utfall"] == "utestaaende_oppdrag"
     assert _saksversjon(conn, uid) == sv1          # ingen ny versjonsøkning
     assert _historikk_teller(conn, uid) == 1       # ingen ny historikkrad
+
+
+def _browsersesjon(bid):
+    """En EKTE browserøkt for TEN+bid: brukersesjon-rad m/ csrf, snapshot lik
+    medlemskapets authz_version. Returnerer (sesjonscookie, csrf-token)."""
+    import secrets
+    from db.pg import koble, sett_kontekst
+    from api import sesjon as sesjonmodul
+    cookie, csrf = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    ver = m.execute("SELECT authz_version FROM brukermedlemskap WHERE tenant=%s"
+                    " AND bruker_id=%s", (TEN, bid)).fetchone()[0]
+    m.execute(
+        "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+        " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper, tilbakekalt)"
+        " VALUES (%s,%s,%s,%s,%s, now(), now(), now()+interval '12 hour', false)",
+        (sesjonmodul._hash(cookie), TEN, bid, ver, sesjonmodul._hash(csrf)))
+    m.commit()
+    m.close()
+    return cookie, csrf
+
+
+def _runtime():
+    from db.pg import koble
+    return koble(DSN)
+
+
+@pg
+def test_port_endepunkt_avklaring_gir_lukket_409_og_committer(klient, miljo,
+                                                              monkeypatch):
+    """Codex-P1: den committede 409-en må bære det LUKKEDE feilformatet
+    `{"feil":"utestaaende_oppdrag","request_id":...}` — ikke den interne
+    DTO-en (`utfall`/`http`), ellers ser UI-et bare en generisk 409. Ekte
+    ende-til-ende gjennom endepunktet (autentisert browserøkt + CSRF): bevis
+    status 409, lukket body UTEN intern lekkasje, OG at flagg/historikk faktisk
+    er committet."""
+    from api import sesjon as sesjonmodul
+    from .test_pr012_behandle import POL, POL_HASH
+    # `avvis` når gate 14a (steg 6b) FØR policyinnholdet brukes; stub oppslaget
+    # så testen ikke må registrere en full skjemagyldig policy for saken.
+    monkeypatch.setattr("api.unntaksbehandling.policyregister.hent_aktiv",
+                        lambda conn, tenant, pid: (POL, POL_HASH))
+    c = _runtime()
+    try:
+        uid = _oppsett(c)
+    finally:
+        c.close()
+    bid = _medlem(None, "e2e")               # rolle godkjenner → exceptions:reject
+    _oppdrag(uid, "opprettet")               # én levende oppdrag → utrygt å avvise
+    c = _runtime()
+    try:
+        sv = _saksversjon(c, uid)
+    finally:
+        c.close()
+    cookie, csrf = _browsersesjon(bid)
+
+    r = klient.post(
+        f"/v1/unntak/{uid}/handling",
+        json={"operatorhandling": "avvis", "saksversjon": sv},
+        headers={"Idempotency-Key": f"e2e-{uid}", "X-Disponit-CSRF": csrf},
+        cookies={sesjonmodul.C_SESJON: cookie})
+
+    assert r.status_code == 409, r.text
+    body = r.json()
+    assert body["feil"] == "utestaaende_oppdrag"
+    assert "request_id" in body
+    # INGEN intern DTO-lekkasje på wire:
+    assert "utfall" not in body and "http" not in body and "unntak_id" not in body
+    # Flagget/historikken ER committet (kan ikke rulles tilbake som vanlig feil):
+    c = _runtime()
+    try:
+        assert _status(c, uid) != "avvist"
+        assert _historikk_teller(c, uid) == 1
+    finally:
+        c.close()
