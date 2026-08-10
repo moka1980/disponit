@@ -22,10 +22,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
-from . import tidsvindu
+from . import semantikk, tidsvindu
 
-KLASSIFIKATORVERSJON = "kv1"
+#: UTLEDET, ikke pinnet: en funksjon av motorsemantikkversjonen OG denne fila.
+#: En motorendring bumper derfor ALLTID klassifikatorversjonen (v3 §4), og en
+#: klassifikatorendring bumper den også — man kan ikke glemme det.
+KLASSIFIKATORVERSJON = "kv-" + hashlib.sha256(
+    (semantikk.MOTOR_SEMANTIKKVERSJON + "|"
+     + hashlib.sha256(Path(__file__).read_bytes()).hexdigest()).encode("utf-8")
+).hexdigest()[:16]
 
 UTVIDER = "UTVIDER"
 INNSNEVRER = "INNSNEVRER"

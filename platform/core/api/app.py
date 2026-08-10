@@ -390,6 +390,12 @@ class Tjeneste:
         # oppstartsperre som attestasjonsnøklene: mangler/ugyldig register →
         # prosessen nekter start, så porten aldri kjører uten en signeringsnøkkel.
         self.mac_register = last_mac_register()
+        # PR-013 (V8/port 13): semantikk- og miljøverifikasjon ved oppstart. En
+        # CI-port beskytter ikke produksjon om verten kjører annen tzdata enn
+        # releasen ble bygget med — da tolker motoren tidsvinduer annerledes enn
+        # klassifikatoren beviste. Fail-closed: avvik → prosessen nekter start.
+        from policy_validator import semantikk
+        semantikk.verifiser_oppstartsmiljo()
         self.bind_vert = bind_vert
         self.logg = logg or Sikkerhetslogg()
         self.rate = Rategrense(rate_per_min if rate_per_min is not None
