@@ -166,6 +166,21 @@ def test_port6_utestaaende_kapabilitet_uten_oppdrag_gir_409(conn):
 
 
 @pg
+def test_port4_utfort_oppdrag_default_deny_gir_409(conn):
+    """Port 4 (fremtidssikring): whitelisten er default-DENY — KUN `kansellert`
+    er trygt. Et `utfort` oppdrag (sideeffekten har alt skjedd) er nettopp det
+    farligste å avvise, og gir 409. En ekte syntetisk/ukjent status kan ikke
+    settes inn (CHECK-en på oppdrag.status), så egenskapen er STRUKTURELL i
+    formen `status <> 'kansellert'`; `utfort` er den sterkeste observerbare
+    prøven — en status som *ser* ferdig ut, men ikke er trygg å avvise."""
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    _oppdrag(uid, "utfort")
+    res = _kall(conn, uid, "avvis", bid, _macreg())
+    assert res["utfall"] == "utestaaende_oppdrag" and res["http"] == 409
+
+
+@pg
 def test_port5_baade_kansellert_og_levende_gir_409(conn):
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
