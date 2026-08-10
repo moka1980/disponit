@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 from datetime import timedelta
 
 import psycopg
@@ -37,6 +38,7 @@ from db.pg import sett_kontekst
 from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
+from . import policyregister as _pr
 from .autorisasjon import scopes_for_roller
 from .mac_register import kanonisk_konvolutt
 
@@ -127,6 +129,168 @@ def _vurder(base_innhold: dict, base_hash: str, ny_innhold: dict) -> dict:
         "base_policy_hash": base_hash,
         "pakrevd_antall_godkjennere": pakrevd,
     }
+
+
+def _base_med_versjon(conn, tenant, policy_id) -> tuple[dict, str, str | None]:
+    """(innhold, hash, aktiv_versjon) for gjeldende aktive base (deny-all om
+    ingen). Delt av utkast-detalj og runde-åpning."""
+    aktiv = _hode_aktiv_versjon(conn, tenant, policy_id)
+    innhold, h = _base(conn, tenant, policy_id, aktiv)
+    return innhold, h, aktiv
+
+
+# --------------------------------------------------------------------------
+# Utkast-livssyklus (CP6): opprett → rediger → valider. Et utkast er IKKE en
+# policy; det er den ENESTE muterbare tilstanden. Validering fryser
+# innholds_hash og låser innholdet (kolonnelåsen i migrasjon 012).
+# --------------------------------------------------------------------------
+
+def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                   request_id: str, policy_id: str, innhold: dict,
+                   rollback_av_versjon: str | None = None) -> dict:
+    """Opprett et nytt utkast (status `utkast`). Fanger gjeldende aktive versjon
+    + hash som `basert_pa_*` for konfliktdeteksjon (§4). Kalleren eier tx."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    if not isinstance(innhold, dict):
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_feilformet")
+    _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
+    utkast_id = "u-" + secrets.token_hex(8)
+    conn.execute(
+        "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
+        " basert_pa_versjon, basert_pa_hash, rollback_av_versjon, innhold,"
+        " opprettet_av) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+        (tenant, utkast_id, policy_id, aktiv, base_hash, rollback_av_versjon,
+         json.dumps(innhold), aktor))
+    conn.commit()
+    return {"utkast_id": utkast_id, "policy_id": policy_id,
+            "utkastversjon": 1, "status": "utkast", "base_versjon": aktiv}
+
+
+def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                   request_id: str, utkast_id: str, forventet_utkastversjon,
+                   innhold: dict) -> dict:
+    """Rediger innholdet i et `utkast`-utkast (optimistisk lås på
+    `utkastversjon`). Et validert utkast er frosset (innholds_hash låst) — da
+    lages et nytt utkast i stedet. Kalleren eier tx."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    if not isinstance(innhold, dict):
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_feilformet")
+    rad = conn.execute(
+        "SELECT status, utkastversjon FROM policyutkast WHERE tenant=%s AND"
+        " utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    status, ver = rad
+    if status != "utkast":
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    if not isinstance(forventet_utkastversjon, int) \
+            or forventet_utkastversjon != ver:
+        conn.rollback()
+        raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
+    ny = ver + 1
+    conn.execute(
+        "UPDATE policyutkast SET innhold=%s::jsonb, utkastversjon=%s"
+        " WHERE tenant=%s AND utkast_id=%s",
+        (json.dumps(innhold), ny, tenant, utkast_id))
+    conn.commit()
+    return {"utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"}
+
+
+def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                   request_id: str, utkast_id: str) -> dict:
+    """Skjemavalider utkastet; ved suksess fryses `innholds_hash` og status går
+    `utkast → validert`. Ugyldig → utfall `ugyldig` med feillisten (ingen
+    tilstandsendring). Kalleren eier tx."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    rad = conn.execute(
+        "SELECT innhold, status FROM policyutkast WHERE tenant=%s AND"
+        " utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    innhold, status = rad
+    if status != "utkast":
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    feil = _schema.valider_policy(innhold)
+    if feil:
+        conn.rollback()
+        return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil}
+    h = _pr.innholds_hash(innhold)
+    conn.execute(
+        "UPDATE policyutkast SET status='validert', innholds_hash=%s"
+        " WHERE tenant=%s AND utkast_id=%s", (h, tenant, utkast_id))
+    conn.commit()
+    return {"utfall": "validert", "utkast_id": utkast_id, "innholds_hash": h}
+
+
+def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                       request_id: str, utkast_id: str) -> dict:
+    """Utkastet + diffen mot aktiv base + klassifisering + evt. åpen runde med
+    attestasjoner. Rent lesende (ruller tilbake til slutt)."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    rad = conn.execute(
+        "SELECT policy_id, innhold, innholds_hash, status, utkastversjon,"
+        " opprettet_av FROM policyutkast WHERE tenant=%s AND utkast_id=%s",
+        (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    policy_id, innhold, innholds_hash, status, ver, opprettet_av = rad
+    base_innhold, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
+    v = _vurder(base_innhold, base_hash, innhold)
+    runde = conn.execute(
+        "SELECT runde, status, diff_hash, risikoklasse,"
+        " pakrevd_antall_godkjennere, utloper FROM aktiveringsrunde"
+        " WHERE tenant=%s AND utkast_id=%s ORDER BY runde DESC LIMIT 1",
+        (tenant, utkast_id)).fetchone()
+    runde_dto = None
+    if runde is not None:
+        r_nr, r_status, r_diff, r_risiko, r_pakrevd, r_utloper = runde
+        rows = conn.execute(
+            "SELECT bruker_id, rolle, er_forfatter, ts FROM"
+            " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND"
+            " runde=%s ORDER BY id", (tenant, utkast_id, r_nr)).fetchall()
+        runde_dto = {
+            "runde": r_nr, "status": r_status, "diff_hash": r_diff,
+            "risikoklasse": r_risiko,
+            "pakrevd_antall_godkjennere": r_pakrevd,
+            "utloper": r_utloper.isoformat(),
+            "attestasjoner": [
+                {"bruker_id": b, "rolle": ro, "er_forfatter": ef,
+                 "ts": ts.isoformat()} for b, ro, ef, ts in rows]}
+    conn.rollback()
+    return {
+        "utkast_id": utkast_id, "policy_id": policy_id, "status": status,
+        "utkastversjon": ver, "opprettet_av": opprettet_av,
+        "innholds_hash": innholds_hash, "base_versjon": aktiv,
+        "diff": v["diff"], "diff_hash": v["diff_hash"],
+        "risikoklasse": v["risikoklasse"],
+        "pakrevd_antall_godkjennere": v["pakrevd_antall_godkjennere"],
+        "aktiv_runde": runde_dto}
+
+
+def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                request_id: str, policy_id: str | None = None) -> list:
+    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    if policy_id:
+        rows = conn.execute(
+            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
+            " FROM policyutkast WHERE tenant=%s AND policy_id=%s"
+            " ORDER BY opprettet DESC", (tenant, policy_id)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
+            " FROM policyutkast WHERE tenant=%s ORDER BY opprettet DESC",
+            (tenant,)).fetchall()
+    conn.rollback()
+    return [{"utkast_id": u, "policy_id": p, "status": s, "utkastversjon": vv,
+             "opprettet": o.isoformat()} for u, p, s, vv, o in rows]
 
 
 def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:

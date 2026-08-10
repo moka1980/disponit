@@ -665,6 +665,30 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def sesjon_logout(request: Request) -> Response:
         return sesjonmodul.sesjon_logout(tjeneste, request)
 
+    # PR-013: policyadministrasjon — utkast-CRUD + aktivering (fire-øyne).
+    from . import policyadmin_http
+
+    def pa_opprett_utkast(request: Request) -> Response:
+        return policyadmin_http.opprett_utkast_endepunkt(tjeneste, request)
+
+    def pa_list_utkast(request: Request) -> Response:
+        return policyadmin_http.list_utkast_endepunkt(tjeneste, request)
+
+    def pa_hent_utkast(request: Request) -> Response:
+        return policyadmin_http.hent_utkast_endepunkt(tjeneste, request)
+
+    def pa_rediger_utkast(request: Request) -> Response:
+        return policyadmin_http.rediger_utkast_endepunkt(tjeneste, request)
+
+    def pa_valider_utkast(request: Request) -> Response:
+        return policyadmin_http.valider_utkast_endepunkt(tjeneste, request)
+
+    def pa_apne_runde(request: Request) -> Response:
+        return policyadmin_http.apne_runde_endepunkt(tjeneste, request)
+
+    def pa_attester(request: Request) -> Response:
+        return policyadmin_http.attester_endepunkt(tjeneste, request)
+
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
         Route("/v1/unntak", unntak, methods=["GET"]),
@@ -687,6 +711,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/handling", unntak_handling,
               methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
+        # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
+        # {utkast_id:str} aldri slukter dem.
+        Route("/v1/policyutkast", pa_opprett_utkast, methods=["POST"]),
+        Route("/v1/policyutkast", pa_list_utkast, methods=["GET"]),
+        Route("/v1/policyutkast/{utkast_id:str}/valider", pa_valider_utkast,
+              methods=["POST"]),
+        Route("/v1/policyutkast/{utkast_id:str}/aktiveringsrunde",
+              pa_apne_runde, methods=["POST"]),
+        Route("/v1/policyutkast/{utkast_id:str}/attester", pa_attester,
+              methods=["POST"]),
+        Route("/v1/policyutkast/{utkast_id:str}", pa_hent_utkast,
+              methods=["GET"]),
+        Route("/v1/policyutkast/{utkast_id:str}", pa_rediger_utkast,
+              methods=["PUT"]),
         # PR-010: OIDC-sesjon. /start er POST (v5 §1), callback er GET
         # (navigasjon fra IdP), /v1/sesjon er GET (hvem) + DELETE (logout).
         Route("/v1/oidc/start", oidc_start, methods=["POST"]),
@@ -1031,6 +1070,15 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
     ("POST", "/v1/unntak/{id:int}/handling"): "exceptions:approve",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
+    # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
+    ("POST", "/v1/policyutkast"):            "policy:write",
+    ("GET",  "/v1/policyutkast"):            "policy:read",
+    ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
+    ("POST", "/v1/policyutkast/{utkast_id:str}/aktiveringsrunde"): "policy:activate",
+    ("POST", "/v1/policyutkast/{utkast_id:str}/attester"): "policy:activate",
+    ("GET",  "/v1/policyutkast/{utkast_id:str}"): "policy:read",
+    ("PUT",  "/v1/policyutkast/{utkast_id:str}"): "policy:write",
     # PR-010: OIDC-sesjon. /start og /callback er uautentiserte (de
     # ETABLERER sesjonen); /v1/sesjon GET/DELETE gjelder sesjonen selv og
     # scope-gates ikke — de er sesjonshåndtering, ikke lese-data.
