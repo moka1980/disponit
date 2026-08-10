@@ -70,6 +70,32 @@ KRAVGRENSER: dict[str, dict] = {
         "krev_avvist_andel": 1.0,
         "maks_halvferdige": 0,
     },
+    # --- PR-012 (menneskelig unntaksbehandling) -------------------------
+    # 12 saker over 4 kategorier (spec §10 + v2-delta): avvis-vei terminal ·
+    # godkjenn-vei ny beslutning · sideeffekt → venter_utførelse → løst ·
+    # fire-øyne to brukere. Pluss de harde invariantene: saksversjonskonflikt
+    # gir 409 UTEN sideeffekt · samtidig arbeider + menneske → nøyaktig én
+    # vinner · ingen klartekst i logg/dump · alle handlinger med aktør.
+    # Andelene er 1.0: en injisert sak som ikke nådde sin terminaltilstand er
+    # nettopp hullet artefaktet skal bevise at ikke finnes.
+    "behandling-m37-v1": {
+        "min_injisert": 12,
+        "min_kategorier": 4,
+        "krev_avvis_terminal_andel": 1.0,
+        "krev_godkjenn_beslutning_andel": 1.0,
+        "krev_sideeffekt_lost_andel": 1.0,
+        "krev_fire_oyne_andel": 1.0,
+        # Minst én saksversjonskonflikt SKAL kjøres — en 409-vei som aldri er
+        # utløst er en hypotese — og den skal ALDRI ha en sideeffekt.
+        "min_saksversjonskonflikt": 1,
+        "maks_saksversjonskonflikt_sideeffekt": 0,
+        # Minst én ekte konkurranse arbeider↔menneske, med nøyaktig én vinner.
+        "min_samtidig_konkurranse": 1,
+        "maks_dobbel_vinner": 0,
+        # Ingen klartekst-begrunnelse i logg eller DB-dump — 0, ikke «lite».
+        "maks_klartekst_treff": 0,
+        "maks_varighet_sek": 300.0,
+    },
 }
 
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
@@ -79,6 +105,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "perf-m01-v1": "artefakt-skjema.json",
     "feilinjisering-m01-v1": "artefakt-feilinjisering-skjema.json",
     "rollback-m01-v1": "artefakt-rollback-skjema.json",
+    "behandling-m37-v1": "artefakt-behandling-skjema.json",
 }
 
 
@@ -272,6 +299,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
         return feil + _grenser_rollback(grense, art)
+    if krav_id == "behandling-m37-v1":
+        return feil + _grenser_behandling(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -439,6 +468,97 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                         f" — fordeling: {dict(sorted(per_sakstype.items()))}")
     if k.get("routing_stemmer") is not True:
         feil.append("etterkontroll: routing_stemmer er ikke true")
+    return feil
+
+
+def _grenser_behandling(grense: dict, art: dict) -> list[str]:
+    """`behandling-m37-v1` — de fire kategori-veiene + de harde invariantene.
+
+    Invariantene REGNES UT på nytt her, aldri lest ut av et flagg (lærdommen
+    fra PR #8 runde 3): hver kategori-andel sjekkes mot `antall/injisert`, og
+    en kategori med `injisert = 0` er en vei som aldri ble prøvd — ikke en
+    bestått. De harde grensene (saksversjonskonflikt uten sideeffekt, nøyaktig
+    én vinner, ingen klartekst) måles mot råtellingene.
+    """
+    feil: list[str] = []
+    m, oppsett = art.get("maalt"), art.get("oppsett")
+    if not isinstance(m, dict) or not isinstance(oppsett, dict):
+        return ["artefaktet mangler `maalt` og/eller `oppsett`"]
+
+    injisert, f = _teller(oppsett, "oppsett.injisert_antall", "injisert_antall")
+    if f:
+        feil.append(f)
+    elif injisert < grense["min_injisert"]:
+        feil.append(f"injisert_antall={injisert},"
+                    f" krever >= {grense['min_injisert']}")
+
+    kategorier = m.get("kategorier_dekket")
+    if not isinstance(kategorier, list):
+        feil.append(f"kategorier_dekket={kategorier!r} er ikke en liste")
+    elif len(set(kategorier)) < grense["min_kategorier"]:
+        feil.append(f"kategorier_dekket har {len(set(kategorier))} unike,"
+                    f" krever >= {grense['min_kategorier']}")
+
+    for grp, antallsfelt, krav in (
+            ("avvis", "terminal", grense["krev_avvis_terminal_andel"]),
+            ("godkjenn", "ny_beslutning",
+             grense["krev_godkjenn_beslutning_andel"]),
+            ("sideeffekt", "lost", grense["krev_sideeffekt_lost_andel"]),
+            ("fire_oyne", "fullfort", grense["krev_fire_oyne_andel"])):
+        u = m.get(grp)
+        if not isinstance(u, dict):
+            feil.append(f"maalt.{grp} mangler")
+            continue
+        inj, f1 = _teller(u, f"{grp}.injisert", "injisert")
+        ant, f2 = _teller(u, f"{grp}.{antallsfelt}", antallsfelt)
+        if f1 or f2:
+            feil.extend(x for x in (f1, f2) if x)
+            continue
+        if inj == 0:
+            feil.append(f"{grp}.injisert er 0 — veien ble aldri prøvd")
+            continue
+        if ant / inj < krav:
+            feil.append(f"{grp}: {antallsfelt}/injisert = {ant}/{inj}"
+                        f" = {ant / inj:g}, krever >= {krav:g}")
+
+    for felt, tak, notat in (
+            ("saksversjonskonflikt_sideeffekt",
+             grense["maks_saksversjonskonflikt_sideeffekt"],
+             "en konflikt skal ALDRI ha sideeffekt"),
+            ("samtidig_dobbel_vinner", grense["maks_dobbel_vinner"],
+             "nøyaktig én vinner"),
+            ("klartekst_treff", grense["maks_klartekst_treff"],
+             "ingen klartekst i logg/dump")):
+        v, f = _teller(m, felt, felt)
+        if f:
+            feil.append(f)
+        elif v > tak:
+            feil.append(f"{felt}={v}, krever <= {tak} ({notat})")
+
+    for felt, minst in (
+            ("saksversjonskonflikt_409", grense["min_saksversjonskonflikt"]),
+            ("samtidig_konkurranser", grense["min_samtidig_konkurranse"])):
+        v, f = _teller(m, felt, felt)
+        if f:
+            feil.append(f)
+        elif v < minst:
+            feil.append(f"{felt}={v}, krever >= {minst} (en uprøvd vei er en"
+                        f" hypotese)")
+
+    med, f1 = _teller(m, "handlinger_med_aktor", "handlinger_med_aktor")
+    tot, f2 = _teller(m, "handlinger_totalt", "handlinger_totalt")
+    if f1 or f2:
+        feil.extend(x for x in (f1, f2) if x)
+    elif tot == 0 or med != tot:
+        feil.append(f"handlinger_med_aktor={med} != handlinger_totalt={tot}"
+                    f" — alle handlinger i revisjonsloggen MÅ ha aktør")
+
+    varighet, f = _positiv(m, "maalt.varighet_sek", "varighet_sek")
+    if f:
+        feil.append(f)
+    elif varighet > grense["maks_varighet_sek"]:
+        feil.append(f"varighet_sek={varighet:g},"
+                    f" krever <= {grense['maks_varighet_sek']:g}")
     return feil
 
 

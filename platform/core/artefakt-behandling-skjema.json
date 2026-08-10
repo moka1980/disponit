@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/behandlingsartefakt-v1.json",
+  "title": "Behandlingsartefakt (behandling-m37-v1)",
+  "comment": "LUKKET format (additionalProperties:false paa HVERT objekt), samme regel som feilinjiseringsartefaktet: en ukjent noekkel skal bli en feil, ikke stillhet. Tellingene er heltall; grensene haandheves av manifestskjema._grenser_behandling, som REGNER UT invariantene paa nytt og aldri leser produsentens `bestatt`-flagg.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "maalt"],
+  "properties": {
+    "krav_id": {"const": "behandling-m37-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["injisert_antall", "kategorier"],
+      "properties": {
+        "injisert_antall": {"type": "integer", "minimum": 0},
+        "kategorier": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kategorier_dekket", "avvis", "godkjenn", "sideeffekt", "fire_oyne",
+        "saksversjonskonflikt_409", "saksversjonskonflikt_sideeffekt",
+        "samtidig_konkurranser", "samtidig_dobbel_vinner", "klartekst_treff",
+        "handlinger_med_aktor", "handlinger_totalt", "varighet_sek"
+      ],
+      "properties": {
+        "kategorier_dekket": {"type": "array", "items": {"type": "string"}},
+        "avvis": {"$ref": "#/$defs/kategori_terminal"},
+        "godkjenn": {"$ref": "#/$defs/kategori_ny_beslutning"},
+        "sideeffekt": {"$ref": "#/$defs/kategori_lost"},
+        "fire_oyne": {"$ref": "#/$defs/kategori_fullfort"},
+        "saksversjonskonflikt_409": {"type": "integer", "minimum": 0},
+        "saksversjonskonflikt_sideeffekt": {"type": "integer", "minimum": 0},
+        "samtidig_konkurranser": {"type": "integer", "minimum": 0},
+        "samtidig_dobbel_vinner": {"type": "integer", "minimum": 0},
+        "klartekst_treff": {"type": "integer", "minimum": 0},
+        "handlinger_med_aktor": {"type": "integer", "minimum": 0},
+        "handlinger_totalt": {"type": "integer", "minimum": 0},
+        "varighet_sek": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "kategori_terminal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "terminal"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "terminal": {"type": "integer", "minimum": 0}
+      }
+    },
+    "kategori_ny_beslutning": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "ny_beslutning"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "ny_beslutning": {"type": "integer", "minimum": 0}
+      }
+    },
+    "kategori_lost": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "lost"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "lost": {"type": "integer", "minimum": 0}
+      }
+    },
+    "kategori_fullfort": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "fullfort"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "fullfort": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
