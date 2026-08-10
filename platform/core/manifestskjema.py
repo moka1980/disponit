@@ -83,7 +83,9 @@ KRAVGRENSER: dict[str, dict] = {
         "min_kategorier": 4,
         "krev_avvis_terminal_andel": 1.0,
         "krev_godkjenn_beslutning_andel": 1.0,
-        "krev_sideeffekt_lost_andel": 1.0,
+        # PR-012s menneskelige vei ender ved `venter_utførelse` (levert til
+        # M-37-outboxen); →løst tilhører M-37 og bevises av `feilinjisering-m01`.
+        "krev_sideeffekt_utforelse_andel": 1.0,
         "krev_fire_oyne_andel": 1.0,
         # Minst én saksversjonskonflikt SKAL kjøres — en 409-vei som aldri er
         # utløst er en hypotese — og den skal ALDRI ha en sideeffekt.
@@ -503,7 +505,8 @@ def _grenser_behandling(grense: dict, art: dict) -> list[str]:
             ("avvis", "terminal", grense["krev_avvis_terminal_andel"]),
             ("godkjenn", "ny_beslutning",
              grense["krev_godkjenn_beslutning_andel"]),
-            ("sideeffekt", "lost", grense["krev_sideeffekt_lost_andel"]),
+            ("sideeffekt", "til_utforelse",
+             grense["krev_sideeffekt_utforelse_andel"]),
             ("fire_oyne", "fullfort", grense["krev_fire_oyne_andel"])):
         u = m.get(grp)
         if not isinstance(u, dict):

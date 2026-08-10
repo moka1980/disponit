@@ -32,7 +32,7 @@
         "kategorier_dekket": {"type": "array", "items": {"type": "string"}},
         "avvis": {"$ref": "#/$defs/kategori_terminal"},
         "godkjenn": {"$ref": "#/$defs/kategori_ny_beslutning"},
-        "sideeffekt": {"$ref": "#/$defs/kategori_lost"},
+        "sideeffekt": {"$ref": "#/$defs/kategori_til_utforelse"},
         "fire_oyne": {"$ref": "#/$defs/kategori_fullfort"},
         "saksversjonskonflikt_409": {"type": "integer", "minimum": 0},
         "saksversjonskonflikt_sideeffekt": {"type": "integer", "minimum": 0},
@@ -62,12 +62,12 @@
         "ny_beslutning": {"type": "integer", "minimum": 0}
       }
     },
-    "kategori_lost": {
+    "kategori_til_utforelse": {
       "type": "object", "additionalProperties": false,
-      "required": ["injisert", "lost"],
+      "required": ["injisert", "til_utforelse"],
       "properties": {
         "injisert": {"type": "integer", "minimum": 0},
-        "lost": {"type": "integer", "minimum": 0}
+        "til_utforelse": {"type": "integer", "minimum": 0}
       }
     },
     "kategori_fullfort": {
