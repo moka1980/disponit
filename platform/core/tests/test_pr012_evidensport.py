@@ -27,7 +27,8 @@ def _gyldig():
             "fire_oyne": {"injisert": 3, "fullfort": 3},
             "saksversjonskonflikt_409": 2,
             "saksversjonskonflikt_sideeffekt": 0,
-            "samtidig_konkurranser": 2, "samtidig_dobbel_vinner": 0,
+            "samtidig_konkurranser": 1, "samtidig_startet": 2,
+            "samtidig_fullfort": 2, "samtidig_vinnere": 1, "samtidig_tapere": 1,
             "klartekst_treff": 0, "handlinger_med_aktor": 40,
             "handlinger_totalt": 40, "varighet_sek": 12.5,
         },
@@ -57,6 +58,11 @@ def _muter(sti, verdi):
 
 @pytest.mark.parametrize("sti, verdi, hint", [
     (["oppsett", "injisert_antall"], 11, "for få injisert"),
+    # P1.1: oppblåst total, oppdiktet kategori, teller > nevner.
+    (["oppsett", "injisert_antall"], 20, "oppblåst total (sum != total)"),
+    (["maalt", "kategorier_dekket"],
+     ["avvis", "godkjenn", "sideeffekt", "OPPDIKTET"], "oppdiktet kategori"),
+    (["maalt", "avvis", "terminal"], 5, "teller > nevner (200 %)"),
     (["maalt", "avvis", "terminal"], 2, "avvis ikke terminal"),
     (["maalt", "godkjenn", "injisert"], 0, "godkjenn-vei aldri prøvd"),
     (["maalt", "sideeffekt", "til_utforelse"], 2, "sideeffekt ikke levert"),
@@ -64,7 +70,10 @@ def _muter(sti, verdi):
     (["maalt", "saksversjonskonflikt_409"], 0, "409-vei aldri prøvd"),
     (["maalt", "saksversjonskonflikt_sideeffekt"], 1, "konflikt m/ sideeffekt"),
     (["maalt", "samtidig_konkurranser"], 0, "ingen konkurranse kjørt"),
-    (["maalt", "samtidig_dobbel_vinner"], 1, "to vinnere"),
+    # P1.2: null vinnere, hengende tråd (fullført < startet), to vinnere.
+    (["maalt", "samtidig_vinnere"], 0, "null vinnere"),
+    (["maalt", "samtidig_fullfort"], 1, "en tråd hang (fullført != startet)"),
+    (["maalt", "samtidig_vinnere"], 2, "to vinnere"),
     (["maalt", "klartekst_treff"], 1, "klartekst i logg/dump"),
     (["maalt", "handlinger_med_aktor"], 39, "handling uten aktør"),
     (["bestatt"], False, "produsenten sier ikke bestått"),

@@ -25,7 +25,8 @@
       "required": [
         "kategorier_dekket", "avvis", "godkjenn", "sideeffekt", "fire_oyne",
         "saksversjonskonflikt_409", "saksversjonskonflikt_sideeffekt",
-        "samtidig_konkurranser", "samtidig_dobbel_vinner", "klartekst_treff",
+        "samtidig_konkurranser", "samtidig_startet", "samtidig_fullfort",
+        "samtidig_vinnere", "samtidig_tapere", "klartekst_treff",
         "handlinger_med_aktor", "handlinger_totalt", "varighet_sek"
       ],
       "properties": {
@@ -37,7 +38,10 @@
         "saksversjonskonflikt_409": {"type": "integer", "minimum": 0},
         "saksversjonskonflikt_sideeffekt": {"type": "integer", "minimum": 0},
         "samtidig_konkurranser": {"type": "integer", "minimum": 0},
-        "samtidig_dobbel_vinner": {"type": "integer", "minimum": 0},
+        "samtidig_startet": {"type": "integer", "minimum": 0},
+        "samtidig_fullfort": {"type": "integer", "minimum": 0},
+        "samtidig_vinnere": {"type": "integer", "minimum": 0},
+        "samtidig_tapere": {"type": "integer", "minimum": 0},
         "klartekst_treff": {"type": "integer", "minimum": 0},
         "handlinger_med_aktor": {"type": "integer", "minimum": 0},
         "handlinger_totalt": {"type": "integer", "minimum": 0},

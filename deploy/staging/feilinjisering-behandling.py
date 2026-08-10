@@ -326,21 +326,29 @@ def main(argv=None) -> int:
     if _status(conn, uid) not in ("manuell",):
         sv_se += 1                              # en konflikt SKAL ikke ha sideeffekt
 
-    # --- Hard invariant: to samtidige behandlinger → én vinner ---------
+    # --- Hard invariant: to samtidige behandlinger → NØYAKTIG én vinner --
+    # Begge tråder starter fra SAMME saksversjon. FOR UPDATE serialiserer:
+    # den ene vinner (TILLAT), den andre ser en konflikt (saksversjon_utdatert
+    # / ingen_aktiv_runde) og TAPER. Råtellingene bæres i artefaktet; en
+    # hengende tråd AVBRYTER — vi kan ikke bevise én vinner uten at begge
+    # fullførte.
     konk_uid = _injiser(conn, "samtidig", "beh-mg", POL_HASH)
+    konk_sv = _saksversjon(conn, konk_uid)
     ut = {}
     laas = threading.Lock()
 
     def kappes(navn):
         c = koble(DSN)
         try:
-            r = _handle(c, reg, konk_uid, "godkjenn", op1,
+            r = _handle(c, reg, konk_uid, "godkjenn", op1, sv=konk_sv,
                         idem=f"samtidig-{konk_uid}-{navn}")
+            vant = r.get("utfall") in ("TILLAT", "venter_andre_godkjenner",
+                                       "venter_utførelse")
             with laas:
-                ut[navn] = r.get("utfall")
-        except Exception as e:                  # taperen ser en konflikt
+                ut[navn] = "vant" if vant else "tapte"
+        except Exception:                       # taperen ser en konflikt
             with laas:
-                ut[navn] = type(e).__name__
+                ut[navn] = "tapte"
         finally:
             c.close()
 
@@ -348,10 +356,15 @@ def main(argv=None) -> int:
     for t in tr:
         t.start()
     for t in tr:
-        t.join(timeout=15)
-    vinnere = [n for n, v in ut.items() if v in ("TILLAT", "venter_andre_godkjenner")]
+        t.join(timeout=30)
+    if any(t.is_alive() for t in tr):
+        raise SystemExit("AVBRUTT: en samtidighetstråd henger etter join —"
+                         " kan ikke bevise nøyaktig én vinner")
     samtidig_konkurranser = 1
-    samtidig_dobbel_vinner = 1 if len(vinnere) > 1 else 0
+    samtidig_startet = len(tr)
+    samtidig_fullfort = len(ut)
+    samtidig_vinnere = sum(1 for v in ut.values() if v == "vant")
+    samtidig_tapere = sum(1 for v in ut.values() if v == "tapte")
 
     canary = _canary_treff(conn)
     med, tot = _handlinger_med_aktor(conn)
@@ -367,7 +380,10 @@ def main(argv=None) -> int:
         "saksversjonskonflikt_409": sv_409,
         "saksversjonskonflikt_sideeffekt": sv_se,
         "samtidig_konkurranser": samtidig_konkurranser,
-        "samtidig_dobbel_vinner": samtidig_dobbel_vinner,
+        "samtidig_startet": samtidig_startet,
+        "samtidig_fullfort": samtidig_fullfort,
+        "samtidig_vinnere": samtidig_vinnere,
+        "samtidig_tapere": samtidig_tapere,
         "klartekst_treff": canary,
         "handlinger_med_aktor": med, "handlinger_totalt": tot,
         "varighet_sek": round(time.monotonic() - t0, 3),
