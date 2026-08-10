@@ -175,16 +175,17 @@ def test_idempotens_identisk_og_avvikende_replay(conn):
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
     sv = _sv(conn, uid)
+    nokkel = f"nokkel-{uid}"   # uid gjør nøkkelen unik per kjøring
     r1 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv,
-               idem="nokkel-A")
+               idem=nokkel)
     assert r1["utfall"] == "TILLAT"
     # Identisk replay (samme nøkkel + samme input) → samme lagrede respons.
     r2 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv,
-               idem="nokkel-A")
+               idem=nokkel)
     assert r2.get("replay") is True and r2["utfall"] == "TILLAT"
     # Avvikende replay (samme nøkkel, ANNET input) → sikkerhetsstopp.
     r3 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv + 5,
-               idem="nokkel-A")
+               idem=nokkel)
     assert r3["utfall"] == "STOPP" and r3["sikkerhet"] == "idempotenskonflikt"
 
 
@@ -208,6 +209,58 @@ def test_reautorisering_scope_fjernet_stoppes(conn):
     assert ei.value.kode == "scope_mangler"
     conn.rollback()
     assert _status(conn, uid) == "manuell"
+
+
+@pg
+def test_reautorisering_skjer_ETTER_saks_laasen(conn):
+    """Bevis at reauth skjer etter FOR UPDATE, ikke bare at koden står der.
+
+    Deterministisk vindu: B låser saken OG sletter medlemskapet (UCOMMITTED),
+    A (behandle) blokkerer på saks­låsen, B committer. A slipper løs, låser, og
+    leser DA medlemskapet — som nå er borte. Var reauth FØR låsen, ville A lest
+    medlemskapet mens B-slettingen ennå var usynlig (MVCC) og sluppet gjennom.
+    """
+    import threading
+    import time
+    from db.pg import koble, sett_kontekst
+
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    sv = _sv(conn, uid)
+
+    b = koble(MIGRATOR_DSN)
+    sett_kontekst(b, TEN, "sys", "rb")
+    b.execute("SELECT id FROM unntak WHERE tenant=%s AND id=%s FOR UPDATE",
+              (TEN, uid))
+    b.execute("DELETE FROM brukermedlemskap WHERE tenant=%s AND bruker_id=%s",
+              (TEN, bid))
+
+    ut = {}
+
+    def kjor_a():
+        a = koble(DSN)
+        try:
+            ih = hashlib.sha256(
+                f"{TEN}\x1f{bid}\x1f{uid}\x1fgodkjenn\x1f{sv}".encode()).hexdigest()
+            behandle_unntakshandling(
+                a, _Pool(), _macreg(), tenant=TEN, aktor=bid, request_id="ra",
+                unntak_id=uid, operatorhandling="godkjenn",
+                forventet_saksversjon=sv, idempotency_key="traad-nokkel",
+                input_hash=ih, naa=NAA)
+            ut["kode"] = "INGEN_FEIL"   # reauth skjedde IKKE etter låsen
+        except Godkjenningsfeil as e:
+            ut["kode"] = e.kode
+        finally:
+            a.close()
+
+    ta = threading.Thread(target=kjor_a)
+    ta.start()
+    time.sleep(1.0)                     # la A blokkere på saks­låsen
+    assert not ut, "A skulle fortsatt blokkere på FOR UPDATE"
+    b.commit()                         # slipp låsen + commit slettingen
+    b.close()
+    ta.join(timeout=10)
+    assert ut.get("kode") == "mangler_medlemskap"
 
 
 @pg

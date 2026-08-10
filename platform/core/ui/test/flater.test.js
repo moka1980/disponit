@@ -224,6 +224,53 @@ test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", a
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 
+test("Unntak: nettverksretry GJENBRUKER samme Idempotency-Key (PR-012)", async () => {
+  const kalt = [];
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");  // nettverksfeil
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "TILLAT", unntak_id: 1 }) };
+    }
+    return ekte(url, opts);
+  };
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 3, tillatte_handlinger: ["godkjenn", "avvis", "eskaler"] } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === tekst);
+  finn(dlg, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.unntak.du_godkjenner"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.unntak.du_godkjenner")));
+  finn(bek, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nettverksfeil skal gi nøyaktig én retry");
+  assert.ok(kalt[0].opts.headers["Idempotency-Key"]);
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "retry MÅ gjenbruke samme idempotensnøkkel");
+  assert.equal(JSON.parse(kalt[0].opts.body).saksversjon, 3);
+  globalThis.fetch = ekte;
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
 test("Tom liste → TomTilstand", async () => {
   SVAR = { ...STD, "/v1/beslutninger": { rader: [], neste_cursor: null } };
   const h = nyHoved();

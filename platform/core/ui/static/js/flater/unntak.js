@@ -5,7 +5,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentJson, postHandling, UautorisertFeil, IngenTilgangFeil,
+  hentJson, postHandling, nyIdempotensnokkel, ApiFeil, UautorisertFeil,
+  IngenTilgangFeil,
 } from "../api.js";
 import {
   KategoriTag, BegrunnelseKjede, StatusTidslinje, Tidspunkt, TomTilstand,
@@ -18,16 +19,25 @@ import { medStatus, flateHode, kvRad } from "./felles.js";
 const STATUSFILTRE = [null, "ny", "under_behandling", "løst", "avvist"];
 
 function utfoer(id, oh, saksversjon, ctx, paaFerdig) {
-  postHandling(id, oh, saksversjon).then(() => {
-    meldLive(t(`ui.unntak.handling.${oh}`) + ": " + t("ui.unntak.behandlet"));
-    if (paaFerdig) paaFerdig();
-  }).catch((e) => {
-    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-    // Konflikt (f.eks. stale saksversjon) → last saken på nytt så operatøren
-    // ser fersk tilstand; ALDRI en blind retry.
-    meldLive(t("ui.unntak.behandling_feilet"));
-    if (paaFerdig) paaFerdig();
-  });
+  // ÉN idempotensnøkkel per operasjon — gjenbrukes ved en nettverksretry, så
+  // serveren ser samme nøkkel og ikke utfører handlingen to ganger.
+  const nokkel = nyIdempotensnokkel();
+  const forsok = (attempt) =>
+    postHandling(id, oh, saksversjon, nokkel).then(() => {
+      meldLive(t(`ui.unntak.handling.${oh}`) + ": " + t("ui.unntak.behandlet"));
+      if (paaFerdig) paaFerdig();
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      // Kun nettverksfeil (status 0) retries — ÉN gang, med SAMME nøkkel. En
+      // konflikt (f.eks. stale saksversjon) retries ALDRI blindt; saken lastes
+      // på nytt så operatøren ser fersk tilstand.
+      if (e instanceof ApiFeil && e.status === 0 && attempt === 0) {
+        return forsok(1);
+      }
+      meldLive(t("ui.unntak.behandling_feilet"));
+      if (paaFerdig) paaFerdig();
+    });
+  return forsok(0);
 }
 
 // PR-012: handlingsknappene. `godkjenn` vises kun når serveren sier den er
