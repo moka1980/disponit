@@ -262,12 +262,10 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         conn.execute(M37_RETTIGHETER.format(rolle=rolle))
         conn.commit()      # avslutter SET LOCAL ROLE
-        # PR-013: eieren av den herdede aktiveringsfunksjonen må kunne SKRIVE
-        # `policyer`/`policy_hode` (funksjonen er SECURITY DEFINER, eid av den).
-        # Gis av migrator (eier av tabellene), én gang — ikke per runtime-rolle.
-        conn.execute("GRANT SELECT, INSERT, UPDATE ON policyer, policy_hode"
-                     " TO disponit_policy_eier")
-        conn.commit()
+        # PR-013: policy_eier sitt skrivegrant på `policyer`/`policy_hode` bor
+        # i migrasjon 013 sammen med funksjonen — der overlever det enhver
+        # skjemagjenoppbygging (også testenes _nullstill + re-migrer), ikke
+        # bare denne kjøringen. Ikke dupliser det her.
         print(f"rettigheter satt for {rolle}")
         # Token-admin er valgfri på eldre installasjoner: rollen opprettes av
         # oppsett-skriptet, og en GRANT til en rolle som ikke finnes er en

@@ -74,3 +74,12 @@ REVOKE ALL ON FUNCTION aktiver_policy(TEXT, TEXT, JSONB, TEXT, TEXT, TEXT)
 GRANT EXECUTE ON FUNCTION aktiver_policy(TEXT, TEXT, JSONB, TEXT, TEXT, TEXT)
     TO disponit;
 RESET ROLE;
+
+-- Eieren (policy_eier) må kunne SKRIVE `policyer`/`policy_hode` når funksjonen
+-- kjører (SECURITY DEFINER kjører som eier). Grantet hører hjemme HER, sammen
+-- med funksjonen — ikke som løs kode i migrer.py sin kjor(): da overlever det
+-- ENHVER skjemagjenoppbygging (også testenes `_nullstill` + re-migrer, som
+-- dropper tabellene og dermed grantene før de re-migrerer), ikke bare den
+-- aller første driftsoppsett-kjøringen. Kjøres som migrator (eier av
+-- tabellene) etter RESET ROLE.
+GRANT SELECT, INSERT, UPDATE ON policyer, policy_hode TO disponit_policy_eier;
