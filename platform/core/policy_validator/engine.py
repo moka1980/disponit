@@ -292,13 +292,14 @@ def _aware(ts: Any) -> datetime | None:
 
 
 def _i_vindu(vindu: str, t: datetime, sone: ZoneInfo) -> bool:
-    lokal = t.astimezone(sone)
-    dager, klokke = vindu.split()
-    d0, d1 = (_DAGER.index(x) for x in dager.split("-"))
-    if not (d0 <= lokal.weekday() <= d1):
-        return False
-    start, slutt = klokke.split("-")
-    return start <= lokal.strftime("%H:%M") <= slutt
+    # DELT kodevei med klassifikatoren (PR-013 v3 §2 / v4 §5, port 14): både
+    # motorens medlemskap og klassifikatorens mengdeinklusjon svarer fra
+    # `tidsvindu.tillatte_ukeminutter`, så de aldri kan divergere. Den delte
+    # funksjonen støtter OGSÅ wrappende dag-/nattvinduer (fre-man, 22:00-06:00)
+    # som den gamle streng-sammenligningen behandlet som tomme — en
+    # motorsemantikk-forbedring (bindes i motor_semantikkversjon, CP4).
+    from . import tidsvindu as _tv
+    return _tv.i_vindu(vindu, t, sone)
 
 
 def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
