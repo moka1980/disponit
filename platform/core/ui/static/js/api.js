@@ -68,3 +68,31 @@ export async function loggUt() {
   // 204 forventet; 401 betyr allerede utlogget — begge er «du er ute».
   return r.status === 204 || r.status === 401;
 }
+
+// PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
+// (dobbel-innsending), samme mønster som loggUt. Selve konvolutten bygges og
+// MAC-signeres SERVER-side; klienten sender bare hvilken handling operatøren
+// valgte.
+export async function postHandling(uid, operatorhandling) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  let r;
+  try {
+    r = await fetch(`/v1/unntak/${uid}/handling`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...(csrf ? { "X-Disponit-CSRF": csrf } : {}),
+      },
+      body: JSON.stringify({ operatorhandling }),
+      redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let kropp = null;
+  try { kropp = await r.json(); } catch { kropp = null; }
+  if (!r.ok) _kast(r.status, kropp && kropp.feil);
+  return kropp;
+}

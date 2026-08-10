@@ -44,7 +44,6 @@
   "kode.attestasjon_under_terskel": "Value is below the policy threshold",
   "kode.logging_feilet": "Audit log could not be secured — action was stopped",
   "kode.motor_exception": "Technical error in the policy engine — action was stopped",
-
   "ui.hopp_til_innhold": "Skip to content",
   "ui.status": "Status:",
   "ui.laster": "Loading …",
@@ -66,12 +65,10 @@
   "ui.logg_ut_bekreft_tittel": "Log out?",
   "ui.logg_ut_bekreft_tekst": "You will be logged out of Disponit. You can log in again at any time.",
   "ui.logg_ut_bekreft_primar": "Log out",
-
   "ui.nav.oversikt": "Overview",
   "ui.nav.policy": "Policy",
   "ui.nav.beslutninger": "Decisions",
   "ui.nav.unntak": "Exceptions",
-
   "ui.tom_tittel": "Nothing to show yet",
   "ui.tom_tekst": "There are no rows in this window.",
   "ui.feil_tittel": "Something went wrong",
@@ -80,7 +77,6 @@
   "ui.uautorisert_tekst": "Your session has expired. Log in again to continue.",
   "ui.ingen_tilgang_tittel": "No access",
   "ui.ingen_tilgang_tekst": "Your account does not have access to this view.",
-
   "ui.kol.tidspunkt": "Time",
   "ui.kol.handling": "Action",
   "ui.kol.beslutning": "Decision",
@@ -89,7 +85,6 @@
   "ui.kol.prioritet": "Priority",
   "ui.kol.hendelse": "Event",
   "ui.kol.overgang": "Transition",
-
   "ui.oversikt.tittel": "Overview",
   "ui.oversikt.undertittel": "Last 24 hours",
   "ui.oversikt.tillatt": "Allowed",
@@ -99,7 +94,6 @@
   "ui.oversikt.vindu": "Window",
   "ui.oversikt.oppdatert": "Updated",
   "ui.oversikt.telling_note": "A simple count for the day — not metrics over time.",
-
   "ui.policy.tittel": "Policy",
   "ui.policy.readonly": "This is the policy being enforced. Editing happens in a separate, versioned flow.",
   "ui.policy.versjon": "Version",
@@ -117,11 +111,9 @@
   "ui.policy.betrodd_for": "Trusted for",
   "ui.policy.permanent": "May establish permanently",
   "ui.policy.per": "per",
-
   "ui.besl.tittel": "Decisions",
   "ui.besl.filter": "Filter by decision",
   "ui.besl.alle": "All",
-
   "ui.detalj.tittel": "Decision detail",
   "ui.detalj.resultat": "Result",
   "ui.detalj.evidens": "Evidence status",
@@ -135,15 +127,12 @@
   "ui.detalj.konflikt_evidens": "Conflicting evidence recorded",
   "ui.detalj.ukjent_tittel": "Unknown result type",
   "ui.detalj.ukjent_tekst": "This decision has a result type the interface does not recognise. We do not display it rather than guess.",
-
   "ui.unntak.tittel": "Exceptions",
   "ui.unntak.detalj_tittel": "Exception detail",
   "ui.unntak.sakstype": "Case type",
   "ui.unntak.historikk": "History",
   "ui.unntak.ingen_historikk": "No history yet.",
-
   "ui.sensitiv.skjult": "Hidden for privacy",
-
   "art.policy_stoppet": "Stopped by policy",
   "art.sideeffektfri_tillatt": "Allowed (no execution)",
   "art.til_unntak": "Sent to exception queue",
@@ -153,14 +142,11 @@
   "art.outbox_utfort": "Executed",
   "art.outbox_feilet": "Execution failed",
   "art.outbox_kansellert": "Execution cancelled",
-
   "evidens.IKKE_RELEVANT": "Not relevant",
   "evidens.MANGLER": "Missing",
   "evidens.GYLDIG": "Valid",
-
   "feil_aarsak.signert": "Signed failure result",
   "feil_aarsak.timeout": "Timeout without receipt",
-
   "status.ny": "New",
   "status.under_behandling": "In progress",
   "status.løst": "Resolved",
@@ -170,23 +156,18 @@
   "status.verifikasjon_klar": "Verification ready",
   "status.verifikasjon_retry_klar": "Verification ready (retry)",
   "status.venter_utførelse": "Awaiting execution",
-
   "prioritet.normal": "Normal",
   "prioritet.hoy": "High",
-
   "sakstype.normal": "Normal",
   "sakstype.sikkerhet": "Security",
   "sakstype.drift": "Operations",
-
   "modus.auto": "Automatic",
   "modus.auto_med_vilkaar": "Automatic with conditions",
   "modus.alltid_stopp": "Always stop",
-
   "vindu_enhet.minutter": "minutes",
   "vindu_enhet.timer": "hours",
   "vindu_enhet.dager": "days",
   "vindu_enhet.uker": "weeks",
-
   "dag.0": "Mon",
   "dag.1": "Tue",
   "dag.2": "Wed",
@@ -194,7 +175,6 @@
   "dag.4": "Fri",
   "dag.5": "Sat",
   "dag.6": "Sun",
-
   "hendelse.opprettet": "Created",
   "hendelse.claim": "Picked up for handling",
   "hendelse.sen_kvittering": "Late receipt",
@@ -210,5 +190,21 @@
   "hendelse.verifikasjon_negativ": "Verification negative",
   "hendelse.verifikasjon_retry": "Verification — retry",
   "hendelse.verifikasjon_utlopt": "Verification expired",
-  "hendelse.verifikasjon_konflikt": "Verification conflict"
+  "hendelse.verifikasjon_konflikt": "Verification conflict",
+  "ui.unntak.behandle": "Handle case",
+  "ui.unntak.behandlet": "handled",
+  "ui.unntak.behandling_feilet": "The action could not be completed",
+  "ui.unntak.ikke_behandlbar": "This case cannot be handled now",
+  "ui.unntak.du_godkjenner": "You are approving",
+  "ui.unntak.bekreft_generisk": "Confirm the action",
+  "ui.unntak.handling.godkjenn": "Approve",
+  "ui.unntak.handling.avvis": "Reject",
+  "ui.unntak.handling.eskaler": "Escalate",
+  "ui.unntak.bekreft.avvis": "Reject the case? It closes without performing the action.",
+  "ui.unntak.bekreft.eskaler": "Escalate the case to a higher authority?",
+  "ui.unntak.utilgjengelig.ingen_intensjon": "Approval requires a recorded action intent.",
+  "ui.unntak.utilgjengelig.blokkerende_grunner_uavklart": "The blocking reasons are unresolved.",
+  "ui.unntak.utilgjengelig.ikke_godkjennbar_grunn": "This reason cannot be approved by a human.",
+  "grunn.belop_over_grense": "amount over policy limit",
+  "grunn.valuta_ikke_tillatt": "currency not allowed"
 }

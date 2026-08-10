@@ -167,6 +167,60 @@ test("Unntak: liste + detalj med begrunnelse og historikk", async () => {
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
 
+test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", async () => {
+  const kalt = [];
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") {
+      kalt.push({ url, opts });
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "TILLAT", unntak_id: 1 }) };
+    }
+    return ekte(url, opts);
+  };
+  // jsdom dropper __Host--cookies (krever Secure); overstyr getteren så
+  // lesCookie ser den (klientens jobb er kun å videresende tokenet).
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  SVAR = { ...STD, "/v1/unntak/1": { id: 1, ts: "2026-08-09T09:00:00+00:00",
+    handling: "utbetaling", kategori: "over_grense", sakstype: "normal",
+    status: "manuell", prioritet: "hoy", begrunnelse: ["belop_over_grense"],
+    saksversjon: 0, tillatte_handlinger: ["godkjenn", "avvis", "eskaler"] } };
+  const h = nyHoved();
+  visUnntak(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  assert.ok(dlg.textContent.includes(t("ui.unntak.behandle")));
+  const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === tekst);
+  assert.ok(finn(dlg, t("ui.unntak.handling.godkjenn")), "godkjenn-knapp mangler");
+  assert.equal((await alvorligeBrudd(dlg, { fragment: true })).length, 0);
+
+  // Godkjenn → bekreftelse med KONKRET grunn i klartekst (v8 §3).
+  finn(dlg, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.unntak.du_godkjenner"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.unntak.du_godkjenner")));
+  assert.ok(bek.textContent.includes(t("grunn.belop_over_grense")));
+
+  // Bekreft → POST med X-Disponit-CSRF (dobbel-innsending).
+  finn(bek, t("ui.unntak.handling.godkjenn"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length > 0);
+  assert.equal(kalt[0].opts.method, "POST");
+  assert.ok(kalt[0].url.includes("/v1/unntak/1/handling"));
+  assert.equal(kalt[0].opts.headers["X-Disponit-CSRF"], "tok123");
+  assert.equal(JSON.parse(kalt[0].opts.body).operatorhandling, "godkjenn");
+  globalThis.fetch = ekte;
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
 test("Tom liste → TomTilstand", async () => {
   SVAR = { ...STD, "/v1/beslutninger": { rader: [], neste_cursor: null } };
   const h = nyHoved();

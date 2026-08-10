@@ -44,7 +44,6 @@
   "kode.attestasjon_under_terskel": "Verdien er under policyterskelen",
   "kode.logging_feilet": "Revisjonslogg kunne ikke sikres — handlingen ble stoppet",
   "kode.motor_exception": "Teknisk feil i policymotoren — handlingen ble stoppet",
-
   "ui.hopp_til_innhold": "Hopp til innhold",
   "ui.status": "Status:",
   "ui.laster": "Laster …",
@@ -66,12 +65,10 @@
   "ui.logg_ut_bekreft_tittel": "Logge ut?",
   "ui.logg_ut_bekreft_tekst": "Du logges ut av Disponit. Du kan logge inn igjen når som helst.",
   "ui.logg_ut_bekreft_primar": "Logg ut",
-
   "ui.nav.oversikt": "Oversikt",
   "ui.nav.policy": "Policy",
   "ui.nav.beslutninger": "Beslutninger",
   "ui.nav.unntak": "Unntak",
-
   "ui.tom_tittel": "Ingenting å vise ennå",
   "ui.tom_tekst": "Det finnes ingen rader i dette vinduet.",
   "ui.feil_tittel": "Noe gikk galt",
@@ -80,7 +77,6 @@
   "ui.uautorisert_tekst": "Økten er utløpt. Logg inn på nytt for å fortsette.",
   "ui.ingen_tilgang_tittel": "Ingen tilgang",
   "ui.ingen_tilgang_tekst": "Kontoen din mangler tilgang til denne visningen.",
-
   "ui.kol.tidspunkt": "Tidspunkt",
   "ui.kol.handling": "Handling",
   "ui.kol.beslutning": "Beslutning",
@@ -89,7 +85,6 @@
   "ui.kol.prioritet": "Prioritet",
   "ui.kol.hendelse": "Hendelse",
   "ui.kol.overgang": "Overgang",
-
   "ui.oversikt.tittel": "Oversikt",
   "ui.oversikt.undertittel": "Siste døgn",
   "ui.oversikt.tillatt": "Tillatt",
@@ -99,7 +94,6 @@
   "ui.oversikt.vindu": "Vindu",
   "ui.oversikt.oppdatert": "Oppdatert",
   "ui.oversikt.telling_note": "Enkel telling for døgnet — ikke nøkkeltall over tid.",
-
   "ui.policy.tittel": "Policy",
   "ui.policy.readonly": "Dette er policyen som håndheves. Redigering skjer i egen, versjonert flyt.",
   "ui.policy.versjon": "Versjon",
@@ -117,11 +111,9 @@
   "ui.policy.betrodd_for": "Betrodd for",
   "ui.policy.permanent": "Kan fastslå permanent",
   "ui.policy.per": "per",
-
   "ui.besl.tittel": "Beslutninger",
   "ui.besl.filter": "Filtrer på beslutning",
   "ui.besl.alle": "Alle",
-
   "ui.detalj.tittel": "Beslutningsdetalj",
   "ui.detalj.resultat": "Resultat",
   "ui.detalj.evidens": "Evidensstatus",
@@ -135,15 +127,12 @@
   "ui.detalj.konflikt_evidens": "Motstridende evidens registrert",
   "ui.detalj.ukjent_tittel": "Ukjent resultattype",
   "ui.detalj.ukjent_tekst": "Denne beslutningen har en resultattype flaten ikke kjenner. Vi viser den ikke framfor å gjette.",
-
   "ui.unntak.tittel": "Unntak",
   "ui.unntak.detalj_tittel": "Unntaksdetalj",
   "ui.unntak.sakstype": "Sakstype",
   "ui.unntak.historikk": "Historikk",
   "ui.unntak.ingen_historikk": "Ingen historikk ennå.",
-
   "ui.sensitiv.skjult": "Skjult av personvern",
-
   "art.policy_stoppet": "Stoppet av policy",
   "art.sideeffektfri_tillatt": "Tillatt (ingen utførelse)",
   "art.til_unntak": "Sendt til unntakskø",
@@ -153,14 +142,11 @@
   "art.outbox_utfort": "Utført",
   "art.outbox_feilet": "Utførelse feilet",
   "art.outbox_kansellert": "Utførelse kansellert",
-
   "evidens.IKKE_RELEVANT": "Ikke relevant",
   "evidens.MANGLER": "Mangler",
   "evidens.GYLDIG": "Gyldig",
-
   "feil_aarsak.signert": "Signert feilresultat",
   "feil_aarsak.timeout": "Tidsavbrudd uten kvittering",
-
   "status.ny": "Ny",
   "status.under_behandling": "Under behandling",
   "status.løst": "Løst",
@@ -170,23 +156,18 @@
   "status.verifikasjon_klar": "Verifikasjon klar",
   "status.verifikasjon_retry_klar": "Verifikasjon klar (nytt forsøk)",
   "status.venter_utførelse": "Venter på utførelse",
-
   "prioritet.normal": "Normal",
   "prioritet.hoy": "Høy",
-
   "sakstype.normal": "Normal",
   "sakstype.sikkerhet": "Sikkerhet",
   "sakstype.drift": "Drift",
-
   "modus.auto": "Automatisk",
   "modus.auto_med_vilkaar": "Automatisk med vilkår",
   "modus.alltid_stopp": "Alltid stopp",
-
   "vindu_enhet.minutter": "minutter",
   "vindu_enhet.timer": "timer",
   "vindu_enhet.dager": "dager",
   "vindu_enhet.uker": "uker",
-
   "dag.0": "man",
   "dag.1": "tir",
   "dag.2": "ons",
@@ -194,7 +175,6 @@
   "dag.4": "fre",
   "dag.5": "lør",
   "dag.6": "søn",
-
   "hendelse.opprettet": "Opprettet",
   "hendelse.claim": "Plukket til behandling",
   "hendelse.sen_kvittering": "Sen kvittering",
@@ -210,5 +190,21 @@
   "hendelse.verifikasjon_negativ": "Verifikasjon negativ",
   "hendelse.verifikasjon_retry": "Verifikasjon — nytt forsøk",
   "hendelse.verifikasjon_utlopt": "Verifikasjon utløpt",
-  "hendelse.verifikasjon_konflikt": "Verifikasjon i konflikt"
+  "hendelse.verifikasjon_konflikt": "Verifikasjon i konflikt",
+  "ui.unntak.behandle": "Behandle sak",
+  "ui.unntak.behandlet": "behandlet",
+  "ui.unntak.behandling_feilet": "Behandlingen kunne ikke fullføres",
+  "ui.unntak.ikke_behandlbar": "Saken kan ikke behandles nå",
+  "ui.unntak.du_godkjenner": "Du godkjenner",
+  "ui.unntak.bekreft_generisk": "Bekreft handlingen",
+  "ui.unntak.handling.godkjenn": "Godkjenn",
+  "ui.unntak.handling.avvis": "Avvis",
+  "ui.unntak.handling.eskaler": "Eskaler",
+  "ui.unntak.bekreft.avvis": "Avvise saken? Den lukkes uten å utføre handlingen.",
+  "ui.unntak.bekreft.eskaler": "Eskalere saken til høyere myndighet?",
+  "ui.unntak.utilgjengelig.ingen_intensjon": "Godkjenning krever en registrert handlingsintensjon.",
+  "ui.unntak.utilgjengelig.blokkerende_grunner_uavklart": "De blokkerende grunnene er uavklart.",
+  "ui.unntak.utilgjengelig.ikke_godkjennbar_grunn": "Denne grunnen kan ikke godkjennes menneskelig.",
+  "grunn.belop_over_grense": "beløp over policygrense",
+  "grunn.valuta_ikke_tillatt": "valuta ikke tillatt"
 }
