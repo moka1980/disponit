@@ -53,3 +53,5 @@ deploy/staging/artefakter/*.json
 !deploy/staging/artefakter/perf-m01-v1-maal-20260802T205915.json
 !deploy/staging/artefakter/feilinjisering-m01-v1-20260805T074109.json
 !deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
+# PR-012: deploy-verifisert menneskelig-behandling-artefakt (onecom-staging).
+!deploy/staging/artefakter/behandling-m37-v1-20260810T160624.json

@@ -77,6 +77,7 @@ OPPSETT = """
 sikre_rolle_dsn "$BRUKER"   "${RUNTIME[@]}"
 sikre_rolle_dsn "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 sikre_attestasjonsnokler
+sikre_mac_nokler
 verifiser_og_reparer "$BRUKER"   "${RUNTIME[@]}"
 verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 """
@@ -104,9 +105,35 @@ def test_ny_installasjon_gir_alle_nokler(tmp_path):
     r = kjor(tmp_path, OPPSETT)
     assert r.returncode == 0, r.stderr
     m = les(tmp_path)
-    for n in ALLE + ["DISPONIT_ATT_NOKLER"]:
+    for n in ALLE + ["DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER"]:
         assert n in m, f"{n} mangler etter ny installasjon"
     assert oct((tmp_path / "staging.env").stat().st_mode)[-3:] == "600"
+
+
+@kun_posix
+def test_mac_nokler_gyldig_og_idempotent(tmp_path):
+    """PR-012: `sikre_mac_nokler` genererer et register som produksjonens egen
+    `last_mac_register`-validering godtar (NØYAKTIG én signerer, hemmelighet
+    >= 32 tegn), OG en ny kjøring lar en eksisterende nøkkel STÅ. Uten dette
+    kan en senere deployendring bytte eller regenerere signeringsnøkkelen
+    ubemerket — staging beviser bare happy path, ikke ny-installasjon/
+    idempotens/eksisterende-verdi."""
+    import json
+    from api.mac_register import _valider_register   # produksjonens egen fasit
+    r = kjor(tmp_path, OPPSETT)
+    assert r.returncode == 0, r.stderr
+    raa = les(tmp_path)["DISPONIT_MAC_NOKLER"]
+    reg = json.loads(raa)
+    _valider_register(reg)          # kaster hvis ikke nøyaktig én signerer / <32 tegn
+    signerere = [k for k, v in reg.items() if v.get("rolle") == "signerer"]
+    assert len(signerere) == 1, f"forventet én signerer, fikk {signerere}"
+    assert all(len(v["hemmelighet"]) >= 32 for v in reg.values())
+    # Idempotens: en ny kjøring rører IKKE den eksisterende nøkkelen.
+    r2 = kjor(tmp_path, OPPSETT)
+    assert r2.returncode == 0, r2.stderr
+    assert les(tmp_path)["DISPONIT_MAC_NOKLER"] == raa, \
+        "MAC-nøkkelen ble regenerert på ny kjøring — signeringsnøkkelen kan " \
+        "byttes ubemerket ved en senere deploy"
 
 
 @kun_posix
