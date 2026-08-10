@@ -288,7 +288,7 @@ def test_port_endepunkt_avklaring_gir_lukket_409_og_committer(klient, miljo,
 def _claimet_oppdrag_med_kvittering(uid):
     """Plukket, owner-claimet oppdrag + EKTE utstedt kvitteringskapabilitet —
     M-37s faktiske kvitteringsvei, ikke en fake status-UPDATE. Returnerer
-    (opp_id, jti, claim_id)."""
+    (opp_id, jti, claim_id, repair_operation_id)."""
     import secrets
     from db.pg import koble, sett_kontekst
     m = koble(MIGRATOR_DSN)
@@ -329,111 +329,176 @@ def _claimet_oppdrag_med_kvittering(uid):
     r.commit()
     r.close()
     assert kap is not None, "kvitteringskapabiliteten ble ikke utstedt"
-    return opp, jti, cid
+    return opp, jti, cid, rop
 
 
-def _kvitter(jti, resultathash="a" * 64):
-    """Eiermodulens EKTE kvittering: bruk_kvitteringskapabilitet. -> utfall."""
-    from db.pg import koble, sett_kontekst
+def _sak_venter_utforelse(conn):
+    """Sak i `venter_utførelse` (der en sak med et LEVENDE oppdrag faktisk
+    står — jf. M-37) med ekte intensjon + loggpost. ny → under_behandling →
+    venter_utførelse, den lovlige veien."""
+    import secrets
+    import types
+    from api.kjerne import _skriv_unntak
+    from api.minimering import bygg_handlingsintensjon
+    from db.pg import sett_kontekst
+    from .test_pr012_behandle import POL_HASH
+    sett_kontekst(conn, TEN, "sys", "r0")
+    lid = conn.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse) VALUES (%s,'h','test-mg@1.0.0/faktura.bokfor','UNNTAK',"
+        "%s::jsonb) RETURNING id",
+        (TEN, '[{"kode":"rolle_ok","params":{"rolle":"agent"}},'
+              '{"kode":"belop_over_grense"}]')).fetchone()[0]
+    snap = types.SimpleNamespace(maks_auto_forsok=3, versjon="1.0.0",
+                                 innholds_hash=POL_HASH)
+    ev = {"handling": "faktura.bokfor", "belop": "45000.00", "valuta": "NOK",
+          "ressurs_id": "fak-1"}
+    uid = _skriv_unntak(conn, TEN, lid, "faktura.bokfor", "over_grense",
+                        "normal", "normal", {"handling": "faktura.bokfor"},
+                        snap, bygg_handlingsintensjon(ev, "agent"))
+    conn.execute("UPDATE unntak SET status='under_behandling', claim_id=%s,"
+                 " claim_generation=1, claim_utloper=now()+interval '600 s'"
+                 " WHERE tenant=%s AND id=%s", (secrets.token_hex(16), TEN, uid))
+    conn.execute("UPDATE unntak SET status='venter_utførelse' WHERE tenant=%s"
+                 " AND id=%s", (TEN, uid))
+    conn.commit()
+    return uid
+
+
+def _signert_kvittering(opp, jti, cid, rop):
+    from policy_validator import attestering
+    from .test_api import NOKLER
+    return attestering.signer(
+        {"oppdrag_id": opp, "tenant": TEN, "kvittering_jti": jti,
+         "repair_operation_id": rop, "owner_claim_id": cid,
+         "owner_generation": 0, "resultat": "utfort", "ressurs_id": "fak-1",
+         "verifikator": "v_fordring"}, "k1", NOKLER["v_fordring"]["k1"])
+
+
+def _full_kvittering(app, kv):
+    """Eiermodulens EKTE, signerte kvitteringsflyt — HELE `_ingest_kvittering`,
+    ikke bare SQL-primitivet: innløser kapabiliteten, verifiserer signaturen,
+    oppdaterer oppdrag (→utfort) OG sak (→løst) i én tx. -> HTTP-status."""
+    from api.app import Autentisert, _ingest_kvittering
+    from db.pg import koble
     r = koble(DSN)
-    sett_kontekst(r, TEN, "sys", "r0")
+    auth = Autentisert(TEN, "eier:reinns", set(), "eiermod")
     try:
-        return r.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                         (jti, resultathash)).fetchone()[0]
-    finally:
+        resp = _ingest_kvittering(app.tjeneste, r, auth, kv, "r")
         r.commit()
+        return resp.status_code
+    finally:
         r.close()
 
 
-def _kap_status(jti):
-    # kvitteringskapabiliteter er m37_claimer-eid (off-limits for runtime);
-    # migrator er medlem og kan SET ROLE for lesningen.
-    from db.pg import koble, sett_kontekst
-    m = koble(MIGRATOR_DSN)
-    sett_kontekst(m, TEN, "sys", "r0")
-    try:
-        m.execute("SET ROLE disponit_m37_claimer")
-        rad = m.execute("SELECT status, resultathash FROM kvitteringskapabiliteter"
-                        " WHERE tenant=%s AND jti=%s", (TEN, jti)).fetchone()
-        m.execute("RESET ROLE")
-        return rad
-    finally:
-        m.rollback()
-        m.close()
+def _hist_hendelser(conn, uid):
+    from db.pg import sett_tenant
+    sett_tenant(conn, TEN)
+    rader = conn.execute("SELECT hendelse FROM unntak_historikk WHERE tenant=%s"
+                         " AND unntak_id=%s ORDER BY id", (TEN, uid)).fetchall()
+    conn.rollback()
+    return [r[0] for r in rader]
 
 
 @pg
-def test_port_kvittering_vs_avvis_konsistent(conn):
-    """Scope-beslutningen §3 (samtidighetsport): eiermodulens EKTE kvittering og
-    et menneskelig avvis gir ALDRI et motsigende utfall. En kvittering markerer
-    kvitteringskapabiliteten `brukt` — den kanselleerer ALDRI oppdraget — så
-    avvis ser fortsatt et levende oppdrag og flagger avklaring (409), aldri
-    `avvist`; kvitteringen bevares. Vi kjører begge deterministiske rekkefølger,
-    en samtidig kjøring, og til slutt at avvis vurderer den nye TERMINALE
-    tilstanden korrekt når oppdraget faktisk kanselleres.
+def test_port_full_kvittering_vs_avvis(conn, app, miljo):
+    """Scope-beslutningen §3: eiermodulens FULLE signerte kvitteringsflyt
+    (`_ingest_kvittering` → oppdrag `utfort` + sak `løst`, saksversjon bumpet)
+    mot et menneskelig avvis. Bevis fra COMMITTET DB-tilstand at ingen
+    rekkefølge — seriell eller samtidig — gir et motsigende utfall, og at
+    saks­låsen faktisk serialiserer.
 
-    Mutasjon som erstatter `bruk_kvitteringskapabilitet` med en direkte
-    status-UPDATE dør på `_kap_status`-sjekken (brukt + resultathash); mutasjon
-    som lar avvis lykkes med et levende oppdrag dør på `!= 'avvist'`."""
-    import secrets
-    # --- Rekkefølge A: kvittering FØRST, så avvis -----------------------
-    uid = _oppsett(conn)
+    Mutasjonen «flytt 14a-kontrollen (steg 6b) før saksversjon-/lås-steget»
+    DØR på rekkefølge A: der committer den fulle kvitteringen først og bumper
+    saksversjonen, så et avvis med operatørens STALE versjon MÅ få
+    `saksversjon_utdatert` (steg 4, under låsen) — ikke `utestaaende_oppdrag`
+    fra en 6b som kjørte for tidlig."""
     bid = _medlem(conn, "op1")
-    _opp, jti, _cid = _claimet_oppdrag_med_kvittering(uid)
-    assert _kvitter(jti) == "brukt"                      # eiermodul vinner sitt løp
-    res = _kall(conn, uid, "avvis", bid, _macreg())
-    assert res["utfall"] == "utestaaende_oppdrag"        # avvis flagger, vinner IKKE
-    assert _status(conn, uid) != "avvist"
-    assert _kap_status(jti)[0] == "brukt"                # kvitteringen BEVART
-    assert _kap_status(jti)[1] == "a" * 64               # resultathashen bevart
 
-    # --- Rekkefølge B: avvis FØRST, så kvittering -----------------------
-    uid2 = _oppsett(conn)
-    _opp2, jti2, _c2 = _claimet_oppdrag_med_kvittering(uid2)
+    # --- Rekkefølge A: full kvittering FØRST (sak→løst, sv bump) ---------
+    uid = _sak_venter_utforelse(conn)
+    opp, jti, cid, rop = _claimet_oppdrag_med_kvittering(uid)
+    sv_stale = _saksversjon(conn, uid)                   # det operatøren SÅ
+    assert _full_kvittering(app, _signert_kvittering(opp, jti, cid, rop)) == 200
+    assert _status(conn, uid) == "løst"                  # oppdrag utfort, sak løst
+    with pytest.raises(Godkjenningsfeil) as ei:          # stale avvis under låsen
+        _kall(conn, uid, "avvis", bid, _macreg(), saksversjon=sv_stale)
+    conn.rollback()
+    assert ei.value.kode == "saksversjon_utdatert"       # dreper 6b-før-lås-mutasjonen
+    assert _status(conn, uid) == "løst"                  # ALDRI avvist
+    assert "avklaring_kreves" not in _hist_hendelser(conn, uid)
+
+    # --- Rekkefølge B: avvis FØRST (409 avklaring), så full kvittering ---
+    uid2 = _sak_venter_utforelse(conn)
+    opp2, jti2, cid2, rop2 = _claimet_oppdrag_med_kvittering(uid2)
     res2 = _kall(conn, uid2, "avvis", bid, _macreg())
-    assert res2["utfall"] == "utestaaende_oppdrag"
+    assert res2["utfall"] == "utestaaende_oppdrag"       # aldri avvist
     assert _status(conn, uid2) != "avvist"
-    assert _kvitter(jti2) == "brukt"                     # kvitteringen går fortsatt gjennom
-    assert _kap_status(jti2)[0] == "brukt"
+    assert _full_kvittering(app, _signert_kvittering(opp2, jti2, cid2, rop2)) == 200
+    assert _status(conn, uid2) == "løst"                 # kvitteringen bevart+fullført
+    h2 = _hist_hendelser(conn, uid2)
+    assert "avklaring_kreves" in h2 and "kvittering" in h2
 
-    # --- Samtidig: avvis-tråd + kvittering-tråd, join m/ timeout --------
-    uid3 = _oppsett(conn)
-    _opp3, jti3, _c3 = _claimet_oppdrag_med_kvittering(uid3)
+    # --- Samtidig, deterministisk vindu rundt saks­låsen -----------------
+    # En port-conn holder `unntak FOR UPDATE`, så BÅDE avvis-tråden (som tar
+    # samme lås) og kvittering-tråden (hvis `UPDATE unntak` tar radlåsen) står
+    # i kø; når porten slippes, serialiserer PostgreSQL dem. Uansett vinner:
+    # saken ender `løst`, aldri `avvist`, uten motsigende historikk.
+    from db.pg import koble, sett_kontekst
+    uid3 = _sak_venter_utforelse(conn)
+    opp3, jti3, cid3, rop3 = _claimet_oppdrag_med_kvittering(uid3)
     sv3 = _saksversjon(conn, uid3)
+    port = koble(DSN)
+    sett_kontekst(port, TEN, "sys", "r0")
+    port.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s FOR UPDATE",
+                 (TEN, uid3))                            # HOLDER saks­låsen
     ut = {}
     laas = threading.Lock()
+    klar = threading.Barrier(2, timeout=30)
 
     def avvis_traad():
-        from db.pg import koble
         c = koble(DSN)
         try:
-            r = _kall(c, uid3, "avvis", bid, _macreg(), saksversjon=sv3,
-                      idem=f"kap-race-{uid3}")
-            with laas:
-                ut["avvis"] = r.get("utfall")
+            klar.wait()
+            try:
+                r = _kall(c, uid3, "avvis", bid, _macreg(), saksversjon=sv3,
+                          idem=f"full-race-{uid3}")
+                with laas:
+                    ut["avvis"] = r.get("utfall")
+            except Godkjenningsfeil as g:
+                with laas:
+                    ut["avvis"] = f"feil:{g.kode}"
         finally:
             c.close()
 
     def kvitter_traad():
+        klar.wait()
+        s = _full_kvittering(app, _signert_kvittering(opp3, jti3, cid3, rop3))
         with laas:
-            ut["kvitter"] = _kvitter(jti3)
+            ut["kvitter"] = s
 
     tr = [threading.Thread(target=avvis_traad),
           threading.Thread(target=kvitter_traad)]
     for t in tr:
         t.start()
+    import time as _t
+    _t.sleep(1.0)                                        # la begge blokkere på porten
+    port.rollback()                                      # slipp saks­låsen
+    port.close()
     for t in tr:
         t.join(timeout=30)
     assert not any(t.is_alive() for t in tr), "en tråd henger — kan ikke bevise"
-    # Uansett interleaving: avvis flagget avklaring (aldri avvist), kvittering brukt.
-    assert ut["avvis"] == "utestaaende_oppdrag"
-    assert ut["kvitter"] == "brukt"
-    assert _status(conn, uid3) != "avvist"
-    assert _kap_status(jti3)[0] == "brukt"
-    # Utfallet er ALLTID (b): en kvittering kan bare gjøre oppdraget mer utført,
-    # aldri `kansellert` — så avvis er korrekt blokkert i hver interleaving.
-    # At avvis lykkes NÅR oppdraget faktisk er terminalt trygt (kansellert /
-    # utfort vurdert korrekt) er dekket av port 2 og port 4.
+    assert ut["kvitter"] == 200                          # kvitteringen fullførte
+    # Uansett hvem som vant den serialiserte kritiske seksjonen:
+    #  - avvis flagget avklaring (så et levende oppdrag) ELLER så den bumpede
+    #    versjonen (`saksversjon_utdatert`) — men vant ALDRI avvisningen;
+    #  - saken ender `løst`, ALDRI `avvist`, og kvitteringen er bevart.
+    # En eventuell `avklaring_kreves` er en korrekt observasjon i det øyeblikket
+    # avvis kjørte (oppdraget var da levende), ikke en motsigelse — den endelige
+    # tilstanden er `løst`, aldri «ikke utført».
+    assert ut["avvis"] in ("utestaaende_oppdrag", "feil:saksversjon_utdatert")
+    assert _status(conn, uid3) == "løst"                 # ALDRI avvist; ender løst
+    assert "kvittering" in _hist_hendelser(conn, uid3)   # kvitteringen bevart
 
 
 @pg

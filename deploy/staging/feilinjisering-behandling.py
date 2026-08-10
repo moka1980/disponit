@@ -34,6 +34,7 @@ import os
 import secrets
 import sys
 import threading
+import types
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -193,9 +194,41 @@ def _handle(conn, reg, uid, oh, bid, *, sv=None, idem=None):
         idempotency_key=idem, input_hash=ih, naa=NAA)
 
 
-def _claimet_oppdrag_med_kvittering(conn, uid: int) -> str:
+def _injiser_vu(conn, merkelapp: str) -> int:
+    """Som `_injiser`, men saken ender i `venter_utførelse` (der en sak med et
+    LEVENDE oppdrag faktisk står) — den lovlige veien ny → under_behandling →
+    venter_utførelse, så eiermodulens FULLE kvittering kan sette den `løst`."""
+    from api.kjerne import _skriv_unntak
+    import types
+    sett_kontekst(conn, TENANT, "sys", "r0")
+    lid = conn.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse) VALUES (%s,'h',%s,'UNNTAK',%s::jsonb) RETURNING id",
+        (TENANT, "beh-mg@1.0.0/faktura.bokfor",
+         json.dumps([{"kode": "rolle_ok", "params": {"rolle": "agent"}},
+                     {"kode": "belop_over_grense"}]))).fetchone()[0]
+    snap = types.SimpleNamespace(maks_auto_forsok=3, versjon="1.0.0",
+                                 innholds_hash=POL_HASH)
+    ev = {"handling": "faktura.bokfor", "belop": "45000.00", "valuta": "NOK",
+          "ressurs_id": f"{merkelapp}-{KANARIFRASE}",
+          "dataklasser": ["finansiell"], "dataklasser_kilde": "connector"}
+    uid = _skriv_unntak(conn, TENANT, lid, "faktura.bokfor", "over_grense",
+                        "normal", "normal", {"handling": "faktura.bokfor",
+                                             "canary": KANARIFRASE},
+                        snap, bygg_handlingsintensjon(ev, "agent"))
+    conn.execute("UPDATE unntak SET status='under_behandling', claim_id=%s,"
+                 " claim_generation=1, claim_utloper=now()+interval '600 s'"
+                 " WHERE tenant=%s AND id=%s", (secrets.token_hex(16), TENANT, uid))
+    conn.execute("UPDATE unntak SET status='venter_utførelse' WHERE tenant=%s"
+                 " AND id=%s", (TENANT, uid))
+    conn.commit()
+    return uid
+
+
+def _claimet_oppdrag_med_kvittering(conn, uid: int):
     """Plukket, owner-claimet oppdrag + EKTE utstedt kvitteringskapabilitet
-    (M-37s faktiske kvitteringsvei). Returnerer kvitterings-jti."""
+    (M-37s faktiske kvitteringsvei). Returnerer (jti, oppdrag_id, claim_id,
+    repair_operation_id)."""
     sett_tenant(conn, TENANT)
     lid, key_id = conn.execute("SELECT loggpost_id, key_id FROM unntak WHERE"
                                " tenant=%s AND id=%s", (TENANT, uid)).fetchone()
@@ -233,34 +266,41 @@ def _claimet_oppdrag_med_kvittering(conn, uid: int) -> str:
               (opp, cid, jti))
     r.commit()
     r.close()
-    return jti
+    return jti, opp, cid, rop
 
 
-def _kvitter(jti: str) -> str:
-    """Eiermodulens EKTE kvittering (`bruk_kvitteringskapabilitet`). -> utfall."""
+class _KvitteringsTjeneste:
+    """Minimal tjeneste for `_ingest_kvittering`: signaturnøklene fra miljøet og
+    en no-op-logg. Nok til å kjøre HELE den signerte kvitteringsflyten."""
+    def __init__(self):
+        from policy_validator import attestering
+        self.nokler = attestering.last_nokler()
+        self.logg = types.SimpleNamespace(hendelse=lambda *a, **k: None)
+
+
+def _signert_kvittering(opp, jti, cid, rop):
+    from policy_validator import attestering
+    reg = attestering.last_nokler()
+    return attestering.signer(
+        {"oppdrag_id": opp, "tenant": TENANT, "kvittering_jti": jti,
+         "repair_operation_id": rop, "owner_claim_id": cid,
+         "owner_generation": 0, "resultat": "utfort", "ressurs_id": "fak-1",
+         "verifikator": "v_fordring"}, "k1", reg["v_fordring"]["k1"])
+
+
+def _full_kvittering(kv) -> int:
+    """Eiermodulens FULLE signerte flyt via `_ingest_kvittering`: innløser
+    kapabiliteten, verifiserer signaturen, oppdaterer oppdrag (→utfort) OG sak
+    (→løst) i én tx. -> HTTP-status."""
+    from api.app import Autentisert, _ingest_kvittering
     r = koble(DSN)
-    sett_kontekst(r, TENANT, "sys", "r0")
+    auth = Autentisert(TENANT, "eier:reinns", set(), "eiermod")
     try:
-        return r.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                         (jti, "a" * 64)).fetchone()[0]
-    finally:
+        resp = _ingest_kvittering(_KvitteringsTjeneste(), r, auth, kv, "r")
         r.commit()
-        r.close()
-
-
-def _kap_brukt(jti: str) -> bool:
-    # kvitteringskapabiliteter er m37_claimer-eid; migrator SET ROLE for lesning.
-    m = koble(MIGRATOR)
-    sett_kontekst(m, TENANT, "sys", "r0")
-    try:
-        m.execute("SET ROLE disponit_m37_claimer")
-        rad = m.execute("SELECT status FROM kvitteringskapabiliteter WHERE"
-                        " tenant=%s AND jti=%s", (TENANT, jti)).fetchone()
-        m.execute("RESET ROLE")
-        return rad is not None and rad[0] == "brukt"
+        return resp.status_code
     finally:
-        m.rollback()
-        m.close()
+        r.close()
 
 
 def _canary_treff(conn) -> int:
@@ -437,46 +477,66 @@ def main(argv=None) -> int:
     samtidig_tapere = sum(1 for v in ut.values() if v == "tapte")
 
     # --- Scope-beslutningen §3: EKTE kvittering-vs-avvis-race -------------
-    # Eiermodulens faktiske kvittering (`bruk_kvitteringskapabilitet`) mot et
-    # menneskelig avvis på SAMME sak. En kvittering gjør oppdraget mer utført,
-    # ALDRI kansellert — så avvis flagger avklaring (409) og påstår aldri
-    # `avvist`, mens kvitteringen bevares. Begge tråder må fullføre.
-    kr_uid = _injiser(conn, "kvitt-race", "beh-mg", POL_HASH)
-    kr_jti = _claimet_oppdrag_med_kvittering(conn, kr_uid)
+    # Eiermodulens FULLE signerte kvitteringsflyt (`_ingest_kvittering`, som
+    # oppdaterer oppdrag→utfort OG sak→løst i én tx) mot et menneskelig avvis
+    # på SAMME sak, i et deterministisk vindu rundt saks­låsen: en port-conn
+    # holder `unntak FOR UPDATE`, begge tråder står i kø, porten slippes. Bevist
+    # fra committet tilstand: saken ender `løst`, ALDRI `avvist`, kvitteringen
+    # bevart. (Den mutation-sensitive rekkefølgen + låsedødsbeviset ligger i
+    # test_pr012_gate14a::test_port_full_kvittering_vs_avvis.)
+    kr_uid = _injiser_vu(conn, "kvitt-race")
+    kr_jti, kr_opp, kr_cid, kr_rop = _claimet_oppdrag_med_kvittering(conn, kr_uid)
     kr_sv = _saksversjon(conn, kr_uid)
     kr_ut = {}
+    kr_klar = threading.Barrier(2, timeout=30)
+    port = koble(DSN)
+    sett_kontekst(port, TENANT, "sys", "r0")
+    port.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s FOR UPDATE",
+                 (TENANT, kr_uid))
 
     def kr_avvis():
         c = koble(DSN)
         try:
+            kr_klar.wait()
             r = _handle(c, reg, kr_uid, "avvis", op1, sv=kr_sv,
                         idem=f"kvrace-{kr_uid}")
             with laas:
                 kr_ut["avvis"] = r.get("utfall")
-        except Exception as e:                  # pragma: no cover
+        except Exception as e:
             with laas:
                 kr_ut["avvis"] = f"feil:{type(e).__name__}"
         finally:
             c.close()
 
     def kr_kvitter():
-        u = _kvitter(kr_jti)
+        try:
+            kr_klar.wait()
+            s = _full_kvittering(_signert_kvittering(kr_opp, kr_jti, kr_cid, kr_rop))
+        except Exception as e:
+            s = f"feil:{type(e).__name__}"
         with laas:
-            kr_ut["kvitter"] = u
+            kr_ut["kvitter"] = s
 
     krt = [threading.Thread(target=kr_avvis), threading.Thread(target=kr_kvitter)]
     for t in krt:
         t.start()
+    time.sleep(1.0)                              # la begge blokkere på porten
+    port.rollback()                             # slipp saks­låsen
+    port.close()
     for t in krt:
         t.join(timeout=30)
     if any(t.is_alive() for t in krt):
         raise SystemExit("AVBRUTT: en kvittering-race-tråd henger etter join")
     kvitteringsrace_konkurranser = 1
     kvitteringsrace_fullfort = len(kr_ut)
-    kvitteringsrace_avvis_flagget = 1 if kr_ut.get("avvis") == "utestaaende_oppdrag" else 0
-    kvitteringsrace_kvittering_brukt = 1 if _kap_brukt(kr_jti) else 0
-    # Den harde invarianten: saken påstår ALDRI «ikke utført» mens oppdraget
-    # lever. Måles direkte mot sakstilstanden, ikke en påstand.
+    # avvis vant ALDRI avvisningen: den ble blokkert (utestaaende_oppdrag) eller
+    # så den bumpede versjonen (saksversjon_utdatert).
+    kvitteringsrace_avvis_flagget = 1 if kr_ut.get("avvis") in (
+        "utestaaende_oppdrag", "feil:saksversjon_utdatert") else 0
+    # Den fulle kvitteringen fullførte: oppdrag→utfort, sak→løst.
+    kvitteringsrace_kvittering_brukt = 1 if (
+        kr_ut.get("kvitter") == 200 and _status(conn, kr_uid) == "løst") else 0
+    # Den harde invarianten: saken påstår ALDRI «ikke utført».
     kvitteringsrace_falskt_avvist = 1 if _status(conn, kr_uid) == "avvist" else 0
 
     canary = _canary_treff(conn)
