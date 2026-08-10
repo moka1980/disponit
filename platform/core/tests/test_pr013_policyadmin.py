@@ -239,3 +239,79 @@ def test_attestasjon_append_only_og_unik_jti():
         c.rollback()
     finally:
         c.close()
+
+
+def _rt():
+    """Runtime-forbindelse (disponit): EXECUTE på aktiver_policy, men INGEN
+    direkte skriv på policyer/policy_hode."""
+    from db.pg import koble
+    c = koble(DSN)
+    c.execute("SELECT set_config('disponit.tenant',%s,false),"
+              " set_config('disponit.aktor','x',false)", (TEN,))
+    return c
+
+
+@pg
+def test_runtime_kan_ikke_skrive_policyer_direkte():
+    """V10: runtime har KUN SELECT på policyer — aktivering går via funksjonen."""
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            r.execute("INSERT INTO policyer (tenant,policy_id,versjon,"
+                      "innholds_hash,status,innhold,aktiv) VALUES (%s,'x','9',"
+                      "%s,'x','{}',true)", (TEN, secrets.token_hex(32)))
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_forste_og_andre_nøyaktig_en_aktiv():
+    r = _rt()
+    pid = "pol-" + secrets.token_hex(3)
+    try:
+        v1 = r.execute("SELECT aktiver_policy(%s,%s,'{\"a\":1}'::jsonb,%s,"
+                       "'produksjon',NULL)",
+                       (TEN, pid, secrets.token_hex(32))).fetchone()[0]
+        r.commit()
+        r.execute("SELECT set_config('disponit.tenant',%s,false)", (TEN,))
+        peker = r.execute("SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+                          " AND policy_id=%s", (TEN, pid)).fetchone()[0]
+        assert peker == v1
+        r.rollback()
+        r.execute("SELECT set_config('disponit.tenant',%s,false),"
+                  " set_config('disponit.aktor','x',false)", (TEN,))
+        v2 = r.execute("SELECT aktiver_policy(%s,%s,'{\"a\":2}'::jsonb,%s,"
+                       "'produksjon',%s)",
+                       (TEN, pid, secrets.token_hex(32), v1)).fetchone()[0]
+        r.commit()
+        r.execute("SELECT set_config('disponit.tenant',%s,false)", (TEN,))
+        n = r.execute("SELECT count(*) FROM policyer WHERE tenant=%s AND"
+                      " policy_id=%s AND aktiv", (TEN, pid)).fetchone()[0]
+        assert n == 1 and v2 != v1                # nøyaktig én aktiv, ny versjon
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_stale_base_krever_rebasering():
+    r = _rt()
+    pid = "pol-" + secrets.token_hex(3)
+    try:
+        v1 = r.execute("SELECT aktiver_policy(%s,%s,'{}'::jsonb,%s,'produksjon',"
+                       "NULL)", (TEN, pid, secrets.token_hex(32))).fetchone()[0]
+        r.commit()
+        r.execute("SELECT set_config('disponit.tenant',%s,false),"
+                  " set_config('disponit.aktor','x',false)", (TEN,))
+        r.execute("SELECT aktiver_policy(%s,%s,'{}'::jsonb,%s,'produksjon',%s)",
+                  (TEN, pid, secrets.token_hex(32), v1))
+        r.commit()
+        # Nå er aktiv = v2, men vi prøver å aktivere med base=v1 (stale).
+        r.execute("SELECT set_config('disponit.tenant',%s,false),"
+                  " set_config('disponit.aktor','x',false)", (TEN,))
+        with pytest.raises(psycopg.errors.SerializationFailure):
+            r.execute("SELECT aktiver_policy(%s,%s,'{}'::jsonb,%s,'produksjon',"
+                      "%s)", (TEN, pid, secrets.token_hex(32), v1))
+        r.rollback()
+    finally:
+        r.close()

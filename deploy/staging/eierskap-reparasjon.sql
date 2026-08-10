@@ -67,7 +67,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'start_verifikasjonsgenerasjon(text,bigint,text,integer,jsonb,text,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'tenanter_uten_policysnapshot()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'utsted_arbeidskapabilitet(text,integer,text,integer)', 'disponit_m37_claimer'),
-    ('FUNCTION', 'utsted_kvitteringskapabilitet(bigint,text,integer,text)', 'disponit_m37_claimer');
+    ('FUNCTION', 'utsted_kvitteringskapabilitet(bigint,text,integer,text)', 'disponit_m37_claimer'),
+    -- 013 (PR-013): den herdede aktiveringsfunksjonen. Eid av
+    -- disponit_policy_eier fordi policyer/policy_hode er off-limits for runtime
+    -- (runtime får KUN EXECUTE). Ny privilegert eier — paritetstesten dekker den.
+    ('FUNCTION', 'aktiver_policy(text,text,jsonb,text,text,text)',   'disponit_policy_eier');
 
 DO $$
 DECLARE

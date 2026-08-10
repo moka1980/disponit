@@ -62,6 +62,12 @@ GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
+-- PR-013: policyadministrasjon. Runtime LESER hodet/utkast/runder og SKRIVER
+-- utkast/runder/attestasjoner direkte (RLS-gated), men når ALDRI `policyer`
+-- eller `policy_hode`-pekeren — aktivering går kun via den herdede
+-- `aktiver_policy` (EXECUTE gitt i migrasjon 013).
+GRANT SELECT ON policy_hode TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattestasjon TO {rolle};
 -- PR-006: outbox-protokollen. `oppdrag` og `reparasjonsoperasjoner` er
 -- append+status som `unntak` — INSERT og status-UPDATE, aldri DELETE.
 -- `arbeidskapabiliteter` står bevisst IKKE her: den eies av
@@ -256,6 +262,12 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         conn.execute(M37_RETTIGHETER.format(rolle=rolle))
         conn.commit()      # avslutter SET LOCAL ROLE
+        # PR-013: eieren av den herdede aktiveringsfunksjonen må kunne SKRIVE
+        # `policyer`/`policy_hode` (funksjonen er SECURITY DEFINER, eid av den).
+        # Gis av migrator (eier av tabellene), én gang — ikke per runtime-rolle.
+        conn.execute("GRANT SELECT, INSERT, UPDATE ON policyer, policy_hode"
+                     " TO disponit_policy_eier")
+        conn.commit()
         print(f"rettigheter satt for {rolle}")
         # Token-admin er valgfri på eldre installasjoner: rollen opprettes av
         # oppsett-skriptet, og en GRANT til en rolle som ikke finnes er en
