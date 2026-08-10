@@ -190,3 +190,27 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 /* Innloggingsflate */
 .innlogging { max-width: 28rem; }
 .innlogging-form { margin-top: var(--sp-6); }
+
+/* PR-013: policyadministrasjon — risikobadge + diff/fire-øyne-lister.
+   Kun tokens (samme doktrine som resten): UTVIDER = fare, INNSNEVRER = info,
+   NØYTRAL = dempet. */
+.risiko {
+  display: inline-block; padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-sm); border: 1px solid var(--line);
+  font-size: 0.85em; margin-left: var(--sp-2);
+  background: var(--card); color: var(--ink);
+}
+.risiko[data-risiko="UTVIDER"] { background: var(--danger); color: var(--card);
+  border-color: var(--danger); }
+.risiko[data-risiko="INNSNEVRER"] { background: var(--info); color: var(--card);
+  border-color: var(--info); }
+.risiko[data-risiko="NØYTRAL"] { color: var(--muted); }
+.diff-liste, .feltdiff, .godkjennere {
+  list-style: none; margin: 0 0 var(--sp-4); padding: 0;
+}
+.diff-liste .diff-rad, .feltdiff li, .godkjennere li {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) 0; border-bottom: 1px solid var(--line);
+}
+.diff-liste code, .feltdiff code { font-family: var(--font-mono); }
+.pa-handling { margin-top: var(--sp-4); }

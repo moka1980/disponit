@@ -74,6 +74,45 @@ export function nyIdempotensnokkel() {
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+// PR-013: policyadministrasjon. Muterende ruter → X-Disponit-CSRF (samme
+// dobbel-innsending som unntaksbehandlingen). `Idempotency-Key` sendes KUN der
+// serveren krever den (attester — den kan aktivere en policy), og genereres av
+// kalleren så en nettverksretry gjenbruker samme nøkkel.
+async function _muter(sti, metode, kropp, idempotensnokkel) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  const headers = {
+    "content-type": "application/json", accept: "application/json",
+    ...(csrf ? { "X-Disponit-CSRF": csrf } : {}),
+    ...(idempotensnokkel ? { "Idempotency-Key": idempotensnokkel } : {}),
+  };
+  let r;
+  try {
+    r = await fetch(sti, {
+      method: metode, credentials: "same-origin", headers,
+      body: kropp != null ? JSON.stringify(kropp) : undefined,
+      redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let b = null;
+  try { b = await r.json(); } catch { b = null; }
+  if (!r.ok) _kast(r.status, b && b.feil);
+  return b;
+}
+
+export const opprettUtkast = (policyId, innhold) =>
+  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold });
+export const redigerUtkast = (uid, utkastversjon, innhold) =>
+  _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold });
+export const validerUtkast = (uid) =>
+  _muter(`/v1/policyutkast/${uid}/valider`, "POST", {});
+export const apneRunde = (uid) =>
+  _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {});
+export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
+  _muter(`/v1/policyutkast/${uid}/attester`, "POST", { diff_hash: diffHash },
+         idempotensnokkel);
+
 // PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
 // (dobbel-innsending). Klienten sender handlingen, `saksversjon` (den den
 // VISTE, for den optimistiske låsen) og en `Idempotency-Key`. Nøkkelen

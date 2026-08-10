@@ -124,6 +124,7 @@ def _vurder(base_innhold: dict, base_hash: str, ny_innhold: dict) -> dict:
         "diff": policydiff.strukturert_diff(base_innhold, ny_innhold),
         "diff_hash": dh,
         "risikoklasse": risikoklasse,
+        "klassifisering_endringer": kl["endringer"],   # risikoklasse PER endring
         "klassifisering_hash": kl["klassifisering_hash"],
         "klassifikatorversjon": kl["klassifikatorversjon"],
         "base_policy_hash": base_hash,
@@ -270,6 +271,7 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "innholds_hash": innholds_hash, "base_versjon": aktiv,
         "diff": v["diff"], "diff_hash": v["diff_hash"],
         "risikoklasse": v["risikoklasse"],
+        "klassifisering_endringer": v["klassifisering_endringer"],
         "pakrevd_antall_godkjennere": v["pakrevd_antall_godkjennere"],
         "aktiv_runde": runde_dto}
 
