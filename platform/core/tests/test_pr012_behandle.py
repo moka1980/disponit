@@ -311,3 +311,45 @@ def test_fire_oyne_krever_to_ulike_godkjennere(conn, monkeypatch):
     conn.rollback()
     r2 = _kall(conn, uid, "godkjenn", bid2, reg)
     assert r2["utfall"] == "TILLAT"
+
+
+@pg
+def test_port15_teknisk_feil_under_siste_godkjenning(conn, monkeypatch):
+    """Port 15: en teknisk feil under den SISTE (terskeloppnående) godkjenningen
+    ruller ALT tilbake — runden forblir `apen`, KUN første attestasjon består,
+    og en retry av andre godkjenner virker."""
+    import api.unntaksbehandling as u
+    from db.pg import sett_tenant
+    monkeypatch.setattr("api.unntaksbehandling.policyregister.hent_aktiv",
+                        lambda conn, tenant, pid: (POL_FIRE, POL_FIRE_HASH))
+    uid = _oppsett(conn, phash=POL_FIRE_HASH)
+    bid1 = _medlem(conn, "op1")
+    bid2 = _medlem(conn, "op2")
+    reg = _macreg()
+    assert _kall(conn, uid, "godkjenn", bid1, reg)["utfall"] \
+        == "venter_andre_godkjenner"
+
+    # Andre godkjenner nås terskelen, men beslutningen kaster en teknisk feil.
+    orig = u.sikker_beslutning_pg
+
+    def boom(*a, **k):
+        raise RuntimeError("injisert teknisk feil")
+
+    monkeypatch.setattr(u, "sikker_beslutning_pg", boom)
+    with pytest.raises(RuntimeError):
+        _kall(conn, uid, "godkjenn", bid2, reg, idem=f"feil-{uid}")
+    conn.rollback()
+    monkeypatch.setattr(u, "sikker_beslutning_pg", orig)
+
+    sett_tenant(conn, TEN)
+    rst = conn.execute("SELECT status FROM godkjenningsrunde WHERE tenant=%s AND"
+                       " unntak_id=%s AND runde=1", (TEN, uid)).fetchone()[0]
+    natt = conn.execute("SELECT count(*) FROM menneskelig_attestasjon WHERE"
+                        " tenant=%s AND unntak_id=%s", (TEN, uid)).fetchone()[0]
+    conn.rollback()
+    assert rst == "apen"      # runden overlevde feilen — ikke `brukt`
+    assert natt == 1          # kun op1 sin attestasjon består
+
+    # Retry av andre godkjenner virker (uten den injiserte feilen).
+    r = _kall(conn, uid, "godkjenn", bid2, reg, idem=f"retry-{uid}")
+    assert r["utfall"] == "TILLAT"
