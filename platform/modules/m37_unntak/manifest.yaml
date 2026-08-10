@@ -74,15 +74,18 @@ staging_sjekkliste:
       - maalt.kvitteringsrace_falskt_avvist
       - maalt.klartekst_treff
       - maalt.handlinger_med_aktor
-    artefakt: deploy/staging/artefakter/behandling-m37-v1-20260810T160624.json
-    artefakt_sha256: 462a674fba221be32064174b8884f8948ee2509a6a0854262cafdd1f4f552561
+    artefakt: deploy/staging/artefakter/behandling-m37-v1-20260810T164428.json
+    artefakt_sha256: 3bd5e5e3d94ead7f79cffb2282fc6ba8070d5163cb5d2c491fb9322a91bfaf30
     notat: >-
       12 saker over fire kategorier: avvis terminal 3/3, godkjenn ny beslutning
       3/3, sideeffekt → venter_utførelse 3/3, fire-øyne (to brukere) 3/3. Harde
       invarianter: 1 saksversjonskonflikt uten sideeffekt, 1 samtidighets-
-      konkurranse med NØYAKTIG én vinner, 0 klartekst-treff, 83/83 handlinger
-      med aktør. Kjørt på den deploy-verifiserte staging-releasen, ikke lokal
-      docker — det var den ekte deploy-veien som avdekket MAC-boot-perren.
+      konkurranse med NØYAKTIG én vinner, og den EKTE kvittering-vs-avvis-rasen
+      (bruk_kvitteringskapabilitet mot avvis): avvis flagget avklaring,
+      kvitteringen bevart, saken påsto ALDRI `avvist` mens oppdraget levde
+      (falskt_avvist = 0). 0 klartekst-treff, 86/86 handlinger med aktør. Kjørt
+      på den deploy-verifiserte staging-releasen, ikke lokal docker — det var den
+      ekte deploy-veien som avdekket MAC-boot-perren.
   ytelse_bestatt:
     status: ja
     krav_id: feilinjisering-m01-v1

@@ -1,6 +1,6 @@
 {
   "krav_id": "behandling-m37-v1",
-  "ts": "2026-08-10T16:06:24.891233+00:00",
+  "ts": "2026-08-10T16:44:28.810405+00:00",
   "bestatt": true,
   "oppsett": {
     "injisert_antall": 12,
@@ -41,9 +41,14 @@
     "samtidig_fullfort": 2,
     "samtidig_vinnere": 1,
     "samtidig_tapere": 1,
+    "kvitteringsrace_konkurranser": 1,
+    "kvitteringsrace_fullfort": 2,
+    "kvitteringsrace_avvis_flagget": 1,
+    "kvitteringsrace_kvittering_brukt": 1,
+    "kvitteringsrace_falskt_avvist": 0,
     "klartekst_treff": 0,
-    "handlinger_med_aktor": 83,
-    "handlinger_totalt": 83,
-    "varighet_sek": 0.307
+    "handlinger_med_aktor": 86,
+    "handlinger_totalt": 86,
+    "varighet_sek": 0.428
   }
 }
