@@ -103,6 +103,28 @@ def _mengde_invers(gammel, ny) -> str:
     return UTVIDER if fjernet else INNSNEVRER
 
 
+def _skalar_ned(gammel, ny) -> str:
+    """Lavere verdi UTVIDER (løser en terskel); fjernet UTVIDER; lagt til
+    INNSNEVRER. For terskler som `vilkaar[].min` (verdi < min → blokk)."""
+    if gammel == ny:
+        return NØYTRAL
+    if ny is _FRAVÆR:                     # terskel fjernet → løsere
+        return UTVIDER
+    if gammel is _FRAVÆR:                 # terskel lagt til
+        return INNSNEVRER
+    try:
+        g, n = float(gammel), float(ny)
+    except Exception:
+        return UTVIDER
+    return UTVIDER if n < g else INNSNEVRER
+
+
+def _endring_utvider(gammel, ny) -> str:
+    """Fail-closed: enhver endring UTVIDER. For felt som når motorobjektet uten
+    en bevist monotoniregel (v4 §4) — endret betydning kan ikke antas trygg."""
+    return NØYTRAL if gammel == ny else UTVIDER
+
+
 def _bool_opp(gammel, ny) -> str:
     """`false → true` UTVIDER (mer fullmakt), `true → false` INNSNEVRER."""
     g = bool(gammel) if gammel is not _FRAVÆR else False
@@ -203,15 +225,58 @@ def _hent(obj, *nokler):
 # Regelsett per muterbar leaf-path (skjemadrevet — se test-porten som binder
 # dette mot skjemaet). Nøkkelen er den normaliserte stien (`[]` = array-element).
 # ---------------------------------------------------------------------------
-#: Stier motoren ALDRI leser (semantikkfrie) → NØYTRAL. Hver må bevises
-#: ikke-lest av motoren (statisk CI-port).
+#: Muterbare skjema-leafs som HAR en fullmaktsregel (over). Bindes mot skjemaet
+#: av test_pr013_klassifikator_dekning: en NY leaf uten regel, eller en regel
+#: mot en slettet leaf, gjør porten rød (port 8).
+KLASSIFISERTE_STIER = frozenset({
+    "tidssone",
+    "roller[].id",
+    "unntak.kategorier[]",
+    "verifikatorer{}.betrodd_for[]",
+    "verifikatorer{}.kan_fastsla_permanent",
+    "verifikator_prioritet{}",
+    "handlinger[].id",
+    "handlinger[].modus",
+    "handlinger[].ved_brudd",
+    "handlinger[].reversering.type",
+    "handlinger[].reversering.frist_sekunder",
+    "handlinger[].reversering.handling",
+    "handlinger[].maks_attestasjon_alder_s",
+    "handlinger[].grenser.belop_maks",
+    "handlinger[].grenser.valuta[]",
+    "handlinger[].grenser.tidsvindu",
+    "handlinger[].grenser.frekvens.maks",
+    "handlinger[].grenser.frekvens.periode_antall",
+    "handlinger[].grenser.frekvens.periode_enhet",
+    "handlinger[].grenser.frekvens.grupperingsnokkel",
+    "handlinger[].vilkaar[].navn",
+    "handlinger[].vilkaar[].min",
+    "handlinger[].vilkaar[].verifikator",
+    "handlinger[].tillatt_for[]",
+    "handlinger[].dataklasser_tillatt[]",
+    "menneskelig_overstyring.godkjennbare[].grunnkode",
+    "menneskelig_overstyring.godkjennbare[].handling",
+    "menneskelig_overstyring.godkjennbare[].belop_maks",
+    "menneskelig_overstyring.godkjennbare[].valuta",
+    "menneskelig_overstyring.krever_rolle",
+    "menneskelig_overstyring.krever_fire_oyne",
+    "menneskelig_overstyring.begrunnelse_pakrevd",
+})
+
+#: Semantikkfrie leafs → NØYTRAL. Hver må bevises ikke-lest av motorens
+#: beslutningsvei (statisk CI-port test_pr013_noytrale_ikke_lest_av_motoren).
 NØYTRALE_STIER = frozenset({
-    "schema_version", "meta", "metadata",
-    "handlinger[].id", "handlinger[].modul", "handlinger[].beskrivelse",
+    "schema_version", "metadata",
+    "meta.bedrift", "meta.bransjemal", "meta.endret_av", "meta.kilder[]",
+    "meta.policy_id", "meta.sist_endret", "meta.status", "meta.versjon",
+    "dataklasser[]",
     "roller[].beskrivelse", "verifikatorer{}.beskrivelse",
-    "verifikator_prioritet", "frister", "retention",
+    "handlinger[].modul",
     "unntak.maks_auto_forsok", "unntak.eskalering",
-    "dataklasser", "tidssone_beskrivelse",
+    "frister[].frekvens", "frister[].id", "frister[].kilde",
+    "frister[].varsling_dager_for[]",
+    "retention[].aar_min", "retention[].dataklasse", "retention[].regel",
+    "retention[].sletting",
 })
 
 
@@ -229,13 +294,26 @@ def _klassifiser_handling(gammel_h, ny_h) -> list[str]:
                       _hent(ny_h, "grenser", "valuta")))
     ut.append(_frekvens_klasse(_hent(gammel_h, "grenser", "frekvens"),
                                _hent(ny_h, "grenser", "frekvens")))
-    ut.append(_mengde_invers(
-        [v.get("navn") for v in (_liste(gammel_h, "vilkaar"))],
-        [v.get("navn") for v in (_liste(ny_h, "vilkaar"))]))
+    # vilkaar: mengde (invers) PLUS per-vilkår terskel/verifikator — et vilkår
+    # kan svekkes uten at navnet endres (lavere `min`, byttet `verifikator`).
+    gv = {v.get("navn"): v for v in _liste(gammel_h, "vilkaar")}
+    nv = {v.get("navn"): v for v in _liste(ny_h, "vilkaar")}
+    ut.append(_mengde_invers(gv.keys(), nv.keys()))
+    for navn in set(gv) & set(nv):
+        ut.append(_skalar_ned(_hent(gv[navn], "min"), _hent(nv[navn], "min")))
+        ut.append(_endring_utvider(_hent(gv[navn], "verifikator"),
+                                   _hent(nv[navn], "verifikator")))
     # tillatt_for/dataklasser_tillatt = mengder (fullmaktsrelevante)
     ut.append(_mengde(_liste(gammel_h, "tillatt_for"), _liste(ny_h, "tillatt_for")))
     ut.append(_mengde(_liste(gammel_h, "dataklasser_tillatt"),
                       _liste(ny_h, "dataklasser_tillatt")))
+    # Felt som når motorobjektet uten monotoniregel → fail-closed UTVIDER.
+    ut.append(_endring_utvider(_hent(gammel_h, "reversering", "frist_sekunder"),
+                               _hent(ny_h, "reversering", "frist_sekunder")))
+    ut.append(_endring_utvider(_hent(gammel_h, "reversering", "handling"),
+                               _hent(ny_h, "reversering", "handling")))
+    ut.append(_endring_utvider(_hent(gammel_h, "maks_attestasjon_alder_s"),
+                               _hent(ny_h, "maks_attestasjon_alder_s")))
     return ut
 
 
@@ -298,6 +376,10 @@ def klassifiser(gammel: dict, ny: dict) -> dict:
             _hent(hg[hid], "grenser", "tidsvindu"),
             _hent(hn[hid], "grenser", "tidsvindu"),
             sone_gammel=sone_g, sone_ny=sone_n))
+
+    # verifikator_prioritet (map) — når motorobjektet, ingen monotoniregel → FC
+    legg("verifikator_prioritet{}", _endring_utvider(
+        _hent(gammel, "verifikator_prioritet"), _hent(ny, "verifikator_prioritet")))
 
     # menneskelig_overstyring
     mg, mn = _hent(gammel, "menneskelig_overstyring"), _hent(ny, "menneskelig_overstyring")

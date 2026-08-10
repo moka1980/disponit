@@ -192,6 +192,95 @@ def test_forste_policy_mot_deny_all_er_utvider():
     assert kl.klassifiser({}, _pol())["klasse"] == U
 
 
+def _skjema_leaf_stier() -> set[str]:
+    import json
+    from pathlib import Path
+    S = json.load((Path(__file__).resolve().parents[3] / "policies"
+                   / "policy-schema-v0.2.json").open(encoding="utf-8"))
+    defs = S.get("$defs", {})
+
+    def res(n):
+        while isinstance(n, dict) and "$ref" in n:
+            n = defs[n["$ref"].split("/")[-1]]
+        return n
+
+    def lv(n, p=""):
+        n = res(n)
+        if not isinstance(n, dict):
+            return []
+        pr = n.get("properties")
+        if pr:
+            o = []
+            for k, v in pr.items():
+                o += lv(v, f"{p}.{k}" if p else k)
+            return o
+        if n.get("type") == "object" and isinstance(n.get("additionalProperties"), dict):
+            return lv(n["additionalProperties"], f"{p}{{}}")
+        if n.get("type") == "array":
+            it = n.get("items")
+            if it is not None:
+                s = lv(it, f"{p}[]")
+                return s if s else [f"{p}[]"]
+            return [f"{p}[]"]
+        return [p]
+    return set(lv(S))
+
+
+def test_klassifikator_dekker_skjemaet_toveis():
+    """Port 8: hver muterbar skjema-leaf har enten en fullmaktsregel eller er
+    eksplisitt NØYTRAL; og ingen regel peker på en leaf som ikke finnes. En ny
+    leaf i skjemaet uten regel → rødt; en regel mot en slettet leaf → rødt."""
+    skjema = _skjema_leaf_stier()
+    dekket = kl.KLASSIFISERTE_STIER | kl.NØYTRALE_STIER
+    assert not (skjema - dekket), \
+        f"skjema-leafs uten regel (ny leaf?): {sorted(skjema - dekket)}"
+    assert not (dekket - skjema), \
+        f"regel mot leaf som ikke finnes: {sorted(dekket - skjema)}"
+    # Ingen sti kan være både klassifisert OG nøytral (motstridende).
+    assert not (kl.KLASSIFISERTE_STIER & kl.NØYTRALE_STIER)
+
+
+def test_noytrale_felt_paavirker_ikke_beslutningen():
+    """Nøytralitetsbevis (behavioral, sterkere enn grep): en endring i et
+    NØYTRAL-felt endrer ALDRI motorens beslutning eller begrunnelseskjede."""
+    import copy
+    import yaml
+    from pathlib import Path
+    from policy_validator.engine import EvaluationContext
+    p = yaml.safe_load((Path(__file__).resolve().parents[3] / "policies"
+                        / "bransjemal-tjenestebedrift.yaml").read_text(encoding="utf-8"))
+    ctx = EvaluationContext(tenant_id="t", aktor_rolle="agent",
+                            autentisert=True, kilde="api_token")
+    ev = {"handling": p["handlinger"][0]["id"]}
+    basis = engine.evaluate(p, ctx, dict(ev))
+
+    def uendret(fn):
+        q = copy.deepcopy(p)
+        fn(q)
+        r = engine.evaluate(q, ctx, dict(ev))
+        return (r.beslutning == basis.beslutning
+                and [g.kode for g in r.begrunnelse] == [g.kode for g in basis.begrunnelse])
+
+    assert uendret(lambda q: q["roller"][0].__setitem__("beskrivelse", "endret"))
+    assert uendret(lambda q: q["meta"].__setitem__("bedrift", "annen"))
+    assert uendret(lambda q: q["handlinger"][0].__setitem__("modul", "M-99"))
+    assert uendret(lambda q: q["unntak"].__setitem__("maks_auto_forsok", 9))
+    assert uendret(lambda q: q.__setitem__("metadata", {"notat": "x"}))
+
+
+def test_vilkaar_terskel_senket_utvider():
+    """Reelt hull som CP3b lukker: et vilkårs `min` senkes uten at navnet
+    endres — klassifikatoren MÅ fange det som UTVIDER (løsere terskel)."""
+    g = _pol()
+    _h(g)["vilkaar"] = [{"navn": "belop_attestert", "verifikator": "v1", "min": 1000}]
+    n = copy.deepcopy(g)
+    _h(n)["vilkaar"][0]["min"] = 100
+    assert kl.klassifiser(g, n)["klasse"] == U
+    n2 = copy.deepcopy(g)
+    _h(n2)["vilkaar"][0]["min"] = 5000
+    assert kl.klassifiser(g, n2)["klasse"] == I
+
+
 def test_hash_og_versjon_deterministisk():
     g, n = _pol(), _pol()
     n["roller"].append({"id": "admin"})
