@@ -17,13 +17,16 @@ import { medStatus, flateHode, kvRad } from "./felles.js";
 
 const STATUSFILTRE = [null, "ny", "under_behandling", "løst", "avvist"];
 
-function utfoer(id, oh, ctx, paaFerdig) {
-  postHandling(id, oh).then(() => {
+function utfoer(id, oh, saksversjon, ctx, paaFerdig) {
+  postHandling(id, oh, saksversjon).then(() => {
     meldLive(t(`ui.unntak.handling.${oh}`) + ": " + t("ui.unntak.behandlet"));
     if (paaFerdig) paaFerdig();
   }).catch((e) => {
     if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+    // Konflikt (f.eks. stale saksversjon) → last saken på nytt så operatøren
+    // ser fersk tilstand; ALDRI en blind retry.
     meldLive(t("ui.unntak.behandling_feilet"));
+    if (paaFerdig) paaFerdig();
   });
 }
 
@@ -59,7 +62,7 @@ function behandlingsHandlinger(detalj, id, ctx, paaFerdig) {
         tekst,
         primarTekst: t(`ui.unntak.handling.${oh}`),
         farlig: oh !== "godkjenn",
-        paaPrimar: () => utfoer(id, oh, ctx, paaFerdig),
+        paaPrimar: () => utfoer(id, oh, detalj.saksversjon, ctx, paaFerdig),
       });
     });
     knapper.append(knapp);

@@ -216,7 +216,10 @@ test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", a
   assert.equal(kalt[0].opts.method, "POST");
   assert.ok(kalt[0].url.includes("/v1/unntak/1/handling"));
   assert.equal(kalt[0].opts.headers["X-Disponit-CSRF"], "tok123");
-  assert.equal(JSON.parse(kalt[0].opts.body).operatorhandling, "godkjenn");
+  assert.ok(kalt[0].opts.headers["Idempotency-Key"], "mangler Idempotency-Key");
+  const sendt = JSON.parse(kalt[0].opts.body);
+  assert.equal(sendt.operatorhandling, "godkjenn");
+  assert.equal(sendt.saksversjon, 0);   // versjonen dialogen viste
   globalThis.fetch = ekte;
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });

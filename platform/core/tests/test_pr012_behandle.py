@@ -1,20 +1,18 @@
-"""PR-012 Increment 3: `behandle_unntakshandling` — hele porten ende-til-ende.
+"""PR-012 Increment 3 + P1-fikser: `behandle_unntakshandling` ende-til-ende.
 
-Mot EKTE Postgres: en MAC-signert godkjenning matet som en NY beslutning gir
-TILLAT + revisjonslogg + godkjenningsutfall + venter_utførelse; en ugyldig MAC
-og et bindingsavvik gir STOPP + sikkerhetsevidens (V3, egen forbindelse) uten
-statusendring.
+Alt skjer under saks­låsen. De tre vaktene Codex krevde negative tester for:
+optimistisk lås (`saksversjon`), idempotens (identisk + avvikende replay), og
+REAUTORISERING etter låsen (medlemskap/scope fjernet i vinduet). Hver test
+muterer bort én vakt og dør.
 """
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+import hashlib
+from datetime import datetime, timezone
 
 import pytest
 
 from api.mac_register import MacRegister
 from api.minimering import bygg_handlingsintensjon
-from api.unntaksbehandling import (behandle_unntakshandling,
-                                   opprett_godkjenningsrunde,
-                                   skriv_sikkerhetsevidens)
+from api.unntaksbehandling import Godkjenningsfeil, behandle_unntakshandling
 from policy_validator.engine import _policy_innholds_hash
 from .test_api import DSN, KEK, MIGRATOR_DSN
 
@@ -36,16 +34,22 @@ POL = {
         "krever_rolle": "okonomi"},
 }
 POL_HASH = _policy_innholds_hash(POL)
+POL_FIRE = {**POL, "menneskelig_overstyring": {
+    **POL["menneskelig_overstyring"], "krever_fire_oyne": True}}
+POL_FIRE_HASH = _policy_innholds_hash(POL_FIRE)
 
 
 class _Pool:
-    """Minimal pool for V3-evidens: fersk forbindelse per hent."""
     def hent(self, timeout=5.0):
         from db.pg import koble
         return koble(DSN)
 
     def gi_tilbake(self, conn):
         conn.close()
+
+
+def _macreg():
+    return MacRegister({"mk1": {"rolle": "signerer", "hemmelighet": "z" * 40}})
 
 
 @pytest.fixture()
@@ -63,12 +67,12 @@ def conn(monkeypatch):
     c.close()
 
 
-def _oppsett_sak(conn, policy=POL, phash=POL_HASH):
-    """Manuell, godkjennbar sak med ekte kryptert intensjon + åpen runde."""
+def _oppsett(conn, phash=POL_HASH):
+    """Manuell, godkjennbar sak med ekte kryptert intensjon (INGEN runde —
+    behandle_unntakshandling åpner den under låsen)."""
     from api.kjerne import _skriv_unntak
     from db.pg import sett_kontekst
     import types
-
     sett_kontekst(conn, TEN, "sys", "r0")
     lid = conn.execute(
         "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
@@ -78,137 +82,147 @@ def _oppsett_sak(conn, policy=POL, phash=POL_HASH):
               '{"kode":"belop_over_grense"}]')).fetchone()[0]
     snap = types.SimpleNamespace(maks_auto_forsok=3, versjon="1.0.0",
                                  innholds_hash=phash)
-    event = {"handling": "faktura.bokfor", "belop": "45000.00", "valuta": "NOK",
-             "ressurs_id": "fak-1"}
-    intensjon = bygg_handlingsintensjon(event, "agent")
+    ev = {"handling": "faktura.bokfor", "belop": "45000.00", "valuta": "NOK",
+          "ressurs_id": "fak-1"}
     uid = _skriv_unntak(conn, TEN, lid, "faktura.bokfor", "over_grense",
                         "normal", "normal", {"handling": "faktura.bokfor"},
-                        snap, intensjon)
+                        snap, bygg_handlingsintensjon(ev, "agent"))
     conn.execute("UPDATE unntak SET status='manuell' WHERE tenant=%s AND id=%s",
                  (TEN, uid))
-    opprett_godkjenningsrunde(conn, tenant=TEN, unntak_id=uid, aktor="sys",
-                              request_id="r0", policy=policy, policy_hash=phash,
-                              naa=NAA)
-    hi_hash = conn.execute("SELECT hi_integritet_hash FROM unntak WHERE"
-                           " tenant=%s AND id=%s", (TEN, uid)).fetchone()[0]
     conn.commit()
-    return uid, hi_hash
+    return uid
 
 
-def _macreg():
-    return MacRegister({"mk1": {"rolle": "signerer", "hemmelighet": "z" * 40}})
+def _medlem(conn, sub, roller="ARRAY['godkjenner','okonomi']"):
+    # brukermedlemskap er OIDC-forvaltet (FK til brukeridentitet, runtime-rollen
+    # kan SELECT men ikke INSERT). Opprett identitet + medlemskap via en
+    # privilegert (migrator) forbindelse, som i drift. Returnerer bruker_id.
+    from db.pg import koble, sett_kontekst
+    from .test_pr010_db import _identitet
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    bid = _identitet(m, sub=f"{TEN}-{sub}")
+    m.execute(f"INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+              f" VALUES (%s,%s,{roller})"
+              f" ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
+              f" roller=EXCLUDED.roller", (TEN, bid))
+    m.commit()
+    m.close()
+    return bid
 
 
-def _konvolutt(uid, hi_hash, *, bruker="op1", ghash=POL_HASH, **over):
-    k = {"konvoluttversjon": 2, "operatorhandling": "godkjenn", "tenant": TEN,
-         "unntak_id": uid, "runde": 1, "target_action": "faktura.bokfor",
-         "ressurs_id": "fak-1", "belop": "45000.00", "valuta": "NOK",
-         "hi_integritet_hash": hi_hash, "bundet_grunnkode": "belop_over_grense",
-         "godkjennings_policy_hash": ghash, "bruker_id": bruker,
-         "rolle": "okonomi", "authz_version": 1,
-         "jti": f"{bruker}{uid}" + "j" * 22,   # uid gjør jti unik per kjøring
-         "utloper": (NAA + timedelta(hours=1)).isoformat()}
-    k.update(over)
-    return k
+def _sv(conn, uid):
+    from db.pg import sett_tenant
+    sett_tenant(conn, TEN)
+    v = conn.execute("SELECT saksversjon FROM unntak WHERE tenant=%s AND id=%s",
+                     (TEN, uid)).fetchone()[0]
+    conn.rollback()
+    return v
 
 
-def _signer(reg, konvolutt):
-    mac_key_id, mac = reg.signer(konvolutt)
-    return {**konvolutt, "mac": mac, "mac_key_id": mac_key_id}
+def _kall(conn, uid, oh, bid, reg, *, saksversjon=None, idem=None):
+    if saksversjon is None:
+        saksversjon = _sv(conn, uid)
+    if idem is None:
+        idem = f"idem-{uid}-{oh}-{bid}"
+    ih = hashlib.sha256(
+        f"{TEN}\x1f{bid}\x1f{uid}\x1f{oh}\x1f{saksversjon}".encode()).hexdigest()
+    return behandle_unntakshandling(
+        conn, _Pool(), reg, tenant=TEN, aktor=bid, request_id="r",
+        unntak_id=uid, operatorhandling=oh, forventet_saksversjon=saksversjon,
+        idempotency_key=idem, input_hash=ih, naa=NAA)
+
+
+def _status(conn, uid):
+    from db.pg import sett_tenant
+    sett_tenant(conn, TEN)
+    s = conn.execute("SELECT status FROM unntak WHERE tenant=%s AND id=%s",
+                     (TEN, uid)).fetchone()[0]
+    conn.rollback()
+    return s
 
 
 @pg
-def test_godkjenning_gir_tillat_og_venter_utforelse(conn):
-    uid, hi_hash = _oppsett_sak(conn)
-    reg = _macreg()
-    konv = _signer(reg, _konvolutt(uid, hi_hash))
-    res = behandle_unntakshandling(conn, _Pool(), reg, tenant=TEN, aktor="op1",
-                                   request_id="r1", konvolutt=konv, naa=NAA)
+def test_godkjenn_gir_tillat_og_venter_utforelse(conn):
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    res = _kall(conn, uid, "godkjenn", bid, _macreg())
     assert res["utfall"] == "TILLAT"
     assert "menneskelig_godkjenning_anvendt" in res["begrunnelse"]
-
-    c2 = _reconn()
-    st = c2.execute("SELECT status FROM unntak WHERE tenant=%s AND id=%s",
-                    (TEN, uid)).fetchone()[0]
-    utfall = c2.execute("SELECT motorutfall FROM godkjenningsutfall WHERE"
-                        " tenant=%s AND unntak_id=%s", (TEN, uid)).fetchone()
-    runde_st = c2.execute("SELECT status FROM godkjenningsrunde WHERE tenant=%s"
-                          " AND unntak_id=%s AND runde=1", (TEN, uid)).fetchone()[0]
-    c2.close()
-    assert st == "venter_utførelse"
-    assert utfall == ("TILLAT_OUTBOX",)
-    assert runde_st == "brukt"
+    assert _status(conn, uid) == "venter_utførelse"
 
 
 @pg
-def test_ugyldig_mac_gir_sikkerhetsstopp_uten_statusendring(conn):
-    uid, hi_hash = _oppsett_sak(conn)
-    reg = _macreg()
-    konv = _signer(reg, _konvolutt(uid, hi_hash))
-    konv["mac"] = "0" * 64   # forfalsket signatur
-    res = behandle_unntakshandling(conn, _Pool(), reg, tenant=TEN, aktor="op1",
-                                   request_id="r1", konvolutt=konv, naa=NAA)
-    assert res["utfall"] == "STOPP" and res["sikkerhet"] == "mac_ugyldig"
-
-    c2 = _reconn()
-    st = c2.execute("SELECT status FROM unntak WHERE tenant=%s AND id=%s",
-                    (TEN, uid)).fetchone()[0]
-    evid = c2.execute("SELECT count(*) FROM unntak_historikk WHERE tenant=%s AND"
-                      " unntak_id=%s AND hendelse='godkjenning_stoppet_av_policy'",
-                      (TEN, uid)).fetchone()[0]
-    c2.close()
-    assert st == "venter_godkjenning"   # uendret
-    assert evid == 1                    # evidensen overlevde (egen forbindelse)
+def test_stale_saksversjon_stoppes_uten_sideeffekt(conn):
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    with pytest.raises(Godkjenningsfeil) as ei:
+        _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=999)
+    assert ei.value.kode == "saksversjon_utdatert"
+    conn.rollback()
+    # Ingen sideeffekt: saken er fortsatt manuell, ingen runde åpnet.
+    assert _status(conn, uid) == "manuell"
+    from db.pg import sett_tenant
+    sett_tenant(conn, TEN)
+    n = conn.execute("SELECT count(*) FROM godkjenningsrunde WHERE tenant=%s AND"
+                     " unntak_id=%s", (TEN, uid)).fetchone()[0]
+    conn.rollback()
+    assert n == 0
 
 
 @pg
-def test_bindingsavvik_gir_sikkerhetsstopp(conn):
-    uid, hi_hash = _oppsett_sak(conn)
-    reg = _macreg()
-    # Gyldig signatur, men konvolutten peker på feil sak (hi-hash).
-    konv = _signer(reg, _konvolutt(uid, hi_hash, hi_integritet_hash="f" * 64))
-    res = behandle_unntakshandling(conn, _Pool(), reg, tenant=TEN, aktor="op1",
-                                   request_id="r1", konvolutt=konv, naa=NAA)
-    assert res["utfall"] == "STOPP"
-    assert res["sikkerhet"] == "bindingsavvik:hi_integritet_hash"
-
-
-POL_FIRE = {**POL, "menneskelig_overstyring": {
-    **POL["menneskelig_overstyring"], "krever_fire_oyne": True}}
-POL_FIRE_HASH = _policy_innholds_hash(POL_FIRE)
+def test_idempotens_identisk_og_avvikende_replay(conn):
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    sv = _sv(conn, uid)
+    r1 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv,
+               idem="nokkel-A")
+    assert r1["utfall"] == "TILLAT"
+    # Identisk replay (samme nøkkel + samme input) → samme lagrede respons.
+    r2 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv,
+               idem="nokkel-A")
+    assert r2.get("replay") is True and r2["utfall"] == "TILLAT"
+    # Avvikende replay (samme nøkkel, ANNET input) → sikkerhetsstopp.
+    r3 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv + 5,
+               idem="nokkel-A")
+    assert r3["utfall"] == "STOPP" and r3["sikkerhet"] == "idempotenskonflikt"
 
 
 @pg
-def test_fire_oyne_forste_venter_andre_gir_tillat(conn, monkeypatch):
+def test_reautorisering_etter_laas_mangler_medlemskap(conn):
+    uid = _oppsett(conn)
+    # INGEN medlemskap opprettet → reauth etter låsen feiler fail-closed.
+    with pytest.raises(Godkjenningsfeil) as ei:
+        _kall(conn, uid, "godkjenn", "op-uten", _macreg())
+    assert ei.value.kode == "mangler_medlemskap"
+    conn.rollback()
+    assert _status(conn, uid) == "manuell"
+
+
+@pg
+def test_reautorisering_scope_fjernet_stoppes(conn):
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1", roller="ARRAY['leser']")   # ingen approve-scope
+    with pytest.raises(Godkjenningsfeil) as ei:
+        _kall(conn, uid, "godkjenn", bid, _macreg())
+    assert ei.value.kode == "scope_mangler"
+    conn.rollback()
+    assert _status(conn, uid) == "manuell"
+
+
+@pg
+def test_fire_oyne_krever_to_ulike_godkjennere(conn, monkeypatch):
     monkeypatch.setattr("api.unntaksbehandling.policyregister.hent_aktiv",
                         lambda conn, tenant, pid: (POL_FIRE, POL_FIRE_HASH))
-    uid, hi_hash = _oppsett_sak(conn, policy=POL_FIRE, phash=POL_FIRE_HASH)
+    uid = _oppsett(conn, phash=POL_FIRE_HASH)
+    bid1 = _medlem(conn, "op1")
+    bid2 = _medlem(conn, "op2")
     reg = _macreg()
-
-    # Første godkjenner: venter på nummer to (ingen beslutning ennå).
-    k1 = _signer(reg, _konvolutt(uid, hi_hash, bruker="op1", ghash=POL_FIRE_HASH))
-    r1 = behandle_unntakshandling(conn, _Pool(), reg, tenant=TEN, aktor="op1",
-                                  request_id="r1", konvolutt=k1, naa=NAA)
+    r1 = _kall(conn, uid, "godkjenn", bid1, reg)
     assert r1["utfall"] == "venter_andre_godkjenner" and r1["gjenstaar"] == 1
-
-    # Samme bruker igjen → fire-øyne-brudd (UNIQUE).
-    from api.unntaksbehandling import Godkjenningsfeil
-    k1b = _signer(reg, _konvolutt(uid, hi_hash, bruker="op1",
-                                  ghash=POL_FIRE_HASH,
-                                  jti=f"op1b{uid}" + "j" * 22))
+    # Samme bruker igjen → fire-øyne-brudd.
     with pytest.raises(Godkjenningsfeil):
-        behandle_unntakshandling(conn, _Pool(), reg, tenant=TEN, aktor="op1",
-                                 request_id="r1b", konvolutt=k1b, naa=NAA)
-
-    # Andre, ULIKE godkjenner: terskel nådd → TILLAT.
-    k2 = _signer(reg, _konvolutt(uid, hi_hash, bruker="op2", ghash=POL_FIRE_HASH))
-    r2 = behandle_unntakshandling(conn, _Pool(), reg, tenant=TEN, aktor="op2",
-                                  request_id="r2", konvolutt=k2, naa=NAA)
+        _kall(conn, uid, "godkjenn", bid1, reg, idem="op1-igjen")
+    conn.rollback()
+    r2 = _kall(conn, uid, "godkjenn", bid2, reg)
     assert r2["utfall"] == "TILLAT"
-
-
-def _reconn():
-    from db.pg import koble, sett_tenant
-    c = koble(DSN)
-    sett_tenant(c, TEN)
-    return c

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import psycopg
 
@@ -179,25 +179,65 @@ def _motorutfall(beslutning: str) -> str:
     return "STOPP"
 
 
+_OP_SCOPE = {"godkjenn": "exceptions:approve", "avvis": "exceptions:reject",
+             "eskaler": "exceptions:escalate"}
+
+
 def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
                              tenant: str, aktor: str, request_id: str,
-                             konvolutt: dict, naa) -> dict:
+                             unntak_id: int, operatorhandling: str,
+                             forventet_saksversjon, idempotency_key: str,
+                             input_hash: str, naa) -> dict:
     """Portens hovedvei. Eier transaksjonen (speiler `_flyt` inline siden
     `kjerne.behandle` eier sin egen commit).
 
-    En MAC-signert konvolutt verifiseres, bindes til den LÅSTE saken, og —
-    for `godkjenn` når fire-øyne-terskelen er nådd — mates som en NY beslutning
-    gjennom motorens egne verifiserte faktakanal. MAC-/bindingsbrudd ruller
-    transaksjonen tilbake OG skriver sikkerhetsevidens på egen forbindelse (V3).
-    Kaster `Godkjenningsfeil` ved tilstands-/formfeil (kalleren mapper til HTTP).
+    ALT skjer under saks­låsen: idempotens-claim → `FOR UPDATE` → REAUTORISERING
+    (medlemskap/scope revalideres etter låsen, fail-closed, uten fallback) →
+    optimistisk lås (`saksversjon`) → runde → konvolutt bygges OG MAC-signeres
+    server-side fra autentiske låste data → beslutning via motorens verifiserte
+    faktakanal. MAC-/bindingsbrudd og avvikende idempotens-replay ruller tilbake
+    OG skriver sikkerhetsevidens på egen forbindelse (V3). Kaster
+    `Godkjenningsfeil` ved tilstands-/formfeil.
     """
-    operatorhandling = konvolutt.get("operatorhandling")
-    if operatorhandling not in ("godkjenn", "avvis", "eskaler"):
+    from .autorisasjon import scopes_for_roller
+
+    if operatorhandling not in _OP_SCOPE:
+        conn.rollback()
         raise Godkjenningsfeil("ukjent_operatorhandling")
-    unntak_id = konvolutt.get("unntak_id")
-    mac, mac_key_id = konvolutt.get("mac"), konvolutt.get("mac_key_id")
 
     sett_kontekst(conn, tenant, aktor, request_id)
+
+    # --- 1. Idempotens: serialiser per nøkkel og claim i EIERTRANSAKSJONEN --
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fidem\x1f{idempotency_key}",))
+    claim = conn.execute(
+        "INSERT INTO idempotens (tenant, nokkel, input_hash, status, request_id)"
+        " VALUES (%s,%s,%s,'paagaar',%s) ON CONFLICT (tenant, nokkel)"
+        " DO NOTHING RETURNING nokkel",
+        (tenant, idempotency_key, input_hash, request_id)).fetchone()
+    if claim is None:
+        eksist = conn.execute(
+            "SELECT input_hash, status, respons FROM idempotens"
+            " WHERE tenant=%s AND nokkel=%s",
+            (tenant, idempotency_key)).fetchone()
+        if eksist is None:
+            conn.rollback()
+            raise Godkjenningsfeil("db_utilgjengelig")
+        lagret_hash, istatus, respons = eksist
+        if lagret_hash != input_hash:
+            # Samme nøkkel, ANNET input → sikkerhetssak (v3/v4), aldri en
+            # stille ny operasjon.
+            return _sikkerhetsstopp(conn, pool, tenant, unntak_id, aktor,
+                                    request_id, "idempotenskonflikt")
+        if istatus == "ferdig":
+            conn.rollback()
+            return {**respons, "replay": True}
+        # `paagaar` OG vi holder låsen ⇒ vinneren finnes ikke lenger; overta.
+        conn.execute("UPDATE idempotens SET request_id=%s, ts=now()"
+                     " WHERE tenant=%s AND nokkel=%s",
+                     (request_id, tenant, idempotency_key))
+
+    # --- 2. Lås saken -----------------------------------------------------
     sak = conn.execute(
         "SELECT status, handling, loggpost_id, intensjon_pakrevd,"
         " handlingsintensjon_kryptert, hi_key_id, hi_nonce, hi_integritet_hash,"
@@ -210,30 +250,97 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
     (status, handling, loggpost_id, intensjon_pakrevd, hi_ct, hi_key_id,
      hi_nonce, hi_hash, hi_ver, intensjon_policy_hash, saksversjon) = sak
 
+    # --- 3. REAUTORISERING ETTER LÅSEN (V3 §6 / port 9) -------------------
+    # Medlemskap + scope revalideres NÅ, ikke ved den innledende auth-en: en
+    # rolle som fjernes i vinduet mellom auth og lås skal stoppe handlingen.
+    # Fail-closed, ingen fallback-rolle.
+    med = conn.execute(
+        "SELECT roller, authz_version FROM brukermedlemskap WHERE tenant=%s"
+        " AND bruker_id=%s AND aktiv", (tenant, aktor)).fetchone()
+    if med is None:
+        conn.rollback()
+        raise Godkjenningsfeil("mangler_medlemskap")
+    roller = list(med[0])
+    authz_version = int(med[1])
+    if _OP_SCOPE[operatorhandling] not in scopes_for_roller(roller):
+        conn.rollback()
+        raise Godkjenningsfeil("scope_mangler")
+
+    # --- 4. Optimistisk lås: klientens saksversjon mot den LÅSTE raden -----
+    # Etter FOR UPDATE, før runde/attestasjon (spec §7). En operatør som
+    # handler fra en stale dialog stoppes uten sideeffekt.
+    if not isinstance(forventet_saksversjon, int) \
+            or forventet_saksversjon != saksversjon:
+        conn.rollback()
+        raise Godkjenningsfeil("saksversjon_utdatert")
+
+    # --- 5. Policy (krever_rolle + godkjennbarhet) ------------------------
+    policy, policy_hash = policyregister.hent_aktiv(
+        conn, tenant, _policy_id(loggpost_id, conn, tenant))
+    mo = policy.get("menneskelig_overstyring") or {}
+
+    # --- 6. Forretningsrolle (reautorisert, ingen fallback) ---------------
+    if operatorhandling == "godkjenn":
+        krever_rolle = mo.get("krever_rolle")
+        if not krever_rolle or krever_rolle not in roller:
+            conn.rollback()
+            raise Godkjenningsfeil("mangler_rolle", str(krever_rolle))
+        rolle = krever_rolle
+    else:
+        rolle = roller[0]   # scope er bevist; audit-rollen er en ekte rolle
+
+    # --- 7. Aktiv runde (åpne under låsen ved behov) ----------------------
     runde = conn.execute(
         "SELECT runde, status, bundet_grunnkode, godkjennings_policy_hash,"
         " utloper FROM godkjenningsrunde WHERE tenant=%s AND unntak_id=%s"
         " AND status IN ('apen','klar') FOR UPDATE",
         (tenant, unntak_id)).fetchone()
     if runde is None:
-        conn.rollback()
-        raise Godkjenningsfeil("ingen_aktiv_runde")
+        if status != "manuell":
+            conn.rollback()
+            raise Godkjenningsfeil("runde_ulovlig_tilstand", f"status={status}")
+        opprett_godkjenningsrunde(conn, tenant=tenant, unntak_id=unntak_id,
+                                  aktor=aktor, request_id=request_id,
+                                  policy=policy, policy_hash=policy_hash, naa=naa,
+                                  krev_godkjennbar=(operatorhandling == "godkjenn"))
+        status = "venter_godkjenning"
+        runde = conn.execute(
+            "SELECT runde, status, bundet_grunnkode, godkjennings_policy_hash,"
+            " utloper FROM godkjenningsrunde WHERE tenant=%s AND unntak_id=%s"
+            " AND status IN ('apen','klar') FOR UPDATE",
+            (tenant, unntak_id)).fetchone()
     r_nr, r_status, bundet_grunnkode, godkj_policy_hash, r_utloper = runde
     if r_utloper <= naa:
         conn.rollback()
         raise Godkjenningsfeil("runde_utlopt")
-    if konvolutt.get("runde") != r_nr:
-        conn.rollback()
-        raise Godkjenningsfeil("feil_runde")
 
-    # MAC — portens jobb, aldri motorens. Fail-closed.
-    if not (isinstance(mac, str) and isinstance(mac_key_id, str)
-            and mac_register.verifiser(konvolutt, mac, mac_key_id)):
+    # --- 8. Bygg + MAC-signer konvolutten fra AUTENTISKE, LÅSTE data ------
+    belop = valuta = ressurs_id = None
+    if operatorhandling == "godkjenn" and intensjon_pakrevd and hi_ct is not None:
+        dek = kryptering.hent_dek(conn, tenant, hi_key_id)
+        aad = kryptering.intensjon_aad(unntak_id, handling, hi_ver,
+                                       intensjon_policy_hash)
+        forhaand = kryptering.dekrypter(dek, bytes(hi_ct), bytes(hi_nonce),
+                                        tenant, hi_key_id, ekstra_aad=aad)
+        belop, valuta = forhaand.get("belop"), forhaand.get("valuta")
+        ressurs_id = forhaand.get("ressurs_id")
+    konvolutt = {
+        "konvoluttversjon": 2, "operatorhandling": operatorhandling,
+        "tenant": tenant, "unntak_id": unntak_id, "runde": r_nr,
+        "target_action": handling, "ressurs_id": ressurs_id, "belop": belop,
+        "valuta": valuta, "hi_integritet_hash": hi_hash,
+        "bundet_grunnkode": bundet_grunnkode,
+        "godkjennings_policy_hash": godkj_policy_hash, "bruker_id": aktor,
+        "rolle": rolle, "authz_version": authz_version,
+        "jti": f"{aktor}-{unntak_id}-r{r_nr}-{operatorhandling}".ljust(22, "j"),
+        "utloper": (naa + RUNDE_TTL).isoformat(), "saksversjon": saksversjon}
+    mac_key_id, mac = mac_register.signer(konvolutt)
+    konvolutt["mac"], konvolutt["mac_key_id"] = mac, mac_key_id
+
+    # MAC + binding (defense-in-depth; server signerte akkurat over disse data).
+    if not mac_register.verifiser(konvolutt, mac, mac_key_id):
         return _sikkerhetsstopp(conn, pool, tenant, unntak_id, aktor,
                                 request_id, "mac_ugyldig")
-
-    # Feltbinding: konvolutten må gjelde NØYAKTIG denne saken/runden. Et avvik
-    # betyr at en gyldig-signert konvolutt forsøkes brukt på noe annet.
     forventet = {"tenant": tenant, "target_action": handling,
                  "hi_integritet_hash": hi_hash,
                  "bundet_grunnkode": bundet_grunnkode,
@@ -256,8 +363,8 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
         conn.execute("UPDATE unntak SET status='avvist' WHERE tenant=%s AND id=%s",
                      (tenant, unntak_id))
         _historikk(conn, tenant, unntak_id, "avvist_handling", aktor, request_id)
-        conn.commit()
-        return {"utfall": "avvist", "unntak_id": unntak_id}
+        return _fullfor(conn, tenant, idempotency_key,
+                        {"utfall": "avvist", "unntak_id": unntak_id})
 
     if operatorhandling == "eskaler":
         conn.execute("UPDATE godkjenningsrunde SET status='kansellert'"
@@ -269,14 +376,10 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
             conn.execute("UPDATE unntak SET status='manuell' WHERE tenant=%s"
                          " AND id=%s", (tenant, unntak_id))
         _historikk(conn, tenant, unntak_id, "eskalert", aktor, request_id)
-        conn.commit()
-        return {"utfall": "eskalert", "unntak_id": unntak_id}
+        return _fullfor(conn, tenant, idempotency_key,
+                        {"utfall": "eskalert", "unntak_id": unntak_id})
 
     # --- godkjenn ---------------------------------------------------------
-    policy, policy_hash = policyregister.hent_aktiv(conn, tenant,
-                                                    _policy_id(loggpost_id, conn,
-                                                               tenant))
-    mo = policy.get("menneskelig_overstyring") or {}
     krever_fire = bool(mo.get("krever_fire_oyne"))
     godkjennere = conn.execute(
         "SELECT bruker_id, rolle, authz_version FROM menneskelig_attestasjon"
@@ -289,9 +392,10 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
                          " WHERE tenant=%s AND id=%s", (tenant, unntak_id))
         _historikk(conn, tenant, unntak_id, "attestasjon_registrert", aktor,
                    request_id)
-        conn.commit()
-        return {"utfall": "venter_andre_godkjenner",
-                "gjenstaar": terskel - len(godkjennere), "unntak_id": unntak_id}
+        return _fullfor(conn, tenant, idempotency_key,
+                        {"utfall": "venter_andre_godkjenner",
+                         "gjenstaar": terskel - len(godkjennere),
+                         "unntak_id": unntak_id})
 
     # Terskel nådd: mat godkjenningen som en ny beslutning gjennom motoren.
     dek = kryptering.hent_dek(conn, tenant, hi_key_id)
@@ -356,9 +460,9 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
                      " id=%s", (tenant, unntak_id))
         _historikk(conn, tenant, unntak_id, "godkjenning_stoppet_av_policy",
                    aktor, request_id)
-    conn.commit()
-    return {"utfall": d.beslutning, "unntak_id": unntak_id,
-            "begrunnelse": [g.kode for g in d.begrunnelse]}
+    return _fullfor(conn, tenant, idempotency_key,
+                    {"utfall": d.beslutning, "unntak_id": unntak_id,
+                     "begrunnelse": [g.kode for g in d.begrunnelse]})
 
 
 def _policy_id(loggpost_id: int, conn: psycopg.Connection, tenant: str) -> str:
@@ -416,6 +520,17 @@ def _sikkerhetsstopp(conn, pool, tenant, unntak_id, aktor, request_id,
     return {"utfall": "STOPP", "sikkerhet": grunn, "unntak_id": unntak_id}
 
 
+def _fullfor(conn, tenant, idempotency_key, res: dict) -> dict:
+    """Lagre den idempotente responsen og commit. En replay med samme nøkkel og
+    samme input får NØYAKTIG denne lagrede responsen tilbake — aldri en ny
+    operasjon."""
+    conn.execute("UPDATE idempotens SET status='ferdig', respons=%s"
+                 " WHERE tenant=%s AND nokkel=%s",
+                 (json.dumps(res, ensure_ascii=False), tenant, idempotency_key))
+    conn.commit()
+    return res
+
+
 # --------------------------------------------------------------------------
 # HTTP-endepunktet (CP5): POST /v1/unntak/{id}/handling
 # --------------------------------------------------------------------------
@@ -430,13 +545,18 @@ _FEIL_HTTP = {"unntak_ukjent": 404, "ingen_aktiv_runde": 409,
               "runde_ulovlig_tilstand": 409, "godkjenn_utilgjengelig": 409,
               "allerede_attestert": 409, "ukjent_operatorhandling": 400,
               "policy_id_ukjent": 409, "mangler_rolle": 403,
-              "runde_allerede_aapen": 409}
+              "mangler_medlemskap": 403, "scope_mangler": 403,
+              "saksversjon_utdatert": 409, "runde_allerede_aapen": 409}
 
 
 def handling_endepunkt(tjeneste, request, unntak_id: int):
-    """POST /v1/unntak/{id}/handling — en autentisert, CSRF-vernet menneskelig
-    handling. Bygger konvolutten SERVER-side fra den autentiserte sesjonen +
-    den låste saken/runden, MAC-signerer den, og kjører den gjennom porten."""
+    """POST /v1/unntak/{id}/handling — autentisert, CSRF-vernet, idempotent.
+
+    Endepunktet er tynt: form + auth + CSRF, så delegeres ALT (idempotens,
+    lås, REAUTORISERING etter lås, saksversjon, konvolutt-signering, beslutning)
+    til `behandle_unntakshandling` i én eiertransaksjon. Klienten sender
+    `operatorhandling` + `saksversjon` (den den viste) + `Idempotency-Key`.
+    """
     from starlette.responses import JSONResponse
 
     from . import kjerne
@@ -449,10 +569,21 @@ def handling_endepunkt(tjeneste, request, unntak_id: int):
         body = json.loads(raa.decode("utf-8"))
     except Exception:
         return _feilsvar("request_feilformet", rid)
-    oh = body.get("operatorhandling") if isinstance(body, dict) else None
-    scope = _HANDLING_SCOPE.get(oh)
-    if scope is None:
+    if not isinstance(body, dict):
         return _feilsvar("request_feilformet", rid)
+    oh = body.get("operatorhandling")
+    scope = _HANDLING_SCOPE.get(oh)
+    # `saksversjon` er PÅKREVD: uten den kan klienten ikke bevise hvilken
+    # tilstand operatøren så, og den optimistiske låsen ville vært tannløs.
+    saksversjon = body.get("saksversjon")
+    if scope is None or not isinstance(saksversjon, int) \
+            or isinstance(saksversjon, bool):
+        return _feilsvar("request_feilformet", rid)
+
+    idem = request.headers.get("idempotency-key")
+    if not idem or not idem.strip():
+        return _feilsvar("idempotensnokkel_mangler", rid)
+    idem = idem.strip()
 
     try:
         conn = tjeneste.pool.hent()
@@ -477,13 +608,18 @@ def handling_endepunkt(tjeneste, request, unntak_id: int):
 
         tenant = auth.tenant
         bid = auth.token_id.split("sesjon:", 1)[-1]
+        # Idempotensnøkkelen bindes til HELE inputtet: samme nøkkel + annet
+        # input = sikkerhetssak, ikke en ny operasjon.
+        input_hash = hashlib.sha256(
+            f"{tenant}\x1f{bid}\x1f{unntak_id}\x1f{oh}\x1f{saksversjon}"
+            .encode("utf-8")).hexdigest()
         try:
-            konvolutt = _bygg_signert_konvolutt(conn, tjeneste, tenant, bid,
-                                                unntak_id, oh, rid, _naa(request))
             res = behandle_unntakshandling(
                 conn, tjeneste.pool, tjeneste.mac_register, tenant=tenant,
-                aktor=bid, request_id=rid, konvolutt=konvolutt,
-                naa=_naa(request))
+                aktor=bid, request_id=rid, unntak_id=unntak_id,
+                operatorhandling=oh, forventet_saksversjon=saksversjon,
+                idempotency_key=idem, input_hash=input_hash,
+                naa=datetime.now(timezone.utc))
         except Godkjenningsfeil as g:
             conn.rollback()
             return _feilsvar_kode(g.kode, rid)
@@ -497,83 +633,3 @@ def _feilsvar_kode(kode: str, rid: str):
     return JSONResponse({"feil": kode, "request_id": rid},
                         status_code=_FEIL_HTTP.get(kode, 409),
                         headers={"x-request-id": rid})
-
-
-def _naa(request):
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc)
-
-
-def _bygg_signert_konvolutt(conn, tjeneste, tenant, bid, unntak_id, oh, rid, naa):
-    """Les saken/runden, åpne runde ved behov, og bygg + MAC-signer konvolutten
-    fra autentiske serverdata. Kaster `Godkjenningsfeil`."""
-    sett_kontekst(conn, tenant, bid, rid)
-    sak = conn.execute(
-        "SELECT status, handling, loggpost_id, hi_integritet_hash,"
-        " intensjon_pakrevd, handlingsintensjon_kryptert, hi_key_id, hi_nonce,"
-        " hi_skjemaversjon, intensjon_policy_hash FROM unntak"
-        " WHERE tenant=%s AND id=%s", (tenant, unntak_id)).fetchone()
-    if sak is None:
-        raise Godkjenningsfeil("unntak_ukjent")
-    (status, handling, loggpost_id, hi_hash, intensjon_pakrevd, hi_ct, hi_key_id,
-     hi_nonce, hi_ver, intensjon_policy_hash) = sak
-
-    policy, policy_hash = policyregister.hent_aktiv(
-        conn, tenant, _policy_id(loggpost_id, conn, tenant))
-    krever_rolle = (policy.get("menneskelig_overstyring") or {}).get(
-        "krever_rolle")
-
-    # Operatørens medlemskap: forretningsrolle + authz_version.
-    med = conn.execute(
-        "SELECT roller, authz_version FROM brukermedlemskap WHERE tenant=%s"
-        " AND bruker_id=%s AND aktiv", (tenant, bid)).fetchone()
-    roller = list(med[0]) if med else []
-    authz_version = med[1] if med else 0
-    if oh == "godkjenn":
-        if not krever_rolle or krever_rolle not in roller:
-            raise Godkjenningsfeil("mangler_rolle", str(krever_rolle))
-        rolle = krever_rolle
-    else:
-        rolle = krever_rolle if krever_rolle in roller else (
-            roller[0] if roller else "godkjenner")
-
-    # Ingen aktiv runde på en manuell sak → åpne én (godkjenn krever
-    # godkjennbar; avvis/eskaler gjør ikke).
-    aktiv = conn.execute(
-        "SELECT runde, bundet_grunnkode, godkjennings_policy_hash FROM"
-        " godkjenningsrunde WHERE tenant=%s AND unntak_id=%s AND status IN"
-        " ('apen','klar')", (tenant, unntak_id)).fetchone()
-    if aktiv is None:
-        if status != "manuell":
-            raise Godkjenningsfeil("runde_ulovlig_tilstand", f"status={status}")
-        opprett_godkjenningsrunde(conn, tenant=tenant, unntak_id=unntak_id,
-                                  aktor=bid, request_id=rid, policy=policy,
-                                  policy_hash=policy_hash, naa=naa,
-                                  krev_godkjennbar=(oh == "godkjenn"))
-        aktiv = conn.execute(
-            "SELECT runde, bundet_grunnkode, godkjennings_policy_hash FROM"
-            " godkjenningsrunde WHERE tenant=%s AND unntak_id=%s AND status IN"
-            " ('apen','klar')", (tenant, unntak_id)).fetchone()
-    runde, bundet_grunnkode, godkj_policy_hash = aktiv
-
-    belop = valuta = ressurs_id = None
-    if oh == "godkjenn" and intensjon_pakrevd and hi_ct is not None:
-        dek = kryptering.hent_dek(conn, tenant, hi_key_id)
-        aad = kryptering.intensjon_aad(unntak_id, handling, hi_ver,
-                                       intensjon_policy_hash)
-        intensjon = kryptering.dekrypter(dek, bytes(hi_ct), bytes(hi_nonce),
-                                         tenant, hi_key_id, ekstra_aad=aad)
-        belop, valuta = intensjon.get("belop"), intensjon.get("valuta")
-        ressurs_id = intensjon.get("ressurs_id")
-
-    konvolutt = {
-        "konvoluttversjon": 2, "operatorhandling": oh, "tenant": tenant,
-        "unntak_id": unntak_id, "runde": runde, "target_action": handling,
-        "ressurs_id": ressurs_id, "belop": belop, "valuta": valuta,
-        "hi_integritet_hash": hi_hash, "bundet_grunnkode": bundet_grunnkode,
-        "godkjennings_policy_hash": godkj_policy_hash, "bruker_id": bid,
-        "rolle": rolle, "authz_version": authz_version,
-        "jti": f"{bid}-{unntak_id}-r{runde}-{oh}".ljust(22, "j"),
-        "utloper": (naa + RUNDE_TTL).isoformat()}
-    mac_key_id, mac = tjeneste.mac_register.signer(konvolutt)
-    return {**konvolutt, "mac": mac, "mac_key_id": mac_key_id}
