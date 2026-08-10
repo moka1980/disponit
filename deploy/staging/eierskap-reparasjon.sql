@@ -60,6 +60,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'kvitteringskapabilitet_statusmaskin()',            'disponit_m37_claimer'),
     ('FUNCTION', 'registrer_verifikasjonsbevis(bigint,text,text,text,text,text,jsonb,text,integer,integer,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reserver_kapabilitet(text,text,integer)',          'disponit_m37_claimer'),
+    -- 011 (PR-012 gate 14a): lesevei for utestående oppdrag/kapabilitet.
+    -- Eid av m37_claimer fordi arbeidskapabiliteter er off-limits for runtime
+    -- (runtime får KUN EXECUTE). Paritetstesten fanget denne da 14a landet.
+    ('FUNCTION', 'sak_utestaaende(text,bigint)',                     'disponit_m37_claimer'),
     ('FUNCTION', 'start_verifikasjonsgenerasjon(text,bigint,text,integer,jsonb,text,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'tenanter_uten_policysnapshot()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'utsted_arbeidskapabilitet(text,integer,text,integer)', 'disponit_m37_claimer'),

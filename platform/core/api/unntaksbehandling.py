@@ -289,6 +289,19 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
     else:
         rolle = roller[0]   # scope er bevist; audit-rollen er en ekte rolle
 
+    # --- 6b. Gate 14a: avvis krever at HVER relatert oppdrag/kapabilitet-rad
+    # positivt er trygg (intet, kansellert oppdrag, eller terminal kapabilitet).
+    # Én levende rad → `avklaring_kreves` + 409, ALDRI `avvist`. Saks­låsen (FOR
+    # UPDATE over) serialiserer mot phantom-innsetting (P2). LIGGER FØR
+    # runde-åpning + attestasjon: en blokkert avvis skal ikke åpne en runde,
+    # etterlate en attestasjon, eller skrive ny historikk ved gjentatt forsøk
+    # (P3).
+    if operatorhandling == "avvis":
+        utestaaende = _sjekk_utestaaende(conn, tenant, unntak_id)
+        if utestaaende is not None:
+            return _flagg_avklaring(conn, tenant, unntak_id, utestaaende,
+                                    aktor, request_id, idempotency_key)
+
     # --- 7. Aktiv runde (åpne under låsen ved behov) ----------------------
     runde = conn.execute(
         "SELECT runde, status, bundet_grunnkode, godkjennings_policy_hash,"
@@ -501,6 +514,49 @@ def _skriv_attestasjon(conn, tenant, unntak_id, runde, operatorhandling,
         raise Godkjenningsfeil("allerede_attestert") from None
 
 
+def _sjekk_utestaaende(conn, tenant: str, unntak_id: int) -> str | None:
+    """Gate 14a (P1): None hvis saken er TRYGG å avvise (HVER relatert rad er
+    positivt trygg), ellers en hash av den utestående tilstanden.
+
+    Trygt oppdrag = `kansellert` (før claim). Trygg kapabilitet = terminal
+    (`brukt`/`feilet`). Alt annet — inkl. en ukjent/fremtidig status — er
+    levende og utrygt. Ingen `MAX`, ingen entallsrad: leser ALLE rader for
+    saken (saks­låsen holdes allerede av kalleren, så settet er stabilt)."""
+    # `arbeidskapabiliteter` er off-limits for runtime; lesningen går gjennom
+    # `sak_utestaaende` (SECURITY DEFINER, eid av m37_claimer). Kalleren holder
+    # saks­låsen, så settet er stabilt.
+    rader = conn.execute("SELECT kilde, ref, status FROM sak_utestaaende(%s,%s)",
+                         (tenant, unntak_id)).fetchall()
+    if not rader:
+        return None
+    payload = json.dumps([[k, r, s] for k, r, s in rader], sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _flagg_avklaring(conn, tenant, unntak_id, utestaaende_hash, aktor,
+                     request_id, idempotency_key) -> dict:
+    """Gate 14a: sett `avklaring_kreves` — men KUN hvis ikke allerede satt for
+    NØYAKTIG samme utestående tilstand (P3): da ingen ny versjonsøkning og
+    ingen ny historikkrad. Invarianten ligger på SAKEN (hash av utestående
+    tilstand), ikke på idempotensnøkkelen — ulike nøkler flagger ikke om og
+    om igjen. Committer FØR 409-et returneres."""
+    siste = conn.execute(
+        "SELECT detalj->>'utestaaende_hash' FROM unntak_historikk WHERE"
+        " tenant=%s AND unntak_id=%s AND hendelse='avklaring_kreves'"
+        " ORDER BY id DESC LIMIT 1", (tenant, unntak_id)).fetchone()
+    if siste is None or siste[0] != utestaaende_hash:
+        conn.execute("UPDATE unntak SET saksversjon=saksversjon+1 WHERE"
+                     " tenant=%s AND id=%s", (tenant, unntak_id))
+        conn.execute(
+            "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+            " request_id, detalj) VALUES (%s,%s,'avklaring_kreves',%s,%s,%s)",
+            (tenant, unntak_id, aktor, request_id,
+             json.dumps({"utestaaende_hash": utestaaende_hash})))
+    return _fullfor(conn, tenant, idempotency_key,
+                    {"utfall": "utestaaende_oppdrag", "unntak_id": unntak_id,
+                     "http": 409})
+
+
 def _historikk(conn, tenant, unntak_id, hendelse, aktor, request_id) -> None:
     conn.execute(
         "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
@@ -623,7 +679,10 @@ def handling_endepunkt(tjeneste, request, unntak_id: int):
         except Godkjenningsfeil as g:
             conn.rollback()
             return _feilsvar_kode(g.kode, rid)
-        return JSONResponse(res, headers={"x-request-id": rid})
+        # 14a: et committet `utestaaende_oppdrag`-flagg bæres som 409 i selve
+        # resultatet (ikke en Godkjenningsfeil — flagget SKAL være committet).
+        return JSONResponse(res, status_code=res.get("http", 200),
+                            headers={"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)
 

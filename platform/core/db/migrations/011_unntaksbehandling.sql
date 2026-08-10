@@ -419,3 +419,38 @@ BEGIN
                 WITH CHECK (tenant = current_setting(''disponit.tenant'', true))', t);
     END LOOP;
 END $$;
+
+-- ------------------------------------------------------------
+-- 7. sak_utestaaende — gate 14a-lesevei for oppdrag + kapabilitet
+--    `arbeidskapabiliteter` er BEVISST off-limits for runtime-rollen (eies av
+--    disponit_m37_claimer). Avvis-veien må likevel bevise at ingen kapabilitet
+--    er utestående FØR en sak avvises. Derfor en SECURITY DEFINER-lesefunksjon,
+--    eid av m37_claimer (samme idiom som claim_neste_sak): runtime får KUN
+--    EXECUTE, aldri direkte tabelltilgang. Kalleren holder saks­låsen
+--    (FOR UPDATE på unntak), så settet er stabilt (P2).
+--    Trygt oppdrag = `kansellert`; trygg kapabilitet = terminal (`brukt`/
+--    `feilet`). Alt annet — inkl. en ukjent/fremtidig status — er utestående.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE OR REPLACE FUNCTION sak_utestaaende(p_tenant TEXT, p_unntak_id BIGINT)
+RETURNS TABLE (kilde TEXT, ref TEXT, status TEXT)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+    SELECT 'oppdrag', o.id::text, o.status
+      FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.unntak_id = p_unntak_id
+       AND o.status <> 'kansellert'
+    UNION ALL
+    SELECT 'kapabilitet', k.jti, k.status
+      FROM public.arbeidskapabiliteter k
+     WHERE k.tenant = p_tenant AND k.unntak_id = p_unntak_id
+       AND k.status NOT IN ('brukt', 'feilet')
+    ORDER BY 1, 2;
+$$;
+REVOKE ALL ON FUNCTION sak_utestaaende(TEXT, BIGINT) FROM PUBLIC;
+-- EXECUTE gis av EIEREN (m37_claimer) her, ikke av migratorrollen i
+-- migrer.py — samme grunn som reserver_kapabilitet: en GRANT på en
+-- m37_claimer-eid funksjon kan bare gjøres av eieren.
+GRANT EXECUTE ON FUNCTION sak_utestaaende(TEXT, BIGINT) TO disponit;
+RESET ROLE;
