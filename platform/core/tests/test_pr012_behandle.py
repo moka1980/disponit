@@ -187,6 +187,38 @@ def test_idempotens_identisk_og_avvikende_replay(conn):
     r3 = _kall(conn, uid, "godkjenn", bid, _macreg(), saksversjon=sv + 5,
                idem=nokkel)
     assert r3["utfall"] == "STOPP" and r3["sikkerhet"] == "idempotenskonflikt"
+    # Port 3: sikkerhetsevidensen ER persistert (egen forbindelse), selv om
+    # forretnings-tx-en ble rullet tilbake.
+    from db.pg import sett_tenant
+    sett_tenant(conn, TEN)
+    ev = conn.execute("SELECT count(*) FROM unntak_historikk WHERE tenant=%s AND"
+                      " unntak_id=%s AND hendelse='godkjenning_stoppet_av_policy'",
+                      (TEN, uid)).fetchone()[0]
+    conn.rollback()
+    assert ev >= 1
+
+
+@pg
+def test_port2_uten_aktiv_runde_avbrytes_ingen_ny_beslutning(conn):
+    # Port 2: menneskeflyt uten aktiv runde → avbrutt, ingen ny beslutning.
+    from db.pg import sett_tenant
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    _kall(conn, uid, "godkjenn", bid, _macreg())   # → venter_utførelse, runde brukt
+    sett_tenant(conn, TEN)
+    logg_for = conn.execute("SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+                            (TEN,)).fetchone()[0]
+    conn.rollback()
+    # Andre godkjenn: ingen aktiv runde + sak ikke manuell → avbrutt.
+    with pytest.raises(Godkjenningsfeil) as ei:
+        _kall(conn, uid, "godkjenn", bid, _macreg(), idem=f"port2-{uid}")
+    assert ei.value.kode == "runde_ulovlig_tilstand"
+    conn.rollback()
+    sett_tenant(conn, TEN)
+    logg_etter = conn.execute("SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+                              (TEN,)).fetchone()[0]
+    conn.rollback()
+    assert logg_etter == logg_for   # ingen ny beslutning skrevet
 
 
 @pg
