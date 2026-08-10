@@ -483,6 +483,17 @@ def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
 # gir ingen TILLAT.
 # --------------------------------------------------------------------------
 
+def _motorpolicy(policy: dict) -> dict:
+    """Policyen SOM MOTOREN SER — uten `metadata` (PR-013 v4 §4). Nøytraliteten
+    er STRUKTURELL: et metadata-felt kan aldri påvirke en beslutning fordi
+    motoren aldri mottar det. Shallow copy uten nøkkelen; resten deles. Denne
+    ene choke-pointen er det klassifikatoren og CI-porten hviler på (metadata
+    som likevel når motorobjektet → rødt)."""
+    if isinstance(policy, dict) and "metadata" in policy:
+        return {k: v for k, v in policy.items() if k != "metadata"}
+    return policy
+
+
 def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
              teller: TellerLager | None = None, naa: datetime | None = None,
              *, menneskelig_godkjenning: "MenneskeligGodkjenning | None" = None
@@ -493,8 +504,12 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
     begrunnelseskjede — PR-012 P3/port 6). Parameteren kan KUN settes av
     `behandle_unntakshandling`, som har MAC-verifisert konvolutten på forhånd;
     motoren verifiserer aldri MAC-en selv.
+
+    `metadata` strippes HER, ved den ene inngangen, så ingen beslutningsvei
+    nedstrøms ser semantikkfrie felt (v4 §4).
     """
     naa = naa or datetime.now(timezone.utc)
+    policy = _motorpolicy(policy)
     grunnvedtak = _evaluer(policy, context, event, teller, naa)
     if menneskelig_godkjenning is None:
         return grunnvedtak
