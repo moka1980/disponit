@@ -738,7 +738,13 @@ LESEROLLER = frozenset({"bruker"})
 #: (dobbel-innsending); carve-outen her slipper dem bare forbi den generelle
 #: «browsersesjon når aldri et muterende scope»-porten.
 BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
-                                     "exceptions:escalate"})
+                                     "exceptions:escalate",
+                                     # PR-013: policyadministrasjon. `write`
+                                     # (redigere utkast) og `activate` (attestere
+                                     # aktivering) er BEVISST ADSKILTE — den som
+                                     # kan skrive et utkast skal ikke dermed
+                                     # kunne sette det i produksjon (v5 §3, V6).
+                                     "policy:write", "policy:activate"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
