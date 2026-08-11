@@ -54,9 +54,9 @@ jobs:
                symptomet. Full testsuite krever Postgres og kjører i CI —
                kjør det du kan lokalt (python -m compileall, målrettede
                tester), commit med forklarende melding på norsk, push til
-               denne branchen. Kommenter deretter `@codex review` for ny
-               runde. IKKE rediger .github/workflows, .env eller
-               hemmeligheter.
+               denne branchen. Codex starter automatisk ny gjennomgang ved
+               push — ikke ping @codex. IKKE rediger .github/workflows,
+               .env eller hemmeligheter.
             3. Godkjenning eller ingen reelle funn: vent på CI med
                `gh pr checks ${{ github.event.pull_request.number }} --watch --fail-fast`.
                Grønn → `gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch`.
