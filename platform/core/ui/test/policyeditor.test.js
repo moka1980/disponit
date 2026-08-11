@@ -123,6 +123,42 @@ test("Rediger: laster utkastets innhold og PUTer med utkastversjon", async () =>
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 
+test("Stabil nøkkel: retry etter nettverksfeil gjenbruker Idempotency-Key", async () => {
+  // Codex R1: en retry av SAMME lagring (tapt svar) må gjenbruke nøkkelen, så
+  // serveren REPLAYer i stedet for å duplisere.
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const ekte = globalThis.fetch;
+  const kalt = [];
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method && opts.method !== "GET") {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");   // tapt svar
+      return { ok: true, status: 200,
+        json: async () => ({ utkast_id: "u-ny", utkastversjon: 1 }) };
+    }
+    return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
+  };
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  const pid = h.querySelector("input.felt-inp");
+  pid.value = "acme"; pid.dispatchEvent(new window.Event("input"));
+
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length === 1);
+  // Re-klikk (samme innhold) → retry.
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "retry med samme innhold MÅ gjenbruke idempotensnøkkelen");
+  globalThis.fetch = ekte;
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
 test("Roller: legg til og fjern re-tegner", async () => {
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });

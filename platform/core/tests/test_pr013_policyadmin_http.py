@@ -265,6 +265,63 @@ def test_hent_maler_gir_bransjemaler():
     for m in maler:
         assert isinstance(m["innhold"], dict)
         assert m["innhold"].get("handlinger")        # komplett policy
+        # Codex R1: en servert mal MÅ være gyldig (skjema + semantikk) — den er
+        # et «gyldig utgangspunkt», ikke bare velformet.
+        assert policyadmin.valider_semantisk(m["innhold"]) == []
+
+
+def test_valider_semantisk_fanger_referanse_og_modus():
+    # Codex R1: referanse-integritet + modus/vilkår.
+    r = policyadmin.valider_semantisk({
+        "roller": [{"id": "a"}],
+        "handlinger": [{"id": "h1", "tillatt_for": ["mangler"]},
+                       {"id": "h2", "modus": "auto_med_vilkaar",
+                        "vilkaar": []}]})
+    assert any("ukjent rolle" in f for f in r)
+    assert any("auto_med_vilkaar" in f for f in r)
+    # gyldig → ingen semantiske feil.
+    assert policyadmin.valider_semantisk({
+        "roller": [{"id": "a"}],
+        "handlinger": [{"id": "h", "modus": "auto",
+                        "tillatt_for": ["a"]}]}) == []
+
+
+@pg
+def test_valider_fanger_hengende_rolle_referanse():
+    # Skjemagyldig, men semantisk brutt: en handling peker på en rolle som ikke
+    # finnes. `valider` MÅ avvise (ugyldig med semantikkfeil) — en «alltid
+    # gyldig»-påstand uten port ville sluppet dette gjennom.
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig()
+    pol["handlinger"][0]["tillatt_for"] = ["finnes_ikke"]
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig"
+        assert any("ukjent rolle" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_fanger_auto_med_vilkaar_uten_vilkaar():
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig()
+    pol["handlinger"][0]["modus"] = "auto_med_vilkaar"
+    pol["handlinger"][0]["vilkaar"] = []
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig"
+        assert any("auto_med_vilkaar" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
 
 
 @pg

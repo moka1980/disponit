@@ -4,8 +4,10 @@
 // lar eieren redigere de FORRETNINGSKRITISKE feltene: firmanavn, roller, og per
 // handling automatiseringsmodus + grenser (beløpstak, valuta, tidsvindu).
 // Strukturen (moduler, verifikatorer, reversering, unntak) arves fra malen, så
-// resultatet er alltid gyldig. Lagring går via opprett/rediger; validering,
-// runde og fire-øyne-aktivering skjer i policyadmin-flaten.
+// utkastet forblir STRUKTURELT komplett — men det er ikke garantert gyldig
+// (eier kan fjerne en referert rolle, sette auto_med_vilkaar uten vilkår osv.).
+// GYLDIGHETSPORTEN er `valider` server-side (skjema + semantikk); den må passere
+// før runde/fire-øyne-aktivering. Lagring går via opprett/rediger.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
@@ -124,7 +126,8 @@ function byggInnhold(policy) {
 export function visPolicyeditor(hoved, ctx, opts = {}) {
   // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn() }
   const st = { policy: null, utkast_id: opts.utkast_id || null,
-               utkastversjon: null, feil: [], laster: true };
+               utkastversjon: null, feil: [], laster: true,
+               nokkel: null, signatur: null };
 
   function lagre() {
     const innhold = byggInnhold(st.policy);
@@ -132,9 +135,17 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     if (!st.utkast_id && !pid) {
       st.feil = [t("ui.editor.policy_id_pakrevd")]; tegn(); return;
     }
+    // STABIL idempotensnøkkel per innhold (Codex R1): samme innhold → samme
+    // nøkkel, så en retry etter tapt svar REPLAYer i stedet for å duplisere.
+    // Endres innholdet, er det en ny operasjon → ny nøkkel.
+    const signatur = JSON.stringify(
+      { u: st.utkast_id, v: st.utkastversjon, p: pid, i: innhold });
+    if (signatur !== st.signatur) {
+      st.nokkel = nyIdempotensnokkel(); st.signatur = signatur;
+    }
     const jobb = st.utkast_id
-      ? redigerUtkast(st.utkast_id, st.utkastversjon, innhold)
-      : opprettUtkast(pid, innhold);
+      ? redigerUtkast(st.utkast_id, st.utkastversjon, innhold, st.nokkel)
+      : opprettUtkast(pid, innhold, st.nokkel);
     jobb.then((res) => {
       meldLive(t("ui.editor.lagret"));
       const uid = res.utkast_id || st.utkast_id;
