@@ -506,3 +506,94 @@ GRANT EXECUTE ON FUNCTION registrer_release(TEXT, TEXT, INT, TEXT, TEXT, TEXT, T
 GRANT EXECUTE ON FUNCTION bytt_release(TEXT, TEXT, TEXT, INT, TEXT, TEXT) TO disponit_modules_admin;
 GRANT EXECUTE ON FUNCTION pensjoner_release(TEXT, TEXT, TEXT, TEXT) TO disponit_modules_admin;
 RESET ROLE;
+
+-- ============================================================
+-- CP4: Nød-deaktivering + reaktivering med epoch-fencing. `module_epoch` er
+-- per-modul fencing-generasjonen (samme mekanikk som PR-006 owner-fencing): et
+-- nødstopp bumper epoch OG draines alle claiming-deployments, slik at ingen
+-- gammel deployment kan gjenoppstå automatisk. Reaktivering er epoch-gjerdet
+-- (kalleren MÅ kjenne gjeldende epoch), lander i `staging_verifisert` (ALDRI
+-- direkte `aktiv`) og bumper epoch igjen — så modulen ikke kan bli aktiv uten en
+-- FRISK claiming (bytt_release) + ny evidens (sett_modulstatus, Python-verifisert).
+-- ============================================================
+SET LOCAL ROLE disponit_modul_eier;
+
+-- Nødstopp (`modules:emergency`). Fra enhver status → nodeaktivert, epoch++,
+-- auditert m/ obligatorisk begrunnelse. Overstyrer livsløpet: alle claiming
+-- draines umiddelbart (venter ikke på graceful drain). Idempotent.
+CREATE OR REPLACE FUNCTION noddeaktiver_modul(
+    p_modul_id    TEXT,
+    p_begrunnelse TEXT,
+    p_aktor       TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_status TEXT; v_epoch BIGINT;
+BEGIN
+    IF p_begrunnelse IS NULL OR length(btrim(p_begrunnelse)) = 0 THEN
+        RAISE EXCEPTION 'noddeaktiver_modul: begrunnelse er obligatorisk'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT status, module_epoch INTO v_status, v_epoch FROM public.modulhode
+     WHERE modul_id = p_modul_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'noddeaktiver_modul: ukjent modul %', p_modul_id
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_status = 'nodeaktivert' THEN
+        RETURN;                                   -- idempotent
+    END IF;
+    UPDATE public.modulhode
+       SET status = 'nodeaktivert', modulrevisjon = modulrevisjon + 1,
+           module_epoch = module_epoch + 1, status_ts = now()
+     WHERE modul_id = p_modul_id;
+    -- Fjern fencet arbeidsgrunnlag: enhver claiming draines (emergency stop),
+    -- så reaktivering ikke kan gjenbruke en gammel deployment.
+    UPDATE public.moduldeployment SET livslop = 'draining'
+     WHERE modul_id = p_modul_id AND livslop = 'claiming';
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, fra_status, til_status, module_epoch, aktor,
+         begrunnelse)
+        VALUES (p_modul_id, 'noddeaktivering', v_status, 'nodeaktivert',
+                v_epoch + 1, p_aktor, p_begrunnelse);
+END $$;
+
+-- Reaktivering. Epoch-gjerdet: `p_forventet_epoch` MÅ matche gjeldende epoch
+-- (fencing mot en samtidig/utdatert reaktivering — port 12). Fra nodeaktivert →
+-- staging_verifisert (aldri direkte aktiv), epoch++ igjen. Ingen deployment
+-- gjenoppstår: modulen må få en frisk claiming + ny evidens før `aktiv` (port 15).
+CREATE OR REPLACE FUNCTION reaktiver_modul(
+    p_modul_id       TEXT,
+    p_forventet_epoch BIGINT,
+    p_aktor          TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_status TEXT; v_epoch BIGINT;
+BEGIN
+    SELECT status, module_epoch INTO v_status, v_epoch FROM public.modulhode
+     WHERE modul_id = p_modul_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'reaktiver_modul: ukjent modul %', p_modul_id
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_status <> 'nodeaktivert' THEN
+        RAISE EXCEPTION 'reaktiver_modul: modul % er % (kun nodeaktivert kan '
+            'reaktiveres)', p_modul_id, v_status
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_forventet_epoch IS DISTINCT FROM v_epoch THEN
+        RAISE EXCEPTION 'reaktiver_modul: epoch-avvik (forventet %, er %)',
+            p_forventet_epoch, v_epoch USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    UPDATE public.modulhode
+       SET status = 'staging_verifisert', modulrevisjon = modulrevisjon + 1,
+           module_epoch = module_epoch + 1, status_ts = now()
+     WHERE modul_id = p_modul_id;
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, fra_status, til_status, module_epoch, aktor)
+        VALUES (p_modul_id, 'reaktivering', 'nodeaktivert', 'staging_verifisert',
+                v_epoch + 1, p_aktor);
+END $$;
+
+REVOKE ALL ON FUNCTION noddeaktiver_modul(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION reaktiver_modul(TEXT, BIGINT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION noddeaktiver_modul(TEXT, TEXT, TEXT) TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION reaktiver_modul(TEXT, BIGINT, TEXT) TO disponit_modules_admin;
+RESET ROLE;

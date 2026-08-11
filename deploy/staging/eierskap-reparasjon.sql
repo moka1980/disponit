@@ -81,7 +81,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'registrer_release(text,text,integer,text,text,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
-    ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier');
+    ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
+    ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
+    ('FUNCTION', 'reaktiver_modul(text,bigint,text)',                'disponit_modul_eier');
 
 DO $$
 DECLARE

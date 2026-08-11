@@ -428,3 +428,106 @@ def test_runtime_kan_ikke_kalle_cp3_funksjoner():
             r.rollback()
     finally:
         r.close()
+
+
+# ---- CP4: nød-deaktivering + reaktivering (epoch-fencing) ----
+
+def _hodefelt(modul):
+    """Leser (status, module_epoch) via runtime."""
+    r = _rt()
+    try:
+        return r.execute("SELECT status, module_epoch FROM modulhode"
+                         " WHERE modul_id=%s", (modul,)).fetchone()
+    finally:
+        r.close()
+
+
+def _oppsett_aktiv(a, m, kh):
+    """Bygger en aktiv modul m/ én claiming-deployment (via CP2/CP3-funksjonene)."""
+    _reg_kontrakt(a, m, kh); _reg_release(a, m, "r1", kh)
+    a.execute("SELECT installer_modul(%s,'sys')", (m,))
+    a.execute("SELECT sett_modulstatus(%s,'staging_verifisert',NULL,'sys')", (m,))
+    a.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (m, kh))
+    a.execute("SELECT sett_modulstatus(%s,'aktiv','r1','sys')", (m,))
+    a.commit()
+
+
+@pg
+def test_noddeaktiver_bumper_epoch_draines_claiming_og_krever_begrunnelse():
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)
+        assert _hodefelt(m) == ("aktiv", 0)
+        assert _livslop(m, "r1") == "claiming"
+        # begrunnelse er obligatorisk.
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT noddeaktiver_modul(%s,'','sys')", (m,))
+        a.rollback()
+        # nødstopp: status→nodeaktivert, epoch 0→1, claiming→draining.
+        a.execute("SELECT noddeaktiver_modul(%s,'sikkerhetshendelse','sys')", (m,))
+        a.commit()
+        assert _hodefelt(m) == ("nodeaktivert", 1)
+        assert _livslop(m, "r1") == "draining"
+        # idempotent.
+        a.execute("SELECT noddeaktiver_modul(%s,'igjen','sys')", (m,)); a.commit()
+        assert _hodefelt(m) == ("nodeaktivert", 1)
+    finally:
+        a.close()
+
+
+@pg
+def test_reaktiver_epoch_gjerdet_og_ingen_auto_resurrect():
+    # Port 12/15: reaktivering krever gjeldende epoch, lander i staging_verifisert,
+    # og modulen kan IKKE bli aktiv igjen uten en frisk claiming (gammel er drained).
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)
+        a.execute("SELECT noddeaktiver_modul(%s,'hendelse','sys')", (m,)); a.commit()
+        assert _hodefelt(m) == ("nodeaktivert", 1)
+        # feil forventet epoch → avvist.
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT reaktiver_modul(%s,0,'sys')", (m,))
+        a.rollback()
+        # reaktivering med gjeldende epoch (1) → staging_verifisert, epoch 1→2.
+        a.execute("SELECT reaktiver_modul(%s,1,'sys')", (m,)); a.commit()
+        assert _hodefelt(m) == ("staging_verifisert", 2)
+        # ingen auto-resurrect: 'aktiv' avvises (den gamle deploymenten er draining,
+        # ingen claiming) → krever ny bytt_release + evidens.
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT sett_modulstatus(%s,'aktiv','r1','sys')", (m,))
+        a.rollback()
+        # frisk claiming (ny release) → aktiv OK igjen.
+        _reg_release(a, m, "r2", kh)
+        a.execute("SELECT bytt_release(%s,'staging','r2',1,%s,'sys')", (m, kh))
+        a.execute("SELECT sett_modulstatus(%s,'aktiv','r2','sys')", (m,)); a.commit()
+        assert _hodefelt(m) == ("aktiv", 2)
+    finally:
+        a.close()
+
+
+@pg
+def test_reaktiver_bare_fra_nodeaktivert():
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)                       # status aktiv, ikke nodeaktivert
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT reaktiver_modul(%s,0,'sys')", (m,))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_runtime_kan_ikke_kalle_cp4_funksjoner():
+    r = _rt()
+    try:
+        for sql in ("SELECT noddeaktiver_modul('x','b','sys')",
+                    "SELECT reaktiver_modul('x',0,'sys')"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r.execute(sql)
+            r.rollback()
+    finally:
+        r.close()
