@@ -101,14 +101,24 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
   return b;
 }
 
-export const opprettUtkast = (policyId, innhold) =>
-  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold });
-export const redigerUtkast = (uid, utkastversjon, innhold) =>
-  _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold });
-export const validerUtkast = (uid) =>
-  _muter(`/v1/policyutkast/${uid}/valider`, "POST", {});
-export const apneRunde = (uid) =>
-  _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {});
+// Idempotency-Key er PÅKREVD på ALLE skriveruter (server P1 R3). Nøkkelen MÅ
+// være STABIL over en retry av SAMME operasjon (Codex PR-014 R1): et tapt svar
+// + nytt klikk skal gjenbruke nøkkelen, så serveren REPLAYer i stedet for å
+// duplisere. Derfor tar hver funksjon en valgfri `idem` — kalleren (editoren)
+// holder en nøkkel som er stabil så lenge innholdet er uendret. Uten arg
+// genereres en fersk (for engangs-klikk der duplikat ikke er en risiko).
+export const hentMaler = () => hentJson("/v1/policymaler");
+export const opprettUtkast = (policyId, innhold, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold }, idem);
+export const redigerUtkast = (uid, utkastversjon, innhold,
+                              idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold }, idem);
+// valider krever `utkastversjon` i kroppen (server R3: nøkkelen bindes til
+// versjonen).
+export const validerUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policyutkast/${uid}/valider`, "POST", { utkastversjon }, idem);
+export const apneRunde = (uid, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {}, idem);
 export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
   _muter(`/v1/policyutkast/${uid}/attester`, "POST", { diff_hash: diffHash },
          idempotensnokkel);

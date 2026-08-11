@@ -303,6 +303,17 @@ def hent_utkast_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def maler_endepunkt(tjeneste, request):
+    from .app import _rid
+    rid = _rid(request)
+
+    def kjor(conn):
+        _leseauth(tjeneste, request, conn, rid)      # policy:read
+        return _ok({"maler": policyadmin.hent_maler()}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def list_utkast_endepunkt(tjeneste, request):
     from .app import _rid
     rid = _rid(request)

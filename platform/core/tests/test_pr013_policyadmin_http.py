@@ -257,6 +257,94 @@ def test_valider_ugyldig_caches_og_binder_versjon():
         rt.close()
 
 
+def test_hent_maler_gir_bransjemaler():
+    # PR-014: editoren starter fra en komplett bransjemal.
+    maler = policyadmin.hent_maler()
+    ider = {m["mal_id"] for m in maler}
+    assert {"handverk-bygg", "netthandel", "tjenestebedrift"} <= ider
+    from policy_validator import schema
+    for m in maler:
+        assert isinstance(m["innhold"], dict)
+        assert m["innhold"].get("handlinger")        # komplett policy
+        # Codex R2: en servert mal MÅ passere den KANONISKE validatoren — den er
+        # et «gyldig utgangspunkt», ikke bare velformet.
+        assert schema.valider_policy(m["innhold"]) == []
+
+
+def test_kanonisk_validator_fanger_auto_med_vilkaar_uten_vilkaar():
+    # Codex R2: regelen ligger i motorens kanoniske schema.valider_policy (lag-2),
+    # ikke i en parallell validator. Den kjører post-skjema → kaster aldri på
+    # typer. Bevist på en komplett bransjemal mutert til den ugyldige tilstanden.
+    from policy_validator import schema
+    pol = _gyldig()
+    pol["handlinger"][0]["modus"] = "auto_med_vilkaar"
+    pol["handlinger"][0].pop("vilkaar", None)   # nøkkelen HELT borte
+    assert any("auto_med_vilkaar" in f for f in schema.valider_policy(pol))
+    # En uendret, gyldig mal har ingen slik feil.
+    assert not any("auto_med_vilkaar" in f
+                   for f in schema.valider_policy(_gyldig()))
+
+
+@pg
+def test_valider_fanger_hengende_rolle_referanse():
+    # Skjemagyldig, men semantisk brutt: en handling peker på en rolle som ikke
+    # finnes. `valider` MÅ avvise (ugyldig med semantikkfeil) — en «alltid
+    # gyldig»-påstand uten port ville sluppet dette gjennom.
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig()
+    pol["handlinger"][0]["tillatt_for"] = ["finnes_ikke"]
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig"
+        assert any("ukjent rolle" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_fanger_auto_med_vilkaar_uten_vilkaar():
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig()
+    pol["handlinger"][0]["modus"] = "auto_med_vilkaar"
+    pol["handlinger"][0].pop("vilkaar", None)   # nøkkelen HELT borte
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig"
+        assert any("auto_med_vilkaar" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
+
+
+@pg
+def test_maler_endepunkt_uautentisert_avvises(klient):
+    r = klient.get("/v1/policymaler")
+    assert r.status_code == 401
+
+
+@pg
+def test_detalj_eksponerer_innhold_for_redigering():
+    pid = "pol-" + secrets.token_hex(3)
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=_gyldig())
+        det = policyadmin.hent_utkast_detalj(
+            rt, tenant=TEN, aktor="forf", request_id="r",
+            utkast_id=o["utkast_id"])
+        assert isinstance(det["innhold"], dict)
+        assert det["innhold"].get("roller")          # editoren kan laste det
+    finally:
+        rt.close()
+
+
 @pg
 def test_hent_detalj_har_diff_og_klasse():
     pid = "pol-" + secrets.token_hex(3)

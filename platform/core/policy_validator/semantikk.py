@@ -93,7 +93,7 @@ def kildechecksum() -> str:
 #: PINNET motorsemantikkversjon. MÅ være lik `kildechecksum()`; CI-porten
 #: håndhever det. Oppdateres BEVISST når en manifestfil endres (= versjonsbump).
 #: (CP3: nattvindu-støtte i tidsvindu/engine er innbakt i denne.)
-MOTOR_SEMANTIKKVERSJON = "258ffc23666020793c8b800dc8e5708d985a1744f04edd525b075110407d5be6"
+MOTOR_SEMANTIKKVERSJON = "4cf832a31a1abf6a89c85e1f58bb57fec33d7abfbc505e5b7de40160b33e6de3"
 
 
 # ---------------------------------------------------------------------------

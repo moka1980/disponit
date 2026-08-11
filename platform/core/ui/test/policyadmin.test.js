@@ -165,3 +165,80 @@ test("Attester: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
     kalt[1].opts.headers["Idempotency-Key"], "retry MÅ gjenbruke nøkkelen");
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
+
+// PR-014 R3: stabil idempotensnøkkel for flatens valider + rundeåpning — et
+// tapt svar + nytt klikk MÅ gjenbruke nøkkelen (retry, ikke ny operasjon).
+const _finn = (rot, tekst) => [...rot.querySelectorAll("button")]
+  .find((b) => b.textContent.trim() === tekst);
+
+function _medCsrf() {
+  const desc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  return () => { if (desc) Object.defineProperty(document, "cookie", desc); };
+}
+
+async function _aapneDetalj(h) {
+  // Rens stale skuffer fra tidligere tester, så querySelector treffer den nye.
+  document.querySelectorAll(".overlegg").forEach((n) => n.remove());
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  return document.querySelector('[role="dialog"]');
+}
+
+test("Valider: retry etter nettverksfeil gjenbruker Idempotency-Key", async () => {
+  const gjenopprett = _medCsrf();
+  const kalt = [];
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");
+      // ugyldig → blir i skuffen (ingen re-åpning) så testen ikke lekker async.
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "ugyldig", feil: ["x"] }) };
+    },
+  };
+  const dlg = await _aapneDetalj(nyHoved());
+  const knapp = _finn(dlg, t("ui.policyadmin.handling.valider"));
+  knapp.dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length === 1);
+  knapp.dispatchEvent(new window.Event("click"));      // retry
+  await vent(() => kalt.length >= 2);
+  assert.ok(kalt[0].url.includes("/valider"));
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "valider-retry MÅ gjenbruke idempotensnøkkelen");
+  gjenopprett();
+});
+
+test("Åpne runde: retry etter nettverksfeil gjenbruker Idempotency-Key", async () => {
+  const gjenopprett = _medCsrf();
+  const kalt = [];
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "validert", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "validert", aktiv_runde: null },
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");
+      return { ok: true, status: 200, json: async () => ({ runde: 1 }) };
+    },
+  };
+  const dlg = await _aapneDetalj(nyHoved());
+  const knapp = _finn(dlg, t("ui.policyadmin.handling.apne_runde"));
+  knapp.dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length === 1);
+  knapp.dispatchEvent(new window.Event("click"));      // retry
+  await vent(() => kalt.length >= 2);
+  assert.ok(kalt[0].url.includes("/aktiveringsrunde"));
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "rundeåpning-retry MÅ gjenbruke idempotensnøkkelen");
+  gjenopprett();
+});

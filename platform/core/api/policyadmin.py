@@ -256,6 +256,8 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
             or forventet_utkastversjon != ver:
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
+    # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
+    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
     feil = _schema.valider_policy(innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
@@ -310,11 +312,40 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utkast_id": utkast_id, "policy_id": policy_id, "status": status,
         "utkastversjon": ver, "opprettet_av": opprettet_av,
         "innholds_hash": innholds_hash, "base_versjon": aktiv,
+        "innhold": innhold,                        # for redigering i editoren
         "diff": v["diff"], "diff_hash": v["diff_hash"],
         "risikoklasse": v["risikoklasse"],
         "klassifisering_endringer": v["klassifisering_endringer"],
         "pakrevd_antall_godkjennere": v["pakrevd_antall_godkjennere"],
         "aktiv_runde": runde_dto}
+
+
+_MAL_DIR = _schema._SKJEMA_STI.parent            # policies/
+
+
+def hent_maler() -> list:
+    """Bransjemalene (komplette policyer) som utgangspunkt for et nytt utkast.
+    Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen tenant
+    (malene er felles). En mal som IKKE validerer mot den KANONISKE validatoren
+    (`schema.valider_policy` — skjema + semantikk, inkl. referanse-integritet og
+    modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke kunne
+    bli et «gyldig utgangspunkt»."""
+    import yaml
+    ut = []
+    for f in sorted(_MAL_DIR.glob("bransjemal-*.yaml")):
+        try:
+            innhold = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(innhold, dict):
+            continue
+        if _schema.valider_policy(innhold):
+            continue                                # fail-closed: hopp over
+        meta = innhold.get("meta") if isinstance(innhold.get("meta"), dict) else {}
+        ut.append({"mal_id": f.stem.replace("bransjemal-", ""),
+                   "bransjemal": meta.get("bransjemal") or f.stem,
+                   "innhold": innhold})
+    return ut
 
 
 def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
