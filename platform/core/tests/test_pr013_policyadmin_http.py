@@ -33,6 +33,23 @@ def _rt():
     return koble(DSN)
 
 
+# Idempotency-Key er nå PÅKREVD på alle skriveveier (Codex P1 R3); disse
+# wrapperne injiserer en fersk nøkkel per kall så funksjonstestene forblir korte.
+def _opprett(rt, **kw):
+    k = secrets.token_hex(8)
+    return policyadmin.opprett_utkast(rt, idempotency_key=k, input_hash=k, **kw)
+
+
+def _rediger(rt, **kw):
+    k = secrets.token_hex(8)
+    return policyadmin.rediger_utkast(rt, idempotency_key=k, input_hash=k, **kw)
+
+
+def _valider(rt, **kw):
+    k = secrets.token_hex(8)
+    return policyadmin.valider_utkast(rt, idempotency_key=k, input_hash=k, **kw)
+
+
 # ---- HTTP-porter (uten sesjon: gates skal svare før noe røres) ------------
 
 @pg
@@ -83,27 +100,27 @@ def test_utkast_livssyklus_opprett_rediger_valider():
     endret["roller"].append({"id": "ny_rolle", "beskrivelse": "lagt til"})
     rt = _rt()
     try:
-        o = policyadmin.opprett_utkast(
+        o = _opprett(
             rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
             innhold=base)
         uid = o["utkast_id"]
         assert o["utkastversjon"] == 1 and o["status"] == "utkast"
 
         # Rediger m/ riktig versjon → 2.
-        red = policyadmin.rediger_utkast(
+        red = _rediger(
             rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
             forventet_utkastversjon=1, innhold=endret)
         assert red["utkastversjon"] == 2
 
         # Stale versjon → optimistisk lås slår til.
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
-            policyadmin.rediger_utkast(
+            _rediger(
                 rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
                 forventet_utkastversjon=1, innhold={"roller": []})
         assert e.value.kode == "utkastversjon_utdatert"
 
         # Valider → validert + frosset hash.
-        val = policyadmin.valider_utkast(
+        val = _valider(
             rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid)
         assert val["utfall"] == "validert"
         assert val["innholds_hash"]
@@ -111,7 +128,7 @@ def test_utkast_livssyklus_opprett_rediger_valider():
         # Etter validering er innholdet frosset: redigering avvises (ikke
         # lenger status 'utkast').
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
-            policyadmin.rediger_utkast(
+            _rediger(
                 rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
                 forventet_utkastversjon=2, innhold={"roller": []})
         assert e.value.kode == "utkast_ulovlig_tilstand"
@@ -125,11 +142,11 @@ def test_valider_ugyldig_policy_gir_feilliste_uten_tilstandsendring():
     rt = _rt()
     try:
         # `roller` med feil type → skjemafeil.
-        o = policyadmin.opprett_utkast(
+        o = _opprett(
             rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
             innhold={"roller": "ikke-en-liste"})
         uid = o["utkast_id"]
-        res = policyadmin.valider_utkast(
+        res = _valider(
             rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid)
         assert res["utfall"] == "ugyldig"
         assert res["feil"]
@@ -143,11 +160,38 @@ def test_valider_ugyldig_policy_gir_feilliste_uten_tilstandsendring():
 
 
 @pg
+def test_opprett_idempotent_replay_samme_utkast_id():
+    # Codex P1 R3: Idempotency-Key på skriveveien. Samme nøkkel + input →
+    # NØYAKTIG samme utkast_id, ikke et nytt utkast.
+    pid = "pol-" + secrets.token_hex(3)
+    k = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        a = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k)
+        b = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k)
+        assert b.get("replay") is True
+        assert a["utkast_id"] == b["utkast_id"]
+        # Nøyaktig ett utkast med den id-en (sett tenant-GUC: _fullfor committet,
+        # og LOCAL-konteksten nulles ved commit → ellers skjuler RLS raden).
+        rt.execute("SELECT set_config('disponit.tenant',%s,false)", (TEN,))
+        n = rt.execute("SELECT count(*) FROM policyutkast WHERE tenant=%s AND"
+                       " utkast_id=%s", (TEN, a["utkast_id"])).fetchone()[0]
+        rt.rollback()
+        assert n == 1
+    finally:
+        rt.close()
+
+
+@pg
 def test_hent_detalj_har_diff_og_klasse():
     pid = "pol-" + secrets.token_hex(3)
     rt = _rt()
     try:
-        o = policyadmin.opprett_utkast(
+        o = _opprett(
             rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
             innhold=_gyldig())
         det = policyadmin.hent_utkast_detalj(

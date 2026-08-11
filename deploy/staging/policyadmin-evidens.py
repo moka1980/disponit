@@ -116,11 +116,11 @@ def _aktiv_base(pid, innhold, versjon="1"):
 
 
 def _apne(rt, uid, aktor):
-    r = policyadmin.opprett_aktiveringsrunde(
+    idem = secrets.token_hex(8)
+    return policyadmin.opprett_aktiveringsrunde(
         rt, tenant=TENANT, utkast_id=uid, aktor=aktor, request_id="r",
+        idempotency_key=idem, input_hash=f"{TENANT}\x1f{uid}\x1fapne\x1f{idem}",
         naa=_naa())
-    rt.commit()
-    return r
 
 
 def _attest(rt, uid, aktor, diff_hash):

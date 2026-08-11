@@ -55,6 +55,20 @@ def _ok(res: dict, rid: str, http: int = 200):
     return JSONResponse(res, status_code=http, headers={"x-request-id": rid})
 
 
+def _krev_idem(request, rid: str) -> str:
+    """`Idempotency-Key` er PÅKREVD på ALLE skriveruter (spec, Codex P1 R3).
+    Reiser `_Avbrudd` med 400 hvis den mangler."""
+    idem = request.headers.get("idempotency-key")
+    if not idem or not idem.strip():
+        raise _Avbrudd(_feil("idempotensnokkel_mangler", rid))
+    return idem.strip()
+
+
+def _input_hash(*deler) -> str:
+    return hashlib.sha256("\x1f".join(str(d) for d in deler)
+                          .encode("utf-8")).hexdigest()
+
+
 def _kropp(request) -> dict:
     raa = request.scope.get("state", {}).get("kropp", b"")
     try:
@@ -135,15 +149,19 @@ def opprett_utkast_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
+        idem = _krev_idem(request, rid)
         body = _kropp(request)
         policy_id = body.get("policy_id")
         innhold = body.get("innhold")
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
+        ih = _input_hash(tenant, bid, "opprett", policy_id,
+                         json.dumps(innhold, sort_keys=True), idem)
         res = policyadmin.opprett_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid,
             policy_id=policy_id, innhold=innhold,
+            idempotency_key=idem, input_hash=ih,
             rollback_av_versjon=body.get("rollback_av_versjon"))
         return _ok(res, rid, 201)
 
@@ -158,15 +176,19 @@ def rediger_utkast_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
+        idem = _krev_idem(request, rid)
         body = _kropp(request)
         innhold = body.get("innhold")
         uv = body.get("utkastversjon")
         if not isinstance(innhold, dict) or not isinstance(uv, int) \
                 or isinstance(uv, bool):
             return _feil("request_feilformet", rid)
+        ih = _input_hash(tenant, bid, "rediger", utkast_id, uv,
+                         json.dumps(innhold, sort_keys=True), idem)
         res = policyadmin.rediger_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid,
-            utkast_id=utkast_id, forventet_utkastversjon=uv, innhold=innhold)
+            utkast_id=utkast_id, forventet_utkastversjon=uv, innhold=innhold,
+            idempotency_key=idem, input_hash=ih)
         return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)
@@ -180,8 +202,11 @@ def valider_utkast_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
+        idem = _krev_idem(request, rid)
+        ih = _input_hash(tenant, bid, "valider", utkast_id, idem)
         res = policyadmin.valider_utkast(
-            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id)
+            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id,
+            idempotency_key=idem, input_hash=ih)
         if res.get("utfall") == "ugyldig":
             from starlette.responses import JSONResponse
             return JSONResponse({"feil": "policy_ugyldig", "detaljer": res["feil"],
@@ -201,10 +226,12 @@ def apne_runde_endepunkt(tjeneste, request):
         from datetime import datetime, timezone
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:activate")
+        idem = _krev_idem(request, rid)
+        ih = _input_hash(tenant, bid, "aapne_runde", utkast_id, idem)
         res = policyadmin.opprett_aktiveringsrunde(
             conn, tenant=tenant, aktor=bid, request_id=rid,
-            utkast_id=utkast_id, naa=datetime.now(timezone.utc))
-        conn.commit()
+            utkast_id=utkast_id, idempotency_key=idem, input_hash=ih,
+            naa=datetime.now(timezone.utc))
         return _ok(res, rid, 201)
 
     return _med_conn(tjeneste, rid, kjor)

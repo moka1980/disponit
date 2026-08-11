@@ -54,7 +54,7 @@ def _medlem(sub, roller):
     arr = "ARRAY[" + ",".join(f"'{r}'" for r in roller) + "]"
     m.execute(f"INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
               f" VALUES (%s,%s,{arr}) ON CONFLICT (tenant,bruker_id)"
-              f" DO UPDATE SET roller=EXCLUDED.roller", (TEN, bid))
+              f" DO UPDATE SET roller=EXCLUDED.roller, aktiv=true", (TEN, bid))
     m.commit()
     m.close()
     return bid
@@ -90,9 +90,11 @@ def _aktiv_base(pid, innhold, versjon="1"):
 
 
 def _apne(rt, uid, aktor):
+    idem = secrets.token_hex(8)
     r = policyadmin.opprett_aktiveringsrunde(
-        rt, tenant=TEN, utkast_id=uid, aktor=aktor, request_id="r", naa=_naa())
-    rt.commit()
+        rt, tenant=TEN, utkast_id=uid, aktor=aktor, request_id="r",
+        idempotency_key=idem, input_hash=f"{TEN}\x1f{uid}\x1fapne\x1f{idem}",
+        naa=_naa())
     return r
 
 
@@ -262,6 +264,33 @@ def test_rebasering_ved_flyttet_base():
         rt.close()
     # Basen fra den konkurrerende aktiveringen står — utkastet ble ikke aktivert.
     assert _aktiv_versjon(pid) == "1"
+
+
+@pg
+def test_tidligere_godkjenner_deautorisert_blokkerer():
+    # Codex P1 R2: den siste attestasjonen utløser aktiveringen, men en TIDLIGERE
+    # godkjenner som mister fullmakten i mellomtiden skal stoppe den.
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}],
+                          "handlinger": [{"id": "h1"}]})     # UTVIDER, pakrevd 2
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        _attester(rt, uid, a, r["diff_hash"])                # forfatter (venter)
+        # Forfatteren mister policy:activate FØR den uavhengige fullfører.
+        m = _mig()
+        m.execute("UPDATE brukermedlemskap SET aktiv=false WHERE tenant=%s AND"
+                  " bruker_id=%s", (TEN, a))
+        m.commit(); m.close()
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, b, r["diff_hash"])            # ville nådd terskel
+        assert e.value.kode == "godkjenner_deautorisert"
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) is None                       # ikke aktivert
 
 
 @pg

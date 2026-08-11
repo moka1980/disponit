@@ -148,13 +148,23 @@ def _base_med_versjon(conn, tenant, policy_id) -> tuple[dict, str, str | None]:
 
 def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, policy_id: str, innhold: dict,
+                   idempotency_key: str, input_hash: str,
                    rollback_av_versjon: str | None = None) -> dict:
     """Opprett et nytt utkast (status `utkast`). Fanger gjeldende aktive versjon
-    + hash som `basert_pa_*` for konfliktdeteksjon (§4). Kalleren eier tx."""
+    + hash som `basert_pa_*` for konfliktdeteksjon (§4). Idempotent (P1 R3):
+    en replay returnerer NØYAKTIG samme utkast_id. Kalleren eier tx."""
     sett_kontekst(conn, tenant, aktor, request_id)
     if not isinstance(innhold, dict):
         conn.rollback()
         raise Aktiveringsfeil("utkast_feilformet")
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
     utkast_id = "u-" + secrets.token_hex(8)
     conn.execute(
@@ -163,21 +173,29 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         " opprettet_av) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
         (tenant, utkast_id, policy_id, aktiv, base_hash, rollback_av_versjon,
          json.dumps(innhold), aktor))
-    conn.commit()
-    return {"utkast_id": utkast_id, "policy_id": policy_id,
-            "utkastversjon": 1, "status": "utkast", "base_versjon": aktiv}
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utkast_id": utkast_id, "policy_id": policy_id,
+        "utkastversjon": 1, "status": "utkast", "base_versjon": aktiv})
 
 
 def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, utkast_id: str, forventet_utkastversjon,
-                   innhold: dict) -> dict:
+                   innhold: dict, idempotency_key: str, input_hash: str) -> dict:
     """Rediger innholdet i et `utkast`-utkast (optimistisk lås på
     `utkastversjon`). Et validert utkast er frosset (innholds_hash låst) — da
-    lages et nytt utkast i stedet. Kalleren eier tx."""
+    lages et nytt utkast i stedet. Idempotent (P1 R3). Kalleren eier tx."""
     sett_kontekst(conn, tenant, aktor, request_id)
     if not isinstance(innhold, dict):
         conn.rollback()
         raise Aktiveringsfeil("utkast_feilformet")
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
     rad = conn.execute(
         "SELECT status, utkastversjon FROM policyutkast WHERE tenant=%s AND"
         " utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
@@ -197,16 +215,25 @@ def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "UPDATE policyutkast SET innhold=%s::jsonb, utkastversjon=%s"
         " WHERE tenant=%s AND utkast_id=%s",
         (json.dumps(innhold), ny, tenant, utkast_id))
-    conn.commit()
-    return {"utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"}
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"})
 
 
 def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
-                   request_id: str, utkast_id: str) -> dict:
+                   request_id: str, utkast_id: str, idempotency_key: str,
+                   input_hash: str) -> dict:
     """Skjemavalider utkastet; ved suksess fryses `innholds_hash` og status går
     `utkast → validert`. Ugyldig → utfall `ugyldig` med feillisten (ingen
-    tilstandsendring). Kalleren eier tx."""
+    tilstandsendring, ikke cachet). Idempotent (P1 R3). Kalleren eier tx."""
     sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
     rad = conn.execute(
         "SELECT innhold, status FROM policyutkast WHERE tenant=%s AND"
         " utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
@@ -219,14 +246,16 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
     feil = _schema.valider_policy(innhold)
     if feil:
+        # Ugyldig er ikke en tilstandsendring → rull tilbake (også
+        # idempotens-claimet), så en rettet re-validering kan kjøre.
         conn.rollback()
         return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil}
     h = _pr.innholds_hash(innhold)
     conn.execute(
         "UPDATE policyutkast SET status='validert', innholds_hash=%s"
         " WHERE tenant=%s AND utkast_id=%s", (h, tenant, utkast_id))
-    conn.commit()
-    return {"utfall": "validert", "utkast_id": utkast_id, "innholds_hash": h}
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utfall": "validert", "utkast_id": utkast_id, "innholds_hash": h})
 
 
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
@@ -316,12 +345,21 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
 
 def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
                              utkast_id: str, aktor: str, request_id: str,
+                             idempotency_key: str, input_hash: str,
                              naa) -> dict:
     """Åpne en aktiveringsrunde for et VALIDERT utkast. Utleder diff + klasse
     under `policy_hode`-låsen og fryser ALT i runden. Returnerer det
-    godkjennerne skal se (diff, risikoklasse, påkrevd antall). Kaster
-    `Aktiveringsfeil`. Kalleren eier transaksjonen."""
+    godkjennerne skal se (diff, risikoklasse, påkrevd antall). Idempotent
+    (P1 R3) — committer via `_fullfor`. Kaster `Aktiveringsfeil`."""
     sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
 
     utk = conn.execute(
         "SELECT policy_id, innhold, innholds_hash, status FROM policyutkast"
@@ -359,16 +397,17 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
              naa + RUNDE_TTL))
     except psycopg.errors.UniqueViolation:
         # en_aktiv_aktiveringsrunde: allerede en åpen/klar runde for utkastet.
+        conn.rollback()
         raise Aktiveringsfeil("runde_allerede_aapen") from None
 
-    return {
+    return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id, "runde": runde,
         "diff": v["diff"], "diff_hash": v["diff_hash"],
         "risikoklasse": v["risikoklasse"],
         "klassifisering_hash": v["klassifisering_hash"],
         "pakrevd_antall_godkjennere": v["pakrevd_antall_godkjennere"],
         "base_versjon": aktiv_versjon,
-    }
+    })
 
 
 # --------------------------------------------------------------------------
@@ -386,31 +425,14 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     sett_kontekst(conn, tenant, aktor, request_id)
 
     # --- 1. Idempotens: serialiser per nøkkel og claim i eiertransaksjonen ---
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
-    claim = conn.execute(
-        "INSERT INTO idempotens (tenant, nokkel, input_hash, status, request_id)"
-        " VALUES (%s,%s,%s,'paagaar',%s) ON CONFLICT (tenant, nokkel)"
-        " DO NOTHING RETURNING nokkel",
-        (tenant, idempotency_key, input_hash, request_id)).fetchone()
-    if claim is None:
-        eksist = conn.execute(
-            "SELECT input_hash, status, respons FROM idempotens"
-            " WHERE tenant=%s AND nokkel=%s",
-            (tenant, idempotency_key)).fetchone()
-        if eksist is None:
-            conn.rollback()
-            raise Aktiveringsfeil("db_utilgjengelig")
-        lagret_hash, istatus, respons = eksist
-        if lagret_hash != input_hash:
-            conn.rollback()
-            raise Aktiveringsfeil("idempotenskonflikt")
-        if istatus == "ferdig":
-            conn.rollback()
-            return {**respons, "replay": True}
-        conn.execute("UPDATE idempotens SET request_id=%s, ts=now()"
-                     " WHERE tenant=%s AND nokkel=%s",
-                     (request_id, tenant, idempotency_key))
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
 
     # --- 2. Lås utkastet ---------------------------------------------------
     utk = conn.execute(
@@ -521,6 +543,17 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
             "gjenstaar": max(0, r_pakrevd - antall),
             "mangler_uavhengig": ikke_forfatter < 1})
 
+    # --- 8b. REAUTORISER ALLE godkjennere ved aktivering (Codex P1 R2) ------
+    # Den siste attestasjonen utløser aktiveringen — men de TIDLIGERE
+    # godkjennerne ble autorisert da DE attesterte. En rolle som fjernes i
+    # vinduet mellom en tidlig attestasjon og aktiveringen skal stoppe
+    # aktiveringen (fire-øyne må holde NÅ, ikke bare da). Fail-closed: mangler
+    # én godkjenner fortsatt `policy:activate`, avbrytes aktiveringen.
+    avvist = _reautoriser_godkjennere(conn, tenant, [b for b, _ef in rader])
+    if avvist is not None:
+        conn.rollback()
+        raise Aktiveringsfeil("godkjenner_deautorisert", avvist)
+
     # --- 9. REKALK UNDER LÅSEN: har basen/semantikken flyttet seg? ---------
     # aktiv_versjon ble lest FOR UPDATE i steg 4, så settet er stabilt.
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
@@ -546,38 +579,38 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "semantikk_endret", "utkast_id": utkast_id})
 
-    # --- 10. Aktiver via den herdede funksjonen (deaktiver+innsett i én tx) -
-    op_id = f"aktiver-{utkast_id}-r{r_nr}"
-    if ustatus == "validert":
-        conn.execute("UPDATE policyutkast SET status='godkjent'"
-                     " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
-    if r_status == "apen":
-        conn.execute("UPDATE aktiveringsrunde SET status='klar'"
-                     " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
-                     (tenant, utkast_id, r_nr))
+    # --- 10. Aktiver via den herdede funksjonen. Funksjonen VERIFISERER SELV
+    #         runde + attestasjonsterskel + base-versjon (fire-øyne-gaten ligger
+    #         i DB-en, ikke her — Codex P1 R1), leser innholdet fra utkastet, og
+    #         lukker runde+utkast atomisk. Et direkte runtime-kall utenom denne
+    #         orkestreringen når aldri forbi funksjonens egne kontroller.
     try:
         ny_versjon = conn.execute(
-            "SELECT aktiver_policy(%s,%s,%s::jsonb,%s,%s,%s)",
-            (tenant, policy_id, json.dumps(ny_innhold), innholds_hash,
-             _AKTIV_STATUS, aktiv_versjon)).fetchone()[0]
+            "SELECT aktiver_policy(%s,%s,%s,%s)",
+            (tenant, utkast_id, r_nr, aktiv_versjon)).fetchone()[0]
     except psycopg.errors.SerializationFailure:
-        # En konkurrerende aktivering vant kappløpet i vinduet mellom rekalk-
-        # lesningen og funksjonens egen lås. Funksjonen er serialiseringspunktet
-        # (V10) — den flyttede basen betyr rebasering.
+        # En konkurrerende aktivering vant kappløpet i funksjonens egen lås.
+        # Funksjonen er serialiseringspunktet (V10) — flyttet base = rebasering.
         conn.rollback()
         raise Aktiveringsfeil("rebasering_kreves") from None
-
-    # V1-rekkefølge: runde `brukt` (m/ op-id) FØR utkastet lukkes.
-    conn.execute(
-        "UPDATE aktiveringsrunde SET status='brukt', decision_operation_id=%s"
-        " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
-        (op_id, tenant, utkast_id, r_nr))
-    conn.execute("UPDATE policyutkast SET status='aktivert'"
-                 " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,
         "versjon": ny_versjon, "runde": r_nr, "risikoklasse": r_risiko})
+
+
+def _reautoriser_godkjennere(conn, tenant: str, bruker_ids) -> str | None:
+    """Reverifiser at HVER godkjenner i runden fortsatt har `policy:activate`
+    (aktivt medlemskap + scope). -> None hvis alle er autorisert, ellers den
+    FØRSTE bruker_id-en som ikke lenger er det. Fail-closed: en bruker uten
+    aktiv medlemskapsrad regnes som deautorisert."""
+    for bid in dict.fromkeys(bruker_ids):          # distinkte, stabil orden
+        med = conn.execute(
+            "SELECT roller FROM brukermedlemskap WHERE tenant=%s AND"
+            " bruker_id=%s AND aktiv", (tenant, bid)).fetchone()
+        if med is None or _AKTIVER_SCOPE not in scopes_for_roller(list(med[0])):
+            return bid
+    return None
 
 
 def _revisjonsrolle(roller) -> str:
@@ -590,9 +623,42 @@ def _revisjonsrolle(roller) -> str:
     return roller[0]
 
 
+def _idempotent_start(conn, tenant: str, idempotency_key: str,
+                      input_hash: str, request_id: str):
+    """Claim en idempotensnøkkel i kallerens tx (spec: `Idempotency-Key` på ALLE
+    skriveruter, Codex P1 R3). -> ("ny", None) fortsett · ("replay", dict)
+    returner lagret respons · ("konflikt", None) samme nøkkel, ANNET input.
+    Serialiserer per nøkkel med en advisory-lås, som unntaksbehandlingen."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+    claim = conn.execute(
+        "INSERT INTO idempotens (tenant, nokkel, input_hash, status, request_id)"
+        " VALUES (%s,%s,%s,'paagaar',%s) ON CONFLICT (tenant, nokkel)"
+        " DO NOTHING RETURNING nokkel",
+        (tenant, idempotency_key, input_hash, request_id)).fetchone()
+    if claim is not None:
+        return ("ny", None)
+    eksist = conn.execute(
+        "SELECT input_hash, status, respons FROM idempotens"
+        " WHERE tenant=%s AND nokkel=%s",
+        (tenant, idempotency_key)).fetchone()
+    if eksist is None:
+        return ("konflikt", None)
+    lagret_hash, istatus, respons = eksist
+    if lagret_hash != input_hash:
+        return ("konflikt", None)          # samme nøkkel, annet input
+    if istatus == "ferdig":
+        return ("replay", {**respons, "replay": True})
+    # `paagaar` OG vi holder låsen ⇒ vinneren finnes ikke lenger; overta.
+    conn.execute("UPDATE idempotens SET request_id=%s, ts=now()"
+                 " WHERE tenant=%s AND nokkel=%s",
+                 (request_id, tenant, idempotency_key))
+    return ("ny", None)
+
+
 def _fullfor(conn, tenant, idempotency_key, res: dict) -> dict:
     """Lagre den idempotente responsen og commit. Replay med samme nøkkel og
-    input får NØYAKTIG denne responsen — aldri en ny aktivering."""
+    input får NØYAKTIG denne responsen — aldri en ny operasjon."""
     conn.execute("UPDATE idempotens SET status='ferdig', respons=%s"
                  " WHERE tenant=%s AND nokkel=%s",
                  (json.dumps(res, ensure_ascii=False), tenant, idempotency_key))

@@ -71,7 +71,7 @@ INSERT INTO _design VALUES
     -- 013 (PR-013): den herdede aktiveringsfunksjonen. Eid av
     -- disponit_policy_eier fordi policyer/policy_hode er off-limits for runtime
     -- (runtime får KUN EXECUTE). Ny privilegert eier — paritetstesten dekker den.
-    ('FUNCTION', 'aktiver_policy(text,text,jsonb,text,text,text)',   'disponit_policy_eier');
+    ('FUNCTION', 'aktiver_policy(text,text,integer,text)',           'disponit_policy_eier');
 
 DO $$
 DECLARE

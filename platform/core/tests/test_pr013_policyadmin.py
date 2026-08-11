@@ -265,53 +265,101 @@ def test_runtime_kan_ikke_skrive_policyer_direkte():
         r.close()
 
 
+def _validert_utkast(c, uid, pid, av="bruker-a", innhold='{"a":1}'):
+    c.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,status,"
+        "innholds_hash,opprettet_av) VALUES (%s,%s,%s,%s::jsonb,'validert',%s,%s)",
+        (TEN, uid, pid, innhold, "ih-" + secrets.token_hex(8), av))
+
+
 @pg
-def test_aktiver_policy_forste_og_andre_nøyaktig_en_aktiv():
+def test_aktiver_policy_krever_runde():
+    """🔴 P1 R1: fire-øyne-gaten ligger I funksjonen. Uten en runde kan et
+    direkte runtime-kall (utenom orkestreringen) ALDRI aktivere."""
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid)
+    c.commit(); c.close()
     r = _rt()
-    pid = "pol-" + secrets.token_hex(3)
     try:
-        v1 = r.execute("SELECT aktiver_policy(%s,%s,'{\"a\":1}'::jsonb,%s,"
-                       "'produksjon',NULL)",
-                       (TEN, pid, secrets.token_hex(32))).fetchone()[0]
-        r.commit()
-        r.execute("SELECT set_config('disponit.tenant',%s,false)", (TEN,))
-        peker = r.execute("SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
-                          " AND policy_id=%s", (TEN, pid)).fetchone()[0]
-        assert peker == v1
+        with pytest.raises(psycopg.errors.Error):     # no_data_found: ukjent runde
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
         r.rollback()
-        r.execute("SELECT set_config('disponit.tenant',%s,false),"
-                  " set_config('disponit.aktor','x',false)", (TEN,))
-        v2 = r.execute("SELECT aktiver_policy(%s,%s,'{\"a\":2}'::jsonb,%s,"
-                       "'produksjon',%s)",
-                       (TEN, pid, secrets.token_hex(32), v1)).fetchone()[0]
-        r.commit()
-        r.execute("SELECT set_config('disponit.tenant',%s,false)", (TEN,))
-        n = r.execute("SELECT count(*) FROM policyer WHERE tenant=%s AND"
-                      " policy_id=%s AND aktiv", (TEN, pid)).fetchone()[0]
-        assert n == 1 and v2 != v1                # nøyaktig én aktiv, ny versjon
     finally:
         r.close()
 
 
 @pg
-def test_aktiver_policy_stale_base_krever_rebasering():
+def test_aktiver_policy_krever_fire_oyne():
+    """🔴 P1 R1: terskelen håndheves I funksjonen. Én attestasjon (forfatteren
+    alene) når ikke pakrevd=2 → et direkte kall avvises (InsufficientPrivilege),
+    ikke bare når Python-koden nekter."""
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf")
+    _runde(c, uid)                          # pakrevd_antall_godkjennere=2
+    _attest(c, uid, "forf", True)           # bare forfatteren
+    c.commit(); c.close()
     r = _rt()
-    pid = "pol-" + secrets.token_hex(3)
     try:
-        v1 = r.execute("SELECT aktiver_policy(%s,%s,'{}'::jsonb,%s,'produksjon',"
-                       "NULL)", (TEN, pid, secrets.token_hex(32))).fetchone()[0]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_full_runde_aktiverer_nøyaktig_en():
+    """Full runde (to godkjennere, én uavhengig, begge bandt rundens diff) →
+    funksjonen aktiverer, nøyaktig én aktiv, pekeren treffer, runden `brukt`,
+    utkastet `aktivert`."""
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        v1 = r.execute("SELECT aktiver_policy(%s,%s,1,NULL)",
+                       (TEN, uid)).fetchone()[0]
         r.commit()
-        r.execute("SELECT set_config('disponit.tenant',%s,false),"
-                  " set_config('disponit.aktor','x',false)", (TEN,))
-        r.execute("SELECT aktiver_policy(%s,%s,'{}'::jsonb,%s,'produksjon',%s)",
-                  (TEN, pid, secrets.token_hex(32), v1))
-        r.commit()
-        # Nå er aktiv = v2, men vi prøver å aktivere med base=v1 (stale).
-        r.execute("SELECT set_config('disponit.tenant',%s,false),"
-                  " set_config('disponit.aktor','x',false)", (TEN,))
+        r.execute("SELECT set_config('disponit.tenant',%s,false)", (TEN,))
+        n = r.execute("SELECT count(*) FROM policyer WHERE tenant=%s AND"
+                      " policy_id=%s AND aktiv", (TEN, pid)).fetchone()[0]
+        peker = r.execute("SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+                          " AND policy_id=%s", (TEN, pid)).fetchone()[0]
+        rstatus = r.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        ustatus = r.execute("SELECT status FROM policyutkast WHERE tenant=%s AND"
+                            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+        assert n == 1 and peker == v1
+        assert rstatus == "brukt" and ustatus == "aktivert"
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_stale_base_serialization_failure():
+    """Base flyttet siden runden åpnet: aktiv er v1, men kallet tror base er
+    deny-all (NULL) → serialization_failure (rebasering)."""
+    c = _c()
+    pid = "pol-" + secrets.token_hex(3)
+    _policyrad(c, pid, "1", aktiv=True)
+    _hode(c, pid, aktiv_versjon="1", neste=2)
+    uid = "u-" + secrets.token_hex(4)
+    _validert_utkast(c, uid, pid, av="forf")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
         with pytest.raises(psycopg.errors.SerializationFailure):
-            r.execute("SELECT aktiver_policy(%s,%s,'{}'::jsonb,%s,'produksjon',"
-                      "%s)", (TEN, pid, secrets.token_hex(32), v1))
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
         r.rollback()
     finally:
         r.close()
