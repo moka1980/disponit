@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/policyadminartefakt-v1.json",
+  "title": "Policyadministrasjonsartefakt (policyadmin-v1)",
+  "comment": "LUKKET format (additionalProperties:false paa HVERT objekt): en ukjent noekkel er en feil, ikke stillhet. Tellingene er heltall; invariantene REGNES UT paa nytt av manifestskjema._grenser_policyadmin, som aldri leser produsentens `bestatt`-flagg. De fire kategoriene beviser fire-oeyne-fullmaktsmodellen (UTVIDER krever to godkjennere, forfatter alene kan ikke aktivere, INNSNEVRER krever en uavhengig, en flyttet base krever rebasering); de harde invariantene beviser V10 (runtime kan ikke skrive policyer), atomisiteten (aldri flere aktive) og at godkjenneren attesterte DIFFEN.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "maalt"],
+  "properties": {
+    "krav_id": {"const": "policyadmin-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["injisert_antall", "kategorier"],
+      "properties": {
+        "injisert_antall": {"type": "integer", "minimum": 0},
+        "kategorier": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kategorier_dekket", "utvider", "forfatter_alene", "innsnevrer",
+        "rebasering", "aktiveringer_totalt", "policyer_med_flere_aktive",
+        "runtime_skrivenekt", "diff_binding_treff", "diff_binding_totalt",
+        "handlinger_totalt", "varighet_sek"
+      ],
+      "properties": {
+        "kategorier_dekket": {"type": "array", "items": {"type": "string"}},
+        "utvider": {"$ref": "#/$defs/kategori_aktivert"},
+        "forfatter_alene": {"$ref": "#/$defs/kategori_stoppet"},
+        "innsnevrer": {"$ref": "#/$defs/kategori_aktivert"},
+        "rebasering": {"$ref": "#/$defs/kategori_rebasert"},
+        "aktiveringer_totalt": {"type": "integer", "minimum": 0},
+        "policyer_med_flere_aktive": {"type": "integer", "minimum": 0},
+        "runtime_skrivenekt": {"type": "integer", "minimum": 0},
+        "diff_binding_treff": {"type": "integer", "minimum": 0},
+        "diff_binding_totalt": {"type": "integer", "minimum": 0},
+        "handlinger_totalt": {"type": "integer", "minimum": 0},
+        "varighet_sek": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "kategori_aktivert": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "aktivert"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "aktivert": {"type": "integer", "minimum": 0}
+      }
+    },
+    "kategori_stoppet": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "stoppet"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "stoppet": {"type": "integer", "minimum": 0}
+      }
+    },
+    "kategori_rebasert": {
+      "type": "object", "additionalProperties": false,
+      "required": ["injisert", "rebasert"],
+      "properties": {
+        "injisert": {"type": "integer", "minimum": 0},
+        "rebasert": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

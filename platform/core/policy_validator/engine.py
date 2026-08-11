@@ -292,13 +292,14 @@ def _aware(ts: Any) -> datetime | None:
 
 
 def _i_vindu(vindu: str, t: datetime, sone: ZoneInfo) -> bool:
-    lokal = t.astimezone(sone)
-    dager, klokke = vindu.split()
-    d0, d1 = (_DAGER.index(x) for x in dager.split("-"))
-    if not (d0 <= lokal.weekday() <= d1):
-        return False
-    start, slutt = klokke.split("-")
-    return start <= lokal.strftime("%H:%M") <= slutt
+    # DELT kodevei med klassifikatoren (PR-013 v3 §2 / v4 §5, port 14): både
+    # motorens medlemskap og klassifikatorens mengdeinklusjon svarer fra
+    # `tidsvindu.tillatte_ukeminutter`, så de aldri kan divergere. Den delte
+    # funksjonen støtter OGSÅ wrappende dag-/nattvinduer (fre-man, 22:00-06:00)
+    # som den gamle streng-sammenligningen behandlet som tomme — en
+    # motorsemantikk-forbedring (bindes i motor_semantikkversjon, CP4).
+    from . import tidsvindu as _tv
+    return _tv.i_vindu(vindu, t, sone)
 
 
 def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
@@ -483,6 +484,17 @@ def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
 # gir ingen TILLAT.
 # --------------------------------------------------------------------------
 
+def _motorpolicy(policy: dict) -> dict:
+    """Policyen SOM MOTOREN SER — uten `metadata` (PR-013 v4 §4). Nøytraliteten
+    er STRUKTURELL: et metadata-felt kan aldri påvirke en beslutning fordi
+    motoren aldri mottar det. Shallow copy uten nøkkelen; resten deles. Denne
+    ene choke-pointen er det klassifikatoren og CI-porten hviler på (metadata
+    som likevel når motorobjektet → rødt)."""
+    if isinstance(policy, dict) and "metadata" in policy:
+        return {k: v for k, v in policy.items() if k != "metadata"}
+    return policy
+
+
 def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
              teller: TellerLager | None = None, naa: datetime | None = None,
              *, menneskelig_godkjenning: "MenneskeligGodkjenning | None" = None
@@ -493,8 +505,12 @@ def evaluate(policy: dict, context: EvaluationContext | None, event: dict,
     begrunnelseskjede — PR-012 P3/port 6). Parameteren kan KUN settes av
     `behandle_unntakshandling`, som har MAC-verifisert konvolutten på forhånd;
     motoren verifiserer aldri MAC-en selv.
+
+    `metadata` strippes HER, ved den ene inngangen, så ingen beslutningsvei
+    nedstrøms ser semantikkfrie felt (v4 §4).
     """
     naa = naa or datetime.now(timezone.utc)
+    policy = _motorpolicy(policy)
     grunnvedtak = _evaluer(policy, context, event, teller, naa)
     if menneskelig_godkjenning is None:
         return grunnvedtak

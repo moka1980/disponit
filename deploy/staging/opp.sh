@@ -88,6 +88,12 @@ skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
 skriv_cred api DISPONIT_MAC_NOKLER   "$DISPONIT_MAC_NOKLER"   # PR-012 (boot-perre)
+# PR-013 (V8/port 13): fest miljøsignaturen (tzdata) RELEASEN bygges med, målt
+# med releasens EGEN kode. Bytter vertens tzdata etterpå, avviker boot-sjekken
+# og prosessen nekter start — motoren tolker aldri tidsvinduer annerledes enn
+# klassifikatoren beviste, uoppdaget.
+skriv_cred api DISPONIT_SEMANTIKK_MILJO "$(PYTHONPATH="$KILDE/platform/core" \
+    "$ROT/.venv/bin/python" -c 'from policy_validator import semantikk; print(semantikk.miljosignatur())')"
 # PR-011b: UI-deploy-config (provider-valg + IdP-origins). Ikke hemmeligheter,
 # men hydreres til os.environ via samme LoadCredential-vei. Tomme = default.
 skriv_cred api DISPONIT_UI_PROVIDER    "${DISPONIT_UI_PROVIDER:-}"

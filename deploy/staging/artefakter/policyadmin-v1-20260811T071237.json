@@ -1,0 +1,45 @@
+{
+  "krav_id": "policyadmin-v1",
+  "ts": "2026-08-11T07:12:37Z",
+  "bestatt": true,
+  "oppsett": {
+    "injisert_antall": 12,
+    "kategorier": [
+      "utvider",
+      "forfatter_alene",
+      "innsnevrer",
+      "rebasering"
+    ]
+  },
+  "maalt": {
+    "kategorier_dekket": [
+      "utvider",
+      "forfatter_alene",
+      "innsnevrer",
+      "rebasering"
+    ],
+    "utvider": {
+      "injisert": 3,
+      "aktivert": 3
+    },
+    "forfatter_alene": {
+      "injisert": 3,
+      "stoppet": 3
+    },
+    "innsnevrer": {
+      "injisert": 3,
+      "aktivert": 3
+    },
+    "rebasering": {
+      "injisert": 3,
+      "rebasert": 3
+    },
+    "aktiveringer_totalt": 6,
+    "policyer_med_flere_aktive": 0,
+    "runtime_skrivenekt": 1,
+    "diff_binding_treff": 18,
+    "diff_binding_totalt": 18,
+    "handlinger_totalt": 18,
+    "varighet_sek": 0.526
+  }
+}

@@ -107,6 +107,11 @@
         "krever_fire_oyne": {"type": "boolean"},
         "begrunnelse_pakrevd": {"type": "boolean"}
       }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Semantikkfrie visningsfelt (koder, beskrivelser, notater). FJERNES før policyen når motoren (v4 §4); nøytraliteten er STRUKTURELL, ikke grep-bevist. Alt under metadata klassifiseres som NØYTRAL.",
+      "additionalProperties": true
     }
   },
   "$defs": {

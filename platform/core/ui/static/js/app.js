@@ -12,14 +12,17 @@ import { visOversikt } from "./flater/oversikt.js";
 import { visPolicy } from "./flater/policy.js";
 import { visBeslutninger } from "./flater/beslutninger.js";
 import { visUnntak } from "./flater/unntak.js";
+import { visPolicyadmin } from "./flater/policyadmin.js";
 
 const RUTER = [
   { nokkel: "oversikt" }, { nokkel: "policy" },
   { nokkel: "beslutninger" }, { nokkel: "unntak" },
+  { nokkel: "policyadmin" },
 ];
 const FLATER = {
   oversikt: visOversikt, policy: visPolicy,
   beslutninger: visBeslutninger, unntak: visUnntak,
+  policyadmin: visPolicyadmin,
 };
 
 function lokaliserSkiplenke() {

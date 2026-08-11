@@ -30,6 +30,13 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     "godkjenner": frozenset({"decisions:read", "exceptions:read",
                              "exceptions:approve", "exceptions:reject",
                              "exceptions:escalate"}),
+    # PR-013: policyforvalteren redigerer utkast OG attesterer aktivering.
+    # `policy:write` og `policy:activate` er adskilte scopes: fire-øyne (V6)
+    # hviler på at aktivering krever attestasjoner, ikke på at rollen mangler
+    # skrivetilgang — men en tenant KAN gi to ulike personer hver sin rolle
+    # (kun-skrive vs. kun-aktivere) ved å definere snevrere roller senere.
+    "policyforvalter": frozenset({"decisions:read", "policy:read",
+                                  "policy:write", "policy:activate"}),
 }
 
 

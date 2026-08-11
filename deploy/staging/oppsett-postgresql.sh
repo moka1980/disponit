@@ -11,6 +11,7 @@ MIGRATOR=disponit_migrator   # eier skjemaet, kjører migrasjoner
 AUTH=disponit_authenticator  # eier api_tokener; runtime naar den aldri direkte
 TOKENADMIN=disponit_token_admin  # administrerer tokens, eier ingenting
 M37=disponit_m37_claimer     # PR-006: eier arbeidskapabiliteter + claim-funksjonene
+POLICYEIER=disponit_policy_eier  # PR-013: eier den herdede aktiver_policy-funksjonen
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -35,7 +36,7 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER"; do
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
-for r in "$AUTH" "$M37"; do
+for r in "$AUTH" "$M37" "$POLICYEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -51,6 +52,7 @@ sudo -u postgres psql -qc "GRANT $AUTH TO $MIGRATOR"
 # (PostgreSQL 16+. SET ROLE er fortsatt mulig for migrator — det er en
 # eksplisitt, sporbar handling, ikke stille arv.)
 sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
@@ -170,7 +172,7 @@ for base in $DB ${DB}_test; do
   # schema public». Gamle staging hadde grantene fra en manuell æra;
   # førstegangsveien hadde aldri satt dem selv.
   sudo -u postgres psql -q -d "$base" -c \
-    "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37"
+    "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37, $POLICYEIER"
 done
 
 # ------------------------------------------------------------

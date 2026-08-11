@@ -107,6 +107,30 @@ KRAVGRENSER: dict[str, dict] = {
         "maks_klartekst_treff": 0,
         "maks_varighet_sek": 300.0,
     },
+    # PR-013: policyadministrasjon. Fire kategori-veier beviser
+    # fire-øyne-fullmaktsmodellen; de harde invariantene beviser V10 (runtime
+    # kan ikke skrive policyer), atomisiteten (aldri flere aktive) og at
+    # godkjenneren attesterte DIFFEN. Alle andeler er 1.0: en injisert vei som
+    # ikke nådde sin kontraktstilstand er nettopp hullet artefaktet skal
+    # avkrefte.
+    "policyadmin-v1": {
+        # 4 kategorier × 2 = 8 (én kjøring er en anekdote; to per vei).
+        "min_injisert": 8,
+        # Kategorimengden EKSAKT (settlikhet), hver vei `utfall == injisert > 0`.
+        "krev_utvider_aktivert_andel": 1.0,
+        "krev_forfatter_alene_stopp_andel": 1.0,
+        "krev_innsnevrer_aktivert_andel": 1.0,
+        "krev_rebasering_andel": 1.0,
+        # Atomisiteten (V10/V1): INGEN policy ender med mer enn én aktiv rad.
+        # 0, ikke «lite».
+        "maks_flere_aktive": 0,
+        # V10: runtime MÅ nektes direkte skriving til `policyer` (målt: 1).
+        "krev_runtime_skrivenekt": 1,
+        # Godkjenneren attesterer DIFFEN: hver attestasjons `diff_hash` MÅ matche
+        # rundens (treff == totalt > 0).
+        "krev_diff_binding_full": True,
+        "maks_varighet_sek": 300.0,
+    },
 }
 
 #: Hvilket LUKKEDE skjema som gjelder for hvilket krav. Uten dette ville
@@ -117,6 +141,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "feilinjisering-m01-v1": "artefakt-feilinjisering-skjema.json",
     "rollback-m01-v1": "artefakt-rollback-skjema.json",
     "behandling-m37-v1": "artefakt-behandling-skjema.json",
+    "policyadmin-v1": "artefakt-policyadmin-skjema.json",
 }
 
 
@@ -312,6 +337,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_rollback(grense, art)
     if krav_id == "behandling-m37-v1":
         return feil + _grenser_behandling(grense, art)
+    if krav_id == "policyadmin-v1":
+        return feil + _grenser_policyadmin(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -629,6 +656,96 @@ def _grenser_behandling(grense: dict, art: dict) -> list[str]:
     elif tot == 0 or med != tot:
         feil.append(f"handlinger_med_aktor={med} != handlinger_totalt={tot}"
                     f" — alle handlinger i revisjonsloggen MÅ ha aktør")
+
+    varighet, f = _positiv(m, "maalt.varighet_sek", "varighet_sek")
+    if f:
+        feil.append(f)
+    elif varighet > grense["maks_varighet_sek"]:
+        feil.append(f"varighet_sek={varighet:g},"
+                    f" krever <= {grense['maks_varighet_sek']:g}")
+    return feil
+
+
+def _grenser_policyadmin(grense: dict, art: dict) -> list[str]:
+    """`policyadmin-v1` — de fire fullmakts-veiene + de harde invariantene.
+
+    Som `_grenser_behandling`: hver andel REGNES UT på nytt fra råtellinger, og
+    en kategori med `injisert = 0` er en vei som aldri ble prøvd — ikke en
+    bestått. Kategorimengden håndheves som EKSAKT settlikhet (ikke «minst
+    fire»), så et sett med en oppdiktet kategori som fyller tallet mens en ekte
+    mangler, avvises. De harde invariantene (aldri flere aktive, runtime kan
+    ikke skrive policyer, diff-binding full) måles mot råtellingene, aldri et
+    flagg.
+    """
+    feil: list[str] = []
+    m, oppsett = art.get("maalt"), art.get("oppsett")
+    if not isinstance(m, dict) or not isinstance(oppsett, dict):
+        return ["artefaktet mangler `maalt` og/eller `oppsett`"]
+
+    injisert, f = _teller(oppsett, "oppsett.injisert_antall", "injisert_antall")
+    if f:
+        feil.append(f)
+    elif injisert < grense["min_injisert"]:
+        feil.append(f"injisert_antall={injisert},"
+                    f" krever >= {grense['min_injisert']}")
+
+    KONTRAKT = {"utvider", "forfatter_alene", "innsnevrer", "rebasering"}
+    for navn, verdi in (("oppsett.kategorier", oppsett.get("kategorier")),
+                        ("kategorier_dekket", m.get("kategorier_dekket"))):
+        if not isinstance(verdi, list) or set(verdi) != KONTRAKT \
+                or len(verdi) != len(KONTRAKT):
+            feil.append(f"{navn}={verdi!r}, krever NØYAKTIG {sorted(KONTRAKT)}")
+
+    # Hver kategori: andelen er 1.0 → EKSAKT `utfall == injisert` med
+    # `injisert > 0`. `>= 1.0` alene godtar teller > nevner (umulig måling).
+    for grp, utfallsfelt in (("utvider", "aktivert"),
+                             ("forfatter_alene", "stoppet"),
+                             ("innsnevrer", "aktivert"),
+                             ("rebasering", "rebasert")):
+        u = m.get(grp)
+        if not isinstance(u, dict):
+            feil.append(f"maalt.{grp} mangler")
+            continue
+        inj, f1 = _teller(u, f"{grp}.injisert", "injisert")
+        ant, f2 = _teller(u, f"{grp}.{utfallsfelt}", utfallsfelt)
+        if f1 or f2:
+            feil.append(f1 or f2)
+            continue
+        if inj <= 0:
+            feil.append(f"maalt.{grp}.injisert={inj} — veien ble aldri prøvd")
+        elif ant != inj:
+            feil.append(f"maalt.{grp}: {utfallsfelt}={ant} != injisert={inj}"
+                        f" (andelen skal være 1.0)")
+
+    # V10/V1: INGEN policy ender med mer enn én aktiv rad.
+    flere, f = _teller(m, "maalt.policyer_med_flere_aktive",
+                       "policyer_med_flere_aktive")
+    if f:
+        feil.append(f)
+    elif flere > grense["maks_flere_aktive"]:
+        feil.append(f"policyer_med_flere_aktive={flere},"
+                    f" krever <= {grense['maks_flere_aktive']}")
+
+    # V10: runtime MÅ nektes direkte skriving til `policyer`.
+    nekt, f = _teller(m, "maalt.runtime_skrivenekt", "runtime_skrivenekt")
+    if f:
+        feil.append(f)
+    elif nekt < grense["krev_runtime_skrivenekt"]:
+        feil.append(f"runtime_skrivenekt={nekt},"
+                    f" krever >= {grense['krev_runtime_skrivenekt']}"
+                    " (runtime kunne skrive policyer direkte — V10 brutt)")
+
+    # Godkjenneren attesterte DIFFEN: hver attestasjons diff_hash == rundens.
+    treff, f1 = _teller(m, "maalt.diff_binding_treff", "diff_binding_treff")
+    tot, f2 = _teller(m, "maalt.diff_binding_totalt", "diff_binding_totalt")
+    if f1 or f2:
+        feil.append(f1 or f2)
+    elif grense.get("krev_diff_binding_full"):
+        if tot <= 0:
+            feil.append("diff_binding_totalt=0 — ingen attestasjon å binde")
+        elif treff != tot:
+            feil.append(f"diff_binding: treff={treff} != totalt={tot}"
+                        " (en attestasjon bandt ikke diffen den så)")
 
     varighet, f = _positiv(m, "maalt.varighet_sek", "varighet_sek")
     if f:

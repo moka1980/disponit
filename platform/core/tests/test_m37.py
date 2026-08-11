@@ -789,10 +789,20 @@ def test_port9b_ureferert_policyversjon_kan_arkiveres(migrator):
 def test_policyer_kan_ikke_truncates(migrator):
     """TRUNCATE omgår rad-triggere fullstendig. Uten en egen
     statement-trigger ville hele retention-vakten vært én setning unna å
-    være virkningsløs."""
+    være virkningsløs.
+
+    PR-013: `policyer` er nå OGSÅ FK-referert av `policy_hode.aktiv_versjon`,
+    så en naken `TRUNCATE policyer` blokkeres av FK-en (første forsvarslinje).
+    Retention-statement-triggeren nås via `CASCADE` og består som andre
+    forsvarslinje — begge veier er dekket her."""
     with pytest.raises(Exception) as feil:
         migrator.execute("TRUNCATE policyer")
-    assert "TRUNCATE er forbudt" in str(feil.value)
+    assert ("referenced in a foreign key" in str(feil.value)
+            or "TRUNCATE er forbudt" in str(feil.value))
+    migrator.rollback()
+    with pytest.raises(Exception) as feil2:
+        migrator.execute("TRUNCATE policyer CASCADE")
+    assert "TRUNCATE er forbudt" in str(feil2.value)
     migrator.rollback()
 
 
