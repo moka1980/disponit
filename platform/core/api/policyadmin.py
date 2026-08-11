@@ -531,11 +531,11 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
 
     # --- 8. Terskel (V6): antall ≥ påkrevd OG minst én ikke-forfatter -------
     rader = conn.execute(
-        "SELECT bruker_id, er_forfatter FROM aktiveringsattestasjon"
-        " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+        "SELECT bruker_id, er_forfatter, rolle, authz_version FROM"
+        " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND runde=%s",
         (tenant, utkast_id, r_nr)).fetchall()
     antall = len(rader)
-    ikke_forfatter = sum(1 for _b, ef in rader if not ef)
+    ikke_forfatter = sum(1 for _b, ef, _r, _a in rader if not ef)
     if antall < r_pakrevd or ikke_forfatter < 1:
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "venter_godkjennere", "utkast_id": utkast_id,
@@ -543,13 +543,14 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
             "gjenstaar": max(0, r_pakrevd - antall),
             "mangler_uavhengig": ikke_forfatter < 1})
 
-    # --- 8b. REAUTORISER ALLE godkjennere ved aktivering (Codex P1 R2) ------
+    # --- 8b. REAUTORISER ALLE godkjennere ved aktivering (Codex R2) ---------
     # Den siste attestasjonen utløser aktiveringen — men de TIDLIGERE
-    # godkjennerne ble autorisert da DE attesterte. En rolle som fjernes i
-    # vinduet mellom en tidlig attestasjon og aktiveringen skal stoppe
-    # aktiveringen (fire-øyne må holde NÅ, ikke bare da). Fail-closed: mangler
-    # én godkjenner fortsatt `policy:activate`, avbrytes aktiveringen.
-    avvist = _reautoriser_godkjennere(conn, tenant, [b for b, _ef in rader])
+    # godkjennerne ble autorisert da DE attesterte. Medlemskapet LÅSES og den
+    # bundne rollen + authz_version sammenlignes; en rolle-/aktiv-endring i
+    # vinduet mellom en tidlig attestasjon og aktiveringen stopper den
+    # (fail-closed). Låsen serialiserer mot en samtidig tilbakekalling.
+    avvist = _reautoriser_godkjennere(
+        conn, tenant, [(b, ro, a) for b, _ef, ro, a in rader])
     if avvist is not None:
         conn.rollback()
         raise Aktiveringsfeil("godkjenner_deautorisert", avvist)
@@ -599,17 +600,32 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         "versjon": ny_versjon, "runde": r_nr, "risikoklasse": r_risiko})
 
 
-def _reautoriser_godkjennere(conn, tenant: str, bruker_ids) -> str | None:
-    """Reverifiser at HVER godkjenner i runden fortsatt har `policy:activate`
-    (aktivt medlemskap + scope). -> None hvis alle er autorisert, ellers den
-    FØRSTE bruker_id-en som ikke lenger er det. Fail-closed: en bruker uten
-    aktiv medlemskapsrad regnes som deautorisert."""
-    for bid in dict.fromkeys(bruker_ids):          # distinkte, stabil orden
-        med = conn.execute(
-            "SELECT roller FROM brukermedlemskap WHERE tenant=%s AND"
-            " bruker_id=%s AND aktiv", (tenant, bid)).fetchone()
-        if med is None or _AKTIVER_SCOPE not in scopes_for_roller(list(med[0])):
-            return bid
+def _reautoriser_godkjennere(conn, tenant: str, attestasjoner) -> str | None:
+    """Reverifiser HVER godkjenner i runden ved aktivering (Codex R2).
+    `attestasjoner`: iterable av (bruker_id, rolle, authz_version) — de bundne
+    verdiene fra attestasjonstiden. -> None hvis alle fortsatt er autorisert,
+    ellers `"<bruker>:<grunn>"`.
+
+    Medlemskapet LÅSES (`laas_godkjenner`, FOR UPDATE via SECURITY DEFINER) så en
+    samtidig tilbakekalling ikke kan committe etter lesningen og tape kappløpet.
+    Autorisasjonen må være UENDRET siden attestasjonen: samme `authz_version`
+    (enhver rolle-/aktiv-endring bumper den), den bundne rollen fortsatt til
+    stede, og `policy:activate` fortsatt gitt. Fail-closed."""
+    sett = {}
+    for bid, rolle, av in attestasjoner:
+        sett[bid] = (rolle, av)                     # distinkt per bruker (UNIQUE)
+    for bid, (rolle, av) in sett.items():
+        rad = conn.execute("SELECT roller, authz_version FROM"
+                           " laas_godkjenner(%s,%s)", (tenant, bid)).fetchone()
+        if rad is None:
+            return f"{bid}:mangler_medlemskap"
+        roller, naa_av = list(rad[0]), int(rad[1])
+        if naa_av != int(av):
+            return f"{bid}:authz_endret"            # roller/aktiv endret siden attest
+        if rolle not in roller:
+            return f"{bid}:rolle_borte"
+        if _AKTIVER_SCOPE not in scopes_for_roller(roller):
+            return f"{bid}:scope_mangler"
     return None
 
 

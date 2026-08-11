@@ -187,6 +187,27 @@ def test_opprett_idempotent_replay_samme_utkast_id():
 
 
 @pg
+def test_opprett_samme_nokkel_annet_input_gir_konflikt():
+    # Codex R2: `rollback_av_versjon` inngår nå i input-hashen. Samme nøkkel med
+    # ANNET input (her simulert via ulik input_hash) → idempotenskonflikt, ikke
+    # en stille ny/replay-operasjon.
+    pid = "pol-" + secrets.token_hex(3)
+    k = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k + "-a")
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.opprett_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+                innhold=_gyldig(), idempotency_key=k, input_hash=k + "-b")
+        assert e.value.kode == "idempotenskonflikt"
+    finally:
+        rt.close()
+
+
+@pg
 def test_hent_detalj_har_diff_og_klasse():
     pid = "pol-" + secrets.token_hex(3)
     rt = _rt()

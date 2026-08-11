@@ -180,3 +180,27 @@ RESET ROLE;
 GRANT SELECT, INSERT, UPDATE ON policyer, policy_hode TO disponit_policy_eier;
 GRANT SELECT         ON aktiveringsattestasjon        TO disponit_policy_eier;
 GRANT SELECT, UPDATE ON policyutkast, aktiveringsrunde TO disponit_policy_eier;
+
+-- ------------------------------------------------------------
+-- Reautoriserings-lås (Codex R2): ved aktivering må HVER godkjenners medlemskap
+-- LÅSES, ikke bare leses, ellers kan en samtidig tilbakekalling committe etter
+-- vår lesning og tape kappløpet. Runtime har kun SELECT på `brukermedlemskap`
+-- (kan verken låse eller skrive den — den er OIDC-forvaltet), så låsen tas av
+-- denne herdede funksjonen: SECURITY DEFINER, eid av migrator (som eier
+-- tabellen), `search_path=pg_catalog`, EXECUTE kun til runtime. `FOR UPDATE`
+-- konflikter med tilbakekallingens UPDATE-radlås → de serialiseres, og en
+-- tilbakekalling kan ikke committe før aktiveringen er ferdig. Funksjonen
+-- RETURNERER den låste rollen + authz_version så kalleren kan sammenligne mot
+-- attestasjonens bundne verdier (uendret autorisasjon siden attestasjonen).
+CREATE OR REPLACE FUNCTION laas_godkjenner(p_tenant TEXT, p_bruker TEXT)
+RETURNS TABLE (roller TEXT[], authz_version INT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    RETURN QUERY
+    SELECT m.roller, m.authz_version
+      FROM public.brukermedlemskap m
+     WHERE m.tenant = p_tenant AND m.bruker_id = p_bruker AND m.aktiv
+       FOR UPDATE;
+END $$;
+REVOKE ALL ON FUNCTION laas_godkjenner(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT) TO disponit;

@@ -156,13 +156,18 @@ def opprett_utkast_endepunkt(tjeneste, request):
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
+        # `rollback_av_versjon` MÅ inngå i input-hashen (Codex R2): ellers kan
+        # samme nøkkel representere to ULIKE operasjoner (rullbakk vs. ikke)
+        # uten å gi idempotenskonflikt.
+        rollback_av = body.get("rollback_av_versjon")
         ih = _input_hash(tenant, bid, "opprett", policy_id,
-                         json.dumps(innhold, sort_keys=True), idem)
+                         json.dumps(innhold, sort_keys=True),
+                         "" if rollback_av is None else str(rollback_av), idem)
         res = policyadmin.opprett_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid,
             policy_id=policy_id, innhold=innhold,
             idempotency_key=idem, input_hash=ih,
-            rollback_av_versjon=body.get("rollback_av_versjon"))
+            rollback_av_versjon=rollback_av)
         return _ok(res, rid, 201)
 
     return _med_conn(tjeneste, rid, kjor)

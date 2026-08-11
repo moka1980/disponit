@@ -294,6 +294,36 @@ def test_tidligere_godkjenner_deautorisert_blokkerer():
 
 
 @pg
+def test_godkjenner_authz_endret_blokkerer():
+    # Codex R2: en godkjenner hvis roller ENDRES (authz_version bumpes) etter
+    # attestasjonen — men som fortsatt HAR policy:activate — skal likevel stoppe
+    # aktiveringen: attestasjonen ble gitt under en ANNEN autorisasjon.
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}],
+                          "handlinger": [{"id": "h1"}]})
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        _attester(rt, uid, a, r["diff_hash"])
+        # Forfatteren får en EKSTRA rolle → authz_version bumpes, men beholder
+        # policyforvalter (og dermed scopet). Attestasjonen er nå stale.
+        m = _mig()
+        m.execute("UPDATE brukermedlemskap SET roller="
+                  "ARRAY['policyforvalter','leser'] WHERE tenant=%s AND"
+                  " bruker_id=%s", (TEN, a))
+        m.commit(); m.close()
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, b, r["diff_hash"])
+        assert e.value.kode == "godkjenner_deautorisert"
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) is None
+
+
+@pg
 def test_idempotent_replay():
     pid = "pol-" + secrets.token_hex(3)
     a = _medlem("forf", ["policyforvalter"])
