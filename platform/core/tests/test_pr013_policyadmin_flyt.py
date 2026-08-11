@@ -373,6 +373,42 @@ def test_samtidig_aktivering_deler_godkjennere_ingen_vranglaas():
 
 
 @pg
+def test_laas_godkjenner_serialiserer_mot_tilbakekalling():
+    # Codex R4: `FOR UPDATE` i laas_godkjenner MÅ serialisere mot en samtidig
+    # medlemskapstilbakekalling — ellers kan revokeringen committe mens
+    # aktiveringen leser gammel autorisasjon. Muterings-drepende bevis: mens én
+    # tx HOLDER laas_godkjenner-låsen på raden, blokkeres en UPDATE på samme rad
+    # (lock_timeout → LockNotAvailable). En plain `SELECT` ville ikke låst, og
+    # UPDATE-en ville gått rett gjennom → denne testen ville feilet.
+    import psycopg
+    from db.pg import sett_kontekst
+    bid = _medlem("laasX", ["policyforvalter"])
+    holder = _rt()
+    revoker = _mig()
+    try:
+        sett_kontekst(holder, TEN, "x", "r")
+        rad = holder.execute("SELECT roller FROM laas_godkjenner(%s,%s)",
+                             (TEN, bid)).fetchone()
+        assert rad is not None                       # låsen holdes nå (ingen commit)
+        revoker.execute("SET lock_timeout='800ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            revoker.execute("UPDATE brukermedlemskap SET aktiv=false WHERE"
+                            " tenant=%s AND bruker_id=%s", (TEN, bid))
+        revoker.rollback()
+        # Slipp låsen → nå går tilbakekallingen gjennom.
+        holder.rollback()
+        sett_kontekst(revoker, TEN, "x", "r")
+        revoker.execute("UPDATE brukermedlemskap SET aktiv=false WHERE tenant=%s"
+                        " AND bruker_id=%s", (TEN, bid))
+        naa = revoker.execute("SELECT aktiv FROM brukermedlemskap WHERE tenant=%s"
+                             " AND bruker_id=%s", (TEN, bid)).fetchone()[0]
+        revoker.commit()
+        assert naa is False
+    finally:
+        holder.close(); revoker.close()
+
+
+@pg
 def test_idempotent_replay():
     pid = "pol-" + secrets.token_hex(3)
     a = _medlem("forf", ["policyforvalter"])

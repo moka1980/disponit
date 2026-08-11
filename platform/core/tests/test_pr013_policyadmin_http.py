@@ -199,6 +199,9 @@ def test_opprett_input_hash_binder_rollback_av_versjon():
     h_v3 = opprett_input_hash(rollback_av="3", **felles)
     h_v4 = opprett_input_hash(rollback_av="4", **felles)
     assert h_uten != h_v3 != h_v4 and h_uten != h_v4   # rullbakk endrer hashen
+    # Codex R4: null og "" MÅ gi ULIKE hasher (str(None)/str("") kolliderte ikke).
+    h_tom = opprett_input_hash(rollback_av="", **felles)
+    assert h_uten != h_tom, "null og tom streng gir samme idempotenshash"
     # Deterministisk: samme input → samme hash.
     assert h_v3 == opprett_input_hash(rollback_av="3", **felles)
 

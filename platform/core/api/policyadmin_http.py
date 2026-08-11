@@ -73,10 +73,11 @@ def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem) -> st
     """Idempotens-inputhash for utkastopprettelse. `rollback_av_versjon` INNGÅR
     (Codex R2/R3): en rullbakk og en ordinær opprettelse med samme nøkkel er
     ULIKE operasjoner og MÅ gi konflikt, ikke replay. Egen funksjon så bindingen
-    er direkte testbar."""
+    er direkte testbar. `rollback_av` JSON-kodes så `null` og `""` gir ULIKE
+    representasjoner (Codex R4: `str(None)`/`str("")` kolliderte ikke lenger)."""
     return _input_hash(tenant, bid, "opprett", policy_id,
                        json.dumps(innhold, sort_keys=True),
-                       "" if rollback_av is None else str(rollback_av), idem)
+                       json.dumps(rollback_av), idem)
 
 
 def _kropp(request) -> dict:
