@@ -208,6 +208,8 @@ def _admin():
     from db.pg import koble
     c = koble(MIGRATOR_DSN)
     c.execute("SET ROLE disponit_modules_admin")   # EXECUTE på overgangsfunksjonene
+    c.commit()   # gjør rolleendringen varig — ellers ruller en senere rollback
+                 # (f.eks. etter en forventet FK-feil) den tilbake til migrator
     return c
 
 
@@ -284,5 +286,145 @@ def test_runtime_kan_ikke_kalle_overgangsfunksjoner():
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             r.execute("SELECT installer_modul('x','sys')")
         r.rollback()
+    finally:
+        r.close()
+
+
+# ---- CP3: release-livsløp (registrer_kontrakt/release, bytt_release, pensjoner) ----
+
+def _livslop(modul, rel, miljo="staging"):
+    """Leser livsløp via runtime (SELECT) — modules_admin har ikke tabelltilgang."""
+    r = _rt()
+    try:
+        rad = r.execute("SELECT livslop FROM moduldeployment WHERE modul_id=%s"
+                        " AND miljo=%s AND release_id=%s", (modul, miljo, rel)
+                        ).fetchone()
+        return rad[0] if rad else None
+    finally:
+        r.close()
+
+
+def _reg_kontrakt(a, modul, kh, ver=1):
+    a.execute("SELECT registrer_kontrakt(%s,%s,%s,'p','k','krever_outbox',"
+              "'kompenserende','sys')", (modul, ver, kh))
+
+
+def _reg_release(a, modul, rel, kh, ver=1):
+    a.execute("SELECT registrer_release(%s,%s,%s,%s,'mh','ad','sys')",
+              (modul, rel, ver, kh))
+
+
+@pg
+def test_registrer_kontrakt_idempotent_og_immutable():
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _reg_kontrakt(a, m, kh); a.commit()
+        _reg_kontrakt(a, m, kh); a.commit()          # samme hash → no-op
+        # samme (modul, versjon), avvikende hash → immutable, avvist.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _reg_kontrakt(a, m, "k-annen")
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_registrer_release_fk_og_immutable():
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        # release før kontrakten finnes → FK avviser (port 1).
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            _reg_release(a, m, "r1", kh)
+        a.rollback()
+        _reg_kontrakt(a, m, kh); _reg_release(a, m, "r1", kh); a.commit()
+        _reg_release(a, m, "r1", kh); a.commit()      # samme innhold → no-op
+        # samme release_id, avvikende innhold → immutable.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            a.execute("SELECT registrer_release(%s,'r1',1,%s,'ANNEN','ad','sys')",
+                      (m, kh))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_bytt_release_atomisk_og_ingen_reclaim():
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _reg_kontrakt(a, m, kh)
+        _reg_release(a, m, "r1", kh); _reg_release(a, m, "r2", kh); a.commit()
+        # første bytte: r1 blir claiming.
+        a.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (m, kh))
+        a.commit()
+        assert _livslop(m, "r1") == "claiming"
+        # bytte til r2: r1 → draining, r2 → claiming, ATOMISK (nøyaktig én claiming).
+        a.execute("SELECT bytt_release(%s,'staging','r2',1,%s,'sys')", (m, kh))
+        a.commit()
+        assert _livslop(m, "r1") == "draining"
+        assert _livslop(m, "r2") == "claiming"
+        # idempotent: bytte til r2 igjen → no-op.
+        a.execute("SELECT bytt_release(%s,'staging','r2',1,%s,'sys')", (m, kh))
+        a.commit()
+        assert _livslop(m, "r2") == "claiming"
+        # r1 er draining → kan ALDRI reclaimes.
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (m, kh))
+        a.rollback()
+    finally:
+        a.close()
+    # nøyaktig én claiming for kontrakten (invarianten, målt via runtime).
+    r = _rt()
+    try:
+        n = r.execute("SELECT count(*) FROM moduldeployment WHERE modul_id=%s"
+                      " AND kontrakt_hash=%s AND livslop='claiming'", (m, kh)
+                      ).fetchone()[0]
+        assert n == 1
+    finally:
+        r.close()
+
+
+@pg
+def test_pensjoner_release_idempotent_og_claiming_avvist():
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _reg_kontrakt(a, m, kh)
+        _reg_release(a, m, "r1", kh); _reg_release(a, m, "r2", kh); a.commit()
+        a.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (m, kh))
+        a.execute("SELECT bytt_release(%s,'staging','r2',1,%s,'sys')", (m, kh))
+        a.commit()                                    # r1 draining, r2 claiming
+        # claiming kan ikke pensjoneres direkte.
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT pensjoner_release(%s,'staging','r2','sys')", (m,))
+        a.rollback()
+        # draining → retired.
+        a.execute("SELECT pensjoner_release(%s,'staging','r1','sys')", (m,))
+        a.commit()
+        assert _livslop(m, "r1") == "retired"
+        # idempotent: pensjoner igjen → no-op.
+        a.execute("SELECT pensjoner_release(%s,'staging','r1','sys')", (m,))
+        a.commit()
+        assert _livslop(m, "r1") == "retired"
+    finally:
+        a.close()
+
+
+@pg
+def test_runtime_kan_ikke_kalle_cp3_funksjoner():
+    r = _rt()
+    try:
+        for sql in (
+            "SELECT registrer_kontrakt('x',1,'h','p','k','sideeffektfri',"
+            "'direkte','sys')",
+            "SELECT registrer_release('x','r',1,'h','m','a','sys')",
+            "SELECT bytt_release('x','staging','r',1,'h','sys')",
+            "SELECT pensjoner_release('x','staging','r','sys')",
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r.execute(sql)
+            r.rollback()
     finally:
         r.close()

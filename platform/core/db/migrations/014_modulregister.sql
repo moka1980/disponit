@@ -330,3 +330,179 @@ GRANT SELECT, INSERT         ON modulrelease           TO disponit_modul_eier;
 GRANT SELECT, INSERT, UPDATE ON moduldeployment        TO disponit_modul_eier;
 GRANT SELECT, INSERT         ON oppdragstype_register   TO disponit_modul_eier;
 GRANT SELECT, INSERT         ON modulregister_hendelse  TO disponit_modul_eier;
+
+-- ============================================================
+-- CP3: Release-livsløpsfunksjoner (samme herdemodell som CP2). Registeret har
+-- ÉN vei inn for skriving — kontrakt/release registreres herdet, releasebytte er
+-- ATOMISK under kontraktlås (V1), og pensjonering er en idempotent
+-- livsløpsovergang. `registrer_kontrakt`/`registrer_release` er
+-- immutabilitets-idempotente: samme identitet + samme innhold = no-op, samme
+-- identitet + avvikende innhold = avvist (kontrakten/releasen LOVER én ting).
+-- ============================================================
+SET LOCAL ROLE disponit_modul_eier;
+
+-- Herdet kontraktregistrering. En (modul, kontraktversjon) har nøyaktig én hash;
+-- re-registrering med samme hash er no-op, med avvikende hash avvist (immutable).
+CREATE OR REPLACE FUNCTION registrer_kontrakt(
+    p_modul_id              TEXT,
+    p_kontraktversjon       INT,
+    p_kontrakt_hash         TEXT,
+    p_payload_schema_hash   TEXT,
+    p_kvittering_schema_hash TEXT,
+    p_sideeffektklasse      TEXT,
+    p_reversibilitet        TEXT,
+    p_aktor                 TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_hash TEXT;
+BEGIN
+    SELECT kontrakt_hash INTO v_hash FROM public.modulkontrakt
+     WHERE modul_id = p_modul_id AND kontraktversjon = p_kontraktversjon;
+    IF FOUND THEN
+        IF v_hash IS DISTINCT FROM p_kontrakt_hash THEN
+            RAISE EXCEPTION 'kontrakt (%,%) er immutable: % != %',
+                p_modul_id, p_kontraktversjon, v_hash, p_kontrakt_hash
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN;                                   -- idempotent
+    END IF;
+    INSERT INTO public.modulkontrakt (modul_id, kontraktversjon, kontrakt_hash,
+        payload_schema_hash, kvittering_schema_hash, sideeffektklasse,
+        reversibilitet)
+        VALUES (p_modul_id, p_kontraktversjon, p_kontrakt_hash,
+                p_payload_schema_hash, p_kvittering_schema_hash,
+                p_sideeffektklasse, p_reversibilitet);
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, kontraktversjon, kontrakt_hash, aktor)
+        VALUES (p_modul_id, 'kontrakt_registrert', p_kontraktversjon,
+                p_kontrakt_hash, p_aktor);
+END $$;
+
+-- Herdet releaseregistrering. FK avviser en release mot en kontrakt som ikke
+-- finnes/avviker (port 1). Immutabilitets-idempotent på hele innholdet.
+CREATE OR REPLACE FUNCTION registrer_release(
+    p_modul_id        TEXT,
+    p_release_id      TEXT,
+    p_kontraktversjon INT,
+    p_kontrakt_hash   TEXT,
+    p_manifest_hash   TEXT,
+    p_artifact_digest TEXT,
+    p_aktor           TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE r RECORD;
+BEGIN
+    SELECT kontraktversjon, kontrakt_hash, manifest_hash, artifact_digest
+      INTO r FROM public.modulrelease
+     WHERE modul_id = p_modul_id AND release_id = p_release_id;
+    IF FOUND THEN
+        IF (r.kontraktversjon, r.kontrakt_hash, r.manifest_hash, r.artifact_digest)
+           IS DISTINCT FROM
+           (p_kontraktversjon, p_kontrakt_hash, p_manifest_hash, p_artifact_digest) THEN
+            RAISE EXCEPTION 'release (%,%) er immutable', p_modul_id, p_release_id
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN;                                   -- idempotent
+    END IF;
+    INSERT INTO public.modulrelease (modul_id, release_id, kontraktversjon,
+        kontrakt_hash, manifest_hash, artifact_digest)
+        VALUES (p_modul_id, p_release_id, p_kontraktversjon, p_kontrakt_hash,
+                p_manifest_hash, p_artifact_digest);   -- FK: port 1
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, release_id, kontraktversjon, kontrakt_hash, aktor)
+        VALUES (p_modul_id, 'release_registrert', p_release_id,
+                p_kontraktversjon, p_kontrakt_hash, p_aktor);
+END $$;
+
+-- V1: ATOMISK releasebytte. Under kontraktlås (serialiserer samtidige bytter for
+-- samme (modul, miljø, kontrakt) → port 3: nøyaktig én ender claiming) settes den
+-- gamle claiming-deploymenten `draining` OG den nye `claiming` i ÉN transaksjon.
+-- En release som alt er draining/retired kan ALDRI reclaimes (ny release kreves).
+CREATE OR REPLACE FUNCTION bytt_release(
+    p_modul_id        TEXT,
+    p_miljo           TEXT,
+    p_ny_release_id   TEXT,
+    p_kontraktversjon INT,
+    p_kontrakt_hash   TEXT,
+    p_aktor           TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_ny_livslop TEXT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'modulregister:bytt:' || p_modul_id || ':' || p_miljo || ':'
+        || p_kontraktversjon::text || ':' || p_kontrakt_hash, 0));
+    -- Ny release må finnes OG matche kontrakten (kompositt).
+    PERFORM 1 FROM public.modulrelease
+     WHERE modul_id = p_modul_id AND release_id = p_ny_release_id
+       AND kontraktversjon = p_kontraktversjon AND kontrakt_hash = p_kontrakt_hash;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'bytt_release: ukjent/avvikende release %/%',
+            p_modul_id, p_ny_release_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    SELECT livslop INTO v_ny_livslop FROM public.moduldeployment
+     WHERE modul_id = p_modul_id AND miljo = p_miljo
+       AND release_id = p_ny_release_id;
+    IF v_ny_livslop = 'claiming' THEN
+        RETURN;                                   -- idempotent: alt claiming
+    ELSIF v_ny_livslop IN ('draining', 'retired') THEN
+        RAISE EXCEPTION 'release %/% er % — kan ikke reclaimes (ny release kreves)',
+            p_modul_id, p_ny_release_id, v_ny_livslop
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Gammel claiming for samme kontrakt → draining (partiell indeks frigjøres
+    -- før innsettingen av den nye).
+    UPDATE public.moduldeployment SET livslop = 'draining'
+     WHERE modul_id = p_modul_id AND miljo = p_miljo
+       AND kontraktversjon = p_kontraktversjon AND kontrakt_hash = p_kontrakt_hash
+       AND livslop = 'claiming';
+    INSERT INTO public.moduldeployment (modul_id, release_id, kontraktversjon,
+        kontrakt_hash, miljo, livslop)
+        VALUES (p_modul_id, p_ny_release_id, p_kontraktversjon, p_kontrakt_hash,
+                p_miljo, 'claiming');
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, til_livslop, release_id, kontraktversjon,
+         kontrakt_hash, aktor)
+        VALUES (p_modul_id, 'releasebytte', 'claiming', p_ny_release_id,
+                p_kontraktversjon, p_kontrakt_hash, p_aktor);
+END $$;
+
+-- Idempotent pensjonering: draining → retired. `claiming` må draines først
+-- (bytt_release), `retired` er no-op. Aktive-claims=0-vilkåret håndheves i CP5
+-- når claim-tabellen finnes; her er selve livsløpsovergangen + revisjon.
+CREATE OR REPLACE FUNCTION pensjoner_release(
+    p_modul_id   TEXT,
+    p_miljo      TEXT,
+    p_release_id TEXT,
+    p_aktor      TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_livslop TEXT;
+BEGIN
+    SELECT livslop INTO v_livslop FROM public.moduldeployment
+     WHERE modul_id = p_modul_id AND miljo = p_miljo
+       AND release_id = p_release_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'pensjoner_release: ukjent deployment %/%/%',
+            p_modul_id, p_miljo, p_release_id USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_livslop = 'retired' THEN
+        RETURN;                                   -- idempotent
+    ELSIF v_livslop = 'claiming' THEN
+        RAISE EXCEPTION 'release %/% er claiming — må draines før pensjonering',
+            p_modul_id, p_release_id USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    UPDATE public.moduldeployment SET livslop = 'retired'
+     WHERE modul_id = p_modul_id AND miljo = p_miljo
+       AND release_id = p_release_id;
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, fra_livslop, til_livslop, release_id, aktor)
+        VALUES (p_modul_id, 'pensjonert', 'draining', 'retired',
+                p_release_id, p_aktor);
+END $$;
+
+REVOKE ALL ON FUNCTION registrer_kontrakt(TEXT, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION registrer_release(TEXT, TEXT, INT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION bytt_release(TEXT, TEXT, TEXT, INT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION pensjoner_release(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION registrer_kontrakt(TEXT, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION registrer_release(TEXT, TEXT, INT, TEXT, TEXT, TEXT, TEXT) TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION bytt_release(TEXT, TEXT, TEXT, INT, TEXT, TEXT) TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION pensjoner_release(TEXT, TEXT, TEXT, TEXT) TO disponit_modules_admin;
+RESET ROLE;

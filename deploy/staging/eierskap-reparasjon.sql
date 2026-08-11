@@ -77,7 +77,11 @@ INSERT INTO _design VALUES
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.
     ('FUNCTION', 'installer_modul(text,text)',                        'disponit_modul_eier'),
     ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),
-    ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier');
+    ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_release(text,text,integer,text,text,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
+    ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier');
 
 DO $$
 DECLARE
