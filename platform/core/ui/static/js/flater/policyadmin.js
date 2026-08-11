@@ -131,10 +131,12 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
       if (lukkPanel) lukkPanel();
       if (aapneEditor) aapneEditor({ utkast_id: uid });
     });
+    // STABIL nøkkel per render (Codex R2): re-klikk = retry, ikke ny operasjon.
+    const valNokkel = nyIdempotensnokkel();
     const b = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.valider") });
     b.addEventListener("click", () =>
-      validerUtkast(uid, detalj.utkastversjon).then((r) => {
+      validerUtkast(uid, detalj.utkastversjon, valNokkel).then((r) => {
         if (r && r.utfall === "ugyldig") {
           meldLive(t("ui.policyadmin.ugyldig"));
           boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
@@ -156,10 +158,11 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
 
   if (detalj.status === "validert"
       && (!runde || ["brukt", "utlopt", "kansellert"].includes(runde.status))) {
+    const rundeNokkel = nyIdempotensnokkel();       // stabil per render (R2)
     const b = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.apne_runde") });
     b.addEventListener("click", () =>
-      apneRunde(uid).then(() => {
+      apneRunde(uid, rundeNokkel).then(() => {
         meldLive(t("ui.policyadmin.runde_apnet"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {

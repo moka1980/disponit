@@ -108,6 +108,12 @@ def _valider(policy: object) -> list[str]:
         if h["reversering"]["type"] == "irreversibel" \
                 and not (h.get("grenser") or h.get("vilkaar")):
             feil.append(f"handling '{hid}': irreversibel uten grenser/vilkår")
+        # `auto_med_vilkaar` UTEN vilkår degenererer til ren `auto` — fullmakt
+        # uten port. Håndheves her i den KANONISKE validatoren (PR-014 R2), ikke
+        # i en parallell validator. Typene er garantert (skjemaet passerte over).
+        if h["modus"] == "auto_med_vilkaar" and not (h.get("vilkaar") or []):
+            feil.append(f"handling '{hid}': modus 'auto_med_vilkaar' krever "
+                        "minst ett vilkår")
 
     kategorier = set(policy["unntak"]["kategorier"])
     for obligatorisk in ("manglende_data", "over_grense", "regelkonflikt",

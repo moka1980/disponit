@@ -262,28 +262,27 @@ def test_hent_maler_gir_bransjemaler():
     maler = policyadmin.hent_maler()
     ider = {m["mal_id"] for m in maler}
     assert {"handverk-bygg", "netthandel", "tjenestebedrift"} <= ider
+    from policy_validator import schema
     for m in maler:
         assert isinstance(m["innhold"], dict)
         assert m["innhold"].get("handlinger")        # komplett policy
-        # Codex R1: en servert mal MÅ være gyldig (skjema + semantikk) — den er
+        # Codex R2: en servert mal MÅ passere den KANONISKE validatoren — den er
         # et «gyldig utgangspunkt», ikke bare velformet.
-        assert policyadmin.valider_semantisk(m["innhold"]) == []
+        assert schema.valider_policy(m["innhold"]) == []
 
 
-def test_valider_semantisk_fanger_referanse_og_modus():
-    # Codex R1: referanse-integritet + modus/vilkår.
-    r = policyadmin.valider_semantisk({
-        "roller": [{"id": "a"}],
-        "handlinger": [{"id": "h1", "tillatt_for": ["mangler"]},
-                       {"id": "h2", "modus": "auto_med_vilkaar",
-                        "vilkaar": []}]})
-    assert any("ukjent rolle" in f for f in r)
-    assert any("auto_med_vilkaar" in f for f in r)
-    # gyldig → ingen semantiske feil.
-    assert policyadmin.valider_semantisk({
-        "roller": [{"id": "a"}],
-        "handlinger": [{"id": "h", "modus": "auto",
-                        "tillatt_for": ["a"]}]}) == []
+def test_kanonisk_validator_fanger_auto_med_vilkaar_uten_vilkaar():
+    # Codex R2: regelen ligger i motorens kanoniske schema.valider_policy (lag-2),
+    # ikke i en parallell validator. Den kjører post-skjema → kaster aldri på
+    # typer. Bevist på en komplett bransjemal mutert til den ugyldige tilstanden.
+    from policy_validator import schema
+    pol = _gyldig()
+    pol["handlinger"][0]["modus"] = "auto_med_vilkaar"
+    pol["handlinger"][0].pop("vilkaar", None)   # nøkkelen HELT borte
+    assert any("auto_med_vilkaar" in f for f in schema.valider_policy(pol))
+    # En uendret, gyldig mal har ingen slik feil.
+    assert not any("auto_med_vilkaar" in f
+                   for f in schema.valider_policy(_gyldig()))
 
 
 @pg
@@ -311,7 +310,7 @@ def test_valider_fanger_auto_med_vilkaar_uten_vilkaar():
     pid = "pol-" + secrets.token_hex(3)
     pol = _gyldig()
     pol["handlinger"][0]["modus"] = "auto_med_vilkaar"
-    pol["handlinger"][0]["vilkaar"] = []
+    pol["handlinger"][0].pop("vilkaar", None)   # nøkkelen HELT borte
     rt = _rt()
     try:
         o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",

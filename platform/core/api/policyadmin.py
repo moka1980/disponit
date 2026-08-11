@@ -256,8 +256,9 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
             or forventet_utkastversjon != ver:
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
-    # Skjema OG semantikk (Codex R1): referanse-integritet + modus/vilkår.
-    feil = _schema.valider_policy(innhold) + valider_semantisk(innhold)
+    # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
+    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
+    feil = _schema.valider_policy(innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -322,39 +323,13 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
 _MAL_DIR = _schema._SKJEMA_STI.parent            # policies/
 
 
-def valider_semantisk(policy: dict) -> list:
-    """Semantiske integritetskrav SKJEMAET IKKE fanger (Codex PR-014 R1) —
-    referanse-integritet og modus/vilkår-konsistens. Kjøres I TILLEGG til
-    skjemavalideringen ved `valider`, og på bransjemalene før de serveres.
-
-    - `tillatt_for` MÅ vise til en rolle som faktisk finnes (en fjernet rolle
-      som fortsatt er referert er en hengende referanse).
-    - `modus = auto_med_vilkaar` MÅ ha minst ett `vilkaar`: uten vilkår ville
-      «auto MED vilkår» degenerert til ren `auto` (fullmakt uten port)."""
-    feil: list[str] = []
-    if not isinstance(policy, dict):
-        return ["policy er ikke et objekt"]
-    roller = {r.get("id") for r in policy.get("roller", [])
-              if isinstance(r, dict)}
-    for h in policy.get("handlinger", []) or []:
-        if not isinstance(h, dict):
-            continue
-        hid = h.get("id", "?")
-        for r in (h.get("tillatt_for") or []):
-            if r not in roller:
-                feil.append(f"handling '{hid}': tillatt_for viser til ukjent"
-                            f" rolle '{r}'")
-        if h.get("modus") == "auto_med_vilkaar" and not (h.get("vilkaar") or []):
-            feil.append(f"handling '{hid}': modus 'auto_med_vilkaar' krever"
-                        " minst ett vilkår")
-    return feil
-
-
 def hent_maler() -> list:
-    """Bransjemalene (komplette, skjemagyldige policyer) som utgangspunkt for et
-    nytt utkast. Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen
-    tenant (malene er felles). En mal som IKKE validerer (skjema + semantikk)
-    serveres ALDRI (Codex R1): den skal ikke kunne bli et «gyldig utgangspunkt»."""
+    """Bransjemalene (komplette policyer) som utgangspunkt for et nytt utkast.
+    Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen tenant
+    (malene er felles). En mal som IKKE validerer mot den KANONISKE validatoren
+    (`schema.valider_policy` — skjema + semantikk, inkl. referanse-integritet og
+    modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke kunne
+    bli et «gyldig utgangspunkt»."""
     import yaml
     ut = []
     for f in sorted(_MAL_DIR.glob("bransjemal-*.yaml")):
@@ -364,7 +339,7 @@ def hent_maler() -> list:
             continue
         if not isinstance(innhold, dict):
             continue
-        if _schema.valider_policy(innhold) or valider_semantisk(innhold):
+        if _schema.valider_policy(innhold):
             continue                                # fail-closed: hopp over
         meta = innhold.get("meta") if isinstance(innhold.get("meta"), dict) else {}
         ut.append({"mal_id": f.stem.replace("bransjemal-", ""),
