@@ -200,3 +200,89 @@ def test_deployment_livslop_fremover_og_frosset():
                   " modul_id=%s AND release_id='r1'", (m,)); c.commit()
     finally:
         c.close()
+
+
+# ---- CP2: herdede overgangsfunksjoner ----
+
+def _admin():
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    c.execute("SET ROLE disponit_modules_admin")   # EXECUTE på overgangsfunksjonene
+    return c
+
+
+@pg
+def test_registrer_oppdragstype_global_og_prefiks_overlapp():
+    # Codex-port 18-familien: globalt unik, prefiks-overlapp avvist (dispatch-
+    # kollisjon). FK binder oppdragstypen til en eksisterende kontrakt.
+    # oppdragstype er GLOBAL og committes — kjør-unike navn holder prefiks-
+    # relasjonen intakt uten å kollidere med tidligere kjøringer.
+    tok = secrets.token_hex(4)
+    full = f"audit{tok}.revider"; pref = f"audit{tok}"; annen = f"ordre{tok}"
+    c = _c(); m = _mid(); kh = _kontrakt(c, m); c.commit(); c.close()
+    a = _admin()
+    try:
+        a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                  (full, m, kh)); a.commit()
+        # 'auditXXXX' er prefiks av 'auditXXXX.revider' → overlapp avvist.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                      (pref, m, kh))
+        a.rollback()
+        # divergerende type er OK.
+        a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                  (annen, m, kh)); a.commit()
+    finally:
+        a.close()
+
+
+@pg
+def test_sett_modulstatus_statemaskin_og_aktiv_krever_claiming():
+    # Codex-port 13: 'aktiv' uten claiming-deployment avvises av funksjonen.
+    c = _c(); m = _mid(); kh = _kontrakt(c, m); _release(c, m, "r1", 1, kh)
+    c.commit(); c.close()
+    a = _admin()
+    try:
+        a.execute("SELECT installer_modul(%s,'sys')", (m,)); a.commit()
+        a.execute("SELECT sett_modulstatus(%s,'staging_verifisert',NULL,'sys')",
+                  (m,)); a.commit()
+        # aktiv uten claiming → avvist.
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT sett_modulstatus(%s,'aktiv',NULL,'sys')", (m,))
+        a.rollback()
+    finally:
+        a.close()
+    # legg til en claiming-deployment (migrator eier tabellen) → aktiv OK.
+    c = _c(); _deployment(c, m, "r1", 1, kh, livslop="claiming"); c.commit(); c.close()
+    a = _admin()
+    try:
+        a.execute("SELECT sett_modulstatus(%s,'aktiv',%s,'sys')", (m, "r1"))
+        a.commit()
+    finally:
+        a.close()
+    # modules_admin har KUN EXECUTE — les statusen via runtime (SELECT).
+    r = _rt()
+    try:
+        s = r.execute("SELECT status FROM modulhode WHERE modul_id=%s",
+                      (m,)).fetchone()[0]
+        assert s == "aktiv"
+    finally:
+        r.close()
+
+
+@pg
+def test_runtime_kan_ikke_kalle_overgangsfunksjoner():
+    # Runtime har ikke EXECUTE på overgangsfunksjonene (kun modules_admin).
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            r.execute("SELECT sett_modulstatus('x','aktiv',NULL,'sys')")
+        r.rollback()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            r.execute("SELECT registrer_oppdragstype('t','x',1,'h','sys')")
+        r.rollback()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            r.execute("SELECT installer_modul('x','sys')")
+        r.rollback()
+    finally:
+        r.close()

@@ -220,3 +220,113 @@ END $$;
 DROP TRIGGER IF EXISTS deployment_livslop ON moduldeployment;
 CREATE TRIGGER deployment_livslop BEFORE UPDATE ON moduldeployment
     FOR EACH ROW EXECUTE FUNCTION moduldeployment_livslop();
+
+-- ============================================================
+-- CP2: Herdede overgangsfunksjoner (SECURITY DEFINER, eid av NOLOGIN-rollen
+-- `disponit_modul_eier`, search_path=pg_catalog). Runtime har KUN SELECT på
+-- registertabellene (§4) — ALL skriving går gjennom disse. EXECUTE gis til
+-- `disponit_modules_admin` (overgangene er admin-/deploy-handlinger, ikke
+-- runtime). Den maskinverifiserte evidensen (åpne artefakt, sha256, KRAVGRENSER)
+-- ligger i Python-orkestreringen som kaller `sett_modulstatus` — som
+-- `aktiver_policy`; her håndheves det DB-en KAN: statemaskin, ≥1 claiming,
+-- global namespace-lås, prefiks-overlapp, og append-only revisjon.
+-- ============================================================
+SET LOCAL ROLE disponit_modul_eier;
+
+-- Onboarding: opprett modulhodet (status 'installert'). Idempotent.
+CREATE OR REPLACE FUNCTION installer_modul(p_modul_id TEXT, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    INSERT INTO public.modulhode (modul_id, status)
+        VALUES (p_modul_id, 'installert')
+        ON CONFLICT (modul_id) DO NOTHING;
+    INSERT INTO public.modulregister_hendelse (modul_id, hendelse, til_status, aktor)
+        VALUES (p_modul_id, 'installert', 'installert', p_aktor);
+END $$;
+
+-- Globalt unike, ikke-overlappende oppdragstyper. Global advisory-lås så to
+-- samtidige overlappende registreringer serialiseres (port 18); prefiks-overlapp
+-- avvises (ingen type får være prefiks av en annen — kollisjon i dispatch).
+CREATE OR REPLACE FUNCTION registrer_oppdragstype(
+    p_oppdragstype   TEXT,
+    p_eiermodul      TEXT,
+    p_kontraktversjon INT,
+    p_kontrakt_hash  TEXT,
+    p_aktor          TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_konflikt TEXT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('modulregister:oppdragstype', 0));
+    SELECT oppdragstype INTO v_konflikt FROM public.oppdragstype_register
+     WHERE starts_with(p_oppdragstype, oppdragstype)
+        OR starts_with(oppdragstype, p_oppdragstype)
+     LIMIT 1;
+    IF v_konflikt IS NOT NULL THEN
+        RAISE EXCEPTION 'oppdragstype % overlapper eksisterende %',
+            p_oppdragstype, v_konflikt USING ERRCODE = 'unique_violation';
+    END IF;
+    INSERT INTO public.oppdragstype_register
+        (oppdragstype, eiermodul, kontraktversjon, kontrakt_hash)
+        VALUES (p_oppdragstype, p_eiermodul, p_kontraktversjon, p_kontrakt_hash);
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, kontraktversjon, kontrakt_hash, aktor, detalj)
+        VALUES (p_eiermodul, 'oppdragstype_registrert', p_kontraktversjon,
+                p_kontrakt_hash, p_aktor,
+                jsonb_build_object('oppdragstype', p_oppdragstype));
+END $$;
+
+-- Statusovergang. Statemaskin-triggeren vokter lovlig overgang; her legges den
+-- domene-invarianten DB-en eier: `aktiv` KREVER ≥1 claiming-deployment (port 13).
+-- Evidensverifiseringen (artefakt/sha256/KRAVGRENSER) gjøres av Python-kalleren
+-- FØR dette kallet (port 14 håndheves der).
+CREATE OR REPLACE FUNCTION sett_modulstatus(
+    p_modul_id   TEXT,
+    p_ny_status  TEXT,
+    p_release_id TEXT,
+    p_aktor      TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_gammel TEXT; v_claiming INT;
+BEGIN
+    SELECT status INTO v_gammel FROM public.modulhode
+     WHERE modul_id = p_modul_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sett_modulstatus: ukjent modul %', p_modul_id
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF p_ny_status = 'aktiv' THEN
+        SELECT count(*) INTO v_claiming FROM public.moduldeployment
+         WHERE modul_id = p_modul_id AND livslop = 'claiming';
+        IF v_claiming < 1 THEN
+            RAISE EXCEPTION 'modul % kan ikke bli aktiv uten claiming-deployment',
+                p_modul_id USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+    END IF;
+    UPDATE public.modulhode
+       SET status = p_ny_status, modulrevisjon = modulrevisjon + 1,
+           status_ts = now()
+     WHERE modul_id = p_modul_id;      -- statemaskin-trigger vokter overgangen
+    INSERT INTO public.modulregister_hendelse
+        (modul_id, hendelse, fra_status, til_status, release_id, aktor)
+        VALUES (p_modul_id, 'statusovergang', v_gammel, p_ny_status,
+                p_release_id, p_aktor);
+END $$;
+
+REVOKE ALL ON FUNCTION installer_modul(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION registrer_oppdragstype(TEXT, TEXT, INT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sett_modulstatus(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION installer_modul(TEXT, TEXT) TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION registrer_oppdragstype(TEXT, TEXT, INT, TEXT, TEXT) TO disponit_modules_admin;
+GRANT EXECUTE ON FUNCTION sett_modulstatus(TEXT, TEXT, TEXT, TEXT) TO disponit_modules_admin;
+RESET ROLE;
+
+-- Eieren (modul_eier) må kunne SKRIVE registertabellene når funksjonene kjører
+-- (SECURITY DEFINER kjører som eier). Grantene bor HER, sammen med funksjonene
+-- (PR-013-lærdom: løs migrer.py-kode overlever ikke skjema-gjenoppbygging).
+-- Kjøres som migrator (eier av tabellene) etter RESET ROLE.
+GRANT SELECT, INSERT         ON modulkontrakt          TO disponit_modul_eier;
+GRANT SELECT, INSERT, UPDATE ON modulhode              TO disponit_modul_eier;
+GRANT SELECT, INSERT         ON modulrelease           TO disponit_modul_eier;
+GRANT SELECT, INSERT, UPDATE ON moduldeployment        TO disponit_modul_eier;
+GRANT SELECT, INSERT         ON oppdragstype_register   TO disponit_modul_eier;
+GRANT SELECT, INSERT         ON modulregister_hendelse  TO disponit_modul_eier;

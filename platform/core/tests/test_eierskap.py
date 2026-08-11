@@ -84,6 +84,7 @@ def test_designtabellen_speiler_migrasjonene():
     assert len(design) >= 23, "designtabellen har mistet rader"
     assert set(design.values()) == {"disponit_authenticator",
                                     "disponit_policy_eier",
+                                    "disponit_modul_eier",
                                     "disponit_m37_claimer"}
     for nokkel, eier in DESIGN.items():
         assert design.get(nokkel) == eier, f"utdraget spriker: {nokkel}"
@@ -100,14 +101,14 @@ def test_designtabellen_dekker_alle_privilegert_eide_objekter(migrator):
         "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
         " WHERE n.nspname='public' AND c.relkind IN ('r','p')"
         "   AND pg_get_userbyid(c.relowner) IN"
-        "       ('disponit_authenticator','disponit_m37_claimer','disponit_policy_eier')"
+        "       ('disponit_authenticator','disponit_m37_claimer','disponit_policy_eier','disponit_modul_eier')"
         " UNION ALL"
         " SELECT 'FUNCTION', p.oid::regprocedure::text,"
         "        pg_get_userbyid(p.proowner)"
         "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
         " WHERE n.nspname='public'"
         "   AND pg_get_userbyid(p.proowner) IN"
-        "       ('disponit_authenticator','disponit_m37_claimer','disponit_policy_eier')"
+        "       ('disponit_authenticator','disponit_m37_claimer','disponit_policy_eier','disponit_modul_eier')"
     ).fetchall()
     migrator.rollback()
     udekket = [(a, i) for a, i, e in faktisk if (a, i) not in design]
