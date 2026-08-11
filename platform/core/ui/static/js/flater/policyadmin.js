@@ -15,6 +15,7 @@ import {
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad } from "./felles.js";
+import { visPolicyeditor } from "./policyeditor.js";
 
 function risikoBadge(klasse) {
   return el("span", {
@@ -117,24 +118,39 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
 
 // Handlingsknappene avhenger av utkastets tilstand: utkast → Valider; validert
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
-function handlinger(detalj, uid, ctx, paaFerdig) {
+function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   const boks = el("section", { class: "pa-handling",
     "aria-label": t("ui.policyadmin.handlinger") });
   const runde = detalj.aktiv_runde;
 
   if (detalj.status === "utkast") {
+    // Rediger: lukk detaljskuffen og åpne editoren på utkastet.
+    const rediger = el("button", { class: "knapp", type: "button",
+      text: t("ui.policyadmin.handling.rediger") });
+    rediger.addEventListener("click", () => {
+      if (lukkPanel) lukkPanel();
+      if (aapneEditor) aapneEditor({ utkast_id: uid });
+    });
     const b = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.valider") });
     b.addEventListener("click", () =>
-      validerUtkast(uid).then((r) => {
-        meldLive(r && r.utfall === "ugyldig"
-          ? t("ui.policyadmin.ugyldig") : t("ui.policyadmin.validert"));
+      validerUtkast(uid, detalj.utkastversjon).then((r) => {
+        if (r && r.utfall === "ugyldig") {
+          meldLive(t("ui.policyadmin.ugyldig"));
+          boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
+          boks.append(el("div", { class: "pa-valfeil", role: "alert" },
+            el("p", { text: t("ui.policyadmin.ugyldig") }),
+            el("ul", {}, ...(r.feil || []).map((f) =>
+              el("li", { text: String(f) })))));
+          return;                       // bli i skuffen så eier ser feilene
+        }
+        meldLive(t("ui.policyadmin.validert"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         meldLive(t("ui.policyadmin.feilet"));
       }));
-    boks.append(b);
+    boks.append(rediger, b);
     return boks;
   }
 
@@ -178,7 +194,7 @@ function handlinger(detalj, uid, ctx, paaFerdig) {
   return boks;
 }
 
-function detaljInnhold(detalj, uid, ctx, paaFerdig) {
+function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   const dl = el("dl", { class: "kv" });
   kvRad(dl, t("ui.policyadmin.kol.policy"), detalj.policy_id);
   kvRad(dl, t("ui.policyadmin.kol.status"),
@@ -197,14 +213,17 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig) {
     rot.append(el("h3", { text: t("ui.policyadmin.fire_oyne") }),
       fireOyneStatus(detalj.aktiv_runde));
   }
-  rot.append(handlinger(detalj, uid, ctx, paaFerdig));
+  rot.append(handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel));
   return rot;
 }
 
-function aapneDetalj(uid, ctx) {
+function aapneDetalj(uid, ctx, aapneEditor) {
   hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-    Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
-      innhold: detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid, ctx)) });
+    let panel;
+    const lukk = () => { if (panel) panel.lukk(); };
+    panel = Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
+      innhold: detaljInnhold(detalj, uid, ctx,
+        () => aapneDetalj(uid, ctx, aapneEditor), aapneEditor, lukk) });
   }).catch((e) => {
     if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
     Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
@@ -215,6 +234,16 @@ function aapneDetalj(uid, ctx) {
 
 export function visPolicyadmin(hoved, ctx) {
   const st = { rader: [] };
+
+  // Editoren tar over `hoved`. Ved lagring åpnes utkastets detalj; Avbryt/
+  // fullført går tilbake til lista.
+  function aapneEditor(opts) {
+    visPolicyeditor(hoved, ctx, {
+      ...opts,
+      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor),
+      tilbake: last,
+    });
+  }
 
   function rad(u) {
     return {
@@ -227,8 +256,17 @@ export function visPolicyadmin(hoved, ctx) {
       },
       sortverdi: { opprettet: u.opprettet, policy: u.policy_id },
       handling: { tekst: t("ui.aapne"),
-        paaKlikk: () => aapneDetalj(u.utkast_id, ctx) },
+        paaKlikk: () => aapneDetalj(u.utkast_id, ctx, aapneEditor) },
     };
+  }
+
+  function verktoylinje() {
+    const bar = el("div", { class: "filterbar" });
+    const nytt = el("button", { class: "knapp primar", type: "button",
+      text: t("ui.policyadmin.nytt_utkast") });
+    nytt.addEventListener("click", () => aapneEditor({}));
+    bar.append(nytt);
+    return bar;
   }
 
   function tegn() {
@@ -249,6 +287,7 @@ export function visPolicyadmin(hoved, ctx) {
                       tekst: t("ui.policyadmin.tom_tekst") });
     sett(hoved,
       ...flateHode(t("ui.policyadmin.tittel"), t("ui.policyadmin.undertittel")),
+      verktoylinje(),
       innhold);
   }
 

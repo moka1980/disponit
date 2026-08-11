@@ -310,11 +310,36 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utkast_id": utkast_id, "policy_id": policy_id, "status": status,
         "utkastversjon": ver, "opprettet_av": opprettet_av,
         "innholds_hash": innholds_hash, "base_versjon": aktiv,
+        "innhold": innhold,                        # for redigering i editoren
         "diff": v["diff"], "diff_hash": v["diff_hash"],
         "risikoklasse": v["risikoklasse"],
         "klassifisering_endringer": v["klassifisering_endringer"],
         "pakrevd_antall_godkjennere": v["pakrevd_antall_godkjennere"],
         "aktiv_runde": runde_dto}
+
+
+_MAL_DIR = _schema._SKJEMA_STI.parent            # policies/
+
+
+def hent_maler() -> list:
+    """Bransjemalene (komplette, skjemagyldige policyer) som utgangspunkt for et
+    nytt utkast. Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen
+    tenant (malene er felles). Editoren bygger utkastet ved å redigere de
+    forretningskritiske feltene oppå en valgt mal."""
+    import yaml
+    ut = []
+    for f in sorted(_MAL_DIR.glob("bransjemal-*.yaml")):
+        try:
+            innhold = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(innhold, dict):
+            continue
+        meta = innhold.get("meta") if isinstance(innhold.get("meta"), dict) else {}
+        ut.append({"mal_id": f.stem.replace("bransjemal-", ""),
+                   "bransjemal": meta.get("bransjemal") or f.stem,
+                   "innhold": innhold})
+    return ut
 
 
 def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,

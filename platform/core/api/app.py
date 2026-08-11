@@ -674,6 +674,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_list_utkast(request: Request) -> Response:
         return policyadmin_http.list_utkast_endepunkt(tjeneste, request)
 
+    def pa_maler(request: Request) -> Response:
+        return policyadmin_http.maler_endepunkt(tjeneste, request)
+
     def pa_hent_utkast(request: Request) -> Response:
         return policyadmin_http.hent_utkast_endepunkt(tjeneste, request)
 
@@ -714,6 +717,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
         # {utkast_id:str} aldri slukter dem.
+        Route("/v1/policymaler", pa_maler, methods=["GET"]),
         Route("/v1/policyutkast", pa_opprett_utkast, methods=["POST"]),
         Route("/v1/policyutkast", pa_list_utkast, methods=["GET"]),
         Route("/v1/policyutkast/{utkast_id:str}/valider", pa_valider_utkast,
@@ -1072,6 +1076,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
+    ("GET",  "/v1/policymaler"):             "policy:read",
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",

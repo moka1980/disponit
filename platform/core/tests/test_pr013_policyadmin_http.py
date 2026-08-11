@@ -257,6 +257,38 @@ def test_valider_ugyldig_caches_og_binder_versjon():
         rt.close()
 
 
+def test_hent_maler_gir_bransjemaler():
+    # PR-014: editoren starter fra en komplett bransjemal.
+    maler = policyadmin.hent_maler()
+    ider = {m["mal_id"] for m in maler}
+    assert {"handverk-bygg", "netthandel", "tjenestebedrift"} <= ider
+    for m in maler:
+        assert isinstance(m["innhold"], dict)
+        assert m["innhold"].get("handlinger")        # komplett policy
+
+
+@pg
+def test_maler_endepunkt_uautentisert_avvises(klient):
+    r = klient.get("/v1/policymaler")
+    assert r.status_code == 401
+
+
+@pg
+def test_detalj_eksponerer_innhold_for_redigering():
+    pid = "pol-" + secrets.token_hex(3)
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=_gyldig())
+        det = policyadmin.hent_utkast_detalj(
+            rt, tenant=TEN, aktor="forf", request_id="r",
+            utkast_id=o["utkast_id"])
+        assert isinstance(det["innhold"], dict)
+        assert det["innhold"].get("roller")          # editoren kan laste det
+    finally:
+        rt.close()
+
+
 @pg
 def test_hent_detalj_har_diff_og_klasse():
     pid = "pol-" + secrets.token_hex(3)

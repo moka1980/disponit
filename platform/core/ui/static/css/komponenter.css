@@ -214,3 +214,33 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 }
 .diff-liste code, .feltdiff code { font-family: var(--font-mono); }
 .pa-handling { margin-top: var(--sp-4); }
+
+/* PR-014: veiledet policy-editor. Kun tokens. */
+.editor-seksjon { margin: var(--sp-4) 0; padding: var(--sp-4);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); }
+.editor-seksjon h3 { margin: 0 0 var(--sp-2); }
+.felt { display: flex; flex-direction: column; gap: var(--sp-1);
+  margin: var(--sp-2) 0; }
+.felt-navn { font-size: 0.9em; color: var(--muted); }
+.felt-inp { padding: var(--sp-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--paper); color: var(--ink);
+  max-width: 32rem; }
+.felt-inp:disabled { background: var(--card); color: var(--muted); }
+.editor-liste { display: flex; flex-direction: column; gap: var(--sp-2); }
+.editor-rad { display: flex; flex-wrap: wrap; gap: var(--sp-3);
+  align-items: flex-end; }
+.editor-kort { border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--sp-3); margin: var(--sp-2) 0; }
+.editor-kort h4 { margin: 0 0 var(--sp-2); }
+.editor-knapper { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); }
+.editor-feil, .pa-valfeil { border: 1px solid var(--danger);
+  border-radius: var(--radius-sm); padding: var(--sp-3); margin: var(--sp-3) 0;
+  color: var(--danger); }
+.knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
+.mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);
+  text-align: left; padding: var(--sp-4); min-width: 14rem;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); color: var(--ink); cursor: pointer; }
+.mal-kort:hover { border-color: var(--info); }

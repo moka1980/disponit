@@ -101,14 +101,24 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
   return b;
 }
 
+// Idempotency-Key er PÅKREVD på ALLE skriveruter (server P1 R3) — genereres per
+// kall. Ingen auto-retry på disse (én brukerhandling = én operasjon), så en
+// fersk nøkkel per kall er riktig; nettverksfeil bobler opp til kalleren.
+export const hentMaler = () => hentJson("/v1/policymaler");
 export const opprettUtkast = (policyId, innhold) =>
-  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold });
+  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold },
+         nyIdempotensnokkel());
 export const redigerUtkast = (uid, utkastversjon, innhold) =>
-  _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold });
-export const validerUtkast = (uid) =>
-  _muter(`/v1/policyutkast/${uid}/valider`, "POST", {});
+  _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold },
+         nyIdempotensnokkel());
+// valider krever `utkastversjon` i kroppen (server R3: nøkkelen bindes til
+// versjonen).
+export const validerUtkast = (uid, utkastversjon) =>
+  _muter(`/v1/policyutkast/${uid}/valider`, "POST", { utkastversjon },
+         nyIdempotensnokkel());
 export const apneRunde = (uid) =>
-  _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {});
+  _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {},
+         nyIdempotensnokkel());
 export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
   _muter(`/v1/policyutkast/${uid}/attester`, "POST", { diff_hash: diffHash },
          idempotensnokkel);
