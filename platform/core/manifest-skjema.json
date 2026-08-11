@@ -77,6 +77,9 @@
         "menneskelig_behandling_bestatt": {
           "$ref": "#/$defs/punkt"
         },
+        "policyadministrasjon_bestatt": {
+          "$ref": "#/$defs/punkt"
+        },
         "ytelse_bestatt": {
           "$ref": "#/$defs/punkt"
         },

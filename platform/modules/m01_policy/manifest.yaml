@@ -177,3 +177,34 @@ staging_sjekkliste:
       0,598 s mot taket på 5,0.
     artefakt: deploy/staging/artefakter/rollback-m01-v1-20260805T081921.json
     artefakt_sha256: 0e973fb1d227b450b38ac8e84bde1e96b41b50373bd92893f55cc563c36eb15e
+  policyadministrasjon_bestatt:
+    # PR-013: policyadministrasjon (endring av agentens fullmakter med samme
+    # strenghet som kodeutrulling). EGET artefakt, EGEN måling — ikke lånt.
+    # Driveren (deploy/staging/policyadmin-evidens.py) kjører den EKTE
+    # aktiveringsflyten mot en ekte base på staging-MASKINEN (onecom-clusteret,
+    # disponit_test migrert til 013, `disponit_policy_eier`-rollen opprettet av
+    # oppsett-postgresql.sh sitt mønster) og MÅLER fire fullmakts-veier + de
+    # harde invariantene. `valider_artefakter` åpner filen, verifiserer sha256 og
+    # RE-DERIVERER hver invariant mot KRAVGRENSER (_grenser_policyadmin) — et
+    # `bestatt: true` inne i fila er produsentens egen påstand og teller ikke.
+    status: ja
+    krav_id: policyadmin-v1
+    bevismaalinger:
+      - maalt.utvider.aktivert
+      - maalt.forfatter_alene.stoppet
+      - maalt.innsnevrer.aktivert
+      - maalt.rebasering.rebasert
+      - maalt.policyer_med_flere_aktive
+      - maalt.runtime_skrivenekt
+      - maalt.diff_binding_treff
+    notat: >-
+      Målt på staging-MASKINEN (onecom), ikke lokal docker. 12 injiseringer over
+      fire veier: UTVIDER (mot deny-all) krever to godkjennere → aktivert 3/3;
+      forfatteren alene når aldri terskelen → stoppet 3/3; INNSNEVRER krever én
+      uavhengig → aktivert 3/3; en base flyttet under runden → rebasering 3/3.
+      Harde invarianter fra råtellinger: INGEN policy med mer enn én aktiv rad
+      (0), runtime NEKTES direkte INSERT i `policyer` (V10, målt 1), og HVER
+      attestasjon bandt rundens diff_hash (18/18). Tre kjøringer (0,492/0,526/
+      0,492 s); artefaktet her er den TREGESTE, ikke det peneste tallet.
+    artefakt: deploy/staging/artefakter/policyadmin-v1-20260811T071237.json
+    artefakt_sha256: a21950deed6ca629d7431ff4f087e7fec3bba0f03975eb4d368aad09e246b94f
