@@ -13,6 +13,7 @@ Beviser at DB-en + porten sammen håndhever V6/V7/V9/V10 ende-til-ende:
 """
 import json
 import secrets
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -321,6 +322,54 @@ def test_godkjenner_authz_endret_blokkerer():
     finally:
         rt.close()
     assert _aktiv_versjon(pid) is None
+
+
+@pg
+def test_samtidig_aktivering_deler_godkjennere_ingen_vranglaas():
+    # Codex R3: to samtidige aktiveringer på samme policy som deler godkjennere
+    # i MOTSATT attestasjonsrekkefølge (D1: a,b · D2: b,a) må ikke vranglåse —
+    # medlemskapslåsene tas i deterministisk (sortert) rekkefølge. Deterministisk
+    # utfall: nøyaktig én vinner, den andre rebaserer; ingen deadlock.
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    d1 = "utk-" + secrets.token_hex(3)
+    d2 = "utk-" + secrets.token_hex(3)
+    _utkast(d1, pid, a, {"roller": [{"id": "r1"}], "handlinger": [{"id": "h1"}]})
+    _utkast(d2, pid, b, {"roller": [{"id": "r2"}], "handlinger": [{"id": "h2"}]})
+    s = _rt()
+    try:
+        r1 = _apne(s, d1, a)
+        r2 = _apne(s, d2, b)
+        _attester(s, d1, a, r1["diff_hash"])       # forfatter D1 (venter)
+        _attester(s, d2, b, r2["diff_hash"])       # forfatter D2 (venter)
+    finally:
+        s.close()
+
+    barriere = threading.Barrier(2)
+    res: dict = {}
+
+    def kjor(navn, uid, aktor, dh):
+        c = _rt()
+        try:
+            barriere.wait(timeout=10)
+            res[navn] = _attester(c, uid, aktor, dh)["utfall"]
+        except policyadmin.Aktiveringsfeil as e:
+            res[navn] = e.kode
+        except Exception as e:                      # deadlock ville havne her
+            res[navn] = f"EXC:{type(e).__name__}"
+        finally:
+            c.close()
+
+    t1 = threading.Thread(target=kjor, args=("t1", d1, b, r1["diff_hash"]))
+    t2 = threading.Thread(target=kjor, args=("t2", d2, a, r2["diff_hash"]))
+    t1.start(); t2.start()
+    t1.join(timeout=30); t2.join(timeout=30)
+    assert not t1.is_alive() and not t2.is_alive(), "vranglås/heng"
+    assert not any(str(v).startswith("EXC:") for v in res.values()), res
+    assert list(res.values()).count("aktivert") == 1, res
+    assert "rebasering_kreves" in res.values(), res
+    assert _aktiv_versjon(pid) is not None
 
 
 @pg

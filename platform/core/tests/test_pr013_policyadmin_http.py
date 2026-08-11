@@ -119,9 +119,10 @@ def test_utkast_livssyklus_opprett_rediger_valider():
                 forventet_utkastversjon=1, innhold={"roller": []})
         assert e.value.kode == "utkastversjon_utdatert"
 
-        # Valider → validert + frosset hash.
+        # Valider → validert + frosset hash (versjon 2 etter redigering).
         val = _valider(
-            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid)
+            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            forventet_utkastversjon=2)
         assert val["utfall"] == "validert"
         assert val["innholds_hash"]
 
@@ -147,7 +148,8 @@ def test_valider_ugyldig_policy_gir_feilliste_uten_tilstandsendring():
             innhold={"roller": "ikke-en-liste"})
         uid = o["utkast_id"]
         res = _valider(
-            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid)
+            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1)
         assert res["utfall"] == "ugyldig"
         assert res["feil"]
         # Status urørt (fortsatt utkast, ingen frosset hash).
@@ -186,11 +188,25 @@ def test_opprett_idempotent_replay_samme_utkast_id():
         rt.close()
 
 
+def test_opprett_input_hash_binder_rollback_av_versjon():
+    # Codex R3: bevis at ENDEPUNKTETS hash-konstruksjon binder
+    # `rollback_av_versjon` (ikke bare at funksjonen skiller ulike input_hash).
+    # Endepunktet kaller nøyaktig `opprett_input_hash`.
+    from api.policyadmin_http import opprett_input_hash
+    felles = dict(tenant="t", bid="b", policy_id="p", innhold={"a": 1},
+                  idem="k")
+    h_uten = opprett_input_hash(rollback_av=None, **felles)
+    h_v3 = opprett_input_hash(rollback_av="3", **felles)
+    h_v4 = opprett_input_hash(rollback_av="4", **felles)
+    assert h_uten != h_v3 != h_v4 and h_uten != h_v4   # rullbakk endrer hashen
+    # Deterministisk: samme input → samme hash.
+    assert h_v3 == opprett_input_hash(rollback_av="3", **felles)
+
+
 @pg
 def test_opprett_samme_nokkel_annet_input_gir_konflikt():
-    # Codex R2: `rollback_av_versjon` inngår nå i input-hashen. Samme nøkkel med
-    # ANNET input (her simulert via ulik input_hash) → idempotenskonflikt, ikke
-    # en stille ny/replay-operasjon.
+    # Mekanismen bak: opprett_utkast gir konflikt når samme nøkkel møter et
+    # ANNET input_hash (endepunktet produserer ulik hash for ulik rullbakk).
     pid = "pol-" + secrets.token_hex(3)
     k = secrets.token_hex(8)
     rt = _rt()
@@ -203,6 +219,37 @@ def test_opprett_samme_nokkel_annet_input_gir_konflikt():
                 rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
                 innhold=_gyldig(), idempotency_key=k, input_hash=k + "-b")
         assert e.value.kode == "idempotenskonflikt"
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_ugyldig_caches_og_binder_versjon():
+    # Codex R3: ugyldig validering CACHES (ikke stille rulletilbake), og nøkkelen
+    # er bundet til utkastversjonen.
+    pid = "pol-" + secrets.token_hex(3)
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold={"roller": "ikke-en-liste"})
+        uid = o["utkast_id"]
+        k = secrets.token_hex(8)
+        r1 = policyadmin.valider_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1, idempotency_key=k, input_hash=k)
+        assert r1["utfall"] == "ugyldig"
+        # Replay samme nøkkel → SAMME cachede ugyldig (ikke en stille ny kjøring).
+        r2 = policyadmin.valider_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1, idempotency_key=k, input_hash=k)
+        assert r2.get("replay") is True and r2["utfall"] == "ugyldig"
+        # Feil versjon → utkastversjon_utdatert (nøkkelen er versjonsbundet).
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.valider_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=99, idempotency_key=secrets.token_hex(8),
+                input_hash="x")
+        assert e.value.kode == "utkastversjon_utdatert"
     finally:
         rt.close()
 

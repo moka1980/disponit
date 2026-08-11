@@ -69,6 +69,16 @@ def _input_hash(*deler) -> str:
                           .encode("utf-8")).hexdigest()
 
 
+def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem) -> str:
+    """Idempotens-inputhash for utkastopprettelse. `rollback_av_versjon` INNGÅR
+    (Codex R2/R3): en rullbakk og en ordinær opprettelse med samme nøkkel er
+    ULIKE operasjoner og MÅ gi konflikt, ikke replay. Egen funksjon så bindingen
+    er direkte testbar."""
+    return _input_hash(tenant, bid, "opprett", policy_id,
+                       json.dumps(innhold, sort_keys=True),
+                       "" if rollback_av is None else str(rollback_av), idem)
+
+
 def _kropp(request) -> dict:
     raa = request.scope.get("state", {}).get("kropp", b"")
     try:
@@ -156,13 +166,9 @@ def opprett_utkast_endepunkt(tjeneste, request):
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
-        # `rollback_av_versjon` MÅ inngå i input-hashen (Codex R2): ellers kan
-        # samme nøkkel representere to ULIKE operasjoner (rullbakk vs. ikke)
-        # uten å gi idempotenskonflikt.
         rollback_av = body.get("rollback_av_versjon")
-        ih = _input_hash(tenant, bid, "opprett", policy_id,
-                         json.dumps(innhold, sort_keys=True),
-                         "" if rollback_av is None else str(rollback_av), idem)
+        ih = opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av,
+                                idem)
         res = policyadmin.opprett_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid,
             policy_id=policy_id, innhold=innhold,
@@ -208,10 +214,16 @@ def valider_utkast_endepunkt(tjeneste, request):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
         idem = _krev_idem(request, rid)
-        ih = _input_hash(tenant, bid, "valider", utkast_id, idem)
+        body = _kropp(request)
+        uv = body.get("utkastversjon")
+        if not isinstance(uv, int) or isinstance(uv, bool):
+            return _feil("request_feilformet", rid)
+        # Versjonen inngår i input-hashen → nøkkelen er bundet til utkastets
+        # tilstand (Codex R3).
+        ih = _input_hash(tenant, bid, "valider", utkast_id, uv, idem)
         res = policyadmin.valider_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id,
-            idempotency_key=idem, input_hash=ih)
+            forventet_utkastversjon=uv, idempotency_key=idem, input_hash=ih)
         if res.get("utfall") == "ugyldig":
             from starlette.responses import JSONResponse
             return JSONResponse({"feil": "policy_ugyldig", "detaljer": res["feil"],

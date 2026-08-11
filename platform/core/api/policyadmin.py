@@ -220,11 +220,17 @@ def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
 
 
 def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
-                   request_id: str, utkast_id: str, idempotency_key: str,
-                   input_hash: str) -> dict:
+                   request_id: str, utkast_id: str, forventet_utkastversjon,
+                   idempotency_key: str, input_hash: str) -> dict:
     """Skjemavalider utkastet; ved suksess fryses `innholds_hash` og status går
-    `utkast → validert`. Ugyldig → utfall `ugyldig` med feillisten (ingen
-    tilstandsendring, ikke cachet). Idempotent (P1 R3). Kalleren eier tx."""
+    `utkast → validert`. Ugyldig → utfall `ugyldig` med feillisten.
+
+    Idempotensnøkkelen er BUNDET til utkastversjonen (Codex R3): klienten sender
+    versjonen den validerer, den inngår i `input_hash`, og den LÅSTE radens
+    faktiske versjon må stemme (ellers `utkastversjon_utdatert`). Både gyldig OG
+    ugyldig resultat CACHES (én validering av én versjon = ett svar); et forsøk
+    med samme nøkkel på et endret utkast får `idempotenskonflikt`, ikke et stille
+    replay av et stale svar. Kalleren eier tx."""
     sett_kontekst(conn, tenant, aktor, request_id)
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
@@ -235,21 +241,27 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("idempotenskonflikt")
     rad = conn.execute(
-        "SELECT innhold, status FROM policyutkast WHERE tenant=%s AND"
-        " utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+        "SELECT innhold, status, utkastversjon FROM policyutkast WHERE"
+        " tenant=%s AND utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
     if rad is None:
         conn.rollback()
         raise Aktiveringsfeil("utkast_ukjent")
-    innhold, status = rad
+    innhold, status, ver = rad
     if status != "utkast":
         conn.rollback()
         raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    # Bind nøkkelen til den FAKTISKE versjonen: input_hash inneholder den
+    # forventede versjonen, og her kreves at den stemmer med den låste raden.
+    if not isinstance(forventet_utkastversjon, int) \
+            or forventet_utkastversjon != ver:
+        conn.rollback()
+        raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
     feil = _schema.valider_policy(innhold)
     if feil:
-        # Ugyldig er ikke en tilstandsendring → rull tilbake (også
-        # idempotens-claimet), så en rettet re-validering kan kjøre.
-        conn.rollback()
-        return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil}
+        # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
+        # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
+        return _fullfor(conn, tenant, idempotency_key, {
+            "utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil})
     h = _pr.innholds_hash(innhold)
     conn.execute(
         "UPDATE policyutkast SET status='validert', innholds_hash=%s"
@@ -614,7 +626,11 @@ def _reautoriser_godkjennere(conn, tenant: str, attestasjoner) -> str | None:
     sett = {}
     for bid, rolle, av in attestasjoner:
         sett[bid] = (rolle, av)                     # distinkt per bruker (UNIQUE)
-    for bid, (rolle, av) in sett.items():
+    # DETERMINISTISK låserekkefølge (Codex R3): to samtidige aktiveringer som
+    # deler godkjennere ville kunne vranglåse om de tok radlåsene i motsatt
+    # rekkefølge. Sortert på bruker_id tar begge samme lås først → serialisering.
+    for bid in sorted(sett):
+        rolle, av = sett[bid]
         rad = conn.execute("SELECT roller, authz_version FROM"
                            " laas_godkjenner(%s,%s)", (tenant, bid)).fetchone()
         if rad is None:
