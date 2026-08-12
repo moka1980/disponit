@@ -258,14 +258,21 @@ CREATE TRIGGER deployment_livslop BEFORE UPDATE ON moduldeployment
 SET LOCAL ROLE disponit_modul_eier;
 
 -- Onboarding: opprett modulhodet (status 'installert'). Idempotent.
+-- Codex P2: hendelsen skrives KUN når hodet faktisk ble opprettet. Med en
+-- ubetinget INSERT ville hvert gjentatte kall (og taperen i en samtidig
+-- installasjon, der ON CONFLICT DO NOTHING gir 0 rader) lagt enda en
+-- `installert`-hendelse i den append-only revisjonen — en overgang som aldri
+-- skjedde. FOUND er false når konflikthåndteringen ikke satte inn noe.
 CREATE OR REPLACE FUNCTION installer_modul(p_modul_id TEXT, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
     INSERT INTO public.modulhode (modul_id, status)
         VALUES (p_modul_id, 'installert')
         ON CONFLICT (modul_id) DO NOTHING;
-    INSERT INTO public.modulregister_hendelse (modul_id, hendelse, til_status, aktor)
-        VALUES (p_modul_id, 'installert', 'installert', p_aktor);
+    IF FOUND THEN
+        INSERT INTO public.modulregister_hendelse (modul_id, hendelse, til_status, aktor)
+            VALUES (p_modul_id, 'installert', 'installert', p_aktor);
+    END IF;
 END $$;
 
 -- Globalt unike, ikke-overlappende oppdragstyper. Global advisory-lås så to
@@ -321,13 +328,22 @@ BEGIN
         RAISE EXCEPTION 'sett_modulstatus: ukjent modul %', p_modul_id
             USING ERRCODE = 'no_data_found';
     END IF;
-    -- Codex P1: en nodeaktivert modul reaktiveres KUN via reaktiver_modul (epoch-
-    -- gjerdet, epoch++). Den generiske veien ut av nodeaktivert ville omgått
-    -- fencingen — statemaskin-triggeren tillater overgangen, men fullmakten her
-    -- gjør det ikke.
+    -- Codex P1: `nodeaktivert` er nødstoppens EGEN tilstand — BEGGE veier er
+    -- reservert for den gjerdede stien. Ut: kun `reaktiver_modul` (epoch-gjerdet,
+    -- epoch++). Inn: kun `noddeaktiver_modul` (epoch++, obligatorisk begrunnelse,
+    -- drenering av alle claiming-deployments). Statemaskin-triggeren tillater
+    -- begge overgangene som sikkerhetsnett, men fullmakten ligger her: en generisk
+    -- `sett_modulstatus(..., 'nodeaktivert', ...)` ville satt statusen UTEN
+    -- epoch-bump, begrunnelse og drenering, slik at en påfølgende reaktivering
+    -- gjenbrukte deployment-state nødstien skulle ha gjerdet bort.
     IF v_gammel = 'nodeaktivert' THEN
         RAISE EXCEPTION 'sett_modulstatus: nodeaktivert modul % reaktiveres kun '
             'via reaktiver_modul', p_modul_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_ny_status = 'nodeaktivert' THEN
+        RAISE EXCEPTION 'sett_modulstatus: modul % nødstoppes kun via '
+            'noddeaktiver_modul', p_modul_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF p_ny_status = 'aktiv' THEN

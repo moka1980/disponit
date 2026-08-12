@@ -689,3 +689,58 @@ def test_livslopshendelser_skiller_miljo():
             "pensjonerings-hendelsen skiller ikke miljø"
     finally:
         r.close()
+
+
+@pg
+def test_sett_modulstatus_avviser_inngang_til_nodeaktivert():
+    # Codex P1: BEGGE veier gjennom `nodeaktivert` er reservert nødstien. Den
+    # generiske veien INN ville satt statusen uten epoch-bump, uten begrunnelse
+    # og uten å drenere claiming-deploymentene — og en påfølgende reaktivering
+    # ville gjenbrukt nøyaktig den deployment-staten gjerdet skulle stengt ute.
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)
+        assert _hodefelt(m) == ("aktiv", 0)
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT sett_modulstatus(%s,'nodeaktivert','r1','sys')",
+                      (m,))
+        a.rollback()
+        # Modulen står urørt: status aktiv, epoch 0, deploymenten claiming.
+        assert _hodefelt(m) == ("aktiv", 0), \
+            "generisk sett_modulstatus endret status til nodeaktivert"
+    finally:
+        a.close()
+    r = _rt()
+    try:
+        assert r.execute(
+            "SELECT livslop FROM moduldeployment WHERE modul_id=%s",
+            (m,)).fetchone()[0] == "claiming", \
+            "deploymenten ble drenert uten nødstien"
+    finally:
+        r.close()
+
+
+@pg
+def test_installer_modul_hendelse_bare_ved_faktisk_opprettelse():
+    # Codex P2: `installer_modul` er idempotent, men hendelsesstrømmen er
+    # append-only revisjon. Et gjentatt kall (og taperen i et samtidig kappløp)
+    # treffer ON CONFLICT DO NOTHING og oppretter INGEN modul — da skal det
+    # heller ikke registreres en `installert`-overgang som aldri skjedde.
+    m = _mid()
+    a = _admin()
+    try:
+        a.execute("SELECT installer_modul(%s,'sys')", (m,)); a.commit()
+        a.execute("SELECT installer_modul(%s,'sys')", (m,)); a.commit()
+        a.execute("SELECT installer_modul(%s,'annen-aktor')", (m,)); a.commit()
+    finally:
+        a.close()
+    r = _rt()
+    try:
+        assert r.execute(
+            "SELECT count(*) FROM modulregister_hendelse"
+            " WHERE modul_id=%s AND hendelse='installert'",
+            (m,)).fetchone()[0] == 1, \
+            "gjentatt installer_modul dupliserte installert-hendelsen"
+    finally:
+        r.close()

@@ -168,6 +168,21 @@ BEGIN
         RAISE EXCEPTION 'claim_neste_oppdrag: modul_id mangler';
     END IF;
 
+    -- Codex P1: DELT gjerde mot registrering av oppdragstyper — SAMME nøkkel som
+    -- `registrer_oppdragstype` tar EKSKLUSIVT (014). Uten dette er «uregistrert»
+    -- en avgjørelse tatt på et snapshot: en `registrer_oppdragstype` kan committe
+    -- ETTER at kandidatsøket og registeroppslaget her har lest, men FØR claimet
+    -- committer, og oppdraget blir da claimet UBUNDET (ingen kontrakt, ingen
+    -- epoch) og uten aktiv-modul-/deployment-portene — nøyaktig den porten
+    -- registreringen skulle innføre. Gjerdet tas FØR kandidatsøket, som selv leser
+    -- `oppdragstype_register` i predikatet, så begge lesningene ligger innenfor.
+    -- Delt: samtidige claims (også på tvers av moduler) sperrer ikke for
+    -- hverandre; kun en registrering venter, og registrering er en sjelden
+    -- admin-/deployhandling. Låserekkefølgen er global → modul → oppdragsrad i
+    -- ALLE stier (overgangsfunksjonene tar bare modul-låsen), så ingen syklus.
+    PERFORM pg_advisory_xact_lock_shared(
+        hashtextextended('modulregister:oppdragstype', 0));
+
     LOOP
         -- Oppdragslås: neste kandidat for eiermodulen (SKIP LOCKED). Den betingede
         -- binding-tilgjengeligheten er ALT et predikat her (Codex P2: da låses

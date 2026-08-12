@@ -408,3 +408,43 @@ def test_claim_deler_modullaasen_men_gjerder_fortsatt_nodstopp(migrator):
             n.close()
     finally:
         c1.rollback(); c1.close()
+
+
+@pg
+def test_claim_deler_oppdragstype_gjerdet_med_registrering(migrator):
+    # Codex P1: «uregistrert» er en avgjørelse tatt på et snapshot. Uten et delt
+    # gjerde kunne `registrer_oppdragstype` committe ETTER at claimet leste
+    # registeret, men FØR claimet committet — og oppdraget ble claimet UBUNDET,
+    # forbi aktiv-modul-/deployment-portene registreringen nettopp innførte.
+    # Claimet tar derfor SAMME globale nøkkel som registreringen, men DELT.
+    t = _tok(); modul = "cp5mod-" + t; ot = "cp5-" + t; kh = "k-" + t
+    a = _admin()
+    try:
+        _reg_kontrakt(a, modul, kh)
+        a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                  (ot, modul, kh)); a.commit()
+        _aktiver_modul(a, modul, kh)
+    finally:
+        a.close()
+    sak, logg = _lag_sak(migrator, TENANT)
+    _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=ot,
+                      eiermodul=modul)
+
+    # En ÅPEN registrering holder nøkkelen EKSKLUSIVT → claimet må vente
+    # (målbart som lock_timeout i _claim_apen i stedet for en hengende test).
+    reg = _admin()
+    try:
+        reg.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                    ("cp5annen-" + t, modul, kh))          # ikke committet
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            _claim_apen(modul, ["purring."], secrets.token_hex(16),
+                        release="r1", miljo="staging", epoch=0)
+        reg.rollback()
+    finally:
+        reg.close()
+
+    # Uten en pågående registrering går claimet gjennom som før — det delte
+    # gjerdet sperrer bare mot samtidig registrering, ikke mot claims.
+    assert _claim(modul, ["purring."], secrets.token_hex(16),
+                  release="r1", miljo="staging", epoch=0) is not None, \
+        "gjerdet blokkerte et claim uten samtidig registrering"
