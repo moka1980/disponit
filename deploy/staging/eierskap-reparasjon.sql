@@ -48,6 +48,17 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'arkiver_policyversjon(text,text,text)',            'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kapabilitet(text,text)',                      'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
+    ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
+    -- 005→015 (Codex P1): den GAMLE 4-args-signaturen står her til den er borte
+    -- overalt. Reparasjonen kjører FØR migrer.py (oppsett-postgresql.sh) og som
+    -- superbruker: på en base som ennå ikke har kjørt 015 ville steg 2
+    -- klassifisert den fortsatt installerte gamle funksjonen som strøgods og
+    -- flyttet den til migrator. 015 dropper den under `SET LOCAL ROLE
+    -- disponit_m37_claimer` og ville da feilet på manglende eierskap —
+    -- medlemskapet er `WITH INHERIT FALSE`, så migrator kan heller ikke droppe
+    -- den på claimers vegne, og HELE oppgraderingen fra 005 stopper. Raden er
+    -- transitorisk: etter 015 finnes ikke funksjonen, og designrader uten
+    -- objekt hoppes stille over (oppslaget er to_regprocedure → NULL).
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_sak(text,integer)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'forny_claim(text,bigint,text,integer,integer)',    'disponit_m37_claimer'),
@@ -71,7 +82,19 @@ INSERT INTO _design VALUES
     -- 013 (PR-013): den herdede aktiveringsfunksjonen. Eid av
     -- disponit_policy_eier fordi policyer/policy_hode er off-limits for runtime
     -- (runtime får KUN EXECUTE). Ny privilegert eier — paritetstesten dekker den.
-    ('FUNCTION', 'aktiver_policy(text,text,integer,text)',           'disponit_policy_eier');
+    ('FUNCTION', 'aktiver_policy(text,text,integer,text)',           'disponit_policy_eier'),
+    -- 014 (PR-014a): modulregisterets herdede overgangsfunksjoner. Eid av
+    -- disponit_modul_eier fordi registertabellene er off-limits for runtime
+    -- (runtime får KUN SELECT). Paritetstesten dekker dem.
+    ('FUNCTION', 'installer_modul(text,text)',                        'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_release(text,text,integer,text,text,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
+    ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
+    ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
+    ('FUNCTION', 'reaktiver_modul(text,bigint,text)',                'disponit_modul_eier');
 
 DO $$
 DECLARE
