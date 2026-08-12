@@ -44,6 +44,10 @@ from . import feil as feiltabell
 from . import kjerne
 
 MAKS_KROPP = 256 * 1024          # v2 Del 3.4
+# PR-014b §7: en artefakt-klartekst kan være opptil 1 MiB (DB-CHECK); HTTP-kroppen
+# bærer i tillegg jti + JSON-struktur, så opplastingsruten får en romsligere grense.
+MAKS_ARTEFAKT_KROPP = 1024 * 1024 + 64 * 1024
+STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
 
 #: Ytelsesporten perf-m01-v1 krever 100 beslutninger/sekund vedvarende fra
 #: ÉN klient. Standard rate-grense må derfor ligge over 6 000/minutt, ellers
@@ -307,6 +311,9 @@ class KroppsgrenseMiddleware:
         rid = scope.setdefault("state", {}).get("request_id") or _nytt_request_id()
         scope["state"]["request_id"] = rid
 
+        # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
+        maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
+                else self.maks)
         oppgitt = headere.get("content-length")
         chunked = "chunked" in headere.get("transfer-encoding", "").lower()
         if oppgitt is None and not chunked:
@@ -314,7 +321,7 @@ class KroppsgrenseMiddleware:
         if oppgitt is not None:
             if not oppgitt.isdigit():
                 return await self._avvis(send, "body_lengde_ugyldig", rid)
-            if int(oppgitt) > self.maks:
+            if int(oppgitt) > maks:
                 # Åpenbart for stor: avvis uten å lese en eneste byte.
                 return await self._avvis(send, "body_for_stor", rid)
 
@@ -324,7 +331,7 @@ class KroppsgrenseMiddleware:
             if melding["type"] == "http.disconnect":
                 return
             kropp += melding.get("body", b"")
-            if len(kropp) > self.maks:
+            if len(kropp) > maks:
                 return await self._avvis(send, "body_for_stor", rid)
             if not melding.get("more_body", False):
                 break
@@ -618,6 +625,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oppdrag_kvittering(request: Request) -> Response:
         return _oppdrag_kvittering(tjeneste, request)
 
+    def artefakt_upload(request: Request) -> Response:
+        return _artefakt_upload(tjeneste, request)
+
     # PR-008: lese-endepunktene. Importen ligger her — ETTER at modulens
     # hjelpere er definert — fordi `lesing` importerer dem på modulnivå.
     from . import lesing
@@ -701,6 +711,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk sjekk i testsuiten håndhever den.
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
+        Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
         # `/v1/policy/aktiv` registreres FØR mønsterruter kunne ha slukt
         # den, og detaljrutene bruker {id:int} så en ikke-numerisk sti er
@@ -1067,6 +1078,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/unntak"):                  "exceptions:read",
     ("POST", "/v1/oppdrag/claim"):           ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/oppdrag/kvittering"):      ORDRESCOPE + "<prefiks>",
+    ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
     ("GET",  "/v1/beslutninger"):            "decisions:read",
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
@@ -1603,6 +1615,113 @@ def _sikkerhetssak_kvittering(conn, tenant: str, unntak_id: int,
         " request_id, detalj) VALUES (%s,%s,%s,'kvitteringsport',%s,%s)",
         (tenant, unntak_id, hendelse, rid,
          json.dumps(detalj, ensure_ascii=False)))
+
+
+# ---------------------------------------------------------------------------
+# PR-014b §7: artefakt-opplasting
+# ---------------------------------------------------------------------------
+
+def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
+    """Controlleren laster opp en lukket rapport med en EGEN kapabilitet.
+
+    Tenanten kommer fra KAPABILITETEN, aldri fra body. Serveren kanoniserer
+    (JCS) og hasher rapporten selv — modulens egen hash-påstand finnes ikke i
+    kontrakten. Rapporten krypteres med tenant-DEK og lagres `staged`; artefaktet
+    promoteres senere i kvittering-ingesten (samme tx som statusovergangen).
+    Idempotent på (kapabilitet_jti, serverhash); samme jti + ANNET dokument →
+    motstridende evidens.
+    """
+    from policy_validator import jcs
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        if "artifacts:upload" not in auth.scopes:
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope="artifacts:upload")
+            return _feilsvar("scope_mangler", rid)
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kropp = json.loads(raa.decode("utf-8"))
+            jti = kropp["kapabilitet_jti"]
+            rapport = kropp["rapport"]
+        except (ValueError, KeyError, AttributeError, TypeError):
+            return _feilsvar("request_feilformet", rid)
+        if not isinstance(jti, str) or not isinstance(rapport, dict):
+            return _feilsvar("request_feilformet", rid)
+
+        # Innløs kapabiliteten — KUN for den holdende modulen (auth.rolle).
+        bind = conn.execute(
+            "SELECT tenant, oppdrag_id, release_id, kontraktversjon,"
+            " kontrakt_hash, module_epoch, artefakttype"
+            "  FROM innlos_artefaktkapabilitet(%s, %s)",
+            (jti, auth.rolle)).fetchone()
+        if bind is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid)
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        (tenant, opp_id, release_id, kontraktversjon, kontrakt_hash,
+         module_epoch, artefakttype) = bind
+
+        # Tenant fra kapabiliteten. Server-beregnet JCS-hash + størrelse.
+        sett_kontekst(conn, tenant, auth.aktor, rid)
+        try:
+            kanon = jcs.kanoniske_bytes(rapport)
+        except jcs.Ikkekanoniserbar:
+            conn.rollback()
+            return _feilsvar("request_feilformet", rid)
+        storrelse = len(kanon)
+        if storrelse > 1048576:
+            conn.rollback()
+            return _feilsvar("body_for_stor", rid)
+        klartekst_sha256 = hashlib.sha256(kanon).hexdigest()
+
+        try:
+            key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+        except psycopg.Error:
+            raise
+        except Exception as e:
+            conn.rollback()
+            return _feilsvar("tenantnokkel_mangler", rid)
+        ct, nonce = kryptering.krypter(dek, rapport, tenant, key_id)
+
+        try:
+            aid = conn.execute(
+                "SELECT lagre_artefakt_staged(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                "%s,%s,%s)",
+                (tenant, opp_id, artefakttype, auth.rolle, release_id,
+                 kontraktversjon, kontrakt_hash, module_epoch, storrelse,
+                 klartekst_sha256, ct, nonce, key_id, jti)).fetchone()[0]
+        except psycopg.errors.UniqueViolation:
+            # Samme jti + ANNET kanonisk dokument → motstridende evidens.
+            conn.rollback()
+            tjeneste.logg.hendelse("artefakt_konflikt", rid, tenant,
+                                   art="sikkerhet")
+            return _feilsvar("idempotenskonflikt", rid)
+
+        utfall = conn.execute("SELECT bruk_artefaktkapabilitet(%s,%s)",
+                              (jti, aid)).fetchone()[0]
+        if utfall == "konflikt":
+            conn.rollback()
+            return _feilsvar("idempotenskonflikt", rid)
+        conn.commit()
+        # Server-beregnet hash returneres (modulen binder den i resultatkvitteringen).
+        return kanonisk_json({"artefakt_id": str(aid),
+                              "klartekst_sha256": klartekst_sha256,
+                              "request_id": rid}, 200, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
 
 
 # ---------------------------------------------------------------------------
