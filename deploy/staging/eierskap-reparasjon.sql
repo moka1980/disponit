@@ -49,6 +49,17 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'bruk_kapabilitet(text,text)',                      'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
+    -- 005→015 (Codex P1): den GAMLE 4-args-signaturen står her til den er borte
+    -- overalt. Reparasjonen kjører FØR migrer.py (oppsett-postgresql.sh) og som
+    -- superbruker: på en base som ennå ikke har kjørt 015 ville steg 2
+    -- klassifisert den fortsatt installerte gamle funksjonen som strøgods og
+    -- flyttet den til migrator. 015 dropper den under `SET LOCAL ROLE
+    -- disponit_m37_claimer` og ville da feilet på manglende eierskap —
+    -- medlemskapet er `WITH INHERIT FALSE`, så migrator kan heller ikke droppe
+    -- den på claimers vegne, og HELE oppgraderingen fra 005 stopper. Raden er
+    -- transitorisk: etter 015 finnes ikke funksjonen, og designrader uten
+    -- objekt hoppes stille over (oppslaget er to_regprocedure → NULL).
+    ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_sak(text,integer)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'forny_claim(text,bigint,text,integer,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_hengende_kapabiliteter()',                   'disponit_m37_claimer'),

@@ -338,3 +338,73 @@ def test_oppdrag_binding_kan_ikke_settes_ved_insert(migrator):
             "'reinnsending','purring.send','em','\\x00','k','\\x00',now(),"
             "now()+interval '1 day','forfalsk')", (TENANT,))
     migrator.rollback()
+
+
+def _claim_apen(modul_id, prefiks, cid, *, release, miljo, epoch,
+                lock_timeout="2s"):
+    """Som `_claim`, men lar transaksjonen stå ÅPEN — låsene beholdes.
+
+    Kalleren må rulle tilbake og lukke. `lock_timeout` gjør en blokkering
+    målbar: venter kallet på modul-låsen, feiler det i stedet for å henge.
+    """
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        c.execute("SELECT set_config('disponit.aktor','m37',true),"
+                  "       set_config('disponit.request_id','r',true)")
+        # set_config(...,true) = SET LOCAL; SET tar ikke parametre.
+        c.execute("SELECT set_config('lock_timeout', %s, true)", (lock_timeout,))
+        rad = c.execute(
+            "SELECT id FROM claim_neste_oppdrag(%s,%s,%s,%s,%s,%s,%s)",
+            (modul_id, prefiks, cid, 300, release, miljo, epoch)).fetchone()
+        return c, rad
+    except BaseException:
+        c.close()
+        raise
+
+
+@pg
+def test_claim_deler_modullaasen_men_gjerder_fortsatt_nodstopp(migrator):
+    # Codex P2: modul-låsen tas DELT av claims. En eksklusiv lås serialiserte
+    # HVERT claim for samme modul — og API-et slipper den først ved commit,
+    # etter dekryptering, minimering og kapabilitetsutstedelse — så modulens
+    # pollere køet bak hele request-transaksjonen selv når SKIP LOCKED alt
+    # hadde gitt dem hver sin rad. Gjerdet mot nødstopp (eksklusiv lås) står.
+    t = _tok(); modul = "cp5mod-" + t; ot = "cp5-" + t; kh = "k-" + t
+    a = _admin()
+    try:
+        _reg_kontrakt(a, modul, kh)
+        a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                  (ot, modul, kh)); a.commit()
+        _aktiver_modul(a, modul, kh)
+    finally:
+        a.close()
+    for _ in range(2):
+        sak, logg = _lag_sak(migrator, TENANT)
+        _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=ot,
+                          eiermodul=modul)
+
+    c1, r1 = _claim_apen(modul, ["purring."], secrets.token_hex(16),
+                         release="r1", miljo="staging", epoch=0)
+    try:
+        assert r1 is not None, "første claim feilet"
+        # Samtidig claim for SAMME modul skal ikke vente på den delte låsen.
+        c2, r2 = _claim_apen(modul, ["purring."], secrets.token_hex(16),
+                             release="r1", miljo="staging", epoch=0)
+        try:
+            assert r2 is not None and r2[0] != r1[0], \
+                "samtidig claim for samme modul ble blokkert/tomt"
+        finally:
+            c2.rollback(); c2.close()
+        # ... men nødstoppet, som tar låsen EKSKLUSIVT, må fortsatt vente på
+        # at det åpne claimet committer (her: til lock_timeout slår inn).
+        n = _admin()
+        try:
+            n.execute("SET LOCAL lock_timeout = '2s'")
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                n.execute("SELECT noddeaktiver_modul(%s,'test','sys')", (modul,))
+            n.rollback()
+        finally:
+            n.close()
+    finally:
+        c1.rollback(); c1.close()

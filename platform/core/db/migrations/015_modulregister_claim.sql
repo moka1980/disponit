@@ -136,8 +136,9 @@ GRANT SELECT ON moduldeployment       TO disponit_m37_claimer;
 --    registrert oppdragstype claimes bare når NETTOPP den deploymenten er
 --    `claiming` og eiermodulen matcher. `p_lease_s` beholder sin 4. posisjon, de
 --    tre nye er valgfrie bakerst → eksisterende 3-/4-args-kall (app + legacy) er
---    uendret. Prosedyren tar modul-låsen (serialiserer med noddeaktiver_modul) og
---    re-leser modulstatus/deployment UNDER låsen. Eid av disponit_m37_claimer.
+--    uendret. Prosedyren tar modul-låsen DELT (serialiserer mot noddeaktiver_modul
+--    og de andre overgangene, som tar den eksklusivt — men ikke mot andre claims)
+--    og re-leser modulstatus/deployment UNDER låsen. Eid av disponit_m37_claimer.
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_m37_claimer;
 -- Utvidet signatur → dropp den gamle 4-args-varianten (005) FØR ny opprettes.
@@ -223,10 +224,16 @@ BEGIN
             -- Legacy: uregistrert oppdragstype → ingen binding (som før).
             v_b_modul := NULL; v_b_ver := NULL; v_b_hash := NULL; v_b_epoch := NULL;
         ELSE
-            -- Modul-lås: venter til et evt. samtidig noddeaktiver_modul har
-            -- committet, så re-lesingen under er FERSK (Codex P1: serialiser
-            -- nødstopp med nye claims).
-            PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || r.eiermodul, 0));
+            -- Modul-lås, DELT (Codex P2): claims skal serialiseres mot
+            -- overgangene (nødstopp/status/releasebytte tar den EKSKLUSIVT),
+            -- men ikke mot hverandre — en eksklusiv lås her ville køet alle
+            -- modulens pollere bak hele claim-transaksjonen (API-et committer
+            -- først etter dekryptering, minimering og kapabilitetsutstedelse),
+            -- selv når SKIP LOCKED alt har gitt dem hver sin rad. Delt lås gir
+            -- samme gjerde mot nødstopp: den venter til et evt. samtidig
+            -- noddeaktiver_modul har committet, så re-lesingen under er FERSK.
+            PERFORM pg_advisory_xact_lock_shared(
+                hashtextextended('modul:' || r.eiermodul, 0));
             SELECT (r.eiermodul = p_modul_id)   -- Codex P1: eiermodulen eier typen
                AND EXISTS (SELECT 1 FROM public.modulhode h
                             WHERE h.modul_id = r.eiermodul AND h.status = 'aktiv'

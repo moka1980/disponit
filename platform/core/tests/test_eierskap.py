@@ -116,6 +116,50 @@ def test_designtabellen_dekker_alle_privilegert_eide_objekter(migrator):
 
 
 @pg
+def test_gammel_claim_signatur_beholdes_hos_claimer(migrator):
+    """Codex P1: reparasjonen kjører FØR migrer.py (oppsett-postgresql.sh).
+
+    En base som ennå ikke har kjørt 015 har den GAMLE 4-args
+    `claim_neste_oppdrag` installert og eid av m37_claimer. Står ikke den
+    signaturen i designtabellen, klassifiserer steg 2 den som strøgods og
+    flytter den til migrator — og 015, som dropper den under
+    `SET LOCAL ROLE disponit_m37_claimer`, feiler på manglende eierskap
+    (medlemskapet er `WITH INHERIT FALSE`, så migrator kan ikke droppe den
+    på claimers vegne heller). Hele oppgraderingen fra 005 stopper.
+
+    Tilstanden fabrikkeres ærlig: den gamle signaturen gjenskapes som
+    m37_claimer (015 har droppet den i denne basen), reparasjonen kjøres,
+    og eierskapet skal stå urørt.
+    """
+    gammel = "claim_neste_oppdrag(text,text[],text,integer)"
+    assert _design_fra_sql().get(("FUNCTION", gammel)) \
+        == "disponit_m37_claimer", "den gamle signaturen mangler i designet"
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    migrator.execute("CREATE FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT,"
+                     " INT) RETURNS VOID LANGUAGE plpgsql AS 'BEGIN RETURN;"
+                     " END'")
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    try:
+        assert _eier(migrator, "FUNCTION", gammel) == "disponit_m37_claimer"
+        _kjor_reparasjon(migrator)
+        assert _eier(migrator, "FUNCTION", gammel) == "disponit_m37_claimer", \
+            "reparasjonen strandet den gamle signaturen — 015 kan ikke droppe den"
+    finally:
+        # Ryddes ALLTID: med begge signaturene installert er et 4-args-kall
+        # tvetydig (de tre nye parameterne har DEFAULT), og hver annen test
+        # som claimer ville feilet.
+        migrator.rollback()
+        eier = _eier(migrator, "FUNCTION", gammel)
+        if eier and eier != "disponit_migrator":
+            migrator.execute(f"SET ROLE {eier}")
+        migrator.execute("DROP FUNCTION IF EXISTS claim_neste_oppdrag(TEXT,"
+                         " TEXT[], TEXT, INT)")
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+
+@pg
 def test_flatet_designobjekt_repareres_tilbake(migrator):
     """Retning 1: designobjekt hos migrator -> designeier.
 

@@ -112,6 +112,11 @@ CREATE TABLE IF NOT EXISTS oppdragstype_register (
 
 -- ------------------------------------------------------------
 -- 6. modulregister_hendelse — append-only revisjon av ALLE overganger.
+--    `miljo` (Codex P2): en release kan være deployet i BÅDE staging og
+--    produksjon (miljø er del av deploymentens primærnøkkel). Uten miljøet
+--    er to livsløpshendelser for samme release ikke til å skille fra
+--    hverandre — særlig ved nødstopp, som skriver én hendelse per drenert
+--    deployment. NULL for hendelser uten miljø (kontrakt/release/status).
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS modulregister_hendelse (
     id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -122,6 +127,8 @@ CREATE TABLE IF NOT EXISTS modulregister_hendelse (
     fra_livslop      TEXT,
     til_livslop      TEXT,
     release_id       TEXT,
+    miljo            TEXT CHECK (miljo IS NULL
+                                 OR miljo IN ('staging', 'produksjon')),
     kontraktversjon  INT,
     kontrakt_hash    TEXT,
     module_epoch     BIGINT,
@@ -513,20 +520,21 @@ BEGIN
     RETURNING release_id INTO v_gammel_release;
     IF v_gammel_release IS NOT NULL THEN
         INSERT INTO public.modulregister_hendelse
-            (modul_id, hendelse, fra_livslop, til_livslop, release_id,
+            (modul_id, hendelse, fra_livslop, til_livslop, release_id, miljo,
              kontraktversjon, kontrakt_hash, aktor)
             VALUES (p_modul_id, 'drainet_ved_bytte', 'claiming', 'draining',
-                    v_gammel_release, p_kontraktversjon, p_kontrakt_hash, p_aktor);
+                    v_gammel_release, p_miljo, p_kontraktversjon,
+                    p_kontrakt_hash, p_aktor);
     END IF;
     INSERT INTO public.moduldeployment (modul_id, release_id, kontraktversjon,
         kontrakt_hash, miljo, livslop)
         VALUES (p_modul_id, p_ny_release_id, p_kontraktversjon, p_kontrakt_hash,
                 p_miljo, 'claiming');
     INSERT INTO public.modulregister_hendelse
-        (modul_id, hendelse, til_livslop, release_id, kontraktversjon,
+        (modul_id, hendelse, til_livslop, release_id, miljo, kontraktversjon,
          kontrakt_hash, aktor)
         VALUES (p_modul_id, 'releasebytte', 'claiming', p_ny_release_id,
-                p_kontraktversjon, p_kontrakt_hash, p_aktor);
+                p_miljo, p_kontraktversjon, p_kontrakt_hash, p_aktor);
 END $$;
 
 -- Idempotent pensjonering: draining → retired. `claiming` må draines først
@@ -557,9 +565,9 @@ BEGIN
      WHERE modul_id = p_modul_id AND miljo = p_miljo
        AND release_id = p_release_id;
     INSERT INTO public.modulregister_hendelse
-        (modul_id, hendelse, fra_livslop, til_livslop, release_id, aktor)
+        (modul_id, hendelse, fra_livslop, til_livslop, release_id, miljo, aktor)
         VALUES (p_modul_id, 'pensjonert', 'draining', 'retired',
-                p_release_id, p_aktor);
+                p_release_id, p_miljo, p_aktor);
 END $$;
 
 REVOKE ALL ON FUNCTION registrer_kontrakt(TEXT, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
@@ -616,20 +624,22 @@ BEGIN
     -- Fjern fencet arbeidsgrunnlag: enhver claiming draines (emergency stop),
     -- så reaktivering ikke kan gjenbruke en gammel deployment. Hver tvangs-
     -- drenert deployment revideres (Codex P2 — ellers står de som claiming i
-    -- hendelsesstrømmen).
+    -- hendelsesstrømmen). Miljøet er med (Codex P2): nødstoppet treffer ALLE
+    -- miljøer, og samme release i staging og produksjon gir ellers to
+    -- identiske hendelser.
     FOR v_d IN
         WITH drenert AS (
             UPDATE public.moduldeployment SET livslop = 'draining'
              WHERE modul_id = p_modul_id AND livslop = 'claiming'
-            RETURNING release_id, kontraktversjon, kontrakt_hash)
+            RETURNING release_id, miljo, kontraktversjon, kontrakt_hash)
         SELECT * FROM drenert
     LOOP
         INSERT INTO public.modulregister_hendelse
-            (modul_id, hendelse, fra_livslop, til_livslop, release_id,
+            (modul_id, hendelse, fra_livslop, til_livslop, release_id, miljo,
              kontraktversjon, kontrakt_hash, module_epoch, aktor, begrunnelse)
             VALUES (p_modul_id, 'drenet_ved_nodstopp', 'claiming', 'draining',
-                    v_d.release_id, v_d.kontraktversjon, v_d.kontrakt_hash,
-                    v_epoch + 1, p_aktor, p_begrunnelse);
+                    v_d.release_id, v_d.miljo, v_d.kontraktversjon,
+                    v_d.kontrakt_hash, v_epoch + 1, p_aktor, p_begrunnelse);
     END LOOP;
     INSERT INTO public.modulregister_hendelse
         (modul_id, hendelse, fra_status, til_status, module_epoch, aktor,

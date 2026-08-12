@@ -650,3 +650,42 @@ def test_noddeaktiver_reviderer_drenerte_deployments():
     finally:
         r.close()
     assert n == 1
+
+
+@pg
+def test_livslopshendelser_skiller_miljo():
+    # Codex P2: `miljo` er del av deploymentens primærnøkkel — SAMME release kan
+    # kjøre i både staging og produksjon. Uten miljøet i hendelsen er de to
+    # livsløpsovergangene ikke til å skille fra hverandre, og hendelsesstrømmen
+    # kan ikke rekonstruere HVILKEN deployment som endret seg. Særlig ved
+    # nødstopp, som skriver én hendelse per drenert deployment.
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _reg_kontrakt(a, m, kh); _reg_release(a, m, "r1", kh)
+        a.execute("SELECT installer_modul(%s,'sys')", (m,))
+        a.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (m, kh))
+        a.execute("SELECT bytt_release(%s,'produksjon','r1',1,%s,'sys')", (m, kh))
+        a.execute("SELECT noddeaktiver_modul(%s,'hendelse','sys')", (m,))
+        # Begge deploymentene er draining etter nødstoppet → pensjonering lovlig.
+        a.execute("SELECT pensjoner_release(%s,'produksjon','r1','sys')", (m,))
+        a.commit()
+    finally:
+        a.close()
+
+    def _miljoer(r, hendelse):
+        return [x[0] for x in r.execute(
+            "SELECT miljo FROM modulregister_hendelse WHERE modul_id=%s"
+            " AND hendelse=%s AND release_id='r1' ORDER BY miljo NULLS FIRST",
+            (m, hendelse)).fetchall()]
+
+    r = _rt()
+    try:
+        assert _miljoer(r, "releasebytte") == ["produksjon", "staging"], \
+            "releasebytte-hendelsene skiller ikke miljø"
+        assert _miljoer(r, "drenet_ved_nodstopp") == ["produksjon", "staging"], \
+            "nødstoppets drenerings-hendelser skiller ikke miljø"
+        assert _miljoer(r, "pensjonert") == ["produksjon"], \
+            "pensjonerings-hendelsen skiller ikke miljø"
+    finally:
+        r.close()
