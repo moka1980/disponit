@@ -70,6 +70,7 @@ APPEND_ONLY_TRIGGERE = (
     # Begge nekter DELETE — som de skal — så oppryddingen må skru dem av.
     ("domenekontroll", "domenekontroll_ingen_delete"),
     ("domenekontroll_hendelse", "hendelse_append_only"),
+    ("artefaktkapabilitet", "artefaktkapabilitet_ingen_delete"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -87,7 +88,7 @@ APPEND_ONLY_TRIGGERE = (
 #: PR-007-tabellene FØRST: `verifikasjonsgenerasjon` og
 #: `verifikasjonsbevis` har fremmednøkler til `unntak`, og generasjonen
 #: peker i tillegg på beviset.
-RYDDETABELLER = ("artefakt",   # PR-014b: FK → oppdrag/tenant_nokler → FØRST
+RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
                  "verifikasjonskonflikt", "verifikasjonsgenerasjon",
                  "verifikasjonsbevis",
                  "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",

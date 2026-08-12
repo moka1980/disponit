@@ -104,7 +104,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'registrer_artefakttype(text,text,integer,text,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'lagre_artefakt_staged(text,bigint,text,text,text,integer,text,bigint,integer,text,bytea,bytea,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'promoter_artefakt(uuid,text,bigint,text,bigint,text,text)', 'disponit_domene_eier'),
-    ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier');
+    ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier'),
+    -- PR-014b CP5: artefakt-opplastingskapabilitet.
+    ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),
+    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier'),
+    ('FUNCTION', 'bruk_artefaktkapabilitet(text,uuid)',              'disponit_domene_eier');
 
 DO $$
 DECLARE
