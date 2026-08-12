@@ -91,7 +91,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'tilbakekall_domenekontroll(text,text,text,text)',   'disponit_domene_eier'),
     ('FUNCTION', 'avgjor_domeneovertakelse(text,text,boolean,text)',  'disponit_domene_eier'),
     ('FUNCTION', 'registrer_artefakttype(text,text,integer,text,text,text)', 'disponit_domene_eier'),
-    ('FUNCTION', 'lagre_artefakt_staged(text,bigint,text,text,text,integer,text,bigint,integer,text,bytea,text,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'lagre_artefakt_staged(text,bigint,text,text,text,integer,text,bigint,integer,text,bytea,bytea,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'promoter_artefakt(uuid,text,bigint,text,bigint,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier');
 
