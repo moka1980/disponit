@@ -164,3 +164,27 @@ RESET ROLE;
 
 -- domene_eier (SECURITY DEFINER-kjøreren) må kunne skrive tabellen + LESE oppdrag.
 GRANT SELECT, INSERT, UPDATE ON artefaktkapabilitet TO disponit_domene_eier;
+
+-- §7 pkt. 8: en kvittering hvis artefakt ikke lar seg verifisere (epoch-drift
+-- eller bindingsavvik) karantenesettes som sikkerhetssak. Utvid hendelses-
+-- taksonomien additivt (alle 011-verdier beholdt + den nye).
+ALTER TABLE unntak_historikk DROP CONSTRAINT unntak_historikk_hendelse_check;
+ALTER TABLE unntak_historikk ADD CONSTRAINT unntak_historikk_hendelse_check CHECK (
+    hendelse IN (
+        'opprettet','statusendring','claim','claim_utlopt','dek_destruert',
+        'claim_fornyet','klassifisert','repair_generation_ny',
+        'generation_blokkert_aktiv_utforelse','kapabilitet_utstedt',
+        'kapabilitet_brukt','oppdrag_opprettet','oppdrag_kansellert',
+        'kvittering','sen_kvittering','motstridende_kvittering',
+        'policy_endret_siden_opprettelse','legacy_uten_snapshot',
+        'dek_utilgjengelig','verifikator_utilgjengelig','frist_utlopt',
+        'verifikasjon_bestilt','verifikasjon_positiv','verifikasjon_negativ',
+        'verifikasjon_utlopt','verifikasjon_konflikt','verifikasjon_retry',
+        'sikkerhetsfrysing',
+        'godkjenning_startet','attestasjon_registrert','runde_apnet',
+        'runde_utlopt','runde_kansellert','godkjent','avvist_handling',
+        'eskalert','godkjenning_stoppet_av_policy',
+        'policy_endret_under_godkjenning','sen_kvittering_etter_avvis',
+        'avklaring_kreves',
+        -- PR-014b §7:
+        'artefakt_ikke_verifisert'));

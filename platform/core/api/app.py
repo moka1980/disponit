@@ -1577,6 +1577,42 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     if svar is not None:
         return svar
 
+    # PR-014b §7: refererer kvitteringen et artefakt, PROMOTERES det i SAMME
+    # transaksjon som statusskiftet — «kvittering godtas aldri før artefaktet er
+    # varig lagret og verifisert» (pkt. 6). artefakt_id er signert (del av
+    # kvitteringen). Promoteringen verifiserer tenant/oppdrag/release/epoch/hash;
+    # feiler den (epoch-drift eller bindingsavvik), avsluttes INGENTING —
+    # artefaktet bevares (opprydding rører det aldri), og kvitteringen
+    # karantenesettes som sikkerhetssak (pkt. 8). Legacy-kvitteringer uten
+    # artefakt_id er helt uendret.
+    art_id = kvittering.get("artefakt_id")
+    if art_id is not None:
+        art = conn.execute(
+            "SELECT release_id, klartekst_sha256 FROM artefakt"
+            " WHERE artefakt_id=%s AND tenant=%s AND oppdrag_id=%s",
+            (art_id, tenant, oppdrag_id)).fetchone()
+        opp_epoch = conn.execute(
+            "SELECT module_epoch FROM oppdrag WHERE tenant=%s AND id=%s",
+            (tenant, oppdrag_id)).fetchone()[0]
+        promotert = art is not None
+        if promotert:
+            try:
+                conn.execute("SELECT promoter_artefakt(%s,%s,%s,%s,%s,%s,%s)",
+                             (art_id, tenant, oppdrag_id, art[0], opp_epoch,
+                              art[1], auth.aktor))
+            except psycopg.errors.InvalidParameterValue:
+                promotert = False   # epoch-drift/bindingsavvik
+        if not promotert:
+            conn.rollback()
+            sett_kontekst(conn, tenant, auth.aktor, rid)
+            _sikkerhetssak_kvittering(
+                conn, tenant, unntak_id, "artefakt_ikke_verifisert",
+                {"oppdrag_id": oppdrag_id, "artefakt_id": str(art_id)}, rid)
+            conn.commit()
+            tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
+                                   oppdrag_id=oppdrag_id, art="sikkerhet")
+            return _feilsvar("kvittering_konflikt", rid)
+
     vellykket = kvittering.get("resultat") == "utfort"
     conn.execute(
         "UPDATE oppdrag SET kvittering=%s, kvittering_signatur=%s,"
