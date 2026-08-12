@@ -56,17 +56,30 @@ BEGIN
     IF NEW.owner_generation < OLD.owner_generation THEN
         RAISE EXCEPTION 'oppdrag: owner_generation kan aldri reduseres';
     END IF;
-    -- CP5: kontraktbindingen er write-once. Satt (non-null) → frosset.
+    -- CP5 + Codex P1: kontraktbinding/epoch endres KUN av den herdede claim-
+    -- funksjonen (eid av disponit_m37_claimer). Runtime har direkte UPDATE på
+    -- oppdrag; uten denne current_user-sjekken kunne runtime initialisere en
+    -- uclaimet rad med vilkårlig modul/versjon/hash (forfalske bindingen) eller
+    -- nulle en stemplet epoch.
+    IF current_user <> 'disponit_m37_claimer' AND (
+           NEW.modul_id        IS DISTINCT FROM OLD.modul_id
+        OR NEW.kontraktversjon IS DISTINCT FROM OLD.kontraktversjon
+        OR NEW.kontrakt_hash   IS DISTINCT FROM OLD.kontrakt_hash
+        OR NEW.module_epoch    IS DISTINCT FROM OLD.module_epoch) THEN
+        RAISE EXCEPTION 'oppdrag: kontraktbinding/epoch settes kun av claim-funksjonen';
+    END IF;
+    -- Write-once (gjelder også claim-funksjonen på en reclaim): satt → frosset.
     IF OLD.modul_id IS NOT NULL AND (
            NEW.modul_id        IS DISTINCT FROM OLD.modul_id
         OR NEW.kontraktversjon IS DISTINCT FROM OLD.kontraktversjon
         OR NEW.kontrakt_hash   IS DISTINCT FROM OLD.kontrakt_hash) THEN
         RAISE EXCEPTION 'oppdrag: kontraktbindingen er frosset når den er satt';
     END IF;
-    -- module_epoch er monoton (fencing-generasjon kan aldri gå bakover).
-    IF OLD.module_epoch IS NOT NULL AND NEW.module_epoch IS NOT NULL
-       AND NEW.module_epoch < OLD.module_epoch THEN
-        RAISE EXCEPTION 'oppdrag: module_epoch kan aldri reduseres';
+    -- module_epoch er monoton OG kan ikke nulles etter at den er satt (Codex P2:
+    -- non-NULL→NULL fjernet fencing-generasjonen uten feil).
+    IF OLD.module_epoch IS NOT NULL
+       AND (NEW.module_epoch IS NULL OR NEW.module_epoch < OLD.module_epoch) THEN
+        RAISE EXCEPTION 'oppdrag: module_epoch kan aldri reduseres/nulles';
     END IF;
     IF OLD.kvittering IS NOT NULL
        AND (NEW.kvittering IS DISTINCT FROM OLD.kvittering
@@ -100,16 +113,21 @@ GRANT SELECT ON modulhode             TO disponit_m37_claimer;
 GRANT SELECT ON moduldeployment       TO disponit_m37_claimer;
 
 -- ------------------------------------------------------------
--- 3. claim_neste_oppdrag med BETINGET kontraktbinding. Signaturen og de
---    returnerte kolonnene er UENDRET (app-laget rører ikke) — kontrakt/epoch
---    stemples på raden og leses derfra av kvitteringskapabiliteten.
---    Funksjonen eies av disponit_m37_claimer (SECURITY DEFINER) → REPLACE må
---    kjøres som eieren.
+-- 3. claim_neste_oppdrag med BETINGET, DEPLOYMENT-BUNDET kontraktbinding.
+--    Kalleren oppgir sin egen deployment-identitet (release/miljø/epoch); for en
+--    registrert oppdragstype claimes bare når NETTOPP den deploymenten er
+--    `claiming` og eiermodulen matcher. `p_lease_s` beholder sin 4. posisjon, de
+--    tre nye er valgfrie bakerst → eksisterende 3-/4-args-kall (app + legacy) er
+--    uendret. Prosedyren tar modul-låsen (serialiserer med noddeaktiver_modul) og
+--    re-leser modulstatus/deployment UNDER låsen. Eid av disponit_m37_claimer.
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_m37_claimer;
-CREATE OR REPLACE FUNCTION claim_neste_oppdrag(p_modul_id TEXT, p_prefiks TEXT[],
-                                               p_claim_id TEXT,
-                                               p_lease_s INT DEFAULT 300)
+-- Utvidet signatur → dropp den gamle 4-args-varianten (005) FØR ny opprettes.
+DROP FUNCTION IF EXISTS claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT);
+CREATE OR REPLACE FUNCTION claim_neste_oppdrag(
+    p_modul_id TEXT, p_prefiks TEXT[], p_claim_id TEXT,
+    p_lease_s INT DEFAULT 300, p_release_id TEXT DEFAULT NULL,
+    p_miljo TEXT DEFAULT NULL, p_module_epoch BIGINT DEFAULT NULL)
 RETURNS TABLE (id BIGINT, tenant TEXT, unntak_id BIGINT, oppdragstype TEXT,
                handling TEXT, repair_operation_id TEXT,
                payload_kryptert BYTEA, key_id TEXT, nonce BYTEA,
@@ -120,6 +138,9 @@ SET search_path = pg_catalog
 AS $$
 DECLARE
     v_lease INT := least(greatest(coalesce(p_lease_s, 300), 30), 3600);
+    v_hoppet BIGINT[] := ARRAY[]::BIGINT[];
+    v_id BIGINT; v_ot TEXT; r RECORD; v_ok BOOLEAN;
+    v_b_modul TEXT; v_b_ver INT; v_b_hash TEXT; v_b_epoch BIGINT;
 BEGIN
     IF p_claim_id IS NULL OR p_claim_id !~ '^[0-9a-f]{32,}$' THEN
         RAISE EXCEPTION 'claim_neste_oppdrag: ugyldig claim_id-format';
@@ -128,64 +149,81 @@ BEGIN
         RAISE EXCEPTION 'claim_neste_oppdrag: modul_id mangler';
     END IF;
 
-    RETURN QUERY
-    UPDATE public.oppdrag o
-       SET status = 'plukket',
-           owner_claim_id = p_claim_id,
-           owner_generation = o.owner_generation + 1,
-           owner_lease_utloper = pg_catalog.now() + (v_lease || ' seconds')::INTERVAL,
-           -- CP5: stemple autorisert kontrakt + fencing-epoch (NULL for legacy).
-           modul_id = (SELECT r.eiermodul FROM public.oppdragstype_register r
-                        WHERE r.oppdragstype = o.oppdragstype),
-           kontraktversjon = (SELECT r.kontraktversjon
-                                FROM public.oppdragstype_register r
-                               WHERE r.oppdragstype = o.oppdragstype),
-           kontrakt_hash = (SELECT r.kontrakt_hash
-                              FROM public.oppdragstype_register r
-                             WHERE r.oppdragstype = o.oppdragstype),
-           module_epoch = (SELECT h.module_epoch
-                             FROM public.oppdragstype_register r
-                             JOIN public.modulhode h ON h.modul_id = r.eiermodul
-                            WHERE r.oppdragstype = o.oppdragstype)
-     WHERE o.id = (
-        SELECT k.id FROM public.oppdrag k
+    LOOP
+        -- Oppdragslås: neste kandidat for eiermodulen (SKIP LOCKED). Allerede
+        -- vurderte-og-forkastede kandidater ekskluderes (v_hoppet) — SKIP LOCKED
+        -- hopper IKKE over rader denne transaksjonen selv har låst.
+        SELECT k.id, k.oppdragstype INTO v_id, v_ot
+          FROM public.oppdrag k
          WHERE (
                  k.status = 'opprettet'
-                 OR (k.status = 'plukket'
-                     AND k.owner_lease_utloper IS NOT NULL
-                     AND k.owner_lease_utloper < pg_catalog.now())
+                 OR (k.status = 'plukket' AND k.owner_lease_utloper IS NOT NULL
+                     AND k.owner_lease_utloper < now())
                )
            AND k.eiermodul = p_modul_id
            AND p_prefiks IS NOT NULL
-           AND pg_catalog.array_length(p_prefiks, 1) > 0
-           AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p_prefiks) AS pre
+           AND array_length(p_prefiks, 1) > 0
+           AND EXISTS (SELECT 1 FROM unnest(p_prefiks) AS pre
                         WHERE k.handling LIKE pre || '%')
-           AND k.utforelsesfrist > pg_catalog.now()
-           -- CP5 BETINGET BINDING: er oppdragstypen registrert, MÅ eiermodulen
-           -- være aktiv med en claiming-deployment for den autoriserte
-           -- kontrakten. Uregistrert oppdragstype → ingen ekstra betingelse.
-           AND (
-                 NOT EXISTS (SELECT 1 FROM public.oppdragstype_register r
-                              WHERE r.oppdragstype = k.oppdragstype)
-                 OR EXISTS (
-                     SELECT 1 FROM public.oppdragstype_register r
-                       JOIN public.modulhode h
-                         ON h.modul_id = r.eiermodul AND h.status = 'aktiv'
-                       JOIN public.moduldeployment d
-                         ON d.modul_id = r.eiermodul
-                        AND d.kontraktversjon = r.kontraktversjon
-                        AND d.kontrakt_hash = r.kontrakt_hash
-                        AND d.livslop = 'claiming'
-                      WHERE r.oppdragstype = k.oppdragstype)
-               )
+           AND k.utforelsesfrist > now()
+           AND k.id <> ALL (v_hoppet)
          ORDER BY k.opprettet, k.id
            FOR UPDATE SKIP LOCKED
-         LIMIT 1)
-    RETURNING o.id, o.tenant, o.unntak_id, o.oppdragstype, o.handling,
-              o.repair_operation_id, o.payload_kryptert, o.key_id, o.nonce,
-              o.owner_generation, o.utforelsesfrist, o.evidensfrist;
+         LIMIT 1;
+        IF NOT FOUND THEN
+            RETURN;   -- tom kø (eller alle gjenværende ikke claimbare av kalleren)
+        END IF;
+
+        -- Tabellen aliases (reg): funksjonens RETURNS TABLE-kolonner (id, tenant,
+        -- oppdragstype, ...) er OUT-variabler i skopet og ville ellers kollidert
+        -- med en ukvalifisert kolonnereferanse (AmbiguousColumn).
+        SELECT reg.eiermodul, reg.kontraktversjon, reg.kontrakt_hash INTO r
+          FROM public.oppdragstype_register reg WHERE reg.oppdragstype = v_ot;
+
+        IF NOT FOUND THEN
+            -- Legacy: uregistrert oppdragstype → ingen binding (som før).
+            v_b_modul := NULL; v_b_ver := NULL; v_b_hash := NULL; v_b_epoch := NULL;
+        ELSE
+            -- Modul-lås: venter til et evt. samtidig noddeaktiver_modul har
+            -- committet, så re-lesingen under er FERSK (Codex P1: serialiser
+            -- nødstopp med nye claims).
+            PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || r.eiermodul, 0));
+            SELECT (r.eiermodul = p_modul_id)   -- Codex P1: eiermodulen eier typen
+               AND EXISTS (SELECT 1 FROM public.modulhode h
+                            WHERE h.modul_id = r.eiermodul AND h.status = 'aktiv'
+                              AND h.module_epoch IS NOT DISTINCT FROM p_module_epoch)
+               AND EXISTS (SELECT 1 FROM public.moduldeployment d
+                            WHERE d.modul_id = r.eiermodul
+                              AND d.kontraktversjon = r.kontraktversjon
+                              AND d.kontrakt_hash = r.kontrakt_hash
+                              AND d.release_id = p_release_id      -- Codex P1:
+                              AND d.miljo = p_miljo                -- KALLERENS
+                              AND d.livslop = 'claiming')          -- deployment
+              INTO v_ok;
+            IF NOT v_ok THEN
+                v_hoppet := array_append(v_hoppet, v_id);
+                CONTINUE;   -- ikke claimbar av denne kalleren; prøv neste
+            END IF;
+            v_b_modul := r.eiermodul; v_b_ver := r.kontraktversjon;
+            v_b_hash := r.kontrakt_hash; v_b_epoch := p_module_epoch;
+        END IF;
+
+        RETURN QUERY
+        UPDATE public.oppdrag o
+           SET status = 'plukket',
+               owner_claim_id = p_claim_id,
+               owner_generation = o.owner_generation + 1,
+               owner_lease_utloper = now() + (v_lease || ' seconds')::INTERVAL,
+               modul_id = v_b_modul, kontraktversjon = v_b_ver,
+               kontrakt_hash = v_b_hash, module_epoch = v_b_epoch
+         WHERE o.id = v_id
+        RETURNING o.id, o.tenant, o.unntak_id, o.oppdragstype, o.handling,
+                  o.repair_operation_id, o.payload_kryptert, o.key_id, o.nonce,
+                  o.owner_generation, o.utforelsesfrist, o.evidensfrist;
+        RETURN;
+    END LOOP;
 END $$;
-REVOKE ALL ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT, TEXT, TEXT, BIGINT) FROM PUBLIC;
 RESET ROLE;
 
 -- ------------------------------------------------------------

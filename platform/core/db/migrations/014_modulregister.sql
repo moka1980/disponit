@@ -160,6 +160,22 @@ DROP TRIGGER IF EXISTS hendelse_append_only ON modulregister_hendelse;
 CREATE TRIGGER hendelse_append_only BEFORE UPDATE OR DELETE ON modulregister_hendelse
     FOR EACH ROW EXECUTE FUNCTION modulregister_append_only();
 
+-- TRUNCATE omgår FOR EACH ROW-triggerne (Codex P2): statement-nivå TRUNCATE-vakt
+-- på hver append-only-tabell, ellers kunne den autoritative revisjonen/registeret
+-- tømmes tross append-only-invarianten.
+DROP TRIGGER IF EXISTS kontrakt_ingen_truncate ON modulkontrakt;
+CREATE TRIGGER kontrakt_ingen_truncate BEFORE TRUNCATE ON modulkontrakt
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+DROP TRIGGER IF EXISTS release_ingen_truncate ON modulrelease;
+CREATE TRIGGER release_ingen_truncate BEFORE TRUNCATE ON modulrelease
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+DROP TRIGGER IF EXISTS oppdragstype_ingen_truncate ON oppdragstype_register;
+CREATE TRIGGER oppdragstype_ingen_truncate BEFORE TRUNCATE ON oppdragstype_register
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+DROP TRIGGER IF EXISTS hendelse_ingen_truncate ON modulregister_hendelse;
+CREATE TRIGGER hendelse_ingen_truncate BEFORE TRUNCATE ON modulregister_hendelse
+    FOR EACH STATEMENT EXECUTE FUNCTION modulregister_append_only();
+
 -- 7b. modulhode statemaskin + kolonnelås. `modul_id` uforanderlig; status følger
 --     installert→staging_verifisert→aktiv (fremover) · enhver → nodeaktivert
 --     (nød) · nodeaktivert → staging_verifisert/aktiv (reaktivering, ny evidens
@@ -201,7 +217,8 @@ CREATE TRIGGER hode_statemaskin BEFORE UPDATE ON modulhode
 CREATE OR REPLACE FUNCTION moduldeployment_livslop()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
-    IF NEW.release_id IS DISTINCT FROM OLD.release_id
+    IF NEW.modul_id IS DISTINCT FROM OLD.modul_id
+       OR NEW.release_id IS DISTINCT FROM OLD.release_id
        OR NEW.kontraktversjon IS DISTINCT FROM OLD.kontraktversjon
        OR NEW.kontrakt_hash IS DISTINCT FROM OLD.kontrakt_hash
        OR NEW.miljo IS DISTINCT FROM OLD.miljo THEN
@@ -288,11 +305,23 @@ CREATE OR REPLACE FUNCTION sett_modulstatus(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_gammel TEXT; v_claiming INT;
 BEGIN
+    -- Modul-lås: serialiserer med noddeaktiver/reaktiver/bytt_release (Codex:
+    -- nød-deaktivering må ikke kunne skje samtidig med en statusovergang).
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     SELECT status INTO v_gammel FROM public.modulhode
      WHERE modul_id = p_modul_id FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'sett_modulstatus: ukjent modul %', p_modul_id
             USING ERRCODE = 'no_data_found';
+    END IF;
+    -- Codex P1: en nodeaktivert modul reaktiveres KUN via reaktiver_modul (epoch-
+    -- gjerdet, epoch++). Den generiske veien ut av nodeaktivert ville omgått
+    -- fencingen — statemaskin-triggeren tillater overgangen, men fullmakten her
+    -- gjør det ikke.
+    IF v_gammel = 'nodeaktivert' THEN
+        RAISE EXCEPTION 'sett_modulstatus: nodeaktivert modul % reaktiveres kun '
+            'via reaktiver_modul', p_modul_id
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF p_ny_status = 'aktiv' THEN
         SELECT count(*) INTO v_claiming FROM public.moduldeployment
@@ -353,15 +382,23 @@ CREATE OR REPLACE FUNCTION registrer_kontrakt(
     p_reversibilitet        TEXT,
     p_aktor                 TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_hash TEXT;
+DECLARE r RECORD;
 BEGIN
-    SELECT kontrakt_hash INTO v_hash FROM public.modulkontrakt
+    -- Codex P2: sammenlign HELE den immutable tuppelen, ikke bare hashen — ellers
+    -- ble en re-registrering med samme hash men avvikende metadata (schema/
+    -- sideeffekt/reversibilitet) stille rapportert som en vellykket no-op.
+    SELECT kontrakt_hash, payload_schema_hash, kvittering_schema_hash,
+           sideeffektklasse, reversibilitet
+      INTO r FROM public.modulkontrakt
      WHERE modul_id = p_modul_id AND kontraktversjon = p_kontraktversjon;
     IF FOUND THEN
-        IF v_hash IS DISTINCT FROM p_kontrakt_hash THEN
-            RAISE EXCEPTION 'kontrakt (%,%) er immutable: % != %',
-                p_modul_id, p_kontraktversjon, v_hash, p_kontrakt_hash
-                USING ERRCODE = 'unique_violation';
+        IF (r.kontrakt_hash, r.payload_schema_hash, r.kvittering_schema_hash,
+            r.sideeffektklasse, r.reversibilitet)
+           IS DISTINCT FROM
+           (p_kontrakt_hash, p_payload_schema_hash, p_kvittering_schema_hash,
+            p_sideeffektklasse, p_reversibilitet) THEN
+            RAISE EXCEPTION 'kontrakt (%,%) er immutable', p_modul_id,
+                p_kontraktversjon USING ERRCODE = 'unique_violation';
         END IF;
         RETURN;                                   -- idempotent
     END IF;
@@ -424,11 +461,22 @@ CREATE OR REPLACE FUNCTION bytt_release(
     p_kontrakt_hash   TEXT,
     p_aktor           TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_ny_livslop TEXT;
+DECLARE v_ny_livslop TEXT; v_gammel_release TEXT; v_status TEXT;
 BEGIN
+    -- Modul-lås FØRST (samme rekkefølge overalt), så kontraktlåsen. Modul-låsen
+    -- serialiserer med noddeaktiver_modul (Codex P1): ellers kunne et bytte legge
+    -- inn en claiming ETTER at nødstoppet skannet deploymentene, og etterlate en
+    -- nodeaktivert modul med en claiming-deployment.
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     PERFORM pg_advisory_xact_lock(hashtextextended(
         'modulregister:bytt:' || p_modul_id || ':' || p_miljo || ':'
         || p_kontraktversjon::text || ':' || p_kontrakt_hash, 0));
+    -- En nodeaktivert modul får ikke en frisk claiming (reaktiver_modul først).
+    SELECT status INTO v_status FROM public.modulhode WHERE modul_id = p_modul_id;
+    IF v_status = 'nodeaktivert' THEN
+        RAISE EXCEPTION 'bytt_release: modul % er nodeaktivert', p_modul_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     -- Ny release må finnes OG matche kontrakten (kompositt).
     PERFORM 1 FROM public.modulrelease
      WHERE modul_id = p_modul_id AND release_id = p_ny_release_id
@@ -448,11 +496,20 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- Gammel claiming for samme kontrakt → draining (partiell indeks frigjøres
-    -- før innsettingen av den nye).
+    -- før innsettingen av den nye). Fang den gamle releasen så draining-
+    -- overgangen kan revideres (Codex P2 — ellers manglet den i hendelsesstrømmen).
     UPDATE public.moduldeployment SET livslop = 'draining'
      WHERE modul_id = p_modul_id AND miljo = p_miljo
        AND kontraktversjon = p_kontraktversjon AND kontrakt_hash = p_kontrakt_hash
-       AND livslop = 'claiming';
+       AND livslop = 'claiming'
+    RETURNING release_id INTO v_gammel_release;
+    IF v_gammel_release IS NOT NULL THEN
+        INSERT INTO public.modulregister_hendelse
+            (modul_id, hendelse, fra_livslop, til_livslop, release_id,
+             kontraktversjon, kontrakt_hash, aktor)
+            VALUES (p_modul_id, 'drainet_ved_bytte', 'claiming', 'draining',
+                    v_gammel_release, p_kontraktversjon, p_kontrakt_hash, p_aktor);
+    END IF;
     INSERT INTO public.moduldeployment (modul_id, release_id, kontraktversjon,
         kontrakt_hash, miljo, livslop)
         VALUES (p_modul_id, p_ny_release_id, p_kontraktversjon, p_kontrakt_hash,
@@ -532,6 +589,9 @@ BEGIN
         RAISE EXCEPTION 'noddeaktiver_modul: begrunnelse er obligatorisk'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Modul-lås: serialiserer med bytt_release/sett_modulstatus/reaktiver, så
+    -- nødstoppets postbetingelse «alle claiming drained» er stabil (Codex P1).
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     SELECT status, module_epoch INTO v_status, v_epoch FROM public.modulhode
      WHERE modul_id = p_modul_id FOR UPDATE;
     IF NOT FOUND THEN
@@ -567,6 +627,7 @@ CREATE OR REPLACE FUNCTION reaktiver_modul(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT; v_epoch BIGINT;
 BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     SELECT status, module_epoch INTO v_status, v_epoch FROM public.modulhode
      WHERE modul_id = p_modul_id FOR UPDATE;
     IF NOT FOUND THEN

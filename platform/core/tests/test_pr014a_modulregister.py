@@ -531,3 +531,102 @@ def test_runtime_kan_ikke_kalle_cp4_funksjoner():
             r.rollback()
     finally:
         r.close()
+
+
+# ---- Codex-review-fikser (014a) ----
+
+@pg
+def test_sett_modulstatus_avviser_nodeaktivert():
+    # Codex P1: nodeaktivert reaktiveres KUN via reaktiver_modul (epoch-gjerdet).
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)
+        a.execute("SELECT noddeaktiver_modul(%s,'hendelse','sys')", (m,)); a.commit()
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT sett_modulstatus(%s,'aktiv','r1','sys')", (m,))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_bytt_release_avviser_nodeaktivert():
+    # Codex P1: en nodeaktivert modul får ikke en frisk claiming (serialisert).
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)
+        a.execute("SELECT noddeaktiver_modul(%s,'h','sys')", (m,)); a.commit()
+        _reg_release(a, m, "r2", kh)
+        with pytest.raises(psycopg.errors.Error):
+            a.execute("SELECT bytt_release(%s,'staging','r2',1,%s,'sys')", (m, kh))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_registrer_kontrakt_full_tuple_immutable():
+    # Codex P2: hele den immutable tuppelen sammenlignes, ikke bare hashen.
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        a.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
+                  "'kompenserende','sys')", (m, kh)); a.commit()
+        with pytest.raises(psycopg.errors.UniqueViolation):   # samme hash, annen reversibilitet
+            a.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
+                      "'irreversibel','sys')", (m, kh))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_moduldeployment_modul_id_frosset():
+    # Codex P2: modul_id er del av den frosne identiteten.
+    c = _c(); m = _mid(); kh = _kontrakt(c, m); _release(c, m, "r1", 1, kh)
+    _deployment(c, m, "r1", 1, kh, livslop="claiming"); c.commit()
+    with pytest.raises(psycopg.errors.RaiseException):
+        c.execute("UPDATE moduldeployment SET modul_id=%s WHERE modul_id=%s AND"
+                  " release_id='r1'", (m + "x", m))
+    c.rollback(); c.close()
+
+
+@pg
+def test_append_only_tabeller_taaler_ikke_truncate():
+    # Codex P2: TRUNCATE omgår FOR EACH ROW-triggerne → egen statement-vakt.
+    # CASCADE så FK-referanse-sperren (FeatureNotSupported) ikke skygger for
+    # trigger-vakten vi faktisk tester — BEFORE TRUNCATE-triggeren fyrer først.
+    c = _c()
+    try:
+        for t in ("modulkontrakt", "modulrelease", "oppdragstype_register",
+                  "modulregister_hendelse"):
+            with pytest.raises(psycopg.errors.RaiseException):
+                c.execute(f"TRUNCATE {t} CASCADE")
+            c.rollback()
+    finally:
+        c.close()
+
+
+@pg
+def test_bytt_release_reviderer_draining_overgang():
+    # Codex P2: den gamle releasens claiming→draining skal stå i hendelsesstrømmen.
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _reg_kontrakt(a, m, kh); _reg_release(a, m, "r1", kh)
+        _reg_release(a, m, "r2", kh)
+        a.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (m, kh))
+        a.execute("SELECT bytt_release(%s,'staging','r2',1,%s,'sys')", (m, kh))
+        a.commit()
+    finally:
+        a.close()
+    r = _rt()
+    try:
+        n = r.execute("SELECT count(*) FROM modulregister_hendelse WHERE modul_id=%s"
+                      " AND hendelse='drainet_ved_bytte' AND release_id='r1'"
+                      " AND til_livslop='draining'", (m,)).fetchone()[0]
+    finally:
+        r.close()
+    assert n == 1

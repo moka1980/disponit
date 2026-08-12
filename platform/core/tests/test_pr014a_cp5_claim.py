@@ -62,16 +62,23 @@ def _lag_oppdrag_type(conn, tenant, sak_id, loggpost_id, *, oppdragstype,
     return int(opp), rid
 
 
-def _claim(modul_id, prefiks, cid, lease=300):
-    """Kaller claim_neste_oppdrag som RUNTIME (den har EXECUTE, ingen andre)."""
+def _claim(modul_id, prefiks, cid, lease=300, release=None, miljo=None,
+           epoch=None):
+    """Kaller claim_neste_oppdrag som RUNTIME (den har EXECUTE, ingen andre).
+
+    release/miljo/epoch er kallerens deployment-identitet (Codex P1): en
+    registrert oppdragstype claimes bare når NETTOPP den deploymenten er
+    claiming. Legacy/uregistrert lar dem være NULL.
+    """
     from db.pg import koble
     c = koble(DSN)
     try:
         c.execute("SELECT set_config('disponit.aktor','m37',true),"
                   "       set_config('disponit.request_id','r',true)")
         rad = c.execute(
-            "SELECT id, owner_generation FROM claim_neste_oppdrag(%s,%s,%s,%s)",
-            (modul_id, prefiks, cid, lease)).fetchone()
+            "SELECT id, owner_generation FROM claim_neste_oppdrag("
+            "%s,%s,%s,%s,%s,%s,%s)",
+            (modul_id, prefiks, cid, lease, release, miljo, epoch)).fetchone()
         c.commit()
         return rad
     finally:
@@ -132,11 +139,21 @@ def test_port5_registrert_oppdragstype_krever_aktiv_claiming_kontrakt(migrator):
         a.commit()
     finally:
         a.close()
-    got = _claim(modul, ["purring."], secrets.token_hex(16))
+    got = _claim(modul, ["purring."], secrets.token_hex(16),
+                 release="r1", miljo="staging", epoch=0)
     assert got is not None and got[0] == opp, "aktiv kontrakt ga ikke claim"
     b = _binding(migrator, opp)
     assert b[0] == modul and b[1] == 1 and b[2] == kh, "kontrakt ikke stemplet"
     assert b[3] == 0, "module_epoch ikke stemplet"
+    # Codex P1: samme modul, men FEIL deployment-identitet (annen release) →
+    # ikke claimbar (drenert/retired r1-prosess kan ikke claime via en annen).
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE oppdrag SET status='opprettet', owner_claim_id=NULL,"
+                     " owner_lease_utloper=NULL WHERE tenant=%s AND id=%s",
+                     (TENANT, opp)); migrator.commit()
+    assert _claim(modul, ["purring."], secrets.token_hex(16),
+                  release="feil-release", miljo="staging", epoch=0) is None, \
+        "claimet med feil deployment-identitet"
 
 
 @pg
@@ -193,7 +210,8 @@ def test_port7_reclaim_bumper_generasjon_og_bevarer_binding(migrator):
     sak, logg = _lag_sak(migrator, TENANT)
     opp, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
                                oppdragstype=ot, eiermodul=modul)
-    first = _claim(modul, ["purring."], secrets.token_hex(16))
+    first = _claim(modul, ["purring."], secrets.token_hex(16),
+                   release="r1", miljo="staging", epoch=0)
     assert first is not None and first[1] == 1
     b1 = _binding(migrator, opp)
     # tving leasen utløpt.
@@ -201,7 +219,8 @@ def test_port7_reclaim_bumper_generasjon_og_bevarer_binding(migrator):
     migrator.execute("UPDATE oppdrag SET owner_lease_utloper=now()-interval '1 s'"
                      " WHERE tenant=%s AND id=%s", (TENANT, opp))
     migrator.commit()
-    second = _claim(modul, ["purring."], secrets.token_hex(16))
+    second = _claim(modul, ["purring."], secrets.token_hex(16),
+                    release="r1", miljo="staging", epoch=0)
     assert second is not None and second[0] == opp and second[1] == 2, \
         "reclaim økte ikke owner_generation"
     b2 = _binding(migrator, opp)
@@ -231,7 +250,8 @@ def test_port8_retired_release_ugyldiggjor_ikke_apent_claim(migrator):
     sak, logg = _lag_sak(migrator, TENANT)
     opp, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
                                oppdragstype=ot, eiermodul=modul)
-    got = _claim(modul, ["purring."], secrets.token_hex(16))
+    got = _claim(modul, ["purring."], secrets.token_hex(16),
+                 release="r1", miljo="staging", epoch=0)
     assert got is not None and got[0] == opp
     # retire r1: bytt til r2 (r1→draining), pensjoner r1.
     a = _admin()
@@ -282,3 +302,24 @@ def test_legacy_uregistrert_oppdragstype_claimes_som_for(migrator):
     b = _binding(migrator, opp)
     assert b[0] is None and b[1] is None and b[2] is None and b[3] is None, \
         "uregistrert oppdragstype fikk kontraktbinding"
+
+
+@pg
+def test_runtime_kan_ikke_sette_oppdrag_binding_direkte(migrator):
+    # Codex P1/P2: bare den herdede claim-funksjonen (disponit_m37_claimer) kan
+    # sette/endre kontraktbinding+epoch — en direkte UPDATE fra en annen rolle
+    # avvises (ellers kunne runtime forfalske bindingen eller nulle epoch).
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
+                               oppdragstype="legacy-" + _tok(),
+                               eiermodul="eiermodul:x")
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE oppdrag SET modul_id='forfalsk' WHERE tenant=%s"
+                         " AND id=%s", (TENANT, opp))
+    migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE oppdrag SET module_epoch=5 WHERE tenant=%s AND"
+                         " id=%s", (TENANT, opp))
+    migrator.rollback()
