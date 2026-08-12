@@ -254,3 +254,274 @@ def test_grant_egress_kun_visningen(migrator):
     assert q("SELECT has_column_privilege('disponit_egress','domenekontroll','hostname','SELECT')") is True
     assert q("SELECT has_column_privilege('disponit_egress','domenekontroll','challenge_token_hash','SELECT')") is False
     migrator.rollback()
+
+
+# ================= CP2: herdede §2-funksjoner =================
+
+def _admin():
+    """migrator SET ROLE domains_admin (committed → overlever rollback)."""
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    c.execute("SET ROLE disponit_domains_admin")
+    c.commit()
+    return c
+
+
+def _rt_call(sql, args):
+    """Kall en artefaktfunksjon som RUNTIME (den har EXECUTE)."""
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        rad = c.execute(sql, args).fetchone()
+        c.commit()
+        return rad
+    finally:
+        c.close()
+
+
+def _dkrow(conn, tenant, hostname):
+    _sett_kontekst(conn, tenant)
+    r = conn.execute("SELECT status, autorisasjonsgenerasjon,"
+                     " challenge_token_hash FROM domenekontroll"
+                     " WHERE tenant=%s AND hostname=%s",
+                     (tenant, hostname)).fetchone()
+    conn.rollback()
+    return r
+
+
+def _binding(conn, hostname):
+    r = conn.execute("SELECT tenant FROM hostname_binding WHERE hostname=%s",
+                     (hostname,)).fetchone()
+    conn.rollback()
+    return r[0] if r else None
+
+
+@pg
+def test_utsted_challenge_lagrer_hash_ikke_klartekst(migrator):
+    # Port 7: kun hash lagres; reutstedelse virker.
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT utsted_challenge(%s,%s,false,'sha-1','sys')", (TENANT, h))
+        a.commit()
+        assert _dkrow(migrator, TENANT, h) == ("ventende", 0, "sha-1")
+        a.execute("SELECT utsted_challenge(%s,%s,false,'sha-2','sys')", (TENANT, h))
+        a.commit()
+        assert _dkrow(migrator, TENANT, h)[2] == "sha-2", "reutstedelse virket ikke"
+    finally:
+        a.close()
+
+
+@pg
+def test_verifiser_setter_verifisert_og_binding(migrator):
+    h = _host(); a = _admin()
+    try:
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "verifisert"
+    finally:
+        a.close()
+    row = _dkrow(migrator, TENANT, h)
+    assert row[0] == "verifisert" and row[1] == 1
+    assert _binding(migrator, h) == TENANT
+
+
+@pg
+def test_b4_takeover_port10(migrator):
+    # Port 10: aktiv A + B verifiser → A tilbakekalt, B avklaring_kreves,
+    # 'konflikt:A', binding → B.
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "konflikt:" + TENANT
+    finally:
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[0] == "tilbakekalt"
+    b = _dkrow(migrator, ANNEN_TENANT, h)
+    assert b[0] == "avklaring_kreves"
+    assert _binding(migrator, h) == ANNEN_TENANT
+
+
+@pg
+def test_b4_rad2_utlopt_a_gir_b_direkte_port13(migrator):
+    # Port 13: A tilbakekalt → B verifiseres direkte (ingen avklaring).
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT tilbakekall_domenekontroll(%s,%s,'opphort','sys')",
+                  (TENANT, h)); a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "verifisert"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "verifisert"
+    assert _binding(migrator, h) == ANNEN_TENANT
+
+
+@pg
+def test_samme_tenant_reverifiser_ingen_avklaring_port14(migrator):
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "verifisert"
+    finally:
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[0] == "verifisert"
+
+
+@pg
+def test_avgjor_overtakelse_port12(migrator):
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()   # B → avklaring_kreves
+        # godkjent → B verifisert
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,true,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "verifisert"
+
+
+@pg
+def test_avgjor_avvist_gir_tilbakekalt(migrator):
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+
+
+@pg
+def test_revalider_endrer_ikke_status(migrator):
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT revalider_domenekontroll(%s,%s,'sys')", (TENANT, h))
+        a.commit()
+    finally:
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[0] == "verifisert"
+
+
+@pg
+def test_tilbakekall_idempotent(migrator):
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT tilbakekall_domenekontroll(%s,%s,'grunn','sys')",
+                  (TENANT, h)); a.commit()
+        g1 = _dkrow(migrator, TENANT, h)[1]
+        a.execute("SELECT tilbakekall_domenekontroll(%s,%s,'igjen','sys')",
+                  (TENANT, h)); a.commit()   # idempotent, ingen gen++
+    finally:
+        a.close()
+    row = _dkrow(migrator, TENANT, h)
+    assert row[0] == "tilbakekalt" and row[1] == g1
+
+
+@pg
+def test_runtime_kan_ikke_kalle_domenefunksjoner(migrator):
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("SELECT verifiser_domenekontroll('t','h',false,'x')")
+        c.rollback()
+    finally:
+        c.close()
+
+
+# ---------------- artefakt-funksjoner ----------------
+
+def _artefakt_oppsett(migrator):
+    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    _artefakttype(migrator, modul, kh, at)
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    from db import kryptering
+    _sett_kontekst(migrator, TENANT)
+    key_id, _ = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
+    migrator.commit()
+    return at, modul, kh, opp, key_id
+
+
+@pg
+def test_lagre_artefakt_idempotent_og_konflikt_port36(migrator):
+    at, modul, kh, opp, key = _artefakt_oppsett(migrator)
+    jti = "jti-" + secrets.token_hex(8)
+    call = ("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s)")
+    a1 = _rt_call(call, (TENANT, opp, at, modul, kh, "hashA", b"ct", key, jti))[0]
+    a2 = _rt_call(call, (TENANT, opp, at, modul, kh, "hashA", b"ct", key, jti))[0]
+    assert a1 == a2, "samme (jti, hash) ga ikke samme artefakt_id"
+    # samme jti + ANNEN hash → konflikt.
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        _rt_call(call, (TENANT, opp, at, modul, kh, "hashB", b"ct", key, jti))
+
+
+@pg
+def test_promoter_epoch_avvik_port37(migrator):
+    at, modul, kh, opp, key = _artefakt_oppsett(migrator)
+    jti = "jti-" + secrets.token_hex(8)
+    aid = _rt_call(
+        "SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s)",
+        (TENANT, opp, at, modul, kh, "h1", b"ct", key, jti))[0]
+    # epoch-avvik (5 <> stemplet 0) → avvist, ingen promotering.
+    with pytest.raises(psycopg.errors.Error):
+        _rt_call("SELECT promoter_artefakt(%s,%s,%s,'r1',5,%s,'sys')",
+                 (aid, TENANT, opp, "h1"))
+    # riktig epoch → promotert.
+    _rt_call("SELECT promoter_artefakt(%s,%s,%s,'r1',0,%s,'sys')",
+             (aid, TENANT, opp, "h1"))
+    _sett_kontekst(migrator, TENANT)
+    st = migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                          (aid,)).fetchone()[0]
+    migrator.rollback()
+    assert st == "promotert"
+
+
+@pg
+def test_rydd_staged_forkaster_og_nuller_port40(migrator):
+    at, modul, kh, opp, key = _artefakt_oppsett(migrator)
+    jti = "jti-" + secrets.token_hex(8)
+    aid = _rt_call(
+        "SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s)",
+        (TENANT, opp, at, modul, kh, "h1", b"ct", key, jti))[0]
+    # tving opprettet > 24 t tilbake.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE artefakt SET opprettet=now()-interval '25 hours'"
+                     " WHERE artefakt_id=%s", (aid,)); migrator.commit()
+    a = _admin()
+    try:
+        n = a.execute("SELECT rydd_staged_artefakter()").fetchone()[0]
+        a.commit()
+        assert n >= 1
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    row = migrator.execute("SELECT tilstand, ciphertext FROM artefakt"
+                           " WHERE artefakt_id=%s", (aid,)).fetchone()
+    migrator.rollback()
+    assert row[0] == "forkastet" and row[1] is None
