@@ -23,29 +23,60 @@ def _admin():
     return koble(DSN)
 
 
+def _mk_admin(rolle):
+    """migrator SET ROLE <rolle>, committed (varig på tvers av rollback)."""
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    c.execute(f"SET ROLE {rolle}")
+    c.commit()
+    return c
+
+
 def _plukket_oppdrag_med_binding(conn, modul, kh):
-    """Et claimet, kontraktbundet oppdrag (satt direkte — 014b-basen har ennå
-    ikke 014as current_user-gate; her måler vi kapabiliteten, ikke claimen)."""
-    kontrakt = ("INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
-                "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
-                "reversibilitet) VALUES (%s,1,%s,'p','k','krever_outbox',"
-                "'kompenserende') ON CONFLICT DO NOTHING")
-    conn.execute(kontrakt, (modul, kh))
+    """Et LEGITIMT claimet, kontraktbundet oppdrag: registrer kontrakt+release,
+    aktiver modulen med en claiming-deployment, registrer oppdragstype+
+    artefakttype, og claim via den herdede claim-veien (014a-final tillater kun
+    claim-funksjonen å stemple bindingen). Returnerer (oppdrag_id, artefakttype)."""
+    from .test_pr014a_cp5_claim import _lag_oppdrag_type
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        ma.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
+                   "'kompenserende','sys')", (modul, kh))
+        ma.execute("SELECT registrer_release(%s,'r1',1,%s,'mh','ad','sys')",
+                   (modul, kh))
+        ma.execute("SELECT installer_modul(%s,'sys')", (modul,))
+        ma.execute("SELECT sett_modulstatus(%s,'staging_verifisert',NULL,'sys')",
+                   (modul,))
+        ma.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')", (modul, kh))
+        ma.execute("SELECT sett_modulstatus(%s,'aktiv','r1','sys')", (modul,))
+        ot = "cp5b-" + secrets.token_hex(4)
+        ma.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')", (ot, modul, kh))
+        ma.commit()
+    finally:
+        ma.close()
     at = "at-" + secrets.token_hex(4)
-    conn.execute("INSERT INTO artefakttype_register (artefakttype,eiermodul,"
-                 "kontraktversjon,kontrakt_hash,skjema_hash) VALUES (%s,%s,1,%s,'sh')",
-                 (at, modul, kh))
-    conn.commit()
+    da = _mk_admin("disponit_domains_admin")
+    try:
+        da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,'sh','sys')",
+                   (at, modul, kh))
+        da.commit()
+    finally:
+        da.close()
     sak, logg = _lag_sak(conn, TENANT)
-    opp, _ = _lag_oppdrag(conn, TENANT, sak, logg)
-    _sett_kontekst(conn, TENANT)
-    conn.execute(
-        "UPDATE oppdrag SET status='plukket', owner_claim_id=%s,"
-        " owner_lease_utloper=now()+interval '5 min', modul_id=%s,"
-        " kontraktversjon=1, kontrakt_hash=%s, module_epoch=0"
-        " WHERE tenant=%s AND id=%s",
-        (secrets.token_hex(16), modul, kh, TENANT, opp))
-    conn.commit()
+    opp, _ = _lag_oppdrag_type(conn, TENANT, sak, logg, oppdragstype=ot,
+                               eiermodul=modul)
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        c.execute("SELECT set_config('disponit.aktor','m37',true),"
+                  "       set_config('disponit.request_id','r',true)")
+        rad = c.execute("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300,'r1',"
+                        "'staging',0)",
+                        (modul, ["purring."], secrets.token_hex(16))).fetchone()
+        c.commit()
+    finally:
+        c.close()
+    assert rad is not None and rad[0] == opp, "oppdraget ble ikke claimet"
     return opp, at
 
 

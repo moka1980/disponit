@@ -80,19 +80,20 @@ def test_upload_ugyldig_kapabilitet(migrator, klient, token):
 
 def _oppdrag_owner(migrator, opp):
     _sett_kontekst(migrator, TENANT)
-    r = migrator.execute("SELECT owner_claim_id, repair_operation_id FROM oppdrag"
+    r = migrator.execute("SELECT owner_claim_id, repair_operation_id,"
+                         " owner_generation FROM oppdrag"
                          " WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
     migrator.rollback()
     return r
 
 
-def _kvitteringskap(opp, owner_claim):
+def _kvitteringskap(opp, owner_claim, gen):
     from db.pg import koble
     jti = secrets.token_hex(16)
     c = koble(DSN)
     try:
-        c.execute("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,0,%s)",
-                  (opp, owner_claim, jti))
+        c.execute("SELECT jti FROM utsted_kvitteringskapabilitet(%s,%s,%s,%s)",
+                  (opp, owner_claim, gen, jti))
         c.commit()
     finally:
         c.close()
@@ -101,27 +102,30 @@ def _kvitteringskap(opp, owner_claim):
 
 def _last_opp_artefakt(migrator, klient, token):
     """Bygg bundet, plukket oppdrag + last opp et staged artefakt. Returnerer
-    (opp, modul, kh, artefakt_id, owner_claim, repair_operation_id)."""
+    (opp, modul, kh, artefakt_id, owner_claim, repair_operation_id, gen)."""
     modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
     opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
-    oc, rep = _oppdrag_owner(migrator, opp)
+    oc, rep, gen = _oppdrag_owner(migrator, opp)
     ajti = _utsted_cap(opp, modul, kh, at)
     tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
     aid = _post(klient, tok, ajti, {"funn": 1}).json()["artefakt_id"]
-    return opp, modul, kh, aid, oc, rep
+    return opp, modul, kh, aid, oc, rep, gen
+
+
+def _kvitteringskropp(opp, kjti, rep, oc, gen, aid):
+    return {"oppdrag_id": opp, "tenant": TENANT, "kvittering_jti": kjti,
+            "repair_operation_id": rep, "owner_claim_id": oc,
+            "owner_generation": gen, "resultat": "utfort",
+            "ressurs_id": "fak-1", "artefakt_id": aid}
 
 
 @pg
 def test_kvittering_promoterer_artefakt(migrator, klient, token):
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep = _last_opp_artefakt(migrator, klient, token)
-    kjti = _kvitteringskap(opp, oc)
-    kv = _signer_kvittering({
-        "oppdrag_id": opp, "tenant": TENANT, "kvittering_jti": kjti,
-        "repair_operation_id": rep, "owner_claim_id": oc, "owner_generation": 0,
-        "resultat": "utfort", "ressurs_id": "fak-1", "artefakt_id": aid})
-    tok2, _ = token(rolle="eiermodul:reinnsending",
-                    scopes=("orders:execute:purring.",))
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
     assert rk.status_code == 200 and rk.json()["status"] == "utfort", rk.text
@@ -133,27 +137,26 @@ def test_kvittering_promoterer_artefakt(migrator, klient, token):
 
 
 @pg
-def test_kvittering_med_epoch_drift_karantenesetter(migrator, klient, token):
+def test_kvittering_med_fremmed_artefakt_karantenesetter(migrator, klient, token):
+    # §7 pkt. 8: refererer kvitteringen et artefakt som IKKE er bundet til dette
+    # oppdraget, promoteres ingenting, oppdraget avsluttes ikke, og det
+    # karantenesettes (409). Bindingsavviket måles UTEN å røre epoch direkte
+    # (det ville krevd claim-funksjonen).
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep = _last_opp_artefakt(migrator, klient, token)
-    # epoch-drift: oppdragets epoch flyttes forbi artefaktets (0).
-    _sett_kontekst(migrator, TENANT)
-    migrator.execute("UPDATE oppdrag SET module_epoch=5 WHERE tenant=%s AND id=%s",
-                     (TENANT, opp)); migrator.commit()
-    kjti = _kvitteringskap(opp, oc)
-    kv = _signer_kvittering({
-        "oppdrag_id": opp, "tenant": TENANT, "kvittering_jti": kjti,
-        "repair_operation_id": rep, "owner_claim_id": oc, "owner_generation": 0,
-        "resultat": "utfort", "ressurs_id": "fak-1", "artefakt_id": aid})
-    tok2, _ = token(rolle="eiermodul:reinnsending",
-                    scopes=("orders:execute:purring.",))
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    # et ANNET oppdrag + artefakt (aid2 hører til opp2, ikke opp).
+    _, _, _, aid2, _, _, _ = _last_opp_artefakt(migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid2))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
-    assert rk.status_code == 409, rk.text   # ikke godtatt
+    assert rk.status_code == 409, rk.text
     _sett_kontekst(migrator, TENANT)
-    row = migrator.execute("SELECT a.tilstand, o.status FROM artefakt a JOIN oppdrag o"
-                           " ON o.tenant=a.tenant AND o.id=a.oppdrag_id"
-                           " WHERE a.artefakt_id=%s", (aid,)).fetchone()
+    art_st = migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                              (aid2,)).fetchone()[0]
+    opp_st = migrator.execute("SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                              (TENANT, opp)).fetchone()[0]
     migrator.rollback()
-    assert row == ("staged", "plukket"), \
-        "epoch-drift skulle karantenesatt (artefakt bevart, oppdrag ikke avsluttet)"
+    assert (art_st, opp_st) == ("staged", "plukket"), \
+        "bindingsavvik skulle karantenesatt (fremmed artefakt bevart, ikke avsluttet)"
