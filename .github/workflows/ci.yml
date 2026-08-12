@@ -65,12 +65,22 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modul_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_modules_admin NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modules_admin TO disponit_migrator WITH INHERIT FALSE"
+          # PR-014b: egress-tjenesterollen (LOGIN, SELECT kun paa visningen),
+          # NOLOGIN-eieren av domene/artefakt-funksjonene (BYPASSRLS: takeover er
+          # iboende kryss-tenant og maa se andre tenanters domenekontroll-rader
+          # via hostname_binding-autoriteten), og admin-rollen med EXECUTE.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_egress LOGIN PASSWORD 'egr'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domene_eier NOLOGIN BYPASSRLS"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domene_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_admin NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_admin TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_m37_claimer"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_policy_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_modul_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_domene_eier"
           # GO-vilkaar V3: event-triggeren som hindrer at retention-vakten
           # DEAKTIVERES. Den kan bare lages av superbruker — derfor her og
           # ikke i en migrasjon, noeyaktig som rollene. CI maa speile
