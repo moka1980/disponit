@@ -74,6 +74,7 @@ GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattes
 -- runtime skal gi `permission denied` (Codex-port 17).
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
+GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- PR-006: outbox-protokollen. `oppdrag` og `reparasjonsoperasjoner` er
 -- append+status som `unntak` — INSERT og status-UPDATE, aldri DELETE.
 -- `arbeidskapabiliteter` står bevisst IKKE her: den eies av

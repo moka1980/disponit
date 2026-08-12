@@ -14,6 +14,9 @@ M37=disponit_m37_claimer     # PR-006: eier arbeidskapabiliteter + claim-funksjo
 POLICYEIER=disponit_policy_eier  # PR-013: eier den herdede aktiver_policy-funksjonen
 MODULEIER=disponit_modul_eier    # PR-014a: eier modulregisterets overgangsfunksjoner
 MODULESADMIN=disponit_modules_admin  # PR-014a: EXECUTE på overgangsfunksjonene
+EGRESS=disponit_egress           # PR-014b: egress-proxyens rolle, SELECT kun paa visningen
+DOMENEEIER=disponit_domene_eier  # PR-014b: eier domene/artefakt-funksjonene (BYPASSRLS: takeover er kryss-tenant)
+DOMAINSADMIN=disponit_domains_admin  # PR-014b: EXECUTE paa domenefunksjonene
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -33,15 +36,19 @@ systemctl enable --now postgresql
 # MINUS verifiser_token (API-autentisering er ikke arbeiderens jobb);
 # skillet settes i migrer.py.
 ARBEIDER=disponit_arbeider
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER"; do
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
-for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN"; do
+for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" "$DOMAINSADMIN"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
+# domene_eier eier de kryss-tenant takeover-funksjonene → BYPASSRLS (den maa se
+# andre tenanters domenekontroll-rader via hostname_binding-autoriteten).
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DOMENEEIER'" \
+  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $DOMENEEIER NOLOGIN BYPASSRLS"
 # Migrator maa vaere MEDLEM av begge for aa kunne sette eierskap (OWNER TO)
 # paa api_tokener (003) og paa arbeidskapabiliteter + M-37-funksjonene (005).
 sudo -u postgres psql -qc "GRANT $AUTH TO $MIGRATOR"
@@ -57,6 +64,8 @@ sudo -u postgres psql -qc "GRANT $M37 TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POLICYEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MODULESADMIN TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $DOMENEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $DOMAINSADMIN TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
@@ -176,7 +185,7 @@ for base in $DB ${DB}_test; do
   # schema public». Gamle staging hadde grantene fra en manuell æra;
   # førstegangsveien hadde aldri satt dem selv.
   sudo -u postgres psql -q -d "$base" -c \
-    "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37, $POLICYEIER, $MODULEIER"
+    "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37, $POLICYEIER, $MODULEIER, $DOMENEEIER"
 done
 
 # ------------------------------------------------------------
