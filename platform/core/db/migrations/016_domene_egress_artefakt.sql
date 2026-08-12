@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS artefakt (
         CHECK (storrelse_bytes > 0 AND storrelse_bytes <= 1048576),   -- 1 MiB (v1)
     klartekst_sha256 TEXT NOT NULL,
     ciphertext       BYTEA,                 -- nullbar: nulles ved 'forkastet'
+    nonce            BYTEA,                 -- AES-GCM-nonce (lagres separat, som oppdrag); nulles ved 'forkastet'
     dek_ref          TEXT NOT NULL,
     kapabilitet_jti  TEXT NOT NULL UNIQUE,
     opprettet        TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -216,9 +217,12 @@ BEGIN
     IF OLD.tilstand IN ('promotert','forkastet') AND NEW.tilstand <> OLD.tilstand THEN
         RAISE EXCEPTION 'artefakt: % er terminal', OLD.tilstand;
     END IF;
-    -- ciphertext kan bare bli NULL (forkastet), aldri endres til annet innhold.
+    -- ciphertext/nonce kan bare bli NULL (forkastet), aldri endres til annet.
     IF NEW.ciphertext IS DISTINCT FROM OLD.ciphertext AND NEW.ciphertext IS NOT NULL THEN
         RAISE EXCEPTION 'artefakt: ciphertext kan kun nulles, aldri endres';
+    END IF;
+    IF NEW.nonce IS DISTINCT FROM OLD.nonce AND NEW.nonce IS NOT NULL THEN
+        RAISE EXCEPTION 'artefakt: nonce kan kun nulles, aldri endres';
     END IF;
     RETURN NEW;
 END $$;
@@ -489,7 +493,7 @@ CREATE OR REPLACE FUNCTION lagre_artefakt_staged(
     p_tenant TEXT, p_oppdrag_id BIGINT, p_artefakttype TEXT, p_modul_id TEXT,
     p_release_id TEXT, p_kontraktversjon INT, p_kontrakt_hash TEXT,
     p_module_epoch BIGINT, p_storrelse INT, p_klartekst_sha256 TEXT,
-    p_ciphertext BYTEA, p_dek_ref TEXT, p_kapabilitet_jti TEXT)
+    p_ciphertext BYTEA, p_nonce BYTEA, p_dek_ref TEXT, p_kapabilitet_jti TEXT)
 RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_id UUID; v_hash TEXT;
 BEGIN
@@ -505,10 +509,11 @@ BEGIN
     END IF;
     INSERT INTO public.artefakt (tenant, oppdrag_id, artefakttype, modul_id,
         release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,
-        storrelse_bytes, klartekst_sha256, ciphertext, dek_ref, kapabilitet_jti)
+        storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,
+        kapabilitet_jti)
         VALUES (p_tenant, p_oppdrag_id, p_artefakttype, p_modul_id, p_release_id,
                 p_kontraktversjon, p_kontrakt_hash, p_module_epoch, 'staged',
-                p_storrelse, p_klartekst_sha256, p_ciphertext, p_dek_ref,
+                p_storrelse, p_klartekst_sha256, p_ciphertext, p_nonce, p_dek_ref,
                 p_kapabilitet_jti)
         RETURNING artefakt_id INTO v_id;
     RETURN v_id;
@@ -557,7 +562,7 @@ RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_antall INT;
 BEGIN
     WITH forkastet AS (
-        UPDATE public.artefakt SET tilstand = 'forkastet', ciphertext = NULL
+        UPDATE public.artefakt SET tilstand = 'forkastet', ciphertext = NULL, nonce = NULL
          WHERE tilstand = 'staged' AND opprettet < now() - interval '24 hours'
         RETURNING 1)
     SELECT count(*) INTO v_antall FROM forkastet;
@@ -570,7 +575,7 @@ REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION tilbakekall_domenekontroll(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BOOLEAN, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION promoter_artefakt(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION rydd_staged_artefakter() FROM PUBLIC;
 -- Domenefunksjonene er admin-/ops-handlinger; artefakt-lagring/-promotering er
@@ -582,7 +587,7 @@ GRANT EXECUTE ON FUNCTION tilbakekall_domenekontroll(TEXT, TEXT, TEXT, TEXT) TO 
 GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BOOLEAN, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter() TO disponit_domains_admin;
-GRANT EXECUTE ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, TEXT, TEXT) TO disponit;
+GRANT EXECUTE ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION promoter_artefakt(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) TO disponit;
 RESET ROLE;
 

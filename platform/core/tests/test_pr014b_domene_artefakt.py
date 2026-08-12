@@ -472,13 +472,13 @@ def _artefakt_oppsett(migrator):
 def test_lagre_artefakt_idempotent_og_konflikt_port36(migrator):
     at, modul, kh, opp, key = _artefakt_oppsett(migrator)
     jti = "jti-" + secrets.token_hex(8)
-    call = ("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s)")
-    a1 = _rt_call(call, (TENANT, opp, at, modul, kh, "hashA", b"ct", key, jti))[0]
-    a2 = _rt_call(call, (TENANT, opp, at, modul, kh, "hashA", b"ct", key, jti))[0]
+    call = ("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s,%s)")
+    a1 = _rt_call(call, (TENANT, opp, at, modul, kh, "hashA", b"ct", b"\x00", key, jti))[0]
+    a2 = _rt_call(call, (TENANT, opp, at, modul, kh, "hashA", b"ct", b"\x00", key, jti))[0]
     assert a1 == a2, "samme (jti, hash) ga ikke samme artefakt_id"
     # samme jti + ANNEN hash → konflikt.
     with pytest.raises(psycopg.errors.UniqueViolation):
-        _rt_call(call, (TENANT, opp, at, modul, kh, "hashB", b"ct", key, jti))
+        _rt_call(call, (TENANT, opp, at, modul, kh, "hashB", b"ct", b"\x00", key, jti))
 
 
 @pg
@@ -486,8 +486,8 @@ def test_promoter_epoch_avvik_port37(migrator):
     at, modul, kh, opp, key = _artefakt_oppsett(migrator)
     jti = "jti-" + secrets.token_hex(8)
     aid = _rt_call(
-        "SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s)",
-        (TENANT, opp, at, modul, kh, "h1", b"ct", key, jti))[0]
+        "SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s,%s)",
+        (TENANT, opp, at, modul, kh, "h1", b"ct", b"\x00", key, jti))[0]
     # epoch-avvik (5 <> stemplet 0) → avvist, ingen promotering.
     with pytest.raises(psycopg.errors.Error):
         _rt_call("SELECT promoter_artefakt(%s,%s,%s,'r1',5,%s,'sys')",
@@ -507,8 +507,8 @@ def test_rydd_staged_forkaster_og_nuller_port40(migrator):
     at, modul, kh, opp, key = _artefakt_oppsett(migrator)
     jti = "jti-" + secrets.token_hex(8)
     aid = _rt_call(
-        "SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s)",
-        (TENANT, opp, at, modul, kh, "h1", b"ct", key, jti))[0]
+        "SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,%s,%s,%s,%s,%s)",
+        (TENANT, opp, at, modul, kh, "h1", b"ct", b"\x00", key, jti))[0]
     # tving opprettet > 24 t tilbake.
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE artefakt SET opprettet=now()-interval '25 hours'"
