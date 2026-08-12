@@ -525,3 +525,44 @@ def test_rydd_staged_forkaster_og_nuller_port40(migrator):
                            " WHERE artefakt_id=%s", (aid,)).fetchone()
     migrator.rollback()
     assert row[0] == "forkastet" and row[1] is None
+
+
+@pg
+def test_b4_overtakelsessak_idempotent_port11(migrator):
+    # Port 11: konflikt → ÉN M-37-sak (familie domeneovertakelse), idempotent per
+    # overtakelsesgenerasjon; ny generasjon → ny sak.
+    from api.domeneovertakelse import opprett_overtakelsessak
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "konflikt:" + TENANT
+    finally:
+        a.close()
+    tapt = res.split(":", 1)[1]
+    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]   # B-generasjon etter overtakelse
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    uid1 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
+    migrator.commit()
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    row = migrator.execute("SELECT kategori, sakstype, status FROM unntak"
+                           " WHERE tenant=%s AND id=%s",
+                           (ANNEN_TENANT, uid1)).fetchone()
+    migrator.rollback()
+    assert row == ("domeneovertakelse", "sikkerhet", "ny")
+    # idempotent: samme konflikt (samme generasjon) → samme sak.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    uid2 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
+    migrator.commit()
+    assert uid2 == uid1
+    # ny overtakelsesgenerasjon → ny sak.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    uid3 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                   tenant_tapt=tapt, generasjon=gen + 1, aktor="sys")
+    migrator.commit()
+    assert uid3 != uid1
