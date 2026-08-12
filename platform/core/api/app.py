@@ -1144,12 +1144,19 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
 
         claim_id = secrets.token_hex(16)
         try:
+            # Deployment-identiteten (release/miljø/epoch) for en REGISTRERT
+            # oppdragstype må komme fra en AUTENTISERT kilde — modulens token,
+            # bundet til dens deployment ved onboarding. Å ta den fra en spoofbar
+            # request-parameter ville latt en drenert r1-prosess claime via r2
+            # (nettopp det bindingen skal hindre). Til modul-onboarding trår i
+            # kraft passeres NULL: en registrert oppdragstype er da IKKE claimbar
+            # herfra (fail-closed) — legacy/uregistrert arbeid er upåvirket.
             rad = conn.execute(
                 "SELECT id, tenant, unntak_id, oppdragstype, handling,"
                 " repair_operation_id, payload_kryptert, key_id, nonce,"
                 " owner_generation, utforelsesfrist, evidensfrist"
-                "  FROM claim_neste_oppdrag(%s, %s, %s, %s)",
-                (auth.rolle, prefikser, claim_id, 300)).fetchone()
+                "  FROM claim_neste_oppdrag(%s, %s, %s, %s, %s, %s, %s)",
+                (auth.rolle, prefikser, claim_id, 300, None, None, None)).fetchone()
             if rad is None:
                 conn.rollback()
                 return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,

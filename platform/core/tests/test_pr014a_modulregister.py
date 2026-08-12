@@ -630,3 +630,23 @@ def test_bytt_release_reviderer_draining_overgang():
     finally:
         r.close()
     assert n == 1
+
+
+@pg
+def test_noddeaktiver_reviderer_drenerte_deployments():
+    # Codex P2: hver tvangs-drenert deployment skal revideres i hendelsesstrømmen.
+    m = _mid(); kh = "k-" + secrets.token_hex(8)
+    a = _admin()
+    try:
+        _oppsett_aktiv(a, m, kh)   # claiming r1
+        a.execute("SELECT noddeaktiver_modul(%s,'hendelse','sys')", (m,)); a.commit()
+    finally:
+        a.close()
+    r = _rt()
+    try:
+        n = r.execute("SELECT count(*) FROM modulregister_hendelse WHERE modul_id=%s"
+                      " AND hendelse='drenet_ved_nodstopp' AND release_id='r1'"
+                      " AND til_livslop='draining'", (m,)).fetchone()[0]
+    finally:
+        r.close()
+    assert n == 1

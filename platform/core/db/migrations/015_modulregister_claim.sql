@@ -103,6 +103,24 @@ BEGIN
     RETURN NEW;
 END $$;
 
+-- Codex P1: kolonnelåsen er BEFORE UPDATE; runtime har direkte INSERT på oppdrag
+-- og kunne ellers opprette en rad med FORFALSKET binding (eller en som gjør
+-- oppdraget permanent uclaimbart). Et oppdrag opprettes ALLTID ubundet — bindingen
+-- stemples kun ved claim (UPDATE, av claim-funksjonen). Egen BEFORE INSERT-vakt.
+CREATE OR REPLACE FUNCTION oppdrag_binding_ved_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.modul_id IS NOT NULL OR NEW.kontraktversjon IS NOT NULL
+       OR NEW.kontrakt_hash IS NOT NULL OR NEW.module_epoch IS NOT NULL THEN
+        RAISE EXCEPTION 'oppdrag: kontraktbinding kan ikke settes ved opprettelse '
+            '(stemples kun ved claim)';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS oppdrag_binding_insert ON oppdrag;
+CREATE TRIGGER oppdrag_binding_insert BEFORE INSERT ON oppdrag
+    FOR EACH ROW EXECUTE FUNCTION oppdrag_binding_ved_insert();
+
 -- ------------------------------------------------------------
 -- 2. m37_claimer (eier av claim-funksjonen) må kunne LESE registeret for å
 --    avgjøre om en registrert oppdragstype har en aktiv, claiming kontrakt.
@@ -150,9 +168,13 @@ BEGIN
     END IF;
 
     LOOP
-        -- Oppdragslås: neste kandidat for eiermodulen (SKIP LOCKED). Allerede
-        -- vurderte-og-forkastede kandidater ekskluderes (v_hoppet) — SKIP LOCKED
-        -- hopper IKKE over rader denne transaksjonen selv har låst.
+        -- Oppdragslås: neste kandidat for eiermodulen (SKIP LOCKED). Den betingede
+        -- binding-tilgjengeligheten er ALT et predikat her (Codex P2: da låses
+        -- ikke en uclaimbar backlog rad for rad) — en registrert oppdragstype
+        -- selekteres bare når kallerens deployment er claiming og modulen aktiv.
+        -- v_hoppet holder kun de sjeldne som taper race-en mot noddeaktiver under
+        -- modul-låsen (re-verifiseringen nedenfor); SKIP LOCKED hopper ikke over
+        -- rader denne transaksjonen selv har låst.
         SELECT k.id, k.oppdragstype INTO v_id, v_ot
           FROM public.oppdrag k
          WHERE (
@@ -167,6 +189,23 @@ BEGIN
                         WHERE k.handling LIKE pre || '%')
            AND k.utforelsesfrist > now()
            AND k.id <> ALL (v_hoppet)
+           AND (
+                 NOT EXISTS (SELECT 1 FROM public.oppdragstype_register reg
+                              WHERE reg.oppdragstype = k.oppdragstype)
+                 OR EXISTS (
+                     SELECT 1 FROM public.oppdragstype_register reg
+                       JOIN public.modulhode h
+                         ON h.modul_id = reg.eiermodul AND h.status = 'aktiv'
+                        AND h.module_epoch IS NOT DISTINCT FROM p_module_epoch
+                       JOIN public.moduldeployment d
+                         ON d.modul_id = reg.eiermodul
+                        AND d.kontraktversjon = reg.kontraktversjon
+                        AND d.kontrakt_hash = reg.kontrakt_hash
+                        AND d.release_id = p_release_id AND d.miljo = p_miljo
+                        AND d.livslop = 'claiming'
+                      WHERE reg.oppdragstype = k.oppdragstype
+                        AND reg.eiermodul = p_modul_id)
+               )
          ORDER BY k.opprettet, k.id
            FOR UPDATE SKIP LOCKED
          LIMIT 1;

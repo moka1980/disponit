@@ -323,3 +323,18 @@ def test_runtime_kan_ikke_sette_oppdrag_binding_direkte(migrator):
         migrator.execute("UPDATE oppdrag SET module_epoch=5 WHERE tenant=%s AND"
                          " id=%s", (TENANT, opp))
     migrator.rollback()
+
+
+@pg
+def test_oppdrag_binding_kan_ikke_settes_ved_insert(migrator):
+    # Codex P1: runtime har direkte INSERT — BEFORE INSERT-vakten hindrer at en
+    # rad opprettes med forfalsket binding (vakten fyrer FØR FK/RLS-sjekkene).
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute(
+            "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+            "oppdragstype,handling,eiermodul,payload_kryptert,key_id,nonce,"
+            "utforelsesfrist,evidensfrist,modul_id) VALUES (%s,1,1,'x',"
+            "'reinnsending','purring.send','em','\\x00','k','\\x00',now(),"
+            "now()+interval '1 day','forfalsk')", (TENANT,))
+    migrator.rollback()

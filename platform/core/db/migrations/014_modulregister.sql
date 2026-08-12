@@ -384,6 +384,11 @@ CREATE OR REPLACE FUNCTION registrer_kontrakt(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE r RECORD;
 BEGIN
+    -- Codex P2: serialiser check-then-insert på kontraktidentiteten, ellers kunne
+    -- to samtidige (deploy/retry) begge se «finnes ikke» og den ene feile på PK
+    -- selv om alt er identisk — i strid med den idempotente retry-oppførselen.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'modulkontrakt:' || p_modul_id || ':' || p_kontraktversjon::text, 0));
     -- Codex P2: sammenlign HELE den immutable tuppelen, ikke bare hashen — ellers
     -- ble en re-registrering med samme hash men avvikende metadata (schema/
     -- sideeffekt/reversibilitet) stille rapportert som en vellykket no-op.
@@ -427,6 +432,9 @@ CREATE OR REPLACE FUNCTION registrer_release(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE r RECORD;
 BEGIN
+    -- Codex P2: serialiser check-then-insert på release-identiteten (som kontrakt).
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'modulrelease:' || p_modul_id || ':' || p_release_id, 0));
     SELECT kontraktversjon, kontrakt_hash, manifest_hash, artifact_digest
       INTO r FROM public.modulrelease
      WHERE modul_id = p_modul_id AND release_id = p_release_id;
@@ -583,7 +591,7 @@ CREATE OR REPLACE FUNCTION noddeaktiver_modul(
     p_begrunnelse TEXT,
     p_aktor       TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_status TEXT; v_epoch BIGINT;
+DECLARE v_status TEXT; v_epoch BIGINT; v_d RECORD;
 BEGIN
     IF p_begrunnelse IS NULL OR length(btrim(p_begrunnelse)) = 0 THEN
         RAISE EXCEPTION 'noddeaktiver_modul: begrunnelse er obligatorisk'
@@ -606,9 +614,23 @@ BEGIN
            module_epoch = module_epoch + 1, status_ts = now()
      WHERE modul_id = p_modul_id;
     -- Fjern fencet arbeidsgrunnlag: enhver claiming draines (emergency stop),
-    -- så reaktivering ikke kan gjenbruke en gammel deployment.
-    UPDATE public.moduldeployment SET livslop = 'draining'
-     WHERE modul_id = p_modul_id AND livslop = 'claiming';
+    -- så reaktivering ikke kan gjenbruke en gammel deployment. Hver tvangs-
+    -- drenert deployment revideres (Codex P2 — ellers står de som claiming i
+    -- hendelsesstrømmen).
+    FOR v_d IN
+        WITH drenert AS (
+            UPDATE public.moduldeployment SET livslop = 'draining'
+             WHERE modul_id = p_modul_id AND livslop = 'claiming'
+            RETURNING release_id, kontraktversjon, kontrakt_hash)
+        SELECT * FROM drenert
+    LOOP
+        INSERT INTO public.modulregister_hendelse
+            (modul_id, hendelse, fra_livslop, til_livslop, release_id,
+             kontraktversjon, kontrakt_hash, module_epoch, aktor, begrunnelse)
+            VALUES (p_modul_id, 'drenet_ved_nodstopp', 'claiming', 'draining',
+                    v_d.release_id, v_d.kontraktversjon, v_d.kontrakt_hash,
+                    v_epoch + 1, p_aktor, p_begrunnelse);
+    END LOOP;
     INSERT INTO public.modulregister_hendelse
         (modul_id, hendelse, fra_status, til_status, module_epoch, aktor,
          begrunnelse)
