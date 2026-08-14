@@ -1540,17 +1540,22 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         if hash_ is None:
             continue
         if hash_ == ny_hash:
-            # Codex: skill en idempotent SUKSESS fra en idempotent AVVISNING. Ble
-            # den forrige (identiske) kvitteringen avvist — artefaktet
-            # karantenesatt, oppdraget aldri avsluttet — må en retry returnere SAMME
-            # 409. Ellers ser en tapt 409-respons ut som en vellykket 200 selv om
-            # jobben aldri ble fullført. Karantene rekonstruerer avvisnings-utfallet.
+            # Codex: skill en idempotent SUKSESS fra en idempotent AVVISNING. En
+            # avvist artefaktkvittering (promotering feilet) skrev en
+            # 'artefakt_ikke_verifisert'-sikkerhetssak og lot oppdraget stå
+            # uavsluttet — men den brente kapabiliteten husker bare resultathashen,
+            # ikke at utfallet var en avvisning. Uten dette ville en identisk retry
+            # sett ut som en vellykket 200 selv om jobben aldri ble fullført.
+            # Sikkerhetssaken er persistert UAVHENGIG av artefakt-tilstand — den
+            # dekker også et FREMMED/IKKE-EKSISTERENDE artefakt der karantene er en
+            # no-op og det derfor ikke finnes noe karantenesatt artefakt å lese.
             art_id0 = kvittering.get("artefakt_id")
             if art_id0 is not None:
                 avvist = conn.execute(
-                    "SELECT 1 FROM artefakt WHERE artefakt_id=%s AND tenant=%s"
-                    " AND oppdrag_id=%s AND tilstand='karantene'",
-                    (art_id0, tenant, oppdrag_id)).fetchone()
+                    "SELECT 1 FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+                    " AND hendelse='artefakt_ikke_verifisert'"
+                    " AND detalj->>'oppdrag_id' = %s AND detalj->>'artefakt_id' = %s",
+                    (tenant, unntak_id, str(oppdrag_id), str(art_id0))).fetchone()
                 if avvist is not None:
                     conn.rollback()
                     return _feilsvar("kvittering_konflikt", rid)

@@ -334,6 +334,31 @@ def test_avvist_kvittering_retry_gir_samme_409(migrator, klient, token):
 
 
 @pg
+def test_avvist_fremmed_artefakt_retry_gir_samme_409(migrator, klient, token):
+    """Codex: avvisnings-utfallet må persisteres UAVHENGIG av artefakt-tilstand.
+    En kvittering som navngir et FREMMED artefakt karantenesetter ingenting
+    (no-op), så en retry ville ellers falt gjennom til 200 idempotent selv om
+    jobben aldri ble fullført. Sikkerhetssaken bærer utfallet.
+
+    MUTASJONEN SOM DREPER DENNE: bytt historikk-sjekken tilbake til å lese
+    artefakt-tilstand='karantene'."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    _, _, _, fremmed, _, _, _ = _last_opp_artefakt(migrator, klient, token)
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    hh = {"authorization": f"Bearer {tok2}"}
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, fremmed))
+    # 1) FREMMED artefakt → avvist (409); ingenting karantenesatt under opp.
+    assert klient.post("/v1/oppdrag/kvittering", json=kv,
+                       headers=hh).status_code == 409
+    # 2) IDENTISK retry → SAMME 409 (utfallet ligger i sikkerhetssaken).
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv, headers=hh)
+    assert rk.status_code == 409, \
+        "retry av avvist kvittering med fremmed artefakt så ut som suksess: " + rk.text
+
+
+@pg
 def test_kvittering_ikke_uuid_artefakt_er_request_feil(migrator, klient, token):
     """Codex: en gyldig signert kvittering med en ikke-UUID artefakt_id må gi
     request_feilformet (400), ikke db_utilgjengelig — uten valideringen når den
