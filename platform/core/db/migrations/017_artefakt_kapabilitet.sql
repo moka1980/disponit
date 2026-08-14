@@ -168,6 +168,64 @@ BEGIN
     RETURN 'brukt';
 END $$;
 
+-- Codex (016:502): lagre_artefakt_staged VALIDERER OG FORBRUKER kapabiliteten
+-- ATOMISK (redefinert her hvor artefaktkapabilitet finnes). Signaturen er
+-- uendret, men bindingen MÅ nå matche en gyldig, ubrukt, ikke-utløpt kapabilitet
+-- holdt av modulen — en runtime-tilkobling kan ikke lenger kalle funksjonen
+-- direkte med oppdiktet jti/binding og omgå eierskap/utløp/status.
+CREATE OR REPLACE FUNCTION lagre_artefakt_staged(
+    p_tenant TEXT, p_oppdrag_id BIGINT, p_artefakttype TEXT, p_modul_id TEXT,
+    p_release_id TEXT, p_kontraktversjon INT, p_kontrakt_hash TEXT,
+    p_module_epoch BIGINT, p_storrelse INT, p_klartekst_sha256 TEXT,
+    p_ciphertext BYTEA, p_nonce BYTEA, p_dek_ref TEXT, p_kapabilitet_jti TEXT)
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE k RECORD; v_id UUID; v_hash TEXT;
+BEGIN
+    SET LOCAL synchronous_commit = on;
+    SELECT tenant, oppdrag_id, release_id, kontraktversjon, kontrakt_hash,
+           module_epoch, artefakttype, status, artefakt_id, utloper
+      INTO k FROM public.artefaktkapabilitet
+     WHERE jti = p_kapabilitet_jti AND modul_id = p_modul_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'artefaktkapabilitet %/% ukjent', p_kapabilitet_jti,
+            p_modul_id USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF k.status = 'brukt' THEN
+        SELECT klartekst_sha256 INTO v_hash FROM public.artefakt
+         WHERE artefakt_id = k.artefakt_id;
+        IF v_hash IS DISTINCT FROM p_klartekst_sha256 THEN
+            RAISE EXCEPTION 'artefaktkapabilitet % gjenbrukt for ANNET dokument',
+                p_kapabilitet_jti USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN k.artefakt_id;                       -- idempotent
+    END IF;
+    IF k.status = 'feilet' OR now() > k.utloper THEN
+        RAISE EXCEPTION 'artefaktkapabilitet % utløpt/ugyldig', p_kapabilitet_jti
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF (k.tenant, k.oppdrag_id, k.release_id, k.kontraktversjon, k.kontrakt_hash,
+        k.module_epoch, k.artefakttype)
+       IS DISTINCT FROM
+       (p_tenant, p_oppdrag_id, p_release_id, p_kontraktversjon, p_kontrakt_hash,
+        p_module_epoch, p_artefakttype) THEN
+        RAISE EXCEPTION 'lagre_artefakt_staged: binding matcher ikke kapabiliteten'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    INSERT INTO public.artefakt (tenant, oppdrag_id, artefakttype, modul_id,
+        release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,
+        storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,
+        kapabilitet_jti)
+        VALUES (k.tenant, k.oppdrag_id, k.artefakttype, p_modul_id, k.release_id,
+                k.kontraktversjon, k.kontrakt_hash, k.module_epoch, 'staged',
+                p_storrelse, p_klartekst_sha256, p_ciphertext, p_nonce, p_dek_ref,
+                p_kapabilitet_jti)
+        RETURNING artefakt_id INTO v_id;
+    UPDATE public.artefaktkapabilitet
+       SET status = 'brukt', artefakt_id = v_id, brukt_ts = now()
+     WHERE jti = p_kapabilitet_jti;
+    RETURN v_id;
+END $$;
+
 REVOKE ALL ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION bruk_artefaktkapabilitet(TEXT, UUID) FROM PUBLIC;

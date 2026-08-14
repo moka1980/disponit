@@ -1759,11 +1759,8 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
                                    art="sikkerhet")
             return _feilsvar("idempotenskonflikt", rid)
 
-        utfall = conn.execute("SELECT bruk_artefaktkapabilitet(%s,%s)",
-                              (jti, aid)).fetchone()[0]
-        if utfall == "konflikt":
-            conn.rollback()
-            return _feilsvar("idempotenskonflikt", rid)
+        # lagre_artefakt_staged validerer OG forbruker kapabiliteten atomisk
+        # (Codex 016:502) — ingen separat bruk-kall lenger.
         conn.commit()
         # Server-beregnet hash returneres (modulen binder den i resultatkvitteringen).
         return kanonisk_json({"artefakt_id": str(aid),
