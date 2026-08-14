@@ -300,3 +300,73 @@ def test_promoteringsfeil_brenner_kapabiliteten(migrator, klient, token):
                               (TENANT, opp)).fetchone()[0]
     migrator.rollback()
     assert opp_st == "plukket", "en avvist kvittering avsluttet oppdraget likevel"
+
+
+@pg
+def test_kvittering_ikke_uuid_artefakt_er_request_feil(migrator, klient, token):
+    """Codex: en gyldig signert kvittering med en ikke-UUID artefakt_id må gi
+    request_feilformet (400), ikke db_utilgjengelig — uten valideringen når den
+    uuid-kolonnen og PostgreSQL kaster InvalidTextRepresentation, feilrapportert
+    som om basen var nede.
+
+    MUTASJONEN SOM DREPER DENNE: fjern uuid.UUID-valideringen i _ingest_kvittering."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, "ikke-en-uuid"))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 400 and "request_feilformet" in rk.text, rk.text
+
+
+@pg
+def test_kvittering_gjerdes_ut_av_ny_module_epoch(migrator, klient, token):
+    """Codex: promoteringen sammenlignes mot modulens GJELDENDE epoch. Nødstoppes
+    modulen etter claim+opplasting (modulhode.module_epoch++), skal en kvittering
+    fra den utgjerdede controlleren IKKE promotere/avslutte — artefaktet
+    karantenesettes.
+
+    MUTASJONEN SOM DREPER DENNE: sammenlign kun mot oppdragets stemplede epoch."""
+    from .test_m37 import _signer_kvittering
+    from .test_pr014b_artefaktkapabilitet import _mk_admin
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        ma.execute("SELECT noddeaktiver_modul(%s,'nodstopp','sys')", (modul,))
+        ma.commit()
+    finally:
+        ma.close()
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 409, rk.text
+    _sett_kontekst(migrator, TENANT)
+    art_st = migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                              (aid,)).fetchone()[0]
+    opp_st = migrator.execute("SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                              (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+    assert (art_st, opp_st) == ("karantene", "plukket"), \
+        "en nodstoppet controllers kvittering promoterte artefaktet likevel"
+
+
+@pg
+def test_upload_ensom_surrogat_er_request_feil(migrator, klient, token):
+    """Codex: en escaped ensom surrogate ("\\ud800") slipper gjennom json.loads,
+    men kanoniseringen kaster UnicodeEncodeError. Handleren fanget kun
+    Ikkekanoniserbar → 500. Nå: request_feilformet (400).
+
+    MUTASJONEN SOM DREPER DENNE: fjern UnicodeEncodeError fra except-en."""
+    import json as _json
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    jti = _utsted_cap(opp, modul, kh, at)
+    tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
+    kropp = _json.dumps({"kapabilitet_jti": jti, "rapport": {"x": "\ud800"}})
+    r = klient.post("/v1/artefakt", content=kropp,
+                    headers={"authorization": f"Bearer {tok}",
+                             "content-type": "application/json"})
+    assert r.status_code == 400 and "request_feilformet" in r.text, r.text

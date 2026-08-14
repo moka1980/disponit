@@ -314,6 +314,35 @@ def test_lagre_avviser_null_payload(migrator):
 
 
 @pg
+def test_brukt_kapabilitet_er_terminal(migrator):
+    """Codex: `brukt` er terminal. Uten dette kunne en brukt kapabilitet settes
+    tilbake til `utstedt`, hvorpå en ellers idempotent retry tar INSERT-veien i
+    lagre_artefakt_staged og kolliderer på artefaktets unike kapabilitet_jti.
+
+    MUTASJONEN SOM DREPER DENNE: fjern brukt-terminal-sjekken i statusmaskinen."""
+    from db import kryptering
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    a = _admin()
+    try:
+        jti = _utsted(a, opp, modul, kh, at)
+        _sett_kontekst(a, TENANT)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(a, TENANT)
+        ct, nonce = kryptering.krypter(dek, {"r": 1}, TENANT, key_id)
+        a.execute("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,"
+                  "%s,%s,%s,%s,%s)",
+                  (TENANT, opp, at, modul, kh, "h-" + secrets.token_hex(8),
+                   ct, nonce, key_id, jti))
+        a.commit()   # kapabiliteten er nå 'brukt'
+    finally:
+        a.close()
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE artefaktkapabilitet SET status='utstedt'"
+                         " WHERE jti=%s", (jti,))
+    migrator.rollback()
+
+
+@pg
 def test_bindingsfelter_uforanderlige(migrator):
     modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
     opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)

@@ -743,3 +743,67 @@ def test_overtakelse_baerer_ny_wildcard(migrator):
     migrator.rollback()
     assert rad == ("avklaring_kreves", True), \
         "overtakelsen beholdt den gamle wildcard-scopen"
+
+
+@pg
+def test_wildcard_ikke_utvidbar_under_avklaring(migrator):
+    """Codex: mens en rad avventer M-37-avklaring kan scope IKKE endres. Ellers
+    kunne B reutstede en wildcard-challenge i avklaring_kreves, og avgjor godkjenne
+    den utvidede scopen uten at wildcard-challengen ble verifisert.
+
+    MUTASJONEN SOM DREPER DENNE: fjern 'avklaring_kreves' fra CASE-en i
+    utsted_challenge sin ON CONFLICT."""
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()   # B → avklaring_kreves (wildcard=false)
+        # B reutsteder en WILDCARD-challenge mens den avventer avklaring.
+        a.execute("SELECT utsted_challenge(%s,%s,true,%s,'sys')",
+                  (ANNEN_TENANT, h, "th-" + secrets.token_hex(8))); a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rad = migrator.execute("SELECT status, wildcard FROM domenekontroll"
+                           " WHERE tenant=%s AND hostname=%s",
+                           (ANNEN_TENANT, h)).fetchone()
+    migrator.rollback()
+    assert rad == ("avklaring_kreves", False), \
+        "wildcard-scopen ble utvidet mens raden avventet avklaring"
+
+
+@pg
+def test_artefakt_dek_ref_frosset(migrator):
+    """Codex: dek_ref er frosset. Krypteringen binder AES-GCM-AAD til tenant|key_id,
+    så en repointing til en annen nøkkel gjør artefaktet udekrypterbart mens
+    ciphertext/hash/tilstand står urørt.
+
+    MUTASJONEN SOM DREPER DENNE: fjern dek_ref fra frys-sjekken i artefakt_statemaskin."""
+    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    _artefakttype(migrator, modul, kh, at)
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    aid = _artefakt(migrator, TENANT, opp, at, modul, kh)
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE artefakt SET dek_ref='annen-key'"
+                         " WHERE artefakt_id=%s", (aid,))
+    migrator.rollback()
+
+
+@pg
+def test_visning_eksponerer_wildcard_scope(migrator):
+    """Codex: v_domeneautorisasjon MÅ eksponere scope-biten, ellers kan egress
+    ikke skille en eksakt-host- fra en wildcard-verifisering."""
+    cols = migrator.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_name='v_domeneautorisasjon'").fetchall()
+    migrator.rollback()
+    assert ("wildcard_scope",) in cols, "visningen mangler scope-biten"
+    # egress har KOLONNE-SELECT på wildcard (security_invoker leser basiskolonnen).
+    ok = migrator.execute("SELECT has_column_privilege('disponit_egress',"
+                          "'domenekontroll','wildcard','SELECT')").fetchone()[0]
+    migrator.rollback()
+    assert ok is True, "egress mangler SELECT på wildcard-kolonnen"

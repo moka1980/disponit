@@ -134,7 +134,12 @@ CREATE OR REPLACE VIEW v_domeneautorisasjon WITH (security_invoker = true) AS
     SELECT tenant, hostname, autorisasjonsgenerasjon,
            (status = 'verifisert' AND now() < utloper
             AND siste_vellykkede_revalidering > now() - interval '72 hours')
-           AS gyldig
+           AS gyldig,
+           -- Codex: scope-biten MÅ eksponeres. Uten den kan egress ikke skille en
+           -- eksakt-host-verifisering fra en wildcard, og måtte enten avvise ALL
+           -- subdomenebruk eller risikere å behandle en eksakt verifisering som
+           -- autorisasjon for subdomener.
+           wildcard AS wildcard_scope
       FROM domenekontroll;
 
 -- ============================================================
@@ -221,6 +226,11 @@ BEGIN
        OR NEW.module_epoch IS DISTINCT FROM OLD.module_epoch
        OR NEW.klartekst_sha256 IS DISTINCT FROM OLD.klartekst_sha256
        OR NEW.kapabilitet_jti IS DISTINCT FROM OLD.kapabilitet_jti
+       -- Codex: dek_ref MÅ fryses. Krypteringen binder AES-GCM-AAD til
+       -- tenant|key_id (db/kryptering.py); en repointing til en annen nøkkel
+       -- ville gjort artefaktet UDEKRYPTERBART mens ciphertext/hash/tilstand står
+       -- urørt — bevaret evidens stille korrumpert.
+       OR NEW.dek_ref IS DISTINCT FROM OLD.dek_ref
        OR NEW.storrelse_bytes IS DISTINCT FROM OLD.storrelse_bytes THEN
         RAISE EXCEPTION 'artefakt: identitet/binding/hash er frosset';
     END IF;
@@ -325,7 +335,7 @@ CREATE POLICY tenant_isolasjon ON artefakt
 -- FORCE innkapsler egress til gjeldende tenant-kontekst.
 GRANT SELECT ON v_domeneautorisasjon TO disponit_egress;
 GRANT SELECT (tenant, hostname, autorisasjonsgenerasjon, status, utloper,
-              siste_vellykkede_revalidering)
+              siste_vellykkede_revalidering, wildcard)
     ON domenekontroll TO disponit_egress;
 
 -- ============================================================
@@ -357,9 +367,13 @@ BEGIN
         SET challenge_token_hash = p_token_hash, challenge_utstedt = now(),
             challenge_utloper = now() + interval '7 days',
             -- Codex: en re-utstedelse skal IKKE kunne utvide scope. Mens raden er
-            -- verifisert beholdes gammel wildcard (en wildcard-oppgradering krever
-            -- en ny, verifisert wildcard-challenge); ellers tar den nye verdien.
-            wildcard = CASE WHEN public.domenekontroll.status = 'verifisert'
+            -- verifisert ELLER avventer M-37-avklaring beholdes gammel wildcard —
+            -- ellers kunne B reutstede en wildcard-challenge mens den står i
+            -- avklaring_kreves, og avgjor_domeneovertakelse godkjenne den utvidede
+            -- scopen UTEN at den nye wildcard-challengen noen gang ble verifisert.
+            -- En scope-oppgradering krever en ny, verifisert wildcard-challenge.
+            wildcard = CASE WHEN public.domenekontroll.status
+                                 IN ('verifisert','avklaring_kreves')
                             THEN public.domenekontroll.wildcard
                             ELSE p_wildcard END;   -- status uendret
     INSERT INTO public.domenekontroll_hendelse

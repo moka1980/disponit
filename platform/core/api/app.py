@@ -23,6 +23,7 @@ import secrets
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1515,6 +1516,21 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         conn.rollback()
         return _feilsvar("kvittering_for_sen", rid)
 
+    # Codex: valider artefakt_id som UUID FØR kapabiliteten forbrukes eller den
+    # uuid-typede artefakt-kolonnen spørres. En gyldig signert kvittering med en
+    # ikke-UUID artefakt_id ville ellers nådd `WHERE artefakt_id=%s` og fått
+    # PostgreSQL til å kaste InvalidTextRepresentation — rapportert som
+    # db_utilgjengelig (som om basen var nede) i stedet for request_feilformet.
+    raa_art = kvittering.get("artefakt_id")
+    if raa_art is not None:
+        try:
+            uuid.UUID(str(raa_art))
+        except (ValueError, AttributeError, TypeError):
+            conn.rollback()
+            tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                                   oppdrag_id=oppdrag_id)
+            return _feilsvar("request_feilformet", rid)
+
     ny_hash = _resultathash(kvittering)
 
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
@@ -1626,10 +1642,18 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             "SELECT release_id, klartekst_sha256 FROM artefakt"
             " WHERE artefakt_id=%s AND tenant=%s AND oppdrag_id=%s",
             (art_id, tenant, oppdrag_id)).fetchone()
-        opp_epoch = conn.execute(
-            "SELECT module_epoch FROM oppdrag WHERE tenant=%s AND id=%s",
-            (tenant, oppdrag_id)).fetchone()[0]
-        promotert = art is not None
+        # Codex: sammenlign mot modulens GJELDENDE epoch, ikke bare den claim-tid-
+        # stemplede på oppdraget. `noddeaktiver_modul` løfter modulhode.module_epoch;
+        # oppdragets stemplede epoch er derimot frosset. En artefakt+kvittering fra
+        # en NØDSTOPPET controller ville ellers fortsatt promotert (stemplet ==
+        # stemplet) og avsluttet oppdraget etter nødstoppen. Er de ulike, gjerdes
+        # controlleren ut → ingen promotering → karantene.
+        epoker = conn.execute(
+            "SELECT o.module_epoch, h.module_epoch FROM oppdrag o"
+            " JOIN modulhode h ON h.modul_id = o.modul_id"
+            " WHERE o.tenant=%s AND o.id=%s", (tenant, oppdrag_id)).fetchone()
+        opp_epoch = epoker[0]
+        promotert = art is not None and epoker[0] == epoker[1]
         if promotert:
             try:
                 # SAVEPOINT: en promoteringsfeil (epoch-drift/bindingsavvik) må
@@ -1762,7 +1786,10 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         sett_kontekst(conn, tenant, auth.aktor, rid)
         try:
             kanon = jcs.kanoniske_bytes(rapport)
-        except jcs.Ikkekanoniserbar:
+        except (jcs.Ikkekanoniserbar, UnicodeEncodeError):
+            # Codex: en escaped ensom surrogate (f.eks. "\ud800") slipper gjennom
+            # json.loads, men kanoniseringen kan da kaste UnicodeEncodeError i
+            # stedet for Ikkekanoniserbar. Begge er feilformet klientinput.
             conn.rollback()
             return _feilsvar("request_feilformet", rid)
         storrelse = len(kanon)

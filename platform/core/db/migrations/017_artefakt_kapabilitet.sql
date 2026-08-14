@@ -68,6 +68,13 @@ BEGIN
     IF OLD.status = 'feilet' AND NEW.status <> 'feilet' THEN
         RAISE EXCEPTION 'artefaktkapabilitet: feilet er terminal';
     END IF;
+    -- Codex: `brukt` er OGSÅ terminal. Uten dette kunne en brukt kapabilitet
+    -- settes tilbake til `utstedt`, hvorpå en ellers idempotent retry tar
+    -- INSERT-veien i lagre_artefakt_staged og kolliderer på artefaktets unike
+    -- kapabilitet_jti i stedet for å returnere det eksisterende artefakt_id.
+    IF OLD.status = 'brukt' AND NEW.status <> 'brukt' THEN
+        RAISE EXCEPTION 'artefaktkapabilitet: brukt er terminal';
+    END IF;
     RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS artefaktkapabilitet_overgang ON artefaktkapabilitet;
