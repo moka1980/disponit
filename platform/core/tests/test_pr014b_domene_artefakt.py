@@ -774,6 +774,59 @@ def test_wildcard_ikke_utvidbar_under_avklaring(migrator):
 
 
 @pg
+def test_tredje_tenant_gaar_i_avklaring_ikke_direkte(migrator):
+    """Codex: mens et hostnavn er under aktiv M-37-avklaring må en TREDJE tenant
+    OGSÅ gå i avklaring — aldri direkte verifisert. Ellers omgår en DNS-kontrollør
+    M-37 ved å forsøke overtakelsen to ganger under ulike tenanter (det andre
+    forsøket falt gjennom overtakelsesgrenen til direkte-verifisering).
+
+    MUTASJONEN SOM DREPER DENNE: fjern ELSIF v_status_a='avklaring_kreves'-grenen."""
+    tredje = "t3-" + secrets.token_hex(4)
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()   # B4-overtakelse → B avklaring
+        # En TREDJE tenant forsøker samme hostnavn mens B avventer avklaring.
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (tredje, h)).fetchone()[0]
+        a.commit()
+        assert res == "konflikt:" + ANNEN_TENANT, \
+            "tredje tenant ble ikke behandlet som en konflikt"
+    finally:
+        a.close()
+    assert _dkrow(migrator, tredje, h)[0] == "avklaring_kreves", \
+        "tredje tenant ble direkte verifisert forbi M-37"
+    # Ingen er verifisert på hostnavnet.
+    _sett_kontekst(migrator, tredje)
+    assert _dkrow(migrator, tredje, h)[0] != "verifisert"
+
+
+@pg
+def test_revalider_avviser_ikke_verifisert(migrator):
+    """Codex: revalidering registrerer KUN en hendelse når nøyaktig én verifisert
+    rad ble oppdatert. Racet mot tilbakekalling/overtakelse (eller kalt for et
+    ukjent/ikke-verifisert hostnavn) traff UPDATE-en null rader — men loggen påsto
+    likevel en vellykket revalidering etter at autorisasjonen var trukket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern IF NOT FOUND-sjekken."""
+    h = _host(); a = _admin()
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT revalider_domenekontroll(%s,%s,'sys')", (TENANT, h))
+        a.rollback()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute("SELECT count(*) FROM domenekontroll_hendelse"
+                         " WHERE hostname=%s AND hendelse='revalidert'",
+                         (h,)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0, "en revalidert-hendelse ble logget uten en verifisert rad"
+
+
+@pg
 def test_artefakt_dek_ref_frosset(migrator):
     """Codex: dek_ref er frosset. Krypteringen binder AES-GCM-AAD til tenant|key_id,
     så en repointing til en annen nøkkel gjør artefaktet udekrypterbart mens

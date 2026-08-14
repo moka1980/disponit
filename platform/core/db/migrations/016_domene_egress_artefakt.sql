@@ -448,6 +448,28 @@ BEGIN
                 VALUES (p_hostname, p_tenant)
             ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
             RETURN 'konflikt:' || v_eier;
+        ELSIF v_status_a = 'avklaring_kreves' THEN
+            -- Codex: hostnavnet er under AKTIV M-37-avklaring (bindingseieren
+            -- v_eier avventer avgjørelse). En TREDJE tenant som verifiserer er en
+            -- ny konfliktpart — den går OGSÅ i avklaring_kreves, ALDRI direkte
+            -- verifisert. Uten denne grenen falt et ANNET tenant-forsøk gjennom
+            -- til direkte-verifisering, så en DNS-kontrollør kunne omgå M-37 ved å
+            -- forsøke overtakelsen to ganger under ulike tenanter. Kun
+            -- avgjor_domeneovertakelse løfter noen ut av avklaring.
+            INSERT INTO public.domenekontroll (tenant, hostname, status, wildcard,
+                autorisasjonsgenerasjon)
+                VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1)
+            ON CONFLICT (tenant, hostname) DO UPDATE
+                SET status = 'avklaring_kreves', wildcard = p_wildcard,
+                    autorisasjonsgenerasjon = public.domenekontroll.autorisasjonsgenerasjon + 1;
+            INSERT INTO public.domenekontroll_hendelse
+                (tenant, hostname, hendelse, til_status, grunn, aktor) VALUES
+                (p_tenant, p_hostname, 'avklaring_kreves', 'avklaring_kreves',
+                 'samtidig_overtakelseskonflikt', p_aktor);
+            INSERT INTO public.hostname_binding (hostname, tenant)
+                VALUES (p_hostname, p_tenant)
+            ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
+            RETURN 'konflikt:' || v_eier;
         ELSIF v_status_a = 'verifisert' THEN
             -- Codex: A er verifisert men UTLØPT. Delindeksen en_verifisert_per_
             -- hostname predikerer kun på status, så A-raden blokkerer B med unique
@@ -492,6 +514,17 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
 BEGIN
     UPDATE public.domenekontroll SET siste_vellykkede_revalidering = now()
      WHERE tenant = p_tenant AND hostname = p_hostname AND status = 'verifisert';
+    -- Codex: KUN registrer revisjonshendelsen når NØYAKTIG én verifisert rad
+    -- faktisk ble oppdatert. Racet en planlagt revalidering med en tilbakekalling/
+    -- overtakelse (eller ble kalt for et ukjent/ikke-verifisert hostnavn), traff
+    -- UPDATE-en null rader — men append-only-loggen påsto likevel en vellykket
+    -- revalidering ETTER at autorisasjonen var trukket, uten noen tilsvarende
+    -- endring i siste_vellykkede_revalidering.
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'revalider_domenekontroll: %/% er ikke verifisert '
+            '(ingen revalidering registrert)', p_tenant, p_hostname
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.domenekontroll_hendelse
         (tenant, hostname, hendelse, aktor) VALUES
         (p_tenant, p_hostname, 'revalidert', p_aktor);

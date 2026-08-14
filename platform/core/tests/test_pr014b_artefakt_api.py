@@ -303,6 +303,37 @@ def test_promoteringsfeil_brenner_kapabiliteten(migrator, klient, token):
 
 
 @pg
+def test_avvist_kvittering_retry_gir_samme_409(migrator, klient, token):
+    """Codex: en IDENTISK retry av en AVVIST kvittering må gi samme 409, ikke en
+    generisk 200 idempotent — jobben ble aldri fullført (artefaktet karantene). En
+    tapt 409-respons ville ellers sett ut som suksess ved retry.
+
+    MUTASJONEN SOM DREPER DENNE: fjern karantene-sjekken i idempotens-grenen."""
+    from .test_m37 import _signer_kvittering
+    from .test_pr014b_artefaktkapabilitet import _mk_admin
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    # Nødstopp modulen → epoch-mismatch → EGEN artefakt (under opp) avvises OG
+    # karantenesettes (karantenesett er no-op for et fremmed artefakt).
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        ma.execute("SELECT noddeaktiver_modul(%s,'nodstopp','sys')", (modul,))
+        ma.commit()
+    finally:
+        ma.close()
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    hh = {"authorization": f"Bearer {tok2}"}
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    # 1) Avvist (409), egen artefakt karantenesatt.
+    assert klient.post("/v1/oppdrag/kvittering", json=kv,
+                       headers=hh).status_code == 409
+    # 2) IDENTISK retry → SAMME 409, ikke 200 idempotent.
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv, headers=hh)
+    assert rk.status_code == 409, \
+        "identisk retry av en avvist kvittering så ut som suksess: " + rk.text
+
+
+@pg
 def test_kvittering_ikke_uuid_artefakt_er_request_feil(migrator, klient, token):
     """Codex: en gyldig signert kvittering med en ikke-UUID artefakt_id må gi
     request_feilformet (400), ikke db_utilgjengelig — uten valideringen når den

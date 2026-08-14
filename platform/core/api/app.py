@@ -1540,6 +1540,20 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         if hash_ is None:
             continue
         if hash_ == ny_hash:
+            # Codex: skill en idempotent SUKSESS fra en idempotent AVVISNING. Ble
+            # den forrige (identiske) kvitteringen avvist — artefaktet
+            # karantenesatt, oppdraget aldri avsluttet — må en retry returnere SAMME
+            # 409. Ellers ser en tapt 409-respons ut som en vellykket 200 selv om
+            # jobben aldri ble fullført. Karantene rekonstruerer avvisnings-utfallet.
+            art_id0 = kvittering.get("artefakt_id")
+            if art_id0 is not None:
+                avvist = conn.execute(
+                    "SELECT 1 FROM artefakt WHERE artefakt_id=%s AND tenant=%s"
+                    " AND oppdrag_id=%s AND tilstand='karantene'",
+                    (art_id0, tenant, oppdrag_id)).fetchone()
+                if avvist is not None:
+                    conn.rollback()
+                    return _feilsvar("kvittering_konflikt", rid)
             conn.rollback()
             return kanonisk_json({"status": "idempotent",
                                   "oppdrag_id": oppdrag_id,
