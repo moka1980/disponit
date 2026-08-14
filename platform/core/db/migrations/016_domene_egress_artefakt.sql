@@ -174,8 +174,16 @@ BEGIN
         (OLD.status = 'ventende'         AND NEW.status IN ('ventende','verifisert','avklaring_kreves','utlopt','tilbakekalt')) OR
         (OLD.status = 'verifisert'       AND NEW.status IN ('verifisert','avklaring_kreves','utlopt','tilbakekalt')) OR
         (OLD.status = 'avklaring_kreves' AND NEW.status IN ('avklaring_kreves','verifisert','tilbakekalt','utlopt')) OR
-        (OLD.status = 'utlopt'           AND NEW.status IN ('utlopt','ventende','verifisert','tilbakekalt')) OR
-        (OLD.status = 'tilbakekalt'      AND NEW.status IN ('tilbakekalt','ventende','verifisert')) OR
+        -- `avklaring_kreves` må kunne nås fra ENHVER tilstand som allerede kan
+        -- nå `verifisert`. En tenant hvis forrige overtakelse ble avvist står
+        -- `tilbakekalt` (og en utløpt står `utlopt`); tar den senere DNS-
+        -- kontrollen fra en aktiv eier igjen, skal overtakelsen ende i ny
+        -- avklaring — uten disse to falt B4-grenen på en ulovlig overgang og
+        -- HELE verifiseringen feilet. Avklaring gir ingen autorisasjon
+        -- (`v_domeneautorisasjon.gyldig` krever `verifisert`), så dette er en
+        -- strengt svakere overgang enn den allerede tillatte til `verifisert`.
+        (OLD.status = 'utlopt'           AND NEW.status IN ('utlopt','ventende','verifisert','tilbakekalt','avklaring_kreves')) OR
+        (OLD.status = 'tilbakekalt'      AND NEW.status IN ('tilbakekalt','ventende','verifisert','avklaring_kreves')) OR
         (OLD.status = NEW.status)
     ) THEN
         RAISE EXCEPTION 'domenekontroll: ulovlig statusovergang % -> %',
