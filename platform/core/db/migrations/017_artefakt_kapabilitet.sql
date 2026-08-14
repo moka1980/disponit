@@ -110,6 +110,18 @@ BEGIN
             'med matchende kontraktbinding', p_tenant, p_oppdrag_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Codex: artefakttypen MÅ være registrert til NETTOPP denne modulen+kontrakten
+    -- — ellers kunne en kapabilitet for modul A navngi en type registrert til
+    -- modul B, og opplastingen lykkes med feil type/skjema.
+    PERFORM 1 FROM public.artefakttype_register atr
+     WHERE atr.artefakttype = p_artefakttype AND atr.eiermodul = p_modul_id
+       AND atr.kontraktversjon = p_kontraktversjon
+       AND atr.kontrakt_hash = p_kontrakt_hash;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'utsted_artefaktkapabilitet: artefakttype % er ikke '
+            'registrert for modulen/kontrakten', p_artefakttype
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.artefaktkapabilitet (jti, tenant, oppdrag_id, modul_id,
         release_id, kontraktversjon, kontrakt_hash, module_epoch, artefakttype,
         utloper)
@@ -139,15 +151,17 @@ END $$;
 -- samme artefakt_id; motstridende artefakt → 'konflikt'.
 CREATE OR REPLACE FUNCTION bruk_artefaktkapabilitet(p_jti TEXT, p_artefakt_id UUID)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_status TEXT; v_aid UUID;
+DECLARE v_status TEXT; v_aid UUID; v_utloper TIMESTAMPTZ;
 BEGIN
-    SELECT status, artefakt_id INTO v_status, v_aid FROM public.artefaktkapabilitet
-     WHERE jti = p_jti FOR UPDATE;
+    SELECT status, artefakt_id, utloper INTO v_status, v_aid, v_utloper
+      FROM public.artefaktkapabilitet WHERE jti = p_jti FOR UPDATE;
     IF NOT FOUND THEN RETURN 'ugyldig'; END IF;
     IF v_status = 'brukt' THEN
         RETURN CASE WHEN v_aid = p_artefakt_id THEN 'idempotent' ELSE 'konflikt' END;
     END IF;
-    IF v_status = 'feilet' THEN RETURN 'ugyldig'; END IF;
+    -- Codex: håndhev utløp i det ATOMISKE forbrukssteget (under radlåsen) — en
+    -- request kan ha passert innlos rett før utløp og bruke tid på kryptering.
+    IF v_status = 'feilet' OR now() > v_utloper THEN RETURN 'ugyldig'; END IF;
     UPDATE public.artefaktkapabilitet
        SET status = 'brukt', artefakt_id = p_artefakt_id, brukt_ts = now()
      WHERE jti = p_jti;

@@ -71,6 +71,7 @@ APPEND_ONLY_TRIGGERE = (
     ("domenekontroll", "domenekontroll_ingen_delete"),
     ("domenekontroll_hendelse", "hendelse_append_only"),
     ("artefaktkapabilitet", "artefaktkapabilitet_ingen_delete"),
+    ("artefakt", "artefakt_ingen_delete"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.

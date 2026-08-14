@@ -40,6 +40,12 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     per konflikt.
     """
     key = idempotensnokkel(hostname, generasjon)
+    # Codex: serialiser på den avledede nøkkelen. `revisjonslogg` har kun en
+    # IKKE-unik indeks på (tenant, idempotency_key), så to samtidige retry-arbeidere
+    # kunne begge se «ingen rad» og opprette hver sin sak. Advisory-låsen (transaks-
+    # jonsscopet) gjør sjekk-og-opprett atomisk per (tenant, hostname, generasjon).
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (tenant_ny + ":" + key,))
     rad = conn.execute(
         "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
         (tenant_ny, key)).fetchone()

@@ -566,3 +566,37 @@ def test_b4_overtakelsessak_idempotent_port11(migrator):
                                    tenant_tapt=tapt, generasjon=gen + 1, aktor="sys")
     migrator.commit()
     assert uid3 != uid1
+
+
+@pg
+def test_karantene_bevares_gjennom_rydd(migrator):
+    # Codex §7 pkt. 8: et karantenesatt artefakt (uverifisert kvittering) må
+    # OVERLEVE oppryddingen — den rører kun 'staged'.
+    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    _artefakttype(migrator, modul, kh, at)
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    aid = _artefakt(migrator, TENANT, opp, at, modul, kh)
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        c.execute("SELECT karantenesett_artefakt(%s,%s,%s)", (aid, TENANT, opp))
+        c.commit()
+    finally:
+        c.close()
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                            (aid,)).fetchone()[0] == "karantene"
+    migrator.execute("UPDATE artefakt SET opprettet=now()-interval '25 hours'"
+                     " WHERE artefakt_id=%s", (aid,)); migrator.commit()
+    a = _admin()
+    try:
+        a.execute("SELECT rydd_staged_artefakter()"); a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    st = migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                          (aid,)).fetchone()[0]
+    migrator.rollback()
+    assert st == "karantene", "rydd forkastet et karantene-artefakt"

@@ -44,9 +44,13 @@ from . import feil as feiltabell
 from . import kjerne
 
 MAKS_KROPP = 256 * 1024          # v2 Del 3.4
-# PR-014b §7: en artefakt-klartekst kan være opptil 1 MiB (DB-CHECK); HTTP-kroppen
-# bærer i tillegg jti + JSON-struktur, så opplastingsruten får en romsligere grense.
-MAKS_ARTEFAKT_KROPP = 1024 * 1024 + 64 * 1024
+# PR-014b §7: en artefakt-klartekst kan være opptil 1 MiB JCS-kanonisert (DB-CHECK
+# på serverberegnet størrelse). Codex: gyldig JSON kan representere ett tegn som
+# et 6-byte `\uXXXX`-escape, så et dokument godt under 1 MiB kanonisk kan ha en
+# vesentlig større WIRE-form. Transport-grensen tillater derfor verste-falls
+# JSON-ekspansjon (~6×) + struktur/jti-overhead; JCS-størrelsen (1 MiB) er den
+# egentlige porten og sjekkes i handleren FØR lagring.
+MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
 
 #: Ytelsesporten perf-m01-v1 krever 100 beslutninger/sekund vedvarende fra
@@ -1283,9 +1287,13 @@ def _resultathash(kvittering: dict) -> str:
     Hashet vi hele kvitteringen, ville en re-post med nytt tidsstempel sett
     ut som et motstridende resultat.
     """
+    # Codex (PR-014b §7): artefakt_id er en del av RESULTATET. Uten det ville to
+    # ellers like kvitteringer som KUN skiller seg i artefakt_id hashet likt, og
+    # den andre returnert 'idempotent' før artefakt-verifiseringen — så
+    # motstridende artefaktbevis verken promoteres eller karantenesettes.
     kjerne_felt = {k: kvittering.get(k) for k in
                    ("oppdrag_id", "repair_operation_id", "resultat",
-                    "ressurs_id")}
+                    "ressurs_id", "artefakt_id")}
     return hashlib.sha256(json.dumps(
         kjerne_felt, sort_keys=True, ensure_ascii=False,
         separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -1605,6 +1613,11 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         if not promotert:
             conn.rollback()
             sett_kontekst(conn, tenant, auth.aktor, rid)
+            # Codex §7 pkt. 8: bevar det uverifiserte artefaktet for etterforskning
+            # (karantene → oppryddingen rører det aldri). No-op for et FREMMED
+            # artefakt (ikke bundet til dette oppdraget) — det hører til sitt eget.
+            conn.execute("SELECT karantenesett_artefakt(%s,%s,%s)",
+                         (art_id, tenant, oppdrag_id))
             _sikkerhetssak_kvittering(
                 conn, tenant, unntak_id, "artefakt_ikke_verifisert",
                 {"oppdrag_id": oppdrag_id, "artefakt_id": str(art_id)}, rid)
@@ -1756,6 +1769,15 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         return kanonisk_json({"artefakt_id": str(aid),
                               "klartekst_sha256": klartekst_sha256,
                               "request_id": rid}, 200, {"x-request-id": rid})
+    except psycopg.Error:
+        # Codex: DB-feil (transient eller en constraint fra en foreldet binding)
+        # skal følge det kanoniske feilkontraktet, ikke lekke som generisk 500.
+        try:
+            conn.rollback()
+        except psycopg.Error:
+            pass
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
     finally:
         tjeneste.pool.gi_tilbake(conn)
 

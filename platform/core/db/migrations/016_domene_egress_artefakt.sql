@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS artefakt (
     kontrakt_hash    TEXT NOT NULL,
     module_epoch     BIGINT NOT NULL,
     tilstand         TEXT NOT NULL DEFAULT 'staged'
-        CHECK (tilstand IN ('staged','promotert','forkastet')),
+        CHECK (tilstand IN ('staged','promotert','forkastet','karantene')),
     storrelse_bytes  INT NOT NULL
         CHECK (storrelse_bytes > 0 AND storrelse_bytes <= 1048576),   -- 1 MiB (v1)
     klartekst_sha256 TEXT NOT NULL,
@@ -208,13 +208,15 @@ BEGIN
         RAISE EXCEPTION 'artefakt: identitet/binding/hash er frosset';
     END IF;
     IF NOT (
-        (OLD.tilstand = 'staged' AND NEW.tilstand IN ('staged','promotert','forkastet')) OR
+        (OLD.tilstand = 'staged' AND NEW.tilstand IN ('staged','promotert','forkastet','karantene')) OR
         (OLD.tilstand = NEW.tilstand)
     ) THEN
         RAISE EXCEPTION 'artefakt: ulovlig tilstandsovergang % -> %',
             OLD.tilstand, NEW.tilstand;
     END IF;
-    IF OLD.tilstand IN ('promotert','forkastet') AND NEW.tilstand <> OLD.tilstand THEN
+    -- Codex: 'karantene' er RETAINED (ikke ryddet) — et artefakt hvis kvittering
+    -- ikke lot seg verifisere (epoch/binding) bevares for etterforskning. Terminal.
+    IF OLD.tilstand IN ('promotert','forkastet','karantene') AND NEW.tilstand <> OLD.tilstand THEN
         RAISE EXCEPTION 'artefakt: % er terminal', OLD.tilstand;
     END IF;
     -- ciphertext/nonce kan bare bli NULL (forkastet), aldri endres til annet.
@@ -236,12 +238,27 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION '%: sletting/truncate er forbudt (evidens/binding)', TG_TABLE_NAME;
 END $$;
+-- Codex: DELETE- OG TRUNCATE-vakt på ALLE tre evidens-/bindingstabellene
+-- (artefakt manglet vakt helt; ingen hadde TRUNCATE-vakt → skjemaeieren kunne
+-- tømt bevisene). En statement-nivå TRUNCATE-vakt per tabell + rad-nivå DELETE.
 DROP TRIGGER IF EXISTS domenekontroll_ingen_delete ON domenekontroll;
 CREATE TRIGGER domenekontroll_ingen_delete BEFORE DELETE ON domenekontroll
     FOR EACH ROW EXECUTE FUNCTION domene_ingen_sletting();
+DROP TRIGGER IF EXISTS domenekontroll_ingen_truncate ON domenekontroll;
+CREATE TRIGGER domenekontroll_ingen_truncate BEFORE TRUNCATE ON domenekontroll
+    FOR EACH STATEMENT EXECUTE FUNCTION domene_ingen_sletting();
 DROP TRIGGER IF EXISTS hostname_binding_ingen_delete ON hostname_binding;
 CREATE TRIGGER hostname_binding_ingen_delete BEFORE DELETE ON hostname_binding
     FOR EACH ROW EXECUTE FUNCTION domene_ingen_sletting();
+DROP TRIGGER IF EXISTS hostname_binding_ingen_truncate ON hostname_binding;
+CREATE TRIGGER hostname_binding_ingen_truncate BEFORE TRUNCATE ON hostname_binding
+    FOR EACH STATEMENT EXECUTE FUNCTION domene_ingen_sletting();
+DROP TRIGGER IF EXISTS artefakt_ingen_delete ON artefakt;
+CREATE TRIGGER artefakt_ingen_delete BEFORE DELETE ON artefakt
+    FOR EACH ROW EXECUTE FUNCTION domene_ingen_sletting();
+DROP TRIGGER IF EXISTS artefakt_ingen_truncate ON artefakt;
+CREATE TRIGGER artefakt_ingen_truncate BEFORE TRUNCATE ON artefakt
+    FOR EACH STATEMENT EXECUTE FUNCTION domene_ingen_sletting();
 
 -- ============================================================
 -- RLS + FORCE (tenant-isolasjon) på domenekontroll, domenekontroll_hendelse,
@@ -312,7 +329,12 @@ BEGIN
     ON CONFLICT (tenant, hostname) DO UPDATE
         SET challenge_token_hash = p_token_hash, challenge_utstedt = now(),
             challenge_utloper = now() + interval '7 days',
-            wildcard = p_wildcard;   -- status uendret (verifisert domene beholder den)
+            -- Codex: en re-utstedelse skal IKKE kunne utvide scope. Mens raden er
+            -- verifisert beholdes gammel wildcard (en wildcard-oppgradering krever
+            -- en ny, verifisert wildcard-challenge); ellers tar den nye verdien.
+            wildcard = CASE WHEN public.domenekontroll.status = 'verifisert'
+                            THEN public.domenekontroll.wildcard
+                            ELSE p_wildcard END;   -- status uendret
     INSERT INTO public.domenekontroll_hendelse
         (tenant, hostname, hendelse, aktor) VALUES
         (p_tenant, p_hostname, 'challenge_utstedt', p_aktor);
@@ -363,6 +385,20 @@ BEGIN
                 VALUES (p_hostname, p_tenant)
             ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
             RETURN 'konflikt:' || v_eier;
+        ELSIF v_status_a = 'verifisert' THEN
+            -- Codex: A er verifisert men UTLØPT. Delindeksen en_verifisert_per_
+            -- hostname predikerer kun på status, så A-raden blokkerer B med unique
+            -- violation. Sett A → utlopt (+gen++) FØR B verifiseres, ellers nås
+            -- den dokumenterte direkte-overføringen (B4 rad 2) aldri ved naturlig
+            -- utløp.
+            UPDATE public.domenekontroll
+               SET status = 'utlopt',
+                   autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1
+             WHERE tenant = v_eier AND hostname = p_hostname;
+            INSERT INTO public.domenekontroll_hendelse
+                (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
+                VALUES (v_eier, p_hostname, 'utlopt', 'verifisert', 'utlopt',
+                        'utlopt_ved_overforing', p_aktor);
         END IF;
         -- A er utlopt/tilbakekalt → B kan verifiseres direkte (B4 rad 2).
     END IF;
@@ -468,12 +504,17 @@ CREATE OR REPLACE FUNCTION registrer_artefakttype(
     p_artefakttype TEXT, p_eiermodul TEXT, p_kontraktversjon INT,
     p_kontrakt_hash TEXT, p_skjema_hash TEXT, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_hash TEXT;
+DECLARE r RECORD;
 BEGIN
-    SELECT skjema_hash INTO v_hash FROM public.artefakttype_register
-     WHERE artefakttype = p_artefakttype;
+    -- Codex: sammenlign HELE den immutable tuppelen — en re-registrering med
+    -- samme skjema_hash men ANNEN eier/kontrakt ble ellers rapportert som en
+    -- vellykket no-op selv om bindingen ikke ble anvendt.
+    SELECT eiermodul, kontraktversjon, kontrakt_hash, skjema_hash INTO r
+      FROM public.artefakttype_register WHERE artefakttype = p_artefakttype;
     IF FOUND THEN
-        IF v_hash IS DISTINCT FROM p_skjema_hash THEN
+        IF (r.eiermodul, r.kontraktversjon, r.kontrakt_hash, r.skjema_hash)
+           IS DISTINCT FROM
+           (p_eiermodul, p_kontraktversjon, p_kontrakt_hash, p_skjema_hash) THEN
             RAISE EXCEPTION 'artefakttype % er immutable', p_artefakttype
                 USING ERRCODE = 'unique_violation';
         END IF;
@@ -569,6 +610,18 @@ BEGIN
     RETURN v_antall;
 END $$;
 
+-- Codex §7 pkt. 8: et artefakt hvis kvittering ikke lot seg verifisere
+-- (epoch/binding) karantenesettes → RETAINED (rydd rører kun 'staged'). Kun for
+-- et staged artefakt bundet til (tenant, oppdrag); idempotent hvis alt karantene.
+CREATE OR REPLACE FUNCTION karantenesett_artefakt(
+    p_artefakt_id UUID, p_tenant TEXT, p_oppdrag_id BIGINT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    UPDATE public.artefakt SET tilstand = 'karantene'
+     WHERE artefakt_id = p_artefakt_id AND tenant = p_tenant
+       AND oppdrag_id = p_oppdrag_id AND tilstand = 'staged';
+END $$;
+
 REVOKE ALL ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) FROM PUBLIC;
@@ -589,6 +642,8 @@ GRANT EXECUTE ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TE
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter() TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION promoter_artefakt(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) TO disponit;
+REVOKE ALL ON FUNCTION karantenesett_artefakt(UUID, TEXT, BIGINT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION karantenesett_artefakt(UUID, TEXT, BIGINT) TO disponit;
 RESET ROLE;
 
 -- domene_eier (SECURITY DEFINER-kjøreren) må kunne skrive tabellene + LESE
