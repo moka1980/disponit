@@ -9,8 +9,9 @@
 -- utstedt her kan ikke innløses av `innlos_kvitteringskapabilitet` og omvendt.
 --
 -- Eid av `disponit_domene_eier` (som artefakt-funksjonene i 016). Utstedes av
--- API-veien når oppdraget claimes (runtime), innløses/forbrukes av opplastings-
--- endepunktet (runtime). All skriving går via de tre herdede funksjonene.
+-- API-veien når oppdraget claimes (runtime), innløses (lesende) av opplastings-
+-- endepunktet og FORBRUKES kun av `lagre_artefakt_staged` — i samme transaksjon
+-- som artefaktraden skrives. All skriving går via de herdede funksjonene.
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS artefaktkapabilitet (
@@ -147,26 +148,16 @@ BEGIN
        AND k.status <> 'feilet' AND k.utloper > now();
 END $$;
 
--- Forbruk (atomisk brenn): setter status='brukt' + artefakt_id. Idempotent på
--- samme artefakt_id; motstridende artefakt → 'konflikt'.
-CREATE OR REPLACE FUNCTION bruk_artefaktkapabilitet(p_jti TEXT, p_artefakt_id UUID)
-RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_status TEXT; v_aid UUID; v_utloper TIMESTAMPTZ;
-BEGIN
-    SELECT status, artefakt_id, utloper INTO v_status, v_aid, v_utloper
-      FROM public.artefaktkapabilitet WHERE jti = p_jti FOR UPDATE;
-    IF NOT FOUND THEN RETURN 'ugyldig'; END IF;
-    IF v_status = 'brukt' THEN
-        RETURN CASE WHEN v_aid = p_artefakt_id THEN 'idempotent' ELSE 'konflikt' END;
-    END IF;
-    -- Codex: håndhev utløp i det ATOMISKE forbrukssteget (under radlåsen) — en
-    -- request kan ha passert innlos rett før utløp og bruke tid på kryptering.
-    IF v_status = 'feilet' OR now() > v_utloper THEN RETURN 'ugyldig'; END IF;
-    UPDATE public.artefaktkapabilitet
-       SET status = 'brukt', artefakt_id = p_artefakt_id, brukt_ts = now()
-     WHERE jti = p_jti;
-    RETURN 'brukt';
-END $$;
+-- Codex: den FRITTSTÅENDE brenneren er FJERNET. Etter at `lagre_artefakt_staged`
+-- ble den atomiske forbruksveien (016:502), var `bruk_artefaktkapabilitet(jti,
+-- uuid)` en foreldet sidedør som runtime fortsatt hadde EXECUTE på: den tok bare
+-- en jti og en vilkårlig UUID, verifiserte verken holdende modul eller at
+-- artefaktet fantes, og kunne dermed markere en LEVENDE kapabilitet `brukt` med
+-- et oppdiktet artefakt-id — hvorpå staged-write leste den statusen som
+-- autoritativ og den legitime opplastingen aldri kom inn. Forbruk skjer nå KUN
+-- der artefaktraden faktisk skrives, i samme transaksjon. DROP-en tar også
+-- databaser der den foreldede funksjonen alt er installert.
+DROP FUNCTION IF EXISTS bruk_artefaktkapabilitet(TEXT, UUID);
 
 -- Codex (016:502): lagre_artefakt_staged VALIDERER OG FORBRUKER kapabiliteten
 -- ATOMISK (redefinert her hvor artefaktkapabilitet finnes). Signaturen er
@@ -228,10 +219,11 @@ END $$;
 
 REVOKE ALL ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION bruk_artefaktkapabilitet(TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT) TO disponit;
 GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT) TO disponit;
-GRANT EXECUTE ON FUNCTION bruk_artefaktkapabilitet(TEXT, UUID) TO disponit;
+-- Runtime har ETT forbrukspunkt: den atomiske staged-writen (redefinert over).
+GRANT EXECUTE ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) TO disponit;
 RESET ROLE;
 
 -- domene_eier (SECURITY DEFINER-kjøreren) må kunne skrive tabellen + LESE oppdrag.

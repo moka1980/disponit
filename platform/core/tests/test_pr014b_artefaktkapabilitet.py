@@ -6,7 +6,6 @@ egne funksjoner). Utstedes kun for et plukket oppdrag med matchende binding;
 innløses kun av den holdende modulen; forbrukes atomisk og idempotent.
 """
 import secrets
-import uuid
 
 import psycopg
 import pytest
@@ -127,28 +126,67 @@ def test_innlos_kun_holdende_modul(migrator):
 
 
 @pg
-def test_bruk_idempotent_og_konflikt(migrator):
+def test_frittstaende_brenner_finnes_ikke(migrator):
+    """Codex: den foreldede brenneren er FJERNET, ikke bare ubrukt.
+
+    `bruk_artefaktkapabilitet(jti, uuid)` tok bare en jti og en vilkårlig UUID —
+    verken holdende modul eller at artefaktet fantes ble verifisert. Med EXECUTE
+    til runtime kunne en misbrukt tilkobling merke en LEVENDE kapabilitet `brukt`
+    med et oppdiktet artefakt-id, hvorpå staged-writen leste den statusen som
+    autoritativ og den legitime opplastingen aldri kom inn. Forbruk skjer nå kun
+    der artefaktraden faktisk skrives.
+
+    MUTASJONEN SOM DREPER DENNE: gjeninnfør funksjonen (eller GRANT-en).
+    """
+    n = migrator.execute(
+        "SELECT count(*) FROM pg_proc WHERE proname='bruk_artefaktkapabilitet'"
+    ).fetchone()[0]
+    migrator.rollback()
+    assert n == 0, "den frittstående kapabilitetsbrenneren finnes fortsatt"
+
+
+@pg
+def test_atomisk_forbruk_avviser_utlopt_kapabilitet(migrator):
+    """Utløpet håndheves der kapabiliteten faktisk brennes (017:145).
+
+    En request kan passere `innlos` rett før utløp og deretter bruke tid på
+    kanonisering og kryptering. Etter at den frittstående brenneren er fjernet
+    er `lagre_artefakt_staged` det eneste forbrukspunktet, og det er DER — under
+    radlåsen — utløpet må nektes.
+    """
+    from db import kryptering
     modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
     opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
     a = _admin()
     try:
         jti = _utsted(a, opp, modul, kh, at)
-        aid = str(uuid.uuid4())
-        assert a.execute("SELECT bruk_artefaktkapabilitet(%s,%s)",
-                         (jti, aid)).fetchone()[0] == "brukt"
+        _sett_kontekst(a, TENANT)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(a, TENANT)
+        ct, nonce = kryptering.krypter(dek, {"r": 1}, TENANT, key_id)
         a.commit()
-        assert a.execute("SELECT bruk_artefaktkapabilitet(%s,%s)",
-                         (jti, aid)).fetchone()[0] == "idempotent"
-        a.commit()
-        assert a.execute("SELECT bruk_artefaktkapabilitet(%s,%s)",
-                         (jti, str(uuid.uuid4()))).fetchone()[0] == "konflikt"
+        # Aldre kapabiliteten forbi utløp. `utloper` er frosset av statusmaskinen,
+        # så triggeren skrus av for nøyaktig denne testmutasjonen.
+        migrator.execute("ALTER TABLE artefaktkapabilitet DISABLE TRIGGER"
+                         " artefaktkapabilitet_overgang")
+        migrator.execute("UPDATE artefaktkapabilitet SET utloper=now()"
+                         " - interval '1 s' WHERE jti=%s", (jti,))
+        migrator.execute("ALTER TABLE artefaktkapabilitet ENABLE TRIGGER"
+                         " artefaktkapabilitet_overgang")
+        migrator.commit()
+        _sett_kontekst(a, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,"
+                      "%s,%s,%s,%s,%s)",
+                      (TENANT, opp, at, modul, kh, "h-" + secrets.token_hex(8),
+                       ct, nonce, key_id, jti))
         a.rollback()
-        assert a.execute("SELECT bruk_artefaktkapabilitet(%s,%s)",
-                         (secrets.token_hex(16), str(uuid.uuid4()))
-                         ).fetchone()[0] == "ugyldig"
-        a.commit()
     finally:
         a.close()
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute("SELECT count(*) FROM artefakt WHERE kapabilitet_jti=%s",
+                         (jti,)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0, "en utløpt kapabilitet fikk skrive et artefakt"
 
 
 @pg

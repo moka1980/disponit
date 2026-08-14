@@ -182,7 +182,23 @@ def test_artefakt_ciphertext_kan_kun_nulles(migrator):
     sak, logg = _lag_sak(migrator, TENANT)
     opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
     aid = _artefakt(migrator, TENANT, opp, at, modul, kh)
-    # nulling (forkastet) er lov.
+    # Codex: nulling UTEN forkastelsen er forbudt — ellers kunne en feilaktig
+    # privilegert UPDATE tømme nyttelasten mens tilstand + hash fortsatt påsto
+    # at evidensen fantes.
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE artefakt SET ciphertext=NULL"
+                         " WHERE artefakt_id=%s", (aid,))
+    migrator.rollback()
+    # ... og et retained artefakt kan heller ikke tømmes.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE artefakt SET tilstand='karantene'"
+                     " WHERE artefakt_id=%s", (aid,))
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE artefakt SET ciphertext=NULL"
+                         " WHERE artefakt_id=%s", (aid,))
+    migrator.rollback()
+    # nulling I SAMME overgang staged → forkastet er lov.
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE artefakt SET tilstand='forkastet', ciphertext=NULL"
                      " WHERE artefakt_id=%s", (aid,))
@@ -388,9 +404,10 @@ def test_avgjor_overtakelse_port12(migrator):
         a.commit()
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (ANNEN_TENANT, h)); a.commit()   # B → avklaring_kreves
-        # godkjent → B verifisert
-        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,true,'sys')",
-                  (ANNEN_TENANT, h)); a.commit()
+        gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        # godkjent → B verifisert (saken avgjøres for NØYAKTIG denne generasjonen)
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,true,'sys')",
+                  (ANNEN_TENANT, h, gen)); a.commit()
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "verifisert"
@@ -404,11 +421,85 @@ def test_avgjor_avvist_gir_tilbakekalt(migrator):
         a.commit()
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (ANNEN_TENANT, h)); a.commit()
-        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,false,'sys')",
-                  (ANNEN_TENANT, h)); a.commit()
+        gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h, gen)); a.commit()
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+
+
+@pg
+def test_foreldet_overtakelsessak_avvises(migrator):
+    """Codex: avgjørelsen er GJERDET av overtakelsesgenerasjonen.
+
+    En gammel M-37-sak (generasjon N) skal ikke kunne autorisere en NYERE
+    overtakelse (generasjon N+2) bare fordi raden tilfeldigvis står i
+    `avklaring_kreves` igjen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern generasjonssjekken i
+    `avgjor_domeneovertakelse` — da godkjenner den foreldede saken den nye
+    konflikten.
+    """
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()      # B → avklaring (gen N)
+        gammel_gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        # Overtakelse 1 AVVISES → B tilbakekalt (gen N+1).
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h, gammel_gen)); a.commit()
+        # A verifiserer på nytt og B tar over igjen → ny konflikt (gen N+2).
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+        ny_gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        assert ny_gen > gammel_gen
+        # Den GAMLE sakens godkjenning treffer den nye konflikten → avvist.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,true,'sys')",
+                      (ANNEN_TENANT, h, gammel_gen))
+        a.rollback()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves", \
+        "en foreldet sak autoriserte en nyere overtakelse"
+
+
+@pg
+def test_reverifisering_under_avklaring_blokkeres(migrator):
+    """Codex: `avklaring_kreves` er terminal for verifiseringsveien.
+
+    Etter at B har overtatt står B i avklaring MED bindingen på seg. Et retry
+    av samme verifisering hopper da over overtakelsesgrenen (eieren er B selv)
+    og traff upserten, som satte B rett til `verifisert` — hele M-37-avgjørelsen
+    omgått.
+
+    MUTASJONEN SOM DREPER DENNE: fjern avklaring-sjekken øverst i
+    `verifiser_domenekontroll`.
+    """
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "konflikt:" + TENANT
+        gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        # RETRY av samme verifisering.
+        res2 = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res2 == "avklaring_kreves"
+    finally:
+        a.close()
+    rad = _dkrow(migrator, ANNEN_TENANT, h)
+    assert rad[0] == "avklaring_kreves", "retry verifiserte forbi M-37-avgjørelsen"
+    assert rad[1] == gen, "retry flyttet generasjonen"
 
 
 @pg

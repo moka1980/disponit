@@ -1525,6 +1525,14 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                   "motstridende_kvittering",
                                   {"kilde": kilde, "lagret": hash_,
                                    "ny": ny_hash}, rid)
+        # Samme bevaringsregel som den sene veien: sikkerhetssaken er skrevet,
+        # og artefaktet det motstridende resultatet påberoper seg er nettopp
+        # det etterforskningen trenger. Karantene = retained (ryddes aldri).
+        # No-op for et alt promotert/fremmed artefakt.
+        strid_artefakt = kvittering.get("artefakt_id")
+        if strid_artefakt is not None:
+            conn.execute("SELECT karantenesett_artefakt(%s,%s,%s)",
+                         (strid_artefakt, tenant, oppdrag_id))
         conn.commit()
         tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
                                oppdrag_id=oppdrag_id)
@@ -1564,6 +1572,16 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             # den andre raden for samme jti — og om utfallet var idempotent
             # eller konflikt, avgjøres atomisk i databasen, ikke her.
             return svar
+        # PR-014b §7 (Codex): den sene kvitteringen GODTAS som evidens — da må
+        # artefaktet den peker på overleve. Det blir aldri promotert (ingenting
+        # avsluttes her), så uten dette ville det stått igjen `staged` og fått
+        # ciphertexten nullet av oppryddingen etter 24 t: evidensen bak en
+        # akseptert kvittering ødelagt. `bevart` er retained og terminalt, og
+        # settes i SAMME commit som evidensraden. No-op for et fremmed artefakt.
+        sen_artefakt = kvittering.get("artefakt_id")
+        if sen_artefakt is not None:
+            conn.execute("SELECT bevar_artefakt(%s,%s,%s)",
+                         (sen_artefakt, tenant, oppdrag_id))
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",

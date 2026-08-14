@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS artefakt (
     kontrakt_hash    TEXT NOT NULL,
     module_epoch     BIGINT NOT NULL,
     tilstand         TEXT NOT NULL DEFAULT 'staged'
-        CHECK (tilstand IN ('staged','promotert','forkastet','karantene')),
+        CHECK (tilstand IN ('staged','promotert','forkastet','karantene','bevart')),
     storrelse_bytes  INT NOT NULL
         CHECK (storrelse_bytes > 0 AND storrelse_bytes <= 1048576),   -- 1 MiB (v1)
     klartekst_sha256 TEXT NOT NULL,
@@ -208,23 +208,33 @@ BEGIN
         RAISE EXCEPTION 'artefakt: identitet/binding/hash er frosset';
     END IF;
     IF NOT (
-        (OLD.tilstand = 'staged' AND NEW.tilstand IN ('staged','promotert','forkastet','karantene')) OR
+        (OLD.tilstand = 'staged'
+         AND NEW.tilstand IN ('staged','promotert','forkastet','karantene','bevart')) OR
         (OLD.tilstand = NEW.tilstand)
     ) THEN
         RAISE EXCEPTION 'artefakt: ulovlig tilstandsovergang % -> %',
             OLD.tilstand, NEW.tilstand;
     END IF;
-    -- Codex: 'karantene' er RETAINED (ikke ryddet) — et artefakt hvis kvittering
-    -- ikke lot seg verifisere (epoch/binding) bevares for etterforskning. Terminal.
-    IF OLD.tilstand IN ('promotert','forkastet','karantene') AND NEW.tilstand <> OLD.tilstand THEN
+    -- Codex: 'karantene' og 'bevart' er RETAINED (ryddes aldri) — 'karantene' er
+    -- artefaktet til en kvittering som ikke lot seg verifisere (epoch/binding),
+    -- 'bevart' er artefaktet til en godtatt SEN kvittering (evidens som aldri
+    -- kan promoteres). Begge terminale.
+    IF OLD.tilstand IN ('promotert','forkastet','karantene','bevart')
+       AND NEW.tilstand <> OLD.tilstand THEN
         RAISE EXCEPTION 'artefakt: % er terminal', OLD.tilstand;
     END IF;
-    -- ciphertext/nonce kan bare bli NULL (forkastet), aldri endres til annet.
-    IF NEW.ciphertext IS DISTINCT FROM OLD.ciphertext AND NEW.ciphertext IS NOT NULL THEN
-        RAISE EXCEPTION 'artefakt: ciphertext kan kun nulles, aldri endres';
-    END IF;
-    IF NEW.nonce IS DISTINCT FROM OLD.nonce AND NEW.nonce IS NOT NULL THEN
-        RAISE EXCEPTION 'artefakt: nonce kan kun nulles, aldri endres';
+    -- Codex: ciphertext/nonce er KOBLET til forkastelsen. Uten koblingen kunne en
+    -- feilaktig privilegert UPDATE nulle nyttelasten til et staged/promotert/
+    -- retained artefakt mens tilstand + hash fortsatt påsto at evidensen fantes.
+    -- Eneste lovlige mutasjon: SAMME update setter staged → forkastet og nuller
+    -- BEGGE feltene.
+    IF NEW.ciphertext IS DISTINCT FROM OLD.ciphertext
+       OR NEW.nonce IS DISTINCT FROM OLD.nonce THEN
+        IF NOT (OLD.tilstand = 'staged' AND NEW.tilstand = 'forkastet'
+                AND NEW.ciphertext IS NULL AND NEW.nonce IS NULL) THEN
+            RAISE EXCEPTION 'artefakt: ciphertext/nonce kan kun nulles i '
+                'overgangen staged -> forkastet';
+        END IF;
     END IF;
     RETURN NEW;
 END $$;
@@ -345,15 +355,32 @@ END $$;
 -- aktiv verifisering, revokes den (grunn overtatt_dns_kontroll) og DENNE settes
 -- avklaring_kreves — funksjonen returnerer 'konflikt:<a-tenant>' så Python lager
 -- den idempotente M-37-saken. Ellers: verifisert + 90-døgnsvindu. generasjon++.
+-- Står KALLEREN selv i avklaring, returneres 'avklaring_kreves' uten å røre noe.
 CREATE OR REPLACE FUNCTION verifiser_domenekontroll(
     p_tenant   TEXT,
     p_hostname TEXT,
     p_wildcard BOOLEAN,
     p_aktor    TEXT)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_eier TEXT; v_status_a TEXT; v_utloper_a TIMESTAMPTZ;
+DECLARE v_eier TEXT; v_status_a TEXT; v_utloper_a TIMESTAMPTZ; v_status_b TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
+    -- Codex: `avklaring_kreves` er TERMINAL FOR DENNE VEIEN. Etter at B har
+    -- overtatt en aktiv verifisering står B i avklaring med bindingen på seg —
+    -- et RETRY av samme verifisering ville da hoppet over overtakelsesgrenen
+    -- (eieren er jo B selv) og falt ned i upserten nedenfor, som satte B rett
+    -- til `verifisert` og dermed omgikk hele M-37-avgjørelsen. Kun
+    -- `avgjor_domeneovertakelse` kan løfte B ut av avklaring.
+    SELECT status INTO v_status_b FROM public.domenekontroll
+     WHERE tenant = p_tenant AND hostname = p_hostname FOR UPDATE;
+    IF v_status_b = 'avklaring_kreves' THEN
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
+            VALUES (p_tenant, p_hostname, 'verifisering_blokkert',
+                    'avklaring_kreves', 'avklaring_kreves',
+                    'avventer_overtakelsesavgjorelse', p_aktor);
+        RETURN 'avklaring_kreves';
+    END IF;
     SELECT tenant INTO v_eier FROM public.hostname_binding
      WHERE hostname = p_hostname;
     IF v_eier IS NOT NULL AND v_eier IS DISTINCT FROM p_tenant THEN
@@ -459,18 +486,36 @@ END $$;
 
 -- Avgjør en overtakelse (fra en avgjort M-37-attestasjon). godkjent → B
 -- verifisert m/ nytt 90-døgnsvindu; avvist → B tilbakekalt. Ingen knapp skriver
--- status direkte.
+-- status direkte. Avgjørelsen er GJERDET av overtakelsesgenerasjonen saken ble
+-- opprettet for (`p_forventet_generasjon`).
+--
+-- Den gamle 4-argumentsformen droppes: en overload uten gjerde ville vært en
+-- åpen sidedør inn til nøyaktig den overgangen gjerdet skal beskytte.
+DROP FUNCTION IF EXISTS avgjor_domeneovertakelse(TEXT, TEXT, BOOLEAN, TEXT);
 CREATE OR REPLACE FUNCTION avgjor_domeneovertakelse(
-    p_tenant TEXT, p_hostname TEXT, p_godkjent BOOLEAN, p_aktor TEXT)
+    p_tenant TEXT, p_hostname TEXT, p_forventet_generasjon BIGINT,
+    p_godkjent BOOLEAN, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_status TEXT;
+DECLARE v_status TEXT; v_gen BIGINT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
-    SELECT status INTO v_status FROM public.domenekontroll
+    SELECT status, autorisasjonsgenerasjon INTO v_status, v_gen
+      FROM public.domenekontroll
      WHERE tenant = p_tenant AND hostname = p_hostname FOR UPDATE;
     IF v_status IS DISTINCT FROM 'avklaring_kreves' THEN
         RAISE EXCEPTION 'avgjor_domeneovertakelse: %/% er % (krever avklaring_kreves)',
             p_tenant, p_hostname, v_status USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Codex: M-37-saken er nøklet på overtakelsesgenerasjonen, men avgjørelsen
+    -- sjekket bare at raden STO i avklaring. Ble en gammel sak liggende mens en
+    -- tidligere overtakelse ble avvist og en NY overtakelse satte samme
+    -- tenant/hostname tilbake i avklaring, autoriserte den foreldede
+    -- godkjenningen den nye generasjonen. Generasjonen leses under RADLÅSEN og
+    -- må stemme nøyaktig.
+    IF v_gen IS DISTINCT FROM p_forventet_generasjon THEN
+        RAISE EXCEPTION 'avgjor_domeneovertakelse: foreldet sak for %/% '
+            '(generasjon % <> %)', p_tenant, p_hostname, p_forventet_generasjon,
+            v_gen USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF p_godkjent THEN
         UPDATE public.domenekontroll
@@ -622,11 +667,27 @@ BEGIN
        AND oppdrag_id = p_oppdrag_id AND tilstand = 'staged';
 END $$;
 
+-- Codex: en GODTATT SEN kvittering (etter utførelsesfrist / fra en foreldet
+-- eier) lagres som evidens uten å avslutte noe — men artefaktet den peker på
+-- ble aldri promotert, så oppryddingen nullet ciphertexten etter 24 t og
+-- ødela nettopp den evidensen kvitteringen ble godtatt for. `bevart` er
+-- RETAINED og terminalt: artefaktet kan aldri promoteres senere, og ryddes
+-- aldri. Samme form som karantenesett: no-op for et fremmed eller alt
+-- terminalt artefakt (det hører til sitt eget oppdrag / sin egen avgjørelse).
+CREATE OR REPLACE FUNCTION bevar_artefakt(
+    p_artefakt_id UUID, p_tenant TEXT, p_oppdrag_id BIGINT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    UPDATE public.artefakt SET tilstand = 'bevart'
+     WHERE artefakt_id = p_artefakt_id AND tenant = p_tenant
+       AND oppdrag_id = p_oppdrag_id AND tilstand = 'staged';
+END $$;
+
 REVOKE ALL ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION tilbakekall_domenekontroll(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BOOLEAN, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION promoter_artefakt(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
@@ -637,13 +698,15 @@ GRANT EXECUTE ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT) TO d
 GRANT EXECUTE ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION tilbakekall_domenekontroll(TEXT, TEXT, TEXT, TEXT) TO disponit_domains_admin;
-GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BOOLEAN, TEXT) TO disponit_domains_admin;
+GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter() TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, INT, TEXT, BIGINT, INT, TEXT, BYTEA, BYTEA, TEXT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION promoter_artefakt(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) TO disponit;
 REVOKE ALL ON FUNCTION karantenesett_artefakt(UUID, TEXT, BIGINT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION karantenesett_artefakt(UUID, TEXT, BIGINT) TO disponit;
+REVOKE ALL ON FUNCTION bevar_artefakt(UUID, TEXT, BIGINT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION bevar_artefakt(UUID, TEXT, BIGINT) TO disponit;
 RESET ROLE;
 
 -- domene_eier (SECURITY DEFINER-kjøreren) må kunne skrive tabellene + LESE
@@ -655,3 +718,17 @@ GRANT SELECT, INSERT, UPDATE ON hostname_binding         TO disponit_domene_eier
 GRANT SELECT, INSERT         ON artefakttype_register     TO disponit_domene_eier;
 GRANT SELECT, INSERT, UPDATE ON artefakt                 TO disponit_domene_eier;
 GRANT SELECT                 ON oppdrag                   TO disponit_domene_eier;
+-- Sekvensen bak `domenekontroll_hendelse.id`. En IDENTITY-kolonne henter
+-- verdien via NextValueExpr, som IKKE ACL-sjekker sekvensen (derfor er suiten
+-- grønn i dag) — men INSERT-veien til hendelsesloggen er den ene tingen som
+-- ikke får feile: mister den nextval, ruller HELE domeneoperasjonen tilbake.
+-- Granten koster ingenting og holder også om kolonnen en dag blir en vanlig
+-- sekvenskolonne (der USAGE er et absolutt krav).
+DO $$
+DECLARE v_seq TEXT := pg_get_serial_sequence('public.domenekontroll_hendelse', 'id');
+BEGIN
+    IF v_seq IS NOT NULL THEN
+        EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO disponit_domene_eier',
+                       v_seq);
+    END IF;
+END $$;
