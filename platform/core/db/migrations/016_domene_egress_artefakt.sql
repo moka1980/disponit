@@ -565,7 +565,7 @@ CREATE OR REPLACE FUNCTION avgjor_domeneovertakelse(
     p_tenant TEXT, p_hostname TEXT, p_forventet_generasjon BIGINT,
     p_godkjent BOOLEAN, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_status TEXT; v_gen BIGINT;
+DECLARE v_status TEXT; v_gen BIGINT; v_binding TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
     SELECT status, autorisasjonsgenerasjon INTO v_status, v_gen
@@ -586,7 +586,26 @@ BEGIN
             '(generasjon % <> %)', p_tenant, p_hostname, p_forventet_generasjon,
             v_gen USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Codex P1: generasjonsgjerdet er TENANT-LOKALT, og hostnavnet er globalt.
+    -- Tar en tredje tenant C over mens B står i avklaring, flyttes
+    -- `hostname_binding` til C — men B-radens status og generasjon står helt
+    -- urørt. B sin ELDRE sak kunne derfor godkjennes etterpå, gjøre B verifisert
+    -- og skrive bindingen TILBAKE til B, mens C sin nyere konflikt fortsatt lå
+    -- uavgjort. Godkjenning gjerdes derfor OGSÅ mot den GJELDENDE
+    -- bindingshaveren: kun den som faktisk er dagens utfordrer kan autoriseres.
+    -- Bindingen leses under hostname-advisory-låsen (alle skrivere av dette
+    -- hostnavnet tar den først), så avlesningen er stabil ut transaksjonen.
+    -- AVVISNING står fortsatt åpen — en forbigått utfordrer må kunne ryddes ut
+    -- av `avklaring_kreves` uten å få autorisasjon.
     IF p_godkjent THEN
+        SELECT tenant INTO v_binding FROM public.hostname_binding
+         WHERE hostname = p_hostname;
+        IF v_binding IS DISTINCT FROM p_tenant THEN
+            RAISE EXCEPTION 'avgjor_domeneovertakelse: %/% er forbigått '
+                '(hostname_binding står på %)', p_tenant, p_hostname,
+                coalesce(v_binding, '(ingen)')
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         UPDATE public.domenekontroll
            SET status = 'verifisert',
                autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1,
@@ -715,16 +734,31 @@ BEGIN
      WHERE artefakt_id = p_artefakt_id;   -- ett_promotert_per_oppdrag vokter
 END $$;
 
--- Rydd staged > 24 t (positiv regel). Refererende-kvittering-vernet kobles i
--- artefakt-API-checkpointet; her forkastes staged > 24 t og ciphertext nulles.
--- Idempotent (forkastet er terminal).
+-- Rydd staged (positiv regel): forkast og null ciphertext. Idempotent
+-- (forkastet er terminal).
+--
+-- Codex P1/P2: 24 t er IKKE nok alene. Oppdraget tar imot signert evidens helt
+-- fram til sin `evidensfrist` (produksjon: 30 døgn) — en kvittering som lander i
+-- vinduet mellom de to fristene godtas som `sen_kvittering`, men `bevar_artefakt`
+-- oppdaterer kun `staged`-rader. Ryddet oppryddingen først, var artefaktet
+-- allerede `forkastet` med null ciphertext, og den GODTATTE evidensen pekte på en
+-- ødelagt rapport. Oppryddingen venter derfor på oppdragets evidensfrist:
+-- 24 t-regelen gjelder fortsatt, men først etter at fristen for å levere evidens
+-- er ute. (Et artefakt uten oppdrag — som ikke kan oppstå gjennom
+-- kapabilitetsveien — ryddes etter 24 t som før.) `bevart` og `karantene` er
+-- retained og røres uansett aldri.
 CREATE OR REPLACE FUNCTION rydd_staged_artefakter()
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_antall INT;
 BEGIN
     WITH forkastet AS (
-        UPDATE public.artefakt SET tilstand = 'forkastet', ciphertext = NULL, nonce = NULL
-         WHERE tilstand = 'staged' AND opprettet < now() - interval '24 hours'
+        UPDATE public.artefakt a
+           SET tilstand = 'forkastet', ciphertext = NULL, nonce = NULL
+         WHERE a.tilstand = 'staged'
+           AND a.opprettet < now() - interval '24 hours'
+           AND NOT EXISTS (SELECT 1 FROM public.oppdrag o
+                            WHERE o.tenant = a.tenant AND o.id = a.oppdrag_id
+                              AND o.evidensfrist > now())
         RETURNING 1)
     SELECT count(*) INTO v_antall FROM forkastet;
     RETURN v_antall;

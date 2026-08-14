@@ -102,29 +102,39 @@ def _kvitteringskap(opp, owner_claim, gen):
 
 def _last_opp_artefakt(migrator, klient, token):
     """Bygg bundet, plukket oppdrag + last opp et staged artefakt. Returnerer
-    (opp, modul, kh, artefakt_id, owner_claim, repair_operation_id, gen)."""
+    (opp, modul, kh, artefakt_id, owner_claim, repair_operation_id, gen, hash).
+
+    Hashen er den serveren selv beregnet ved opplasting — nøyaktig den verdien en
+    ekte controller får i opplastingssvaret og MÅ signere i kvitteringen."""
     modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
     opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
     oc, rep, gen = _oppdrag_owner(migrator, opp)
     ajti = _utsted_cap(opp, modul, kh, at)
     tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
-    aid = _post(klient, tok, ajti, {"funn": 1}).json()["artefakt_id"]
-    return opp, modul, kh, aid, oc, rep, gen
+    svar = _post(klient, tok, ajti, {"funn": 1}).json()
+    return (opp, modul, kh, svar["artefakt_id"], oc, rep, gen,
+            svar["klartekst_sha256"])
 
 
-def _kvitteringskropp(opp, kjti, rep, oc, gen, aid):
-    return {"oppdrag_id": opp, "tenant": TENANT, "kvittering_jti": kjti,
-            "repair_operation_id": rep, "owner_claim_id": oc,
-            "owner_generation": gen, "resultat": "utfort",
-            "ressurs_id": "fak-1", "artefakt_id": aid}
+def _kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts=None):
+    kropp = {"oppdrag_id": opp, "tenant": TENANT, "kvittering_jti": kjti,
+             "repair_operation_id": rep, "owner_claim_id": oc,
+             "owner_generation": gen, "resultat": "utfort",
+             "ressurs_id": "fak-1", "artefakt_id": aid}
+    # Codex P1: den ATTESTERTE klartekst-hashen hører til kvitteringen. Uten den
+    # leste promoteringen artefaktets egen hash og sammenlignet den med seg selv.
+    if kts is not None:
+        kropp["klartekst_sha256"] = kts
+    return kropp
 
 
 @pg
 def test_kvittering_promoterer_artefakt(migrator, klient, token):
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     kjti = _kvitteringskap(opp, oc, gen)
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
@@ -143,11 +153,12 @@ def test_kvittering_med_fremmed_artefakt_karantenesetter(migrator, klient, token
     # karantenesettes (409). Bindingsavviket måles UTEN å røre epoch direkte
     # (det ville krevd claim-funksjonen).
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     # et ANNET oppdrag + artefakt (aid2 hører til opp2, ikke opp).
-    _, _, _, aid2, _, _, _ = _last_opp_artefakt(migrator, klient, token)
+    _, _, _, aid2, _, _, _, kts2 = _last_opp_artefakt(migrator, klient, token)
     kjti = _kvitteringskap(opp, oc, gen)
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid2))
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid2, kts2))
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
@@ -203,7 +214,8 @@ def test_sen_kvittering_bevarer_artefaktet(migrator, klient, token):
     `not kan_avslutte`-grenen — da er tilstanden `staged` og rydd tar den.
     """
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     kjti = _kvitteringskap(opp, oc, gen)
     # Foreldet eier: kapabiliteten er utstedt for generasjon `gen`, mens
     # oppdraget nå står på gen+1. Kvitteringen er fortsatt gyldig EVIDENS.
@@ -211,7 +223,7 @@ def test_sen_kvittering_bevarer_artefaktet(migrator, klient, token):
     migrator.execute("UPDATE oppdrag SET owner_generation=owner_generation+1"
                      " WHERE tenant=%s AND id=%s", (TENANT, opp))
     migrator.commit()
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
@@ -226,14 +238,15 @@ def test_sen_kvittering_bevarer_artefaktet(migrator, klient, token):
 
 
 def _en_til_opplasting(migrator, klient, token, opp, modul, kh):
-    """Nok en opplasting på SAMME (fortsatt plukkede) oppdrag."""
+    """Nok en opplasting på SAMME (fortsatt plukkede) oppdrag. (id, hash)."""
     at = migrator.execute("SELECT artefakttype FROM artefakttype_register"
                           " WHERE eiermodul=%s AND kontrakt_hash=%s",
                           (modul, kh)).fetchone()[0]
     migrator.rollback()
     jti = _utsted_cap(opp, modul, kh, at)
     tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
-    return _post(klient, tok, jti, {"funn": 2}).json()["artefakt_id"]
+    svar = _post(klient, tok, jti, {"funn": 2}).json()
+    return svar["artefakt_id"], svar["klartekst_sha256"]
 
 
 @pg
@@ -242,18 +255,19 @@ def test_motstridende_kvittering_karantenesetter_artefaktet(migrator, klient, to
     # artefaktet det andre resultatet påberoper seg er nettopp det
     # etterforskningen trenger. Karantene ryddes aldri.
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     # BEGGE opplastingene skjer mens oppdraget står plukket (kapabiliteter
     # utstedes kun da).
-    aid2 = _en_til_opplasting(migrator, klient, token, opp, modul, kh)
+    aid2, kts2 = _en_til_opplasting(migrator, klient, token, opp, modul, kh)
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     h = {"authorization": f"Bearer {tok2}"}
     kjti = _kvitteringskap(opp, oc, gen)
-    kv1 = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    kv1 = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
     assert klient.post("/v1/oppdrag/kvittering", json=kv1,
                        headers=h).status_code == 200
     # Samme kapabilitet, ANNET resultat + annet artefakt → motstrid (409).
-    kropp = _kvitteringskropp(opp, kjti, rep, oc, gen, aid2)
+    kropp = _kvitteringskropp(opp, kjti, rep, oc, gen, aid2, kts2)
     kropp["ressurs_id"] = "fak-2"
     rk = klient.post("/v1/oppdrag/kvittering", json=_signer_kvittering(kropp),
                      headers=h)
@@ -275,13 +289,15 @@ def test_promoteringsfeil_brenner_kapabiliteten(migrator, klient, token):
     MUTASJONEN SOM DREPER DENNE: bytt savepointen (`with conn.transaction()`) rundt
     promoter_artefakt tilbake til `conn.rollback()` i promoteringsfeil-grenen."""
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
-    _, _, _, fremmed, _, _, _ = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    _, _, _, fremmed, _, _, _, fkts = _last_opp_artefakt(migrator, klient, token)
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     h = {"authorization": f"Bearer {tok2}"}
     kjti = _kvitteringskap(opp, oc, gen)
     # 1) FREMMED artefakt → promotering feiler → 409 + karantene.
-    kv1 = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, fremmed))
+    kv1 = _signer_kvittering(
+        _kvitteringskropp(opp, kjti, rep, oc, gen, fremmed, fkts))
     assert klient.post("/v1/oppdrag/kvittering", json=kv1,
                        headers=h).status_code == 409
     # Brenningen + resultathashen skal ha OVERLEVD (ikke rullet med promoteringen).
@@ -289,7 +305,7 @@ def test_promoteringsfeil_brenner_kapabiliteten(migrator, klient, token):
     # 2) SAMME jti, gyldig eget artefakt, ANNET resultat. Er brenningen intakt,
     #    står jti-en 'brukt' med første hash → motstrid (409). Var den rullet
     #    tilbake, ville re-posten vært fersk og promotert aid → 200.
-    kropp = _kvitteringskropp(opp, kjti, rep, oc, gen, aid)
+    kropp = _kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts)
     kropp["ressurs_id"] = "fak-2"
     rk = klient.post("/v1/oppdrag/kvittering", json=_signer_kvittering(kropp),
                      headers=h)
@@ -311,7 +327,8 @@ def test_avvist_kvittering_retry_gir_samme_409(migrator, klient, token):
     MUTASJONEN SOM DREPER DENNE: fjern karantene-sjekken i idempotens-grenen."""
     from .test_m37 import _signer_kvittering
     from .test_pr014b_artefaktkapabilitet import _mk_admin
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     # Nødstopp modulen → epoch-mismatch → EGEN artefakt (under opp) avvises OG
     # karantenesettes (karantenesett er no-op for et fremmed artefakt).
     ma = _mk_admin("disponit_modules_admin")
@@ -323,7 +340,7 @@ def test_avvist_kvittering_retry_gir_samme_409(migrator, klient, token):
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     hh = {"authorization": f"Bearer {tok2}"}
     kjti = _kvitteringskap(opp, oc, gen)
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
     # 1) Avvist (409), egen artefakt karantenesatt.
     assert klient.post("/v1/oppdrag/kvittering", json=kv,
                        headers=hh).status_code == 409
@@ -343,12 +360,14 @@ def test_avvist_fremmed_artefakt_retry_gir_samme_409(migrator, klient, token):
     MUTASJONEN SOM DREPER DENNE: bytt historikk-sjekken tilbake til å lese
     artefakt-tilstand='karantene'."""
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
-    _, _, _, fremmed, _, _, _ = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    _, _, _, fremmed, _, _, _, fkts = _last_opp_artefakt(migrator, klient, token)
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     hh = {"authorization": f"Bearer {tok2}"}
     kjti = _kvitteringskap(opp, oc, gen)
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, fremmed))
+    kv = _signer_kvittering(
+        _kvitteringskropp(opp, kjti, rep, oc, gen, fremmed, fkts))
     # 1) FREMMED artefakt → avvist (409); ingenting karantenesatt under opp.
     assert klient.post("/v1/oppdrag/kvittering", json=kv,
                        headers=hh).status_code == 409
@@ -367,13 +386,77 @@ def test_kvittering_ikke_uuid_artefakt_er_request_feil(migrator, klient, token):
 
     MUTASJONEN SOM DREPER DENNE: fjern uuid.UUID-valideringen i _ingest_kvittering."""
     from .test_m37 import _signer_kvittering
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     kjti = _kvitteringskap(opp, oc, gen)
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, "ikke-en-uuid"))
+    kv = _signer_kvittering(
+        _kvitteringskropp(opp, kjti, rep, oc, gen, "ikke-en-uuid", kts))
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
     assert rk.status_code == 400 and "request_feilformet" in rk.text, rk.text
+
+
+@pg
+def test_kvittering_uten_signert_hash_er_request_feil(migrator, klient, token):
+    """Codex P1: en kvittering som peker på et artefakt MÅ bære den attesterte
+    klartekst-hashen. Uten den er signaturen bare en påstand om HVILKET artefakt
+    som gjelder, aldri om HVA det inneholder — og porten avviser den som
+    feilformet FØR kapabiliteten forbrukes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern kravet om `klartekst_sha256` i
+    _ingest_kvittering."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)
+    # kts utelatt → ingen attestert hash i den signerte kroppen.
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 400 and "request_feilformet" in rk.text, rk.text
+    # Kapabiliteten er IKKE forbrukt: den samme controlleren kan levere en
+    # korrekt kvittering etterpå.
+    kv2 = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
+    rk2 = klient.post("/v1/oppdrag/kvittering", json=kv2,
+                      headers={"authorization": f"Bearer {tok2}"})
+    assert rk2.status_code == 200, rk2.text
+
+
+@pg
+def test_kvittering_med_feil_attestert_hash_avvises(migrator, klient, token):
+    """Codex P1: den SIGNERTE hashen sammenlignes med artefaktets lagrede hash.
+
+    Tidligere leste promoteringen `klartekst_sha256` fra artefaktraden og sendte
+    den samme verdien tilbake til `promoter_artefakt` — sammenligningen var en
+    tautologi som ALLTID holdt. Da kunne den som holdt opplastingstokenet og
+    kapabilitets-jti-en lastet opp en vilkårlig rapport og fått den promotert
+    som attestert evidens. Nå: hashavvik → ingen promotering, oppdraget står,
+    artefaktet karantenesettes.
+
+    MUTASJONEN SOM DREPER DENNE: send artefaktets egen hash til promoter_artefakt
+    igjen i stedet for den signerte."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)
+    # Velformet, men FEIL hash — signeren attesterer et annet innhold enn det
+    # som faktisk ble lastet opp.
+    feil = "".join("0" if c != "0" else "1" for c in kts)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, feil))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 409, rk.text
+    _sett_kontekst(migrator, TENANT)
+    art_st = migrator.execute("SELECT tilstand FROM artefakt WHERE artefakt_id=%s",
+                              (aid,)).fetchone()[0]
+    opp_st = migrator.execute("SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                              (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+    assert (art_st, opp_st) == ("karantene", "plukket"), \
+        "en kvittering med feil attestert hash promoterte artefaktet likevel"
 
 
 @pg
@@ -386,7 +469,8 @@ def test_kvittering_gjerdes_ut_av_ny_module_epoch(migrator, klient, token):
     MUTASJONEN SOM DREPER DENNE: sammenlign kun mot oppdragets stemplede epoch."""
     from .test_m37 import _signer_kvittering
     from .test_pr014b_artefaktkapabilitet import _mk_admin
-    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
     ma = _mk_admin("disponit_modules_admin")
     try:
         ma.execute("SELECT noddeaktiver_modul(%s,'nodstopp','sys')", (modul,))
@@ -394,7 +478,7 @@ def test_kvittering_gjerdes_ut_av_ny_module_epoch(migrator, klient, token):
     finally:
         ma.close()
     kjti = _kvitteringskap(opp, oc, gen)
-    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid))
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
     tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})

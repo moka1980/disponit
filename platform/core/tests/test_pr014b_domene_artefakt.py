@@ -470,6 +470,49 @@ def test_foreldet_overtakelsessak_avvises(migrator):
 
 
 @pg
+def test_forbigatt_utfordrer_kan_ikke_godkjennes(migrator):
+    """Codex P1: generasjonsgjerdet er tenant-lokalt — hostnavnet er globalt.
+
+    Tar en TREDJE tenant C over mens B står i avklaring, flyttes
+    `hostname_binding` til C, mens B-radens status og generasjon står helt urørt.
+    B sin eldre sak kunne derfor godkjennes etterpå: B ble verifisert og skrev
+    bindingen TILBAKE til seg selv, mens C sin nyere konflikt fortsatt lå
+    uavgjort. Godkjenning gjerdes derfor også mot den gjeldende bindingshaveren.
+    AVVISNING står fortsatt åpen — en forbigått utfordrer må kunne ryddes ut.
+
+    MUTASJONEN SOM DREPER DENNE: fjern hostname_binding-sjekken i
+    `avgjor_domeneovertakelse`."""
+    tredje = "t-api-tredje"
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        # B tar over → B i avklaring, bindingen på B.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+        b_gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        # C tar over mens B venter → bindingen flyttes til C. B står urørt.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (tredje, h)); a.commit()
+        assert _binding(migrator, h) == tredje
+        assert _dkrow(migrator, ANNEN_TENANT, h)[1] == b_gen, \
+            "C sin overtakelse flyttet B sin generasjon (gjerdet ville truffet tilfeldig)"
+        # B sin sak er FORBIGÅTT: godkjenning avvises.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,true,'sys')",
+                      (ANNEN_TENANT, h, b_gen))
+        a.rollback()
+        # ...men den kan fortsatt AVVISES, slik at B ikke blir stående for alltid.
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h, b_gen)); a.commit()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+    assert _binding(migrator, h) == tredje, \
+        "en forbigått utfordrer tok bindingen tilbake"
+
+
+@pg
 def test_reverifisering_under_avklaring_blokkeres(migrator):
     """Codex: `avklaring_kreves` er terminal for verifiseringsveien.
 
@@ -590,18 +633,25 @@ def test_promoter_epoch_avvik_port37(migrator):
     assert st == "promotert"
 
 
-@pg
-def test_rydd_staged_forkaster_og_nuller_port40(migrator):
+def _gammelt_staged_artefakt(migrator, *, evidensfrist):
+    """Staged artefakt > 24 t gammelt på et oppdrag med gitt evidensfrist."""
     at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
-    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg,
+                          utforelsesfrist="-3 hours", evidensfrist=evidensfrist)
     aid = _artefakt(migrator, TENANT, opp, at, modul, kh)
-    # tving opprettet > 24 t tilbake.
     _sett_kontekst(migrator, TENANT)
     migrator.execute("UPDATE artefakt SET opprettet=now()-interval '25 hours'"
                      " WHERE artefakt_id=%s", (aid,)); migrator.commit()
+    return aid
+
+
+@pg
+def test_rydd_staged_forkaster_og_nuller_port40(migrator):
+    # Evidensfristen er ute → 24 t-regelen gjelder.
+    aid = _gammelt_staged_artefakt(migrator, evidensfrist="-2 hours")
     a = _admin()
     try:
         n = a.execute("SELECT rydd_staged_artefakter()").fetchone()[0]
@@ -614,6 +664,33 @@ def test_rydd_staged_forkaster_og_nuller_port40(migrator):
                            " WHERE artefakt_id=%s", (aid,)).fetchone()
     migrator.rollback()
     assert row[0] == "forkastet" and row[1] is None
+
+
+@pg
+def test_rydd_venter_paa_evidensfristen(migrator):
+    """Codex P1/P2: oppryddingen må ikke løpe foran evidensfristen.
+
+    Oppdraget tar imot signert evidens til `evidensfrist` (produksjon: 30 døgn),
+    mens oppryddingen forkastet alt staged etter 24 t. En kvittering som landet i
+    vinduet mellom fristene ble godtatt som `sen_kvittering`, men `bevar_artefakt`
+    oppdaterer kun `staged`-rader — hadde oppryddingen kjørt først, pekte den
+    godtatte evidensen på en rapport med nullet ciphertext.
+
+    MUTASJONEN SOM DREPER DENNE: fjern evidensfrist-vilkåret i
+    `rydd_staged_artefakter` — da forkastes artefaktet under, midt i vinduet der
+    evidens fortsatt kan leveres."""
+    aid = _gammelt_staged_artefakt(migrator, evidensfrist="30 days")
+    a = _admin()
+    try:
+        a.execute("SELECT rydd_staged_artefakter()"); a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    row = migrator.execute("SELECT tilstand, ciphertext IS NOT NULL FROM artefakt"
+                           " WHERE artefakt_id=%s", (aid,)).fetchone()
+    migrator.rollback()
+    assert row == ("staged", True), \
+        "oppryddingen forkastet et artefakt før oppdragets evidensfrist"
 
 
 @pg

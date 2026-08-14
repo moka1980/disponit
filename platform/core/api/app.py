@@ -1279,6 +1279,16 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         tjeneste.pool.gi_tilbake(conn)
 
 
+def _er_sha256_hex(verdi: object) -> bool:
+    """En sha256 skrevet slik serveren selv skriver den: 64 små hex-siffer.
+
+    Formen valideres FØR verdien når basen — en kvittering som påstår en hash i
+    et annet format er feilformet, ikke et hashavvik.
+    """
+    return (isinstance(verdi, str) and len(verdi) == 64
+            and all(c in "0123456789abcdef" for c in verdi))
+
+
 def _resultathash(kvittering: dict) -> str:
     """Kanonisk hash over RESULTATET, ikke over hele kvitteringen.
 
@@ -1292,9 +1302,12 @@ def _resultathash(kvittering: dict) -> str:
     # ellers like kvitteringer som KUN skiller seg i artefakt_id hashet likt, og
     # den andre returnert 'idempotent' før artefakt-verifiseringen — så
     # motstridende artefaktbevis verken promoteres eller karantenesettes.
+    # Codex P1: og `klartekst_sha256` — den ATTESTERTE hashen — hører til
+    # resultatet på nøyaktig samme måte. To kvitteringer som påstår ulikt innhold
+    # for samme oppdrag er motstridende evidens, ikke en idempotent re-post.
     kjerne_felt = {k: kvittering.get(k) for k in
                    ("oppdrag_id", "repair_operation_id", "resultat",
-                    "ressurs_id", "artefakt_id")}
+                    "ressurs_id", "artefakt_id", "klartekst_sha256")}
     return hashlib.sha256(json.dumps(
         kjerne_felt, sort_keys=True, ensure_ascii=False,
         separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -1531,6 +1544,21 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                    oppdrag_id=oppdrag_id)
             return _feilsvar("request_feilformet", rid)
 
+    # Codex P1: en artefaktkvittering må BÆRE hashen den attesterer. Uten et
+    # signert `klartekst_sha256` leste promoteringen hashen fra selve artefaktet
+    # og sendte den tilbake til `promoter_artefakt` — sammenligningen der var en
+    # tautologi (samme radverdi mot seg selv). Signaturen sa da bare HVILKET
+    # artefakt som gjaldt, aldri HVA det inneholdt: den som holdt
+    # opplastingstokenet og kapabilitets-jti-en kunne lastet opp en vilkårlig
+    # rapport og fått den promotert som attestert evidens. Hashen valideres FØR
+    # kapabiliteten forbrukes, på samme måte som artefakt_id.
+    raa_hash = kvittering.get("klartekst_sha256")
+    if raa_art is not None and not _er_sha256_hex(raa_hash):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id, grunn="klartekst_sha256")
+        return _feilsvar("request_feilformet", rid)
+
     ny_hash = _resultathash(kvittering)
 
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
@@ -1658,21 +1686,39 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     art_id = kvittering.get("artefakt_id")
     if art_id is not None:
         art = conn.execute(
-            "SELECT release_id, klartekst_sha256 FROM artefakt"
+            "SELECT release_id FROM artefakt"
             " WHERE artefakt_id=%s AND tenant=%s AND oppdrag_id=%s",
             (art_id, tenant, oppdrag_id)).fetchone()
-        # Codex: sammenlign mot modulens GJELDENDE epoch, ikke bare den claim-tid-
+        # Codex P1: MODUL-LÅSEN (delt) FØR epoch leses, og den holdes til commit.
+        # Uten den var epoch-sammenligningen under et ulåst punktavlesningsbilde:
+        # `noddeaktiver_modul` serialiserer epoch-endringene sine på `modul:<id>`,
+        # så et nødstopp som committet ETTER denne SELECT-en, men FØR
+        # kvitteringstransaksjonen, lot likheten stå igjen sann — og den utgjerdede
+        # controlleren promoterte artefaktet og avsluttet oppdraget etter
+        # nødstoppen likevel. Delt lås (samme form som claim_neste_oppdrag):
+        # kvitteringer serialiseres mot nødstopp/statusoverganger, men ikke mot
+        # hverandre. Låsen er en xact-lås — den slippes først i commit/rollback,
+        # så nødstoppet venter på HELE denne transaksjonen.
+        oppdragsmodul = conn.execute(
+            "SELECT modul_id, module_epoch FROM oppdrag"
+            " WHERE tenant=%s AND id=%s", (tenant, oppdrag_id)).fetchone()
+        opp_epoch = oppdragsmodul[1]
+        if oppdragsmodul[0] is not None:
+            conn.execute(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended(%s,0))",
+                ("modul:" + oppdragsmodul[0],))
+        # Sammenlign mot modulens GJELDENDE epoch, ikke bare den claim-tid-
         # stemplede på oppdraget. `noddeaktiver_modul` løfter modulhode.module_epoch;
         # oppdragets stemplede epoch er derimot frosset. En artefakt+kvittering fra
         # en NØDSTOPPET controller ville ellers fortsatt promotert (stemplet ==
-        # stemplet) og avsluttet oppdraget etter nødstoppen. Er de ulike, gjerdes
-        # controlleren ut → ingen promotering → karantene.
-        epoker = conn.execute(
-            "SELECT o.module_epoch, h.module_epoch FROM oppdrag o"
-            " JOIN modulhode h ON h.modul_id = o.modul_id"
-            " WHERE o.tenant=%s AND o.id=%s", (tenant, oppdrag_id)).fetchone()
-        opp_epoch = epoker[0]
-        promotert = art is not None and epoker[0] == epoker[1]
+        # stemplet) og avsluttet oppdraget etter nødstoppen. Er de ulike (eller er
+        # oppdraget ikke modulbundet i det hele tatt), gjerdes controlleren ut →
+        # ingen promotering → karantene.
+        naa_epoch = conn.execute(
+            "SELECT module_epoch FROM modulhode WHERE modul_id=%s",
+            (oppdragsmodul[0],)).fetchone()
+        promotert = (art is not None and naa_epoch is not None
+                     and opp_epoch == naa_epoch[0])
         if promotert:
             try:
                 # SAVEPOINT: en promoteringsfeil (epoch-drift/bindingsavvik) må
@@ -1683,9 +1729,14 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                 # om til fristen, og en ANNEN kvittering med samme jti ble aldri
                 # klassifisert mot den første resultathashen.
                 with conn.transaction():
+                    # `raa_hash` er den SIGNERTE hashen fra kvitteringen — ikke
+                    # artefaktets egen (Codex P1). Sammenligningen i
+                    # `promoter_artefakt` er dermed en ekte attestasjon: stemmer
+                    # ikke det signeren skrev under på med det som faktisk ligger
+                    # lagret, promoteres ingenting.
                     conn.execute("SELECT promoter_artefakt(%s,%s,%s,%s,%s,%s,%s)",
                                  (art_id, tenant, oppdrag_id, art[0], opp_epoch,
-                                  art[1], auth.aktor))
+                                  raa_hash, auth.aktor))
             except psycopg.errors.InvalidParameterValue:
                 promotert = False   # epoch-drift/bindingsavvik (kun savepoint rullet)
         if not promotert:
