@@ -123,6 +123,20 @@ BEGIN
             'registrert for modulen/kontrakten', p_artefakttype
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Codex P2: release_id VERIFISERES også. Oppdraget stempler kun modul/
+    -- kontrakt/epoch ved claim — IKKE release — så uten denne porten kunne en
+    -- gyldig claimet jobb tilskrives en vilkårlig/ikke-eksisterende release, som
+    -- promoteringen senere leser tilbake fra artefaktet. Krev at (modul, release,
+    -- kontrakt) er en REGISTRERT release (samme kontrakt som kapabiliteten).
+    PERFORM 1 FROM public.modulrelease mr
+     WHERE mr.modul_id = p_modul_id AND mr.release_id = p_release_id
+       AND mr.kontraktversjon = p_kontraktversjon
+       AND mr.kontrakt_hash = p_kontrakt_hash;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'utsted_artefaktkapabilitet: release % er ikke registrert '
+            'for modulen/kontrakten', p_release_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.artefaktkapabilitet (jti, tenant, oppdrag_id, modul_id,
         release_id, kontraktversjon, kontrakt_hash, module_epoch, artefakttype,
         utloper)
@@ -132,8 +146,12 @@ BEGIN
     RETURN QUERY SELECT p_jti, v_utloper;
 END $$;
 
--- Innløs (idempotent, brenner IKKE): returnerer bindingen for en gyldig, ubrukt,
--- ikke-utløpt kapabilitet — men KUN til den holdende modulen (p_modul_id).
+-- Innløs (idempotent, brenner IKKE): returnerer bindingen for en kapabilitet
+-- holdt av modulen (p_modul_id). Codex P2: en ALLEREDE `brukt` kapabilitet er
+-- innløsbar UANSETT utløp — mister controlleren svaret og retryer etter de 15
+-- minuttene, må lagre_artefakt_staged fortsatt kunne returnere samme artefakt_id
+-- idempotent; ellers får den `kapabilitet_ugyldig` og får aldri fullført
+-- kvitteringsflyten. En `utstedt` kapabilitet må derimot være ikke-utløpt.
 CREATE OR REPLACE FUNCTION innlos_artefaktkapabilitet(p_jti TEXT, p_modul_id TEXT)
 RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, release_id TEXT,
                kontraktversjon INT, kontrakt_hash TEXT, module_epoch BIGINT,
@@ -145,7 +163,8 @@ BEGIN
            k.kontrakt_hash, k.module_epoch, k.artefakttype
       FROM public.artefaktkapabilitet k
      WHERE k.jti = p_jti AND k.modul_id = p_modul_id
-       AND k.status <> 'feilet' AND k.utloper > now();
+       AND k.status <> 'feilet'
+       AND (k.status = 'brukt' OR k.utloper > now());
 END $$;
 
 -- Codex: den FRITTSTÅENDE brenneren er FJERNET. Etter at `lagre_artefakt_staged`
@@ -202,6 +221,15 @@ BEGIN
         RAISE EXCEPTION 'lagre_artefakt_staged: binding matcher ikke kapabiliteten'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Codex P2: et staged artefakt MÅ ha payload. ciphertext/nonce er nullbare
+    -- KUN for forkastede artefakter (statemaskinen tillater nulling bare i
+    -- overgangen staged→forkastet). En kaller med EXECUTE kunne ellers sende NULL
+    -- her, få raden inn som `staged` og senere promotert — med rapporten alt
+    -- borte. Håndhev non-null FØR kapabiliteten brennes.
+    IF p_ciphertext IS NULL OR p_nonce IS NULL THEN
+        RAISE EXCEPTION 'lagre_artefakt_staged: staged artefakt krever ciphertext+nonce'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.artefakt (tenant, oppdrag_id, artefakttype, modul_id,
         release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,
         storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,
@@ -228,6 +256,9 @@ RESET ROLE;
 
 -- domene_eier (SECURITY DEFINER-kjøreren) må kunne skrive tabellen + LESE oppdrag.
 GRANT SELECT, INSERT, UPDATE ON artefaktkapabilitet TO disponit_domene_eier;
+-- Codex P2: utsted_artefaktkapabilitet verifiserer nå release mot modulrelease
+-- (014a). SECURITY DEFINER kjører som domene_eier → den trenger LESE der.
+GRANT SELECT ON modulrelease TO disponit_domene_eier;
 
 -- §7 pkt. 8: en kvittering hvis artefakt ikke lar seg verifisere (epoch-drift
 -- eller bindingsavvik) karantenesettes som sikkerhetssak. Utvid hendelses-

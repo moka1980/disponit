@@ -91,11 +91,16 @@ TOKENADMIN_DSN=("DISPONIT_TOKEN_ADMIN_URL=$DB"
                 "DISPONIT_TEST_TOKEN_ADMIN_DSN=${DB}_test")
 ARBEIDER_DSN=("DISPONIT_ARBEIDER_URL=$DB"
               "DISPONIT_TEST_ARBEIDER_DSN=${DB}_test")
+# PR-014b (Codex P2): egress-proxyen har egen LOGIN-rolle med tilfeldig passord,
+# men uten en DSN i miljøfilen kunne den ikke autentisere på en fersk install
+# (manuell passord-reset kreves ellers). Samme state-machine som de andre rollene.
+EGRESS_DSN=("DISPONIT_EGRESS_URL=$DB" "DISPONIT_TEST_EGRESS_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 sikre_rolle_dsn "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 sikre_rolle_dsn "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
+sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -115,6 +120,7 @@ verifiser_og_reparer "$BRUKER"     "${RUNTIME_DSN[@]}"
 verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 verifiser_og_reparer "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
+verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -267,6 +273,7 @@ done
 verifiser_og_reparer "$BRUKER"     "${RUNTIME_DSN[@]}"
 verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
+verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q"

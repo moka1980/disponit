@@ -154,6 +154,15 @@ CREATE TRIGGER hendelse_append_only BEFORE UPDATE OR DELETE ON domenekontroll_he
 DROP TRIGGER IF EXISTS artefakttype_immutable ON artefakttype_register;
 CREATE TRIGGER artefakttype_immutable BEFORE UPDATE OR DELETE ON artefakttype_register
     FOR EACH ROW EXECUTE FUNCTION domene_append_only();
+-- Codex P2: TRUNCATE omgår rad-triggere i PostgreSQL. Uten en statement-nivå
+-- TRUNCATE-vakt kunne skjemaeieren tømt disse append-only-tabellene tross
+-- immutabilitets-invarianten. (domene_append_only rapporterer TG_OP='TRUNCATE'.)
+DROP TRIGGER IF EXISTS hendelse_ingen_truncate ON domenekontroll_hendelse;
+CREATE TRIGGER hendelse_ingen_truncate BEFORE TRUNCATE ON domenekontroll_hendelse
+    FOR EACH STATEMENT EXECUTE FUNCTION domene_append_only();
+DROP TRIGGER IF EXISTS artefakttype_ingen_truncate ON artefakttype_register;
+CREATE TRIGGER artefakttype_ingen_truncate BEFORE TRUNCATE ON artefakttype_register
+    FOR EACH STATEMENT EXECUTE FUNCTION domene_append_only();
 
 -- 7b. domenekontroll kolonnelås: identitet frosset, autorisasjonsgenerasjon
 --     monoton, status-statemaskin. Selve fullmakten (resolver-enighet, PSL,
@@ -411,6 +420,11 @@ BEGIN
                 VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1)
             ON CONFLICT (tenant, hostname) DO UPDATE
                 SET status = 'avklaring_kreves',
+                    -- Codex P2: bær den NETTOPP verifiserte wildcard-scopen inn i
+                    -- avklaringsraden. Ellers kunne en tenant med en gammel
+                    -- wildcard-rad fullføre en eksakt-host-overtakelse og etter
+                    -- M-37-godkjenning bli verifisert med den gamle scopen.
+                    wildcard = p_wildcard,
                     autorisasjonsgenerasjon = public.domenekontroll.autorisasjonsgenerasjon + 1;
             INSERT INTO public.domenekontroll_hendelse
                 (tenant, hostname, hendelse, til_status, grunn, aktor) VALUES
@@ -559,9 +573,15 @@ CREATE OR REPLACE FUNCTION registrer_artefakttype(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE r RECORD;
 BEGIN
-    -- Codex: sammenlign HELE den immutable tuppelen — en re-registrering med
-    -- samme skjema_hash men ANNEN eier/kontrakt ble ellers rapportert som en
-    -- vellykket no-op selv om bindingen ikke ble anvendt.
+    -- Codex P2: serialiser på artefakttype-identiteten (samme mønster som
+    -- modulregisteret). Uten låsen kan to samtidige registreringer av samme
+    -- immutable tuppel begge passere eksistenssjekken under; én vinner, den andre
+    -- får PK-brudd i stedet for den dokumenterte idempotente no-op-en.
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('artefakttype:' || p_artefakttype, 0));
+    -- Sammenlign HELE den immutable tuppelen — en re-registrering med samme
+    -- skjema_hash men ANNEN eier/kontrakt ble ellers rapportert som en vellykket
+    -- no-op selv om bindingen ikke ble anvendt.
     SELECT eiermodul, kontraktversjon, kontrakt_hash, skjema_hash INTO r
       FROM public.artefakttype_register WHERE artefakttype = p_artefakttype;
     IF FOUND THEN

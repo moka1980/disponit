@@ -207,6 +207,113 @@ def test_kryssbruk_mot_kvitteringskapabilitet_avvist(migrator):
 
 
 @pg
+def test_utsted_krever_registrert_release(migrator):
+    """Codex P2: release_id verifiseres mot modulrelease. Oppdraget stempler ikke
+    release ved claim, så uten porten kunne en kapabilitet tilskrives en vilkårlig
+    release som promoteringen senere leser tilbake fra artefaktet.
+
+    MUTASJONEN SOM DREPER DENNE: fjern modulrelease-sjekken i utsted."""
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)  # registrerer 'r1'
+    a = _admin()
+    try:
+        # 'r1' er registrert → OK.
+        _utsted(a, opp, modul, kh, at)
+        # 'r-bogus' er IKKE en registrert release → avvist.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT utsted_artefaktkapabilitet(%s,%s,%s,'r-bogus',1,%s,0,"
+                      "%s,%s,900)",
+                      (TENANT, opp, modul, kh, at, secrets.token_hex(16)))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_innlos_og_lagre_idempotent_etter_utlop(migrator):
+    """Codex P2: en ALLEREDE `brukt` kapabilitet er innløsbar + lagre returnerer
+    samme artefakt_id UANSETT utløp. Mister controlleren svaret og retryer etter
+    de 15 minuttene, må flyten fortsatt kunne fullføres idempotent.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `status = 'brukt' OR` fra innlos-filteret."""
+    from db import kryptering
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    a = _admin()
+    try:
+        jti = _utsted(a, opp, modul, kh, at)
+        _sett_kontekst(a, TENANT)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(a, TENANT)
+        ct, nonce = kryptering.krypter(dek, {"r": 1}, TENANT, key_id)
+        h = "h-" + secrets.token_hex(8)
+        aid1 = a.execute("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,"
+                         "%s,%s,%s,%s,%s)",
+                         (TENANT, opp, at, modul, kh, h, ct, nonce, key_id, jti)
+                         ).fetchone()[0]
+        a.commit()
+        # Kapabiliteten er nå 'brukt'. Aldre den forbi utløp (utloper er frosset).
+        migrator.execute("ALTER TABLE artefaktkapabilitet DISABLE TRIGGER"
+                         " artefaktkapabilitet_overgang")
+        migrator.execute("UPDATE artefaktkapabilitet SET utloper=now()-interval"
+                         " '1 s' WHERE jti=%s", (jti,))
+        migrator.execute("ALTER TABLE artefaktkapabilitet ENABLE TRIGGER"
+                         " artefaktkapabilitet_overgang")
+        migrator.commit()
+        # innlos returnerer FORTSATT bindingen (brukt overstyrer utløp).
+        _sett_kontekst(a, TENANT)
+        rad = a.execute("SELECT tenant FROM innlos_artefaktkapabilitet(%s,%s)",
+                        (jti, modul)).fetchone()
+        a.commit()
+        assert rad is not None, "en brukt kapabilitet ble ikke innløsbar etter utløp"
+        # lagre returnerer SAMME artefakt_id idempotent, tross utløp.
+        _sett_kontekst(a, TENANT)
+        aid2 = a.execute("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,"
+                         "%s,%s,%s,%s,%s)",
+                         (TENANT, opp, at, modul, kh, h, ct, nonce, key_id, jti)
+                         ).fetchone()[0]
+        a.commit()
+        assert aid2 == aid1, "retry etter utløp ga ikke samme artefakt_id"
+    finally:
+        a.close()
+
+
+@pg
+def test_lagre_avviser_null_payload(migrator):
+    """Codex P2: et `staged` artefakt MÅ ha ciphertext+nonce (nullbar KUN ved
+    forkastet). En kaller med EXECUTE kunne ellers sende NULL og få en tom rad
+    inn som staged og senere promotert. Håndheves FØR kapabiliteten brennes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern non-null-sjekken i lagre_artefakt_staged."""
+    from db import kryptering
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    a = _admin()
+    try:
+        jti = _utsted(a, opp, modul, kh, at)
+        _sett_kontekst(a, TENANT)
+        key_id, _ = kryptering.hent_eller_opprett_aktiv_dek(a, TENANT)
+        a.commit()
+        _sett_kontekst(a, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,"
+                      "%s,NULL,NULL,%s,%s)",
+                      (TENANT, opp, at, modul, kh, "h-" + secrets.token_hex(8),
+                       key_id, jti))
+        a.rollback()
+    finally:
+        a.close()
+    # Ingen rad skrevet, og kapabiliteten IKKE brent (sjekken kom før brenningen).
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute("SELECT count(*) FROM artefakt WHERE kapabilitet_jti=%s",
+                         (jti,)).fetchone()[0]
+    st = migrator.execute("SELECT status FROM artefaktkapabilitet WHERE jti=%s",
+                          (jti,)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0 and st == "utstedt", \
+        "null-payload ble akseptert eller brente kapabiliteten"
+
+
+@pg
 def test_bindingsfelter_uforanderlige(migrator):
     modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
     opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)

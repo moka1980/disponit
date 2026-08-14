@@ -262,3 +262,41 @@ def test_motstridende_kvittering_karantenesetter_artefaktet(migrator, klient, to
     _rydd()
     assert _art(migrator, aid2) == ("karantene", True), \
         "det motstridende resultatets artefakt overlevde ikke oppryddingen"
+
+
+@pg
+def test_promoteringsfeil_brenner_kapabiliteten(migrator, klient, token):
+    """Codex P2: en avvist artefaktkvittering (fremmed/foreldet artefakt) må
+    BRENNE kvitteringskapabiliteten i den committede karantenetransaksjonen. En
+    full rollback her angret brenningen, så den samme jti-en kunne spilles om til
+    fristen, og en ANNEN kvittering med samme jti unnslapp klassifisering mot den
+    første resultathashen.
+
+    MUTASJONEN SOM DREPER DENNE: bytt savepointen (`with conn.transaction()`) rundt
+    promoter_artefakt tilbake til `conn.rollback()` i promoteringsfeil-grenen."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen = _last_opp_artefakt(migrator, klient, token)
+    _, _, _, fremmed, _, _, _ = _last_opp_artefakt(migrator, klient, token)
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    h = {"authorization": f"Bearer {tok2}"}
+    kjti = _kvitteringskap(opp, oc, gen)
+    # 1) FREMMED artefakt → promotering feiler → 409 + karantene.
+    kv1 = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, fremmed))
+    assert klient.post("/v1/oppdrag/kvittering", json=kv1,
+                       headers=h).status_code == 409
+    # Brenningen + resultathashen skal ha OVERLEVD (ikke rullet med promoteringen).
+    # Måles ATFERDSMESSIG (kvitteringskapabiliteter er off-limits for migrator):
+    # 2) SAMME jti, gyldig eget artefakt, ANNET resultat. Er brenningen intakt,
+    #    står jti-en 'brukt' med første hash → motstrid (409). Var den rullet
+    #    tilbake, ville re-posten vært fersk og promotert aid → 200.
+    kropp = _kvitteringskropp(opp, kjti, rep, oc, gen, aid)
+    kropp["ressurs_id"] = "fak-2"
+    rk = klient.post("/v1/oppdrag/kvittering", json=_signer_kvittering(kropp),
+                     headers=h)
+    assert rk.status_code == 409, rk.text
+    # Oppdraget ble aldri avsluttet av den ugyldige kvitteringen.
+    _sett_kontekst(migrator, TENANT)
+    opp_st = migrator.execute("SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                              (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+    assert opp_st == "plukket", "en avvist kvittering avsluttet oppdraget likevel"

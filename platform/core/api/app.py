@@ -1355,7 +1355,7 @@ def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
 
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
-                         rid: str) -> Response | None:
+                         rid: str, artefakt_id=None) -> Response | None:
     """Forbruker kapabiliteten, eller klassifiserer hvorfor vi ikke kunne.
 
     -> None betyr «kapabiliteten er VÅR, fortsett». Alt annet er et ferdig
@@ -1391,6 +1391,14 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                                   "motstridende_kvittering",
                                   {"kilde": "kapplop", "ny": ny_hash,
                                    "oppdrag_id": oppdrag_id}, rid)
+        # Codex P2: også kappløps-TAPEREN navngir et artefakt, og det er nettopp
+        # evidensen sikkerhetssaken trenger. Hash-konfliktveien bevarer det alt;
+        # denne atomiske DB-konfliktgrenen returnerte før den nådde bevaringen, så
+        # taperens artefakt stod igjen `staged` og fikk cipherteksten nullet av
+        # oppryddingen. Karantene i SAMME commit. No-op for fremmed/ikke-staged.
+        if artefakt_id is not None:
+            conn.execute("SELECT karantenesett_artefakt(%s,%s,%s)",
+                         (artefakt_id, tenant, oppdrag_id))
         conn.commit()
         tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
                                oppdrag_id=oppdrag_id, kapplop=True)
@@ -1566,7 +1574,8 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # skal aldri avslutte noe.
         svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash,
                                     tenant=tenant, unntak_id=unntak_id,
-                                    oppdrag_id=oppdrag_id, rid=rid)
+                                    oppdrag_id=oppdrag_id, rid=rid,
+                                    artefakt_id=kvittering.get("artefakt_id"))
         if svar is not None:
             # Taperen av kappløpet skriver INGEN evidensrad. Den ville vært
             # den andre raden for samme jti — og om utfallet var idempotent
@@ -1599,7 +1608,7 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     # den, har noen andre rukket å bruke den, og da skal ingenting skje.
     svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash, tenant=tenant,
                                 unntak_id=unntak_id, oppdrag_id=oppdrag_id,
-                                rid=rid)
+                                rid=rid, artefakt_id=kvittering.get("artefakt_id"))
     if svar is not None:
         return svar
 
@@ -1623,17 +1632,25 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         promotert = art is not None
         if promotert:
             try:
-                conn.execute("SELECT promoter_artefakt(%s,%s,%s,%s,%s,%s,%s)",
-                             (art_id, tenant, oppdrag_id, art[0], opp_epoch,
-                              art[1], auth.aktor))
+                # SAVEPOINT: en promoteringsfeil (epoch-drift/bindingsavvik) må
+                # IKKE rulle tilbake kapabilitet-brenningen + resultathashen som
+                # _forbruk_kapabilitet nettopp skrev. Codex P2: en full rollback
+                # her angret brenningen FØR sikkerhetssaken ble committet i en ny
+                # transaksjon, så den samme ugyldige kvitteringen kunne spilles
+                # om til fristen, og en ANNEN kvittering med samme jti ble aldri
+                # klassifisert mot den første resultathashen.
+                with conn.transaction():
+                    conn.execute("SELECT promoter_artefakt(%s,%s,%s,%s,%s,%s,%s)",
+                                 (art_id, tenant, oppdrag_id, art[0], opp_epoch,
+                                  art[1], auth.aktor))
             except psycopg.errors.InvalidParameterValue:
-                promotert = False   # epoch-drift/bindingsavvik
+                promotert = False   # epoch-drift/bindingsavvik (kun savepoint rullet)
         if not promotert:
-            conn.rollback()
-            sett_kontekst(conn, tenant, auth.aktor, rid)
-            # Codex §7 pkt. 8: bevar det uverifiserte artefaktet for etterforskning
-            # (karantene → oppryddingen rører det aldri). No-op for et FREMMED
-            # artefakt (ikke bundet til dette oppdraget) — det hører til sitt eget.
+            # Brenningen + resultathashen står ved lag (bare savepointen ble
+            # rullet). Codex §7 pkt. 8: bevar det uverifiserte artefaktet for
+            # etterforskning (karantene → oppryddingen rører det aldri) OG commit
+            # brenning + karantene + sikkerhetssak i SAMME transaksjon. No-op for
+            # et FREMMED artefakt (ikke bundet til dette oppdraget).
             conn.execute("SELECT karantenesett_artefakt(%s,%s,%s)",
                          (art_id, tenant, oppdrag_id))
             _sikkerhetssak_kvittering(

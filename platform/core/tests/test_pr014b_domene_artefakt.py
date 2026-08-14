@@ -689,3 +689,57 @@ def test_karantene_bevares_gjennom_rydd(migrator):
                           (aid,)).fetchone()[0]
     migrator.rollback()
     assert st == "karantene", "rydd forkastet et karantene-artefakt"
+
+
+@pg
+def test_append_only_tabeller_ingen_truncate(migrator):
+    """Codex P2: TRUNCATE omgår rad-triggere i PostgreSQL. De append-only
+    tabellene har nå statement-nivå TRUNCATE-vakt slik at skjemaeieren ikke kan
+    tømme dem tross immutabilitets-invarianten.
+
+    MUTASJONEN SOM DREPER DENNE: fjern BEFORE TRUNCATE-triggerne."""
+    # domenekontroll_hendelse har ingen innkommende FK → triggeren er det ENESTE
+    # som stopper en TRUNCATE.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("TRUNCATE domenekontroll_hendelse")
+    migrator.rollback()
+    # artefakttype_register: FK fra artefakt blokkerer plain TRUNCATE, men CASCADE
+    # (som ellers ville tømt BEGGE) fanges nettopp av statement-triggeren.
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("TRUNCATE artefakttype_register CASCADE")
+    migrator.rollback()
+
+
+@pg
+def test_overtakelse_baerer_ny_wildcard(migrator):
+    """Codex P2: overtakelsen bærer den NETTOPP forespurte wildcard-scopen inn i
+    avklaringsraden, ikke den gamle. Ellers kunne en tenant med en gammel
+    wildcard-rad fullføre en eksakt-host-overtakelse og etter M-37 bli verifisert
+    med feil scope.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `wildcard = p_wildcard` fra ON CONFLICT."""
+    h = _host(); a = _admin()
+    try:
+        # B har en rad med wildcard=false; settes tilbakekalt (behold gammel rad).
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        migrator.execute("UPDATE domenekontroll SET status='tilbakekalt',"
+                         " autorisasjonsgenerasjon=autorisasjonsgenerasjon+1"
+                         " WHERE tenant=%s AND hostname=%s", (ANNEN_TENANT, h))
+        migrator.commit()
+        # A blir eier.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        # B tar over igjen, nå med wildcard=TRUE.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,true,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rad = migrator.execute("SELECT status, wildcard FROM domenekontroll"
+                           " WHERE tenant=%s AND hostname=%s",
+                           (ANNEN_TENANT, h)).fetchone()
+    migrator.rollback()
+    assert rad == ("avklaring_kreves", True), \
+        "overtakelsen beholdt den gamle wildcard-scopen"
