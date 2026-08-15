@@ -34,9 +34,16 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
 | 10 | `avgjor_domeneovertakelse(…, p_runde UUID)` — flerpartsoppgjør, friskhetskrav og taperoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon (§3), telle kun ferske attestasjoner mot fersk DNS-evidens (§4), og la taperens sak kunne lukkes (§3.1) |
 
-**Ett objekt hører ikke hjemme i 019, men i Python:** rollen som kan bære
-`domains:adjudicate`. Den ligger i `ROLLE_TIL_SCOPES`
-(`platform/core/api/autorisasjon.py:17`), ikke i databasen — se §4.1.
+**Fire ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
+saksflyten ligger ikke i databasen, og en port som bare finnes i SQL er
+ikke nådd:
+
+| # | Objekt i Python | Hvor | Hvorfor |
+|---|---|---|---|
+| A | Rollen `domeneavgjorer` i `ROLLE_TIL_SCOPES` | `api/autorisasjon.py:17` | Ingen eksisterende rolle bærer `domains:adjudicate`, §4.1 |
+| B | `domains:adjudicate` i `BROWSER_MUTASJONSSCOPES` | `api/app.py:799` | Uten det nektes attestanten før ruten, §4.2 |
+| C | Ruten `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` + familiegjerdet på PR-012-ruten | `api/app.py`, `api/unntaksbehandling.py` | Scopet slås opp fra handlingen, ikke fra saksfamilien, §4.2 |
+| D | `ny → manuell` i `opprett_overtakelsessak()` | `api/domeneovertakelse.py` | Saken er ellers synlig, men ikke handterbar, §3 |
 
 ---
 
@@ -153,11 +160,24 @@ den er fersk.
 
 ### 2.1 Tre køer, streng prioritet
 
+**Alle tre køene ser kun `status = 'verifisert'`.** En rad i
+`avklaring_kreves` er ikke foreldet — den er under avgjørelse, og
+`apne_domeneobservasjonsrunde(…, 'revalidering')` godtar den ikke (§2.4).
+Talte den med, ville hver eneste time plukket den i kø 1 (som er
+ubegrenset og aldri kappes), åpnet en runde som funksjonen avviser, og
+skrevet en revalideringsfeil på en rad der DNS-en ikke er problemet.
+Det er permanent retry-last utenfor K og et feilsignal som lyver.
+Ferskheten for en konfliktrad håndheves ett annet sted, i det ene
+øyeblikket den betyr noe: `formal = 'overtakelsesoppgjor'`-runden ved
+tildeling (§4). Vinneren får `siste_vellykkede_revalidering = now()` av
+`avgjor_domeneovertakelse` (018 linje 406) og kommer derfor inn i kø 2
+som fersk rad, ikke som etterslep.
+
 | # | Kø | Regel |
 |---|---|---|
-| **1** | **Sikkerhetsnett** — `siste_vellykkede_revalidering < now() - 26 t` | **Utenfor budsjettet. Aldri utsatt, aldri kappet** |
-| 2 | **Normalslott** — minuttet falt i vinduet, raden ≥ 20 t gammel | Innenfor budsjettet |
-| 3 | **Etterslep** — slott passert mens timeren var nede, eldste først | Budsjettet som er igjen etter kø 2 |
+| **1** | **Sikkerhetsnett** — `verifisert` og `siste_vellykkede_revalidering < now() - 26 t` | **Utenfor budsjettet. Aldri utsatt, aldri kappet** |
+| 2 | **Normalslott** — `verifisert`, minuttet falt i vinduet, raden ≥ 20 t gammel | Innenfor budsjettet |
+| 3 | **Etterslep** — `verifisert`, slott passert mens timeren var nede, eldste først | Budsjettet som er igjen etter kø 2 |
 
 Kø 1 er ubegrenset *rett til å bli plukket*, ikke ubegrenset arbeid:
 oppslagene kjøres med **fast samtidighetsgrense C = 8**. Ingen rad
@@ -167,9 +187,13 @@ feil.
 ### 2.2 Absolutt budsjett
 
 ```
-N = antall rader med status IN ('verifisert','avklaring_kreves')
+N = antall rader med status = 'verifisert'      -- samme populasjon som køene
 K = ceil(0.10 * N)      -- HARDT tak per kjøring for kø 2 + kø 3 samlet
 ```
+`N` er nøyaktig det køene kan plukke fra (§2.1). Talte den også
+`avklaring_kreves`, ville budsjettet vært regnet på rader arbeideren aldri
+får lov til å revalidere — K ville vokst av konflikter og krympet igjen når
+de ble avgjort, uten at det hadde noe med revalideringslasten å gjøre.
 **K håndheves med `LIMIT`**, ikke som forventning. Rader fra kø 2 som ikke
 får plass blir etterslep og plukkes neste kjøring — slottet er avledet, så
 ingenting mistes. Hashskjevhet påvirker hvor mye etterslep som oppstår,
@@ -323,6 +347,28 @@ databasen kan kontrollere selv.
   til begge rader, begge hostnames i saksvisningen.
 - **Ut:** attestasjonen kaller `avgjor_domeneovertakelse()`.
   **Ingen knapp skriver status** — invariant 3.
+- **Saken må settes `manuell` når den opprettes.** Synlig er ikke det
+  samme som handterbar: `opprett_overtakelsessak()` skriver saken uten
+  status, altså `ny` (`003_unntak_api_policy.sql` linje 136), og
+  `sakstype='sikkerhet'` gjør at normalarbeideren aldri claimer den
+  (`claim_neste_sak` filtrerer `WHERE k.sakstype = 'normal'`, 007 linje
+  861). Ingenting flytter den videre av seg selv. PR-012 åpner en runde
+  kun fra `manuell` og hever ellers `runde_ulovlig_tilstand`
+  (`unntaksbehandling.py:312`) — så uten dette ville hver eneste
+  overtakelsessak stått i køen uten at verken godkjenning eller avvisning
+  kunne begynne, og port 20 vært umulig å bestå. PR-015 legger derfor den
+  ene, auditerte overgangen inn i `opprett_overtakelsessak()`, i **samme
+  transaksjon** som saken skrives:
+  `UPDATE unntak SET status='manuell' WHERE tenant=… AND id=… AND status='ny'`.
+  - Overgangen er whitelistet fra før (`ny → manuell`, 011 linje 151);
+    det er R3-veien for saksklasser som ikke har noen automatisk vei
+    (005 linje 103), og en overtakelse er per definisjon en av dem
+    (`UKJENT_SNAPSHOT`, `maks_auto_forsok = 0`). Statustriggeren skriver
+    `statusendring` i `unntak_historikk` som for enhver annen overgang.
+  - **Kun på opprettelsesveien.** Idempotensgrenen returnerer en
+    eksisterende sak urørt; `AND status='ny'` er gjerdet som gjør at et
+    retry aldri kan dra en sak som alt står i `venter_godkjenning` eller
+    er terminal, tilbake til `manuell`.
 - **Scope `domains:adjudicate`**, eget, båret av den nye rollen
   `domeneavgjorer` (§4.1). Unntaksscopene `exceptions:approve` /
   `:reject` / `:escalate` gir aldri cross-tenant domeneautoritet, uansett
@@ -419,13 +465,22 @@ feil pris.
 **Oppgjøret er derfor todelt, og begge delene er beviste:**
 1. **Domeneradene avgjøres atomisk** i B-s transaksjon, under
    hostname-låsen. Utfallet er ikke til forhandling etterpå.
-2. **C-s sak lukkes i C-s egen kontekst**, gjennom den ordinære
-   `avvis`-veien (**én** attestasjon, §4) som PR-012 allerede har. Punkt 5
-   over er det som gjør den veien farbar: funksjonen ser at raden alt er
-   `tilbakekalt` med grunn `tapte_domeneoppgjor`, returnerer
-   `alt_avgjort`, og kalleren fører saken til `avvist` med hendelsen
-   `avvist_handling`. Ingen ny domeneovergang, ingen ny autorisasjon —
-   bare en sak som lukkes mot evidens databasen alt bærer.
+2. **C-s sak lukkes i C-s egen kontekst**, med **én** `avvis`-attestasjon
+   (§4) på **domeneruten** (§4.2) — ikke på PR-012-s generelle
+   handlingsendepunkt. Runde- og attestasjonsmaskineriet er PR-012-s,
+   uendret; det er bare scopet ved døren som er domenets. Grunnen er
+   konkret: `POST /v1/unntak/{id}/handling` autentiserer `avvis` med
+   `exceptions:reject` (`unntaksbehandling.py:597`, og på nytt under
+   sakslåsen på linje 265), mens `domeneavgjorer` med vilje ikke bærer
+   noen unntaksskrivescopes (§4.1).
+   Sendte vi C-s avgjører den veien, måtte tenanten i tillegg gitt hen
+   `godkjenner` — altså skrivetilgang til hele unntakskøen for å lukke én
+   domenesak. Punkt 5 over er det som gjør veien farbar i databasen:
+   funksjonen ser at raden alt er `tilbakekalt` med grunn
+   `tapte_domeneoppgjor`, returnerer `alt_avgjort`, og kalleren fører
+   saken til `avvist` med hendelsen `avvist_handling`. Ingen ny
+   domeneovergang, ingen ny autorisasjon — bare en sak som lukkes mot
+   evidens databasen alt bærer.
 
 **Derfor røres ikke generasjonen på taperradene.** Saken C-s attestasjon
 er bundet til (§1) bærer den generasjonen C-raden hadde da konflikten
@@ -459,7 +514,8 @@ attestasjon.
   mål, så det de to øynene faktisk bekrefter er *utfallet*, ikke hvilken
   rad som skal flyttes.
 - **Ingen enkelt aktør produserer begge** — håndhevet av primærnøkkelen,
-  ikke av UI-et. Begge krever `domains:adjudicate`.
+  ikke av UI-et. Begge krever `domains:adjudicate`, avgitt på domeneruten
+  (§4.2) — det er den ene veien inn for denne saksfamilien.
 - **Ny konflikt invaliderer ventende attestasjoner** i kraft av
   saksidentiteten: C-s konflikt får sin egen `unntak_id` (ny generasjon,
   §1), og en attestasjon avgitt på B-s sak bærer B-s `unntak_id` i
@@ -565,6 +621,59 @@ derfor rollen inn:
   forsvinner umiddelbart. Rolleadministrasjon i UI er registrert
   arbeidselement, ikke PR-015-scope — men **DB-veien må dokumenteres i
   `docs/RUTINER.md`**, ellers er utveien fortsatt bare en påstand.
+
+### 4.2 Veien inn — egen rute, og døren må slippe rollen gjennom
+
+**Et scope ingen rute spør etter er ingen fullmakt.** Rollen fra §4.1 er
+nødvendig, men ikke tilstrekkelig: PR-012-s handlingsendepunkt slår opp
+scopet fra *operatørhandlingen* (`_HANDLING_SCOPE`,
+`unntaksbehandling.py:597`), ikke fra saksfamilien, så en `domeneavgjorer`
+ville blitt nektet ved døren på `exceptions:approve` — og en `godkjenner`
+sluppet inn på en cross-tenant domenesak, stikk i strid med §3 og port 13.
+PR-015 gir derfor overtakelsessaken sin **egen rute**, og setter et gjerde
+på den generelle:
+
+| Rute | Scope | Familie |
+|---|---|---|
+| `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` (ny) | `domains:adjudicate` | kun `kategori = 'domeneovertakelse'`, bevist under sakslåsen |
+| `POST /v1/unntak/{id}/handling` (PR-012, uendret ellers) | `exceptions:approve` / `:reject` / `:escalate` | **avviser** `domeneovertakelse` med `feil_saksfamilie` (409), under samme lås |
+
+- **Maskineriet er PR-012-s, uendret.** Den nye ruten er tynn — form,
+  auth, CSRF (dobbel-innsending, som PR-012) — og delegerer til
+  `behandle_unntakshandling` med `domains:adjudicate` som det scopet som
+  revalideres under sakslåsen (`unntaksbehandling.py:265`). Samme
+  idempotens, samme optimistiske saksversjonslås, samme runde, samme
+  historikk. Det eneste som er domenets, er scopet og familiegjerdet.
+- **Familien bevises, den påstås ikke av stien.** `kategori` leses fra
+  den `FOR UPDATE`-låste raden i steg 2 og må være `domeneovertakelse`;
+  er den noe annet, er svaret `unntak_ukjent` (404) — en avgjører har
+  ikke `exceptions:read` på resten av køen som saksliste og skal ikke
+  kunne kartlegge den gjennom feilkoder. Gjerdet på den generelle ruten
+  er speilbildet, men svarer `feil_saksfamilie` (409): den som står der
+  har allerede lov til å se saken, så koden skal si *hvorfor* handlingen
+  ikke hører hjemme her, ikke skjule at saken finnes. Koden legges i
+  `_FEIL_HTTP` (`unntaksbehandling.py:602`), ikke overlatt til
+  fallbacken. Det er *dette* gjerdet som gjør port 13 sann: uten det
+  ville tre unntaksscopes fortsatt kunne drive en domenesak gjennom
+  godkjenningsrunden.
+- **Browsersesjonen må slippe gjennom.** `_autentiser()` nekter enhver
+  muterende browsersesjon som ikke står i `BROWSER_MUTASJONSSCOPES`
+  (`platform/core/api/app.py:799–806, 832`) — et lukket sett som i dag er
+  PR-012-s tre unntaksscopes pluss PR-013-s to policyscopes. To mennesker
+  med `domeneavgjorer` ville altså blitt nektet **før** ruten i det hele
+  tatt ble nådd, uansett hva `scopes_for_roller()` returnerer, og port
+  20g vært umulig ende-til-ende. PR-015 utvider derfor settet:
+
+  ```python
+  # platform/core/api/app.py — BROWSER_MUTASJONSSCOPES
+  "domains:adjudicate",   # PR-015 §4.2: attestasjon er en menneskehandling
+                          # i nettleseren, CSRF-vernet som PR-012-s.
+  ```
+
+  Det er en bevisst utvidelse av et lukket sett, ikke en oppmykning:
+  attestasjonen *er* en menneskelig handling i en browsersesjon, og
+  vernet er nøyaktig det PR-012 bruker — dobbel-innsending på en rute som
+  selv verner seg. Maskintokens er upåvirket.
 
 ## 5. Opplastingskapabilitet utstedes ved claim
 
@@ -693,7 +802,7 @@ funksjonen kun treffer `tilstand = 'staged'`.
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
 | Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; de gamle signaturene uten runde er REVOKE-et fra både `disponit_domains_admin` og `disponit`; én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs og kortlevd | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB; arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)` |
-| Overtakelsesavgjørelse | Kun PR-012-attestasjon → funksjonen; taperens sak har nøyaktig én lovlig handling (§3.1) | Hostname-lås; hele oppgjøret i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører med `domains:adjudicate` (rollen finnes, §4.1), identisk utfall, **begge ferske (72 t)**, og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` |
+| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → PR-012-runden → funksjonen; den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling (§3.1) | Hostname-lås; hele oppgjøret i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører med `domains:adjudicate` (rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` |
 | Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; generasjonen sjekkes på nytt under kapabilitetens radlås i `lagre_artefakt_staged()` | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
@@ -744,6 +853,14 @@ forsøk 1 → slott 2 og 3 hopper over raden ·
 10 Rad passerer 26 t → plukket i samme kjøring **selv når K er brukt
 opp**; totalen overskrider K og telles i `sikkerhetsnett.kjoringer_over_K`.
 10b Kø 1 med 200 rader → samtidighet aldri over C = 8, null rader droppet.
+10c **Konfliktrader er ikke revalideringsarbeid:** en rad i
+`avklaring_kreves` med `siste_vellykkede_revalidering` 30 timer gammel →
+**ikke plukket av noen kø**, ingen runde åpnet, ingen revalideringsfeil
+logget, og den teller ikke i `N`. Etter at `avgjor_domeneovertakelse`
+godkjenner den, er den `verifisert` med fersk
+`siste_vellykkede_revalidering` og går inn i kø 2 til sitt eget slott —
+ikke i sikkerhetsnettet. Testen må måle begge sidene av overgangen; en
+variant som bare teller kø 1 består selv med den permanente retry-lasten.
 
 **Alarm (11).** 11 Bred resolverfeil → én driftsalarm, null M-37-saker, og
 `tenant X / hostname Y` fortsatt individuelt synlig med tre døgn uten
@@ -751,8 +868,19 @@ suksess.
 
 **M-37 og fire øyne (12–20g).**
 12 Overtakelsessak synlig i PR-012-flaten med begge hostnames og lineage ·
+12b **Saken er handterbar i det den er synlig:** en fersk overtakelsessak
+står `manuell` (ikke `ny`), og første attestasjon åpner runden uten
+`runde_ulovlig_tilstand`. Et retry av samme konflikt returnerer samme sak
+**uten** å røre statusen — også når saken alt er `venter_godkjenning`
+eller terminal ·
 13 Avgjørelse uten `domains:adjudicate` → nektet, selv med alle tre
-unntaksscopene (`exceptions:approve` + `:reject` + `:escalate`) ·
+unntaksscopene (`exceptions:approve` + `:reject` + `:escalate`); og de tre
+unntaksscopene på **den generelle** ruten mot en `domeneovertakelse`-sak
+→ `feil_saksfamilie`, ingen runde åpnet, ingen attestasjon skrevet ·
+13b **Døren, ikke bare kartet:** en browsersesjon med `domeneavgjorer`
+når faktisk domeneruten (`domains:adjudicate` står i
+`BROWSER_MUTASJONSSCOPES`), og CSRF-en håndheves der som i PR-012. En
+sesjon uten CSRF-token nektes ·
 14 Godkjenn med én attestasjon → nektet med `krever_to_attestasjoner` ·
 15 Samme aktør to ganger → avvist av primærnøkkel, ikke av UI (fornyelse
 er en oppdatering av samme rad, ikke en andre stemme) ·
@@ -788,9 +916,10 @@ den ·
 20c **Avvisning avgjør ikke tvisten:** `avvis` på B med C fortsatt i
 avklaring → kun B blir `tilbakekalt`, C står urørt og saken dens er
 fortsatt åpen ·
-20d **Taperens sak kan faktisk lukkes:** B godkjennes, C settes
-`tilbakekalt` med grunn `tapte_domeneoppgjor` — deretter avgir C-s
-avgjører **én** `avvis`-attestasjon på C-s egen sak → attestasjonen
+20d **Taperens sak kan faktisk lukkes — av rollen som skal lukke den:** B
+godkjennes, C settes `tilbakekalt` med grunn `tapte_domeneoppgjor` —
+deretter avgir C-s avgjører, som bærer **kun** `domeneavgjorer` og ingen
+unntaksscopes, **én** `avvis`-attestasjon på C-s egen sak → attestasjonen
 godtas av saksbindingstriggeren (C-radens generasjon er urørt),
 `avgjor_domeneovertakelse` returnerer `alt_avgjort` uten å røre
 domeneraden, og C-s sak ender `avvist`. **Ingen sak står igjen åpen på
@@ -810,7 +939,12 @@ ingen ny 90-døgnsautorisasjon utstedt ·
 `brukermedlemskap.roller` får `domains:adjudicate`; `godkjenner`,
 `admin`, `sikkerhet`, `leser` og `policyforvalter` får det **ikke**, og
 en bruker med `exceptions:approve` alene nektes å attestere. To brukere
-med `domeneavgjorer` fullfører en positiv tildeling ende-til-ende.
+med `domeneavgjorer` — og **ingen andre scopes** — fullfører en positiv
+tildeling ende-til-ende **over HTTP i browsersesjon**, fra sak i `manuell`
+til `verifisert` domenerad og lukkede saker. Testen må gå gjennom
+endepunktet; en variant som kaller `behandle_unntakshandling` direkte
+hopper over både `BROWSER_MUTASJONSSCOPES` og familiegjerdet og beviser
+derfor ingenting om veien inn.
 
 **Kapabilitet (21–24b).**
 21 Claim returnerer distinkte tokens; opplastingstokenet virker ikke
@@ -893,6 +1027,12 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 `avgjorelse_uten_scope_nektet = alle` ·
 **`roller_med_domains_adjudicate = {domeneavgjorer}`** (nøyaktig, ikke
 «minst») ·
+**`domenesak_behandlet_pa_generell_unntaksrute = 0`** ·
+**`attestasjon_ende_til_ende_kun_med_domeneavgjorer = ja`** (over HTTP,
+browsersesjon, ikke direkte funksjonskall) ·
+**`overtakelsessak_opprettet_i_status_ny = 0`** ·
+**`retry_endret_status_pa_eksisterende_sak = 0`** ·
+**`avklaringsrad_plukket_av_revalidering = 0`** ·
 `tokens_distinkte = ja` · `uten_artefakttype_utstedt = 0` ·
 **`kapabilitet_per_registrert_type = alle`** ·
 **`opplasting_med_foreldet_owner_generation = 0`** (målt på
@@ -930,9 +1070,13 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
          platform/core/api/autorisasjon.py (rollen `domeneavgjorer`, §4.1),
          platform/drift/domenerevalidering.py, platform/drift/domeneobservator.py,
          platform/drift/artefaktrydding.py,
-         platform/core/api/domeneovertakelse.py,
+         platform/core/api/domeneovertakelse.py (saken opprettes `manuell`, §3),
+         platform/core/api/unntaksbehandling.py (familiegjerdet på den
+         generelle ruten + scopet fra saksfamilien under låsen, §4.2),
          platform/core/api/app.py (oppdrag_claim, linje ~717;
-         artefaktopplasting, linje ~1928),
+         artefaktopplasting, linje ~1928; `domains:adjudicate` i
+         BROWSER_MUTASJONSSCOPES, linje ~799; ruten
+         POST /v1/domener/overtakelse/{unntak_id}/attestasjon, §4.2),
          docs/RUTINER.md (hvordan eier tildeler `domeneavgjorer`)
 NESTE: Draft PR-014c (automatisk WCAG-kontroll) — første eiermodul på
        plattformen 014a/014b/015 bygde — Claude.ai
