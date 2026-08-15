@@ -16,31 +16,37 @@ const LOKALER = ["nb", "en"].map((sprak) =>
   [sprak, JSON.parse(readFileSync(join(ROT, "locales", `${sprak}.json`), "utf-8"))]);
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
-  // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
-  // godkjent men ikke i drift, M-2/M-37 er under utvikling, M-38 har intet
-  // manifest. Ingen av dem er `i_drift` — det ordet krever
-  // `driftstilstand: produksjon`.
-  assert.equal(modulStatus(1), "klargjort");
+  // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1
+  // kjører i produksjon, M-2/M-37 er under utvikling, M-38 har intet manifest.
+  // `i_drift` krever `driftstilstand: produksjon` i manifestet — ikke en
+  // redaksjonell avgjørelse her.
+  assert.equal(modulStatus(1), "i_drift");
   assert.equal(modulStatus(2), "bygges");
   assert.equal(modulStatus(38), "planlagt");
   assert.equal(modulStatus(45), "planlagt");
 });
 
 test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => {
-  assert.equal(Object.values(MODULSTATUS).filter((s) => s === "i_drift").length,
-    0, "en modul står i_drift — da må manifestet ha driftstilstand: produksjon");
+  // Regelen er bindingen, ikke tallet: hver `i_drift` her må ha
+  // `driftstilstand: produksjon` i sitt manifest, og
+  // `test_ui_kontrakt.py::test_modulstatus_folger_manifestene` håndhever
+  // nettopp den retningen. M-1 er i drift fordi disponit.com kjører den.
+  assert.deepEqual(
+    Object.entries(MODULSTATUS).filter(([, s]) => s === "i_drift")
+      .map(([id]) => Number(id)),
+    [1], "andre moduler enn M-1 påstår drift — sjekk manifestene");
 });
 
 test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
   // «Tilgjengelig» er et løfte til en besøkende om at hen kan ta modulen i
   // bruk NÅ. Bare `i_drift` bærer det løftet: `klargjort` er godkjent uten
-  // drift (M-1 har `ikke_i_drift` og ingen API-enhet i manifestet), og
-  // `bygges`/`planlagt` er enda lenger unna. Alle fire sier «Kommer».
+  // drift, og `bygges`/`planlagt` er enda lenger unna.
   for (const post of TILBUD) {
     assert.equal(erTilgjengelig(post.id), modulStatus(post.id) === "i_drift",
       `M-${post.id} lover noe annet enn MODULSTATUS bærer`);
   }
-  assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
+  assert.equal(erTilgjengelig(1), true, "M-1 kjører i produksjon");
+  assert.equal(erTilgjengelig(37), false, "M-37 er under utvikling");
   assert.equal(erTilgjengelig(45), false, "ukjent modul er planlagt");
 });
 
@@ -72,9 +78,11 @@ test("heroTekstNokkel: hovedløftet følger brikkene, ikke redaktøren", () => {
   // drevet fra hverandre neste gang en modul skifter tilstand.
   const iDrift = TILBUD.filter((post) => erTilgjengelig(post.id)).length;
   assert.equal(heroTekstNokkel(), heroTekstNokkelFor(iDrift, TILBUD.length));
-  // Slik plattformen faktisk står: null moduler i drift, altså bygge-formen.
-  assert.equal(iDrift, 0, "et tilbudspunkt er i drift — sjekk MODULSTATUS");
-  assert.equal(heroTekstNokkel(), "site.hero.tekst_bygges");
+  // Slik plattformen faktisk står: ett av fire tilbudspunkter i drift (M-1),
+  // altså delvis-formen — den lover det som står merket «Tilgjengelig» og
+  // sier at resten bygges.
+  assert.equal(iDrift, 1, "antall tilbudspunkter i drift har endret seg");
+  assert.equal(heroTekstNokkel(), "site.hero.tekst_delvis");
 });
 
 test("MODULOVERSIKT: kortstatus utledes av MODULSTATUS, ikke duplisert", () => {
@@ -112,12 +120,12 @@ test("modulerFraIder: kundens tildeling, ikke plattformkatalogen", () => {
 });
 
 test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
-  // En tenant med M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
-  // arbeid — og resten av katalogen er planlagt for kunden. Tildelingen er
-  // ID-er fra den autentiserte veien, ikke et oppslag i klientpakken.
+  // En tenant med M-1 (i drift) og M-2 (bygges): én i drift, én under arbeid
+  // — og resten av katalogen er planlagt for kunden. Tildelingen er ID-er fra
+  // den autentiserte veien, ikke et oppslag i klientpakken.
   const telling = tenantTelling(modulerFraIder([1, 2]));
-  assert.equal(telling.iDrift, 0);
-  assert.equal(telling.underArbeid, 2);
+  assert.equal(telling.iDrift, 1);
+  assert.equal(telling.underArbeid, 1);
   assert.equal(telling.planlagt, telling.totalt - 2);
   const ukjent = tenantTelling([]);
   assert.equal(ukjent.iDrift, 0);

@@ -864,17 +864,25 @@ def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
 # To akser: godkjent (`status`) og utrullet (`driftstilstand`)
 # ===========================================================================
 
-def test_m01_er_godkjent_men_ikke_i_drift(m01):
+def test_m01_er_godkjent_og_i_produksjon(m01):
     """Arkitektbeslutningen 2026-08-05, pinnet på begge akser.
 
     Begge feltene leses EKSPLISITT. Å utlede det ene av det andre ville
     gjort testen blind for nettopp den forvekslingen feltet ble innført for
     å hindre.
+
+    `driftstilstand` sto `ikke_i_drift` med begrunnelsen «staging har ingen
+    installerte units, og det finnes ikke engang en unit for API-et». Begge
+    deler var sanne da det ble skrevet. Ingen av dem er sanne nå:
+    `disponit-api.service` og `disponit-m37.service` er installert og aktive
+    på disponit.com (og på staging), releasen kjører mot migrasjon 19, og
+    policymotoren avgjør ekte forespørsler. En akse som ikke oppdateres når
+    virkeligheten endrer seg, er verre enn ingen akse — da later registeret
+    som om ingenting kjører, og flatene arver løgnen.
     """
     assert m01["status"] == "aktiv"
-    assert m01["driftstilstand"] == "ikke_i_drift", (
-        "m01 kjører ingen steder: staging har ingen installerte units, og"
-        " det finnes ikke engang en unit for API-et")
+    assert m01["driftstilstand"] == "produksjon", (
+        "m01 kjører på disponit.com: units installert og aktive, migrasjon 19")
 
 
 def test_registeret_skiller_godkjent_fra_utrullet(m01):
@@ -882,8 +890,8 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     from registry import les_manifester, valider
     st = valider(les_manifester(MODULROT))
     assert st.aktive == ["m01_policy"], st
-    assert st.i_drift == [], (
-        f"registeret påstår at noe kjører: {st.i_drift}")
+    assert st.i_drift == ["m01_policy"], (
+        f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
 

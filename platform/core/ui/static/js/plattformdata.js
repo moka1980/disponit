@@ -18,7 +18,7 @@ import { t } from "./i18n.js";
 //   manifest finnes, status ikke aktiv  → bygges      under utvikling
 //   ingen manifest                      → planlagt    beskrevet, ikke påbegynt
 export const MODULSTATUS = {
-  1: "klargjort",   // m01_policy: status aktiv, driftstilstand ikke_i_drift
+  1: "i_drift",     // m01_policy: status aktiv, driftstilstand produksjon
   2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
@@ -141,12 +141,18 @@ export function modulmerke(id) {
 // «Fullmakter og policy», ikke «M-1 Klargjort».
 //
 // `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten, og bare
-// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift —
-// `m01_policy/manifest.yaml` sier eksplisitt `ikke_i_drift` og har ingen
-// API-enhet — så «Tilgjengelig» på M-1 ville vært et løfte en besøkende ikke
-// kan innfri. `sitekomponenter.js` gjør allerede det samme skillet på
-// adminflaten: grønt er reservert for det som FAKTISK kjører hos kunder.
-// Forsiden sier «Kommer» om resten — ett ord, ikke et byggeregnskap.
+// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift, og
+// «Tilgjengelig» på noe som ikke kjører ville vært et løfte en besøkende ikke
+// kan innfri. `sitekomponenter.js` gjør samme skille på adminflaten: grønt er
+// reservert for det som FAKTISK kjører hos kunder. Forsiden sier «Kommer» om
+// resten — ett ord, ikke et byggeregnskap.
+//
+// M-1 står nå `i_drift` fordi den GJØR det: disponit.com kjører
+// `disponit-api.service` og `disponit-m37.service` mot migrasjon 19, og
+// policymotoren avgjør ekte forespørsler der. Manifestet sa `ikke_i_drift`
+// med begrunnelsen «staging har ingen installerte units, og det finnes ikke
+// engang en unit for API-et» — begge deler var sant da det ble skrevet, og
+// ingen av dem er sanne nå.
 export const TILBUD = [
   { id: 1, navn_nokkel: "site.tilbud.fullmakt.navn",
     tekst_nokkel: "site.tilbud.fullmakt.tekst" },

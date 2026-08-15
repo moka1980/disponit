@@ -4,7 +4,7 @@
 // provider_id kommer fra /ui/oppsett.json (deploy-satt per arbeidsområde),
 // aldri hardkodet i klienten.
 import { el, sett } from "./dom.js";
-import { t } from "./i18n.js";
+import { t, sprak, lagreSprak } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
@@ -19,6 +19,32 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // `policy_validator/engine.py` + `flater/unntak.js` (en policy-autorisert
 // godkjenning KAN løfte nøyaktig den bundne grensen). Begge lovet mer enn
 // koden bar (Codex P2) — endres et svar her, sjekk kilden først.
+// Språkvalget må finnes FØR innlogging: en besøkende som ikke leser norsk
+// skal kunne lese tilbudet, ikke bare finne bryteren etterpå — den lå bare i
+// `AppShell`, altså bak en økt. Samme mekanikk som app-skallet bruker
+// (`lagreSprak` + reload): valget lagres, og siden rendres på nytt med det nye
+// locale-settet. En knapp per språk, ikke en `select`, fordi det er to valg og
+// begge skal være synlige — da ser man at engelsk FINNES uten å åpne noe.
+function sprakvelger() {
+  const valgt = sprak();
+  return el("nav", { class: "site-sprak", "aria-label": t("ui.sprak") },
+    ["nb", "en"].map((s) => {
+      const knapp = el("button", {
+        type: "button",
+        class: s === valgt ? "site-sprak-knapp valgt" : "site-sprak-knapp",
+        text: t(`ui.sprak.${s}`),
+      });
+      if (s === valgt) knapp.setAttribute("aria-current", "true");
+      else {
+        knapp.addEventListener("click", () => {
+          lagreSprak(s);
+          window.location.reload();
+        });
+      }
+      return knapp;
+    }));
+}
+
 const SPORSMAL = [
   ["site.svar.hvem_sp", "site.svar.hvem_sv"],
   ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],
@@ -65,6 +91,7 @@ export async function visInnlogging() {
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
     tabindex: "-1" },
+    sprakvelger(),
     el("section", { class: "site-hero" },
       el("div", { class: "site-hero-copy" },
         el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),

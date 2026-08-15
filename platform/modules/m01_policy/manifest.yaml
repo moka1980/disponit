@@ -14,7 +14,7 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # M-1 er godkjent og kjører ingen steder: staging har ingen installerte
 # units, og det finnes ikke engang en unit for API-et. `registry.valider`
 # nekter motsatt tilstand — drift uten aktiv status er en feil.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 # AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
 #
 # Grunnlaget er MASKINVERIFISERT, ikke et flagg noen satte: alle punktene i
