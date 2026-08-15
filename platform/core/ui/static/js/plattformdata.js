@@ -140,10 +140,13 @@ export function modulmerke(id) {
 // (`klargjort`/`bygges`) hører hjemme på adminflaten — en kunde skal lese
 // «Fullmakter og policy», ikke «M-1 Klargjort».
 //
-// `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten: en modul som
-// er godkjent (`klargjort`) eller i drift kan tas i bruk, resten kommer. Da kan
-// ikke forsiden love noe registeret ikke bærer — men den sier det som «Kommer»
-// i stedet for å vise et byggeregnskap.
+// `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten, og bare
+// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift —
+// `m01_policy/manifest.yaml` sier eksplisitt `ikke_i_drift` og har ingen
+// API-enhet — så «Tilgjengelig» på M-1 ville vært et løfte en besøkende ikke
+// kan innfri. `sitekomponenter.js` gjør allerede det samme skillet på
+// adminflaten: grønt er reservert for det som FAKTISK kjører hos kunder.
+// Forsiden sier «Kommer» om resten — ett ord, ikke et byggeregnskap.
 export const TILBUD = [
   { id: 1, navn_nokkel: "site.tilbud.fullmakt.navn",
     tekst_nokkel: "site.tilbud.fullmakt.tekst" },
@@ -156,8 +159,7 @@ export const TILBUD = [
 ];
 
 export function erTilgjengelig(id) {
-  const s = modulStatus(id);
-  return s === "i_drift" || s === "klargjort";
+  return modulStatus(id) === "i_drift";
 }
 
 // Planetiketten. Serveren sender en KODE (`pilot`, `internt`) fordi planen er
