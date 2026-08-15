@@ -48,9 +48,10 @@ def main() -> int:
     tidligere = _les_feiltelling()
     conn = koble(dsn)
     try:
-        # Flere batcher i én kjøring: hver committes for seg, så en opphopning
-        # dreneres uten at tabellen holdes i én lang transaksjon.
-        r = artefaktrydding.kjor(conn, maks_batcher=4, tidligere_feil=tidligere)
+        # §6: 500 per KJØRING, ikke per batch. `maks_batcher=1` sammen med
+        # `grense=BATCHGRENSE` (500) er selve grensen — flere batcher her ville
+        # latt én timeraktivering forkaste et multiplum av 500.
+        r = artefaktrydding.kjor(conn, maks_batcher=1, tidligere_feil=tidligere)
     finally:
         conn.close()
 
