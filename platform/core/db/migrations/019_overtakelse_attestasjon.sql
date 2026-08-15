@@ -460,10 +460,25 @@ BEGIN
     RETURN NULL;       -- AFTER-trigger: returverdien brukes ikke
 END $$;
 
+-- Codex (P1): triggerFUNKSJONEN eies av `disponit_domene_eier` (SECURITY
+-- DEFINER over `domenekontroll`), men selve TRIGGEREN er DDL på en tabell den
+-- rollen ikke eier: `hostname_binding` er migratorens, og 016 gir domenelaget
+-- kun SELECT/INSERT/UPDATE på den. PostgreSQL krever eierskap for DROP TRIGGER
+-- og TRIGGER-privilegium for CREATE TRIGGER, så under `SET LOCAL ROLE
+-- disponit_domene_eier` stoppet migrasjonen her med «must be owner of relation
+-- hostname_binding» — 019 kom aldri i mål, og hele PR-ens fire-øyne-lag med
+-- den. Rollen legges derfor ned rundt DDL-en og tas opp igjen etterpå: eieren
+-- av triggerfunksjonen er fortsatt domenelaget (den ble opprettet over), mens
+-- triggeren opprettes av den som eier tabellen. Alternativet — å gi
+-- domenelaget TRIGGER på `hostname_binding` — ville gitt det retten til å
+-- legge VILKÅRLIGE triggere på bindingsautoriteten, altså mer makt enn denne
+-- ene invarianten trenger.
+RESET ROLE;
 DROP TRIGGER IF EXISTS hostname_binding_degrader_forbigatte ON hostname_binding;
 CREATE TRIGGER hostname_binding_degrader_forbigatte
     AFTER INSERT OR UPDATE ON hostname_binding
     FOR EACH ROW EXECUTE FUNCTION trg_degrader_forbigatte_utfordrere();
+SET LOCAL ROLE disponit_domene_eier;
 
 -- ------------------------------------------------------------
 -- 3.3 antall_autoriserte_adjudikatorer — legibel fail-closed (§4 siste kule).
