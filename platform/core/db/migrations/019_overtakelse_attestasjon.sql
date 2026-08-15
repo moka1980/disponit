@@ -627,7 +627,21 @@ GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
 -- kjeden (unntak_kolonnelaas + unntak_skriv_historikk, 003/011) kjører under
 -- SAMME rolle som gjør UPDATE-en — domene_eier trenger derfor UPDATE på
 -- unntak og INSERT på unntak_historikk, ikke bare EXECUTE på funksjonen.
-GRANT UPDATE ON unntak TO disponit_domene_eier;
+--
+-- Codex (P1): SELECT hører med til den UPDATE-en, den er ikke en ekstra
+-- lesetilgang. `lukk_overtakelsessak()` gjerder begge overgangene på
+-- `WHERE tenant = ... AND id = ... AND status = ...`, og PostgreSQL krever
+-- SELECT på hver kolonne en kommando LESER — også når lesningen kun er et
+-- UPDATE-predikat. Uten den feilet første avvisning (eller andre
+-- godkjenning) med `permission denied for table unntak` inne i det nestede
+-- kallet, og siden lukkingen er ATOMISK med domenevedtaket rullet hele
+-- avgjørelsen tilbake: fire øyne var enige, og ingenting skjedde.
+-- Nøyaktig samme bunt som M-37-eieren har (005: SELECT, UPDATE på unntak +
+-- INSERT på unntak_historikk); identitetssekvensen bak `unntak_historikk.id`
+-- trenger ingen egen grant — en `GENERATED ALWAYS AS IDENTITY`-kolonne
+-- henter neste verdi internt, ikke gjennom `nextval()`s USAGE-sjekk, og
+-- M-37-eieren har da heller aldri hatt et sekvensgrant.
+GRANT SELECT, UPDATE ON unntak TO disponit_domene_eier;
 GRANT INSERT ON unntak_historikk TO disponit_domene_eier;
 -- Codex (P1): reautoriseringen av de tellende stemmene leser og LÅSER
 -- `brukermedlemskap` (FOR SHARE) inne i `avgi_overtakelse_attestasjon`.
