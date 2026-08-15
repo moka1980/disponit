@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visInnlogging } from "../static/js/innlogging.js";
+import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
 import { TILBUD, erTilgjengelig } from "../static/js/plattformdata.js";
@@ -145,6 +146,29 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
   assert.notEqual(siteTilbudMerke(true).className,
     siteTilbudMerke(false).className,
     "tilgjengelig og kommer deler klasse — da skiller ingenting dem visuelt");
+});
+
+test("Landing: hvert språknavn er merket med sitt eget språk", async () => {
+  // Codex P2: begge etikettene arvet sidens `lang`. På den norske forsiden ble
+  // «English» dermed uttalt med norsk uttale av en skjermleser, og etter
+  // byttet ble «Norsk» uttalt som engelsk. Disse to knappene er nettopp
+  // kontrollen en bruker trenger for å komme seg UT av et språk de ikke
+  // forstår — de er de siste som tåler å bli lest feil.
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+  const merking = [...app.querySelectorAll(".site-sprak-knapp")]
+    .map((k) => [k.getAttribute("lang"), k.textContent]);
+  assert.deepEqual(merking, [["nb", NB["ui.sprak.nb"]], ["en", NB["ui.sprak.en"]]],
+    "språkknappene mangler sitt eget lang — etiketten arver sidens språk");
+  // Samme krav i skallet bak innlogging: der er velgeren en <select>, og
+  // valgene arvet skallets lang på nøyaktig samme måte.
+  const skall = AppShell({ tenant: "acme", ruter: [], aktiv: "oversikt",
+    sprak: "nb" });
+  const valg = [...skall.rot.querySelectorAll(".sprakvelger option")]
+    .map((o) => [o.getAttribute("lang"), o.textContent]);
+  assert.deepEqual(valg, [["nb", NB["ui.sprak.nb"]], ["en", NB["ui.sprak.en"]]],
+    "språkvalgene i AppShell mangler sitt eget lang");
 });
 
 test("Landing: språkbyttet virker når localStorage er nektet", async () => {

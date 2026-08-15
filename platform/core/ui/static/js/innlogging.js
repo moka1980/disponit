@@ -65,12 +65,20 @@ async function byttTil(s) {
   await visInnlogging({ fokuserSprak: true });
 }
 
+// `lang` per knapp (Codex P2): etikettene ER på hvert sitt språk, og uten
+// dette arver de sidens `lang`. En skjermleser på den norske forsiden ville
+// da uttalt «English» med norsk uttale — og etter byttet «Norsk» med engelsk.
+// Det er nøyaktig de to kontrollene en bruker trenger for å komme seg UT av
+// et språk de ikke forstår, så de er de siste som tåler å bli lest feil.
+// Attributtet står på knappen, ikke på `<nav>`: `aria-label`-en der er på
+// sidens språk, mens hver etikett er på sitt eget.
 function sprakvelger() {
   const valgt = sprak();
   return el("nav", { class: "site-sprak", "aria-label": t("ui.sprak") },
     ["nb", "en"].map((s) => {
       const knapp = el("button", {
         type: "button",
+        lang: s,
         class: s === valgt ? "site-sprak-knapp valgt" : "site-sprak-knapp",
         text: t(`ui.sprak.${s}`),
       });
