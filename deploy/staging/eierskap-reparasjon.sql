@@ -116,6 +116,15 @@ INSERT INTO _design VALUES
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
     -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
     ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint)', 'disponit_domene_eier'),
+    -- `lukk_overtakelsessak` kalles NESTET fra avgi_overtakelse_attestasjon og
+    -- må derfor ha samme eier: utelatt herfra ville reparasjonssløyfa nedenfor
+    -- behandlet den som en vanlig funksjon og flyttet den til
+    -- disponit_migrator ved andre kjøring av `oppsett-postgresql.sh`. 019
+    -- hoppes da over på sjekksum, og siden EXECUTE er revoket fra PUBLIC uten
+    -- en grant tilbake til disponit_domene_eier, ville hver senere
+    -- godkjenning/avvisning truffet permission denied i det nestede kallet og
+    -- rullet tilbake selve domenevedtaket.
+    ('FUNCTION', 'lukk_overtakelsessak(text,bigint,text,text)',       'disponit_domene_eier'),
     ('FUNCTION', 'degrader_forbigatte_utfordrere(text,text)',         'disponit_domene_eier'),
     ('FUNCTION', 'antall_avgitte_attestasjoner(bigint,bigint)',       'disponit_domene_eier'),
     ('FUNCTION', 'rydd_staged_artefakter(integer)',                   'disponit_domene_eier'),
