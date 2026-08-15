@@ -106,7 +106,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'promoter_artefakt(uuid,text,bigint,text,bigint,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier'),
     ('FUNCTION', 'karantenesett_artefakt(uuid,text,bigint)',         'disponit_domene_eier'),
-    ('FUNCTION', 'bevar_artefakt(uuid,text,bigint)',                 'disponit_domene_eier'),
+    ('FUNCTION', 'bevar_artefakt(uuid,text,bigint,text)',                 'disponit_domene_eier'),
     -- PR-014b CP5: artefakt-opplastingskapabilitet. Den frittstående brenneren
     -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
     ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),

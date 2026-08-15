@@ -414,6 +414,22 @@ BEGIN
     END IF;
     SELECT tenant INTO v_eier FROM public.hostname_binding
      WHERE hostname = p_hostname;
+    -- Codex: en kandidat som ble AVVIST av M-37 står `tilbakekalt` MED bindingen
+    -- fortsatt på seg. En re-verifisering ser da seg selv som bindingseier, hopper
+    -- over ALLE fremmed-eier-grenene under, og ville upsertet seg rett til
+    -- `verifisert` — omgått avvisningen uten en ny godkjenning. Tving den tilbake
+    -- gjennom avklaring (ny M-37-sak); kun avgjor_domeneovertakelse kan verifisere.
+    IF v_eier IS NOT DISTINCT FROM p_tenant AND v_status_b = 'tilbakekalt' THEN
+        UPDATE public.domenekontroll
+           SET status = 'avklaring_kreves', wildcard = p_wildcard,
+               autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1
+         WHERE tenant = p_tenant AND hostname = p_hostname;
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
+            VALUES (p_tenant, p_hostname, 'avklaring_kreves', 'tilbakekalt',
+                    'avklaring_kreves', 'reapplication_etter_avvisning', p_aktor);
+        RETURN 'avklaring_kreves';
+    END IF;
     IF v_eier IS NOT NULL AND v_eier IS DISTINCT FROM p_tenant THEN
         SELECT status, utloper INTO v_status_a, v_utloper_a
           FROM public.domenekontroll
@@ -783,13 +799,28 @@ END $$;
 -- RETAINED og terminalt: artefaktet kan aldri promoteres senere, og ryddes
 -- aldri. Samme form som karantenesett: no-op for et fremmed eller alt
 -- terminalt artefakt (det hører til sitt eget oppdrag / sin egen avgjørelse).
+-- Codex: bevar VALIDERER (tenant/oppdrag/signert hash) og LÅSER raden (FOR UPDATE)
+-- før den bevares. Runtime har kun SELECT på artefakt, så låsen MÅ tas her (eid av
+-- domene_eier). Låsen serialiserer mot rydd_staged_artefakter (samme eier): har
+-- rydd nettopp nullet raden i race-en rundt evidensfristen, ser vi den ikke som
+-- 'staged' og returnerer 'ugyldig' → kalleren klassifiserer sikkerhetskonflikt i
+-- stedet for falsk aksept. Returnerer 'bevart' | 'idempotent' | 'ugyldig'.
 CREATE OR REPLACE FUNCTION bevar_artefakt(
-    p_artefakt_id UUID, p_tenant TEXT, p_oppdrag_id BIGINT)
-RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    p_artefakt_id UUID, p_tenant TEXT, p_oppdrag_id BIGINT, p_klartekst_sha256 TEXT)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE r RECORD;
 BEGIN
-    UPDATE public.artefakt SET tilstand = 'bevart'
+    SELECT klartekst_sha256, tilstand INTO r FROM public.artefakt
      WHERE artefakt_id = p_artefakt_id AND tenant = p_tenant
-       AND oppdrag_id = p_oppdrag_id AND tilstand = 'staged';
+       AND oppdrag_id = p_oppdrag_id FOR UPDATE;
+    IF NOT FOUND THEN RETURN 'ugyldig'; END IF;
+    IF r.klartekst_sha256 IS DISTINCT FROM p_klartekst_sha256 THEN
+        RETURN 'ugyldig';
+    END IF;
+    IF r.tilstand = 'bevart' THEN RETURN 'idempotent'; END IF;
+    IF r.tilstand <> 'staged' THEN RETURN 'ugyldig'; END IF;   -- forkastet/…
+    UPDATE public.artefakt SET tilstand = 'bevart' WHERE artefakt_id = p_artefakt_id;
+    RETURN 'bevart';
 END $$;
 
 REVOKE ALL ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT) FROM PUBLIC;
@@ -814,8 +845,8 @@ GRANT EXECUTE ON FUNCTION lagre_artefakt_staged(TEXT, BIGINT, TEXT, TEXT, TEXT, 
 GRANT EXECUTE ON FUNCTION promoter_artefakt(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) TO disponit;
 REVOKE ALL ON FUNCTION karantenesett_artefakt(UUID, TEXT, BIGINT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION karantenesett_artefakt(UUID, TEXT, BIGINT) TO disponit;
-REVOKE ALL ON FUNCTION bevar_artefakt(UUID, TEXT, BIGINT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION bevar_artefakt(UUID, TEXT, BIGINT) TO disponit;
+REVOKE ALL ON FUNCTION bevar_artefakt(UUID, TEXT, BIGINT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION bevar_artefakt(UUID, TEXT, BIGINT, TEXT) TO disponit;
 RESET ROLE;
 
 -- domene_eier (SECURITY DEFINER-kjøreren) må kunne skrive tabellene + LESE

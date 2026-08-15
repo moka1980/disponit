@@ -937,3 +937,32 @@ def test_visning_eksponerer_wildcard_scope(migrator):
                           "'domenekontroll','wildcard','SELECT')").fetchone()[0]
     migrator.rollback()
     assert ok is True, "egress mangler SELECT på wildcard-kolonnen"
+
+
+@pg
+def test_avvist_kandidat_ma_readjudikeres(migrator):
+    """Codex: en kandidat AVVIST av M-37 står `tilbakekalt` men fortsatt som
+    bindingseier. En re-verifisering ser da seg selv som eier, hopper over alle
+    fremmed-eier-grenene og ville upsertet seg rett til verifisert — omgått
+    avvisningen. Den tvinges nå tilbake gjennom avklaring.
+
+    MUTASJONEN SOM DREPER DENNE: fjern tilbakekalt+bindingseier-grenen i verifiser."""
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h)); a.commit()   # B avklaring, binding=B
+        gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'sys')",
+                  (ANNEN_TENANT, h, gen)); a.commit()   # avvist → B tilbakekalt
+        assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+        # B re-verifiserer → IKKE verifisert, men tilbake til avklaring.
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "avklaring_kreves"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves", \
+        "en avvist kandidat re-verifiserte seg forbi M-37"

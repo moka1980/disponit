@@ -510,3 +510,28 @@ def test_upload_ensom_surrogat_er_request_feil(migrator, klient, token):
                     headers={"authorization": f"Bearer {tok}",
                              "content-type": "application/json"})
     assert r.status_code == 400 and "request_feilformet" in r.text, r.text
+
+
+@pg
+def test_sen_kvittering_fremmed_artefakt_avvises(migrator, klient, token):
+    """Codex: en SEN kvittering valideres som promoteringsveien (tenant/oppdrag/
+    signert hash). Et fremmed artefakt (eller feil hash) → sikkerhetskonflikt
+    (409), IKKE akseptert som sen evidens (202) med en payload som ikke kan
+    verifiseres.
+
+    MUTASJONEN SOM DREPER DENNE: kall bevar_artefakt uten validering på den sene
+    veien (no-op for fremmed artefakt → falsk 202)."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    _, _, _, fremmed, _, _, _, kts2 = _last_opp_artefakt(migrator, klient, token)
+    kjti = _kvitteringskap(opp, oc, gen)   # utstedes FØR generasjonsbumpen
+    # Foreldet eier → sen vei (lagres uten statusendring).
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE oppdrag SET owner_generation=owner_generation+1"
+                     " WHERE tenant=%s AND id=%s", (TENANT, opp)); migrator.commit()
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, fremmed, kts2))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    rk = klient.post("/v1/oppdrag/kvittering", json=kv,
+                     headers={"authorization": f"Bearer {tok2}"})
+    assert rk.status_code == 409, rk.text

@@ -1645,15 +1645,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             # eller konflikt, avgjøres atomisk i databasen, ikke her.
             return svar
         # PR-014b §7 (Codex): den sene kvitteringen GODTAS som evidens — da må
-        # artefaktet den peker på overleve. Det blir aldri promotert (ingenting
-        # avsluttes her), så uten dette ville det stått igjen `staged` og fått
-        # ciphertexten nullet av oppryddingen etter 24 t: evidensen bak en
-        # akseptert kvittering ødelagt. `bevart` er retained og terminalt, og
-        # settes i SAMME commit som evidensraden. No-op for et fremmed artefakt.
+        # artefaktet den peker på overleve OG faktisk stemme. `bevar_artefakt`
+        # alene krevde ingen matchende rad og sammenlignet ingen hash: en gyldig
+        # signert kvittering som navnga et ikke-eksisterende/fremmed artefakt,
+        # eller påsto feil hash, ble ellers akseptert (202) med en payload som ikke
+        # kan gjenopprettes/verifiseres. Valider som promoteringsveien (tenant/
+        # oppdrag/signert hash) FØR aksept. `FOR UPDATE` serialiserer også mot
+        # oppryddingen: har rydd nettopp nullet raden i race-en rundt evidensfristen,
+        # ser vi den ikke som gjenopprettbar og klassifiserer konflikt i stedet for
+        # falsk aksept. `bevart` er retained/terminalt; idempotent hvis alt bevart.
         sen_artefakt = kvittering.get("artefakt_id")
         if sen_artefakt is not None:
-            conn.execute("SELECT bevar_artefakt(%s,%s,%s)",
-                         (sen_artefakt, tenant, oppdrag_id))
+            # bevar_artefakt validerer (tenant/oppdrag/signert hash), låser raden
+            # (serialiserer mot oppryddingen) og bevarer den atomisk. 'ugyldig' =
+            # fremmed/ikke-eksisterende/feil-hash/alt-nullet → sikkerhetskonflikt,
+            # ikke falsk aksept. Runtime kan ikke låse artefakt selv (kun SELECT).
+            utfall = conn.execute(
+                "SELECT bevar_artefakt(%s,%s,%s,%s)",
+                (sen_artefakt, tenant, oppdrag_id,
+                 kvittering.get("klartekst_sha256"))).fetchone()[0]
+            if utfall == "ugyldig":
+                # Brenningen fra _forbruk står ved lag; klassifiser som
+                # sikkerhetskonflikt (som promoteringsfeil) og commit den.
+                _sikkerhetssak_kvittering(
+                    conn, tenant, unntak_id, "artefakt_ikke_verifisert",
+                    {"oppdrag_id": oppdrag_id, "artefakt_id": str(sen_artefakt)},
+                    rid)
+                conn.commit()
+                tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
+                                       oppdrag_id=oppdrag_id, art="sikkerhet")
+                return _feilsvar("kvittering_konflikt", rid)
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
