@@ -648,7 +648,13 @@ def test_promoter_idempotent_validerer_binding(migrator):
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
     opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
-    opp2, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    # «Feil oppdrag» må ha sin EGEN sak: `en_aktiv_reparasjon_per_sak` tillater
+    # bare én aktiv reparasjon per sak, så en andre `_lag_oppdrag` på SAMME sak
+    # traff `ON CONFLICT DO NOTHING` og etterlot ingen reparasjonsoperasjon for
+    # den nye repair_operation_id-en — oppdraget feilet da på FK-en i stedet for
+    # å teste noe.
+    sak2, logg2 = _lag_sak(migrator, TENANT)
+    opp2, _ = _lag_oppdrag(migrator, TENANT, sak2, logg2)
     aid = _artefakt(migrator, TENANT, opp, at, modul, kh)
     _sett_kontekst(migrator, TENANT)
     rel, h = migrator.execute("SELECT release_id, klartekst_sha256 FROM artefakt"
