@@ -433,6 +433,14 @@ GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
 REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) FROM PUBLIC;
+-- Codex (P1): staging kjører API-et med DATABASE_URL som `disponit` — den
+-- NOLOGIN admin-bunten (`disponit_domains_admin`) er kun tilgjengelig for
+-- migrator (WITH INHERIT FALSE). Uten en direkte grant til runtime-rollen
+-- feiler ENHVER produksjonsforespørsel mot endepunktet med
+-- InsufficientPrivilege. Samme mønster som 016 (lagre_artefakt_staged m.fl.
+-- granted direkte til `disponit`) — funksjonsspesifikk, ikke bunten.
+GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit;
+GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit;
 GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit_domains_admin;
