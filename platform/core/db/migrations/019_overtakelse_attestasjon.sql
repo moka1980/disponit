@@ -452,3 +452,34 @@ REVOKE ALL ON FUNCTION rydd_staged_artefakter(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_karantenesatte() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION antall_karantenesatte() TO disponit_domains_admin;
+
+-- ------------------------------------------------------------
+-- Codex (P1): `disponit_domains_admin` bærer OGSÅ direkte EXECUTE på
+-- `avgjor_domeneovertakelse` (016, urørt) — en holder av DEN credentialen
+-- kunne kalt adjudikasjonen selv, med p_godkjent=true og ÉN aktør, og dermed
+-- omgått fire øyne helt. Driftstimerne (revalidering + rydding) autentiserer
+-- derfor som `disponit_domener`, en NY, minst-privilegert rolle som får
+-- EXECUTE på nøyaktig de funksjonene arbeiderne kaller — aldri
+-- `avgjor_domeneovertakelse`, aldri `avgi_overtakelse_attestasjon`, aldri
+-- `verifiser_domenekontroll`. `revalider_domenekontroll` er 016s egen
+-- (urørt kropp); denne GRANT-en er en ny, uavhengig DCL-setning, ikke en
+-- endring av 016-filen.
+-- ------------------------------------------------------------
+-- Betinget: rollen opprettes av deploy/staging/oppsett-postgresql.sh (roller
+-- er klyngeobjekter — «aldri i en migrasjon», se samme fils §-kommentar).
+-- CI-arbeidsflyten (.github/workflows/ci.yml) speiler normalt rolleoppsettet,
+-- men den filen kan ikke endres herfra (GitHub App-tillatelser); en bar GRANT
+-- ville derfor feilet migrasjonen i CI med «role does not exist». Betinget
+-- på EXISTS er ikke en svekkelse av kravet — staging får grantene, og en
+-- fremtidig CI-oppdatering som legger til rollen får dem også, uten en ny
+-- migrasjon.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_domener') THEN
+        GRANT EXECUTE ON FUNCTION revalideringskandidater(INT, INT, INT, INT, INT) TO disponit_domener;
+        GRANT EXECUTE ON FUNCTION revalideringspopulasjon() TO disponit_domener;
+        GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT) TO disponit_domener;
+        GRANT EXECUTE ON FUNCTION antall_karantenesatte() TO disponit_domener;
+        GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) TO disponit_domener;
+    END IF;
+END $$;
