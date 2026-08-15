@@ -203,10 +203,18 @@ def test_artefakt_ciphertext_kan_kun_nulles(migrator):
         migrator.execute("UPDATE artefakt SET ciphertext=NULL"
                          " WHERE artefakt_id=%s", (aid,))
     migrator.rollback()
-    # nulling I SAMME overgang staged → forkastet er lov.
+    # ... og forkastelsen må ta BEGGE feltene: en halvtom rad (ciphertext NULL,
+    # nonce igjen) er udekrypterbar evidens og avvises av statemaskinen — samme
+    # invariant som CHECK-en artefakt_payload_struktur håndhever på skrivesiden.
     _sett_kontekst(migrator, TENANT)
-    migrator.execute("UPDATE artefakt SET tilstand='forkastet', ciphertext=NULL"
-                     " WHERE artefakt_id=%s", (aid,))
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE artefakt SET tilstand='forkastet', ciphertext=NULL"
+                         " WHERE artefakt_id=%s", (aid,))
+    migrator.rollback()
+    # nulling av BEGGE I SAMME overgang staged → forkastet er lov.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE artefakt SET tilstand='forkastet',"
+                     " ciphertext=NULL, nonce=NULL WHERE artefakt_id=%s", (aid,))
     migrator.commit()
     # men å sette ciphertext til NYTT innhold er forbudt (frosset terminal + verd).
     _sett_kontekst(migrator, TENANT)
