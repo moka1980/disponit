@@ -65,7 +65,7 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
 
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
   const h = nyHoved();
-  visKundeadmin(h, ctx({ tenant: "Nordvik" }));
+  visKundeadmin(h, ctx({ tenant: "Nordvik", scopes: ["policy:activate"] }));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.tittel")));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.plattform_tittel")));
@@ -105,6 +105,23 @@ test("Kundeadmin: ukjent tenant sier «vet ikke», viser ikke katalogen", async 
   assert.deepEqual(kpi.slice(0, 2), ["0", "0"]);
 });
 
+test("Kundeadmin: leser får lesevisning av policy, ikke aktiveringsflaten", () => {
+  // Kundeflaten er åpen for hele kundeøkten, men `leser` skal ikke tilbys
+  // policyadministrasjon: den flaten nekter ruteren dem, og knappene der gir
+  // 403. Lesevegen til `#/policy` skal stå igjen.
+  const lese = nyHoved();
+  visKundeadmin(lese, ctx({ tenant: "Nordvik",
+    scopes: ["decisions:read", "exceptions:read", "policy:read"] }));
+  assert.equal(lese.querySelector('a[href="#/policyadmin"]'), null,
+    "aktiveringsflate tilbudt leser");
+  assert.ok(lese.querySelector('a[href="#/policy"]'), "lesevei til policy borte");
+  assert.ok(lese.textContent.includes(t("ui.kundeadmin.policy_lesing_tittel")));
+
+  const forvalter = nyHoved();
+  visKundeadmin(forvalter, ctx({ tenant: "Nordvik", scopes: ["policy:write"] }));
+  assert.ok(forvalter.querySelector('a[href="#/policyadmin"]'));
+});
+
 test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () => {
   const h = nyHoved();
   visAdmin(h, ctx());
@@ -125,8 +142,8 @@ test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {
   visAdmin(lese, ctx({ scopes: ["security:read", "policy:read"] }));
   assert.equal(lese.querySelector('a[href="#/policyadmin"]'), null,
     "aktiveringssnarvei vist til leser");
-  assert.equal(lese.querySelector('a[href="#/kundeadmin"]'), null,
-    "kundeadmin-snarvei vist til leser");
+  // Kundeflaten er derimot en basisrute nå — snarveien dit gjelder alle.
+  assert.ok(lese.querySelector('a[href="#/kundeadmin"]'));
   assert.ok(lese.querySelector('a[href="#/policy"]'), "lesevei til policy borte");
   assert.ok(lese.textContent.includes(t("ui.admin.handling.policy_lesing")));
 

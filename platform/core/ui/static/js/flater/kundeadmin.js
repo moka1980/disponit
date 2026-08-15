@@ -2,9 +2,15 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
 import { modulerForTenant, tenantTelling } from "../plattformdata.js";
+import { kanForvaltePolicy } from "../sitekart.js";
 import { siteModuleKort, siteStatusMerke } from "../sitekomponenter.js";
 
-export function visKundeadmin(hoved, ctx) {
+export function visKundeadmin(hoved, ctx = {}) {
+  // Flaten er åpen for hele kundeøkten, men policyADMINISTRASJONEN er det
+  // ikke: uten `policy:write`/`policy:activate` peker snarveien på en flate
+  // ruteren nekter, med aktiveringsknapper som uansett gir 403. Leseren får
+  // lesevisningen `#/policy` i stedet — samme mønster som admin-flaten.
+  const forvalter = kanForvaltePolicy(ctx);
   // Kundens arbeidsflate viser KUNDENS moduler, ikke plattformkatalogen: uten
   // dette meldte Bjørkli (tildelt M-1 og M-2) tre aktive moduler og viste M-37
   // som aktiv og M-38 under bygging. `null` = tildelingen er ukjent, og da sier
@@ -94,11 +100,17 @@ export function visKundeadmin(hoved, ctx) {
           el("a", { class: "lenkeknapp", href: "#/policy",
             text: t("ui.kundeadmin.handling.ga_til") })))),
     el("section", { class: "site-grid site-grid-2" },
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.policy") }),
-        el("h2", { text: t("ui.kundeadmin.policy_tittel") }),
-        el("p", { text: t("ui.kundeadmin.policy_tekst") }),
-        el("a", { class: "knapp primar", href: "#/policyadmin", text: t("ui.kundeadmin.policy_handling") })),
+      forvalter
+        ? el("article", { class: "kort" },
+          el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.policy") }),
+          el("h2", { text: t("ui.kundeadmin.policy_tittel") }),
+          el("p", { text: t("ui.kundeadmin.policy_tekst") }),
+          el("a", { class: "knapp primar", href: "#/policyadmin", text: t("ui.kundeadmin.policy_handling") }))
+        : el("article", { class: "kort" },
+          el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.policy") }),
+          el("h2", { text: t("ui.kundeadmin.policy_lesing_tittel") }),
+          el("p", { text: t("ui.kundeadmin.policy_lesing_tekst") }),
+          el("a", { class: "knapp primar", href: "#/policy", text: t("ui.kundeadmin.policy_lesing_handling") })),
       el("article", { class: "kort" },
         el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.neste") }),
         el("h2", { text: t("ui.kundeadmin.neste_tittel") }),

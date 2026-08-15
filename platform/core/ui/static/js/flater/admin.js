@@ -97,16 +97,17 @@ export function visAdmin(hoved, ctx = {}) {
           el("p", { class: "site-eyebrow", text: t("ui.admin.handlinger") }),
           el("h2", { text: t("ui.admin.handlinger_tittel") }))),
       el("div", { class: "site-card-grid" },
-        // Kundeadmin og policyadmin krever policy-forvaltning. Admin-flaten
-        // åpnes av `security:read`, og rollene `admin`/`sikkerhet` har bare
-        // `policy:read` — snarveiene ville pekt på flater ruteren nekter dem,
-        // med mutasjonsknapper som uansett gir 403.
+        // Kundeadmin er en leseflate og ligger i basisrutene — snarveien dit
+        // gjelder derfor alle. PolicyADMINISTRASJONEN krever forvaltning:
+        // admin-flaten åpnes av `security:read`, og rollene `admin`/`sikkerhet`
+        // har bare `policy:read`, så snarveien ville pekt på en flate ruteren
+        // nekter dem, med mutasjonsknapper som uansett gir 403.
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("ui.admin.handling.kundeadmin") }),
+          el("p", { text: t("ui.admin.handling.kundeadmin_tekst") }),
+          el("a", { class: "lenkeknapp", href: "#/kundeadmin",
+            text: t("ui.admin.handling.ga_til") })),
         ...(forvalter ? [
-          el("article", { class: "site-mini-card" },
-            el("strong", { text: t("ui.admin.handling.kundeadmin") }),
-            el("p", { text: t("ui.admin.handling.kundeadmin_tekst") }),
-            el("a", { class: "lenkeknapp", href: "#/kundeadmin",
-              text: t("ui.admin.handling.ga_til") })),
           el("article", { class: "site-mini-card" },
             el("strong", { text: t("ui.admin.handling.policyadmin") }),
             el("p", { text: t("ui.admin.handling.policyadmin_tekst") }),

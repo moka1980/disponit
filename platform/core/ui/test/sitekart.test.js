@@ -11,12 +11,22 @@ test("harScope: leser scopes fra sesjon uten kast", () => {
 
 test("byggRuter: basisruter finnes alltid", () => {
   const ruter = byggRuter({ scopes: [] }).map((r) => r.nokkel);
-  assert.deepEqual(ruter, ["oversikt", "policy", "beslutninger", "unntak"]);
+  assert.deepEqual(ruter,
+    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
 });
 
-test("byggRuter: kundeadmin og policyadmin krever policy-scope", () => {
-  const ruter = byggRuter({ scopes: ["policy:activate"] }).map((r) => r.nokkel);
+test("byggRuter: vanlig kundeøkt når kundeflaten, ikke policyadmin", () => {
+  // `leser` har bare lesescopes, og kundeinnloggingen sender den til
+  // `/?visning=kundeadmin`: nektes ruten, lander knappen stille på `oversikt`.
+  const ruter = byggRuter({ scopes: ["decisions:read", "exceptions:read",
+    "policy:read"] }).map((r) => r.nokkel);
   assert.ok(ruter.includes("kundeadmin"));
+  assert.ok(!ruter.includes("policyadmin"));
+  assert.ok(!ruter.includes("admin"));
+});
+
+test("byggRuter: policyadmin krever policy-forvaltningsscope", () => {
+  const ruter = byggRuter({ scopes: ["policy:activate"] }).map((r) => r.nokkel);
   assert.ok(ruter.includes("policyadmin"));
   assert.ok(!ruter.includes("admin"));
 });
@@ -24,7 +34,7 @@ test("byggRuter: kundeadmin og policyadmin krever policy-scope", () => {
 test("byggRuter: admin krever security-scope", () => {
   const ruter = byggRuter({ scopes: ["security:read"] }).map((r) => r.nokkel);
   assert.ok(ruter.includes("admin"));
-  assert.ok(!ruter.includes("kundeadmin"));
+  assert.ok(!ruter.includes("policyadmin"));
 });
 
 test("tillatteFlater: direkte hash kan ikke nå en flate uten scope", () => {
@@ -33,13 +43,13 @@ test("tillatteFlater: direkte hash kan ikke nå en flate uten scope", () => {
     admin: () => {} };
   const uten = tillatteFlater(byggRuter({ scopes: [] }), flater);
   assert.deepEqual(Object.keys(uten),
-    ["oversikt", "policy", "beslutninger", "unntak"]);
+    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
   assert.equal(uten.admin, undefined);
-  assert.equal(uten.kundeadmin, undefined);
+  assert.equal(uten.policyadmin, undefined);
 
   const med = tillatteFlater(byggRuter({ scopes: ["security:read"] }), flater);
   assert.equal(typeof med.admin, "function");
-  assert.equal(med.kundeadmin, undefined);
+  assert.equal(med.policyadmin, undefined);
 });
 
 test("visningFraSok: returnerer kun tilgjengelig visning", () => {

@@ -10,14 +10,17 @@ export function kanForvaltePolicy(sesjon) {
 }
 
 export function byggRuter(sesjon) {
+  // Kundens arbeidsflate er en LESEFLATE: modulstatus, roller, integrasjoner.
+  // Den hører derfor til basisrutene. Lå den bak `kanForvaltePolicy`, landet en
+  // vanlig `leser` — som kundeinnloggingen sender til `/?visning=kundeadmin` —
+  // stille på `oversikt`, og knappen «Åpne kundeflate» åpnet noe annet enn den
+  // lovte. Det er bare policyADMINISTRASJONEN som krever forvaltningsscope.
   const ruter = [
     { nokkel: "oversikt" }, { nokkel: "policy" },
     { nokkel: "beslutninger" }, { nokkel: "unntak" },
+    { nokkel: "kundeadmin" },
   ];
-  if (kanForvaltePolicy(sesjon)) {
-    ruter.push({ nokkel: "kundeadmin" });
-    ruter.push({ nokkel: "policyadmin" });
-  }
+  if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "policyadmin" });
   if (harScope(sesjon, "security:read")) ruter.push({ nokkel: "admin" });
   return ruter;
 }
