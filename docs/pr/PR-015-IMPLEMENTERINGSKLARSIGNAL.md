@@ -23,7 +23,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 
 | # | Objekt i 019 | Hvorfor det ikke kan ligge i kalleren |
 |---|---|---|
-| 1 | `overtakelse_attestasjon` (ny tabell) + `overtakelse_attestasjon_saksbinding()` (trigger) | Fire øyne, §4; målet må bindes til saken, §1 |
+| 1 | `overtakelse_attestasjon` (ny tabell, m/ `rolle` + `authz_version`) + `overtakelse_attestasjon_saksbinding()` (trigger) | Fire øyne, §4; målet må bindes til saken, §1; autorisasjonen må kunne reautoriseres ved tildeling, §4.3 |
 | 2 | `domeneobservasjonsrunde` + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4 |
 | 3 | `apne_domeneobservasjonsrunde(tenant, hostname)` (ny) | Runden er engangs, kortlevd og bundet til én rad, §2.4 |
 | 4 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4 |
@@ -42,7 +42,7 @@ ikke nådd:
 |---|---|---|---|
 | A | Rollen `domeneavgjorer` i `ROLLE_TIL_SCOPES` | `api/autorisasjon.py:17` | Ingen eksisterende rolle bærer `domains:adjudicate`, §4.1 |
 | B | `domains:adjudicate` i `BROWSER_MUTASJONSSCOPES` | `api/app.py:799` | Uten det nektes attestanten før ruten, §4.2 |
-| C | Ruten `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` + familiegjerdet på PR-012-ruten | `api/app.py`, `api/unntaksbehandling.py` | Scopet slås opp fra handlingen, ikke fra saksfamilien, §4.2 |
+| C | Ruten `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` + **behandleren `behandle_domeneattestasjon()`** + familiegjerdet på PR-012-ruten | `api/app.py`, `api/domeneovertakelse.py`, `api/unntaksbehandling.py` | PR-012-s behandler kan ikke avgjøre en domenesak (§4.2b), og scopet slås opp fra handlingen, ikke fra saksfamilien, §4.2 |
 | D | `ny → manuell` i `opprett_overtakelsessak()` | `api/domeneovertakelse.py` | Saken er ellers synlig, men ikke handterbar, §3 |
 
 ---
@@ -55,6 +55,8 @@ CREATE TABLE overtakelse_attestasjon (
   tenant TEXT NOT NULL,                -- RLS-nøkkel; tenanten saken tilhører
   unntak_id BIGINT NOT NULL,           -- M-37-saken (unntak.id er BIGINT identity)
   aktor TEXT NOT NULL,
+  rolle TEXT NOT NULL,                 -- rollen som bar scopet DA stemmen ble avgitt
+  authz_version INT NOT NULL,          -- brukermedlemskap.authz_version, samme øyeblikk
   utfall TEXT NOT NULL CHECK (utfall IN ('godkjenn','avvis')),
   vinnende_tenant TEXT NOT NULL,
   hostname TEXT NOT NULL CHECK (er_kanonisk_hostname(hostname)),
@@ -63,6 +65,12 @@ CREATE TABLE overtakelse_attestasjon (
   PRIMARY KEY (tenant, unntak_id, aktor),      -- én aktør, én stemme per sak
   FOREIGN KEY (tenant, unntak_id) REFERENCES unntak (tenant, id));
 ```
+
+`rolle` og `authz_version` er ikke pynt: uten dem kan oppgjøret ikke
+bevise at begge stemmene fortsatt er autoriserte når domenet faktisk
+tildeles (§4.3). Feltene speiler `menneskelig_attestasjon (bruker_id,
+rolle, authz_version)` fra PR-012 (011 linje 233) — samme snapshot, samme
+grunn.
 
 **Målet utledes AV saken, det avtales ikke mellom aktørene.** FK-en over
 binder bare raden til en sak; den sier ingenting om at
@@ -125,10 +133,14 @@ foreldes etter 72 timer (§4), og primærnøkkelen tillater kun én rad per
 aktør per sak — uten en vei til å attestere på nytt ville en sak der
 vinduet løp ut mellom første og andre stemme vært permanent
 uavgjørbar, altså nøyaktig den låsingen foreldelsen skal hindre. Triggeren
-tillater derfor UPDATE av **kun** `avgitt_ts` og `utfall`, kun med
-`avgitt_ts = now()`, og aldri av `unntak_id`, `aktor`, `vinnende_tenant`,
-`hostname` eller `forventet_generasjon` — bindingsfeltene er
-uforanderlige, akkurat som saksbindingstriggeren krever. DELETE er
+tillater derfor UPDATE av **kun** `avgitt_ts`, `utfall`, `rolle` og
+`authz_version`, kun med `avgitt_ts = now()`, og aldri av `unntak_id`,
+`aktor`, `vinnende_tenant`, `hostname` eller `forventet_generasjon` —
+bindingsfeltene er uforanderlige, akkurat som saksbindingstriggeren
+krever. **`rolle` og `authz_version` er stemmens snapshot, ikke sakens
+mål:** en fornyelse er en ny stemme avgitt nå, så autorisasjonen som
+telles må være den som gjaldt nå. Fryses de, ville en fornyelse kunnet
+bære en foreldet autorisasjon inn i et ferskt vindu. DELETE er
 forbudt. **Evidenskjeden ligger i `unntak_historikk`:** hver attestasjon
 og hver fornyelse skrives som `attestasjon_registrert` med aktør, utfall
 og tidspunkt, så tabellen er en projeksjon av «gjeldende stemme per
@@ -369,6 +381,30 @@ databasen kan kontrollere selv.
     eksisterende sak urørt; `AND status='ny'` er gjerdet som gjør at et
     retry aldri kan dra en sak som alt står i `venter_godkjenning` eller
     er terminal, tilbake til `manuell`.
+- **Saken må også kunne bære en runde.** `manuell` er ikke terminalt,
+  men den ENESTE veien ut er `manuell → venter_godkjenning`, og den
+  krever at en `apen godkjenningsrunde` allerede finnes (011 linje
+  185–190). Verken `løst` eller `avvist` kan nås fra `manuell` direkte.
+  Domeneoppgjøret må altså gå gjennom PR-012-s runde — det er ikke et
+  valg, det er statusmaskinen. `opprett_godkjenningsrunde` stiller da to
+  krav loggposten må oppfylle, og `opprett_overtakelsessak()` er den som
+  skriver loggposten:
+  - **En blokkerende grunnkode sist i `begrunnelse`.** `_siste_grunnkode`
+    leser den siste posten i kjeden (`unntaksbehandling.py:77–85`); er
+    den tom, feiler runden på `godkjenn_utilgjengelig`. Koden er
+    `domene_overtakelse_avklaring`, og den står **med vilje ikke** i noen
+    tenants `menneskelig_overstyring.godkjennbare` — da er
+    `_er_godkjennbar` usann, den ordinære saksvisningen tilbyr aldri
+    «godkjenn» på en domenesak (`lesing.py:437`), og runden åpnes kun av
+    domenebehandleren med `krev_godkjennbar=False`. Familiegjerdet (§4.2)
+    er porten; dette er beltet.
+  - **En oppløselig `policy_id` på loggposten.** `_policy_id()` leser
+    `revisjonslogg.policy_id` og krever en gyldig policyref
+    (`unntaksbehandling.py:481–490`); hashen fryses på runden. Saken
+    skrives derfor med utfordrertenantens aktive policyref, som enhver
+    annen M-37-sak. Har tenanten ingen aktiv policy, kan runden ikke
+    åpnes — en ærlig fail-closed-tilstand som svares som
+    `policy_id_ukjent`, ikke maskeres.
 - **Scope `domains:adjudicate`**, eget, båret av den nye rollen
   `domeneavgjorer` (§4.1). Unntaksscopene `exceptions:approve` /
   `:reject` / `:escalate` gir aldri cross-tenant domeneautoritet, uansett
@@ -467,9 +503,9 @@ feil pris.
    hostname-låsen. Utfallet er ikke til forhandling etterpå.
 2. **C-s sak lukkes i C-s egen kontekst**, med **én** `avvis`-attestasjon
    (§4) på **domeneruten** (§4.2) — ikke på PR-012-s generelle
-   handlingsendepunkt. Runde- og attestasjonsmaskineriet er PR-012-s,
-   uendret; det er bare scopet ved døren som er domenets. Grunnen er
-   konkret: `POST /v1/unntak/{id}/handling` autentiserer `avvis` med
+   handlingsendepunkt. Runden er PR-012-s (statusmaskinen krever det, §3),
+   men behandleren og oppgjøret er domenets (§4.2b). Grunnen til at den
+   generelle ruten ikke kan brukes er konkret: `POST /v1/unntak/{id}/handling` autentiserer `avvis` med
    `exceptions:reject` (`unntaksbehandling.py:597`, og på nytt under
    sakslåsen på linje 265), mens `domeneavgjorer` med vilje ikke bærer
    noen unntaksskrivescopes (§4.1).
@@ -524,6 +560,9 @@ attestasjon.
   synk. Radene bevares.
 - **Motoren beslutter:** `avgjor_domeneovertakelse()` teller
   attestasjonene under hostname-låsen og gjør overgangen.
+- **Og hver talt stemme må fortsatt være autorisert** når overgangen
+  skjer — ikke bare da den ble avgitt. Se §4.3; det er den porten som
+  gjør at en fjernet rolle faktisk får virkning på en ventende sak.
 
 - **Attestasjoner foreldes, og godkjenning krever fersk DNS-evidens.**
   `avgitt_ts` skrives, men uten et krav til den er den kun pynt. Angrepet
@@ -616,9 +655,12 @@ derfor rollen inn:
   formulert mot dem.
 - **Tildeling er en eierhandling, ikke en ny flate i v1.** Roller settes i
   `brukermedlemskap.roller` (migrasjon 010 linje 61); trigger
-  `brukermedlemskap_authz_bump()` invaliderer sesjonens autorisasjon ved
-  endring, så et nytt scope trer i kraft uten omstart og et fjernet scope
-  forsvinner umiddelbart. Rolleadministrasjon i UI er registrert
+  `brukermedlemskap_authz_bump()` øker `authz_version` ved enhver endring
+  (010 linje 71–85), så et nytt scope trer i kraft uten omstart og en
+  fjernet rolle river sesjonen med seg ved neste forespørsel
+  (`sesjon.py:562–566`). Det gjelder **sesjoner**; en allerede avgitt
+  stemme dør ikke av seg selv — det er §4.3 som gjør den delen sann.
+  Rolleadministrasjon i UI er registrert
   arbeidselement, ikke PR-015-scope — men **DB-veien må dokumenteres i
   `docs/RUTINER.md`**, ellers er utveien fortsatt bare en påstand.
 
@@ -638,12 +680,16 @@ på den generelle:
 | `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` (ny) | `domains:adjudicate` | kun `kategori = 'domeneovertakelse'`, bevist under sakslåsen |
 | `POST /v1/unntak/{id}/handling` (PR-012, uendret ellers) | `exceptions:approve` / `:reject` / `:escalate` | **avviser** `domeneovertakelse` med `feil_saksfamilie` (409), under samme lås |
 
-- **Maskineriet er PR-012-s, uendret.** Den nye ruten er tynn — form,
-  auth, CSRF (dobbel-innsending, som PR-012) — og delegerer til
-  `behandle_unntakshandling` med `domains:adjudicate` som det scopet som
-  revalideres under sakslåsen (`unntaksbehandling.py:265`). Samme
-  idempotens, samme optimistiske saksversjonslås, samme runde, samme
-  historikk. Det eneste som er domenets, er scopet og familiegjerdet.
+- **Byggeklossene er PR-012-s; oppgjøret er domenets.** Ruten er tynn —
+  form, auth, CSRF (dobbel-innsending, som PR-012) — men den delegerer
+  **ikke** til `behandle_unntakshandling`. Den kaller
+  `behandle_domeneattestasjon()` i `api/domeneovertakelse.py`, som
+  gjenbruker PR-012-s beviste mekanismer i samme rekkefølge
+  (idempotens-claim i eiertransaksjonen, `FOR UPDATE` på saken,
+  reautorisering etter låsen, optimistisk `saksversjon`-lås,
+  `opprett_godkjenningsrunde`, `unntak_historikk`) og erstatter kun det
+  som er motorens: policy-/intensjonsleddet og beslutningen. Se §4.2b for
+  hvorfor delegering ikke er mulig, og for rekkefølgen.
 - **Familien bevises, den påstås ikke av stien.** `kategori` leses fra
   den `FOR UPDATE`-låste raden i steg 2 og må være `domeneovertakelse`;
   er den noe annet, er svaret `unntak_ukjent` (404) — en avgjører har
@@ -674,6 +720,180 @@ på den generelle:
   attestasjonen *er* en menneskelig handling i en browsersesjon, og
   vernet er nøyaktig det PR-012 bruker — dobbel-innsending på en rute som
   selv verner seg. Maskintokens er upåvirket.
+
+### 4.2b Egen behandler — `behandle_unntakshandling` kan ikke avgjøre en domenesak
+
+**«Samme flyt, annet scope» er ikke en mulig implementasjon.** Å sende
+domenestemmen inn i `behandle_unntakshandling` med `domains:adjudicate`
+feiler på fem uavhengige steder, og de fire første feiler *før* noen
+stemme registreres:
+
+1. **Scopet er ikke kallerens.** Funksjonen slår det opp selv fra det
+   lukkede kartet `_OP_SCOPE[operatorhandling]`
+   (`unntaksbehandling.py:182, 265`) — de tre unntakshandlingene, ingen
+   parameter. `domains:adjudicate` kan altså ikke «sendes med»; det måtte
+   vært lagt inn i kartet, og da ville det også åpnet den generelle
+   ruten, stikk i strid med gjerdet over.
+2. **Runden kan ikke åpnes for `godkjenn`.** Endepunktet åpner runden med
+   `krev_godkjennbar=True` for godkjenn, og `opprett_godkjenningsrunde`
+   krever da `unntak.intensjon_pakrevd` (`unntaksbehandling.py:129`). En
+   overtakelsessak har ingen handlingsintensjon (`UKJENT_SNAPSHOT`), så
+   den *første* godkjenn-attestasjonen dør på `godkjenn_utilgjengelig`.
+3. **Forretningsrollen finnes ikke.** Godkjenn krever
+   `menneskelig_overstyring.krever_rolle` fra tenantens **aktive
+   forretningspolicy**, og at operatøren bærer nettopp den rollen
+   (`unntaksbehandling.py:280–289`). `domeneavgjorer` er en
+   plattformrolle, ikke et policyfelt; ingen tenants policy nevner den.
+4. **Intensjonen dekrypteres ubetinget ved terskel.** Ved nådd terskel
+   kaller flyten `kryptering.hent_dek(conn, tenant, hi_key_id)` og
+   dekrypterer `handlingsintensjon` før motoren kjøres
+   (`unntaksbehandling.py:414–421`). `hi_key_id` er NULL på en
+   overtakelsessak.
+5. **Utfallet ville vært feil selv om alt over gikk.** Flyten tar ingen
+   `p_runde`, kaller aldri `avgjor_domeneovertakelse()`, og setter ved
+   TILLAT saken `venter_utførelse` (`unntaksbehandling.py:466`) — en
+   tilstand som venter på en utførelse som ikke finnes. Avvis-grenen
+   setter saken `avvist` med én gang. Domeneraden ville stått **urørt**
+   etter en fullført attestasjonsrunde: saken lukket, autorisasjonen ikke
+   flyttet. Det er nøyaktig påstanden invariant 10 forbyr.
+
+**Behandleren, med rekkefølgen:**
+```
+behandle_domeneattestasjon(tenant, aktor, unntak_id, utfall,
+                           forventet_saksversjon, dns_runde_id, idempotency_key)
+  1. idempotens-claim i eiertransaksjonen        (som PR-012 steg 1)
+  2. FOR UPDATE på unntaksraden. kategori må være 'domeneovertakelse',
+     ellers `unntak_ukjent` (404) — familiegjerdets speilbilde (§4.2)
+  3. reautorisering ETTER låsen: medlemskap + `domains:adjudicate`,
+     fail-closed, ingen fallback-rolle  (som PR-012 steg 3)
+  4. optimistisk lås på `saksversjon`             (som PR-012 steg 4)
+  5. runden: er den aktive runden UTLØPT, merkes den `utlopt` og saken
+     føres tilbake til `manuell` (begge whitelistet) — attestasjonene
+     røres ikke, de henger på saken, ikke på runden. Finnes ingen aktiv
+     runde: `opprett_godkjenningsrunde(..., krev_godkjennbar=False)` —
+     den lovlige `manuell → venter_godkjenning` med en `apen` runde som
+     allerede finnes (011 linje 169 + 185). `krev_godkjennbar=False` er
+     PR-012-s egen vei for handlinger som ikke skal re-evalueres av
+     motoren; den krever ingen intensjon
+  6. INSERT ... ON CONFLICT DO UPDATE i `overtakelse_attestasjon`.
+     Målet skrives fra SAKEN, aldri fra kroppen; saksbindingstriggeren
+     (§1) avviser avvik. `rolle` + `authz_version` fra steg 3 (§4.3).
+     Historikk: `attestasjon_registrert`
+  7. tell FERSKE attestasjoner med samme `utfall` (§4):
+       avvis → terskel 1 · godkjenn → terskel 2, distinkte aktører
+     under terskel → `venter_andre_godkjenner`, svar `gjenstaar`, ferdig
+  8. terskel nådd: reautoriser HVER talt attestant (§4.3), så
+     runden `apen → klar` og saken → `godkjenning_klar`
+  9. `avgjor_domeneovertakelse(..., p_runde)` i SAMME transaksjon.
+     `p_runde` er DNS-runden (§2.4) og kreves kun ved `godkjenn`;
+     den er ikke godkjenningsrunden fra steg 5
+ 10. godkjenningsrunden `klar → brukt` med
+     `decision_operation_id = 'domeneoppgjor-<unntak_id>-r<runde>'`
+     (011 linje 318 krever en id; den er tekst, ikke en motoroperasjon),
+     så saken → `løst` ved godkjenn, `avvist` ved avvis og ved
+     `alt_avgjort` (§3.1). Historikk + `_fullfor` på idempotensnøkkelen
+```
+
+**To runder, to levetider — og de må ikke blandes.** `p_runde` er
+DNS-observasjonsrunden fra §2.4 (minutter, `formal =
+'overtakelsesoppgjor'`); godkjenningsrunden fra steg 5 er PR-012-s
+saksrunde (`RUNDE_TTL = 24 timer`, `unntaksbehandling.py:35`).
+
+**Attestasjonene henger på saken, ikke på saksrunden — og det er derfor
+72-timersvinduet er nåbart.** `menneskelig_attestasjon` har `runde` i
+nøkkelen; `overtakelse_attestasjon` har det med vilje ikke (§1). Ellers
+ville en stemme avgitt time 0 vært verdiløs i time 25, uansett hva §4
+sier, fordi saksrunden er utløpt — og porten «begge ferske innen 72 t»
+hadde vært 24 t i praksis. Utløper saksrunden mellom to stemmer, åpner
+steg 5 en ny (`utlopt` → tilbake til `manuell` → ny runde). Det er en
+tilstandsbærer som fornyes, ikke evidens som mistes: en utløpt saksrunde
+har aldri båret et domeneoppgjør, for oppgjøret skjer i steg 9 i samme
+transaksjon som runden merkes `brukt`.
+
+**Statusveien bruker kun whitelistede overganger** (011 linje 168–176):
+`ny → manuell` (§3) → `venter_godkjenning` (steg 5, med runden på plass)
+→ `venter_andre_godkjenner` (steg 7) → `godkjenning_klar` (steg 8) →
+`løst`/`avvist` (steg 10), pluss
+`venter_godkjenning`/`venter_andre_godkjenner → manuell` når saksrunden
+må fornyes (steg 5). Alle står i whitelisten. Ingen ny
+tilstand, ingen endring i `unntak_kolonnelaas` — 011 er checksum-låst og
+skal ikke røres.
+
+**Ingen rad i `godkjenningsutfall`.** Den tabellen krever
+`hi_integritet_hash` og et `motorutfall` (011 linje 345–352); en
+domenetildeling har ingen intensjonshash og ingen motorbeslutning. Å
+skrive en syntetisk hash dit ville vært å påstå en beslutning motoren
+aldri tok. Evidenskjeden for domeneoppgjøret er
+`overtakelse_attestasjon` + `unntak_historikk` +
+`domenekontroll_hendelse`, og den bærer mer enn `godkjenningsutfall`
+kunne: målet, observatørene og begge stemmene.
+
+**`menneskelig_attestasjon` brukes heller ikke.** Den er motorens
+MAC-signerte konvolutt, bundet til intensjonshash og policyhash
+(`unntaksbehandling.py:347`). Domenestemmen har sin egen tabell nettopp
+fordi den må bindes til *sakens mål* (§1) — et krav ingen
+PR-012-attestasjon har.
+
+### 4.3 Hver talt stemme reautoriseres ved tildelingen
+
+**Ferskhet er ikke autorisasjon.** Attestasjonsvinduet (§4) sier at
+stemmen ble avgitt for under 72 timer siden; det sier ingenting om at
+aktøren fortsatt *har lov*. Angrepet er konkret og ligger helt innenfor
+vinduet: aktør 1 attesterer, mister så `domeneavgjorer` — eller
+deaktiveres, eller får medlemskapet fjernet — og aktør 2 attesterer
+dagen etter. Uten en sjekk teller aktør 1-s stemme fortsatt, og to
+mennesker der bare det ene fortsatt er avgjører fullfører en cross-tenant
+domenetildeling. Reautoriseringen i steg 3 (§4.2b) dekker bare den som
+handler *nå*; den sier ingenting om den andre raden.
+
+**Kontrakten er PR-013-s, og den er alt bevist i koden.** Aktivering av en
+policy reautoriserer hver bundet godkjenner ved aktiveringen —
+`_reautoriser_godkjennere()` (`policyadmin.py:646–676`), selv et resultat
+av en Codex-runde. PR-015 bruker samme mønster på attestantene, i steg 8,
+i **samme transaksjon** som `avgjor_domeneovertakelse()`:
+
+```
+for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
+    rad = laas_godkjenner(sakens tenant, aktor)     -- FOR UPDATE, 013 linje 195
+    rad IS NULL                       -> `attestant_uautorisert:<aktor>:mangler_medlemskap`
+    rad.authz_version <> authz_version-> `attestant_uautorisert:<aktor>:authz_endret`
+    rolle NOT IN rad.roller           -> `attestant_uautorisert:<aktor>:rolle_borte`
+    'domains:adjudicate' NOT IN scopes_for_roller(rad.roller)
+                                      -> `attestant_uautorisert:<aktor>:scope_mangler`
+```
+
+- **`authz_version` er hele beviset.** `brukermedlemskap_authz_bump()`
+  øker den ved *enhver* endring av raden — rolle fjernet, rolle lagt til,
+  `aktiv` satt av. Et uendret versjonsnummer er derfor et positivt bevis
+  på at autorisasjonen er den samme som da stemmen ble avgitt, ikke en
+  liste over endringer vi husket å lete etter. Rolle- og scope-sjekkene
+  under er defense-in-depth mot en rad som skulle blitt bumpet og ikke
+  ble det.
+- **Låsen, ikke bare lesningen.** `laas_godkjenner` er SECURITY DEFINER
+  med `FOR UPDATE`, så en samtidig tilbakekalling ikke kan committe etter
+  lesningen og vinne kappløpet mot oppgjøret. Uten låsen ville sjekken
+  vært et øyeblikksbilde tildelingen straks kunne overleve. Funksjonen
+  finnes fra før og har allerede `EXECUTE` for `disponit` (013 linje
+  205–206) — samme rolle domeneruten kjører som. Ingen ny GRANT, ingen ny
+  funksjon.
+- **Deterministisk låserekkefølge.** Sortert på `aktor`, av nøyaktig
+  samme grunn som PR-013 (`policyadmin.py:663–666`): to samtidige
+  oppgjør som deler en attestant tar samme lås først og serialiseres i
+  stedet for å vranglåse.
+- **Scopeoversettelsen blir i Python.** `ROLLE_TIL_SCOPES` er
+  applikasjonens lukkede kart; databasen kjenner bare rollenavn.
+  Sjekken kjøres derfor av kalleren — men **under samme transaksjon og
+  samme radlås** som `avgjor_domeneovertakelse()`, så den er ikke en
+  preflight. Rekkefølgen er ufravikelig: lås attestantene, verifiser,
+  *så* kall oppgjøret. Faller én sjekk, rulles hele transaksjonen
+  tilbake: ingen domeneovergang, ingen sakslukking, og attestasjonene
+  blir stående som evidens.
+- **Fail-closed og legibelt.** Feilen navngir aktøren og grunnen (403),
+  slik at flaten kan si «aktør X er ikke lenger avgjører — hen må
+  attestere på nytt, eller tenanten må gi rollen til en annen», ikke
+  «ukjent feil». Den utveien er den samme som §4.1 beskriver.
+- **Gjelder også `avvis`.** Én stemme er også en stemme; en aktør som har
+  mistet rollen skal ikke kunne lukke en domenesak.
 
 ## 5. Opplastingskapabilitet utstedes ved claim
 
@@ -797,12 +1017,79 @@ funksjonen kun treffer `tilstand = 'staged'`.
 - To sammenhengende feilede kjøringer → alarm. En stille ryddejobb er en
   voksende disk.
 
+## 6b. Deploy-porten — rollene, credentialene og timerne
+
+**En jobb som ikke er installert, kjører ikke; en rolle som ikke kan
+logge inn, observerer ikke.** Fem Python-filer og én migrasjon er ikke
+hele PR-015: `deploy/staging/oppsett-postgresql.sh` er repoets **eneste**
+rollegrense — migrasjoner har uttrykkelig forbud mot å opprette
+clusterroller (skriptets egen kommentar, linje 30–34) — og
+`deploy/staging/opp.sh` har en **lukket** unit-liste (linje 51–54) som
+både preflightes og enables. Uten endringer begge steder er §2 og §6
+spesifikasjoner uten kjøretid.
+
+**Observatørrollene må finnes FØR migrasjonen.** 019 gjør `GRANT EXECUTE
+ON FUNCTION meld_domeneobservasjon(...) TO disponit_domeneobservator_1,
+disponit_domeneobservator_2` — en `GRANT` til en rolle som ikke finnes er
+en feil, ikke en advarsel, og ville stoppet første migrasjonskjøring på
+en fersk installasjon. Rekkefølgen i skriptet er allerede riktig (roller
+linje 39–51, `migrer.py` linje 221); det som mangler er rollene:
+
+| Rolle | Type | Hvorfor |
+|---|---|---|
+| `disponit_domeneobservator_1` / `_2` | **LOGIN**, tilfeldig passord, egen DSN | Identiteten er `session_user` (§2.4). En NOLOGIN-rolle kan ikke være noens `session_user`, og uten DSN kan prosessen ikke autentisere |
+| `disponit_domains_admin` | **LOGIN** + DSN (i dag NOLOGIN, linje 44–47) | Både revalideringsarbeideren (§2) og ryddetimeren (§6) kjører som den; 016 gir den EXECUTE (linje 927–933). Uten innlogging er de grantene uinnløselige |
+
+- Begge går inn i LOGIN-løkken og gjennom `sikre_rolle_dsn` +
+  `verifiser_og_reparer` (linje 99–123), som er skriptets beviste vei:
+  passordrotasjon og miljøfil holdes i takt, og en halvskrevet DSN
+  repareres før noen migrasjon kjøres.
+- **Ikke medlemskap i stedet for innlogging.** Å la en eksisterende
+  LOGIN-rolle arve `disponit_domains_admin` ville dratt med seg *arvede*
+  rettigheter — og RLS-policyer med `TO`-klausul matcher på arvet
+  medlemskap. Det er nøyaktig fellen skriptets `WITH INHERIT FALSE`-
+  kommentar (linje 60–66) beskriver, gjeninnført av en GRANT som ser ut
+  som en formalitet. Egen credential per prosess er også det §2.4 faktisk
+  krever.
+- **Observatørene får ikke mer enn det ene.** EXECUTE på
+  `meld_domeneobservasjon`, ingenting annet: ikke
+  `apne_domeneobservasjonsrunde`, ikke revalidering, ikke SELECT på
+  `domenekontroll`. En kompromittert observatør skal kunne lyve om én
+  observasjon, ikke lese domeneporteføljen.
+
+**Unitene må inn i den lukkede lista.** Fire nye filer i
+`deploy/staging/`, lagt til `UNITS` i `opp.sh` slik at `preflight_units`
+verifiserer dem og `systemctl enable --now` starter dem:
+
+| Unit | Kadens | Kjører som |
+|---|---|---|
+| `disponit-domenerevalidering.service` + `.timer` | hver time (§2) | `disponit_domains_admin` |
+| `disponit-artefaktrydding.service` + `.timer` | hvert 15. min (§6) | `disponit_domains_admin` |
+| `disponit-domeneobservator-1.service` / `-2.service` | kontinuerlig, poller åpne runder | hver sin `disponit_domeneobservator_*` |
+
+- Observatørene er **to separate units med hver sin miljøfil**, ikke to
+  tråder i én prosess. Delte de prosess, ville «to distinkte
+  `session_user`» vært en formalitet: ett kompromiss gir da begge
+  stemmene, og hele §2.4 hviler på at det ikke er tilfellet.
+- **Diversitetsporten håndheves i prosessen, ikke av en kommentar.**
+  Hver observatør leser sin resolver fra egen konfigurasjon og **nekter å
+  starte** hvis den ser samme resolver-endepunkt som den andre, eller
+  hvis den kjører med en DB-rolle som ikke er en
+  `disponit_domeneobservator_*`. Sagt rett ut om staging: begge
+  prosessene kjører på **samme vert** med ulike resolveroperatører. Det
+  gir rolle- og resolverdiversitet, ikke vertsdiversitet — en navngitt
+  restrisiko som lukkes i produksjon, ikke en port vi later som er
+  bestått.
+- Ryddetimeren erstatter ikke `disponit-rydd-pending.timer` (PR-009,
+  PENDING-tokens). To ulike jobber, to ulike navn.
+
 ## 7. De fire portspørsmålene
 
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
 | Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; de gamle signaturene uten runde er REVOKE-et fra både `disponit_domains_admin` og `disponit`; én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs og kortlevd | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB; arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)` |
-| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → PR-012-runden → funksjonen; den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling (§3.1) | Hostname-lås; hele oppgjøret i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører med `domains:adjudicate` (rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` |
+| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling (§3.1) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjonssnapshotet |
+| Drift av det hele (§6b) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables | Roller før migrasjon; timerne tar hver sin advisory-lås; observatørene er separate prosesser | Innlogging per rolle og `is-active` per unit MÅLES på en fersk base (port 28), ikke antas | `UNITS` er en lukket liste; en observatør med feil rolle eller delt resolver nekter å starte |
 | Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; generasjonen sjekkes på nytt under kapabilitetens radlås i `lagre_artefakt_staged()` | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
@@ -945,6 +1232,28 @@ til `verifisert` domenerad og lukkede saker. Testen må gå gjennom
 endepunktet; en variant som kaller `behandle_unntakshandling` direkte
 hopper over både `BROWSER_MUTASJONSSCOPES` og familiegjerdet og beviser
 derfor ingenting om veien inn.
+20h **Attestasjonen flytter faktisk domenet:** etter den andre
+godkjenn-attestasjonen er B-radens status `verifisert`, `hostname_binding`
+står på B, generasjonen er økt og et nytt 90-døgnsvindu er satt — målt på
+**domenekontroll-raden**, ikke på saksstatusen. Saken skal samtidig ende
+`løst`, aldri `venter_utførelse`. En variant som bare sjekker at saken
+lukket seg ville bestått med `behandle_unntakshandling`, som aldri kaller
+`avgjor_domeneovertakelse()` og lar domeneraden stå urørt ·
+20i **Attestasjonen dør med rollen:** aktør 1 attesterer, tenanten
+fjerner `domeneavgjorer` fra aktør 1 (eller setter medlemskapet
+inaktivt), aktør 2 attesterer innenfor 72-timersvinduet → **ingen
+tildeling**, 403 `attestant_uautorisert` som navngir aktør 1, og B står
+fortsatt `avklaring_kreves` med domeneraden urørt. Gis rollen tilbake, må
+aktør 1 attestere på nytt (ny `authz_version`) før oppgjøret går. Samme
+port for `avvis` med én stemme. Testen må endre medlemskapet **etter**
+første stemme; en variant som bare sjekker scopet ved døren beviser
+ingenting om den andre raden ·
+20j **72-timersvinduet er faktisk 72 timer:** aktør 1 attesterer, klokka
+skrus 25 timer fram (saksrunden er da utløpt, attestasjonen fortsatt
+fersk), aktør 2 attesterer → **tildelingen går gjennom**; en ny
+saksrunde er åpnet, den gamle står `utlopt`, og begge attestasjonene er
+uendret. En implementasjon som binder domenestemmen til saksrunden
+består 20e og feiler her.
 
 **Kapabilitet (21–24b).**
 21 Claim returnerer distinkte tokens; opplastingstokenet virker ikke
@@ -988,6 +1297,18 @@ evidensfristleddet ·
 `karantene_bevart`; det samme for `bevart` ·
 27 To feilede ryddekjøringer → alarm.
 
+**Deploy (28).**
+28 **Fersk installasjon fra skriptene alene** (§6b): `oppsett-postgresql.sh`
+kjøres på en tom base → migrasjon 019 går gjennom (`GRANT` til
+observatørrollene feiler ikke), begge observatørrollene og
+`disponit_domains_admin` kan **logge inn med DSN-en fra miljøfilen**, og
+`opp.sh` installerer og starter begge timerne og begge
+observatørprosessene. Målt som `systemctl is-active` per unit og én
+vellykket innlogging per rolle. En observatør startet med feil DB-rolle,
+eller med samme resolver-endepunkt som den andre, **skal nekte å
+starte**. Uten denne porten kan hele PR-015 bestå testsuiten og likevel
+ikke revalidere ett eneste domene i drift.
+
 **Alle tester konstruerer egen tilstand.** Ingen delt fixture.
 
 ## 9. Evidensgrense `operativt-lag-v1` (defineres FØR arbeidet)
@@ -1028,6 +1349,10 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 **`roller_med_domains_adjudicate = {domeneavgjorer}`** (nøyaktig, ikke
 «minst») ·
 **`domenesak_behandlet_pa_generell_unntaksrute = 0`** ·
+**`domenerad_uendret_etter_fullfort_godkjenning = 0`** ·
+**`domenesak_endt_i_venter_utforelse = 0`** ·
+**`oppgjor_med_uautorisert_attestant = 0`** ·
+**`attestasjon_uten_authz_snapshot = 0`** ·
 **`attestasjon_ende_til_ende_kun_med_domeneavgjorer = ja`** (over HTTP,
 browsersesjon, ikke direkte funksjonskall) ·
 **`overtakelsessak_opprettet_i_status_ny = 0`** ·
@@ -1042,7 +1367,11 @@ browsersesjon, ikke direkte funksjonskall) ·
 `levetid_over_frist_avvist = alle` ·
 **`ryddebatch_over_p_maks = 0`** ·
 **`ryddet_for_evidensfrist = 0`** ·
-`karantene_bevart = alle` · `idempotens_kjoring2_slettet = 0`.
+`karantene_bevart = alle` · `idempotens_kjoring2_slettet = 0` ·
+**`observatorrolle_uten_login_eller_dsn = 0`** ·
+**`nye_timere_installert_og_aktive = alle`** ·
+**`migrasjon_019_pa_fersk_base_feiler = nei`** ·
+**`observator_startet_med_delt_resolver = 0`**.
 
 **Målte egenskaper (rapporteres, ingen bestått/ikke bestått):**
 `fordeling.maks_andel_per_time` for testpopulasjonen ·
@@ -1070,13 +1399,23 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
          platform/core/api/autorisasjon.py (rollen `domeneavgjorer`, §4.1),
          platform/drift/domenerevalidering.py, platform/drift/domeneobservator.py,
          platform/drift/artefaktrydding.py,
-         platform/core/api/domeneovertakelse.py (saken opprettes `manuell`, §3),
+         platform/core/api/domeneovertakelse.py (saken opprettes `manuell`
+           med grunnkode og policyref, §3; behandleren
+           `behandle_domeneattestasjon()` med domeneoppgjøret og
+           reautoriseringen av hver talt attestant, §4.2b + §4.3),
          platform/core/api/unntaksbehandling.py (familiegjerdet på den
          generelle ruten + scopet fra saksfamilien under låsen, §4.2),
          platform/core/api/app.py (oppdrag_claim, linje ~717;
          artefaktopplasting, linje ~1928; `domains:adjudicate` i
          BROWSER_MUTASJONSSCOPES, linje ~799; ruten
          POST /v1/domener/overtakelse/{unntak_id}/attestasjon, §4.2),
+         deploy/staging/oppsett-postgresql.sh (observatørrollene som LOGIN
+           m/DSN + `disponit_domains_admin` som LOGIN m/DSN, §6b — uten
+           dem feiler 019 på en fersk base og ingen jobb kan autentisere),
+         deploy/staging/opp.sh (UNITS utvides med de fire nye unitene, §6b),
+         deploy/staging/disponit-domenerevalidering.{service,timer},
+         deploy/staging/disponit-artefaktrydding.{service,timer},
+         deploy/staging/disponit-domeneobservator-{1,2}.service,
          docs/RUTINER.md (hvordan eier tildeler `domeneavgjorer`)
 NESTE: Draft PR-014c (automatisk WCAG-kontroll) — første eiermodul på
        plattformen 014a/014b/015 bygde — Claude.ai

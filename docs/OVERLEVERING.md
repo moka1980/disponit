@@ -139,12 +139,23 @@ nøyaktig det evidensen bærer.
 
 ## 7. Neste steg i den nye chatten
 
-**PR-014b er levert og merget** (migrasjon 016 + 017, oppfølging 018):
-domeneverifikasjon med DNS-TXT-challenge, controller/browser-separasjon,
-egress-proxy og artefaktprotokollen står i koden. Klarsignalet ligger i
-`docs/pr/PR-014b-IMPLEMENTERINGSKLARSIGNAL.md` og er rettet mot det
-migrasjonene faktisk gjør — les det som beskrivelse av eksisterende
-skjema, ikke som en bestilling.
+**PR-014b-s databaselag er levert og merget** (migrasjon 016 + 017,
+oppfølging 018): domeneverifikasjon med DNS-TXT-challenge,
+autorisasjonsvisningen `v_domeneautorisasjon`, rollen `disponit_egress`
+og artefaktprotokollens funksjoner står i koden, med tester.
+Klarsignalet ligger i `docs/pr/PR-014b-IMPLEMENTERINGSKLARSIGNAL.md`; §1–4
+er rettet mot det migrasjonene faktisk gjør og leses som beskrivelse av
+eksisterende skjema.
+
+**Kjøretiden er IKKE levert, og skal ikke antas levert.** Det finnes
+ingen `platform/egress/`, ingen `platform/browser/`, ingen
+proxy-tjeneste og ingen forbruker av per-oppdrag proxy-token — kun
+databaseobjektene over. §5 (egress-proxy og crawlgrenser) og §6
+(controller/browser-separasjon) i 014b-klarsignalet er derfor fortsatt
+**bestilling**, ikke beskrivelse. Det betyr noe konkret: den eneste
+grensen som skal håndheve domeneautorisasjon og SSRF-restriksjoner på
+hver eneste browserforespørsel, finnes ikke ennå. PR-014c (som *bruker*
+den grensen) kan ikke regnes som ferdig før den er bygget.
 
 Neste oppgave er **PR-015 (operativt lag)**, klarsignal levert:
 `docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md`. Migrasjon **019** —
@@ -154,4 +165,7 @@ reclaim på artefaktkapabiliteten, batchgrense i `rydd_staged_artefakter()`,
 og rollen som faktisk kan bære `domains:adjudicate`.
 
 Deretter **PR-014c**: automatisk WCAG-kontroll — den første eiermodulen
-som bruker plattformen 014a/014b/015 bygde.
+som bruker plattformen 014a/014b/015 bygde. Den forutsetter
+egress-kjøretiden fra 014b §5–6, som ennå ikke finnes: enten bygges den
+som en del av 014c, eller så må den planlegges som eget arbeid før
+014c kan crawle noe som helst.
