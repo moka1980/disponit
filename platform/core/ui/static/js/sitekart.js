@@ -9,6 +9,17 @@ export function kanForvaltePolicy(sesjon) {
   return harScope(sesjon, "policy:write") || harScope(sesjon, "policy:activate");
 }
 
+// Kontrollplanet på TVERS av tenanter er plattformdriftens, ikke kundens.
+// `security:read` er ikke den autoriteten: PR-008 §1 beskriver den som en
+// valgfri ops/compliance-scope på en TENANTBUNDET brukersesjon, og rollene
+// `admin`/`sikkerhet` i `autorisasjon.py` er kunderoller. Leste admin-flaten
+// tenanttabellen ut fra det scopet, så en kundes sikkerhetsansvarlige hver
+// eneste andre tenants plan, moduler og neste steg. Ingen kunderolle gir
+// `platform:admin` — plattformdrift er en egen autoritet (default-deny).
+export function erPlattformdrift(sesjon) {
+  return harScope(sesjon, "platform:admin");
+}
+
 export function byggRuter(sesjon) {
   // Kundens arbeidsflate er en LESEFLATE: modulstatus, roller, integrasjoner.
   // Den hører derfor til basisrutene. Lå den bak `kanForvaltePolicy`, landet en

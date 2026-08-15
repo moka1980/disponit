@@ -1,14 +1,20 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { FASEOVERSIKT, TENANTOVERSIKT, modulmerke, plattformTelling }
+import { FASEOVERSIKT, TENANTOVERSIKT, modulmerke, plattformTelling, tenantRad }
   from "../plattformdata.js";
-import { kanForvaltePolicy } from "../sitekart.js";
+import { erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
 import { siteFaseMerke } from "../sitekomponenter.js";
 
 export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
   const forvalter = kanForvaltePolicy(ctx);
+  // Tenanttabellen er kontrollplan på tvers av kunder, og krever
+  // plattformdrift. En tenantbundet ops-økt (`security:read`) ser bare sin
+  // egen rad — ikke hver eneste andre kundes plan, moduler og neste steg.
+  const plattformdrift = erPlattformdrift(ctx);
+  const egen = tenantRad(ctx.tenant);
+  const tenanter = plattformdrift ? TENANTOVERSIKT : (egen ? [egen] : []);
 
   sett(hoved,
     ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
@@ -25,7 +31,7 @@ export function visAdmin(hoved, ctx = {}) {
             el("strong", { text: String(telling.bygges) }),
             el("span", { text: t("ui.admin.kpi.bygges") })),
           el("div", { class: "site-kpi" },
-            el("strong", { text: String(TENANTOVERSIKT.length) }),
+            el("strong", { text: String(tenanter.length) }),
             el("span", { text: t("ui.admin.kpi.tenanter") })))),
       el("section", { class: "kort" },
         el("p", { class: "site-eyebrow", text: t("ui.admin.utrulling") }),
@@ -74,23 +80,33 @@ export function visAdmin(hoved, ctx = {}) {
       el("div", { class: "site-section-head" },
         el("div", {},
           el("p", { class: "site-eyebrow", text: t("ui.admin.tenanter") }),
-          el("h2", { text: t("ui.admin.tenanter_tittel") }))),
-      el("div", { class: "tablewrap" },
-        el("table", {},
-          el("caption", { class: "sr-only", text: t("ui.admin.tenanter_tittel") }),
-          el("thead", {},
-            el("tr", {},
-              el("th", { scope: "col", text: t("ui.admin.kol.tenant") }),
-              el("th", { scope: "col", text: t("ui.admin.kol.plan") }),
-              el("th", { scope: "col", text: t("ui.admin.kol.moduler") }),
-              el("th", { scope: "col", text: t("ui.admin.kol.neste") }))),
-          el("tbody", {},
-            TENANTOVERSIKT.map((tenant) =>
+          el("h2", { text: plattformdrift
+            ? t("ui.admin.tenanter_tittel")
+            : t("ui.admin.tenanter_egen_tittel") })),
+        plattformdrift
+          ? null
+          : el("span", { class: "site-inline-note",
+            text: t("ui.admin.tenanter_egen_note") })),
+      tenanter.length
+        ? el("div", { class: "tablewrap" },
+          el("table", {},
+            el("caption", { class: "sr-only", text: plattformdrift
+              ? t("ui.admin.tenanter_tittel")
+              : t("ui.admin.tenanter_egen_tittel") }),
+            el("thead", {},
               el("tr", {},
-                el("td", {}, el("strong", { text: t(tenant.navn_nokkel) })),
-                el("td", { text: t(tenant.plan_nokkel) }),
-                el("td", { text: tenant.moduler.map(modulmerke).join(", ") }),
-                el("td", { text: t(tenant.neste_nokkel) }))))))),
+                el("th", { scope: "col", text: t("ui.admin.kol.tenant") }),
+                el("th", { scope: "col", text: t("ui.admin.kol.plan") }),
+                el("th", { scope: "col", text: t("ui.admin.kol.moduler") }),
+                el("th", { scope: "col", text: t("ui.admin.kol.neste") }))),
+            el("tbody", {},
+              tenanter.map((tenant) =>
+                el("tr", {},
+                  el("td", {}, el("strong", { text: t(tenant.navn_nokkel) })),
+                  el("td", { text: t(tenant.plan_nokkel) }),
+                  el("td", { text: tenant.moduler.map(modulmerke).join(", ") }),
+                  el("td", { text: t(tenant.neste_nokkel) }))))))
+        : el("p", { class: "muted", text: t("ui.admin.tenanter_ukjent") })),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },
         el("div", {},

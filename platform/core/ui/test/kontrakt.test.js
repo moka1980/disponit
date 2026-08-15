@@ -105,7 +105,10 @@ test("Landing og nye adminflater: synlig tekst kommer fra locale, ikke hardkodin
   let tekst = document.body.textContent;
   visKundeadmin(hoved, ctx());
   tekst += document.body.textContent;
-  visAdmin(hoved, ctx());
+  // Tenanttabellen på tvers av kunder krever plattformdrift — uten den
+  // scopen ville `site.tenant.*` aldri nådd DOM, og locale-påstanden under
+  // hadde feilet på autorisasjon i stedet for på hardkodet tekst.
+  visAdmin(hoved, { ...ctx(), scopes: ["platform:admin"] });
   tekst += document.body.textContent;
   for (const k of [
     "site.hero.tittel",

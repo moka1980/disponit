@@ -124,7 +124,7 @@ test("Kundeadmin: leser får lesevisning av policy, ikke aktiveringsflaten", () 
 
 test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () => {
   const h = nyHoved();
-  visAdmin(h, ctx());
+  visAdmin(h, ctx({ scopes: ["platform:admin"] }));
   assert.ok(h.textContent.includes(t("ui.admin.tittel")));
   assert.ok(h.textContent.includes(t("site.fase.fundament")));
   assert.ok(h.textContent.includes(t("site.tenant.nordvik.navn")));
@@ -132,6 +132,35 @@ test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () =
   assert.ok(h.textContent.includes(t("ui.admin.kontrollplan_tittel")));
   const b = await alvorligeBrudd(h, { fragment: true });
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+test("Admin: tenanttabellen på tvers krever plattformdrift", () => {
+  // `security:read` er en TENANTBUNDET ops-scope. En kundes sikkerhets-
+  // ansvarlige skal se sin egen rad — ikke hver eneste andre kundes plan,
+  // moduler og neste steg.
+  const ops = nyHoved();
+  visAdmin(ops, ctx({ tenant: "bjorkli", scopes: ["security:read"] }));
+  assert.ok(ops.textContent.includes(t("site.tenant.bjorkli.navn")));
+  assert.ok(!ops.textContent.includes(t("site.tenant.nordvik.navn")),
+    "annen tenant lekket til en tenantbundet økt");
+  assert.ok(!ops.textContent.includes(t("site.tenant.granmo.navn")),
+    "annen tenant lekket til en tenantbundet økt");
+  assert.ok(ops.textContent.includes(t("ui.admin.tenanter_egen_note")));
+  assert.equal(ops.querySelectorAll("tbody tr").length, 1);
+
+  const drift = nyHoved();
+  visAdmin(drift, ctx({ tenant: "bjorkli", scopes: ["platform:admin"] }));
+  assert.equal(drift.querySelectorAll("tbody tr").length, 3);
+  assert.ok(drift.textContent.includes(t("ui.admin.tenanter_tittel")));
+});
+
+test("Admin: ukjent tenant får ingen tabell å gjette fra", () => {
+  const h = nyHoved();
+  visAdmin(h, ctx({ tenant: "acme", scopes: ["security:read"] }));
+  assert.equal(h.querySelector("tbody"), null, "tabell vist uten kjent tenant");
+  assert.ok(h.textContent.includes(t("ui.admin.tenanter_ukjent")));
+  const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);
+  assert.equal(kpi[2], "0");
 });
 
 test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {

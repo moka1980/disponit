@@ -105,13 +105,18 @@ export function modulmerke(id) {
   return `M-${id}`;
 }
 
+// Utrullingsraden for ÉN tenant, eller null når vi ikke kjenner tenanten.
+export function tenantRad(tenant) {
+  const navn = String(tenant || "").trim().toLowerCase();
+  if (!navn) return null;
+  return TENANTOVERSIKT.find((tt) => tt.id === navn) || null;
+}
+
 // Modultildelingen for ÉN tenant, eller null når vi ikke kjenner tenanten.
 // Null betyr «vet ikke», ikke «ingen moduler»: en flate som ikke vet, skal si
 // det — ikke vise hele plattformkatalogen som om den var kundens.
 export function modulerForTenant(tenant) {
-  const navn = String(tenant || "").trim().toLowerCase();
-  if (!navn) return null;
-  const rad = TENANTOVERSIKT.find((tt) => tt.id === navn);
+  const rad = tenantRad(tenant);
   if (!rad) return null;
   return MODULOVERSIKT.filter((mod) => rad.moduler.includes(mod.id));
 }
