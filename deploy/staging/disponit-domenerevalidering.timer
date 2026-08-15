@@ -1,0 +1,26 @@
+# PR-015 §2: hver time.
+#
+# Planen er AVLEDET av hostnavnet (sha256 mod 1440), ikke lagret. Timeren
+# trenger derfor ikke vite hvilke rader som skal kjøres når — den vekker
+# arbeideren hver time, og arbeideren regner ut hvem som falt i timen som gikk.
+#
+# `Persistent=true`: er maskinen nede over flere slott, kjøres timeren ÉN gang
+# ved oppstart i stedet for å ta igjen hvert tapte slott. Å ta igjen ville vært
+# meningsløst — de tapte radene er allerede etterslep (kø 3) og plukkes av
+# budsjettet i normal takt.
+#
+# `RandomizedDelaySec`: sprer flere instanser. Jitteren INNENFOR slottet (±5
+# min) ligger i arbeideren og er deterministisk per hostname; denne er for
+# maskinen, ikke for raden.
+
+[Unit]
+Description=Disponit domenerevalideringstimer
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

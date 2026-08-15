@@ -1,0 +1,28 @@
+# PR-015 §6: opprydding av staged artefakter.
+#
+# Timeren legger INGEN logikk oppå den positive regelen. Regelen eies av
+# databasen (016): `staged` eldre enn 24 t OG uten refererende kvittering.
+# Timeren kaller `rydd_staged_artefakter(500)` — samme predikat, med en bunn,
+# så en opphopning ikke låser tabellen i én transaksjon.
+#
+# Karantenesatt evidens telles og RAPPORTERES, aldri ryddes: den er ikke
+# `staged` og nås ikke av predikatet. Men en ryddejobb som ikke sier hvor mye
+# den bevarer, skjuler at disken vokser av noe den aldri får røre.
+#
+# To sammenhengende feilede kjøringer → alarm. En stille ryddejobb er en
+# voksende disk.
+
+[Unit]
+Description=Disponit artefaktrydding
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv
+LoadCredential=DISPONIT_DOMAINS_URL:/etc/disponit/domener/DISPONIT_DOMAINS_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_artefaktrydding
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

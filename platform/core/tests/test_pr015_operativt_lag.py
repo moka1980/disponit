@@ -1,0 +1,754 @@
+"""PR-015: operativt lag — resolverarbeider, fire øyne, kapabilitet, rydding.
+
+Portene fra klarsignalets §8. Alle tester konstruerer EGEN tilstand; ingen delt
+fixture. Der en port måler en INVARIANT (budsjettet, dobbeltstemme, foreldet
+revisjon) konstrueres den populasjonen som ville brutt den, ikke en snill en —
+en port som bare ser normaltilfellet beviser ingenting.
+
+Rollediscipin, som i 014b-testene: `_admin()` (`disponit_domains_admin`) kaller
+FUNKSJONER, `migrator` leser og skriver TABELLER. Arbeiderrollen har bevisst
+ingen bordtilgang til `domenekontroll` — scheduleren ser populasjonen gjennom
+`revalideringskandidater()`, ikke gjennom et grant den kunne brukt til hva som
+helst.
+"""
+import math
+import secrets
+
+import psycopg
+import pytest
+
+from .test_api import DSN, MIGRATOR_DSN, TENANT, ANNEN_TENANT, migrator, miljo  # noqa: F401
+from .test_m37 import _sett_kontekst
+
+pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+
+TREDJE_TENANT = "tredje-tenant-pr015"
+
+
+def _host():
+    return "d" + secrets.token_hex(6) + ".example"
+
+
+def _admin():
+    """migrator SET ROLE domains_admin (committed → overlever rollback)."""
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    c.execute("SET ROLE disponit_domains_admin")
+    c.commit()
+    return c
+
+
+def _dkrow(conn, tenant, hostname):
+    """(status, generasjon, siste_vellykkede) lest som migrator."""
+    _sett_kontekst(conn, tenant)
+    r = conn.execute("SELECT status, autorisasjonsgenerasjon,"
+                     " siste_vellykkede_revalidering FROM domenekontroll"
+                     " WHERE tenant=%s AND hostname=%s",
+                     (tenant, hostname)).fetchone()
+    conn.rollback()
+    return r
+
+
+def _verifisert(conn, tenant, hostname, *, alder_timer=0):
+    """Legg inn en verifisert rad med kontrollert revalideringsalder."""
+    _sett_kontekst(conn, tenant)
+    conn.execute(
+        "INSERT INTO domenekontroll (tenant, hostname, status,"
+        " autorisasjonsgenerasjon, verifisert_ts, siste_vellykkede_revalidering,"
+        " utloper) VALUES (%s,%s,'verifisert',1, now(),"
+        " now() - make_interval(hours => %s), now()+interval '90 days')",
+        (tenant, hostname, alder_timer))
+    conn.commit()
+
+
+def _tom_populasjon(conn, tenant):
+    """Nullstill tenantens domenerader.
+
+    Budsjettet regnes av populasjonen, så en test som skal måle K må eie hele
+    nevneren. `domenekontroll` har en sletteverntrigger (016), som må vike for
+    testoppsettet — nøyaktig som `_rydd` i test_api gjør for append-only-tabellene.
+    """
+    _sett_kontekst(conn, tenant)
+    conn.execute("ALTER TABLE domenekontroll DISABLE TRIGGER USER")
+    conn.execute("DELETE FROM domenekontroll WHERE tenant=%s", (tenant,))
+    conn.execute("ALTER TABLE domenekontroll ENABLE TRIGGER USER")
+    conn.commit()
+
+
+def _res(navn, operator, nett, svar):
+    from drift.domenerevalidering import Resolver
+    return Resolver(navn=navn, operator=operator, nett=nett,
+                    slå_opp=lambda _h: svar)
+
+
+def _enige():
+    return [_res("x", "op1", "n1", frozenset({"t"})),
+            _res("y", "op2", "n2", frozenset({"t"}))]
+
+
+def _uenige():
+    return [_res("x", "op1", "n1", frozenset({"1"})),
+            _res("y", "op2", "n2", frozenset({"2"}))]
+
+
+# ===========================================================================
+# Planen (§2) — rene funksjoner. Port 8 og 9.
+# ===========================================================================
+
+def test_plan_er_avledet_og_deterministisk():
+    """Port 8: restore fra backup gir identisk plan.
+
+    Ikke fordi vi gjenoppretter en plan, men fordi det ikke FINNES en plan å
+    gjenopprette: minuttet er en ren funksjon av hostnavnet.
+    """
+    import hashlib
+    from drift.domenerevalidering import revalideringsminutt, DOGN_MINUTTER
+    h = "eksempel.example"
+    assert revalideringsminutt(h) == revalideringsminutt(h)
+    assert 0 <= revalideringsminutt(h) < DOGN_MINUTTER
+    # Kjent verdi, så en endring i utledningen ikke kan skje ubemerket: en ny
+    # hashfunksjon ville flyttet HELE populasjonen på én deploy.
+    ventet = int(hashlib.sha256(h.encode()).hexdigest()[0:8], 16) % 1440
+    assert revalideringsminutt(h) == ventet
+
+
+def test_retry_slott_forskyver_ikke_normalplanen():
+    """Port 9: forsøk 2 og 3 ligger på +4 t/+8 t, og planen er uendret.
+
+    Et feilet forsøk kan ikke forskyve normalslottet fordi normalslottet ikke
+    lagres noe sted — det utledes på nytt hver gang.
+    """
+    from drift.domenerevalidering import revalideringsminutt, slott_minutter
+    h = "retry.example"
+    m = revalideringsminutt(h)
+    s = slott_minutter(h)
+    assert s == (m, (m + 240) % 1440, (m + 480) % 1440)
+    assert slott_minutter(h) == s and revalideringsminutt(h) == m
+
+
+def test_jitter_holder_seg_innenfor_slottet():
+    """Jitter er ±5 min INNENFOR slottet — den flytter aldri en rad ut."""
+    from drift.domenerevalidering import jitter_minutt, JITTER_MINUTTER
+    for i in range(200):
+        for slott in (0, 700, 1439):
+            assert abs(jitter_minutt(f"j{i}.example", slott)) <= JITTER_MINUTTER
+
+
+@pg
+def test_sql_minutt_er_identisk_med_python_minutt(migrator):
+    """SQL-en og Python-en MÅ gi samme minutt.
+
+    Utvalget skjer i SQL, rapporteringen i Python. Divergerer de to, plukker
+    scheduleren andre rader enn den rapporterer — og begge deler ser riktige ut
+    hver for seg. Derfor måles de mot hverandre, ikke hver for seg.
+    """
+    from drift.domenerevalidering import revalideringsminutt, _MINUTT_SQL
+    for i in range(50):
+        h = f"m{i}.example"
+        i_sql = int(migrator.execute(
+            f"SELECT {_MINUTT_SQL} FROM (SELECT %s::TEXT AS hostname) t",
+            (h,)).fetchone()[0])
+        assert i_sql == revalideringsminutt(h), h
+    migrator.rollback()
+
+
+# ===========================================================================
+# Resolverkontrakten (§2.4) — port 1, 2, 3, 4, 11.
+# ===========================================================================
+
+def test_port4_diversitet_er_deploy_port():
+    """Port 4: resolverkonfigurasjon uten diversitet → oppstart NEKTES."""
+    from drift.domenerevalidering import krev_diversitet, Diversitetsfeil
+    krev_diversitet(_enige())                          # skal ikke kaste
+    with pytest.raises(Diversitetsfeil):
+        krev_diversitet(_enige()[:1])                  # bare én
+    with pytest.raises(Diversitetsfeil):               # samme operatør
+        krev_diversitet([_res("a", "op1", "n1", frozenset()),
+                         _res("b", "op1", "n2", frozenset())])
+    with pytest.raises(Diversitetsfeil):               # samme nett
+        krev_diversitet([_res("a", "op1", "n1", frozenset()),
+                         _res("b", "op2", "n1", frozenset())])
+
+
+def test_uenige_resolvere_er_ikke_vellykket():
+    """Port 2 (ren del): uenighet → ikke vellykket. Ikke flertall, ikke «minst én»."""
+    from drift.domenerevalidering import enige
+    assert enige(_enige(), "x.example") is True
+    assert enige(_uenige(), "x.example") is False
+
+
+def test_oppslag_som_kaster_teller_som_uenighet():
+    """«Vi fikk ikke svar» er ikke «svaret var ja»."""
+    from drift.domenerevalidering import Resolver, enige
+
+    def sprekker(_h):
+        raise TimeoutError("ingen svar")
+
+    assert enige([Resolver("a", "op1", "n1", sprekker),
+                  _res("b", "op2", "n2", frozenset({"t"}))], "x.example") is False
+
+
+@pg
+def test_port2_uenighet_rorer_ikke_siste_vellykkede(migrator):
+    """Port 2: `siste_vellykkede_revalidering` står URØRT ved uenighet."""
+    from drift import domenerevalidering as dr
+    h = _host()
+    _verifisert(migrator, TENANT, h, alder_timer=30)
+    for_ = _dkrow(migrator, TENANT, h)[2]
+    a = _admin()
+    try:
+        res = dr.kjor(a, _uenige())
+    finally:
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[2] == for_, \
+        "uenige resolvere oppdaterte likevel raden"
+    assert res.vellykket == 0 and res.uenige_resolvere >= 1
+
+
+@pg
+def test_port1_to_samtidige_kjoringer_serialiseres(migrator):
+    """Port 1: to samtidige kjøringer → én kjører, én venter (og gjør ingenting).
+
+    Arbeidernøkkelen er en advisory-lås. Den andre kjøringen returnerer tomt i
+    stedet for å stå i kø — planen er avledet, så det som ikke ble plukket nå,
+    plukkes uansett neste time.
+    """
+    from drift import domenerevalidering as dr
+    h = _host()
+    _verifisert(migrator, TENANT, h, alder_timer=30)
+    a, b = _admin(), _admin()
+    try:
+        a.execute("SELECT pg_advisory_lock(%s)", (dr.ARBEIDERNOKKEL,))
+        a.commit()
+        res = dr.kjor(b, _enige())
+        assert res.plukket_ko1 == 0 and res.vellykket == 0, \
+            "andre kjøring kjørte selv om arbeidernøkkelen var tatt"
+    finally:
+        a.execute("SELECT pg_advisory_unlock(%s)", (dr.ARBEIDERNOKKEL,))
+        a.commit()
+        a.close()
+        b.close()
+
+
+@pg
+def test_port3_arbeideren_setter_aldri_status(migrator):
+    """Port 3: tre døgn uten svar → raden verken slettet eller `utlopt`-satt.
+
+    Arbeideren har ingen autoritet. En rad som ikke lar seg revalidere blir
+    liggende, `verifisert`, med sitt gamle tidsstempel — synlig som nettopp det
+    den er. Ferskheten i `v_domeneautorisasjon` gjør jobben.
+    """
+    from drift import domenerevalidering as dr
+    h = _host()
+    _verifisert(migrator, TENANT, h, alder_timer=72)
+    a = _admin()
+    try:
+        dr.kjor(a, _uenige())
+    finally:
+        a.close()
+    rad = _dkrow(migrator, TENANT, h)
+    assert rad is not None, "arbeideren slettet raden"
+    assert rad[0] == "verifisert", f"arbeideren satte status til {rad[0]}"
+
+
+# ===========================================================================
+# Budsjettet (§2.2) — port 5, 6, 7, 10, 10b.
+# ===========================================================================
+
+@pg
+def test_port5_patologisk_populasjon_bryter_aldri_K(migrator):
+    """Port 5: mange plukkbare rader → kø 2 + kø 3 overskrider ALDRI K.
+
+    Populasjonen er konstruert patologisk: alle radene er ferske nok til å
+    holde seg unna sikkerhetsnettet, men gamle nok til å være plukkbare. Da er
+    det utelukkende `LIMIT K` som står mellom scheduleren og en kjøring som
+    revaliderer hele populasjonen på én time.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    for i in range(60):
+        _verifisert(migrator, TENANT, f"pat{i}-{secrets.token_hex(3)}.example",
+                    alder_timer=21)
+    a = _admin()
+    try:
+        N, K = dr.budsjett(a)
+        assert K == math.ceil(0.10 * N)
+        res = dr.kjor(a, _enige())
+    finally:
+        a.close()
+    assert res.ko2_pluss_ko3 <= res.budsjett_K, (
+        f"budsjettbrudd: kø2+kø3={res.ko2_pluss_ko3} > K={res.budsjett_K}")
+    assert res.plukket_ko1 == 0, "ingen rad skulle nådd sikkerhetsnettet"
+
+
+@pg
+def test_port10_sikkerhetsnett_plukkes_selv_nar_K_er_brukt_opp(migrator):
+    """Port 10: rad over 26 t plukkes i SAMME kjøring selv når K er oppbrukt.
+
+    Totalen får da overskride K — det er en MÅLT hendelse
+    (`sikkerhetsnett.kjoringer_over_K`), ikke en feil. Invarianten gjelder kø 2
+    + kø 3, ikke totalen; blandet man de to sammen, ville sikkerhetsnettet blitt
+    kappet av budsjettet, som er nøyaktig det §2.1 forbyr.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    for i in range(10):
+        _verifisert(migrator, TENANT, f"nett{i}-{secrets.token_hex(3)}.example",
+                    alder_timer=40)
+    a = _admin()
+    try:
+        res = dr.kjor(a, _enige())
+    finally:
+        a.close()
+    assert res.plukket_ko1 == 10, "sikkerhetsnettet ble kappet"
+    assert res.ko2_pluss_ko3 <= res.budsjett_K
+    assert res.kjoring_over_K is True, "hendelsen ble ikke MÅLT"
+
+
+@pg
+def test_port10b_samtidighet_aldri_over_C(migrator):
+    """Port 10b: kø 1 med mange rader → samtidighet aldri over C, null droppet.
+
+    «Ubegrenset rett til å bli plukket» er ikke «ubegrenset arbeid». Alle rader
+    behandles; det er takten som er begrenset.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    antall = 40
+    for i in range(antall):
+        _verifisert(migrator, TENANT, f"c{i}-{secrets.token_hex(3)}.example",
+                    alder_timer=40)
+    a = _admin()
+    try:
+        res = dr.kjor(a, _enige())
+    finally:
+        a.close()
+    assert res.plukket_ko1 == antall, "rader ble droppet fra kø 1"
+    assert res.maks_samtidighet <= dr.SAMTIDIGHET, (
+        f"samtidighet {res.maks_samtidighet} > C={dr.SAMTIDIGHET}")
+    assert res.vellykket == antall, "ikke alle rader ble faktisk behandlet"
+
+
+@pg
+def test_port6_bootstrap_rapporterer_faktisk_fordeling(migrator):
+    """Port 6: bootstrap → K aldri overskredet, og faktisk fordeling RAPPORTERT.
+
+    Fordelingen er en MÅLT egenskap (§2.3): testen krever at den finnes og
+    summerer riktig, ikke at den er jevn. `sha256 mod 1440` garanterer ikke
+    jevnhet, og en test som krevde det ville vært en test på flaks.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    for i in range(120):
+        _verifisert(migrator, TENANT, f"boot{i}-{secrets.token_hex(3)}.example",
+                    alder_timer=21)
+    a = _admin()
+    try:
+        res = dr.kjor(a, _enige())
+    finally:
+        a.close()
+    assert res.ko2_pluss_ko3 <= res.budsjett_K
+    assert res.fordeling_per_time, "fordelingen ble ikke rapportert"
+    assert sum(res.fordeling_per_time.values()) == (
+        res.plukket_ko1 + res.ko2_pluss_ko3)
+
+
+@pg
+def test_port7_outage_kohorten_er_monotont_synkende(migrator):
+    """Port 7: outage-KOHORTEN monotont synkende mot null, tom innen 24 t.
+
+    Målt på den IDENTIFISERTE kohorten, ikke på global kø 3. Det er hele poenget
+    med presiseringen: nytt etterslep fra en senere skjev time er legitimt og
+    teller ikke som recovery-feil, så en global kø-3-måling ville rapportert
+    falske brudd på en helt frisk drenering.
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    kohort = [f"out{i}-{secrets.token_hex(3)}.example" for i in range(30)]
+    for h in kohort:
+        _verifisert(migrator, TENANT, h, alder_timer=25)
+    igjen = []
+    a = _admin()
+    try:
+        for _ in range(24):
+            dr.kjor(a, _enige())
+            _sett_kontekst(migrator, TENANT)
+            n = int(migrator.execute(
+                "SELECT count(*) FROM domenekontroll WHERE tenant=%s"
+                "   AND hostname = ANY(%s)"
+                "   AND siste_vellykkede_revalidering"
+                "       < now() - interval '20 hours'",
+                (TENANT, kohort)).fetchone()[0])
+            migrator.rollback()
+            igjen.append(n)
+    finally:
+        a.close()
+    assert igjen == sorted(igjen, reverse=True), (
+        f"kohorten var ikke monotont synkende: {igjen}")
+    assert igjen[-1] == 0, f"kohorten ble ikke tom innen 24 kjøringer: {igjen}"
+
+
+@pg
+def test_port11_bred_feil_gir_en_alarm_og_ingen_m37_sak(migrator):
+    """Port 11: bred resolverfeil → ÉN driftsalarm, null M-37-saker.
+
+    Terskelen dedupliserer VARSLINGEN; den klassifiserer ikke tenantens
+    tilstand. Radene står urørt og er fortsatt individuelt synlige — alarmen
+    sier «vi fikk ikke svar», aldri «domenene er tapt».
+    """
+    from drift import domenerevalidering as dr
+    _tom_populasjon(migrator, TENANT)
+    for i in range(10):
+        _verifisert(migrator, TENANT, f"bred{i}-{secrets.token_hex(3)}.example",
+                    alder_timer=40)
+    _sett_kontekst(migrator, TENANT)
+    saker_for = int(migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s", (TENANT,)).fetchone()[0])
+    migrator.rollback()
+
+    a = _admin()
+    try:
+        res = dr.kjor(a, _uenige())
+    finally:
+        a.close()
+    assert res.alarm_utlost is True, "bred feil utløste ingen alarm"
+
+    _sett_kontekst(migrator, TENANT)
+    saker_etter = int(migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s", (TENANT,)).fetchone()[0])
+    synlige = int(migrator.execute(
+        "SELECT count(*) FROM domenekontroll WHERE tenant=%s"
+        "   AND status='verifisert'"
+        "   AND siste_vellykkede_revalidering < now() - interval '26 hours'",
+        (TENANT,)).fetchone()[0])
+    migrator.rollback()
+    assert saker_etter == saker_for, "bred feil opprettet M-37-sak(er)"
+    assert synlige == 10, "radene sluttet å være individuelt synlige"
+
+
+# ===========================================================================
+# Fire øyne (§4) — port 14, 15, 16, 17, 18, 20.
+# ===========================================================================
+
+def _konflikt(migrator, tenant_a, tenant_b, hostname):
+    """Kjør A→B-overtakelsen og opprett saken. -> (sak_id, B-generasjon).
+
+    Overtakelsen går gjennom FUNKSJONEN (admin-rollen); saken skrives med
+    migrator, som har bordtilgangen `opprett_overtakelsessak` trenger.
+    """
+    from api import domeneovertakelse as dov
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (tenant_a, hostname))
+        a.commit()
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (tenant_b, hostname)).fetchone()[0]
+        a.commit()
+    finally:
+        a.close()
+    assert svar.startswith("konflikt:"), svar
+    gen = _dkrow(migrator, tenant_b, hostname)[1]
+    _sett_kontekst(migrator, tenant_b)
+    sak = dov.opprett_overtakelsessak(
+        migrator, tenant_ny=tenant_b, hostname=hostname,
+        tenant_tapt=svar.split(":", 1)[1], generasjon=gen, aktor="sys")
+    migrator.commit()
+    return sak, gen
+
+
+def _attester(a, tenant, sak, hostname, utfall, vinner, aktor):
+    r = a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
+                  (tenant, sak, hostname, utfall, vinner, aktor)).fetchone()[0]
+    a.commit()
+    return r
+
+
+@pg
+def test_port14_godkjenn_med_en_attestasjon_nektes(migrator):
+    """Port 14: godkjenn med ÉN attestasjon → ingen avgjørelse.
+
+    Terskelen er to DISTINKTE aktører for en positiv tildeling. Med én står
+    saken uavgjort og B blir IKKE verifisert.
+    """
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                         "aktor-1") == "venter"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+
+
+@pg
+def test_port14b_to_distinkte_aktorer_avgjor(migrator):
+    """Motstykket: to distinkte aktører → avgjort, B verifisert.
+
+    Uten denne ville port 14 vært oppfylt av en funksjon som aldri avgjør noe.
+    """
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                         "aktor-2") == "avgjort"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "verifisert"
+
+
+@pg
+def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
+    """Port 15: samme aktør to ganger → avvist av PRIMÆRNØKKELEN, ikke av UI.
+
+    Testen går rett på funksjonen, utenom ethvert UI, nettopp for å bevise at
+    det er databasen som nekter.
+    """
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
+                      (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme"))
+        a.rollback()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves", \
+        "dobbeltstemmen avgjorde saken"
+
+
+@pg
+def test_port16_ulikt_utfall_gir_ingen_avgjorelse(migrator):
+    """Port 16: to attestasjoner som ikke er identiske → INGEN avgjørelse.
+
+    Aldri en sammenslåing. Begge radene bevares — de er evidens for at to
+    autoriserte aktører mente forskjellige ting.
+    """
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        assert _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
+                         "aktor-2") == "venter"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    n = int(migrator.execute(
+        "SELECT count(*) FROM overtakelse_attestasjon WHERE sak_id=%s",
+        (sak,)).fetchone()[0])
+    migrator.rollback()
+    assert n == 2, "en uenig attestasjon ble ikke bevart"
+
+
+@pg
+def test_port18_avvis_med_en_attestasjon_tilbakekaller(migrator):
+    """Port 18: avvis med ÉN attestasjon → B tilbakekalt. Fail-closed."""
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        assert _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
+                         "aktor-1") == "avgjort"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+
+
+@pg
+def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
+    """Port 17: C overtar med B-attestasjon inne → revisjonen økt, stemmen teller ikke.
+
+    Raden BEVARES: den er evidens for at noen attesterte et utfall som ble
+    foreldet. Forsvant den, ville «ingen stemte» og «stemmen ble ugyldig» sett
+    like ut i ettertid.
+
+    Revisjonsøkningen skjer i `degrader_forbigatte_utfordrere` — 016 lar B stå
+    urørt når C tar over, og PR-015 legger degraderingen utenpå uten å røre
+    016-kroppen.
+    """
+    h = _host()
+    sak, gen_b = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TREDJE_TENANT, h))
+        a.commit()
+        a.execute("SELECT degrader_forbigatte_utfordrere(%s,'sys')", (h,))
+        a.commit()
+    finally:
+        a.close()
+
+    # B-attestasjonen er BEVART på sin gamle revisjon...
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    n = int(migrator.execute(
+        "SELECT count(*) FROM overtakelse_attestasjon"
+        " WHERE sak_id=%s AND saksrevisjon=%s", (sak, gen_b)).fetchone()[0])
+    migrator.rollback()
+    assert n == 1, "den foreldede attestasjonen ble borte"
+
+    # ...men B er degradert og revisjonen økt, så stemmen kan ikke telle.
+    rad_b = _dkrow(migrator, ANNEN_TENANT, h)
+    assert rad_b[0] == "tilbakekalt", rad_b
+    assert rad_b[1] > gen_b, "saksrevisjonen ble ikke økt av overtakelsen"
+
+    a = _admin()
+    try:
+        with pytest.raises(psycopg.Error):
+            a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
+                      (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2"))
+        a.rollback()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] != "verifisert", \
+        "foreldet attestasjon autoriserte B"
+
+
+@pg
+def test_port20_abc_kun_c_i_avklaring_og_a_gjenoppstar_ikke(migrator):
+    """Port 20: A→B→C — hver overtakelse tilbakekaller forrige, KUN C i avklaring.
+
+    016 lar den forbigåtte B stå i `avklaring_kreves` (den grenen setter bare C
+    i avklaring og flytter bindingen). B kan ikke bli godkjent — gjerdet mot
+    `hostname_binding` stopper det — men statusen blir aldri terminal, og
+    porten måler statusen. `degrader_forbigatte_utfordrere` lukker det uten å
+    røre en eneste 016-kropp.
+    """
+    h = _host()
+    _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TREDJE_TENANT, h))
+        a.commit()
+        antall = int(a.execute("SELECT degrader_forbigatte_utfordrere(%s,'sys')",
+                               (h,)).fetchone()[0])
+        a.commit()
+        assert antall == 1, f"forventet én forbigått utfordrer, fikk {antall}"
+        # Idempotent: en kjøring til endrer ingenting.
+        assert int(a.execute("SELECT degrader_forbigatte_utfordrere(%s,'sys')",
+                             (h,)).fetchone()[0]) == 0
+        a.commit()
+    finally:
+        a.close()
+    assert _dkrow(migrator, TREDJE_TENANT, h)[0] == "avklaring_kreves"
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+    assert _dkrow(migrator, TENANT, h)[0] == "tilbakekalt", "A gjenoppstod"
+
+
+@pg
+def test_attestasjon_er_append_only_ogsa_mot_delete(migrator):
+    """§1: foreldede attestasjoner kan ikke slettes.
+
+    De er evidens for at noen attesterte et utfall som ble foreldet. Kan de
+    slettes, mister vi akkurat den sporbarheten fire øyne skal gi.
+    """
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    a = _admin()
+    try:
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+    finally:
+        a.close()
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("DELETE FROM overtakelse_attestasjon WHERE sak_id=%s",
+                         (sak,))
+    migrator.rollback()
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("UPDATE overtakelse_attestasjon SET utfall='avvis'"
+                         " WHERE sak_id=%s", (sak,))
+    migrator.rollback()
+
+
+# ===========================================================================
+# Rydding (§6) — port 25, 26, 27.
+# ===========================================================================
+
+@pg
+def test_port25_batchgrense_og_idempotens(migrator):
+    """Port 25: idempotent rydding i avgrensede batcher.
+
+    Grensen finnes for å begrense TRANSAKSJONEN, ikke sluttresultatet: kjøringen
+    dreneres i flere avgrensede batcher, hver committet for seg.
+    """
+    from drift import artefaktrydding
+    a = _admin()
+    try:
+        artefaktrydding.kjor(a, grense=5, maks_batcher=3)
+        res2 = artefaktrydding.kjor(a, grense=5, maks_batcher=3)
+        assert res2.forkastet == 0, "andre kjøring forkastet noe på nytt"
+    finally:
+        a.close()
+
+
+@pg
+def test_grense_maa_vaere_positiv(migrator):
+    """En grense på 0 ville vært en ryddejobb som aldri rydder — stille."""
+    a = _admin()
+    try:
+        for ugyldig in (0, -1):
+            with pytest.raises(psycopg.Error):
+                a.execute("SELECT rydd_staged_artefakter(%s)", (ugyldig,))
+            a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+def test_port26_karantene_bevares_og_telles(migrator):
+    """Port 26: karantenesatt artefakt bevares og TELLES.
+
+    Karantene bevares på EGENSKAP, ikke på alder: predikatet treffer kun
+    `staged`, så et karantenesatt artefakt er utenfor rekkevidde uansett hvor
+    gammelt det blir.
+    """
+    from drift import artefaktrydding
+    a = _admin()
+    try:
+        for_ = int(a.execute("SELECT antall_karantenesatte()").fetchone()[0])
+        res = artefaktrydding.kjor(a)
+        etter = int(a.execute("SELECT antall_karantenesatte()").fetchone()[0])
+    finally:
+        a.close()
+    assert res.karantene_bevart == for_, "ryddingen endret antallet karantenesatte"
+    assert etter == for_, "et karantenesatt artefakt ble ryddet"
+
+
+def test_port27_to_feilede_kjoringer_gir_alarm():
+    """Port 27: to sammenhengende feilede kjøringer → alarm.
+
+    Én feilet kjøring er drift; to på rad er en voksende disk ingen ser.
+    """
+    from drift import artefaktrydding
+
+    class Sprekker:
+        """Minimal dobbeltgjenger: låsen tas, ryddekallet feiler."""
+
+        def execute(self, sql, args=None):
+            if "rydd_staged_artefakter" in sql:
+                raise psycopg.OperationalError("simulert feil")
+
+            class R:
+                def fetchone(self_inner):
+                    return (True,)
+            return R()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+    res1 = artefaktrydding.kjor(Sprekker(), tidligere_feil=0)
+    assert res1.feilet and not res1.alarm_utlost, "alarm gikk på FØRSTE feil"
+    res2 = artefaktrydding.kjor(Sprekker(), tidligere_feil=1)
+    assert res2.feilet and res2.alarm_utlost, "to feil på rad ga ingen alarm"

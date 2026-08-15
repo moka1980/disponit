@@ -110,7 +110,21 @@ INSERT INTO _design VALUES
     -- PR-014b CP5: artefakt-opplastingskapabilitet. Den frittstående brenneren
     -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
     ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),
-    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier');
+    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier'),
+    -- PR-015: fire øyne + de bundne driftsformene (migrasjon 019). Samme eier
+    -- som resten av domenelaget — avgjørelsen er iboende kryss-tenant, og
+    -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
+    -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
+    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'degrader_forbigatte_utfordrere(text,text)',         'disponit_domene_eier'),
+    ('FUNCTION', 'antall_avgitte_attestasjoner(bigint,bigint)',       'disponit_domene_eier'),
+    ('FUNCTION', 'rydd_staged_artefakter(integer)',                   'disponit_domene_eier'),
+    ('FUNCTION', 'antall_karantenesatte()',                           'disponit_domene_eier'),
+    -- Revalideringsscheduleren. Eid av domene_eier fordi den MÅ lese
+    -- `domenekontroll` på tvers av tenanter (BYPASSRLS) for å regne budsjettet
+    -- på riktig nevner — arbeiderrollen har bevisst ingen bordtilgang.
+    ('FUNCTION', 'revalideringskandidater(integer,integer,integer,integer,integer)', 'disponit_domene_eier'),
+    ('FUNCTION', 'revalideringspopulasjon()',                         'disponit_domene_eier');
 
 DO $$
 DECLARE

@@ -657,6 +657,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return unntaksbehandling.handling_endepunkt(
             tjeneste, request, request.path_params["id"])
 
+    def unntak_domeneattestasjon(request: Request) -> Response:
+        # PR-015 §4: fire øyne. EGEN rute og EGET scope — å henge den på
+        # /handling ville gitt `exceptions:approve` cross-tenant
+        # domeneautoritet som en ren bieffekt av å kunne behandle unntak.
+        from . import domeneovertakelse
+        return domeneovertakelse.attester_endepunkt(
+            tjeneste, request, request.path_params["id"])
+
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
@@ -729,6 +737,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["GET"]),
         Route("/v1/unntak/{id:int}/handling", unntak_handling,
               methods=["POST"]),
+        Route("/v1/unntak/{id:int}/domeneattestasjon",
+              unntak_domeneattestasjon, methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
@@ -803,7 +813,14 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # aktivering) er BEVISST ADSKILTE — den som
                                      # kan skrive et utkast skal ikke dermed
                                      # kunne sette det i produksjon (v5 §3, V6).
-                                     "policy:write", "policy:activate"})
+                                     "policy:write", "policy:activate",
+                                     # PR-015 §3/§4: domeneadjudikasjon er en
+                                     # MENNESKELIG avgjørelse i PR-012-flaten,
+                                     # altså en browsersesjon. Scopet står her
+                                     # for å slippe forbi den generelle porten
+                                     # — ikke for å gi det til noen: det deles
+                                     # aldri ut sammen med exceptions:handle.
+                                     "domains:adjudicate"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -1090,6 +1107,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
     ("POST", "/v1/unntak/{id:int}/handling"): "exceptions:approve",
+    # PR-015 §3: cross-tenant domeneautoritet er sitt EGET scope.
+    ("POST", "/v1/unntak/{id:int}/domeneattestasjon"): "domains:adjudicate",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
@@ -1251,6 +1270,72 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                                        art="drift",
                                        feiltype="kvitteringskapabilitet")
                 return _feilsvar("db_utilgjengelig", rid)
+
+            # PR-015 §5: OPPLASTINGSkapabiliteten utstedes her, sammen med
+            # kvitteringskapabiliteten, som et SEPARAT token — aldri utledet av
+            # den, aldri samme audience. Ikke noe nytt on-demand-endepunkt i v1:
+            # et endepunkt som deler ut opplastingsrett på forespørsel ville
+            # gjort bindingen til noe modulen ber om, ikke noe serveren vet.
+            #
+            # Bindingen er SERVERKONTEKSTENS: tenant · oppdrag_id · modul_id ·
+            # release_id · kontraktversjon · kontrakt_hash · module_epoch ·
+            # artefakttype. Modulen ber ikke om felt; den mottar et token.
+            # `oppdrag` stempler modul/kontrakt/epoch ved claim, men IKKE
+            # release (017 sier det selv). Releasen hentes derfor fra
+            # deploymentregisteret: den ENE `claiming`-deploymenten for samme
+            # (modul, kontraktversjon, kontrakt_hash) — det er nettopp den som
+            # plukker arbeid, og unikindeksen i 014a garanterer én per miljø.
+            # Er den tvetydig eller fraværende, utstedes ingen kapabilitet:
+            # å gjette en release ville tilskrevet artefaktet en opprinnelse
+            # serveren ikke kan bevise.
+            opplasting = None
+            oppdragsrad = conn.execute(
+                "SELECT o.modul_id, ("
+                "  SELECT string_agg(DISTINCT d.release_id, ',')"
+                "    FROM moduldeployment d"
+                "   WHERE d.modul_id = o.modul_id AND d.livslop = 'claiming'"
+                "     AND d.kontraktversjon = o.kontraktversjon"
+                "     AND d.kontrakt_hash = o.kontrakt_hash),"
+                " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
+                " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+                (tenant, opp_id)).fetchone()
+            if oppdragsrad is not None and oppdragsrad[0] is not None \
+                    and oppdragsrad[1] is not None and "," not in oppdragsrad[1]:
+                (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
+                # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
+                # modulen + kontrakten. Finnes ingen registrert type, utstedes
+                # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
+                # En modul som ikke skal laste opp, får ikke lov (port 22).
+                typerad = conn.execute(
+                    "SELECT artefakttype FROM artefakttype_register"
+                    " WHERE eiermodul=%s AND kontraktversjon=%s"
+                    "   AND kontrakt_hash=%s ORDER BY artefakttype LIMIT 1",
+                    (o_modul, o_kv, o_khash)).fetchone()
+                if typerad is not None:
+                    # Levetid = evidensfristen, ALDRI lengre (port 23). 017
+                    # klemmer levetiden til [60, 3600]; er det under et minutt
+                    # igjen til fristen, ville klemmen gitt et token som lever
+                    # LENGER enn evidensen det er til for. Da utstedes ingen —
+                    # å runde oppover her hadde vært å bryte grensen i det
+                    # stille, og oppdraget er uansett tapt før opplastingen.
+                    igjen = int((ef - datetime.now(timezone.utc)).total_seconds())
+                    if igjen >= 60:
+                        opplasting_jti = secrets.token_hex(16)
+                        # Epoch kontrolleres UNDER oppdragslåsen: dette kallet
+                        # ligger i samme transaksjon som claimen, som holder
+                        # raden. Endret epoch mellom claim og utstedelse gir
+                        # ingen kapabilitet (port 24) — funksjonen matcher
+                        # o.module_epoch og feiler.
+                        orad = conn.execute(
+                            "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
+                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
+                             o_epoch, typerad[0], opplasting_jti,
+                             min(igjen, 3600))).fetchone()
+                        if orad is not None:
+                            opplasting = {"jti": orad[0],
+                                          "utloper": orad[1].isoformat(),
+                                          "artefakttype": typerad[0]}
             conn.commit()
         except psycopg.Error as e:
             conn.rollback()
@@ -1272,6 +1357,12 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # oppdrag modulen noensinne har hatt.
             "kvittering_jti": kap[0],
             "kvittering_utloper": kap[1].isoformat(),
+            # PR-015 §5: SEPARAT token, aldri utledet av kvitteringen og aldri
+            # samme audience — `opplasting_jti` virker ikke som kvittering og
+            # motsatt (port 21). `null` når oppdraget ikke har noen registrert
+            # artefakttype: en modul som ikke skal laste opp, får ikke lov, og
+            # claimen lykkes likevel (port 22).
+            "opplasting": opplasting,
             "verification_generation": verifikasjonsgen,
             "payload": minimert, "request_id": rid}, 200,
             {"x-request-id": rid})
