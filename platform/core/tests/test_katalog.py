@@ -72,7 +72,7 @@ def test_generatoren_leser_sannhetskilden():
     """
     kilde = "/".join(KILDE_REL)
     assert KILDE.exists(), f"sannhetskilden mangler: {kilde}"
-    tekst = GENERATOR.read_text("utf-8")
+    tekst = GENERATOR.read_text(encoding="utf-8")
     assert kilde in tekst, (
         f"generatoren nevner ikke sannhetskilden {kilde}")
     # Arkivet skal ikke være INNDATA. Det kan nevnes i prosa (kommentaren som
@@ -101,13 +101,13 @@ def test_katalogen_er_fersk(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
-    ny = (tmp_path / "platform/core/ui/static/js/katalog.js").read_text("utf-8")
-    assert ny == KATALOG_JS.read_text("utf-8"), (
+    ny = (tmp_path / "platform/core/ui/static/js/katalog.js").read_text(encoding="utf-8")
+    assert ny == KATALOG_JS.read_text(encoding="utf-8"), (
         "katalog.js er ikke fersk — kjør tools/gen_katalog.py")
     for sprak, sti in LOCALER.items():
         forventet = json.loads((tmp_path / "locales" / f"{sprak}.json")
-                               .read_text("utf-8"))
-        faktisk = json.loads(sti.read_text("utf-8"))
+                               .read_text(encoding="utf-8"))
+        faktisk = json.loads(sti.read_text(encoding="utf-8"))
         nokler = {k: v for k, v in forventet.items()
                   if k.startswith(("site.katalog.m", "site.omrade."))}
         for k, v in nokler.items():
@@ -136,7 +136,7 @@ def test_katalogen_har_forventet_form():
 @pytest.mark.parametrize("sprak", sorted(LOCALER))
 def test_hvert_navn_finnes_paa_begge_sprak(sprak):
     katalog, omrader = _katalog_js()
-    d = json.loads(LOCALER[sprak].read_text("utf-8"))
+    d = json.loads(LOCALER[sprak].read_text(encoding="utf-8"))
     for m in katalog:
         nokkel = f"site.katalog.m{m['n']}.navn"
         assert d.get(nokkel), f"{nokkel} mangler i {sprak}.json"
