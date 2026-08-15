@@ -59,6 +59,25 @@ if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "kjører som før."
   exit 1
 fi
+# PR-015: driftstimerne over kaller funksjoner som migrasjon 019 kun granter
+# til `disponit_domains_admin` og `disponit_domener`. En EKSISTERENDE
+# installasjon har ingen DISPONIT_DOMAINS_URL før `oppsett-postgresql.sh` er
+# kjørt på nytt; en stille fallback til runtime-DSN-en (`disponit`) ville
+# startet begge timerne rett i `permission denied` og latt revalidering og
+# rydding stå ute av drift uten at utrullingen sa fra. Gaten hører derfor
+# hjemme her, FØR første mutasjon: feiler den, er systemet beviselig urørt.
+# Lesingen skjer i en subshell, så miljøfilen ikke lekker inn i preflighten.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_DOMAINS_URL mangler i $MILJOFIL."
+  echo "Driftstimerne (disponit-domenerevalidering, disponit-artefaktrydding)"
+  echo "ville da fått runtime-DSN-en, som migrasjon 019 ikke granter"
+  echo "revaliderings- eller ryddefunksjonene til — begge timerne ville"
+  echo "startet i 'permission denied'. Kjør deploy/staging/oppsett-postgresql.sh"
+  echo "på nytt (den oppretter rollen disponit_domener og skriver DSN-en),"
+  echo "og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 
 # ============================================================
 # HERFRA MUTERES SYSTEMET — gaten over er passert.
@@ -119,7 +138,10 @@ skriv_cred tokenadmin DISPONIT_TOKEN_PEPPER    "$DISPONIT_TOKEN_PEPPER"
 # som resten (v3 §5); tom streng gir en tydelig oppstart-nektet-feil i
 # stedet for stille å hoppe over diversitetskravet.
 install -d -m 700 /etc/disponit/domener
-skriv_cred domener DISPONIT_DOMAINS_URL "${DISPONIT_DOMAINS_URL:-$DATABASE_URL}"
+# INGEN fallback til $DATABASE_URL: den DSN-en har ingen av grantene 019
+# gir, så en fallback ville bare gjort en manglende rolle til to timere som
+# feiler i drift. Gaten i §2 har alt avbrutt utrullingen hvis den mangler.
+skriv_cred domener DISPONIT_DOMAINS_URL "$DISPONIT_DOMAINS_URL"
 skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
