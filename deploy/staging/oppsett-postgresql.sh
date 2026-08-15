@@ -228,8 +228,12 @@ fi
 # JWS/ID-token-validering, JWKS-rotasjon) — Disponit skriver ingen egen
 # JWT-parser (v6 §3). joserfc er Authlibs JOSE-backend. Pinnes med hash i
 # et lockfil som egen driftsoppgave; her installeres de i venv-en.
+# PR-015: revalideringsarbeideren (`drift.kjor_revalidering`) slaar opp TXT
+# gjennom dnspython. Importen er lat, saa uten den her ville unit-preflighten
+# passert og feilen foerst dukket opp ved foerste timeraktivering — som en
+# RuntimeError i `_txt_oppslag`, med ingen domener revalidert.
 "$VENV/bin/pip" install -q "psycopg[binary]" cryptography pyyaml jsonschema pytest \
-  starlette uvicorn httpx "authlib>=1.6,<2" joserfc
+  starlette uvicorn httpx "authlib>=1.6,<2" joserfc dnspython
 
 for _dsn in "$DISPONIT_MIGRATOR_URL" "$DISPONIT_TEST_MIGRATOR_DSN"; do
   DISPONIT_MIGRATOR_URL="$_dsn" "$VENV/bin/python" \

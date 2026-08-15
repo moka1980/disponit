@@ -59,6 +59,20 @@ if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "kjører som før."
   exit 1
 fi
+# PR-015: revalideringsarbeideren importerer dnspython LAT (enhetstestene
+# injiserer egne oppslag og skal slippe DNS-avhengigheten). Baksiden er at
+# unit-preflighten passerer selv om pakken mangler i venv-en, og at feilen
+# først viser seg ved første timeraktivering — som en RuntimeError i
+# `_txt_oppslag`, uten at ett eneste domene blir revalidert. Importen prøves
+# derfor her, lesende, sammen med resten av gaten.
+if ! "$ROT/.venv/bin/python" -c 'import dns.resolver' 2>/dev/null; then
+  echo "AVBRUTT: dnspython mangler i $ROT/.venv — disponit-domenerevalidering"
+  echo "ville startet og feilet ved første TXT-oppslag. Kjør"
+  echo "deploy/staging/oppsett-postgresql.sh på nytt (den installerer den),"
+  echo "og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015: driftstimerne over kaller funksjoner som migrasjon 019 kun granter
 # til `disponit_domains_admin` og `disponit_domener`. En EKSISTERENDE
 # installasjon har ingen DISPONIT_DOMAINS_URL før `oppsett-postgresql.sh` er
