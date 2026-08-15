@@ -13,6 +13,13 @@ Wirer sammen de tre delene og gjør INGEN beslutninger selv:
 Resultatet skrives som én linje JSON på stdout — journalen er der drift leser
 den. Målte egenskaper (fordeling, kjøringer over K, dreneringstid) rapporteres;
 de har ingen bestått/ikke bestått.
+
+ALARMEN er unntaket fra det (§2.4). Slår terskelen for bred resolverfeil inn,
+avsluttes prosessen med feilkode, slik at systemd setter oneshot-unitten i
+`failed` — samme vei som ryddejobbens §6-alarm bruker. Et JSON-felt alene ville
+vært en alarm ingenting lytter på: uten en konsument i journalen ville
+`systemctl` rapportert kjøringen som vellykket mens domeneautorisasjonene
+eldes mot 72-timersgrensen.
 """
 from __future__ import annotations
 
@@ -85,9 +92,20 @@ def resolvere() -> list[dr.Resolver]:
     return ut
 
 
+def _koble(dsn: str):
+    """Tilkoblingen bak et navn på modulnivå.
+
+    Importen er fortsatt lat (arbeideren skal kunne importeres uten et
+    databasebibliotek i hånda), men navnet gir testene et sømpunkt — samme
+    mønster som ryddejobben, slik at alarmveien måles på det `main()` faktisk
+    returnerer og ikke på en etterligning av den.
+    """
+    from db.pg import koble
+    return koble(dsn)
+
+
 def main() -> int:
     from db.hemmeligheter import last_credentials
-    from db.pg import koble
     last_credentials()  # PR-009 §5: LoadCredential før env-lesing under
     try:
         res_konf = resolvere()
@@ -103,7 +121,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    conn = koble(dsn)
+    conn = _koble(dsn)
     try:
         r = dr.kjor(conn, res_konf)
     finally:
@@ -129,6 +147,28 @@ def main() -> int:
         "alarm.terskel_utlost": int(r.alarm_utlost),
         "maks_samtidighet": r.maks_samtidighet,
     }))
+    if r.alarm_utlost:
+        # Codex (P1): terskelen skal FØRE et sted. `alarm.terskel_utlost: 1` i
+        # en ellers vellykket kjøring er ingen alarm — ingen journalkonsument,
+        # ingen OnFailure og ingen annen utrullet vei leser det feltet, så
+        # systemd bokførte en bred resolverfeil som en vellykket aktivering
+        # mens domeneautorisasjonene eldes mot 72-timersgrensen. Med en
+        # feilkode havner unitten i `failed`, synlig for `systemctl --failed`
+        # og for enhver OnFailure drift senere henger på — samme kontrakt som
+        # ryddejobbens §6-alarm.
+        #
+        # Radene som FAKTISK ble revalidert er alt committet (én commit per
+        # rad), så feilkoden kaster ikke arbeid: den sier at kjøringen ikke kan
+        # stås inne for, ikke at den ikke skjedde.
+        print(json.dumps({
+            "hendelse": "revalideringsalarm",
+            "grunn": "bred_resolverfeil",
+            "andel_terskel": dr.ALARM_ANDEL,
+            "uenige_resolvere": r.uenige_resolvere,
+            "oppslagsfeil": r.oppslagsfeil,
+            "plukket": r.plukket_ko1 + r.ko2_pluss_ko3,
+        }), file=sys.stderr)
+        return 1
     return 0
 
 

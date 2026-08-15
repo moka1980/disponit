@@ -546,6 +546,38 @@ def test_port11_bred_feil_gir_en_alarm_og_ingen_m37_sak(migrator):
     assert synlige == 10, "radene sluttet å være individuelt synlige"
 
 
+def test_alarmterskelen_gir_en_feilet_kjoring(monkeypatch):
+    """Codex (P1): alarmen skal FØRE et sted — ikke bare stå i JSON-linjen.
+
+    Ingen journalkonsument, OnFailure eller annen utrullet vei leser
+    `alarm.terskel_utlost`, så en kjøring som utløste terskelen ble bokført av
+    systemd som vellykket. Kontrakten er derfor exit-koden, som for ryddejobben:
+    alarm → `failed`, ingen alarm → `success`.
+    """
+    from drift import domenerevalidering as dr, kjor_revalidering as kr
+
+    class Tilkobling:
+        def close(self):
+            pass
+
+    # Transporten stubbes: dnspython er en driftsavhengighet, og alarmveien
+    # skal kunne måles uten den (samme grunn som den late importen der).
+    monkeypatch.setattr(kr, "_txt_oppslag", lambda adresse: (lambda h: frozenset()))
+    monkeypatch.setenv("DISPONIT_RESOLVERE",
+                       "a@op1/net1=192.0.2.1,b@op2/net2=192.0.2.2")
+    monkeypatch.setenv("DISPONIT_DOMAINS_URL", "postgresql:///finnes-ikke")
+    monkeypatch.setattr(kr, "_koble", lambda dsn: Tilkobling())
+
+    rolig = dr.Revalideringsresultat(plukket_ko2=10, vellykket=10)
+    monkeypatch.setattr(dr, "kjor", lambda *a, **k: rolig)
+    assert kr.main() == 0, "en kjøring uten alarm ble rapportert som feilet"
+
+    alarm = dr.Revalideringsresultat(plukket_ko2=10, uenige_resolvere=9,
+                                     alarm_utlost=True)
+    monkeypatch.setattr(dr, "kjor", lambda *a, **k: alarm)
+    assert kr.main() == 1, "alarmterskelen ga fortsatt en vellykket kjøring"
+
+
 # ===========================================================================
 # Fire øyne (§4) — port 14, 15, 16, 17, 18, 20.
 # ===========================================================================
