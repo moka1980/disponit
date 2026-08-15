@@ -321,16 +321,35 @@ def test_utrullingen_leverer_faktisk_DISPONIT_MILJO_til_api_prosessen():
     opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
     unit = (rot / "deploy/staging/disponit-api.service").read_text(
         encoding="utf-8")
-    assert re.search(r"^skriv_cred api DISPONIT_MILJO\s", opp, re.M), \
+    materialisering = re.search(r"^skriv_cred api DISPONIT_MILJO\s", opp, re.M)
+    assert materialisering, \
         "opp.sh materialiserer ikke DISPONIT_MILJO som credential for api"
     assert "LoadCredential=DISPONIT_MILJO:/etc/disponit/api/DISPONIT_MILJO" \
         in unit, "disponit-api.service laster ikke DISPONIT_MILJO"
     # …og løypa kan ikke skrive `produksjon` på staging-maskinen: gaten står
     # FØR første mutasjon, som de andre miljøfil-portene i opp.sh.
+    # Posisjonene måles på LINJESTART, aldri med `index` på kommandoteksten:
+    # kommentarene i opp.sh omtaler `skriv_cred api DISPONIT_MILJO` med navn,
+    # og en test som traff omtalen ville målt rekkefølgen på en kommentar.
+    skriving = materialisering.start()
     gate = opp.index('[ "${DISPONIT_MILJO:-staging}" = "staging" ]')
     assert gate < opp.index("HERFRA MUTERES SYSTEMET"), \
         "miljøporten står etter første mutasjon — da er systemet alt endret"
-    assert gate < opp.index("skriv_cred api DISPONIT_MILJO")
+    assert gate < skriving
+    # …og verdien som SKRIVES er den som ble GODKJENT (Codex P2). Gaten over
+    # leser miljøfila i en subshell — bevisst, så fila ikke lekker inn i
+    # preflighten — og verdien dør med subshellen. `skriv_cred` under bruker
+    # en SENERE, egen lesing av samme fil. Byttes eller redigeres fila mellom
+    # de to, godkjente gaten en verdi som aldri ble skrevet, og staging-API-et
+    # startet i produksjonsmodus med gaten passert. Porten er derfor ikke bare
+    # at det finnes en andre sjekk, men at miljøfila ikke leses igjen mellom
+    # den og skrivingen: godkjenningen og skrivingen må stå på samme variabel.
+    lesing = opp.rindex('. "$MILJOFIL"')
+    andre_gate = opp.index('[ "${DISPONIT_MILJO:-staging}" != "staging" ]')
+    assert lesing < andre_gate < skriving, \
+        "gaten står ikke mellom den autoritative lesingen og skrivingen"
+    assert '. "$MILJOFIL"' not in opp[andre_gate:skriving], \
+        "miljøfila leses på nytt mellom gaten og skrivingen — vinduet er åpent"
 
 
 def test_credential_veien_tolker_ikke_miljoverdien(tmp_path, monkeypatch):
