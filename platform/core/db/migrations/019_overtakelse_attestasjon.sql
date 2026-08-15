@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS overtakelse_attestasjon (
     sak_id          BIGINT NOT NULL,
     saksrevisjon    BIGINT NOT NULL,   -- = domenekontroll.autorisasjonsgenerasjon
     aktor           TEXT   NOT NULL CHECK (length(btrim(aktor)) > 0),
+    -- Codex (P1): aktøren MÅ kunne reautoriseres når terskelen slår inn, ikke
+    -- bare når stemmen avgis. `aktor` er sesjonsstrengen (`sesjon:<bid>`) og
+    -- egner seg til evidens, ikke til oppslag. Prinsipalen bak den lagres
+    -- derfor eksplisitt, sammen med DEN authz-versjonen medlemskapet hadde da
+    -- stemmen ble avgitt: en rolle som trekkes tilbake bumper versjonen (010),
+    -- og en gammel rad kan da ikke lenger telle som en gyldig godkjenning.
+    -- Nullbar for radene en tidligere kjøring av denne migrasjonen kan ha
+    -- rukket å skrive; slike rader teller IKKE (fail-closed, se opptellingen).
+    bruker_id       TEXT   CHECK (bruker_id IS NULL OR length(btrim(bruker_id)) > 0),
+    authz_versjon   INT,
     utfall          TEXT   NOT NULL CHECK (utfall IN ('godkjenn','avvis')),
     vinnende_tenant TEXT   NOT NULL,
     hostname        TEXT   NOT NULL,
@@ -53,6 +63,11 @@ CREATE TABLE IF NOT EXISTS overtakelse_attestasjon (
     -- sjekker nettopp at det er nøkkelen som avviser, ikke en frontend-sjekk.
     PRIMARY KEY (sak_id, saksrevisjon, aktor)
 );
+
+-- Idempotens: tabellen kan finnes fra en tidligere kjøring av migrasjonen, og
+-- `CREATE TABLE IF NOT EXISTS` legger da ikke til de to nye kolonnene.
+ALTER TABLE overtakelse_attestasjon ADD COLUMN IF NOT EXISTS bruker_id TEXT;
+ALTER TABLE overtakelse_attestasjon ADD COLUMN IF NOT EXISTS authz_versjon INT;
 
 -- Opptellingen i §4 går alltid på (sak, revisjon) og teller distinkte aktører.
 CREATE INDEX IF NOT EXISTS overtakelse_attestasjon_sak
@@ -109,6 +124,8 @@ SET LOCAL ROLE disponit_domene_eier;
 -- hostnavnet tar (016) — så opptelling og overgang kan ikke rives fra hverandre
 -- av en samtidig overtakelse.
 -- ------------------------------------------------------------
+DROP FUNCTION IF EXISTS avgi_overtakelse_attestasjon(
+    TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT);
 CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
     p_tenant               TEXT,     -- utfordreren (B) — eier saken
     p_sak_id               BIGINT,
@@ -116,9 +133,10 @@ CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
     p_utfall               TEXT,
     p_vinnende_tenant      TEXT,
     p_aktor                TEXT,
-    p_forventet_generasjon BIGINT)   -- saksrevisjonen SAKEN ble opprettet for
+    p_forventet_generasjon BIGINT,   -- saksrevisjonen SAKEN ble opprettet for
+    p_bruker_id            TEXT)     -- prinsipalen bak `p_aktor` (brukermedlemskap)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_gen BIGINT; v_status TEXT; v_antall INT; v_avvik INT;
+DECLARE v_gen BIGINT; v_status TEXT; v_antall INT; v_avvik INT; v_authz INT;
 BEGIN
     PERFORM public.krev_kanonisk_hostname(p_hostname);
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
@@ -162,23 +180,72 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    -- Stemmegiveren autoriseres i BASEN, ikke bare i API-laget, og
+    -- medlemskapsraden LÅSES (FOR SHARE) ut transaksjonen. Uten låsen kunne en
+    -- tilbakekalling committe mellom denne sjekken og overgangen nedenfor.
+    -- Rollen er den eneste som bærer `domains:adjudicate` (autorisasjon.py);
+    -- basen sjekker rollen fordi scopene er en applikasjonsavledning, og
+    -- fire øyne skal ikke hvile på at applikasjonen husket å spørre.
+    IF p_bruker_id IS NULL OR length(btrim(p_bruker_id)) = 0 THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: bruker_id mangler'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT m.authz_version INTO v_authz
+      FROM public.brukermedlemskap m
+     WHERE m.tenant = p_tenant AND m.bruker_id = p_bruker_id
+       AND m.aktiv AND 'domeneadjudikator' = ANY (m.roller)
+       FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: % er ikke aktiv '
+            'domeneadjudikator for %', p_bruker_id, p_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
     -- Dobbeltstemme avvises av primærnøkkelen. INGEN ON CONFLICT: en aktør som
     -- prøver å stemme to ganger skal få en hard feil, ikke en stille no-op som
     -- ser ut som en godkjent stemme fra kallerens side.
     INSERT INTO public.overtakelse_attestasjon
-        (tenant, sak_id, saksrevisjon, aktor, utfall, vinnende_tenant, hostname)
-        VALUES (p_tenant, p_sak_id, v_gen, p_aktor, p_utfall, p_vinnende_tenant,
-                p_hostname);
+        (tenant, sak_id, saksrevisjon, aktor, bruker_id, authz_versjon,
+         utfall, vinnende_tenant, hostname)
+        VALUES (p_tenant, p_sak_id, v_gen, p_aktor, p_bruker_id, v_authz,
+                p_utfall, p_vinnende_tenant, p_hostname);
 
     -- §4: de to radene må ha IDENTISK (saksrevisjon, utfall, vinnende_tenant,
     -- hostname). Avvik → ingen avgjørelse, ALDRI en sammenslåing. Vi teller
     -- derfor kun stemmer som er enige med denne, og sjekker samtidig om det
     -- finnes uenige stemmer på samme revisjon — de skal blokkere, ikke ignoreres.
+    --
+    -- Codex (P1): stemmene REAUTORISERES her, ikke bare da de ble avgitt.
+    -- Attestasjonstabellen er append-only, så en rad fra en aktør som siden
+    -- har mistet `domeneadjudikator` — eller hele medlemskapet — ville ellers
+    -- fortsatt telt, og en andre stemme kunne gjennomført overtakelsen med
+    -- ÉN faktisk autorisert aktør. Alle medlemskapsradene bak de tellende
+    -- stemmene låses derfor DELT først: en tilbakekalling som er underveis må
+    -- vente til denne transaksjonen er ferdig, og en som alt har committet er
+    -- synlig i tellingen under.
+    PERFORM 1
+       FROM public.brukermedlemskap m
+       JOIN public.overtakelse_attestasjon a
+         ON a.tenant = m.tenant AND a.bruker_id = m.bruker_id
+      WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_gen
+        FOR SHARE OF m;
     SELECT count(*) INTO v_antall
-      FROM public.overtakelse_attestasjon
-     WHERE sak_id = p_sak_id AND saksrevisjon = v_gen
-       AND utfall = p_utfall AND vinnende_tenant = p_vinnende_tenant
-       AND hostname = p_hostname;
+      FROM public.overtakelse_attestasjon a
+     WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_gen
+       AND a.utfall = p_utfall AND a.vinnende_tenant = p_vinnende_tenant
+       AND a.hostname = p_hostname
+       -- Fail-closed: en rad uten prinsipal (skrevet før denne kolonnen
+       -- fantes) kan ikke reautoriseres og teller derfor ikke.
+       AND a.bruker_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM public.brukermedlemskap m
+                    WHERE m.tenant = a.tenant AND m.bruker_id = a.bruker_id
+                      AND m.aktiv
+                      AND 'domeneadjudikator' = ANY (m.roller)
+                      -- Samme autorisasjonsversjon som da stemmen ble avgitt.
+                      -- Enhver sikkerhetsrelevant endring på medlemskapet
+                      -- bumper den (010) og ugyldiggjør allerede sesjonen —
+                      -- da skal den heller ikke bære en gammel stemme videre.
+                      AND m.authz_version = a.authz_versjon);
     SELECT count(*) INTO v_avvik
       FROM public.overtakelse_attestasjon
      WHERE sak_id = p_sak_id AND saksrevisjon = v_gen
@@ -310,8 +377,17 @@ CREATE OR REPLACE FUNCTION antall_avgitte_attestasjoner(
     p_sak_id BIGINT, p_saksrevisjon BIGINT)
 RETURNS INT LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-    SELECT count(DISTINCT aktor)::INT FROM public.overtakelse_attestasjon
-     WHERE sak_id = p_sak_id AND saksrevisjon = p_saksrevisjon;
+    -- Teller de stemmene som fortsatt VILLE talt (samme reautorisering som
+    -- terskelen bruker). Et tall som inkluderte tilbakekalte aktører ville
+    -- lovet brukeren en fremgang mot to øyne som aldri kan innfris.
+    SELECT count(DISTINCT a.aktor)::INT
+      FROM public.overtakelse_attestasjon a
+     WHERE a.sak_id = p_sak_id AND a.saksrevisjon = p_saksrevisjon
+       AND a.bruker_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM public.brukermedlemskap m
+                    WHERE m.tenant = a.tenant AND m.bruker_id = a.bruker_id
+                      AND m.aktiv AND 'domeneadjudikator' = ANY (m.roller)
+                      AND m.authz_version = a.authz_versjon);
 $$;
 
 -- ------------------------------------------------------------
@@ -553,8 +629,12 @@ GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
 -- unntak og INSERT på unntak_historikk, ikke bare EXECUTE på funksjonen.
 GRANT UPDATE ON unntak TO disponit_domene_eier;
 GRANT INSERT ON unntak_historikk TO disponit_domene_eier;
+-- Codex (P1): reautoriseringen av de tellende stemmene leser og LÅSER
+-- `brukermedlemskap` (FOR SHARE) inne i `avgi_overtakelse_attestasjon`.
+-- Kun SELECT — domenelaget skal kunne bekrefte et medlemskap, aldri endre det.
+GRANT SELECT ON brukermedlemskap TO disponit_domene_eier;
 
-REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION lukk_overtakelsessak(TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
@@ -564,7 +644,7 @@ REVOKE ALL ON FUNCTION lukk_overtakelsessak(TEXT, BIGINT, TEXT, TEXT) FROM PUBLI
 -- feiler ENHVER produksjonsforespørsel mot endepunktet med
 -- InsufficientPrivilege. Samme mønster som 016 (lagre_artefakt_staged m.fl.
 -- granted direkte til `disponit`) — funksjonsspesifikk, ikke bunten.
-GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit;
+GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit;
 -- `opprett_overtakelsessak()` (domeneovertakelse.py) kaller nå
 -- `degrader_forbigatte_utfordrere` som en del av å håndtere konfliktsignalet
@@ -575,7 +655,7 @@ GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO dispon
 -- tabelleierskapet INSERT-ene under trenger.
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_migrator;
-GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit_domains_admin;
+GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit_domains_admin;
 REVOKE ALL ON FUNCTION revalideringskandidater(INT, INT, INT, INT, INT) FROM PUBLIC;

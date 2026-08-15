@@ -197,14 +197,21 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             return _feilsvar(f.kode, rid)
 
         # CSRF (dobbel-innsending) — samme browsermuterende vei som PR-012.
+        # `bruker_id` hentes fra SAMME herdede oppslag: prinsipalen bak
+        # stemmen må sendes til motoren for at de tellende stemmene skal kunne
+        # reautoriseres når terskelen slår inn (Codex). Den leses her, fra
+        # sesjonen, og ikke ved å parse `auth.token_id` — sesjonsstrengen er
+        # evidensformatet, ikke et oppslagsnøkkelformat.
         sesjon_cookie = request.cookies.get(sesjonmodul.C_SESJON)
-        rad = conn.execute("SELECT csrf_hash FROM slaa_opp_sesjon(%s)",
-                           (sesjonmodul._hash(sesjon_cookie),)).fetchone() \
+        rad = conn.execute(
+            "SELECT csrf_hash, bruker_id FROM slaa_opp_sesjon(%s)",
+            (sesjonmodul._hash(sesjon_cookie),)).fetchone() \
             if sesjon_cookie else None
         conn.rollback()
         if rad is None or not sesjonmodul.csrf_matcher(rad[0], request):
             tjeneste.logg.hendelse("csrf_ugyldig", rid)
             return _feilsvar("csrf_ugyldig", rid)
+        bruker_id = rad[1]
 
         from db.pg import sett_kontekst
         tenant = auth.tenant
@@ -225,9 +232,10 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             # overlevde en reapplikasjon fått stemmer telt mot den GJELDENDE
             # generasjonen — en konflikt ingen attestant faktisk har sett.
             svar = conn.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
                 (tenant, unntak_id, hostname, utfall, vinnende.strip(),
-                 aktor, generasjon_ved_opprettelse)).fetchone()[0]
+                 aktor, generasjon_ved_opprettelse,
+                 bruker_id)).fetchone()[0]
             conn.commit()
         except psycopg.errors.UniqueViolation:
             # Samme aktør, samme revisjon, andre gang. Avvist av PRIMÆRNØKKELEN

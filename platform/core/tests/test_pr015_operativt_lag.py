@@ -557,10 +557,58 @@ def _saksstatus(migrator, tenant, sak):
     return status
 
 
-def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen):
+def _adjudikator(tenant, sub, *, roller="ARRAY['domeneadjudikator']"):
+    """Aktiv domeneadjudikator i `tenant`. Returnerer bruker_id.
+
+    Attestasjonene reautoriseres mot `brukermedlemskap` når terskelen slår inn
+    (Codex), så en stemme MÅ ha en ekte prinsipal bak seg. Medlemskapet er
+    OIDC-forvaltet (FK til `brukeridentitet`, runtime kan lese men ikke skrive)
+    og opprettes derfor via migrator, som i drift.
+    """
+    from db.pg import koble
+    from .test_pr010_db import _identitet
+    m = koble(MIGRATOR_DSN)
+    try:
+        _sett_kontekst(m, tenant)
+        bid = _identitet(m, sub=f"{tenant}-{sub}")
+        m.execute(f"INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+                  f" VALUES (%s,%s,{roller})"
+                  f" ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
+                  f" roller=EXCLUDED.roller, aktiv=true", (tenant, bid))
+        m.commit()
+        return bid
+    finally:
+        m.close()
+
+
+def _sett_medlemskap(tenant, bid, **felt):
+    """Endre medlemskapet (aktiv/roller). Triggeren bumper authz_version."""
+    from db.pg import koble
+    m = koble(MIGRATOR_DSN)
+    try:
+        _sett_kontekst(m, tenant)
+        sett = ", ".join(f"{k}={v}" for k, v in felt.items())
+        m.execute(f"UPDATE brukermedlemskap SET {sett}"
+                  f" WHERE tenant=%s AND bruker_id=%s", (tenant, bid))
+        m.commit()
+    finally:
+        m.close()
+
+
+def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen,
+              bruker_id=None):
+    """Avgi én attestasjon. `aktor` er evidensstrengen, `bruker_id` prinsipalen.
+
+    Uten et eksplisitt `bruker_id` opprettes en adjudikator for `aktor` —
+    testene som bare trenger «to distinkte, autoriserte aktører» slipper å
+    gjenta oppsettet, mens de som måler reautoriseringen styrer det selv.
+    """
+    if bruker_id is None:
+        bruker_id = _adjudikator(tenant, aktor)
     r = a.execute(
-        "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
-        (tenant, sak, hostname, utfall, vinner, aktor, gen)).fetchone()[0]
+        "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+        (tenant, sak, hostname, utfall, vinner, aktor, gen,
+         bruker_id)).fetchone()[0]
     a.commit()
     return r
 
@@ -605,6 +653,62 @@ def test_port14b_to_distinkte_aktorer_avgjor(migrator):
 
 
 @pg
+def test_tilbakekalt_adjudikator_teller_ikke_mot_terskelen(migrator):
+    """Codex (P1): stemmene reautoriseres NÅR terskelen slår inn.
+
+    Attestasjonstabellen er append-only. Mistet den første attestanten rollen
+    sin mellom de to stemmene, ville en ren opptelling latt den andre stemmen
+    gjennomføre overtakelsen med ÉN faktisk autorisert aktør — altså to øyne,
+    ikke fire. Raden består som evidens (den ble avgitt), men den teller ikke.
+    """
+    h = _host()
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    forste = _adjudikator(ANNEN_TENANT, "revokert-1")
+    a = _admin()
+    try:
+        assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                         "aktor-revokert", gen, forste) == "venter"
+        # Rollen trekkes tilbake. Triggeren i 010 bumper authz_version, som er
+        # nøyaktig det stemmen ble bundet til.
+        _sett_medlemskap(ANNEN_TENANT, forste, roller="ARRAY['leser']")
+        assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                         "aktor-2", gen) == "venter", \
+            "en tilbakekalt attestant talte fortsatt mot terskelen"
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+
+    # Evidensen står: raden er ikke ryddet bort, den teller bare ikke.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    n = int(migrator.execute(
+        "SELECT count(*) FROM overtakelse_attestasjon"
+        " WHERE sak_id=%s AND saksrevisjon=%s", (sak, gen)).fetchone()[0])
+    migrator.rollback()
+    assert n == 2, "attestasjonene ble ryddet bort i stedet for å stå som evidens"
+
+
+@pg
+def test_ikke_adjudikator_kan_ikke_attestere(migrator):
+    """Basen er den andre porten: rollen sjekkes der, ikke bare i API-laget.
+
+    `domains:adjudicate` er en applikasjonsavledning av rollen. Fire øyne skal
+    ikke hvile på at applikasjonen husket å spørre.
+    """
+    h = _host()
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    utenfor = _adjudikator(ANNEN_TENANT, "bare-leser", roller="ARRAY['leser']")
+    a = _admin()
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
+                      "aktor-uten-rolle", gen, utenfor)
+        a.rollback()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+
+
+@pg
 def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
     """Port 15: samme aktør to ganger → avvist av PRIMÆRNØKKELEN, ikke av UI.
 
@@ -615,11 +719,14 @@ def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
     sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
-        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen)
+        bid = _adjudikator(ANNEN_TENANT, "samme")
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme",
+                  gen, bid)
         with pytest.raises(psycopg.errors.UniqueViolation):
             a.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
-                (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen))
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+                (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen,
+                 bid))
         a.rollback()
     finally:
         a.close()
@@ -710,8 +817,9 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
     try:
         with pytest.raises(psycopg.Error):
             a.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
-                (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2", gen_b))
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+                (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2",
+                 gen_b, _adjudikator(ANNEN_TENANT, "aktor-2")))
         a.rollback()
     finally:
         a.close()

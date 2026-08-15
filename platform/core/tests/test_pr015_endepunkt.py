@@ -172,12 +172,15 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
             " WHERE tenant=%s AND hostname=%s", (TEN, h)).fetchone()[0])
     finally:
         m.close()
-    # Avgjør saken (avvis krever ÉN attestasjon) rett på motoren.
+    # Avgjør saken (avvis krever ÉN attestasjon) rett på motoren. Stemmen må
+    # ha en ekte prinsipal bak seg — motoren reautoriserer de tellende
+    # aktørene mot `brukermedlemskap` (Codex).
+    avviser = _medlem(None, "pr015-avvis", roller="ARRAY['domeneadjudikator']")
     a = _admin()
     try:
         a.execute(
-            "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',%s,%s,%s)",
-            (TEN, sak, h, TEN, "aktor-avvis", gen))
+            "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',%s,%s,%s,%s)",
+            (TEN, sak, h, TEN, "aktor-avvis", gen, avviser))
         a.commit()
     finally:
         a.close()

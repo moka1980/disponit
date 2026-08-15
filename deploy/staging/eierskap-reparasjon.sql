@@ -115,7 +115,11 @@ INSERT INTO _design VALUES
     -- som resten av domenelaget — avgjørelsen er iboende kryss-tenant, og
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
     -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
-    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint)', 'disponit_domene_eier'),
+    -- 8. argument (`p_bruker_id`) kom med reautoriseringen av tellende
+    -- stemmer: signaturen her MÅ følge migrasjon 019, ellers finner
+    -- reparasjonsløkka ingen funksjon å eie og den reelle funksjonen blir
+    -- behandlet som en vanlig, eierløs funksjon ved neste kjøring.
+    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text)', 'disponit_domene_eier'),
     -- `lukk_overtakelsessak` kalles NESTET fra avgi_overtakelse_attestasjon og
     -- må derfor ha samme eier: utelatt herfra ville reparasjonssløyfa nedenfor
     -- behandlet den som en vanlig funksjon og flyttet den til
