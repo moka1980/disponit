@@ -16,17 +16,21 @@ anvendte migrasjoner utelukkende på de tre sifrene
 registrert) og på en fersk base ville kun den alfabetisk første `018_*`
 kjørt. Tabellen under ville da aldri eksistert.
 
-**019 er ikke bare en tabell.** Fire av portene under kan ikke håndheves
-av kallere alene; de krever at 019 erstatter funksjoner fra 016/017.
-016- og 017-*filene* er immutable (checksum), så 019 legger nye
+**019 er ikke bare en tabell.** Portene under kan ikke håndheves av
+kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
+016-, 017- og 018-*filene* er immutable (checksum), så 019 legger nye
 `CREATE OR REPLACE`-versjoner og `ALTER TABLE ... ADD COLUMN` oppå dem:
 
 | # | Objekt i 019 | Hvorfor det ikke kan ligge i kalleren |
 |---|---|---|
-| 1 | `overtakelse_attestasjon` (ny tabell) | Fire øyne, §4 |
-| 2 | `revalider_domenekontroll(…, resolvere, observert_txt)` | Arbeideren skal ikke være autoritet, §2.4 |
-| 3 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense, §6 / port 25 |
-| 4 | `artefaktkapabilitet.owner_generation` + validering | Fencing ved reclaim, §5 |
+| 1 | `overtakelse_attestasjon` (ny tabell) + `overtakelse_attestasjon_saksbinding()` (trigger) | Fire øyne, §4; målet må bindes til saken, §1 |
+| 2 | `revalideringsrunde` + `revalideringsobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4 |
+| 3 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4 |
+| 4 | `revalider_domenekontroll(…, p_runde UUID)` | Arbeideren skal ikke være autoritet, §2.4 |
+| 5 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense, §6 / port 25 |
+| 6 | `artefaktkapabilitet.owner_generation` + `.owner_claim_id`, med oppgraderingssekvens | Fencing ved reclaim, §5 |
+| 7 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
+| 8 | `avgjor_domeneovertakelse(…)` — flerpartsoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon, §3 |
 
 ---
 
@@ -40,11 +44,51 @@ CREATE TABLE overtakelse_attestasjon (
   aktor TEXT NOT NULL,
   utfall TEXT NOT NULL CHECK (utfall IN ('godkjenn','avvis')),
   vinnende_tenant TEXT NOT NULL,
-  hostname TEXT NOT NULL,
+  hostname TEXT NOT NULL CHECK (er_kanonisk_hostname(hostname)),
+  forventet_generasjon BIGINT NOT NULL,
   avgitt_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant, unntak_id, aktor),      -- én aktør, én stemme per sak
   FOREIGN KEY (tenant, unntak_id) REFERENCES unntak (tenant, id));
 ```
+
+**Målet utledes AV saken, det avtales ikke mellom aktørene.** FK-en over
+binder bare raden til en sak; den sier ingenting om at
+`(vinnende_tenant, hostname, forventet_generasjon)` er *denne sakens*
+mål. To aktører som er enige med hverandre om et helt annet ventende
+hostname ville ellers fått en SECURITY DEFINER-funksjon til å flytte den
+raden — gjensidig enighet er ikke bevis når begge verdiene kommer fra
+samme skjema. Trigger `overtakelse_attestasjon_saksbinding()` (BEFORE
+INSERT) slår derfor opp sakens eget mål og avviser avvik:
+
+```sql
+-- Sakens mål ligger i idempotensnøkkelen, som SERVEREN skrev:
+--   revisjonslogg.idempotency_key = 'domeneovertakelse:<hostname>:<generasjon>'
+-- Hostnavnet er kanonisk (018 §0) og kan aldri inneholde kolon, så
+-- split_part er entydig. Joinen bærer kilde/kategori/handling, nøyaktig
+-- som `opprett_overtakelsessak` skriver dem — en fremmed loggpost med
+-- samme nøkkel kan ikke matche.
+SELECT split_part(r.idempotency_key, ':', 2),
+       split_part(r.idempotency_key, ':', 3)::BIGINT
+  INTO v_hostname, v_generasjon
+  FROM public.unntak u
+  JOIN public.revisjonslogg r ON r.tenant = u.tenant AND r.id = u.loggpost_id
+ WHERE u.tenant = NEW.tenant AND u.id = NEW.unntak_id
+   AND u.kategori = 'domeneovertakelse' AND u.handling = 'domene.overtakelse'
+   AND r.kilde = 'domeneovertakelse';
+```
+- `NEW.hostname` må være `v_hostname`, `NEW.forventet_generasjon` må være
+  `v_generasjon`. Avvik → exception, ikke en stille ignorering.
+- `NEW.vinnende_tenant` må være `NEW.tenant` når `utfall = 'godkjenn'`:
+  saken tilhører utfordreren (`opprett_overtakelsessak` kalles med
+  `tenant_ny`), og en godkjenning som utpeker noen andre er ikke denne
+  sakens utfall. `avvis` krever ingen vinner, men bærer feltet uendret
+  for at radene skal kunne sammenlignes felt for felt.
+- Ingen sak funnet (feil familie, fremmed `unntak_id`) → exception.
+
+`avgjor_domeneovertakelse()` teller altså attestasjoner som allerede er
+bevist å peke på sakens eget mål, og leser generasjonen på nytt under
+radlåsen (§3). Enigheten mellom de to radene er da et *fire-øyne*-krav,
+ikke identitetsbeviset.
 **Identiteten er M-37-sakens, ikke en egen UUID.** `unntak.id` er
 `BIGINT GENERATED ALWAYS AS IDENTITY`, den referensielle identiteten er
 `(tenant, id)` (`unntak_tenant_id_unik`), og `opprett_overtakelsessak()`
@@ -68,12 +112,15 @@ en sak som ble forbigått av en ny konflikt er evidens for at noen
 attesterte et utfall. RLS + FORCE. `sett_kontekst` først på alle veier
 inn.
 
-## 2. Resolverarbeider — kaller `revalider_domenekontroll()`
+## 2. Revalideringsarbeider — planlegger, observerer ikke
 
 `disponit-domenerevalidering.timer`, hver time, egen Unix-bruker, rolle
-`disponit_domains_admin`. **Arbeideren har ingen egen autoritet:** den
-slår opp DNS og leverer *observasjonen* til funksjonen, som validerer den
-(§2.4). Statusbeslutningen ligger i databasen.
+`disponit_domains_admin`. **Arbeideren er en scheduler, ikke en kilde:**
+den bestemmer *hvilke* rader som skal revalideres når, åpner en runde og
+ber til slutt om avgjørelsen — men den slår ikke opp DNS selv og kan
+ikke melde inn en observasjon (§2.4). Selve oppslaget gjøres av separate
+**observatørprosesser** med hver sin DB-rolle, som skriver observasjonen
+i eget navn. Statusbeslutningen ligger i databasen.
 `pg_advisory_lock` på arbeidernøkkel — to kjøringer overlapper aldri.
 
 **Planen avledes av hostname, aldri lagret:**
@@ -126,35 +173,87 @@ men kan aldri bryte K.
 
 ### 2.4 Resolverkontrakt og korrelert feil
 
-**Evidensen sendes inn i databasen — regelen bor ikke i arbeideren.**
+**Observasjonen skal ikke kunne påstås av den som ber om revalideringen.**
 016/018-signaturen `revalider_domenekontroll(tenant, hostname, aktor)`
 tar ingen observert TXT-verdi og ingen resolveridentiteter; den setter
 `siste_vellykkede_revalidering = now()` på enhver verifisert rad. Siden
 arbeideren har `disponit_domains_admin` (016 linje 929), kunne en
 feilende eller kompromittert arbeider friske opp et hvilket som helst
-verifisert domene uten å ha slått opp noe. Derfor legger 019:
+verifisert domene uten å ha slått opp noe.
+
+**Å ta TXT-verdien som parameter løser det ikke.** Challenge-tokenet står
+i en offentlig, cachebar DNS-TXT-post: enhver som har sett det én gang —
+arbeideren selv, hver eneste kjøring — kan reprodusere hashen for alltid.
+En hashsjekk beviser *kunnskap om tokenet*, ikke at noen resolver svarte
+nå. På samme måte er `p_resolvere TEXT[]` bare tekst kalleren skriver:
+en kompromittert arbeider oppgir to oppdiktede navn og består
+distinkthetskravet. Begge deler lar arbeideren fortsette å friske opp et
+domene etter at TXT-posten er fjernet. Regelen må derfor flyttes ut av
+kallerens hender helt, ikke pakkes inn i flere parametere.
+
+**Observatørene skriver selv, i egen rolle.** 019 innfører en rundetabell
+og en observasjonstabell, og observasjonen registreres av en funksjon som
+tar identiteten fra `session_user` — aldri fra et argument:
 
 ```sql
-revalider_domenekontroll(p_tenant TEXT, p_hostname TEXT, p_aktor TEXT,
-                         p_resolvere TEXT[], p_observert_txt TEXT)
-```
-som under hostname-låsen krever, og ellers hever exception:
-- `p_resolvere` inneholder **≥ 2 distinkte** identiteter (uenighet
-  representeres ved at arbeideren ikke kaller med begge — men *antallet*
-  er databasens krav, ikke arbeiderens løfte),
-- `encode(sha256(convert_to(p_observert_txt,'UTF8')),'hex')` er lik
-  radens `challenge_token_hash`. Klarteksten lagres fortsatt aldri;
-  arbeideren beviser oppslaget ved å kunne reprodusere hashen.
+CREATE TABLE revalideringsrunde (
+  runde_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant TEXT NOT NULL, hostname TEXT NOT NULL CHECK (er_kanonisk_hostname(hostname)),
+  apnet TIMESTAMPTZ NOT NULL DEFAULT now(),
+  utloper TIMESTAMPTZ NOT NULL,           -- kort, f.eks. now() + 5 min
+  status TEXT NOT NULL DEFAULT 'apen' CHECK (status IN ('apen','brukt','forkastet')));
 
-Resolveridentitetene skrives på `domenekontroll_hendelse` som evidens.
+CREATE TABLE revalideringsobservasjon (
+  runde_id UUID NOT NULL REFERENCES revalideringsrunde (runde_id),
+  observator TEXT NOT NULL,               -- session_user, satt av funksjonen
+  txt_hash TEXT NOT NULL,                 -- sha256, beregnet I databasen
+  observert_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (runde_id, observator));    -- én observatør, én observasjon
+```
+
+| Funksjon | Kalles av | Håndhever |
+|---|---|---|
+| `apne_revalideringsrunde(tenant, hostname)` → `runde_id` | arbeideren (`disponit_domains_admin`) | Raden må være `verifisert`; kort TTL; runden er engangs |
+| `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB og må være lik radens `challenge_token_hash`; runden må være `apen` og ikke utløpt |
+| `revalider_domenekontroll(tenant, hostname, aktor, p_runde UUID)` | arbeideren | Under hostname-låsen: runden er `apen`, ikke utløpt, gjelder dette `(tenant, hostname)`; **≥ 2 observasjoner fra distinkte `observator`**, alle med samme `txt_hash`; så settes tidsstemplet og runden merkes `brukt` |
+
+Det som er vunnet: arbeideren har **ikke** EXECUTE på
+`meld_domeneobservasjon`, og kan ikke skrive `revalideringsobservasjon`
+direkte. Identiteten er `session_user`, altså Postgres' egen
+autentisering (klientsertifikat/passord per observatørprosess) — ikke en
+streng kalleren velger. En kompromittert arbeider kan derfor åpne runder
+den vil og kalle funksjonen så ofte den vil, men uten to ekte
+observatørprosesser som *hver for seg* har slått opp TXT-posten og meldt
+den inn i samme runde, skjer ingenting. Klarteksten lagres fortsatt aldri;
+det er hashen som bæres. Observatøridentitetene skrives på
+`domenekontroll_hendelse` som evidens.
+
 3-argumentsversjonen **REVOKE-es fra `disponit_domains_admin`** i samme
 migrasjon; ellers består den gamle, ubeviste veien ved siden av den nye.
 
-- **≥2 uavhengige resolvere; uenighet → ikke vellykket revalidering.**
-- **Diversitet er deploy-port:** minst to resolvere hos ulike operatører
-  og ulike nett. Konfigurasjon som bryter det → oppstart nektes.
+**Restrisikoen, sagt rett ut:** en kompromittert *observatør* kan lyve om
+hva dens resolver svarte, og to samvirkende observatører kan forfalske en
+runde. Databasen kan ikke selv slå opp DNS og har ingen måte å avgjøre
+det på. Det som begrenser skaden er at (a) diversitetsporten under
+plasserer observatørene hos ulike operatører, i ulike nett og som ulike
+prosesser med hver sin DB-credential, så én kompromittert vert gir én
+stemme, og (b) `revalider_domenekontroll` **kan bare friske opp en rad
+som allerede er `verifisert`** — den kan aldri opprette en
+domeneautorisasjon, aldri løfte en status og aldri avgjøre en konflikt.
+Maksimal effekt av et fullstendig kompromiss er altså at et domene som en
+gang var verifisert holdes kunstig ferskt til en operatør tilbakekaller
+det. Det er en akseptert, navngitt restrisiko — ikke en lukket port.
+
+- **≥2 uavhengige observatører; uenighet → ikke vellykket revalidering.**
+  Uenighet er ikke en beslutning arbeideren tar: to observasjoner med
+  ulik `txt_hash` i samme runde får rett og slett aldri funksjonen til å
+  telle to like.
+- **Diversitet er deploy-port:** minst to observatørprosesser, hver med
+  sin egen DB-rolle og credential, mot resolvere hos ulike operatører og
+  i ulike nett. Konfigurasjon som bryter det → oppstart nektes.
   Deploy-porten er det som gjør identitetene *uavhengige*; databasen
-  teller dem, men kan ikke vite hvem som eier dem.
+  autentiserer dem og teller dem, men kan ikke vite hvem som eier
+  resolverne bak.
 - **Bred feil (> 20 % innen én time) → én driftsalarm.** Terskelen
   dedupliserer **varslingen**; den klassifiserer ikke tenantens tilstand,
   oppretter ingen M-37-sak, og skjuler ikke at `tenant X / hostname Y` har
@@ -197,6 +296,39 @@ hostname**: en `godkjenn` for én part krever at de øvrige avklaringsradene
 avvises i samme transaksjon under hostname-låsen. ≥3 parter innen 24 t →
 `hoy_konfliktrate` på sakene; det stopper ingenting automatisk.
 
+**Det krever at 019 erstatter `avgjor_domeneovertakelse()` (objekt 8).**
+018-versjonen kan ikke gjøre dette, og det er ikke en mangel som kan
+dekkes av kalleren:
+- Den rører **kun den tenanten den får inn** (018 linje 352–426) — de
+  øvrige `avklaring_kreves`-radene på samme hostname står urørt.
+- Godkjenning krever i tillegg at `hostname_binding` allerede står på
+  `p_tenant` (018 linje 390–396). I A→B→C står bindingen på C, så B kan
+  **ikke** godkjennes i det hele tatt — selv om B er den saken fire øyne
+  faktisk har attestert.
+
+019-versjonen tar hostname-låsen, og gjør så hele oppgjøret i én
+transaksjon:
+```
+avgjor_domeneovertakelse(p_tenant, p_hostname, p_forventet_generasjon,
+                         p_godkjent, p_aktor)
+  1. lås hostname; les p_tenant-raden FOR UPDATE
+  2. status må være 'avklaring_kreves' og generasjonen må stemme (uendret fra 018)
+  3. p_godkjent:
+       - vinneren settes 'verifisert', generasjon++, nytt 90-døgnsvindu
+       - hostname_binding settes til p_tenant  (den FLYTTES, den forutsettes ikke)
+       - HVER ANNEN rad på p_hostname med status 'avklaring_kreves' settes
+         'tilbakekalt' med grunn 'tapte_domeneoppgjor', generasjon++, og en
+         hendelse per rad — i SAMME transaksjon, under samme lås
+  4. NOT p_godkjent: kun p_tenant-raden → 'tilbakekalt' (uendret fra 018);
+       de øvrige avklaringsradene blir stående, tvisten er ikke avgjort
+```
+Bindingssjekken fra 018 faller altså bort som *forutsetning* og blir en
+*konsekvens*: det er avgjørelsen som utpeker bindingshaveren, ikke
+bindingshaveren som avgjør hvem som kan avgjøres. Gjerdet mot en
+foreldet sak ligger fortsatt i generasjonen, som leses under radlåsen,
+og nå også i saksbindingen fra §1 — det er de to som gjør at en gammel
+attestasjon ikke kan autorisere en ny konflikt.
+
 ## 4. Fire øyne ved positiv tildeling
 
 | Utfall | Krav | Hvorfor |
@@ -205,7 +337,11 @@ avvises i samme transaksjon under hostname-låsen. ≥3 parter innen 24 t →
 | **Godkjenn** (B → `verifisert`) | **To distinkte** attestasjoner | Etablerer hvilken kunde plattformen autoriserer |
 
 - De to radene må ha identisk `(unntak_id, utfall, vinnende_tenant,
-  hostname)`. Avvik → ingen avgjørelse, aldri en sammenslåing.
+  hostname, forventet_generasjon)`. Avvik → ingen avgjørelse, aldri en
+  sammenslåing. **Enigheten er i tillegg til saksbindingen fra §1, ikke i
+  stedet for den:** begge radene er allerede bevist å bære sakens eget
+  mål, så det de to øynene faktisk bekrefter er *utfallet*, ikke hvilken
+  rad som skal flyttes.
 - **Ingen enkelt aktør produserer begge** — håndhevet av primærnøkkelen,
   ikke av UI-et. Begge krever `domains:adjudicate`.
 - **Ny konflikt invaliderer ventende attestasjoner** i kraft av
@@ -264,19 +400,65 @@ avvises i samme transaksjon under hostname-låsen. ≥3 parter innen 24 t →
 - **Levetid = evidensfristen for oppdraget**, aldri lengre.
 - **Epoch kontrolleres under oppdragslåsen** ved utstedelse.
 - **Fencing mot reclaim krever `owner_generation` i bindingen.** Et
-  reclaim øker `oppdrag.owner_generation` (015 linje 276) uten å endre
-  tenant, oppdrag, modul, release, kontrakt, epoch eller artefakttype —
-  hvert eneste felt i 017-bindingen forblir altså gyldig for den gamle
-  eieren, og `artefaktkapabilitet` har ingen generasjonskolonne. Den gamle
-  eieren kunne derfor lastet opp med sitt token helt frem til
-  evidensfristen, etter at en annen arbeider hadde overtatt oppdraget.
-  019 legger `owner_generation BIGINT NOT NULL` (og `owner_claim_id`) på
-  `artefaktkapabilitet`, stempler den ved utstedelse under oppdragslåsen,
-  og `innlos_artefaktkapabilitet` **avviser** en kapabilitet hvis
-  generasjon er lavere enn oppdragets nåværende. Kolonnene er
-  bindingsfelter — uforanderlige via `artefaktkapabilitet_statusmaskin()`.
-  Dette er en **egen port** (24b), ikke bare en utvidet negativ test:
-  uten kolonnen finnes ingen stale/fencing-garanti å teste.
+  reclaim øker `oppdrag.owner_generation` (`INT NOT NULL DEFAULT 0`, 005
+  linje 317) uten å endre tenant, oppdrag, modul, release, kontrakt,
+  epoch eller artefakttype — hvert eneste felt i 017-bindingen forblir
+  altså gyldig for den gamle eieren, og `artefaktkapabilitet` har ingen
+  generasjonskolonne. Den gamle eieren kunne derfor lastet opp med sitt
+  token helt frem til evidensfristen, etter at en annen arbeider hadde
+  overtatt oppdraget. 019 legger `owner_generation INT` og
+  `owner_claim_id TEXT` på `artefaktkapabilitet` og stempler dem ved
+  utstedelse under oppdragslåsen. Kolonnene er bindingsfelter —
+  uforanderlige via `artefaktkapabilitet_statusmaskin()`, som derfor må
+  erstattes i samme migrasjon (objekt 7). Dette er en **egen port**
+  (24b), ikke bare en utvidet negativ test: uten kolonnen finnes ingen
+  stale/fencing-garanti å teste.
+
+- **Sjekken hører hjemme i `lagre_artefakt_staged()`, ikke bare i
+  preflighten.** `innlos_artefaktkapabilitet()` er et rent oppslag; den
+  brenner ingenting (017 linje 162–175). Opplastingsveien leser
+  bindingen der, **krypterer så rapporten med tenant-DEK-en**, og kaller
+  først deretter `lagre_artefakt_staged()`, som er den som validerer og
+  forbruker kapabiliteten atomisk under `FOR UPDATE`
+  (`platform/core/api/app.py:1928–1976`). Mellom de to kallene går det
+  reell tid — koden håndterer alt eksplisitt at tilstanden endrer seg
+  der (utløps-kappløpet i `InvalidParameterValue`-grenen). Et reclaim som
+  committer i det vinduet ville passert en preflight-only-sjekk og så
+  blitt konsumert. 019-versjonen av `lagre_artefakt_staged()`
+  sammenligner derfor kapabilitetens `owner_generation` mot
+  `oppdrag.owner_generation` **etter** at kapabilitetsraden er låst, og
+  hever `invalid_parameter_value` ved avvik. Preflighten beholder samme
+  sjekk — den gir det tidlige, billige avslaget — men den er ikke
+  porten.
+  **Unntaket er idempotensgrenen:** en kapabilitet som allerede er
+  `brukt` returnerer sitt eksisterende `artefakt_id` uendret, også etter
+  et reclaim. Der skrives ingen ny evidens, og et retry som mister svaret
+  skal ikke straffes for at oppdraget siden skiftet eier.
+
+- **Oppgraderingsveien er en del av migrasjonen, ikke en detalj.**
+  `ALTER TABLE artefaktkapabilitet ADD COLUMN owner_generation INT NOT
+  NULL` feiler umiddelbart på enhver base som alt har rader fra 017. Og
+  å backfille med oppdragets *nåværende* generasjon ville vært verre enn
+  å feile: tokens utstedt før et reclaim ville da fått den nye
+  generasjonen stemplet på seg og blitt velsignet av nettopp den porten
+  de skal stoppes av. Den opprinnelige generasjonen ble aldri lagret og
+  kan ikke rekonstrueres. Sekvensen er derfor:
+  1. `ADD COLUMN owner_generation INT` og `owner_claim_id TEXT`, **begge
+     nullbare** — ingen default, ingen backfill.
+  2. `UPDATE artefaktkapabilitet SET status = 'feilet' WHERE status =
+     'utstedt'` — hvert levende, ubrukt token invalideres. `feilet` er
+     terminal i statusmaskinen, så ingen av dem kan brukes igjen.
+     Modulene claimer på nytt og får stemplede tokens. Fail-closed, og
+     tapet er en kortlevd kapabilitet, ikke evidens.
+  3. `ADD CONSTRAINT artefaktkapabilitet_generasjon_kjent CHECK
+     (owner_generation IS NOT NULL OR status <> 'utstedt')`. Historiske
+     `brukt`/`feilet`-rader beholder NULL som det de er — evidens fra før
+     fencingen fantes — mens hver ny `utstedt` rad må bære generasjonen.
+     Siden bindingsfelter er uforanderlige, arver en rad stemplet sitt
+     hele veien til `brukt`.
+  4. `utsted_artefaktkapabilitet()` skriver begge kolonnene under
+     oppdragslåsen, i samme `SELECT` som verifiserer at oppdraget er
+     `plukket`.
 
 ## 6. Ryddetimer
 
@@ -304,23 +486,33 @@ inkludert karantenesatt).
 
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
-| Revalidering | Én timer, én arbeidernøkkel; manuell kjøring tar samme lås; 3-argumentsversjonen REVOKE-et | Advisory-lås; K som `LIMIT`; avledet plan | Funksjonen validerer TXT-hash og ≥2 distinkte resolvere; arbeideren setter aldri status | Kaller kun `revalider_domenekontroll(…, resolvere, txt)` |
-| Overtakelsesavgjørelse | Kun PR-012-attestasjon → funksjonen | Hostname-lås; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | To distinkte aktører med `domains:adjudicate`, identisk utfall | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme |
-| Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
+| Revalidering | Én timer, én arbeidernøkkel; manuell kjøring tar samme lås; 3-argumentsversjonen REVOKE-et | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB; arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | Kaller kun `apne_revalideringsrunde()` + `revalider_domenekontroll(…, p_runde)` |
+| Overtakelsesavgjørelse | Kun PR-012-attestasjon → funksjonen | Hostname-lås; hele oppgjøret i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører med `domains:adjudicate`, identisk utfall | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme |
+| Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; generasjonen sjekkes på nytt under kapabilitetens radlås i `lagre_artefakt_staged()` | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel | Batchgrense i funksjonen (`LIMIT p_maks`) + idempotens | Karantene bevares på egenskap, ikke på alder | Kaller kun `rydd_staged_artefakter(500)` |
 
 ## 8. Codex-porter
 
 **Revalidering (1–10).**
 1 To samtidige kjøringer → én kjører, én venter ·
-2 Uenige resolvere → ikke vellykket, `siste_vellykkede_revalidering` urørt ·
-2b **Kall med kun én resolveridentitet, eller med en TXT-verdi som ikke
-hasher til `challenge_token_hash` → exception, tidsstempel urørt** — også
-når kalleren har `disponit_domains_admin`; og 3-argumentsversjonen er
-ikke lenger kallbar for arbeiderrollen ·
+2 Uenige observatører (ulik `txt_hash` i samme runde) → ikke vellykket,
+`siste_vellykkede_revalidering` urørt ·
+2b **Runde med kun én observasjon, eller med en TXT-verdi som ikke hasher
+til `challenge_token_hash` → exception, tidsstempel urørt** — også når
+kalleren har `disponit_domains_admin`; og 3-argumentsversjonen er ikke
+lenger kallbar for arbeiderrollen ·
+2c **Arbeiderrollen forsøker å melde en observasjon selv** — direkte
+`INSERT` i `revalideringsobservasjon` og kall til
+`meld_domeneobservasjon()` → begge nektet på rettigheter; en
+observatørrolle som melder inn kan **ikke** oppgi en annen identitet enn
+sin egen (`observator` er `session_user`, ikke et argument) ·
+2d **Runden er engangs og kortlevd:** samme `runde_id` brukt to ganger →
+andre kall avvist; utløpt runde → avvist; runde åpnet for ett
+`(tenant, hostname)` og brukt mot et annet → avvist ·
 3 Tre døgn uten svar → attestasjon nektes; raden ikke slettet eller
 `utlopt`-satt av arbeideren ·
-4 Resolverkonfigurasjon uten diversitet → oppstart nektes (deploy-port) ·
+4 Observatørkonfigurasjon uten diversitet (samme operatør, samme nett
+eller samme DB-rolle) → oppstart nektes (deploy-port) ·
 5 **Konstruert patologisk hashfordeling** (≥ 3·K rader i samme time) →
 kø 2 + kø 3 overskrider aldri K; overskuddet blir etterslep og dreneres;
 ingen rad tapt ·
@@ -347,6 +539,11 @@ suksess.
 15 Samme aktør to ganger → avvist av primærnøkkel, ikke av UI ·
 16 To attestasjoner med ulikt `vinnende_tenant` eller ulik `unntak_id` →
 ingen avgjørelse ·
+16b **Attestasjon som peker på et ANNET mål enn sakens:** to aktører
+attesterer samstemt et hostname/`vinnende_tenant`/generasjon som ikke er
+det saken bærer i idempotensnøkkelen → **avvist ved INSERT**, ikke ved
+telling; en `godkjenn` der `vinnende_tenant <> tenant` avvises likeså.
+Gjensidig enighet flytter aldri en rad saken ikke handler om ·
 17 C overtar med B-attestasjon inne → C-s konflikt får ny `unntak_id`,
 B-attestasjonen teller ikke mot C-saken, raden bevart ·
 18 Avvis med én attestasjon → B `tilbakekalt`; tenant med én autorisert
@@ -363,6 +560,15 @@ terminal sak urørt ·
 (018 rører ikke B når C kommer inn), A gjenoppstår ikke; godkjenning av
 én part avviser de øvrige avklaringsradene i samme transaksjon; ≥3 parter
 innen 24 t → `hoy_konfliktrate`.
+20b **Den forbigåtte parten kan faktisk godkjennes:** B godkjennes mens
+`hostname_binding` står på C → B blir `verifisert`, bindingen **flyttes**
+til B, og C settes `tilbakekalt` med grunn `tapte_domeneoppgjor` i samme
+transaksjon. 018-versjonen ville nektet B på «forbigått»; 019-versjonen
+gjør bindingen til en konsekvens av avgjørelsen, ikke en forutsetning for
+den ·
+20c **Avvisning avgjør ikke tvisten:** `avvis` på B med C fortsatt i
+avklaring → kun B blir `tilbakekalt`, C står urørt og saken dens er
+fortsatt åpen.
 
 **Kapabilitet (21–24b).**
 21 Claim returnerer distinkte tokens; opplastingstokenet virker ikke
@@ -378,6 +584,19 @@ til å laste opp den andre typen** ·
 oppdrag, modul, release, kontrakt, epoch og artefakttype — kun
 `owner_generation` er økt), A forsøker opplasting innen evidensfristen →
 avvist på generasjon.** Egen port, ikke bare en utvidet negativ test.
+24c **Reclaim i vinduet mellom preflight og forbruk:** A passerer
+`innlos_artefaktkapabilitet`, reclaimet committer mens rapporten
+krypteres, A kaller `lagre_artefakt_staged` → **avvist der**, ingen
+artefaktrad, kapabiliteten ikke brent. Testen må committe reclaimet
+mellom de to kallene; en variant som bare sjekker preflighten består selv
+med en usikret forbruker og beviser derfor ingenting ·
+24d **Idempotensen overlever et reclaim:** A laster opp, kapabiliteten
+blir `brukt`, B reclaimer, A retryer samme kanoniske dokument → samme
+`artefakt_id` returneres, ingen ny rad, ingen exception ·
+24e **Oppgraderingsveien:** base med både `utstedt`- og `brukt`-rader fra
+017 → migrasjonen går gjennom, hver `utstedt` rad ender `feilet`,
+historiske `brukt`-rader beholder `owner_generation IS NULL`, og et token
+utstedt før migrasjonen kan ikke brukes etterpå.
 
 **Rydding (25–27).**
 25 600 kandidater → to batcher à 500 og 100 **fordi funksjonen har
@@ -399,18 +618,27 @@ avvist på generasjon.** Egen port, ikke bare en utvidet negativ test.
 identifiserte 6-timers-kohorten, ikke på global kø 3 — nytt etterslep fra
 en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 `dobbeltkjoring = 0` · `status_satt_av_arbeider = 0` ·
-`uenige_resolvere_avvist = alle` ·
+`uenige_observatorer_avvist = alle` ·
 **`revalidering_uten_gyldig_txt_hash = 0`** ·
-**`revalidering_med_under_2_resolvere = 0`** ·
+**`revalidering_med_under_2_observatorer = 0`** ·
+**`observasjon_meldt_av_arbeiderrollen = 0`** ·
+**`observator_oppgitt_som_argument = 0`** ·
+**`runde_gjenbrukt_eller_utlopt_godtatt = 0`** ·
 **`revalider_3arg_kallbar_for_arbeider = nei`** ·
 `godkjenn_med_en_attestasjon = 0` · `samme_aktor_to_stemmer = 0` ·
 `attestasjon_pa_annen_sak_talt = 0` ·
+**`attestasjon_med_mal_utenfor_saken = 0`** ·
 `saker_per_konfliktgenerasjon ≤ 1` · `kjede_abc.a_gjenoppstatt = 0` ·
+**`forbigatt_part_kan_godkjennes = ja`** ·
+**`taperrader_igjen_i_avklaring_etter_godkjenn = 0`** ·
 **`tidsbasert_utvei_fra_avklaring = 0`** ·
 `avgjorelse_uten_scope_nektet = alle` ·
 `tokens_distinkte = ja` · `uten_artefakttype_utstedt = 0` ·
 **`kapabilitet_per_registrert_type = alle`** ·
-**`opplasting_med_foreldet_owner_generation = 0`** ·
+**`opplasting_med_foreldet_owner_generation = 0`** (målt på
+`lagre_artefakt_staged`, med reclaimet committet ETTER preflighten) ·
+**`utstedt_kapabilitet_uten_generasjon_etter_019 = 0`** ·
+**`migrasjon_019_feiler_pa_eksisterende_rader = nei`** ·
 `levetid_over_frist_avvist = alle` ·
 **`ryddebatch_over_p_maks = 0`** ·
 `karantene_bevart = alle` · `idempotens_kjoring2_slettet = 0`.
@@ -426,14 +654,20 @@ Et sjekklistepunkt uten definert, målbar grense regnes som `nei`.
 
 ```
 NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
-       resolverarbeider, M-37-kobling, kapabilitetsutstedelse ved claim,
-       ryddetimere — Claude Code
-       — platform/core/db/migrations/019_overtakelse_attestasjon.sql
-         (tabell + revalider_domenekontroll m/evidens +
-          rydd_staged_artefakter(p_maks) + artefaktkapabilitet.owner_generation),
-         platform/drift/domenerevalidering.py, platform/drift/artefaktrydding.py,
+       revalideringsarbeider + observatører, M-37-kobling,
+       kapabilitetsutstedelse ved claim, ryddetimere — Claude Code
+       — platform/core/db/migrations/019_operativt_lag.sql
+         (overtakelse_attestasjon m/saksbinding + revalideringsrunde og
+          revalideringsobservasjon + meld_domeneobservasjon +
+          revalider_domenekontroll(p_runde) + avgjor_domeneovertakelse
+          m/flerpartsoppgjør + rydd_staged_artefakter(p_maks) +
+          artefaktkapabilitet.owner_generation m/oppgraderingssekvens og
+          validering i lagre_artefakt_staged),
+         platform/drift/domenerevalidering.py, platform/drift/domeneobservator.py,
+         platform/drift/artefaktrydding.py,
          platform/core/api/domeneovertakelse.py,
-         platform/core/api/app.py (oppdrag_claim, linje ~717)
+         platform/core/api/app.py (oppdrag_claim, linje ~717;
+         artefaktopplasting, linje ~1928)
 NESTE: Ren docs-rettelse av migrasjonsnummer (014 → 016/017) i de tre
        014b-dokumentene; egen PR, porten hoppes over med begrunnelse
        — Claude Code — docs/PR-014b-*.md

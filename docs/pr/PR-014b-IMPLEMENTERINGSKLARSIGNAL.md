@@ -56,22 +56,46 @@ CREATE TABLE artefakttype_register (
     REFERENCES modulkontrakt (modul_id, kontraktversjon, kontrakt_hash));
 
 CREATE TABLE artefakt (
-  artefakt_id UUID PRIMARY KEY,
-  tenant TEXT NOT NULL, oppdrag_id UUID NOT NULL REFERENCES oppdrag (oppdrag_id),
+  artefakt_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant TEXT NOT NULL, oppdrag_id BIGINT NOT NULL,
   artefakttype TEXT NOT NULL REFERENCES artefakttype_register (artefakttype),
   modul_id TEXT NOT NULL, release_id TEXT NOT NULL,
   kontraktversjon INT NOT NULL, kontrakt_hash TEXT NOT NULL,
   module_epoch BIGINT NOT NULL,
-  tilstand TEXT NOT NULL CHECK (tilstand IN ('staged','promotert','forkastet')),
+  tilstand TEXT NOT NULL DEFAULT 'staged'
+    CHECK (tilstand IN ('staged','promotert','forkastet','karantene','bevart')),
   storrelse_bytes INT NOT NULL
     CHECK (storrelse_bytes > 0 AND storrelse_bytes <= 1048576),   -- 1 MiB, v1
   klartekst_sha256 TEXT NOT NULL,    -- SERVERBEREGNET over JCS-kanonisert klartekst
-  ciphertext BYTEA, dek_ref TEXT NOT NULL,                        -- nulles ved forkastet
+  ciphertext BYTEA, nonce BYTEA, dek_ref TEXT NOT NULL,           -- ct+nonce nulles ved forkastet
   kapabilitet_jti TEXT NOT NULL UNIQUE,
-  opprettet TIMESTAMPTZ NOT NULL DEFAULT now(), promotert_ts TIMESTAMPTZ);
+  opprettet TIMESTAMPTZ NOT NULL DEFAULT now(), promotert_ts TIMESTAMPTZ,
+  -- En payload som FINNES må være strukturelt dekrypterbar: 12-byte nonce,
+  -- ciphertext = ct || 16-byte GCM-tag. IS NOT NULL-leddene er ikke overflødige
+  -- (`octet_length(NULL)` er NULL, og en CHECK som evaluerer til NULL passerer).
+  CONSTRAINT artefakt_payload_struktur CHECK (
+    (ciphertext IS NULL AND nonce IS NULL)
+    OR (ciphertext IS NOT NULL AND nonce IS NOT NULL
+        AND octet_length(ciphertext) > 16 AND octet_length(nonce) = 12)),
+  FOREIGN KEY (tenant, oppdrag_id) REFERENCES oppdrag (tenant, id),
+  FOREIGN KEY (tenant, dek_ref)    REFERENCES tenant_nokler (tenant, key_id),
+  FOREIGN KEY (modul_id, kontraktversjon, kontrakt_hash)
+    REFERENCES modulkontrakt (modul_id, kontraktversjon, kontrakt_hash));
 CREATE UNIQUE INDEX ett_promotert_per_oppdrag ON artefakt
   (oppdrag_id, artefakttype) WHERE tilstand = 'promotert';
+CREATE INDEX artefakt_staged_opprydding ON artefakt (opprettet)
+  WHERE tilstand = 'staged';
 ```
+**Oppdragsidentiteten er `oppdrag.id`, ikke en UUID.** `oppdrag` har
+`id BIGINT GENERATED ALWAYS AS IDENTITY` (005 linje 297) og ingen
+`oppdrag_id`-kolonne; den referensielle identiteten er `(tenant, id)`
+(`oppdrag_tenant_id_unik`). En `oppdrag_id UUID REFERENCES oppdrag
+(oppdrag_id)` kunne verken opprettes, og en FK uten `tenant` ville
+uansett ikke bevist at artefaktet og oppdraget tilhører samme tenant.
+Tenantscopet FK er selve beviset — derfor står den, ikke en enkel
+kolonnereferanse. Tilstandene `karantene` og `bevart` hører til
+epoch-avviket (§7 pkt. 8): et artefakt som ikke kan promoteres skal
+bevares, ikke forkastes, og opprydningen må kunne se forskjell.
 RLS + FORCE per tenant på `domenekontroll` og `artefakt`.
 `sett_kontekst` først på alle veier inn — også fra egress-proxyen.
 Immutabilitet med triggere: `domenekontroll_hendelse` og
@@ -89,7 +113,7 @@ endres **kun** via funksjonene i §2.
 | `tilbakekall_domenekontroll()` | Umiddelbar, auditert grunn, `autorisasjonsgenerasjon++` |
 | `avgjor_domeneovertakelse()` | Fra M-37-attestasjon: godkjent → `verifisert` m/ nytt 90-døgnsvindu; avvist → `tilbakekalt`. Ingen knapp skriver status direkte |
 | `registrer_artefakttype()` | FK mot `modulkontrakt`; `skjema_hash` immutable |
-| `lagre_artefakt_staged()` | Skjema + størrelse · **serverberegnet JCS-hash** · tenant-DEK · `synchronous_commit=on` · idempotent på `(kapabilitet_jti, klartekst_sha256)` |
+| `lagre_artefakt_staged()` | Forbruker kapabiliteten ATOMISK under radlåsen · binding + størrelse + payloadstruktur · **serverberegnet JCS-hash** · tenant-DEK · `synchronous_commit=on` · idempotent på `(kapabilitet_jti, klartekst_sha256)`. Skjema håndheves **ikke** — se §7 |
 | `promoter_artefakt()` | **I SAMME transaksjon som statusovergangen.** Verifiserer tilstand · tenant · oppdrag · release · epoch · hash |
 | `rydd_staged_artefakter()` | Positiv regel: `staged` > 24 t **og uten refererende kvittering, inkludert karantenesatt**. Idempotent |
 
@@ -158,15 +182,35 @@ Kunden kan aldri fjerne kontrollen, heller ikke med fire øyne.
 
 | # | Hvor | Hva |
 |---|---|---|
-| a | Før oppdragsopprettelse | Gyldig, fersk attestasjon fra `v_domene` |
-| b | Ved claim, under oppdragslåsen | Radene PÅ NYTT — ikke attestasjonen |
+| a | Før oppdragsopprettelse | Autoritativt oppslag i `v_domeneautorisasjon`; `(hostname, autorisasjonsgenerasjon)` stemples på oppdraget |
+| b | Ved claim, under oppdragslåsen | Radene PÅ NYTT — det stemplede generasjonstallet må fortsatt stemme |
 | c | **Før hver proxiede request** | `v_domeneautorisasjon` + generasjon (B1) |
 
-Attestasjon utstedes kun ved `status='verifisert'` OG `now() < utloper` OG
-`siste_vellykkede_revalidering > now() - 72 t`. Revalidering kjører
-daglig: tre forsøk før en forbigående DNS-feil får konsekvens.
-Attestasjonen binder `(tenant, hostname, wildcard, utloper,
-siste_vellykkede_revalidering, jti)`. Policyen kan stille **strengere**
+**Det finnes ingen `v_domene`-verifikator, og punkt (a) skal ikke vente på
+en.** Et repo-søk gir ingen slik visning, funksjon, modul eller
+attestasjonsskjema: det eneste som finnes er `v_domeneautorisasjon`, som
+er egress-flaten i §1. `v_domene` kommer fra PR-014-utkastet, der
+domeneeierskap skulle utstede en signert attestasjon gjennom
+PR-007-verifikatorløypa (`valgt_verifikator`, `nokkel_id`, `signatur`).
+Den løypa ble aldri koblet til domener, og 014b løste problemet på en
+annen måte: **databasen er selv autoriteten**, og alle tre punktene leser
+den samme raden. En attestasjon ville bare vært en kopi av raden med
+kortere levetid — og det tredje punktet slår den likevel ihjel ved hver
+request. Alle tre punktene krever `status='verifisert'` OG
+`now() < utloper` OG `siste_vellykkede_revalidering > now() - 72 t`;
+det er nettopp `gyldig`-uttrykket i visningen, ett sted, ikke tre.
+
+**Åpen port, ikke løst av 016:** `oppdrag` har i dag ingen
+`hostname`-/`autorisasjonsgenerasjon`-kolonne (005 §oppdrag, utvidet i
+014), så stemplingen i (a) og gjenlesningen i (b) har ingen bærer.
+016 leverte punkt (c) — visningen, generasjonen og RLS-en — og
+domenekontrollen selv. Punktene (a) og (b) er derfor **spesifisert her,
+men ikke implementert**, og kolonnene må komme i migrasjonen som
+innfører crawloppdraget. Inntil da er egress-porten den eneste
+håndhevede, og det skal ikke leses som at de to andre er dekket.
+
+Revalidering kjører daglig: tre forsøk før en forbigående DNS-feil får
+konsekvens. Policyen kan stille **strengere**
 krav, aldri svakere. Wildcard kun bekreftet på apex, ett nivå, aldri
 nestet; minst én etikett under public suffix (pinnet PSL — utdatert PSL
 avviser, den åpner aldri).
@@ -237,8 +281,9 @@ modul_id · release_id · kontraktversjon · kontrakt_hash · module_epoch ·
 artefakttype`. Kryssbruk mot kvitteringskapabiliteten avvises begge veier.
 
 1. Controlleren laster opp lukket rapport til `POST /v1/artefakt`.
-2. API-et validerer størrelse + skjema mot `skjema_hash`, krypterer med
-   tenant-DEK, lagrer `staged` varig.
+2. API-et validerer størrelse, JCS-kanoniserer, krypterer med tenant-DEK
+   og lagrer `staged` varig. **Skjemavalideringen er en åpen port** — se
+   under.
 3. API returnerer `artefakt_id` + **serverberegnet hash**. Modulens egen
    hash-påstand finnes ikke i skjemaet.
 4. Resultatkvitteringen binder begge.
@@ -252,6 +297,38 @@ artefakttype`. Kryssbruk mot kvitteringskapabiliteten avvises begge veier.
    bevares** (opprydding rører det aldri). Signatur-/tenant-/oppdrags-/
    release-/bindingsavvik → sikkerhetsrouting, som 014a §5.
 9. Innsyn krever `artifacts:read`. Modulen ser aldri DEK, ciphertext, DB.
+
+**Skjemavalidering: en hash er ikke et skjema.** `artefakttype_register`
+lagrer kun `skjema_hash TEXT NOT NULL` (016 linje 93), og det finnes
+ingen skjemakilde noe sted i repoet — verken tabell, fil eller register
+som `POST /v1/artefakt` kunne slått opp. Endepunktet parser derfor,
+JCS-kanoniserer, måler størrelse, hasher og krypterer et **vilkårlig**
+JSON-objekt. En hash alene kan ikke validere noe: den kan bekrefte at et
+skjema man allerede har er det registrerte, aldri produsere skjemaet.
+Steg 2 kan altså ikke i dag håndheve «lukket rapport», og en åpen eller
+feilformet rapport blir varig evidens.
+
+Porten lukkes med en **serverid skjemakilde**, ikke med en påstand fra
+modulen:
+```sql
+CREATE TABLE artefaktskjema (
+  skjema_hash TEXT PRIMARY KEY,     -- sha256 over JCS-kanonisert `skjema`
+  skjema      JSONB NOT NULL,
+  registrert  TIMESTAMPTZ NOT NULL DEFAULT now());
+-- Append-only + trigger som avviser INSERT der hashen ikke er sha256 over
+-- de kanoniserte bytene. Innholdet er da bundet til navnet sitt.
+ALTER TABLE artefakttype_register
+  ADD CONSTRAINT artefakttype_skjema_fk
+  FOREIGN KEY (skjema_hash) REFERENCES artefaktskjema (skjema_hash);
+```
+`registrer_artefakttype()` kan da ikke registrere en type mot et skjema
+som ikke finnes, og steg 2 validerer rapporten mot bytene i registeret
+— verifisert mot hashen før bruk — i stedet for mot hashen alene.
+
+**Status: ikke levert i 016.** Tabellen, triggeren og FK-en må komme i en
+senere migrasjon (016 er immutable, checksum-låst), og
+`skjema_hash`-kolonnen er i mellomtiden et navn uten oppslagsvei. Det
+skal stå her, ikke leses inn i steg 2 som om det var håndhevet.
 
 ## 8. GRANT-modell (default-deny)
 
