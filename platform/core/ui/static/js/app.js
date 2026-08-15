@@ -73,10 +73,17 @@ function riveNedRuter() {
 // Omstartsgenerasjonen telles derfor opp her: enhver omstart som er underveis
 // blir forbigått i samme øyeblikk som vi går til innlogging, uansett hvor i
 // ventekjeden den står.
+//
+// Overgangen tar samtidig eierskapet til flaten, ikke bare fra andre — også
+// for seg selv. Den har nemlig sitt EGET ventepunkt: `visInnlogging` henter
+// `/ui/oppsett.json` før den tegner. Blir overgangen forbigått mens den venter
+// — en 401 fra en flate, og så et språkbytte i skallet som fortsatt sto på
+// skjermen — skulle den ikke tegnet innloggingsflaten over det nyere valget.
+// Nummeret bæres derfor med inn, samme regel som `byttNr` i `byttTil`.
 function tilInnlogging() {
-  omstartNr++;
+  const nr = ++omstartNr;
   riveNedRuter();
-  return visInnlogging();
+  return visInnlogging({ gjelderFortsatt: () => nr === omstartNr });
 }
 
 function bekreftLoggUt() {
@@ -135,9 +142,8 @@ function visApp(sesjon, utrulling = {}) {
 // løper to omstarter side om side gjennom fire ventepunkter. Uten et skille
 // vant den som tilfeldigvis kom sist i mål — altså kunne det FØRSTE valget
 // rendre over det andre, og `_kart`, `<html lang>` og den markerte knappen
-// ende på hvert sitt språk.
+// ende på hvert sitt språk. Eierskapsregelen selv står ved `omstartNr` øverst.
 //
-
 // `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
 // da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
 // `data-sprak` → nettleseren → nb).
