@@ -147,11 +147,18 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
     // `meldLive` i tillegg skrev samme setning til det polite område, så
     // skjermleseren fikk to konkurrerende opplesninger for ett klikk, og den
     // polite kunne komme sist og overdøve selve feillista.
-    const visFeil = (feil) => {
+    // Overskriften er en DIAGNOSE, og bare 422 gir grunnlag for å stille den
+    // (Codex P2). Derfor tar boksen overskrift og linjer som argumenter i
+    // stedet for å anta «ugyldig»: en nettverksfeil, 403, 409 eller 5xx sier
+    // ingenting om utkastet, og skal ikke få eier til å lete etter feil i en
+    // policy som kan være helt i orden.
+    const visFeil = (overskrift, linjer) => {
       boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
       boks.append(el("div", { class: "pa-valfeil", role: "alert" },
-        el("p", { text: t("ui.policyadmin.ugyldig") }),
-        el("ul", {}, ...feil.map((f) => el("li", { text: String(f) })))));
+        el("p", { text: overskrift }),
+        ...(linjer.length
+          ? [el("ul", {}, ...linjer.map((f) => el("li", { text: String(f) })))]
+          : [])));
     };
     b.addEventListener("click", () =>
       validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
@@ -163,11 +170,13 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
         if (e instanceof UgyldigFeil) {
           // Serverens egen feilliste når den finnes; ellers sier vi i det
           // minste SYNLIG at utkastet er ugyldig.
-          visFeil(e.detaljer || [t("ui.policyadmin.ugyldig_uten_detaljer")]);
+          visFeil(t("ui.policyadmin.ugyldig"),
+            e.detaljer || [t("ui.policyadmin.ugyldig_uten_detaljer")]);
           return;                       // bli i skuffen så eier ser feilene
         }
-        // Enhver annen feil skal også være synlig, ikke bare annonsert.
-        visFeil([t("ui.policyadmin.feilet")]);
+        // Enhver annen feil skal også være SYNLIG — men uten å påstå noe om
+        // utkastet: her vet vi bare at handlingen ikke gikk gjennom.
+        visFeil(t("ui.policyadmin.feilet"), []);
       }));
     boks.append(rediger, b);
     return boks;

@@ -323,3 +323,28 @@ test("Valider: 422 uten detaljer sier likevel synlig fra", async () => {
     .includes(t("ui.policyadmin.ugyldig_uten_detaljer")));
   gjenopprett();
 });
+
+test("Valider: 5xx sier «handlingen feilet», ikke «utkastet er ugyldig»", async () => {
+  // Bare 422 er et valideringssvar. En 500 (eller nettverksfeil, 403, 409)
+  // sier ingenting om utkastet — påstår flaten «ugyldig» der, sender den eier
+  // ut på leting etter feil i en policy som kan være helt i orden.
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 500,
+      json: async () => ({ feil: "internfeil" }) }),
+  };
+  const dlg = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+  _finn(dlg, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => dlg.querySelector(".pa-valfeil"));
+  const tekst = dlg.querySelector(".pa-valfeil").textContent;
+  assert.ok(tekst.includes(t("ui.policyadmin.feilet")),
+    "serverfeil skal være synlig, ikke bare annonsert");
+  assert.ok(!tekst.includes(t("ui.policyadmin.ugyldig")),
+    "en serverfeil er ikke et bevis på at utkastet er ugyldig");
+  gjenopprett();
+});
