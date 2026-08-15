@@ -6,7 +6,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentJson, validerUtkast, apneRunde, attesterAktivering,
+  hentJson, validerUtkast, apneRunde, attesterAktivering, UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
@@ -135,22 +135,35 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
     const valNokkel = nyIdempotensnokkel();
     const b = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.valider") });
+    // Et ugyldig utkast er ikke et 200-svar med `utfall: "ugyldig"` — serveren
+    // svarer 422 `policy_ugyldig` med feillista i `detaljer`. Koden ventet på
+    // den første formen, så `.then` kjørte aldri; 422-en havnet i `.catch`,
+    // som bare kalte `meldLive`. Det skriver til aria-live-området: en
+    // skjermleser sa fra, men på skjermen så knappen helt død ut. Eier klikket
+    // «Valider» og ingenting skjedde — den eneste som fikk vite hvorfor, var
+    // den som leste serverloggen.
+    const visFeil = (feil) => {
+      meldLive(t("ui.policyadmin.ugyldig"));
+      boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
+      boks.append(el("div", { class: "pa-valfeil", role: "alert" },
+        el("p", { text: t("ui.policyadmin.ugyldig") }),
+        el("ul", {}, ...feil.map((f) => el("li", { text: String(f) })))));
+    };
     b.addEventListener("click", () =>
-      validerUtkast(uid, detalj.utkastversjon, valNokkel).then((r) => {
-        if (r && r.utfall === "ugyldig") {
-          meldLive(t("ui.policyadmin.ugyldig"));
-          boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
-          boks.append(el("div", { class: "pa-valfeil", role: "alert" },
-            el("p", { text: t("ui.policyadmin.ugyldig") }),
-            el("ul", {}, ...(r.feil || []).map((f) =>
-              el("li", { text: String(f) })))));
-          return;                       // bli i skuffen så eier ser feilene
-        }
+      validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
+        boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
         meldLive(t("ui.policyadmin.validert"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        meldLive(t("ui.policyadmin.feilet"));
+        if (e instanceof UgyldigFeil) {
+          // Serverens egen feilliste når den finnes; ellers sier vi i det
+          // minste SYNLIG at utkastet er ugyldig.
+          visFeil(e.detaljer || [t("ui.policyadmin.ugyldig_uten_detaljer")]);
+          return;                       // bli i skuffen så eier ser feilene
+        }
+        // Enhver annen feil skal også være synlig, ikke bare annonsert.
+        visFeil([t("ui.policyadmin.feilet")]);
       }));
     boks.append(rediger, b);
     return boks;

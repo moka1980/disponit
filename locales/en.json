@@ -558,5 +558,6 @@
   "site.katalog.m45.navn": "Sustainability and ESG agent",
   "site.katalog": "The whole platform",
   "site.katalog_tittel": "One agent platform, eleven business areas",
-  "site.katalog_note": "Planned product scope: {antall} modules across four phases. What is available today is listed under “What you get”."
+  "site.katalog_note": "Planned product scope: {antall} modules across four phases. What is available today is listed under “What you get”.",
+  "ui.policyadmin.ugyldig_uten_detaljer": "The draft is invalid, but the server gave no reason."
 }
