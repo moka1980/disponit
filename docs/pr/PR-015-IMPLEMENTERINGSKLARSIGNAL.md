@@ -25,6 +25,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 |---|---|---|
 | 1 | `overtakelse_attestasjon` (ny tabell, m/ `rolle`, `authz_version` + `konfliktsett_hash`) + `overtakelse_attestasjon_saksbinding()` (trigger) | Fire øyne, §4; målet må bindes til saken, §1; autorisasjonen må kunne reautoriseres ved tildeling, §4.3; og stemmen må bindes til konfliktbildet den gjaldt, §1a |
 | 1b | `konfliktsett_hash()` + `registrer_overtakelsesattestasjon()` (nye) | Med INSERT-grant kan én kompromittert runtime-credential skrive to stemmer i to navn og gjøre opp domenet selv; aktøren må tas fra sesjonen og autoriseres i databasen, §1b |
+| 1c | `opprett_brukersesjon()` + `tilbakekall_brukersesjon()` (nye, eid av `disponit_authenticator`) + `REVOKE ALL ON brukersesjon FROM disponit` | Å ta aktøren fra sesjonen er ingen port så lenge runtime kan INSERT-e sesjonen selv: med `SELECT` på `brukermedlemskap` og `INSERT` på `brukersesjon` kan ett lekket DB-credential skrive to sesjoner i to avgjøreres navn og avgi begge stemmene, §1c |
 | 2 | `domeneobservasjonsrunde` (m/ `challenge_token_hash`, unikindeks på levende runde, køindeks) + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4; runden må være bundet til challengeVERSJONEN, §2.4a; én levende runde per mål og formål, §2.4 |
 | 2b | `rydd_domeneobservasjonsrunder(p_maks INT)` (ny) | En runde som bare utløper har ingen avslutning, og køtabellen vokser uten grense, §2.4bb |
 | 3 | `apne_domeneobservasjonsrunde(tenant, hostname, formal)` (ny) → `(runde_id, gjenbrukt, forrige_runde, forrige_utfall)` | Runden er engangs, kortlevd, idempotent under sonelåsen og bundet til én rad og én challenge, §2.4/§2.4a; og en utløpt runde må rapportere utfallet sitt, ellers er `409 observasjon_uteblitt` en respons ingen kodesti kan produsere, §2.4/§2.5c |
@@ -36,6 +37,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 7 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense uten å miste evidensfristpredikatet, §6 / port 25 |
 | 8 | `artefaktkapabilitet.owner_generation` + `.owner_claim_id`, med oppgraderingssekvens | Fencing ved reclaim, §5 |
 | 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
+| 9b | `laas_oppdragsgenerasjon()` (ny, eid av `disponit_m37_claimer`) | Forbrukeren kjører som `disponit_domene_eier`, som kun har `SELECT ON oppdrag` (016 linje 950); en låseklausul krever `UPDATE`, så `FOR SHARE` derfra gir `permission denied` på HVER opplasting. Låsen må gå gjennom en eid hjelper — et `UPDATE`-grant ville gitt den gjerdede rollen retten til å flytte gjerdet, §5 |
 | 10 | `avgjor_domeneovertakelse(…, p_runde UUID)` — flerpartsoppgjør, friskhetskrav og taperoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon (§3), telle kun ferske attestasjoner på gjeldende konfliktbilde (§1a) mot fersk DNS-evidens (§4), og la taperens sak kunne lukkes mot hendelsesevidens — også etter en reapplikasjon (§3.1) |
 | 10b | `avgjor_domeneovertakelse_attestert()` (ny innpakning; oppgjøret selv grantes til ingen) | §4.3-reautoriseringen i Python er ingen port når runtime kan kalle oppgjøret direkte: med to lovlige stemmer inne kan en kompromittert credential gjøre opp domenet etter at en attestant har mistet rollen. Tellingen og reautoriseringen må skje i databasen, under sakens lås, §4.3/§2.4c |
 | 11 | `forelder_hostname()` + `sone_overlapp()` (nye) + sonelåsen og overlappsgrenen i `verifiser_domenekontroll` / `avgjor_domeneovertakelse` | Wildcard-scopen dekker ett nivå mer enn hostnavnet, men 016/018 gjerder kun det litterale navnet: `example.com` (wildcard, tenant A) og `foo.example.com` (tenant B) kan i dag begge stå `verifisert` samtidig, §2.5b |
@@ -43,7 +45,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 13 | Oppgraderingsryddingen av eksisterende overlapp, FØR gjerdet installeres | Gjerdet er fremoverrettet: rader som alt er `verifisert` i overlapp forblir doble til noen rydder dem, §2.5b |
 | 14 | `utsted_challenge()` (`CREATE OR REPLACE`, ACL bevares) | En reissue må forkaste åpne runder på målet, ellers kan evidens for en invalidert challenge forbrukes etterpå, §2.4a |
 
-**Seks ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
+**Sju ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
 saksflyten ligger ikke i databasen, og en port som bare finnes i SQL er
 ikke nådd:
 
@@ -55,6 +57,7 @@ ikke nådd:
 | D | `ny → manuell` i `opprett_overtakelsessak()` | `api/domeneovertakelse.py` | Saken er ellers synlig, men ikke handterbar, §3 |
 | E | **Verifiseringsflaten**: `POST /v1/domener`, `POST /v1/domener/{hostname}/verifisering`, `GET /v1/domener[/{hostname}]` | `api/app.py`, `api/domenekontroll.py` | Etter §2.4c er `disponit` eneste kaller av `verifiser_domenekontroll`, og ingen rute kaller den — uten dette kan intet domene bli autorisert, §2.5c |
 | F | `POST /v1/domener/overtakelse/{unntak_id}/runde` | `api/domeneovertakelse.py` | Attestanten må få `dns_runde_id` fra et sted; oppgjørsrunden åpnes ikke av seg selv, §2.5c/§4.2b |
+| G | Sesjonsutstedelsen over innloggings-DSN-en: `opprett_brukersesjon()` / `tilbakekall_brukersesjon()` i stedet for direkte `SELECT`/`INSERT`/`UPDATE` (`sesjon.py` linje 434–449, 529), med 5-sesjonstaket flyttet inn i funksjonen + rollen `disponit_innlogging` i `oppsett-postgresql.sh` | `api/sesjon.py`, `deploy/staging/` | Uten dette feiler innloggingen i det 019 tar tabellen fra runtime — og med tilgangen igjen er §1b-s aktøroppslag ingen port, §1c |
 
 ---
 
@@ -243,9 +246,11 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   -- 1. Aktøren er sesjonens, ikke et argument: slå opp brukersesjon på
   --    encode(sha256(convert_to(p_sesjon,'UTF8')),'hex'). Ikke tilbakekalt,
   --    ikke utløpt, tenant = p_tenant. Ellers -> `sesjon_ugyldig`.
-  -- 2. brukermedlemskap FOR UPDATE på (p_tenant, sesjonens bruker_id):
-  --    aktiv, 'domeneavgjorer' = ANY(roller), og authz_version må være
-  --    LIK sesjonens authz_snapshot. Ellers -> `aktor_uautorisert`.
+  -- 2. medlemskapet LÅSES gjennom laas_godkjenner(p_tenant, sesjonens
+  --    bruker_id) (013 linje 195) — ALDRI med en egen FOR UPDATE her.
+  --    Ingen rad (ikke medlem/ikke aktiv), 'domeneavgjorer' ikke i
+  --    roller, eller authz_version <> sesjonens authz_snapshot
+  --    -> `aktor_uautorisert`.
   -- 3. saken leses FOR UPDATE: kategori 'domeneovertakelse', og målet
   --    (vinnende_tenant, hostname, forventet_generasjon) hentes fra sakens
   --    idempotensnøkkel — samme oppslag som saksbindingstriggeren (§1).
@@ -258,11 +263,13 @@ $$;
 
 - **`aktor` er ikke lenger noe kalleren kan velge.** Den utledes av en
   sesjon kalleren må ha *klartekstverdien* av. Databasen lagrer kun
-  `sesjon_id_hash` (010 linje 134), så en kompromittert runtime kan ikke
-  regne seg tilbake til en gyldig `p_sesjon` fra tabellen: den må ha
-  fanget to distinkte avgjøreres levende sesjoner. Samme prinsipp som
+  `sesjon_id_hash` (010 linje 134), så ingen kan regne seg tilbake til en
+  gyldig `p_sesjon` fra en lesning av tabellen. Samme prinsipp som
   `observator = session_user` i §2.4 — identiteten kommer fra
-  autentiseringen, aldri fra parameterlista.
+  autentiseringen, aldri fra parameterlista. **Men en sesjon man ikke kan
+  lese seg til, kan man skrive seg til**, og det hullet lukkes i §1c: uten
+  den er hele dette punktet en påstand om lesetilgang i en modell der
+  angriperen har skrivetilgang.
 - **Autorisasjonen sjekkes i databasen, ikke bare i Python.**
   `'domeneavgjorer'` står i funksjonskroppen, ikke i et argument, av
   samme grunn som `status = 'verifisert'` gjør det i §2.2b. At nettopp
@@ -279,14 +286,155 @@ $$;
   `disponit_domene_eier` og har selv de rettighetene.
 - **BYPASSRLS er ikke et bordgrant.** Eierrollen ser bort fra RLS, men den
   må fortsatt ha `SELECT` på tabellene funksjonen leser: `brukersesjon`,
-  `brukermedlemskap`, `unntak` og `revisjonslogg`. Grantene står i 019 og
+  `unntak` og `revisjonslogg`. Grantene står i 019 og
   overlever REVOKE-syklusen, som kun kjøres for `disponit`, token-admin og
   `disponit_arbeider` (§6c). Uten dem feiler funksjonen på `permission
   denied` ved første stemme — på en base der alle testene er grønne.
+- **Medlemskapslåsen kan ikke tas med et bordgrant, og skal ikke tas med
+  et.** `brukermedlemskap` står derfor IKKE i listen over: et `SELECT`-
+  grant bærer ikke en låseklausul. PostgreSQL krever `UPDATE`-rett (på
+  minst én kolonne) for `SELECT … FOR UPDATE`, så en egen `FOR UPDATE` her
+  ville feilet på `permission denied` ved **første lovlige stemme** — ikke
+  ved et angrep, men i normalveien. Og å gi eierrollen `UPDATE` på
+  `brukermedlemskap` for å få låsen ville gitt den skriverett på selve
+  autorisasjonskilden (§4.1): rollen som håndhever fire øyne ville kunnet
+  gi seg selv rollen den håndhever. Låsen tas derfor av PR-013-s
+  `laas_godkjenner` (013 linje 195–204) — SECURITY DEFINER, eid av
+  tabelleieren, `FOR UPDATE` innebygd, returnerer nøyaktig `roller` og
+  `authz_version`. Eierrollen har alt EXECUTE på den (§6b), og §4.3
+  reautoriserer gjennom samme funksjon: skrivingen og tellingen av en
+  stemme låser da medlemskapet på nøyaktig samme måte, gjennom nøyaktig
+  samme objekt.
 - **Fornyelsen går samme vei.** `ON CONFLICT DO UPDATE` treffer
   kolonnelåstriggeren i §1, som tillater nettopp de fem
   snapshot-feltene — en fornyelse er en ny stemme avgitt nå, med ny
   sesjonssjekk og ny konfliktsett-hash.
+
+### 1c. Runtime skal ikke kunne UTSTEDE en sesjon
+
+**Å ta aktøren fra sesjonen flytter bare hullet hvis runtime kan lage
+sesjonen.** `migrer.py` linje 103 gir `disponit`
+`SELECT, INSERT, UPDATE` på `brukersesjon`, og linje 102 gir `SELECT` på
+`brukermedlemskap`. Med *bare* DB-credentialet — ikke prosessen, ikke noen
+brukers cookie, ikke ett eneste nettverkskall mot API-et — går angrepet slik:
+
+1. les de to avgjørernes `bruker_id` og gjeldende `authz_version` fra
+   `brukermedlemskap`;
+2. velg to vilkårlige klartekstverdier `s1`, `s2`, og INSERT to rader i
+   `brukersesjon` med `sesjon_id_hash = sha256(s_i)`, riktig `tenant`,
+   de to `bruker_id`-ene, `authz_snapshot` = den leste `authz_version`,
+   `utloper` i framtiden, `tilbakekalt = false`;
+3. kall `registrer_overtakelsesattestasjon(..., s1)` og `(..., s2)`.
+
+Begge stemmene passerer hvert eneste ledd i §1b: sesjonen er levende,
+snapshotet stemmer, medlemskapet er ekte og bærer `domeneavgjorer`.
+Kolonnelåstriggeren (010 linje 149) gjelder `UPDATE`, ikke `INSERT`, så den
+ser ikke noe. Angriperen trenger altså **ikke** å fange to levende sesjoner,
+slik §1b hevdet — hen skriver dem. Fire øyne håndhevet av en sesjonstabell
+angriperen selv skriver, er ikke fire øyne, og §1b lukker da bare den ene
+halvdelen av sin egen luke: `overtakelse_attestasjon` er utenfor rekkevidde,
+men *inngangen* til den er det ikke.
+
+**Utstedelsen flyttes derfor til authenticator-rollen.** 010 har alt
+skillet — `slaa_opp_sesjon` eies av NOLOGIN-rollen `disponit_authenticator`,
+som har `SELECT, UPDATE ON brukersesjon` (010 linje 244–250), og runtime
+LESER aldri tabellen direkte. Det som mangler er skrivesiden:
+
+```sql
+-- 019. Eid av disponit_authenticator; rollen får INSERT i tillegg til
+-- SELECT, UPDATE (010 linje 250). Utstedelsen stempler selv `opprettet`,
+-- `siste_bruk` og `tilbakekalt` — kalleren oppgir dem ikke.
+--
+-- 5-SESJONSTAKET FLYTTER MED INN. I dag teller `sesjon.py` (linje 433–441)
+-- aktive sesjoner, tilbakekaller de eldste over taket og INSERT-er, alt i
+-- ÉN transaksjon på ÉN forbindelse. Blir utstedelsen liggende på en annen
+-- DSN enn tellingen, er de to ikke lenger atomiske: to samtidige
+-- innlogginger kan begge se fire aktive og begge legge til én. Taket er
+-- derfor funksjonens ansvar, ikke kallerens — samme flytting som §1a gjorde
+-- med `konfliktsett_hash`.
+CREATE FUNCTION opprett_brukersesjon(
+        p_tenant TEXT, p_bruker_id TEXT, p_sesjon_id_hash TEXT,
+        p_csrf_hash TEXT, p_authz_snapshot INT, p_levetid INTERVAL,
+        p_maks_sesjoner INT)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog;
+-- 1. rader for (p_tenant, p_bruker_id), NOT tilbakekalt, utloper > now(),
+--    ORDER BY opprettet, id -- FOR UPDATE: taket telles under lås, ellers
+--    er det en anbefaling
+-- 2. mens antallet >= p_maks_sesjoner: tilbakekall den eldste
+-- 3. INSERT med utloper = now() + p_levetid
+
+-- Logout. Kalleren har bare sesjonshashen; tenant og bruker er radens egne.
+CREATE FUNCTION tilbakekall_brukersesjon(p_sesjon_id_hash TEXT)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog;
+
+ALTER FUNCTION opprett_brukersesjon(TEXT,TEXT,TEXT,TEXT,INT,INTERVAL,INT)
+    OWNER TO disponit_authenticator;
+ALTER FUNCTION tilbakekall_brukersesjon(TEXT)
+    OWNER TO disponit_authenticator;
+GRANT INSERT ON brukersesjon TO disponit_authenticator;
+
+-- Runtime mister lese- OG skriveretten på tabellen. REVOKE-en må stå HER i
+-- tillegg til i migrer.py — se kulepunktet om de to basene under.
+REVOKE ALL ON brukersesjon FROM disponit;
+
+-- Utstedelsen gis til innloggingsrollen ALENE; tilbakekalling er trygt
+-- for begge.
+GRANT EXECUTE ON FUNCTION opprett_brukersesjon(TEXT,TEXT,TEXT,TEXT,INT,INTERVAL,INT)
+  TO disponit_innlogging;
+GRANT EXECUTE ON FUNCTION tilbakekall_brukersesjon(TEXT)
+  TO disponit, disponit_innlogging;
+```
+
+- **Et EXECUTE til `disponit` ville vært samme hull med nytt navn.** Hele
+  poenget er at credentialet som betjener avgjørerruten — og hele resten av
+  forespørselsflaten — ikke kan utstede en sesjon i noens navn. `disponit_innlogging`
+  er derfor en EGEN LOGIN-rolle med eget systemd-credential og egen DSN, på
+  linje med `disponit_arbeider` og token-admin, og den har **ingenting
+  annet**: `USAGE` på skjemaet og EXECUTE på disse to funksjonene. Den kan
+  ikke lese `brukermedlemskap`, ikke se en sak, ikke stemme. Rollen
+  opprettes i `deploy/staging/oppsett-postgresql.sh` som alle andre roller,
+  aldri i en migrasjon; 019 feiler tidlig med samme melding som 005 linje
+  44–47 hvis den mangler.
+- **OIDC-dansen blir liggende på `disponit`.** `oidc_logintransaksjon`,
+  `oidc_rate` og `brukeridentitet` er uendret. Innloggingsbehandleren tar
+  det ene ekstra kallet — utstedelsen — over innloggings-DSN-en, og
+  ingenting mer. Jo smalere den rollen er, jo mindre er den verdt å stjele.
+- **Tilbakekalling er trygt å dele.** Å avslutte en sesjon kan ikke
+  forfalske en identitet; den kan bare fjerne en. Logout (`sesjon.py` linje
+  529) blir derfor liggende på `disponit`, nå gjennom funksjonen i stedet
+  for et direkte `UPDATE`.
+- **`SELECT` går med, og det er ikke en innstramming for sin egen skyld.**
+  Runtimes eneste direkte lesning av tabellen er 5-sesjonstellingen
+  (`sesjon.py` linje 434–437), og den flytter inn i utstedelsen sammen med
+  taket. Alt annet gikk allerede gjennom `slaa_opp_sesjon` (010 linje 220),
+  som er SECURITY DEFINER og aldri returnerer en hash. Beholdt runtime
+  `SELECT`, ville en lekket credential kunnet kartlegge hvem som er logget
+  inn akkurat nå — nyttig nettopp for å velge hvilke to avgjørere man skal
+  stemme i navnet til.
+- **REVOKE-en må stå to steder, ellers gjelder den ett.** `migrer.py`
+  kjører `NULLSTILL_TABELLER` (`REVOKE ALL` for `disponit` på hver tabell
+  migrator eier) og gjenoppretter så `RETTIGHETER`; å ta `brukersesjon` ut
+  av linje 103 er derfor nok **for staging** (§6c). Men en base som kun er
+  bygget av migrasjoner — test og utvikling — har aldri kjørt den syklusen,
+  og der står 010 linje 265 (`GRANT SELECT, INSERT, UPDATE ON brukersesjon
+  TO disponit`) fortsatt. Uten `REVOKE`-linja i 019 ville porten vært
+  stengt i staging og åpen i nettopp den basen testene kjører mot: en grønn
+  negativ test som beviser ingenting.
+- **Hva grensen faktisk er.** Dette gjør et *credential* utilstrekkelig,
+  ikke en *prosess*. En angriper som eier API-prosessen holder begge
+  DSN-ene og kan logge inn som hvem som helst — den grensen er den samme
+  som for PR-012-s MAC-nøkkel, som ligger i app-state nettopp fordi
+  DB-tilgang alene ikke skal holde (011 linje 9–10). Det denne seksjonen
+  fjerner er klassen «lekket DSN, backup, SQL-injeksjon, feilkonfigurert
+  nettverk» — der angriperen har databasen, men ikke prosessen. §1b sa noe
+  sterkere enn det; §1c er det som faktisk holder, og §4.3 (reautorisering
+  under sakens lås) står uansett igjen som det siste leddet.
+- **Port 20p** — negativ, kjøres som `disponit` over dens egen
+  forbindelse: `INSERT INTO brukersesjon …`, `UPDATE brukersesjon SET …`,
+  `SELECT … FROM brukersesjon` og `SELECT opprett_brukersesjon(…)` gir alle
+  `permission denied`, og en påfølgende
+  `registrer_overtakelsesattestasjon()` med en selvvalgt klartekst gir
+  `sesjon_ugyldig`. Uten alle fem er §1b-s aktøroppslag en formalitet.
 
 ## 2. Revalideringsarbeider og observasjonskontrakten — planlegger, observerer ikke
 
@@ -653,7 +801,10 @@ kolonnen: de er ikke revalideringsarbeid.
 | `revalider_domenekontroll(tenant, hostname, aktor, p_runde UUID)` | arbeideren | Samme runde-krav med `formal = 'revalidering'`; så settes tidsstemplet og runden merkes `brukt` |
 | `avgjor_domeneovertakelse(…, p_runde UUID)` | **kun** `avgjor_domeneovertakelse_attestert()` — grantet til ingen | Samme runde-krav med `formal = 'overtakelsesoppgjor'` på vinnerens `(tenant, hostname)` — §4 |
 | `avgjor_domeneovertakelse_attestert(tenant, unntak_id, utfall, p_runde)` | API-et (`disponit`), behandleren §4.2b steg 9 | Teller de ferske stemmene under sakens lås, kontrollerer `konfliktsett_hash` (§1a) og **reautoriserer hver talt attestant** med `laas_godkjenner` FOR UPDATE (§4.3) — *så* kalles oppgjøret, i samme transaksjon |
-| `registrer_overtakelsesattestasjon(tenant, unntak_id, utfall, sesjon)` | API-et (`disponit`), behandleren §4.2b | `aktor` tas fra brukersesjonens `bruker_id`, aldri fra et argument; sesjonen må være levende og `authz_snapshot` stemme; medlemskapet må være aktivt og bære `domeneavgjorer`; målet og `konfliktsett_hash` skrives fra saken (§1a/§1b) |
+| `registrer_overtakelsesattestasjon(tenant, unntak_id, utfall, sesjon)` | API-et (`disponit`), behandleren §4.2b | `aktor` tas fra brukersesjonens `bruker_id`, aldri fra et argument; sesjonen må være levende og `authz_snapshot` stemme; medlemskapet låses og leses med `laas_godkjenner` (§1b) og må være aktivt og bære `domeneavgjorer`; målet og `konfliktsett_hash` skrives fra saken (§1a/§1b) |
+| `opprett_brukersesjon(tenant, bruker_id, sesjon_id_hash, csrf_hash, authz_snapshot, levetid, maks_sesjoner)` | **kun** `disponit_innlogging` | Runtime har verken bordgrant på `brukersesjon` eller EXECUTE her; uten det skillet kan ett lekket DB-credential skrive begge stemmene over. 5-sesjonstaket håndheves inne i funksjonen, under lås, fordi tellingen og INSERT-en må ligge i samme transaksjon (§1c) |
+| `tilbakekall_brukersesjon(sesjon_id_hash)` | `disponit` (logout) og `disponit_innlogging` | Å avslutte en sesjon kan ikke forfalske en identitet, kun fjerne en (§1c) |
+| `laas_oppdragsgenerasjon(tenant, oppdrag_id)` | **kun** `disponit_domene_eier`, fra `lagre_artefakt_staged()` | Eierrollen har kun `SELECT ON oppdrag`, og en låseklausul krever `UPDATE`; hjelperen eies av `disponit_m37_claimer` og returnerer én kolonne fra den raden den låser `FOR SHARE` (§5) |
 
 Det som er vunnet: arbeideren har **ikke** EXECUTE på
 `meld_domeneobservasjon`, og kan ikke skrive `domeneobservasjon`
@@ -869,11 +1020,26 @@ GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID)
 -- står NÅ.
 GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse_attestert(TEXT, BIGINT, TEXT, UUID)
   TO disponit;                       -- behandleren, §4.2b steg 8–9
--- Innpakningen kaller PR-013-s `laas_godkjenner` som EIER, ikke som
--- `disponit`. SECURITY DEFINER bytter `current_user`, så eierrollen må ha
--- sitt eget EXECUTE (013 linje 205–206 grantet kun `disponit`).
+-- Innpakningen (§4.3) OG `registrer_overtakelsesattestasjon()` (§1b) kaller
+-- PR-013-s `laas_godkjenner` som EIER, ikke som `disponit`. SECURITY DEFINER
+-- bytter `current_user`, så eierrollen må ha sitt eget EXECUTE (013 linje
+-- 205–206 grantet kun `disponit`). Dette EXECUTE-grantet er HELE eierrollens
+-- tilgang til `brukermedlemskap` — den får bevisst intet bordgrant der, fordi
+-- et `SELECT`-grant ikke bærer en låseklausul og et `UPDATE`-grant ville gitt
+-- håndheveren skriverett på autorisasjonskilden (§1b).
 GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT)
   TO disponit_domene_eier;
+-- Oppdragslåsen i `lagre_artefakt_staged()` (§5) har samme form og samme
+-- grunn: eierrollen har kun `SELECT` på `oppdrag` (016 linje 950), og en
+-- låseklausul krever `UPDATE`. Hjelperen eies av `disponit_m37_claimer`,
+-- som alt har `SELECT, UPDATE ON oppdrag` (005 linje 1331). Bare EIEREN kan
+-- gi bort rettigheter på et objekt, og migrator eier den ikke — grantet
+-- gjøres derfor under `SET LOCAL ROLE`, nøyaktig som 005 §9 (linje 421) og
+-- migrer.py linje 122–133.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION laas_oppdragsgenerasjon(TEXT, BIGINT)
+  TO disponit_domene_eier;
+RESET ROLE;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT)
   TO disponit_artefaktrydder;        -- ryddetimeren, §6
 GRANT EXECUTE ON FUNCTION rydd_domeneobservasjonsrunder(INT)
@@ -2122,9 +2288,10 @@ $$;
   derfor:
 
   ```
-  1. SELECT owner_generation FROM oppdrag
-      WHERE tenant = p_tenant AND id = p_oppdrag_id FOR SHARE;
-     -- ikke funnet -> invalid_parameter_value, samme kontrakt som
+  1. v_gen := laas_oppdragsgenerasjon(p_tenant, p_oppdrag_id);
+     -- eid hjelper (019, se kulepunktet under): SELECT owner_generation
+     -- FROM oppdrag WHERE tenant = ... AND id = ... FOR SHARE
+     -- NULL (ingen rad) -> invalid_parameter_value, samme kontrakt som
      -- bindingsavviket under
   2. SELECT ... FROM artefaktkapabilitet WHERE jti = ... FOR UPDATE;
   3. brukt-grenen (idempotens) svarer som før, UTEN generasjonsledd
@@ -2134,6 +2301,46 @@ $$;
   6. INSERT artefakt + UPDATE kapabilitet -> brukt
   ```
 
+  - **Låsen tas gjennom en EID hjelper, ikke gjennom et bordgrant.**
+    `lagre_artefakt_staged()` kjører som `disponit_domene_eier`, og 016 gir
+    den rollen kun `SELECT ON oppdrag` (016 linje 950). PostgreSQL krever
+    `UPDATE`-rett (på minst én kolonne) for enhver låseklausul, så en
+    `SELECT … FOR SHARE` derfra ville gitt `permission denied` **før** noen
+    generasjon ble sammenlignet — på hver eneste opplasting, ikke bare på
+    de kappløpende. Porten ville ikke vært streng; den ville vært stengt.
+    Og et `GRANT UPDATE (owner_generation) ON oppdrag TO
+    disponit_domene_eier` er feil vei ut: det ville gitt rollen som skal
+    STOPPES av gjerdet retten til å flytte det. 019 legger derfor til en
+    hjelper i samme form som PR-013-s `laas_godkjenner` (§1b):
+
+    ```sql
+    -- 019, under SET LOCAL ROLE disponit_m37_claimer (005 §9, linje 421):
+    -- eieren har alt SELECT, UPDATE ON oppdrag (005 linje 1331) og
+    -- passerer m37_dispatcher-policyen, som krever nettopp
+    -- current_user = 'disponit_m37_claimer' (005 linje 1365–1367) —
+    -- oppfylt fordi SECURITY DEFINER bytter current_user til eieren.
+    CREATE FUNCTION laas_oppdragsgenerasjon(p_tenant TEXT, p_oppdrag_id BIGINT)
+    RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog AS $$
+    DECLARE v BIGINT;
+    BEGIN
+        SELECT o.owner_generation INTO v
+          FROM public.oppdrag o
+         WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
+           FOR SHARE;
+        RETURN v;          -- NULL = ingen rad; kalleren avviser
+    END $$;
+    REVOKE ALL ON FUNCTION laas_oppdragsgenerasjon(TEXT, BIGINT) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION laas_oppdragsgenerasjon(TEXT, BIGINT)
+      TO disponit_domene_eier;   -- KUN forbrukeren; ikke runtime, ikke arbeideren
+    ```
+
+    Hjelperen returnerer én kolonne fra én rad og kan ikke skrive noe.
+    Låsen den tar lever i **kallerens** transaksjon — `FOR SHARE` er en
+    radlås, ikke en funksjonslokal ressurs — så den holder til
+    `lagre_artefakt_staged()` committer, som er hele poenget med steg 1.
+    Samme grunn som `laas_godkjenner`: den eneste rettigheten som deles ut
+    er retten til å ta én bestemt lås på én bestemt rad.
   - **`FOR SHARE`, ikke `FOR UPDATE`.** Den skal konflikte med reclaim, som
     tar en eksklusiv radlås gjennom sin `UPDATE` — og *ikke* med andre
     samtidige opplastinger på samme oppdrag, som er helt lovlige. Delt lås
@@ -2242,9 +2449,10 @@ clusterroller (skriptets egen kommentar, linje 30–34) — og
 like lukket brukerløkke (linje 67–69), som begge preflightes og enables.
 Uten endringer begge steder er §2 og §6 spesifikasjoner uten kjøretid.
 
-**Alle fire nye rollene må finnes FØR migrasjonen.** 019 gjør `GRANT
+**Alle fem nye rollene må finnes FØR migrasjonen.** 019 gjør `GRANT
 EXECUTE` til `disponit_domeneobservator_1`, `disponit_domeneobservator_2`,
-`disponit_domenerevalidator` og `disponit_artefaktrydder` (§2.4c) — en
+`disponit_domenerevalidator`, `disponit_artefaktrydder` (§2.4c) og
+`disponit_innlogging` (§1c) — en
 `GRANT` til en rolle som ikke finnes er en feil, ikke en advarsel, og ville
 stoppet første migrasjonskjøring på en fersk installasjon. Rekkefølgen i
 skriptet er allerede riktig (roller linje 39–51, `migrer.py` linje 221);
@@ -2255,9 +2463,10 @@ det som mangler er rollene:
 | `disponit_domeneobservator_1` / `_2` | **LOGIN**, tilfeldig passord, egen DSN | Identiteten er `session_user` (§2.4). En NOLOGIN-rolle kan ikke være noens `session_user`, og uten DSN kan prosessen ikke autentisere |
 | `disponit_domenerevalidator` | **LOGIN** + DSN, **ny** | Revalideringsarbeideren (§2). Har nøyaktig tre EXECUTE (`apne_domeneobservasjonsrunde`, `revalider_domenekontroll(…, p_runde)`, `hent_revalideringskandidater(INT, TIMESTAMPTZ)`) og **ingen bord- eller kolonnegrant** — køen leses gjennom funksjonen fordi RLS gjør et kolonnegrant tomt, §2.2b/§2.4c |
 | `disponit_artefaktrydder` | **LOGIN** + DSN, **ny** | Ryddetimeren (§6). Har nøyaktig to EXECUTE: `rydd_staged_artefakter(INT)` og `rydd_domeneobservasjonsrunder(INT)` |
+| `disponit_innlogging` | **LOGIN** + DSN, **ny** | Sesjonsutstedelsen (§1c). Har nøyaktig to EXECUTE (`opprett_brukersesjon`, `tilbakekall_brukersesjon`) og **ingen bordgrant i det hele tatt**. DSN-en brukes av API-prosessen for det ene kallet ved innlogging; den er ikke en egen unit, og skal derfor **ikke** inn i `opp.sh`-s unit-liste eller brukerløkke |
 | `disponit_domains_admin` | **NOLOGIN, uendret fra 014b** | Se under: den skal ikke bli en servicecredential |
 
-- Alle fire går inn i LOGIN-løkken (de tre nye; domains_admin blir i
+- Alle går inn i LOGIN-løkken (de fire nye; domains_admin blir i
   NOLOGIN-løkken) og gjennom `sikre_rolle_dsn` + `verifiser_og_reparer`
   (linje 99–123), som er skriptets beviste vei: passordrotasjon og miljøfil
   holdes i takt, og en halvskrevet DSN repareres før noen migrasjon kjøres.
@@ -2409,19 +2618,48 @@ GRANT SELECT ON overtakelse_attestasjon TO {rolle};
 GRANT SELECT ON domenekonfliktpart TO {rolle};
 ```
 
+**Og én linje må ENDRES, ikke legges til (§1c).** Linje 103 er i dag
+
+```python
+GRANT SELECT, INSERT, UPDATE ON oidc_logintransaksjon, brukersesjon TO {rolle};
+```
+
+og skal bli
+
+```python
+# PR-015 §1c: `brukersesjon` er TATT UT — også SELECT. Runtime slår opp en
+# sesjon via `slaa_opp_sesjon` og avslutter en via
+# `tilbakekall_brukersesjon`, men UTSTEDER aldri og LESER aldri tabellen
+# direkte: med INSERT her kan ett lekket DB-credential skrive to sesjoner i
+# to avgjøreres navn og avgi begge stemmene i §1b uten å røre API-et, og med
+# SELECT kan det se hvem det lønner seg å velge. Utstedelsen er
+# `disponit_innlogging` sin, og bare den.
+GRANT SELECT, INSERT, UPDATE ON oidc_logintransaksjon TO {rolle};
+GRANT EXECUTE ON FUNCTION tilbakekall_brukersesjon(TEXT) TO {rolle};
+```
+
 - **Kun `RETTIGHETER`, ikke `ARBEIDER_RETTIGHETER`.** Attestasjonen
   leses av API-behandleren (`disponit`). `disponit_arbeider` attesterer
   ikke, og skal ikke kunne det.
 - **Skriveretten ligger hos eieren, og gis i 019.** `disponit_domene_eier`
   får `SELECT, INSERT, UPDATE` på `overtakelse_attestasjon`,
   `SELECT, INSERT, DELETE` på `domenekonfliktpart` og `SELECT` på
-  `brukersesjon`, `brukermedlemskap`, `unntak` og `revisjonslogg` (§1b) i
+  `brukersesjon`, `unntak` og `revisjonslogg` (§1b) i
   migrasjonen, ikke i
   `migrer.py`: REVOKE-syklusen kjøres kun for `disponit`, token-admin og
   `disponit_arbeider` (se siste kulepunkt), så eierrollens grants vaskes
   ikke bort. Det er disse rettighetene
   `registrer_overtakelsesattestasjon()` og `verifiser_domenekontroll()`
   kjører på som SECURITY DEFINER.
+- **To bordgrants står bevisst IKKE der: `brukermedlemskap` og `oppdrag`.**
+  Begge trengs kun for å ta en LÅS, og et `SELECT`-grant bærer ikke en
+  låseklausul; PostgreSQL krever `UPDATE`. Å gi eierrollen `UPDATE` på
+  `brukermedlemskap` ville gitt fire-øyne-håndheveren skriverett på
+  autorisasjonskilden, og `UPDATE (owner_generation)` på `oppdrag` ville
+  gitt fencinghåndheveren retten til å flytte generasjonen den gjerder mot.
+  Låsene tas derfor gjennom `laas_godkjenner` (§1b) og
+  `laas_oppdragsgenerasjon` (§5), som begge eies av rollen som ALT har
+  rettigheten, og som kun kan returnere den ene raden de låser.
 - **`domeneobservasjonsrunde` og `domeneobservasjon` får ingen linje.**
   De nås utelukkende gjennom SECURITY DEFINER-funksjonene i §2.4/§2.4b;
   et bordgrant der ville gjort observatørkontrakten til pynt — runtime
@@ -2459,6 +2697,18 @@ alle testene er grønne.
 - **Hver ny og hver erstattet signatur inn i `_design`.** Signaturen er
   nøkkelen (`to_regprocedure`), så `p_runde`-versjonene er *nye* rader ved
   siden av 016/018-radene — ikke erstatninger av dem.
+- **To av 019-funksjonene har en ANNEN eier enn `disponit_domene_eier`, og
+  må inn med den.** `laas_oppdragsgenerasjon(text,bigint)` eies av
+  `disponit_m37_claimer` (§5) — samme rad-form som de øvrige M-37-
+  funksjonene i `_design` (linje 46–81) — og `opprett_brukersesjon(text,
+  text,text,text,integer,interval,integer)` +
+  `tilbakekall_brukersesjon(text)` eies av
+  `disponit_authenticator` (§1c), som `slaa_opp_sesjon` alt gjør. Havner de
+  inn med feil eier, eller ikke i det hele tatt, flytter reparasjonen dem
+  til migrator: `laas_oppdragsgenerasjon` ville da fortsatt virke — den
+  ville bare ha sluttet å være avgrenset — mens
+  sesjonsutstedelsen ville kjørt med migrators privilegier og §1c-grensen
+  vært borte uten at ett kall feilet.
 - **`overtakelse_attestasjon` og `domenekonfliktpart` skal IKKE inn — de
   blir hos migrator.** Det er ikke en forglemmelse, det er §6c: begge har
   en linje i `migrer.py`-s `RETTIGHETER`, og den blokka kjører som
@@ -2494,10 +2744,10 @@ alle testene er grønne.
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
 | Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); veien inn til en NY autorisasjon er kun verifiseringsruten (§2.5c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs, kortlevd og **unik per (tenant, hostname, formal)** mens den lever; åpningen er idempotent | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB mot **rundens** challenge (§2.4a); arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status; et mislykket oppslag registreres som `avvik`/`ingen_post` i stedet for å kastes, så observatørkøen roterer i stedet for å låse seg (§2.4b); køen leses gjennom `hent_revalideringskandidater()` fordi FORCE RLS gjør et kolonnegrant tomt, og kø 1 sideinndeles til den er tom i stedet for å kappes (§2.2b) | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)`; terminale runder ryddes på tid (§2.4bb) |
-| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; **stemmen skrives kun av `registrer_overtakelsesattestasjon()`** — runtime har ingen INSERT/UPDATE (§1b/§6c); den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling, også etter en reapplikasjon (§3.1); **selve oppgjøret er grantet til ingen** — eneste kallbare vei er `avgjor_domeneovertakelse_attestert()`, som teller stemmene og reautoriserer attestantene i databasen (§4.3/§2.4c) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); aktøren tatt fra **sesjonen** og autorisert i databasen (§1b); to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, **begge på gjeldende `konfliktsett_hash`** (§1a), og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjons- og konfliktsettsnapshotet |
+| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; **stemmen skrives kun av `registrer_overtakelsesattestasjon()`** — runtime har ingen INSERT/UPDATE (§1b/§6c); den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling, også etter en reapplikasjon (§3.1); **selve oppgjøret er grantet til ingen** — eneste kallbare vei er `avgjor_domeneovertakelse_attestert()`, som teller stemmene og reautoriserer attestantene i databasen (§4.3/§2.4c) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); aktøren tatt fra **sesjonen** og autorisert i databasen under `laas_godkjenner`-låsen (§1b) — og sesjonen kan runtime hverken lese eller utstede (§1c), ellers ville aktøroppslaget bevist en rad angriperen selv skrev; to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, **begge på gjeldende `konfliktsett_hash`** (§1a), og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjons- og konfliktsettsnapshotet |
 | Domenegjerdet (§2.5b) | Overlappstesten ligger i `verifiser_domenekontroll` — den ENESTE veien inn i `verifisert`, også overtakelsesgrenen; ingen kaller kan hoppe over den, og `sone_overlapp` har ingen grant utenfor funksjonen; **rader fra før 019 ryddes av migrasjonen selv**, så gjerdet ikke bare gjelder fremover | **Sonelås på både hostnavnet og forelderen**, i sortert rekkefølge; `example.com` og `foo.example.com` serialiseres mot hverandre, ikke bare mot seg selv; hele overlappsmengden avledes på nytt under låsen ved oppgjør — `forelder`/`barn` mot `sone_overlapp()`, `eksakt` mot at motparten fortsatt ikke er `verifisert`, siden den ble tilbakekalt allerede ved verifiseringen (§2.5b) | Gjerdet måler *effektiv* dekning (wildcard = ett nivå), ikke likhet i hostnavnstreng; `retning` utledes av hostnavnene, ikke av wildcard-biten; overlapp gir `avklaring_kreves` + sak, aldri `verifisert` | Tre og bare tre overlappsformer (`eksakt`/`forelder`/`barn`); en fjerde form er en feil, ikke stillhet; motpartsmengden er en tabell (`domenekonfliktpart`), ikke én kolonne |
 | Drift av det hele (§6b/§6c/§6d) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort); eierskapet kun i `eierskap-reparasjon.sql`-s `_design` — og de to listene motsier ikke hverandre: en runtime-grantet tabell blir hos migrator (§6d, port 28f) | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser med hver sin Unix-bruker og egen 0400-miljøfil | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas; at domenerollen IKKE kan logge inn måles på en oppgradert base (28c) | `UNITS`, `RETTIGHETER`, `_design` og resolveroperatørlista er lukkede lister; en observatør med feil rolle, ukjent operatør eller delt operatør/ASN nekter å starte |
-| Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; ved forbruk låses **oppdragsraden `FOR SHARE` FØR kapabilitetsraden `FOR UPDATE`**, så sammenligningen er atomisk mot et samtidig reclaim og ikke bare mot et som alt har committet (§5) | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
+| Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; ved forbruk låses **oppdragsraden `FOR SHARE` FØR kapabilitetsraden `FOR UPDATE`**, så sammenligningen er atomisk mot et samtidig reclaim og ikke bare mot et som alt har committet — oppdragslåsen tas gjennom `laas_oppdragsgenerasjon()`, fordi forbrukerens eierrolle kun har `SELECT ON oppdrag` og en låseklausul krever `UPDATE` (§5) | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
 ## 8. Codex-porter
@@ -2899,7 +3149,12 @@ er den eneste rollen i `ROLLE_TIL_SCOPES` som bærer `domains:adjudicate`,
 og det er nøyaktig rollenavnet funksjonskroppen krever — en test som
 leser kartet og funksjonens kilde og sammenligner, så de to ikke kan
 drive fra hverandre. Målt som `disponit` over nettverket; en variant som
-kjører som eier eller migrator består med et INSERT-grant i drift ·
+kjører som eier eller migrator består med et INSERT-grant i drift.
+**Positiv halvdel i samme port:** den første lovlige stemmen må faktisk bli
+skrevet. Eierrollen har intet bordgrant på `brukermedlemskap` (§6c), og en
+låseklausul krever `UPDATE` — en `FOR UPDATE` rett i funksjonskroppen gir
+derfor `permission denied` før noen rad skrives, og en port som kun måler
+avslag ville stått grønn mens ingen i det hele tatt kunne stemme ·
 20m **Endret konfliktbilde ugyldiggjør stemmene (§1a):** B utfordrer A-s
 wildcard, to avgjørere godkjenner, og **før** oppgjøret verifiseres et
 nytt barn under samme forelder → første forsøk gir
@@ -2929,6 +3184,19 @@ fordi ingen av de to andre er `verifisert`, og markøren ville vært
 unåelig i nettopp det tilfellet den finnes for. I samme port: et positivt
 oppgjør for C kontrollerer begge de registrerte `eksakt`-partene med
 regelen «fortsatt ikke `verifisert`», og lykkes.
+20p **Runtime kan ikke UTSTEDE en sesjon (§1c):** målt som `disponit` over
+dens egen forbindelse, uten å røre API-et. `INSERT INTO brukersesjon (…)`,
+`UPDATE brukersesjon SET tilbakekalt = false …` og
+`SELECT sesjon_id_hash FROM brukersesjon` → **alle nektet på
+rettigheter**; `SELECT opprett_brukersesjon(…)` → nektet; og
+`registrer_overtakelsesattestasjon(..., 'egenvalgt-klartekst')` →
+`sesjon_ugyldig`. Positiv halvdel i samme port: som `disponit_innlogging`
+lykkes `opprett_brukersesjon()`, og som `disponit` lykkes
+`tilbakekall_brukersesjon()` — grensen skal stenge utstedelsen, ikke
+innloggingen eller utloggingen. Porten kjøres mot en base der `migrer.py`
+IKKE har kjørt (kun migrasjoner), for det er den basen 010 linje 265
+fortsatt gir grantet på; en variant som bare måler staging beviser
+`RETTIGHETER`-blokka og ikke migrasjonen ·
 
 **Kapabilitet (21–24b).**
 21 Claim returnerer distinkte tokens; opplastingstokenet virker ikke
@@ -2974,6 +3242,15 @@ kapabilitetsraden består 24b, 24c og 24d og feiler her. I samme port:
 to samtidige opplastinger på **samme** oppdrag sperrer ikke for hverandre
 (delt lås, ikke eksklusiv), og ingen kjøring ender i vranglås — låsen tas
 alltid på oppdraget før kapabiliteten ·
+24g **Gjerdet stenger ikke normalveien (§5):** én opplasting uten noe
+reclaim i nærheten, kjørt mot 019-versjonen av `lagre_artefakt_staged()` →
+artefaktraden skrives og kapabiliteten blir `brukt`. Porten finnes fordi
+låsen i steg 1 tas av en rolle som kun har `SELECT ON oppdrag` (016 linje
+950): en `SELECT … FOR SHARE` rett i funksjonskroppen gir `permission
+denied` på **hver eneste** opplasting, ikke bare på de kappløpende, og
+24b/24c/24f — som alle forventer et avslag — ville stått grønne mens ingen
+evidens i det hele tatt lot seg lagre. Målt på at
+`laas_oppdragsgenerasjon()` faktisk returnerer generasjonen ·
 24e **Oppgraderingsveien:** base med både `utstedt`- og `brukt`-rader fra
 017 → migrasjonen går gjennom, hver `utstedt` rad ender `feilet`,
 historiske `brukt`-rader beholder `owner_generation IS NULL`, og et token
@@ -2996,8 +3273,9 @@ evidensfristleddet ·
 **Deploy (28).**
 28 **Fersk installasjon fra skriptene alene** (§6b): `oppsett-postgresql.sh`
 kjøres på en tom base → migrasjon 019 går gjennom (`GRANT` til
-observatør- og jobbrollene feiler ikke), begge observatørrollene,
-`disponit_domenerevalidator` og `disponit_artefaktrydder` kan **logge inn
+observatør-, jobb- og innloggingsrollene feiler ikke), begge
+observatørrollene, `disponit_domenerevalidator`, `disponit_artefaktrydder`
+og `disponit_innlogging` kan **logge inn
 med DSN-en fra miljøfilen**, og `opp.sh` installerer og starter begge
 timerne og begge observatørprosessene. Målt som `systemctl is-active` per
 unit og én vellykket innlogging per rolle. En observatør startet med feil
@@ -3247,7 +3525,14 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           domenekontroll.siste_revalideringsforsok, stemplet av
           apne_domeneobservasjonsrunde (§2.2b) +
           konfliktsett_hash() + registrer_overtakelsesattestasjon() —
-          stemmen skrives av eieren, aktøren tas fra sesjonen (§1a/§1b) +
+          stemmen skrives av eieren, aktøren tas fra sesjonen og
+          medlemskapet låses med laas_godkjenner (§1a/§1b) +
+          opprett_brukersesjon() + tilbakekall_brukersesjon() eid av
+          disponit_authenticator, m/5-sesjonstaket flyttet inn, og
+          REVOKE ALL ON brukersesjon FROM disponit (§1c) +
+          laas_oppdragsgenerasjon() eid av disponit_m37_claimer, fordi
+          eierrollen kun har SELECT ON oppdrag og en låseklausul krever
+          UPDATE (§5) +
           overtakelse_attestasjon.konfliktsett_hash +
           RLS + FORCE + tenant-policy på overtakelse_attestasjon OG
           domenekonfliktpart (§1/§2.5b) +
@@ -3259,6 +3544,9 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           §2.4c),
          platform/core/api/autorisasjon.py (rollene `domeneavgjorer` (§4.1)
            og `domeneforvalter` (§2.5c) + `domains:read`),
+         platform/core/api/sesjon.py (utstedelsen går over innloggings-DSN-en
+           via opprett_brukersesjon(); 5-sesjonstaket er funksjonens, ikke
+           Pythons; logout via tilbakekall_brukersesjon() — §1c),
          platform/drift/domenerevalidering.py, platform/drift/domeneobservator.py,
          platform/drift/artefaktrydding.py (rydder også observasjonsrunder),
          platform/core/api/domenekontroll.py (verifiseringsflaten: registrer,
@@ -3277,7 +3565,8 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
          POST /v1/domener/overtakelse/{unntak_id}/runde (§2.5c) og
          POST /v1/domener/overtakelse/{unntak_id}/attestasjon, §4.2),
          deploy/staging/oppsett-postgresql.sh (observatørrollene +
-           `disponit_domenerevalidator` + `disponit_artefaktrydder` som LOGIN
+           `disponit_domenerevalidator` + `disponit_artefaktrydder` +
+           `disponit_innlogging` som LOGIN
            m/DSN, og et eksplisitt idempotent `ALTER ROLE
            disponit_domains_admin NOLOGIN`, §6b — uten rollene feiler 019 på
            en fersk base, og med en credentialed adminrolle er hele 016-
@@ -3291,7 +3580,9 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
            `overtakelse_attestasjon` og på `domenekonfliktpart`,
            §6c — uten den vaskes 019-s grant bort av REVOKE-syklusen og
            saksvisningen feiler; skriveveien er funksjonen, ikke et
-           bordgrant),
+           bordgrant. Og linje 103 ENDRES: `brukersesjon` tas ut av
+           runtime-grantet og erstattes av EXECUTE på
+           `tilbakekall_brukersesjon`, §1c),
          deploy/staging/eierskap-reparasjon.sql (`_design` utvides med hver
            ny/erstattet 019-signatur og de to observasjonstabellene, §6d —
            ellers flyttes de til migrator ved neste oppsett og 019 kjøres
