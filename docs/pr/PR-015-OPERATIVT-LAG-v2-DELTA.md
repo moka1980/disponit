@@ -1,5 +1,14 @@
 # PR-015 SPESIFIKASJON v2 — DELTA (to bindende vilkår → GO)
 
+> **AVLØST — historikk, ikke byggegrunnlag.**
+> `PR-015-IMPLEMENTERINGSKLARSIGNAL.md` er den autoritative teksten
+> («Deltaformen forlates»). DDL-en under er rettet der: migrasjonen er
+> **019** (018 er `018_kanonisk_hostname.sql` på main), attestasjonen
+> nøkles på `(tenant, unntak_id, aktor)` mot `unntak (tenant, id)`, og
+> det finnes ingen `saksrevisjon` — `domenekontroll` har
+> `autorisasjonsgenerasjon`, og saksidentiteten bærer foreldelsen.
+> Bygg fra klarsignalet, ikke herfra.
+
 **Draft: Claude.ai · Retningen står: PR-015 før 014c, A→B→C-modellen,
 `domains:adjudicate`, utstedelse ved claim, ryddetimere. To vilkår lukket.
 Den bærende rettelsen: spredningen var et håp, ikke en mekanisme.**
