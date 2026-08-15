@@ -42,10 +42,25 @@ function rivRuter() {
   aktivRuter = null;
 }
 
+// FLATEGENERASJONEN: hvem eier `#app` akkurat nå. Nummeret tas ved inngangen
+// til en overtakelse og sjekkes etter hver venting; er det ikke lenger det
+// høyeste, finnes det en nyere overtakelse og den eldre trekker seg.
+//
+// Den gjelder BEGGE veier (Codex P2 til PR #42). Først telte bare `start()`
+// opp, som om appflaten var den eneste som kunne ta over `#app`. Det er den
+// ikke: innloggingsflaten erstatter nøyaktig det samme elementet. En oppstart
+// som fortsatt ventet på `/v1/sesjon` eller `/v1/utrulling` var derfor
+// fremdeles «den siste» etter en utlogging, og rendret appskallet OVER
+// innloggingsflaten — med øktdata hentet FØR utloggingen. Brukeren så en
+// innlogget flate hen nettopp hadde logget seg ut av.
+let oppstartNr = 0;
+
 // Innloggingsflaten erstatter hele `#app`, altså også ruterens `<main>`.
-// Den må rives i samme åndedrag, ellers navigerer en gammel ruter videre bak
-// en flate som ikke har noen økt.
+// Ruteren må rives i samme åndedrag, ellers navigerer en gammel ruter videre
+// bak en flate som ikke har noen økt — og generasjonen må telles opp, ellers
+// skriver en ventende oppstart seg inn igjen når svaret endelig kommer.
 function tilInnlogging() {
+  oppstartNr += 1;
   rivRuter();
   visInnlogging();
 }
@@ -117,11 +132,9 @@ function visApp(sesjon, utrulling = {}) {
 // utrulling. To bytter i rask rekkefølge ga to gjennomløp som kappet om de
 // samme globale ressursene — `#app`, `<html lang>`, ruteren — og den tregeste
 // skrev sist. Resultatet kunne bli ett språks tekster i et skall bygget av
-// det andre. Nummeret tas ved inngangen og sjekkes etter hver venting: er det
-// ikke lenger det høyeste, finnes det et nyere gjennomløp som eier flaten, og
-// dette trekker seg uten å røre noe.
-let oppstartNr = 0;
-
+// det andre. Nummeret er `oppstartNr` over, som også `tilInnlogging()` teller
+// opp: den som ikke lenger har det høyeste, trekker seg uten å røre noe.
+//
 // `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
 // da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
 // `data-sprak` → nettleseren → nb).
