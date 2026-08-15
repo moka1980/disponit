@@ -137,6 +137,7 @@ CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
     p_bruker_id            TEXT)     -- prinsipalen bak `p_aktor` (brukermedlemskap)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_gen BIGINT; v_status TEXT; v_antall INT; v_avvik INT; v_authz INT;
+        v_roller TEXT[]; v_bruker TEXT;
 BEGIN
     PERFORM public.krev_kanonisk_hostname(p_hostname);
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
@@ -181,7 +182,7 @@ BEGIN
     END IF;
 
     -- Stemmegiveren autoriseres i BASEN, ikke bare i API-laget, og
-    -- medlemskapsraden LÅSES (FOR SHARE) ut transaksjonen. Uten låsen kunne en
+    -- medlemskapsraden LÅSES ut transaksjonen. Uten låsen kunne en
     -- tilbakekalling committe mellom denne sjekken og overgangen nedenfor.
     -- Rollen er den eneste som bærer `domains:adjudicate` (autorisasjon.py);
     -- basen sjekker rollen fordi scopene er en applikasjonsavledning, og
@@ -190,12 +191,26 @@ BEGIN
         RAISE EXCEPTION 'avgi_overtakelse_attestasjon: bruker_id mangler'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    SELECT m.authz_version INTO v_authz
-      FROM public.brukermedlemskap m
-     WHERE m.tenant = p_tenant AND m.bruker_id = p_bruker_id
-       AND m.aktiv AND 'domeneadjudikator' = ANY (m.roller)
-       FOR SHARE;
-    IF NOT FOUND THEN
+    -- Låsen tas gjennom `laas_godkjenner()` (013), ikke med en egen
+    -- `FOR SHARE` her. Grunnen er en HARD grense i PostgreSQL, ikke en
+    -- stilpreferanse: enhver radlåsklausul — også `FOR SHARE` — krever
+    -- UPDATE-privilegium på tabellen I TILLEGG til SELECT. Domenelaget skal
+    -- aldri kunne skrive `brukermedlemskap` (den er OIDC-forvaltet, og en
+    -- rolle som kunne bumpe `authz_version` kunne gjenopplive en tilbakekalt
+    -- stemme ved å flytte versjonen tilbake på plass), så låsen lånes av den
+    -- herdede funksjonen PR-013 alt har for nøyaktig dette: SECURITY DEFINER
+    -- eid av tabellens egen eier, `FOR UPDATE`, og returnerer rollene +
+    -- authz_version den låste raden hadde.
+    --
+    -- `laas_godkjenner()` kjører som tabelleieren, som IKKE er BYPASSRLS —
+    -- tenantkonteksten settes derfor eksplisitt her. Den er transaksjons-
+    -- lokal, og p_tenant er samme tenant API-et alt har satt (saken tilhører
+    -- utfordreren); test- og driftsveien får dermed samme RLS-vindu.
+    PERFORM set_config('disponit.tenant', p_tenant, true);
+    SELECT g.roller, g.authz_version INTO v_roller, v_authz
+      FROM public.laas_godkjenner(p_tenant, p_bruker_id) g;
+    IF NOT FOUND OR v_roller IS NULL
+       OR NOT ('domeneadjudikator' = ANY (v_roller)) THEN
         RAISE EXCEPTION 'avgi_overtakelse_attestasjon: % er ikke aktiv '
             'domeneadjudikator for %', p_bruker_id, p_tenant
             USING ERRCODE = 'invalid_parameter_value';
@@ -220,15 +235,20 @@ BEGIN
     -- har mistet `domeneadjudikator` — eller hele medlemskapet — ville ellers
     -- fortsatt telt, og en andre stemme kunne gjennomført overtakelsen med
     -- ÉN faktisk autorisert aktør. Alle medlemskapsradene bak de tellende
-    -- stemmene låses derfor DELT først: en tilbakekalling som er underveis må
+    -- stemmene låses derfor først: en tilbakekalling som er underveis må
     -- vente til denne transaksjonen er ferdig, og en som alt har committet er
     -- synlig i tellingen under.
-    PERFORM 1
-       FROM public.brukermedlemskap m
-       JOIN public.overtakelse_attestasjon a
-         ON a.tenant = m.tenant AND a.bruker_id = m.bruker_id
-      WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_gen
-        FOR SHARE OF m;
+    -- Samme lån av `laas_godkjenner()` som over, én gang per DISTINKT
+    -- prinsipal bak stemmene: en `FOR SHARE OF m` i en join her ville krevd
+    -- skriverett på fullmaktstabellen.
+    FOR v_bruker IN
+        SELECT DISTINCT a.bruker_id
+          FROM public.overtakelse_attestasjon a
+         WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_gen
+           AND a.tenant = p_tenant AND a.bruker_id IS NOT NULL
+    LOOP
+        PERFORM 1 FROM public.laas_godkjenner(p_tenant, v_bruker);
+    END LOOP;
     SELECT count(*) INTO v_antall
       FROM public.overtakelse_attestasjon a
      WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_gen
@@ -643,10 +663,18 @@ GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
 -- M-37-eieren har da heller aldri hatt et sekvensgrant.
 GRANT SELECT, UPDATE ON unntak TO disponit_domene_eier;
 GRANT INSERT ON unntak_historikk TO disponit_domene_eier;
--- Codex (P1): reautoriseringen av de tellende stemmene leser og LÅSER
--- `brukermedlemskap` (FOR SHARE) inne i `avgi_overtakelse_attestasjon`.
+-- Codex (P1): reautoriseringen av de tellende stemmene leser `brukermedlemskap`
+-- inne i `avgi_overtakelse_attestasjon` og i `antall_avgitte_attestasjoner`.
 -- Kun SELECT — domenelaget skal kunne bekrefte et medlemskap, aldri endre det.
+--
+-- LÅSEN kan derfor ikke tas her: PostgreSQL krever UPDATE-privilegium for
+-- ENHVER radlåsklausul, også `FOR SHARE`. Den lånes av `laas_godkjenner()`
+-- (013), som er SECURITY DEFINER eid av tabellens egen eier og finnes for
+-- nøyaktig dette — PR-013 møtte samme grense da runtime skulle reautorisere
+-- policygodkjennere. EXECUTE, ikke DML: domenelaget får låse en
+-- medlemskapsrad, aldri skrive den.
 GRANT SELECT ON brukermedlemskap TO disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT) TO disponit_domene_eier;
 
 REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) FROM PUBLIC;
