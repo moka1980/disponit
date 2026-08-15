@@ -6,7 +6,7 @@
 import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
-import { Feiltilstand } from "./komponenter.js";
+import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
@@ -66,6 +66,8 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 async function byttTil(s) {
   lagreSprak(s);              // best effort — kan være nektet, og det er greit
   if (await lastI18n(s) === null) return;   // forbigått av et nyere valg
+  // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
+  lokaliserSkiplenke();
   await visInnlogging({ fokuserSprak: true });
 }
 

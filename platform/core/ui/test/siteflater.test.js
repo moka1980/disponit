@@ -171,6 +171,36 @@ test("Landing: hvert språknavn er merket med sitt eget språk", async () => {
     "språkvalgene i AppShell mangler sitt eget lang");
 });
 
+test("Landing: hoppelenka følger språkbyttet", async () => {
+  // Codex P2: `.hoppelenke` står i `index.html`, altså UTENFOR `#app`, mens
+  // språkbyttet på forsiden bare skriver `#app`. Lokaliseringen bodde privat i
+  // `app.js` og ble aldri kalt herfra, så etter bytte til engelsk sto den
+  // første tastaturkontrollen på siden igjen som «Hopp til innhold» under
+  // `lang="en"` — feil språk for nøyaktig den som trenger den mest.
+  const app = nyttAppBrett();
+  // Lenka rigges som i `index.html`: søsken til `#app`, ikke barn.
+  const lenke = document.createElement("a");
+  lenke.className = "hoppelenke";
+  lenke.setAttribute("href", "#hovedinnhold");
+  lenke.textContent = NB["ui.hopp_til_innhold"];
+  app.parentNode.insertBefore(lenke, app);
+  try {
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+
+    assert.equal(lenke.textContent, EN["ui.hopp_til_innhold"],
+      "hoppelenka står igjen på norsk etter byttet til engelsk");
+    assert.equal(document.documentElement.getAttribute("lang"), "en");
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Landing: språkbyttet virker når localStorage er nektet", async () => {
   // Codex P2: byttet lagret valget og kjørte `location.reload()`. Nektet
   // nettleseren lagringen — privat modus, blokkerte tredjepartscookies, en
