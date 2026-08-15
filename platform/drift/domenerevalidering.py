@@ -190,23 +190,42 @@ def krev_diversitet(resolvere: Sequence[Resolver]) -> None:
             f"({sorted({r.nett for r in resolvere})}) — krever minst 2 ulike")
 
 
-def enige(resolvere: Sequence[Resolver], hostname: str) -> bool:
-    """≥2 uavhengige resolvere må gi SAMME svar (§2.4).
+def enig_svar(resolvere: Sequence[Resolver],
+              hostname: str) -> frozenset[str] | None:
+    """Den TXT-mengden ≥2 uavhengige resolvere er ENIGE om, ellers None (§2.4).
 
     Uenighet → ikke vellykket revalidering. Ikke «flertallet vinner»: to kilder
     som sier ulike ting om en DNS-sone er nettopp tilfellet der vi ikke vet, og
     da skal `siste_vellykkede_revalidering` stå urørt. Et oppslag som KASTER
     teller som uenighet — «vi fikk ikke svar» er ikke «svaret var ja».
+
+    Selve VERDIEN returneres, ikke bare enigheten: enighet alene er ikke
+    kontrollbevis (en sone med en hvilken som helst stabil TXT-verdi gir full
+    enighet lenge etter at utfordringen er fjernet). Verdiene sendes videre
+    til `revalider_domenekontroll(...,TEXT[])`, som holder dem mot den lagrede
+    utfordringen. Se migrasjon 019 §3.35.
     """
     svar = []
     for r in resolvere:
         try:
             svar.append(r.slå_opp(hostname))
         except Exception:
-            return False
+            return None
     if len(svar) < 2:
-        return False
-    return all(s == svar[0] for s in svar[1:])
+        return None
+    if not all(s == svar[0] for s in svar[1:]):
+        return None
+    return frozenset(svar[0])
+
+
+def enige(resolvere: Sequence[Resolver], hostname: str) -> bool:
+    """Er resolverne enige? Ren enighetsprøve — sier INGENTING om kontroll.
+
+    Beholdt fordi §2.4-diversiteten og enighetsregelen er én ting og
+    bevisprøven en annen; kallveien i `_utfor` bruker `enig_svar`, som også
+    bærer verdien beviskontrollen trenger.
+    """
+    return enig_svar(resolvere, hostname) is not None
 
 
 def kandidater(conn, minutt_fra: int, minutt_til: int, K: int
@@ -304,7 +323,7 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
         aktive += 1
         topp = max(topp, aktive)
         try:
-            return rad, enige(resolvere, rad[1])
+            return rad, enig_svar(resolvere, rad[1])
         finally:
             aktive -= 1
 
@@ -312,8 +331,8 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
         svar = list(pool.map(slå_opp, rader))
     res.maks_samtidighet = topp
 
-    for (tenant, hostname), ok in svar:
-        if not ok:
+    for (tenant, hostname), txt in svar:
+        if txt is None:
             res.uenige_resolvere += 1
             continue
         try:
@@ -325,14 +344,21 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
                 "SELECT set_config('disponit.tenant',%s,true),"
                 "       set_config('disponit.aktor',%s,true)",
                 (tenant, aktor))
-            conn.execute("SELECT revalider_domenekontroll(%s,%s,%s)",
-                         (tenant, hostname, aktor))
+            # Bevisformen (019 §3.35), ikke 016s 3-argumentsform: den
+            # avtalte TXT-mengden sendes MED, og databasen holder den mot
+            # `challenge_token_hash`. Enighet alene er ikke kontrollbevis —
+            # en sone som fortsatt har en hvilken som helst stabil TXT-verdi
+            # (SPF) gir full enighet lenge etter at utfordringen er borte.
+            conn.execute("SELECT revalider_domenekontroll(%s,%s,%s,%s)",
+                         (tenant, hostname, aktor, sorted(txt)))
             conn.commit()
             res.vellykket += 1
         except Exception:
-            # Raden ble tilbakekalt/overtatt mellom plukk og kall. Funksjonen
-            # nekter da å registrere en revalidering (016), og det er riktig:
-            # arbeideren skal ikke påstå suksess etter at autorisasjonen er
-            # trukket. Telles som oppslagsfeil, ikke som uenighet.
+            # To tilfeller, samme svar: raden ble tilbakekalt/overtatt mellom
+            # plukk og kall (016 nekter da å registrere revalideringen), eller
+            # beviset manglet i TXT-svaret. Begge betyr «ingen bevist kontroll
+            # nå», og arbeideren skal ikke påstå suksess etter at
+            # autorisasjonen er trukket. Telles som oppslagsfeil, ikke som
+            # uenighet — resolverne var jo enige.
             conn.rollback()
             res.oppslagsfeil += 1

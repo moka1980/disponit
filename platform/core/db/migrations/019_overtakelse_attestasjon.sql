@@ -404,6 +404,68 @@ SET search_path = pg_catalog AS $$
 $$;
 
 -- ------------------------------------------------------------
+-- 3.35 revalider_domenekontroll(p_tenant, p_hostname, p_aktor, p_txt_verdier)
+--
+-- Codex (P1): resolverenighet er IKKE kontrollbevis. `enige()` fastslår kun
+-- at resolverne returnerte samme TXT-mengde — mister tenanten kontrollen og
+-- utfordrings-TXT-en fjernes, men sonen fortsatt har en hvilken som helst
+-- stabil TXT-verdi (SPF, DMARC-eier, verifikasjonsstrenger fra andre
+-- leverandører), er ALLE resolvere enige, og 016s 3-argumentsform ville
+-- friskmeldt `siste_vellykkede_revalidering` for den tidligere kontrolløren.
+--
+-- Denne overlasten krever at den avtalte TXT-mengden faktisk INNEHOLDER
+-- utfordringsbeviset. Sammenligningen ligger her, ikke i arbeideren, av to
+-- grunner: `challenge_token_hash` er bevisst holdt utenfor ethvert grant
+-- (016 gir den ikke engang som kolonne-grant til egress), og hash-
+-- konvensjonen hører hjemme ved siden av kolonnen som lagrer den — ikke
+-- duplisert i en arbeider som kunne kommet i utakt med den.
+--
+-- Fail-closed hele veien: mangler raden bevis (NULL), nektes revalideringen
+-- i stedet for å tolke «ingen lagret utfordring» som «ingenting å bevise».
+-- Selve oppdateringen delegeres til 016s form, så det finnes fortsatt
+-- NØYAKTIG ett sted som skriver `siste_vellykkede_revalidering` og
+-- hendelsesloggen — denne funksjonen legger en port foran, ikke en ny vei.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION revalider_domenekontroll(
+    p_tenant TEXT, p_hostname TEXT, p_aktor TEXT, p_txt_verdier TEXT[])
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_bevis TEXT; v_treff BOOLEAN;
+BEGIN
+    SELECT d.challenge_token_hash INTO v_bevis
+      FROM public.domenekontroll d
+     WHERE d.tenant = p_tenant AND d.hostname = p_hostname
+       AND d.status = 'verifisert';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'revalider_domenekontroll: %/% er ikke verifisert '
+            '(ingen revalidering registrert)', p_tenant, p_hostname
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_bevis IS NULL THEN
+        RAISE EXCEPTION 'revalider_domenekontroll: %/% har ingen lagret '
+            'utfordring — kontroll kan ikke bevises', p_tenant, p_hostname
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- TXT-verdien ER utfordringstokenet; 016 lagrer kun sha256 av det
+    -- («klartekst vises ÉN gang, lagres aldri»). Hex sammenlignes
+    -- ufølsomt for store/små bokstaver, og verdiene trimmes: en TXT-verdi
+    -- kan bære omkringliggende blanktegn fra sonefilen uten at det er en
+    -- annen verdi.
+    SELECT EXISTS (
+        SELECT 1 FROM unnest(coalesce(p_txt_verdier, ARRAY[]::TEXT[])) AS v
+         WHERE v IS NOT NULL
+           AND lower(encode(sha256(convert_to(btrim(v), 'UTF8')), 'hex'))
+               = lower(btrim(v_bevis)))
+      INTO v_treff;
+    IF NOT v_treff THEN
+        RAISE EXCEPTION 'revalider_domenekontroll: %/% — utfordringsbeviset '
+            'finnes ikke i TXT-svaret (kontroll ikke bevist)',
+            p_tenant, p_hostname
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM public.revalider_domenekontroll(p_tenant, p_hostname, p_aktor);
+END $$;
+
+-- ------------------------------------------------------------
 -- 3.4 rydd_staged_artefakter(p_grense) — samme positive regel, med bunn i én
 --     transaksjon (§6).
 --
@@ -508,6 +570,8 @@ REVOKE ALL ON FUNCTION rydd_staged_artefakter(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_karantenesatte() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION antall_karantenesatte() TO disponit_domains_admin;
+REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, TEXT[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, TEXT[]) TO disponit_domains_admin;
 
 -- ------------------------------------------------------------
 -- Codex (P1): `disponit_domains_admin` bærer OGSÅ direkte EXECUTE på
@@ -536,6 +600,21 @@ BEGIN
         GRANT EXECUTE ON FUNCTION revalideringspopulasjon() TO disponit_domener;
         GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT) TO disponit_domener;
         GRANT EXECUTE ON FUNCTION antall_karantenesatte() TO disponit_domener;
-        GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) TO disponit_domener;
+        -- Bevisformen, ALDRI 016s 3-argumentsform: en arbeider som kunne
+        -- kalt den siste ville kunnet friskmelde en domenekontroll uten å
+        -- legge fram utfordringsbeviset i det hele tatt, som er nøyaktig
+        -- den veien overlasten over stenger.
+        GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, TEXT[]) TO disponit_domener;
+    END IF;
+END $$;
+
+-- Skulle en tidligere kjøring av denne migrasjonen ha gitt arbeiderrollen
+-- 3-argumentsformen (bevisløs revalidering), trekkes den tilbake her —
+-- migrasjonen er idempotent, og en grant som ble feil skal ikke overleve
+-- fordi den ble gitt før porten fantes.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_domener') THEN
+        REVOKE EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) FROM disponit_domener;
     END IF;
 END $$;

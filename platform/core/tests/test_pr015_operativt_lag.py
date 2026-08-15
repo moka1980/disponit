@@ -11,6 +11,7 @@ ingen bordtilgang til `domenekontroll` — scheduleren ser populasjonen gjennom
 `revalideringskandidater()`, ikke gjennom et grant den kunne brukt til hva som
 helst.
 """
+import hashlib
 import math
 import secrets
 
@@ -23,6 +24,11 @@ from .test_m37 import _sett_kontekst
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 TREDJE_TENANT = "tredje-tenant-pr015"
+
+# Utfordringstokenet `_enige()` legger i TXT-svaret. `domenekontroll` lagrer
+# kun sha256 av det (016: «klartekst vises ÉN gang, lagres aldri»), så testene
+# holder klarteksten her og hasher der raden legges inn.
+BEVIS_TOKEN = "t"
 
 
 def _host():
@@ -49,15 +55,22 @@ def _dkrow(conn, tenant, hostname):
     return r
 
 
-def _verifisert(conn, tenant, hostname, *, alder_timer=0):
-    """Legg inn en verifisert rad med kontrollert revalideringsalder."""
+def _verifisert(conn, tenant, hostname, *, alder_timer=0, bevis=BEVIS_TOKEN):
+    """Legg inn en verifisert rad med kontrollert revalideringsalder.
+
+    `challenge_token_hash` settes: revalidering krever siden 019 §3.35 at den
+    avtalte TXT-mengden inneholder utfordringsbeviset, ikke bare at resolverne
+    er enige. En rad uten lagret utfordring kan ikke revalideres i det hele
+    tatt — det er porten, ikke en mangel ved oppsettet.
+    """
     _sett_kontekst(conn, tenant)
     conn.execute(
         "INSERT INTO domenekontroll (tenant, hostname, status,"
         " autorisasjonsgenerasjon, verifisert_ts, siste_vellykkede_revalidering,"
-        " utloper) VALUES (%s,%s,'verifisert',1, now(),"
-        " now() - make_interval(hours => %s), now()+interval '90 days')",
-        (tenant, hostname, alder_timer))
+        " utloper, challenge_token_hash) VALUES (%s,%s,'verifisert',1, now(),"
+        " now() - make_interval(hours => %s), now()+interval '90 days', %s)",
+        (tenant, hostname, alder_timer,
+         hashlib.sha256(bevis.encode()).hexdigest()))
     conn.commit()
 
 
@@ -203,6 +216,84 @@ def test_port2_uenighet_rorer_ikke_siste_vellykkede(migrator):
     assert _dkrow(migrator, TENANT, h)[2] == for_, \
         "uenige resolvere oppdaterte likevel raden"
     assert res.vellykket == 0 and res.uenige_resolvere >= 1
+
+
+@pg
+def test_enighet_uten_utfordringsbevis_er_ikke_revalidering(migrator):
+    """Codex P1: ENIGHET er ikke KONTROLL.
+
+    Kontrollen er tapt og utfordrings-TXT-en fjernet, men sonen har fortsatt
+    en stabil TXT-verdi (her SPF). Alle resolvere er da fullt enige, og med
+    enighet alene som kriterium ville arbeideren friskmeldt
+    `siste_vellykkede_revalidering` for den TIDLIGERE kontrolløren. Beviset må
+    ligge i svaret.
+    """
+    from drift import domenerevalidering as dr
+    h = _host()
+    _verifisert(migrator, TENANT, h, alder_timer=30)
+    for_ = _dkrow(migrator, TENANT, h)[2]
+    spf = frozenset({"v=spf1 -all"})
+    enige_uten_bevis = [_res("x", "op1", "n1", spf),
+                        _res("y", "op2", "n2", spf)]
+    # Resolverne ER enige — porten ligger ikke i enighetsprøven.
+    assert dr.enige(enige_uten_bevis, h) is True
+    a = _admin()
+    try:
+        res = dr.kjor(a, enige_uten_bevis)
+    finally:
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[2] == for_, \
+        "revalidering registrert uten at utfordringsbeviset lå i TXT-svaret"
+    assert res.vellykket == 0
+    # Ikke uenighet: resolverne var samstemte. Det som feilet var beviset.
+    assert res.oppslagsfeil >= 1
+
+
+@pg
+def test_revalidering_uten_lagret_utfordring_nektes(migrator):
+    """Fail-closed: ingen lagret utfordring → ingenting å bevise mot.
+
+    En rad uten `challenge_token_hash` skal ikke kunne revalideres. Alternativet
+    — å tolke «ingen lagret utfordring» som «ingenting å kreve» — ville gjort
+    porten til en no-op for nøyaktig de radene som ikke kan dokumentere noe.
+    """
+    h = _host()
+    _verifisert(migrator, TENANT, h, alder_timer=30)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE domenekontroll SET challenge_token_hash = NULL"
+                     " WHERE tenant=%s AND hostname=%s", (TENANT, h))
+    migrator.commit()
+    for_ = _dkrow(migrator, TENANT, h)[2]
+    a = _admin()
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT revalider_domenekontroll(%s,%s,'sys',%s)",
+                      (TENANT, h, [BEVIS_TOKEN]))
+    finally:
+        a.rollback()
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[2] == for_
+
+
+@pg
+def test_arbeiderrollen_har_ikke_bevislos_revalidering(migrator):
+    """Arbeideren skal KUN nå bevisformen.
+
+    Beholdt 3-argumentsform på arbeiderrollen ville vært en åpen dør rundt
+    hele porten. Rollen er betinget (opprettes av oppsettskriptet, ikke av
+    migrasjonen), så testen hopper over når den ikke finnes.
+    """
+    finnes = migrator.execute(
+        "SELECT 1 FROM pg_roles WHERE rolname='disponit_domener'").fetchone()
+    migrator.rollback()
+    if not finnes:
+        pytest.skip("disponit_domener finnes ikke i denne basen")
+    q = lambda sql: migrator.execute(sql).fetchone()[0]     # noqa: E731
+    assert q("SELECT has_function_privilege('disponit_domener',"
+             "'revalider_domenekontroll(text,text,text)','EXECUTE')") is False
+    assert q("SELECT has_function_privilege('disponit_domener',"
+             "'revalider_domenekontroll(text,text,text,text[])','EXECUTE')") is True
+    migrator.rollback()
 
 
 @pg

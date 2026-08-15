@@ -133,7 +133,11 @@ INSERT INTO _design VALUES
     -- `domenekontroll` på tvers av tenanter (BYPASSRLS) for å regne budsjettet
     -- på riktig nevner — arbeiderrollen har bevisst ingen bordtilgang.
     ('FUNCTION', 'revalideringskandidater(integer,integer,integer,integer,integer)', 'disponit_domene_eier'),
-    ('FUNCTION', 'revalideringspopulasjon()',                         'disponit_domene_eier');
+    ('FUNCTION', 'revalideringspopulasjon()',                         'disponit_domene_eier'),
+    -- Bevisporten foran 016s revalidering. Må ha SAMME eier som
+    -- `revalider_domenekontroll(text,text,text)`: den delegerer til den
+    -- nestet, og eierskapet er det eneste som gir den EXECUTE der.
+    ('FUNCTION', 'revalider_domenekontroll(text,text,text,text[])',   'disponit_domene_eier');
 
 DO $$
 DECLARE
