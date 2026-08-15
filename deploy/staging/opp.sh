@@ -51,7 +51,9 @@ fi
 UNITS="disponit-api.socket disponit-api.service disponit-m37.service
 disponit-helse.service disponit-helse.timer
 disponit-rydd-pending.service disponit-rydd-pending.timer
-disponit-backup.service disponit-backup.timer"
+disponit-backup.service disponit-backup.timer
+disponit-domenerevalidering.service disponit-domenerevalidering.timer
+disponit-artefaktrydding.service disponit-artefaktrydding.timer"
 if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
   echo "kjører som før."
@@ -64,7 +66,10 @@ fi
 
 # --- 3. Unix-identiteter (idempotent; v2 §3 + PR-009b V1) ------------------
 getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
-for b in disponit-api disponit-m37 disponit-helse; do
+# PR-015: driftstimerne (revalidering + rydding) får sin EGEN Unix-bruker,
+# samme skille som API/M-37/helse — et kompromittert timerkjøring skal ikke
+# arve noen annen tjenestes fullmakter, og omvendt.
+for b in disponit-api disponit-m37 disponit-helse disponit-domener; do
   getent passwd "$b" >/dev/null || \
     useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
 done
@@ -106,6 +111,16 @@ skriv_cred m37 DISPONIT_KEK "$DISPONIT_KEK"
 install -d -m 700 /etc/disponit/tokenadmin
 skriv_cred tokenadmin DISPONIT_TOKEN_ADMIN_URL "$DISPONIT_TOKEN_ADMIN_URL"
 skriv_cred tokenadmin DISPONIT_TOKEN_PEPPER    "$DISPONIT_TOKEN_PEPPER"
+# PR-015: driftstimerne — egen rolle (disponit_domener, migrasjon 019),
+# ALDRI disponit_domains_admin (den bærer direkte EXECUTE på
+# avgjor_domeneovertakelse og ville omgått fire øyne, jf. F16-notatet i
+# migrasjonen). DISPONIT_RESOLVERE er ikke en hemmelighet — server-
+# adressene for DNS-oppslag — men går gjennom samme LoadCredential-vei
+# som resten (v3 §5); tom streng gir en tydelig oppstart-nektet-feil i
+# stedet for stille å hoppe over diversitetskravet.
+install -d -m 700 /etc/disponit/domener
+skriv_cred domener DISPONIT_DOMAINS_URL "${DISPONIT_DOMAINS_URL:-$DATABASE_URL}"
+skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
@@ -158,6 +173,10 @@ systemctl enable --now disponit-api.socket
 systemctl enable --now disponit-api.service disponit-m37.service
 systemctl enable --now disponit-helse.timer disponit-rydd-pending.timer \
     disponit-backup.timer
+# PR-015: revalidering (timeplan i .timer) + rydding (hvert 15. min). Begge
+# er Type=oneshot bak en .timer — enable --now på TIMEREN, ikke tjenesten.
+systemctl enable --now disponit-domenerevalidering.timer \
+    disponit-artefaktrydding.timer
 
 KLAR=nei
 for _ in $(seq 1 30); do
