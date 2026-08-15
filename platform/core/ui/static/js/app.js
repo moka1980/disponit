@@ -34,7 +34,9 @@ const FLATER = {
 // valget overlever til NESTE besøk.
 function byttSprak(s) {
   lagreSprak(s);
-  start(s);
+  // `fokuserSprak`: kontrollen brukeren nettopp brukte blir skrevet ut av
+  // DOM-en når skallet bygges på nytt, og fokus skal følge med over (Codex P2).
+  start(s, { fokuserSprak: true });
 }
 
 // `omstartNr` er den ene sannheten om hvilket valg som gjelder: `start` teller
@@ -96,7 +98,14 @@ function bekreftLoggUt() {
   });
 }
 
-function visApp(sesjon, utrulling = {}) {
+// FOKUS FØLGER MED NÅR SKALLET BYGGES PÅ NYTT (Codex P2). Et språkbytte i
+// skallet erstatter hele treet — inkludert `<select>`-en brukeren står i.
+// Uten `fokuserSprak` falt fokus til `<body>`, og en som styrer med tastatur
+// måtte tabbe seg inn i siden på nytt for å se at byttet virket. Forsiden har
+// hatt regelen hele tiden; skallet er den samme situasjonen, og får den nå
+// også. Bare omstarter som KOMMER fra velgeren flytter fokus: førstelasten og
+// et fall tilbake fra en flate skal ikke rykke brukeren ut av der de er.
+function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   // Før skallet skrives over: riv ned ruteren som eide det forrige.
   riveNedRuter();
   const app = document.getElementById("app");
@@ -134,6 +143,11 @@ function visApp(sesjon, utrulling = {}) {
     window.location.hash, tilgjengeligeRuter);
   if (dypLenke) window.location.hash = dypLenke;
   else klientruter.naviger();
+
+  // Etter rutingen, ikke før: den første `naviger()` flytter ikke fokus selv
+  // (`forste` i `ruter.js`), men flaten skriver i `hoved` — og fokus skal ende
+  // på velgeren i det ferdige skallet, ikke i noe som straks blir overskrevet.
+  if (opsjoner.fokuserSprak && skall.velger) skall.velger.focus();
 }
 
 // BARE DEN SISTE OMSTARTEN FÅR TEGNE (Codex P2). `byttSprak` venter ikke på
@@ -147,7 +161,7 @@ function visApp(sesjon, utrulling = {}) {
 // `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
 // da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
 // `data-sprak` → nettleseren → nb).
-async function start(valgtSprak) {
+async function start(valgtSprak, opsjoner = {}) {
   const nr = ++omstartNr;
   const gjelderFortsatt = () => nr === omstartNr;
 
@@ -164,7 +178,7 @@ async function start(valgtSprak) {
     // og da hører den hjemme i `catch`-en under, ikke i et tomt svar.
     const utrulling = await hentUtrullingForSkall(sprak());
     if (!gjelderFortsatt()) return;
-    visApp(sesjon, utrulling);
+    visApp(sesjon, utrulling, opsjoner);
   } catch (e) {
     if (!gjelderFortsatt()) return;
     if (e instanceof UautorisertFeil) { tilInnlogging(); return; }
