@@ -11,10 +11,22 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # andre feltet leses `aktiv` som «ute hos kunder», og det er noe helt annet
 # enn det sjekklisten har bevist.
 #
-# M-1 er godkjent OG i drift: `disponit-api.service` og `disponit-m37.service`
-# er installert og aktive på disponit.com, databasen står på migrasjon 19, og
-# policymotoren avgjør ekte forespørsler. `registry.valider` nekter motsatt
-# tilstand — drift uten aktiv status er en feil.
+# M-1 er godkjent OG i drift: `disponit-api.service` er installert og aktiv,
+# databasen står på migrasjon 19, og policymotoren avgjør ekte forespørsler.
+# `registry.valider` nekter motsatt tilstand — drift uten aktiv status er en
+# feil.
+#
+# BARE M-1s EGEN UNIT TELLER SOM BEVIS HER. `disponit-m37.service` sto i denne
+# begrunnelsen fram til nå, og gjorde M-37s manifest usant i samme åndedrag:
+# det sier `under_utvikling` og `ikke_i_drift`, og punktet `rollback_testet`
+# begrunner sin `nei` nettopp med at arbeiderens unit ikke er installert på
+# staging. To manifester kan ikke begge være autoriteten på M-37s tilstand, og
+# registeret leser hver modul fra HENNES egen fil. Er arbeideren faktisk i
+# drift, er det M-37s manifest som skal endres — etter at porten den mangler
+# er kjørt — ikke M-1s begrunnelse som skal påstå det på hennes vegne.
+#
+# M-1s driftstilstand avhenger uansett ikke av arbeideren: policymotoren
+# avgjør forespørsler gjennom API-et uten at unntakskøen behandler noe.
 #
 # FELTET STO `ikke_i_drift` FRAM TIL 2026-08-15, begrunnet med at staging ikke
 # hadde installerte units og at det ikke fantes en unit for API-et engang.

@@ -873,8 +873,8 @@ def test_m01_er_godkjent_og_i_produksjon(m01):
     """
     assert m01["status"] == "aktiv"
     assert m01["driftstilstand"] == "produksjon", (
-        "m01 kjører på disponit.com: disponit-api.service og"
-        " disponit-m37.service er installert og aktive, migrasjon 19, og"
+        "m01 kjører på disponit.com: disponit-api.service er installert og"
+        " aktiv, migrasjon 19, og"
         " policymotoren avgjør ekte forespørsler. Den gamle begrunnelsen"
         " («staging har ingen installerte units, og det finnes ikke engang"
         " en unit for API-et») var sann da den ble skrevet og er det ikke nå."
