@@ -29,6 +29,10 @@ from api import kjerne
 #: ligger i den krypterte payloaden.
 FAMILIE = "domeneovertakelse"
 
+#: Handlingen saken bærer (unntak.handling). Sammen med FAMILIE er dette det
+#: som skiller VÅRE rader fra alt annet som deler idempotensnavnerommet.
+HANDLING = "domene.overtakelse"
+
 
 def idempotensnokkel(hostname: str, generasjon: int) -> str:
     return f"{FAMILIE}:{hostname}:{generasjon}"
@@ -42,6 +46,12 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     Kalleren MÅ ha satt `disponit.tenant = tenant_ny` (RLS). `generasjon` er
     B-radens `autorisasjonsgenerasjon` etter overtakelsen — monoton, altså unik
     per konflikt.
+
+    `hostname` er alltid kanonisk her: nøkkelen bygges på det samme navnet som
+    ble sendt til `verifiser_domenekontroll`, og migrasjon 018 (§0) avviser
+    enhver annen tekstlig form FØR konflikten i det hele tatt kan oppstå. Det
+    er nettopp derfor §0 validerer i stedet for å normalisere — ellers kunne to
+    former av samme navn gitt to idempotensnøkler for én konflikt.
     """
     key = idempotensnokkel(hostname, generasjon)
     # Codex: serialiser på den avledede nøkkelen. `revisjonslogg` har kun en
@@ -50,15 +60,27 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     # jonsscopet) gjør sjekk-og-opprett atomisk per (tenant, hostname, generasjon).
     conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                  (tenant_ny + ":" + key,))
-    rad = conn.execute(
-        "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
-        (tenant_ny, key)).fetchone()
-    if rad is not None:
-        u = conn.execute(
-            "SELECT id FROM unntak WHERE tenant=%s AND loggpost_id=%s",
-            (tenant_ny, rad[0])).fetchone()
-        if u is not None:
-            return int(u[0])   # idempotent: saken finnes alt for denne konflikten
+    # Codex: slå opp SAKEN direkte, scopet til overtakelsesfamilien — ikke en
+    # vilkårlig loggpost med samme nøkkel. `revisjonslogg.idempotency_key` er et
+    # DELT, KALLERSTYRT navnerom (`/v1/beslutning` skriver klientens
+    # Idempotency-Key rett inn) med kun en IKKE-unik indeks. Gikk oppslaget via
+    # loggposten først, kunne en fremmed rad som alt het
+    # `domeneovertakelse:<hostname>:<generasjon>` kapre idempotensen på to måter:
+    # uten `unntak` fant vi ingen sak og opprettet en NY ved hvert retry (én
+    # konflikt → mange M-37-saker), og MED et urelatert `unntak` returnerte vi
+    # den fremmede saken som om den var overtakelsessaken — og konflikten fikk
+    # aldri sin egen sak, mens B ble stående i `avklaring_kreves` for alltid.
+    # Joinen bærer både `kilde`/`kategori` og `handling`, altså nøyaktig det
+    # denne funksjonen selv skriver; en fremmed rad kan ikke matche.
+    sak = conn.execute(
+        "SELECT u.id FROM unntak u"
+        " JOIN revisjonslogg r ON r.tenant = u.tenant AND r.id = u.loggpost_id"
+        " WHERE u.tenant=%s AND u.kategori=%s AND u.handling=%s"
+        "   AND r.kilde=%s AND r.idempotency_key=%s"
+        " ORDER BY u.id LIMIT 1",
+        (tenant_ny, FAMILIE, HANDLING, FAMILIE, key)).fetchone()
+    if sak is not None:
+        return int(sak[0])   # idempotent: saken finnes alt for denne konflikten
 
     loggpost = int(conn.execute(
         "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash, policy_id,"
@@ -75,6 +97,6 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
         "familie": FAMILIE,
     }
     return kjerne._skriv_unntak(
-        conn, tenant_ny, loggpost, handling="domene.overtakelse",
+        conn, tenant_ny, loggpost, handling=HANDLING,
         kategori=FAMILIE, sakstype="sikkerhet", prioritet="hoy",
         payload=payload, snapshot=kjerne.UKJENT_SNAPSHOT)
