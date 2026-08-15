@@ -164,11 +164,20 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
     """
     h = _host()
     sak = _overtakelsessak(h)
+    m = _mig()
+    try:
+        _sett_kontekst(m, TEN)
+        gen = int(m.execute(
+            "SELECT autorisasjonsgenerasjon FROM domenekontroll"
+            " WHERE tenant=%s AND hostname=%s", (TEN, h)).fetchone()[0])
+    finally:
+        m.close()
     # Avgjør saken (avvis krever ÉN attestasjon) rett på motoren.
     a = _admin()
     try:
-        a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',%s,%s)",
-                  (TEN, sak, h, TEN, "aktor-avvis"))
+        a.execute(
+            "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',%s,%s,%s)",
+            (TEN, sak, h, TEN, "aktor-avvis", gen))
         a.commit()
     finally:
         a.close()

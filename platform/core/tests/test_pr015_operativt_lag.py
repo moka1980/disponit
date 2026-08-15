@@ -457,9 +457,10 @@ def _konflikt(migrator, tenant_a, tenant_b, hostname):
     return sak, gen
 
 
-def _attester(a, tenant, sak, hostname, utfall, vinner, aktor):
-    r = a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
-                  (tenant, sak, hostname, utfall, vinner, aktor)).fetchone()[0]
+def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen):
+    r = a.execute(
+        "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
+        (tenant, sak, hostname, utfall, vinner, aktor, gen)).fetchone()[0]
     a.commit()
     return r
 
@@ -472,11 +473,11 @@ def test_port14_godkjenn_med_en_attestasjon_nektes(migrator):
     saken uavgjort og B blir IKKE verifisert.
     """
     h = _host()
-    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
         assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
-                         "aktor-1") == "venter"
+                         "aktor-1", gen) == "venter"
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
@@ -489,12 +490,12 @@ def test_port14b_to_distinkte_aktorer_avgjor(migrator):
     Uten denne ville port 14 vært oppfylt av en funksjon som aldri avgjør noe.
     """
     h = _host()
-    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
-        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1", gen)
         assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
-                         "aktor-2") == "avgjort"
+                         "aktor-2", gen) == "avgjort"
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "verifisert"
@@ -508,13 +509,14 @@ def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
     det er databasen som nekter.
     """
     h = _host()
-    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
-        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme")
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen)
         with pytest.raises(psycopg.errors.UniqueViolation):
-            a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
-                      (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme"))
+            a.execute(
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
+                (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen))
         a.rollback()
     finally:
         a.close()
@@ -530,12 +532,12 @@ def test_port16_ulikt_utfall_gir_ingen_avgjorelse(migrator):
     autoriserte aktører mente forskjellige ting.
     """
     h = _host()
-    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
-        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1", gen)
         assert _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
-                         "aktor-2") == "venter"
+                         "aktor-2", gen) == "venter"
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
@@ -551,11 +553,11 @@ def test_port16_ulikt_utfall_gir_ingen_avgjorelse(migrator):
 def test_port18_avvis_med_en_attestasjon_tilbakekaller(migrator):
     """Port 18: avvis med ÉN attestasjon → B tilbakekalt. Fail-closed."""
     h = _host()
-    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
         assert _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
-                         "aktor-1") == "avgjort"
+                         "aktor-1", gen) == "avgjort"
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
@@ -577,7 +579,7 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
     sak, gen_b = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
-        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1", gen_b)
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TREDJE_TENANT, h))
         a.commit()
@@ -602,8 +604,9 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
     a = _admin()
     try:
         with pytest.raises(psycopg.Error):
-            a.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
-                      (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2"))
+            a.execute(
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
+                (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2", gen_b))
         a.rollback()
     finally:
         a.close()
@@ -651,10 +654,10 @@ def test_attestasjon_er_append_only_ogsa_mot_delete(migrator):
     slettes, mister vi akkurat den sporbarheten fire øyne skal gi.
     """
     h = _host()
-    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
     a = _admin()
     try:
-        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1")
+        _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1", gen)
     finally:
         a.close()
     _sett_kontekst(migrator, ANNEN_TENANT)

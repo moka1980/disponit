@@ -110,12 +110,13 @@ SET LOCAL ROLE disponit_domene_eier;
 -- av en samtidig overtakelse.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
-    p_tenant          TEXT,     -- utfordreren (B) — eier saken
-    p_sak_id          BIGINT,
-    p_hostname        TEXT,
-    p_utfall          TEXT,
-    p_vinnende_tenant TEXT,
-    p_aktor           TEXT)
+    p_tenant               TEXT,     -- utfordreren (B) — eier saken
+    p_sak_id               BIGINT,
+    p_hostname             TEXT,
+    p_utfall               TEXT,
+    p_vinnende_tenant      TEXT,
+    p_aktor                TEXT,
+    p_forventet_generasjon BIGINT)   -- saksrevisjonen SAKEN ble opprettet for
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_gen BIGINT; v_status TEXT; v_antall INT; v_avvik INT;
 BEGIN
@@ -137,6 +138,18 @@ BEGIN
         RAISE EXCEPTION 'avgi_overtakelse_attestasjon: %/% er % '
             '(krever avklaring_kreves)', p_tenant, p_hostname, v_status
             USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Saken er bundet til REVISJONEN den ble opprettet for (Codex): uten
+    -- denne sjekken leser funksjonen bare den GJELDENDE generasjonen, og en
+    -- sak som overlevde en reapplikasjon (avvist B søker på nytt — ny
+    -- generasjon, status tilbake i avklaring_kreves, SAMME sak-id) kunne fått
+    -- stemmer beregnet mot den nyere, uavklarte konflikten uten at noen
+    -- attestant noensinne så DEN. Avvik her betyr «saken er foreldet», ikke
+    -- en basefeil.
+    IF v_gen IS DISTINCT FROM p_forventet_generasjon THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: %/% er på revisjon %, '
+            'saken gjelder %', p_tenant, p_hostname, v_gen,
+            p_forventet_generasjon USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
     -- Dobbeltstemme avvises av primærnøkkelen. INGEN ON CONFLICT: en aktør som
@@ -407,10 +420,10 @@ RESET ROLE;
 -- ============================================================
 GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
 
-REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT) TO disponit_domains_admin;
+GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit_domains_admin;
 REVOKE ALL ON FUNCTION revalideringskandidater(INT, INT, INT, INT, INT) FROM PUBLIC;

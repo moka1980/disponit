@@ -115,7 +115,7 @@ INSERT INTO _design VALUES
     -- som resten av domenelaget — avgjørelsen er iboende kryss-tenant, og
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
     -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
-    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint)', 'disponit_domene_eier'),
     ('FUNCTION', 'degrader_forbigatte_utfordrere(text,text)',         'disponit_domene_eier'),
     ('FUNCTION', 'antall_avgitte_attestasjoner(bigint,bigint)',       'disponit_domene_eier'),
     ('FUNCTION', 'rydd_staged_artefakter(integer)',                   'disponit_domene_eier'),

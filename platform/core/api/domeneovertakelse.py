@@ -204,17 +204,21 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
         if sak is None:
             conn.rollback()
             return _feilsvar("ikke_funnet", rid)
-        hostname, _generasjon_ved_opprettelse = sak
+        hostname, generasjon_ved_opprettelse = sak
 
         # Aktøren er sesjonens bruker-id, ikke noe klienten oppgir: «ingen
         # enkelt aktør produserer begge» er håndhevet av primærnøkkelen, og en
         # klientoppgitt aktør ville gjort den nøkkelen til et forslag.
         aktor = auth.token_id
         try:
+            # Revisjonen SAKEN ble opprettet for sendes med og håndheves under
+            # hostname-låsen i funksjonen (Codex): uten den ville en sak som
+            # overlevde en reapplikasjon fått stemmer telt mot den GJELDENDE
+            # generasjonen — en konflikt ingen attestant faktisk har sett.
             svar = conn.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s)",
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
                 (tenant, unntak_id, hostname, utfall, vinnende.strip(),
-                 aktor)).fetchone()[0]
+                 aktor, generasjon_ved_opprettelse)).fetchone()[0]
             conn.commit()
         except psycopg.errors.UniqueViolation:
             # Samme aktør, samme revisjon, andre gang. Avvist av PRIMÆRNØKKELEN
