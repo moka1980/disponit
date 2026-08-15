@@ -151,6 +151,16 @@ BEGIN
             'saken gjelder %', p_tenant, p_hostname, v_gen,
             p_forventet_generasjon USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- `avgjor_domeneovertakelse()` autoriserer ALLTID p_tenant (utfordreren
+    -- saken tilhører) ved godkjenn — det finnes ingen gren som autoriserer en
+    -- ANNEN tenant. En godkjenn-stemme som navngir noen andre som vinner ville
+    -- latt to adjudikatorer attestere ett utfall mens overgangen faktisk
+    -- gjennomfører et annet — evidens som motsier avgjørelsen den skal bevise.
+    IF p_utfall = 'godkjenn' AND p_vinnende_tenant IS DISTINCT FROM p_tenant THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: vinnende_tenant % '
+            'stemmer ikke med saken (utfordrer %)', p_vinnende_tenant, p_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
 
     -- Dobbeltstemme avvises av primærnøkkelen. INGEN ON CONFLICT: en aktør som
     -- prøver å stemme to ganger skal få en hard feil, ikke en stille no-op som
