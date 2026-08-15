@@ -201,6 +201,71 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
   }
 });
 
+test("Landing: et forbigått språkbytte tegner ikke over flaten som står", async () => {
+  // Codex P2: byttet har TO ventepunkter, og bare det første var vernet.
+  // `lastI18n` melder fra med `null` når et nyere valg har overtatt, men et
+  // bytte som rakk forbi det vernet gikk videre inn i `visInnlogging`, som
+  // henter `/ui/oppsett.json` og deretter rendret ubetinget. Kom det svaret
+  // sist, tegnet et forlatt bytte over flaten et nyere bytte hadde bygd — med
+  // SITT oppsett-svar.
+  //
+  // Riggen er nøyaktig det: det første byttets oppsett-kall henger og svarer
+  // til slutt UTEN provider (nettverksglipp, feilende oppsettsrute), mens det
+  // andre byttet går rett gjennom med provider. Vinner det gamle svaret, bytter
+  // forsiden ut innloggingsknappene med «ikke tilgjengelig» — en besøkende
+  // mister veien inn fordi et kall de hadde forlatt kom i mål.
+  const app = nyttAppBrett();
+  const ekteFetch = globalThis.fetch;
+  let slippOppsett = () => {};
+  const holdt = new Promise((r) => { slippOppsett = r; });
+  let oppsettNr = 0;
+  globalThis.fetch = async (url) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      const nr = ++oppsettNr;
+      if (nr === 2) {                    // det FØRSTE byttet: henger, og taper
+        await holdt;
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return { ok: true, status: 200,
+        json: async () => ({ provider_id: "google" }) };
+    }
+    return ekteFetch(url);
+  };
+  try {
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+
+    // Første klikk: locale-settet lastes ferdig, så blir kallet stående i
+    // oppsett-hentingen. Flaten er urørt, så knappen står der fortsatt.
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => oppsettNr === 2);
+    // Andre klikk — samme knapp, for siden er ikke rendret på nytt ennå. Dette
+    // byttet eier flaten fra nå, og det er det som kommer i mål først.
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    assert.equal(app.querySelectorAll("form").length, 2,
+      "det gjeldende byttet rendret ikke innloggingsveiene");
+
+    // …og så kommer det forlatte byttet i mål, med sitt provider-løse svar.
+    slippOppsett();
+    await vent(() => false, 20);         // la det forlatte kallet få kjøre ut
+
+    assert.equal(app.querySelectorAll("form").length, 2,
+      "et forbigått språkbytte skrev over flaten med sitt eget oppsett-svar");
+    assert.ok(!app.textContent.includes(NB["ui.logg_inn_utilgjengelig"]),
+      "forsiden endte i feiltilstand fra et kall brukeren hadde forlatt");
+    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+      "flaten det gjeldende byttet bygde står ikke lenger");
+  } finally {
+    slippOppsett();
+    globalThis.fetch = ekteFetch;
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Landing: språkbyttet virker når localStorage er nektet", async () => {
   // Codex P2: byttet lagret valget og kjørte `location.reload()`. Nektet
   // nettleseren lagringen — privat modus, blokkerte tredjepartscookies, en

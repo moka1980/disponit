@@ -59,16 +59,29 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // derfor rett inn i modulen og flaten rendres på nytt: valget lever i økten
 // uansett hva lageret svarer, og lagringen er kun det som gjør at det
 // overlever et nytt besøk.
-// `null` fra `lastI18n` betyr at et NYERE valg overtok mens dette settet ble
-// hentet (Codex P2). Da skal denne omgangen ikke rendre: den ville tegnet
-// forsiden på nytt fra det nye locale-settet, men flyttet fokus til knappen
-// for sitt eget, forlatte språk.
+// BARE DET SISTE BYTTET FÅR TEGNE (Codex P2). Byttet har TO ventepunkter, ikke
+// ett: locale-settet, og så `/ui/oppsett.json` inne i `visInnlogging`. `null`
+// fra `lastI18n` verner det første — et nyere valg overtok mens settet ble
+// hentet — men slapp et forlatt bytte videre inn i det andre, der det rendret
+// ubetinget. Da tegnet det over flaten et nyere bytte nettopp bygde, med SITT
+// oppsett-svar: gikk det ene kallet gjennom og det andre ikke, avgjorde
+// rekkefølgen om forsiden viste innloggingsknappene eller «ikke tilgjengelig»,
+// og fokus ble revet til en flate som allerede var erstattet.
+//
+// `byttNr` er den ene sannheten om hvilket bytte som eier flaten — samme regel
+// som `omstartNr` i `app.js`, og den bæres HELE veien: `visInnlogging` får
+// `gjelderFortsatt` og sjekker den etter sitt eget ventepunkt, rett før den
+// rører DOM-en.
+let byttNr = 0;
+
 async function byttTil(s) {
+  const nr = ++byttNr;
   lagreSprak(s);              // best effort — kan være nektet, og det er greit
   if (await lastI18n(s) === null) return;   // forbigått av et nyere valg
   // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
   lokaliserSkiplenke();
-  await visInnlogging({ fokuserSprak: true });
+  await visInnlogging({ fokuserSprak: true,
+    gjelderFortsatt: () => nr === byttNr });
 }
 
 // `lang` per knapp (Codex P2): etikettene ER på hvert sitt språk, og uten
@@ -130,13 +143,22 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
   return kort;
 }
 
+// `gjelderFortsatt` er kallerens rett til å tegne, målt ETTER ventepunktet
+// under: den som kalte kan ha blitt forbigått mens oppsettet ble hentet, og et
+// forlatt kall skal da trekke seg stille i stedet for å skrive over flaten som
+// står. Uten opsjonen tegner flaten alltid — det er riktig for førstelasten og
+// for `tilInnlogging`, som ikke konkurrerer med noen.
 export async function visInnlogging(opsjoner = {}) {
+  const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
   let provider = null;
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
   } catch { provider = null; }
+  // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
+  // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
+  if (!gjelderFortsatt()) return;
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
     tabindex: "-1" },
