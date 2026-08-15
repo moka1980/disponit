@@ -8,13 +8,17 @@ her beviser vi at feltene UI-et faktisk konsumerer, finnes.
 
 Kildegrep, ikke DB: feltnavnene står som strengliteraler i handlerne.
 """
+import re
 from pathlib import Path
 
 import pytest
 
 API = Path(__file__).resolve().parents[1] / "api"
+UI_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "js"
+MODULER = Path(__file__).resolve().parents[2] / "modules"
 KILDE = "\n".join((API / f).read_text(encoding="utf-8")
-                  for f in ("lesing.py", "app.py", "sesjon.py"))
+                  for f in ("lesing.py", "app.py", "sesjon.py",
+                            "utrulling.py"))
 
 # Feltene UI-et leser, per endepunkt (se platform/core/ui/static/js/flater/*).
 KONTRAKT = {
@@ -37,6 +41,10 @@ KONTRAKT = {
                          "offentlig_id", "betrodd_for",
                          "kan_fastsla_permanent"],
     "/v1/sesjon": ["tenant", "scopes"],
+    # Utrullingsplanen. Feltene leses av flater/admin.js og
+    # flater/kundeadmin.js — de har ingen tenanttabell å falle tilbake på.
+    "/v1/utrulling": ["plattformdrift", "tenanter", "navn", "plan", "moduler",
+                      "neste"],
 }
 
 
@@ -60,3 +68,108 @@ def test_resultat_arter_er_de_ni_ui_kjenner():
                 "outbox_kansellert"):
         assert art in KILDE, f"{art} finnes ikke i backend?"
         assert art in ui, f"UI KJENTE_ARTER mangler {art}"
+
+
+def _kunderoller_fra_ui() -> dict[str, frozenset[str]]:
+    """`KUNDEROLLER` i plattformdata.js, som {rolle: scopes}."""
+    kilde = (UI_JS / "plattformdata.js").read_text(encoding="utf-8")
+    blokk = re.search(r"export const KUNDEROLLER = \[(.*?)\n\];", kilde, re.S)
+    assert blokk, "KUNDEROLLER finnes ikke i plattformdata.js"
+    ut: dict[str, frozenset[str]] = {}
+    for rolle in re.finditer(r'id:\s*"([a-z]+)",.*?scopes:\s*\[(.*?)\]',
+                             blokk.group(1), re.S):
+        ut[rolle.group(1)] = frozenset(re.findall(r'"([a-z:]+)"',
+                                                  rolle.group(2)))
+    return ut
+
+
+def test_rolleguiden_lover_bare_fullmakter_rollen_faktisk_har():
+    """Kundeflatens rolleguide er kundens grunnlag for å TILDELE roller. Lover
+    den mer enn rollen har, oppdager kunden det først på en 403 — slik
+    `godkjenner` ble beskrevet som å attestere policy, mens attestasjon krever
+    `policy:activate` og bare `policyforvalter` har den. Guiden pinnes derfor
+    mot den kanoniske utledningen, ikke mot prosa."""
+    from api.autorisasjon import ROLLE_TIL_SCOPES
+
+    guide = _kunderoller_fra_ui()
+    assert guide, "rolleguiden er tom — regexen eller kilden har flyttet seg"
+    for rolle, scopes in guide.items():
+        assert rolle in ROLLE_TIL_SCOPES, \
+            f"rolleguiden viser {rolle!r}, som ikke finnes i ROLLE_TIL_SCOPES"
+        assert scopes == set(ROLLE_TIL_SCOPES[rolle]), (
+            f"rolleguiden for {rolle!r} er ute av takt med autorisasjon.py: "
+            f"guide={sorted(scopes)} kanonisk={sorted(ROLLE_TIL_SCOPES[rolle])}")
+
+
+def test_ingen_tenantdata_i_offentlige_ressurser():
+    """`/ui/{sti}` og `/ui/locale/{sprak}` serveres UTEN øktsjekk, og den
+    anonyme landingssiden importerer klientbunten. Lå tenantregisteret der,
+    kunne hvem som helst laste ned hver kundes navn, plan, modultildeling og
+    neste steg — uansett hvilket filter admin-flaten gjorde i DOM-en etterpå.
+
+    `offentlige_ressurser.test.js` håndhever den samme grensen fra JS-siden,
+    men bare mot mønstre. Denne porten leser de FAKTISKE radene registeret
+    serverer, så et nytt kundenavn er dekket i det øyeblikket det legges
+    inn — uten at noen må huske å oppdatere et mønster."""
+    from api.utrulling import _UTRULLING
+
+    offentlig = list(UI_JS.rglob("*.js"))
+    offentlig += sorted((Path(__file__).resolve().parents[3] / "locales")
+                        .glob("*.json"))
+    assert offentlig, "fant ingen serverte ressurser å sjekke"
+    for sti in offentlig:
+        tekst = sti.read_text(encoding="utf-8").lower()
+        for rad in _UTRULLING:
+            for verdi in (rad["id"], rad["navn"]):
+                assert verdi.lower() not in tekst, (
+                    f"tenantdata ({verdi!r}) ligger i {sti.name}, som serveres "
+                    f"uten øktsjekk")
+
+
+def _modulstatus_fra_ui() -> dict[int, str]:
+    """`MODULSTATUS` i plattformdata.js, som {modulnummer: status}."""
+    kilde = (UI_JS / "plattformdata.js").read_text(encoding="utf-8")
+    blokk = re.search(r"export const MODULSTATUS = \{(.*?)\n\};", kilde, re.S)
+    assert blokk, "MODULSTATUS finnes ikke i plattformdata.js"
+    return {int(m.group(1)): m.group(2)
+            for m in re.finditer(r'(\d+):\s*"([a-z_]+)"', blokk.group(1))}
+
+
+def _status_fra_manifest(modul_id: int) -> str:
+    """Manifestets TO akser → UI-ets ene ord. Ingen manifest = `planlagt`."""
+    import yaml
+
+    treff = sorted(MODULER.glob(f"m{modul_id:02d}_*/manifest.yaml"))
+    if not treff:
+        return "planlagt"
+    m = yaml.safe_load(treff[0].read_text(encoding="utf-8"))
+    if m.get("driftstilstand") == "produksjon":
+        return "i_drift"
+    return "klargjort" if m.get("status") == "aktiv" else "bygges"
+
+
+def test_modulstatus_folger_manifestene():
+    """Flatens modulstatus er en PÅSTAND OM DRIFT, og manifestene er
+    autoriteten på den. Uten denne porten kunne landingssiden reklamere med
+    «tre moduler i drift» mens hvert manifest sa `driftstilstand:
+    ikke_i_drift` — nøyaktig den sammenblandingen manifestene innfører to
+    akser for å unngå (`status` = godkjent, `driftstilstand` = kjører faktisk).
+    Drift i én av retningene skal ryke her, ikke hos kunden."""
+    ui = _modulstatus_fra_ui()
+    assert ui, "MODULSTATUS er tom — regexen eller kilden har flyttet seg"
+    for modul_id, status in ui.items():
+        forventet = _status_fra_manifest(modul_id)
+        assert status == forventet, (
+            f"M-{modul_id} står som {status!r} i UI-et, men manifestet gir "
+            f"{forventet!r} (status/driftstilstand i "
+            f"platform/modules/m{modul_id:02d}_*/manifest.yaml)")
+
+
+def test_modulstatus_dekker_manifestene():
+    """Motsatt retning: et NYTT manifest skal tvinge en bevisst
+    UI-oppdatering, ikke bli usynlig fordi kartet aldri ble utvidet."""
+    ui = _modulstatus_fra_ui()
+    for sti in sorted(MODULER.glob("m*_*/manifest.yaml")):
+        modul_id = int(re.match(r"m(\d+)_", sti.parent.name).group(1))
+        assert modul_id in ui, \
+            f"{sti.parent.name} har manifest, men mangler i MODULSTATUS"

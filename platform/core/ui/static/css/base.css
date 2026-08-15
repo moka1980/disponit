@@ -17,6 +17,14 @@ body {
   line-height: var(--lh-base);
 }
 
+html[data-visning="landing"] body,
+html[data-visning="app"] body {
+  background:
+    radial-gradient(circle at top right, rgba(29,111,165,.08), transparent 28rem),
+    linear-gradient(180deg, rgba(229,239,246,.7), rgba(246,248,247,.98) 22rem),
+    var(--paper);
+}
+
 /* Skjult for øyet, synlig for hjelpemidler (WCAG). */
 .sr-only {
   position: absolute !important;
@@ -51,25 +59,42 @@ a { color: var(--info); }
 .skall-topp {
   display: flex; align-items: center; gap: var(--sp-4);
   padding: var(--sp-3) var(--sp-4);
-  background: var(--card);
+  background: rgba(255,255,255,.9);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: var(--z-topplinje);
 }
 .skall-merke { font-weight: 700; font-size: 1.15rem; }
-.skall-tenant { color: var(--muted); }
+.skall-brand { display: grid; gap: 0; }
+.skall-undertekst { color: var(--muted); font-size: .88rem; }
+.skall-tenant {
+  color: var(--ink);
+  background: rgba(229,239,246,.88);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-3);
+}
+.skall-ruteantall {
+  color: var(--muted);
+  font-size: .88rem;
+  white-space: nowrap;
+}
 .skall-hoyre { margin-left: auto; display: flex; gap: var(--sp-2);
   align-items: center; }
 
 .skall-nav { display: flex; gap: var(--sp-1); flex-wrap: wrap;
-  padding: 0 var(--sp-4); background: var(--card);
+  padding: 0 var(--sp-4); background: rgba(255,255,255,.84);
   border-bottom: 1px solid var(--line); }
 .skall-nav a {
-  display: inline-block; padding: var(--sp-3) var(--sp-3);
+  display: inline-block; padding: var(--sp-2) var(--sp-3);
+  margin: var(--sp-2) 0;
   text-decoration: none; color: var(--ink);
-  border-bottom: 3px solid transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
 }
 .skall-nav a[aria-current="page"] {
-  border-bottom-color: var(--info); font-weight: 600;
+  border-color: var(--line); font-weight: 600;
+  background: rgba(229,239,246,.88);
 }
 
 .skall-hoved {
@@ -81,5 +106,6 @@ a { color: var(--info); }
 
 @media (max-width: 720px) {
   .skall-topp { flex-wrap: wrap; }
+  .skall-ruteantall { order: 4; width: 100%; }
   .skall-hoved { padding: var(--sp-4) var(--sp-3); }
 }

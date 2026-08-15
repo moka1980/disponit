@@ -185,8 +185,12 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   if (paaLoggUt) loggUt.addEventListener("click", paaLoggUt);
 
   const topp = el("header", { class: "skall-topp" },
-    el("span", { class: "skall-merke", text: t("app.navn", "Disponit") }),
+    el("div", { class: "skall-brand" },
+      el("span", { class: "skall-merke", text: t("app.navn", "Disponit") }),
+      el("span", { class: "skall-undertekst", text: t("ui.shell.undertittel") })),
     tenant ? el("span", { class: "skall-tenant", text: tenant }) : null,
+    el("span", { class: "skall-ruteantall",
+      text: `${ruter.length} · ${t("ui.shell.ruter")}` }),
     el("div", { class: "skall-hoyre" }, velger, loggUt));
 
   const lenker = new Map();

@@ -1,9 +1,9 @@
 // M-1 kundeflate — inngang. Sjekker økten, viser innloggingsflate (401) eller
 // bygger AppShell + ruteren (200). 401 og 403 holdes adskilt (V2): 401 →
 // innlogging, 403 → ingen-tilgang PÅ flaten (håndteres i flatene).
-import { el, sett } from "./dom.js";
+import { sett } from "./dom.js";
 import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
-import { hentJson, loggUt, UautorisertFeil } from "./api.js";
+import { hentJson, hentUtrulling, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
 import { lagRuter } from "./ruter.js";
@@ -13,16 +13,15 @@ import { visPolicy } from "./flater/policy.js";
 import { visBeslutninger } from "./flater/beslutninger.js";
 import { visUnntak } from "./flater/unntak.js";
 import { visPolicyadmin } from "./flater/policyadmin.js";
+import { visKundeadmin } from "./flater/kundeadmin.js";
+import { visAdmin } from "./flater/admin.js";
+import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
-const RUTER = [
-  { nokkel: "oversikt" }, { nokkel: "policy" },
-  { nokkel: "beslutninger" }, { nokkel: "unntak" },
-  { nokkel: "policyadmin" },
-];
 const FLATER = {
   oversikt: visOversikt, policy: visPolicy,
   beslutninger: visBeslutninger, unntak: visUnntak,
-  policyadmin: visPolicyadmin,
+  policyadmin: visPolicyadmin, kundeadmin: visKundeadmin,
+  admin: visAdmin,
 };
 
 function lokaliserSkiplenke() {
@@ -47,10 +46,11 @@ function bekreftLoggUt() {
   });
 }
 
-function visApp(sesjon) {
+function visApp(sesjon, utrulling = {}) {
   const app = document.getElementById("app");
+  const tilgjengeligeRuter = byggRuter(sesjon);
   const skall = AppShell({
-    tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: RUTER,
+    tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: tilgjengeligeRuter,
     paaSprak: byttSprak, paaLoggUt: bekreftLoggUt,
   });
   sett(app, skall.rot);
@@ -60,10 +60,27 @@ function visApp(sesjon) {
 
   const ctx = {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
+    // Tenantdata kommer fra `/v1/utrulling`, ikke fra klientpakken: serveren
+    // har allerede avgjort hvilke rader økten får se. Mangler svaret (feil,
+    // eller en økt uten `decisions:read`), står feltene tomme — og flatene
+    // viser sin eksplisitte tomtilstand i stedet for å gjette.
+    tenanter: Array.isArray(utrulling.tenanter) ? utrulling.tenanter : [],
+    moduler: Array.isArray(utrulling.moduler) ? utrulling.moduler : null,
     paaUautorisert: () => visInnlogging(),
   };
-  const ruter = lagRuter(skall.hoved, ctx, FLATER, skall.settAktiv);
-  ruter.naviger();
+  // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet
+  // rett i adressefeltet rendret admin uten `security:read`, siden `gjeldende()`
+  // validerer mot flatekartet — ikke mot menyen.
+  const klientruter = lagRuter(skall.hoved, ctx,
+    tillatteFlater(tilgjengeligeRuter, FLATER), skall.settAktiv);
+  // Enten setter vi hash (og `hashchange` rendrer), ELLER så navigerer vi selv.
+  // Begge deler ville rendret flaten to ganger på en dyplenke som
+  // `/?visning=oversikt`: to sett API-kall, og en forbigående feil i det ene
+  // kallet kunne vasket bort innholdet det andre nettopp hadde skrevet.
+  const dypLenke = hashForDypLenke(window.location.search,
+    window.location.hash, tilgjengeligeRuter);
+  if (dypLenke) window.location.hash = dypLenke;
+  else klientruter.naviger();
 }
 
 async function start() {
@@ -71,7 +88,11 @@ async function start() {
   lokaliserSkiplenke();
   try {
     const sesjon = await hentJson("/v1/sesjon");
-    visApp(sesjon);
+    // Utrullingen hentes ETTER at økten er bekreftet, og en feil her felles
+    // ikke appen: 401 håndteres av øktsjekken over, og alt annet betyr bare at
+    // tenantdata mangler — flatene har en tomtilstand for nettopp det.
+    const utrulling = await hentUtrulling(sprak()).catch(() => ({}));
+    visApp(sesjon, utrulling);
   } catch (e) {
     if (e instanceof UautorisertFeil) { visInnlogging(); return; }
     // Nettverk/annet på øktsjekk: fall til innlogging (ingen økt å stole på).
