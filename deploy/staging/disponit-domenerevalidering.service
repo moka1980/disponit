@@ -3,11 +3,14 @@
 # Arbeideren har INGEN egen autoritet: den slår opp DNS og kaller
 # `revalider_domenekontroll()`. Statusbeslutningen ligger i databasen.
 #
-# Egen Unix-bruker og rollen `disponit_domains_admin` — som har EXECUTE på
-# funksjonene og INGEN bordtilgang til `domenekontroll`. Utvalget går gjennom
-# `revalideringskandidater()` (SECURITY DEFINER), så den kryss-tenant-lesingen
-# scheduleren trenger ligger ett sted, revidérbart, i stedet for som et grant
-# arbeideren kunne brukt til hva som helst.
+# Egen Unix-bruker og en EGEN, minst-privilegert DB-rolle
+# (`disponit_domener`, migrasjon 019) — IKKE `disponit_domains_admin`, som
+# også bærer direkte EXECUTE på `avgjor_domeneovertakelse` og dermed kunne
+# omgått fire øyne. `disponit_domener` har EXECUTE på nøyaktig de
+# funksjonene arbeideren kaller og INGEN bordtilgang til `domenekontroll`.
+# Utvalget går gjennom `revalideringskandidater()` (SECURITY DEFINER), så
+# den kryss-tenant-lesingen scheduleren trenger ligger ett sted, revidérbart,
+# i stedet for som et grant arbeideren kunne brukt til hva som helst.
 #
 # Oppstart NEKTES hvis DISPONIT_RESOLVERE bryter diversitetskravet (§2.4):
 # minst to resolvere hos ULIKE operatører og ULIKE nett. To resolvere hos samme
@@ -22,7 +25,13 @@ Wants=network-online.target
 Type=oneshot
 User=disponit-domener
 Group=disponit-domener
-WorkingDirectory=/opt/disponit/aktiv
+# `drift` ligger i platform/, ved SIDEN av platform/core — ikke inni det
+# (samme grense som holder m37/ ute av api/). `-m drift.kjor_revalidering`
+# løser derfor `drift` fra WorkingDirectory, mens `db` (platform/core/db)
+# trenger platform/core på PYTHONPATH i tillegg — verken releaseroten alene
+# eller platform/ alene eksponerer begge pakkene.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
 LoadCredential=DISPONIT_DOMAINS_URL:/etc/disponit/domener/DISPONIT_DOMAINS_URL
 LoadCredential=DISPONIT_RESOLVERE:/etc/disponit/domener/DISPONIT_RESOLVERE
 ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_revalidering

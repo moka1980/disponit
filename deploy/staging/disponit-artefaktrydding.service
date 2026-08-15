@@ -19,7 +19,11 @@ Description=Disponit artefaktrydding
 Type=oneshot
 User=disponit-domener
 Group=disponit-domener
-WorkingDirectory=/opt/disponit/aktiv
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
 LoadCredential=DISPONIT_DOMAINS_URL:/etc/disponit/domener/DISPONIT_DOMAINS_URL
 ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_artefaktrydding
 TimeoutStartSec=10min
