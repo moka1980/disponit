@@ -1,14 +1,15 @@
 // Språkbyttet er ASYNKRONT, og velgeren står åpen mens locale-settet hentes.
 // To valg kan derfor være i lufta samtidig, og de kan lande i motsatt
-// rekkefølge av at de ble gjort. Testene her holder på den ene regelen som
-// gjør det trygt: bare den SISTE lastingen får skrive til modulens tilstand.
+// rekkefølge av at de ble gjort. Testene her holder på de to reglene som gjør
+// det trygt: bare den SISTE lastingen får skrive til modulens tilstand, og
+// ingen lasting skriver før kalleren tar den i bruk.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB } from "./hjelp.js";
-import { lastI18n, settI18nForTest, sprak, t } from "../static/js/i18n.js";
+import { hentI18n, settI18nForTest, sprak, t } from "../static/js/i18n.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
 const EN = JSON.parse(readFileSync(
@@ -31,7 +32,7 @@ function riggTregEn() {
   return { slipp, gjenopprett: () => { globalThis.fetch = ekte; } };
 }
 
-test("lastI18n: en forbigått lasting skriver ikke over det nyeste valget", async () => {
+test("hentI18n: en forbigått lasting skriver ikke over det nyeste valget", async () => {
   // Codex P2: `_sprak` ble satt FØR hentingen og `_kart` av den som kom sist
   // i mål. Valgte brukeren engelsk på en treg linje og så norsk, rendret norsk
   // ferdig — og deretter landet engelsk og satte `_kart` og `<html lang>` til
@@ -40,12 +41,13 @@ test("lastI18n: en forbigått lasting skriver ikke over det nyeste valget", asyn
   document.documentElement.setAttribute("lang", "nb");
   const rigg = riggTregEn();
   try {
-    const forst = lastI18n("en");   // brukerens første valg — henger
-    const sist = lastI18n("nb");    // brukeren ombestemmer seg
+    const forst = hentI18n("en");   // brukerens første valg — henger
+    const sist = hentI18n("nb");    // brukeren ombestemmer seg
 
-    assert.equal(await sist, "nb", "det siste valget ble ikke tatt i bruk");
+    assert.equal((await sist).taIBruk(), "nb",
+      "det siste valget ble ikke tatt i bruk");
     rigg.slipp();
-    assert.equal(await forst, null,
+    assert.equal((await forst).taIBruk(), null,
       "den forbigåtte lastingen meldte seg som gjeldende");
 
     assert.equal(sprak(), "nb", "`sprak()` endte på det forlatte valget");
@@ -59,19 +61,21 @@ test("lastI18n: en forbigått lasting skriver ikke over det nyeste valget", asyn
   }
 });
 
-test("lastI18n: den siste lastingen gjelder også når den kommer sist", async () => {
+test("hentI18n: den siste lastingen gjelder også når den kommer sist", async () => {
   // Motprøven: samme rigg, men det TREGE valget er det siste. Da skal det
   // vinne — vernet skal ikke låse språket til det som tilfeldigvis er raskt.
   settI18nForTest(NB, "nb");
   document.documentElement.setAttribute("lang", "nb");
   const rigg = riggTregEn();
   try {
-    const forst = lastI18n("nb");
-    const sist = lastI18n("en");
+    const forst = hentI18n("nb");
+    const sist = hentI18n("en");
 
-    assert.equal(await forst, null, "det forlatte valget ble tatt i bruk");
+    assert.equal((await forst).taIBruk(), null,
+      "det forlatte valget ble tatt i bruk");
     rigg.slipp();
-    assert.equal(await sist, "en", "det siste valget nådde aldri fram");
+    assert.equal((await sist).taIBruk(), "en",
+      "det siste valget nådde aldri fram");
 
     assert.equal(sprak(), "en");
     assert.equal(t("ui.sprak.nb"), EN["ui.sprak.nb"]);
@@ -79,5 +83,39 @@ test("lastI18n: den siste lastingen gjelder også når den kommer sist", async (
   } finally {
     rigg.gjenopprett();
     settI18nForTest(NB, "nb");
+  }
+});
+
+test("hentI18n: settet er hentet, men ingenting er endret før det tas i bruk", async () => {
+  // Codex P2: hentingen commitet `_kart` og `<html lang>` i samme øyeblikk
+  // svaret kom, mens flaten som skulle BÆRE språket først ble byttet etter
+  // kallerens neste ventepunkt — oppsettet på forsiden, økt og utrulling i
+  // skallet. I det gapet sto en norsk side merket `lang="en"`, og hang det
+  // neste kallet, sto den slik på ubestemt tid. Hentingen skal derfor ikke
+  // røre noe: den bærer settet, og kalleren tar det i bruk når flaten er klar.
+  settI18nForTest(NB, "nb");
+  document.documentElement.setAttribute("lang", "nb");
+  const rigg = riggTregEn();
+  rigg.slipp();                     // ingen brems: begge språk svarer med én gang
+  try {
+    const hentet = await hentI18n("en");
+    assert.equal(hentet.sprak, "en",
+      "hentingen sier ikke hvilket språk den bærer — kalleren trenger det til "
+      + "utrullingskallet før språket er tatt i bruk");
+    assert.equal(sprak(), "nb",
+      "hentingen endret språket før noen hadde tatt det i bruk");
+    assert.equal(t("ui.sprak.nb"), NB["ui.sprak.nb"],
+      "locale-kartet ble byttet av hentingen alene");
+    assert.equal(document.documentElement.getAttribute("lang"), "nb",
+      "<html lang> ble byttet av hentingen alene — flaten står fortsatt på nb");
+
+    assert.equal(hentet.taIBruk(), "en", "ibruktakingen tok ikke språket i bruk");
+    assert.equal(sprak(), "en");
+    assert.equal(t("ui.sprak.nb"), EN["ui.sprak.nb"]);
+    assert.equal(document.documentElement.getAttribute("lang"), "en");
+  } finally {
+    rigg.gjenopprett();
+    settI18nForTest(NB, "nb");
+    document.documentElement.setAttribute("lang", "nb");
   }
 });

@@ -235,5 +235,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   }
 
   const rot = el("div", { class: "skall" }, topp, nav, hoved);
-  return { rot, hoved, settAktiv };
+  // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
+  // tilbake på kontrollen brukeren nettopp brukte (Codex P2) — uten å lete
+  // etter den på klassenavn i et tre den selv nettopp har satt inn.
+  return { rot, hoved, settAktiv, velger };
 }
