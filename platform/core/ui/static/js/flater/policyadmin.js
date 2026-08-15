@@ -142,8 +142,12 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
     // skjermleser sa fra, men på skjermen så knappen helt død ut. Eier klikket
     // «Valider» og ingenting skjedde — den eneste som fikk vite hvorfor, var
     // den som leste serverloggen.
+    // ÉN annonsering per klikk (Codex P2): `role="alert"` ER et assertivt
+    // live-område — boksen under leses opp av seg selv når den settes inn. Et
+    // `meldLive` i tillegg skrev samme setning til det polite område, så
+    // skjermleseren fikk to konkurrerende opplesninger for ett klikk, og den
+    // polite kunne komme sist og overdøve selve feillista.
     const visFeil = (feil) => {
-      meldLive(t("ui.policyadmin.ugyldig"));
       boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
       boks.append(el("div", { class: "pa-valfeil", role: "alert" },
         el("p", { text: t("ui.policyadmin.ugyldig") }),
