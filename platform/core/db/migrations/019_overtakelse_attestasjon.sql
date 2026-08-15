@@ -510,6 +510,22 @@ BEGIN
            SET tilstand = 'forkastet', ciphertext = NULL, nonce = NULL
           FROM kandidat k
          WHERE a.artefakt_id = k.artefakt_id
+           -- Codex (P1): predikatet GJENTAS på selve UPDATE-en, ikke bare i
+           -- CTE-en. CTE-en leser transaksjonens snapshot; blir artefaktet
+           -- promotert, bevart eller karantenesatt ETTER den lesningen men FØR
+           -- denne raden låses, ville et `WHERE artefakt_id = ...` alene
+           -- overskrevet den nye, terminale tilstanden med `forkastet` og
+           -- nullet chiffertekst — altså slettet evidens som nettopp var
+           -- akseptert. I READ COMMITTED re-evalueres WHERE-en mot den
+           -- OPPDATERTE raden når UPDATE-en slipper opp fra radlåsen, så den
+           -- gjentatte betingelsen er nøyaktig det som gjør den samtidige
+           -- overgangen synlig her. Raden faller da bare ut av batchen; neste
+           -- kjøring plukker den om den fortsatt kvalifiserer.
+           AND a.tilstand = 'staged'
+           AND a.opprettet < now() - interval '24 hours'
+           AND NOT EXISTS (SELECT 1 FROM public.oppdrag o
+                            WHERE o.tenant = a.tenant AND o.id = a.oppdrag_id
+                              AND o.evidensfrist > now())
         RETURNING 1)
     SELECT count(*) INTO v_antall FROM forkastet;
     RETURN v_antall;
