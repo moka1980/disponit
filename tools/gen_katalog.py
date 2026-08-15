@@ -16,9 +16,14 @@ import pathlib
 import re
 import sys
 
-ROT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-PROTOTYPE = pathlib.Path("/home/moka/prosjekt/disponit/prototype/"
-                         "AI-bedriftsagent-prototype-v7.html")
+# Repoet finnes ut fra SKRIPTETS egen plassering, ikke fra en absolutt sti på
+# én maskin (Codex P1). En hardkodet `/home/<bruker>/...` gjør genereringen
+# umulig å reprodusere i CI eller på en annen laptop — og verre: den ville lest
+# en checkout som kunne ha et ANNET innhold enn commiten som ble generert fra,
+# uten at noe sa fra. Prototypen er sporet i repoet, så den er kilden.
+ROT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 \
+    else pathlib.Path(__file__).resolve().parent.parent
+PROTOTYPE = ROT / "prototype" / "AI-bedriftsagent-prototype-v7.html"
 
 # Områdenavn på engelsk.
 OMRADE_EN = {
@@ -79,9 +84,21 @@ def les_katalog() -> list[dict]:
         for m in re.finditer(
             r"\{n:(\d+),name:'([^']*)'(.*?),area:'([^']*)',p:(\d+)", skript)
     ]
-    if len(poster) != 45:
-        raise SystemExit(f"forventet 45 moduler, fant {len(poster)} — "
-                         f"prototypen har endret form, sjekk parseren")
+    # Antallet alene er ikke en kontroll (Codex P2): en duplisert `n` sammen
+    # med en manglende modul gir også 45 poster, og da hadde katalogen sett
+    # komplett ut mens én modul var borte og en annen sto to ganger. Kravet er
+    # derfor at nummerSETTET er nøyaktig 1..45.
+    numre = [p["n"] for p in poster]
+    duplikater = sorted({n for n in numre if numre.count(n) > 1})
+    if duplikater:
+        raise SystemExit(f"duplisert modulnummer i prototypen: {duplikater}")
+    forventet = set(range(1, 46))
+    if set(numre) != forventet:
+        mangler = sorted(forventet - set(numre))
+        ukjente = sorted(set(numre) - forventet)
+        raise SystemExit(
+            f"katalogen er ikke 1..45 — mangler: {mangler}, ukjente: {ukjente}"
+            f" (prototypen har endret form, sjekk parseren)")
     return sorted(poster, key=lambda p: p["n"])
 
 
