@@ -200,9 +200,15 @@ CREATE FUNCTION konfliktsett_hash(p_tenant TEXT, p_hostname TEXT,
 RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
     SELECT encode(sha256(convert_to(coalesce(string_agg(
-               k.retning || '|' || k.motpart_tenant || '|' || k.motpart_hostname
-                         || '|' || k.motpart_generasjon,
-               E'\n' ORDER BY k.retning, k.motpart_tenant, k.motpart_hostname), ''),
+               -- LENGDEPREFIKS per tekstfelt, i BYTES: hvert felt leses som
+               -- «n:» + n byte, så innholdet kan aldri leses som struktur.
+               -- Skilletegnene under er lesbarhet, ikke grammatikk.
+               octet_length(convert_to(k.retning,          'UTF8')) || ':' || k.retning          || '|' ||
+               octet_length(convert_to(k.motpart_tenant,   'UTF8')) || ':' || k.motpart_tenant   || '|' ||
+               octet_length(convert_to(k.motpart_hostname, 'UTF8')) || ':' || k.motpart_hostname || '|' ||
+               k.motpart_generasjon,   -- BIGINT: kun siffer, kan ikke bære et skilletegn
+               E'\n' ORDER BY k.motpart_tenant COLLATE "C",
+                              k.motpart_hostname COLLATE "C"), ''),
            'UTF8')), 'hex')
       FROM public.domenekonfliktpart k
      WHERE k.tenant = p_tenant AND k.hostname = p_hostname
@@ -222,7 +228,29 @@ SET search_path = pg_catalog AS $$
   gjelder.
 - **Sorteringen er en del av definisjonen.** `string_agg` uten `ORDER BY`
   gir en radrekkefølge som ikke er garantert; to like mengder ville da
-  kunnet hashe ulikt og blokkert et oppgjør uten grunn.
+  kunnet hashe ulikt og blokkert et oppgjør uten grunn. `COLLATE "C"`
+  hører til av samme grunn: en språkspesifikk kollasjon kan behandle to
+  ulike strenger som like i sorteringen, og da er rekkefølgen mellom dem
+  igjen udefinert. `(motpart_tenant, motpart_hostname)` er unik innenfor
+  én `(tenant, hostname, generasjon)` — det er primærnøkkelens hale — så
+  sorteringen er total, og `retning` trengs ikke i den.
+- **Serialiseringen er injektiv, ikke bare lesbar.** Et første utkast
+  skjøtet feltene med `|` og `\n` og hashet resultatet. Det er en
+  forsikring bare så lenge ingen felt kan *inneholde* skilletegnene — og
+  hverken tenant-bootstrappen eller skjemaet forbyr `|` eller linjeskift i
+  en tenant-ID. En motpart-ID kunne dermed inneholdt halen og linjeskiftet
+  som ellers utgjør en hel ekstra konfliktrad, og to **ulike**
+  partsmengder ville fått samme preimage og samme hash. Konsekvensen er
+  ikke kosmetisk: hashen er nettopp det som skal gjøre gamle stemmer
+  ugyldige når mengden endrer seg (§2.5b), så en kollisjon her lar to
+  attestasjoner avgitt på ett konfliktbilde gjøre opp et annet — akkurat
+  invarianten §1a finnes for. Hvert tekstfelt bærer derfor sin egen
+  bytelengde som prefiks (`n:` + n byte). Da er parsingen drevet av
+  lengdene, ikke av skilletegnene, og innhold kan per konstruksjon ikke
+  leses som struktur uansett hva en tenant-ID inneholder. `|` og `\n` blir
+  stående fordi de gjør preimagen leselig i en feilsøking, ikke fordi noe
+  hviler på dem. `motpart_generasjon` er en `BIGINT` og kan ikke bære et
+  skilletegn; den trenger derfor ikke prefiks.
 - **Den tomme mengden har også en hash** (`sha256('')`), så en eksakt
   overtakelse uten registrerte parter er ikke et spesialtilfelle.
 - **`motpart_generasjon` er med i hashen, og uten den er `eksakt`-parten
@@ -3936,6 +3964,19 @@ ikke `verifisert`» består 20m og feiler her — og det er nettopp den
 varianten som lar to stemmer avgitt før A-s nye krav fantes tilbakekalle
 det kravet uten at ett menneske har sett det. Målt på `motpart_generasjon`
 i raden og på hashen i attestasjonene, ikke på saksstatusen ·
+20m-4 **Hashen er injektiv over vilkårlige tenant-IDer (§1a):** to
+konfliktmengder konstrueres slik at en naiv skjøting ville gitt samme
+preimage — mengde 1 har **én** part med en `motpart_tenant` som selv
+inneholder `|`, et linjeskift og halen av en ekstra rad; mengde 2 har de
+**to** partene den strengen imiterer. `konfliktsett_hash()` skal gi
+**ulike** hasher. Kollasjonsvarianten måles i samme port: to parter som en
+språkspesifikk kollasjon sorterer likt, hasher likt ved gjentatte kall.
+Porten er nødvendig ved siden av 20m/20m-2 — de måler at hashen *endrer
+seg* når mengden endrer seg, aldri at to ulike mengder ikke kan treffe
+samme verdi, og det er kollisjonen som lar to stemmer avgitt på ett
+konfliktbilde gjøre opp et annet. Skjemaet forbyr ikke `|` eller
+linjeskift i en tenant-ID, så inndataene i porten er lovlige, ikke
+konstruerte umuligheter ·
 20n **Taperens sak kan lukkes også etter reapplikasjon (§3.1):** B vinner,
 C settes `tilbakekalt` med grunn `tapte_domeneoppgjor` — deretter
 **verifiserer C på nytt** (reapplikasjonsgrenen: `avklaring_kreves`, ny
