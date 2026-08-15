@@ -37,7 +37,9 @@ def _skriv_feiltelling(n: int) -> None:
 
 
 def main() -> int:
+    from db.hemmeligheter import last_credentials
     from db.pg import koble
+    last_credentials()  # PR-009 §5: LoadCredential før env-lesing under
     dsn = os.environ.get("DISPONIT_DOMAINS_URL") or os.environ.get("DATABASE_URL")
     if not dsn:
         print(json.dumps({"hendelse": "oppstart_nektet",

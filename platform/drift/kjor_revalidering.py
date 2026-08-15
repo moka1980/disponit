@@ -70,7 +70,9 @@ def resolvere() -> list[dr.Resolver]:
 
 
 def main() -> int:
+    from db.hemmeligheter import last_credentials
     from db.pg import koble
+    last_credentials()  # PR-009 §5: LoadCredential før env-lesing under
     try:
         res_konf = resolvere()
     except dr.Diversitetsfeil as e:
