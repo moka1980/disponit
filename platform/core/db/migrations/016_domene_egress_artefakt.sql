@@ -796,7 +796,13 @@ BEGIN
         RAISE EXCEPTION 'promoter_artefakt: ukjent artefakt %', p_artefakt_id
             USING ERRCODE = 'no_data_found';
     END IF;
-    IF r.tilstand = 'promotert' THEN RETURN; END IF;   -- idempotent
+    -- Codex: VALIDER FØR den idempotente returen. Sto den først, hoppet et kall
+    -- for et alt promotert artefakt over hele binding/hash/epoch-sammenligningen
+    -- og fikk `RETURN` (suksess) tilbake fra en herdet SECURITY DEFINER-funksjon.
+    -- En retry eller gjenopprettingsvei med FEIL tenant/oppdrag/release/epoch
+    -- eller feil signert hash ble da lest av applikasjonen som «verifisert
+    -- promotering» — nettopp attestasjonen funksjonen finnes for å håndheve.
+    -- En ekte identisk retry sender de samme parameterne og passerer fortsatt.
     IF r.tenant IS DISTINCT FROM p_tenant
        OR r.oppdrag_id IS DISTINCT FROM p_oppdrag_id
        OR r.release_id IS DISTINCT FROM p_release_id
@@ -808,6 +814,7 @@ BEGIN
         RAISE EXCEPTION 'promoter_artefakt: epoch-avvik (% <> %)',
             r.module_epoch, p_module_epoch USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    IF r.tilstand = 'promotert' THEN RETURN; END IF;   -- idempotent (etter validering)
     IF r.tilstand <> 'staged' THEN
         RAISE EXCEPTION 'promoter_artefakt: % kan ikke promoteres', r.tilstand
             USING ERRCODE = 'invalid_parameter_value';

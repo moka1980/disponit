@@ -633,6 +633,43 @@ def test_promoter_epoch_avvik_port37(migrator):
     assert st == "promotert"
 
 
+@pg
+def test_promoter_idempotent_validerer_binding(migrator):
+    """Den idempotente returen for et alt promotert artefakt må ligge ETTER
+    binding/hash/epoch-kontrollen (Codex 016:799).
+
+    MUTASJONEN SOM DREPER DENNE: flytt `IF r.tilstand = 'promotert' THEN RETURN`
+    tilbake foran sammenligningene — da svarer en herdet SECURITY DEFINER-
+    funksjon «promotert» på et kall med feil oppdrag, feil release, feil epoch
+    eller feil signert hash, og applikasjonen leser det som verifisert evidens.
+    """
+    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    _artefakttype(migrator, modul, kh, at)
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    opp2, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    aid = _artefakt(migrator, TENANT, opp, at, modul, kh)
+    _sett_kontekst(migrator, TENANT)
+    rel, h = migrator.execute("SELECT release_id, klartekst_sha256 FROM artefakt"
+                              " WHERE artefakt_id=%s", (aid,)).fetchone()
+    migrator.rollback()
+    _rt_call("SELECT promoter_artefakt(%s,%s,%s,%s,0,%s,'sys')",
+             (aid, TENANT, opp, rel, h))
+
+    # Identisk retry er fortsatt idempotent suksess.
+    _rt_call("SELECT promoter_artefakt(%s,%s,%s,%s,0,%s,'sys')",
+             (aid, TENANT, opp, rel, h))
+
+    # …men ingen av de avvikende parametersettene slipper gjennom.
+    for args in ((aid, TENANT, opp2, rel, 0, h),          # feil oppdrag
+                 (aid, TENANT, opp, "r-annen", 0, h),     # feil release
+                 (aid, TENANT, opp, rel, 7, h),           # feil epoch
+                 (aid, TENANT, opp, rel, 0, "h-feil")):   # feil signert hash
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _rt_call("SELECT promoter_artefakt(%s,%s,%s,%s,%s,%s,'sys')", args)
+
+
 def _gammelt_staged_artefakt(migrator, *, evidensfrist):
     """Staged artefakt > 24 t gammelt på et oppdrag med gitt evidensfrist."""
     at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
