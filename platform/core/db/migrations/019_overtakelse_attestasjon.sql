@@ -521,6 +521,17 @@ $$;
 -- Selve oppdateringen delegeres til 016s form, så det finnes fortsatt
 -- NØYAKTIG ett sted som skriver `siste_vellykkede_revalidering` og
 -- hendelsesloggen — denne funksjonen legger en port foran, ikke en ny vei.
+--
+-- Codex (P2): beviset LÅSES mens det holdes mot TXT-svaret. Porten og
+-- oppdateringen er to setninger, og `utsted_challenge()` bytter
+-- `challenge_token_hash` med en `ON CONFLICT DO UPDATE` — altså en ren
+-- radlås, ingen advisory-lås å synkronisere mot. Uten `FOR UPDATE` kunne en
+-- rotasjon committe mellom lesningen og det nestede kallet: raden ville
+-- fortsatt stått `verifisert`, og `siste_vellykkede_revalidering` ville blitt
+-- friskmeldt av et TXT-token basen nettopp hadde forlatt. Med låsen venter
+-- rotasjonen, og en rotasjon som kom FØR oss re-evalueres av predikatet her
+-- (READ COMMITTED leser den oppdaterte raden når låsen slippes), så beviset
+-- vi sammenligner mot er alltid det som gjelder ved oppdateringen.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION revalider_domenekontroll(
     p_tenant TEXT, p_hostname TEXT, p_aktor TEXT, p_txt_verdier TEXT[])
@@ -530,7 +541,8 @@ BEGIN
     SELECT d.challenge_token_hash INTO v_bevis
       FROM public.domenekontroll d
      WHERE d.tenant = p_tenant AND d.hostname = p_hostname
-       AND d.status = 'verifisert';
+       AND d.status = 'verifisert'
+       FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'revalider_domenekontroll: %/% er ikke verifisert '
             '(ingen revalidering registrert)', p_tenant, p_hostname
