@@ -1005,3 +1005,31 @@ def test_ordinaer_tilbakekalling_laaser_ikke_ute_reverifisering(migrator):
     finally:
         a.close()
     assert _dkrow(migrator, TENANT, h)[0] == "verifisert"
+
+
+@pg
+def test_hendelse_stempler_generasjon(migrator):
+    """Codex: hver transisjonshendelse stemples med resulterende
+    autorisasjonsgenerasjon (sto NULL) → den append-only historikken kan
+    rekonstruere hvilken generasjon som ble tilbakekalt / gikk i avklaring.
+
+    MUTASJONEN SOM DREPER DENNE: fjern hendelse_stamp_gen-triggeren."""
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    gen = migrator.execute("SELECT autorisasjonsgenerasjon FROM domenekontroll"
+                           " WHERE tenant=%s AND hostname=%s",
+                           (TENANT, h)).fetchone()[0]
+    rows = migrator.execute("SELECT autorisasjonsgenerasjon FROM"
+                            " domenekontroll_hendelse WHERE tenant=%s AND hostname=%s",
+                            (TENANT, h)).fetchall()
+    migrator.rollback()
+    assert rows, "ingen hendelse ble logget"
+    assert all(r[0] is not None for r in rows), \
+        "en transisjonshendelse mangler autorisasjonsgenerasjon"
+    assert any(r[0] == gen for r in rows), \
+        "hendelsens generasjon matcher ikke domenekontroll-raden"

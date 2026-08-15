@@ -157,6 +157,27 @@ CREATE OR REPLACE VIEW v_domeneautorisasjon WITH (security_invoker = true) AS
 -- Integritetstriggere
 -- ============================================================
 
+-- Codex: stemple resulterende autorisasjonsgenerasjon på HVER transisjonshendelse.
+-- Overgangene øker generasjonen men lot revisjonsradens `autorisasjonsgenerasjon`
+-- stå NULL, så den append-only historikken kunne ikke identifisere HVILKEN
+-- generasjon som ble tilbakekalt eller gikk i avklaring — og overtakelsessaker/
+-- foreldet-avgjørelse-gjerder er nettopp generasjonsspesifikke. Et BEFORE INSERT
+-- fyller feltet fra domenekontroll-radens GJELDENDE generasjon (hendelsen skrives
+-- ETTER at overgangen har oppdatert raden) i ÉN vakt for alle innskrivningssteder.
+CREATE OR REPLACE FUNCTION domenekontroll_hendelse_stamp_gen()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.autorisasjonsgenerasjon IS NULL THEN
+        SELECT autorisasjonsgenerasjon INTO NEW.autorisasjonsgenerasjon
+          FROM public.domenekontroll
+         WHERE tenant = NEW.tenant AND hostname = NEW.hostname;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS hendelse_stamp_gen ON domenekontroll_hendelse;
+CREATE TRIGGER hendelse_stamp_gen BEFORE INSERT ON domenekontroll_hendelse
+    FOR EACH ROW EXECUTE FUNCTION domenekontroll_hendelse_stamp_gen();
+
 -- 7a. Append-only: domenekontroll_hendelse + artefakttype_register.
 CREATE OR REPLACE FUNCTION domene_append_only()
 RETURNS trigger LANGUAGE plpgsql AS $$
