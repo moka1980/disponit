@@ -223,8 +223,11 @@ def test_oppsett_provider_id_fail_closed(monkeypatch):
     # Ugyldig provider (injeksjonsforsøk / rare tegn) → tom, ikke rå passthrough.
     for ondt in ('a"b', "a b", "a;b", "../x", "A".ljust(65, "A")):
         monkeypatch.setenv("DISPONIT_UI_PROVIDER", ondt)
-        assert json.loads(_klient().get("/ui/oppsett.json").text) \
-            == {"provider_id": ""}, ondt
+        # Bare provider-feltet påstås her: svaret bærer også `miljo`, og en
+        # helhetssammenligning ville gjort testen rød hver gang endepunktet
+        # får et felt som ikke angår fail-closed på provider.
+        assert json.loads(_klient().get("/ui/oppsett.json").text)["provider_id"] \
+            == "", ondt
 
 
 def test_oppsett_json_er_env_drevet(monkeypatch):
@@ -234,9 +237,9 @@ def test_oppsett_json_er_env_drevet(monkeypatch):
     r = _klient().get("/ui/oppsett.json")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/json; charset=utf-8"
-    assert json.loads(r.text) == {"provider_id": "google"}
+    assert json.loads(r.text)["provider_id"] == "google"
     monkeypatch.delenv("DISPONIT_UI_PROVIDER", raising=False)
-    assert json.loads(_klient().get("/ui/oppsett.json").text) == {"provider_id": ""}
+    assert json.loads(_klient().get("/ui/oppsett.json").text)["provider_id"] == ""
     # ingen statisk oppsett.json igjen i repoet
     assert not (uiserver.STATISK / "oppsett.json").exists()
 
@@ -253,3 +256,22 @@ def test_ingen_hardkodet_farge_eller_avstand_i_ui_css():
                 continue
             assert not re.search(r"#[0-9a-fA-F]{3,8}\b", s), \
                 f"hardkodet hex i {p.name}: {s}"
+
+
+def test_oppsett_oppgir_miljo_fail_closed(monkeypatch):
+    """`/ui/oppsett.json` bærer miljøet forsiden avgjør løfter fra.
+
+    Fail-closed som provider: alt annet enn den eksakte strengen `produksjon`
+    blir `staging`. En skrivefeil i miljøfila skal koste et løfte, ikke gi et,
+    og en tom verdi skal ikke arve produksjon fra en tidligere deploy.
+    """
+    k = _klient()
+    for verdi, forventet in (("produksjon", "produksjon"),
+                             ("staging", "staging"),
+                             ("produksjonn", "staging"),
+                             (" produksjon ", "produksjon"),
+                             ("", "staging")):
+        monkeypatch.setenv("DISPONIT_MILJO", verdi)
+        assert k.get("/ui/oppsett.json").json()["miljo"] == forventet, verdi
+    monkeypatch.delenv("DISPONIT_MILJO", raising=False)
+    assert k.get("/ui/oppsett.json").json()["miljo"] == "staging"

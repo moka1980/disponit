@@ -347,8 +347,8 @@ test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => 
   assert.ok(!h.textContent.includes(t("site.modul.m38.navn")),
     "M-38 vises for en tenant som ikke har den");
   const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);
-  assert.equal(kpi[0], "0");
-  assert.equal(kpi[1], "2");
+  assert.equal(kpi[0], "1");
+  assert.equal(kpi[1], "1");
 });
 
 test("Kundeadmin: ukjent tenant sier «vet ikke», viser ikke katalogen", async () => {

@@ -18,7 +18,7 @@ import { t } from "./i18n.js";
 //   manifest finnes, status ikke aktiv  → bygges      under utvikling
 //   ingen manifest                      → planlagt    beskrevet, ikke påbegynt
 export const MODULSTATUS = {
-  1: "klargjort",   // m01_policy: status aktiv, driftstilstand ikke_i_drift
+  1: "i_drift",     // m01_policy: status aktiv, driftstilstand produksjon
   2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
@@ -158,8 +158,32 @@ export const TILBUD = [
     tekst_nokkel: "site.tilbud.kapasitet.tekst" },
 ];
 
+// «Tilgjengelig» er et løfte til en BESØKENDE om at hen kan ta modulen i bruk
+// med sine egne data. Det løftet har TO ledd, ikke ett: modulen må kjøre, OG
+// verten må kjøre i produksjonsmodus. `driftstilstand: produksjon` dekker bare
+// det første. M-1 avgjør ekte forespørsler på disponit.com i dag, men
+// policyene som binder dem står `utkast` og verten står `staging` — brikka
+// ville lovet noe ingen kunne innfri.
+//
+// Skillet er det samme manifestene gjør med `status` og `driftstilstand`:
+// kollapses to akser til ett ord, lover flaten mer enn den ene aksen bærer.
+export function erTilgjengeligFor(status, produksjonsmiljo) {
+  return status === "i_drift" && produksjonsmiljo === true;
+}
+
+// Miljøet kommer fra SERVEREN (`/ui/oppsett.json` → `miljo`), ikke fra en
+// konstant her. En hardkodet verdi ville krevd kodeendring, review og
+// utrulling bare for å si sannheten den dagen verten flippet — og like gjerne
+// blitt stående og løyet motsatt vei etterpå. Startverdien er `false`: laster
+// oppsettet aldri, lover forsiden ingenting.
+let _produksjonsmiljo = false;
+
+export function settProduksjonsmiljo(pa) { _produksjonsmiljo = pa === true; }
+
+export function produksjonsmiljo() { return _produksjonsmiljo; }
+
 export function erTilgjengelig(id) {
-  return modulStatus(id) === "i_drift";
+  return erTilgjengeligFor(modulStatus(id), _produksjonsmiljo);
 }
 
 // Hovedløftet i heltet er formulert i presens («agenten håndterer …»), men

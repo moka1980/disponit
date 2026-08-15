@@ -228,5 +228,18 @@ def ui_oppsett(request: Request) -> Response:
     # «ikke konfigurert» i stedet for å poste en umulig provider).
     if not _PROVIDER_RE.match(provider):
         provider = ""
-    data = json.dumps({"provider_id": provider}).encode("utf-8")
+    # `miljo` er det forsiden trenger for å avgjøre om noe kan LOVES en kunde.
+    # `driftstilstand: produksjon` sier hvor koden KJØRER; det sier ingenting om
+    # hvilke policystatuser verten godtar. Kjører prosessen i staging-modus,
+    # binder policyer merket `utkast` beslutningene — og da er «Tilgjengelig» et
+    # løfte kunden ikke kan innfri. Verdien leses fra den SAMME `DISPONIT_MILJO`
+    # som `policyregister.tillatte_statuser`, så brikka og regelverket som
+    # faktisk binder beslutningene ikke kan komme i utakt.
+    #
+    # Fail-closed som provider over: alt annet enn den eksakte strengen
+    # `produksjon` er staging. En skrivefeil skal koste et løfte, ikke gi et.
+    miljo = "produksjon" \
+        if os.environ.get("DISPONIT_MILJO", "").strip() == "produksjon" \
+        else "staging"
+    data = json.dumps({"provider_id": provider, "miljo": miljo}).encode("utf-8")
     return _svar(data, _CT[".json"])
