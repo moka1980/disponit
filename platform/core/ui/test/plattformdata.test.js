@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, heroTekstNokkel,
-  produksjonsmiljo, settProduksjonsmiljo,
+  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, erTilgjengeligFor,
+  heroTekstNokkel, produksjonsmiljo, settProduksjonsmiljo,
   heroTekstNokkelFor, modulStatus, modulerFraIder, modulmerke,
   plattformTelling, tenantTelling,
 } from "../static/js/plattformdata.js";
@@ -18,10 +18,10 @@ const LOKALER = ["nb", "en"].map((sprak) =>
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
-  // godkjent og i drift, M-2/M-37 er under utvikling, M-38 har intet manifest.
-  // `i_drift` krever `driftstilstand: produksjon` i manifestet — og bare M-1
-  // har det.
-  assert.equal(modulStatus(1), "i_drift");
+  // godkjent og kjører — men på STAGING, så flaten sier `klargjort`. `i_drift`
+  // krever `driftstilstand: produksjon`, altså en utrulling hos kunder, og den
+  // finnes ikke ennå. M-2/M-37 er under utvikling, M-38 har intet manifest.
+  assert.equal(modulStatus(1), "klargjort");
   assert.equal(modulStatus(2), "bygges");
   assert.equal(modulStatus(38), "planlagt");
   assert.equal(modulStatus(45), "planlagt");
@@ -31,22 +31,28 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
   // Regelen er BINDINGEN, ikke tallet: hver `i_drift` her må ha
   // `driftstilstand: produksjon` i sitt manifest, og
   // `test_ui_kontrakt.py::test_modulstatus_folger_manifestene` håndhever den
-  // retningen. M-1 står i drift fordi disponit.com kjører den.
+  // retningen. Ingen har det i dag — M-1 kjører på staging-serveren, og
+  // `docs/DEPLOY.md` reserverer produksjon for en egen VPS med kundedata.
   assert.deepEqual(
     Object.entries(MODULSTATUS).filter(([, s]) => s === "i_drift")
       .map(([id]) => Number(id)),
-    [1], "andre moduler enn M-1 påstår drift — sjekk manifestene");
+    [], "en modul påstår drift hos kunder — sjekk manifestets driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
-  // To ledd, ikke ett. M-1 kjører (i_drift), men verten står i staging-modus
-  // fordi policyene som binder beslutningene fortsatt er `utkast` — da skal
-  // forsiden ikke love kunden noe. Begge retninger måles, så porten ikke bare
-  // beskriver dagens tilstand.
-  settProduksjonsmiljo(false);
-  assert.equal(erTilgjengelig(1), false, "drift alene er ikke nok");
+  // To ledd, ikke ett — og regelen måles på REGELEN, ikke på dagens tilstand:
+  // hadde testen pinnet «M-1 er i drift», ville den målt manifestet på nytt og
+  // ryket hver gang en modul flyttet seg, uten at porten var svekket.
+  for (const status of ["i_drift", "klargjort", "bygges", "planlagt"]) {
+    assert.equal(erTilgjengeligFor(status, true), status === "i_drift",
+      `${status} + produksjonsmiljø lover feil`);
+    assert.equal(erTilgjengeligFor(status, false), false,
+      `${status} loves uten produksjonsmiljø`);
+  }
+  // Slik plattformen faktisk står: M-1 kjører på staging, altså `klargjort`.
+  // Da faller løftet på det FØRSTE leddet alene, uansett hva verten sier.
   settProduksjonsmiljo(true);
-  assert.equal(erTilgjengelig(1), true, "drift + produksjonsmiljø skal loves");
+  assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
   assert.equal(erTilgjengelig(37), false, "M-37 bygges, uansett miljø");
   for (const verdi of [undefined, null, "produksjon", "produksjonn", 1, {}]) {
     settProduksjonsmiljo(verdi);
@@ -102,10 +108,11 @@ test("heroTekstNokkel: hovedløftet følger brikkene, ikke redaktøren", () => {
   // drevet fra hverandre neste gang en modul skifter tilstand.
   const iDrift = TILBUD.filter((post) => erTilgjengelig(post.id)).length;
   assert.equal(heroTekstNokkel(), heroTekstNokkelFor(iDrift, TILBUD.length));
-  // Slik plattformen faktisk står: null moduler i drift, altså bygge-formen.
-  // I staging-modus lover forsiden ingenting, uansett hva som kjører.
+  // Slik plattformen faktisk står: ingen tilbudspunkter loves, altså
+  // bygge-formen. Begge leddene holder tallet på null hver for seg — ingen
+  // modul er rullet ut hos kunder, og verten står ikke i produksjonsmodus.
   assert.equal(iDrift, 0,
-    "et tilbudspunkt loves — men verten står ikke i produksjonsmodus");
+    "et tilbudspunkt loves — sjekk driftstilstand og DISPONIT_MILJO");
   assert.equal(heroTekstNokkel(), "site.hero.tekst_bygges");
 });
 
@@ -147,11 +154,11 @@ test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
   // En tenant med M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
   // arbeid — og resten av katalogen er planlagt for kunden. Tildelingen er
   // ID-er fra den autentiserte veien, ikke et oppslag i klientpakken.
-  // Tellingen følger MODULSTATUS (hvor koden kjører), ikke kundeløftet på
-  // forsiden: M-1 er i drift, M-2 bygges.
+  // Tellingen følger MODULSTATUS: `iDrift` er utrulling hos kunder, og M-1
+  // kjører på staging-serveren, ikke der.
   const telling = tenantTelling(modulerFraIder([1, 2]));
-  assert.equal(telling.iDrift, 1);
-  assert.equal(telling.underArbeid, 1);
+  assert.equal(telling.iDrift, 0);
+  assert.equal(telling.underArbeid, 2);
   assert.equal(telling.planlagt, telling.totalt - 2);
   const ukjent = tenantTelling([]);
   assert.equal(ukjent.iDrift, 0);

@@ -17,8 +17,14 @@ import { t } from "./i18n.js";
 //   status: aktiv, ikke i produksjon    → klargjort   godkjent, men ikke i drift
 //   manifest finnes, status ikke aktiv  → bygges      under utvikling
 //   ingen manifest                      → planlagt    beskrevet, ikke påbegynt
+//
+// `staging` faller altså sammen med `ikke_i_drift` HER, og det er riktig for en
+// FLATE: ordene beskriver hva en besøkende kan regne med, ikke hvor mange
+// maskiner koden står på. Skillet mellom «kjører ingen steder» og «kjører på
+// vår egen testserver» er ekte, men det bor i manifestet og i registerets
+// `i_drift`-liste — ikke i det kunden leser.
 export const MODULSTATUS = {
-  1: "i_drift",     // m01_policy: status aktiv, driftstilstand produksjon
+  1: "klargjort",   // m01_policy: status aktiv, driftstilstand staging
   2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
@@ -141,10 +147,10 @@ export function modulmerke(id) {
 // «Fullmakter og policy», ikke «M-1 Klargjort».
 //
 // `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten, og bare
-// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift, så en
-// modul i den tilstanden kan aldri stå «Tilgjengelig». M-1 er ikke lenger der:
-// manifestet sier `driftstilstand: produksjon`, og det er miljøleddet under —
-// ikke driftstilstanden — som holder brikka på «Kommer» i dag.
+// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift hos
+// kunder, så en modul i den tilstanden kan aldri stå «Tilgjengelig». M-1 står
+// der i dag: manifestet sier `driftstilstand: staging` — koden kjører, men på
+// vår egen testserver, ikke hos noen kunde.
 // `sitekomponenter.js` gjør allerede det samme skillet på
 // adminflaten: grønt er reservert for det som FAKTISK kjører hos kunder.
 // Forsiden sier «Kommer» om resten — ett ord, ikke et byggeregnskap.
@@ -160,11 +166,12 @@ export const TILBUD = [
 ];
 
 // «Tilgjengelig» er et løfte til en BESØKENDE om at hen kan ta modulen i bruk
-// med sine egne data. Det løftet har TO ledd, ikke ett: modulen må kjøre, OG
-// verten må kjøre i produksjonsmodus. `driftstilstand: produksjon` dekker bare
-// det første. M-1 avgjør ekte forespørsler på disponit.com i dag, men
-// policyene som binder dem står `utkast` og verten står `staging` — brikka
-// ville lovet noe ingen kunne innfri.
+// med sine egne data. Det løftet har TO ledd, ikke ett: modulen må være rullet
+// ut til kunder (`i_drift`), OG verten må kjøre i produksjonsmodus. Ingen av
+// dem holder i dag — M-1 kjører på staging, og `DISPONIT_MILJO` sier det samme
+// — men de kan bli oppfylt hver for seg, og da er ETT av dem ikke nok:
+// policyene som binder beslutningene står `utkast` så lenge verten er staging,
+// uansett hvor koden er rullet ut.
 //
 // Skillet er det samme manifestene gjør med `status` og `driftstilstand`:
 // kollapses to akser til ett ord, lover flaten mer enn den ene aksen bærer.
