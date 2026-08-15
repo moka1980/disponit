@@ -110,4 +110,17 @@ test("Utlogging forbigår en omstart som allerede venter på svar", async () => 
     "skallet står igjen på skjermen etter utlogging");
   assert.ok(app.querySelector(".site-sprak"),
     "innloggingsflaten ble skrevet over");
+
+  // Codex P2, samme scenario ett hakk videre: `tilInnlogging` teller opp
+  // `omstartNr`, men lastenummeret i `i18n.js` er et annet. Commitet locale-
+  // hentingen på egen hånd — som før — satte den forlatte omstarten `_kart` og
+  // `<html lang>` til engelsk ETTER at innloggingsflaten var tegnet på norsk,
+  // og omstarten trakk seg så ved generasjonssjekken uten å tegne noe. Siden
+  // ble stående norsk under `lang="en"` på ubestemt tid. Settet tas nå i bruk
+  // først i det flaten byttes, så en forbigått omstart commiter ingenting.
+  assert.equal(document.documentElement.getAttribute("lang"), "nb",
+    "en forlatt locale-lasting commiterte språket etter utloggingen");
+  const valgt = app.querySelector('.site-sprak-knapp[aria-current="true"]');
+  assert.equal(valgt && valgt.textContent, NB["ui.sprak.nb"],
+    "innloggingsflaten står på et annet språk enn dokumentet erklærer");
 });
