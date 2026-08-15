@@ -64,3 +64,47 @@ test("lagRuter: en økt uten én eneste rute kaster ikke", () => {
   assert.doesNotThrow(() => ruter.naviger());
   assert.deepEqual(aktive, []);
 });
+
+// Språkbyttet bygger skallet — og dermed ruteren — på nytt. Uten `stopp` ble
+// den gamle lytteren stående på `window` og rendret sin flate inn i et
+// frakoblet `<main>`: usynlig for brukeren, men med ekte API-kall, og ett
+// ekstra sett per bytte. Testene under låser at bare den LEVENDE ruteren
+// svarer på en `hashchange`.
+// Hendelsen sendes eksplisitt i stedet for å vente på jsdom' egen kø: køen
+// tømmes først ved neste `await`, og da lander også hash-endringene fra
+// testene over. Et synkront `dispatchEvent` måler nøyaktig én navigasjon.
+function navigerTil(hash) {
+  window.location.hash = hash;
+  window.dispatchEvent(new Event("hashchange"));
+}
+
+test("lagRuter: en stoppet ruter rendrer ikke lenger på hashchange", () => {
+  window.location.hash = "#/oversikt";
+  const rendret = [];
+  const gammel = rigg({
+    oversikt: () => rendret.push("gammel:oversikt"),
+    policy: () => rendret.push("gammel:policy"),
+  });
+  const ny = rigg({
+    oversikt: () => rendret.push("ny:oversikt"),
+    policy: () => rendret.push("ny:policy"),
+  });
+  gammel.ruter.stopp();
+
+  navigerTil("#/policy");
+
+  assert.deepEqual(rendret, ["ny:policy"]);
+  ny.ruter.stopp();
+});
+
+test("lagRuter: stopp er idempotent", () => {
+  window.location.hash = "#/oversikt";
+  const rendret = [];
+  const { ruter } = rigg({ policy: () => rendret.push("policy") });
+  ruter.stopp();
+  assert.doesNotThrow(() => ruter.stopp());
+
+  navigerTil("#/policy");
+
+  assert.deepEqual(rendret, []);
+});

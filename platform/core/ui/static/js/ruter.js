@@ -30,6 +30,12 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
     forste = false;
   }
 
+  // Lytteren må kunne FJERNES igjen (Codex P2 til PR #42). Ruteren lever like
+  // lenge som skallet den ble bygget for, og skallet byttes ut ved språkbytte:
+  // uten `stopp` ble den gamle lytteren stående og rendret sine flater inn i et
+  // frakoblet `<main>` ved hver `hashchange` — usynlig for brukeren, men med
+  // ekte API-kall, og ett ekstra sett per språkbytte.
   window.addEventListener("hashchange", naviger);
-  return { naviger, gjeldende };
+  function stopp() { window.removeEventListener("hashchange", naviger); }
+  return { naviger, gjeldende, stopp };
 }
