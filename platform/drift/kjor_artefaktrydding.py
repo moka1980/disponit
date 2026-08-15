@@ -46,18 +46,49 @@ def _les_feiltelling() -> int:
 
 
 def _skriv_feiltelling(n: int) -> bool:
-    """Lagrer telleren. Returnerer False hvis den gikk tapt.
+    """Lagrer telleren ATOMISK. Returnerer False hvis den gikk tapt.
 
-    Tapet svelges ikke stille lenger: en tilstandsfil som ikke lar seg
-    skrive nullstiller §6-alarmen ved hver kjøring, og det må være synlig
-    i kjøringens egen linje i stedet for å se ut som en frisk teller.
+    Codex (P2): et direkte skriv trunkerer den ENESTE persisterte telleren før
+    den nye JSON-en er komplett. Blir oneshot-prosessen eller verten avbrutt i
+    det vinduet, leser neste aktivering en tom eller halv fil, `_les_feiltelling`
+    tolker den som 0 — og en alt opptelt feil er glemt, så to sammenhengende
+    feilede kjøringer aldri utløser §6-alarmen. Skriv til en temporærfil i
+    SAMME katalog (så `os.replace` er en atomisk rename på samme filsystem),
+    fsync innholdet, og bytt inn. Da ser en avbrutt kjøring enten den gamle
+    eller den nye telleren — aldri en halv.
+
+    Tapet svelges ikke stille: en tilstandsfil som ikke lar seg skrive
+    nullstiller §6-alarmen ved hver kjøring, og det må være synlig i kjøringens
+    egen linje i stedet for å se ut som en frisk teller.
     """
     fil = _tilstandsfil()
+    tmp = fil.with_name(f"{fil.name}.{os.getpid()}.tmp")
     try:
         fil.parent.mkdir(parents=True, exist_ok=True)
-        fil.write_text(json.dumps({"feil": n}), encoding="utf-8")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"feil": n}))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, fil)
+        # Selve renamen fsyncet på katalogen: uten den kan et vertskrasj rett
+        # etter byttet gi den GAMLE filen tilbake ved neste oppstart, og
+        # atomisiteten over ville vært en halv garanti. Best effort — filsystemer
+        # som ikke tillater å åpne katalogen skal ikke gjøre skrivingen til en
+        # feilet kjøring.
+        try:
+            kat = os.open(str(fil.parent), os.O_RDONLY)
+            try:
+                os.fsync(kat)
+            finally:
+                os.close(kat)
+        except OSError:
+            pass
         return True
     except OSError as e:
+        try:
+            os.unlink(tmp)      # ingen etterlatte .tmp-filer i tilstandskatalogen
+        except OSError:
+            pass
         print(json.dumps({"hendelse": "ryddetilstand_skrivefeil",
                           "sti": str(fil), "feil": str(e)}), file=sys.stderr)
         return False
