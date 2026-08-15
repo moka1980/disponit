@@ -58,11 +58,24 @@ export async function lastI18n(sprak) {
   return _sprak;
 }
 
-// For tester (jsdom): sett kartet direkte uten nettverk. Teller opp
-// generasjonen, så en henting som fortsatt er underveis ikke kan overskrive
-// kartet testen nettopp satte.
-export function settI18nForTest(kart, sprak = "nb") {
+// Ugyldiggjør en henting som fortsatt er underveis (Codex P2 til PR #42).
+// Telleverket over kjente bare ÉN grunn til å trekke seg: at et nyere
+// språkvalg hadde startet. Men et språkvalg kan også bli irrelevant fordi
+// flaten som bad om det er borte — en utlogging midt i hentingen. Da var det
+// ingen nyere henting til å telle opp, og den gamle committet kartet og
+// `<html lang>` over en innloggingsflate som allerede sto rendret på det
+// forrige språket: siden så norsk ut og var merket engelsk. Den som river ned
+// en flate teller derfor opp her, på samme måte som den teller opp
+// flategenerasjonen sin.
+export function ugyldiggjorSprakhenting() {
   _generasjon += 1;
+}
+
+// For tester (jsdom): sett kartet direkte uten nettverk. Ugyldiggjør samtidig
+// hentinger som er underveis, så de ikke kan overskrive kartet testen nettopp
+// satte.
+export function settI18nForTest(kart, sprak = "nb") {
+  ugyldiggjorSprakhenting();
   _kart = kart;
   _sprak = sprak;
 }

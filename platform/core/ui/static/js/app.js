@@ -2,7 +2,8 @@
 // bygger AppShell + ruteren (200). 401 og 403 holdes adskilt (V2): 401 →
 // innlogging, 403 → ingen-tilgang PÅ flaten (håndteres i flatene).
 import { sett } from "./dom.js";
-import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
+import { velgSprak, lagreSprak, lastI18n, ugyldiggjorSprakhenting, t, sprak }
+  from "./i18n.js";
 import { hentJson, hentUtrullingForSkall, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion, lokaliserSkiplenke } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
@@ -54,8 +55,19 @@ let oppstartNr = 0;
 // Ruteren må rives i samme åndedrag, ellers navigerer en gammel ruter videre
 // bak en flate som ikke har noen økt — og generasjonen må telles opp, ellers
 // skriver en ventende oppstart seg inn igjen når svaret endelig kommer.
+//
+// Det tredje er språkhentingen (Codex P2 til PR #42). `oppstartNr` stanser en
+// ventende oppstart FØR den rendrer, men `lastI18n` committer sitt eget
+// resultat — tekstkartet og `<html lang>` er globale og settes inne i
+// hentingen, før oppstarten får sjekket nummeret sitt. Logget brukeren ut
+// mens et språkbytte fortsatt ventet på locale-settet, ble innloggingsflaten
+// derfor stående rendret på det gamle språket, men merket med det nye: en
+// skjermleser leste norsk tekst som engelsk, og påfølgende `t()`-oppslag kom
+// fra et kart som ikke passet til det som sto på skjermen. En teardown av
+// appflaten ugyldiggjør alt den forlatte oppstarten har underveis.
 function tilInnlogging() {
   oppstartNr += 1;
+  ugyldiggjorSprakhenting();
   rivRuter();
   visInnlogging();
 }
