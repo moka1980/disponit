@@ -7,10 +7,18 @@ import { el, sett } from "./dom.js";
 import { t } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
-import { TILBUD, erTilgjengelig } from "./plattformdata.js";
+import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
 import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
+// SVARENE ER PÅSTANDER OM SYSTEMET, IKKE SALGSTEKST: hvert av dem har en
+// kilde i repoet, og avviker svaret fra kilden, er det svaret som er feil.
+// `data_sv` måles mot `docs/DEPLOY.md` (produksjon er en egen maskin som
+// settes opp når fase 1 nærmer seg pilot — dagens Cloud Server er staging
+// og deles med et annet produkt), og `kontroll_sv` mot
+// `policy_validator/engine.py` + `flater/unntak.js` (en policy-autorisert
+// godkjenning KAN løfte nøyaktig den bundne grensen). Begge lovet mer enn
+// koden bar (Codex P2) — endres et svar her, sjekk kilden først.
 const SPORSMAL = [
   ["site.svar.hvem_sp", "site.svar.hvem_sv"],
   ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],
@@ -61,7 +69,7 @@ export async function visInnlogging() {
       el("div", { class: "site-hero-copy" },
         el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
         el("h1", { text: t("site.hero.tittel") }),
-        el("p", { class: "site-hero-text", text: t("site.hero.tekst") })),
+        el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) })),
       el("aside", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
         el("h2", { text: t("site.hero.punkter_tittel") }),

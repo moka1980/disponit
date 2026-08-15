@@ -162,6 +162,33 @@ export function erTilgjengelig(id) {
   return modulStatus(id) === "i_drift";
 }
 
+// Hovedløftet i heltet er formulert i presens («agenten håndterer …»), men
+// med null moduler i drift rendres hvert eneste tilbudspunkt under det som
+// «Kommer». Forsiden motsa da seg selv innenfor én skjermhøyde (Codex P2).
+// Teksten velges derfor av den SAMME `MODULSTATUS` som brikkene.
+//
+// Utrullingen har TRE tilstander, ikke to (Codex P2, andre runde): et
+// `some()` lot den første modulen som gikk i drift slå på presensformen, og
+// den lover ALLE fire områdene selv om tre brikker fortsatt sier «Kommer» —
+// samme selvmotsigelse, bare flyttet fra null til delvis. Presensformen over
+// hele linja krever derfor at HVERT tilbudspunkt er i drift; er noen, men
+// ikke alle, i drift, har delvis-formen sin egen tekst som lover det som
+// står merket «Tilgjengelig» og sier at resten bygges.
+//
+// Selve valget er skilt ut som en ren funksjon av tellingene, så alle tre
+// tilstandene kan pinnes i test uten å forfalske `MODULSTATUS` — den
+// beholder én kilde, og delvis-tilfellet trenger ikke vente på at en modul
+// faktisk går i drift før noen oppdager at teksten er feil.
+export function heroTekstNokkelFor(iDrift, totalt) {
+  if (iDrift <= 0) return "site.hero.tekst_bygges";
+  return iDrift >= totalt ? "site.hero.tekst" : "site.hero.tekst_delvis";
+}
+
+export function heroTekstNokkel() {
+  return heroTekstNokkelFor(
+    TILBUD.filter((post) => erTilgjengelig(post.id)).length, TILBUD.length);
+}
+
 // Planetiketten. Serveren sender en KODE (`pilot`, `internt`) fordi planen er
 // et lukket vokabular: sendte den etiketten, viste den engelske tabellen
 // «Internt» uansett hvilket språk brukeren hadde valgt. Selve etiketten er

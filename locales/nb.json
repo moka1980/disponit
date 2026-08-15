@@ -83,6 +83,8 @@
   "site.hero.kicker": "AI-bedriftsagent",
   "site.hero.tittel": "Disponit gjør jobben i bedriften din — innenfor fullmakter du selv setter.",
   "site.hero.tekst": "Agenten håndterer utbetalinger, purringer, oppfølging og rapportering. Hver handling måles mot policyen din før den skjer: er den innenfor, utføres den; er den ikke det, stoppes den og legges til deg.",
+  "site.hero.tekst_bygges": "Disponit bygges for å håndtere utbetalinger, purringer, oppfølging og rapportering. Prinsippet ligger fast: hver handling måles mot policyen din før den skjer — er den innenfor, utføres den; er den ikke det, stoppes den og legges til deg. Ingen av områdene under er i drift ennå.",
+  "site.hero.tekst_delvis": "Agenten gjør allerede jobben på områdene som er merket «Tilgjengelig» under; resten bygges. Prinsippet er det samme for alle: hver handling måles mot policyen din før den skjer — er den innenfor, utføres den; er den ikke det, stoppes den og legges til deg.",
   "site.argument.presisjon": "Kontroll",
   "site.argument.presisjon_tittel": "Du bestemmer hva agenten får lov til",
   "site.argument.presisjon_tekst": "Fullmaktene er en policy du selv forvalter: beløpsgrenser, hvilke handlinger som krever attestasjon, og hvem som kan godkjenne. Endringer krever fire øyne, og ingen knapp overstyrer dem.",
@@ -491,11 +493,11 @@
   "site.svar.hvem_sp": "Hvem passer dette for?",
   "site.svar.hvem_sv": "Bedrifter som allerede har rutiner for hvem som får godkjenne hva, og som vil at systemet skal håndheve dem i stedet for å håpe på dem.",
   "site.svar.kontroll_sp": "Hva hindrer agenten i å gjøre noe dumt?",
-  "site.svar.kontroll_sv": "Policyen din, håndhevet før handlingen. Mangler et vilkår, blir handlingen ikke utført — den stoppes og legges til deg. Det er ingen knapp som overstyrer den porten.",
+  "site.svar.kontroll_sv": "Policyen din, håndhevet før handlingen. Mangler et vilkår, blir handlingen ikke utført — den stoppes og legges til deg. Et menneske kan frigi den saken, men bare det policyen din på forhånd har gjort godkjennbart: rollen policyen krever, taket policyen setter, og nøyaktig det vilkåret som stoppet. Alt annet står, og godkjenningen loggføres. Ingen knapp gir seg selv fullmakt.",
   "site.svar.feil_sp": "Hva skjer når den er i tvil?",
   "site.svar.feil_sv": "Den stopper. Tvil behandles som avslag, ikke som sannsynlig ja, og saken går til kø med hva som manglet.",
   "site.svar.data_sp": "Hvor ligger dataene?",
-  "site.svar.data_sv": "På egen server under vår drift, kryptert, med tilgangsstyring per bedrift. Ingen deling med andre kunder, ingen bruk til noe du ikke har avtalt.",
+  "site.svar.data_sv": "Hos oss, kryptert, med tilgangsstyring per bedrift: ingen deling med andre kunder, ingen bruk til noe du ikke har avtalt. Produksjon får sin egen maskin, satt opp før første kunde. I dag finnes bare staging, og der ligger det syntetiske testdata — aldri kundedata.",
   "site.svar.start_sp": "Hvordan starter vi?",
   "site.svar.start_sv": "Med ett område og stramme grenser. Du ser hva agenten faktisk gjør før du utvider fullmaktene — og de kan strammes inn igjen når som helst."
 }

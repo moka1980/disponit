@@ -83,6 +83,8 @@
   "site.hero.kicker": "AI business agent",
   "site.hero.tittel": "Disponit does the work in your business — within authority you set yourself.",
   "site.hero.tekst": "The agent handles payments, reminders, follow-up and reporting. Every action is measured against your policy before it happens: inside the limits, it is carried out; outside them, it stops and comes to you.",
+  "site.hero.tekst_bygges": "Disponit is being built to handle payments, reminders, follow-up and reporting. The principle is fixed: every action is measured against your policy before it happens — inside the limits, it is carried out; outside them, it stops and comes to you. None of the areas below are live yet.",
+  "site.hero.tekst_delvis": "The agent already does the work in the areas marked “Available” below; the rest are being built. The principle is the same for all of them: every action is measured against your policy before it happens — inside the limits, it is carried out; outside them, it stops and comes to you.",
   "site.argument.presisjon": "Control",
   "site.argument.presisjon_tittel": "You decide what the agent may do",
   "site.argument.presisjon_tekst": "The authority is a policy you manage yourself: amount limits, which actions require attestation, and who may approve. Changes take four eyes, and no button overrides them.",
@@ -491,11 +493,11 @@
   "site.svar.hvem_sp": "Who is this for?",
   "site.svar.hvem_sv": "Businesses that already have rules for who may approve what, and want the system to enforce them rather than hope for them.",
   "site.svar.kontroll_sp": "What stops the agent doing something stupid?",
-  "site.svar.kontroll_sv": "Your policy, enforced before the action. If a condition is missing, the action is not carried out — it stops and comes to you. No button overrides that gate.",
+  "site.svar.kontroll_sv": "Your policy, enforced before the action. If a condition is missing, the action is not carried out — it stops and comes to you. A person can release that case, but only what your policy has made approvable in advance: the role the policy requires, the ceiling the policy sets, and exactly the condition that stopped it. Everything else stands, and the approval is logged. No button grants itself authority.",
   "site.svar.feil_sp": "What happens when it is unsure?",
   "site.svar.feil_sv": "It stops. Doubt is treated as refusal, not as a probable yes, and the case goes to the queue with what was missing.",
   "site.svar.data_sp": "Where is our data?",
-  "site.svar.data_sv": "On a dedicated server under our operation, encrypted, with access control per business. No sharing between customers, no use for anything you have not agreed to.",
+  "site.svar.data_sv": "With us, encrypted, with access control per business: no sharing between customers, no use for anything you have not agreed to. Production gets its own machine, set up before the first customer. Today only staging exists, and it holds synthetic test data — never customer data.",
   "site.svar.start_sp": "How do we start?",
   "site.svar.start_sv": "With one area and tight limits. You see what the agent actually does before you widen its authority — and it can be narrowed again at any time."
 }
