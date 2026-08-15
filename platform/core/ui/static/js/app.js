@@ -15,7 +15,7 @@ import { visUnntak } from "./flater/unntak.js";
 import { visPolicyadmin } from "./flater/policyadmin.js";
 import { visKundeadmin } from "./flater/kundeadmin.js";
 import { visAdmin } from "./flater/admin.js";
-import { byggRuter, visningFraSok } from "./sitekart.js";
+import { byggRuter, tillatteFlater, visningFraSok } from "./sitekart.js";
 
 const FLATER = {
   oversikt: visOversikt, policy: visPolicy,
@@ -62,7 +62,11 @@ function visApp(sesjon) {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
     paaUautorisert: () => visInnlogging(),
   };
-  const klientruter = lagRuter(skall.hoved, ctx, FLATER, skall.settAktiv);
+  // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet
+  // rett i adressefeltet rendret admin uten `security:read`, siden `gjeldende()`
+  // validerer mot flatekartet — ikke mot menyen.
+  const klientruter = lagRuter(skall.hoved, ctx,
+    tillatteFlater(tilgjengeligeRuter, FLATER), skall.settAktiv);
   const visning = visningFraSok(window.location.search, tilgjengeligeRuter);
   if (visning && !window.location.hash) {
     window.location.hash = `#/${visning}`;
