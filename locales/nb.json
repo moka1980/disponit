@@ -492,7 +492,7 @@
   "site.svar.hvem_sp": "Hvem passer dette for?",
   "site.svar.hvem_sv": "Bedrifter som allerede har rutiner for hvem som får godkjenne hva, og som vil at systemet skal håndheve dem i stedet for å håpe på dem.",
   "site.svar.kontroll_sp": "Hva hindrer agenten i å gjøre noe dumt?",
-  "site.svar.kontroll_sv": "Policyen din, håndhevet før handlingen. Mangler et vilkår, blir handlingen ikke utført — den stoppes og legges til deg. Det er ingen knapp som overstyrer den porten.",
+  "site.svar.kontroll_sv": "Policyen din, håndhevet før handlingen. Mangler et vilkår, blir handlingen ikke utført — den stoppes og legges til deg. Et menneske kan frigi den saken, men bare det policyen din på forhånd har gjort godkjennbart: rollen policyen krever, taket policyen setter, og nøyaktig det vilkåret som stoppet. Alt annet står, og godkjenningen loggføres. Ingen knapp gir seg selv fullmakt.",
   "site.svar.feil_sp": "Hva skjer når den er i tvil?",
   "site.svar.feil_sv": "Den stopper. Tvil behandles som avslag, ikke som sannsynlig ja, og saken går til kø med hva som manglet.",
   "site.svar.data_sp": "Hvor ligger dataene?",

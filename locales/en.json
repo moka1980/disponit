@@ -492,7 +492,7 @@
   "site.svar.hvem_sp": "Who is this for?",
   "site.svar.hvem_sv": "Businesses that already have rules for who may approve what, and want the system to enforce them rather than hope for them.",
   "site.svar.kontroll_sp": "What stops the agent doing something stupid?",
-  "site.svar.kontroll_sv": "Your policy, enforced before the action. If a condition is missing, the action is not carried out — it stops and comes to you. No button overrides that gate.",
+  "site.svar.kontroll_sv": "Your policy, enforced before the action. If a condition is missing, the action is not carried out — it stops and comes to you. A person can release that case, but only what your policy has made approvable in advance: the role the policy requires, the ceiling the policy sets, and exactly the condition that stopped it. Everything else stands, and the approval is logged. No button grants itself authority.",
   "site.svar.feil_sp": "What happens when it is unsure?",
   "site.svar.feil_sv": "It stops. Doubt is treated as refusal, not as a probable yes, and the case goes to the queue with what was missing.",
   "site.svar.data_sp": "Where is our data?",
