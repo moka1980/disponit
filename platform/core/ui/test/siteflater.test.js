@@ -268,6 +268,57 @@ test("Landing: to raske trykk på språkknappen rendrer flaten ÉN gang", async 
   }
 });
 
+test("Landing: datasvaret leses ved rendring, ikke ved import", async () => {
+  // Codex P2: spørsmålslisten var en modulKONSTANT, så `dataSvarNokkel()` ble
+  // lest da modulen ble lastet — før `/ui/oppsett.json` hadde svart og
+  // `settProduksjonsmiljo()` var kalt. Nøkkelen frøs på startverdien, og en
+  // produksjonsvert fikk brikker som sa «Tilgjengelig» over et datasvar som
+  // fortsatt sa at bare staging finnes. Testen måler derfor de to påstandene
+  // MOT HVERANDRE i samme render, i begge miljøene.
+  const ekte = globalThis.fetch;
+  function medMiljo(miljo) {
+    globalThis.fetch = async (url, opsjoner) => {
+      const sti = String(url).split("?")[0];
+      if (sti === "/ui/oppsett.json") {
+        return { ok: true, status: 200,
+          json: async () => ({ provider_id: "google", ...(miljo ? { miljo } : {}) }) };
+      }
+      return ekte(url, opsjoner);
+    };
+  }
+  const brikker = () =>
+    [...document.querySelectorAll(".site-mini-card .site-badge")]
+      .map((b) => b.className);
+
+  try {
+    medMiljo("produksjon");
+    let app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-mini-card .site-badge").length > 0);
+    assert.ok(app.textContent.includes(NB["site.svar.data_sv_produksjon"]),
+      "produksjonsverten fikk staging-svaret om hvor dataene ligger");
+    assert.ok(!app.textContent.includes(NB["site.svar.data_sv"]),
+      "begge datasvarene sto på siden samtidig");
+    assert.ok(brikker().includes("site-badge ok"),
+      "ingen tilbudspunkt ble tilgjengelig i produksjonsmiljø — riggen måler " +
+      "da ikke koblingen");
+
+    // …og motsatt vei: uten `miljo` i oppsettet skal INGEN brikke love noe,
+    // og datasvaret skal si det samme.
+    medMiljo(null);
+    app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-mini-card .site-badge").length > 0);
+    assert.ok(app.textContent.includes(NB["site.svar.data_sv"]),
+      "staging-verten lovet produksjonssvaret om hvor dataene ligger");
+    assert.ok(!brikker().includes("site-badge ok"),
+      "et tilbudspunkt sto merket tilgjengelig på en side som sier at bare " +
+      "staging finnes");
+  } finally {
+    globalThis.fetch = ekte;
+  }
+});
+
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2, 37],

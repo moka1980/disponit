@@ -102,13 +102,22 @@ function sprakvelger() {
     }));
 }
 
-const SPORSMAL = [
-  ["site.svar.hvem_sp", "site.svar.hvem_sv"],
-  ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],
-  ["site.svar.feil_sp", "site.svar.feil_sv"],
-  ["site.svar.data_sp", dataSvarNokkel()],
-  ["site.svar.start_sp", "site.svar.start_sv"],
-];
+// En FUNKSJON, ikke en konstant (Codex P2). Listen sto som modulkonstant, og
+// `dataSvarNokkel()` ble dermed lest ved IMPORT — lenge før `/ui/oppsett.json`
+// hadde svart og `settProduksjonsmiljo()` var kalt. Nøkkelen frøs på
+// startverdien `false`, så en produksjonsvert flippet brikkene og lot
+// datasvaret stå igjen på «i dag finnes bare staging»: nøyaktig den
+// selvmotsigelsen miljøkilden ble innført for å fjerne. Alt som utledes av
+// miljøet må leses når flaten BYGGES, ikke når modulen lastes.
+function sporsmal() {
+  return [
+    ["site.svar.hvem_sp", "site.svar.hvem_sv"],
+    ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],
+    ["site.svar.feil_sp", "site.svar.feil_sv"],
+    ["site.svar.data_sp", dataSvarNokkel()],
+    ["site.svar.start_sp", "site.svar.start_sv"],
+  ];
+}
 
 // INGEN MODUL- ELLER FASESTATUS PÅ DEN PUBLIKE FORSIDEN. Statusen er ekte og
 // bindende, men den hører hjemme bak innlogging: for en besøkende var det
@@ -238,7 +247,7 @@ export async function visInnlogging(opsjoner = {}) {
           el("p", { class: "site-eyebrow", text: t("site.svar") }),
           el("h2", { text: t("site.svar_tittel") }))),
       el("dl", { class: "site-list" },
-        SPORSMAL.map(([sp, sv]) =>
+        sporsmal().map(([sp, sv]) =>
           el("div", {},
             el("dt", {}, el("strong", { text: t(sp) })),
             el("dd", { text: t(sv) }))))),
