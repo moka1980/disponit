@@ -64,14 +64,19 @@ ikke gjøre forretningsarbeid ennå.
 |---|---|---|
 | **014a** | Modulregister, kontraktversjoner, aktiveringsport | **Merget** — migrasjon 014 + 015 |
 | **014b** | Domeneverifikasjon, controller/browser-separasjon, egress-proxy, artefaktprotokoll | **Merget** — migrasjon 016 + 017, oppfølging i 018 (kanonisk hostname) |
-| **014c** | Automatisk WCAG-kontroll (selve modulen) | Etter PR-015 |
+| **014c** | Automatisk WCAG-kontroll (selve modulen) | Ikke startet — forutsetter egress-kjøretiden, se §7 |
 
-**Neste faktiske oppgave er PR-015 (operativt lag)**, ikke 014a/014b:
-klarsignalet ligger i `docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md` og
-beskriver migrasjon **019** (domeneobservasjonsrunder, flerpartsoppgjør,
-sonegjerde mot wildcard-overlapp, fencing ved reclaim, batchgrense i
-ryddefunksjonen). Migrasjonshistorikken
-er checksum-låst: 014–018 er ferdige filer som ikke skal skrives på nytt.
+**PR-015 (operativt lag) er MERGET** (PR #34, 2026-08-15): migrasjon
+**019** (domeneobservasjonsrunder, flerpartsoppgjør, sonegjerde mot
+wildcard-overlapp, fencing ved reclaim, batchgrense i ryddefunksjonen),
+revalideringsjobben i `platform/drift/` og testene ligger i koden.
+Klarsignalet `docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md` leses derfor nå
+som **beskrivelse av eksisterende skjema**, ikke som bestilling — bygg den
+ikke om igjen. Migrasjonshistorikken er checksum-låst: 014–019 er ferdige
+filer som ikke skal skrives på nytt; en retting går i en **ny** migrasjon.
+
+**Neste faktiske oppgave er egress-kjøretiden (014b §5–6), så PR-014c** —
+se §7.
 
 **Åpen forutsetning — IKKE lukket:** `m37_unntak` modulaksept
 (rollback-m37-driver + staging-måling). Manifestet er autoritativt, og det
@@ -86,7 +91,8 @@ vært å låne konklusjonen fra et annet spørsmål.
 
 **Hva den åpne porten faktisk blokkerer:** modulaksept og driftssetting av
 M-37 — ikke plattformarbeidet. Handoffen 2026-08-11 §7.4 legger lukkingen
-«parallelt/løpende» ved siden av PR-014-kjeden, så PR-015 kan bygges. Men
+«parallelt/løpende» ved siden av PR-014-kjeden, så plattformarbeidet
+(PR-015, og nå egress-kjøretiden) kan bygges videre. Men
 ingen spesifikasjon skal skrives som om porten er passert, og ingen modul
 som avhenger av M-37 i drift kan regnes som ferdig før rollbacken er kjørt
 og målt.
@@ -173,15 +179,26 @@ grensen som skal håndheve domeneautorisasjon og SSRF-restriksjoner på
 hver eneste browserforespørsel, finnes ikke ennå. PR-014c (som *bruker*
 den grensen) kan ikke regnes som ferdig før den er bygget.
 
-Neste oppgave er **PR-015 (operativt lag)**, klarsignal levert:
-`docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md`. Migrasjon **019** —
-domeneobservasjonsrunder (arbeideren er scheduler, observatørene skriver
+**PR-015 (operativt lag) er levert og merget** (PR #34): migrasjon **019**
+— domeneobservasjonsrunder (arbeideren er scheduler, observatørene skriver
 i eget navn), flerpartsoppgjør i `avgjor_domeneovertakelse()`, fencing mot
 reclaim på artefaktkapabiliteten, batchgrense i `rydd_staged_artefakter()`,
-og rollen som faktisk kan bære `domains:adjudicate`.
+og rollen som faktisk kan bære `domains:adjudicate`. Revalideringsjobben
+(`platform/drift/domenerevalidering.py`, `kjor_revalidering.py`) og
+019-testene ligger i koden. Ikke implementer den på nytt, og ikke skriv om
+`019_overtakelse_attestasjon.sql` — den er checksum-låst (invariant 8);
+enhver retting går i migrasjon 020 eller senere.
+
+Det som **gjenstår av 015** er drift, ikke skjema: unitene, de fire
+systembrukerne, den lukkede resolveroperatørlista og deploy-portene 28/28b–
+28g er beskrevet i klarsignalets §6b–§6d og er ikke målt på staging ennå.
+
+**Neste oppgave er egress-kjøretiden (014b §5–6)** — `platform/egress/`,
+`platform/browser/`, proxy-tjenesten og forbrukeren av per-oppdrag
+proxy-token. Uten den finnes ikke grensen som håndhever domeneautorisasjon
+og SSRF-restriksjoner.
 
 Deretter **PR-014c**: automatisk WCAG-kontroll — den første eiermodulen
-som bruker plattformen 014a/014b/015 bygde. Den forutsetter
-egress-kjøretiden fra 014b §5–6, som ennå ikke finnes: enten bygges den
-som en del av 014c, eller så må den planlegges som eget arbeid før
-014c kan crawle noe som helst.
+som bruker plattformen 014a/014b/015 bygde. Den kan ikke crawle noe som
+helst før egress-kjøretiden finnes: enten bygges den som en del av 014c,
+eller så planlegges den som eget arbeid først.
