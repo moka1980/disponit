@@ -354,11 +354,30 @@ END $$;
 -- Den rører ALDRI den gjeldende bindingshaveren: kun utfordrere som er
 -- forbigått. `hostname_binding` er autoriteten på hvem som er dagens utfordrer
 -- (016 §3 B2), og den leses under låsen.
+--
+-- Codex (P2): SAKEN følger utfordreren ut. Blir B terminalt `tilbakekalt`,
+-- kan B aldri fullføre adjudikasjonen — `avgi_overtakelse_attestasjon()`
+-- krever `avklaring_kreves`, og den er den ENESTE kalleren av
+-- `lukk_overtakelsessak()`. B-saken ville derfor blitt stående `ny` for
+-- alltid og fortsatt vist seg som en åpen, handlingskrevende sak i
+-- PR-012-flaten — nøyaktig den etterlatte tilstanden degraderingen finnes for
+-- å rydde, bare ett lag opp. Saken lukkes derfor her, i SAMME overgang, med
+-- `avvist`: ingen fikk autorisasjon, og en `løst` ville påstått at noen gjorde
+-- det.
+--
+-- Saken finnes via IDEMPOTENSNØKKELEN (`<familie>:<hostname>:<generasjon>`,
+-- domeneovertakelse.py), lest på generasjonen raden hadde FØR degraderingen
+-- bumper den — det er den konflikten saken ble opprettet for. Joinen bærer
+-- `kategori`/`handling`/`kilde` slik begge Python-oppslagene gjør, så en
+-- fremmed rad i det DELTE idempotensnavnerommet ikke kan matche. Finnes ingen
+-- slik sak (eller er den alt beveget videre), gjør vi ingenting — funksjonen
+-- skal fortsatt være idempotent og aldri velte en degradering på en sak som
+-- ikke står der den forventes.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION degrader_forbigatte_utfordrere(
     p_hostname TEXT, p_aktor TEXT)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE v_binding TEXT; v_rad RECORD; v_antall INT := 0;
+DECLARE v_binding TEXT; v_rad RECORD; v_antall INT := 0; v_sak BIGINT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
     SELECT tenant INTO v_binding FROM public.hostname_binding
@@ -367,7 +386,8 @@ BEGIN
         RETURN 0;   -- ingen binding ennå: ingen er forbigått
     END IF;
     FOR v_rad IN
-        SELECT tenant FROM public.domenekontroll
+        SELECT tenant, autorisasjonsgenerasjon AS generasjon
+          FROM public.domenekontroll
          WHERE hostname = p_hostname AND status = 'avklaring_kreves'
            AND tenant IS DISTINCT FROM v_binding
          FOR UPDATE
@@ -380,6 +400,22 @@ BEGIN
             (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
             VALUES (v_rad.tenant, p_hostname, 'forbigatt', 'avklaring_kreves',
                     'tilbakekalt', 'forbigatt_av_senere_overtakelse', p_aktor);
+        SELECT u.id INTO v_sak
+          FROM public.unntak u
+          JOIN public.revisjonslogg r
+            ON r.tenant = u.tenant AND r.id = u.loggpost_id
+         WHERE u.tenant = v_rad.tenant AND u.status = 'ny'
+           AND u.kategori = 'domeneovertakelse'
+           AND u.handling = 'domene.overtakelse'
+           AND r.kilde = 'domeneovertakelse'
+           AND r.idempotency_key = 'domeneovertakelse:' || p_hostname || ':'
+                                   || v_rad.generasjon::TEXT
+         ORDER BY u.id
+         LIMIT 1;
+        IF FOUND THEN
+            PERFORM public.lukk_overtakelsessak(
+                v_rad.tenant, v_sak, 'avvist', p_aktor);
+        END IF;
         v_antall := v_antall + 1;
     END LOOP;
     RETURN v_antall;
@@ -675,6 +711,10 @@ GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
 -- M-37-eieren har da heller aldri hatt et sekvensgrant.
 GRANT SELECT, UPDATE ON unntak TO disponit_domene_eier;
 GRANT INSERT ON unntak_historikk TO disponit_domene_eier;
+-- Codex (P2): `degrader_forbigatte_utfordrere()` finner den forbigåtte
+-- utfordrerens sak gjennom idempotensnøkkelen, som ligger på loggposten.
+-- KUN SELECT: domenelaget skal kunne FINNE saken, aldri skrive revisjonen.
+GRANT SELECT ON revisjonslogg TO disponit_domene_eier;
 -- Codex (P1): reautoriseringen av de tellende stemmene leser `brukermedlemskap`
 -- inne i `avgi_overtakelse_attestasjon` og i `antall_avgitte_attestasjoner`.
 -- Kun SELECT — domenelaget skal kunne bekrefte et medlemskap, aldri endre det.

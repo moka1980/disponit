@@ -836,9 +836,15 @@ def test_port20_abc_kun_c_i_avklaring_og_a_gjenoppstar_ikke(migrator):
     `hostname_binding` stopper det — men statusen blir aldri terminal, og
     porten måler statusen. `degrader_forbigatte_utfordrere` lukker det uten å
     røre en eneste 016-kropp.
+
+    Codex (P2): SAKEN følger utfordreren ut. B kan aldri fullføre
+    adjudikasjonen etter degraderingen — `avgi_overtakelse_attestasjon` krever
+    `avklaring_kreves` — så en B-sak som ble stående `ny` ville blitt liggende
+    som en åpen, handlingskrevende sak ingen kan avgjøre.
     """
     h = _host()
-    _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    b_sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    assert _saksstatus(migrator, ANNEN_TENANT, b_sak) == "ny"
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -857,6 +863,8 @@ def test_port20_abc_kun_c_i_avklaring_og_a_gjenoppstar_ikke(migrator):
     assert _dkrow(migrator, TREDJE_TENANT, h)[0] == "avklaring_kreves"
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
     assert _dkrow(migrator, TENANT, h)[0] == "tilbakekalt", "A gjenoppstod"
+    assert _saksstatus(migrator, ANNEN_TENANT, b_sak) == "avvist", \
+        "den forbigåtte utfordrerens sak ble stående åpen"
 
 
 @pg
