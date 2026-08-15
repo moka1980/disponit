@@ -6,11 +6,13 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor fire porter (Codex P2 på PR #43):
+Testene her er derfor fem porter (Codex P2 på PR #43):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
-  3. FORM      — 45 moduler, elleve områder, faser 1–4, alle representert.
-  4. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
+  3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
+                 vurdert på nytt, så nb og en ikke kan drive fra hverandre.
+  4. FORM      — 45 moduler, elleve områder, faser 1–4, alle representert.
+  5. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
 """
 import json
 import re
@@ -82,13 +84,11 @@ def test_generatoren_leser_sannhetskilden():
             f"generatoren bygger fortsatt en sti til arkivet: {arkivfil.name}")
 
 
-def test_katalogen_er_fersk(tmp_path):
-    """Regenerering skal gi byte-identisk resultat.
+def _temprot(tmp_path: Path) -> Path:
+    """Kopi av det generatoren leser og skriver, utenfor repoet.
 
-    Uten denne porten kunne `katalog.js` vært håndredigert, eller
-    spesifikasjonen endret uten en ny kjøring, og ingenting ville sagt fra.
-    Generatoren kjøres mot en KOPI, så testen aldri skriver i repoet — en test
-    som «verifiserer» ved å oppdatere fila den sjekker, kan ikke feile.
+    Generatoren kjøres alltid mot en KOPI: en test som «verifiserer» ved å
+    oppdatere fila den sjekker, kan ikke feile.
     """
     (tmp_path / "docs" / "spesifikasjon").mkdir(parents=True)
     (tmp_path / "locales").mkdir()
@@ -96,7 +96,16 @@ def test_katalogen_er_fersk(tmp_path):
     shutil.copy2(KILDE, tmp_path.joinpath(*KILDE_REL))
     for sprak, sti in LOCALER.items():
         shutil.copy2(sti, tmp_path / "locales" / f"{sprak}.json")
+    return tmp_path
 
+
+def test_katalogen_er_fersk(tmp_path):
+    """Regenerering skal gi byte-identisk resultat.
+
+    Uten denne porten kunne `katalog.js` vært håndredigert, eller
+    spesifikasjonen endret uten en ny kjøring, og ingenting ville sagt fra.
+    """
+    _temprot(tmp_path)
     r = subprocess.run([sys.executable, str(GENERATOR), str(tmp_path)],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
@@ -112,6 +121,49 @@ def test_katalogen_er_fersk(tmp_path):
                   if k.startswith(("site.katalog.m", "site.omrade."))}
         for k, v in nokler.items():
             assert faktisk.get(k) == v, f"{sprak}: {k} er ikke fersk"
+
+
+def test_navneendring_krever_ny_oversettelse(tmp_path):
+    """Et omdøpt modulnavn i kilden skal stoppe genereringen (Codex P2 på #43).
+
+    `MODUL_EN` slo tidligere opp på modulnummer alene. Fikk en modul nytt navn i
+    spesifikasjonen uten nytt nummer, skrev generatoren det nye navnet i
+    `nb.json` og BEHOLDT det gamle produktnavnet i `en.json` — og ingen av de
+    andre portene her kunne se det: utdata var byte-identisk med seg selv
+    (ferskhetsporten), og den engelske nøkkelen var ikke tom (tekstporten). De
+    to offentlige katalogene kunne altså si hver sin ting i det uendelige.
+    Denne porten er derfor den eneste som fanger drift MELLOM språkene.
+
+    Navnet som døpes om leses ut av `nb.json`, ikke skrevet inn her: en literal
+    ville vært en tredje avskrift av katalogen, og den ville råtnet stille den
+    dagen modulen faktisk fikk nytt navn.
+    """
+    rot = _temprot(tmp_path)
+    spek = rot.joinpath(*KILDE_REL)
+    navn = json.loads(LOCALER["nb"].read_text(encoding="utf-8"))[
+        "site.katalog.m42.navn"]
+    tekst = spek.read_text(encoding="utf-8")
+    omdopt = tekst.replace(f"n:42,name:'{navn}'", "n:42,name:'Transaksjonsvakt'")
+    assert omdopt != tekst, f"fant ikke «{navn}» som modul 42 i kilden"
+    spek.write_text(omdopt, encoding="utf-8")
+
+    r = subprocess.run([sys.executable, str(GENERATOR), str(rot)],
+                       capture_output=True, text=True)
+    assert r.returncode != 0, (
+        "generatoren godtok et omdøpt modulnavn — den engelske katalogen ville "
+        "beholdt det gamle produktnavnet uten at noe sa fra")
+    melding = r.stderr + r.stdout
+    assert "M-42" in melding, f"feilmeldingen navngir ikke modulen: {melding}"
+    assert navn in melding and "Transaksjonsvakt" in melding, (
+        f"feilmeldingen viser ikke hva navnet ble endret fra og til: {melding}")
+    # Ingenting skal være skrevet: en generator som stopper halvveis ville
+    # etterlatt en katalog og et locale-sett som ikke hører sammen.
+    assert not (rot / "platform/core/ui/static/js/katalog.js").exists(), (
+        "generatoren skrev katalog.js selv om den avviste kilden")
+    for sprak, sti in LOCALER.items():
+        assert (rot / "locales" / f"{sprak}.json").read_text(encoding="utf-8") \
+            == sti.read_text(encoding="utf-8"), (
+                f"{sprak}.json ble skrevet selv om genereringen ble avvist")
 
 
 def test_katalogen_har_forventet_form():
