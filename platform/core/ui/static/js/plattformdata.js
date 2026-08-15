@@ -75,26 +75,55 @@ export const FASEOVERSIKT = [
   },
 ];
 
+// `moduler` er modul-ID-er, ikke visningsstrenger: da kan en tenants tildeling
+// slås opp mot `MODULOVERSIKT` i stedet for å parses tilbake fra "M-1".
 export const TENANTOVERSIKT = [
   {
+    id: "nordvik",
     navn_nokkel: "site.tenant.nordvik.navn",
     plan_nokkel: "site.plan.pilot",
-    moduler: ["M-1", "M-2", "M-37"],
+    moduler: [1, 2, 37],
     neste_nokkel: "site.tenant.nordvik.neste",
   },
   {
+    id: "bjorkli",
     navn_nokkel: "site.tenant.bjorkli.navn",
     plan_nokkel: "site.plan.pilot",
-    moduler: ["M-1", "M-2"],
+    moduler: [1, 2],
     neste_nokkel: "site.tenant.bjorkli.neste",
   },
   {
+    id: "granmo",
     navn_nokkel: "site.tenant.granmo.navn",
     plan_nokkel: "site.plan.internt",
-    moduler: ["M-1", "M-2", "M-37", "M-38"],
+    moduler: [1, 2, 37, 38],
     neste_nokkel: "site.tenant.granmo.neste",
   },
 ];
+
+export function modulmerke(id) {
+  return `M-${id}`;
+}
+
+// Modultildelingen for ÉN tenant, eller null når vi ikke kjenner tenanten.
+// Null betyr «vet ikke», ikke «ingen moduler»: en flate som ikke vet, skal si
+// det — ikke vise hele plattformkatalogen som om den var kundens.
+export function modulerForTenant(tenant) {
+  const navn = String(tenant || "").trim().toLowerCase();
+  if (!navn) return null;
+  const rad = TENANTOVERSIKT.find((tt) => tt.id === navn);
+  if (!rad) return null;
+  return MODULOVERSIKT.filter((mod) => rad.moduler.includes(mod.id));
+}
+
+// Tenantens egne tall. `planlagt` er plattformmodulene kunden ennå ikke har
+// fått aktivert — ikke plattformens globale restliste.
+export function tenantTelling(moduler) {
+  const iDrift = moduler.filter((m) => m.status === "i_drift").length;
+  const bygges = moduler.filter((m) => m.status === "bygges").length;
+  const totalt = plattformTelling().totalt;
+  return { iDrift, bygges, planlagt: totalt - moduler.length, totalt };
+}
 
 export function plattformTelling() {
   const iDrift = Object.values(MODULSTATUS).filter((s) => s === "i_drift").length;

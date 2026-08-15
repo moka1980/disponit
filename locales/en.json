@@ -320,6 +320,7 @@
   "ui.kundeadmin.moduler": "Module status",
   "ui.kundeadmin.moduler_tittel": "What the customer has now, and what comes next",
   "ui.kundeadmin.moduler_note": "The list shows real status, not roadmap marketing.",
+  "ui.kundeadmin.moduler_ukjent": "No module assignment is registered for this customer yet.",
   "ui.kundeadmin.handlinger": "Workflow",
   "ui.kundeadmin.handlinger_tittel": "Where the user goes next from here",
   "ui.kundeadmin.handling.oversikt": "Follow today's status",

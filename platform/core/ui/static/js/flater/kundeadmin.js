@@ -1,13 +1,19 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { MODULOVERSIKT, plattformTelling } from "../plattformdata.js";
+import { modulerForTenant, tenantTelling } from "../plattformdata.js";
 import { siteModuleKort, siteStatusMerke } from "../sitekomponenter.js";
 
 export function visKundeadmin(hoved, ctx) {
-  const telling = plattformTelling();
-  const aktive = MODULOVERSIKT.filter((mod) => mod.status === "i_drift");
-  const bygges = MODULOVERSIKT.filter((mod) => mod.status === "bygges");
+  // Kundens arbeidsflate viser KUNDENS moduler, ikke plattformkatalogen: uten
+  // dette meldte Bjørkli (tildelt M-1 og M-2) tre aktive moduler og viste M-37
+  // som aktiv og M-38 under bygging. `null` = tildelingen er ukjent, og da sier
+  // flaten det i stedet for å gjette.
+  const mine = modulerForTenant(ctx.tenant);
+  const moduler = mine || [];
+  const telling = tenantTelling(moduler);
+  const aktive = moduler.filter((mod) => mod.status === "i_drift");
+  const bygges = moduler.filter((mod) => mod.status === "bygges");
 
   sett(hoved,
     ...flateHode(t("ui.kundeadmin.tittel"), t("ui.kundeadmin.undertittel")),
@@ -62,8 +68,10 @@ export function visKundeadmin(hoved, ctx) {
           el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.moduler") }),
           el("h2", { text: t("ui.kundeadmin.moduler_tittel") })),
         el("span", { class: "site-inline-note", text: t("ui.kundeadmin.moduler_note") })),
-      el("div", { class: "site-card-grid" },
-        MODULOVERSIKT.map((mod) => siteModuleKort(mod)))),
+      mine
+        ? el("div", { class: "site-card-grid" },
+          moduler.map((mod) => siteModuleKort(mod)))
+        : el("p", { class: "muted", text: t("ui.kundeadmin.moduler_ukjent") })),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },
         el("div", {},

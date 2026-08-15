@@ -1,7 +1,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { FASEOVERSIKT, TENANTOVERSIKT, plattformTelling } from "../plattformdata.js";
+import { FASEOVERSIKT, TENANTOVERSIKT, modulmerke, plattformTelling }
+  from "../plattformdata.js";
 import { siteFaseMerke } from "../sitekomponenter.js";
 
 export function visAdmin(hoved) {
@@ -86,7 +87,7 @@ export function visAdmin(hoved) {
               el("tr", {},
                 el("td", {}, el("strong", { text: t(tenant.navn_nokkel) })),
                 el("td", { text: t(tenant.plan_nokkel) }),
-                el("td", { text: tenant.moduler.join(", ") }),
+                el("td", { text: tenant.moduler.map(modulmerke).join(", ") }),
                 el("td", { text: t(tenant.neste_nokkel) }))))))),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },

@@ -79,6 +79,32 @@ test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", a
   assert.equal(b.length, 0, beskrivBrudd(b));
 });
 
+test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => {
+  // Bjørkli er tildelt M-1 og M-2. Da skal M-37 og M-38 IKKE stå på flaten,
+  // og «aktive moduler» skal være 2 — ikke plattformens tre.
+  const h = nyHoved();
+  visKundeadmin(h, ctx({ tenant: "bjorkli" }));
+  assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
+  assert.ok(h.textContent.includes(t("site.modul.m2.navn")));
+  assert.ok(!h.textContent.includes(t("site.modul.m37.navn")),
+    "M-37 vises for en tenant som ikke har den");
+  assert.ok(!h.textContent.includes(t("site.modul.m38.navn")),
+    "M-38 vises for en tenant som ikke har den");
+  const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);
+  assert.equal(kpi[0], "2");
+  assert.equal(kpi[1], "0");
+});
+
+test("Kundeadmin: ukjent tenant sier «vet ikke», viser ikke katalogen", async () => {
+  const h = nyHoved();
+  visKundeadmin(h, ctx({ tenant: "acme" }));
+  assert.ok(h.textContent.includes(t("ui.kundeadmin.moduler_ukjent")));
+  assert.ok(!h.textContent.includes(t("site.modul.m1.navn")),
+    "plattformkatalogen vises for en ukjent tenant");
+  const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);
+  assert.deepEqual(kpi.slice(0, 2), ["0", "0"]);
+});
+
 test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () => {
   const h = nyHoved();
   visAdmin(h, ctx());

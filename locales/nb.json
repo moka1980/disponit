@@ -320,6 +320,7 @@
   "ui.kundeadmin.moduler": "Modulstatus",
   "ui.kundeadmin.moduler_tittel": "Hva kunden har nå, og hva som kommer",
   "ui.kundeadmin.moduler_note": "Listen viser faktisk status, ikke roadmap-markedsføring.",
+  "ui.kundeadmin.moduler_ukjent": "Vi har ingen modultildeling registrert for denne kunden ennå.",
   "ui.kundeadmin.handlinger": "Arbeidsflyt",
   "ui.kundeadmin.handlinger_tittel": "Hvor brukeren går videre herfra",
   "ui.kundeadmin.handling.oversikt": "Følg dagens status",
