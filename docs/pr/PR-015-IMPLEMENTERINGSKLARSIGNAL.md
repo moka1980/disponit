@@ -1650,14 +1650,52 @@ saksbilde.
   derfor også, med `retning = 'eksakt'`:
   - **innehaveren B4-grenen nettopp tilbakekalte** i samme transaksjon —
     den er borte fra `verifisert` idet raden skrives, så den kan ikke
-    avledes på nytt senere; og
+    avledes på nytt senere;
   - **hver rad på samme effektive hostnavn med status
     `avklaring_kreves`** — de øvrige utfordrerne, som §3 uansett gjør opp
-    i samme transaksjon som en vinner kåres.
+    i samme transaksjon som en vinner kåres; og
+  - **hver `eksakt`-part de utfordrerne selv alt har registrert** — se
+    neste kulepunkt.
 
-  Begge er `eksakt`-parter, og oppgjøret kontrollerer dem med den samme
+  Alle tre er `eksakt`-parter, og oppgjøret kontrollerer dem med den samme
   regelen som allerede står i tabellen under: motpartens rad må fortsatt
   **ikke** være `verifisert`. Ingen ny gren, ingen ny `retning`-verdi.
+- **Det tredje punktet er det som gjør A→B→C til tre parter — uten det er
+  de to.** Da C verifiserer, ble A tilbakekalt i **B-s** transaksjon, ikke
+  i C-s: A treffes hverken av `sone_overlapp()` (ikke `verifisert`), av
+  B4-grenen (ingenting å tilbakekalle) eller av
+  `avklaring_kreves`-punktet (A er `tilbakekalt`). C-s mengde ville da
+  bestått av B alene, og port 20o — «tre parter i tabellen, ikke bare i
+  prosaen» — ville vært uoppnåelig: `hoy_konfliktrate` (§3, «≥ 3 parter
+  innen 24 t») kan ikke telle en part som ikke finnes noe sted i C-s
+  saksbilde. A **finnes** i basen, som `eksakt`-part på B-s egen rad, men
+  den raden bærer B-s `tenant` og er derfor usynlig for C bak RLS.
+  Verifiseringen bygger derfor mengden som en **lukning**: start med de to
+  første punktene, og for hver utfordrer som er tatt med, ta med hver
+  `eksakt`-motpart den selv har registrert på det samme effektive
+  hostnavnet. Gjenta til mengden ikke vokser mer.
+  - **Lukningen leses av eieren, ikke av kalleren.**
+    `verifiser_domenekontroll()` kjører som `disponit_domene_eier`, som
+    har BYPASSRLS, så den ser B-s rader selv om C aldri kan. Runtime får
+    fortsatt bare sine egne (§6c) — det er nettopp derfor propageringen
+    må skje ved skriving, i databasen, og ikke kan legges i en saksvisning
+    senere.
+  - **Kun kjeder som fortsatt er LEVENDE følges.** En utfordrer «tas med»
+    som kilde bare når den står `avklaring_kreves`, eller ble tilbakekalt
+    i denne transaksjonen. En part som var `verifisert` da den ble
+    tilbakekalt, er en avsluttet innehaver: dens gamle konfliktrader
+    tilhører en **avgjort** runde og følges ikke. Uten den grensen ville
+    utfordrer D — som kommer inn etter at B vant og ble `verifisert` —
+    arvet hele A/B/C-historikken og fått `hoy_konfliktrate` på en tvist
+    med én motpart. Regelen er den samme som skiller en åpen tvist fra en
+    lukket: én `verifisert` rad avslutter kjeden, og neste utfordrer
+    starter en ny.
+  - **Lukningen terminerer, og den er liten.** Mengden bare vokser, og den
+    er begrenset av antall tenanter som har vært inne på navnet siden
+    siste avgjorte oppgjør — i praksis de partene §3 uansett gjør opp i
+    samme transaksjon. `konfliktsett_hash()` (§1a) avledes av den ferdige
+    mengden, som før: at mengden nå er større i A→B→C betyr bare at
+    stemmene bindes til det konfliktbildet som faktisk gjelder.
 - **`konflikt_motpart` beholder sin betydning** og settes til motparten i
   den *første* raden sortert på `(retning, motpart_hostname, motpart_tenant)`
   — det er verdien 018-s reapplikasjonsgren og `opprett_overtakelsessak()`
@@ -3602,9 +3640,24 @@ A (tilbakekalt av B4-grenen) og B (`avklaring_kreves`), begge med
 parter innen 24 t, så `hoy_konfliktrate` vises på C-s sak. En
 implementasjon som kun skriver `sone_overlapp()`-treff får null rader her,
 fordi ingen av de to andre er `verifisert`, og markøren ville vært
-unåelig i nettopp det tilfellet den finnes for. I samme port: et positivt
-oppgjør for C kontrollerer begge de registrerte `eksakt`-partene med
-regelen «fortsatt ikke `verifisert`», og lykkes.
+unåelig i nettopp det tilfellet den finnes for. **Og A kommer kun med
+gjennom lukningen:** A ble tilbakekalt i B-s transaksjon, ikke i C-s, så
+hverken `sone_overlapp()`, B4-grenen eller `avklaring_kreves`-punktet
+treffer den — den finnes bare som `eksakt`-part på B-s egen rad, bak B-s
+RLS. En implementasjon som stopper ved de to første punktene gir C
+**nøyaktig to** parter og feiler porten. I samme port: et positivt
+oppgjør for C kontrollerer alle de registrerte `eksakt`-partene med
+regelen «fortsatt ikke `verifisert`», og lykkes ·
+20o-2 **Lukningen arver ikke en AVGJORT runde (§2.5b):** samme oppsett,
+men kjør oppgjøret ferdig — B vinner, blir `verifisert`, A og C ender
+`tilbakekalt` med grunn `tapte_domeneoppgjor`. Utfordrer D verifiserer så
+det samme hostnavnet → D-s `domenekonfliktpart` har **én** rad (B, som
+B4-grenen tilbakekalte i D-s egen transaksjon), ingen A og ingen C, og
+`hoy_konfliktrate` vises **ikke** på D-s sak. En implementasjon som følger
+konfliktradene til enhver tidligere part — også en som var `verifisert` da
+den ble tilbakekalt — arver hele A/B/C-historikken og merker en tvist med
+én motpart som høy konfliktrate. Målt på radantallet i D-s mengde, ikke på
+markøren alene.
 20p **Runtime kan ikke UTSTEDE en sesjon (§1c):** målt som `disponit` over
 dens egen forbindelse, uten å røre API-et. `INSERT INTO brukersesjon (…)`,
 `UPDATE brukersesjon SET tilbakekalt = false …` og
