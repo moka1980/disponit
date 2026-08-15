@@ -22,6 +22,8 @@ from urllib.parse import urlsplit
 from starlette.requests import Request
 from starlette.responses import Response
 
+from miljo import miljo as miljonavn
+
 # --- Stier (lukket) --------------------------------------------------------
 _UI = Path(__file__).resolve().parent
 STATISK = _UI / "static"
@@ -232,13 +234,15 @@ def ui_oppsett(request: Request) -> Response:
     # `driftstilstand: produksjon` sier hvor koden kjører; det sier ingenting
     # om hvilke policystatuser verten godtar. Kjører prosessen i staging-modus,
     # binder policyer merket `utkast` beslutningene, og da er «Tilgjengelig» et
-    # løfte kunden ikke kan innfri. Verdien leses fra den samme
-    # `DISPONIT_MILJO` som `policyregister.tillatte_statuser`, og alt annet enn
-    # den eksakte strengen `produksjon` regnes som ikke-produksjon — fail-
-    # closed, akkurat som provider over: en skrivefeil skal koste et løfte, ikke
-    # gi et.
-    miljo = "produksjon" \
-        if os.environ.get("DISPONIT_MILJO", "").strip() == "produksjon" \
-        else "staging"
-    data = json.dumps({"provider_id": provider, "miljo": miljo}).encode("utf-8")
+    # løfte kunden ikke kan innfri.
+    #
+    # Avlesningen er derfor IKKE en egen tolkning her, men den samme funksjonen
+    # `policyregister.tillatte_statuser` bruker (Codex P2 til PR #42). Da den
+    # sto to steder, `.strip()`-et denne verdien mens registeret sammenlignet
+    # den rått: `DISPONIT_MILJO=" produksjon "` ga «produksjon» på forsiden og
+    # staging-statusene i registeret — løftet og regelverket bak det pekte hver
+    # sin vei. Regelen er den samme fail-closed-en som provider over: kun den
+    # eksakte strengen teller, en skrivefeil skal koste et løfte, ikke gi et.
+    data = json.dumps({"provider_id": provider,
+                       "miljo": miljonavn()}).encode("utf-8")
     return _svar(data, _CT[".json"])

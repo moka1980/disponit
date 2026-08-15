@@ -264,12 +264,18 @@ def test_oppsett_oppgir_miljo_fail_closed(monkeypatch):
     Fail-closed på samme måte som provider: alt annet enn den eksakte strengen
     `produksjon` blir `staging`. En skrivefeil i miljøfila skal koste et løfte,
     ikke gi et — og en tom verdi skal ikke arve produksjon fra forrige deploy.
+
+    En PADDET verdi hører til i samme bunke (Codex P2 til PR #42). Testen
+    godtok den før som produksjon, fordi endepunktet `.strip()`-et den — men
+    `policyregister.tillatte_statuser` gjorde ikke det, så forsiden lovet drift
+    mens `utkast` fortsatt bandt beslutninger. Begge leser nå `miljo.miljo()`,
+    og enigheten måles i `test_miljo.py`.
     """
     k = _klient()
     for verdi, forventet in (("produksjon", "produksjon"),
                              ("staging", "staging"),
                              ("produksjonn", "staging"),
-                             (" produksjon ", "produksjon"),
+                             (" produksjon ", "staging"),
                              ("", "staging")):
         monkeypatch.setenv("DISPONIT_MILJO", verdi)
         assert k.get("/ui/oppsett.json").json()["miljo"] == forventet, verdi

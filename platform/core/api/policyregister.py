@@ -12,6 +12,8 @@ import os
 
 import psycopg
 
+from miljo import er_produksjon
+
 #: Statusene en policy kan ha i `meta.status`. I produksjon er listen
 #: HARDKODET og kan ikke konfigureres bort — en policy merket `utkast` skal
 #: aldri kunne binde en ekte handling fordi noen satte en miljøvariabel.
@@ -40,7 +42,11 @@ def innholds_hash(policy: dict) -> str:
 
 
 def tillatte_statuser() -> frozenset[str]:
-    if os.environ.get("DISPONIT_MILJO") == "produksjon":
+    # Miljøet leses gjennom `miljo.er_produksjon` — samme avlesning som
+    # `/ui/oppsett.json` bruker til å avgjøre hva forsiden kan LOVE (Codex P2
+    # til PR #42). Sto tolkningen to steder, kunne forsiden si produksjon mens
+    # dette settet fortsatt slapp `utkast` inn i ekte beslutninger.
+    if er_produksjon():
         return PRODUKSJONSSTATUSER
     raa = os.environ.get("DISPONIT_TILLATTE_POLICYSTATUSER", STAGING_STANDARD)
     return frozenset(s.strip() for s in raa.split(",") if s.strip())

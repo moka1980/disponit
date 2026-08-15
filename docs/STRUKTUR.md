@@ -23,6 +23,8 @@ disponit/                           ← repo-rot (main-branch), github.com/moka1
 │   │   │                              pg.py, kjorer.py (herdet migrasjons-
 │   │   │                              kjører), kryptering.py, migrations/
 │   │   ├── registry.py             ← modulregister: oppdag, aktiver, deaktiver
+│   │   ├── miljo.py                ← DISPONIT_MILJO leses ETT sted: produksjon
+│   │   │                              eller staging, eksakt og fail-closed
 │   │   ├── tests/                  ← core-tester (kjør: pytest platform/core/tests)
 │   │   └── examples/               ← run_synthetic.py m.m.
 │   └── modules/                    ← én mappe per modul, selvforsynt
