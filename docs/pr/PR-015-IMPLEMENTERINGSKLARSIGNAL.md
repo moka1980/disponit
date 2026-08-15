@@ -45,7 +45,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 12 | `domenekonfliktpart` (ny tabell) | En wildcard-verifisering kan overlappe FLERE innehavere samtidig; `konflikt_motpart` er én kolonne, og oppgjøret må kunne løse hele mengden atomisk, §2.5b |
 | 13 | Oppgraderingsryddingen av eksisterende overlapp, FØR gjerdet installeres | Gjerdet er fremoverrettet: rader som alt er `verifisert` i overlapp forblir doble til noen rydder dem, §2.5b |
 | 14 | `utsted_challenge()` (`CREATE OR REPLACE`, ACL bevares) | En reissue må forkaste åpne runder på målet, ellers kan evidens for en invalidert challenge forbrukes etterpå, §2.4a |
-| 14b | `krev_domenechallenge()` (ny innpakning; `utsted_challenge()` selv grantes til ingen ny rolle) | `utsted_challenge()` tar tenant og aktør som frie argumenter uten sesjonssjekk; et direkte GRANT til `disponit` lar et kompromittert credential reutstede en challenge for enhver tenant. Sesjonen må bestemme tenant og aktør, som for en stemme, §1b/§2.4c |
+| 14b | `krev_domenechallenge()` (ny innpakning; `utsted_challenge()` selv grantes til ingen ny rolle) | `utsted_challenge()` tar tenant og aktør som frie argumenter uten sesjonssjekk; et direkte GRANT til `disponit` lar et kompromittert credential reutstede en challenge for enhver tenant. Sesjonen må bestemme tenant og aktør, som for en stemme — og medlemskapet må låses og `domeneforvalter` kreves i kroppen, ellers er en levende sesjon nok til å bytte challenge-hash på en verifisert rad etter at rollen er fjernet, §1b/§2.4c |
 
 **Sju ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
 saksflyten ligger ikke i databasen, og en port som bare finnes i SQL er
@@ -1183,7 +1183,8 @@ GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID)
 -- står NÅ.
 GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse_attestert(TEXT, BIGINT, TEXT, UUID)
   TO disponit;                       -- behandleren, §4.2b steg 8–9
--- Innpakningen (§4.3) OG `registrer_overtakelsesattestasjon()` (§1b) kaller
+-- Innpakningen (§4.3), `registrer_overtakelsesattestasjon()` (§1b) OG
+-- `krev_domenechallenge()` (under) kaller
 -- PR-013-s `laas_godkjenner` som EIER, ikke som `disponit`. SECURITY DEFINER
 -- bytter `current_user`, så eierrollen må ha sitt eget EXECUTE (013 linje
 -- 205–206 grantet kun `disponit`). Dette EXECUTE-grantet er HELE eierrollens
@@ -1238,7 +1239,12 @@ RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   -- 1. Sesjonen, ikke et argument: slå opp brukersesjon på
   --    encode(sha256(convert_to(p_sesjon,'UTF8')),'hex') — samme oppslag
   --    som §1b. Ikke tilbakekalt, ikke utløpt. Ellers -> `sesjon_ugyldig`.
-  -- 2. utsted_challenge(sesjonens tenant, p_hostname, p_wildcard,
+  -- 2. AUTORISASJONEN, ikke bare livstegnet: medlemskapet LÅSES gjennom
+  --    laas_godkjenner(sesjonens tenant, sesjonens bruker_id) — samme
+  --    objekt, samme låseform og samme rekkefølge som §1b steg 2. Ingen rad
+  --    (ikke medlem/ikke aktiv), 'domeneforvalter' ikke i roller, eller
+  --    authz_version <> sesjonens authz_snapshot -> `aktor_uautorisert`.
+  -- 3. utsted_challenge(sesjonens tenant, p_hostname, p_wildcard,
   --    p_token_hash, sesjonens bruker_id) — tenant og aktør er sesjonens,
   --    ALDRI et argument kalleren velger.
 $$;
@@ -1248,6 +1254,20 @@ ALTER FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT)
 REVOKE ALL ON FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT)
   TO disponit;
+-- STEG 2 ER IKKE PYNT. En sesjonssjekk som kun spør «lever sesjonen?»
+-- flytter tenantvalget bort fra kalleren, men ikke autorisasjonen: mister
+-- brukeren `domeneforvalter` mens sesjonsraden fortsatt er ugått, kan den
+-- som har sesjonsverdien OG runtime-credentialet kalle funksjonen direkte,
+-- bytte challenge-hash på en ALLEREDE VERIFISERT rad, forkaste åpne runder
+-- på målet (§2.4a) — og tenantens neste revalidering feiler, med
+-- autorisasjonen forfalt 72 timer senere. Det er nøyaktig angrepet
+-- kulepunktene over sier innpakningen lukker. `authz_snapshot` er
+-- sesjonens ferskhet (`sesjon.py:562–566`) og `authz_version` bumpes ved
+-- HVER endring av medlemskapsraden, så et uendret tall er et positivt
+-- bevis — ikke en liste over endringer noen husket å lete etter.
+-- Rollekravet står i funksjonskroppen, ikke i et argument, av samme grunn
+-- som `'domeneavgjorer'` gjør det i §1b; paritetstesten mot
+-- `ROLLE_TIL_SCOPES` er port 20l sin form, her på `domains:verify`.
 -- `utsted_challenge` selv beholder sin eksisterende ACL fra 016
 -- (`disponit_domains_admin`, NOLOGIN, §6b) uendret — 019 legger ikke noe
 -- nytt GRANT på den.
@@ -1797,6 +1817,15 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
   `registrer_overtakelsesattestasjon()` gjør det for en stemme (§1b).
   Grantet til `disponit_domains_admin` fra 016 blir stående uendret —
   rollen er NOLOGIN og nås kun med `SET ROLE` (§6b).
+- **Og innpakningen reautoriserer, den autentiserer ikke bare.** En sesjon
+  som lever beviser at noen logget inn, ikke at hen fortsatt er
+  `domeneforvalter`. Innpakningen låser derfor medlemskapet med
+  `laas_godkjenner` og krever rollen i kroppen (§2.4c steg 2) — samme
+  kontrakt som §1b, og med samme grunn: uten den kan den som holder
+  sesjonsverdien og runtime-credentialet bytte challenge-hash på en
+  allerede verifisert rad etter at rollen er tatt fra hen, og la
+  autorisasjonen forfalle av seg selv. Rollen fjernes i UI-et; sesjonen
+  varer til den utløper. Det er hele vinduet.
 - **Ingen rute setter status.** Alle fire kaller funksjoner som gjør
   overgangen selv, under sonelås og radlås. Invariant 3 er uendret: motoren
   beslutter, ruten formidler.
@@ -3026,6 +3055,19 @@ domeneraden urørt, ingen tildeling. Den eneste kallbare veien er
 i samme port, så REVOKE-en ikke låser ute driften den beskytter. Målt med
 `SET ROLE` for NOLOGIN-rollen (§6b) — porten skal bevise at veien er
 **revokert**, ikke bare at den er uinnlogget ·
+2g-2 **Challenge-utstedelsen dør med rollen (§2.4c).** Tenant A-s
+`domeneforvalter` logger inn og får en levende sesjon; tenanten fjerner så
+rollen fra medlemskapet (eller setter det inaktivt), **uten** å tilbakekalle
+sesjonen. Et direkte `krev_domenechallenge(<sesjonsverdien>, …)` som
+`disponit` over den faktiske forbindelsen → `aktor_uautorisert`, ingen ny
+`challenge_token_hash` skrevet, og A-s allerede `verifisert`-rad står med
+uendret hash og uendret `challenge_utloper`. Samme port, andre halvdel:
+`utsted_challenge(…)` direkte som `disponit` → `permission denied`, og en
+sesjon som **fortsatt** bærer `domeneforvalter` går gjennom, så REVOKE-en
+ikke låser ute driften den beskytter. En implementasjon som kun slår opp
+sesjonsraden består porten på hostnavn/tenant-leddet og feiler her — og det
+er nettopp den varianten som lar en fjernet forvalter la et verifisert
+domene forfalle 72 timer senere ·
 2h **Ingen 019-funksjon er kallbar for `PUBLIC`.** For hver nye signatur
 i §2.4c: en rolle uten eksplisitt grant (test-rollen holder) kaller
 funksjonen → `permission denied`. Målt med `has_function_privilege('public', …,
@@ -3787,6 +3829,8 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           migrator-eide tabellene (§6c) +
           REVOKE/GRANT-blokka for hver ny signatur, krev_domenechallenge()
           som ENESTE kallbare vei til å utstede en challenge fra `disponit`
+          — med medlemskapet låst gjennom laas_godkjenner og
+          `domeneforvalter` krevd i kroppen, ikke bare en levende sesjon
           (§2.4c/§14b — `utsted_challenge` selv grantes til ingen ny rolle),
           EXECUTE på køfunksjonen til revalidatoren, REVOKE av de tre gamle
           overloadene og DROP av rydd_staged_artefakter(), §2.4c),
