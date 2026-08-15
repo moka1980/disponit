@@ -2,8 +2,15 @@
 
 **Til Claude Code · Konsolidert spesifikasjon + v2. Deltaformen forlates.
 Branch: `pr-014b-domene-egress-artefakt`. Andre av tre: 014a → 014b → 014c.
-Forutsetninger: `m37_unntak`-aksept lukket · 014a merget og
-staging-verifisert (leverte migrasjon 014 + 015, ikke 013 som draften antok).**
+Forutsetning: 014a merget og staging-verifisert (leverte migrasjon 014 +
+015, ikke 013 som draften antok).**
+
+**`m37_unntak`-aksepten er IKKE lukket.** Draften førte den opp som
+oppfylt forutsetning; det var feil da og er feil nå. Manifestet står
+fortsatt `under_utvikling` / `ikke_i_drift` / `rollback_testet: nei`
+(`platform/modules/m37_unntak/manifest.yaml` linje 6–9, 104–117).
+Lukkingen går parallelt med PR-014-kjeden (handoff 2026-08-11 §7.4) og er
+altså ikke noe dette arbeidet fikk oppfylt før det startet.
 
 **Dette er plattforminfrastruktur alle senere eiermoduler arver. Ingen
 WCAG-spesifikk logikk her.**
@@ -40,6 +47,10 @@ CREATE TABLE domenekontroll (
   siste_vellykkede_revalidering TIMESTAMPTZ,
   utloper TIMESTAMPTZ,               -- verifisert_ts + 90 døgn
   PRIMARY KEY (tenant, hostname));
+-- Gjerdet er LITTERALT, ikke effektivt: denne indeksen, `hostname_binding`
+-- og advisory-låsen nøkler alle på hostnavnet slik det står. Wildcard-scopen
+-- dekker ett nivå til, og det namespacet er UGJERDET i 016/017/018 — se
+-- noten under DDL-en. Lukkes i migrasjon 019 (PR-015 §2.5b).
 CREATE UNIQUE INDEX en_verifisert_per_hostname
   ON domenekontroll (hostname) WHERE status = 'verifisert';
 
@@ -105,6 +116,25 @@ CREATE UNIQUE INDEX ett_promotert_per_oppdrag ON artefakt
 CREATE INDEX artefakt_staged_opprydding ON artefakt (opprettet)
   WHERE tilstand = 'staged';
 ```
+**Wildcard-namespacet er ikke gjerdet av dette skjemaet — en åpen
+sikkerhetsgrense, ikke en detalj.** `en_verifisert_per_hostname`,
+`hostname_binding` (PK på `hostname`) og advisory-låsen `domene:<hostname>`
+(016 linje 450, 633, 664) nøkler alle på hostnavnet slik det er skrevet.
+Verifiserer tenant A `example.com` med `wildcard = true` mens tenant B
+verifiserer `foo.example.com`, kolliderer ingenting: radene har ulike
+hostnavn, de to transaksjonene tar ulike låser, og B-s verifisering utløser
+derfor ingen B4-overtakelse. Egressen ser da `foo.example.com` som
+autorisert for **to** tenanter — A gjennom `wildcard_scope`, B eksakt —
+altså nøyaktig den dobbelttildelingen overtakelsesflyten finnes for å
+hindre, uten at flyten i det hele tatt kjøres. Verken 016, 017 eller 018
+lukker dette, og filene er checksum-låst. Gjerdet må derfor legges i
+**migrasjon 019**: sonelås + overlappstest i `verifiser_domenekontroll`,
+med konflikten sendt inn i den samme avklarings- og oppgjørsveien som
+eksakt-host-konflikten. Kontrakten står i
+`docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md` §2.5b. Inntil den er
+implementert er «én tenant per effektivt hostnavn» en påstand skjemaet
+ikke kan bevise, og den skal ikke skrives noe sted som om den er bevist.
+
 **Oppdragsidentiteten er `oppdrag.id`, ikke en UUID.** `oppdrag` har
 `id BIGINT GENERATED ALWAYS AS IDENTITY` (005 linje 297) og ingen
 `oppdrag_id`-kolonne; den referensielle identiteten er `(tenant, id)`

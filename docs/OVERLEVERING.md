@@ -69,11 +69,27 @@ ikke gjøre forretningsarbeid ennå.
 **Neste faktiske oppgave er PR-015 (operativt lag)**, ikke 014a/014b:
 klarsignalet ligger i `docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md` og
 beskriver migrasjon **019** (domeneobservasjonsrunder, flerpartsoppgjør,
-fencing ved reclaim, batchgrense i ryddefunksjonen). Migrasjonshistorikken
+sonegjerde mot wildcard-overlapp, fencing ved reclaim, batchgrense i
+ryddefunksjonen). Migrasjonshistorikken
 er checksum-låst: 014–018 er ferdige filer som ikke skal skrives på nytt.
 
-**Blokkerende forutsetning (lukket):** `m37_unntak` modulaksept
-(rollback-m37-driver + staging-måling).
+**Åpen forutsetning — IKKE lukket:** `m37_unntak` modulaksept
+(rollback-m37-driver + staging-måling). Manifestet er autoritativt, og det
+står fortsatt `status: under_utvikling`, `driftstilstand: ikke_i_drift` og
+`rollback_testet.status: nei` (`platform/modules/m37_unntak/manifest.yaml`
+linje 6–9 og 104–117). Manifestet sier også hvorfor, og det er en reell
+mangel: `rollback-m01-v1` deaktiverte **beslutningsmodulen**, ikke
+M-37-arbeideren, og arbeiderens egen unit
+(`deploy/staging/disponit-m37.service`) er ikke engang installert på
+staging (RUTINER.md linje 33 sier det samme). Å låne den målingen hit ville
+vært å låne konklusjonen fra et annet spørsmål.
+
+**Hva den åpne porten faktisk blokkerer:** modulaksept og driftssetting av
+M-37 — ikke plattformarbeidet. Handoffen 2026-08-11 §7.4 legger lukkingen
+«parallelt/løpende» ved siden av PR-014-kjeden, så PR-015 kan bygges. Men
+ingen spesifikasjon skal skrives som om porten er passert, og ingen modul
+som avhenger av M-37 i drift kan regnes som ferdig før rollbacken er kjørt
+og målt.
 
 **Registrerte arbeidselementer (ikke startet):**
 - Gate 14b: oppløsning av levende oppdrag ved menneskelig avvis (M-37-domenet)
