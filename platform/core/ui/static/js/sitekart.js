@@ -2,12 +2,19 @@ export function harScope(sesjon, scope) {
   return (sesjon.scopes || []).includes(scope);
 }
 
+// Å forvalte policy krever skrive- eller aktiveringsscope. `policy:read` er
+// IKKE nok: rollene `admin` og `sikkerhet` har bare lesetilgang, og en flate
+// med mutasjonsknapper ville bare gitt dem 403 fra API-et.
+export function kanForvaltePolicy(sesjon) {
+  return harScope(sesjon, "policy:write") || harScope(sesjon, "policy:activate");
+}
+
 export function byggRuter(sesjon) {
   const ruter = [
     { nokkel: "oversikt" }, { nokkel: "policy" },
     { nokkel: "beslutninger" }, { nokkel: "unntak" },
   ];
-  if (harScope(sesjon, "policy:write") || harScope(sesjon, "policy:activate")) {
+  if (kanForvaltePolicy(sesjon)) {
     ruter.push({ nokkel: "kundeadmin" });
     ruter.push({ nokkel: "policyadmin" });
   }

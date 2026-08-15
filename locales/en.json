@@ -379,6 +379,8 @@
   "ui.admin.handling.kundeadmin_tekst": "Switch to customer admin to verify how the platform shell looks from the tenant side.",
   "ui.admin.handling.policyadmin": "Go to policy activation",
   "ui.admin.handling.policyadmin_tekst": "Open policy administration when new authorities must be validated and attested.",
+  "ui.admin.handling.policy_lesing": "View current policy",
+  "ui.admin.handling.policy_lesing_tekst": "Read which authorities apply right now. Activation requires a policy scope you do not have.",
   "ui.admin.handling.unntak": "Go to exception queue",
   "ui.admin.handling.unntak_tekst": "Follow up cases that block further activation or require a manual decision.",
   "ui.admin.handling.ga_til": "Go to view",

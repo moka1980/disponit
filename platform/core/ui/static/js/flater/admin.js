@@ -3,10 +3,12 @@ import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
 import { FASEOVERSIKT, TENANTOVERSIKT, modulmerke, plattformTelling }
   from "../plattformdata.js";
+import { kanForvaltePolicy } from "../sitekart.js";
 import { siteFaseMerke } from "../sitekomponenter.js";
 
-export function visAdmin(hoved) {
+export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
+  const forvalter = kanForvaltePolicy(ctx);
 
   sett(hoved,
     ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
@@ -95,16 +97,30 @@ export function visAdmin(hoved) {
           el("p", { class: "site-eyebrow", text: t("ui.admin.handlinger") }),
           el("h2", { text: t("ui.admin.handlinger_tittel") }))),
       el("div", { class: "site-card-grid" },
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("ui.admin.handling.kundeadmin") }),
-          el("p", { text: t("ui.admin.handling.kundeadmin_tekst") }),
-          el("a", { class: "lenkeknapp", href: "#/kundeadmin",
-            text: t("ui.admin.handling.ga_til") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("ui.admin.handling.policyadmin") }),
-          el("p", { text: t("ui.admin.handling.policyadmin_tekst") }),
-          el("a", { class: "lenkeknapp", href: "#/policyadmin",
-            text: t("ui.admin.handling.ga_til") })),
+        // Kundeadmin og policyadmin krever policy-forvaltning. Admin-flaten
+        // åpnes av `security:read`, og rollene `admin`/`sikkerhet` har bare
+        // `policy:read` — snarveiene ville pekt på flater ruteren nekter dem,
+        // med mutasjonsknapper som uansett gir 403.
+        ...(forvalter ? [
+          el("article", { class: "site-mini-card" },
+            el("strong", { text: t("ui.admin.handling.kundeadmin") }),
+            el("p", { text: t("ui.admin.handling.kundeadmin_tekst") }),
+            el("a", { class: "lenkeknapp", href: "#/kundeadmin",
+              text: t("ui.admin.handling.ga_til") })),
+          el("article", { class: "site-mini-card" },
+            el("strong", { text: t("ui.admin.handling.policyadmin") }),
+            el("p", { text: t("ui.admin.handling.policyadmin_tekst") }),
+            el("a", { class: "lenkeknapp", href: "#/policyadmin",
+              text: t("ui.admin.handling.ga_til") })),
+        ] : [
+          // Leserettighet skal fortsatt komme til policy — bare til
+          // lesevisningen, ikke til aktiveringsflaten.
+          el("article", { class: "site-mini-card" },
+            el("strong", { text: t("ui.admin.handling.policy_lesing") }),
+            el("p", { text: t("ui.admin.handling.policy_lesing_tekst") }),
+            el("a", { class: "lenkeknapp", href: "#/policy",
+              text: t("ui.admin.handling.ga_til") })),
+        ]),
         el("article", { class: "site-mini-card" },
           el("strong", { text: t("ui.admin.handling.unntak") }),
           el("p", { text: t("ui.admin.handling.unntak_tekst") }),

@@ -379,6 +379,8 @@
   "ui.admin.handling.kundeadmin_tekst": "Bytt til kundeadmin for å verifisere hvordan plattformskallet ser ut fra tenant-siden.",
   "ui.admin.handling.policyadmin": "Gå til policyaktivering",
   "ui.admin.handling.policyadmin_tekst": "Åpne policyadministrasjon når nye fullmakter skal valideres og attesteres.",
+  "ui.admin.handling.policy_lesing": "Se gjeldende policy",
+  "ui.admin.handling.policy_lesing_tekst": "Les hvilke fullmakter som gjelder nå. Aktivering krever policy-scope du ikke har.",
   "ui.admin.handling.unntak": "Gå til unntakskø",
   "ui.admin.handling.unntak_tekst": "Følg opp saker som blokkerer videre aktivering eller krever manuell avgjørelse.",
   "ui.admin.handling.ga_til": "Gå til visning",

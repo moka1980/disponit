@@ -113,7 +113,25 @@ test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () =
   assert.ok(h.textContent.includes(t("site.tenant.nordvik.navn")));
   assert.ok(h.textContent.includes(t("site.plan.pilot")));
   assert.ok(h.textContent.includes(t("ui.admin.kontrollplan_tittel")));
-  assert.ok(h.querySelector('a[href="#/policyadmin"]'));
   const b = await alvorligeBrudd(h, { fragment: true });
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {
+  // `security:read` åpner admin-flaten, men rollene `admin`/`sikkerhet` har
+  // bare `policy:read`: da skal aktiveringssnarveien være borte, og lesevegen
+  // til policy stå igjen.
+  const lese = nyHoved();
+  visAdmin(lese, ctx({ scopes: ["security:read", "policy:read"] }));
+  assert.equal(lese.querySelector('a[href="#/policyadmin"]'), null,
+    "aktiveringssnarvei vist til leser");
+  assert.equal(lese.querySelector('a[href="#/kundeadmin"]'), null,
+    "kundeadmin-snarvei vist til leser");
+  assert.ok(lese.querySelector('a[href="#/policy"]'), "lesevei til policy borte");
+  assert.ok(lese.textContent.includes(t("ui.admin.handling.policy_lesing")));
+
+  const forvalter = nyHoved();
+  visAdmin(forvalter, ctx({ scopes: ["security:read", "policy:activate"] }));
+  assert.ok(forvalter.querySelector('a[href="#/policyadmin"]'));
+  assert.ok(forvalter.querySelector('a[href="#/kundeadmin"]'));
 });
