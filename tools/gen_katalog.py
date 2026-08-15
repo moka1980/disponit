@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generer modulkatalogen for forsiden fra prototypen — én kilde, ikke avskrift.
+"""Generer modulkatalogen for forsiden fra spesifikasjonen — én kilde, ikke avskrift.
 
 Katalogen (45 moduler, 11 områder, 4 faser) lever i
-`prototype/AI-bedriftsagent-prototype-v7.html`. Å taste den inn på nytt ville
-gitt to sannheter som driver fra hverandre; dette skriptet leser prototypen og
-skriver ut både datafila og locale-nøklene, så en endring i katalogen bare
+`docs/spesifikasjon/disponit-prototype-v7.html`. Å taste den inn på nytt ville
+gitt to sannheter som driver fra hverandre; dette skriptet leser spesifikasjonen
+og skriver ut både datafila og locale-nøklene, så en endring i katalogen bare
 krever en ny kjøring.
 
 Engelske navn er OVERSATT her, ikke maskinelt: modulnavn er produktnavn, og en
@@ -20,10 +20,21 @@ import sys
 # én maskin (Codex P1). En hardkodet `/home/<bruker>/...` gjør genereringen
 # umulig å reprodusere i CI eller på en annen laptop — og verre: den ville lest
 # en checkout som kunne ha et ANNET innhold enn commiten som ble generert fra,
-# uten at noe sa fra. Prototypen er sporet i repoet, så den er kilden.
+# uten at noe sa fra. Kilden er sporet i repoet, så den er kilden.
 ROT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 \
     else pathlib.Path(__file__).resolve().parent.parent
-PROTOTYPE = ROT / "prototype" / "AI-bedriftsagent-prototype-v7.html"
+
+# SANNHETSKILDEN, ikke arkivet (Codex P2). Generatoren leste tidligere
+# `prototype/AI-bedriftsagent-prototype-v7.html` — v7.0. `README.md` peker på
+# `docs/spesifikasjon/disponit-prototype-v7.html` (v7.2) som sannhetskilden, og
+# `docs/STRUKTUR.md` kaller `prototype/` et historisk arkiv som ALDRI endres.
+# De to filene gir identisk katalog i dag, så feilen ga ingen synlig forskjell —
+# den var stille: neste kanoniske modul-, område- eller faseendring ville ikke
+# nådd generatoren, og en ny kjøring ville reprodusert gammelt offentlig innhold
+# uten at noe klaget. Et arkiv som aldri endres kan per definisjon ikke være
+# inndata til noe som skal følge produktet.
+KILDE = ROT / "docs" / "spesifikasjon" / "disponit-prototype-v7.html"
+KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v7.html"
 
 # Områdenavn på engelsk.
 OMRADE_EN = {
@@ -75,9 +86,11 @@ def slug(navn: str) -> str:
 
 
 def les_katalog() -> list[dict]:
+    if not KILDE.exists():
+        raise SystemExit(f"fant ikke sannhetskilden: {KILDE_NAVN}")
     skript = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>",
-                                  PROTOTYPE.read_text(encoding="utf-8",
-                                                      errors="replace"), re.S))
+                                  KILDE.read_text(encoding="utf-8",
+                                                  errors="replace"), re.S))
     poster = [
         {"n": int(m.group(1)), "navn": m.group(2), "omrade": m.group(4),
          "fase": int(m.group(5))}
@@ -91,14 +104,15 @@ def les_katalog() -> list[dict]:
     numre = [p["n"] for p in poster]
     duplikater = sorted({n for n in numre if numre.count(n) > 1})
     if duplikater:
-        raise SystemExit(f"duplisert modulnummer i prototypen: {duplikater}")
+        raise SystemExit(
+            f"duplisert modulnummer i {KILDE_NAVN}: {duplikater}")
     forventet = set(range(1, 46))
     if set(numre) != forventet:
         mangler = sorted(forventet - set(numre))
         ukjente = sorted(set(numre) - forventet)
         raise SystemExit(
             f"katalogen er ikke 1..45 — mangler: {mangler}, ukjente: {ukjente}"
-            f" (prototypen har endret form, sjekk parseren)")
+            f" ({KILDE_NAVN} har endret form, sjekk parseren)")
     return sorted(poster, key=lambda p: p["n"])
 
 
@@ -112,7 +126,7 @@ def main() -> None:
     # 1. Datafila: bare struktur, all tekst via locale-nøkler.
     linjer = [
         "// GENERERT av tools/gen_katalog.py fra",
-        "// prototype/AI-bedriftsagent-prototype-v7.html — IKKE rediger for hånd.",
+        f"// {KILDE_NAVN} — IKKE rediger for hånd.",
         "//",
         "// Modulkatalogen er produktomfanget: 45 moduler i 11 områder over fire",
         "// faser. Den er OFFENTLIG informasjon (hva vi tilbyr), i motsetning til",

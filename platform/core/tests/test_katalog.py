@@ -1,15 +1,16 @@
 """Modulkatalogen på forsiden: fersk, komplett og formriktig.
 
-Katalogen er generert fra `prototype/AI-bedriftsagent-prototype-v7.html` av
+Katalogen er generert fra `docs/spesifikasjon/disponit-prototype-v7.html` av
 `tools/gen_katalog.py`. En generator uten en port i CI er bare en vennlig
 anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
-prototypen uten å kjøre generatoren, driver de to kildene fra hverandre —
+spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor tre porter (Codex P2 på PR #43):
-  1. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
-  2. FORM      — 45 moduler, elleve områder, faser 1–4, alle representert.
-  3. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
+Testene her er derfor fire porter (Codex P2 på PR #43):
+  1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
+  2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
+  3. FORM      — 45 moduler, elleve områder, faser 1–4, alle representert.
+  4. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
 """
 import json
 import re
@@ -23,7 +24,13 @@ import pytest
 ROT = Path(__file__).resolve().parents[3]
 GENERATOR = ROT / "tools" / "gen_katalog.py"
 KATALOG_JS = ROT / "platform" / "core" / "ui" / "static" / "js" / "katalog.js"
-PROTOTYPE = ROT / "prototype" / "AI-bedriftsagent-prototype-v7.html"
+# Sannhetskilden slik README.md og docs/STRUKTUR.md utpeker den. Stien står
+# som en LITERAL her, ikke importert fra generatoren: en port som henter
+# kildestien fra det den skal vokte, godkjenner enhver sti generatoren måtte
+# bytte til.
+KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v7.html")
+KILDE = ROT.joinpath(*KILDE_REL)
+ARKIV = ROT / "prototype"
 LOCALER = {s: ROT / "locales" / f"{s}.json" for s in ("nb", "en")}
 
 MODULER = 45
@@ -52,18 +59,41 @@ def _katalog_js() -> tuple[list[dict], list[dict]]:
     return katalog, omrader
 
 
+def test_generatoren_leser_sannhetskilden():
+    """Kilden skal være spesifikasjonen, ikke arkivet (Codex P2 på PR #43).
+
+    Generatoren leste `prototype/AI-bedriftsagent-prototype-v7.html` — v7.0 —
+    mens `README.md` peker på `docs/spesifikasjon/disponit-prototype-v7.html`
+    (v7.2) som sannhetskilden og `docs/STRUKTUR.md` kaller `prototype/` et
+    historisk arkiv som aldri endres. De to filene gir identisk katalog i dag,
+    så ferskhetsporten under ville stått grønn uansett: den måler at
+    `katalog.js` stemmer med det generatoren leser, ikke at generatoren leser
+    riktig fil. Derfor denne, som er den eneste som fanger at kilden peker feil.
+    """
+    kilde = "/".join(KILDE_REL)
+    assert KILDE.exists(), f"sannhetskilden mangler: {kilde}"
+    tekst = GENERATOR.read_text("utf-8")
+    assert kilde in tekst, (
+        f"generatoren nevner ikke sannhetskilden {kilde}")
+    # Arkivet skal ikke være INNDATA. Det kan nevnes i prosa (kommentaren som
+    # forklarer hvorfor kilden ble byttet), men ingen filsti dit skal bygges.
+    for arkivfil in sorted(ARKIV.glob("*.html")):
+        assert f'"{arkivfil.name}"' not in tekst, (
+            f"generatoren bygger fortsatt en sti til arkivet: {arkivfil.name}")
+
+
 def test_katalogen_er_fersk(tmp_path):
     """Regenerering skal gi byte-identisk resultat.
 
-    Uten denne porten kunne `katalog.js` vært håndredigert, eller prototypen
-    endret uten en ny kjøring, og ingenting ville sagt fra. Generatoren kjøres
-    mot en KOPI, så testen aldri skriver i repoet — en test som «verifiserer»
-    ved å oppdatere fila den sjekker, kan ikke feile.
+    Uten denne porten kunne `katalog.js` vært håndredigert, eller
+    spesifikasjonen endret uten en ny kjøring, og ingenting ville sagt fra.
+    Generatoren kjøres mot en KOPI, så testen aldri skriver i repoet — en test
+    som «verifiserer» ved å oppdatere fila den sjekker, kan ikke feile.
     """
-    (tmp_path / "prototype").mkdir()
+    (tmp_path / "docs" / "spesifikasjon").mkdir(parents=True)
     (tmp_path / "locales").mkdir()
     (tmp_path / "platform/core/ui/static/js").mkdir(parents=True)
-    shutil.copy2(PROTOTYPE, tmp_path / "prototype" / PROTOTYPE.name)
+    shutil.copy2(KILDE, tmp_path.joinpath(*KILDE_REL))
     for sprak, sti in LOCALER.items():
         shutil.copy2(sti, tmp_path / "locales" / f"{sprak}.json")
 

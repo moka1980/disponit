@@ -1,5 +1,5 @@
 // GENERERT av tools/gen_katalog.py fra
-// prototype/AI-bedriftsagent-prototype-v7.html — IKKE rediger for hånd.
+// docs/spesifikasjon/disponit-prototype-v7.html — IKKE rediger for hånd.
 //
 // Modulkatalogen er produktomfanget: 45 moduler i 11 områder over fire
 // faser. Den er OFFENTLIG informasjon (hva vi tilbyr), i motsetning til
