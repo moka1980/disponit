@@ -221,6 +221,51 @@ test("Landing: språkbyttet virker når localStorage er nektet", async () => {
   }
 });
 
+test("Landing: to raske trykk på språkknappen rendrer flaten ÉN gang", async () => {
+  // Codex P2: `byttTil` ventet på locale-settet og rendret flaten uansett om
+  // et nyere trykk hadde kommet imens. To trykk før det første svaret ga to
+  // gjennomløp om den samme flaten, og den tregeste skrev sist — med fokus
+  // flyttet to ganger og et sett API-kall for hver.
+  //
+  // Antall renderinger måles på `/ui/oppsett.json`: hver `visInnlogging`
+  // henter den nøyaktig én gang.
+  const ekte = globalThis.fetch;
+  let oppsettkall = 0;
+  globalThis.fetch = async (url) => {
+    const sti = url.split("?")[0];
+    if (sti === "/ui/oppsett.json") oppsettkall += 1;
+    // Locale-settet svarer tregt, ellers rekker ikke det andre trykket å
+    // komme før det første er ferdig — og da finnes ikke kappløpet.
+    if (/^\/ui\/locale\//.test(sti)) await new Promise((r) => setTimeout(r, 20));
+    return ekte(url);
+  };
+  try {
+    const app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    const forOppsett = oppsettkall;
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    // Vent forbi det forbigåtte gjennomløpet: hadde det rendret, ville det
+    // rukket det innen den tregeste hentingen er ferdig.
+    await new Promise((r) => setTimeout(r, 40));
+
+    assert.equal(oppsettkall - forOppsett, 1,
+      "flaten ble rendret mer enn én gang for to trykk på samme språk");
+    assert.equal(document.documentElement.getAttribute("lang"), "en");
+    const naavaerende = app.querySelector('.site-sprak-knapp[aria-current="true"]');
+    assert.equal(naavaerende.textContent, EN["ui.sprak.en"]);
+  } finally {
+    globalThis.fetch = ekte;
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2, 37],

@@ -6,6 +6,14 @@
 const SPRAK = ["nb", "en"];
 let _kart = {};
 let _sprak = "nb";
+// Bare det SISTE språkvalget får skrive (Codex P2 til PR #42). Tilstanden her
+// er delt av hele flaten, og `lastI18n` er asynkron: to bytter i rask
+// rekkefølge ga to hentinger som kunne svare i motsatt rekkefølge av den de
+// ble bedt om. Uten dette telleverket committet den TREGESTE sist, og flaten
+// ble stående med ett språks tekster, et annet i `<html lang>` og et tredje i
+// velgeren. Hver henting merker seg sitt nummer og trekker seg hvis et nyere
+// kall har startet.
+let _generasjon = 0;
 
 export function velgSprak() {
   // Rekkefølge: lagret valg → <html data-sprak> → nettleser → nb.
@@ -24,21 +32,40 @@ export function lagreSprak(s) {
   try { window.localStorage.setItem("disponit_sprak", s); } catch { /* ignore */ }
 }
 
+// Returnerer språket som FAKTISK gjelder etterpå — ikke nødvendigvis det som
+// ble bedt om. Ble kallet forbigått av et nyere, rører det ingenting og gir
+// tilbake det gjeldende språket; kalleren ser da at svaret ikke er dens eget
+// og lar være å rendre. Ingenting settes før hentingen er i havn, så et
+// forbigått eller feilende kall etterlater seg ingen halv tilstand.
 export async function lastI18n(sprak) {
-  _sprak = SPRAK.includes(sprak) ? sprak : "nb";
-  const r = await fetch(`/ui/locale/${_sprak}`, {
+  const onsket = SPRAK.includes(sprak) ? sprak : "nb";
+  const min = ++_generasjon;
+  const r = await fetch(`/ui/locale/${onsket}`, {
     credentials: "same-origin",
     headers: { accept: "application/json" },
   });
-  if (!r.ok) throw new Error(`locale ${_sprak}: ${r.status}`);
-  _kart = await r.json();
+  // Forbigått: også en FEIL herfra er uinteressant nå. Kastet den, ville et
+  // tregt 500-svar på et forlatt språk revet ned flaten som nettopp rendret
+  // riktig på det språket brukeren endte på.
+  if (min !== _generasjon) return _sprak;
+  if (!r.ok) throw new Error(`locale ${onsket}: ${r.status}`);
+  const kart = await r.json();
+  if (min !== _generasjon) return _sprak;
+  _kart = kart;
+  _sprak = onsket;
   document.documentElement.setAttribute("lang", _sprak);
   document.documentElement.setAttribute("data-sprak", _sprak);
   return _sprak;
 }
 
-// For tester (jsdom): sett kartet direkte uten nettverk.
-export function settI18nForTest(kart, sprak = "nb") { _kart = kart; _sprak = sprak; }
+// For tester (jsdom): sett kartet direkte uten nettverk. Teller opp
+// generasjonen, så en henting som fortsatt er underveis ikke kan overskrive
+// kartet testen nettopp satte.
+export function settI18nForTest(kart, sprak = "nb") {
+  _generasjon += 1;
+  _kart = kart;
+  _sprak = sprak;
+}
 
 export function t(nokkel, reserve) {
   const v = _kart[nokkel];

@@ -112,22 +112,40 @@ function visApp(sesjon, utrulling = {}) {
   else klientruter.naviger();
 }
 
+// Bare den SISTE oppstarten får rendre (Codex P2 til PR #42). `byttSprak`
+// kjører hele `start` på nytt, og den venter tre ganger: locale, økt,
+// utrulling. To bytter i rask rekkefølge ga to gjennomløp som kappet om de
+// samme globale ressursene — `#app`, `<html lang>`, ruteren — og den tregeste
+// skrev sist. Resultatet kunne bli ett språks tekster i et skall bygget av
+// det andre. Nummeret tas ved inngangen og sjekkes etter hver venting: er det
+// ikke lenger det høyeste, finnes det et nyere gjennomløp som eier flaten, og
+// dette trekker seg uten å røre noe.
+let oppstartNr = 0;
+
 // `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
 // da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
 // `data-sprak` → nettleseren → nb).
 async function start(valgtSprak) {
+  const min = ++oppstartNr;
+  const forbigatt = () => min !== oppstartNr;
   await lastI18n(valgtSprak || velgSprak());
+  if (forbigatt()) return;
   lokaliserSkiplenke();
   try {
     const sesjon = await hentJson("/v1/sesjon");
+    if (forbigatt()) return;
     // Utrullingen hentes ETTER at økten er bekreftet, og en feil her felles
     // ikke appen: alt annet enn 401 betyr bare at tenantdata mangler — flatene
     // har en tomtilstand for nettopp det. 401 slukes IKKE (se
     // `hentUtrullingForSkall`): økten kan ha blitt borte mellom de to kallene,
     // og da hører den hjemme i `catch`-en under, ikke i et tomt svar.
     const utrulling = await hentUtrullingForSkall(sprak());
+    if (forbigatt()) return;
     visApp(sesjon, utrulling);
   } catch (e) {
+    // Et forbigått gjennomløp river ikke ned flaten et nyere har bygget — heller
+    // ikke når det feiler. Feilen gjaldt en oppstart ingen venter på lenger.
+    if (forbigatt()) return;
     if (e instanceof UautorisertFeil) { tilInnlogging(); return; }
     // Nettverk/annet på øktsjekk: fall til innlogging (ingen økt å stole på).
     tilInnlogging();

@@ -59,9 +59,18 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // derfor rett inn i modulen og flaten rendres på nytt: valget lever i økten
 // uansett hva lageret svarer, og lagringen er kun det som gjør at det
 // overlever et nytt besøk.
+// Bare det SISTE trykket får rendre (Codex P2 til PR #42). Knappene er to
+// klikk fra hverandre, og hentingen av locale-settet tar tid: to raske trykk
+// ga to gjennomløp om den samme flaten, og den tregeste rendret sist. Da
+// kunne siden endt på et annet språk enn knappen brukeren trykket — og enn
+// den som står merket `aria-current`. Nummeret tas ved inngangen; er det ikke
+// lenger det høyeste, eier et nyere trykk flaten og dette trekker seg.
+let byttNr = 0;
 async function byttTil(s) {
   lagreSprak(s);              // best effort — kan være nektet, og det er greit
+  const min = ++byttNr;
   await lastI18n(s);          // kilden til sannhet for DENNE økten
+  if (min !== byttNr) return;
   await visInnlogging({ fokuserSprak: true });
 }
 
