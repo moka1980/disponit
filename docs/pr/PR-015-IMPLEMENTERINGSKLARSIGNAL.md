@@ -2177,9 +2177,12 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   -- 4. Reautoriseringen over, i `aktor`-rekkefølge, med laas_godkjenner
   --    FOR UPDATE. Feiler én -> RAISE `attestant_uautorisert:<aktor>:<grunn>`.
   -- 5. FØRST DA: avgjor_domeneovertakelse(vinnende_tenant, hostname,
-  --    p_unntak_id, p_utfall = 'godkjenn', aktor, p_runde) — samme
-  --    transaksjon, samme låser. Returverdien går rett tilbake
-  --    ('tildelt' / 'avvist' / 'alt_avgjort').
+  --    forventet_generasjon, p_utfall = 'godkjenn', aktor, p_runde) — samme
+  --    transaksjon, samme låser. forventet_generasjon er den fra steg 1
+  --    (idempotensnøkkelen), IKKE p_unntak_id — saks-ID og
+  --    autorisasjonsgenerasjon er to forskjellige tall, og den indre
+  --    funksjonens tredje parameter er `p_forventet_generasjon` (over).
+  --    Returverdien går rett tilbake ('tildelt' / 'avvist' / 'alt_avgjort').
 $$;
 ```
 
