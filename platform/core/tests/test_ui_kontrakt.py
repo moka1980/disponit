@@ -17,7 +17,8 @@ API = Path(__file__).resolve().parents[1] / "api"
 UI_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "js"
 MODULER = Path(__file__).resolve().parents[2] / "modules"
 KILDE = "\n".join((API / f).read_text(encoding="utf-8")
-                  for f in ("lesing.py", "app.py", "sesjon.py"))
+                  for f in ("lesing.py", "app.py", "sesjon.py",
+                            "utrulling.py"))
 
 # Feltene UI-et leser, per endepunkt (se platform/core/ui/static/js/flater/*).
 KONTRAKT = {
@@ -40,6 +41,10 @@ KONTRAKT = {
                          "offentlig_id", "betrodd_for",
                          "kan_fastsla_permanent"],
     "/v1/sesjon": ["tenant", "scopes"],
+    # Utrullingsplanen. Feltene leses av flater/admin.js og
+    # flater/kundeadmin.js — de har ingen tenanttabell å falle tilbake på.
+    "/v1/utrulling": ["plattformdrift", "tenanter", "navn", "plan", "moduler",
+                      "neste"],
 }
 
 
@@ -94,6 +99,31 @@ def test_rolleguiden_lover_bare_fullmakter_rollen_faktisk_har():
         assert scopes == set(ROLLE_TIL_SCOPES[rolle]), (
             f"rolleguiden for {rolle!r} er ute av takt med autorisasjon.py: "
             f"guide={sorted(scopes)} kanonisk={sorted(ROLLE_TIL_SCOPES[rolle])}")
+
+
+def test_ingen_tenantdata_i_offentlige_ressurser():
+    """`/ui/{sti}` og `/ui/locale/{sprak}` serveres UTEN øktsjekk, og den
+    anonyme landingssiden importerer klientbunten. Lå tenantregisteret der,
+    kunne hvem som helst laste ned hver kundes navn, plan, modultildeling og
+    neste steg — uansett hvilket filter admin-flaten gjorde i DOM-en etterpå.
+
+    `offentlige_ressurser.test.js` håndhever den samme grensen fra JS-siden,
+    men bare mot mønstre. Denne porten leser de FAKTISKE radene registeret
+    serverer, så et nytt kundenavn er dekket i det øyeblikket det legges
+    inn — uten at noen må huske å oppdatere et mønster."""
+    from api.utrulling import _UTRULLING
+
+    offentlig = list(UI_JS.rglob("*.js"))
+    offentlig += sorted((Path(__file__).resolve().parents[3] / "locales")
+                        .glob("*.json"))
+    assert offentlig, "fant ingen serverte ressurser å sjekke"
+    for sti in offentlig:
+        tekst = sti.read_text(encoding="utf-8").lower()
+        for rad in _UTRULLING:
+            for verdi in (rad["id"], rad["navn"]):
+                assert verdi.lower() not in tekst, (
+                    f"tenantdata ({verdi!r}) ligger i {sti.name}, som serveres "
+                    f"uten øktsjekk")
 
 
 def _modulstatus_fra_ui() -> dict[int, str]:

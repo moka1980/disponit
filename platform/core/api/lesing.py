@@ -838,3 +838,29 @@ def policy_aktiv(tjeneste, request: Request) -> Response:
         dto["request_id"] = rid
         return kanonisk_json(dto, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "policy:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/utrulling — scope decisions:read
+#
+# Utrullingsplanen lå tidligere som en konstant i den STATISK SERVERTE
+# klientbunten, altså lesbar for hvem som helst. Her er den bak økten, og
+# `utrullingsmodul.svar_for` — ikke klienten — bestemmer hvilke rader som
+# forlater prosessen (P1, Codex runde 3).
+#
+# `decisions:read` er valgt fordi ALLE kunderollene i `autorisasjon.py` har
+# det: flaten er kundens egen. En senere plattformoperatørrolle må derfor
+# BÅDE ha `platform:admin` (for kontrollplanet) og `decisions:read` (for å
+# komme inn her) — eller `platform:admin` må registreres i `LESESCOPES`.
+# Det skal være en bevisst endring i autorisasjonslaget, ikke noe dette
+# endepunktet avgjør på egen hånd.
+# ---------------------------------------------------------------------------
+
+def utrulling(tjeneste, request: Request) -> Response:
+    from . import utrulling as utrullingsmodul
+
+    def _fn(conn, auth, rid):
+        svar = utrullingsmodul.svar_for(auth.tenant, auth.scopes)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)

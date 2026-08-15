@@ -668,6 +668,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
+    def utrulling(request: Request) -> Response:
+        return lesing.utrulling(tjeneste, request)
+
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
     # de refereres direkte i rutelisten.
@@ -740,6 +743,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/domeneattestasjon",
               unntak_domeneattestasjon, methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        # Utrullingsplanen: øktbundet, fordi den ellers måtte ligge i den
+        # statisk serverte klientbunten der hvem som helst kunne lese hver
+        # tenants plan og modultildeling.
+        Route("/v1/utrulling", utrulling, methods=["GET"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
         # {utkast_id:str} aldri slukter dem.
@@ -1110,6 +1117,11 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-015 §3: cross-tenant domeneautoritet er sitt EGET scope.
     ("POST", "/v1/unntak/{id:int}/domeneattestasjon"): "domains:adjudicate",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
+    # kunderollene har). Kontrollplanet på tvers krever i tillegg
+    # `platform:admin`, og det avgjøres inne i endepunktet — det er en
+    # utvidelse av svaret, ikke en annen inngang.
+    ("GET",  "/v1/utrulling"):               "decisions:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

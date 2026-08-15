@@ -57,6 +57,12 @@ export async function hentJson(sti, sok = null) {
   return kropp;
 }
 
+// Utrullingsplanen for ØKTEN. Den kan ikke ligge i klientpakken: `/ui/{sti}`
+// serveres uten sesjonssjekk. Serveren returnerer bare radene økten har rett
+// til — egen tenant, eller alle med `platform:admin` — så klienten filtrerer
+// ingenting og har aldri en rad den ikke skulle sett.
+export const hentUtrulling = () => hentJson("/v1/utrulling");
+
 export async function loggUt() {
   const csrf = lesCookie("__Host-disponit_csrf");
   const r = await fetch("/v1/sesjon", {

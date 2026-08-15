@@ -3,7 +3,7 @@
 // innlogging, 403 → ingen-tilgang PÅ flaten (håndteres i flatene).
 import { sett } from "./dom.js";
 import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
-import { hentJson, loggUt, UautorisertFeil } from "./api.js";
+import { hentJson, hentUtrulling, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
 import { lagRuter } from "./ruter.js";
@@ -46,7 +46,7 @@ function bekreftLoggUt() {
   });
 }
 
-function visApp(sesjon) {
+function visApp(sesjon, utrulling = {}) {
   const app = document.getElementById("app");
   const tilgjengeligeRuter = byggRuter(sesjon);
   const skall = AppShell({
@@ -60,6 +60,12 @@ function visApp(sesjon) {
 
   const ctx = {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
+    // Tenantdata kommer fra `/v1/utrulling`, ikke fra klientpakken: serveren
+    // har allerede avgjort hvilke rader økten får se. Mangler svaret (feil,
+    // eller en økt uten `decisions:read`), står feltene tomme — og flatene
+    // viser sin eksplisitte tomtilstand i stedet for å gjette.
+    tenanter: Array.isArray(utrulling.tenanter) ? utrulling.tenanter : [],
+    moduler: Array.isArray(utrulling.moduler) ? utrulling.moduler : null,
     paaUautorisert: () => visInnlogging(),
   };
   // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet
@@ -82,7 +88,11 @@ async function start() {
   lokaliserSkiplenke();
   try {
     const sesjon = await hentJson("/v1/sesjon");
-    visApp(sesjon);
+    // Utrullingen hentes ETTER at økten er bekreftet, og en feil her felles
+    // ikke appen: 401 håndteres av øktsjekken over, og alt annet betyr bare at
+    // tenantdata mangler — flatene har en tomtilstand for nettopp det.
+    const utrulling = await hentUtrulling().catch(() => ({}));
+    visApp(sesjon, utrulling);
   } catch (e) {
     if (e instanceof UautorisertFeil) { visInnlogging(); return; }
     // Nettverk/annet på øktsjekk: fall til innlogging (ingen økt å stole på).
