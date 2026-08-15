@@ -3,7 +3,7 @@
 // innlogging, 403 → ingen-tilgang PÅ flaten (håndteres i flatene).
 import { sett } from "./dom.js";
 import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
-import { hentJson, hentUtrulling, loggUt, UautorisertFeil } from "./api.js";
+import { hentJson, hentUtrullingForSkall, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
 import { lagRuter } from "./ruter.js";
@@ -89,9 +89,11 @@ async function start() {
   try {
     const sesjon = await hentJson("/v1/sesjon");
     // Utrullingen hentes ETTER at økten er bekreftet, og en feil her felles
-    // ikke appen: 401 håndteres av øktsjekken over, og alt annet betyr bare at
-    // tenantdata mangler — flatene har en tomtilstand for nettopp det.
-    const utrulling = await hentUtrulling(sprak()).catch(() => ({}));
+    // ikke appen: alt annet enn 401 betyr bare at tenantdata mangler — flatene
+    // har en tomtilstand for nettopp det. 401 slukes IKKE (se
+    // `hentUtrullingForSkall`): økten kan ha blitt borte mellom de to kallene,
+    // og da hører den hjemme i `catch`-en under, ikke i et tomt svar.
+    const utrulling = await hentUtrullingForSkall(sprak());
     visApp(sesjon, utrulling);
   } catch (e) {
     if (e instanceof UautorisertFeil) { visInnlogging(); return; }
