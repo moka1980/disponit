@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
+import { sikreLiveRegion } from "../static/js/komponenter.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
 
 settI18nForTest(NB, "nb");
@@ -346,5 +347,39 @@ test("Valider: 5xx sier «handlingen feilet», ikke «utkastet er ugyldig»", as
     "serverfeil skal være synlig, ikke bare annonsert");
   assert.ok(!tekst.includes(t("ui.policyadmin.ugyldig")),
     "en serverfeil er ikke et bevis på at utkastet er ugyldig");
+  gjenopprett();
+});
+
+test("Valider: feilen annonseres ÉN gang, ikke to", async () => {
+  // `role="alert"` ER et assertivt live-område: innsettingen annonseres. Skrev
+  // flaten I TILLEGG til det globale live-området, ble samme feil lest to
+  // ganger — og den som rammes er den som allerede har minst kontekst.
+  // Koden er rettet; denne testen er det som hindrer at kallet sniker seg inn
+  // igjen neste gang noen «legger på en melding for sikkerhets skyld».
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 422,
+      json: async () => ({ feil: "policy_ugyldig", detaljer: ["for kort"] }) }),
+  };
+  const dlg = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+  // Live-området hentes ETTER at skuffen står. To feller, begge målt: det har
+  // `role="status"` (ikke `[aria-live]`, som et selvlaget element ville hatt),
+  // og `nyHoved()` tømmer `document.body` — en node hentet før dét blir
+  // frakoblet, og `meldLive` skriver da til en NY node testen ikke ser på.
+  // Med begge feilene besto testen selv med dobbeltannonseringen inne.
+  const live = sikreLiveRegion();
+  live.textContent = "";
+  _finn(dlg, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => dlg.querySelector(".pa-valfeil"));
+
+  assert.equal(dlg.querySelectorAll('[role="alert"]').length, 1,
+    "mer enn ett varsel for samme feil");
+  assert.equal(sikreLiveRegion().textContent, "",
+    "feilen ble også skrevet til det globale live-området — dobbelt annonsert");
   gjenopprett();
 });
