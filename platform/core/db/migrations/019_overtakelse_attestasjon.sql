@@ -441,6 +441,15 @@ REVOKE ALL ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) FROM PUBLIC;
 -- granted direkte til `disponit`) — funksjonsspesifikk, ikke bunten.
 GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit;
+-- `opprett_overtakelsessak()` (domeneovertakelse.py) kaller nå
+-- `degrader_forbigatte_utfordrere` som en del av å håndtere konfliktsignalet
+-- — samme runtime-rolle som skriver `unntak`/`revisjonslogg` trenger derfor
+-- EXECUTE på den også. Migrator kaller samme funksjon direkte (uten
+-- SET ROLE) i test-oppsettet, som `opprett_overtakelsessak` selv alltid har
+-- gjort for tabellskrivingen — en SET ROLE der ville mistet
+-- tabelleierskapet INSERT-ene under trenger.
+GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit;
+GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_migrator;
 GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit_domains_admin;
