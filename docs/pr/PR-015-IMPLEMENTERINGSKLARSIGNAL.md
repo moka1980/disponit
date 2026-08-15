@@ -27,16 +27,17 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 1b | `konfliktsett_hash()` + `registrer_overtakelsesattestasjon()` (nye) | Med INSERT-grant kan én kompromittert runtime-credential skrive to stemmer i to navn og gjøre opp domenet selv; aktøren må tas fra sesjonen og autoriseres i databasen, §1b |
 | 2 | `domeneobservasjonsrunde` (m/ `challenge_token_hash`, unikindeks på levende runde, køindeks) + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4; runden må være bundet til challengeVERSJONEN, §2.4a; én levende runde per mål og formål, §2.4 |
 | 2b | `rydd_domeneobservasjonsrunder(p_maks INT)` (ny) | En runde som bare utløper har ingen avslutning, og køtabellen vokser uten grense, §2.4bb |
-| 3 | `apne_domeneobservasjonsrunde(tenant, hostname, formal)` (ny) | Runden er engangs, kortlevd, idempotent under sonelåsen og bundet til én rad og én challenge, §2.4/§2.4a |
-| 4 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4 |
-| 4b | `hent_apne_observasjonsrunder()` (ny, avgrenset lesekø) | Observatøren må kunne *finne* runden den skal svare på. Uten den kan prosessen autentisere, men aldri oppdage et `runde_id`, §2.4b |
+| 3 | `apne_domeneobservasjonsrunde(tenant, hostname, formal)` (ny) → `(runde_id, gjenbrukt, forrige_runde, forrige_utfall)` | Runden er engangs, kortlevd, idempotent under sonelåsen og bundet til én rad og én challenge, §2.4/§2.4a; og en utløpt runde må rapportere utfallet sitt, ellers er `409 observasjon_uteblitt` en respons ingen kodesti kan produsere, §2.4/§2.5c |
+| 4 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4; og et **mislykket** oppslag må registreres (`avvik`/`ingen_post`), ellers forlater runden aldri observatørkøen, §2.4b |
+| 4b | `hent_apne_observasjonsrunder()` (ny, avgrenset lesekø) | Observatøren må kunne *finne* runden den skal svare på. Uten den kan prosessen autentisere, men aldri oppdage et `runde_id`, §2.4b. Køen må dessuten rotere forsøkte runder ut av hodet, ellers stanser 50 hostnavn uten TXT-post all verifisering for alle tenanter |
 | 5 | `verifiser_domenekontroll(…, p_runde UUID)` | **Førstegangsverifisering er den farligste veien** — den kan opprette en autorisasjon og utløse en overtakelse. Uten runde er den beviskravsfri, §2.5 |
 | 6 | `revalider_domenekontroll(…, p_runde UUID)` | Arbeideren skal ikke være autoritet, §2.4 |
-| 6b | `hent_revalideringskandidater(p_grense INT)` (ny) + `domenekontroll.siste_revalideringsforsok` | `domenekontroll` har FORCE RLS med tenant-policy; et kolonnegrant gir den globale scheduleren null rader, og domenene mister ferskhet uten at én alarm går. Uten et forsøksstempel å rotere på returnerer køen dessuten den samme feilende kohorten hver time, §2.2b |
+| 6b | `hent_revalideringskandidater(p_grense INT, p_kjoring_start TIMESTAMPTZ)` (ny) + `domenekontroll.siste_revalideringsforsok` | `domenekontroll` har FORCE RLS med tenant-policy; et kolonnegrant gir den globale scheduleren null rader, og domenene mister ferskhet uten at én alarm går. Uten et forsøksstempel å rotere på returnerer køen dessuten den samme feilende kohorten hver time, og uten sideinndeling kapper én `LIMIT` sikkerhetsnettet §2.1 sier aldri kappes, §2.2b |
 | 7 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense uten å miste evidensfristpredikatet, §6 / port 25 |
 | 8 | `artefaktkapabilitet.owner_generation` + `.owner_claim_id`, med oppgraderingssekvens | Fencing ved reclaim, §5 |
 | 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
 | 10 | `avgjor_domeneovertakelse(…, p_runde UUID)` — flerpartsoppgjør, friskhetskrav og taperoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon (§3), telle kun ferske attestasjoner på gjeldende konfliktbilde (§1a) mot fersk DNS-evidens (§4), og la taperens sak kunne lukkes mot hendelsesevidens — også etter en reapplikasjon (§3.1) |
+| 10b | `avgjor_domeneovertakelse_attestert()` (ny innpakning; oppgjøret selv grantes til ingen) | §4.3-reautoriseringen i Python er ingen port når runtime kan kalle oppgjøret direkte: med to lovlige stemmer inne kan en kompromittert credential gjøre opp domenet etter at en attestant har mistet rollen. Tellingen og reautoriseringen må skje i databasen, under sakens lås, §4.3/§2.4c |
 | 11 | `forelder_hostname()` + `sone_overlapp()` (nye) + sonelåsen og overlappsgrenen i `verifiser_domenekontroll` / `avgjor_domeneovertakelse` | Wildcard-scopen dekker ett nivå mer enn hostnavnet, men 016/018 gjerder kun det litterale navnet: `example.com` (wildcard, tenant A) og `foo.example.com` (tenant B) kan i dag begge stå `verifisert` samtidig, §2.5b |
 | 12 | `domenekonfliktpart` (ny tabell) | En wildcard-verifisering kan overlappe FLERE innehavere samtidig; `konflikt_motpart` er én kolonne, og oppgjøret må kunne løse hele mengden atomisk, §2.5b |
 | 13 | Oppgraderingsryddingen av eksisterende overlapp, FØR gjerdet installeres | Gjerdet er fremoverrettet: rader som alt er `verifisert` i overlapp forblir doble til noen rydder dem, §2.5b |
@@ -225,10 +226,12 @@ Med `INSERT, UPDATE` direkte på tabellen kan API-prosessens delte
 `disponit`-credential skrive to rader med to vilkårlige, distinkte
 `aktor`-verdier og deretter kalle `avgjor_domeneovertakelse()` selv.
 Saksbindingstriggeren (§1) beviser bare *målet*; den sier ingenting om
-hvem som stemte. Reautoriseringen i §4.3 er ekte, men den ligger i
-Python-behandleren — en direkte DB-vei går utenom både den og hele
-innloggingen, og tildeler domenet uten at noen av de to menneskene har
-gjort noe. Fire øyne som kun håndheves av kalleren er ikke fire øyne.
+hvem som stemte. En direkte DB-vei går utenom hele innloggingen og tildeler
+domenet uten at noen av de to menneskene har gjort noe. Fire øyne som kun
+håndheves av kalleren er ikke fire øyne — og det gjelder begge halvdelene:
+**skrivingen** av en stemme lukkes her, **tellingen** av dem i §4.3, der
+oppgjøret selv revokeres fra runtime og reautoriseringen flyttes inn i
+databasen. Lukkes bare den ene, står den andre igjen som samme luke.
 
 **Stemmen skrives derfor av eieren, og identiteten tas fra sesjonen:**
 
@@ -377,46 +380,105 @@ Køen leveres derfor som **én smal SECURITY DEFINER-funksjon**, eid av
 observatørkøen i §2.4b, av samme grunn:
 
 ```sql
-CREATE FUNCTION hent_revalideringskandidater(p_grense INT DEFAULT 5000)
+CREATE FUNCTION hent_revalideringskandidater(
+        p_grense INT DEFAULT 5000,
+        p_kjoring_start TIMESTAMPTZ DEFAULT NULL)   -- NULL = én enkelt side
 RETURNS TABLE (tenant TEXT, hostname TEXT, wildcard BOOLEAN,
                autorisasjonsgenerasjon BIGINT, verifisert_ts TIMESTAMPTZ,
                siste_vellykkede_revalidering TIMESTAMPTZ, utloper TIMESTAMPTZ,
-               n_verifisert BIGINT)
+               sikkerhetsnett BOOLEAN, n_verifisert BIGINT,
+               n_sikkerhetsnett BIGINT)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT d.tenant, d.hostname, d.wildcard, d.autorisasjonsgenerasjon,
-           d.verifisert_ts, d.siste_vellykkede_revalidering, d.utloper,
-           -- Vindusfunksjonen regnes over HELE WHERE-mengden, før LIMIT:
-           -- `N` er populasjonen, ikke antall rader kallet rakk å hente.
-           -- Ellers ville K krympet med kappingen og køen aldri drenert.
-           count(*) OVER ()
-      FROM public.domenekontroll d
-     WHERE d.status = 'verifisert'                       -- §2.1, ordrett
-     -- 1. Sikkerhetsnettet (kø 1) først som KLASSE — kappingen kan aldri
-     --    sette en fersk rad foran en foreldet.
+    WITH populasjon AS (
+        SELECT d.*,
+               (d.siste_vellykkede_revalidering IS NULL
+                OR d.siste_vellykkede_revalidering < now() - INTERVAL '26 hours')
+               AS sikkerhetsnett
+          FROM public.domenekontroll d
+         WHERE d.status = 'verifisert'                   -- §2.1, ordrett
+    ), maalt AS (
+        -- Regnes over HELE populasjonen, aldri over siden: `N` er
+        -- populasjonen, ikke antall rader kallet rakk å hente. Ellers ville
+        -- K krympet med kappingen og køen aldri drenert. `n_sikkerhetsnett`
+        -- er hvor mange kø 1-rader som finnes i det hele tatt — arbeideren
+        -- måler sin egen dekning mot den, ikke mot sidestørrelsen.
+        SELECT count(*) AS n_verifisert,
+               count(*) FILTER (WHERE sikkerhetsnett) AS n_sikkerhetsnett
+          FROM populasjon
+    )
+    SELECT p.tenant, p.hostname, p.wildcard, p.autorisasjonsgenerasjon,
+           p.verifisert_ts, p.siste_vellykkede_revalidering, p.utloper,
+           p.sikkerhetsnett, m.n_verifisert, m.n_sikkerhetsnett
+      FROM populasjon p CROSS JOIN maalt m
+     -- Sideinndelingen: rader arbeideren ALT har forsøkt i DENNE kjøringen
+     -- faller ut. Stempelet settes av `apne_domeneobservasjonsrunde` i
+     -- samme transaksjon som runden åpnes (under), så neste side er
+     -- nødvendigvis rader kjøringen ikke har rørt. Ingen markørkolonne kan
+     -- gjøre samme jobb: sorteringsnøkkelen FLYTTER SEG mens kjøringen går.
+     WHERE p_kjoring_start IS NULL
+        OR p.siste_revalideringsforsok IS NULL
+        OR p.siste_revalideringsforsok < p_kjoring_start
+     -- 1. Sikkerhetsnettet (kø 1) først som KLASSE — sidestørrelsen kan
+     --    aldri sette en fersk rad foran en foreldet.
      -- 2. Innenfor klassen: den som ble FORSØKT for lengst siden først.
      --    Det er dette leddet som roterer; se punktet om vedvarende feil.
      -- 3. Deretter eldste vellykkede, så hostname: deterministisk mellom
      --    to kjøringer, som før.
-     ORDER BY (d.siste_vellykkede_revalidering IS NULL
-               OR d.siste_vellykkede_revalidering < now() - INTERVAL '26 hours') DESC,
-              d.siste_revalideringsforsok ASC NULLS FIRST,
-              d.siste_vellykkede_revalidering ASC NULLS FIRST,
-              d.hostname
+     ORDER BY p.sikkerhetsnett DESC,
+              p.siste_revalideringsforsok ASC NULLS FIRST,
+              p.siste_vellykkede_revalidering ASC NULLS FIRST,
+              p.hostname
      LIMIT p_grense $$;
 ```
 
-- **Kolonnene er de samme som kolonnegrantet ville gitt** — og ikke én mer.
-  `challenge_token_hash` og `konflikt_motpart` er ikke arbeiderens (samme
-  grense som egressens grant, 016 linje 386). Funksjonen er `STABLE`, har
-  ingen skrivevei og kan ikke velge en annen status: `verifisert` står i
-  kroppen, ikke i et argument, så en kompromittert arbeider kan ikke be om
+- **Radkolonnene er de samme som kolonnegrantet ville gitt** — og ikke én
+  mer. `challenge_token_hash` og `konflikt_motpart` er ikke arbeiderens
+  (samme grense som egressens grant, 016 linje 386). `sikkerhetsnett`,
+  `n_verifisert` og `n_sikkerhetsnett` er avledninger av nøyaktig den
+  mengden, ikke nye felter fra raden. Funksjonen er `STABLE`, har ingen
+  skrivevei og kan ikke velge en annen status: `verifisert` står i kroppen,
+  ikke i et argument, så en kompromittert arbeider kan ikke be om
   konfliktradene den er utestengt fra i §2.1.
 - **`status = 'verifisert'` er hardkodet, ikke en parameter.** Det er
   samme populasjon som `N` og som alle tre køene — én definisjon, ett sted.
-- **Sorteringen gir sikkerhetsnettet forrang uansett kapping.**
+- **Sorteringen gir sikkerhetsnettet forrang uansett sidestørrelse.**
   Kø 1-klassen (aldri revalidert, eller eldre enn 26 t) står først, så
-  `p_grense` kan aldri sulte kø 1. `hostname` som siste nøkkel gjør
-  rekkefølgen deterministisk mellom to kjøringer.
+  `p_grense` kan aldri sette en fersk rad foran en foreldet. `hostname` som
+  siste nøkkel gjør rekkefølgen deterministisk mellom to kjøringer.
+- **Kø 1 kappes ikke — den sideinndeles, i samme kjøring.** Én `LIMIT` mot
+  hele populasjonen ville motsagt §2.1 direkte: står det flere enn
+  `p_grense` rader i kø 1 — etter en lengre schedulerstans, eller på en
+  base der `p_grense` er satt lavt — ville resten aldri blitt returnert i
+  det hele tatt. Rotasjonen på `siste_revalideringsforsok` flytter riktignok
+  kohorten ved *neste* time, men rader som ble utelatt kan da alt ha passert
+  72-timersgrensen: sikkerhetsnettet ville vært kappet, bare langsomt.
+  Arbeideren kaller derfor funksjonen i **løkke** med sitt eget
+  kjøringsstempel:
+
+  ```
+  start := now()                      -- ETT stempel for hele kjøringen
+  behandlet := {}                     -- arbeiderens egen in-run-mengde
+  loop:
+      side := hent_revalideringskandidater(p_grense, start)
+      side := side minus `behandlet`  -- terminering, se under
+      hvis side er tom: bryt
+      behandle side (kø 1 helt, kø 2+3 til K er brukt opp)
+      behandlet := behandlet ∪ side
+      hvis ingen rad i side var sikkerhetsnett OG K er brukt opp: bryt
+  ```
+
+  Løkka terminerer fordi hver rad den åpner en runde for, får
+  `siste_revalideringsforsok = now() >= start` og dermed faller ut av
+  neste sides `WHERE`. Arbeiderens egen `behandlet`-mengde er beltet: en
+  rad der åpningen kastet før stempelet ble satt, kan ikke gi en evig
+  løkke. I tillegg står et hardt tak på antall sider per kjøring, og et
+  brudd på det er en **målt** hendelse (`sikkerhetsnett.sider_avkortet`),
+  aldri en stille avkorting.
+- **K gjelder fortsatt kun kø 2 + kø 3 — nå målt per rad.** Det er
+  `sikkerhetsnett`-kolonnen som gjør det mulig å håndheve budsjettet uten
+  å regne klassen ut på nytt i arbeideren, med risiko for at de to
+  definisjonene av «26 timer» driver fra hverandre. Kø 1-rader teller ikke
+  mot K, uansett hvor mange sider de kom over.
 - **Vedvarende feil må ikke kunne stenge køen for alle andre.** Sorterte
   vi kun på `siste_vellykkede_revalidering`, ville `p_grense` domener som
   feiler TXT-validering hver time hatt et tidsstempel som aldri rykker
@@ -443,11 +505,14 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
   en kjøring*, aldri *når* en rad skal revalideres: normalslottet avledes
   fortsatt av `revalideringsminutt(hostname)` (§2). Et feilforsøk kan
   derfor fortsatt ikke forskyve normalplanen.
-- **`p_grense` er en minnegrense, ikke K.** K regnes fortsatt av
-  `n_verifisert` (§2.2) og håndheves med `LIMIT` i arbeiderens egen plan.
-  Blir populasjonen større enn `p_grense`, er det en **målt** hendelse med
-  samme form som overskridelse av kø 1: arbeideren logger at kandidatlista
-  ble kappet, og port 10 måler at det ikke skjer stille.
+- **`p_grense` er en SIDEstørrelse, ikke K og ikke en dekningsgrense.** Den
+  begrenser hvor mye én spørring drar inn i minnet, ingenting annet. K
+  regnes fortsatt av `n_verifisert` (§2.2) og håndheves i arbeiderens egen
+  plan mot kø 2 + kø 3. At populasjonen er større enn `p_grense` er derfor
+  ikke lenger en kapping å rapportere — det er én ekstra side. Det som
+  fortsatt rapporteres, er sidetaket over og enhver kjøring der kø 1 ikke
+  ble tømt (`n_sikkerhetsnett` mot antall kø 1-rader arbeideren faktisk
+  behandlet), og port 10 måler at det ikke skjer stille.
 - **Ingen ny credential, ingen BYPASSRLS på jobbrollen.** Alternativet —
   å gi `disponit_domenerevalidator` `BYPASSRLS` — ville gitt en
   nettverksautentiserbar rolle full kryss-tenant lesetilgang til alt den
@@ -520,8 +585,14 @@ CREATE TABLE domeneobservasjon (
   runde_id UUID NOT NULL REFERENCES domeneobservasjonsrunde (runde_id)
                          ON DELETE CASCADE,
   observator TEXT NOT NULL,               -- session_user, satt av funksjonen
-  txt_hash TEXT NOT NULL,                 -- sha256, beregnet I databasen
+  -- Et MISLYKKET oppslag er også en observasjon. Se §2.4b: uten at det
+  -- registreres, forlater runden aldri observatørens kø.
+  utfall TEXT NOT NULL CHECK (utfall IN ('treff','avvik','ingen_post')),
+  txt_hash TEXT,                          -- sha256, beregnet I databasen
+  forsok INT NOT NULL DEFAULT 1,          -- avgrenset, §2.4b
   observert_ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT domeneobservasjon_hash_naar_svar
+      CHECK ((txt_hash IS NULL) = (utfall = 'ingen_post')),
   PRIMARY KEY (runde_id, observator));    -- én observatør, én observasjon
 ```
 
@@ -538,6 +609,34 @@ i stedet for å opprette en ny. Unikindeksen er beltet: en kaller som forsøker
 Idempotensen er ikke bare hygiene — den er det som gjør at et API-retry (§2.5c)
 poller den *samme* runden i stedet for å åpne en ny hver gang klienten spør.
 
+**Den forkastede runden må RAPPORTERES, ikke bare ryddes.** Erstatningen
+skjer i samme kall som forkastingen, og en funksjon som bare returnerte det
+nye `runde_id`-et ville gjort forrige forsøks utfall permanent uobserverbart:
+kalleren fikk et `apen` runde-id tilbake, svarte `202 venter_observasjoner`
+igjen, og klienten kunne pollet i det uendelige uten noen gang å få vite at
+DNS-forsøket før dette **feilet**. `409 observasjon_uteblitt` i §2.5c ville
+vært en dokumentert respons ingen kodesti kunne produsere. Funksjonen
+returnerer derfor en rad, ikke en skalar:
+
+```sql
+CREATE FUNCTION apne_domeneobservasjonsrunde(
+        p_tenant TEXT, p_hostname TEXT, p_formal TEXT)
+RETURNS TABLE (runde_id UUID, gjenbrukt BOOLEAN,
+               forrige_runde UUID, forrige_utfall TEXT)
+-- forrige_utfall ∈ (NULL, 'observasjon_uteblitt', 'observasjon_uenighet')
+```
+
+Utfallet avledes av den forkastede runden FØR den forkastes: null
+observasjoner → `observasjon_uteblitt`; observasjoner, men aldri to distinkte
+observatører med `txt_hash` lik rundens `challenge_token_hash` →
+`observasjon_uenighet`. Det samme utfallet skrives som
+`domenekontroll_hendelse` på raden, så evidensen står igjen etter at runden
+selv er ryddet (§2.4bb) — returverdien er hvordan kalleren *svarer*,
+hendelsen er hva som *skjedde*. Forkastes flere utløpte runder i samme kall,
+rapporteres den nyeste; alle får hendelse. Revalideringsarbeideren bruker
+samme felt som feilsignal i stedet for å utlede stillhet av at ingenting
+skjedde.
+
 **Og med `formal = 'revalidering'` stempler den forsøket.**
 `domenekontroll.siste_revalideringsforsok = now()` settes i samme
 transaksjon, **også** når kallet returnerer en runde som alt lever — det
@@ -547,12 +646,13 @@ kolonnen: de er ikke revalideringsarbeid.
 
 | Funksjon | Kalles av | Håndhever |
 |---|---|---|
-| `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `runde_id` | revalideringsarbeideren (`disponit_domenerevalidator`) eller API-et (`disponit`) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt, **kopieres til runden** (§2.4a) og challengen ikke utløpt (unntatt `revalidering`, §2.5); kort TTL; åpningen er idempotent under sonelåsen; runden er engangs |
-| `hent_apne_observasjonsrunder()` → `SETOF (runde_id, hostname, formal)` | **observatørrollene** `disponit_domeneobservator_*` | Kun `apen`, ikke utløpt, og kun runder kalleren selv ikke alt har meldt inn i; `ORDER BY apnet LIMIT 50`; **ingen `tenant` i utdata** (§2.4b) |
-| `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB og må være lik **rundens** `challenge_token_hash` (§2.4a); runden må være `apen` og ikke utløpt |
+| `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `(runde_id, gjenbrukt, forrige_runde, forrige_utfall)` | revalideringsarbeideren (`disponit_domenerevalidator`) eller API-et (`disponit`) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt`/`tilbakekalt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt, **kopieres til runden** (§2.4a) og challengen ikke utløpt (unntatt `revalidering`, §2.5); kort TTL; åpningen er idempotent under sonelåsen; en utløpt runde forkastes med **utfallet rapportert** (over); runden er engangs |
+| `hent_apne_observasjonsrunder()` → `SETOF (runde_id, hostname, formal)` | **observatørrollene** `disponit_domeneobservator_*` | Kun `apen`, ikke utløpt, og kun runder kalleren selv ikke har fått `treff` på — med maks 3 forsøk og 60 s tilbakefall per runde; `ORDER BY forsok NULLS FIRST, apnet LIMIT 50`; **ingen `tenant` i utdata** (§2.4b) |
+| `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB; utfallet er `treff` når den er lik **rundens** `challenge_token_hash` (§2.4a), ellers `avvik` eller `ingen_post` — **raden skrives uansett** (§2.4b), `treff` er uforanderlig; runden må være `apen` og ikke utløpt |
 | `verifiser_domenekontroll(tenant, hostname, wildcard, aktor, p_runde UUID)` | API-et | Som under, pluss: runden har `formal = 'verifisering'`, gjelder dette `(tenant, hostname)`, er `apen` og ikke utløpt, og har **≥ 2 observasjoner fra distinkte `observator` med samme `txt_hash`** — alt under hostname-låsen, FØR noen status settes eller noen overtakelse utløses |
 | `revalider_domenekontroll(tenant, hostname, aktor, p_runde UUID)` | arbeideren | Samme runde-krav med `formal = 'revalidering'`; så settes tidsstemplet og runden merkes `brukt` |
-| `avgjor_domeneovertakelse(…, p_runde UUID)` | API-et, ved **positiv** tildeling | Samme runde-krav med `formal = 'overtakelsesoppgjor'` på vinnerens `(tenant, hostname)` — §4 |
+| `avgjor_domeneovertakelse(…, p_runde UUID)` | **kun** `avgjor_domeneovertakelse_attestert()` — grantet til ingen | Samme runde-krav med `formal = 'overtakelsesoppgjor'` på vinnerens `(tenant, hostname)` — §4 |
+| `avgjor_domeneovertakelse_attestert(tenant, unntak_id, utfall, p_runde)` | API-et (`disponit`), behandleren §4.2b steg 9 | Teller de ferske stemmene under sakens lås, kontrollerer `konfliktsett_hash` (§1a) og **reautoriserer hver talt attestant** med `laas_godkjenner` FOR UPDATE (§4.3) — *så* kalles oppgjøret, i samme transaksjon |
 | `registrer_overtakelsesattestasjon(tenant, unntak_id, utfall, sesjon)` | API-et (`disponit`), behandleren §4.2b | `aktor` tas fra brukersesjonens `bruker_id`, aldri fra et argument; sesjonen må være levende og `authz_snapshot` stemme; medlemskapet må være aktivt og bære `domeneavgjorer`; målet og `konfliktsett_hash` skrives fra saken (§1a/§1b) |
 
 Det som er vunnet: arbeideren har **ikke** EXECUTE på
@@ -631,11 +731,16 @@ BEGIN
   RETURN QUERY
     SELECT r.runde_id, r.hostname, r.formal
       FROM public.domeneobservasjonsrunde r
+      LEFT JOIN public.domeneobservasjon o
+             ON o.runde_id = r.runde_id AND o.observator = session_user
      WHERE r.status = 'apen' AND r.utloper > now()
-       AND NOT EXISTS (SELECT 1 FROM public.domeneobservasjon o
-                        WHERE o.runde_id = r.runde_id
-                          AND o.observator = session_user)
-     ORDER BY r.apnet
+       AND (o.runde_id IS NULL                  -- aldri forsøkt av meg
+            OR (o.utfall <> 'treff'             -- forsøkt, uten svar
+                AND o.forsok < 3                -- avgrenset: maks 3 forsøk
+                AND o.observert_ts < now() - INTERVAL '60 seconds'))
+     -- ALDRI forsøkte runder først. Det er dette leddet som gjør at en
+     -- kohort med manglende TXT-post ikke kan stå i hodet på køen.
+     ORDER BY o.forsok NULLS FIRST, r.apnet
      LIMIT 50;                      -- avgrenset: køen er arbeid, ikke et register
 END $$;
 ```
@@ -644,9 +749,31 @@ END $$;
   slå opp TXT-posten; den trenger ikke å vite hvem som eier det. Uten
   tenant er utdata en arbeidsliste, ikke `domenekontroll`-porteføljen —
   som er nøyaktig grensen §6b setter.
-- **`LIMIT 50` og «ikke meldt av meg»** gjør køen selvdrenerende: en
-  observatør som har svart, ser ikke runden igjen, og en observatør som
-  ligger etter kan aldri dra hele tabellen ut i ett kall.
+- **Et mislykket oppslag må registreres, ellers drenerer køen aldri.**
+  Et tidligere utkast lot `meld_domeneobservasjon()` kaste når TXT-posten
+  manglet eller hashet feil. Da fikk runden aldri en barnerad, `NOT EXISTS`
+  forble sann, og de 50 eldste runder med feil TXT-post ble returnert ved
+  hvert eneste poll — for alltid, i begge observatørene. Ferske, gyldige
+  runder bak dem ville utløpt usett, og en tenant som klarte å åpne nok
+  feilende runder kunne stanset verifisering og revalidering for **alle
+  andre** tenanter. Det er en DoS med to linjers oppskrift, ikke en
+  ytelsesdetalj. `meld_domeneobservasjon()` skriver derfor **alltid** en
+  rad: `treff` når hashen er rundens, `avvik` når TXT-posten svarte noe
+  annet, `ingen_post` når det ikke fantes noe svar. Beviskravet er urørt —
+  konsumentene teller kun rader der `txt_hash` er lik rundens
+  `challenge_token_hash` (§2.4) — men køen ser nå forskjell på «ikke
+  forsøkt» og «forsøkt uten svar».
+- **Forsøkene er avgrensede, ikke uendelige.** En transient SERVFAIL skal
+  kunne prøves igjen, så et ikke-`treff` slippes tilbake i køen etter 60
+  sekunder — men maks tre ganger, og aldri foran en runde ingen har rørt.
+  Etter tredje forsøk er runden ute av *denne* observatørens kø og lever
+  til den utløper og forkastes (§2.4bb). Et `treff` er uforanderlig: det
+  er evidens, og `ON CONFLICT DO UPDATE` i funksjonen rører aldri en rad
+  som alt står `treff`.
+- **`LIMIT 50` og sorteringen** gjør køen selvdrenerende: en observatør
+  som har svart, ser ikke runden igjen; en observatør som ligger etter kan
+  aldri dra hele tabellen ut i ett kall; og hodet av køen tilhører alltid
+  runder ingen har forsøkt ennå.
 - **Køen utvider ikke angrepsflaten.** Den lister kun runder som
   *allerede* er åpnet av en autorisert kaller, den er kortlevd av samme
   grunn som runden (`utloper`), og den kan verken åpne, avslutte eller
@@ -708,9 +835,10 @@ REVOKE ALL ON FUNCTION meld_domeneobservasjon(UUID, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION avgjor_domeneovertakelse_attestert(TEXT, BIGINT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION rydd_staged_artefakter(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION rydd_domeneobservasjonsrunder(INT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION hent_revalideringskandidater(INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION hent_revalideringskandidater(INT, TIMESTAMPTZ) FROM PUBLIC;
 REVOKE ALL ON FUNCTION forelder_hostname(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sone_overlapp(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION konfliktsett_hash(TEXT, TEXT, BIGINT) FROM PUBLIC;
@@ -730,8 +858,22 @@ GRANT EXECUTE ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UU
   TO disponit;                       -- API-et; arbeideren verifiserer ikke
 GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID)
   TO disponit_domenerevalidator;     -- arbeideren; API-et revaliderer ikke
-GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT, UUID)
-  TO disponit;                       -- behandleren, §4.2b
+-- `avgjor_domeneovertakelse` grantes til INGEN. Den er oppgjørets indre
+-- funksjon og kalles utelukkende av innpakningen under, som eies av samme
+-- rolle. Et direkte grant til `disponit` ville gjort §4.3 håndhevet av
+-- Python alene: med to lovlig avgitte stemmer inne, og etter at den ene
+-- attestanten har mistet `domeneavgjorer`, kunne en kompromittert
+-- runtime-credential hoppet over behandleren, åpnet en DNS-runde gjennom
+-- sitt eget grant og kalt oppgjøret rett — funksjonen ville talt de ferske,
+-- lagrede stemmene og tildelt domenet uten å se på medlemskapet slik det
+-- står NÅ.
+GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse_attestert(TEXT, BIGINT, TEXT, UUID)
+  TO disponit;                       -- behandleren, §4.2b steg 8–9
+-- Innpakningen kaller PR-013-s `laas_godkjenner` som EIER, ikke som
+-- `disponit`. SECURITY DEFINER bytter `current_user`, så eierrollen må ha
+-- sitt eget EXECUTE (013 linje 205–206 grantet kun `disponit`).
+GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT)
+  TO disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT)
   TO disponit_artefaktrydder;        -- ryddetimeren, §6
 GRANT EXECUTE ON FUNCTION rydd_domeneobservasjonsrunder(INT)
@@ -748,7 +890,7 @@ GRANT EXECUTE ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT)
 -- riktig ut og levert null rader (§2.2b). Køen går derfor gjennom eierens
 -- egen SECURITY DEFINER-funksjon, som er den ENESTE kryss-tenant lesingen
 -- arbeideren har — syv kolonner, én status.
-GRANT EXECUTE ON FUNCTION hent_revalideringskandidater(INT)
+GRANT EXECUTE ON FUNCTION hent_revalideringskandidater(INT, TIMESTAMPTZ)
   TO disponit_domenerevalidator;
 -- Stemmen skrives KUN gjennom eierens funksjon (§1b): aktøren tas fra
 -- sesjonen og autoriseres i databasen, så en kompromittert runtime kan ikke
@@ -816,10 +958,29 @@ med dør ved siden av.
 UUID` med **nøyaktig samme runde-krav** som revalideringen, kontrollert
 under hostname-låsen **før** noen status settes og før overtakelsesgrenen
 i det hele tatt evalueres. Runden åpnes med `formal = 'verifisering'` mot
-en rad som er `ventende` eller `utlopt` og som har en ikke-utløpt
-challenge — nøyaktig den tilstanden hvor TXT-posten skal ligge ute.
-Førstegangsverifisering og oppfriskning har med dette **én** felles
+en rad som er `ventende`, `utlopt` eller `tilbakekalt`, og som har en
+ikke-utløpt challenge — nøyaktig den tilstanden hvor TXT-posten skal ligge
+ute. Førstegangsverifisering og oppfriskning har med dette **én** felles
 beviskrav-grense, ikke to.
+
+**`tilbakekalt` MÅ stå i den lista, ellers finnes ingen vei tilbake.**
+`utsted_challenge()` bevarer statusen på en `tilbakekalt` rad — det er hele
+poenget med reapplikasjonsgrenen i 018 (linje 186–199): tenanten utsteder en
+fersk challenge, verifiserer på nytt, og raden går til `avklaring_kreves`
+med ny generasjon og `konflikt:<motpart>` som `opprett_overtakelsessak()`
+lages av. Med bare `ventende`/`utlopt` her kan runden aldri åpnes for en
+`tilbakekalt` rad; den gamle fireargumentsversjonen er revokert (§2.4c) og
+den nye krever en runde, så reapplikasjonsgrenen blir **uåpnelig**. Det
+rammer nøyaktig de radene som trenger den mest: en tenant som mistet et
+oppgjør (`tapte_domeneoppgjor`, §3.1), en tenant som ble ryddet av 019
+(`namespaceoverlapp_ved_019`, §2.5b) og en tenant en operatør tilbakekalte
+i ordinær drift ville alle stått permanent uten mulighet til å verifisere
+på nytt eller reise sin egen sak. Port 2k-s «veien ut» og port 20n hviler
+begge på at denne åpningen går. Kravet om **fersk, ikke-utløpt challenge**
+er gjerdet: en tilbakekalt rad kan ikke åpne en runde på en gammel
+challenge, den må utstede en ny gjennom `POST /v1/domener` (§2.5c).
+`avklaring_kreves` står fortsatt **ikke** i lista — den raden er under
+avgjørelse, og veien ut er oppgjøret (§4), ikke en ny verifisering.
 
 **Restrisikoen, sagt rett ut:** en kompromittert *observatør* kan lyve om
 hva dens resolver svarte, og to samvirkende observatører kan forfalske en
@@ -1119,32 +1280,64 @@ ikke oppfyller. 019 rydder derfor **først**, i samme transaksjon, før
 funksjonene erstattes:
 
 ```
-for hvert par (d1, d2) av verifiserte rader i ULIKE tenanter der
-    d1.hostname = forelder(d2.hostname) og d1.wildcard
-    -- KUN forelderens wildcard-bit. Ikke `d1.wildcard OR d2.wildcard`:
-    -- `sone_overlapp` (over) treffer utelukkende når FORELDEREN har
-    -- wildcard, fordi barnets egen wildcard dekker barnebarn — ikke
-    -- forelderen. `example.com` uten wildcard hos A og `foo.example.com`
-    -- MED wildcard hos B har disjunkte scoper; et `OR` ville tilbakekalt
-    -- den yngste av to fullt lovlige autorisasjoner, altså skrudd av
-    -- egress for en tenant migrasjonen ikke hadde noe å utsette på.
-    -- Ryddingen må dekke nøyaktig det gjerdet under gjerder, hverken mer
-    -- eller mindre.
+-- Overlevermengden avledes for HELE overlappsgrafen, i ÉN pass i
+-- ansiennitetsrekkefølge. Hver rad måles mot dem som fortsatt STÅR, aldri
+-- mot utgangspunktet.
+overlevere := {}                     -- rader som fortsatt er `verifisert`
+for hver verifisert rad d, SORTERT på (verifisert_ts, hostname, tenant):
+    innehaver := den FØRSTE o i `overlevere` (samme sortering) der
+        o.tenant <> d.tenant
+        AND (sone_overlapp(o.hostname, d.hostname, o.wildcard)
+             OR sone_overlapp(d.hostname, o.hostname, d.wildcard))
+    -- KUN forelderens wildcard-bit — det er nettopp det `sone_overlapp`
+    -- tar som tredje argument, og de to leddene er de to retningene
+    -- (o forelder til d, eller d forelder til o). Ikke
+    -- `o.wildcard OR d.wildcard`: `sone_overlapp` treffer utelukkende når
+    -- FORELDEREN har wildcard, fordi barnets egen wildcard dekker
+    -- barnebarn — ikke forelderen. `example.com` uten wildcard hos A og
+    -- `foo.example.com` MED wildcard hos B har disjunkte scoper; et `OR`
+    -- ville tilbakekalt den yngste av to fullt lovlige autorisasjoner,
+    -- altså skrudd av egress for en tenant migrasjonen ikke hadde noe å
+    -- utsette på. Ryddingen må dekke nøyaktig det gjerdet under gjerder,
+    -- hverken mer eller mindre.
     -- eksakt-navnkollisjon kan ikke finnes: `en_verifisert_per_hostname`
     -- har gjerdet den siden 016
-  innehaver := den med LAVEST (verifisert_ts, hostname, tenant)   -- deterministisk
-  utfordrer := den andre
-  utfordrer → 'tilbakekalt', grunn 'namespaceoverlapp_ved_019',
-              konflikt_motpart = innehaver.tenant, generasjon++
-  hendelse på begge rader, med hele overlappsbildet i `detalj`
-  hostname_binding røres IKKE
+    hvis innehaver finnes:
+        d → 'tilbakekalt', grunn 'namespaceoverlapp_ved_019',
+            konflikt_motpart = innehaver.tenant, generasjon++
+        hendelse på BEGGE rader, med hele overlappsbildet i `detalj`
+        hostname_binding røres IKKE
+        -- d går IKKE inn i `overlevere`: en tilbakekalt rad er ikke et
+        -- gjerde for radene etter den
+    ellers:
+        overlevere := overlevere ∪ {d}
 ```
 
+- **Kjeder løses mot overleverne, ikke mot utgangspunktet.** Den naive
+  formen — finn alle overlappende par én gang, og tilbakekall den yngste i
+  hvert par — tilbakekaller rader som er fullt lovlige når kjeden er
+  nøstet. Konkret: A wildcard `example.com` (eldst), B wildcard
+  `foo.example.com`, C eksakt `bar.foo.example.com` (yngst). Startparene er
+  A–B og B–C, så den naive regelen tar **både** B og C — men A-s wildcard
+  dekker kun ett nivå ned (`foo.example.com`), så i det B er borte, er A og
+  C disjunkte og C skulle stått. Passet over gjør nettopp det: når C måles,
+  er `overlevere` = {A}, og A–C treffer ikke. Bare B faller. Egress for C
+  overlever migrasjonen, og det er ikke en finesse — det er en tenant som
+  ellers hadde mistet et domene ingen hadde noe å utsette på.
+- **Motparten er alltid en rad som fortsatt står.** Fordi `innehaver`
+  velges fra `overlevere`, kan `konflikt_motpart` aldri peke på en rad
+  migrasjonen selv tilbakekalte. Det er ikke kosmetikk: 018-s
+  reapplikasjonsgren returnerer `konflikt:<motpart>`, og
+  `opprett_overtakelsessak()` lager saken av nettopp den verdien. En
+  motpart som selv er `tilbakekalt` ville gitt en sak mot ingen.
 - **Innehaveren er den eldste verifiseringen.** Ikke den bredeste, ikke
   den smaleste: den som sto der først. Regelen må kunne kjøres to ganger
   med samme utfall på en base som ble avbrutt, og `verifisert_ts` er det
   eneste feltet som gir det uten å ta stilling til hvem som «egentlig» eier
-  navnet — det er fire øyne som avgjør, ikke en migrasjon.
+  navnet — det er fire øyne som avgjør, ikke en migrasjon. Ett pass er nok
+  nettopp fordi rekkefølgen er ansiennitet: en rad som er sluppet inn i
+  `overlevere`, kan aldri senere bli tilbakekalt av en yngre rad, så
+  mengden vokser monotont og et andre pass finner ingenting.
 - **`tilbakekalt` med motpart, ikke `avklaring_kreves`.** Det er ikke en
   formalitet: en rad i `avklaring_kreves` kan **kun** løftes ut av
   `avgjor_domeneovertakelse()`, som krever en M-37-sak — og saken opprettes
@@ -1183,7 +1376,7 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
 | Rute | Scope | Hva den gjør |
 |---|---|---|
 | `POST /v1/domener` | `domains:verify` | `utsted_challenge(tenant, hostname, wildcard, aktor, …)`; returnerer TXT-navn og token **én gang** (hashen lagres, klarteksten aldri, 016). Reissue på samme hostnavn forkaster åpne runder (§2.4a) |
-| `POST /v1/domener/{hostname}/verifisering` | `domains:verify` | Åpner (eller gjenbruker, §2.4) runden med `formal = 'verifisering'` og svarer `202 venter_observasjoner` med `runde_id`. Er runden alt full — to distinkte observatører, samme `txt_hash` — kaller den `verifiser_domenekontroll(…, p_runde)` og svarer `200 verifisert`, `409 avklaring_kreves` (overlapp eller overtakelse, §2.5b/§3) eller `409 observasjon_uteblitt` når runden utløp uten to enige |
+| `POST /v1/domener/{hostname}/verifisering` | `domains:verify` | Åpner (eller gjenbruker, §2.4) runden med `formal = 'verifisering'` og svarer `202 venter_observasjoner` med `runde_id`. Er runden alt full — to distinkte observatører, samme `txt_hash` — kaller den `verifiser_domenekontroll(…, p_runde)` og svarer `200 verifisert` eller `409 avklaring_kreves` (overlapp eller overtakelse, §2.5b/§3). Rapporterte åpningen at forrige runde utløp uten to enige, svarer den `409` med `forrige_utfall` som kode (`observasjon_uteblitt`/`observasjon_uenighet`) — og med det **nye** `runde_id`-et i kroppen |
 | `GET /v1/domener` / `GET /v1/domener/{hostname}` | `domains:read` | Tenantens egne rader: status, `utloper`, `siste_vellykkede_revalidering`, konfliktbildet fra `domenekonfliktpart`. Aldri `challenge_token_hash` |
 | `POST /v1/domener/overtakelse/{unntak_id}/runde` | `domains:adjudicate` | Åpner runden med `formal = 'overtakelsesoppgjor'` på **sakens** vinnende `(tenant, hostname)` og returnerer `runde_id`-en attestasjonsruten tar som `dns_runde_id` (§4.2b steg 9). Uten den måtte attestanten gjettet en UUID |
 
@@ -1195,6 +1388,13 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
   ruten forbruker den i det øyeblikket den er full. Utløpt runde uten to
   enige er ikke en feil i basen: neste kall åpner en ny mot samme
   challenge.
+- **Men klienten skal VITE at forrige forsøk feilet.** Åpningen forkaster
+  den utløpte runden og returnerer utfallet i samme kall (§2.4), og ruten
+  svarer da `409` med den koden — ikke enda et `202`. Uten det leddet er
+  «poll til det går» det eneste klienten kan gjøre, og en TXT-post som
+  aldri ble publisert ser ut nøyaktig som en som er på vei: `409` med
+  `runde_id` for den ferske runden sier begge deler på én gang — forrige
+  DNS-forsøk fant ingenting, og her er runden det neste forsøket gjelder.
 - **`domains:verify` er tenantens eget domene, `domains:adjudicate` er en
   annens.** De to scopene er adskilte med vilje og bæres av hver sin rolle.
   Å registrere `example.com` for seg selv er en alminnelig
@@ -1687,12 +1887,16 @@ behandle_domeneattestasjon(tenant, aktor, unntak_id, utfall,
   7. tell FERSKE attestasjoner med samme `utfall` (§4):
        avvis → terskel 1 · godkjenn → terskel 2, distinkte aktører
      under terskel → `venter_andre_godkjenner`, svar `gjenstaar`, ferdig
-  8. terskel nådd: reautoriser HVER talt attestant (§4.3), så
-     runden `apen → klar` og saken → `godkjenning_klar`
-  9. `avgjor_domeneovertakelse(..., p_runde)` i SAMME transaksjon.
+  8. terskel nådd: reautoriser HVER talt attestant (§4.3) som tidlig,
+     legibelt avslag, så runden `apen → klar` og saken → `godkjenning_klar`
+  9. `avgjor_domeneovertakelse_attestert(tenant, unntak_id, utfall,
+     dns_runde_id)` i SAMME transaksjon — ikke `avgjor_domeneovertakelse()`
+     direkte; den er ikke lenger kallbar for runtime (§2.4c). Innpakningen
+     gjentar tellingen og HELE reautoriseringen fra steg 8 under sakens
+     lås, så steg 8 er defense-in-depth og ikke den eneste vakten (§4.3).
      `p_runde` er DNS-runden (§2.4), åpnet av rundeRUTEN i §2.5c og sendt
      inn som `dns_runde_id`; den kreves kun ved `godkjenn` og er ikke
-     godkjenningsrunden fra steg 5. Funksjonen avgjør HELE
+     godkjenningsrunden fra steg 5. Oppgjøret avgjør HELE
      overlappsmengden (§2.5b) — flere motparter er ett oppgjør, ikke ett
      kall per motpart
  10. godkjenningsrunden `klar → brukt` med
@@ -1757,8 +1961,7 @@ handler *nå*; den sier ingenting om den andre raden.
 **Kontrakten er PR-013-s, og den er alt bevist i koden.** Aktivering av en
 policy reautoriserer hver bundet godkjenner ved aktiveringen —
 `_reautoriser_godkjennere()` (`policyadmin.py:646–676`), selv et resultat
-av en Codex-runde. PR-015 bruker samme mønster på attestantene, i steg 8,
-i **samme transaksjon** som `avgjor_domeneovertakelse()`:
+av en Codex-runde. PR-015 bruker samme mønster på attestantene:
 
 ```
 for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
@@ -1768,6 +1971,42 @@ for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
     rolle NOT IN rad.roller           -> `attestant_uautorisert:<aktor>:rolle_borte`
     'domains:adjudicate' NOT IN scopes_for_roller(rad.roller)
                                       -> `attestant_uautorisert:<aktor>:scope_mangler`
+```
+
+**Og sjekken må ligge INNE i oppgjøret, ikke foran det.** Et tidligere
+utkast la hele denne løkka i Python-behandleren og grantet
+`avgjor_domeneovertakelse()` direkte til runtime-rollen. Da er §4.3 en vakt
+med en dør ved siden av, og angrepet er kort: to lovlige stemmer står inne,
+den ene attestanten mister `domeneavgjorer`, og en kompromittert
+`disponit`-credential kaller oppgjøret direkte — den åpner DNS-runden
+gjennom sitt eget grant (§2.4c) og sender `p_runde` inn. Funksjonen teller
+de lagrede, fortsatt ferske stemmene og tildeler domenet uten å se på
+medlemskapet slik det står nå. §1b lukket den samme luken for *skrivingen*
+av en stemme; dette er `tellingen` av dem, og den må lukkes samme sted:
+i databasen, av eieren. 019 legger derfor en innpakning ved siden av
+oppgjøret, og oppgjøret selv grantes til ingen:
+
+```sql
+CREATE FUNCTION avgjor_domeneovertakelse_attestert(
+        p_tenant TEXT, p_unntak_id BIGINT, p_utfall TEXT, p_runde UUID)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+  -- 1. Saken FOR UPDATE: kategori 'domeneovertakelse'; målet
+  --    (vinnende_tenant, hostname, forventet_generasjon) leses fra
+  --    idempotensnøkkelen — samme oppslag som saksbindingstriggeren (§1).
+  -- 2. De TALTE stemmene: `overtakelse_attestasjon` for saken med
+  --    `utfall = p_utfall` og `avgitt_ts > now() - INTERVAL '72 hours'`,
+  --    ORDER BY aktor. Terskel: 'avvis' -> 1, 'godkjenn' -> 2 distinkte
+  --    aktører. Under terskel -> RETURN 'krever_to_attestasjoner'.
+  -- 3. Konfliktbildet: hver talt stemmes `konfliktsett_hash` må være lik
+  --    konfliktsett_hash(vinnende_tenant, hostname, generasjon) NÅ (§1a),
+  --    ellers -> 'konfliktbildet_endret'.
+  -- 4. Reautoriseringen over, i `aktor`-rekkefølge, med laas_godkjenner
+  --    FOR UPDATE. Feiler én -> RAISE `attestant_uautorisert:<aktor>:<grunn>`.
+  -- 5. FØRST DA: avgjor_domeneovertakelse(vinnende_tenant, hostname,
+  --    p_unntak_id, p_utfall = 'godkjenn', aktor, p_runde) — samme
+  --    transaksjon, samme låser. Returverdien går rett tilbake
+  --    ('tildelt' / 'avvist' / 'alt_avgjort').
+$$;
 ```
 
 - **`authz_version` er hele beviset.** `brukermedlemskap_authz_bump()`
@@ -1781,25 +2020,35 @@ for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
   med `FOR UPDATE`, så en samtidig tilbakekalling ikke kan committe etter
   lesningen og vinne kappløpet mot oppgjøret. Uten låsen ville sjekken
   vært et øyeblikksbilde tildelingen straks kunne overleve. Funksjonen
-  finnes fra før og har allerede `EXECUTE` for `disponit` (013 linje
-  205–206) — samme rolle domeneruten kjører som. Ingen ny GRANT, ingen ny
-  funksjon.
+  finnes fra før; 019 legger kun til `EXECUTE` for `disponit_domene_eier`,
+  fordi innpakningen kjører som eier og ikke som `disponit` (§2.4c).
+- **Én vei inn, målt som fravær av alle andre.** Etter dette har `disponit`
+  EXECUTE på `avgjor_domeneovertakelse_attestert` og på **ingen** signatur
+  av `avgjor_domeneovertakelse`. Fire-øyne-kontrakten er da håndhevet av
+  det samme laget som eier tabellen den leser, og et kompromittert
+  runtime-credential har ingen kallbar vei forbi den. Port 2g måler
+  nettopp fraværet, ikke bare at den vanlige veien virker.
+- **Terskelen telles to steder, med vilje.** Behandleren teller også (steg
+  7) — den må kunne svare `venter_andre_godkjenner` og `gjenstaar` uten å
+  forsøke et oppgjør. Men det er innpakningens telling som *avgjør*: den
+  leser stemmene under sakens lås, i samme transaksjon som tildelingen, og
+  returnerer `krever_to_attestasjoner` hvis Python tok feil. Python teller
+  for å svare; databasen teller for å tildele.
 - **Deterministisk låserekkefølge.** Sortert på `aktor`, av nøyaktig
   samme grunn som PR-013 (`policyadmin.py:663–666`): to samtidige
   oppgjør som deler en attestant tar samme lås først og serialiseres i
   stedet for å vranglåse.
-- **Scopeoversettelsen blir i Python — men den er ikke alene.**
-  `ROLLE_TIL_SCOPES` er
-  applikasjonens lukkede kart; databasen kjenner bare rollenavn.
-  Sjekken kjøres derfor av kalleren — men **under samme transaksjon og
-  samme radlås** som `avgjor_domeneovertakelse()`, så den er ikke en
-  preflight. At stemmen i det hele tatt kunne skrives, krever i tillegg
-  at databasen selv så `domeneavgjorer` på en aktiv sesjon (§1b): dette
-  leddet er defense-in-depth over en vakt som allerede har stått, ikke
-  den eneste vakten. Rekkefølgen er ufravikelig: lås attestantene, verifiser,
-  *så* kall oppgjøret. Faller én sjekk, rulles hele transaksjonen
-  tilbake: ingen domeneovergang, ingen sakslukking, og attestasjonene
-  blir stående som evidens.
+- **Scopeoversettelsen blir i Python — men den er ikke vakten.**
+  `ROLLE_TIL_SCOPES` er applikasjonens lukkede kart; databasen kjenner bare
+  rollenavn. Innpakningen krever derfor **rollenavnet** `domeneavgjorer`
+  direkte i funksjonskroppen, nøyaktig som §1b gjør det, og port 20l er
+  paritetstesten som holder kartet og kroppen fra å drive fra hverandre.
+  Scopeleddet kjøres i tillegg av behandleren (steg 3 og 8) som
+  defense-in-depth over en vakt som allerede har stått — ikke som den
+  eneste. Rekkefølgen inne i innpakningen er ufravikelig: lås saken, tell
+  stemmene, lås attestantene, verifiser, *så* kall oppgjøret. Faller én
+  sjekk, rulles hele transaksjonen tilbake: ingen domeneovergang, ingen
+  sakslukking, og attestasjonene blir stående som evidens.
 - **Fail-closed og legibelt.** Feilen navngir aktøren og grunnen (403),
   slik at flaten kan si «aktør X er ikke lenger avgjører — hen må
   attestere på nytt, eller tenanten må gi rollen til en annen», ikke
@@ -1856,10 +2105,53 @@ for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
   committer i det vinduet ville passert en preflight-only-sjekk og så
   blitt konsumert. 019-versjonen av `lagre_artefakt_staged()`
   sammenligner derfor kapabilitetens `owner_generation` mot
-  `oppdrag.owner_generation` **etter** at kapabilitetsraden er låst, og
-  hever `invalid_parameter_value` ved avvik. Preflighten beholder samme
-  sjekk — den gir det tidlige, billige avslaget — men den er ikke
-  porten.
+  `oppdrag.owner_generation`, og hever `invalid_parameter_value` ved
+  avvik. Preflighten beholder samme sjekk — den gir det tidlige, billige
+  avslaget — men den er ikke porten.
+
+  **Og sammenligningen må gjøres under en lås på OPPDRAGET, ikke bare på
+  kapabiliteten.** Å låse kapabilitetsraden `FOR UPDATE` og så lese
+  `oppdrag.owner_generation` er fortsatt to uavhengige operasjoner: de to
+  radene har ingen låserelasjon, så et reclaim kan committe sin
+  `UPDATE public.oppdrag SET owner_generation = o.owner_generation + 1`
+  (015 linje 272–280) i vinduet mellom lesningen og `INSERT`-en av
+  artefaktet — generasjonene stemte da de ble sammenlignet, og den gamle
+  eieren skriver evidens på et oppdrag som alt har skiftet eier. Porten som
+  bare committer reclaimet *før* forbrukeren starter (24c), treffer ikke
+  dette indre kappløpet i det hele tatt. Rekkefølgen i 019-versjonen er
+  derfor:
+
+  ```
+  1. SELECT owner_generation FROM oppdrag
+      WHERE tenant = p_tenant AND id = p_oppdrag_id FOR SHARE;
+     -- ikke funnet -> invalid_parameter_value, samme kontrakt som
+     -- bindingsavviket under
+  2. SELECT ... FROM artefaktkapabilitet WHERE jti = ... FOR UPDATE;
+  3. brukt-grenen (idempotens) svarer som før, UTEN generasjonsledd
+  4. bindingssjekken, som nå BEVISER at raden fra steg 1 er
+     kapabilitetens eget oppdrag (k.oppdrag_id = p_oppdrag_id)
+  5. k.owner_generation <> generasjonen fra steg 1 -> avvist
+  6. INSERT artefakt + UPDATE kapabilitet -> brukt
+  ```
+
+  - **`FOR SHARE`, ikke `FOR UPDATE`.** Den skal konflikte med reclaim, som
+    tar en eksklusiv radlås gjennom sin `UPDATE` — og *ikke* med andre
+    samtidige opplastinger på samme oppdrag, som er helt lovlige. Delt lås
+    gir nøyaktig det: reclaimet kan ikke committe mens en evidensskriving
+    er inne, og to opplastinger sperrer ikke for hverandre.
+    `claim_neste_oppdrag` selekterer kandidatene med `FOR UPDATE SKIP
+    LOCKED` (015 linje 186–194), så et reclaim som møter en pågående
+    opplasting **hopper over** oppdraget og tar neste — det blokkerer ikke,
+    og oppdraget er reclaimbart igjen ved neste poll, mikrosekunder senere.
+    Fencingen koster altså ingen reclaim-latens; den flytter bare
+    rekkefølgen.
+  - **Låserekkefølgen er oppdrag før kapabilitet, i ALLE stier.**
+    `utsted_artefaktkapabilitet()` låser alt oppdraget først og skriver så
+    kapabiliteten (§5, punktet om epoch), og `claim_neste_oppdrag` tar
+    global → modul → oppdragsrad (015 linje 181–182) uten å røre
+    kapabiliteter. Steg 1 før steg 2 holder derfor hele grafen syklusfri.
+    Motsatt rekkefølge — kapabilitet først, så oppdrag — ville gitt en
+    vranglås mot enhver sti som utsteder mens en annen forbruker.
   **Unntaket er idempotensgrenen:** en kapabilitet som allerede er
   `brukt` returnerer sitt eksisterende `artefakt_id` uendret, også etter
   et reclaim. Der skrives ingen ny evidens, og et retry som mister svaret
@@ -1961,7 +2253,7 @@ det som mangler er rollene:
 | Rolle | Type | Hvorfor |
 |---|---|---|
 | `disponit_domeneobservator_1` / `_2` | **LOGIN**, tilfeldig passord, egen DSN | Identiteten er `session_user` (§2.4). En NOLOGIN-rolle kan ikke være noens `session_user`, og uten DSN kan prosessen ikke autentisere |
-| `disponit_domenerevalidator` | **LOGIN** + DSN, **ny** | Revalideringsarbeideren (§2). Har nøyaktig tre EXECUTE (`apne_domeneobservasjonsrunde`, `revalider_domenekontroll(…, p_runde)`, `hent_revalideringskandidater(INT)`) og **ingen bord- eller kolonnegrant** — køen leses gjennom funksjonen fordi RLS gjør et kolonnegrant tomt, §2.2b/§2.4c |
+| `disponit_domenerevalidator` | **LOGIN** + DSN, **ny** | Revalideringsarbeideren (§2). Har nøyaktig tre EXECUTE (`apne_domeneobservasjonsrunde`, `revalider_domenekontroll(…, p_runde)`, `hent_revalideringskandidater(INT, TIMESTAMPTZ)`) og **ingen bord- eller kolonnegrant** — køen leses gjennom funksjonen fordi RLS gjør et kolonnegrant tomt, §2.2b/§2.4c |
 | `disponit_artefaktrydder` | **LOGIN** + DSN, **ny** | Ryddetimeren (§6). Har nøyaktig to EXECUTE: `rydd_staged_artefakter(INT)` og `rydd_domeneobservasjonsrunder(INT)` |
 | `disponit_domains_admin` | **NOLOGIN, uendret fra 014b** | Se under: den skal ikke bli en servicecredential |
 
@@ -2150,9 +2442,10 @@ GRANT SELECT ON domenekonfliktpart TO {rolle};
 ender i dag på 016/017-signaturene. Etter 019 ville hver ny
 `disponit_domene_eier`-eid funksjon — `verifiser_domenekontroll(…, UUID)`,
 `revalider_domenekontroll(…, UUID)`, `avgjor_domeneovertakelse(…, UUID)`,
-`apne_domeneobservasjonsrunde`, `hent_apne_observasjonsrunder`,
-`meld_domeneobservasjon`, `sone_overlapp`, `forelder_hostname`,
-`rydd_domeneobservasjonsrunder`, `hent_revalideringskandidater`,
+`avgjor_domeneovertakelse_attestert`, `apne_domeneobservasjonsrunde`,
+`hent_apne_observasjonsrunder`, `meld_domeneobservasjon`, `sone_overlapp`,
+`forelder_hostname`, `rydd_domeneobservasjonsrunder`,
+`hent_revalideringskandidater(INT, TIMESTAMPTZ)`,
 `konfliktsett_hash`, `registrer_overtakelsesattestasjon` — og de to
 observasjonstabellene (`domeneobservasjonsrunde`, `domeneobservasjon`)
 blitt reklassifisert som
@@ -2200,11 +2493,11 @@ alle testene er grønne.
 
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
-| Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); veien inn til en NY autorisasjon er kun verifiseringsruten (§2.5c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs, kortlevd og **unik per (tenant, hostname, formal)** mens den lever; åpningen er idempotent | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB mot **rundens** challenge (§2.4a); arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status; køen leses gjennom `hent_revalideringskandidater()` fordi FORCE RLS gjør et kolonnegrant tomt (§2.2b) | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)`; terminale runder ryddes på tid (§2.4bb) |
-| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; **stemmen skrives kun av `registrer_overtakelsesattestasjon()`** — runtime har ingen INSERT/UPDATE (§1b/§6c); den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling, også etter en reapplikasjon (§3.1) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); aktøren tatt fra **sesjonen** og autorisert i databasen (§1b); to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, **begge på gjeldende `konfliktsett_hash`** (§1a), og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjons- og konfliktsettsnapshotet |
+| Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); veien inn til en NY autorisasjon er kun verifiseringsruten (§2.5c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs, kortlevd og **unik per (tenant, hostname, formal)** mens den lever; åpningen er idempotent | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB mot **rundens** challenge (§2.4a); arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status; et mislykket oppslag registreres som `avvik`/`ingen_post` i stedet for å kastes, så observatørkøen roterer i stedet for å låse seg (§2.4b); køen leses gjennom `hent_revalideringskandidater()` fordi FORCE RLS gjør et kolonnegrant tomt, og kø 1 sideinndeles til den er tom i stedet for å kappes (§2.2b) | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)`; terminale runder ryddes på tid (§2.4bb) |
+| Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; **stemmen skrives kun av `registrer_overtakelsesattestasjon()`** — runtime har ingen INSERT/UPDATE (§1b/§6c); den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling, også etter en reapplikasjon (§3.1); **selve oppgjøret er grantet til ingen** — eneste kallbare vei er `avgjor_domeneovertakelse_attestert()`, som teller stemmene og reautoriserer attestantene i databasen (§4.3/§2.4c) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); aktøren tatt fra **sesjonen** og autorisert i databasen (§1b); to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, **begge på gjeldende `konfliktsett_hash`** (§1a), og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjons- og konfliktsettsnapshotet |
 | Domenegjerdet (§2.5b) | Overlappstesten ligger i `verifiser_domenekontroll` — den ENESTE veien inn i `verifisert`, også overtakelsesgrenen; ingen kaller kan hoppe over den, og `sone_overlapp` har ingen grant utenfor funksjonen; **rader fra før 019 ryddes av migrasjonen selv**, så gjerdet ikke bare gjelder fremover | **Sonelås på både hostnavnet og forelderen**, i sortert rekkefølge; `example.com` og `foo.example.com` serialiseres mot hverandre, ikke bare mot seg selv; hele overlappsmengden avledes på nytt under låsen ved oppgjør — `forelder`/`barn` mot `sone_overlapp()`, `eksakt` mot at motparten fortsatt ikke er `verifisert`, siden den ble tilbakekalt allerede ved verifiseringen (§2.5b) | Gjerdet måler *effektiv* dekning (wildcard = ett nivå), ikke likhet i hostnavnstreng; `retning` utledes av hostnavnene, ikke av wildcard-biten; overlapp gir `avklaring_kreves` + sak, aldri `verifisert` | Tre og bare tre overlappsformer (`eksakt`/`forelder`/`barn`); en fjerde form er en feil, ikke stillhet; motpartsmengden er en tabell (`domenekonfliktpart`), ikke én kolonne |
 | Drift av det hele (§6b/§6c/§6d) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort); eierskapet kun i `eierskap-reparasjon.sql`-s `_design` — og de to listene motsier ikke hverandre: en runtime-grantet tabell blir hos migrator (§6d, port 28f) | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser med hver sin Unix-bruker og egen 0400-miljøfil | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas; at domenerollen IKKE kan logge inn måles på en oppgradert base (28c) | `UNITS`, `RETTIGHETER`, `_design` og resolveroperatørlista er lukkede lister; en observatør med feil rolle, ukjent operatør eller delt operatør/ASN nekter å starte |
-| Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; generasjonen sjekkes på nytt under kapabilitetens radlås i `lagre_artefakt_staged()` | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
+| Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; ved forbruk låses **oppdragsraden `FOR SHARE` FØR kapabilitetsraden `FOR UPDATE`**, så sammenligningen er atomisk mot et samtidig reclaim og ikke bare mot et som alt har committet (§5) | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
 ## 8. Codex-porter
@@ -2214,9 +2507,13 @@ alle testene er grønne.
 2 Uenige observatører (ulik `txt_hash` i samme runde) → ikke vellykket,
 `siste_vellykkede_revalidering` urørt ·
 2b **Runde med kun én observasjon, eller med en TXT-verdi som ikke hasher
-til `challenge_token_hash` → exception, tidsstempel urørt** — også når
-kalleren har `disponit_domains_admin`; og 3-argumentsversjonen er ikke
-lenger kallbar for arbeiderrollen ·
+til `challenge_token_hash` → exception i KONSUMENTEN, tidsstempel urørt** —
+også når kalleren har `disponit_domains_admin`; og 3-argumentsversjonen er
+ikke lenger kallbar for arbeiderrollen. Merk hvor feilen ligger:
+`meld_domeneobservasjon()` **kaster ikke** på et avvik, den registrerer det
+(`utfall = 'avvik'`/`'ingen_post'`, §2.4b) — porten måler at raden finnes
+*og* at `verifiser_domenekontroll`/`revalider_domenekontroll` likevel
+nekter, fordi de teller kun `txt_hash = rundens hash` ·
 2c **Arbeiderrollen forsøker å melde en observasjon selv** — direkte
 `INSERT` i `domeneobservasjon` og kall til
 `meld_domeneobservasjon()` → begge nektet på rettigheter; en
@@ -2237,11 +2534,17 @@ annen tenants autorisasjon ·
 2f **4-argumentsversjonen av `verifiser_domenekontroll` er ikke lenger
 kallbar** for `disponit_domains_admin` eller `disponit` — REVOKE
 verifisert med et direkte kall, ikke antatt ·
-2g **Femargumentsversjonen av `avgjor_domeneovertakelse` er ikke lenger
-kallbar** for `disponit_domains_admin` eller `disponit`: et direkte kall
-med `(tenant, hostname, unntak_id, true, aktor)` → `permission denied`,
-domeneraden urørt, ingen tildeling. Målt med `SET ROLE`, ikke over
-nettverket — rollen er NOLOGIN (§6b), og porten skal bevise at veien er
+2g **INGEN versjon av `avgjor_domeneovertakelse` er kallbar for runtime.**
+Femargumentsversjonen: et direkte kall med
+`(tenant, hostname, unntak_id, true, aktor)` som `disponit_domains_admin`
+eller `disponit` → `permission denied`. **Seksargumentsversjonen med
+`p_runde` likeså** — den grantes til ingen (§2.4c), og porten måler
+`has_function_privilege('disponit', 'avgjor_domeneovertakelse(text,text,
+bigint,boolean,text,uuid)', 'EXECUTE') = false`. I begge tilfeller:
+domeneraden urørt, ingen tildeling. Den eneste kallbare veien er
+`avgjor_domeneovertakelse_attestert()`, og den **må** virke for `disponit`
+i samme port, så REVOKE-en ikke låser ute driften den beskytter. Målt med
+`SET ROLE` for NOLOGIN-rollen (§6b) — porten skal bevise at veien er
 **revokert**, ikke bare at den er uinnlogget ·
 2h **Ingen 019-funksjon er kallbar for `PUBLIC`.** For hver nye signatur
 i §2.4c: en rolle uten eksplisitt grant (test-rollen holder) kaller
@@ -2299,7 +2602,15 @@ tenanter ·
 `foo.example.com` — og 019 kjøres → B står `tilbakekalt` med grunn
 `namespaceoverlapp_ved_019` og `konflikt_motpart = A`, A er urørt, antallet
 er rapportert, og `v_domeneautorisasjon` har null hostnavn med to `gyldig`
-tenanter. **Det disjunkte paret måles i samme port:** A eksakt (uten
+tenanter. **Den nøstede kjeden måles i samme port:** A wildcard
+`example.com` (eldst), B wildcard `foo.example.com`, C eksakt
+`bar.foo.example.com` (yngst) → **kun B** blir `tilbakekalt`. C står urørt,
+fordi A-s wildcard dekker ett nivå og A–C derfor er disjunkte i det B er
+borte. En rydding som tar hvert opprinnelig overlappspar for seg
+tilbakekaller både B og C og slår av egress for en tenant den ikke hadde
+noe å utsette på. I samme måling: hver `konflikt_motpart` peker på en rad
+som fortsatt er `verifisert` etter migrasjonen — en motpart som selv ble
+ryddet, gir en reapplikasjon uten sak å reise. **Det disjunkte paret måles i samme port:** A eksakt (uten
 wildcard) på `example.com` og B **med** wildcard på `foo.example.com` er
 *ikke* overlapp — scopene er disjunkte — og begge skal stå urørt etter
 019. En rydding som predikerer på `d1.wildcard OR d2.wildcard` består
@@ -2330,6 +2641,43 @@ inn; nytt kall på samme rute → `200 verifisert`. Målt ende-til-ende gjennom
 HTTP med browsersesjon, ikke ved å kalle SQL-funksjonen direkte. Negativt:
 en `domeneavgjorer` nektes på registreringsruten, en `domeneforvalter`
 nektes på attestasjonsruten, og tokenet vises aldri igjen ·
+2q **Feilende oppslag roterer ut av observatørkøen (§2.4b):** 50 runder
+åpnes på hostnavn **uten** TXT-post (eller med feil verdi), og deretter én
+runde med riktig post. Begge observatørene poller
+`hent_apne_observasjonsrunder()` i løkke og melder inn det de faktisk fant.
+Den gyldige runden **må** komme ut av køen og bli verifisert innen sin egen
+TTL. Hvert feilende oppslag skriver en rad (`utfall = 'avvik'`/
+`'ingen_post'`), runden slippes tilbake tidligst etter 60 s og maks 3
+ganger, og etter tredje forsøk er den ute av observatørens kø helt. En
+implementasjon der `meld_domeneobservasjon()` kaster på avvik returnerer de
+samme 50 radene ved hvert poll og feiler porten — den gyldige runden
+utløper usett. **Angrepsformen måles i samme port:** tenant X åpner nok
+feilende runder til å fylle køen, og tenant Y-s verifisering går likevel
+gjennom ·
+2r **En `tilbakekalt` rad kan verifisere på nytt (§2.5/§2.4):** B står
+`tilbakekalt` med `konflikt_motpart` satt — først etter et tapt oppgjør
+(`tapte_domeneoppgjor`), så på en rad ryddet av 019
+(`namespaceoverlapp_ved_019`), og til slutt etter en ordinær
+operatørtilbakekalling. I alle tre: `POST /v1/domener` gir fersk challenge,
+`POST /v1/domener/{hostname}/verifisering` åpner runden **uten**
+`runde_ulovlig_tilstand`, to observatører melder inn, og raden ender
+`avklaring_kreves` med ny generasjon og en fersk M-37-sak (eller
+`verifisert`, når ingen motpart står igjen). Negativt i samme port: en
+`tilbakekalt` rad med **utløpt** challenge nektes, og en rad i
+`avklaring_kreves` nektes fortsatt — veien ut derfra er oppgjøret. En
+implementasjon som kun godtar `ventende`/`utlopt` gjør reapplikasjonsgrenen
+uåpnelig, og både port 2k og 20n hviler på at denne går ·
+2s **Utløpt runde rapporteres, den forsvinner ikke (§2.4/§2.5c):** en
+verifiseringsrunde åpnes, ingen observatør melder inn, klokka skrus forbi
+`utloper`, og klienten kaller ruten igjen → **`409`** med
+`observasjon_uteblitt`, ikke et andre `202` — og kroppen bærer `runde_id`
+for den nye, ferske runden, som deretter kan fylles og gi `200 verifisert`.
+Variant: én observatør melder inn, den andre ikke → `409
+observasjon_uenighet`. I begge tilfellene står utfallet også som
+`domenekontroll_hendelse` på raden etter at runden selv er ryddet (§2.4bb).
+En implementasjon som bare forkaster den utløpte runden og returnerer den
+nye gjør `409 observasjon_uteblitt` uåpnelig, og klienten poller i det
+uendelige uten å få vite at TXT-posten aldri ble sett ·
 2p **De nye tenantbundne tabellene er faktisk RLS-lukket (§1/§2.5b):**
 runtime-rollen setter `sett_kontekst` på tenant X og leser
 `domenekonfliktpart` og `overtakelse_attestasjon` → null rader tilhørende
@@ -2395,6 +2743,19 @@ begge kjøringene og feiler porten. I samme port: rekkefølgen er fortsatt
 deterministisk mellom to like baser, kø 1-klassen står fortsatt først, og
 `hent_revalideringskandidater` er fortsatt `STABLE` — stempelet skrives av
 `apne_domeneobservasjonsrunde`, ikke av køspørringen.
+10f **Sikkerhetsnettet kappes ikke av sidestørrelsen (§2.1/§2.2b):**
+`p_grense` settes til 5 og **20** domener konstrueres i kø 1 (aldri
+revalidert, eller `siste_vellykkede_revalidering` eldre enn 26 t), med
+ytterligere kø 2-rader bak dem. Én kjøring av arbeideren må åpne en runde
+for **alle 20** — ikke 5 — og `n_sikkerhetsnett` må rapportere 20 fra
+første side. K er fortsatt uoverskredet for kø 2 + kø 3, `n_verifisert` er
+fortsatt hele populasjonen på hver side, og ingen rad returneres to ganger
+(stempelet fra `apne_domeneobservasjonsrunde` tar den ut av neste side).
+Kjør så samme kjøring med sidetaket satt kunstig lavt → resten er
+**rapportert** i `sikkerhetsnett.sider_avkortet`, aldri stille utelatt. En
+implementasjon med én `LIMIT p_grense` over hele populasjonen returnerer 5
+og består både 10, 10d og 10e — og lar 15 domener passere 72 timer med
+grønn timer, som er nøyaktig den stille formen §2.2b finnes for å hindre.
 
 **Alarm (11).** 11 Bred resolverfeil → én driftsalarm, null M-37-saker, og
 `tenant X / hostname Y` fortsatt individuelt synlig med tre døgn uten
@@ -2495,6 +2856,17 @@ aktør 1 attestere på nytt (ny `authz_version`) før oppgjøret går. Samme
 port for `avvis` med én stemme. Testen må endre medlemskapet **etter**
 første stemme; en variant som bare sjekker scopet ved døren beviser
 ingenting om den andre raden ·
+20i-2 **Reautoriseringen står også når behandleren omgås (§4.3/§2.4c):**
+samme oppsett som 20i — to lovlig avgitte, fortsatt ferske stemmer, aktør 1
+har mistet `domeneavgjorer` — men nå kalles oppgjøret **utenom
+Python-behandleren**, som `disponit` over den faktiske forbindelsen: først
+`avgjor_domeneovertakelse(..., p_runde)` direkte → `permission denied`
+(port 2g), så `avgjor_domeneovertakelse_attestert(...)` med en DNS-runde
+runtime har åpnet selv → `attestant_uautorisert:<aktør 1>:authz_endret`,
+ingen tildeling, domeneraden urørt. Porten måler at fire øyne overlever et
+kompromittert runtime-credential, ikke bare en veloppdragen behandler. En
+implementasjon som lar §4.3 ligge i Python og granter oppgjøret til
+`disponit` består 20i og feiler her ·
 20j **72-timersvinduet er faktisk 72 timer:** aktør 1 attesterer, klokka
 skrus 25 timer fram (saksrunden er da utløpt, attestasjonen fortsatt
 fersk), aktør 2 attesterer → **tildelingen går gjennom**; en ny
@@ -2585,6 +2957,23 @@ gjennom **hele** opplastingsveien inkludert `innlos_artefaktkapabilitet`:
 en preflight som sammenligner generasjonen også for `brukt` rader avviser
 retryen før den idempotente grenen nås, og porten er da rød selv om
 `lagre_artefakt_staged()` er riktig (§5) ·
+24f **Reclaim i vinduet INNE i forbrukeren (§5):** A passerer preflighten
+og kaller `lagre_artefakt_staged()`. Reclaim-transaksjonen startes så den
+er klar til å committe **etter** at forbrukeren har lest
+`oppdrag.owner_generation`, men **før** artefaktraden er skrevet — målt
+med en `pg_advisory_lock`-basert barriere eller et injisert stopp inne i
+funksjonen, ikke med `sleep`. Utfallet må være ett av to, aldri noe tredje:
+enten blokkeres/hoppes reclaimet over (`FOR UPDATE SKIP LOCKED` mot
+forbrukerens `FOR SHARE`) og opplastingen lykkes på den generasjonen som
+faktisk gjaldt, eller reclaimet vant og opplastingen avvises. Aldri: begge
+lykkes. Etterpå har oppdraget nøyaktig én eier, og det finnes ingen
+artefaktrad skrevet på en generasjon oppdraget ikke lenger hadde. Port 24c
+committer reclaimet **før** forbrukeren starter og treffer derfor ikke
+dette kappløpet i det hele tatt — en implementasjon som kun låser
+kapabilitetsraden består 24b, 24c og 24d og feiler her. I samme port:
+to samtidige opplastinger på **samme** oppdrag sperrer ikke for hverandre
+(delt lås, ikke eksklusiv), og ingen kjøring ender i vranglås — låsen tas
+alltid på oppdraget før kapabiliteten ·
 24e **Oppgraderingsveien:** base med både `utstedt`- og `brukt`-rader fra
 017 → migrasjonen går gjennom, hver `utstedt` rad ender `feilet`,
 historiske `brukt`-rader beholder `owner_generation IS NULL`, og et token
@@ -2682,6 +3071,10 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 **`revalider_3arg_kallbar_for_arbeider = nei`** ·
 **`verifiser_4arg_kallbar = nei`** ·
 **`avgjor_5arg_kallbar = nei`** ·
+**`avgjor_6arg_kallbar_for_runtime = nei`** (oppgjøret grantes til ingen;
+eneste vei er `avgjor_domeneovertakelse_attestert()`, §2.4c) ·
+**`oppgjor_uten_reautorisering_i_databasen = 0`** (§4.3-løkka kjøres inne i
+innpakningen, ikke bare i behandleren) ·
 **`019_funksjon_kallbar_for_public = 0`** (alle nye signaturer, §2.4c) ·
 **`navngitt_kaller_uten_execute = 0`** (samme liste, motsatt vei) ·
 **`observator_finner_apen_runde = ja`** ·
@@ -2689,6 +3082,20 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 **`observasjonsko_lesbar_for_arbeider_eller_api = 0`** ·
 **`kandidatko_stagnert_pa_vedvarende_feil = 0`** (hver rad i populasjonen
 forsøkt innen ⌈N/p_grense⌉ kjøringer) ·
+**`sikkerhetsnettrad_utelatt_av_sidestorrelsen = 0`** (kø 1 sideinndeles til
+den er tom i samme kjøring; `p_grense` er sidestørrelse, ikke dekning) ·
+**`kandidatrad_returnert_to_ganger_i_samme_kjoring = 0`** ·
+**`observasjonsko_last_av_feilende_oppslag = 0`** (en gyldig runde bak 50
+runder uten TXT-post blir observert innen sin egen TTL) ·
+**`mislykket_oppslag_uregistrert = 0`** (`avvik`/`ingen_post` skrives) ·
+**`treff_overskrevet_av_senere_forsok = 0`** ·
+**`observasjonsforsok_over_maks = 0`** (maks 3 per runde per observatør) ·
+**`tilbakekalt_rad_uten_vei_til_ny_runde = 0`** (reapplikasjonsgrenen er
+åpnelig for `tapte_domeneoppgjor`, `namespaceoverlapp_ved_019` og ordinær
+operatørtilbakekalling) ·
+**`avklaringsrad_apnet_verifiseringsrunde = 0`** ·
+**`utlopt_runde_rapportert_som_202 = 0`** (`409` med `forrige_utfall`, og
+utfallet står som hendelse) ·
 **`verifisering_uten_2_observatorer = 0`** ·
 **`overtakelse_utlost_uten_observasjonsrunde = 0`** ·
 **`to_tenanter_gyldige_for_samme_effektive_hostnavn = 0`** (målt på
@@ -2706,6 +3113,10 @@ vanligste veien: A tilbakekalt ved verifiseringen, B godkjennes) ·
 **`overlapp_fra_for_019_igjen_etter_migrasjon = 0`** ·
 **`disjunkt_par_tilbakekalt_av_019_ryddingen = 0`** (eksakt forelder +
 wildcard barn er IKKE overlapp) ·
+**`overlevende_rad_tilbakekalt_av_nostet_kjede = 0`** (A wildcard
+`example.com` → B wildcard `foo.example.com` → C eksakt
+`bar.foo.example.com`: kun B ryddes) ·
+**`konflikt_motpart_peker_pa_ryddet_rad = 0`** ·
 **`ryddet_overlappsrad_uten_vei_tilbake = 0`** (reapplikasjon gir ny sak) ·
 **`to_apne_runder_pa_samme_mal_og_formal = 0`** ·
 **`runde_forbrukt_etter_challengebytte = 0`** ·
@@ -2755,6 +3166,11 @@ browsersesjon, ikke direkte funksjonskall) ·
 **`kapabilitet_per_registrert_type = alle`** ·
 **`opplasting_med_foreldet_owner_generation = 0`** (målt på
 `lagre_artefakt_staged`, med reclaimet committet ETTER preflighten) ·
+**`opplasting_committet_pa_reclaimet_oppdrag = 0`** (reclaimet committer
+INNE i forbrukeren, mellom generasjonslesningen og artefaktinnsettingen —
+oppdragsraden låses `FOR SHARE` før kapabiliteten, §5) ·
+**`vranglas_mellom_utstedelse_og_forbruk = 0`** (låserekkefølgen er oppdrag
+før kapabilitet i alle stier) ·
 **`utstedt_kapabilitet_uten_generasjon_etter_019 = 0`** ·
 **`migrasjon_019_feiler_pa_eksisterende_rader = nei`** ·
 `levetid_over_frist_avvist = alle` ·
@@ -2788,7 +3204,8 @@ browsersesjon, ikke direkte funksjonskall) ·
 
 **Målte egenskaper (rapporteres, ingen bestått/ikke bestått):**
 `fordeling.maks_andel_per_time` for testpopulasjonen ·
-`sikkerhetsnett.kjoringer_over_K` · `dreneringstid_timer` ved 6 t outage ·
+`sikkerhetsnett.kjoringer_over_K` · `sikkerhetsnett.sider_avkortet` ·
+`sikkerhetsnett.sider_per_kjoring` · `dreneringstid_timer` ved 6 t outage ·
 `alarm.terskel_utlost`.
 
 Et sjekklistepunkt uten definert, målbar grense regnes som `nei`.
@@ -2818,10 +3235,15 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           taperoppgjør og innsnevring av taperens wildcard-scope +
           rydd_staged_artefakter(p_maks) MED 016-s evidensfristledd +
           artefaktkapabilitet.owner_generation m/oppgraderingssekvens og
-          validering i lagre_artefakt_staged (preflighten kun for `utstedt`) +
-          hent_revalideringskandidater(p_grense) — køen som SECURITY
-          DEFINER, fordi FORCE RLS gjør et kolonnegrant tomt, med
-          rotasjon på siste_revalideringsforsok (§2.2b) +
+          validering i lagre_artefakt_staged under oppdragets FOR SHARE-lås
+          (preflighten kun for `utstedt`) +
+          avgjor_domeneovertakelse_attestert() — telling og reautorisering
+          av hver talt attestant i databasen, oppgjøret grantet til ingen
+          (§4.3) +
+          hent_revalideringskandidater(p_grense, p_kjoring_start) — køen som
+          SECURITY DEFINER, fordi FORCE RLS gjør et kolonnegrant tomt, med
+          rotasjon på siste_revalideringsforsok og sideinndeling som holder
+          kø 1 ukappet (§2.2b) +
           domenekontroll.siste_revalideringsforsok, stemplet av
           apne_domeneobservasjonsrunde (§2.2b) +
           konfliktsett_hash() + registrer_overtakelsesattestasjon() —
