@@ -1,7 +1,7 @@
 // M-1 kundeflate — inngang. Sjekker økten, viser innloggingsflate (401) eller
 // bygger AppShell + ruteren (200). 401 og 403 holdes adskilt (V2): 401 →
 // innlogging, 403 → ingen-tilgang PÅ flaten (håndteres i flatene).
-import { el, sett } from "./dom.js";
+import { sett } from "./dom.js";
 import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
 import { hentJson, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion } from "./komponenter.js";
@@ -13,16 +13,15 @@ import { visPolicy } from "./flater/policy.js";
 import { visBeslutninger } from "./flater/beslutninger.js";
 import { visUnntak } from "./flater/unntak.js";
 import { visPolicyadmin } from "./flater/policyadmin.js";
+import { visKundeadmin } from "./flater/kundeadmin.js";
+import { visAdmin } from "./flater/admin.js";
+import { byggRuter, visningFraSok } from "./sitekart.js";
 
-const RUTER = [
-  { nokkel: "oversikt" }, { nokkel: "policy" },
-  { nokkel: "beslutninger" }, { nokkel: "unntak" },
-  { nokkel: "policyadmin" },
-];
 const FLATER = {
   oversikt: visOversikt, policy: visPolicy,
   beslutninger: visBeslutninger, unntak: visUnntak,
-  policyadmin: visPolicyadmin,
+  policyadmin: visPolicyadmin, kundeadmin: visKundeadmin,
+  admin: visAdmin,
 };
 
 function lokaliserSkiplenke() {
@@ -49,8 +48,9 @@ function bekreftLoggUt() {
 
 function visApp(sesjon) {
   const app = document.getElementById("app");
+  const tilgjengeligeRuter = byggRuter(sesjon);
   const skall = AppShell({
-    tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: RUTER,
+    tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: tilgjengeligeRuter,
     paaSprak: byttSprak, paaLoggUt: bekreftLoggUt,
   });
   sett(app, skall.rot);
@@ -62,8 +62,12 @@ function visApp(sesjon) {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
     paaUautorisert: () => visInnlogging(),
   };
-  const ruter = lagRuter(skall.hoved, ctx, FLATER, skall.settAktiv);
-  ruter.naviger();
+  const klientruter = lagRuter(skall.hoved, ctx, FLATER, skall.settAktiv);
+  const visning = visningFraSok(window.location.search, tilgjengeligeRuter);
+  if (visning && !window.location.hash) {
+    window.location.hash = `#/${visning}`;
+  }
+  klientruter.naviger();
 }
 
 async function start() {

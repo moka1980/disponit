@@ -8,6 +8,9 @@ import {
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
   VarselBanner, CursorNavigasjon, SensitiveData, AppShell,
 } from "../static/js/komponenter.js";
+import {
+  siteFaseMerke, siteModuleKort, siteStatusMerke,
+} from "../static/js/sitekomponenter.js";
 import { DataTabell } from "../static/js/tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../static/js/dialog.js";
 
@@ -146,6 +149,21 @@ test("Bekreftelsesdialog: primær kaller callback og lukker", () => {
   assert.equal(document.querySelector('[role="dialog"]'), null);
 });
 
+test("Site-komponenter: status/fase/modulkort rendrer trygt", async () => {
+  const mod = {
+    id: 37,
+    navn_nokkel: "site.modul.m37.navn",
+    status: "i_drift",
+    fase_nokkel: "site.fase.fundament",
+    tekst_nokkel: "site.modul.m37.tekst",
+  };
+  for (const n of [siteStatusMerke("i_drift"), siteFaseMerke("aktiv"),
+                   siteModuleKort(mod)]) {
+    const b = await alvorligeBrudd(n, { fragment: true });
+    assert.equal(b.length, 0, beskrivBrudd(b));
+  }
+});
+
 test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () => {
   const { rot, hoved } = AppShell({
     tenant: "Acme AS", sprak: "nb", aktiv: "oversikt",
@@ -158,6 +176,8 @@ test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () 
   assert.equal(hoved.id, "hovedinnhold");
   assert.equal(rot.querySelector('a[aria-current="page"]').getAttribute("href"),
     "#/oversikt");
+  assert.ok(rot.textContent.includes(t("ui.shell.undertittel")));
+  assert.ok(rot.textContent.includes(`4 · ${t("ui.shell.ruter")}`));
   const b = await alvorligeBrudd(rot);   // hel-side-regler PÅ (har main+nav)
   assert.equal(b.length, 0, beskrivBrudd(b));
 });

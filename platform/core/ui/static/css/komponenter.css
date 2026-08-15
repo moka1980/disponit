@@ -191,6 +191,83 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .innlogging { max-width: 28rem; }
 .innlogging-form { margin-top: var(--sp-6); }
 
+/* Offentlig webflate + nye adminflater */
+.site-shell { display: grid; gap: var(--sp-6); }
+.site-hero {
+  display: grid; gap: var(--sp-4); grid-template-columns: 1.35fr .85fr;
+  align-items: stretch;
+}
+.site-hero-copy, .site-hero-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-6); box-shadow: var(--skygge);
+}
+.site-hero-text { font-size: 1.05rem; max-width: 42rem; }
+.site-eyebrow {
+  color: var(--info); text-transform: uppercase; letter-spacing: .08em;
+  font-size: .82rem; font-weight: 700; margin: 0 0 var(--sp-2);
+}
+.site-grid { display: grid; gap: var(--sp-4); }
+.site-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.site-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.site-card-grid {
+  display: grid; gap: var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.site-module-card, .site-login-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: var(--sp-4); background: var(--card);
+}
+.site-mini-card {
+  display: grid; gap: var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--sp-4); background: rgba(246,248,247,.82);
+}
+.site-module-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-3); margin-bottom: var(--sp-2);
+}
+.site-badge {
+  display: inline-flex; align-items: center;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: 999px; font-weight: 600;
+  border: 1px solid var(--line);
+}
+.site-badge.ok {
+  background: var(--auto-bg); color: var(--auto); border-color: var(--auto);
+}
+.site-badge.info {
+  background: var(--info-bg); color: var(--info); border-color: var(--info);
+}
+.site-badge.plan {
+  background: var(--paper); color: var(--muted);
+}
+.site-inline-badges { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.site-kpi-row {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3); margin-top: var(--sp-4);
+}
+.site-kpi {
+  padding: var(--sp-3); background: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.site-kpi strong { display: block; font-size: 1.5rem; color: var(--ink); }
+.site-kpi span { color: var(--muted); }
+.site-section { display: grid; gap: var(--sp-4); }
+.site-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-4); flex-wrap: wrap;
+}
+.site-inline-note { color: var(--muted); }
+.site-list { margin: 0; padding-left: var(--sp-6); display: grid; gap: var(--sp-2); }
+.site-list-ordered { list-style: decimal; }
+.site-mini-card p { margin: 0; color: var(--muted); }
+.site-mini-card strong { font-size: 1rem; }
+
+@media (max-width: 960px) {
+  .site-hero, .site-grid-3 { grid-template-columns: 1fr; }
+  .site-grid-2, .site-kpi-row { grid-template-columns: 1fr; }
+}
+
 /* PR-013: policyadministrasjon — risikobadge + diff/fire-øyne-lister.
    Kun tokens (samme doktrine som resten): UTVIDER = fare, INNSNEVRER = info,
    NØYTRAL = dempet. */

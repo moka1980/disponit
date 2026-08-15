@@ -64,12 +64,61 @@ test("AppShell + policy: nav og seksjoner er lokalisert", async () => {
   const { AppShell } = await import("../static/js/komponenter.js");
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
     ruter: [{ nokkel: "oversikt" }, { nokkel: "policy" },
-            { nokkel: "beslutninger" }, { nokkel: "unntak" }],
+            { nokkel: "beslutninger" }, { nokkel: "unntak" },
+            { nokkel: "kundeadmin" }, { nokkel: "policyadmin" },
+            { nokkel: "admin" }],
     paaSprak: () => {}, paaLoggUt: () => {} });
-  for (const n of ["oversikt", "policy", "beslutninger", "unntak"]) {
+  for (const n of ["oversikt", "policy", "beslutninger", "unntak",
+                   "kundeadmin", "policyadmin", "admin"]) {
     assert.ok(rot.textContent.includes(`PL_ui.nav.${n}`), `nav ${n} ikke lokalisert`);
   }
   assert.ok(rot.textContent.includes("PL_ui.logg_ut"));
+});
+
+test("Landing og nye adminflater: synlig tekst kommer fra locale, ikke hardkoding", async () => {
+  const fetch0 = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const sti = url.split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      return { ok: true, status: 200, json: async () => ({ provider_id: "google" }) };
+    }
+    return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
+  };
+  const { visInnlogging } = await import("../static/js/innlogging.js");
+  const { visKundeadmin } = await import("../static/js/flater/kundeadmin.js");
+  const { visAdmin } = await import("../static/js/flater/admin.js");
+  const hoved = nyHoved();
+  // `#app` opprettes ETTER `nyHoved()`, ikke før: `nyttBrett()` gjør
+  // `document.body.replaceChildren()`, så en div som lages først blir koblet
+  // FRA brettet igjen, og `visInnlogging()` finner ingenting å skrive i.
+  // Skallet (`static/index.html`) har `<div id="app">` ved siden av
+  // hovedinnholdet, og det er den formen testen skal etterligne.
+  const app = document.createElement("div");
+  app.id = "app";
+  document.body.append(app);
+
+  // Teksten samles opp ETTER hver rendring, ikke én gang til slutt: begge
+  // flatene eier `hovedinnhold` og skriver med `sett()` (replaceChildren), så
+  // en avsluttende avlesning ville bare sett den SISTE flata — og påstanden om
+  // kundeadmin ville feilet på at admin rendret etterpå, ikke på locale.
+  await visInnlogging();
+  let tekst = document.body.textContent;
+  visKundeadmin(hoved, ctx());
+  tekst += document.body.textContent;
+  visAdmin(hoved, ctx());
+  tekst += document.body.textContent;
+  for (const k of [
+    "site.hero.tittel",
+    "site.modul.m1.navn",
+    "ui.kundeadmin.tittel",
+    "ui.admin.tittel",
+    "site.tenant.nordvik.navn",
+  ]) {
+    assert.ok(tekst.includes(`PL_${k}`), `${k} ikke fra locale`);
+  }
+  assert.ok(!tekst.includes("Policy- og fullmaktsmotor"),
+    "hardkodet modulnavn lekket til DOM");
+  globalThis.fetch = fetch0;
 });
 
 test("Klienten sender ALDRI tenant (V3): ingen forespørsel bærer 'tenant'", async () => {
