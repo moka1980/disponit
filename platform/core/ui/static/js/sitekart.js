@@ -32,7 +32,15 @@ export function byggRuter(sesjon) {
     { nokkel: "kundeadmin" },
   ];
   if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "policyadmin" });
-  if (harScope(sesjon, "security:read")) ruter.push({ nokkel: "admin" });
+  // Admin-flaten har TO lovlige innganger, og de er ikke den samme autoriteten:
+  // `security:read` gir den tenantbundne ops-økten sin EGEN utrullingsrad, mens
+  // `platform:admin` er plattformdriften som ser kontrollplanet. Krevde ruten
+  // bare `security:read`, ville en ren plattformdriftsøkt — som per definisjon
+  // ikke har kundens tenant-lokale scopes — falt stille til `oversikt`, og
+  // `erPlattformdrift()` inne på flaten ville aldri fått si noe.
+  if (harScope(sesjon, "security:read") || erPlattformdrift(sesjon)) {
+    ruter.push({ nokkel: "admin" });
+  }
   return ruter;
 }
 

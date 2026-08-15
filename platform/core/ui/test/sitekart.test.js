@@ -37,6 +37,15 @@ test("byggRuter: admin krever security-scope", () => {
   assert.ok(!ruter.includes("policyadmin"));
 });
 
+test("byggRuter: plattformdrift når admin uten tenant-lokale scopes", () => {
+  // Plattformdrift er en EGEN autoritet. Krevde ruten `security:read`, ville en
+  // ren `platform:admin`-økt landet stille på `oversikt` — og filteret inne på
+  // flaten aldri blitt kjørt.
+  const ruter = byggRuter({ scopes: ["platform:admin"] }).map((r) => r.nokkel);
+  assert.ok(ruter.includes("admin"));
+  assert.ok(!ruter.includes("policyadmin"));
+});
+
 test("tillatteFlater: direkte hash kan ikke nå en flate uten scope", () => {
   const flater = { oversikt: () => {}, policy: () => {}, beslutninger: () => {},
     unntak: () => {}, kundeadmin: () => {}, policyadmin: () => {},
