@@ -1,0 +1,17 @@
+# PR-015 §6: hvert 15. minutt.
+#
+# Regelen er «staged eldre enn 24 t», så kadensen avgjør ikke HVA som ryddes —
+# bare hvor raskt en opphopning dreneres etter at den har kvalifisert. 15
+# minutter med batchgrense 500 gir 2000 forkastede artefakter i timen, som er
+# rikelig over enhver normal produksjonsrate.
+
+[Unit]
+Description=Disponit artefaktryddingstimer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -22,8 +22,14 @@ Saken er `sakstype='sikkerhet'` (normalarbeideren claimer den aldri) med
 er per definisjon en menneskelig/sikkerhetsavgjørelse.
 """
 import hashlib
+import json
 
 from api import kjerne
+
+#: PR-015 §3: EGET scope. `exceptions:handle` alene gir ALDRI cross-tenant
+#: domeneautoritet — den som kan behandle unntak skal ikke dermed kunne avgjøre
+#: hvem plattformen autoriserer for et domene. Port 13 måler nettopp det.
+ADJUDIKASJONSSCOPE = "domains:adjudicate"
 
 #: Familien saken merkes med (unntak.kategori). Lineage til begge domenerader
 #: ligger i den krypterte payloaden.
@@ -52,6 +58,15 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     enhver annen tekstlig form FØR konflikten i det hele tatt kan oppstå. Det
     er nettopp derfor §0 validerer i stedet for å normalisere — ellers kunne to
     former av samme navn gitt to idempotensnøkler for én konflikt.
+
+    Degraderingen av forbigåtte utfordrere (A→B→C, §3) gjøres IKKE herfra
+    (Codex): et kall her hadde ingen virkning, for denne funksjonen har ingen
+    produksjonskaller — konfliktsignalet fra `verifiser_domenekontroll()`
+    håndteres ennå ikke av noen utrullet kodevei. Invarianten hører uansett
+    hjemme på selve overgangen, ikke hos en kaller som må huske den: migrasjon
+    019 §3.25 henger `degrader_forbigatte_utfordrere` på `hostname_binding` —
+    flyttes bindingen, degraderes alle andre i `avklaring_kreves` i samme
+    transaksjon, uansett hvem som utløste overtakelsen.
     """
     key = idempotensnokkel(hostname, generasjon)
     # Codex: serialiser på den avledede nøkkelen. `revisjonslogg` har kun en
@@ -100,3 +115,173 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
         conn, tenant_ny, loggpost, handling=HANDLING,
         kategori=FAMILIE, sakstype="sikkerhet", prioritet="hoy",
         payload=payload, snapshot=kjerne.UKJENT_SNAPSHOT)
+
+
+def slaa_opp_sak(conn, tenant: str, unntak_id: int) -> tuple[str, int] | None:
+    """(hostname, saksrevisjon) for en overtakelsessak. None hvis det ikke ER en.
+
+    Leses av IDEMPOTENSNØKKELEN, ikke av den krypterte payloaden:
+    `domeneovertakelse:<hostname>:<generasjon>` er nøyaktig de to feltene vi
+    trenger, i klartekst, og den er skrevet av `opprett_overtakelsessak` selv.
+    Å dekryptere payloaden for å lese to felter som alt står i nøkkelen ville
+    vært en omvei med en DEK i hånda.
+
+    Joinen bærer `kategori`/`handling`/`kilde` slik oppslaget i
+    `opprett_overtakelsessak` gjør — en fremmed rad i det DELTE
+    idempotensnavnerommet kan ikke matche og dermed ikke låne seg
+    adjudikasjonsveien.
+    """
+    rad = conn.execute(
+        "SELECT r.idempotency_key FROM unntak u"
+        " JOIN revisjonslogg r ON r.tenant = u.tenant AND r.id = u.loggpost_id"
+        " WHERE u.id=%s AND u.tenant=%s AND u.kategori=%s AND u.handling=%s"
+        "   AND r.kilde=%s",
+        (unntak_id, tenant, FAMILIE, HANDLING, FAMILIE)).fetchone()
+    if rad is None:
+        return None
+    key = rad[0] or ""
+    # `<familie>:<hostname>:<generasjon>` — hostnavnet er kanonisk (018 avviser
+    # alt annet før konflikten kan oppstå), så det inneholder aldri kolon.
+    biter = key.split(":")
+    if len(biter) != 3 or biter[0] != FAMILIE:
+        return None
+    try:
+        return biter[1], int(biter[2])
+    except ValueError:
+        return None
+
+
+def attester_endepunkt(tjeneste, request, unntak_id: int):
+    """POST /v1/unntak/{id}/domeneattestasjon — fire øyne ved positiv tildeling.
+
+    Endepunktet SKRIVER ALDRI STATUS (invariant 3). Det avgir én attestasjon;
+    `avgi_overtakelse_attestasjon()` teller under hostname-låsen og kaller
+    `avgjor_domeneovertakelse()` når terskelen er nådd:
+
+        avvis    → ÉN attestasjon
+        godkjenn → TO DISTINKTE aktører
+
+    Blir det ikke avgjort, er svaret `krever_to_attestasjoner` MED antall
+    avgitte — «én autorisert aktør → positiv tildeling er umulig» er riktig
+    fail-closed, men det skal sies, ikke oppleves som stillhet (§4).
+    """
+    import psycopg
+    from starlette.responses import JSONResponse   # noqa: F401  (kanonisk_json under)
+
+    from . import sesjon as sesjonmodul
+    from .app import _autentiser, _feilsvar, _rid, kanonisk_json
+
+    rid = _rid(request)
+    raa = request.scope.get("state", {}).get("kropp", b"")
+    try:
+        body = json.loads(raa.decode("utf-8"))
+    except Exception:
+        return _feilsvar("request_feilformet", rid)
+    if not isinstance(body, dict):
+        return _feilsvar("request_feilformet", rid)
+    utfall = body.get("utfall")
+    vinnende = body.get("vinnende_tenant")
+    if utfall not in ("godkjenn", "avvis") or not isinstance(vinnende, str) \
+            or not vinnende.strip():
+        return _feilsvar("request_feilformet", rid)
+
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid, ADJUDIKASJONSSCOPE)
+        except kjerne.Feilsvar as f:
+            return _feilsvar(f.kode, rid)
+
+        # CSRF (dobbel-innsending) — samme browsermuterende vei som PR-012.
+        # `bruker_id` hentes fra SAMME herdede oppslag: prinsipalen bak
+        # stemmen må sendes til motoren for at de tellende stemmene skal kunne
+        # reautoriseres når terskelen slår inn (Codex). Den leses her, fra
+        # sesjonen, og ikke ved å parse `auth.token_id` — sesjonsstrengen er
+        # evidensformatet, ikke et oppslagsnøkkelformat.
+        sesjon_cookie = request.cookies.get(sesjonmodul.C_SESJON)
+        rad = conn.execute(
+            "SELECT csrf_hash, bruker_id FROM slaa_opp_sesjon(%s)",
+            (sesjonmodul._hash(sesjon_cookie),)).fetchone() \
+            if sesjon_cookie else None
+        conn.rollback()
+        if rad is None or not sesjonmodul.csrf_matcher(rad[0], request):
+            tjeneste.logg.hendelse("csrf_ugyldig", rid)
+            return _feilsvar("csrf_ugyldig", rid)
+        bruker_id = rad[1]
+
+        from db.pg import sett_kontekst
+        tenant = auth.tenant
+        sett_kontekst(conn, tenant, auth.token_id, rid)
+        sak = slaa_opp_sak(conn, tenant, unntak_id)
+        if sak is None:
+            conn.rollback()
+            return _feilsvar("ikke_funnet", rid)
+        hostname, generasjon_ved_opprettelse = sak
+
+        # Aktøren er sesjonens bruker-id, ikke noe klienten oppgir: «ingen
+        # enkelt aktør produserer begge» er håndhevet av primærnøkkelen, og en
+        # klientoppgitt aktør ville gjort den nøkkelen til et forslag.
+        aktor = auth.token_id
+        try:
+            # Revisjonen SAKEN ble opprettet for sendes med og håndheves under
+            # hostname-låsen i funksjonen (Codex): uten den ville en sak som
+            # overlevde en reapplikasjon fått stemmer telt mot den GJELDENDE
+            # generasjonen — en konflikt ingen attestant faktisk har sett.
+            svar = conn.execute(
+                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, unntak_id, hostname, utfall, vinnende.strip(),
+                 aktor, generasjon_ved_opprettelse,
+                 bruker_id)).fetchone()[0]
+            # Codex (P2): tallet leses i SAMME transaksjon som stemmen, mens
+            # domeneraden fortsatt er låst av funksjonen — ikke etter commit.
+            # Etter commit kunne en samtidig andre godkjenning ha fullført
+            # overtakelsen og økt `autorisasjonsgenerasjon`; et oppslag mot den
+            # GJELDENDE generasjonen telte da den nye revisjonen (null avgitte)
+            # og svarte `409 krever_to_attestasjoner` på en sak som nettopp var
+            # avgjort. Revisjonen er den funksjonen selv håndhevet under låsen,
+            # så tallet hører til nøyaktig den konflikten stemmen ble avgitt i.
+            antall = 0 if svar == "avgjort" else int(conn.execute(
+                "SELECT antall_avgitte_attestasjoner(%s,%s)",
+                (unntak_id, generasjon_ved_opprettelse)).fetchone()[0])
+            conn.commit()
+        except psycopg.errors.UniqueViolation:
+            # Samme aktør, samme revisjon, andre gang. Avvist av PRIMÆRNØKKELEN
+            # (port 15) — ikke av en UI-sjekk, og ikke stille.
+            conn.rollback()
+            return _feilsvar("dobbel_attestasjon", rid)
+        except (psycopg.errors.NoDataFound, psycopg.errors.InvalidParameterValue):
+            # Motorens EGNE avvisninger (ukjent domenekontroll, eller status !=
+            # avklaring_kreves — saken ble foreldet av en nyere overtakelse).
+            # Dette er den normale, forventede utgangen når en konflikt
+            # rekker å bli avløst — ikke en basefeil, jf. samme skille app.py
+            # gjør for kapabilitetsvalidering (Codex).
+            conn.rollback()
+            return _feilsvar("attestasjon_avvist", rid)
+        except psycopg.Error:
+            # EKTE basefeil (tilkobling tapt, e.l.) — skal IKKE se ut som at
+            # motoren tok en avgjørelse. `attestasjon_avvist` her ville fortalt
+            # klienten at attestasjonen ble vurdert og nektet, når tjenesten i
+            # virkeligheten var utilgjengelig.
+            conn.rollback()
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+            return _feilsvar("db_utilgjengelig", rid)
+
+        if svar == "avgjort":
+            return kanonisk_json({"status": "avgjort", "utfall": utfall,
+                                  "hostname": hostname, "request_id": rid},
+                                 200, {"x-request-id": rid})
+
+        # Ikke avgjort. Tallet gjør feilen legibel: står det 1 av 2, vet
+        # tenanten at den mangler en andre autorisert aktør — ikke at systemet
+        # er i stykker. Det er lest over, under låsen, så det er ikke lenger et
+        # nytt oppslag som kan lande på en annen (eller foreldet) revisjon.
+        return kanonisk_json(
+            {"feil": "krever_to_attestasjoner", "avgitt": antall, "krever": 2,
+             "hostname": hostname, "request_id": rid},
+            409, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)

@@ -110,7 +110,45 @@ INSERT INTO _design VALUES
     -- PR-014b CP5: artefakt-opplastingskapabilitet. Den frittstående brenneren
     -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
     ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),
-    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier');
+    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier'),
+    -- PR-015: fire øyne + de bundne driftsformene (migrasjon 019). Samme eier
+    -- som resten av domenelaget — avgjørelsen er iboende kryss-tenant, og
+    -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
+    -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
+    -- 8. argument (`p_bruker_id`) kom med reautoriseringen av tellende
+    -- stemmer: signaturen her MÅ følge migrasjon 019, ellers finner
+    -- reparasjonsløkka ingen funksjon å eie og den reelle funksjonen blir
+    -- behandlet som en vanlig, eierløs funksjon ved neste kjøring.
+    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text)', 'disponit_domene_eier'),
+    -- `lukk_overtakelsessak` kalles NESTET fra avgi_overtakelse_attestasjon og
+    -- må derfor ha samme eier: utelatt herfra ville reparasjonssløyfa nedenfor
+    -- behandlet den som en vanlig funksjon og flyttet den til
+    -- disponit_migrator ved andre kjøring av `oppsett-postgresql.sh`. 019
+    -- hoppes da over på sjekksum, og siden EXECUTE er revoket fra PUBLIC uten
+    -- en grant tilbake til disponit_domene_eier, ville hver senere
+    -- godkjenning/avvisning truffet permission denied i det nestede kallet og
+    -- rullet tilbake selve domenevedtaket.
+    ('FUNCTION', 'lukk_overtakelsessak(text,bigint,text,text)',       'disponit_domene_eier'),
+    ('FUNCTION', 'degrader_forbigatte_utfordrere(text,text)',         'disponit_domene_eier'),
+    -- Triggerfunksjonen på `hostname_binding` (019 §3.25) er SECURITY DEFINER
+    -- og MÅ eies av samme rolle som funksjonen den kaller. Havnet den hos
+    -- disponit_migrator ved andre kjøring av `oppsett-postgresql.sh`, ville
+    -- degraderingen kjørt med migratorens rettigheter i stedet for
+    -- domenelagets — en stille privilegieutvidelse på en vei ingen kaller
+    -- eksplisitt.
+    ('FUNCTION', 'trg_degrader_forbigatte_utfordrere()',              'disponit_domene_eier'),
+    ('FUNCTION', 'antall_avgitte_attestasjoner(bigint,bigint)',       'disponit_domene_eier'),
+    ('FUNCTION', 'rydd_staged_artefakter(integer)',                   'disponit_domene_eier'),
+    ('FUNCTION', 'antall_karantenesatte()',                           'disponit_domene_eier'),
+    -- Revalideringsscheduleren. Eid av domene_eier fordi den MÅ lese
+    -- `domenekontroll` på tvers av tenanter (BYPASSRLS) for å regne budsjettet
+    -- på riktig nevner — arbeiderrollen har bevisst ingen bordtilgang.
+    ('FUNCTION', 'revalideringskandidater(integer,integer,integer,integer,integer)', 'disponit_domene_eier'),
+    ('FUNCTION', 'revalideringspopulasjon()',                         'disponit_domene_eier'),
+    -- Bevisporten foran 016s revalidering. Må ha SAMME eier som
+    -- `revalider_domenekontroll(text,text,text)`: den delegerer til den
+    -- nestet, og eierskapet er det eneste som gir den EXECUTE der.
+    ('FUNCTION', 'revalider_domenekontroll(text,text,text,text[])',   'disponit_domene_eier');
 
 DO $$
 DECLARE
