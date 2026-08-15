@@ -116,50 +116,32 @@ export const FASEOVERSIKT = [
   },
 ];
 
-// `moduler` er modul-ID-er, ikke visningsstrenger: da kan en tenants tildeling
-// slås opp mot `MODULOVERSIKT` i stedet for å parses tilbake fra "M-1".
-export const TENANTOVERSIKT = [
-  {
-    id: "nordvik",
-    navn_nokkel: "site.tenant.nordvik.navn",
-    plan_nokkel: "site.plan.pilot",
-    moduler: [1, 2, 37],
-    neste_nokkel: "site.tenant.nordvik.neste",
-  },
-  {
-    id: "bjorkli",
-    navn_nokkel: "site.tenant.bjorkli.navn",
-    plan_nokkel: "site.plan.pilot",
-    moduler: [1, 2],
-    neste_nokkel: "site.tenant.bjorkli.neste",
-  },
-  {
-    id: "granmo",
-    navn_nokkel: "site.tenant.granmo.navn",
-    plan_nokkel: "site.plan.internt",
-    moduler: [1, 2, 37, 38],
-    neste_nokkel: "site.tenant.granmo.neste",
-  },
-];
+// INGEN TENANTDATA I DENNE FILA (Codex P1). `/ui/{sti}` serveres uten
+// sesjonssjekk — den anonyme landingssiden importerer dette modultreet — så alt
+// som ligger her kan lastes ned av hvem som helst, uansett hvilken
+// scope-sjekk flatene gjør før de RENDRER. Et tenantregister her ville lekket
+// hver kundes navn, plan, modultildeling og neste steg til en `curl`.
+//
+// Samme grunn gjelder `locales/`: `/ui/locale/nb` svarer 200 uten cookie, så
+// kundenavn kan heller ikke ligge der som oversettelsesnøkler. Tenantdata er
+// DATA, ikke chrome-tekst — den hentes fra et autentisert, server-autorisert
+// endepunkt og sendes inn i flatene som `ctx.tenanter` / `ctx.moduler`.
+// Flatene viser en eksplisitt tomtilstand til det endepunktet finnes.
+//
+// `platform/core/ui/test/offentlige_ressurser.test.js` håndhever begge deler.
 
 export function modulmerke(id) {
   return `M-${id}`;
 }
 
-// Utrullingsraden for ÉN tenant, eller null når vi ikke kjenner tenanten.
-export function tenantRad(tenant) {
-  const navn = String(tenant || "").trim().toLowerCase();
-  if (!navn) return null;
-  return TENANTOVERSIKT.find((tt) => tt.id === navn) || null;
-}
-
-// Modultildelingen for ÉN tenant, eller null når vi ikke kjenner tenanten.
-// Null betyr «vet ikke», ikke «ingen moduler»: en flate som ikke vet, skal si
-// det — ikke vise hele plattformkatalogen som om den var kundens.
-export function modulerForTenant(tenant) {
-  const rad = tenantRad(tenant);
-  if (!rad) return null;
-  return MODULOVERSIKT.filter((mod) => rad.moduler.includes(mod.id));
+// Modultildelingen for ÉN tenant, utledet av modul-ID-ene den AUTENTISERTE
+// veien oppga. `null` betyr «vet ikke», ikke «ingen moduler»: en flate som
+// ikke vet, skal si det — ikke vise hele plattformkatalogen som om den var
+// kundens. Selve tildelingen er tenantdata og kommer derfor utenfra, ikke fra
+// en tabell i denne fila.
+export function modulerFraIder(ider) {
+  if (!Array.isArray(ider)) return null;
+  return MODULOVERSIKT.filter((mod) => ider.includes(mod.id));
 }
 
 // Tenantens egne tall. `planlagt` er plattformmodulene kunden ennå ikke har

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  MODULOVERSIKT, MODULSTATUS, TENANTOVERSIKT, modulStatus, modulerForTenant,
+  MODULOVERSIKT, MODULSTATUS, modulStatus, modulerFraIder,
   modulmerke, plattformTelling, tenantTelling,
 } from "../static/js/plattformdata.js";
 
@@ -41,19 +41,25 @@ test("plattformTelling: KPI-ene teller det kortene viser", () => {
     + telling.planlagt, telling.totalt);
 });
 
-test("modulerForTenant: kundens tildeling, ikke plattformkatalogen", () => {
-  assert.deepEqual(modulerForTenant("Bjorkli").map((m) => m.id), [1, 2]);
-  assert.deepEqual(modulerForTenant("granmo").map((m) => m.id), [1, 2, 37, 38]);
-  // Ukjent tenant er «vet ikke» (null), ikke «hele katalogen».
-  assert.equal(modulerForTenant("acme"), null);
-  assert.equal(modulerForTenant(""), null);
-  assert.equal(modulerForTenant(undefined), null);
+test("modulerFraIder: kundens tildeling, ikke plattformkatalogen", () => {
+  // Tildelingen kommer fra den autentiserte veien; her måles bare
+  // oppslaget fra ID-er til modulkort.
+  assert.deepEqual(modulerFraIder([1, 2]).map((m) => m.id), [1, 2]);
+  assert.deepEqual(modulerFraIder([1, 2, 37, 38]).map((m) => m.id),
+    [1, 2, 37, 38]);
+  assert.deepEqual(modulerFraIder([]).map((m) => m.id), []);
+  // «Vet ikke» (null) er ikke det samme som «ingen moduler» ([]): en flate
+  // uten tildeling skal si at den ikke vet, ikke vise hele katalogen.
+  assert.equal(modulerFraIder(undefined), null);
+  assert.equal(modulerFraIder(null), null);
+  assert.equal(modulerFraIder("1,2"), null);
 });
 
 test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
-  // Bjørkli har M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
-  // arbeid — og resten av katalogen er planlagt for kunden.
-  const telling = tenantTelling(modulerForTenant("bjorkli"));
+  // En tenant med M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
+  // arbeid — og resten av katalogen er planlagt for kunden. Tildelingen er
+  // ID-er fra den autentiserte veien, ikke et oppslag i klientpakken.
+  const telling = tenantTelling(modulerFraIder([1, 2]));
   assert.equal(telling.iDrift, 0);
   assert.equal(telling.underArbeid, 2);
   assert.equal(telling.planlagt, telling.totalt - 2);
@@ -63,5 +69,5 @@ test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
 });
 
 test("modulmerke: tenantens modul-ID-er vises som M-<id>", () => {
-  assert.deepEqual(TENANTOVERSIKT[1].moduler.map(modulmerke), ["M-1", "M-2"]);
+  assert.deepEqual([1, 2].map(modulmerke), ["M-1", "M-2"]);
 });

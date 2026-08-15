@@ -6,6 +6,17 @@ import { visInnlogging } from "../static/js/innlogging.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
 
+// Tenantrader som testdata, ikke som produksjonsinnhold: de lever HER, i en
+// testfil som aldri serveres, og ikke i klientpakken eller locale-settet.
+const RADER = [
+  { id: "alfa", navn: "Alfa", plan: "Pilot", moduler: [1, 2, 37],
+    neste: "M-38 når kapasitet er grønt." },
+  { id: "beta", navn: "Beta", plan: "Pilot", moduler: [1, 2],
+    neste: "M-37 etter signerte unntaksrutiner." },
+  { id: "gamma", navn: "Gamma", plan: "Internt", moduler: [1, 2, 37, 38],
+    neste: "Kunde null for utrulling." },
+];
+
 settI18nForTest(NB, "nb");
 
 globalThis.fetch = async (url) => {
@@ -65,7 +76,8 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
 
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
   const h = nyHoved();
-  visKundeadmin(h, ctx({ tenant: "Nordvik", scopes: ["policy:activate"] }));
+  visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2, 37],
+    scopes: ["policy:activate"] }));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.tittel")));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.plattform_tittel")));
@@ -84,7 +96,7 @@ test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => 
   // Ingen av de to er i drift (manifestene sier `ikke_i_drift`), så «aktive
   // moduler» er 0 og «under arbeid» er 2 — kundens to, ikke katalogens.
   const h = nyHoved();
-  visKundeadmin(h, ctx({ tenant: "bjorkli" }));
+  visKundeadmin(h, ctx({ tenant: "Beta", moduler: [1, 2] }));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
   assert.ok(h.textContent.includes(t("site.modul.m2.navn")));
   assert.ok(!h.textContent.includes(t("site.modul.m37.navn")),
@@ -98,7 +110,7 @@ test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => 
 
 test("Kundeadmin: ukjent tenant sier «vet ikke», viser ikke katalogen", async () => {
   const h = nyHoved();
-  visKundeadmin(h, ctx({ tenant: "acme" }));
+  visKundeadmin(h, ctx({ tenant: "Ukjent" }));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.moduler_ukjent")));
   assert.ok(!h.textContent.includes(t("site.modul.m1.navn")),
     "plattformkatalogen vises for en ukjent tenant");
@@ -111,7 +123,7 @@ test("Kundeadmin: leser får lesevisning av policy, ikke aktiveringsflaten", () 
   // policyadministrasjon: den flaten nekter ruteren dem, og knappene der gir
   // 403. Lesevegen til `#/policy` skal stå igjen.
   const lese = nyHoved();
-  visKundeadmin(lese, ctx({ tenant: "Nordvik",
+  visKundeadmin(lese, ctx({ tenant: "Alfa", moduler: [1, 2, 37],
     scopes: ["decisions:read", "exceptions:read", "policy:read"] }));
   assert.equal(lese.querySelector('a[href="#/policyadmin"]'), null,
     "aktiveringsflate tilbudt leser");
@@ -119,16 +131,17 @@ test("Kundeadmin: leser får lesevisning av policy, ikke aktiveringsflaten", () 
   assert.ok(lese.textContent.includes(t("ui.kundeadmin.policy_lesing_tittel")));
 
   const forvalter = nyHoved();
-  visKundeadmin(forvalter, ctx({ tenant: "Nordvik", scopes: ["policy:write"] }));
+  visKundeadmin(forvalter, ctx({ tenant: "Alfa", moduler: [1, 2, 37],
+    scopes: ["policy:write"] }));
   assert.ok(forvalter.querySelector('a[href="#/policyadmin"]'));
 });
 
 test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () => {
   const h = nyHoved();
-  visAdmin(h, ctx({ scopes: ["platform:admin"] }));
+  visAdmin(h, ctx({ scopes: ["platform:admin"], tenanter: RADER }));
   assert.ok(h.textContent.includes(t("ui.admin.tittel")));
   assert.ok(h.textContent.includes(t("site.fase.fundament")));
-  assert.ok(h.textContent.includes(t("site.tenant.nordvik.navn")));
+  assert.ok(h.textContent.includes("Alfa"));
   assert.ok(h.textContent.includes(t("site.plan.pilot")));
   assert.ok(h.textContent.includes(t("ui.admin.kontrollplan_tittel")));
   const b = await alvorligeBrudd(h, { fragment: true });
@@ -140,24 +153,27 @@ test("Admin: tenanttabellen på tvers krever plattformdrift", () => {
   // ansvarlige skal se sin egen rad — ikke hver eneste andre kundes plan,
   // moduler og neste steg.
   const ops = nyHoved();
-  visAdmin(ops, ctx({ tenant: "bjorkli", scopes: ["security:read"] }));
-  assert.ok(ops.textContent.includes(t("site.tenant.bjorkli.navn")));
-  assert.ok(!ops.textContent.includes(t("site.tenant.nordvik.navn")),
+  visAdmin(ops, ctx({ tenant: "beta", scopes: ["security:read"],
+    tenanter: RADER }));
+  assert.ok(ops.textContent.includes("Beta"));
+  assert.ok(!ops.textContent.includes("Alfa"),
     "annen tenant lekket til en tenantbundet økt");
-  assert.ok(!ops.textContent.includes(t("site.tenant.granmo.navn")),
+  assert.ok(!ops.textContent.includes("Gamma"),
     "annen tenant lekket til en tenantbundet økt");
   assert.ok(ops.textContent.includes(t("ui.admin.tenanter_egen_note")));
   assert.equal(ops.querySelectorAll("tbody tr").length, 1);
 
   const drift = nyHoved();
-  visAdmin(drift, ctx({ tenant: "bjorkli", scopes: ["platform:admin"] }));
+  visAdmin(drift, ctx({ tenant: "beta", scopes: ["platform:admin"],
+    tenanter: RADER }));
   assert.equal(drift.querySelectorAll("tbody tr").length, 3);
   assert.ok(drift.textContent.includes(t("ui.admin.tenanter_tittel")));
 });
 
 test("Admin: ukjent tenant får ingen tabell å gjette fra", () => {
   const h = nyHoved();
-  visAdmin(h, ctx({ tenant: "acme", scopes: ["security:read"] }));
+  visAdmin(h, ctx({ tenant: "ukjent", scopes: ["security:read"],
+    tenanter: RADER }));
   assert.equal(h.querySelector("tbody"), null, "tabell vist uten kjent tenant");
   assert.ok(h.textContent.includes(t("ui.admin.tenanter_ukjent")));
   const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);

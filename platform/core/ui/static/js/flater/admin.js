@@ -1,7 +1,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { FASEOVERSIKT, TENANTOVERSIKT, modulmerke, plattformTelling, tenantRad }
+import { FASEOVERSIKT, modulmerke, plattformTelling }
   from "../plattformdata.js";
 import { erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
 import { siteFaseMerke } from "../sitekomponenter.js";
@@ -13,8 +13,16 @@ export function visAdmin(hoved, ctx = {}) {
   // plattformdrift. En tenantbundet ops-økt (`security:read`) ser bare sin
   // egen rad — ikke hver eneste andre kundes plan, moduler og neste steg.
   const plattformdrift = erPlattformdrift(ctx);
-  const egen = tenantRad(ctx.tenant);
-  const tenanter = plattformdrift ? TENANTOVERSIKT : (egen ? [egen] : []);
+  // Radene kommer UTENFRA — fra en autentisert, server-autorisert vei — og
+  // ligger ikke i klientpakken. `/ui/{sti}` og `/ui/locale/{sprak}` serveres
+  // uten sesjonssjekk, så et tenantregister i bundelen (eller som
+  // `site.tenant.*`-nøkler i locale-settet) ville vært nedlastbart anonymt
+  // uansett hva denne scope-sjekken velger å rendre. Tom liste = vi vet ikke,
+  // og da sier flaten det.
+  const rader = Array.isArray(ctx.tenanter) ? ctx.tenanter : [];
+  const tenanter = plattformdrift
+    ? rader
+    : rader.filter((rad) => rad.id === ctx.tenant || rad.navn === ctx.tenant);
 
   sett(hoved,
     ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
@@ -102,10 +110,15 @@ export function visAdmin(hoved, ctx = {}) {
             el("tbody", {},
               tenanter.map((tenant) =>
                 el("tr", {},
-                  el("td", {}, el("strong", { text: t(tenant.navn_nokkel) })),
-                  el("td", { text: t(tenant.plan_nokkel) }),
-                  el("td", { text: tenant.moduler.map(modulmerke).join(", ") }),
-                  el("td", { text: t(tenant.neste_nokkel) }))))))
+                  // Verdiene er DATA fra den autentiserte veien, ikke
+                  // locale-nøkler: kundenavn er ikke oversettelser, og en
+                  // `t()` her ville vært en invitasjon til å legge dem
+                  // tilbake i det offentlige locale-settet.
+                  el("td", {}, el("strong", { text: tenant.navn || "" })),
+                  el("td", { text: tenant.plan || "" }),
+                  el("td", { text: Array.isArray(tenant.moduler)
+                    ? tenant.moduler.map(modulmerke).join(", ") : "" }),
+                  el("td", { text: tenant.neste || "" }))))))
         : el("p", { class: "muted", text: t("ui.admin.tenanter_ukjent") })),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },

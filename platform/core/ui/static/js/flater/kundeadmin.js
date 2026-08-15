@@ -1,7 +1,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { KUNDEROLLER, modulerForTenant, tenantTelling } from "../plattformdata.js";
+import { KUNDEROLLER, modulerFraIder, tenantTelling } from "../plattformdata.js";
 import { kanForvaltePolicy } from "../sitekart.js";
 import { siteModuleKort, siteStatusMerke } from "../sitekomponenter.js";
 
@@ -12,10 +12,12 @@ export function visKundeadmin(hoved, ctx = {}) {
   // lesevisningen `#/policy` i stedet — samme mønster som admin-flaten.
   const forvalter = kanForvaltePolicy(ctx);
   // Kundens arbeidsflate viser KUNDENS moduler, ikke plattformkatalogen: uten
-  // dette meldte Bjørkli (tildelt M-1 og M-2) tre aktive moduler og viste M-37
-  // som aktiv og M-38 under bygging. `null` = tildelingen er ukjent, og da sier
-  // flaten det i stedet for å gjette.
-  const mine = modulerForTenant(ctx.tenant);
+  // dette meldte en kunde med to tildelte moduler tre aktive, og viste M-37 og
+  // M-38 som om de var kundens. Tildelingen kommer fra den autentiserte veien
+  // (`ctx.moduler` = modul-ID-er for DENNE økten), ikke fra en tabell i
+  // klientpakken — bundelen og locale-settet serveres uten sesjonssjekk.
+  // `null` = tildelingen er ukjent, og da sier flaten det i stedet for å gjette.
+  const mine = modulerFraIder(ctx.moduler);
   const moduler = mine || [];
   const telling = tenantTelling(moduler);
   const aktive = moduler.filter((mod) => mod.status === "i_drift");
