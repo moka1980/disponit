@@ -68,7 +68,7 @@ def kjor(conn, *, grense: int = BATCHGRENSE, maks_batcher: int = 1,
                                      (grense,)).fetchone()[0])
                 conn.commit()
             except Exception:
-                conn.rollback()
+                _rull_tilbake(conn)
                 res.feilet = True
                 res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
                 return res
@@ -78,10 +78,40 @@ def kjor(conn, *, grense: int = BATCHGRENSE, maks_batcher: int = 1,
             # sletter ingenting nytt. Tom batch betyr ferdig, ikke feil.
             if n < grense:
                 break
-        res.karantene_bevart = int(
-            conn.execute("SELECT antall_karantenesatte()").fetchone()[0])
-        conn.commit()
+        # Codex (P2): SAMME feilhåndtering som selve ryddekallet. Faller
+        # tilkoblingen etter at en batch er committet, er kjøringen fortsatt en
+        # FEILET kjøring i §6-forstand — men uten dette slapp unntaket ut av
+        # `kjor()`, `main()` rakk aldri å persistere den økte telleren, og en
+        # vedvarende feil i nettopp dette steget nådde derfor aldri alarmen
+        # etter to sammenhengende feil. Det som alt er forkastet står ved lag
+        # (batchen er committet); det som mangler, er tallet på bevart
+        # karantene, og da skal kjøringen si «feilet», ikke rapportere 0 bevart
+        # som om den hadde talt.
+        try:
+            res.karantene_bevart = int(
+                conn.execute("SELECT antall_karantenesatte()").fetchone()[0])
+            conn.commit()
+        except Exception:
+            _rull_tilbake(conn)
+            res.feilet = True
+            res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
         return res
     finally:
-        conn.execute("SELECT pg_advisory_unlock(%s)", (ARBEIDERNOKKEL,))
-        conn.commit()
+        # Opplåsingen er BEST EFFORT. Er tilkoblingen borte, feiler også denne
+        # — og et unntak herfra ville erstattet resultatet kalleren skal
+        # rapportere og persistere telleren fra, altså gjenskapt nøyaktig den
+        # tapte alarmen over. Låsen er sesjonsscopet: en død sesjon slipper den
+        # uansett når tilkoblingen lukkes.
+        try:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (ARBEIDERNOKKEL,))
+            conn.commit()
+        except Exception:
+            pass
+
+
+def _rull_tilbake(conn) -> None:
+    """Rollback som aldri kaster. En død tilkobling kan ikke rulles tilbake."""
+    try:
+        conn.rollback()
+    except Exception:
+        pass

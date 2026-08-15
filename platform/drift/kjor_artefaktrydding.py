@@ -97,8 +97,20 @@ def main() -> int:
         # `grense=BATCHGRENSE` (500) er selve grensen — flere batcher her ville
         # latt én timeraktivering forkaste et multiplum av 500.
         r = artefaktrydding.kjor(conn, maks_batcher=1, tidligere_feil=tidligere)
+    except Exception:
+        # Siste skanse (Codex): slipper et unntak likevel ut av `kjor()`, er
+        # kjøringen feilet — og telleren MÅ persisteres her, ellers nullstiller
+        # hver feilende kjøring §6-alarmen den skulle bygge opp mot. Uten dette
+        # var «to sammenhengende feilede kjøringer» avhengig av at ingen ny
+        # feilvei noen gang oppsto inne i arbeideren.
+        r = artefaktrydding.Ryddresultat(
+            feilet=True,
+            alarm_utlost=tidligere + 1 >= artefaktrydding.ALARM_ETTER_FEIL)
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     lagret = _skriv_feiltelling(tidligere + 1 if r.feilet else 0)
     print(json.dumps({
