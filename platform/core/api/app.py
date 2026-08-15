@@ -1327,7 +1327,20 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                     # LENGER enn evidensen det er til for. Da utstedes ingen —
                     # å runde oppover her hadde vært å bryte grensen i det
                     # stille, og oppdraget er uansett tapt før opplastingen.
-                    igjen = int((ef - datetime.now(timezone.utc)).total_seconds())
+                    #
+                    # Codex (P2): resttiden regnes av DATABASENS klokke, ikke
+                    # API-vertens. `utsted_artefaktkapabilitet()` setter
+                    # `utloper = now() + levetid` med basens `now()` og
+                    # sammenligner ALDRI med evidensfristen selv; ligger
+                    # API-vertens klokke etter basens, ble `igjen`
+                    # overestimert og kapabiliteten levde forbi fristen den er
+                    # hardt bundet av. `now()` er transaksjonens starttid og er
+                    # den SAMME i begge kall — dette er én transaksjon — så
+                    # `utloper = now() + min(igjen, 3600) <= evidensfrist`
+                    # holder eksakt, ikke omtrentlig.
+                    igjen = int(conn.execute(
+                        "SELECT floor(extract(epoch FROM (%s::timestamptz"
+                        " - now())))::INT", (ef,)).fetchone()[0])
                     if igjen >= 60:
                         opplasting_jti = secrets.token_hex(16)
                         # Epoch kontrolleres UNDER oppdragslåsen: dette kallet
@@ -1341,7 +1354,15 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                             (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
                              o_epoch, typerad[0], opplasting_jti,
                              min(igjen, 3600))).fetchone()
-                        if orad is not None:
+                        # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
+                        # over gjør `utloper <= evidensfrist` til en identitet,
+                        # men den identiteten hviler på 017s klemming — og en
+                        # kapabilitet som overlever evidensen den er til for
+                        # skal ikke kunne slippe ut fordi et ledd endret seg et
+                        # annet sted. Går den likevel over, utstedes ingen
+                        # `opplasting` i svaret: jti-en er da aldri utlevert og
+                        # kan ikke innløses.
+                        if orad is not None and orad[1] <= ef:
                             opplasting = {"jti": orad[0],
                                           "utloper": orad[1].isoformat(),
                                           "artefakttype": typerad[0]}
