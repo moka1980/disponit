@@ -187,6 +187,21 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
 # eller utløse en restart midt i migrasjonsvinduet.
+#
+# PR-015 (Codex P2): driftstimerne MÅ med. Er de først aktivert av en tidligere
+# utrulling, kan de ellers fyre midt i dette vinduet — mens credentials skrives
+# om, forward-only-migrasjoner kjører og `aktiv`-symlenken byttes — og en
+# revaliderings- eller ryddekjøring ville da kjørt halvt gammel, halvt ny kode
+# mot et skjema i bevegelse. Både TIMERNE og de aktive oneshot-TJENESTENE
+# stoppes: å stoppe timeren alene avbryter ikke en kjøring som alt er i gang.
+# `systemctl stop` på en oneshot venter til prosessen er ute, så vinduet åpnes
+# først når begge arbeiderne faktisk er stille.
+systemctl stop disponit-helse.timer disponit-m37.service \
+    disponit-api.service disponit-api.socket 2>/dev/null || true
+systemctl stop disponit-domenerevalidering.timer \
+    disponit-artefaktrydding.timer \
+    disponit-domenerevalidering.service \
+    disponit-artefaktrydding.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
