@@ -183,6 +183,34 @@ def test_port4_diversitet_er_deploy_port():
                          _res("b", "op2", "n1", frozenset())])
 
 
+def test_resolverparser_avviser_tomme_komponenter(monkeypatch):
+    """Codex (P2): skilletegn til stede ≠ uavhengighetsmetadata til stede.
+
+    `a@/net1=...,b@op2/=...` har både «@», «/» og «=», så kardinalitetssjekkene
+    i `krev_diversitet` passerer — den tomme strengen teller som en distinkt
+    operatør og et distinkt nett. Utrullingen ville dermed sertifisert
+    resolverdiversitet på et oppsett der uavhengigheten aldri ble oppgitt.
+    """
+    from drift import kjor_revalidering as kr
+    from drift.domenerevalidering import Diversitetsfeil
+    from drift.kjor_revalidering import resolvere
+
+    # Transporten stubbes: dnspython er en driftsavhengighet, og parseren skal
+    # kunne måles uten den (samme grunn som den late importen i `_txt_oppslag`).
+    monkeypatch.setattr(kr, "_txt_oppslag", lambda adresse: (lambda h: frozenset()))
+
+    gyldig = "a@op1/net1=1.1.1.1,b@op2/net2=8.8.8.8"
+    monkeypatch.setenv("DISPONIT_RESOLVERE", gyldig)
+    assert len(resolvere()) == 2
+
+    for ugyldig in ("a@/net1=1.1.1.1,b@op2/=8.8.8.8",     # tom operator/nett
+                    "@op1/net1=1.1.1.1,b@op2/net2=8.8.8.8",   # tomt navn
+                    "a@op1/net1=,b@op2/net2=8.8.8.8"):        # tom adresse
+        monkeypatch.setenv("DISPONIT_RESOLVERE", ugyldig)
+        with pytest.raises(Diversitetsfeil):
+            resolvere()
+
+
 def test_uenige_resolvere_er_ikke_vellykket():
     """Port 2 (ren del): uenighet → ikke vellykket. Ikke flertall, ikke «minst én»."""
     from drift.domenerevalidering import enige

@@ -63,6 +63,22 @@ def resolvere() -> list[dr.Resolver]:
         navn, resten = bit.split("@", 1)
         operator, resten = resten.split("/", 1)
         nett, adresse = resten.split("=", 1)
+        # Codex (P2): skilletegnene alene er ikke en gyldig spesifikasjon.
+        # `a@/net1=1.1.1.1,b@op2/=8.8.8.8` har både «@», «/» og «=», men to
+        # TOMME uavhengighetsfelter — og en tom streng teller som en distinkt
+        # operatør/nett i `krev_diversitet`, så porten ville sagt god for et
+        # oppsett der uavhengigheten er UDOKUMENTERT, ikke påvist. Hver
+        # komponent må derfor være ikke-tom; adressen likeså, ellers ville
+        # resolveren blitt bygget mot en tom navnetjener.
+        navn, operator = navn.strip(), operator.strip()
+        nett, adresse = nett.strip(), adresse.strip()
+        tomme = [felt for felt, verdi in
+                 (("navn", navn), ("operator", operator),
+                  ("nett", nett), ("adresse", adresse)) if not verdi]
+        if tomme:
+            raise dr.Diversitetsfeil(
+                f"ugyldig resolverspesifikasjon {bit!r}: tomt {', '.join(tomme)} "
+                f"(krever navn@operator/nett=adresse)")
         ut.append(dr.Resolver(navn=navn, operator=operator, nett=nett,
                               slå_opp=_txt_oppslag(adresse)))
     dr.krev_diversitet(ut)          # deploy-porten: kaster før DB-en røres
