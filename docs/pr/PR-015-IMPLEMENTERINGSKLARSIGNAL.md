@@ -377,6 +377,12 @@ GRANT INSERT ON brukersesjon TO disponit_authenticator;
 -- tillegg til i migrer.py — se kulepunktet om de to basene under.
 REVOKE ALL ON brukersesjon FROM disponit;
 
+-- Nye funksjonsobjekter får EXECUTE for PUBLIC som default (§2.4c) — uten
+-- disse to linjene kan enhver rolle i clusteret kalle utstedelsen direkte,
+-- og hele poenget med den egne innloggingsrollen under er dekorasjon.
+REVOKE ALL ON FUNCTION opprett_brukersesjon(TEXT,TEXT,TEXT,TEXT,INT,INTERVAL,INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION tilbakekall_brukersesjon(TEXT) FROM PUBLIC;
+
 -- Utstedelsen gis til innloggingsrollen ALENE; tilbakekalling er trygt
 -- for begge.
 GRANT EXECUTE ON FUNCTION opprett_brukersesjon(TEXT,TEXT,TEXT,TEXT,INT,INTERVAL,INT)
@@ -994,6 +1000,8 @@ REVOKE ALL ON FUNCTION forelder_hostname(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sone_overlapp(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION konfliktsett_hash(TEXT, TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION registrer_overtakelsesattestasjon(TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION opprett_brukersesjon(TEXT,TEXT,TEXT,TEXT,INT,INTERVAL,INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION tilbakekall_brukersesjon(TEXT) FROM PUBLIC;
 
 -- 2. Minste nødvendige EXECUTE, per kaller i tabellen i §2.4.
 --    Merk hvilke roller som IKKE står her: `disponit_domains_admin` får
