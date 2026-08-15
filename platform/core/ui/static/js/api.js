@@ -8,19 +8,29 @@
 //   sendes i X-Disponit-CSRF på mutasjoner (logout og senere skriveveier).
 
 export class ApiFeil extends Error {
-  constructor(status, kode) { super(`api ${status}`); this.status = status; this.kode = kode; }
+  // `detaljer` er serverens egen begrunnelse (f.eks. valideringsfeillista fra
+  // 422 `policy_ugyldig`). Uten den kan en fanger bare si «noe gikk galt» —
+  // og da er den eneste som får vite HVA, den som leser serverloggen.
+  constructor(status, kode, detaljer = null) {
+    super(`api ${status}`);
+    this.status = status;
+    this.kode = kode;
+    this.detaljer = Array.isArray(detaljer) ? detaljer : null;
+  }
 }
 export class UautorisertFeil extends ApiFeil {}      // 401 → innlogging
 export class IngenTilgangFeil extends ApiFeil {}     // 403 → ingen tilgang
 export class IkkeFunnetFeil extends ApiFeil {}       // 404
 export class FeilformetFeil extends ApiFeil {}       // 400
+export class UgyldigFeil extends ApiFeil {}          // 422 → validering feilet
 
-function _kast(status, kode) {
-  if (status === 401) throw new UautorisertFeil(status, kode);
-  if (status === 403) throw new IngenTilgangFeil(status, kode);
-  if (status === 404) throw new IkkeFunnetFeil(status, kode);
-  if (status === 400) throw new FeilformetFeil(status, kode);
-  throw new ApiFeil(status, kode);
+function _kast(status, kode, detaljer) {
+  if (status === 401) throw new UautorisertFeil(status, kode, detaljer);
+  if (status === 403) throw new IngenTilgangFeil(status, kode, detaljer);
+  if (status === 404) throw new IkkeFunnetFeil(status, kode, detaljer);
+  if (status === 400) throw new FeilformetFeil(status, kode, detaljer);
+  if (status === 422) throw new UgyldigFeil(status, kode, detaljer);
+  throw new ApiFeil(status, kode, detaljer);
 }
 
 export function lesCookie(navn) {
@@ -126,7 +136,7 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
   }
   let b = null;
   try { b = await r.json(); } catch { b = null; }
-  if (!r.ok) _kast(r.status, b && b.feil);
+  if (!r.ok) _kast(r.status, b && b.feil, b && b.detaljer);
   return b;
 }
 

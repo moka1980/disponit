@@ -179,9 +179,30 @@ function _medCsrf() {
   return () => { if (desc) Object.defineProperty(document, "cookie", desc); };
 }
 
+// Åpner detaljskuffen og venter på DEN skuffen som bærer den forventede
+// knappen. `_aapneDetalj` venter på «en hvilken som helst dialog», og en
+// forrige tests sene async-rendring kan rekke å legge sin egen skuff i DOM-en
+// først — da tester man forrige tests tilstand og får en umulig feil.
+async function _aapneDetaljMed(h, tekst) {
+  document.querySelectorAll('.overlegg, [role="dialog"]')
+    .forEach((n) => n.remove());
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => _finn(d, tekst)));
+  return [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => _finn(d, tekst));
+}
+
 async function _aapneDetalj(h) {
   // Rens stale skuffer fra tidligere tester, så querySelector treffer den nye.
-  document.querySelectorAll(".overlegg").forEach((n) => n.remove());
+  // BEGGE må ryddes: en skuff som ble bygget uten `.overlegg`-wrapperen ble
+  // stående igjen som `[role="dialog"]`, og neste test fant DEN i stedet for
+  // sin egen — med forrige tests knapper i seg. Det ga en «umulig» feil der
+  // testen lette etter Valider og fikk Åpne aktiveringsrunde.
+  document.querySelectorAll('.overlegg, [role="dialog"]')
+    .forEach((n) => n.remove());
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
@@ -199,9 +220,12 @@ test("Valider: retry etter nettverksfeil gjenbruker Idempotency-Key", async () =
     __post: async (url, opts) => {
       kalt.push({ url, opts });
       if (kalt.length === 1) throw new TypeError("network");
-      // ugyldig → blir i skuffen (ingen re-åpning) så testen ikke lekker async.
-      return { ok: true, status: 200,
-        json: async () => ({ utfall: "ugyldig", feil: ["x"] }) };
+      // Ugyldig → blir i skuffen (ingen re-åpning) så testen ikke lekker async.
+      // Formen er serverens EKTE: 422 `policy_ugyldig` med `detaljer`. Den sto
+      // før som 200 + `utfall: "ugyldig"` — en form serveren aldri sender — og
+      // nettopp derfor fanget ingen test at flaten stolte på den.
+      return { ok: false, status: 422,
+        json: async () => ({ feil: "policy_ugyldig", detaljer: ["x"] }) };
     },
   };
   const dlg = await _aapneDetalj(nyHoved());
@@ -240,5 +264,87 @@ test("Åpne runde: retry etter nettverksfeil gjenbruker Idempotency-Key", async 
   assert.equal(kalt[0].opts.headers["Idempotency-Key"],
     kalt[1].opts.headers["Idempotency-Key"],
     "rundeåpning-retry MÅ gjenbruke idempotensnøkkelen");
+  gjenopprett();
+});
+
+test("Valider: serverens 422 vises som feilliste, ikke som en død knapp", async () => {
+  // Serveren svarer 422 `policy_ugyldig` med feillista i `detaljer` — ALDRI
+  // 200 med `utfall: "ugyldig"`. Koden ventet på den siste formen, så
+  // `.then` kjørte aldri og 422-en havnet i en `.catch` som bare kalte
+  // `meldLive`: annonsert til skjermleser, usynlig på skjermen. Eier klikket
+  // «Valider» og ingenting skjedde.
+  //
+  // Fikstruren i testen over hadde NØYAKTIG samme misforståelse (den mocket
+  // 200 + `utfall`), og det er derfor ingen test fanget dette: mocken bekreftet
+  // koden i stedet for serveren. Denne bruker det ekte svaret.
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => ({
+      ok: false, status: 422,
+      json: async () => ({ feil: "policy_ugyldig", request_id: "r1",
+        detaljer: ["skjema: meta/policy_id: '01' is too short"] }),
+    }),
+  };
+
+  const dlg = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+  _finn(dlg, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => dlg.querySelector(".pa-valfeil"));
+
+  const boks = dlg.querySelector(".pa-valfeil");
+  assert.ok(boks, "ingen synlig feilboks — knappen ser død ut");
+  assert.equal(boks.getAttribute("role"), "alert");
+  assert.ok(boks.textContent.includes("is too short"),
+    "serverens begrunnelse nådde ikke skjermen");
+  gjenopprett();
+});
+
+test("Valider: 422 uten detaljer sier likevel synlig fra", async () => {
+  // Fail-visible: mangler serveren begrunnelse, skal flaten fortsatt vise at
+  // utkastet er ugyldig — ikke falle tilbake til stillhet.
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 422,
+      json: async () => ({ feil: "policy_ugyldig" }) }),
+  };
+  const dlg = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+  _finn(dlg, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => dlg.querySelector(".pa-valfeil"));
+  assert.ok(dlg.querySelector(".pa-valfeil").textContent
+    .includes(t("ui.policyadmin.ugyldig_uten_detaljer")));
+  gjenopprett();
+});
+
+test("Valider: 5xx sier «handlingen feilet», ikke «utkastet er ugyldig»", async () => {
+  // Bare 422 er et valideringssvar. En 500 (eller nettverksfeil, 403, 409)
+  // sier ingenting om utkastet — påstår flaten «ugyldig» der, sender den eier
+  // ut på leting etter feil i en policy som kan være helt i orden.
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 500,
+      json: async () => ({ feil: "internfeil" }) }),
+  };
+  const dlg = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+  _finn(dlg, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => dlg.querySelector(".pa-valfeil"));
+  const tekst = dlg.querySelector(".pa-valfeil").textContent;
+  assert.ok(tekst.includes(t("ui.policyadmin.feilet")),
+    "serverfeil skal være synlig, ikke bare annonsert");
+  assert.ok(!tekst.includes(t("ui.policyadmin.ugyldig")),
+    "en serverfeil er ikke et bevis på at utkastet er ugyldig");
   gjenopprett();
 });

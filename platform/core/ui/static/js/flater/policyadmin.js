@@ -6,7 +6,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentJson, validerUtkast, apneRunde, attesterAktivering,
+  hentJson, validerUtkast, apneRunde, attesterAktivering, UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
@@ -135,22 +135,48 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
     const valNokkel = nyIdempotensnokkel();
     const b = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.valider") });
+    // Et ugyldig utkast er ikke et 200-svar med `utfall: "ugyldig"` — serveren
+    // svarer 422 `policy_ugyldig` med feillista i `detaljer`. Koden ventet på
+    // den første formen, så `.then` kjørte aldri; 422-en havnet i `.catch`,
+    // som bare kalte `meldLive`. Det skriver til aria-live-området: en
+    // skjermleser sa fra, men på skjermen så knappen helt død ut. Eier klikket
+    // «Valider» og ingenting skjedde — den eneste som fikk vite hvorfor, var
+    // den som leste serverloggen.
+    // ÉN annonsering per klikk (Codex P2): `role="alert"` ER et assertivt
+    // live-område — boksen under leses opp av seg selv når den settes inn. Et
+    // `meldLive` i tillegg skrev samme setning til det polite område, så
+    // skjermleseren fikk to konkurrerende opplesninger for ett klikk, og den
+    // polite kunne komme sist og overdøve selve feillista.
+    // Overskriften er en DIAGNOSE, og bare 422 gir grunnlag for å stille den
+    // (Codex P2). Derfor tar boksen overskrift og linjer som argumenter i
+    // stedet for å anta «ugyldig»: en nettverksfeil, 403, 409 eller 5xx sier
+    // ingenting om utkastet, og skal ikke få eier til å lete etter feil i en
+    // policy som kan være helt i orden.
+    const visFeil = (overskrift, linjer) => {
+      boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
+      boks.append(el("div", { class: "pa-valfeil", role: "alert" },
+        el("p", { text: overskrift }),
+        ...(linjer.length
+          ? [el("ul", {}, ...linjer.map((f) => el("li", { text: String(f) })))]
+          : [])));
+    };
     b.addEventListener("click", () =>
-      validerUtkast(uid, detalj.utkastversjon, valNokkel).then((r) => {
-        if (r && r.utfall === "ugyldig") {
-          meldLive(t("ui.policyadmin.ugyldig"));
-          boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
-          boks.append(el("div", { class: "pa-valfeil", role: "alert" },
-            el("p", { text: t("ui.policyadmin.ugyldig") }),
-            el("ul", {}, ...(r.feil || []).map((f) =>
-              el("li", { text: String(f) })))));
-          return;                       // bli i skuffen så eier ser feilene
-        }
+      validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
+        boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
         meldLive(t("ui.policyadmin.validert"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        meldLive(t("ui.policyadmin.feilet"));
+        if (e instanceof UgyldigFeil) {
+          // Serverens egen feilliste når den finnes; ellers sier vi i det
+          // minste SYNLIG at utkastet er ugyldig.
+          visFeil(t("ui.policyadmin.ugyldig"),
+            e.detaljer || [t("ui.policyadmin.ugyldig_uten_detaljer")]);
+          return;                       // bli i skuffen så eier ser feilene
+        }
+        // Enhver annen feil skal også være SYNLIG — men uten å påstå noe om
+        // utkastet: her vet vi bare at handlingen ikke gikk gjennom.
+        visFeil(t("ui.policyadmin.feilet"), []);
       }));
     boks.append(rediger, b);
     return boks;
