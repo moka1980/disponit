@@ -1,8 +1,12 @@
 import { el } from "./dom.js";
 import { t } from "./i18n.js";
 
+// `ok` er reservert for modulen som FAKTISK kjører hos kunder. `klargjort` er
+// godkjent-men-ikke-i-drift og deler `info` med `bygges`: begge er «ikke i
+// drift ennå», og et grønt merke der ville lovet drift manifestet ikke har.
 export function siteStatusMerke(status) {
-  const cls = status === "i_drift" ? "ok" : status === "bygges" ? "info" : "plan";
+  const cls = status === "i_drift" ? "ok"
+    : status === "planlagt" ? "plan" : "info";
   return el("span", { class: `site-badge ${cls}` }, t(`site.status.${status}`));
 }
 

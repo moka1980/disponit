@@ -19,7 +19,10 @@ export function visKundeadmin(hoved, ctx = {}) {
   const moduler = mine || [];
   const telling = tenantTelling(moduler);
   const aktive = moduler.filter((mod) => mod.status === "i_drift");
-  const bygges = moduler.filter((mod) => mod.status === "bygges");
+  // «Under arbeid» dekker både `klargjort` (godkjent, ikke satt i drift) og
+  // `bygges`: for kunden er begge det samme — modulen er ikke i drift ennå.
+  const underArbeid = moduler.filter((mod) => mod.status === "klargjort"
+    || mod.status === "bygges");
 
   sett(hoved,
     ...flateHode(t("ui.kundeadmin.tittel"), t("ui.kundeadmin.undertittel")),
@@ -33,8 +36,8 @@ export function visKundeadmin(hoved, ctx = {}) {
             el("strong", { text: String(aktive.length) }),
             el("span", { text: t("ui.kundeadmin.kpi.aktive_moduler") })),
           el("div", { class: "site-kpi" },
-            el("strong", { text: String(bygges.length) }),
-            el("span", { text: t("ui.kundeadmin.kpi.bygges") })),
+            el("strong", { text: String(underArbeid.length) }),
+            el("span", { text: t("ui.kundeadmin.kpi.under_arbeid") })),
           el("div", { class: "site-kpi" },
             el("strong", { text: String(telling.planlagt) }),
             el("span", { text: t("ui.kundeadmin.kpi.planlagt") })))),
@@ -117,6 +120,7 @@ export function visKundeadmin(hoved, ctx = {}) {
         el("p", { text: t("ui.kundeadmin.neste_tekst") }),
         el("div", { class: "site-inline-badges" },
           siteStatusMerke("i_drift"),
+          siteStatusMerke("klargjort"),
           siteStatusMerke("bygges"),
           siteStatusMerke("planlagt")))));
 }

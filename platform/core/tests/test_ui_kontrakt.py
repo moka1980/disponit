@@ -15,6 +15,7 @@ import pytest
 
 API = Path(__file__).resolve().parents[1] / "api"
 UI_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "js"
+MODULER = Path(__file__).resolve().parents[2] / "modules"
 KILDE = "\n".join((API / f).read_text(encoding="utf-8")
                   for f in ("lesing.py", "app.py", "sesjon.py"))
 
@@ -93,3 +94,52 @@ def test_rolleguiden_lover_bare_fullmakter_rollen_faktisk_har():
         assert scopes == set(ROLLE_TIL_SCOPES[rolle]), (
             f"rolleguiden for {rolle!r} er ute av takt med autorisasjon.py: "
             f"guide={sorted(scopes)} kanonisk={sorted(ROLLE_TIL_SCOPES[rolle])}")
+
+
+def _modulstatus_fra_ui() -> dict[int, str]:
+    """`MODULSTATUS` i plattformdata.js, som {modulnummer: status}."""
+    kilde = (UI_JS / "plattformdata.js").read_text(encoding="utf-8")
+    blokk = re.search(r"export const MODULSTATUS = \{(.*?)\n\};", kilde, re.S)
+    assert blokk, "MODULSTATUS finnes ikke i plattformdata.js"
+    return {int(m.group(1)): m.group(2)
+            for m in re.finditer(r'(\d+):\s*"([a-z_]+)"', blokk.group(1))}
+
+
+def _status_fra_manifest(modul_id: int) -> str:
+    """Manifestets TO akser → UI-ets ene ord. Ingen manifest = `planlagt`."""
+    import yaml
+
+    treff = sorted(MODULER.glob(f"m{modul_id:02d}_*/manifest.yaml"))
+    if not treff:
+        return "planlagt"
+    m = yaml.safe_load(treff[0].read_text(encoding="utf-8"))
+    if m.get("driftstilstand") == "produksjon":
+        return "i_drift"
+    return "klargjort" if m.get("status") == "aktiv" else "bygges"
+
+
+def test_modulstatus_folger_manifestene():
+    """Flatens modulstatus er en PÅSTAND OM DRIFT, og manifestene er
+    autoriteten på den. Uten denne porten kunne landingssiden reklamere med
+    «tre moduler i drift» mens hvert manifest sa `driftstilstand:
+    ikke_i_drift` — nøyaktig den sammenblandingen manifestene innfører to
+    akser for å unngå (`status` = godkjent, `driftstilstand` = kjører faktisk).
+    Drift i én av retningene skal ryke her, ikke hos kunden."""
+    ui = _modulstatus_fra_ui()
+    assert ui, "MODULSTATUS er tom — regexen eller kilden har flyttet seg"
+    for modul_id, status in ui.items():
+        forventet = _status_fra_manifest(modul_id)
+        assert status == forventet, (
+            f"M-{modul_id} står som {status!r} i UI-et, men manifestet gir "
+            f"{forventet!r} (status/driftstilstand i "
+            f"platform/modules/m{modul_id:02d}_*/manifest.yaml)")
+
+
+def test_modulstatus_dekker_manifestene():
+    """Motsatt retning: et NYTT manifest skal tvinge en bevisst
+    UI-oppdatering, ikke bli usynlig fordi kartet aldri ble utvidet."""
+    ui = _modulstatus_fra_ui()
+    for sti in sorted(MODULER.glob("m*_*/manifest.yaml")):
+        modul_id = int(re.match(r"m(\d+)_", sti.parent.name).group(1))
+        assert modul_id in ui, \
+            f"{sti.parent.name} har manifest, men mangler i MODULSTATUS"

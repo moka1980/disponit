@@ -4,11 +4,23 @@
 
 // Kanonisk statuskilde. Alt annet — kort, merker og KPI-er — utleder herfra,
 // så en modul som skifter tilstand oppdateres ETT sted.
+//
+// Verdiene er ikke en mening om modulene: de er AVLEDET av manifestenes to
+// akser (`platform/modules/*/manifest.yaml`), og
+// `test_ui_kontrakt.py::test_modulstatus_folger_manifestene` pinner kartet mot
+// dem. Manifestet skiller bevisst `status` (er modulen GODKJENT?) fra
+// `driftstilstand` (hvor kjører den FAKTISK?) — kollapset flaten de to til ett
+// ord, lovet den drift der registeret sa `ikke_i_drift`. Avledningen:
+//
+//   driftstilstand: produksjon          → i_drift     modulen kjører hos kunder
+//   status: aktiv, ikke i produksjon    → klargjort   godkjent, men ikke i drift
+//   manifest finnes, status ikke aktiv  → bygges      under utvikling
+//   ingen manifest                      → planlagt    beskrevet, ikke påbegynt
 export const MODULSTATUS = {
-  1: "i_drift",
-  2: "i_drift",
-  37: "i_drift",
-  38: "bygges",
+  1: "klargjort",   // m01_policy: status aktiv, driftstilstand ikke_i_drift
+  2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
+  37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
+  38: "planlagt",   // ingen manifest i platform/modules/ ennå
 };
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens
@@ -153,14 +165,25 @@ export function modulerForTenant(tenant) {
 // Tenantens egne tall. `planlagt` er plattformmodulene kunden ennå ikke har
 // fått aktivert — ikke plattformens globale restliste.
 export function tenantTelling(moduler) {
-  const iDrift = moduler.filter((m) => m.status === "i_drift").length;
-  const bygges = moduler.filter((m) => m.status === "bygges").length;
-  const totalt = plattformTelling().totalt;
-  return { iDrift, bygges, planlagt: totalt - moduler.length, totalt };
+  const tell = (s) => moduler.filter((m) => m.status === s).length;
+  const iDrift = tell("i_drift");
+  const klargjort = tell("klargjort");
+  const bygges = tell("bygges");
+  const totalt = KATALOG_TOTALT;
+  return { iDrift, klargjort, bygges, underArbeid: klargjort + bygges,
+    planlagt: totalt - moduler.length, totalt };
 }
 
+//: Modulkatalogen slik produktplanen beskriver den. Bare de fire i `MODULER`
+//: har en tilstand ennå; resten er `planlagt`.
+const KATALOG_TOTALT = 45;
+
 export function plattformTelling() {
-  const iDrift = Object.values(MODULSTATUS).filter((s) => s === "i_drift").length;
-  const bygges = Object.values(MODULSTATUS).filter((s) => s === "bygges").length;
-  return { iDrift, bygges, planlagt: 45 - iDrift - bygges, totalt: 45 };
+  const tell = (s) => Object.values(MODULSTATUS).filter((v) => v === s).length;
+  const iDrift = tell("i_drift");
+  const klargjort = tell("klargjort");
+  const bygges = tell("bygges");
+  return { iDrift, klargjort, bygges, underArbeid: klargjort + bygges,
+    planlagt: KATALOG_TOTALT - iDrift - klargjort - bygges,
+    totalt: KATALOG_TOTALT };
 }

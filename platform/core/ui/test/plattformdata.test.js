@@ -6,9 +6,19 @@ import {
 } from "../static/js/plattformdata.js";
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
-  assert.equal(modulStatus(1), "i_drift");
-  assert.equal(modulStatus(38), "bygges");
+  // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
+  // godkjent men ikke i drift, M-2/M-37 er under utvikling, M-38 har intet
+  // manifest. Ingen av dem er `i_drift` — det ordet krever
+  // `driftstilstand: produksjon`.
+  assert.equal(modulStatus(1), "klargjort");
+  assert.equal(modulStatus(2), "bygges");
+  assert.equal(modulStatus(38), "planlagt");
   assert.equal(modulStatus(45), "planlagt");
+});
+
+test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => {
+  assert.equal(Object.values(MODULSTATUS).filter((s) => s === "i_drift").length,
+    0, "en modul står i_drift — da må manifestet ha driftstilstand: produksjon");
 });
 
 test("MODULOVERSIKT: kortstatus utledes av MODULSTATUS, ikke duplisert", () => {
@@ -24,9 +34,11 @@ test("plattformTelling: KPI-ene teller det kortene viser", () => {
   // Alt i MODULSTATUS er beskrevet i oversikten, så tallene skal møtes.
   assert.equal(Object.keys(MODULSTATUS).length, MODULOVERSIKT.length);
   assert.equal(telling.iDrift, kort("i_drift"));
+  assert.equal(telling.klargjort, kort("klargjort"));
   assert.equal(telling.bygges, kort("bygges"));
-  assert.equal(telling.iDrift + telling.bygges + telling.planlagt,
-    telling.totalt);
+  assert.equal(telling.underArbeid, telling.klargjort + telling.bygges);
+  assert.equal(telling.iDrift + telling.klargjort + telling.bygges
+    + telling.planlagt, telling.totalt);
 });
 
 test("modulerForTenant: kundens tildeling, ikke plattformkatalogen", () => {
@@ -39,13 +51,15 @@ test("modulerForTenant: kundens tildeling, ikke plattformkatalogen", () => {
 });
 
 test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
+  // Bjørkli har M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
+  // arbeid — og resten av katalogen er planlagt for kunden.
   const telling = tenantTelling(modulerForTenant("bjorkli"));
-  assert.equal(telling.iDrift, 2);
-  assert.equal(telling.bygges, 0);
+  assert.equal(telling.iDrift, 0);
+  assert.equal(telling.underArbeid, 2);
   assert.equal(telling.planlagt, telling.totalt - 2);
   const ukjent = tenantTelling([]);
   assert.equal(ukjent.iDrift, 0);
-  assert.equal(ukjent.bygges, 0);
+  assert.equal(ukjent.underArbeid, 0);
 });
 
 test("modulmerke: tenantens modul-ID-er vises som M-<id>", () => {
