@@ -26,6 +26,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 1 | `overtakelse_attestasjon` (ny tabell, m/ `rolle`, `authz_version` + `konfliktsett_hash`) + `overtakelse_attestasjon_saksbinding()` (trigger) | Fire øyne, §4; målet må bindes til saken, §1; autorisasjonen må kunne reautoriseres ved tildeling, §4.3; og stemmen må bindes til konfliktbildet den gjaldt, §1a |
 | 1b | `konfliktsett_hash()` + `registrer_overtakelsesattestasjon()` (nye) | Med INSERT-grant kan én kompromittert runtime-credential skrive to stemmer i to navn og gjøre opp domenet selv; aktøren må tas fra sesjonen og autoriseres i databasen, §1b |
 | 1c | `opprett_brukersesjon()` + `tilbakekall_brukersesjon()` (nye, eid av `disponit_authenticator`) + `REVOKE ALL ON brukersesjon FROM disponit` | Å ta aktøren fra sesjonen er ingen port så lenge runtime kan INSERT-e sesjonen selv: med `SELECT` på `brukermedlemskap` og `INSERT` på `brukersesjon` kan ett lekket DB-credential skrive to sesjoner i to avgjøreres navn og avgi begge stemmene, §1c |
+| 1d | `laas_domenesak()` (ny, eid av `disponit_m37_claimer`) | Både `registrer_overtakelsesattestasjon()` (§1b) og `avgjor_domeneovertakelse_attestert()` (§4.3) kjører som `disponit_domene_eier`, som kun har `SELECT ON unntak` (§6c); en låseklausul krever `UPDATE`, så `FOR UPDATE` derfra gir `permission denied` på FØRSTE lovlige stemme og på HVERT oppgjør. Et `UPDATE`-grant ville gitt fire-øyne-håndheveren skriverett på saksraden den håndhever på, §1d |
 | 2 | `domeneobservasjonsrunde` (m/ `challenge_token_hash`, unikindeks på levende runde, køindeks) + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4; runden må være bundet til challengeVERSJONEN, §2.4a; én levende runde per mål og formål, §2.4 |
 | 2b | `rydd_domeneobservasjonsrunder(p_maks INT)` (ny) | En runde som bare utløper har ingen avslutning, og køtabellen vokser uten grense, §2.4bb |
 | 3 | `apne_domeneobservasjonsrunde(tenant, hostname, formal)` (ny) → `(runde_id, gjenbrukt, forrige_runde, forrige_utfall)` | Runden er engangs, kortlevd, idempotent under sonelåsen og bundet til én rad og én challenge, §2.4/§2.4a; og en utløpt runde må rapportere utfallet sitt, ellers er `409 observasjon_uteblitt` en respons ingen kodesti kan produsere, §2.4/§2.5c |
@@ -252,9 +253,13 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   --    Ingen rad (ikke medlem/ikke aktiv), 'domeneavgjorer' ikke i
   --    roller, eller authz_version <> sesjonens authz_snapshot
   --    -> `aktor_uautorisert`.
-  -- 3. saken leses FOR UPDATE: kategori 'domeneovertakelse', og målet
-  --    (vinnende_tenant, hostname, forventet_generasjon) hentes fra sakens
-  --    idempotensnøkkel — samme oppslag som saksbindingstriggeren (§1).
+  -- 3. saken LÅSES gjennom laas_domenesak(p_tenant, p_unntak_id) (§1d) —
+  --    ALDRI med en egen FOR UPDATE her, av nøyaktig samme grunn som i
+  --    steg 2. Hjelperen returnerer `kategori`, `status`, `saksversjon` og
+  --    `idempotensnokkel` fra raden den låser. Kategori må være
+  --    'domeneovertakelse', og målet (vinnende_tenant, hostname,
+  --    forventet_generasjon) hentes fra idempotensnøkkelen — samme oppslag
+  --    som saksbindingstriggeren (§1). Ingen rad -> `unntak_ukjent`.
   -- 4. INSERT ... ON CONFLICT (tenant, unntak_id, aktor) DO UPDATE med
   --    rolle='domeneavgjorer', authz_version fra steg 2, konfliktsett_hash
   --    fra konfliktsett_hash(vinnende_tenant, hostname, generasjon) (§1a),
@@ -306,6 +311,21 @@ $$;
   reautoriserer gjennom samme funksjon: skrivingen og tellingen av en
   stemme låser da medlemskapet på nøyaktig samme måte, gjennom nøyaktig
   samme objekt.
+- **Og SAKSLÅSEN har nøyaktig samme problem — den er bare mindre synlig,
+  fordi `unntak` *står* i grantlisten.** Eierrollen har `SELECT` på
+  `unntak` (kulepunktet over), og et `SELECT`-grant bærer ikke en
+  låseklausul. `SELECT … FOR UPDATE` i steg 3 ville derfor gitt
+  `permission denied` ved **første lovlige stemme**, ikke ved et angrep —
+  og nøyaktig det samme skjer i steg 1 av `avgjor_domeneovertakelse_-
+  attestert()` (§4.3), så hvert eneste oppgjør ville feilet på samme lås.
+  Å løse det med `GRANT UPDATE ON unntak TO disponit_domene_eier` er
+  utelukket av samme grunn som for `brukermedlemskap`: fire-øyne-
+  håndheveren ville fått skriverett på saksraden den håndhever fire øyne
+  på, og kunne flyttet saken forbi sin egen port. Låsen tas derfor av
+  `laas_domenesak()` (§1d) — samme form som `laas_godkjenner` og
+  `laas_oppdragsgenerasjon`: eid av en rolle som ALT har `UPDATE`,
+  `FOR UPDATE` innebygd, og den returnerer kun de fire feltene kalleren
+  har bruk for.
 - **Fornyelsen går samme vei.** `ON CONFLICT DO UPDATE` treffer
   kolonnelåstriggeren i §1, som tillater nettopp de fem
   snapshot-feltene — en fornyelse er en ny stemme avgitt nå, med ny
@@ -449,6 +469,92 @@ GRANT EXECUTE ON FUNCTION tilbakekall_brukersesjon(TEXT)
   `permission denied`, og en påfølgende
   `registrer_overtakelsesattestasjon()` med en selvvalgt klartekst gir
   `sesjon_ugyldig`. Uten alle fem er §1b-s aktøroppslag en formalitet.
+
+### 1d. Sakslåsen må tas av en rolle som HAR `UPDATE` på `unntak`
+
+**Begge inngangene til fire øyne låser saken, og ingen av dem har lov til
+det.** `registrer_overtakelsesattestasjon()` (§1b steg 3) og
+`avgjor_domeneovertakelse_attestert()` (§4.3 steg 1) kjører begge som
+`disponit_domene_eier`, og begge må lese unntaksraden **under lås** —
+ellers kan saken flyttes mellom målavlesningen og skrivingen. Men §6c gir
+eierrollen kun `SELECT ON unntak`, og PostgreSQL krever `UPDATE`-rett (på
+minst én kolonne) for `SELECT … FOR UPDATE`. Uten dette punktet feiler
+altså **første lovlige stemme** på `permission denied`, og **hvert eneste**
+oppgjør på den samme låsen — ikke ved et angrep, men i normalveien, på en
+base der de negative portene (20l, 20i-2, 2g) alle står grønne fordi de
+forventer et avslag.
+
+**Og `GRANT UPDATE ON unntak TO disponit_domene_eier` er ikke løsningen.**
+Det er samme feil som §1b avviser for `brukermedlemskap`, bare på et annet
+objekt: rollen som håndhever fire øyne ville fått skriverett på saksraden
+den håndhever fire øyne *på*. Én kompromittert eierkontekst kunne da satt
+saken `løst` uten å røre attestasjonene, eller flyttet `saksversjon` forbi
+den optimistiske låsen i §4.2b steg 4. Mønsteret fra `laas_godkjenner`
+(013) og `laas_oppdragsgenerasjon` (§5) brukes derfor her også:
+
+```sql
+-- Kjøres under `SET LOCAL ROLE disponit_m37_claimer` (§2.4c), fordi bare
+-- eieren kan gi bort rettigheter på et objekt, og migrator eier den ikke.
+CREATE FUNCTION laas_domenesak(p_tenant TEXT, p_unntak_id BIGINT)
+RETURNS TABLE (kategori TEXT, status TEXT, saksversjon INT,
+               idempotensnokkel TEXT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    RETURN QUERY
+    SELECT u.kategori, u.status, u.saksversjon, u.idempotensnokkel
+      FROM public.unntak u
+     WHERE u.tenant = p_tenant AND u.id = p_unntak_id
+       FOR UPDATE;
+END $$;
+
+ALTER FUNCTION laas_domenesak(TEXT, BIGINT) OWNER TO disponit_m37_claimer;
+REVOKE ALL ON FUNCTION laas_domenesak(TEXT, BIGINT) FROM PUBLIC;
+-- EXECUTE gis KUN til `disponit_domene_eier`, under samme
+-- `SET LOCAL ROLE disponit_m37_claimer` som oppdragslåsen (§2.4c).
+```
+
+- **Eieren er `disponit_m37_claimer`, ikke migrator og ikke
+  `disponit_domene_eier`.** Rollen har alt `SELECT, UPDATE ON unntak`
+  (005 linje 1328) — den ble opprettet nettopp for å eie de SECURITY
+  DEFINER-funksjonene som må røre unntakskøen — og den er NOLOGIN, så
+  ingen kan koble til som den. Å la migrator eie hjelperen ville gjort
+  låsen til en vei inn i migrators privilegier, som er nøyaktig det §6d
+  finnes for å hindre.
+- **RLS er alt løst for den rollen.** `unntak` har ENABLE + FORCE RLS
+  (011 linje 414), og `disponit_m37_claimer` har bevisst **ikke**
+  BYPASSRLS; 005 gir den i stedet den navngitte policyen `m37_dispatcher`
+  på `unntak`, som gjelder når `current_user = 'disponit_m37_claimer'` —
+  altså nøyaktig inne i en SECURITY DEFINER-funksjon rollen eier (005
+  linje 1336–1370). Hjelperen ser derfor saken uansett hvilken tenant
+  kalleren står i, uten at rollen får et fritak som gjelder alle tabeller.
+- **Den returnerer fire felter, ikke raden.** `kategori` er familiegjerdet
+  (§4.2), `status` er statusmaskinen (§4.2b steg 5), `saksversjon` er den
+  optimistiske låsen, og `idempotensnokkel` bærer målet (§1). Alt annet på
+  `unntak` — intensjon, policyref, historikkpekere — er utenfor både §1b
+  og §4.3, og en hjelper som returnerte hele raden ville vært et
+  kryss-tenant leseoppslag over hele unntakskøen med ett EXECUTE-grant.
+- **`SELECT ON unntak` blir stående for eierrollen.** Låsen er ikke den
+  eneste lesningen: `avgjor_domeneovertakelse` leser saken igjen når
+  taperoppgjøret skal skrives (§3.1). Det er *låseklausulen* som må gå
+  gjennom hjelperen, ikke lesningen — samme deling som for `oppdrag`, der
+  eierrollen beholder sitt `SELECT` (016 linje 950) og kun `FOR SHARE`
+  flyttes ut (§5).
+- **`FOR UPDATE`, ikke `FOR SHARE`.** I motsetning til oppdragslåsen skal
+  to samtidige attestasjoner på **samme** sak serialiseres: begge teller
+  stemmer og kan begge nå terskelen, og uten eksklusiv lås ville to
+  parallelle oppgjør begge sett to ferske stemmer. Oppdragslåsen deles
+  fordi to opplastinger på samme oppdrag er lovlige samtidig; to oppgjør
+  på samme sak er det ikke.
+- **Port 20l-2** — positiv, og den finnes fordi alle de andre
+  §1b/§4.3-portene måler avslag: én lovlig stemme skrives, og et lovlig
+  oppgjør går gjennom, kjørt som `disponit` mot 019-versjonen. En
+  implementasjon med `SELECT … FOR UPDATE` rett i funksjonskroppen feiler
+  her med `permission denied` på `unntak` mens 20l, 20i-2 og 2g alle står
+  grønne. Målt på at `laas_domenesak()` faktisk returnerer
+  idempotensnøkkelen, og på at en samtidig `UPDATE unntak` på samme rad
+  blokkeres mens låsen holdes — samme form som
+  `test_laas_godkjenner_serialiserer_mot_tilbakekalling`
+  (`test_pr013_policyadmin_flyt.py:376`).
 
 ## 2. Revalideringsarbeider og observasjonskontrakten — planlegger, observerer ikke
 
@@ -858,6 +964,7 @@ verdi.
 | `opprett_brukersesjon(tenant, bruker_id, sesjon_id_hash, csrf_hash, authz_snapshot, levetid, maks_sesjoner)` | **kun** `disponit_innlogging` | Runtime har verken bordgrant på `brukersesjon` eller EXECUTE her; uten det skillet kan ett lekket DB-credential skrive begge stemmene over. 5-sesjonstaket håndheves inne i funksjonen, under lås, fordi tellingen og INSERT-en må ligge i samme transaksjon (§1c) |
 | `tilbakekall_brukersesjon(sesjon_id_hash)` | `disponit` (logout) og `disponit_innlogging` | Å avslutte en sesjon kan ikke forfalske en identitet, kun fjerne en (§1c) |
 | `laas_oppdragsgenerasjon(tenant, oppdrag_id)` | **kun** `disponit_domene_eier`, fra `lagre_artefakt_staged()` | Eierrollen har kun `SELECT ON oppdrag`, og en låseklausul krever `UPDATE`; hjelperen eies av `disponit_m37_claimer` og returnerer én kolonne fra den raden den låser `FOR SHARE` (§5) |
+| `laas_domenesak(tenant, unntak_id)` | **kun** `disponit_domene_eier`, fra `registrer_overtakelsesattestasjon()` (§1b) og `avgjor_domeneovertakelse_attestert()` (§4.3) | Samme grunn på `unntak`: eierrollen har kun `SELECT`, og en låseklausul krever `UPDATE`. Hjelperen eies av `disponit_m37_claimer` (som har `SELECT, UPDATE` + policyen `m37_dispatcher` der) og returnerer nøyaktig `kategori`, `status`, `saksversjon` og `idempotensnokkel` fra raden den låser `FOR UPDATE` (§1d) |
 
 Det som er vunnet: arbeideren har **ikke** EXECUTE på
 `meld_domeneobservasjon`, og kan ikke skrive `domeneobservasjon`
@@ -1092,8 +1199,19 @@ GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT)
 -- gi bort rettigheter på et objekt, og migrator eier den ikke — grantet
 -- gjøres derfor under `SET LOCAL ROLE`, nøyaktig som 005 §9 (linje 421) og
 -- migrer.py linje 122–133.
+--
+-- SAKSLÅSEN har samme form, samme grunn og samme eier (§1d): eierrollen
+-- har kun `SELECT` på `unntak` (§6c), og BEGGE inngangene til fire øyne —
+-- `registrer_overtakelsesattestasjon()` (§1b steg 3) og innpakningen over
+-- (§4.3 steg 1) — må låse saksraden. Uten dette EXECUTE-et feiler første
+-- lovlige stemme og hvert eneste oppgjør på `permission denied`, mens alle
+-- de negative portene står grønne. `disponit_m37_claimer` har alt
+-- `SELECT, UPDATE ON unntak` (005 linje 1328) og policyen `m37_dispatcher`
+-- der (005 linje 1336–1370), så hjelperen ser saken uten BYPASSRLS.
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION laas_oppdragsgenerasjon(TEXT, BIGINT)
+  TO disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION laas_domenesak(TEXT, BIGINT)
   TO disponit_domene_eier;
 RESET ROLE;
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT)
@@ -2249,9 +2367,12 @@ oppgjøret, og oppgjøret selv grantes til ingen:
 CREATE FUNCTION avgjor_domeneovertakelse_attestert(
         p_tenant TEXT, p_unntak_id BIGINT, p_utfall TEXT, p_runde UUID)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-  -- 1. Saken FOR UPDATE: kategori 'domeneovertakelse'; målet
-  --    (vinnende_tenant, hostname, forventet_generasjon) leses fra
-  --    idempotensnøkkelen — samme oppslag som saksbindingstriggeren (§1).
+  -- 1. Saken låses gjennom laas_domenesak(p_tenant, p_unntak_id) (§1d) —
+  --    IKKE med en egen FOR UPDATE: eierrollen har kun SELECT på `unntak`
+  --    (§6c), og en låseklausul krever UPDATE. Kategori må være
+  --    'domeneovertakelse'; målet (vinnende_tenant, hostname,
+  --    forventet_generasjon) leses fra idempotensnøkkelen — samme oppslag
+  --    som saksbindingstriggeren (§1).
   -- 2. De TALTE stemmene: `overtakelse_attestasjon` for saken med
   --    `utfall = p_utfall` og `avgitt_ts > now() - INTERVAL '72 hours'`,
   --    ORDER BY aktor. Terskel: 'avvis' -> 1, 'godkjenn' -> 2 distinkte
@@ -2756,6 +2877,16 @@ GRANT EXECUTE ON FUNCTION tilbakekall_brukersesjon(TEXT) TO {rolle};
   Låsene tas derfor gjennom `laas_godkjenner` (§1b) og
   `laas_oppdragsgenerasjon` (§5), som begge eies av rollen som ALT har
   rettigheten, og som kun kan returnere den ene raden de låser.
+- **`unntak` er det tredje tilfellet, og det farligste å overse: grantet
+  STÅR der, men det er `SELECT`.** Både §1b steg 3 og §4.3 steg 1 låser
+  saksraden, og `SELECT … FOR UPDATE` krever `UPDATE`-rett. Å utvide linja
+  over til `SELECT, UPDATE ON unntak` ville gitt fire-øyne-håndheveren
+  skriverett på saksraden den håndhever på — den kunne satt saken `løst`
+  uten å røre en attestasjon. Sakslåsen går derfor gjennom
+  `laas_domenesak()` (§1d), eid av `disponit_m37_claimer` som alt har
+  `SELECT, UPDATE ON unntak` (005 linje 1328). Uten den feiler **første
+  lovlige stemme** og **hvert eneste oppgjør** på `permission denied`,
+  mens hver negativ port står grønn.
 - **`domeneobservasjonsrunde` og `domeneobservasjon` får ingen linje.**
   De nås utelukkende gjennom SECURITY DEFINER-funksjonene i §2.4/§2.4b;
   et bordgrant der ville gjort observatørkontrakten til pynt — runtime
@@ -2793,16 +2924,19 @@ alle testene er grønne.
 - **Hver ny og hver erstattet signatur inn i `_design`.** Signaturen er
   nøkkelen (`to_regprocedure`), så `p_runde`-versjonene er *nye* rader ved
   siden av 016/018-radene — ikke erstatninger av dem.
-- **To av 019-funksjonene har en ANNEN eier enn `disponit_domene_eier`, og
-  må inn med den.** `laas_oppdragsgenerasjon(text,bigint)` eies av
-  `disponit_m37_claimer` (§5) — samme rad-form som de øvrige M-37-
+- **Fire av 019-funksjonene har en ANNEN eier enn `disponit_domene_eier`,
+  og må inn med den.** `laas_oppdragsgenerasjon(text,bigint)` og
+  `laas_domenesak(text,bigint)` eies begge av
+  `disponit_m37_claimer` (§5/§1d) — samme rad-form som de øvrige M-37-
   funksjonene i `_design` (linje 46–81) — og `opprett_brukersesjon(text,
   text,text,text,integer,interval,integer)` +
   `tilbakekall_brukersesjon(text)` eies av
   `disponit_authenticator` (§1c), som `slaa_opp_sesjon` alt gjør. Havner de
   inn med feil eier, eller ikke i det hele tatt, flytter reparasjonen dem
-  til migrator: `laas_oppdragsgenerasjon` ville da fortsatt virke — den
-  ville bare ha sluttet å være avgrenset — mens
+  til migrator: de to låsehjelperne ville da fortsatt virke — de
+  ville bare ha sluttet å være avgrenset, og `laas_domenesak` ville i
+  tillegg fått migrators RLS-fritak i stedet for policyen `m37_dispatcher`
+  — mens
   sesjonsutstedelsen ville kjørt med migrators privilegier og §1c-grensen
   vært borte uten at ett kall feilet.
 - **`overtakelse_attestasjon` og `domenekonfliktpart` skal IKKE inn — de
@@ -3251,6 +3385,17 @@ skrevet. Eierrollen har intet bordgrant på `brukermedlemskap` (§6c), og en
 låseklausul krever `UPDATE` — en `FOR UPDATE` rett i funksjonskroppen gir
 derfor `permission denied` før noen rad skrives, og en port som kun måler
 avslag ville stått grønn mens ingen i det hele tatt kunne stemme ·
+20l-2 **Sakslåsen holder også (§1d):** samme positive krav, men på
+`unntak` — der grantet finnes, og er `SELECT`. Én lovlig stemme skrives,
+og et lovlig oppgjør går gjennom, begge kjørt som `disponit` mot
+019-versjonen. En implementasjon med `SELECT … FOR UPDATE` rett i
+`registrer_overtakelsesattestasjon()` eller i
+`avgjor_domeneovertakelse_attestert()` feiler her med `permission denied`
+på `unntak`, mens 20l, 20i-2 og 2g alle står grønne fordi de forventer et
+avslag. Målt på at `laas_domenesak()` returnerer idempotensnøkkelen, og på
+at en samtidig `UPDATE unntak` på samme rad blokkeres mens låsen holdes —
+samme form som `test_laas_godkjenner_serialiserer_mot_tilbakekalling`
+(`test_pr013_policyadmin_flyt.py:376`) ·
 20m **Endret konfliktbilde ugyldiggjør stemmene (§1a):** B utfordrer A-s
 wildcard, to avgjørere godkjenner, og **før** oppgjøret verifiseres et
 nytt barn under samme forelder → første forsøk gir
@@ -3631,6 +3776,10 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           laas_oppdragsgenerasjon() eid av disponit_m37_claimer, fordi
           eierrollen kun har SELECT ON oppdrag og en låseklausul krever
           UPDATE (§5) +
+          laas_domenesak() eid av samme rolle og av samme grunn på
+          `unntak`, fordi BÅDE stemmen (§1b steg 3) og oppgjøret
+          (§4.3 steg 1) må låse saksraden — uten den feiler første lovlige
+          stemme og hvert oppgjør på permission denied (§1d) +
           overtakelse_attestasjon.konfliktsett_hash +
           RLS + FORCE + tenant-policy på overtakelse_attestasjon OG
           domenekonfliktpart (§1/§2.5b) +
