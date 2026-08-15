@@ -4,10 +4,36 @@
 // provider_id kommer fra /ui/oppsett.json (deploy-satt per arbeidsområde),
 // aldri hardkodet i klienten.
 import { el, sett } from "./dom.js";
-import { t } from "./i18n.js";
+import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
-import { Feiltilstand } from "./komponenter.js";
+import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
+import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
+
+// Hele produktomfanget, gruppert slik en kjøper leser det: elleve områder, 45
+// moduler, fire faser. Uten dette svarte forsiden bare på de fire punktene i
+// «Hva du får» — og en besøkende kunne tro at det var alt vi tilbyr.
+//
+// Ingen statusbrikke per modul her. Katalogen er OMFANGET (hva plattformen
+// dekker), ikke en leveranseplan, og 45 «Kommer»-merker ville gjort seksjonen
+// til nettopp det byggeregnskapet forsiden ble ryddet for. Hva som kjører i
+// dag står ett sted: brikkene i «Hva du får».
+function katalogseksjon() {
+  return el("section", { class: "kort site-section" },
+    el("div", { class: "site-section-head" },
+      el("div", {},
+        el("p", { class: "site-eyebrow", text: t("site.katalog") }),
+        el("h2", { text: t("site.katalog_tittel") })),
+      el("span", { class: "site-inline-note",
+        text: t("site.katalog_note").replace("{antall}", KATALOG_ANTALL) })),
+    el("div", { class: "site-grid site-grid-3" },
+      OMRADER.map((omrade) =>
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t(`site.omrade.${omrade.id}`) }),
+          el("ul", { class: "site-list site-list-tett" },
+            omrade.moduler.map((n) =>
+              el("li", { text: t(`site.katalog.m${n}.navn`) })))))));
+}
 import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
@@ -19,6 +45,68 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // `policy_validator/engine.py` + `flater/unntak.js` (en policy-autorisert
 // godkjenning KAN løfte nøyaktig den bundne grensen). Begge lovet mer enn
 // koden bar (Codex P2) — endres et svar her, sjekk kilden først.
+// Språkvalget må finnes FØR innlogging: en besøkende som ikke leser norsk
+// skal kunne lese tilbudet, ikke bare finne bryteren etterpå — den lå bare i
+// `AppShell`, altså bak en økt. En knapp per språk, ikke en `select`, fordi
+// det er to valg og begge skal være synlige — da ser man at engelsk FINNES
+// uten å åpne noe.
+//
+// Byttet LAGRER, men LITER IKKE PÅ at lagringen gikk (Codex P2). `lagreSprak`
+// svelger et nektet `localStorage` — privat modus, blokkerte tredjeparts-
+// cookies, en herdet nettleser — og en `location.reload()` ville da lest
+// `index.html` sin `data-sprak="nb"` og gitt norsk tilbake. Nøyaktig de
+// brukerne som trenger knappen mest ville sittet fast. Locale-settet lastes
+// derfor rett inn i modulen og flaten rendres på nytt: valget lever i økten
+// uansett hva lageret svarer, og lagringen er kun det som gjør at det
+// overlever et nytt besøk.
+// BARE DET SISTE BYTTET FÅR TEGNE (Codex P2). Byttet har TO ventepunkter, ikke
+// ett: locale-settet, og så `/ui/oppsett.json` inne i `visInnlogging`. `null`
+// fra `lastI18n` verner det første — et nyere valg overtok mens settet ble
+// hentet — men slapp et forlatt bytte videre inn i det andre, der det rendret
+// ubetinget. Da tegnet det over flaten et nyere bytte nettopp bygde, med SITT
+// oppsett-svar: gikk det ene kallet gjennom og det andre ikke, avgjorde
+// rekkefølgen om forsiden viste innloggingsknappene eller «ikke tilgjengelig»,
+// og fokus ble revet til en flate som allerede var erstattet.
+//
+// `byttNr` er den ene sannheten om hvilket bytte som eier flaten — samme regel
+// som `omstartNr` i `app.js`, og den bæres HELE veien: `visInnlogging` får
+// `gjelderFortsatt` og sjekker den etter sitt eget ventepunkt, rett før den
+// rører DOM-en.
+let byttNr = 0;
+
+async function byttTil(s) {
+  const nr = ++byttNr;
+  lagreSprak(s);              // best effort — kan være nektet, og det er greit
+  if (await lastI18n(s) === null) return;   // forbigått av et nyere valg
+  // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
+  lokaliserSkiplenke();
+  await visInnlogging({ fokuserSprak: true,
+    gjelderFortsatt: () => nr === byttNr });
+}
+
+// `lang` per knapp (Codex P2): etikettene ER på hvert sitt språk, og uten
+// dette arver de sidens `lang`. En skjermleser på den norske forsiden ville
+// da uttalt «English» med norsk uttale — og etter byttet «Norsk» med engelsk.
+// Det er nøyaktig de to kontrollene en bruker trenger for å komme seg UT av
+// et språk de ikke forstår, så de er de siste som tåler å bli lest feil.
+// Attributtet står på knappen, ikke på `<nav>`: `aria-label`-en der er på
+// sidens språk, mens hver etikett er på sitt eget.
+function sprakvelger() {
+  const valgt = sprak();
+  return el("nav", { class: "site-sprak", "aria-label": t("ui.sprak") },
+    ["nb", "en"].map((s) => {
+      const knapp = el("button", {
+        type: "button",
+        lang: s,
+        class: s === valgt ? "site-sprak-knapp valgt" : "site-sprak-knapp",
+        text: t(`ui.sprak.${s}`),
+      });
+      if (s === valgt) knapp.setAttribute("aria-current", "true");
+      else knapp.addEventListener("click", () => { byttTil(s); });
+      return knapp;
+    }));
+}
+
 const SPORSMAL = [
   ["site.svar.hvem_sp", "site.svar.hvem_sv"],
   ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],
@@ -55,16 +143,26 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
   return kort;
 }
 
-export async function visInnlogging() {
+// `gjelderFortsatt` er kallerens rett til å tegne, målt ETTER ventepunktet
+// under: den som kalte kan ha blitt forbigått mens oppsettet ble hentet, og et
+// forlatt kall skal da trekke seg stille i stedet for å skrive over flaten som
+// står. Uten opsjonen tegner flaten alltid — det er riktig for førstelasten og
+// for `tilInnlogging`, som ikke konkurrerer med noen.
+export async function visInnlogging(opsjoner = {}) {
+  const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
   let provider = null;
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
   } catch { provider = null; }
+  // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
+  // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
+  if (!gjelderFortsatt()) return;
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
     tabindex: "-1" },
+    sprakvelger(),
     el("section", { class: "site-hero" },
       el("div", { class: "site-hero-copy" },
         el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
@@ -93,6 +191,7 @@ export async function visInnlogging() {
               el("strong", { text: t(post.navn_nokkel) }),
               siteTilbudMerke(erTilgjengelig(post.id))),
             el("p", { text: t(post.tekst_nokkel) }))))),
+    katalogseksjon(),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },
         el("div", {},
@@ -158,4 +257,13 @@ export async function visInnlogging() {
   sett(app, hoved);
   app.setAttribute("aria-busy", "false");
   document.documentElement.setAttribute("data-visning", "landing");
+
+  // Knappen brukeren nettopp trykket på ble skrevet ut av DOM-en sammen med
+  // resten av flaten. Uten dette havner fokus på `<body>`, og en som styrer
+  // med tastatur må tabbe seg inn i siden på nytt for å se at byttet virket.
+  // Fokus legges på det nå valgte språket — samme sted, ny tilstand.
+  if (opsjoner.fokuserSprak) {
+    const aktiv = app.querySelector('.site-sprak-knapp[aria-current="true"]');
+    if (aktiv) aktiv.focus();
+  }
 }

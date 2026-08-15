@@ -31,5 +31,20 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
   }
 
   window.addEventListener("hashchange", naviger);
-  return { naviger, gjeldende };
+
+  // Ruteren MÅ kunne rives ned igjen (Codex P2). Den lever på et globalt
+  // `hashchange`, men rendrer inn i ETT bestemt `hoved`-element — og det
+  // elementet blir løsrevet i det skallet bygges på nytt (språkbytte,
+  // utlogging). Uten opprydding ble hver nye ruter lagt PÅ TOPPEN av de
+  // gamle: én navigasjon kalte da alle sammen, med ett sett API-kall per
+  // ruter, og alt utenom den nyeste ble skrevet inn i et tre ingen ser.
+  // Antallet vokste for hvert bytte. `stopp` er tålig å kalle to ganger.
+  let stoppet = false;
+  function stopp() {
+    if (stoppet) return;
+    stoppet = true;
+    window.removeEventListener("hashchange", naviger);
+  }
+
+  return { naviger, gjeldende, stopp };
 }

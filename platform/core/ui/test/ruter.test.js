@@ -54,6 +54,26 @@ test("lagRuter: gyldig hash rendrer sin egen flate", () => {
   assert.deepEqual(rendret, ["policy"]);
 });
 
+test("lagRuter: stopp kobler ruteren av hashchange", () => {
+  // Skallet bygges på nytt ved språkbytte, og da lages en NY ruter. Uten
+  // avkobling lå den gamle igjen på `hashchange` og rendret inn i sitt eget,
+  // nå løsrevne, `hoved` — ett ekstra sett API-kall per bytte, i et tre ingen
+  // ser. Her: to rutere, den første stoppet, én navigasjon → kun den nye.
+  window.location.hash = "#/oversikt";
+  const rendret = [];
+  const gammel = rigg({ oversikt: () => rendret.push("gammel") }).ruter;
+  const ny = rigg({ oversikt: () => rendret.push("ny") }).ruter;
+  gammel.stopp();
+
+  window.location.hash = "#/policy";
+  window.dispatchEvent(new window.HashChangeEvent("hashchange"));
+  assert.deepEqual(rendret, ["ny"]);
+
+  // Tålig å kalle to ganger, og den stoppede ruteren kan fortsatt spørres.
+  assert.doesNotThrow(() => gammel.stopp());
+  ny.stopp();
+});
+
 test("lagRuter: en økt uten én eneste rute kaster ikke", () => {
   // `scopes_for_roller` er default-deny: et medlemskap med bare ukjente roller
   // gir tom scope-mengde, altså tomt flatekart. Da finnes det ingen flate å

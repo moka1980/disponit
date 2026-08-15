@@ -117,6 +117,23 @@ export function VarselBanner({ art = "info", tekst } = {}) {
     el("span", { text: tekst || "" }));
 }
 
+// --- Hoppelenke (WCAG 2.4.1) ----------------------------------------------
+// Lenka står i `index.html`, altså UTENFOR `#app`, og overlever derfor hver
+// eneste flatebytte. Den er også det FØRSTE en tastaturbruker treffer.
+//
+// Den bodde tidligere som en privat hjelper i `app.js`, og da var det bare
+// oppstarten der som lokaliserte den: byttet språk fra forsiden, som bare
+// skriver `#app`, sto lenka igjen på «Hopp til innhold» under `lang="en"`
+// (Codex P2). Nøyaktig den brukeren som trenger den mest — en som ikke leser
+// norsk og navigerer med tastatur — møtte den på feil språk.
+//
+// Den hører hjemme her, sammen med `sikreLiveRegion`: begge er sidens egen
+// ramme, ikke en flate, og begge må røres av ALLE som bytter språk.
+export function lokaliserSkiplenke() {
+  const l = document.querySelector(".hoppelenke");
+  if (l) l.textContent = t("ui.hopp_til_innhold");
+}
+
 // --- LiveRegion (én aria-live-region for asynkrone meldinger) --------------
 let _live = null;
 export function sikreLiveRegion() {
@@ -170,11 +187,13 @@ export function visStatus(container, tilstand) {
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
                           paaSprak, paaLoggUt } = {}) {
-  // Språkvelger
+  // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
+  // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
+  // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
   const velger = el("select", { class: "sprakvelger",
     "aria-label": t("ui.sprak") });
   for (const s of ["nb", "en"]) {
-    const opt = el("option", { value: s, text: t(`ui.sprak.${s}`) });
+    const opt = el("option", { value: s, lang: s, text: t(`ui.sprak.${s}`) });
     if (s === valgtSprak) opt.setAttribute("selected", "");
     velger.append(opt);
   }
