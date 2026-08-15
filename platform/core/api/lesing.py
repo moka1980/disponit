@@ -860,7 +860,13 @@ def utrulling(tjeneste, request: Request) -> Response:
     from . import utrulling as utrullingsmodul
 
     def _fn(conn, auth, rid):
-        svar = utrullingsmodul.svar_for(auth.tenant, auth.scopes)
+        # `?sprak=` velger fritekstoversettelsen av «neste steg». Kundenavn og
+        # «neste steg» kan ikke ligge i det ANONYMT nedlastbare locale-settet
+        # (P1, runde 3), så oversettelsen må følge raden ut her. Parameteren er
+        # ren presentasjon: `svar_for` bruker den ikke til å velge rader, og en
+        # ukjent verdi gir norsk tekst.
+        sprak = request.query_params.get("sprak")
+        svar = utrullingsmodul.svar_for(auth.tenant, auth.scopes, sprak)
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visInnlogging } from "../static/js/innlogging.js";
@@ -8,14 +11,19 @@ import { visAdmin } from "../static/js/flater/admin.js";
 
 // Tenantrader som testdata, ikke som produksjonsinnhold: de lever HER, i en
 // testfil som aldri serveres, og ikke i klientpakken eller locale-settet.
+// `plan` er en KODE fra et lukket vokabular — etiketten slås opp i
+// locale-settet — mens `neste` er fritekst serveren allerede har oversatt.
 const RADER = [
-  { id: "alfa", navn: "Alfa", plan: "Pilot", moduler: [1, 2, 37],
+  { id: "alfa", navn: "Alfa", plan: "pilot", moduler: [1, 2, 37],
     neste: "M-38 når kapasitet er grønt." },
-  { id: "beta", navn: "Beta", plan: "Pilot", moduler: [1, 2],
+  { id: "beta", navn: "Beta", plan: "pilot", moduler: [1, 2],
     neste: "M-37 etter signerte unntaksrutiner." },
-  { id: "gamma", navn: "Gamma", plan: "Internt", moduler: [1, 2, 37, 38],
+  { id: "gamma", navn: "Gamma", plan: "internt", moduler: [1, 2, 37, 38],
     neste: "Kunde null for utrulling." },
 ];
+
+const EN = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "..", "..", "locales", "en.json"), "utf-8"));
 
 settI18nForTest(NB, "nb");
 
@@ -176,6 +184,34 @@ test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () =
   assert.ok(h.textContent.includes(t("ui.admin.kontrollplan_tittel")));
   const b = await alvorligeBrudd(h, { fragment: true });
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+test("Admin: plantildelingen følger valgt språk, ikke serverens morsmål", () => {
+  // Før dette sendte serveren etiketten «Pilot»/«Internt» ferdig skrevet, og
+  // flaten rendret den verbatim: den engelske tabellen viste norsk. Nå er
+  // `plan` en KODE, og etiketten slås opp i locale-settet der den hører hjemme.
+  try {
+    settI18nForTest(EN, "en");
+    const h = nyHoved();
+    visAdmin(h, ctx({ scopes: ["platform:admin"], tenanter: RADER }));
+    const planer = [...h.querySelectorAll("tbody tr")]
+      .map((r) => r.children[1].textContent);
+    assert.deepEqual(planer, [EN["site.plan.pilot"], EN["site.plan.pilot"],
+      EN["site.plan.internt"]]);
+    assert.ok(!planer.includes("internt"), "plankoden lekket til tabellen");
+    assert.ok(!planer.includes(NB["site.plan.internt"]),
+      "norsk planetikett vist på engelsk flate");
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
+test("Admin: ukjent plankode gir koden, aldri en tom celle", () => {
+  const h = nyHoved();
+  visAdmin(h, ctx({ scopes: ["platform:admin"],
+    tenanter: [{ id: "alfa", navn: "Alfa", plan: "fremtidig", moduler: [1],
+      neste: "x" }] }));
+  assert.equal(h.querySelector("tbody tr").children[1].textContent, "fremtidig");
 });
 
 test("Admin: tenanttabellen på tvers krever plattformdrift", () => {

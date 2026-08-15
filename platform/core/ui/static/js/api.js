@@ -61,7 +61,13 @@ export async function hentJson(sti, sok = null) {
 // serveres uten sesjonssjekk. Serveren returnerer bare radene økten har rett
 // til — egen tenant, eller alle med `platform:admin` — så klienten filtrerer
 // ingenting og har aldri en rad den ikke skulle sett.
-export const hentUtrulling = () => hentJson("/v1/utrulling");
+//
+// `?sprak=` følger med fordi «neste steg» er FRITEKST per kunde: den kan ikke
+// være en locale-nøkkel uten å legge tenantdata tilbake i en anonymt
+// nedlastbar fil, så oversettelsen kommer med raden. `plan` kommer derimot som
+// kode og oversettes i flaten — planetiketten er chrome, tildelingen er data.
+export const hentUtrulling = (sprak) =>
+  hentJson(`/v1/utrulling?sprak=${encodeURIComponent(sprak || "nb")}`);
 
 export async function loggUt() {
   const csrf = lesCookie("__Host-disponit_csrf");

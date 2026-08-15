@@ -1,6 +1,7 @@
 // Produkt- og plattformdata for den offentlige webflaten og de nye
 // administrasjonsvisningene. Én statuskilde gjør at modulstatus kan oppdateres
 // ett sted når en modul faktisk er ferdig.
+import { t } from "./i18n.js";
 
 // Kanonisk statuskilde. Alt annet — kort, merker og KPI-er — utleder herfra,
 // så en modul som skifter tilstand oppdateres ETT sted.
@@ -132,6 +133,17 @@ export const FASEOVERSIKT = [
 
 export function modulmerke(id) {
   return `M-${id}`;
+}
+
+// Planetiketten. Serveren sender en KODE (`pilot`, `internt`) fordi planen er
+// et lukket vokabular: sendte den etiketten, viste den engelske tabellen
+// «Internt» uansett hvilket språk brukeren hadde valgt. Selve etiketten er
+// chrome og ligger i locale-settet — det er TILDELINGEN av en plan til en
+// kunde som er tenantdata, og den blir bak den autentiserte veien.
+// Ukjent kode faller til koden selv, aldri til en tom celle.
+export function planEtikett(kode) {
+  const k = String(kode || "").trim();
+  return k ? t(`site.plan.${k}`, k) : "";
 }
 
 // Modultildelingen for ÉN tenant, utledet av modul-ID-ene den AUTENTISERTE

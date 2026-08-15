@@ -26,30 +26,58 @@ from __future__ import annotations
 #: ingenting om rett til å se andre kunder.
 PLATTFORMDRIFT = "platform:admin"
 
-#: Utrullingsplanen. Kundenavn, plan og «neste steg» er DATA, ikke chrome-
-#: tekst: de rendres som verdier i flaten og ligger derfor ikke som nøkler i
-#: det offentlige locale-settet (`/ui/locale/nb` svarer 200 uten cookie).
-#: `moduler` er modul-ID-er, så tildelingen kan slås opp mot modulkatalogen i
-#: klienten uten å parses tilbake fra "M-1".
+#: Språkene flaten kan be om. Samme mengde som `SPRAK` i `i18n.js`; `nb` er
+#: reserven, så en ny locale i klienten aldri gir en tom celle.
+SPRAK: tuple[str, ...] = ("nb", "en")
+RESERVESPRAK = "nb"
+
+#: Utrullingsplanen. Kundenavn, plantildeling og «neste steg» er DATA, ikke
+#: chrome-tekst: de rendres som verdier i flaten og ligger derfor ikke som
+#: nøkler i det offentlige locale-settet (`/ui/locale/nb` svarer 200 uten
+#: cookie). `moduler` er modul-ID-er, så tildelingen kan slås opp mot
+#: modulkatalogen i klienten uten å parses tilbake fra "M-1".
+#:
+#: To felter er språksatt, og på hver sin måte — fordi de er hver sin slags
+#: verdi (P2, Codex runde 4; før dette var begge norske literaler som
+#: admin-flaten rendret verbatim, så den engelske tabellen viste «Internt»):
+#:
+#:   * `plan` er et LUKKET vokabular. Serveren sender koden, og klienten slår
+#:     den opp i `site.plan.<kode>`. Etiketten «Pilot»/«Internt» er chrome og
+#:     hører hjemme i det offentlige locale-settet; det er tildelingen av en
+#:     plan TIL en kunde som er tenantdata, og den blir her.
+#:   * `neste` er fritekst per kunde. Den kan ikke være en locale-nøkkel uten
+#:     å legge tenantdata tilbake i en anonymt nedlastbar fil, så
+#:     oversettelsene følger raden ut gjennom den AUTENTISERTE veien i stedet.
 _UTRULLING: tuple[dict, ...] = (
-    {"id": "nordvik", "navn": "Nordvik Regnskap AS", "plan": "Pilot",
+    {"id": "nordvik", "navn": "Nordvik Regnskap AS", "plan": "pilot",
      "moduler": (1, 2, 37),
-     "neste": "M-38 når kapasitet og købevis er grønt."},
-    {"id": "bjorkli", "navn": "Bjørkli Elektro", "plan": "Pilot",
+     "neste": {"nb": "M-38 når kapasitet og købevis er grønt.",
+               "en": "M-38 once capacity and queue evidence are green."}},
+    {"id": "bjorkli", "navn": "Bjørkli Elektro", "plan": "pilot",
      "moduler": (1, 2),
-     "neste": "M-37 etter at unntaksrutinene er signert."},
-    {"id": "granmo", "navn": "Granmo Driftsselskap", "plan": "Internt",
+     "neste": {"nb": "M-37 etter at unntaksrutinene er signert.",
+               "en": "M-37 once the exception routines are signed."}},
+    {"id": "granmo", "navn": "Granmo Driftsselskap", "plan": "internt",
      "moduler": (1, 2, 37, 38),
-     "neste": "Brukes som kunde null for utrulling og intern drift."},
+     "neste": {"nb": "Brukes som kunde null for utrulling og intern drift.",
+               "en": "Used as customer zero for rollout and internal "
+                     "operations."}},
 )
 
 
-def _rad(r: dict) -> dict:
+def _tekst(oversettelser: dict, sprak: str | None) -> str:
+    """Fritekstfeltet på ett språk. Ukjent eller manglende språk faller til
+    `nb` — en tabellcelle skal aldri stå tom fordi en oversettelse mangler."""
+    valgt = sprak if sprak in SPRAK else RESERVESPRAK
+    return oversettelser.get(valgt) or oversettelser.get(RESERVESPRAK) or ""
+
+
+def _rad(r: dict, sprak: str | None) -> dict:
     return {"id": r["id"], "navn": r["navn"], "plan": r["plan"],
-            "moduler": list(r["moduler"]), "neste": r["neste"]}
+            "moduler": list(r["moduler"]), "neste": _tekst(r["neste"], sprak)}
 
 
-def egen_rad(tenant) -> dict | None:
+def egen_rad(tenant, sprak: str | None = None) -> dict | None:
     """Raden for ÉN tenant, eller None når vi ikke kjenner den. None betyr
     «vet ikke», ikke «ingen moduler»: en flate som ikke vet, skal si det."""
     navn = str(tenant or "").strip().lower()
@@ -57,22 +85,26 @@ def egen_rad(tenant) -> dict | None:
         return None
     for r in _UTRULLING:
         if r["id"] == navn:
-            return _rad(r)
+            return _rad(r, sprak)
     return None
 
 
-def svar_for(tenant, scopes) -> dict:
+def svar_for(tenant, scopes, sprak: str | None = None) -> dict:
     """Svaret for én økt. REN funksjon — den er hele autorisasjonsregelen for
     hva som forlater serveren, og testes uten DB.
 
     Uten `platform:admin` inneholder `tenanter` maksimalt økten sin EGEN rad.
     Klienten får dermed aldri en rad den ikke skal se, og trenger ikke gjøre
     et filter vi må stole på.
+
+    `sprak` velger fritekstoversettelsen. Den er en PRESENTASJONSparameter og
+    påvirker aldri HVILKE rader som sendes: en ukjent verdi gir norsk tekst,
+    ikke en annen kundes rad.
     """
     plattformdrift = PLATTFORMDRIFT in set(scopes or ())
-    egen = egen_rad(tenant)
+    egen = egen_rad(tenant, sprak)
     if plattformdrift:
-        tenanter = [_rad(r) for r in _UTRULLING]
+        tenanter = [_rad(r, sprak) for r in _UTRULLING]
     else:
         tenanter = [egen] if egen else []
     # `moduler` er tenantens EGEN tildeling — også for plattformdrift, som

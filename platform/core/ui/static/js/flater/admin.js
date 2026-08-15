@@ -1,7 +1,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { FASEOVERSIKT, modulmerke, plattformTelling }
+import { FASEOVERSIKT, modulmerke, planEtikett, plattformTelling }
   from "../plattformdata.js";
 import { byggRuter, erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
 import { siteFaseMerke } from "../sitekomponenter.js";
@@ -119,7 +119,11 @@ export function visAdmin(hoved, ctx = {}) {
                   // `t()` her ville vært en invitasjon til å legge dem
                   // tilbake i det offentlige locale-settet.
                   el("td", {}, el("strong", { text: tenant.navn || "" })),
-                  el("td", { text: tenant.plan || "" }),
+                  // Unntaket er `plan`: den kommer som KODE fra et lukket
+                  // vokabular, og etiketten er chrome. `neste` er fritekst per
+                  // kunde og er allerede oversatt av serveren — den kan ikke
+                  // ligge i det anonymt nedlastbare locale-settet.
+                  el("td", { text: planEtikett(tenant.plan) }),
                   el("td", { text: Array.isArray(tenant.moduler)
                     ? tenant.moduler.map(modulmerke).join(", ") : "" }),
                   el("td", { text: tenant.neste || "" }))))))

@@ -91,7 +91,7 @@ async function start() {
     // Utrullingen hentes ETTER at økten er bekreftet, og en feil her felles
     // ikke appen: 401 håndteres av øktsjekken over, og alt annet betyr bare at
     // tenantdata mangler — flatene har en tomtilstand for nettopp det.
-    const utrulling = await hentUtrulling().catch(() => ({}));
+    const utrulling = await hentUtrulling(sprak()).catch(() => ({}));
     visApp(sesjon, utrulling);
   } catch (e) {
     if (e instanceof UautorisertFeil) { visInnlogging(); return; }
