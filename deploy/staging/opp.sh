@@ -163,6 +163,32 @@ usermod -aG disponit-proxy disponit-helse
 # Kilden er staging.env (lib-miljofil eier livssyklusen); her MATERIALISERES
 # de per unit, slik at LoadCredential gir hver prosess kun sine egne.
 set -a; . "$MILJOFIL"; set +a
+# PR-045 (Codex P2): MILJØPORTEN PÅ NYTT — nå på verdien som faktisk SKRIVES.
+# Gaten før første mutasjon leser miljøfila i en SUBSHELL (bevisst: fila skal
+# ikke lekke inn i preflighten) og kaster verdien når subshellen dør. Lesingen
+# rett over er en NY lesing av samme fil, og det er DEN verdien
+# `skriv_cred api DISPONIT_MILJO` under materialiserer. Byttes eller
+# redigeres fila mellom de to lesingene — en konfigurasjonsstyring som ruller
+# `produksjon` ut mens utrullingen står på — godkjente den første gaten en
+# verdi som aldri ble skrevet, og staging-API-et startet i produksjonsmodus
+# med gaten passert. Sjekken står derfor på SAMME shell-variabel som skrives,
+# og linjene mellom her og skrivingen leser ikke miljøfila igjen; da finnes
+# det ikke noe vindu mellom godkjenningen og verdien.
+#
+# Den første gaten blir ikke overflødig av dette: den er den som lar en
+# feilkonfigurert miljøfil stoppe utrullingen mens systemet BEVISELIG er
+# urørt. Denne er den som garanterer at det godkjente og det skrevne er det
+# samme. Begge trengs, og de måler ikke det samme.
+if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
+  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er ikke 'staging'."
+  echo "Verdien endret seg mellom miljøporten og materialiseringen av"
+  echo "credentials — miljøfila er byttet eller redigert mens utrullingen"
+  echo "kjørte. Verdien er IKKE skrevet: ingen credential er materialisert,"
+  echo "ingen unit er aktivert, og ingen tjeneste er startet på nytt."
+  echo "Unix-identitetene i steg 3 er opprettet (idempotent) — kjør opp.sh"
+  echo "på nytt når $MILJOFIL står stille og sier 'staging'."
+  exit 1
+fi
 install -d -m 700 /etc/disponit/api /etc/disponit/m37
 skriv_cred() {  # katalog navn verdi
   printf '%s' "$3" > "/etc/disponit/$1/$2"
@@ -193,9 +219,15 @@ skriv_cred api DISPONIT_UI_IDP_ORIGINS "${DISPONIT_UI_IDP_ORIGINS:-}"
 # testene hadde.
 #
 # Verdien er `staging` og kan ikke være noe annet HER: dette er
-# staging-løypa, gaten over avviser en miljøfil som påstår noe annet, og
-# `docs/DEPLOY.md` reserverer produksjon for en egen VPS. En
-# produksjonsutrulling får sin egen løype som skriver sin egen verdi.
+# staging-løypa, og `docs/DEPLOY.md` reserverer produksjon for en egen VPS.
+# Påstanden hviler på gaten rett etter den autoritative lesingen, ikke på
+# den før første mutasjon: det er bare den første som er lest fra SAMME
+# variabel som denne linjen skriver. En produksjonsutrulling får sin egen
+# løype som skriver sin egen verdi.
+#
+# Verdien hydreres RÅ i prosessen (`db.hemmeligheter.EKSAKTE`), så
+# `platform/core/miljo` ser nøyaktig det som står her — ingen stripping
+# mellom fila og sammenligningen.
 skriv_cred api DISPONIT_MILJO          "${DISPONIT_MILJO:-staging}"
 # Arbeideren får sin EGEN DB-rolle (v2 §3) når DISPONIT_ARBEIDER_URL er
 # satt av oppsett-postgresql.sh; ellers deler den runtime-DSN-en og det
