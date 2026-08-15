@@ -37,6 +37,14 @@ function byttSprak(s) {
   start(s);
 }
 
+// `omstartNr` er den ene sannheten om hvilket valg som gjelder: `start` teller
+// den opp med én gang, og etter HVERT ventepunkt sjekker den at den fortsatt
+// er den siste. Er den ikke det, trekker den seg stille — inkludert på vei til
+// innlogging, for et fall tilbake fra en forlatt omstart skal ikke rive ned
+// flaten et nyere valg holder på å bygge. Locale-settet er vernet på samme vis
+// inne i `lastI18n`, som returnerer `null` når det ble forbigått.
+let omstartNr = 0;
+
 // Ruteren overlever ikke skallet sitt (Codex P2). `lagRuter` henger på et
 // globalt `hashchange`, men rendrer inn i det `hoved`-elementet skallet hadde
 // da den ble laget. Bygges skallet på nytt — språkbytte — eller forlates det
@@ -53,7 +61,20 @@ function riveNedRuter() {
 
 // Alle veier tilbake til innlogging går herfra, så ruteren aldri blir stående
 // igjen og lytte på en flate som er borte.
+//
+// Å rive ned ruteren er ikke nok (Codex P1). Bytter noen språk og logger ut
+// mens `start()` venter på `/v1/utrulling`, er det svaret allerede autorisert
+// — det kommer tilbake ETTER utloggingen, `gjelderFortsatt()` sier fortsatt
+// ja, og omstarten kaller `visApp()` med økten og tenantdataene fra FØR
+// utloggingen. Innloggingssiden byttes da ut med et tilsynelatende
+// autentisert skall, og en flate uten API-kall (`kundeadmin`) kunne blitt
+// stående synlig på ubestemt tid.
+//
+// Omstartsgenerasjonen telles derfor opp her: enhver omstart som er underveis
+// blir forbigått i samme øyeblikk som vi går til innlogging, uansett hvor i
+// ventekjeden den står.
 function tilInnlogging() {
+  omstartNr++;
   riveNedRuter();
   return visInnlogging();
 }
@@ -116,13 +137,6 @@ function visApp(sesjon, utrulling = {}) {
 // rendre over det andre, og `_kart`, `<html lang>` og den markerte knappen
 // ende på hvert sitt språk.
 //
-// `omstartNr` er den ene sannheten om hvilket valg som gjelder: `start` teller
-// den opp med én gang, og etter HVERT ventepunkt sjekker den at den fortsatt
-// er den siste. Er den ikke det, trekker den seg stille — inkludert på vei til
-// innlogging, for et fall tilbake fra en forlatt omstart skal ikke rive ned
-// flaten et nyere valg holder på å bygge. Locale-settet er vernet på samme vis
-// inne i `lastI18n`, som returnerer `null` når det ble forbigått.
-let omstartNr = 0;
 
 // `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
 // da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
