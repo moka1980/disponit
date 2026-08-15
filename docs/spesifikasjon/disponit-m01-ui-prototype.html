@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disponit — Policy og fullmakter (M-1)</title>
+<style>
+/* === Fra design/tokens.css (main) — eneste designkilde === */
+:root{
+  --paper:#F6F8F7; --card:#FFFFFF; --ink:#14232B; --muted:#5A6E77; --line:#D5DEDD;
+  --auto:#0F7A5C; --auto-bg:#E8F3EE; --guard:#A05A00; --guard-bg:#FBF2E3;
+  --danger:#9A2B2B; --danger-bg:#F8E9E9; --info:#1D6FA5; --info-bg:#E5EFF6;
+  --font-sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","JetBrains Mono",monospace;
+  --fs-base:1rem; --lh-base:1.55;
+  --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-6:1.5rem; --sp-8:2rem;
+  --radius:8px; --radius-sm:4px;
+  --focus:3px solid var(--info); --focus-offset:2px;
+  /* UI-tokens foreslått lagt til tokens.css (spek §8.1) */
+  --shadow:0 1px 2px rgba(20,35,43,.06),0 4px 12px rgba(20,35,43,.05);
+  --z-drawer:40; --bp-narrow:720px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--font-sans);
+  font-size:var(--fs-base);line-height:var(--lh-base)}
+:focus-visible{outline:var(--focus);outline-offset:var(--focus-offset)}
+.skip{position:absolute;left:-999px;top:0;background:var(--card);padding:var(--sp-2) var(--sp-4);
+  border-radius:var(--radius-sm);z-index:100}
+.skip:focus{left:var(--sp-2)}
+
+/* AppShell */
+header.shell{background:var(--card);border-bottom:1px solid var(--line);
+  padding:var(--sp-3) var(--sp-6);display:flex;align-items:center;gap:var(--sp-4)}
+.brand{font-weight:800;letter-spacing:-.02em;font-size:1.15rem}
+.brand small{font-weight:500;color:var(--muted);font-size:.8rem;margin-left:var(--sp-2)}
+.shell .right{margin-left:auto;display:flex;align-items:center;gap:var(--sp-3);
+  font-size:.85rem;color:var(--muted)}
+.tenant{background:var(--info-bg);color:var(--info);padding:var(--sp-1) var(--sp-3);
+  border-radius:var(--radius-sm);font-weight:600}
+.shell button.link{background:none;border:none;color:var(--muted);cursor:pointer;
+  font:inherit;font-size:.85rem;text-decoration:underline}
+nav.tabs{background:var(--card);border-bottom:1px solid var(--line);
+  padding:0 var(--sp-6);display:flex;gap:var(--sp-1)}
+nav.tabs button{background:none;border:none;border-bottom:3px solid transparent;
+  padding:var(--sp-3) var(--sp-4);cursor:pointer;font:inherit;color:var(--muted);
+  font-weight:600}
+nav.tabs button[aria-current="page"]{color:var(--ink);border-bottom-color:var(--auto)}
+nav.tabs .count{background:var(--guard-bg);color:var(--guard);border-radius:999px;
+  padding:0 var(--sp-2);font-size:.75rem;margin-left:var(--sp-1)}
+main{max-width:1000px;margin:0 auto;padding:var(--sp-6)}
+h1{font-size:1.4rem;font-weight:800;letter-spacing:-.01em;margin-bottom:var(--sp-1)}
+.sub{color:var(--muted);margin-bottom:var(--sp-6);font-size:.92rem}
+
+/* Kort/telling */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:var(--sp-3);margin-bottom:var(--sp-6)}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:var(--sp-4);box-shadow:var(--shadow)}
+.stat b{display:block;font-size:1.8rem;font-weight:800;letter-spacing:-.02em}
+.stat span{font-size:.82rem;color:var(--muted)}
+.stat.auto b{color:var(--auto)} .stat.guard b{color:var(--guard)}
+.stat.danger b{color:var(--danger)}
+
+/* Badge — farge + ikon + tekst (WCAG 1.4.1) */
+.badge{display:inline-flex;align-items:center;gap:.35em;font-weight:600;
+  font-size:.8rem;padding:.15em .6em;border-radius:var(--radius-sm);white-space:nowrap}
+.badge svg{width:.9em;height:.9em}
+.badge.tillat{background:var(--auto-bg);color:var(--auto)}
+.badge.stopp{background:var(--danger-bg);color:var(--danger)}
+.badge.unntak{background:var(--guard-bg);color:var(--guard)}
+.tag{display:inline-block;background:var(--info-bg);color:var(--info);
+  font-size:.75rem;padding:.1em .5em;border-radius:var(--radius-sm)}
+
+/* Tabell */
+.tablewrap{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{text-align:left;padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line)}
+th{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  background:var(--paper);font-weight:700}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--paper)}
+tbody tr:last-child td{border-bottom:0}
+td.mono{font-family:var(--font-mono);font-size:.82rem;color:var(--muted)}
+
+/* Policy-visning */
+.policy-sec{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:var(--sp-4) var(--sp-6);margin-bottom:var(--sp-4);box-shadow:var(--shadow)}
+.policy-sec h3{font-size:1rem;margin-bottom:var(--sp-3)}
+.rule{border-left:3px solid var(--line);padding:var(--sp-2) var(--sp-4);margin-bottom:var(--sp-3)}
+.rule.auto{border-color:var(--auto)} .rule.stop{border-color:var(--guard)}
+.rule .h{font-family:var(--font-mono);font-weight:600;font-size:.88rem}
+.rule .d{font-size:.85rem;color:var(--muted);margin-top:var(--sp-1)}
+.readonly-note{background:var(--info-bg);color:var(--info);border-radius:var(--radius-sm);
+  padding:var(--sp-2) var(--sp-4);font-size:.85rem;margin-bottom:var(--sp-4)}
+
+/* Drawer */
+.overlay{position:fixed;inset:0;background:rgba(20,35,43,.35);z-index:var(--z-drawer);
+  display:none}
+.overlay.open{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,92vw);background:var(--card);
+  box-shadow:var(--shadow);padding:var(--sp-6);overflow-y:auto}
+.drawer h2{font-size:1.1rem;margin-bottom:var(--sp-1)}
+.drawer .close{position:absolute;top:var(--sp-4);right:var(--sp-4);background:none;
+  border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;
+  padding:var(--sp-1) var(--sp-3);font:inherit}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:var(--sp-2) var(--sp-4);
+  font-size:.88rem;margin:var(--sp-4) 0}
+.kv dt{color:var(--muted)} .kv dd{font-weight:500}
+.chain{list-style:none;margin:var(--sp-4) 0}
+.chain li{padding:var(--sp-2) var(--sp-3);border-left:3px solid var(--auto);
+  background:var(--auto-bg);border-radius:var(--radius-sm);margin-bottom:var(--sp-2);font-size:.85rem}
+.chain li.stop{border-color:var(--guard);background:var(--guard-bg)}
+.chain li .code{font-family:var(--font-mono);font-size:.72rem;color:var(--muted);display:block}
+.timeline{list-style:none;margin:var(--sp-4) 0}
+.timeline li{display:flex;gap:var(--sp-3);align-items:flex-start;padding-bottom:var(--sp-3);
+  font-size:.85rem}
+.timeline .dot{width:1.4em;height:1.4em;border-radius:50%;background:var(--auto-bg);
+  color:var(--auto);display:grid;place-items:center;flex-shrink:0;font-size:.7rem;font-weight:700}
+.btn{display:inline-flex;align-items:center;gap:.4em;background:var(--auto);color:#fff;
+  border:none;border-radius:var(--radius-sm);padding:var(--sp-2) var(--sp-4);
+  font:inherit;font-weight:600;cursor:pointer;margin-top:var(--sp-3)}
+.btn.secondary{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.btn.danger{background:var(--danger)}
+
+.empty,.error{text-align:center;padding:var(--sp-8);color:var(--muted)}
+.error{color:var(--danger)}
+.filterbar{display:flex;gap:var(--sp-2);margin-bottom:var(--sp-4);flex-wrap:wrap}
+.filterbar button{background:var(--card);border:1px solid var(--line);border-radius:999px;
+  padding:var(--sp-1) var(--sp-4);cursor:pointer;font:inherit;font-size:.85rem;color:var(--muted)}
+.filterbar button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.view{display:none} .view.active{display:block}
+.legend{font-size:.78rem;color:var(--muted);margin-top:var(--sp-2)}
+</style>
+</head>
+<body>
+<a href="#main" class="skip">Hopp til innhold</a>
+
+<header class="shell">
+  <div class="brand">Disponit <small>Policy og fullmakter</small></div>
+  <div class="right">
+    <span class="tenant">Acme AS</span>
+    <span>Norsk bokmål ▾</span>
+    <button class="link">Logg ut</button>
+  </div>
+</header>
+
+<nav class="tabs" aria-label="Hovednavigasjon">
+  <button data-view="oversikt" aria-current="page">Oversikt</button>
+  <button data-view="policy">Policy</button>
+  <button data-view="beslutninger">Beslutninger</button>
+  <button data-view="unntak">Unntak <span class="count">3</span></button>
+</nav>
+
+<main id="main">
+  <!-- OVERSIKT -->
+  <section class="view active" id="v-oversikt" aria-labelledby="h-oversikt">
+    <h1 id="h-oversikt">Oversikt</h1>
+    <p class="sub">Siste døgn — policyversjon <strong>tjenestebedrift-no@0.2.0</strong> i bruk.</p>
+    <div class="cards">
+      <div class="stat auto"><b>128</b><span>Tillatt</span></div>
+      <div class="stat danger"><b>4</b><span>Stoppet</span></div>
+      <div class="stat guard"><b>3</b><span>Åpne unntak</span></div>
+      <div class="stat"><b>135</b><span>Beslutninger totalt</span></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <caption class="sr-only">Siste beslutninger</caption>
+        <thead><tr><th>Tidspunkt</th><th>Handling</th><th>Beslutning</th></tr></thead>
+        <tbody id="oversikt-rows"></tbody>
+      </table>
+    </div>
+    <p class="legend">Enkel telling for døgnet — ikke nøkkeltall over tid (det er M-16).</p>
+  </section>
+
+  <!-- POLICY -->
+  <section class="view" id="v-policy" aria-labelledby="h-policy">
+    <h1 id="h-policy">Policy</h1>
+    <p class="sub">Reglene som håndheves for Acme AS akkurat nå.</p>
+    <div class="readonly-note">🔒 Skrivebeskyttet i denne versjonen. Endring av policy går gjennom validering, versjonering og godkjenning — kommer som eget steg.</div>
+    <div class="policy-sec">
+      <h3>Roller</h3>
+      <div class="rule"><div class="h">agent</div><div class="d">Automatisert utførelse innen denne policyen</div></div>
+      <div class="rule"><div class="h">okonomiansvarlig</div><div class="d">Bokføring, betaling, avstemming</div></div>
+    </div>
+    <div class="policy-sec">
+      <h3>Handlinger</h3>
+      <div class="rule auto"><div class="h">faktura.bokfor · auto</div>
+        <div class="d">Grense 25 000 NOK · vilkår: dublettsjekk, leverandør i register, mva validert · reversibel</div></div>
+      <div class="rule stop"><div class="h">betaling.utfor · frys ved brudd</div>
+        <div class="d">Grense 25 000 NOK · man–fre 07:00–17:00 · vilkår: faktura godkjent, konto verifisert, svindelsjekk · irreversibel</div></div>
+      <div class="rule stop"><div class="h">epost.send_ny_mottaker · alltid stopp</div>
+        <div class="d">Går alltid til unntakskø — ny mottaker krever policy-vurdering</div></div>
+    </div>
+  </section>
+
+  <!-- BESLUTNINGER -->
+  <section class="view" id="v-beslutninger" aria-labelledby="h-besl">
+    <h1 id="h-besl">Beslutninger</h1>
+    <p class="sub">Revisjonsloggen — hver beslutning med begrunnelse. Klikk en rad for detaljer.</p>
+    <div class="filterbar" role="group" aria-label="Filtrer beslutninger">
+      <button aria-pressed="true" data-f="alle">Alle</button>
+      <button aria-pressed="false" data-f="TILLAT">Tillatt</button>
+      <button aria-pressed="false" data-f="STOPP">Stoppet</button>
+      <button aria-pressed="false" data-f="UNNTAK">Unntak</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tidspunkt</th><th>Handling</th><th>Beslutning</th><th>Begrunnelse</th></tr></thead>
+        <tbody id="besl-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- UNNTAK -->
+  <section class="view" id="v-unntak" aria-labelledby="h-unntak">
+    <h1 id="h-unntak">Unntak</h1>
+    <p class="sub">Saker som ble stoppet av policy og venter på behandling. Klikk for detaljer.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Opprettet</th><th>Handling</th><th>Kategori</th><th>Status</th></tr></thead>
+        <tbody id="unntak-rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- Drawer -->
+<div class="overlay" id="overlay">
+  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" id="drawer">
+    <button class="close" id="drawer-close">Lukk ✕</button>
+    <div id="drawer-body"></div>
+  </aside>
+</div>
+
+<script>
+// === Oversatte koder (fra locales/nb.json på main) ===
+const T = {
+  "beslutning.TILLAT":"Tillatt","beslutning.STOPP":"Stoppet","beslutning.UNNTAK":"Til unntakskø",
+  "unntak.manglende_data":"Nødvendige data mangler","unntak.over_grense":"Utenfor policygrense",
+  "unntak.regelkonflikt":"I strid med policyregel","unntak.ukjent":"Handlingen er ikke definert i policy",
+  "kode.belop_over_grense":"Beløpet overstiger policygrensen","kode.rolle_ok":"Rollen har fullmakt",
+  "kode.belop_ok":"Beløp innenfor grense","kode.attestasjon_mangler":"Påkrevd verifikasjon mangler",
+  "kode.utenfor_tidsvindu":"Utenfor tillatt tidsvindu","kode.alle_kontroller_bestatt":"Alle policykontroller bestått",
+  "kode.rolle_ikke_tillatt":"Rollen har ikke fullmakt","kode.attestasjon_utlopt":"Verifikasjonen er utløpt"
+};
+const t = k => T[k] || k;
+
+const ICON = {
+  tillat:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 5"/></svg>',
+  stopp:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M5.5 8h5"/></svg>',
+  unntak:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2v7M8 12.5v.5"/></svg>'
+};
+function badge(b){
+  const c = b==='TILLAT'?'tillat':b==='STOPP'?'stopp':'unntak';
+  return `<span class="badge ${c}">${ICON[c]}${t('beslutning.'+b)}</span>`;
+}
+
+// === Syntetiske data (speiler API-datakontrakten §5) ===
+const beslutninger = [
+  {ts:'14:22', h:'faktura.bokfor', b:'TILLAT', ko:['kode.rolle_ok','kode.belop_ok','kode.alle_kontroller_bestatt']},
+  {ts:'14:19', h:'betaling.utfor', b:'STOPP', ef:'frys', ko:['kode.rolle_ok','kode.utenfor_tidsvindu']},
+  {ts:'13:57', h:'faktura.bokfor', b:'UNNTAK', kat:'over_grense', ko:['kode.rolle_ok','kode.belop_over_grense']},
+  {ts:'13:40', h:'epost.send_kjent_mottaker', b:'TILLAT', ko:['kode.rolle_ok','kode.alle_kontroller_bestatt']},
+  {ts:'13:31', h:'purring.send', b:'UNNTAK', kat:'manglende_data', ko:['kode.rolle_ok','kode.attestasjon_mangler']},
+  {ts:'12:58', h:'faktura.bokfor', b:'TILLAT', ko:['kode.rolle_ok','kode.belop_ok','kode.alle_kontroller_bestatt']}
+];
+const unntak = [
+  {id:'u-4021', ts:'13:57', h:'faktura.bokfor', kat:'over_grense', st:'ny', pri:'normal',
+   kjede:[['kode.rolle_ok',0],['kode.belop_over_grense',1]],
+   tl:[['Opprettet','13:57'],['Ligger i kø','—']]},
+  {id:'u-4019', ts:'13:31', h:'purring.send', kat:'manglende_data', st:'under_behandling', pri:'normal',
+   kjede:[['kode.rolle_ok',0],['kode.attestasjon_mangler',1]],
+   tl:[['Opprettet','13:31'],['Claimet av M-37','13:33'],['Venter verifikasjon','13:33']]},
+  {id:'u-4004', ts:'11:12', h:'betaling.utfor', kat:'regelkonflikt', st:'ny', pri:'hoy',
+   kjede:[['kode.rolle_ok',0],['kode.attestasjon_utlopt',1]],
+   tl:[['Opprettet','11:12'],['Ligger i kø (høy prioritet)','—']]}
+];
+
+// Render
+function td(x){return `<td>${x}</td>`}
+document.getElementById('oversikt-rows').innerHTML = beslutninger.slice(0,4).map(r=>
+  `<tr data-besl="${r.ts}"><td class="mono">${r.ts}</td><td>${r.h}</td><td>${badge(r.b)}</td></tr>`).join('');
+function renderBesl(f='alle'){
+  const rows = beslutninger.filter(r=>f==='alle'||r.b===f);
+  document.getElementById('besl-rows').innerHTML = rows.length? rows.map(r=>
+    `<tr data-besl="${r.ts}"><td class="mono">${r.ts}</td><td>${r.h}</td><td>${badge(r.b)}</td>
+     <td>${r.kat?t('unntak.'+r.kat):t(r.ko[r.ko.length-1])}</td></tr>`).join('')
+    : `<tr><td colspan="4"><div class="empty">Ingen beslutninger i dette filteret.</div></td></tr>`;
+}
+renderBesl();
+document.getElementById('unntak-rows').innerHTML = unntak.map(u=>
+  `<tr data-unntak="${u.id}"><td class="mono">${u.ts}</td><td>${u.h}</td>
+   <td><span class="tag">${t('unntak.'+u.kat)}</span></td>
+   <td>${u.st==='ny'?'Ny':'Under behandling'}${u.pri==='hoy'?' · høy':''}</td></tr>`).join('');
+
+// Navigasjon
+document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav.tabs button').forEach(x=>x.removeAttribute('aria-current'));
+  b.setAttribute('aria-current','page');
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('v-'+b.dataset.view).classList.add('active');
+});
+// Filter
+document.querySelectorAll('.filterbar button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.filterbar button').forEach(x=>x.setAttribute('aria-pressed','false'));
+  b.setAttribute('aria-pressed','true'); renderBesl(b.dataset.f);
+});
+
+// Drawer
+const overlay=document.getElementById('overlay'), body=document.getElementById('drawer-body');
+let lastFocus=null;
+function openDrawer(html){body.innerHTML=html;overlay.classList.add('open');lastFocus=document.activeElement;
+  document.getElementById('drawer-close').focus();}
+function closeDrawer(){overlay.classList.remove('open');if(lastFocus)lastFocus.focus();}
+document.getElementById('drawer-close').onclick=closeDrawer;
+overlay.onclick=e=>{if(e.target===overlay)closeDrawer();};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&overlay.classList.contains('open'))closeDrawer();});
+
+document.body.addEventListener('click',e=>{
+  const br=e.target.closest('[data-besl]'); const ur=e.target.closest('[data-unntak]');
+  if(br){
+    const r=beslutninger.find(x=>x.ts===br.dataset.besl);
+    openDrawer(`<h2 id="drawer-title">Beslutning ${r.ts}</h2>
+      <dl class="kv"><dt>Handling</dt><dd>${r.h}</dd><dt>Resultat</dt><dd>${badge(r.b)}</dd>
+      ${r.ef?`<dt>Effekt</dt><dd>Transaksjon frosset</dd>`:''}</dl>
+      <h3 style="font-size:.9rem">Begrunnelseskjede</h3>
+      <ol class="chain">${r.ko.map((k,i)=>`<li class="${i===r.ko.length-1&&r.b!=='TILLAT'?'stop':''}">${t(k)}<span class="code">${k}</span></li>`).join('')}</ol>`);
+  }
+  if(ur){
+    const u=unntak.find(x=>x.id===ur.dataset.unntak);
+    openDrawer(`<h2 id="drawer-title">Unntak ${u.id}</h2>
+      <dl class="kv"><dt>Handling</dt><dd>${u.h}</dd><dt>Kategori</dt><dd><span class="tag">${t('unntak.'+u.kat)}</span></dd>
+      <dt>Status</dt><dd>${u.st==='ny'?'Ny':'Under behandling'}</dd><dt>Prioritet</dt><dd>${u.pri==='hoy'?'Høy':'Normal'}</dd></dl>
+      <h3 style="font-size:.9rem">Hvorfor stoppet</h3>
+      <ol class="chain">${u.kjede.map(([k,s])=>`<li class="${s?'stop':''}">${t(k)}<span class="code">${k}</span></li>`).join('')}</ol>
+      <h3 style="font-size:.9rem">Historikk</h3>
+      <ul class="timeline">${u.tl.map((s,i)=>`<li><span class="dot">${i+1}</span><div><strong>${s[0]}</strong><br><span class="mono" style="font-size:.75rem;color:var(--muted)">${s[1]}</span></div></li>`).join('')}</ul>
+      <button class="btn secondary" onclick="alert('Bekreftelsesdialog: beskriver konsekvens, krever bekreftelse, logger til historikk. (prototype)')">Behandle sak</button>`);
+  }
+});
+</script>
+</body>
+</html>
