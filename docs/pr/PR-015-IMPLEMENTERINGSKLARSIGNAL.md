@@ -33,6 +33,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 4 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4; og et **mislykket** oppslag må registreres (`avvik`/`ingen_post`), ellers forlater runden aldri observatørkøen, §2.4b |
 | 4b | `hent_apne_observasjonsrunder()` (ny, avgrenset lesekø) | Observatøren må kunne *finne* runden den skal svare på. Uten den kan prosessen autentisere, men aldri oppdage et `runde_id`, §2.4b. Køen må dessuten rotere forsøkte runder ut av hodet, ellers stanser 50 hostnavn uten TXT-post all verifisering for alle tenanter |
 | 5 | `verifiser_domenekontroll(…, p_runde UUID)` | **Førstegangsverifisering er den farligste veien** — den kan opprette en autorisasjon og utløse en overtakelse. Uten runde er den beviskravsfri, §2.5 |
+| 5b | `krev_domeneverifiseringsrunde()` + `krev_domeneverifisering()` + `krev_oppgjorsrunde()` (nye innpakninger; `verifiser_domenekontroll()` grantes til ingen, og `apne_domeneobservasjonsrunde()` kun til arbeideren) | Begge tar tenant/hostname/aktør/formål som frie argumenter. Med rå grants til den delte `disponit`-rollen kan et kompromittert credential åpne en `verifisering`-runde på en ANNEN tenants rad, la observatørene fylle den, og verifisere utenfor sesjon og scope — konflikten gjenåpnet og den sittende innehaveren ført til `avklaring_kreves`, §2.4c/§2.5c |
 | 6 | `revalider_domenekontroll(…, p_runde UUID)` | Arbeideren skal ikke være autoritet, §2.4 |
 | 6b | `hent_revalideringskandidater(p_grense INT, p_kjoring_start TIMESTAMPTZ)` + `stempl_revalideringsforsok(tenant, hostname)` (begge nye) + `domenekontroll.siste_revalideringsforsok` | `domenekontroll` har FORCE RLS med tenant-policy; et kolonnegrant gir den globale scheduleren null rader, og domenene mister ferskhet uten at én alarm går. Uten et forsøksstempel å rotere på returnerer køen dessuten den samme feilende kohorten hver time, og uten sideinndeling kapper én `LIMIT` sikkerhetsnettet §2.1 sier aldri kappes. Stemplet må committe i EGEN transaksjon, før runden forsøkes åpnet — ellers ruller en kastende åpning stemplet tilbake, en hel side av vedvarende feil kommer tilbake uendret, og arbeiderens eget `behandlet`-belte avkorter resten av kjøringen i stedet for bare siden, §2.2b |
 | 7 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense uten å miste evidensfristpredikatet, §6 / port 25 |
@@ -953,10 +954,10 @@ verdi.
 
 | Funksjon | Kalles av | Håndhever |
 |---|---|---|
-| `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `(runde_id, gjenbrukt, forrige_runde, forrige_utfall)` | revalideringsarbeideren (`disponit_domenerevalidator`) eller API-et (`disponit`) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt`/`tilbakekalt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt, **kopieres til runden** (§2.4a) og challengen ikke utløpt (unntatt `revalidering`, §2.5); kort TTL; åpningen er idempotent under sonelåsen; en utløpt runde forkastes med **utfallet rapportert** (over); runden er engangs |
+| `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `(runde_id, gjenbrukt, forrige_runde, forrige_utfall)` | revalideringsarbeideren (`disponit_domenerevalidator`) direkte; API-et **kun** gjennom `krev_domeneverifiseringsrunde()` / `krev_oppgjorsrunde()`, som eier (§2.4c) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt`/`tilbakekalt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt, **kopieres til runden** (§2.4a) og challengen ikke utløpt (unntatt `revalidering`, §2.5); kort TTL; åpningen er idempotent under sonelåsen; en utløpt runde forkastes med **utfallet rapportert** (over); runden er engangs |
 | `hent_apne_observasjonsrunder()` → `SETOF (runde_id, hostname, formal)` | **observatørrollene** `disponit_domeneobservator_*` | Kun `apen`, ikke utløpt, og kun runder kalleren selv ikke har fått `treff` på — med maks 3 forsøk og 60 s tilbakefall per runde; `ORDER BY forsok NULLS FIRST, apnet LIMIT 50`; **ingen `tenant` i utdata** (§2.4b) |
 | `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB; utfallet er `treff` når den er lik **rundens** `challenge_token_hash` (§2.4a), ellers `avvik` eller `ingen_post` — **raden skrives uansett** (§2.4b), `treff` er uforanderlig; runden må være `apen` og ikke utløpt |
-| `verifiser_domenekontroll(tenant, hostname, wildcard, aktor, p_runde UUID)` | API-et | Som under, pluss: runden har `formal = 'verifisering'`, gjelder dette `(tenant, hostname)`, er `apen` og ikke utløpt, og har **≥ 2 observasjoner fra distinkte `observator` med samme `txt_hash`** — alt under hostname-låsen, FØR noen status settes eller noen overtakelse utløses |
+| `verifiser_domenekontroll(tenant, hostname, wildcard, aktor, p_runde UUID)` | **kun** `krev_domeneverifisering()` — grantet til ingen (§2.4c) | Som under, pluss: runden har `formal = 'verifisering'`, gjelder dette `(tenant, hostname)`, er `apen` og ikke utløpt, og har **≥ 2 observasjoner fra distinkte `observator` med samme `txt_hash`** — alt under hostname-låsen, FØR noen status settes eller noen overtakelse utløses |
 | `revalider_domenekontroll(tenant, hostname, aktor, p_runde UUID)` | arbeideren | Samme runde-krav med `formal = 'revalidering'`; så settes tidsstemplet og runden merkes `brukt` |
 | `avgjor_domeneovertakelse(…, p_runde UUID)` | **kun** `avgjor_domeneovertakelse_attestert()` — grantet til ingen | Samme runde-krav med `formal = 'overtakelsesoppgjor'` på vinnerens `(tenant, hostname)` — §4 |
 | `avgjor_domeneovertakelse_attestert(tenant, unntak_id, utfall, p_runde)` | API-et (`disponit`), behandleren §4.2b steg 9 | Teller de ferske stemmene under sakens lås, kontrollerer `konfliktsett_hash` (§1a) og **reautoriserer hver talt attestant** med `laas_godkjenner` FOR UPDATE (§4.3) — *så* kalles oppgjøret, i samme transaksjon |
@@ -964,7 +965,8 @@ verdi.
 | `opprett_brukersesjon(tenant, bruker_id, sesjon_id_hash, csrf_hash, authz_snapshot, levetid, maks_sesjoner)` | **kun** `disponit_innlogging` | Runtime har verken bordgrant på `brukersesjon` eller EXECUTE her; uten det skillet kan ett lekket DB-credential skrive begge stemmene over. 5-sesjonstaket håndheves inne i funksjonen, under lås, fordi tellingen og INSERT-en må ligge i samme transaksjon (§1c) |
 | `tilbakekall_brukersesjon(sesjon_id_hash)` | `disponit` (logout) og `disponit_innlogging` | Å avslutte en sesjon kan ikke forfalske en identitet, kun fjerne en (§1c) |
 | `laas_oppdragsgenerasjon(tenant, oppdrag_id)` | **kun** `disponit_domene_eier`, fra `lagre_artefakt_staged()` | Eierrollen har kun `SELECT ON oppdrag`, og en låseklausul krever `UPDATE`; hjelperen eies av `disponit_m37_claimer` og returnerer én kolonne fra den raden den låser `FOR SHARE` (§5) |
-| `laas_domenesak(tenant, unntak_id)` | **kun** `disponit_domene_eier`, fra `registrer_overtakelsesattestasjon()` (§1b) og `avgjor_domeneovertakelse_attestert()` (§4.3) | Samme grunn på `unntak`: eierrollen har kun `SELECT`, og en låseklausul krever `UPDATE`. Hjelperen eies av `disponit_m37_claimer` (som har `SELECT, UPDATE` + policyen `m37_dispatcher` der) og returnerer nøyaktig `kategori`, `status`, `saksversjon` og `idempotensnokkel` fra raden den låser `FOR UPDATE` (§1d) |
+| `krev_domeneverifiseringsrunde(sesjon, hostname)` / `krev_domeneverifisering(sesjon, hostname, wildcard, p_runde)` / `krev_oppgjorsrunde(sesjon, unntak_id)` | API-et (`disponit`), §2.5c | Sesjonen bestemmer tenant og aktør; medlemskapet låses med `laas_godkjenner` og rollen kreves i kroppen (`domeneforvalter` for de to første, `domeneavgjorer` for den tredje); formålet står i kroppen, ikke i parameterlista; oppgjørsrundens mål leses fra sakens idempotensnøkkel under `laas_domenesak()` (§2.4c/§1d) |
+| `laas_domenesak(tenant, unntak_id)` | **kun** `disponit_domene_eier`, fra `registrer_overtakelsesattestasjon()` (§1b), `avgjor_domeneovertakelse_attestert()` (§4.3) og `krev_oppgjorsrunde()` (§2.4c) | Samme grunn på `unntak`: eierrollen har kun `SELECT`, og en låseklausul krever `UPDATE`. Hjelperen eies av `disponit_m37_claimer` (som har `SELECT, UPDATE` + policyen `m37_dispatcher` der) og returnerer nøyaktig `kategori`, `status`, `saksversjon` og `idempotensnokkel` fra raden den låser `FOR UPDATE` (§1d) |
 
 Det som er vunnet: arbeideren har **ikke** EXECUTE på
 `meld_domeneobservasjon`, og kan ikke skrive `domeneobservasjon`
@@ -1162,14 +1164,33 @@ REVOKE ALL ON FUNCTION tilbakekall_brukersesjon(TEXT) FROM PUBLIC;
 --    Merk hvilke roller som IKKE står her: `disponit_domains_admin` får
 --    ingen nye grants i 019 og forblir NOLOGIN (§6b). Hver kjørende jobb
 --    har sin egen rolle med nøyaktig de funksjonene jobben kaller.
+-- `apne_domeneobservasjonsrunde` grantes til ARBEIDEREN, ikke til
+-- `disponit`. Den tar tenant, hostname og formål som frie argumenter, og
+-- den delte runtime-rollen skal ikke kunne velge dem: se innpakningene
+-- under. Arbeiderrollen beholder det rå grantet fordi den er en global
+-- planlegger uten sesjonsbegrep — og fordi den ikke har noen vei til å
+-- FORBRUKE en runde den åpner: `verifiser_domenekontroll` og
+-- `avgjor_domeneovertakelse_attestert` grantes den ikke, og
+-- `revalider_domenekontroll` krever `formal = 'revalidering'` på en rad som
+-- alt er `verifisert`.
 GRANT EXECUTE ON FUNCTION apne_domeneobservasjonsrunde(TEXT, TEXT, TEXT)
-  TO disponit_domenerevalidator, disponit;
+  TO disponit_domenerevalidator;
 GRANT EXECUTE ON FUNCTION hent_apne_observasjonsrunder()
   TO disponit_domeneobservator_1, disponit_domeneobservator_2;
 GRANT EXECUTE ON FUNCTION meld_domeneobservasjon(UUID, TEXT)
   TO disponit_domeneobservator_1, disponit_domeneobservator_2;
-GRANT EXECUTE ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UUID)
-  TO disponit;                       -- API-et; arbeideren verifiserer ikke
+-- `verifiser_domenekontroll` grantes til INGEN, av nøyaktig samme grunn som
+-- `avgjor_domeneovertakelse` under: den tar tenant, hostname, wildcard,
+-- aktør OG runde som frie argumenter, og den er den farligste veien i hele
+-- 019 — den kan opprette en autorisasjon og utløse en overtakelse (§2.5).
+-- Med et rått GRANT til den delte `disponit`-rollen kunne et kompromittert
+-- credential — uten ett ekte HTTP-kall — åpnet en `verifisering`-runde på
+-- en ANNEN tenants `ventende` eller `tilbakekalt` rad, ventet på at de to
+-- observatørprosessene fylte den, og så kalt verifiseringen utenfor både
+-- sesjonen og scopet: konflikten gjenåpnet, og den sittende innehaveren
+-- ført til `avklaring_kreves` av en kaller som aldri beviste noe som helst
+-- om verken tenanten eller DNS-en. Observatørene ville gjort DNS-arbeidet
+-- for angriperen. Eneste kallbare vei er innpakningen under.
 GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID)
   TO disponit_domenerevalidator;     -- arbeideren; API-et revaliderer ikke
 -- `avgjor_domeneovertakelse` grantes til INGEN. Den er oppgjørets indre
@@ -1271,6 +1292,77 @@ GRANT EXECUTE ON FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT)
 -- `utsted_challenge` selv beholder sin eksisterende ACL fra 016
 -- (`disponit_domains_admin`, NOLOGIN, §6b) uendret — 019 legger ikke noe
 -- nytt GRANT på den.
+--
+-- SAMME INNPAKNING FOR Å ÅPNE OG FORBRUKE EN VERIFISERINGSRUNDE.
+-- Challengen var bare det første av tre frie tenant-argumenter runtime
+-- ellers ville hatt. `apne_domeneobservasjonsrunde(tenant, hostname,
+-- formal)` og `verifiser_domenekontroll(tenant, hostname, wildcard, aktor,
+-- runde)` er de to andre, og de henger sammen: åpningen alene gjør ingen
+-- skade, men åpning PLUSS forbruk er en komplett vei til å gjenåpne en
+-- konflikt på en annen tenants domene. Begge går derfor gjennom sesjonen,
+-- med nøyaktig samme kontrakt som `krev_domenechallenge()` over — sesjonen
+-- bestemmer tenant og aktør, medlemskapet låses, og rollen kreves i
+-- kroppen.
+CREATE FUNCTION krev_domeneverifiseringsrunde(p_sesjon TEXT, p_hostname TEXT)
+RETURNS TABLE (runde_id UUID, gjenbrukt BOOLEAN,
+               forrige_runde UUID, forrige_utfall TEXT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+  -- 1. sesjonsoppslaget, som §1b steg 1 -> `sesjon_ugyldig`.
+  -- 2. laas_godkjenner(sesjonens tenant, sesjonens bruker_id):
+  --    'domeneforvalter' i roller og authz_version = authz_snapshot,
+  --    ellers -> `aktor_uautorisert`.
+  -- 3. apne_domeneobservasjonsrunde(sesjonens tenant, p_hostname,
+  --    'verifisering') — formålet står i KROPPEN, ikke i parameterlista:
+  --    en `revalidering`- eller `overtakelsesoppgjor`-runde skal ikke
+  --    kunne åpnes herfra.
+$$;
+
+CREATE FUNCTION krev_domeneverifisering(
+        p_sesjon TEXT, p_hostname TEXT, p_wildcard BOOLEAN, p_runde UUID)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+  -- 1.–2. som over: sesjonen, så medlemskapet under laas_godkjenner-låsen
+  --    med 'domeneforvalter'.
+  -- 3. verifiser_domenekontroll(sesjonens tenant, p_hostname, p_wildcard,
+  --    sesjonens bruker_id, p_runde). Tenant OG aktør er sesjonens.
+  --    Rundekravene (formal = 'verifisering', samme (tenant, hostname),
+  --    apen, ikke utløpt, to distinkte observatører med samme txt_hash)
+  --    står som før i den indre funksjonen, under hostname-låsen (§2.4);
+  --    innpakningen svekker dem ikke, den fjerner bare kallerens frihet
+  --    til å velge hvem verifiseringen gjelder.
+$$;
+
+-- Oppgjørsrunden (§2.5c) er den tredje: den åpnes på SAKENS vinnende
+-- (tenant, hostname), og saken er det eneste stedet det paret finnes.
+CREATE FUNCTION krev_oppgjorsrunde(p_sesjon TEXT, p_unntak_id BIGINT)
+RETURNS TABLE (runde_id UUID, gjenbrukt BOOLEAN,
+               forrige_runde UUID, forrige_utfall TEXT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+  -- 1. sesjonsoppslaget -> `sesjon_ugyldig`.
+  -- 2. laas_godkjenner(...) med 'domeneavgjorer' — ikke 'domeneforvalter':
+  --    å åpne oppgjørsrunden er en del av å avgjøre, §2.5c.
+  -- 3. laas_domenesak(sesjonens tenant, p_unntak_id) (§1d). Ingen rad, feil
+  --    tenant eller kategori <> 'domeneovertakelse' -> `unntak_ukjent`.
+  --    Målet (vinnende_tenant, hostname) leses fra idempotensnøkkelen —
+  --    samme oppslag som §1/§4.3, aldri fra kalleren.
+  -- 4. apne_domeneobservasjonsrunde(vinnende_tenant, hostname,
+  --    'overtakelsesoppgjor').
+$$;
+
+ALTER FUNCTION krev_domeneverifiseringsrunde(TEXT, TEXT)
+    OWNER TO disponit_domene_eier;
+ALTER FUNCTION krev_domeneverifisering(TEXT, TEXT, BOOLEAN, UUID)
+    OWNER TO disponit_domene_eier;
+ALTER FUNCTION krev_oppgjorsrunde(TEXT, BIGINT)
+    OWNER TO disponit_domene_eier;
+REVOKE ALL ON FUNCTION krev_domeneverifiseringsrunde(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION krev_domeneverifisering(TEXT, TEXT, BOOLEAN, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION krev_oppgjorsrunde(TEXT, BIGINT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION krev_domeneverifiseringsrunde(TEXT, TEXT)
+  TO disponit;
+GRANT EXECUTE ON FUNCTION krev_domeneverifisering(TEXT, TEXT, BOOLEAN, UUID)
+  TO disponit;
+GRANT EXECUTE ON FUNCTION krev_oppgjorsrunde(TEXT, BIGINT)
+  TO disponit;
 -- Revalidatoren må kunne SE køen sin, og et kolonnegrant på
 -- `domenekontroll` kan IKKE gi den det: tabellen har ENABLE + FORCE RLS med
 -- en tenant-policy (016 linje 353–363), og jobbrollen har verken BYPASSRLS
@@ -1769,9 +1861,9 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
 | Rute | Scope | Hva den gjør |
 |---|---|---|
 | `POST /v1/domener` | `domains:verify` | `krev_domenechallenge(sesjon, hostname, wildcard, token_hash)` (§2.4c) — sesjonen gir tenant og aktør, ikke requestbody-en; returnerer TXT-navn og token **én gang** (hashen lagres, klarteksten aldri, 016). Reissue på samme hostnavn forkaster åpne runder (§2.4a) |
-| `POST /v1/domener/{hostname}/verifisering` | `domains:verify` | Åpner (eller gjenbruker, §2.4) runden med `formal = 'verifisering'` og svarer `202 venter_observasjoner` med `runde_id`. Er runden alt full — to distinkte observatører, samme `txt_hash` — kaller den `verifiser_domenekontroll(…, p_runde)` og svarer `200 verifisert` eller `409 avklaring_kreves` (overlapp eller overtakelse, §2.5b/§3). Rapporterte åpningen at forrige runde utløp uten to enige, svarer den `409` med `forrige_utfall` som kode (`observasjon_uteblitt`/`observasjon_uenighet`) — og med det **nye** `runde_id`-et i kroppen |
+| `POST /v1/domener/{hostname}/verifisering` | `domains:verify` | `krev_domeneverifiseringsrunde(sesjon, hostname)` (§2.4c) åpner (eller gjenbruker, §2.4) runden med `formal = 'verifisering'`, og ruten svarer `202 venter_observasjoner` med `runde_id`. Er runden alt full — to distinkte observatører, samme `txt_hash` — kaller den `krev_domeneverifisering(sesjon, hostname, wildcard, runde_id)` og svarer `200 verifisert` eller `409 avklaring_kreves` (overlapp eller overtakelse, §2.5b/§3). Rapporterte åpningen at forrige runde utløp uten to enige, svarer den `409` med `forrige_utfall` som kode (`observasjon_uteblitt`/`observasjon_uenighet`) — og med det **nye** `runde_id`-et i kroppen |
 | `GET /v1/domener` / `GET /v1/domener/{hostname}` | `domains:read` | Tenantens egne rader: status, `utloper`, `siste_vellykkede_revalidering`, konfliktbildet fra `domenekonfliktpart`. Aldri `challenge_token_hash` |
-| `POST /v1/domener/overtakelse/{unntak_id}/runde` | `domains:adjudicate` | Åpner runden med `formal = 'overtakelsesoppgjor'` på **sakens** vinnende `(tenant, hostname)` og returnerer `runde_id`-en attestasjonsruten tar som `dns_runde_id` (§4.2b steg 9). Uten den måtte attestanten gjettet en UUID |
+| `POST /v1/domener/overtakelse/{unntak_id}/runde` | `domains:adjudicate` | `krev_oppgjorsrunde(sesjon, unntak_id)` (§2.4c) åpner runden med `formal = 'overtakelsesoppgjor'` på **sakens** vinnende `(tenant, hostname)` — lest fra sakens idempotensnøkkel under `laas_domenesak()`, aldri fra kroppen — og returnerer `runde_id`-en attestasjonsruten tar som `dns_runde_id` (§4.2b steg 9). Uten den måtte attestanten gjettet en UUID |
 
 - **Verifiseringen er tostegs og idempotent, ikke blokkerende.** Runden
   fylles av to andre prosesser, som poller sin egen kø (§2.4b); en HTTP-tråd
@@ -1817,6 +1909,32 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
   `registrer_overtakelsesattestasjon()` gjør det for en stemme (§1b).
   Grantet til `disponit_domains_admin` fra 016 blir stående uendret —
   rollen er NOLOGIN og nås kun med `SET ROLE` (§6b).
+- **Og verifiseringen selv grantes IKKE til `disponit` — heller ikke
+  rundeåpningen.** Å ta tenant og aktør fra sesjonen i
+  `krev_domenechallenge()` lukker bare det første av tre frie
+  tenant-argumenter runtime ellers ville hatt.
+  `apne_domeneobservasjonsrunde(tenant, hostname, formal)` og
+  `verifiser_domenekontroll(tenant, hostname, wildcard, aktor, runde)` er
+  de to andre, og sammen er de en komplett vei: et kompromittert
+  `disponit`-credential kunne åpnet en `verifisering`-runde på en **annen
+  tenants** `ventende`- eller `tilbakekalt`-rad, latt de to
+  observatørprosessene gjøre DNS-arbeidet, og så kalt verifiseringen —
+  utenfor sesjonen, utenfor scopet, utenfor ruten. Resultatet er en
+  gjenåpnet konflikt og en sittende innehaver ført til `avklaring_kreves`
+  av en kaller som aldri beviste noe om verken tenanten eller DNS-en.
+  019 granter derfor `krev_domeneverifiseringsrunde()`,
+  `krev_domeneverifisering()` og `krev_oppgjorsrunde()` (§2.4c) — samme
+  kontrakt som challengeinnpakningen — og `verifiser_domenekontroll` selv
+  til **ingen**, nøyaktig som `avgjor_domeneovertakelse`. Arbeiderrollen
+  beholder sitt rå grant på rundeåpningen: den er en global planlegger
+  uten sesjonsbegrep, og den har ingen vei til å FORBRUKE en runde den
+  åpner.
+- **Formålet står i kroppen, ikke i parameterlista.** De to
+  verifiseringsinnpakningene kan bare åpne `formal = 'verifisering'`, og
+  oppgjørsinnpakningen bare `'overtakelsesoppgjor'` — av samme grunn som
+  `status = 'verifisert'` står i kroppen i §2.2b og `'domeneavgjorer'` i
+  §1b. Ellers kunne `disponit` åpnet en `revalidering`-runde på en
+  verifisert rad og fått ferskhet uten arbeideren.
 - **Og innpakningen reautoriserer, den autentiserer ikke bare.** En sesjon
   som lever beviser at noen logget inn, ikke at hen fortsatt er
   `domeneforvalter`. Innpakningen låser derfor medlemskapet med
@@ -2940,7 +3058,9 @@ ender i dag på 016/017-signaturene. Etter 019 ville hver ny
 `hent_apne_observasjonsrunder`, `meld_domeneobservasjon`, `sone_overlapp`,
 `forelder_hostname`, `rydd_domeneobservasjonsrunder`,
 `hent_revalideringskandidater(INT, TIMESTAMPTZ)`,
-`konfliktsett_hash`, `registrer_overtakelsesattestasjon` — og de to
+`konfliktsett_hash`, `registrer_overtakelsesattestasjon`,
+`krev_domenechallenge`, `krev_domeneverifiseringsrunde`,
+`krev_domeneverifisering`, `krev_oppgjorsrunde` — og de to
 observasjonstabellene (`domeneobservasjonsrunde`, `domeneobservasjon`)
 blitt reklassifisert som
 ordinære objekter og fått eier migrator ved neste `oppsett-postgresql.sh`.
@@ -3055,6 +3175,24 @@ domeneraden urørt, ingen tildeling. Den eneste kallbare veien er
 i samme port, så REVOKE-en ikke låser ute driften den beskytter. Målt med
 `SET ROLE` for NOLOGIN-rollen (§6b) — porten skal bevise at veien er
 **revokert**, ikke bare at den er uinnlogget ·
+2g-3 **Verifiseringen er heller ikke kallbar for runtime (§2.4c/§2.5c).**
+Femargumentsversjonen av `verifiser_domenekontroll` grantes til ingen:
+porten måler `has_function_privilege('disponit',
+'verifiser_domenekontroll(text,text,boolean,text,uuid)', 'EXECUTE') =
+false` **og** at `disponit` ikke lenger har
+`apne_domeneobservasjonsrunde(text,text,text)`. Angrepet porten stenger,
+kjørt som `disponit` over den faktiske forbindelsen: åpne en
+`verifisering`-runde på **tenant B-s** `ventende` hostnavn, la de to
+observatørprosessene fylle den, og kall så verifiseringen med B-s tenant og
+en oppdiktet aktør → begge kallene `permission denied`, B-raden urørt,
+ingen `avklaring_kreves` på den sittende innehaveren. Positiv halvdel i
+samme port, så REVOKE-en ikke låser ute driften den beskytter: A-s egen
+`domeneforvalter` kommer gjennom hele kjeden over HTTP —
+`krev_domeneverifiseringsrunde` → to observasjoner →
+`krev_domeneverifisering` → `verifisert` — og et forsøk på å be om runden
+for et hostnavn som tilhører B gir `domenekontroll_ukjent`, fordi tenanten
+er sesjonens og ikke et argument. Arbeiderrollen beholder rundeåpningen og
+skal fortsatt kunne åpne sin `revalidering`-runde i samme port ·
 2g-2 **Challenge-utstedelsen dør med rollen (§2.4c).** Tenant A-s
 `domeneforvalter` logger inn og får en levende sesjon; tenanten fjerner så
 rollen fra medlemskapet (eller setter det inaktivt), **uten** å tilbakekalle
@@ -3832,6 +3970,12 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           — med medlemskapet låst gjennom laas_godkjenner og
           `domeneforvalter` krevd i kroppen, ikke bare en levende sesjon
           (§2.4c/§14b — `utsted_challenge` selv grantes til ingen ny rolle),
+          krev_domeneverifiseringsrunde() + krev_domeneverifisering() +
+          krev_oppgjorsrunde() som ENESTE veier for `disponit` til å åpne
+          og forbruke en verifiseringsrunde — verifiser_domenekontroll
+          grantes til ingen og apne_domeneobservasjonsrunde kun til
+          arbeideren, ellers kan et lekket credential la observatørene
+          verifisere en annen tenants domene for seg (§2.4c/§2.5c),
           EXECUTE på køfunksjonen til revalidatoren, REVOKE av de tre gamle
           overloadene og DROP av rydd_staged_artefakter(), §2.4c),
          platform/core/api/autorisasjon.py (rollene `domeneavgjorer` (§4.1)
