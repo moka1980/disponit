@@ -46,7 +46,22 @@ def main() -> int:
         return 2
 
     tidligere = _les_feiltelling()
-    conn = koble(dsn)
+    try:
+        conn = koble(dsn)
+    except Exception:
+        # Databasen utilgjengelig ER en feilet kjøring (§6) — telleren skal
+        # øke akkurat som ved en feilet `rydd_staged_artefakter()`, ellers
+        # utløser en vedvarende tilkoblingsfeil aldri alarmen den skal.
+        n = tidligere + 1
+        _skriv_feiltelling(n)
+        print(json.dumps({
+            "hendelse": "ryddekjoring", "forkastet": 0, "batcher": 0,
+            "karantene_bevart": 0, "feilet": 1, "sammenhengende_feil": n,
+            "alarm": int(n >= artefaktrydding.ALARM_ETTER_FEIL),
+            "grunn": "tilkobling_feilet",
+        }))
+        return 1
+
     try:
         # §6: 500 per KJØRING, ikke per batch. `maks_batcher=1` sammen med
         # `grense=BATCHGRENSE` (500) er selve grensen — flere batcher her ville
