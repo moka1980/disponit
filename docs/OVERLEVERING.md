@@ -62,12 +62,18 @@ ikke gjøre forretningsarbeid ennå.
 
 | PR | Innhold | Status |
 |---|---|---|
-| **014a** | Modulregister, kontraktversjoner, aktiveringsport | **GO gitt, klarsignal levert** → Claude Code bygger |
-| **014b** | Domeneverifikasjon, controller/browser-separasjon, egress-proxy, artefaktprotokoll | **Claude.ai skal drafte NÅ** |
-| **014c** | Automatisk WCAG-kontroll (selve modulen) | Etter 014b |
+| **014a** | Modulregister, kontraktversjoner, aktiveringsport | **Merget** — migrasjon 014 + 015 |
+| **014b** | Domeneverifikasjon, controller/browser-separasjon, egress-proxy, artefaktprotokoll | **Merget** — migrasjon 016 + 017, oppfølging i 018 (kanonisk hostname) |
+| **014c** | Automatisk WCAG-kontroll (selve modulen) | Etter PR-015 |
 
-**Blokkerende forutsetning:** `m37_unntak` modulaksept
-(rollback-m37-driver + staging-måling) — Claude Code lukker denne først.
+**Neste faktiske oppgave er PR-015 (operativt lag)**, ikke 014a/014b:
+klarsignalet ligger i `docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md` og
+beskriver migrasjon **019** (domeneobservasjonsrunder, flerpartsoppgjør,
+fencing ved reclaim, batchgrense i ryddefunksjonen). Migrasjonshistorikken
+er checksum-låst: 014–018 er ferdige filer som ikke skal skrives på nytt.
+
+**Blokkerende forutsetning (lukket):** `m37_unntak` modulaksept
+(rollback-m37-driver + staging-måling).
 
 **Registrerte arbeidselementer (ikke startet):**
 - Gate 14b: oppløsning av levende oppdrag ved menneskelig avvis (M-37-domenet)
@@ -92,7 +98,12 @@ ikke gjøre forretningsarbeid ennå.
 7. **`sett_kontekst` først på alle veier inn** (tenant, aktør, request_id).
 8. **Kjøreren eier migrasjonstransaksjonen**; migrasjonshistorikk er
    checksum-låst og immutable.
-9. **Terminale tilstander endres aldri** (`løst`, `avvist`, `manuell`).
+9. **Terminale tilstander endres aldri** (`løst`, `avvist`). `manuell` er
+   terminal for **automatisk** M-37-behandling, ikke absolutt: PR-012 åpnet
+   den ene whitelistede, auditerte veien ut (`manuell → venter_godkjenning`,
+   som krever at en `apen` godkjenningsrunde allerede finnes —
+   `011_unntaksbehandling.sql` linje 169 + 185). Uten den ville ingen
+   menneskelig godkjenning, avvisning eller eskalering vært mulig.
 10. **Systemet påstår aldri noe databasen ikke kan bevise.**
 
 ---
@@ -128,15 +139,19 @@ nøyaktig det evidensen bærer.
 
 ## 7. Neste steg i den nye chatten
 
-Claude.ai drafter **PR-014b**: domeneverifikasjon (`v_domene` med
-DNS-TXT-challenge, livsløp, tilbakekalling), controller/browser-separasjon
-(browseren har ingen credentials og kun egress-proxy som nettverksvei),
-egress-proxy (kun globalt routbare adresser, IP-pinning, revalidering ved
-hvert redirect), og artefaktprotokollen (modulen laster opp lukket
-rapport, API-et krypterer, kvittering binder hash, atomisk promotering).
+**PR-014b er levert og merget** (migrasjon 016 + 017, oppfølging 018):
+domeneverifikasjon med DNS-TXT-challenge, controller/browser-separasjon,
+egress-proxy og artefaktprotokollen står i koden. Klarsignalet ligger i
+`docs/pr/PR-014b-IMPLEMENTERINGSKLARSIGNAL.md` og er rettet mot det
+migrasjonene faktisk gjør — les det som beskrivelse av eksisterende
+skjema, ikke som en bestilling.
 
-Kjente krav fra PR-014-reviewen som må inn: separat
-`artifact_upload_capability` (ikke gjenbruk av kvitteringskapabiliteten),
-DB-lagring maks 1 MiB i v1, crawlgrenser (samme hostname, GET/HEAD,
-HTML-only, ingen query/fragment, eksakte tak), URL med credentials/query
-avvises ved input, eierskap kontrolleres før HVER toppnivånavigasjon.
+Neste oppgave er **PR-015 (operativt lag)**, klarsignal levert:
+`docs/pr/PR-015-IMPLEMENTERINGSKLARSIGNAL.md`. Migrasjon **019** —
+domeneobservasjonsrunder (arbeideren er scheduler, observatørene skriver
+i eget navn), flerpartsoppgjør i `avgjor_domeneovertakelse()`, fencing mot
+reclaim på artefaktkapabiliteten, batchgrense i `rydd_staged_artefakter()`,
+og rollen som faktisk kan bære `domains:adjudicate`.
+
+Deretter **PR-014c**: automatisk WCAG-kontroll — den første eiermodulen
+som bruker plattformen 014a/014b/015 bygde.

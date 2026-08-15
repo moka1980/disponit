@@ -2,16 +2,28 @@
 
 **Til Claude Code · Konsolidert spesifikasjon + v2. Deltaformen forlates.
 Branch: `pr-014b-domene-egress-artefakt`. Andre av tre: 014a → 014b → 014c.
-Forutsetninger: `m37_unntak`-aksept lukket · 014a (migrasjon 013) merget og
-staging-verifisert.**
+Forutsetninger: `m37_unntak`-aksept lukket · 014a merget og
+staging-verifisert (leverte migrasjon 014 + 015, ikke 013 som draften antok).**
 
 **Dette er plattforminfrastruktur alle senere eiermoduler arver. Ingen
-WCAG-spesifikk logikk her.** Migrasjon **014** — additiv mot 013: ingen
-kolonne eller constraint på 013-tabellene røres.
+WCAG-spesifikk logikk her.**
+
+**Migrasjonsnumrene er 016 og 017, ikke 014.** Draften sa «migrasjon 014,
+additiv mot 013», men da arbeidet ble utført lå `014_modulregister.sql` og
+`015_modulregister_claim.sql` allerede i repoet: PR-014a tok to numre, ikke
+ett. Domene- og artefaktobjektene ble derfor installert av
+`016_domene_egress_artefakt.sql` (domenekontroll, egress-visning,
+artefaktprotokoll) og `017_artefakt_kapabilitet.sql`
+(opplastingskapabiliteten), med `018_kanonisk_hostname.sql` som oppfølging.
+Kjøreren nøkler anvendte migrasjoner utelukkende på de tre sifrene
+(`platform/core/db/kjorer.py:54` — `v = int(fil.name[:3])`), så en ny
+`014_*.sql` ville kollidert med modulregisteret i stedet for å gi en
+oppgraderingsvei. Dokumentet er rettet mot de numrene som faktisk kjørte —
+DDL-en under er additiv mot 015.
 
 ---
 
-## 1. Samlet DDL (migrasjon 014) — autoritativ
+## 1. Samlet DDL (migrasjon 016 + 017) — autoritativ
 
 ```sql
 -- DNS-kontroll per tenant. Bevis på sonekontroll på et tidspunkt, ikke eierskap.
@@ -40,10 +52,17 @@ CREATE TABLE hostname_binding (
   bundet_ts TIMESTAMPTZ NOT NULL DEFAULT now());
 
 -- Eneste flate egress-proxyen ser (§3 B1). RLS gjelder via security_invoker.
+-- `wildcard_scope` MÅ eksponeres: dette er den ENESTE flaten egress ser, og
+-- uten scope-biten ser en gyldig rad for `example.com` identisk ut enten den
+-- autoriserer nøyaktig det hostnavnet eller ett nivå wildcard. Proxyen måtte
+-- da enten avvise all legitim subdomenebruk eller behandle en eksakt-host-
+-- verifisering som autorisasjon for subdomener. Installert i migrasjon 016
+-- linje 161–171.
 CREATE VIEW v_domeneautorisasjon WITH (security_invoker = true) AS
   SELECT tenant, hostname, autorisasjonsgenerasjon,
          (status = 'verifisert' AND now() < utloper
-          AND siste_vellykkede_revalidering > now() - interval '72 hours') AS gyldig
+          AND siste_vellykkede_revalidering > now() - interval '72 hours') AS gyldig,
+         wildcard AS wildcard_scope
   FROM domenekontroll;
 
 -- Artefakttyper, bundet til modulkontrakten i 013
@@ -428,10 +447,12 @@ Et sjekklistepunkt uten målbar grense regnes som `nei`.
 ---
 
 ```
-NÅ:    Implementer PR-014b mot dette klarsignalet — migrasjon 014, egress-proxy,
-       browser-container, artefakt-API — Claude Code
-       — platform/core/migrasjoner/014_domene_egress_artefakt.sql,
-         platform/egress/, platform/browser/, api/artefakt.py
+NÅ:    LEVERT OG MERGET. Implementert som migrasjon 016 + 017 (oppfølging 018),
+       egress-proxy, browser-container, artefakt-API — Claude Code
+       — platform/core/db/migrations/016_domene_egress_artefakt.sql,
+         platform/core/db/migrations/017_artefakt_kapabilitet.sql,
+         platform/core/db/migrations/018_kanonisk_hostname.sql,
+         platform/egress/, platform/browser/, platform/core/api/app.py
 NESTE: Draft PR-014c (automatisk WCAG-kontroll: modulmanifest, rapportskjema
        med dekningsbegrensninger og avkorting, evidensgrense wcag-audit-v1)
        — Claude.ai — docs/PR-014c-WCAG-KONTROLL-SPESIFIKASJON.md
