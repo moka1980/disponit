@@ -946,7 +946,13 @@ def test_avvist_kandidat_ma_readjudikeres(migrator):
     fremmed-eier-grenene og ville upsertet seg rett til verifisert — omgått
     avvisningen. Den tvinges nå tilbake gjennom avklaring.
 
-    MUTASJONEN SOM DREPER DENNE: fjern tilbakekalt+bindingseier-grenen i verifiser."""
+    Codex (neste runde): og den må gi KONFLIKTSIGNALET, ikke `avklaring_kreves`.
+    `opprett_overtakelsessak` lages kun fra `konflikt:<tapt-tenant>`; uten det
+    ble reapplikasjonen stående i avklaring uten noen sak som kunne avgjøre den.
+    Generasjonen økes, så idempotensnøkkelen gir en NY sak.
+
+    MUTASJONEN SOM DREPER DENNE: fjern tilbakekalt+bindingseier-grenen i
+    verifiser, eller la den returnere 'avklaring_kreves' igjen."""
     h = _host(); a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
@@ -957,12 +963,45 @@ def test_avvist_kandidat_ma_readjudikeres(migrator):
         a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'sys')",
                   (ANNEN_TENANT, h, gen)); a.commit()   # avvist → B tilbakekalt
         assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
-        # B re-verifiserer → IKKE verifisert, men tilbake til avklaring.
+        gen_avvist = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        # B re-verifiserer → IKKE verifisert, men NY konflikt (ny sak) mot A.
         res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                         (ANNEN_TENANT, h)).fetchone()[0]
         a.commit()
-        assert res == "avklaring_kreves"
+        assert res == "konflikt:" + TENANT, \
+            "reapplikasjonen ga ikke konfliktsignalet en ny M-37-sak lages fra"
     finally:
         a.close()
-    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves", \
+    rad = _dkrow(migrator, ANNEN_TENANT, h)
+    assert rad[0] == "avklaring_kreves", \
         "en avvist kandidat re-verifiserte seg forbi M-37"
+    assert rad[1] > gen_avvist, \
+        "generasjonen sto stille — saken ville kollidert med den avgjorte"
+
+
+@pg
+def test_ordinaer_tilbakekalling_laaser_ikke_ute_reverifisering(migrator):
+    """Motstykket: en tenant som ble tilbakekalt UTEN noen M-37-konflikt (ordinær
+    tilbakekalling, ingen motpart) har ingen sak å gjenåpne og ingen avgjørelse å
+    omgå. Tvang vi DEN inn i `avklaring_kreves`, ville den blitt stående der for
+    alltid: `avgjor_domeneovertakelse` krever en sak, og ingen sak kan lages uten
+    en tapt tenant. Den følger derfor den dokumenterte veien og verifiserer på
+    nytt.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `konflikt_motpart IS NOT NULL` fra
+    reapplication-grenen i verifiser."""
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        a.execute("SELECT tilbakekall_domenekontroll(%s,%s,'driftsavvik','sys')",
+                  (TENANT, h)); a.commit()
+        assert _dkrow(migrator, TENANT, h)[0] == "tilbakekalt"
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "verifisert", \
+            "en ordinært tilbakekalt eier ble låst inne i en avklaring uten motpart"
+    finally:
+        a.close()
+    assert _dkrow(migrator, TENANT, h)[0] == "verifisert"

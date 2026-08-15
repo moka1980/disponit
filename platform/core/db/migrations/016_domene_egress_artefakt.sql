@@ -34,9 +34,20 @@ CREATE TABLE IF NOT EXISTS domenekontroll (
     verifisert_ts                 TIMESTAMPTZ,
     siste_vellykkede_revalidering TIMESTAMPTZ,
     utloper                       TIMESTAMPTZ,     -- verifisert_ts + 90 døgn
+    -- Codex: MOTPARTEN i den M-37-konflikten raden står i (eller sist ble
+    -- AVVIST i) — tenanten som tapte DNS-kontrollen til denne raden. Uten den
+    -- var «avvist av M-37» og «tilbakekalt av en operatør» samme tilstand, og
+    -- verifiseringsveien kunne verken skille dem eller navngi den tapte
+    -- tenanten `opprett_overtakelsessak` trenger. Settes ved inngang til
+    -- `avklaring_kreves`, BEHOLDES ved avvisning (markøren), nulles når raden
+    -- faktisk blir verifisert. Aldri eksponert for egress.
+    konflikt_motpart              TEXT,
     opprettet                     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, hostname)
 );
+-- Re-kjøring mot en base der tabellen alt finnes (CREATE TABLE IF NOT EXISTS
+-- er da en no-op og ville hoppet over kolonnen over).
+ALTER TABLE domenekontroll ADD COLUMN IF NOT EXISTS konflikt_motpart TEXT;
 -- Kun ÉN verifisert eier per hostname på tvers av tenanter (§3 B2/B4).
 CREATE UNIQUE INDEX IF NOT EXISTS en_verifisert_per_hostname
     ON domenekontroll (hostname) WHERE status = 'verifisert';
@@ -386,7 +397,9 @@ END $$;
 -- aktiv verifisering, revokes den (grunn overtatt_dns_kontroll) og DENNE settes
 -- avklaring_kreves — funksjonen returnerer 'konflikt:<a-tenant>' så Python lager
 -- den idempotente M-37-saken. Ellers: verifisert + 90-døgnsvindu. generasjon++.
--- Står KALLEREN selv i avklaring, returneres 'avklaring_kreves' uten å røre noe.
+-- Står KALLEREN selv i avklaring, returneres 'avklaring_kreves' uten å røre noe
+-- (saken for den generasjonen finnes alt). En kandidat som ble AVVIST søker på
+-- nytt: ny generasjon → 'konflikt:<motpart>' → NY sak.
 CREATE OR REPLACE FUNCTION verifiser_domenekontroll(
     p_tenant   TEXT,
     p_hostname TEXT,
@@ -394,6 +407,7 @@ CREATE OR REPLACE FUNCTION verifiser_domenekontroll(
     p_aktor    TEXT)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_eier TEXT; v_status_a TEXT; v_utloper_a TIMESTAMPTZ; v_status_b TEXT;
+        v_motpart TEXT;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
     -- Codex: `avklaring_kreves` er TERMINAL FOR DENNE VEIEN. Etter at B har
@@ -402,7 +416,8 @@ BEGIN
     -- (eieren er jo B selv) og falt ned i upserten nedenfor, som satte B rett
     -- til `verifisert` og dermed omgikk hele M-37-avgjørelsen. Kun
     -- `avgjor_domeneovertakelse` kan løfte B ut av avklaring.
-    SELECT status INTO v_status_b FROM public.domenekontroll
+    SELECT status, konflikt_motpart INTO v_status_b, v_motpart
+      FROM public.domenekontroll
      WHERE tenant = p_tenant AND hostname = p_hostname FOR UPDATE;
     IF v_status_b = 'avklaring_kreves' THEN
         INSERT INTO public.domenekontroll_hendelse
@@ -419,7 +434,23 @@ BEGIN
     -- over ALLE fremmed-eier-grenene under, og ville upsertet seg rett til
     -- `verifisert` — omgått avvisningen uten en ny godkjenning. Tving den tilbake
     -- gjennom avklaring (ny M-37-sak); kun avgjor_domeneovertakelse kan verifisere.
-    IF v_eier IS NOT DISTINCT FROM p_tenant AND v_status_b = 'tilbakekalt' THEN
+    --
+    -- Codex (denne runden): grenen returnerte `avklaring_kreves` — SAMME verdi som
+    -- et retry av en alt pågående sak. `opprett_overtakelsessak` lages KUN fra
+    -- `konflikt:<tapt-tenant>`, så reapplikasjonen fikk verken konfliktsignalet
+    -- eller motparten: kandidaten ble stående `avklaring_kreves` uten noen fersk
+    -- sak som kunne nå `avgjor_domeneovertakelse` — permanent limbo. Generasjonen
+    -- økes (idempotensnøkkelen er hostname+generasjon → NY sak), og konflikten
+    -- returneres med motparten saken skal navngi.
+    --
+    -- Gjerdet er `konflikt_motpart IS NOT NULL`, ikke `tilbakekalt` alene: kun en
+    -- rad som HAR stått i en M-37-konflikt bærer en motpart. En tenant som ble
+    -- tilbakekalt av en operatør (aldri i avklaring) har ingen motpart, ingen sak
+    -- å gjenåpne og ingen avgjørelse å omgå — den følger den dokumenterte veien
+    -- «tilbakekalt eier kan verifisere på nytt» (B4 rad 2) i stedet for å bli
+    -- låst inne i en avklaring ingen kan avslutte.
+    IF v_eier IS NOT DISTINCT FROM p_tenant AND v_status_b = 'tilbakekalt'
+       AND v_motpart IS NOT NULL THEN
         UPDATE public.domenekontroll
            SET status = 'avklaring_kreves', wildcard = p_wildcard,
                autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1
@@ -428,7 +459,7 @@ BEGIN
             (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
             VALUES (p_tenant, p_hostname, 'avklaring_kreves', 'tilbakekalt',
                     'avklaring_kreves', 'reapplication_etter_avvisning', p_aktor);
-        RETURN 'avklaring_kreves';
+        RETURN 'konflikt:' || v_motpart;
     END IF;
     IF v_eier IS NOT NULL AND v_eier IS DISTINCT FROM p_tenant THEN
         SELECT status, utloper INTO v_status_a, v_utloper_a
@@ -446,8 +477,9 @@ BEGIN
                 (v_eier, p_hostname, 'overtatt', 'verifisert', 'tilbakekalt',
                  'overtatt_dns_kontroll', p_aktor);
             INSERT INTO public.domenekontroll (tenant, hostname, status, wildcard,
-                autorisasjonsgenerasjon)
-                VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1)
+                autorisasjonsgenerasjon, konflikt_motpart)
+                VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1,
+                        v_eier)
             ON CONFLICT (tenant, hostname) DO UPDATE
                 SET status = 'avklaring_kreves',
                     -- Codex P2: bær den NETTOPP verifiserte wildcard-scopen inn i
@@ -455,6 +487,8 @@ BEGIN
                     -- wildcard-rad fullføre en eksakt-host-overtakelse og etter
                     -- M-37-godkjenning bli verifisert med den gamle scopen.
                     wildcard = p_wildcard,
+                    -- Motparten saken navngir (= `konflikt:<tapt-tenant>` under).
+                    konflikt_motpart = v_eier,
                     autorisasjonsgenerasjon = public.domenekontroll.autorisasjonsgenerasjon + 1;
             INSERT INTO public.domenekontroll_hendelse
                 (tenant, hostname, hendelse, til_status, grunn, aktor) VALUES
@@ -473,10 +507,12 @@ BEGIN
             -- forsøke overtakelsen to ganger under ulike tenanter. Kun
             -- avgjor_domeneovertakelse løfter noen ut av avklaring.
             INSERT INTO public.domenekontroll (tenant, hostname, status, wildcard,
-                autorisasjonsgenerasjon)
-                VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1)
+                autorisasjonsgenerasjon, konflikt_motpart)
+                VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1,
+                        v_eier)
             ON CONFLICT (tenant, hostname) DO UPDATE
                 SET status = 'avklaring_kreves', wildcard = p_wildcard,
+                    konflikt_motpart = v_eier,
                     autorisasjonsgenerasjon = public.domenekontroll.autorisasjonsgenerasjon + 1;
             INSERT INTO public.domenekontroll_hendelse
                 (tenant, hostname, hendelse, til_status, grunn, aktor) VALUES
@@ -511,6 +547,10 @@ BEGIN
     ON CONFLICT (tenant, hostname) DO UPDATE
         SET status = 'verifisert', wildcard = p_wildcard,
             autorisasjonsgenerasjon = public.domenekontroll.autorisasjonsgenerasjon + 1,
+            -- Autorisasjonen er i havn: konflikten raden bar er over, og
+            -- markøren skal ikke sende en senere, ordinær tilbakekalling
+            -- inn i en avklaring det ikke finnes noen motpart for.
+            konflikt_motpart = NULL,
             verifisert_ts = now(), siste_vellykkede_revalidering = now(),
             utloper = now() + interval '90 days';
     INSERT INTO public.domenekontroll_hendelse
@@ -625,6 +665,11 @@ BEGIN
         UPDATE public.domenekontroll
            SET status = 'verifisert',
                autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1,
+               -- Konflikten er avgjort i utfordrerens favør; markøren nulles.
+               -- Ved AVVISNING beholdes den — den er nettopp det som skiller «avvist
+               -- av M-37» (må readjudikeres, og motparten er kjent) fra en ordinær
+               -- tilbakekalling i verifiseringsveien over.
+               konflikt_motpart = NULL,
                verifisert_ts = now(), siste_vellykkede_revalidering = now(),
                utloper = now() + interval '90 days'
          WHERE tenant = p_tenant AND hostname = p_hostname;

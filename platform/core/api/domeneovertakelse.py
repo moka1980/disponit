@@ -6,6 +6,10 @@ i samme transaksjon, men gir ALDRI B autorisasjonen der og da. Denne modulen
 oppretter den ENE M-37-saken (familie `domeneovertakelse`) som avgjøres i
 unntaksbehandlingen (PR-012) og til slutt kaller `avgjor_domeneovertakelse`.
 
+Samme signal kommer når en AVVIST kandidat søker på nytt (DB-en bærer motparten
+på raden i `konflikt_motpart`): ny generasjon, og dermed en ny sak — ellers ble
+reapplikasjonen stående i `avklaring_kreves` uten noen sak som kunne avgjøre den.
+
 Saken er idempotent PER overtakelsesgenerasjon: samme konflikt (samme B-rads
 `autorisasjonsgenerasjon`) gir SAMME sak; en ny overtakelse (ny, monoton
 generasjon) gir en ny sak. Generasjonen i idempotensnøkkelen er nettopp det som

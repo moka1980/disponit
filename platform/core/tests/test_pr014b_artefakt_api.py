@@ -535,3 +535,125 @@ def test_sen_kvittering_fremmed_artefakt_avvises(migrator, klient, token):
     rk = klient.post("/v1/oppdrag/kvittering", json=kv,
                      headers={"authorization": f"Bearer {tok2}"})
     assert rk.status_code == 409, rk.text
+
+
+def _vinner_avviser_og_holder_laasen(sak, opp, kjti, aid, vinnerhash):
+    """En transaksjon som gjør NØYAKTIG det VINNEREN av et kappløp gjør når
+    kvitteringen AVVISES: skriver sikkerhetssaken `artefakt_ikke_verifisert` og
+    brenner kapabiliteten med sin resultathash — og holder igjen radlåsen.
+
+    Taperen (identisk kvittering) blokkerer inne i `bruk_kvitteringskapabilitet`
+    og får først svar etter commiten. Dette er ikke en timing-test: blokkerer
+    taperen, klassifiseres den mot vinnerens committede rad; kommer den etterpå,
+    mot nøyaktig den samme raden. Begge interleavinger skal gi samme utfall — det
+    er hele funnet."""
+    import json as _json
+    from db.pg import koble
+    from .test_api import MIGRATOR_DSN
+    h = koble(MIGRATOR_DSN)
+    h.execute("SELECT set_config('disponit.tenant',%s,true),"
+              "       set_config('disponit.aktor','vinner',true),"
+              "       set_config('disponit.request_id','vinner',true)",
+              (TENANT,))
+    h.execute(
+        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+        " request_id, detalj) VALUES (%s,%s,'artefakt_ikke_verifisert',"
+        " 'kvitteringsport','vinner',%s)",
+        (TENANT, sak, _json.dumps({"oppdrag_id": opp, "artefakt_id": str(aid)})))
+    h.execute("SET LOCAL ROLE disponit_m37_claimer")
+    h.execute("UPDATE kvitteringskapabiliteter SET status='brukt',"
+              " resultathash=%s, brukt_ts=now() WHERE jti=%s",
+              (vinnerhash, kjti))
+    h.execute("RESET ROLE")
+    return h                       # IKKE committet — låsen holdes
+
+
+@pg
+def test_samtidig_avvist_kvittering_gir_ogsaa_409(migrator, klient, token):
+    """Codex: den PERSISTERTE avvisningen må rekonstrueres også på KAPPLØPS-
+    veien. Vinneren skriver `artefakt_ikke_verifisert` og svarer 409; taperen
+    blokkerer inne i `bruk_kvitteringskapabilitet`, våkner med `idempotent` og
+    returnerte 200 uten å konsultere det committede utfallet. Nøyaktig samme
+    avviste kvittering fikk altså 409 eller 200 avhengig av timing alene.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_kvittering_alt_avvist`-oppslaget fra
+    `idempotent`-grenen i `_forbruk_kapabilitet`."""
+    import threading
+    import time
+    from api.app import _resultathash
+    from .test_m37 import _signer_kvittering
+
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    _sett_kontekst(migrator, TENANT)
+    sak = migrator.execute("SELECT unntak_id FROM oppdrag WHERE tenant=%s"
+                           " AND id=%s", (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    hh = {"authorization": f"Bearer {tok2}"}
+
+    holder = _vinner_avviser_og_holder_laasen(sak, opp, kjti, aid,
+                                              _resultathash(kv))
+    svar = {}
+
+    def taper():
+        svar["r"] = klient.post("/v1/oppdrag/kvittering", json=kv, headers=hh)
+
+    t = threading.Thread(target=taper)
+    t.start()
+    try:
+        time.sleep(0.5)              # la taperen rekke fram til låsen
+    finally:
+        holder.commit()
+        holder.close()
+    t.join(timeout=30)
+    assert not t.is_alive(), "taperen hang på låsen"
+    r = svar["r"]
+    assert r.status_code == 409, \
+        "kappløps-taperen rapporterte en AVVIST kvittering som suksess: " + r.text
+
+
+@pg
+def test_ugyldig_kapabilitet_i_kapplop_er_ikke_driftsfeil(migrator, klient, token,
+                                                          monkeypatch):
+    """Codex: blir opplastingskapabiliteten ugyldig ETTER at
+    `innlos_artefaktkapabilitet` leste den, men FØR `lagre_artefakt_staged` tar
+    radlåsen og validerer den på nytt, reiser DB-en `invalid_parameter_value`.
+    Catch-all-en klassifiserte det som `db_utilgjengelig` (503, drift) — altså en
+    basefeil med tilhørende retry-atferd og overvåkingsstøy for en helt normal
+    grensetilstand på en kortlevd kapabilitet. Skal være `kapabilitet_ugyldig`.
+
+    Vinduet gjenskapes deterministisk ved å ugyldiggjøre kapabiliteten inne i
+    krypteringen — som kalles nettopp mellom innløsningen og staged-writen.
+    `utloper` er uforanderlig (statusmaskinen), så invalideringen gjøres via den
+    lovlige overgangen `utstedt → feilet`; DB-en avviser på NØYAKTIG samme RAISE.
+
+    MUTASJONEN SOM DREPER DENNE: fjern InvalidParameterValue-grenen i
+    `_artefakt_upload`."""
+    from db import kryptering
+    from db.pg import koble
+    from .test_api import MIGRATOR_DSN
+
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    jti = _utsted_cap(opp, modul, kh, at)
+    tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
+
+    ekte = kryptering.krypter
+
+    def ugyldiggjor_midt_i(*a, **kw):
+        c = koble(MIGRATOR_DSN)
+        try:
+            c.execute("UPDATE artefaktkapabilitet SET status='feilet'"
+                      " WHERE jti=%s", (jti,))
+            c.commit()
+        finally:
+            c.close()
+        return ekte(*a, **kw)
+
+    monkeypatch.setattr(kryptering, "krypter", ugyldiggjor_midt_i)
+    r = _post(klient, tok, jti, {"a": 1})
+    assert r.status_code == 401 and "kapabilitet_ugyldig" in r.text, \
+        "en ugyldig kapabilitet ble rapportert som driftsfeil: " + r.text

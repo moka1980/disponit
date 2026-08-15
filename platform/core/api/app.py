@@ -1367,6 +1367,36 @@ def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
         tjeneste.pool.gi_tilbake(conn)
 
 
+def _kvittering_alt_avvist(conn, tenant: str, unntak_id: int, oppdrag_id: int,
+                           artefakt_id) -> bool:
+    """Ble NØYAKTIG denne kvitteringen alt avvist og utfallet persistert?
+
+    En avvist artefaktkvittering (promotering/bevaring feilet) skriver
+    sikkerhetssaken `artefakt_ikke_verifisert` og lar oppdraget stå uavsluttet.
+    Kapabiliteten husker derimot bare resultathashen — ikke at utfallet var en
+    AVVISNING. Uten dette oppslaget ser en gjentakelse av den samme avviste
+    kvitteringen ut som en vellykket 200 selv om jobben aldri ble fullført.
+
+    Saken er persistert UAVHENGIG av artefakt-tilstand: den dekker også et
+    FREMMED/IKKE-EKSISTERENDE artefakt der karantene/bevaring er en no-op og det
+    derfor ikke finnes noen artefaktrad å lese utfallet av.
+
+    ÉN funksjon, fordi utfallet må rekonstrueres på BEGGE veiene inn hit: den
+    SEKVENSIELLE retryen (hashen er alt lagret) og KAPPLØPS-taperen (som blokkerte
+    inne i `bruk_kvitteringskapabilitet` og våknet med `idempotent` etter at
+    vinneren committet avvisningen sin). Var den bare implementert på den ene,
+    fikk samme avviste kvittering 409 eller 200 avhengig av timing.
+    """
+    if artefakt_id is None:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        " AND hendelse='artefakt_ikke_verifisert'"
+        " AND detalj->>'oppdrag_id' = %s AND detalj->>'artefakt_id' = %s",
+        (tenant, unntak_id, str(oppdrag_id),
+         str(artefakt_id))).fetchone() is not None
+
+
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
                          rid: str, artefakt_id=None) -> Response | None:
@@ -1392,7 +1422,20 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
     if utfall == "idempotent":
         # Vi tapte kappløpet mot en IDENTISK kvittering. Vinneren har
         # skrevet evidensraden; vi skal ikke skrive en til.
+        #
+        # Codex: men vinneren kan ha AVVIST den. Vi blokkerte på kapabilitetsraden
+        # inne i `bruk_kvitteringskapabilitet` til vinneren committet — utfallet
+        # står altså persistert og lesbart (READ COMMITTED: setningen under tar et
+        # ferskt snapshot). Uten oppslaget fikk den ene av to identiske avviste
+        # kvitteringer 409 og den andre 200, avgjort av timing alene. Samme
+        # rekonstruksjon som den sekvensielle retryen, samme funksjon.
+        avvist = _kvittering_alt_avvist(conn, tenant, unntak_id, oppdrag_id,
+                                        artefakt_id)
         conn.rollback()
+        if avvist:
+            tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
+                                   oppdrag_id=oppdrag_id, kapplop=True)
+            return _feilsvar("kvittering_konflikt", rid)
         return kanonisk_json({"status": "idempotent",
                               "oppdrag_id": oppdrag_id, "request_id": rid},
                              200, {"x-request-id": rid})
@@ -1568,25 +1611,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         if hash_ is None:
             continue
         if hash_ == ny_hash:
-            # Codex: skill en idempotent SUKSESS fra en idempotent AVVISNING. En
-            # avvist artefaktkvittering (promotering feilet) skrev en
-            # 'artefakt_ikke_verifisert'-sikkerhetssak og lot oppdraget stå
-            # uavsluttet — men den brente kapabiliteten husker bare resultathashen,
-            # ikke at utfallet var en avvisning. Uten dette ville en identisk retry
-            # sett ut som en vellykket 200 selv om jobben aldri ble fullført.
-            # Sikkerhetssaken er persistert UAVHENGIG av artefakt-tilstand — den
-            # dekker også et FREMMED/IKKE-EKSISTERENDE artefakt der karantene er en
-            # no-op og det derfor ikke finnes noe karantenesatt artefakt å lese.
-            art_id0 = kvittering.get("artefakt_id")
-            if art_id0 is not None:
-                avvist = conn.execute(
-                    "SELECT 1 FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
-                    " AND hendelse='artefakt_ikke_verifisert'"
-                    " AND detalj->>'oppdrag_id' = %s AND detalj->>'artefakt_id' = %s",
-                    (tenant, unntak_id, str(oppdrag_id), str(art_id0))).fetchone()
-                if avvist is not None:
-                    conn.rollback()
-                    return _feilsvar("kvittering_konflikt", rid)
+            # Codex: skill en idempotent SUKSESS fra en idempotent AVVISNING
+            # (se `_kvittering_alt_avvist` — samme rekonstruksjon som
+            # kappløpsveien i `_forbruk_kapabilitet`).
+            if _kvittering_alt_avvist(conn, tenant, unntak_id, oppdrag_id,
+                                      kvittering.get("artefakt_id")):
+                conn.rollback()
+                return _feilsvar("kvittering_konflikt", rid)
             conn.rollback()
             return kanonisk_json({"status": "idempotent",
                                   "oppdrag_id": oppdrag_id,
@@ -1911,6 +1942,19 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
             tjeneste.logg.hendelse("artefakt_konflikt", rid, tenant,
                                    art="sikkerhet")
             return _feilsvar("idempotenskonflikt", rid)
+        except psycopg.errors.InvalidParameterValue:
+            # Codex: kapabilitetsVALIDERINGEN (ukjent/utløpt/feilet kapabilitet,
+            # bindingsavvik, manglende payload) reiser `invalid_parameter_value` —
+            # den er en normal grensetilstand for en kortlevd kapabilitet, ikke en
+            # basefeil. Uten denne grenen falt særlig utløps-kappløpet (kapabiliteten
+            # utløper etter `innlos_artefaktkapabilitet` har lest den, men før
+            # radlåsen i `lagre_artefakt_staged`) ned i catch-all-en under og ble
+            # rapportert som `db_utilgjengelig` — altså en driftshendelse med
+            # tilhørende retry-atferd og overvåkingsstøy for noe som bare var en
+            # ugyldig kapabilitet. Catch-all-en er reservert for EKTE basefeil.
+            conn.rollback()
+            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant)
+            return _feilsvar("kapabilitet_ugyldig", rid)
 
         # lagre_artefakt_staged validerer OG forbruker kapabiliteten atomisk
         # (Codex 016:502) — ingen separat bruk-kall lenger.
