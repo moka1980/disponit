@@ -24,8 +24,9 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | # | Objekt i 019 | Hvorfor det ikke kan ligge i kalleren |
 |---|---|---|
 | 1 | `overtakelse_attestasjon` (ny tabell, m/ `rolle` + `authz_version`) + `overtakelse_attestasjon_saksbinding()` (trigger) | Fire øyne, §4; målet må bindes til saken, §1; autorisasjonen må kunne reautoriseres ved tildeling, §4.3 |
-| 2 | `domeneobservasjonsrunde` + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4 |
-| 3 | `apne_domeneobservasjonsrunde(tenant, hostname)` (ny) | Runden er engangs, kortlevd og bundet til én rad, §2.4 |
+| 2 | `domeneobservasjonsrunde` (m/ `challenge_token_hash`, unikindeks på levende runde, køindeks) + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4; runden må være bundet til challengeVERSJONEN, §2.4a; én levende runde per mål og formål, §2.4 |
+| 2b | `rydd_domeneobservasjonsrunder(p_maks INT)` (ny) | En runde som bare utløper har ingen avslutning, og køtabellen vokser uten grense, §2.4bb |
+| 3 | `apne_domeneobservasjonsrunde(tenant, hostname, formal)` (ny) | Runden er engangs, kortlevd, idempotent under sonelåsen og bundet til én rad og én challenge, §2.4/§2.4a |
 | 4 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4 |
 | 4b | `hent_apne_observasjonsrunder()` (ny, avgrenset lesekø) | Observatøren må kunne *finne* runden den skal svare på. Uten den kan prosessen autentisere, men aldri oppdage et `runde_id`, §2.4b |
 | 5 | `verifiser_domenekontroll(…, p_runde UUID)` | **Førstegangsverifisering er den farligste veien** — den kan opprette en autorisasjon og utløse en overtakelse. Uten runde er den beviskravsfri, §2.5 |
@@ -35,17 +36,22 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
 | 10 | `avgjor_domeneovertakelse(…, p_runde UUID)` — flerpartsoppgjør, friskhetskrav og taperoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon (§3), telle kun ferske attestasjoner mot fersk DNS-evidens (§4), og la taperens sak kunne lukkes (§3.1) |
 | 11 | `forelder_hostname()` + `sone_overlapp()` (nye) + sonelåsen og overlappsgrenen i `verifiser_domenekontroll` / `avgjor_domeneovertakelse` | Wildcard-scopen dekker ett nivå mer enn hostnavnet, men 016/018 gjerder kun det litterale navnet: `example.com` (wildcard, tenant A) og `foo.example.com` (tenant B) kan i dag begge stå `verifisert` samtidig, §2.5b |
+| 12 | `domenekonfliktpart` (ny tabell) | En wildcard-verifisering kan overlappe FLERE innehavere samtidig; `konflikt_motpart` er én kolonne, og oppgjøret må kunne løse hele mengden atomisk, §2.5b |
+| 13 | Oppgraderingsryddingen av eksisterende overlapp, FØR gjerdet installeres | Gjerdet er fremoverrettet: rader som alt er `verifisert` i overlapp forblir doble til noen rydder dem, §2.5b |
+| 14 | `utsted_challenge()` (`CREATE OR REPLACE`, ACL bevares) | En reissue må forkaste åpne runder på målet, ellers kan evidens for en invalidert challenge forbrukes etterpå, §2.4a |
 
-**Fire ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
+**Seks ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
 saksflyten ligger ikke i databasen, og en port som bare finnes i SQL er
 ikke nådd:
 
 | # | Objekt i Python | Hvor | Hvorfor |
 |---|---|---|---|
-| A | Rollen `domeneavgjorer` i `ROLLE_TIL_SCOPES` | `api/autorisasjon.py:17` | Ingen eksisterende rolle bærer `domains:adjudicate`, §4.1 |
-| B | `domains:adjudicate` i `BROWSER_MUTASJONSSCOPES` | `api/app.py:799` | Uten det nektes attestanten før ruten, §4.2 |
+| A | Rollene `domeneavgjorer` og `domeneforvalter` i `ROLLE_TIL_SCOPES` | `api/autorisasjon.py:17` | Ingen eksisterende rolle bærer `domains:adjudicate` (§4.1) eller `domains:verify` (§2.5c) |
+| B | `domains:adjudicate` + `domains:verify` i `BROWSER_MUTASJONSSCOPES` | `api/app.py:799` | Uten dem nektes attestanten og domeneforvalteren før ruten, §4.2/§2.5c |
 | C | Ruten `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` + **behandleren `behandle_domeneattestasjon()`** + familiegjerdet på PR-012-ruten | `api/app.py`, `api/domeneovertakelse.py`, `api/unntaksbehandling.py` | PR-012-s behandler kan ikke avgjøre en domenesak (§4.2b), og scopet slås opp fra handlingen, ikke fra saksfamilien, §4.2 |
 | D | `ny → manuell` i `opprett_overtakelsessak()` | `api/domeneovertakelse.py` | Saken er ellers synlig, men ikke handterbar, §3 |
+| E | **Verifiseringsflaten**: `POST /v1/domener`, `POST /v1/domener/{hostname}/verifisering`, `GET /v1/domener[/{hostname}]` | `api/app.py`, `api/domenekontroll.py` | Etter §2.4c er `disponit` eneste kaller av `verifiser_domenekontroll`, og ingen rute kaller den — uten dette kan intet domene bli autorisert, §2.5c |
+| F | `POST /v1/domener/overtakelse/{unntak_id}/runde` | `api/domeneovertakelse.py` | Attestanten må få `dns_runde_id` fra et sted; oppgjørsrunden åpnes ikke av seg selv, §2.5c/§4.2b |
 
 ---
 
@@ -152,8 +158,9 @@ ny konflikt. RLS + FORCE. `sett_kontekst` først på alle veier inn.
 
 ## 2. Revalideringsarbeider og observasjonskontrakten — planlegger, observerer ikke
 
-`disponit-domenerevalidering.timer`, hver time, egen Unix-bruker, rolle
-`disponit_domains_admin`. **Arbeideren er en scheduler, ikke en kilde:**
+`disponit-domenerevalidering.timer`, hver time, egen Unix-bruker, egen
+least-privilege-rolle `disponit_domenerevalidator` (§6b).
+**Arbeideren er en scheduler, ikke en kilde:**
 den bestemmer *hvilke* rader som skal revalideres når, åpner en runde og
 ber til slutt om avgjørelsen — men den slår ikke opp DNS selv og kan
 ikke melde inn en observasjon (§2.4). Selve oppslaget gjøres av separate
@@ -231,10 +238,11 @@ men kan aldri bryte K.
 **Observasjonen skal ikke kunne påstås av den som ber om revalideringen.**
 016/018-signaturen `revalider_domenekontroll(tenant, hostname, aktor)`
 tar ingen observert TXT-verdi og ingen resolveridentiteter; den setter
-`siste_vellykkede_revalidering = now()` på enhver verifisert rad. Siden
-arbeideren har `disponit_domains_admin` (016 linje 929), kunne en
-feilende eller kompromittert arbeider friske opp et hvilket som helst
-verifisert domene uten å ha slått opp noe.
+`siste_vellykkede_revalidering = now()` på enhver verifisert rad. Den
+signaturen er grantet til `disponit_domains_admin` (016 linje 929), altså
+rollen et 014b-oppsett ville gitt arbeideren: en feilende eller
+kompromittert arbeider kunne friske opp et hvilket som helst verifisert
+domene uten å ha slått opp noe.
 
 **Å ta TXT-verdien som parameter løser det ikke.** Challenge-tokenet står
 i en offentlig, cachebar DNS-TXT-post: enhver som har sett det én gang —
@@ -256,9 +264,23 @@ CREATE TABLE domeneobservasjonsrunde (
   tenant TEXT NOT NULL, hostname TEXT NOT NULL CHECK (er_kanonisk_hostname(hostname)),
   formal TEXT NOT NULL                    -- hva runden kan brukes til, lukket enum
     CHECK (formal IN ('verifisering','revalidering','overtakelsesoppgjor')),
+  challenge_token_hash TEXT NOT NULL,     -- challengen runden gjelder, §2.4a
   apnet TIMESTAMPTZ NOT NULL DEFAULT now(),
   utloper TIMESTAMPTZ NOT NULL,           -- kort, f.eks. now() + 5 min
   status TEXT NOT NULL DEFAULT 'apen' CHECK (status IN ('apen','brukt','forkastet')));
+
+-- Én LEVENDE runde per mål og formål. Uten den kan to samtidige kallere åpne
+-- hver sin `apen` runde på samme (tenant, hostname, formal), hver samle sine
+-- to observasjoner og hver bli forbrukt: samtidige API-retries ville da
+-- verifisert eller fornyet det samme domenet flere ganger, og en kaller som
+-- kan åpne runder kunne fylle begge observatørkøene med identisk arbeid.
+CREATE UNIQUE INDEX en_apen_runde_per_mal
+    ON domeneobservasjonsrunde (tenant, hostname, formal) WHERE status = 'apen';
+
+-- Køindeks: nøyaktig predikatet og sorteringen `hent_apne_observasjonsrunder()`
+-- kjører, og begge observatørprosessene kjører den kontinuerlig (§2.4b).
+CREATE INDEX domeneobservasjonsrunde_ko
+    ON domeneobservasjonsrunde (apnet) WHERE status = 'apen';
 
 CREATE TABLE domeneobservasjon (
   runde_id UUID NOT NULL REFERENCES domeneobservasjonsrunde (runde_id),
@@ -273,11 +295,19 @@ friske opp et verifisert domene skal ikke kunne brukes til å opprette en
 ny autorisasjon eller til å avgjøre en tvist. Hver konsument krever sitt
 eget formål, og runden er uansett engangs.
 
+**Åpningen er idempotent under hostname-låsen.** `apne_domeneobservasjonsrunde()`
+tar sonelåsen (§2.5b) først, setter så hver utløpt `apen` runde på målet til
+`forkastet`, og returnerer deretter `runde_id` for en runde som fortsatt lever
+i stedet for å opprette en ny. Unikindeksen er beltet: en kaller som forsøker
+å omgå funksjonen kan ikke få to `apen` rader på samme mål og formål.
+Idempotensen er ikke bare hygiene — den er det som gjør at et API-retry (§2.5c)
+poller den *samme* runden i stedet for å åpne en ny hver gang klienten spør.
+
 | Funksjon | Kalles av | Håndhever |
 |---|---|---|
-| `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `runde_id` | arbeideren (`disponit_domains_admin`) eller API-et (`disponit`) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt og challengen ikke utløpt; kort TTL; runden er engangs |
+| `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `runde_id` | revalideringsarbeideren (`disponit_domenerevalidator`) eller API-et (`disponit`) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt, **kopieres til runden** (§2.4a) og challengen ikke utløpt (unntatt `revalidering`, §2.5); kort TTL; åpningen er idempotent under sonelåsen; runden er engangs |
 | `hent_apne_observasjonsrunder()` → `SETOF (runde_id, hostname, formal)` | **observatørrollene** `disponit_domeneobservator_*` | Kun `apen`, ikke utløpt, og kun runder kalleren selv ikke alt har meldt inn i; `ORDER BY apnet LIMIT 50`; **ingen `tenant` i utdata** (§2.4b) |
-| `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB og må være lik radens `challenge_token_hash`; runden må være `apen` og ikke utløpt |
+| `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB og må være lik **rundens** `challenge_token_hash` (§2.4a); runden må være `apen` og ikke utløpt |
 | `verifiser_domenekontroll(tenant, hostname, wildcard, aktor, p_runde UUID)` | API-et | Som under, pluss: runden har `formal = 'verifisering'`, gjelder dette `(tenant, hostname)`, er `apen` og ikke utløpt, og har **≥ 2 observasjoner fra distinkte `observator` med samme `txt_hash`** — alt under hostname-låsen, FØR noen status settes eller noen overtakelse utløses |
 | `revalider_domenekontroll(tenant, hostname, aktor, p_runde UUID)` | arbeideren | Samme runde-krav med `formal = 'revalidering'`; så settes tidsstemplet og runden merkes `brukt` |
 | `avgjor_domeneovertakelse(…, p_runde UUID)` | API-et, ved **positiv** tildeling | Samme runde-krav med `formal = 'overtakelsesoppgjor'` på vinnerens `(tenant, hostname)` — §4 |
@@ -292,6 +322,43 @@ observatørprosesser som *hver for seg* har slått opp TXT-posten og meldt
 den inn i samme runde, skjer ingenting. Klarteksten lagres fortsatt aldri;
 det er hashen som bæres. Observatøridentitetene skrives på
 `domenekontroll_hendelse` som evidens.
+
+### 2.4a Runden er bundet til challengeVERSJONEN, ikke bare til raden
+
+**En runde som bare kjenner `(tenant, hostname, formal)` kan forbrukes med
+evidens for en challenge som ikke gjelder lenger.** Kappløpet er konkret:
+begge observatørene slår opp og melder inn H1; `utsted_challenge()` skriver
+så en ny challenge H2 på raden — reissue er en helt lovlig operasjon, og med
+§2.5c er den dessuten nåbar fra API-et; deretter tar
+`verifiser_domenekontroll()` hostname-låsen og finner en fortsatt `apen`
+runde med to enige observasjoner. Sammenlignet den bare mot radens
+*nåværende* hash, ville H1-observasjonene ikke telt — men sammenlignet den
+mot ingenting, ville de telt, og en invalidert challenge hadde opprettet
+eller flyttet en autorisasjon. Derfor:
+
+- `apne_domeneobservasjonsrunde()` **kopierer** radens
+  `challenge_token_hash` inn i runden (`NOT NULL`) under sonelåsen.
+- `meld_domeneobservasjon()` sammenligner mot **rundens** hash, ikke radens.
+  Observatøren svarer på den challengen runden ble åpnet for.
+- Hver konsument (`verifiser_`, `revalider_`, `avgjor_`) sammenligner
+  rundens `challenge_token_hash` mot radens **under samme radlås som
+  statusovergangen**, og avviser med `challenge_endret` ved avvik. Bindingen
+  kontrolleres altså atomisk med overgangen, ikke før den.
+- `utsted_challenge()` er reissue: 019-versjonen setter hver `apen` runde på
+  målet til `forkastet` i samme transaksjon. Det er den positive halvdelen —
+  gammel evidens blir aldri stående og vente på en konsument.
+
+**Utløpt challenge er en port ved førstegangsverifisering, ikke ved
+oppfriskning.** `utsted_challenge()` setter `challenge_utloper` til sju
+døgn, mens en verifisert autorisasjon lever i 90 og revalideres daglig.
+Krevde `formal = 'revalidering'` en ikke-utløpt challenge, ville hvert
+eneste domene mistet evnen til å åpne revalideringsrunden sin på dag åtte
+og blitt ugyldig i `v_domeneautorisasjon` 72 timer senere — mens riktig
+TXT-post fortsatt lå ute. Kravet gjelder derfor kun `verifisering` og
+`overtakelsesoppgjor`, som begge *etablerer* en autorisasjon. For
+`revalidering` er beviset uendret: TXT-posten må fortsatt hashe til den
+tokenverdien raden bærer, av to distinkte observatører. Det er tokenet i
+sonen som er beviset, ikke utstedelsestidspunktet.
 
 ### 2.4b Observatøren må kunne finne runden — en avgrenset lesekø
 
@@ -343,6 +410,40 @@ END $$;
   omformålsbestemme noe. Restrisikoen er uendret fra §2.4: den ligger hos
   to samvirkende observatører, ikke hos oppdagelsen av `runde_id`.
 
+### 2.4bb Runder er kortlevde — tabellen må være det også
+
+**Ingenting i §2.4 avslutter en runde som bare utløper.** En runde merkes
+`brukt` av konsumenten sin, men en runde der observatørene aldri ble enige,
+eller der kalleren aldri kom tilbake, blir stående `apen` for alltid. Med
+daglig revalidering av N domener er det N nye runder i døgnet som aldri
+forlater det partielle køindeksen dekker, og to prosesser som poller
+`hent_apne_observasjonsrunder()` kontinuerlig ville til slutt sortert en
+historikk i stedet for en arbeidsliste. Tre ting lukker det, og ingen av
+dem rører evidenskjeden:
+
+1. **Utløpsovergangen er eksplisitt.** `apne_domeneobservasjonsrunde()`
+   setter utløpte `apen` runder på målet til `forkastet` før den åpner
+   (over), og `rydd_domeneobservasjonsrunder(p_maks INT DEFAULT 500)` gjør
+   det samme for alle mål: `apen` og `utloper < now()` → `forkastet`,
+   `ORDER BY utloper LIMIT p_maks FOR UPDATE SKIP LOCKED`. Samme batchform
+   som §6, samme grunn.
+2. **Retensjon, ikke evighet.** Samme funksjon sletter runder som har vært
+   terminale (`brukt`/`forkastet`) i mer enn **30 døgn**, og
+   `domeneobservasjon`-radene følger med (`ON DELETE CASCADE` på
+   fremmednøkkelen). Det er trygt fordi den varige evidensen — hvilke
+   observatører som var enige om hvilken hash, og hvilken overgang det
+   førte til — allerede er kopiert til `domenekontroll_hendelse`, som er
+   append-only og aldri ryddes. Runden er arbeidstilstand; hendelsen er
+   evidens.
+3. **Køen leser aldri historikken.** Det partielle indekset
+   `domeneobservasjonsrunde_ko` dekker kun `status = 'apen'`, så
+   pollespørringen holder seg konstant i størrelse uansett hvor mye som
+   har vært.
+
+Funksjonen kjøres av **ryddetimeren** (§6), som allerede har en batchgrense
+og en alarm på to sammenhengende feilede kjøringer. Ingen ny timer, ingen
+ny credential.
+
 ### 2.4c Rettighetskontrakten for 019 — REVOKE først, så GRANT
 
 **En ny signatur er et nytt funksjonsobjekt, og nye funksjoner får
@@ -365,12 +466,16 @@ REVOKE ALL ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UUID)
 REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION rydd_staged_artefakter(INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION rydd_domeneobservasjonsrunder(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION forelder_hostname(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sone_overlapp(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 
--- 2. Minste nødvendige EXECUTE, per kaller i tabellen i §2.4
+-- 2. Minste nødvendige EXECUTE, per kaller i tabellen i §2.4.
+--    Merk hvilke roller som IKKE står her: `disponit_domains_admin` får
+--    ingen nye grants i 019 og forblir NOLOGIN (§6b). Hver kjørende jobb
+--    har sin egen rolle med nøyaktig de funksjonene jobben kaller.
 GRANT EXECUTE ON FUNCTION apne_domeneobservasjonsrunde(TEXT, TEXT, TEXT)
-  TO disponit_domains_admin, disponit;
+  TO disponit_domenerevalidator, disponit;
 GRANT EXECUTE ON FUNCTION hent_apne_observasjonsrunder()
   TO disponit_domeneobservator_1, disponit_domeneobservator_2;
 GRANT EXECUTE ON FUNCTION meld_domeneobservasjon(UUID, TEXT)
@@ -378,11 +483,24 @@ GRANT EXECUTE ON FUNCTION meld_domeneobservasjon(UUID, TEXT)
 GRANT EXECUTE ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UUID)
   TO disponit;                       -- API-et; arbeideren verifiserer ikke
 GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID)
-  TO disponit_domains_admin;         -- arbeideren; API-et revaliderer ikke
+  TO disponit_domenerevalidator;     -- arbeideren; API-et revaliderer ikke
 GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT, UUID)
   TO disponit;                       -- behandleren, §4.2b
 GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT)
-  TO disponit_domains_admin;         -- ryddetimeren, §6
+  TO disponit_artefaktrydder;        -- ryddetimeren, §6
+GRANT EXECUTE ON FUNCTION rydd_domeneobservasjonsrunder(INT)
+  TO disponit_artefaktrydder;        -- samme timer, §2.4bb
+-- Utstedelse av challenge er nå en API-handling (§2.5c). 016 ga den kun til
+-- den NOLOGIN-rollen som ikke lenger kjører noe; uten denne linja finnes det
+-- ingen kallbar vei til å registrere et domene i det hele tatt.
+GRANT EXECUTE ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT)
+  TO disponit;
+-- Revalidatoren må kunne SE køen sin. Kolonnegrant, aldri hele raden:
+-- `challenge_token_hash` og `konflikt_motpart` er ikke arbeiderens (samme
+-- mønster som egressens grant, 016 linje 386).
+GRANT SELECT (tenant, hostname, status, wildcard, autorisasjonsgenerasjon,
+              verifisert_ts, siste_vellykkede_revalidering, utloper)
+  ON domenekontroll TO disponit_domenerevalidator;
 -- `forelder_hostname` og `sone_overlapp` (§2.5b) får INGEN grant: de kalles
 -- kun innenfra de SECURITY DEFINER-funksjonene som eier gjerdet. Et grant
 -- til runtime ville gjort `sone_overlapp` til et kryss-tenant leseoppslag
@@ -399,13 +517,17 @@ nye:
 | `verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT)` | `disponit_domains_admin` (016 linje 928) | Oppretter en autorisasjon og **utløser en overtakelse** uten ett DNS-oppslag, §2.5 |
 | `avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT)` | `disponit_domains_admin` (016 linje 931) | **Tildeler domenet til den bundne utfordreren uten attestasjoner og uten runde** — hele §4 forbigått i ett kall |
 
-Den siste er den som gjør de to første til halve arbeid. §6b gjør
-`disponit_domains_admin` om fra `NOLOGIN` til en **credentialed
-arbeiderrolle med DSN**: fra det øyeblikket er 016-s grant på
-femargumentsversjonen ikke en teoretisk vei, men et innloggbart
-sidespor rundt fire-øyne-oppgjøret. Alle tre **REVOKE-es fra
-`disponit_domains_admin` og fra `disponit`** i 019, i samme migrasjon som
-etterfølgerne får sine grants.
+Den siste er den som gjør de to første til halve arbeid: den tildeler
+domenet til den bundne utfordreren i ett kall, uten attestasjoner og uten
+runde. Alle tre **REVOKE-es fra `disponit_domains_admin` og fra
+`disponit`** i 019, i samme migrasjon som etterfølgerne får sine grants.
+
+**At rollen forblir NOLOGIN er ikke et argument for å la dem stå.**
+`disponit_domains_admin` er fortsatt nåbar med `SET ROLE` for migrator og
+for superbrukeren, og den er nettopp den rollen en fremtidig endring ville
+fristes til å gi en credential (§6b sier hvorfor den ikke skal få en).
+En revokert funksjon er en vei som ikke finnes; en NOLOGIN-rolle er en vei
+som ikke er tatt ennå. Bare den første er en port.
 
 `rydd_staged_artefakter()` uten argumenter (016 linje 856) **droppes**
 (`DROP FUNCTION rydd_staged_artefakter()`), den revokes ikke: med en
@@ -526,9 +648,10 @@ RETURNS TABLE (tenant TEXT, hostname TEXT, wildcard BOOLEAN,
                autorisasjonsgenerasjon BIGINT, retning TEXT)
   LANGUAGE sql STABLE SECURITY DEFINER AS $$
     SELECT d.tenant, d.hostname, d.wildcard, d.autorisasjonsgenerasjon,
-           CASE WHEN d.hostname = p_hostname THEN 'eksakt'
-                WHEN d.wildcard              THEN 'forelder'   -- d dekker oss
-                ELSE                              'barn'       -- vi dekker d
+           -- Retningen er en egenskap ved HOSTNAVNENE, ikke ved wildcard-biten.
+           CASE WHEN d.hostname = p_hostname                           THEN 'eksakt'
+                WHEN d.hostname = public.forelder_hostname(p_hostname) THEN 'forelder'
+                ELSE                                                        'barn'
            END
       FROM public.domenekontroll d
      WHERE d.tenant <> p_tenant
@@ -537,6 +660,18 @@ RETURNS TABLE (tenant TEXT, hostname TEXT, wildcard BOOLEAN,
           OR (d.wildcard AND public.forelder_hostname(p_hostname) = d.hostname)
           OR (p_wildcard AND public.forelder_hostname(d.hostname) = p_hostname)) $$;
 ```
+
+**Retningen utledes av navnene, ikke av wildcard-biten.** Wildcard-flagget
+sier *hvorfor* to rader overlapper; det sier ingenting om hvem som er
+forelder. Et utkast som testet `d.wildcard` først feilet på en helt vanlig
+konstellasjon: eksisterende `foo.example.com` med `wildcard = true`, ny
+wildcard-verifisering av `example.com`. Da treffer barnegrenen i
+`WHERE`-leddet, men `CASE`-en ville merket raden `forelder` — og oppgjøret
+under ville fulgt forelderoppskriften og kun slått av barnets wildcard,
+mens barnets **eksakte** `foo.example.com`-autorisasjon ble stående inne i
+vinnerens wildcard-scope. To tenanter, ett effektivt hostnavn, gjennom
+gjerdet som skulle stoppe nettopp det. `d.hostname = forelder(p_hostname)`
+er entydig i alle fire kombinasjonene av wildcard-bitene.
 
 **Utfallet: fail-closed i utfordrerens disfavør, aldri i innehaverens.**
 
@@ -550,17 +685,80 @@ Det siste feltet er ikke forsiktighet, det er en DoS-sperre: å tilbakekalle
 A-s wildcard fordi noen beviste kontroll over ett delegert subdomene ville
 gjort delegering til et våpen mot forelderen.
 
-**Oppgjøret snevrer inn nøyaktig det omstridte.** I samme transaksjon som
-den positive tildelingen (§4), under samme sonelås:
+#### En wildcard-verifisering kan møte FLERE innehavere samtidig
 
-- taperen er **eksakt-host-raden** → `tilbakekalt`, grunn
-  `tapte_domeneoppgjor`, generasjon++ — som i eksakt-host-oppgjøret;
-- taperen er **wildcard-forelderen** → `wildcard = false`, generasjon++,
-  hendelse `wildcardscope_innsnevret`. Raden blir stående `verifisert` for
-  sitt eget hostnavn, som aldri var omstridt.
+**`sone_overlapp` er en mengde, ikke en rad.** Med `p_wildcard = true` er
+barnegrenen `forelder_hostname(d.hostname) = p_hostname` — den treffer
+*hvert* verifiserte barn under navnet. Eier tenant B `foo.example.com` og
+tenant C `bar.example.com` når tenant D verifiserer wildcard `example.com`,
+returnerer funksjonen to rader hos to ulike tenanter. `konflikt_motpart` er
+én `TEXT`-kolonne (016 linje 44), og et oppgjør som løser «taperen» i
+entall ville da autorisert D-s wildcard mens ett av barna fortsatt sto
+`verifisert`. Overlappet er altså flerpartig av natur, og både saken og
+oppgjøret må bære hele mengden:
 
-`avvis` avgjør ingenting: utfordrerens rad blir `tilbakekalt`, innehaveren
-står urørt.
+```sql
+-- 019: hvilke motparter konflikten faktisk består av. Én rad per overlapp.
+CREATE TABLE domenekonfliktpart (
+  tenant TEXT NOT NULL,                   -- UTFORDREREN; RLS-nøkkel, som saken
+  hostname TEXT NOT NULL,
+  autorisasjonsgenerasjon BIGINT NOT NULL,-- konfliktens generasjon = sakens
+  motpart_tenant TEXT NOT NULL,
+  motpart_hostname TEXT NOT NULL,
+  retning TEXT NOT NULL CHECK (retning IN ('eksakt','forelder','barn')),
+  oppdaget TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant, hostname, autorisasjonsgenerasjon,
+               motpart_tenant, motpart_hostname));
+```
+
+- **Skrives kun av `verifiser_domenekontroll()`**, under sonelåsen, i samme
+  transaksjon som utfordreren settes `avklaring_kreves` — én rad per treff i
+  `sone_overlapp`. Runtime har SELECT (§6c), aldri INSERT: mengden er
+  databasens observasjon, ikke kallerens påstand.
+- **`konflikt_motpart` beholder sin betydning** og settes til motparten i
+  den *første* raden sortert på `(retning, motpart_hostname, motpart_tenant)`
+  — det er verdien 018-s reapplikasjonsgren og `opprett_overtakelsessak()`
+  allerede leser. Den er en peker inn i mengden, ikke mengden selv, og
+  saksvisningen leser `domenekonfliktpart`, aldri kolonnen alene.
+- **Saken forblir én per konflikt.** Idempotensnøkkelen er fortsatt
+  `domeneovertakelse:<hostname>:<generasjon>` (§1) — det er utfordrerens
+  konflikt som avgjøres, ikke ett parforhold av gangen, og fire øyne
+  attesterer ett utfall for hele mengden.
+
+**Oppgjøret snevrer inn nøyaktig det omstridte — for hver motpart.** I samme
+transaksjon som den positive tildelingen (§4), under samme sonelås,
+itererer `avgjor_domeneovertakelse()` over **hele** mengden:
+
+| Taperraden er | Hva som skjer | Hvorfor |
+|---|---|---|
+| `eksakt` | `tilbakekalt`, grunn `tapte_domeneoppgjor` | Samme navn; det er selve autorisasjonen som skifter hender |
+| `barn` (dens eget hostnavn ligger inne i vinnerens wildcard-scope) | `tilbakekalt`, grunn `tapte_domeneoppgjor` — **også når barnet selv har wildcard**; barnets scope dør med raden | Det omstridte er barnets eget navn. Å bare slå av barnets wildcard ville latt `foo.example.com` stå autorisert inne i vinnerens scope |
+| `forelder` (kun wildcard-utvidelsen overlapper; forelderens eget hostnavn er ikke omstridt) | `wildcard = false`, generasjon++, hendelse `wildcardscope_innsnevret`; raden blir stående `verifisert` for sitt eget navn | Vinneren vant ett navn, ikke forelderens sone |
+
+**Mengden avledes på nytt under låsen, den leses ikke fra saken.**
+`avgjor_domeneovertakelse()` kaller `sone_overlapp()` selv i
+oppgjørstransaksjonen og sammenligner resultatet med `domenekonfliktpart`
+for sakens generasjon. Er de ulike — et barn er kommet til, en motpart er
+tilbakekalt i mellomtiden — avvises tildelingen med `konfliktbildet_endret`
+og saken føres tilbake til `manuell` med en ny mengde. To mennesker skal
+ikke kunne attestere ett konfliktbilde og få et annet gjennomført; og
+motsatt skal en motpart som er kommet til etter attestasjonen ikke kunne
+overleve tildelingen ubemerket. Sonelåsen dekker dette fullt ut: enhver
+verifisering av et barn under `example.com` tar også låsen
+`domene:example.com`, så mengden kan ikke endre seg mens oppgjøret kjører.
+
+**Konfliktraten er avledet, ikke et felt.** «≥ 3 parter innen 24 t →
+`hoy_konfliktrate`» (§3) leses fra `domenekonfliktpart`: antall distinkte
+`motpart_tenant` pluss utfordreren på samme `hostname` med `oppdaget >
+now() - 24 t`. Markøren har ingen egen kolonne på `unntak` og ingen egen
+hendelsestype — den er en autoritativ avledning fra tabellen over, som
+tenantens saksvisning regner ut på samme evidens hver gang. Et lagret flagg
+måtte vært skrevet på saker i **andre** tenanter (RLS forbyr det, §3.1) og
+kunne blitt stående igjen etter at konflikten var avgjort.
+
+`avvis` avgjør ingenting: utfordrerens rad blir `tilbakekalt`, alle
+innehaverne står urørt, og `domenekonfliktpart`-radene blir stående som
+evidens for hva som ble avvist.
 
 **Invarianten holder gjennom hele forløpet.** Utfordreren står
 `avklaring_kreves`, som ikke er `gyldig` i `v_domeneautorisasjon`, så det
@@ -573,6 +771,114 @@ suffiks er et *annet* problem enn dette, og det er allerede stengt av at
 ingen kan bevise DNS-kontroll over `com` gjennom en TXT-post i sonen.
 Sonelåsen tar likevel `domene:com` som nøkkel — en låsnøkkel er ikke en
 påstand om at raden finnes.
+
+#### Gjerdet er fremoverrettet — det som alt står inne må ryddes
+
+**En base oppgradert fra 016/018 kan allerede ha overlappet.** Gjerdet over
+gjelder fra og med 019 og repareres ikke av seg selv: to rader som ble
+`verifisert` før migrasjonen — A med wildcard `example.com`, B med eksakt
+`foo.example.com` — blir stående nøyaktig som de er, og
+`v_domeneautorisasjon` gir dem begge `gyldig = true` i det uendelige.
+Installerte 019 bare gjerdet, ville migrasjonen påstått en invariant basen
+ikke oppfyller. 019 rydder derfor **først**, i samme transaksjon, før
+funksjonene erstattes:
+
+```
+for hvert par (d1, d2) av verifiserte rader i ULIKE tenanter der
+    d1.hostname = forelder(d2.hostname) og (d1.wildcard eller d2.wildcard)
+    -- eksakt-navnkollisjon kan ikke finnes: `en_verifisert_per_hostname`
+    -- har gjerdet den siden 016
+  innehaver := den med LAVEST (verifisert_ts, hostname, tenant)   -- deterministisk
+  utfordrer := den andre
+  utfordrer → 'tilbakekalt', grunn 'namespaceoverlapp_ved_019',
+              konflikt_motpart = innehaver.tenant, generasjon++
+  hendelse på begge rader, med hele overlappsbildet i `detalj`
+  hostname_binding røres IKKE
+```
+
+- **Innehaveren er den eldste verifiseringen.** Ikke den bredeste, ikke
+  den smaleste: den som sto der først. Regelen må kunne kjøres to ganger
+  med samme utfall på en base som ble avbrutt, og `verifisert_ts` er det
+  eneste feltet som gir det uten å ta stilling til hvem som «egentlig» eier
+  navnet — det er fire øyne som avgjør, ikke en migrasjon.
+- **`tilbakekalt` med motpart, ikke `avklaring_kreves`.** Det er ikke en
+  formalitet: en rad i `avklaring_kreves` kan **kun** løftes ut av
+  `avgjor_domeneovertakelse()`, som krever en M-37-sak — og saken opprettes
+  av `opprett_overtakelsessak()` i Python, med tenantens aktive policyref og
+  en blokkerende grunnkode (§3). En SQL-migrasjon kan ikke skrive den, og
+  radene ville stått permanent uavgjørbare. `tilbakekalt` **med
+  `konflikt_motpart` satt** treffer derimot 018-s reapplikasjonsgren (018
+  linje 186–199): tenantens neste verifisering gjennom §2.5c sender raden
+  til `avklaring_kreves` med **ny** generasjon og returnerer
+  `konflikt:<motpart>`, som er nøyaktig signalet `opprett_overtakelsessak()`
+  lages fra. Veien ut er den ordinære overtakelsesflyten, ikke en migrasjon
+  som later som den kan avgjøre en tvist.
+- **Fail-closed, og det koster noe navngitt.** Etter ryddingen har hvert
+  effektivt hostnavn nøyaktig én `gyldig` tenant. Den yngste taper
+  egresstilgangen sin inntil den verifiserer på nytt og vinner et oppgjør —
+  et reelt driftsavbrudd for den tenanten, ført som hendelse på raden og
+  talt i migrasjonens returverdi. Alternativet er å la to tenanter dele et
+  hostnavn videre, og det er nettopp tilstanden hele §2.5b finnes for å
+  gjøre umulig.
+- **Antallet rapporteres, aldri stille.** Migrasjonen `RAISE NOTICE`-er
+  antall ryddede rader, og port 2k måler at tallet er 0 på en base uten
+  overlapp og nøyaktig 1 på en base som er konstruert med ett.
+
+### 2.5c Noen må faktisk kalle verifiseringen — kjøreveien inn
+
+**Etter §2.4c finnes det ellers ingen kallbar vei til en ny autorisasjon.**
+Den gamle 4-argumentsversjonen er revokert, den nye femargumentsversjonen
+er grantet **kun** til `disponit` — og et søk gjennom repoet finner
+`verifiser_domenekontroll` utelukkende i migrasjoner og tester. Det finnes
+ingen `/v1/domener`-rute, og implementasjonsinventaret la til én rute:
+attestasjonsruten. Uten dette avsnittet lukker PR-015 sidesporene og lar
+hoveddøren stå umurt igjen: ingen tenant kan registrere et domene, og
+`utsted_challenge` ligger fortsatt bare hos en NOLOGIN-rolle. PR-015 må
+derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
+
+| Rute | Scope | Hva den gjør |
+|---|---|---|
+| `POST /v1/domener` | `domains:verify` | `utsted_challenge(tenant, hostname, wildcard, aktor, …)`; returnerer TXT-navn og token **én gang** (hashen lagres, klarteksten aldri, 016). Reissue på samme hostnavn forkaster åpne runder (§2.4a) |
+| `POST /v1/domener/{hostname}/verifisering` | `domains:verify` | Åpner (eller gjenbruker, §2.4) runden med `formal = 'verifisering'` og svarer `202 venter_observasjoner` med `runde_id`. Er runden alt full — to distinkte observatører, samme `txt_hash` — kaller den `verifiser_domenekontroll(…, p_runde)` og svarer `200 verifisert`, `409 avklaring_kreves` (overlapp eller overtakelse, §2.5b/§3) eller `409 observasjon_uteblitt` når runden utløp uten to enige |
+| `GET /v1/domener` / `GET /v1/domener/{hostname}` | `domains:read` | Tenantens egne rader: status, `utloper`, `siste_vellykkede_revalidering`, konfliktbildet fra `domenekonfliktpart`. Aldri `challenge_token_hash` |
+| `POST /v1/domener/overtakelse/{unntak_id}/runde` | `domains:adjudicate` | Åpner runden med `formal = 'overtakelsesoppgjor'` på **sakens** vinnende `(tenant, hostname)` og returnerer `runde_id`-en attestasjonsruten tar som `dns_runde_id` (§4.2b steg 9). Uten den måtte attestanten gjettet en UUID |
+
+- **Verifiseringen er tostegs og idempotent, ikke blokkerende.** Runden
+  fylles av to andre prosesser, som poller sin egen kø (§2.4b); en HTTP-tråd
+  som ventet på dem ville holdt en transaksjon åpen over et DNS-oppslag hos
+  to operatører. Klienten kaller derfor samme rute igjen — åpningen er
+  idempotent under sonelåsen, så et retry poller den *samme* runden — og
+  ruten forbruker den i det øyeblikket den er full. Utløpt runde uten to
+  enige er ikke en feil i basen: neste kall åpner en ny mot samme
+  challenge.
+- **`domains:verify` er tenantens eget domene, `domains:adjudicate` er en
+  annens.** De to scopene er adskilte med vilje og bæres av hver sin rolle.
+  Å registrere `example.com` for seg selv er en alminnelig
+  administrasjonshandling; å avgjøre hvem av to kunder plattformen
+  autoriserer, er ikke. En `domeneforvalter` kan aldri attestere et
+  oppgjør, og en `domeneavgjorer` kan aldri registrere et domene:
+
+  ```python
+  # platform/core/api/autorisasjon.py — ROLLE_TIL_SCOPES
+  "domeneforvalter": frozenset({"decisions:read", "policy:read",
+                                "domains:read", "domains:verify"}),
+  ```
+
+  `domains:read` legges i tillegg til `admin` og `sikkerhet`, som lesescope:
+  domeneporteføljen er tenantens egen tilstand, og en flate ingen kan se er
+  ikke en flate.
+- **Begge skrivescopene inn i `BROWSER_MUTASJONSSCOPES`.** `domains:verify`
+  av samme grunn som `domains:adjudicate` (§4.2): registreringen skjer i
+  nettleseren, med PR-012-s CSRF-vern. Lesescopet hører ikke hjemme der —
+  settet gjelder mutasjon.
+- **`utsted_challenge` grantes til `disponit`** i 019 (§2.4c). Den er ikke
+  en cross-tenant-funksjon: den skriver challenge på tenantens egen rad, og
+  reissue er allerede en dokumentert, auditert operasjon. Grantet til
+  `disponit_domains_admin` blir stående — rollen er NOLOGIN og nås kun med
+  `SET ROLE` (§6b).
+- **Ingen rute setter status.** Alle fire kaller funksjoner som gjør
+  overgangen selv, under sonelås og radlås. Invariant 3 er uendret: motoren
+  beslutter, ruten formidler.
 
 ## 3. M-37-kobling — konflikten kan avgjøres
 
@@ -654,7 +960,9 @@ ikke, og kun `avgjor_domeneovertakelse()` løfter noen ut av avklaring.
 PR-015 må derfor kunne avgjøre en tvist med **flere åpne saker på samme
 hostname**: en `godkjenn` for én part krever at de øvrige avklaringsradene
 avvises i samme transaksjon under hostname-låsen. ≥3 parter innen 24 t →
-`hoy_konfliktrate` på sakene; det stopper ingenting automatisk.
+`hoy_konfliktrate`, **avledet av `domenekonfliktpart`** (§2.5b), ikke et
+lagret flagg; markøren vises i saksvisningen og stopper ingenting
+automatisk.
 
 **Det krever at 019 erstatter `avgjor_domeneovertakelse()` (objekt 10).**
 018-versjonen kan ikke gjøre dette, og det er ikke en mangel som kan
@@ -671,20 +979,28 @@ transaksjon:
 ```
 avgjor_domeneovertakelse(p_tenant, p_hostname, p_forventet_generasjon,
                          p_godkjent, p_aktor, p_runde UUID)
-  1. lås hostname; les p_tenant-raden FOR UPDATE
+  1. lås SONEN (hostnavnet OG forelderen, sortert — §2.5b);
+     les p_tenant-raden FOR UPDATE
   2. status må være 'avklaring_kreves' og generasjonen må stemme (uendret fra 018)
      — MED ÉN TILLEGGSGREN, se 5 under
   3. p_godkjent:
        - p_runde må være en `apen`, ikke utløpt runde med
          formal='overtakelsesoppgjor' på (p_tenant, p_hostname), med >= 2
-         observasjoner fra distinkte observatører og samme txt_hash (§4)
+         observasjoner fra distinkte observatører og samme txt_hash (§4),
+         og rundens challenge_token_hash må stemme med radens (§2.4a)
        - attestasjonene må være FERSKE (§4)
+       - konfliktbildet avledes på nytt: sone_overlapp(...) sammenlignet med
+         domenekonfliktpart for sakens generasjon → avvik = 'konfliktbildet_endret',
+         ingen tildeling (§2.5b)
        - vinneren settes 'verifisert', generasjon++, nytt 90-døgnsvindu
        - hostname_binding settes til p_tenant  (den FLYTTES, den forutsettes ikke)
        - HVER ANNEN rad på p_hostname med status 'avklaring_kreves' settes
          'tilbakekalt' med grunn 'tapte_domeneoppgjor', og en hendelse per rad
          — i SAMME transaksjon, under samme lås.
          GENERASJONEN PÅ TAPERRADENE RØRES IKKE (se §3.1)
+       - HVER rad i overlappsmengden (§2.5b) avgjøres i samme transaksjon:
+         'eksakt'/'barn' → 'tilbakekalt', 'forelder' → wildcard = false.
+         Flere motparter er ETT oppgjør, ikke ett kall per motpart
        - runden merkes 'brukt'
   4. NOT p_godkjent: kun p_tenant-raden → 'tilbakekalt', generasjon++
        (uendret fra 018); de øvrige avklaringsradene blir stående,
@@ -900,6 +1216,7 @@ på den generelle:
 | Rute | Scope | Familie |
 |---|---|---|
 | `POST /v1/domener/overtakelse/{unntak_id}/attestasjon` (ny) | `domains:adjudicate` | kun `kategori = 'domeneovertakelse'`, bevist under sakslåsen |
+| `POST /v1/domener/overtakelse/{unntak_id}/runde` (ny, §2.5c) | `domains:adjudicate` | samme familiegjerde; åpner DNS-runden attestasjonen skal bære |
 | `POST /v1/unntak/{id}/handling` (PR-012, uendret ellers) | `exceptions:approve` / `:reject` / `:escalate` | **avviser** `domeneovertakelse` med `feil_saksfamilie` (409), under samme lås |
 
 - **Byggeklossene er PR-012-s; oppgjøret er domenets.** Ruten er tynn —
@@ -1007,8 +1324,11 @@ behandle_domeneattestasjon(tenant, aktor, unntak_id, utfall,
   8. terskel nådd: reautoriser HVER talt attestant (§4.3), så
      runden `apen → klar` og saken → `godkjenning_klar`
   9. `avgjor_domeneovertakelse(..., p_runde)` i SAMME transaksjon.
-     `p_runde` er DNS-runden (§2.4) og kreves kun ved `godkjenn`;
-     den er ikke godkjenningsrunden fra steg 5
+     `p_runde` er DNS-runden (§2.4), åpnet av rundeRUTEN i §2.5c og sendt
+     inn som `dns_runde_id`; den kreves kun ved `godkjenn` og er ikke
+     godkjenningsrunden fra steg 5. Funksjonen avgjør HELE
+     overlappsmengden (§2.5b) — flere motparter er ett oppgjør, ikke ett
+     kall per motpart
  10. godkjenningsrunden `klar → brukt` med
      `decision_operation_id = 'domeneoppgjor-<unntak_id>-r<runde>'`
      (011 linje 318 krever en id; den er tekst, ikke en motoroperasjon),
@@ -1174,6 +1494,15 @@ for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
   `brukt` returnerer sitt eksisterende `artefakt_id` uendret, også etter
   et reclaim. Der skrives ingen ny evidens, og et retry som mister svaret
   skal ikke straffes for at oppdraget siden skiftet eier.
+  **Og unntaket må gjelde i preflighten også, ellers finnes det ikke.**
+  `innlos_artefaktkapabilitet()` kjører før `lagre_artefakt_staged()`; sammenlignet
+  den generasjonen ubetinget, ville en `brukt` kapabilitet fra før et reclaim
+  blitt avvist der — og den idempotente grenen lenger inne aldri blitt nådd.
+  Nøyaktig port 24d (tapt svar → reclaim → retry av samme dokument) ville da
+  ikke kunnet returnere den opprinnelige artefakt-IDen. Generasjonsleddet i
+  preflighten gjelder derfor **kun `status = 'utstedt'`**; `brukt` slippes
+  gjennom til den hash-sjekkede idempotensgrenen, som svarer på innhold, ikke
+  på eierskap. `feilet` er terminal og avvises som før.
 
 - **Oppgraderingsveien er en del av migrasjonen, ikke en detalj.**
   `ALTER TABLE artefaktkapabilitet ADD COLUMN owner_generation INT NOT
@@ -1203,8 +1532,9 @@ for hver TALT attestasjon (aktor, rolle, authz_version), SORTERT på aktor:
 ## 6. Ryddetimer
 
 `disponit-artefaktrydding.timer`, hvert 15. minutt, kaller
-`rydd_staged_artefakter(500)`. Timeren legger **ingen logikk oppå** den
-positive regelen.
+`rydd_staged_artefakter(500)` og deretter
+`rydd_domeneobservasjonsrunder(500)` (§2.4bb). Timeren legger **ingen
+logikk oppå** noen av de positive reglene.
 
 **Den positive regelen er 016-s, og den endres ikke.** Et artefakt er
 kvalifisert når det er `staged`, eldre enn 24 timer, **og oppdraget det
@@ -1242,60 +1572,68 @@ funksjonen kun treffer `tilstand = 'staged'`.
 ## 6b. Deploy-porten — rollene, credentialene og timerne
 
 **En jobb som ikke er installert, kjører ikke; en rolle som ikke kan
-logge inn, observerer ikke.** Fem Python-filer og én migrasjon er ikke
-hele PR-015: `deploy/staging/oppsett-postgresql.sh` er repoets **eneste**
+logge inn, observerer ikke.** Python-filene og migrasjonen er ikke hele
+PR-015: `deploy/staging/oppsett-postgresql.sh` er repoets **eneste**
 rollegrense — migrasjoner har uttrykkelig forbud mot å opprette
 clusterroller (skriptets egen kommentar, linje 30–34) — og
-`deploy/staging/opp.sh` har en **lukket** unit-liste (linje 51–54) som
-både preflightes og enables. Uten endringer begge steder er §2 og §6
-spesifikasjoner uten kjøretid.
+`deploy/staging/opp.sh` har en **lukket** unit-liste (linje 51–54) og en
+like lukket brukerløkke (linje 67–69), som begge preflightes og enables.
+Uten endringer begge steder er §2 og §6 spesifikasjoner uten kjøretid.
 
-**Observatørrollene må finnes FØR migrasjonen.** 019 gjør `GRANT EXECUTE`
-på `meld_domeneobservasjon` og `hent_apne_observasjonsrunder` til
-`disponit_domeneobservator_1` og `disponit_domeneobservator_2` (§2.4c)
-— en `GRANT` til en rolle som ikke finnes er
-en feil, ikke en advarsel, og ville stoppet første migrasjonskjøring på
-en fersk installasjon. Rekkefølgen i skriptet er allerede riktig (roller
-linje 39–51, `migrer.py` linje 221); det som mangler er rollene:
+**Alle fire nye rollene må finnes FØR migrasjonen.** 019 gjør `GRANT
+EXECUTE` til `disponit_domeneobservator_1`, `disponit_domeneobservator_2`,
+`disponit_domenerevalidator` og `disponit_artefaktrydder` (§2.4c) — en
+`GRANT` til en rolle som ikke finnes er en feil, ikke en advarsel, og ville
+stoppet første migrasjonskjøring på en fersk installasjon. Rekkefølgen i
+skriptet er allerede riktig (roller linje 39–51, `migrer.py` linje 221);
+det som mangler er rollene:
 
 | Rolle | Type | Hvorfor |
 |---|---|---|
 | `disponit_domeneobservator_1` / `_2` | **LOGIN**, tilfeldig passord, egen DSN | Identiteten er `session_user` (§2.4). En NOLOGIN-rolle kan ikke være noens `session_user`, og uten DSN kan prosessen ikke autentisere |
-| `disponit_domains_admin` | **LOGIN** + DSN (i dag NOLOGIN, linje 44–47) | Både revalideringsarbeideren (§2) og ryddetimeren (§6) kjører som den; 016 gir den EXECUTE (linje 927–933). Uten innlogging er de grantene uinnløselige |
+| `disponit_domenerevalidator` | **LOGIN** + DSN, **ny** | Revalideringsarbeideren (§2). Har nøyaktig to EXECUTE (`apne_domeneobservasjonsrunde`, `revalider_domenekontroll(…, p_runde)`) og et kolonne-SELECT på `domenekontroll` for køen — §2.4c |
+| `disponit_artefaktrydder` | **LOGIN** + DSN, **ny** | Ryddetimeren (§6). Har nøyaktig to EXECUTE: `rydd_staged_artefakter(INT)` og `rydd_domeneobservasjonsrunder(INT)` |
+| `disponit_domains_admin` | **NOLOGIN, uendret fra 014b** | Se under: den skal ikke bli en servicecredential |
 
-- Begge går inn i LOGIN-løkken og gjennom `sikre_rolle_dsn` +
-  `verifiser_og_reparer` (linje 99–123), som er skriptets beviste vei:
-  passordrotasjon og miljøfil holdes i takt, og en halvskrevet DSN
-  repareres før noen migrasjon kjøres.
-- **Å flytte rollen opp i LOGIN-løkken fikser bare ferske baser.**
-  Løkken oppretter kun roller som ikke finnes
-  (`SELECT 1 FROM pg_roles … | grep -q 1 || CREATE ROLE …`, linje 39–45),
-  og `sikre_rolle_dsn` kjører `ALTER ROLE … PASSWORD`
-  (`lib-miljofil.sh` linje 22) — et passord er ikke innlogging. På hver
-  base som er oppgradert fra PR-014b står `disponit_domains_admin`
-  fortsatt `NOLOGIN`, nå med en gyldig DSN i miljøfilen, og begge timerne
-  møter `role "disponit_domains_admin" is not permitted to log in`.
-  Overgangen må derfor stå eksplisitt og idempotent i skriptet, **før**
-  DSN-ene tas i bruk:
+- Alle fire går inn i LOGIN-løkken (de tre nye; domains_admin blir i
+  NOLOGIN-løkken) og gjennom `sikre_rolle_dsn` + `verifiser_og_reparer`
+  (linje 99–123), som er skriptets beviste vei: passordrotasjon og miljøfil
+  holdes i takt, og en halvskrevet DSN repareres før noen migrasjon kjøres.
+- **`disponit_domains_admin` skal ikke bli en servicecredential.** Et
+  tidligere utkast løste «jobbene kan ikke autentisere» ved å gi den
+  eksisterende domenerollen LOGIN og DSN. Det ville eksponert **hele**
+  016-grantsettet dens, ikke bare revalidering og rydding: den beholder
+  `utsted_challenge`, `tilbakekall_domenekontroll` og
+  `registrer_artefakttype` (016 linje 927–933). Et kompromiss av *hvilken
+  som helst* av de to timer-credentialene hadde da kunnet tilbakekalle en
+  hvilken som helst tenants domene eller skrive om challengen dens — også
+  etter at de tre gamle overloadene er revokert (§2.4c). To timere med hver
+  sin least-privilege-rolle koster to linjer i oppsettskriptet og fjerner
+  hele den flaten. Rollen blir stående som det den er i 014b: en NOLOGIN
+  eier-/adminrolle som nås med `SET ROLE` av superbruker eller migrator,
+  aldri over nettverket.
+- **Og den må bli værende NOLOGIN på en oppgradert base.** En base som
+  rakk å kjøre et tidligere PR-015-utkast har rollen som LOGIN med et
+  passord i miljøfilen. Overgangen tilbake er like eksplisitt og idempotent
+  som den ville vært den andre veien, og står **før** DSN-ene tas i bruk:
 
   ```bash
-  # PR-015 (Codex P1): 014b opprettet rollen NOLOGIN, og opprettelsesløkka
-  # hopper over roller som allerede finnes. Uten denne linja er port 28 grønn
-  # på en fersk base mens hver oppgradert staging-installasjon står med to
-  # timere som ikke kan autentisere. ALTER er idempotent og trygg på begge.
-  sudo -u postgres psql -qc "ALTER ROLE $DOMAINSADMIN LOGIN"
+  # PR-015 (Codex P1): domenerollen er en NOLOGIN-adminrolle. Kjørte basen et
+  # tidligere utkast som ga den LOGIN, skal den tilbake — ALTER er idempotent
+  # og trygg både på en fersk base og på en oppgradert. Jobbene har sine egne
+  # roller (over); ingenting mister tilgang av denne linja.
+  sudo -u postgres psql -qc "ALTER ROLE $DOMAINSADMIN NOLOGIN"
   ```
 
-  Porten måles tilsvarende på en **oppgradert** base, ikke bare på en fersk
-  (port 28c). Observatørrollene er nye og trenger ikke dette; det er kun
-  den eksisterende rollen som skifter karakter.
-- **Ikke medlemskap i stedet for innlogging.** Å la en eksisterende
-  LOGIN-rolle arve `disponit_domains_admin` ville dratt med seg *arvede*
-  rettigheter — og RLS-policyer med `TO`-klausul matcher på arvet
-  medlemskap. Det er nøyaktig fellen skriptets `WITH INHERIT FALSE`-
-  kommentar (linje 60–66) beskriver, gjeninnført av en GRANT som ser ut
-  som en formalitet. Egen credential per prosess er også det §2.4 faktisk
-  krever.
+  Porten måles på **både** en fersk og en oppgradert base (port 28c):
+  `disponit_domains_admin` kan ikke logge inn, og begge timerne kjører
+  likevel.
+- **Ikke medlemskap i stedet for egne roller.** Å la de nye jobbrollene
+  arve `disponit_domains_admin` ville dratt med seg *arvede* rettigheter —
+  og RLS-policyer med `TO`-klausul matcher på arvet medlemskap. Det er
+  nøyaktig fellen skriptets `WITH INHERIT FALSE`-kommentar (linje 60–66)
+  beskriver, gjeninnført av en GRANT som ser ut som en formalitet. Egen
+  credential med egne grants per prosess er også det §2.4 faktisk krever.
 - **Observatørene får nøyaktig to funksjoner, og ingenting mer.** EXECUTE
   på `hent_apne_observasjonsrunder()` (§2.4b) og på
   `meld_domeneobservasjon` — lese køen, svare på den. Ikke
@@ -1312,16 +1650,43 @@ linje 39–51, `migrer.py` linje 221); det som mangler er rollene:
 `deploy/staging/`, lagt til `UNITS` i `opp.sh` slik at `preflight_units`
 verifiserer dem og `systemctl enable --now` starter dem:
 
-| Unit | Kadens | Kjører som |
-|---|---|---|
-| `disponit-domenerevalidering.service` + `.timer` | hver time (§2) | `disponit_domains_admin` |
-| `disponit-artefaktrydding.service` + `.timer` | hvert 15. min (§6) | `disponit_domains_admin` |
-| `disponit-domeneobservator-1.service` / `-2.service` | kontinuerlig, poller åpne runder | hver sin `disponit_domeneobservator_*` |
+| Unit | Kadens | DB-rolle | Unix-bruker |
+|---|---|---|---|
+| `disponit-domenerevalidering.service` + `.timer` | hver time (§2) | `disponit_domenerevalidator` | `disponit-domener` |
+| `disponit-artefaktrydding.service` + `.timer` | hvert 15. min (§6) | `disponit_artefaktrydder` | `disponit-rydd` |
+| `disponit-domeneobservator-1.service` | kontinuerlig, poller åpne runder | `disponit_domeneobservator_1` | `disponit-obs1` |
+| `disponit-domeneobservator-2.service` | kontinuerlig, poller åpne runder | `disponit_domeneobservator_2` | `disponit-obs2` |
 
 - Observatørene er **to separate units med hver sin miljøfil**, ikke to
   tråder i én prosess. Delte de prosess, ville «to distinkte
   `session_user`» vært en formalitet: ett kompromiss gir da begge
   stemmene, og hele §2.4 hviler på at det ikke er tilfellet.
+- **Separate prosesser er ikke nok — de må være separate *identiteter*.**
+  `opp.sh`-s brukerløkke (linje 67–69) oppretter i dag kun `disponit-api`,
+  `disponit-m37` og `disponit-helse`. Kjørte begge observatørunitene som
+  samme Unix-bruker, kunne prosess 1 lest prosess 2-s miljøfil og
+  autentisert som `disponit_domeneobservator_2`: ett kompromiss, begge
+  stemmene, og §2.4-s eneste reelle skanse borte — uten at noen `GRANT`
+  eller `session_user`-sjekk hadde merket det. Fire nye systembrukere legges
+  derfor inn i den samme løkken (`--system --no-create-home --shell
+  /usr/sbin/nologin`), og credentialen følger identiteten:
+
+  | Fil | Eier | Modus |
+  |---|---|---|
+  | `/etc/disponit/observator-1.env` | `disponit-obs1` | `0400` |
+  | `/etc/disponit/observator-2.env` | `disponit-obs2` | `0400` |
+  | `/etc/disponit/domenerevalidering.env` | `disponit-domener` | `0400` |
+  | `/etc/disponit/artefaktrydding.env` | `disponit-rydd` | `0400` |
+
+  Hver unit setter `User=` til sin egen bruker og `EnvironmentFile=` til sin
+  egen fil; ingen av de fire kan lese de andres. Den delte
+  `/etc/disponit/miljo` (0600, root) blir **ikke** montert inn i
+  observatørunitene — der ligger KEK, token-pepper og migrator-DSN, og en
+  observatør har ingenting der å gjøre. Alternativet, `LoadCredential=` med
+  `systemd-creds`, gir samme isolasjon og er likeverdig; det som ikke er
+  likeverdig, er én felles fil to prosesser kan lese.
+- **Porten er en negativ test, ikke en påstand:** observatør 1-s bruker
+  forsøker å lese observatør 2-s miljøfil → `Permission denied` (port 28d).
 - **Diversitetsporten måler operatør, ikke streng.** `8.8.8.8` og
   `8.8.4.4` er to ulike endepunkter og **én** operatør; to DoH-aliaser kan
   peke på samme tjeneste. En ulikhetstest på endepunktstekst ville derfor
@@ -1375,6 +1740,11 @@ deployet og der alle testene er grønne.
 # FORCE holder den tenantbundet — derfor er et bordgrant trygt her.
 # UPDATE er nødvendig for fornyelsen (§1); DELETE er forbudt og gis aldri.
 GRANT SELECT, INSERT, UPDATE ON overtakelse_attestasjon TO {rolle};
+# Konfliktbildet leses av saksvisningen og av verifiseringsflaten (§2.5b/§2.5c).
+# KUN SELECT: radene skrives av `verifiser_domenekontroll()` som
+# `disponit_domene_eier`, aldri av runtime — mengden er databasens
+# observasjon, ikke kallerens påstand.
+GRANT SELECT ON domenekonfliktpart TO {rolle};
 ```
 
 - **Kun `RETTIGHETER`, ikke `ARBEIDER_RETTIGHETER`.** Attestasjonen
@@ -1387,16 +1757,52 @@ GRANT SELECT, INSERT, UPDATE ON overtakelse_attestasjon TO {rolle};
   `arbeidskapabiliteter` (migrer.py linje 80–84).
 - **`disponit_domains_admin` berøres ikke av dette.** REVOKE-syklusen
   kjøres kun for `disponit`, token-admin og `disponit_arbeider`, så 016-s
-  og 019-s EXECUTE-grants til domenerollen overlever som før.
+  EXECUTE-grants til domenerollen overlever som før — det samme gjelder
+  019-s grants til jobbrollene og observatørrollene (§6b), som heller ikke
+  er med i syklusen.
+
+### 6d. Eierskapsreparasjonen må kjenne 019-objektene
+
+**`deploy/staging/eierskap-reparasjon.sql` er en lukket designtabell, og
+019 legger til objekter den ikke kjenner.** Skriptet bygger `_design` (linje
+32–…) med hver privilegert eid tabell og funksjon, klassifiserer så alt
+*annet* som strøgods og flytter det til migrator (linje 147–165). Listen
+ender i dag på 016/017-signaturene. Etter 019 ville hver ny
+`disponit_domene_eier`-eid funksjon — `verifiser_domenekontroll(…, UUID)`,
+`revalider_domenekontroll(…, UUID)`, `avgjor_domeneovertakelse(…, UUID)`,
+`apne_domeneobservasjonsrunde`, `hent_apne_observasjonsrunder`,
+`meld_domeneobservasjon`, `sone_overlapp`, `forelder_hostname`,
+`rydd_domeneobservasjonsrunder` — og de to nye tabellene
+(`overtakelse_attestasjon`, `domenekonfliktpart`,
+`domeneobservasjonsrunde`, `domeneobservasjon`) blitt reklassifisert som
+ordinære objekter og fått eier migrator ved neste `oppsett-postgresql.sh`.
+Og fordi 019 da for lengst er checksum-hoppet, kjøres den aldri på nytt:
+eierskapet blir **ikke** gjenopprettet. SECURITY DEFINER-funksjonene ville
+kjørt med migrators privilegier i stedet for den BYPASSRLS-avgrensede
+eierrollen, og hele NOLOGIN-eiergrensen vært borte — stille, på en base der
+alle testene er grønne.
+
+- **Hver ny og hver erstattet signatur inn i `_design`.** Signaturen er
+  nøkkelen (`to_regprocedure`), så `p_runde`-versjonene er *nye* rader ved
+  siden av 016/018-radene — ikke erstatninger av dem.
+- **De tre gamle overloadene tas UT** i samme runde: 019 revoker dem
+  (§2.4c), og en designrad for et objekt som fortsatt finnes, men ikke skal
+  finnes, er en påstand om at gjerdet ikke er satt. Beholdes de likevel til
+  de er droppet overalt, gjelder samme transitoriske begrunnelse som
+  `claim_neste_oppdrag`-raden i filen — men da skrevet ned, ikke antatt.
+- **Paritetstesten er porten.** Den samme testen som fanget
+  `hent_pending_token` og `slaa_opp_sesjon` da de manglet, må dekke
+  019-objektene: hver funksjon eid av `disponit_domene_eier` i basen skal
+  ha en rad i `_design`, og omvendt (port 28e).
 
 ## 7. De fire portspørsmålene
 
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
-| Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs og kortlevd | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB; arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)` |
+| Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); veien inn til en NY autorisasjon er kun verifiseringsruten (§2.5c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs, kortlevd og **unik per (tenant, hostname, formal)** mens den lever; åpningen er idempotent | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB mot **rundens** challenge (§2.4a); arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)`; terminale runder ryddes på tid (§2.4bb) |
 | Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling (§3.1) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjonssnapshotet |
-| Domenegjerdet (§2.5b) | Overlappstesten ligger i `verifiser_domenekontroll` — den ENESTE veien inn i `verifisert`, også overtakelsesgrenen; ingen kaller kan hoppe over den, og `sone_overlapp` har ingen grant utenfor funksjonen | **Sonelås på både hostnavnet og forelderen**, i sortert rekkefølge; `example.com` og `foo.example.com` serialiseres mot hverandre, ikke bare mot seg selv | Gjerdet måler *effektiv* dekning (wildcard = ett nivå), ikke likhet i hostnavnstreng; overlapp gir `avklaring_kreves` + sak, aldri `verifisert` | Tre og bare tre overlappsformer (`eksakt`/`forelder`/`barn`); en fjerde form er en feil, ikke stillhet |
-| Drift av det hele (§6b/§6c) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort) | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas | `UNITS`, `RETTIGHETER` og resolveroperatørlista er lukkede lister; en observatør med feil rolle, ukjent operatør eller delt operatør/ASN nekter å starte |
+| Domenegjerdet (§2.5b) | Overlappstesten ligger i `verifiser_domenekontroll` — den ENESTE veien inn i `verifisert`, også overtakelsesgrenen; ingen kaller kan hoppe over den, og `sone_overlapp` har ingen grant utenfor funksjonen; **rader fra før 019 ryddes av migrasjonen selv**, så gjerdet ikke bare gjelder fremover | **Sonelås på både hostnavnet og forelderen**, i sortert rekkefølge; `example.com` og `foo.example.com` serialiseres mot hverandre, ikke bare mot seg selv; hele overlappsmengden avledes på nytt under låsen ved oppgjør | Gjerdet måler *effektiv* dekning (wildcard = ett nivå), ikke likhet i hostnavnstreng; `retning` utledes av hostnavnene, ikke av wildcard-biten; overlapp gir `avklaring_kreves` + sak, aldri `verifisert` | Tre og bare tre overlappsformer (`eksakt`/`forelder`/`barn`); en fjerde form er en feil, ikke stillhet; motpartsmengden er en tabell (`domenekonfliktpart`), ikke én kolonne |
+| Drift av det hele (§6b/§6c/§6d) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort); eierskapet kun i `eierskap-reparasjon.sql`-s `_design` | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser med hver sin Unix-bruker og egen 0400-miljøfil | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas; at domenerollen IKKE kan logge inn måles på en oppgradert base (28c) | `UNITS`, `RETTIGHETER`, `_design` og resolveroperatørlista er lukkede lister; en observatør med feil rolle, ukjent operatør eller delt operatør/ASN nekter å starte |
 | Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; generasjonen sjekkes på nytt under kapabilitetens radlås i `lagre_artefakt_staged()` | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
@@ -1431,11 +1837,11 @@ annen tenants autorisasjon ·
 kallbar** for `disponit_domains_admin` eller `disponit` — REVOKE
 verifisert med et direkte kall, ikke antatt ·
 2g **Femargumentsversjonen av `avgjor_domeneovertakelse` er ikke lenger
-kallbar** for `disponit_domains_admin` (som nå ER innloggbar, §6b) eller
-`disponit`: et direkte kall med `(tenant, hostname, unntak_id, true,
-aktor)` → `permission denied`, domeneraden urørt, ingen tildeling. Uten
-denne porten består PR-015 alle fire-øyne-testene og har likevel et
-innloggbart sidespor rundt hele §4 ·
+kallbar** for `disponit_domains_admin` eller `disponit`: et direkte kall
+med `(tenant, hostname, unntak_id, true, aktor)` → `permission denied`,
+domeneraden urørt, ingen tildeling. Målt med `SET ROLE`, ikke over
+nettverket — rollen er NOLOGIN (§6b), og porten skal bevise at veien er
+**revokert**, ikke bare at den er uinnlogget ·
 2h **Ingen 019-funksjon er kallbar for `PUBLIC`.** For hver nye signatur
 i §2.4c: en rolle uten eksplisitt grant (test-rollen holder) kaller
 funksjonen → `permission denied`. Målt med `has_function_privilege('public', …,
@@ -1463,6 +1869,52 @@ urørt, og det opprettes en overtakelsessak på B-s eget hostnavn. Målt på
 `foo.example.com` verifiseres i to parallelle transaksjoner og
 serialiseres av sonelåsen — en variant som bare kjører dem sekvensielt
 består selv uten lås ·
+2j-2 **Retningen er hostnavnenes, ikke wildcard-bitens:** eksisterende
+`foo.example.com` med `wildcard = true` hos tenant B, deretter wildcard
+`example.com` hos tenant D → `sone_overlapp` merker B-raden `barn`, og
+et positivt oppgjør for D setter **hele** B-raden `tilbakekalt`. En
+implementasjon som kun slår av B-s wildcard etterlater
+`foo.example.com` autorisert inne i D-s scope, og porten måler nettopp
+det på `v_domeneautorisasjon`: null hostnavn med to `gyldig` tenanter ·
+2j-3 **Flerparts wildcard-overlapp:** B eier `foo.example.com`, C eier
+`bar.example.com`, D verifiserer wildcard `example.com` → begge blir
+rader i `domenekonfliktpart` på D-s sak, saksvisningen viser begge, og
+**én** positiv attestasjonsrunde tilbakekaller **begge** i samme
+transaksjon. Variant: et tredje barn (`baz.example.com`) verifiseres
+etter attestasjonene, men før oppgjøret → tildelingen avvises med
+`konfliktbildet_endret`, ingen rad flyttes, saken tilbake til `manuell` ·
+2k **Oppgraderingsryddingen (§2.5b):** en base konstrueres med rader som
+016/018 slapp gjennom — A wildcard `example.com` (eldst) og B eksakt
+`foo.example.com` — og 019 kjøres → B står `tilbakekalt` med grunn
+`namespaceoverlapp_ved_019` og `konflikt_motpart = A`, A er urørt, antallet
+er rapportert, og `v_domeneautorisasjon` har null hostnavn med to `gyldig`
+tenanter. **Veien ut måles i samme port:** B verifiserer på nytt gjennom
+§2.5c → reapplikasjonsgrenen gir `avklaring_kreves` med ny generasjon og en
+fersk M-37-sak som kan avgjøres. En base uten overlapp får `ryddet = 0`, og
+migrasjonen er idempotent ved ny kjøring ·
+2l **Én levende runde per mål og formål:** to samtidige åpninger for samme
+`(tenant, hostname, formal)` → samme `runde_id` tilbake, aldri to `apen`
+rader (målt med unikindeksen, ikke bare med returverdien); en utløpt `apen`
+runde forkastes ved neste åpning i stedet for å blokkere ·
+2m **Runden er bundet til challengeversjonen (§2.4a):** to observatører
+melder inn H1, `utsted_challenge()` skriver H2, konsumenten kaller
+`verifiser_domenekontroll(…, p_runde)` → `challenge_endret`, ingen rad blir
+`verifisert`, og runden er `forkastet`. Motsatt: en revalideringsrunde åpnes
+og forbrukes på dag 30, altså **etter** at `challenge_utloper` er passert →
+lykkes, fordi TXT-posten fortsatt hasher riktig ·
+2n **Runder ryddes (§2.4bb):** en `apen` runde som utløper uten to
+observasjoner settes `forkastet` av `rydd_domeneobservasjonsrunder`; en
+terminal runde eldre enn 30 døgn slettes med observasjonene sine, mens
+`domenekontroll_hendelse` for samme forløp er urørt; batchgrensen holder
+(`p_maks` rader per kjøring), og køspørringen bruker det partielle indekset
+(målt i `EXPLAIN`, ikke antatt) ·
+2o **Verifiseringsflaten finnes og virker (§2.5c):** en `domeneforvalter`
+registrerer `example.com` (`POST /v1/domener`), får token én gang, kaller
+verifiseringsruten → `202` med `runde_id`; to observatørprosesser melder
+inn; nytt kall på samme rute → `200 verifisert`. Målt ende-til-ende gjennom
+HTTP med browsersesjon, ikke ved å kalle SQL-funksjonen direkte. Negativt:
+en `domeneavgjorer` nektes på registreringsruten, en `domeneforvalter`
+nektes på attestasjonsruten, og tokenet vises aldri igjen ·
 3 Tre døgn uten svar → attestasjon nektes; raden ikke slettet eller
 `utlopt`-satt av arbeideren ·
 4 Observatørkonfigurasjon uten diversitet (samme operatør, samme nett
@@ -1633,7 +2085,11 @@ mellom de to kallene; en variant som bare sjekker preflighten består selv
 med en usikret forbruker og beviser derfor ingenting ·
 24d **Idempotensen overlever et reclaim:** A laster opp, kapabiliteten
 blir `brukt`, B reclaimer, A retryer samme kanoniske dokument → samme
-`artefakt_id` returneres, ingen ny rad, ingen exception ·
+`artefakt_id` returneres, ingen ny rad, ingen exception. Retryen må gå
+gjennom **hele** opplastingsveien inkludert `innlos_artefaktkapabilitet`:
+en preflight som sammenligner generasjonen også for `brukt` rader avviser
+retryen før den idempotente grenen nås, og porten er da rød selv om
+`lagre_artefakt_staged()` er riktig (§5) ·
 24e **Oppgraderingsveien:** base med både `utstedt`- og `brukt`-rader fra
 017 → migrasjonen går gjennom, hver `utstedt` rad ender `feilet`,
 historiske `brukt`-rader beholder `owner_generation IS NULL`, og et token
@@ -1656,21 +2112,37 @@ evidensfristleddet ·
 **Deploy (28).**
 28 **Fersk installasjon fra skriptene alene** (§6b): `oppsett-postgresql.sh`
 kjøres på en tom base → migrasjon 019 går gjennom (`GRANT` til
-observatørrollene feiler ikke), begge observatørrollene og
-`disponit_domains_admin` kan **logge inn med DSN-en fra miljøfilen**, og
-`opp.sh` installerer og starter begge timerne og begge
-observatørprosessene. Målt som `systemctl is-active` per unit og én
-vellykket innlogging per rolle. En observatør startet med feil DB-rolle,
-eller med samme resolveroperatør/ASN som den andre, **skal nekte å
-starte**. Uten denne porten kan hele PR-015 bestå testsuiten og likevel
+observatør- og jobbrollene feiler ikke), begge observatørrollene,
+`disponit_domenerevalidator` og `disponit_artefaktrydder` kan **logge inn
+med DSN-en fra miljøfilen**, og `opp.sh` installerer og starter begge
+timerne og begge observatørprosessene. Målt som `systemctl is-active` per
+unit og én vellykket innlogging per rolle. En observatør startet med feil
+DB-rolle, eller med samme resolveroperatør/ASN som den andre, **skal nekte
+å starte**. Uten denne porten kan hele PR-015 bestå testsuiten og likevel
 ikke revalidere ett eneste domene i drift.
-28c **Oppgraderingsveien for rollen (§6b).** Kjør `oppsett-postgresql.sh`
-på en base der `disponit_domains_admin` allerede finnes som `NOLOGIN` —
-altså en hvilken som helst PR-014b-installasjon — og mål etterpå
-`rolcanlogin = true` for rollen, en faktisk innlogging med DSN-en fra
-miljøfilen, og at begge timerne kjører. Skriptet kjøres **to ganger**:
-idempotent. Port 28 alene måler kun ferske installasjoner og ville vært
-grønn med hele staging-flåten ute av stand til å revalidere ·
+28c **Domenerollen forblir uten innlogging (§6b).** Kjør
+`oppsett-postgresql.sh` **to ganger** på en base der
+`disponit_domains_admin` finnes fra PR-014b, og på en base der et tidligere
+utkast ga den `LOGIN` med passord → begge ender med `rolcanlogin = false`,
+en tilkobling som den rollen avvises, og begge timerne kjører likevel på
+sine egne roller. Porten er dobbel: den måler at den brede adminrollen ikke
+er en nettverksidentitet, **og** at jobbene ikke var avhengige av at den var
+det ·
+28d **Observatørcredentialene er isolert på OS-nivå (§6b).**
+`sudo -u disponit-obs1 cat /etc/disponit/observator-2.env` →
+`Permission denied`; samme vei motsatt; ingen av de fire jobbrollenes
+miljøfiler er lesbare for de andre, og ingen av dem kan lese
+`/etc/disponit/miljo`. Målt på filsystemet etter et fullt `opp.sh`, ikke i
+unit-filene. To separate units under samme Unix-bruker består enhver test
+som bare teller prosesser, og gir likevel ett kompromiss begge stemmene ·
+28e **Eierskapsdesignet dekker 019 (§6d).** Kjør `eierskap-reparasjon.sql`
+etter at 019 er anvendt, og mål paritet begge veier: hver funksjon og tabell
+eid av `disponit_domene_eier` i basen har en rad i `_design`, og hver
+`_design`-rad peker på et objekt som finnes (eller er dokumentert
+transitorisk). Kjør deretter reparasjonen **på nytt** og mål at eierskapet
+er uendret. Uten porten flytter neste `oppsett-postgresql.sh` de nye
+SECURITY DEFINER-funksjonene til migrator — stille, og uten at 019 kjøres
+om igjen for å rette det ·
 28b **Rettighetene overlever deployet (§6c).** Kjør `migrer.py` **to
 ganger** på samme base — altså gjennom en hel REVOKE-ALL-syklus etter at
 019 er anvendt — og skriv så en attestasjon som `disponit`:
@@ -1715,6 +2187,17 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 **`namespace_overlapp_endt_i_verifisert = 0`** ·
 **`wildcardrad_tilbakekalt_av_subdomeneoppgjor = 0`** ·
 **`sonelas_manglet_ved_samtidig_forelder_barn = 0`** ·
+**`retning_feilklassifisert_pa_wildcard_barn = 0`** ·
+**`uavgjort_motpart_igjen_etter_wildcardoppgjor = 0`** (alle rader fra
+`sone_overlapp`, ikke bare den første) ·
+**`oppgjor_pa_endret_konfliktbilde = 0`** ·
+**`overlapp_fra_for_019_igjen_etter_migrasjon = 0`** ·
+**`ryddet_overlappsrad_uten_vei_tilbake = 0`** (reapplikasjon gir ny sak) ·
+**`to_apne_runder_pa_samme_mal_og_formal = 0`** ·
+**`runde_forbrukt_etter_challengebytte = 0`** ·
+**`revalidering_nektet_pa_utlopt_challenge = 0`** ·
+**`utlopt_runde_staende_apen_etter_rydding = 0`** ·
+**`observasjonsrunde_beholdt_over_retensjon = 0`** ·
 `godkjenn_med_en_attestasjon = 0` · `samme_aktor_to_stemmer = 0` ·
 `attestasjon_pa_annen_sak_talt = 0` ·
 **`attestasjon_med_mal_utenfor_saken = 0`** ·
@@ -1730,6 +2213,9 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 `avgjorelse_uten_scope_nektet = alle` ·
 **`roller_med_domains_adjudicate = {domeneavgjorer}`** (nøyaktig, ikke
 «minst») ·
+**`roller_med_domains_verify = {domeneforvalter}`** (nøyaktig) ·
+**`nytt_domene_verifisert_over_http = ja`** (§2.5c, ende-til-ende) ·
+**`verifiseringsrute_apnet_ny_runde_ved_retry = 0`** ·
 **`domenesak_behandlet_pa_generell_unntaksrute = 0`** ·
 **`domenerad_uendret_etter_fullfort_godkjenning = 0`** ·
 **`domenesak_endt_i_venter_utforelse = 0`** ·
@@ -1751,11 +2237,16 @@ browsersesjon, ikke direkte funksjonskall) ·
 **`ryddet_for_evidensfrist = 0`** ·
 `karantene_bevart = alle` · `idempotens_kjoring2_slettet = 0` ·
 **`observatorrolle_uten_login_eller_dsn = 0`** ·
+**`jobbrolle_uten_login_eller_dsn = 0`** (revalidator + rydder) ·
 **`nye_timere_installert_og_aktive = alle`** ·
 **`attestasjonsskriv_etter_to_migrer_kjoringer = ok`** ·
 **`runtime_har_skriv_pa_observasjonstabellene = 0`** ·
+**`runtime_har_skriv_pa_domenekonfliktpart = 0`** ·
 **`migrasjon_019_pa_fersk_base_feiler = nei`** ·
-**`domains_admin_uten_login_etter_oppgradering = 0`** ·
+**`domains_admin_kan_logge_inn = 0`** (fersk OG oppgradert base) ·
+**`observator_kan_lese_annen_observators_miljofil = 0`** ·
+**`019_objekt_uten_rad_i_eierskapsdesignet = 0`** ·
+**`eid_funksjon_flyttet_til_migrator_av_reparasjonen = 0`** ·
 **`observator_startet_med_delt_resolver = 0`** ·
 **`observator_startet_med_delt_operator_eller_asn = 0`** ·
 **`observatorkonfig_uten_operator_eller_asn_godtatt = 0`**.
@@ -1774,47 +2265,71 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
        revalideringsarbeider + observatører, M-37-kobling,
        kapabilitetsutstedelse ved claim, ryddetimere — Claude Code
        — platform/core/db/migrations/019_operativt_lag.sql
-         (overtakelse_attestasjon m/saksbinding og fornyelse +
-          domeneobservasjonsrunde og domeneobservasjon +
-          apne_domeneobservasjonsrunde + hent_apne_observasjonsrunder +
-          meld_domeneobservasjon +
-          forelder_hostname + sone_overlapp + sonelåsen (§2.5b) +
+         (oppgraderingsryddingen av eksisterende namespaceoverlapp FØRST,
+          før gjerdet installeres, §2.5b +
+          overtakelse_attestasjon m/saksbinding og fornyelse +
+          domenekonfliktpart (flerpartsmengden, §2.5b) +
+          domeneobservasjonsrunde m/challenge_token_hash, unikindeks på
+          levende runde og køindeks + domeneobservasjon (ON DELETE CASCADE) +
+          apne_domeneobservasjonsrunde (idempotent under sonelåsen) +
+          hent_apne_observasjonsrunder + meld_domeneobservasjon +
+          rydd_domeneobservasjonsrunder(p_maks) (§2.4bb) +
+          utsted_challenge som forkaster åpne runder (§2.4a) +
+          forelder_hostname + sone_overlapp m/retning fra HOSTNAVNENE +
+          sonelåsen (§2.5b) +
           verifiser_domenekontroll(p_runde) MED overlappsgrenen +
           revalider_domenekontroll(p_runde) + avgjor_domeneovertakelse
-          m/flerpartsoppgjør, friskhetskrav, taperoppgjør og
-          innsnevring av taperens wildcard-scope +
+          m/flerpartsoppgjør over HELE overlappsmengden, friskhetskrav,
+          taperoppgjør og innsnevring av taperens wildcard-scope +
           rydd_staged_artefakter(p_maks) MED 016-s evidensfristledd +
           artefaktkapabilitet.owner_generation m/oppgraderingssekvens og
-          validering i lagre_artefakt_staged +
-          REVOKE/GRANT-blokka for hver ny signatur, REVOKE av de tre gamle
-          overloadene og DROP av rydd_staged_artefakter(), §2.4c),
-         platform/core/api/autorisasjon.py (rollen `domeneavgjorer`, §4.1),
+          validering i lagre_artefakt_staged (preflighten kun for `utstedt`) +
+          REVOKE/GRANT-blokka for hver ny signatur, GRANT av utsted_challenge
+          til `disponit`, kolonne-SELECT til revalidatoren, REVOKE av de tre
+          gamle overloadene og DROP av rydd_staged_artefakter(), §2.4c),
+         platform/core/api/autorisasjon.py (rollene `domeneavgjorer` (§4.1)
+           og `domeneforvalter` (§2.5c) + `domains:read`),
          platform/drift/domenerevalidering.py, platform/drift/domeneobservator.py,
-         platform/drift/artefaktrydding.py,
+         platform/drift/artefaktrydding.py (rydder også observasjonsrunder),
+         platform/core/api/domenekontroll.py (verifiseringsflaten: registrer,
+           åpne/forbruke runde, les portefølje — §2.5c),
          platform/core/api/domeneovertakelse.py (saken opprettes `manuell`
-           med grunnkode og policyref, §3; behandleren
-           `behandle_domeneattestasjon()` med domeneoppgjøret og
+           med grunnkode og policyref, §3; ruten som åpner oppgjørsrunden;
+           behandleren `behandle_domeneattestasjon()` med domeneoppgjøret og
            reautoriseringen av hver talt attestant, §4.2b + §4.3),
          platform/core/api/unntaksbehandling.py (familiegjerdet på den
          generelle ruten + scopet fra saksfamilien under låsen, §4.2),
          platform/core/api/app.py (oppdrag_claim, linje ~717;
-         artefaktopplasting, linje ~1928; `domains:adjudicate` i
-         BROWSER_MUTASJONSSCOPES, linje ~799; ruten
+         artefaktopplasting, linje ~1928; `domains:adjudicate` OG
+         `domains:verify` i BROWSER_MUTASJONSSCOPES, linje ~799; rutene
+         POST /v1/domener, POST /v1/domener/{hostname}/verifisering,
+         GET /v1/domener[/{hostname}] (§2.5c),
+         POST /v1/domener/overtakelse/{unntak_id}/runde (§2.5c) og
          POST /v1/domener/overtakelse/{unntak_id}/attestasjon, §4.2),
-         deploy/staging/oppsett-postgresql.sh (observatørrollene som LOGIN
-           m/DSN + `disponit_domains_admin` som LOGIN m/DSN OG et eksplisitt
-           `ALTER ROLE … LOGIN` for oppgraderte baser, §6b — uten dem feiler
-           019 på en fersk base og ingen jobb kan autentisere på en gammel),
+         deploy/staging/oppsett-postgresql.sh (observatørrollene +
+           `disponit_domenerevalidator` + `disponit_artefaktrydder` som LOGIN
+           m/DSN, og et eksplisitt idempotent `ALTER ROLE
+           disponit_domains_admin NOLOGIN`, §6b — uten rollene feiler 019 på
+           en fersk base, og med en credentialed adminrolle er hele 016-
+           grantsettet eksponert),
          deploy/staging/resolveroperatorer.json (lukket operatør/ASN-liste
            som observatørene validerer konfigurasjonen mot, §6b),
-         deploy/staging/opp.sh (UNITS utvides med de fire nye unitene, §6b),
+         deploy/staging/opp.sh (UNITS utvides med de fire nye unitene, og
+           brukerløkka med fire nye systembrukere — én per jobb, egen
+           0400-miljøfil, §6b),
          deploy/staging/migrer.py (RETTIGHETER utvides med
-           `overtakelse_attestasjon`, §6c — uten den vaskes 019-s grant
-           bort av REVOKE-syklusen og første stemme feiler),
+           `overtakelse_attestasjon` og SELECT på `domenekonfliktpart`,
+           §6c — uten den vaskes 019-s grant bort av REVOKE-syklusen og
+           første stemme feiler),
+         deploy/staging/eierskap-reparasjon.sql (`_design` utvides med hver
+           ny/erstattet 019-signatur og de nye eide tabellene, §6d — ellers
+           flyttes de til migrator ved neste oppsett og 019 kjøres aldri om
+           igjen for å rette det),
          deploy/staging/disponit-domenerevalidering.{service,timer},
          deploy/staging/disponit-artefaktrydding.{service,timer},
          deploy/staging/disponit-domeneobservator-{1,2}.service,
-         docs/RUTINER.md (hvordan eier tildeler `domeneavgjorer`)
+         docs/RUTINER.md (hvordan eier tildeler `domeneavgjorer` og
+           `domeneforvalter`)
 NESTE: Draft PR-014c (automatisk WCAG-kontroll) — første eiermodul på
        plattformen 014a/014b/015 bygde — Claude.ai
        — docs/pr/PR-014c-*.md
