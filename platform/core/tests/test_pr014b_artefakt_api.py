@@ -12,8 +12,18 @@ from .test_pr014b_artefaktkapabilitet import _plukket_oppdrag_med_binding
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 
-def _domeneaktorsesjon(tenant: str, sub: str) -> tuple[str, str]:
-    """Browserøkt for CSRF-porten i domeneattestasjon."""
+def _domeneaktorsesjon(tenant: str, sub: str,
+                       roller: str = "leser") -> tuple[str, str]:
+    """Browserøkt for CSRF-porten i domeneattestasjon.
+
+    `roller` er rollen medlemskapet får. PR-015 flyttet fire-øyne-sjekken NED i
+    basen: `avgi_overtakelse_attestasjon` slår opp prinsipalen bak stemmen med
+    `laas_godkjenner()` og krever `domeneadjudikator` DER, ikke bare i
+    API-laget. En økt med bare `leser` avvises derfor av motoren før
+    opptellingen — det er meningen, og de to attestasjonstestene under sender
+    rollen eksplisitt i stedet for å arve en default som ville skjult hvilken
+    autorisasjon de faktisk hviler på.
+    """
     from api import sesjon as sesjonmodul
     from db.pg import koble, sett_kontekst
     from .test_pr010_db import _identitet
@@ -24,9 +34,9 @@ def _domeneaktorsesjon(tenant: str, sub: str) -> tuple[str, str]:
         sett_kontekst(m, tenant, "sys", "r0")
         bid = _identitet(m, sub=f"{tenant}-{sub}")
         m.execute("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
-                  " VALUES (%s,%s,ARRAY['leser'])"
+                  " VALUES (%s,%s,%s)"
                   " ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
-                  " roller=EXCLUDED.roller", (tenant, bid))
+                  " roller=EXCLUDED.roller", (tenant, bid, [roller]))
         ver = m.execute("SELECT authz_version FROM brukermedlemskap"
                         " WHERE tenant=%s AND bruker_id=%s",
                         (tenant, bid)).fetchone()[0]
@@ -150,7 +160,8 @@ def test_upload_ugyldig_kapabilitet(migrator, klient, token):
 @dekker("dobbel_attestasjon")
 def test_domeneattestasjon_dobbel_attestasjon(klient, migrator, monkeypatch):
     uid = _domeneovertakelsessak(migrator)
-    cookie, csrf = _domeneaktorsesjon(ANNEN_TENANT, "domene-1")
+    cookie, csrf = _domeneaktorsesjon(ANNEN_TENANT, "domene-1",
+                                      roller="domeneadjudikator")
     auth = {"aktor": "aktor-1"}
 
     monkeypatch.setattr(
@@ -174,7 +185,8 @@ def test_domeneattestasjon_dobbel_attestasjon(klient, migrator, monkeypatch):
 def test_domeneattestasjon_avvist_naar_saken_er_foreldet(klient, migrator,
                                                          monkeypatch):
     uid = _domeneovertakelsessak(migrator)
-    cookie, csrf = _domeneaktorsesjon(ANNEN_TENANT, "domene-2")
+    cookie, csrf = _domeneaktorsesjon(ANNEN_TENANT, "domene-2",
+                                      roller="domeneadjudikator")
     auth = {"aktor": "aktor-1"}
 
     monkeypatch.setattr(
