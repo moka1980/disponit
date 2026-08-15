@@ -305,12 +305,12 @@ def test_revalidering_uten_lagret_utfordring_nektes(migrator):
 
 
 def _execute_mottakere(conn, signatur):
-    """Ikke-eiende roller med EXECUTE på funksjonen, som navn.
+    """Ikke-eiende roller med EXECUTE på funksjonen, som navn. PUBLIC er `-`.
 
-    `aclexplode` på en TOM `proacl` gir null rader — og tom ACL betyr i
-    PostgreSQL standardrettigheten, altså EXECUTE for PUBLIC. Den forskjellen
-    skal ikke se ut som «ingen mottakere», så en NULL-ACL rapporteres eksplisitt
-    som `{'PUBLIC (standard-ACL)'}` og feller sammenlikningen under.
+    `aclexplode` på en TOM `proacl` gir null rader, men tom ACL er ikke
+    «ingen mottakere»: den betyr standardrettigheten, og for en funksjon er
+    den EXECUTE for PUBLIC. Uten dette skillet ville den farligste tilstanden
+    sett ut som den strengeste, så en NULL-ACL rapporteres som PUBLIC.
     """
     acl = conn.execute("SELECT proacl FROM pg_proc"
                        " WHERE oid = to_regprocedure(%s)",
@@ -318,7 +318,7 @@ def _execute_mottakere(conn, signatur):
     assert acl is not None, f"{signatur} finnes ikke i basen"
     if acl[0] is None:
         conn.rollback()
-        return {"PUBLIC (standard-ACL)"}
+        return {"-"}
     rader = conn.execute(
         "SELECT g.grantee::regrole::text FROM pg_proc p,"
         " aclexplode(p.proacl) g WHERE p.oid = to_regprocedure(%s)"
@@ -359,6 +359,39 @@ def test_arbeiderrollen_har_ikke_bevislos_revalidering(migrator):
     assert q("SELECT has_function_privilege('disponit_domener',"
              "'revalider_domenekontroll(text,text,text,text[])','EXECUTE')") is True
     migrator.rollback()
+
+
+# 019s default-deny-modell, funksjon for funksjon. Signaturene skrives ut i
+# stedet for å hentes fra katalogen: en test som spør basen hvilke funksjoner
+# 019 laget, ville godtatt at en av dem forsvant.
+DEFAULT_DENY = [
+    "avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text)",
+    "degrader_forbigatte_utfordrere(text,text)",
+    "antall_avgitte_attestasjoner(bigint,bigint)",
+    "lukk_overtakelsessak(text,bigint,text,text)",
+    "revalideringskandidater(int,int,int,int,int)",
+    "revalideringspopulasjon()",
+    "rydd_staged_artefakter(int)",
+    "antall_karantenesatte()",
+    "revalider_domenekontroll(text,text,text,text[])",
+]
+
+
+@pg
+def test_019_default_deny_gjelder_faktisk(migrator):
+    """PUBLIC skal ikke nå NOEN av funksjonene 019 gjerder.
+
+    Porten finnes fordi en `REVOKE ... FROM PUBLIC` kan MISLYKKES stille:
+    kjøres den av en rolle som ikke eier funksjonen, advarer PostgreSQL og
+    går videre — men materialiserer samtidig standard-ACL-en, som for en
+    funksjon er EXECUTE for PUBLIC. Resultatet er det motsatte av det
+    migrasjonen sier: alle roller i klyngen slipper inn, og ingen funksjonell
+    test ser det, fordi et privilegium PUBLIC allerede har aldri feiler.
+    Derfor måles gjerdet her på ACL-en, ikke på at et kall lykkes.
+    """
+    apne = [sig for sig in DEFAULT_DENY
+            if "-" in _execute_mottakere(migrator, sig)]
+    assert not apne, f"PUBLIC har EXECUTE på: {', '.join(apne)}"
 
 
 @pg

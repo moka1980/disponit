@@ -787,6 +787,27 @@ GRANT SELECT ON revisjonslogg TO disponit_domene_eier;
 GRANT SELECT ON brukermedlemskap TO disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT) TO disponit_domene_eier;
 
+-- ------------------------------------------------------------
+-- FUNKSJONS-DCL KJØRER SOM EIEREN. Grantene over gjelder tabeller og
+-- `laas_godkjenner`, som migrator eier — de hører hjemme her. Funksjonene
+-- under eies derimot av `disponit_domene_eier` (de er opprettet inne i
+-- rolleblokkene over), og migrator er medlem av den rollen `WITH INHERIT
+-- FALSE: medlemskapet gir SET ROLE, men ingen ARVEDE rettigheter, og
+-- retten til å gi bort et privilegium følger EIERSKAPET.
+--
+-- Uten denne rolleblokken var hver eneste REVOKE/GRANT under en STILLE
+-- no-op: PostgreSQL advarer («no privileges could be revoked») og lar
+-- kjøringen fortsette — men materialiserer samtidig standard-ACL-en, som
+-- for en funksjon er EXECUTE for PUBLIC. Default-deny-modellen 019 beskriver
+-- var dermed ikke bare uinnført, den var snudd: HVER rolle i klyngen kunne
+-- kalle `avgi_overtakelse_attestasjon`, `degrader_forbigatte_utfordrere`,
+-- `rydd_staged_artefakter` og bevisformen av `revalider_domenekontroll`.
+-- Ingen test så det, fordi et privilegium PUBLIC allerede har aldri feiler.
+-- 016 gjør dette riktig (dens grants står INNE i sin egen rolleblokk); det
+-- er nøyaktig det mønsteret som gjenopprettes her.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_domene_eier;
+
 REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) FROM PUBLIC;
@@ -872,3 +893,8 @@ BEGIN
         REVOKE EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT) FROM disponit_domener;
     END IF;
 END $$;
+
+-- Tilbake til migrator: kjøreren registrerer versjon og checksum i sin egen
+-- tabell i SAMME transaksjon, og den bokføringen er migrators, ikke
+-- domeneeierens.
+RESET ROLE;
