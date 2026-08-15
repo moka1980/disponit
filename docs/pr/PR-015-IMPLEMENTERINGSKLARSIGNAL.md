@@ -358,11 +358,18 @@ CREATE FUNCTION opprett_brukersesjon(
         p_csrf_hash TEXT, p_authz_snapshot INT, p_levetid INTERVAL,
         p_maks_sesjoner INT)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog;
--- 1. rader for (p_tenant, p_bruker_id), NOT tilbakekalt, utloper > now(),
---    ORDER BY opprettet, id -- FOR UPDATE: taket telles under lås, ellers
---    er det en anbefaling
--- 2. mens antallet >= p_maks_sesjoner: tilbakekall den eldste
--- 3. INSERT med utloper = now() + p_levetid
+-- 1. pg_advisory_xact_lock(hashtextextended(p_tenant || ':' || p_bruker_id, 0))
+--    FØRST. `FOR UPDATE` under låser EKSISTERENDE rader, ikke gapet en ny
+--    INSERT lander i: uten dette kan seks samtidige innlogginger for en
+--    bruker UTEN aktive sesjoner alle telle null rader, alle bestå taket
+--    og alle INSERT-e, og fem-sesjonstaket er brutt selv om telling og
+--    skriving deler én transaksjon. Låsen er per (tenant, bruker), tas før
+--    telling og holdes til COMMIT, så et samtidig andre kall til samme
+--    bruker venter i stedet for å telle det samme tomme gapet.
+-- 2. rader for (p_tenant, p_bruker_id), NOT tilbakekalt, utloper > now(),
+--    ORDER BY opprettet, id -- FOR UPDATE: taket telles under lås
+-- 3. mens antallet >= p_maks_sesjoner: tilbakekall den eldste
+-- 4. INSERT med utloper = now() + p_levetid
 
 -- Logout. Kalleren har bare sesjonshashen; tenant og bruker er radens egne.
 CREATE FUNCTION tilbakekall_brukersesjon(p_sesjon_id_hash TEXT)
