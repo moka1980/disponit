@@ -85,6 +85,39 @@ Produksjon oppdateres kun via utrullingsløypen i v7.2 (CI → staging →
 evaluering → kanari → gradvis → automatisk rollback). Ingen SSH-endringer
 rett i produksjon — aldri.
 
+### Verten må SI hvilket miljø den er: `DISPONIT_MILJO`
+
+Samme kode og samme units ruller ut begge steder. Hva som skiller dem, er
+én nøkkel i miljøfila:
+
+```
+DISPONIT_MILJO='staging'      # eller 'produksjon'
+```
+
+Den er ikke kosmetisk. `api/policyregister.tillatte_statuser` leser den, og
+den avgjør hvilke policystatuser som får binde en ekte beslutning:
+
+| `DISPONIT_MILJO` | Tillatte policystatuser |
+|---|---|
+| `produksjon` | `produksjon` — **hardkodet**, kan ikke konfigureres bort |
+| `staging` (eller uspesifisert) | `utkast`, `validert_pilot`, `produksjon` (kan overstyres med `DISPONIT_TILLATTE_POLICYSTATUSER`) |
+
+En produksjonsvert uten denne nøkkelen avgjør altså ekte forespørsler under
+stagings regelverk — en policy merket `utkast` binder en ekte handling, og
+ingenting krasjer. Derfor:
+
+* `oppsett-postgresql.sh` skriver `staging` på en fersk install og
+  **overskriver aldri** en eksisterende verdi.
+* `opp.sh` avbryter FØR første mutasjon hvis verdien mangler eller er noe
+  annet enn de to lovlige — en skrivefeil skal ikke falle stille tilbake
+  til staging.
+* `opp.sh` materialiserer den som credential, og `disponit-api.service`
+  laster den med `LoadCredential=`.
+
+En vert løftes til produksjon ved å sette nøkkelen for hånd i miljøfila og
+kjøre `opp.sh` på nytt. Det er en bevisst handling, som rotasjon av
+`DISPONIT_KEK`.
+
 ## Skaleringsvei (bygget inn, aktivert etter behov)
 
 Prinsippet som gjør skalering til et maskinvalg, ikke en omskriving:

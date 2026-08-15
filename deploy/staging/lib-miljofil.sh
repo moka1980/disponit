@@ -101,6 +101,25 @@ verifiser_og_reparer() {
   return 0
 }
 
+# Hvilket miljø verten ER. Ikke en hemmelighet, men den hører hjemme her
+# fordi den er vertens egenskap, ikke releasens: samme kode ruller ut til
+# staging og produksjon, og det er verten som avgjør hvilke policystatuser
+# som får binde en ekte handling (`api/policyregister.tillatte_statuser`).
+#
+# Uten en verdi tar den funksjonen staging-standarden — `utkast` og
+# `validert_pilot` binder da ekte beslutninger. Derfor SKRIVES nøkkelen på
+# en fersk install, med den trygge verdien: en vert er staging til noen
+# bevisst sier noe annet. Oppgradering til produksjon er en redigering av
+# miljøfila (`DISPONIT_MILJO='produksjon'`) — og den overskrives aldri
+# herfra, like lite som KEK-en roteres bak ryggen på noen.
+sikre_miljo() {
+  if har_nokkel DISPONIT_MILJO; then
+    return 0
+  fi
+  sett_nokkel DISPONIT_MILJO staging
+  echo "  satte DISPONIT_MILJO=staging (endre i $MILJOFIL for produksjon)"
+}
+
 # Én hemmelighet, generert én gang og aldri rotert automatisk.
 #
 # Rotasjon MÅ være en bevisst handling for disse to: bytter man DISPONIT_KEK,

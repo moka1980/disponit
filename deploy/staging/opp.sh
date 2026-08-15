@@ -92,6 +92,28 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# MILJØPORTEN (Codex P1 til PR #42): hvilket miljø verten ER må stå eksplisitt
+# i miljøfila FØR noe rulles ut. `api/policyregister.tillatte_statuser` leser
+# `DISPONIT_MILJO`, og MANGLER den, tar den staging-standarden — da binder
+# policyer merket `utkast` og `validert_pilot` ekte beslutninger. Det er den
+# stille varianten av feilen: ingenting krasjer, svarene blir bare tatt under
+# et annet regelverk enn den som leser «M-1 i produksjon» tror.
+# Gaten står her, før første mutasjon, og godtar KUN de to kjente verdiene:
+# en skrivefeil («produksjonn») ville ellers falt tilbake til staging uten et
+# ord. `oppsett-postgresql.sh` skriver `staging` på en fersk install, så en
+# eksisterende vert som mangler nøkkelen kjører den på nytt; produksjon settes
+# bevisst for hånd.
+MILJO=$( set -a; . "$MILJOFIL"; set +a; printf '%s' "${DISPONIT_MILJO:-}" )
+if [ "$MILJO" != staging ] && [ "$MILJO" != produksjon ]; then
+  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er '${MILJO:-<tom>}' —"
+  echo "må være 'staging' eller 'produksjon'. Uten en gyldig verdi tar"
+  echo "policyregisteret staging-standarden, og policyer merket 'utkast' eller"
+  echo "'validert_pilot' ville bundet ekte beslutninger på denne verten."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh på nytt (den skriver"
+  echo "'staging'), eller sett verdien for hånd på en produksjonsvert."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015 (Codex P1): RESOLVERPORTEN kjøres FØR første mutasjon, ikke først ved
 # timeraktivering. `skriv_cred domener DISPONIT_RESOLVERE` skrev tidligere
 # hva som helst — også tom streng — og utrullingen rapporterte suksess fordi
@@ -162,6 +184,11 @@ skriv_cred api DISPONIT_SEMANTIKK_MILJO "$(PYTHONPATH="$KILDE/platform/core" \
 # men hydreres til os.environ via samme LoadCredential-vei. Tomme = default.
 skriv_cred api DISPONIT_UI_PROVIDER    "${DISPONIT_UI_PROVIDER:-}"
 skriv_cred api DISPONIT_UI_IDP_ORIGINS "${DISPONIT_UI_IDP_ORIGINS:-}"
+# Miljøet API-prosessen KJØRER i — gaten i §2 har alt slått fast at verdien er
+# en av de to lovlige. Ingen `:-`-fallback her: en tom streng ville gitt
+# staging-statusene tilbake i det stille, og det er nettopp det gaten finnes
+# for å hindre.
+skriv_cred api DISPONIT_MILJO "$MILJO"
 # Arbeideren får sin EGEN DB-rolle (v2 §3) når DISPONIT_ARBEIDER_URL er
 # satt av oppsett-postgresql.sh; ellers deler den runtime-DSN-en og det
 # rapporteres som avvik nederst.

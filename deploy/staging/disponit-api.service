@@ -47,6 +47,13 @@ LoadCredential=DISPONIT_SEMANTIKK_MILJO:/etc/disponit/api/DISPONIT_SEMANTIKK_MIL
 # samme LoadCredential-hydrering til os.environ). Tomme filer = trygg default.
 LoadCredential=DISPONIT_UI_PROVIDER:/etc/disponit/api/DISPONIT_UI_PROVIDER
 LoadCredential=DISPONIT_UI_IDP_ORIGINS:/etc/disponit/api/DISPONIT_UI_IDP_ORIGINS
+# Miljøet verten ER — avgjør hvilke policystatuser som får binde en ekte
+# beslutning (`api/policyregister.tillatte_statuser`). Uten den tar registeret
+# staging-standarden og slipper `utkast` og `validert_pilot` gjennom; en
+# produksjonsvert som mangler dette ville altså avgjort ekte forespørsler
+# under stagings regelverk, uten et eneste varsel. `opp.sh` gater verdien før
+# første mutasjon og skriver den her — den er ikke valgfri.
+LoadCredential=DISPONIT_MILJO:/etc/disponit/api/DISPONIT_MILJO
 
 # access_log=False: uvicorns ASGI-access-logg skriver hele request-linjen
 # — inkludert en callback-query — til journald. Det er den FEMTE logglag-

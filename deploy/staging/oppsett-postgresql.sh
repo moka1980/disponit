@@ -116,6 +116,7 @@ sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
+sikre_miljo               # DISPONIT_MILJO: staging til noen bevisst sier annet
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
 # ble innfoert, men ingen deploy-vei satte noekkelen — API-et nekter aa starte
 # uten den, og det er slik feilen skal oppdages, ikke i foerste unntaksrad.

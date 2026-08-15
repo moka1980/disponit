@@ -78,6 +78,7 @@ sikre_rolle_dsn "$BRUKER"   "${RUNTIME[@]}"
 sikre_rolle_dsn "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler
+sikre_miljo
 verifiser_og_reparer "$BRUKER"   "${RUNTIME[@]}"
 verifiser_og_reparer "$MIGRATOR" "${MIGRATOR_DSN[@]}"
 """
@@ -134,6 +135,70 @@ def test_mac_nokler_gyldig_og_idempotent(tmp_path):
     assert les(tmp_path)["DISPONIT_MAC_NOKLER"] == raa, \
         "MAC-nøkkelen ble regenerert på ny kjøring — signeringsnøkkelen kan " \
         "byttes ubemerket ved en senere deploy"
+
+
+@kun_posix
+def test_miljoet_settes_trygt_og_overskrives_aldri(tmp_path):
+    """Codex P1 til PR #42: `api/policyregister.tillatte_statuser` leser
+    `DISPONIT_MILJO`, og mangler den, tar den staging-standarden — `utkast`
+    og `validert_pilot` binder da ekte beslutninger. Nøkkelen skrives derfor
+    på en fersk install, med den TRYGGE verdien.
+
+    Og den overskrives aldri: en produksjonsvert setter `produksjon` for
+    hånd, og en ny kjøring av oppsettskriptet skal ikke stille den tilbake
+    til staging — det ville vært nøyaktig den stille nedgraderingen porten
+    finnes for å hindre."""
+    r = kjor(tmp_path, OPPSETT)
+    assert r.returncode == 0, r.stderr
+    assert les(tmp_path)["DISPONIT_MILJO"] == "staging", \
+        "fersk install skrev ikke DISPONIT_MILJO=staging"
+
+    r2 = kjor(tmp_path, "sett_nokkel DISPONIT_MILJO produksjon\n" + OPPSETT)
+    assert r2.returncode == 0, r2.stderr
+    assert les(tmp_path)["DISPONIT_MILJO"] == "produksjon", \
+        "oppsettskriptet nedgraderte en produksjonsvert til staging"
+
+
+def test_utrullingen_gater_miljoet_og_gir_det_til_api_prosessen():
+    """Codex P1 til PR #42: å erklære en modul `i_drift`/`produksjon` er
+    tomt så lenge INGEN vei setter `DISPONIT_MILJO` på prosessen. Da tar
+    `tillatte_statuser` staging-standarden, og en policy merket `utkast`
+    kan binde en ekte beslutning uten at noe krasjer.
+
+    Tre ledd må henge sammen, og alle tre låses her: utrullingen må GATE
+    verdien før første mutasjon (en skrivefeil skal ikke falle tilbake til
+    staging), MATERIALISERE den som credential, og unit-fila må LASTE den.
+    Ryker ett av dem, er de to andre virkningsløse."""
+    rot = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    with open(rot + "/deploy/staging/opp.sh", encoding="utf-8") as f:
+        linjer = f.read().splitlines()
+    with open(rot + "/deploy/staging/disponit-api.service",
+              encoding="utf-8") as f:
+        unit = f.read()
+
+    def forste(nal):
+        for nr, l in enumerate(linjer):
+            if nal in l and not l.strip().startswith("#"):
+                return nr
+        return None
+
+    gate = forste('[ "$MILJO" != staging ]')
+    skriving = forste("skriv_cred api DISPONIT_MILJO")
+    # Første aktive mutasjon i skriptet: Unix-identitetene opprettes rett
+    # etter «HERFRA MUTERES SYSTEMET»-skillet. Kommentaren selv duger ikke
+    # som anker — `forste` hopper over kommentarlinjer med vilje.
+    mutasjon = forste("groupadd --system disponit-proxy")
+    assert gate is not None, "opp.sh gater ikke DISPONIT_MILJO i det hele tatt"
+    assert skriving is not None, \
+        "opp.sh gir aldri DISPONIT_MILJO videre til API-prosessen"
+    assert gate < mutasjon, (
+        f"miljøporten (linje {gate + 1}) står etter første mutasjon "
+        f"(linje {mutasjon + 1}) — en avvist utrulling ville alt ha endret "
+        f"systemet")
+    assert "LoadCredential=DISPONIT_MILJO:" in unit, \
+        "disponit-api.service laster ikke DISPONIT_MILJO — credentialen " \
+        "skrives, men når aldri prosessen"
 
 
 @kun_posix
