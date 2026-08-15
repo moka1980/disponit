@@ -39,9 +39,16 @@ jobs:
        github.event.issue.pull_request &&
        contains(github.event.comment.user.login, 'codex'))
     runs-on: ubuntu-latest
-    # Tre forsøk à ~35 min i verste fall — jobben skal ikke drepes av
-    # klokka før fortsettelsesforsøkene har fått kjøre.
-    timeout-minutes: 150
+    # Regnestykket, målt på denne workflowen selv: 101 turer tok 21 minutter,
+    # altså ~12,5 s per tur. 300 turer er da ~62 min per forsøk, og tre forsøk
+    # ~187 min — mer enn de 150 minuttene som sto her først. En jobb som dør på
+    # klokka tar med seg varslingssteget også, og da er vi tilbake i nøyaktig
+    # den stille, parkerte PR-en denne endringen finnes for å fjerne.
+    # Derfor: hvert forsøk har sitt EGET stegtak (95 min — et steg som henger
+    # dreper bare seg selv, ikke resten av jobben), og jobbtaket ligger over
+    # summen med margin (3 × 95 + oppsett/CI-venting < 330 < 360, som er
+    # ubuntu-latest sin grense).
+    timeout-minutes: 330
     concurrency:
       group: claude-fiks-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
@@ -61,6 +68,7 @@ jobs:
       # ville forsøk 2 og 3 blitt hoppet over nøyaktig når de trengs.
       - id: runde
         continue-on-error: true
+        timeout-minutes: 95
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -153,6 +161,7 @@ jobs:
       - id: runde2
         if: steps.runde.outcome == 'failure'
         continue-on-error: true
+        timeout-minutes: 95
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -201,6 +210,7 @@ jobs:
 
       - id: runde3
         if: steps.runde2.outcome == 'failure'
+        timeout-minutes: 95
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
