@@ -8,6 +8,7 @@ import { t } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
 import { TILBUD, erTilgjengelig } from "./plattformdata.js";
+import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
 const SPORSMAL = [
@@ -82,11 +83,7 @@ export async function visInnlogging() {
           el("article", { class: "site-mini-card" },
             el("div", { class: "site-module-head" },
               el("strong", { text: t(post.navn_nokkel) }),
-              el("span", {
-                class: erTilgjengelig(post.id)
-                  ? "merke merke-i_drift" : "merke merke-planlagt",
-                text: erTilgjengelig(post.id)
-                  ? t("site.tilbud.tilgjengelig") : t("site.tilbud.kommer") })),
+              siteTilbudMerke(erTilgjengelig(post.id))),
             el("p", { text: t(post.tekst_nokkel) }))))),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },

@@ -8,6 +8,10 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visInnlogging } from "../static/js/innlogging.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
+import { TILBUD, erTilgjengelig } from "../static/js/plattformdata.js";
+import { siteTilbudMerke } from "../static/js/sitekomponenter.js";
+
+const HER = dirname(fileURLToPath(import.meta.url));
 
 // Tenantrader som testdata, ikke som produksjonsinnhold: de lever HER, i en
 // testfil som aldri serveres, og ikke i klientpakken eller locale-settet.
@@ -22,8 +26,8 @@ const RADER = [
     neste: "Kunde null for utrulling." },
 ];
 
-const EN = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)),
-  "..", "..", "..", "..", "locales", "en.json"), "utf-8"));
+const EN = JSON.parse(readFileSync(
+  join(HER, "..", "..", "..", "..", "locales", "en.json"), "utf-8"));
 
 settI18nForTest(NB, "nb");
 
@@ -89,6 +93,43 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
   assert.equal(document.documentElement.getAttribute("data-visning"), "landing");
   const b = await alvorligeBrudd(app);
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async () => {
+  // Codex P3: brikkene bar `merke-i_drift`/`merke-planlagt`, klasser som ikke
+  // finnes i noen stilfil. Begge rendret da som en umerket `.merke`, og
+  // «Tilgjengelig» så nøyaktig ut som «Kommer». Et merke som bare skiller i
+  // tekst er ikke et merke. Testen krever derfor to ting av HVER brikke:
+  // klassene må ha en definisjon i stilkilden, og de to tilstandene må ha
+  // forskjellig klasse.
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelectorAll(".site-mini-card .site-badge").length > 0);
+  const css = ["base.css", "komponenter.css"]
+    .map((f) => readFileSync(join(HER, "..", "static", "css", f), "utf-8"))
+    .join("\n");
+  const definert = new Set([...css.matchAll(/\.([A-Za-z_][-\w]*)/g)]
+    .map((m) => m[1]));
+
+  const brikker = [...app.querySelectorAll(".site-mini-card .site-badge")];
+  assert.equal(brikker.length, TILBUD.length,
+    "hvert tilbudspunkt skal ha én tilgjengelighetsbrikke");
+  for (const brikke of brikker) {
+    for (const klasse of brikke.className.split(/\s+/).filter(Boolean)) {
+      assert.ok(definert.has(klasse),
+        `brikka bruker .${klasse}, som ingen stilfil definerer — ` +
+        `da rendres tilstanden umerket`);
+    }
+  }
+  // M-1 er `klargjort`, altså ikke i drift: alle fire sier «Kommer» i dag.
+  // Testen skal likevel holde den dagen en modul går i drift, så den måler
+  // klassen mot `erTilgjengelig` per punkt i stedet for å anta fordelingen.
+  const forventet = TILBUD.map((post) =>
+    erTilgjengelig(post.id) ? "site-badge ok" : "site-badge plan");
+  assert.deepEqual(brikker.map((b) => b.className), forventet);
+  assert.notEqual(siteTilbudMerke(true).className,
+    siteTilbudMerke(false).className,
+    "tilgjengelig og kommer deler klasse — da skiller ingenting dem visuelt");
 });
 
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
