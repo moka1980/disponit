@@ -141,10 +141,11 @@ export function modulmerke(id) {
 // «Fullmakter og policy», ikke «M-1 Klargjort».
 //
 // `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten, og bare
-// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift —
-// `m01_policy/manifest.yaml` sier eksplisitt `ikke_i_drift` og har ingen
-// API-enhet — så «Tilgjengelig» på M-1 ville vært et løfte en besøkende ikke
-// kan innfri. `sitekomponenter.js` gjør allerede det samme skillet på
+// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift, så en
+// modul i den tilstanden kan aldri stå «Tilgjengelig». M-1 er ikke lenger der:
+// manifestet sier `driftstilstand: produksjon`, og det er miljøleddet under —
+// ikke driftstilstanden — som holder brikka på «Kommer» i dag.
+// `sitekomponenter.js` gjør allerede det samme skillet på
 // adminflaten: grønt er reservert for det som FAKTISK kjører hos kunder.
 // Forsiden sier «Kommer» om resten — ett ord, ikke et byggeregnskap.
 export const TILBUD = [

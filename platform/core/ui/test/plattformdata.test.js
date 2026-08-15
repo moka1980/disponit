@@ -18,9 +18,9 @@ const LOKALER = ["nb", "en"].map((sprak) =>
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
-  // godkjent men ikke i drift, M-2/M-37 er under utvikling, M-38 har intet
-  // manifest. Ingen av dem er `i_drift` — det ordet krever
-  // `driftstilstand: produksjon`.
+  // godkjent og i drift, M-2/M-37 er under utvikling, M-38 har intet manifest.
+  // `i_drift` krever `driftstilstand: produksjon` i manifestet — og bare M-1
+  // har det.
   assert.equal(modulStatus(1), "i_drift");
   assert.equal(modulStatus(2), "bygges");
   assert.equal(modulStatus(38), "planlagt");

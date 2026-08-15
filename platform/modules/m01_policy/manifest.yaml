@@ -11,9 +11,22 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # andre feltet leses `aktiv` som «ute hos kunder», og det er noe helt annet
 # enn det sjekklisten har bevist.
 #
-# M-1 er godkjent og kjører ingen steder: staging har ingen installerte
-# units, og det finnes ikke engang en unit for API-et. `registry.valider`
-# nekter motsatt tilstand — drift uten aktiv status er en feil.
+# M-1 er godkjent OG i drift: `disponit-api.service` og `disponit-m37.service`
+# er installert og aktive på disponit.com, databasen står på migrasjon 19, og
+# policymotoren avgjør ekte forespørsler. `registry.valider` nekter motsatt
+# tilstand — drift uten aktiv status er en feil.
+#
+# FELTET STO `ikke_i_drift` FRAM TIL 2026-08-15, begrunnet med at staging ikke
+# hadde installerte units og at det ikke fantes en unit for API-et engang.
+# Sant den dagen det ble skrevet, usant nå. En akse som ikke oppdateres når
+# virkeligheten endrer seg, later registeret som om ingenting kjører — og
+# flatene arver løgnen, siden de leser HERFRA og ikke fra serverne.
+#
+# AT DEN KJØRER ER IKKE ET KUNDELØFTE. Dette feltet sier hvor koden kjører, og
+# ingenting om hvilke policystatuser verten godtar. Står `DISPONIT_MILJO` i
+# staging, binder policyer merket `utkast` beslutningene, og da skal forsiden
+# si «Kommer», ikke «Tilgjengelig». Det andre leddet bor i `platform/core/miljo`
+# og leses av flaten via `/ui/oppsett.json` — ikke i dette manifestet.
 driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 # AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
 #
