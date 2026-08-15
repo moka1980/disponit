@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from miljo import gjeldende_miljo
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -237,9 +238,11 @@ def ui_oppsett(request: Request) -> Response:
     # faktisk binder beslutningene ikke kan komme i utakt.
     #
     # Fail-closed som provider over: alt annet enn den eksakte strengen
-    # `produksjon` er staging. En skrivefeil skal koste et løfte, ikke gi et.
-    miljo = "produksjon" \
-        if os.environ.get("DISPONIT_MILJO", "").strip() == "produksjon" \
-        else "staging"
+    # `produksjon` er staging. Sammenligningen gjøres IKKE her, men i `miljo`,
+    # som registeret bruker: leste denne flaten variabelen mildere — f.eks.
+    # ved å strippe blanktegn — ville ` produksjon ` gitt «Tilgjengelig» på
+    # forsiden mens registeret fortsatt sto i staging og lot `utkast` binde
+    # beslutninger. Da faller de to ikke lenger sammen, som er hele poenget.
+    miljo = gjeldende_miljo()
     data = json.dumps({"provider_id": provider, "miljo": miljo}).encode("utf-8")
     return _svar(data, _CT[".json"])

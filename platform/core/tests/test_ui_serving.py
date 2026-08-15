@@ -264,14 +264,37 @@ def test_oppsett_oppgir_miljo_fail_closed(monkeypatch):
     Fail-closed som provider: alt annet enn den eksakte strengen `produksjon`
     blir `staging`. En skrivefeil i miljøfila skal koste et løfte, ikke gi et,
     og en tom verdi skal ikke arve produksjon fra en tidligere deploy.
+
+    ` produksjon ` med blanktegn er `staging` MED VILJE: policyregisteret
+    sammenligner rått, så en flate som normaliserte verdien ville lovet
+    «Tilgjengelig» i et register som fortsatt lar `utkast` binde beslutninger.
     """
     k = _klient()
     for verdi, forventet in (("produksjon", "produksjon"),
                              ("staging", "staging"),
                              ("produksjonn", "staging"),
-                             (" produksjon ", "produksjon"),
+                             (" produksjon ", "staging"),
                              ("", "staging")):
         monkeypatch.setenv("DISPONIT_MILJO", verdi)
         assert k.get("/ui/oppsett.json").json()["miljo"] == forventet, verdi
     monkeypatch.delenv("DISPONIT_MILJO", raising=False)
     assert k.get("/ui/oppsett.json").json()["miljo"] == "staging"
+
+
+def test_oppsett_miljo_folger_samme_tolkning_som_policyregisteret(monkeypatch):
+    """Porten mot utakt: flaten leser miljøet gjennom `miljo`, ikke selv.
+
+    Registeret (`policyregister.tillatte_statuser`) spør det SAMME modulen om
+    hvorvidt verten er i produksjon. Skulle noen legge inn en egen tolkning i
+    endepunktet igjen — strip, casefold, «prod» som alias — spriker svaret her
+    fra `miljo.gjeldende_miljo` og testen faller. Modulen importeres direkte
+    fordi registeret krever psycopg og en database; det er tolkningen som skal
+    måles, ikke oppslaget.
+    """
+    import miljo as miljomodul
+    k = _klient()
+    for verdi in ("produksjon", " produksjon ", "PRODUKSJON", "prod",
+                  "staging", ""):
+        monkeypatch.setenv("DISPONIT_MILJO", verdi)
+        assert k.get("/ui/oppsett.json").json()["miljo"] \
+            == miljomodul.gjeldende_miljo(), verdi

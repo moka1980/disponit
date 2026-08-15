@@ -11,6 +11,7 @@ import json
 import os
 
 import psycopg
+from miljo import er_produksjon
 
 #: Statusene en policy kan ha i `meta.status`. I produksjon er listen
 #: HARDKODET og kan ikke konfigureres bort — en policy merket `utkast` skal
@@ -40,7 +41,9 @@ def innholds_hash(policy: dict) -> str:
 
 
 def tillatte_statuser() -> frozenset[str]:
-    if os.environ.get("DISPONIT_MILJO") == "produksjon":
+    # Samme kilde og samme eksakte tolkning som kundeflaten leser miljøet med
+    # (`miljo.gjeldende_miljo` i ui/server) — se `miljo`-modulen.
+    if er_produksjon():
         return PRODUKSJONSSTATUSER
     raa = os.environ.get("DISPONIT_TILLATTE_POLICYSTATUSER", STAGING_STANDARD)
     return frozenset(s.strip() for s in raa.split(",") if s.strip())
