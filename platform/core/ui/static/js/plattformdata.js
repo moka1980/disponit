@@ -43,7 +43,20 @@ export const MODULSTATUS = {
 // policyene promotert fra `utkast` til `produksjon`, `DISPONIT_MILJO=produksjon`
 // satt på verten, en utrulling som beviser verdien i den kjørende prosessen —
 // og først da bærer forsiden løftet.
-export const PRODUKSJONSMILJO = false;
+//
+// Verdien kommer fra SERVEREN (`/ui/oppsett.json` → `miljo`), ikke fra en
+// konstant her. En hardkodet `false` ville krevd en kodeendring, en review og
+// en utrulling for å si sannheten den dagen de fire leddene var på plass — og
+// like gjerne blitt stående og lyve motsatt vei etterpå. Serveren leser den
+// samme `DISPONIT_MILJO` som `policyregister.tillatte_statuser`, så brikka og
+// regelverket som binder beslutningene kan ikke komme i utakt.
+//
+// Startverdien er `false`: laster oppsettet aldri, lover forsiden ingenting.
+let _produksjonsmiljo = false;
+
+export function settProduksjonsmiljo(pa) { _produksjonsmiljo = pa === true; }
+
+export function produksjonsmiljo() { return _produksjonsmiljo; }
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens
 // `MODULSTATUS` eier hva de faktisk er. Sto den begge steder, ville en modul
@@ -200,7 +213,7 @@ export function erTilgjengeligFor(status, produksjonsmiljo) {
 }
 
 export function erTilgjengelig(id) {
-  return erTilgjengeligFor(modulStatus(id), PRODUKSJONSMILJO);
+  return erTilgjengeligFor(modulStatus(id), _produksjonsmiljo);
 }
 
 // Svaret på «Hvor ligger dataene?» er en PÅSTAND OM SYSTEMET, ikke salgstekst,
@@ -215,7 +228,7 @@ export function dataSvarNokkelFor(produksjonsmiljo) {
 }
 
 export function dataSvarNokkel() {
-  return dataSvarNokkelFor(PRODUKSJONSMILJO);
+  return dataSvarNokkelFor(_produksjonsmiljo);
 }
 
 // Hovedløftet i heltet er formulert i presens («agenten håndterer …»), men

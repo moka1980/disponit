@@ -7,7 +7,7 @@ import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
-import { TILBUD, erTilgjengelig, heroTekstNokkel,
+import { TILBUD, erTilgjengelig, heroTekstNokkel, settProduksjonsmiljo,
   dataSvarNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
@@ -40,7 +40,7 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
 // SVARENE ER PÅSTANDER OM SYSTEMET, IKKE SALGSTEKST: hvert av dem har en
 // kilde i repoet, og avviker svaret fra kilden, er det svaret som er feil.
-// Datasvaret VELGES av `PRODUKSJONSMILJO`, det er ikke en fast nøkkel (Codex
+// Datasvaret VELGES av miljøet serveren oppgir, det er ikke en fast nøkkel (Codex
 // P2). Det er den samme kilden brikkene i «Hva du får» leser, og det er hele
 // poenget: en fast `data_sv` sa «i dag finnes bare staging» på en side som i
 // seksjonen over kunne merke et tilbudspunkt «Tilgjengelig». To utelukkende
@@ -144,7 +144,15 @@ export async function visInnlogging(opsjoner = {}) {
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
-  } catch { provider = null; }
+    // Miljøet avgjør om forsiden kan LOVE noe (brikka «Tilgjengelig» og
+    // svaret om hvor dataene ligger). Det settes FØR rendringen under, og
+    // fail-closed: bare den eksakte strengen `produksjon` teller, så et
+    // manglende felt eller en skrivefeil koster et løfte i stedet for å gi et.
+    settProduksjonsmiljo(o && o.miljo === "produksjon");
+  } catch {
+    provider = null;
+    settProduksjonsmiljo(false);
+  }
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
     tabindex: "-1" },

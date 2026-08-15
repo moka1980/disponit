@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  MODULOVERSIKT, MODULSTATUS, PRODUKSJONSMILJO, TILBUD, dataSvarNokkel,
+  MODULOVERSIKT, MODULSTATUS, TILBUD, dataSvarNokkel, produksjonsmiljo,
+  settProduksjonsmiljo,
   dataSvarNokkelFor, erTilgjengelig, erTilgjengeligFor, heroTekstNokkel,
   heroTekstNokkelFor, modulStatus, modulerFraIder, modulmerke,
   plattformTelling, tenantTelling,
@@ -59,7 +60,7 @@ test("erTilgjengeligFor: løftet krever både drift OG et produksjonsmiljø", ()
 test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
   for (const post of TILBUD) {
     assert.equal(erTilgjengelig(post.id),
-      erTilgjengeligFor(modulStatus(post.id), PRODUKSJONSMILJO),
+      erTilgjengeligFor(modulStatus(post.id), produksjonsmiljo()),
       `M-${post.id} lover noe annet enn kildene bærer`);
   }
   // Slik plattformen faktisk står: M-1 KJØRER (manifestet sier
@@ -67,7 +68,7 @@ test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
   // produksjonsmiljøet finnes ikke ennå — policyene bak står `utkast` og
   // verten står `DISPONIT_MILJO=staging`. Brikka sier derfor «Kommer».
   assert.equal(modulStatus(1), "i_drift", "M-1 kjører — det er uendret");
-  assert.equal(PRODUKSJONSMILJO, false,
+  assert.equal(produksjonsmiljo(), false,
     "flippes denne, må datasvaret og brikkene flippe SAMMEN — se testen under");
   assert.equal(erTilgjengelig(1), false,
     "M-1 loves som tilgjengelig uten at produksjonsmiljøet finnes");
@@ -83,7 +84,7 @@ test("datasvaret og brikkene kan ikke motsi hverandre", () => {
   // pinner koblingen i BEGGE retninger — ikke bare i dagens tilstand.
   assert.equal(dataSvarNokkelFor(false), "site.svar.data_sv");
   assert.equal(dataSvarNokkelFor(true), "site.svar.data_sv_produksjon");
-  assert.equal(dataSvarNokkel(), dataSvarNokkelFor(PRODUKSJONSMILJO));
+  assert.equal(dataSvarNokkel(), dataSvarNokkelFor(produksjonsmiljo()));
   // Sier siden at bare staging finnes, kan intet tilbudspunkt være merket
   // tilgjengelig — og motsatt.
   if (dataSvarNokkel() === "site.svar.data_sv") {
@@ -185,4 +186,37 @@ test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
 
 test("modulmerke: tenantens modul-ID-er vises som M-<id>", () => {
   assert.deepEqual([1, 2].map(modulmerke), ["M-1", "M-2"]);
+});
+
+test("miljøflagget kommer fra serveren, og er fail-closed", () => {
+  // Poenget med å flytte flagget ut av koden er at det skal kunne bli sant
+  // uten en kodeendring — og like viktig: bli usant igjen. Begge retninger
+  // måles her, sammen med at ALT annet enn den eksakte strengen regnes som
+  // ikke-produksjon.
+  const før = produksjonsmiljo();
+  try {
+    settProduksjonsmiljo(true);
+    assert.equal(produksjonsmiljo(), true);
+    assert.equal(erTilgjengeligFor("i_drift", produksjonsmiljo()), true,
+      "en modul i drift i produksjonsmiljø skal kunne loves");
+    assert.equal(erTilgjengeligFor("klargjort", produksjonsmiljo()), false,
+      "klargjort er ikke drift, uansett miljø");
+    assert.equal(dataSvarNokkelFor(produksjonsmiljo()),
+      "site.svar.data_sv_produksjon");
+
+    settProduksjonsmiljo(false);
+    assert.equal(erTilgjengeligFor("i_drift", produksjonsmiljo()), false,
+      "drift alene er ikke nok — miljøet må også finnes");
+    assert.equal(dataSvarNokkelFor(produksjonsmiljo()), "site.svar.data_sv");
+
+    // Fail-closed: bare `true` slår på. Et manglende felt fra serveren blir
+    // `undefined`, en skrivefeil blir en streng — ingen av dem skal love noe.
+    for (const verdi of [undefined, null, "produksjon", "produksjonn", 1, {}]) {
+      settProduksjonsmiljo(verdi);
+      assert.equal(produksjonsmiljo(), false,
+        `${JSON.stringify(verdi)} slo på produksjonsmiljøet`);
+    }
+  } finally {
+    settProduksjonsmiljo(før);
+  }
 });
