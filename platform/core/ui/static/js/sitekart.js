@@ -31,3 +31,12 @@ export function visningFraSok(sok, ruter) {
   const visning = q.get("visning");
   return ruter.some((r) => r.nokkel === visning) ? visning : null;
 }
+
+// Hash-en en dyplenke (`?visning=x`) skal sette, eller null hvis ruteren skal
+// navigere selv. Kun ÉN av delene skal skje: å sette hash utløser `hashchange`,
+// og et `naviger()` i tillegg ville rendret flaten — og kalt API-et — to ganger.
+export function hashForDypLenke(sok, hash, ruter) {
+  if (hash) return null;
+  const visning = visningFraSok(sok, ruter);
+  return visning ? `#/${visning}` : null;
+}

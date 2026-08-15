@@ -15,7 +15,7 @@ import { visUnntak } from "./flater/unntak.js";
 import { visPolicyadmin } from "./flater/policyadmin.js";
 import { visKundeadmin } from "./flater/kundeadmin.js";
 import { visAdmin } from "./flater/admin.js";
-import { byggRuter, tillatteFlater, visningFraSok } from "./sitekart.js";
+import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
   oversikt: visOversikt, policy: visPolicy,
@@ -67,11 +67,14 @@ function visApp(sesjon) {
   // validerer mot flatekartet — ikke mot menyen.
   const klientruter = lagRuter(skall.hoved, ctx,
     tillatteFlater(tilgjengeligeRuter, FLATER), skall.settAktiv);
-  const visning = visningFraSok(window.location.search, tilgjengeligeRuter);
-  if (visning && !window.location.hash) {
-    window.location.hash = `#/${visning}`;
-  }
-  klientruter.naviger();
+  // Enten setter vi hash (og `hashchange` rendrer), ELLER så navigerer vi selv.
+  // Begge deler ville rendret flaten to ganger på en dyplenke som
+  // `/?visning=oversikt`: to sett API-kall, og en forbigående feil i det ene
+  // kallet kunne vasket bort innholdet det andre nettopp hadde skrevet.
+  const dypLenke = hashForDypLenke(window.location.search,
+    window.location.hash, tilgjengeligeRuter);
+  if (dypLenke) window.location.hash = dypLenke;
+  else klientruter.naviger();
 }
 
 async function start() {

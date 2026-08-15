@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { byggRuter, harScope, tillatteFlater, visningFraSok }
+import { byggRuter, harScope, hashForDypLenke, tillatteFlater, visningFraSok }
   from "../static/js/sitekart.js";
 
 test("harScope: leser scopes fra sesjon uten kast", () => {
@@ -48,4 +48,17 @@ test("visningFraSok: returnerer kun tilgjengelig visning", () => {
   assert.equal(visningFraSok("?visning=admin", ruter), "admin");
   assert.equal(visningFraSok("?visning=ukjent", ruter), null);
   assert.equal(visningFraSok("", ruter), null);
+});
+
+test("hashForDypLenke: hash settes én gang, ellers navigerer ruteren selv", () => {
+  const ruter = byggRuter({ scopes: ["policy:write", "security:read"] });
+  // Dyplenke uten hash: hash settes, og `hashchange` gjør navigasjonen.
+  assert.equal(hashForDypLenke("?visning=admin", "", ruter), "#/admin");
+  // Finnes hash allerede, er den sannheten — ruteren navigerer selv (null).
+  assert.equal(hashForDypLenke("?visning=admin", "#/unntak", ruter), null);
+  // Ukjent eller nektet visning skal ikke sette hash.
+  assert.equal(hashForDypLenke("?visning=ukjent", "", ruter), null);
+  assert.equal(hashForDypLenke("", "", ruter), null);
+  assert.equal(hashForDypLenke("?visning=admin", "", byggRuter({ scopes: [] })),
+    null);
 });
