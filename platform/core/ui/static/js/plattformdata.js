@@ -52,6 +52,35 @@ export const MODULOVERSIKT = MODULER.map((mod) => ({
   ...mod, status: modulStatus(mod.id),
 }));
 
+// Rolleguiden kundeflaten viser. `scopes` er rollens FAKTISKE scopes slik
+// `platform/core/api/autorisasjon.py` utleder dem, og `test_ui_kontrakt.py`
+// pinner listen mot den kanoniske `ROLLE_TIL_SCOPES`. Uten den bindingen kunne
+// guiden love en fullmakt rollen ikke har — som da `godkjenner` ble beskrevet
+// som å attestere policy, mens attestasjon krever `policy:activate` og bare
+// `policyforvalter` har den. Kunden ville tildelt feil rolle og oppdaget det
+// først på en 403.
+export const KUNDEROLLER = [
+  {
+    id: "leser",
+    navn_nokkel: "ui.kundeadmin.rolle.leser",
+    tekst_nokkel: "ui.kundeadmin.rolle.leser_tekst",
+    scopes: ["decisions:read", "exceptions:read", "policy:read"],
+  },
+  {
+    id: "godkjenner",
+    navn_nokkel: "ui.kundeadmin.rolle.godkjenner",
+    tekst_nokkel: "ui.kundeadmin.rolle.godkjenner_tekst",
+    scopes: ["decisions:read", "exceptions:read", "exceptions:approve",
+             "exceptions:reject", "exceptions:escalate"],
+  },
+  {
+    id: "policyforvalter",
+    navn_nokkel: "ui.kundeadmin.rolle.policyforvalter",
+    tekst_nokkel: "ui.kundeadmin.rolle.policyforvalter_tekst",
+    scopes: ["decisions:read", "policy:read", "policy:write", "policy:activate"],
+  },
+];
+
 export const FASEOVERSIKT = [
   {
     navn_nokkel: "site.fase.fundament",

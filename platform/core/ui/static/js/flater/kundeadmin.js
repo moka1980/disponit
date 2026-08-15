@@ -1,7 +1,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { modulerForTenant, tenantTelling } from "../plattformdata.js";
+import { KUNDEROLLER, modulerForTenant, tenantTelling } from "../plattformdata.js";
 import { kanForvaltePolicy } from "../sitekart.js";
 import { siteModuleKort, siteStatusMerke } from "../sitekomponenter.js";
 
@@ -42,9 +42,9 @@ export function visKundeadmin(hoved, ctx = {}) {
         el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.brukere") }),
         el("h2", { text: t("ui.kundeadmin.brukere_tittel") }),
         el("ul", { class: "site-list" },
-          el("li", {}, el("strong", { text: t("ui.kundeadmin.rolle.leser") }), " ", t("ui.kundeadmin.rolle.leser_tekst")),
-          el("li", {}, el("strong", { text: t("ui.kundeadmin.rolle.godkjenner") }), " ", t("ui.kundeadmin.rolle.godkjenner_tekst")),
-          el("li", {}, el("strong", { text: t("ui.kundeadmin.rolle.policyforvalter") }), " ", t("ui.kundeadmin.rolle.policyforvalter_tekst")))),
+          KUNDEROLLER.map((rolle) =>
+            el("li", {}, el("strong", { text: t(rolle.navn_nokkel) }), " ",
+              t(rolle.tekst_nokkel))))),
       el("section", { class: "kort" },
         el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.integrasjoner") }),
         el("h2", { text: t("ui.kundeadmin.integrasjoner_tittel") }),
