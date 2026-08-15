@@ -3133,18 +3133,47 @@ verifiserer dem og `systemctl enable --now` starter dem:
 
   | Nøkkel | Innhold | Validering ved oppstart |
   |---|---|---|
-  | `DISPONIT_RESOLVER_ENDEPUNKT` | resolverens adresse/URL | Må være satt; ingen defaultverdi |
+  | `DISPONIT_RESOLVER_ENDEPUNKT` | resolverens adresse/URL | Må være satt; ingen defaultverdi; **må stå i `endepunkter` under den oppgitte operatøren** i den lukkede lista |
   | `DISPONIT_RESOLVER_OPERATOR` | operatørens id, fra en **lukket** liste i repoet (`deploy/staging/resolveroperatorer.json`) | Ukjent verdi → oppstart nektes, ikke en advarsel |
   | `DISPONIT_RESOLVER_ASN` | AS-nummeret endepunktet ligger i | Må være satt og stemme med operatørens oppføring i lista |
   | `DISPONIT_OBSERVATOR_MOTPART_OPERATOR` / `_ASN` | den andre observatørens operatør og ASN | Begge må være **ulike** egne verdier |
 
+  **Endepunktet må høre til operatøren det merkes med.** Uten den bindingen
+  validerer oppstarten bare at endepunktet er en ikke-tom streng og at
+  operatør og ASN stemmer med hverandre — aldri at *dette* endepunktet
+  faktisk driftes av *den* operatøren. To Google-adresser (`8.8.8.8` og
+  `8.8.4.4`) kunne da settes opp under hver sin operatør/ASN-etikett og
+  bestått diversitetsporten, hvorpå ett korrelert svar fra én leverandør
+  leverte begge observasjonene som verifiserer eller flytter et domene —
+  nøyaktig det porten finnes for å hindre. Merkelappen er en påstand
+  observatøren gjør om seg selv; den kan ikke også være beviset. Derfor
+  bærer hver oppføring i den lukkede lista sitt eget endepunktsett:
+
+  ```json
+  {
+    "cloudflare": { "asn": "AS13335", "endepunkter": ["1.1.1.1", "1.0.0.1",
+                     "https://cloudflare-dns.com/dns-query"] },
+    "quad9":      { "asn": "AS19281", "endepunkter": ["9.9.9.9", "149.112.112.112",
+                     "https://dns.quad9.net/dns-query"] }
+  }
+  ```
+
+  Oppslaget går fra operatør til endepunktsett, ikke omvendt: et endepunkt
+  som ikke står under den oppgitte operatøren nekter oppstart selv om det
+  står under en **annen** operatør i lista — da er konfigurasjonen
+  feilmerket, og det er selve feilen porten skal fange. Et nytt endepunkt
+  tas i bruk ved å legge det inn under riktig operatør i lista, der det
+  revideres som kode.
+
   Prosessen nekter å starte hvis en nøkkel mangler, hvis operatøren ikke
-  står i den lukkede lista, hvis operatøren eller ASN-et er lik motpartens,
+  står i den lukkede lista, hvis endepunktet ikke står under den
+  operatøren, hvis operatøren eller ASN-et er lik motpartens,
   eller hvis DB-rollen ikke er en `disponit_domeneobservator_*`. Lista er
   data i repoet og revideres som kode: en ny resolver tas i bruk ved å
   legge den inn, ikke ved å skrive en ny streng i en miljøfil.
-  Endepunktulikhet er fortsatt et krav, men den svakeste av de tre — den
-  alene beviser ingenting.
+  Endepunktulikhet er fortsatt et krav i tillegg — to observatører kan ikke
+  dele endepunkt selv om lista tillater begge — men den alene beviser
+  ingenting.
 - Sagt rett ut om staging: begge prosessene kjører på **samme vert**, med
   resolvere hos ulike operatører i ulike AS-nummer. Det gir rolle-,
   operatør- og nettdiversitet, ikke vertsdiversitet — en navngitt
@@ -3325,7 +3354,7 @@ alle testene er grønne.
 | Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); veien inn til en NY autorisasjon er kun verifiseringsruten (§2.5c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs, kortlevd og **unik per (tenant, hostname, formal)** mens den lever; åpningen er idempotent | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB mot **rundens** challenge (§2.4a); arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status; et mislykket oppslag registreres som `avvik`/`ingen_post` i stedet for å kastes, så observatørkøen roterer i stedet for å låse seg (§2.4b); køen leses gjennom `hent_revalideringskandidater()` fordi FORCE RLS gjør et kolonnegrant tomt, og kø 1 sideinndeles til den er tom i stedet for å kappes (§2.2b) | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)`; terminale runder ryddes på tid (§2.4bb) |
 | Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; **stemmen skrives kun av `registrer_overtakelsesattestasjon()`** — runtime har ingen INSERT/UPDATE (§1b/§6c); den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling, også etter en reapplikasjon (§3.1); **selve oppgjøret er grantet til ingen** — eneste kallbare vei er `avgjor_domeneovertakelse_attestert()`, som teller stemmene og reautoriserer attestantene i databasen (§4.3/§2.4c) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); aktøren tatt fra **sesjonen** og autorisert i databasen under `laas_godkjenner`-låsen (§1b) — og sesjonen kan runtime hverken lese eller utstede (§1c), ellers ville aktøroppslaget bevist en rad angriperen selv skrev; to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, **begge på gjeldende `konfliktsett_hash`** (§1a), og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjons- og konfliktsettsnapshotet |
 | Domenegjerdet (§2.5b) | Overlappstesten ligger i `verifiser_domenekontroll` — den ENESTE veien inn i `verifisert`, også overtakelsesgrenen; ingen kaller kan hoppe over den, og `sone_overlapp` har ingen grant utenfor funksjonen; **rader fra før 019 ryddes av migrasjonen selv**, så gjerdet ikke bare gjelder fremover | **Sonelås på både hostnavnet og forelderen**, i sortert rekkefølge; `example.com` og `foo.example.com` serialiseres mot hverandre, ikke bare mot seg selv; hele overlappsmengden avledes på nytt under låsen ved oppgjør — `forelder`/`barn` mot `sone_overlapp()`, `eksakt` mot at motparten fortsatt ikke er `verifisert`, siden den ble tilbakekalt allerede ved verifiseringen (§2.5b) | Gjerdet måler *effektiv* dekning (wildcard = ett nivå), ikke likhet i hostnavnstreng; `retning` utledes av hostnavnene, ikke av wildcard-biten; overlapp gir `avklaring_kreves` + sak, aldri `verifisert` | Tre og bare tre overlappsformer (`eksakt`/`forelder`/`barn`); en fjerde form er en feil, ikke stillhet; motpartsmengden er en tabell (`domenekonfliktpart`), ikke én kolonne |
-| Drift av det hele (§6b/§6c/§6d) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort); eierskapet kun i `eierskap-reparasjon.sql`-s `_design` — og de to listene motsier ikke hverandre: en runtime-grantet tabell blir hos migrator (§6d, port 28f) | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser med hver sin Unix-bruker og egen 0400-miljøfil | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas; at domenerollen IKKE kan logge inn måles på en oppgradert base (28c) | `UNITS`, `RETTIGHETER`, `_design` og resolveroperatørlista er lukkede lister; en observatør med feil rolle, ukjent operatør eller delt operatør/ASN nekter å starte |
+| Drift av det hele (§6b/§6c/§6d) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort); eierskapet kun i `eierskap-reparasjon.sql`-s `_design` — og de to listene motsier ikke hverandre: en runtime-grantet tabell blir hos migrator (§6d, port 28f) | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser med hver sin Unix-bruker og egen 0400-miljøfil | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas; at domenerollen IKKE kan logge inn måles på en oppgradert base (28c) | `UNITS`, `RETTIGHETER`, `_design` og resolveroperatørlista er lukkede lister; en observatør med feil rolle, ukjent operatør, endepunkt som ikke står under den operatøren (port 28g) eller delt operatør/ASN nekter å starte |
 | Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; ved forbruk låses **oppdragsraden `FOR SHARE` FØR kapabilitetsraden `FOR UPDATE`**, så sammenligningen er atomisk mot et samtidig reclaim og ikke bare mot et som alt har committet — oppdragslåsen tas gjennom `laas_oppdragsgenerasjon()`, fordi forbrukerens eierrolle kun har `SELECT ON oppdrag` og en låseklausul krever `UPDATE` (§5) | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
@@ -3958,6 +3987,15 @@ unit og én vellykket innlogging per rolle. En observatør startet med feil
 DB-rolle, eller med samme resolveroperatør/ASN som den andre, **skal nekte
 å starte**. Uten denne porten kan hele PR-015 bestå testsuiten og likevel
 ikke revalidere ett eneste domene i drift.
+28g **Endepunktet er bundet til operatøren det merkes med (§6b).** Start
+observatør 1 med `DISPONIT_RESOLVER_ENDEPUNKT=8.8.8.8` og
+`DISPONIT_RESOLVER_OPERATOR=cloudflare` (+ Cloudflares ASN, ulikt
+motpartens) → **oppstart nektes**, med endepunktet og operatøren i
+feilmeldingen. Samme med et endepunkt som ikke står under noen operatør i
+lista. Porten er nødvendig ved siden av 28: 28 måler bare at de to
+etikettene er ulike hverandre, og består derfor med begge observatørene på
+hver sin Google-adresse under hver sin falske etikett — ett driftsansvar,
+ett kompromiss, to «uavhengige» stemmer ·
 28c **Domenerollen forblir uten innlogging (§6b).** Kjør
 `oppsett-postgresql.sh` **to ganger** på en base der
 `disponit_domains_admin` finnes fra PR-014b, og på en base der et tidligere
@@ -4269,8 +4307,10 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
            disponit_domains_admin NOLOGIN`, §6b — uten rollene feiler 019 på
            en fersk base, og med en credentialed adminrolle er hele 016-
            grantsettet eksponert),
-         deploy/staging/resolveroperatorer.json (lukket operatør/ASN-liste
-           som observatørene validerer konfigurasjonen mot, §6b),
+         deploy/staging/resolveroperatorer.json (lukket liste operatør →
+           {ASN, endepunkter} som observatørene validerer konfigurasjonen
+           mot — endepunktet må stå under den oppgitte operatøren, ellers
+           er etiketten en upåvist påstand, §6b, port 28g),
          deploy/staging/opp.sh (UNITS utvides med de fire nye unitene, og
            brukerløkka med fire nye systembrukere — én per jobb, egen
            0400-miljøfil, §6b),
