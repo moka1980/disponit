@@ -130,6 +130,13 @@ INSERT INTO _design VALUES
     -- rullet tilbake selve domenevedtaket.
     ('FUNCTION', 'lukk_overtakelsessak(text,bigint,text,text)',       'disponit_domene_eier'),
     ('FUNCTION', 'degrader_forbigatte_utfordrere(text,text)',         'disponit_domene_eier'),
+    -- Triggerfunksjonen på `hostname_binding` (019 §3.25) er SECURITY DEFINER
+    -- og MÅ eies av samme rolle som funksjonen den kaller. Havnet den hos
+    -- disponit_migrator ved andre kjøring av `oppsett-postgresql.sh`, ville
+    -- degraderingen kjørt med migratorens rettigheter i stedet for
+    -- domenelagets — en stille privilegieutvidelse på en vei ingen kaller
+    -- eksplisitt.
+    ('FUNCTION', 'trg_degrader_forbigatte_utfordrere()',              'disponit_domene_eier'),
     ('FUNCTION', 'antall_avgitte_attestasjoner(bigint,bigint)',       'disponit_domene_eier'),
     ('FUNCTION', 'rydd_staged_artefakter(integer)',                   'disponit_domene_eier'),
     ('FUNCTION', 'antall_karantenesatte()',                           'disponit_domene_eier'),

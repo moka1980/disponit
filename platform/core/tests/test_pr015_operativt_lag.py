@@ -785,7 +785,8 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
 
     Revisjonsøkningen skjer i `degrader_forbigatte_utfordrere` — 016 lar B stå
     urørt når C tar over, og PR-015 legger degraderingen utenpå uten å røre
-    016-kroppen.
+    016-kroppen: triggeren på `hostname_binding` (019 §3.25) fyrer i det
+    bindingen flyttes til C, altså inne i samme overtakelse.
     """
     h = _host()
     sak, gen_b = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
@@ -794,8 +795,6 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
         _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1", gen_b)
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TREDJE_TENANT, h))
-        a.commit()
-        a.execute("SELECT degrader_forbigatte_utfordrere(%s,'sys')", (h,))
         a.commit()
     finally:
         a.close()
@@ -837,6 +836,12 @@ def test_port20_abc_kun_c_i_avklaring_og_a_gjenoppstar_ikke(migrator):
     porten måler statusen. `degrader_forbigatte_utfordrere` lukker det uten å
     røre en eneste 016-kropp.
 
+    Codex (P1): degraderingen må skje av SELVE overtakelsen. Den lå tidligere i
+    `opprett_overtakelsessak()`, som ingen produksjonsvei kaller, så porten var
+    i praksis kun oppfylt når en test ringte funksjonen manuelt. Testen kaller
+    den derfor IKKE lenger før den måler: triggeren på `hostname_binding`
+    (019 §3.25) skal ha gjort jobben i det C tok bindingen.
+
     Codex (P2): SAKEN følger utfordreren ut. B kan aldri fullføre
     adjudikasjonen etter degraderingen — `avgi_overtakelse_attestasjon` krever
     `avklaring_kreves` — så en B-sak som ble stående `ny` ville blitt liggende
@@ -850,11 +855,10 @@ def test_port20_abc_kun_c_i_avklaring_og_a_gjenoppstar_ikke(migrator):
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TREDJE_TENANT, h))
         a.commit()
-        antall = int(a.execute("SELECT degrader_forbigatte_utfordrere(%s,'sys')",
-                               (h,)).fetchone()[0])
-        a.commit()
-        assert antall == 1, f"forventet én forbigått utfordrer, fikk {antall}"
-        # Idempotent: en kjøring til endrer ingenting.
+        # Overtakelsen alene skal ha degradert B — ingen manuell opprydding.
+        assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt", \
+            "triggeren degraderte ikke den forbigåtte utfordreren"
+        # Idempotent: et manuelt kall etterpå finner ingenting å gjøre.
         assert int(a.execute("SELECT degrader_forbigatte_utfordrere(%s,'sys')",
                              (h,)).fetchone()[0]) == 0
         a.commit()

@@ -422,6 +422,50 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
+-- 3.25 Degraderingen henges på SELVE OVERGANGEN, ikke på en kaller.
+--
+-- Codex (P1): forrige runde la kallet i `opprett_overtakelsessak()`
+-- (domeneovertakelse.py). Den funksjonen har ingen produksjonskaller — kun
+-- tester — og `verifiser_domenekontroll()`s `konflikt:*` håndteres i dag ikke
+-- av noen utrullet kodevei i det hele tatt. I en A→B→C-overtakelse ble
+-- degraderingen derfor aldri kjørt: B ble stående i `avklaring_kreves` med
+-- sin foreldede sak åpen, akkurat den tilstanden §3/port 20 finnes for.
+--
+-- Å legge kallet hos en (fremtidig) kaller er dessuten feil sted uansett: da
+-- er invarianten «kun dagens utfordrer står i avklaring» avhengig av at HVER
+-- kaller husker den. Signalet ligger i databasen: `hostname_binding` er §3 B2s
+-- globale autoritet på hvem som ER dagens utfordrer, og hver konfliktgren i
+-- 016/018 avslutter med å flytte den. Flyttes bindingen, er per definisjon
+-- alle andre i `avklaring_kreves` forbigått.
+--
+-- Triggeren henger derfor der, ETTER at bindingen er endelig: den kjører i
+-- SAMME transaksjon som overtakelsen (alt eller ingenting), under den samme
+-- hostname-advisory-låsen kalleren alt holder, og den er umulig å omgå — også
+-- for en fremtidig kaller som ikke kjenner §3. INGEN 016/018-kropp er rørt.
+--
+-- Kun ved FAKTISK bindingsskifte: en re-verifisering som skriver samme tenant
+-- tilbake (`bundet_ts`-oppfriskningen i upserten) har ikke forbigått noen, og
+-- `avgjor_domeneovertakelse()`s godkjenningsgren skriver bindingen tilbake til
+-- den som alt står der — den skal ikke utløse en degradering av noen.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_degrader_forbigatte_utfordrere()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.tenant IS NOT DISTINCT FROM OLD.tenant THEN
+        RETURN NULL;   -- samme utfordrer: ingen er forbigått
+    END IF;
+    -- Idempotent og bindingsstyrt: den rører aldri NEW.tenant selv.
+    PERFORM public.degrader_forbigatte_utfordrere(NEW.hostname, 'binding_skifte');
+    RETURN NULL;       -- AFTER-trigger: returverdien brukes ikke
+END $$;
+
+DROP TRIGGER IF EXISTS hostname_binding_degrader_forbigatte ON hostname_binding;
+CREATE TRIGGER hostname_binding_degrader_forbigatte
+    AFTER INSERT OR UPDATE ON hostname_binding
+    FOR EACH ROW EXECUTE FUNCTION trg_degrader_forbigatte_utfordrere();
+
+-- ------------------------------------------------------------
 -- 3.3 antall_autoriserte_adjudikatorer — legibel fail-closed (§4 siste kule).
 --
 -- «Én autorisert aktør → positiv tildeling er umulig» er riktig fail-closed,
@@ -740,13 +784,18 @@ REVOKE ALL ON FUNCTION lukk_overtakelsessak(TEXT, BIGINT, TEXT, TEXT) FROM PUBLI
 -- granted direkte til `disponit`) — funksjonsspesifikk, ikke bunten.
 GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) TO disponit;
--- `opprett_overtakelsessak()` (domeneovertakelse.py) kaller nå
--- `degrader_forbigatte_utfordrere` som en del av å håndtere konfliktsignalet
--- — samme runtime-rolle som skriver `unntak`/`revisjonslogg` trenger derfor
--- EXECUTE på den også. Migrator kaller samme funksjon direkte (uten
--- SET ROLE) i test-oppsettet, som `opprett_overtakelsessak` selv alltid har
--- gjort for tabellskrivingen — en SET ROLE der ville mistet
+-- Degraderingen kalles nå av triggeren på `hostname_binding` (3.25), som
+-- kjører SECURITY DEFINER som funksjonseieren og derfor ikke er avhengig av
+-- kallerens EXECUTE. Grantene under står likevel: drift og tester kaller
+-- funksjonen direkte for å reparere en gammel, forbigått rad fra før
+-- triggeren fantes, og en manuell kjøring er idempotent. Migrator kaller den
+-- uten SET ROLE (test-oppsettet) — en SET ROLE der ville mistet
 -- tabelleierskapet INSERT-ene under trenger.
+--
+-- Trigger*funksjonen* får ingen egen REVOKE: PostgreSQL sjekker EXECUTE ved
+-- CREATE TRIGGER, ikke ved hver fyring, og et direkte kall utenfor en trigger
+-- avvises av motoren selv («can only be called as trigger»). En REVOKE her
+-- ville derfor ikke stengt noe, bare risikert at fyringen ble nektet.
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) TO disponit_migrator;
 GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT) TO disponit_domains_admin;

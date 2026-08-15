@@ -493,6 +493,12 @@ def test_forbigatt_utfordrer_kan_ikke_godkjennes(migrator):
     uavgjort. Godkjenning gjerdes derfor også mot den gjeldende bindingshaveren.
     AVVISNING står fortsatt åpen — en forbigått utfordrer må kunne ryddes ut.
 
+    PR-015 rydder B ut automatisk (degraderingstriggeren på `hostname_binding`,
+    migrasjon 019 §3.25), så B når normalt aldri dette gjerdet lenger. Gjerdet
+    beholdes og måles likevel: det er den siste skansen dersom en forbigått rad
+    på noe vis står i `avklaring_kreves` mens bindingen ligger hos en annen —
+    derfor gjenskaper testen nettopp den tilstanden direkte.
+
     MUTASJONEN SOM DREPER DENNE: fjern hostname_binding-sjekken i
     `avgjor_domeneovertakelse`."""
     tredje = "t-api-tredje"
@@ -503,14 +509,20 @@ def test_forbigatt_utfordrer_kan_ikke_godkjennes(migrator):
         # B tar over → B i avklaring, bindingen på B.
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (ANNEN_TENANT, h)); a.commit()
-        b_gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
-        # C tar over mens B venter → bindingen flyttes til C. B står urørt.
+        # C tar over mens B venter → bindingen flyttes til C, og B degraderes
+        # i samme transaksjon (PR-015 §3).
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (tredje, h)); a.commit()
         assert _binding(migrator, h) == tredje
-        assert _dkrow(migrator, ANNEN_TENANT, h)[1] == b_gen, \
-            "C sin overtakelse flyttet B sin generasjon (gjerdet ville truffet tilfeldig)"
-        # B sin sak er FORBIGÅTT: godkjenning avvises.
+        assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt", \
+            "den forbigåtte utfordreren ble stående i avklaring"
+        # Gjenskap den forbigåtte-i-avklaring-tilstanden gjerdet finnes for.
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        migrator.execute("UPDATE domenekontroll SET status='avklaring_kreves'"
+                         " WHERE tenant=%s AND hostname=%s", (ANNEN_TENANT, h))
+        migrator.commit()
+        b_gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        # B sin sak er FORBIGÅTT: godkjenning avvises på bindingen.
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,true,'sys')",
                       (ANNEN_TENANT, h, b_gen))

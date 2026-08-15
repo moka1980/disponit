@@ -59,15 +59,15 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     er nettopp derfor §0 validerer i stedet for å normalisere — ellers kunne to
     former av samme navn gitt to idempotensnøkler for én konflikt.
 
-    Kaller ALLTID `degrader_forbigatte_utfordrere` FØRST (Codex): dette er den
-    reelle kalleren `verifiser_domenekontroll()` sin `konflikt:*`-gren mangler
-    (016 lar en forbigått B stå urørt i `avklaring_kreves` når en tredje C tar
-    over). Uten kallet her fantes det INGEN produksjonsvei til funksjonen —
-    kun tester ringte den. Idempotent og hostname-låst i seg selv, så et
-    retry på en allerede eksisterende sak endrer ingenting.
+    Degraderingen av forbigåtte utfordrere (A→B→C, §3) gjøres IKKE herfra
+    (Codex): et kall her hadde ingen virkning, for denne funksjonen har ingen
+    produksjonskaller — konfliktsignalet fra `verifiser_domenekontroll()`
+    håndteres ennå ikke av noen utrullet kodevei. Invarianten hører uansett
+    hjemme på selve overgangen, ikke hos en kaller som må huske den: migrasjon
+    019 §3.25 henger `degrader_forbigatte_utfordrere` på `hostname_binding` —
+    flyttes bindingen, degraderes alle andre i `avklaring_kreves` i samme
+    transaksjon, uansett hvem som utløste overtakelsen.
     """
-    conn.execute("SELECT degrader_forbigatte_utfordrere(%s, %s)",
-                 (hostname, aktor))
     key = idempotensnokkel(hostname, generasjon)
     # Codex: serialiser på den avledede nøkkelen. `revisjonslogg` har kun en
     # IKKE-unik indeks på (tenant, idempotency_key), så to samtidige retry-arbeidere
