@@ -27,6 +27,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 2 | `domeneobservasjonsrunde` + `domeneobservasjon` (nye tabeller) | Observasjonen må bæres av databasen, ikke av kalleren, §2.4 |
 | 3 | `apne_domeneobservasjonsrunde(tenant, hostname)` (ny) | Runden er engangs, kortlevd og bundet til én rad, §2.4 |
 | 4 | `meld_domeneobservasjon(runde, observert_txt)` (ny) | Observatøridentiteten er `session_user`, aldri en parameter, §2.4 |
+| 4b | `hent_apne_observasjonsrunder()` (ny, avgrenset lesekø) | Observatøren må kunne *finne* runden den skal svare på. Uten den kan prosessen autentisere, men aldri oppdage et `runde_id`, §2.4b |
 | 5 | `verifiser_domenekontroll(…, p_runde UUID)` | **Førstegangsverifisering er den farligste veien** — den kan opprette en autorisasjon og utløse en overtakelse. Uten runde er den beviskravsfri, §2.5 |
 | 6 | `revalider_domenekontroll(…, p_runde UUID)` | Arbeideren skal ikke være autoritet, §2.4 |
 | 7 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense uten å miste evidensfristpredikatet, §6 / port 25 |
@@ -274,6 +275,7 @@ eget formål, og runden er uansett engangs.
 | Funksjon | Kalles av | Håndhever |
 |---|---|---|
 | `apne_domeneobservasjonsrunde(tenant, hostname, formal)` → `runde_id` | arbeideren (`disponit_domains_admin`) eller API-et (`disponit`) | Raden må finnes og stå i den statusen formålet krever (`ventende`/`utlopt` for `verifisering`, `verifisert` for `revalidering`, `avklaring_kreves` for `overtakelsesoppgjor`); `challenge_token_hash` må være satt og challengen ikke utløpt; kort TTL; runden er engangs |
+| `hent_apne_observasjonsrunder()` → `SETOF (runde_id, hostname, formal)` | **observatørrollene** `disponit_domeneobservator_*` | Kun `apen`, ikke utløpt, og kun runder kalleren selv ikke alt har meldt inn i; `ORDER BY apnet LIMIT 50`; **ingen `tenant` i utdata** (§2.4b) |
 | `meld_domeneobservasjon(runde_id, observert_txt)` | **observatørrollene** `disponit_domeneobservator_*` | `observator := session_user`; hashen beregnes i DB og må være lik radens `challenge_token_hash`; runden må være `apen` og ikke utløpt |
 | `verifiser_domenekontroll(tenant, hostname, wildcard, aktor, p_runde UUID)` | API-et | Som under, pluss: runden har `formal = 'verifisering'`, gjelder dette `(tenant, hostname)`, er `apen` og ikke utløpt, og har **≥ 2 observasjoner fra distinkte `observator` med samme `txt_hash`** — alt under hostname-låsen, FØR noen status settes eller noen overtakelse utløses |
 | `revalider_domenekontroll(tenant, hostname, aktor, p_runde UUID)` | arbeideren | Samme runde-krav med `formal = 'revalidering'`; så settes tidsstemplet og runden merkes `brukt` |
@@ -290,10 +292,125 @@ den inn i samme runde, skjer ingenting. Klarteksten lagres fortsatt aldri;
 det er hashen som bæres. Observatøridentitetene skrives på
 `domenekontroll_hendelse` som evidens.
 
-De gamle signaturene uten `p_runde` — `revalider_domenekontroll` med tre
-argumenter og `verifiser_domenekontroll` med fire —
-**REVOKE-es fra `disponit_domains_admin` og fra `disponit`** i samme
-migrasjon; ellers består den gamle, ubeviste veien ved siden av den nye.
+### 2.4b Observatøren må kunne finne runden — en avgrenset lesekø
+
+**EXECUTE på `meld_domeneobservasjon` alene er en prosess som ikke kan
+gjøre noe.** Funksjonen tar `runde_id` som første argument, og
+observatøren har hverken SELECT på `domeneobservasjonsrunde`, EXECUTE på
+`apne_domeneobservasjonsrunde` eller noe API som forteller den at en runde
+finnes — runden åpnes av arbeideren eller API-et, i en helt annen prosess.
+Uten en vei til å oppdage `runde_id` og hostnavnet kan observatørunitene
+autentisere og polle i det uendelige uten noen gang å finne noe å svare
+på. Da samles aldri to observasjoner, og §2.4 stopper **all**
+verifisering og all revalidering i stedet for å herde dem. Deploy-avsnittet
+(§6b) sier uttrykkelig at unitene «poller åpne runder»; dette er
+funksjonen de poller.
+
+```sql
+CREATE FUNCTION hent_apne_observasjonsrunder()
+RETURNS TABLE (runde_id UUID, hostname TEXT, formal TEXT)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- Kun observatørrollene. Ikke fordi GRANT-en ikke holder, men fordi
+  -- køen filtrerer på `session_user`: en annen rolle ville fått hele
+  -- listen, og det er ikke det denne funksjonen er til for.
+  IF session_user NOT LIKE 'disponit_domeneobservator@_%' ESCAPE '@' THEN
+    RAISE EXCEPTION 'kun observatørroller kan lese observasjonskøen';
+  END IF;
+  RETURN QUERY
+    SELECT r.runde_id, r.hostname, r.formal
+      FROM public.domeneobservasjonsrunde r
+     WHERE r.status = 'apen' AND r.utloper > now()
+       AND NOT EXISTS (SELECT 1 FROM public.domeneobservasjon o
+                        WHERE o.runde_id = r.runde_id
+                          AND o.observator = session_user)
+     ORDER BY r.apnet
+     LIMIT 50;                      -- avgrenset: køen er arbeid, ikke et register
+END $$;
+```
+
+- **`tenant` returneres ikke.** Observatøren trenger hostnavnet for å
+  slå opp TXT-posten; den trenger ikke å vite hvem som eier det. Uten
+  tenant er utdata en arbeidsliste, ikke `domenekontroll`-porteføljen —
+  som er nøyaktig grensen §6b setter.
+- **`LIMIT 50` og «ikke meldt av meg»** gjør køen selvdrenerende: en
+  observatør som har svart, ser ikke runden igjen, og en observatør som
+  ligger etter kan aldri dra hele tabellen ut i ett kall.
+- **Køen utvider ikke angrepsflaten.** Den lister kun runder som
+  *allerede* er åpnet av en autorisert kaller, den er kortlevd av samme
+  grunn som runden (`utloper`), og den kan verken åpne, avslutte eller
+  omformålsbestemme noe. Restrisikoen er uendret fra §2.4: den ligger hos
+  to samvirkende observatører, ikke hos oppdagelsen av `runde_id`.
+
+### 2.4c Rettighetskontrakten for 019 — REVOKE først, så GRANT
+
+**En ny signatur er et nytt funksjonsobjekt, og nye funksjoner får
+`EXECUTE` for `PUBLIC` som default.** Det gjelder hver eneste funksjon
+019 innfører eller gir en ny parameterliste: `p_runde`-versjonene er ikke
+`CREATE OR REPLACE` av 016/018-funksjonene, de er *nye* objekter ved siden
+av dem. 016 fjerner den defaulten eksplisitt for sine egne funksjoner
+(linje 916–924); gjør ikke 019 det samme, kan enhver rolle i clusteret
+kalle SECURITY DEFINER-verifisering og -overtakelse direkte, og hele
+kapittelet over er dekorasjon. Motsatt: å revoke fra `PUBLIC` uten å
+GRANT-e til de faktiske kallerne gjør API-et og arbeideren ute av stand
+til å kalle dem i det hele tatt. **Begge halvdeler må stå i migrasjonen:**
+
+```sql
+-- 1. Nye objekter: fjern PUBLIC-defaulten
+REVOKE ALL ON FUNCTION apne_domeneobservasjonsrunde(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION hent_apne_observasjonsrunder() FROM PUBLIC;
+REVOKE ALL ON FUNCTION meld_domeneobservasjon(UUID, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION rydd_staged_artefakter(INT) FROM PUBLIC;
+
+-- 2. Minste nødvendige EXECUTE, per kaller i tabellen i §2.4
+GRANT EXECUTE ON FUNCTION apne_domeneobservasjonsrunde(TEXT, TEXT, TEXT)
+  TO disponit_domains_admin, disponit;
+GRANT EXECUTE ON FUNCTION hent_apne_observasjonsrunder()
+  TO disponit_domeneobservator_1, disponit_domeneobservator_2;
+GRANT EXECUTE ON FUNCTION meld_domeneobservasjon(UUID, TEXT)
+  TO disponit_domeneobservator_1, disponit_domeneobservator_2;
+GRANT EXECUTE ON FUNCTION verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT, UUID)
+  TO disponit;                       -- API-et; arbeideren verifiserer ikke
+GRANT EXECUTE ON FUNCTION revalider_domenekontroll(TEXT, TEXT, TEXT, UUID)
+  TO disponit_domains_admin;         -- arbeideren; API-et revaliderer ikke
+GRANT EXECUTE ON FUNCTION avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT, UUID)
+  TO disponit;                       -- behandleren, §4.2b
+GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT)
+  TO disponit_domains_admin;         -- ryddetimeren, §6
+```
+
+**De gamle overloadene må vekk — alle tre, ikke bare to.** Så lenge en
+gammel signatur er kallbar, står den ubeviste veien åpen ved siden av den
+nye:
+
+| Gammel signatur | Hvem har den i dag | Hvorfor den ikke kan bli stående |
+|---|---|---|
+| `revalider_domenekontroll(TEXT, TEXT, TEXT)` | `disponit_domains_admin` (016 linje 929) | Frisker opp et hvilket som helst verifisert domene uten observasjonsrunde, §2.4 |
+| `verifiser_domenekontroll(TEXT, TEXT, BOOLEAN, TEXT)` | `disponit_domains_admin` (016 linje 928) | Oppretter en autorisasjon og **utløser en overtakelse** uten ett DNS-oppslag, §2.5 |
+| `avgjor_domeneovertakelse(TEXT, TEXT, BIGINT, BOOLEAN, TEXT)` | `disponit_domains_admin` (016 linje 931) | **Tildeler domenet til den bundne utfordreren uten attestasjoner og uten runde** — hele §4 forbigått i ett kall |
+
+Den siste er den som gjør de to første til halve arbeid. §6b gjør
+`disponit_domains_admin` om fra `NOLOGIN` til en **credentialed
+arbeiderrolle med DSN**: fra det øyeblikket er 016-s grant på
+femargumentsversjonen ikke en teoretisk vei, men et innloggbart
+sidespor rundt fire-øyne-oppgjøret. Alle tre **REVOKE-es fra
+`disponit_domains_admin` og fra `disponit`** i 019, i samme migrasjon som
+etterfølgerne får sine grants.
+
+`rydd_staged_artefakter()` uten argumenter (016 linje 856) **droppes**
+(`DROP FUNCTION rydd_staged_artefakter()`), den revokes ikke: med en
+default på `p_maks` ville `rydd_staged_artefakter()` blitt et tvetydig
+kall mot to overloads, og timeren ville feilet på `function is not
+unique` i stedet for å rydde. Ingen annen kaller finnes.
+
+`lagre_artefakt_staged()`, `utsted_artefaktkapabilitet()`,
+`innlos_artefaktkapabilitet()` og triggerfunksjonene beholder signaturene
+sine (objekt 9). De er ekte `CREATE OR REPLACE`, som **bevarer ACL-en** —
+016/017-s REVOKE + GRANT står ved lag, og 019 skal verken gjenta eller
+røre dem.
 
 ### 2.5 Førstegangsverifisering er samme port
 
@@ -1028,9 +1145,10 @@ clusterroller (skriptets egen kommentar, linje 30–34) — og
 både preflightes og enables. Uten endringer begge steder er §2 og §6
 spesifikasjoner uten kjøretid.
 
-**Observatørrollene må finnes FØR migrasjonen.** 019 gjør `GRANT EXECUTE
-ON FUNCTION meld_domeneobservasjon(...) TO disponit_domeneobservator_1,
-disponit_domeneobservator_2` — en `GRANT` til en rolle som ikke finnes er
+**Observatørrollene må finnes FØR migrasjonen.** 019 gjør `GRANT EXECUTE`
+på `meld_domeneobservasjon` og `hent_apne_observasjonsrunder` til
+`disponit_domeneobservator_1` og `disponit_domeneobservator_2` (§2.4c)
+— en `GRANT` til en rolle som ikke finnes er
 en feil, ikke en advarsel, og ville stoppet første migrasjonskjøring på
 en fersk installasjon. Rekkefølgen i skriptet er allerede riktig (roller
 linje 39–51, `migrer.py` linje 221); det som mangler er rollene:
@@ -1051,11 +1169,17 @@ linje 39–51, `migrer.py` linje 221); det som mangler er rollene:
   kommentar (linje 60–66) beskriver, gjeninnført av en GRANT som ser ut
   som en formalitet. Egen credential per prosess er også det §2.4 faktisk
   krever.
-- **Observatørene får ikke mer enn det ene.** EXECUTE på
-  `meld_domeneobservasjon`, ingenting annet: ikke
-  `apne_domeneobservasjonsrunde`, ikke revalidering, ikke SELECT på
-  `domenekontroll`. En kompromittert observatør skal kunne lyve om én
-  observasjon, ikke lese domeneporteføljen.
+- **Observatørene får nøyaktig to funksjoner, og ingenting mer.** EXECUTE
+  på `hent_apne_observasjonsrunder()` (§2.4b) og på
+  `meld_domeneobservasjon` — lese køen, svare på den. Ikke
+  `apne_domeneobservasjonsrunde`, ikke revalidering, ikke
+  `avgjor_domeneovertakelse`, ikke SELECT på noen tabell, heller ikke
+  `domeneobservasjonsrunde` selv. En kompromittert observatør skal kunne
+  lyve om én observasjon, ikke lese domeneporteføljen — og køen gir den
+  hostnavn uten tenant, altså arbeidet uten porteføljen. **Én funksjon
+  alene ville vært en prosess som ikke kan gjøre noe:**
+  `meld_domeneobservasjon` tar `runde_id` som argument, og uten køen
+  finnes det ingen vei til den verdien.
 
 **Unitene må inn i den lukkede lista.** Fire nye filer i
 `deploy/staging/`, lagt til `UNITS` i `opp.sh` slik at `preflight_units`
@@ -1083,13 +1207,49 @@ verifiserer dem og `systemctl enable --now` starter dem:
 - Ryddetimeren erstatter ikke `disponit-rydd-pending.timer` (PR-009,
   PENDING-tokens). To ulike jobber, to ulike navn.
 
+### 6c. Runtime-tilgangen til `overtakelse_attestasjon` hører i `migrer.py`
+
+**En inline GRANT i 019 ville blitt vasket bort ved neste deploy.**
+`deploy/staging/migrer.py` kjører `NULLSTILL_TABELLER` — `REVOKE ALL` på
+**hver tabell migrator eier** (linje 42–55) — etter at migrasjonene er
+kjørt, og gjenoppretter deretter kun det som står i den lukkede
+`RETTIGHETER`-blokka (linje 57–114). `overtakelse_attestasjon` opprettes
+av migrator og står ikke i den lista. 016 sier dette rett ut om sine egne
+tabeller: runtime-grants hører i `migrer.py`, «en løs GRANT her ville
+blitt vasket bort» (016 linje 377–380). Uten en linje der ville
+`behandle_domeneattestasjon()` steg 6 — som er en direkte
+`INSERT ... ON CONFLICT DO UPDATE`, ikke et funksjonskall — feilet med
+`permission denied` på aller første stemme, på en base som er nettopp
+deployet og der alle testene er grønne.
+
+```python
+# PR-015: fire øyne ved cross-tenant domenetildeling. Runtime SKRIVER raden
+# direkte (som `menneskelig_attestasjon` i PR-012): saksbindingstriggeren
+# (§1) beviser målet, fornyelsestriggeren låser bindingsfeltene, og RLS +
+# FORCE holder den tenantbundet — derfor er et bordgrant trygt her.
+# UPDATE er nødvendig for fornyelsen (§1); DELETE er forbudt og gis aldri.
+GRANT SELECT, INSERT, UPDATE ON overtakelse_attestasjon TO {rolle};
+```
+
+- **Kun `RETTIGHETER`, ikke `ARBEIDER_RETTIGHETER`.** Attestasjonen
+  skrives av API-behandleren (`disponit`). `disponit_arbeider` attesterer
+  ikke, og skal ikke kunne det.
+- **`domeneobservasjonsrunde` og `domeneobservasjon` får ingen linje.**
+  De nås utelukkende gjennom SECURITY DEFINER-funksjonene i §2.4/§2.4b;
+  et bordgrant der ville gjort observatørkontrakten til pynt — runtime
+  kunne skrevet sin egen observasjon. Samme resonnement som
+  `arbeidskapabiliteter` (migrer.py linje 80–84).
+- **`disponit_domains_admin` berøres ikke av dette.** REVOKE-syklusen
+  kjøres kun for `disponit`, token-admin og `disponit_arbeider`, så 016-s
+  og 019-s EXECUTE-grants til domenerollen overlever som før.
+
 ## 7. De fire portspørsmålene
 
 | Kontroll | Alle veier inn? | Samtidighet? | Riktig vs. velformet? | Lukket format? |
 |---|---|---|---|---|
-| Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; de gamle signaturene uten runde er REVOKE-et fra både `disponit_domains_admin` og `disponit`; én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs og kortlevd | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB; arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)` |
+| Domeneobservasjon (**verifisering OG revalidering**) | Begge inngangene krever `p_runde`; alle tre gamle overloads (verifisering, revalidering **og femarguments-`avgjor_domeneovertakelse`**) er REVOKE-et fra både `disponit_domains_admin` og `disponit`, og hver ny signatur er REVOKE-et fra `PUBLIC` før den grantes til sin ene kaller (§2.4c); én timer, én arbeidernøkkel; manuell kjøring tar samme lås | Advisory-lås; K som `LIMIT`; avledet plan; runden er engangs og kortlevd | Observasjonene skrives av observatørrollene selv (`session_user`), hashes i DB; arbeideren har ikke EXECUTE på `meld_domeneobservasjon` og setter aldri status | `formal` er lukket enum; kaller kun `apne_domeneobservasjonsrunde()` + `verifiser_/revalider_domenekontroll(…, p_runde)` |
 | Overtakelsesavgjørelse | Kun domeneruten (§4.2) → **egen behandler** (§4.2b) → PR-012-runden → funksjonen; den generelle unntaksruten avviser familien, og saken settes `manuell` ved opprettelse så veien i det hele tatt finnes (§3); taperens sak har nøyaktig én lovlig handling (§3.1) | Hostname-lås; hele oppgjøret — inkludert reautoriseringen av hver talt attestant (§4.3) — i én transaksjon; én sak per konflikt­generasjon; ny konflikt = ny `unntak_id` | Målet bevist mot sakens egen idempotensnøkkel (§1); to distinkte aktører som **fortsatt** har `domains:adjudicate` ved tildelingen (§4.3; rollen finnes, §4.1, og døren slipper den gjennom, §4.2), identisk utfall, **begge ferske (72 t)**, og **fersk observasjonsrunde** ved positiv tildeling | Funksjonens enum; PK `(tenant, unntak_id, aktor)` hindrer dobbeltstemme; fornyelse endrer kun `avgitt_ts`/`utfall` + autorisasjonssnapshotet |
-| Drift av det hele (§6b) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables | Roller før migrasjon; timerne tar hver sin advisory-lås; observatørene er separate prosesser | Innlogging per rolle og `is-active` per unit MÅLES på en fersk base (port 28), ikke antas | `UNITS` er en lukket liste; en observatør med feil rolle eller delt resolver nekter å starte |
+| Drift av det hele (§6b/§6c) | Rollene opprettes kun i `oppsett-postgresql.sh` (migrasjoner har forbud); unitene kun i `opp.sh`-s lukkede liste, som preflightes og enables; runtime-bordtilgangen kun i `migrer.py`-s lukkede `RETTIGHETER` (en inline GRANT vaskes bort) | Roller før migrasjon; REVOKE-syklus etter migrasjon, så grants gjenopprettes fra lista; timerne tar hver sin advisory-lås; observatørene er separate prosesser | Innlogging per rolle, `is-active` per unit og **første attestasjonsskriv etter et fullt deploy** MÅLES på en fersk base (port 28/28b), ikke antas | `UNITS` og `RETTIGHETER` er lukkede lister; en observatør med feil rolle eller delt resolver nekter å starte |
 | Opplastingskapabilitet | Kun `POST /v1/oppdrag/claim` | Epoch **og `owner_generation`** under oppdragslåsen ved utstedelse; generasjonen sjekkes på nytt under kapabilitetens radlås i `lagre_artefakt_staged()` | Bundet til serverkontekst, ikke modulens ønske | Ingen registrert artefakttype → tom liste, ingen kapabilitet |
 | Rydding | Én timer, funksjonens positive regel — **inkludert 016-s evidensfristledd**, ikke bare 24 t | Batchgrense i funksjonen (`LIMIT p_maks`) + `FOR UPDATE` mot `bevar_artefakt()` + idempotens | Karantene og `bevart` bevares på tilstand, ikke på alder; sen evidens bevares på oppdragets frist | Kaller kun `rydd_staged_artefakter(500)` |
 
@@ -1123,6 +1283,26 @@ annen tenants autorisasjon ·
 2f **4-argumentsversjonen av `verifiser_domenekontroll` er ikke lenger
 kallbar** for `disponit_domains_admin` eller `disponit` — REVOKE
 verifisert med et direkte kall, ikke antatt ·
+2g **Femargumentsversjonen av `avgjor_domeneovertakelse` er ikke lenger
+kallbar** for `disponit_domains_admin` (som nå ER innloggbar, §6b) eller
+`disponit`: et direkte kall med `(tenant, hostname, unntak_id, true,
+aktor)` → `permission denied`, domeneraden urørt, ingen tildeling. Uten
+denne porten består PR-015 alle fire-øyne-testene og har likevel et
+innloggbart sidespor rundt hele §4 ·
+2h **Ingen 019-funksjon er kallbar for `PUBLIC`.** For hver nye signatur
+i §2.4c: en rolle uten eksplisitt grant (test-rollen holder) kaller
+funksjonen → `permission denied`. Målt med `has_function_privilege('public', …,
+'EXECUTE') = false` for **alle** oppføringene, ikke et utvalg — og
+samtidig at hver navngitt kaller i tabellen faktisk **kan** kalle sin
+egen, så REVOKE-en ikke låser ute driften den skal beskytte ·
+2i **Observatøren finner runden.** `hent_apne_observasjonsrunder()` kalt
+av `disponit_domeneobservator_1` mot en nettopp åpnet runde returnerer
+`(runde_id, hostname, formal)` og **ingen `tenant`**; etter at samme
+observatør har meldt inn, er runden borte fra dens egen kø, men fortsatt
+synlig for `_2`; en utløpt eller `brukt` runde vises ikke; kallet fra
+`disponit_domains_admin` eller `disponit` → nektet. Testen må kjøre hele
+kjeden observatørprosessen faktisk kjører — kø → oppslag → melding —
+ikke starte fra et `runde_id` testen selv kjenner ·
 3 Tre døgn uten svar → attestasjon nektes; raden ikke slettet eller
 `utlopt`-satt av arbeideren ·
 4 Observatørkonfigurasjon uten diversitet (samme operatør, samme nett
@@ -1308,6 +1488,14 @@ vellykket innlogging per rolle. En observatør startet med feil DB-rolle,
 eller med samme resolver-endepunkt som den andre, **skal nekte å
 starte**. Uten denne porten kan hele PR-015 bestå testsuiten og likevel
 ikke revalidere ett eneste domene i drift.
+28b **Rettighetene overlever deployet (§6c).** Kjør `migrer.py` **to
+ganger** på samme base — altså gjennom en hel REVOKE-ALL-syklus etter at
+019 er anvendt — og skriv så en attestasjon som `disponit`:
+`overtakelse_attestasjon` må fortsatt kunne SELECT/INSERT/UPDATE-es.
+Samme kjøring måler negativt: `disponit` har **ikke** INSERT på
+`domeneobservasjon` eller `domeneobservasjonsrunde`. En test som bare
+kjører migrasjonen én gang består selv med en inline GRANT som drift
+vasker bort ved neste deploy.
 
 **Alle tester konstruerer egen tilstand.** Ingen delt fixture.
 
@@ -1331,6 +1519,12 @@ en senere skjev time er legitimt og teller ikke som recovery-feil) ·
 **`runde_brukt_pa_feil_formal = 0`** ·
 **`revalider_3arg_kallbar_for_arbeider = nei`** ·
 **`verifiser_4arg_kallbar = nei`** ·
+**`avgjor_5arg_kallbar = nei`** ·
+**`019_funksjon_kallbar_for_public = 0`** (alle nye signaturer, §2.4c) ·
+**`navngitt_kaller_uten_execute = 0`** (samme liste, motsatt vei) ·
+**`observator_finner_apen_runde = ja`** ·
+**`observasjonsko_lekker_tenant = 0`** ·
+**`observasjonsko_lesbar_for_arbeider_eller_api = 0`** ·
 **`verifisering_uten_2_observatorer = 0`** ·
 **`overtakelse_utlost_uten_observasjonsrunde = 0`** ·
 `godkjenn_med_en_attestasjon = 0` · `samme_aktor_to_stemmer = 0` ·
@@ -1370,6 +1564,8 @@ browsersesjon, ikke direkte funksjonskall) ·
 `karantene_bevart = alle` · `idempotens_kjoring2_slettet = 0` ·
 **`observatorrolle_uten_login_eller_dsn = 0`** ·
 **`nye_timere_installert_og_aktive = alle`** ·
+**`attestasjonsskriv_etter_to_migrer_kjoringer = ok`** ·
+**`runtime_har_skriv_pa_observasjonstabellene = 0`** ·
 **`migrasjon_019_pa_fersk_base_feiler = nei`** ·
 **`observator_startet_med_delt_resolver = 0`**.
 
@@ -1389,13 +1585,16 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
        — platform/core/db/migrations/019_operativt_lag.sql
          (overtakelse_attestasjon m/saksbinding og fornyelse +
           domeneobservasjonsrunde og domeneobservasjon +
-          apne_domeneobservasjonsrunde + meld_domeneobservasjon +
+          apne_domeneobservasjonsrunde + hent_apne_observasjonsrunder +
+          meld_domeneobservasjon +
           verifiser_domenekontroll(p_runde) +
           revalider_domenekontroll(p_runde) + avgjor_domeneovertakelse
           m/flerpartsoppgjør, friskhetskrav og taperoppgjør +
           rydd_staged_artefakter(p_maks) MED 016-s evidensfristledd +
           artefaktkapabilitet.owner_generation m/oppgraderingssekvens og
-          validering i lagre_artefakt_staged),
+          validering i lagre_artefakt_staged +
+          REVOKE/GRANT-blokka for hver ny signatur, REVOKE av de tre gamle
+          overloadene og DROP av rydd_staged_artefakter(), §2.4c),
          platform/core/api/autorisasjon.py (rollen `domeneavgjorer`, §4.1),
          platform/drift/domenerevalidering.py, platform/drift/domeneobservator.py,
          platform/drift/artefaktrydding.py,
@@ -1413,6 +1612,9 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
            m/DSN + `disponit_domains_admin` som LOGIN m/DSN, §6b — uten
            dem feiler 019 på en fersk base og ingen jobb kan autentisere),
          deploy/staging/opp.sh (UNITS utvides med de fire nye unitene, §6b),
+         deploy/staging/migrer.py (RETTIGHETER utvides med
+           `overtakelse_attestasjon`, §6c — uten den vaskes 019-s grant
+           bort av REVOKE-syklusen og første stemme feiler),
          deploy/staging/disponit-domenerevalidering.{service,timer},
          deploy/staging/disponit-artefaktrydding.{service,timer},
          deploy/staging/disponit-domeneobservator-{1,2}.service,
