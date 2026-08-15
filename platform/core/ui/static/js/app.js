@@ -42,17 +42,40 @@ function byttSprak(s) {
   start(s);
 }
 
+// Ruteren overlever ikke skallet sitt (Codex P2). `lagRuter` henger på et
+// globalt `hashchange`, men rendrer inn i det `hoved`-elementet skallet hadde
+// da den ble laget. Bygges skallet på nytt — språkbytte — eller forlates det
+// helt — utlogging, tapt økt — er det elementet løsrevet, og en ruter som
+// fortsatt lytter ville kjørt et helt sett API-kall for å tegne inn i et tre
+// ingen ser. Nøyaktig ÉN ruter skal lytte om gangen: den som eier flaten på
+// skjermen nå.
+let aktivRuter = null;
+
+function riveNedRuter() {
+  if (aktivRuter) aktivRuter.stopp();
+  aktivRuter = null;
+}
+
+// Alle veier tilbake til innlogging går herfra, så ruteren aldri blir stående
+// igjen og lytte på en flate som er borte.
+function tilInnlogging() {
+  riveNedRuter();
+  return visInnlogging();
+}
+
 function bekreftLoggUt() {
   Bekreftelsesdialog({
     tittel: t("ui.logg_ut_bekreft_tittel"),
     tekst: t("ui.logg_ut_bekreft_tekst"),
     primarTekst: t("ui.logg_ut_bekreft_primar"),
     farlig: true,
-    paaPrimar: async () => { await loggUt(); visInnlogging(); },
+    paaPrimar: async () => { await loggUt(); tilInnlogging(); },
   });
 }
 
 function visApp(sesjon, utrulling = {}) {
+  // Før skallet skrives over: riv ned ruteren som eide det forrige.
+  riveNedRuter();
   const app = document.getElementById("app");
   const tilgjengeligeRuter = byggRuter(sesjon);
   const skall = AppShell({
@@ -72,13 +95,14 @@ function visApp(sesjon, utrulling = {}) {
     // viser sin eksplisitte tomtilstand i stedet for å gjette.
     tenanter: Array.isArray(utrulling.tenanter) ? utrulling.tenanter : [],
     moduler: Array.isArray(utrulling.moduler) ? utrulling.moduler : null,
-    paaUautorisert: () => visInnlogging(),
+    paaUautorisert: () => tilInnlogging(),
   };
   // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet
   // rett i adressefeltet rendret admin uten `security:read`, siden `gjeldende()`
   // validerer mot flatekartet — ikke mot menyen.
   const klientruter = lagRuter(skall.hoved, ctx,
     tillatteFlater(tilgjengeligeRuter, FLATER), skall.settAktiv);
+  aktivRuter = klientruter;
   // Enten setter vi hash (og `hashchange` rendrer), ELLER så navigerer vi selv.
   // Begge deler ville rendret flaten to ganger på en dyplenke som
   // `/?visning=oversikt`: to sett API-kall, og en forbigående feil i det ene
@@ -105,9 +129,9 @@ async function start(valgtSprak) {
     const utrulling = await hentUtrullingForSkall(sprak());
     visApp(sesjon, utrulling);
   } catch (e) {
-    if (e instanceof UautorisertFeil) { visInnlogging(); return; }
+    if (e instanceof UautorisertFeil) { tilInnlogging(); return; }
     // Nettverk/annet på øktsjekk: fall til innlogging (ingen økt å stole på).
-    visInnlogging();
+    tilInnlogging();
   }
 }
 
