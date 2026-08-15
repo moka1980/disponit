@@ -188,6 +188,42 @@ def test_oidc_soner_erstatter_den_generelle_ikke_stables():
 
 
 # ---------------------------------------------------------------------------
+# Kroppsgrensen: proxyen må ikke være strammere enn appen på store ruter
+# ---------------------------------------------------------------------------
+
+_ENHET = {"": 1, "k": 1024, "m": 1024 * 1024}
+
+
+def test_nginx_artefaktrute_slipper_gjennom_appens_kroppsgrense():
+    """PR-014b P1: appen fikk en egen, større kroppsgrense for /v1/artefakt,
+    men proxyen beholdt sin server-vide `client_max_body_size 256k`. Nginx
+    svarte da 413 for enhver wire-kropp over 256 KiB FØR appen så den — altså
+    var 1 MiB-artefaktet ruten finnes for uoppnåelig i den ENESTE stien en
+    kontroller har. Testen binder nginx-verdien til appkonstanten så de to
+    tallene ikke kan gli fra hverandre igjen."""
+    from api.app import MAKS_ARTEFAKT_KROPP, MAKS_KROPP, STORE_KROPP_RUTER
+    https = _https()
+    # Den server-vide grensen er fortsatt den STRAMME; unntaket er per rute.
+    assert re.search(r"^\s*client_max_body_size 256k;", https, re.M)
+    assert MAKS_KROPP == 256 * 1024
+
+    for rute in STORE_KROPP_RUTER:
+        blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
+                          https, re.S)
+        assert blokk, f"ingen egen nginx-location for {rute}"
+        krop = blokk.group(1)
+        m = re.search(r"client_max_body_size\s+(\d+)([kKmM]?);", krop)
+        assert m, f"{rute} mangler egen client_max_body_size"
+        grense = int(m.group(1)) * _ENHET[m.group(2).lower()]
+        assert grense >= MAKS_ARTEFAKT_KROPP, (
+            f"nginx slipper {grense} B på {rute}, appen tillater "
+            f"{MAKS_ARTEFAKT_KROPP} B — proxyen avviser med 413 først")
+        # Ruten mister ikke rate-grense eller socket-tillitsgrensen.
+        assert "zone=disponit_general" in krop
+        assert "proxy_pass http://unix:/run/disponit/api.sock;" in krop
+
+
+# ---------------------------------------------------------------------------
 # ACME-tilstandsmaskinen: rekkefølge og idempotens (v2 §3)
 # ---------------------------------------------------------------------------
 

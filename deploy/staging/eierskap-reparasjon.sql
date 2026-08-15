@@ -94,7 +94,23 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'bytt_release(text,text,text,integer,text,text)',    'disponit_modul_eier'),
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
-    ('FUNCTION', 'reaktiver_modul(text,bigint,text)',                'disponit_modul_eier');
+    ('FUNCTION', 'reaktiver_modul(text,bigint,text)',                'disponit_modul_eier'),
+    -- PR-014b: domene/artefakt-funksjonene, eid av disponit_domene_eier.
+    ('FUNCTION', 'utsted_challenge(text,text,boolean,text,text)',     'disponit_domene_eier'),
+    ('FUNCTION', 'verifiser_domenekontroll(text,text,boolean,text)',  'disponit_domene_eier'),
+    ('FUNCTION', 'revalider_domenekontroll(text,text,text)',          'disponit_domene_eier'),
+    ('FUNCTION', 'tilbakekall_domenekontroll(text,text,text,text)',   'disponit_domene_eier'),
+    ('FUNCTION', 'avgjor_domeneovertakelse(text,text,bigint,boolean,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'registrer_artefakttype(text,text,integer,text,text,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'lagre_artefakt_staged(text,bigint,text,text,text,integer,text,bigint,integer,text,bytea,bytea,text,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'promoter_artefakt(uuid,text,bigint,text,bigint,text,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'rydd_staged_artefakter()',                          'disponit_domene_eier'),
+    ('FUNCTION', 'karantenesett_artefakt(uuid,text,bigint)',         'disponit_domene_eier'),
+    ('FUNCTION', 'bevar_artefakt(uuid,text,bigint,text)',                 'disponit_domene_eier'),
+    -- PR-014b CP5: artefakt-opplastingskapabilitet. Den frittstående brenneren
+    -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
+    ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),
+    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier');
 
 DO $$
 DECLARE

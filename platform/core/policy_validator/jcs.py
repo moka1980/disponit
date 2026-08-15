@@ -37,6 +37,22 @@ class Ikkekanoniserbar(TypeError):
     """En verdi JSON ikke kan uttrykke. Aldri en stille konvertering."""
 
 
+#: Maks nøstedybde. Serialisereren er REKURSIV, så uten en egen grense er
+#: bunnen Pythons `sys.setrecursionlimit` — og den treffes som `RecursionError`
+#: (en `RuntimeError`, ikke `Ikkekanoniserbar`), på et sted som avhenger av hvor
+#: dypt i stacken kalleren allerede står. Codex fant konsekvensen: en syntaktisk
+#: gyldig, dypt nøstet rapport på noen få kilobyte ga 500 (intern feil) i stedet
+#: for det dokumenterte `request_feilformet`, og ville dessuten kunne feile ULIKT
+#: for samme dokument avhengig av kallstien. Grensen gjør avvisningen til en
+#: EGENSKAP VED FORMATET: deterministisk, kallstedsuavhengig, og en
+#: valideringsfeil — samme kategori som en ikke-JSON-type.
+#:
+#: 250 nivåer ligger langt over enhver ekte rapport/policy/attestasjon (de
+#: dypeste i repoet er ensifret) og trygt under rekursjonsgrensen på 1000:
+#: ett nivå koster ~2 rammer (`kanoniser` + generator).
+MAKS_DYBDE = 250
+
+
 # --- Strenger --------------------------------------------------------------
 
 #: RFC 8785 §3.2.2.2: kun disse får kort escape. Alle andre kontrolltegn
@@ -125,12 +141,19 @@ def _utf16_nokkel(s: str) -> tuple[int, ...]:
 
 # --- Serialisering ---------------------------------------------------------
 
-def kanoniser(verdi: object) -> str:
+def kanoniser(verdi: object, _dybde: int = 0) -> str:
     """RFC 8785-kanonisk JSON-tekst. Kaster `Ikkekanoniserbar`.
 
     Ingen `default`-parameter, og det er med vilje: en escape hatch her
     ville gjenåpnet nøyaktig hullet `default=str` var.
+
+    `_dybde` er intern: containere teller den opp og avviser over
+    `MAKS_DYBDE` (se konstanten) framfor å la stacken renne over.
     """
+    if _dybde > MAKS_DYBDE:
+        raise Ikkekanoniserbar(
+            f"nøstedybden overstiger {MAKS_DYBDE} — dokumentet kan ikke"
+            " kanoniseres uten å risikere stackoverflyt")
     if verdi is None:
         return "null"
     if verdi is True:
@@ -142,7 +165,7 @@ def kanoniser(verdi: object) -> str:
     if isinstance(verdi, (int, float)):
         return _tall(verdi)
     if isinstance(verdi, (list, tuple)):
-        return "[" + ",".join(kanoniser(v) for v in verdi) + "]"
+        return "[" + ",".join(kanoniser(v, _dybde + 1) for v in verdi) + "]"
     if isinstance(verdi, dict):
         for k in verdi:
             if not isinstance(k, str):
@@ -150,7 +173,8 @@ def kanoniser(verdi: object) -> str:
                     f"objektnøkkelen {k!r} er ikke en streng")
         nokler = sorted(verdi, key=_utf16_nokkel)
         return "{" + ",".join(
-            f"{_streng(k)}:{kanoniser(verdi[k])}" for k in nokler) + "}"
+            f"{_streng(k)}:{kanoniser(verdi[k], _dybde + 1)}"
+            for k in nokler) + "}"
     raise Ikkekanoniserbar(
         f"{type(verdi).__name__} kan ikke kanoniseres — konverter eksplisitt"
         " før signering, aldri stille i serialiseringen")

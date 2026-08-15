@@ -66,6 +66,12 @@ APPEND_ONLY_TRIGGERE = (
     ("verifikasjonsbevis", "bevis_ingen_endring"),
     ("verifikasjonskonflikt", "konflikt_ingen_endring"),
     ("verifikasjonsgenerasjon", "verifikasjonsgenerasjon_overgang"),
+    # PR-014b: domenekontroll er append+status, hendelsen er append-only.
+    # Begge nekter DELETE — som de skal — så oppryddingen må skru dem av.
+    ("domenekontroll", "domenekontroll_ingen_delete"),
+    ("domenekontroll_hendelse", "hendelse_append_only"),
+    ("artefaktkapabilitet", "artefaktkapabilitet_ingen_delete"),
+    ("artefakt", "artefakt_ingen_delete"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -83,11 +89,13 @@ APPEND_ONLY_TRIGGERE = (
 #: PR-007-tabellene FØRST: `verifikasjonsgenerasjon` og
 #: `verifikasjonsbevis` har fremmednøkler til `unntak`, og generasjonen
 #: peker i tillegg på beviset.
-RYDDETABELLER = ("verifikasjonskonflikt", "verifikasjonsgenerasjon",
+RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
+                 "verifikasjonskonflikt", "verifikasjonsgenerasjon",
                  "verifikasjonsbevis",
                  "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
                  "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
-                 "policyer", "tenant_nokler", "frekvens_hendelser")
+                 "policyer", "tenant_nokler", "frekvens_hendelser",
+                 "domenekontroll_hendelse", "domenekontroll")
 
 
 def _rydd_kapabiliteter(migrator, tenanter) -> None:
