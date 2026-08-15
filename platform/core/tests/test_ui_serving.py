@@ -298,3 +298,35 @@ def test_oppsett_miljo_folger_samme_tolkning_som_policyregisteret(monkeypatch):
         monkeypatch.setenv("DISPONIT_MILJO", verdi)
         assert k.get("/ui/oppsett.json").json()["miljo"] \
             == miljomodul.gjeldende_miljo(), verdi
+
+
+def test_utrullingen_leverer_faktisk_DISPONIT_MILJO_til_api_prosessen():
+    """Porten mot en variabel bare testene har (Codex P1).
+
+    Tolkningen over kan være aldri så eksakt: leverer ikke UTRULLINGEN
+    verdien, leser prosessen den aldri. `lag_app()` hydrerer kun de
+    credentialene unitten laster (`db.hemmeligheter.last_credentials` over
+    `$CREDENTIALS_DIRECTORY`), så en `DISPONIT_MILJO` i staging.env uten
+    `skriv_cred` + `LoadCredential` er usynlig for både
+    `policyregister.tillatte_statuser` og `/ui/oppsett.json` — begge tar
+    fallbacken, uansett hva verten mener den er. Det er ikke en feil noen
+    test av tolkningen kan se, og heller ikke en utrullingen rapporterer:
+    den måler API/M-37-readiness, og prosessen starter helt fint uten.
+
+    Kjeden pinnes derfor helt fram til unitten: skrives credentialen, og
+    lastes den av den unitten som faktisk kjører API-et.
+    """
+    rot = Path(uiserver._ROT)
+    opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    unit = (rot / "deploy/staging/disponit-api.service").read_text(
+        encoding="utf-8")
+    assert re.search(r"^skriv_cred api DISPONIT_MILJO\s", opp, re.M), \
+        "opp.sh materialiserer ikke DISPONIT_MILJO som credential for api"
+    assert "LoadCredential=DISPONIT_MILJO:/etc/disponit/api/DISPONIT_MILJO" \
+        in unit, "disponit-api.service laster ikke DISPONIT_MILJO"
+    # …og løypa kan ikke skrive `produksjon` på staging-maskinen: gaten står
+    # FØR første mutasjon, som de andre miljøfil-portene i opp.sh.
+    gate = opp.index('[ "${DISPONIT_MILJO:-staging}" = "staging" ]')
+    assert gate < opp.index("HERFRA MUTERES SYSTEMET"), \
+        "miljøporten står etter første mutasjon — da er systemet alt endret"
+    assert gate < opp.index("skriv_cred api DISPONIT_MILJO")

@@ -118,6 +118,27 @@ if ! RESOLVERFEIL=$( set -a; . "$MILJOFIL"; set +a
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# PR-045 (Codex P1): MILJØPORTEN. Denne løypa installerer STAGING — den heter
+# det, den leser /etc/disponit/staging.env, og docs/DEPLOY.md utpeker maskinen
+# som staging-serveren. `DISPONIT_MILJO=produksjon` her ville derfor vært en
+# påstand om maskinen som ikke stemmer, og den påstanden er ikke uskyldig i
+# noen retning: registeret ville sluttet å la `utkast` binde beslutninger
+# (altså sluttet å teste det staging er til for), og forsiden ville lovet
+# «Tilgjengelig» til en besøkende på en maskin uten kundedata. Gaten står FØR
+# første mutasjon, så en slik miljøfil stopper utrullingen i stedet for å bli
+# skrevet inn i en credential. Uspesifisert er greit — da gjelder `staging`.
+if ! ( set -a; . "$MILJOFIL"; set +a
+       [ "${DISPONIT_MILJO:-staging}" = "staging" ] ); then
+  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er ikke 'staging'."
+  echo "opp.sh er staging-løypa: den ruller ut på maskinen docs/DEPLOY.md"
+  echo "utpeker som staging-serveren, mens produksjon er en EGEN VPS med"
+  echo "kunder og ekte data. En annen verdi her ville fått policyregisteret"
+  echo "til å slutte å godta 'utkast' (staging tester da ikke lenger det den"
+  echo "er til for) og forsiden til å love moduler 'Tilgjengelig' på en"
+  echo "maskin uten kundedata. Fjern linjen, eller sett den til 'staging'."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 
 # ============================================================
 # HERFRA MUTERES SYSTEMET — gaten over er passert.
@@ -162,6 +183,20 @@ skriv_cred api DISPONIT_SEMANTIKK_MILJO "$(PYTHONPATH="$KILDE/platform/core" \
 # men hydreres til os.environ via samme LoadCredential-vei. Tomme = default.
 skriv_cred api DISPONIT_UI_PROVIDER    "${DISPONIT_UI_PROVIDER:-}"
 skriv_cred api DISPONIT_UI_IDP_ORIGINS "${DISPONIT_UI_IDP_ORIGINS:-}"
+# PR-045 (Codex P1): MILJØET prosessen kjører i. `platform/core/miljo` er den
+# ene tolkningen av variabelen, og TO ting leser den: hvilke policystatuser som
+# får binde en beslutning (`api.policyregister.tillatte_statuser`), og om
+# forsiden kan love en modul til en kunde (`/ui/oppsett.json`). Uten denne
+# linjen nådde verdien ALDRI prosessen — `lag_app()` hydrerer kun de
+# credentialene unitten laster, så begge leddene tok fallbacken uansett hva
+# som sto i miljøfila. Da var `DISPONIT_MILJO` i praksis en variabel bare
+# testene hadde.
+#
+# Verdien er `staging` og kan ikke være noe annet HER: dette er
+# staging-løypa, gaten over avviser en miljøfil som påstår noe annet, og
+# `docs/DEPLOY.md` reserverer produksjon for en egen VPS. En
+# produksjonsutrulling får sin egen løype som skriver sin egen verdi.
+skriv_cred api DISPONIT_MILJO          "${DISPONIT_MILJO:-staging}"
 # Arbeideren får sin EGEN DB-rolle (v2 §3) når DISPONIT_ARBEIDER_URL er
 # satt av oppsett-postgresql.sh; ellers deler den runtime-DSN-en og det
 # rapporteres som avvik nederst.
