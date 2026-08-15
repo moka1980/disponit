@@ -4,7 +4,7 @@
 import { sett } from "./dom.js";
 import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
 import { hentJson, hentUtrullingForSkall, loggUt, UautorisertFeil } from "./api.js";
-import { AppShell, sikreLiveRegion } from "./komponenter.js";
+import { AppShell, sikreLiveRegion, lokaliserSkiplenke } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
 import { lagRuter } from "./ruter.js";
 import { visInnlogging } from "./innlogging.js";
@@ -23,11 +23,6 @@ const FLATER = {
   policyadmin: visPolicyadmin, kundeadmin: visKundeadmin,
   admin: visAdmin,
 };
-
-function lokaliserSkiplenke() {
-  const l = document.querySelector(".hoppelenke");
-  if (l) l.textContent = t("ui.hopp_til_innhold");
-}
 
 // Ruteren eier en `hashchange`-lytter på `window`, og den overlever skallet
 // sitt (Codex P2 til PR #42): et språkbytte — og en utlogging — bygger `#app`

@@ -6,7 +6,7 @@
 import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
-import { Feiltilstand } from "./komponenter.js";
+import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel, settProduksjonsmiljo,
   dataSvarNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
@@ -258,6 +258,11 @@ export async function visInnlogging(opsjoner = {}) {
         t("site.login.admin_tekst"), t("site.login.admin_knapp"))));
 
   sett(app, hoved);
+  // Hoppelenken lever utenfor `#app` og ble derfor ikke med i rendringen over
+  // (Codex P2). Det publike språkbyttet går rett hit uten å innom `start()` i
+  // `app.js`, så flaten må lokalisere chromet rundt seg selv — ellers står
+  // sidens FØRSTE tastaturkontroll igjen på forrige språk.
+  lokaliserSkiplenke();
   app.setAttribute("aria-busy", "false");
   document.documentElement.setAttribute("data-visning", "landing");
 

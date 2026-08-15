@@ -268,6 +268,37 @@ test("Landing: to raske trykk på språkknappen rendrer flaten ÉN gang", async 
   }
 });
 
+test("Landing: hoppelenken bytter språk sammen med flaten", async () => {
+  // Codex P2: `.hoppelenke` står i `index.html`, altså UTENFOR `#app`, og det
+  // publike språkbyttet rendrer bare `#app`. Lokaliseringen lå privat i
+  // `app.js` og ble bare kalt fra oppstarten BAK innlogging, så en besøkende
+  // som byttet til engelsk fikk en side der den aller første tastaturkontrollen
+  // fortsatt sa «Hopp til innhold».
+  const app = nyttAppBrett();
+  const hopp = document.createElement("a");
+  hopp.className = "hoppelenke";
+  hopp.href = "#hovedinnhold";
+  hopp.textContent = "Hopp til innhold";
+  app.parentNode.insertBefore(hopp, app);
+  try {
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    assert.equal(hopp.textContent, NB["ui.hopp_til_innhold"]);
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+
+    assert.equal(hopp.textContent, EN["ui.hopp_til_innhold"],
+      "hoppelenken sto igjen på forrige språk etter det publike byttet");
+  } finally {
+    hopp.remove();
+    try { window.localStorage.removeItem("disponit_sprak"); } catch { /* nektet */ }
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Landing: datasvaret leses ved rendring, ikke ved import", async () => {
   // Codex P2: spørsmålslisten var en modulKONSTANT, så `dataSvarNokkel()` ble
   // lest da modulen ble lastet — før `/ui/oppsett.json` hadde svart og

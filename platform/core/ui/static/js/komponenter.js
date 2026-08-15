@@ -117,6 +117,22 @@ export function VarselBanner({ art = "info", tekst } = {}) {
     el("span", { text: tekst || "" }));
 }
 
+// --- Sidechrome utenfor #app -----------------------------------------------
+// Hoppelenken (WCAG 2.4.1) står i `index.html`, altså UTENFOR `#app`, og
+// overlever derfor hver eneste flate. Den hører dermed ingen flate til — men
+// den bærer tekst, og teksten må følge språket.
+//
+// Funksjonen lå privat i `app.js` og ble bare kalt fra oppstarten bak
+// innlogging (Codex P2 til PR #42). Den PUBLIKE språkvelgeren rendrer bare
+// `#app` på nytt, så en besøkende som byttet til engelsk fikk en side der
+// første tastaturkontroll fortsatt sa «Hopp til innhold» — og motsatt vei på
+// en side som startet på engelsk. Regelen den nå bærer: hver flate som
+// rendrer på et nytt språk lokaliserer også chromet rundt seg.
+export function lokaliserSkiplenke() {
+  const l = document.querySelector(".hoppelenke");
+  if (l) l.textContent = t("ui.hopp_til_innhold");
+}
+
 // --- LiveRegion (én aria-live-region for asynkrone meldinger) --------------
 let _live = null;
 export function sikreLiveRegion() {
