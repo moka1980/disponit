@@ -4,7 +4,7 @@
 // provider_id kommer fra /ui/oppsett.json (deploy-satt per arbeidsområde),
 // aldri hardkodet i klienten.
 import { el, sett } from "./dom.js";
-import { t, sprak, lagreSprak } from "./i18n.js";
+import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
@@ -47,10 +47,24 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // koden bar (Codex P2) — endres et svar her, sjekk kilden først.
 // Språkvalget må finnes FØR innlogging: en besøkende som ikke leser norsk
 // skal kunne lese tilbudet, ikke bare finne bryteren etterpå — den lå bare i
-// `AppShell`, altså bak en økt. Samme mekanikk som app-skallet bruker
-// (`lagreSprak` + reload): valget lagres, og siden rendres på nytt med det nye
-// locale-settet. En knapp per språk, ikke en `select`, fordi det er to valg og
-// begge skal være synlige — da ser man at engelsk FINNES uten å åpne noe.
+// `AppShell`, altså bak en økt. En knapp per språk, ikke en `select`, fordi
+// det er to valg og begge skal være synlige — da ser man at engelsk FINNES
+// uten å åpne noe.
+//
+// Byttet LAGRER, men LITER IKKE PÅ at lagringen gikk (Codex P2). `lagreSprak`
+// svelger et nektet `localStorage` — privat modus, blokkerte tredjeparts-
+// cookies, en herdet nettleser — og en `location.reload()` ville da lest
+// `index.html` sin `data-sprak="nb"` og gitt norsk tilbake. Nøyaktig de
+// brukerne som trenger knappen mest ville sittet fast. Locale-settet lastes
+// derfor rett inn i modulen og flaten rendres på nytt: valget lever i økten
+// uansett hva lageret svarer, og lagringen er kun det som gjør at det
+// overlever et nytt besøk.
+async function byttTil(s) {
+  lagreSprak(s);              // best effort — kan være nektet, og det er greit
+  await lastI18n(s);          // kilden til sannhet for DENNE økten
+  await visInnlogging({ fokuserSprak: true });
+}
+
 function sprakvelger() {
   const valgt = sprak();
   return el("nav", { class: "site-sprak", "aria-label": t("ui.sprak") },
@@ -61,12 +75,7 @@ function sprakvelger() {
         text: t(`ui.sprak.${s}`),
       });
       if (s === valgt) knapp.setAttribute("aria-current", "true");
-      else {
-        knapp.addEventListener("click", () => {
-          lagreSprak(s);
-          window.location.reload();
-        });
-      }
+      else knapp.addEventListener("click", () => { byttTil(s); });
       return knapp;
     }));
 }
@@ -107,7 +116,7 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
   return kort;
 }
 
-export async function visInnlogging() {
+export async function visInnlogging(opsjoner = {}) {
   const app = document.getElementById("app");
   let provider = null;
   try {
@@ -212,4 +221,13 @@ export async function visInnlogging() {
   sett(app, hoved);
   app.setAttribute("aria-busy", "false");
   document.documentElement.setAttribute("data-visning", "landing");
+
+  // Knappen brukeren nettopp trykket på ble skrevet ut av DOM-en sammen med
+  // resten av flaten. Uten dette havner fokus på `<body>`, og en som styrer
+  // med tastatur må tabbe seg inn i siden på nytt for å se at byttet virket.
+  // Fokus legges på det nå valgte språket — samme sted, ny tilstand.
+  if (opsjoner.fokuserSprak) {
+    const aktiv = app.querySelector('.site-sprak-knapp[aria-current="true"]');
+    if (aktiv) aktiv.focus();
+  }
 }

@@ -31,10 +31,18 @@ const EN = JSON.parse(readFileSync(
 
 settI18nForTest(NB, "nb");
 
+const LOCALER = { nb: NB, en: EN };
+
 globalThis.fetch = async (url) => {
   const sti = url.split("?")[0];
   if (sti === "/ui/oppsett.json") {
     return { ok: true, status: 200, json: async () => ({ provider_id: "google" }) };
+  }
+  // Språkbyttet på forsiden går gjennom `lastI18n`, altså et ekte
+  // locale-oppslag — serveres her fra de samme filene serveren serverer.
+  const locale = sti.match(/^\/ui\/locale\/(nb|en)$/);
+  if (locale) {
+    return { ok: true, status: 200, json: async () => LOCALER[locale[1]] };
   }
   return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
 };
@@ -137,6 +145,56 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
   assert.notEqual(siteTilbudMerke(true).className,
     siteTilbudMerke(false).className,
     "tilgjengelig og kommer deler klasse — da skiller ingenting dem visuelt");
+});
+
+test("Landing: språkbyttet virker når localStorage er nektet", async () => {
+  // Codex P2: byttet lagret valget og kjørte `location.reload()`. Nektet
+  // nettleseren lagringen — privat modus, blokkerte tredjepartscookies, en
+  // herdet nettleser — svelget `lagreSprak` feilen, og reloaden leste
+  // `index.html` sin `data-sprak="nb"`: siden kom tilbake på norsk. Den
+  // besøkende som ikke leser norsk kom seg altså ALDRI til engelsk.
+  //
+  // Riggen her er nøyaktig den tilstanden: `localStorage` kaster på både
+  // lesing og skriving, som i en nettleser med lagring avslått.
+  const ekte = globalThis.localStorage;
+  const nektende = {
+    getItem() { throw new Error("lagring nektet"); },
+    setItem() { throw new Error("lagring nektet"); },
+  };
+  Object.defineProperty(globalThis, "localStorage",
+    { value: nektende, configurable: true, writable: true });
+  Object.defineProperty(window, "localStorage",
+    { value: nektende, configurable: true, writable: true });
+  try {
+    const app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    assert.ok(app.textContent.includes(NB["site.hero.tittel"]));
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    assert.ok(engelsk, "ingen knapp for engelsk på forsiden");
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+      "forsiden ble aldri engelsk — byttet lente seg på lagringen");
+    assert.ok(!app.textContent.includes(NB["site.hero.tittel"]),
+      "norsk innhold står igjen etter byttet");
+    assert.equal(document.documentElement.getAttribute("lang"), "en",
+      "<html lang> følger ikke det valgte språket");
+    // Fokus følger med: knappen brukeren trykket på ble skrevet ut av DOM-en,
+    // og uten dette må en tastaturbruker tabbe seg inn i siden på nytt.
+    const naavaerende = app.querySelector('.site-sprak-knapp[aria-current="true"]');
+    assert.equal(document.activeElement, naavaerende,
+      "fokus havnet ikke på det valgte språket etter byttet");
+  } finally {
+    Object.defineProperty(globalThis, "localStorage",
+      { value: ekte, configurable: true, writable: true });
+    Object.defineProperty(window, "localStorage",
+      { value: ekte, configurable: true, writable: true });
+    settI18nForTest(NB, "nb");
+  }
 });
 
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
