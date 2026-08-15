@@ -59,9 +59,13 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // derfor rett inn i modulen og flaten rendres på nytt: valget lever i økten
 // uansett hva lageret svarer, og lagringen er kun det som gjør at det
 // overlever et nytt besøk.
+// `null` fra `lastI18n` betyr at et NYERE valg overtok mens dette settet ble
+// hentet (Codex P2). Da skal denne omgangen ikke rendre: den ville tegnet
+// forsiden på nytt fra det nye locale-settet, men flyttet fokus til knappen
+// for sitt eget, forlatte språk.
 async function byttTil(s) {
   lagreSprak(s);              // best effort — kan være nektet, og det er greit
-  await lastI18n(s);          // kilden til sannhet for DENNE økten
+  if (await lastI18n(s) === null) return;   // forbigått av et nyere valg
   await visInnlogging({ fokuserSprak: true });
 }
 

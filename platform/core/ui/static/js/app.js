@@ -113,22 +113,45 @@ function visApp(sesjon, utrulling = {}) {
   else klientruter.naviger();
 }
 
+// BARE DEN SISTE OMSTARTEN FÅR TEGNE (Codex P2). `byttSprak` venter ikke på
+// `start`, og språkvelgeren i skallet står åpen hele veien mens locale, økt og
+// utrulling hentes. På en treg linje rekker brukeren å velge om igjen, og da
+// løper to omstarter side om side gjennom fire ventepunkter. Uten et skille
+// vant den som tilfeldigvis kom sist i mål — altså kunne det FØRSTE valget
+// rendre over det andre, og `_kart`, `<html lang>` og den markerte knappen
+// ende på hvert sitt språk.
+//
+// `omstartNr` er den ene sannheten om hvilket valg som gjelder: `start` teller
+// den opp med én gang, og etter HVERT ventepunkt sjekker den at den fortsatt
+// er den siste. Er den ikke det, trekker den seg stille — inkludert på vei til
+// innlogging, for et fall tilbake fra en forlatt omstart skal ikke rive ned
+// flaten et nyere valg holder på å bygge. Locale-settet er vernet på samme vis
+// inne i `lastI18n`, som returnerer `null` når det ble forbigått.
+let omstartNr = 0;
+
 // `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
 // da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
 // `data-sprak` → nettleseren → nb).
 async function start(valgtSprak) {
-  await lastI18n(valgtSprak || velgSprak());
+  const nr = ++omstartNr;
+  const gjelderFortsatt = () => nr === omstartNr;
+
+  if (await lastI18n(valgtSprak || velgSprak()) === null) return;
+  if (!gjelderFortsatt()) return;
   lokaliserSkiplenke();
   try {
     const sesjon = await hentJson("/v1/sesjon");
+    if (!gjelderFortsatt()) return;
     // Utrullingen hentes ETTER at økten er bekreftet, og en feil her felles
     // ikke appen: alt annet enn 401 betyr bare at tenantdata mangler — flatene
     // har en tomtilstand for nettopp det. 401 slukes IKKE (se
     // `hentUtrullingForSkall`): økten kan ha blitt borte mellom de to kallene,
     // og da hører den hjemme i `catch`-en under, ikke i et tomt svar.
     const utrulling = await hentUtrullingForSkall(sprak());
+    if (!gjelderFortsatt()) return;
     visApp(sesjon, utrulling);
   } catch (e) {
+    if (!gjelderFortsatt()) return;
     if (e instanceof UautorisertFeil) { tilInnlogging(); return; }
     // Nettverk/annet på øktsjekk: fall til innlogging (ingen økt å stole på).
     tilInnlogging();
