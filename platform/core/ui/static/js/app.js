@@ -29,11 +29,17 @@ function lokaliserSkiplenke() {
   if (l) l.textContent = t("ui.hopp_til_innhold");
 }
 
+// Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).
+// `lagreSprak` svelger et nektet `localStorage` — privat modus, blokkerte
+// tredjepartscookies, en herdet nettleser — og `location.reload()` ville da
+// startet appen på nytt med det GAMLE språket, uten et eneste varsel.
+// I stedet kjøres oppstarten på nytt med språket som argument: samme vei som
+// ved første last (locale, skiplenke, økt, utrulling, skall), men valget bæres
+// i modulen i stedet for i lageret. Lagringen er nå kun det som gjør at
+// valget overlever til NESTE besøk.
 function byttSprak(s) {
-  // Enkelt og korrekt: lagre valg og last på nytt (re-henter locale + rendrer
-  // alt på det nye språket).
   lagreSprak(s);
-  window.location.reload();
+  start(s);
 }
 
 function bekreftLoggUt() {
@@ -83,8 +89,11 @@ function visApp(sesjon, utrulling = {}) {
   else klientruter.naviger();
 }
 
-async function start() {
-  await lastI18n(velgSprak());
+// `valgtSprak` settes KUN av `byttSprak`. Ved første last er den udefinert, og
+// da gjelder den vanlige rekkefølgen i `velgSprak` (lagret valg → dokumentets
+// `data-sprak` → nettleseren → nb).
+async function start(valgtSprak) {
+  await lastI18n(valgtSprak || velgSprak());
   lokaliserSkiplenke();
   try {
     const sesjon = await hentJson("/v1/sesjon");

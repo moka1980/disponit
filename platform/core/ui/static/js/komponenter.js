@@ -170,11 +170,13 @@ export function visStatus(container, tilstand) {
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
                           paaSprak, paaLoggUt } = {}) {
-  // Språkvelger
+  // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
+  // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
+  // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
   const velger = el("select", { class: "sprakvelger",
     "aria-label": t("ui.sprak") });
   for (const s of ["nb", "en"]) {
-    const opt = el("option", { value: s, text: t(`ui.sprak.${s}`) });
+    const opt = el("option", { value: s, lang: s, text: t(`ui.sprak.${s}`) });
     if (s === valgtSprak) opt.setAttribute("selected", "");
     velger.append(opt);
   }

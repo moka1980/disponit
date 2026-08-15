@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visInnlogging } from "../static/js/innlogging.js";
+import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
 import { TILBUD, erTilgjengelig } from "../static/js/plattformdata.js";
@@ -31,10 +32,18 @@ const EN = JSON.parse(readFileSync(
 
 settI18nForTest(NB, "nb");
 
+const LOCALER = { nb: NB, en: EN };
+
 globalThis.fetch = async (url) => {
   const sti = url.split("?")[0];
   if (sti === "/ui/oppsett.json") {
     return { ok: true, status: 200, json: async () => ({ provider_id: "google" }) };
+  }
+  // Språkbyttet på forsiden går gjennom `lastI18n`, altså et ekte
+  // locale-oppslag — serveres her fra de samme filene serveren serverer.
+  const locale = sti.match(/^\/ui\/locale\/(nb|en)$/);
+  if (locale) {
+    return { ok: true, status: 200, json: async () => LOCALER[locale[1]] };
   }
   return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
 };
@@ -82,9 +91,16 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
   assert.ok(app.textContent.includes(t("site.problem_tittel")));
   assert.ok(app.textContent.includes(t("site.svar_tittel")));
   assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
-  // Driftsvokabularet skal IKKE nå en anonym besøkende.
-  assert.ok(!app.textContent.includes(t("site.modul.m37.navn")),
-    "internt modulnavn på den publike forsiden");
+  // Hele produktomfanget skal være synlig: elleve områder, 45 modulnavn.
+  assert.ok(app.textContent.includes(t("site.katalog_tittel")));
+  assert.ok(app.textContent.includes(t("site.omrade.okonomi")));
+  assert.ok(app.textContent.includes(t("site.katalog.m42.navn")),
+    "modulkatalogen mangler på forsiden");
+  // …men DRIFTSVOKABULARET skal ikke nå en anonym besøkende. Skillet er ikke
+  // «modul» mot «ikke modul»: navnene ER tilbudet. Det som ikke hører hjemme
+  // er de interne merkelappene — modulnumre og byggeregnskap.
+  assert.ok(!/\bM-\d+\b/.test(app.textContent),
+    "internt modulnummer på den publike forsiden");
   assert.ok(!/\b0\/45\b/.test(app.textContent),
     "byggeregnskap på den publike forsiden");
   const retur = [...app.querySelectorAll('input[name="retursti"]')]
@@ -132,6 +148,79 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
     "tilgjengelig og kommer deler klasse — da skiller ingenting dem visuelt");
 });
 
+test("Landing: hvert språknavn er merket med sitt eget språk", async () => {
+  // Codex P2: begge etikettene arvet sidens `lang`. På den norske forsiden ble
+  // «English» dermed uttalt med norsk uttale av en skjermleser, og etter
+  // byttet ble «Norsk» uttalt som engelsk. Disse to knappene er nettopp
+  // kontrollen en bruker trenger for å komme seg UT av et språk de ikke
+  // forstår — de er de siste som tåler å bli lest feil.
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+  const merking = [...app.querySelectorAll(".site-sprak-knapp")]
+    .map((k) => [k.getAttribute("lang"), k.textContent]);
+  assert.deepEqual(merking, [["nb", NB["ui.sprak.nb"]], ["en", NB["ui.sprak.en"]]],
+    "språkknappene mangler sitt eget lang — etiketten arver sidens språk");
+  // Samme krav i skallet bak innlogging: der er velgeren en <select>, og
+  // valgene arvet skallets lang på nøyaktig samme måte.
+  const skall = AppShell({ tenant: "acme", ruter: [], aktiv: "oversikt",
+    sprak: "nb" });
+  const valg = [...skall.rot.querySelectorAll(".sprakvelger option")]
+    .map((o) => [o.getAttribute("lang"), o.textContent]);
+  assert.deepEqual(valg, [["nb", NB["ui.sprak.nb"]], ["en", NB["ui.sprak.en"]]],
+    "språkvalgene i AppShell mangler sitt eget lang");
+});
+
+test("Landing: språkbyttet virker når localStorage er nektet", async () => {
+  // Codex P2: byttet lagret valget og kjørte `location.reload()`. Nektet
+  // nettleseren lagringen — privat modus, blokkerte tredjepartscookies, en
+  // herdet nettleser — svelget `lagreSprak` feilen, og reloaden leste
+  // `index.html` sin `data-sprak="nb"`: siden kom tilbake på norsk. Den
+  // besøkende som ikke leser norsk kom seg altså ALDRI til engelsk.
+  //
+  // Riggen her er nøyaktig den tilstanden: `localStorage` kaster på både
+  // lesing og skriving, som i en nettleser med lagring avslått.
+  const ekte = globalThis.localStorage;
+  const nektende = {
+    getItem() { throw new Error("lagring nektet"); },
+    setItem() { throw new Error("lagring nektet"); },
+  };
+  Object.defineProperty(globalThis, "localStorage",
+    { value: nektende, configurable: true, writable: true });
+  Object.defineProperty(window, "localStorage",
+    { value: nektende, configurable: true, writable: true });
+  try {
+    const app = nyttAppBrett();
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    assert.ok(app.textContent.includes(NB["site.hero.tittel"]));
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    assert.ok(engelsk, "ingen knapp for engelsk på forsiden");
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+      "forsiden ble aldri engelsk — byttet lente seg på lagringen");
+    assert.ok(!app.textContent.includes(NB["site.hero.tittel"]),
+      "norsk innhold står igjen etter byttet");
+    assert.equal(document.documentElement.getAttribute("lang"), "en",
+      "<html lang> følger ikke det valgte språket");
+    // Fokus følger med: knappen brukeren trykket på ble skrevet ut av DOM-en,
+    // og uten dette må en tastaturbruker tabbe seg inn i siden på nytt.
+    const naavaerende = app.querySelector('.site-sprak-knapp[aria-current="true"]');
+    assert.equal(document.activeElement, naavaerende,
+      "fokus havnet ikke på det valgte språket etter byttet");
+  } finally {
+    Object.defineProperty(globalThis, "localStorage",
+      { value: ekte, configurable: true, writable: true });
+    Object.defineProperty(window, "localStorage",
+      { value: ekte, configurable: true, writable: true });
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2, 37],
@@ -151,7 +240,7 @@ test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", a
 });
 
 test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => {
-  // Bjørkli er tildelt M-1 og M-2. Da skal M-37 og M-38 IKKE stå på flaten.
+  // Kunden er tildelt M-1 og M-2. Da skal M-37 og M-38 IKKE stå på flaten.
   // Ingen av de to er i drift (manifestene sier `ikke_i_drift`), så «aktive
   // moduler» er 0 og «under arbeid» er 2 — kundens to, ikke katalogens.
   const h = nyHoved();

@@ -321,3 +321,45 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--card); color: var(--ink); cursor: pointer; }
 .mal-kort:hover { border-color: var(--info); }
+
+/* Språkvalg på den publike forsiden. Ligger øverst til høyre, over heltet:
+   en besøkende som ikke leser norsk skal se at engelsk finnes uten å lete.
+   Begge valgene er synlige knapper — en `select` ville skjult at det andre
+   språket i det hele tatt fantes bak et klikk. */
+.site-sprak {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+
+.site-sprak-knapp {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.site-sprak-knapp:hover { border-color: var(--info); }
+
+/* Det valgte språket er ikke en knapp å trykke på — det er en tilstand.
+   Markeringen er både flate, kant OG vekt, så den ikke hviler på farge alene. */
+.site-sprak-knapp.valgt {
+  background: var(--card);
+  border-color: var(--info);
+  color: var(--ink);
+  cursor: default;
+  font-weight: 600;
+}
+
+/* Modulkatalogen: elleve områder med sine moduler. Tett liste uten kulepunkt-
+   innrykk, så 45 navn kan leses i tre kolonner uten å bli en mur. */
+.site-list-tett {
+  font-size: 0.95em;
+  gap: 0;
+}
+
+.site-list-tett li { padding: 0.15rem 0; }
