@@ -236,6 +236,17 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
                 (tenant, unntak_id, hostname, utfall, vinnende.strip(),
                  aktor, generasjon_ved_opprettelse,
                  bruker_id)).fetchone()[0]
+            # Codex (P2): tallet leses i SAMME transaksjon som stemmen, mens
+            # domeneraden fortsatt er låst av funksjonen — ikke etter commit.
+            # Etter commit kunne en samtidig andre godkjenning ha fullført
+            # overtakelsen og økt `autorisasjonsgenerasjon`; et oppslag mot den
+            # GJELDENDE generasjonen telte da den nye revisjonen (null avgitte)
+            # og svarte `409 krever_to_attestasjoner` på en sak som nettopp var
+            # avgjort. Revisjonen er den funksjonen selv håndhevet under låsen,
+            # så tallet hører til nøyaktig den konflikten stemmen ble avgitt i.
+            antall = 0 if svar == "avgjort" else int(conn.execute(
+                "SELECT antall_avgitte_attestasjoner(%s,%s)",
+                (unntak_id, generasjon_ved_opprettelse)).fetchone()[0])
             conn.commit()
         except psycopg.errors.UniqueViolation:
             # Samme aktør, samme revisjon, andre gang. Avvist av PRIMÆRNØKKELEN
@@ -266,18 +277,8 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
 
         # Ikke avgjort. Tallet gjør feilen legibel: står det 1 av 2, vet
         # tenanten at den mangler en andre autorisert aktør — ikke at systemet
-        # er i stykker.
-        #
-        # Konteksten settes PÅ NYTT: `sett_kontekst` er transaksjonslokal, og
-        # commiten over nullstilte den. Uten dette filtrerer RLS bort raden, og
-        # oppslaget gir `None` — altså et krasj nøyaktig i den grenen som
-        # finnes for å unngå at brukeren møter stillhet.
-        sett_kontekst(conn, tenant, auth.token_id, rid)
-        antall = int(conn.execute(
-            "SELECT antall_avgitte_attestasjoner(%s, autorisasjonsgenerasjon)"
-            "  FROM domenekontroll WHERE tenant=%s AND hostname=%s",
-            (unntak_id, tenant, hostname)).fetchone()[0])
-        conn.rollback()
+        # er i stykker. Det er lest over, under låsen, så det er ikke lenger et
+        # nytt oppslag som kan lande på en annen (eller foreldet) revisjon.
         return kanonisk_json(
             {"feil": "krever_to_attestasjoner", "avgitt": antall, "krever": 2,
              "hostname": hostname, "request_id": rid},
