@@ -192,6 +192,7 @@ BEGIN
         -- Fail-closed: én stemme holder, ingen får autorisasjon.
         PERFORM public.avgjor_domeneovertakelse(
             p_tenant, p_hostname, v_gen, false, p_aktor);
+        PERFORM public.lukk_overtakelsessak(p_tenant, p_sak_id, 'avvist', p_aktor);
         RETURN 'avgjort';
     END IF;
 
@@ -200,9 +201,47 @@ BEGIN
     IF v_antall >= 2 THEN
         PERFORM public.avgjor_domeneovertakelse(
             p_tenant, p_hostname, v_gen, true, p_aktor);
+        PERFORM public.lukk_overtakelsessak(p_tenant, p_sak_id, 'løst', p_aktor);
         RETURN 'avgjort';
     END IF;
     RETURN 'venter';
+END $$;
+
+-- ------------------------------------------------------------
+-- 3.15 lukk_overtakelsessak — Codex (P1): saken fulgte ALDRI domenevedtaket.
+--
+-- `unntak` opprettes med status='ny' (opprett_overtakelsessak); uten dette
+-- ble raden stående i 'ny' for alltid etter avgjørelsen, og fortsatte å
+-- vises som en åpen sak i PR-012-flaten. Statusmaskinen (011) tillater ikke
+-- 'ny' -> 'løst'/'avvist' direkte — kun via 'under_behandling' — så
+-- overgangen gjøres i to UPDATE-er i SAMME transaksjon som domenevedtaket.
+-- `disponit.aktor` settes eksplisitt: `unntak_skriv_historikk()` (003) krever
+-- den, og denne funksjonen kjører her under domene_eier, ikke under en
+-- sesjon som allerede har satt den.
+--
+-- Rører KUN en sak som fortsatt er 'ny' (den forventede tilstanden for denne
+-- sakstypen — normalarbeideren claimer den aldri, jf. modulens topp-
+-- docstring). Er saken alt beveget av en annen vei, lar denne funksjonen den
+-- stå urørt i stedet for å risikere en ulovlig overgang eller en feil som
+-- ville rullet tilbake selve domenevedtaket.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lukk_overtakelsessak(
+    p_tenant TEXT, p_sak_id BIGINT, p_sluttstatus TEXT, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_flyttet INT;
+BEGIN
+    PERFORM set_config('disponit.aktor', p_aktor, true);
+    UPDATE public.unntak SET status = 'under_behandling'
+     WHERE tenant = p_tenant AND id = p_sak_id AND status = 'ny';
+    GET DIAGNOSTICS v_flyttet = ROW_COUNT;
+    -- Kun DENNE overgangens egen 'under_behandling' fullføres til
+    -- sluttstatus — en sak som alt sto i 'under_behandling' av en annen vei
+    -- (utenfor denne sakstypens forventede bruk) skal ikke bli flyttet av et
+    -- kall den ikke var en del av.
+    IF v_flyttet = 1 THEN
+        UPDATE public.unntak SET status = p_sluttstatus
+         WHERE tenant = p_tenant AND id = p_sak_id AND status = 'under_behandling';
+    END IF;
 END $$;
 
 -- ------------------------------------------------------------
@@ -429,10 +468,18 @@ RESET ROLE;
 -- GRANT-modell (default-deny), samme mønster som 016.
 -- ============================================================
 GRANT SELECT, INSERT ON overtakelse_attestasjon TO disponit_domene_eier;
+-- Codex (P1): saken skal LUKKES atomisk med domenevedtaket
+-- (lukk_overtakelsessak, kalt fra avgi_overtakelse_attestasjon). Trigger-
+-- kjeden (unntak_kolonnelaas + unntak_skriv_historikk, 003/011) kjører under
+-- SAMME rolle som gjør UPDATE-en — domene_eier trenger derfor UPDATE på
+-- unntak og INSERT på unntak_historikk, ikke bare EXECUTE på funksjonen.
+GRANT UPDATE ON unntak TO disponit_domene_eier;
+GRANT INSERT ON unntak_historikk TO disponit_domene_eier;
 
 REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION degrader_forbigatte_utfordrere(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION antall_avgitte_attestasjoner(BIGINT, BIGINT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION lukk_overtakelsessak(TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
 -- Codex (P1): staging kjører API-et med DATABASE_URL som `disponit` — den
 -- NOLOGIN admin-bunten (`disponit_domains_admin`) er kun tilgjengelig for
 -- migrator (WITH INHERIT FALSE). Uten en direkte grant til runtime-rollen

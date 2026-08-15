@@ -457,6 +457,15 @@ def _konflikt(migrator, tenant_a, tenant_b, hostname):
     return sak, gen
 
 
+def _saksstatus(migrator, tenant, sak):
+    _sett_kontekst(migrator, tenant)
+    status = migrator.execute(
+        "SELECT status FROM unntak WHERE tenant=%s AND id=%s",
+        (tenant, sak)).fetchone()[0]
+    migrator.rollback()
+    return status
+
+
 def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen):
     r = a.execute(
         "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s)",
@@ -499,6 +508,9 @@ def test_port14b_to_distinkte_aktorer_avgjor(migrator):
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "verifisert"
+    # Codex (P1): saken lukkes ATOMISK med domenevedtaket — den skal ikke
+    # bli stående 'ny' og fortsette å vises som en åpen sak i PR-012-flaten.
+    assert _saksstatus(migrator, ANNEN_TENANT, sak) == "løst"
 
 
 @pg
@@ -561,6 +573,8 @@ def test_port18_avvis_med_en_attestasjon_tilbakekaller(migrator):
     finally:
         a.close()
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+    # Codex (P1): avvisningen lukker saken også — 'avvist', ikke stående 'ny'.
+    assert _saksstatus(migrator, ANNEN_TENANT, sak) == "avvist"
 
 
 @pg
