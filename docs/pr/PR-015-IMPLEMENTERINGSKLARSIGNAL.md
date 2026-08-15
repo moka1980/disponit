@@ -38,7 +38,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 6b | `hent_revalideringskandidater(p_grense INT, p_kjoring_start TIMESTAMPTZ)` + `stempl_revalideringsforsok(tenant, hostname)` (begge nye) + `domenekontroll.siste_revalideringsforsok` | `domenekontroll` har FORCE RLS med tenant-policy; et kolonnegrant gir den globale scheduleren null rader, og domenene mister ferskhet uten at én alarm går. Uten et forsøksstempel å rotere på returnerer køen dessuten den samme feilende kohorten hver time, og uten sideinndeling kapper én `LIMIT` sikkerhetsnettet §2.1 sier aldri kappes. Stemplet må committe i EGEN transaksjon, før runden forsøkes åpnet — ellers ruller en kastende åpning stemplet tilbake, en hel side av vedvarende feil kommer tilbake uendret, og arbeiderens eget `behandlet`-belte avkorter resten av kjøringen i stedet for bare siden, §2.2b |
 | 7 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense uten å miste evidensfristpredikatet, §6 / port 25 |
 | 8 | `artefaktkapabilitet.owner_generation` + `.owner_claim_id`, med oppgraderingssekvens | Fencing ved reclaim, §5 |
-| 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
+| 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5. Og `utloper` må avledes av det låste oppdragets `evidensfrist`: 017 klemmer levetiden til maks 3600 s (linje 104), mens kapabiliteten kun utstedes ved claim — en modul som bruker mer enn en time har da ingen gyldig opplastingsvei og ingen rute å hente en ny fra, §5 |
 | 9b | `laas_oppdragsgenerasjon()` (ny, eid av `disponit_m37_claimer`) | Forbrukeren kjører som `disponit_domene_eier`, som kun har `SELECT ON oppdrag` (016 linje 950); en låseklausul krever `UPDATE`, så `FOR SHARE` derfra gir `permission denied` på HVER opplasting. Låsen må gå gjennom en eid hjelper — et `UPDATE`-grant ville gitt den gjerdede rollen retten til å flytte gjerdet, §5 |
 | 10 | `avgjor_domeneovertakelse(…, p_runde UUID)` — flerpartsoppgjør, friskhetskrav og taperoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon (§3), telle kun ferske attestasjoner på gjeldende konfliktbilde (§1a) mot fersk DNS-evidens (§4), og la taperens sak kunne lukkes mot hendelsesevidens — også etter en reapplikasjon (§3.1) |
 | 10b | `avgjor_domeneovertakelse_attestert()` (ny innpakning; oppgjøret selv grantes til ingen) | §4.3-reautoriseringen i Python er ingen port når runtime kan kalle oppgjøret direkte: med to lovlige stemmer inne kan en kompromittert credential gjøre opp domenet etter at en attestant har mistet rollen. Tellingen og reautoriseringen må skje i databasen, under sakens lås, §4.3/§2.4c |
@@ -2756,7 +2756,54 @@ $$;
   tilfellet, uendret i praksis. Finnes **ingen** registrert artefakttype →
   **tom liste, ingen opplastingskapabilitet**, og claim lykkes fortsatt.
   En modul som ikke skal laste opp, får ikke lov.
-- **Levetid = evidensfristen for oppdraget**, aldri lengre.
+- **Levetid = evidensfristen for oppdraget**, aldri lengre — og det er
+  019-utstederen som må regne den ut, ikke kalleren.
+
+  017-versjonen klemmer levetiden til **maks én time**:
+  `v_lev INT := least(greatest(coalesce(p_levetid_s, 900), 60), 3600)`
+  (017 linje 104), og `utloper := now() + v_lev`. Kulepunktet over er
+  altså en påstand funksjonen aktivt motsier. Og siden PR-015 utsteder
+  opplastingskapabiliteten **kun ved claim** — «ikke noe nytt
+  on-demand-endepunkt i v1» (over) — har en modul som bruker mer enn en
+  time på et oppdrag med evidensfrist om to døgn **ingen gyldig
+  opplastingsvei igjen**, og ingen rute å hente en ny fra. Oppdraget
+  kjøres ferdig, rapporten krypteres, og `lagre_artefakt_staged()` avviser
+  den på `kapabilitet_ugyldig`. Det er ikke et kappløp eller et
+  angrepsscenario: det er normalveien for ethvert oppdrag som varer lenger
+  enn en time.
+
+  **019-versjonen (objekt 9) erstatter derfor utløpsregningen sammen med
+  generasjonsstemplingen:** `p_levetid_s` faller bort som sannhet, og
+  `utloper` settes til `evidensfrist` fra den **låste** oppdragsraden —
+  samme rad, samme lås og samme transaksjon som `owner_generation` og
+  `owner_claim_id` stemples i. Det er nøyaktig formen
+  `utsted_kvitteringskapabilitet()` alt har (005 linje 996–1011:
+  `SELECT o.evidensfrist INTO r … utloper := r.evidensfrist`), og de to
+  tokenene som utstedes side om side ved claim får da samme, ikke to
+  ulike, horisonter.
+
+  - **`p_levetid_s` beholdes i signaturen, men kan bare FORKORTE.** Den er
+    et tak kalleren kan sette lavere, aldri høyere:
+    `utloper := least(o.evidensfrist, now() + p_levetid_s)` når argumentet
+    er gitt, ellers `o.evidensfrist`. 60-sekundersgulvet blir stående;
+    3600-taket forsvinner. Signaturen er dermed uendret, og port 23
+    («levetid > evidensfrist → utstedelse avvist») beholder sin betydning:
+    en kaller som *ber om* mer enn fristen får avslag, ikke en stille
+    forkortelse.
+  - **Fristen leses fra raden, ikke fra kalleren.** `evidensfrist` er
+    `NOT NULL` på `oppdrag` (005 linje 322) og er et bindingsfelt
+    (005 linje 357), så den kan ikke flyttes under et token som alt er
+    utstedt. Å ta den som parameter ville gjort levetiden til kallerens
+    påstand — samme feil som en påstått observasjon (§2.4).
+  - **Port 24h** — positiv, og den finnes fordi hver eneste andre
+    kapabilitetsport måler et avslag: claim et oppdrag med
+    `evidensfrist` godt over en time fram, skru klokka **forbi det gamle
+    3600-taket**, og last så opp. Opplastingen skal lykkes, og
+    kapabilitetsradens `utloper` skal være **lik oppdragets
+    `evidensfrist`** — ikke `now() + 3600`. En implementasjon som beholder
+    017-s klemming består 22, 22b, 23, 24, 24b–24g og feiler her, mens
+    ingen modul med en jobb på over en time kan levere evidens i det hele
+    tatt.
 - **Epoch kontrolleres under oppdragslåsen** ved utstedelse.
 - **Fencing mot reclaim krever `owner_generation` i bindingen.** Et
   reclaim øker `oppdrag.owner_generation` (`INT NOT NULL DEFAULT 0`, 005
@@ -2910,7 +2957,10 @@ $$;
      hele veien til `brukt`.
   4. `utsted_artefaktkapabilitet()` skriver begge kolonnene under
      oppdragslåsen, i samme `SELECT` som verifiserer at oppdraget er
-     `plukket`.
+     `plukket` — og henter **`evidensfrist` fra den samme raden** til
+     `utloper` (§5). 3600-taket i 017 linje 104 forsvinner i den samme
+     erstatningen: én låst rad, én lesning, tre felter som alle må komme
+     derfra og ikke fra kalleren.
 
 ## 6. Ryddetimer
 
@@ -3866,6 +3916,17 @@ denied` på **hver eneste** opplasting, ikke bare på de kappløpende, og
 24b/24c/24f — som alle forventer et avslag — ville stått grønne mens ingen
 evidens i det hele tatt lot seg lagre. Målt på at
 `laas_oppdragsgenerasjon()` faktisk returnerer generasjonen ·
+24h **Tokenet varer til evidensfristen, ikke til neste time (§5):** claim
+et oppdrag med `evidensfrist` godt over en time fram, skru klokka **forbi
+det gamle 3600-taket** (017 linje 104), og last så opp → opplastingen
+**lykkes**, og kapabilitetsradens `utloper` er lik oppdragets
+`evidensfrist`, ikke `now() + 3600`. I samme port: den utstedes kun ved
+claim (ingen on-demand-rute i v1), så en klemt levetid har ingen
+reparasjonsvei — og `utsted_kvitteringskapabilitet()` for samme claim gir
+**samme** `utloper`, så de to tokenene ikke lever i hvert sitt tidsrom. En
+implementasjon som beholder 017-s klemming består 22, 22b, 23, 24 og
+24b–24g og feiler her, mens ingen modul med en jobb på over en time kan
+levere evidens i det hele tatt ·
 24e **Oppgraderingsveien:** base med både `utstedt`- og `brukt`-rader fra
 017 → migrasjonen går gjennom, hver `utstedt` rad ender `feilet`,
 historiske `brukt`-rader beholder `owner_generation IS NULL`, og et token
@@ -4131,6 +4192,9 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           artefaktkapabilitet.owner_generation m/oppgraderingssekvens og
           validering i lagre_artefakt_staged under oppdragets FOR SHARE-lås
           (preflighten kun for `utstedt`) +
+          utsted_artefaktkapabilitet() med `utloper` = det låste oppdragets
+          evidensfrist i stedet for 017-s 3600-tak — kapabiliteten utstedes
+          kun ved claim, så en klemt levetid har ingen reparasjonsvei (§5) +
           avgjor_domeneovertakelse_attestert() — telling og reautorisering
           av hver talt attestant i databasen, oppgjøret grantet til ingen
           (§4.3) +
