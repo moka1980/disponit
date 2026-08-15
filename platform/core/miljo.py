@@ -12,6 +12,13 @@ EKSAKT, INGEN NORMALISERING. Alt annet enn strengen `produksjon` er staging —
 også ` produksjon ` med blanktegn fra en miljøfil. Det er ikke en mangel:
 fail-closed betyr at en skrivefeil skal koste et løfte, ikke gi et, og en
 verdi verten ikke selv regner som produksjon skal ingen flate regne som det.
+
+Løftet gjelder BEGGE leveringsveiene. Verdien kan komme som miljøvariabel
+eller som systemd-credential, og hydreringen av den siste (`db.hemmeligheter`)
+`.strip()`-er hver credential — riktig for nøkler, men her ville det gjort
+` produksjon ` til produksjon før sammenligningen under fikk se den. Derfor
+står `DISPONIT_MILJO` i `db.hemmeligheter.EKSAKTE` og hydreres rått: det er
+denne modulen, ikke leveringsveien, som avgjør hva verdien betyr.
 """
 from __future__ import annotations
 

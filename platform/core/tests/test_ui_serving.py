@@ -7,6 +7,7 @@ aldri databasen, så porten skal bevises uten Postgres (og uten å hoppe over
 testen i CI).
 """
 import json
+import os
 import re
 from pathlib import Path
 
@@ -320,13 +321,86 @@ def test_utrullingen_leverer_faktisk_DISPONIT_MILJO_til_api_prosessen():
     opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
     unit = (rot / "deploy/staging/disponit-api.service").read_text(
         encoding="utf-8")
-    assert re.search(r"^skriv_cred api DISPONIT_MILJO\s", opp, re.M), \
+    materialisering = re.search(r"^skriv_cred api DISPONIT_MILJO\s", opp, re.M)
+    assert materialisering, \
         "opp.sh materialiserer ikke DISPONIT_MILJO som credential for api"
     assert "LoadCredential=DISPONIT_MILJO:/etc/disponit/api/DISPONIT_MILJO" \
         in unit, "disponit-api.service laster ikke DISPONIT_MILJO"
     # …og løypa kan ikke skrive `produksjon` på staging-maskinen: gaten står
     # FØR første mutasjon, som de andre miljøfil-portene i opp.sh.
+    # Posisjonene måles på LINJESTART, aldri med `index` på kommandoteksten:
+    # kommentarene i opp.sh omtaler `skriv_cred api DISPONIT_MILJO` med navn,
+    # og en test som traff omtalen ville målt rekkefølgen på en kommentar.
+    skriving = materialisering.start()
     gate = opp.index('[ "${DISPONIT_MILJO:-staging}" = "staging" ]')
     assert gate < opp.index("HERFRA MUTERES SYSTEMET"), \
         "miljøporten står etter første mutasjon — da er systemet alt endret"
-    assert gate < opp.index("skriv_cred api DISPONIT_MILJO")
+    assert gate < skriving
+    # …og verdien som SKRIVES er den som ble GODKJENT (Codex P2). Gaten over
+    # leser miljøfila i en subshell — bevisst, så fila ikke lekker inn i
+    # preflighten — og verdien dør med subshellen. `skriv_cred` under bruker
+    # en SENERE, egen lesing av samme fil. Byttes eller redigeres fila mellom
+    # de to, godkjente gaten en verdi som aldri ble skrevet, og staging-API-et
+    # startet i produksjonsmodus med gaten passert. Porten er derfor ikke bare
+    # at det finnes en andre sjekk, men at miljøfila ikke leses igjen mellom
+    # den og skrivingen: godkjenningen og skrivingen må stå på samme variabel.
+    lesing = opp.rindex('. "$MILJOFIL"')
+    andre_gate = opp.index('[ "${DISPONIT_MILJO:-staging}" != "staging" ]')
+    assert lesing < andre_gate < skriving, \
+        "gaten står ikke mellom den autoritative lesingen og skrivingen"
+    assert '. "$MILJOFIL"' not in opp[andre_gate:skriving], \
+        "miljøfila leses på nytt mellom gaten og skrivingen — vinduet er åpent"
+
+
+def test_credential_veien_tolker_ikke_miljoverdien(tmp_path, monkeypatch):
+    """Porten mot at LEVERINGSVEIEN avgjør miljøet (Codex P2).
+
+    `miljo` lover fail-closed på den eksakte strengen, og testene over måler
+    løftet slik verdien kommer på en utviklermaskin: som miljøvariabel. I
+    drift kommer den motsatt vei — `LoadCredential` → `$CREDENTIALS_DIRECTORY`
+    → `db.hemmeligheter.last_credentials` — og den loopen `.strip()`-et hver
+    credential. ` produksjon ` ble dermed `produksjon` FØR `miljo` fikk se
+    den: produksjonsmodus fra en verdi verten ikke selv skrev som produksjon,
+    altså `utkast` som slutter å binde beslutninger og en forside som lover
+    «Tilgjengelig» uten kundedata.
+
+    Stagings egen gate i `opp.sh` skjuler dette i dag fordi den bare slipper
+    `staging` gjennom. Produksjonsløypa som skal komme, og enhver eksternt
+    provisjonert credential, har ingen slik gate — og da er dette nøyaktig
+    klassen feil ingen test av tolkningen kan se, siden tolkningen er riktig.
+    """
+    import miljo as miljomodul
+    from db.hemmeligheter import last_credentials
+
+    for i, (verdi, forventet) in enumerate(((" produksjon ", "staging"),
+                                            ("produksjon\n", "staging"),
+                                            ("PRODUKSJON", "staging"),
+                                            ("produksjon", "produksjon"),
+                                            ("staging", "staging"))):
+        katalog = tmp_path / f"cred{i}"
+        katalog.mkdir()
+        (katalog / "DISPONIT_MILJO").write_text(verdi, encoding="utf-8")
+        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(katalog))
+        monkeypatch.delenv("DISPONIT_MILJO", raising=False)
+        assert last_credentials() == 1
+        assert os.environ["DISPONIT_MILJO"] == verdi, \
+            f"hydreringen endret verdien: {verdi!r}"
+        assert miljomodul.gjeldende_miljo() == forventet, repr(verdi)
+
+
+def test_hemmeligheter_strippes_fortsatt(tmp_path, monkeypatch):
+    """Motporten: unntaket over gjelder KUN de eksakte variablene.
+
+    `.strip()` er riktig for nøkler — en credential provisjonert med `echo`
+    bærer et linjeskift, og uten strippingen blir nøkkelen ubrukelig på en
+    måte som først viser seg ved første dekryptering. Fjerner noen
+    strippingen helt for å «forenkle» unntaket, faller denne.
+    """
+    from db.hemmeligheter import EKSAKTE, last_credentials
+
+    (tmp_path / "DISPONIT_KEK").write_text("nokkel\n", encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+    monkeypatch.delenv("DISPONIT_KEK", raising=False)
+    assert last_credentials() == 1
+    assert os.environ["DISPONIT_KEK"] == "nokkel"
+    assert "DISPONIT_KEK" not in EKSAKTE
