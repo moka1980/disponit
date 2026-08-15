@@ -192,6 +192,44 @@ def test_jcs_avviser_det_default_str_konverterte_stille():
             jcs.kanoniser(verdi)
 
 
+def _nost_objekt(n, blad=1):
+    v = blad
+    for _ in range(n):
+        v = {"a": v}
+    return v
+
+
+def _nost_liste(n, blad=1):
+    v = blad
+    for _ in range(n):
+        v = [v]
+    return v
+
+
+def test_jcs_avviser_dyp_nosting_som_valideringsfeil_ikke_stackoverflyt():
+    """PR-014b P2: serialisereren er rekursiv, så uten en egen dybdegrense var
+    bunnen `sys.setrecursionlimit` — og den treffes som RecursionError, en
+    RuntimeError ingen kaller fanget. Et syntaktisk gyldig, dypt nøstet
+    dokument på noen få kilobyte ble derfor 500 i stedet for det dokumenterte
+    `request_feilformet`, og feilet dessuten ULIKT avhengig av hvor dypt i
+    stacken kalleren sto. Nå er avvisningen en egenskap ved formatet."""
+    from policy_validator import jcs
+
+    # Rett under grensen kanoniseres fortsatt — grensen står ikke i veien for
+    # noe ekte dokument (de dypeste i repoet er ensifret).
+    n = jcs.MAKS_DYBDE - 1
+    assert jcs.kanoniser(_nost_objekt(n)) == '{"a":' * n + "1" + "}" * n
+    # Over grensen: en VALIDERINGSFEIL, ikke en RecursionError — for BEGGE
+    # containertypene, og også for dybder der stacken ellers hadde rent over.
+    for bygg in (_nost_objekt, _nost_liste):
+        for dyp in (jcs.MAKS_DYBDE + 1, 2000):
+            with pytest.raises(jcs.Ikkekanoniserbar):
+                jcs.kanoniser(bygg(dyp))
+    # Gjelder også via bytes-inngangen — den som faktisk signeres/hashes.
+    with pytest.raises(jcs.Ikkekanoniserbar):
+        jcs.kanoniske_bytes(_nost_objekt(2000))
+
+
 def test_ikke_jcs_attestasjon_avvises_paa_nettverksveien():
     """Lukket format: manglende eller ukjent `kanonisering` avvises.
 

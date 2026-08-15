@@ -43,7 +43,10 @@ server {
     # sertifikatutstederen får OCSP igjen.
 
     # --- Grenser (v1 §5) ------------------------------------------------
-    client_max_body_size 256k;          # app-lagets 256 KiB som andre linje
+    # Server-vid grense = app-lagets 256 KiB som andre linje. Artefakt-ruten
+    # har sin EGEN, større grense i `location = /v1/artefakt` under; uten den
+    # ville nginx svart 413 lenge før appens rutegrense ble nådd.
+    client_max_body_size 256k;
     client_body_timeout 10s;
     client_header_timeout 10s;
     keepalive_timeout 65s;
@@ -98,6 +101,21 @@ server {
     }
     location = /v1/oidc/start {
         limit_req zone=disponit_oidc burst=30 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
+    # PR-014b §7: artefaktopplastingen er den ENESTE ruten som bærer mer enn
+    # 256 KiB. Codex: uten en egen proxy-grense her avviste nginx enhver wire-
+    # kropp over 256 KiB med 413 FØR appens rutegrense (`MAKS_ARTEFAKT_KROPP`)
+    # i det hele tatt ble konsultert — altså var 1 MiB-artefaktet ruten er
+    # bygget for uoppnåelig i den eneste stien en kontroller faktisk har.
+    # Verdien er BUNDET til appkonstanten av
+    # `test_nginx_artefaktrute_slipper_gjennom_appens_kroppsgrense`, så de to
+    # tallene ikke kan gli fra hverandre.
+    location = /v1/artefakt {
+        client_max_body_size 6208k;     # = MAKS_ARTEFAKT_KROPP (6 MiB + 64 KiB)
+        limit_req zone=disponit_general burst=100 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:/run/disponit/api.sock;
     }

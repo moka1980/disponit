@@ -133,16 +133,21 @@ def _artefakt(conn, tenant, oppdrag_id, at, modul, kh, *, jti=None, ver=1):
     from db import kryptering
     _sett_kontekst(conn, tenant)
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
-    ct, _ = kryptering.krypter(dek, {"rapport": "x"}, tenant, key_id)
+    # Noncen skrives med: `artefakt_payload_struktur` (016) krever at et
+    # artefakt med payload er STRUKTURELT dekrypterbart — ct||tag + 12-byte
+    # nonce. Denne hjelperen skrev tidligere ciphertext uten nonce, altså
+    # nøyaktig den udekrypterbare raden constrainten finnes for.
+    ct, nonce = kryptering.krypter(dek, {"rapport": "x"}, tenant, key_id)
     jti = jti or ("jti-" + secrets.token_hex(8))
     aid = conn.execute(
         "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
         " release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,"
-        " storrelse_bytes, klartekst_sha256, ciphertext, dek_ref, kapabilitet_jti)"
-        " VALUES (%s,%s,%s,%s,'r1',%s,%s,0,'staged',100,%s,%s,%s,%s)"
+        " storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,"
+        " kapabilitet_jti)"
+        " VALUES (%s,%s,%s,%s,'r1',%s,%s,0,'staged',100,%s,%s,%s,%s,%s)"
         " RETURNING artefakt_id",
         (tenant, oppdrag_id, at, modul, ver, kh,
-         "h-" + secrets.token_hex(8), ct, key_id, jti)).fetchone()[0]
+         "h-" + secrets.token_hex(8), ct, nonce, key_id, jti)).fetchone()[0]
     conn.commit()
     return aid
 

@@ -121,6 +121,23 @@ CREATE TABLE IF NOT EXISTS artefakt (
     kapabilitet_jti  TEXT NOT NULL UNIQUE,
     opprettet        TIMESTAMPTZ NOT NULL DEFAULT now(),
     promotert_ts     TIMESTAMPTZ,
+    -- Codex P2: en payload som FINNES må være STRUKTURELT dekrypterbar. NOT NULL
+    -- alene fanget bare det tomme tilfellet: `ciphertext='\x'` / `nonce='\x'`
+    -- (eller en avkortet variant) ble godtatt, brant kapabiliteten og la seg inn
+    -- som `staged`. Promoteringen validerer bindinger og den PÅSTÅTTE
+    -- klartekst-hashen — ingen av delene rører nyttelasten — så raden kunne bli
+    -- permanent evidens selv om AES-GCM-dekrypteringen ALLTID ville feilet
+    -- (ingen autentiseringstag, ugyldig nonce). Invariantene kommer fra
+    -- db/kryptering.py: nonce er 12 byte, ciphertext er ct||16-byte-tag og
+    -- klarteksten er minst `{}` — altså strengt mer enn tag-lengden.
+    -- Nulling hører til forkastelsen og tar BEGGE feltene (se statemaskinen).
+    -- IS NOT NULL-leddene er ikke overflødige: `octet_length(NULL)` er NULL, og
+    -- en CHECK som evaluerer til NULL PASSERER. Uten dem slapp den halvtomme
+    -- raden (ciphertext NULL, nonce satt) gjennom.
+    CONSTRAINT artefakt_payload_struktur CHECK (
+        (ciphertext IS NULL AND nonce IS NULL)
+        OR (ciphertext IS NOT NULL AND nonce IS NOT NULL
+            AND octet_length(ciphertext) > 16 AND octet_length(nonce) = 12)),
     CONSTRAINT artefakt_oppdrag_fk
         FOREIGN KEY (tenant, oppdrag_id) REFERENCES oppdrag (tenant, id),
     CONSTRAINT artefakt_dek_fk

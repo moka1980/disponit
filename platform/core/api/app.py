@@ -1914,7 +1914,13 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
             kropp = json.loads(raa.decode("utf-8"))
             jti = kropp["kapabilitet_jti"]
             rapport = kropp["rapport"]
-        except (ValueError, KeyError, AttributeError, TypeError):
+        except (ValueError, KeyError, AttributeError, TypeError,
+                RecursionError):
+            # Codex: `json.loads` er REKURSIV. Et syntaktisk gyldig, dypt nøstet
+            # dokument på noen få kilobyte (≈2 000 nivåer) treffer
+            # rekursjonsgrensen og kaster RecursionError — en RuntimeError, ikke
+            # en ValueError. Uten den her slapp den ut som generisk 500 i stedet
+            # for det dokumenterte `request_feilformet`. Dybde er klientinput.
             return _feilsvar("request_feilformet", rid)
         if not isinstance(jti, str) or not isinstance(rapport, dict):
             return _feilsvar("request_feilformet", rid)
@@ -1936,10 +1942,14 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         sett_kontekst(conn, tenant, auth.aktor, rid)
         try:
             kanon = jcs.kanoniske_bytes(rapport)
-        except (jcs.Ikkekanoniserbar, UnicodeEncodeError):
+        except (jcs.Ikkekanoniserbar, UnicodeEncodeError, RecursionError):
             # Codex: en escaped ensom surrogate (f.eks. "\ud800") slipper gjennom
             # json.loads, men kanoniseringen kan da kaste UnicodeEncodeError i
             # stedet for Ikkekanoniserbar. Begge er feilformet klientinput.
+            # RecursionError er belte-og-seler: `jcs.MAKS_DYBDE` avviser dyp
+            # nøsting som `Ikkekanoniserbar` FØR stacken renner over, men skulle
+            # kalleren allerede stå dypt, er også overflyten feilformet input —
+            # aldri en 500.
             conn.rollback()
             return _feilsvar("request_feilformet", rid)
         storrelse = len(kanon)

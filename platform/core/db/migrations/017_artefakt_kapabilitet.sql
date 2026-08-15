@@ -237,6 +237,23 @@ BEGIN
         RAISE EXCEPTION 'lagre_artefakt_staged: staged artefakt krever ciphertext+nonce'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Codex P2 (oppfølger): NULL-sjekken over er ikke nok. En kaller med EXECUTE
+    -- og en GYLDIG kapabilitet kunne sende `p_ciphertext='\x'` / `p_nonce='\x'`
+    -- (eller en avkortet nonce) — verdier AES-GCM aldri kan dekryptere, fordi
+    -- autentiseringstaggen mangler og noncen er ugyldig — men godt nok til å
+    -- BRENNE kapabiliteten og lande som `staged`. Promoteringen ser bare
+    -- bindinger og den PÅSTÅTTE hashen, aldri nyttelasten, så raden kunne blitt
+    -- permanent evidens uten gjenopprettbart innhold. Invariantene kommer fra
+    -- db/kryptering.py: 12-byte nonce, ct||16-byte-tag over en klartekst som
+    -- minst er `{}`. Håndheves FØR innsettingen og FØR forbruket.
+    -- `artefakt_payload_struktur` (016) er samme invariant på TABELLEN og fanger
+    -- enhver annen skrivevei; sjekken her gir i tillegg det kanoniske
+    -- feilkontraktet (`kapabilitet_ugyldig`) i stedet for check_violation.
+    IF octet_length(p_ciphertext) <= 16 OR octet_length(p_nonce) <> 12 THEN
+        RAISE EXCEPTION 'lagre_artefakt_staged: ciphertext/nonce er strukturelt '
+            'ugyldig (ct=% B, nonce=% B)', octet_length(p_ciphertext),
+            octet_length(p_nonce) USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     INSERT INTO public.artefakt (tenant, oppdrag_id, artefakttype, modul_id,
         release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,
         storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,

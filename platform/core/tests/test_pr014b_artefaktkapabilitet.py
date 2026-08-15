@@ -314,6 +314,84 @@ def test_lagre_avviser_null_payload(migrator):
 
 
 @pg
+@pytest.mark.parametrize("ct,nonce,hvorfor", [
+    (b"", b"", "tom ciphertext + tom nonce"),
+    (b"\x00" * 16, b"\x00" * 12, "ciphertext = KUN tag, ingen chiffertekst"),
+    (b"\x00" * 64, b"", "tom nonce"),
+    (b"\x00" * 64, b"\x00" * 11, "avkortet nonce"),
+    (b"\x00" * 64, b"\x00" * 13, "for lang nonce"),
+])
+def test_lagre_avviser_strukturelt_ugyldig_payload(migrator, ct, nonce, hvorfor):
+    """Codex P2: NULL-sjekken alene var for svak. En runtime-tilkobling med en
+    GYLDIG kapabilitet kunne sende `'\\x'` (eller en avkortet nonce) — verdier
+    AES-GCM aldri kan dekryptere, fordi autentiseringstaggen mangler og noncen
+    er ugyldig — og likevel brenne kapabiliteten og lande som `staged`.
+    Promoteringen ser bare bindinger og den PÅSTÅTTE klartekst-hashen, aldri
+    nyttelasten, så raden kunne blitt permanent evidens uten gjenopprettbart
+    innhold. Invariantene kommer fra db/kryptering.py: 12-byte nonce,
+    ct||16-byte-tag over en klartekst som minst er `{}`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern lengdesjekken i lagre_artefakt_staged
+    (tabellens `artefakt_payload_struktur` fanger den fortsatt, men da som
+    check_violation ETTER at kapabiliteten er forsøkt brent — feil feilkontrakt)."""
+    from db import kryptering
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    a = _admin()
+    try:
+        jti = _utsted(a, opp, modul, kh, at)
+        _sett_kontekst(a, TENANT)
+        key_id, _ = kryptering.hent_eller_opprett_aktiv_dek(a, TENANT)
+        a.commit()
+        _sett_kontekst(a, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT lagre_artefakt_staged(%s,%s,%s,%s,'r1',1,%s,0,100,"
+                      "%s,%s,%s,%s,%s)",
+                      (TENANT, opp, at, modul, kh, "h-" + secrets.token_hex(8),
+                       ct, nonce, key_id, jti))
+        a.rollback()
+    finally:
+        a.close()
+    # Ingen rad, og kapabiliteten står IGJEN — avvisningen kom før brenningen,
+    # så den legitime opplastingen kan fortsatt bruke den.
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute("SELECT count(*) FROM artefakt WHERE kapabilitet_jti=%s",
+                         (jti,)).fetchone()[0]
+    st = migrator.execute("SELECT status FROM artefaktkapabilitet WHERE jti=%s",
+                          (jti,)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0 and st == "utstedt", \
+        f"{hvorfor} ble akseptert eller brente kapabiliteten"
+
+
+@pg
+def test_tabellen_avviser_udekrypterbar_payload_uansett_skrivevei(migrator):
+    """Samme invariant som en TABELL-CHECK: `lagre_artefakt_staged` er den
+    eneste veien runtime har, men constrainten gjør en udekrypterbar rad umulig
+    for ENHVER skrivevei (migrator, framtidig funksjon, manuell reparasjon).
+    Nullingen som hører til forkastelsen tar fortsatt BEGGE feltene.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `artefakt_payload_struktur` fra 016."""
+    n = migrator.execute(
+        "SELECT count(*) FROM pg_constraint WHERE conname="
+        "'artefakt_payload_struktur' AND conrelid='artefakt'::regclass"
+    ).fetchone()[0]
+    migrator.rollback()
+    assert n == 1, "tabell-invarianten for ciphertext/nonce mangler"
+    # Håndhevet, ikke bare erklært: en direkte INSERT med tom payload avvises.
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
+            " release_id, kontraktversjon, kontrakt_hash, module_epoch,"
+            " storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,"
+            " kapabilitet_jti) VALUES (%s,1,'x','m','r1',1,'k',0,10,'h',"
+            "%s,%s,'d',%s)",
+            (TENANT, b"", b"", secrets.token_hex(16)))
+    migrator.rollback()
+
+
+@pg
 def test_brukt_kapabilitet_er_terminal(migrator):
     """Codex: `brukt` er terminal. Uten dette kunne en brukt kapabilitet settes
     tilbake til `utstedt`, hvorpå en ellers idempotent retry tar INSERT-veien i

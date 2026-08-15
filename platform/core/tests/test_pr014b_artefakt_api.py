@@ -579,6 +579,42 @@ def test_upload_ensom_surrogat_er_request_feil(migrator, klient, token):
 
 
 @pg
+@pytest.mark.parametrize("dybde,hvor", [
+    (300, "kanoniseringen (jcs.MAKS_DYBDE)"),
+    (5000, "json.loads (Pythons rekursjonsgrense)"),
+])
+def test_upload_dypt_nostet_rapport_er_request_feil(migrator, klient, token,
+                                                    dybde, hvor):
+    """Codex P2: BÅDE `json.loads` og JCS-serialisereren er rekursive. En
+    syntaktisk gyldig, dypt nøstet rapport på noen få kilobyte traff derfor
+    rekursjonsgrensen som RecursionError — en RuntimeError, ikke en ValueError
+    eller Ikkekanoniserbar — og slapp ut som generisk 500 i stedet for det
+    dokumenterte `request_feilformet`. Nøsting er klientinput, ikke en
+    driftshendelse.
+
+    Kroppen bygges som TEKST: `json.dumps` av en 5 000-dyp struktur ville tatt
+    livet av testen selv, ikke serveren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern RecursionError fra except-ene i
+    `_artefakt_upload` (og `jcs.MAKS_DYBDE`)."""
+    import json as _json
+    modul = "m-" + secrets.token_hex(4); kh = "k-" + secrets.token_hex(8)
+    opp, at = _plukket_oppdrag_med_binding(migrator, modul, kh)
+    jti = _utsted_cap(opp, modul, kh, at)
+    tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
+    dyp = '{"a":' * dybde + "1" + "}" * dybde
+    kropp = '{"kapabilitet_jti":%s,"rapport":%s}' % (_json.dumps(jti), dyp)
+    assert len(kropp) < 100_000, "testkroppen skal være liten, ikke stor"
+    r = klient.post("/v1/artefakt", content=kropp,
+                    headers={"authorization": f"Bearer {tok}",
+                             "content-type": "application/json"})
+    assert r.status_code == 400 and "request_feilformet" in r.text, \
+        f"dyp nøsting avvist feil i {hvor}: {r.status_code} {r.text}"
+    # Kapabiliteten er IKKE forbrukt — den legitime opplastingen går fortsatt.
+    assert _post(klient, tok, jti, {"funn": 1}).status_code == 200
+
+
+@pg
 def test_sen_kvittering_fremmed_artefakt_avvises(migrator, klient, token):
     """Codex: en SEN kvittering valideres som promoteringsveien (tenant/oppdrag/
     signert hash). Et fremmed artefakt (eller feil hash) → sikkerhetskonflikt
