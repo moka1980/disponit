@@ -304,19 +304,55 @@ def test_revalidering_uten_lagret_utfordring_nektes(migrator):
     assert _dkrow(migrator, TENANT, h)[2] == for_
 
 
+def _execute_mottakere(conn, signatur):
+    """Ikke-eiende roller med EXECUTE på funksjonen, som navn.
+
+    `aclexplode` på en TOM `proacl` gir null rader — og tom ACL betyr i
+    PostgreSQL standardrettigheten, altså EXECUTE for PUBLIC. Den forskjellen
+    skal ikke se ut som «ingen mottakere», så en NULL-ACL rapporteres eksplisitt
+    som `{'PUBLIC (standard-ACL)'}` og feller sammenlikningen under.
+    """
+    acl = conn.execute("SELECT proacl FROM pg_proc"
+                       " WHERE oid = to_regprocedure(%s)",
+                       (signatur,)).fetchone()
+    assert acl is not None, f"{signatur} finnes ikke i basen"
+    if acl[0] is None:
+        conn.rollback()
+        return {"PUBLIC (standard-ACL)"}
+    rader = conn.execute(
+        "SELECT g.grantee::regrole::text FROM pg_proc p,"
+        " aclexplode(p.proacl) g WHERE p.oid = to_regprocedure(%s)"
+        "   AND g.privilege_type = 'EXECUTE' AND g.grantee <> p.proowner",
+        (signatur,)).fetchall()
+    conn.rollback()
+    return {r[0] for r in rader}          # PUBLIC (grantee 0) blir '-'
+
+
 @pg
 def test_arbeiderrollen_har_ikke_bevislos_revalidering(migrator):
     """Arbeideren skal KUN nå bevisformen.
 
     Beholdt 3-argumentsform på arbeiderrollen ville vært en åpen dør rundt
-    hele porten. Rollen er betinget (opprettes av oppsettskriptet, ikke av
-    migrasjonen), så testen hopper over når den ikke finnes.
+    hele porten. Arbeiderrollen er en KLYNGErolle: den opprettes av
+    oppsettskriptet, ikke av migrasjonen, så den finnes ikke i alle baser
+    porten måles i. Å hoppe over testen da ville latt porten stå ubevist i
+    nettopp den basen CI kjører — derfor måles den her på ACL-en i stedet for
+    på rollen: uansett base skal INGEN annen enn `disponit_domains_admin` nå
+    den bevisløse 3-argumentsformen. Finnes arbeiderrollen i tillegg (staging),
+    måles den direkte oppå.
     """
+    bevislos = "revalider_domenekontroll(text,text,text)"
+    bevisform = "revalider_domenekontroll(text,text,text,text[])"
+
+    assert _execute_mottakere(migrator, bevislos) == {"disponit_domains_admin"}, \
+        "en annen rolle enn adjudikasjonsadministratoren når den bevisløse formen"
+    assert "disponit_domains_admin" in _execute_mottakere(migrator, bevisform)
+
     finnes = migrator.execute(
         "SELECT 1 FROM pg_roles WHERE rolname='disponit_domener'").fetchone()
     migrator.rollback()
     if not finnes:
-        pytest.skip("disponit_domener finnes ikke i denne basen")
+        return
     q = lambda sql: migrator.execute(sql).fetchone()[0]     # noqa: E731
     assert q("SELECT has_function_privilege('disponit_domener',"
              "'revalider_domenekontroll(text,text,text)','EXECUTE')") is False
