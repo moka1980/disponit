@@ -266,24 +266,40 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   -- 1. Aktøren er sesjonens, ikke et argument: slå opp brukersesjon på
   --    encode(sha256(convert_to(p_sesjon,'UTF8')),'hex'). Ikke tilbakekalt,
   --    ikke utløpt, tenant = p_tenant. Ellers -> `sesjon_ugyldig`.
-  -- 2. medlemskapet LÅSES gjennom laas_godkjenner(p_tenant, sesjonens
-  --    bruker_id) (013 linje 195) — ALDRI med en egen FOR UPDATE her.
-  --    Ingen rad (ikke medlem/ikke aktiv), 'domeneavgjorer' ikke i
-  --    roller, eller authz_version <> sesjonens authz_snapshot
-  --    -> `aktor_uautorisert`.
-  -- 3. saken LÅSES gjennom laas_domenesak(p_tenant, p_unntak_id) (§1d) —
-  --    ALDRI med en egen FOR UPDATE her, av nøyaktig samme grunn som i
-  --    steg 2. Hjelperen returnerer `kategori`, `status`, `saksversjon` og
+  -- 2. SAKEN FØRST — låserekkefølgen er global (se under). Saken LÅSES
+  --    gjennom laas_domenesak(p_tenant, p_unntak_id) (§1d) — ALDRI med en
+  --    egen FOR UPDATE her: eierrollen har kun SELECT på `unntak` (§6c).
+  --    Hjelperen returnerer `kategori`, `status`, `saksversjon` og
   --    `idempotensnokkel` fra raden den låser. Kategori må være
   --    'domeneovertakelse', og målet (vinnende_tenant, hostname,
   --    forventet_generasjon) hentes fra idempotensnøkkelen — samme oppslag
   --    som saksbindingstriggeren (§1). Ingen rad -> `unntak_ukjent`.
+  -- 3. DERETTER medlemskapet: LÅSES gjennom laas_godkjenner(p_tenant,
+  --    sesjonens bruker_id) (013 linje 195) — ALDRI med en egen FOR UPDATE
+  --    her, av nøyaktig samme grunn som i steg 2.
+  --    Ingen rad (ikke medlem/ikke aktiv), 'domeneavgjorer' ikke i
+  --    roller, eller authz_version <> sesjonens authz_snapshot
+  --    -> `aktor_uautorisert`.
   -- 4. INSERT ... ON CONFLICT (tenant, unntak_id, aktor) DO UPDATE med
-  --    rolle='domeneavgjorer', authz_version fra steg 2, konfliktsett_hash
+  --    rolle='domeneavgjorer', authz_version fra steg 3, konfliktsett_hash
   --    fra konfliktsett_hash(vinnende_tenant, hostname, generasjon) (§1a),
   --    avgitt_ts = now(). Returnerer aktøren funksjonen faktisk skrev.
 $$;
 ```
+
+**Låserekkefølgen er SAK → MEDLEMSKAP, og den gjelder hver inngang.**
+Rekkefølgen her er ikke smakssak: `avgjor_domeneovertakelse_attestert()`
+(§4.3) låser saken i steg 1 og de talte medlemskapene i steg 4, og den
+rekkefølgen kan ikke snus — hvilke medlemskap som skal låses *avledes* av
+stemmene på saken, så saken må være låst først. Låste registreringen
+medlemskapet før saken, kunne en stemme og et oppgjør på samme sak og
+samme aktør holdt hver sin lås den andre ventet på: PostgreSQL bryter
+vranglåsen ved å abortere den ene transaksjonen, og en fullt lovlig
+attestasjon eller et fullt lovlig oppgjør feilet med `deadlock detected`
+under ren samtidighet. `krev_oppgjorsrunde()` (§2.4c) har samme to låser og
+følger samme rekkefølge, av samme grunn. Regelen står én gang og gjelder
+alle tre: **`laas_domenesak()` før `laas_godkjenner()`, alltid.** En ny
+inngang som trenger begge, arver den — port 20l-3 måler det.
 
 - **`aktor` er ikke lenger noe kalleren kan velge.** Den utledes av en
   sesjon kalleren må ha *klartekstverdien* av. Databasen lagrer kun
@@ -491,7 +507,7 @@ GRANT EXECUTE ON FUNCTION tilbakekall_brukersesjon(TEXT)
 ### 1d. Sakslåsen må tas av en rolle som HAR `UPDATE` på `unntak`
 
 **Begge inngangene til fire øyne låser saken, og ingen av dem har lov til
-det.** `registrer_overtakelsesattestasjon()` (§1b steg 3) og
+det.** `registrer_overtakelsesattestasjon()` (§1b steg 2) og
 `avgjor_domeneovertakelse_attestert()` (§4.3 steg 1) kjører begge som
 `disponit_domene_eier`, og begge må lese unntaksraden **under lås** —
 ellers kan saken flyttes mellom målavlesningen og skrivingen. Men §6c gir
@@ -986,7 +1002,7 @@ verdi.
 | `opprett_brukersesjon(tenant, bruker_id, sesjon_id_hash, csrf_hash, authz_snapshot, levetid, maks_sesjoner)` | **kun** `disponit_innlogging` | Runtime har verken bordgrant på `brukersesjon` eller EXECUTE her; uten det skillet kan ett lekket DB-credential skrive begge stemmene over. 5-sesjonstaket håndheves inne i funksjonen, under lås, fordi tellingen og INSERT-en må ligge i samme transaksjon (§1c) |
 | `tilbakekall_brukersesjon(sesjon_id_hash)` | `disponit` (logout) og `disponit_innlogging` | Å avslutte en sesjon kan ikke forfalske en identitet, kun fjerne en (§1c) |
 | `laas_oppdragsgenerasjon(tenant, oppdrag_id)` | **kun** `disponit_domene_eier`, fra `lagre_artefakt_staged()` | Eierrollen har kun `SELECT ON oppdrag`, og en låseklausul krever `UPDATE`; hjelperen eies av `disponit_m37_claimer` og returnerer én kolonne fra den raden den låser `FOR SHARE` (§5) |
-| `krev_domeneverifiseringsrunde(sesjon, hostname)` / `krev_domeneverifisering(sesjon, hostname, p_runde)` / `krev_oppgjorsrunde(sesjon, unntak_id)` | API-et (`disponit`), §2.5c | Sesjonen bestemmer tenant og aktør; medlemskapet låses med `laas_godkjenner` og rollen kreves i kroppen (`domeneforvalter` for de to første, `domeneavgjorer` for den tredje); formålet står i kroppen, ikke i parameterlista; oppgjørsrundens mål leses fra sakens idempotensnøkkel under `laas_domenesak()` (§2.4c/§1d) |
+| `krev_domeneverifiseringsrunde(sesjon, hostname)` / `krev_domeneverifisering(sesjon, hostname, p_runde)` / `krev_oppgjorsrunde(sesjon, unntak_id)` | API-et (`disponit`), §2.5c | Sesjonen bestemmer tenant og aktør; medlemskapet låses med `laas_godkjenner` og rollen kreves i kroppen (`domeneforvalter` for de to første, `domeneavgjorer` for den tredje); formålet står i kroppen, ikke i parameterlista; oppgjørsrundens mål leses fra sakens idempotensnøkkel under `laas_domenesak()` — som tas **før** `laas_godkjenner()`, den globale låserekkefølgen (§1b, port 20l-3) (§2.4c/§1d) |
 | `laas_domenesak(tenant, unntak_id)` | **kun** `disponit_domene_eier`, fra `registrer_overtakelsesattestasjon()` (§1b), `avgjor_domeneovertakelse_attestert()` (§4.3) og `krev_oppgjorsrunde()` (§2.4c) | Samme grunn på `unntak`: eierrollen har kun `SELECT`, og en låseklausul krever `UPDATE`. Hjelperen eies av `disponit_m37_claimer` (som har `SELECT, UPDATE` + policyen `m37_dispatcher` der) og returnerer nøyaktig `kategori`, `status`, `saksversjon` og `idempotensnokkel` fra raden den låser `FOR UPDATE` (§1d) |
 
 Det som er vunnet: arbeideren har **ikke** EXECUTE på
@@ -1283,7 +1299,7 @@ GRANT EXECUTE ON FUNCTION laas_godkjenner(TEXT, TEXT)
 --
 -- SAKSLÅSEN har samme form, samme grunn og samme eier (§1d): eierrollen
 -- har kun `SELECT` på `unntak` (§6c), og BEGGE inngangene til fire øyne —
--- `registrer_overtakelsesattestasjon()` (§1b steg 3) og innpakningen over
+-- `registrer_overtakelsesattestasjon()` (§1b steg 2) og innpakningen over
 -- (§4.3 steg 1) — må låse saksraden. Uten dette EXECUTE-et feiler første
 -- lovlige stemme og hvert eneste oppgjør på `permission denied`, mens alle
 -- de negative portene står grønne. `disponit_m37_claimer` har alt
@@ -1321,7 +1337,7 @@ RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   --    som §1b. Ikke tilbakekalt, ikke utløpt. Ellers -> `sesjon_ugyldig`.
   -- 2. AUTORISASJONEN, ikke bare livstegnet: medlemskapet LÅSES gjennom
   --    laas_godkjenner(sesjonens tenant, sesjonens bruker_id) — samme
-  --    objekt, samme låseform og samme rekkefølge som §1b steg 2. Ingen rad
+  --    objekt, samme låseform som §1b steg 3. Ingen rad
   --    (ikke medlem/ikke aktiv), 'domeneforvalter' ikke i roller, eller
   --    authz_version <> sesjonens authz_snapshot -> `aktor_uautorisert`.
   -- 3. utsted_challenge(sesjonens tenant, p_hostname, p_wildcard,
@@ -1402,12 +1418,14 @@ RETURNS TABLE (runde_id UUID, gjenbrukt BOOLEAN,
                forrige_runde UUID, forrige_utfall TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
   -- 1. sesjonsoppslaget -> `sesjon_ugyldig`.
-  -- 2. laas_godkjenner(...) med 'domeneavgjorer' — ikke 'domeneforvalter':
-  --    å åpne oppgjørsrunden er en del av å avgjøre, §2.5c.
-  -- 3. laas_domenesak(sesjonens tenant, p_unntak_id) (§1d). Ingen rad, feil
+  -- 2. laas_domenesak(sesjonens tenant, p_unntak_id) (§1d) FØRST — samme
+  --    globale låserekkefølge som §1b og §4.3: sak før medlemskap, ellers
+  --    er vranglås mot et samtidig oppgjør mulig. Ingen rad, feil
   --    tenant eller kategori <> 'domeneovertakelse' -> `unntak_ukjent`.
   --    Målet (vinnende_tenant, hostname) leses fra idempotensnøkkelen —
   --    samme oppslag som §1/§4.3, aldri fra kalleren.
+  -- 3. laas_godkjenner(...) med 'domeneavgjorer' — ikke 'domeneforvalter':
+  --    å åpne oppgjørsrunden er en del av å avgjøre, §2.5c.
   -- 4. apne_domeneobservasjonsrunde(vinnende_tenant, hostname,
   --    'overtakelsesoppgjor').
 $$;
@@ -3301,7 +3319,7 @@ GRANT EXECUTE ON FUNCTION tilbakekall_brukersesjon(TEXT) TO {rolle};
   `laas_oppdragsgenerasjon` (§5), som begge eies av rollen som ALT har
   rettigheten, og som kun kan returnere den ene raden de låser.
 - **`unntak` er det tredje tilfellet, og det farligste å overse: grantet
-  STÅR der, men det er `SELECT`.** Både §1b steg 3 og §4.3 steg 1 låser
+  STÅR der, men det er `SELECT`.** Både §1b steg 2 og §4.3 steg 1 låser
   saksraden, og `SELECT … FOR UPDATE` krever `UPDATE`-rett. Å utvide linja
   over til `SELECT, UPDATE ON unntak` ville gitt fire-øyne-håndheveren
   skriverett på saksraden den håndhever på — den kunne satt saken `løst`
@@ -3866,6 +3884,19 @@ avslag. Målt på at `laas_domenesak()` returnerer idempotensnøkkelen, og på
 at en samtidig `UPDATE unntak` på samme rad blokkeres mens låsen holdes —
 samme form som `test_laas_godkjenner_serialiserer_mot_tilbakekalling`
 (`test_pr013_policyadmin_flyt.py:376`) ·
+20l-3 **Alle tre inngangene låser sak FØR medlemskap (§1b):** en stemme
+(`registrer_overtakelsesattestasjon()`) og et oppgjør
+(`avgjor_domeneovertakelse_attestert()`) kjøres samtidig på **samme sak og
+samme aktør**, hver i sin sesjon, med et sperrepunkt mellom de to låsene i
+hver transaksjon slik at flettingen faktisk blir den farlige — begge må
+lykkes (den ene serialiseres bak den andre), og **ingen** av dem får
+`deadlock detected` (SQLSTATE 40P01). Samme måling for
+`krev_oppgjorsrunde()` mot et samtidig oppgjør. En implementasjon som
+låser medlemskapet først i én av de tre feiler her og bare her: hver
+funksjon for seg består alle sine egne porter, for vranglåsen finnes ikke
+sekvensielt. Statisk halvdel i tillegg: `laas_domenesak(` skal stå før
+`laas_godkjenner(` i kroppen til hver av de tre funksjonene, lest ut av
+`pg_get_functiondef` — en ren timingtest kan flakse, rekkefølgen kan ikke ·
 20m **Endret konfliktbilde ugyldiggjør stemmene (§1a):** B utfordrer A-s
 wildcard, to avgjørere godkjenner, og **før** oppgjøret verifiseres et
 nytt barn under samme forelder → første forsøk gir
@@ -4315,7 +4346,7 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           eierrollen kun har SELECT ON oppdrag og en låseklausul krever
           UPDATE (§5) +
           laas_domenesak() eid av samme rolle og av samme grunn på
-          `unntak`, fordi BÅDE stemmen (§1b steg 3) og oppgjøret
+          `unntak`, fordi BÅDE stemmen (§1b steg 2) og oppgjøret
           (§4.3 steg 1) må låse saksraden — uten den feiler første lovlige
           stemme og hvert oppgjør på permission denied (§1d) +
           overtakelse_attestasjon.konfliktsett_hash +
