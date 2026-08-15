@@ -1306,11 +1306,20 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 # modulen + kontrakten. Finnes ingen registrert type, utstedes
                 # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
                 # En modul som ikke skal laste opp, får ikke lov (port 22).
-                typerad = conn.execute(
+                #
+                # Codex (P2): `LIMIT 1` plukket den alfabetisk FØRSTE typen
+                # stille når kontrakten registrerer FLERE — svaret bar da en
+                # kapabilitet for feil type uten at noe sa fra. Responsen har
+                # ETT `opplasting`-felt, ikke en liste, og v1 har bevisst
+                # ingen on-demand-utstedelse (se docstringen over) — samme
+                # fail-closed regel som RELEASE-tvetydigheten over: er valget
+                # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
+                typerader = conn.execute(
                     "SELECT artefakttype FROM artefakttype_register"
                     " WHERE eiermodul=%s AND kontraktversjon=%s"
-                    "   AND kontrakt_hash=%s ORDER BY artefakttype LIMIT 1",
-                    (o_modul, o_kv, o_khash)).fetchone()
+                    "   AND kontrakt_hash=%s ORDER BY artefakttype LIMIT 2",
+                    (o_modul, o_kv, o_khash)).fetchall()
+                typerad = typerader[0] if len(typerader) == 1 else None
                 if typerad is not None:
                     # Levetid = evidensfristen, ALDRI lengre (port 23). 017
                     # klemmer levetiden til [60, 3600]; er det under et minutt
