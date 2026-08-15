@@ -92,6 +92,32 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# PR-015 (Codex P1): RESOLVERPORTEN kjøres FØR første mutasjon, ikke først ved
+# timeraktivering. `skriv_cred domener DISPONIT_RESOLVERE` skrev tidligere
+# hva som helst — også tom streng — og utrullingen rapporterte suksess fordi
+# den bare måler API/M-37-readiness; `systemctl enable --now` på en .timer
+# starter ikke oneshot-tjenesten synkront, så en ugyldig resolverkonfigurasjon
+# var USYNLIG i rapporten. Hver aktivering ville da avsluttet med
+# «oppstart_nektet» uten å røre databasen, og etter 72 timer uten fersk
+# revalidering ville freshness-regelen ugyldiggjort ALLE domeneautorisasjoner.
+# Samme parser og samme diversitetsgate som arbeideren bruker (§2.4: minst to
+# resolvere hos ULIKE operatører og ULIKE nett) — ikke en kopi av regelen her,
+# som kunne divergert. Ingen DNS-oppslag utføres; `resolvere()` bygger bare
+# transporten og måler diversiteten. PYTHONPATH speiler unit-filene: `drift`
+# fra platform/, `db` fra platform/core.
+if ! RESOLVERFEIL=$( set -a; . "$MILJOFIL"; set +a
+      cd "$KILDE/platform" && PYTHONPATH="$KILDE/platform/core" \
+        "$ROT/.venv/bin/python" -c 'import drift.kjor_revalidering as k; k.resolvere()' 2>&1 ); then
+  echo "AVBRUTT: DISPONIT_RESOLVERE er ugyldig i $MILJOFIL."
+  echo "$RESOLVERFEIL" | tail -3
+  echo "Formatet er navn@operator/nett=adresse, komma-separert, med minst to"
+  echo "resolvere hos ULIKE operatører og ULIKE nett (§2.4). Uten dette ville"
+  echo "disponit-domenerevalidering blitt aktivert, nektet oppstart ved hver"
+  echo "kjøring uten å røre databasen, og utrullingen ville rapportert suksess"
+  echo "— helt til 72-timersregelen ugyldiggjorde alle domeneautorisasjoner."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 
 # ============================================================
 # HERFRA MUTERES SYSTEMET — gaten over er passert.
@@ -161,8 +187,6 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
 # eller utløse en restart midt i migrasjonsvinduet.
-systemctl stop disponit-helse.timer disponit-m37.service \
-    disponit-api.service disponit-api.socket 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
