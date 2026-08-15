@@ -2501,12 +2501,78 @@ behandle_domeneattestasjon(tenant, aktor, unntak_id, utfall,
      godkjenningsrunden fra steg 5. Oppgjøret avgjør HELE
      overlappsmengden (§2.5b) — flere motparter er ett oppgjør, ikke ett
      kall per motpart
- 10. godkjenningsrunden `klar → brukt` med
-     `decision_operation_id = 'domeneoppgjor-<unntak_id>-r<runde>'`
-     (011 linje 318 krever en id; den er tekst, ikke en motoroperasjon),
-     så saken → `løst` ved godkjenn, `avvist` ved avvis og ved
-     `alt_avgjort` (§3.1). Historikk + `_fullfor` på idempotensnøkkelen
+ 10. AVSLUTNINGEN FØLGER RETURVERDIEN FRA STEG 9, IKKE DEN BE OM HANDLINGEN.
+     Innpakningen returnerer ett av fem utfall, og hvert av dem har sin
+     egen avslutning:
+       'tildelt'                 -> runden `klar → brukt` med
+                                    `decision_operation_id =
+                                    'domeneoppgjor-<unntak_id>-r<runde>'`
+                                    (011 linje 318 krever en id; den er
+                                    tekst, ikke en motoroperasjon),
+                                    saken → `løst`, historikk
+                                    `domene_tildelt`, `_fullfor` 200
+       'avvist' / 'alt_avgjort'  -> samme runde­overgang og
+                                    `decision_operation_id`, saken →
+                                    `avvist` (§3.1), `_fullfor` 200
+       'konfliktbildet_endret'   -> EGEN GREN, se under: runden
+                                    `klar → kansellert`, saken
+                                    `godkjenning_klar → manuell`,
+                                    historikk `konfliktbilde_endret`,
+                                    `_fullfor` med **409**
+       'krever_to_attestasjoner' -> samme form som over, men saken →
+                                    `venter_andre_godkjenner`, historikk
+                                    `attestasjon_registrert`, `_fullfor`
+                                    med `gjenstaar` (databasen talte
+                                    annerledes enn Python i steg 7)
 ```
+
+**Steg 10 kan ikke gå på det som ble BEDT om — det må gå på det som
+skjedde.** Innpakningen returnerer `konfliktbildet_endret` uten å tildele
+domenet (§1a/§2.5b), og en avslutning som kun kjenner `godkjenn`, `avvis`
+og `alt_avgjort` ville da satt runden `brukt` og saken `løst` på en
+`godkjenn`-forespørsel der **ingen domenerad flyttet seg**. Saken hadde
+vært terminal (011 gjør `løst` absolutt), utfordreren stått igjen i
+`avklaring_kreves` uten en åpen sak, og §2.5b-s hele poeng — «to mennesker
+skal ikke kunne attestere ett konfliktbilde og få et annet gjennomført» —
+vært snudd til noe verre: ett konfliktbilde attestert, *ingenting*
+gjennomført, og saken lukket som om det var det. Det er nøyaktig
+tilstanden port 20d måler fraværet av: ingen sak skal stå igjen åpen på
+hostnavnet — og ingen skal stå igjen **lukket** over en uløst konflikt
+heller.
+
+- **Grenen bruker overganger som alt er whitelistet.**
+  `godkjenning_klar → manuell` står i 011 linje 174–175, og
+  `klar → kansellert` i runde-statusmaskinen (011 linje 309). Ingen ny
+  tilstand, ingen endring i `unntak_kolonnelaas`. Formen er PR-012-s egen
+  `eskaler`-gren (`unntaksbehandling.py:382–393`): runden kanselleres,
+  saken føres tilbake til `manuell`, og responsen lagres idempotent.
+- **`kansellert`, ikke `brukt`.** `brukt` krever
+  `decision_operation_id` (011 linje 318) og *er* påstanden om at runden
+  bar en beslutning. Ingen beslutning ble tatt her, så å stemple en id ville
+  vært å skrive en beslutning ingen fattet — samme feil som en syntetisk
+  `hi_integritet_hash` i `godkjenningsutfall` (over). En kansellert runde
+  er terminal, så neste forsøk går gjennom steg 5 og åpner en ny.
+- **Attestasjonene røres ikke — men de teller ikke lenger.** Radene blir
+  stående som evidens (de henger på saken, ikke på runden), og
+  `konfliktsett_hash` er alt skrevet om i steg 9-s egen transaksjon (§1a).
+  Neste forsøk teller derfor null gyldige stemmer og svarer
+  `krever_to_attestasjoner` til begge har fornyet på det bildet som
+  faktisk gjelder.
+- **Saksflyttingen er BEHANDLERENS, ikke eierfunksjonens.** Innpakningen
+  kjører som `disponit_domene_eier`, som kun har `SELECT` på `unntak`
+  (§6c/§1d) — den kan låse saken gjennom `laas_domenesak()`, men ikke
+  skrive den. Å legge statusovergangen inne i eierfunksjonen ville feilet
+  på `permission denied`, og å gi eierrollen `UPDATE` for å få den til å
+  virke ville gitt fire-øyne-håndheveren skriverett på saksraden den
+  håndhever på (§1d). Behandleren kjører som `disponit`, som har
+  `SELECT, INSERT, UPDATE ON unntak` (migrer.py linje 62), og gjør
+  overgangen i **samme transaksjon** som steg 9 — så enten skjer hele
+  avslutningen, eller ingen del av den.
+- **`konfliktbildet_endret` ruller IKKE tilbake.** Til forskjell fra
+  `attestant_uautorisert` (§4.3), som er en `RAISE` og velter hele
+  transaksjonen, er dette en returverdi: mengdeomskrivingen i steg 9 skal
+  overleve, ellers ville neste forsøk møtt nøyaktig det samme gamle bildet
+  og de samme gamle stemmene igjen.
 
 **To runder, to levetider — og de må ikke blandes.** `p_runde` er
 DNS-observasjonsrunden fra §2.4 (minutter, `formal =
@@ -2529,7 +2595,8 @@ transaksjon som runden merkes `brukt`.
 → `venter_andre_godkjenner` (steg 7) → `godkjenning_klar` (steg 8) →
 `løst`/`avvist` (steg 10), pluss
 `venter_godkjenning`/`venter_andre_godkjenner → manuell` når saksrunden
-må fornyes (steg 5). Alle står i whitelisten. Ingen ny
+må fornyes (steg 5) og `godkjenning_klar → manuell` når steg 9 svarer
+`konfliktbildet_endret` (steg 10). Alle står i whitelisten. Ingen ny
 tilstand, ingen endring i `unntak_kolonnelaas` — 011 er checksum-låst og
 skal ikke røres.
 
@@ -2613,7 +2680,12 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
   --    (idempotensnøkkelen), IKKE p_unntak_id — saks-ID og
   --    autorisasjonsgenerasjon er to forskjellige tall, og den indre
   --    funksjonens tredje parameter er `p_forventet_generasjon` (over).
-  --    Returverdien går rett tilbake ('tildelt' / 'avvist' / 'alt_avgjort').
+  --    Returverdien går rett tilbake ('tildelt' / 'avvist' / 'alt_avgjort'
+  --    / 'konfliktbildet_endret'). Sammen med 'krever_to_attestasjoner'
+  --    fra steg 2 er det de FEM utfallene behandlerens steg 10 må
+  --    forgrene på (§4.2b) — den kan ikke gå på handlingen som ble bedt
+  --    om, for `konfliktbildet_endret` betyr at INGEN domenerad flyttet
+  --    seg selv om `godkjenn` ble bedt om.
 $$;
 ```
 
@@ -3664,6 +3736,21 @@ nye bildet, går oppgjøret gjennom. Målt på `konfliktsett_hash` i
 attestasjonsradene: den er ulik før og etter fornyelsen, og
 bindingsfeltene er urørt. En implementasjon som kun fører saken tilbake
 til `manuell` består 2j-3 og feiler her ·
+20m-3 **Saken lukkes ikke over en uløst konflikt (§4.2b steg 10):** samme
+oppsett som 20m, kjørt **over HTTP** på attestasjonsruten med `godkjenn` —
+og målt på hva som står igjen etterpå. Svaret er `409
+konfliktbildet_endret`; saken står `manuell` (ikke `løst`, ikke `avvist`),
+godkjenningsrunden er `kansellert` (ikke `brukt`, og uten
+`decision_operation_id`), domeneraden er urørt, og `unntak_historikk` har
+`konfliktbilde_endret` — ikke `domene_tildelt`. Et replay med samme
+idempotensnøkkel gir nøyaktig den lagrede 409-en, ikke en ny operasjon. En
+implementasjon der steg 10 forgrener på den **be om** handlingen i stedet
+for på returverdien fra steg 9 setter runden `brukt` og saken `løst` her —
+saken blir terminal (011 gjør `løst` absolutt), utfordreren står igjen i
+`avklaring_kreves` uten en åpen sak, og porten fanger det på saksstatusen,
+ikke på HTTP-koden. I samme port: databasen svarer
+`krever_to_attestasjoner` der Python i steg 7 trodde terskelen var nådd →
+saken ender `venter_andre_godkjenner`, ikke `løst` ·
 20m-2 **Reapplikasjon fra en eksaktpart er også et endret konfliktbilde
 (§1a/§2.5b):** B utfordrer A eksakt, A blir `tilbakekalt` av B4-grenen, og
 to avgjørere godkjenner B. **Før** oppgjøret verifiserer A på nytt —
@@ -4098,7 +4185,10 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
          platform/core/api/domeneovertakelse.py (saken opprettes `manuell`
            med grunnkode og policyref, §3; ruten som åpner oppgjørsrunden;
            behandleren `behandle_domeneattestasjon()` med domeneoppgjøret og
-           reautoriseringen av hver talt attestant, §4.2b + §4.3),
+           reautoriseringen av hver talt attestant, §4.2b + §4.3; steg 10
+           forgrener på RETURVERDIEN fra oppgjøret — konfliktbildet_endret
+           kansellerer runden og fører saken tilbake til manuell, den
+           lukker den ikke),
          platform/core/api/unntaksbehandling.py (familiegjerdet på den
          generelle ruten + scopet fra saksfamilien under låsen, §4.2),
          platform/core/api/app.py (oppdrag_claim, linje ~717;
