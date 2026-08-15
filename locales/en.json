@@ -83,6 +83,7 @@
   "site.hero.kicker": "AI business agent",
   "site.hero.tittel": "Disponit does the work in your business — within authority you set yourself.",
   "site.hero.tekst": "The agent handles payments, reminders, follow-up and reporting. Every action is measured against your policy before it happens: inside the limits, it is carried out; outside them, it stops and comes to you.",
+  "site.hero.tekst_bygges": "Disponit is being built to handle payments, reminders, follow-up and reporting. The principle is fixed: every action is measured against your policy before it happens — inside the limits, it is carried out; outside them, it stops and comes to you. None of the areas below are live yet.",
   "site.argument.presisjon": "Control",
   "site.argument.presisjon_tittel": "You decide what the agent may do",
   "site.argument.presisjon_tekst": "The authority is a policy you manage yourself: amount limits, which actions require attestation, and who may approve. Changes take four eyes, and no button overrides them.",

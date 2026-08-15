@@ -7,7 +7,7 @@ import { el, sett } from "./dom.js";
 import { t } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
-import { TILBUD, erTilgjengelig } from "./plattformdata.js";
+import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
 import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
@@ -61,7 +61,7 @@ export async function visInnlogging() {
       el("div", { class: "site-hero-copy" },
         el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
         el("h1", { text: t("site.hero.tittel") }),
-        el("p", { class: "site-hero-text", text: t("site.hero.tekst") })),
+        el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) })),
       el("aside", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
         el("h2", { text: t("site.hero.punkter_tittel") }),

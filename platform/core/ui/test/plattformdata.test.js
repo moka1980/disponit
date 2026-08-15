@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, modulStatus,
-  modulerFraIder, modulmerke, plattformTelling, tenantTelling,
+  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, heroTekstNokkel,
+  modulStatus, modulerFraIder, modulmerke, plattformTelling, tenantTelling,
 } from "../static/js/plattformdata.js";
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
@@ -32,6 +32,19 @@ test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
   }
   assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
   assert.equal(erTilgjengelig(45), false, "ukjent modul er planlagt");
+});
+
+test("heroTekstNokkel: hovedløftet følger brikkene, ikke redaktøren", () => {
+  // Presensformen («agenten håndterer …») er et løfte om noe som virker NÅ.
+  // Står hvert tilbudspunkt i «Kommer», er det løftet usant, og forsiden
+  // motsier seg selv innenfor én skjermhøyde (Codex P2). Nøkkelen utledes
+  // derfor av den samme MODULSTATUS som brikkene.
+  const noeIDrift = TILBUD.some((post) => erTilgjengelig(post.id));
+  assert.equal(heroTekstNokkel(),
+    noeIDrift ? "site.hero.tekst" : "site.hero.tekst_bygges");
+  // Slik plattformen faktisk står: null moduler i drift, altså bygge-formen.
+  assert.equal(noeIDrift, false, "et tilbudspunkt er i drift — sjekk MODULSTATUS");
+  assert.equal(heroTekstNokkel(), "site.hero.tekst_bygges");
 });
 
 test("MODULOVERSIKT: kortstatus utledes av MODULSTATUS, ikke duplisert", () => {
