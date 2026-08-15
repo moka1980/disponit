@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
@@ -312,6 +312,17 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
     serielt på ÉN tilkobling: psycopg-tilkoblinger er ikke trådsikre, og en
     delt tilkobling ville gjort «to kjøringer overlapper aldri» til en løgn
     inne i én kjøring.
+
+    Codex (P2): resultatene KONSUMERES etter hvert som de fullføres, ikke
+    materialiseres først. Kø 1 er bevisst ubegrenset, og unit-filen gir
+    kjøringen 45 minutter; ventet vi på hele populasjonen før første commit,
+    kunne en stor eller treg kohort bli drept på timeout uten at ÉN eneste rad
+    var skrevet — og neste time ville startet på null igjen, i det uendelige.
+    Med `as_completed` er hver ferdig revalidering committet i det den er
+    ferdig, så et avbrudd koster de radene som ennå ikke er slått opp, ikke
+    hele kjøringen. Oppslagene fortsetter i bakgrunnen mens DB-kallet gjøres:
+    samtidighetsgrensen C gjelder oppslagene, og DB-en har fortsatt nøyaktig
+    én skriver.
     """
     if not rader:
         return
@@ -328,37 +339,43 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
             aktive -= 1
 
     with ThreadPoolExecutor(max_workers=samtidighet) as pool:
-        svar = list(pool.map(slå_opp, rader))
+        ventende = [pool.submit(slå_opp, rad) for rad in rader]
+        for ferdig in as_completed(ventende):
+            (tenant, hostname), txt = ferdig.result()
+            _skriv_resultat(conn, tenant, hostname, txt, aktor, res)
     res.maks_samtidighet = topp
 
-    for (tenant, hostname), txt in svar:
-        if txt is None:
-            res.uenige_resolvere += 1
-            continue
-        try:
-            # Tenantkonteksten er TRANSAKSJONSLOKAL (`set_config(..., true)`) og
-            # settes derfor på nytt for hver rad — commiten under nullstiller
-            # den. Det er riktig vei rundt: en kontekst som overlevde commiten,
-            # ville latt neste rads kall arve forrige tenants RLS-vindu.
-            conn.execute(
-                "SELECT set_config('disponit.tenant',%s,true),"
-                "       set_config('disponit.aktor',%s,true)",
-                (tenant, aktor))
-            # Bevisformen (019 §3.35), ikke 016s 3-argumentsform: den
-            # avtalte TXT-mengden sendes MED, og databasen holder den mot
-            # `challenge_token_hash`. Enighet alene er ikke kontrollbevis —
-            # en sone som fortsatt har en hvilken som helst stabil TXT-verdi
-            # (SPF) gir full enighet lenge etter at utfordringen er borte.
-            conn.execute("SELECT revalider_domenekontroll(%s,%s,%s,%s)",
-                         (tenant, hostname, aktor, sorted(txt)))
-            conn.commit()
-            res.vellykket += 1
-        except Exception:
-            # To tilfeller, samme svar: raden ble tilbakekalt/overtatt mellom
-            # plukk og kall (016 nekter da å registrere revalideringen), eller
-            # beviset manglet i TXT-svaret. Begge betyr «ingen bevist kontroll
-            # nå», og arbeideren skal ikke påstå suksess etter at
-            # autorisasjonen er trukket. Telles som oppslagsfeil, ikke som
-            # uenighet — resolverne var jo enige.
-            conn.rollback()
-            res.oppslagsfeil += 1
+
+def _skriv_resultat(conn, tenant, hostname, txt, aktor,
+                    res: Revalideringsresultat) -> None:
+    """Én ferdig rad: commit eller rollback, og tellerne som følger med."""
+    if txt is None:
+        res.uenige_resolvere += 1
+        return
+    try:
+        # Tenantkonteksten er TRANSAKSJONSLOKAL (`set_config(..., true)`) og
+        # settes derfor på nytt for hver rad — commiten under nullstiller
+        # den. Det er riktig vei rundt: en kontekst som overlevde commiten,
+        # ville latt neste rads kall arve forrige tenants RLS-vindu.
+        conn.execute(
+            "SELECT set_config('disponit.tenant',%s,true),"
+            "       set_config('disponit.aktor',%s,true)",
+            (tenant, aktor))
+        # Bevisformen (019 §3.35), ikke 016s 3-argumentsform: den
+        # avtalte TXT-mengden sendes MED, og databasen holder den mot
+        # `challenge_token_hash`. Enighet alene er ikke kontrollbevis —
+        # en sone som fortsatt har en hvilken som helst stabil TXT-verdi
+        # (SPF) gir full enighet lenge etter at utfordringen er borte.
+        conn.execute("SELECT revalider_domenekontroll(%s,%s,%s,%s)",
+                     (tenant, hostname, aktor, sorted(txt)))
+        conn.commit()
+        res.vellykket += 1
+    except Exception:
+        # To tilfeller, samme svar: raden ble tilbakekalt/overtatt mellom
+        # plukk og kall (016 nekter da å registrere revalideringen), eller
+        # beviset manglet i TXT-svaret. Begge betyr «ingen bevist kontroll
+        # nå», og arbeideren skal ikke påstå suksess etter at
+        # autorisasjonen er trukket. Telles som oppslagsfeil, ikke som
+        # uenighet — resolverne var jo enige.
+        conn.rollback()
+        res.oppslagsfeil += 1
