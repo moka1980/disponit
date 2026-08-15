@@ -11,6 +11,14 @@ import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
 import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
+// SVARENE ER PÅSTANDER OM SYSTEMET, IKKE SALGSTEKST: hvert av dem har en
+// kilde i repoet, og avviker svaret fra kilden, er det svaret som er feil.
+// `data_sv` måles mot `docs/DEPLOY.md` (produksjon er en egen maskin som
+// settes opp når fase 1 nærmer seg pilot — dagens Cloud Server er staging
+// og deles med et annet produkt), og `kontroll_sv` mot
+// `policy_validator/engine.py` + `flater/unntak.js` (en policy-autorisert
+// godkjenning KAN løfte nøyaktig den bundne grensen). Begge lovet mer enn
+// koden bar (Codex P2) — endres et svar her, sjekk kilden først.
 const SPORSMAL = [
   ["site.svar.hvem_sp", "site.svar.hvem_sv"],
   ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],

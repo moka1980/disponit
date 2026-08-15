@@ -496,7 +496,7 @@
   "site.svar.feil_sp": "Hva skjer når den er i tvil?",
   "site.svar.feil_sv": "Den stopper. Tvil behandles som avslag, ikke som sannsynlig ja, og saken går til kø med hva som manglet.",
   "site.svar.data_sp": "Hvor ligger dataene?",
-  "site.svar.data_sv": "På egen server under vår drift, kryptert, med tilgangsstyring per bedrift. Ingen deling med andre kunder, ingen bruk til noe du ikke har avtalt.",
+  "site.svar.data_sv": "Hos oss, kryptert, med tilgangsstyring per bedrift: ingen deling med andre kunder, ingen bruk til noe du ikke har avtalt. Produksjon får sin egen maskin, satt opp før første kunde. I dag finnes bare staging, og der ligger det syntetiske testdata — aldri kundedata.",
   "site.svar.start_sp": "Hvordan starter vi?",
   "site.svar.start_sv": "Med ett område og stramme grenser. Du ser hva agenten faktisk gjør før du utvider fullmaktene — og de kan strammes inn igjen når som helst."
 }
