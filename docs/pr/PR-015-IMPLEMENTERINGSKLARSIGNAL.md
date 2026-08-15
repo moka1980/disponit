@@ -33,7 +33,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 4b | `hent_apne_observasjonsrunder()` (ny, avgrenset lesekø) | Observatøren må kunne *finne* runden den skal svare på. Uten den kan prosessen autentisere, men aldri oppdage et `runde_id`, §2.4b. Køen må dessuten rotere forsøkte runder ut av hodet, ellers stanser 50 hostnavn uten TXT-post all verifisering for alle tenanter |
 | 5 | `verifiser_domenekontroll(…, p_runde UUID)` | **Førstegangsverifisering er den farligste veien** — den kan opprette en autorisasjon og utløse en overtakelse. Uten runde er den beviskravsfri, §2.5 |
 | 6 | `revalider_domenekontroll(…, p_runde UUID)` | Arbeideren skal ikke være autoritet, §2.4 |
-| 6b | `hent_revalideringskandidater(p_grense INT, p_kjoring_start TIMESTAMPTZ)` (ny) + `domenekontroll.siste_revalideringsforsok` | `domenekontroll` har FORCE RLS med tenant-policy; et kolonnegrant gir den globale scheduleren null rader, og domenene mister ferskhet uten at én alarm går. Uten et forsøksstempel å rotere på returnerer køen dessuten den samme feilende kohorten hver time, og uten sideinndeling kapper én `LIMIT` sikkerhetsnettet §2.1 sier aldri kappes, §2.2b |
+| 6b | `hent_revalideringskandidater(p_grense INT, p_kjoring_start TIMESTAMPTZ)` + `stempl_revalideringsforsok(tenant, hostname)` (begge nye) + `domenekontroll.siste_revalideringsforsok` | `domenekontroll` har FORCE RLS med tenant-policy; et kolonnegrant gir den globale scheduleren null rader, og domenene mister ferskhet uten at én alarm går. Uten et forsøksstempel å rotere på returnerer køen dessuten den samme feilende kohorten hver time, og uten sideinndeling kapper én `LIMIT` sikkerhetsnettet §2.1 sier aldri kappes. Stemplet må committe i EGEN transaksjon, før runden forsøkes åpnet — ellers ruller en kastende åpning stemplet tilbake, en hel side av vedvarende feil kommer tilbake uendret, og arbeiderens eget `behandlet`-belte avkorter resten av kjøringen i stedet for bare siden, §2.2b |
 | 7 | `rydd_staged_artefakter(p_maks INT)` | Batchgrense uten å miste evidensfristpredikatet, §6 / port 25 |
 | 8 | `artefaktkapabilitet.owner_generation` + `.owner_claim_id`, med oppgraderingssekvens | Fencing ved reclaim, §5 |
 | 9 | `artefaktkapabilitet_statusmaskin()` + `utsted_artefaktkapabilitet()` + `innlos_artefaktkapabilitet()` + `lagre_artefakt_staged()` | Generasjonen må stemples ved utstedelse og valideres i den ATOMISKE forbrukeren, §5 |
@@ -624,18 +624,51 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
       side := hent_revalideringskandidater(p_grense, start)
       side := side minus `behandlet`  -- terminering, se under
       hvis side er tom: bryt
-      behandle side (kø 1 helt, kø 2+3 til K er brukt opp)
+      for hver rad i side:
+          stempl_revalideringsforsok(rad.tenant, rad.hostname)  -- EGEN
+              -- transaksjon, se under; committer FØR forsøket under
+          forsøk å åpne runden / revalidere (kø 1 helt, kø 2+3 til K er brukt opp)
       behandlet := behandlet ∪ side
       hvis ingen rad i side var sikkerhetsnett OG K er brukt opp: bryt
   ```
 
-  Løkka terminerer fordi hver rad den åpner en runde for, får
-  `siste_revalideringsforsok = now() >= start` og dermed faller ut av
-  neste sides `WHERE`. Arbeiderens egen `behandlet`-mengde er beltet: en
-  rad der åpningen kastet før stempelet ble satt, kan ikke gi en evig
-  løkke. I tillegg står et hardt tak på antall sider per kjøring, og et
-  brudd på det er en **målt** hendelse (`sikkerhetsnett.sider_avkortet`),
-  aldri en stille avkorting.
+  **`behandlet` alene beviste ikke terminering — den kunne AVKORTE
+  kjøringen i stedet.** Stemplet ble tidligere satt kun inne i
+  `apne_domeneobservasjonsrunde`s egen transaksjon, «uansett hvordan
+  forsøket ender» — men det gjelder bare forsøk som *lykkes med å
+  committe*. Kaster åpningen selv (et konfliktavvik, en rad i en
+  uventet tilstand) ruller stemplet tilbake sammen med resten. En hel
+  side der ALLE radene kaster ved åpning ville da kommet tilbake
+  UENDRET fra `hent_revalideringskandidater` neste runde — `side minus
+  behandlet` ville vært tom, og løkka ville brutt **hele kjøringen**,
+  ikke bare hoppet over siden. Alt sikkerhetsnett bak den siden ville
+  vært usynlig for scheduleren resten av timen, stille — nøyaktig
+  formen §2.2b finnes for å hindre, nå produsert av selve beltet som
+  skulle forhindre en evig løkke.
+
+  Stemplingen er derfor flyttet til en egen, smal funksjon som
+  arbeideren kaller FØR den forsøker å åpne runden, i sin egen
+  transaksjon:
+
+  ```sql
+  CREATE FUNCTION stempl_revalideringsforsok(p_tenant TEXT, p_hostname TEXT)
+  RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+      UPDATE public.domenekontroll SET siste_revalideringsforsok = now()
+       WHERE tenant = p_tenant AND hostname = p_hostname
+  $$;
+  ```
+
+  Den committer alene, uavhengig av om det påfølgende
+  `apne_domeneobservasjonsrunde`-kallet lykkes. Stemplet er dermed
+  fortsatt satt av databasen — ikke påstått av arbeideren, samme
+  prinsipp som før — men av et objekt hvis eneste jobb er å vitne om
+  forsøket, ikke om utfallet. En rad som kaster ved åpning faller
+  likevel ut av neste sides `WHERE`, `hent_revalideringskandidater`
+  returnerer en NY side, og `behandlet` er igjen bare beltet mot en
+  evig løkke det alltid var ment å være — ikke den faktiske
+  sideinndelingsmekanismen. I tillegg står et hardt tak på antall
+  sider per kjøring, og et brudd på det er en **målt** hendelse
+  (`sikkerhetsnett.sider_avkortet`), aldri en stille avkorting.
 - **K gjelder fortsatt kun kø 2 + kø 3 — nå målt per rad.** Det er
   `sikkerhetsnett`-kolonnen som gjør det mulig å håndheve budsjettet uten
   å regne klassen ut på nytt i arbeideren, med risiko for at de to
@@ -804,7 +837,13 @@ skjedde.
 transaksjon, **også** når kallet returnerer en runde som alt lever — det
 er *forsøket* som telles, ikke opprettelsen, og det er den tellingen
 kandidatkøen roterer på (§2.2b). Verifisering og oppgjør rører ikke
-kolonnen: de er ikke revalideringsarbeid.
+kolonnen: de er ikke revalideringsarbeid. Dette stempelet er den
+**andre** skrivingen av kolonnen, ikke den eneste: arbeideren har alt
+kalt `stempl_revalideringsforsok()` i sin egen transaksjon FØR den kom
+hit (§2.2b), nettopp for at et forsøk som kaster HER ikke skal rulle
+tilbake beviset på at det ble gjort. Begge er idempotente `now()`-
+skrivinger på samme kolonne; treffer denne, er det bare en litt ferskere
+verdi.
 
 | Funksjon | Kalles av | Håndhever |
 |---|---|---|
@@ -1004,6 +1043,7 @@ REVOKE ALL ON FUNCTION avgjor_domeneovertakelse_attestert(TEXT, BIGINT, TEXT, UU
 REVOKE ALL ON FUNCTION rydd_staged_artefakter(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION rydd_domeneobservasjonsrunder(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION hent_revalideringskandidater(INT, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION stempl_revalideringsforsok(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION forelder_hostname(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sone_overlapp(TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION konfliktsett_hash(TEXT, TEXT, BIGINT) FROM PUBLIC;
@@ -1101,6 +1141,11 @@ GRANT EXECUTE ON FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT)
 -- egen SECURITY DEFINER-funksjon, som er den ENESTE kryss-tenant lesingen
 -- arbeideren har — syv kolonner, én status.
 GRANT EXECUTE ON FUNCTION hent_revalideringskandidater(INT, TIMESTAMPTZ)
+  TO disponit_domenerevalidator;
+-- Den eneste veien til å gjøre et revalideringsforsøk holdbart FØR runden
+-- forsøkes åpnet (§2.2b) — uten dette EXECUTE-et er kø 1-sideinndelingen
+-- fortsatt beltet-som-avkortingsmekanisme, ikke fikset.
+GRANT EXECUTE ON FUNCTION stempl_revalideringsforsok(TEXT, TEXT)
   TO disponit_domenerevalidator;
 -- Stemmen skrives KUN gjennom eierens funksjon (§1b): aktøren tas fra
 -- sesjonen og autoriseres i databasen, så en kompromittert runtime kan ikke
@@ -3574,7 +3619,9 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           rotasjon på siste_revalideringsforsok og sideinndeling som holder
           kø 1 ukappet (§2.2b) +
           domenekontroll.siste_revalideringsforsok, stemplet av
-          apne_domeneobservasjonsrunde (§2.2b) +
+          stempl_revalideringsforsok() i EGEN transaksjon FØR
+          apne_domeneobservasjonsrunde forsøkes, så en kastende åpning ikke
+          ruller stemplet tilbake og avkorter resten av kjøringen (§2.2b) +
           konfliktsett_hash() + registrer_overtakelsesattestasjon() —
           stemmen skrives av eieren, aktøren tas fra sesjonen og
           medlemskapet låses med laas_godkjenner (§1a/§1b) +
