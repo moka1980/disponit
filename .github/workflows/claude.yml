@@ -37,9 +37,17 @@ jobs:
     # reviews» som en helt vanlig issue_comment — altså med nøyaktig samme
     # avsender og form som et verdikt, men uten funn. Steg 3 sier at et
     # verdikt uten funn skal MERGES, så en tom lommebok kunne blitt lest som
-    # en godkjenning og merget ureviewet kode. Meldingen filtreres derfor bort
-    # her, og steg 0 i prompten gjentar regelen for de variantene teksten
-    # måtte få senere.
+    # en godkjenning og merget ureviewet kode.
+    #
+    # Filteret matcher KVOTEMELDINGENS EGEN ÅPNING, ikke løse delstrenger
+    # (Codex' P2 på denne PR-en): et `contains(body, 'usage limits')` ville
+    # også kastet et EKTE verdikt som tilfeldigvis diskuterer rate-limiting
+    # eller fakturering i funnene sine — og da kjører verken steg 0 eller
+    # fikselogikken, så en gyldig review blir liggende stille. Nøyaktig den
+    # feilmåten denne PR-en finnes for å fjerne, bare speilvendt.
+    # Presist filter her, bred vurdering i steg 0: teksten kommer fra en
+    # tredjepart og kan endre seg, så prompten fanger variantene filteret
+    # ikke kjenner.
     if: >-
       (github.event_name == 'pull_request_review' &&
        (github.event.review.user.login == 'moka1980' ||
@@ -47,9 +55,7 @@ jobs:
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        contains(github.event.comment.user.login, 'codex') &&
-       !contains(github.event.comment.body, 'usage limits') &&
-       !contains(github.event.comment.body, 'usage limit') &&
-       !contains(github.event.comment.body, 'adding credits'))
+       !startsWith(github.event.comment.body, 'Codex usage limits have been reached'))
     runs-on: ubuntu-latest
     # Regnestykket, målt på denne workflowen selv: 101 turer tok 21 minutter,
     # altså ~12,5 s per tur. 300 turer er da ~62 min per forsøk, og tre forsøk
