@@ -82,9 +82,16 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
   assert.ok(app.textContent.includes(t("site.problem_tittel")));
   assert.ok(app.textContent.includes(t("site.svar_tittel")));
   assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
-  // Driftsvokabularet skal IKKE nå en anonym besøkende.
-  assert.ok(!app.textContent.includes(t("site.modul.m37.navn")),
-    "internt modulnavn på den publike forsiden");
+  // Hele produktomfanget skal være synlig: elleve områder, 45 modulnavn.
+  assert.ok(app.textContent.includes(t("site.katalog_tittel")));
+  assert.ok(app.textContent.includes(t("site.omrade.okonomi")));
+  assert.ok(app.textContent.includes(t("site.katalog.m42.navn")),
+    "modulkatalogen mangler på forsiden");
+  // …men DRIFTSVOKABULARET skal ikke nå en anonym besøkende. Skillet er ikke
+  // «modul» mot «ikke modul»: navnene ER tilbudet. Det som ikke hører hjemme
+  // er de interne merkelappene — modulnumre og byggeregnskap.
+  assert.ok(!/\bM-\d+\b/.test(app.textContent),
+    "internt modulnummer på den publike forsiden");
   assert.ok(!/\b0\/45\b/.test(app.textContent),
     "byggeregnskap på den publike forsiden");
   const retur = [...app.querySelectorAll('input[name="retursti"]')]

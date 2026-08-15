@@ -354,3 +354,12 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   cursor: default;
   font-weight: 600;
 }
+
+/* Modulkatalogen: elleve områder med sine moduler. Tett liste uten kulepunkt-
+   innrykk, så 45 navn kan leses i tre kolonner uten å bli en mur. */
+.site-list-tett {
+  font-size: 0.95em;
+  gap: 0;
+}
+
+.site-list-tett li { padding: 0.15rem 0; }

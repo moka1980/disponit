@@ -8,6 +8,32 @@ import { t, sprak, lagreSprak } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
+import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
+
+// Hele produktomfanget, gruppert slik en kjøper leser det: elleve områder, 45
+// moduler, fire faser. Uten dette svarte forsiden bare på de fire punktene i
+// «Hva du får» — og en besøkende kunne tro at det var alt vi tilbyr.
+//
+// Ingen statusbrikke per modul her. Katalogen er OMFANGET (hva plattformen
+// dekker), ikke en leveranseplan, og 45 «Kommer»-merker ville gjort seksjonen
+// til nettopp det byggeregnskapet forsiden ble ryddet for. Hva som kjører i
+// dag står ett sted: brikkene i «Hva du får».
+function katalogseksjon() {
+  return el("section", { class: "kort site-section" },
+    el("div", { class: "site-section-head" },
+      el("div", {},
+        el("p", { class: "site-eyebrow", text: t("site.katalog") }),
+        el("h2", { text: t("site.katalog_tittel") })),
+      el("span", { class: "site-inline-note",
+        text: t("site.katalog_note").replace("{antall}", KATALOG_ANTALL) })),
+    el("div", { class: "site-grid site-grid-3" },
+      OMRADER.map((omrade) =>
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t(`site.omrade.${omrade.id}`) }),
+          el("ul", { class: "site-list site-list-tett" },
+            omrade.moduler.map((n) =>
+              el("li", { text: t(`site.katalog.m${n}.navn`) })))))));
+}
 import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
@@ -120,6 +146,7 @@ export async function visInnlogging() {
               el("strong", { text: t(post.navn_nokkel) }),
               siteTilbudMerke(erTilgjengelig(post.id))),
             el("p", { text: t(post.tekst_nokkel) }))))),
+    katalogseksjon(),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },
         el("div", {},
