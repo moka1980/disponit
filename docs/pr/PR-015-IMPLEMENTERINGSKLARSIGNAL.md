@@ -43,7 +43,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 10 | `avgjor_domeneovertakelse(…, p_runde UUID)` — flerpartsoppgjør, friskhetskrav og taperoppgjør | Én godkjenning må avvise de øvrige avklaringsradene i samme transaksjon (§3), telle kun ferske attestasjoner på gjeldende konfliktbilde (§1a) mot fersk DNS-evidens (§4), og la taperens sak kunne lukkes mot hendelsesevidens — også etter en reapplikasjon (§3.1) |
 | 10b | `avgjor_domeneovertakelse_attestert()` (ny innpakning; oppgjøret selv grantes til ingen) | §4.3-reautoriseringen i Python er ingen port når runtime kan kalle oppgjøret direkte: med to lovlige stemmer inne kan en kompromittert credential gjøre opp domenet etter at en attestant har mistet rollen. Tellingen og reautoriseringen må skje i databasen, under sakens lås, §4.3/§2.4c |
 | 11 | `forelder_hostname()` + `sone_overlapp()` (nye) + sonelåsen og overlappsgrenen i `verifiser_domenekontroll` / `avgjor_domeneovertakelse` | Wildcard-scopen dekker ett nivå mer enn hostnavnet, men 016/018 gjerder kun det litterale navnet: `example.com` (wildcard, tenant A) og `foo.example.com` (tenant B) kan i dag begge stå `verifisert` samtidig, §2.5b |
-| 12 | `domenekonfliktpart` (ny tabell) | En wildcard-verifisering kan overlappe FLERE innehavere samtidig; `konflikt_motpart` er én kolonne, og oppgjøret må kunne løse hele mengden atomisk, §2.5b |
+| 12 | `domenekonfliktpart` (ny tabell, m/ `motpart_generasjon`) | En wildcard-verifisering kan overlappe FLERE innehavere samtidig; `konflikt_motpart` er én kolonne, og oppgjøret må kunne løse hele mengden atomisk, §2.5b. Motpartens generasjon må stå i raden og i `konfliktsett_hash`, ellers er en `eksakt`-part uversjonert: en tapt part som reapplikerer (§3.1) endrer hverken status-leddet eller hashen, og gamle stemmer kan tilbakekalle det nye kravet, §1a |
 | 13 | Oppgraderingsryddingen av eksisterende overlapp, FØR gjerdet installeres | Gjerdet er fremoverrettet: rader som alt er `verifisert` i overlapp forblir doble til noen rydder dem, §2.5b |
 | 14 | `utsted_challenge()` (`CREATE OR REPLACE`, ACL bevares) | En reissue må forkaste åpne runder på målet, ellers kan evidens for en invalidert challenge forbrukes etterpå, §2.4a |
 | 14b | `krev_domenechallenge()` (ny innpakning; `utsted_challenge()` selv grantes til ingen ny rolle) | `utsted_challenge()` tar tenant og aktør som frie argumenter uten sesjonssjekk; et direkte GRANT til `disponit` lar et kompromittert credential reutstede en challenge for enhver tenant. Sesjonen må bestemme tenant og aktør, som for en stemme — og medlemskapet må låses og `domeneforvalter` kreves i kroppen, ellers er en levende sesjon nok til å bytte challenge-hash på en verifisert rad etter at rollen er fjernet, §1b/§2.4c |
@@ -200,7 +200,8 @@ CREATE FUNCTION konfliktsett_hash(p_tenant TEXT, p_hostname TEXT,
 RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
     SELECT encode(sha256(convert_to(coalesce(string_agg(
-               k.retning || '|' || k.motpart_tenant || '|' || k.motpart_hostname,
+               k.retning || '|' || k.motpart_tenant || '|' || k.motpart_hostname
+                         || '|' || k.motpart_generasjon,
                E'\n' ORDER BY k.retning, k.motpart_tenant, k.motpart_hostname), ''),
            'UTF8')), 'hex')
       FROM public.domenekonfliktpart k
@@ -224,6 +225,22 @@ SET search_path = pg_catalog AS $$
   kunnet hashe ulikt og blokkert et oppgjør uten grunn.
 - **Den tomme mengden har også en hash** (`sha256('')`), så en eksakt
   overtakelse uten registrerte parter er ikke et spesialtilfelle.
+- **`motpart_generasjon` er med i hashen, og uten den er `eksakt`-parten
+  uversjonert.** Mengden `{tenant, hostname, retning}` er stabil på tvers
+  av at motparten *fornyer kravet sitt*, og det er nøyaktig hullet §3.1-s
+  reapplikasjonsgren åpner: A taper mot B, blir `tilbakekalt` — og
+  **verifiserer på nytt**, som setter A `avklaring_kreves` med en NY
+  `autorisasjonsgenerasjon` (§3.1). B-s registrerte `eksakt`-rad navnger
+  fortsatt A, A er fortsatt ikke `verifisert`, så oppgjørets kontroll
+  («motparten står fortsatt ikke `verifisert`», §2.5b) står seg — og
+  hashen er uendret. B kunne da gjort opp med **de to stemmene som ble
+  avgitt før A-s nye krav fantes**, og tilbakekalt et krav ingen av de to
+  menneskene har sett. Med generasjonen i både raden og hashen er A-s
+  reapplikasjon per definisjon et endret konfliktbilde: hashen skifter,
+  de gamle stemmene slutter å telle, og §1-s fornyelse er veien tilbake.
+  Det er samme mekanikk som for et nytt barn i sonen — forskjellen var
+  bare at et nytt barn er en ny *rad*, mens en reapplikasjon er den samme
+  raden med et nytt tall.
 
 ### 1b. Runtime skal ikke kunne SKRIVE en stemme
 
@@ -1607,6 +1624,11 @@ CREATE TABLE domenekonfliktpart (
   autorisasjonsgenerasjon BIGINT NOT NULL,-- konfliktens generasjon = sakens
   motpart_tenant TEXT NOT NULL,
   motpart_hostname TEXT NOT NULL,
+  motpart_generasjon BIGINT NOT NULL,     -- motpartradens autorisasjonsgenerasjon
+                                          -- DA konflikten ble registrert; med i
+                                          -- konfliktsett_hash (§1a), så en
+                                          -- reapplikasjon fra motparten er et
+                                          -- endret konfliktbilde
   retning TEXT NOT NULL CHECK (retning IN ('eksakt','forelder','barn')),
   oppdaget TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant, hostname, autorisasjonsgenerasjon,
@@ -1659,7 +1681,22 @@ saksbilde.
 
   Alle tre er `eksakt`-parter, og oppgjøret kontrollerer dem med den samme
   regelen som allerede står i tabellen under: motpartens rad må fortsatt
-  **ikke** være `verifisert`. Ingen ny gren, ingen ny `retning`-verdi.
+  **ikke** være `verifisert`, **og dens `autorisasjonsgenerasjon` må
+  fortsatt være den `motpart_generasjon` raden ble skrevet med**. Ingen ny
+  gren, ingen ny `retning`-verdi.
+- **Generasjonsleddet er ikke pynt — uten det er `eksakt`-parten
+  uversjonert (§1a).** «Fortsatt ikke `verifisert`» er sant også når
+  motparten har fornyet kravet sitt: A taper mot B, blir `tilbakekalt`, og
+  **verifiserer på nytt** — reapplikasjonsgrenen i §3.1 setter A
+  `avklaring_kreves` med en ny `autorisasjonsgenerasjon`. Raden navnger
+  fortsatt A, A er fortsatt ikke `verifisert`, og et konfliktsett som kun
+  bærer `(tenant, hostname, retning)` hasher likt før og etter. B kunne da
+  gjort opp med de to stemmene som ble avgitt **før A-s nye krav fantes**,
+  og tilbakekalt et krav ingen av de to menneskene har sett. Med
+  `motpart_generasjon` i raden og i hashen er reapplikasjonen per
+  definisjon `konfliktbildet_endret`: mengden skrives om med den nye
+  generasjonen, hashen skifter, de gamle stemmene slutter å telle, og
+  §1-s fornyelse er veien tilbake.
 - **Det tredje punktet er det som gjør A→B→C til tre parter — uten det er
   de to.** Da C verifiserer, ble A tilbakekalt i **B-s** transaksjon, ikke
   i C-s: A treffes hverken av `sone_overlapp()` (ikke `verifisert`), av
@@ -1720,7 +1757,9 @@ itererer `avgjor_domeneovertakelse()` over **hele** mengden:
 `avgjor_domeneovertakelse()` kaller `sone_overlapp()` selv i
 oppgjørstransaksjonen og sammenligner resultatet med `domenekonfliktpart`
 for sakens generasjon. Er de ulike — et barn er kommet til, en motpart er
-tilbakekalt i mellomtiden — avvises tildelingen med `konfliktbildet_endret`
+tilbakekalt i mellomtiden, eller en registrert `eksakt`-part har
+**reapplikert** og bærer en ny `autorisasjonsgenerasjon` (§1a/§3.1) —
+avvises tildelingen med `konfliktbildet_endret`
 og saken føres tilbake til `manuell` med en ny mengde. To mennesker skal
 ikke kunne attestere ett konfliktbilde og få et annet gjennomført; og
 motsatt skal en motpart som er kommet til etter attestasjonen ikke kunne
@@ -1732,8 +1771,9 @@ tilbake til `manuell` er ikke nok i seg selv: saken beholder sin
 ferske. Uten et gjerde til ville neste forsøk telt nøyaktig de samme to
 stemmene og gjort opp den *endrede* mengden uten at noen hadde attestert
 den. `konfliktbildet_endret` skriver derfor mengden om i samme
-transaksjon — de registrerte `eksakt`-radene beholdes (de kontrolleres
-etter regelen under, ikke avledes på nytt), `forelder`/`barn` erstattes av
+transaksjon — de registrerte `eksakt`-radene beholdes, men **stemples med
+motpartens generasjon slik den står nå** (de kontrolleres etter regelen
+under, de avledes ikke på nytt), `forelder`/`barn` erstattes av
 det `sone_overlapp()` nå gir — og fordi `konfliktsett_hash()` (§1a) er en
 avledning av nettopp de radene, slutter de to gamle stemmene å telle i
 samme øyeblikk. Veien videre er en fornyet attestasjon på det bildet som
@@ -1754,7 +1794,7 @@ Sammenligningen må dermed skille på `retning`, ikke gjøres i ett:
 | Registrert `retning` | Hvordan den kontrolleres ved oppgjøret | Hvorfor |
 |---|---|---|
 | `forelder` / `barn` | Sammenlignes felt for felt mot `sone_overlapp()`-radene med samme retning. Avvik → `konfliktbildet_endret` | Disse motpartene står fortsatt `verifisert` (§2.5b-grenen rører dem ikke), så de *skal* dukke opp på nytt. Faller en bort eller kommer en til, er bildet et annet enn det som ble attestert |
-| `eksakt` | Motpartens rad slås opp direkte og må fortsatt **ikke** være `verifisert`. Er den det, → `konfliktbildet_endret` | A ble tilbakekalt da konflikten oppsto; at den ikke er kommet tilbake er hele påstanden. En A som har rukket å bli `verifisert` igjen er et nytt bilde, ikke det attesterte |
+| `eksakt` | Motpartens rad slås opp direkte og må fortsatt **ikke** være `verifisert` **og** fortsatt ha `autorisasjonsgenerasjon = motpart_generasjon`. Bommer én av de to, → `konfliktbildet_endret` | A ble tilbakekalt da konflikten oppsto; at den ikke er kommet tilbake er hele påstanden. En A som har rukket å bli `verifisert` igjen er et nytt bilde — og en A som har **reapplikert** (§3.1: `avklaring_kreves`, ny generasjon) er det også, selv om statusleddet alene ville sagt ja |
 
 Og speilvendt: returnerer `sone_overlapp()` en `eksakt`-rad ved oppgjøret,
 avvises tildelingen uansett hva som er registrert. En verifisert rad på
@@ -3624,6 +3664,20 @@ nye bildet, går oppgjøret gjennom. Målt på `konfliktsett_hash` i
 attestasjonsradene: den er ulik før og etter fornyelsen, og
 bindingsfeltene er urørt. En implementasjon som kun fører saken tilbake
 til `manuell` består 2j-3 og feiler her ·
+20m-2 **Reapplikasjon fra en eksaktpart er også et endret konfliktbilde
+(§1a/§2.5b):** B utfordrer A eksakt, A blir `tilbakekalt` av B4-grenen, og
+to avgjørere godkjenner B. **Før** oppgjøret verifiserer A på nytt —
+reapplikasjonsgrenen setter A `avklaring_kreves` med en ny
+`autorisasjonsgenerasjon` (§3.1) — og først da kalles oppgjøret →
+`konfliktbildet_endret`, ingen tildeling, A-s nye krav urørt. Mengden
+skrives om med A-s nye generasjon, `konfliktsett_hash` er ulik før og
+etter, og et **nytt** forsøk med de to samme, fortsatt ferske stemmene gir
+`krever_to_attestasjoner`. Først når begge har fornyet, går oppgjøret
+gjennom. En implementasjon som kun kontrollerer «motparten står fortsatt
+ikke `verifisert`» består 20m og feiler her — og det er nettopp den
+varianten som lar to stemmer avgitt før A-s nye krav fantes tilbakekalle
+det kravet uten at ett menneske har sett det. Målt på `motpart_generasjon`
+i raden og på hashen i attestasjonene, ikke på saksstatusen ·
 20n **Taperens sak kan lukkes også etter reapplikasjon (§3.1):** B vinner,
 C settes `tilbakekalt` med grunn `tapte_domeneoppgjor` — deretter
 **verifiserer C på nytt** (reapplikasjonsgrenen: `avklaring_kreves`, ny
@@ -3972,7 +4026,8 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
          (oppgraderingsryddingen av eksisterende namespaceoverlapp FØRST,
           før gjerdet installeres, §2.5b +
           overtakelse_attestasjon m/saksbinding og fornyelse +
-          domenekonfliktpart (flerpartsmengden, §2.5b) +
+          domenekonfliktpart (flerpartsmengden, m/ motpart_generasjon og
+          lukningen som bærer tidligere tilbakekalte parter, §2.5b) +
           domeneobservasjonsrunde m/challenge_token_hash, unikindeks på
           levende runde og køindeks + domeneobservasjon (ON DELETE CASCADE) +
           apne_domeneobservasjonsrunde (idempotent under sonelåsen) +
