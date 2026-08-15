@@ -47,6 +47,13 @@ LoadCredential=DISPONIT_SEMANTIKK_MILJO:/etc/disponit/api/DISPONIT_SEMANTIKK_MIL
 # samme LoadCredential-hydrering til os.environ). Tomme filer = trygg default.
 LoadCredential=DISPONIT_UI_PROVIDER:/etc/disponit/api/DISPONIT_UI_PROVIDER
 LoadCredential=DISPONIT_UI_IDP_ORIGINS:/etc/disponit/api/DISPONIT_UI_IDP_ORIGINS
+# PR-045: miljøet prosessen kjører i (`platform/core/miljo`). Ikke en
+# hemmelighet, men samme hydreringsvei — og uten den nådde verdien aldri
+# prosessen: `lag_app()` leser kun det unitten laster, så både
+# policyregisterets statusregel og `/ui/oppsett.json` tok fallbacken uansett
+# hva miljøfila sa. Filen skrives av opp.sh, som avviser alt annet enn
+# `staging` på denne maskinen.
+LoadCredential=DISPONIT_MILJO:/etc/disponit/api/DISPONIT_MILJO
 
 # access_log=False: uvicorns ASGI-access-logg skriver hele request-linjen
 # — inkludert en callback-query — til journald. Det er den FEMTE logglag-

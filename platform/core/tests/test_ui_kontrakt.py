@@ -136,7 +136,13 @@ def _modulstatus_fra_ui() -> dict[int, str]:
 
 
 def _status_fra_manifest(modul_id: int) -> str:
-    """Manifestets TO akser → UI-ets ene ord. Ingen manifest = `planlagt`."""
+    """Manifestets TO akser → UI-ets ene ord. Ingen manifest = `planlagt`.
+
+    Flatens `i_drift` er STRENGERE enn registerets: her betyr det utrullet
+    hos kunder, altså `driftstilstand: produksjon`. `staging` faller sammen
+    med `ikke_i_drift`, fordi forskjellen mellom «kjører ingen steder» og
+    «kjører på vår egen testserver» ikke er noe en besøkende kan bruke.
+    """
     import yaml
 
     treff = sorted(MODULER.glob(f"m{modul_id:02d}_*/manifest.yaml"))

@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from miljo import gjeldende_miljo
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -228,5 +229,20 @@ def ui_oppsett(request: Request) -> Response:
     # «ikke konfigurert» i stedet for å poste en umulig provider).
     if not _PROVIDER_RE.match(provider):
         provider = ""
-    data = json.dumps({"provider_id": provider}).encode("utf-8")
+    # `miljo` er det forsiden trenger for å avgjøre om noe kan LOVES en kunde.
+    # `driftstilstand: produksjon` sier hvor koden KJØRER; det sier ingenting om
+    # hvilke policystatuser verten godtar. Kjører prosessen i staging-modus,
+    # binder policyer merket `utkast` beslutningene — og da er «Tilgjengelig» et
+    # løfte kunden ikke kan innfri. Verdien leses fra den SAMME `DISPONIT_MILJO`
+    # som `policyregister.tillatte_statuser`, så brikka og regelverket som
+    # faktisk binder beslutningene ikke kan komme i utakt.
+    #
+    # Fail-closed som provider over: alt annet enn den eksakte strengen
+    # `produksjon` er staging. Sammenligningen gjøres IKKE her, men i `miljo`,
+    # som registeret bruker: leste denne flaten variabelen mildere — f.eks.
+    # ved å strippe blanktegn — ville ` produksjon ` gitt «Tilgjengelig» på
+    # forsiden mens registeret fortsatt sto i staging og lot `utkast` binde
+    # beslutninger. Da faller de to ikke lenger sammen, som er hele poenget.
+    miljo = gjeldende_miljo()
+    data = json.dumps({"provider_id": provider, "miljo": miljo}).encode("utf-8")
     return _svar(data, _CT[".json"])

@@ -864,26 +864,47 @@ def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
 # To akser: godkjent (`status`) og utrullet (`driftstilstand`)
 # ===========================================================================
 
-def test_m01_er_godkjent_men_ikke_i_drift(m01):
+def test_m01_er_godkjent_og_kjorer_pa_staging(m01):
     """Arkitektbeslutningen 2026-08-05, pinnet på begge akser.
 
     Begge feltene leses EKSPLISITT. Å utlede det ene av det andre ville
     gjort testen blind for nettopp den forvekslingen feltet ble innført for
     å hindre.
+
+    `driftstilstand` er en påstand om HVILKEN MASKIN koden står på, ikke om
+    hvor moden den er — derfor er den bundet til `docs/DEPLOY.md`, som er
+    autoriteten på miljøtopologien. Testen leser den bindingen, så en
+    oppgradering av feltet uten en tilsvarende endring i topologien ryker
+    her og ikke hos en kunde.
     """
     assert m01["status"] == "aktiv"
-    assert m01["driftstilstand"] == "ikke_i_drift", (
-        "m01 kjører ingen steder: staging har ingen installerte units, og"
-        " det finnes ikke engang en unit for API-et")
+    assert m01["driftstilstand"] == "staging", (
+        "m01 kjører — disponit-api.service er installert og aktiv, migrasjon"
+        " 19, og policymotoren avgjør ekte forespørsler — men den MASKINEN er"
+        " staging: docs/DEPLOY.md utpeker one.com Cloud Server S som"
+        " staging-serveren og reserverer produksjon for en egen VPS med"
+        " kunder og ekte data. `produksjon` her ville sagt til registeret,"
+        " i_drift-lista og kunde-KPI-ene at det finnes en kundeutrulling som"
+        " ikke eksisterer.")
+    deploy = (REPOROT / "docs/DEPLOY.md").read_text(encoding="utf-8")
+    assert "Cloud Server S er staging-serveren vår nå" in deploy, (
+        "DEPLOY.md utpeker ikke lenger Cloud Server S som staging — da må"
+        " driftstilstanden i m01 vurderes på nytt mot den nye topologien,"
+        " ikke stå igjen som en gjetning")
 
 
 def test_registeret_skiller_godkjent_fra_utrullet(m01):
-    """`aktive` og `i_drift` er to lister, ikke to navn på det samme."""
+    """`aktive` og `i_drift` er to lister, ikke to navn på det samme.
+
+    `i_drift` betyr «kjører et sted», ikke «kjører hos kunder»: staging
+    teller. Flatens `i_drift` er et annet, strengere ord (kundeutrulling) —
+    se `_status_fra_manifest` i test_ui_kontrakt.
+    """
     from registry import les_manifester, valider
     st = valider(les_manifester(MODULROT))
     assert st.aktive == ["m01_policy"], st
-    assert st.i_drift == [], (
-        f"registeret påstår at noe kjører: {st.i_drift}")
+    assert st.i_drift == ["m01_policy"], (
+        f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
 

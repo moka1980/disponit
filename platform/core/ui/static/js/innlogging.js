@@ -7,7 +7,7 @@ import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, hentI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
-import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
+import { TILBUD, erTilgjengelig, settProduksjonsmiljo, heroTekstNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
 // Hele produktomfanget, gruppert slik en kjøper leser det: elleve områder, 45
@@ -164,7 +164,14 @@ export async function visInnlogging(opsjoner = {}) {
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
-  } catch { provider = null; }
+    // Miljøet avgjør om forsiden kan LOVE noe. Settes FØR rendringen under, og
+    // fail-closed: bare den eksakte strengen teller, så et manglende felt
+    // eller en feilet henting koster et løfte i stedet for å gi et.
+    settProduksjonsmiljo(o && o.miljo === "produksjon");
+  } catch {
+    provider = null;
+    settProduksjonsmiljo(false);
+  }
   // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
   // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
   if (!gjelderFortsatt()) return;

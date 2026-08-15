@@ -137,7 +137,9 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
         `da rendres tilstanden umerket`);
     }
   }
-  // M-1 er `klargjort`, altså ikke i drift: alle fire sier «Kommer» i dag.
+  // Alle fire sier «Kommer» i dag: M-1 er `klargjort` (den kjører, men på
+  // staging-serveren), og løftet krever i tillegg at verten står i
+  // produksjonsmodus — begge ledd, som `erTilgjengeligFor` sier.
   // Testen skal likevel holde den dagen en modul går i drift, så den måler
   // klassen mot `erTilgjengelig` per punkt i stedet for å anta fordelingen.
   const forventet = TILBUD.map((post) =>
@@ -390,8 +392,9 @@ test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", a
 
 test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => {
   // Kunden er tildelt M-1 og M-2. Da skal M-37 og M-38 IKKE stå på flaten.
-  // Ingen av de to er i drift (manifestene sier `ikke_i_drift`), så «aktive
-  // moduler» er 0 og «under arbeid» er 2 — kundens to, ikke katalogens.
+  // Ingen av de to er rullet ut hos kunder (M-1 kjører på staging, M-2 er
+  // under utvikling), så «aktive moduler» er 0 og «under arbeid» er 2 —
+  // kundens to, ikke katalogens.
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Beta", moduler: [1, 2] }));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));

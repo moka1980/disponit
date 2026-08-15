@@ -223,8 +223,11 @@ def test_oppsett_provider_id_fail_closed(monkeypatch):
     # Ugyldig provider (injeksjonsforsøk / rare tegn) → tom, ikke rå passthrough.
     for ondt in ('a"b', "a b", "a;b", "../x", "A".ljust(65, "A")):
         monkeypatch.setenv("DISPONIT_UI_PROVIDER", ondt)
-        assert json.loads(_klient().get("/ui/oppsett.json").text) \
-            == {"provider_id": ""}, ondt
+        # Bare provider-feltet påstås her: svaret bærer også `miljo`, og en
+        # helhetssammenligning ville gjort testen rød hver gang endepunktet
+        # får et felt som ikke angår fail-closed på provider.
+        assert json.loads(_klient().get("/ui/oppsett.json").text)["provider_id"] \
+            == "", ondt
 
 
 def test_oppsett_json_er_env_drevet(monkeypatch):
@@ -234,9 +237,9 @@ def test_oppsett_json_er_env_drevet(monkeypatch):
     r = _klient().get("/ui/oppsett.json")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/json; charset=utf-8"
-    assert json.loads(r.text) == {"provider_id": "google"}
+    assert json.loads(r.text)["provider_id"] == "google"
     monkeypatch.delenv("DISPONIT_UI_PROVIDER", raising=False)
-    assert json.loads(_klient().get("/ui/oppsett.json").text) == {"provider_id": ""}
+    assert json.loads(_klient().get("/ui/oppsett.json").text)["provider_id"] == ""
     # ingen statisk oppsett.json igjen i repoet
     assert not (uiserver.STATISK / "oppsett.json").exists()
 
@@ -253,3 +256,77 @@ def test_ingen_hardkodet_farge_eller_avstand_i_ui_css():
                 continue
             assert not re.search(r"#[0-9a-fA-F]{3,8}\b", s), \
                 f"hardkodet hex i {p.name}: {s}"
+
+
+def test_oppsett_oppgir_miljo_fail_closed(monkeypatch):
+    """`/ui/oppsett.json` bærer miljøet forsiden avgjør løfter fra.
+
+    Fail-closed som provider: alt annet enn den eksakte strengen `produksjon`
+    blir `staging`. En skrivefeil i miljøfila skal koste et løfte, ikke gi et,
+    og en tom verdi skal ikke arve produksjon fra en tidligere deploy.
+
+    ` produksjon ` med blanktegn er `staging` MED VILJE: policyregisteret
+    sammenligner rått, så en flate som normaliserte verdien ville lovet
+    «Tilgjengelig» i et register som fortsatt lar `utkast` binde beslutninger.
+    """
+    k = _klient()
+    for verdi, forventet in (("produksjon", "produksjon"),
+                             ("staging", "staging"),
+                             ("produksjonn", "staging"),
+                             (" produksjon ", "staging"),
+                             ("", "staging")):
+        monkeypatch.setenv("DISPONIT_MILJO", verdi)
+        assert k.get("/ui/oppsett.json").json()["miljo"] == forventet, verdi
+    monkeypatch.delenv("DISPONIT_MILJO", raising=False)
+    assert k.get("/ui/oppsett.json").json()["miljo"] == "staging"
+
+
+def test_oppsett_miljo_folger_samme_tolkning_som_policyregisteret(monkeypatch):
+    """Porten mot utakt: flaten leser miljøet gjennom `miljo`, ikke selv.
+
+    Registeret (`policyregister.tillatte_statuser`) spør det SAMME modulen om
+    hvorvidt verten er i produksjon. Skulle noen legge inn en egen tolkning i
+    endepunktet igjen — strip, casefold, «prod» som alias — spriker svaret her
+    fra `miljo.gjeldende_miljo` og testen faller. Modulen importeres direkte
+    fordi registeret krever psycopg og en database; det er tolkningen som skal
+    måles, ikke oppslaget.
+    """
+    import miljo as miljomodul
+    k = _klient()
+    for verdi in ("produksjon", " produksjon ", "PRODUKSJON", "prod",
+                  "staging", ""):
+        monkeypatch.setenv("DISPONIT_MILJO", verdi)
+        assert k.get("/ui/oppsett.json").json()["miljo"] \
+            == miljomodul.gjeldende_miljo(), verdi
+
+
+def test_utrullingen_leverer_faktisk_DISPONIT_MILJO_til_api_prosessen():
+    """Porten mot en variabel bare testene har (Codex P1).
+
+    Tolkningen over kan være aldri så eksakt: leverer ikke UTRULLINGEN
+    verdien, leser prosessen den aldri. `lag_app()` hydrerer kun de
+    credentialene unitten laster (`db.hemmeligheter.last_credentials` over
+    `$CREDENTIALS_DIRECTORY`), så en `DISPONIT_MILJO` i staging.env uten
+    `skriv_cred` + `LoadCredential` er usynlig for både
+    `policyregister.tillatte_statuser` og `/ui/oppsett.json` — begge tar
+    fallbacken, uansett hva verten mener den er. Det er ikke en feil noen
+    test av tolkningen kan se, og heller ikke en utrullingen rapporterer:
+    den måler API/M-37-readiness, og prosessen starter helt fint uten.
+
+    Kjeden pinnes derfor helt fram til unitten: skrives credentialen, og
+    lastes den av den unitten som faktisk kjører API-et.
+    """
+    rot = Path(uiserver._ROT)
+    opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    unit = (rot / "deploy/staging/disponit-api.service").read_text(
+        encoding="utf-8")
+    assert re.search(r"^skriv_cred api DISPONIT_MILJO\s", opp, re.M), \
+        "opp.sh materialiserer ikke DISPONIT_MILJO som credential for api"
+    assert "LoadCredential=DISPONIT_MILJO:/etc/disponit/api/DISPONIT_MILJO" \
+        in unit, "disponit-api.service laster ikke DISPONIT_MILJO"
+    # …og løypa kan ikke skrive `produksjon` på staging-maskinen: gaten står
+    # FØR første mutasjon, som de andre miljøfil-portene i opp.sh.
+    gate = opp.index('[ "${DISPONIT_MILJO:-staging}" = "staging" ]')
+    assert gate < opp.index("HERFRA MUTERES SYSTEMET"), \
+        "miljøporten står etter første mutasjon — da er systemet alt endret"
+    assert gate < opp.index("skriv_cred api DISPONIT_MILJO")
