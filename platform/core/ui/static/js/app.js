@@ -2,7 +2,7 @@
 // bygger AppShell + ruteren (200). 401 og 403 holdes adskilt (V2): 401 →
 // innlogging, 403 → ingen-tilgang PÅ flaten (håndteres i flatene).
 import { sett } from "./dom.js";
-import { velgSprak, lagreSprak, lastI18n, t, sprak } from "./i18n.js";
+import { velgSprak, lagreSprak, hentI18n, t, sprak } from "./i18n.js";
 import { hentJson, hentUtrullingForSkall, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion, lokaliserSkiplenke } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
@@ -44,7 +44,7 @@ function byttSprak(s) {
 // er den siste. Er den ikke det, trekker den seg stille — inkludert på vei til
 // innlogging, for et fall tilbake fra en forlatt omstart skal ikke rive ned
 // flaten et nyere valg holder på å bygge. Locale-settet er vernet på samme vis
-// inne i `lastI18n`, som returnerer `null` når det ble forbigått.
+// inne i `hentI18n`, hvis `taIBruk()` returnerer `null` når det ble forbigått.
 let omstartNr = 0;
 
 // Ruteren overlever ikke skallet sitt (Codex P2). `lagRuter` henger på et
@@ -150,6 +150,15 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   if (opsjoner.fokuserSprak && skall.velger) skall.velger.focus();
 }
 
+// Hoppelenka står utenfor `#app` og overlever rendringen av flaten, så den
+// lokaliseres her — sammen med selve ibruktakingen av språket, aldri før den:
+// før sto den på det nye språket mens flaten fortsatt sto på det gamle.
+function taSpraketIBruk(i18n) {
+  const s = i18n.taIBruk();
+  if (s !== null) lokaliserSkiplenke();
+  return s;
+}
+
 // BARE DEN SISTE OMSTARTEN FÅR TEGNE (Codex P2). `byttSprak` venter ikke på
 // `start`, og språkvelgeren i skallet står åpen hele veien mens locale, økt og
 // utrulling hentes. På en treg linje rekker brukeren å velge om igjen, og da
@@ -165,9 +174,13 @@ async function start(valgtSprak, opsjoner = {}) {
   const nr = ++omstartNr;
   const gjelderFortsatt = () => nr === omstartNr;
 
-  if (await lastI18n(valgtSprak || velgSprak()) === null) return;
+  // Settet HENTES her, men tas ikke i bruk før flaten som skal bære det er
+  // klar (Codex P2). Mellom hentingen og skallet ligger to kall til: commitet
+  // vi språket med én gang, sto skallet på skjermen med gammel tekst under et
+  // `<html lang>` som allerede sa noe annet, og en navigasjon i det gapet
+  // rendret en flate på det nye språket inn i det gamle treet.
+  const i18n = await hentI18n(valgtSprak || velgSprak());
   if (!gjelderFortsatt()) return;
-  lokaliserSkiplenke();
   try {
     const sesjon = await hentJson("/v1/sesjon");
     if (!gjelderFortsatt()) return;
@@ -176,11 +189,23 @@ async function start(valgtSprak, opsjoner = {}) {
     // har en tomtilstand for nettopp det. 401 slukes IKKE (se
     // `hentUtrullingForSkall`): økten kan ha blitt borte mellom de to kallene,
     // og da hører den hjemme i `catch`-en under, ikke i et tomt svar.
-    const utrulling = await hentUtrullingForSkall(sprak());
+    //
+    // Den hentes på språket som er PÅ VEI INN, ikke på det som står: `sprak()`
+    // svarer fortsatt det gamle helt til `taIBruk()` har kjørt, og
+    // tenantteksten i svaret skal høre til skallet vi straks bygger.
+    const utrulling = await hentUtrullingForSkall(i18n.sprak);
     if (!gjelderFortsatt()) return;
+    // Alt som skal til for å bytte flaten er inne: språket tas i bruk, og
+    // skallet bygges i samme omgang. `null` = et nyere valg eier språket nå.
+    if (taSpraketIBruk(i18n) === null) return;
     visApp(sesjon, utrulling, opsjoner);
   } catch (e) {
     if (!gjelderFortsatt()) return;
+    // Innloggingsflaten tegnes NÅ, så språket skal være i bruk før den bygges.
+    // Ved første last er alternativet ikke «forrige språk», men ingen tekster
+    // i det hele tatt: `_kart` er tomt til noe er tatt i bruk, og `t()` ville
+    // gitt nøklene tilbake på en side ingen har logget inn på ennå.
+    taSpraketIBruk(i18n);
     if (e instanceof UautorisertFeil) { tilInnlogging(); return; }
     // Nettverk/annet på øktsjekk: fall til innlogging (ingen økt å stole på).
     tilInnlogging();

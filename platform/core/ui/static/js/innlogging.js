@@ -4,7 +4,7 @@
 // provider_id kommer fra /ui/oppsett.json (deploy-satt per arbeidsområde),
 // aldri hardkodet i klienten.
 import { el, sett } from "./dom.js";
-import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
+import { t, sprak, lagreSprak, hentI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
@@ -60,27 +60,31 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // uansett hva lageret svarer, og lagringen er kun det som gjør at det
 // overlever et nytt besøk.
 // BARE DET SISTE BYTTET FÅR TEGNE (Codex P2). Byttet har TO ventepunkter, ikke
-// ett: locale-settet, og så `/ui/oppsett.json` inne i `visInnlogging`. `null`
-// fra `lastI18n` verner det første — et nyere valg overtok mens settet ble
-// hentet — men slapp et forlatt bytte videre inn i det andre, der det rendret
-// ubetinget. Da tegnet det over flaten et nyere bytte nettopp bygde, med SITT
-// oppsett-svar: gikk det ene kallet gjennom og det andre ikke, avgjorde
-// rekkefølgen om forsiden viste innloggingsknappene eller «ikke tilgjengelig»,
-// og fokus ble revet til en flate som allerede var erstattet.
+// ett: locale-settet, og så `/ui/oppsett.json` inne i `visInnlogging`. Vernet
+// på det første — et nyere valg overtok mens settet ble hentet — slapp et
+// forlatt bytte videre inn i det andre, der det rendret ubetinget. Da tegnet
+// det over flaten et nyere bytte nettopp bygde, med SITT oppsett-svar: gikk det
+// ene kallet gjennom og det andre ikke, avgjorde rekkefølgen om forsiden viste
+// innloggingsknappene eller «ikke tilgjengelig», og fokus ble revet til en
+// flate som allerede var erstattet.
 //
 // `byttNr` er den ene sannheten om hvilket bytte som eier flaten — samme regel
 // som `omstartNr` i `app.js`, og den bæres HELE veien: `visInnlogging` får
 // `gjelderFortsatt` og sjekker den etter sitt eget ventepunkt, rett før den
 // rører DOM-en.
+//
+// Settet bæres med på samme vis, og tas i bruk først der (Codex P2). Byttet
+// begynner ikke i det locale-svaret kommer, men i det flaten skiftes: tok vi
+// språket i bruk med én gang, sto den norske forsiden merket `lang="en"` helt
+// til oppsettskallet var ferdig — og hang det kallet, sto den slik for godt.
 let byttNr = 0;
 
 async function byttTil(s) {
   const nr = ++byttNr;
   lagreSprak(s);              // best effort — kan være nektet, og det er greit
-  if (await lastI18n(s) === null) return;   // forbigått av et nyere valg
-  // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
-  lokaliserSkiplenke();
-  await visInnlogging({ fokuserSprak: true,
+  const i18n = await hentI18n(s);
+  if (nr !== byttNr) return;                // forbigått av et nyere valg
+  await visInnlogging({ fokuserSprak: true, i18n,
     gjelderFortsatt: () => nr === byttNr });
 }
 
@@ -148,6 +152,11 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
 // forlatt kall skal da trekke seg stille i stedet for å skrive over flaten som
 // står. Uten opsjonen tegner flaten alltid — det er riktig for førstelasten og
 // for `tilInnlogging`, som ikke konkurrerer med noen.
+//
+// `i18n` er et hentet, men ikke ibruktatt locale-sett fra `hentI18n`. Det tas i
+// bruk her, ett skritt før treet bygges, slik at språket og flaten som bærer
+// det skifter i samme omgang. Uten opsjonen står språket som det står — riktig
+// for `tilInnlogging`, som ikke bytter språk i det hele tatt.
 export async function visInnlogging(opsjoner = {}) {
   const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
@@ -159,6 +168,14 @@ export async function visInnlogging(opsjoner = {}) {
   // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
   // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
   if (!gjelderFortsatt()) return;
+
+  // Nå — og ikke tidligere — er alt til stede for å bytte flaten. `null` fra
+  // `taIBruk` betyr at et nyere valg eier språket; da tegner vi ikke.
+  if (opsjoner.i18n) {
+    if (opsjoner.i18n.taIBruk() === null) return;
+    // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
+    lokaliserSkiplenke();
+  }
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
     tabindex: "-1" },

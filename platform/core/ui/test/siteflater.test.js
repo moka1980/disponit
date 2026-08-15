@@ -39,7 +39,7 @@ globalThis.fetch = async (url) => {
   if (sti === "/ui/oppsett.json") {
     return { ok: true, status: 200, json: async () => ({ provider_id: "google" }) };
   }
-  // Språkbyttet på forsiden går gjennom `lastI18n`, altså et ekte
+  // Språkbyttet på forsiden går gjennom `hentI18n`, altså et ekte
   // locale-oppslag — serveres her fra de samme filene serveren serverer.
   const locale = sti.match(/^\/ui\/locale\/(nb|en)$/);
   if (locale) {
@@ -203,7 +203,7 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
 
 test("Landing: et forbigått språkbytte tegner ikke over flaten som står", async () => {
   // Codex P2: byttet har TO ventepunkter, og bare det første var vernet.
-  // `lastI18n` melder fra med `null` når et nyere valg har overtatt, men et
+  // `taIBruk` melder fra med `null` når et nyere valg har overtatt, men et
   // bytte som rakk forbi det vernet gikk videre inn i `visInnlogging`, som
   // henter `/ui/oppsett.json` og deretter rendret ubetinget. Kom det svaret
   // sist, tegnet et forlatt bytte over flaten et nyere bytte hadde bygd — med
@@ -263,6 +263,60 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
     slippOppsett();
     globalThis.fetch = ekteFetch;
     settI18nForTest(NB, "nb");
+  }
+});
+
+test("Landing: språket tas i bruk først når flaten som bærer det er klar", async () => {
+  // Codex P2: locale-settet ble tatt i bruk i det svaret kom, men flaten ble
+  // først byttet når `/ui/oppsett.json` var ferdig. I gapet sto den NORSKE
+  // forsiden merket `lang="en"` — og henger oppsettskallet, står den slik på
+  // ubestemt tid: en skjermleser leser norsk tekst med engelsk uttale, og en
+  // oversetter ser en side som lyver om sitt eget språk.
+  //
+  // Riggen er nøyaktig gapet: byttets oppsett-kall parkeres, og vi ser på
+  // dokumentet mens det står der.
+  const app = nyttAppBrett();
+  const ekteFetch = globalThis.fetch;
+  let slippOppsett = () => {};
+  const holdt = new Promise((r) => { slippOppsett = r; });
+  let oppsettNr = 0;
+  globalThis.fetch = async (url) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      if (++oppsettNr === 2) await holdt;   // språkbyttets eget kall
+      return { ok: true, status: 200,
+        json: async () => ({ provider_id: "google" }) };
+    }
+    return ekteFetch(url);
+  };
+  document.documentElement.setAttribute("lang", "nb");
+  try {
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => oppsettNr === 2);
+    await vent(() => false, 20);          // la locale-svaret komme helt fram
+
+    assert.ok(app.textContent.includes(NB["site.hero.tittel"]),
+      "riggen parkerte ikke byttet — flaten er allerede byttet");
+    assert.equal(document.documentElement.getAttribute("lang"), "nb",
+      "dokumentet ble merket engelsk mens den norske forsiden fortsatt sto");
+    assert.equal(t("site.hero.tittel"), NB["site.hero.tittel"],
+      "locale-kartet ble byttet under flaten som fortsatt sto på skjermen");
+
+    // Oppsettet kommer i mål: NÅ skal språket og flaten skifte sammen.
+    slippOppsett();
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    assert.equal(document.documentElement.getAttribute("lang"), "en",
+      "flaten ble engelsk uten at dokumentet fulgte med");
+  } finally {
+    slippOppsett();
+    globalThis.fetch = ekteFetch;
+    settI18nForTest(NB, "nb");
+    document.documentElement.setAttribute("lang", "nb");
   }
 });
 
