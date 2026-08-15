@@ -221,9 +221,22 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             # (port 15) — ikke av en UI-sjekk, og ikke stille.
             conn.rollback()
             return _feilsvar("dobbel_attestasjon", rid)
-        except psycopg.Error:
+        except (psycopg.errors.NoDataFound, psycopg.errors.InvalidParameterValue):
+            # Motorens EGNE avvisninger (ukjent domenekontroll, eller status !=
+            # avklaring_kreves — saken ble foreldet av en nyere overtakelse).
+            # Dette er den normale, forventede utgangen når en konflikt
+            # rekker å bli avløst — ikke en basefeil, jf. samme skille app.py
+            # gjør for kapabilitetsvalidering (Codex).
             conn.rollback()
             return _feilsvar("attestasjon_avvist", rid)
+        except psycopg.Error:
+            # EKTE basefeil (tilkobling tapt, e.l.) — skal IKKE se ut som at
+            # motoren tok en avgjørelse. `attestasjon_avvist` her ville fortalt
+            # klienten at attestasjonen ble vurdert og nektet, når tjenesten i
+            # virkeligheten var utilgjengelig.
+            conn.rollback()
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+            return _feilsvar("db_utilgjengelig", rid)
 
         if svar == "avgjort":
             return kanonisk_json({"status": "avgjort", "utfall": utfall,
