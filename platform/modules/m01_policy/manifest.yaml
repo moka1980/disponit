@@ -11,9 +11,23 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # andre feltet leses `aktiv` som «ute hos kunder», og det er noe helt annet
 # enn det sjekklisten har bevist.
 #
-# M-1 er godkjent og kjører ingen steder: staging har ingen installerte
-# units, og det finnes ikke engang en unit for API-et. `registry.valider`
-# nekter motsatt tilstand — drift uten aktiv status er en feil.
+# M-1 er godkjent OG kjører: disponit.com kjører `disponit-api.service` og
+# `disponit-m37.service` mot migrasjon 19, og policymotoren avgjør ekte
+# forespørsler der. `registry.valider` nekter motsatt tilstand — drift uten
+# aktiv status er en feil.
+#
+# Feltet sto `ikke_i_drift` frem til 2026-08-15, med begrunnelsen «staging har
+# ingen installerte units, og det finnes ikke engang en unit for API-et».
+# Begge deler var sant da det ble skrevet; ingen av dem er sanne nå. Den
+# gamle begrunnelsen står her fordi et manifest skal kunne leses uten å
+# kjenne historikken den kom fra — ikke som en påstand om i dag.
+#
+# `produksjon` her er en påstand om VERTEN, og verten må si det samme:
+# `DISPONIT_MILJO=produksjon` i miljøfila avgjør hvilke policystatuser som
+# får binde en ekte beslutning (`api/policyregister.tillatte_statuser`).
+# Uten den tar registeret staging-standarden og slipper `utkast` gjennom.
+# `opp.sh` gater verdien før utrulling; se «Verten må SI hvilket miljø den
+# er» i `docs/DEPLOY.md`.
 driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 # AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
 #
