@@ -31,13 +31,31 @@ jobs:
     # Offentlig repo: bare reviews fra eier eller Codex utløser autonom
     # fiksing/merging. Codex-verdikter kommer som issue_comment fra
     # chatgpt-codex-connector[bot], ikke som formell review — fang begge.
+    #
+    # 🔴 IKKE ALT Codex-bottet skriver ER ET VERDIKT. Da kreditten tok slutt
+    # 2026-08-15 postet den «Codex usage limits have been reached for code
+    # reviews» som en helt vanlig issue_comment — altså med nøyaktig samme
+    # avsender og form som et verdikt, men uten funn. Steg 3 sier at et
+    # verdikt uten funn skal MERGES, så en tom lommebok kunne blitt lest som
+    # en godkjenning og merget ureviewet kode.
+    #
+    # Filteret matcher KVOTEMELDINGENS EGEN ÅPNING, ikke løse delstrenger
+    # (Codex' P2 på denne PR-en): et `contains(body, 'usage limits')` ville
+    # også kastet et EKTE verdikt som tilfeldigvis diskuterer rate-limiting
+    # eller fakturering i funnene sine — og da kjører verken steg 0 eller
+    # fikselogikken, så en gyldig review blir liggende stille. Nøyaktig den
+    # feilmåten denne PR-en finnes for å fjerne, bare speilvendt.
+    # Presist filter her, bred vurdering i steg 0: teksten kommer fra en
+    # tredjepart og kan endre seg, så prompten fanger variantene filteret
+    # ikke kjenner.
     if: >-
       (github.event_name == 'pull_request_review' &&
        (github.event.review.user.login == 'moka1980' ||
         contains(github.event.review.user.login, 'codex'))) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
-       contains(github.event.comment.user.login, 'codex'))
+       contains(github.event.comment.user.login, 'codex') &&
+       !startsWith(github.event.comment.body, 'Codex usage limits have been reached'))
     runs-on: ubuntu-latest
     # Regnestykket, målt på denne workflowen selv: 101 turer tok 21 minutter,
     # altså ~12,5 s per tur. 300 turer er da ~62 min per forsøk, og tre forsøk
@@ -82,6 +100,16 @@ jobs:
             Sjekk ut PR-branchen først:
             `gh pr checkout ${{ github.event.pull_request.number || github.event.issue.number }}`.
 
+            0. ER DETTE I DET HELE TATT ET VERDIKT? En melding fra
+               Codex-bottet om at kreditten/kvoten er brukt opp («usage
+               limits have been reached», «add credits», eller en annen
+               formulering av samme sak), en feilmelding fra
+               integrasjonen, eller en ren statusmelding er IKKE en review.
+               Den har ingen funn — og et verdikt uten funn skal ifølge steg
+               3 merges, så uten denne sjekken merger du ureviewet kode
+               fordi noen gikk tom for penger. Skjer det: IKKE fiks, IKKE
+               merge. Skriv én kommentar til eier om at review-kanalen er
+               nede og at PR-en venter, og stopp.
             1. Les hele verdiktet og alle tråder: `gh pr view <nr> --comments`
                og `gh api` mot pulls/<nr>/reviews og pulls/<nr>/comments.
                Ignorer rene triggerkommentarer («@codex review»).
