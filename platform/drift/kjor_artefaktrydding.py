@@ -94,9 +94,20 @@ def _skriv_feiltelling(n: int) -> bool:
         return False
 
 
+def _koble(dsn: str):
+    """Tilkoblingen bak et navn på modulnivå.
+
+    Importen er fortsatt lat (arbeideren skal kunne importeres uten et
+    databasebibliotek i hånda), men navnet gir testene et sømpunkt: den
+    hoppet over kjøringen måles på det `main()` faktisk gjør med telleren,
+    ikke på en etterligning av den.
+    """
+    from db.pg import koble
+    return koble(dsn)
+
+
 def main() -> int:
     from db.hemmeligheter import last_credentials
-    from db.pg import koble
     last_credentials()  # PR-009 §5: LoadCredential før env-lesing under
     dsn = os.environ.get("DISPONIT_DOMAINS_URL") or os.environ.get("DATABASE_URL")
     if not dsn:
@@ -107,7 +118,7 @@ def main() -> int:
 
     tidligere = _les_feiltelling()
     try:
-        conn = koble(dsn)
+        conn = _koble(dsn)
     except Exception:
         # Databasen utilgjengelig ER en feilet kjøring (§6) — telleren skal
         # øke akkurat som ved en feilet `rydd_staged_artefakter()`, ellers
@@ -116,7 +127,8 @@ def main() -> int:
         lagret = _skriv_feiltelling(n)
         print(json.dumps({
             "hendelse": "ryddekjoring", "forkastet": 0, "batcher": 0,
-            "karantene_bevart": 0, "feilet": 1, "sammenhengende_feil": n,
+            "karantene_bevart": 0, "feilet": 1, "hoppet_over": 0,
+            "sammenhengende_feil": n,
             "alarm": int(n >= artefaktrydding.ALARM_ETTER_FEIL),
             "tilstand_lagret": int(lagret),
             "grunn": "tilkobling_feilet",
@@ -143,14 +155,25 @@ def main() -> int:
         except Exception:
             pass
 
-    lagret = _skriv_feiltelling(tidligere + 1 if r.feilet else 0)
+    if r.hoppet_over:
+        # Codex (P2): en kjøring som fant arbeidernøkkelen opptatt har ikke
+        # ryddet noe og har heller ikke feilet — telleren skal stå NØYAKTIG som
+        # den sto. Skrev vi 0 her, ville en overlappende kjøring (manuell drift,
+        # flere verter, en henger som holder låsen) slettet en alt opptelt feil,
+        # og §6-alarmen ville aldri nådd to sammenhengende feil. `tilstand_lagret`
+        # er sant fordi tilstanden er intakt: ingenting gikk tapt.
+        feil_n, lagret = tidligere, True
+    else:
+        feil_n = tidligere + 1 if r.feilet else 0
+        lagret = _skriv_feiltelling(feil_n)
     print(json.dumps({
         "hendelse": "ryddekjoring",
         "forkastet": r.forkastet,
         "batcher": r.batcher,
         "karantene_bevart": r.karantene_bevart,
         "feilet": int(r.feilet),
-        "sammenhengende_feil": tidligere + 1 if r.feilet else 0,
+        "hoppet_over": int(r.hoppet_over),
+        "sammenhengende_feil": feil_n,
         "alarm": int(r.alarm_utlost),
         "tilstand_lagret": int(lagret),
     }))

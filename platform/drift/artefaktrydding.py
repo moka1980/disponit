@@ -40,6 +40,10 @@ class Ryddresultat:
     batcher: int = 0
     feilet: bool = False
     alarm_utlost: bool = False
+    #: Codex (P2): en kjøring som fant arbeidernøkkelen opptatt har verken
+    #: lyktes eller feilet — den gjorde ingenting. Skillet må stå PÅ resultatet,
+    #: ellers kan ikke kalleren vite at feiltelleren skal stå urørt.
+    hoppet_over: bool = False
 
 
 def kjor(conn, *, grense: int = BATCHGRENSE, maks_batcher: int = 1,
@@ -60,6 +64,13 @@ def kjor(conn, *, grense: int = BATCHGRENSE, maks_batcher: int = 1,
     fikk_lås = conn.execute("SELECT pg_try_advisory_lock(%s)",
                             (ARBEIDERNOKKEL,)).fetchone()[0]
     if not fikk_lås:
+        # Codex (P2): dette er HOPPET OVER, ikke vellykket. Et rent
+        # standardresultat her så ut som en kjøring som ryddet null rader, og
+        # kalleren persisterte da feiltellingen 0. Ved overlappende manuelle
+        # kjøringer, flere verter, eller en henger som holder låsen, kunne hver
+        # forbigåtte aktivering dermed slette en alt opptelt feil og rapportere
+        # suksess uten å ha ryddet noe — nøyaktig det §6-alarmen skal fange.
+        res.hoppet_over = True
         return res
     try:
         for _ in range(maks_batcher):

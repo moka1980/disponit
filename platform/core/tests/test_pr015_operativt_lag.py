@@ -12,6 +12,7 @@ ingen bordtilgang til `domenekontroll` — scheduleren ser populasjonen gjennom
 helst.
 """
 import hashlib
+import json
 import math
 import secrets
 
@@ -1008,3 +1009,48 @@ def test_port27_to_feilede_kjoringer_gir_alarm():
     assert res1.feilet and not res1.alarm_utlost, "alarm gikk på FØRSTE feil"
     res2 = artefaktrydding.kjor(Sprekker(), tidligere_feil=1)
     assert res2.feilet and res2.alarm_utlost, "to feil på rad ga ingen alarm"
+
+
+def test_hoppet_over_kjoring_sletter_ikke_feiltellingen(tmp_path, monkeypatch):
+    """Codex (P2): opptatt arbeidernøkkel = HOPPET OVER, ikke vellykket.
+
+    En kjøring som ikke fikk låsen har verken ryddet eller feilet. Ble den
+    rapportert som vellykket, skrev `main()` feiltellingen 0 — og ved
+    overlappende kjøringer (manuell drift, flere verter, en henger som holder
+    låsen) kunne hver forbigått aktivering slette en alt opptelt feil, slik at
+    §6-alarmen aldri nådde to sammenhengende feil.
+    """
+    from drift import artefaktrydding, kjor_artefaktrydding as kar
+
+    class Opptatt:
+        """Låsen er tatt av en annen sesjon."""
+
+        def execute(self, sql, args=None):
+            assert "rydd_staged_artefakter" not in sql, "ryddet uten lås"
+
+            class R:
+                def fetchone(self_inner):
+                    return (False,)
+            return R()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    res = artefaktrydding.kjor(Opptatt())
+    assert res.hoppet_over and not res.feilet, "hoppet over så ut som en kjøring"
+
+    # ...og telleren står urørt gjennom `main()`.
+    tilstand = tmp_path / "artefaktrydding.json"
+    tilstand.write_text('{"feil": 1}', encoding="utf-8")
+    monkeypatch.setenv("DISPONIT_RYDDETILSTAND", str(tilstand))
+    monkeypatch.setenv("DISPONIT_DOMAINS_URL", "postgresql:///finnes-ikke")
+    monkeypatch.setattr(kar, "_koble", lambda dsn: Opptatt())
+    assert kar.main() == 0
+    assert json.loads(tilstand.read_text(encoding="utf-8"))["feil"] == 1, \
+        "en hoppet over kjøring slettet en opptelt feil"
