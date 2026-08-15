@@ -1,13 +1,91 @@
 """PR-014b CP5 (del 2): POST /v1/artefakt — opplastingsendepunktet."""
 import secrets
+import types
 
 import pytest
 
-from .test_api import DSN, TENANT, migrator, miljo, token, klient, app  # noqa: F401
+from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, TENANT, app, klient,  # noqa: F401
+                       dekker, migrator, miljo, token)
 from .test_m37 import _sett_kontekst
 from .test_pr014b_artefaktkapabilitet import _plukket_oppdrag_med_binding
 
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+
+
+def _domeneaktorsesjon(tenant: str, sub: str,
+                       roller: str = "leser") -> tuple[str, str]:
+    """Browserøkt for CSRF-porten i domeneattestasjon.
+
+    `roller` er rollen medlemskapet får. PR-015 flyttet fire-øyne-sjekken NED i
+    basen: `avgi_overtakelse_attestasjon` slår opp prinsipalen bak stemmen med
+    `laas_godkjenner()` og krever `domeneadjudikator` DER, ikke bare i
+    API-laget. En økt med bare `leser` avvises derfor av motoren før
+    opptellingen — det er meningen, og de to attestasjonstestene under sender
+    rollen eksplisitt i stedet for å arve en default som ville skjult hvilken
+    autorisasjon de faktisk hviler på.
+    """
+    from api import sesjon as sesjonmodul
+    from db.pg import koble, sett_kontekst
+    from .test_pr010_db import _identitet
+
+    cookie, csrf = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, tenant, "sys", "r0")
+        bid = _identitet(m, sub=f"{tenant}-{sub}")
+        m.execute("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+                  " VALUES (%s,%s,%s)"
+                  " ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
+                  " roller=EXCLUDED.roller", (tenant, bid, [roller]))
+        ver = m.execute("SELECT authz_version FROM brukermedlemskap"
+                        " WHERE tenant=%s AND bruker_id=%s",
+                        (tenant, bid)).fetchone()[0]
+        m.execute(
+            "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+            " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
+            " tilbakekalt)"
+            " VALUES (%s,%s,%s,%s,%s, now(), now(),"
+            " now()+interval '12 hour', false)",
+            (sesjonmodul._hash(cookie), tenant, bid, ver,
+             sesjonmodul._hash(csrf)))
+        m.commit()
+    finally:
+        m.close()
+    return cookie, csrf
+
+
+def _domeneovertakelsessak(migrator):
+    from api.domeneovertakelse import opprett_overtakelsessak
+    from .test_pr014b_domene_artefakt import _admin, _dkrow, _host
+
+    h = _host()
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res == "konflikt:" + TENANT
+    finally:
+        a.close()
+    tapt = res.split(":", 1)[1]
+    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    uid = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                  tenant_tapt=tapt, generasjon=gen, aktor="sys")
+    migrator.commit()
+    return uid
+
+
+def _post_domeneattestasjon(klient, uid, cookie, csrf, utfall, vinnende):
+    from api import sesjon as sesjonmodul
+
+    return klient.post(
+        f"/v1/unntak/{uid}/domeneattestasjon",
+        json={"utfall": utfall, "vinnende_tenant": vinnende},
+        headers={"X-Disponit-CSRF": csrf},
+        cookies={sesjonmodul.C_SESJON: cookie})
 
 
 def _utsted_cap(opp, modul, kh, at):
@@ -76,6 +154,62 @@ def test_upload_ugyldig_kapabilitet(migrator, klient, token):
     tok, _ = token(rolle=modul, scopes=("artifacts:upload",))
     r = _post(klient, tok, secrets.token_hex(16), {"a": 1})   # ukjent jti
     assert r.status_code == 401
+
+
+@pg
+@dekker("dobbel_attestasjon")
+def test_domeneattestasjon_dobbel_attestasjon(klient, migrator, monkeypatch):
+    uid = _domeneovertakelsessak(migrator)
+    cookie, csrf = _domeneaktorsesjon(ANNEN_TENANT, "domene-1",
+                                      roller="domeneadjudikator")
+    auth = {"aktor": "aktor-1"}
+
+    monkeypatch.setattr(
+        "api.app._autentiser",
+        lambda *a, **k: types.SimpleNamespace(tenant=ANNEN_TENANT,
+                                              token_id=auth["aktor"]))
+
+    r1 = _post_domeneattestasjon(klient, uid, cookie, csrf,
+                                 "godkjenn", ANNEN_TENANT)
+    assert r1.status_code == 409, r1.text
+    assert r1.json()["feil"] == "krever_to_attestasjoner"
+
+    r2 = _post_domeneattestasjon(klient, uid, cookie, csrf,
+                                 "godkjenn", ANNEN_TENANT)
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["feil"] == "dobbel_attestasjon"
+
+
+@pg
+@dekker("attestasjon_avvist")
+def test_domeneattestasjon_avvist_naar_saken_er_foreldet(klient, migrator,
+                                                         monkeypatch):
+    uid = _domeneovertakelsessak(migrator)
+    cookie, csrf = _domeneaktorsesjon(ANNEN_TENANT, "domene-2",
+                                      roller="domeneadjudikator")
+    auth = {"aktor": "aktor-1"}
+
+    monkeypatch.setattr(
+        "api.app._autentiser",
+        lambda *a, **k: types.SimpleNamespace(tenant=ANNEN_TENANT,
+                                              token_id=auth["aktor"]))
+
+    r1 = _post_domeneattestasjon(klient, uid, cookie, csrf,
+                                 "godkjenn", ANNEN_TENANT)
+    assert r1.status_code == 409, r1.text
+    assert r1.json()["feil"] == "krever_to_attestasjoner"
+
+    auth["aktor"] = "aktor-2"
+    r2 = _post_domeneattestasjon(klient, uid, cookie, csrf,
+                                 "godkjenn", ANNEN_TENANT)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["status"] == "avgjort"
+
+    auth["aktor"] = "aktor-3"
+    r3 = _post_domeneattestasjon(klient, uid, cookie, csrf,
+                                 "godkjenn", ANNEN_TENANT)
+    assert r3.status_code == 409, r3.text
+    assert r3.json()["feil"] == "attestasjon_avvist"
 
 
 def _oppdrag_owner(migrator, opp):
