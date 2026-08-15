@@ -144,6 +144,17 @@ FEILVEIER: tuple[Feilvei, ...] = (
     Feilvei("innlogging_feilet", 400, ("sikkerhet",), None, aggregert=True,
             notat=("Generisk callback-feilside. Gjengir ALDRI"
                    " URL-parametere (v5 §6).")),
+    # PR-015 §4: fire øyne ved positiv cross-tenant domenetildeling.
+    Feilvei("dobbel_attestasjon", 409, ("sikkerhet",), "sikkerhet", notat=(
+        "Samme aktør forsøkte å avgi to stemmer på samme saksrevisjon."
+        " Avvist av PRIMÆRNØKKELEN i overtakelse_attestasjon, ikke av UI-et."
+        " Sikkerhetssak fordi et forsøk på å produsere begge øyne selv er"
+        " nettopp det fire-øyne-kravet finnes for.")),
+    Feilvei("attestasjon_avvist", 409, ("sikkerhet",), None, notat=(
+        "Motoren nektet attestasjonen: saken er ikke i avklaring_kreves, eller"
+        " revisjonen er foreldet av en nyere overtakelse. Ingen sak — dette er"
+        " den normale utgangen når en konflikt rekker å bli avløst av en"
+        " nyere, og attestasjonsraden er allerede bevart som evidens.")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}

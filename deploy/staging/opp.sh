@@ -51,10 +51,71 @@ fi
 UNITS="disponit-api.socket disponit-api.service disponit-m37.service
 disponit-helse.service disponit-helse.timer
 disponit-rydd-pending.service disponit-rydd-pending.timer
-disponit-backup.service disponit-backup.timer"
+disponit-backup.service disponit-backup.timer
+disponit-domenerevalidering.service disponit-domenerevalidering.timer
+disponit-artefaktrydding.service disponit-artefaktrydding.timer"
 if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
   echo "kjører som før."
+  exit 1
+fi
+# PR-015: revalideringsarbeideren importerer dnspython LAT (enhetstestene
+# injiserer egne oppslag og skal slippe DNS-avhengigheten). Baksiden er at
+# unit-preflighten passerer selv om pakken mangler i venv-en, og at feilen
+# først viser seg ved første timeraktivering — som en RuntimeError i
+# `_txt_oppslag`, uten at ett eneste domene blir revalidert. Importen prøves
+# derfor her, lesende, sammen med resten av gaten.
+if ! "$ROT/.venv/bin/python" -c 'import dns.resolver' 2>/dev/null; then
+  echo "AVBRUTT: dnspython mangler i $ROT/.venv — disponit-domenerevalidering"
+  echo "ville startet og feilet ved første TXT-oppslag. Kjør"
+  echo "deploy/staging/oppsett-postgresql.sh på nytt (den installerer den),"
+  echo "og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# PR-015: driftstimerne over kaller funksjoner som migrasjon 019 kun granter
+# til `disponit_domains_admin` og `disponit_domener`. En EKSISTERENDE
+# installasjon har ingen DISPONIT_DOMAINS_URL før `oppsett-postgresql.sh` er
+# kjørt på nytt; en stille fallback til runtime-DSN-en (`disponit`) ville
+# startet begge timerne rett i `permission denied` og latt revalidering og
+# rydding stå ute av drift uten at utrullingen sa fra. Gaten hører derfor
+# hjemme her, FØR første mutasjon: feiler den, er systemet beviselig urørt.
+# Lesingen skjer i en subshell, så miljøfilen ikke lekker inn i preflighten.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_DOMAINS_URL mangler i $MILJOFIL."
+  echo "Driftstimerne (disponit-domenerevalidering, disponit-artefaktrydding)"
+  echo "ville da fått runtime-DSN-en, som migrasjon 019 ikke granter"
+  echo "revaliderings- eller ryddefunksjonene til — begge timerne ville"
+  echo "startet i 'permission denied'. Kjør deploy/staging/oppsett-postgresql.sh"
+  echo "på nytt (den oppretter rollen disponit_domener og skriver DSN-en),"
+  echo "og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# PR-015 (Codex P1): RESOLVERPORTEN kjøres FØR første mutasjon, ikke først ved
+# timeraktivering. `skriv_cred domener DISPONIT_RESOLVERE` skrev tidligere
+# hva som helst — også tom streng — og utrullingen rapporterte suksess fordi
+# den bare måler API/M-37-readiness; `systemctl enable --now` på en .timer
+# starter ikke oneshot-tjenesten synkront, så en ugyldig resolverkonfigurasjon
+# var USYNLIG i rapporten. Hver aktivering ville da avsluttet med
+# «oppstart_nektet» uten å røre databasen, og etter 72 timer uten fersk
+# revalidering ville freshness-regelen ugyldiggjort ALLE domeneautorisasjoner.
+# Samme parser og samme diversitetsgate som arbeideren bruker (§2.4: minst to
+# resolvere hos ULIKE operatører og ULIKE nett) — ikke en kopi av regelen her,
+# som kunne divergert. Ingen DNS-oppslag utføres; `resolvere()` bygger bare
+# transporten og måler diversiteten. PYTHONPATH speiler unit-filene: `drift`
+# fra platform/, `db` fra platform/core.
+if ! RESOLVERFEIL=$( set -a; . "$MILJOFIL"; set +a
+      cd "$KILDE/platform" && PYTHONPATH="$KILDE/platform/core" \
+        "$ROT/.venv/bin/python" -c 'import drift.kjor_revalidering as k; k.resolvere()' 2>&1 ); then
+  echo "AVBRUTT: DISPONIT_RESOLVERE er ugyldig i $MILJOFIL."
+  echo "$RESOLVERFEIL" | tail -3
+  echo "Formatet er navn@operator/nett=adresse, komma-separert, med minst to"
+  echo "resolvere hos ULIKE operatører og ULIKE nett (§2.4). Uten dette ville"
+  echo "disponit-domenerevalidering blitt aktivert, nektet oppstart ved hver"
+  echo "kjøring uten å røre databasen, og utrullingen ville rapportert suksess"
+  echo "— helt til 72-timersregelen ugyldiggjorde alle domeneautorisasjoner."
+  echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
 
@@ -64,7 +125,10 @@ fi
 
 # --- 3. Unix-identiteter (idempotent; v2 §3 + PR-009b V1) ------------------
 getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
-for b in disponit-api disponit-m37 disponit-helse; do
+# PR-015: driftstimerne (revalidering + rydding) får sin EGEN Unix-bruker,
+# samme skille som API/M-37/helse — et kompromittert timerkjøring skal ikke
+# arve noen annen tjenestes fullmakter, og omvendt.
+for b in disponit-api disponit-m37 disponit-helse disponit-domener; do
   getent passwd "$b" >/dev/null || \
     useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
 done
@@ -106,12 +170,38 @@ skriv_cred m37 DISPONIT_KEK "$DISPONIT_KEK"
 install -d -m 700 /etc/disponit/tokenadmin
 skriv_cred tokenadmin DISPONIT_TOKEN_ADMIN_URL "$DISPONIT_TOKEN_ADMIN_URL"
 skriv_cred tokenadmin DISPONIT_TOKEN_PEPPER    "$DISPONIT_TOKEN_PEPPER"
+# PR-015: driftstimerne — egen rolle (disponit_domener, migrasjon 019),
+# ALDRI disponit_domains_admin (den bærer direkte EXECUTE på
+# avgjor_domeneovertakelse og ville omgått fire øyne, jf. F16-notatet i
+# migrasjonen). DISPONIT_RESOLVERE er ikke en hemmelighet — server-
+# adressene for DNS-oppslag — men går gjennom samme LoadCredential-vei
+# som resten (v3 §5); tom streng gir en tydelig oppstart-nektet-feil i
+# stedet for stille å hoppe over diversitetskravet.
+install -d -m 700 /etc/disponit/domener
+# INGEN fallback til $DATABASE_URL: den DSN-en har ingen av grantene 019
+# gir, så en fallback ville bare gjort en manglende rolle til to timere som
+# feiler i drift. Gaten i §2 har alt avbrutt utrullingen hvis den mangler.
+skriv_cred domener DISPONIT_DOMAINS_URL "$DISPONIT_DOMAINS_URL"
+skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 
 # --- 5. VEDLIKEHOLDSVINDU: stopp tjenester OG helsetimer (V1) --------------
 # Timeren stoppes også: den skal verken telle feil mot stoppede tjenester
 # eller utløse en restart midt i migrasjonsvinduet.
+#
+# PR-015 (Codex P2): driftstimerne MÅ med. Er de først aktivert av en tidligere
+# utrulling, kan de ellers fyre midt i dette vinduet — mens credentials skrives
+# om, forward-only-migrasjoner kjører og `aktiv`-symlenken byttes — og en
+# revaliderings- eller ryddekjøring ville da kjørt halvt gammel, halvt ny kode
+# mot et skjema i bevegelse. Både TIMERNE og de aktive oneshot-TJENESTENE
+# stoppes: å stoppe timeren alene avbryter ikke en kjøring som alt er i gang.
+# `systemctl stop` på en oneshot venter til prosessen er ute, så vinduet åpnes
+# først når begge arbeiderne faktisk er stille.
 systemctl stop disponit-helse.timer disponit-m37.service \
     disponit-api.service disponit-api.socket 2>/dev/null || true
+systemctl stop disponit-domenerevalidering.timer \
+    disponit-artefaktrydding.timer \
+    disponit-domenerevalidering.service \
+    disponit-artefaktrydding.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
@@ -158,6 +248,10 @@ systemctl enable --now disponit-api.socket
 systemctl enable --now disponit-api.service disponit-m37.service
 systemctl enable --now disponit-helse.timer disponit-rydd-pending.timer \
     disponit-backup.timer
+# PR-015: revalidering (timeplan i .timer) + rydding (hvert 15. min). Begge
+# er Type=oneshot bak en .timer — enable --now på TIMEREN, ikke tjenesten.
+systemctl enable --now disponit-domenerevalidering.timer \
+    disponit-artefaktrydding.timer
 
 KLAR=nei
 for _ in $(seq 1 30); do

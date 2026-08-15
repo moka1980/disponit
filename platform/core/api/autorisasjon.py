@@ -37,6 +37,14 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # (kun-skrive vs. kun-aktivere) ved å definere snevrere roller senere.
     "policyforvalter": frozenset({"decisions:read", "policy:read",
                                   "policy:write", "policy:activate"}),
+    # PR-015 §3: cross-tenant domeneautoritet er sin EGEN rolle, og den bærer
+    # BEVISST ikke `exceptions:approve`/`reject`/`escalate`. En som kan behandle
+    # unntakskøen skal ikke dermed kunne avgjøre hvilken kunde plattformen
+    # autoriserer for et domene — «`exceptions:handle` alene gir aldri
+    # cross-tenant domeneautoritet». Rollen leser saken (`exceptions:read`) og
+    # attesterer utfallet; motoren gjør overgangen.
+    "domeneadjudikator": frozenset({"decisions:read", "exceptions:read",
+                                    "domains:adjudicate"}),
 }
 
 
