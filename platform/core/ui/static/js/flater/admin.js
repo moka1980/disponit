@@ -3,12 +3,16 @@ import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
 import { FASEOVERSIKT, modulmerke, plattformTelling }
   from "../plattformdata.js";
-import { erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
+import { byggRuter, erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
 import { siteFaseMerke } from "../sitekomponenter.js";
 
 export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
   const forvalter = kanForvaltePolicy(ctx);
+  // Snarveiene nederst peker bare på ruter økten har. En ren plattformdriftsøkt
+  // bærer ikke kundens tenant-lokale lesescopes, og lesefallbacken til `#/policy`
+  // er heller ikke gratis: `policy:read` er sitt eget scope.
+  const ruter = new Set(byggRuter(ctx).map((r) => r.nokkel));
   // Tenanttabellen er kontrollplan på tvers av kunder, og krever
   // plattformdrift. En tenantbundet ops-økt (`security:read`) ser bare sin
   // egen rad — ikke hver eneste andre kundes plan, moduler og neste steg.
@@ -142,18 +146,21 @@ export function visAdmin(hoved, ctx = {}) {
             el("p", { text: t("ui.admin.handling.policyadmin_tekst") }),
             el("a", { class: "lenkeknapp", href: "#/policyadmin",
               text: t("ui.admin.handling.ga_til") })),
-        ] : [
-          // Leserettighet skal fortsatt komme til policy — bare til
-          // lesevisningen, ikke til aktiveringsflaten.
+        // Leserettighet skal fortsatt komme til policy — bare til
+        // lesevisningen, ikke til aktiveringsflaten. Uten `policy:read` finnes
+        // ingen av delene, og da er ingen snarvei riktigere enn en som 403-er.
+        ] : ruter.has("policy") ? [
           el("article", { class: "site-mini-card" },
             el("strong", { text: t("ui.admin.handling.policy_lesing") }),
             el("p", { text: t("ui.admin.handling.policy_lesing_tekst") }),
             el("a", { class: "lenkeknapp", href: "#/policy",
               text: t("ui.admin.handling.ga_til") })),
-        ]),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("ui.admin.handling.unntak") }),
-          el("p", { text: t("ui.admin.handling.unntak_tekst") }),
-          el("a", { class: "lenkeknapp", href: "#/unntak",
-            text: t("ui.admin.handling.ga_til") })))));
+        ] : []),
+        ...(ruter.has("unntak") ? [
+          el("article", { class: "site-mini-card" },
+            el("strong", { text: t("ui.admin.handling.unntak") }),
+            el("p", { text: t("ui.admin.handling.unntak_tekst") }),
+            el("a", { class: "lenkeknapp", href: "#/unntak",
+              text: t("ui.admin.handling.ga_til") })),
+        ] : []))));
 }

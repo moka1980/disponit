@@ -77,7 +77,8 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
 test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", async () => {
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2, 37],
-    scopes: ["policy:activate"] }));
+    scopes: ["decisions:read", "policy:read", "policy:write",
+      "policy:activate"] }));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.tittel")));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
   assert.ok(h.textContent.includes(t("ui.kundeadmin.plattform_tittel")));
@@ -134,6 +135,35 @@ test("Kundeadmin: leser får lesevisning av policy, ikke aktiveringsflaten", () 
   visKundeadmin(forvalter, ctx({ tenant: "Alfa", moduler: [1, 2, 37],
     scopes: ["policy:write"] }));
   assert.ok(forvalter.querySelector('a[href="#/policyadmin"]'));
+});
+
+test("Kundeadmin: godkjenner tilbys ikke policylesing den ikke har", () => {
+  // Kanonisk `godkjenner` i `autorisasjon.py` har hverken forvaltnings- eller
+  // LESEscope på policy. Fallbacken lovet den likevel `#/policy`, en flate
+  // ruteren nekter, bak et endepunkt som svarer 403. Nå står forklaringen der
+  // i stedet — og ingen lenke.
+  const h = nyHoved();
+  visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2],
+    scopes: ["decisions:read", "exceptions:read", "exceptions:approve",
+      "exceptions:reject", "exceptions:escalate"] }));
+  assert.equal(h.querySelector('a[href="#/policy"]'), null,
+    "lesevei til policy tilbudt uten policy:read");
+  assert.equal(h.querySelector('a[href="#/policyadmin"]'), null);
+  assert.ok(h.textContent.includes(t("ui.kundeadmin.policy_ingen_tittel")));
+  // Unntakskøen er derimot nettopp det rollen KAN, og skal stå igjen.
+  assert.ok(h.querySelector('a[href="#/unntak"]'), "unntakssnarvei borte");
+  assert.ok(h.querySelector('a[href="#/oversikt"]'));
+});
+
+test("Kundeadmin: policyforvalter tilbys ikke unntakskøen den ikke kan lese", () => {
+  // Speilbildet: `policyforvalter` mangler `exceptions:read`.
+  const h = nyHoved();
+  visKundeadmin(h, ctx({ tenant: "Alfa", moduler: [1, 2],
+    scopes: ["decisions:read", "policy:read", "policy:write",
+      "policy:activate"] }));
+  assert.equal(h.querySelector('a[href="#/unntak"]'), null,
+    "unntakssnarvei tilbudt uten exceptions:read");
+  assert.ok(h.querySelector('a[href="#/policyadmin"]'));
 });
 
 test("Admin: tenanttabell og faser lokaliseres uten alvorlige brudd", async () => {
@@ -197,4 +227,14 @@ test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {
   visAdmin(forvalter, ctx({ scopes: ["security:read", "policy:activate"] }));
   assert.ok(forvalter.querySelector('a[href="#/policyadmin"]'));
   assert.ok(forvalter.querySelector('a[href="#/kundeadmin"]'));
+
+  // En ren plattformdriftsøkt bærer ingen tenant-lokale lesescopes: da skal
+  // hverken lesevegen til policy eller unntakskøen stå der som en 403 i vente.
+  const drift = nyHoved();
+  visAdmin(drift, ctx({ scopes: ["platform:admin"] }));
+  assert.equal(drift.querySelector('a[href="#/policy"]'), null,
+    "lesevei til policy tilbudt uten policy:read");
+  assert.equal(drift.querySelector('a[href="#/unntak"]'), null,
+    "unntakssnarvei tilbudt uten exceptions:read");
+  assert.ok(drift.querySelector('a[href="#/kundeadmin"]'));
 });

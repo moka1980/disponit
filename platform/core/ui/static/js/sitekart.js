@@ -9,6 +9,18 @@ export function kanForvaltePolicy(sesjon) {
   return harScope(sesjon, "policy:write") || harScope(sesjon, "policy:activate");
 }
 
+// Å LESE policy er sitt eget scope, og det er ikke noe alle kunderoller har:
+// `godkjenner` og `domeneadjudikator` i `autorisasjon.py` har `decisions:read`
+// og unntaksscopene, men ikke `policy:read`. En flate som tilbyr policylesing
+// til dem lover noe `GET /v1/policy/aktiv` svarer 403 på.
+export function kanLesePolicy(sesjon) {
+  return harScope(sesjon, "policy:read");
+}
+
+export function kanLeseUnntak(sesjon) {
+  return harScope(sesjon, "exceptions:read");
+}
+
 // Kontrollplanet på TVERS av tenanter er plattformdriftens, ikke kundens.
 // `security:read` er ikke den autoriteten: PR-008 §1 beskriver den som en
 // valgfri ops/compliance-scope på en TENANTBUNDET brukersesjon, og rollene
@@ -20,17 +32,29 @@ export function erPlattformdrift(sesjon) {
   return harScope(sesjon, "platform:admin");
 }
 
-export function byggRuter(sesjon) {
-  // Kundens arbeidsflate er en LESEFLATE: modulstatus, roller, integrasjoner.
-  // Den hører derfor til basisrutene. Lå den bak `kanForvaltePolicy`, landet en
+// Hver rute står her med scopet API-et BAK flaten krever — samme verdi som i
+// `RUTESCOPE` i `app.py`. Er de to ikke like, lover menyen (og dyplenken) en
+// flate serveren svarer 403 på: `godkjenner` mangler `policy:read`, og
+// `policyforvalter` mangler `exceptions:read`. `null` = flaten har ikke noe
+// API bak seg og hører derfor alle kundeøkter til.
+const BASISRUTER = [
+  { nokkel: "oversikt", scope: "decisions:read" },
+  { nokkel: "policy", scope: "policy:read" },
+  { nokkel: "beslutninger", scope: "decisions:read" },
+  { nokkel: "unntak", scope: "exceptions:read" },
+  // Kundens arbeidsflate er en LESEFLATE over det økten allerede har fått:
+  // modulstatus, roller, integrasjoner. Den kaller ikke noe eget endepunkt, og
+  // hører derfor til uansett scope. Lå den bak `kanForvaltePolicy`, landet en
   // vanlig `leser` — som kundeinnloggingen sender til `/?visning=kundeadmin` —
   // stille på `oversikt`, og knappen «Åpne kundeflate» åpnet noe annet enn den
   // lovte. Det er bare policyADMINISTRASJONEN som krever forvaltningsscope.
-  const ruter = [
-    { nokkel: "oversikt" }, { nokkel: "policy" },
-    { nokkel: "beslutninger" }, { nokkel: "unntak" },
-    { nokkel: "kundeadmin" },
-  ];
+  { nokkel: "kundeadmin", scope: null },
+];
+
+export function byggRuter(sesjon) {
+  const ruter = BASISRUTER
+    .filter((r) => !r.scope || harScope(sesjon, r.scope))
+    .map((r) => ({ nokkel: r.nokkel }));
   if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "policyadmin" });
   // Admin-flaten har TO lovlige innganger, og de er ikke den samme autoriteten:
   // `security:read` gir den tenantbundne ops-økten sin EGEN utrullingsrad, mens

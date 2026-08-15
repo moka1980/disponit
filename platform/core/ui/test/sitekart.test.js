@@ -9,10 +9,37 @@ test("harScope: leser scopes fra sesjon uten kast", () => {
   assert.equal(harScope({}, "policy:write"), false);
 });
 
-test("byggRuter: basisruter finnes alltid", () => {
-  const ruter = byggRuter({ scopes: [] }).map((r) => r.nokkel);
-  assert.deepEqual(ruter,
+test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
+  // Uten scopes finnes bare kundeflaten: den leser det økten allerede har fått
+  // og kaller ikke noe endepunkt. Alle de andre ville lovet en flate serveren
+  // svarer 403 på.
+  assert.deepEqual(byggRuter({ scopes: [] }).map((r) => r.nokkel),
+    ["kundeadmin"]);
+  const alle = byggRuter({ scopes: ["decisions:read", "exceptions:read",
+    "policy:read"] }).map((r) => r.nokkel);
+  assert.deepEqual(alle,
     ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
+});
+
+test("byggRuter: godkjenner får ikke policyruten den ikke kan lese", () => {
+  // Kanonisk `godkjenner` i `autorisasjon.py`: unntakskøen, men INGEN
+  // `policy:read`. Sto `policy` i basisrutene, tilbød både menyen og
+  // kundeflaten en lesevisning bak et endepunkt som svarer 403.
+  const ruter = byggRuter({ scopes: ["decisions:read", "exceptions:read",
+    "exceptions:approve", "exceptions:reject", "exceptions:escalate"] })
+    .map((r) => r.nokkel);
+  assert.ok(!ruter.includes("policy"), "policyrute uten policy:read");
+  assert.ok(ruter.includes("unntak"));
+  assert.ok(ruter.includes("kundeadmin"));
+});
+
+test("byggRuter: policyforvalter får ikke unntaksruten den ikke kan lese", () => {
+  // Speilbildet: `policyforvalter` har ikke `exceptions:read`.
+  const ruter = byggRuter({ scopes: ["decisions:read", "policy:read",
+    "policy:write", "policy:activate"] }).map((r) => r.nokkel);
+  assert.ok(!ruter.includes("unntak"), "unntaksrute uten exceptions:read");
+  assert.ok(ruter.includes("policy"));
+  assert.ok(ruter.includes("policyadmin"));
 });
 
 test("byggRuter: vanlig kundeøkt når kundeflaten, ikke policyadmin", () => {
@@ -50,11 +77,19 @@ test("tillatteFlater: direkte hash kan ikke nå en flate uten scope", () => {
   const flater = { oversikt: () => {}, policy: () => {}, beslutninger: () => {},
     unntak: () => {}, kundeadmin: () => {}, policyadmin: () => {},
     admin: () => {} };
-  const uten = tillatteFlater(byggRuter({ scopes: [] }), flater);
-  assert.deepEqual(Object.keys(uten),
+  const leser = tillatteFlater(byggRuter({ scopes: ["decisions:read",
+    "exceptions:read", "policy:read"] }), flater);
+  assert.deepEqual(Object.keys(leser),
     ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
-  assert.equal(uten.admin, undefined);
-  assert.equal(uten.policyadmin, undefined);
+  assert.equal(leser.admin, undefined);
+  assert.equal(leser.policyadmin, undefined);
+
+  // `#/policy` skrevet rett i adressefeltet av en `godkjenner` skal ikke rendre:
+  // ruteren validerer mot flatekartet, og flatekartet er scopene.
+  const godkjenner = tillatteFlater(byggRuter({ scopes: ["decisions:read",
+    "exceptions:read", "exceptions:approve"] }), flater);
+  assert.equal(godkjenner.policy, undefined);
+  assert.equal(typeof godkjenner.unntak, "function");
 
   const med = tillatteFlater(byggRuter({ scopes: ["security:read"] }), flater);
   assert.equal(typeof med.admin, "function");
