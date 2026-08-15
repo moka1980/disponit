@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  MODULOVERSIKT, MODULSTATUS, modulStatus, modulerFraIder,
-  modulmerke, plattformTelling, tenantTelling,
+  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, modulStatus,
+  modulerFraIder, modulmerke, plattformTelling, tenantTelling,
 } from "../static/js/plattformdata.js";
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
@@ -19,6 +19,19 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
 test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => {
   assert.equal(Object.values(MODULSTATUS).filter((s) => s === "i_drift").length,
     0, "en modul står i_drift — da må manifestet ha driftstilstand: produksjon");
+});
+
+test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
+  // «Tilgjengelig» er et løfte til en besøkende om at hen kan ta modulen i
+  // bruk NÅ. Bare `i_drift` bærer det løftet: `klargjort` er godkjent uten
+  // drift (M-1 har `ikke_i_drift` og ingen API-enhet i manifestet), og
+  // `bygges`/`planlagt` er enda lenger unna. Alle fire sier «Kommer».
+  for (const post of TILBUD) {
+    assert.equal(erTilgjengelig(post.id), modulStatus(post.id) === "i_drift",
+      `M-${post.id} lover noe annet enn MODULSTATUS bærer`);
+  }
+  assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
+  assert.equal(erTilgjengelig(45), false, "ukjent modul er planlagt");
 });
 
 test("MODULOVERSIKT: kortstatus utledes av MODULSTATUS, ikke duplisert", () => {

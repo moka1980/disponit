@@ -135,6 +135,33 @@ export function modulmerke(id) {
   return `M-${id}`;
 }
 
+// TILBUDET slik en kunde møter det: hva agenten gjør for bedriften, i
+// klartekst. Interne modulnumre (M-1, M-37) og driftsvokabular
+// (`klargjort`/`bygges`) hører hjemme på adminflaten — en kunde skal lese
+// «Fullmakter og policy», ikke «M-1 Klargjort».
+//
+// `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten, og bare
+// `i_drift` teller (Codex P2). `klargjort` betyr GODKJENT, ikke i drift —
+// `m01_policy/manifest.yaml` sier eksplisitt `ikke_i_drift` og har ingen
+// API-enhet — så «Tilgjengelig» på M-1 ville vært et løfte en besøkende ikke
+// kan innfri. `sitekomponenter.js` gjør allerede det samme skillet på
+// adminflaten: grønt er reservert for det som FAKTISK kjører hos kunder.
+// Forsiden sier «Kommer» om resten — ett ord, ikke et byggeregnskap.
+export const TILBUD = [
+  { id: 1, navn_nokkel: "site.tilbud.fullmakt.navn",
+    tekst_nokkel: "site.tilbud.fullmakt.tekst" },
+  { id: 37, navn_nokkel: "site.tilbud.unntak.navn",
+    tekst_nokkel: "site.tilbud.unntak.tekst" },
+  { id: 2, navn_nokkel: "site.tilbud.spor.navn",
+    tekst_nokkel: "site.tilbud.spor.tekst" },
+  { id: 38, navn_nokkel: "site.tilbud.kapasitet.navn",
+    tekst_nokkel: "site.tilbud.kapasitet.tekst" },
+];
+
+export function erTilgjengelig(id) {
+  return modulStatus(id) === "i_drift";
+}
+
 // Planetiketten. Serveren sender en KODE (`pilot`, `internt`) fordi planen er
 // et lukket vokabular: sendte den etiketten, viste den engelske tabellen
 // «Internt» uansett hvilket språk brukeren hadde valgt. Selve etiketten er

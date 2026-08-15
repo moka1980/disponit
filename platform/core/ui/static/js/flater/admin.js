@@ -1,10 +1,10 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
-import { FASEOVERSIKT, modulmerke, planEtikett, plattformTelling }
+import { FASEOVERSIKT, MODULOVERSIKT, modulmerke, planEtikett, plattformTelling }
   from "../plattformdata.js";
 import { byggRuter, erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
-import { siteFaseMerke } from "../sitekomponenter.js";
+import { siteFaseMerke, siteModuleKort } from "../sitekomponenter.js";
 
 export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
@@ -75,6 +75,18 @@ export function visAdmin(hoved, ctx = {}) {
         el("article", { class: "site-mini-card" },
           el("strong", { text: t("ui.admin.kontrollplan.port_tittel") }),
           el("p", { text: t("ui.admin.kontrollplan.port_tekst") })))),
+    // Modulregisteret sto på den PUBLIKE forsiden, med badges og et
+    // «0/45 i drift» som første tall en besøkende møtte. Statusen er ekte og
+    // skal fortsatt være bindende — men den er et driftsbilde, ikke et
+    // salgsargument, så den leses her, av dem som styrer utrullingen.
+    el("section", { class: "kort site-section" },
+      el("div", { class: "site-section-head" },
+        el("div", {},
+          el("p", { class: "site-eyebrow", text: t("site.moduler") }),
+          el("h2", { text: t("site.moduler_tittel") })),
+        el("span", { class: "site-inline-note", text: t("site.moduler_note") })),
+      el("div", { class: "site-card-grid" },
+        MODULOVERSIKT.map((mod) => siteModuleKort(mod)))),
     el("section", { class: "kort site-section" },
       el("div", { class: "site-section-head" },
         el("div", {},

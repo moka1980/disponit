@@ -10,6 +10,23 @@ export function siteStatusMerke(status) {
   return el("span", { class: `site-badge ${cls}` }, t(`site.status.${status}`));
 }
 
+// Tilgjengelighetsbrikka på forsidens tilbudspunkter. Den bor HER, sammen med
+// de andre site-merkene, fordi klassevokabularet er `site-badge`-familien i
+// `komponenter.css` — det er den eneste som har definisjoner. Kallstedet skrev
+// før sine egne `merke-i_drift`/`merke-planlagt`, som ikke finnes i noen CSS,
+// så «Tilgjengelig» og «Kommer» rendret helt likt (Codex P3). Et merke som
+// bare skiller i tekst er ikke et merke.
+//
+// `ok` mot `plan` er samme akse som `siteStatusMerke`: grønt er det som
+// kjører, nøytralt er det som kommer. Teksten er salgsordet, ikke
+// driftsordet — kunden leser «Kommer», ikke «Bygges».
+export function siteTilbudMerke(tilgjengelig) {
+  return el("span", {
+    class: tilgjengelig ? "site-badge ok" : "site-badge plan",
+    text: t(tilgjengelig ? "site.tilbud.tilgjengelig" : "site.tilbud.kommer"),
+  });
+}
+
 export function siteFaseMerke(status) {
   const cls = status === "aktiv" ? "ok" : "plan";
   return el("span", { class: `site-badge ${cls}` }, t(`site.fase_status.${status}`));
