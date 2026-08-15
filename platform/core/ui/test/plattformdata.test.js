@@ -1,9 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, heroTekstNokkel,
-  modulStatus, modulerFraIder, modulmerke, plattformTelling, tenantTelling,
+  heroTekstNokkelFor, modulStatus, modulerFraIder, modulmerke,
+  plattformTelling, tenantTelling,
 } from "../static/js/plattformdata.js";
+
+// Locale-settene leses direkte, ikke via `hjelp.js`: denne fila påstår om ren
+// data og trenger ingen jsdom-rigg for å gjøre det.
+const ROT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+const LOKALER = ["nb", "en"].map((sprak) =>
+  [sprak, JSON.parse(readFileSync(join(ROT, "locales", `${sprak}.json`), "utf-8"))]);
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
@@ -34,16 +44,36 @@ test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
   assert.equal(erTilgjengelig(45), false, "ukjent modul er planlagt");
 });
 
+test("heroTekstNokkelFor: delvis utrulling har sin egen tekst", () => {
+  // Presensformen («agenten håndterer utbetalinger, purringer, oppfølging og
+  // rapportering») lover ALLE fire områdene. Den er derfor bare sann når
+  // hvert tilbudspunkt er i drift. Ett `some()` slo den på ved den FØRSTE
+  // modulen som gikk i drift, mens tre brikker fortsatt sa «Kommer» — samme
+  // selvmotsigelse som med null i drift, bare flyttet (Codex P2).
+  assert.equal(heroTekstNokkelFor(0, 4), "site.hero.tekst_bygges");
+  assert.equal(heroTekstNokkelFor(1, 4), "site.hero.tekst_delvis",
+    "én av fire i drift lover ikke alle fire");
+  assert.equal(heroTekstNokkelFor(3, 4), "site.hero.tekst_delvis",
+    "tre av fire i drift lover fortsatt ikke alle fire");
+  assert.equal(heroTekstNokkelFor(4, 4), "site.hero.tekst");
+  // Alle tre nøklene må finnes på BEGGE språk — ellers ville en delvis
+  // utrulling rendret selve nøkkelen som brødtekst på forsiden, og bare på
+  // det språket ingen husket å fylle.
+  for (const [sprak, sett] of LOKALER) {
+    for (const nokkel of ["site.hero.tekst", "site.hero.tekst_bygges",
+                          "site.hero.tekst_delvis"]) {
+      assert.ok(sett[nokkel], `${nokkel} mangler i locales/${sprak}.json`);
+    }
+  }
+});
+
 test("heroTekstNokkel: hovedløftet følger brikkene, ikke redaktøren", () => {
-  // Presensformen («agenten håndterer …») er et løfte om noe som virker NÅ.
-  // Står hvert tilbudspunkt i «Kommer», er det løftet usant, og forsiden
-  // motsier seg selv innenfor én skjermhøyde (Codex P2). Nøkkelen utledes
-  // derfor av den samme MODULSTATUS som brikkene.
-  const noeIDrift = TILBUD.some((post) => erTilgjengelig(post.id));
-  assert.equal(heroTekstNokkel(),
-    noeIDrift ? "site.hero.tekst" : "site.hero.tekst_bygges");
+  // Nøkkelen utledes av den samme MODULSTATUS som brikkene: to kilder ville
+  // drevet fra hverandre neste gang en modul skifter tilstand.
+  const iDrift = TILBUD.filter((post) => erTilgjengelig(post.id)).length;
+  assert.equal(heroTekstNokkel(), heroTekstNokkelFor(iDrift, TILBUD.length));
   // Slik plattformen faktisk står: null moduler i drift, altså bygge-formen.
-  assert.equal(noeIDrift, false, "et tilbudspunkt er i drift — sjekk MODULSTATUS");
+  assert.equal(iDrift, 0, "et tilbudspunkt er i drift — sjekk MODULSTATUS");
   assert.equal(heroTekstNokkel(), "site.hero.tekst_bygges");
 });
 
