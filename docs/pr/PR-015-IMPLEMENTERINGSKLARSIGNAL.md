@@ -44,6 +44,7 @@ kallere alene; de krever at 019 erstatter funksjoner fra 016/017/018.
 | 12 | `domenekonfliktpart` (ny tabell) | En wildcard-verifisering kan overlappe FLERE innehavere samtidig; `konflikt_motpart` er én kolonne, og oppgjøret må kunne løse hele mengden atomisk, §2.5b |
 | 13 | Oppgraderingsryddingen av eksisterende overlapp, FØR gjerdet installeres | Gjerdet er fremoverrettet: rader som alt er `verifisert` i overlapp forblir doble til noen rydder dem, §2.5b |
 | 14 | `utsted_challenge()` (`CREATE OR REPLACE`, ACL bevares) | En reissue må forkaste åpne runder på målet, ellers kan evidens for en invalidert challenge forbrukes etterpå, §2.4a |
+| 14b | `krev_domenechallenge()` (ny innpakning; `utsted_challenge()` selv grantes til ingen ny rolle) | `utsted_challenge()` tar tenant og aktør som frie argumenter uten sesjonssjekk; et direkte GRANT til `disponit` lar et kompromittert credential reutstede en challenge for enhver tenant. Sesjonen må bestemme tenant og aktør, som for en stemme, §1b/§2.4c |
 
 **Sju ting hører ikke hjemme i 019, men i Python** — autorisasjonen og
 saksflyten ligger ikke i databasen, og en port som bare finnes i SQL er
@@ -1052,11 +1053,39 @@ GRANT EXECUTE ON FUNCTION rydd_staged_artefakter(INT)
   TO disponit_artefaktrydder;        -- ryddetimeren, §6
 GRANT EXECUTE ON FUNCTION rydd_domeneobservasjonsrunder(INT)
   TO disponit_artefaktrydder;        -- samme timer, §2.4bb
--- Utstedelse av challenge er nå en API-handling (§2.5c). 016 ga den kun til
--- den NOLOGIN-rollen som ikke lenger kjører noe; uten denne linja finnes det
--- ingen kallbar vei til å registrere et domene i det hele tatt.
-GRANT EXECUTE ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT)
+-- Utstedelse av challenge er nå en API-handling (§2.5c), MEN
+-- `utsted_challenge(p_tenant, p_hostname, p_wildcard, p_token_hash, p_aktor)`
+-- selv tar BÅDE tenant og aktør som frie argumenter (016 linje 403–412;
+-- filen er checksum-låst og røres ikke, §0). Et direkte GRANT til
+-- `disponit` her ville vært samme luke som §1b lukket for stemmer: et
+-- kompromittert runtime-credential — SQL-injeksjon, lekket DSN, uten et
+-- eneste ekte HTTP-kall — kunne kalt funksjonen med hvilken som helst
+-- p_tenant, reutstedt en challenge for en annen tenants domene, forkastet
+-- åpne runder på målet (§2.4a) og byttet hash på en allerede verifisert
+-- rad. Ofrets neste revalidering ville feilet, og autorisasjonen forfaller
+-- 72 timer senere — uten at angriperen noensinne beviste kontroll over
+-- verken tenanten eller DNS-en. 019 grantes derfor til INGEN direkte;
+-- en tynn innpakning ved siden av, som tar sesjonen i stedet for en fri
+-- p_tenant/p_aktor, står for det kallbare grantet:
+CREATE FUNCTION krev_domenechallenge(
+        p_sesjon TEXT, p_hostname TEXT, p_wildcard BOOLEAN, p_token_hash TEXT)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+  -- 1. Sesjonen, ikke et argument: slå opp brukersesjon på
+  --    encode(sha256(convert_to(p_sesjon,'UTF8')),'hex') — samme oppslag
+  --    som §1b. Ikke tilbakekalt, ikke utløpt. Ellers -> `sesjon_ugyldig`.
+  -- 2. utsted_challenge(sesjonens tenant, p_hostname, p_wildcard,
+  --    p_token_hash, sesjonens bruker_id) — tenant og aktør er sesjonens,
+  --    ALDRI et argument kalleren velger.
+$$;
+
+ALTER FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT)
+    OWNER TO disponit_domene_eier;
+REVOKE ALL ON FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION krev_domenechallenge(TEXT, TEXT, BOOLEAN, TEXT)
   TO disponit;
+-- `utsted_challenge` selv beholder sin eksisterende ACL fra 016
+-- (`disponit_domains_admin`, NOLOGIN, §6b) uendret — 019 legger ikke noe
+-- nytt GRANT på den.
 -- Revalidatoren må kunne SE køen sin, og et kolonnegrant på
 -- `domenekontroll` kan IKKE gi den det: tabellen har ENABLE + FORCE RLS med
 -- en tenant-policy (016 linje 353–363), og jobbrollen har verken BYPASSRLS
@@ -1549,7 +1578,7 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
 
 | Rute | Scope | Hva den gjør |
 |---|---|---|
-| `POST /v1/domener` | `domains:verify` | `utsted_challenge(tenant, hostname, wildcard, aktor, …)`; returnerer TXT-navn og token **én gang** (hashen lagres, klarteksten aldri, 016). Reissue på samme hostnavn forkaster åpne runder (§2.4a) |
+| `POST /v1/domener` | `domains:verify` | `krev_domenechallenge(sesjon, hostname, wildcard, token_hash)` (§2.4c) — sesjonen gir tenant og aktør, ikke requestbody-en; returnerer TXT-navn og token **én gang** (hashen lagres, klarteksten aldri, 016). Reissue på samme hostnavn forkaster åpne runder (§2.4a) |
 | `POST /v1/domener/{hostname}/verifisering` | `domains:verify` | Åpner (eller gjenbruker, §2.4) runden med `formal = 'verifisering'` og svarer `202 venter_observasjoner` med `runde_id`. Er runden alt full — to distinkte observatører, samme `txt_hash` — kaller den `verifiser_domenekontroll(…, p_runde)` og svarer `200 verifisert` eller `409 avklaring_kreves` (overlapp eller overtakelse, §2.5b/§3). Rapporterte åpningen at forrige runde utløp uten to enige, svarer den `409` med `forrige_utfall` som kode (`observasjon_uteblitt`/`observasjon_uenighet`) — og med det **nye** `runde_id`-et i kroppen |
 | `GET /v1/domener` / `GET /v1/domener/{hostname}` | `domains:read` | Tenantens egne rader: status, `utloper`, `siste_vellykkede_revalidering`, konfliktbildet fra `domenekonfliktpart`. Aldri `challenge_token_hash` |
 | `POST /v1/domener/overtakelse/{unntak_id}/runde` | `domains:adjudicate` | Åpner runden med `formal = 'overtakelsesoppgjor'` på **sakens** vinnende `(tenant, hostname)` og returnerer `runde_id`-en attestasjonsruten tar som `dns_runde_id` (§4.2b steg 9). Uten den måtte attestanten gjettet en UUID |
@@ -1589,11 +1618,15 @@ derfor ha **verifiseringsflaten**, ikke bare oppgjørsflaten.
   av samme grunn som `domains:adjudicate` (§4.2): registreringen skjer i
   nettleseren, med PR-012-s CSRF-vern. Lesescopet hører ikke hjemme der —
   settet gjelder mutasjon.
-- **`utsted_challenge` grantes til `disponit`** i 019 (§2.4c). Den er ikke
-  en cross-tenant-funksjon: den skriver challenge på tenantens egen rad, og
-  reissue er allerede en dokumentert, auditert operasjon. Grantet til
-  `disponit_domains_admin` blir stående — rollen er NOLOGIN og nås kun med
-  `SET ROLE` (§6b).
+- **`utsted_challenge` selv grantes IKKE til `disponit`.** Funksjonen tar
+  `p_tenant` og `p_aktor` som frie argumenter (016 linje 403–412) og har
+  ingen sesjonssjekk innebygd; et rått GRANT til den delte runtime-rollen
+  ville latt et kompromittert credential reutstede en challenge for
+  enhver tenant. 019 grantes i stedet `krev_domenechallenge()` (§2.4c),
+  som tar sesjonen og lar den bestemme tenant og aktør, nøyaktig som
+  `registrer_overtakelsesattestasjon()` gjør det for en stemme (§1b).
+  Grantet til `disponit_domains_admin` fra 016 blir stående uendret —
+  rollen er NOLOGIN og nås kun med `SET ROLE` (§6b).
 - **Ingen rute setter status.** Alle fire kaller funksjoner som gjør
   overgangen selv, under sonelås og radlås. Invariant 3 er uendret: motoren
   beslutter, ruten formidler.
@@ -3549,10 +3582,11 @@ NÅ:    Implementer PR-015 mot dette klarsignalet — migrasjon 019,
           domenekonfliktpart (§1/§2.5b) +
           GRANT til `disponit_domene_eier` på begge de to
           migrator-eide tabellene (§6c) +
-          REVOKE/GRANT-blokka for hver ny signatur, GRANT av utsted_challenge
-          til `disponit`, EXECUTE på køfunksjonen til revalidatoren, REVOKE
-          av de tre gamle overloadene og DROP av rydd_staged_artefakter(),
-          §2.4c),
+          REVOKE/GRANT-blokka for hver ny signatur, krev_domenechallenge()
+          som ENESTE kallbare vei til å utstede en challenge fra `disponit`
+          (§2.4c/§14b — `utsted_challenge` selv grantes til ingen ny rolle),
+          EXECUTE på køfunksjonen til revalidatoren, REVOKE av de tre gamle
+          overloadene og DROP av rydd_staged_artefakter(), §2.4c),
          platform/core/api/autorisasjon.py (rollene `domeneavgjorer` (§4.1)
            og `domeneforvalter` (§2.5c) + `domains:read`),
          platform/core/api/sesjon.py (utstedelsen går over innloggings-DSN-en
