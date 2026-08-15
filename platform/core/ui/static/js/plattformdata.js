@@ -135,6 +135,31 @@ export function modulmerke(id) {
   return `M-${id}`;
 }
 
+// TILBUDET slik en kunde møter det: hva agenten gjør for bedriften, i
+// klartekst. Interne modulnumre (M-1, M-37) og driftsvokabular
+// (`klargjort`/`bygges`) hører hjemme på adminflaten — en kunde skal lese
+// «Fullmakter og policy», ikke «M-1 Klargjort».
+//
+// `tilgjengelig` utledes av den SAMME `MODULSTATUS` som resten: en modul som
+// er godkjent (`klargjort`) eller i drift kan tas i bruk, resten kommer. Da kan
+// ikke forsiden love noe registeret ikke bærer — men den sier det som «Kommer»
+// i stedet for å vise et byggeregnskap.
+export const TILBUD = [
+  { id: 1, navn_nokkel: "site.tilbud.fullmakt.navn",
+    tekst_nokkel: "site.tilbud.fullmakt.tekst" },
+  { id: 37, navn_nokkel: "site.tilbud.unntak.navn",
+    tekst_nokkel: "site.tilbud.unntak.tekst" },
+  { id: 2, navn_nokkel: "site.tilbud.spor.navn",
+    tekst_nokkel: "site.tilbud.spor.tekst" },
+  { id: 38, navn_nokkel: "site.tilbud.kapasitet.navn",
+    tekst_nokkel: "site.tilbud.kapasitet.tekst" },
+];
+
+export function erTilgjengelig(id) {
+  const s = modulStatus(id);
+  return s === "i_drift" || s === "klargjort";
+}
+
 // Planetiketten. Serveren sender en KODE (`pilot`, `internt`) fordi planen er
 // et lukket vokabular: sendte den etiketten, viste den engelske tabellen
 // «Internt» uansett hvilket språk brukeren hadde valgt. Selve etiketten er

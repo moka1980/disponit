@@ -71,9 +71,18 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
   await visInnlogging();
   await vent(() => app.querySelectorAll("form").length === 2);
   assert.ok(app.textContent.includes(t("site.hero.tittel")));
-  assert.ok(app.textContent.includes(t("site.modul.m37.navn")));
-  assert.ok(app.textContent.includes(t("site.klarhet_tittel")));
+  // Forsiden selger TILBUDET, ikke byggestatusen: kundevendte navn og en
+  // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
+  assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
+  assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
+  assert.ok(app.textContent.includes(t("site.problem_tittel")));
+  assert.ok(app.textContent.includes(t("site.svar_tittel")));
   assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
+  // Driftsvokabularet skal IKKE nå en anonym besøkende.
+  assert.ok(!app.textContent.includes(t("site.modul.m37.navn")),
+    "internt modulnavn på den publike forsiden");
+  assert.ok(!/\b0\/45\b/.test(app.textContent),
+    "byggeregnskap på den publike forsiden");
   const retur = [...app.querySelectorAll('input[name="retursti"]')]
     .map((n) => n.getAttribute("value"));
   assert.deepEqual(retur, ["/?visning=kundeadmin", "/?visning=admin"]);
