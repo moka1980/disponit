@@ -42,6 +42,32 @@ def _pakk_ut(rad, tenant: str) -> tuple[str, bytes]:
     return key_id, _kek().decrypt(nonce, ct, tenant.encode())
 
 
+def _livslas(conn: psycopg.Connection, tenant: str, *, eksklusiv: bool) -> None:
+    """Livstidslås rundt en tenants DEK — DELT for de som krypterer under den,
+    EKSKLUSIV for den som destruerer den (Codex P1).
+
+    Uten denne var lesingen av den aktive DEK-en et ulåst punktavlesningsbilde:
+    en crypto-shredding kunne committe ETTER at `hent_eller_opprett_aktiv_dek`
+    hadde levert nøkkelen, men FØR transaksjonen som krypterte med den var
+    committet. Fremmednøkkelen holdt fortsatt (nøkkelRADEN består — det er
+    `wrapped_dek` som nulles), så skrivingen lyktes: resultatet var et ciphertext
+    som per konstruksjon ALDRI kan dekrypteres, lagret som gyldig evidens. I
+    artefaktveien betydde det et 200-svar med brent kapabilitet for en rapport
+    ingen kan lese igjen — og en senere kvittering kunne til og med promotere den,
+    siden promoteringen ikke sjekker nøkkeltilgjengelighet.
+
+    Låsen er en advisory xact-lås, ikke `SELECT ... FOR SHARE`: radlåsing på
+    `tenant_nokler` ville krevd UPDATE-privilegium på tabellen og trukket RLS-ens
+    UPDATE-policy inn i en ren lesevei. Den delte formen serialiserer IKKE
+    krypterende transaksjoner mot hverandre — bare mot destruksjonen, som venter
+    til hver enkelt av dem har committet. Etter det er nøkkelen borte som tiltenkt.
+    """
+    fn = ("pg_advisory_xact_lock" if eksklusiv
+          else "pg_advisory_xact_lock_shared")
+    conn.execute(f"SELECT {fn}(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fdek-liv",))
+
+
 def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
                                  tenant: str) -> tuple[str, bytes]:
     """Den aktive DEK-en for tenanten, opprettet ved første behov.
@@ -65,6 +91,9 @@ def hent_eller_opprett_aktiv_dek(conn: psycopg.Connection,
     # uleselige uten at noe feiler høylytt.
     from .pg import sett_tenant
     sett_tenant(conn, tenant)
+    # Delt livstidslås FØR lesingen: den DEK-en vi leverer skal ikke kunne
+    # destrueres før kalleren har committet det den krypterte med den.
+    _livslas(conn, tenant, eksklusiv=False)
     rad = conn.execute(
         "SELECT key_id, wrapped_dek FROM tenant_nokler"
         " WHERE tenant=%s AND aktiv", (tenant,)).fetchone()
@@ -153,6 +182,10 @@ def destruer(conn: psycopg.Connection, tenant: str, key_id: str) -> None:
     (revisjonslogg + unntak_historikk per berørt sak)."""
     from .pg import sett_tenant
     sett_tenant(conn, tenant)
+    # Eksklusiv livstidslås: vent til hver transaksjon som allerede har fått
+    # utlevert denne tenantens DEK har committet, slik at destruksjonen aldri
+    # legger seg MELLOM utleveringen og skrivingen av ciphertexten.
+    _livslas(conn, tenant, eksklusiv=True)
     res = conn.execute("UPDATE tenant_nokler SET wrapped_dek=NULL,"
                        " destruert_ts=now(), aktiv=false"
                        " WHERE tenant=%s AND key_id=%s", (tenant, key_id))

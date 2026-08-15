@@ -230,6 +230,57 @@ def test_crypto_shredding_gjor_payload_uleselig(conn, monkeypatch):
 
 
 @pg
+def test_shredding_venter_paa_paagaaende_kryptering(conn, monkeypatch):
+    """Codex P1: en DEK kan ikke destrueres MELLOM utleveringen og skrivingen.
+
+    `hent_eller_opprett_aktiv_dek` leste nøkkelen ulåst. En crypto-shredding som
+    committet etterpå, men før den krypterende transaksjonen, etterlot et
+    ciphertext som per konstruksjon aldri kan dekrypteres — lagret som gyldig
+    evidens (fremmednøkkelen holder, det er `wrapped_dek` som nulles). I
+    artefaktveien: 200-svar og brent kapabilitet for en rapport ingen kan lese.
+
+    Her holder `conn` den delte livstidslåsen i en åpen transaksjon; destruksjonen
+    på en ANNEN tilkobling må da blokkere til `conn` committer.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_livslas`-kallet i enten
+    `hent_eller_opprett_aktiv_dek` eller `destruer`."""
+    from db import kryptering
+    from db.pg import koble
+    monkeypatch.setenv("DISPONIT_KEK", KEK)
+    tenant = "t-shredlaas"
+    key_id, _ = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+    conn.commit()
+
+    # conn tar den delte låsen på nytt og HOLDER den (ingen commit).
+    kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+
+    ferdig = threading.Event()
+    feil = {}
+
+    def shredder():
+        c = koble(DSN)
+        try:
+            kryptering.destruer(c, tenant, key_id)
+            c.commit()
+        except Exception as e:            # pragma: no cover - diagnostikk
+            feil["e"] = e
+        finally:
+            c.close()
+            ferdig.set()
+
+    t = threading.Thread(target=shredder, daemon=True)
+    t.start()
+    try:
+        assert not ferdig.wait(1.0), \
+            "destruksjonen slapp forbi en pågående kryptering av samme DEK"
+    finally:
+        conn.commit()                     # slipper den delte låsen
+    assert ferdig.wait(30), "shredderen hang etter at låsen ble sluppet"
+    t.join(timeout=5)
+    assert "e" not in feil, f"destruksjonen feilet: {feil.get('e')}"
+
+
+@pg
 def test_shredding_som_ikke_traff_noe_er_en_feil(conn, monkeypatch):
     from db import kryptering
     monkeypatch.setenv("DISPONIT_KEK", KEK)

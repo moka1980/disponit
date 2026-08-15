@@ -397,6 +397,72 @@ def test_kvittering_ikke_uuid_artefakt_er_request_feil(migrator, klient, token):
     assert rk.status_code == 400 and "request_feilformet" in rk.text, rk.text
 
 
+def test_resultathash_uendret_for_kvittering_uten_artefakt():
+    """Codex: de valgfrie artefaktfeltene må ikke endre hashen til kvitteringer
+    som ikke har dem.
+
+    Tok `_resultathash` dem alltid med som eksplisitt null, fikk hver kvittering
+    som ble akseptert FØR denne utrullingen en ny hash ved en byte-identisk
+    re-post — og ble klassifisert som `motstridende_kvittering` (sikkerhetssak)
+    i stedet for idempotent. Oppgraderingen selv ville altså produsert
+    sikkerhetssaker.
+
+    MUTASJONEN SOM DREPER DENNE: ta artefaktfeltene med ubetinget i
+    `kjerne_felt`."""
+    import hashlib as _hl
+    import json as _js
+    from api.app import _resultathash
+
+    kv = {"oppdrag_id": 7, "repair_operation_id": "rep-1",
+          "resultat": "utfort", "ressurs_id": "fak-1",
+          "kvittering_jti": "j", "signatur": {"verdi": "x"}}
+    gammel = _hl.sha256(_js.dumps(
+        {"oppdrag_id": 7, "repair_operation_id": "rep-1",
+         "resultat": "utfort", "ressurs_id": "fak-1"},
+        sort_keys=True, ensure_ascii=False,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+    assert _resultathash(kv) == gammel, \
+        "hashen til en legacy-kvittering endret seg av artefaktfeltene"
+    # ...men en kvittering som FAKTISK bærer et artefakt hasher annerledes:
+    # ellers ville motstridende artefaktbevis sett idempotente ut.
+    assert _resultathash({**kv, "artefakt_id": "a", "klartekst_sha256": "b"}) \
+        != gammel
+
+
+@pg
+def test_kvittering_ikke_kanonisk_uuid_er_request_feil(migrator, klient, token):
+    """Codex: valideringen må gjelde den verdien som FAKTISK bindes.
+
+    `uuid.UUID(str(x))` godtar `urn:uuid:...` (og versaler, klammer, og etter
+    str() et 32-sifret tall), men det parsede resultatet ble kastet — originalen
+    gikk videre til `WHERE artefakt_id=%s`, hvor PostgreSQL avviste den og feilen
+    ble rapportert som `db_utilgjengelig`. Nøyaktig den feilklassifiseringen
+    valideringen skulle fjerne.
+
+    MUTASJONEN SOM DREPER DENNE: sammenlign ikke den parsede kanoniske teksten
+    med den innsendte i _ingest_kvittering."""
+    from .test_m37 import _signer_kvittering
+    opp, modul, kh, aid, oc, rep, gen, kts = _last_opp_artefakt(
+        migrator, klient, token)
+    tok2, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    hh = {"authorization": f"Bearer {tok2}"}
+    kjti = _kvitteringskap(opp, oc, gen)        # SAMME kapabilitet hele veien
+    varianter = [f"urn:uuid:{aid}", "{" + aid + "}", aid.replace("-", "")]
+    if aid.upper() != aid:                      # en uuid uten bokstaver er lik
+        varianter.append(aid.upper())
+    for variant in varianter:
+        kv = _signer_kvittering(
+            _kvitteringskropp(opp, kjti, rep, oc, gen, variant, kts))
+        rk = klient.post("/v1/oppdrag/kvittering", json=kv, headers=hh)
+        assert rk.status_code == 400 and "request_feilformet" in rk.text, \
+            f"ikke-kanonisk artefakt_id ({variant}) ble ikke avvist: {rk.text}"
+    # Avvisningen skjer FØR forbruket: den kanoniske formen — den serveren selv
+    # returnerte — går fortsatt gjennom på den samme kapabiliteten.
+    kv = _signer_kvittering(_kvitteringskropp(opp, kjti, rep, oc, gen, aid, kts))
+    assert klient.post("/v1/oppdrag/kvittering", json=kv,
+                       headers=hh).status_code == 200
+
+
 @pg
 def test_kvittering_uten_signert_hash_er_request_feil(migrator, klient, token):
     """Codex P1: en kvittering som peker på et artefakt MÅ bære den attesterte

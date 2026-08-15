@@ -1307,7 +1307,19 @@ def _resultathash(kvittering: dict) -> str:
     # for samme oppdrag er motstridende evidens, ikke en idempotent re-post.
     kjerne_felt = {k: kvittering.get(k) for k in
                    ("oppdrag_id", "repair_operation_id", "resultat",
-                    "ressurs_id", "artefakt_id", "klartekst_sha256")}
+                    "ressurs_id")}
+    # Codex: de to artefaktfeltene tas KUN med når kvitteringen faktisk bærer dem.
+    # Skrev vi dem inn som eksplisitt null også for en kvittering uten artefakt,
+    # ville hashen til ALLE kvitteringer fra før denne utrullingen endret seg:
+    # deres lagrede `resultathash` er beregnet over den gamle firefelts-formen, og
+    # en ellers BYTE-IDENTISK re-post innenfor evidensfristen ville derfor sett ut
+    # som et nytt resultat og blitt klassifisert som `motstridende_kvittering` —
+    # en sikkerhetssak utløst av selve oppgraderingen, ikke av controlleren.
+    # Fraværende og null behandles likt: resten av koden måler artefaktveien på
+    # `is not None`, så en eksplisitt null ER «ingen artefakt».
+    for valgfritt in ("artefakt_id", "klartekst_sha256"):
+        if kvittering.get(valgfritt) is not None:
+            kjerne_felt[valgfritt] = kvittering[valgfritt]
     return hashlib.sha256(json.dumps(
         kjerne_felt, sort_keys=True, ensure_ascii=False,
         separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -1577,14 +1589,30 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     # ikke-UUID artefakt_id ville ellers nådd `WHERE artefakt_id=%s` og fått
     # PostgreSQL til å kaste InvalidTextRepresentation — rapportert som
     # db_utilgjengelig (som om basen var nede) i stedet for request_feilformet.
+    #
+    # Codex: valideringen må treffe den verdien som FAKTISK bindes. `uuid.UUID(
+    # str(x))` godtok `urn:uuid:...`, `{...}`, versaler og — etter str()-en — et
+    # 32-sifret JSON-TALL, men kastet det parsede resultatet: nedenfor ble
+    # ORIGINALEN bundet, og da avviste PostgreSQL urn-formen eller forsøkte en
+    # ugyldig uuid-mot-numeric-sammenligning — nøyaktig den feilklassifiseringen
+    # (db_utilgjengelig) valideringen var der for å fjerne.
+    #
+    # Vi KREVER den kanoniske teksten i stedet for å normalisere, på samme måte
+    # som `_er_sha256_hex` krever lowercase hex: kvitteringen lagres ORDRETT i
+    # `oppdrag.kvittering` som signert evidens, og en serverside-omskriving ville
+    # gjort den arkiverte kvitteringen ulik den som faktisk ble signert. Kravet
+    # er heller ikke strengt for en ekte controller — opplastingssvaret returnerer
+    # `str(aid)`, altså nøyaktig den kanoniske formen den skal signere.
     raa_art = kvittering.get("artefakt_id")
     if raa_art is not None:
         try:
-            uuid.UUID(str(raa_art))
+            kanonisk_art = str(uuid.UUID(raa_art))
         except (ValueError, AttributeError, TypeError):
+            kanonisk_art = None
+        if kanonisk_art != raa_art:
             conn.rollback()
             tjeneste.logg.hendelse("request_feilformet", rid, tenant,
-                                   oppdrag_id=oppdrag_id)
+                                   oppdrag_id=oppdrag_id, grunn="artefakt_id")
             return _feilsvar("request_feilformet", rid)
 
     # Codex P1: en artefaktkvittering må BÆRE hashen den attesterer. Uten et
