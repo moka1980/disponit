@@ -1089,3 +1089,194 @@ def test_hendelse_stempler_generasjon(migrator):
         "en transisjonshendelse mangler autorisasjonsgenerasjon"
     assert any(r[0] == gen for r in rows), \
         "hendelsens generasjon matcher ikke domenekontroll-raden"
+
+
+# ---------------- §0 kanonisk hostname ----------------
+
+# Ikke-kanoniske former av ET DNS-navn + former som ikke er DNS-soner i det
+# hele tatt. Hver av dem MÅ avvises, ellers finnes det mer enn én nøkkel for
+# samme navn.
+IKKE_KANONISKE = [
+    "EXAMPLE.example",       # versaler — DNS er case-insensitivt, PG er ikke
+    "Example.Example",       # blandet kasus
+    "example.example.",      # avsluttende rot-punktum
+    "eksempel.æøå",          # U-label (unicode) — må punycode-kodes til A-label
+    " example.example",      # ledende blank
+    "example.example ",      # etterfølgende blank
+    "example..example",      # tom label
+    "-example.example",      # bindestrek først i label
+    "example-.example",      # bindestrek sist i label
+    "example",               # ikke en FQDN (kun én label)
+    "192.168.0.1",           # IP-literal — ingen DNS-sone å verifisere
+    "",                      # tom
+]
+
+
+@pg
+@pytest.mark.parametrize("dolent", IKKE_KANONISKE)
+def test_ikke_kanonisk_hostname_avvises_av_funksjonene(migrator, dolent):
+    """Codex P1: hver herdet §2-inngang krever kanonisk A-label FØR den låser
+    eller skriver. Uten gjerdet ble `example.example` og `EXAMPLE.example` to
+    ULIKE nøkler i PK-en, i `en_verifisert_per_hostname` og i
+    `hostname_binding` — og advisory-låsen (avledet av hostnavnet) sprikte
+    likedan, så de to verifiseringene serialiserte ikke engang mot hverandre.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `krev_kanonisk_hostname`-kallet fra
+    en av §2-funksjonene."""
+    a = _admin()
+    try:
+        for sql in ("SELECT utsted_challenge(%s,%s,false,'h','sys')",
+                    "SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    "SELECT revalider_domenekontroll(%s,%s,'sys')",
+                    "SELECT tilbakekall_domenekontroll(%s,%s,'g','sys')"):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                a.execute(sql, (TENANT, dolent))
+            a.rollback()
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT avgjor_domeneovertakelse(%s,%s,1,true,'sys')",
+                      (TENANT, dolent))
+        a.rollback()
+    finally:
+        a.close()
+
+
+@pg
+@pytest.mark.parametrize("dolent", IKKE_KANONISKE)
+def test_ikke_kanonisk_hostname_avvises_ved_lagring(migrator, dolent):
+    """Lagringsgjerdet: CHECK-en stenger også en PRIVILEGERT direkte INSERT
+    utenom §2 — migrator eier tabellene og ville ellers kunnet plante den
+    andre formen selv.
+
+    MUTASJONEN SOM DREPER DENNE: drop CHECK-en på én av de tre tabellene."""
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute("INSERT INTO domenekontroll (tenant, hostname)"
+                         " VALUES (%s,%s)", (TENANT, dolent))
+    migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute("INSERT INTO domenekontroll_hendelse (tenant, hostname,"
+                         " hendelse, aktor) VALUES (%s,%s,'utstedt','sys')",
+                         (TENANT, dolent))
+    migrator.rollback()
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute("INSERT INTO hostname_binding (hostname, tenant)"
+                         " VALUES (%s,%s)", (dolent, TENANT))
+    migrator.rollback()
+
+
+@pg
+def test_kanonisk_hostname_slipper_gjennom(migrator):
+    """Gjerdet må ikke være for stramt: ordinære A-labels, punycode og lange
+    label-kjeder er GYLDIGE og skal fortsatt kunne verifiseres."""
+    u = secrets.token_hex(6)
+    for h in ("a." + u + ".example",                  # ett-tegns label
+              "xn--eksempel-cxa." + u + ".example",   # punycode A-label
+              "sub.dyp.kjede." + u + ".example",      # dyp label-kjede
+              "d1-2." + u + ".example"):              # siffer + intern bindestrek
+        a = _admin()
+        try:
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (TENANT, h))
+            a.commit()
+        finally:
+            a.close()
+        assert _dkrow(migrator, TENANT, h)[0] == "verifisert", \
+            f"kanonisk hostname {h} ble avvist"
+
+
+@pg
+def test_to_tenanter_kan_ikke_dele_hostname_via_kasus(migrator):
+    """PORTEN Codex fant: to tenanter `verifisert` for SAMME DNS-navn.
+
+    Uten §0 ga `EXAMPLE`-formen en egen PK-rad, en egen delindeksrad og en
+    egen `hostname_binding` — begge tenanter sto verifisert samtidig, og B4-
+    overtakelsesadjudikeringen (som er hele poenget med `hostname_binding`)
+    ble aldri utløst. Nå tvinges den andre tenanten inn i samme nøkkel og får
+    `konflikt:` — altså den ordentlige M-37-veien."""
+    h = _host()
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        # Samme navn, annen tekstlig form: MÅ avvises, ikke bli en parallell eier.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (ANNEN_TENANT, h.upper()))
+        a.rollback()
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (ANNEN_TENANT, h + "."))
+        a.rollback()
+        # Kanonisk form fra samme tenant → den ekte konfliktveien.
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+    finally:
+        a.close()
+    assert res == "konflikt:" + TENANT, \
+        "andre tenant kom forbi uten å utløse overtakelsesadjudikering"
+    assert _binding(migrator, h.upper()) is None, \
+        "en parallell binding ble opprettet for en ikke-kanonisk form"
+
+
+@pg
+def test_overtakelsessak_ignorerer_fremmed_idempotensnokkel(migrator):
+    """Codex: `revisjonslogg.idempotency_key` er et DELT, KALLERSTYRT navnerom
+    (`/v1/beslutning` skriver klientens Idempotency-Key rett inn) med kun en
+    IKKE-unik indeks. En fremmed loggpost som alt heter
+    `domeneovertakelse:<hostname>:<generasjon>` skal verken kapre eller
+    ødelegge idempotensen: saken slås opp via `unntak` scopet til familien.
+
+    MUTASJONEN SOM DREPER DENNE: slå opp loggposten først og let etter et
+    hvilket som helst `unntak` på den."""
+    from api.domeneovertakelse import (opprett_overtakelsessak,
+                                       idempotensnokkel, FAMILIE)
+    h = _host(); a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
+        a.commit()
+        res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                        (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+    finally:
+        a.close()
+    tapt = res.split(":", 1)[1]
+    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+    key = idempotensnokkel(h, gen)
+
+    # En FREMMED loggpost med NØYAKTIG samme idempotensnøkkel, skrevet av en
+    # annen kilde — nøyaktig det `/v1/beslutning` produserer.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    fremmed = int(migrator.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash, policy_id,"
+        " beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'klient','beslutning','ih','pol','TILLAT','[]',%s)"
+        " RETURNING id", (ANNEN_TENANT, key)).fetchone()[0])
+    migrator.commit()
+
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    uid1 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
+    migrator.commit()
+    # Retry MÅ gi samme sak — den fremmede raden skal ikke sende oss i INSERT igjen.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    uid2 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
+    migrator.commit()
+    assert uid2 == uid1, \
+        "en fremmed loggpost med samme nøkkel brøt idempotensen (duplikat M-37-sak)"
+
+    # ...og saken er VÅR — ikke hengt på den fremmede loggposten.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rad = migrator.execute(
+        "SELECT u.loggpost_id, u.kategori, r.kilde FROM unntak u"
+        " JOIN revisjonslogg r ON r.tenant=u.tenant AND r.id=u.loggpost_id"
+        " WHERE u.tenant=%s AND u.id=%s", (ANNEN_TENANT, uid1)).fetchone()
+    n = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND kategori=%s",
+        (ANNEN_TENANT, FAMILIE)).fetchone()[0]
+    migrator.rollback()
+    assert rad[0] != fremmed, "saken ble hengt på den fremmede loggposten"
+    assert (rad[1], rad[2]) == (FAMILIE, FAMILIE)
+    assert n == 1, f"{n} overtakelsessaker for én konflikt (skulle vært 1)"
