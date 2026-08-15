@@ -14,13 +14,30 @@ from pathlib import Path
 
 from . import artefaktrydding
 
-TILSTAND = Path(os.environ.get("DISPONIT_RYDDETILSTAND",
-                               "/var/lib/disponit/artefaktrydding.json"))
+def _tilstandsfil() -> Path:
+    """Hvor feiltelleren ligger.
+
+    Unit-filen setter `StateDirectory=disponit`, så systemd oppretter
+    katalogen med arbeiderens egen eier FØR ExecStart og oppgir den i
+    $STATE_DIRECTORY. Uten den var stien hardkodet under root-eide
+    /var/lib, `mkdir` feilet for `disponit-domener`, og telleren ble
+    lest som 0 hver gang — alarmen etter to feil kunne aldri utløses.
+    Den hardkodede stien beholdes kun som fallback for kjøring utenfor
+    systemd; $DISPONIT_RYDDETILSTAND overstyrer alt (tester, manuell drift).
+    """
+    eksplisitt = os.environ.get("DISPONIT_RYDDETILSTAND")
+    if eksplisitt:
+        return Path(eksplisitt)
+    statedir = os.environ.get("STATE_DIRECTORY")
+    if statedir:
+        # systemd oppgir en kolonseparert liste når flere er deklarert.
+        return Path(statedir.split(":")[0]) / "artefaktrydding.json"
+    return Path("/var/lib/disponit/artefaktrydding.json")
 
 
 def _les_feiltelling() -> int:
     try:
-        return int(json.loads(TILSTAND.read_text(encoding="utf-8"))["feil"])
+        return int(json.loads(_tilstandsfil().read_text(encoding="utf-8"))["feil"])
     except Exception:
         # Manglende/ødelagt fil betyr «vi vet ikke om forrige kjøring feilet».
         # Da er 0 riktig: en alarm som utløses av en tapt fil er en falsk
@@ -28,12 +45,22 @@ def _les_feiltelling() -> int:
         return 0
 
 
-def _skriv_feiltelling(n: int) -> None:
+def _skriv_feiltelling(n: int) -> bool:
+    """Lagrer telleren. Returnerer False hvis den gikk tapt.
+
+    Tapet svelges ikke stille lenger: en tilstandsfil som ikke lar seg
+    skrive nullstiller §6-alarmen ved hver kjøring, og det må være synlig
+    i kjøringens egen linje i stedet for å se ut som en frisk teller.
+    """
+    fil = _tilstandsfil()
     try:
-        TILSTAND.parent.mkdir(parents=True, exist_ok=True)
-        TILSTAND.write_text(json.dumps({"feil": n}), encoding="utf-8")
-    except OSError:
-        pass          # tilstandsfilen er drift, ikke korrekthet
+        fil.parent.mkdir(parents=True, exist_ok=True)
+        fil.write_text(json.dumps({"feil": n}), encoding="utf-8")
+        return True
+    except OSError as e:
+        print(json.dumps({"hendelse": "ryddetilstand_skrivefeil",
+                          "sti": str(fil), "feil": str(e)}), file=sys.stderr)
+        return False
 
 
 def main() -> int:
@@ -55,11 +82,12 @@ def main() -> int:
         # øke akkurat som ved en feilet `rydd_staged_artefakter()`, ellers
         # utløser en vedvarende tilkoblingsfeil aldri alarmen den skal.
         n = tidligere + 1
-        _skriv_feiltelling(n)
+        lagret = _skriv_feiltelling(n)
         print(json.dumps({
             "hendelse": "ryddekjoring", "forkastet": 0, "batcher": 0,
             "karantene_bevart": 0, "feilet": 1, "sammenhengende_feil": n,
             "alarm": int(n >= artefaktrydding.ALARM_ETTER_FEIL),
+            "tilstand_lagret": int(lagret),
             "grunn": "tilkobling_feilet",
         }))
         return 1
@@ -72,7 +100,7 @@ def main() -> int:
     finally:
         conn.close()
 
-    _skriv_feiltelling(tidligere + 1 if r.feilet else 0)
+    lagret = _skriv_feiltelling(tidligere + 1 if r.feilet else 0)
     print(json.dumps({
         "hendelse": "ryddekjoring",
         "forkastet": r.forkastet,
@@ -81,6 +109,7 @@ def main() -> int:
         "feilet": int(r.feilet),
         "sammenhengende_feil": tidligere + 1 if r.feilet else 0,
         "alarm": int(r.alarm_utlost),
+        "tilstand_lagret": int(lagret),
     }))
     return 1 if r.feilet else 0
 

@@ -24,6 +24,14 @@ Group=disponit-domener
 # eksponerer ingen av dem.
 WorkingDirectory=/opt/disponit/aktiv/platform
 Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren i §6 lever i en fil fordi hver kjøring er en egen prosess.
+# Uten dette lå filen under root-eide /var/lib, `mkdir` feilet for
+# `disponit-domener`, og hver kjøring leste forrige feiltelling som 0 — da
+# kan alarmen etter to sammenhengende feil ALDRI utløses. `StateDirectory`
+# lar systemd opprette /var/lib/disponit med riktig eier før ExecStart, og
+# eksponerer den som $STATE_DIRECTORY (som arbeideren leser).
+StateDirectory=disponit
+StateDirectoryMode=0750
 LoadCredential=DISPONIT_DOMAINS_URL:/etc/disponit/domener/DISPONIT_DOMAINS_URL
 ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_artefaktrydding
 TimeoutStartSec=10min
