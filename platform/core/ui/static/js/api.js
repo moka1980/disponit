@@ -69,6 +69,23 @@ export async function hentJson(sti, sok = null) {
 export const hentUtrulling = (sprak) =>
   hentJson(`/v1/utrulling?sprak=${encodeURIComponent(sprak || "nb")}`);
 
+// Samme kall, men med skallets feilpolitikk: utrullingen er TILLEGGSDATA.
+// Nettverksfeil, 403 eller 5xx betyr bare at tenantfeltene står tomme, og
+// flatene har sin egen tomtilstand for nettopp det — appen skal ikke falle.
+//
+// 401 er noe kvalitativt annet og må IKKE slukes: økten kan ha utløpt eller
+// blitt tilbakekalt etter at `/v1/sesjon` svarte. Ble den gjort om til et tomt,
+// vellykket svar, rendret skallet seg autentisert på øktdata som ikke lenger
+// gjelder — blant annet den API-frie kundeflaten, som ikke selv oppdager at
+// økten er borte. Da lyver flaten om at brukeren er innlogget. Her får 401 i
+// stedet nå den ytre håndteringen i `start()`, altså innloggingsflaten, slik
+// alle andre 401-er i klienten gjør (V2: 401 → innlogging, 403 → ingen tilgang).
+export const hentUtrullingForSkall = (sprak) =>
+  hentUtrulling(sprak).catch((e) => {
+    if (e instanceof UautorisertFeil) throw e;
+    return {};
+  });
+
 export async function loggUt() {
   const csrf = lesCookie("__Host-disponit_csrf");
   const r = await fetch("/v1/sesjon", {
