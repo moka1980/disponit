@@ -7,7 +7,8 @@ import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, lastI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand } from "./komponenter.js";
-import { TILBUD, erTilgjengelig, heroTekstNokkel } from "./plattformdata.js";
+import { TILBUD, erTilgjengelig, heroTekstNokkel,
+  dataSvarNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
 // Hele produktomfanget, gruppert slik en kjøper leser det: elleve områder, 45
@@ -39,9 +40,13 @@ import { siteTilbudMerke } from "./sitekomponenter.js";
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.
 // SVARENE ER PÅSTANDER OM SYSTEMET, IKKE SALGSTEKST: hvert av dem har en
 // kilde i repoet, og avviker svaret fra kilden, er det svaret som er feil.
-// `data_sv` måles mot `docs/DEPLOY.md` (produksjon er en egen maskin som
-// settes opp når fase 1 nærmer seg pilot — dagens Cloud Server er staging
-// og deles med et annet produkt), og `kontroll_sv` mot
+// Datasvaret VELGES av `PRODUKSJONSMILJO`, det er ikke en fast nøkkel (Codex
+// P2). Det er den samme kilden brikkene i «Hva du får» leser, og det er hele
+// poenget: en fast `data_sv` sa «i dag finnes bare staging» på en side som i
+// seksjonen over kunne merke et tilbudspunkt «Tilgjengelig». To utelukkende
+// påstander om det samme, i samme skjermbilde. Nå kan de ikke skille lag —
+// flippes kilden, flyttes begge. Selve teksten måles fortsatt mot
+// `docs/DEPLOY.md` sin miljøtabell, og `kontroll_sv` mot
 // `policy_validator/engine.py` + `flater/unntak.js` (en policy-autorisert
 // godkjenning KAN løfte nøyaktig den bundne grensen). Begge lovet mer enn
 // koden bar (Codex P2) — endres et svar her, sjekk kilden først.
@@ -101,7 +106,7 @@ const SPORSMAL = [
   ["site.svar.hvem_sp", "site.svar.hvem_sv"],
   ["site.svar.kontroll_sp", "site.svar.kontroll_sv"],
   ["site.svar.feil_sp", "site.svar.feil_sv"],
-  ["site.svar.data_sp", "site.svar.data_sv"],
+  ["site.svar.data_sp", dataSvarNokkel()],
   ["site.svar.start_sp", "site.svar.start_sv"],
 ];
 

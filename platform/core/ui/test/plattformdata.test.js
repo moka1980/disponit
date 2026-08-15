@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, heroTekstNokkel,
+  MODULOVERSIKT, MODULSTATUS, PRODUKSJONSMILJO, TILBUD, dataSvarNokkel,
+  dataSvarNokkelFor, erTilgjengelig, erTilgjengeligFor, heroTekstNokkel,
   heroTekstNokkelFor, modulStatus, modulerFraIder, modulmerke,
   plattformTelling, tenantTelling,
 } from "../static/js/plattformdata.js";
@@ -37,17 +38,66 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     [1], "andre moduler enn M-1 påstår drift — sjekk manifestene");
 });
 
-test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
+test("erTilgjengeligFor: løftet krever både drift OG et produksjonsmiljø", () => {
   // «Tilgjengelig» er et løfte til en besøkende om at hen kan ta modulen i
-  // bruk NÅ. Bare `i_drift` bærer det løftet: `klargjort` er godkjent uten
-  // drift, og `bygges`/`planlagt` er enda lenger unna.
+  // bruk NÅ, med sine egne data. Bare `i_drift` bærer det FØRSTE leddet:
+  // `klargjort` er godkjent uten drift, og `bygges`/`planlagt` er enda lenger
+  // unna. Men drift alene er ikke nok (Codex P2): finnes ikke miljøet kundens
+  // data skulle ligge i, er løftet tomt uansett hvor koden kjører.
+  //
+  // Ren funksjon av de to aksene, så BEGGE tilstandene kan pinnes uten å
+  // forfalske `MODULSTATUS` eller vente på at et miljø faktisk finnes.
+  assert.equal(erTilgjengeligFor("i_drift", true), true);
+  assert.equal(erTilgjengeligFor("i_drift", false), false,
+    "drift uten produksjonsmiljø er ikke et løfte en kunde kan innfri");
+  assert.equal(erTilgjengeligFor("klargjort", true), false,
+    "godkjent er ikke i drift");
+  assert.equal(erTilgjengeligFor("bygges", true), false);
+  assert.equal(erTilgjengeligFor("planlagt", true), false);
+});
+
+test("erTilgjengelig: forsiden lover bare det som faktisk kjører", () => {
   for (const post of TILBUD) {
-    assert.equal(erTilgjengelig(post.id), modulStatus(post.id) === "i_drift",
-      `M-${post.id} lover noe annet enn MODULSTATUS bærer`);
+    assert.equal(erTilgjengelig(post.id),
+      erTilgjengeligFor(modulStatus(post.id), PRODUKSJONSMILJO),
+      `M-${post.id} lover noe annet enn kildene bærer`);
   }
-  assert.equal(erTilgjengelig(1), true, "M-1 kjører i produksjon");
+  // Slik plattformen faktisk står: M-1 KJØRER (manifestet sier
+  // `driftstilstand: produksjon`, og `test_ui_kontrakt.py` pinner det), men
+  // produksjonsmiljøet finnes ikke ennå — policyene bak står `utkast` og
+  // verten står `DISPONIT_MILJO=staging`. Brikka sier derfor «Kommer».
+  assert.equal(modulStatus(1), "i_drift", "M-1 kjører — det er uendret");
+  assert.equal(PRODUKSJONSMILJO, false,
+    "flippes denne, må datasvaret og brikkene flippe SAMMEN — se testen under");
+  assert.equal(erTilgjengelig(1), false,
+    "M-1 loves som tilgjengelig uten at produksjonsmiljøet finnes");
   assert.equal(erTilgjengelig(37), false, "M-37 er under utvikling");
   assert.equal(erTilgjengelig(45), false, "ukjent modul er planlagt");
+});
+
+test("datasvaret og brikkene kan ikke motsi hverandre", () => {
+  // Kjernen i funnet (Codex P2): forsiden rendrer BÅDE tilgjengelighetsbrikker
+  // og svaret på «Hvor ligger dataene?». Sto svaret som en fast nøkkel, kunne
+  // den merke et tilbudspunkt «Tilgjengelig» i én seksjon og si «i dag finnes
+  // bare staging» i den neste. Begge utledes nå av samme konstant, og testen
+  // pinner koblingen i BEGGE retninger — ikke bare i dagens tilstand.
+  assert.equal(dataSvarNokkelFor(false), "site.svar.data_sv");
+  assert.equal(dataSvarNokkelFor(true), "site.svar.data_sv_produksjon");
+  assert.equal(dataSvarNokkel(), dataSvarNokkelFor(PRODUKSJONSMILJO));
+  // Sier siden at bare staging finnes, kan intet tilbudspunkt være merket
+  // tilgjengelig — og motsatt.
+  if (dataSvarNokkel() === "site.svar.data_sv") {
+    assert.equal(TILBUD.filter((post) => erTilgjengelig(post.id)).length, 0,
+      "forsiden lover et tilbud som tilgjengelig, men sier at bare staging " +
+      "finnes — to utelukkende påstander på samme side");
+  }
+  // Begge svarene må finnes på BEGGE språk, ellers ville flippen rendret selve
+  // nøkkelen som brødtekst — og bare på det språket ingen husket å fylle.
+  for (const [sprak, sett] of LOKALER) {
+    for (const nokkel of ["site.svar.data_sv", "site.svar.data_sv_produksjon"]) {
+      assert.ok(sett[nokkel], `${nokkel} mangler i locales/${sprak}.json`);
+    }
+  }
 });
 
 test("heroTekstNokkelFor: delvis utrulling har sin egen tekst", () => {
@@ -78,11 +128,12 @@ test("heroTekstNokkel: hovedløftet følger brikkene, ikke redaktøren", () => {
   // drevet fra hverandre neste gang en modul skifter tilstand.
   const iDrift = TILBUD.filter((post) => erTilgjengelig(post.id)).length;
   assert.equal(heroTekstNokkel(), heroTekstNokkelFor(iDrift, TILBUD.length));
-  // Slik plattformen faktisk står: ett av fire tilbudspunkter i drift (M-1),
-  // altså delvis-formen — den lover det som står merket «Tilgjengelig» og
-  // sier at resten bygges.
-  assert.equal(iDrift, 1, "antall tilbudspunkter i drift har endret seg");
-  assert.equal(heroTekstNokkel(), "site.hero.tekst_delvis");
+  // Slik plattformen faktisk står: ingen tilbudspunkter er tilgjengelige for
+  // en kunde ennå, fordi produksjonsmiljøet ikke finnes — og hovedløftet står
+  // derfor i bygges-formen. Det er den samme kilden som brikkene og datasvaret:
+  // ryker koblingen, ville helten lovet noe brikkene rett under motsa.
+  assert.equal(iDrift, 0, "antall tilgjengelige tilbudspunkter har endret seg");
+  assert.equal(heroTekstNokkel(), "site.hero.tekst_bygges");
 });
 
 test("MODULOVERSIKT: kortstatus utledes av MODULSTATUS, ikke duplisert", () => {

@@ -137,9 +137,11 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
         `da rendres tilstanden umerket`);
     }
   }
-  // M-1 er `klargjort`, altså ikke i drift: alle fire sier «Kommer» i dag.
-  // Testen skal likevel holde den dagen en modul går i drift, så den måler
-  // klassen mot `erTilgjengelig` per punkt i stedet for å anta fordelingen.
+  // Alle fire sier «Kommer» i dag: M-1 KJØRER, men produksjonsmiljøet kundens
+  // data skulle ligge i finnes ikke ennå, og «Tilgjengelig» krever begge deler
+  // (`PRODUKSJONSMILJO` i `plattformdata.js`). Testen skal likevel holde den
+  // dagen et punkt blir tilgjengelig, så den måler klassen mot
+  // `erTilgjengelig` per punkt i stedet for å anta fordelingen.
   const forventet = TILBUD.map((post) =>
     erTilgjengelig(post.id) ? "site-badge ok" : "site-badge plan");
   assert.deepEqual(brikker.map((b) => b.className), forventet);

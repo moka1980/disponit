@@ -498,6 +498,7 @@
   "site.svar.feil_sv": "Den stopper. Tvil behandles som avslag, ikke som sannsynlig ja, og saken går til kø med hva som manglet.",
   "site.svar.data_sp": "Hvor ligger dataene?",
   "site.svar.data_sv": "Hos oss, kryptert, med tilgangsstyring per bedrift: ingen deling med andre kunder, ingen bruk til noe du ikke har avtalt. Produksjon får sin egen maskin, satt opp før første kunde. I dag finnes bare staging, og der ligger det syntetiske testdata — aldri kundedata.",
+  "site.svar.data_sv_produksjon": "Hos oss, kryptert, med tilgangsstyring per bedrift: ingen deling med andre kunder, ingen bruk til noe du ikke har avtalt. Produksjon kjører på sin egen maskin, adskilt fra staging — kundedata ligger der, aldri i staging, som fortsatt bare har syntetiske testdata.",
   "site.svar.start_sp": "Hvordan starter vi?",
   "site.svar.start_sv": "Med ett område og stramme grenser. Du ser hva agenten faktisk gjør før du utvider fullmaktene — og de kan strammes inn igjen når som helst.",
   "site.omrade.analyse_og_ledelse": "Analyse og ledelse",

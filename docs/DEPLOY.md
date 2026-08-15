@@ -118,6 +118,35 @@ En vert løftes til produksjon ved å sette nøkkelen for hånd i miljøfila og
 kjøre `opp.sh` på nytt. Det er en bevisst handling, som rotasjon av
 `DISPONIT_KEK`.
 
+### Hva forsiden får lov til å love
+
+Miljøtabellen over er ikke bare drift — den er en PÅSTAND DEN PUBLIKE
+FORSIDEN GJENTAR. `site.svar.data_sv` svarer en besøkende at «i dag finnes
+bare staging, og der ligger det syntetiske testdata», og brikka
+«Tilgjengelig» lover at et område kan tas i bruk nå, med kundens egne data.
+Utledes de to hver for seg, kan siden si begge deler samtidig (Codex P2, PR
+#42) — og en besøkende har ingen måte å vite hvilken som gjelder.
+
+Begge leser derfor `PRODUKSJONSMILJO` i
+`platform/core/ui/static/js/plattformdata.js`, og
+`plattformdata.test.js` pinner koblingen: sier siden at bare staging finnes,
+kan ingenting stå merket «Tilgjengelig».
+
+At en modul KJØRER er ikke nok. `driftstilstand: produksjon` i manifestet er
+en påstand om koden; løftet til en kunde krever i tillegg at miljøet finnes.
+Rekkefølgen er fire ledd:
+
+1. policyene promoteres fra `utkast` til `produksjon` (styrt handling —
+   med `DISPONIT_MILJO=produksjon` og `utkast`-policyer ville hver eneste
+   beslutning kastet `PolicyKorrupt`, ikke bare de gale),
+2. `DISPONIT_MILJO='produksjon'` settes i miljøfila,
+3. `opp.sh` kjøres, som materialiserer verdien som credential og beviser at
+   den kjørende prosessen faktisk mottar den,
+4. `PRODUKSJONSMILJO` flippes til `true` — og produksjonsraden i
+   miljøtabellen over slutter å stå i futurum.
+
+Steg 4 er det eneste som er en kodeendring, og det er med vilje det siste.
+
 ## Skaleringsvei (bygget inn, aktivert etter behov)
 
 Prinsippet som gjør skalering til et maskinvalg, ikke en omskriving:

@@ -24,6 +24,27 @@ export const MODULSTATUS = {
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
 };
 
+// Den ANDRE aksen den publike forsiden trenger: FINNES produksjonsmiljøet?
+//
+// `MODULSTATUS` sier hvor koden kjører. Det er ikke det samme som at en kunde
+// kan legge sine egne data inn i den. `docs/DEPLOY.md` sin miljøtabell sier at
+// produksjon er en egen maskin som settes opp når fase 1 nærmer seg pilot, og
+// verten som kjører i dag står `DISPONIT_MILJO=staging` — altså regelverket
+// som slipper `utkast`-policyer gjennom. Begge deler er sanne samtidig:
+// disponit.com avgjør ekte forespørsler, OG produksjonsmiljøet finnes ikke.
+//
+// Denne konstanten er kilden BEGGE de publike påstandene utledes av: brikka
+// «Tilgjengelig» og svaret på «Hvor ligger dataene?». Sto de hver for seg,
+// kunne forsiden love drift i den ene setningen og si at bare staging finnes
+// i den neste (Codex P2) — to utelukkende påstander innenfor samme side, og
+// en besøkende uten noen måte å vite hvilken som gjaldt.
+//
+// Den flippes når miljøet FAKTISK finnes, og det er fire ledd, ikke ett:
+// policyene promotert fra `utkast` til `produksjon`, `DISPONIT_MILJO=produksjon`
+// satt på verten, en utrulling som beviser verdien i den kjørende prosessen —
+// og først da bærer forsiden løftet.
+export const PRODUKSJONSMILJO = false;
+
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens
 // `MODULSTATUS` eier hva de faktisk er. Sto den begge steder, ville en modul
 // som skifter tilstand vise `bygges` på kortet mens KPI-en talte den som
@@ -164,8 +185,37 @@ export const TILBUD = [
     tekst_nokkel: "site.tilbud.kapasitet.tekst" },
 ];
 
+// «Tilgjengelig» er et løfte til en BESØKENDE om at hen kan ta modulen i bruk
+// — med sine egne data. Det løftet har TO ledd, ikke ett (Codex P2): modulen
+// må kjøre, og miljøet den skulle kjøre kundens data i må finnes.
+// `driftstilstand: produksjon` dekker bare det første. M-1 avgjør ekte
+// forespørsler på disponit.com i dag, men policyene som binder dem står
+// `utkast` og verten står `staging` — brikka ville lovet en kunde noe ingen
+// kunne innfri, samtidig som svaret rett under sa at bare staging finnes.
+//
+// Skillet er det samme manifestene gjør med `status` og `driftstilstand`:
+// kollapses to akser til ett ord, lover flaten mer enn den ene aksen bærer.
+export function erTilgjengeligFor(status, produksjonsmiljo) {
+  return status === "i_drift" && produksjonsmiljo;
+}
+
 export function erTilgjengelig(id) {
-  return modulStatus(id) === "i_drift";
+  return erTilgjengeligFor(modulStatus(id), PRODUKSJONSMILJO);
+}
+
+// Svaret på «Hvor ligger dataene?» er en PÅSTAND OM SYSTEMET, ikke salgstekst,
+// og det utledes derfor av den SAMME kilden som brikkene. `data_sv` beskriver
+// dagens tilstand (bare staging, syntetiske testdata); `data_sv_produksjon`
+// blir sant i nøyaktig samme øyeblikk som `PRODUKSJONSMILJO`. Begge finnes i
+// begge locale-sett, så flippen er ett ord her — ikke en redaksjonsrunde der
+// noen kan komme til å oppdatere halve forsiden.
+export function dataSvarNokkelFor(produksjonsmiljo) {
+  return produksjonsmiljo
+    ? "site.svar.data_sv_produksjon" : "site.svar.data_sv";
+}
+
+export function dataSvarNokkel() {
+  return dataSvarNokkelFor(PRODUKSJONSMILJO);
 }
 
 // Hovedløftet i heltet er formulert i presens («agenten håndterer …»), men

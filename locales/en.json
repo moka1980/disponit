@@ -498,6 +498,7 @@
   "site.svar.feil_sv": "It stops. Doubt is treated as refusal, not as a probable yes, and the case goes to the queue with what was missing.",
   "site.svar.data_sp": "Where is our data?",
   "site.svar.data_sv": "With us, encrypted, with access control per business: no sharing between customers, no use for anything you have not agreed to. Production gets its own machine, set up before the first customer. Today only staging exists, and it holds synthetic test data — never customer data.",
+  "site.svar.data_sv_produksjon": "With us, encrypted, with access control per business: no sharing between customers, no use for anything you have not agreed to. Production runs on its own machine, separate from staging — customer data lives there and never in staging, which still holds only synthetic test data.",
   "site.svar.start_sp": "How do we start?",
   "site.svar.start_sv": "With one area and tight limits. You see what the agent actually does before you widen its authority — and it can be narrowed again at any time.",
   "site.omrade.analyse_og_ledelse": "Analytics and management",
