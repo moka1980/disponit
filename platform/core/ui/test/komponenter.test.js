@@ -99,6 +99,43 @@ test("DataTabell: caption, th scope, aria-sort, radhandling som knapp", async ()
   assert.equal(b.length, 0, beskrivBrudd(b));
 });
 
+// Codex P2: tabellen bygges på nytt ved hver tegning av flaten rundt, så et
+// sorteringsvalg som bare bodde her var borte igjen ved neste «Vis mer»,
+// filterbytte eller «Tilbake». Valget meldes ut og tas imot igjen.
+test("DataTabell: sorteringsvalget meldes ut og kan gis tilbake", () => {
+  const kolonner = [
+    { nokkel: "ts", tittel: t("ui.kol.tidspunkt"), sorterbar: true },
+    { nokkel: "handling", tittel: t("ui.kol.handling") },
+  ];
+  const rader = [
+    { id: 1, celler: { ts: "a", handling: "x" }, sortverdi: { ts: "a" } },
+    { id: 2, celler: { ts: "b", handling: "y" }, sortverdi: { ts: "b" } },
+  ];
+  let meldt = null;
+  const forste = DataTabell({ kolonner, rader,
+    paaSort: (s) => { meldt = s; } });
+  const knapp = forste.querySelector('th[aria-sort] button');
+  knapp.dispatchEvent(new window.Event("click"));         // stigende
+  knapp.dispatchEvent(new window.Event("click"));         // synkende
+  assert.deepEqual(meldt, { nokkel: "ts", retning: "descending" },
+    "valget ble ikke meldt ut av tabellen");
+
+  // Ny tabell, samme valg: både radrekkefølgen og aria-sort skal være som før.
+  const igjen = DataTabell({ kolonner, rader, sort: meldt });
+  assert.equal(igjen.querySelector('th[aria-sort]').getAttribute("aria-sort"),
+    "descending", "aria-sort sa «usortert» om en sortert tabell");
+  assert.equal(igjen.querySelector("tbody tr td").textContent, "b",
+    "radrekkefølgen fulgte ikke med det gjenopprettede valget");
+
+  // En nøkkel som ikke lenger er en sorterbar kolonne, ignoreres — en usynlig
+  // sortering ingen `aria-sort` peker på er verre enn ingen.
+  const ukjent = DataTabell({ kolonner, rader,
+    sort: { nokkel: "borte", retning: "descending" } });
+  assert.equal(ukjent.querySelector('th[aria-sort]').getAttribute("aria-sort"),
+    "none");
+  assert.equal(ukjent.querySelector("tbody tr td").textContent, "a");
+});
+
 test("Tilstander (laster/tom/feil/uautorisert/ingen tilgang) uten brudd", async () => {
   for (const n of [Lasteskjelett({}), TomTilstand({}), Feiltilstand({}),
                    Uautorisert({}), TilgangsVakt({}),

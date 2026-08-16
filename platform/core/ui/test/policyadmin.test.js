@@ -801,3 +801,41 @@ test("Editor: treigt utkastsvar tegner seg ikke over lista man gikk tilbake til"
       "editoren tegnet seg over lista");
     globalThis.fetch = brukFetch;
   });
+
+// Codex P2: sorteringen er eiers valg, men den bodde i `DataTabell` — og den
+// bygges på nytt hver gang lista lastes. «Tilbake» fra et utkast kastet dermed
+// kolonne og retning, og den som gikk gjennom flere utkast måtte sortere på nytt
+// for hvert eneste ett.
+test("Tilbake til lista: kolonnevalget står igjen", async () => {
+  SVAR = { "/v1/policyutkast": TO_UTKAST, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelectorAll("tbody button").length === 2);
+
+  const sorter = () => [...h.querySelectorAll("th button")]
+    .find((b) => b.textContent === t("ui.policyadmin.kol.policy"));
+  sorter().dispatchEvent(new window.Event("click"));      // stigende
+  sorter().dispatchEvent(new window.Event("click"));      // synkende
+  const forsteRad = () => h.querySelector("tbody tr").textContent;
+  assert.ok(forsteRad().includes("lonn-no"),
+    "sorteringen slo ikke inn — testen måler ikke det den tror");
+
+  // Raden hentes på policy-id, ikke på indeks: rekkefølgen er nettopp det som
+  // er under test.
+  [...h.querySelectorAll("tbody tr")]
+    .find((tr) => tr.textContent.includes("faktura-no"))
+    .querySelector("button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+
+  assert.ok(forsteRad().includes("lonn-no"),
+    "«Tilbake» kastet kolonnevalget og ga serverrekkefølgen tilbake");
+  const th = [...h.querySelectorAll("th")]
+    .find((x) => x.textContent.includes(t("ui.policyadmin.kol.policy")));
+  assert.equal(th.getAttribute("aria-sort"), "descending",
+    "radene var sortert, men aria-sort sa «usortert» til skjermleseren");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});

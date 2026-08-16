@@ -132,7 +132,9 @@ function aapneDetalj(id, ctx) {
 }
 
 export function visUnntak(hoved, ctx) {
-  const st = { status: null, rader: [], neste: null };
+  // `sort` bor her, ikke i tabellen: den bygges på nytt ved hvert statusbytte og
+  // hver «Vis mer», og eiers kolonnevalg skal ikke nullstilles av det.
+  const st = { status: null, rader: [], neste: null, sort: null };
 
   function rad(r) {
     return {
@@ -177,6 +179,8 @@ export function visUnntak(hoved, ctx) {
             { nokkel: "prioritet", tittel: t("ui.kol.prioritet") },
           ],
           rader: st.rader.map(rad),
+          sort: st.sort,
+          paaSort: (s) => { st.sort = s; },
         })
       : TomTilstand({});
     sett(hoved,

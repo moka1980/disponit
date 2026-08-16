@@ -319,7 +319,9 @@ function fokuserOverskrift(hoved) {
 }
 
 export function visPolicyadmin(hoved, ctx) {
-  const st = { rader: [] };
+  // `sort` er eiers kolonnevalg, og det bor HER fordi flaten overlever
+  // tegningene — tabellen bygges på nytt hver gang lista lastes (Codex P2).
+  const st = { rader: [], sort: null };
 
   // Eierskapet til `hoved` har TO nivåer, og et sent svar må bestå begge.
   //
@@ -454,6 +456,8 @@ export function visPolicyadmin(hoved, ctx) {
               sorterbar: true },
           ],
           rader: st.rader.map(rad),
+          sort: st.sort,
+          paaSort: (s) => { st.sort = s; },
         })
       : TomTilstand({ tittel: t("ui.policyadmin.tom_tittel"),
                       tekst: t("ui.policyadmin.tom_tekst") });
