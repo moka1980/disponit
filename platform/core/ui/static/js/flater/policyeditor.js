@@ -20,6 +20,30 @@ import { flateHode } from "./felles.js";
 
 const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
 
+// Skjemaets `meta.policy_id` (`^[a-z0-9-]+$` + `minLength: 3`), som
+// `policyadmin._POLICY_ID` håndhever på raden. Klienten er ikke porten — den
+// er der for at eier skal møte kravet ved feltet, ikke etter en rundtur.
+const POLICY_ID_FORM = /^[a-z0-9-]{3,}$/;
+
+// ... og STØRRELSEN (Codex P3). `policyer_pkey` er `(tenant, policy_id,
+// versjon)`, og de tre deler btree-oppføringens tak — serveren regner budsjettet
+// som `_MAKS_NOKKELBYTES - _VERSJONSRESERVE` MINUS tenantens egne byte.
+// Klienten kjenner ikke tenanten, så den kan ikke speile grensen eksakt.
+//
+// Den speiler derfor den TENANT-UAVHENGIGE delen: en id over dette taket
+// avvises av enhver tenant, så kontrollen kan aldri avvise noe serveren ville
+// godtatt. Båndet rett under taket er fortsatt serverens å svare på — og den
+// svarer nå `policy_id_for_stor`, ikke `utkast_feilformet`, så eier får vite at
+// det er id-en som skal forkortes og ikke dokumentet som skal repareres.
+const POLICY_ID_MAKS_BYTE = 2400 - 64;
+
+// UTF-8-byte, som `octet_length` i Postgres og `_nokkelbytes` i porten —
+// `String.length` teller UTF-16-enheter og ville sagt for lite om en id med
+// tegn utenfor ASCII.
+function byteLengde(s) {
+  return new TextEncoder().encode(s).length;
+}
+
 // `hint` er reglene feltet faktisk håndhever, sagt FØR man skriver. Uten den
 // måtte eier gjette formatet og få svaret fra validatoren etterpå — og bare
 // hvis feilen i det hele tatt nådde skjermen. Knyttes med `aria-describedby`,
@@ -514,27 +538,104 @@ function policyIdHint(aktiv) {
   return t("ui.editor.policy_id_hint_avloser").replace("{id}", aktiv.id);
 }
 
-function metaSeksjon(policy, erNy, aktiv) {
+// Hjelpeteksten under det LÅSTE feltet. Vanligvis er det bare regelen —
+// identiteten velges ved opprettelse. Men er dokumentets id rettet ved
+// innlasting (`avstemIdentitet`), er det en endring eier ikke gjorde selv, og
+// da skal hun se BÅDE at den skjedde og hva som sto der: et låst felt som
+// stille bytter verdi er ikke en reparasjon eier kan gå god for.
+function policyIdLaastHint(rettetFra) {
+  if (!rettetFra) return t("ui.editor.policy_id_laast");
+  // Teksten nevner den gamle id-en mer enn én gang (hva som sto der, og hva
+  // eier gjør om det var den hun ville ha) — `split/join` bytter ALLE, der
+  // `replace` med en streng bare hadde tatt den første.
+  return t("ui.editor.policy_id_rettet").split("{id}").join(rettetFra);
+}
+
+function metaSeksjon(policy, erNy, aktiv, rettetFra) {
   policy.meta = (policy.meta && typeof policy.meta === "object") ? policy.meta : {};
   const m = policy.meta;
   const felt = [
     // policy_id er identiteten; kan settes ved NY, låst ved redigering.
     tekstfelt(t("ui.editor.policy_id"), m.policy_id || "",
       (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" },
-      erNy ? policyIdHint(aktiv) : t("ui.editor.policy_id_laast")),
+      erNy ? policyIdHint(aktiv) : policyIdLaastHint(rettetFra)),
     tekstfelt(t("ui.editor.bedrift"), m.bedrift || "",
       (v) => { m.bedrift = v || undefined; }),
     tekstfelt(t("ui.editor.versjon"), m.versjon || "",
       (v) => { m.versjon = v; }),
   ];
+  // Statusen er ikke et felt eier fyller ut — den er en opplysning om hva
+  // utkastet blir. Å skrive den inn i dokumentet uten å si det ville vært en
+  // stille endring av noe eier tror hun eier; å tilby den som et valg ville
+  // vært en løgn, for de andre verdiene kan ikke aktiveres i det hele tatt.
+  felt.push(el("p", { class: "felt-hint", text: t("ui.editor.status_laast") }));
   return el("section", { class: "editor-seksjon",
     "aria-label": t("ui.editor.meta") },
     el("h3", { text: t("ui.editor.meta") }), ...felt);
 }
 
+// Statusen den STYRTE aktiveringen skriver i registeret. Editoren har ingen
+// statuskontroll, og skal ikke ha en: det finnes bare ett utfall for et utkast
+// herfra — fire-øyne-runden, som aktiverer det som produksjonspolicy.
+const AKTIVERINGSSTATUS = "produksjon";
+
+// Malene bærer `meta.status: utkast` (alle tre i `policies/`), og det er riktig
+// FOR EN MAL — den er ikke en policy i kraft. Men et utkast bygget på den er på
+// vei ett sted: gjennom fire-øyne-runden, som skriver `produksjon` i registeret.
+// `policyregister.hent_aktiv` krever at dokumentet sier det samme, så et utkast
+// som beholder malens status kan ikke aktiveres (Codex P1).
+//
+// Uten dette var utkastet INNELÅST, akkurat som med en fremmed id: valideringen
+// frøs dokumentet, rundeåpningen avviste det, og statusfeltet finnes ikke i
+// editoren — så den eneste feilen kunne ikke rettes noe sted.
+//
+// Statusen settes derfor der utkastet BYGGES, ikke etterpå: det er ikke et valg
+// eier tar bort fra henne, det er den eneste verdien et utkast herfra kan ha.
+function settAktiveringsstatus(policy) {
+  policy.meta = (policy.meta && typeof policy.meta === "object")
+    ? policy.meta : {};
+  policy.meta.status = AKTIVERINGSSTATUS;
+  return policy;
+}
+
 // Bygg det som skal lagres: hele malen/utkastet med redigerte felt oppå.
 function byggInnhold(policy) {
-  return policy;                       // policy muteres in-place av feltene
+  // `policy` muteres in-place av feltene; statusen er det ene feltet ingen av
+  // dem skriver, og den må stå i det som lagres.
+  return settAktiveringsstatus(policy);
+}
+
+// Radens `policy_id` og dokumentets `meta.policy_id` er ÉN identitet skrevet to
+// steder, og spriker de, er det RADEN som gjelder: den er det utkastet er
+// registrert under, den kan ikke endres etterpå, og det er den aktiveringen
+// lagrer under. Bare dokumentet kan rettes.
+//
+// Utkastet fødes med malens id (opprettelsen tar id-en fra forespørselen og
+// innholdet fra malen), så et utkast opprettet før serveren begynte å kreve
+// samsvar kan godt bære en fremmed id. Da nekter valideringen å fryse det og
+// viser eier tilbake hit — der feltet er låst, fordi identiteten velges ved
+// opprettelse. Uten denne avstemmingen er utkastet dermed innelåst: den ENESTE
+// feilen kan ikke rettes noe sted, og et ellers redigerbart utkast må forlates.
+//
+// Derfor fylles feltet fra raden ved innlasting. Skjermen viser da identiteten
+// utkastet FAKTISK har, og første lagring skriver den inn i dokumentet —
+// reparasjonen er selve redigeringen, ikke et eget verktøy. Feltet forblir
+// låst: eier får ikke velge en ANNEN id, for det ville bare gjenskape avviket
+// (`rediger_utkast` rører aldri radens id). En annen identitet krever et nytt
+// utkast, som hjelpeteksten alltid har sagt.
+// -> id-en dokumentet oppga, når den ble rettet bort; ellers null.
+function avstemIdentitet(policy, radId) {
+  if (!radId) return null;             // ukjent rad-id: ingenting å avstemme mot
+  policy.meta = (policy.meta && typeof policy.meta === "object")
+    ? policy.meta : {};
+  const iDokumentet = policy.meta.policy_id;
+  if (iDokumentet === radId) return null;
+  policy.meta.policy_id = radId;
+  // Et TOMT felt er ingen påstand om en annen policy — det er bare ufylt, og
+  // da er utfyllingen ikke verdt en advarsel. Vi melder fra om det som
+  // faktisk er en rettelse: en id dokumentet oppga, og som nå er borte.
+  return (typeof iDokumentet === "string" && iDokumentet.trim())
+    ? iDokumentet : null;
 }
 
 // Porten står ved LAGRING, ikke ved tegning: det er lagringen som er den
@@ -567,14 +668,38 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
                // Hva GJELDER i dag? `kjent: false` er utgangspunktet, ikke en
                // feiltilstand: før oppslaget har svart vet flaten ingenting,
                // og skal derfor heller ikke påstå noe om avløsning.
-               aktiv: { kjent: false, id: null } };
+               aktiv: { kjent: false, id: null },
+               // Ble dokumentets id rettet mot radens ved innlasting? Da bærer
+               // hjelpeteksten den gamle verdien (`policyIdLaastHint`).
+               rettetFra: null };
 
   function lagre() {
-    const innhold = byggInnhold(st.policy);
     const pid = (st.policy.meta && st.policy.meta.policy_id || "").trim();
     if (!st.utkast_id && !pid) {
       st.feil = [t("ui.editor.policy_id_pakrevd")]; tegn(); return;
     }
+    // Formen, ikke bare tilstedeværelsen (Codex P2). Serveren avviser nå en
+    // rad-id som bryter skjemaets `meta.policy_id`, og det er riktig: en slik
+    // id kan aldri skrives inn i dokumentet, og raden kan ikke endres etterpå
+    // — utkastet ville vært dødfødt. Men eier skal møte kravet HER, ved feltet
+    // hjelpeteksten allerede beskriver det under, ikke som et avslag på en
+    // lagring hun trodde gikk gjennom.
+    if (!st.utkast_id && !POLICY_ID_FORM.test(pid)) {
+      st.feil = [t("ui.editor.policy_id_ugyldig")]; tegn(); return;
+    }
+    // Formen er i orden, men id-en kan fortsatt være for stor for
+    // registernøkkelen. Egen melding: «for lang» er ikke «feil tegn», og en id
+    // som er feil på begge måter skal høre om formen først — den er det eier
+    // faktisk må velge om igjen.
+    if (!st.utkast_id && byteLengde(pid) > POLICY_ID_MAKS_BYTE) {
+      st.feil = [t("ui.editor.policy_id_for_stor")]; tegn(); return;
+    }
+    // Raden opprettes fra den TRIMMEDE id-en, så dokumentet må bære nøyaktig
+    // den samme — ikke feltets råtekst. Et utkast født med « acme» i
+    // dokumentet og `acme` i raden er allerede i avvik i det det lagres, og
+    // ville vært innelåst fra første stund (feltet låses etter opprettelse).
+    if (!st.utkast_id) st.policy.meta.policy_id = pid;
+    const innhold = byggInnhold(st.policy);
     const venter = grenserSomVenterPaaValg(st.policy);
     if (venter.length) {
       st.feil = [`${t("ui.editor.grense_maa_repareres")}: ${venter.join(", ")}`];
@@ -638,7 +763,8 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       paaBytte: (n) => { st.fane = n; },
       trinn: [
         { nokkel: "grunn", tittel: t("ui.editor.fane.grunn"),
-          bygg: () => metaSeksjon(st.policy, !st.utkast_id, st.aktiv) },
+          bygg: () => metaSeksjon(st.policy, !st.utkast_id, st.aktiv,
+                                  st.rettetFra) },
         { nokkel: "roller", tittel: t("ui.editor.fane.roller"),
           bygg: () => rollerSeksjon(st.policy, tegn) },
         { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
@@ -661,6 +787,9 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       st.laster = false;
       st.utkastversjon = detalj.utkastversjon;
       st.policy = detalj.innhold || {};
+      // Identiteten avstemmes FØR første tegning: feltet er låst, så det eier
+      // ser her er det eneste hun kan forholde seg til.
+      st.rettetFra = avstemIdentitet(st.policy, detalj.policy_id);
       tegn();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }

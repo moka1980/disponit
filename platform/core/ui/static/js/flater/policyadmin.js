@@ -805,6 +805,10 @@ const UTFALLSART = new Map([
   // Versjonen utkastet bærer kan ikke lagres (tatt utenom den styrte veien
   // mens runden sto åpen). Runden er lukket; utkastet må få en ny versjon.
   ["versjon_i_bruk", "feil"],
+  // Det frosne dokumentet stemmer ikke med policyen det aktiveres som (id
+  // eller status). Runden er lukket; innholdet er frosset, så det må et nytt
+  // utkast til.
+  ["dokument_avvik", "feil"],
   // Utkastet bryter et framoverrettet krav (migrasjon 022 stoppet det i selve
   // aktiveringen). Samme art som over — runden er lukket — men eier må rette
   // INNHOLDET, ikke versjonen, så teksten er en annen.
@@ -820,6 +824,9 @@ const GRUNNLAGSFEIL = new Map([
   ["aktiv_peker_usynk", "ui.policyadmin.utfall.aktiv_peker_usynk"],
   ["versjon_i_bruk", "ui.policyadmin.utfall.versjon_i_bruk"],
   ["versjon_mangler", "ui.policyadmin.utfall.versjon_mangler"],
+  ["policy_id_avvik", "ui.policyadmin.utfall.policy_id_avvik"],
+  ["status_ikke_produksjon", "ui.policyadmin.utfall.status_ikke_produksjon"],
+  ["dokument_avvik", "ui.policyadmin.utfall.dokument_avvik"],
   // Utkastet bryter et framoverrettet krav som kom ETTER at det ble validert
   // (Codex P2 på #63). Statusen `validert` er ekte, men foreldet — og et nytt
   // klikk kan ikke gjøre noe med det: utkastet må rettes og valideres på nytt.

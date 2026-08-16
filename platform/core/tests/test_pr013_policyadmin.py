@@ -271,10 +271,12 @@ def test_runtime_kan_ikke_skrive_policyer_direkte():
 def _validert_utkast(c, uid, pid, av="bruker-a", innhold=None,
                      versjon="1.1.0"):
     # Aktiveringen lagrer policyens EGEN `meta.versjon` som registerets
-    # `versjon` (migrasjon 020) — et utkast uten den kan ikke aktiveres, heller
-    # ikke i disse DB-nære testene.
+    # `versjon` (migrasjon 020), krever at dokumentet bærer radens egen
+    # `meta.policy_id` (023) og at det SIER `produksjon` (024) — et utkast uten
+    # dem kan ikke aktiveres, heller ikke i disse DB-nære testene.
     if innhold is None:
-        innhold = '{"meta":{"versjon":"' + versjon + '"},"a":1}'
+        innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"'
+                   + versjon + '","status":"produksjon"},"a":1}')
     c.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,status,"
         "innholds_hash,opprettet_av) VALUES (%s,%s,%s,%s::jsonb,'validert',%s,%s)",
@@ -362,7 +364,11 @@ def test_aktiver_policy_krever_semantisk_versjon():
     """
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
-    _validert_utkast(c, uid, pid, av="forf", innhold='{"a":1}')  # ingen meta
+    # Identiteten (022) og statusen (023) er på plass — det er VERSJONEN som
+    # mangler, ellers ville testen bevist feil kontroll.
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold='{"meta":{"policy_id":"' + pid + '",'
+                             '"status":"produksjon"},"a":1}')
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -427,6 +433,170 @@ def test_aktiver_policy_krever_nyere_versjon_enn_aktiv():
 
 
 @pg
+def test_aktiver_policy_krever_dokumentets_egen_policy_id():
+    """🔴 P1: dokumentet må bære den identiteten raden aktiveres under.
+
+    `policyutkast.policy_id` og `innhold.meta.policy_id` er to felter uten noen
+    binding mellom seg — redigeringsveien skriver nytt innhold uten å røre
+    radens id. Aktiveres et slikt utkast, indekseres policyen under én id mens
+    motoren bygger beslutningens policyreferanse fra dokumentets egen. Ingen av
+    de to halvdelene ser gale ut hver for seg; sakene bare slutter å finne
+    policyen sin.
+
+    Bruddet er NAVNGITT (`dokument_policy_id`), så kalleren kan skille det fra
+    versjonsinvariantene, som deler feilkode.
+
+    Kontroll: fjern steg 1b i migrasjon 023, så aktiverer denne uten å blunke.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold='{"meta":{"policy_id":"en-annen-policy",'
+                             '"versjon":"1.1.0","status":"produksjon"},"a":1}')
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as e:
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        assert e.value.diag.constraint_name == "dokument_policy_id", (
+            "bruddet må være navngitt — ellers rapporteres et identitetsavvik"
+            " som versjon_i_bruk")
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
+def test_aktiver_policy_sammenligner_versjonsledd_over_int32():
+    """🔴 P2: et versjonsledd over 2^31 skal avvises, ikke velte forespørselen.
+
+    Skjemaet setter ingen øvre grense på et ledd, så «2147483648.0.0» er et
+    gyldig utkast. Med `::int[]` reiste sammenligningen
+    `numeric_value_out_of_range` — ikke den `check_violation` kalleren
+    håndterer — og runden døde med HTTP 500 og tapt attestasjon. Verre: var en
+    slik versjon først AKTIV, traff hver senere aktivering samme cast.
+
+    Her er den aktive versjonen den store, og utkastet ligger UNDER den: riktig
+    svar er en ren `check_violation` (ikke nyere), levert av en sammenligning
+    som faktisk klarte å måle tallene.
+
+    Kontroll: sett casten tilbake til `::int[]`, så blir denne rød med
+    `NumericValueOutOfRange`.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    stor = "2147483648.0.0"                      # 2^31 — over int4 og int8-cast
+    _policyrad(c, pid, stor, aktiv=True)
+    _hode(c, pid, aktiv_versjon=stor)
+    _validert_utkast(c, uid, pid, av="forf", versjon="2147483647.9.9")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,%s)", (TEN, uid, stor))
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
+def test_aktiver_policy_aktiverer_versjonsledd_over_int32():
+    """Og den store versjonen skal kunne AKTIVERES — ikke bare avvises.
+
+    En kontroll som bare svarer «nei» på store tall er ikke en fiks: da er
+    policyen like fastlåst, bare med en penere feil. Her ligger utkastet OVER
+    den aktive, og aktiveringen skal gå gjennom.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _policyrad(c, pid, "2147483648.0.0", aktiv=True)
+    _hode(c, pid, aktiv_versjon="2147483648.0.0")
+    _validert_utkast(c, uid, pid, av="forf", versjon="4294967296.0.0")  # 2^32
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        ny = r.execute("SELECT aktiver_policy(%s,%s,1,%s)",
+                       (TEN, uid, "2147483648.0.0")).fetchone()[0]
+        assert ny == "4294967296.0.0", ny
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_avviser_versjon_som_sprenger_primaernokkelen():
+    """🔴 Siste skanse mot en versjon registeret ikke kan lagre.
+
+    `numeric` har også et tak (131 072 sifre), og kroppsgrensen slipper gjennom
+    mer enn det — men lenge før dét sprenger nøkkelen btree-oppføringen.
+    `policyer_pkey` er (tenant, policy_id, versjon), og de tre DELER taket på
+    ~2704 byte, så ingen av dem er trygg målt for seg. Slapp nøkkelen forbi,
+    ville INSERT-en i steg 5 reist `program_limit_exceeded`: en uhåndtert 500
+    etter fire-øyne. Nå er den et `check_violation`, som kalleren besvarer med
+    en kansellert runde.
+
+    Kontroll: fjern `octet_length`-kravet i migrasjon 025, så blir denne rød med
+    `ProgramLimitExceeded` i stedet.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf", versjon="9" * 2500 + ".0.0")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
+def test_aktiver_policy_krever_at_dokumentet_sier_produksjon():
+    """🔴 P1: raden skrives som `produksjon` — dokumentet må si det samme.
+
+    Skjemaet tillater `utkast` og `validert_pilot` i `meta.status`, så en slik
+    policy er fullt gyldig og gikk hele veien gjennom fire-øyne. Etterpå avviste
+    `hent_aktiv` raden: `meta.status 'utkast' != registerets 'produksjon'` —
+    aktiveringen svarte «aktivert», beslutningsveien svarte `PolicyKorrupt`.
+
+    Kontroll: fjern steg 1c i migrasjon 024, så aktiverer denne et utkast som
+    beslutningsveien aldri kan bruke.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold='{"meta":{"policy_id":"' + pid + '",'
+                             '"versjon":"1.1.0","status":"utkast"},"a":1}')
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as e:
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        assert e.value.diag.constraint_name == "dokument_status", (
+            "bruddet må være navngitt — ellers er det ikke til å skille fra"
+            " versjonsinvariantene")
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
 def test_aktiver_policy_monotoni_nullpadder_gamle_versjoner():
     """🔴 «2.0.0» er ikke nyere enn en aktiv «2» — den er den SAMME.
 
@@ -474,8 +644,12 @@ def test_aktiver_policy_monotoni_nullpadder_gamle_versjoner():
         r.close()
 
 
-def _innhold_med_verifikator(vid, versjon="1.1.0", felt="verifikatorer"):
-    return json.dumps({"meta": {"versjon": versjon},
+def _innhold_med_verifikator(vid, pid, versjon="1.1.0", felt="verifikatorer"):
+    # Full `meta` som `_validert_utkast`: dokumentet må bære radens identitet
+    # (023) og si `produksjon` (024), ellers stopper aktiveringen der i stedet
+    # — og testen ville «bestått» på feil invariant.
+    return json.dumps({"meta": {"policy_id": pid, "versjon": versjon,
+                                "status": "produksjon"},
                        felt: {vid: {"beskrivelse": "x"}}})
 
 
@@ -495,7 +669,7 @@ def test_aktiver_policy_avviser_flertydig_verifikator_id(vid, felt):
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
     _validert_utkast(c, uid, pid, av="forf",
-                     innhold=_innhold_med_verifikator(vid, felt=felt))
+                     innhold=_innhold_med_verifikator(vid, pid, felt=felt))
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -539,7 +713,7 @@ def test_aktiver_policy_slipper_gjennom_entydig_verifikator_id():
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
     _validert_utkast(c, uid, pid, av="forf",
-                     innhold=_innhold_med_verifikator("v-ny_2:a"))
+                     innhold=_innhold_med_verifikator("v-ny_2:a", pid))
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -559,12 +733,14 @@ def test_aktiver_policy_takler_innhold_uten_verifikatorer():
     er objekter — den skal si fra om flertydige id-er, ikke duplisere
     lastekontrakten (det ville brutt P1-en over: skjema hører hjemme i
     validatoren, ikke i plpgsql)."""
-    for innhold in ('{"meta":{"versjon":"1.1.0"},"verifikatorer":null}',
-                    '{"meta":{"versjon":"1.1.0"},"verifikatorer":[]}',
-                    '{"meta":{"versjon":"1.1.0"}}'):
+    for verifikatorer in (',"verifikatorer":null', ',"verifikatorer":[]', ''):
         c = _c()
         uid = "u-" + secrets.token_hex(4)
         pid = "pol-" + secrets.token_hex(3)     # egen policy per variant
+        # `meta` bygges her fordi identiteten er radens egen (023) og statusen
+        # må være `produksjon` (024) — varianten som testes er verifikatorfeltet.
+        innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"1.1.0",'
+                   '"status":"produksjon"}' + verifikatorer + '}')
         _validert_utkast(c, uid, pid, av="forf", innhold=innhold)
         _runde(c, uid)
         _attest(c, uid, "forf", True)

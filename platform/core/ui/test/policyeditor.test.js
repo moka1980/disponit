@@ -35,9 +35,13 @@ globalThis.fetch = async (url, opts) => {
       { mal_id: "netthandel", bransjemal: "netthandel-no", innhold: MAL }] }) };
   }
   if (sti === "/v1/policyutkast/u-1") {
+    // Utkastet er REGISTRERT under «acme», men dokumentet bærer fortsatt
+    // malens id: nøyaktig utkastet som ble opprettet før serveren krevde
+    // samsvar. Kopi, ikke `MAL` selv — editoren redigerer innholdet in-place,
+    // og et delt fikstur ville latt én test skrive i den neste.
     return { ok: true, status: 200, json: async () => ({
       utkast_id: "u-1", policy_id: "acme", status: "utkast", utkastversjon: 2,
-      innhold: MAL }) };
+      innhold: JSON.parse(JSON.stringify(MAL)) }) };
   }
   return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
 };
@@ -116,10 +120,33 @@ test("Ny: malvelger → skjema → lagre POSTer med CSRF + Idempotency-Key", asy
   const sendt = JSON.parse(POST.opts.body);
   assert.equal(sendt.policy_id, "acme-netthandel");
   assert.equal(sendt.innhold.handlinger[0].modus, "alltid_stopp");
+  // Codex P1: malen bærer `status: utkast`. Lagres den slik, validerer
+  // utkastet ikke — og etter frysing kan statusen ikke rettes noe sted, for
+  // editoren har ingen statuskontroll. Utkastet blir derfor bygget som det
+  // aktiveringen faktisk skriver.
+  assert.equal(sendt.innhold.meta.status, "produksjon",
+    "utkastet ble lagret med malens status og kan ikke aktiveres");
   await vent(() => aapnet === "u-ny");
   assert.equal(aapnet, "u-ny");
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
+
+test("Grunnopplysninger: eier får VITE at utkastet blir en produksjonspolicy",
+  async () => {
+    // Statusen skrives inn i dokumentet ved lagring. En stille endring av et
+    // felt eier tror hun eier, er ikke greit — så den står i klartekst, som en
+    // opplysning og ikke som et valg (de andre statusene kan ikke aktiveres).
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: {
+      meta: { policy_id: "acme", versjon: "1.0.0", bransjemal: "x",
+              status: "utkast" },
+      roller: [], handlinger: [],
+    } });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    assert.ok(h.textContent.includes(t("ui.editor.status_laast")),
+      "editoren sier ikke hva utkastet lagres som");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
 
 test("Rediger: laster utkastets innhold og PUTer med utkastversjon", async () => {
   const cookieDesc = Object.getOwnPropertyDescriptor(
@@ -137,6 +164,131 @@ test("Rediger: laster utkastets innhold og PUTer med utkastversjon", async () =>
   assert.equal(POST.opts.method, "PUT");
   assert.ok(POST.url.includes("/v1/policyutkast/u-1"));
   assert.equal(JSON.parse(POST.opts.body).utkastversjon, 2);
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+// Codex P2: et utkast der dokumentets `meta.policy_id` ikke er radens er
+// INNELÅST uten dette. Valideringen nekter å fryse det og viser eier tilbake
+// til editoren — der id-feltet er låst, altså der den eneste feilen ikke kan
+// rettes. Feltet fylles derfor fra raden, og lagringen bærer rettelsen videre.
+test("Rediger: fremmed id i dokumentet rettes til radens, og lagres", async () => {
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { utkast_id: "u-1", aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+
+  // Fikstur: raden er «acme», dokumentet oppgir «netthandel-no».
+  const pid = h.querySelector("input.felt-inp");
+  assert.equal(pid.value, "acme", "feltet skal vise radens identitet");
+  assert.ok(pid.hasAttribute("disabled"), "identiteten er fortsatt låst");
+  // Rettelsen er eiers å vite om: hjelpeteksten sier hva som sto der.
+  const hint = h.querySelector(".felt-hint").textContent;
+  assert.ok(hint.includes("netthandel-no"),
+    "hjelpeteksten skal nevne id-en dokumentet oppga");
+  assert.ok(!hint.includes("{id}"), "plassholderen er ikke byttet ut");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+
+  // ... og lagringen skriver den inn i dokumentet: neste validering går
+  // gjennom, uten at eier måtte forlate utkastet.
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(JSON.parse(POST.opts.body).innhold.meta.policy_id, "acme");
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+// Codex P2: raden lagres med den id-en som sendes, og den kan ALDRI endres.
+// Bryter den skjemaets form, er utkastet dødfødt: radens id kan ikke skrives
+// inn i dokumentet (skjemaet avviser den), og en skjemagyldig id spriker fra
+// raden. Serveren avviser den nå — og eier skal møte kravet ved feltet.
+test("Ny: en policy-ID som bryter formen stoppes før lagring", async () => {
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  const pid = h.querySelector("input.felt-inp");
+
+  for (const ugyldig of ["ACME", "ac", "acme_no"]) {
+    pid.value = ugyldig;
+    pid.dispatchEvent(new window.Event("input"));
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(t("ui.editor.policy_id_ugyldig")));
+    assert.ok(h.textContent.includes(t("ui.editor.policy_id_ugyldig")), ugyldig);
+    assert.equal(POST, undefined, `${ugyldig} skal ikke ha blitt sendt`);
+  }
+
+  // …og en gyldig id går gjennom, så vakten er om FORMEN og ikke en blokade.
+  h.querySelector("input.felt-inp").value = "acme-netthandel";
+  h.querySelector("input.felt-inp").dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(JSON.parse(POST.opts.body).policy_id, "acme-netthandel");
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+// Codex P3: en id med riktig FORM kan fortsatt være for stor for
+// registernøkkelen, og «for lang» er ikke «feil tegn». Serveren har fått en
+// egen kode (`policy_id_for_stor`) fordi `utkast_feilformet` ble oversatt til
+// «innholdet er ikke gyldig JSON-struktur» — eier ble sendt for å reparere et
+// dokument som var helt i orden. Her møter hun det ved feltet i stedet.
+test("Ny: en policy-ID over registernøkkelens tak stoppes med egen melding",
+     async () => {
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  const pid = h.querySelector("input.felt-inp");
+
+  // Skjemagyldig form, 2500 byte: over det tenant-uavhengige taket.
+  pid.value = "a".repeat(2500);
+  pid.dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.editor.policy_id_for_stor")));
+  assert.ok(h.textContent.includes(t("ui.editor.policy_id_for_stor")));
+  assert.equal(POST, undefined, "for stor id skal ikke ha blitt sendt");
+
+  // En lang, men lagringsbar id går gjennom — kontrollen er et tak, ikke en
+  // ny formregel, og den avviser aldri noe serveren ville godtatt.
+  const lang = "a".repeat(200);
+  pid.value = lang;
+  pid.dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(JSON.parse(POST.opts.body).policy_id, lang);
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+test("Ny: id-en trimmes likt i raden og i dokumentet", async () => {
+  // Raden opprettes fra den trimmede id-en. Bar dokumentet råteksten, ville
+  // utkastet vært i avvik allerede ved fødselen — og låst ute av valideringen
+  // fra første stund, siden feltet låses etter opprettelse.
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  const pid = h.querySelector("input.felt-inp");
+  pid.value = "  acme-netthandel  ";
+  pid.dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const sendt = JSON.parse(POST.opts.body);
+  assert.equal(sendt.policy_id, "acme-netthandel");
+  assert.equal(sendt.innhold.meta.policy_id, "acme-netthandel");
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 

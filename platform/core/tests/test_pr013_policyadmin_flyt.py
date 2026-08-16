@@ -16,6 +16,7 @@ import secrets
 import threading
 from datetime import datetime, timezone
 
+import psycopg
 import pytest
 
 from api import policyadmin
@@ -673,6 +674,299 @@ def test_porten_nullpadder_gammel_aktiv_versjon_i_monotonikontrollen():
         rt.close()
 
 
+@pg
+def test_porten_avviser_utkast_som_oppgir_en_annen_policy():
+    """🔴 P1: ingen runde åpnes på et dokument med fremmed identitet.
+
+    Et utkast validert FØR identitetskontrollen fantes kan bære avviket inn i
+    en runde. Da ville godkjennerne signert en aktivering som indekserer
+    policyen under én id mens motoren leser en annen ut av dokumentet — og
+    `hent_aktiv` ville avvist resultatet som korrupt etterpå. Porten stopper
+    det før noen signerer, med en kode eier kan handle på.
+
+    Kontroll: fjern `_krev_dokumentidentitet` i `opprett_aktiveringsrunde`, så
+    åpner runden og feilen flyttes til etter to signaturer.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    # Dokumentet oppgir en ANNEN policy enn raden det ligger under.
+    _utkast(uid, pid, a, {**_UTVIDER_INNHOLD,
+                          "meta": {"policy_id": "en-annen-policy",
+                                   "versjon": "1.1.0", "bransjemal": "test",
+                                   "status": "produksjon"}})
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "policy_id_avvik", e.value.kode
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_porten_avviser_utkast_som_ikke_sier_produksjon():
+    """🔴 P1: et utkast merket `utkast` kan ikke aktiveres som `produksjon`.
+
+    Aktiveringen skriver alltid registerstatus `produksjon`, og `hent_aktiv`
+    krever at dokumentet sier det samme. Et skjemagyldig utkast med
+    `meta.status: utkast` gikk derfor hele veien gjennom fire-øyne og ble en
+    aktiv policy beslutningsveien avviste som korrupt. Statusen kan ikke rettes
+    etterpå — innholdet er frosset — så kravet må stå FØR noen signerer.
+
+    Kontroll: fjern `_krev_produksjonsstatus` i `opprett_aktiveringsrunde`, så
+    åpner runden, og feilen flytter seg til etter to signaturer.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {**_UTVIDER_INNHOLD,
+                          "meta": {"policy_id": pid, "versjon": "1.1.0",
+                                   "bransjemal": "test", "status": "utkast"}})
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "status_ikke_produksjon", e.value.kode
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_hent_aktiv_avviser_rad_med_fremmed_dokumentidentitet():
+    """🔴 P1: beslutningsveien nekter å bruke en policy som ikke vet hvem den er.
+
+    Status og versjon revalideres mot registeret ved lasting; identiteten var
+    den ENESTE av de tre dokumentet fikk oppgi fritt. Spriker den, bygger
+    motoren policyreferansen sin fra en id ingen kan slå opp igjen — og
+    M-37-gjenopprettingen leter etter en aktiv rad som ikke finnes. Fail-closed
+    er det eneste ærlige: `PolicyKorrupt`, ikke en beslutning under feil navn.
+    """
+    from .test_bootstrap_ankerrad import _policy
+    pid = "pol-" + secrets.token_hex(3)
+    # Fullgyldig policy — skjema, hash, status og versjon skal ALLE passere, så
+    # det eneste som kan felle lasten er identiteten.
+    innhold = _policy("1.0.0", policy_id="en-annen-policy")
+    m = _mig()
+    try:
+        m.execute(
+            "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+            "status,innhold,aktiv) VALUES"
+            " (%s,%s,'1.0.0',%s,'produksjon',%s::jsonb,true)",
+            (TEN, pid, pr.innholds_hash(innhold), json.dumps(innhold)))
+        m.commit()
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "sys", "r1")
+        with pytest.raises(pr.PolicyKorrupt) as e:
+            pr.hent_aktiv(m, TEN, pid)
+        assert "meta.policy_id" in str(e.value), str(e.value)
+    finally:
+        m.rollback()
+        m.close()
+
+
+def test_versjonsnokkel_maaler_uten_ovre_grense():
+    """🔴 P2: porten hadde databasens 32-bits-problem i sin egen form.
+
+    `_versjonsnokkel` brukte `int()`, og CPython nekter å konvertere strenger
+    over 4300 sifre. Skjemaet setter ingen grense på `meta.versjon`, så et
+    skjemagyldig utkast kunne felt PORTEN med `ValueError` — HTTP 500 der det
+    skulle stått et utfall. Nøkkelen sammenligner nå (antall sifre, sifrene):
+    ubegrenset, og nøyaktig tallorden for ikke-negative heltall.
+
+    Kjører uten database: kontrollen er ren.
+    """
+    n = policyadmin._versjonsnokkel
+    assert n("2", 3) == n("2.0.0", 3), "«2» fra den gamle telleren ER 2.0.0"
+    assert n("2.0.1", 3) > n("2.0.0", 3)
+    assert n("10.0.0", 3) > n("9.0.0", 3), "sammenlignet som tekst, ikke tall"
+    assert n("2147483648.0.0", 3) > n("2147483647.0.0", 3)   # over int4
+    stor = "9" * 5000                       # over CPythons int-grense (4300)
+    assert n(f"{stor}.0.0", 3) > n("2147483648.0.0", 3)
+    # Og over Postgres' `numeric`-tak (131 072 sifre), som var det ANDRE taket
+    # Codex fant: begge gatene måler nå det samme, uten tak noe sted.
+    enorm = "9" * 140000
+    assert n(f"{enorm}.0.0", 3) > n(f"{'9' * 139999}.0.0", 3)
+
+
+def test_versjonsformen_krever_ascii_sifre():
+    """🔴 P2: «١.٠.٠» er skjemagyldig for Python, men ikke for databasen.
+
+    `\\d` i Python — og dermed i `jsonschema` — matcher HELE Unicodes
+    desimalsiffer-kategori, mens migrasjonene bruker `[0-9]`. Med en
+    unicode-versjon godtok porten et utkast databasen ville avvist, og
+    sifferstrengen sorterer dessuten feil: «١» ligger over «2» i tekst. Runden
+    åpnet, godkjennerne signerte, og bruddet kom først i aktiveringen — som en
+    kansellert runde.
+
+    Kjører uten database: kontrollen er ren.
+    """
+    from api.policyadmin import _SEMVER, _TALLVERSJON, _dokumentavvik
+    assert _SEMVER.match("1.0.0")
+    assert not _SEMVER.match("١.٠.٠"), "unicode-sifre slipper gjennom porten"
+    assert not _TALLVERSJON.match("٢")
+    # Og valideringen sier fra MENS utkastet kan rettes.
+    avvik = _dokumentavvik("p", {"meta": {"policy_id": "p", "versjon": "١.٠.٠",
+                                          "status": "produksjon"}})
+    assert any("meta.versjon" in a for a in avvik), avvik
+
+
+def test_versjonsformen_har_ekte_slutt():
+    """🔴 P2: `"1.2.3\\n"` er ikke en versjon — men Pythons `$` synes det.
+
+    `$` matcher også rett FØR en avsluttende linjeskift, så både skjemaet og
+    `_SEMVER.match()` godtok halen. Migrasjonenes `$` gjør det ikke, så
+    utkastet ble frosset og attestert, og bruddet kom i `aktiver_policy` — der
+    runden ble kansellert som `versjon_i_bruk`, en beskjed eier ikke kan handle
+    på fordi `meta.versjon` da ikke lenger kan rettes.
+
+    Samme hale på RADENS identitet er like dødfødt: `"acme\\n"` kan aldri
+    skrives inn i dokumentet, og raden kan ikke rettes.
+
+    Kontroll: bytt `fullmatch` tilbake til `match`, så blir denne rød.
+    """
+    from api.policyadmin import (_POLICY_ID, _SEMVER, _TALLVERSJON,
+                                 _dokumentavvik)
+    assert _SEMVER.fullmatch("1.2.3")
+    assert not _SEMVER.fullmatch("1.2.3\n"), "hale slipper gjennom porten"
+    assert not _TALLVERSJON.fullmatch("2\n")
+    assert _POLICY_ID.fullmatch("acme")
+    assert not _POLICY_ID.fullmatch("acme\n")
+    # Og valideringen sier fra MENS utkastet kan rettes.
+    avvik = _dokumentavvik("p", {"meta": {"policy_id": "p", "versjon": "1.2.3\n",
+                                          "status": "produksjon"}})
+    assert any("meta.versjon" in a for a in avvik), avvik
+
+
+@pg
+def test_porten_avviser_versjon_registeret_ikke_kan_lagre():
+    """🔴 En versjon som ikke KAN lagres skal ikke koste to signaturer.
+
+    `policyer_pkey` er (tenant, policy_id, versjon), og btree-oppføringen har et
+    hardt tak de tre DELER — så nøkkelen må måles samlet, ikke feltvis. Skjemaet
+    setter ingen grense på noen av dem, og API-ets kroppsgrense slipper gjennom
+    ledd på titusener av sifre; uten dette passerte en slik nøkkel alle
+    kontrollene og veltet først på INSERT-en inne i `aktiver_policy` — som
+    `ProgramLimitExceeded`, altså en uhåndtert 500 etter at godkjennerne hadde
+    signert.
+
+    Kontroll: fjern nøkkelkravet i `_krev_ny_versjon`, så blir denne rød ved at
+    runden ÅPNER på en versjon som aldri kan skrives.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, dict(_UTVIDER_INNHOLD), versjon="9" * 2500 + ".0.0")
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "versjon_mangler", e.value.kode
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+def _ekte_pk_kollisjon(pid):
+    """-> en EKTE `UniqueViolation` fra `policyer_pkey`.
+
+    Ikke en konstruert exception: routingen leser `diag.constraint_name`, og en
+    håndlaget feil har ingen. Da ville testen bevist at fallbacken virker, ikke
+    at PK-bruddet gjenkjennes. Denne kommer fra databasen, med navnet i seg.
+    """
+    innhold = {"roller": [{"id": "rPk"}]}
+    m = _mig()
+    try:
+        rad = (TEN, pid, "7.7.7", pr.innholds_hash(innhold),
+               json.dumps(innhold))
+        sql = ("INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+               "status,innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',"
+               "%s::jsonb,false)")
+        m.execute(sql, rad)
+        m.commit()
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "sys", "r1")
+        try:
+            m.execute(sql, rad)
+        except psycopg.errors.UniqueViolation as e:
+            assert e.diag.constraint_name == "policyer_pkey", \
+                e.diag.constraint_name
+            return e
+        raise AssertionError("dubletten ble akseptert — PK-en er borte")
+    finally:
+        m.rollback()
+        m.close()
+
+
+class _KollisjonIAktiveringen:
+    """Forbindelsen, men `aktiver_policy` reiser den oppgitte feilen.
+
+    Vinduet finnes bare inne i funksjonen — mellom dens egen ubrukt-kontroll og
+    INSERT-en — og kan ikke treffes utenfra uten å skrive om funksjonen. Alt
+    ANNET i veien er ekte: savepointet, kanselleringen, idempotenslagringen og
+    committen kjører mot databasen som vanlig.
+    """
+
+    def __init__(self, ekte, feil):
+        self._ekte, self._feil = ekte, feil
+
+    def execute(self, sql, params=None, **kw):
+        if "aktiver_policy" in str(sql):
+            raise self._feil
+        return self._ekte.execute(sql, params, **kw)
+
+    def __getattr__(self, navn):
+        return getattr(self._ekte, navn)
+
+
+@pg
+def test_pk_kollisjon_kansellerer_runden_i_stedet_for_a_meldes_som_drift():
+    """🔴 P2: en tapt versjon er ikke en usynk peker.
+
+    INSERT-en i `aktiver_policy` kan bryte to ulike unike krav, og de betyr
+    motsatte ting for eier. `en_aktiv_per_policy` = pekeren må repareres, og
+    runden er gyldig etterpå. `policyer_pkey` = versjonen ble registrert av en
+    annen skriver i vinduet, pekeren er i synk, og runden er DØD: innholdet er
+    frosset, så versjonen kan ikke økes uten et nytt utkast.
+
+    Uten routing meldte begge `aktiv_peker_usynk`: eier ble sendt for å
+    reparere en usynk som ikke fantes, og runden ble stående åpen og se levende
+    ut selv om den aldri kunne aktiveres.
+
+    Kontroll: fjern `policyer_pkey`-grenen, så blir denne rød med utfall
+    `aktiv_peker_usynk` og en runde som fortsatt står åpen.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)             # UTVIDER, pakrevd 2
+    feil = _ekte_pk_kollisjon(pid)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        dh = r["diff_hash"]
+        assert _attester(rt, uid, a, dh)["utfall"] == "venter_godkjennere"
+        svar = _attester(_KollisjonIAktiveringen(rt, feil), uid, b, dh)
+        assert svar["utfall"] == "versjon_i_bruk", svar
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        antall = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback(); m.close()
+    assert rstatus == "kansellert", (
+        "en runde som beviselig aldri kan aktiveres ble stående åpen")
+    assert antall == 2, "signaturene skal bestå — de er sporet av hva som ble godkjent"
+
+
 def _reparer(pid, versjon="9"):
     """Eiers reparasjon: den forvillede aktive raden ryddes, så peker og flagg
     er enige igjen (begge «ingen aktiv» — nøyaktig basen runden ble åpnet på)."""
@@ -813,6 +1107,12 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
     tilstanden utrullingen arver. Da må attesteringen ta den — og ta den FØR
     signaturen skrives: en attestasjon på et utkast som ikke kan aktiveres er
     ingen godkjenning, bare et spor som må ryddes.
+
+    Og runden må LUKKES (Codex P2). Kravet måler det frosne innholdet, så
+    avslaget er permanent — rullet vi bare tilbake, sto runden `apen` og så
+    levende ut: flaten tilbyr bare «attester», hvert forsøk gir samme feil, og
+    `forkast_utkast` nekter et utkast med en levende runde. Eier sto fast til
+    runden utløp av seg selv. Siste ledd her er derfor at hun kommer VIDERE.
     """
     pid = "pol-" + secrets.token_hex(3)
     a = _medlem("forf", ["policyforvalter"])
@@ -824,10 +1124,8 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
                             lambda *_a, **_k: None)
         r = _apne(rt, uid, a)                  # runden fra «før utrullingen»
         monkeypatch.undo()                     # ... og så lander den
-        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
-            _attester(rt, uid, a, r["diff_hash"])
-        assert e.value.kode == "utkast_ugyldig", e.value.kode
-        rt.rollback()
+        svar = _attester(rt, uid, a, r["diff_hash"])
+        assert svar["utfall"] == "utkast_ugyldig", svar
     finally:
         rt.close()
     m = _mig()
@@ -836,9 +1134,94 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
             "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
             " utkast_id=%s", (TEN, uid)).fetchone()[0] == 0, (
             "signaturen ble skrevet på et utkast som ikke kan aktiveres")
+        rstatus = m.execute(
+            "SELECT status FROM aktiveringsrunde WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
     finally:
         m.rollback(); m.close()
+    assert rstatus == "kansellert", rstatus
     assert _aktiv_versjon(pid) is None
+
+    # Veien ut er åpen: uten kanselleringen nektet `forkast_utkast` fordi
+    # runden var levende, og eier hadde ingen handling igjen på flaten.
+    rt = _rt()
+    try:
+        idem = secrets.token_hex(8)
+        f = policyadmin.forkast_utkast(
+            rt, tenant=TEN, aktor=a, request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1, idempotency_key=idem, input_hash=idem,
+            naa=_naa())
+        assert f["utfall"] == "forkastet", f
+    finally:
+        rt.close()
+
+
+@pg
+def test_intern_valideringsfeil_kansellerer_ikke_runden(monkeypatch):
+    """🔴 Codex P2: «validatoren er nede» er ingen dom over utkastet.
+
+    Kanselleringen over hviler på at avslaget er PERMANENT — det frosne
+    innholdet kan ikke rettes. Men kontrollen kan også feile fordi VI er nede:
+    skjemafilen kan mangle eller være uleselig i en halvlandet utrulling, og
+    `valider_innforingskrav` gjorde et hvilket som helst slikt avbrudd om til
+    en oppføring i feillista. Da ble en reparerbar driftsfeil lest som et
+    innholdsbrudd, og runden lukket for godt: retter man utrullingen, kommer
+    runden ikke tilbake.
+
+    `valider_innforingskrav_strengt` kaster i stedet, `_krev_innforingskrav`
+    oversetter det til `valideringsfeil_intern` (HTTP 503), og
+    `_FROSNE_DOKUMENTBRUDD` slipper bare de permanente kodene til
+    kanselleringen.
+
+    Kontroll: legg `valideringsfeil_intern` inn i `_FROSNE_DOKUMENTBRUDD`, så
+    blir denne rød ved at runden er `kansellert` — og siste ledd, at eier
+    kommer helt i mål etter reparasjonen, blir umulig.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)             # UTVIDER, pakrevd 2
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+
+        def _nede(*_a, **_k):
+            raise policyadmin._schema.ValideringUtilgjengelig(
+                "FileNotFoundError: policy-schema-v0.2.json")
+
+        monkeypatch.setattr(policyadmin._schema,
+                            "valider_innforingskrav_strengt", _nede)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, a, r["diff_hash"])
+        assert e.value.kode == "valideringsfeil_intern", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        antall = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback(); m.close()
+    assert rstatus == "apen", (
+        "en reparerbar driftsfeil lukket en runde som var helt i orden")
+    assert antall == 0, "ingen signatur skal være skrevet"
+
+    # Og reparasjonen holder: utrullingen rettes, og runden går helt i mål.
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        assert _attester(rt, uid, b, r["diff_hash"])["utfall"] == "aktivert"
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) == "1.1.0"
 
 
 @pg
@@ -914,3 +1297,81 @@ def test_ferdig_attestert_runde_fra_for_utrullingen_aktiverer_ikke(monkeypatch):
     assert rstatus == "kansellert", rstatus
     assert antall_attest == 2
     assert ustatus == "validert", ustatus
+
+
+# --------------------------------------------------------------------------
+# Codex P2 på denne PR-en: ankerkravet er også et framoverrettet krav, og også
+# det må stå i SQL — ikke bare i `schema._valider_innforing`.
+# --------------------------------------------------------------------------
+
+#: Handlings-id med en avsluttende linjeskift. Skjemagyldig for Pythons `re`
+#: (`$` matcher rett FØR en avsluttende linjeskift), ulesbar for alle andre:
+#: `engine.les_policyref` måler med `fullmatch`, og databasens `~` leser `$`
+#: som ekte slutt.
+_ANKERHALE_INNHOLD = {
+    "roller": [{"id": "r1"}],
+    "handlinger": [{"id": "faktura.send\n"}]}
+
+
+@pg
+def test_ankerhale_stoppes_av_db_grensen_nar_python_porten_er_passert(monkeypatch):
+    """🔴 Codex P2: `_valider_innforing` fikk ankerkravet — SQL-grensen ikke.
+
+    Samme to hull som verifikator-id-kravet: et utkast kan ha blitt validert og
+    fullt attestert FØR utrullingen, og `aktiver_policy` er grantet direkte til
+    runtime-rollen. Slapp halen gjennom her, ble policyen AKTIVERT — og først
+    da oppdages det: `les_policyref` klarer ikke lese
+    `<policy_id>@<versjon>/<handling>`, så hver beslutning under policyen
+    produserer evidens uten policyidentitet.
+
+    Utfallet må dessuten være `utkast_ugyldig` og ikke `versjon_i_bruk`:
+    kontrollen deler SQLSTATE med versjonsinvariantene fra 020, og bare
+    `CONSTRAINT`-navnet skiller dem.
+
+    Kontroll: fjern 4d fra migrasjon 025, så aktiveres utkastet.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _ANKERHALE_INNHOLD)
+    rt = _rt()
+    try:
+        monkeypatch.setattr(policyadmin, "_krev_innforingskrav",
+                            lambda *_a, **_k: None)
+        r = _apne(rt, uid, a)
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        siste = _attester(rt, uid, b, r["diff_hash"])
+        assert siste["utfall"] == "utkast_ugyldig", siste
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) is None, "utkastet ble aktivert"
+
+
+@pg
+def test_db_grensen_maler_bare_differansen_ikke_hele_lastekontrakten():
+    """Motprøven, og den er hele grunnen til at 4d er skrevet som den er.
+
+    `h1` mangler punktumet mønsteret krever og feiler BEGGE lesningene — det er
+    en helt vanlig skjemafeil som lastekontrakten sier fra om ved validering.
+    Målte SQL-grensen hele mønsteret i stedet for differansen, ville en runde
+    blitt KANSELLERT med «bryter et nytt krav» for et dokument som ganske
+    enkelt er strukturelt ødelagt. Det er nøyaktig sammenblandingen
+    innførings- og lastekontrakten ble delt i to for å unngå, og den samme
+    feilen `_pattern_ecma` alt er rettet for på Python-siden.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)            # handlinger[].id = 'h1'
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        assert _attester(rt, uid, b, r["diff_hash"])["utfall"] == "aktivert"
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) == "1.1.0"

@@ -28,14 +28,29 @@ _FEIL_HTTP = {
     "allerede_attestert": 409, "rebasering_kreves": 409,
     "semantikk_endret": 409, "base_mangler": 409, "base_korrupt": 409,
     "aktiv_peker_usynk": 409,
-    "status_ikke_produksjon": 409,
     "versjon_i_bruk": 409, "versjon_mangler": 409,
+    "policy_id_avvik": 409, "status_ikke_produksjon": 409,
+    # 400, ikke 409: en `policy_id` som bryter formen er en feil i
+    # FORESPØRSELEN, ikke en tilstandskonflikt. Ingenting i basen kan endre seg
+    # slik at det samme kallet plutselig lykkes.
+    "policy_id_ugyldig": 400,
+    # Samme kategori: id-en har riktig FORM, men er for stor til å dele
+    # registerets primærnøkkel med en versjon. Egen kode fordi eier ellers fikk
+    # `utkast_feilformet` og ble bedt om å reparere dokumentet sitt i stedet for
+    # å forkorte id-en (Codex P3).
+    "policy_id_for_stor": 400,
+    "dokument_avvik": 409,
     "idempotenskonflikt": 409, "sikkerhet": 409,
     "scope_mangler": 403, "mangler_medlemskap": 403,
     "token_ugyldig": 401, "rate_grense": 429,
     "dobbel_principal": 400, "sesjon_ugyldig": 401, "csrf_ugyldig": 403,
     "request_feilformet": 400, "idempotensnokkel_mangler": 400,
-    "db_utilgjengelig": 503, "policy_ugyldig": 422,
+    # 503, ikke 422: validatoren kunne ikke KJØRE (skjemafilen mangler i en
+    # halvlandet utrulling, f.eks.). Det er vår feil og den er reparerbar — å
+    # svare «utkastet er ugyldig» ville sendt eier for å rette noe vi ikke har
+    # målt (Codex P2).
+    "db_utilgjengelig": 503, "valideringsfeil_intern": 503,
+    "policy_ugyldig": 422,
     # Innholdet er ugyldig (innføringskontrakten), ikke tilstanden: 422 som
     # `policy_ugyldig` — eier må rette utkastet, ikke prøve igjen.
     "utkast_ugyldig": 422,
