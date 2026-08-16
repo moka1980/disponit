@@ -6,7 +6,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentJson, validerUtkast, apneRunde, attesterAktivering, UgyldigFeil,
+  hentJson, validerUtkast, forkastUtkast, apneRunde, attesterAktivering,
+  UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
@@ -907,6 +908,38 @@ function visEllerMeld(boks, node, talemelding) {
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
 // Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
 // er tegnet, og er det som låser opp attestering (se attest-grenen).
+// «Slett» finnes bare for et UTKAST — et forslag som ennå ikke binder noen.
+// En policy som har styrt beslutninger kan ikke fjernes: revisjonssporet ville
+// pekt på noe som ikke finnes lenger. Derfor heter den «Forkast», ikke «Slett»,
+// og derfor er den borte i det øyeblikket en runde er åpen: da har
+// godkjennere attestasjoner i omløp, og forslaget skal ikke kunne rives bort
+// under dem.
+function forkastKnapp(detalj, uid, ctx, paaFerdig) {
+  // STABIL nøkkel per render: re-klikk er retry, ikke en ny operasjon.
+  const nokkel = nyIdempotensnokkel();
+  const b = el("button", { class: "knapp fare", type: "button",
+    text: t("ui.policyadmin.handling.forkast") });
+  b.addEventListener("click", () => {
+    Bekreftelsesdialog({
+      tittel: t("ui.policyadmin.forkast.tittel"),
+      tekst: `${detalj.policy_id} · ${t("ui.policyadmin.forkast.tekst")}`,
+      primarTekst: t("ui.policyadmin.handling.forkast"),
+      farlig: true,
+      paaPrimar: () => forkastUtkast(uid, detalj.utkastversjon, nokkel)
+        .then(() => {
+          _settKvittering(uid, "ok", t("ui.policyadmin.forkastet"));
+          if (paaFerdig) paaFerdig();
+        })
+        .catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          _settKvittering(uid, "feil", t("ui.policyadmin.feilet"));
+          if (paaFerdig) paaFerdig();
+        }),
+    });
+  });
+  return b;
+}
+
 function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
   const boks = el("section", { class: "pa-handling",
     "aria-label": t("ui.policyadmin.handlinger") });
@@ -981,7 +1014,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
         // utkastet: her vet vi bare at handlingen ikke gikk gjennom.
         visFeil(t("ui.policyadmin.feilet"), []);
       }));
-    boks.append(rediger, b);
+    boks.append(rediger, b, forkastKnapp(detalj, uid, ctx, paaFerdig));
     return { rot: boks, diffVist };
   }
 
@@ -1011,7 +1044,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
             el("p", { text: tekst })),
           tekst);
       }));
-    boks.append(b);
+    boks.append(b, forkastKnapp(detalj, uid, ctx, paaFerdig));
     return { rot: boks, diffVist };
   }
 

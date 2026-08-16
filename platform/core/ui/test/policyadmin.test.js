@@ -2534,3 +2534,74 @@ test("Diff: den grupperte visningen er axe-ren", async () => {
   await aapneEndringer(h);
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// Eier ba om å kunne slette, ikke bare redigere. Det som KAN slettes er et
+// UTKAST — et forslag som ennå ikke binder noen. En policy som har styrt
+// beslutninger kan ikke fjernes; da ville revisjonssporet pekt på noe som
+// ikke finnes. Derfor «Forkast», ikke «Slett».
+test("Forkast: et utkast kan forkastes, med bekreftelse først", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => { kalt.push({ url, opts });
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "forkastet", utkast_id: "u-1" }) }; } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  // Et irreversibelt valg skal ikke skje på ett klikk.
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  assert.ok(dlg.textContent.includes("faktura-no"),
+    "bekreftelsen sier ikke HVILKET utkast som forkastes");
+  assert.equal(kalt.length, 0, "forkastet før eier bekreftet");
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length > 0);
+  assert.equal(kalt[0].opts.method, "POST");
+  assert.ok(kalt[0].url.includes("/v1/policyutkast/u-1/forkast"));
+  assert.ok(kalt[0].opts.headers["Idempotency-Key"], "mangler Idempotency-Key");
+  assert.equal(JSON.parse(kalt[0].opts.body).utkastversjon, 2,
+    "utkastversjonen binder nøkkelen til tilstanden eier så");
+  // Kvitteringen fylles i en SENERE oppgave (live-området må rekke å bli
+  // registrert), så vi venter på den ferdige boksen — ikke på det tomme
+  // skallet. Første utgave av denne testen ventet på skallet og fant "".
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkastet")),
+    "utfallet er ikke synlig");
+});
+
+// Kontroll: flytt `forkastKnapp` ut av runde-betingelsen, så blir denne rød.
+test("Forkast: knappen finnes IKKE når en runde er åpen", async () => {
+  // DETALJ har en åpen runde med attestasjoner i omløp.
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+  assert.equal(_finn(h, t("ui.policyadmin.handling.forkast")), undefined,
+    "et forslag med attestasjoner i omløp skal ikke kunne rives bort");
+});
+
+test("Forkast: axe-ren, og knappen er merket som farlig", async () => {
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  assert.ok(_finn(h, t("ui.policyadmin.handling.forkast"))
+    .classList.contains("fare"));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
