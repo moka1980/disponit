@@ -12,7 +12,9 @@ Grensene som prøves her er de som gjør senderen trygg å la stå og gå:
     driftstilstand, ikke en egenskap ved varselet;
   * teksten rendres fra locale, ikke fra databasen.
 """
+import re
 import secrets
+from pathlib import Path
 
 import pytest
 
@@ -1057,6 +1059,81 @@ SENDERFUNKSJONER = [
 ]
 
 SENDERROLLE = "disponit_varselsender"
+
+EIERROLLE = "disponit_domene_eier"
+
+_KOMMENTAR = re.compile(r"--[^\n]*")
+_KROPP = re.compile(r"\$\$.*?\$\$", re.S)
+
+
+def _setninger(sql):
+    """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
+
+    Kroppene fjernes fordi de inneholder både `;` og — i kommentarform —
+    nettopp de ordene denne testen leter etter. Det som er igjen er filens
+    DDL og rettighetsutsagn, i den rekkefølgen basen ser dem.
+    """
+    for rå in _KROPP.sub(" ", _KOMMENTAR.sub("", sql)).split(";"):
+        s = " ".join(rå.split()).lower()
+        if s:
+            yield s
+
+
+def test_gjerdet_staar_ved_slutten_av_migrasjonshistorikken():
+    """Kildeport: PUBLIC skal ikke ha EXECUTE når siste migrasjon er kjørt.
+
+    En `REVOKE … FROM PUBLIC` kan MISLYKKES STILLE — kjøres den av en rolle
+    som ikke eier funksjonen, advarer PostgreSQL og går videre, men
+    materialiserer samtidig standard-ACL-en, som for en funksjon er EXECUTE
+    for PUBLIC. Og en DROP tar ACL-en med seg, så enhver gjenskaping av en
+    alt herdet funksjon åpner gjerdet på nytt.
+
+    Nøyaktig dét skjedde i 028 (Codex P1 på #68): den gjenskapte
+    `varsel_klaim_epost` og la REVOKE-en ETTER `ALTER … OWNER TO`, men FØR
+    `SET LOCAL ROLE` — altså som migrator, som er medlem av eierrollen
+    `WITH INHERIT FALSE`.
+
+    ACL-testen under så det ikke, og kunne ikke se det: både CI og staging
+    migrerer med `deploy/staging/migrer.py`, som ETTERPÅ kjører sin egen
+    REVOKE som eier. Den målingen skjer på en base der oppryddingen alt har
+    lukket hullet. Hullet er likevel ekte i vinduet mellom stegene, og
+    permanent for den som kjører `db.kjorer.migrer` direkte.
+
+    Derfor måles filene, og de måles SOM EN HISTORIKK, ikke én for én: 028
+    er kjørt og er immutable, så den kan ikke repareres — den kan bare
+    etterfølges (030). Testen spiller av alle migrasjonene i rekkefølge og
+    krever at gjerdet står igjen til slutt. Neste gjenskaping som glemmer å
+    sette det opp igjen, feiler her.
+    """
+    mig = Path(__file__).resolve().parents[1] / "db/migrations"
+    navn = [s.split("(")[0] for s in SENDERFUNKSJONER]
+    # None = funksjonen finnes ikke ennå. False = den finnes med åpen ACL.
+    gjerdet = dict.fromkeys(navn)
+    spor = {n: [] for n in navn}
+    for fil in sorted(mig.glob("[0-9][0-9][0-9]_*.sql")):
+        rolle = None                      # None = migrator, kjørerens rolle
+        for s in _setninger(fil.read_text(encoding="utf-8")):
+            if s.startswith("set local role "):
+                rolle = s.split()[3]
+            elif s.startswith("reset role"):
+                rolle = None
+            for n in navn:
+                if n not in s:
+                    continue
+                if s.startswith("create ") and " function " in f" {s} ":
+                    # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC.
+                    gjerdet[n] = False
+                    spor[n].append(f"{fil.name}: gjenskapt")
+                elif s.startswith("revoke ") and " public" in s:
+                    # Som eier: gjerdet står. Som migrator: advarsel, og
+                    # standard-ACL-en materialiseres — verre enn ingenting.
+                    gjerdet[n] = rolle == EIERROLLE
+                    spor[n].append(f"{fil.name}: revoke som {rolle or 'migrator'}")
+    for n in navn:
+        assert gjerdet[n] is True, (
+            f"PUBLIC har EXECUTE på {n} etter siste migrasjon — en"
+            f" gjenskaping uten nytt gjerde, eller en REVOKE utenfor"
+            f" `SET LOCAL ROLE {EIERROLLE}`. Spor: {spor[n]}")
 
 
 def _execute_mottakere(conn, signatur):
