@@ -1488,3 +1488,130 @@ test("Valideringsfeil som lander etter navigasjon, blir hørt", async () => {
     "feillista ble tegnet inn i en side eier hadde forlatt");
   gjenopprett();
 });
+
+// Diffen er det godkjenneren BINDER SEG TIL. En ny policy ga ~200 flate rader
+// («handlinger[0].vilkaar[2].verifikator · added: "v_prognose"»), og det
+// spørsmålet et menneske skal svare på — hva får agenten lov til, og opp til
+// hvilket beløp — lå begravd. Eier meldte den som «en lang liste, litt
+// vanskelig å forholde seg til».
+//
+// Kravet er derfor TO ting samtidig: den skal være til å lese, OG ingenting
+// skal forsvinne. Den siste er den viktige — en diff som skjuler noe gjør
+// attesteringen til en løgn.
+const STOR_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [
+    { sti: "handlinger[]", klasse: "UTVIDER" },
+    { sti: "roller[]", klasse: "UTVIDER" },
+    { sti: "unntak.kategorier[]", klasse: "UTVIDER" },
+  ],
+  diff: { endringer: [
+    { sti: "handlinger[0].id", type: "lagt_til", til: "ordre.bekreft_og_fakturer" },
+    { sti: "handlinger[0].modul", type: "lagt_til", til: "M-25" },
+    { sti: "handlinger[0].modus", type: "lagt_til", til: "auto" },
+    { sti: "handlinger[0].vilkaar[0].navn", type: "lagt_til", til: "betaling_autorisert" },
+    { sti: "handlinger[1].id", type: "lagt_til", til: "refusjon.utfor" },
+    { sti: "handlinger[1].modul", type: "lagt_til", til: "M-41" },
+    { sti: "handlinger[1].modus", type: "lagt_til", til: "auto" },
+    { sti: "handlinger[1].grenser.belop_maks", type: "lagt_til", til: "5000.00" },
+    { sti: "handlinger[1].grenser.valuta[0]", type: "lagt_til", til: "NOK" },
+    { sti: "roller[0].id", type: "lagt_til", til: "daglig_leder" },
+    { sti: "unntak.kategorier[0]", type: "lagt_til", til: "manglende_data" },
+    { sti: "unntak.kategorier[1]", type: "lagt_til", til: "over_grense" },
+    { sti: "unntak.kategorier[2]", type: "lagt_til", til: "svindelmistanke" },
+    { sti: "tidssone", type: "endret", fra: "UTC", til: "Europe/Oslo" },
+  ] },
+};
+
+async function aapneEndringer(h) {
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".diff-grupper"));
+  return h.querySelector(".diff-grupper");
+}
+
+// Kontroll: gjør `feltDiff` flat igjen (én li per endring), så blir denne rød.
+test("Diff: grupperes per område, og de som utvider fullmakt står åpne øverst",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const grupper = [...rot.querySelectorAll(".diff-gruppe")];
+    assert.equal(grupper.length, 4,
+      "handlinger, roller, unntak og tidssone skal bli fire områder");
+    const navn = grupper.map((g) =>
+      g.querySelector(".diff-gruppenavn").textContent);
+    assert.deepEqual(navn.slice(0, 3).sort(), [
+      t("ui.policyadmin.diff.gruppe.handlinger"),
+      t("ui.policyadmin.diff.gruppe.roller"),
+      t("ui.policyadmin.diff.gruppe.unntak"),
+    ].sort(), "områdene som utvider fullmakt skal ligge først");
+    // Åpne = det fire-øyne-kravet finnes for. Resten kan foldes ut.
+    for (const g of grupper.slice(0, 3)) {
+      assert.ok(g.hasAttribute("open"), "et område som utvider skal stå åpent");
+    }
+    assert.ok(!grupper[3].hasAttribute("open"),
+      "tidssone utvider ikke fullmakt og skal ikke stjele plass");
+  });
+
+test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const overskrifter = [...rot.querySelectorAll(".diff-element > summary")]
+      .map((s) => s.textContent);
+    const refusjon = overskrifter.find((o) => o.includes("refusjon.utfor"));
+    assert.ok(refusjon, "handlingen identifiseres ikke ved navn");
+    // Nettopp disse tre avgjør fullmakten, og skal kunne leses UTEN å utfolde.
+    assert.ok(refusjon.includes("M-41"), "modul mangler i overskriften");
+    assert.ok(refusjon.includes("auto"), "modus mangler i overskriften");
+    assert.ok(refusjon.includes("5000.00") && refusjon.includes("NOK"),
+      "beløpsgrensen mangler i overskriften");
+    // Delene må skilles i TEKSTEN, ikke bare visuelt: flex-gap er ingen
+    // avstand for en skjermleser, og «refusjon.utforM-41auto» er uleselig.
+    assert.ok(!/refusjon\.utforM-41/.test(refusjon),
+      "overskriftsdelene limes sammen uten skilletegn");
+  });
+
+test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const unntak = [...rot.querySelectorAll(".diff-gruppe")].find((g) =>
+    g.querySelector(".diff-gruppenavn").textContent
+      === t("ui.policyadmin.diff.gruppe.unntak"));
+  const alle = unntak.querySelectorAll("li");
+  assert.equal(alle.length, 1,
+    "tre unntakskategorier er én beslutning — og én rad, ikke en wrapper "
+    + `rundt tre (fant ${alle.length})`);
+  for (const v of ["manglende_data", "over_grense", "svindelmistanke"]) {
+    assert.ok(alle[0].textContent.includes(v), `${v} forsvant`);
+  }
+});
+
+// Den viktigste testen i fila: grupperingen er PRESENTASJON. Forsvinner én
+// endring, attesterer godkjenneren noe hun ikke har sett.
+test("Diff: ingen endring forsvinner i grupperingen", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const tekst = rot.textContent;
+  for (const e of STOR_DIFF.diff.endringer) {
+    const verdi = String(e.type === "endret" ? e.til : e.til);
+    assert.ok(tekst.includes(verdi),
+      `verdien «${verdi}» (${e.sti}) finnes ikke i den grupperte diffen`);
+  }
+  // Og endringen som ikke er et tillegg skal vise BEGGE sider.
+  assert.ok(tekst.includes("UTC") && tekst.includes("Europe/Oslo"),
+    "en endret verdi må vise både fra og til");
+});
+
+test("Diff: den grupperte visningen er axe-ren", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  await aapneEndringer(h);
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});

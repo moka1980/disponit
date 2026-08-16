@@ -326,6 +326,23 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   color: var(--guard); }
 .pa-kvittering-feil { border-color: var(--danger); background: var(--danger-bg);
   color: var(--danger); }
+/* Diffen gruppert: lukkbare områder, ett kort per element. Ingenting skjules
+   — `details` gjør bare at 200 rader kan vurderes uten å leses i ett jafs. */
+.diff-sammendrag { margin: 0 0 var(--sp-3); color: var(--muted); }
+.diff-gruppe { border: 1px solid var(--line); border-radius: var(--radius-sm);
+  margin: 0 0 var(--sp-2); }
+.diff-gruppe > summary, .diff-element > summary { cursor: pointer;
+  padding: var(--sp-2) var(--sp-3); display: flex; flex-wrap: wrap;
+  gap: var(--sp-2); align-items: center; }
+.diff-gruppe > summary:focus-visible, .diff-element > summary:focus-visible {
+  outline: var(--focus); outline-offset: var(--focus-offset); }
+.diff-gruppenavn { font-weight: 600; }
+.diff-elementer { list-style: none; margin: 0; padding: 0 var(--sp-3) var(--sp-2); }
+.diff-elementrad { margin: var(--sp-1) 0; }
+.diff-element { border-left: 2px solid var(--line); }
+.diff-navn { font-family: var(--font-mono); }
+.diff-merke { border: 1px solid var(--line); border-radius: var(--radius-pill);
+  padding: 0 var(--sp-2); font-size: 0.85em; color: var(--muted); }
 .knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
 .mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);

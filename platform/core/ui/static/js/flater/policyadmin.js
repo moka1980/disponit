@@ -43,22 +43,184 @@ function risikoEndringer(detalj) {
 }
 
 // Granulær felt-diff (lagt til / fjernet / endret) — hva som konkret skifter.
+// Diffen er det godkjenneren binder seg til, så den må være til å LESE.
+//
+// Den flate lista var teknisk korrekt og praktisk ubrukelig: en ny policy ga
+// ~200 rader av typen `handlinger[0].vilkaar[2].verifikator · added:
+// "v_prognose"`. Det spørsmålet et menneske skal svare på — hva får agenten
+// lov til å gjøre, og opp til hvilket beløp — lå begravd mellom
+// beskrivelsestekster og varslingsdager. En godkjenner som ikke orker å lese
+// er en godkjenner som klikker, og da er fire øyne bare seremoni.
+//
+// Ingenting SKJULES: hver eneste endring er fortsatt til stede og utfoldbar.
+// Det som endres er rekkefølgen og oppdelingen — grupper man kan lukke, ett
+// kort per element i stedet for én rad per blad, og en presis oppsummering på
+// hver overskrift så gruppen kan vurderes uten å åpnes.
+
+// «handlinger[0].vilkaar[2].navn» → { gruppe: "handlinger",
+//                                     element: "handlinger[0]", rest: … }
+// Skalarledd i en liste («unntak.kategorier[3]») har ingen rest — de slås
+// sammen til én rad for hele lista lenger nede.
+function delOppSti(sti) {
+  const m = /^([^.[]+)/.exec(sti);
+  const gruppe = m ? m[1] : sti;
+  // Elementet er første ledd som er indeksert eller nøklet ETTER gruppen.
+  const e = /^([^.[]+(?:\[\d+\]|\.[^.[]+))/.exec(sti);
+  const element = e ? e[1] : gruppe;
+  const rest = sti.slice(element.length).replace(/^\./, "");
+  return { gruppe, element, rest };
+}
+
+function verdiTekst(e) {
+  if (e.type === "endret") {
+    return `${JSON.stringify(e.fra)} → ${JSON.stringify(e.til)}`;
+  }
+  return JSON.stringify(e.type === "lagt_til" ? e.til : e.fra);
+}
+
+function bladRad(e) {
+  return el("li", {},
+    el("code", { text: e.sti }),
+    el("span", { class: "sub",
+      text: ` · ${t(`ui.policyadmin.endring.${e.type}`, e.type)}: `
+        + verdiTekst(e) }));
+}
+
+// Overskriften på et element skal si HVA elementet er, ikke hvor det står i
+// JSON-en. `id` er navnet mennesket kjenner; modul/modus/beløpsgrense er det
+// som avgjør fullmakten, og hører derfor hjemme i overskriften og ikke tolv
+// rader ned.
+const NOKKELFELT = ["modul", "modus", "grenser.belop_maks", "tillatt_for[0]"];
+
+function elementOverskrift(element, blader) {
+  const felt = new Map();
+  for (const e of blader) {
+    const { rest } = delOppSti(e.sti);
+    const v = e.type === "fjernet" ? e.fra : e.til;
+    if (rest) felt.set(rest, v);
+  }
+  const navn = felt.get("id") || element;
+  const merker = [];
+  for (const f of NOKKELFELT) {
+    const v = felt.get(f);
+    if (v === undefined || v === null) continue;
+    merker.push(f === "grenser.belop_maks"
+      ? `${t("ui.policyadmin.diff.maks")} ${v}${
+        felt.get("grenser.valuta[0]") ? " " + felt.get("grenser.valuta[0]") : ""}`
+      : String(v));
+  }
+  return { navn: String(navn), merker, felt };
+}
+
+// En liste av rene verdier («unntak.kategorier[]», «dataklasser[]») blir én
+// rad med alle verdiene, ikke én rad per indeks. Åtte kategorier er én
+// beslutning, ikke åtte.
+function skalarListeRad(element, blader) {
+  const verdier = blader.map((e) =>
+    String(e.type === "fjernet" ? e.fra : e.til));
+  const type = blader[0].type;
+  return el("li", {},
+    el("code", { text: `${element.replace(/\[\d+\]$/, "")}[]` }),
+    el("span", { class: "sub",
+      text: ` · ${t(`ui.policyadmin.endring.${type}`, type)} (${verdier.length}): `
+        + verdier.join(", ") }));
+}
+
+// Et blad er skalart når det ikke har noe felt under elementet — enten fordi
+// resten er tom («dataklasser[0]»), eller fordi den bare er en indeks
+// («unntak.kategorier[3]»). Åtte unntakskategorier er ÉN beslutning.
+function erSkalarblad(e) {
+  const rest = delOppSti(e.sti).rest;
+  return !rest || /^\[\d+\]$/.test(rest);
+}
+
+function elementBlokk(element, blader) {
+  // Sammenslåing er BARE trygt for like tillegg/fjerninger. En `endret` verdi
+  // har to sider, og den sammenslåtte raden viste bare den nye — `tidssone`
+  // ble «Europe/Oslo» uten at «UTC» sto noe sted. Å miste utgangspunktet i en
+  // fullmaktsdiff er nøyaktig det grupperingen ikke har lov til å gjøre, så
+  // blandede eller endrede blader beholder én rad hver.
+  const ensartet = blader.every((e) => e.type === blader[0].type);
+  if (blader.every(erSkalarblad)) {
+    return (ensartet && blader[0].type !== "endret")
+      ? skalarListeRad(element, blader)
+      : el("li", { class: "diff-elementrad" },
+        el("ul", { class: "feltdiff" }, ...blader.map(bladRad)));
+  }
+
+  const { navn, merker } = elementOverskrift(element, blader);
+  const detaljer = el("details", { class: "diff-element" });
+  const opps = el("summary", {},
+    el("span", { class: "diff-navn", text: navn }));
+  for (const m of merker) {
+    opps.append(document.createTextNode(" · "),
+      el("span", { class: "diff-merke", text: m }));
+  }
+  opps.append(document.createTextNode(" · "),
+    el("span", { class: "sub",
+      text: t("ui.policyadmin.diff.antall_felt")
+        .replace("{n}", String(blader.length)) }));
+  detaljer.append(opps,
+    el("ul", { class: "feltdiff" }, ...blader.map(bladRad)));
+  return el("li", { class: "diff-elementrad" }, detaljer);
+}
+
 function feltDiff(detalj) {
   const endr = (detalj.diff && detalj.diff.endringer) || [];
   if (!endr.length) {
     return el("p", { class: "muted", text: t("ui.policyadmin.ingen_endringer") });
   }
-  const ul = el("ul", { class: "feltdiff" });
+
+  // Gruppene som UTVIDER fullmakt står først og står ÅPNE. Det er dem
+  // fire-øyne-kravet finnes for; resten er kontekst man kan folde ut.
+  const utvider = new Set((detalj.klassifisering_endringer || [])
+    .filter((k) => k.klasse === "UTVIDER")
+    .map((k) => delOppSti(k.sti).gruppe));
+
+  const grupper = new Map();
   for (const e of endr) {
-    const verdi = e.type === "endret"
-      ? `${JSON.stringify(e.fra)} → ${JSON.stringify(e.til)}`
-      : (e.type === "lagt_til" ? JSON.stringify(e.til) : JSON.stringify(e.fra));
-    ul.append(el("li", {},
-      el("code", { text: e.sti }),
-      el("span", { class: "sub",
-        text: ` · ${t(`ui.policyadmin.endring.${e.type}`, e.type)}: ${verdi}` })));
+    const { gruppe, element } = delOppSti(e.sti);
+    if (!grupper.has(gruppe)) grupper.set(gruppe, new Map());
+    const g = grupper.get(gruppe);
+    if (!g.has(element)) g.set(element, []);
+    g.get(element).push(e);
   }
-  return ul;
+
+  const sortert = [...grupper.keys()].sort((a, b) => {
+    const ua = utvider.has(a), ub = utvider.has(b);
+    if (ua !== ub) return ua ? -1 : 1;
+    return a.localeCompare(b, "nb");
+  });
+
+  const rot = el("div", { class: "diff-grupper" });
+  rot.append(el("p", { class: "diff-sammendrag",
+    text: t("ui.policyadmin.diff.sammendrag")
+      .replace("{antall}", String(endr.length))
+      .replace("{omrader}", String(sortert.length)) }));
+
+  for (const navn of sortert) {
+    const elementer = grupper.get(navn);
+    const antall = [...elementer.values()].reduce((n, b) => n + b.length, 0);
+    const blokk = el("details", { class: "diff-gruppe" });
+    if (utvider.has(navn)) blokk.setAttribute("open", "");
+    const opps = el("summary", {},
+      el("span", { class: "diff-gruppenavn",
+        text: t(`ui.policyadmin.diff.gruppe.${navn}`, navn) }));
+    if (utvider.has(navn)) {
+      // Samme merking som risikolista over, så de to visningene ikke kan
+      // fortelle to forskjellige historier om hva som utvider fullmakten.
+      opps.append(document.createTextNode(" · "), risikoBadge("UTVIDER"));
+    }
+    opps.append(document.createTextNode(" · "),
+      el("span", { class: "sub",
+        text: t("ui.policyadmin.diff.antall_endringer")
+          .replace("{n}", String(antall)) }));
+    blokk.append(opps, el("ul", { class: "diff-elementer" },
+      ...[...elementer.keys()].sort((a, b) => a.localeCompare(b, "nb"))
+        .map((k) => elementBlokk(k, elementer.get(k)))));
+    rot.append(blokk);
+  }
+  return rot;
 }
 
 // Fire-øyne-status: N/påkrevd + hvem som har attestert (og om de er forfatter).

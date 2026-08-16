@@ -651,5 +651,18 @@
   "ui.policyadmin.tilbake_til_liste": "← Tilbake til utkastene",
   "ui.policyadmin.detalj_undertittel": "Utkast {id}",
   "ui.policyadmin.utfall.venter_antall": "{avgitt} av godkjenningene er avgitt, {gjenstaar} gjenstår.",
-  "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet."
+  "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet.",
+  "ui.policyadmin.diff.sammendrag": "{antall} endringer i {omrader} områder. Områder som utvider fullmakt står åpne øverst.",
+  "ui.policyadmin.diff.antall_endringer": "{n} endringer",
+  "ui.policyadmin.diff.antall_felt": "{n} felt",
+  "ui.policyadmin.diff.maks": "maks",
+  "ui.policyadmin.diff.gruppe.handlinger": "Handlinger agenten kan utføre",
+  "ui.policyadmin.diff.gruppe.roller": "Roller",
+  "ui.policyadmin.diff.gruppe.verifikatorer": "Verifikatorer",
+  "ui.policyadmin.diff.gruppe.frister": "Frister",
+  "ui.policyadmin.diff.gruppe.retention": "Oppbevaring",
+  "ui.policyadmin.diff.gruppe.unntak": "Unntakshåndtering",
+  "ui.policyadmin.diff.gruppe.dataklasser": "Dataklasser",
+  "ui.policyadmin.diff.gruppe.tidssone": "Tidssone",
+  "ui.policyadmin.diff.gruppe.meta": "Metadata"
 }

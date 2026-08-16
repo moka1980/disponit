@@ -651,5 +651,18 @@
   "ui.policyadmin.tilbake_til_liste": "← Back to drafts",
   "ui.policyadmin.detalj_undertittel": "Draft {id}",
   "ui.policyadmin.utfall.venter_antall": "{avgitt} approval(s) given, {gjenstaar} remaining.",
-  "ui.policyadmin.utfall.mangler_uavhengig": "At least one approver must be someone other than the author."
+  "ui.policyadmin.utfall.mangler_uavhengig": "At least one approver must be someone other than the author.",
+  "ui.policyadmin.diff.sammendrag": "{antall} changes across {omrader} areas. Areas that expand authority are open at the top.",
+  "ui.policyadmin.diff.antall_endringer": "{n} changes",
+  "ui.policyadmin.diff.antall_felt": "{n} fields",
+  "ui.policyadmin.diff.maks": "max",
+  "ui.policyadmin.diff.gruppe.handlinger": "Actions the agent may perform",
+  "ui.policyadmin.diff.gruppe.roller": "Roles",
+  "ui.policyadmin.diff.gruppe.verifikatorer": "Verifiers",
+  "ui.policyadmin.diff.gruppe.frister": "Deadlines",
+  "ui.policyadmin.diff.gruppe.retention": "Retention",
+  "ui.policyadmin.diff.gruppe.unntak": "Exception handling",
+  "ui.policyadmin.diff.gruppe.dataklasser": "Data classes",
+  "ui.policyadmin.diff.gruppe.tidssone": "Time zone",
+  "ui.policyadmin.diff.gruppe.meta": "Metadata"
 }
