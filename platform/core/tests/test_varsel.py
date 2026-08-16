@@ -179,6 +179,50 @@ def test_kun_portal_er_bevisst_fravaer_ikke_feilet_sending():
 
 
 @pg
+def test_avmeldingen_gjelder_ogsaa_epost_som_alt_staar_i_koe():
+    """Codex P2: en avmelding som først virker på neste hendelse, er ingen
+    avmelding.
+
+    `_kanal` leses når varselet OPPRETTES, og køen er definert av
+    `epost_status='koet'`. Et valg tatt i dag rørte derfor ikke varslene som
+    ble laget i går — brukeren fikk nettopp den e-posten hun akkurat sa nei
+    til, og hadde ingen måte å stoppe den på.
+
+    Det som ER sendt står urørt: `sendt` er et faktum om fortiden.
+
+    Kontroll: fjern UPDATE-en i `sett_kanal`, så blir denne rød.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "avmelding")
+        uid = "u-" + secrets.token_hex(6)
+        for h in ("1", "2"):
+            varsel.opprett(c, tenant=TEN, bruker_id=b,
+                           art="attestering_venter",
+                           ressurs_type="policyutkast", ressurs_id=uid,
+                           hendelse=h, tekstnokkel="varsel.attestering_venter")
+        # Den ene rakk å bli sendt før hun ombestemte seg.
+        c.execute("UPDATE varsel SET epost_status='sendt' WHERE tenant=%s"
+                  " AND bruker_id=%s AND hendelse='1'", (TEN, b))
+
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=b, kanal="kun_portal")
+
+        st = dict(c.execute(
+            "SELECT hendelse, epost_status FROM varsel WHERE tenant=%s"
+            " AND bruker_id=%s AND ressurs_id=%s", (TEN, b, uid)).fetchall())
+        assert st["2"] == "ikke_aktuelt", (
+            "den køede e-posten overlevde avmeldingen — hun får den likevel")
+        assert st["1"] == "sendt", (
+            "en allerede sendt e-post ble skrevet om til «ikke aktuelt»; "
+            "fortiden kan ikke angres, og statusen er et driftsspor")
+        # …og begge står fortsatt i innboksen. Avmeldingen gjelder kanalen,
+        # ikke varselet.
+        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 2
+    finally:
+        c.close()
+
+
+@pg
 def test_standardvalget_er_begge_kanaler():
     """Fraværende rad er ikke «av». Ingen skal gå glipp av at noe venter fordi
     de aldri åpnet innstillingene."""

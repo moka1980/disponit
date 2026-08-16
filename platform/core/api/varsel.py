@@ -291,7 +291,21 @@ def merk_lest(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
 def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
                kanal: str) -> str:
     """Valget eier ba om. Ukjent verdi avvises — en feilstavet kanal skal ikke
-    stille slå av varslingen."""
+    stille slå av varslingen.
+
+    «Kun portal» gjelder OGSÅ e-post som alt ligger i kø (Codex P2). Køen er
+    definert av `epost_status='koet'`, og `_kanal` leses når varselet
+    OPPRETTES — så uten dette ville et valg tatt i dag ikke rørt de varslene
+    som ble laget i går, og brukeren ville fått nettopp den e-posten hun
+    nettopp sa nei til. En avmelding som først virker på neste hendelse er
+    ikke en avmelding; den er en forklaring på hvorfor det fortsatte litt til.
+    Samme transaksjon som valget: enten gjelder begge deler, eller ingen.
+
+    Motsatt vei re-køes INGENTING. `ikke_aktuelt` er et bevisst fravær, og å
+    vekke det opp igjen ville sendt e-post om runder som kan ha rukket å bli
+    både attestert og lukket i mellomtiden. Nye varsler etter omvalget får
+    `koet` som normalt — det er den kanalen valget gjelder for.
+    """
     if kanal not in ("epost_og_portal", "kun_portal"):
         raise ValueError(f"ukjent varselkanal: {kanal!r}")
     conn.execute(
@@ -299,6 +313,11 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
         " ON CONFLICT (tenant, bruker_id) DO UPDATE"
         " SET kanal=EXCLUDED.kanal, oppdatert=now()",
         (tenant, bruker_id, kanal))
+    if kanal == "kun_portal":
+        conn.execute(
+            "UPDATE varsel SET epost_status='ikke_aktuelt'"
+            " WHERE tenant=%s AND bruker_id=%s AND epost_status='koet'",
+            (tenant, bruker_id))
     return kanal
 
 
