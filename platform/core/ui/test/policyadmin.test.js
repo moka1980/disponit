@@ -2649,6 +2649,8 @@ test("Forkast: et utkast kan forkastes, med bekreftelse først", async () => {
   const dlg = [...document.querySelectorAll('[role="dialog"]')]
     .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
   assert.ok(dlg.textContent.includes("faktura-no"),
+    "bekreftelsen sier ikke hvilken SERIE som berøres");
+  assert.ok(dlg.textContent.includes("u-1"),
     "bekreftelsen sier ikke HVILKET utkast som forkastes");
   assert.equal(kalt.length, 0, "forkastet før eier bekreftet");
   [...dlg.querySelectorAll("button")]
@@ -2666,6 +2668,121 @@ test("Forkast: et utkast kan forkastes, med bekreftelse først", async () => {
   const kvitt = await _ventKvittering(h);
   assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkastet")),
     "utfallet er ikke synlig");
+});
+
+// En policyserie kan ha FLERE utkast samtidig, og de deler `policy_id`. Viser
+// bekreftelsen bare serien, er to uopprettelige dialoger for to forskjellige
+// forslag ord for ord like — og eier kan ikke se hvilket forslag hun er i ferd
+// med å rive bort.
+//
+// Kontroll: bytt `forkastMaal(detalj, uid)` tilbake til `detalj.policy_id`, så
+// blir denne rød.
+test("Forkast: bekreftelsen navngir UTKASTET, ikke bare serien", async () => {
+  const serie = { utkast: [
+    { utkast_id: "u-1", policy_id: "faktura-no", status: "utkast",
+      utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" },
+    { utkast_id: "u-9", policy_id: "faktura-no", status: "utkast",
+      utkastversjon: 5, opprettet: "2026-08-10T09:00:00+00:00" },
+  ] };
+  // Radene står i samme rekkefølge som `serie`, så raden peker ut utkastet.
+  const dialogtekst = async (rad, uid, utkastversjon) => {
+    SVAR = { "/v1/policyutkast": serie,
+      [`/v1/policyutkast/${uid}`]: { ...DETALJ, utkast_id: uid, utkastversjon,
+        status: "utkast", aktiv_runde: null },
+      __post: async () => ({}) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelectorAll("tbody button").length >= 2);
+    h.querySelectorAll("tbody button")[rad]
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+    _finn(h, t("ui.policyadmin.handling.forkast"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+    const d = [...document.querySelectorAll('[role="dialog"]')]
+      .filter((x) => x.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+    return d[d.length - 1].textContent;
+  };
+  const en = await dialogtekst(0, "u-1", 2);
+  const to = await dialogtekst(1, "u-9", 5);
+  assert.ok(en.includes("u-1") && to.includes("u-9"),
+    "bekreftelsen navngir ikke utkastet som forkastes");
+  assert.notEqual(en, to,
+    "to utkast i samme serie gir umulige-å-skille bekreftelser");
+});
+
+// Et tapt SVAR er ikke en mislykket handling. Commiter serveren forkastingen
+// og svaret forsvinner på vei tilbake, kan eier ikke prøve igjen for å finne
+// ut av det: utkastet er `forkastet`, knappen er borte med sin nøkkel, og
+// handlingen er uopprettelig. Retryen med SAMME nøkkel er derfor det eneste
+// som kan hente kvitteringen hennes tilbake — serveren svarer replay.
+//
+// Kontroll: fjern status-0-grenen i `forkastForsok`, så blir denne rød.
+test("Forkast: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "forkastet", utkast_id: "u-1" }) };
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  _finn(dlg, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nettverksfeil skal gi nøyaktig én retry");
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "retry MÅ gjenbruke nøkkelen — ellers forkastes det på nytt");
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkastet")),
+    "eier fikk ikke den ekte kvitteringen sin");
+});
+
+// Svarer nettet ikke andre gangen heller, VET vi ikke hva som skjedde — og
+// «Handlingen feilet.» ville vært en påstand vi ikke har dekning for om en
+// uopprettelig handling.
+test("Forkast: to tapte svar gir «ukjent utfall», ikke «feilet»", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      throw new TypeError("network");
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  _finn(dlg, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nøyaktig én retry, ikke en løkke");
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkast.ukjent")),
+    "utfallet meldes ikke som ukjent");
+  assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")),
+    "en falsk feilkvittering på en uopprettelig handling");
 });
 
 // Kontroll: flytt `forkastKnapp` ut av runde-betingelsen, så blir denne rød.

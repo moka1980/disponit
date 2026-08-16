@@ -674,5 +674,7 @@
   "ui.policyadmin.handling.forkast": "Forkast utkast",
   "ui.policyadmin.forkast.tittel": "Forkast utkastet?",
   "ui.policyadmin.forkast.tekst": "Utkastet blir stående som forkastet og kan ikke tas i bruk igjen. Ingen aktiv policy endres — dette er et forslag, ikke en fullmakt.",
+  "ui.policyadmin.forkast.maal": "utkast {utkast}, versjon {versjon}",
+  "ui.policyadmin.forkast.ukjent": "Vi vet ikke om forkastingen kom fram: nettverket svarte ikke, og forsøket ble gjentatt én gang. Frisk opp siden og se på statusen til utkastet før du prøver igjen.",
   "ui.policyadmin.forkastet": "Utkastet er forkastet."
 }

@@ -246,6 +246,7 @@ def forkast_utkast_endepunkt(tjeneste, request):
     utkast_id = request.path_params["utkast_id"]
 
     def kjor(conn):
+        from datetime import datetime, timezone
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
         idem = _krev_idem(request, rid)
@@ -256,7 +257,8 @@ def forkast_utkast_endepunkt(tjeneste, request):
         ih = _input_hash(tenant, bid, "forkast", utkast_id, uv, idem)
         res = policyadmin.forkast_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id,
-            forventet_utkastversjon=uv, idempotency_key=idem, input_hash=ih)
+            forventet_utkastversjon=uv, idempotency_key=idem, input_hash=ih,
+            naa=datetime.now(timezone.utc))
         return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)
@@ -322,9 +324,11 @@ def hent_utkast_endepunkt(tjeneste, request):
     utkast_id = request.path_params["utkast_id"]
 
     def kjor(conn):
+        from datetime import datetime, timezone
         tenant, bid = _leseauth(tjeneste, request, conn, rid)
         res = policyadmin.hent_utkast_detalj(
-            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id)
+            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id,
+            naa=datetime.now(timezone.utc))
         return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)

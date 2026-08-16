@@ -942,6 +942,63 @@ function visEllerMeld(boks, node, talemelding) {
 // og derfor er den borte i det øyeblikket en runde er åpen: da har
 // godkjennere attestasjoner i omløp, og forslaget skal ikke kunne rives bort
 // under dem.
+// EN TAPT KVITTERING ER IKKE EN MISLYKKET HANDLING (Codex P2). Commiter
+// serveren forkastingen og svaret forsvinner på vei tilbake, ser klienten bare
+// en `ApiFeil` med status 0. «Handlingen feilet.» er da direkte usant — og
+// verre enn usant, fordi eier ikke kan prøve igjen for å finne ut av det: det
+// oppfriskede utkastet er `forkastet`, knappen er borte sammen med sin
+// render-stabile nøkkel, og handlingen er uopprettelig. Hun sitter igjen med
+// en kvittering som sier «feilet» på noe som gikk gjennom.
+//
+// Derfor det samme mønsteret som attesteringen bruker: ÉN retry med SAMME
+// nøkkel. Kom den første forespørselen fram, er nummer to en replay —
+// idempotensnøkkelen gjør at serveren svarer med det lagrede utfallet i stedet
+// for å forkaste noe om igjen — og eier får den ekte kvitteringen sin.
+//
+// Svarer nettet ikke andre gangen heller, VET vi fortsatt ikke hva som skjedde,
+// og da skal skjermen si nettopp det. Arten er `feil`, ikke `vent`: det er en
+// `role="alert"` som skal lese seg opp, for ingenting løser seg av seg selv.
+// Bare teksten er sann — «vi vet ikke» — i stedet for «det feilet».
+function forkastForsok(uid, versjon, nokkel, forsok, ctx, paaFerdig) {
+  return forkastUtkast(uid, versjon, nokkel)
+    .then(() => {
+      _settKvittering(uid, "ok", t("ui.policyadmin.forkastet"));
+      if (paaFerdig) paaFerdig();
+    })
+    .catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (e instanceof ApiFeil && e.status === 0) {
+        if (forsok === 0) {
+          return forkastForsok(uid, versjon, nokkel, 1, ctx, paaFerdig);
+        }
+        _settKvittering(uid, "feil", t("ui.policyadmin.forkast.ukjent"));
+        if (paaFerdig) paaFerdig();
+        return;
+      }
+      // Et SVAR fra serveren er derimot et svar: da feilet handlingen, og en
+      // blind retry ville bare gjentatt den samme avvisningen.
+      _settKvittering(uid, "feil", t("ui.policyadmin.feilet"));
+      if (paaFerdig) paaFerdig();
+    });
+}
+
+// HVILKET utkast? Bekreftelsen viste bare `policy_id`, og det er ikke en
+// identifikator for et utkast (Codex P2): en policyserie kan ha FLERE utkast
+// samtidig — skjemaet og `opprett_utkast` tillater det uttrykkelig — og de
+// deler `policy_id`. To dialoger for to forskjellige forslag i samme serie var
+// da ord for ord like. Det er én dialog for mye å ta feil av når handlingen er
+// uopprettelig og eier kan ha flere utkast oppe.
+//
+// `utkast_id` er det som faktisk peker på raden som forkastes, og
+// utkastversjonen er tilstanden nøkkelen bindes til — den samme versjonen
+// serveren avviser handlingen på hvis den har flyttet seg siden eier så den.
+// Serien først, fordi det er der eier orienterer seg; så det som skiller.
+function forkastMaal(detalj, uid) {
+  return `${detalj.policy_id} · ${t("ui.policyadmin.forkast.maal")
+    .replace("{utkast}", uid)
+    .replace("{versjon}", String(detalj.utkastversjon))}`;
+}
+
 function forkastKnapp(detalj, uid, ctx, paaFerdig) {
   // STABIL nøkkel per render: re-klikk er retry, ikke en ny operasjon.
   const nokkel = nyIdempotensnokkel();
@@ -950,19 +1007,11 @@ function forkastKnapp(detalj, uid, ctx, paaFerdig) {
   b.addEventListener("click", () => {
     Bekreftelsesdialog({
       tittel: t("ui.policyadmin.forkast.tittel"),
-      tekst: `${detalj.policy_id} · ${t("ui.policyadmin.forkast.tekst")}`,
+      tekst: `${forkastMaal(detalj, uid)} · ${t("ui.policyadmin.forkast.tekst")}`,
       primarTekst: t("ui.policyadmin.handling.forkast"),
       farlig: true,
-      paaPrimar: () => forkastUtkast(uid, detalj.utkastversjon, nokkel)
-        .then(() => {
-          _settKvittering(uid, "ok", t("ui.policyadmin.forkastet"));
-          if (paaFerdig) paaFerdig();
-        })
-        .catch((e) => {
-          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-          _settKvittering(uid, "feil", t("ui.policyadmin.feilet"));
-          if (paaFerdig) paaFerdig();
-        }),
+      paaPrimar: () => forkastForsok(uid, detalj.utkastversjon, nokkel, 0,
+        ctx, paaFerdig),
     });
   });
   return b;
