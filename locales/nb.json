@@ -565,6 +565,7 @@
   "ui.rolle.policyforvalter": "policyforvalter",
   "ui.rolle.domeneadjudikator": "domeneadjudikator",
   "ui.editor.rolle_i_bruk": "Rollen er i bruk",
+  "ui.editor.rolle_i_bruk_overstyring": "menneskelig overstyring",
   "ui.editor.policy_id_hint": "Minst 3 tegn: små bokstaver, tall og bindestrek. Behold malens id for å avløse policyen som gjelder i dag.",
   "ui.editor.policy_id_laast": "Identiteten er låst etter opprettelse. Trenger du en annen id, lag et nytt utkast."
 }

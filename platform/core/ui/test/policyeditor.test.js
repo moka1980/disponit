@@ -202,6 +202,33 @@ test("Roller: en rolle handlinger peker på kan ikke fjernes ved et uhell", asyn
     "en ubrukt rolle skal kunne fjernes");
 });
 
+test("Roller: en rolle som BARE menneskelig overstyring bruker er også låst", async () => {
+  // `menneskelig_overstyring.krever_rolle` er en rollereferanse på lik linje
+  // med `tillatt_for`: schema.py avviser policyen med «ukjent rolle» når den
+  // mangler. Uten den i vakten så rollen fjernbar ut, og knappen førte rett i
+  // den samme fella vakten er til for å stenge.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-2", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "okonomi" }, { id: "ubrukt" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: [] }],
+    menneskelig_overstyring: { krever_rolle: "okonomi", godkjennbare: [] },
+  } });
+  await vent(() => h.querySelectorAll(".editor-rad").length >= 2);
+
+  const rader = [...h.querySelectorAll(".editor-rad")];
+  const merke = t("ui.editor.rolle_i_bruk_overstyring");
+  const overstyring = rader.find((r) => r.textContent.includes(merke));
+  assert.ok(overstyring, "raden sier ikke at overstyringen holder rollen");
+  assert.ok(overstyring.querySelector("button").hasAttribute("disabled"),
+    "rollen overstyringen krever kunne fjernes — policyen blir da ugyldig");
+
+  const fri = rader.find((r) => !r.textContent.includes(merke)
+    && r.querySelector("button"));
+  assert.ok(!fri.querySelector("button").hasAttribute("disabled"),
+    "en ubrukt rolle skal fortsatt kunne fjernes");
+});
+
 test("Policy-ID: malen foreslår sin egen id, og regelen står ved feltet", async () => {
   // Feltet var tomt, uten format og uten å si hva id-en brukes til. En ny id
   // lager en NY policy ved siden av den som gjelder — i stedet for å avløse

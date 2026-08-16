@@ -54,23 +54,34 @@ function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
     el("span", { class: "felt-navn", text: etikett }), sel);
 }
 
-// Hvilke handlinger peker på rollen? En referert rolle kan ikke bare fjernes:
-// `tillatt_for` ville stått igjen med et navn som ikke finnes, og validatoren
-// avviser hele policyen med «ukjent rolle» — én linje per handling. Det er
-// nøyaktig det som skjedde: eier fjernet en rolle og fikk seks feil som pekte
-// på handlinger han aldri hadde rørt.
-function handlingerSomBruker(policy, rolleId) {
+// Hva peker på rollen? En referert rolle kan ikke bare fjernes: referansen
+// ville stått igjen med et navn som ikke finnes, og validatoren avviser hele
+// policyen med «ukjent rolle» — én linje per handling. Det er nøyaktig det
+// som skjedde: eier fjernet en rolle og fikk seks feil som pekte på
+// handlinger han aldri hadde rørt.
+//
+// `menneskelig_overstyring.krever_rolle` er en rollereferanse på lik linje med
+// `tillatt_for` (Codex P2): `policy_validator/schema.py` avviser policyen på
+// nøyaktig samme måte når DEN rollen mangler. Så lenge vakten bare så på
+// handlingene, framsto en rolle som kun brukes til overstyring som fjernbar —
+// og knappen førte rett i den fella vakten er til for å stenge.
+function referanserTilRolle(policy, rolleId) {
   if (!rolleId) return [];
-  return (policy.handlinger || [])
+  const ut = (policy.handlinger || [])
     .filter((h) => (h.tillatt_for || []).includes(rolleId))
     .map((h) => h.id);
+  const mo = policy.menneskelig_overstyring;
+  if (mo && mo.krever_rolle === rolleId) {
+    ut.push(t("ui.editor.rolle_i_bruk_overstyring"));
+  }
+  return ut;
 }
 
 function rollerSeksjon(policy, tegnPaaNytt) {
   policy.roller = Array.isArray(policy.roller) ? policy.roller : [];
   const liste = el("div", { class: "editor-liste" });
   policy.roller.forEach((r, i) => {
-    const brukt = handlingerSomBruker(policy, r.id);
+    const brukt = referanserTilRolle(policy, r.id);
     const rad = el("div", { class: "editor-rad" },
       tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => { r.id = v; }),
       tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",

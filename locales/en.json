@@ -565,6 +565,7 @@
   "ui.rolle.policyforvalter": "policy manager",
   "ui.rolle.domeneadjudikator": "domain adjudicator",
   "ui.editor.rolle_i_bruk": "Role is in use",
+  "ui.editor.rolle_i_bruk_overstyring": "human override",
   "ui.editor.policy_id_hint": "At least 3 characters: lowercase letters, digits and hyphens. Keep the template's id to supersede the policy in force today.",
   "ui.editor.policy_id_laast": "The identity is locked after creation. For a different id, create a new draft."
 }
