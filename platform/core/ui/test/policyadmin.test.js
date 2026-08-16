@@ -2033,6 +2033,41 @@ test("Diff: en rolle som mister fullmakten, står i overskriften", async () => {
     `en rolle som fortsatt har fullmakt meldes fjernet: «${opps}»`);
 });
 
+// `grenser.valuta` er en LISTE av valutaer, men overskriften leste bare
+// indeks 0. Utvides den fra ["NOK"] til ["NOK", "EUR"], klassifiserer serveren
+// det som UTVIDER — mens overskriften sto uendret på «maks 5000.00 NOK», og den
+// nye valutaen var usynlig til kortet ble åpnet (Codex P2).
+//
+// Kontroll: sett `grenser.valuta[0]` tilbake i `BELOPSFELT`, så blir denne rød.
+const NY_VALUTA_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].grenser.valuta[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41",
+        grenser: { belop_maks: "5000.00", valuta: ["NOK", "EUR"] } },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].grenser.valuta[1]", type: "lagt_til", til: "EUR" },
+  ] },
+};
+
+test("Diff: hver valuta grensen gjelder i, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NY_VALUTA_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  for (const v of ["NOK", "EUR"]) {
+    assert.ok(opps.includes(v), `valutaen «${v}» mangler i overskriften: «${opps}»`);
+  }
+  assert.ok(/NOK,\s*EUR/.test(opps),
+    `valutaene limes sammen uten skilletegn: «${opps}»`);
+  assert.ok(opps.includes("5000.00"),
+    `grensen valutaene gjelder for, mangler: «${opps}»`);
+});
+
 // Fjernes et nøkkelfelt fra et element som fortsatt finnes, har utkastet
 // ingenting å hydrere overskriften med — og feltet forsvant da helt fra den.
 // Å fjerne `grenser.belop_maks` gjør en begrenset handling UBEGRENSET og

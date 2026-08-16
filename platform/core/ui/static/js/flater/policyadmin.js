@@ -267,9 +267,15 @@ const MENGDEFELT = ["tillatt_for"];
 // Beløpsgrense + valutaen den er i — de hører sammen i én merkelapp, og de to
 // listene plasserer dem forskjellig: `handlinger[].grenser.belop_maks` mot
 // `godkjennbare[].belop_maks`.
+//
+// Siste ledd sier om valutafeltet er en MENGDE. `handlinger[].grenser.valuta`
+// er en liste: utvides den fra ["NOK"] til ["NOK", "EUR"], er den nye valutaen
+// en ny fullmakt (serveren klassifiserer det som UTVIDER), men overskriften
+// leste bare indeks 0 og sto uendret på «maks 5000 NOK» — EUR var usynlig til
+// kortet ble åpnet (Codex P2). `godkjennbare[].valuta` er derimot ett felt.
 const BELOPSFELT = [
-  ["grenser.belop_maks", "grenser.valuta[0]"],
-  ["belop_maks", "valuta"],
+  ["grenser.belop_maks", "grenser.valuta", true],
+  ["belop_maks", "valuta", false],
 ];
 
 // «handlinger[1]» / «menneskelig_overstyring.godkjennbare[0]» → verdien på den
@@ -383,25 +389,30 @@ function elementOverskrift(element, blader, kilder) {
   //
   // Verdiene sammenlignes derfor som mengder: borte er det som fantes før og
   // ikke finnes nå, uansett hvilken indeks det lå på.
-  const mengde = (f) => {
-    const indeksene = (m) => [...m.keys()]
-      .map((k) => [k, /^(.+)\[(\d+)\]$/.exec(k)])
-      .filter(([, m2]) => m2 && m2[1] === f)
-      .sort((a, b) => Number(a[1][2]) - Number(b[1][2]))
-      .map(([k]) => k);
-    const naa = indeksene(felt)
+  const iNr = (k) => Number(/\[(\d+)\]$/.exec(k)[1]);
+  const indeksene = (m, f) => [...m.keys()]
+    .filter((k) => /^(.+)\[(\d+)\]$/.exec(k)?.[1] === f)
+    .sort((a, b) => iNr(a) - iNr(b));
+  // Mengden `f` slik den er nå og slik den var, begge i indeksrekkefølge.
+  const mengdeSider = (f) => {
+    const naa = indeksene(felt, f)
       .map((k) => sider(k).ny).filter((v) => v !== undefined);
     const naaSett = new Set(naa);
     // Før-verdien på en indeks er diffens `fra` der den endret seg. Sto
     // indeksen ikke i diffen, er den uendret og dagens verdi er også gårsdagens
     // — med mindre indeksen er NY, og da fantes den ikke før.
-    const gamle = new Set();
-    for (const k of new Set([...indeksene(foer), ...indeksene(felt)])) {
+    const gamle = [];
+    for (const k of [...new Set([...indeksene(foer, f), ...indeksene(felt, f)])]
+      .sort((a, b) => iNr(a) - iNr(b))) {
       const { ny, gml } = sider(k);
       const g = foer.has(k) ? gml : (nye.has(k) ? undefined : ny);
-      if (g !== undefined) gamle.add(g);
+      if (g !== undefined && !gamle.includes(g)) gamle.push(g);
     }
-    const borte = [...gamle].filter((v) => !naaSett.has(v))
+    return { naa, naaSett, gamle };
+  };
+  const mengde = (f) => {
+    const { naa, naaSett, gamle } = mengdeSider(f);
+    const borte = gamle.filter((v) => !naaSett.has(v))
       .map((v) => `${v} → ${t("ui.policyadmin.diff.fjernet")}`);
     const alle = [...naa, ...borte];
     return alle.length ? alle.join(", ") : undefined;
@@ -416,21 +427,24 @@ function elementOverskrift(element, blader, kilder) {
     const v = mengde(f);
     if (v !== undefined) merker.push(v);
   }
-  for (const [belop, valuta] of BELOPSFELT) {
-    const b = sider(belop), v = sider(valuta);
+  for (const [belop, valuta, erMengde] of BELOPSFELT) {
+    const b = sider(belop);
     if (b.ny === undefined && b.gml === undefined) continue;
     const maks = t("ui.policyadmin.diff.maks");
     // Beløpsgrensen er ett tall MED en valuta, så når grensen forsvinner hører
     // pilen til paret og ikke til hver halvdel: «maks 5000.00 NOK → uten
     // grense». Det er den mest utvidende endringen som finnes på en handling —
     // en begrenset fullmakt blir ubegrenset — og den skal stå i overskriften.
+    // Da er det den gamle valutaen grensen gjaldt i som hører til paret.
     if (b.ny === undefined) {
-      const val = v.gml ?? v.ny;
+      const s = erMengde ? mengdeSider(valuta) : null;
+      const val = s ? (s.gamle.length ? s.gamle : s.naa).join(", ")
+        : (sider(valuta).gml ?? sider(valuta).ny);
       merker.push(`${maks} ${b.gml}${val ? " " + val : ""} → `
         + t("ui.policyadmin.diff.uten_grense"));
       continue;
     }
-    const val = vis(valuta);
+    const val = erMengde ? mengde(valuta) : vis(valuta);
     merker.push(`${maks} ${vis(belop)}${val ? " " + val : ""}`);
   }
   return { navn, merker, felt };
