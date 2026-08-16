@@ -1219,7 +1219,16 @@ _SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
 #: gjerdet for den kryss-tenante utgaven — nøyaktig det signaturkravet skulle
 #: hindre. Klausulen er derfor det som står MELLOM verbet og mottakeren.
 _REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
-_DROP_MAL = re.compile(r"\bdrop\s+function\b(?:\s+if\s+exists\b)?(.*)")
+
+#: `ROUTINE` ER SAMME SLETTING, STAVET OM (Codex P2 på #71). PostgreSQL godtar
+#: `DROP ROUTINE f(int,int)` som en generisk form som treffer funksjonen like
+#: godt som `DROP FUNCTION`. Kjente modellen bare den ene stavemåten, sto
+#: `True` fra forrige REVOKE igjen etter at senderfunksjonen var borte — det
+#: er nøyaktig utgangen `DROP`-grenen ble lagt inn for å hindre. Samme grunn
+#: som `ALL ROUTINES` står i den skjemabrede granten: synonymet må med, ellers
+#: er hullet bare skrevet på nytt.
+_DROP_MAL = re.compile(
+    r"\bdrop\s+(?:function|routine)\b(?:\s+if\s+exists\b)?(.*)")
 
 #: EN VAKT FORAN SETNINGEN (Codex P2 på #71). Etter at DO-blokker pakkes ut,
 #: kommer innmaten med plpgsql-innpakningen foran — og er den innpakningen en
@@ -1455,7 +1464,8 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       om, og måles som samme sak.
     * en DROP uten gjenskaping — funksjonen er da BORTE, og et gjerde rundt
       ingenting er ikke et bevis. Uten dette sporet sto `True` fra forrige
-      REVOKE igjen som om den fortsatt gjaldt.
+      REVOKE igjen som om den fortsatt gjaldt. `DROP ROUTINE` er samme
+      sletting stavet om, og måles som samme sak.
     * en VAKT som nevner den beskyttede signaturen mens REVOKE-en tar en
       overlast. Det er forskjellen på hva en setning NEVNER og hva den
       VIRKER på, og den forskjellen er hele signaturkravet. Sporet finnes i
@@ -1573,11 +1583,15 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
 
     # En DROP uten gjenskaping: funksjonen er BORTE, ikke åpen — og et gjerde
     # rundt ingenting er ikke et bevis. `None` faller i sluttkravet.
-    gjerdet, spor = _spill_av(
-        [("a.sql", lag + gjerde),
-         ("b.sql", "DROP FUNCTION varsel_klaim_epost(int, int);")], n)
-    assert gjerdet == {sig: None}, \
-        f"en droppet funksjon skal ikke stå som gjerdet. Spor: {spor}"
+    # `ROUTINE` er PostgreSQLs generiske stavemåte for den samme slettingen,
+    # og måles som samme sak — ellers er hullet bare skrevet om.
+    for ord_ in ("FUNCTION", "ROUTINE"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP {ord_} varsel_klaim_epost(int, int);")], n)
+        assert gjerdet == {sig: None}, (
+            f"en droppet funksjon ({ord_}) skal ikke stå som gjerdet."
+            f" Spor: {spor}")
 
     # …men DROP + gjenskaping + nytt gjerde er 031s egen form, og skal stå.
     assert _spill_av(
