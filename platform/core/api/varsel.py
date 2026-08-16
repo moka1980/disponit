@@ -48,14 +48,21 @@ def _kanal(conn: psycopg.Connection, tenant: str, bruker_id: str) -> str:
     return rad[0] if rad else STANDARDKANAL
 
 
-def mottakere_for_runde(conn: psycopg.Connection, tenant: str,
-                        utkast_id: str) -> list[str]:
+def mottakere_for_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
+                        runde: int) -> list[str]:
     """Hvem kan bringe DENNE runden videre?
 
     Ikke «alle policyforvaltere». Den som allerede har attestert er ferdig, og
     å varsle henne igjen lærer henne bare å overse varsler. Forfatteren tas med
     KUN hvis hun ikke alt har attestert — hun teller, men kan ikke fullføre
     fire øyne alene, så terskelen avgjør uansett.
+
+    «Allerede attestert» måles PÅ RUNDEN, ikke på utkastet. En attestasjon
+    binder én rundes diff (migrasjon 012: unik på tenant+utkast+runde+bruker),
+    og den følger ikke med over i neste runde: forfaller eller avbrytes runde
+    1, må runde 2 attesteres på nytt av de samme menneskene. Uten `a.runde`
+    her ville alle som deltok i en tidligere runde vært utelukket fra varselet
+    for den nye — permanent, og nettopp de som har vist at de svarer.
     """
     return [r[0] for r in conn.execute(
         "SELECT m.bruker_id FROM brukermedlemskap m"
@@ -63,8 +70,8 @@ def mottakere_for_runde(conn: psycopg.Connection, tenant: str,
         "   AND 'policyforvalter' = ANY(m.roller)"
         "   AND NOT EXISTS (SELECT 1 FROM aktiveringsattestasjon a"
         "                    WHERE a.tenant=m.tenant AND a.utkast_id=%s"
-        "                      AND a.bruker_id=m.bruker_id)",
-        (tenant, utkast_id)).fetchall()]
+        "                      AND a.runde=%s AND a.bruker_id=m.bruker_id)",
+        (tenant, utkast_id, runde)).fetchall()]
 
 
 def opprett(conn: psycopg.Connection, *, tenant: str, bruker_id: str, art: str,
@@ -113,7 +120,7 @@ def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
     try:
         sett_kontekst(conn, tenant, aktor, request_id)
         n = 0
-        for bid in mottakere_for_runde(conn, tenant, utkast_id):
+        for bid in mottakere_for_runde(conn, tenant, utkast_id, runde):
             if opprett(conn, tenant=tenant, bruker_id=bid,
                        art="attestering_venter", ressurs_type="policyutkast",
                        ressurs_id=utkast_id, hendelse=str(runde),

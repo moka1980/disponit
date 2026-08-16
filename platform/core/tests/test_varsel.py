@@ -76,8 +76,27 @@ def test_varsler_bare_dem_som_kan_bringe_runden_videre():
             "1,'kh','m','mk1',%s,now()+interval '1 hour')",
             (TEN, uid, a, "jti-" + secrets.token_hex(12)))
 
-        mott = varsel.mottakere_for_runde(c, TEN, uid)
+        mott = varsel.mottakere_for_runde(c, TEN, uid, 1)
         assert mott == [b], f"forventet bare den som IKKE har attestert, fikk {mott}"
+
+        # …men attestasjonen bandt RUNDE 1. Åpnes runde 2 på samme utkast, må
+        # alt attesteres på nytt, og a er igjen en av dem som kan bringe den
+        # videre. Kontroll: fjern `a.runde` fra NOT EXISTS, så blir dette rødt
+        # — og a ville vært permanent utelukket fra hvert eneste senere varsel
+        # på utkastet.
+        c.execute(
+            "UPDATE aktiveringsrunde SET status='utlopt' WHERE tenant=%s"
+            " AND utkast_id=%s AND runde=1", (TEN, uid))
+        c.execute(
+            "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+            "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+            "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+            "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+            "pakrevd_antall_godkjennere,utloper)"
+            " VALUES (%s,%s,2,'apen','d2','i','b','UTVIDER','k','1','0.2','1',"
+            "'dh','1',2,now()+interval '1 hour')", (TEN, uid))
+        assert sorted(varsel.mottakere_for_runde(c, TEN, uid, 2)) == sorted([a, b]), \
+            "en tidligere rundes attestant ble utelukket fra den nye runden"
     finally:
         c.close()
 
