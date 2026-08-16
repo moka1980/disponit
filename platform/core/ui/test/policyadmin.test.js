@@ -1991,6 +1991,48 @@ test("Diff: hver rolle som får fullmakt, står i overskriften", async () => {
     `rollene limes sammen uten skilletegn: «${opps}»`);
 });
 
+// Byttes én rolle mot en annen, sammenligner serverens diff listene POSISJONELT
+// og melder ett `endret`-blad på indeks 0. Ble «borte» avgjort på indeks, fantes
+// indeks 0 fortsatt, og overskriften viste bare den nye rollen: den som mistet
+// fullmakten sto ingen steder (Codex P2). `admin` beholder samtidig fullmakten
+// sin på en annen indeks enn før, og skal IKKE meldes fjernet.
+//
+// Kontroll: avgjør `borte` på indeks igjen (`sider(k).ny === undefined`), så
+// blir denne rød.
+const BYTTET_ROLLE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].tillatt_for[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41", tillatt_for: ["ansatt", "admin"] },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].tillatt_for[0]", type: "endret",
+      fra: "admin", til: "ansatt" },
+    { sti: "handlinger[0].tillatt_for[1]", type: "endret",
+      fra: "regnskap", til: "admin" },
+  ] },
+};
+
+test("Diff: en rolle som mister fullmakten, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": BYTTET_ROLLE_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  const fjernet = t("ui.policyadmin.diff.fjernet");
+  assert.ok(opps.includes(`regnskap → ${fjernet}`),
+    `rollen som mistet fullmakten mangler i overskriften: «${opps}»`);
+  for (const r of ["ansatt", "admin"]) {
+    assert.ok(opps.includes(r), `rollen «${r}» mangler i overskriften: «${opps}»`);
+  }
+  // `admin` har fortsatt fullmakt — bare på en annen indeks. En posisjonell
+  // sammenligning ville påstått at rollen var borte.
+  assert.ok(!opps.includes(`admin → ${fjernet}`),
+    `en rolle som fortsatt har fullmakt meldes fjernet: «${opps}»`);
+});
+
 // Fjernes et nøkkelfelt fra et element som fortsatt finnes, har utkastet
 // ingenting å hydrere overskriften med — og feltet forsvant da helt fra den.
 // Å fjerne `grenser.belop_maks` gjør en begrenset handling UBEGRENSET og

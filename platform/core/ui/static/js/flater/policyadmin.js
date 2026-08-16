@@ -324,12 +324,17 @@ function flateFelt(verdi, prefiks = "", ut = new Map()) {
 // forsvant — sto ingen steder (Codex P2). Derfor: endret feltet seg, viser
 // overskriften BEGGE sider.
 function elementOverskrift(element, blader, kilder) {
-  // FØR-tilstanden slik diffen beskriver den. `lagt_til` har ingen før.
+  // FØR-tilstanden slik diffen beskriver den. `lagt_til` har ingen før — og
+  // hvilke stier det gjelder må HUSKES: at en sti mangler i `foer` betyr ellers
+  // enten «feltet er nytt» eller «feltet er uendret», og de to er motsatte svar
+  // på hva mengden inneholdt før.
   const foer = new Map();
+  const nye = new Set();
   for (const e of blader) {
-    if (e.type === "lagt_til") continue;
     const { rest } = delOppSti(e.sti, kilder);
-    if (rest) foer.set(rest, e.fra);
+    if (!rest) continue;
+    if (e.type === "lagt_til") nye.add(rest);
+    else foer.set(rest, e.fra);
   }
   const felt = new Map();
   const kilde = slaaOppSti(kilder, element);
@@ -368,6 +373,16 @@ function elementOverskrift(element, blader, kilder) {
   // Hele mengden under `f` som ÉN merkelapp, i indeksrekkefølge — og roller
   // som er borte henger med, av samme grunn som et fjernet nøkkelfelt gjør det:
   // det er endringen i hvem som har fullmakt godkjenneren skal se.
+  //
+  // Men en mengde endres ikke POSISJONELT, og serverens diff sammenligner
+  // lister etter indeks. Byttes `["admin"]` mot `["ansatt"]`, er det ett
+  // `endret`-blad på indeks 0: «borte» ble avgjort på indeks, indeks 0 fantes
+  // fortsatt, og overskriften sa bare «ansatt». Rollen som MISTET fullmakten
+  // sto ingen steder — og en forskyvning kunne motsatt påstå at en rolle som
+  // fortsatt har fullmakt var fjernet (Codex P2).
+  //
+  // Verdiene sammenlignes derfor som mengder: borte er det som fantes før og
+  // ikke finnes nå, uansett hvilken indeks det lå på.
   const mengde = (f) => {
     const indeksene = (m) => [...m.keys()]
       .map((k) => [k, /^(.+)\[(\d+)\]$/.exec(k)])
@@ -376,8 +391,18 @@ function elementOverskrift(element, blader, kilder) {
       .map(([k]) => k);
     const naa = indeksene(felt)
       .map((k) => sider(k).ny).filter((v) => v !== undefined);
-    const borte = indeksene(foer).filter((k) => sider(k).ny === undefined)
-      .map((k) => `${foer.get(k)} → ${t("ui.policyadmin.diff.fjernet")}`);
+    const naaSett = new Set(naa);
+    // Før-verdien på en indeks er diffens `fra` der den endret seg. Sto
+    // indeksen ikke i diffen, er den uendret og dagens verdi er også gårsdagens
+    // — med mindre indeksen er NY, og da fantes den ikke før.
+    const gamle = new Set();
+    for (const k of new Set([...indeksene(foer), ...indeksene(felt)])) {
+      const { ny, gml } = sider(k);
+      const g = foer.has(k) ? gml : (nye.has(k) ? undefined : ny);
+      if (g !== undefined) gamle.add(g);
+    }
+    const borte = [...gamle].filter((v) => !naaSett.has(v))
+      .map((v) => `${v} → ${t("ui.policyadmin.diff.fjernet")}`);
     const alle = [...naa, ...borte];
     return alle.length ? alle.join(", ") : undefined;
   };
