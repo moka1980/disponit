@@ -1627,6 +1627,13 @@ def _spill_av(filer, signaturer):
       gjenskapingen (den som kjører den, eier resultatet) og av eierskiftet.
       Migrator som beholder sin egen funksjon, EIER den; `disponit_domene_eier`
       med en funksjon som er overført til en annen, gjør det ikke.
+    * VAKTEN GJELDER OGSÅ EIERSKAPET (Codex P2 på #71). En `ALTER … OWNER
+      TO` eller en gjenskaping under en vakt som kan være usann, FLYTTET
+      kanskje ingenting — og hvem som da eier funksjonen, vet ikke kilden.
+      Eieren settes derfor til «ukjent», og en senere REVOKE regnes ikke som
+      eierens. Samme retning på tvilen som ellers: uten den ble en REVOKE
+      etter et eierskifte som kanskje ikke skjedde, lest som et gjerde mens
+      PostgreSQL bare advarte og lot PUBLIC beholde EXECUTE.
     * En DROP setter tilbake til None: funksjonen er BORTE, ikke åpen. Uten
       den grenen beholdt avspillingen `True` fra en tidligere REVOKE, og en
       migrasjon som droppet uten å lage på nytt ga grønn port på noe som
@@ -1685,15 +1692,38 @@ def _spill_av(filer, signaturer):
                     # Eierskapet flyttes. ACL-en følger ikke med, så gjerdet
                     # står der det sto — men HVEM som kan lukke det senere,
                     # er nettopp det som endret seg.
-                    eier[sig] = eie.group(2)
-                    spor[sig].append(f"{filnavn}: eier nå {eier[sig]}")
-                elif _LAGER.search(s):
+                    #
+                    # …med mindre setningen står under en VAKT. Er den usann
+                    # i klyngen, flyttes ingenting, og funksjonen blir hos
+                    # den forrige eieren — som kilden ikke nødvendigvis vet
+                    # hvem er. «Vet ikke» skal ikke kunne bli til «eier», så
+                    # eieren settes til ukjent og ingen senere REVOKE regnes
+                    # som eierens.
+                    if under_vakt or _BETINGET.search(s[:eie.start()]):
+                        eier[sig] = None
+                        spor[sig].append(
+                            f"{filnavn}: betinget eierskifte — eier ukjent")
+                    else:
+                        eier[sig] = eie.group(2)
+                        spor[sig].append(f"{filnavn}: eier nå {eier[sig]}")
+                elif ny := _LAGER.search(s):
                     # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC —
                     # og EIEREN er den som kjører setningen, ikke den som
                     # eide den forrige funksjonen med samme navn.
+                    #
+                    # Samme forbehold som for eierskiftet: en gjenskaping
+                    # under en vakt gir kanskje ingen ny funksjon, og da står
+                    # den gamle igjen hos sin gamle eier. `False` på gjerdet
+                    # er trygt begge veier (holder vakten, er ACL-en åpen; og
+                    # ellers er en falsk alarm den billige utgangen), men
+                    # EIEREN er ukjent.
                     gjerdet[sig] = False
-                    eier[sig] = aktiv
-                    spor[sig].append(f"{filnavn}: gjenskapt av {aktiv}")
+                    betinget = under_vakt or _BETINGET.search(s[:ny.start()])
+                    eier[sig] = None if betinget else aktiv
+                    spor[sig].append(
+                        f"{filnavn}: {'betinget ' if betinget else ''}"
+                        f"gjenskapt av {aktiv}"
+                        f"{' — eier ukjent' if betinget else ''}")
                 elif _GRANT_PUBLIC.search(s):
                     # Gjerdet ned igjen, og uten dette sporet ville
                     # avspillingen beholdt True fra en tidligere REVOKE. At
@@ -1838,6 +1868,11 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
       `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
       inne i en DO-blokk er betinget», og målt langt mer enn den vet.
+    * et EIERSKIFTE UNDER EN VAKT, og en gjenskaping likeså. Skjedde de
+      ikke, står funksjonen igjen hos en eier kilden ikke kjenner — og den
+      velkjente halen `SET LOCAL ROLE disponit_domene_eier; REVOKE …`
+      lukker da ingenting. Med motprøven at det UBETINGEDE eierskiftet
+      fortsatt krediteres; ellers ville regelen bare slått av eierskapet.
     * et ROLLESKIFTE SKREVET PÅ EN ANNEN MÅTE — `SET ROLE`, `SET SESSION
       ROLE`, `SET ROLE TO`, `SET ROLE NONE`. Særlig skiftet TILBAKE: ses det
       ikke, bokføres en senere REVOKE på den gamle rollen, og modellen leser
@@ -2181,6 +2216,47 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         [("a.sql", lag + gjerde),
          ("b.sql", "DROP FUNCTION public.varsel_klaim_epost(int, int);")],
         n)[0] == {sig: None}, "`public.` utskrevet er samme objekt"
+
+    # VAKTEN GJELDER OGSÅ EIERSKAPET. Et `ALTER … OWNER TO` under en usann
+    # vakt flytter ingenting, og halen etterpå — den velkjente
+    # `SET LOCAL ROLE disponit_domene_eier; REVOKE …` — kjøres da av en rolle
+    # som ikke eier funksjonen. PostgreSQL advarer bare, og PUBLIC beholder
+    # EXECUTE bak en setning som LESER som 027 og 031.
+    betinget_eierskifte = (
+        "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
+        " DO $$\nBEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_roles"
+        " WHERE rolname = 'disponit_domene_eier') THEN\n"
+        "        ALTER FUNCTION varsel_klaim_epost(int, int)"
+        " OWNER TO disponit_domene_eier;\n"
+        "    END IF;\nEND $$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", betinget_eierskifte + gjerde)], n)
+    assert gjerdet == {sig: False}, (
+        "et eierskifte som kanskje ikke skjedde gir ingen kjent eier."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er den som skiller regelen fra «eierskifter teller
+    # ikke»: det UBETINGEDE eierskiftet i `lag` krediteres fortsatt, og det
+    # er nettopp det som gjør `gjerde` til eierens REVOKE.
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {sig: True}, \
+        "et ubetinget eierskifte skal fortsatt krediteres"
+
+    # Samme sak for en GJENSKAPING under en vakt: skjedde den ikke, står den
+    # gamle funksjonen igjen hos sin gamle eier, og migrator er ikke den.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n"
+                   "    IF EXISTS (SELECT 1 FROM pg_roles"
+                   " WHERE rolname = 'disponit_varselsender') THEN\n"
+                   "        CREATE OR REPLACE FUNCTION"
+                   " varsel_klaim_epost(int, int) ...;\n"
+                   "    END IF;\nEND $$;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC;")], n)
+    assert gjerdet == {sig: False}, (
+        "en betinget gjenskaping gjør ikke migrator til eier."
+        f" Spor: {spor}")
 
     # ROLLESKIFTET HAR FLERE FORMER. `SET ROLE`, `SET SESSION ROLE` og
     # `SET ROLE TO` gjør det samme som `SET LOCAL ROLE` for spørsmålet
