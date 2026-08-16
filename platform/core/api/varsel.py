@@ -37,6 +37,56 @@ from db.pg import sett_kontekst
 
 STANDARDKANAL = "epost_og_portal"
 
+#: Sentinel fra `_skjermet`: steget feilet. Skilt fra `None`, som er et helt
+#: gyldig resultat av et steg som gikk bra.
+_FEILET = object()
+
+#: Savepoint-navnet. Fast literal — aldri satt sammen av data, siden en
+#: savepoint-etikett er en identifikator og ikke kan parametriseres.
+_SP = "varsel_skjerm"
+
+
+def _skjermet(conn: psycopg.Connection, arbeid):
+    """Kjør ett steg av varslingen under en SAVEPOINT. -> resultatet, eller
+    `_FEILET`.
+
+    Dette er hele mekanismen bak «et varsel velter aldri handlingen». Kalleren
+    eier transaksjonen: uten savepoint ville én feilet spørring her latt
+    PostgreSQL stå i abortert tilstand, og kallerens neste setning — og
+    `commit()` — ville feilet selv om vi svelget unntaket pent i Python.
+
+    SAVEPOINT skrives ut som SQL, IKKE med `conn.transaction()`. Husets idiom
+    ellers, men det kan ikke brukes her: psycopg teller opp transaksjonsstabelen
+    FØR den sender SAVEPOINT, så entringen på en alt abortert forbindelse
+    etterlater telleren hevet — og da kaster kallerens `conn.rollback()`
+    «Explicit rollback() forbidden within a Transaction context». Nøyaktig det
+    denne funksjonen finnes for å hindre: varslingen som ødelegger kallerens
+    ryddevei. Med ren SQL finnes ikke den skjulte tilstanden.
+
+    Er transaksjonen alt abortert når vi kommer hit, feiler SAVEPOINT-en selv,
+    og vi melder `_FEILET` uten å røre noe. Å reparere en transaksjon kalleren
+    alt har mistet er ikke varslingens oppgave.
+    """
+    try:
+        conn.execute(f"SAVEPOINT {_SP}")
+    except Exception:                                         # noqa: BLE001
+        return _FEILET
+    try:
+        res = arbeid()
+    except Exception:                                         # noqa: BLE001
+        try:
+            # Tilbake til savepointet: varselet angres, kallerens arbeid ikke.
+            conn.execute(f"ROLLBACK TO SAVEPOINT {_SP}")
+            conn.execute(f"RELEASE SAVEPOINT {_SP}")
+        except Exception:                                     # noqa: BLE001
+            pass   # forbindelsen er borte; kalleren ser det uansett selv
+        return _FEILET
+    try:
+        conn.execute(f"RELEASE SAVEPOINT {_SP}")
+    except Exception:                                         # noqa: BLE001
+        return _FEILET
+    return res
+
 
 def _kanal(conn: psycopg.Connection, tenant: str, bruker_id: str) -> str:
     """Brukerens valg, eller standarden. Fraværende rad er IKKE «av»: ingen
@@ -122,35 +172,31 @@ def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
     PostgreSQL i abortert tilstand, og da feiler kallerens NESTE setning — og
     `commit()` — uansett hvor pent vi svelget feilen i Python. Varslingen ville
     altså veltet nøyaktig den handlingen den lovte å ikke røre. Derfor kjøres
-    hver del under `with conn.transaction()`: en SAVEPOINT som rulles tilbake
-    ved feil, slik at forbindelsen er brukbar igjen og kallerens eget arbeid
-    står urørt.
+    hvert steg under en SAVEPOINT (`_skjermet`), som rulles tilbake ved feil
+    slik at forbindelsen er brukbar igjen og kallerens eget arbeid står urørt.
 
     Savepointet er PER MOTTAKER, ikke ett rundt hele sløyfa. Den typiske
     feilen rammer én rad (en identitet er slettet, en rad kolliderer), og de
     andre godkjennerne skal ikke miste varselet sitt fordi den ene feilet.
     """
-    try:
-        with conn.transaction():
-            sett_kontekst(conn, tenant, aktor, request_id)
-            mottakere = mottakere_for_runde(conn, tenant, utkast_id, runde)
-    except Exception:                                         # noqa: BLE001
+    if _skjermet(conn, lambda: sett_kontekst(conn, tenant, aktor, request_id)) \
+            is _FEILET:
+        return 0
+    mottakere = _skjermet(
+        conn, lambda: mottakere_for_runde(conn, tenant, utkast_id, runde))
+    if mottakere is _FEILET:
         return 0
     n = 0
     for bid in mottakere:
-        try:
-            with conn.transaction():
-                if opprett(conn, tenant=tenant, bruker_id=bid,
-                           art="attestering_venter",
-                           ressurs_type="policyutkast",
-                           ressurs_id=utkast_id, hendelse=str(runde),
-                           tekstnokkel="varsel.attestering_venter",
-                           parametre={"policy_id": policy_id, "runde": runde,
-                                      "risikoklasse": risikoklasse,
-                                      "gjenstaar": gjenstaar}):
-                    n += 1
-        except Exception:                                     # noqa: BLE001
-            continue
+        if _skjermet(conn, lambda bid=bid: opprett(
+                conn, tenant=tenant, bruker_id=bid,
+                art="attestering_venter", ressurs_type="policyutkast",
+                ressurs_id=utkast_id, hendelse=str(runde),
+                tekstnokkel="varsel.attestering_venter",
+                parametre={"policy_id": policy_id, "runde": runde,
+                           "risikoklasse": risikoklasse,
+                           "gjenstaar": gjenstaar})) is True:
+            n += 1
     return n
 
 

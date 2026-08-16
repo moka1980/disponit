@@ -226,8 +226,17 @@ def test_varsling_velter_aldri_handlingen():
 
     En aktiveringsrunde er en fullmaktsendring. Den skal ikke kunne feile fordi
     varslingen gjorde det — konsekvensen av en varslingsfeil er at et menneske
-    ikke får en påminnelse, ikke at styringen stopper. Her rives tabellen bort
-    under kallet; det skal gi 0 varsler og ingen exception.
+    ikke får en påminnelse, ikke at styringen stopper. Her er transaksjonen alt
+    abortert når varslingen kalles; det skal gi 0 varsler og ingen exception.
+
+    `c.rollback()` til slutt er ikke opprydding, det er en ASSERT: kalleren må
+    fortsatt komme seg ut. Da savepointet ble skrevet med `conn.transaction()`,
+    var det nettopp denne linja som falt — psycopg teller opp
+    transaksjonsstabelen før SAVEPOINT sendes, så entringen på en abortert
+    forbindelse etterlot telleren hevet og `rollback()` kastet «Explicit
+    rollback() forbidden within a Transaction context». Varslingen ødela altså
+    kallerens ryddevei i stedet for hans neste setning: samme brudd på løftet,
+    ny dør. Derfor skrives savepointet nå som ren SQL.
 
     Kontroll: fjern try/except i `varsle_runde_venter`, så blir denne rød.
     """
