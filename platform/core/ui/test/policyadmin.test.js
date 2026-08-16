@@ -2578,6 +2578,79 @@ test("Forkast: et utkast kan forkastes, med bekreftelse først", async () => {
     "utfallet er ikke synlig");
 });
 
+// Et tapt SVAR er ikke en mislykket handling. Commiter serveren forkastingen
+// og svaret forsvinner på vei tilbake, kan eier ikke prøve igjen for å finne
+// ut av det: utkastet er `forkastet`, knappen er borte med sin nøkkel, og
+// handlingen er uopprettelig. Retryen med SAMME nøkkel er derfor det eneste
+// som kan hente kvitteringen hennes tilbake — serveren svarer replay.
+//
+// Kontroll: fjern status-0-grenen i `forkastForsok`, så blir denne rød.
+test("Forkast: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "forkastet", utkast_id: "u-1" }) };
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  _finn(dlg, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nettverksfeil skal gi nøyaktig én retry");
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "retry MÅ gjenbruke nøkkelen — ellers forkastes det på nytt");
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkastet")),
+    "eier fikk ikke den ekte kvitteringen sin");
+});
+
+// Svarer nettet ikke andre gangen heller, VET vi ikke hva som skjedde — og
+// «Handlingen feilet.» ville vært en påstand vi ikke har dekning for om en
+// uopprettelig handling.
+test("Forkast: to tapte svar gir «ukjent utfall», ikke «feilet»", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      throw new TypeError("network");
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  _finn(dlg, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nøyaktig én retry, ikke en løkke");
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkast.ukjent")),
+    "utfallet meldes ikke som ukjent");
+  assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")),
+    "en falsk feilkvittering på en uopprettelig handling");
+});
+
 // Kontroll: flytt `forkastKnapp` ut av runde-betingelsen, så blir denne rød.
 test("Forkast: knappen finnes IKKE når en runde er åpen", async () => {
   // DETALJ har en åpen runde med attestasjoner i omløp.

@@ -673,5 +673,6 @@
   "ui.policyadmin.handling.forkast": "Discard draft",
   "ui.policyadmin.forkast.tittel": "Discard this draft?",
   "ui.policyadmin.forkast.tekst": "The draft stays on record as discarded and cannot be used again. No active policy changes — this is a proposal, not an authority.",
+  "ui.policyadmin.forkast.ukjent": "We do not know whether the discard went through: the network did not answer, and the attempt was retried once. Refresh and check the draft's status before trying again.",
   "ui.policyadmin.forkastet": "The draft has been discarded."
 }
