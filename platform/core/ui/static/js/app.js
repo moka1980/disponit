@@ -58,9 +58,27 @@ let omstartNr = 0;
 // skjermen nå.
 let aktivRuter = null;
 
+// BARE DET NYESTE VARSELTALLET FÅR SKRIVE (Codex P2). `oppdaterVarseltall`
+// kalles fra flere kanter — oppstarten, hver navigasjon, og varselflaten hver
+// gang den merker noe lest eller melder av — og de kallene kan overlappe uten
+// at noe skiller dem. Oppstartens kall kunne lese `uleste=3`, innboksen merke
+// ett lest og skrive 2, og så kunne det trege førstekallet legge 3 tilbake
+// oppå. Samme regel som `omstartNr` for omstartene og `EIERSKAP` for flatene:
+// den som startet sist eier feltet. Nummeret er på MODULNIVÅ og ikke i
+// skallets closure, slik at et svar fra et forrige skall heller ikke kan vinne
+// over et kall fra det nye.
+let varseltallNr = 0;
+
+// …og det som lytter på vegne av telleren må kunne rives ned, som ruteren.
+// Lytteren henger på `document`, mens `settVarsler` skriver inn i ETT bestemt
+// skall — nøyaktig den bindingen `riveNedRuter` finnes for.
+let varseltallStopp = null;
+
 function riveNedRuter() {
   if (aktivRuter) aktivRuter.stopp();
   aktivRuter = null;
+  if (varseltallStopp) varseltallStopp();
+  varseltallStopp = null;
 }
 
 // Alle veier tilbake til innlogging går herfra, så ruteren aldri blir stående
@@ -144,8 +162,15 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   const harVarsler = tilgjengeligeRuter.some((r) => r.nokkel === "varsler");
   const oppdaterVarseltall = () => {
     if (!harVarsler) return Promise.resolve();
+    // Generasjonen tas FØR kallet, og sjekkes etter: et svar som ikke lenger
+    // er det nyeste skriver ingenting. Uten dette kunne et tregt førstekall
+    // legge et gammelt tall oppå et ferskere (se `varseltallNr`).
+    const nr = ++varseltallNr;
     return hentJson("/v1/varsel?uleste=1")
-      .then((d) => { if (aktivRuter === klientruter) skall.settVarsler(d.uleste); })
+      .then((d) => {
+        if (nr !== varseltallNr) return;
+        if (aktivRuter === klientruter) skall.settVarsler(d.uleste);
+      })
       .catch(() => {});
   };
 
@@ -164,12 +189,48 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
     // brukeren.
     oppdaterVarseltall,
   };
+  // TELLEREN MÅ OGSÅ OPPDATERES AV ANDRES HANDLINGER (Codex P2). Fram til nå
+  // var oppstartens ene kall den eneste automatiske hentingen i hele øktens
+  // levetid — de andre kallstedene ligger i varselflaten og utløses bare av
+  // at DENNE klienten merker noe lest eller åpner det. Åpner en annen
+  // policyforvalter en runde etter at siden er lastet, var det ingenting som
+  // spurte igjen: telleren kunne stå på null resten av økten, og den som har
+  // valgt kun portal fikk aldri den proaktive beskjeden hele feltet finnes
+  // for.
+  //
+  // To anledninger, og de er valgt fordi de er de eneste øyeblikkene et
+  // ferskere tall kan endre noe for brukeren:
+  //
+  //   * HVER NAVIGASJON. Hun gjør noe i appen, og skallet står foran henne.
+  //     Første navigasjon hoppes over — oppstartens eget kall under dekker
+  //     den, og to kall om det samme ved hver innlasting er bare støy.
+  //   * TILBAKE TIL FANEN. En SPA som har ligget i bakgrunnen er nettopp der
+  //     et varsel rekker å oppstå.
+  //
+  // Ingen bakgrunnstimer. En `setInterval` måtte vært ryddet på HVER vei ut av
+  // skallet (språkbytte, utlogging, tapt økt), og en timer som overlever
+  // skallet sitt er samme feil som ruteren som overlevde sitt — bare stillere,
+  // fordi den ikke tegner noe. Det som er igjen er en ærlig grense: står
+  // brukeren helt i ro i en synlig fane, oppdateres tallet ikke før hun rører
+  // seg. Da har hun heller ikke handlet på det.
+  let forsteNavigasjon = true;
+  const settAktivOgHentTall = (rute) => {
+    skall.settAktiv(rute);
+    if (forsteNavigasjon) { forsteNavigasjon = false; return; }
+    oppdaterVarseltall();
+  };
   // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet
   // rett i adressefeltet rendret admin uten `security:read`, siden `gjeldende()`
   // validerer mot flatekartet — ikke mot menyen.
   const klientruter = lagRuter(skall.hoved, ctx,
-    tillatteFlater(tilgjengeligeRuter, FLATER), skall.settAktiv);
+    tillatteFlater(tilgjengeligeRuter, FLATER), settAktivOgHentTall);
   aktivRuter = klientruter;
+  if (harVarsler) {
+    const paaSynlighet = () => { if (!document.hidden) oppdaterVarseltall(); };
+    document.addEventListener("visibilitychange", paaSynlighet);
+    varseltallStopp = () =>
+      document.removeEventListener("visibilitychange", paaSynlighet);
+  }
   // Enten setter vi hash (og `hashchange` rendrer), ELLER så navigerer vi selv.
   // Begge deler ville rendret flaten to ganger på en dyplenke som
   // `/?visning=oversikt`: to sett API-kall, og en forbigående feil i det ene
