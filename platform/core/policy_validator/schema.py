@@ -96,9 +96,23 @@ def _strengt_monster(monster: str) -> re.Pattern:
 
 
 def _pattern_ecma(validator, monster, instans, skjema):
-    """`pattern`-nøkkelordet med ECMA-ankre. Feilteksten er `jsonschema`s egen,
-    så feillistene kallerne allerede leser ser uendret ut."""
-    if validator.is_type(instans, "string") \
+    """`pattern`-nøkkelordet som KUN DIFFERANSEN mot lastekontrakten: strengen
+    matcher Pythons lesning av mønsteret, men ikke ECMA-262 sin.
+
+    Differansen, ikke hele kontrollen. En streng som feiler BEGGE lesningene —
+    `handlinger[].id` = `'h1'`, som mangler punktumet mønsteret krever — er en
+    helt vanlig skjemafeil, og lastekontrakten sier alt fra om den. Rapporterte
+    vi den her også, ville `valider_ny_policy` meldt den to ganger, og
+    `_krev_innforingskrav` (som kjører denne ALENE, på et frosset utkast) ville
+    kansellert runden med «bryter et nytt krav» for et dokument som ganske
+    enkelt er strukturelt ødelagt — nøyaktig sammenblandingen kontrakten ble
+    delt i to for å unngå.
+
+    Feilteksten er `jsonschema`s egen, så feillistene kallerne leser ser
+    uendret ut."""
+    if not validator.is_type(instans, "string"):
+        return
+    if re.search(monster, instans) \
             and not _strengt_monster(monster).search(instans):
         yield jsonschema.ValidationError(
             f"{instans!r} does not match {monster!r}")
@@ -225,11 +239,10 @@ def valider_innforingskrav(policy: object) -> list[str]:
 def _valider_innforing(policy: dict) -> list[str]:
     # Mønstrene måles med ECMA-ankre (se `_pattern_ecma`): `$` er slutten på
     # strengen, ikke «slutten, eller rett før en avsluttende linjeskift» som
-    # Pythons `re` leser den. KUN `pattern`-bruddene plukkes ut — resten av
-    # skjemaet er lastekontraktens ansvar, og `valider_ny_policy` har alt kjørt
-    # den. Uten filteret ville hver strukturfeil blitt rapportert to ganger, og
-    # `_krev_innforingskrav` (som kjører DENNE alene) ville blandet «bryter et
-    # nytt krav» sammen med «er strukturelt ødelagt» i samme feilkode.
+    # Pythons `re` leser den. Nøkkelordet gir alt KUN differansen mot
+    # lastekontrakten; filteret her tar resten av skjemaet (type, required,
+    # additionalProperties), som er lastekontraktens ansvar og som
+    # `valider_ny_policy` alt har kjørt.
     feil: list[str] = [
         f"skjema: {'/'.join(str(p) for p in e.absolute_path) or '<rot>'}: "
         f"{e.message}"

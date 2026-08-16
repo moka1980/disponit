@@ -419,7 +419,7 @@ def test_valider_avviser_dokument_med_fremmed_policy_id():
         # Og innholdet er IKKE frosset: eier kan rette id-en og validere igjen.
         det = policyadmin.hent_utkast_detalj(
             rt, tenant=TEN, aktor="forf", request_id="r",
-            utkast_id=o["utkast_id"])
+            utkast_id=o["utkast_id"], naa=datetime.now(timezone.utc))
         assert det["status"] == "utkast" and det["innholds_hash"] is None
         _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
                  utkast_id=o["utkast_id"], forventet_utkastversjon=1,

@@ -100,7 +100,12 @@ def kildechecksum() -> str:
 #: (Codex P2 på #63: differansen er eksponert som `valider_innforingskrav`, så
 #: aktiveringsveien kan stille det framoverrettede kravet på nytt — `validert`
 #: kan være satt før kravet fantes.)
-MOTOR_SEMANTIKKVERSJON = "3d0f356b5bfb4a13a4a7da8e9bed37bbe89f8aa9dfaf74652f2f3cae062dcfce"
+#: (Codex P2 på #64: skjemamønstrene måles med ECMA-262-ankre, så `$` er ekte
+#: slutt og ikke «slutt, eller rett før en avsluttende linjeskift» som Pythons
+#: `re` leser den. Samme plassering og samme grunn som verifikator-id-kravet:
+#: INNFØRINGSKONTRAKTEN, ikke lastekontrakten — en alt aktiv policy med hale
+#: skal fortsette å virke.)
+MOTOR_SEMANTIKKVERSJON = "75d1cd8c3e820145c000372c8b00d312faf44266b299e662e37c0cc83dd21f9b"
 
 
 # ---------------------------------------------------------------------------

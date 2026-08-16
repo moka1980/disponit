@@ -272,7 +272,7 @@ def _validert_utkast(c, uid, pid, av="bruker-a", innhold=None,
                      versjon="1.1.0"):
     # Aktiveringen lagrer policyens EGEN `meta.versjon` som registerets
     # `versjon` (migrasjon 020), krever at dokumentet bærer radens egen
-    # `meta.policy_id` (022) og at det SIER `produksjon` (023) — et utkast uten
+    # `meta.policy_id` (023) og at det SIER `produksjon` (024) — et utkast uten
     # dem kan ikke aktiveres, heller ikke i disse DB-nære testene.
     if innhold is None:
         innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"'
@@ -644,8 +644,12 @@ def test_aktiver_policy_monotoni_nullpadder_gamle_versjoner():
         r.close()
 
 
-def _innhold_med_verifikator(vid, versjon="1.1.0", felt="verifikatorer"):
-    return json.dumps({"meta": {"versjon": versjon},
+def _innhold_med_verifikator(vid, pid, versjon="1.1.0", felt="verifikatorer"):
+    # Full `meta` som `_validert_utkast`: dokumentet må bære radens identitet
+    # (023) og si `produksjon` (024), ellers stopper aktiveringen der i stedet
+    # — og testen ville «bestått» på feil invariant.
+    return json.dumps({"meta": {"policy_id": pid, "versjon": versjon,
+                                "status": "produksjon"},
                        felt: {vid: {"beskrivelse": "x"}}})
 
 
@@ -665,7 +669,7 @@ def test_aktiver_policy_avviser_flertydig_verifikator_id(vid, felt):
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
     _validert_utkast(c, uid, pid, av="forf",
-                     innhold=_innhold_med_verifikator(vid, felt=felt))
+                     innhold=_innhold_med_verifikator(vid, pid, felt=felt))
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -709,7 +713,7 @@ def test_aktiver_policy_slipper_gjennom_entydig_verifikator_id():
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
     _validert_utkast(c, uid, pid, av="forf",
-                     innhold=_innhold_med_verifikator("v-ny_2:a"))
+                     innhold=_innhold_med_verifikator("v-ny_2:a", pid))
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -729,12 +733,14 @@ def test_aktiver_policy_takler_innhold_uten_verifikatorer():
     er objekter — den skal si fra om flertydige id-er, ikke duplisere
     lastekontrakten (det ville brutt P1-en over: skjema hører hjemme i
     validatoren, ikke i plpgsql)."""
-    for innhold in ('{"meta":{"versjon":"1.1.0"},"verifikatorer":null}',
-                    '{"meta":{"versjon":"1.1.0"},"verifikatorer":[]}',
-                    '{"meta":{"versjon":"1.1.0"}}'):
+    for verifikatorer in (',"verifikatorer":null', ',"verifikatorer":[]', ''):
         c = _c()
         uid = "u-" + secrets.token_hex(4)
         pid = "pol-" + secrets.token_hex(3)     # egen policy per variant
+        # `meta` bygges her fordi identiteten er radens egen (023) og statusen
+        # må være `produksjon` (024) — varianten som testes er verifikatorfeltet.
+        innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"1.1.0",'
+                   '"status":"produksjon"}' + verifikatorer + '}')
         _validert_utkast(c, uid, pid, av="forf", innhold=innhold)
         _runde(c, uid)
         _attest(c, uid, "forf", True)
