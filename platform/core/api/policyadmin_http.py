@@ -390,6 +390,7 @@ def slett_policy_endepunkt(tjeneste, request):
     policy_id = request.path_params["policy_id"]
 
     def kjor(conn):
+        from datetime import datetime, timezone
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
         idem = _krev_idem(request, rid)
@@ -398,7 +399,8 @@ def slett_policy_endepunkt(tjeneste, request):
         ih = _input_hash(tenant, bid, "slett_policy", policy_id, idem)
         res = policyadmin.slett_policy(
             conn, tenant=tenant, aktor=bid, request_id=rid,
-            policy_id=policy_id, idempotency_key=idem, input_hash=ih)
+            policy_id=policy_id, idempotency_key=idem, input_hash=ih,
+            naa=datetime.now(timezone.utc))
         return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)

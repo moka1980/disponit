@@ -656,12 +656,54 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utfall": "forkastet", "utkast_id": utkast_id})
 
 
+def _lukk_forfalte_runder(conn: psycopg.Connection, tenant: str,
+                          policy_id: str, naa) -> None:
+    """Kjør `apen|klar → utlopt`-overgangen på hver av policyens runder som har
+    passert `utloper`, før slettingen teller runder «i omløp».
+
+    Uten dette blokkerte en forfalt runde slettingen for alltid (Codex P2).
+    Vernet i `slett_ubrukt_policy` teller `status IN ('apen','klar')` — den
+    LAGREDE statusen — og den er ikke en løgn, bare foreldet: overgangen til
+    `utlopt` skjer først når en skrivesti kommer forbi. Kom ingen forbi, sto
+    runden `apen` i det uendelige, og en ubrukt policy med en runde ingen kan
+    attestere (`attester_aktivering` nekter den med `runde_utlopt`) svarte
+    `runde_allerede_aapen` hver eneste gang. Vilkåret «ingen attestasjoner i
+    omløp» var oppfylt; det var bare ingen som hadde skrevet det ned.
+
+    Overgangen kjøres, den utelates ikke i et predikat: `_lukk_forfalt_runde`
+    er den ENE definisjonen av «forfalt» (`_runde_status`), og en fjerde kopi —
+    denne gangen i SQL, med sin egen klokke — er nøyaktig det de tre andre
+    veiene er skrevet for å unngå. Den pensjonerer dessuten varselet, så
+    godkjennerne slutter å bli bedt om å attestere en runde som nå heller ikke
+    har en policy å aktivere.
+
+    LÅSREKKEFØLGEN er `opprett_aktiveringsrunde` sin: utkastraden, så runden,
+    og FØRST DERETTER den eksklusive policylåsen inne i `slett_ubrukt_policy`.
+    Motsatt vei ville laget en sirkel mot en runde-åpning som holder utkastet
+    og venter på den delte låsen. Utkastene låses i utkast_id-rekkefølge, så to
+    slettinger på samme policy heller ikke kan gå i ring.
+
+    Kommer en NY runde til etter skanningen, er den ikke forfalt (en runde
+    åpnes med `utloper` i framtiden) — og da SKAL den blokkere. Den telles av
+    `slett_ubrukt_policy` under policylåsen, som er stedet det avgjøres.
+    """
+    rader = conn.execute(
+        "SELECT DISTINCT r.utkast_id FROM aktiveringsrunde r"
+        "  JOIN policyutkast u ON u.tenant=r.tenant AND u.utkast_id=r.utkast_id"
+        " WHERE r.tenant=%s AND u.policy_id=%s AND r.status IN ('apen','klar')"
+        " ORDER BY 1", (tenant, policy_id)).fetchall()
+    for (utkast_id,) in rader:
+        conn.execute("SELECT 1 FROM policyutkast WHERE tenant=%s"
+                     " AND utkast_id=%s FOR UPDATE", (tenant, utkast_id))
+        _lukk_forfalt_runde(conn, tenant, utkast_id, naa)
+
+
 def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
                  request_id: str, policy_id: str, idempotency_key: str,
-                 input_hash: str) -> dict:
+                 input_hash: str, naa) -> dict:
     """Angre en feilopprettet policy: slett den som ALDRI har styrt en
     beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (030) — her
-    ligger idempotensen, og bare den.
+    ligger idempotensen og OVERGANGEN som lukker forfalte runder.
 
     Idempotensen er ikke pynt på en `Idempotency-Key` endepunktet uansett
     krever (Codex P2). Slettingen er ENGANGS og irreversibel: går svaret tapt
@@ -671,6 +713,9 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
     flate som viste den slettede policyen som aktiv, og hvert nye forsøk sa det
     samme til hun lastet siden på nytt. Med claimet på plass svarer replayen
     NØYAKTIG det lagrede svaret, og flaten kommer videre.
+
+    `naa` er klokka forfalte runder måles mot, som i `forkast_utkast` og
+    `opprett_aktiveringsrunde` — se `_lukk_forfalte_runder` under.
 
     Kalleren eier tx; `_fullfor` committer.
     """
@@ -683,6 +728,7 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
     if tilstand == "konflikt":
         conn.rollback()
         raise Aktiveringsfeil("idempotenskonflikt")
+    _lukk_forfalte_runder(conn, tenant, policy_id, naa)
     try:
         n = conn.execute("SELECT slett_ubrukt_policy(%s,%s)",
                          (tenant, policy_id)).fetchone()[0]

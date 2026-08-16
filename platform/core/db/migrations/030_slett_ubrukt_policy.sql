@@ -23,7 +23,10 @@
 --     så en riktig opprettelse etterpå ikke stoppes av 020-monotonien;
 --   * utkast og runder RØRES IKKE: at mennesker attesterte er et faktum om
 --     fortiden, og det skal stå igjen selv om resultatet angres. (Nøyaktig
---     det de manuelle oppryddingene bevarte.)
+--     det de manuelle oppryddingene bevarte.) Det ENESTE kalleren skriver på
+--     en runde er `apen|klar → utlopt` for en runde som allerede har passert
+--     `utloper` — en overgang som var forfalt uansett, ikke en opprydding;
+--     attestasjonene blir stående.
 --
 -- `revisjonslogg`-kontrollen bruker `LIKE pid || '@%'`: loggformatet er
 -- `pid@versjon/handling`, og skjemaet forbyr `@` i policy_id, så prefikset er
@@ -96,7 +99,14 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- En åpen runde betyr attestasjoner i omløp — samme vern som forkast.
+    -- En LEVENDE åpen runde betyr attestasjoner i omløp — samme vern som
+    -- forkast. En FORFALT runde er derimot ikke i omløp: ingen kan attestere
+    -- den (`attester_aktivering` nekter den), og den skal ikke blokkere.
+    -- Vilkåret måles ikke her: `policyadmin._lukk_forfalte_runder` kjører
+    -- `apen|klar → utlopt`-overgangen FØR dette kallet, gjennom den samme
+    -- `_lukk_forfalt_runde` som forkasting og runde-åpning bruker. Statusen
+    -- under er derfor à jour når den leses, og «forfalt» har fortsatt bare
+    -- ÉN definisjon — ikke en kopi til, med sin egen klokke, i SQL.
     SELECT count(*) INTO v_apen
       FROM aktiveringsrunde r JOIN policyutkast u
         ON u.tenant = r.tenant AND u.utkast_id = r.utkast_id

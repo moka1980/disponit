@@ -9,12 +9,15 @@ Grensene er hele verdien av funksjonen:
   * en åpen runde blokkerer, som for forkast: attestasjoner i omløp;
   * ankerraden består (append-only), bare pekeren nullstilles;
   * utkast og runder røres ikke — at mennesker attesterte er et faktum om
-    fortiden;
+    fortiden. Ett unntak, og det er en OVERGANG, ikke en opprydding: en runde
+    som har passert `utloper` skrives ned som `utlopt` før vernet teller, som
+    i forkast og runde-åpning;
   * versjonene blir ledige igjen, så riktig opprettelse etterpå ikke stoppes
     av 020-monotonien.
 """
 import json
 import secrets
+from datetime import datetime, timezone
 
 import pytest
 
@@ -145,6 +148,99 @@ def test_apen_runde_blokkerer_sletting():
 
 
 @pg
+def test_forfalt_runde_blokkerer_ikke_sletting():
+    """Kontroll: fjern `_lukk_forfalte_runder`-kallet i
+    `policyadmin.slett_policy`, så blir denne rød.
+
+    En runde som har passert `utloper` er DØD — `attester_aktivering` nekter
+    den med `runde_utlopt`, så det finnes ingen attestasjoner i omløp å verne.
+    Men statusen i basen blir stående `apen` til en skrivesti kommer forbi og
+    skriver ned overgangen, og slettingen teller den lagrede statusen. Uten
+    overgangen her svarte en ubrukt policy med en timet-ut runde
+    `runde_allerede_aapen` for alltid: vilkåret var oppfylt, men ingen hadde
+    skrevet det ned — og eier satt igjen uten vei ut, akkurat den tilstanden
+    `_lukk_forfalt_runde` finnes for.
+    """
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av) VALUES (%s,%s,%s,'{}'::jsonb,'forf')", (TEN, uid, pid))
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,1,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()-interval '1 hour')", (TEN, uid))
+    m.commit()
+    rt = _rt()
+    try:
+        res = policyadmin.slett_policy(
+            rt, tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+            idempotency_key=idem, input_hash="ih-" + idem,
+            naa=datetime.now(timezone.utc))
+        assert res["slettet"] == 1
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r0")
+        # Overgangen ble SKREVET NED, ikke bare oversett i et predikat: runden
+        # står nå `utlopt`, som etter forkast og runde-åpning.
+        assert m.execute(
+            "SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+            " AND utkast_id=%s", (TEN, uid)).fetchone() == ("utlopt",)
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_levende_runde_blokkerer_fortsatt_etter_forfallsovergangen():
+    """Motstykket: overgangen skal lukke de DØDE rundene, ikke svekke vernet.
+    En runde som fortsatt kan attesteres blokkerer som før."""
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av) VALUES (%s,%s,%s,'{}'::jsonb,'forf')", (TEN, uid, pid))
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,1,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()+interval '1 hour')", (TEN, uid))
+    m.commit()
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.slett_policy(
+                rt, tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+                idempotency_key=idem, input_hash="ih-" + idem,
+                naa=datetime.now(timezone.utc))
+        assert e.value.kode == "runde_allerede_aapen"
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r0")
+        assert m.execute(
+            "SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+            " AND utkast_id=%s", (TEN, uid)).fetchone() == ("apen",)
+        assert m.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                         " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 1
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_utkast_og_runder_roeres_ikke_av_slettingen():
     """At mennesker attesterte er et faktum om fortiden. Slettingen angrer
     RESULTATET, ikke historien — nøyaktig det de manuelle oppryddingene
@@ -192,7 +288,8 @@ def test_slettingen_er_idempotent_og_replayer_suksess():
     try:
         kall = dict(tenant=TEN, aktor="test", request_id="r1",
                     policy_id=pid, idempotency_key=idem,
-                    input_hash="ih-" + idem)
+                    input_hash="ih-" + idem,
+                    naa=datetime.now(timezone.utc))
         forste = policyadmin.slett_policy(rt, **kall)
         assert forste["slettet"] == 1 and forste["policy_id"] == pid
 
@@ -236,7 +333,8 @@ def test_mislykket_sletting_brenner_ikke_nokkelen():
     try:
         kall = dict(tenant=TEN, aktor="test", request_id="r1",
                     policy_id=pid, idempotency_key=idem,
-                    input_hash="ih-" + idem)
+                    input_hash="ih-" + idem,
+                    naa=datetime.now(timezone.utc))
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
             policyadmin.slett_policy(rt, **kall)
         assert e.value.kode == "runde_allerede_aapen"
