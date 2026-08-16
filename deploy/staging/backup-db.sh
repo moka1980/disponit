@@ -29,9 +29,14 @@ install -d -m 700 "$KATALOG"
 STEMPEL=$(date -u +%Y%m%dT%H%M%S)
 FIL="$KATALOG/disponit-$STEMPEL.dump.age"
 
-# pg_dump i custom-format via migrator (eier skjemaet, ser alt under
-# NO FORCE-vinduet sitt eierskap gir — RLS gjelder ikke pg_dump som eier).
-pg_dump --format=custom --dbname="$DISPONIT_MIGRATOR_URL" \
+# pg_dump i custom-format som POSTGRES, ikke migrator. «Eier skjemaet, ser
+# alt» sluttet å være sant da kapabilitetstabellene fikk egen eier uten
+# grants (PR-009-modellen, bevist av test_m37): pg_dump som migrator døde på
+# LOCK TABLE, og basen sto uten backup. Alternativet — å gi migrator SELECT —
+# er den nøyaktige mutasjonen `test_migrator_naar_ikke_kapabilitetene_uten_
+# set_role` finnes for å forby. Uniten kjører som root; superbrukeren ser alt
+# uten at rettighetsmodellen røres.
+sudo -u postgres pg_dump --format=custom --dbname=disponit \
   | age -R "$MOTTAKER" > "$FIL"
 chmod 600 "$FIL"
 
@@ -44,7 +49,7 @@ VERIF="disponit_backup_verif_$$"
 sudo -u postgres createdb "$VERIF"
 opprydd() { sudo -u postgres dropdb --if-exists "$VERIF"; }
 trap opprydd EXIT
-pg_dump --format=custom --dbname="$DISPONIT_MIGRATOR_URL" \
+sudo -u postgres pg_dump --format=custom --dbname=disponit \
   | sudo -u postgres pg_restore --dbname="$VERIF" --no-owner --role=postgres
 TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
   "SELECT count(*) FROM pg_tables WHERE schemaname='public'")

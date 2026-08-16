@@ -548,3 +548,22 @@ def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
         (gammel, fersk)).fetchall())
     migrator.rollback()
     assert statuser == {gammel: "TILBAKEKALT", fersk: "PENDING"}
+
+
+def test_backupen_dumper_som_postgres_ikke_migrator():
+    """En backup som hopper over en tabell er ikke en backup.
+
+    backup-db.sh dumpet som migrator under antagelsen «eier skjemaet, ser
+    alt». Den sluttet å holde da kapabilitetstabellene fikk egen eier uten
+    grants: pg_dump døde på LOCK TABLE, og basen sto uten backup — funnet
+    først da eier la inn mottakernøkkelen og den første ekte kjøringen
+    feilet. Alternativet, SELECT til migrator, er nøyaktig mutasjonen
+    `test_migrator_naar_ikke_kapabilitetene_uten_set_role` forbyr. Derfor
+    postgres: uniten kjører som root, og superbrukeren ser alt uten at
+    rettighetsmodellen røres. Målt på kilden, som de andre skript-portene.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert "pg_dump" in skript
+    assert "MIGRATOR_URL" not in skript.split("pg_dump", 1)[1].split("\n")[0] \
+        and skript.count("sudo -u postgres pg_dump") == 2, \
+        "backupen dumper ikke som postgres — kapabilitetstabellene blir utelatt"
