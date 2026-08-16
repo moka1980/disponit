@@ -389,3 +389,74 @@ test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
     "valuta" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser, false,
     "«ingen begrensning» kunne ikke velges tilbake");
 });
+
+test("Grenser: en valuta policyen alt har, blir ikke stående to ganger",
+  async () => {
+    // Codex P1. Å velge en kode som ligger LENGER BAK i lista skrev den fram
+    // uten å ta den ut der den lå: `["NOK","EUR"]` + EUR ga `["EUR","EUR"]`.
+    // Det kanoniske skjemaet krever ikke unike koder, så utkastet validerer og
+    // kan aktiveres — men `_valider_grenser` vraker duplikater, så senere
+    // lesninger av den aktive policyen svarer `policy_korrupt`.
+    const policy = {
+      meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
+        status: "utkast" },
+      roller: [{ id: "agent" }],
+      handlinger: [{ id: "betaling.utfor", modus: "manuell",
+        tillatt_for: ["agent"], grenser: { valuta: ["NOK", "EUR"] } }],
+    };
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: policy });
+    await vent(() => h.querySelector(".editor-kort"));
+    const sel = [...h.querySelectorAll(".editor-kort select")]
+      .find((s) => [...s.options].some((o) => o.value === "NOK"));
+    assert.equal(sel.value, "NOK");
+    sel.value = "EUR";
+    sel.dispatchEvent(new window.Event("change"));
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.deepEqual(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta, ["EUR"],
+      "nedtrekket la igjen en dublett serveren vraker");
+  });
+
+test("Grenser: en valutaliste ingen kontroll kan vise, lagres ikke videre",
+  async () => {
+    // Samme regel som for tidsvinduet: nedtrekket viser ett normalisert sett,
+    // og da skal modellen bære DET. En dublett som lå der fra før, en bar
+    // streng eller en tom liste er former ingen kontroll her kan vise — de
+    // ville blitt stående usynlig og fulgt med på neste, urelaterte lagring.
+    const tilfeller = [
+      [["EUR", "EUR"], ["EUR"]],
+      ["NOK", ["NOK"]],
+      [[], undefined],
+    ];
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    for (const [inn, ut] of tilfeller) {
+      const policy = {
+        meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
+          status: "utkast" },
+        roller: [{ id: "agent" }],
+        handlinger: [{ id: "betaling.utfor", modus: "manuell",
+          tillatt_for: ["agent"], grenser: { valuta: inn } }],
+      };
+      const h = nyHoved();
+      visPolicyeditor(h, ctx(), { startPolicy: policy });
+      await vent(() => h.querySelector(".editor-kort"));
+      POST = undefined;
+      finnKnapp(h, t("ui.editor.lagre"))
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => POST);
+      const g = JSON.parse(POST.opts.body).innhold.handlinger[0].grenser;
+      if (ut === undefined) {
+        assert.equal("valuta" in g, false,
+          `${JSON.stringify(inn)} ble stående i modellen`);
+      } else {
+        assert.deepEqual(g.valuta, ut,
+          `${JSON.stringify(inn)} ble ikke normalisert`);
+      }
+    }
+  });

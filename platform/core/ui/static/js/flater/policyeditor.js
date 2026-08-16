@@ -166,9 +166,21 @@ const VALUTA_INGEN = "";
 function valutaVelger(g, tegnPaaNytt) {
   // Valutaen er en liste i skjemaet, men i praksis én kode. Har policyen
   // flere, beholdes de: nedtrekket bytter den FØRSTE og sier fra om resten,
-  // i stedet for å kaste dem stille.
-  const valutaer = Array.isArray(g.valuta) ? g.valuta.filter(Boolean)
+  // i stedet for å kaste dem stille. Lista er et SETT: serveren vraker
+  // duplikater (`_valider_grenser` → `_unik`), og en kode som står to steder
+  // gjør den aktive policyen uleselig — `policy_korrupt`.
+  const raa = Array.isArray(g.valuta) ? g.valuta.filter(Boolean)
     : (g.valuta ? [g.valuta] : []);
+  const valutaer = [...new Set(raa)];
+  // Nedtrekket viser det normaliserte settet; da skal modellen bære det
+  // samme. Ellers blir en form ingen kontroll her viser — en tom liste, en
+  // bar streng, en dublett fra før — stående usynlig og lagret videre.
+  if ("valuta" in g) {
+    if (!valutaer.length) delete g.valuta;
+    else if (!Array.isArray(g.valuta) || g.valuta.length !== valutaer.length) {
+      g.valuta = valutaer;
+    }
+  }
   const valgt = valutaer[0] || VALUTA_INGEN;
   const valgbare = valgt && !VALUTAER.includes(valgt)
     ? [valgt, ...VALUTAER] : VALUTAER;
@@ -182,7 +194,11 @@ function valutaVelger(g, tegnPaaNytt) {
   for (const v of valgbare) rad(v, v);           // valutakoder oversettes ikke
   sel.addEventListener("change", () => {
     if (sel.value === VALUTA_INGEN) delete g.valuta;
-    else g.valuta = [sel.value, ...valutaer.slice(1)];
+    // Den valgte koden kan alt stå lenger bak i lista: `["NOK","EUR"]` + valg
+    // av EUR ga `["EUR","EUR"]`. Halen er resten AV settet, ikke resten av
+    // rekka — koden som flyttes fram tas ut der den lå.
+    else g.valuta = [sel.value,
+      ...valutaer.slice(1).filter((v) => v !== sel.value)];
     // Bare hintet under avhenger av tilstanden; uten flere valutaer er det
     // ingenting som kan bli stående og lyve, og da beholder vi fokus.
     if (valutaer.length > 1) tegnPaaNytt();
