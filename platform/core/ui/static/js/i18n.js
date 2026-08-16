@@ -7,9 +7,22 @@ const SPRAK = ["nb", "en"];
 let _kart = {};
 let _sprak = "nb";
 
+// SPRÅKET REISER I URL-EN, IKKE BARE I LAGERET (Codex P2). `lagreSprak` er
+// best effort — privat modus, blokkerte tredjepartslagre, en herdet nettleser
+// — og de offentlige lenkene er ordinære `href`-er som laster dokumentet på
+// nytt. Uten URL-leddet leste den neste siden ingenting av valget og falt
+// tilbake til `data-sprak="nb"` i `index.html`: en besøkende som byttet til
+// engelsk fikk norsk igjen ved første klikk i navigasjonen. URL-en leses FØR
+// lageret fordi den er det eksplisitte valget for NETTOPP denne navigasjonen
+// — og fordi en delt lenke da åpner på språket den ble delt på, uansett hva
+// mottakerens forrige besøk la igjen.
 export function velgSprak() {
-  // Rekkefølge: lagret valg → <html data-sprak> → nettleser → nb.
+  // Rekkefølge: URL → lagret valg → <html data-sprak> → nettleser → nb.
   let s = null;
+  try {
+    s = new URLSearchParams(window.location.search).get("sprak");
+  } catch { s = null; }
+  if (SPRAK.includes(s)) return s;
   try { s = window.localStorage.getItem("disponit_sprak"); } catch { s = null; }
   if (!SPRAK.includes(s)) s = document.documentElement.getAttribute("data-sprak");
   if (!SPRAK.includes(s)) {

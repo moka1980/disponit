@@ -24,19 +24,35 @@ function lesSide() {
     ? side : "hjem";
 }
 
+// Hver offentlig lenke bærer språket (Codex P2). Navigasjonen her er ordinære
+// `href`-er som laster dokumentet på nytt, og etter en reload finnes valget
+// bare der det er SKREVET: i lageret — som kan være nektet — eller i URL-en.
+// Derfor bygges ingen offentlig lenke for hånd lenger; alle går gjennom denne,
+// og `velgSprak` leser leddet i den andre enden.
+function offentligUrl(side, ekstra = {}) {
+  const p = new URLSearchParams();
+  if (side && side !== "hjem") p.set("side", side);
+  for (const [n, v] of Object.entries(ekstra)) if (v) p.set(n, v);
+  p.set("sprak", sprak());
+  return `/?${p.toString()}`;
+}
+
 function offentligTopp(side) {
   const lenker = ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"];
   const nav = el("nav", { class: "site-hovednav", "aria-label": t("site.nav.hoved") },
     el("ul", {}, lenker.map((nokkel) => {
       const attrs = {
-        href: nokkel === "hjem" ? "/" : `/?side=${nokkel}`,
+        href: offentligUrl(nokkel),
         text: t(`site.nav.${nokkel}`),
       };
       if (nokkel === side) attrs["aria-current"] = "page";
       return el("li", {}, el("a", attrs));
     })));
+  // Søket er en GET-form: den bygger sin egen URL av feltene sine, så språket
+  // må stå som et felt her — ellers mister nettopp søket valget (Codex P2).
   const sok = el("form", { class: "site-sok", method: "get", action: "/" },
     el("input", { type: "hidden", name: "side", value: "tjenester" }),
+    el("input", { type: "hidden", name: "sprak", value: sprak() }),
     el("label", { class: "sr-only", for: "site-sokefelt", text: t("site.sok.label") }),
     el("input", { id: "site-sokefelt", name: "q", type: "search",
       placeholder: t("site.sok.placeholder"), value: side === "tjenester"
@@ -44,7 +60,8 @@ function offentligTopp(side) {
     el("button", { type: "submit", text: t("site.sok.knapp") }));
   return el("header", { class: "site-topp" },
     el("div", { class: "site-topp-rad" },
-      el("a", { class: "site-logo", href: "/", "aria-label": t("site.nav.logo") },
+      el("a", { class: "site-logo", href: offentligUrl("hjem"),
+        "aria-label": t("site.nav.logo") },
         el("span", { "aria-hidden": "true", text: "D" }),
         el("strong", { text: t("app.navn", "Disponit") })),
       nav,
@@ -179,9 +196,14 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
   if (provider) {
     const form = el("form", { class: "innlogging-form", method: "post",
       action: "/v1/oidc/start" });
+    // Retursti-en er den siste offentlige navigasjonen: språket må bli med
+    // over OIDC-runden, ellers står skallet på `data-sprak="nb"` etter
+    // innlogging for den som ikke kan lagre valget. `trygg_retursti` beholder
+    // query-strengen på en lokal path-referanse, så leddet overlever turen.
     form.append(
       el("input", { type: "hidden", name: "provider_id", value: provider }),
-      el("input", { type: "hidden", name: "retursti", value: `/?visning=${visning}` }),
+      el("input", { type: "hidden", name: "retursti",
+        value: `/?visning=${visning}&sprak=${sprak()}` }),
       el("button", { type: "submit", class: "knapp primar", text: knapp }));
     kort.append(form);
   } else {
@@ -215,9 +237,9 @@ function hjemSide() {
         el("h1", { text: t("site.hero.tittel") }),
         el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) }),
         el("div", { class: "site-cta" },
-          el("a", { class: "knapp primar", href: "/?side=tjenester",
+          el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
             text: t("site.cta.tjenester") }),
-          el("a", { class: "knapp", href: "/?side=produkt",
+          el("a", { class: "knapp", href: offentligUrl("produkt"),
             text: t("site.cta.produkt") }))),
       el("aside", { class: "site-signal", "aria-label": t("site.hero.punkter_tittel") },
         el("span", { class: "site-orbit", "aria-hidden": "true" }),
@@ -231,7 +253,7 @@ function hjemSide() {
     el("section", { class: "site-bunn-cta" },
       el("div", {}, el("p", { class: "site-eyebrow", text: t("site.cta.kicker") }),
         el("h2", { text: t("site.cta.tittel") })),
-      el("a", { class: "knapp primar", href: "/?side=innlogging",
+      el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
         text: t("site.nav.innlogging") })),
   ];
 }
@@ -301,11 +323,26 @@ function innloggingSide(provider) {
   ];
 }
 
+// Adresselinja skal si hvilket språk siden faktisk står på. Byttet skjer uten
+// navigasjon, så uten dette pekte URL-en fortsatt på det forrige språket: en
+// oppdatering (F5) eller en lenke kopiert ut av adressefeltet leser ingen
+// minnetilstand, og med nektet lagring falt begge tilbake til norsk.
+// `replaceState` og ikke `pushState`: et språkbytte er ikke et nytt sted i
+// historikken, og «tilbake» skal føre dit brukeren kom fra.
+function speilSprakIUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("sprak") === sprak()) return;
+    url.searchParams.set("sprak", sprak());
+    window.history.replaceState(window.history.state, "", url);
+  } catch { /* språket lever uansett i økten — URL-en er bare et ekko */ }
+}
+
 function offentligBunn() {
   return el("footer", { class: "site-footer" },
     el("strong", { text: t("app.navn", "Disponit") }),
     el("p", { text: t("site.footer.tekst") }),
-    el("a", { href: "/?side=sikkerhet", text: t("site.nav.sikkerhet") }));
+    el("a", { href: offentligUrl("sikkerhet"), text: t("site.nav.sikkerhet") }));
 }
 
 // `gjelderFortsatt` er kallerens rett til å tegne, målt ETTER ventepunktet
@@ -343,6 +380,7 @@ export async function visInnlogging(opsjoner = {}) {
     if (opsjoner.i18n.taIBruk() === null) return;
     // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
     lokaliserSkiplenke();
+    speilSprakIUrl();
   }
 
   const side = lesSide();

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
-import { settI18nForTest, t } from "../static/js/i18n.js";
+import { settI18nForTest, t, velgSprak } from "../static/js/i18n.js";
 import { visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
@@ -127,7 +127,12 @@ test("Landing: innlogging er en egen side med riktig retursti", async () => {
   await visInnlogging();
   const retur = [...app.querySelectorAll('input[name="retursti"]')]
     .map((n) => n.getAttribute("value"));
-  assert.deepEqual(retur, ["/?visning=kundeadmin", "/?visning=admin"]);
+  // Språket er med i retursti-en (Codex P2): innlogging er den siste
+  // offentlige navigasjonen, og for den som ikke kan lagre valget er URL-en
+  // det ENESTE som bærer det over OIDC-runden. `trygg_retursti` beholder
+  // query-strengen på en lokal path-referanse, så leddet overlever turen.
+  assert.deepEqual(retur,
+    ["/?visning=kundeadmin&sprak=nb", "/?visning=admin&sprak=nb"]);
   window.history.replaceState({}, "", "/");
 });
 
@@ -219,6 +224,59 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
       "hoppelenka står igjen på norsk etter byttet til engelsk");
     assert.equal(document.documentElement.getAttribute("lang"), "en");
   } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
+// Codex P2: `byttTil` lagrer valget best effort, men lagringen KAN være nektet
+// (privat modus, herdet nettleser). Den offentlige navigasjonen er ordinære
+// `href`-er som laster dokumentet på nytt, så etter et klikk finnes valget kun
+// der det er skrevet. Uten språkleddet i URL-en leste neste side ingenting og
+// falt tilbake til `data-sprak="nb"` — en besøkende som byttet til engelsk fikk
+// norsk igjen ved første klikk i den nye navigasjonen. Testen kjører med
+// nektet `localStorage`, altså nøyaktig den brukeren, og krever at HVER vei
+// videre bærer språket: lenkene, søkeformen og adresselinja.
+test("Landing: språkvalget følger navigasjonen når lagring er nektet", async () => {
+  const app = nyttAppBrett();
+  const ekte = Object.getOwnPropertyDescriptor(window, "localStorage");
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    get() { throw new Error("lagring nektet"); },
+  });
+  try {
+    window.history.replaceState({}, "", "/");
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+
+    const lenker = [...app.querySelectorAll(".site-hovednav a, .site-logo, " +
+      ".site-cta a, .site-bunn-cta a, .site-footer a")];
+    assert.ok(lenker.length >= 8, "for få offentlige lenker til å måle noe");
+    for (const a of lenker) {
+      assert.equal(new URL(a.getAttribute("href"), "https://x.test")
+        .searchParams.get("sprak"), "en",
+        `${a.getAttribute("href")} mister språkvalget ved klikk`);
+    }
+    assert.equal(
+      app.querySelector('.site-sok input[name="sprak"]').getAttribute("value"),
+      "en", "søket sender brukeren tilbake til norsk");
+    assert.equal(new URLSearchParams(window.location.search).get("sprak"), "en",
+      "adresselinja sier fortsatt norsk — en oppdatering mister valget");
+
+    // Og den andre enden: en URL med språkleddet velges over dokumentets
+    // `data-sprak`, ellers hadde lenkene båret et valg ingen leser.
+    document.documentElement.setAttribute("data-sprak", "nb");
+    window.history.replaceState({}, "", "/?side=tjenester&sprak=en");
+    assert.equal(velgSprak(), "en");
+  } finally {
+    if (ekte) Object.defineProperty(window, "localStorage", ekte);
+    else delete window.localStorage;
+    window.history.replaceState({}, "", "/");
+    document.documentElement.setAttribute("data-sprak", "nb");
     settI18nForTest(NB, "nb");
   }
 });
