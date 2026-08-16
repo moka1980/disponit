@@ -568,6 +568,8 @@
   "ui.rolle.domeneadjudikator": "domain adjudicator",
   "ui.editor.rolle_i_bruk": "Role is in use",
   "ui.editor.rolle_i_bruk_overstyring": "human override",
-  "ui.editor.policy_id_hint": "At least 3 characters: lowercase letters, digits and hyphens. Keep the template's id to supersede the policy in force today.",
+  "ui.editor.policy_id_hint": "At least 3 characters: lowercase letters, digits and hyphens. The same id continues the same policy series; a different id creates a new policy alongside the one in force.",
+  "ui.editor.policy_id_hint_avloser": "At least 3 characters: lowercase letters, digits and hyphens. “{id}” is the policy in force today — keep it to supersede that policy. A different id creates a new policy alongside it.",
+  "ui.editor.policy_id_hint_ingen_aktiv": "At least 3 characters: lowercase letters, digits and hyphens. No policy is active today, so this one becomes the first.",
   "ui.editor.policy_id_laast": "The identity is locked after creation. For a different id, create a new draft."
 }

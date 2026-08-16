@@ -147,6 +147,28 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
 // holder en nøkkel som er stabil så lenge innholdet er uendret. Uten arg
 // genereres en fersk (for engangs-klikk der duplikat ikke er en risiko).
 export const hentMaler = () => hentJson("/v1/policymaler");
+
+// Hvilken policy GJELDER i dag? Editoren kan ikke bare anta at malens id er
+// dagens policy-id: aktivering er per `policy_id`, så en ny id lager en NY
+// policyserie ved siden av den som gjelder i stedet for å avløse den — og
+// kunder som opprettet policyen med egen id (`acme-netthandel`) har ikke
+// malens id i det hele tatt.
+//
+// Svaret er derfor TREDELT, ikke boolsk. `ukjent` er en egen tilstand med
+// vilje: 404 betyr «ingen aktiv i dag», mens 403 (ingen `policy:read`) eller
+// 500 (registeret har flere aktive og nekter å velge én) betyr at vi IKKE VET
+// — og da skal flaten heller ikke påstå noe.
+export async function hentAktivPolicyId() {
+  try {
+    const d = await hentJson("/v1/policy/aktiv");
+    const id = d && typeof d.policy_id === "string" ? d.policy_id : null;
+    return id ? { kjent: true, id } : { kjent: false, id: null };
+  } catch (e) {
+    if (e instanceof UautorisertFeil) throw e;   // 401 er innlogging, ikke data
+    if (e instanceof IkkeFunnetFeil) return { kjent: true, id: null };
+    return { kjent: false, id: null };
+  }
+}
 export const opprettUtkast = (policyId, innhold, idem = nyIdempotensnokkel()) =>
   _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold }, idem);
 export const redigerUtkast = (uid, utkastversjon, innhold,

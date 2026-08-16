@@ -11,7 +11,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentMaler, hentJson, opprettUtkast, redigerUtkast, nyIdempotensnokkel,
+  hentMaler, hentAktivPolicyId, hentJson, opprettUtkast, redigerUtkast,
+  nyIdempotensnokkel,
   UautorisertFeil, ApiFeil,
 } from "../api.js";
 import { meldLive, TomTilstand, Feiltilstand } from "../komponenter.js";
@@ -196,14 +197,33 @@ function handlingerSeksjon(policy) {
     ...kort);
 }
 
-function metaSeksjon(policy, erNy) {
+// Hva kan vi SI om policy-id-en? Teksten lovet universelt at man «beholder
+// malens id for å avløse policyen som gjelder i dag» (Codex P1). Det er ikke
+// noe klienten kunne vite: aktivering er per `policy_id`, katalogen har flere
+// maler (`tjenestebedrift-no`, `netthandel-no`, `handverk-bygg-no`), og en
+// kunde som opprettet policyen med sin EGEN id har ikke malens id i det hele
+// tatt. Følger man rådet der, får man en ny policyserie ved siden av den som
+// gjelder — mens den gamle fortsatt er i kraft.
+//
+// Derfor sier hjelpeteksten bare det oppslaget faktisk dekker:
+//   kjent + id  → «<id> gjelder i dag; behold den for å avløse den»
+//   kjent, ingen aktiv → «det finnes ingen aktiv policy; dette blir den første»
+//   ukjent (403/500) → den kontraktsriktige regelen, uten å påstå hva som
+//                      gjelder: samme id viderefører serien, en annen lager ny.
+function policyIdHint(aktiv) {
+  if (!aktiv || !aktiv.kjent) return t("ui.editor.policy_id_hint");
+  if (!aktiv.id) return t("ui.editor.policy_id_hint_ingen_aktiv");
+  return t("ui.editor.policy_id_hint_avloser").replace("{id}", aktiv.id);
+}
+
+function metaSeksjon(policy, erNy, aktiv) {
   policy.meta = (policy.meta && typeof policy.meta === "object") ? policy.meta : {};
   const m = policy.meta;
   const felt = [
     // policy_id er identiteten; kan settes ved NY, låst ved redigering.
     tekstfelt(t("ui.editor.policy_id"), m.policy_id || "",
       (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" },
-      erNy ? t("ui.editor.policy_id_hint") : t("ui.editor.policy_id_laast")),
+      erNy ? policyIdHint(aktiv) : t("ui.editor.policy_id_laast")),
     tekstfelt(t("ui.editor.bedrift"), m.bedrift || "",
       (v) => { m.bedrift = v || undefined; }),
     tekstfelt(t("ui.editor.versjon"), m.versjon || "",
@@ -223,7 +243,11 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
   // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn() }
   const st = { policy: null, utkast_id: opts.utkast_id || null,
                utkastversjon: null, feil: [], laster: true,
-               nokkel: null, signatur: null };
+               nokkel: null, signatur: null,
+               // Hva GJELDER i dag? `kjent: false` er utgangspunktet, ikke en
+               // feiltilstand: før oppslaget har svart vet flaten ingenting,
+               // og skal derfor heller ikke påstå noe om avløsning.
+               aktiv: { kjent: false, id: null } };
 
   function lagre() {
     const innhold = byggInnhold(st.policy);
@@ -274,7 +298,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
 
     const barn = [
       ...flateHode(t("ui.editor.tittel"), t("ui.editor.undertittel")),
-      metaSeksjon(st.policy, !st.utkast_id),
+      metaSeksjon(st.policy, !st.utkast_id, st.aktiv),
       rollerSeksjon(st.policy, tegn),
       handlingerSeksjon(st.policy),
     ];
@@ -299,15 +323,24 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     st.policy = JSON.parse(JSON.stringify(opts.startPolicy));
     tegn();
   } else {
-    // Malvelger.
-    hentMaler().then((d) => {
+    // Malvelger. Hvilken policy som GJELDER hentes samtidig: uten den kan
+    // flaten verken foreslå riktig id eller si sant om hva id-en gjør. Den er
+    // hjelpedata, så et avslag (403) eller et tvetydig register (500) stopper
+    // ingenting — da blir bare `kjent: false`, og teksten lover mindre.
+    Promise.all([hentMaler(), hentAktivPolicyId()]).then(([d, aktiv]) => {
       st.laster = false;
+      st.aktiv = aktiv;
       visMalvelger(hoved, ctx, (d && d.maler) || [], (mal) => {
         st.policy = JSON.parse(JSON.stringify(mal.innhold));
-        // Malen FORESLÅR sin egen id i stedet for å tømme feltet: et tomt felt
-        // ba eier finne på en identitet uten å si hva den brukes til eller
-        // hvilket format den krever — og en ny id lager en NY policy ved siden
-        // av den som gjelder, i stedet for å avløse den. Kan overskrives.
+        st.policy.meta = (st.policy.meta && typeof st.policy.meta === "object")
+          ? st.policy.meta : {};
+        // Feltet fylles med den AKTIVE policyens id når vi kjenner den — det
+        // er den, ikke malens id, som avgjør om utkastet avløser dagens policy
+        // eller starter en ny serie ved siden av (Codex P1). Kjenner vi den
+        // ikke, står malens egen id igjen som forslag: et tomt felt ba eier
+        // finne på en identitet uten å si hva den brukes til eller hvilket
+        // format den krever. Begge deler kan overskrives.
+        if (st.aktiv.kjent && st.aktiv.id) st.policy.meta.policy_id = st.aktiv.id;
         tegn();
       }, opts.tilbake);
     }).catch((e) => {

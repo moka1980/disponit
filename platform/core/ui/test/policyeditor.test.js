@@ -250,6 +250,69 @@ test("Policy-ID: malen foreslår sin egen id, og regelen står ved feltet", asyn
     hint.id, "hjelpeteksten er ikke koblet til feltet for skjermlesere");
 });
 
+// --- Hva policy-id-en FAKTISK gjør avhenger av hva som gjelder i dag -----
+
+// Hjelpeteksten lovet universelt at man «beholder malens id for å avløse
+// policyen som gjelder i dag». Det kunne klienten ikke vite: aktivering er per
+// `policy_id`, katalogen har flere maler, og en kunde som opprettet policyen
+// med sin EGEN id har ikke malens id i det hele tatt. Følger man rådet der,
+// får man en NY policyserie ved siden av — mens den gamle fortsatt gjelder.
+async function velgMalMedAktiv(svarPaaAktiv) {
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policy/aktiv") return svarPaaAktiv();
+    return ekte(url, opts);
+  };
+  try {
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { aapneUtkast: () => {} });
+    await vent(() => h.querySelector(".mal-liste"));
+    h.querySelector(".mal-kort").dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".editor-seksjon"));
+    const felt = [...h.querySelectorAll(".felt")]
+      .find((f) => f.textContent.includes(t("ui.editor.policy_id")));
+    return { felt, inp: felt.querySelector("input"),
+             hint: felt.querySelector(".felt-hint").textContent };
+  } finally {
+    globalThis.fetch = ekte;
+  }
+}
+
+test("Policy-ID: feltet fylles med den AKTIVE policyens id, ikke malens", async () => {
+  const { inp, hint } = await velgMalMedAktiv(() => ({
+    ok: true, status: 200,
+    json: async () => ({ policy_id: "acme-netthandel", versjon: "1.0.0" }) }));
+  assert.equal(inp.value, "acme-netthandel",
+    "malens id ble foreslått som om den var dagens policy — den avløser " +
+    "ingenting, den lager en ny policyserie ved siden av");
+  assert.ok(hint.includes("acme-netthandel"),
+    "teksten sier ikke hvilken id som faktisk gjelder i dag");
+  assert.ok(!hint.includes("netthandel-no") || hint.includes("acme"),
+    "teksten peker fortsatt på malens id");
+});
+
+test("Policy-ID: uten aktiv policy loves ingen avløsning", async () => {
+  // 404 = vi VET at ingenting gjelder. Da er det ingenting å avløse, og
+  // teksten skal si nettopp det i stedet for å love det motsatte.
+  const { inp, hint } = await velgMalMedAktiv(() => ({
+    ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) }));
+  assert.equal(inp.value, "netthandel-no",
+    "uten aktiv policy er malens egen id et greit forslag");
+  assert.equal(hint, t("ui.editor.policy_id_hint_ingen_aktiv"));
+});
+
+test("Policy-ID: uten svar på hva som gjelder påstås ingenting", async () => {
+  // 403 (ingen `policy:read`) og 500 (registeret har flere aktive og nekter å
+  // velge én) betyr at flaten IKKE VET. Da skal den si regelen — samme id
+  // viderefører serien, en annen lager en ny — og ikke hva som gjelder.
+  const { inp, hint } = await velgMalMedAktiv(() => ({
+    ok: false, status: 403, json: async () => ({ feil: "ingen_tilgang" }) }));
+  assert.equal(inp.value, "netthandel-no");
+  assert.equal(hint, t("ui.editor.policy_id_hint"));
+  assert.ok(!hint.includes(t("ui.editor.policy_id_hint_ingen_aktiv")),
+    "flaten påstår at ingenting gjelder, men den vet det ikke");
+});
+
 // --- Rolle-ID-en er REDIGERBAR, og vakten må følge med -------------------
 
 const rolleRad = (h, idVerdi) =>

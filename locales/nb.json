@@ -568,6 +568,8 @@
   "ui.rolle.domeneadjudikator": "domeneadjudikator",
   "ui.editor.rolle_i_bruk": "Rollen er i bruk",
   "ui.editor.rolle_i_bruk_overstyring": "menneskelig overstyring",
-  "ui.editor.policy_id_hint": "Minst 3 tegn: små bokstaver, tall og bindestrek. Behold malens id for å avløse policyen som gjelder i dag.",
+  "ui.editor.policy_id_hint": "Minst 3 tegn: små bokstaver, tall og bindestrek. Samme id viderefører den samme policyserien; en annen id lager en ny policy ved siden av den som gjelder.",
+  "ui.editor.policy_id_hint_avloser": "Minst 3 tegn: små bokstaver, tall og bindestrek. «{id}» er policyen som gjelder i dag — behold den for å avløse den. En annen id lager en ny policy ved siden av.",
+  "ui.editor.policy_id_hint_ingen_aktiv": "Minst 3 tegn: små bokstaver, tall og bindestrek. Ingen policy er aktiv i dag, så denne blir den første.",
   "ui.editor.policy_id_laast": "Identiteten er låst etter opprettelse. Trenger du en annen id, lag et nytt utkast."
 }
