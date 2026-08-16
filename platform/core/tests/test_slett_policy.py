@@ -172,6 +172,109 @@ def test_utkast_og_runder_roeres_ikke_av_slettingen():
         m.close()
 
 
+# ---------------------------------------------------------------------------
+# Serialisering mot BRUK (Codex P1 + P2). Garantien «aldri brukt» er ikke et
+# utsagn om øyeblikket funksjonen kikker — den må holde over hele vinduet der
+# noen andre kan gjøre policyen brukt. Radlåsen på `policy_hode` klarte det
+# ikke: verken beslutningsveien eller runde-åpningen rører den raden.
+# ---------------------------------------------------------------------------
+
+def _sperret(c, pid, ms=400):
+    """Prøv å slette med en kort låsefrist. -> True hvis vi ble sperret."""
+    import psycopg
+    c.execute("SET LOCAL lock_timeout = %s", (f"{ms}ms",))
+    try:
+        _slett(c, pid)
+        return False
+    except psycopg.errors.LockNotAvailable:
+        return True
+
+
+@pg
+def test_sletting_venter_paa_en_beslutning_som_er_i_gang():
+    """Kontroll: fjern `laas_policy_delt` fra `policyregister.hent_aktiv`, så
+    blir denne rød — og med den forsvinner hele «aldri brukt»-garantien.
+
+    Uten låsen: beslutningen leser policyen, slettingen ser en revisjonslogg
+    uten spor og committer, og SÅ skriver beslutningen revisjonsraden sin. Et
+    revisjonsspor som peker på en policy som ikke finnes er ikke et spor.
+    """
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    beslutning, sletter = _rt(), _rt()
+    try:
+        # Beslutningsveien, midt i sin transaksjon: den har lest policyen, men
+        # revisjonsraden er ikke skrevet ennå. Innholdet i fixturen består ikke
+        # revalideringen — og det er nettopp poenget: låsen tas FØR lesingen,
+        # så den holder uansett hva lesingen ender med.
+        with pytest.raises(pr.PolicyKorrupt):
+            pr.hent_aktiv(beslutning, TEN, pid)
+
+        assert _sperret(sletter, pid), \
+            "slettingen gikk forbi en beslutning som var i gang"
+        sletter.rollback()
+
+        # Og når beslutningen er ferdig, slipper slettingen til.
+        beslutning.rollback()
+        from db.pg import sett_kontekst
+        sett_kontekst(sletter, TEN, "test", "r3")
+        assert _slett(sletter, pid) == 1
+        sletter.commit()
+    finally:
+        beslutning.close()
+        sletter.close()
+        m.close()
+
+
+@pg
+def test_sletting_venter_paa_en_runde_som_aapnes():
+    """Kontroll: fjern `laas_policy_delt` fra `policyadmin._hode_aktiv_versjon`,
+    så blir denne rød — og godkjennere kunne blitt sendt inn i en runde på en
+    policy som ble slettet under dem, og som aldri kan aktiveres."""
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    runde, sletter = _rt(), _rt()
+    try:
+        # Runde-åpningen har validert basen, men INSERT-en er ikke gjort.
+        assert policyadmin._hode_aktiv_versjon(runde, TEN, pid) == "1.0.0"
+        assert _sperret(sletter, pid), \
+            "slettingen gikk forbi en runde-åpning som var i gang"
+        sletter.rollback()
+        runde.rollback()
+    finally:
+        runde.close()
+        sletter.close()
+        m.close()
+
+
+@pg
+def test_to_beslutninger_staar_ikke_i_ko_bak_hverandre():
+    """Låsen er DELT for lesere. Var den eksklusiv, ville hver beslutning på
+    samme policy serialisert mot alle andre — en riktig garanti kjøpt for en
+    pris ingen ba om."""
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    a, b = _rt(), _rt()
+    try:
+        from db.pg import laas_policy_delt
+        laas_policy_delt(a, TEN, pid)
+        b.execute("SET LOCAL lock_timeout = '400ms'")
+        laas_policy_delt(b, TEN, pid)   # skal ikke kaste
+        a.rollback()
+        b.rollback()
+    finally:
+        a.close()
+        b.close()
+        m.close()
+
+
 @pg
 def test_sletting_krever_matchende_tenantkontekst():
     """SECURITY DEFINER omgår RLS — da er kontekstsjekken inne i funksjonen

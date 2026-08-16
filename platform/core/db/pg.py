@@ -64,6 +64,42 @@ def sett_tenant(conn: psycopg.Connection, tenant: str | None) -> str:
     return t
 
 
+def policylasnokkel(tenant: str, policy_id: str) -> str:
+    """Advisory-nøkkelen som serialiserer BRUK av en policy mot SLETTING av den.
+
+    Nøkkelen er tekst og hashes med `hashtextextended(nøkkel, 0)`, akkurat som
+    jti-låsen i `api.kjerne`. Den SAMME strengen bygges i SQL av
+    `slett_ubrukt_policy` (migrasjon 030) — endres formen her, må den endres
+    der, og omvendt. Derfor står den ett sted i Python og er skrevet ut i
+    klartekst i migrasjonens kommentar.
+    """
+    return f"{tenant}\x1fpolicy\x1f{policy_id}"
+
+
+def laas_policy_delt(conn: psycopg.Connection, tenant: str,
+                     policy_id: str) -> None:
+    """Ta DELT lås på en policy for resten av transaksjonen.
+
+    Hvorfor advisory og ikke `SELECT ... FOR SHARE` på `policy_hode`: runtime
+    har KUN SELECT på den tabellen (V10), og Postgres krever UPDATE-privilegium
+    for radlåsing — en radlås ville altså ikke kunne tas i forespørselsveien i
+    det hele tatt. En advisory-nøkkel finnes dessuten selv når hoderaden ikke
+    gjør det, og en `FOR SHARE` på ingenting serialiserer ingenting.
+
+    DELT, ikke eksklusiv: samtidige beslutninger på samme policy skal ikke stå
+    i kø bak hverandre. De skal bare — alle sammen — stå foran en sletting.
+    Slettingen tar den EKSKLUSIVE varianten av samme nøkkel, så den venter på
+    hver beslutning som allerede er i gang (og dermed på revisjonsraden den
+    ennå ikke har rukket å skrive), og enhver ny beslutning venter på den.
+
+    Låsen er `xact`-varianten: den slippes i commit/rollback, aldri før.
+    Kallerens transaksjon MÅ derfor være den som skriver ferdig det låsen
+    beskytter — for beslutningsveien er det revisjonsraden i `_avslutt`.
+    """
+    conn.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s, 0))",
+                 (policylasnokkel(tenant, policy_id),))
+
+
 def sett_kontekst(conn: psycopg.Connection, tenant: str | None,
                   aktor: str, request_id: str) -> str:
     """Setter ALLE tre sesjonsvariablene for gjeldende transaksjon.

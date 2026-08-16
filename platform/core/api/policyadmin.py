@@ -34,7 +34,7 @@ from datetime import timedelta
 
 import psycopg
 
-from db.pg import sett_kontekst
+from db.pg import laas_policy_delt, sett_kontekst
 from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
@@ -771,7 +771,19 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
     `serialization_failure`). Finnes ikke hoderaden (helt ny policy), er basen
     deny-all og funksjonen oppretter ankerraden idempotent ved aktivering — vi
     oppretter den ALDRI her (en forkastet runde skal ikke etterlate en tom
-    hoderad)."""
+    hoderad).
+
+    Men mot SLETTING (`slett_ubrukt_policy`, 030) holdt det ikke å ikke låse
+    (Codex P2). Slettingen lover at den ikke etterlater attestasjoner i omløp,
+    og kontrollerer det ved å telle åpne runder. En naken SELECT her lot
+    runde-åpningen validere basen, slettingen telle null runder og committe, og
+    så runde-INSERT-en lande på en policy som ikke lenger finnes — godkjennere
+    sendt inn i en runde som aldri kan aktiveres. Den delte låsen på policyen
+    holder til denne transaksjonen committer, altså til runden STÅR, og
+    slettingens eksklusive lås på samme nøkkel ser den. Radlås er ikke et
+    alternativ: `FOR SHARE` krever UPDATE-privilegium, som runtime ikke har.
+    """
+    laas_policy_delt(conn, tenant, policy_id)
     rad = conn.execute(
         "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s AND policy_id=%s",
         (tenant, policy_id)).fetchone()

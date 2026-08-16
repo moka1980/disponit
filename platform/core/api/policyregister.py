@@ -57,7 +57,19 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     forespørselen er kun et navn innenfor den tenanten — den kan aldri peke
     ut en annen tenants policy, verken via spørringen eller via RLS.
     Krever at kalleren har satt `disponit.tenant` (db.pg.sett_kontekst).
+
+    Låsen FØRST, og delt (Codex P1). Uten den kunne `slett_ubrukt_policy`
+    (030) kile seg inn i dette vinduet: beslutningen leser policyen her,
+    slettingen ser en revisjonslogg uten spor av den, sletter — og så
+    committer beslutningen revisjonsraden sin, som nå peker på en policy som
+    ikke finnes. `FOR UPDATE` på `policy_hode` inne i slettefunksjonen stengte
+    ikke det vinduet, for denne veien rører aldri `policy_hode`. Den delte
+    låsen holder til kallerens transaksjon committer, altså til revisjonsraden
+    STÅR — og slettingens eksklusive lås på samme nøkkel venter på nettopp det.
+    Delte låser blokkerer ikke hverandre, så beslutninger går som før.
     """
+    from db.pg import laas_policy_delt
+    laas_policy_delt(conn, tenant, policy_id)
     rad = conn.execute(
         "SELECT innhold, innholds_hash, status, versjon FROM policyer"
         " WHERE tenant=%s AND policy_id=%s AND aktiv",

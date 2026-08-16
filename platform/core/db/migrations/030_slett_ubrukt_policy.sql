@@ -54,7 +54,35 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
-    -- Lås ankeret først: en samtidig aktivering av samme policy skal enten
+    -- SERIALISERINGEN, og den må komme aller først.
+    --
+    -- Radlåsen på `policy_hode` under er ikke nok, og kunne aldri blitt det.
+    -- De to veiene som gjør en policy BRUKT rører ikke den raden i det hele
+    -- tatt: beslutningsveien leser `policyer` via `policyregister.hent_aktiv`,
+    -- og runde-åpningen leste `policy_hode` med en naken SELECT. Begge kunne
+    -- derfor gå helt forbi låsen, la denne funksjonen se en revisjonslogg uten
+    -- spor og null åpne runder, slette — og først ETTERPÅ committe sin egen
+    -- revisjonsrad eller aktiveringsrunde. Resultatet er nøyaktig det garantien
+    -- «aldri brukt» skulle utelukke: et revisjonsspor som peker på en policy
+    -- som ikke finnes, eller godkjennere i en runde som aldri kan aktiveres.
+    --
+    -- Runtime kan heller ikke låse rader i `policy_hode`: den har KUN SELECT
+    -- (V10), og Postgres krever UPDATE-privilegium for `FOR SHARE`. Det som
+    -- gjenstår, og som virker fra begge sider, er en advisory-nøkkel.
+    --
+    -- Nøkkelen er `tenant \x1f 'policy' \x1f policy_id`, hashet med
+    -- `hashtextextended(..., 0)` — SAMME streng som `db.pg.policylasnokkel`
+    -- bygger. Endres den ene, MÅ den andre endres: da tar de to sidene hvert
+    -- sitt lås og serialiserer ingenting.
+    --
+    -- Her tas den EKSKLUSIVT, mens brukerne tar den DELT. Denne funksjonen
+    -- venter derfor på hver beslutning og hver runde-åpning som allerede er i
+    -- gang (til den har committet, ikke bare til den har lest), og enhver ny
+    -- må vente på oss. Beslutninger blokkerer aldri hverandre.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        p_tenant || E'\x1f' || 'policy' || E'\x1f' || p_policy_id, 0));
+
+    -- Deretter ankeret: en samtidig aktivering av samme policy skal enten
     -- skje FØR (og da er policyen kanskje brukt) eller vente til vi er
     -- ferdige (og da finner den ingen aktiv base — som er sannheten).
     PERFORM 1 FROM policy_hode
