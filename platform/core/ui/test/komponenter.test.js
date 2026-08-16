@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { plattformTelling } from "../static/js/plattformdata.js";
+import { KATALOG } from "../static/js/katalog.js";
 import {
   BeslutningBadge, KategoriTag, Tidspunkt, BegrunnelseKjede, StatusTidslinje,
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
@@ -21,6 +22,12 @@ import { Detaljpanel, Bekreftelsesdialog } from "../static/js/dialog.js";
 const HER = dirname(fileURLToPath(import.meta.url));
 
 settI18nForTest(NB, "nb");
+
+// Modulmenyen viser tenantens TILDELING, ikke plattformkatalogen. Testene som
+// handler om noe annet enn tildelingen får derfor «alt», eksplisitt: uten et
+// `moduler`-argument har skallet ingen tildeling å vise, og det er nettopp
+// poenget (se testen om tildelingen lenger ned).
+const ALLE_MODULER = KATALOG.map((k) => k.n);
 
 test("BeslutningBadge: farge + glyf + tekst, ingen axe-brudd", async () => {
   for (const kode of ["TILLAT", "STOPP", "UNNTAK"]) {
@@ -249,7 +256,7 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   // sentrum: modulene var usynlige inne i produktet de utgjør, og det fantes
   // ingen statuslinje.
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }], varsler: 3,
+    ruter: [{ nokkel: "oversikt" }], varsler: 3, moduler: ALLE_MODULER,
     paaSprak: () => {}, paaLoggUt: () => {} });
 
   assert.ok(rot.querySelector(".skall-topp"), "topp mangler");
@@ -262,7 +269,7 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   assert.ok(rot.querySelectorAll(".skall-modulgruppe").length >= 5,
     "modulmenyen er ikke gruppert etter område");
   assert.equal(rot.querySelectorAll(".skall-modul").length, 45,
-    "modulmenyen viser ikke hele katalogen");
+    "modulmenyen viser ikke hele tildelingen");
 
   // 🔴 Statuslinja skal si det REGISTERET bærer. Spesifikasjonens «45 moduler
   // aktive» er en ILLUSTRASJON, ikke en verdi. Testen sammenligner derfor mot
@@ -317,7 +324,8 @@ test("AppShell: «sist oppdatert» er dataenes tid, ikke rendringens", () => {
 
 test("AppShell: modulmenyen kan skjules, og bryteren sier fra", async () => {
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
   const bryter = [...rot.querySelectorAll("button")]
     .find((b) => b.getAttribute("aria-controls") === "modulmeny");
   assert.ok(bryter, "ingen bryter for modulmenyen");
@@ -366,7 +374,8 @@ test("skall-kropp: sonene er navngitte, også når menyen er skjult", () => {
 
 test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () => {
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
   const felt = rot.querySelector("#skall-sok");
   assert.ok(felt, "søkefeltet mangler i toppen");
   felt.value = "bank";
@@ -384,7 +393,8 @@ test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () 
 
 test("AppShell: et modulvalg fyller kontekstpanelet", async () => {
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
   const panel = rot.querySelector(".skall-kontekst");
   assert.ok(panel.textContent.includes(NB["ui.shell.kontekst_tom"]),
     "panelet sier ikke hva det venter på");
@@ -403,7 +413,8 @@ test("AppShell: modulvalget merkes og panelet tar imot fokus", () => {
   // under hele 45-modulersmenyen.
   const brett = nyttBrett();
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
   brett.append(rot);
   const panel = rot.querySelector(".skall-kontekst");
   assert.equal(panel.getAttribute("tabindex"), "-1",
@@ -429,4 +440,43 @@ test("AppShell: modulvalget merkes og panelet tar imot fokus", () => {
   felt.dispatchEvent(new window.Event("input"));
   assert.equal(knapp("site.katalog.m14.navn").getAttribute("aria-current"),
     "true", "valget forsvant da søket tegnet menyen på nytt");
+});
+
+test("AppShell: modulmenyen viser tenantens tildeling, ikke katalogen", () => {
+  // 🔴 MENYEN ER KUNDENS, IKKE PLATTFORMENS (Codex P2). Den gikk over hele
+  // `OMRADER`, mens `/v1/utrulling` for lengst har sagt hvilke moduler økten
+  // eier — Bjørkli har to. 43 fremmede moduler sto altså som valgbare i en
+  // meny som utgir seg for å være kundens egen applikasjon.
+  const { rot, visKontekst } = AppShell({ tenant: "Bjørkli", sprak: "nb",
+    aktiv: "oversikt", ruter: [{ nokkel: "oversikt" }], moduler: [1, 2],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const navn = [...rot.querySelectorAll(".skall-modul")].map((b) => b.textContent);
+  assert.deepEqual(navn,
+    [NB["site.katalog.m1.navn"], NB["site.katalog.m2.navn"]],
+    `menyen viser ${navn.length} moduler for en tenant med to`);
+
+  // Panelet er detaljvisningen til menyen: det som ikke er tildelt, kan heller
+  // ikke hentes fram derfra.
+  const panel = rot.querySelector(".skall-kontekst");
+  visKontekst(13, { fokuser: false });
+  assert.ok(panel.textContent.includes(NB["ui.shell.kontekst_tom"]),
+    "kontekstpanelet viste en modul tenanten ikke har");
+
+  // Og en ukjent tildeling er ikke en tom en: uten svar fra den autoriserte
+  // veien skal menyen SI at den ikke vet, ikke vise hele katalogen.
+  const ukjent = AppShell({ tenant: "Bjørkli", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  assert.equal(ukjent.rot.querySelectorAll(".skall-modul").length, 0,
+    "uten tildeling ble hele plattformkatalogen presentert som kundens");
+  assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_ukjent"]),
+    "menyen sier ikke fra at tildelingen mangler");
+
+  // En tildeling som ER tom, er noe annet enn et søk uten treff.
+  const tom = AppShell({ tenant: "Bjørkli", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: [],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  assert.ok(tom.rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_ingen"]),
+    "en tom tildeling forveksles med et søk uten treff");
 });

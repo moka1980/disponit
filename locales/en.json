@@ -623,6 +623,8 @@
   "ui.dag.son": "Sunday",
   "ui.shell.moduler": "Module menu",
   "ui.shell.moduler_tomt": "No modules match the search.",
+  "ui.shell.moduler_ingen": "No modules are allocated to this customer yet.",
+  "ui.shell.moduler_ukjent": "Module allocation is unavailable.",
   "ui.shell.kontekst": "Details",
   "ui.shell.kontekst_tom": "Select a module in the menu to see details.",
   "ui.shell.kontekst_omrade": "Area",

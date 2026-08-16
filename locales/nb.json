@@ -623,6 +623,8 @@
   "ui.dag.son": "søndag",
   "ui.shell.moduler": "Modulmeny",
   "ui.shell.moduler_tomt": "Ingen moduler matcher søket.",
+  "ui.shell.moduler_ingen": "Ingen moduler er tildelt denne kunden ennå.",
+  "ui.shell.moduler_ukjent": "Modultildelingen er ikke tilgjengelig.",
   "ui.shell.kontekst": "Detaljer",
   "ui.shell.kontekst_tom": "Velg en modul i menyen for å se detaljer.",
   "ui.shell.kontekst_omrade": "Område",

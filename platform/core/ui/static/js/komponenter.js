@@ -190,7 +190,7 @@ export function visStatus(container, tilstand) {
 
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
-                          brukerId, epost, roller, varsler, oppdatert,
+                          brukerId, epost, roller, moduler, varsler, oppdatert,
                           paaSprak, paaLoggUt } = {}) {
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
@@ -310,12 +310,31 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     }
   }
 
+  // MENYEN VISER KUNDENS MODULER, IKKE PLATTFORMKATALOGEN (Codex P2). Menyen
+  // gikk over hele `OMRADER` — altså alle 45 modulene vi TILBYR — mens
+  // `/v1/utrulling` allerede har sagt hvilke modul-ID-er DENNE økten er
+  // tildelt. En kunde med to moduler fikk dermed 43 fremmede moduler presentert
+  // som valgbare i sin egen applikasjonsmeny. Kundeflaten har hatt regelen
+  // lenge (`modulerFraIder`): en ukjent eller delvis tildeling erstattes ikke
+  // med hele katalogen.
+  //
+  // `null` er «vet ikke», ikke «ingen»: uten svar fra den autoriserte veien
+  // sier menyen at tildelingen ikke er tilgjengelig, i stedet for å gjette i
+  // noen av retningene.
+  const tildelte = Array.isArray(moduler) ? new Set(moduler) : null;
+  const erTildelt = (n) => tildelte !== null && tildelte.has(n);
+
   function tegnModuler(filter) {
     const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
     const grupper = [];
     modulknapper.clear();
+    if (tildelte === null) {
+      sett(modulliste,
+        el("p", { class: "muted", text: t("ui.shell.moduler_ukjent") }));
+      return;
+    }
     for (const omrade of OMRADER) {
-      const treff = omrade.moduler.filter((n) =>
+      const treff = omrade.moduler.filter((n) => erTildelt(n)).filter((n) =>
         !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
           .includes(q));
       if (!treff.length) continue;
@@ -331,9 +350,12 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
             return el("li", {}, kn);
           }))));
     }
-    // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting.
+    // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting — og en
+    // tildeling uten moduler er noe annet enn et søk uten treff.
+    const tomNokkel = tildelte.size
+      ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
     sett(modulliste, grupper.length ? grupper
-      : el("p", { class: "muted", text: t("ui.shell.moduler_tomt") }));
+      : el("p", { class: "muted", text: t(tomNokkel) }));
     merkValgt();
   }
 
@@ -341,6 +363,10 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // oppslag: den som fyller panelet uten at brukeren ba om det, skal ikke rykke
   // fokus ut av der brukeren står.
   function visKontekst(n, { fokuser = true } = {}) {
+    // Panelet er detaljvisningen til MENYEN, og skal ikke kunne brukes til å
+    // hente fram en modul kunden ikke har: den som kaller utenfra ser ikke
+    // tildelingen, så grensen står her.
+    if (!erTildelt(n)) return;
     const status = modulStatus(n);
     valgtModul = n;
     merkValgt();
