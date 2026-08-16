@@ -451,7 +451,7 @@
   "ui.policyadmin.utfall.venter_godkjennere": "Attestert — venter på flere godkjennere.",
   "ui.policyadmin.utfall.rebasering_kreves": "Grunnlaget har endret seg — rebasering kreves.",
   "ui.policyadmin.utfall.semantikk_endret": "Motorsemantikken har endret seg — åpne ny runde.",
-  "ui.policyadmin.utfall.ukjent": "Handlingen er utført.",
+  "ui.policyadmin.utfall.ukjent": "Ukjent utfall — kontroller utkastets tilstand før du går videre.",
   "risiko.UTVIDER": "Utvider fullmakt",
   "risiko.INNSNEVRER": "Innsnevrer",
   "risiko.NØYTRAL": "Nøytral",

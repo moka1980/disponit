@@ -817,6 +817,67 @@ test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
     "kvitteringen ble hengende igjen og bekrefter noe som ikke skjedde nå");
 });
 
+// Codex P2: `rebasering_kreves` og `semantikk_endret` er TERMINALE utfall —
+// serveren har kansellert aktiveringsrunden og krever en ny handling av eier —
+// men de kommer som 200. De traff derfor `.then`, der alt som ikke var
+// `aktivert` ble klassifisert som «vent», og en kansellert runde fikk samme
+// rolige ventestil som en runde som går sin gang. Samme `rebasering_kreves`
+// ble vist som FEIL når den kom som `ApiFeil`: ett utfall, to farger, og den
+// villedende av dem sa «len deg tilbake» til noen som må åpne ny runde.
+//
+// Kontroll: sett `UTFALLSART` tilbake til «alt som ikke er aktivert = vent», så
+// blir testen rød.
+const _attesterMedUtfall = async (h, svar) => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({ ok: true, status: 200, json: async () => svar }) };
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+  _finn(h, t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+  [...bek.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering"));
+  return h.querySelector(".pa-kvittering");
+};
+
+test("Attester: kansellert runde er en FEIL, ikke en ventetilstand", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(),
+    { utfall: "rebasering_kreves" });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.rebasering_kreves")));
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"),
+    "en kansellert runde ble vist med ventestil — eier tror hun kan vente");
+  assert.ok(!kvitt.classList.contains("pa-kvittering-vent"));
+  assert.equal(kvitt.getAttribute("role"), "alert",
+    "et terminalt utfall krever handling og skal ikke annonseres politt");
+});
+
+test("Attester: semantikkendring er en FEIL, ikke en ventetilstand", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(),
+    { utfall: "semantikk_endret" });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.semantikk_endret")));
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+});
+
+// `vent` er reservert for det ENE utfallet der ventingen faktisk ER svaret. Et
+// utfall flaten ikke kjenner, er ikke en bekreftet aktivering, og skal verken
+// se ut som en eller som en rolig venting (fail-closed).
+test("Attester: ukjent utfall bekrefter ingenting", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(), { utfall: "noe_nytt" });
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+  assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.utfall.ukjent"));
+  assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.utfall.aktivert")),
+    "et ukjent utfall skal ikke påstå at policyen er aktivert");
+});
+
 // Codex P2: et `role="status"` annonserer ikke pålitelig tekst som lå der
 // allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
 // bare `role="alert"` som vanligvis får. Bygde vi kvitteringsboksen ferdig

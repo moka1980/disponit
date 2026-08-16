@@ -150,6 +150,27 @@ function kvitteringsBoks(k) {
   return { rot, fyll: () => sett(linje, k.tekst) };
 }
 
+// En attestering har TRE utfallsfamilier, ikke to (Codex P2).
+//
+// `rebasering_kreves` og `semantikk_endret` er TERMINALE: serveren har
+// KANSELLERT aktiveringsrunden (se `policyadmin.py` — runden settes til
+// 'kansellert' rett før svaret) og krever en ny handling av eier. Men de kommer
+// som 200, ikke som feil, så de traff `.then` — og der ble alt som ikke var
+// `aktivert` klassifisert som «vent». En kansellert runde fikk dermed samme
+// rolige ventestil som en runde som går sin gang, mens SAMME `rebasering_kreves`
+// ble vist som feil når den kom som `ApiFeil`. Samme utfall, to farger, og den
+// mest villedende av dem sa «len deg tilbake» til noen som må åpne ny runde.
+//
+// Kartet er derfor eksplisitt, og alt ukjent faller til `feil`: et utfall denne
+// flaten ikke kjenner, er ikke en bekreftet aktivering, og skal ikke se ut som
+// en. `vent` er reservert for det ENE utfallet der ventingen er svaret.
+const UTFALLSART = {
+  aktivert: "ok",
+  venter_godkjennere: "vent",
+  rebasering_kreves: "feil",
+  semantikk_endret: "feil",
+};
+
 // ÉN idempotensnøkkel per aktiveringsforsøk — gjenbrukes ved nettverksretry, så
 // serveren ser samme nøkkel og ikke aktiverer to ganger.
 function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
@@ -171,7 +192,7 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
           tekst += " " + t("ui.policyadmin.utfall.mangler_uavhengig");
         }
       }
-      _settKvittering(uid, utfall === "aktivert" ? "ok" : "vent", tekst);
+      _settKvittering(uid, UTFALLSART[utfall] || "feil", tekst);
       if (paaFerdig) paaFerdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
