@@ -429,17 +429,38 @@ def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
     utkast_id, runde = lagret.get("utkast_id"), lagret.get("runde")
     if not utkast_id or not runde:
         return 0
-    rad = varsel.skjermet(conn, lambda: conn.execute(
-        "SELECT r.status, r.utloper, r.pakrevd_antall_godkjennere,"
-        " (SELECT count(*) FROM aktiveringsattestasjon a"
-        "   WHERE a.tenant=r.tenant AND a.utkast_id=r.utkast_id"
-        "     AND a.runde=r.runde),"
-        " (SELECT count(*) FROM aktiveringsattestasjon a"
-        "   WHERE a.tenant=r.tenant AND a.utkast_id=r.utkast_id"
-        "     AND a.runde=r.runde AND NOT a.er_forfatter)"
-        " FROM aktiveringsrunde r"
-        " WHERE r.tenant=%s AND r.utkast_id=%s AND r.runde=%s",
-        (tenant, utkast_id, runde)).fetchone())
+
+    def _les_under_laas():
+        # RUNDEN LÅSES FØRST (Codex P2). Uten låsen var «åpen» bare sant i det
+        # øyeblikket spørringen svarte: den siste attesteringen kunne lukke
+        # runden og kjøre `pensjoner_runde` i vinduet før innsettingen under,
+        # og da traff ikke pensjoneringen de radene som ennå ikke fantes.
+        # `ON CONFLICT` kan ikke fange dem heller — for de mottakerne
+        # forsoningen finnes for, er det nettopp den opprinnelige raden som
+        # MANGLER. Resultatet var et ulest, e-postkøet varsel om en runde som
+        # var ferdig, altså en ny løgn skapt av veien som skulle reparere en.
+        #
+        # Låsen holder til kallerens commit, så attesteringen kan ikke lukke
+        # runden før varslene finnes — og finner den dem, pensjonerer den dem.
+        #
+        # Låsrekkefølgen kan ikke gi vranglås: attesteringen tar utkastet
+        # først og runden etterpå, denne veien tar KUN runden og venter aldri
+        # på utkastet. Ingen sirkel.
+        laast = conn.execute(
+            "SELECT status, utloper, pakrevd_antall_godkjennere"
+            "  FROM aktiveringsrunde"
+            " WHERE tenant=%s AND utkast_id=%s AND runde=%s FOR UPDATE",
+            (tenant, utkast_id, runde)).fetchone()
+        if laast is None:
+            return None
+        antall, ikke_forfatter = conn.execute(
+            "SELECT count(*), count(*) FILTER (WHERE NOT er_forfatter)"
+            "  FROM aktiveringsattestasjon"
+            " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+            (tenant, utkast_id, runde)).fetchone()
+        return (*laast, antall, ikke_forfatter)
+
+    rad = varsel.skjermet(conn, _les_under_laas)
     if rad is varsel.FEILET or rad is None:
         return 0
     if _runde_status(rad[0], rad[1], naa) != "apen":

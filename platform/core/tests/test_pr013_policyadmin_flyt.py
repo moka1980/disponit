@@ -1545,6 +1545,83 @@ def test_replay_varsler_ikke_om_en_runde_som_ikke_lenger_venter(monkeypatch):
         "forsoningen varslet om en runde som ikke lenger venter på noen")
 
 
+@pg
+def test_forsoningen_holder_runden_laast_gjennom_varselopprettelsen(monkeypatch):
+    """Codex P2: «åpen» var bare sant i det øyeblikket spørringen svarte.
+
+    Forsoningen leste rundens status og satte DERETTER inn varslene. I vinduet
+    imellom kunne den siste attesteringen lukke runden og kjøre
+    `pensjoner_runde` — som ikke traff noe, fordi radene ennå ikke fantes. For
+    nettopp de mottakerne forsoningen finnes for (den opprinnelige raden
+    MANGLER) kan `ON CONFLICT` heller ikke fange dem, så de satt igjen med et
+    ulest, e-postkøet varsel om en runde som var ferdig. Veien som skulle
+    reparere en løgn, laget en ny.
+
+    Målt slik det virker: forsoningen kjøres på én forbindelse UTEN å committe,
+    og en annen forbindelse prøver å ta rundens rad `FOR UPDATE NOWAIT` — den
+    låsen attesteringen tar i steg 4. Blir den nektet, kan ingen attestering
+    lukke runden før varslene er på plass og committet.
+
+    `NOWAIT` og ikke en tråd med tidsavbrudd: en test som VENTER på en lås
+    beviser bare at noe tok tid. Denne svarer ja eller nei med det samme.
+
+    Kontroll: ta `FOR UPDATE` ut av `_les_under_laas`, og NOWAIT-kallet går
+    gjennom.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("laas-forf", ["policyforvalter"])
+    _medlem("laas-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    # Åpningen med varslingen slått av: hullet forsoningen skal fylle.
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter",
+                        lambda *a, **k: 0)
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fapne\x1f{idem}"
+    rt = _rt()
+    try:
+        lagret = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+    assert _varsler(uid) == {}, "forutsetningen holder ikke: noe ble varslet"
+    monkeypatch.undo()
+
+    from db.pg import sett_kontekst
+    forsoner = _rt()
+    annen = _rt()
+    try:
+        sett_kontekst(forsoner, TEN, a, "r-forson")
+        antall = policyadmin._forson_rundevarsling(
+            forsoner, TEN, a, "r-forson", lagret, _naa())
+        assert antall > 0, "forsoningen opprettet ingen varsler å verne om"
+
+        sett_kontekst(annen, TEN, a, "r-annen")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            annen.execute(
+                "SELECT 1 FROM aktiveringsrunde WHERE tenant=%s"
+                " AND utkast_id=%s AND runde=1 FOR UPDATE NOWAIT",
+                (TEN, uid)).fetchone()
+        annen.rollback()
+        forsoner.commit()
+
+        # …og etter commiten er runden fri igjen: låsen varer så lenge den
+        # trengs, ikke lenger.
+        sett_kontekst(annen, TEN, a, "r-annen2")
+        assert annen.execute(
+            "SELECT 1 FROM aktiveringsrunde WHERE tenant=%s"
+            " AND utkast_id=%s AND runde=1 FOR UPDATE NOWAIT",
+            (TEN, uid)).fetchone() is not None
+        annen.rollback()
+    finally:
+        forsoner.close()
+        annen.close()
+
+    assert set(_varsler(uid)), "forsoningen etterlot ingen varsler"
+
+
 def _varsler(uid, runde=1):
     """{bruker_id: (lest_ts, epost_status)} for rundens varsler."""
     m = _mig()
