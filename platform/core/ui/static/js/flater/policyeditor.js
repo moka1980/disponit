@@ -69,11 +69,74 @@ function rollerSeksjon(policy, tegnPaaNytt) {
     el("h3", { text: t("ui.editor.roller") }), liste, legg);
 }
 
-function handlingKort(h) {
+// Skjemaet er smalt, og da skal feltet være det også. Alle tre grensene under
+// hadde fritekst, så eier måtte KJENNE formatet på forhånd og fikk svaret av
+// validatoren etterpå: valuta som «kommaseparert» (en rå array lekket ut i
+// UI-et), tidsvindu som en streng med sin egen grammatikk, beløp uten hint om
+// desimaler. Et felt som bare kan produsere gyldige verdier trenger ingen av
+// delene.
+
+// `^[A-Z]{3}$` i skjemaet. NOK står først fordi det er standarden her; de
+// øvrige er de vi faktisk møter. En policy med en annen kode beholder den
+// (den legges inn i lista), så et nedtrekk aldri kan slette data.
+const VALUTAER = ["NOK", "EUR", "USD", "SEK", "DKK", "GBP"];
+const DAGER = ["man", "tir", "ons", "tor", "fre", "lor", "son"];
+const TIDSVINDU_RE = /^([a-z]{3})-([a-z]{3}) (\d{2}:\d{2})-(\d{2}:\d{2})$/;
+
+function tidsvinduDeler(verdi) {
+  const m = TIDSVINDU_RE.exec(verdi || "");
+  return m ? { fraDag: m[1], tilDag: m[2], fraKl: m[3], tilKl: m[4] }
+           : { fraDag: "man", tilDag: "fre", fraKl: "08:00", tilKl: "16:00" };
+}
+
+function tidsvinduVelger(g, tegnPaaNytt) {
+  const paa = typeof g.tidsvindu === "string" && g.tidsvindu !== "";
+  const d = tidsvinduDeler(g.tidsvindu);
+  const skriv = () => {
+    g.tidsvindu = `${d.fraDag}-${d.tilDag} ${d.fraKl}-${d.tilKl}`;
+  };
+  const bryter = el("input", { type: "checkbox", class: "felt-bryter" });
+  if (paa) bryter.setAttribute("checked", "");
+  bryter.addEventListener("change", () => {
+    if (bryter.checked) skriv(); else delete g.tidsvindu;
+    tegnPaaNytt();
+  });
+  const rad = el("div", { class: "editor-tidsvindu" });
+  if (paa) {
+    const klokke = (verdi, sett) => {
+      const i = el("input", { type: "time", class: "felt-inp", value: verdi });
+      i.addEventListener("change", () => { sett(i.value); skriv(); });
+      return i;
+    };
+    rad.append(
+      velg(t("ui.editor.tidsvindu_fra_dag"), d.fraDag, DAGER, "ui.dag.",
+        (v) => { d.fraDag = v; skriv(); }),
+      velg(t("ui.editor.tidsvindu_til_dag"), d.tilDag, DAGER, "ui.dag.",
+        (v) => { d.tilDag = v; skriv(); }),
+      el("label", { class: "felt" },
+        el("span", { class: "felt-navn", text: t("ui.editor.tidsvindu_fra_kl") }),
+        klokke(d.fraKl, (v) => { d.fraKl = v; })),
+      el("label", { class: "felt" },
+        el("span", { class: "felt-navn", text: t("ui.editor.tidsvindu_til_kl") }),
+        klokke(d.tilKl, (v) => { d.tilKl = v; })));
+  }
+  return el("div", { class: "editor-felt-gruppe" },
+    el("label", { class: "felt felt-vannrett" }, bryter,
+      el("span", { class: "felt-navn", text: t("ui.editor.tidsvindu") })),
+    rad);
+}
+
+function handlingKort(h, tegnPaaNytt) {
   h.grenser = (h.grenser && typeof h.grenser === "object") ? h.grenser : {};
   const g = h.grenser;
-  const valutaTekst = Array.isArray(g.valuta) ? g.valuta.join(", ")
-    : (g.valuta || "");
+  // Valutaen er en liste i skjemaet, men i praksis én kode. Har policyen
+  // flere, beholdes de: nedtrekket bytter den FØRSTE og sier fra om resten,
+  // i stedet for å kaste dem stille.
+  const valutaer = Array.isArray(g.valuta) ? g.valuta.filter(Boolean)
+    : (g.valuta ? [g.valuta] : []);
+  const valgtValuta = valutaer[0] || "NOK";
+  const valgbare = VALUTAER.includes(valgtValuta)
+    ? VALUTAER : [valgtValuta, ...VALUTAER];
   return el("div", { class: "editor-kort" },
     el("h4", {}, el("code", { text: h.id || "?" })),
     velg(t("ui.editor.modus"), h.modus, MODUS, "modus.", (v) => { h.modus = v; }),
@@ -81,19 +144,20 @@ function handlingKort(h) {
       (v) => {
         v = v.trim();
         if (!v) delete g.belop_maks; else g.belop_maks = v;
-      }),
-    tekstfelt(t("ui.editor.valuta"), valutaTekst, (v) => {
-      const liste = v.split(",").map((s) => s.trim()).filter(Boolean);
-      if (liste.length) g.valuta = liste; else delete g.valuta;
+      }, { inputmode: "decimal" }, t("ui.editor.belop_hint")),
+    velg(t("ui.editor.valuta"), valgtValuta, valgbare, "", (v) => {
+      g.valuta = [v, ...valutaer.slice(1)];
     }),
-    tekstfelt(t("ui.editor.tidsvindu"), g.tidsvindu || "", (v) => {
-      v = v.trim(); if (v) g.tidsvindu = v; else delete g.tidsvindu;
-    }));
+    valutaer.length > 1
+      ? el("p", { class: "editor-hint",
+        text: `${t("ui.editor.valuta_flere")}: ${valutaer.join(", ")}` })
+      : null,
+    tidsvinduVelger(g, tegnPaaNytt));
 }
 
-function handlingerSeksjon(policy) {
+function handlingerSeksjon(policy, tegnPaaNytt) {
   policy.handlinger = Array.isArray(policy.handlinger) ? policy.handlinger : [];
-  const kort = policy.handlinger.map(handlingKort);
+  const kort = policy.handlinger.map((h) => handlingKort(h, tegnPaaNytt));
   return el("section", { class: "editor-seksjon",
     "aria-label": t("ui.editor.handlinger") },
     el("h3", { text: t("ui.editor.handlinger") }),
@@ -180,7 +244,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       ...flateHode(t("ui.editor.tittel"), t("ui.editor.undertittel")),
       metaSeksjon(st.policy, !st.utkast_id),
       rollerSeksjon(st.policy, tegn),
-      handlingerSeksjon(st.policy),
+      handlingerSeksjon(st.policy, tegn),
     ];
     if (feilboks) barn.push(feilboks);
     barn.push(knapper);

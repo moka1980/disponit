@@ -170,3 +170,84 @@ test("Roller: legg til og fjern re-tegner", async () => {
     h.querySelectorAll(".editor-liste .editor-rad").length === foer + 1);
   assert.equal(h.querySelectorAll(".editor-liste .editor-rad").length, foer + 1);
 });
+
+test("Grenser: valuta og tidsvindu velges, de skrives ikke", async () => {
+  // Feltene var fritekst: valuta «kommaseparert» (en rå array lekket ut i
+  // UI-et) og tidsvindu en streng med egen grammatikk. Et felt som bare kan
+  // produsere gyldige verdier fjerner hele feilklassen.
+  const policy = {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
+      grenser: { belop_maks: "1000.00", valuta: ["NOK"],
+        tidsvindu: "man-fre 08:00-16:00" } }],
+  };
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: policy });
+  await vent(() => h.querySelector(".editor-kort"));
+
+  const kort = h.querySelector(".editor-kort");
+  const valutaSel = [...kort.querySelectorAll("select")]
+    .find((s) => [...s.options].some((o) => o.value === "NOK"));
+  assert.ok(valutaSel, "valuta er ikke et nedtrekk");
+  assert.equal(valutaSel.value, "NOK");
+  assert.ok([...valutaSel.options].every((o) => /^[A-Z]{3}$/.test(o.value)),
+    "nedtrekket kan produsere en kode skjemaet avviser");
+
+  // Tidsvinduet er dager + klokkeslett, og skrives tilbake på skjemaets form.
+  assert.equal(kort.querySelectorAll('input[type="time"]').length, 2,
+    "tidsvindu har ikke klokkeslettvelgere");
+  const dagSel = [...kort.querySelectorAll("select")]
+    .filter((s) => [...s.options].some((o) => o.value === "man"));
+  assert.equal(dagSel.length, 2, "tidsvindu har ikke dagvelgere");
+  dagSel[1].value = "lor";
+  dagSel[1].dispatchEvent(new window.Event("change"));
+  // Editoren dyp-kopierer `startPolicy`, så originalen endrer seg ALDRI —
+  // en påstand om den ville vært grønn uansett hva velgeren skrev. Verdien
+  // leses derfor av det som faktisk sendes til serveren.
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const sendt = JSON.parse(POST.opts.body);
+  const tv = sendt.innhold.handlinger[0].grenser.tidsvindu;
+  assert.match(tv,
+    /^(man|tir|ons|tor|fre|lor|son)-(man|tir|ons|tor|fre|lor|son) \d{2}:\d{2}-\d{2}:\d{2}$/,
+    "velgeren skrev en verdi skjemaet ikke godtar");
+  assert.ok(tv.startsWith("man-lor"), `tidsvindu ble «${tv}»`);
+});
+
+test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () => {
+  // En policy kan bære flere valutaer, og en naiv `g.valuta = [valgt]` ville
+  // slettet resten stille. Koden som ikke er skrevet kan ikke feile — men den
+  // som ER skrevet skal måles.
+  const policy = {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
+      grenser: { valuta: ["CHF", "EUR"] } }],
+  };
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: policy });
+  await vent(() => h.querySelector(".editor-kort"));
+  const kort = h.querySelector(".editor-kort");
+  const sel = [...kort.querySelectorAll("select")]
+    .find((s) => [...s.options].some((o) => o.value === "CHF"));
+  assert.ok(sel, "en ukjent kode fra policyen mangler i nedtrekket");
+  assert.equal(sel.value, "CHF");
+  sel.value = "NOK";
+  sel.dispatchEvent(new window.Event("change"));
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.deepEqual(
+    JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta,
+    ["NOK", "EUR"], "de øvrige valutaene ble kastet");
+});

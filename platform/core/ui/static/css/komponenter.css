@@ -363,3 +363,20 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 }
 
 .site-list-tett li { padding: 0.15rem 0; }
+
+/* Tidsvindu: dager og klokkeslett side om side, så grensen leses som én
+   setning i stedet for fire felt. */
+.editor-tidsvindu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.editor-felt-gruppe { margin-top: var(--sp-3); }
+
+.felt-vannrett {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-2);
+}

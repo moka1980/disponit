@@ -559,5 +559,18 @@
   "site.katalog": "The whole platform",
   "site.katalog_tittel": "One agent platform, eleven business areas",
   "site.katalog_note": "Planned product scope: {antall} modules across four phases. What is available today is listed under “What you get”.",
-  "ui.policyadmin.ugyldig_uten_detaljer": "The draft is invalid, but the server gave no reason."
+  "ui.policyadmin.ugyldig_uten_detaljer": "The draft is invalid, but the server gave no reason.",
+  "ui.editor.belop_hint": "A number with up to two decimals, no spaces.",
+  "ui.editor.valuta_flere": "The policy has several currencies",
+  "ui.editor.tidsvindu_fra_dag": "From day",
+  "ui.editor.tidsvindu_til_dag": "To day",
+  "ui.editor.tidsvindu_fra_kl": "From",
+  "ui.editor.tidsvindu_til_kl": "To",
+  "ui.dag.man": "Monday",
+  "ui.dag.tir": "Tuesday",
+  "ui.dag.ons": "Wednesday",
+  "ui.dag.tor": "Thursday",
+  "ui.dag.fre": "Friday",
+  "ui.dag.lor": "Saturday",
+  "ui.dag.son": "Sunday"
 }
