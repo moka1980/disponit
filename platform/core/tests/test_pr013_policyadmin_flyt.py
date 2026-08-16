@@ -1431,6 +1431,120 @@ def test_apen_runde_varsler_dem_som_kan_bringe_den_videre():
     assert epost == "koet", "standardvalget er e-post OG portal"
 
 
+@pg
+def test_replay_forsoner_en_varsling_som_feilet(monkeypatch):
+    """Codex P2: en feilet varsling var ENDELIG.
+
+    Varslingen er best effort med vilje — en fullmaktsendring skal ikke kunne
+    velte fordi varslingen gjorde det. Men prisen var at feilen ikke kunne
+    repareres av noe som helst: runden ble committet, den sto åpen og ventet
+    på godkjennere som aldri fikk beskjed, og klienten som prøvde på nytt med
+    samme idempotensnøkkel gikk ut i `replay`-grenen FØR varslingen ble
+    forsøkt. Retryen som skulle vært reparasjonen, hoppet over den.
+
+    Her feiler varslingen på første forsøk (samme utfall som en transient
+    databasefeil: savepointet rulles tilbake, runden committes likevel), og
+    retryen med SAMME nøkkel og input skal opprette det som mangler.
+
+    Kontroll: fjern `_forson_rundevarsling`-kallet i replay-grenen, så blir
+    denne rød — ingen varsler etter retryen.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forson-forf", ["policyforvalter"])
+    b = _medlem("forson-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    # Første forsøk: varslingen gjør ingenting, som om hvert steg hadde feilet
+    # og blitt rullet tilbake til savepointet sitt.
+    ekte = policyadmin.varsel.varsle_runde_venter
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter",
+                        lambda *a, **k: 0)
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fapne\x1f{idem}"
+    rt = _rt()
+    try:
+        r1 = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+    assert r1["runde"] == 1
+    assert _varsler(uid) == {}, "forutsetningen holder ikke: noe ble varslet"
+
+    # Retry med samme nøkkel og input. Svaret er det lagrede — men hullet
+    # lukkes.
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter", ekte)
+    rt = _rt()
+    try:
+        r2 = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r2",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+    assert r2.get("replay") is True, "retryen åpnet en NY runde"
+    assert r2["runde"] == r1["runde"] and r2["diff_hash"] == r1["diff_hash"]
+
+    etter = _varsler(uid)
+    assert {a, b} <= set(etter), (
+        f"replayen forsonet ikke varslingen; mottakere={set(etter)}")
+    assert all(lest is None for lest, _ in etter.values()), \
+        "et forsonet varsel skal være ULEST — det venter fortsatt"
+
+
+@pg
+def test_replay_varsler_ikke_om_en_runde_som_ikke_lenger_venter(monkeypatch):
+    """Forsoningen skal reparere et hull, ikke lage en ny løgn.
+
+    Er runden aktivert, kansellert eller forfalt i mellomtiden, venter den ikke
+    på noen — og et varsel opprettet da ville bedt godkjennere om å attestere
+    noe som ikke kan attesteres. Samme predikat som skrive- og lesestien
+    (`_runde_status`), så de tre aldri blir uenige om hva «forfalt» betyr.
+
+    Kontroll: fjern `_runde_status`-sjekken i `_forson_rundevarsling`, så blir
+    denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forfall-forf", ["policyforvalter"])
+    _medlem("forfall-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    ekte = policyadmin.varsel.varsle_runde_venter
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter",
+                        lambda *a, **k: 0)
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fapne\x1f{idem}"
+    rt = _rt()
+    try:
+        policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+
+    # Runden forfaller før retryen kommer.
+    m = _mig()
+    try:
+        m.execute("UPDATE aktiveringsrunde SET utloper=now() - interval '1 h'"
+                  " WHERE tenant=%s AND utkast_id=%s AND runde=1", (TEN, uid))
+        m.commit()
+    finally:
+        m.close()
+
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter", ekte)
+    rt = _rt()
+    try:
+        policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r2",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+
+    assert _varsler(uid) == {}, (
+        "forsoningen varslet om en runde som ikke lenger venter på noen")
+
+
 def _varsler(uid, runde=1):
     """{bruker_id: (lest_ts, epost_status)} for rundens varsler."""
     m = _mig()

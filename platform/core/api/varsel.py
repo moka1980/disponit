@@ -37,18 +37,23 @@ from db.pg import sett_kontekst
 
 STANDARDKANAL = "epost_og_portal"
 
-#: Sentinel fra `_skjermet`: steget feilet. Skilt fra `None`, som er et helt
+#: Sentinel fra `skjermet`: steget feilet. Skilt fra `None`, som er et helt
 #: gyldig resultat av et steg som gikk bra.
-_FEILET = object()
+FEILET = object()
 
 #: Savepoint-navnet. Fast literal — aldri satt sammen av data, siden en
 #: savepoint-etikett er en identifikator og ikke kan parametriseres.
 _SP = "varsel_skjerm"
 
 
-def _skjermet(conn: psycopg.Connection, arbeid):
-    """Kjør ett steg av varslingen under en SAVEPOINT. -> resultatet, eller
-    `_FEILET`.
+def skjermet(conn: psycopg.Connection, arbeid):
+    """Kjør ett steg under en SAVEPOINT. -> resultatet, eller `FEILET`.
+
+    Offentlig fordi regel 2 ikke stopper ved modulgrensen: en kaller som skal
+    avgjøre OM det er noe å varsle om, må stille et spørsmål til databasen, og
+    det spørsmålet kan feile på nøyaktig samme måte som varslingen selv. Sto
+    det uskjermet, ville oppslaget veltet handlingen som varslingen lovte å
+    ikke røre — bare ett skritt tidligere i sløyfa.
 
     Dette er hele mekanismen bak «et varsel velter aldri handlingen». Kalleren
     eier transaksjonen: uten savepoint ville én feilet spørring her latt
@@ -64,13 +69,13 @@ def _skjermet(conn: psycopg.Connection, arbeid):
     ryddevei. Med ren SQL finnes ikke den skjulte tilstanden.
 
     Er transaksjonen alt abortert når vi kommer hit, feiler SAVEPOINT-en selv,
-    og vi melder `_FEILET` uten å røre noe. Å reparere en transaksjon kalleren
+    og vi melder `FEILET` uten å røre noe. Å reparere en transaksjon kalleren
     alt har mistet er ikke varslingens oppgave.
     """
     try:
         conn.execute(f"SAVEPOINT {_SP}")
     except Exception:                                         # noqa: BLE001
-        return _FEILET
+        return FEILET
     try:
         res = arbeid()
     except Exception:                                         # noqa: BLE001
@@ -80,11 +85,11 @@ def _skjermet(conn: psycopg.Connection, arbeid):
             conn.execute(f"RELEASE SAVEPOINT {_SP}")
         except Exception:                                     # noqa: BLE001
             pass   # forbindelsen er borte; kalleren ser det uansett selv
-        return _FEILET
+        return FEILET
     try:
         conn.execute(f"RELEASE SAVEPOINT {_SP}")
     except Exception:                                         # noqa: BLE001
-        return _FEILET
+        return FEILET
     return res
 
 
@@ -172,23 +177,23 @@ def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
     PostgreSQL i abortert tilstand, og da feiler kallerens NESTE setning — og
     `commit()` — uansett hvor pent vi svelget feilen i Python. Varslingen ville
     altså veltet nøyaktig den handlingen den lovte å ikke røre. Derfor kjøres
-    hvert steg under en SAVEPOINT (`_skjermet`), som rulles tilbake ved feil
+    hvert steg under en SAVEPOINT (`skjermet`), som rulles tilbake ved feil
     slik at forbindelsen er brukbar igjen og kallerens eget arbeid står urørt.
 
     Savepointet er PER MOTTAKER, ikke ett rundt hele sløyfa. Den typiske
     feilen rammer én rad (en identitet er slettet, en rad kolliderer), og de
     andre godkjennerne skal ikke miste varselet sitt fordi den ene feilet.
     """
-    if _skjermet(conn, lambda: sett_kontekst(conn, tenant, aktor, request_id)) \
-            is _FEILET:
+    if skjermet(conn, lambda: sett_kontekst(conn, tenant, aktor, request_id)) \
+            is FEILET:
         return 0
-    mottakere = _skjermet(
+    mottakere = skjermet(
         conn, lambda: mottakere_for_runde(conn, tenant, utkast_id, runde))
-    if mottakere is _FEILET:
+    if mottakere is FEILET:
         return 0
     n = 0
     for bid in mottakere:
-        if _skjermet(conn, lambda bid=bid: opprett(
+        if skjermet(conn, lambda bid=bid: opprett(
                 conn, tenant=tenant, bruker_id=bid,
                 art="attestering_venter", ressurs_type="policyutkast",
                 ressurs_id=utkast_id, hendelse=str(runde),
@@ -230,7 +235,7 @@ def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
 
     KASTER ALDRI, av nøyaktig samme grunn som `varsle_runde_venter`: dette
     kalles fra attesterings- og aktiveringsflyten, og en fullmaktsendring skal
-    ikke kunne feile fordi en opprydding gjorde det. Derfor `_skjermet` — og
+    ikke kunne feile fordi en opprydding gjorde det. Derfor `skjermet` — og
     derfor er dette et Python-kall og ikke en databasetrigger på
     `aktiveringsrunde`: en trigger kan ikke skjermes av en savepoint, så en
     feilende opprydding ville veltet selve aktiveringen. Kalleren eier
@@ -246,9 +251,9 @@ def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
     if bruker_id is not None:
         sql += " AND bruker_id=%s"
         p += (bruker_id,)
-    res = _skjermet(conn, lambda: conn.execute(sql + " RETURNING id",
+    res = skjermet(conn, lambda: conn.execute(sql + " RETURNING id",
                                                p).fetchall())
-    return 0 if res is _FEILET else len(res)
+    return 0 if res is FEILET else len(res)
 
 
 def innboks(conn: psycopg.Connection, *, tenant: str, bruker_id: str,

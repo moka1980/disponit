@@ -376,6 +376,54 @@ def _runde_status(status: str, utloper, naa) -> str:
     return status
 
 
+def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
+                          request_id: str, lagret: dict, naa) -> int:
+    """Kjør varslingen for en alt åpnet runde på nytt. -> antall opprettet.
+
+    Varslingen er best effort med vilje (regel 2 i `varsel`): feiler den, blir
+    runden committet likevel, for en fullmaktsendring skal ikke kunne velte av
+    en varslingsfeil. Men prisen var at feilen var ENDELIG (Codex P2). Runden
+    sto åpen og ventet på godkjennere som aldri fikk vite det, og en klient som
+    prøvde på nytt med samme idempotensnøkkel gikk ut i `replay`-grenen FØR
+    varslingen i det hele tatt ble forsøkt — nettopp den retryen som skulle
+    reparert det, hoppet over reparasjonen.
+
+    Varslingen er idempotent i seg selv (`ON CONFLICT DO NOTHING` på
+    hendelsesnøkkelen), så en gjentakelse er gratis når ingenting mangler og
+    fyller nøyaktig hullet når noe gjør det. Det er derfor dette kan gjøres
+    uten å telle eller huske noe: TILSTANDEN er allerede lagret — det er den
+    åpne runden.
+
+    Bare en runde som fortsatt VENTER varsles på nytt. Er den attestert,
+    aktivert, kansellert eller forfalt, er det ikke lenger sant at den venter
+    på noen, og et varsel opprettet her ville vært en ny løgn i stedet for en
+    reparasjon av en gammel. `_runde_status` avgjør det — samme predikat som
+    skrive- og lesestien ellers, så de tre aldri blir uenige om «forfalt».
+
+    Oppslaget kjøres SKJERMET. Det er et spørsmål til den samme databasen som
+    nettopp kan ha sviktet, og et uskjermet oppslag her ville veltet replayen —
+    altså gjort varslingen til det den lovte å aldri bli: noe som velter
+    handlingen.
+    """
+    utkast_id, runde = lagret.get("utkast_id"), lagret.get("runde")
+    if not utkast_id or not runde:
+        return 0
+    rad = varsel.skjermet(conn, lambda: conn.execute(
+        "SELECT status, utloper FROM aktiveringsrunde"
+        " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+        (tenant, utkast_id, runde)).fetchone())
+    if rad is varsel.FEILET or rad is None:
+        return 0
+    if _runde_status(rad[0], rad[1], naa) != "apen":
+        return 0
+    return varsel.varsle_runde_venter(
+        conn, tenant=tenant, aktor=aktor, request_id=request_id,
+        utkast_id=utkast_id, runde=int(runde),
+        policy_id=lagret.get("policy_id", ""),
+        risikoklasse=lagret.get("risikoklasse", ""),
+        gjenstaar=lagret.get("pakrevd_antall_godkjennere", 0))
+
+
 def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
                         naa) -> bool:
     """Lås utkastets aktive runde, og lukk den (`apen|klar → utlopt`) om den
@@ -975,7 +1023,19 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Replayen gjentar ikke handlingen — runden er åpnet, og svaret er
+        # nøyaktig det lagrede. Men den FORSONER varslingen (Codex P2): den er
+        # best effort, så den kan ha feilet mens runden ble committet, og fram
+        # til nå var det en endelig feil. Retryen som skulle reparert det, gikk
+        # ut her uten å prøve. Varslingen er idempotent, så dette oppretter kun
+        # det som faktisk mangler.
+        #
+        # Derfor `commit()` og ikke `rollback()`: forsoningen har ingen verdi
+        # hvis den kastes på vei ut. Ingenting annet er skrevet i denne
+        # transaksjonen — idempotens-INSERT-en traff `DO NOTHING`, og
+        # advisory-låsen slippes likt av begge.
+        _forson_rundevarsling(conn, tenant, aktor, request_id, lagret, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
