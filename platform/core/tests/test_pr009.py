@@ -394,7 +394,8 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     rot = tmp_path / "etc-disponit"
     venv = tmp_path / "rot/.venv/bin"
     venv.mkdir(parents=True)
-    (venv / "python").write_text("#!/bin/sh\necho signatur-stub\n")
+    (venv / "python").write_text("#!/bin/sh\necho signatur-stub\n",
+                                 encoding="utf-8")
     (venv / "python").chmod(0o755)
     blokk = _credentialblokken().replace("/etc/disponit", str(rot))
     env = {"ROT": str(tmp_path / "rot"), "KILDE": str(ROT),
@@ -408,8 +409,8 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
                          capture_output=True, text=True, env=env)
     assert res.returncode == 0, \
         f"credential-materialiseringen feilet på en fersk rot:\n{res.stderr}"
-    assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text() \
-        == "verdi-DATABASE_URL"
+    assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text(
+        encoding="utf-8") == "verdi-DATABASE_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
