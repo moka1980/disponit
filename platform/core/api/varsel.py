@@ -37,6 +37,22 @@ from db.pg import sett_kontekst
 
 STANDARDKANAL = "epost_og_portal"
 
+#: Tilstandene en e-post fortsatt KAN bli sendt fra. Ett sted, fordi det er to
+#: veier som avlyser en sending — avmeldingen (`sett_kanal`) og pensjoneringen
+#: (`pensjoner_runde`) — og de må mene det samme.
+#:
+#: `koet` var lenge hele svaret, og begge veiene skrev det inn hver for seg.
+#: Så ble `feilet` retrybar (027: `varsel_rekoe` løfter den tilbake til `koet`
+#: når backoffen er ute), og da avlyste begge bare halvparten: en avmelding
+#: gjort mens raden lå og ventet på nytt forsøk, stoppet ikke e-posten hun
+#: nettopp sa nei til.
+#:
+#: `under_sending` står bevisst UTENFOR. Den raden er i et SMTP-kall akkurat
+#: nå, og en e-post som er ute kan ikke kalles hjem — den hører til fortiden,
+#: som `sendt`. Å sette den `ikke_aktuelt` ville dessuten stjålet klaimet fra
+#: senderen som holder det.
+I_KO = "('koet', 'feilet')"
+
 #: Sentinel fra `skjermet`: steget feilet. Skilt fra `None`, som er et helt
 #: gyldig resultat av et steg som gikk bra.
 FEILET = object()
@@ -227,11 +243,13 @@ def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
     `bruker_id` avgrenser til ÉN mottaker (aktøren som nettopp attesterte);
     utelates den, ryddes hele rundens varsler.
 
-    E-post som ennå står i kø settes samtidig til `ikke_aktuelt`. Køen er
-    definert av `epost_status='koet'`, så uten dette ville senderen fortsatt
-    sendt «venter på din attestering» om en runde som er lukket — samme løgn,
-    bare i den kanalen mottakeren ikke kan lukke selv. Alt som ER sendt står
-    urørt: `sendt` er et faktum om fortiden, ikke en tilstand vi kan angre.
+    E-post som ennå står i kø settes samtidig til `ikke_aktuelt` — hele køen,
+    `I_KO`, og ikke bare `koet`: en rad som venter på nytt forsøk er like mye
+    på vei ut som en som aldri har vært prøvd. Uten dette ville senderen
+    fortsatt sendt «venter på din attestering» om en runde som er lukket —
+    samme løgn, bare i den kanalen mottakeren ikke kan lukke selv. Alt som ER
+    sendt står urørt: `sendt` er et faktum om fortiden, ikke en tilstand vi kan
+    angre, og det samme gjelder en sending som pågår nå.
 
     KASTER ALDRI, av nøyaktig samme grunn som `varsle_runde_venter`: dette
     kalles fra attesterings- og aktiveringsflyten, og en fullmaktsendring skal
@@ -242,11 +260,13 @@ def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
     transaksjonen og har alt satt `disponit.*`.
     """
     sql = ("UPDATE varsel SET lest_ts=coalesce(lest_ts, now()),"
-           " epost_status=CASE WHEN epost_status='koet' THEN 'ikke_aktuelt'"
-           "                   ELSE epost_status END"
+           f" epost_status=CASE WHEN epost_status IN {I_KO}"
+           "                    THEN 'ikke_aktuelt'"
+           "                    ELSE epost_status END"
            " WHERE tenant=%s AND art='attestering_venter'"
            "   AND ressurs_type='policyutkast' AND ressurs_id=%s"
-           "   AND hendelse=%s AND (lest_ts IS NULL OR epost_status='koet')")
+           f"   AND hendelse=%s AND (lest_ts IS NULL"
+           f"                        OR epost_status IN {I_KO})")
     p: tuple = (tenant, utkast_id, str(runde))
     if bruker_id is not None:
         sql += " AND bruker_id=%s"
@@ -316,13 +336,17 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     """Valget eier ba om. Ukjent verdi avvises — en feilstavet kanal skal ikke
     stille slå av varslingen.
 
-    «Kun portal» gjelder OGSÅ e-post som alt ligger i kø (Codex P2). Køen er
-    definert av `epost_status='koet'`, og `_kanal` leses når varselet
-    OPPRETTES — så uten dette ville et valg tatt i dag ikke rørt de varslene
-    som ble laget i går, og brukeren ville fått nettopp den e-posten hun
-    nettopp sa nei til. En avmelding som først virker på neste hendelse er
-    ikke en avmelding; den er en forklaring på hvorfor det fortsatte litt til.
-    Samme transaksjon som valget: enten gjelder begge deler, eller ingen.
+    «Kun portal» gjelder OGSÅ e-post som alt ligger i kø (Codex P2). `_kanal`
+    leses når varselet OPPRETTES — så uten dette ville et valg tatt i dag ikke
+    rørt de varslene som ble laget i går, og brukeren ville fått nettopp den
+    e-posten hun nettopp sa nei til. En avmelding som først virker på neste
+    hendelse er ikke en avmelding; den er en forklaring på hvorfor det
+    fortsatte litt til. Samme transaksjon som valget: enten gjelder begge
+    deler, eller ingen.
+
+    Køen er `I_KO`, ikke `koet` alene: en rad som feilet og venter på nytt
+    forsøk blir løftet tilbake i køen av `varsel_rekoe`, og en avmelding som
+    ikke tar den, avlyser bare det som tilfeldigvis ikke hadde feilet ennå.
 
     Motsatt vei re-køes INGENTING. `ikke_aktuelt` er et bevisst fravær, og å
     vekke det opp igjen ville sendt e-post om runder som kan ha rukket å bli
@@ -339,7 +363,7 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     if kanal == "kun_portal":
         conn.execute(
             "UPDATE varsel SET epost_status='ikke_aktuelt'"
-            " WHERE tenant=%s AND bruker_id=%s AND epost_status='koet'",
+            f" WHERE tenant=%s AND bruker_id=%s AND epost_status IN {I_KO}",
             (tenant, bruker_id))
     return kanal
 

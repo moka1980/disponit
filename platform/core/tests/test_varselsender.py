@@ -441,6 +441,61 @@ def test_klaim_fra_en_doed_kjoring_kommer_tilbake_naar_leasen_loper_ut():
         c.close()
 
 
+@pg
+def test_avmelding_stopper_ogsaa_en_rad_som_venter_paa_nytt_forsok():
+    """Køen er ikke `koet` alene lenger, og de som AVLYSER en sending må mene
+    det samme som den som sender.
+
+    En feilet rad ligger og venter på at backoffen skal løpe ut; da løfter
+    `varsel_rekoe` den tilbake til `koet`. En avmelding som bare tok `koet`
+    avlyste derfor bare det som tilfeldigvis ikke hadde feilet ennå — og
+    e-posten hun nettopp sa nei til gikk ut ved neste timerkjøring likevel.
+    Samme kobling som resten av denne runden: to steder som må si det samme,
+    og ingenting som bandt dem sammen.
+
+    Målt gjennom SENDEREN, ikke bare på kolonnen: det er re-køingen som er den
+    andre halvdelen av koblingen, og en assert på `epost_status` rett etter
+    avmeldingen ville stått uendret uansett hva `varsel_rekoe` gjør etterpå.
+
+    Kontroll: sett `varsel.I_KO` tilbake til bare `('koet')`, og denne blir
+    rød med en e-post til en avmeldt mottaker.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "avmeldt", "avmeldt@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+
+        def alltid_feil(til, emne, tekst):
+            raise RuntimeError("midlertidig")
+
+        varselsender.kjor(c, send=alltid_feil)
+        _kontekst(c)
+        # Hun melder seg av MENS raden ligger og venter på nytt forsøk.
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=b, kanal="kun_portal")
+        c.commit()
+        _kontekst(c)
+        # …og så løper backoffen ut.
+        c.execute("UPDATE varsel SET epost_ts = now() - interval '1 hour'"
+                  " WHERE tenant=%s AND bruker_id=%s", (TEN, b))
+        c.commit()
+        _kontekst(c)
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt
+                if t == "avmeldt@example.test"] == [], (
+            "e-posten hun meldte seg av fra ble re-køet og sendt likevel")
+        st = c.execute("SELECT epost_status FROM varsel WHERE tenant=%s"
+                       " AND bruker_id=%s", (TEN, b)).fetchone()
+        assert st == ("ikke_aktuelt",), st
+        # Varselet står fortsatt i portalen: avmeldingen gjelder kanalen.
+        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 1
+    finally:
+        c.close()
+
+
 @pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 def test_runtime_rollen_kan_kalle_senderens_funksjoner():
     """Rollen som FAKTISK kjører senderen må kunne kalle de tre funksjonene.

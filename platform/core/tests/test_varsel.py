@@ -196,7 +196,7 @@ def test_avmeldingen_gjelder_ogsaa_epost_som_alt_staar_i_koe():
     try:
         b = _bruker(c, "avmelding")
         uid = "u-" + secrets.token_hex(6)
-        for h in ("1", "2"):
+        for h in ("1", "2", "3", "4"):
             varsel.opprett(c, tenant=TEN, bruker_id=b,
                            art="attestering_venter",
                            ressurs_type="policyutkast", ressurs_id=uid,
@@ -204,6 +204,16 @@ def test_avmeldingen_gjelder_ogsaa_epost_som_alt_staar_i_koe():
         # Den ene rakk å bli sendt før hun ombestemte seg.
         c.execute("UPDATE varsel SET epost_status='sendt' WHERE tenant=%s"
                   " AND bruker_id=%s AND hendelse='1'", (TEN, b))
+        # Den tredje feilet og ligger og venter på nytt forsøk. Den er like
+        # mye på vei ut som den som aldri har vært prøvd: `varsel_rekoe`
+        # løfter den tilbake til `koet` når backoffen er ute.
+        c.execute("UPDATE varsel SET epost_status='feilet', epost_forsok=1,"
+                  " epost_ts=now() WHERE tenant=%s AND bruker_id=%s"
+                  " AND hendelse='3'", (TEN, b))
+        # Den fjerde er i et SMTP-kall AKKURAT NÅ. Den kan ikke kalles hjem.
+        c.execute("UPDATE varsel SET epost_status='under_sending',"
+                  " epost_forsok=1, epost_ts=now() WHERE tenant=%s"
+                  " AND bruker_id=%s AND hendelse='4'", (TEN, b))
 
         varsel.sett_kanal(c, tenant=TEN, bruker_id=b, kanal="kun_portal")
 
@@ -212,12 +222,18 @@ def test_avmeldingen_gjelder_ogsaa_epost_som_alt_staar_i_koe():
             " AND bruker_id=%s AND ressurs_id=%s", (TEN, b, uid)).fetchall())
         assert st["2"] == "ikke_aktuelt", (
             "den køede e-posten overlevde avmeldingen — hun får den likevel")
+        assert st["3"] == "ikke_aktuelt", (
+            "raden som ventet på nytt forsøk overlevde avmeldingen — den blir "
+            "re-køet og sendt, og avmeldingen tok bare halve køen")
         assert st["1"] == "sendt", (
             "en allerede sendt e-post ble skrevet om til «ikke aktuelt»; "
             "fortiden kan ikke angres, og statusen er et driftsspor")
-        # …og begge står fortsatt i innboksen. Avmeldingen gjelder kanalen,
+        assert st["4"] == "under_sending", (
+            "en pågående sending ble skrevet om — e-posten er ute, og "
+            "klaimet tilhører senderen som holder det")
+        # …og alle står fortsatt i innboksen. Avmeldingen gjelder kanalen,
         # ikke varselet.
-        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 2
+        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 4
     finally:
         c.close()
 
