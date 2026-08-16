@@ -364,6 +364,38 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 
 .site-list-tett li { padding: 0.15rem 0; }
 
+/* Tidsvindu: dager og klokkeslett side om side, så grensen leses som én
+   setning i stedet for fire felt. */
+.editor-tidsvindu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.editor-felt-gruppe { margin-top: var(--sp-3); }
+
+/* En lagret grense ingen kontroll kan vise. Den skal SES — den stopper
+   lagringen — men den er en tilstand på ett felt, ikke en feilmelding for hele
+   skjemaet: samme varselfarge som `.editor-feil`, dempet flate, og eiers valg
+   liggende rett under teksten. */
+.editor-reparasjon {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+}
+
+.editor-reparasjon p { margin: 0; }
+
+.felt-vannrett {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-2);
+}
+
 /* Hvem er innlogget. Står i topplinja fordi svaret må være synlig UTEN å
    navigere: fire øyne krever to forskjellige prinsipaler, og med to konti i
    samme nettleser er «hvem er jeg nå» et sikkerhetsspørsmål, ikke pynt. */
