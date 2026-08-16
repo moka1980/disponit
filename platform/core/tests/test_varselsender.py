@@ -1334,6 +1334,25 @@ _GRANT_OPSJON = re.compile(r"^\s*grant\s+option\s+for\b")
 _DROP_MAL = re.compile(
     r"\bdrop\s+(?:function|routine)\b(?:\s+if\s+exists\b)?(.*)")
 
+#: Å FLYTTE ET NAVN ER Å FJERNE DET (Codex P2 på #71). `DROP` er ikke den
+#: eneste veien ut: `ALTER FUNCTION f(int,int) RENAME TO …` og `ALTER FUNCTION
+#: f(int,int) SET SCHEMA …` lar funksjonen leve, men `public.f(int,int)` —
+#: navnet `varselsender.kjor` faktisk kaller, ukvalifisert — finnes ikke
+#: lenger. Modellen kjente bare `DROP` som fjerning og lot `True` fra forrige
+#: REVOKE stå: porten var grønn på et gjerde rundt et navn som var borte, og
+#: den som kjører `db.kjorer.migrer` direkte satt igjen med en sender som ikke
+#: virker.
+#:
+#: Identiteten som flyttes er den i MÅLKLAUSULEN, altså det som står mellom
+#: `ALTER FUNCTION` og verbet — samme krav som for `DROP` og `REVOKE`, slik at
+#: en omdøpt OVERLAST ikke fjerner den beskyttede.
+#:
+#: Vakten teller ikke her, av samme grunn som for `DROP`: skjedde flyttingen
+#: likevel ikke, er svaret «finnes ikke», og det er en falsk alarm noen må se
+#: på — ikke en sender ingen oppdager er borte.
+_NAVNESKIFTE = re.compile(
+    r"\balter\s+(?:function|routine)\b(.*?)\b(rename\s+to|set\s+schema)\b")
+
 #: EIERSKIFTET (Codex P2 på #71). `ALTER FUNCTION … OWNER TO x` er den ene
 #: setningen som bestemmer hvem en senere `REVOKE … FROM PUBLIC` må kjøres
 #: som. Uten den grenen satte modellen «kjører som `disponit_domene_eier`»
@@ -1660,6 +1679,11 @@ def _spill_av(filer, signaturer):
       ikke fantes. Den bruker samme målklausul som REVOKE-en, med ett
       tillegg: `DROP FUNCTION f` uten signatur er lovlig når navnet er
       entydig, og gjelder da enhver overlast.
+    * EN `RENAME TO` ELLER `SET SCHEMA` ER SAMME UTGANG (Codex P2 på #71).
+      Funksjonen kan leve videre under et annet navn, men `public.f(…)` — det
+      ukvalifiserte navnet `varselsender.kjor` kaller — er borte, og
+      tilstanden settes til None som for en DROP. Uten den grenen sto `True`
+      fra forrige REVOKE igjen som et gjerde rundt et navn som ikke fantes.
     """
     beskyttet = [_normalisert(s) for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
@@ -1707,6 +1731,16 @@ def _spill_av(filer, signaturer):
                     gjerdet[sig] = None
                     eier[sig] = None
                     spor[sig].append(f"{filnavn}: droppet")
+                elif (nav := _NAVNESKIFTE.search(s)) and _rammer(
+                        nav.group(1), sig, basenavn[sig]):
+                    # SAMME UTGANG SOM EN DROP, en annen dør. Funksjonen kan
+                    # godt leve videre under et nytt navn eller i et annet
+                    # skjema — men navnet senderen kaller, finnes ikke, og et
+                    # gjerde rundt et navn som er borte er ikke et bevis.
+                    gjerdet[sig] = None
+                    eier[sig] = None
+                    spor[sig].append(
+                        f"{filnavn}: {nav.group(2)} — navnet er borte")
                 elif (eie := _EIERSKIFTE.search(s)) and _rammer(
                         eie.group(1), sig, basenavn[sig]):
                     # Eierskapet flyttes. ACL-en følger ikke med, så gjerdet
@@ -2223,6 +2257,37 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
             [("a.sql", lag + gjerde),
              ("b.sql", f"DROP FUNCTION varsel_klaim_epost({annen});")],
             n)[0] == {sig: True}, f"`{annen}` er ikke `(int,int)`"
+
+    # Å FLYTTE ET NAVN ER Å FJERNE DET. Funksjonen lever videre — det gjør
+    # ikke navnet senderen kaller, og et gjerde rundt et navn som er borte er
+    # ikke et bevis. Samme utgang som en DROP, gjennom en annen dør.
+    for form in ("RENAME TO varsel_klaim_epost_v2", "SET SCHEMA arkiv"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"ALTER FUNCTION varsel_klaim_epost(int, int)"
+                       f" {form};")], n)
+        assert gjerdet == {sig: None}, (
+            f"`{form}` fjerner det beskyttede navnet. Spor: {spor}")
+
+    # …og motprøvene, som er det som skiller regelen fra «enhver ALTER er en
+    # fjerning»: EIERSKIFTET er også en `ALTER FUNCTION`, og det flytter ikke
+    # navnet noe sted. En OMDØPT OVERLAST er heller ikke den beskyttede.
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {sig: True}, \
+        "`ALTER … OWNER TO` i `lag` er ikke en fjerning"
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(text)"
+                   " RENAME TO noe_annet;")], n)[0] == {sig: True}, \
+        "en omdøpt OVERLAST rører ikke den beskyttede signaturen"
+
+    # …og gjenskaping av navnet etterpå er den lovlige formen: omdøpingen
+    # arkiverer den gamle, `lag + gjerde` setter opp den nye. Uten dette
+    # ville regelen over gjort enhver arkivering til en permanent rød port.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO varsel_klaim_epost_v1;" + lag + gjerde)],
+        n)[0] == {sig: True}, "omdøping + gjenskaping + nytt gjerde"
 
     # EN REVOKE SOM IKKE TAR PRIVILEGIET. `GRANT OPTION FOR` er en lovlig
     # REVOKE på nøyaktig den beskyttede signaturen, kjørt av eieren — og den
