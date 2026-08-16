@@ -1,6 +1,9 @@
 // axe + oppførsel på komponentbiblioteket (gate 6/7, «fra første komponent»).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
@@ -13,6 +16,8 @@ import {
 } from "../static/js/sitekomponenter.js";
 import { DataTabell } from "../static/js/tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../static/js/dialog.js";
+
+const HER = dirname(fileURLToPath(import.meta.url));
 
 settI18nForTest(NB, "nb");
 
@@ -210,4 +215,29 @@ test("AppShell: viser bruker_id når e-post mangler, med roller", () => {
     "kari@acme.no");
   assert.equal(medEpost.querySelector(".skall-bruker-id").textContent,
     "bid_10e5674");
+});
+
+// Etiketten er brukerens data, ikke vår: en gyldig OIDC-e-post kan være svært
+// lang, og `bruker_id` er én ubrytelig token. Uten `min-width: 0` er et
+// flex-element «aldri smalere enn innholdet», og den lange linja dyttet
+// topplinja bredere enn viewporten — språkvelger og «Logg ut» havnet i
+// horisontal overflyt. jsdom har ingen layout å måle, så porten står på
+// stilkilden: reglene MÅ være der, ellers er det ingenting som stopper det.
+test("skall-bruker: lange prinsipal-etiketter kan krympe og brytes", () => {
+  const css = readFileSync(
+    join(HER, "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  assert.match(regel(".skall-bruker {"), /min-width:\s*0/,
+    "uten min-width: 0 kan ikke etiketten krympe, og topplinja flyter over");
+  const bryt = regel(".skall-bruker-navn,");
+  assert.match(bryt, /overflow-wrap:\s*(anywhere|break-word)/,
+    "navnelinja må kunne brytes — den har ingen mellomrom å brekke på");
+  for (const k of ["skall-bruker-navn", "skall-bruker-id",
+                   "skall-bruker-roller"]) {
+    assert.ok(bryt.includes(k), `${k} skal omfattes av brytingsregelen`);
+  }
 });
