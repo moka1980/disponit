@@ -585,6 +585,10 @@ html[data-visning="landing"] .skall-hoved {
   max-width: var(--maks-display);
 }
 .site-hero-ny .site-hero-text { font-size: var(--fs-ingress); }
+/* Statuslinja er UNDERORDNET tilbudet: tilbudet er hva Disponit er, status
+   er hvor langt utrullingen har kommet. Dempet og mindre, så den ikke leses
+   som en ny påstand om produktet. */
+.site-hero-status { color: var(--muted); max-width: 42rem; }
 .site-signal {
   align-content: end;
   background: var(--ink);
