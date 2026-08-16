@@ -448,19 +448,28 @@ def test_aktiver_policy_monotoni_nullpadder_gamle_versjoner():
     try:
         with pytest.raises(psycopg.errors.CheckViolation):
             r.execute("SELECT aktiver_policy(%s,%s,1,%s)", (TEN, uid, "2"))
+    finally:
         r.rollback()
-        # …og en som FAKTISK er nyere enn 2.0.0 slipper fortsatt gjennom.
-        c = _c()
-        uid2 = "u-" + secrets.token_hex(4)
-        _validert_utkast(c, uid2, pid, av="forf", versjon="2.0.1")
-        _runde(c, uid2)
-        _attest(c, uid2, "forf", True)
-        _attest(c, uid2, "uavh", False)
-        c.commit(); c.close()
+        r.close()
+
+    # …og en som FAKTISK er nyere enn 2.0.0 slipper fortsatt gjennom, så
+    # kontrollen stopper dubletten og ikke monotonien selv. Ny forbindelse:
+    # `set_config(..., false)` i `_rt()` er transaksjonell som alt annet SET,
+    # så rullebakken over tok tenant-konteksten med seg — og uten den skjuler
+    # RLS utkastet vi nettopp skrev.
+    c = _c()
+    uid2 = "u-" + secrets.token_hex(4)
+    _validert_utkast(c, uid2, pid, av="forf", versjon="2.0.1")
+    _runde(c, uid2)
+    _attest(c, uid2, "forf", True)
+    _attest(c, uid2, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
         assert r.execute("SELECT aktiver_policy(%s,%s,1,%s)",
                          (TEN, uid2, "2")).fetchone()[0] == "2.0.1"
-        r.rollback()
     finally:
+        r.rollback()
         r.close()
 
 
