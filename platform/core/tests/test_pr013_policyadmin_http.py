@@ -497,26 +497,54 @@ def test_valider_avviser_malstatus_mens_utkastet_ennaa_kan_rettes():
     Kravet står derfor der utkastet ennå er redigerbart, og editoren setter
     statusen når den bygger innholdet.
 
-    Kontroll: fjern statusdelen av `_dokumentavvik`, så blir denne rød med
-    utfall `validert` — og utkastet innelåst.
+    TO LAG, etter at #67 landet på `main`. Opprettelsen NORMALISERER nå
+    statusen — malens `utkast` blir `produksjon` før noe fryses, så veien
+    gjennom produktet kan ikke lenger produsere feilen. Men `rediger_utkast`
+    normaliserer ikke, så en redigering kan sette den tilbake, og da er
+    valideringen fortsatt det som fanger den mens utkastet kan rettes. Begge
+    lagene bevises her; uten det andre ville normaliseringen sett ut som en
+    grunn til å fjerne kontrollen.
+
+    Kontroll: fjern statusdelen av `_dokumentavvik`, så blir andre halvdel rød
+    med utfall `validert` — og utkastet innelåst.
     """
     pid = "pol-" + secrets.token_hex(3)
-    pol = _gyldig(pid)
-    pol["meta"]["status"] = "utkast"          # slik malen kommer
+    mal = _gyldig(pid)
+    mal["meta"]["status"] = "utkast"          # slik malen kommer
+    rt = _rt()
+    try:
+        # Lag 1: opprettelsen retter statusen, så malen validerer rett fram.
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=mal)
+        ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert ok["utfall"] == "validert", ok
+    finally:
+        rt.close()
+
+    # Lag 2: en redigering kan sette statusen tilbake — `rediger_utkast`
+    # normaliserer ikke — og da må valideringen fange den MENS utkastet ennå
+    # kan rettes.
+    pid2 = "pol-" + secrets.token_hex(3)
     rt = _rt()
     try:
         o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
-                     policy_id=pid, innhold=pol)
+                     policy_id=pid2, innhold=_gyldig(pid2))
+        tilbake = _gyldig(pid2)
+        tilbake["meta"]["status"] = "utkast"
+        _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=1,
+                 innhold=tilbake)
         res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
-                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=2)
         assert res["utfall"] == "ugyldig", res
         assert any("meta.status" in f for f in res["feil"]), res["feil"]
         # Utkastet er IKKE frosset: eier retter statusen og validerer igjen.
         _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
-                 utkast_id=o["utkast_id"], forventet_utkastversjon=1,
-                 innhold=_gyldig(pid))
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=2,
+                 innhold=_gyldig(pid2))
         ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
-                      utkast_id=o["utkast_id"], forventet_utkastversjon=2)
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=3)
         assert ok["utfall"] == "validert", ok
     finally:
         rt.close()
