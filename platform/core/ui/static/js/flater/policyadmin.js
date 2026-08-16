@@ -186,6 +186,28 @@ const UTFALLSART = new Map([
   ["semantikk_endret", "feil"],
 ]);
 
+// Terskelen har TO betingelser, og serverens `gjenstaar` teller bare den ene
+// (Codex P2). Feltet er `max(0, påkrevd - antall)` — et rent talloppgjør — mens
+// aktiveringen i tillegg krever minst ÉN godkjenner som ikke skrev utkastet.
+// For en runde der påkrevd er 1 (INNSNEVRER/NØYTRAL) og forfatteren attesterer
+// først, svarer serveren derfor `antall: 1, gjenstaar: 0,
+// mangler_uavhengig: true`. Sa vi da «0 gjenstår» og fortsatte med at det
+// mangler en uavhengig godkjenner, motsa kvitteringen seg selv i samme
+// åndedrag — og tallet, som er det eier leser først, sa at hun var ferdig når
+// hun ikke var det.
+//
+// Tallet som vises er derfor det som FAKTISK gjenstår: er
+// uavhengighetskravet uinnfridd, må det komme minst én attestasjon til,
+// uansett hva talloppgjøret sier. Serverfeltet står urørt — det er
+// talloppgjøret, og skal fortsette å være det.
+//
+// Mangler `gjenstaar` i svaret, gjettes det ikke: «?» er sant, og setningen om
+// uavhengighet står uansett og forteller hva som mangler.
+function gjenstaarIgjen(svar) {
+  if (svar.gjenstaar == null) return "?";
+  return Math.max(svar.gjenstaar, svar.mangler_uavhengig ? 1 : 0);
+}
+
 // ÉN idempotensnøkkel per aktiveringsforsøk — gjenbrukes ved nettverksretry, så
 // serveren ser samme nøkkel og ikke aktiverer to ganger.
 function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
@@ -201,8 +223,7 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
       if (utfall === "venter_godkjennere") {
         tekst += " " + t("ui.policyadmin.utfall.venter_antall")
           .replace("{avgitt}", String(svar.antall != null ? svar.antall : "?"))
-          .replace("{gjenstaar}",
-                   String(svar.gjenstaar != null ? svar.gjenstaar : "?"));
+          .replace("{gjenstaar}", String(gjenstaarIgjen(svar)));
         if (svar.mangler_uavhengig) {
           tekst += " " + t("ui.policyadmin.utfall.mangler_uavhengig");
         }

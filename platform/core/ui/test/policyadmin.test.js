@@ -1003,6 +1003,40 @@ const _attesterMedUtfall = async (h, svar) => {
   return h.querySelector(".pa-kvittering");
 };
 
+// Codex P2: terskelen har TO betingelser, men serverens `gjenstaar` teller bare
+// den ene. Krever runden én godkjenning (INNSNEVRER/NØYTRAL) og forfatteren
+// attesterer først, svarer serveren `antall: 1, gjenstaar: 0,
+// mangler_uavhengig: true` — talloppgjøret er oppfylt, uavhengighetskravet er
+// det ikke. Kvitteringen sa da «0 gjenstår» og fortsatte med at det mangler en
+// uavhengig godkjenner: to påstander som ikke kan være sanne samtidig, der
+// tallet — det eier leser først — var det som løy.
+//
+// Kontroll: send `svar.gjenstaar` rett inn i teksten igjen, så blir testen rød.
+test("Attester: uavhengighetskravet teller med i det som gjenstår", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(), {
+    utfall: "venter_godkjennere", antall: 1, gjenstaar: 0,
+    mangler_uavhengig: true });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.venter_antall")
+      .replace("{avgitt}", "1").replace("{gjenstaar}", "1")),
+  "kvitteringen sa «0 gjenstår» og krevde en godkjenner til i samme setning");
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.mangler_uavhengig")),
+  "hvem den siste godkjenningen må komme fra, er fortsatt poenget");
+});
+
+// Er talloppgjøret det strengeste kravet, er det talloppgjøret som vises: den
+// ene som gjenstår, må uansett være en annen enn forfatteren.
+test("Attester: to som gjenstår blir ikke rundet ned til uavhengighetskravet",
+  async () => {
+    const kvitt = await _attesterMedUtfall(nyHoved(), {
+      utfall: "venter_godkjennere", antall: 1, gjenstaar: 2,
+      mangler_uavhengig: true });
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.venter_antall")
+        .replace("{avgitt}", "1").replace("{gjenstaar}", "2")));
+  });
+
 test("Attester: kansellert runde er en FEIL, ikke en ventetilstand", async () => {
   const kvitt = await _attesterMedUtfall(nyHoved(),
     { utfall: "rebasering_kreves" });
