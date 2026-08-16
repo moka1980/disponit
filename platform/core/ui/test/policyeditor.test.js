@@ -200,6 +200,39 @@ test("Rediger: fremmed id i dokumentet rettes til radens, og lagres", async () =
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 
+// Codex P2: raden lagres med den id-en som sendes, og den kan ALDRI endres.
+// Bryter den skjemaets form, er utkastet dødfødt: radens id kan ikke skrives
+// inn i dokumentet (skjemaet avviser den), og en skjemagyldig id spriker fra
+// raden. Serveren avviser den nå — og eier skal møte kravet ved feltet.
+test("Ny: en policy-ID som bryter formen stoppes før lagring", async () => {
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  const pid = h.querySelector("input.felt-inp");
+
+  for (const ugyldig of ["ACME", "ac", "acme_no"]) {
+    pid.value = ugyldig;
+    pid.dispatchEvent(new window.Event("input"));
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(t("ui.editor.policy_id_ugyldig")));
+    assert.ok(h.textContent.includes(t("ui.editor.policy_id_ugyldig")), ugyldig);
+    assert.equal(POST, undefined, `${ugyldig} skal ikke ha blitt sendt`);
+  }
+
+  // …og en gyldig id går gjennom, så vakten er om FORMEN og ikke en blokade.
+  h.querySelector("input.felt-inp").value = "acme-netthandel";
+  h.querySelector("input.felt-inp").dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(JSON.parse(POST.opts.body).policy_id, "acme-netthandel");
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
 test("Ny: id-en trimmes likt i raden og i dokumentet", async () => {
   // Raden opprettes fra den trimmede id-en. Bar dokumentet råteksten, ville
   // utkastet vært i avvik allerede ved fødselen — og låst ute av valideringen

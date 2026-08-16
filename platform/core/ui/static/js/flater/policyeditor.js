@@ -20,6 +20,11 @@ import { flateHode } from "./felles.js";
 
 const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
 
+// Skjemaets `meta.policy_id` (`^[a-z0-9-]+$` + `minLength: 3`), som
+// `policyadmin._POLICY_ID` håndhever på raden. Klienten er ikke porten — den
+// er der for at eier skal møte kravet ved feltet, ikke etter en rundtur.
+const POLICY_ID_FORM = /^[a-z0-9-]{3,}$/;
+
 // `hint` er reglene feltet faktisk håndhever, sagt FØR man skriver. Uten den
 // måtte eier gjette formatet og få svaret fra validatoren etterpå — og bare
 // hvis feilen i det hele tatt nådde skjermen. Knyttes med `aria-describedby`,
@@ -653,6 +658,15 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     const pid = (st.policy.meta && st.policy.meta.policy_id || "").trim();
     if (!st.utkast_id && !pid) {
       st.feil = [t("ui.editor.policy_id_pakrevd")]; tegn(); return;
+    }
+    // Formen, ikke bare tilstedeværelsen (Codex P2). Serveren avviser nå en
+    // rad-id som bryter skjemaets `meta.policy_id`, og det er riktig: en slik
+    // id kan aldri skrives inn i dokumentet, og raden kan ikke endres etterpå
+    // — utkastet ville vært dødfødt. Men eier skal møte kravet HER, ved feltet
+    // hjelpeteksten allerede beskriver det under, ikke som et avslag på en
+    // lagring hun trodde gikk gjennom.
+    if (!st.utkast_id && !POLICY_ID_FORM.test(pid)) {
+      st.feil = [t("ui.editor.policy_id_ugyldig")]; tegn(); return;
     }
     // Raden opprettes fra den TRIMMEDE id-en, så dokumentet må bære nøyaktig
     // den samme — ikke feltets råtekst. Et utkast født med « acme» i

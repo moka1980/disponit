@@ -157,10 +157,22 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     if not isinstance(innhold, dict):
         conn.rollback()
         raise Aktiveringsfeil("utkast_feilformet")
-    # Identiteten LÅSES her — den kan ikke endres etterpå. Levner den ikke rom
-    # til en versjon i registerets primærnøkkel, er utkastet dødfødt: ingen
-    # versjon eier senere kan skrive, vil få plass (Codex P2). Da er det
-    # opprettelsen som skal si nei, ikke en validering hun aldri kan tilfredsstille.
+    # Identiteten LÅSES her — den kan ikke endres etterpå. To krav må derfor
+    # holde ved opprettelsen, begge Codex P2, og begge fordi et utkast som
+    # bryter dem er DØDFØDT: eier kan ikke rette raden, bare forlate utkastet.
+    #
+    # FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
+    # dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
+    # ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
+    # beskjeden. Kontrollen står FØR idempotensposten: en forespørsel som aldri
+    # kunne blitt et utkast skal heller ikke brenne nøkkelen.
+    if not _POLICY_ID.match(policy_id or ""):
+        conn.rollback()
+        raise Aktiveringsfeil("policy_id_ugyldig", f"policy_id={policy_id!r}")
+    # Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
+    # primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
+    # plass. Da er det opprettelsen som skal si nei, ikke en validering hun
+    # aldri kan tilfredsstille.
     if _nokkelbytes(tenant, policy_id) > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
         conn.rollback()
         raise Aktiveringsfeil(
@@ -441,6 +453,28 @@ def _meta(innhold) -> dict:
     """`innhold.meta` som dict — tomt kart om den mangler eller er noe annet."""
     m = innhold.get("meta") if isinstance(innhold, dict) else None
     return m if isinstance(m, dict) else {}
+
+
+#: Identitetsformen — en KOPI av skjemaets `meta.policy_id`
+#: (`policy-schema-v0.2.json`: `^[a-z0-9-]+$`, `minLength: 3`).
+#: `test_policy_id_monsteret_speiler_skjemaet` binder de to sammen, så de ikke
+#: kan gli fra hverandre — samme grep som `engine._POLICY_ID_MONSTER`.
+#:
+#: Kravet må stå på RADEN, ikke bare i dokumentet (Codex P2). Endepunktet tok
+#: `policy_id` fra toppnivået i forespørselen og krevde bare en ikke-tom
+#: streng, så `"ACME"` og `" acme "` ble lagret som radens identitet — og den
+#: kan aldri endres (`rediger_utkast` rører den ikke, og det er med vilje).
+#: Etter at identitetskravet kom, var et slikt utkast dødfødt uansett hvilken
+#: vei eier prøvde: skriver hun radens id inn i dokumentet, bryter den
+#: skjemaet; velger hun en skjemagyldig id, spriker den fra raden. Den ENESTE
+#: utveien var å forlate utkastet — nøyaktig fella `2d94532` lukket for
+#: dokumentets side.
+#:
+#: Derfor avvises den, ikke normaliseres: `" acme "` → `"acme"` ville vært en
+#: gjetning på hvilken policy eier mente, og identiteten er det ene feltet som
+#: ikke kan rettes etterpå. Editoren trimmer allerede FØR den sender (`2d94532`),
+#: så dette rammer bare direkte API-kall — der et tydelig avslag er riktig svar.
+_POLICY_ID = re.compile(r"^[a-z0-9-]{3,}$")
 
 
 def _dokumentidentitet_avvik(policy_id: str, innhold) -> str | None:

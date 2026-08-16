@@ -333,6 +333,63 @@ def test_valider_fanger_auto_med_vilkaar_uten_vilkaar():
         rt.close()
 
 
+def test_policy_id_monsteret_speiler_skjemaet():
+    """Porten sitt `_POLICY_ID` er en KOPI av skjemaets `meta.policy_id`.
+
+    Glir de fra hverandre, er hullet tilbake i en ny form: raden ville tatt en
+    id dokumentet ikke kan bære (eller motsatt), og utkastet blir dødfødt igjen.
+    Samme grep som `engine._POLICY_ID_MONSTER` (`test_m37`).
+
+    Kjører uten database.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    skjema = _json.loads(
+        (_Path(__file__).resolve().parents[3] / "policies"
+         / "policy-schema-v0.2.json").read_text(encoding="utf-8"))
+    felt = skjema["properties"]["meta"]["properties"]["policy_id"]
+    assert felt["pattern"] == "^[a-z0-9-]+$", felt
+    assert felt["minLength"] == 3, felt
+    # Og mønsteret oppfører seg som de to kravene til sammen.
+    for gyldig in ("acme", "acme-netthandel", "a-1", "123"):
+        assert policyadmin._POLICY_ID.match(gyldig), gyldig
+    for ugyldig in ("ACME", " acme ", "acme ", "ac", "", "acme_no", "ac.me",
+                    "æøå"):
+        assert not policyadmin._POLICY_ID.match(ugyldig), ugyldig
+
+
+@pg
+def test_opprett_avviser_radidentitet_dokumentet_ikke_kan_baere():
+    """🔴 P2: raden må tåle det samme kravet som dokumentet.
+
+    Endepunktet krevde bare en ikke-tom streng, så `"ACME"` og `" acme "` ble
+    lagret som radens identitet — og den kan aldri endres. Etter at
+    identitetskravet kom, var et slikt utkast dødfødt uansett hvilken vei eier
+    prøvde: skriver hun radens id inn i dokumentet, bryter den skjemaet
+    (`^[a-z0-9-]+$`); velger hun en skjemagyldig id, spriker den fra raden. Den
+    eneste utveien var å forlate utkastet.
+
+    Kontroll: fjern `_POLICY_ID`-sjekken i `opprett_utkast`, så blir denne rød
+    ved at utkastet OPPRETTES — og de to påfølgende valideringene viser at det
+    da ikke finnes noen vei videre for det.
+    """
+    rt = _rt()
+    try:
+        for ugyldig in ("ACME", " acme ", "ac", "acme_no"):
+            with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+                _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                         policy_id=ugyldig, innhold=_gyldig(ugyldig))
+            assert e.value.kode == "policy_id_ugyldig", (ugyldig, e.value.kode)
+            rt.rollback()
+        # Den trimmede/små-bokstavede varianten går, så avvisningen er om
+        # FORMEN og ikke om navnet.
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id="acme", innhold=_gyldig("acme"))
+        assert o["policy_id"] == "acme"
+    finally:
+        rt.close()
+
+
 @pg
 def test_valider_avviser_dokument_med_fremmed_policy_id():
     """🔴 P1: identiteten er ÉN sak, og valideringen er der den fryses.

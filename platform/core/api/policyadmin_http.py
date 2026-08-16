@@ -30,6 +30,10 @@ _FEIL_HTTP = {
     "aktiv_peker_usynk": 409,
     "versjon_i_bruk": 409, "versjon_mangler": 409,
     "policy_id_avvik": 409, "status_ikke_produksjon": 409,
+    # 400, ikke 409: en `policy_id` som bryter formen er en feil i
+    # FORESPØRSELEN, ikke en tilstandskonflikt. Ingenting i basen kan endre seg
+    # slik at det samme kallet plutselig lykkes.
+    "policy_id_ugyldig": 400,
     "dokument_avvik": 409,
     "idempotenskonflikt": 409, "sikkerhet": 409,
     "scope_mangler": 403, "mangler_medlemskap": 403,
