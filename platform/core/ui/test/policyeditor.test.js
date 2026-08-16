@@ -346,6 +346,49 @@ test("Grenser: et tidsvindu ingen kontroll kan vise, lagres ikke videre", async 
     "modellen beholdt et vindu ingen kontroll på skjermen viste");
 });
 
+test("Grenser: et tidsvindu som tegnes som AV, lagres ikke videre",
+  async () => {
+    // Codex P2. Et lagret utkast kan bære et `tidsvindu` som er tomt, null
+    // eller ikke en streng. Bryteren står da av og ingen kontroll tegnes —
+    // men verdien ble stående i `g`, så en helt urelatert endring sendte den
+    // med, og den kanoniske valideringen vraket den i stedet for å lese den
+    // viste av-tilstanden som «ingen grense». Til forskjell fra det tømte
+    // klokkeslettet ligger denne verdien der før eier rører noe.
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    for (const tomt of ["", null, 0, { fra: "08:00" }]) {
+      const policy = {
+        meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
+          status: "utkast" },
+        roller: [{ id: "agent" }],
+        handlinger: [{ id: "betaling.utfor", modus: "manuell",
+          tillatt_for: ["agent"], grenser: { tidsvindu: tomt } }],
+      };
+      const h = nyHoved();
+      visPolicyeditor(h, ctx(), { startPolicy: policy });
+      await vent(() => h.querySelector(".editor-kort"));
+      const kort = h.querySelector(".editor-kort");
+      const bryter = kort.querySelector('input[type="checkbox"]');
+      assert.equal(bryter.checked, false,
+        `${JSON.stringify(tomt)} ble vist som et tidsvindu`);
+      assert.equal(kort.querySelectorAll('input[type="time"]').length, 0);
+
+      // Eier rører IKKE tidsvinduet — bare et annet felt på samme kort.
+      const modus = [...kort.querySelectorAll("select")]
+        .find((s) => [...s.options].some((o) => o.value === "alltid_stopp"));
+      modus.value = "alltid_stopp";
+      modus.dispatchEvent(new window.Event("change"));
+      POST = undefined;
+      finnKnapp(h, t("ui.editor.lagre"))
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => POST);
+      assert.equal(
+        "tidsvindu" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser,
+        false,
+        `${JSON.stringify(tomt)} fulgte med på en urelatert lagring`);
+    }
+  });
+
 test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
   // Codex P1. `grenser.valuta` er valgfri i skjemaet, og fraværet betyr noe
   // ANNET enn NOK: motoren sjekker valuta bare når feltet finnes. Et nedtrekk

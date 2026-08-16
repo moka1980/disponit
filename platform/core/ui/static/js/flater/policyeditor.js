@@ -107,6 +107,13 @@ function tidsvinduDeler(verdi) {
 
 function tidsvinduVelger(g, tegnPaaNytt) {
   const paa = typeof g.tidsvindu === "string" && g.tidsvindu !== "";
+  // Av på skjermen ER at grensen ikke finnes. En tom streng, null eller noe
+  // som ikke er en streng i det hele tatt kan ingen kontroll her tegne — den
+  // ville blitt stående usynlig i modellen, fulgt med på neste, urelaterte
+  // lagring, og blitt vraket av den kanoniske valideringen langt fra feltet
+  // som viste av. Dette er noe annet enn det tømte klokkeslettet under: her
+  // ligger verdien der ALLEREDE når editoren åpnes.
+  if (!paa) delete g.tidsvindu;
   const d = tidsvinduDeler(g.tidsvindu);
   const skriv = () => {
     g.tidsvindu = `${d.fraDag}-${d.tilDag} ${d.fraKl}-${d.tilKl}`;
