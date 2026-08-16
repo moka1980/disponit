@@ -686,5 +686,18 @@
   "ui.policyadmin.forkast.tekst": "The draft stays on record as discarded and cannot be used again. No active policy changes — this is a proposal, not an authority.",
   "ui.policyadmin.forkast.maal": "draft {utkast}, version {versjon}",
   "ui.policyadmin.forkast.ukjent": "We do not know whether the discard went through: the network did not answer, and the attempt was retried once. Refresh and check the draft's status before trying again.",
-  "ui.policyadmin.forkastet": "The draft has been discarded."
+  "ui.policyadmin.forkastet": "The draft has been discarded.",
+  "ui.varsler.tittel": "Notifications",
+  "ui.varsler.undertittel": "{n} unread",
+  "ui.varsler.tom": "Nothing is waiting for you",
+  "ui.varsler.tom_tekst": "You will be notified here when a policy round needs your attestation.",
+  "ui.varsler.gaa_til": "Go to",
+  "ui.varsler.merk_lest": "Mark as read",
+  "ui.varsler.merket_lest": "The notification has been marked as read.",
+  "ui.varsler.kanal": "How would you like to be notified?",
+  "ui.varsler.kanal.epost_og_portal": "Email and a message in the portal",
+  "ui.varsler.kanal.kun_portal": "Message in the portal only",
+  "ui.varsler.kanal_lagret": "Your notification preference has been saved.",
+  "ui.varsler.feilet": "The action failed.",
+  "varsel.attestering_venter": "Policy {policy_id} is waiting for your attestation (round {runde}, risk {risikoklasse}) — {gjenstaar} attestation(s) remaining."
 }

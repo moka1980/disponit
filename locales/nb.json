@@ -686,5 +686,18 @@
   "ui.policyadmin.forkast.tekst": "Utkastet blir stående som forkastet og kan ikke tas i bruk igjen. Ingen aktiv policy endres — dette er et forslag, ikke en fullmakt.",
   "ui.policyadmin.forkast.maal": "utkast {utkast}, versjon {versjon}",
   "ui.policyadmin.forkast.ukjent": "Vi vet ikke om forkastingen kom fram: nettverket svarte ikke, og forsøket ble gjentatt én gang. Frisk opp siden og se på statusen til utkastet før du prøver igjen.",
-  "ui.policyadmin.forkastet": "Utkastet er forkastet."
+  "ui.policyadmin.forkastet": "Utkastet er forkastet.",
+  "ui.varsler.tittel": "Varsler",
+  "ui.varsler.undertittel": "{n} uleste",
+  "ui.varsler.tom": "Ingenting venter på deg",
+  "ui.varsler.tom_tekst": "Du får varsel her når en policyrunde trenger din attestering.",
+  "ui.varsler.gaa_til": "Gå til",
+  "ui.varsler.merk_lest": "Merk som lest",
+  "ui.varsler.merket_lest": "Varselet er merket som lest.",
+  "ui.varsler.kanal": "Hvordan vil du varsles?",
+  "ui.varsler.kanal.epost_og_portal": "E-post og melding i portalen",
+  "ui.varsler.kanal.kun_portal": "Bare melding i portalen",
+  "ui.varsler.kanal_lagret": "Varslingsvalget er lagret.",
+  "ui.varsler.feilet": "Handlingen feilet.",
+  "varsel.attestering_venter": "Policyen {policy_id} venter på din attestering (runde {runde}, risiko {risikoklasse}) — {gjenstaar} attestasjon(er) gjenstår."
 }
