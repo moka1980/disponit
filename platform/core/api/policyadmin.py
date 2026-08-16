@@ -272,6 +272,32 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utfall": "validert", "utkast_id": utkast_id, "innholds_hash": h})
 
 
+def _runde_status(status: str, utloper, naa) -> str:
+    """Rundens FAKTISKE status. En `apen`/`klar` runde som har passert
+    `utloper` er `utlopt` — også før noen har rukket å skrive det ned.
+
+    Statusen i basen er ikke en løgn, den er bare foreldet: overgangen til
+    `utlopt` skjer først når en skrivesti kommer forbi (`_lukk_forfalt_runde`),
+    og en forfalt runde kan bli liggende vilkårlig lenge uten at noen skriver.
+    Lesestien har ingen slik anledning — den ruller tilbake — så den må REGNE
+    seg fram til det samme.
+
+    Uten dette var reparasjonen av skrivestiene ikke til å nå (Codex P2):
+    flaten valgte handlinger på rundestatusen den fikk servert, så en forfalt
+    runde som fortsatt sto `apen` skjulte BÅDE «Åpne runde» og «Forkast» og
+    tilbød «Attester» — den ene handlingen som er umulig, siden
+    `attester_aktivering` nekter nettopp en forfalt runde (`runde_utlopt`).
+    Eier satt igjen med en knapp som alltid feiler og ingen vei ut, mens de to
+    veiene ut fantes i API-et.
+
+    Samme predikat som `attester_aktivering` bruker for å nekte, og som
+    `_lukk_forfalt_runde` bruker for å lukke: én forståelse av «forfalt».
+    """
+    if status in ("apen", "klar") and utloper <= naa:
+        return "utlopt"
+    return status
+
+
 def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
                         naa) -> bool:
     """Lås utkastets aktive runde, og lukk den (`apen|klar → utlopt`) om den
@@ -295,13 +321,16 @@ def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
     samme utkast køer i stedet for å låse hverandre fast.
     """
     rad = conn.execute(
-        "SELECT runde, utloper FROM aktiveringsrunde WHERE tenant=%s"
+        "SELECT runde, status, utloper FROM aktiveringsrunde WHERE tenant=%s"
         " AND utkast_id=%s AND status IN ('apen','klar') FOR UPDATE",
         (tenant, utkast_id)).fetchone()
     if rad is None:
         return False
-    r_nr, r_utloper = rad
-    if r_utloper > naa:
+    r_nr, r_status, r_utloper = rad
+    # Samme predikat som lesestien serverer (`_runde_status`) og som
+    # `attester_aktivering` nekter på: skriver og leser skal aldri kunne bli
+    # uenige om hva «forfalt» betyr.
+    if _runde_status(r_status, r_utloper, naa) != "utlopt":
         return True
     # Forfalt: runden er allerede død for attestering (`runde_utlopt`), så
     # dette tar ingen fullmakt bort fra noen — det skriver bare ned det som
@@ -371,9 +400,13 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
 
 
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
-                       request_id: str, utkast_id: str) -> dict:
+                       request_id: str, utkast_id: str, naa) -> dict:
     """Utkastet + diffen mot aktiv base + klassifisering + evt. åpen runde med
-    attestasjoner. Rent lesende (ruller tilbake til slutt)."""
+    attestasjoner. Rent lesende (ruller tilbake til slutt).
+
+    `naa` er klokka lesestien måler `utloper` mot. Uten den var svaret om en
+    forfalt runde ikke galt, bare foreldet — og flaten har ingen annen kilde
+    (se `_runde_status` under)."""
     sett_kontekst(conn, tenant, aktor, request_id)
     rad = conn.execute(
         "SELECT policy_id, innhold, innholds_hash, status, utkastversjon,"
@@ -393,6 +426,7 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
     runde_dto = None
     if runde is not None:
         r_nr, r_status, r_diff, r_risiko, r_pakrevd, r_utloper = runde
+        r_status = _runde_status(r_status, r_utloper, naa)
         rows = conn.execute(
             "SELECT bruker_id, rolle, er_forfatter, ts FROM"
             " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND"

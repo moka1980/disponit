@@ -107,6 +107,12 @@ def _rundestatus(uid):
     return rad[0] if rad else None
 
 
+def _detalj(rt, uid, naa=None):
+    return policyadmin.hent_utkast_detalj(
+        rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+        naa=naa or datetime.now(timezone.utc))
+
+
 def _status(uid):
     m = _mig()
     rad = m.execute("SELECT status FROM policyutkast WHERE tenant=%s"
@@ -206,6 +212,47 @@ def test_forfalt_klar_runde_lukkes_ogsaa():
         rt.commit()
         assert res["utfall"] == "forkastet"
         assert _rundestatus(uid) == "utlopt"
+    finally:
+        rt.close()
+
+
+@pg
+def test_detalj_melder_forfalt_runde_som_utlopt():
+    """Lesestien må si det samme som skrivestiene mener (Codex P2 på #66).
+
+    Flaten velger handlinger på rundestatusen den får servert: en forfalt
+    runde som fortsatt står `apen` i basen skjuler BÅDE «Åpne runde» og
+    «Forkast», og tilbyr «Attester» — den ene handlingen som er umulig. Da er
+    veiene ut som ble reparert i skrivestiene ikke nåbare for eier i det hele
+    tatt. Ingen skrivesti hadde vært innom ennå, så statusen i basen er
+    fortsatt `apen` — detaljen må REGNE seg fram til `utlopt`.
+
+    Kontroll: fjern `_runde_status`-kallet i `hent_utkast_detalj`, så blir
+    denne rød.
+    """
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, "validert")
+    _runde(uid, "-1 hour")
+    rt = _rt()
+    try:
+        det = _detalj(rt, uid)
+        assert det["aktiv_runde"]["status"] == "utlopt"
+        assert _rundestatus(uid) == "apen", "lesestien skrev til basen"
+    finally:
+        rt.close()
+
+
+@pg
+def test_detalj_lar_levende_runde_staa():
+    """Motstykket: en runde som ikke har passert `utloper` skal fortsatt meldes
+    som åpen, ellers ville flaten tilby forkasting mens attestasjoner er i
+    omløp — og serveren ville nektet den med `runde_allerede_aapen`."""
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, "validert")
+    _runde(uid, "1 hour")
+    rt = _rt()
+    try:
+        assert _detalj(rt, uid)["aktiv_runde"]["status"] == "apen"
     finally:
         rt.close()
 

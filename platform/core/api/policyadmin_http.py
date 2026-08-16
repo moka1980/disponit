@@ -321,9 +321,11 @@ def hent_utkast_endepunkt(tjeneste, request):
     utkast_id = request.path_params["utkast_id"]
 
     def kjor(conn):
+        from datetime import datetime, timezone
         tenant, bid = _leseauth(tjeneste, request, conn, rid)
         res = policyadmin.hent_utkast_detalj(
-            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id)
+            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id,
+            naa=datetime.now(timezone.utc))
         return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)

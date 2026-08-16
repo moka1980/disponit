@@ -7,6 +7,7 @@ rediger → valider) håndhever optimistisk lås + skjemavalidering + frysing.
 """
 import copy
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -154,7 +155,8 @@ def test_valider_ugyldig_policy_gir_feilliste_uten_tilstandsendring():
         assert res["feil"]
         # Status urørt (fortsatt utkast, ingen frosset hash).
         det = policyadmin.hent_utkast_detalj(
-            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid)
+            rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            naa=datetime.now(timezone.utc))
         assert det["status"] == "utkast"
         assert det["innholds_hash"] is None
     finally:
@@ -338,7 +340,7 @@ def test_detalj_eksponerer_innhold_for_redigering():
                      policy_id=pid, innhold=_gyldig())
         det = policyadmin.hent_utkast_detalj(
             rt, tenant=TEN, aktor="forf", request_id="r",
-            utkast_id=o["utkast_id"])
+            utkast_id=o["utkast_id"], naa=datetime.now(timezone.utc))
         assert isinstance(det["innhold"], dict)
         assert det["innhold"].get("roller")          # editoren kan laste det
     finally:
@@ -355,7 +357,7 @@ def test_hent_detalj_har_diff_og_klasse():
             innhold=_gyldig())
         det = policyadmin.hent_utkast_detalj(
             rt, tenant=TEN, aktor="forf", request_id="r",
-            utkast_id=o["utkast_id"])
+            utkast_id=o["utkast_id"], naa=datetime.now(timezone.utc))
         assert det["risikoklasse"] == "UTVIDER"     # fra DENY_ALL
         assert det["diff"]["endringer"]
         assert det["aktiv_runde"] is None
