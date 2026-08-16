@@ -1170,14 +1170,28 @@ EIERROLLE = "disponit_domene_eier"
 #: aktive rollen: en funksjon migrator selv har laget og beholdt, EIER den.
 MIGRATORROLLE = "disponit_migrator"
 
-_KROPP = re.compile(r"\$\$.*?\$\$", re.S)
+#: DOLLARSITERING HAR EN TAGG (Codex P2 på #71). `$$` er bare det navnløse
+#: tilfellet av `$tagg$ … $tagg$`, og taggen er ikke pynt: den er måten
+#: PostgreSQL lar en dollarsitert tekst inneholde en annen. Kjente modellen
+#: bare den bare formen, ble en `DO $acl$ … $acl$` hverken strøket som kropp
+#: ELLER pakket ut som blokk — innmaten ble i stedet splittet som toppnivå,
+#: uten gren å telle. En `IF … THEN RAISE …; REVOKE …;` inne i den leste
+#: dermed som en ubetinget REVOKE, og gjerdet ble målt som lukket mens vakten
+#: kunne være usann og PUBLIC stå igjen med EXECUTE.
+#:
+#: Åpningstaggen er en tilbakereferanse, ikke et nytt `$…$`: `$a$ … $b$ … $a$`
+#: er ÉN tekst, og et uttrykk som avsluttet på hvilken som helst tagg ville
+#: delt den i to.
+_TAGG = r"\$([a-z_][a-z0-9_]*|)\$"
+
+_KROPP = re.compile(_TAGG + r".*?\$\1\$", re.S | re.I)
 
 #: En `DO $$ … $$`-blokk ser ut som en funksjonskropp og er noe helt annet:
 #: den KJØRES av migrasjonen, og innholdet er ekte DDL og rettighetsutsagn.
 #: 027, 030 og 031 legger alle den betingede granten til senderrollen der.
 #: Ble blokken strøket sammen med kroppene, var en `GRANT … TO PUBLIC` med
 #: feilskrevet mottaker inne i en slik blokk usynlig for porten.
-_DO_BLOKK = re.compile(r"\bdo\s*\$\$(.*?)\$\$", re.S | re.I)
+_DO_BLOKK = re.compile(r"\bdo\s*" + _TAGG + r"(.*?)\$\1\$", re.S | re.I)
 
 #: Setningene måles med SØK, ikke `startswith`: innmaten i en utpakket
 #: DO-blokk kommer med plpgsql-innpakning foran («begin if exists (…) then
@@ -1402,7 +1416,7 @@ def _setninger(sql):
     pos = 0
     for m in _DO_BLOKK.finditer(uten_kommentar):
         yield from _delt(uten_kommentar[pos:m.start()], False)
-        yield from _delt(m.group(1), True)
+        yield from _delt(m.group(2), True)
         pos = m.end()
     yield from _delt(uten_kommentar[pos:], False)
 
@@ -1722,6 +1736,10 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
       `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
       inne i en DO-blokk er betinget», og målt langt mer enn den vet.
+    * samme vakt i en TAGGET blokk — `DO $acl$ … $acl$`. `$$` er bare det
+      navnløse tilfellet, og en tagget blokk ble hverken strøket som kropp
+      eller pakket ut som blokk. Med motprøvene at taggen PARES: en fremmed
+      tagg avslutter hverken en kropp eller en gren.
     * en UTKOMMENTERT REVOKE — i begge PostgreSQLs kommentarformer, og
       nøstet. En merknad som dokumenterer den påkrevde eierrekkefølgen er
       ikke en utført setning. Med motprøvene at strykingen ikke SLUKER: det
@@ -2024,6 +2042,63 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         [("a.sql", lag + gjerde),
          ("b.sql", "DROP FUNCTION public.varsel_klaim_epost(int, int);")],
         n)[0] == {sig: None}, "`public.` utskrevet er samme objekt"
+
+    # DOLLARSITERING HAR EN TAGG. `$$` er bare det navnløse tilfellet, og en
+    # `DO $acl$ … $acl$` ble hverken strøket som kropp eller pakket ut som
+    # blokk: innmaten ble splittet som toppnivå, uten gren å telle, og den
+    # betingede REVOKE-en leste som ubetinget.
+    for tagg in ("$$", "$acl$"):
+        med_tagg = med_forspill.replace("$$", tagg)
+        gjerdet, spor = _spill_av([("a.sql", lag + med_tagg)], n)
+        assert gjerdet == {sig: False}, (
+            f"en vakt i en `DO {tagg}`-blokk er fortsatt en vakt."
+            f" Spor: {spor}")
+
+    # …og samme tagg om en FUNKSJONSKROPP, som skal STRYKES og ikke måles. En
+    # kropp inneholder både semikolon og de ordene porten leter etter; ble den
+    # ikke kjent igjen, ble innmaten splittet og lest som setninger — og her
+    # som en REVOKE utført av eieren, altså et gjerde som ikke finnes.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int)"
+                   " RETURNS void LANGUAGE sql AS $kropp$ SELECT 1;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC; $kropp$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en tagget kropp er en kropp, ikke setninger." f" Spor: {spor}")
+
+    # …og motprøven på selve TILBAKEREFERANSEN, som er hele grunnen til at
+    # tagger finnes: en dollarsitert tekst kan inneholde en annen tagg uten
+    # at den avslutter noe. Bare `$f$` lukker `$f$`. Avsluttet modellen på
+    # hvilken som helst tagg, sluttet kroppen ved den fremmede taggen, og
+    # halen — her en REVOKE som ville blitt lest som utført av eieren — ble
+    # stående igjen som setninger.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int)"
+                   " RETURNS void LANGUAGE plpgsql AS $f$ BEGIN"
+                   " RAISE NOTICE 'bruk $q$ som tagg';"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC; END $f$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en fremmed tagg avslutter ikke kroppen." f" Spor: {spor}")
+
+    # …og det samme for DO-blokken, der taggen i tillegg avgjør hvor GRENEN
+    # slutter: sluttet blokken ved den indre taggen, falt resten ut på
+    # toppnivå, og en REVOKE som står under en vakt ble lest som ubetinget.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $ytre$ BEGIN"
+                   " IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname ="
+                   " 'disponit_varselsender') THEN EXECUTE $indre$ SELECT 1"
+                   " $indre$;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC; END IF; END $ytre$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "vakten gjelder helt til `END IF`, uansett hvilke tagger som står"
+        f" imellom. Spor: {spor}")
 
     # EN KOMMENTAR ER IKKE EN SETNING. Et `/* … */` som DOKUMENTERER den
     # påkrevde eierrekkefølgen er nøyaktig den slags merknad disse filene er
