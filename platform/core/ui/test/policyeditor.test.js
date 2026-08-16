@@ -253,6 +253,72 @@ test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () =>
     ["NOK", "EUR"], "de øvrige valutaene ble kastet");
 });
 
+test("Grenser: et tømt klokkeslett lager ikke et ugyldig tidsvindu", async () => {
+  // Codex P2. Et tømt `type="time"` gir "", og lagringen kjører ingen native
+  // skjemavalidering — så «man-fre -16:00» gikk rett inn i utkastet og døde
+  // først hos validatoren. Å FJERNE vinduet er av/på-bryterens jobb.
+  const policy = {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
+      grenser: { tidsvindu: "man-fre 08:00-16:00" } }],
+  };
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: policy });
+  await vent(() => h.querySelector(".editor-kort"));
+  const kort = h.querySelector(".editor-kort");
+  const klokker = [...kort.querySelectorAll('input[type="time"]')];
+  assert.equal(klokker.length, 2);
+  klokker[0].value = "";
+  klokker[0].dispatchEvent(new window.Event("change"));
+  assert.equal(klokker[0].value, "08:00",
+    "feltet ble stående tomt i stedet for å falle tilbake");
+
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const tv = JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.tidsvindu;
+  assert.equal(tv, "man-fre 08:00-16:00",
+    `et tomt felt ble serialisert: «${tv}»`);
+
+  // Bryteren er veien ut: den fjerner grensen i stedet for å halvskrive den.
+  const bryter = kort.querySelector('input[type="checkbox"]');
+  bryter.checked = false;
+  bryter.dispatchEvent(new window.Event("change"));
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(
+    "tidsvindu" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser,
+    false, "av/på-bryteren fjernet ikke tidsvinduet");
+});
+
+test("Grenser: et tidsvindu ingen kontroll kan vise, lagres ikke videre", async () => {
+  // Parseren skal ikke være løsere enn skjemaet: en verdi den plukker fra
+  // hverandre men ikke kan sette sammen igjen, gir velgere som viser ETT
+  // vindu mens modellen bærer et annet.
+  const policy = {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
+      grenser: { tidsvindu: "xyz-abc 99:99-16:00" } }],
+  };
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: policy });
+  await vent(() => h.querySelector(".editor-kort"));
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(
+    JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.tidsvindu,
+    "man-fre 08:00-16:00",
+    "modellen beholdt et vindu ingen kontroll på skjermen viste");
+});
+
 test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
   // Codex P1. `grenser.valuta` er valgfri i skjemaet, og fraværet betyr noe
   // ANNET enn NOK: motoren sjekker valuta bare når feltet finnes. Et nedtrekk

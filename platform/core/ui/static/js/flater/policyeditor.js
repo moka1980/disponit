@@ -81,12 +81,20 @@ function rollerSeksjon(policy, tegnPaaNytt) {
 // (den legges inn i lista), så et nedtrekk aldri kan slette data.
 const VALUTAER = ["NOK", "EUR", "USD", "SEK", "DKK", "GBP"];
 const DAGER = ["man", "tir", "ons", "tor", "fre", "lor", "son"];
-const TIDSVINDU_RE = /^([a-z]{3})-([a-z]{3}) (\d{2}:\d{2})-(\d{2}:\d{2})$/;
+// Nøyaktig delene skjemaet godtar — verken mer eller mindre. Er den løsere enn
+// skjemaet, plukker parseren fra hverandre en verdi den ikke kan sette sammen
+// igjen, og velgerne viser noe annet enn det som ligger i modellen.
+const DAG_RE = DAGER.join("|");
+const KL_RE = "([01]\\d|2[0-3]):[0-5]\\d";
+const TIDSVINDU_RE = new RegExp(
+  `^(${DAG_RE})-(${DAG_RE}) (${KL_RE})-(${KL_RE})$`);
+const TIDSVINDU_STANDARD =
+  { fraDag: "man", tilDag: "fre", fraKl: "08:00", tilKl: "16:00" };
 
 function tidsvinduDeler(verdi) {
   const m = TIDSVINDU_RE.exec(verdi || "");
-  return m ? { fraDag: m[1], tilDag: m[2], fraKl: m[3], tilKl: m[4] }
-           : { fraDag: "man", tilDag: "fre", fraKl: "08:00", tilKl: "16:00" };
+  return m ? { fraDag: m[1], tilDag: m[2], fraKl: m[3], tilKl: m[5] }
+           : { ...TIDSVINDU_STANDARD };
 }
 
 function tidsvinduVelger(g, tegnPaaNytt) {
@@ -95,6 +103,10 @@ function tidsvinduVelger(g, tegnPaaNytt) {
   const skriv = () => {
     g.tidsvindu = `${d.fraDag}-${d.tilDag} ${d.fraKl}-${d.tilKl}`;
   };
+  // Et vindu som ikke lar seg lese, kan heller ikke vises. Velgerne står da på
+  // standarden, og modellen skal si det SAMME — ellers lagrer eier en streng
+  // ingen kontroll på skjermen viser.
+  if (paa && !TIDSVINDU_RE.test(g.tidsvindu)) skriv();
   const bryter = el("input", { type: "checkbox", class: "felt-bryter" });
   if (paa) bryter.setAttribute("checked", "");
   bryter.addEventListener("change", () => {
@@ -103,9 +115,19 @@ function tidsvinduVelger(g, tegnPaaNytt) {
   });
   const rad = el("div", { class: "editor-tidsvindu" });
   if (paa) {
-    const klokke = (verdi, sett) => {
-      const i = el("input", { type: "time", class: "felt-inp", value: verdi });
-      i.addEventListener("change", () => { sett(i.value); skriv(); });
+    // Tømmer eier et `type="time"`-felt, blir verdien "". Lagringen kjører
+    // ingen native skjemavalidering, så en tom del ble skrevet rett inn som
+    // «man-fre -16:00» og døde først hos validatoren etterpå. Feltet tar bare
+    // imot det skjemaet godtar, og faller ellers tilbake til siste gyldige
+    // verdi. Å FJERNE vinduet er en egen, tydelig handling: av/på-bryteren.
+    const KL_BARE = new RegExp(`^${KL_RE}$`);
+    const klokke = (les, sett) => {
+      const i = el("input", { type: "time", class: "felt-inp", value: les(),
+        required: "" });
+      i.addEventListener("change", () => {
+        if (KL_BARE.test(i.value)) { sett(i.value); skriv(); }
+        else i.value = les();
+      });
       return i;
     };
     rad.append(
@@ -115,10 +137,10 @@ function tidsvinduVelger(g, tegnPaaNytt) {
         (v) => { d.tilDag = v; skriv(); }),
       el("label", { class: "felt" },
         el("span", { class: "felt-navn", text: t("ui.editor.tidsvindu_fra_kl") }),
-        klokke(d.fraKl, (v) => { d.fraKl = v; })),
+        klokke(() => d.fraKl, (v) => { d.fraKl = v; })),
       el("label", { class: "felt" },
         el("span", { class: "felt-navn", text: t("ui.editor.tidsvindu_til_kl") }),
-        klokke(d.tilKl, (v) => { d.tilKl = v; })));
+        klokke(() => d.tilKl, (v) => { d.tilKl = v; })));
   }
   return el("div", { class: "editor-felt-gruppe" },
     el("label", { class: "felt felt-vannrett" }, bryter,
