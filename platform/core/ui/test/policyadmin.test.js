@@ -1206,6 +1206,62 @@ test("Kvitteringen for A lekker ikke til B når A-tegningen aldri kom fram",
     globalThis.fetch = brukFetch;
   });
 
+// Codex P2: forlot eier detaljsiden mens POST-en fortsatt lå ute, avviste
+// eierskapssjekken oppfriskningen — riktig, siden gjentegningen ellers ville
+// revet bort det hun sto i. Men kvitteringen var alt lagt igjen i modulen, og
+// uten en gjentegning ble den ALDRI forbrukt: eier fikk null tilbakemelding på
+// en fullmaktshandling som faktisk ble utført, og kvitteringen ble liggende og
+// vente på en tilfeldig senere tegning av samme utkast — der den ville dukket
+// opp som om utfallet var ferskt.
+//
+// Kontroll: la `paaFerdig` gå tilbake til `if (eierSkjermen(min)) …` alene, så
+// blir begge påstandene under røde.
+test("Et utfall som ikke kan VISES, blir i det minste lest opp", async () => {
+  let slippPost = null;
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => {
+      await new Promise((r) => { slippPost = r; });
+      return { ok: true, status: 200, json: async () => ({
+        utfall: "venter_godkjennere", antall: 1, gjenstaar: 1,
+        mangler_uavhengig: false }) };
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+  _finn(h, t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+  [...bek.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slippPost);          // attesteringen er ute på nettet
+
+  // Eier venter ikke — hun går tilbake til lista mens POST-en henger.
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  slippPost();
+  await vent(() => false, 20);
+
+  const live = [...document.querySelectorAll('[aria-live="polite"]')]
+    .map((n) => n.textContent).join(" ");
+  assert.ok(live.includes(t("ui.policyadmin.utfall.venter_godkjennere")),
+    "attesteringen ble utført, men eier fikk aldri vite utfallet");
+  assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+    "gjentegningen skulle IKKE hente eier tilbake til detaljsiden");
+
+  // Og den skal ikke ligge igjen og dukke opp neste gang utkastet åpnes.
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+  assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+    "et gammelt utfall ble vist som om det var ferskt");
+});
+
 // Codex P2: kvitteringen ble forbrukt da tegningen startet, men feilgrenen
 // tegnet den aldri. Lyktes handlingen mens den påfølgende detalj-GET-en feilet,
 // fikk eier INGEN tilbakemelding på noe som FAKTISK ble utført — bare en naken

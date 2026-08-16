@@ -10,7 +10,7 @@ import {
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
-  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, Faner,
+  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, Faner, meldLive,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -129,6 +129,13 @@ function _settKvittering(uid, art, tekst) {
 // tegne kvitteringen sin, også når selve oppfriskningen feiler. Ellers bytter
 // vi én feil (kvittering på feil utkast) mot en annen (ingen kvittering for en
 // handling som faktisk ble utført).
+//
+// Og hver `_settKvittering` må ha en `taKvittering` som svarer på seg — også i
+// den grenen der det ALDRI startes en tegning (Codex P2). Blir oppfriskningen
+// droppet fordi eier har gått videre, tas kvitteringen ut her og leses opp i
+// live-området i stedet; se `paaFerdig` i `aapneDetalj`. Uten det blir den
+// liggende i modulen: usett nå, og feilaktig fersk neste gang samme utkast
+// tegnes.
 function taKvittering(uid) {
   const k = _ventendeKvittering;
   _ventendeKvittering = null;
@@ -540,10 +547,26 @@ export function visPolicyadmin(hoved, ctx) {
       // ute mens editoren tok over `hoved`: svaret kom, kalte `aapneDetalj`,
       // og erstattet editoren — med det hun hadde rukket å skrive i den.
       // Oppfriskningen bæres derfor av visningen den ble startet fra.
-      // Selve utfallet annonseres uansett: handlingen ER utført, og det skal
-      // eier få vite selv om skjermen har gått videre.
-      const innhold = detaljInnhold(detalj, uid, ctx,
-        () => { if (eierSkjermen(min)) aapneDetalj(uid); }, aapneEditor, kvitt);
+      //
+      // Men å DROPPE oppfriskningen var ikke å gjøre ingenting (Codex P2):
+      // handlingen hadde alt lagt kvitteringen sin i modulen, og uten en
+      // gjentegning ble den ALDRI forbrukt. Den ble hverken vist eller lest
+      // opp — eier fikk null tilbakemelding på en fullmaktshandling som
+      // faktisk ble utført — og den ble liggende igjen som en tidsinnstilt
+      // felle: neste tegning av SAMME utkast viste et gammelt utfall som om
+      // det var ferskt, og neste tegning av et ANNET utkast kastet den.
+      //
+      // Den tapte visningen håndteres derfor eksplisitt. Kvitteringen tas ut
+      // med én gang — den hører til denne handlingen og skal ikke overleve
+      // den — og utfallet leses opp i det varige live-området i stedet.
+      // Skjermen kan ikke vise det lenger; skjermleseren kan fortsatt si det.
+      // Det er nettopp her `meldLive` er riktig: her finnes det ingen
+      // kvitteringsboks å konkurrere med.
+      const innhold = detaljInnhold(detalj, uid, ctx, () => {
+        if (eierSkjermen(min)) { aapneDetalj(uid); return; }
+        const tapt = taKvittering(uid);
+        if (tapt) meldLive(tapt.tekst);
+      }, aapneEditor, kvitt);
       sett(hoved,
         ...flateHode(
           `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
