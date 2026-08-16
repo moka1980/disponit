@@ -195,7 +195,8 @@ test("Grenser: valuta og tidsvindu velges, de skrives ikke", async () => {
     .find((s) => [...s.options].some((o) => o.value === "NOK"));
   assert.ok(valutaSel, "valuta er ikke et nedtrekk");
   assert.equal(valutaSel.value, "NOK");
-  assert.ok([...valutaSel.options].every((o) => /^[A-Z]{3}$/.test(o.value)),
+  assert.ok([...valutaSel.options]
+    .every((o) => o.value === "" || /^[A-Z]{3}$/.test(o.value)),
     "nedtrekket kan produsere en kode skjemaet avviser");
 
   // Tidsvinduet er dager + klokkeslett, og skrives tilbake på skjemaets form.
@@ -250,4 +251,48 @@ test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () =>
   assert.deepEqual(
     JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta,
     ["NOK", "EUR"], "de øvrige valutaene ble kastet");
+});
+
+test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
+  // Codex P1. `grenser.valuta` er valgfri i skjemaet, og fraværet betyr noe
+  // ANNET enn NOK: motoren sjekker valuta bare når feltet finnes. Et nedtrekk
+  // som viste NOK uten å skrive NOK fortalte eier om en begrensning policyen
+  // ikke hadde. Målt på begge sider: hva nedtrekket viser, og hva som SENDES.
+  const policy = {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
+      grenser: { belop_maks: "1000.00" } }],
+  };
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: policy });
+  await vent(() => h.querySelector(".editor-kort"));
+  const kort = h.querySelector(".editor-kort");
+  const sel = [...kort.querySelectorAll("select")]
+    .find((s) => [...s.options].some((o) => o.value === "NOK"));
+  assert.ok(sel, "valuta er ikke et nedtrekk");
+  assert.equal(sel.value, "", "en policy uten valuta viser en begrensning");
+
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(
+    "valuta" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser, false,
+    "editoren fant på en valutabegrensning eieren aldri valgte");
+
+  // …og veien tilbake: valgt kode kan tas AV igjen, ikke bare byttes.
+  const sel2 = [...h.querySelectorAll(".editor-kort select")]
+    .find((s) => [...s.options].some((o) => o.value === "NOK"));
+  sel2.value = "EUR";
+  sel2.dispatchEvent(new window.Event("change"));
+  sel2.value = "";
+  sel2.dispatchEvent(new window.Event("change"));
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(
+    "valuta" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser, false,
+    "«ingen begrensning» kunne ikke velges tilbake");
 });

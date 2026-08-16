@@ -126,17 +126,49 @@ function tidsvinduVelger(g, tegnPaaNytt) {
     rad);
 }
 
-function handlingKort(h, tegnPaaNytt) {
-  h.grenser = (h.grenser && typeof h.grenser === "object") ? h.grenser : {};
-  const g = h.grenser;
+// FRAVÆR av `grenser.valuta` er en gyldig tilstand i skjemaet, og den betyr
+// noe ANNET enn NOK: motoren sjekker valuta bare når feltet finnes, så «ingen
+// begrensning» slipper gjennom enhver kode. Et nedtrekk som viste NOK uten å
+// skrive NOK løy derfor om policyen — eier så en begrensning som ikke fantes.
+// Den tomme raden ER den tilstanden, og den er valgbar begge veier.
+const VALUTA_INGEN = "";
+
+function valutaVelger(g, tegnPaaNytt) {
   // Valutaen er en liste i skjemaet, men i praksis én kode. Har policyen
   // flere, beholdes de: nedtrekket bytter den FØRSTE og sier fra om resten,
   // i stedet for å kaste dem stille.
   const valutaer = Array.isArray(g.valuta) ? g.valuta.filter(Boolean)
     : (g.valuta ? [g.valuta] : []);
-  const valgtValuta = valutaer[0] || "NOK";
-  const valgbare = VALUTAER.includes(valgtValuta)
-    ? VALUTAER : [valgtValuta, ...VALUTAER];
+  const valgt = valutaer[0] || VALUTA_INGEN;
+  const valgbare = valgt && !VALUTAER.includes(valgt)
+    ? [valgt, ...VALUTAER] : VALUTAER;
+  const sel = el("select", { class: "felt-inp" });
+  const rad = (v, tekst) => {
+    const o = el("option", { value: v, text: tekst });
+    if (v === valgt) o.selected = true;
+    sel.append(o);
+  };
+  rad(VALUTA_INGEN, t("ui.editor.valuta_ingen"));
+  for (const v of valgbare) rad(v, v);           // valutakoder oversettes ikke
+  sel.addEventListener("change", () => {
+    if (sel.value === VALUTA_INGEN) delete g.valuta;
+    else g.valuta = [sel.value, ...valutaer.slice(1)];
+    // Bare hintet under avhenger av tilstanden; uten flere valutaer er det
+    // ingenting som kan bli stående og lyve, og da beholder vi fokus.
+    if (valutaer.length > 1) tegnPaaNytt();
+  });
+  return el("div", { class: "editor-felt-gruppe" },
+    el("label", { class: "felt" },
+      el("span", { class: "felt-navn", text: t("ui.editor.valuta") }), sel),
+    valutaer.length > 1
+      ? el("p", { class: "editor-hint",
+        text: `${t("ui.editor.valuta_flere")}: ${valutaer.join(", ")}` })
+      : null);
+}
+
+function handlingKort(h, tegnPaaNytt) {
+  h.grenser = (h.grenser && typeof h.grenser === "object") ? h.grenser : {};
+  const g = h.grenser;
   return el("div", { class: "editor-kort" },
     el("h4", {}, el("code", { text: h.id || "?" })),
     velg(t("ui.editor.modus"), h.modus, MODUS, "modus.", (v) => { h.modus = v; }),
@@ -145,13 +177,7 @@ function handlingKort(h, tegnPaaNytt) {
         v = v.trim();
         if (!v) delete g.belop_maks; else g.belop_maks = v;
       }, { inputmode: "decimal" }, t("ui.editor.belop_hint")),
-    velg(t("ui.editor.valuta"), valgtValuta, valgbare, "", (v) => {
-      g.valuta = [v, ...valutaer.slice(1)];
-    }),
-    valutaer.length > 1
-      ? el("p", { class: "editor-hint",
-        text: `${t("ui.editor.valuta_flere")}: ${valutaer.join(", ")}` })
-      : null,
+    valutaVelger(g, tegnPaaNytt),
     tidsvinduVelger(g, tegnPaaNytt));
 }
 

@@ -561,6 +561,7 @@
   "site.katalog_note": "Planlagt produktomfang: {antall} moduler i fire faser. Det som er tilgjengelig i dag står under «Hva du får».",
   "ui.policyadmin.ugyldig_uten_detaljer": "Utkastet er ugyldig, men serveren oppga ingen begrunnelse.",
   "ui.editor.belop_hint": "Tall med inntil to desimaler, uten mellomrom.",
+  "ui.editor.valuta_ingen": "Ingen valutabegrensning",
   "ui.editor.valuta_flere": "Policyen har flere valutaer",
   "ui.editor.tidsvindu_fra_dag": "Fra dag",
   "ui.editor.tidsvindu_til_dag": "Til dag",
