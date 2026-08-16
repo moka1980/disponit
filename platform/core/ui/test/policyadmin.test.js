@@ -456,6 +456,25 @@ test("Rediger: går rett til editoren uten å laste lista på nytt", async () =>
     "Rediger startet en liste-GET som kappløper med editoren om `hoved`");
 });
 
+// Codex P2: veien FRAM flyttet fokus til detaljsidens overskrift, veien
+// TILBAKE flyttet det ingensteds. `last()` river DOM-en synkront for
+// lastetilstanden, så knappen tastaturbrukeren nettopp trykte på er borte og
+// fokus faller til `body` — tastaturnavigasjonen starter forfra, utenfor lista.
+test("Tilbake til lista: fokus følger med, ikke til `body`", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  await _aapneDetalj(h);
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.notEqual(document.activeElement, document.body,
+    "fokus falt til body — tastaturnavigasjonen starter utenfor lista");
+  assert.ok(h.contains(document.activeElement), "fokus havnet utenfor flaten");
+  assert.equal(document.activeElement.textContent, t("ui.policyadmin.tittel"),
+    "fokus skal lande på listas overskrift");
+});
+
 // Codex P2: feilet detalj-GET erstattet HELE flaten med en naken feiltilstand.
 // Skuffen lot lista ligge under seg; siden gjorde et forbigående 5xx til en
 // blindvei man bare kom ut av ved å laste appen på nytt.

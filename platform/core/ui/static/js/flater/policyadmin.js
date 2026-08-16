@@ -365,8 +365,8 @@ export function visPolicyadmin(hoved, ctx) {
   function aapneEditor(opts) {
     visPolicyeditor(hoved, ctx, {
       ...opts,
-      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor, hoved, last),
-      tilbake: last,
+      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor, hoved, tilbakeTilListe),
+      tilbake: tilbakeTilListe,
     });
   }
 
@@ -381,7 +381,8 @@ export function visPolicyadmin(hoved, ctx) {
       },
       sortverdi: { opprettet: u.opprettet, policy: u.policy_id },
       handling: { tekst: t("ui.aapne"),
-        paaKlikk: () => aapneDetalj(u.utkast_id, ctx, aapneEditor, hoved, last) },
+        paaKlikk: () =>
+          aapneDetalj(u.utkast_id, ctx, aapneEditor, hoved, tilbakeTilListe) },
     };
   }
 
@@ -394,7 +395,7 @@ export function visPolicyadmin(hoved, ctx) {
     return bar;
   }
 
-  function tegn() {
+  function tegn(flyttFokus) {
     const innhold = st.rader.length
       ? DataTabell({
           captionTekst: t("ui.policyadmin.tittel"),
@@ -414,13 +415,25 @@ export function visPolicyadmin(hoved, ctx) {
       ...flateHode(t("ui.policyadmin.tittel"), t("ui.policyadmin.undertittel")),
       verktoylinje(),
       innhold);
+    if (flyttFokus) fokuserOverskrift(hoved);
   }
 
-  function last() {
+  // `fokus` settes når lista er et RETURMÅL. Veien FRAM flytter fokus til
+  // detaljsidens overskrift; veien TILBAKE gjorde det ikke, og der forsvant
+  // fokus (Codex P2): `last()` river DOM-en synkront for lastetilstanden, så
+  // knappen tastaturbrukeren nettopp trykte på er borte, og fokus faller til
+  // `body`. Da starter tastaturnavigasjonen forfra, utenfor utkastlista.
+  //
+  // Ved første tegning skal den IKKE flytte fokus: der er det ruteren som eier
+  // fokus (`hoved.focus()`), og flaten skal ikke rykke det fra den.
+  function last(opts) {
+    const flyttFokus = !!(opts && opts.fokus);
     medStatus(hoved, ctx, () => hentJson("/v1/policyutkast"), (d) => {
-      st.rader = (d && d.utkast) || []; tegn();
+      st.rader = (d && d.utkast) || []; tegn(flyttFokus);
     });
   }
+
+  function tilbakeTilListe() { last({ fokus: true }); }
 
   last();
 }
