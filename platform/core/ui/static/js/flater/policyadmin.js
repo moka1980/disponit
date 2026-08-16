@@ -107,9 +107,9 @@ function normaliserKlassifikatorSti(sti) {
 // dem er en ekte nøkkelgrense, og lengste treff på tvers vinner.
 //
 // Men lengste faktiske nøkkel hjalp ikke så lenge skilletegnet ble TOLKET
-// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har heller
-// ingen `propertyNames`-begrensning, så `[bank]` og `.foo` er lovlige
-// verifikator-id-er. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
+// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har ingen
+// mønsterbegrensning i skjemaet, så `[bank]` og `.foo` er lovlige
+// verifikator-id-er i en LAGRET policy. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
 // før den så på nodens nøkler: `verifikatorer..foo…` mistet det ene punktumet
 // som var en DEL av nøkkelen, og `verifikatorer.[bank]…` ble lest som
 // listeindeks. Begge falt tilbake til samlegruppen `verifikatorer`, og flere
@@ -152,15 +152,35 @@ function delOppLedd(sti, kilder) {
     }
     forste = false;
     let navn = null;
+    let flertydig = false;
     for (const n of noder) {
       if (Array.isArray(n)) continue;
       for (const k of Object.keys(n)) {
         const etter = rest[k.length];
         if (!rest.startsWith(k)) continue;
         if (etter !== undefined && etter !== "." && etter !== "[") continue;
-        if (navn === null || k.length > navn.length) navn = k;
+        if (navn === null) { navn = k; continue; }
+        if (k === navn) continue;             // samme nøkkel fra base og utkast
+        flertydig = true;
+        if (k.length > navn.length) navn = k;
       }
     }
+    // To ULIKE nøkler treffer samme sti på en ekte nøkkelgrense (Codex P2):
+    // med verifikator-id-ene `foo` og `foo.beskrivelse` er
+    // `verifikatorer.foo.beskrivelse` både beskrivelsen til `foo` og roten til
+    // den andre. Lengste treff vant, så bladene til BEGGE havnet i ett kort med
+    // den ene id-en som overskrift — og godkjenneren leste en tillitsendring på
+    // feil verifikator. Innføringskontrakten (`schema.valider_ny_policy`)
+    // avviser nå slike id-er i policyer på vei INN, men det er en framoverrettet
+    // regel: en policy som ble aktivert før regelen fantes kan fortsatt ha en
+    // slik id (den kan ikke gjøres ugyldig i ettertid uten å ta beslutningene
+    // til tenanten med i fallet — Codex P1 på #63), og den er nettopp BASEN
+    // diffen måles mot. Utkastdetaljen viser dessuten diff for utkast som ENNÅ
+    // ikke er validert (`policyadmin.hent_utkast_detalj`). Stien kan altså nå
+    // hit, og da gjettes det ikke: resten tas som ETT ledd, så hvert blad får
+    // sitt eget kort med hele den rå stien som overskrift. Dårligere
+    // gruppering, men aldri feil tilskriving — og ingenting forsvinner.
+    if (flertydig) navn = rest;
     // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
     // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,
     // som før. Ett innledende skilletegn hører likevel nøkkelen til — vi står
@@ -785,6 +805,10 @@ const UTFALLSART = new Map([
   // Versjonen utkastet bærer kan ikke lagres (tatt utenom den styrte veien
   // mens runden sto åpen). Runden er lukket; utkastet må få en ny versjon.
   ["versjon_i_bruk", "feil"],
+  // Utkastet bryter et framoverrettet krav (migrasjon 022 stoppet det i selve
+  // aktiveringen). Samme art som over — runden er lukket — men eier må rette
+  // INNHOLDET, ikke versjonen, så teksten er en annen.
+  ["utkast_ugyldig", "feil"],
 ]);
 
 // Feilkoder der «Handlingen feilet.» ville vært en løgn. Felles for dem er at
@@ -796,6 +820,10 @@ const GRUNNLAGSFEIL = new Map([
   ["aktiv_peker_usynk", "ui.policyadmin.utfall.aktiv_peker_usynk"],
   ["versjon_i_bruk", "ui.policyadmin.utfall.versjon_i_bruk"],
   ["versjon_mangler", "ui.policyadmin.utfall.versjon_mangler"],
+  // Utkastet bryter et framoverrettet krav som kom ETTER at det ble validert
+  // (Codex P2 på #63). Statusen `validert` er ekte, men foreldet — og et nytt
+  // klikk kan ikke gjøre noe med det: utkastet må rettes og valideres på nytt.
+  ["utkast_ugyldig", "ui.policyadmin.utfall.utkast_ugyldig"],
 ]);
 
 // -> teksten for en grunnlagsfeil, ellers den generiske «Handlingen feilet.».

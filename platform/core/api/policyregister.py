@@ -114,7 +114,7 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     veien: runtime-rollen har kun SELECT på `policyer`.
     """
     from db.pg import sett_tenant
-    from policy_validator.schema import valider_policy
+    from policy_validator.schema import valider_ny_policy
     # Setter tenanten selv, i motsetning til `hent_aktiv`. Forskjellen er
     # tilsiktet: `hent_aktiv` kjører alltid inne i forespørselsveien, der
     # `sett_kontekst` allerede har satt den, og en ekstra setting der ville
@@ -122,7 +122,11 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     # administrativ operasjon uten en slik eier — uten dette treffer den
     # bare row level security med FORCE og feiler på skriving.
     sett_tenant(conn, tenant)
-    feil = valider_policy(policy)
+    # INNFØRINGSKONTRAKTEN, ikke lastekontrakten: dette er en policy på vei
+    # INN, og da gjelder også kravene som bare kan stilles framover (Codex P1
+    # på #63). `hent_aktiv` over bruker `valider_policy` — det som allerede
+    # ligger der skal fortsette å virke.
+    feil = valider_ny_policy(policy)
     if feil:
         raise PolicyKorrupt(feil, policy)
     meta = policy.get("meta") or {}

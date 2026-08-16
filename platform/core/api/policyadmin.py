@@ -257,8 +257,11 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
     # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
-    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
-    feil = _schema.valider_policy(innhold)
+    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2). Her i
+    # INNFØRINGS-varianten: utkastet skal aktiveres, og porten inn er stedet
+    # der framoverrettede krav (entydig verifikator-id) hører hjemme — ikke i
+    # revalideringen av det som alt er aktivt (Codex P1 på #63).
+    feil = _schema.valider_ny_policy(innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -391,9 +394,11 @@ def hent_maler() -> list:
     """Bransjemalene (komplette policyer) som utgangspunkt for et nytt utkast.
     Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen tenant
     (malene er felles). En mal som IKKE validerer mot den KANONISKE validatoren
-    (`schema.valider_policy` — skjema + semantikk, inkl. referanse-integritet og
-    modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke kunne
-    bli et «gyldig utgangspunkt»."""
+    (`schema.valider_ny_policy` — skjema + semantikk, inkl. referanse-integritet
+    og modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke
+    kunne bli et «gyldig utgangspunkt». Innføringsvarianten er den riktige her:
+    en mal er alltid en NY policy, og et utgangspunkt som ikke kan aktiveres er
+    ikke et utgangspunkt."""
     import yaml
     ut = []
     for f in sorted(_MAL_DIR.glob("bransjemal-*.yaml")):
@@ -403,7 +408,7 @@ def hent_maler() -> list:
             continue
         if not isinstance(innhold, dict):
             continue
-        if _schema.valider_policy(innhold):
+        if _schema.valider_ny_policy(innhold):
             continue                                # fail-closed: hopp over
         meta = innhold.get("meta") if isinstance(innhold.get("meta"), dict) else {}
         ut.append({"mal_id": f.stem.replace("bransjemal-", ""),
@@ -524,6 +529,50 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     return ny
 
 
+def _krev_innforingskrav(ny_innhold) -> None:
+    """Utkastet må oppfylle de FRAMOVERRETTEDE kravene for å kunne aktiveres —
+    ikke bare ha oppfylt dem den gangen det ble validert.
+
+    `valider_utkast` er porten inn, men den er en ENGANGS-port: den kjører idet
+    utkastet går til `validert`, og statusen blir stående. Et utkast som fikk
+    `validert` FØR et slikt krav fantes bærer statusen videre, og
+    runde-åpningen leser bare status + `innholds_hash` (Codex P2 på #63). Da
+    kunne det aktiveres uten noen gang å ha møtt kravet — og «gjelder framover»
+    ville i praksis betydd «gjelder framover, unntatt for de utkastene som alt
+    lå klare», nøyaktig de som lander først etter utrullingen. Kravet hører
+    derfor hjemme på aktiveringsveien selv, ikke bare på porten inn.
+
+    KUN differansen (`schema.valider_innforingskrav`), ikke hele
+    `valider_ny_policy`: lastekontrakten er bakoverkompatibel og sier per
+    definisjon ingenting nytt her, og å dra den inn ville blandet «bryter et
+    nytt krav» sammen med «er strukturelt ødelagt» i samme feilkode.
+
+    Kontrollen speiler `_krev_peker_synk`/`_krev_ny_versjon`: den kjører både
+    før runden åpnes OG før noen attesterer. Det andre kallet er ikke
+    overflødig — en runde kan ha vært åpen da utrullingen landet, og en
+    signatur på et utkast som ikke kan aktiveres er verdiløs i det den skrives.
+
+    Merk asymmetrien mot `hent_aktiv`: en alt AKTIV policy revalideres fortsatt
+    mot lastekontrakten alene og virker som før. Det er bare veien INN som
+    strammes. Kaster `Aktiveringsfeil("utkast_ugyldig")`; eier må rette
+    utkastet og validere det på nytt.
+
+    SISTE SKANSE ligger likevel i `aktiver_policy` (migrasjon 022): begge
+    kontrollene her er passert i det aktiveringen skjer, og en runde kan ha
+    vært ferdig attestert allerede da utrullingen landet. Denne funksjonen er
+    porten som gir eier en forståelig feil FØR signaturene brukes; funksjonen i
+    DB er invarianten som holder også for et direkte kall utenom oss."""
+    feil = _schema.valider_innforingskrav(ny_innhold)
+    if feil:
+        raise Aktiveringsfeil("utkast_ugyldig", "; ".join(feil))
+
+
+#: `CONSTRAINT`-navnet `aktiver_policy` merker innføringskravbruddet med
+#: (migrasjon 022). Skiller det fra versjonsinvariantene, som deler SQLSTATE
+#: `check_violation` — uten det måtte utfallet utledes av feilteksten.
+_INNFORINGSKRAV_CONSTRAINT = "verifikator_id_entydig"
+
+
 # --------------------------------------------------------------------------
 # 1. Runde-åpning.
 # --------------------------------------------------------------------------
@@ -567,6 +616,9 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # Og ingen runde åpnes på et utkast som ikke KAN lagres: versjonen det
     # bærer må være semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
     _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+    # ... eller som ikke oppfyller de framoverrettede kravene: `validert` kan
+    # stamme fra før kravet fantes, og status alene er ingen kvittering.
+    _krev_innforingskrav(ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -717,6 +769,9 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # Samme argument for versjonen: en signatur på et utkast som ikke kan
         # lagres er like verdiløs som en signatur på feil base.
         _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+        # Og for de framoverrettede kravene: runden kan ha vært åpen da
+        # utrullingen som innførte dem landet.
+        _krev_innforingskrav(ny_innhold)
     except Aktiveringsfeil:
         conn.rollback()
         raise
@@ -874,22 +929,36 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
-    except psycopg.errors.CheckViolation:
-        # Versjonsinvariantene i `aktiver_policy` (migrasjon 020): utkastets
-        # `meta.versjon` er borte, alt registrert, eller ikke nyere enn den
-        # aktive. Kontrollen i steg 5b fanger det som var der da runden ble
-        # bygget; hit kommer bare en versjon som ble tatt UTENOM den styrte
-        # veien i vinduet etterpå. Da er runden død: innholdet er frosset, så
-        # versjonen kan ikke økes uten et nytt utkast og nye signaturer.
-        # Runden kanselleres derfor med det samme — en runde som beviselig
-        # aldri kan aktiveres skal ikke stå åpen og se levende ut. Signaturene
-        # består (append-only); det er sporet av hva som faktisk ble godkjent.
+    except psycopg.errors.CheckViolation as e:
+        # Innholdsinvariantene i `aktiver_policy`: enten VERSJONEN (migrasjon
+        # 020 — `meta.versjon` er borte, alt registrert, eller ikke nyere enn
+        # den aktive), eller INNFØRINGSKRAVET (migrasjon 022 — en verifikator-id
+        # som gjør diffstien flertydig). Kontrollene i steg 5b fanger det som
+        # var der da runden ble bygget; hit kommer bare det som traff UTENOM
+        # den styrte veien i vinduet etterpå — eller, for innføringskravet, en
+        # runde som var ferdig attestert før utrullingen som innførte det.
+        #
+        # Uansett hvilken av de to: runden er død. Innholdet er frosset, så
+        # verken versjonen eller id-en kan rettes uten et nytt utkast og nye
+        # signaturer. Runden kanselleres derfor med det samme — en runde som
+        # beviselig aldri kan aktiveres skal ikke stå åpen og se levende ut.
+        # Signaturene består (append-only); det er sporet av hva som faktisk
+        # ble godkjent.
+        #
+        # UTFALLET må derimot skilles. De to krever ulik retting av eier (øk
+        # versjonen vs. rett id-en), og «versjonen er i bruk» om en
+        # verifikator-id er en feilmelding som sender eier feil vei.
+        # Funksjonen merker id-bruddet med `CONSTRAINT` (022), så skillet
+        # leses maskinelt og ikke ut av feilteksten.
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
+        utfall = ("utkast_ugyldig"
+                  if e.diag.constraint_name == _INNFORINGSKRAV_CONSTRAINT
+                  else "versjon_i_bruk")
         return _fullfor(conn, tenant, idempotency_key, {
-            "utfall": "versjon_i_bruk", "utkast_id": utkast_id,
+            "utfall": utfall, "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 

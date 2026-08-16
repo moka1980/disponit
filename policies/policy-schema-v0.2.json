@@ -37,6 +37,7 @@
     },
     "verifikatorer": {
       "type": "object", "minProperties": 1,
+      "description": "Kravet om at id-en må gi en ENTYDIG diffsti (ingen `.` eller `[`, Codex P2 på PR-013/#61) står IKKE her, men i innføringskontrakten `policy_validator.schema.valider_ny_policy`. Grunnen er at dette skjemaet også er LASTEKONTRAKTEN: `policyregister.hent_aktiv` revaliderer den lagrede policyen mot skjemaet ved hver forespørsel (fail-closed mot DB-korrupsjon), så en innstramming her ville gjort allerede aktive policyer med en slik id ugyldige med det samme — tenanten mister alle policystyrte beslutninger uten å rekke å rette id-en. Skjemaet beskriver derfor hva en LAGRET policy må være; innføringskontrakten hva en NY policy i tillegg må være.",
       "additionalProperties": {
         "type": "object", "additionalProperties": false, "required": ["betrodd_for"],
         "properties": {
@@ -50,7 +51,7 @@
     },
     "verifikator_prioritet": {
       "type": "object",
-      "description": "PR-007 / Scope v2 pkt. 1: prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden.",
+      "description": "PR-007 / Scope v2 pkt. 1: prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden. Nøkkelen er en verifikator-id og har samme entydighetskrav som `verifikatorer` — håndhevet i `valider_ny_policy`, av samme grunn som der.",
       "additionalProperties": {"type": "integer"}
     },
     "handlinger": {
