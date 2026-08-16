@@ -82,6 +82,23 @@ fi
 # rydding stå ute av drift uten at utrullingen sa fra. Gaten hører derfor
 # hjemme her, FØR første mutasjon: feiler den, er systemet beviselig urørt.
 # Lesingen skjer i en subshell, så miljøfilen ikke lekker inn i preflighten.
+# Samme port for varselsenderens DSN (Codex P1 på #68): min første utgave
+# kontrollerte den nede ved `skriv_cred` — MIDT i den muterende fasen, etter
+# at tjenester var stoppet og credentials skrevet. En «preflight» som feiler
+# etter første mutasjon er ingen preflight; den etterlater et halvt utrullet
+# system med beskjed om at ingenting skulle vært rørt. Porten hører hjemme
+# HER, der DOMAINS-porten allerede står, av nøyaktig samme grunn.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_VARSEL_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_VARSEL_URL mangler i $MILJOFIL."
+  echo "Varselsenderen (disponit-varselsender.timer) trenger sin egen"
+  echo "DB-rolle (disponit_varselsender) — uten DSN-en ville den fått"
+  echo "API-ets, som ikke har EXECUTE på senderfunksjonene. Kjør"
+  echo "deploy/staging/oppsett-postgresql.sh (idempotent) først; den"
+  echo "oppretter rollen og skriver DSN-en. Kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+
 if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "AVBRUTT: DISPONIT_DOMAINS_URL mangler i $MILJOFIL."
   echo "Driftstimerne (disponit-domenerevalidering, disponit-artefaktrydding)"
@@ -206,18 +223,8 @@ skriv_cred api DATABASE_URL          "$DATABASE_URL"
 # skriver i den — uten `install -d` feilet omdirigeringen, og den feilen ville
 # først vist seg som en sender uten DB-URL.
 install -d -m 700 /etc/disponit/varsel
-# SENDERENS EGEN DSN (Codex P1) — aldri API-ets. Ingen fallback til
-# $DATABASE_URL: da ville en manglende variabel stille gitt senderen
-# web-API-rollen igjen, og skillet ville bare vært pynt. Og ingen naken
-# `set -u`-død midt i den muterende fasen: mangler variabelen, har verten
-# ikke kjørt oppsett-postgresql.sh etter denne releasen — det er DER rollen
-# `disponit_varselsender` og DSN-en dens blir til.
-if [ -z "${DISPONIT_VARSEL_URL:-}" ]; then
-  echo "AVBRUTT: DISPONIT_VARSEL_URL mangler i ${MILJOFIL:-/etc/disponit/staging.env} —"
-  echo "kjør deploy/staging/oppsett-postgresql.sh (idempotent) først;"
-  echo "den oppretter senderrollen disponit_varselsender og skriver DSN-en."
-  exit 1
-fi
+# SENDERENS EGEN DSN — aldri API-ets. At variabelen finnes er alt bevist i
+# preflighten (før første mutasjon); her bare materialiseres den.
 skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"

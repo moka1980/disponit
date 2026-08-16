@@ -348,6 +348,23 @@ def test_p1_preflight_skjer_for_forste_mutasjon():
             f"mutasjonen {mutasjon!r} står FØR preflight-gaten"
 
 
+def test_p1_varsel_dsn_gates_for_forste_mutasjon():
+    """Codex P1 på #68, samme kontrakt som testen over: porten for
+    DISPONIT_VARSEL_URL står FØR hver muterende kommando. Første utgave
+    kontrollerte den nede ved `skriv_cred` — midt i den muterende fasen,
+    etter at tjenester var stoppet — og en preflight som feiler etter første
+    mutasjon er ingen preflight. Målt på kilden, så en omflytting ikke kan
+    skje stille."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    gate = opp.index('[ -n "${DISPONIT_VARSEL_URL:-}" ]')
+    for mutasjon in ("groupadd", "useradd", "usermod", "skriv_cred api",
+                     "systemctl stop", "install -m 755", "install -m 644",
+                     "install -m 440", "ln -sfn"):
+        pos = opp.index(mutasjon)
+        assert gate < pos, \
+            f"mutasjonen {mutasjon!r} står FØR varsel-DSN-porten"
+
+
 # ---------------------------------------------------------------------------
 # Codex P1 (PR-068): credential-katalogen må finnes FØR den skrives i.
 #
