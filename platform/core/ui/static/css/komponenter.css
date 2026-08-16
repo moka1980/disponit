@@ -367,6 +367,13 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .diff-navn { font-family: var(--font-mono); }
 .diff-merke { border: 1px solid var(--line); border-radius: var(--radius-pill);
   padding: 0 var(--sp-2); font-size: 0.85em; color: var(--muted); }
+/* Et helt slettet element er ikke en dempet detalj som de andre merkelappene:
+   det er hele fullmakten kortet handler om som forsvinner. Merkelappen står
+   derfor i full farge — men den SIER det den betyr, så meningen ikke hviler på
+   fargen alene (WCAG 1.4.1). Fylt badge er reservert risikoklassene, så de to
+   ikke kan forveksles. */
+.diff-merke.diff-slettet { color: var(--danger); border-color: var(--danger);
+  font-weight: 600; }
 .knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
 .mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);

@@ -420,6 +420,20 @@ function elementOverskrift(element, blader, kilder) {
       if (rest) felt.set(rest, v);
     }
   }
+  // Finnes elementet ikke i utkastet og hvert eneste blad er `fjernet`, er det
+  // HELE elementet som er borte — en hel handling, rolle, oppbevaringsregel
+  // eller verifikator.
+  //
+  // Rekonstruksjonen over gjør da før og etter like, for begge sider er hentet
+  // fra de samme `fra`-verdiene: `vis()` leste dem som uendrede NÅ-verdier, og
+  // ingen pil dukket opp noe sted. Slettinger står dessuten normalt lukket, så
+  // et kort for en fullmakt som er strøket i sin helhet så ut som et hvilket
+  // som helst eksisterende element helt til det ble åpnet (Codex P2).
+  //
+  // Verdiene beholdes — de er det eneste som identifiserer det som forsvinner —
+  // men selve elementet merkes som slettet i den lukkede oppsummeringen.
+  const slettet = kilde === undefined
+    && blader.every((e) => e.type === "fjernet");
   // Rå før/etter for ett felt, så sammensatte merkelapper kan sette pilen der
   // den hører hjemme.
   const sider = (f) => {
@@ -514,7 +528,7 @@ function elementOverskrift(element, blader, kilder) {
     const val = erMengde ? mengde(valuta) : vis(valuta);
     merker.push(`${maks} ${vis(belop)}${val ? " " + val : ""}`);
   }
-  return { navn, merker, felt };
+  return { navn, merker, felt, slettet };
 }
 
 // En liste av rene verdier («unntak.kategorier[]», «dataklasser[]») blir én
@@ -594,10 +608,18 @@ function elementBlokk(element, blader, kilder) {
   // Det skal stå med sin egen sti, ikke pakkes i et kort og ikke få «[]».
   if (blader.every((e) => erBladetSelv(e, kilder))) return feltdiffRad(blader);
 
-  const { navn, merker } = elementOverskrift(element, blader, kilder);
+  const { navn, merker, slettet } = elementOverskrift(element, blader, kilder);
   const detaljer = el("details", { class: "diff-element" });
   const opps = el("summary", {},
     el("span", { class: "diff-navn", text: navn }));
+  // At hele elementet er borte, står FØRST: det er den opplysningen som avgjør
+  // hvordan resten av overskriften skal leses — feltene under er hva som
+  // forsvinner, ikke hva som gjelder.
+  if (slettet) {
+    opps.append(document.createTextNode(" · "),
+      el("span", { class: "diff-merke diff-slettet",
+        text: t("ui.policyadmin.diff.element_fjernet") }));
+  }
   for (const m of merker) {
     opps.append(document.createTextNode(" · "),
       el("span", { class: "diff-merke", text: m }));

@@ -1846,6 +1846,54 @@ test("Diff: et slettet element beholder navnet sitt fra fra-verdiene",
     assert.ok(opps.includes("M-41"), "modulen forsvant fra overskriften");
   });
 
+// Men rekonstruksjonen fra `fra`-verdiene gjør før og etter LIKE: ingen pil
+// dukker opp noe sted, og et kort for en handling som er strøket i sin helhet
+// leses som et hvilket som helst eksisterende element. Slettinger står dessuten
+// normalt lukket, så det sto ingenting om at fullmakten er borte før kortet ble
+// åpnet (Codex P2).
+//
+// Kontroll: fjern `slettet`-merkelappen i `elementBlokk`, så blir denne rød.
+test("Diff: et helt slettet element er merket som slettet i oppsummeringen",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": SLETTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const kort = rot.querySelector(".diff-element");
+    assert.ok(!kort.hasAttribute("open"),
+      "kortet står lukket — da må oppsummeringen alene si at elementet er borte");
+    const opps = kort.querySelector("summary");
+    assert.ok(opps.querySelector(".diff-slettet"),
+      `den slettede handlingen er ikke merket slettet: «${opps.textContent}»`);
+    assert.ok(opps.textContent
+      .includes(t("ui.policyadmin.diff.element_fjernet")),
+      "merkingen må stå med ord, ikke bare farge");
+    // Og verdiene som identifiserer det som forsvinner skal fortsatt stå der.
+    assert.ok(opps.textContent.includes("refusjon.utfor")
+      && opps.textContent.includes("M-41"),
+      "det slettede elementet mistet identiteten sin");
+  });
+
+// Og merkingen må skille: fjernes den første av to handlinger, er
+// `handlinger[0]` et ENDRET element (id-en skiftet) mens `handlinger[1]` er
+// helt borte. Merkes begge, påstår diffen at en handling som fortsatt gjelder
+// er strøket.
+test("Diff: bare det slettede elementet merkes slettet, ikke det endrede",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": FORSKJOVET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const kort = [...rot.querySelectorAll(".diff-element")];
+    assert.equal(kort.length, 2, "to posisjoner er to kort");
+    const merket = kort.filter((k) => k.querySelector(".diff-slettet"));
+    assert.equal(merket.length, 1,
+      `nøyaktig ett av kortene er slettet (merket: ${merket.length})`);
+    const opps = merket[0].querySelector("summary").textContent;
+    assert.ok(opps.includes("refusjon.utfor"),
+      `feil kort er merket slettet: «${opps}»`);
+    assert.ok(!opps.includes("ordre.bekreft"),
+      "handlingen som bare skiftet identitet ble merket slettet");
+  });
+
 // Serverens diff sammenligner lister POSISJONELT. Fjernes den første av to
 // handlinger, blir `handlinger[0]` til bladet «id: A → B», og `handlinger[1]`
 // til de fjernede bladene til gamle B. Hentes overskriften utelukkende fra

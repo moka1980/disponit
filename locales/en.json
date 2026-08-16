@@ -657,6 +657,7 @@
   "ui.policyadmin.diff.antall_felt": "{n} fields",
   "ui.policyadmin.diff.maks": "max",
   "ui.policyadmin.diff.fjernet": "removed",
+  "ui.policyadmin.diff.element_fjernet": "the entire element is removed",
   "ui.policyadmin.diff.uten_grense": "no limit",
   "ui.policyadmin.diff.gruppe.handlinger": "Actions the agent may perform",
   "ui.policyadmin.diff.gruppe.roller": "Roles",
