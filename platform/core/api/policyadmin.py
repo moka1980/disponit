@@ -479,6 +479,37 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     })
 
 
+def _kan_gjenoppta_aktivering(conn, tenant: str, utkast_id: str, runde: int,
+                              aktor: str, diff_hash: str, pakrevd: int) -> bool:
+    """Er en ny innsending fra en godkjenner som ALT har attestert et lovlig
+    forsøk på å fullføre aktiveringen — eller bare en dublett?
+
+    Lovlig KUN når runden allerede er på terskel (antall ≥ påkrevd OG minst én
+    ikke-forfatter) og aktørens eksisterende attestasjon binder NØYAKTIG denne
+    rundens diff. Da er signaturene på plass, runden er fortsatt åpen, og det
+    eneste som gjenstår er aktiveringen: nøyaktig tilstanden `aktiv_peker_usynk`
+    etterlater. Innsendingen skriver ingen ny signatur — den kjører de samme
+    kontrollene og forsøker aktiveringen om igjen.
+
+    Er runden IKKE på terskel, er det ingenting å gjenoppta: runden venter på
+    ANDRE godkjennere, og dubletten er en konflikt (`allerede_attestert`).
+    Fire-øyne-gaten står urørt — terskelen måles her på de lagrede radene, og
+    `aktiver_policy` verifiserer den uansett selv som policy-eieren."""
+    egen = conn.execute(
+        "SELECT diff_hash FROM aktiveringsattestasjon WHERE tenant=%s AND"
+        " utkast_id=%s AND runde=%s AND bruker_id=%s",
+        (tenant, utkast_id, runde, aktor)).fetchone()
+    if egen is None or egen[0] != diff_hash:
+        # Kollisjonen kom fra noe annet enn aktørens egen attestasjon på denne
+        # diffen (f.eks. `jti`) — da er dette ikke en gjenopptakelse.
+        return False
+    antall, uavhengige = conn.execute(
+        "SELECT count(*), count(*) FILTER (WHERE NOT er_forfatter) FROM"
+        " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+        (tenant, utkast_id, runde)).fetchone()
+    return antall >= pakrevd and uavhengige >= 1
+
+
 # --------------------------------------------------------------------------
 # 2+3. Attestering + (ved terskel) aktivering.
 # --------------------------------------------------------------------------
@@ -595,6 +626,10 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     konvolutt_hash = hashlib.sha256(kanonisk_konvolutt(konvolutt)).hexdigest()
 
     # --- 7. Skriv attestasjonen (append-only; trigger vokter er_forfatter) --
+    # Savepointet gjør at en kollisjon kan BESVARES i stedet for å velte
+    # transaksjonen: en godkjenner som alt har attestert er som regel en
+    # konflikt, men ikke alltid (steg 7b).
+    conn.execute("SAVEPOINT attestasjonsforsok")
     try:
         conn.execute(
             "INSERT INTO aktiveringsattestasjon (tenant, utkast_id, runde,"
@@ -607,8 +642,25 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
              KONVOLUTTVERSJON, konvolutt_hash, mac, mac_key_id,
              konvolutt["jti"], r_utloper))
     except psycopg.errors.UniqueViolation:
-        conn.rollback()
-        raise Aktiveringsfeil("allerede_attestert") from None
+        # --- 7b. Samme godkjenner, samme runde, én gang til ----------------
+        # Append-only-nøkkelen stopper en NY signatur — men innsendingen kan
+        # være det eneste gjenværende forsøket på å FULLFØRE en runde som alt
+        # står på terskel. Det skjer etter `aktiv_peker_usynk` i steg 10:
+        # attestasjonen ble bevart, runden står åpen, og etter at eier har
+        # reparert dataene finnes det ingen annen vei inn — samme
+        # idempotensnøkkel replayer bare det lagrede utfallet, og en ny nøkkel
+        # traff før dette punktet. Uten denne veien står en runde på NØYAKTIG
+        # terskel fast til en ekstra kvalifisert person signerer unødig.
+        conn.execute("ROLLBACK TO SAVEPOINT attestasjonsforsok")
+        if not _kan_gjenoppta_aktivering(conn, tenant, utkast_id, r_nr, aktor,
+                                         r_diff_hash, r_pakrevd):
+            conn.rollback()
+            raise Aktiveringsfeil("allerede_attestert") from None
+        # Faller gjennom til steg 8: ingen ny signatur skrives, men terskelen,
+        # reautoriseringen, rekalken og selve aktiveringen kjøres på nytt —
+        # med nøyaktig de samme kontrollene som første gang.
+    else:
+        conn.execute("RELEASE SAVEPOINT attestasjonsforsok")
 
     # --- 8. Terskel (V6): antall ≥ påkrevd OG minst én ikke-forfatter -------
     rader = conn.execute(

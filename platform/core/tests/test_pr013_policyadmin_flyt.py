@@ -28,6 +28,10 @@ pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 TEN = "t-pflyt-" + secrets.token_hex(3)
 MAC = MacRegister({"mk1": {"rolle": "signerer", "hemmelighet": "m" * 40}})
 
+#: Utkastinnhold som UTVIDER fra DENY_ALL_V1 → to påkrevde godkjennere. Brukt
+#: der terskelen selv er poenget (drift-/gjenopptakelsestestene).
+_UTVIDER_INNHOLD = {"roller": [{"id": "r1"}], "handlinger": [{"id": "h1"}]}
+
 
 def _naa():
     return datetime.now(timezone.utc)
@@ -561,4 +565,89 @@ def test_terskelattestasjonen_overlever_drift_i_aktiveringsvinduet(monkeypatch):
     assert antall == 2, "terskel-attestasjonen gikk tapt sammen med aktiveringen"
     assert rstatus == "apen", "runden skal stå — dataene repareres, ikke runden"
     assert [x[0] for x in aktive] == ["9"], "noe ble aktivert tross usynk peker"
+    assert _aktiv_versjon(pid) is None
+
+
+def _reparer(pid, versjon="9"):
+    """Eiers reparasjon: den forvillede aktive raden ryddes, så peker og flagg
+    er enige igjen (begge «ingen aktiv» — nøyaktig basen runden ble åpnet på)."""
+    m = _mig()
+    m.execute("UPDATE policyer SET aktiv=false WHERE tenant=%s AND policy_id=%s"
+              " AND versjon=%s", (TEN, pid, versjon))
+    m.commit()
+    m.close()
+
+
+@pg
+def test_terskelrunde_kan_aktiveres_paa_nytt_etter_reparasjon(monkeypatch):
+    """En bevart runde må kunne FULLFØRES når dataene er reparert.
+
+    Å bevare attestasjonen er bare halve jobben: uten en vei tilbake inn er
+    runden fanget. Samme idempotensnøkkel replayer bare `aktiv_peker_usynk`,
+    og en ny nøkkel fra samme godkjenner traff `allerede_attestert` — så en
+    runde på NØYAKTIG terskel sto fast til en fjerde, unødvendig person
+    signerte. Her sender den samme godkjenneren inn på nytt etter
+    reparasjonen: ingen ny signatur skrives (append-only står), men terskel,
+    reautorisering, rekalk og aktivering kjøres om igjen, og runden fullføres.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)             # UTVIDER, pakrevd 2
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        dh = r["diff_hash"]
+        assert r["pakrevd_antall_godkjennere"] == 2
+        assert _attester(rt, uid, a, dh)["utfall"] == "venter_godkjennere"
+        _drift(pid)                    # samtidig commit i aktiveringsvinduet
+        monkeypatch.setattr(policyadmin, "_krev_peker_synk",
+                            lambda *_a, **_k: None)
+        assert _attester(rt, uid, b, dh)["utfall"] == "aktiv_peker_usynk"
+        # Eier reparerer. Kontrollen settes tilbake: den EKTE kontrollen skal
+        # slippe gjennom nå — ellers er ikke dataene reparert.
+        monkeypatch.undo()
+        _reparer(pid)
+        r2 = _attester(rt, uid, b, dh)          # ny nøkkel, samme godkjenner
+        assert r2["utfall"] == "aktivert", r2
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        antall = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback(); m.close()
+    assert antall == 2, "gjenopptakelsen skrev en ny signatur"
+    assert rstatus == "brukt"
+    assert _aktiv_versjon(pid) == r2["versjon"]
+
+
+@pg
+def test_dublett_under_terskel_er_fortsatt_konflikt():
+    """Gjenopptakelsen åpner IKKE for dubletter generelt.
+
+    Venter runden på ANDRE godkjennere, er det ingenting å gjenoppta — da er en
+    ny innsending fra en som alt har signert nøyaktig det den alltid har vært:
+    en konflikt. Fire-øyne-gaten kan ikke omgås ved å sende inn to ganger.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)             # UTVIDER, pakrevd 2
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, a, r["diff_hash"])
+        assert e.value.kode == "allerede_attestert", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
     assert _aktiv_versjon(pid) is None
