@@ -291,6 +291,30 @@ test("AppShell: uten varselkilde påstår statuslinja ingen null (Codex P2)", ()
     "statuslinja påstår null varsler den ikke har dekning for");
 });
 
+test("AppShell: «sist oppdatert» er dataenes tid, ikke rendringens", () => {
+  // 🔴 Feltet sto på `new Date()` ved bygging av skallet — altså klokka i
+  // nettleseren i det treet tegnes. Ingenting synkroniseres der, så en
+  // oppfriskning eller et språkbytte ga uendrede data et helt ferskt
+  // tidsstempel. Uten et tidspunkt fra kilden skal påstanden ikke stå.
+  const uten = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const utenTekst = uten.rot.querySelector(".skall-status").textContent;
+  assert.ok(!utenTekst.includes(NB["ui.shell.status_oppdatert"].split("{")[0].trim()),
+    `statuslinja lover ferskhet uten kilde: «${utenTekst}»`);
+  // Og skilletegnet skal ikke bli hengende igjen etter delen som falt bort.
+  assert.ok(!utenTekst.trim().endsWith("·"), "løst skilletegn til slutt");
+
+  const tid = new Date("2026-03-05T09:07:00Z");
+  const med = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], oppdatert: tid,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const medTekst = med.rot.querySelector(".skall-status").textContent;
+  assert.ok(medTekst.includes(NB["ui.shell.status_oppdatert"]
+    .replace("{tid}", tid.toLocaleTimeString("nb",
+      { hour: "2-digit", minute: "2-digit" }))),
+    `tidspunktet fra kilden vises ikke: «${medTekst}»`);
+});
+
 test("AppShell: modulmenyen kan skjules, og bryteren sier fra", async () => {
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
     ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });

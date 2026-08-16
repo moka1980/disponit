@@ -190,8 +190,8 @@ export function visStatus(container, tilstand) {
 
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
-                          brukerId, epost, roller, varsler, paaSprak,
-                          paaLoggUt } = {}) {
+                          brukerId, epost, roller, varsler, oppdatert,
+                          paaSprak, paaLoggUt } = {}) {
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
   // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
@@ -388,19 +388,37 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // varselkilde å sende fra ennå — sa hver eneste økt i produksjon «0 varsler»
   // uansett hva som var på gang. Et tall er en påstand: mangler grunnlaget, sier
   // linja at tallet ikke er tilgjengelig i stedet for å hevde at alt er rolig.
+  //
+  // «SIST OPPDATERT» ER DATAENES TID, IKKE VÅR EGEN (Codex P2). Feltet sto på
+  // `new Date()` ved bygging av skallet. Det er klokka i nettleseren i det
+  // treet tegnes — ingenting synkroniseres her: modulstatusen er et statisk
+  // kart, og varseltallet kommer utenfra. En oppfriskning av siden eller et
+  // språkbytte ga altså uendrede data et helt ferskt tidsstempel, og en
+  // feilstilt klokke ga et tidspunkt som var galt uansett.
+  //
+  // Tidspunktet kommer derfor fra den som HAR et: `oppdatert`. Uten et slikt
+  // tidsstempel står påstanden ikke der i det hele tatt — en manglende
+  // opplysning er ærligere enn en oppdiktet.
   const telling = plattformTelling();
-  const statuslinje = el("footer", { class: "skall-status", role: "status" },
+  const oppdatertTid = oppdatert == null ? null
+    : (oppdatert instanceof Date ? oppdatert : new Date(oppdatert));
+  const deler = [
     el("span", { text: t("ui.shell.status_moduler")
       .replace("{i_drift}", String(telling.iDrift))
       .replace("{totalt}", String(telling.totalt)) }),
-    el("span", { text: "·" }),
     el("span", { text: varsler == null
       ? t("ui.shell.status_varsler_ukjent")
       : t("ui.shell.status_varsler").replace("{antall}", String(varsler)) }),
-    el("span", { text: "·" }),
-    el("span", { text: t("ui.shell.status_oppdatert")
-      .replace("{tid}", new Date().toLocaleTimeString(valgtSprak || "nb",
+  ];
+  if (oppdatertTid && !Number.isNaN(oppdatertTid.getTime())) {
+    deler.push(el("span", { text: t("ui.shell.status_oppdatert")
+      .replace("{tid}", oppdatertTid.toLocaleTimeString(valgtSprak || "nb",
         { hour: "2-digit", minute: "2-digit" })) }));
+  }
+  // Skilletegnet hører til fugen mellom to opplysninger, ikke til den ene av
+  // dem: faller en del bort, skal ikke en løs prikk bli stående igjen.
+  const statuslinje = el("footer", { class: "skall-status", role: "status" },
+    deler.flatMap((d, i) => i ? [el("span", { text: "·" }), d] : [d]));
 
   const kropp = el("div", { class: "skall-kropp", "data-meny": "apen" },
     venstre, hoved, kontekst);
