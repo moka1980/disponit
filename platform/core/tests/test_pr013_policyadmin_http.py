@@ -411,6 +411,36 @@ def test_valider_avviser_malstatus_mens_utkastet_ennaa_kan_rettes():
 
 
 @pg
+def test_opprett_avviser_policy_id_som_ikke_levner_plass_til_en_versjon():
+    """🔴 P2: nøkkelen deles — en enorm `policy_id` gjør utkastet dødfødt.
+
+    `policyer_pkey` er (tenant, policy_id, versjon), og de tre deler btree-taket.
+    Skjemaet setter ingen maks på `policy_id`, og `policyutkast`-indeksen tar
+    imot en id på et par kilobyte. Identiteten LÅSES ved opprettelse, så et
+    slikt utkast kunne aldri aktiveres uansett hva eier gjorde etterpå — og uten
+    denne kontrollen fikk hun vite det først når INSERT-en veltet, etter
+    signaturene.
+
+    Kontroll: fjern nøkkelkontrollen i `opprett_utkast`, så blir denne grønn på
+    opprettelsen og rød hos godkjennerne.
+    """
+    pid = "p" + "o" * 2500
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=_gyldig())
+        assert e.value.kode == "utkast_feilformet", e.value.kode
+        rt.rollback()
+        # En vanlig id går fortsatt gjennom — kontrollen er en grense, ikke en dør.
+        assert _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                        policy_id="pol-" + secrets.token_hex(3),
+                        innhold=_gyldig())["utkast_id"]
+    finally:
+        rt.close()
+
+
+@pg
 def test_valider_avviser_unicode_sifre_i_versjonen():
     """🔴 P2: skjemaet godtar «١.٠.٠» — databasen gjør det ikke.
 

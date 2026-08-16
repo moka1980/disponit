@@ -817,20 +817,21 @@ def test_versjonsformen_krever_ascii_sifre():
 def test_porten_avviser_versjon_registeret_ikke_kan_lagre():
     """🔴 En versjon som ikke KAN lagres skal ikke koste to signaturer.
 
-    `versjon` er del av primærnøkkelen, og btree-oppføringen har et hardt tak.
-    Skjemaet setter ingen grense og API-ets kroppsgrense slipper gjennom ledd på
-    titusener av sifre, så uten dette passerte en slik versjon alle kontrollene
-    og veltet først på INSERT-en inne i `aktiver_policy` — som
+    `policyer_pkey` er (tenant, policy_id, versjon), og btree-oppføringen har et
+    hardt tak de tre DELER — så nøkkelen må måles samlet, ikke feltvis. Skjemaet
+    setter ingen grense på noen av dem, og API-ets kroppsgrense slipper gjennom
+    ledd på titusener av sifre; uten dette passerte en slik nøkkel alle
+    kontrollene og veltet først på INSERT-en inne i `aktiver_policy` — som
     `ProgramLimitExceeded`, altså en uhåndtert 500 etter at godkjennerne hadde
     signert.
 
-    Kontroll: fjern lengdekravet i `_krev_ny_versjon`, så blir denne rød ved at
+    Kontroll: fjern nøkkelkravet i `_krev_ny_versjon`, så blir denne rød ved at
     runden ÅPNER på en versjon som aldri kan skrives.
     """
     pid = "pol-" + secrets.token_hex(3)
     a = _medlem("forf", ["policyforvalter"])
     uid = "utk-" + secrets.token_hex(3)
-    _utkast(uid, pid, a, dict(_UTVIDER_INNHOLD), versjon="9" * 600 + ".0.0")
+    _utkast(uid, pid, a, dict(_UTVIDER_INNHOLD), versjon="9" * 2500 + ".0.0")
     rt = _rt()
     try:
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:

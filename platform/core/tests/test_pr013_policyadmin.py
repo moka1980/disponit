@@ -536,17 +536,19 @@ def test_aktiver_policy_avviser_versjon_som_sprenger_primaernokkelen():
     """🔴 Siste skanse mot en versjon registeret ikke kan lagre.
 
     `numeric` har også et tak (131 072 sifre), og kroppsgrensen slipper gjennom
-    mer enn det — men lenge før dét sprenger versjonen btree-oppføringen i
-    primærnøkkelen. Slapp den forbi, ville INSERT-en i steg 5 reist
-    `program_limit_exceeded`: en uhåndtert 500 etter fire-øyne. Nå er den et
-    `check_violation`, som kalleren besvarer med en kansellert runde.
+    mer enn det — men lenge før dét sprenger nøkkelen btree-oppføringen.
+    `policyer_pkey` er (tenant, policy_id, versjon), og de tre DELER taket på
+    ~2704 byte, så ingen av dem er trygg målt for seg. Slapp nøkkelen forbi,
+    ville INSERT-en i steg 5 reist `program_limit_exceeded`: en uhåndtert 500
+    etter fire-øyne. Nå er den et `check_violation`, som kalleren besvarer med
+    en kansellert runde.
 
-    Kontroll: fjern lengdekravet i migrasjon 024, så blir denne rød med
+    Kontroll: fjern `octet_length`-kravet i migrasjon 024, så blir denne rød med
     `ProgramLimitExceeded` i stedet.
     """
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
-    _validert_utkast(c, uid, pid, av="forf", versjon="9" * 600 + ".0.0")
+    _validert_utkast(c, uid, pid, av="forf", versjon="9" * 2500 + ".0.0")
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)

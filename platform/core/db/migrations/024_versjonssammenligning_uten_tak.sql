@@ -186,18 +186,21 @@ BEGIN
     --     med hoderaden låst, så ingen annen STYRT aktivering kan legge seg
     --     imellom dette og INSERT-en i steg 5.
     v_ny := v_innhold -> 'meta' ->> 'versjon';
-    -- Formen OG lengden. `versjon` er del av primærnøkkelen, og en btree-
-    -- oppføring har et hardt tak (~2704 byte) som tenant, policy_id og versjon
-    -- deler. Uten lengdekravet ville en versjon på titusener av sifre — som
-    -- skjemaet tillater — passert hit og først veltet på INSERT-en i steg 5,
-    -- som `program_limit_exceeded`: en uhåndtert 500 etter at godkjennerne
-    -- hadde signert. Porten håndhever samme tall
-    -- (`policyadmin._MAKS_VERSJONSLENGDE`); dette er siste skanse.
+    -- Formen OG plassen. `policyer_pkey` er (tenant, policy_id, versjon), og en
+    -- btree-oppføring har et hardt tak (~2704 byte) som de tre DELER — så ingen
+    -- av dem er trygg målt for seg. Verken `policy_id` eller versjonen har noen
+    -- maks i skjemaet, og uten dette ville en for stor nøkkel passert hit og
+    -- først veltet på INSERT-en i steg 5, som `program_limit_exceeded`: en
+    -- uhåndtert 500 etter at godkjennerne hadde signert. `octet_length` måler
+    -- nøyaktig det btree teller. Porten håndhever samme tall
+    -- (`policyadmin._MAKS_NOKKELBYTES`); dette er siste skanse.
     IF v_ny IS NULL OR v_ny !~ '^[0-9]+\.[0-9]+\.[0-9]+$'
-       OR length(v_ny) > 512 THEN
-        RAISE EXCEPTION 'aktiver_policy: utkast % mangler brukbar '
-            'meta.versjon (lengde %)', p_utkast_id,
-            coalesce(length(v_ny), 0)
+       OR octet_length(p_tenant) + octet_length(v_policy_id)
+          + octet_length(v_ny) > 2400 THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % mangler brukbar meta.versjon '
+            '(nøkkel % byte)', p_utkast_id,
+            octet_length(p_tenant) + octet_length(v_policy_id)
+            + coalesce(octet_length(v_ny), 0)
             USING ERRCODE = 'check_violation';
     END IF;
     IF EXISTS (SELECT 1 FROM public.policyer

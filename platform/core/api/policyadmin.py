@@ -157,6 +157,16 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     if not isinstance(innhold, dict):
         conn.rollback()
         raise Aktiveringsfeil("utkast_feilformet")
+    # Identiteten LÅSES her — den kan ikke endres etterpå. Levner den ikke rom
+    # til en versjon i registerets primærnøkkel, er utkastet dødfødt: ingen
+    # versjon eier senere kan skrive, vil få plass (Codex P2). Da er det
+    # opprettelsen som skal si nei, ikke en validering hun aldri kan tilfredsstille.
+    if _nokkelbytes(tenant, policy_id) > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
+        conn.rollback()
+        raise Aktiveringsfeil(
+            "utkast_feilformet",
+            f"policy_id levner ikke plass til en versjon i registernøkkelen"
+            f" ({_nokkelbytes(tenant, policy_id)} byte)")
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
@@ -269,7 +279,7 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # rundeåpning, sto eier igjen med et validert utkast hun verken kunne
     # aktivere eller redigere. Avvikene legges i feillisten sammen med
     # skjemafeilene, så eier ser NØYAKTIG hva som må rettes i editoren.
-    feil = list(feil) + _dokumentavvik(policy_id, innhold)
+    feil = list(feil) + _dokumentavvik(policy_id, innhold, tenant)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -456,7 +466,7 @@ def _dokumentidentitet_avvik(policy_id: str, innhold) -> str | None:
             f" {policy_id!r}")
 
 
-def _dokumentavvik(policy_id: str, innhold) -> list[str]:
+def _dokumentavvik(policy_id: str, innhold, tenant: str = "") -> list[str]:
     """Alt som gjør at det frosne dokumentet ikke KAN aktiveres slik det står.
 
     Kravene er identiske med portens (`_krev_dokumentidentitet`,
@@ -477,7 +487,7 @@ def _dokumentavvik(policy_id: str, innhold) -> list[str]:
     # den en feil, her er den en tekst eier kan handle på. Skjemaet slipper
     # gjennom to former registeret ikke kan bære — unicode-sifre (Pythons `\d`,
     # og dermed `jsonschema`, godtar hele desimalsiffer-kategorien mens
-    # databasen krever `[0-9]`) og en lengde som sprenger primærnøkkelens
+    # databasen krever `[0-9]`) og en nøkkel som sprenger primærnøkkelens
     # btree-oppføring. Begge må stanses FØR frysingen: etterpå kan versjonen
     # ikke økes, og runden er tapt.
     versjon = _meta(innhold).get("versjon")
@@ -485,10 +495,12 @@ def _dokumentavvik(policy_id: str, innhold) -> list[str]:
         avvik.append(
             f"meta.versjon {versjon[:40]!r} må være tre tall skilt med punktum"
             " (ASCII-sifre, formen 1.2.3)")
-    elif isinstance(versjon, str) and len(versjon) > _MAKS_VERSJONSLENGDE:
-        avvik.append(
-            f"meta.versjon er {len(versjon)} tegn — maks er"
-            f" {_MAKS_VERSJONSLENGDE}")
+    elif isinstance(versjon, str):
+        stor = _nokkelbytes(tenant, policy_id, versjon)
+        if stor > _MAKS_NOKKELBYTES:
+            avvik.append(
+                f"policy_id + meta.versjon er {stor} byte til sammen — maks er"
+                f" {_MAKS_NOKKELBYTES} (de deler registerets primærnøkkel)")
     return avvik
 
 
@@ -543,16 +555,34 @@ _DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
 #: ulagringsbar, åpnet runden, og lot bruddet komme etter attestasjonene — med
 #: en kansellert runde som resultat. De to gatene skal måle det samme.
 _SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-#: Lengste versjon registeret KAN lagre. Ikke en smakssak: `versjon` er del av
-#: primærnøkkelen `(tenant, policy_id, versjon)`, og en btree-oppføring har et
-#: hardt tak (~2704 byte på 8 KiB-sider) som de tre feltene deler. Skjemaet
-#: setter ingen grense, og API-ets kroppsgrense slipper gjennom ledd på titusener
-#: av sifre — uten dette ville en slik versjon passert alle kontrollene og først
-#: veltet på INSERT-en, som `ProgramLimitExceeded`: en uhåndtert 500 midt i
-#: fire-øyne-runden, etter at godkjennerne hadde signert. 512 er flere hundre
-#: ganger lengre enn en ekte semver og fortsatt trygt under indeksgrensen.
-#: Migrasjon 024 håndhever det samme tallet som siste skanse.
-_MAKS_VERSJONSLENGDE = 512
+#: Største SAMLEDE nøkkel registeret kan lagre, i byte. `policyer_pkey` er
+#: `(tenant, policy_id, versjon)`, og en btree-oppføring har et hardt tak
+#: (~2704 byte på 8 KiB-sider) som de tre feltene DELER. Derfor er ingen av dem
+#: trygg målt for seg (Codex P2): `policy_id` har ingen maks i skjemaet, så en
+#: id på et par kilobyte kan spise hele budsjettet alene, og da hjelper det ikke
+#: at versjonen er kort. Skjemaet setter heller ingen grense på versjonen, og
+#: API-ets kroppsgrense slipper gjennom ledd på titusener av sifre.
+#:
+#: Uten kontrollen passerte en slik nøkkel ALLE kontrollene og veltet først på
+#: INSERT-en i aktiveringen, som `ProgramLimitExceeded`: en uhåndtert 500 midt i
+#: fire-øyne-runden, etter at godkjennerne hadde signert.
+#:
+#: 2400 lar det stå ~300 byte igjen til indeksoppføringens eget overhead
+#: (tuppelhode, null-bitmap, varlena-hoder og justering per felt) — rikelig, og
+#: fortsatt hundrevis av ganger mer enn en ekte id + semver trenger. Migrasjon
+#: 024 håndhever samme tall med `octet_length`, som er nøyaktig samme mål.
+_MAKS_NOKKELBYTES = 2400
+
+#: Plass som MÅ stå igjen til versjonen når identiteten låses (ved opprettelse).
+#: `policy_id` kan ikke endres etterpå, så en id som ikke levner rom til en
+#: versjon gir et utkast som aldri kan aktiveres — uansett hva eier gjør
+#: etterpå. Da er det opprettelsen som skal si nei, ikke valideringen.
+_VERSJONSRESERVE = 64
+
+
+def _nokkelbytes(*deler: str) -> int:
+    """Nøkkelens størrelse slik Postgres måler den (`octet_length`, UTF-8)."""
+    return sum(len(d.encode("utf-8")) for d in deler if isinstance(d, str))
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
 #: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
 _TALLVERSJON = re.compile(r"^[0-9]+(\.[0-9]+)*$")
@@ -601,9 +631,9 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     -> versjonen som vil bli lagret. Kaster `Aktiveringsfeil`."""
     ny = _meta(ny_innhold).get("versjon")
     if not isinstance(ny, str) or not _SEMVER.match(ny) \
-            or len(ny) > _MAKS_VERSJONSLENGDE:
-        # Formen OG lengden: en versjon registeret ikke kan lagre er like
-        # umulig å aktivere som en som mangler (se `_MAKS_VERSJONSLENGDE`), og
+            or _nokkelbytes(tenant, policy_id, ny) > _MAKS_NOKKELBYTES:
+        # Formen OG plassen: en nøkkel registeret ikke kan lagre er like umulig
+        # å aktivere som en versjon som mangler (se `_MAKS_NOKKELBYTES`), og
         # skal stoppes her — ikke som en indeksfeil etter to signaturer.
         raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r:.80}")
     if conn.execute(
