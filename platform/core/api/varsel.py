@@ -324,9 +324,27 @@ def merk_lest(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     `bruker_id` i WHERE er ikke pynt oppå RLS: RLS skiller tenanter, ikke
     mennesker inne i samme tenant. Uten den kunne én bruker merket en kollegas
     varsel som lest — og dermed skjult at noe ventet på henne.
+
+    Å LESE VARSELET AVLYSER E-POSTEN (Codex P2). Timeren går hvert 5. minutt,
+    så det vanligste tilfellet av alle er at mottakeren sitter i portalen når
+    varselet dukker opp: hun ser det, merker det lest, og fikk før likevel
+    e-posten noen minutter senere — om noe hun allerede hadde kvittert ut. Det
+    er samme løgn som `pensjoner_runde` finnes for å hindre, bare i den
+    kanalen hun ikke kan lukke selv.
+
+    Køen er `I_KO`, som hos de to andre veiene som avlyser en sending: også en
+    rad som venter på nytt forsøk skal stoppes, ellers ville `varsel_rekoe`
+    løftet den tilbake til `koet` etter at hun leste den. `under_sending` står
+    utenfor av samme grunn som der — den raden er i et SMTP-kall akkurat nå.
+    Den fanges i stedet av klaimets eget `lest_ts IS NULL` (migrasjon 027),
+    som er den siste porten før SMTP.
     """
     return conn.execute(
-        "UPDATE varsel SET lest_ts=now() WHERE tenant=%s AND bruker_id=%s"
+        "UPDATE varsel SET lest_ts=now(),"
+        f" epost_status=CASE WHEN epost_status IN {I_KO}"
+        "                    THEN 'ikke_aktuelt'"
+        "                    ELSE epost_status END"
+        " WHERE tenant=%s AND bruker_id=%s"
         " AND id=%s AND lest_ts IS NULL RETURNING id",
         (tenant, bruker_id, varsel_id)).fetchone() is not None
 

@@ -502,6 +502,87 @@ def test_avmelding_stopper_ogsaa_en_rad_som_venter_paa_nytt_forsok():
         c.close()
 
 
+@pg
+def test_lest_i_portalen_gir_ingen_epost():
+    """Det vanligste tilfellet: hun sitter i portalen når varselet kommer.
+
+    Timeren går hvert 5. minutt, så vinduet mellom «varselet står i innboksen»
+    og «e-posten går ut» er nettopp det vinduet en bruker som er innlogget
+    bruker på å lese det. Før fikk hun e-posten likevel — `merk_lest` rørte
+    bare `lest_ts`, og raden ble stående `koet`. En e-post om noe hun alt har
+    kvittert ut er samme løgn som et varsel om en lukket runde, bare i den
+    kanalen hun ikke kan lukke selv.
+
+    Kontroll: ta `epost_status`-leddet ut av `merk_lest`, og denne blir rød på
+    at e-posten gikk ut.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "leser", "leser@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        vid = varsel.innboks(c, tenant=TEN, bruker_id=b)[0]["id"]
+        assert varsel.merk_lest(c, tenant=TEN, bruker_id=b, varsel_id=vid)
+        c.commit()
+        _kontekst(c)
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt if t == "leser@example.test"] == [], (
+            "e-post om et varsel hun alt hadde lest")
+        st = c.execute("SELECT epost_status FROM varsel WHERE id=%s",
+                       (vid,)).fetchone()
+        assert st == ("ikke_aktuelt",), st
+    finally:
+        c.close()
+
+
+@pg
+def test_klaimet_tar_aldri_en_rad_som_er_lest():
+    """Den siste porten før SMTP, uavhengig av hvem som satte `lest_ts`.
+
+    `merk_lest` avlyser sendingen selv, men den kan ikke være hele vernet: den
+    når ikke en rad som er `under_sending` (den står i et SMTP-kall), og en rad
+    som kommer tilbake fra en utløpt lease etter at den ble lest, ville ellers
+    gått rett ut ved neste kjøring. Derfor spør KLAIMET selv.
+
+    Tilstanden fabrikkeres direkte — en `koet`-rad som er lest — for det er
+    nettopp den kombinasjonen `merk_lest` ikke lenger produserer. `RETURNING`
+    asserter at fabrikkeringen landet: uten tenantkontekst filtrerer RLS bort
+    UPDATE-en, og testen ville i stedet målt at en helt vanlig rad blir sendt.
+
+    Kontroll: fjern `k.lest_ts IS NULL` fra `varsel_klaim_epost`, og denne blir
+    rød.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "lest_ko", "lest-ko@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        _kontekst(c)
+        truffet = c.execute(
+            "UPDATE varsel SET lest_ts=now() WHERE tenant=%s AND bruker_id=%s"
+            " AND epost_status='koet' RETURNING id", (TEN, b)).fetchall()
+        assert len(truffet) == 1, "fabrikkeringen landet ikke"
+        c.commit()
+        _kontekst(c)
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt
+                if t == "lest-ko@example.test"] == [], (
+            "klaimet tok en rad som var lest")
+        st = c.execute("SELECT epost_status, epost_forsok FROM varsel"
+                       " WHERE tenant=%s AND bruker_id=%s",
+                       (TEN, b)).fetchone()
+        # Urørt: ikke klaimet, og forsøkstelleren ikke brent.
+        assert st == ("koet", 0), st
+    finally:
+        c.close()
+
+
 @pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 def test_runtime_rollen_kan_kalle_senderens_funksjoner():
     """Rollen som FAKTISK kjører senderen må kunne kalle de tre funksjonene.

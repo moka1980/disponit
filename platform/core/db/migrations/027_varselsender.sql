@@ -75,6 +75,16 @@ DROP FUNCTION IF EXISTS varsel_rekoe(interval, int, interval);
 -- som har brukt opp forsøkene sine er ikke i køen lenger, uansett hvilken vei
 -- den kom dit.
 --
+-- ET LEST VARSEL ER IKKE I KØ (Codex P2). `lest_ts IS NULL` står i klaimets
+-- eget filter, ikke bare i de veiene som avlyser en sending. Modulteksten over
+-- lovte «aldri leste», men ingenting håndhevet det: `merk_lest` rørte bare
+-- `lest_ts`, og raden ble stående `koet` — så mottakeren som leste varselet i
+-- portalen fikk e-posten om det noen minutter senere likevel. Avlysningen
+-- ligger nå i `merk_lest`, men den kan ikke være det eneste vernet: den når
+-- ikke en rad som er `under_sending`, og en rad som kommer tilbake fra en
+-- lease etter at den ble lest, ville ellers gått rett ut. Klaimet er den siste
+-- porten før SMTP, og derfor den som må stille spørsmålet.
+--
 -- Ordningen er FIFO på `opprettet` — den eldste ventende varsles først, som i
 -- innboksen.
 CREATE OR REPLACE FUNCTION varsel_klaim_epost(p_grense int,
@@ -95,6 +105,7 @@ AS $$
                       FROM varsel k
                       JOIN brukeridentitet b ON b.bruker_id = k.bruker_id
                      WHERE k.epost_status = 'koet'
+                       AND k.lest_ts IS NULL
                        AND (b.profil->>'epost') IS NOT NULL
                        AND (b.profil->>'epost_verifisert')::boolean IS TRUE
                        AND k.epost_forsok < greatest(1, coalesce(p_maks, 3))
