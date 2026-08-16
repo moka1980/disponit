@@ -9,25 +9,26 @@ TEKSTEN RENDRES HER, ikke i databasen. Raden bærer `tekstnokkel` + `parametre`,
 og lokaliseringen skjer ved sending — så en rettet oversettelse gjelder også
 for det som alt står i kø. Databasen skal ikke kunne noe språk.
 
-SPRÅKET ER INSTALLASJONENS, IKKE MOTTAKERENS — og det skal stå rett ut (eiers
-P2). Modulteksten lovte tidligere at e-posten ble lest «på mottakerens språk».
-Det er sant i INNBOKSEN, som rendrer nøkkelen i nettleseren med leserens eget
-valg, men det kan ikke være sant her: portalens språkvalg lever i URL-ledd og
-`localStorage` (`ui/static/js/i18n.js`), profil-DTO-en fra IdP-en er lukket
-til tre felt (`visningsnavn`, `epost`, `epost_verifisert`) og `varselvalg`
-bærer bare kanalvalget. Det finnes altså ingen serverlagret språkpreferanse å
-slå opp, og `varsel_klaim_epost` returnerer ingen — en kjøring laster ett
-locale og bruker det på hele den kryss-tenante køen.
+SPRÅKET ER MOTTAKERENS DER HUN HAR VALGT, OG INSTALLASJONENS ELLERS. Teksten
+her sa tidligere at det var installasjonens og bare det, og det var sant da
+den ble skrevet: portalens språkvalg lever i URL-ledd og `localStorage`
+(`ui/static/js/i18n.js`), profil-DTO-en fra IdP-en er lukket til tre felt
+(`visningsnavn`, `epost`, `epost_verifisert`), og `varselvalg` bar bare
+kanalvalget — det fantes ingen serverlagret preferanse å slå opp.
 
-Løftet er derfor avgrenset til det som er sant, og gjort til et VALG i stedet
-for en konstant: `DISPONIT_VARSEL_SPRAK` bestemmer språket for
-installasjonen, med `nb` som standard. En engelskspråklig installasjon er da
-en env-endring, ikke en kodeendring — men det er fortsatt ETT språk for alle
-mottakere, og det er den ærlige beskrivelsen inntil en preferanse lagres.
+Nå gjør det det. `varselvalg.sprak` (028) settes av flaten når kanalvalget
+lagres — brukeren STÅR i språket sitt i det øyeblikket — og
+`varsel_klaim_epost` returnerer det per rad, så én kjøring rendrer hver
+e-post riktig. At nøkkelen og ikke setningen lagres er nettopp det som gjør
+at det også gjelder for det som alt står i kø.
 
-Den dagen den lagres, er dette den korte veien: la klaimet returnere språket
-per rad og velg locale i løkka. At nøkkelen og ikke setningen lagres er
-nettopp det som gjør at det da også gjelder for køen.
+DEN SOM IKKE HAR VALGT, ER IKKE NORSK (Codex P2). Kolonnen og klaimet skrev
+først 'nb' i det tilfellet, og da fikk senderen alltid en gyldig verdi og tok
+den for et valg — `DISPONIT_VARSEL_SPRAK=en` var virkningsløs for nettopp den
+gruppen innstillingen fantes for. Fra 031 er «ikke uttrykt» NULL, og det er
+DA installasjonens valg gjelder: `DISPONIT_VARSEL_SPRAK`, med `nb` som
+standard. En engelskspråklig installasjon er en env-endring, ikke en
+kodeendring.
 
 SMTP-oppsettet kommer fra credentials, aldri fra koden. Eier: WCAGvakts konto
 (`send.one.com:587`) brukes til TEST og byttes senere — derfor er avsender og
@@ -158,12 +159,12 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     `send` er injiserbar, så testene kan måle HVA som ville blitt sendt uten en
     e-postserver. Standard er ekte SMTP.
 
-    `sprak` er INSTALLASJONENS språk, ikke mottakerens, og standarden er
-    `DISPONIT_VARSEL_SPRAK` (`nb`) — ikke en hardkodet «nb» i signaturen.
-    Forskjellen er at driften kan velge språk uten en kodeendring, og at
-    valget står ett sted i stedet for hos hver kaller. Ett locale lastes for
-    hele kjøringen fordi køen er kryss-tenant og klaimet ikke bærer noe språk;
-    se modulteksten for hvorfor det ikke finnes noe å bære.
+    `sprak` er INSTALLASJONENS språk, og gjelder for den mottakeren som ikke
+    har uttrykt noe eget. Standarden er `DISPONIT_VARSEL_SPRAK` (`nb`) — ikke
+    en hardkodet «nb» i signaturen. Forskjellen er at driften kan velge språk
+    uten en kodeendring, og at valget står ett sted i stedet for hos hver
+    kaller. Har mottakeren derimot valgt selv, bærer klaimet det valget, og
+    det vinner — locale lastes per språk, ikke per kjøring.
 
     RADEN KLAIMES FØR SMTP, og klaimet COMMITTES før sendingen begynner. Det er
     hele forskjellen på denne løkka og den forrige (Codex P1): før plukket den
@@ -250,8 +251,10 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     # varselet leses på MOTTAKERENS språk — det var derfor raden bærer nøkkel
     # og parametre i stedet for ferdig tekst. Å rendre hele kjøringen med ETT
     # språk brøt løftet i nettopp den kanalen mottakeren ikke kan bytte språk
-    # i selv. Klaimet returnerer språket (fra `varselvalg`, 'nb' som
-    # standard); ordboka lastes én gang per språk per kjøring.
+    # i selv. Klaimet returnerer språket fra `varselvalg`, og NULL når
+    # brukeren ikke har uttrykt noe (migrasjon 031) — da, og bare da, gjelder
+    # installasjonens valg under. Ordboka lastes én gang per språk per
+    # kjøring.
     tekstcache: dict = {}
 
     def _tekster(radsprak):
