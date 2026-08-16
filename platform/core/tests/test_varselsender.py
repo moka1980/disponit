@@ -262,47 +262,43 @@ def test_spraket_er_installasjonens_valg_og_ikke_en_konstant(monkeypatch):
 
 
 @pg
-def test_hele_koen_rendres_i_ett_sprak_uansett_mottaker(monkeypatch):
-    """Den ærlige avgrensningen, målt: to mottakere, samme språk.
+def test_epost_rendres_paa_MOTTAKERENS_sprak():
+    """Løftet var mottakerens språk; kjøringen brukte ETT (Codex P2).
 
-    Dette er IKKE en test som feirer en mangel. Den låser at mangelen er
-    kjent og avgrenset: køen er kryss-tenant, `varsel_klaim_epost` returnerer
-    ingen språkpreferanse, og et locale lastes per KJØRING. Skulle noen senere
-    la klaimet bære språket og velge locale per rad, er det denne testen som
-    skal skrives om — og det er hele poenget med at den finnes.
+    Forgjengeren av denne testen låste den motsatte oppførselen fast og sa
+    eksplisitt at den skulle skrives om den dagen klaimet bar språket. Den
+    dagen er nå: `varselvalg.sprak` (028) settes av flaten når valget lagres,
+    klaimet returnerer det per rad, og senderen rendrer hver e-post riktig i
+    én og samme kjøring.
 
-    Språket settes til `en` for å skille de to tilfellene fra hverandre: med
-    `nb` ville en test som IKKE lastet noe locale i det hele tatt sett like
-    grønn ut.
+    To mottakere: én med engelsk valgt, én uten valg i det hele tatt. Den
+    engelske får engelsk emne og tekst; den uten valg får standardspråket —
+    ikke ingenting, og ikke den andres.
+
+    Kontroll: la senderen bruke ett locale for hele kjøringen igjen, så blir
+    denne rød på det engelske emnet.
     """
-    monkeypatch.setattr(varselsender, "SPRAK", "en")
-    engelsk = varselsender._locale("en")
-    norsk = varselsender._locale("nb")
-    nokkel = "varsel.attestering_venter"
-    assert engelsk[nokkel] != norsk[nokkel], (
-        "nb og en har samme tekst for nøkkelen — da kan ikke denne testen"
-        " skille språkene, og porten er verdiløs")
-
     c = _conn()
     try:
-        for navn in ("sprak-a", "sprak-b"):
-            b = _bruker(c, navn, f"{navn}@example.test")
-            _ko(c, b, "u-" + secrets.token_hex(4))
+        en = _bruker(c, "engelsk", "en@example.test")
+        nb = _bruker(c, "norsk", "nb@example.test")
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=en,
+                          kanal="epost_og_portal", sprak="en")
+        _ko(c, en, "u-" + secrets.token_hex(4))
+        _ko(c, nb, "u-" + secrets.token_hex(4))
         c.commit()
+        _kontekst(c)
         sendt, send = _samler()
         varselsender.kjor(c, send=send)
         _kontekst(c)
-
-        mine = [(til, emne, tekst) for til, emne, tekst in sendt
-                if til.startswith("sprak-")]
-        assert len(mine) == 2, f"forventet to sendinger, fikk {mine}"
-        forventet = varselsender.rendre(
-            engelsk, nokkel, {"policy_id": "p", "runde": 1,
-                              "risikoklasse": "UTVIDER", "gjenstaar": 1})
-        for til, emne, tekst in mine:
-            assert tekst == forventet, (
-                f"{til} fikk ikke installasjonens språk: {tekst!r}")
-            assert emne == engelsk["varsel.epost.emne"]
+        per = {til: (emne, tekst) for til, emne, tekst in sendt}
+        assert "en@example.test" in per and "nb@example.test" in per, per.keys()
+        emne_en, tekst_en = per["en@example.test"]
+        emne_nb, _t = per["nb@example.test"]
+        assert "waiting" in emne_en, f"engelsk mottaker fikk: {emne_en!r}"
+        assert "venter" in emne_nb, f"norsk mottaker fikk: {emne_nb!r}"
+        assert "attestation" in tekst_en, (
+            f"kroppen fulgte ikke mottakerens språk: {tekst_en!r}")
     finally:
         c.close()
 

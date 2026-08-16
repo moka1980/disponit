@@ -367,10 +367,11 @@ def varselvalg_endepunkt(tjeneste, request):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
         from . import varsel as v
-        kanal = (_kropp(request) or {}).get("kanal")
+        kropp = _kropp(request) or {}
         try:
             satt = v.sett_kanal(conn, tenant=tenant, bruker_id=bid,
-                                kanal=kanal)
+                                kanal=kropp.get("kanal"),
+                                sprak=kropp.get("sprak"))
         except ValueError:
             return _feil("request_feilformet", rid)
         return _ok_lagret(conn, {"kanal": satt}, rid)

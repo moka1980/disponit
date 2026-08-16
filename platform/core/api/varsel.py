@@ -446,7 +446,7 @@ def merk_lest(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
 
 
 def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
-               kanal: str) -> str:
+               kanal: str, sprak: str | None = None) -> str:
     """Valget eier ba om. Ukjent verdi avvises — en feilstavet kanal skal ikke
     stille slå av varslingen.
 
@@ -483,12 +483,21 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     """
     if kanal not in ("epost_og_portal", "kun_portal"):
         raise ValueError(f"ukjent varselkanal: {kanal!r}")
+    # Språket følger valget (Codex P2): flaten sender språket brukeren STÅR i
+    # når hun lagrer — det er den beste kilden serveren har, siden valget
+    # ellers bare lever i nettleserens localStorage. `None` = urørt, så et
+    # kanalbytte fra en klient som ikke sender språk ikke nullstiller det.
+    if sprak is not None and sprak not in ("nb", "en"):
+        raise ValueError(f"ukjent språk: {sprak!r}")
     _laas_kanalvalget(conn, tenant, bruker_id)
     conn.execute(
-        "INSERT INTO varselvalg (tenant, bruker_id, kanal) VALUES (%s,%s,%s)"
+        "INSERT INTO varselvalg (tenant, bruker_id, kanal, sprak)"
+        " VALUES (%s,%s,%s, coalesce(%s,'nb'))"
         " ON CONFLICT (tenant, bruker_id) DO UPDATE"
-        " SET kanal=EXCLUDED.kanal, oppdatert=now()",
-        (tenant, bruker_id, kanal))
+        " SET kanal=EXCLUDED.kanal,"
+        "     sprak=coalesce(%s, varselvalg.sprak),"
+        "     oppdatert=now()",
+        (tenant, bruker_id, kanal, sprak, sprak))
     if kanal == "kun_portal":
         conn.execute(
             "UPDATE varsel SET epost_status='ikke_aktuelt'"

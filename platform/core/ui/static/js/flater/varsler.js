@@ -186,7 +186,11 @@ export function visVarsler(hoved, ctx) {
     kanalventende += 1;
     laasKanalvelger(true);
     kanalko = kanalko
-      .then(() => settVarselkanal(kanal))
+      // Språket sendes med valget (Codex P2): serveren har ingen annen kilde
+      // — brukerens språk lever ellers bare i localStorage — og hun STÅR i
+      // språket sitt idet hun lagrer. E-posten rendres da på samme språk som
+      // portalen hun valgte det i.
+      .then(() => settVarselkanal(kanal, ctx.sprak))
       .then(() => {
         // Bare kvittering for det valget som står igjen. Kom det et nytt
         // klikk mens dette var ute, er «lagret» om det gamle valget en

@@ -410,11 +410,9 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
                          capture_output=True, text=True, env=env)
     assert res.returncode == 0, \
         f"credential-materialiseringen feilet på en fersk rot:\n{res.stderr}"
-    # EGEN DSN, ikke runtime-DSN-en (eiers P1). Verdien er det som avgjør
-    # hvilken DB-ROLLE senderen autentiserer som, og dermed om kryss-tenant-
-    # funksjonene måtte grantes til `disponit` — altså til hele web-API-et.
-    # `set -eu` over gjør en manglende DISPONIT_VARSEL_URL til en avbrutt
-    # utrulling; her måles at det er DEN verdien som havner i credentialen.
+    # SENDERENS dsn, aldri API-ets (Codex P1). Denne asserten sa tidligere
+    # `verdi-DATABASE_URL` — den KODIFISERTE feilen reviewet fant: at
+    # senderen fikk web-API-rollens DSN og dermed dens rettigheter.
     assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_VARSEL_URL"
 

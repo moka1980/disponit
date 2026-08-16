@@ -202,20 +202,22 @@ skriv_cred() {  # katalog navn verdi
   chmod 600 "/etc/disponit/$1/$2"
 }
 skriv_cred api DATABASE_URL          "$DATABASE_URL"
-# Katalogen må finnes FØR `skriv_cred` skriver i den — uten `install -d`
-# feilet omdirigeringen, og den feilen ville først vist seg som en sender uten
-# DB-URL.
-#
-# EGEN ROLLE, EGEN CREDENTIAL (eiers P1). Her sto `"$DATABASE_URL"`, altså
-# runtime-rollen — og da måtte migrasjon 027 gi kryss-tenant-funksjonene til
-# `disponit`, som hele web-API-et kobler som. Senderen autentiserer nå som
-# `disponit_varselsender`, en rolle hvis eneste evne i basen er de tre
-# funksjonene. Ingen fallback til `$DATABASE_URL`: en fallback ville vært en
-# stille vei tilbake til nøyaktig den delingen dette fjerner — og med
-# grantene borte fra `disponit` ville den uansett bare gitt
-# «permission denied» ved første timerkjøring. `set -u` gjør en manglende
-# DSN til en avbrutt utrulling i stedet.
+# Senderen leser køen som runtime-rollen. Katalogen må finnes FØR `skriv_cred`
+# skriver i den — uten `install -d` feilet omdirigeringen, og den feilen ville
+# først vist seg som en sender uten DB-URL.
 install -d -m 700 /etc/disponit/varsel
+# SENDERENS EGEN DSN (Codex P1) — aldri API-ets. Ingen fallback til
+# $DATABASE_URL: da ville en manglende variabel stille gitt senderen
+# web-API-rollen igjen, og skillet ville bare vært pynt. Og ingen naken
+# `set -u`-død midt i den muterende fasen: mangler variabelen, har verten
+# ikke kjørt oppsett-postgresql.sh etter denne releasen — det er DER rollen
+# `disponit_varselsender` og DSN-en dens blir til.
+if [ -z "${DISPONIT_VARSEL_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_VARSEL_URL mangler i ${MILJOFIL:-/etc/disponit/staging.env} —"
+  echo "kjør deploy/staging/oppsett-postgresql.sh (idempotent) først;"
+  echo "den oppretter senderrollen disponit_varselsender og skriver DSN-en."
+  exit 1
+fi
 skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"

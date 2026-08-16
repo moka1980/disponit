@@ -34,6 +34,10 @@ User=disponit-helse
 Group=disponit-helse
 WorkingDirectory=/opt/disponit/aktiv/platform
 Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Credentialen bærer SENDERENS DSN (`disponit_varsler`), aldri API-ets
+# (Codex P1). Rollen har KUN EXECUTE på de tre senderfunksjonene: et
+# kompromittert web-API har ikke senderens kryss-tenant-vindu, og en
+# kompromittert sender har ikke API-ets DML.
 LoadCredential=DISPONIT_DATABASE_URL:/etc/disponit/varsel/DISPONIT_DATABASE_URL
 # SMTP-oppsettet er VALGFRITT — merk minus-tegnet. Uten det ville timeren
 # feilet hvert 5. minutt fram til noen la inn legitimasjonen, nøyaktig slik

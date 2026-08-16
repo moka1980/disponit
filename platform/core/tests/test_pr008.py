@@ -70,8 +70,13 @@ def _gjenopprett_rettigheter(migrator):
     """
     from .test_kjorer_og_kryptering import _migrer_modul
     modul = _migrer_modul()
+    # VARSLER-blokken hører med: migrasjonstestene river skjemaet og bygger
+    # det på nytt, og en gjenoppbygging som replayer alle grantsettene UNNTATT
+    # ett etterlater senderrollen uten EXECUTE — for resten av suiten. Det var
+    # nøyaktig slik varselsendertestene røk i full suite men besto alene.
     for sql, rolle in ((modul.RETTIGHETER, "disponit"),
                        (modul.M37_RETTIGHETER, "disponit"),
+                       (modul.VARSLER_RETTIGHETER, "disponit_varselsender"),
                        (modul.TOKEN_ADMIN_RETTIGHETER,
                         "disponit_token_admin")):
         migrator.execute(sql.format(rolle=rolle))

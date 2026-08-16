@@ -25,16 +25,6 @@ DOMAINSADMIN=disponit_domains_admin  # PR-014b: EXECUTE paa domenefunksjonene
 # revalideringsfunksjonene og rydd_staged_artefakter(int) i migrasjon 019 —
 # aldri avgjor_domeneovertakelse, aldri verifiser_domenekontroll.
 DOMENER=disponit_domener
-# PR-068 (Codex P1): EGEN, minst-privilegert rolle for e-postsenderen.
-# `varsel_klaim_epost` er med vilje SECURITY DEFINER og KRYSS-TENANT: den
-# returnerer tenant, verifisert e-postadresse, tekstnoekkel og parametre for
-# ALLE tenanters koeede varsler, og RLS verner ikke mot den — omgaaelsen er
-# nettopp funksjonens formaal. Var EXECUTE gitt til runtime-rollen $BRUKER,
-# hadde hele web-API-prosessen den evnen, selv om bare dette ene oneshotet
-# trenger den. Senderen faar derfor sin egen LOGIN-rolle med EXECUTE paa
-# noeyaktig de tre funksjonene i migrasjon 027 — og ingen tabellrettigheter i
-# det hele tatt.
-VARSELSENDER=disponit_varselsender
 MILJOFIL=/etc/disponit/staging.env
 
 # Rolleskillet er Codex' P1 fra PR-004-reviewen: eide runtime-rollen
@@ -54,8 +44,12 @@ systemctl enable --now postgresql
 # MINUS verifiser_token (API-autentisering er ikke arbeiderens jobb);
 # skillet settes i migrer.py.
 ARBEIDER=disponit_arbeider
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" \
-         "$VARSELSENDER"; do
+# Varselsenderen har EGEN DB-rolle, av samme grunn som arbeideren: et
+# kompromittert web-API skal ikke ha senderens kryss-tenant-vindu, og en
+# kompromittert sender skal ikke ha API-ets DML. Rollen får KUN EXECUTE på de
+# tre senderfunksjonene (migrer.py) — ingen tabellrettigheter i det hele tatt.
+VARSLER=disponit_varselsender
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -118,10 +112,7 @@ EGRESS_DSN=("DISPONIT_EGRESS_URL=$DB" "DISPONIT_TEST_EGRESS_DSN=${DB}_test")
 # samme state-machine som de andre rollene, ellers kan ikke $DOMENER
 # autentisere paa en fersk install.
 DOMENER_DSN=("DISPONIT_DOMAINS_URL=$DB" "DISPONIT_TEST_DOMAINS_DSN=${DB}_test")
-# PR-068 (Codex P1): senderen har EGEN DSN. Uten den ville unitten fortsatt
-# maattet koble med $DATABASE_URL — altsaa som runtime — og da var en egen
-# rolle bare et navn: evnen ville ligget hos API-prosessen uansett.
-VARSEL_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
+VARSLER_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -129,7 +120,7 @@ sikre_rolle_dsn "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 sikre_rolle_dsn "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 sikre_rolle_dsn "$EGRESS"     "${EGRESS_DSN[@]}"
 sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
-sikre_rolle_dsn "$VARSELSENDER" "${VARSEL_DSN[@]}"
+sikre_rolle_dsn "$VARSLER"    "${VARSLER_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -151,7 +142,7 @@ verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 verifiser_og_reparer "$ARBEIDER"   "${ARBEIDER_DSN[@]}"
 verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
-verifiser_og_reparer "$VARSELSENDER" "${VARSEL_DSN[@]}"
+verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -310,7 +301,7 @@ verifiser_og_reparer "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 verifiser_og_reparer "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
 verifiser_og_reparer "$EGRESS"     "${EGRESS_DSN[@]}"
 verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
-verifiser_og_reparer "$VARSELSENDER" "${VARSEL_DSN[@]}"
+verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 
 echo "OK. Kilde miljøet med: set -a; . $MILJOFIL; set +a"
 echo "Verifiser: python3 -m pytest platform/core/tests -q"

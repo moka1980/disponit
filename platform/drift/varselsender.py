@@ -198,8 +198,19 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
                 "grunn": "smtp_ikke_konfigurert"}
     send = send or (lambda til, emne, tekst: _send_ekte(oppsett, til, emne,
                                                         tekst))
-    tekster = _locale(sprak or SPRAK)
-    emne = tekster.get("varsel.epost.emne", "Disponit")
+    # SPRÅKET ER PER RAD, ikke per kjøring (Codex P2). Designet lover at
+    # varselet leses på MOTTAKERENS språk — det var derfor raden bærer nøkkel
+    # og parametre i stedet for ferdig tekst. Å rendre hele kjøringen med ETT
+    # språk brøt løftet i nettopp den kanalen mottakeren ikke kan bytte språk
+    # i selv. Klaimet returnerer språket (fra `varselvalg`, 'nb' som
+    # standard); ordboka lastes én gang per språk per kjøring.
+    tekstcache: dict = {}
+
+    def _tekster(radsprak):
+        radsprak = radsprak if radsprak in ("nb", "en") else (sprak or SPRAK)
+        if radsprak not in tekstcache:
+            tekstcache[radsprak] = _locale(radsprak)
+        return tekstcache[radsprak]
     # Først: tilbake i køen med det som ikke kom frem — feilede rader som har
     # ventet ut backoffen, og klaim fra en kjøring som døde underveis. Egen
     # SQL-funksjon, ikke et utvidet klaim: `koet` forblir den eneste tilstanden
@@ -231,7 +242,10 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
         conn.commit()      # …og ut av alle andres kø FØR SMTP-kallet.
         if rad is None:
             break          # køen er tom — ingenting mer å hente denne runden.
-        vid, _tenant, epost, nokkel, parametre, forsok, klaim = rad
+        vid, _tenant, epost, nokkel, parametre, forsok, klaim, radsprak \
+            = rad
+        tekster = _tekster(radsprak)
+        emne = tekster.get("varsel.epost.emne", "Disponit")
         try:
             send(epost, emne, rendre(tekster, nokkel, parametre))
         except Exception as e:                                # noqa: BLE001

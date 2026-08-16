@@ -34,6 +34,7 @@ jobs:
       # administrere tokens og likevel ikke lese secret_mac eller kalle
       # verifiser_token.
       DISPONIT_TEST_TOKEN_ADMIN_DSN: postgresql://disponit_token_admin:tok@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_VARSEL_DSN: postgresql://disponit_varselsender:var@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,6 +48,7 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_migrator LOGIN PASSWORD 'mig'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_authenticator NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_varselsender LOGIN PASSWORD 'var'"
           # PR-006: NOLOGIN-eieren av arbeidskapabiliteter og claim-funksjonene.
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_m37_claimer NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_authenticator TO disponit_migrator"
