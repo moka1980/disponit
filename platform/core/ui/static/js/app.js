@@ -110,9 +110,15 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   riveNedRuter();
   const app = document.getElementById("app");
   const tilgjengeligeRuter = byggRuter(sesjon);
+  // Modulmenyen i skallet får tenantens EGEN tildeling (Codex P2), samme kilde
+  // og samme regel som kundeflaten: `/v1/utrulling` har allerede avgjort hvilke
+  // moduler økten eier, og `null` betyr «vet ikke» — ikke «hele katalogen».
+  const tildelteModuler = Array.isArray(utrulling.moduler)
+    ? utrulling.moduler : null;
   const skall = AppShell({
     tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: tilgjengeligeRuter,
     brukerId: sesjon.bruker_id, epost: sesjon.epost, roller: sesjon.roller,
+    moduler: tildelteModuler,
     paaSprak: byttSprak, paaLoggUt: bekreftLoggUt,
   });
   sett(app, skall.rot);
@@ -127,7 +133,7 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
     // eller en økt uten `decisions:read`), står feltene tomme — og flatene
     // viser sin eksplisitte tomtilstand i stedet for å gjette.
     tenanter: Array.isArray(utrulling.tenanter) ? utrulling.tenanter : [],
-    moduler: Array.isArray(utrulling.moduler) ? utrulling.moduler : null,
+    moduler: tildelteModuler,
     paaUautorisert: () => tilInnlogging(),
   };
   // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet

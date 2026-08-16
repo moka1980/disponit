@@ -620,5 +620,22 @@
   "ui.dag.tor": "Thursday",
   "ui.dag.fre": "Friday",
   "ui.dag.lor": "Saturday",
-  "ui.dag.son": "Sunday"
+  "ui.dag.son": "Sunday",
+  "ui.shell.moduler": "Module menu",
+  "ui.shell.moduler_tomt": "No modules match the search.",
+  "ui.shell.moduler_ingen": "No modules are allocated to this customer yet.",
+  "ui.shell.moduler_ukjent": "Module allocation is unavailable.",
+  "ui.shell.kontekst": "Details",
+  "ui.shell.kontekst_tom": "Select a module in the menu to see details.",
+  "ui.shell.kontekst_omrade": "Area",
+  "ui.shell.kontekst_status": "Status",
+  "ui.shell.kontekst_fase": "Phase",
+  "ui.shell.sok_merkelapp": "Search modules",
+  "ui.shell.sok_plassholder": "Search modules",
+  "ui.shell.skjul_meny": "Hide module menu",
+  "ui.shell.vis_meny": "Show module menu",
+  "ui.shell.status_moduler": "{i_drift} of {totalt} modules in production",
+  "ui.shell.status_varsler": "{antall} alerts",
+  "ui.shell.status_varsler_ukjent": "Alert count unavailable",
+  "ui.shell.status_oppdatert": "Last updated {tid}"
 }

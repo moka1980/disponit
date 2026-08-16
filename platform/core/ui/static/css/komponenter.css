@@ -680,3 +680,119 @@ html[data-visning="landing"] .skall-hoved {
   font-size: 0.85em;
   margin: var(--sp-1) 0 0;
 }
+
+/* --- Portalskall, §2.3: topp · venstre · sentrum · høyre · bunn ---------- */
+
+/* SONENE HAR NAVN, DE TELLES IKKE (Codex P1). Rutenettet sto på ren
+   autoplassering: hvert barn falt i neste ledige kolonne. Da bryteren skjulte
+   modulmenyen, forsvant første barn ut av flyten — og resten rykket én kolonne
+   til venstre. `main` havnet i sidebarkolonnen på 12–16rem, kontekstpanelet i
+   midten, og høyre kolonne sto tom. Handlingen som skulle GI plass til arbeidet
+   klemte det altså sammen til en tredjedel.
+   Med navngitte områder ligger sonen fast uansett hvilke barn som finnes, og
+   den skjulte menyen har sitt eget oppsett der plassen faktisk tilfaller
+   `main`. */
+.skall-kropp {
+  display: grid;
+  gap: var(--sp-4);
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr) minmax(14rem, 20rem);
+  grid-template-areas: "venstre hoved kontekst";
+  align-items: start;
+}
+
+.skall-kropp[data-meny="skjult"] {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
+  grid-template-areas: "hoved kontekst";
+}
+
+/* Bare som soner i skallkroppen: `.skall-hoved` brukes også av forsiden og
+   innloggingen, som ikke ligger i dette rutenettet. */
+.skall-kropp > .skall-venstre { grid-area: venstre; }
+.skall-kropp > .skall-hoved { grid-area: hoved; }
+.skall-kropp > .skall-kontekst { grid-area: kontekst; }
+
+/* Under bruddpunktet stables sonene i DOM-rekkefølge: venstre · hoved ·
+   kontekst. Rekkefølgen ble tidligere snudd visuelt med `order`, slik at
+   hovedinnholdet kom først på liten skjerm — men `order` flytter bare pikslene.
+   Tastatur og skjermleser følger DOM-en, så etter bryteren i toppen ble
+   brukeren ført NEDENFOR det synlige hovedinnholdet, gjennom alle 45
+   modulknappene, og først da opp igjen. Hoppelenka i `index.html` løser den
+   samme mobilsituasjonen uten å skille syn fra fokus, og modullista får i
+   stedet en høydegrense her så hovedinnholdet er innen rekkevidde. */
+@media (max-width: 60rem) {
+  .skall-kropp {
+    grid-template-columns: 1fr;
+    grid-template-areas: "venstre" "hoved" "kontekst";
+  }
+  .skall-kropp[data-meny="skjult"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "hoved" "kontekst";
+  }
+  .skall-modulliste { max-height: 40vh; overflow-y: auto; }
+}
+
+.skall-venstre, .skall-kontekst {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+}
+
+.skall-modulgruppe + .skall-modulgruppe { margin-top: var(--sp-4); }
+
+.skall-modulgruppe-navn {
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 var(--sp-1);
+  text-transform: uppercase;
+}
+
+.skall-modulgruppe-liste { list-style: none; margin: 0; padding: 0; }
+
+/* Modulvalget er en knapp, ikke en lenke: den bytter kontekstpanelet, den
+   navigerer ikke. Tekstbasert, som §2.1 krever. */
+.skall-modul {
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: var(--sp-1) var(--sp-2);
+  text-align: left;
+  width: 100%;
+}
+
+.skall-modul:hover { background: var(--paper); }
+
+/* Den valgte modulen skal SES, ikke bare ligge i panelet. Markeringen bæres av
+   to kanaler — vekt og en kant — i tillegg til flaten, så den ikke er avhengig
+   av at forskjellen på to bakgrunner er synlig. */
+.skall-modul[aria-current="true"] {
+  background: var(--paper);
+  border-left: 3px solid var(--ink);
+  font-weight: 600;
+  padding-left: calc(var(--sp-2) - 3px);
+}
+
+.skall-kontekst-tittel { font-size: 1.05rem; margin: 0 0 var(--sp-2); }
+.skall-kontekst-liste { display: grid; gap: var(--sp-1) var(--sp-2);
+  grid-template-columns: auto 1fr; margin: 0; }
+.skall-kontekst-liste dt { color: var(--muted); }
+.skall-kontekst-liste dd { margin: 0; }
+
+.skall-sok { margin: var(--sp-2) 0; max-width: 22rem; }
+
+/* Statuslinja: rolig, men alltid til stede. */
+.skall-status {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  font-size: 0.9rem;
+  margin-top: var(--sp-6);
+  padding-top: var(--sp-3);
+}

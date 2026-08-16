@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
+import { plattformTelling } from "../static/js/plattformdata.js";
+import { KATALOG } from "../static/js/katalog.js";
 import {
   BeslutningBadge, KategoriTag, Tidspunkt, BegrunnelseKjede, StatusTidslinje,
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
@@ -20,6 +22,12 @@ import { Detaljpanel, Bekreftelsesdialog } from "../static/js/dialog.js";
 const HER = dirname(fileURLToPath(import.meta.url));
 
 settI18nForTest(NB, "nb");
+
+// Modulmenyen viser tenantens TILDELING, ikke plattformkatalogen. Testene som
+// handler om noe annet enn tildelingen får derfor «alt», eksplisitt: uten et
+// `moduler`-argument har skallet ingen tildeling å vise, og det er nettopp
+// poenget (se testen om tildelingen lenger ned).
+const ALLE_MODULER = KATALOG.map((k) => k.n);
 
 test("BeslutningBadge: farge + glyf + tekst, ingen axe-brudd", async () => {
   for (const kode of ["TILLAT", "STOPP", "UNNTAK"]) {
@@ -240,4 +248,289 @@ test("skall-bruker: lange prinsipal-etiketter kan krympe og brytes", () => {
                    "skall-bruker-roller"]) {
     assert.ok(bryt.includes(k), `${k} skal omfattes av brytingsregelen`);
   }
+});
+
+test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async () => {
+  // Spesifikasjonen (`prototype/Ai-bedriftsagent-prototype-v5.html` §2.3) sier
+  // topp · venstre · sentrum · høyre · bunn. Skallet hadde bare topp og
+  // sentrum: modulene var usynlige inne i produktet de utgjør, og det fantes
+  // ingen statuslinje.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], varsler: 3, moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+
+  assert.ok(rot.querySelector(".skall-topp"), "topp mangler");
+  assert.ok(rot.querySelector("main#hovedinnhold"), "sentrum mangler");
+  assert.ok(rot.querySelector(".skall-venstre"), "modulmeny mangler");
+  assert.ok(rot.querySelector(".skall-kontekst"), "kontekstpanel mangler");
+  assert.ok(rot.querySelector(".skall-status"), "statuslinje mangler");
+
+  // Modulmenyen er gruppert etter fagområde, ikke én lang liste.
+  assert.ok(rot.querySelectorAll(".skall-modulgruppe").length >= 5,
+    "modulmenyen er ikke gruppert etter område");
+  assert.equal(rot.querySelectorAll(".skall-modul").length, 45,
+    "modulmenyen viser ikke hele tildelingen");
+
+  // 🔴 Statuslinja skal si det REGISTERET bærer. Spesifikasjonens «45 moduler
+  // aktive» er en ILLUSTRASJON, ikke en verdi. Testen sammenligner derfor mot
+  // `plattformTelling()` i stedet for et innbakt tall: et fast tall her ville
+  // enten låst dagens tilstand for alltid, eller blitt en løgn i det en modul
+  // faktisk går i drift.
+  const status = rot.querySelector(".skall-status").textContent;
+  const telling = plattformTelling();
+  assert.ok(status.includes(`${telling.iDrift} av ${telling.totalt}`),
+    `statuslinja sier «${status}», registeret sier ${telling.iDrift}/${telling.totalt}`);
+  assert.ok(telling.iDrift < telling.totalt,
+    "forutsetningen for denne testen er borte — hele katalogen er i drift");
+  assert.ok(status.includes("3"), "varseltallet vises ikke");
+});
+
+test("AppShell: modulmenyens overskriftsnivåer henger sammen (Codex P2)", () => {
+  // 🔴 De elleve gruppene sto som `h3` uten noe på nivå 2 over seg: den som
+  // navigerer på overskrifter begynte på nivå 3, under et hull. Sonens
+  // `aria-label` er en etikett på et landemerke, ikke en overskrift — den
+  // lager ikke nivået som mangler.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const meny = rot.querySelector(".skall-venstre");
+  const nivaer = [...meny.querySelectorAll("h1, h2, h3, h4, h5, h6")]
+    .map((h) => Number(h.tagName[1]));
+  assert.equal(nivaer[0], 2,
+    `modulmenyen starter på nivå ${nivaer[0]} — gruppene har ingen forelder`);
+  assert.ok(nivaer.slice(1).every((n) => n === 3),
+    "gruppene ligger ikke ett nivå under menyens egen overskrift");
+
+  // Overskriften er ETIKETTEN på sonen, ikke en kopi av den: to tekster som
+  // sier det samme kan komme fra hverandre.
+  const tittel = meny.querySelector("h2");
+  assert.equal(meny.getAttribute("aria-labelledby"), tittel.id);
+  assert.equal(tittel.textContent, NB["ui.shell.moduler"]);
+  assert.equal(meny.getAttribute("aria-label"), null,
+    "sonen bærer både en etikett og en overskrift");
+});
+
+test("AppShell: uten varselkilde påstår statuslinja ingen null (Codex P2)", () => {
+  // 🔴 `app.js` sender ikke `varsler` — det finnes ingen varselkilde ennå. Med
+  // fallback til 0 sa hver eneste økt i produksjon «0 varsler», uansett hva som
+  // var på gang. Ingen teller er noe annet enn ingen varsler.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const status = rot.querySelector(".skall-status").textContent;
+  assert.ok(status.includes(NB["ui.shell.status_varsler_ukjent"]),
+    `statuslinja sier «${status}» uten å ha et varseltall`);
+  assert.ok(!/\b0 varsler\b/.test(status),
+    "statuslinja påstår null varsler den ikke har dekning for");
+});
+
+test("AppShell: «sist oppdatert» er dataenes tid, ikke rendringens", () => {
+  // 🔴 Feltet sto på `new Date()` ved bygging av skallet — altså klokka i
+  // nettleseren i det treet tegnes. Ingenting synkroniseres der, så en
+  // oppfriskning eller et språkbytte ga uendrede data et helt ferskt
+  // tidsstempel. Uten et tidspunkt fra kilden skal påstanden ikke stå.
+  const uten = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const utenTekst = uten.rot.querySelector(".skall-status").textContent;
+  assert.ok(!utenTekst.includes(NB["ui.shell.status_oppdatert"].split("{")[0].trim()),
+    `statuslinja lover ferskhet uten kilde: «${utenTekst}»`);
+  // Og skilletegnet skal ikke bli hengende igjen etter delen som falt bort.
+  assert.ok(!utenTekst.trim().endsWith("·"), "løst skilletegn til slutt");
+
+  const tid = new Date("2026-03-05T09:07:00Z");
+  const med = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], oppdatert: tid,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const medTekst = med.rot.querySelector(".skall-status").textContent;
+  assert.ok(medTekst.includes(NB["ui.shell.status_oppdatert"]
+    .replace("{tid}", tid.toLocaleTimeString("nb",
+      { hour: "2-digit", minute: "2-digit" }))),
+    `tidspunktet fra kilden vises ikke: «${medTekst}»`);
+});
+
+test("AppShell: modulmenyen kan skjules, og bryteren sier fra", async () => {
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const bryter = [...rot.querySelectorAll("button")]
+    .find((b) => b.getAttribute("aria-controls") === "modulmeny");
+  assert.ok(bryter, "ingen bryter for modulmenyen");
+  assert.equal(bryter.getAttribute("aria-expanded"), "true");
+  bryter.dispatchEvent(new window.Event("click"));
+  assert.equal(bryter.getAttribute("aria-expanded"), "false",
+    "menyen ble skjult uten at bryteren sa fra");
+  assert.equal(rot.querySelector(".skall-venstre").hidden, true);
+
+  // 🔴 Å SKJULE MENYEN SKAL GI PLASS, IKKE FLYTTE SONENE (Codex P1).
+  // Rutenettet var autoplassert: forsvant første barn, rykket `main` inn i
+  // sidebarkolonnen og kontekstpanelet inn i midten. jsdom har ingen layout,
+  // så porten står på de to tingene som styrer den — tilstanden på kroppen og
+  // de navngitte områdene i stilkilden.
+  const kropp = rot.querySelector(".skall-kropp");
+  assert.equal(kropp.dataset.meny, "skjult",
+    "kroppen sier ikke fra at menysonen er borte");
+  bryter.dispatchEvent(new window.Event("click"));
+  assert.equal(kropp.dataset.meny, "apen");
+});
+
+test("skall-kropp: sonene er navngitte, også når menyen er skjult", () => {
+  const css = readFileSync(
+    join(HER, "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  assert.match(regel(".skall-kropp {"),
+    /grid-template-areas:\s*"venstre hoved kontekst"/,
+    "uten navngitte områder faller sonene der autoplasseringen vil");
+  const skjult = regel('.skall-kropp[data-meny="skjult"] {');
+  assert.match(skjult, /grid-template-areas:\s*"hoved kontekst"/,
+    "skjult meny må ha sitt eget oppsett, ellers står en tom kolonne igjen");
+  assert.match(skjult, /grid-template-columns:\s*minmax\(0, 1fr\)/,
+    "plassen etter menyen skal tilfalle hovedinnholdet");
+  for (const sone of ["venstre", "hoved", "kontekst"]) {
+    assert.match(css, new RegExp(`\\.skall-kropp > \\.skall-${sone} \\{[^}]*grid-area: ${sone}`),
+      `${sone} er ikke bundet til sin egen sone`);
+  }
+  // `order` snur pikslene uten å snu fokus — den skal ikke tilbake.
+  assert.ok(!/\.skall-hoved\s*\{\s*order:/.test(css),
+    "visuell omrokering av sonene bryter fokusrekkefølgen");
+});
+
+test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () => {
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const felt = rot.querySelector("#skall-sok");
+  assert.ok(felt, "søkefeltet mangler i toppen");
+  felt.value = "bank";
+  felt.dispatchEvent(new window.Event("input"));
+  const treff = [...rot.querySelectorAll(".skall-modul")].map((b) => b.textContent);
+  assert.ok(treff.length > 0 && treff.length < 45, `fikk ${treff.length} treff`);
+  assert.ok(treff.every((n) => n.toLowerCase().includes("bank")));
+
+  felt.value = "finnesikkexyz";
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(rot.querySelectorAll(".skall-modul").length, 0);
+  assert.ok(rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_tomt"]), "tomt søk sier ikke fra");
+});
+
+test("AppShell: et søk med skjult meny henter menyen fram (Codex P2)", () => {
+  // 🔴 Søkefeltet står i toppsonen, men treffene vises BARE i modulmenyen. Med
+  // menyen skjult ble resultatlista tatt ut av både skjermbildet og
+  // tilgjengelighetstreet, mens feltet sto igjen synlig og aktivt: hvert
+  // tastetrykk bygget en liste ingen kunne se.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const bryter = [...rot.querySelectorAll("button")]
+    .find((b) => b.getAttribute("aria-controls") === "modulmeny");
+  const meny = rot.querySelector(".skall-venstre");
+  const felt = rot.querySelector("#skall-sok");
+  bryter.dispatchEvent(new window.Event("click"));
+  assert.equal(meny.hidden, true, "forutsetningen: menyen skal være skjult");
+
+  felt.value = "bank";
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(meny.hidden, false,
+    "søket skrev treff inn i en meny ingen kunne se");
+  assert.ok(rot.querySelectorAll(".skall-modul").length > 0, "ingen treff vist");
+
+  // Og bryteren skal si det samme som skjermen — ellers har vi byttet ett
+  // stille misforhold ut med et annet.
+  assert.equal(bryter.getAttribute("aria-expanded"), "true",
+    "bryteren melder fortsatt at menyen er skjult");
+  assert.equal(bryter.textContent, NB["ui.shell.skjul_meny"]);
+  assert.equal(rot.querySelector(".skall-kropp").dataset.meny, "apen");
+});
+
+test("AppShell: et modulvalg fyller kontekstpanelet", async () => {
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const panel = rot.querySelector(".skall-kontekst");
+  assert.ok(panel.textContent.includes(NB["ui.shell.kontekst_tom"]),
+    "panelet sier ikke hva det venter på");
+  const modul = [...rot.querySelectorAll(".skall-modul")]
+    .find((b) => b.textContent === NB["site.katalog.m13.navn"]);
+  modul.dispatchEvent(new window.Event("click"));
+  assert.ok(panel.textContent.includes(NB["site.katalog.m13.navn"]));
+  assert.ok(panel.textContent.includes(NB["site.omrade.okonomi"]),
+    "området vises ikke i kontekstpanelet");
+});
+
+test("AppShell: modulvalget merkes og panelet tar imot fokus", () => {
+  // 🔴 ET VALG SOM IKKE SIER FRA ER IKKE ET VALG (Codex P2). Panelet ble fylt
+  // et helt annet sted i treet mens fokus ble stående på en uendret knapp:
+  // ingen valgt-tilstand, ingen kunngjøring, og på stablet visning lå panelet
+  // under hele 45-modulersmenyen.
+  const brett = nyttBrett();
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(rot);
+  const panel = rot.querySelector(".skall-kontekst");
+  assert.equal(panel.getAttribute("tabindex"), "-1",
+    "panelet kan ikke ta imot fokus");
+
+  const knapp = (nokkel) => [...rot.querySelectorAll(".skall-modul")]
+    .find((b) => b.textContent === NB[nokkel]);
+  knapp("site.katalog.m13.navn").dispatchEvent(new window.Event("click"));
+  assert.equal(knapp("site.katalog.m13.navn").getAttribute("aria-current"),
+    "true", "den valgte modulen er ikke merket");
+  assert.equal(rot.ownerDocument.activeElement, panel,
+    "fokus fulgte ikke med til det oppdaterte panelet");
+
+  // Ett valg om gangen: forrige merking skal bort.
+  knapp("site.katalog.m14.navn").dispatchEvent(new window.Event("click"));
+  assert.equal(knapp("site.katalog.m13.navn").getAttribute("aria-current"), null,
+    "to moduler står som valgt samtidig");
+
+  // Og merkingen overlever at menyen tegnes på nytt av søket — panelet viser
+  // fortsatt modulen, så knappen må fortsatt si at den er valgt.
+  const felt = rot.querySelector("#skall-sok");
+  felt.value = "faktura";
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(knapp("site.katalog.m14.navn").getAttribute("aria-current"),
+    "true", "valget forsvant da søket tegnet menyen på nytt");
+});
+
+test("AppShell: modulmenyen viser tenantens tildeling, ikke katalogen", () => {
+  // 🔴 MENYEN ER KUNDENS, IKKE PLATTFORMENS (Codex P2). Den gikk over hele
+  // `OMRADER`, mens `/v1/utrulling` for lengst har sagt hvilke moduler økten
+  // eier — Bjørkli har to. 43 fremmede moduler sto altså som valgbare i en
+  // meny som utgir seg for å være kundens egen applikasjon.
+  const { rot, visKontekst } = AppShell({ tenant: "Bjørkli", sprak: "nb",
+    aktiv: "oversikt", ruter: [{ nokkel: "oversikt" }], moduler: [1, 2],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const navn = [...rot.querySelectorAll(".skall-modul")].map((b) => b.textContent);
+  assert.deepEqual(navn,
+    [NB["site.katalog.m1.navn"], NB["site.katalog.m2.navn"]],
+    `menyen viser ${navn.length} moduler for en tenant med to`);
+
+  // Panelet er detaljvisningen til menyen: det som ikke er tildelt, kan heller
+  // ikke hentes fram derfra.
+  const panel = rot.querySelector(".skall-kontekst");
+  visKontekst(13, { fokuser: false });
+  assert.ok(panel.textContent.includes(NB["ui.shell.kontekst_tom"]),
+    "kontekstpanelet viste en modul tenanten ikke har");
+
+  // Og en ukjent tildeling er ikke en tom en: uten svar fra den autoriserte
+  // veien skal menyen SI at den ikke vet, ikke vise hele katalogen.
+  const ukjent = AppShell({ tenant: "Bjørkli", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  assert.equal(ukjent.rot.querySelectorAll(".skall-modul").length, 0,
+    "uten tildeling ble hele plattformkatalogen presentert som kundens");
+  assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_ukjent"]),
+    "menyen sier ikke fra at tildelingen mangler");
+
+  // En tildeling som ER tom, er noe annet enn et søk uten treff.
+  const tom = AppShell({ tenant: "Bjørkli", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: [],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  assert.ok(tom.rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_ingen"]),
+    "en tom tildeling forveksles med et søk uten treff");
 });

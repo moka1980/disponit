@@ -4,6 +4,10 @@
 // tidslinje bærer også glyf + tekst.
 import { el, sett } from "./dom.js";
 import { t, sprak } from "./i18n.js";
+import { OMRADER } from "./katalog.js";
+import { omradeFor, faseFor } from "./katalogoppslag.js";
+import { modulStatus, plattformTelling } from "./plattformdata.js";
+import { siteStatusMerke } from "./sitekomponenter.js";
 
 // --- BeslutningBadge (TILLAT/STOPP/UNNTAK) ---------------------------------
 const _BADGE_KLASSE = { TILLAT: "tillat", STOPP: "stopp", UNNTAK: "unntak" };
@@ -186,8 +190,8 @@ export function visStatus(container, tilstand) {
 
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
-                          brukerId, epost, roller, paaSprak,
-                          paaLoggUt } = {}) {
+                          brukerId, epost, roller, moduler, varsler, oppdatert,
+                          paaSprak, paaLoggUt } = {}) {
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
   // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
@@ -261,9 +265,222 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     }
   }
 
-  const rot = el("div", { class: "skall" }, topp, nav, hoved);
+  // §2.3 LAYOUT: topp (nav + søk) · venstre (modulmeny) · sentrum (dashboard)
+  // · høyre (kontekstpanel) · bunn (statuslinje). Skallet eide bare topp og
+  // sentrum; resten fantes ikke, og modulene var usynlige inne i produktet de
+  // utgjør.
+  //
+  // Venstremenyen kan skjules (§2.3), og bryteren bærer `aria-expanded` — en
+  // meny som forsvinner uten at kontrollen sier fra er en meny som er borte
+  // for den som ikke ser den forsvinne.
+  //
+  // Kontekstpanelet tar imot FOKUS når et modulvalg fyller det (Codex P2).
+  // Uten det skjedde valget i stillhet: fokus ble stående på en knapp som ikke
+  // endret seg, panelet ligger et helt annet sted i treet, og ingenting sa at
+  // det var oppdatert. På den stablede visningen lå det i tillegg under hele
+  // 45-modulersmenyen, altså langt utenfor skjermen. `tabindex="-1"` gjør det
+  // til et mål man kan sendes til uten å legge det inn i tabrekkefølgen.
+  const kontekst = el("aside", { class: "skall-kontekst", tabindex: "-1",
+    "aria-label": t("ui.shell.kontekst") },
+    el("p", { class: "muted", text: t("ui.shell.kontekst_tom") }));
+
+  // OVERSKRIFTSNIVÅENE MÅ HENGE SAMMEN (Codex P2). De elleve gruppene sto som
+  // `h3` uten noe på nivå 2 over seg, så den som navigerer på overskrifter
+  // begynte på nivå 3 — under et hull. Sonens `aria-label` hjelper ikke: en
+  // etikett på et landemerke er ikke en overskrift og lager ikke et nivå.
+  //
+  // Menyen får derfor sin egen `h2`. Den er visuelt skjult fordi sonen alt SER
+  // ut som en meny for den som ser den; det er hierarkiet som manglet, ikke
+  // pynten. Sonen merkes av selve overskriften i stedet for av en kopi av
+  // teksten: én kilde, og de to kan ikke komme fra hverandre.
+  const modulliste = el("div", { class: "skall-modulliste" });
+  const menytittel = el("h2", { class: "sr-only", id: "modulmeny-tittel",
+    text: t("ui.shell.moduler") });
+  const venstre = el("aside", { class: "skall-venstre", id: "modulmeny",
+    "aria-labelledby": "modulmeny-tittel" }, menytittel, modulliste);
+
+  // Søket filtrerer modulmenyen. Det er det eneste søket har å søke i her, og
+  // et søkefelt som later som det gjør mer ville vært verre enn ingen.
+  const sokefelt = el("input", { id: "skall-sok", type: "search",
+    class: "felt-inp", placeholder: t("ui.shell.sok_plassholder") });
+  const sok = el("div", { class: "skall-sok" },
+    el("label", { class: "sr-only", for: "skall-sok",
+      text: t("ui.shell.sok_merkelapp") }), sokefelt);
+
+  // HVILKEN MODUL SER JEG PÅ (Codex P2). Valget er en tilstand menyen bærer,
+  // ikke en engangshendelse: knappene tegnes på nytt for hvert tastetrykk i
+  // søket, og uten at valget er lagret her ville markeringen forsvunnet i det
+  // brukeren skrev én bokstav — mens panelet fortsatt viste modulen.
+  let valgtModul = null;
+  const modulknapper = new Map();
+
+  function merkValgt() {
+    for (const [n, kn] of modulknapper) {
+      if (n === valgtModul) kn.setAttribute("aria-current", "true");
+      else kn.removeAttribute("aria-current");
+    }
+  }
+
+  // MENYEN VISER KUNDENS MODULER, IKKE PLATTFORMKATALOGEN (Codex P2). Menyen
+  // gikk over hele `OMRADER` — altså alle 45 modulene vi TILBYR — mens
+  // `/v1/utrulling` allerede har sagt hvilke modul-ID-er DENNE økten er
+  // tildelt. En kunde med to moduler fikk dermed 43 fremmede moduler presentert
+  // som valgbare i sin egen applikasjonsmeny. Kundeflaten har hatt regelen
+  // lenge (`modulerFraIder`): en ukjent eller delvis tildeling erstattes ikke
+  // med hele katalogen.
+  //
+  // `null` er «vet ikke», ikke «ingen»: uten svar fra den autoriserte veien
+  // sier menyen at tildelingen ikke er tilgjengelig, i stedet for å gjette i
+  // noen av retningene.
+  const tildelte = Array.isArray(moduler) ? new Set(moduler) : null;
+  const erTildelt = (n) => tildelte !== null && tildelte.has(n);
+
+  function tegnModuler(filter) {
+    const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
+    const grupper = [];
+    modulknapper.clear();
+    if (tildelte === null) {
+      sett(modulliste,
+        el("p", { class: "muted", text: t("ui.shell.moduler_ukjent") }));
+      return;
+    }
+    for (const omrade of OMRADER) {
+      const treff = omrade.moduler.filter((n) => erTildelt(n)).filter((n) =>
+        !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
+          .includes(q));
+      if (!treff.length) continue;
+      grupper.push(el("section", { class: "skall-modulgruppe" },
+        el("h3", { class: "skall-modulgruppe-navn",
+          text: t(`site.omrade.${omrade.id}`) }),
+        el("ul", { class: "skall-modulgruppe-liste" },
+          treff.map((n) => {
+            const kn = el("button", { type: "button", class: "skall-modul",
+              text: t(`site.katalog.m${n}.navn`) });
+            kn.addEventListener("click", () => visKontekst(n));
+            modulknapper.set(n, kn);
+            return el("li", {}, kn);
+          }))));
+    }
+    // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting — og en
+    // tildeling uten moduler er noe annet enn et søk uten treff.
+    const tomNokkel = tildelte.size
+      ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
+    sett(modulliste, grupper.length ? grupper
+      : el("p", { class: "muted", text: t(tomNokkel) }));
+    merkValgt();
+  }
+
+  // `fokuser` er sant for brukerens eget klikk og usant for et programmatisk
+  // oppslag: den som fyller panelet uten at brukeren ba om det, skal ikke rykke
+  // fokus ut av der brukeren står.
+  function visKontekst(n, { fokuser = true } = {}) {
+    // Panelet er detaljvisningen til MENYEN, og skal ikke kunne brukes til å
+    // hente fram en modul kunden ikke har: den som kaller utenfra ser ikke
+    // tildelingen, så grensen står her.
+    if (!erTildelt(n)) return;
+    const status = modulStatus(n);
+    valgtModul = n;
+    merkValgt();
+    sett(kontekst,
+      el("h2", { class: "skall-kontekst-tittel",
+        text: t(`site.katalog.m${n}.navn`) }),
+      el("dl", { class: "skall-kontekst-liste" },
+        el("dt", { text: t("ui.shell.kontekst_omrade") }),
+        el("dd", { text: t(`site.omrade.${omradeFor(n)}`) }),
+        el("dt", { text: t("ui.shell.kontekst_status") }),
+        el("dd", {}, siteStatusMerke(status)),
+        el("dt", { text: t("ui.shell.kontekst_fase") }),
+        el("dd", { text: String(faseFor(n)) })));
+    // Fokus flyttes ETTER at innholdet står der, ellers leses det tomme
+    // panelet. Da følger både skjermleseren og skjermbildet med — nettleseren
+    // ruller til det fokuserte elementet, som er hele poenget når panelet
+    // ligger under en 45-modulersmeny på en liten skjerm.
+    if (fokuser) kontekst.focus();
+  }
+
+  tegnModuler("");
+
+  const skjul = el("button", { type: "button", class: "knapp liten",
+    text: t("ui.shell.skjul_meny") });
+  skjul.setAttribute("aria-expanded", "true");
+  skjul.setAttribute("aria-controls", "modulmeny");
+
+  // Bryteren og søket er to veier til den SAMME tilstanden, så tilstanden
+  // settes ett sted. Kalles først fra en hendelse, altså etter at `kropp` er
+  // bygget.
+  function settMeny(apen) {
+    skjul.setAttribute("aria-expanded", apen ? "true" : "false");
+    skjul.textContent = apen ? t("ui.shell.skjul_meny") : t("ui.shell.vis_meny");
+    venstre.hidden = !apen;
+    // Rutenettet må VITE at sonen er borte (Codex P1): `hidden` alene tok
+    // menyen ut av flyten, og et autoplassert rutenett flyttet da `main` inn i
+    // sidebarkolonnen. Tilstanden står på kroppen, og CSS bytter oppsett.
+    kropp.dataset.meny = apen ? "apen" : "skjult";
+  }
+  const menyErApen = () => skjul.getAttribute("aria-expanded") === "true";
+  skjul.addEventListener("click", () => settMeny(!menyErApen()));
+
+  // Å SØKE ER Å BE OM RESULTATENE (Codex P2). Søkefeltet står i toppsonen,
+  // men det eneste stedet treffene vises er modulmenyen. Var menyen skjult,
+  // ble den lista tatt ut av både skjermbildet og tilgjengelighetstreet mens
+  // feltet sto igjen synlig og aktivt: hvert tastetrykk bygget en liste ingen
+  // kunne se, og kontrollen framsto som ødelagt.
+  //
+  // Feltet slås ikke av — et søkefelt som er inaktivt av en grunn brukeren
+  // ikke ser er samme problem med motsatt fortegn. Søket åpner menyen i
+  // stedet: den som søker etter en modul ber om å få se modulene.
+  sokefelt.addEventListener("input", () => {
+    if (!menyErApen()) settMeny(true);
+    tegnModuler(sokefelt.value);
+  });
+
+  // Statuslinja sier hva som FAKTISK gjelder. Spesifikasjonens eksempel («45
+  // moduler aktive») er en illustrasjon, ikke en verdi: tallet utledes av
+  // MODULSTATUS, så linja ikke kan love drift registeret ikke bærer.
+  //
+  // INGEN TELLER ER IKKE NULL VARSLER (Codex P2). `varsler` falt tidligere
+  // tilbake på 0, og siden `app.js` aldri sender den inn — det finnes ingen
+  // varselkilde å sende fra ennå — sa hver eneste økt i produksjon «0 varsler»
+  // uansett hva som var på gang. Et tall er en påstand: mangler grunnlaget, sier
+  // linja at tallet ikke er tilgjengelig i stedet for å hevde at alt er rolig.
+  //
+  // «SIST OPPDATERT» ER DATAENES TID, IKKE VÅR EGEN (Codex P2). Feltet sto på
+  // `new Date()` ved bygging av skallet. Det er klokka i nettleseren i det
+  // treet tegnes — ingenting synkroniseres her: modulstatusen er et statisk
+  // kart, og varseltallet kommer utenfra. En oppfriskning av siden eller et
+  // språkbytte ga altså uendrede data et helt ferskt tidsstempel, og en
+  // feilstilt klokke ga et tidspunkt som var galt uansett.
+  //
+  // Tidspunktet kommer derfor fra den som HAR et: `oppdatert`. Uten et slikt
+  // tidsstempel står påstanden ikke der i det hele tatt — en manglende
+  // opplysning er ærligere enn en oppdiktet.
+  const telling = plattformTelling();
+  const oppdatertTid = oppdatert == null ? null
+    : (oppdatert instanceof Date ? oppdatert : new Date(oppdatert));
+  const deler = [
+    el("span", { text: t("ui.shell.status_moduler")
+      .replace("{i_drift}", String(telling.iDrift))
+      .replace("{totalt}", String(telling.totalt)) }),
+    el("span", { text: varsler == null
+      ? t("ui.shell.status_varsler_ukjent")
+      : t("ui.shell.status_varsler").replace("{antall}", String(varsler)) }),
+  ];
+  if (oppdatertTid && !Number.isNaN(oppdatertTid.getTime())) {
+    deler.push(el("span", { text: t("ui.shell.status_oppdatert")
+      .replace("{tid}", oppdatertTid.toLocaleTimeString(valgtSprak || "nb",
+        { hour: "2-digit", minute: "2-digit" })) }));
+  }
+  // Skilletegnet hører til fugen mellom to opplysninger, ikke til den ene av
+  // dem: faller en del bort, skal ikke en løs prikk bli stående igjen.
+  const statuslinje = el("footer", { class: "skall-status", role: "status" },
+    deler.flatMap((d, i) => i ? [el("span", { text: "·" }), d] : [d]));
+
+  const kropp = el("div", { class: "skall-kropp", "data-meny": "apen" },
+    venstre, hoved, kontekst);
+  const rot = el("div", { class: "skall" }, topp, nav, sok, skjul, kropp,
+    statuslinje);
   // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
   // tilbake på kontrollen brukeren nettopp brukte (Codex P2) — uten å lete
   // etter den på klassenavn i et tre den selv nettopp har satt inn.
-  return { rot, hoved, settAktiv, velger };
+  return { rot, hoved, settAktiv, velger, visKontekst };
 }
