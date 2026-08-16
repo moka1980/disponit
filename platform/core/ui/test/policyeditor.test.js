@@ -253,6 +253,33 @@ test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () =>
     ["NOK", "EUR"], "de øvrige valutaene ble kastet");
 });
 
+test("Grenser: beløpshintet TEGNES, og henger på feltet", async () => {
+  // Codex P2. Hintet ble sendt som et femte argument til en `tekstfelt` som
+  // tok fire — så det forsvant i begge språk, og beløpsfeltet sto igjen uten
+  // den formveiledningen hele endringen handlet om.
+  const policy = {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
+      grenser: { belop_maks: "1000.00" } }],
+  };
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: policy });
+  await vent(() => h.querySelector(".editor-kort"));
+  const kort = h.querySelector(".editor-kort");
+  const hint = [...kort.querySelectorAll(".felt-hint")]
+    .find((n) => n.textContent === t("ui.editor.belop_hint"));
+  assert.ok(hint, "beløpshintet ble ikke tegnet");
+  // Synlig er ikke nok: hintet må nå den som ikke SER det.
+  const inp = kort.querySelector(`[aria-describedby="${hint.id}"]`);
+  assert.ok(inp, "hintet henger ikke på noe felt");
+  assert.equal(inp.value, "1000.00", "hintet henger på feil felt");
+  // Et felt uten hint skal ikke peke i tomme luften.
+  const uten = [...h.querySelectorAll("input[aria-describedby]")]
+    .filter((i) => !h.querySelector(`#${i.getAttribute("aria-describedby")}`));
+  assert.deepEqual(uten, [], "aria-describedby peker på en id som ikke finnes");
+});
+
 test("Grenser: et tømt klokkeslett lager ikke et ugyldig tidsvindu", async () => {
   // Codex P2. Et tømt `type="time"` gir "", og lagringen kjører ingen native
   // skjemavalidering — så «man-fre -16:00» gikk rett inn i utkastet og døde

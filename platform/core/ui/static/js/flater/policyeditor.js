@@ -19,7 +19,7 @@ import { flateHode } from "./felles.js";
 
 const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
 
-function tekstfelt(etikett, verdi, paaEndre, attrs = {}) {
+function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = "") {
   const inp = el("input", {
     type: "text", value: verdi == null ? "" : String(verdi),
     class: "felt-inp", ...attrs,
@@ -27,8 +27,16 @@ function tekstfelt(etikett, verdi, paaEndre, attrs = {}) {
   inp.addEventListener("input", () => paaEndre(inp.value));
   const id = "f-" + Math.random().toString(36).slice(2, 9);
   inp.id = id;
+  // Et hint som ikke tegnes, hjelper ingen. Det henger på feltet via
+  // `aria-describedby`, så en skjermleser leser formen SAMMEN med etiketten —
+  // ikke som løs tekst i nærheten, eller ikke i det hele tatt. `span`, ikke
+  // `p`: innholdet i en `label` er fraseinnhold.
+  const hintNode = hint
+    ? el("span", { class: "felt-hint", id: `${id}-hint`, text: hint })
+    : null;
+  if (hintNode) inp.setAttribute("aria-describedby", hintNode.id);
   return el("label", { class: "felt" },
-    el("span", { class: "felt-navn", text: etikett }), inp);
+    el("span", { class: "felt-navn", text: etikett }), inp, hintNode);
 }
 
 function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {

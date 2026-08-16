@@ -374,6 +374,16 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 
 .editor-felt-gruppe { margin-top: var(--sp-3); }
 
+/* Formhint under et felt, og opplysningen om valutaer nedtrekket ikke viser.
+   Dempet, men ikke skjult: den som trenger formen skal finne den uten å lete,
+   og den som kan den skal ikke måtte lese den. */
+.felt-hint, .editor-hint {
+  color: var(--muted);
+  font-size: 0.85em;
+  margin: 0;
+  max-width: 32rem;
+}
+
 .felt-vannrett {
   align-items: center;
   display: flex;
