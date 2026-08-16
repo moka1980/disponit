@@ -259,6 +259,23 @@ GRANT UPDATE ON varsel TO disponit_domene_eier;
 -- `koet` på en måte ingen har tenkt på ennå. En avmelding som virker bare når
 -- man kommer inn den ene veien, er ikke en avmelding.
 --
+-- OG DEN ARVER HELLER IKKE EN LESNING (Codex P2). Nøyaktig samme hull, andre
+-- årsak — og denne veien endte ikke i en unødig e-post, men i en rad som ble
+-- liggende for alltid. `merk_lest` og `pensjoner_runde` avlyser bare `I_KO`
+-- (`koet`, `feilet`) og lar `under_sending` stå, av samme grunn som over.
+-- Ble raden lest — eller runden pensjonert — mens den var klaimet, og døde
+-- senderen før sendingen, løftet leasen den blindt til `koet`. Der stanset
+-- den: klaimet krever `lest_ts IS NULL`, så det tok den aldri igjen, og
+-- re-køingen ser bare `feilet` og `under_sending`, så den kom aldri tilbake
+-- hit heller. Raden sto `koet` i evighet, talte som kø i indeksen, og
+-- beskrev en e-post ingen skulle sendt.
+--
+-- Klaimets `lest_ts IS NULL` er altså riktig som siste port, men det er en
+-- port som bare kan AVVISE — den kan ikke rydde. Ryddingen må skje her, på
+-- den ene veien ut av `under_sending`, og svaret er det samme som de to
+-- andre veiene gir: `ikke_aktuelt`. `pensjoner_runde` setter dessuten
+-- `lest_ts`, så den ene testen dekker begge tilfellene funnet nevner.
+--
 -- Returverdien teller bare det som faktisk kom I KØ igjen. En rad som ble
 -- avlyst er ikke gjenkøet, og `gjenkoet=1` i journalen for en e-post som
 -- aldri skal sendes ville vært en tallmessig løgn i den ene linjen driften
@@ -277,7 +294,8 @@ BEGIN
     WITH gjenopptatt AS (
         UPDATE varsel v
            SET epost_status = CASE
-                   WHEN EXISTS (SELECT 1 FROM varselvalg vv
+                   WHEN v.lest_ts IS NOT NULL
+                     OR EXISTS (SELECT 1 FROM varselvalg vv
                                  WHERE vv.tenant = v.tenant
                                    AND vv.bruker_id = v.bruker_id
                                    AND vv.kanal = 'kun_portal')

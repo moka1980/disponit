@@ -674,6 +674,72 @@ def test_avmelding_overlever_at_klaimet_kommer_tilbake_fra_en_lease():
 
 
 @pg
+def test_en_lest_rad_som_kommer_tilbake_fra_en_lease_blir_avlyst():
+    """Codex P2: en gjenopptatt rad arvet heller ikke LESNINGEN.
+
+    Samme hull som avmeldingen, men denne veien endte ikke i en unødig
+    e-post — den endte i en rad som ble liggende for alltid.
+
+    `merk_lest` (og `pensjoner_runde`, som setter `lest_ts` på samme vis)
+    avlyser bare `I_KO` og lar `under_sending` stå: raden er i et SMTP-kall.
+    Døde senderen før sendingen, løftet leasen den blindt til `koet` — og der
+    stanset den. Klaimet krever `lest_ts IS NULL`, så det tok den aldri igjen,
+    og re-køingen ser bare `feilet` og `under_sending`, så den kom aldri
+    hit heller. Rad, indeksplass og køtall sto der i evighet for en e-post
+    ingen skulle sendt.
+
+    Målt over TO kjøringer, for det er nettopp den andre som var beviset:
+    den første er der re-køingen skjer, og hadde raden bare blitt `koet`,
+    ville den vært like klaimbar-og-avvist i hver eneste kjøring etter det.
+
+    Kontroll: ta `lest_ts IS NOT NULL` ut av CASE-uttrykket i `varsel_rekoe`,
+    så står raden `koet` etter begge kjøringene.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "leaselest", "leaselest@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        _kontekst(c)
+        vid = c.execute("SELECT id FROM varsel WHERE tenant=%s AND"
+                        " bruker_id=%s", (TEN, b)).fetchone()[0]
+        # Klaimet som døde, med leasen alt utløpt.
+        assert c.execute("UPDATE varsel SET epost_status='under_sending',"
+                         " epost_ts=now() - interval '2 hours', epost_forsok=1"
+                         " WHERE id=%s RETURNING id", (vid,)).fetchall(), \
+            "krasjen ble aldri fabrikkert"
+        c.commit()
+        _kontekst(c)
+        # Lesningen kommer nå — og skal IKKE røre det klaimede varselet.
+        assert varsel.merk_lest(c, tenant=TEN, bruker_id=b, varsel_id=vid)
+        c.commit()
+        _kontekst(c)
+        assert c.execute("SELECT epost_status FROM varsel WHERE id=%s",
+                         (vid,)).fetchone()[0] == "under_sending", (
+            "forutsetningen holder ikke: lesningen tok det aktive klaimet")
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt if t == "leaselest@example.test"] \
+            == [], "et lest varsel ble sendt etter at leasen løftet det tilbake"
+        assert c.execute("SELECT epost_status FROM varsel WHERE id=%s",
+                         (vid,)).fetchone()[0] == "ikke_aktuelt", (
+            "raden kom tilbake som `koet` — der kan verken klaimet"
+            " (`lest_ts IS NULL`) eller re-køingen nå den igjen, og den blir"
+            " liggende som kø for alltid")
+
+        # Andre kjøring: ingenting å gjøre, og ingenting som endrer seg.
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert sendt == [], "raden ble sendt ved en senere kjøring"
+        assert c.execute("SELECT epost_status FROM varsel WHERE id=%s",
+                         (vid,)).fetchone()[0] == "ikke_aktuelt"
+    finally:
+        c.close()
+
+
+@pg
 def test_klaimet_tar_aldri_en_avmeldt_rad_uansett_hvordan_den_kom_i_koen():
     """Den siste porten før SMTP spør om kanalvalget selv.
 
