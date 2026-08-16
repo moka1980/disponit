@@ -83,6 +83,7 @@ INSERT INTO _design VALUES
     -- disponit_policy_eier fordi policyer/policy_hode er off-limits for runtime
     -- (runtime får KUN EXECUTE). Ny privilegert eier — paritetstesten dekker den.
     ('FUNCTION', 'aktiver_policy(text,text,integer,text)',           'disponit_policy_eier'),
+    ('FUNCTION', 'slett_ubrukt_policy(text,text)',           'disponit_policy_eier'),
     -- 014 (PR-014a): modulregisterets herdede overgangsfunksjoner. Eid av
     -- disponit_modul_eier fordi registertabellene er off-limits for runtime
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.

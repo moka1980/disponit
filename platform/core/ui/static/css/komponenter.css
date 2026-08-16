@@ -381,6 +381,24 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   padding: var(--sp-3); margin: 0 0 var(--sp-4); }
 .varselvalg-rad { display: flex; gap: var(--sp-2); align-items: center;
   margin: var(--sp-1) 0; }
+/* Dashbordet (§2.3 Sentrum): KPI-kortene øverst, de to listene side om side
+   der det er plass. Wide content ruller i egen boks — aldri hele siden. */
+.dash-grid { display: grid; gap: var(--sp-4); margin-top: var(--sp-6);
+  grid-template-columns: 1fr; }
+@media (min-width: 900px) { .dash-grid { grid-template-columns: 1fr 1fr; } }
+.dash-blokk { border: 1px solid var(--line); border-radius: var(--radius);
+  padding: var(--sp-4); background: var(--card); }
+.dash-blokk h2 { margin: 0 0 var(--sp-3); font-size: 1.1rem; }
+.dash-liste { list-style: none; margin: 0 0 var(--sp-3); padding: 0; }
+.dash-rad { padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
+.dash-rad:last-child { border-bottom: 0; }
+.dash-handling { font-family: var(--font-mono); }
+/* Handlingsvelgeren i editoren: én handling om gangen. Valgt markeres med
+   aria-pressed + kantfarge — og fet tekst, ikke farge alene (1.4.1). */
+.handling-velger { display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  margin: 0 0 var(--sp-2); }
+.handling-velger-knapp[aria-pressed="true"] { border-color: var(--info);
+  background: var(--info-bg); font-weight: 600; }
 .knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
 .mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);

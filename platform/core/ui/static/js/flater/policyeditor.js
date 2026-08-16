@@ -509,14 +509,70 @@ function handlingKort(h, tegnPaaNytt) {
     tidsvinduVelger(g, tegnPaaNytt));
 }
 
-function handlingerSeksjon(policy, tegnPaaNytt) {
+function handlingerSeksjon(policy, tegnPaaNytt, st) {
   policy.handlinger = Array.isArray(policy.handlinger) ? policy.handlinger : [];
-  const kort = policy.handlinger.map((h) => handlingKort(h, tegnPaaNytt));
+  const handlinger = policy.handlinger;
+  if (!handlinger.length) {
+    return el("section", { class: "editor-seksjon",
+      "aria-label": t("ui.editor.handlinger") },
+      el("h3", { text: t("ui.editor.handlinger") }),
+      el("p", { class: "muted", text: t("ui.editor.handlinger_hjelp") }));
+  }
+
+  // ÉN handling om gangen, ikke alle stablet. En bransjemal har gjerne sju
+  // handlinger med beløpsgrense, valutaliste og tidsvindu hver — som én
+  // rulle var fanen «veldig lang» (eiers ord), og feltene til handling fire
+  // hadde ingen synlig tilhørighet når overskriften dens var rullet ut av
+  // skjermen. Velgeren viser id + modus per handling (modus er det
+  // raskeste svaret på «hva gjør denne»), kortet under viser den valgte,
+  // og forrige/neste går sekvensielt — samme navigasjonsform som `Faner`.
+  //
+  // Valget huskes i editorens `st` og overlever re-rendringene feltene
+  // utløser (valuta/tidsvindu tegner på nytt) — uten det hoppet fanen
+  // tilbake til første handling hver gang man la til en valuta på den femte.
+  if (!handlinger.some((h) => h.id === st.handlingValgt)) {
+    st.handlingValgt = handlinger[0].id;
+  }
+  const i = handlinger.findIndex((h) => h.id === st.handlingValgt);
+  const valgt = handlinger[i];
+
+  const velgerknapper = handlinger.map((h) => {
+    const b = el("button", { class: "knapp liten handling-velger-knapp",
+      type: "button", "aria-pressed": String(h.id === st.handlingValgt) },
+      el("code", { text: h.id || "?" }),
+      el("span", { class: "sub", text: ` ${t(`modus.${h.modus}`, h.modus)}` }));
+    b.addEventListener("click", () => {
+      if (h.id === st.handlingValgt) return;
+      st.handlingValgt = h.id;
+      tegnPaaNytt();
+    });
+    return b;
+  });
+
+  const forrige = el("button", { class: "knapp liten", type: "button",
+    text: t("ui.editor.handling_forrige") });
+  forrige.disabled = i === 0;
+  forrige.addEventListener("click", () => {
+    st.handlingValgt = handlinger[i - 1].id; tegnPaaNytt();
+  });
+  const neste = el("button", { class: "knapp liten", type: "button",
+    text: t("ui.editor.handling_neste") });
+  neste.disabled = i === handlinger.length - 1;
+  neste.addEventListener("click", () => {
+    st.handlingValgt = handlinger[i + 1].id; tegnPaaNytt();
+  });
+
   return el("section", { class: "editor-seksjon",
     "aria-label": t("ui.editor.handlinger") },
     el("h3", { text: t("ui.editor.handlinger") }),
     el("p", { class: "muted", text: t("ui.editor.handlinger_hjelp") }),
-    ...kort);
+    el("div", { class: "handling-velger", role: "group",
+      "aria-label": t("ui.editor.handling_velg") }, ...velgerknapper),
+    el("p", { class: "sub", text: t("ui.editor.handling_posisjon")
+      .replace("{n}", String(i + 1))
+      .replace("{av}", String(handlinger.length)) }),
+    handlingKort(valgt, tegnPaaNytt),
+    el("div", { class: "editor-knapper" }, forrige, neste));
 }
 
 // Hva kan vi SI om policy-id-en? Teksten lovet universelt at man «beholder
@@ -768,7 +824,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
         { nokkel: "roller", tittel: t("ui.editor.fane.roller"),
           bygg: () => rollerSeksjon(st.policy, tegn) },
         { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
-          bygg: () => handlingerSeksjon(st.policy, tegn) },
+          bygg: () => handlingerSeksjon(st.policy, tegn, st) },
       ],
     });
     const barn = [

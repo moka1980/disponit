@@ -1,10 +1,24 @@
-// Oversikt — helsebilde for siste døgn (telling, ikke KPI/M-16). Tidssonen er
-// UTC fra serveren; visning lokaliseres av Tidspunkt.
+// Oversikt — dashbordet §2.3 beskriver for Sentrum:
+// «KPI-kort + prioriterte varsler + siste aktiviteter».
+//
+// KPI-kortene er de fire telleverdiene fra /v1/oversikt (telling, ikke
+// M-16-KPI-er — noten under kortene sier det). Prioriterte varsler er de ÅPNE
+// unntakene: sakene som venter på et menneske er per definisjon det
+// prioriterte. Siste aktiviteter er de ferskeste beslutningene.
+//
+// HVER BLOKK LASTER FOR SEG. Dashbordet er tre uavhengige spørsmål, og et
+// 5xx på unntakslisten skal ikke rive bort beslutningstallene som alt står
+// på skjermen — `medStatus` (hele-siden-varianten) ville gjort nettopp det.
+// En blokk som feiler viser sin egen feiltilstand med «Prøv igjen» som bare
+// laster DEN blokken på nytt.
+//
+// Tidssonen er UTC fra serveren; visning lokaliseres av Tidspunkt.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson } from "../api.js";
-import { Tidspunkt } from "../komponenter.js";
-import { medStatus, flateHode } from "./felles.js";
+import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
+import { Tidspunkt, Feiltilstand, TomTilstand, TilgangsVakt,
+         BeslutningBadge, KategoriTag } from "../komponenter.js";
+import { flateHode } from "./felles.js";
 
 function stat(klasse, tall, tekst) {
   return el("div", { class: `stat ${klasse}`.trim() },
@@ -12,18 +26,115 @@ function stat(klasse, tall, tekst) {
     el("span", { text: tekst }));
 }
 
+// Statusene som betyr «venter på et menneske». Løst/avvist er ferdig
+// saksbehandling og hører ikke hjemme under «prioriterte varsler» — å vise
+// dem der ville lært eier at listen kan ignoreres.
+const AAPNE = new Set(["ny", "under_behandling", "manuell",
+                       "venter_verifikasjon", "verifikasjon_klar",
+                       "verifikasjon_retry_klar"]);
+
+// Én selvstendig dashbordblokk: overskrift + eget lastings-/feilløp.
+// `tegnInnhold(data) -> node`. Feiler lastingen, får blokken sin egen
+// Feiltilstand med «Prøv igjen» som kun berører denne blokken.
+function blokk(ctx, tittel, lastFn, tegnInnhold) {
+  const rot = el("section", { class: "dash-blokk", "aria-label": tittel },
+    el("h2", { text: tittel }));
+  const kropp = el("div", { class: "dash-kropp" });
+  rot.append(kropp);
+  const last = () => {
+    sett(kropp, el("p", { class: "muted", text: t("ui.laster") }));
+    lastFn().then((d) => sett(kropp, tegnInnhold(d)))
+      .catch((e) => {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e instanceof IngenTilgangFeil) { sett(kropp, TilgangsVakt({})); return; }
+        sett(kropp, Feiltilstand({ paaProvIgjen: last }));
+      });
+  };
+  last();
+  return rot;
+}
+
+function lenkeknapp(tekst, hash) {
+  const b = el("button", { class: "knapp liten", type: "button", text: tekst });
+  b.addEventListener("click", () => { window.location.hash = hash; });
+  return b;
+}
+
+function unntaksliste(rader) {
+  const aapne = rader.filter((r) => AAPNE.has(r.status)).slice(0, 5);
+  if (!aapne.length) {
+    return TomTilstand({ tittel: t("ui.dashbord.ingen_varsler"),
+      tekst: t("ui.dashbord.ingen_varsler_tekst") });
+  }
+  const ul = el("ul", { class: "dash-liste" });
+  for (const r of aapne) {
+    ul.append(el("li", { class: "dash-rad" },
+      el("span", { class: "dash-handling", text: r.handling }),
+      document.createTextNode(" · "),
+      KategoriTag(r.kategori),
+      document.createTextNode(" · "),
+      el("span", { class: "sub" }, Tidspunkt(r.ts))));
+  }
+  return el("div", {}, ul,
+    lenkeknapp(t("ui.dashbord.til_unntak"), "#/unntak"));
+}
+
+function aktivitetsliste(rader) {
+  const siste = rader.slice(0, 8);
+  if (!siste.length) {
+    return TomTilstand({ tittel: t("ui.dashbord.ingen_aktivitet"),
+      tekst: t("ui.dashbord.ingen_aktivitet_tekst") });
+  }
+  const ul = el("ul", { class: "dash-liste" });
+  for (const r of siste) {
+    ul.append(el("li", { class: "dash-rad" },
+      BeslutningBadge(r.policybeslutning),
+      document.createTextNode(" "),
+      el("span", { class: "dash-handling", text: r.handling }),
+      document.createTextNode(" · "),
+      el("span", { class: "sub" }, Tidspunkt(r.ts))));
+  }
+  return el("div", {}, ul,
+    lenkeknapp(t("ui.dashbord.til_beslutninger"), "#/beslutninger"));
+}
+
 export function visOversikt(hoved, ctx) {
-  medStatus(hoved, ctx, () => hentJson("/v1/oversikt"), (d) => {
-    sett(hoved,
-      ...flateHode(t("ui.oversikt.tittel"), t("ui.oversikt.undertittel")),
-      el("div", { class: "cards" },
-        stat("tillat", d.tillatt, t("ui.oversikt.tillatt")),
-        stat("stopp", d.stoppet, t("ui.oversikt.stoppet")),
-        stat("unntak", d.unntak, t("ui.oversikt.unntak")),
-        stat("", d.totalt, t("ui.oversikt.totalt"))),
-      el("p", { class: "muted" },
-        `${t("ui.oversikt.oppdatert")}: `, Tidspunkt(d.vindu_slutt),
-        ` (${d.tidssone})`),
-      el("p", { class: "legend muted", text: t("ui.oversikt.telling_note") }));
-  });
+  // KPI-kortene beholder heltside-semantikken de alltid har hatt: feiler
+  // selve helsebildet, feiler siden — det er dashbordets rygg. De to
+  // listene under er blokker med egne løp.
+  sett(hoved,
+    ...flateHode(t("ui.oversikt.tittel"), t("ui.oversikt.undertittel")),
+    el("div", { class: "dash-kpi" }));
+
+  const kpi = hoved.querySelector(".dash-kpi");
+  const lastKpi = () => {
+    sett(kpi, el("p", { class: "muted", text: t("ui.laster") }));
+    hentJson("/v1/oversikt").then((d) => {
+      sett(kpi,
+        el("div", { class: "cards" },
+          stat("tillat", d.tillatt, t("ui.oversikt.tillatt")),
+          stat("stopp", d.stoppet, t("ui.oversikt.stoppet")),
+          stat("unntak", d.unntak, t("ui.oversikt.unntak")),
+          stat("", d.totalt, t("ui.oversikt.totalt"))),
+        el("p", { class: "muted" },
+          `${t("ui.oversikt.oppdatert")}: `, Tidspunkt(d.vindu_slutt),
+          ` (${d.tidssone})`),
+        el("p", { class: "legend muted",
+          text: t("ui.oversikt.telling_note") }));
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      // 403 er en tilstand PÅ flaten, aldri en innlogging (speiler medStatus).
+      if (e instanceof IngenTilgangFeil) { sett(kpi, TilgangsVakt({})); return; }
+      sett(kpi, Feiltilstand({ paaProvIgjen: lastKpi }));
+    });
+  };
+  lastKpi();
+
+  hoved.append(el("div", { class: "dash-grid" },
+    blokk(ctx, t("ui.dashbord.varsler"),
+      () => hentJson("/v1/unntak", { limit: 8 }),
+      (d) => unntaksliste(d.saker || [])),
+    blokk(ctx, t("ui.dashbord.aktivitet"),
+      () => hentJson("/v1/beslutninger", { limit: 8 }),
+      (d) => aktivitetsliste(d.rader || []))));
 }

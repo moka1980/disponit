@@ -178,6 +178,8 @@ export const redigerUtkast = (uid, utkastversjon, innhold,
 // versjonen).
 export const validerUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/valider`, "POST", { utkastversjon }, idem);
+export const slettPolicy = (policyId, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policy/${encodeURIComponent(policyId)}/slett`, "POST", {}, idem);
 export const merkVarselLest = (id, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/varsel/${id}/lest`, "POST", {}, idem);
 export const settVarselkanal = (kanal, sprak, idem = nyIdempotensnokkel()) =>

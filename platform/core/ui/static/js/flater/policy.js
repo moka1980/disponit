@@ -2,8 +2,9 @@
 // versjonert flyt). Menneskelesbar visning av den lukkede PolicyDTO-en.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, IkkeFunnetFeil } from "../api.js";
-import { VarselBanner, TomTilstand } from "../komponenter.js";
+import { hentJson, slettPolicy, IkkeFunnetFeil, ApiFeil, UautorisertFeil } from "../api.js";
+import { VarselBanner, TomTilstand, meldLive } from "../komponenter.js";
+import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode } from "./felles.js";
 
 function grenserNode(g) {
@@ -70,6 +71,46 @@ export function visPolicy(hoved, ctx) {
         [el("ul", { class: "liste" },
           d.roller.map((r) => el("li", { text: r.id })))]),
       seksjon(t("ui.policy.handlinger"), d.handlinger.map(handlingNode)),
-      seksjon(t("ui.policy.verifikatorer"), d.verifikatorer.map(verifikatorNode)));
+      seksjon(t("ui.policy.verifikatorer"), d.verifikatorer.map(verifikatorNode)),
+      angreSeksjon(d, ctx, () => visPolicy(hoved, ctx)));
   });
+}
+
+// «Angre» for en feilopprettet policy. Serveren (`slett_ubrukt_policy`, 030)
+// håndhever HELE vilkåret: aldri styrt en beslutning, ingen åpen runde.
+// Knappen står derfor alltid for policyforvalteren, og en avvisning kommer
+// tilbake som en FORKLARING («policyen har styrt beslutninger — den kan
+// avvikles, ikke slettes»), ikke som en skjult knapp: en vakt man kan se er
+// en vakt man kan forstå.
+function angreSeksjon(d, ctx, tegnPaaNytt) {
+  const status = el("p", { class: "muted", role: "status", text: "" });
+  const b = el("button", { class: "knapp fare", type: "button",
+    text: t("ui.policy.slett") });
+  b.addEventListener("click", () => {
+    Bekreftelsesdialog({
+      tittel: t("ui.policy.slett_tittel"),
+      tekst: `${d.policy_id} · ${t("ui.policy.slett_tekst")}`,
+      primarTekst: t("ui.policy.slett"),
+      farlig: true,
+      paaPrimar: () => slettPolicy(d.policy_id)
+        .then(() => {
+          meldLive(t("ui.policy.slettet"));
+          tegnPaaNytt();               // flaten viser nå TomTilstand — sant.
+        })
+        .catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          const kode = e instanceof ApiFeil ? e.kode : "";
+          status.textContent = kode === "policy_i_bruk"
+            ? t("ui.policy.slett_i_bruk")
+            : kode === "runde_allerede_aapen"
+              ? t("ui.policy.slett_runde_aapen")
+              : t("ui.policy.slett_feilet");
+        }),
+    });
+  });
+  return el("section", { class: "policy-angre",
+    "aria-label": t("ui.policy.slett_tittel") },
+    el("h3", { text: t("ui.policy.slett_tittel") }),
+    el("p", { class: "muted", text: t("ui.policy.slett_forklaring") }),
+    b, status);
 }

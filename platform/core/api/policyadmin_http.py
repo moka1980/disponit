@@ -30,6 +30,7 @@ _FEIL_HTTP = {
     "aktiv_peker_usynk": 409,
     "versjon_i_bruk": 409, "versjon_mangler": 409,
     "policy_id_avvik": 409, "status_ikke_produksjon": 409,
+    "policy_i_bruk": 409, "policy_ukjent": 404,
     # 400, ikke 409: en `policy_id` som bryter formen er en feil i
     # FORESPØRSELEN, ikke en tilstandskonflikt. Ingenting i basen kan endre seg
     # slik at det samme kallet plutselig lykkes.
@@ -375,6 +376,37 @@ def varselvalg_endepunkt(tjeneste, request):
         except ValueError:
             return _feil("request_feilformet", rid)
         return _ok_lagret(conn, {"kanal": satt}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def slett_policy_endepunkt(tjeneste, request):
+    """Angre en feilopprettet policy: slett den som ALDRI har styrt en
+    beslutning. Alle vilkårene håndheves i `slett_ubrukt_policy` (030) —
+    endepunktet oversetter bare feilkodene til domenesvar."""
+    import psycopg
+    from .app import _rid
+    rid = _rid(request)
+    policy_id = request.path_params["policy_id"]
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        _krev_idem(request, rid)
+        from db.pg import sett_kontekst
+        sett_kontekst(conn, tenant, bid, rid)
+        try:
+            n = conn.execute("SELECT slett_ubrukt_policy(%s,%s)",
+                             (tenant, policy_id)).fetchone()[0]
+        except psycopg.errors.CheckViolation as e:
+            conn.rollback()
+            kode = "policy_i_bruk" if "beslutning" in str(e)                 else "runde_allerede_aapen"
+            return _feil(kode, rid)
+        except psycopg.errors.NoDataFound:
+            conn.rollback()
+            return _feil("policy_ukjent", rid)
+        conn.commit()
+        return _ok({"slettet": n, "policy_id": policy_id}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
