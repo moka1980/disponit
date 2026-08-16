@@ -404,6 +404,34 @@ test("Roller: navnebytte tar referansene med seg", async () => {
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 
+test("Roller: et utkast med ødelagt `tillatt_for` kan fortsatt ÅPNES", async () => {
+  // Utkast opprettes og redigeres uten skjemavalidering — den er et eget steg
+  // — så `handlinger[].tillatt_for` kan inneholde et objekt eller et tall.
+  // Server-siden klassifiserer bevisst en ikke-liste som «tom» framfor å
+  // avvise den, så verdien når fram hit. Med `.includes` rett på verdien kastet
+  // editoren `TypeError` mens den TEGNET, og eieren kunne ikke åpne utkastet
+  // for å reparere nettopp det som var galt.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-6", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "agent" }, { id: "okonomi" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: { rolle: "agent" } },
+                 { id: "betaling.utfor", tillatt_for: 5 },
+                 { id: "rapport.les", tillatt_for: ["okonomi"] }],
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const agent = rolleRad(h, "agent");
+  assert.ok(agent, "editoren tegnet ikke rollene for et ødelagt utkast");
+  assert.ok(!agent.querySelector("button").hasAttribute("disabled"),
+    "en ikke-liste er ingen rollereferanse og skal ikke låse raden");
+  // …og en ekte referanse i samme utkast holder fortsatt sin rolle låst.
+  assert.ok(rolleRad(h, "okonomi").querySelector("button")
+    .hasAttribute("disabled"),
+    "den GYLDIGE referansen ble borte sammen med de ødelagte");
+});
+
 test("Roller: navnebytte som PASSERER en annen rolles id lar den i fred", async () => {
   // Navnet skrives tegn for tegn. Med rollene `admin` og `ad` går veien til
   // `admin2` gjennom `admin`: `ad` → `adm` → `admi` → `admin` → `admin2`. Med

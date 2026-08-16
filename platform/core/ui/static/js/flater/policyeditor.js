@@ -66,14 +66,21 @@ function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
 // nøyaktig samme måte når DEN rollen mangler. Så lenge vakten bare så på
 // handlingene, framsto en rolle som kun brukes til overstyring som fjernbar —
 // og knappen førte rett i den fella vakten er til for å stenge.
+//
+// Vakten leser referansepunktene, som hopper over `tillatt_for` som ikke er en
+// liste (Codex P2). Et ULAGRET utkast kan inneholde hva som helst der:
+// opprett/rediger tar imot en vilkårlig dict, og skjemavalideringen er et eget
+// steg — server-siden klassifiserer til og med bevisst en ikke-liste her som
+// «tom» framfor å avvise den, så verdien når fram til detaljsvaret. Med
+// `.includes` rett på verdien kastet editoren `TypeError` mens den TEGNET, og
+// eieren kunne dermed ikke åpne utkastet for å REPARERE det. En ikke-liste har
+// ingen rollereferanser; eieren slipper inn og kan rette den.
 function referanserTilRolle(policy, rolleId) {
   if (!rolleId) return [];
-  const ut = (policy.handlinger || [])
-    .filter((h) => (h.tillatt_for || []).includes(rolleId))
-    .map((h) => h.id);
-  const mo = policy.menneskelig_overstyring;
-  if (mo && mo.krever_rolle === rolleId) {
-    ut.push(t("ui.editor.rolle_i_bruk_overstyring"));
+  const ut = [];
+  for (const punkt of referansepunkter(policy)) {
+    if (punkt.les() !== rolleId) continue;
+    if (!ut.includes(punkt.merkelapp)) ut.push(punkt.merkelapp);
   }
   return ut;
 }
