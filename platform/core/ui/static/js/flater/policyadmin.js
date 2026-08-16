@@ -815,6 +815,10 @@ const GRUNNLAGSFEIL = new Map([
   ["aktiv_peker_usynk", "ui.policyadmin.utfall.aktiv_peker_usynk"],
   ["versjon_i_bruk", "ui.policyadmin.utfall.versjon_i_bruk"],
   ["versjon_mangler", "ui.policyadmin.utfall.versjon_mangler"],
+  // Utkastet bryter et framoverrettet krav som kom ETTER at det ble validert
+  // (Codex P2 på #63). Statusen `validert` er ekte, men foreldet — og et nytt
+  // klikk kan ikke gjøre noe med det: utkastet må rettes og valideres på nytt.
+  ["utkast_ugyldig", "ui.policyadmin.utfall.utkast_ugyldig"],
 ]);
 
 // -> teksten for en grunnlagsfeil, ellers den generiske «Handlingen feilet.».

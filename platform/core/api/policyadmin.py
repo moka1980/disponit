@@ -470,6 +470,38 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     return ny
 
 
+def _krev_innforingskrav(ny_innhold) -> None:
+    """Utkastet må oppfylle de FRAMOVERRETTEDE kravene for å kunne aktiveres —
+    ikke bare ha oppfylt dem den gangen det ble validert.
+
+    `valider_utkast` er porten inn, men den er en ENGANGS-port: den kjører idet
+    utkastet går til `validert`, og statusen blir stående. Et utkast som fikk
+    `validert` FØR et slikt krav fantes bærer statusen videre, og
+    runde-åpningen leser bare status + `innholds_hash` (Codex P2 på #63). Da
+    kunne det aktiveres uten noen gang å ha møtt kravet — og «gjelder framover»
+    ville i praksis betydd «gjelder framover, unntatt for de utkastene som alt
+    lå klare», nøyaktig de som lander først etter utrullingen. Kravet hører
+    derfor hjemme på aktiveringsveien selv, ikke bare på porten inn.
+
+    KUN differansen (`schema.valider_innforingskrav`), ikke hele
+    `valider_ny_policy`: lastekontrakten er bakoverkompatibel og sier per
+    definisjon ingenting nytt her, og å dra den inn ville blandet «bryter et
+    nytt krav» sammen med «er strukturelt ødelagt» i samme feilkode.
+
+    Kontrollen speiler `_krev_peker_synk`/`_krev_ny_versjon`: den kjører både
+    før runden åpnes OG før noen attesterer. Det andre kallet er ikke
+    overflødig — en runde kan ha vært åpen da utrullingen landet, og en
+    signatur på et utkast som ikke kan aktiveres er verdiløs i det den skrives.
+
+    Merk asymmetrien mot `hent_aktiv`: en alt AKTIV policy revalideres fortsatt
+    mot lastekontrakten alene og virker som før. Det er bare veien INN som
+    strammes. Kaster `Aktiveringsfeil("utkast_ugyldig")`; eier må rette
+    utkastet og validere det på nytt."""
+    feil = _schema.valider_innforingskrav(ny_innhold)
+    if feil:
+        raise Aktiveringsfeil("utkast_ugyldig", "; ".join(feil))
+
+
 # --------------------------------------------------------------------------
 # 1. Runde-åpning.
 # --------------------------------------------------------------------------
@@ -513,6 +545,9 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # Og ingen runde åpnes på et utkast som ikke KAN lagres: versjonen det
     # bærer må være semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
     _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+    # ... eller som ikke oppfyller de framoverrettede kravene: `validert` kan
+    # stamme fra før kravet fantes, og status alene er ingen kvittering.
+    _krev_innforingskrav(ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -663,6 +698,9 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # Samme argument for versjonen: en signatur på et utkast som ikke kan
         # lagres er like verdiløs som en signatur på feil base.
         _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+        # Og for de framoverrettede kravene: runden kan ha vært åpen da
+        # utrullingen som innførte dem landet.
+        _krev_innforingskrav(ny_innhold)
     except Aktiveringsfeil:
         conn.rollback()
         raise

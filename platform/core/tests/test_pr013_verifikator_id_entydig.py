@@ -22,7 +22,8 @@ from pathlib import Path
 
 import yaml
 
-from policy_validator.schema import valider_ny_policy, valider_policy
+from policy_validator.schema import (valider_innforingskrav,
+                                     valider_ny_policy, valider_policy)
 
 _BASE = yaml.safe_load(
     (Path(__file__).resolve().parents[3] / "policies"
@@ -125,3 +126,32 @@ def test_innforingskontrakten_returnerer_lastefeil_alene():
     feil = valider_ny_policy(p)
     assert feil == valider_policy(p), feil
     assert not any("flertydig" in f for f in feil), feil
+
+
+# --- Codex P2 på #63: differansen må kunne stilles ALENE -------------------
+# `valider_utkast` er en ENGANGS-port: et utkast som fikk status `validert` før
+# kravet fantes, bærer statusen inn i aktiveringen. Aktiveringsveien må derfor
+# kunne stille kravet på nytt — men bare DET kravet, ikke lastekontrakten, som
+# er bakoverkompatibel og per definisjon ikke sier noe nytt her.
+
+def test_innforingskrav_alene_er_differansen():
+    assert valider_innforingskrav(_med_verifikator("v_ny")) == []
+    assert valider_innforingskrav(_med_verifikator("foo.beskrivelse"))
+    assert valider_innforingskrav(_med_verifikator("foo[0]"))
+    assert valider_innforingskrav(_med_verifikator(""))
+
+
+def test_innforingskrav_drar_ikke_lastekontrakten_med_seg():
+    """Et strukturelt ufullstendig fragment med en LOVLIG id skal passere:
+    ellers kunne aktiveringsporten ikke skille «bryter et nytt krav» fra «er
+    strukturelt ødelagt», og ville avvist på feil grunnlag."""
+    fragment = {"roller": [{"id": "r1"}],
+                "verifikatorer": {"v_reg": {"betrodd_for": []}}}
+    assert valider_policy(fragment), "fragmentet bryter lastekontrakten"
+    assert valider_innforingskrav(fragment) == []
+
+
+def test_innforingskrav_kaster_aldri():
+    for rar in (None, 42, "policy", [], {"verifikatorer": ["v_reg"]},
+                {"verifikatorer": "v_reg"}, {"verifikator_prioritet": None}):
+        assert isinstance(valider_innforingskrav(rar), list), rar

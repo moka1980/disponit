@@ -756,3 +756,105 @@ def test_dublett_under_terskel_er_fortsatt_konflikt():
     finally:
         rt.close()
     assert _aktiv_versjon(pid) is None
+
+
+# --------------------------------------------------------------------------
+# Codex P2 på #63: et framoverrettet krav må gjelde ALT som aktiveres etter
+# utrullingen — også utkast som alt sto `validert` da den landet.
+# --------------------------------------------------------------------------
+
+#: Utkast med en verifikator-id som gjør diffstien flertydig. Nøyaktig formen
+#: `valider_utkast` avviser i dag — men en rad kan ha fått `validert` FØR den
+#: porten stilte kravet, og `_utkast` skriver akkurat en slik rad direkte.
+_FLERTYDIG_INNHOLD = {
+    "roller": [{"id": "r1"}],
+    "verifikatorer": {"v_reg.beskrivelse": {"betrodd_for": ["fire_oyne"],
+                                            "beskrivelse": "test"}}}
+
+
+@pg
+def test_gammelt_validert_utkast_kan_ikke_apne_runde():
+    """Statusen `validert` er ingen kvittering på DAGENS krav.
+
+    `valider_utkast` er en engangs-port: den kjørte den gangen raden gikk til
+    `validert`, og statusen ble stående. Leser runde-åpningen bare status +
+    hash, aktiveres utkastet uten noen gang å ha møtt kravet — og «gjelder
+    framover» ville i praksis unntatt nøyaktig de utkastene som lander først
+    etter utrullingen.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _FLERTYDIG_INNHOLD)           # status='validert'
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "utkast_ugyldig", e.value.kode
+        assert "flertydig" in e.value.detalj, e.value.detalj
+        rt.rollback()
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        assert m.execute("SELECT count(*) FROM aktiveringsrunde WHERE tenant=%s"
+                         " AND utkast_id=%s", (TEN, uid)).fetchone()[0] == 0, (
+            "runden ble åpnet på et utkast som ikke kan aktiveres")
+    finally:
+        m.rollback(); m.close()
+    assert _aktiv_versjon(pid) is None
+
+
+@pg
+def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
+    """Runde-åpningen alene er ikke nok: runden kan ha vært ÅPEN da kravet kom.
+
+    Kontrollen nøytraliseres under åpningen for å gjenskape nøyaktig den
+    tilstanden utrullingen arver. Da må attesteringen ta den — og ta den FØR
+    signaturen skrives: en attestasjon på et utkast som ikke kan aktiveres er
+    ingen godkjenning, bare et spor som må ryddes.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _FLERTYDIG_INNHOLD)
+    rt = _rt()
+    try:
+        monkeypatch.setattr(policyadmin, "_krev_innforingskrav",
+                            lambda *_a, **_k: None)
+        r = _apne(rt, uid, a)                  # runden fra «før utrullingen»
+        monkeypatch.undo()                     # ... og så lander den
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, a, r["diff_hash"])
+        assert e.value.kode == "utkast_ugyldig", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0] == 0, (
+            "signaturen ble skrevet på et utkast som ikke kan aktiveres")
+    finally:
+        m.rollback(); m.close()
+    assert _aktiv_versjon(pid) is None
+
+
+@pg
+def test_lovlig_utkast_slipper_gjennom_den_nye_porten():
+    """Motprøven: porten avviser IKKE et utkast med en entydig verifikator-id.
+    Uten den ville en for bred kontroll (hele lastekontrakten) stanset all
+    aktivering — også det som er helt i orden."""
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}],
+                          "verifikatorer": {"v_reg": {"betrodd_for": [],
+                                                      "beskrivelse": "t"}}})
+    rt = _rt()
+    try:
+        assert _apne(rt, uid, a)["runde"] == 1
+        rt.rollback()
+    finally:
+        rt.close()

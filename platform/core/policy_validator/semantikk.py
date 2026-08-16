@@ -97,7 +97,10 @@ def kildechecksum() -> str:
 #: skilletegnene i diffstien — men kravet ligger i INNFØRINGSKONTRAKTEN
 #: `schema.valider_ny_policy`, ikke i skjemaet, så en allerede aktiv policy
 #: ikke blir korrupt ved lasting.)
-MOTOR_SEMANTIKKVERSJON = "bf707a3491748b48a80356ba443aa60812040f91f005e7e372aa00d724c03910"
+#: (Codex P2 på #63: differansen er eksponert som `valider_innforingskrav`, så
+#: aktiveringsveien kan stille det framoverrettede kravet på nytt — `validert`
+#: kan være satt før kravet fantes.)
+MOTOR_SEMANTIKKVERSJON = "3d0f356b5bfb4a13a4a7da8e9bed37bbe89f8aa9dfaf74652f2f3cae062dcfce"
 
 
 # ---------------------------------------------------------------------------

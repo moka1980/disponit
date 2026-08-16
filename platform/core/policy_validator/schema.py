@@ -98,9 +98,26 @@ def valider_ny_policy(policy: object) -> list[str]:
     feil = valider_policy(policy)
     if feil:
         return feil
+    return valider_innforingskrav(policy)
+
+
+def valider_innforingskrav(policy: object) -> list[str]:
+    """KUN differansen mellom innførings- og lastekontrakten: de framoverrettede
+    kravene, uten lastekontrakten foran. Tom == oppfylt. Kaster aldri.
+
+    Hvorfor den er eksponert alene (Codex P2 på PR #63): `valider_utkast` er en
+    ENGANGS-port, og et utkast som fikk status `validert` før et slikt krav
+    fantes bærer statusen videre inn i aktiveringen. Aktiveringsveien må derfor
+    kunne stille kravet på nytt — men BARE dette kravet. Å kjøre hele
+    `valider_ny_policy` der ville dratt lastekontrakten inn i en kontroll som
+    handler om noe annet, og gjort «utkastet bryter et nytt krav» umulig å
+    skille fra «utkastet er strukturelt ødelagt».
+    """
+    if not isinstance(policy, dict):
+        return ["policy er ikke et objekt"]
     try:
-        return _valider_innforing(policy)          # type: ignore[arg-type]
-    except Exception as e:
+        return _valider_innforing(policy)
+    except Exception as e:  # siste skanse — aldri ukontrollert exception
         return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
 
 

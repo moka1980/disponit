@@ -1139,10 +1139,13 @@ test("Attester: brukt versjon sier at utkastet må få ny versjon (utfall)",
     assert.equal(kvitt.getAttribute("role"), "alert");
   });
 
-test("Attester: versjonsfeil som 409 sier det samme som utfallet", async () => {
-  for (const kode of ["versjon_i_bruk", "versjon_mangler"]) {
+// Codex P2 på #63: `utkast_ugyldig` er 422, ikke 409 — det er INNHOLDET som er
+// ugyldig, ikke tilstanden. Grunnlagsteksten må følge koden, ikke statusen.
+test("Attester: grunnlagsfeil sier det samme som utfallet", async () => {
+  for (const [kode, status] of [["versjon_i_bruk", 409],
+    ["versjon_mangler", 409], ["utkast_ugyldig", 422]]) {
     const kvitt = await _attesterMedPost(nyHoved(), async () => ({
-      ok: false, status: 409, json: async () => ({ feil: kode }) }));
+      ok: false, status, json: async () => ({ feil: kode }) }));
     assert.ok(kvitt.textContent.includes(t(`ui.policyadmin.utfall.${kode}`)),
       `${kode} falt til «Handlingen feilet» og skjulte hva som må rettes`);
     assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")));

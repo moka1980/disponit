@@ -35,6 +35,9 @@ _FEIL_HTTP = {
     "dobbel_principal": 400, "sesjon_ugyldig": 401, "csrf_ugyldig": 403,
     "request_feilformet": 400, "idempotensnokkel_mangler": 400,
     "db_utilgjengelig": 503, "policy_ugyldig": 422,
+    # Innholdet er ugyldig (innføringskontrakten), ikke tilstanden: 422 som
+    # `policy_ugyldig` — eier må rette utkastet, ikke prøve igjen.
+    "utkast_ugyldig": 422,
 }
 
 

@@ -655,6 +655,7 @@
   "ui.policyadmin.utfall.aktiv_peker_usynk": "Aktiv policy og peker er ute av synk — dataene må repareres før aktivering.",
   "ui.policyadmin.utfall.versjon_i_bruk": "Versjonsnummeret i utkastet er allerede registrert, eller ikke nyere enn den aktive versjonen. Øk «meta.versjon» i utkastet og valider på nytt.",
   "ui.policyadmin.utfall.versjon_mangler": "Utkastet mangler et gyldig versjonsnummer i «meta.versjon» (formen 1.2.3). Rett det i utkastet og valider på nytt.",
+  "ui.policyadmin.utfall.utkast_ugyldig": "Utkastet bryter et krav som gjelder alle policyer som aktiveres nå — det ble validert før kravet kom. Rett utkastet og valider på nytt.",
   "ui.policyadmin.diff.sammendrag": "{antall} endringer i {omrader} områder. Områder som utvider fullmakt står åpne øverst.",
   "ui.policyadmin.diff.antall_endringer": "{n} endringer",
   "ui.policyadmin.diff.antall_felt": "{n} felt",
