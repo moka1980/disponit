@@ -416,8 +416,18 @@ _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _TALLVERSJON = re.compile(r"^\d+(\.\d+)*$")
 
 
-def _versjonsnokkel(versjon: str) -> tuple[int, ...]:
-    return tuple(int(d) for d in versjon.split("."))
+def _versjonsnokkel(versjon: str, ledd: int) -> tuple[int, ...]:
+    """Tallpunktet versjon som sammenlignbar nøkkel, NULLPADDET til `ledd`.
+
+    Paddingen er ikke kosmetikk. Uten den sorterer tuppelsammenligningen
+    «2.0.0» OVER «2» — prefikset er likt, og den lengste vinner. Det er
+    nøyaktig formen de eldre radene bærer («1», «2», skrevet av telleren
+    migrasjon 020 fjerner), så en aktiv «2»-rad ville sluppet gjennom
+    dokumentversjonen «2.0.0»: samme versjon, ikke en nyere. Padder vi begge
+    til samme bredde, blir «2» → (2, 0, 0) og de to er like — som de er.
+    """
+    tall = tuple(int(d) for d in versjon.split("."))
+    return tall + (0,) * (ledd - len(tall))
 
 
 def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
@@ -446,10 +456,12 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
             "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND versjon=%s", (tenant, policy_id, ny)).fetchone():
         raise Aktiveringsfeil("versjon_i_bruk", f"versjon={ny} finnes")
-    if aktiv_versjon is not None and _TALLVERSJON.match(aktiv_versjon) \
-            and _versjonsnokkel(ny) <= _versjonsnokkel(aktiv_versjon):
-        raise Aktiveringsfeil(
-            "versjon_i_bruk", f"versjon={ny} ikke nyere enn {aktiv_versjon}")
+    if aktiv_versjon is not None and _TALLVERSJON.match(aktiv_versjon):
+        ledd = max(ny.count("."), aktiv_versjon.count(".")) + 1
+        if _versjonsnokkel(ny, ledd) <= _versjonsnokkel(aktiv_versjon, ledd):
+            raise Aktiveringsfeil(
+                "versjon_i_bruk",
+                f"versjon={ny} ikke nyere enn {aktiv_versjon}")
     return ny
 
 
