@@ -98,6 +98,7 @@
   "ui.nav.beslutninger": "Decisions",
   "ui.nav.unntak": "Exceptions",
   "ui.nav.kundeadmin": "Customer admin",
+  "ui.nav.varsler": "Notifications",
   "ui.nav.admin": "Admin",
   "site.status.i_drift": "Live",
   "site.status.klargjort": "Approved, not live",

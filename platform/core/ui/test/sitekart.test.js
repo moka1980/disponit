@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { byggRuter, harScope, hashForDypLenke, tillatteFlater, visningFraSok }
   from "../static/js/sitekart.js";
+
+const HER = dirname(fileURLToPath(import.meta.url));
+const locale = (navn) => JSON.parse(readFileSync(
+  join(HER, "..", "..", "..", "..", "locales", `${navn}.json`), "utf-8"));
 
 test("harScope: leser scopes fra sesjon uten kast", () => {
   assert.equal(harScope({ scopes: ["policy:write"] }, "policy:write"), true);
@@ -115,4 +122,32 @@ test("hashForDypLenke: hash settes én gang, ellers navigerer ruteren selv", () 
   assert.equal(hashForDypLenke("", "", ruter), null);
   assert.equal(hashForDypLenke("?visning=admin", "", byggRuter({ scopes: [] })),
     null);
+});
+
+// En rute uten etikett er ikke en kosmetisk mangel: `AppShell` slår opp
+// `ui.nav.<nokkel>`, og i18n-fallbacket returnerer NØKKELEN når oppslaget
+// bommer. Hovedmenyen viste derfor «ui.nav.varsler» til hver eneste
+// policyforvalter, på begge språk (Codex P2). Det er nettopp en slik feil som
+// ikke fanges av en test av flaten selv — flaten var riktig; det var kartet som
+// pekte på en tekst ingen hadde skrevet.
+//
+// Porten måles mot rutene `byggRuter` FAKTISK kan produsere, ikke mot en liste
+// noen må huske å oppdatere. Da er en ny rute uten etikett en rød test, og
+// begge locale-settene holdes i takt av det samme kravet.
+test("Hver rute byggRuter kan gi har en nav-etikett i BEGGE locale-sett", () => {
+  // Alle scopene til sammen: den bredeste økten sitekartet kan bygge for.
+  const alle = byggRuter({ scopes: [
+    "decisions:read", "policy:read", "policy:write", "policy:activate",
+    "exceptions:read", "security:read", "platform:admin",
+  ] });
+  // Kartet skal faktisk ha rukket å bli bredt — ellers måler testen ingenting.
+  assert.ok(alle.length >= 8, `for få ruter i porten: ${alle.length}`);
+  for (const navn of ["nb", "en"]) {
+    const tekster = locale(navn);
+    for (const r of alle) {
+      const nokkel = `ui.nav.${r.nokkel}`;
+      assert.ok(typeof tekster[nokkel] === "string" && tekster[nokkel].trim(),
+        `${navn}.json mangler ${nokkel}`);
+    }
+  }
 });
