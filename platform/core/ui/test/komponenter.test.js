@@ -416,6 +416,35 @@ test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () 
     .includes(NB["ui.shell.moduler_tomt"]), "tomt søk sier ikke fra");
 });
 
+test("AppShell: et søk med skjult meny henter menyen fram (Codex P2)", () => {
+  // 🔴 Søkefeltet står i toppsonen, men treffene vises BARE i modulmenyen. Med
+  // menyen skjult ble resultatlista tatt ut av både skjermbildet og
+  // tilgjengelighetstreet, mens feltet sto igjen synlig og aktivt: hvert
+  // tastetrykk bygget en liste ingen kunne se.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const bryter = [...rot.querySelectorAll("button")]
+    .find((b) => b.getAttribute("aria-controls") === "modulmeny");
+  const meny = rot.querySelector(".skall-venstre");
+  const felt = rot.querySelector("#skall-sok");
+  bryter.dispatchEvent(new window.Event("click"));
+  assert.equal(meny.hidden, true, "forutsetningen: menyen skal være skjult");
+
+  felt.value = "bank";
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(meny.hidden, false,
+    "søket skrev treff inn i en meny ingen kunne se");
+  assert.ok(rot.querySelectorAll(".skall-modul").length > 0, "ingen treff vist");
+
+  // Og bryteren skal si det samme som skjermen — ellers har vi byttet ett
+  // stille misforhold ut med et annet.
+  assert.equal(bryter.getAttribute("aria-expanded"), "true",
+    "bryteren melder fortsatt at menyen er skjult");
+  assert.equal(bryter.textContent, NB["ui.shell.skjul_meny"]);
+  assert.equal(rot.querySelector(".skall-kropp").dataset.meny, "apen");
+});
+
 test("AppShell: et modulvalg fyller kontekstpanelet", async () => {
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
     ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,

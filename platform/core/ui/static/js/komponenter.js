@@ -398,22 +398,40 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     if (fokuser) kontekst.focus();
   }
 
-  sokefelt.addEventListener("input", () => tegnModuler(sokefelt.value));
   tegnModuler("");
 
   const skjul = el("button", { type: "button", class: "knapp liten",
     text: t("ui.shell.skjul_meny") });
   skjul.setAttribute("aria-expanded", "true");
   skjul.setAttribute("aria-controls", "modulmeny");
-  skjul.addEventListener("click", () => {
-    const apen = skjul.getAttribute("aria-expanded") === "true";
-    skjul.setAttribute("aria-expanded", apen ? "false" : "true");
-    skjul.textContent = apen ? t("ui.shell.vis_meny") : t("ui.shell.skjul_meny");
-    venstre.hidden = apen;
+
+  // Bryteren og søket er to veier til den SAMME tilstanden, så tilstanden
+  // settes ett sted. Kalles først fra en hendelse, altså etter at `kropp` er
+  // bygget.
+  function settMeny(apen) {
+    skjul.setAttribute("aria-expanded", apen ? "true" : "false");
+    skjul.textContent = apen ? t("ui.shell.skjul_meny") : t("ui.shell.vis_meny");
+    venstre.hidden = !apen;
     // Rutenettet må VITE at sonen er borte (Codex P1): `hidden` alene tok
     // menyen ut av flyten, og et autoplassert rutenett flyttet da `main` inn i
     // sidebarkolonnen. Tilstanden står på kroppen, og CSS bytter oppsett.
-    kropp.dataset.meny = apen ? "skjult" : "apen";
+    kropp.dataset.meny = apen ? "apen" : "skjult";
+  }
+  const menyErApen = () => skjul.getAttribute("aria-expanded") === "true";
+  skjul.addEventListener("click", () => settMeny(!menyErApen()));
+
+  // Å SØKE ER Å BE OM RESULTATENE (Codex P2). Søkefeltet står i toppsonen,
+  // men det eneste stedet treffene vises er modulmenyen. Var menyen skjult,
+  // ble den lista tatt ut av både skjermbildet og tilgjengelighetstreet mens
+  // feltet sto igjen synlig og aktivt: hvert tastetrykk bygget en liste ingen
+  // kunne se, og kontrollen framsto som ødelagt.
+  //
+  // Feltet slås ikke av — et søkefelt som er inaktivt av en grunn brukeren
+  // ikke ser er samme problem med motsatt fortegn. Søket åpner menyen i
+  // stedet: den som søker etter en modul ber om å få se modulene.
+  sokefelt.addEventListener("input", () => {
+    if (!menyErApen()) settMeny(true);
+    tegnModuler(sokefelt.value);
   });
 
   // Statuslinja sier hva som FAKTISK gjelder. Spesifikasjonens eksempel («45
