@@ -12,7 +12,9 @@ Grensene som prøves her er de som gjør senderen trygg å la stå og gå:
     driftstilstand, ikke en egenskap ved varselet;
   * teksten rendres fra locale, ikke fra databasen.
 """
+import re
 import secrets
+from pathlib import Path
 
 import pytest
 
@@ -226,16 +228,17 @@ def test_rendre_viser_ukjent_nokkel_i_stedet_for_tomhet():
 
 
 # ---------------------------------------------------------------------------
-# SPRÅKET (eiers P2). Modulteksten lovte «mottakerens språk». Innboksen holder
-# det løftet — den rendrer nøkkelen i nettleseren med leserens eget valg — men
-# e-posten kan ikke: portalens språkvalg lever i URL-ledd og `localStorage`,
-# profil-DTO-en fra IdP-en er lukket til tre felt, og `varselvalg` bærer bare
-# kanalvalget. Det finnes altså ingen serverlagret preferanse å slå opp.
+# SPRÅKET. Løftet er mottakerens språk der hun har valgt, og installasjonens
+# der hun ikke har. Innboksen har alltid holdt den første halvdelen — den
+# rendrer nøkkelen i nettleseren med leserens eget valg. E-posten kunne ikke
+# før `varselvalg.sprak` (028) ga serveren noe å slå opp.
 #
-# Løftet er derfor avgrenset til det som er sant, og testene under måler
-# nettopp avgrensningen: ETT språk for hele kjøringen, valgt av
-# installasjonen. Uten dem ville «det er sånn med vilje» og «det er en feil
-# ingen har sett» sett helt like ut i koden.
+# Testene under måler BEGGE halvdelene, og grensen mellom dem. Den grensen er
+# der feilen satt: så lenge «ikke valgt» ble lagret som 'nb', fikk senderen
+# alltid en gyldig verdi og tok den for et valg — og installasjonens
+# `DISPONIT_VARSEL_SPRAK` var virkningsløs for nettopp den gruppen den fantes
+# for (Codex P2, migrasjon 031). Uten disse testene ville «det er sånn med
+# vilje» og «det er en feil ingen har sett» sett helt like ut i koden.
 # ---------------------------------------------------------------------------
 
 def test_spraket_er_installasjonens_valg_og_ikke_en_konstant(monkeypatch):
@@ -301,6 +304,107 @@ def test_epost_rendres_paa_MOTTAKERENS_sprak():
             f"kroppen fulgte ikke mottakerens språk: {tekst_en!r}")
     finally:
         c.close()
+
+
+@pg
+def test_uten_eget_valg_gjelder_INSTALLASJONENS_sprak():
+    """Den som ikke har valgt, er ikke norsk (Codex P2).
+
+    `varselvalg.sprak` var `NOT NULL DEFAULT 'nb'`, og klaimet avsluttet med
+    `coalesce(…, 'nb')`. Senderen fikk derfor ALLTID en gyldig verdi, og
+    `(sprak or SPRAK)` — installasjonens valg — var uoppnåelig. På en
+    installasjon satt opp med `DISPONIT_VARSEL_SPRAK=en` fikk hver mottaker
+    uten eget valg e-posten på norsk. Innstillingen var virkningsløs for
+    nettopp den gruppen den fantes for.
+
+    Tre mottakere, fordi funnet har tre utganger og bare den midterste var
+    feil:
+      * INGEN `varselvalg`-rad → installasjonens språk;
+      * rad, men uten uttrykt språk (kanalvalg fra en klient som ikke sender
+        det) → installasjonens språk. Det var her 'nb' ble skrevet som om
+        brukeren hadde valgt;
+      * rad med uttrykt 'nb' → norsk, selv om installasjonen er engelsk.
+        Uten den siste kunne funnet «fikses» ved å la installasjonen
+        overkjøre alle, og det ville vært samme feil speilvendt.
+
+    `sprak="en"` sendes til `kjor` i stedet for å settes i miljøet: det er
+    samme ledd (`sprak or SPRAK`), og modulkonstanten leses ved import.
+    """
+    c = _conn()
+    try:
+        ingen = _bruker(c, "ingenrad", "ingen@example.test")
+        tom = _bruker(c, "tomtsprak", "tom@example.test")
+        valgt = _bruker(c, "valgtnb", "valgt@example.test")
+        # Ingen `sett_kanal` for `ingen` — den har ikke noen rad i det hele
+        # tatt, som er tilstanden enhver bruker har før hun rører innboksen.
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=tom,
+                          kanal="epost_og_portal")
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=valgt,
+                          kanal="epost_og_portal", sprak="nb")
+        lagret = c.execute(
+            "SELECT sprak FROM varselvalg WHERE tenant=%s AND bruker_id=%s",
+            (TEN, tom)).fetchone()[0]
+        assert lagret is None, (
+            f"kanalvalg uten språk ble lagret som {lagret!r} — da finnes ikke"
+            " «ikke uttrykt» lenger, og driftens valg er uoppnåelig")
+        for b in (ingen, tom, valgt):
+            _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        _kontekst(c)
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send, sprak="en")
+        _kontekst(c)
+        per = {til: emne for til, emne, _t in sendt}
+        for adr in ("ingen@example.test", "tom@example.test",
+                    "valgt@example.test"):
+            assert adr in per, f"{adr} fikk ingen e-post: {sorted(per)}"
+        assert "waiting" in per["ingen@example.test"], (
+            f"uten rad fulgte ikke installasjonen: {per['ingen@example.test']!r}")
+        assert "waiting" in per["tom@example.test"], (
+            f"uten uttrykt språk fulgte ikke installasjonen:"
+            f" {per['tom@example.test']!r}")
+        assert "venter" in per["valgt@example.test"], (
+            f"et uttrykt 'nb' ble overkjørt av installasjonen:"
+            f" {per['valgt@example.test']!r}")
+    finally:
+        c.close()
+
+
+def test_031_nuller_de_historiske_nb_ene_innenfor_RLS_vinduet():
+    """Engangsnullingen i 031, målt på KILDEN — den kan ikke måles på basen.
+
+    Migrasjonen kjører én gang, og etter den er en lagret 'nb' et EKTE
+    uttrykk. En test som skrev 'nb' og så etter NULL ville altså måle noe
+    annet enn det den later som. Det som derimot kan brekke stille, er
+    REKKEFØLGEN, og den måles her (Codex P2 på #71):
+
+    * FØR `DROP NOT NULL` ville UPDATE-en feilet — høyt, og altså ufarlig.
+    * UTENFOR `NO FORCE ROW LEVEL SECURITY` ville den truffet NULL RADER:
+      `varselvalg` står med FORCE (026), politikken `tenant_isolasjon`
+      sammenligner mot `current_setting('disponit.tenant')`, og den er uset
+      under migrering. Migrasjonen ville gått grønn uten å ha gjort noe, og
+      funnet stått som lukket. Det er den utgangen denne testen finnes for.
+    """
+    sql = (Path(__file__).resolve().parents[1] / "db/migrations"
+           / "031_varsel_sprak_ikke_uttrykt.sql").read_text(encoding="utf-8")
+    # Bare teksten her: `_setninger` gir også «står setningen under en vakt»,
+    # og det er ACL-avspillingens spørsmål, ikke rekkefølgens.
+    setninger = [s for s, _under_vakt in _setninger(sql)]
+
+    def hvor(nal):
+        traff = [i for i, s in enumerate(setninger) if nal in s]
+        assert len(traff) == 1, f"{nal!r} forventet én gang, fikk {traff}"
+        return traff[0]
+
+    nulling = hvor("update varselvalg set sprak = null")
+    assert "where sprak = 'nb'" in setninger[nulling], (
+        "nullingen skal treffe 'nb' og bare 'nb' — en lagret 'en' kunne bare"
+        " komme fra en klient som uttrykkelig sendte den")
+    assert hvor("drop not null") < nulling, "NOT NULL må være borte først"
+    assert (hvor("varselvalg no force row level security") < nulling
+            < hvor("varselvalg force row level security")), (
+        "nullingen står utenfor RLS-vinduet og ville truffet null rader —"
+        " grønn migrasjon, uendret data")
 
 
 @pg
@@ -1057,6 +1161,1346 @@ SENDERFUNKSJONER = [
 ]
 
 SENDERROLLE = "disponit_varselsender"
+
+EIERROLLE = "disponit_domene_eier"
+
+#: Rollen migrasjonene kjøres SOM når ingen `SET LOCAL ROLE` er i kraft —
+#: `db.kjorer.migrer`, CI og staging bruker alle den. Avspillingen trenger et
+#: NAVN og ikke bare «ingen rolle», fordi eierskap sammenlignes med den
+#: aktive rollen: en funksjon migrator selv har laget og beholdt, EIER den.
+MIGRATORROLLE = "disponit_migrator"
+
+#: DOLLARSITERING HAR EN TAGG (Codex P2 på #71). `$$` er bare det navnløse
+#: tilfellet av `$tagg$ … $tagg$`, og taggen er ikke pynt: den er måten
+#: PostgreSQL lar en dollarsitert tekst inneholde en annen. Kjente modellen
+#: bare den bare formen, ble en `DO $acl$ … $acl$` hverken strøket som kropp
+#: ELLER pakket ut som blokk — innmaten ble i stedet splittet som toppnivå,
+#: uten gren å telle. En `IF … THEN RAISE …; REVOKE …;` inne i den leste
+#: dermed som en ubetinget REVOKE, og gjerdet ble målt som lukket mens vakten
+#: kunne være usann og PUBLIC stå igjen med EXECUTE.
+#:
+#: Åpningstaggen er en tilbakereferanse, ikke et nytt `$…$`: `$a$ … $b$ … $a$`
+#: er ÉN tekst, og et uttrykk som avsluttet på hvilken som helst tagg ville
+#: delt den i to.
+_TAGG = r"\$([a-z_][a-z0-9_]*|)\$"
+
+_KROPP = re.compile(_TAGG + r".*?\$\1\$", re.S | re.I)
+
+#: En `DO $$ … $$`-blokk ser ut som en funksjonskropp og er noe helt annet:
+#: den KJØRES av migrasjonen, og innholdet er ekte DDL og rettighetsutsagn.
+#: 027, 030 og 031 legger alle den betingede granten til senderrollen der.
+#: Ble blokken strøket sammen med kroppene, var en `GRANT … TO PUBLIC` med
+#: feilskrevet mottaker inne i en slik blokk usynlig for porten.
+_DO_BLOKK = re.compile(r"\bdo\s*" + _TAGG + r"(.*?)\$\1\$", re.S | re.I)
+
+#: Setningene måles med SØK, ikke `startswith`: innmaten i en utpakket
+#: DO-blokk kommer med plpgsql-innpakning foran («begin if exists (…) then
+#: grant …»), og et krav om at setningen BEGYNNER med `grant` ville gjort
+#: nettopp de blokkene usynlige igjen.
+_LAGER = re.compile(r"\bcreate\b.*\bfunction\b")
+
+#: PUBLIC som MOTTAKER, ikke som skjemanavn: `… ON FUNCTION public.f(…) TO
+#: disponit` og `… ON ALL SEQUENCES IN SCHEMA public TO …` inneholder begge
+#: delstrengen «public» uten å si noe om PUBLIC-ACL-en.
+#:
+#: PUBLIC KAN STÅ HVOR SOM HELST I MOTTAKERLISTEN (Codex P2 på #71). En GRANT
+#: tar en LISTE av mottakere, og `… TO disponit_varselsender, PUBLIC` gir
+#: PUBLIC EXECUTE like fullt som en enslig `TO PUBLIC` — men inneholder ikke
+#: delstrengen «to public», så den gamle formen så den ikke. Mottakerlisten er
+#: alt som står ETTER `TO`, og det er nettopp det som skiller de to
+#: betydningene av ordet: skjemanavnet `public` står alltid FORAN `TO`
+#: (`ON FUNCTION public.f(…)`, `IN SCHEMA public`), mottakeren alltid etter.
+#: Motprøvene i kontrolltesten holder derfor fortsatt.
+_TIL_PUBLIC = r"\bto\b.*\bpublic\b"
+_GRANT_PUBLIC = re.compile(r"\bgrant\b.*" + _TIL_PUBLIC)
+
+#: `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` åpner alle tre på én gang
+#: og NEVNER INGEN AV DEM (Codex P2 på #71). Setningen slapp derfor gjennom
+#: silen på basenavn før den rakk å bli målt — den eneste veien til PUBLIC som
+#: ikke skriver navnet på det den åpner. `ROUTINES` er PostgreSQLs eget
+#: synonym og må stå med, ellers er hullet bare stavet om.
+#:
+#: SKJEMANAVNET SJEKKES IKKE. Avspillingen sporer ikke hvilket skjema
+#: funksjonene bor i, og en modell som gjetter «bare `public` teller» ville
+#: vært stille den dagen de flyttes. Tvilen faller mot åpent, som ellers her:
+#: en grant i et annet skjema gir en falsk alarm noen må se på, ikke et hull
+#: ingen ser. Motprøven om `public` som skjemanavn gjelder ikke — her er PUBLIC
+#: MOTTAKEREN, og det er utvetydig.
+_GRANT_ALLE_PUBLIC = re.compile(
+    r"\bgrant\b.*\bon all (?:functions|routines) in schema\b.*" + _TIL_PUBLIC)
+
+#: ET MÅL ER ET OBJEKT, IKKE EN DELSTRENG (Codex P2 på #71). Et objektnavn i
+#: SQL er `[skjema.]navn[(argumenter)]`, og hver av de tre delene skiller
+#: funksjoner fra hverandre: `varsel_rekoe_helper(interval)` INNEHOLDER
+#: `varsel_rekoe` uten å være den, og `annet_skjema.varsel_rekoe(…)` er et
+#: annet objekt med samme navn. Med delstrengsjekk slapp begge inn — og
+#: verre: fordi ingen av dem har en signatur som BEGYNNER på `varsel_rekoe(`,
+#: falt de ned i «bart navn»-grenen og lukket gjerdet for den beskyttede
+#: funksjonen på vegne av en helt annen.
+_MAAL = re.compile(
+    r"(?:(?P<skjema>[a-z_][a-z0-9_]*)\s*\.\s*)?"
+    r"(?P<navn>[a-z_][a-z0-9_]*)\s*(?:\((?P<args>[^()]*)\))?")
+
+#: SAMME TYPE, ULIK STAVEMÅTE (Codex P2 på #71). `DROP FUNCTION
+#: varsel_klaim_epost(integer, integer)` fjerner nøyaktig den funksjonen
+#: `SENDERFUNKSJONER` kaller `(int,int)`: PostgreSQL slår begge opp til samme
+#: `pg_type` og kjenner ingen forskjell. Sammenlignes stavemåten bokstavelig,
+#: leser modellen aliaset som en ANNEN overlast, lar forrige `True` stå — og
+#: godtar at senderfunksjonen er borte.
+#:
+#: NØKLENE ER ALIASENE, VERDIEN ER DEN KANONISKE STAVEMÅTEN — som godt kan
+#: være flere ord, fordi argumentlisten deles på KOMMA og ikke på mellomrom:
+#: `varchar` og `character varying` blir begge det samme ene leddet. En ukjent
+#: type får stå som den er skrevet; å gjette utover det basen faktisk regner
+#: som synonymer, gjør ingen tvil mindre.
+_TYPESYNONYM = {
+    "integer": "int", "int4": "int",
+    "int8": "bigint",
+    "int2": "smallint",
+    "bool": "boolean",
+    "float4": "real",
+    "varchar": "character varying",
+    "decimal": "numeric",
+    "timestamptz": "timestamp with time zone",
+    "timetz": "time with time zone",
+}
+
+#: ET ARGUMENT ER MER ENN EN TYPE (Codex P2 på #71). PostgreSQL skriver et
+#: argument som `[modus] [navn] type [DEFAULT uttrykk]`, og alle formene er
+#: lovlige identiteter for den SAMME funksjonen: `DROP FUNCTION
+#: varsel_klaim_epost(p_grense integer, p_maks integer)` treffer nøyaktig den
+#: `(int,int)` beskytter. Ble `p_grense integer` lest som selve typen, traff
+#: ikke `_rammer` — og en DROP av senderfunksjonen lot `True` fra forrige
+#: REVOKE stå, som er nettopp utgangen DROP-grenen finnes for.
+#:
+#: Modus er en fast, kort liste, og `OUT` er den ene som betyr noe for
+#: IDENTITETEN: PostgreSQL slår opp en funksjon på INN-typene alene, så
+#: `f(int, OUT text)` og `f(int)` er samme funksjon og begge skrivemåtene er
+#: lovlige i en DROP. NAVNET er derimot ikke gjenkjennelig i seg selv, så
+#: skillet må gå på det som ER kjent: en type. Ordene under er ord som kan
+#: BEGYNNE et typenavn, og formene med mellomrom er de eneste typene i
+#: PostgreSQL som består av flere ord.
+_MODUS = frozenset(("in", "out", "inout", "variadic"))
+
+_FLERORDSTYPER = frozenset((
+    "double precision", "character varying", "bit varying",
+    "timestamp with time zone", "timestamp without time zone",
+    "time with time zone", "time without time zone",
+))
+
+_TYPEORD = frozenset((
+    "int", "integer", "int2", "int4", "int8", "smallint", "bigint",
+    "serial", "smallserial", "bigserial", "serial4", "serial8",
+    "numeric", "decimal", "real", "float4", "float8", "double", "money",
+    "bool", "boolean", "bit", "text", "char", "character", "varchar",
+    "name", "bytea", "uuid", "json", "jsonb", "xml",
+    "date", "time", "timetz", "timestamp", "timestamptz", "interval",
+    "inet", "cidr", "macaddr", "macaddr8", "tsvector", "tsquery",
+    "oid", "regclass", "regproc", "regprocedure", "regtype", "regrole",
+    "record", "void", "trigger", "internal", "cstring", "unknown",
+    "anyelement", "anyarray", "anynonarray", "anyenum", "anycompatible",
+))
+
+#: MÅLKLAUSULEN, ikke hele setningen (Codex P2 på #71). En setning kan NEVNE
+#: en signatur uten å virke på den — en vakt som
+#: `IF to_regprocedure('varsel_klaim_epost(int,int)') IS NOT NULL THEN REVOKE
+#: … varsel_klaim_epost(text) FROM PUBLIC` nevner den beskyttede signaturen og
+#: revokerer overlasten. Leses hele setningen, lukker overlastens REVOKE
+#: gjerdet for den kryss-tenante utgaven — nøyaktig det signaturkravet skulle
+#: hindre. Klausulen er derfor det som står MELLOM verbet og mottakeren.
+_REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
+
+#: `ROUTINE` ER SAMME SLETTING, STAVET OM (Codex P2 på #71). PostgreSQL godtar
+#: `DROP ROUTINE f(int,int)` som en generisk form som treffer funksjonen like
+#: godt som `DROP FUNCTION`. Kjente modellen bare den ene stavemåten, sto
+#: `True` fra forrige REVOKE igjen etter at senderfunksjonen var borte — det
+#: er nøyaktig utgangen `DROP`-grenen ble lagt inn for å hindre. Samme grunn
+#: som `ALL ROUTINES` står i den skjemabrede granten: synonymet må med, ellers
+#: er hullet bare skrevet på nytt.
+_DROP_MAL = re.compile(
+    r"\bdrop\s+(?:function|routine)\b(?:\s+if\s+exists\b)?(.*)")
+
+#: EIERSKIFTET (Codex P2 på #71). `ALTER FUNCTION … OWNER TO x` er den ene
+#: setningen som bestemmer hvem en senere `REVOKE … FROM PUBLIC` må kjøres
+#: som. Uten den grenen satte modellen «kjører som `disponit_domene_eier`»
+#: lik «eier funksjonen» — en gjenskaping som ved et uhell ble overført til
+#: en annen eier, fulgt av den velkjente `SET LOCAL ROLE disponit_domene_eier;
+#: REVOKE …`, ble da regnet som et gjerde, mens PostgreSQL bare advarer og
+#: lar standard-ACL-en (EXECUTE for PUBLIC) stå.
+_EIERSKIFTE = re.compile(
+    r"\balter\s+(?:function|routine)\b(.*?)\bowner\s+to\s+([a-z_][a-z0-9_]*)")
+
+#: EN VAKT FORAN SETNINGEN (Codex P2 på #71). Etter at DO-blokker pakkes ut,
+#: kommer innmaten med plpgsql-innpakningen foran — og er den innpakningen en
+#: BETINGELSE, vet ikke kilden om setningen kjørte i det hele tatt. Formen er
+#: alt i bruk i 027/030/031 for den betingede senderrollegranten, så en
+#: `IF … THEN REVOKE … FROM PUBLIC` er én redigering unna. Måles på teksten
+#: FORAN verbet: en setning på toppnivå har ingenting foran seg.
+_BETINGET = re.compile(r"\b(?:if|elsif|elseif|case|when)\b")
+
+#: `SET LOCAL ROLE` ER ÉN AV FLERE FORMER (Codex P2 på #71). PostgreSQL
+#: skriver rolleskiftet som `SET [LOCAL | SESSION] ROLE [TO] navn`, og
+#: modellen kjente bare den ene. En `SET ROLE disponit_migrator` etter et
+#: stykke arbeid som eier gikk derfor upåaktet hen, og en REVOKE etterpå ble
+#: bokført på den GAMLE rollen — modellen leste et gjerde der klyngen kjørte
+#: setningen som ikke-eier, advarte, og lot PUBLIC beholde EXECUTE.
+#:
+#: `NONE` er ikke et rollenavn, men PostgreSQLs egen måte å skrive «tilbake
+#: til innloggingsrollen» på, og betyr det samme som `RESET ROLE`.
+_ROLLESKIFTE = re.compile(
+    r"^set\s+(?:(local|session)\s+)?role\s+(?:to\s+)?([a-z_][a-z0-9_]*)")
+
+#: EN VAKT SOM STREKKER SEG OVER FLERE SETNINGER (Codex P2 på #71). Vakten
+#: over måler bare teksten FORAN verbet i den SAMME setningen, og en
+#: plpgsql-gren er ikke én setning: `IF … THEN RAISE NOTICE …; REVOKE …;
+#: END IF;` splittes på semikolon, og da står REVOKE-en igjen med ingenting
+#: foran seg. Modellen leste den som ubetinget og lukket gjerdet — mens
+#: klyngen, med usann vakt, ikke revokerte noe som helst.
+#:
+#: Grenen må derfor telles, ikke bare søkes etter. `IF … THEN` åpner, `END IF`
+#: lukker, og `ELSIF` gjør ingen av delene — det er samme blokk.
+#: KRAVET OM `THEN` I SAMME SETNING er det som skiller plpgsql-grenen fra
+#: `DROP FUNCTION IF EXISTS …`, der ordet `if` hører til en helt annen
+#: setning. Går tellingen likevel i ulage, blir svaret «betinget», altså
+#: «ikke bevist lukket» — tvilen faller mot åpent, som ellers her.
+_AAPNER = re.compile(
+    r"(?<!end )\bif\b(?=.*\bthen\b)|(?<!end )\bcase\b(?=.*\bwhen\b)")
+_LUKKER = re.compile(r"\bend\s+(?:if|case)\b")
+
+
+def _uten_kommentarer(sql):
+    """SQL-en slik BASEN leser den: uten kommentarer av noe slag.
+
+    EN KOMMENTAR ER IKKE EN SETNING (Codex P2 på #71). Modellen strøk bare
+    `--`-kommentarer, og PostgreSQL har to former. Et `/* … */` som
+    DOKUMENTERER den påkrevde eierrekkefølgen — nøyaktig den slags merknad
+    disse migrasjonene er fulle av — ble derfor liggende igjen i strømmen, og
+    `_REVOKE_MAL` leste den utkommenterte teksten som en utført REVOKE fra
+    eieren. Verre: semikolonet inne i eksempelet delte setningen, så en
+    etterfølgende `RESET ROLE` kunne bli borte og rollen stå igjen feil.
+
+    Formen må leses, ikke søkes etter, av tre grunner:
+
+    * `/* … */` NØSTER i PostgreSQL, i motsetning til C. Et ikke-grådig regex
+      ville avsluttet på den første `*/` og sluppet resten av den ytre
+      kommentaren inn igjen.
+    * Hvilken form som gjelder, avgjøres av hvem som BEGYNNER først: en `/*`
+      inne i en `--`-linje er tekst, og en `--` inne i en blokk likeså.
+    * En apostrof åpner en STRENGKONSTANT, og der er `--` og `/*` bare tegn.
+      Strengene beholdes ordrett — det er bare kommentarene som skal bort.
+
+    Blokken erstattes av ett mellomrom, ikke ingenting: `revoke/**/all` er to
+    ord for basen, og skal være to ord her også.
+    """
+    ut, i, n = [], 0, len(sql)
+    while i < n:
+        if sql.startswith("--", i):
+            slutt = sql.find("\n", i)
+            # Nylinjen beholdes: den er skillet mellom to `--`-kommenterte
+            # linjer, og uten den ville de to blitt limt sammen til én.
+            i = n if slutt < 0 else slutt
+        elif sql.startswith("/*", i):
+            dybde, i = 1, i + 2
+            while i < n and dybde:
+                if sql.startswith("/*", i):
+                    dybde, i = dybde + 1, i + 2
+                elif sql.startswith("*/", i):
+                    dybde, i = dybde - 1, i + 2
+                else:
+                    i += 1
+            ut.append(" ")
+        elif sql[i] == "'":
+            j = i + 1
+            while j < n:
+                if sql[j] != "'":
+                    j += 1
+                elif sql.startswith("''", j):
+                    j += 2          # doblet apostrof er ETT tegn, ikke slutt
+                else:
+                    j += 1
+                    break
+            ut.append(sql[i:j])
+            i = j
+        else:
+            ut.append(sql[i])
+            i += 1
+    return "".join(ut)
+
+
+def _delt(tekst, i_blokk):
+    """Setningene i et tekststykke, hver med «står den under en vakt?».
+
+    Dybden telles bare inne i en DO-blokk: på toppnivå i en migrasjonsfil
+    finnes det ingen plpgsql-gren en setning kan stå under.
+    """
+    dybde = 0
+    for rå in _KROPP.sub(" ", tekst).split(";"):
+        s = " ".join(rå.split()).lower()
+        if not s:
+            continue
+        yield s, dybde > 0
+        if i_blokk:
+            dybde = max(0, dybde + len(_AAPNER.findall(s))
+                        - len(_LUKKER.findall(s)))
+
+
+def _setninger(sql):
+    """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
+
+    Gir `(setning, betinget)`, der `betinget` sier om setningen står inne i
+    en plpgsql-gren som ÅPNET I EN TIDLIGERE SETNING.
+
+    Kroppene fjernes fordi de inneholder både `;` og — i kommentarform —
+    nettopp de ordene denne testen leter etter. Det som er igjen er filens
+    DDL og rettighetsutsagn, i den rekkefølgen basen ser dem.
+
+    DO-blokker er unntaket: de PAKKES UT i stedet for å strykes, slik at
+    setningene inni dem splittes og måles som alle andre. En blokk er ikke en
+    kropp — den er kode som kjører. Og de pakkes ut STYKKEVIS, ikke ved å
+    limes inn i filteksten: grensen mellom «inne i en blokk» og «på toppnivå»
+    er nettopp det tellingen over trenger for å vite hva som er en gren.
+    """
+    uten_kommentar = _uten_kommentarer(sql)
+    pos = 0
+    for m in _DO_BLOKK.finditer(uten_kommentar):
+        yield from _delt(uten_kommentar[pos:m.start()], False)
+        yield from _delt(m.group(2), True)
+        pos = m.end()
+    yield from _delt(uten_kommentar[pos:], False)
+
+
+def _type(ledd):
+    """Ett argument redusert til TYPEN det er, kanonisert.
+
+    Skallet rundt typen — modus (`IN`/`OUT`/`INOUT`/`VARIADIC`), et
+    parameternavn og en `DEFAULT`-hale — hører til ERKLÆRINGEN og ikke til
+    funksjonens identitet. Basen ser `(p_grense integer, p_maks integer)` og
+    `(int,int)` som samme funksjon; gjør ikke modellen det, treffer den ikke
+    en DROP som er skrevet med navn.
+
+    Et `OUT`-argument gir `None`: det er ikke en del av identiteten i det
+    hele tatt. PostgreSQL slår opp funksjonen på INN-typene alene, så
+    `f(int, OUT text)` er den samme funksjonen som `f(int)` — og begge
+    skrivemåtene er lovlige i en DROP.
+
+    Navnet kjennes ikke igjen i seg selv, så det skrelles av det som ER
+    kjent: står det mer enn ett ord igjen, og de ordene ikke til sammen er
+    en av PostgreSQLs flerordstyper, er det første ordet et navn — med det
+    ene forbeholdet at et ord som ikke KAN begynne en type, alltid er det.
+    Betingelsen `ord_[1] in _TYPEORD` er det som skiller `text text` (navn +
+    type) fra en ukjent type skrevet i to ord.
+    """
+    ord_ = [o for o in ledd.lower().split() if o]
+    if ord_ and ord_[0] in _MODUS:
+        if ord_[0] == "out":
+            return None
+        ord_ = ord_[1:]
+    for i, o in enumerate(ord_):
+        if o == "default" or o == "=":
+            ord_ = ord_[:i]
+            break
+    while (len(ord_) > 1 and " ".join(ord_) not in _FLERORDSTYPER
+           and (ord_[0] not in _TYPEORD or ord_[1] in _TYPEORD)):
+        ord_ = ord_[1:]
+    t = " ".join(ord_)
+    return _TYPESYNONYM.get(t, t)
+
+
+def _typeliste(argumenter):
+    """Argumentlisten som en sammenlignbar rekke av typer.
+
+    Typene kanoniseres, jf. `_TYPESYNONYM`: basen slår `int`, `integer` og
+    `int4` opp til samme `pg_type`, så to signaturer som bare er ulikt
+    STAVET er den samme funksjonen. Og hvert ledd skrelles først for modus,
+    navn og standardverdi, jf. `_type`: de er heller ikke en del av
+    identiteten. `OUT`-argumenter faller helt bort — de teller ikke med i
+    oppslaget basen gjør.
+    """
+    return tuple(t for t in (_type(d) for d in argumenter.split(","))
+                 if t)
+
+
+def _normalisert(signatur):
+    """En full signatur på formen modellen sammenligner med.
+
+    Navnet i små bokstaver, argumentene kanonisert og uten mellomrom rundt
+    komma. Den erstatter et rått `replace(" ", "")`, som ville limt sammen
+    en type som ER flere ord (`timestamp with time zone`) og gjort den
+    ugjenkjennelig mot den samme typen skrevet i en migrasjon.
+    """
+    navn, _, argumenter = signatur.lower().partition("(")
+    return f"{navn.strip()}({','.join(_typeliste(argumenter.rstrip(')')))})"
+
+
+def _referanser(tekst):
+    """Hvert objektnavn i teksten, som `(skjema, navn, argumenter)`.
+
+    `argumenter` er None når navnet står uten parentes — som er forskjellen
+    på `DROP FUNCTION f` (enhver overlast) og `DROP FUNCTION f(text)` (én).
+    Nøkkelord som `on` og `function` kommer med som navn uten argumenter;
+    de er harmløse, fordi de aldri er lik et basenavn vi leter etter.
+    """
+    for m in _MAAL.finditer(tekst):
+        yield m.group("skjema"), m.group("navn"), m.group("args")
+
+
+def _nevner(tekst, basenavn):
+    """Nevner teksten basenavnet som et OBJEKTNAVN — ikke som delstreng?
+
+    Silen foran målingen. Den er med vilje blind for skjema: en setning som
+    åpner gjerdet skal måles selv om den skriver et annet skjemanavn, av
+    samme grunn som `_GRANT_ALLE_PUBLIC` ikke sjekker skjema. Navnet må
+    derimot være HELE navnet — `varsel_rekoe_helper` er ikke `varsel_rekoe`,
+    og en migrasjon som lager eller granter hjelperen skal ikke rødme
+    porten for den beskyttede funksjonen.
+    """
+    return any(navn == basenavn for _skjema, navn, _args in _referanser(tekst))
+
+
+def _rammer(klausul, sig, basenavn):
+    """Treffer MÅLKLAUSULEN denne signaturen — som OBJEKT, ikke som tekst?
+
+    Brukes av de LUKKENDE grenene (REVOKE, DROP), og der er tvilens retning
+    motsatt av ellers: det som skal til for å regne gjerdet som lukket, må
+    være hele identiteten. Alle tre delene av objektnavnet kreves derfor:
+
+    * SKJEMAET må være uskrevet eller `public`. `annet.varsel_rekoe(…)` er et
+      annet objekt, og en REVOKE på det sier ingenting om vårt.
+    * NAVNET må være hele navnet, ikke en delstreng. `varsel_rekoe_helper`
+      inneholder `varsel_rekoe` uten å være den — og ville ellers falt ned i
+      «bart navn»-grenen under og lukket gjerdet på vegne av en fremmed.
+    * ARGUMENTENE må stemme når de er skrevet: `f(text)` sier ingenting om
+      `f(int,int)`.
+
+    Står navnet BART — `DROP FUNCTION f`, som PostgreSQL godtar når navnet er
+    entydig — finnes det ingen argumentliste å skille på, og setningen
+    gjelder enhver overlast. Tvilen faller da mot at den beskyttede
+    signaturen er truffet, som ellers i denne modellen.
+    """
+    egne = [args for skjema, navn, args in _referanser(klausul)
+            if navn == basenavn and skjema in (None, "public")]
+    if not egne:
+        return False
+    med_args = [a for a in egne if a is not None]
+    if not med_args:
+        return True
+    onsket = _typeliste(sig.split("(", 1)[1].rstrip(")"))
+    return any(_typeliste(a) == onsket for a in med_args)
+
+
+def _spill_av(filer, signaturer):
+    """Gjerdetilstanden for hver signatur etter at `filer` er kjørt.
+
+    `filer` er (filnavn, sql)-par i kjørerekkefølge, `signaturer` fulle
+    signaturer på formen `f(int,int)`. Returnerer `(gjerdet, spor)`, der
+    gjerdet er None = funksjonen finnes ikke ennå, False = den finnes med
+    EXECUTE for PUBLIC, True = gjerdet står.
+
+    Modellen er ACL-ens tilstand, ikke en tekstsjekk per fil: hver setning
+    som kan flytte PUBLICs EXECUTE må være representert, ellers leser
+    avspillingen en åpen funksjon som lukket.
+
+    SIGNATUREN, IKKE BASENAVNET, er nøkkelen — og setningstypene behandler
+    den ulikt, med vilje (Codex P2 på #71):
+
+    * En REVOKE lukker BARE den signaturen MÅLKLAUSULEN nevner — det som står
+      mellom `REVOKE` og `FROM PUBLIC`, ikke det som står hvor som helst i
+      setningen. En vakt som nevner den beskyttede signaturen og revokerer en
+      overlast, lukker ingenting. `f(text)` sier
+      ingenting om `f(int,int)`, og en overlast måtte ellers bare bli
+      revokert av eieren for å skjule at den kryss-tenante utgaven står åpen.
+    * En gjenskaping eller en `GRANT … TO PUBLIC` som nevner basenavnet
+      åpner, uansett hvilken signatur den bærer. Asymmetrien er retningen
+      på tvilen: en overlast for mye målt som åpen gir en falsk alarm noen
+      må se på, mens en for lite gir en åpen kryss-tenant funksjon ingen ser.
+    * En BETINGET REVOKE er ikke bevis. Står den under en vakt som kan være
+      usann i klyngen, revokeres ingenting — som eier løfter den derfor ikke
+      tilstanden til True. Som migrator måles den fortsatt som åpning: holder
+      vakten, materialiserer den standard-ACL-en. Tvilen faller begge veier
+      mot åpent.
+    * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
+      hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
+      før silen på navn — se `_GRANT_ALLE_PUBLIC`.
+    * EIERSKAPET FØLGES, ikke rollenavnet. En REVOKE lukker bare når den
+      aktive rollen faktisk EIER funksjonen — det er det PostgreSQL spør
+      etter, og en `ALTER … OWNER TO` kan ha flyttet det. Eieren settes av
+      gjenskapingen (den som kjører den, eier resultatet) og av eierskiftet.
+      Migrator som beholder sin egen funksjon, EIER den; `disponit_domene_eier`
+      med en funksjon som er overført til en annen, gjør det ikke.
+    * VAKTEN GJELDER OGSÅ EIERSKAPET (Codex P2 på #71). En `ALTER … OWNER
+      TO` eller en gjenskaping under en vakt som kan være usann, FLYTTET
+      kanskje ingenting — og hvem som da eier funksjonen, vet ikke kilden.
+      Eieren settes derfor til «ukjent», og en senere REVOKE regnes ikke som
+      eierens. Samme retning på tvilen som ellers: uten den ble en REVOKE
+      etter et eierskifte som kanskje ikke skjedde, lest som et gjerde mens
+      PostgreSQL bare advarte og lot PUBLIC beholde EXECUTE.
+    * En DROP setter tilbake til None: funksjonen er BORTE, ikke åpen. Uten
+      den grenen beholdt avspillingen `True` fra en tidligere REVOKE, og en
+      migrasjon som droppet uten å lage på nytt ga grønn port på noe som
+      ikke fantes. Den bruker samme målklausul som REVOKE-en, med ett
+      tillegg: `DROP FUNCTION f` uten signatur er lovlig når navnet er
+      entydig, og gjelder da enhver overlast.
+    """
+    beskyttet = [_normalisert(s) for s in signaturer]
+    basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
+    gjerdet = dict.fromkeys(beskyttet)
+    eier = dict.fromkeys(beskyttet)
+    spor = {sig: [] for sig in beskyttet}
+    sesjonsrolle = None                   # None = migrator, kjørerens rolle
+    for filnavn, sql in filer:
+        # `db.kjorer.migrer` kjører HVER fil i sin egen transaksjon på den
+        # SAMME sesjonen. Et `SET LOCAL ROLE` varer derfor bare ut filen,
+        # mens et `SET ROLE` uten `LOCAL` blir stående inn i den neste — og
+        # den forskjellen er nettopp hvem en senere REVOKE kjøres som.
+        rolle = sesjonsrolle
+        for s, under_vakt in _setninger(sql):
+            if skift := _ROLLESKIFTE.match(s):
+                ny = None if skift.group(2) == "none" else skift.group(2)
+                rolle = ny
+                if skift.group(1) != "local":
+                    sesjonsrolle = ny
+            elif s.startswith("reset role"):
+                rolle = sesjonsrolle = None
+            aktiv = rolle or MIGRATORROLLE
+            if _GRANT_ALLE_PUBLIC.search(s):
+                # Den ene setningen som åpner uten å nevne noe navn — måles
+                # derfor FØR silen på basenavn, ellers ville den aldri kommet
+                # så langt. Den treffer alle tre samtidig, som er nettopp
+                # grunnen til at den er verdt et eget spor.
+                for sig in beskyttet:
+                    gjerdet[sig] = False
+                    spor[sig].append(
+                        f"{filnavn}: skjemabred grant til public som {aktiv}")
+                continue
+            for sig in beskyttet:
+                if not _nevner(s, basenavn[sig]):
+                    continue
+                fall = _DROP_MAL.search(s)
+                if fall and _rammer(fall.group(1), sig, basenavn[sig]):
+                    # BORTE, ikke bare uten gjerde. Uten dette sporet beholdt
+                    # avspillingen `True` fra en tidligere REVOKE, og en
+                    # migrasjon som droppet funksjonen uten å lage den igjen
+                    # ga grønn port på noe som ikke fantes. Det er samme
+                    # grunn som SENDERFUNKSJONER skrives ut for hånd: en
+                    # funksjon som FORSVINNER skal ikke kunne godtas stille.
+                    # `None` faller i sluttkravet, som er meningen.
+                    gjerdet[sig] = None
+                    eier[sig] = None
+                    spor[sig].append(f"{filnavn}: droppet")
+                elif (eie := _EIERSKIFTE.search(s)) and _rammer(
+                        eie.group(1), sig, basenavn[sig]):
+                    # Eierskapet flyttes. ACL-en følger ikke med, så gjerdet
+                    # står der det sto — men HVEM som kan lukke det senere,
+                    # er nettopp det som endret seg.
+                    #
+                    # …med mindre setningen står under en VAKT. Er den usann
+                    # i klyngen, flyttes ingenting, og funksjonen blir hos
+                    # den forrige eieren — som kilden ikke nødvendigvis vet
+                    # hvem er. «Vet ikke» skal ikke kunne bli til «eier», så
+                    # eieren settes til ukjent og ingen senere REVOKE regnes
+                    # som eierens.
+                    if under_vakt or _BETINGET.search(s[:eie.start()]):
+                        eier[sig] = None
+                        spor[sig].append(
+                            f"{filnavn}: betinget eierskifte — eier ukjent")
+                    else:
+                        eier[sig] = eie.group(2)
+                        spor[sig].append(f"{filnavn}: eier nå {eier[sig]}")
+                elif ny := _LAGER.search(s):
+                    # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC —
+                    # og EIEREN er den som kjører setningen, ikke den som
+                    # eide den forrige funksjonen med samme navn.
+                    #
+                    # Samme forbehold som for eierskiftet: en gjenskaping
+                    # under en vakt gir kanskje ingen ny funksjon, og da står
+                    # den gamle igjen hos sin gamle eier. `False` på gjerdet
+                    # er trygt begge veier (holder vakten, er ACL-en åpen; og
+                    # ellers er en falsk alarm den billige utgangen), men
+                    # EIEREN er ukjent.
+                    gjerdet[sig] = False
+                    betinget = under_vakt or _BETINGET.search(s[:ny.start()])
+                    eier[sig] = None if betinget else aktiv
+                    spor[sig].append(
+                        f"{filnavn}: {'betinget ' if betinget else ''}"
+                        f"gjenskapt av {aktiv}"
+                        f"{' — eier ukjent' if betinget else ''}")
+                elif _GRANT_PUBLIC.search(s):
+                    # Gjerdet ned igjen, og uten dette sporet ville
+                    # avspillingen beholdt True fra en tidligere REVOKE. At
+                    # granten kan komme fra en rolle uten grant option — og
+                    # da bare gi en WARNING — endrer ikke svaret: det usikre
+                    # tilfellet skal måles som åpent, ikke antas lukket.
+                    gjerdet[sig] = False
+                    spor[sig].append(f"{filnavn}: grant til public som {aktiv}")
+                elif (rev := _REVOKE_MAL.search(s)) and _rammer(
+                        rev.group(1), sig, basenavn[sig]):
+                    # Vakten kan stå i den SAMME setningen (`IF … THEN
+                    # REVOKE …`) eller i en TIDLIGERE (`IF … THEN RAISE …;
+                    # REVOKE …`). Begge er den samme grenen for basen, og
+                    # ingen av dem er bevis for at REVOKE-en kjørte.
+                    betinget = under_vakt or _BETINGET.search(s[:rev.start()])
+                    # EIER, ikke rollenavn: det er eierskapet PostgreSQL
+                    # spør etter, og en gjenskaping kan ha flyttet det.
+                    er_eier = aktiv == eier[sig]
+                    if betinget and er_eier:
+                        # Vakten kan være usann i klyngen, og da revokeres
+                        # ingenting. En setning som KANSKJE kjørte er ikke
+                        # bevis for at gjerdet står, så tilstanden holdes der
+                        # den var i stedet for å bli løftet til True. Var den
+                        # alt False, blir den stående False — og det er
+                        # nettopp den utgangen som ellers ble skjult av
+                        # oppryddingen i `deploy/staging/migrer.py`.
+                        spor[sig].append(
+                            f"{filnavn}: betinget revoke som eier"
+                            f" — kjørte kanskje ikke")
+                    else:
+                        # Som eier: gjerdet står. Som migrator: advarsel, og
+                        # standard-ACL-en materialiseres — verre enn
+                        # ingenting. En BETINGET revoke som migrator måles
+                        # også som åpning: holder vakten, gjør den nettopp
+                        # den skaden, og tvilen faller mot åpent.
+                        gjerdet[sig] = er_eier
+                        spor[sig].append(
+                            f"{filnavn}: {'betinget ' if betinget else ''}"
+                            f"revoke som {aktiv}"
+                            f"{'' if er_eier else f' (eier: {eier[sig]})'}")
+    return gjerdet, spor
+
+
+def test_gjerdet_staar_ved_slutten_av_migrasjonshistorikken():
+    """Kildeport: PUBLIC skal ikke ha EXECUTE når siste migrasjon er kjørt.
+
+    En `REVOKE … FROM PUBLIC` kan MISLYKKES STILLE — kjøres den av en rolle
+    som ikke eier funksjonen, advarer PostgreSQL og går videre, men
+    materialiserer samtidig standard-ACL-en, som for en funksjon er EXECUTE
+    for PUBLIC. Og en DROP tar ACL-en med seg, så enhver gjenskaping av en
+    alt herdet funksjon åpner gjerdet på nytt.
+
+    Nøyaktig dét skjedde i 028 (Codex P1 på #68): den gjenskapte
+    `varsel_klaim_epost` og la REVOKE-en ETTER `ALTER … OWNER TO`, men FØR
+    `SET LOCAL ROLE` — altså som migrator, som er medlem av eierrollen
+    `WITH INHERIT FALSE`.
+
+    ACL-testen under så det ikke, og kunne ikke se det: både CI og staging
+    migrerer med `deploy/staging/migrer.py`, som ETTERPÅ kjører sin egen
+    REVOKE som eier. Den målingen skjer på en base der oppryddingen alt har
+    lukket hullet. Hullet er likevel ekte i vinduet mellom stegene, og
+    permanent for den som kjører `db.kjorer.migrer` direkte.
+
+    Derfor måles filene, og de måles SOM EN HISTORIKK, ikke én for én: 028
+    er kjørt og er immutable, så den kan ikke repareres — den kan bare
+    etterfølges (030). Testen spiller av alle migrasjonene i rekkefølge og
+    krever at gjerdet står igjen til slutt. Neste gjenskaping som glemmer å
+    sette det opp igjen, feiler her.
+    """
+    mig = Path(__file__).resolve().parents[1] / "db/migrations"
+    gjerdet, spor = _spill_av(
+        ((f.name, f.read_text(encoding="utf-8"))
+         for f in sorted(mig.glob("[0-9][0-9][0-9]_*.sql"))), SENDERFUNKSJONER)
+    for sig in gjerdet:
+        assert gjerdet[sig] is not None, (
+            f"{sig} finnes ikke etter siste migrasjon — den er droppet uten å"
+            f" bli laget igjen, eller aldri laget. Spor: {spor[sig]}")
+        assert gjerdet[sig] is True, (
+            f"PUBLIC har EXECUTE på {sig} etter siste migrasjon — en"
+            f" gjenskaping uten nytt gjerde, en REVOKE utenfor"
+            f" `SET LOCAL ROLE {EIERROLLE}`, eller en GRANT tilbake til"
+            f" PUBLIC. Spor: {spor[sig]}")
+
+
+def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
+    """Kontroll på selve målestokken: porten over er bare så god som denne.
+
+    Avspillingen er en modell av ACL-en, og en modell som ikke kjenner en
+    setning leser den som om den ikke fantes. Da blir testen over grønn av
+    at den er blind — den verste formen for grønn, fordi den ser ut som et
+    bevis. Hvert spor her er en vei PUBLIC kan få EXECUTE på nytt:
+
+    * gjenskaping uten nytt gjerde — DROP-en tar ACL-en med seg (028, P1),
+    * REVOKE som migrator — WARNING, og standard-ACL-en materialiseres,
+    * `GRANT … TO PUBLIC` etter et gjerde som sto. Den er ikke hypotetisk på
+      en annen måte enn de to andre: 027 og 028 granter begge EXECUTE
+      eksplisitt, og en mottaker skrevet feil er én redigering unna.
+    * samme grant med PUBLIC som ETT NAVN BLANT FLERE — `TO
+      disponit_varselsender, PUBLIC`. Mottakeren er en LISTE, og formen leser
+      som en helt vanlig grant til senderrollen helt til komma-et.
+    * samme grant INNE I EN `DO`-BLOKK. 027, 030 og 031 legger alle den
+      betingede senderrollegranten der, så det er nettopp formen en
+      feilskrevet mottaker ville hatt.
+    * en REVOKE på en OVERLAST — den skal ikke kunne lukke gjerdet for den
+      kryss-tenante signaturen på vegne av en annen.
+    * `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` — den ene veien til
+      PUBLIC som ikke nevner navnet på det den åpner, og derfor den ene som
+      silen på basenavn ikke fikk se. `ALL ROUTINES` er samme setning stavet
+      om, og måles som samme sak.
+    * en DROP uten gjenskaping — funksjonen er da BORTE, og et gjerde rundt
+      ingenting er ikke et bevis. Uten dette sporet sto `True` fra forrige
+      REVOKE igjen som om den fortsatt gjaldt. `DROP ROUTINE` er samme
+      sletting stavet om, og måles som samme sak.
+    * en VAKT som nevner den beskyttede signaturen mens REVOKE-en tar en
+      overlast. Det er forskjellen på hva en setning NEVNER og hva den
+      VIRKER på, og den forskjellen er hele signaturkravet. Sporet finnes i
+      to utgaver — med og uten vakt — fordi den betingede utgaven ellers
+      ville blitt fanget av regelen under, og målklausulen stått uprøvd.
+    * den samme signaturen STAVET ANNERLEDES — `(integer,integer)`, `(int4,
+      int4)`. Basen kjenner ingen forskjell; en modell som sammenligner
+      stavemåter gjør det, og lar da et gjerde stå rundt en funksjon som er
+      droppet.
+    * den samme signaturen SKREVET SOM EN ERKLÆRING — med modus,
+      parameternavn og `DEFAULT`. Alle er lovlige identiteter for den samme
+      funksjonen, og 027 og 031 erklærer den selv slik. `OUT` teller ikke
+      med i det hele tatt. Med motprøvene at skrellingen ikke bare tar
+      siste ord: en annen type med navn foran er fortsatt en annen
+      overlast, og en flerordstype skal stå hel.
+    * et NAVN SOM BARE BEGYNNER LIKT, og et ANNET SKJEMA. Begge inneholder
+      det beskyttede navnet som delstreng uten å være det objektet, og en
+      lukkende setning om dem skal ikke lukke noe her.
+    * en BETINGET revoke: som eier beviser den ingenting (vakten kan være
+      usann), som migrator er den fortsatt en åpning. Og motprøven, som er
+      den dyre halvdelen: den skal ikke RIVE et gjerde som alt står, ellers
+      blir enhver betinget opprydding en falsk alarm.
+    * en gjenskaping som overfører funksjonen til en ANNEN eier, med den
+      velkjente `SET LOCAL ROLE disponit_domene_eier; REVOKE …` etterpå. Den
+      leser som 027 og 031, og lukker likevel ingenting. Med motprøven at
+      MIGRATOR som beholder sin egen funksjon FAKTISK eier den — ellers måler
+      regelen et rollenavn, ikke et eierskap.
+    * samme vakt, men ÅPNET I EN TIDLIGERE SETNING — `IF … THEN RAISE …;
+      REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
+      `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
+      inne i en DO-blokk er betinget», og målt langt mer enn den vet.
+    * et EIERSKIFTE UNDER EN VAKT, og en gjenskaping likeså. Skjedde de
+      ikke, står funksjonen igjen hos en eier kilden ikke kjenner — og den
+      velkjente halen `SET LOCAL ROLE disponit_domene_eier; REVOKE …`
+      lukker da ingenting. Med motprøven at det UBETINGEDE eierskiftet
+      fortsatt krediteres; ellers ville regelen bare slått av eierskapet.
+    * et ROLLESKIFTE SKREVET PÅ EN ANNEN MÅTE — `SET ROLE`, `SET SESSION
+      ROLE`, `SET ROLE TO`, `SET ROLE NONE`. Særlig skiftet TILBAKE: ses det
+      ikke, bokføres en senere REVOKE på den gamle rollen, og modellen leser
+      et gjerde der klyngen bare advarte. Med skillet som gjør `LOCAL` til
+      noe annet enn støy: sesjonsformen overlever inn i neste fil,
+      transaksjonsformen ikke.
+    * samme vakt i en TAGGET blokk — `DO $acl$ … $acl$`. `$$` er bare det
+      navnløse tilfellet, og en tagget blokk ble hverken strøket som kropp
+      eller pakket ut som blokk. Med motprøvene at taggen PARES: en fremmed
+      tagg avslutter hverken en kropp eller en gren.
+    * en UTKOMMENTERT REVOKE — i begge PostgreSQLs kommentarformer, og
+      nøstet. En merknad som dokumenterer den påkrevde eierrekkefølgen er
+      ikke en utført setning. Med motprøvene at strykingen ikke SLUKER: det
+      som står rundt kommentaren måles fortsatt, og en apostrof inne i den
+      åpner ingen strengkonstant.
+
+    Alle ville ellers blitt skjult for ACL-testen av oppryddingen i
+    `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
+
+    Og motprøven: skjemanavnet `public` i en grant til en annen rolle skal
+    IKKE leses som PUBLIC — ellers ville modellen slått ut på 027s egne
+    granter og gjort porten til støy.
+    """
+    sig = "varsel_klaim_epost(int,int)"
+    n = [sig]
+    # Formen 027/028/031 bruker: migrator lager funksjonen, OVERFØRER den til
+    # domeneeieren, og gjerder den så inne som den eieren. Eierskiftet er en
+    # del av `lag`, ikke pynt — det er det som gjør `gjerde` under til en
+    # REVOKE fra funksjonens EIER og ikke bare fra en rolle med riktig navn.
+    lag = ("CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
+           " ALTER FUNCTION varsel_klaim_epost(int, int)"
+           " OWNER TO disponit_domene_eier;")
+    gjerde = ("SET LOCAL ROLE disponit_domene_eier;"
+              " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+              " FROM PUBLIC; RESET ROLE;")
+
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {sig: True}, \
+        "gjerde satt av eieren skal stå"
+
+    assert _spill_av([("a.sql", lag + gjerde), ("b.sql", lag)], n)[0] == {
+        sig: False}, "gjenskaping uten nytt gjerde"
+
+    assert _spill_av([("a.sql", lag + "REVOKE ALL ON FUNCTION"
+                       " varsel_klaim_epost(int, int) FROM PUBLIC;")], n)[0] \
+        == {sig: False}, "REVOKE som migrator er ikke gjerde"
+
+    etterpaa = ("GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                " TO PUBLIC;")
+    gjerdet, spor = _spill_av([("a.sql", lag + gjerde),
+                               ("b.sql", etterpaa)], n)
+    assert gjerdet == {sig: False}, \
+        f"GRANT tilbake til PUBLIC skal åpne gjerdet. Spor: {spor}"
+    assert f"b.sql: grant til public som {MIGRATORROLLE}" in spor[sig]
+
+    # …og PUBLIC som ETT NAVN BLANT FLERE i mottakerlisten. En GRANT tar en
+    # liste, og denne formen ser ut som en helt vanlig grant til senderrollen
+    # helt til man leser komma-et. Den gir PUBLIC EXECUTE like fullt.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO disponit_varselsender, PUBLIC;")], n)
+    assert gjerdet == {sig: False}, \
+        f"PUBLIC i en mottakerliste skal åpne gjerdet. Spor: {spor}"
+
+    # Samme grant, men betinget inne i en DO-blokk — formen 027/030/031
+    # bruker for senderrollen, og den `_KROPP` ville strøket som en kropp.
+    i_do = ("DO $$\nBEGIN\n"
+            "    IF EXISTS (SELECT 1 FROM pg_roles"
+            " WHERE rolname = 'disponit_varselsender') THEN\n"
+            "        GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+            " TO PUBLIC;\n"
+            "    END IF;\nEND $$;")
+    gjerdet, spor = _spill_av([("a.sql", lag + gjerde), ("b.sql", i_do)], n)
+    assert gjerdet == {sig: False}, \
+        f"GRANT til PUBLIC i en DO-blokk skal åpne gjerdet. Spor: {spor}"
+
+    # …og den samme blokken med RIKTIG mottaker skal ikke røre gjerdet.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", i_do.replace("TO PUBLIC",
+                                             "TO disponit_varselsender"))],
+                     n)[0] == {sig: True}, "DO-blokk med riktig mottaker"
+
+    # En OVERLAST lukker ikke gjerdet for den kryss-tenante signaturen…
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(text)"
+                   " FROM PUBLIC; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, \
+        f"REVOKE på `f(text)` sier ingenting om `f(int,int)`. Spor: {spor}"
+
+    # …men en gjenskaping av en overlast regnes som åpning, fordi tvilen
+    # skal falle mot åpent. Dette er den falske alarmen asymmetrien koster.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(text) ...;")],
+        n)[0] == {sig: False}, "gjenskaping av overlast måles som åpning"
+
+    # En BETINGET revoke er ikke bevis: er vakten usann i klyngen, revokeres
+    # ingenting, og den gjenskapte funksjonen står åpen bak en setning som
+    # LESER som et gjerde.
+    betinget_gjerde = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                       "    IF EXISTS (SELECT 1 FROM pg_roles"
+                       " WHERE rolname = 'disponit_varselsender') THEN\n"
+                       "        REVOKE ALL ON FUNCTION"
+                       " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                       "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + betinget_gjerde)], n)
+    assert gjerdet == {sig: False}, \
+        f"en betinget revoke som eier er ikke et gjerde. Spor: {spor}"
+
+    # …men den river heller ikke ned et gjerde som ALT står: den kan bare la
+    # være å bevise noe. Uten dette ville regelen over vært en dyr no-op som
+    # gjorde enhver betinget opprydding til en falsk alarm.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", betinget_gjerde)], n)[0] == {sig: True}, \
+        "en betinget revoke skal ikke rive et gjerde som står"
+
+    # …og VAKTEN OVERLEVER ET SEMIKOLON. Gjør blokken noe som helst FØR
+    # REVOKE-en, havner `IF` og `REVOKE` i hver sin setning når kroppen
+    # splittes, og en vakt som bare måles i egen setning er da borte.
+    med_forspill = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                    "    IF EXISTS (SELECT 1 FROM pg_roles"
+                    " WHERE rolname = 'disponit_varselsender') THEN\n"
+                    "        RAISE NOTICE 'rydder opp';\n"
+                    "        REVOKE ALL ON FUNCTION"
+                    " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                    "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + med_forspill)], n)
+    assert gjerdet == {sig: False}, (
+        "en vakt som åpnet i en tidligere setning er fortsatt en vakt."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er den som gjør regelen over til noe annet enn «alt
+    # inne i en DO-blokk er betinget»: END IF LUKKER GRENEN. En REVOKE etter
+    # den står ubetinget, og lukker gjerdet som den skal.
+    etter_end_if = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                    "    IF EXISTS (SELECT 1 FROM pg_roles"
+                    " WHERE rolname = 'disponit_varselsender') THEN\n"
+                    "        RAISE NOTICE 'rydder opp';\n"
+                    "    END IF;\n"
+                    "    REVOKE ALL ON FUNCTION"
+                    " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                    "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + etter_end_if)], n)
+    assert gjerdet == {sig: True}, (
+        "en REVOKE ETTER `END IF` er ubetinget og lukker gjerdet."
+        f" Spor: {spor}")
+
+    # Som MIGRATOR er den fortsatt en åpning: holder vakten, materialiserer
+    # REVOKE-en standard-ACL-en, og det er verre enn ingenting.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", betinget_gjerde.replace(
+             "SET LOCAL ROLE disponit_domene_eier; ", ""))], n)
+    assert gjerdet == {sig: False}, \
+        f"betinget revoke som migrator er en åpning. Spor: {spor}"
+
+    # En DROP uten gjenskaping: funksjonen er BORTE, ikke åpen — og et gjerde
+    # rundt ingenting er ikke et bevis. `None` faller i sluttkravet.
+    # `ROUTINE` er PostgreSQLs generiske stavemåte for den samme slettingen,
+    # og måles som samme sak — ellers er hullet bare skrevet om.
+    for ord_ in ("FUNCTION", "ROUTINE"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP {ord_} varsel_klaim_epost(int, int);")], n)
+        assert gjerdet == {sig: None}, (
+            f"en droppet funksjon ({ord_}) skal ikke stå som gjerdet."
+            f" Spor: {spor}")
+
+    # …men DROP + gjenskaping + nytt gjerde er 031s egen form, og skal stå.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION IF EXISTS varsel_klaim_epost(int, int);"
+                   + lag + gjerde)], n)[0] == {sig: True}, \
+        "drop + gjenskaping + gjerde som eier"
+
+    # En DROP av en OVERLAST rører ikke den beskyttede — samme signaturkrav
+    # som for REVOKE, og 027 gjør nettopp dette med `f(bigint, text, text)`.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION IF EXISTS varsel_klaim_epost(text);")],
+        n)[0] == {sig: True}, "en droppet overlast er ikke den beskyttede"
+
+    # …og en BAR DROP uten signatur, som PostgreSQL godtar når navnet er
+    # entydig, gjelder enhver overlast — også denne.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost;")], n)[0] == {
+        sig: None}, "bar DROP uten signatur treffer alle overlaster"
+
+    # Vakten er ikke målet: en betinget REVOKE som NEVNER den beskyttede
+    # signaturen, men bare tar overlasten, lukker ingenting.
+    vakt = ("DO $$\nBEGIN\n"
+            "    IF to_regprocedure('varsel_klaim_epost(int,int)')"
+            " IS NOT NULL THEN\n"
+            "        REVOKE ALL ON FUNCTION varsel_klaim_epost(text)"
+            " FROM PUBLIC;\n"
+            "    END IF;\nEND $$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag), ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                                   + vakt + " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en vakt som NEVNER signaturen er ikke en REVOKE som TAR den."
+        f" Spor: {spor}")
+
+    # Samme skille, men UTEN vakt — ellers ville regelen om betingede revoker
+    # målt dette sporet i stedet, og målklausulen stått uprøvd. Løkkeformen er
+    # 030s egen: en signaturliste i en `FOREACH`, som nevner den beskyttede
+    # signaturen i hodet mens setningen under tar en annen.
+    loekke = ("DO $$\nDECLARE s text;\nBEGIN\n"
+              "    FOREACH s IN ARRAY"
+              " ARRAY['varsel_klaim_epost(int,int)']\n"
+              "    LOOP\n"
+              "        REVOKE ALL ON FUNCTION varsel_klaim_epost(text)"
+              " FROM PUBLIC;\n"
+              "    END LOOP;\nEND $$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag), ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                                   + loekke + " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en ubetinget REVOKE på en overlast lukker ikke den beskyttede, selv"
+        f" om setningen NEVNER den. Spor: {spor}")
+
+    # Den skjemabrede granten: åpner alle tre, og NEVNER INGEN AV DEM. Den
+    # eneste veien til PUBLIC som ikke skriver navnet på det den åpner, og
+    # derfor den eneste som må måles før silen på basenavn.
+    for form in ("ALL FUNCTIONS", "ALL ROUTINES"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"GRANT EXECUTE ON {form} IN SCHEMA public"
+                       " TO PUBLIC;")], n)
+        assert gjerdet == {sig: False}, \
+            f"skjemabred grant ({form}) skal åpne gjerdet. Spor: {spor}"
+
+    # Motprøven: `public` som SKJEMA, og en helt annen mottaker.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", "GRANT EXECUTE ON FUNCTION"
+                       " public.varsel_klaim_epost(int, int)"
+                       " TO disponit_varselsender;")], n)[0] == {
+        sig: True}, "skjemanavnet `public` er ikke PUBLIC"
+
+    # ET NAVN SOM BEGYNNER LIKT ER ET ANNET NAVN. `varsel_klaim_epost_hjelper`
+    # inneholder hele det beskyttede navnet som delstreng, men er en annen
+    # funksjon — og fordi ingen av signaturene i setningen begynner på
+    # `varsel_klaim_epost(`, falt den før dette ned i «bart navn»-grenen og
+    # lukket gjerdet på vegne av en fremmed.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost_hjelper(interval) FROM PUBLIC;"
+                   " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE på et navn som bare BEGYNNER likt lukker ingenting."
+        f" Spor: {spor}")
+
+    # EIERSKAP, IKKE ROLLENAVN. En gjenskaping som ved et uhell overfører
+    # funksjonen til en ANNEN eier, og så følger den velkjente halen
+    # `SET LOCAL ROLE disponit_domene_eier; REVOKE …`, ser ut nøyaktig som
+    # 027 og 031 — men PostgreSQL advarer bare, og standard-ACL-en (EXECUTE
+    # for PUBLIC) blir stående.
+    feil_eier = lag.replace("OWNER TO disponit_domene_eier",
+                            "OWNER TO disponit_annen_eier") + gjerde
+    assert feil_eier != lag + gjerde
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde), ("b.sql", feil_eier)], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE fra en rolle som ikke EIER funksjonen er ikke et gjerde,"
+        f" uansett hva rollen heter. Spor: {spor}")
+
+    # …og motprøven, som viser at det er EIERSKAPET som måles og ikke navnet
+    # `disponit_domene_eier`: beholder migrator funksjonen selv, EIER
+    # migrator den — og da lukker migrators egen REVOKE gjerdet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int)"
+                   " ...; REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC;")], n)
+    assert gjerdet == {sig: True}, (
+        "migrator EIER en funksjon den selv har laget og beholdt."
+        f" Spor: {spor}")
+
+    # SAMME TYPE, ULIK STAVEMÅTE. `integer` og `int4` er `int` for basen, så
+    # en DROP skrevet slik fjerner nøyaktig den beskyttede funksjonen. Måltes
+    # stavemåten bokstavelig, leste modellen den som en annen overlast og lot
+    # gjerdet stå rundt noe som var borte.
+    for alias in ("integer, integer", "int4, int4", "INT, INTEGER"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP FUNCTION varsel_klaim_epost({alias});")], n)
+        assert gjerdet == {sig: None}, (
+            f"`{alias}` er den samme funksjonen som `(int,int)`."
+            f" Spor: {spor}")
+
+    # ET ARGUMENT ER MER ENN EN TYPE. `[modus] [navn] type [DEFAULT …]` er
+    # alle lovlige måter å skrive den SAMME funksjonen på — 027 og 031
+    # erklærer den selv med navn og standardverdi — og hver av dem dropper
+    # nøyaktig den signaturen `(int,int)` beskytter.
+    for skrivemaate in ("p_grense integer, p_maks integer",
+                        "IN p_grense int, IN p_maks int",
+                        "p_grense int, p_maks int DEFAULT 3",
+                        "IN p_grense integer, INOUT p_maks int4 DEFAULT 3",
+                        "p_grense int, p_maks int, OUT p_status text"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP FUNCTION varsel_klaim_epost({skrivemaate});")], n)
+        assert gjerdet == {sig: None}, (
+            f"`{skrivemaate}` er den samme funksjonen som `(int,int)`."
+            f" Spor: {spor}")
+
+    # …og motprøvene, som er det som gjør skrellingen til noe annet enn «ta
+    # siste ord»: en ANNEN type med navn foran er fortsatt en annen overlast,
+    # og en type som ER flere ord skal ikke miste halvparten av seg selv.
+    for annen in ("p_a bigint, p_b bigint",
+                  "p_ts timestamp with time zone"):
+        assert _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP FUNCTION varsel_klaim_epost({annen});")],
+            n)[0] == {sig: True}, f"`{annen}` er ikke `(int,int)`"
+
+    assert _type("p_ts timestamp with time zone") \
+        == "timestamp with time zone", "flerordstypen skal stå hel"
+    assert _type("timestamptz") == "timestamp with time zone"
+    assert _type("VARIADIC p_liste text[]") == "text[]"
+
+    # …og motprøven: en type som IKKE er et synonym er en annen overlast.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost(bigint, bigint);")],
+        n)[0] == {sig: True}, "`bigint` er ikke `int`"
+
+    # Samme skille for skjemaet: et annet skjema er et annet objekt, og en
+    # DROP der rører ikke den beskyttede funksjonen.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION annet.varsel_klaim_epost(int, int);")],
+        n)[0] == {sig: True}, "en DROP i et annet skjema er et annet objekt"
+
+    # …men `public.` UTSKREVET er det samme objektet som det uskrevne.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION public.varsel_klaim_epost(int, int);")],
+        n)[0] == {sig: None}, "`public.` utskrevet er samme objekt"
+
+    # VAKTEN GJELDER OGSÅ EIERSKAPET. Et `ALTER … OWNER TO` under en usann
+    # vakt flytter ingenting, og halen etterpå — den velkjente
+    # `SET LOCAL ROLE disponit_domene_eier; REVOKE …` — kjøres da av en rolle
+    # som ikke eier funksjonen. PostgreSQL advarer bare, og PUBLIC beholder
+    # EXECUTE bak en setning som LESER som 027 og 031.
+    betinget_eierskifte = (
+        "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
+        " DO $$\nBEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_roles"
+        " WHERE rolname = 'disponit_domene_eier') THEN\n"
+        "        ALTER FUNCTION varsel_klaim_epost(int, int)"
+        " OWNER TO disponit_domene_eier;\n"
+        "    END IF;\nEND $$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", betinget_eierskifte + gjerde)], n)
+    assert gjerdet == {sig: False}, (
+        "et eierskifte som kanskje ikke skjedde gir ingen kjent eier."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er den som skiller regelen fra «eierskifter teller
+    # ikke»: det UBETINGEDE eierskiftet i `lag` krediteres fortsatt, og det
+    # er nettopp det som gjør `gjerde` til eierens REVOKE.
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {sig: True}, \
+        "et ubetinget eierskifte skal fortsatt krediteres"
+
+    # Samme sak for en GJENSKAPING under en vakt: skjedde den ikke, står den
+    # gamle funksjonen igjen hos sin gamle eier, og migrator er ikke den.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n"
+                   "    IF EXISTS (SELECT 1 FROM pg_roles"
+                   " WHERE rolname = 'disponit_varselsender') THEN\n"
+                   "        CREATE OR REPLACE FUNCTION"
+                   " varsel_klaim_epost(int, int) ...;\n"
+                   "    END IF;\nEND $$;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC;")], n)
+    assert gjerdet == {sig: False}, (
+        "en betinget gjenskaping gjør ikke migrator til eier."
+        f" Spor: {spor}")
+
+    # ROLLESKIFTET HAR FLERE FORMER. `SET ROLE`, `SET SESSION ROLE` og
+    # `SET ROLE TO` gjør det samme som `SET LOCAL ROLE` for spørsmålet
+    # modellen stiller: hvem kjører den neste setningen.
+    for form in ("SET ROLE disponit_domene_eier",
+                 "SET SESSION ROLE disponit_domene_eier",
+                 "SET ROLE TO disponit_domene_eier"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + f"{form};"
+                             " REVOKE ALL ON FUNCTION"
+                             " varsel_klaim_epost(int, int) FROM PUBLIC;"
+                             " RESET ROLE;")], n)
+        assert gjerdet == {sig: True}, (
+            f"`{form}` er et rolleskifte. Spor: {spor}")
+
+    # …og den veien funnet faktisk peker: et rolleskifte TILBAKE som ikke
+    # ses, lar en senere REVOKE bli bokført på den gamle rollen. Her kjører
+    # den som migrator, som ikke eier funksjonen — PostgreSQL advarer bare.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier;"
+                         " SET ROLE disponit_migrator;"
+                         " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                         " FROM PUBLIC; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE etter `SET ROLE disponit_migrator` er ikke eierens."
+        f" Spor: {spor}")
+
+    # …og `SET ROLE NONE`, som er PostgreSQLs egen skrivemåte for det samme
+    # som `RESET ROLE`: TILBAKE TIL INNLOGGINGSROLLEN, ikke over til en rolle
+    # som heter «none». Forskjellen måles der den er observerbar — på en
+    # funksjon migrator selv eier, der migrators egen REVOKE lukker gjerdet.
+    for tilbake in ("SET ROLE NONE", "RESET ROLE"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", "CREATE OR REPLACE FUNCTION"
+                       " varsel_klaim_epost(int, int) ...;"
+                       " SET ROLE disponit_domene_eier;"
+                       f" {tilbake};"
+                       " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                       " FROM PUBLIC;")], n)
+        assert gjerdet == {sig: True}, (
+            f"`{tilbake}` fører tilbake til migrator, som eier denne."
+            f" Spor: {spor}")
+
+    # …og skillet mellom de to formene, som er hele grunnen til at `LOCAL`
+    # står der: hver fil er sin egen TRANSAKSJON på den SAMME sesjonen. Et
+    # `SET ROLE` blir stående inn i neste fil; et `SET LOCAL ROLE` gjør det
+    # ikke.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET ROLE disponit_domene_eier;"),
+         ("b.sql", "REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC;")], n)
+    assert gjerdet == {sig: True}, (
+        "et `SET ROLE` uten `LOCAL` varer ut sesjonen." f" Spor: {spor}")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier;"),
+         ("b.sql", "REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC;")], n)
+    assert gjerdet == {sig: False}, (
+        "et `SET LOCAL ROLE` faller bort når transaksjonen gjør det."
+        f" Spor: {spor}")
+
+    # DOLLARSITERING HAR EN TAGG. `$$` er bare det navnløse tilfellet, og en
+    # `DO $acl$ … $acl$` ble hverken strøket som kropp eller pakket ut som
+    # blokk: innmaten ble splittet som toppnivå, uten gren å telle, og den
+    # betingede REVOKE-en leste som ubetinget.
+    for tagg in ("$$", "$acl$"):
+        med_tagg = med_forspill.replace("$$", tagg)
+        gjerdet, spor = _spill_av([("a.sql", lag + med_tagg)], n)
+        assert gjerdet == {sig: False}, (
+            f"en vakt i en `DO {tagg}`-blokk er fortsatt en vakt."
+            f" Spor: {spor}")
+
+    # …og samme tagg om en FUNKSJONSKROPP, som skal STRYKES og ikke måles. En
+    # kropp inneholder både semikolon og de ordene porten leter etter; ble den
+    # ikke kjent igjen, ble innmaten splittet og lest som setninger — og her
+    # som en REVOKE utført av eieren, altså et gjerde som ikke finnes.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int)"
+                   " RETURNS void LANGUAGE sql AS $kropp$ SELECT 1;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC; $kropp$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en tagget kropp er en kropp, ikke setninger." f" Spor: {spor}")
+
+    # …og motprøven på selve TILBAKEREFERANSEN, som er hele grunnen til at
+    # tagger finnes: en dollarsitert tekst kan inneholde en annen tagg uten
+    # at den avslutter noe. Bare `$f$` lukker `$f$`. Avsluttet modellen på
+    # hvilken som helst tagg, sluttet kroppen ved den fremmede taggen, og
+    # halen — her en REVOKE som ville blitt lest som utført av eieren — ble
+    # stående igjen som setninger.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int)"
+                   " RETURNS void LANGUAGE plpgsql AS $f$ BEGIN"
+                   " RAISE NOTICE 'bruk $q$ som tagg';"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC; END $f$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en fremmed tagg avslutter ikke kroppen." f" Spor: {spor}")
+
+    # …og det samme for DO-blokken, der taggen i tillegg avgjør hvor GRENEN
+    # slutter: sluttet blokken ved den indre taggen, falt resten ut på
+    # toppnivå, og en REVOKE som står under en vakt ble lest som ubetinget.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $ytre$ BEGIN"
+                   " IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname ="
+                   " 'disponit_varselsender') THEN EXECUTE $indre$ SELECT 1"
+                   " $indre$;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC; END IF; END $ytre$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "vakten gjelder helt til `END IF`, uansett hvilke tagger som står"
+        f" imellom. Spor: {spor}")
+
+    # EN KOMMENTAR ER IKKE EN SETNING. Et `/* … */` som DOKUMENTERER den
+    # påkrevde eierrekkefølgen er nøyaktig den slags merknad disse filene er
+    # fulle av — og ble lest som en utført REVOKE fra eieren.
+    kommentert = ("/* Slik SKAL gjerdet settes:\n"
+                  "   SET LOCAL ROLE disponit_domene_eier;\n"
+                  "   REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                  " FROM PUBLIC;\n"
+                  "   RESET ROLE;\n"
+                  " */\n")
+    gjerdet, spor = _spill_av([("a.sql", lag + kommentert)], n)
+    assert gjerdet == {sig: False}, (
+        "en utkommentert REVOKE er ikke et gjerde." f" Spor: {spor}")
+
+    # …også NØSTET, som PostgreSQL godtar og C ikke gjør. Et ikke-grådig
+    # regex ville avsluttet på den første `*/` og sluppet resten inn igjen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "/* ytre /* indre */ SET LOCAL ROLE"
+                         " disponit_domene_eier; REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC; */")], n)
+    assert gjerdet == {sig: False}, (
+        "en nøstet blokkkommentar er fortsatt kommentar." f" Spor: {spor}")
+
+    # …og den samme formen med `--`, som var den ene modellen alt kjente.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "-- REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC;\n")], n)
+    assert gjerdet == {sig: False}, f"utkommentert med `--`. Spor: {spor}"
+
+    # …og motprøvene, som er det som skiller en stryking fra en sluking:
+    # setningene RUNDT kommentaren skal fortsatt måles, og en apostrof inne i
+    # kommentaren skal ikke ta med seg resten av filen som en streng.
+    assert _spill_av(
+        [("a.sql", lag + "/* eierens gjerde, jf. 027 */ " + gjerde)],
+        n)[0] == {sig: True}, "en kommentar foran skal ikke skjule gjerdet"
+    assert _spill_av(
+        [("a.sql", lag + "/* eier'ens gjerde */ " + gjerde)], n)[0] == {
+        sig: True}, "en apostrof i en kommentar er ikke en strengkonstant"
+
+    # …og den motsatte veien, som er den strengregelen faktisk finnes for:
+    # inne i en STRENGKONSTANT er `/*` og `--` bare tegn. Leses de som
+    # kommentarstart, sluker en notistekst som SITERER SQL resten av filen —
+    # og gjerdet under forsvinner sammen med den.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "DO $$ BEGIN RAISE NOTICE 'gjerdet settes i /* en"
+                         " blokk'; END $$;" + gjerde)], n)
+    assert gjerdet == {sig: True}, (
+        "en kommentarstart inne i en strengkonstant er ikke en kommentar."
+        f" Spor: {spor}")
+
+    # …og motprøven til den skjemabrede: samme form, annen mottaker.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA"
+                       " public TO disponit_varselsender;")], n)[0] == {
+        sig: True}, "skjemabred grant til en NAVNGITT rolle er ikke PUBLIC"
+
+
+@pg
+def test_skjemaeieren_kan_droppe_en_funksjon_den_ikke_eier():
+    """Forutsetningen 027, 028 og 031 alle hviler på — MÅLT, ikke antatt.
+
+    Alle tre dropper `varsel_klaim_epost` som `disponit_migrator`, mens
+    funksjonen siden 027 eies av `disponit_domene_eier` og migrator er
+    medlem `WITH INHERIT FALSE` — altså ikke eier i PostgreSQLs forstand.
+    Det som bærer, er at PostgreSQL for DROP godtar eieren av SKJEMAET som
+    alternativ til eieren av objektet, og at både CI (`.github/workflows/
+    ci.yml`) og staging (`deploy/staging/oppsett-postgresql.sh`) gjør
+    `ALTER SCHEMA public OWNER TO disponit_migrator` før første migrasjon.
+
+    Den forutsetningen har til nå bare stått som en KOMMENTAR i 031 (Codex
+    P1 på #71, to runder). En påstand om hva basen gjør, hører hjemme i en
+    måling: holder den ikke, feiler denne testen i stedet for at en
+    migrasjon stopper halvveis i produksjon. Og motprøven under sier hva
+    som faktisk bærer — flyttes skjemaeierskapet, faller 027 og 028 først,
+    ikke 031, og da er DENNE testen stedet det står forklart.
+
+    Begge målingene gjøres i hver sin transaksjon som RULLES TILBAKE. DDL er
+    transaksjonelt i PostgreSQL, så basen er den samme etterpå — og det
+    asserteres, ikke antas.
+    """
+    import psycopg
+    sig = "varsel_klaim_epost(int,int)"
+    c = _conn()
+    try:
+        # Forutsetningene, som er halve poenget: er noen av dem falske, er
+        # ikke denne testen et bevis for noe som helst.
+        eier, skjemaeier, medlem, arver = c.execute(
+            "SELECT pg_get_userbyid(p.proowner),"
+            "       pg_get_userbyid(n.nspowner),"
+            "       pg_has_role(%s, %s, 'MEMBER'),"
+            "       pg_has_role(%s, %s, 'USAGE')"
+            "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE p.oid = %s::regprocedure",
+            (MIGRATORROLLE, EIERROLLE, MIGRATORROLLE, EIERROLLE,
+             sig)).fetchone()
+        assert eier == EIERROLLE, f"{sig} eies av {eier}, ikke {EIERROLLE}"
+        assert skjemaeier == MIGRATORROLLE, (
+            f"skjemaet `public` eies av {skjemaeier} — da er det ikke"
+            f" skjemaeierskapet 031s DROP hviler på")
+        assert medlem, "migrator er ikke medlem av eierrollen"
+        assert not arver, (
+            "migrator ARVER eierrollen — da er dette ikke lenger et"
+            " spørsmål om skjemaeierskap, og `WITH INHERIT FALSE` er borte")
+
+        # Selve påstanden: dette er setningen 028 kjørte og 031 kjører.
+        c.execute("DROP FUNCTION varsel_klaim_epost(int, int)")
+        assert c.execute("SELECT to_regprocedure(%s)",
+                         (sig,)).fetchone()[0] is None, "DROP-en gjorde intet"
+        c.rollback()
+
+        # MOTPRØVEN: det er SKJEMAEIERSKAPET som bærer, ikke medlemskapet og
+        # ikke noe annet. Flyttes skjemaet til domeneeieren, avviser
+        # PostgreSQL nøyaktig den samme setningen.
+        c.execute(f"ALTER SCHEMA public OWNER TO {EIERROLLE}")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("DROP FUNCTION varsel_klaim_epost(int, int)")
+        c.rollback()
+        assert c.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace"
+            " WHERE nspname='public'").fetchone()[0] == MIGRATORROLLE, \
+            "skjemaeierskapet ble ikke rullet tilbake"
+        assert c.execute("SELECT to_regprocedure(%s)",
+                         (sig,)).fetchone()[0] is not None, \
+            "funksjonen ble ikke rullet tilbake"
+    finally:
+        c.rollback()
+        c.close()
 
 
 def _execute_mottakere(conn, signatur):

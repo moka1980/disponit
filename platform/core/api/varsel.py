@@ -487,12 +487,20 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     # når hun lagrer — det er den beste kilden serveren har, siden valget
     # ellers bare lever i nettleserens localStorage. `None` = urørt, så et
     # kanalbytte fra en klient som ikke sender språk ikke nullstiller det.
+    #
+    # …og `None` LAGRES som NULL, ikke som 'nb' (Codex P2, migrasjon 031).
+    # Første utgave skrev `coalesce(%s,'nb')`, og da ble en klient som ikke
+    # sendte språk til en bruker som hadde VALGT norsk. Forskjellen er ikke
+    # akademisk: senderen bruker installasjonens `DISPONIT_VARSEL_SPRAK` for
+    # den som ikke har uttrykt noe, og en gjettet 'nb' tok fra driften det
+    # valget. NULL er den ene verdien som betyr «vet ikke» — skriver vi noe
+    # annet der, finnes uvissheten ikke lenger.
     if sprak is not None and sprak not in ("nb", "en"):
         raise ValueError(f"ukjent språk: {sprak!r}")
     _laas_kanalvalget(conn, tenant, bruker_id)
     conn.execute(
         "INSERT INTO varselvalg (tenant, bruker_id, kanal, sprak)"
-        " VALUES (%s,%s,%s, coalesce(%s,'nb'))"
+        " VALUES (%s,%s,%s,%s)"
         " ON CONFLICT (tenant, bruker_id) DO UPDATE"
         " SET kanal=EXCLUDED.kanal,"
         "     sprak=coalesce(%s, varselvalg.sprak),"
