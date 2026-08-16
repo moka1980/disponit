@@ -10,7 +10,7 @@ import {
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
-  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive, Faner,
+  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, Faner,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -84,6 +84,40 @@ function fireOyneStatus(runde) {
       text: t("ui.policyadmin.ingen_attestasjoner") }));
 }
 
+// Utfallet av en handling skal SES, ikke bare annonseres — og det må overleve
+// gjentegningen.
+//
+// To feil lå oppå hverandre her. Utfallet gikk bare til `meldLive`, altså
+// aria-live-området: en skjermleser fikk beskjed, skjermen var uendret. Og selv
+// om det HADDE blitt tegnet, ville det forsvunnet umiddelbart, for hver
+// vellykket handling kaller `paaFerdig()` → `aapneDetalj()` → `sett(hoved, …)`,
+// som bytter ut hele siden. Eier attesterte, så ingenting, og konkluderte med
+// at klikket ikke virket — mens serveren hadde svart «venter_godkjennere: 1
+// avgitt, 1 gjenstår».
+//
+// Utfallet legges derfor til side og tegnes inn i den NYE siden, rett under
+// overskriften der fokus havner. Det er en `role="status"`, som er et politt
+// live-område: innsettingen annonseres av seg selv, så det skal IKKE følges av
+// et `meldLive` — da ville ett klikk gitt to konkurrerende opplesninger (samme
+// funn Codex hadde på valideringsboksen).
+let _ventendeKvittering = null;
+
+function _settKvittering(art, tekst) {
+  _ventendeKvittering = { art, tekst };
+}
+
+// Forbrukes ÉN gang: kvitteringen hører til handlingen som nettopp skjedde, og
+// skal ikke dukke opp igjen neste gang siden tegnes av andre grunner.
+function taKvittering() {
+  const k = _ventendeKvittering;
+  _ventendeKvittering = null;
+  if (!k) return null;
+  return el("div", {
+    class: `pa-kvittering pa-kvittering-${k.art}`,
+    role: k.art === "feil" ? "alert" : "status",
+  }, el("p", { text: k.tekst }));
+}
+
 // ÉN idempotensnøkkel per aktiveringsforsøk — gjenbrukes ved nettverksretry, så
 // serveren ser samme nøkkel og ikke aktiverer to ganger.
 function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
@@ -91,8 +125,21 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
   const forsok = (attempt) =>
     attesterAktivering(uid, diffHash, nokkel).then((svar) => {
       const utfall = (svar && svar.utfall) || "";
-      meldLive(t(`ui.policyadmin.utfall.${utfall}`,
-        t("ui.policyadmin.utfall.ukjent")));
+      // «Venter på flere godkjennere» skal si HVOR MANGE, og om det som
+      // mangler er en UAVHENGIG godkjenner. Det er opplysningen som avgjør hva
+      // du gjør videre, og den lå i svaret hele tiden.
+      let tekst = t(`ui.policyadmin.utfall.${utfall}`,
+        t("ui.policyadmin.utfall.ukjent"));
+      if (utfall === "venter_godkjennere") {
+        tekst += " " + t("ui.policyadmin.utfall.venter_antall")
+          .replace("{avgitt}", String(svar.antall != null ? svar.antall : "?"))
+          .replace("{gjenstaar}",
+                   String(svar.gjenstaar != null ? svar.gjenstaar : "?"));
+        if (svar.mangler_uavhengig) {
+          tekst += " " + t("ui.policyadmin.utfall.mangler_uavhengig");
+        }
+      }
+      _settKvittering(utfall === "aktivert" ? "ok" : "vent", tekst);
       if (paaFerdig) paaFerdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -102,16 +149,16 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
         return forsok(1);
       }
       if (e instanceof ApiFeil && e.kode === "rebasering_kreves") {
-        meldLive(t("ui.policyadmin.utfall.rebasering_kreves"));
+        _settKvittering("feil", t("ui.policyadmin.utfall.rebasering_kreves"));
         if (paaFerdig) paaFerdig();
         return;
       }
       if (e instanceof ApiFeil && e.kode === "diff_utdatert") {
-        meldLive(t("ui.policyadmin.diff_utdatert"));
+        _settKvittering("feil", t("ui.policyadmin.diff_utdatert"));
         if (paaFerdig) paaFerdig();
         return;
       }
-      meldLive(t("ui.policyadmin.feilet"));
+      _settKvittering("feil", t("ui.policyadmin.feilet"));
       if (paaFerdig) paaFerdig();
     });
   return forsok(0);
@@ -174,7 +221,10 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
     b.addEventListener("click", () =>
       validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
         boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
-        meldLive(t("ui.policyadmin.validert"));
+        // «Valider» hadde samme feil som «Attester»: et grønt utfall gikk bare
+        // til aria-live, og siden ble tegnet på nytt i samme åndedrag. Eier så
+        // et klikk uten virkning enten utkastet var gyldig eller ikke.
+        _settKvittering("ok", t("ui.policyadmin.validert"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -200,11 +250,15 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
       text: t("ui.policyadmin.handling.apne_runde") });
     b.addEventListener("click", () =>
       apneRunde(uid, rundeNokkel).then(() => {
-        meldLive(t("ui.policyadmin.runde_apnet"));
+        _settKvittering("ok", t("ui.policyadmin.runde_apnet"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        meldLive(t("ui.policyadmin.feilet"));
+        // Ingen gjentegning her, så feilen tegnes rett i handlingsboksen —
+        // synlig, ikke bare hørbar.
+        boks.querySelectorAll(".pa-kvittering").forEach((n) => n.remove());
+        boks.append(el("div", { class: "pa-kvittering pa-kvittering-feil",
+          role: "alert" }, el("p", { text: t("ui.policyadmin.feilet") })));
       }));
     boks.append(b);
     return { rot: boks, diffVist };
@@ -301,7 +355,10 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
     && ["apen", "klar"].includes(detalj.aktiv_runde.status);
   const faner = Faner({ trinn, start: venterAttest ? "endringer" : "oversikt",
     paaBytte: (nokkel) => { if (nokkel === "endringer") handl.diffVist(); } });
-  return el("div", {}, faner.rot, handl.rot);
+  // Kvitteringen står ØVERST, rett under overskriften fokus settes til — ikke
+  // nederst ved knappen, som kan være utenfor skjermen etter gjentegningen.
+  const kvitt = taKvittering();
+  return el("div", {}, ...(kvitt ? [kvitt] : []), faner.rot, handl.rot);
 }
 
 function tilbakeKnapp(tilbakeTilListe) {

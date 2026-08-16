@@ -314,6 +314,18 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .editor-feil, .pa-valfeil { border: 1px solid var(--danger);
   border-radius: var(--radius-sm); padding: var(--sp-3); margin: var(--sp-3) 0;
   color: var(--danger); }
+/* Kvittering for en utført handling (valider / åpne runde / attester).
+   Fargen alene bærer ikke betydningen (WCAG 1.4.1) — teksten sier utfallet,
+   og de tre parene er alle >= 4.5:1 mot sin egen bakgrunn. */
+.pa-kvittering { border: 1px solid; border-radius: var(--radius-sm);
+  padding: var(--sp-3); margin: 0 0 var(--sp-4); }
+.pa-kvittering p { margin: 0; }
+.pa-kvittering-ok { border-color: var(--auto); background: var(--auto-bg);
+  color: var(--auto); }
+.pa-kvittering-vent { border-color: var(--guard); background: var(--guard-bg);
+  color: var(--guard); }
+.pa-kvittering-feil { border-color: var(--danger); background: var(--danger-bg);
+  color: var(--danger); }
 .knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
 .mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);

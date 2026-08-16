@@ -649,5 +649,7 @@
   "ui.policyadmin.fane.endringer": "Changes",
   "ui.policyadmin.fane.fire_oyne": "Four eyes",
   "ui.policyadmin.tilbake_til_liste": "← Back to drafts",
-  "ui.policyadmin.detalj_undertittel": "Draft {id}"
+  "ui.policyadmin.detalj_undertittel": "Draft {id}",
+  "ui.policyadmin.utfall.venter_antall": "{avgitt} approval(s) given, {gjenstaar} remaining.",
+  "ui.policyadmin.utfall.mangler_uavhengig": "At least one approver must be someone other than the author."
 }

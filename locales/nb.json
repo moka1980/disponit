@@ -649,5 +649,7 @@
   "ui.policyadmin.fane.endringer": "Endringer",
   "ui.policyadmin.fane.fire_oyne": "Fire øyne",
   "ui.policyadmin.tilbake_til_liste": "← Tilbake til utkastene",
-  "ui.policyadmin.detalj_undertittel": "Utkast {id}"
+  "ui.policyadmin.detalj_undertittel": "Utkast {id}",
+  "ui.policyadmin.utfall.venter_antall": "{avgitt} av godkjenningene er avgitt, {gjenstaar} gjenstår.",
+  "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet."
 }
