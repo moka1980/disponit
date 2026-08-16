@@ -133,8 +133,7 @@ def main() -> int:                                        # noqa: C901
         forf, godkj = aktorer or (forfatter, godkjenner)
         rt = koble(DSN)
         innhold = copy.deepcopy(grunnpolicy)
-        innhold["meta"] = {**innhold["meta"], "versjon": ny_versjon,
-                           "status": "produksjon"}
+        innhold["meta"] = {**innhold["meta"], "versjon": ny_versjon}
         muter(innhold)
         idem = secrets.token_hex(8)
         res = policyadmin.opprett_utkast(
@@ -288,15 +287,25 @@ def main() -> int:                                        # noqa: C901
     sett_kontekst(mig, malten, "rundtur", "r7")
     mf = medlem("mforfatter", ["policyforvalter"], tenant=malten)
     mg = medlem("mgodkjenner", ["policyforvalter"], tenant=malten)
+    livslop("0.9.0", lambda pol: None, "7", tenant=malten, aktorer=(mf, mg))
+    # Kravet er ikke at kjeden stopper — det er at resultatet er BRUKBART.
+    # Malen bærer `status: utkast`; `opprett_utkast` normaliserer dokumentets
+    # status til `produksjon` ved opprettelsen, før valideringen fryser hashen,
+    # så det som attesteres er det samme som blir aktivert. Uten den
+    # normaliseringen aktiveres policyen og avvises deretter som korrupt ved
+    # hver beslutning — eier laget to slike uten at noe sa fra.
+    rt2 = koble(DSN)
     try:
-        livslop("0.9.0", lambda pol: pol["meta"].update(
-                    {"status": grunnpolicy["meta"]["status"]}),
-                "7", tenant=malten, aktorer=(mf, mg))
-        port("mal-status «utkast» aktiveres IKKE", False,
-             "kjeden gikk gjennom — policyen ville vært korrupt ved bruk")
+        sett_kontekst(rt2, malten, "rundtur", "r8")
+        pm, hm = pr.hent_aktiv(rt2, malten, pid)
+        port("policy laget RETT FRA MALEN er brukbar", bool(pm) and bool(hm),
+             f"status={pm.get('meta', {}).get('status')} "
+             f"versjon={pm.get('meta', {}).get('versjon')}")
     except Exception as e:                                    # noqa: BLE001
-        port("mal-status «utkast» aktiveres IKKE", True,
-             f"{type(e).__name__}: {str(e)[:80]}")
+        port("policy laget RETT FRA MALEN er brukbar", False,
+             f"{type(e).__name__}: {str(e)[:110]}")
+    finally:
+        rt2.close()
 
     mig.close()
 

@@ -165,6 +165,27 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     if tilstand == "konflikt":
         conn.rollback()
         raise Aktiveringsfeil("idempotenskonflikt")
+    # Dokumentets `meta.status` settes HER, ikke av mennesket.
+    #
+    # Bransjemalene bærer `status: utkast` — riktig for en mal. Men aktiveringen
+    # skriver `produksjon` i registeret, og `hent_aktiv` krever at de to er
+    # like; et utkast som bar malens status videre ble derfor aktivert til en
+    # policy som ble avvist som korrupt ved HVER beslutning. Eier laget to
+    # slike (`tjenestebedrift1`, `tjenestebedrift2`) uten at noe sa fra.
+    #
+    # Editoren eksponerer ikke feltet, og skal ikke gjøre det: arbeidsflyt-
+    # statusen ligger i `policyutkast.status` (utkast → validert → godkjent →
+    # aktivert). `meta.status` beskriver hva dokumentet ER som registrert
+    # policy, altså en KONSEKVENS av å bli aktivert — ikke et valg. Å be
+    # mennesket skrive «produksjon» i et fritekstfelt ville bare flyttet
+    # feilen.
+    #
+    # Normaliseringen skjer ved opprettelsen, FØR valideringen fryser
+    # `innholds_hash`: det som valideres, differes og attesteres er da det
+    # samme dokumentet som blir aktivert.
+    if isinstance(innhold.get("meta"), dict):
+        innhold = {**innhold,
+                   "meta": {**innhold["meta"], "status": "produksjon"}}
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
     utkast_id = "u-" + secrets.token_hex(8)
     conn.execute(
