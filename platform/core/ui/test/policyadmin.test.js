@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
+import { lagRuter } from "../static/js/ruter.js";
+import { el, sett } from "../static/js/dom.js";
 
 settI18nForTest(NB, "nb");
 
@@ -514,6 +516,54 @@ test("Detalj: tilbake fra feiltilstanden fører til lista", async () => {
     .dispatchEvent(new window.Event("click"));
   await vent(() => h.querySelector("tbody"));
   assert.ok(h.querySelector("tbody"), "kom ikke tilbake til utkastlista");
+});
+
+// Codex P2: alle flater rendrer i ETT `hoved`. Et detaljsvar som kom tilbake
+// etter at brukeren hadde valgt en annen toppnivårute, tegnet seg selv over
+// DEN flaten — mens menyvalget hennes ble stående markert. Skjermen viste én
+// flate og navigasjonen en annen.
+test("Treigt detaljsvar rører ikke ruten brukeren har navigert til", async () => {
+  let slipp = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policyutkast/u-1") {
+      await new Promise((r) => { slipp = r; });
+      return { ok: true, status: 200, json: async () => DETALJ };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };
+  const h = nyHoved();
+  const annenFlate = (hoved) => sett(hoved, el("h1", { text: "annen flate" }));
+
+  // Hashen settes FØR ruteren finnes, og `hashchange`-en den utløser slippes
+  // gjennom uten lytter: ellers kunne den re-montere flaten midt i testen og
+  // gjøre stempelet foreldet av seg selv — da hadde testen vært grønn uansett.
+  window.location.hash = "#/policyadmin";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(),
+    { policyadmin: visPolicyadmin, annen: annenFlate }, () => {});
+  ruter.naviger();
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => slipp);                       // detalj-GET er ute på nettet
+
+  // Brukeren navigerer videre mens svaret fortsatt er underveis. Ruteren
+  // kobles av med det samme: en `hashchange` som tegnet `annen` på nytt ville
+  // vasket bort sporet etter det foreldede svaret og skjult feilen.
+  window.location.hash = "#/annen";
+  ruter.naviger();
+  ruter.stopp();
+  assert.ok(h.textContent.includes("annen flate"));
+
+  slipp();
+  await vent(() => false, 20);                   // la svaret få tegne, om det vil
+  assert.ok(h.textContent.includes("annen flate"),
+    "det foreldede detaljsvaret rev bort ruten brukeren står i");
+  assert.equal(_finn(h, t("ui.policyadmin.tilbake_til_liste")), undefined,
+    "policyutkastet tegnet seg inn i en annen rute");
+
+  globalThis.fetch = brukFetch;
 });
 
 test("Detalj: 403 gir tilgangsvakt med vei tilbake, men INGEN «Prøv igjen»", async () => {

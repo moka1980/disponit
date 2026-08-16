@@ -13,6 +13,7 @@ import {
   Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive, Faner,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
+import { visningsToken, erGjeldendeVisning } from "../ruter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
@@ -303,14 +304,6 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
   return el("div", {}, faner.rot, handl.rot);
 }
 
-// Utkastet åpnes som en VANLIG SIDE i flaten, ikke som en skuff over den.
-//
-// Skuffen var feil form for det som skjer her: å attestere er ikke en rask
-// sidehandling, det er hovedoppgaven. Den la et smalt panel over lista, og —
-// verre — den sa ikke tydelig HVILKET utkast man sto i. Med to åpne runder
-// endte de to attestasjonene på hvert sitt utkast, og ingen av dem kunne
-// aktivere. Siden har utkastets policy-ID i overskriften og en synlig vei
-// tilbake, slik editoren allerede gjør.
 function tilbakeKnapp(tilbakeTilListe) {
   const b = el("button", { class: "knapp", type: "button",
     text: t("ui.policyadmin.tilbake_til_liste") });
@@ -325,48 +318,67 @@ function fokuserOverskrift(hoved) {
   if (h) { h.setAttribute("tabindex", "-1"); h.focus(); }
 }
 
-function aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe) {
-  const paaNytt = () => aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe);
-  hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-    sett(hoved,
-      ...flateHode(
-        `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
-        t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
-      tilbakeKnapp(tilbakeTilListe),
-      detaljInnhold(detalj, uid, ctx, paaNytt, aapneEditor));
-    fokuserOverskrift(hoved);
-  }).catch((e) => {
-    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-    // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
-    // i det minste lista ligge under seg; siden erstattet HELE flaten med en
-    // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et forbigående
-    // 5xx eller et nettverksglipp ble dermed en blindvei man bare kom ut av ved
-    // å laste appen på nytt. Feiltilstanden er derfor en side som de andre: den
-    // beholder overskrift og tilbakeknapp.
-    //
-    // «Prøv igjen» tilbys bare der den kan hjelpe: 403 er ingen forbigående
-    // feil, og en knapp som lover et annet svar neste gang lyver.
-    sett(hoved,
-      ...flateHode(t("ui.policyadmin.detalj_tittel"),
-        t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
-      tilbakeKnapp(tilbakeTilListe),
-      e instanceof IngenTilgangFeil
-        ? TilgangsVakt({})
-        : Feiltilstand({ paaProvIgjen: paaNytt }));
-    fokuserOverskrift(hoved);
-  });
-}
-
 export function visPolicyadmin(hoved, ctx) {
   const st = { rader: [] };
+
+  // Flatens eierskap til `hoved`, fanget ved oppstart. Alle flater deler ETT
+  // element, og et svar som er ute på nettet vet ikke at brukeren har navigert
+  // videre: kom detaljsvaret etter at hun hadde valgt en annen toppnivårute,
+  // tegnet det seg selv over DEN flaten, mens menyvalget hennes ble stående
+  // markert (Codex P2). `fetch` her kan ikke avbrytes bakover gjennom
+  // `hentJson`, så svaret slippes i stedet: er stempelet flyttet, er dette
+  // svaret foreldet og skal ikke røre skjermen.
+  const minVisning = visningsToken(hoved);
+  const eierSkjermen = () => erGjeldendeVisning(hoved, minVisning);
 
   // Editoren tar over `hoved`. Ved lagring åpnes utkastets detalj; Avbryt/
   // fullført går tilbake til lista.
   function aapneEditor(opts) {
     visPolicyeditor(hoved, ctx, {
       ...opts,
-      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor, hoved, tilbakeTilListe),
+      aapneUtkast: aapneDetalj,
       tilbake: tilbakeTilListe,
+    });
+  }
+
+  // Utkastet åpnes som en VANLIG SIDE i flaten, ikke som en skuff over den.
+  //
+  // Skuffen var feil form for det som skjer her: å attestere er ikke en rask
+  // sidehandling, det er hovedoppgaven. Den la et smalt panel over lista, og —
+  // verre — den sa ikke tydelig HVILKET utkast man sto i. Med to åpne runder
+  // endte de to attestasjonene på hvert sitt utkast, og ingen av dem kunne
+  // aktivere. Siden har utkastets policy-ID i overskriften og en synlig vei
+  // tilbake, slik editoren allerede gjør.
+  function aapneDetalj(uid) {
+    hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
+      if (!eierSkjermen()) return;
+      sett(hoved,
+        ...flateHode(
+          `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
+          t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
+        tilbakeKnapp(tilbakeTilListe),
+        detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid), aapneEditor));
+      fokuserOverskrift(hoved);
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (!eierSkjermen()) return;
+      // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
+      // i det minste lista ligge under seg; siden erstattet HELE flaten med en
+      // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et
+      // forbigående 5xx eller et nettverksglipp ble dermed en blindvei man bare
+      // kom ut av ved å laste appen på nytt. Feiltilstanden er derfor en side
+      // som de andre: den beholder overskrift og tilbakeknapp.
+      //
+      // «Prøv igjen» tilbys bare der den kan hjelpe: 403 er ingen forbigående
+      // feil, og en knapp som lover et annet svar neste gang lyver.
+      sett(hoved,
+        ...flateHode(t("ui.policyadmin.detalj_tittel"),
+          t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
+        tilbakeKnapp(tilbakeTilListe),
+        e instanceof IngenTilgangFeil
+          ? TilgangsVakt({})
+          : Feiltilstand({ paaProvIgjen: () => aapneDetalj(uid) }));
+      fokuserOverskrift(hoved);
     });
   }
 
@@ -381,8 +393,7 @@ export function visPolicyadmin(hoved, ctx) {
       },
       sortverdi: { opprettet: u.opprettet, policy: u.policy_id },
       handling: { tekst: t("ui.aapne"),
-        paaKlikk: () =>
-          aapneDetalj(u.utkast_id, ctx, aapneEditor, hoved, tilbakeTilListe) },
+        paaKlikk: () => aapneDetalj(u.utkast_id) },
     };
   }
 
@@ -429,6 +440,7 @@ export function visPolicyadmin(hoved, ctx) {
   function last(opts) {
     const flyttFokus = !!(opts && opts.fokus);
     medStatus(hoved, ctx, () => hentJson("/v1/policyutkast"), (d) => {
+      if (!eierSkjermen()) return;         // samme foreldelse som i detaljen
       st.rader = (d && d.utkast) || []; tegn(flyttFokus);
     });
   }
