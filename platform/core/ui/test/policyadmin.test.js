@@ -996,3 +996,47 @@ test("Kvitteringen for A lekker ikke til B når A-tegningen aldri kom fram",
       "det foreldede A-svaret rev bort utkastet eier står i");
     globalThis.fetch = brukFetch;
   });
+
+// Codex P2: kvitteringen ble forbrukt da tegningen startet, men feilgrenen
+// tegnet den aldri. Lyktes handlingen mens den påfølgende detalj-GET-en feilet,
+// fikk eier INGEN tilbakemelding på noe som FAKTISK ble utført — bare en naken
+// feiltilstand — og «Prøv igjen» kunne ikke hente kvitteringen tilbake, for den
+// var borte for godt. Det nærliggende neste trekket er da å gjøre handlingen om
+// igjen. Utfallet av HANDLINGEN og utfallet av OPPFRISKNINGEN er to
+// forskjellige ting, og begge er sanne samtidig.
+//
+// Kontroll: fjern tegningen av `boks` i `.catch`-grenen, så blir testen rød.
+test("Kvitteringen overlever at gjentegningen feiler", async () => {
+  let gets = 0;
+  SVAR = {
+    "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    // Første GET tegner detaljen. Den ANDRE er gjentegningen `paaFerdig()`
+    // starter etter valideringen — den svarer 404.
+    __get: (sti) => {
+      if (sti === "/v1/policyutkast/u-1" && ++gets === 2) delete SVAR[sti];
+    },
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+
+  const kvitt = h.querySelector(".pa-kvittering");
+  assert.ok(kvitt,
+    "handlingen ble utført, men eier fikk ingen kvittering — da gjør hun den om");
+  assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
+    "kvitteringen ble tegnet tom");
+  assert.ok(kvitt.classList.contains("pa-kvittering-ok"),
+    "det var oppfriskningen som feilet, ikke handlingen");
+  // Feiltilstanden skal fortsatt stå: den sier noe annet enn kvitteringen.
+  assert.ok(_finn(h, t("ui.prov_igjen")),
+    "veien ut av den feilede gjentegningen forsvant");
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});

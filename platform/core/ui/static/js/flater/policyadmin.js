@@ -120,10 +120,15 @@ function _settKvittering(uid, art, tekst) {
 // siden tegnes av andre grunner, eller på et annet utkast.
 //
 // Den tas UT av modulen med én gang tegningen starter — ikke når det tegnes.
-// Da eier den enkelte tegningen kvitteringen alene: blir tegningen foreldet
-// eller feiler den, dør kvitteringen med den i stedet for å bli liggende og
-// vente på en tilfeldig neste tegning. En kvittering som er satt for et annet
-// utkast er per definisjon foreldet her, og forkastes.
+// Da eier den enkelte tegningen kvitteringen alene: blir tegningen foreldet,
+// dør kvitteringen med den i stedet for å bli liggende og vente på en tilfeldig
+// neste tegning. En kvittering som er satt for et annet utkast er per
+// definisjon foreldet her, og forkastes.
+//
+// Å eie den innebærer også en PLIKT: en tegning som fortsatt eier skjermen må
+// tegne kvitteringen sin, også når selve oppfriskningen feiler. Ellers bytter
+// vi én feil (kvittering på feil utkast) mot en annen (ingen kvittering for en
+// handling som faktisk ble utført).
 function taKvittering(uid) {
   const k = _ventendeKvittering;
   _ventendeKvittering = null;
@@ -487,8 +492,10 @@ export function visPolicyadmin(hoved, ctx) {
     const min = nyVisning();
     // Kvitteringen hentes HER, ikke nede i tegningen: fra nå av er den DENNE
     // tegningens eiendom og ligger ikke igjen i modulen. Kommer svaret etter at
-    // eier har navigert bort, eller feiler det, faller kvitteringen bort
-    // sammen med tegningen — den kan ikke lenger forbrukes av et annet utkast.
+    // eier har navigert bort, faller kvitteringen bort sammen med tegningen —
+    // den kan ikke lenger forbrukes av et annet utkast. Men så lenge tegningen
+    // FORTSATT eier skjermen, skal den vise kvitteringen sin uansett hvordan
+    // den ender: begge grenene under tegner den.
     const kvitt = taKvittering(uid);
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
       if (!eierSkjermen(min)) return;
@@ -518,14 +525,26 @@ export function visPolicyadmin(hoved, ctx) {
       //
       // «Prøv igjen» tilbys bare der den kan hjelpe: 403 er ingen forbigående
       // feil, og en knapp som lover et annet svar neste gang lyver.
+      //
+      // Kvitteringen følger tegningen HIT også (Codex P2). Utfallet av
+      // HANDLINGEN og utfallet av OPPFRISKNINGEN er to forskjellige ting:
+      // attesteringen lyktes, det er gjentegningen som feilet. Uten dette ble
+      // kvitteringen forbrukt da tegningen startet og så aldri tegnet — eier
+      // fikk INGEN tilbakemelding på en fullført fullmaktshandling, og «Prøv
+      // igjen» kunne ikke hente den tilbake, for den var borte for godt. Det
+      // nærliggende neste trekket er da å attestere om igjen. Derfor står
+      // begge: hva som skjedde, og at siden ikke kunne hentes etterpå.
+      const boks = kvitt ? kvitteringsBoks(kvitt) : null;
       sett(hoved,
         ...flateHode(t("ui.policyadmin.detalj_tittel"),
           t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
         tilbakeKnapp(tilbakeTilListe),
+        ...(boks ? [boks.rot] : []),
         e instanceof IngenTilgangFeil
           ? TilgangsVakt({})
           : Feiltilstand({ paaProvIgjen: () => aapneDetalj(uid) }));
       fokuserOverskrift(hoved);
+      if (boks) boks.fyll();
     });
   }
 
