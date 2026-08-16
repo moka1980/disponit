@@ -620,5 +620,19 @@
   "ui.dag.tor": "torsdag",
   "ui.dag.fre": "fredag",
   "ui.dag.lor": "lørdag",
-  "ui.dag.son": "søndag"
+  "ui.dag.son": "søndag",
+  "ui.shell.moduler": "Modulmeny",
+  "ui.shell.moduler_tomt": "Ingen moduler matcher søket.",
+  "ui.shell.kontekst": "Detaljer",
+  "ui.shell.kontekst_tom": "Velg en modul i menyen for å se detaljer.",
+  "ui.shell.kontekst_omrade": "Område",
+  "ui.shell.kontekst_status": "Status",
+  "ui.shell.kontekst_fase": "Fase",
+  "ui.shell.sok_merkelapp": "Søk i moduler",
+  "ui.shell.sok_plassholder": "Søk i moduler",
+  "ui.shell.skjul_meny": "Skjul modulmeny",
+  "ui.shell.vis_meny": "Vis modulmeny",
+  "ui.shell.status_moduler": "{i_drift} av {totalt} moduler i drift",
+  "ui.shell.status_varsler": "{antall} varsler",
+  "ui.shell.status_oppdatert": "Sist oppdatert {tid}"
 }

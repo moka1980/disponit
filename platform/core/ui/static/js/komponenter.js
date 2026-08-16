@@ -4,6 +4,9 @@
 // tidslinje bærer også glyf + tekst.
 import { el, sett } from "./dom.js";
 import { t, sprak } from "./i18n.js";
+import { OMRADER, omradeFor, faseFor } from "./katalog.js";
+import { modulStatus, plattformTelling } from "./plattformdata.js";
+import { siteStatusMerke } from "./sitekomponenter.js";
 
 // --- BeslutningBadge (TILLAT/STOPP/UNNTAK) ---------------------------------
 const _BADGE_KLASSE = { TILLAT: "tillat", STOPP: "stopp", UNNTAK: "unntak" };
@@ -186,7 +189,7 @@ export function visStatus(container, tilstand) {
 
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
-                          brukerId, epost, roller, paaSprak,
+                          brukerId, epost, roller, varsler, paaSprak,
                           paaLoggUt } = {}) {
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
@@ -261,9 +264,103 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     }
   }
 
-  const rot = el("div", { class: "skall" }, topp, nav, hoved);
+  // §2.3 LAYOUT: topp (nav + søk) · venstre (modulmeny) · sentrum (dashboard)
+  // · høyre (kontekstpanel) · bunn (statuslinje). Skallet eide bare topp og
+  // sentrum; resten fantes ikke, og modulene var usynlige inne i produktet de
+  // utgjør.
+  //
+  // Venstremenyen kan skjules (§2.3), og bryteren bærer `aria-expanded` — en
+  // meny som forsvinner uten at kontrollen sier fra er en meny som er borte
+  // for den som ikke ser den forsvinne.
+  const kontekst = el("aside", { class: "skall-kontekst",
+    "aria-label": t("ui.shell.kontekst") },
+    el("p", { class: "muted", text: t("ui.shell.kontekst_tom") }));
+
+  const modulliste = el("div", { class: "skall-modulliste" });
+  const venstre = el("aside", { class: "skall-venstre", id: "modulmeny",
+    "aria-label": t("ui.shell.moduler") }, modulliste);
+
+  // Søket filtrerer modulmenyen. Det er det eneste søket har å søke i her, og
+  // et søkefelt som later som det gjør mer ville vært verre enn ingen.
+  const sokefelt = el("input", { id: "skall-sok", type: "search",
+    class: "felt-inp", placeholder: t("ui.shell.sok_plassholder") });
+  const sok = el("div", { class: "skall-sok" },
+    el("label", { class: "sr-only", for: "skall-sok",
+      text: t("ui.shell.sok_merkelapp") }), sokefelt);
+
+  function tegnModuler(filter) {
+    const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
+    const grupper = [];
+    for (const omrade of OMRADER) {
+      const treff = omrade.moduler.filter((n) =>
+        !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
+          .includes(q));
+      if (!treff.length) continue;
+      grupper.push(el("section", { class: "skall-modulgruppe" },
+        el("h3", { class: "skall-modulgruppe-navn",
+          text: t(`site.omrade.${omrade.id}`) }),
+        el("ul", { class: "skall-modulgruppe-liste" },
+          treff.map((n) => {
+            const kn = el("button", { type: "button", class: "skall-modul",
+              text: t(`site.katalog.m${n}.navn`) });
+            kn.addEventListener("click", () => visKontekst(n));
+            return el("li", {}, kn);
+          }))));
+    }
+    // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting.
+    sett(modulliste, grupper.length ? grupper
+      : el("p", { class: "muted", text: t("ui.shell.moduler_tomt") }));
+  }
+
+  function visKontekst(n) {
+    const status = modulStatus(n);
+    sett(kontekst,
+      el("h2", { class: "skall-kontekst-tittel",
+        text: t(`site.katalog.m${n}.navn`) }),
+      el("dl", { class: "skall-kontekst-liste" },
+        el("dt", { text: t("ui.shell.kontekst_omrade") }),
+        el("dd", { text: t(`site.omrade.${omradeFor(n)}`) }),
+        el("dt", { text: t("ui.shell.kontekst_status") }),
+        el("dd", {}, siteStatusMerke(status)),
+        el("dt", { text: t("ui.shell.kontekst_fase") }),
+        el("dd", { text: String(faseFor(n)) })));
+  }
+
+  sokefelt.addEventListener("input", () => tegnModuler(sokefelt.value));
+  tegnModuler("");
+
+  const skjul = el("button", { type: "button", class: "knapp liten",
+    text: t("ui.shell.skjul_meny") });
+  skjul.setAttribute("aria-expanded", "true");
+  skjul.setAttribute("aria-controls", "modulmeny");
+  skjul.addEventListener("click", () => {
+    const apen = skjul.getAttribute("aria-expanded") === "true";
+    skjul.setAttribute("aria-expanded", apen ? "false" : "true");
+    skjul.textContent = apen ? t("ui.shell.vis_meny") : t("ui.shell.skjul_meny");
+    venstre.hidden = apen;
+  });
+
+  // Statuslinja sier hva som FAKTISK gjelder. Spesifikasjonens eksempel («45
+  // moduler aktive») er en illustrasjon, ikke en verdi: tallet utledes av
+  // MODULSTATUS, så linja ikke kan love drift registeret ikke bærer.
+  const telling = plattformTelling();
+  const statuslinje = el("footer", { class: "skall-status", role: "status" },
+    el("span", { text: t("ui.shell.status_moduler")
+      .replace("{i_drift}", String(telling.iDrift))
+      .replace("{totalt}", String(telling.totalt)) }),
+    el("span", { text: "·" }),
+    el("span", { text: t("ui.shell.status_varsler")
+      .replace("{antall}", String(varsler == null ? 0 : varsler)) }),
+    el("span", { text: "·" }),
+    el("span", { text: t("ui.shell.status_oppdatert")
+      .replace("{tid}", new Date().toLocaleTimeString(valgtSprak || "nb",
+        { hour: "2-digit", minute: "2-digit" })) }));
+
+  const kropp = el("div", { class: "skall-kropp" }, venstre, hoved, kontekst);
+  const rot = el("div", { class: "skall" }, topp, nav, sok, skjul, kropp,
+    statuslinje);
   // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
   // tilbake på kontrollen brukeren nettopp brukte (Codex P2) — uten å lete
   // etter den på klassenavn i et tre den selv nettopp har satt inn.
-  return { rot, hoved, settAktiv, velger };
+  return { rot, hoved, settAktiv, velger, visKontekst };
 }

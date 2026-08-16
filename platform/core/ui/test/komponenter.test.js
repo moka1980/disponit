@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
+import { plattformTelling } from "../static/js/plattformdata.js";
 import {
   BeslutningBadge, KategoriTag, Tidspunkt, BegrunnelseKjede, StatusTidslinje,
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
@@ -240,4 +241,84 @@ test("skall-bruker: lange prinsipal-etiketter kan krympe og brytes", () => {
                    "skall-bruker-roller"]) {
     assert.ok(bryt.includes(k), `${k} skal omfattes av brytingsregelen`);
   }
+});
+
+test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async () => {
+  // Spesifikasjonen (`prototype/Ai-bedriftsagent-prototype-v5.html` §2.3) sier
+  // topp · venstre · sentrum · høyre · bunn. Skallet hadde bare topp og
+  // sentrum: modulene var usynlige inne i produktet de utgjør, og det fantes
+  // ingen statuslinje.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], varsler: 3,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+
+  assert.ok(rot.querySelector(".skall-topp"), "topp mangler");
+  assert.ok(rot.querySelector("main#hovedinnhold"), "sentrum mangler");
+  assert.ok(rot.querySelector(".skall-venstre"), "modulmeny mangler");
+  assert.ok(rot.querySelector(".skall-kontekst"), "kontekstpanel mangler");
+  assert.ok(rot.querySelector(".skall-status"), "statuslinje mangler");
+
+  // Modulmenyen er gruppert etter fagområde, ikke én lang liste.
+  assert.ok(rot.querySelectorAll(".skall-modulgruppe").length >= 5,
+    "modulmenyen er ikke gruppert etter område");
+  assert.equal(rot.querySelectorAll(".skall-modul").length, 45,
+    "modulmenyen viser ikke hele katalogen");
+
+  // 🔴 Statuslinja skal si det REGISTERET bærer. Spesifikasjonens «45 moduler
+  // aktive» er en ILLUSTRASJON, ikke en verdi. Testen sammenligner derfor mot
+  // `plattformTelling()` i stedet for et innbakt tall: et fast tall her ville
+  // enten låst dagens tilstand for alltid, eller blitt en løgn i det en modul
+  // faktisk går i drift.
+  const status = rot.querySelector(".skall-status").textContent;
+  const telling = plattformTelling();
+  assert.ok(status.includes(`${telling.iDrift} av ${telling.totalt}`),
+    `statuslinja sier «${status}», registeret sier ${telling.iDrift}/${telling.totalt}`);
+  assert.ok(telling.iDrift < telling.totalt,
+    "forutsetningen for denne testen er borte — hele katalogen er i drift");
+  assert.ok(status.includes("3"), "varseltallet vises ikke");
+});
+
+test("AppShell: modulmenyen kan skjules, og bryteren sier fra", async () => {
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const bryter = [...rot.querySelectorAll("button")]
+    .find((b) => b.getAttribute("aria-controls") === "modulmeny");
+  assert.ok(bryter, "ingen bryter for modulmenyen");
+  assert.equal(bryter.getAttribute("aria-expanded"), "true");
+  bryter.dispatchEvent(new window.Event("click"));
+  assert.equal(bryter.getAttribute("aria-expanded"), "false",
+    "menyen ble skjult uten at bryteren sa fra");
+  assert.equal(rot.querySelector(".skall-venstre").hidden, true);
+});
+
+test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () => {
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const felt = rot.querySelector("#skall-sok");
+  assert.ok(felt, "søkefeltet mangler i toppen");
+  felt.value = "bank";
+  felt.dispatchEvent(new window.Event("input"));
+  const treff = [...rot.querySelectorAll(".skall-modul")].map((b) => b.textContent);
+  assert.ok(treff.length > 0 && treff.length < 45, `fikk ${treff.length} treff`);
+  assert.ok(treff.every((n) => n.toLowerCase().includes("bank")));
+
+  felt.value = "finnesikkexyz";
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(rot.querySelectorAll(".skall-modul").length, 0);
+  assert.ok(rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_tomt"]), "tomt søk sier ikke fra");
+});
+
+test("AppShell: et modulvalg fyller kontekstpanelet", async () => {
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const panel = rot.querySelector(".skall-kontekst");
+  assert.ok(panel.textContent.includes(NB["ui.shell.kontekst_tom"]),
+    "panelet sier ikke hva det venter på");
+  const modul = [...rot.querySelectorAll(".skall-modul")]
+    .find((b) => b.textContent === NB["site.katalog.m13.navn"]);
+  modul.dispatchEvent(new window.Event("click"));
+  assert.ok(panel.textContent.includes(NB["site.katalog.m13.navn"]));
+  assert.ok(panel.textContent.includes(NB["site.omrade.okonomi"]),
+    "området vises ikke i kontekstpanelet");
 });
