@@ -50,7 +50,30 @@ LoadCredential=DISPONIT_DATABASE_URL:/etc/disponit/varsel/DISPONIT_DATABASE_URL
 # redeploy.
 EnvironmentFile=-/etc/disponit/varsel/smtp.env
 ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_varselsender
-TimeoutStartSec=5min
+# FRISTEN ER SENDERENS, IKKE SYSTEMDS (Codex P2).
+#
+# `TimeoutStartSec=5min` var før det eneste taket i TID, og senderens eget tak
+# var `GRENSE=50` — et tak i ANTALL. De to hang ikke sammen: 50 SMTP-kall à
+# 20 s sokkeltimeout kan bruke langt mer enn fem minutter, så en helt legitim
+# kjøring på en treg SMTP-server ble drept midt i bunken.
+#
+# Og det farlige var ikke avbruddet, men HVOR det landet. Traff SIGTERM
+# mellom et akseptert SMTP-kall og statusoppdateringen, sto raden
+# `under_sending` med et klaim ingen holder — og leasen løftet den siden
+# tilbake i køen, så den samme e-posten gikk ut en gang til. Nøyaktig den
+# dobbeltsendingen klaimet finnes for å utelukke, gjenskapt av tidsgrensen.
+#
+# Senderen stanser derfor seg selv (`varselsender.FRIST_S`, 4 min), og den
+# gjør det FØR et nytt klaim — det ene punktet i løkka der ingenting er i
+# luften. Resten av køen står `koet` og tas av neste timerkjøring om fem
+# minutter; køen er tilstanden, og en oneshot som stanser er ikke en jobb som
+# mislyktes.
+#
+# `TimeoutStartSec` er da et SIKKERHETSNETT som ikke skal utløses, og satt
+# deretter: fristen (4 min) + den ene sendingen som kan være påbegynt når
+# fristen slår inn (fire sokkeloperasjoner à 20 s) + margin. Tallene hører
+# sammen og skal endres sammen.
+TimeoutStartSec=6min
 
 [Install]
 WantedBy=multi-user.target

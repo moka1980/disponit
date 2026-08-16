@@ -42,12 +42,39 @@ import os
 import smtplib
 import ssl
 import sys
+import time
 from email.message import EmailMessage
 from pathlib import Path
 
 GRENSE = int(os.environ.get("DISPONIT_VARSEL_GRENSE", "50"))
 MAKS_FORSOK = int(os.environ.get("DISPONIT_VARSEL_MAKS_FORSOK", "3"))
 BACKOFF_MIN = int(os.environ.get("DISPONIT_VARSEL_BACKOFF_MIN", "15"))
+#: Sokkeltimeouten for ett SMTP-kall. Navngitt fordi den er en FAKTOR i to
+#: andre tall: leasen skal være mye lengre enn den, og fristen under er
+#: definert som «rekker en runde til før unitens frist».
+SMTP_TIMEOUT_S = int(os.environ.get("DISPONIT_VARSEL_SMTP_TIMEOUT_S", "20"))
+#: Hvor lenge KJØRINGEN får vare før den gir seg av seg selv (Codex P2).
+#:
+#: `GRENSE` alene er ikke en grense i tid: 50 runder à et SMTP-kall med
+#: `SMTP_TIMEOUT_S` per sokkeloperasjon kan bruke en god halvtime, mens
+#: uniten dreper prosessen etter `TimeoutStartSec`. Da var ikke spørsmålet OM
+#: en legitim kjøring ble avbrutt, men HVOR: lander SIGTERM mellom et
+#: akseptert SMTP-kall og statusoppdateringen, står raden `under_sending` med
+#: et dødt klaim, og leasen sender den samme e-posten en gang til.
+#:
+#: Senderen stanser derfor seg selv, og den gjør det på det ene punktet i
+#: løkka der ingenting er i luften: FØR et nytt klaim. Da er hver rad enten
+#: ferdig eller aldri påbegynt, køen står igjen som den skal, og neste
+#: timerkjøring fortsetter der denne slapp — køen er tilstanden.
+#:
+#: Fristen er kortere enn unitens `TimeoutStartSec` med god margin, slik at
+#: SIGTERM forblir et sikkerhetsnett som aldri skal utløses. Se
+#: `deploy/staging/disponit-varselsender.service` for regnestykket; de to
+#: tallene hører sammen og skal endres sammen.
+#:
+#: Den stanser aldri den FØRSTE raden — se løkka. En frist satt for kort gir
+#: korte kjøringer, ikke tomme.
+FRIST_S = int(os.environ.get("DISPONIT_VARSEL_FRIST_S", "240"))
 #: Hvor lenge et klaim gjelder før en annen kjøring kan ta raden igjen.
 #: MYE lengre enn SMTP-timeouten (20 s) med vilje: leasen skal aldri løpe ut
 #: for en sending som fortsatt pågår — da ville den gjenskapt dobbeltsendingen
@@ -118,14 +145,15 @@ def _send_ekte(oppsett: dict, til: str, emne: str, tekst: str) -> None:
     m["Subject"] = emne
     m.set_content(tekst)
     ctx = ssl.create_default_context()
-    with smtplib.SMTP(oppsett["vert"], oppsett["port"], timeout=20) as s:
+    with smtplib.SMTP(oppsett["vert"], oppsett["port"],
+                      timeout=SMTP_TIMEOUT_S) as s:
         s.starttls(context=ctx)
         s.login(oppsett["bruker"], oppsett["passord"])
         s.send_message(m)
 
 
 def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
-    """Tøm køen én gang. -> {sendt, feilet, gjenkoet, mistet}.
+    """Tøm køen én gang. -> {sendt, feilet, gjenkoet, mistet, stanset}.
 
     `send` er injiserbar, så testene kan måle HVA som ville blitt sendt uten en
     e-postserver. Standard er ekte SMTP.
@@ -173,6 +201,26 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
 
     Hver rad står for seg: én adresse som ikke tar imot skal ikke stoppe resten
     av køen.
+
+    KJØRINGEN GIR SEG SELV FØR UNITEN GJØR DET (Codex P2). `GRENSE` var det
+    eneste taket, og det er et tak i ANTALL, ikke i tid: 50 runder à et
+    SMTP-kall med `SMTP_TIMEOUT_S` per sokkeloperasjon kan bruke langt mer enn
+    unitens `TimeoutStartSec`. Da drepte systemd en kjøring som ikke gjorde
+    noe galt — og det farlige var ikke avbruddet, men hvor det landet: SIGTERM
+    mellom et akseptert SMTP-kall og `_sett` etterlot raden `under_sending`
+    med et klaim ingen holder, og leasen løftet den senere tilbake i køen.
+    E-posten ble da sendt to ganger, av nøyaktig den grunnen klaimet finnes
+    for å utelukke.
+
+    `FRIST_S` sjekkes derfor FØR hvert klaim, som er det ene punktet i løkka
+    der ingenting er i luften: hver rad er enten ferdig eller aldri påbegynt.
+    Aldri før den første raden, av samme grunn som `max(1, GRENSE)`: en frist
+    som er satt for kort skal gi korte kjøringer, ikke tomme.
+    Resten av køen blir stående `koet` og tas av neste timerkjøring — køen er
+    tilstanden, og en oneshot som stanser er ikke en jobb som mislyktes.
+    `stanset` sier hvilken grense som avsluttet runden (`frist`, `grense`
+    eller `tom`), for det er forskjellen på «køen er tømt» og «køen er lengre
+    enn ett vindu», og bare den ene av dem er verdt å se på.
 
     `mistet` teller de radene der statusoppdateringen ikke fant klaimet igjen.
     Med en lease som er mye lengre enn SMTP-timeouten skal det aldri skje — og
@@ -233,7 +281,22 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
         conn.commit()
         return beholdt
 
-    for _ in range(max(1, GRENSE)):
+    start = time.monotonic()
+    stanset = "grense"
+    for runde in range(max(1, GRENSE)):
+        # FRISTEN SPØRRES FØR KLAIMET, aldri etter. Her er ingenting i luften:
+        # forrige rad er ferdig skrevet, neste er ennå ikke tatt ut av køen.
+        # Stanser vi et annet sted — og det er der systemd ville stanset oss —
+        # kan en rad stå `under_sending` med et dødt klaim, og leasen sender
+        # den samme e-posten en gang til.
+        #
+        # Men aldri før den FØRSTE raden, samme garanti som `max(1, GRENSE)`
+        # gir: en frist som er satt for kort skal gjøre kjøringene korte, ikke
+        # tomme. Ellers ville en feilkonfigurert `FRIST_S` stanset køen helt,
+        # og stille — hver kjøring hadde returnert null uten å ha prøvd noe.
+        if runde and time.monotonic() - start >= FRIST_S:
+            stanset = "frist"
+            break
         # Klaimet: `koet` → `under_sending` i samme setning som leser raden.
         # ÉN rad, og den sendes med det samme: vinduet der raden er tatt ut av
         # køen skal ikke være lengre enn sendingen det verner.
@@ -241,6 +304,7 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
                            (1, MAKS_FORSOK)).fetchone()
         conn.commit()      # …og ut av alle andres kø FØR SMTP-kallet.
         if rad is None:
+            stanset = "tom"
             break          # køen er tom — ingenting mer å hente denne runden.
         vid, _tenant, epost, nokkel, parametre, forsok, klaim, radsprak \
             = rad
@@ -263,5 +327,11 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
             mistet += 1
             print(f"varselsender: ADVARSEL mistet klaim på varsel {vid}",
                   file=sys.stderr)
+    if stanset != "tom":
+        # Køen er lengre enn ett vindu. Ikke en feil — neste timerkjøring tar
+        # resten — men den ene linjen driften leser skal si det, ellers ser en
+        # kø som vokser fortere enn den tømmes nøyaktig ut som en som tømmes.
+        print(f"varselsender: køen ikke tømt, stanset på {stanset}",
+              file=sys.stderr)
     return {"sendt": sendt, "feilet": feilet, "gjenkoet": gjenkoet,
-            "mistet": mistet}
+            "mistet": mistet, "stanset": stanset}

@@ -674,6 +674,59 @@ def test_avmelding_overlever_at_klaimet_kommer_tilbake_fra_en_lease():
 
 
 @pg
+def test_kjoringen_stanser_paa_fristen_og_alltid_mellom_to_rader(monkeypatch):
+    """Codex P2: `GRENSE` er et tak i ANTALL, uniten hadde et tak i TID.
+
+    De to hang ikke sammen: 50 SMTP-kall à 20 s sokkeltimeout kan bruke langt
+    mer enn `TimeoutStartSec`, så en legitim kjøring ble drept midt i bunken.
+    Og det farlige var ikke avbruddet, men HVOR det landet — traff SIGTERM
+    mellom et akseptert SMTP-kall og statusoppdateringen, sto raden
+    `under_sending` med et dødt klaim, og leasen sendte e-posten om igjen.
+
+    Det som måles er derfor ikke bare AT kjøringen gir seg, men HVOR: hver rad
+    skal være enten ferdig eller aldri påbegynt. Ingen rad står igjen
+    `under_sending` etter at fristen bet, og ingen rad ble sendt uten at
+    resultatet ble skrevet.
+
+    Fristen settes til 0 så den biter etter første runde, og `send` teller —
+    ingen klokke å vente på.
+
+    Kontroll: flytt fristsjekken ned etter klaimet, og raden som ble klaimet
+    står igjen `under_sending`.
+    """
+    monkeypatch.setattr(varselsender, "FRIST_S", 0)
+    c = _conn()
+    try:
+        b = _bruker(c, "frist", "frist@example.test")
+        for _ in range(3):
+            _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        sendt, send = _samler()
+        res = varselsender.kjor(c, send=send)
+        _kontekst(c)
+
+        assert res["stanset"] == "frist", (
+            f"kjøringen stanset på {res['stanset']!r}, ikke på fristen")
+        assert res["sendt"] == 1 and len(sendt) == 1, (
+            f"fristen bet ikke etter første rad: {res}")
+        # Det avgjørende: ingenting står igjen halvveis.
+        rester = c.execute(
+            "SELECT epost_status, count(*) FROM varsel WHERE tenant=%s"
+            " AND bruker_id=%s GROUP BY 1 ORDER BY 1", (TEN, b)).fetchall()
+        assert dict(rester) == {"koet": 2, "sendt": 1}, (
+            f"kjøringen stanset midt i en rad: {rester}")
+
+        # Og resten tas av neste kjøring — køen er tilstanden.
+        monkeypatch.setattr(varselsender, "FRIST_S", 240)
+        res2 = varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert res2["sendt"] == 2 and res2["stanset"] == "tom", res2
+        assert len(sendt) == 3
+    finally:
+        c.close()
+
+
+@pg
 def test_en_lest_rad_som_kommer_tilbake_fra_en_lease_blir_avlyst():
     """Codex P2: en gjenopptatt rad arvet heller ikke LESNINGEN.
 
