@@ -674,3 +674,44 @@ test("Detalj: hengende «Prøv igjen» tegner ikke over lista man gikk tilbake t
       "det hengende forsøket dro brukeren ut av lista hun gikk tilbake til");
     globalThis.fetch = brukFetch;
   });
+
+// Codex P2: eierskapssjekken sto i `tegnFn`, altså bare på SUKSESSVEIEN. En
+// liste-GET som ble avvist etter at brukeren hadde byttet rute, nådde aldri
+// `tegnFn` — `medStatus` fanget avvisningen og tegnet policyadmins feiltilstand
+// rett over ruten hun sto i.
+test("Avvist liste-GET river ikke bort ruten brukeren har navigert til", async () => {
+  let feil = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policyutkast") {
+      await new Promise((r) => { feil = r; });
+      throw new TypeError("nettverket falt ut");
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { __post: async () => ({}) };
+  const h = nyHoved();
+  const annenFlate = (hoved) => sett(hoved, el("h1", { text: "annen flate" }));
+
+  window.location.hash = "#/policyadmin";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(),
+    { policyadmin: visPolicyadmin, annen: annenFlate }, () => {});
+  ruter.naviger();
+  await vent(() => feil);                          // liste-GET er ute på nettet
+
+  // Ruteren kobles av med det samme, slik at ingen `hashchange` kan tegne
+  // `annen` på nytt og vaske bort sporet etter det foreldede svaret.
+  window.location.hash = "#/annen";
+  ruter.naviger();
+  ruter.stopp();
+  assert.ok(h.textContent.includes("annen flate"));
+
+  feil();
+  await vent(() => false, 20);                     // la avvisningen få tegne, om den vil
+  assert.ok(h.textContent.includes("annen flate"),
+    "den avviste liste-GET-en rev bort ruten brukeren står i");
+  assert.equal(h.querySelector(".tilstand.feil"), null,
+    "policyadmins feiltilstand tegnet seg inn i en annen rute");
+  globalThis.fetch = brukFetch;
+});

@@ -457,10 +457,13 @@ export function visPolicyadmin(hoved, ctx) {
   function last(opts) {
     const flyttFokus = !!(opts && opts.fokus);
     const min = nyVisning();
+    // Eierskapet gis til RAMMEN, ikke bare sjekket i `tegnFn`: en avvist
+    // liste-GET når aldri `tegnFn`, og feiltilstanden `medStatus` tegner i
+    // stedet, traff skjermen uvoktet (Codex P2). `medStatus` vokter nå begge
+    // veier — her sier vi bare hvilken visning kallet ble startet under.
     medStatus(hoved, ctx, () => hentJson("/v1/policyutkast"), (d) => {
-      if (!eierSkjermen(min)) return;      // samme foreldelse som i detaljen
       st.rader = (d && d.utkast) || []; tegn(flyttFokus);
-    });
+    }, () => eierSkjermen(min));
   }
 
   function tilbakeTilListe() { last({ fokus: true }); }
