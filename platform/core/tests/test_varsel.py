@@ -561,3 +561,146 @@ def test_ukjent_kanal_avvises():
         c.rollback()
     finally:
         c.close()
+
+
+def _backfill_sql():
+    """Migrasjon 029, lest fra FILA. Testen kjører nøyaktig det deployen
+    kjører — en kopi av spørringen her ville målt kopien."""
+    from pathlib import Path
+    mig = Path(__file__).resolve().parents[1] / "db/migrations"
+    return next(mig.glob("029_*.sql")).read_text(encoding="utf-8")
+
+
+#: EGEN TENANT for backfill-testene. De to må COMMITTE — migrasjonen leses fra
+#: fila og kjøres som ekte SQL — og backfillen varsler ALLE aktive
+#: policyforvaltere i tenanten. Med modulens delte `TEN` ville mottakerlista
+#: avhengt av hvilke andre tester som hadde rukket å committe et medlemskap,
+#: og en eksakt assertion vært umulig å stole på.
+TEN_BF = "t-varsel-bf-" + secrets.token_hex(3)
+
+
+def _apen_runde(c, uid, forfatter, *, runde=1, pakrevd=2, utloper="1 hour"):
+    c.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av) VALUES (%s,%s,'p-029','{}'::jsonb,%s)"
+        " ON CONFLICT DO NOTHING", (TEN_BF, uid, forfatter))
+    c.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,%s,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        f"'dh','1',%s,now()+interval '{utloper}')",
+        (TEN_BF, uid, runde, pakrevd))
+
+
+@pg
+def test_backfill_naar_runder_alt_ventet_ved_oppgraderingen():
+    """Codex P2: 026 lager en TOM tabell, og de eneste veiene som fyller den
+    er en runde som ÅPNES etterpå — eller en replay av nøyaktig den
+    forespørselen.
+
+    Det etterslepet er ikke et hjørnetilfelle, det er hovedtilfellet: rundene
+    som står og venter i det deployen kjører, er de menneskene har ventet
+    lengst på, og uten backfillen var de de eneste som aldri ble varslet.
+    Modulen ville sett ut som den virket — alt NYTT fungerte.
+
+    Migrasjonen leses FRA FILA, så det som måles er det deployen kjører.
+
+    Kontroll: fjern INSERT-en fra 029, så blir denne rød med null varsler.
+    """
+    c = _conn(TEN_BF)
+    try:
+        a = _bruker(c, "bf-forfatter", tenant=TEN_BF)
+        b = _bruker(c, "bf-uavhengig", tenant=TEN_BF)
+        # Feil rolle → aldri mottaker.
+        _bruker(c, "bf-leser", roller=("leser",), tenant=TEN_BF)
+        uid = "u-" + secrets.token_hex(6)
+        _apen_runde(c, uid, a)
+        # Forfatteren har alt attestert: hun er ferdig og skal ikke varsles.
+        # Runden venter fortsatt på den uavhengige godkjenneren.
+        c.execute(
+            "INSERT INTO aktiveringsattestasjon (tenant,utkast_id,runde,"
+            "bruker_id,rolle,authz_version,er_forfatter,diff_hash,"
+            "klassifisering_hash,risikoklasse,konvoluttversjon,konvolutt_hash,"
+            "mac,mac_key_id,jti,utloper)"
+            " VALUES (%s,%s,1,%s,'policyforvalter',1,true,'d','k','UTVIDER',"
+            "1,'kh','m','mk1',%s,now()+interval '1 hour')",
+            (TEN_BF, uid, a, "jti-" + secrets.token_hex(12)))
+        c.commit()
+        _kontekst(c, TEN_BF)
+        assert c.execute(
+            "SELECT count(*) FROM varsel WHERE tenant=%s AND ressurs_id=%s",
+            (TEN_BF, uid)).fetchone()[0] == 0, (
+            "forutsetningen holder ikke: runden hadde alt varsler")
+
+        c.execute(_backfill_sql())
+        c.commit()
+        _kontekst(c, TEN_BF)
+
+        rader = c.execute(
+            "SELECT bruker_id, hendelse, epost_status, lest_ts, parametre"
+            "  FROM varsel WHERE tenant=%s AND ressurs_id=%s"
+            "   AND art='attestering_venter'", (TEN_BF, uid)).fetchall()
+        assert [r[0] for r in rader] == [b], (
+            f"feil mottakere: {[r[0] for r in rader]} — forventet bare den"
+            " uavhengige godkjenneren, som er den runden faktisk venter på")
+        _bid, hendelse, status, lest, param = rader[0]
+        assert hendelse == "1", (
+            f"hendelsen er {hendelse!r}, ikke rundenummeret — da ville runde 2"
+            " delt nøkkel med runde 1 og blitt slukt som en dublett")
+        assert status == "koet" and lest is None, (status, lest)
+        # `_gjenstaar_effektivt`: pakrevd=2, én attestasjon, og den er
+        # forfatterens — både differansen og uavhengighetskravet gir 1.
+        assert param["gjenstaar"] == 1, param
+        assert param["policy_id"] == "p-029" and param["runde"] == 1, param
+
+        # IDEMPOTENT. En runde som ble åpnet ETTER 026 har alt sine varsler,
+        # og backfillen skal ikke lage dem om igjen.
+        c.execute(_backfill_sql())
+        c.commit()
+        _kontekst(c, TEN_BF)
+        assert c.execute(
+            "SELECT count(*) FROM varsel WHERE tenant=%s AND ressurs_id=%s",
+            (TEN_BF, uid)).fetchone()[0] == 1, (
+            "backfillen duplisert ved gjenkjøring")
+    finally:
+        c.close()
+
+
+@pg
+def test_backfill_varsler_ikke_om_en_runde_som_ikke_venter():
+    """En forfalt eller lukket runde venter ikke på noen.
+
+    `_runde_status` sier at en `apen` runde som har passert `utloper` ER
+    `utlopt`, også før en skrivesti har rukket å skrive det ned. Å varsle om
+    den ville vært å starte modulen med en løgn i innboksen — og det er verre
+    enn ingen varsling: et varsel man ikke kan handle på er nettopp det som
+    lærer folk å slutte å se der.
+
+    Kontroll: fjern `utloper > now()` fra 029, så blir denne rød.
+    """
+    c = _conn(TEN_BF)
+    try:
+        a = _bruker(c, "bf2-a", tenant=TEN_BF)
+        forfalt = "u-" + secrets.token_hex(6)
+        lukket = "u-" + secrets.token_hex(6)
+        _apen_runde(c, forfalt, a, utloper="-1 hour")
+        _apen_runde(c, lukket, a)
+        c.execute("UPDATE aktiveringsrunde SET status='kansellert'"
+                  " WHERE tenant=%s AND utkast_id=%s", (TEN_BF, lukket))
+        c.commit()
+        _kontekst(c, TEN_BF)
+
+        c.execute(_backfill_sql())
+        c.commit()
+        _kontekst(c, TEN_BF)
+
+        for uid, hva in ((forfalt, "forfalt"), (lukket, "kansellert")):
+            n = c.execute(
+                "SELECT count(*) FROM varsel WHERE tenant=%s AND ressurs_id=%s",
+                (TEN_BF, uid)).fetchone()[0]
+            assert n == 0, f"{hva} runde ble varslet ({n} rader)"
+    finally:
+        c.close()
