@@ -375,6 +375,39 @@ function tidsvinduVelger(g, tegnPaaNytt) {
 // skrive NOK løy derfor om policyen — eier så en begrensning som ikke fantes.
 // Den tomme raden ER den tilstanden, og den er valgbar begge veier.
 const VALUTA_INGEN = "";
+const VALUTA_MAKS = 10;                  // `_valider_grenser`: 1–10 koder
+
+// Ett nedtrekk over hele den kanoniske mengden. `opptatt` er kodene de ANDRE
+// radene alt bærer: en dublett vrakes av `_valider_grenser` (`_unik`) og gjør
+// den aktive policyen uleselig, så den skal ikke være valgbar i det hele tatt
+// — det er billigere enn å rydde opp i den etterpå. De vanlige seks står i
+// sin egen gruppe øverst, så kortlisten er en snarvei og ikke et tak.
+function valutanedtrekk(valgt, opptatt, etikett, paaEndre) {
+  const sel = el("select", { class: "felt-inp", "aria-label": etikett });
+  const legg = (foreldre, v, tekst) => {
+    const o = el("option", { value: v, text: tekst });
+    if (v === valgt) o.selected = true;
+    foreldre.append(o);
+  };
+  // Legg-til-nedtrekket står på en plassholder til eier velger; en rad står
+  // alltid på sin egen kode.
+  if (valgt === VALUTA_INGEN) legg(sel, VALUTA_INGEN, etikett);
+  const vanlige = el("optgroup", { label: t("ui.editor.valuta_vanlige") });
+  const ovrige = el("optgroup", { label: t("ui.editor.valuta_ovrige") });
+  for (const v of VANLIGE_VALUTAER) {
+    if (!opptatt.includes(v)) legg(vanlige, v, v);    // koder oversettes ikke
+  }
+  for (const v of VALUTAER) {
+    if (!VANLIGE_VALUTAER.includes(v) && !opptatt.includes(v)) {
+      legg(ovrige, v, v);
+    }
+  }
+  sel.append(vanlige, ovrige);
+  sel.addEventListener("change", () => {
+    if (sel.value !== VALUTA_INGEN) paaEndre(sel.value);
+  });
+  return sel;
+}
 
 function valutaVelger(g, tegnPaaNytt) {
   // Samme regel som for tidsvinduet: en lagret liste nedtrekket ikke kan vise,
@@ -395,48 +428,46 @@ function valutaVelger(g, tegnPaaNytt) {
     }
     return reparasjon(t("ui.editor.valuta"), g.valuta, valg);
   }
-  // Valutaen er en liste i skjemaet, men i praksis én kode. Har policyen
-  // flere, beholdes de: nedtrekket bytter den FØRSTE og sier fra om resten,
-  // i stedet for å kaste dem stille.
+  // Valuta er en LISTE i skjemaet, og kontrollen må kunne det lista kan.
+  // Ett nedtrekk som byttet den første koden kunne bare bevare flere valutaer
+  // som alt lå der: `["NOK"]` + EUR ga `["EUR"]`, og det fantes ingen vei til
+  // `["NOK","EUR"]` i det hele tatt. Fritekstfeltet det avløste kunne legge
+  // til. Derfor én rad per kode, med «Fjern», og et eget nedtrekk som legger
+  // til — samme form som rollelista over.
   const valutaer = Array.isArray(g.valuta) ? g.valuta : [];
-  const valgt = valutaer[0] || VALUTA_INGEN;
-  // Hele den kanoniske mengden er valgbar. Med bare seks koder i lista hadde
-  // eier som skulle sette CAD, CHF eller JPY ingen vei dit — nedtrekket var
-  // smalere enn fullmakten serveren faktisk godtar, og det gamle
-  // fritekstfeltet kunne mer enn erstatningen. De vanlige står i sin egen
-  // gruppe øverst, så kortlisten er en snarvei og ikke et tak.
-  const sel = el("select", { class: "felt-inp" });
-  const rad = (foreldre, v, tekst) => {
-    const o = el("option", { value: v, text: tekst });
-    if (v === valgt) o.selected = true;
-    foreldre.append(o);
+  // Fraværet av rader ER «ingen valutabegrensning»: motoren sjekker valuta
+  // bare når feltet finnes, så en tom liste ville vært en annen — og ugyldig
+  // — tilstand enn den eier ser.
+  const skriv = (liste) => {
+    if (liste.length) g.valuta = liste; else delete g.valuta;
+    // Alltid ny tegning: hvilke koder de øvrige radene kan tilby, avhenger av
+    // hva de andre bærer nå.
+    tegnPaaNytt();
   };
-  rad(sel, VALUTA_INGEN, t("ui.editor.valuta_ingen"));
-  const vanlige = el("optgroup", { label: t("ui.editor.valuta_vanlige") });
-  const ovrige = el("optgroup", { label: t("ui.editor.valuta_ovrige") });
-  for (const v of VANLIGE_VALUTAER) rad(vanlige, v, v);  // koder oversettes ikke
-  for (const v of VALUTAER) {
-    if (!VANLIGE_VALUTAER.includes(v)) rad(ovrige, v, v);
-  }
-  sel.append(vanlige, ovrige);
-  sel.addEventListener("change", () => {
-    if (sel.value === VALUTA_INGEN) delete g.valuta;
-    // Den valgte koden kan alt stå lenger bak i lista: `["NOK","EUR"]` + valg
-    // av EUR ga `["EUR","EUR"]`. Halen er resten AV settet, ikke resten av
-    // rekka — koden som flyttes fram tas ut der den lå.
-    else g.valuta = [sel.value,
-      ...valutaer.slice(1).filter((v) => v !== sel.value)];
-    // Bare hintet under avhenger av tilstanden; uten flere valutaer er det
-    // ingenting som kan bli stående og lyve, og da beholder vi fokus.
-    if (valutaer.length > 1) tegnPaaNytt();
+  const rader = valutaer.map((kode, i) => {
+    const fjern = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.fjern") });
+    fjern.addEventListener("click",
+      () => skriv(valutaer.filter((_, j) => j !== i)));
+    return el("div", { class: "editor-rad valuta-rad" },
+      valutanedtrekk(kode, valutaer.filter((_, j) => j !== i),
+        `${t("ui.editor.valuta")} ${i + 1}`,
+        (v) => { const ny = [...valutaer]; ny[i] = v; skriv(ny); }),
+      fjern);
   });
+  // `_valider_grenser`: 1–10 koder. Taket er serverens, så det skal stå her
+  // og ikke oppdages som en avvist lagring.
+  const legg = valutaer.length < VALUTA_MAKS
+    ? el("div", { class: "editor-rad valuta-legg-til" },
+      valutanedtrekk(VALUTA_INGEN, valutaer, t("ui.editor.valuta_legg_til"),
+        (v) => skriv([...valutaer, v])))
+    : el("p", { class: "editor-hint", text: t("ui.editor.valuta_maks") });
   return el("div", { class: "editor-felt-gruppe" },
-    el("label", { class: "felt" },
-      el("span", { class: "felt-navn", text: t("ui.editor.valuta") }), sel),
-    valutaer.length > 1
-      ? el("p", { class: "editor-hint",
-        text: `${t("ui.editor.valuta_flere")}: ${valutaer.join(", ")}` })
-      : null);
+    el("p", { class: "felt-navn", text: t("ui.editor.valuta") },
+    ), ...rader,
+    valutaer.length ? null
+      : el("p", { class: "editor-hint", text: t("ui.editor.valuta_ingen") }),
+    legg);
 }
 
 function handlingKort(h, tegnPaaNytt) {
