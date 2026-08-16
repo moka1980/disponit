@@ -426,6 +426,44 @@ def test_aktiver_policy_krever_nyere_versjon_enn_aktiv():
 
 
 @pg
+def test_aktiver_policy_monotoni_nullpadder_gamle_versjoner():
+    """🔴 «2.0.0» er ikke nyere enn en aktiv «2» — den er den SAMME.
+
+    De gamle radene telleren skrev bærer «1»/«2», og migrasjon 020 lar dem
+    bevisst stå. Uten nullpadding sammenlignes `{2,0,0}` mot `{2}`: prefikset
+    er likt, den lengste vinner, og monotonikontrollen slipper gjennom et
+    dokument med nøyaktig den versjonen den aktive raden allerede bærer.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _policyrad(c, pid, "2", aktiv=True)          # skrevet av den gamle telleren
+    _hode(c, pid, aktiv_versjon="2")
+    _validert_utkast(c, uid, pid, av="forf", versjon="2.0.0")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,%s)", (TEN, uid, "2"))
+        r.rollback()
+        # …og en som FAKTISK er nyere enn 2.0.0 slipper fortsatt gjennom.
+        c = _c()
+        uid2 = "u-" + secrets.token_hex(4)
+        _validert_utkast(c, uid2, pid, av="forf", versjon="2.0.1")
+        _runde(c, uid2)
+        _attest(c, uid2, "forf", True)
+        _attest(c, uid2, "uavh", False)
+        c.commit(); c.close()
+        assert r.execute("SELECT aktiver_policy(%s,%s,1,%s)",
+                         (TEN, uid2, "2")).fetchone()[0] == "2.0.1"
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
 def test_aktiver_policy_stale_base_serialization_failure():
     """Base flyttet siden runden åpnet: aktiv er v1, men kallet tror base er
     deny-all (NULL) → serialization_failure (rebasering)."""

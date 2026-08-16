@@ -53,7 +53,8 @@
 -- nøkkelen og målet for pekerens FK, og å skrive om versjonen på en aktiv,
 -- attestert policyrad er en operatørhandling, ikke en stille sideeffekt av en
 -- skjemamigrasjon. Merk også at monotonikontrollen måler mot den aktive raden
--- som den STÅR: er den «2», må neste dokument ligge over 2 (f.eks. «3.0.0»).
+-- som den STÅR, nullpadd til samme bredde: er den «2», leses den som 2.0.0, og
+-- neste dokument må ligge STRENGT over den (2.0.1, 3.0.0 — ikke «2.0.0»).
 -- ============================================================
 
 SET LOCAL ROLE disponit_policy_eier;
@@ -79,6 +80,9 @@ DECLARE
     v_diff_avvik    INT;
     v_aktiv         TEXT;
     v_ny            TEXT;
+    v_ny_ledd       TEXT[];
+    v_aktiv_ledd    TEXT[];
+    v_bredde        INT;
 BEGIN
     -- 1. Utkastet — låst. Innholdet som aktiveres kommer HERFRA, ikke fra
     --    kalleren (så det som aktiveres er nøyaktig det som ble attestert).
@@ -179,12 +183,28 @@ BEGIN
     -- Monotoni: kun når den aktive versjonen selv er tallpunktet. Eldre rader
     -- (registrert før PR-013) kan bære hva som helst i TEXT-kolonnen, og en
     -- kastefeil på en cast ville vært en dårligere feil enn ingen kontroll.
-    IF v_aktiv IS NOT NULL AND v_aktiv ~ '^[0-9]+(\.[0-9]+)*$'
-       AND string_to_array(v_ny, '.')::int[]
-           <= string_to_array(v_aktiv, '.')::int[] THEN
-        RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn aktiv % '
-            '(%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
-            USING ERRCODE = 'check_violation';
+    --
+    -- Leddene NULLPADDES til samme bredde FØR sammenligningen. Array-
+    -- sammenligningen lar ellers {2,0,0} slå {2} — likt prefiks, lengst
+    -- vinner — og de gamle radene bærer nettopp «1»/«2» (telleren denne
+    -- migrasjonen fjerner, og som den bevisst IKKE skriver om). En aktiv
+    -- «2»-rad ville da sluppet gjennom dokumentversjonen «2.0.0»: samme
+    -- versjon, ikke en nyere, og den innbakte versjonen ville blitt en
+    -- duplikat av den i den korrupte raden. Padded er «2» → {2,0,0}.
+    IF v_aktiv IS NOT NULL AND v_aktiv ~ '^[0-9]+(\.[0-9]+)*$' THEN
+        v_ny_ledd    := string_to_array(v_ny, '.');
+        v_aktiv_ledd := string_to_array(v_aktiv, '.');
+        v_bredde := greatest(array_length(v_ny_ledd, 1),
+                             array_length(v_aktiv_ledd, 1));
+        v_ny_ledd := (v_ny_ledd
+                      || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
+        v_aktiv_ledd := (v_aktiv_ledd
+                      || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
+        IF v_ny_ledd::int[] <= v_aktiv_ledd::int[] THEN
+            RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn aktiv '
+                '% (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
+                USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
 
     -- 5. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).

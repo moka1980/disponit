@@ -641,6 +641,38 @@ def test_bootstrappet_tenant_aktiveres_og_kan_LESES_av_beslutningsveien():
     assert {r["id"] for r in innhold["roller"]} == {"agent", "agent2"}
 
 
+@pg
+def test_porten_nullpadder_gammel_aktiv_versjon_i_monotonikontrollen():
+    """En aktiv «2» fra den gamle telleren er 2.0.0 — ikke mindre enn den.
+
+    Migrasjon 020 lar de gamle radene stå, så monotonikontrollen må kunne måle
+    et semantisk dokument mot en versjon med FÆRRE ledd. Uten nullpadding
+    sorterer (2, 0, 0) over (2,) — likt prefiks, lengst vinner — og porten
+    ville åpnet en runde på et utkast som bærer nøyaktig den versjonen den
+    aktive raden allerede har. To signaturer på en aktivering som skulle vært
+    stoppet før den første.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    _aktiv_base(pid, {"roller": [{"id": "r1"}]}, versjon="2")   # gammel teller
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}, {"id": "r2"}]},
+            versjon="2.0.0")
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "versjon_i_bruk", e.value.kode
+        rt.rollback()
+        # Et dokument som FAKTISK ligger over 2.0.0 åpner fortsatt.
+        uid2 = "utk-" + secrets.token_hex(3)
+        _utkast(uid2, pid, a, {"roller": [{"id": "r1"}, {"id": "r2"}]},
+                versjon="2.0.1")
+        assert _apne(rt, uid2, a)["diff_hash"]
+    finally:
+        rt.close()
+
+
 def _reparer(pid, versjon="9"):
     """Eiers reparasjon: den forvillede aktive raden ryddes, så peker og flagg
     er enige igjen (begge «ingen aktiv» — nøyaktig basen runden ble åpnet på)."""
