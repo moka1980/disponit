@@ -1,43 +1,48 @@
 -- ============================================================
--- 023 — Dokumentet må si `produksjon` for å bli aktivert som det (Codex P1)
+-- 025 — Versjonsleddene sammenlignes uten tallcast i det hele tatt (Codex P2)
 --
--- 🔴 FUNNET: aktiveringen skriver ALLTID `policyer.status = 'produksjon'`
--- (steg 5), men leser aldri hva dokumentet selv sier. Skjemaet tillater tre
--- verdier i `meta.status` — `utkast`, `validert_pilot` og `produksjon`
--- (`policies/policy-schema-v0.2.json`) — og en policy merket `utkast` er
--- fullt skjemagyldig. En slik runde gikk hele veien: fire-øyne passerte,
--- funksjonen svarte «aktivert», og raden ble stående med databasestatus
--- `produksjon` over et dokument som sier noe annet.
+-- 🔴 FUNNET: monotonikontrollen caster leddene til `int[]`. Skjemaet setter
+-- ingen øvre grense på et versjonsledd (`policy-schema-v0.2.json`:
+-- `^\d+\.\d+\.\d+$`), så `2147483648.0.0` er et fullt gyldig utkast — og
+-- casten reiser `numeric_value_out_of_range` (22003), ikke den `check_violation`
+-- kalleren håndterer. Resultatet er en UHÅNDTERT feil: HTTP 500 midt i en
+-- fire-øyne-runde, med attestasjonen tapt i rollbacken.
 --
--- `policyregister.hent_aktiv` avviser NØYAKTIG den raden:
+-- Verre: er en slik versjon først bootstrappet som AKTIV, treffer hver eneste
+-- senere styrte aktivering for den policyen samme cast. Policyen blir umulig å
+-- avløse gjennom den styrte veien, uten at noen feilmelding sier hvorfor.
 --
---     meta.status 'utkast' != registerets status 'produksjon'  → PolicyKorrupt
+-- 🔴 OG ETT TAK TIL (Codex, andre runde): `numeric` er ikke ubegrenset heller.
+-- Heltallsdelen tar 131 072 sifre, og API-ets kroppsgrense på 256 KiB slipper
+-- gjennom et ledd på ~140 000. Da reiste `::numeric[]` samme feil, og selv om
+-- underblokken gjorde den om til et pent `check_violation`, var utfallet feil:
+-- runden ble KANSELLERT som `versjon_i_bruk` for en versjon som i virkeligheten
+-- er nyere, og som porten (Python) hadde godtatt. To gater som er uenige om
+-- samme dokument er verre enn én som er streng.
 --
--- Kontrollen finnes fordi kolonnen brukes til filtrering mens `meta.status`
--- havner i loggposten: spriker de, er det uklart hva beslutningen ble tatt
--- under. Resultatet er samme sykdom som versjonsfunnet (020) og
--- identitetsfunnet (022): aktiveringen svarer «ja», og hver påfølgende
--- beslutning avviser den ferske policyen som korrupt. En maskert korrupsjon,
--- ikke en høylytt feil.
+-- 🟢 RETNINGEN: ingen tallcast. Leddene sammenlignes som (ANTALL SIFRE,
+-- SIFRENE) etter at innledende nuller er strøket — for ikke-negative heltall er
+-- det nøyaktig tallordenen, og det har ikke noe tak overhodet. Tekst-
+-- sammenligningen tvinges til `COLLATE "C"` så ordenen er sifferordenen og
+-- ikke en lokaltilpasset kollasjon.
 --
--- 🟢 RETNINGEN: dokumentet må SI det det aktiveres som. Å skrive om
--- `meta.status` her er stengt av samme grunn som for versjon og identitet:
--- innholdet er frosset ved validering og `innholds_hash` er bundet i
--- attestasjonene — en omskriving ville aktivert noe ANNET enn det
--- godkjennerne signerte på. Så: krav, ikke reparasjon.
+-- Dette er PRESIS samme algoritme som porten bruker
+-- (`policyadmin._versjonsnokkel`), og det er poenget: de to gatene måler
+-- samme dokument likt, i stedet for å møtes i et hjørne der den ene sier
+-- «nyere» og den andre kansellerer runden.
 --
--- Porten (`policyadmin`) krever det samme FØR runden åpnes og før noen
--- attesterer, så eier får beskjed om å rette `meta.status` i utkastet mens
--- det ennå KAN rettes. Denne funksjonen er siste skanse.
+-- Alternativet Codex nevner — å sette en sifergrense i skjemaet — er ikke
+-- valgt: det ville avvist dokumenter skjemaet i dag godtar, og flyttet
+-- problemet til en grense noen må vedlikeholde. En sammenligning uten tak
+-- trenger ingen grense.
 --
--- Merk at `produksjon` er hardkodet her, som i steg 5. Hvilke statuser en
--- LASTET policy får ha, er miljøstyrt (`policyregister.tillatte_statuser`) —
--- men hva den STYRTE aktiveringen skriver, er det ikke, og skal ikke være:
--- fire-øyne-veien aktiverer produksjonspolicyer, i alle miljøer.
---
--- Funksjonen erstattes i sin helhet (022 er siste versjon); alt annet er
+-- Funksjonen erstattes i sin helhet (024 er siste versjon); alt annet er
 -- uendret. `db/kjorer.py` verifiserer SHA-256 på hver anvendt migrasjon, så
--- 020/021/022 kan ikke rettes i ettertid — rettelsen hører hjemme her.
+-- 020–023 kan ikke rettes i ettertid — rettelsen hører hjemme her. DENNE filen
+-- er derimot rettet i seg selv, ikke etterfulgt av en 025: 024 har aldri vært
+-- på `main`, den er ny i samme PR, og reglen som gjør historikken immutable
+-- gjelder ANVENDTE migrasjoner. En 025 som erstattet en 024 ingen har kjørt,
+-- ville vært historikk om vår egen review-runde, ikke om databasen.
 -- ============================================================
 
 SET LOCAL ROLE disponit_policy_eier;
@@ -66,8 +71,14 @@ DECLARE
     v_ny_ledd       TEXT[];
     v_aktiv_ledd    TEXT[];
     v_bredde        INT;
+    v_dok           JSONB;
+    v_ugyldig_id    TEXT;
     v_dok_pid       TEXT;
     v_dok_status    TEXT;
+    v_i             INT;
+    v_a             TEXT;
+    v_b             TEXT;
+    v_nyere         BOOLEAN;
 BEGIN
     -- 1. Utkastet — låst. Innholdet som aktiveres kommer HERFRA, ikke fra
     --    kalleren (så det som aktiveres er nøyaktig det som ble attestert).
@@ -177,9 +188,21 @@ BEGIN
     --     med hoderaden låst, så ingen annen STYRT aktivering kan legge seg
     --     imellom dette og INSERT-en i steg 5.
     v_ny := v_innhold -> 'meta' ->> 'versjon';
-    IF v_ny IS NULL OR v_ny !~ '^[0-9]+\.[0-9]+\.[0-9]+$' THEN
-        RAISE EXCEPTION 'aktiver_policy: utkast % mangler semantisk '
-            'meta.versjon (%)', p_utkast_id, coalesce(v_ny, '<null>')
+    -- Formen OG plassen. `policyer_pkey` er (tenant, policy_id, versjon), og en
+    -- btree-oppføring har et hardt tak (~2704 byte) som de tre DELER — så ingen
+    -- av dem er trygg målt for seg. Verken `policy_id` eller versjonen har noen
+    -- maks i skjemaet, og uten dette ville en for stor nøkkel passert hit og
+    -- først veltet på INSERT-en i steg 5, som `program_limit_exceeded`: en
+    -- uhåndtert 500 etter at godkjennerne hadde signert. `octet_length` måler
+    -- nøyaktig det btree teller. Porten håndhever samme tall
+    -- (`policyadmin._MAKS_NOKKELBYTES`); dette er siste skanse.
+    IF v_ny IS NULL OR v_ny !~ '^[0-9]+\.[0-9]+\.[0-9]+$'
+       OR octet_length(p_tenant) + octet_length(v_policy_id)
+          + octet_length(v_ny) > 2400 THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % mangler brukbar meta.versjon '
+            '(nøkkel % byte)', p_utkast_id,
+            octet_length(p_tenant) + octet_length(v_policy_id)
+            + coalesce(octet_length(v_ny), 0)
             USING ERRCODE = 'check_violation';
     END IF;
     IF EXISTS (SELECT 1 FROM public.policyer
@@ -190,12 +213,13 @@ BEGIN
     END IF;
     -- Monotoni: kun når den aktive versjonen selv er tallpunktet. Eldre rader
     -- (registrert før PR-013) kan bære hva som helst i TEXT-kolonnen, og en
-    -- kastefeil på en cast ville vært en dårligere feil enn ingen kontroll.
+    -- versjon vi ikke kan lese som tall, kan vi heller ikke måle mot.
     --
-    -- Leddene NULLPADDES til samme bredde FØR sammenligningen (se 021):
-    -- array-sammenligningen lar ellers {2,0,0} slå {2} — likt prefiks, lengst
-    -- vinner — og en aktiv «2» fra den gamle telleren ville sluppet gjennom
-    -- dokumentversjonen «2.0.0», som er den samme versjonen, ikke en nyere.
+    -- Leddene NULLPADDES til samme bredde FØR sammenligningen (se 021): uten
+    -- det slår «2.0.0» en aktiv «2» — likt prefiks, flest ledd vinner — og en
+    -- aktiv «2» fra den gamle telleren ville sluppet gjennom nøyaktig den
+    -- versjonen den allerede bærer, som ikke er en nyere versjon i det hele
+    -- tatt. Paddet til samme bredde er «2» det den betyr: 2.0.0.
     IF v_aktiv IS NOT NULL AND v_aktiv ~ '^[0-9]+(\.[0-9]+)*$' THEN
         v_ny_ledd    := string_to_array(v_ny, '.');
         v_aktiv_ledd := string_to_array(v_aktiv, '.');
@@ -205,12 +229,73 @@ BEGIN
                       || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
         v_aktiv_ledd := (v_aktiv_ledd
                       || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
-        IF v_ny_ledd::int[] <= v_aktiv_ledd::int[] THEN
-            RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn aktiv '
-                '% (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
+        -- INGEN tallcast (se toppen): både `int` og `numeric` har et tak, og
+        -- skjemaet har ingen. Leddene måles som (antall sifre, sifrene) med
+        -- innledende nuller strøket — nøyaktig tallorden for ikke-negative
+        -- heltall, uten øvre grense. `COLLATE "C"` gjør at teksten sorterer på
+        -- sifrene selv, ikke etter en lokaltilpasset kollasjon.
+        v_nyere := NULL;                       -- NULL = like så langt
+        FOR v_i IN 1..v_bredde LOOP
+            v_a := ltrim(v_ny_ledd[v_i], '0');
+            v_b := ltrim(v_aktiv_ledd[v_i], '0');
+            IF length(v_a) <> length(v_b) THEN
+                v_nyere := length(v_a) > length(v_b);
+                EXIT;
+            ELSIF v_a COLLATE "C" <> v_b THEN
+                v_nyere := v_a COLLATE "C" > v_b;
+                EXIT;
+            END IF;
+        END LOOP;
+        -- `IS NOT TRUE` dekker begge nei-ene: leddene var like hele veien
+        -- (v_nyere = NULL, altså SAMME versjon) eller den nye lå under.
+        IF v_nyere IS NOT TRUE THEN
+            RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn '
+                'aktiv % (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
                 USING ERRCODE = 'check_violation';
         END IF;
     END IF;
+
+    -- 4c. INNFØRINGSKONTRAKTEN (022, Codex P2 på #63): verifikator-id-en er
+    --     den eneste FRIE nøkkelen i policyen, og den havner UTOLKET i
+    --     diffstien godkjenneren attesterer (`verifikatorer.<id>.<felt>`).
+    --     Med id-ene `foo` og `foo.beskrivelse` er `verifikatorer.foo.
+    --     beskrivelse` både beskrivelsen til den ene og roten til den andre,
+    --     og attestasjonen kan tilskrive en tillitsendring FEIL verifikator.
+    --     En tom id gir stien `verifikatorer.` og et blad uten eier.
+    --
+    --     Python stiller kravet ved runde-åpning og attestasjon, men begge
+    --     kan være passert før utrullingen — og et direkte kall hit går
+    --     utenom dem. Speiler `schema._valider_innforing`: KUN de to tegnene
+    --     som skaper flertydigheten, ikke husmønsteret, og ikke resten av
+    --     lastekontrakten (den er bakoverkompatibel og sier ingenting nytt).
+    v_dok := CASE WHEN jsonb_typeof(v_innhold) = 'object'
+                  THEN v_innhold ELSE '{}'::jsonb END;
+    SELECT string_agg(format('%s: %L', k.felt, k.vid), ', '
+                      ORDER BY k.felt, k.vid)
+      INTO v_ugyldig_id
+      FROM (SELECT f.felt, o.vid
+              FROM (VALUES ('verifikatorer'), ('verifikator_prioritet'))
+                        AS f(felt)
+              CROSS JOIN LATERAL jsonb_object_keys(
+                  CASE WHEN jsonb_typeof(v_dok -> f.felt) = 'object'
+                       THEN v_dok -> f.felt ELSE '{}'::jsonb END) AS o(vid)
+             WHERE o.vid = '' OR position('.' in o.vid) > 0
+                             OR position('[' in o.vid) > 0) AS k;
+    --     `CONSTRAINT` settes bevisst: orkestreringen fanger check_violation
+    --     fra denne funksjonen og har til nå kunnet anta at det var
+    --     VERSJONEN (020). Uten et strukturert skille måtte den lest
+    --     feilteksten for å vite forskjellen, og eier ville fått «versjonen er
+    --     i bruk» om en id. `diag.constraint_name` er den maskinlesbare
+    --     kanalen for nettopp det.
+    IF v_ugyldig_id IS NOT NULL THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % har verifikator-id som gjør '
+            'diffstien flertydig (%)', p_utkast_id, v_ugyldig_id
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'verifikator_id_entydig';
+    END IF;
+    --     BÆRES VIDERE: denne migrasjonen erstatter hele kroppen til
+    --     `aktiver_policy`, så en invariant som ikke står her er droppet
+    --     — stille. 022 og denne kom hver sin vei inn i samme funksjon.
 
     -- 5. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).
     IF v_aktiv IS NOT NULL THEN

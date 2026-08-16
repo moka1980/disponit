@@ -31,7 +31,7 @@ _SKJEMA_STI = Path(__file__).resolve().parents[3] / "policies" / "policy-schema-
 # gjennom `re`, så hele skjemaet arvet den lekkasjen: `"1.2.3\n"` matchet
 # `^\d+\.\d+\.\d+$` og var fullt skjemagyldig.
 #
-# Halen kom ikke gratis. Databasen leser `$` som ekte slutt (migrasjon 020–024
+# Halen kom ikke gratis. Databasen leser `$` som ekte slutt (migrasjon 020–025
 # bruker samme form), så utkastet ble FRYST og attestert her, og bruddet dukket
 # opp først inne i `aktiver_policy` — der runden ble kansellert som
 # `versjon_i_bruk`: feil beskjed, og på et tidspunkt der `meta.versjon` ikke
@@ -42,6 +42,16 @@ _SKJEMA_STI = Path(__file__).resolve().parents[3] / "policies" / "policy-schema-
 # Derfor oversettes ankrene før mønsteret kompileres: `^` → `\A`, `$` → `\Z`.
 # Det er ECMA-semantikken bokstavelig, ikke en innstramming vi finner på — og
 # den gjelder ALLE skjemaets mønstre, så ingen av dem kan glemmes.
+#
+# MEN den hører hjemme i INNFØRINGSkontrakten, ikke lastekontrakten (se
+# `valider_ny_policy`). Lastekontrakten revalideres av `hent_aktiv` ved hver
+# eneste forespørsel, og en policy med hale i en `handlinger[].id` KAN være
+# aktiv i dag: skjemaet slapp den gjennom, og bare `meta.policy_id`/
+# `meta.versjon` har en DB-kontroll som fanget den. Strammet vi lastekontrakten,
+# ville en slik tenant mistet alle policystyrte beslutninger i det utrullingen
+# lander — `PolicyKorrupt`, uten sjanse til å aktivere en rettet versjon.
+# Kravet gjelder derfor FRAMOVER: den gamle policyen leses og virker som før,
+# men neste versjon må rette halen for å slippe inn.
 def _ecma_ankre(monster: str) -> str:
     """Skjemaets ECMA-mønster med ankre Python leser likt: `^`→`\\A`, `$`→`\\Z`.
 
@@ -94,7 +104,9 @@ def _pattern_ecma(validator, monster, instans, skjema):
             f"{instans!r} does not match {monster!r}")
 
 
-_Validator = jsonschema.validators.extend(
+#: Skjemaet målt med ECMA-ankre. Brukes KUN av innføringskontrakten; alt annet
+#: går gjennom `Draft202012Validator` som før.
+_StrengValidator = jsonschema.validators.extend(
     jsonschema.Draft202012Validator, {"pattern": _pattern_ecma})
 
 # Validatoren bygges ÉN gang per skjemaversjon, ikke per kall.
@@ -111,6 +123,10 @@ _Validator = jsonschema.validators.extend(
 # Det som caches er selve skjemaet, som er kode og følger utrullingen.
 # Nøkkelen inkluderer mtime og størrelse, så en endret skjemafil plukkes
 # opp uten omstart og cachen aldri kan servere et utdatert skjema.
+#
+# Nøkkelen bærer også validatorKLASSEN: last- og innføringskontrakten leser
+# samme skjemafil, men måler mønstrene ulikt (se `_pattern_ecma`), og to
+# instanser med samme nøkkel ville servert feil av dem til én av kallerne.
 _VALIDATOR_CACHE: dict[tuple, object] = {}
 
 
@@ -118,26 +134,129 @@ def _last_skjema() -> dict:
     return json.loads(_SKJEMA_STI.read_text(encoding="utf-8"))
 
 
-def _validator():
+def _validator(klasse=jsonschema.Draft202012Validator):
     try:
         st = _SKJEMA_STI.stat()
-        nokkel = (str(_SKJEMA_STI), st.st_mtime_ns, st.st_size)
+        nokkel = (str(_SKJEMA_STI), st.st_mtime_ns, st.st_size, klasse)
     except OSError:
-        nokkel = (str(_SKJEMA_STI), None, None)
+        nokkel = (str(_SKJEMA_STI), None, None, klasse)
     v = _VALIDATOR_CACHE.get(nokkel)
     if v is None:
-        v = _Validator(_last_skjema())
-        _VALIDATOR_CACHE.clear()      # kun én versjon om gangen
+        v = klasse(_last_skjema())
+        # Kun ÉN skjemaversjon om gangen — men begge kontraktenes validatorer
+        # for den versjonen. Filens mtime/størrelse er lik i begge nøklene, så
+        # en endret skjemafil tømmer fortsatt hele cachen.
+        for gammel in [k for k in _VALIDATOR_CACHE if k[:3] != nokkel[:3]]:
+            del _VALIDATOR_CACHE[gammel]
         _VALIDATOR_CACHE[nokkel] = v
     return v
 
 
 def valider_policy(policy: object) -> list[str]:
-    """Returnerer komplett feilliste. Tom liste == gyldig. Kaster aldri."""
+    """LASTEKONTRAKTEN. Returnerer komplett feilliste. Tom == gyldig. Kaster aldri.
+
+    Dette er kravet en policy må oppfylle for å kunne TOLKES — og det er den
+    `hent_aktiv` revaliderer mot ved hver eneste forespørsel (v2 1.5). Derfor
+    er den bakoverkompatibel: en policy som var gyldig den dagen den ble
+    aktivert, må fortsatt være gyldig i dag. Nye krav hører hjemme i
+    `valider_ny_policy`.
+    """
     try:
         return _valider(policy)
     except Exception as e:  # siste skanse — aldri ukontrollert exception
         return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
+
+
+#: Skilletegnene i den flate diffstien (`policydiff._flat`):
+#: `verifikatorer.<id>.<felt>` skjøtes med punktum, lister med klammer.
+_DIFFSTI_SKILLETEGN = (".", "[")
+
+
+def valider_ny_policy(policy: object) -> list[str]:
+    """INNFØRINGSKONTRAKTEN: lastekontrakten + krav som bare gjelder policyer
+    som skal INN (registrering, utkastvalidering, malene vi selv leverer).
+
+    Hvorfor to kontrakter i stedet for én innstramming i skjemaet (Codex P1 på
+    PR #63): skjemaet er også lastekontrakten, og `hent_aktiv` revaliderer den
+    LAGREDE policyen mot det ved hver forespørsel. Strammer vi skjemaet, blir
+    enhver allerede aktiv policy som brøt det nye kravet `PolicyKorrupt` i det
+    utrullingen lander — tenanten mister alle policystyrte beslutninger
+    umiddelbart, uten å få sjansen til å aktivere en rettet versjon. Et krav
+    som først oppstår i dag kan derfor bare gjelde FRAMOVER: den gamle
+    policyen leses og virker som før, men neste versjon må rette id-en for å
+    slippe inn. Å migrere lagrede rader er ikke et alternativ — en verifikator-
+    id-endring er en semantisk policyendring som skal gjennom fire-øyne-veien
+    som alt annet, ikke en skjult skriving i en utrulling.
+
+    Rekkefølgen er bevisst: er lastekontrakten brutt, returneres KUN den.
+    Kravene under forutsetter at strukturen er på plass.
+    """
+    feil = valider_policy(policy)
+    if feil:
+        return feil
+    return valider_innforingskrav(policy)
+
+
+def valider_innforingskrav(policy: object) -> list[str]:
+    """KUN differansen mellom innførings- og lastekontrakten: de framoverrettede
+    kravene, uten lastekontrakten foran. Tom == oppfylt. Kaster aldri.
+
+    Hvorfor den er eksponert alene (Codex P2 på PR #63): `valider_utkast` er en
+    ENGANGS-port, og et utkast som fikk status `validert` før et slikt krav
+    fantes bærer statusen videre inn i aktiveringen. Aktiveringsveien må derfor
+    kunne stille kravet på nytt — men BARE dette kravet. Å kjøre hele
+    `valider_ny_policy` der ville dratt lastekontrakten inn i en kontroll som
+    handler om noe annet, og gjort «utkastet bryter et nytt krav» umulig å
+    skille fra «utkastet er strukturelt ødelagt».
+
+    To krav bor her nå: entydig verifikator-id, og mønstre målt med ECMA-ankre
+    (Codex P2 — Pythons `$` godtar en avsluttende linjeskift, databasens gjør
+    det ikke). Begge har samme form: de gjelder FRAMOVER, fordi en alt aktiv
+    policy som bryter dem må fortsette å virke.
+    """
+    if not isinstance(policy, dict):
+        return ["policy er ikke et objekt"]
+    try:
+        return _valider_innforing(policy)
+    except Exception as e:  # siste skanse — aldri ukontrollert exception
+        return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
+
+
+def _valider_innforing(policy: dict) -> list[str]:
+    # Mønstrene måles med ECMA-ankre (se `_pattern_ecma`): `$` er slutten på
+    # strengen, ikke «slutten, eller rett før en avsluttende linjeskift» som
+    # Pythons `re` leser den. KUN `pattern`-bruddene plukkes ut — resten av
+    # skjemaet er lastekontraktens ansvar, og `valider_ny_policy` har alt kjørt
+    # den. Uten filteret ville hver strukturfeil blitt rapportert to ganger, og
+    # `_krev_innforingskrav` (som kjører DENNE alene) ville blandet «bryter et
+    # nytt krav» sammen med «er strukturelt ødelagt» i samme feilkode.
+    feil: list[str] = [
+        f"skjema: {'/'.join(str(p) for p in e.absolute_path) or '<rot>'}: "
+        f"{e.message}"
+        for e in _validator(_StrengValidator).iter_errors(policy)
+        if e.validator == "pattern"]
+    # Verifikator-id-en er den ENESTE frie nøkkelen i en ellers lukket policy,
+    # og den havner UTOLKET i diffstien godkjenneren attesterer. Med id-ene
+    # `foo` og `foo.beskrivelse` er `verifikatorer.foo.beskrivelse` både
+    # beskrivelsen til `foo` og roten til den andre verifikatoren — og
+    # godkjenneren kan tilskrive en tillitsendring FEIL verifikator.
+    # Skilletegnene forbys derfor i id-en i stedet for å gjettes ut av stien i
+    # etterkant. Bevisst minimal: bare de to tegnene som skaper flertydigheten,
+    # ikke husmønsteret `^[a-z0-9_]+$`, så id-er som allerede gir en entydig
+    # diff fortsatt slipper gjennom. Tom id er også ute: den gir stien
+    # `verifikatorer.` og et blad uten eier.
+    for felt in ("verifikatorer", "verifikator_prioritet"):
+        for vid in policy.get(felt) or {}:
+            if not isinstance(vid, str):
+                continue                            # skjemaet har alt sagt fra
+            if not vid:
+                feil.append(f"{felt}: tom verifikator-id gir ingen entydig"
+                            " diffsti")
+            elif any(t in vid for t in _DIFFSTI_SKILLETEGN):
+                feil.append(
+                    f"{felt}: verifikator-id '{vid}' inneholder skilletegn fra"
+                    " diffstien (. eller [) og gjør stien flertydig")
+    return sorted(feil)
 
 
 def _valider(policy: object) -> list[str]:

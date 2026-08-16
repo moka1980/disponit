@@ -280,8 +280,12 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
     # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
-    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
-    feil = _schema.valider_policy(innhold)
+    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2). Her i
+    # INNFØRINGS-varianten: utkastet skal aktiveres, og porten inn er stedet
+    # der framoverrettede krav (entydig verifikator-id, strenge mønsterankre)
+    # hører hjemme — ikke i revalideringen av det som alt er aktivt (Codex P1
+    # på #63).
+    feil = _schema.valider_ny_policy(innhold)
     # Identiteten og statusen er ingen skjemasak: skjemaet ser bare dokumentet,
     # og et dokument kan være helt gyldig og LIKEVEL oppgi en annen
     # `meta.policy_id` enn raden det ligger under, eller en `meta.status` som
@@ -305,10 +309,141 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utfall": "validert", "utkast_id": utkast_id, "innholds_hash": h})
 
 
+def _runde_status(status: str, utloper, naa) -> str:
+    """Rundens FAKTISKE status. En `apen`/`klar` runde som har passert
+    `utloper` er `utlopt` — også før noen har rukket å skrive det ned.
+
+    Statusen i basen er ikke en løgn, den er bare foreldet: overgangen til
+    `utlopt` skjer først når en skrivesti kommer forbi (`_lukk_forfalt_runde`),
+    og en forfalt runde kan bli liggende vilkårlig lenge uten at noen skriver.
+    Lesestien har ingen slik anledning — den ruller tilbake — så den må REGNE
+    seg fram til det samme.
+
+    Uten dette var reparasjonen av skrivestiene ikke til å nå (Codex P2):
+    flaten valgte handlinger på rundestatusen den fikk servert, så en forfalt
+    runde som fortsatt sto `apen` skjulte BÅDE «Åpne runde» og «Forkast» og
+    tilbød «Attester» — den ene handlingen som er umulig, siden
+    `attester_aktivering` nekter nettopp en forfalt runde (`runde_utlopt`).
+    Eier satt igjen med en knapp som alltid feiler og ingen vei ut, mens de to
+    veiene ut fantes i API-et.
+
+    Samme predikat som `attester_aktivering` bruker for å nekte, og som
+    `_lukk_forfalt_runde` bruker for å lukke: én forståelse av «forfalt».
+    """
+    if status in ("apen", "klar") and utloper <= naa:
+        return "utlopt"
+    return status
+
+
+def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
+                        naa) -> bool:
+    """Lås utkastets aktive runde, og lukk den (`apen|klar → utlopt`) om den
+    har passert `utloper`. Returnerer True hvis en LEVENDE runde står igjen.
+
+    Dette er den manglende OVERGANGEN, ikke en opprydding: fram til nå fantes
+    det ingen kodesti som noensinne satte `utlopt`. `attester_aktivering`
+    nekter en forfalt runde og RULLER TILBAKE, så raden blir liggende `apen`
+    for alltid — og en slik zombie låser utkastet på to måter samtidig:
+
+      * forkasting nektes, fordi den ser en «åpen» runde (Codex P2) — og
+        forkasting er flatens ENESTE «slett», så forslaget blir uryddbart;
+      * en NY runde kan ikke åpnes, fordi unik-indeksen
+        `en_aktiv_aktiveringsrunde` teller den med.
+
+    Ingen av dem kunne løses opp av eier. Statusmaskinen i migrasjon 012
+    tillot `apen|klar → utlopt` hele tiden; det var bare ingen som gikk den.
+
+    Kalleren eier tx og har allerede låst utkastraden — samme rekkefølge
+    (utkast, så runde) i begge kallstedene, så to samtidige handlinger på
+    samme utkast køer i stedet for å låse hverandre fast.
+    """
+    rad = conn.execute(
+        "SELECT runde, status, utloper FROM aktiveringsrunde WHERE tenant=%s"
+        " AND utkast_id=%s AND status IN ('apen','klar') FOR UPDATE",
+        (tenant, utkast_id)).fetchone()
+    if rad is None:
+        return False
+    r_nr, r_status, r_utloper = rad
+    # Samme predikat som lesestien serverer (`_runde_status`) og som
+    # `attester_aktivering` nekter på: skriver og leser skal aldri kunne bli
+    # uenige om hva «forfalt» betyr.
+    if _runde_status(r_status, r_utloper, naa) != "utlopt":
+        return True
+    # Forfalt: runden er allerede død for attestering (`runde_utlopt`), så
+    # dette tar ingen fullmakt bort fra noen — det skriver bare ned det som
+    # er sant. Attestasjonene blir stående; de tilhører runden, ikke utkastet.
+    conn.execute(
+        "UPDATE aktiveringsrunde SET status='utlopt' WHERE tenant=%s"
+        " AND utkast_id=%s AND runde=%s", (tenant, utkast_id, r_nr))
+    return False
+
+
+def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                   request_id: str, utkast_id: str, forventet_utkastversjon,
+                   idempotency_key: str, input_hash: str, naa) -> dict:
+    """Forkast et utkast: status → `forkastet`. TERMINALT (statusmaskinen i
+    migrasjon 012 slipper ingen vei ut igjen).
+
+    Et utkast er et FORSLAG, ikke en policy. Å forkaste det endrer ingen
+    fullmakt — ingen agent får lov til noe mer eller mindre av det — så det
+    krever ikke fire øyne. Derfor er dette også det ENESTE «slett» flaten
+    tilbyr: en policy som HAR styrt beslutninger kan ikke fjernes, for da
+    ville revisjonssporet pekt på noe som ikke finnes lenger.
+
+    To ting nektes:
+      * en LEVENDE åpen eller klar runde — der er attestasjoner i omløp, og et
+        utkast skal ikke kunne rives bort under godkjennerne mens de vurderer
+        det. Runden må avsluttes først. En runde som har passert `utloper` er
+        derimot ikke lenger i omløp: ingen kan attestere den, og den lukkes
+        her (se `_lukk_forfalt_runde`) i stedet for å blokkere for alltid;
+      * `godkjent` — da HAR fire øyne sagt ja, og å kaste den godkjenningen er
+        en annen handling enn å rydde bort et forslag ingen har vurdert.
+
+    Idempotensnøkkelen bindes til utkastversjonen som ellers i denne modulen.
+    Kalleren eier tx.
+    """
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    rad = conn.execute(
+        "SELECT status, utkastversjon FROM policyutkast WHERE"
+        " tenant=%s AND utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    status, ver = rad
+    if status not in ("utkast", "validert"):
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    if not isinstance(forventet_utkastversjon, int) \
+            or isinstance(forventet_utkastversjon, bool) \
+            or forventet_utkastversjon != ver:
+        conn.rollback()
+        raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
+    if _lukk_forfalt_runde(conn, tenant, utkast_id, naa):
+        conn.rollback()
+        raise Aktiveringsfeil("runde_allerede_aapen")
+    conn.execute(
+        "UPDATE policyutkast SET status='forkastet'"
+        " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utfall": "forkastet", "utkast_id": utkast_id})
+
+
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
-                       request_id: str, utkast_id: str) -> dict:
+                       request_id: str, utkast_id: str, naa) -> dict:
     """Utkastet + diffen mot aktiv base + klassifisering + evt. åpen runde med
-    attestasjoner. Rent lesende (ruller tilbake til slutt)."""
+    attestasjoner. Rent lesende (ruller tilbake til slutt).
+
+    `naa` er klokka lesestien måler `utloper` mot. Uten den var svaret om en
+    forfalt runde ikke galt, bare foreldet — og flaten har ingen annen kilde
+    (se `_runde_status` under)."""
     sett_kontekst(conn, tenant, aktor, request_id)
     rad = conn.execute(
         "SELECT policy_id, innhold, innholds_hash, status, utkastversjon,"
@@ -328,6 +463,7 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
     runde_dto = None
     if runde is not None:
         r_nr, r_status, r_diff, r_risiko, r_pakrevd, r_utloper = runde
+        r_status = _runde_status(r_status, r_utloper, naa)
         rows = conn.execute(
             "SELECT bruker_id, rolle, er_forfatter, ts FROM"
             " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND"
@@ -365,9 +501,11 @@ def hent_maler() -> list:
     """Bransjemalene (komplette policyer) som utgangspunkt for et nytt utkast.
     Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen tenant
     (malene er felles). En mal som IKKE validerer mot den KANONISKE validatoren
-    (`schema.valider_policy` — skjema + semantikk, inkl. referanse-integritet og
-    modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke kunne
-    bli et «gyldig utgangspunkt»."""
+    (`schema.valider_ny_policy` — skjema + semantikk, inkl. referanse-integritet
+    og modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke
+    kunne bli et «gyldig utgangspunkt». Innføringsvarianten er den riktige her:
+    en mal er alltid en NY policy, og et utgangspunkt som ikke kan aktiveres er
+    ikke et utgangspunkt."""
     import yaml
     ut = []
     for f in sorted(_MAL_DIR.glob("bransjemal-*.yaml")):
@@ -377,7 +515,7 @@ def hent_maler() -> list:
             continue
         if not isinstance(innhold, dict):
             continue
-        if _schema.valider_policy(innhold):
+        if _schema.valider_ny_policy(innhold):
             continue                                # fail-closed: hopp over
         meta = innhold.get("meta") if isinstance(innhold.get("meta"), dict) else {}
         ut.append({"mal_id": f.stem.replace("bransjemal-", ""),
@@ -507,7 +645,7 @@ def _dokumentavvik(policy_id: str, innhold, tenant: str = "") -> list[str]:
     """Alt som gjør at det frosne dokumentet ikke KAN aktiveres slik det står.
 
     Kravene er identiske med portens (`_krev_dokumentidentitet`,
-    `_krev_produksjonsstatus`) og databasens (migrasjon 022/023) — samlet her
+    `_krev_produksjonsstatus`) og databasens (migrasjon 023/024) — samlet her
     fordi valideringen trenger dem som TEKST, ikke som feil: der er de ennå til
     å rette. Etter frysingen er de ikke det.
     """
@@ -575,18 +713,23 @@ def _krev_produksjonsstatus(innhold) -> None:
                               f"meta.status={status!r}")
 
 
-#: `aktiver_policy` reiser dokumentinvariantene sine som `check_violation` og
+#: `aktiver_policy` reiser innholdsinvariantene sine som `check_violation` og
 #: NAVNGIR bruddet (`USING CONSTRAINT`). Navnet er det eneste som skiller dem
 #: fra hverandre i feilen kalleren ser — uten det ville et identitetsavvik blitt
 #: rapportert som `versjon_i_bruk`: riktig kansellering, feil beskjed til eier.
 #: Ukjent/uten navn → versjonsinvariantene fra 020, som er de eldste.
+#:
+#: `verifikator_id_entydig` (migrasjon 022) hører hjemme i samme tabell selv om
+#: den kom en annen vei: den deler SQLSTATE med de andre og krever sin egen
+#: retting av eier. Én tabell, ikke en tabell og et unntak ved siden av.
 _DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
-                  "dokument_status": "dokument_avvik"}
+                  "dokument_status": "dokument_avvik",
+                  "verifikator_id_entydig": "utkast_ugyldig"}
 
 #: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`), men med
 #: ASCII-sifre EKSPLISITT (Codex P2). Pythons `\d` matcher hele Unicodes
 #: desimalsiffer-kategori, og det gjør `jsonschema` også — så «١.٠.٠» er
-#: skjemagyldig. Databasen bruker `[0-9]` (migrasjon 020–024) og avviser den, og
+#: skjemagyldig. Databasen bruker `[0-9]` (migrasjon 020–025) og avviser den, og
 #: nøkkelen under sammenligner sifrene som TEKST, der «١» sorterer over «2».
 #: Uten dette godtok porten altså en versjon som er både feilordnet og
 #: ulagringsbar, åpnet runden, og lot bruddet komme etter attestasjonene — med
@@ -695,6 +838,52 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     return ny
 
 
+def _krev_innforingskrav(ny_innhold) -> None:
+    """Utkastet må oppfylle de FRAMOVERRETTEDE kravene for å kunne aktiveres —
+    ikke bare ha oppfylt dem den gangen det ble validert.
+
+    `valider_utkast` er porten inn, men den er en ENGANGS-port: den kjører idet
+    utkastet går til `validert`, og statusen blir stående. Et utkast som fikk
+    `validert` FØR et slikt krav fantes bærer statusen videre, og
+    runde-åpningen leser bare status + `innholds_hash` (Codex P2 på #63). Da
+    kunne det aktiveres uten noen gang å ha møtt kravet — og «gjelder framover»
+    ville i praksis betydd «gjelder framover, unntatt for de utkastene som alt
+    lå klare», nøyaktig de som lander først etter utrullingen. Kravet hører
+    derfor hjemme på aktiveringsveien selv, ikke bare på porten inn.
+
+    KUN differansen (`schema.valider_innforingskrav`), ikke hele
+    `valider_ny_policy`: lastekontrakten er bakoverkompatibel og sier per
+    definisjon ingenting nytt her, og å dra den inn ville blandet «bryter et
+    nytt krav» sammen med «er strukturelt ødelagt» i samme feilkode.
+
+    Kontrollen speiler `_krev_peker_synk`/`_krev_ny_versjon`: den kjører både
+    før runden åpnes OG før noen attesterer. Det andre kallet er ikke
+    overflødig — en runde kan ha vært åpen da utrullingen landet, og en
+    signatur på et utkast som ikke kan aktiveres er verdiløs i det den skrives.
+
+    Merk asymmetrien mot `hent_aktiv`: en alt AKTIV policy revalideres fortsatt
+    mot lastekontrakten alene og virker som før. Det er bare veien INN som
+    strammes. Kaster `Aktiveringsfeil("utkast_ugyldig")`; eier må rette
+    utkastet og validere det på nytt.
+
+    SISTE SKANSE ligger likevel i `aktiver_policy` (migrasjon 022): begge
+    kontrollene her er passert i det aktiveringen skjer, og en runde kan ha
+    vært ferdig attestert allerede da utrullingen landet. Denne funksjonen er
+    porten som gir eier en forståelig feil FØR signaturene brukes; funksjonen i
+    DB er invarianten som holder også for et direkte kall utenom oss."""
+    feil = _schema.valider_innforingskrav(ny_innhold)
+    if feil:
+        raise Aktiveringsfeil("utkast_ugyldig", "; ".join(feil))
+
+
+#: `CONSTRAINT`-navnet `aktiver_policy` merker innføringskravbruddet med
+#: (migrasjon 022). Skiller det fra versjonsinvariantene, som deler SQLSTATE
+#: `check_violation` — uten det måtte utfallet utledes av feilteksten.
+#: Utfallet slås opp i `_DOKUMENTBRUDD` sammen med de andre navngitte bruddene;
+#: navnet står igjen her fordi testene binder migrasjonen til det.
+_INNFORINGSKRAV_CONSTRAINT = "verifikator_id_entydig"
+
+
 # --------------------------------------------------------------------------
 # 1. Runde-åpning.
 # --------------------------------------------------------------------------
@@ -729,6 +918,10 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         raise Aktiveringsfeil("utkast_ikke_validert", f"status={status}")
     if innholds_hash is None:
         raise Aktiveringsfeil("utkast_ikke_validert", "mangler innholds_hash")
+    # En forfalt runde er ikke en åpen runde. Sto den igjen som `apen`, tok
+    # unik-indeksen under INSERT-en nedenfor imot og svarte
+    # `runde_allerede_aapen` — for alltid, siden ingenting ellers lukker den.
+    _lukk_forfalt_runde(conn, tenant, utkast_id, naa)
 
     aktiv_versjon = _hode_aktiv_versjon(conn, tenant, policy_id)
     # Ingen runde åpnes på en base vi ikke stoler på (Codex P1): en usynk peker
@@ -736,12 +929,15 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ikke aktiveres etter en reparasjon.
     _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
     # Og ingen runde åpnes på et utkast som ikke KAN lagres: identiteten det
-    # bærer må være radens egen (migrasjon 022), statusen må være den
-    # aktiveringen skriver (migrasjon 023), og versjonen må være semantisk,
+    # bærer må være radens egen (migrasjon 023), statusen må være den
+    # aktiveringen skriver (migrasjon 024), og versjonen må være semantisk,
     # ubrukt og nyere enn den aktive (migrasjon 020).
     _krev_dokumentidentitet(policy_id, ny_innhold)
     _krev_produksjonsstatus(ny_innhold)
     _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+    # ... eller som ikke oppfyller de framoverrettede kravene: `validert` kan
+    # stamme fra før kravet fantes, og status alene er ingen kvittering.
+    _krev_innforingskrav(ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -896,6 +1092,9 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         _krev_dokumentidentitet(policy_id, ny_innhold)
         _krev_produksjonsstatus(ny_innhold)
         _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+        # Og for de framoverrettede kravene: runden kan ha vært åpen da
+        # utrullingen som innførte dem landet.
+        _krev_innforingskrav(ny_innhold)
     except Aktiveringsfeil:
         conn.rollback()
         raise
@@ -1070,20 +1269,29 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
             "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
     except psycopg.errors.CheckViolation as e:
-        # Dokumentinvariantene i `aktiver_policy`: versjonen (migrasjon 020) er
-        # borte, alt registrert eller ikke nyere enn den aktive — eller
-        # identiteten (migrasjon 022) er en annen enn radens. Kontrollene i
-        # steg 5b fanger det som var der da runden ble bygget; hit kommer bare
-        # et avvik som oppsto UTENOM den styrte veien i vinduet etterpå. Da er
-        # runden død: innholdet er frosset, så verken versjon eller identitet
-        # kan rettes uten et nytt utkast og nye signaturer. Runden kanselleres
-        # derfor med det samme — en runde som beviselig aldri kan aktiveres
-        # skal ikke stå åpen og se levende ut. Signaturene består (append-only);
-        # det er sporet av hva som faktisk ble godkjent.
+        # Innholdsinvariantene i `aktiver_policy`. Fire slag deler SQLSTATE
+        # `check_violation`: VERSJONEN (migrasjon 020 — `meta.versjon` er borte,
+        # alt registrert, eller ikke nyere enn den aktive), IDENTITETEN
+        # (migrasjon 023 — dokumentet oppgir en annen policy enn raden),
+        # STATUSEN (migrasjon 024 — dokumentet sier ikke `produksjon`) og
+        # INNFØRINGSKRAVET (migrasjon 022 — en verifikator-id som gjør
+        # diffstien flertydig). Kontrollene i steg 5b fanger det som var der da
+        # runden ble bygget; hit kommer bare det som traff UTENOM den styrte
+        # veien i vinduet etterpå — eller, for innføringskravet, en runde som
+        # var ferdig attestert før utrullingen som innførte det.
         #
-        # Funksjonen NAVNGIR bruddet (`USING CONSTRAINT`), for de to slagene
-        # deler feilkode og krever hver sin forklaring til eier: «gi utkastet
-        # en ny versjon» hjelper ikke den som har skrevet feil policy_id.
+        # Uansett hvilket av dem: runden er død. Innholdet er frosset, så
+        # verken versjonen, id-en eller statusen kan rettes uten et nytt utkast
+        # og nye signaturer. Runden kanselleres derfor med det samme — en runde
+        # som beviselig aldri kan aktiveres skal ikke stå åpen og se levende ut.
+        # Signaturene består (append-only); det er sporet av hva som faktisk
+        # ble godkjent.
+        #
+        # UTFALLET må derimot skilles: de krever ulik retting av eier (øk
+        # versjonen vs. rett id-en vs. rett statusen), og «versjonen er i bruk»
+        # om en verifikator-id er en feilmelding som sender eier feil vei.
+        # Funksjonen NAVNGIR derfor bruddet (`USING CONSTRAINT`), så skillet
+        # leses maskinelt og ikke ut av feilteksten.
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
         return _kanseller_runde(
             conn, tenant, idempotency_key, utkast_id, policy_id, r_nr,

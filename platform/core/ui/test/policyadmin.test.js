@@ -1139,10 +1139,32 @@ test("Attester: brukt versjon sier at utkastet må få ny versjon (utfall)",
     assert.equal(kvitt.getAttribute("role"), "alert");
   });
 
-test("Attester: versjonsfeil som 409 sier det samme som utfallet", async () => {
-  for (const kode of ["versjon_i_bruk", "versjon_mangler"]) {
+// Codex P2 på #63: `utkast_ugyldig` kommer også som UTFALL, ikke bare som
+// feilkode — runden kan ha vært ferdig attestert da kravet kom, og da er det
+// migrasjon 022 i DB-grensen som stopper aktiveringen. Utfallet deler SQLSTATE
+// med versjonsinvariantene, så uten skillet ville eier fått «versjonen er i
+// bruk» om en verifikator-id og økt versjonen uten at noe ble bedre.
+test("Attester: utkast_ugyldig som utfall peker på innholdet, ikke versjonen",
+  async () => {
+    const kvitt = await _attesterMedUtfall(nyHoved(),
+      { utfall: "utkast_ugyldig" });
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.utkast_ugyldig")),
+    "eier fikk ikke vite at det er utkastets innhold som må rettes");
+    assert.ok(!kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.versjon_i_bruk")),
+    "eier ble sendt til versjonsnummeret for en feil i innholdet");
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+    assert.equal(kvitt.getAttribute("role"), "alert");
+  });
+
+// Codex P2 på #63: `utkast_ugyldig` er 422, ikke 409 — det er INNHOLDET som er
+// ugyldig, ikke tilstanden. Grunnlagsteksten må følge koden, ikke statusen.
+test("Attester: grunnlagsfeil sier det samme som utfallet", async () => {
+  for (const [kode, status] of [["versjon_i_bruk", 409],
+    ["versjon_mangler", 409], ["utkast_ugyldig", 422]]) {
     const kvitt = await _attesterMedPost(nyHoved(), async () => ({
-      ok: false, status: 409, json: async () => ({ feil: kode }) }));
+      ok: false, status, json: async () => ({ feil: kode }) }));
     assert.ok(kvitt.textContent.includes(t(`ui.policyadmin.utfall.${kode}`)),
       `${kode} falt til «Handlingen feilet» og skjulte hva som må rettes`);
     assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")));
@@ -2294,8 +2316,11 @@ test("Diff: nøkkelfelt som fjernes, står i overskriften", async () => {
   assert.ok(opps.includes("refusjon.utfor"), "handlingen mistet navnet sitt");
 });
 
-// `verifikatorer` har UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» er en
-// gyldig verifikator-id. Serverens flate sti skjøter map-nøkler med punktum,
+// `verifikatorer` hadde UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» var en
+// gyldig verifikator-id. Skjemaet forbyr nå punktum og klammer i id-en, men
+// utkastdetaljen viser diff også for utkast som ennå ikke er validert, så
+// oppdelingen må fortsatt tåle stien.
+// Serverens flate sti skjøter map-nøkler med punktum,
 // og en oppdeling som leser punktum som skilletegn slo derfor to helt ulike
 // verifikatorer sammen til elementet «verifikatorer.foo» — bladene deres i
 // ett kort, og oppslaget i utkastet ned i nøkler som ikke finnes (Codex P2).
@@ -2323,7 +2348,8 @@ const PUNKTUMNOKKEL_DIFF = {
   ] },
 };
 
-// Samme ubegrensede nøkkelnavn gjør «foo{}bar» til en gyldig verifikator-id.
+// Samme frie nøkkelnavn gjør «foo{}bar» til en gyldig verifikator-id — «{}» er
+// ikke et skilletegn i den flate stien, så innstrammingen over rører den ikke.
 // Ble normaliseringen av klassifikatorens beholder-markør kjørt på bladdiffen
 // også, skrev den «verifikatorer.foo{}bar» om til «verifikatorer.foobar» — og
 // fantes BEGGE i policyen, pekte de to stiene på samme element (Codex P2).
@@ -2384,6 +2410,70 @@ test("Diff: to verifikatorer med punktum i id-en blir to kort", async () => {
     "overskriften navngir ikke verifikatoren: "
     + `«${bar.querySelector("summary").textContent}»`);
 });
+
+// Den verre varianten av de frie nøkkelnavnene: id-ene `foo` OG
+// `foo.beskrivelse` finnes SAMTIDIG. Da er `verifikatorer.foo.beskrivelse`
+// både beskrivelsen til `foo` og roten til den andre verifikatoren — stien er
+// EKTE flertydig, og ingen parser kan lese den riktig. Lengste treff gjettet
+// på den lengste id-en, så beskrivelsen til `foo` havnet i kortet til
+// `foo.beskrivelse`, sammen med DENS felt: godkjenneren leste en
+// tillitsendring på feil verifikator (Codex P2 på #61).
+//
+// Skjemaet forbyr nå punktum og klammer i verifikator-id-en, så en policy som
+// kan AKTIVERES kan ikke komme hit. Men utkastdetaljen viser diff også for et
+// utkast som ennå ikke er validert (`policyadmin.hent_utkast_detalj`), så
+// stien kan fortsatt nå UI-et. Da gjettes det ikke: det flertydige bladet blir
+// stående som ett ledd med hele den rå stien, så det får sitt EGET kort i
+// stedet for å bli lagt inn under en annen verifikator. Dårligere gruppering,
+// men aldri feil tilskriving — og ingenting forsvinner.
+//
+// Kontroll: la `delOppLedd` gjette på lengste treff igjen, så blir denne rød.
+const FLERTYDIG_NOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      foo: { beskrivelse: "Bankintegrasjon", betrodd_for: ["vilkaar_a"] },
+      "foo.beskrivelse": { beskrivelse: "Fakturamottak",
+        betrodd_for: ["vilkaar_b"] },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.betrodd_for[0]", type: "lagt_til",
+      til: "vilkaar_a" },
+    { sti: "verifikatorer.foo.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.beskrivelse.betrodd_for[0]", type: "lagt_til",
+      til: "vilkaar_b" },
+    { sti: "verifikatorer.foo.beskrivelse.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+  ] },
+};
+
+test("Diff: flertydig verifikator-id blander ikke to verifikatorer",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": FLERTYDIG_NOKKEL_DIFF, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+    const kort = [...v.querySelectorAll(".diff-element")];
+    // Selve funnet: ingen kort tilskriver den ene verifikatoren den andres
+    // felt. `vilkaar_a`/`vilkaar_b` er tillitsendringen — den som må treffe
+    // riktig verifikator.
+    for (const k of kort) {
+      const tekst = k.textContent;
+      assert.ok(!(tekst.includes("vilkaar_a") && tekst.includes("vilkaar_b")),
+        `to verifikatorers betrodd_for i ett kort: «${tekst}»`);
+      assert.ok(
+        !(tekst.includes("Bankintegrasjon") && tekst.includes("Fakturamottak")),
+        `to verifikatorer slått sammen i ett kort: «${tekst}»`);
+    }
+    // Og ingenting forsvinner: alle fire bladene står fortsatt et sted.
+    for (const s of ["vilkaar_a", "vilkaar_b", "Bankintegrasjon",
+      "Fakturamottak"]) {
+      assert.ok(v.textContent.includes(s), `«${s}» forsvant fra diffen`);
+    }
+  });
 
 // Samme punktumnøkler, men SLETTET: da finnes ingen av dem i utkastet, og en
 // oppdeling som bare kjenner utkastet faller tilbake på første punktum. Begge
@@ -2581,5 +2671,193 @@ test("Diff: den grupperte visningen er axe-ren", async () => {
     __post: async () => ({}) };
   const h = nyHoved();
   await aapneEndringer(h);
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// Eier ba om å kunne slette, ikke bare redigere. Det som KAN slettes er et
+// UTKAST — et forslag som ennå ikke binder noen. En policy som har styrt
+// beslutninger kan ikke fjernes; da ville revisjonssporet pekt på noe som
+// ikke finnes. Derfor «Forkast», ikke «Slett».
+test("Forkast: et utkast kan forkastes, med bekreftelse først", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => { kalt.push({ url, opts });
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "forkastet", utkast_id: "u-1" }) }; } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  // Et irreversibelt valg skal ikke skje på ett klikk.
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  assert.ok(dlg.textContent.includes("faktura-no"),
+    "bekreftelsen sier ikke hvilken SERIE som berøres");
+  assert.ok(dlg.textContent.includes("u-1"),
+    "bekreftelsen sier ikke HVILKET utkast som forkastes");
+  assert.equal(kalt.length, 0, "forkastet før eier bekreftet");
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length > 0);
+  assert.equal(kalt[0].opts.method, "POST");
+  assert.ok(kalt[0].url.includes("/v1/policyutkast/u-1/forkast"));
+  assert.ok(kalt[0].opts.headers["Idempotency-Key"], "mangler Idempotency-Key");
+  assert.equal(JSON.parse(kalt[0].opts.body).utkastversjon, 2,
+    "utkastversjonen binder nøkkelen til tilstanden eier så");
+  // Kvitteringen fylles i en SENERE oppgave (live-området må rekke å bli
+  // registrert), så vi venter på den ferdige boksen — ikke på det tomme
+  // skallet. Første utgave av denne testen ventet på skallet og fant "".
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkastet")),
+    "utfallet er ikke synlig");
+});
+
+// En policyserie kan ha FLERE utkast samtidig, og de deler `policy_id`. Viser
+// bekreftelsen bare serien, er to uopprettelige dialoger for to forskjellige
+// forslag ord for ord like — og eier kan ikke se hvilket forslag hun er i ferd
+// med å rive bort.
+//
+// Kontroll: bytt `forkastMaal(detalj, uid)` tilbake til `detalj.policy_id`, så
+// blir denne rød.
+test("Forkast: bekreftelsen navngir UTKASTET, ikke bare serien", async () => {
+  const serie = { utkast: [
+    { utkast_id: "u-1", policy_id: "faktura-no", status: "utkast",
+      utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" },
+    { utkast_id: "u-9", policy_id: "faktura-no", status: "utkast",
+      utkastversjon: 5, opprettet: "2026-08-10T09:00:00+00:00" },
+  ] };
+  // Radene står i samme rekkefølge som `serie`, så raden peker ut utkastet.
+  const dialogtekst = async (rad, uid, utkastversjon) => {
+    SVAR = { "/v1/policyutkast": serie,
+      [`/v1/policyutkast/${uid}`]: { ...DETALJ, utkast_id: uid, utkastversjon,
+        status: "utkast", aktiv_runde: null },
+      __post: async () => ({}) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelectorAll("tbody button").length >= 2);
+    h.querySelectorAll("tbody button")[rad]
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+    _finn(h, t("ui.policyadmin.handling.forkast"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+    const d = [...document.querySelectorAll('[role="dialog"]')]
+      .filter((x) => x.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+    return d[d.length - 1].textContent;
+  };
+  const en = await dialogtekst(0, "u-1", 2);
+  const to = await dialogtekst(1, "u-9", 5);
+  assert.ok(en.includes("u-1") && to.includes("u-9"),
+    "bekreftelsen navngir ikke utkastet som forkastes");
+  assert.notEqual(en, to,
+    "to utkast i samme serie gir umulige-å-skille bekreftelser");
+});
+
+// Et tapt SVAR er ikke en mislykket handling. Commiter serveren forkastingen
+// og svaret forsvinner på vei tilbake, kan eier ikke prøve igjen for å finne
+// ut av det: utkastet er `forkastet`, knappen er borte med sin nøkkel, og
+// handlingen er uopprettelig. Retryen med SAMME nøkkel er derfor det eneste
+// som kan hente kvitteringen hennes tilbake — serveren svarer replay.
+//
+// Kontroll: fjern status-0-grenen i `forkastForsok`, så blir denne rød.
+test("Forkast: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      if (kalt.length === 1) throw new TypeError("network");
+      return { ok: true, status: 200,
+        json: async () => ({ utfall: "forkastet", utkast_id: "u-1" }) };
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  _finn(dlg, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nettverksfeil skal gi nøyaktig én retry");
+  assert.equal(kalt[0].opts.headers["Idempotency-Key"],
+    kalt[1].opts.headers["Idempotency-Key"],
+    "retry MÅ gjenbruke nøkkelen — ellers forkastes det på nytt");
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkastet")),
+    "eier fikk ikke den ekte kvitteringen sin");
+});
+
+// Svarer nettet ikke andre gangen heller, VET vi ikke hva som skjedde — og
+// «Handlingen feilet.» ville vært en påstand vi ikke har dekning for om en
+// uopprettelig handling.
+test("Forkast: to tapte svar gir «ukjent utfall», ikke «feilet»", async () => {
+  const kalt = [];
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async (url, opts) => {
+      kalt.push({ url, opts });
+      throw new TypeError("network");
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  _finn(h, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel"))));
+  const dlg = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.forkast.tittel")));
+  _finn(dlg, t("ui.policyadmin.handling.forkast"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => kalt.length >= 2);
+  assert.equal(kalt.length, 2, "nøyaktig én retry, ikke en løkke");
+  const kvitt = await _ventKvittering(h);
+  assert.ok(kvitt.textContent.includes(t("ui.policyadmin.forkast.ukjent")),
+    "utfallet meldes ikke som ukjent");
+  assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")),
+    "en falsk feilkvittering på en uopprettelig handling");
+});
+
+// Kontroll: flytt `forkastKnapp` ut av runde-betingelsen, så blir denne rød.
+test("Forkast: knappen finnes IKKE når en runde er åpen", async () => {
+  // DETALJ har en åpen runde med attestasjoner i omløp.
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+  assert.equal(_finn(h, t("ui.policyadmin.handling.forkast")), undefined,
+    "et forslag med attestasjoner i omløp skal ikke kunne rives bort");
+});
+
+test("Forkast: axe-ren, og knappen er merket som farlig", async () => {
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
+  assert.ok(_finn(h, t("ui.policyadmin.handling.forkast"))
+    .classList.contains("fare"));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });

@@ -13,7 +13,7 @@ from policy_validator.audit import lag_loggpost, sikker_beslutning
 from policy_validator.engine import (
     STOPP, TILLAT, UNNTAK, Decision, EvaluationContext, MinneTellerLager,
     evaluate, parse_belop)
-from policy_validator.schema import valider_policy
+from policy_validator.schema import valider_ny_policy, valider_policy
 
 NAA = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)  # mandag
 CTX = EvaluationContext(tenant_id="t1", aktor_rolle="agent",
@@ -71,7 +71,7 @@ def test_skjemamonstre_bruker_ekte_slutt_ikke_pythons(tjeneste):
 
     JSON Schema er ECMA-262, der `$` uten `m`-flagget ER slutten. `jsonschema`
     kjører mønstrene gjennom `re`, så hele skjemaet arvet lekkasjen: `"1.2.3\\n"`
-    var skjemagyldig. Databasen leser `$` strengt (migrasjon 020–024), så
+    var skjemagyldig. Databasen leser `$` strengt (migrasjon 020–025), så
     utkastet ble frosset og attestert her og veltet først i `aktiver_policy` —
     rapportert som `versjon_i_bruk`, altså feil beskjed på et tidspunkt der
     `meta.versjon` ikke lenger kan rettes.
@@ -80,18 +80,42 @@ def test_skjemamonstre_bruker_ekte_slutt_ikke_pythons(tjeneste):
     like skjemagyldig, og da avviser `les_policyref` referansen som uleselig —
     evidens uten policyidentitet.
 
-    Kontroll: bytt `_Validator` tilbake til `jsonschema.Draft202012Validator`,
-    så blir denne rød ved at feillisten er tom.
+    Kravet står i INNFØRINGSkontrakten — se
+    `test_ekte_slutt_gjelder_framover_ikke_for_aktive`.
+
+    Kontroll: fjern `pattern`-passet i `_valider_innforing`, så blir denne rød
+    ved at feillisten er tom.
     """
-    for sti, verdi in ((("meta", "versjon"), "1.2.3\n"),
-                       (("meta", "policy_id"), "tjenestebedrift-no\n")):
+    for felt, verdi in (("versjon", "1.2.3\n"),
+                        ("policy_id", "tjenestebedrift-no\n")):
         p = yaml.safe_load(yaml.safe_dump(tjeneste))
-        p[sti[0]][sti[1]] = verdi
-        assert any(sti[1] in f for f in valider_policy(p)), \
-            f"{sti[1]} med linjeskift slapp gjennom skjemaet"
+        p["meta"][felt] = verdi
+        assert any(felt in f for f in valider_ny_policy(p)), \
+            f"{felt} med linjeskift slapp gjennom innføringskontrakten"
     p = yaml.safe_load(yaml.safe_dump(tjeneste))
     p["handlinger"][0]["id"] += "\n"
-    assert valider_policy(p), "handling-id med linjeskift slapp gjennom"
+    assert valider_ny_policy(p), "handling-id med linjeskift slapp gjennom"
+
+
+def test_ekte_slutt_gjelder_framover_ikke_for_aktive(tjeneste):
+    """Ankerkravet er FRAMOVERRETTET — lastekontrakten er urørt.
+
+    `hent_aktiv` revaliderer den LAGREDE policyen mot lastekontrakten ved hver
+    eneste forespørsel. En policy med hale i en `handlinger[].id` kan være aktiv
+    i dag: skjemaet slapp den gjennom, og bare `meta.policy_id`/`meta.versjon`
+    hadde en DB-kontroll som fanget den. Strammet vi lastekontrakten, ville den
+    tenanten mistet ALLE policystyrte beslutninger i det utrullingen lander —
+    `PolicyKorrupt`, uten sjanse til å aktivere en rettet versjon. Samme
+    resonnement som verifikator-id-kravet (Codex P1 på #63).
+
+    Kontroll: flytt `pattern`-passet fra `_valider_innforing` inn i `_valider`,
+    så blir denne rød.
+    """
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    p["handlinger"][0]["id"] += "\n"
+    assert valider_policy(p) == [], \
+        "lastekontrakten ble strammet — aktive policyer med hale blir korrupte"
+    assert valider_ny_policy(p), "veien INN skal likevel være stengt"
 
 
 def test_ecma_ankre_rorer_ikke_klasser_og_escaper():

@@ -5,6 +5,7 @@ DB-en håndhever fullmaktsreglene, ikke koden: `er_forfatter` server-utledet
 utkast-/runde-statemaskiner, append-only attestasjon. Hver trigger muteres bort
 av en ulovlig operasjon som MÅ feile.
 """
+import json
 import secrets
 
 import psycopg
@@ -445,7 +446,7 @@ def test_aktiver_policy_krever_dokumentets_egen_policy_id():
     Bruddet er NAVNGITT (`dokument_policy_id`), så kalleren kan skille det fra
     versjonsinvariantene, som deler feilkode.
 
-    Kontroll: fjern steg 1b i migrasjon 022, så aktiverer denne uten å blunke.
+    Kontroll: fjern steg 1b i migrasjon 023, så aktiverer denne uten å blunke.
     """
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
@@ -543,7 +544,7 @@ def test_aktiver_policy_avviser_versjon_som_sprenger_primaernokkelen():
     etter fire-øyne. Nå er den et `check_violation`, som kalleren besvarer med
     en kansellert runde.
 
-    Kontroll: fjern `octet_length`-kravet i migrasjon 024, så blir denne rød med
+    Kontroll: fjern `octet_length`-kravet i migrasjon 025, så blir denne rød med
     `ProgramLimitExceeded` i stedet.
     """
     c = _c()
@@ -571,7 +572,7 @@ def test_aktiver_policy_krever_at_dokumentet_sier_produksjon():
     `hent_aktiv` raden: `meta.status 'utkast' != registerets 'produksjon'` —
     aktiveringen svarte «aktivert», beslutningsveien svarte `PolicyKorrupt`.
 
-    Kontroll: fjern steg 1c i migrasjon 023, så aktiverer denne et utkast som
+    Kontroll: fjern steg 1c i migrasjon 024, så aktiverer denne et utkast som
     beslutningsveien aldri kan bruke.
     """
     c = _c()
@@ -641,6 +642,111 @@ def test_aktiver_policy_monotoni_nullpadder_gamle_versjoner():
     finally:
         r.rollback()
         r.close()
+
+
+def _innhold_med_verifikator(vid, versjon="1.1.0", felt="verifikatorer"):
+    return json.dumps({"meta": {"versjon": versjon},
+                       felt: {vid: {"beskrivelse": "x"}}})
+
+
+@pg
+@pytest.mark.parametrize("vid", ["foo.beskrivelse", "foo[0]", ""])
+@pytest.mark.parametrize("felt", ["verifikatorer", "verifikator_prioritet"])
+def test_aktiver_policy_avviser_flertydig_verifikator_id(vid, felt):
+    """🔴 Codex P2 på #63: innføringskravet må holde I den herdede grensen.
+
+    Python stiller kravet ved runde-åpning og ved attestasjon — men en runde
+    som ble åpnet FØR utrullingen kan alt ha nok attestasjoner (bevart fra et
+    forsøk som stoppet på en usynk peker). Er begge de portene passert, går et
+    direkte `SELECT aktiver_policy(...)` utenom dem, og utkastet ville blitt
+    aktivert uten at kravet noen gang ble stilt. Migrasjon 022 stiller det der
+    de andre invariantene står: i funksjonen, på innholdet som skrives.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold=_innhold_med_verifikator(vid, felt=felt))
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as ei:
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        assert "flertydig" in str(ei.value)
+    finally:
+        r.rollback()
+        r.close()
+
+    # …og ingenting ble skrevet: policyen er ikke registrert, og utkastet står
+    # fortsatt som `validert` (feilen rullet hele kallet tilbake).
+    #
+    # Kontrollen tas på en FERSK forbindelse, ikke på `r` etter rullebakken:
+    # `set_config(..., false)` er transaksjonell som alt annet SET, så
+    # rollbacken over tok tenant-konteksten med seg — og uten den skjuler RLS
+    # radene. En «0 rader»-påstand ville da vært sann uansett hva funksjonen
+    # hadde skrevet, altså en test som ikke kan feile.
+    c = _c()
+    try:
+        assert c.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                         " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 0
+        assert c.execute("SELECT status FROM policyutkast WHERE tenant=%s"
+                         " AND utkast_id=%s", (TEN, uid)).fetchone()[0] \
+            == "validert"
+    finally:
+        c.rollback()
+        c.close()
+
+
+@pg
+def test_aktiver_policy_slipper_gjennom_entydig_verifikator_id():
+    """Motprøve på 022: kontrollen tar de to skilletegnene, ikke id-er flest.
+
+    Uten denne ville en for bred kontroll (husmønsteret `^[a-z0-9_]+$`, eller
+    en tegn-kontroll som også tok `-`/`:`) sett like grønn ut på testen over.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold=_innhold_med_verifikator("v-ny_2:a"))
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        assert r.execute("SELECT aktiver_policy(%s,%s,1,NULL)",
+                         (TEN, uid)).fetchone()[0] == "1.1.0"
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
+def test_aktiver_policy_takler_innhold_uten_verifikatorer():
+    """Kontrollen må ikke kaste på et dokument der feltene mangler eller ikke
+    er objekter — den skal si fra om flertydige id-er, ikke duplisere
+    lastekontrakten (det ville brutt P1-en over: skjema hører hjemme i
+    validatoren, ikke i plpgsql)."""
+    for innhold in ('{"meta":{"versjon":"1.1.0"},"verifikatorer":null}',
+                    '{"meta":{"versjon":"1.1.0"},"verifikatorer":[]}',
+                    '{"meta":{"versjon":"1.1.0"}}'):
+        c = _c()
+        uid = "u-" + secrets.token_hex(4)
+        pid = "pol-" + secrets.token_hex(3)     # egen policy per variant
+        _validert_utkast(c, uid, pid, av="forf", innhold=innhold)
+        _runde(c, uid)
+        _attest(c, uid, "forf", True)
+        _attest(c, uid, "uavh", False)
+        c.commit(); c.close()
+        r = _rt()
+        try:
+            assert r.execute("SELECT aktiver_policy(%s,%s,1,NULL)",
+                             (TEN, uid)).fetchone()[0] == "1.1.0", innhold
+        finally:
+            r.rollback()
+            r.close()
 
 
 @pg

@@ -1,47 +1,37 @@
 -- ============================================================
--- 022 — Dokumentet må bære den identiteten det aktiveres under (Codex P1)
+-- 022 — Innføringskravet må håndheves I aktiveringsgrensen (Codex P2 på #63)
 --
--- 🔴 FUNNET: `policyutkast.policy_id` og dokumentets `innhold.meta.policy_id`
--- er TO uavhengige felter, og ingenting bandt dem sammen. Utkastendepunktet tar
--- `policy_id` fra forespørselens topp-nivå og `innhold` som en egen blokk; hver
--- av dem består sin egen formatkontroll. Redigeringsveien er verre: den skriver
--- nytt `innhold` UTEN å røre radens `policy_id`, så `meta.policy_id` kan endres
--- til hva som helst etter at utkastet er opprettet.
+-- 🔴 FUNNET: kravet om at en verifikator-id ikke kan bære skilletegnene i
+-- diffstien (`.` eller `[`) sto kun i Python: `policyadmin.valider_utkast`
+-- (porten inn) og `_krev_innforingskrav` i `opprett_aktiveringsrunde` +
+-- `attester_aktivering`. `aktiver_policy` er derimot den HERDEDE grensen —
+-- den er `SECURITY DEFINER` og eksplisitt grantet til runtime-rollen
+-- `disponit` (021, linje 217-218), nettopp fordi den skal holde selv når den
+-- kalles UTENOM orkestreringen. Fire-øyne, diffbindingen og versjons-
+-- monotonien ligger derfor i funksjonen. Innføringskravet gjorde ikke det.
 --
--- Aktiveringen lagrer da raden under databasens `policy_id` = «p», mens
--- dokumentet inni sier «q». Registeret er tilsynelatende friskt —
--- `hent_aktiv(p)` finner raden og validerer innholdet — men beslutningsmotoren
--- bygger policyreferansen sin fra DOKUMENTET
--- (`engine.policyreferanse`: `<meta.policy_id>@<meta.versjon>/<handling>`).
--- Revisjonsposten og M-37-gjenopprettingen slår derfor opp «q», der ingen aktiv
--- rad finnes, og sakene faller ut av automatisk behandling. Ingen feilmelding
--- peker på årsaken: begge halvdeler ser riktige ut hver for seg.
+-- Hullet er ikke teoretisk: en runde som ble åpnet FØR utrullingen kan alt ha
+-- nok attestasjoner (f.eks. bevart fra et aktiveringsforsøk som stoppet på en
+-- usynk peker). Python-gatene kjører ved runde-åpning og ved attestasjon —
+-- begge er da passert. Repareres pekeren, aktiverer et direkte
+-- `SELECT aktiver_policy(...)` utkastet uten at kravet noen gang ble stilt.
 --
--- 🟢 RETNINGEN: identiteten er ÉN sak, ikke to. Dokumentet eier den — på samme
--- måte som det eier versjonen (020) — og registerkolonnen indekserer den.
--- Kontrollen ligger på tre nivåer, som versjonsinvariantene:
---   * `valider_utkast` nekter å FRYSE et dokument som bærer en annen identitet
---     enn raden (utfall `ugyldig`, med avviket i feillisten — eier ser hva som
---     er galt i editoren);
---   * porten kontrollerer det igjen før runden åpnes og før noen attesterer
---     (et utkast validert FØR denne fiksen kan bære avviket);
---   * denne funksjonen er siste skanse: et direkte kall utenom orkestreringen
---     når aldri forbi den.
+-- 🟢 RETNINGEN: samme invariant, samme sted som de andre — i funksjonen, på
+-- det INNHOLDET som faktisk skrives (utkastraden, låst i steg 1), ikke på noe
+-- kalleren sender inn. Kontrollen er en TEGN-kontroll på nøklene i
+-- `verifikatorer`/`verifikator_prioritet`, ikke en skjemavalidering: en
+-- plpgsql-funksjon skal ikke bære en kopi av `policy-schema-v0.2.json`, og
+-- lastekontrakten er per definisjon bakoverkompatibel og sier ingenting nytt
+-- her. Den speiler `schema._valider_innforing` — differansen, og bare den.
 --
--- Å SKRIVE OM `meta.policy_id` VED AKTIVERING er stengt, av samme grunn som for
--- versjonen: innholdet er frosset ved validering og `innholds_hash` er bundet i
--- attestasjonene. En omskriving ville aktivert noe ANNET enn det godkjennerne
--- signerte på.
+-- FRAMOVERRETTET, som i Python (P1 på #63): kontrollen står på
+-- AKTIVERINGSVEIEN, ikke på lesing. En allerede aktiv policy med en slik id
+-- leses og virker som før; det er neste versjon som må rette id-en.
 --
--- Bruddet reises som `check_violation` med et NAVNGITT constraint
--- (`USING CONSTRAINT`), så kalleren kan skille dokumentavvik fra
--- versjonsinvariantene 020 innførte — som ellers deler feilkode. Uten navnet
--- ville et identitetsavvik blitt rapportert som `versjon_i_bruk`, altså en
--- korrekt kansellering med feil begrunnelse.
---
--- Funksjonen erstattes i sin helhet (021 er siste versjon); alt annet er
--- uendret. `db/kjorer.py` verifiserer SHA-256 på hver anvendt migrasjon, så
--- 020/021 kan ikke rettes i ettertid — rettelsen hører hjemme her.
+-- HVORFOR EN NY FIL: `db/kjorer.py` verifiserer SHA-256 på hver anvendt
+-- migrasjon og feiler hardt på endret fil — historikken er immutable, og 021
+-- har landet. Funksjonen erstattes i sin helhet, slik 021 erstattet den fra
+-- 020; alt annet i den er ordrett uendret.
 -- ============================================================
 
 SET LOCAL ROLE disponit_policy_eier;
@@ -70,7 +60,8 @@ DECLARE
     v_ny_ledd       TEXT[];
     v_aktiv_ledd    TEXT[];
     v_bredde        INT;
-    v_dok_pid       TEXT;
+    v_dok           JSONB;
+    v_ugyldig_id    TEXT;
 BEGIN
     -- 1. Utkastet — låst. Innholdet som aktiveres kommer HERFRA, ikke fra
     --    kalleren (så det som aktiveres er nøyaktig det som ble attestert).
@@ -90,17 +81,6 @@ BEGIN
     IF v_innholds_hash IS NULL THEN
         RAISE EXCEPTION 'aktiver_policy: utkast % mangler frosset innholds_hash',
             p_utkast_id USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-
-    -- 1b. IDENTITETEN (se toppen): dokumentet må bære den policyen raden
-    --     aktiveres under. Ellers indekseres innholdet under én id mens motoren
-    --     bygger beslutningens policyreferanse fra en annen.
-    v_dok_pid := v_innhold -> 'meta' ->> 'policy_id';
-    IF v_dok_pid IS DISTINCT FROM v_policy_id THEN
-        RAISE EXCEPTION 'aktiver_policy: utkast % bærer meta.policy_id %, men '
-            'aktiveres under %', p_utkast_id, coalesce(v_dok_pid, '<null>'),
-            v_policy_id
-            USING ERRCODE = 'check_violation', CONSTRAINT = 'dokument_policy_id';
     END IF;
 
     -- 2. Runden — låst. Må være aktiverbar og ikke allerede brukt.
@@ -201,6 +181,45 @@ BEGIN
                 '% (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
                 USING ERRCODE = 'check_violation';
         END IF;
+    END IF;
+
+    -- 4c. INNFØRINGSKONTRAKTEN (022, Codex P2 på #63): verifikator-id-en er
+    --     den eneste FRIE nøkkelen i policyen, og den havner UTOLKET i
+    --     diffstien godkjenneren attesterer (`verifikatorer.<id>.<felt>`).
+    --     Med id-ene `foo` og `foo.beskrivelse` er `verifikatorer.foo.
+    --     beskrivelse` både beskrivelsen til den ene og roten til den andre,
+    --     og attestasjonen kan tilskrive en tillitsendring FEIL verifikator.
+    --     En tom id gir stien `verifikatorer.` og et blad uten eier.
+    --
+    --     Python stiller kravet ved runde-åpning og attestasjon, men begge
+    --     kan være passert før utrullingen — og et direkte kall hit går
+    --     utenom dem. Speiler `schema._valider_innforing`: KUN de to tegnene
+    --     som skaper flertydigheten, ikke husmønsteret, og ikke resten av
+    --     lastekontrakten (den er bakoverkompatibel og sier ingenting nytt).
+    v_dok := CASE WHEN jsonb_typeof(v_innhold) = 'object'
+                  THEN v_innhold ELSE '{}'::jsonb END;
+    SELECT string_agg(format('%s: %L', k.felt, k.vid), ', '
+                      ORDER BY k.felt, k.vid)
+      INTO v_ugyldig_id
+      FROM (SELECT f.felt, o.vid
+              FROM (VALUES ('verifikatorer'), ('verifikator_prioritet'))
+                        AS f(felt)
+              CROSS JOIN LATERAL jsonb_object_keys(
+                  CASE WHEN jsonb_typeof(v_dok -> f.felt) = 'object'
+                       THEN v_dok -> f.felt ELSE '{}'::jsonb END) AS o(vid)
+             WHERE o.vid = '' OR position('.' in o.vid) > 0
+                             OR position('[' in o.vid) > 0) AS k;
+    --     `CONSTRAINT` settes bevisst: orkestreringen fanger check_violation
+    --     fra denne funksjonen og har til nå kunnet anta at det var
+    --     VERSJONEN (020). Uten et strukturert skille måtte den lest
+    --     feilteksten for å vite forskjellen, og eier ville fått «versjonen er
+    --     i bruk» om en id. `diag.constraint_name` er den maskinlesbare
+    --     kanalen for nettopp det.
+    IF v_ugyldig_id IS NOT NULL THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % har verifikator-id som gjør '
+            'diffstien flertydig (%)', p_utkast_id, v_ugyldig_id
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'verifikator_id_entydig';
     END IF;
 
     -- 5. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).

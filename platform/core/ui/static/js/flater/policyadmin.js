@@ -6,7 +6,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentJson, validerUtkast, apneRunde, attesterAktivering, UgyldigFeil,
+  hentJson, validerUtkast, forkastUtkast, apneRunde, attesterAktivering,
+  UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
@@ -106,9 +107,9 @@ function normaliserKlassifikatorSti(sti) {
 // dem er en ekte nøkkelgrense, og lengste treff på tvers vinner.
 //
 // Men lengste faktiske nøkkel hjalp ikke så lenge skilletegnet ble TOLKET
-// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har heller
-// ingen `propertyNames`-begrensning, så `[bank]` og `.foo` er lovlige
-// verifikator-id-er. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
+// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har ingen
+// mønsterbegrensning i skjemaet, så `[bank]` og `.foo` er lovlige
+// verifikator-id-er i en LAGRET policy. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
 // før den så på nodens nøkler: `verifikatorer..foo…` mistet det ene punktumet
 // som var en DEL av nøkkelen, og `verifikatorer.[bank]…` ble lest som
 // listeindeks. Begge falt tilbake til samlegruppen `verifikatorer`, og flere
@@ -151,15 +152,35 @@ function delOppLedd(sti, kilder) {
     }
     forste = false;
     let navn = null;
+    let flertydig = false;
     for (const n of noder) {
       if (Array.isArray(n)) continue;
       for (const k of Object.keys(n)) {
         const etter = rest[k.length];
         if (!rest.startsWith(k)) continue;
         if (etter !== undefined && etter !== "." && etter !== "[") continue;
-        if (navn === null || k.length > navn.length) navn = k;
+        if (navn === null) { navn = k; continue; }
+        if (k === navn) continue;             // samme nøkkel fra base og utkast
+        flertydig = true;
+        if (k.length > navn.length) navn = k;
       }
     }
+    // To ULIKE nøkler treffer samme sti på en ekte nøkkelgrense (Codex P2):
+    // med verifikator-id-ene `foo` og `foo.beskrivelse` er
+    // `verifikatorer.foo.beskrivelse` både beskrivelsen til `foo` og roten til
+    // den andre. Lengste treff vant, så bladene til BEGGE havnet i ett kort med
+    // den ene id-en som overskrift — og godkjenneren leste en tillitsendring på
+    // feil verifikator. Innføringskontrakten (`schema.valider_ny_policy`)
+    // avviser nå slike id-er i policyer på vei INN, men det er en framoverrettet
+    // regel: en policy som ble aktivert før regelen fantes kan fortsatt ha en
+    // slik id (den kan ikke gjøres ugyldig i ettertid uten å ta beslutningene
+    // til tenanten med i fallet — Codex P1 på #63), og den er nettopp BASEN
+    // diffen måles mot. Utkastdetaljen viser dessuten diff for utkast som ENNÅ
+    // ikke er validert (`policyadmin.hent_utkast_detalj`). Stien kan altså nå
+    // hit, og da gjettes det ikke: resten tas som ETT ledd, så hvert blad får
+    // sitt eget kort med hele den rå stien som overskrift. Dårligere
+    // gruppering, men aldri feil tilskriving — og ingenting forsvinner.
+    if (flertydig) navn = rest;
     // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
     // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,
     // som før. Ett innledende skilletegn hører likevel nøkkelen til — vi står
@@ -788,6 +809,10 @@ const UTFALLSART = new Map([
   // eller status). Runden er lukket; innholdet er frosset, så det må et nytt
   // utkast til.
   ["dokument_avvik", "feil"],
+  // Utkastet bryter et framoverrettet krav (migrasjon 022 stoppet det i selve
+  // aktiveringen). Samme art som over — runden er lukket — men eier må rette
+  // INNHOLDET, ikke versjonen, så teksten er en annen.
+  ["utkast_ugyldig", "feil"],
 ]);
 
 // Feilkoder der «Handlingen feilet.» ville vært en løgn. Felles for dem er at
@@ -802,6 +827,10 @@ const GRUNNLAGSFEIL = new Map([
   ["policy_id_avvik", "ui.policyadmin.utfall.policy_id_avvik"],
   ["status_ikke_produksjon", "ui.policyadmin.utfall.status_ikke_produksjon"],
   ["dokument_avvik", "ui.policyadmin.utfall.dokument_avvik"],
+  // Utkastet bryter et framoverrettet krav som kom ETTER at det ble validert
+  // (Codex P2 på #63). Statusen `validert` er ekte, men foreldet — og et nytt
+  // klikk kan ikke gjøre noe med det: utkastet må rettes og valideres på nytt.
+  ["utkast_ugyldig", "ui.policyadmin.utfall.utkast_ugyldig"],
 ]);
 
 // -> teksten for en grunnlagsfeil, ellers den generiske «Handlingen feilet.».
@@ -914,6 +943,87 @@ function visEllerMeld(boks, node, talemelding) {
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
 // Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
 // er tegnet, og er det som låser opp attestering (se attest-grenen).
+// «Slett» finnes bare for et UTKAST — et forslag som ennå ikke binder noen.
+// En policy som har styrt beslutninger kan ikke fjernes: revisjonssporet ville
+// pekt på noe som ikke finnes lenger. Derfor heter den «Forkast», ikke «Slett»,
+// og derfor er den borte i det øyeblikket en runde er åpen: da har
+// godkjennere attestasjoner i omløp, og forslaget skal ikke kunne rives bort
+// under dem.
+// EN TAPT KVITTERING ER IKKE EN MISLYKKET HANDLING (Codex P2). Commiter
+// serveren forkastingen og svaret forsvinner på vei tilbake, ser klienten bare
+// en `ApiFeil` med status 0. «Handlingen feilet.» er da direkte usant — og
+// verre enn usant, fordi eier ikke kan prøve igjen for å finne ut av det: det
+// oppfriskede utkastet er `forkastet`, knappen er borte sammen med sin
+// render-stabile nøkkel, og handlingen er uopprettelig. Hun sitter igjen med
+// en kvittering som sier «feilet» på noe som gikk gjennom.
+//
+// Derfor det samme mønsteret som attesteringen bruker: ÉN retry med SAMME
+// nøkkel. Kom den første forespørselen fram, er nummer to en replay —
+// idempotensnøkkelen gjør at serveren svarer med det lagrede utfallet i stedet
+// for å forkaste noe om igjen — og eier får den ekte kvitteringen sin.
+//
+// Svarer nettet ikke andre gangen heller, VET vi fortsatt ikke hva som skjedde,
+// og da skal skjermen si nettopp det. Arten er `feil`, ikke `vent`: det er en
+// `role="alert"` som skal lese seg opp, for ingenting løser seg av seg selv.
+// Bare teksten er sann — «vi vet ikke» — i stedet for «det feilet».
+function forkastForsok(uid, versjon, nokkel, forsok, ctx, paaFerdig) {
+  return forkastUtkast(uid, versjon, nokkel)
+    .then(() => {
+      _settKvittering(uid, "ok", t("ui.policyadmin.forkastet"));
+      if (paaFerdig) paaFerdig();
+    })
+    .catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (e instanceof ApiFeil && e.status === 0) {
+        if (forsok === 0) {
+          return forkastForsok(uid, versjon, nokkel, 1, ctx, paaFerdig);
+        }
+        _settKvittering(uid, "feil", t("ui.policyadmin.forkast.ukjent"));
+        if (paaFerdig) paaFerdig();
+        return;
+      }
+      // Et SVAR fra serveren er derimot et svar: da feilet handlingen, og en
+      // blind retry ville bare gjentatt den samme avvisningen.
+      _settKvittering(uid, "feil", t("ui.policyadmin.feilet"));
+      if (paaFerdig) paaFerdig();
+    });
+}
+
+// HVILKET utkast? Bekreftelsen viste bare `policy_id`, og det er ikke en
+// identifikator for et utkast (Codex P2): en policyserie kan ha FLERE utkast
+// samtidig — skjemaet og `opprett_utkast` tillater det uttrykkelig — og de
+// deler `policy_id`. To dialoger for to forskjellige forslag i samme serie var
+// da ord for ord like. Det er én dialog for mye å ta feil av når handlingen er
+// uopprettelig og eier kan ha flere utkast oppe.
+//
+// `utkast_id` er det som faktisk peker på raden som forkastes, og
+// utkastversjonen er tilstanden nøkkelen bindes til — den samme versjonen
+// serveren avviser handlingen på hvis den har flyttet seg siden eier så den.
+// Serien først, fordi det er der eier orienterer seg; så det som skiller.
+function forkastMaal(detalj, uid) {
+  return `${detalj.policy_id} · ${t("ui.policyadmin.forkast.maal")
+    .replace("{utkast}", uid)
+    .replace("{versjon}", String(detalj.utkastversjon))}`;
+}
+
+function forkastKnapp(detalj, uid, ctx, paaFerdig) {
+  // STABIL nøkkel per render: re-klikk er retry, ikke en ny operasjon.
+  const nokkel = nyIdempotensnokkel();
+  const b = el("button", { class: "knapp fare", type: "button",
+    text: t("ui.policyadmin.handling.forkast") });
+  b.addEventListener("click", () => {
+    Bekreftelsesdialog({
+      tittel: t("ui.policyadmin.forkast.tittel"),
+      tekst: `${forkastMaal(detalj, uid)} · ${t("ui.policyadmin.forkast.tekst")}`,
+      primarTekst: t("ui.policyadmin.handling.forkast"),
+      farlig: true,
+      paaPrimar: () => forkastForsok(uid, detalj.utkastversjon, nokkel, 0,
+        ctx, paaFerdig),
+    });
+  });
+  return b;
+}
+
 function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
   const boks = el("section", { class: "pa-handling",
     "aria-label": t("ui.policyadmin.handlinger") });
@@ -988,7 +1098,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
         // utkastet: her vet vi bare at handlingen ikke gikk gjennom.
         visFeil(t("ui.policyadmin.feilet"), []);
       }));
-    boks.append(rediger, b);
+    boks.append(rediger, b, forkastKnapp(detalj, uid, ctx, paaFerdig));
     return { rot: boks, diffVist };
   }
 
@@ -1018,7 +1128,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
             el("p", { text: tekst })),
           tekst);
       }));
-    boks.append(b);
+    boks.append(b, forkastKnapp(detalj, uid, ctx, paaFerdig));
     return { rot: boks, diffVist };
   }
 

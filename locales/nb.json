@@ -662,6 +662,7 @@
   "ui.policyadmin.utfall.policy_id_avvik": "Utkastet oppgir en annen policy i «meta.policy_id» enn den det er registrert under. Rett id-en i utkastet og valider på nytt.",
   "ui.policyadmin.utfall.status_ikke_produksjon": "Utkastet må ha «meta.status»: «produksjon» for å kunne aktiveres. Rett statusen i utkastet og valider på nytt.",
   "ui.policyadmin.utfall.dokument_avvik": "Utkastet stemmer ikke med policyen det aktiveres som («meta.policy_id» eller «meta.status»). Runden er lukket — innholdet er frosset, så det må lages et nytt utkast.",
+  "ui.policyadmin.utfall.utkast_ugyldig": "Utkastet bryter et krav som gjelder alle policyer som aktiveres nå — det ble validert før kravet kom. Rett utkastet og valider på nytt.",
   "ui.policyadmin.diff.sammendrag": "{antall} endringer i {omrader} områder. Områder som utvider fullmakt står åpne øverst.",
   "ui.policyadmin.diff.antall_endringer": "{n} endringer",
   "ui.policyadmin.diff.antall_felt": "{n} felt",
@@ -676,5 +677,11 @@
   "ui.policyadmin.diff.gruppe.unntak": "Unntakshåndtering",
   "ui.policyadmin.diff.gruppe.dataklasser": "Dataklasser",
   "ui.policyadmin.diff.gruppe.tidssone": "Tidssone",
-  "ui.policyadmin.diff.gruppe.meta": "Metadata"
+  "ui.policyadmin.diff.gruppe.meta": "Metadata",
+  "ui.policyadmin.handling.forkast": "Forkast utkast",
+  "ui.policyadmin.forkast.tittel": "Forkast utkastet?",
+  "ui.policyadmin.forkast.tekst": "Utkastet blir stående som forkastet og kan ikke tas i bruk igjen. Ingen aktiv policy endres — dette er et forslag, ikke en fullmakt.",
+  "ui.policyadmin.forkast.maal": "utkast {utkast}, versjon {versjon}",
+  "ui.policyadmin.forkast.ukjent": "Vi vet ikke om forkastingen kom fram: nettverket svarte ikke, og forsøket ble gjentatt én gang. Frisk opp siden og se på statusen til utkastet før du prøver igjen.",
+  "ui.policyadmin.forkastet": "Utkastet er forkastet."
 }

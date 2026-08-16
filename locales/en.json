@@ -662,6 +662,7 @@
   "ui.policyadmin.utfall.policy_id_avvik": "The draft names a different policy in \"meta.policy_id\" than the one it is registered under. Fix the id in the draft and validate again.",
   "ui.policyadmin.utfall.status_ikke_produksjon": "The draft must have \"meta.status\": \"produksjon\" to be activated. Fix the status in the draft and validate again.",
   "ui.policyadmin.utfall.dokument_avvik": "The draft does not match the policy it is being activated as (\"meta.policy_id\" or \"meta.status\"). The round is closed — the content is frozen, so a new draft is required.",
+  "ui.policyadmin.utfall.utkast_ugyldig": "The draft breaks a requirement that applies to every policy activated from now on — it was validated before the requirement existed. Fix the draft and validate again.",
   "ui.policyadmin.diff.sammendrag": "{antall} changes across {omrader} areas. Areas that expand authority are open at the top.",
   "ui.policyadmin.diff.antall_endringer": "{n} changes",
   "ui.policyadmin.diff.antall_felt": "{n} fields",
@@ -676,5 +677,11 @@
   "ui.policyadmin.diff.gruppe.unntak": "Exception handling",
   "ui.policyadmin.diff.gruppe.dataklasser": "Data classes",
   "ui.policyadmin.diff.gruppe.tidssone": "Time zone",
-  "ui.policyadmin.diff.gruppe.meta": "Metadata"
+  "ui.policyadmin.diff.gruppe.meta": "Metadata",
+  "ui.policyadmin.handling.forkast": "Discard draft",
+  "ui.policyadmin.forkast.tittel": "Discard this draft?",
+  "ui.policyadmin.forkast.tekst": "The draft stays on record as discarded and cannot be used again. No active policy changes — this is a proposal, not an authority.",
+  "ui.policyadmin.forkast.maal": "draft {utkast}, version {versjon}",
+  "ui.policyadmin.forkast.ukjent": "We do not know whether the discard went through: the network did not answer, and the attempt was retried once. Refresh and check the draft's status before trying again.",
+  "ui.policyadmin.forkastet": "The draft has been discarded."
 }
