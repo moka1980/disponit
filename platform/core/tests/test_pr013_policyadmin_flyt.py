@@ -1157,6 +1157,74 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
 
 
 @pg
+def test_intern_valideringsfeil_kansellerer_ikke_runden(monkeypatch):
+    """🔴 Codex P2: «validatoren er nede» er ingen dom over utkastet.
+
+    Kanselleringen over hviler på at avslaget er PERMANENT — det frosne
+    innholdet kan ikke rettes. Men kontrollen kan også feile fordi VI er nede:
+    skjemafilen kan mangle eller være uleselig i en halvlandet utrulling, og
+    `valider_innforingskrav` gjorde et hvilket som helst slikt avbrudd om til
+    en oppføring i feillista. Da ble en reparerbar driftsfeil lest som et
+    innholdsbrudd, og runden lukket for godt: retter man utrullingen, kommer
+    runden ikke tilbake.
+
+    `valider_innforingskrav_strengt` kaster i stedet, `_krev_innforingskrav`
+    oversetter det til `valideringsfeil_intern` (HTTP 503), og
+    `_FROSNE_DOKUMENTBRUDD` slipper bare de permanente kodene til
+    kanselleringen.
+
+    Kontroll: legg `valideringsfeil_intern` inn i `_FROSNE_DOKUMENTBRUDD`, så
+    blir denne rød ved at runden er `kansellert` — og siste ledd, at eier
+    kommer helt i mål etter reparasjonen, blir umulig.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)             # UTVIDER, pakrevd 2
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+
+        def _nede(*_a, **_k):
+            raise policyadmin._schema.ValideringUtilgjengelig(
+                "FileNotFoundError: policy-schema-v0.2.json")
+
+        monkeypatch.setattr(policyadmin._schema,
+                            "valider_innforingskrav_strengt", _nede)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, a, r["diff_hash"])
+        assert e.value.kode == "valideringsfeil_intern", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        antall = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback(); m.close()
+    assert rstatus == "apen", (
+        "en reparerbar driftsfeil lukket en runde som var helt i orden")
+    assert antall == 0, "ingen signatur skal være skrevet"
+
+    # Og reparasjonen holder: utrullingen rettes, og runden går helt i mål.
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        assert _attester(rt, uid, b, r["diff_hash"])["utfall"] == "aktivert"
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) == "1.1.0"
+
+
+@pg
 def test_lovlig_utkast_slipper_gjennom_den_nye_porten():
     """Motprøven: porten avviser IKKE et utkast med en entydig verifikator-id.
     Uten den ville en for bred kontroll (hele lastekontrakten) stanset all

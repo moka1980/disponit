@@ -236,6 +236,39 @@ def valider_innforingskrav(policy: object) -> list[str]:
         return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
 
 
+class ValideringUtilgjengelig(RuntimeError):
+    """Validatoren kunne ikke KJØRE — det er ikke en dom over policyen.
+
+    Skjemafilen kan mangle eller være uleselig i en halvlandet utrulling. Da
+    vet vi ingenting om innholdet, og «utkastet bryter et krav» er en påstand
+    vi ikke har dekning for.
+    """
+
+
+def valider_innforingskrav_strengt(policy: object) -> list[str]:
+    """Som `valider_innforingskrav`, men SKILLER intern svikt fra innholdsbrudd:
+    en feil som ikke er policyens skyld kastes som `ValideringUtilgjengelig`.
+
+    Hvorfor begge finnes (Codex P2 på PR #64). `valider_innforingskrav` sluker
+    alt og legger «intern valideringsfeil» i feillista, og det er riktig der den
+    brukes som en ren rapport — en lesesti skal aldri kunne velte på en
+    validator. Men den som bruker svaret til å ta en IRREVERSIBEL avgjørelse
+    trenger forskjellen: `attester_aktivering` kansellerer runden på et
+    innholdsbrudd, fordi det frosne dokumentet aldri kan rettes. En manglende
+    skjemafil er derimot reparerbar — og en runde som ble kansellert mens
+    utrullingen var halvveis, kommer ikke tilbake når filen gjør det.
+
+    Kaster altså for det som er VÅR feil, og returnerer bare det som er
+    policyens.
+    """
+    if not isinstance(policy, dict):
+        return ["policy er ikke et objekt"]
+    try:
+        return _valider_innforing(policy)
+    except Exception as e:
+        raise ValideringUtilgjengelig(f"{type(e).__name__}: {e}") from e
+
+
 def _valider_innforing(policy: dict) -> list[str]:
     # Mønstrene måles med ECMA-ankre (se `_pattern_ecma`): `$` er slutten på
     # strengen, ikke «slutten, eller rett før en avsluttende linjeskift» som

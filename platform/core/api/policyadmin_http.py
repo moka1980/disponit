@@ -45,7 +45,12 @@ _FEIL_HTTP = {
     "token_ugyldig": 401, "rate_grense": 429,
     "dobbel_principal": 400, "sesjon_ugyldig": 401, "csrf_ugyldig": 403,
     "request_feilformet": 400, "idempotensnokkel_mangler": 400,
-    "db_utilgjengelig": 503, "policy_ugyldig": 422,
+    # 503, ikke 422: validatoren kunne ikke KJØRE (skjemafilen mangler i en
+    # halvlandet utrulling, f.eks.). Det er vår feil og den er reparerbar — å
+    # svare «utkastet er ugyldig» ville sendt eier for å rette noe vi ikke har
+    # målt (Codex P2).
+    "db_utilgjengelig": 503, "valideringsfeil_intern": 503,
+    "policy_ugyldig": 422,
     # Innholdet er ugyldig (innføringskontrakten), ikke tilstanden: 422 som
     # `policy_ugyldig` — eier må rette utkastet, ikke prøve igjen.
     "utkast_ugyldig": 422,

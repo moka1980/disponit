@@ -105,7 +105,10 @@ def kildechecksum() -> str:
 #: `re` leser den. Samme plassering og samme grunn som verifikator-id-kravet:
 #: INNFØRINGSKONTRAKTEN, ikke lastekontrakten — en alt aktiv policy med hale
 #: skal fortsette å virke.)
-MOTOR_SEMANTIKKVERSJON = "75d1cd8c3e820145c000372c8b00d312faf44266b299e662e37c0cc83dd21f9b"
+#: (Codex P2 på #64: `valider_innforingskrav_strengt` skiller INTERN svikt i
+#: validatoren fra et innholdsbrudd. Ingen policy skifter dom av dette — kravene
+#: er de samme — men `schema.py` er en manifestfil, så pinnen følger med.)
+MOTOR_SEMANTIKKVERSJON = "b55527ab582b451a7b2a1aaaa4b97c3586522ff3bb0a25ecfac61821f030bc4e"
 
 
 # ---------------------------------------------------------------------------

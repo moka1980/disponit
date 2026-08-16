@@ -890,11 +890,31 @@ def _krev_innforingskrav(ny_innhold) -> None:
     kontrollene her er passert i det aktiveringen skjer, og en runde kan ha
     vært ferdig attestert allerede da utrullingen landet. Denne funksjonen er
     porten som gir eier en forståelig feil FØR signaturene brukes; funksjonen i
-    DB er invarianten som holder også for et direkte kall utenom oss."""
-    feil = _schema.valider_innforingskrav(ny_innhold)
+    DB er invarianten som holder også for et direkte kall utenom oss.
+
+    Den STRENGE varianten brukes her (Codex P2): svarer validatoren «intern
+    feil» — skjemafilen mangler i en halvlandet utrulling, f.eks. — er det ikke
+    en dom over utkastet, og det skal ikke se ut som en. Kalleren kansellerer
+    runden på `utkast_ugyldig`, og en runde kansellert mens utrullingen var
+    halvveis kommer ikke tilbake når filen gjør det."""
+    try:
+        feil = _schema.valider_innforingskrav_strengt(ny_innhold)
+    except _schema.ValideringUtilgjengelig as e:
+        raise Aktiveringsfeil("valideringsfeil_intern", str(e)) from e
     if feil:
         raise Aktiveringsfeil("utkast_ugyldig", "; ".join(feil))
 
+
+#: Feilkodene som betyr at det FROSNE dokumentet er dømt: innholdet kan ikke
+#: rettes, bare erstattes, så en runde som møter dem er beviselig død og skal
+#: lukkes med det samme (`_kanseller_runde`). Tillatelsesliste, ikke
+#: unntaksliste — en ny kode er trygg i den andre grenen (rull tilbake, la
+#: runden leve) helt til noen har vist at den er permanent. `aktiv_peker_usynk`
+#: og `valideringsfeil_intern` står bevisst UTENFOR: begge er reparerbare, og
+#: den ene har dessuten en gjenopptakelsesvei (steg 7b).
+_FROSNE_DOKUMENTBRUDD = frozenset({
+    "policy_id_avvik", "status_ikke_produksjon",
+    "versjon_i_bruk", "versjon_mangler", "utkast_ugyldig"})
 
 #: `CONSTRAINT`-navnet `aktiver_policy` merker innføringskravbruddet med
 #: (migrasjon 022). Skiller det fra versjonsinvariantene, som deler SQLSTATE
@@ -1142,6 +1162,18 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         #
         # Utfallet er feilkoden selv, så eier får vite hva som må rettes — som
         # `_DOKUMENTBRUDD` gjør det på aktiveringsveien.
+        #
+        # ... men bare for de kodene som FAKTISK er en dom over det frosne
+        # dokumentet (Codex P2). En kontroll her kan også feile fordi VI er nede
+        # — `valideringsfeil_intern` når skjemafilen ikke kan leses i en
+        # halvlandet utrulling. Da vet vi ingenting om innholdet, og en runde
+        # kansellert på den påstanden kommer ikke tilbake når filen gjør det.
+        # Lista er derfor en tillatelsesliste og ikke en unntaksliste: en kode
+        # som legges til senere havner i den TRYGGE grenen til noen har tenkt
+        # gjennom om den er permanent.
+        if e.kode not in _FROSNE_DOKUMENTBRUDD:
+            conn.rollback()
+            raise
         return _kanseller_runde(conn, tenant, idempotency_key, utkast_id,
                                 policy_id, r_nr, e.kode)
 
