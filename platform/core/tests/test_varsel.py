@@ -28,6 +28,17 @@ def _conn(tenant=TEN):
     return c
 
 
+def _kontekst(c, tenant=TEN):
+    """Sett tenantkonteksten PÅ NYTT etter en commit.
+
+    `sett_kontekst` bruker `SET LOCAL`, som dør med transaksjonen. De fleste
+    testene her lever i én transaksjon og trenger den aldri; den som måler et
+    kappløp må committe, og da filtrerer RLS bort alt uten denne.
+    """
+    from db.pg import sett_kontekst
+    sett_kontekst(c, tenant, "test", "r0")
+
+
 def _bruker(c, navn, roller=("policyforvalter",), tenant=TEN):
     bid = c.execute(
         "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
@@ -236,6 +247,76 @@ def test_avmeldingen_gjelder_ogsaa_epost_som_alt_staar_i_koe():
         assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 4
     finally:
         c.close()
+
+
+@pg
+def test_avmelding_rekker_ogsaa_varselet_som_opprettes_akkurat_naa():
+    """Codex P2: avmeldingen og opprettelsen kappløp om en rad ingen av dem så.
+
+    `opprett` LESER kanalen og skriver så raden; `sett_kanal` SKRIVER kanalen
+    og rydder så køen. Skjer de samtidig, kan opprettelsen lese
+    `epost_og_portal`, avmeldingen rydde alle rader den kan SE — den nye er
+    ikke committet ennå, så ingen — og opprettelsen så sette inn en `koet`-rad
+    etterpå. Det endelige valget sier kun portal, og e-posten går ut likevel.
+    Vinduet er nøyaktig det brukeren tilbringer i innstillingene mens en runde
+    åpnes.
+
+    Her tvinges den rekkefølgen fram: opprettelsen står med en uskrevet rad
+    mens avmeldingen kjører i en annen forbindelse. Med kanalvalg-låsen må
+    avmeldingen vente til opprettelsen har committet, og oppryddingen ser da
+    raden.
+
+    Kontroll: fjern `_laas_kanalvalget`-kallet fra `opprett` eller fra
+    `sett_kanal`, så blir denne rød med `koet`.
+    """
+    import threading
+    import time
+
+    a = _conn()
+    b_conn = _conn()
+    try:
+        bid = _bruker(a, "kapplop")
+        a.commit()
+        _kontekst(a)
+        uid = "u-" + secrets.token_hex(6)
+
+        feil = []
+
+        def melder_av():
+            try:
+                _kontekst(b_conn)
+                varsel.sett_kanal(b_conn, tenant=TEN, bruker_id=bid,
+                                  kanal="kun_portal")
+                b_conn.commit()
+            except Exception as e:                            # noqa: BLE001
+                feil.append(e)
+
+        # Varselet opprettes, men transaksjonen står åpen: raden finnes ennå
+        # ikke for noen andre.
+        varsel.opprett(a, tenant=TEN, bruker_id=bid, art="attestering_venter",
+                       ressurs_type="policyutkast", ressurs_id=uid,
+                       hendelse="1", tekstnokkel="varsel.attestering_venter")
+        t = threading.Thread(target=melder_av)
+        t.start()
+        # Uten låsen rekker avmeldingen hele veien gjennom her — den ser ingen
+        # rad å rydde, og committer.
+        time.sleep(0.4)
+        a.commit()
+        t.join(timeout=15)
+        assert not t.is_alive(), "avmeldingen slapp aldri gjennom låsen"
+        assert not feil, feil
+
+        _kontekst(a)
+        st = a.execute(
+            "SELECT epost_status FROM varsel WHERE tenant=%s AND bruker_id=%s"
+            " AND ressurs_id=%s", (TEN, bid, uid)).fetchone()
+        assert st == ("ikke_aktuelt",), (
+            "varselet ble opprettet med e-post i kø mens brukeren meldte seg "
+            f"av i samme øyeblikk — hun får e-posten likevel: {st}")
+        assert varsel.hent_kanal(a, tenant=TEN, bruker_id=bid) == "kun_portal"
+    finally:
+        b_conn.close()
+        a.close()
 
 
 @pg

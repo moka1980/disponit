@@ -68,6 +68,11 @@ FEILET = object()
 #: savepoint-etikett er en identifikator og ikke kan parametriseres.
 _SP = "varsel_skjerm"
 
+#: Advisory-klassen for kanalvalget. Andre halvdel av nøkkelen er hashen av
+#: tenant + bruker, så to brukere ikke venter på hverandre. Se
+#: `_laas_kanalvalget`.
+KANALVALGNOKKEL = 615_774_026
+
 
 def skjermet(conn: psycopg.Connection, arbeid):
     """Kjør ett steg under en SAVEPOINT. -> resultatet, eller `FEILET`.
@@ -126,6 +131,36 @@ def _kanal(conn: psycopg.Connection, tenant: str, bruker_id: str) -> str:
     return rad[0] if rad else STANDARDKANAL
 
 
+def _laas_kanalvalget(conn: psycopg.Connection, tenant: str,
+                      bruker_id: str) -> None:
+    """Ta brukerens kanalvalg-lås for resten av transaksjonen.
+
+    De to veiene som må være enige om kanalen — `opprett`, som LESER valget og
+    så skriver en rad, og `sett_kanal`, som SKRIVER valget og så rydder køen —
+    kappløp ellers om et varsel som ikke fantes for noen av dem (Codex P2):
+    `opprett` leser `epost_og_portal`, avmeldingen oppdaterer alle rader den
+    kan SE, og først etterpå settes den nye raden inn med `koet`. Valget sier
+    kun portal, og e-posten går ut likevel. Vinduet er nøyaktig det brukeren
+    tilbringer i innstillingene mens en runde åpnes.
+
+    Låsen er en advisory-lås og ikke en radlås på `varselvalg`, fordi den
+    farligste varianten er den der raden IKKE finnes ennå: standarden er et
+    fravær, så førstegangsavmeldingen — den vanligste av alle — INSERTer, og en
+    `FOR SHARE` på ingenting serialiserer ingenting. En advisory-nøkkel finnes
+    uansett om raden gjør det.
+
+    `xact`-varianten slippes av commit eller rollback, aldri av en savepoint
+    som rulles tilbake. Det er riktig her: `opprett` kjøres under `skjermet`,
+    og en lås som forsvant med savepointet ville sluppet avmeldingen inn i
+    vinduet igjen.
+
+    Nøkkelen er (klasse, hash av tenant+bruker). En hash-kollisjon mellom to
+    brukere koster litt unødig serialisering og ingenting annet.
+    """
+    conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))",
+                 (KANALVALGNOKKEL, f"{tenant}\x1f{bruker_id}"))
+
+
 def mottakere_for_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
                         runde: int) -> list[str]:
     """Hvem kan bringe DENNE runden videre?
@@ -141,6 +176,11 @@ def mottakere_for_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
     1, må runde 2 attesteres på nytt av de samme menneskene. Uten `a.runde`
     her ville alle som deltok i en tidligere runde vært utelukket fra varselet
     for den nye — permanent, og nettopp de som har vist at de svarer.
+
+    Rekkefølgen er FAST på `bruker_id`, ikke fordi noen leser den, men fordi
+    `opprett` tar en lås per mottaker: to runder som åpnes samtidig og deler
+    godkjennere kunne ellers ta de samme låsene i motsatt rekkefølge og gå i
+    vranglås. Én sorteringsnøkkel er hele vernet.
     """
     return [r[0] for r in conn.execute(
         "SELECT m.bruker_id FROM brukermedlemskap m"
@@ -148,7 +188,8 @@ def mottakere_for_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
         "   AND 'policyforvalter' = ANY(m.roller)"
         "   AND NOT EXISTS (SELECT 1 FROM aktiveringsattestasjon a"
         "                    WHERE a.tenant=m.tenant AND a.utkast_id=%s"
-        "                      AND a.runde=%s AND a.bruker_id=m.bruker_id)",
+        "                      AND a.runde=%s AND a.bruker_id=m.bruker_id)"
+        " ORDER BY m.bruker_id",
         (tenant, utkast_id, runde)).fetchall()]
 
 
@@ -170,7 +211,12 @@ def opprett(conn: psycopg.Connection, *, tenant: str, bruker_id: str, art: str,
 
     Har mottakeren valgt kun portal, settes `epost_status='ikke_aktuelt'` med
     én gang: et bevisst fravær skal ikke se ut som en sending som aldri kom.
+
+    Lesningen av kanalen og innsettingen av raden skjer under mottakerens
+    kanalvalg-lås (`_laas_kanalvalget`), så en avmelding som skjer akkurat nå
+    enten er lest av oss eller rekker å rydde raden vi setter inn.
     """
+    _laas_kanalvalget(conn, tenant, bruker_id)
     kanal = _kanal(conn, tenant, bruker_id)
     status = "koet" if kanal == "epost_og_portal" else "ikke_aktuelt"
     rad = conn.execute(
@@ -415,9 +461,16 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     vekke det opp igjen ville sendt e-post om runder som kan ha rukket å bli
     både attestert og lukket i mellomtiden. Nye varsler etter omvalget får
     `koet` som normalt — det er den kanalen valget gjelder for.
+
+    «Alt ligger i kø» rakk likevel ikke det som ble opprettet i det samme
+    øyeblikket (Codex P2). Derfor tas mottakerens kanalvalg-lås FØR valget
+    skrives: en samtidig `opprett` er da enten ferdig — og raden dens synlig
+    for oppryddingen under — eller den venter, og leser det nye valget når den
+    slipper til.
     """
     if kanal not in ("epost_og_portal", "kun_portal"):
         raise ValueError(f"ukjent varselkanal: {kanal!r}")
+    _laas_kanalvalget(conn, tenant, bruker_id)
     conn.execute(
         "INSERT INTO varselvalg (tenant, bruker_id, kanal) VALUES (%s,%s,%s)"
         " ON CONFLICT (tenant, bruker_id) DO UPDATE"
