@@ -190,7 +190,13 @@ if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
   echo "på nytt når $MILJOFIL står stille og sier 'staging'."
   exit 1
 fi
-install -d -m 700 /etc/disponit/api /etc/disponit/m37
+# Hver katalog `skriv_cred` skriver i MÅ opprettes her først. `skriv_cred` er
+# en `printf >`-omdirigering: står katalogen ikke der, feiler den — og den
+# feiler i den MUTERENDE fasen, etter at preflighten er passert og
+# credentials alt er delvis skrevet om. På en vert som har rullet ut før,
+# finnes katalogen fra forrige gang og feilen er usynlig; det er nøyaktig
+# den ferske verten som treffer den. `test_pr009` måler koblingen mot kilden.
+install -d -m 700 /etc/disponit/api /etc/disponit/m37 /etc/disponit/varsel
 skriv_cred() {  # katalog navn verdi
   printf '%s' "$3" > "/etc/disponit/$1/$2"
   chmod 600 "/etc/disponit/$1/$2"

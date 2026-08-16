@@ -348,6 +348,70 @@ def test_p1_preflight_skjer_for_forste_mutasjon():
             f"mutasjonen {mutasjon!r} står FØR preflight-gaten"
 
 
+# ---------------------------------------------------------------------------
+# Codex P1 (PR-068): credential-katalogen må finnes FØR den skrives i.
+#
+# `skriv_cred` er `printf > /etc/disponit/<kat>/<navn>` — ingen katalog, ingen
+# fil, og feilen kommer i den MUTERENDE fasen, lenge etter preflighten. På en
+# vert som har rullet ut før, ligger katalogen igjen fra forrige gang og
+# hullet er usynlig. Det er den FERSKE verten som treffer det, og det er
+# derfor den som måles her.
+# ---------------------------------------------------------------------------
+
+CRED_START = "install -d -m 700 /etc/disponit/api"
+CRED_SLUTT = "skriv_cred domener DISPONIT_RESOLVERE"
+
+
+def _credentialblokken() -> str:
+    """Materialiseringen av credentials, ordrett fra opp.sh."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    start = opp.index(CRED_START)
+    slutt = opp.index("\n", opp.index(CRED_SLUTT, start))
+    return opp[start:slutt]
+
+
+def test_p1_hver_skriv_cred_katalog_opprettes_forst():
+    """Kilden: hver `skriv_cred <kat>` har en `install -d` av NØYAKTIG den
+    katalogen FØR seg. Porten er generell med vilje — den neste
+    credential-katalogen noen legger til er dekket uten at noen husker det."""
+    blokk = _credentialblokken()
+    import re
+    opprettet: dict[str, int] = {}
+    for m in re.finditer(r"^install -d -m 700 (.+)$", blokk, re.M):
+        for sti in m.group(1).split():
+            opprettet.setdefault(sti.rsplit("/", 1)[-1], m.start())
+    for m in re.finditer(r"^skriv_cred (\w+) ", blokk, re.M):
+        kat = m.group(1)
+        assert kat in opprettet, \
+            f"skriv_cred skriver i /etc/disponit/{kat}, som aldri opprettes"
+        assert opprettet[kat] < m.start(), \
+            f"/etc/disponit/{kat} opprettes ETTER at det skrives i"
+
+
+def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
+    """Og beviset: kjør blokken mot en TOM falsk rot. En manglende katalog
+    er da en ikke-null exit, ikke en fil ingen la merke til manglet."""
+    rot = tmp_path / "etc-disponit"
+    venv = tmp_path / "rot/.venv/bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("#!/bin/sh\necho signatur-stub\n")
+    (venv / "python").chmod(0o755)
+    blokk = _credentialblokken().replace("/etc/disponit", str(rot))
+    env = {"ROT": str(tmp_path / "rot"), "KILDE": str(ROT),
+           "PATH": "/usr/bin:/bin"}
+    env.update({n: f"verdi-{n}" for n in (
+        "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
+        "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
+        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL")})
+    import subprocess
+    res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
+                         capture_output=True, text=True, env=env)
+    assert res.returncode == 0, \
+        f"credential-materialiseringen feilet på en fersk rot:\n{res.stderr}"
+    assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text() \
+        == "verdi-DATABASE_URL"
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):
