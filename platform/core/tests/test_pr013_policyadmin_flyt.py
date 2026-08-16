@@ -705,6 +705,35 @@ def test_porten_avviser_utkast_som_oppgir_en_annen_policy():
 
 
 @pg
+def test_porten_avviser_utkast_som_ikke_sier_produksjon():
+    """🔴 P1: et utkast merket `utkast` kan ikke aktiveres som `produksjon`.
+
+    Aktiveringen skriver alltid registerstatus `produksjon`, og `hent_aktiv`
+    krever at dokumentet sier det samme. Et skjemagyldig utkast med
+    `meta.status: utkast` gikk derfor hele veien gjennom fire-øyne og ble en
+    aktiv policy beslutningsveien avviste som korrupt. Statusen kan ikke rettes
+    etterpå — innholdet er frosset — så kravet må stå FØR noen signerer.
+
+    Kontroll: fjern `_krev_produksjonsstatus` i `opprett_aktiveringsrunde`, så
+    åpner runden, og feilen flytter seg til etter to signaturer.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {**_UTVIDER_INNHOLD,
+                          "meta": {"policy_id": pid, "versjon": "1.1.0",
+                                   "bransjemal": "test", "status": "utkast"}})
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "status_ikke_produksjon", e.value.kode
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
 def test_hent_aktiv_avviser_rad_med_fremmed_dokumentidentitet():
     """🔴 P1: beslutningsveien nekter å bruke en policy som ikke vet hvem den er.
 

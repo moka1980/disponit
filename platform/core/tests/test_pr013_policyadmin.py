@@ -270,12 +270,12 @@ def test_runtime_kan_ikke_skrive_policyer_direkte():
 def _validert_utkast(c, uid, pid, av="bruker-a", innhold=None,
                      versjon="1.1.0"):
     # Aktiveringen lagrer policyens EGEN `meta.versjon` som registerets
-    # `versjon` (migrasjon 020) og krever at dokumentet bærer radens egen
-    # `meta.policy_id` (migrasjon 022) — et utkast uten dem kan ikke aktiveres,
-    # heller ikke i disse DB-nære testene.
+    # `versjon` (migrasjon 020), krever at dokumentet bærer radens egen
+    # `meta.policy_id` (022) og at det SIER `produksjon` (023) — et utkast uten
+    # dem kan ikke aktiveres, heller ikke i disse DB-nære testene.
     if innhold is None:
         innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"'
-                   + versjon + '"},"a":1}')
+                   + versjon + '","status":"produksjon"},"a":1}')
     c.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,status,"
         "innholds_hash,opprettet_av) VALUES (%s,%s,%s,%s::jsonb,'validert',%s,%s)",
@@ -363,10 +363,11 @@ def test_aktiver_policy_krever_semantisk_versjon():
     """
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
-    # Identiteten er på plass (migrasjon 022) — det er VERSJONEN som mangler,
-    # ellers ville testen bevist feil kontroll.
+    # Identiteten (022) og statusen (023) er på plass — det er VERSJONEN som
+    # mangler, ellers ville testen bevist feil kontroll.
     _validert_utkast(c, uid, pid, av="forf",
-                     innhold='{"meta":{"policy_id":"' + pid + '"},"a":1}')
+                     innhold='{"meta":{"policy_id":"' + pid + '",'
+                             '"status":"produksjon"},"a":1}')
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -450,7 +451,7 @@ def test_aktiver_policy_krever_dokumentets_egen_policy_id():
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
     _validert_utkast(c, uid, pid, av="forf",
                      innhold='{"meta":{"policy_id":"en-annen-policy",'
-                             '"versjon":"1.1.0"},"a":1}')
+                             '"versjon":"1.1.0","status":"produksjon"},"a":1}')
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -462,6 +463,39 @@ def test_aktiver_policy_krever_dokumentets_egen_policy_id():
         assert e.value.diag.constraint_name == "dokument_policy_id", (
             "bruddet må være navngitt — ellers rapporteres et identitetsavvik"
             " som versjon_i_bruk")
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
+def test_aktiver_policy_krever_at_dokumentet_sier_produksjon():
+    """🔴 P1: raden skrives som `produksjon` — dokumentet må si det samme.
+
+    Skjemaet tillater `utkast` og `validert_pilot` i `meta.status`, så en slik
+    policy er fullt gyldig og gikk hele veien gjennom fire-øyne. Etterpå avviste
+    `hent_aktiv` raden: `meta.status 'utkast' != registerets 'produksjon'` —
+    aktiveringen svarte «aktivert», beslutningsveien svarte `PolicyKorrupt`.
+
+    Kontroll: fjern steg 1c i migrasjon 023, så aktiverer denne et utkast som
+    beslutningsveien aldri kan bruke.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold='{"meta":{"policy_id":"' + pid + '",'
+                             '"versjon":"1.1.0","status":"utkast"},"a":1}')
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as e:
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        assert e.value.diag.constraint_name == "dokument_status", (
+            "bruddet må være navngitt — ellers er det ikke til å skille fra"
+            " versjonsinvariantene")
     finally:
         r.rollback()
         r.close()

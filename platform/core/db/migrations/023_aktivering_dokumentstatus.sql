@@ -1,0 +1,252 @@
+-- ============================================================
+-- 023 — Dokumentet må si `produksjon` for å bli aktivert som det (Codex P1)
+--
+-- 🔴 FUNNET: aktiveringen skriver ALLTID `policyer.status = 'produksjon'`
+-- (steg 5), men leser aldri hva dokumentet selv sier. Skjemaet tillater tre
+-- verdier i `meta.status` — `utkast`, `validert_pilot` og `produksjon`
+-- (`policies/policy-schema-v0.2.json`) — og en policy merket `utkast` er
+-- fullt skjemagyldig. En slik runde gikk hele veien: fire-øyne passerte,
+-- funksjonen svarte «aktivert», og raden ble stående med databasestatus
+-- `produksjon` over et dokument som sier noe annet.
+--
+-- `policyregister.hent_aktiv` avviser NØYAKTIG den raden:
+--
+--     meta.status 'utkast' != registerets status 'produksjon'  → PolicyKorrupt
+--
+-- Kontrollen finnes fordi kolonnen brukes til filtrering mens `meta.status`
+-- havner i loggposten: spriker de, er det uklart hva beslutningen ble tatt
+-- under. Resultatet er samme sykdom som versjonsfunnet (020) og
+-- identitetsfunnet (022): aktiveringen svarer «ja», og hver påfølgende
+-- beslutning avviser den ferske policyen som korrupt. En maskert korrupsjon,
+-- ikke en høylytt feil.
+--
+-- 🟢 RETNINGEN: dokumentet må SI det det aktiveres som. Å skrive om
+-- `meta.status` her er stengt av samme grunn som for versjon og identitet:
+-- innholdet er frosset ved validering og `innholds_hash` er bundet i
+-- attestasjonene — en omskriving ville aktivert noe ANNET enn det
+-- godkjennerne signerte på. Så: krav, ikke reparasjon.
+--
+-- Porten (`policyadmin`) krever det samme FØR runden åpnes og før noen
+-- attesterer, så eier får beskjed om å rette `meta.status` i utkastet mens
+-- det ennå KAN rettes. Denne funksjonen er siste skanse.
+--
+-- Merk at `produksjon` er hardkodet her, som i steg 5. Hvilke statuser en
+-- LASTET policy får ha, er miljøstyrt (`policyregister.tillatte_statuser`) —
+-- men hva den STYRTE aktiveringen skriver, er det ikke, og skal ikke være:
+-- fire-øyne-veien aktiverer produksjonspolicyer, i alle miljøer.
+--
+-- Funksjonen erstattes i sin helhet (022 er siste versjon); alt annet er
+-- uendret. `db/kjorer.py` verifiserer SHA-256 på hver anvendt migrasjon, så
+-- 020/021/022 kan ikke rettes i ettertid — rettelsen hører hjemme her.
+-- ============================================================
+
+SET LOCAL ROLE disponit_policy_eier;
+CREATE OR REPLACE FUNCTION aktiver_policy(
+    p_tenant       TEXT,
+    p_utkast_id    TEXT,
+    p_runde        INT,
+    p_base_versjon TEXT)           -- forventet gjeldende aktiv (NULL = deny-all)
+RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    v_policy_id     TEXT;
+    v_innhold       JSONB;
+    v_innholds_hash TEXT;
+    v_ustatus       TEXT;
+    v_rstatus       TEXT;
+    v_diff_hash     TEXT;
+    v_pakrevd       INT;
+    v_utloper       TIMESTAMPTZ;
+    v_opid          TEXT;
+    v_total         INT;
+    v_uavhengige    INT;
+    v_diff_avvik    INT;
+    v_aktiv         TEXT;
+    v_ny            TEXT;
+    v_ny_ledd       TEXT[];
+    v_aktiv_ledd    TEXT[];
+    v_bredde        INT;
+    v_dok_pid       TEXT;
+    v_dok_status    TEXT;
+BEGIN
+    -- 1. Utkastet — låst. Innholdet som aktiveres kommer HERFRA, ikke fra
+    --    kalleren (så det som aktiveres er nøyaktig det som ble attestert).
+    SELECT policy_id, innhold, innholds_hash, status
+      INTO v_policy_id, v_innhold, v_innholds_hash, v_ustatus
+      FROM public.policyutkast
+     WHERE tenant = p_tenant AND utkast_id = p_utkast_id
+       FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'aktiver_policy: ukjent utkast %', p_utkast_id
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_ustatus NOT IN ('validert', 'godkjent') THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % er ikke aktiverbart (status=%)',
+            p_utkast_id, v_ustatus USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_innholds_hash IS NULL THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % mangler frosset innholds_hash',
+            p_utkast_id USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- 1b. IDENTITETEN (se toppen): dokumentet må bære den policyen raden
+    --     aktiveres under. Ellers indekseres innholdet under én id mens motoren
+    --     bygger beslutningens policyreferanse fra en annen.
+    v_dok_pid := v_innhold -> 'meta' ->> 'policy_id';
+    IF v_dok_pid IS DISTINCT FROM v_policy_id THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % bærer meta.policy_id %, men '
+            'aktiveres under %', p_utkast_id, coalesce(v_dok_pid, '<null>'),
+            v_policy_id
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'dokument_policy_id';
+    END IF;
+
+    -- 1c. STATUSEN (se toppen): raden skrives som `produksjon` i steg 5, og
+    --     `hent_aktiv` krever at dokumentet sier det samme. Et utkast merket
+    --     `utkast`/`validert_pilot` ville derfor blitt aktivert — og deretter
+    --     avvist som korrupt av hver eneste beslutning.
+    v_dok_status := v_innhold -> 'meta' ->> 'status';
+    IF v_dok_status IS DISTINCT FROM 'produksjon' THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % har meta.status %, men '
+            'aktivering skriver produksjon', p_utkast_id,
+            coalesce(v_dok_status, '<null>')
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'dokument_status';
+    END IF;
+
+    -- 2. Runden — låst. Må være aktiverbar og ikke allerede brukt.
+    SELECT status, diff_hash, pakrevd_antall_godkjennere, utloper,
+           decision_operation_id
+      INTO v_rstatus, v_diff_hash, v_pakrevd, v_utloper, v_opid
+      FROM public.aktiveringsrunde
+     WHERE tenant = p_tenant AND utkast_id = p_utkast_id AND runde = p_runde
+       FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'aktiver_policy: ukjent runde %/%', p_utkast_id, p_runde
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_opid IS NOT NULL OR v_rstatus NOT IN ('apen', 'klar') THEN
+        RAISE EXCEPTION 'aktiver_policy: runde %/% er ikke aktiverbar (status=%)',
+            p_utkast_id, p_runde, v_rstatus USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_utloper <= now() THEN
+        RAISE EXCEPTION 'aktiver_policy: runde %/% er utløpt', p_utkast_id, p_runde
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- 3. FIRE-ØYNE (V6), håndhevet i funksjonen: antall ≥ påkrevd, minst én
+    --    ikke-forfatter, og HVER attestasjon bandt rundens diff. Et direkte
+    --    kall uten en tilstrekkelig attestert runde avvises her.
+    SELECT count(*),
+           count(*) FILTER (WHERE NOT er_forfatter),
+           count(*) FILTER (WHERE diff_hash IS DISTINCT FROM v_diff_hash)
+      INTO v_total, v_uavhengige, v_diff_avvik
+      FROM public.aktiveringsattestasjon
+     WHERE tenant = p_tenant AND utkast_id = p_utkast_id AND runde = p_runde;
+    IF v_total < v_pakrevd THEN
+        RAISE EXCEPTION 'aktiver_policy: for få godkjennere (% < %) for %/%',
+            v_total, v_pakrevd, p_utkast_id, p_runde
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF v_uavhengige < 1 THEN
+        RAISE EXCEPTION 'aktiver_policy: ingen uavhengig godkjenner for %/%',
+            p_utkast_id, p_runde USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF v_diff_avvik > 0 THEN
+        RAISE EXCEPTION 'aktiver_policy: % attestasjon(er) bandt ikke rundens '
+            'diff for %/%', v_diff_avvik, p_utkast_id, p_runde
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- 4. Lås ankerraden (V1). Finnes den ikke, opprett den (onboarding).
+    INSERT INTO public.policy_hode (tenant, policy_id)
+        VALUES (p_tenant, v_policy_id)
+        ON CONFLICT (tenant, policy_id) DO NOTHING;
+    SELECT aktiv_versjon INTO v_aktiv
+      FROM public.policy_hode
+     WHERE tenant = p_tenant AND policy_id = v_policy_id
+       FOR UPDATE;
+
+    -- Konfliktdeteksjon (§4): den godkjennerne diffet mot MÅ fortsatt være
+    -- aktiv. En konkurrerende aktivering flyttet pekeren → rebasering.
+    IF v_aktiv IS DISTINCT FROM p_base_versjon THEN
+        RAISE EXCEPTION 'aktiver_policy: base % er ikke lenger aktiv (%) — '
+            'rebasering kreves', p_base_versjon, v_aktiv
+            USING ERRCODE = 'serialization_failure';
+    END IF;
+
+    -- 4b. VERSJONEN LESES FRA DOKUMENTET (se 020). Kontrollene under kjøres
+    --     med hoderaden låst, så ingen annen STYRT aktivering kan legge seg
+    --     imellom dette og INSERT-en i steg 5.
+    v_ny := v_innhold -> 'meta' ->> 'versjon';
+    IF v_ny IS NULL OR v_ny !~ '^[0-9]+\.[0-9]+\.[0-9]+$' THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % mangler semantisk '
+            'meta.versjon (%)', p_utkast_id, coalesce(v_ny, '<null>')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.policyer
+                WHERE tenant = p_tenant AND policy_id = v_policy_id
+                  AND versjon = v_ny) THEN
+        RAISE EXCEPTION 'aktiver_policy: versjon % er allerede registrert for '
+            '%/%', v_ny, p_tenant, v_policy_id USING ERRCODE = 'check_violation';
+    END IF;
+    -- Monotoni: kun når den aktive versjonen selv er tallpunktet. Eldre rader
+    -- (registrert før PR-013) kan bære hva som helst i TEXT-kolonnen, og en
+    -- kastefeil på en cast ville vært en dårligere feil enn ingen kontroll.
+    --
+    -- Leddene NULLPADDES til samme bredde FØR sammenligningen (se 021):
+    -- array-sammenligningen lar ellers {2,0,0} slå {2} — likt prefiks, lengst
+    -- vinner — og en aktiv «2» fra den gamle telleren ville sluppet gjennom
+    -- dokumentversjonen «2.0.0», som er den samme versjonen, ikke en nyere.
+    IF v_aktiv IS NOT NULL AND v_aktiv ~ '^[0-9]+(\.[0-9]+)*$' THEN
+        v_ny_ledd    := string_to_array(v_ny, '.');
+        v_aktiv_ledd := string_to_array(v_aktiv, '.');
+        v_bredde := greatest(array_length(v_ny_ledd, 1),
+                             array_length(v_aktiv_ledd, 1));
+        v_ny_ledd := (v_ny_ledd
+                      || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
+        v_aktiv_ledd := (v_aktiv_ledd
+                      || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
+        IF v_ny_ledd::int[] <= v_aktiv_ledd::int[] THEN
+            RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn aktiv '
+                '% (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+
+    -- 5. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).
+    IF v_aktiv IS NOT NULL THEN
+        UPDATE public.policyer SET aktiv = false
+         WHERE tenant = p_tenant AND policy_id = v_policy_id AND versjon = v_aktiv;
+    END IF;
+    INSERT INTO public.policyer
+        (tenant, policy_id, versjon, innholds_hash, status, innhold, aktiv)
+      VALUES (p_tenant, v_policy_id, v_ny, v_innholds_hash, 'produksjon',
+              v_innhold, true);
+    UPDATE public.policy_hode
+       SET aktiv_versjon = v_ny,
+           revisjon       = revisjon + 1
+     WHERE tenant = p_tenant AND policy_id = v_policy_id;
+
+    -- 6. Lukk runden (apen→klar→brukt følger statemaskinen) + utkast→aktivert
+    --    (validert→godkjent→aktivert). Alt i SAMME tx: runden kan aldri brukes
+    --    to ganger (decision_operation_id unik når satt).
+    IF v_rstatus = 'apen' THEN
+        UPDATE public.aktiveringsrunde SET status = 'klar'
+         WHERE tenant = p_tenant AND utkast_id = p_utkast_id AND runde = p_runde;
+    END IF;
+    UPDATE public.aktiveringsrunde
+       SET status = 'brukt',
+           decision_operation_id = 'aktiver-' || p_utkast_id || '-r' || p_runde
+     WHERE tenant = p_tenant AND utkast_id = p_utkast_id AND runde = p_runde;
+
+    IF v_ustatus = 'validert' THEN
+        UPDATE public.policyutkast SET status = 'godkjent'
+         WHERE tenant = p_tenant AND utkast_id = p_utkast_id;
+    END IF;
+    UPDATE public.policyutkast SET status = 'aktivert'
+     WHERE tenant = p_tenant AND utkast_id = p_utkast_id;
+
+    RETURN v_ny;
+END $$;
+REVOKE ALL ON FUNCTION aktiver_policy(TEXT, TEXT, INT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION aktiver_policy(TEXT, TEXT, INT, TEXT) TO disponit;
+RESET ROLE;

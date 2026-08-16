@@ -462,12 +462,41 @@ def _krev_dokumentidentitet(policy_id: str, innhold) -> None:
         raise Aktiveringsfeil("policy_id_avvik", avvik)
 
 
+#: Statusen den STYRTE aktiveringen skriver i registeret (`aktiver_policy`
+#: steg 5: `status = 'produksjon'`). Hvilke statuser en LASTET policy får ha er
+#: miljøstyrt (`policyregister.tillatte_statuser`) — hva fire-øyne-veien
+#: aktiverer, er det ikke: den aktiverer produksjonspolicyer, i alle miljøer.
+_AKTIVERINGSSTATUS = "produksjon"
+
+
+def _krev_produksjonsstatus(innhold) -> None:
+    """Dokumentets `meta.status` MÅ være den registerstatusen aktiveringen
+    skriver. Kaster `Aktiveringsfeil("status_ikke_produksjon")`.
+
+    Skjemaet tillater tre verdier (`utkast`, `validert_pilot`, `produksjon`),
+    så en policy merket `utkast` er fullt skjemagyldig — og gikk hele veien
+    gjennom fire-øyne. Raden ble da skrevet som `produksjon` over et dokument
+    som sier noe annet, og `hent_aktiv` avviser NØYAKTIG den kombinasjonen:
+    kolonnen brukes til filtrering mens `meta.status` havner i loggposten, så
+    spriker de, er det uklart hva beslutningen ble tatt under. Aktiveringen
+    svarte «aktivert», og hver påfølgende beslutning svarte `PolicyKorrupt`.
+
+    Å skrive om statusen ved aktivering er stengt (frosset innhold, bundet
+    `innholds_hash`), så kravet må komme FØR noen signerer — mens utkastet
+    ennå kan rettes."""
+    status = _meta(innhold).get("status")
+    if status != _AKTIVERINGSSTATUS:
+        raise Aktiveringsfeil("status_ikke_produksjon",
+                              f"meta.status={status!r}")
+
+
 #: `aktiver_policy` reiser dokumentinvariantene sine som `check_violation` og
 #: NAVNGIR bruddet (`USING CONSTRAINT`). Navnet er det eneste som skiller dem
 #: fra hverandre i feilen kalleren ser — uten det ville et identitetsavvik blitt
 #: rapportert som `versjon_i_bruk`: riktig kansellering, feil beskjed til eier.
 #: Ukjent/uten navn → versjonsinvariantene fra 020, som er de eldste.
-_DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik"}
+_DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
+                  "dokument_status": "dokument_avvik"}
 
 #: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`).
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -565,9 +594,11 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ikke aktiveres etter en reparasjon.
     _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
     # Og ingen runde åpnes på et utkast som ikke KAN lagres: identiteten det
-    # bærer må være radens egen (migrasjon 022), og versjonen må være
-    # semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
+    # bærer må være radens egen (migrasjon 022), statusen må være den
+    # aktiveringen skriver (migrasjon 023), og versjonen må være semantisk,
+    # ubrukt og nyere enn den aktive (migrasjon 020).
     _krev_dokumentidentitet(policy_id, ny_innhold)
+    _krev_produksjonsstatus(ny_innhold)
     _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
@@ -716,11 +747,12 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     # flytter basen, så rekalken i steg 9 krever rebasering uansett.
     try:
         _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
-        # Samme argument for identiteten og versjonen: en signatur på et utkast
-        # som ikke kan lagres — eller som ville blitt lagret under en ANNEN
-        # policy enn den det selv oppgir — er like verdiløs som en signatur på
-        # feil base.
+        # Samme argument for identiteten, statusen og versjonen: en signatur på
+        # et utkast som ikke kan lagres — eller som ville blitt lagret under en
+        # ANNEN policy enn den det selv oppgir, eller som en policy det ikke
+        # sier at det er — er like verdiløs som en signatur på feil base.
         _krev_dokumentidentitet(policy_id, ny_innhold)
+        _krev_produksjonsstatus(ny_innhold)
         _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     except Aktiveringsfeil:
         conn.rollback()

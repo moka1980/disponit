@@ -1187,8 +1187,9 @@ test("Attester: fremmed policy_id sier hva som må rettes (utfall)", async () =>
   assert.equal(kvitt.getAttribute("role"), "alert");
 });
 
-test("Attester: fremmed policy_id som 409 sier det samme", async () => {
-  for (const kode of ["policy_id_avvik", "dokument_avvik"]) {
+test("Attester: dokumentavvik som 409 sier hva som må rettes", async () => {
+  for (const kode of ["policy_id_avvik", "status_ikke_produksjon",
+    "dokument_avvik"]) {
     const kvitt = await _attesterMedPost(nyHoved(), async () => ({
       ok: false, status: 409, json: async () => ({ feil: kode }) }));
     assert.ok(kvitt.textContent.includes(t(`ui.policyadmin.utfall.${kode}`)),
