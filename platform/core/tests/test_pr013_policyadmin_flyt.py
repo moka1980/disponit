@@ -858,3 +858,59 @@ def test_lovlig_utkast_slipper_gjennom_den_nye_porten():
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_ferdig_attestert_runde_fra_for_utrullingen_aktiverer_ikke(monkeypatch):
+    """🔴 Codex P2 på #63: den herdede grensen må bære kravet, ikke bare Python.
+
+    Runde-åpning og attestering er BEGGE passert i det utrullingen lander på en
+    runde som alt hadde nok signaturer (f.eks. bevart fra et forsøk som stoppet
+    på en usynk peker). Da er det bare `aktiver_policy` igjen — og den er
+    dessuten grantet direkte til runtime-rollen, så et kall utenom
+    orkestreringen ender samme sted. Migrasjon 022 stopper det der.
+
+    Utfallet må dessuten si hva som er galt: kontrollen deler SQLSTATE med
+    versjonsinvariantene, og uten `CONSTRAINT`-skillet ville eier fått
+    «versjonen er i bruk» om en verifikator-id.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _FLERTYDIG_INNHOLD)
+    rt = _rt()
+    try:
+        # Hele Python-veien er «fra før utrullingen»: runden åpnes og begge
+        # signaturene avgis uten at kravet noen gang ble stilt.
+        monkeypatch.setattr(policyadmin, "_krev_innforingskrav",
+                            lambda *_a, **_k: None)
+        r = _apne(rt, uid, a)
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        # Terskelen nås → `aktiver_policy` kalles → DB-grensen tar den.
+        siste = _attester(rt, uid, b, r["diff_hash"])
+        assert siste["utfall"] == "utkast_ugyldig", siste
+    finally:
+        rt.close()
+
+    assert _aktiv_versjon(pid) is None, "utkastet ble aktivert"
+    m = _mig()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM policyer WHERE tenant=%s AND policy_id=%s",
+            (TEN, pid)).fetchone()[0] == 0
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        antall_attest = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+        ustatus = m.execute("SELECT status FROM policyutkast WHERE tenant=%s AND"
+                            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback(); m.close()
+    # Runden er beviselig død (innholdet er frosset) → kansellert med det
+    # samme, men signaturene består: de er sporet av hva som ble godkjent.
+    assert rstatus == "kansellert", rstatus
+    assert antall_attest == 2
+    assert ustatus == "validert", ustatus

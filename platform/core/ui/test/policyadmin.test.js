@@ -1139,6 +1139,25 @@ test("Attester: brukt versjon sier at utkastet må få ny versjon (utfall)",
     assert.equal(kvitt.getAttribute("role"), "alert");
   });
 
+// Codex P2 på #63: `utkast_ugyldig` kommer også som UTFALL, ikke bare som
+// feilkode — runden kan ha vært ferdig attestert da kravet kom, og da er det
+// migrasjon 022 i DB-grensen som stopper aktiveringen. Utfallet deler SQLSTATE
+// med versjonsinvariantene, så uten skillet ville eier fått «versjonen er i
+// bruk» om en verifikator-id og økt versjonen uten at noe ble bedre.
+test("Attester: utkast_ugyldig som utfall peker på innholdet, ikke versjonen",
+  async () => {
+    const kvitt = await _attesterMedUtfall(nyHoved(),
+      { utfall: "utkast_ugyldig" });
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.utkast_ugyldig")),
+    "eier fikk ikke vite at det er utkastets innhold som må rettes");
+    assert.ok(!kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.versjon_i_bruk")),
+    "eier ble sendt til versjonsnummeret for en feil i innholdet");
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+    assert.equal(kvitt.getAttribute("role"), "alert");
+  });
+
 // Codex P2 på #63: `utkast_ugyldig` er 422, ikke 409 — det er INNHOLDET som er
 // ugyldig, ikke tilstanden. Grunnlagsteksten må følge koden, ikke statusen.
 test("Attester: grunnlagsfeil sier det samme som utfallet", async () => {

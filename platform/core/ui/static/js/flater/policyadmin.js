@@ -804,6 +804,10 @@ const UTFALLSART = new Map([
   // Versjonen utkastet bærer kan ikke lagres (tatt utenom den styrte veien
   // mens runden sto åpen). Runden er lukket; utkastet må få en ny versjon.
   ["versjon_i_bruk", "feil"],
+  // Utkastet bryter et framoverrettet krav (migrasjon 022 stoppet det i selve
+  // aktiveringen). Samme art som over — runden er lukket — men eier må rette
+  // INNHOLDET, ikke versjonen, så teksten er en annen.
+  ["utkast_ugyldig", "feil"],
 ]);
 
 // Feilkoder der «Handlingen feilet.» ville vært en løgn. Felles for dem er at

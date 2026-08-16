@@ -496,10 +496,22 @@ def _krev_innforingskrav(ny_innhold) -> None:
     Merk asymmetrien mot `hent_aktiv`: en alt AKTIV policy revalideres fortsatt
     mot lastekontrakten alene og virker som før. Det er bare veien INN som
     strammes. Kaster `Aktiveringsfeil("utkast_ugyldig")`; eier må rette
-    utkastet og validere det på nytt."""
+    utkastet og validere det på nytt.
+
+    SISTE SKANSE ligger likevel i `aktiver_policy` (migrasjon 022): begge
+    kontrollene her er passert i det aktiveringen skjer, og en runde kan ha
+    vært ferdig attestert allerede da utrullingen landet. Denne funksjonen er
+    porten som gir eier en forståelig feil FØR signaturene brukes; funksjonen i
+    DB er invarianten som holder også for et direkte kall utenom oss."""
     feil = _schema.valider_innforingskrav(ny_innhold)
     if feil:
         raise Aktiveringsfeil("utkast_ugyldig", "; ".join(feil))
+
+
+#: `CONSTRAINT`-navnet `aktiver_policy` merker innføringskravbruddet med
+#: (migrasjon 022). Skiller det fra versjonsinvariantene, som deler SQLSTATE
+#: `check_violation` — uten det måtte utfallet utledes av feilteksten.
+_INNFORINGSKRAV_CONSTRAINT = "verifikator_id_entydig"
 
 
 # --------------------------------------------------------------------------
@@ -858,22 +870,36 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
-    except psycopg.errors.CheckViolation:
-        # Versjonsinvariantene i `aktiver_policy` (migrasjon 020): utkastets
-        # `meta.versjon` er borte, alt registrert, eller ikke nyere enn den
-        # aktive. Kontrollen i steg 5b fanger det som var der da runden ble
-        # bygget; hit kommer bare en versjon som ble tatt UTENOM den styrte
-        # veien i vinduet etterpå. Da er runden død: innholdet er frosset, så
-        # versjonen kan ikke økes uten et nytt utkast og nye signaturer.
-        # Runden kanselleres derfor med det samme — en runde som beviselig
-        # aldri kan aktiveres skal ikke stå åpen og se levende ut. Signaturene
-        # består (append-only); det er sporet av hva som faktisk ble godkjent.
+    except psycopg.errors.CheckViolation as e:
+        # Innholdsinvariantene i `aktiver_policy`: enten VERSJONEN (migrasjon
+        # 020 — `meta.versjon` er borte, alt registrert, eller ikke nyere enn
+        # den aktive), eller INNFØRINGSKRAVET (migrasjon 022 — en verifikator-id
+        # som gjør diffstien flertydig). Kontrollene i steg 5b fanger det som
+        # var der da runden ble bygget; hit kommer bare det som traff UTENOM
+        # den styrte veien i vinduet etterpå — eller, for innføringskravet, en
+        # runde som var ferdig attestert før utrullingen som innførte det.
+        #
+        # Uansett hvilken av de to: runden er død. Innholdet er frosset, så
+        # verken versjonen eller id-en kan rettes uten et nytt utkast og nye
+        # signaturer. Runden kanselleres derfor med det samme — en runde som
+        # beviselig aldri kan aktiveres skal ikke stå åpen og se levende ut.
+        # Signaturene består (append-only); det er sporet av hva som faktisk
+        # ble godkjent.
+        #
+        # UTFALLET må derimot skilles. De to krever ulik retting av eier (øk
+        # versjonen vs. rett id-en), og «versjonen er i bruk» om en
+        # verifikator-id er en feilmelding som sender eier feil vei.
+        # Funksjonen merker id-bruddet med `CONSTRAINT` (022), så skillet
+        # leses maskinelt og ikke ut av feilteksten.
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
+        utfall = ("utkast_ugyldig"
+                  if e.diag.constraint_name == _INNFORINGSKRAV_CONSTRAINT
+                  else "versjon_i_bruk")
         return _fullfor(conn, tenant, idempotency_key, {
-            "utfall": "versjon_i_bruk", "utkast_id": utkast_id,
+            "utfall": utfall, "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
