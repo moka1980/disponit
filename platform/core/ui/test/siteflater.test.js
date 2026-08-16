@@ -685,3 +685,42 @@ test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {
     "unntakssnarvei tilbudt uten exceptions:read");
   assert.ok(drift.querySelector('a[href="#/kundeadmin"]'));
 });
+
+test("Landing: hopp-lenka hopper FORBI navigasjonen, ikke til den", async () => {
+  // Fra #52, der feilen faktisk oppsto: topplinja lå INNE i
+  // `<main id="hovedinnhold">`, altså inne i målet for `.hoppelenke` i
+  // `index.html`. Da lander hoppet på toppen AV den gjentatte navigasjonen, og
+  // neste Tab går gjennom merket, alle nav-lenkene, søkefeltet og
+  // språkknappene — lenka sparer ingenting (WCAG 2.4.1).
+  //
+  // Denne forsiden gjør det riktig i dag. Testen finnes fordi forholdet er
+  // lett å bryte igjen ved neste omstrukturering, og fordi ingenting ellers
+  // måler det: den påstår RELASJONEN — navigasjon og søk utenfor målet,
+  // sideinnhold inni — ikke klassenavn.
+  window.history.replaceState({}, "", "/");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-hovednav"));
+
+  const maal = app.querySelector("#hovedinnhold");
+  assert.ok(maal, "hopp-målet #hovedinnhold finnes ikke");
+  assert.equal(maal.tagName, "MAIN", "hopp-målet er ikke hovedlandemerket");
+  assert.equal(maal.querySelector(".site-hovednav"), null,
+    "hovednavigasjonen står inne i hopp-målet — da hopper lenka til den");
+  assert.equal(maal.querySelector(".site-sok"), null,
+    "søkefeltet står inne i hopp-målet");
+  assert.ok(maal.textContent.includes(t("site.hero.tittel")),
+    "sideinnholdet står UTENFOR hopp-målet — da hopper lenka til ingenting");
+});
+
+test("Landing: en ukjent side gir hjem, ikke en tom flate", async () => {
+  // `?side=finnes-ikke` skal ikke ende i en side uten innhold. Fallet er
+  // stille i koden (siste ledd i ternærkjeden), og derfor verdt å låse.
+  window.history.replaceState({}, "", "/?side=finnes-ikke");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-hovednav"));
+  assert.ok(app.textContent.includes(t("site.hero.tittel")),
+    "en ukjent side ga en tom flate i stedet for hjem");
+  window.history.replaceState({}, "", "/");
+});
