@@ -106,8 +106,8 @@ function normaliserKlassifikatorSti(sti) {
 // dem er en ekte nøkkelgrense, og lengste treff på tvers vinner.
 //
 // Men lengste faktiske nøkkel hjalp ikke så lenge skilletegnet ble TOLKET
-// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har heller
-// ingen `propertyNames`-begrensning, så `[bank]` og `.foo` er lovlige
+// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` hadde den
+// gangen ingen `propertyNames`-begrensning, så `[bank]` og `.foo` var lovlige
 // verifikator-id-er. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
 // før den så på nodens nøkler: `verifikatorer..foo…` mistet det ene punktumet
 // som var en DEL av nøkkelen, og `verifikatorer.[bank]…` ble lest som
@@ -151,15 +151,32 @@ function delOppLedd(sti, kilder) {
     }
     forste = false;
     let navn = null;
+    let flertydig = false;
     for (const n of noder) {
       if (Array.isArray(n)) continue;
       for (const k of Object.keys(n)) {
         const etter = rest[k.length];
         if (!rest.startsWith(k)) continue;
         if (etter !== undefined && etter !== "." && etter !== "[") continue;
-        if (navn === null || k.length > navn.length) navn = k;
+        if (navn === null) { navn = k; continue; }
+        if (k === navn) continue;             // samme nøkkel fra base og utkast
+        flertydig = true;
+        if (k.length > navn.length) navn = k;
       }
     }
+    // To ULIKE nøkler treffer samme sti på en ekte nøkkelgrense (Codex P2):
+    // med verifikator-id-ene `foo` og `foo.beskrivelse` er
+    // `verifikatorer.foo.beskrivelse` både beskrivelsen til `foo` og roten til
+    // den andre. Lengste treff vant, så bladene til BEGGE havnet i ett kort med
+    // den ene id-en som overskrift — og godkjenneren leste en tillitsendring på
+    // feil verifikator. Skjemaet forbyr nå skilletegn i id-en, så dette er
+    // uoppnåelig for en policy som kan aktiveres; men utkastdetaljen viser diff
+    // for utkast som ENNÅ ikke er validert (`policyadmin.hent_utkast_detalj`),
+    // så stien kan fortsatt nå hit. Da gjettes det ikke: resten tas som ETT
+    // ledd, så hvert blad får sitt eget kort med hele den rå stien som
+    // overskrift. Dårligere gruppering, men aldri feil tilskriving — og
+    // ingenting forsvinner.
+    if (flertydig) navn = rest;
     // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
     // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,
     // som før. Ett innledende skilletegn hører likevel nøkkelen til — vi står

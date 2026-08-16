@@ -93,7 +93,9 @@ def kildechecksum() -> str:
 #: PINNET motorsemantikkversjon. MÅ være lik `kildechecksum()`; CI-porten
 #: håndhever det. Oppdateres BEVISST når en manifestfil endres (= versjonsbump).
 #: (CP3: nattvindu-støtte i tidsvindu/engine er innbakt i denne.)
-MOTOR_SEMANTIKKVERSJON = "4cf832a31a1abf6a89c85e1f58bb57fec33d7abfbc505e5b7de40160b33e6de3"
+#: (Codex P2 på #61: `propertyNames` på `verifikatorer`/`verifikator_prioritet`
+#: — verifikator-id-en kan ikke lenger inneholde skilletegnene i diffstien.)
+MOTOR_SEMANTIKKVERSJON = "3fc010fbabdf26ddebead7f6eb8bd4f230b6d972fbe82be08af5d633a92c6c5a"
 
 
 # ---------------------------------------------------------------------------
