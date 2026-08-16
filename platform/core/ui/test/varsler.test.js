@@ -81,6 +81,26 @@ test("Varsler: et ulest varsel er markert med MER enn farge", async () => {
   assert.ok(finn(h, t("ui.varsler.merk_lest")), "mangler «merk som lest»");
 });
 
+test("Varsler: tidspunktet er et lesbart klokkeslett, ikke «[object Object]»",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+      kanal: "epost_og_portal" } };
+    const h = nyHoved();
+    visVarsler(h, ctx());
+    await vent(() => h.querySelector(".varselrad"));
+    const tid = h.querySelector(".varselrad time");
+    assert.ok(tid, "raden mangler <time>");
+    // `Tidspunkt` tar ISO-STRENGEN. Fikk den et objekt rundt den, ble
+    // formateringen ugyldig og fallbacken skrev objektet — synlig for
+    // brukeren, og i `datetime` som en maskinlesbar løgn.
+    assert.equal(tid.getAttribute("datetime"), VARSEL.opprettet,
+      "datetime bærer ikke ISO-strengen");
+    assert.ok(!tid.textContent.includes("object Object"),
+      "tidspunktet ble rendret fra et objekt");
+    assert.ok(/\d/.test(tid.textContent), "tidspunktet viser ingen tall");
+  });
+
 test("Varsler: «Gå til» merker lest OG navigerer — også hvis merkingen feiler",
   async () => {
     POSTET = [];

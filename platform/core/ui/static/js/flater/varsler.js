@@ -37,7 +37,12 @@ function varseltekst(v) {
 function rad(v, paaLest, paaAapne) {
   const li = el("li", { class: `varselrad${v.lest ? "" : " varsel-ulest"}` });
   const tekst = el("p", { class: "varseltekst", text: varseltekst(v) });
-  const nar = Tidspunkt({ iso: v.opprettet });
+  // ISO-STRENGEN, ikke et objekt rundt den (Codex P2). `Tidspunkt` tar
+  // strengen selv, slik alle de andre flatene kaller den. Med et objekt ble
+  // `new Date(...)` ugyldig, formateringen kastet, og fallbacken skrev
+  // objektet både i teksten og i `datetime` — hvert varsel viste
+  // «[object Object]» der tidspunktet skulle stått.
+  const nar = Tidspunkt(v.opprettet);
   const knapper = el("div", { class: "varselknapper" });
 
   const rute = RUTE_FOR_ART[v.art];
