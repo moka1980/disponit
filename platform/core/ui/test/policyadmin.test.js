@@ -1889,6 +1889,44 @@ test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
       "modulen skiftet også, og begge sider hører hjemme i overskriften");
   });
 
+// `tillatt_for` er en MENGDE av roller. Sto bare `tillatt_for[0]` i
+// overskriften, var en rolle lagt til ETTER den første usynlig i den lukkede
+// oppsummeringen — enda det å gi en ny rolle fullmakt er nettopp det serveren
+// klassifiserer som UTVIDER (Codex P2).
+//
+// Kontroll: sett `MENGDEFELT` tilbake til `tillatt_for[0]` i `NOKKELFELT`, så
+// blir denne rød.
+const NY_ROLLE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].tillatt_for[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41",
+        tillatt_for: ["admin", "ansatt", "regnskap"] },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].tillatt_for[1]", type: "lagt_til", til: "ansatt" },
+    { sti: "handlinger[0].tillatt_for[2]", type: "lagt_til", til: "regnskap" },
+  ] },
+};
+
+test("Diff: hver rolle som får fullmakt, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NY_ROLLE_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  for (const r of ["admin", "ansatt", "regnskap"]) {
+    assert.ok(opps.includes(r),
+      `rollen «${r}» mangler i overskriften: «${opps}»`);
+  }
+  // Rollene er en mengde, og skal skilles i TEKSTEN — «adminansatt» er ikke
+  // to roller for et menneske, og ikke for en skjermleser heller.
+  assert.ok(/admin,\s*ansatt/.test(opps),
+    `rollene limes sammen uten skilletegn: «${opps}»`);
+});
+
 // Fjernes et nøkkelfelt fra et element som fortsatt finnes, har utkastet
 // ingenting å hydrere overskriften med — og feltet forsvant da helt fra den.
 // Å fjerne `grenser.belop_maks` gjør en begrenset handling UBEGRENSET og

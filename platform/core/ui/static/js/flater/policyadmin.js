@@ -219,7 +219,14 @@ function bladRad(e) {
 const IDENTITET = ["id", "handling"];
 
 // Fullmaktsbærende felt, i den rekkefølgen de vises.
-const NOKKELFELT = ["modul", "modus", "grunnkode", "tillatt_for[0]"];
+const NOKKELFELT = ["modul", "modus", "grunnkode"];
+
+// `tillatt_for` er en MENGDE av roller, ikke ett felt, og sto i overskriften
+// som `tillatt_for[0]`. Utvides den fra ["admin"] til ["admin", "ansatt"],
+// klassifiserer serveren det som UTVIDER — men overskriften viste fortsatt
+// bare «admin», og den rollen som nettopp FIKK fullmakt var den ene som ikke
+// var å se (Codex P2). Hele mengden hører hjemme der, i indeksrekkefølge.
+const MENGDEFELT = ["tillatt_for"];
 
 // Beløpsgrense + valutaen den er i — de hører sammen i én merkelapp, og de to
 // listene plasserer dem forskjellig: `handlinger[].grenser.belop_maks` mot
@@ -322,10 +329,30 @@ function elementOverskrift(element, blader, kilder) {
     }
     return (gml !== undefined && gml !== ny) ? `${gml} → ${ny}` : ny;
   };
+  // Hele mengden under `f` som ÉN merkelapp, i indeksrekkefølge — og roller
+  // som er borte henger med, av samme grunn som et fjernet nøkkelfelt gjør det:
+  // det er endringen i hvem som har fullmakt godkjenneren skal se.
+  const mengde = (f) => {
+    const indeksene = (m) => [...m.keys()]
+      .map((k) => [k, /^(.+)\[(\d+)\]$/.exec(k)])
+      .filter(([, m2]) => m2 && m2[1] === f)
+      .sort((a, b) => Number(a[1][2]) - Number(b[1][2]))
+      .map(([k]) => k);
+    const naa = indeksene(felt)
+      .map((k) => sider(k).ny).filter((v) => v !== undefined);
+    const borte = indeksene(foer).filter((k) => sider(k).ny === undefined)
+      .map((k) => `${foer.get(k)} → ${t("ui.policyadmin.diff.fjernet")}`);
+    const alle = [...naa, ...borte];
+    return alle.length ? alle.join(", ") : undefined;
+  };
   const navn = IDENTITET.map(vis).find((v) => v !== undefined) ?? String(element);
   const merker = [];
   for (const f of NOKKELFELT) {
     const v = vis(f);
+    if (v !== undefined) merker.push(v);
+  }
+  for (const f of MENGDEFELT) {
+    const v = mengde(f);
     if (v !== undefined) merker.push(v);
   }
   for (const [belop, valuta] of BELOPSFELT) {
