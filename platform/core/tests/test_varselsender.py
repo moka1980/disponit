@@ -387,9 +387,10 @@ def test_031_nuller_de_historiske_nb_ene_innenfor_RLS_vinduet():
     """
     sql = (Path(__file__).resolve().parents[1] / "db/migrations"
            / "031_varsel_sprak_ikke_uttrykt.sql").read_text(encoding="utf-8")
-    # Bare teksten her: `_setninger` gir også «står setningen under en vakt»,
-    # og det er ACL-avspillingens spørsmål, ikke rekkefølgens.
-    setninger = [s for s, _under_vakt in _setninger(sql)]
+    # Bare den SKREVNE teksten her: `_setninger` gir også en maskert form og
+    # «står setningen under en vakt», og begge er ACL-avspillingens spørsmål,
+    # ikke rekkefølgens. Maskeringen ville dessuten strøket nettopp `'nb'`.
+    setninger = [s for s, _maskert, _under_vakt in _setninger(sql)]
 
     def hvor(nal):
         traff = [i for i, s in enumerate(setninger) if nal in s]
@@ -1467,6 +1468,7 @@ _STRENG = re.compile(r"'(?:''|[^'])*'")
 #: Markøren bruker NUL, som ikke kan stå i SQL-tekst — og som ingen av
 #: uttrykkene over kan forveksle med et navn eller et nøkkelord.
 _MARKOER = "\x00{}\x00"
+_MARKOER_MAL = re.compile(r"\x00(\d+)\x00")
 
 #: DEN ENE STRENGEN SOM LIKEVEL KJØRER (Codex P2 på #71). plpgsql `EXECUTE`
 #: tar en tekst og utfører den som SQL, og 003 bruker formen alt
@@ -1511,8 +1513,28 @@ def _uten_strenger(tekst):
     return _STRENG.sub(bytt, tekst), innhold
 
 
+def _klartekst(setning, strenger):
+    """Setningen slik den STÅR SKREVET — markørene byttet tilbake.
+
+    Maskeringen er ACL-avspillingens verktøy, ikke en egenskap ved filen.
+    Den som spør etter setningene for å lese REKKEFØLGEN — nullingen i 031
+    mot RLS-vinduet, for eksempel — skal se teksten som er der, `'nb'` og
+    alt. Konstanten normaliseres på samme måte som resten av setningen, slik
+    at den leses likt uansett hvordan den er brutt over linjer.
+    """
+    return _MARKOER_MAL.sub(
+        lambda m: "'" + " ".join(strenger[int(m.group(1))].split()).lower()
+                  .replace("'", "''") + "'",
+        setning)
+
+
 def _delt(tekst, i_blokk):
-    """Setningene i et tekststykke, hver med «står den under en vakt?».
+    """Setningene i et tekststykke, hver på to former og med sin vakt.
+
+    Gir `(setning, maskert, betinget)`: `setning` er teksten slik den står
+    skrevet, `maskert` er den samme med strengkonstantene byttet ut med
+    markører. ACL-avspillingen måler den MASKERTE — se `_uten_strenger` —
+    mens den som leser rekkefølge eller innhold skal ha den skrevne.
 
     Dybden telles bare inne i en DO-blokk: på toppnivå i en migrasjonsfil
     finnes det ingen plpgsql-gren en setning kan stå under.
@@ -1527,15 +1549,16 @@ def _delt(tekst, i_blokk):
         s = " ".join(rå.split()).lower()
         if not s:
             continue
-        yield s, dybde > 0
+        yield _klartekst(s, strenger), s, dybde > 0
         # …og den ene teksten som likevel er kode. Den spilles av HER, altså
         # på plassen der `EXECUTE` står, med den vakten som gjelder der.
         # Innholdet kan selv være flere setninger — plpgsql godtar det — så
-        # det splittes på semikolon som alt annet.
+        # det splittes på semikolon som alt annet. Den er sin egen klartekst:
+        # det er nettopp teksten som kjører.
         for m in _DYNAMISK.finditer(s):
             for bit in strenger[int(m.group(1))].split(";"):
                 if kjort := " ".join(bit.split()).lower():
-                    yield kjort, dybde > 0
+                    yield kjort, kjort, dybde > 0
         if i_blokk:
             # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
             # en logglinje lukker ingen gren, og en `IF … THEN` i en
@@ -1547,8 +1570,10 @@ def _delt(tekst, i_blokk):
 def _setninger(sql):
     """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
 
-    Gir `(setning, betinget)`, der `betinget` sier om setningen står inne i
-    en plpgsql-gren som ÅPNET I EN TIDLIGERE SETNING.
+    Gir `(setning, maskert, betinget)`, der `setning` er teksten slik den
+    står skrevet, `maskert` er den samme med strengkonstantene byttet ut med
+    markører — den ACL-avspillingen måler — og `betinget` sier om setningen
+    står inne i en plpgsql-gren som ÅPNET I EN TIDLIGERE SETNING.
 
     Kroppene fjernes fordi de inneholder både `;` og — i kommentarform —
     nettopp de ordene denne testen leter etter. Det som er igjen er filens
@@ -1764,7 +1789,9 @@ def _spill_av(filer, signaturer):
         # mens et `SET ROLE` uten `LOCAL` blir stående inn i den neste — og
         # den forskjellen er nettopp hvem en senere REVOKE kjøres som.
         rolle = sesjonsrolle
-        for s, under_vakt in _setninger(sql):
+        # Den MASKERTE formen måles: en ACL-setning som bare er sitert i en
+        # logglinje er ikke en setning. Klarteksten er de andre lesernes.
+        for _skrevet, s, under_vakt in _setninger(sql):
             if skift := _ROLLESKIFTE.match(s):
                 ny = None if skift.group(2) == "none" else skift.group(2)
                 rolle = ny
