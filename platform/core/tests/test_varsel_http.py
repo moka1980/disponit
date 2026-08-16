@@ -117,3 +117,66 @@ def test_innboksen_ser_egne_varsler_gjennom_endepunktet(klient):
         f"brukeren at ingenting venter: {body}")
     assert body["uleste"] == 1
     assert body["kanal"] == "epost_og_portal"
+
+
+def _les(sql, *p):
+    m = _migrator()
+    try:
+        return m.execute(sql, p).fetchone()
+    finally:
+        m.close()
+
+
+@pg
+def test_merk_lest_overlever_forespoerselen(klient):
+    """Codex P1: et 200-svar er ikke et løfte om at noe ble lagret.
+
+    `Tilkoblingspool.gi_tilbake` ruller UBETINGET tilbake — med vilje, så
+    SET LOCAL og låser ikke følger med inn i neste tenants forespørsel. Uten en
+    commit blir svaret altså sendt og skrivingen kastet i samme åndedrag.
+
+    Derfor leses tilstanden her fra en HELT ANNEN forbindelse etter kallet. En
+    assert på responsbodyen ville vært grønn også uten commit: den måler bare
+    at UPDATE-en traff en rad, ikke at raden fortsatt er endret.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `_ok_lagret` mot `_ok` i endepunktet.
+    """
+    from api import sesjon as sesjonmodul
+    bid = _forvalter("lest")
+    vid = _legg_inn_varsel(bid, "u-" + secrets.token_hex(6))
+    cookie, csrf = _browsersesjon(bid)
+
+    r = klient.post(f"/v1/varsel/{vid}/lest",
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(8)},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["lest"] is True
+    assert _les("SELECT lest_ts FROM varsel WHERE id=%s", vid)[0] is not None, (
+        "svaret sa «lest», men raden er urørt — mutasjonen ble aldri committet")
+
+
+@pg
+def test_varselvalget_overlever_forespoerselen(klient):
+    """Samme P1 på den andre mutasjonen, og den verste av de to.
+
+    En bruker som skrur AV e-postvarsler og får «lagret» i retur, men fortsetter
+    å få e-post, har ikke bare mistet en innstilling — hun har mistet tilliten
+    til at valget betyr noe.
+    """
+    from api import sesjon as sesjonmodul
+    bid = _forvalter("kanal")
+    cookie, csrf = _browsersesjon(bid)
+
+    r = klient.post("/v1/varselvalg", json={"kanal": "kun_portal"},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(8)},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["kanal"] == "kun_portal"
+    rad = _les("SELECT kanal FROM varselvalg WHERE tenant=%s AND bruker_id=%s",
+               TEN, bid)
+    assert rad is not None and rad[0] == "kun_portal", (
+        f"valget ble ikke lagret ({rad}) — svaret lovte noe basen ikke holder")

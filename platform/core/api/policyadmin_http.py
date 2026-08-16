@@ -76,6 +76,30 @@ def _ok(res: dict, rid: str, http: int = 200):
     return JSONResponse(res, status_code=http, headers={"x-request-id": rid})
 
 
+def _ok_lagret(conn, res: dict, rid: str, http: int = 200):
+    """`_ok`, men transaksjonen committes FØRST (Codex P1).
+
+    Poolen gir ALDRI en forbindelse tilbake med en åpen transaksjon:
+    `Tilkoblingspool.gi_tilbake` ruller ubetinget tilbake, nettopp for at
+    SET LOCAL-verdier og låser ikke skal følge med inn i neste tenants
+    forespørsel. Et 200-svar er derfor ikke i seg selv et løfte om at noe ble
+    lagret — uten commit blir svaret sendt og skrivingen kastet i samme
+    åndedrag. Det er den verste feilklassen vi kan lage: en flate som viser
+    lagret tilstand som ikke finnes, og en bruker som skrur av e-postvarsler og
+    fortsetter å få dem.
+
+    Policyadmin-veiene rammes ikke: hver av dem ender i `policyadmin._fullfor`,
+    som committer sammen med idempotensraden. Varselmutasjonene har ingen
+    idempotensrad å committe med — de er naturlig idempotente («lest» og «kanal»
+    er tilstander, ikke hendelser — å sette dem to ganger er samme svar) — så
+    commit-en må stå her. Den ligger i svarhjelperen og ikke i tjenesten fordi
+    det er endepunktet som eier forbindelsen; `varsel`-funksjonene kalles også
+    fra aktiveringsflyten, midt inne i en transaksjon de ikke får røre.
+    """
+    conn.commit()
+    return _ok(res, rid, http)
+
+
 def _krev_idem(request, rid: str) -> str:
     """`Idempotency-Key` er PÅKREVD på ALLE skriveruter (spec, Codex P1 R3).
     Reiser `_Avbrudd` med 400 hvis den mangler."""
@@ -319,8 +343,9 @@ def varsel_lest_endepunkt(tjeneste, request):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
         from . import varsel as v
-        return _ok({"lest": v.merk_lest(conn, tenant=tenant, bruker_id=bid,
-                                        varsel_id=vid)}, rid)
+        return _ok_lagret(
+            conn, {"lest": v.merk_lest(conn, tenant=tenant, bruker_id=bid,
+                                       varsel_id=vid)}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
@@ -340,7 +365,7 @@ def varselvalg_endepunkt(tjeneste, request):
                                 kanal=kanal)
         except ValueError:
             return _feil("request_feilformet", rid)
-        return _ok({"kanal": satt}, rid)
+        return _ok_lagret(conn, {"kanal": satt}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
