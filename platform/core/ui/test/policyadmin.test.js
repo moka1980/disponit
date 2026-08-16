@@ -1034,6 +1034,25 @@ test("Attester: ukjent utfall bekrefter ingenting", async () => {
     "et ukjent utfall skal ikke påstå at policyen er aktivert");
 });
 
+// Codex P2: «ukjent» må gjelde ALLE ukjente navn — også de som tilfeldigvis
+// finnes på `Object.prototype`. Med et objektliteral som kart svarte oppslaget
+// på arvede navn, så `"constructor"` og `"__proto__"` slapp forbi
+// `|| "feil"`-fallbacken: klassen ble ugyldig, og fordi arten ikke var strengen
+// `"feil"`, ble kvitteringen politt i stedet for et varsel.
+//
+// Kontroll: bytt `UTFALLSART` tilbake til et objektliteral med `[utfall]`, så
+// blir testen rød.
+for (const navn of ["constructor", "toString", "__proto__"]) {
+  test(`Attester: «${navn}» er et ukjent utfall som alle andre`, async () => {
+    const kvitt = await _attesterMedUtfall(nyHoved(), { utfall: navn });
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"),
+      "et arvet prototypenavn slapp forbi fail-closed-fallbacken");
+    assert.equal(kvitt.getAttribute("role"), "alert",
+      "et ukjent utfall skal varsles, ikke hviskes politt");
+    assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.utfall.ukjent"));
+  });
+}
+
 // Codex P2: et `role="status"` annonserer ikke pålitelig tekst som lå der
 // allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
 // bare `role="alert"` som vanligvis får. Bygde vi kvitteringsboksen ferdig

@@ -169,12 +169,22 @@ function kvitteringsBoks(k) {
 // Kartet er derfor eksplisitt, og alt ukjent faller til `feil`: et utfall denne
 // flaten ikke kjenner, er ikke en bekreftet aktivering, og skal ikke se ut som
 // en. `vent` er reservert for det ENE utfallet der ventingen er svaret.
-const UTFALLSART = {
-  aktivert: "ok",
-  venter_godkjennere: "vent",
-  rebasering_kreves: "feil",
-  semantikk_endret: "feil",
-};
+//
+// `Map`, ikke objektliteral (Codex P2): et oppslag i et vanlig objekt treffer
+// også ARVEDE navn. Svarte serveren `utfall: "constructor"`, `"toString"` eller
+// `"__proto__"`, ga `UTFALLSART[utfall]` en sann verdi — og dermed hoppet det
+// ukjente utfallet over `|| "feil"`-fallbacken. Kvitteringen fikk en klasse som
+// ikke finnes, og fordi arten da ikke var strengen `"feil"`, ble den tegnet som
+// en politt `role="status"` i stedet for en `role="alert"`. Nøyaktig den
+// stillheten fail-closed skal hindre, utløst av et navn ingen hadde valgt.
+// Et `Map` har ingen prototypenavn å arve, så oppslaget svarer bare på det
+// kartet faktisk inneholder.
+const UTFALLSART = new Map([
+  ["aktivert", "ok"],
+  ["venter_godkjennere", "vent"],
+  ["rebasering_kreves", "feil"],
+  ["semantikk_endret", "feil"],
+]);
 
 // ÉN idempotensnøkkel per aktiveringsforsøk — gjenbrukes ved nettverksretry, så
 // serveren ser samme nøkkel og ikke aktiverer to ganger.
@@ -197,7 +207,7 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
           tekst += " " + t("ui.policyadmin.utfall.mangler_uavhengig");
         }
       }
-      _settKvittering(uid, UTFALLSART[utfall] || "feil", tekst);
+      _settKvittering(uid, UTFALLSART.get(utfall) || "feil", tekst);
       if (paaFerdig) paaFerdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
