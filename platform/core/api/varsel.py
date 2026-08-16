@@ -69,13 +69,19 @@ def mottakere_for_runde(conn: psycopg.Connection, tenant: str,
 
 def opprett(conn: psycopg.Connection, *, tenant: str, bruker_id: str, art: str,
             ressurs_type: str, ressurs_id: str, tekstnokkel: str,
-            parametre: dict | None = None) -> bool:
+            hendelse: str = "", parametre: dict | None = None) -> bool:
     """Ett varsel til én mottaker. -> True hvis det ble opprettet.
 
-    Idempotent på (tenant, bruker, art, ressurs): en retry av handlingen som
-    utløste varselet skal ikke fylle innboksen med duplikater. `ON CONFLICT DO
-    NOTHING` er hele mekanismen — det unike indekset i migrasjon 026 er det som
-    faktisk håndhever den.
+    Idempotent på (tenant, bruker, art, ressurs, hendelse): en retry av
+    handlingen som utløste varselet skal ikke fylle innboksen med duplikater.
+    `ON CONFLICT DO NOTHING` er hele mekanismen — det unike indekset i
+    migrasjon 026 er det som faktisk håndhever den.
+
+    `hendelse` er grensen mellom «samme hendelse igjen» og «en ny hendelse på
+    samme ressurs»: for en aktiveringsrunde er det rundenummeret. Utelates den,
+    ville runde 2 på et utkast delt nøkkel med runde 1 og blitt slukt som en
+    dublett — og godkjenneren som alt hadde lest det gamle varselet ville ikke
+    sett noe nytt i det hele tatt.
 
     Har mottakeren valgt kun portal, settes `epost_status='ikke_aktuelt'` med
     én gang: et bevisst fravær skal ikke se ut som en sending som aldri kom.
@@ -84,18 +90,19 @@ def opprett(conn: psycopg.Connection, *, tenant: str, bruker_id: str, art: str,
     status = "koet" if kanal == "epost_og_portal" else "ikke_aktuelt"
     rad = conn.execute(
         "INSERT INTO varsel (tenant, bruker_id, art, ressurs_type, ressurs_id,"
-        " tekstnokkel, parametre, epost_status)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)"
-        " ON CONFLICT (tenant, bruker_id, art, ressurs_type, ressurs_id)"
-        " DO NOTHING RETURNING id",
-        (tenant, bruker_id, art, ressurs_type, ressurs_id, tekstnokkel,
-         json.dumps(parametre or {}), status)).fetchone()
+        " hendelse, tekstnokkel, parametre, epost_status)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)"
+        " ON CONFLICT (tenant, bruker_id, art, ressurs_type, ressurs_id,"
+        " hendelse) DO NOTHING RETURNING id",
+        (tenant, bruker_id, art, ressurs_type, ressurs_id, hendelse,
+         tekstnokkel, json.dumps(parametre or {}), status)).fetchone()
     return rad is not None
 
 
 def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
-                        request_id: str, utkast_id: str, policy_id: str,
-                        risikoklasse: str, gjenstaar: int) -> int:
+                        request_id: str, utkast_id: str, runde: int,
+                        policy_id: str, risikoklasse: str,
+                        gjenstaar: int) -> int:
     """Varsle dem som kan bringe runden videre. -> antall varsler opprettet.
 
     KASTER ALDRI. Kalles fra aktiveringsflyten, og en fullmaktsendring skal
@@ -109,9 +116,9 @@ def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
         for bid in mottakere_for_runde(conn, tenant, utkast_id):
             if opprett(conn, tenant=tenant, bruker_id=bid,
                        art="attestering_venter", ressurs_type="policyutkast",
-                       ressurs_id=utkast_id,
+                       ressurs_id=utkast_id, hendelse=str(runde),
                        tekstnokkel="varsel.attestering_venter",
-                       parametre={"policy_id": policy_id,
+                       parametre={"policy_id": policy_id, "runde": runde,
                                   "risikoklasse": risikoklasse,
                                   "gjenstaar": gjenstaar}):
                 n += 1

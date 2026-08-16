@@ -104,6 +104,40 @@ def test_samme_hendelse_varsler_bare_en_gang():
 
 
 @pg
+def test_ny_runde_er_en_ny_hendelse_ikke_en_dublett():
+    """En runde som forfalt eller ble avbrutt kan åpnes på nytt for SAMME
+    utkast. Da venter noe nytt på godkjenneren, og hun skal se det.
+
+    Uten `hendelse` i unikhetsnøkkelen har runde 2 nøyaktig samme nøkkel som
+    runde 1, `ON CONFLICT DO NOTHING` leser den som en retry og sluker den —
+    verst hvis hun alt har lest det gamle varselet, for da er innboksen tom og
+    ingenting tyder på at noe venter.
+
+    Kontroll: fjern `hendelse` fra unikhetsnøkkelen i migrasjon 026 (eller fra
+    `opprett`), så blir denne rød.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "nyrunde")
+        uid = "u-" + secrets.token_hex(6)
+        f = dict(tenant=TEN, bruker_id=b, art="attestering_venter",
+                 ressurs_type="policyutkast", ressurs_id=uid,
+                 tekstnokkel="varsel.attestering_venter")
+        assert varsel.opprett(c, hendelse="1", **f) is True
+        assert varsel.opprett(c, hendelse="1", **f) is False, \
+            "retry av samme runde skal fortsatt slukes"
+        # Runde 1 leses; nå åpnes runde 2 på samme utkast.
+        vid = c.execute("SELECT id FROM varsel WHERE tenant=%s AND bruker_id=%s"
+                        " AND ressurs_id=%s", (TEN, b, uid)).fetchone()[0]
+        varsel.merk_lest(c, tenant=TEN, bruker_id=b, varsel_id=vid)
+        assert varsel.opprett(c, hendelse="2", **f) is True, \
+            "ny runde ble slukt som dublett — godkjenneren får aldri vite"
+        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 1
+    finally:
+        c.close()
+
+
+@pg
 def test_kun_portal_er_bevisst_fravaer_ikke_feilet_sending():
     c = _conn()
     try:
@@ -193,7 +227,7 @@ def test_varsling_velter_aldri_handlingen():
             pass
         n = varsel.varsle_runde_venter(
             c, tenant=TEN, aktor="sys", request_id="r",
-            utkast_id="u-hva-som-helst", policy_id="p",
+            utkast_id="u-hva-som-helst", runde=1, policy_id="p",
             risikoklasse="UTVIDER", gjenstaar=1)
         assert n == 0, "varslingen skal rapportere 0, ikke kaste"
         c.rollback()

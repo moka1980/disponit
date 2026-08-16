@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS varsel (
     -- tabellen må kjenne hver ressurstype.
     ressurs_type    text NOT NULL CHECK (ressurs_type IN ('policyutkast')),
     ressurs_id      text NOT NULL,
+    -- HVILKEN forekomst av hendelsen på den ressursen. Et utkast kan få runde
+    -- 1 som forfaller, runde 2 som avbrytes, runde 3 som venter på nettopp
+    -- deg — og det er tre forskjellige varsler, ikke ett gjentatt. Uten dette
+    -- leddet i unikhetsnøkkelen nedenfor ville `ON CONFLICT DO NOTHING` tatt
+    -- runde 3 for en retry av runde 1 og slukt den i stillhet.
+    -- Tom streng når ressursen SELV er hendelsen og det ikke finnes noen
+    -- forekomst å skille på.
+    hendelse        text NOT NULL DEFAULT '',
     tekstnokkel     text NOT NULL,
     parametre       jsonb NOT NULL DEFAULT '{}'::jsonb
                     CHECK (jsonb_typeof(parametre) = 'object'),
@@ -84,8 +92,14 @@ CREATE INDEX IF NOT EXISTS varsel_koet
     ON varsel (epost_status, opprettet) WHERE epost_status = 'koet';
 -- Samme hendelse skal ikke kunne varsle samme person to ganger. Uten dette
 -- ville en retry av runde-åpningen fylt innboksen med duplikater.
+--
+-- `hendelse` MÅ være med: nøkkelen skal fange en RETRY av samme hendelse, ikke
+-- en ny hendelse på samme ressurs. Uten den ville en runde 2 på et utkast som
+-- forfalt eller ble avbrutt hatt nøyaktig samme nøkkel som runde 1, blitt lest
+-- som en dublett, og aldri nådd godkjenneren — verst i det tilfellet der noen
+-- har lest det gamle varselet og altså ikke ser noe nytt.
 CREATE UNIQUE INDEX IF NOT EXISTS varsel_en_per_hendelse
-    ON varsel (tenant, bruker_id, art, ressurs_type, ressurs_id);
+    ON varsel (tenant, bruker_id, art, ressurs_type, ressurs_id, hendelse);
 
 CREATE TABLE IF NOT EXISTS varselvalg (
     tenant          text NOT NULL CHECK (length(btrim(tenant)) > 0),
