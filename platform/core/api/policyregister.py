@@ -135,6 +135,32 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         conn.execute("UPDATE policyer SET aktiv=false"
                      " WHERE tenant=%s AND policy_id=%s AND aktiv",
                      (tenant, pid))
+    else:
+        # `aktiver=False` på DEN VERSJONEN SOM ER AKTIV er ikke en
+        # registrering — det er en avvikling, og den skal ikke skje som
+        # bivirkning av en re-registrering.
+        #
+        # Upserten under setter `aktiv = EXCLUDED.aktiv`. Kalles funksjonen
+        # med samme versjon og `aktiver=False`, slås altså flagget av på den
+        # gjeldende raden mens pekeren blir stående. Det er speilbildet av
+        # rotårsaken denne fiksen handler om — og verre: `hent_aktiv` finner
+        # da INGEN aktiv rad og kaster `PolicyUkjent` på hver beslutning,
+        # mens styringslaget fortsatt tror en policy er i kraft. Tenanten
+        # mister policyen sin uten at noe sier fra.
+        #
+        # Å avvikle en policy i kraft er en styringshandling. Den skal ha sin
+        # egen, sporede vei — ikke denne.
+        rad = conn.execute(
+            "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND versjon=%s AND aktiv", (tenant, pid, versjon)).fetchone()
+        peker = conn.execute(
+            "SELECT 1 FROM policy_hode WHERE tenant=%s AND policy_id=%s"
+            " AND aktiv_versjon=%s", (tenant, pid, versjon)).fetchone()
+        if rad or peker:
+            raise PolicyKorrupt(
+                [f"kan ikke registrere versjon {versjon} med aktiver=False:"
+                 " den er den gjeldende aktive versjonen — avvikling er en"
+                 " egen, styrt handling"], policy)
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
         " status, innhold, aktiv) VALUES (%s,%s,%s,%s,%s,%s,%s)"

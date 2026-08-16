@@ -154,3 +154,41 @@ def test_ikke_aktiverende_registrering_roerer_ikke_pekeren():
             f"en ikke-aktiverende registrering flyttet pekeren til {peker[0]!r}")
     finally:
         c.close()
+
+
+@pg
+def test_aktiver_false_paa_gjeldende_versjon_avvises():
+    """Speilbildet av rotårsaken — og verre.
+
+    Upserten setter `aktiv = EXCLUDED.aktiv`. Kalles `registrer` med SAMME
+    versjon og `aktiver=False`, ble flagget slått av på den gjeldende raden
+    mens pekeren ble stående. Da finner `hent_aktiv` INGEN aktiv rad og kaster
+    `PolicyUkjent` på hver eneste beslutning, mens styringslaget fortsatt tror
+    en policy er i kraft. Tenanten mister policyen sin uten at noe sier fra.
+
+    Målt før fiksen: flagget sa «ingen aktiv», pekeren sa «1.0.0».
+
+    Kontroll: fjern `else`-grenen i `registrer`, så blir denne rød.
+    """
+    tenant = TEN + "-d"
+    c = _mig(tenant)
+    try:
+        pr.registrer(c, tenant, _policy("1.0.0"), "produksjon")
+        _commit_og_les(c, tenant)
+        with pytest.raises(pr.PolicyKorrupt):
+            pr.registrer(c, tenant, _policy("1.0.0"), "produksjon",
+                         aktiver=False)
+        c.rollback()
+        from db.pg import sett_kontekst
+        sett_kontekst(c, tenant, "sys", "r2")
+        # Og de to sannhetene står fortsatt sammen.
+        akt = c.execute(
+            "SELECT versjon FROM policyer WHERE tenant=%s AND aktiv",
+            (tenant,)).fetchall()
+        pek = c.execute(
+            "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s",
+            (tenant,)).fetchone()
+        assert [r[0] for r in akt] == ["1.0.0"], "den aktive raden ble borte"
+        assert pek[0] == "1.0.0", "pekeren driftet fra flagget"
+    finally:
+        c.close()
