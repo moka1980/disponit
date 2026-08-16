@@ -123,6 +123,33 @@ def test_hver_kanonisk_rolle_har_navn_i_begge_lokalene():
                 f"identifikatoren {rolle!r} i stedet for et rollenavn")
 
 
+def _valutaer_fra_ui() -> list[str]:
+    """`VALUTAER` i flater/policyeditor.js — kodene nedtrekket tilbyr."""
+    kilde = (UI_JS / "flater" / "policyeditor.js").read_text(encoding="utf-8")
+    blokk = re.search(r"const VALUTAER = \[(.*?)\n\];", kilde, re.S)
+    assert blokk, "VALUTAER finnes ikke i policyeditor.js"
+    return re.findall(r'"([A-Z]{3})"', blokk.group(1))
+
+
+def test_valutanedtrekket_er_den_kanoniske_mengden():
+    """Valutafeltet i policyeditoren er et NEDTREKK, og et nedtrekk er både et
+    tak og en bunn: koder som mangler kan eier ikke velge selv om serveren
+    godtar dem, og koder som ikke skulle vært der kan velges og aktiveres —
+    for så å bli lest som `policy_korrupt`, siden `_valider_grenser` måler mot
+    `ISO4217` og ikke mot `^[A-Z]{3}$`.
+
+    Mengden eies av `ISO4217`. Endres registeret der, skal denne porten si fra
+    med én gang — ikke en kunde som ikke finner valutaen sin."""
+    from api.lesing import ISO4217
+
+    ui = _valutaer_fra_ui()
+    assert len(ui) == len(set(ui)), "VALUTAER har dubletter"
+    assert set(ui) == set(ISO4217), (
+        "valutanedtrekket er ute av takt med ISO4217: "
+        f"mangler={sorted(set(ISO4217) - set(ui))} "
+        f"ukjente={sorted(set(ui) - set(ISO4217))}")
+
+
 def test_ingen_tenantdata_i_offentlige_ressurser():
     """`/ui/{sti}` og `/ui/locale/{sprak}` serveres UTEN øktsjekk, og den
     anonyme landingssiden importerer klientbunten. Lå tenantregisteret der,

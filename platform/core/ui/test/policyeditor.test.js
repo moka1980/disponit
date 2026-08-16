@@ -556,31 +556,26 @@ test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () =>
     ["NOK", "EUR"], "de øvrige valutaene ble kastet");
 });
 
-test("Grenser: en beholdt valuta i HALEN kan velges, ikke bare nevnes",
+test("Grenser: en beholdt valuta i HALEN er like redigerbar som den første",
   async () => {
-    // Codex P2. Valgene ble bygd av `valgt` + standardlista, så en kode som lå
-    // BAK den første — `["NOK","CHF"]` — sto i hintet uten å finnes i
-    // nedtrekket. Eier kunne dermed ikke fjerne NOK og beholde CHF, slik det
-    // gamle fritekstfeltet tillot, selv om skjemaet godtar begge.
-    const policy = {
-      meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
-        status: "utkast" },
-      roller: [{ id: "agent" }],
-      handlinger: [{ id: "betaling.utfor", modus: "manuell",
-        tillatt_for: ["agent"], grenser: { valuta: ["NOK", "CHF"] } }],
-    };
+    // Codex P2. Kontrollen var ett nedtrekk over den FØRSTE koden, så en kode
+    // som lå bak — `["NOK","CHF"]` — sto nevnt i et hint uten å kunne røres:
+    // eier kunne verken velge den eller fjerne NOK og beholde den, slik det
+    // gamle fritekstfeltet tillot. Nå har hver kode sin egen rad, så halen har
+    // nøyaktig de samme knappene som hodet.
     Object.defineProperty(document, "cookie", { configurable: true,
       get: () => "__Host-disponit_csrf=tok123" });
     const h = nyHoved();
-    visPolicyeditor(h, ctx(), { startPolicy: policy });
+    visPolicyeditor(h, ctx(),
+      { startPolicy: medGrenser({ valuta: ["NOK", "CHF"] }) });
     await vent(() => h.querySelector(".editor-kort"));
-    const sel = [...h.querySelectorAll(".editor-kort select")]
-      .find((s) => [...s.options].some((o) => o.value === "NOK"));
-    assert.equal(sel.value, "NOK");
-    assert.ok([...sel.options].some((o) => o.value === "CHF"),
-      "en beholdt kode i halen mangler i nedtrekket");
-    sel.value = "CHF";
-    sel.dispatchEvent(new window.Event("change"));
+    assert.equal(valutaRader(h).length, 2,
+      "en beholdt kode i halen har ingen rad å bli redigert fra");
+    assert.equal(valutaRader(h)[1].querySelector("select").value, "CHF");
+
+    // Eier fjerner NOK og beholder CHF — veien fritekstfeltet hadde.
+    fjernValuta(h, 0);
+    await vent(() => valutaRader(h).length === 1);
     POST = undefined;
     finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
     await vent(() => POST);
@@ -588,6 +583,70 @@ test("Grenser: en beholdt valuta i HALEN kan velges, ikke bare nevnes",
       JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta, ["CHF"],
       "eier kunne ikke fjerne NOK og beholde CHF");
   });
+
+test("Grenser: nedtrekket tilbyr HELE den kanoniske valutamengden",
+  async () => {
+    // Codex P2. Nedtrekket bar seks koder pluss de policyen alt hadde. Eier
+    // som skulle sette CAD, CHF eller JPY hadde derfor ingen vei dit, selv om
+    // `_valider_grenser` godtar dem — erstatningen kunne mindre enn
+    // fritekstfeltet den avløste. Autoriteten er `ISO4217` i lesing.py;
+    // `test_ui_kontrakt.py` pinner lista mot den, denne måler kontrollen.
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: ["NOK"] }) });
+    await vent(() => h.querySelector(".editor-kort"));
+    const sel = [...h.querySelectorAll(".editor-kort select")]
+      .find((s) => [...s.options].some((o) => o.value === "NOK"));
+    for (const kode of ["CAD", "JPY", "CHF", "ZAR"]) {
+      assert.ok([...sel.options].some((o) => o.value === kode),
+        `${kode} godtas av serveren, men kan ikke velges`);
+    }
+    // «XXX» er tre store bokstaver og består skjemaets mønster — men det er
+    // ingen valuta, og en policy med den leses som `policy_korrupt`.
+    assert.equal([...sel.options].some((o) => o.value === "XXX"), false,
+      "nedtrekket kan produsere en kode _valider_grenser vraker");
+    sel.value = "JPY";
+    sel.dispatchEvent(new window.Event("change"));
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.deepEqual(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta, ["JPY"],
+      "eiers valg utenfor kortlista ble ikke lagret");
+  });
+
+test("Grenser: reparasjonen berger ingen kode serveren vraker", async () => {
+  // Codex P2. «Behold» målte mot `^[A-Z]{3}$`, så `["XXX","XXX"]` ble berget
+  // til `["XXX"]` — porten åpnet, utkastet kunne aktiveres, og først ved
+  // neste lesning av den AKTIVE policyen kom svaret: `policy_korrupt`. Da
+  // hadde reparasjonen bare flyttet feilen lenger unna feltet som viste den.
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(),
+    { startPolicy: medGrenser({ valuta: ["XXX", "XXX"] }) });
+  await vent(() => h.querySelector(".editor-kort"));
+  assert.ok(h.querySelector(".editor-reparasjon"),
+    "en liste av ikke-valutaer ble ikke vist som en grense som må repareres");
+  assert.equal(reparasjonsvalg(h, t("ui.editor.grense_behold")), undefined,
+    "«behold» tilbød en kode _valider_grenser vraker");
+
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".editor-feil"));
+  assert.equal(POST, undefined, "et utkast med «XXX» slapp gjennom porten");
+
+  // Veien ut finnes, den er bare eiers: fjern grensen.
+  reparasjonsvalg(h, t("ui.editor.grense_fjern"))
+    .dispatchEvent(new window.Event("click"));
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(
+    "valuta" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser, false,
+    "eiers «fjern» fjernet ikke grensen");
+});
 
 test("Grenser: beløpshintet TEGNES, og henger på feltet", async () => {
   // Codex P2. Hintet ble sendt som et femte argument til en `tekstfelt` som
@@ -667,6 +726,25 @@ function medGrenser(grenser) {
     handlinger: [{ id: "betaling.utfor", modus: "manuell",
       tillatt_for: ["agent"], grenser }],
   };
+}
+
+// Valutakontrollen: én rad per kode, og et eget nedtrekk som legger til.
+function valutaRader(rot) {
+  return [...rot.querySelectorAll(".valuta-rad")];
+}
+
+function leggTilValuta(rot) {
+  return rot.querySelector(".valuta-legg-til select");
+}
+
+function velgValuta(sel, kode) {
+  sel.value = kode;
+  sel.dispatchEvent(new window.Event("change"));
+}
+
+function fjernValuta(rot, i) {
+  valutaRader(rot)[i].querySelector("button")
+    .dispatchEvent(new window.Event("click"));
 }
 
 function reparasjonsvalg(h, tekst) {
@@ -768,10 +846,10 @@ test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
   visPolicyeditor(h, ctx(), { startPolicy: policy });
   await vent(() => h.querySelector(".editor-kort"));
   const kort = h.querySelector(".editor-kort");
-  const sel = [...kort.querySelectorAll("select")]
-    .find((s) => [...s.options].some((o) => o.value === "NOK"));
-  assert.ok(sel, "valuta er ikke et nedtrekk");
-  assert.equal(sel.value, "", "en policy uten valuta viser en begrensning");
+  assert.equal(kort.querySelectorAll(".valuta-rad").length, 0,
+    "en policy uten valuta viser en begrensning");
+  assert.ok(kort.textContent.includes(t("ui.editor.valuta_ingen")),
+    "tilstanden «ingen valutabegrensning» står ingen steder");
 
   POST = undefined;
   finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
@@ -780,13 +858,11 @@ test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
     "valuta" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser, false,
     "editoren fant på en valutabegrensning eieren aldri valgte");
 
-  // …og veien tilbake: valgt kode kan tas AV igjen, ikke bare byttes.
-  const sel2 = [...h.querySelectorAll(".editor-kort select")]
-    .find((s) => [...s.options].some((o) => o.value === "NOK"));
-  sel2.value = "EUR";
-  sel2.dispatchEvent(new window.Event("change"));
-  sel2.value = "";
-  sel2.dispatchEvent(new window.Event("change"));
+  // …og veien tilbake: en lagt til kode kan tas AV igjen, ikke bare byttes.
+  velgValuta(leggTilValuta(h), "EUR");
+  await vent(() => h.querySelectorAll(".valuta-rad").length === 1);
+  fjernValuta(h, 0);
+  await vent(() => h.querySelectorAll(".valuta-rad").length === 0);
   POST = undefined;
   finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
   await vent(() => POST);
@@ -795,37 +871,79 @@ test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
     "«ingen begrensning» kunne ikke velges tilbake");
 });
 
-test("Grenser: en valuta policyen alt har, blir ikke stående to ganger",
+test("Grenser: en valuta policyen alt har, kan ikke velges to ganger",
   async () => {
-    // Codex P1. Å velge en kode som ligger LENGER BAK i lista skrev den fram
-    // uten å ta den ut der den lå: `["NOK","EUR"]` + EUR ga `["EUR","EUR"]`.
-    // Det kanoniske skjemaet krever ikke unike koder, så utkastet validerer og
-    // kan aktiveres — men `_valider_grenser` vraker duplikater, så senere
-    // lesninger av den aktive policyen svarer `policy_korrupt`.
-    const policy = {
-      meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
-        status: "utkast" },
-      roller: [{ id: "agent" }],
-      handlinger: [{ id: "betaling.utfor", modus: "manuell",
-        tillatt_for: ["agent"], grenser: { valuta: ["NOK", "EUR"] } }],
-    };
+    // Codex P1. Å velge en kode som lå LENGER BAK i lista skrev den fram uten
+    // å ta den ut der den lå: `["NOK","EUR"]` + EUR ga `["EUR","EUR"]`. Det
+    // kanoniske skjemaet krever ikke unike koder, så utkastet validerer og kan
+    // aktiveres — men `_valider_grenser` vraker duplikater, så senere lesninger
+    // av den aktive policyen svarer `policy_korrupt`. Med én rad per kode kan
+    // dubletten ikke lages i det hele tatt: en kode en annen rad bærer, står
+    // ikke i nedtrekket. Det er en billigere vakt enn å rydde opp etterpå.
     Object.defineProperty(document, "cookie", { configurable: true,
       get: () => "__Host-disponit_csrf=tok123" });
     const h = nyHoved();
-    visPolicyeditor(h, ctx(), { startPolicy: policy });
+    visPolicyeditor(h, ctx(),
+      { startPolicy: medGrenser({ valuta: ["NOK", "EUR"] }) });
     await vent(() => h.querySelector(".editor-kort"));
-    const sel = [...h.querySelectorAll(".editor-kort select")]
-      .find((s) => [...s.options].some((o) => o.value === "NOK"));
-    assert.equal(sel.value, "NOK");
-    sel.value = "EUR";
-    sel.dispatchEvent(new window.Event("change"));
+    const rader = valutaRader(h);
+    assert.equal(rader.length, 2, "hver valuta har ikke sin egen rad");
+    assert.equal(rader[0].querySelector("select").value, "NOK");
+    assert.equal(rader[1].querySelector("select").value, "EUR");
+    for (const [i, egen, annen] of [[0, "NOK", "EUR"], [1, "EUR", "NOK"]]) {
+      const valg = [...rader[i].querySelectorAll("option")].map((o) => o.value);
+      assert.ok(valg.includes(egen), `rad ${i} mangler sin egen kode`);
+      assert.equal(valg.includes(annen), false,
+        `rad ${i} kan lage dubletten ${annen} som _valider_grenser vraker`);
+    }
+    const leggValg = [...leggTilValuta(h).querySelectorAll("option")]
+      .map((o) => o.value);
+    assert.equal(leggValg.includes("NOK") || leggValg.includes("EUR"), false,
+      "legg-til-nedtrekket kan legge til en kode som alt står der");
+
+    // Og radene er uavhengige: å bytte den ene rører ikke den andre.
+    velgValuta(rader[0].querySelector("select"), "CHF");
+    await vent(() => valutaRader(h)[0].querySelector("select").value === "CHF");
     POST = undefined;
     finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
     await vent(() => POST);
     assert.deepEqual(
-      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta, ["EUR"],
-      "nedtrekket la igjen en dublett serveren vraker");
+      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta,
+      ["CHF", "EUR"], "et bytte på én rad tok en annen rads valuta med seg");
   });
+
+test("Grenser: en valuta kan LEGGES TIL, ikke bare byttes", async () => {
+  // Codex P2. Kontrollen var ett nedtrekk som byttet den første koden, så
+  // `["NOK"]` + EUR ga alltid `["EUR"]` — halen var tom, og det fantes ingen
+  // vei til `["NOK","EUR"]` i det hele tatt. Skjemaet og motoren støtter
+  // bevisst en liste, og fritekstfeltet dette avløste kunne legge til; eier
+  // kunne altså bare BEVARE flere valutaer som alt lå der, ikke lage dem.
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: ["NOK"] }) });
+  await vent(() => h.querySelector(".editor-kort"));
+  assert.equal(valutaRader(h).length, 1);
+  velgValuta(leggTilValuta(h), "EUR");
+  await vent(() => valutaRader(h).length === 2);
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.deepEqual(
+    JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta,
+    ["NOK", "EUR"], "valutaen kunne ikke legges til, bare byttes");
+
+  // Taket er serverens (`_valider_grenser`: 1–10), så det står i kontrollen
+  // og oppdages ikke som en avvist lagring.
+  for (const kode of ["USD", "SEK", "DKK", "GBP", "CHF", "JPY", "CAD", "ZAR"]) {
+    velgValuta(leggTilValuta(h), kode);
+    await vent(() => valutaRader(h).some(
+      (r) => r.querySelector("select").value === kode));
+  }
+  assert.equal(valutaRader(h).length, 10);
+  assert.equal(leggTilValuta(h), null,
+    "en ellevte valuta kunne legges til — serveren vraker lista");
+});
 
 test("Grenser: en valutaliste ingen kontroll kan vise, repareres av EIER",
   async () => {
