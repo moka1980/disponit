@@ -255,6 +255,55 @@ def test_feilet_epost_prøves_igjen_etter_backoff():
         c.close()
 
 
+@pg
+def test_retryen_stopper_eksakt_paa_maks_forsok(monkeypatch):
+    """Den andre halvdelen av retry-løftet: den slutter å prøve.
+
+    Testen over viser at en feilet e-post kommer TILBAKE i køen. Uten et tak
+    målt like presist er det løftet like farlig som blindveien var: en adresse
+    som aldri tar imot ville banket på hvert 15. minutt i evighet, og
+    `MAKS_FORSOK` ville vært en konstant ingen test hadde sett virke.
+
+    Backoffen skrus av ved å skru KLOKKA tilbake mellom rundene, ikke ved å
+    sette den til null — da måles taket og backoffen hver for seg, og en
+    runde som stoppet fordi backoffen bet ville ikke kunne forveksles med en
+    runde som stoppet fordi taket bet.
+    """
+    monkeypatch.setattr(varselsender, "MAKS_FORSOK", 2)
+    c = _conn()
+    try:
+        b = _bruker(c, "maks", "maks@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+
+        forsokt = []
+
+        def alltid_feil(til, emne, tekst):
+            forsokt.append(til)
+            raise RuntimeError("mottaker avviser alltid")
+
+        for _ in range(5):
+            varselsender.kjor(c, send=alltid_feil)
+            _kontekst(c)
+            c.execute("UPDATE varsel SET epost_ts = now() - interval '1 hour'"
+                      " WHERE tenant=%s AND bruker_id=%s", (TEN, b))
+            c.commit()
+            _kontekst(c)
+
+        assert len(forsokt) == 2, (
+            f"{len(forsokt)} forsøk, ikke MAKS_FORSOK=2 — taket bet ikke der "
+            "det skulle")
+        st = c.execute("SELECT epost_status, epost_forsok FROM varsel"
+                       " WHERE tenant=%s AND bruker_id=%s",
+                       (TEN, b)).fetchone()
+        assert st == ("feilet", 2), f"endetilstanden er ikke terminal: {st}"
+        # Og raden står IGJEN i portalen. E-posten er kopien; innboksen er
+        # sannheten, og den skal ikke kunne gå tapt med den siste sendingen.
+        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 1
+    finally:
+        c.close()
+
+
 # ---------------------------------------------------------------------------
 # Codex P1 (PR-068): credential-veien er en del av inngangspunktet.
 #
