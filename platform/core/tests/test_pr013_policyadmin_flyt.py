@@ -1429,3 +1429,140 @@ def test_apen_runde_varsler_dem_som_kan_bringe_den_videre():
     assert param["policy_id"] == pid and param["runde"] == 1
     assert param["gjenstaar"] == 2
     assert epost == "koet", "standardvalget er e-post OG portal"
+
+
+def _varsler(uid, runde=1):
+    """{bruker_id: (lest_ts, epost_status)} for rundens varsler."""
+    m = _mig()
+    try:
+        return {r[0]: (r[1], r[2]) for r in m.execute(
+            "SELECT bruker_id, lest_ts, epost_status FROM varsel"
+            " WHERE tenant=%s AND ressurs_type='policyutkast'"
+            " AND ressurs_id=%s AND hendelse=%s",
+            (TEN, uid, str(runde))).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+
+@pg
+def test_attestering_pensjonerer_aktoerens_eget_varsel():
+    """Codex P2: et varsel skal slutte å vente når handlingen er gjort.
+
+    Varselet er en OPPFORDRING — «attesteringen venter på deg» — ikke en
+    kvittering. I den vanligste flyten attesterer forfatteren rett etter at hun
+    har åpnet runden, og uten dette ber innboksen hennes om at hun skal gjøre
+    det hun nettopp gjorde. En innboks som lyver om hva som venter, blir en
+    innboks folk slutter å se på.
+
+    Men KUN hennes rad: runden venter fortsatt på den uavhengige godkjenneren,
+    og hans varsel skal stå urørt. Det er den grensen som gjør dette til en
+    pensjonering og ikke en tømming.
+
+    Kontroll: fjern kallet i steg 7c, så blir første assert rød; utvid det til
+    hele runden (dropp `bruker_id`), så blir den andre det.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("pens-forf", ["policyforvalter"])
+    b = _medlem("pens-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert _varsler(uid)[a][0] is None, "forfatteren ble varslet — og venter"
+        r1 = _attester(rt, uid, a, r["diff_hash"])
+        assert r1["utfall"] == "venter_godkjennere", r1
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    assert v[a][0] is not None, (
+        "forfatteren har attestert, men innboksen hennes ber henne fortsatt "
+        "om å attestere")
+    assert v[a][1] == "ikke_aktuelt", (
+        "varselet er ryddet, men e-posten står fortsatt i kø — senderen ville "
+        "bedt henne om det samme i den kanalen hun ikke kan lukke selv")
+    assert v[b][0] is None, (
+        "den uavhengige godkjenneren fikk varselet sitt ryddet bort av en "
+        "ANNENS attestering — runden venter fortsatt på ham")
+    assert v[b][1] == "koet"
+
+
+@pg
+def test_aktivering_pensjonerer_hele_rundens_varsler():
+    """Når runden er brukt, venter den ikke på noen — heller ikke på dem som
+    aldri rakk å svare.
+
+    Uten dette blir hvert gjenstående varsel stående ulest for alltid, og
+    eneste vei ut er at hver enkelt trykker «merk som lest» på et varsel om noe
+    som ikke finnes lenger.
+
+    Kontroll: fjern `pensjoner_runde`-kallet etter `RELEASE SAVEPOINT
+    aktiveringsforsok`, så blir denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("brukt-forf", ["policyforvalter"])
+    b = _medlem("brukt-uavh", ["policyforvalter"])
+    c = _medlem("brukt-taus", ["policyforvalter"])   # svarer aldri
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        _attester(rt, uid, a, r["diff_hash"])
+        assert _attester(rt, uid, b, r["diff_hash"])["utfall"] == "aktivert"
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    assert {a, b, c} <= set(v), f"forventet varsel til alle tre, fikk {set(v)}"
+    for bid, hvem in ((a, "forfatteren"), (b, "godkjenneren"),
+                      (c, "den som aldri svarte")):
+        assert v[bid][0] is not None, (
+            f"{hvem} har fortsatt et ulest varsel om en runde som er brukt")
+        assert v[bid][1] == "ikke_aktuelt", (
+            f"e-posten til {hvem} står fortsatt i kø etter at runden er lukket")
+
+
+@pg
+def test_forfalt_runde_pensjonerer_varslene_sine():
+    """Samme regel på den stille veien ut: en runde som forfaller.
+
+    Ingen handling utløser den — den skjer fordi tiden gikk — så uten
+    pensjonering her er det nettopp de rundene ingen fulgte opp som blir
+    stående og maser i innboksen for alltid.
+
+    Kontroll: fjern `pensjoner_runde`-kallet i `_lukk_forfalt_runde`.
+    """
+    from datetime import timedelta
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("utl-forf", ["policyforvalter"])
+    b = _medlem("utl-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        _apne(rt, uid, a)
+        assert all(x[0] is None for x in _varsler(uid).values())
+        # Forfallet oppdages av neste handling på utkastet — her forkastingen,
+        # som er den ENESTE veien eier har til å rydde et dødt forslag.
+        uv = _mig()
+        try:
+            versjon = uv.execute(
+                "SELECT utkastversjon FROM policyutkast WHERE tenant=%s AND"
+                " utkast_id=%s", (TEN, uid)).fetchone()[0]
+        finally:
+            uv.rollback(); uv.close()
+        idem = secrets.token_hex(8)
+        policyadmin.forkast_utkast(
+            rt, tenant=TEN, aktor=a, request_id="r", utkast_id=uid,
+            forventet_utkastversjon=versjon, idempotency_key=idem,
+            input_hash=idem, naa=_naa() + timedelta(days=30))
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    for bid, hvem in ((a, "forfatteren"), (b, "godkjenneren")):
+        assert v[bid][0] is not None, (
+            f"runden forfalt, men {hvem} blir bedt om å attestere den fortsatt")
+        assert v[bid][1] == "ikke_aktuelt"

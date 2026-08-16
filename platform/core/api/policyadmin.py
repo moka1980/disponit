@@ -416,6 +416,9 @@ def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
     conn.execute(
         "UPDATE aktiveringsrunde SET status='utlopt' WHERE tenant=%s"
         " AND utkast_id=%s AND runde=%s", (tenant, utkast_id, r_nr))
+    # Runden er død; varselet om den skal ikke bli stående og be folk om å
+    # attestere noe som ikke lenger kan attesteres (Codex P2).
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id, runde=r_nr)
     return False
 
 
@@ -1293,6 +1296,15 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     else:
         conn.execute("RELEASE SAVEPOINT attestasjonsforsok")
 
+    # --- 7c. Aktørens EGET varsel er ferdig -------------------------------
+    # Hun har attestert; oppfordringen «venter på deg» er ikke sann lenger,
+    # uansett om runden fortsatt venter på ANDRE. I den vanligste flyten
+    # attesterer forfatteren rett etter at runden ble åpnet, og uten dette ville
+    # hennes egen innboks bedt henne om å gjøre det hun nettopp gjorde
+    # (Codex P2). Kun HENNES rad — de andre godkjennerne venter fortsatt.
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                           runde=r_nr, bruker_id=aktor)
+
     # --- 8. Terskel (V6): antall ≥ påkrevd OG minst én ikke-forfatter -------
     rader = conn.execute(
         "SELECT bruker_id, er_forfatter, rolle, authz_version FROM"
@@ -1332,6 +1344,8 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
+        varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                               runde=r_nr)
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "rebasering_kreves", "utkast_id": utkast_id})
     if (v["klassifikatorversjon"] != r_klassver
@@ -1341,6 +1355,8 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
+        varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                               runde=r_nr)
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "semantikk_endret", "utkast_id": utkast_id})
 
@@ -1425,6 +1441,10 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
             _DOKUMENTBRUDD.get(e.diag.constraint_name, "versjon_i_bruk"))
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
+    # Runden er brukt. Ingen venter lenger på noen — heller ikke de
+    # godkjennerne som aldri rakk å svare (Codex P2).
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id, runde=r_nr)
+
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,
         "versjon": ny_versjon, "runde": r_nr, "risikoklasse": r_risiko})
@@ -1443,6 +1463,10 @@ def _kanseller_runde(conn, tenant: str, idempotency_key: str, utkast_id: str,
     conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                  " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                  (tenant, utkast_id, runde))
+    # Godkjennerne ventet på noe som aldri kan komme; varselet skal si det
+    # samme som runden gjør (Codex P2).
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                           runde=runde)
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": utfall, "utkast_id": utkast_id, "policy_id": policy_id,
         "runde": runde})

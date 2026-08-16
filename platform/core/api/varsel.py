@@ -200,6 +200,57 @@ def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
     return n
 
 
+def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
+                    runde: int, bruker_id: str | None = None) -> int:
+    """Et varsel skal slutte å vente når handlingen er gjort. -> antall ryddet.
+
+    Varselet er en OPPFORDRING, ikke en kvittering: «attesteringen venter på
+    deg». I det du har attestert — eller runden er brukt, kansellert eller
+    forfalt — er oppfordringen ikke lenger sann. Uten denne funksjonen ble den
+    stående likevel, og det er ikke en skjønnhetsfeil:
+
+      * i den vanligste flyten attesterer forfatteren med én gang runden er
+        åpnet. Innboksen hennes sier da at hennes egen, alt utførte
+        attestering venter på henne;
+      * når runden lukkes, blir alle de andres varsler stående uleste for
+        alltid. Eneste vei ut var at hver enkelt trykket «merk som lest» på et
+        varsel om noe som ikke finnes lenger.
+
+    En innboks som lyver om hva som venter, blir en innboks folk slutter å se
+    på — og da er hele modulen tapt.
+
+    `bruker_id` avgrenser til ÉN mottaker (aktøren som nettopp attesterte);
+    utelates den, ryddes hele rundens varsler.
+
+    E-post som ennå står i kø settes samtidig til `ikke_aktuelt`. Køen er
+    definert av `epost_status='koet'`, så uten dette ville senderen fortsatt
+    sendt «venter på din attestering» om en runde som er lukket — samme løgn,
+    bare i den kanalen mottakeren ikke kan lukke selv. Alt som ER sendt står
+    urørt: `sendt` er et faktum om fortiden, ikke en tilstand vi kan angre.
+
+    KASTER ALDRI, av nøyaktig samme grunn som `varsle_runde_venter`: dette
+    kalles fra attesterings- og aktiveringsflyten, og en fullmaktsendring skal
+    ikke kunne feile fordi en opprydding gjorde det. Derfor `_skjermet` — og
+    derfor er dette et Python-kall og ikke en databasetrigger på
+    `aktiveringsrunde`: en trigger kan ikke skjermes av en savepoint, så en
+    feilende opprydding ville veltet selve aktiveringen. Kalleren eier
+    transaksjonen og har alt satt `disponit.*`.
+    """
+    sql = ("UPDATE varsel SET lest_ts=coalesce(lest_ts, now()),"
+           " epost_status=CASE WHEN epost_status='koet' THEN 'ikke_aktuelt'"
+           "                   ELSE epost_status END"
+           " WHERE tenant=%s AND art='attestering_venter'"
+           "   AND ressurs_type='policyutkast' AND ressurs_id=%s"
+           "   AND hendelse=%s AND (lest_ts IS NULL OR epost_status='koet')")
+    p: tuple = (tenant, utkast_id, str(runde))
+    if bruker_id is not None:
+        sql += " AND bruker_id=%s"
+        p += (bruker_id,)
+    res = _skjermet(conn, lambda: conn.execute(sql + " RETURNING id",
+                                               p).fetchall())
+    return 0 if res is _FEILET else len(res)
+
+
 def innboks(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
             kun_uleste: bool = False, grense: int = 50) -> list[dict]:
     """Mottakerens egne varsler, nyeste først."""
