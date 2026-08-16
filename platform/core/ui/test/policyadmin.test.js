@@ -9,6 +9,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
 import { lagRuter } from "../static/js/ruter.js";
 import { el, sett } from "../static/js/dom.js";
+import { meldLive } from "../static/js/komponenter.js";
 
 settI18nForTest(NB, "nb");
 
@@ -1327,3 +1328,75 @@ test("Kvitteringen overlever at gjentegningen feiler", async () => {
   assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// Codex P2: å ta kvitteringen ut når tegningen STARTER lukket ett tapsvindu og
+// åpnet et annet rett etter. Fullførte POST-en mens eier fortsatt sto i
+// detaljen, kalte `paaFerdig` riktignok `aapneDetalj` — men da er kvitteringen
+// alt tatt ut av modulen og eid av en tegning som ennå bare er en GET på
+// nettet. Gikk eier tilbake i det sekundet, returnerte både `.then` og
+// `.catch` på eierskapssjekken, og kvitteringen var borte for godt: ikke feil
+// kvittering, ikke gammel kvittering — INGEN. Eier fikk null tilbakemelding på
+// en fullmaktshandling som faktisk ble utført, og det nærliggende neste
+// trekket er da å gjøre den om igjen.
+//
+// Dette er et ANNET vindu enn det `paaFerdig` alt dekker: der navigerte eier
+// FØR POST-en var i havn, her etter. Den grenen redder ikke dette tilfellet.
+//
+// Kontroll: fjern `meldTaptKvittering(kvitt)` fra eierskapsreturen i `.then`,
+// så blir testen rød.
+test("Utfallet leses opp selv om gjentegningen mister skjermen underveis",
+  async () => {
+    let slippGet = null;
+    let gets = 0;
+    const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+    SVAR = {
+      "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": utkast,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+    };
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      // Første GET tegner detaljen. Den ANDRE er gjentegningen `paaFerdig()`
+      // starter etter valideringen — POST-en er da ferdig og kvitteringen tatt
+      // ut av modulen, mens GET-en holdes ute på nettet.
+      if (sti === "/v1/policyutkast/u-1" && !(opts && opts.method)
+          && ++gets === 2) {
+        await new Promise((r) => { slippGet = r; });
+        return { ok: true, status: 200, json: async () => utkast };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+
+    meldLive("");                        // ren startlinje å måle mot
+    _finn(h, t("ui.policyadmin.handling.valider"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippGet);          // POST i havn, gjentegningen ute
+
+    // Eier venter ikke på gjentegningen — hun går tilbake til lista.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+    slippGet();
+    await vent(() => false, 20);
+
+    const live = [...document.querySelectorAll('[aria-live="polite"]')]
+      .map((n) => n.textContent).join(" ");
+    assert.ok(live.includes(t("ui.policyadmin.validert")),
+      "valideringen ble utført, men utfallet forsvant med tegningen");
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "det foreldede svaret hentet eier tilbake til detaljsiden");
+
+    // Og den skal ikke ligge igjen og dukke opp neste gang utkastet åpnes.
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+    await vent(() => false, 20);
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "et gammelt utfall ble vist som om det var ferskt");
+    globalThis.fetch = brukFetch;
+  });

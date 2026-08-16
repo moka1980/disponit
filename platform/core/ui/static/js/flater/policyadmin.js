@@ -142,6 +142,24 @@ function taKvittering(uid) {
   return k && k.uid === uid ? k : null;
 }
 
+// Plikten over gjelder HELE veien, ikke bare fram til tegningen er startet
+// (Codex P2). Å ta kvitteringen ut med én gang lukket det ene tapsvinduet —
+// handlingen som fullførte etter at eier hadde navigert bort — men åpnet et
+// annet rett etter: kvitteringen er nå denne tegningens eiendom, og faller
+// tegningen bort MENS detalj-GET-en er ute, faller kvitteringen med den. Eier
+// rakk å trykke «Tilbake» i sekundet mellom POST og GET, og fikk dermed ingen
+// bekreftelse i det hele tatt på en fullmaktshandling som faktisk ble utført.
+// Ikke feil kvittering, ikke gammel kvittering — ingen.
+//
+// Det er samme svar som i `paaFerdig`: skjermen kan ikke vise utfallet lenger,
+// men skjermleseren kan fortsatt si det. Den varige live-regionen hører til
+// dokumentet, ikke til tegningen, og overlever navigasjonen som drepte boksen.
+// Ingen kvitteringsboks når skjermen her, så det finnes heller ingenting å
+// konkurrere med om opplesningen.
+function meldTaptKvittering(k) {
+  if (k) meldLive(k.tekst);
+}
+
 // Live-området settes inn TOMT og fylles først når det står i dokumentet
 // (Codex P2). Et `role="status"` annonserer ikke pålitelig tekst som lå der
 // allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
@@ -551,9 +569,12 @@ export function visPolicyadmin(hoved, ctx) {
     // den kan ikke lenger forbrukes av et annet utkast. Men så lenge tegningen
     // FORTSATT eier skjermen, skal den vise kvitteringen sin uansett hvordan
     // den ender: begge grenene under tegner den.
+    //
+    // Og eier ikke tegningen skjermen lenger, dør ikke utfallet stille: begge
+    // grenene melder det til live-området i stedet (`meldTaptKvittering`).
     const kvitt = taKvittering(uid);
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-      if (!eierSkjermen(min)) return;
+      if (!eierSkjermen(min)) { meldTaptKvittering(kvitt); return; }
       // En handling som fullfører ETTER at eier har forlatt detaljsiden, skal
       // ikke hente den tilbake (Codex P1). `paaFerdig` friskner opp siden
       // etter Valider/Åpne runde/Attester — riktig så lenge siden er den man
@@ -578,8 +599,7 @@ export function visPolicyadmin(hoved, ctx) {
       // kvitteringsboks å konkurrere med.
       const innhold = detaljInnhold(detalj, uid, ctx, () => {
         if (eierSkjermen(min)) { aapneDetalj(uid); return; }
-        const tapt = taKvittering(uid);
-        if (tapt) meldLive(tapt.tekst);
+        meldTaptKvittering(taKvittering(uid));
       }, aapneEditor, kvitt);
       sett(hoved,
         ...flateHode(
@@ -595,8 +615,11 @@ export function visPolicyadmin(hoved, ctx) {
       // oppgave — `kvitteringsBoks` sørger for det, og forklarer hvorfor.
       innhold.ferdig();
     }).catch((e) => {
+      // 401 er ikke navigasjon: sesjonen er ute, `paaUautorisert` sender eier
+      // til innlogging, og et utfall lest opp inn i den overgangen ville blitt
+      // overskrevet av innloggingssiden uansett. Kvitteringen faller her.
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (!eierSkjermen(min)) return;
+      if (!eierSkjermen(min)) { meldTaptKvittering(kvitt); return; }
       // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
       // i det minste lista ligge under seg; siden erstattet HELE flaten med en
       // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et
