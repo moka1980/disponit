@@ -1271,9 +1271,46 @@ _DROP_MAL = re.compile(
 #: FORAN verbet: en setning på toppnivå har ingenting foran seg.
 _BETINGET = re.compile(r"\b(?:if|elsif|elseif|case|when)\b")
 
+#: EN VAKT SOM STREKKER SEG OVER FLERE SETNINGER (Codex P2 på #71). Vakten
+#: over måler bare teksten FORAN verbet i den SAMME setningen, og en
+#: plpgsql-gren er ikke én setning: `IF … THEN RAISE NOTICE …; REVOKE …;
+#: END IF;` splittes på semikolon, og da står REVOKE-en igjen med ingenting
+#: foran seg. Modellen leste den som ubetinget og lukket gjerdet — mens
+#: klyngen, med usann vakt, ikke revokerte noe som helst.
+#:
+#: Grenen må derfor telles, ikke bare søkes etter. `IF … THEN` åpner, `END IF`
+#: lukker, og `ELSIF` gjør ingen av delene — det er samme blokk.
+#: KRAVET OM `THEN` I SAMME SETNING er det som skiller plpgsql-grenen fra
+#: `DROP FUNCTION IF EXISTS …`, der ordet `if` hører til en helt annen
+#: setning. Går tellingen likevel i ulage, blir svaret «betinget», altså
+#: «ikke bevist lukket» — tvilen faller mot åpent, som ellers her.
+_AAPNER = re.compile(
+    r"(?<!end )\bif\b(?=.*\bthen\b)|(?<!end )\bcase\b(?=.*\bwhen\b)")
+_LUKKER = re.compile(r"\bend\s+(?:if|case)\b")
+
+
+def _delt(tekst, i_blokk):
+    """Setningene i et tekststykke, hver med «står den under en vakt?».
+
+    Dybden telles bare inne i en DO-blokk: på toppnivå i en migrasjonsfil
+    finnes det ingen plpgsql-gren en setning kan stå under.
+    """
+    dybde = 0
+    for rå in _KROPP.sub(" ", tekst).split(";"):
+        s = " ".join(rå.split()).lower()
+        if not s:
+            continue
+        yield s, dybde > 0
+        if i_blokk:
+            dybde = max(0, dybde + len(_AAPNER.findall(s))
+                        - len(_LUKKER.findall(s)))
+
 
 def _setninger(sql):
     """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
+
+    Gir `(setning, betinget)`, der `betinget` sier om setningen står inne i
+    en plpgsql-gren som ÅPNET I EN TIDLIGERE SETNING.
 
     Kroppene fjernes fordi de inneholder både `;` og — i kommentarform —
     nettopp de ordene denne testen leter etter. Det som er igjen er filens
@@ -1281,14 +1318,17 @@ def _setninger(sql):
 
     DO-blokker er unntaket: de PAKKES UT i stedet for å strykes, slik at
     setningene inni dem splittes og måles som alle andre. En blokk er ikke en
-    kropp — den er kode som kjører.
+    kropp — den er kode som kjører. Og de pakkes ut STYKKEVIS, ikke ved å
+    limes inn i filteksten: grensen mellom «inne i en blokk» og «på toppnivå»
+    er nettopp det tellingen over trenger for å vite hva som er en gren.
     """
     uten_kommentar = _KOMMENTAR.sub("", sql)
-    utpakket = _DO_BLOKK.sub(lambda m: f" {m.group(1)} ", uten_kommentar)
-    for rå in _KROPP.sub(" ", utpakket).split(";"):
-        s = " ".join(rå.split()).lower()
-        if s:
-            yield s
+    pos = 0
+    for m in _DO_BLOKK.finditer(uten_kommentar):
+        yield from _delt(uten_kommentar[pos:m.start()], False)
+        yield from _delt(m.group(1), True)
+        pos = m.end()
+    yield from _delt(uten_kommentar[pos:], False)
 
 
 def _typeliste(argumenter):
@@ -1416,7 +1456,7 @@ def _spill_av(filer, signaturer):
     spor = {sig: [] for sig in beskyttet}
     for filnavn, sql in filer:
         rolle = None                      # None = migrator, kjørerens rolle
-        for s in _setninger(sql):
+        for s, under_vakt in _setninger(sql):
             if s.startswith("set local role "):
                 rolle = s.split()[3]
             elif s.startswith("reset role"):
@@ -1461,7 +1501,11 @@ def _spill_av(filer, signaturer):
                         f"{filnavn}: grant til public som {rolle or 'migrator'}")
                 elif (rev := _REVOKE_MAL.search(s)) and _rammer(
                         rev.group(1), sig, basenavn[sig]):
-                    betinget = _BETINGET.search(s[:rev.start()])
+                    # Vakten kan stå i den SAMME setningen (`IF … THEN
+                    # REVOKE …`) eller i en TIDLIGERE (`IF … THEN RAISE …;
+                    # REVOKE …`). Begge er den samme grenen for basen, og
+                    # ingen av dem er bevis for at REVOKE-en kjørte.
+                    betinget = under_vakt or _BETINGET.search(s[:rev.start()])
                     if betinget and rolle == EIERROLLE:
                         # Vakten kan være usann i klyngen, og da revokeres
                         # ingenting. En setning som KANSKJE kjørte er ikke
@@ -1572,6 +1616,10 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       usann), som migrator er den fortsatt en åpning. Og motprøven, som er
       den dyre halvdelen: den skal ikke RIVE et gjerde som alt står, ellers
       blir enhver betinget opprydding en falsk alarm.
+    * samme vakt, men ÅPNET I EN TIDLIGERE SETNING — `IF … THEN RAISE …;
+      REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
+      `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
+      inne i en DO-blokk er betinget», og målt langt mer enn den vet.
 
     Alle ville ellers blitt skjult for ACL-testen av oppryddingen i
     `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
@@ -1668,6 +1716,37 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert _spill_av([("a.sql", lag + gjerde),
                       ("b.sql", betinget_gjerde)], n)[0] == {sig: True}, \
         "en betinget revoke skal ikke rive et gjerde som står"
+
+    # …og VAKTEN OVERLEVER ET SEMIKOLON. Gjør blokken noe som helst FØR
+    # REVOKE-en, havner `IF` og `REVOKE` i hver sin setning når kroppen
+    # splittes, og en vakt som bare måles i egen setning er da borte.
+    med_forspill = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                    "    IF EXISTS (SELECT 1 FROM pg_roles"
+                    " WHERE rolname = 'disponit_varselsender') THEN\n"
+                    "        RAISE NOTICE 'rydder opp';\n"
+                    "        REVOKE ALL ON FUNCTION"
+                    " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                    "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + med_forspill)], n)
+    assert gjerdet == {sig: False}, (
+        "en vakt som åpnet i en tidligere setning er fortsatt en vakt."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er den som gjør regelen over til noe annet enn «alt
+    # inne i en DO-blokk er betinget»: END IF LUKKER GRENEN. En REVOKE etter
+    # den står ubetinget, og lukker gjerdet som den skal.
+    etter_end_if = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                    "    IF EXISTS (SELECT 1 FROM pg_roles"
+                    " WHERE rolname = 'disponit_varselsender') THEN\n"
+                    "        RAISE NOTICE 'rydder opp';\n"
+                    "    END IF;\n"
+                    "    REVOKE ALL ON FUNCTION"
+                    " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                    "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + etter_end_if)], n)
+    assert gjerdet == {sig: True}, (
+        "en REVOKE ETTER `END IF` er ubetinget og lukker gjerdet."
+        f" Spor: {spor}")
 
     # Som MIGRATOR er den fortsatt en åpning: holder vakten, materialiserer
     # REVOKE-en standard-ACL-en, og det er verre enn ingenting.
