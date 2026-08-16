@@ -69,6 +69,61 @@ function normaliserSti(sti) {
   return String(sti).replace(/\{\}/g, "");
 }
 
+// Serverens flate sti (`policydiff._flat`) skjøter map-nøkler med punktum og
+// listeindekser med klammer. Punktumet er derfor bare et skilletegn så lenge
+// nøklene selv er punktumfrie — og `verifikatorer` har UBEGRENSEDE
+// nøkkelnavn i skjemaet (`additionalProperties`, ingen `propertyNames`). To
+// gyldige verifikatorer `foo.bar` og `foo.baz` ga stiene
+// «verifikatorer.foo.bar…» og «verifikatorer.foo.baz…», som begge ble lest
+// som elementet «verifikatorer.foo»: bladene deres havnet i ETT kort, og
+// oppslaget i utkastet fulgte nøkler som ikke finnes (Codex P2).
+//
+// Utkastet vet hvor en nøkkel slutter, så det er utkastet som deler opp
+// stien: på hvert nivå er leddet den LENGSTE faktiske nøkkelen stien starter
+// med. Uten utkast (eller for klassifikatorstier, som ikke peker inn i det)
+// faller vi tilbake til punktum som skilletegn — samme oppførsel som før.
+function delOppLedd(sti, rot) {
+  const ledd = [];
+  let rest = sti, node = rot;
+  const inn = (n) => (n !== null && typeof n === "object" ? n : undefined);
+  while (rest) {
+    if (rest[0] === ".") { rest = rest.slice(1); continue; }
+    if (rest[0] === "[") {
+      const j = rest.indexOf("]");
+      if (j < 0) { ledd.push({ tekst: rest, noekkel: rest, brakett: true,
+        indeks: false }); break; }
+      const noekkel = rest.slice(1, j);
+      ledd.push({ tekst: `[${noekkel}]`, noekkel, brakett: true,
+        indeks: /^\d+$/.test(noekkel) });
+      const o = inn(node);
+      node = o && (Array.isArray(o) ? o[Number(noekkel)] : o[noekkel]);
+      rest = rest.slice(j + 1);
+      continue;
+    }
+    let navn = null;
+    const o = inn(node);
+    if (o && !Array.isArray(o)) {
+      for (const k of Object.keys(o)) {
+        const etter = rest[k.length];
+        if (!rest.startsWith(k)) continue;
+        if (etter !== undefined && etter !== "." && etter !== "[") continue;
+        if (navn === null || k.length > navn.length) navn = k;
+      }
+    }
+    if (navn === null) navn = /^[^.[]+/.exec(rest)[0];
+    node = o ? o[navn] : undefined;
+    ledd.push({ tekst: navn, noekkel: navn, brakett: false, indeks: false });
+    rest = rest.slice(navn.length);
+  }
+  return ledd;
+}
+
+// Ledd → sti igjen. Klammeledd henger på uten punktum foran seg.
+function settSammenLedd(ledd) {
+  return ledd.reduce((ut, l) =>
+    (!ut || l.brakett ? ut + l.tekst : `${ut}.${l.tekst}`), "");
+}
+
 // «handlinger[0].vilkaar[2].navn» → { gruppe: "handlinger",
 //                                     element: "handlinger[0]", rest: … }
 // Skalarledd i en liste («unntak.kategorier[3]») har ingen rest — de slås
@@ -91,15 +146,22 @@ function normaliserSti(sti) {
 // slutt betyr skalarliste, og `dataklasser[0]`, `dataklasser[1]` … skal
 // samles til én rad `dataklasser[]` i stedet for én rad per indeks (Codex
 // P2). Toppnivålisten har ikke noe navngitt ledd, så elementet er gruppen.
-function delOppSti(raa) {
+function delOppSti(raa, innhold) {
   const sti = normaliserSti(raa);
-  const m = /^([^.[]+)/.exec(sti);
-  const gruppe = m ? m[1] : sti;
-  const iListe = /^(.*?\[\d+\])(?=\.)/.exec(sti);
-  const navngitt = /^([^.[]+\.[^.[]+)/.exec(sti);
-  const element = iListe ? iListe[1] : (navngitt ? navngitt[1] : gruppe);
-  const rest = sti.slice(element.length).replace(/^\./, "");
-  return { gruppe, element, rest };
+  const ledd = delOppLedd(sti, innhold);
+  if (!ledd.length) return { gruppe: sti, element: sti, rest: "" };
+  const gruppe = ledd[0].tekst;
+  // Første indeks som har et navngitt ledd under seg — der slutter elementet.
+  const iListe = ledd.findIndex((l, i) =>
+    l.indeks && ledd[i + 1] && !ledd[i + 1].brakett);
+  // Ellers: gruppen + ett navngitt ledd, om det finnes et.
+  const slutt = iListe >= 0 ? iListe + 1
+    : (ledd.length >= 2 && !ledd[0].brakett && !ledd[1].brakett ? 2 : 1);
+  return {
+    gruppe,
+    element: settSammenLedd(ledd.slice(0, slutt)),
+    rest: settSammenLedd(ledd.slice(slutt)),
+  };
 }
 
 function verdiTekst(e) {
@@ -146,9 +208,9 @@ const BELOPSFELT = [
 // stien i utkastet, eller `undefined` finnes den ikke.
 function slaaOppSti(rot, sti) {
   let v = rot;
-  for (const ledd of String(sti).match(/[^.[\]]+/g) || []) {
+  for (const l of delOppLedd(String(sti), rot)) {
     if (v === null || typeof v !== "object") return undefined;
-    v = Array.isArray(v) ? v[Number(ledd)] : v[ledd];
+    v = Array.isArray(v) ? v[Number(l.noekkel)] : v[l.noekkel];
     if (v === undefined) return undefined;
   }
   return v;
@@ -194,7 +256,7 @@ function elementOverskrift(element, blader, innhold) {
   const foer = new Map();
   for (const e of blader) {
     if (e.type === "lagt_til") continue;
-    const { rest } = delOppSti(e.sti);
+    const { rest } = delOppSti(e.sti, innhold);
     if (rest) foer.set(rest, e.fra);
   }
   const felt = new Map();
@@ -203,7 +265,7 @@ function elementOverskrift(element, blader, innhold) {
     for (const [k, v] of flateFelt(kilde)) felt.set(k, v);
   } else {
     for (const e of blader) {
-      const { rest } = delOppSti(e.sti);
+      const { rest } = delOppSti(e.sti, innhold);
       const v = e.type === "fjernet" ? e.fra : e.til;
       if (rest) felt.set(rest, v);
     }
@@ -262,12 +324,12 @@ function skalarListeRad(element, blader) {
 // som «tidssone[]» — diffen påsto at feltet var en liste. Godkjenneren
 // attesterer strukturen hun ser, så en sti som ikke finnes i policyen er
 // ikke en kosmetisk feil (Codex P2).
-function erListeblad(e) {
-  return /^\[\d+\]$/.test(delOppSti(e.sti).rest);
+function erListeblad(e, innhold) {
+  return /^\[\d+\]$/.test(delOppSti(e.sti, innhold).rest);
 }
 
-function erBladetSelv(e) {
-  return !delOppSti(e.sti).rest;
+function erBladetSelv(e, innhold) {
+  return !delOppSti(e.sti, innhold).rest;
 }
 
 function feltdiffRad(blader) {
@@ -282,14 +344,14 @@ function elementBlokk(element, blader, innhold) {
   // fullmaktsdiff er nøyaktig det grupperingen ikke har lov til å gjøre, så
   // blandede eller endrede blader beholder én rad hver.
   const ensartet = blader.every((e) => e.type === blader[0].type);
-  if (blader.every(erListeblad)) {
+  if (blader.every((e) => erListeblad(e, innhold))) {
     return (ensartet && blader[0].type !== "endret")
       ? skalarListeRad(element, blader)
       : feltdiffRad(blader);
   }
   // Elementet ER bladet: ingen felt under seg, ingen liste å slå sammen.
   // Det skal stå med sin egen sti, ikke pakkes i et kort og ikke få «[]».
-  if (blader.every(erBladetSelv)) return feltdiffRad(blader);
+  if (blader.every((e) => erBladetSelv(e, innhold))) return feltdiffRad(blader);
 
   const { navn, merker } = elementOverskrift(element, blader, innhold);
   const detaljer = el("details", { class: "diff-element" });
@@ -318,11 +380,11 @@ function feltDiff(detalj) {
   // fire-øyne-kravet finnes for; resten er kontekst man kan folde ut.
   const utvider = new Set((detalj.klassifisering_endringer || [])
     .filter((k) => k.klasse === "UTVIDER")
-    .map((k) => delOppSti(k.sti).gruppe));
+    .map((k) => delOppSti(k.sti, detalj.innhold).gruppe));
 
   const grupper = new Map();
   for (const e of endr) {
-    const { gruppe, element } = delOppSti(e.sti);
+    const { gruppe, element } = delOppSti(e.sti, detalj.innhold);
     if (!grupper.has(gruppe)) grupper.set(gruppe, new Map());
     const g = grupper.get(gruppe);
     if (!g.has(element)) g.set(element, []);

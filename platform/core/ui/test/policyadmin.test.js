@@ -1889,6 +1889,53 @@ test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
       "modulen skiftet også, og begge sider hører hjemme i overskriften");
   });
 
+// `verifikatorer` har UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» er en
+// gyldig verifikator-id. Serverens flate sti skjøter map-nøkler med punktum,
+// og en oppdeling som leser punktum som skilletegn slo derfor to helt ulike
+// verifikatorer sammen til elementet «verifikatorer.foo» — bladene deres i
+// ett kort, og oppslaget i utkastet ned i nøkler som ikke finnes (Codex P2).
+//
+// Kontroll: la `delOppLedd` ignorere utkastet og dele på punktum, så blir
+// denne rød.
+const PUNKTUMNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      "foo.bar": { beskrivelse: "Bankintegrasjon", betrodd_for: ["betaling"] },
+      "foo.baz": { beskrivelse: "Fakturamottak", betrodd_for: ["mottak"] },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.bar.betrodd_for[0]", type: "lagt_til",
+      til: "betaling" },
+    { sti: "verifikatorer.foo.bar.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.baz.betrodd_for[0]", type: "lagt_til",
+      til: "mottak" },
+    { sti: "verifikatorer.foo.baz.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+  ] },
+};
+
+test("Diff: to verifikatorer med punktum i id-en blir to kort", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": PUNKTUMNOKKEL_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+  const kort = [...v.querySelectorAll(".diff-element")];
+  assert.equal(kort.length, 2,
+    `to verifikatorer er to kort (fant ${kort.length})`);
+  const bar = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+  assert.ok(bar, "verifikatorene ble slått sammen til ett kort");
+  assert.ok(!bar.textContent.includes("Fakturamottak"),
+    "en annen verifikators felt havnet i dette kortet");
+  // Og oppslaget i utkastet må treffe den EKTE nøkkelen, ikke «foo».
+  assert.ok(bar.querySelector("summary").textContent.includes("foo.bar"),
+    "overskriften navngir ikke verifikatoren: "
+    + `«${bar.querySelector("summary").textContent}»`);
+});
+
 test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
     __post: async () => ({}) };
