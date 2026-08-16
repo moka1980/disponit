@@ -34,8 +34,17 @@ def _locale(sprak: str) -> dict:
 
     Én kilde til tekst — ikke en egen e-postmal som driver fra portalen. Det
     var hele poenget med å lagre nøkkel og ikke setning.
+
+    Roten utledes fra MODULENS EGEN plassering, ikke fra en hardkodet
+    driftssti. `locales/` ligger i repoet, og denne filen ligger i det samme
+    repoet — så `parents[2]` er svaret både på staging (der utsjekken ER
+    `/opt/disponit/aktiv`) og i CI, i en utviklers arbeidskopi og i en
+    worktree. Den hardkodede stien var sann bare ett sted, og i CI fantes den
+    ikke: senderen kastet `FileNotFoundError` på hver eneste e-post.
+    `DISPONIT_REPO` overstyrer fortsatt, som i `policy-rundtur.py`.
     """
-    rot = Path(os.environ.get("DISPONIT_REPO", "/opt/disponit/aktiv"))
+    rot = Path(os.environ.get("DISPONIT_REPO")
+               or Path(__file__).resolve().parents[2])
     sti = rot / "locales" / f"{sprak}.json"
     if not sti.exists():
         sti = rot / "locales" / "nb.json"

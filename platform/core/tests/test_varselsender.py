@@ -185,6 +185,32 @@ def test_teksten_rendres_fra_locale_med_parametre():
         c.close()
 
 
+def test_locale_finnes_uten_at_driftsstien_finnes(monkeypatch):
+    """Senderen finner `locales/` fra SIN EGEN plassering, ikke fra en
+    hardkodet driftssti.
+
+    Roten var `/opt/disponit/aktiv` når `DISPONIT_REPO` manglet — sant på
+    staging og ingen andre steder. I CI fantes ikke stien, og senderen kastet
+    `FileNotFoundError` på hver eneste e-post: den kunne altså ikke prøves der
+    den bygges. Modulen ligger i det samme repoet som `locales/`, så den vet
+    selv hvor de er.
+
+    Denne testen er med vilje uten `@pg`: den skal kjøre overalt, for det var
+    nettopp «kjører bare ett sted» som var feilen.
+    """
+    monkeypatch.delenv("DISPONIT_REPO", raising=False)
+    tekster = varselsender._locale("nb")
+    assert tekster.get("varsel.attestering_venter"), \
+        "locale-settet ble ikke funnet uten driftsstien"
+    # Ukjent språk faller til nb i stedet for å kaste.
+    assert varselsender._locale("zz").get("varsel.attestering_venter")
+    # …og teksten er faktisk en setning, ikke nøkkelen som falt gjennom.
+    tekst = varselsender.rendre(tekster, "varsel.attestering_venter",
+                                {"policy_id": "p", "runde": 1,
+                                 "risikoklasse": "UTVIDER", "gjenstaar": 2})
+    assert "UTVIDER" in tekst and "{" not in tekst, f"uferdig tekst: {tekst!r}"
+
+
 def test_rendre_viser_ukjent_nokkel_i_stedet_for_tomhet():
     """En manglende oversettelse skal være SYNLIG. En tom e-post forteller
     ingenting; en rå nøkkel forteller sannheten."""
