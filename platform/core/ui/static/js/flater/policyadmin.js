@@ -100,18 +100,37 @@ function fireOyneStatus(runde) {
 // live-område: innsettingen annonseres av seg selv, så det skal IKKE følges av
 // et `meldLive` — da ville ett klikk gitt to konkurrerende opplesninger (samme
 // funn Codex hadde på valideringsboksen).
+//
+// Kvitteringen BÆRER HVILKET UTKAST den gjelder, og lever bare fram til den
+// tegningen handlingen selv startet (Codex P2 / eier P1). Uten det var den en
+// naken modulglobal: attesterte man A og gikk tilbake før detalj-GET-en kom,
+// avviste `eierSkjermen(min)` tegningen — men kvitteringen ble liggende. Neste
+// utkast som ble tegnet, HVILKET SOM HELST, forbrukte den og viste
+// «attestert / venter på godkjennere» på feil policy. I en styringsflate er
+// det ikke en kosmetisk feil: skjermen bekrefter da en fullmaktsendring på et
+// annet objekt enn det handlingen traff.
 let _ventendeKvittering = null;
 
-function _settKvittering(art, tekst) {
-  _ventendeKvittering = { art, tekst };
+function _settKvittering(uid, art, tekst) {
+  _ventendeKvittering = { uid, art, tekst };
 }
 
-// Forbrukes ÉN gang: kvitteringen hører til handlingen som nettopp skjedde, og
-// skal ikke dukke opp igjen neste gang siden tegnes av andre grunner.
-function taKvittering() {
+// Forbrukes ÉN gang, og bare av utkastet den gjelder: kvitteringen hører til
+// handlingen som nettopp skjedde, og skal verken dukke opp igjen neste gang
+// siden tegnes av andre grunner, eller på et annet utkast.
+//
+// Den tas UT av modulen med én gang tegningen starter — ikke når det tegnes.
+// Da eier den enkelte tegningen kvitteringen alene: blir tegningen foreldet
+// eller feiler den, dør kvitteringen med den i stedet for å bli liggende og
+// vente på en tilfeldig neste tegning. En kvittering som er satt for et annet
+// utkast er per definisjon foreldet her, og forkastes.
+function taKvittering(uid) {
   const k = _ventendeKvittering;
   _ventendeKvittering = null;
-  if (!k) return null;
+  return k && k.uid === uid ? k : null;
+}
+
+function kvitteringsBoks(k) {
   return el("div", {
     class: `pa-kvittering pa-kvittering-${k.art}`,
     role: k.art === "feil" ? "alert" : "status",
@@ -139,7 +158,7 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
           tekst += " " + t("ui.policyadmin.utfall.mangler_uavhengig");
         }
       }
-      _settKvittering(utfall === "aktivert" ? "ok" : "vent", tekst);
+      _settKvittering(uid, utfall === "aktivert" ? "ok" : "vent", tekst);
       if (paaFerdig) paaFerdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -149,16 +168,17 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
         return forsok(1);
       }
       if (e instanceof ApiFeil && e.kode === "rebasering_kreves") {
-        _settKvittering("feil", t("ui.policyadmin.utfall.rebasering_kreves"));
+        _settKvittering(uid, "feil",
+          t("ui.policyadmin.utfall.rebasering_kreves"));
         if (paaFerdig) paaFerdig();
         return;
       }
       if (e instanceof ApiFeil && e.kode === "diff_utdatert") {
-        _settKvittering("feil", t("ui.policyadmin.diff_utdatert"));
+        _settKvittering(uid, "feil", t("ui.policyadmin.diff_utdatert"));
         if (paaFerdig) paaFerdig();
         return;
       }
-      _settKvittering("feil", t("ui.policyadmin.feilet"));
+      _settKvittering(uid, "feil", t("ui.policyadmin.feilet"));
       if (paaFerdig) paaFerdig();
     });
   return forsok(0);
@@ -224,7 +244,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
         // «Valider» hadde samme feil som «Attester»: et grønt utfall gikk bare
         // til aria-live, og siden ble tegnet på nytt i samme åndedrag. Eier så
         // et klikk uten virkning enten utkastet var gyldig eller ikke.
-        _settKvittering("ok", t("ui.policyadmin.validert"));
+        _settKvittering(uid, "ok", t("ui.policyadmin.validert"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -250,7 +270,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
       text: t("ui.policyadmin.handling.apne_runde") });
     b.addEventListener("click", () =>
       apneRunde(uid, rundeNokkel).then(() => {
-        _settKvittering("ok", t("ui.policyadmin.runde_apnet"));
+        _settKvittering(uid, "ok", t("ui.policyadmin.runde_apnet"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -315,7 +335,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
   return { rot: boks, diffVist };
 }
 
-function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
+function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, kvitt) {
   const dl = el("dl", { class: "kv" });
   kvRad(dl, t("ui.policyadmin.kol.policy"), detalj.policy_id);
   kvRad(dl, t("ui.policyadmin.kol.status"),
@@ -357,8 +377,10 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
     paaBytte: (nokkel) => { if (nokkel === "endringer") handl.diffVist(); } });
   // Kvitteringen står ØVERST, rett under overskriften fokus settes til — ikke
   // nederst ved knappen, som kan være utenfor skjermen etter gjentegningen.
-  const kvitt = taKvittering();
-  return el("div", {}, ...(kvitt ? [kvitt] : []), faner.rot, handl.rot);
+  // Den kommer inn utenfra: den som STARTET tegningen har tatt den, så en
+  // tegning som aldri når skjermen ikke etterlater seg en kvittering.
+  return el("div", {}, ...(kvitt ? [kvitteringsBoks(kvitt)] : []),
+    faner.rot, handl.rot);
 }
 
 function tilbakeKnapp(tilbakeTilListe) {
@@ -424,6 +446,11 @@ export function visPolicyadmin(hoved, ctx) {
   // tilbake, slik editoren allerede gjør.
   function aapneDetalj(uid) {
     const min = nyVisning();
+    // Kvitteringen hentes HER, ikke nede i tegningen: fra nå av er den DENNE
+    // tegningens eiendom og ligger ikke igjen i modulen. Kommer svaret etter at
+    // eier har navigert bort, eller feiler det, faller kvitteringen bort
+    // sammen med tegningen — den kan ikke lenger forbrukes av et annet utkast.
+    const kvitt = taKvittering(uid);
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
       if (!eierSkjermen(min)) return;
       sett(hoved,
@@ -431,7 +458,8 @@ export function visPolicyadmin(hoved, ctx) {
           `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
           t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
         tilbakeKnapp(tilbakeTilListe),
-        detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid), aapneEditor));
+        detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid), aapneEditor,
+          kvitt));
       fokuserOverskrift(hoved);
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }

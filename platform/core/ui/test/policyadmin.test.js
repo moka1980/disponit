@@ -816,3 +816,76 @@ test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
   assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
     "kvitteringen ble hengende igjen og bekrefter noe som ikke skjedde nå");
 });
+
+// Eier P1 / Codex P2: kvitteringen var en naken modulglobal uten identitet.
+// Attesterte man A og gikk tilbake mens gjentegningen av A fortsatt var ute på
+// nettet, avviste eierskapssjekken den tegningen — men kvitteringen ble
+// liggende igjen i modulen. Neste utkast som ble tegnet, forbrukte den, og
+// skjermen bekreftet «attestert — venter på godkjennere» på FEIL policy. I en
+// styringsflate er det den verste formen for feil: den bekrefter en
+// fullmaktshandling på et annet objekt enn det handlingen traff.
+//
+// Kontroll: la `taKvittering` slutte å kreve `uid`, eller flytt kallet tilbake
+// ned i `detaljInnhold`, så blir testen rød.
+test("Kvitteringen for A lekker ikke til B når A-tegningen aldri kom fram",
+  async () => {
+    let slippA = null;
+    let aRunde = 0;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policyutkast/u-1" && !(opts && opts.method)) {
+        // Første GET tegner detaljen. Den ANDRE er gjentegningen `paaFerdig()`
+        // starter etter attesteringen — den holdes ute på nettet.
+        if (++aRunde === 2) await new Promise((r) => { slippA = r; });
+        return { ok: true, status: 200, json: async () => DETALJ };
+      }
+      if (sti === "/v1/policyutkast/u-2") {
+        return { ok: true, status: 200, json: async () => Object.assign(
+          {}, DETALJ, { utkast_id: "u-2", policy_id: "lonn-no" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = { "/v1/policyutkast": TO_UTKAST,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({
+        utfall: "venter_godkjennere", antall: 1, gjenstaar: 1,
+        mangler_uavhengig: true }) }) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelectorAll("tbody button").length === 2);
+    const aapne = (polId) => [...h.querySelectorAll("tbody tr")]
+      .find((tr) => tr.textContent.includes(polId)).querySelector("button");
+
+    aapne("faktura-no").dispatchEvent(new window.Event("click"));   // A = u-1
+    await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+    _finn(h, t("ui.policyadmin.handling.attester"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+    const bek = [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+    [...bek.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippA);            // gjentegningen av A er ute på nettet
+
+    // Eier gir opp å vente og går tilbake, så inn i et ANNET utkast.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelectorAll("tbody button").length === 2);
+    aapne("lonn-no").dispatchEvent(new window.Event("click"));      // B = u-2
+    await vent(() => h.textContent.includes("lonn-no")
+      && _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "attesteringen av A ble kvittert ut på utkast B");
+
+    // Og den skal heller ikke dukke opp når det foreldede A-svaret lander.
+    slippA();
+    await vent(() => false, 20);
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "det foreldede A-svaret tegnet kvitteringen sin inn i utkast B");
+    assert.ok(h.textContent.includes("lonn-no"),
+      "det foreldede A-svaret rev bort utkastet eier står i");
+    globalThis.fetch = brukFetch;
+  });
