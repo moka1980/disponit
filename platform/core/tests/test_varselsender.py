@@ -228,16 +228,17 @@ def test_rendre_viser_ukjent_nokkel_i_stedet_for_tomhet():
 
 
 # ---------------------------------------------------------------------------
-# SPRÅKET (eiers P2). Modulteksten lovte «mottakerens språk». Innboksen holder
-# det løftet — den rendrer nøkkelen i nettleseren med leserens eget valg — men
-# e-posten kan ikke: portalens språkvalg lever i URL-ledd og `localStorage`,
-# profil-DTO-en fra IdP-en er lukket til tre felt, og `varselvalg` bærer bare
-# kanalvalget. Det finnes altså ingen serverlagret preferanse å slå opp.
+# SPRÅKET. Løftet er mottakerens språk der hun har valgt, og installasjonens
+# der hun ikke har. Innboksen har alltid holdt den første halvdelen — den
+# rendrer nøkkelen i nettleseren med leserens eget valg. E-posten kunne ikke
+# før `varselvalg.sprak` (028) ga serveren noe å slå opp.
 #
-# Løftet er derfor avgrenset til det som er sant, og testene under måler
-# nettopp avgrensningen: ETT språk for hele kjøringen, valgt av
-# installasjonen. Uten dem ville «det er sånn med vilje» og «det er en feil
-# ingen har sett» sett helt like ut i koden.
+# Testene under måler BEGGE halvdelene, og grensen mellom dem. Den grensen er
+# der feilen satt: så lenge «ikke valgt» ble lagret som 'nb', fikk senderen
+# alltid en gyldig verdi og tok den for et valg — og installasjonens
+# `DISPONIT_VARSEL_SPRAK` var virkningsløs for nettopp den gruppen den fantes
+# for (Codex P2, migrasjon 031). Uten disse testene ville «det er sånn med
+# vilje» og «det er en feil ingen har sett» sett helt like ut i koden.
 # ---------------------------------------------------------------------------
 
 def test_spraket_er_installasjonens_valg_og_ikke_en_konstant(monkeypatch):
@@ -301,6 +302,70 @@ def test_epost_rendres_paa_MOTTAKERENS_sprak():
         assert "venter" in emne_nb, f"norsk mottaker fikk: {emne_nb!r}"
         assert "attestation" in tekst_en, (
             f"kroppen fulgte ikke mottakerens språk: {tekst_en!r}")
+    finally:
+        c.close()
+
+
+@pg
+def test_uten_eget_valg_gjelder_INSTALLASJONENS_sprak():
+    """Den som ikke har valgt, er ikke norsk (Codex P2).
+
+    `varselvalg.sprak` var `NOT NULL DEFAULT 'nb'`, og klaimet avsluttet med
+    `coalesce(…, 'nb')`. Senderen fikk derfor ALLTID en gyldig verdi, og
+    `(sprak or SPRAK)` — installasjonens valg — var uoppnåelig. På en
+    installasjon satt opp med `DISPONIT_VARSEL_SPRAK=en` fikk hver mottaker
+    uten eget valg e-posten på norsk. Innstillingen var virkningsløs for
+    nettopp den gruppen den fantes for.
+
+    Tre mottakere, fordi funnet har tre utganger og bare den midterste var
+    feil:
+      * INGEN `varselvalg`-rad → installasjonens språk;
+      * rad, men uten uttrykt språk (kanalvalg fra en klient som ikke sender
+        det) → installasjonens språk. Det var her 'nb' ble skrevet som om
+        brukeren hadde valgt;
+      * rad med uttrykt 'nb' → norsk, selv om installasjonen er engelsk.
+        Uten den siste kunne funnet «fikses» ved å la installasjonen
+        overkjøre alle, og det ville vært samme feil speilvendt.
+
+    `sprak="en"` sendes til `kjor` i stedet for å settes i miljøet: det er
+    samme ledd (`sprak or SPRAK`), og modulkonstanten leses ved import.
+    """
+    c = _conn()
+    try:
+        ingen = _bruker(c, "ingenrad", "ingen@example.test")
+        tom = _bruker(c, "tomtsprak", "tom@example.test")
+        valgt = _bruker(c, "valgtnb", "valgt@example.test")
+        # Ingen `sett_kanal` for `ingen` — den har ikke noen rad i det hele
+        # tatt, som er tilstanden enhver bruker har før hun rører innboksen.
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=tom,
+                          kanal="epost_og_portal")
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=valgt,
+                          kanal="epost_og_portal", sprak="nb")
+        lagret = c.execute(
+            "SELECT sprak FROM varselvalg WHERE tenant=%s AND bruker_id=%s",
+            (TEN, tom)).fetchone()[0]
+        assert lagret is None, (
+            f"kanalvalg uten språk ble lagret som {lagret!r} — da finnes ikke"
+            " «ikke uttrykt» lenger, og driftens valg er uoppnåelig")
+        for b in (ingen, tom, valgt):
+            _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        _kontekst(c)
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send, sprak="en")
+        _kontekst(c)
+        per = {til: emne for til, emne, _t in sendt}
+        for adr in ("ingen@example.test", "tom@example.test",
+                    "valgt@example.test"):
+            assert adr in per, f"{adr} fikk ingen e-post: {sorted(per)}"
+        assert "waiting" in per["ingen@example.test"], (
+            f"uten rad fulgte ikke installasjonen: {per['ingen@example.test']!r}")
+        assert "waiting" in per["tom@example.test"], (
+            f"uten uttrykt språk fulgte ikke installasjonen:"
+            f" {per['tom@example.test']!r}")
+        assert "venter" in per["valgt@example.test"], (
+            f"et uttrykt 'nb' ble overkjørt av installasjonen:"
+            f" {per['valgt@example.test']!r}")
     finally:
         c.close()
 
