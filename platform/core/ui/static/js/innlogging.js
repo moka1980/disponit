@@ -6,7 +6,8 @@
 import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, hentI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
-import { Feiltilstand, lokaliserSkiplenke, meldLive } from "./komponenter.js";
+import { Feiltilstand, lokaliserSkiplenke, meldLive,
+  settDokumenttittel } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, settProduksjonsmiljo, heroTekstNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
@@ -341,6 +342,13 @@ function gjeldendeSide() {
   return SIDER.some((x) => x.nokkel === n) ? n : "hjem";
 }
 
+// Sidens navn, ett sted. Nav-lenka og dokumenttittelen skal si det SAMME —
+// står det «Tjenester» i navigasjonen og noe annet i faneveksleren, er det to
+// navn på én side. (`logg-inn` → `logg_inn`: nøkler tar ikke bindestrek.)
+function sidenavn(nokkel) {
+  return t(`site.nav.${nokkel.replace("-", "_")}`);
+}
+
 // Fem elementer, innenfor §2.3 sine 5–7, i fast rekkefølge — så plasseringen
 // er forutsigbar fra side til side.
 function hovednav(aktiv) {
@@ -348,7 +356,7 @@ function hovednav(aktiv) {
     el("ul", { class: "site-nav-liste" },
       SIDER.map((side) => {
         const a = el("a", { class: "site-nav-lenke", href: `#/${side.nokkel}`,
-          text: t(`site.nav.${side.nokkel.replace("-", "_")}`) });
+          text: sidenavn(side.nokkel) });
         // `aria-current` svarer på «hvor er jeg». Markeringen er BÅDE farge og
         // en understrek — farge alene er ikke informasjon (WCAG 1.4.1).
         if (side.nokkel === aktiv) {
@@ -411,6 +419,10 @@ export async function visInnlogging(opsjoner = {}) {
     sett(navplass, hovednav(aktiv));
     sett(visning, SIDER.find((x) => x.nokkel === aktiv).bygg(ctx));
     document.documentElement.setAttribute("data-side", aktiv);
+    // Sidebyttet er ikke ferdig før siden HETER noe (Codex P2): tittelen er
+    // det historikk, bokmerker og faneveksler kjenner siden på, og den følger
+    // språket fordi navnet hentes fra locale-settet ved hvert bytte.
+    settDokumenttittel(sidenavn(aktiv));
     if (!fokuser) return;
     const h = visning.querySelector("#sidetittel");
     if (h) h.focus();

@@ -1,6 +1,9 @@
 // Klient-ruting via hash (#/oversikt …). Én skall-rute holder; ingen server-
 // side rutekonfig per flate. Ved navigasjon flyttes fokus til main-
 // landemerket (WCAG: SPA-navigasjon skal annonseres/flytte fokus).
+import { t } from "./i18n.js";
+import { settDokumenttittel } from "./komponenter.js";
+
 export function lagRuter(hoved, ctx, flater, settAktiv) {
   // Reserveruten er den FØRSTE flaten økten faktisk har, ikke hardkodet
   // `oversikt`. `flater` er allerede scope-filtrert av `tillatteFlater`, så en
@@ -25,6 +28,10 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
     // er å kaste. Skallet står igjen med sin egen tomtilstand.
     if (!r) return;
     settAktiv(r);
+    // Samme krav som på forsiden (Codex P2): flatene her er like direkte
+    // navigerbare, og uten dette ville forsidens SISTE tittel — «Logg inn» —
+    // blitt stående som navn på hver eneste flate bak innlogging.
+    settDokumenttittel(t(`ui.nav.${r}`, r));
     flater[r](hoved, ctx);
     if (!forste && typeof hoved.focus === "function") hoved.focus();
     forste = false;

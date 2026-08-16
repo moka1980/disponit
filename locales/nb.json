@@ -592,6 +592,7 @@
   "ui.dag.fre": "fredag",
   "ui.dag.lor": "lørdag",
   "ui.dag.son": "søndag",
+  "site.dokumenttittel": "{side} · {produkt}",
   "site.nav.merkelapp": "Hovednavigasjon",
   "site.nav.hjem": "Hjem",
   "site.nav.tjenester": "Tjenester",

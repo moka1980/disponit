@@ -134,6 +134,27 @@ export function lokaliserSkiplenke() {
   if (l) l.textContent = t("ui.hopp_til_innhold");
 }
 
+// --- Dokumenttittel per side ----------------------------------------------
+// Hver rute — `#/tjenester`, `#/om`, `#/oversikt` — er DIREKTE navigerbar, og
+// havner som sitt eget punkt i historikken, i bokmerker og i faneveksleren.
+// Sto tittelen fast på «Disponit» (Codex P2), het alle sammen det samme der:
+// fem faner uten forskjell, en tilbakeknapp uten spor, et bokmerke som ikke
+// sier hva det peker på. En skjermleser melder ofte tittelen FØRST etter en
+// navigasjon, og meldte da samme ord hver gang.
+//
+// Formen bor her, ikke i hver ruter. Forsiden og appen har hver sin ruter, og
+// to kopier ville drevet fra hverandre — verre: skrev bare den ene, ble dens
+// siste tittel stående som navn på den andres sider. Uten sidenavn faller den
+// tilbake til produktnavnet alene, som er riktig for en flate uten rute.
+export function settDokumenttittel(sidenavn) {
+  const produkt = t("app.navn", "Disponit");
+  document.title = sidenavn
+    ? t("site.dokumenttittel", "{side} · {produkt}")
+      .replace("{side}", sidenavn)
+      .replace("{produkt}", produkt)
+    : produkt;
+}
+
 // --- LiveRegion (én aria-live-region for asynkrone meldinger) --------------
 let _live = null;
 export function sikreLiveRegion() {

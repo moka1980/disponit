@@ -3,8 +3,11 @@
 // hver økt har `oversikt`.
 import test from "node:test";
 import assert from "node:assert/strict";
-import "./hjelp.js";
+import { NB } from "./hjelp.js";
+import { settI18nForTest } from "../static/js/i18n.js";
 import { lagRuter } from "../static/js/ruter.js";
+
+settI18nForTest(NB, "nb");
 
 function rigg(flater) {
   const hoved = document.createElement("main");
@@ -72,6 +75,26 @@ test("lagRuter: stopp kobler ruteren av hashchange", () => {
   // Tålig å kalle to ganger, og den stoppede ruteren kan fortsatt spørres.
   assert.doesNotThrow(() => gammel.stopp());
   ny.stopp();
+});
+
+test("lagRuter: flaten den rendrer navngir også dokumentet", () => {
+  // Codex P2: forsiden setter nå tittel per side. Gjorde ikke flatene bak
+  // innlogging det samme, ble forsidens SISTE tittel — «Logg inn» — stående
+  // som navn på hver eneste flate i appen: du logger inn, og fanen påstår
+  // fortsatt at du står i innloggingen.
+  window.location.hash = "#/policy";
+  const { ruter } = rigg({ oversikt: () => {}, policy: () => {} });
+  ruter.naviger();
+  assert.ok(document.title.startsWith(NB["ui.nav.policy"]),
+    `dokumenttittelen er «${document.title}», ikke policy-flaten`);
+  assert.ok(document.title.includes(NB["app.navn"]),
+    "produktnavnet forsvant ut av tittelen");
+
+  window.location.hash = "#/oversikt";
+  window.dispatchEvent(new window.HashChangeEvent("hashchange"));
+  assert.ok(document.title.startsWith(NB["ui.nav.oversikt"]),
+    "tittelen ble stående på forrige flate");
+  ruter.stopp();
 });
 
 test("lagRuter: en økt uten én eneste rute kaster ikke", () => {

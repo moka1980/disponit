@@ -677,6 +677,41 @@ test("Forsiden: hopp-lenkas fragment bytter ikke side under føttene", async () 
   await vent(() => app.textContent.includes(t("site.svar_tittel")));
 });
 
+test("Forsiden: hver side heter noe i historikk og faneveksler", async () => {
+  // Codex P2: fem direkte navigerbare sider delte den statiske
+  // `<title>Disponit</title>`. Fem faner uten forskjell, en tilbakeknapp uten
+  // spor, et bokmerke som ikke sier hva det peker på — og en skjermleser som
+  // melder samme ord etter hver navigasjon.
+  const app = nyttAppBrett();
+  await paaSide(app, "hjem");
+  assert.match(document.title, new RegExp(`^${t("site.nav.hjem")}\\b`),
+    `dokumenttittelen på hjem er «${document.title}»`);
+  assert.ok(document.title.includes(t("app.navn")),
+    "produktnavnet forsvant ut av tittelen");
+
+  const sett = [document.title];
+  for (const nokkel of ["tjenester", "slik", "om", "logg-inn"]) {
+    window.location.hash = `#/${nokkel}`;
+    await vent(() => document.title.startsWith(
+      t(`site.nav.${nokkel.replace("-", "_")}`)));
+    sett.push(document.title);
+  }
+  assert.equal(new Set(sett).size, sett.length,
+    `to sider deler tittel: ${sett.join(" | ")}`);
+
+  // Tittelen er tekst en bruker leser, så den følger språket som alt annet.
+  try {
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => document.title.startsWith(EN["site.nav.logg_inn"]));
+    assert.ok(document.title.startsWith(EN["site.nav.logg_inn"]),
+      `tittelen ble stående på norsk: «${document.title}»`);
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Forsiden: ukjent rute faller tilbake til hjem, den blir ikke tom", async () => {
   const app = nyttAppBrett();
   window.location.hash = "#/finnes-ikke";
