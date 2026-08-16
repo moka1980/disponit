@@ -4,6 +4,9 @@
 // (godkjenneren attesterer diffen hun SÅ, ikke versjonsnummeret).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
@@ -1589,4 +1592,945 @@ test("Valideringsfeil som lander etter navigasjon, blir hørt", async () => {
   assert.equal(h.querySelectorAll(".pa-valfeil").length, 0,
     "feillista ble tegnet inn i en side eier hadde forlatt");
   gjenopprett();
+});
+
+// Diffen er det godkjenneren BINDER SEG TIL. En ny policy ga ~200 flate rader
+// («handlinger[0].vilkaar[2].verifikator · added: "v_prognose"»), og det
+// spørsmålet et menneske skal svare på — hva får agenten lov til, og opp til
+// hvilket beløp — lå begravd. Eier meldte den som «en lang liste, litt
+// vanskelig å forholde seg til».
+//
+// Kravet er derfor TO ting samtidig: den skal være til å lese, OG ingenting
+// skal forsvinne. Den siste er den viktige — en diff som skjuler noe gjør
+// attesteringen til en løgn.
+const STOR_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [
+    { sti: "handlinger[]", klasse: "UTVIDER" },
+    { sti: "roller[]", klasse: "UTVIDER" },
+    { sti: "unntak.kategorier[]", klasse: "UTVIDER" },
+  ],
+  diff: { endringer: [
+    { sti: "handlinger[0].id", type: "lagt_til", til: "ordre.bekreft_og_fakturer" },
+    { sti: "handlinger[0].modul", type: "lagt_til", til: "M-25" },
+    { sti: "handlinger[0].modus", type: "lagt_til", til: "auto" },
+    { sti: "handlinger[0].vilkaar[0].navn", type: "lagt_til", til: "betaling_autorisert" },
+    { sti: "handlinger[1].id", type: "lagt_til", til: "refusjon.utfor" },
+    { sti: "handlinger[1].modul", type: "lagt_til", til: "M-41" },
+    { sti: "handlinger[1].modus", type: "lagt_til", til: "auto" },
+    { sti: "handlinger[1].grenser.belop_maks", type: "lagt_til", til: "5000.00" },
+    { sti: "handlinger[1].grenser.valuta[0]", type: "lagt_til", til: "NOK" },
+    { sti: "roller[0].id", type: "lagt_til", til: "daglig_leder" },
+    { sti: "unntak.kategorier[0]", type: "lagt_til", til: "manglende_data" },
+    { sti: "unntak.kategorier[1]", type: "lagt_til", til: "over_grense" },
+    { sti: "unntak.kategorier[2]", type: "lagt_til", til: "svindelmistanke" },
+    { sti: "tidssone", type: "endret", fra: "UTC", til: "Europe/Oslo" },
+  ] },
+};
+
+async function aapneEndringer(h) {
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".diff-grupper"));
+  return h.querySelector(".diff-grupper");
+}
+
+// Kontroll: gjør `feltDiff` flat igjen (én li per endring), så blir denne rød.
+test("Diff: grupperes per område, og de som utvider fullmakt står åpne øverst",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const grupper = [...rot.querySelectorAll(".diff-gruppe")];
+    assert.equal(grupper.length, 4,
+      "handlinger, roller, unntak og tidssone skal bli fire områder");
+    const navn = grupper.map((g) =>
+      g.querySelector(".diff-gruppenavn").textContent);
+    assert.deepEqual(navn.slice(0, 3).sort(), [
+      t("ui.policyadmin.diff.gruppe.handlinger"),
+      t("ui.policyadmin.diff.gruppe.roller"),
+      t("ui.policyadmin.diff.gruppe.unntak"),
+    ].sort(), "områdene som utvider fullmakt skal ligge først");
+    // Åpne = det fire-øyne-kravet finnes for. Resten kan foldes ut.
+    for (const g of grupper.slice(0, 3)) {
+      assert.ok(g.hasAttribute("open"), "et område som utvider skal stå åpent");
+    }
+    assert.ok(!grupper[3].hasAttribute("open"),
+      "tidssone utvider ikke fullmakt og skal ikke stjele plass");
+  });
+
+// Klassifikatoren skriver «verifikatorer{}» / «verifikator_prioritet{}» —
+// «{}» sier at beholderen er en objekt-map, mens bladdiffen navngir de samme
+// feltene uten markør. Beholdes markøren i gruppenavnet, er «verifikatorer{}»
+// og «verifikatorer» to forskjellige grupper, og en verifikator som UTVIDER
+// fullmakten blir verken sortert først, åpnet eller merket (Codex P1).
+// Kontroll: fjern `normaliserKlassifikatorSti`, så blir denne rød.
+const VERIFIKATOR_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [
+    { sti: "verifikatorer{}", klasse: "UTVIDER" },
+    { sti: "tidssone", klasse: "NØYTRAL" },
+  ],
+  diff: { endringer: [
+    { sti: "tidssone", type: "endret", fra: "UTC", til: "Europe/Oslo" },
+    { sti: "verifikatorer.v_prognose.betrodd_for[0]", type: "lagt_til",
+      til: "ordre.bekreft" },
+    { sti: "verifikatorer.v_prognose.kan_fastsla_permanent", type: "lagt_til",
+      til: true },
+  ] },
+};
+
+test("Diff: «{}»-markøren fra klassifikatoren peker på samme gruppe som diffen",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": VERIFIKATOR_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const grupper = [...rot.querySelectorAll(".diff-gruppe")];
+    const verif = grupper.find((g) =>
+      g.querySelector(".diff-gruppenavn").textContent
+        === t("ui.policyadmin.diff.gruppe.verifikatorer"));
+    assert.ok(verif, "verifikatorene ble ikke en egen gruppe");
+    assert.equal(grupper[0], verif,
+      "gruppen som utvider fullmakt skal sorteres først");
+    assert.ok(verif.hasAttribute("open"),
+      "en gruppe som utvider fullmakt skal stå åpen");
+    assert.ok(verif.querySelector('[data-risiko="UTVIDER"]'),
+      "gruppen som utvider fullmakt skal bære samme merking som risikolista");
+  });
+
+// To feil i samme uttrykk for hva et «element» er (Codex P2 × 2).
+//
+// `menneskelig_overstyring.godkjennbare[0].handling`: elementet stoppet før
+// indeksen, så ALLE overstyringene havnet i ett kort med samlestien som
+// eneste overskrift. Det er en fullmaktsbærende liste — hvilken handling og
+// hvilket beløp per overstyring er nettopp det godkjenneren skal skille.
+//
+// `dataklasser[0]`: her ble den indekserte stien selv elementnøkkelen, så
+// hver indeks ble sin egen rad — stikk i strid med løftet om ÉN rad for
+// `dataklasser[]`.
+const NOSTET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  diff: { endringer: [
+    { sti: "menneskelig_overstyring.godkjennbare[0].handling",
+      type: "lagt_til", til: "refusjon.utfor" },
+    { sti: "menneskelig_overstyring.godkjennbare[0].belop_maks",
+      type: "lagt_til", til: "5000.00" },
+    { sti: "menneskelig_overstyring.godkjennbare[1].handling",
+      type: "lagt_til", til: "ordre.kanseller" },
+    { sti: "menneskelig_overstyring.godkjennbare[1].belop_maks",
+      type: "lagt_til", til: "250000.00" },
+    { sti: "dataklasser[0]", type: "lagt_til", til: "personopplysninger" },
+    { sti: "dataklasser[1]", type: "lagt_til", til: "regnskapsdata" },
+    { sti: "dataklasser[2]", type: "lagt_til", til: "kontonummer" },
+  ] },
+};
+
+function gruppeMedNavn(rot, navn) {
+  return [...rot.querySelectorAll(".diff-gruppe")].find((g) =>
+    g.querySelector(".diff-gruppenavn").textContent === navn);
+}
+
+test("Diff: hver oppføring i en nøstet objektliste blir sitt eget kort",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NOSTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const mo = gruppeMedNavn(rot, t(
+      "ui.policyadmin.diff.gruppe.menneskelig_overstyring",
+      "menneskelig_overstyring"));
+    const kort = [...mo.querySelectorAll(".diff-element")];
+    assert.equal(kort.length, 2,
+      "to overstyringer er to beslutninger — og to kort "
+      + `(fant ${kort.length})`);
+    // Og hver av dem må bære SINE egne verdier, ikke naboens.
+    const refusjon = kort.find((k) => k.textContent.includes("refusjon.utfor"));
+    const ordre = kort.find((k) => k.textContent.includes("ordre.kanseller"));
+    assert.ok(refusjon && ordre, "overstyringene ble ikke skilt fra hverandre");
+    assert.ok(refusjon.textContent.includes("5000.00")
+      && !refusjon.textContent.includes("250000.00"),
+      "beløpsgrensene ble blandet mellom overstyringene");
+  });
+
+// Å dele overstyringene i hvert sitt kort hjelper ikke hvis alle kortene har
+// samme overskrift. `godkjennbare[]` har ingen `id` — skjemaet krever
+// `grunnkode` + `handling` — så overskriften ble «…godkjennbare[n] · N felt»,
+// og godkjenneren måtte åpne hvert kort for å finne handlingen og
+// beløpsgrensen (Codex P2).
+//
+// Kontroll: fjern `handling` fra `IDENTITET` og `["belop_maks", "valuta"]`
+// fra `BELOPSFELT`, så blir denne rød.
+test("Diff: en overstyring identifiseres på handling og beløp, ikke på indeks",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": {
+      ...NOSTET_DIFF,
+      diff: { endringer: [
+        ...NOSTET_DIFF.diff.endringer,
+        { sti: "menneskelig_overstyring.godkjennbare[0].grunnkode",
+          type: "lagt_til", til: "belop_over_grense" },
+        { sti: "menneskelig_overstyring.godkjennbare[0].valuta",
+          type: "lagt_til", til: "NOK" },
+      ] },
+    }, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const mo = gruppeMedNavn(rot, t(
+      "ui.policyadmin.diff.gruppe.menneskelig_overstyring",
+      "menneskelig_overstyring"));
+    const opps = [...mo.querySelectorAll(".diff-element > summary")]
+      .map((s) => s.textContent);
+    const refusjon = opps.find((o) => o.includes("refusjon.utfor"));
+    assert.ok(refusjon,
+      "overstyringen identifiseres ikke ved handling, bare ved indeks "
+      + `(${JSON.stringify(opps)})`);
+    assert.ok(refusjon.includes("belop_over_grense"),
+      "grunnkoden — hva overstyringen gjelder — mangler i overskriften");
+    assert.ok(refusjon.includes("5000.00") && refusjon.includes("NOK"),
+      "beløpsgrensen er selve fullmakten, og mangler i overskriften");
+    assert.ok(opps.some((o) => o.includes("ordre.kanseller")),
+      "den andre overstyringen har fortsatt bare indeksen som overskrift");
+  });
+
+test("Diff: en skalarliste på toppnivå blir ÉN rad, ikke én per indeks",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NOSTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const dk = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.dataklasser"));
+    const rader = dk.querySelectorAll("li");
+    assert.equal(rader.length, 1,
+      `tre dataklasser er én rad, ikke ${rader.length}`);
+    assert.equal(rader[0].querySelector("code").textContent, "dataklasser[]");
+    for (const v of ["personopplysninger", "regnskapsdata", "kontonummer"]) {
+      assert.ok(rader[0].textContent.includes(v), `${v} forsvant`);
+    }
+  });
+
+// Et enkelt lagt-til skalarfelt tilfredsstilte også «alle blader er
+// skalare», og gikk gjennom sammenslåingen som hektet på «[]». «tidssone»
+// ble vist som «tidssone[]» — diffen påsto at feltet var en liste.
+// Godkjenneren attesterer strukturen hun ser (Codex P2).
+const SKALAR_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  diff: { endringer: [
+    { sti: "tidssone", type: "lagt_til", til: "Europe/Oslo" },
+    { sti: "unntak.maks_auto_forsok", type: "lagt_til", til: 3 },
+    { sti: "unntak.kategorier[0]", type: "lagt_til", til: "over_grense" },
+    { sti: "unntak.kategorier[1]", type: "lagt_til", til: "manglende_data" },
+  ] },
+};
+
+test("Diff: et enkelt skalarfelt omdøpes ikke til en liste", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": SKALAR_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const stier = [...rot.querySelectorAll("code")].map((c) => c.textContent);
+  assert.ok(stier.includes("tidssone"),
+    `«tidssone» skal stå med sin egen sti (fant ${JSON.stringify(stier)})`);
+  assert.ok(!stier.includes("tidssone[]"),
+    "et skalarfelt ble presentert som en liste");
+  assert.ok(stier.includes("unntak.maks_auto_forsok")
+    && !stier.includes("unntak.maks_auto_forsok[]"),
+    "et skalarfelt under en gruppe ble presentert som en liste");
+  // Og den EKTE lista skal fortsatt slås sammen.
+  assert.ok(stier.includes("unntak.kategorier[]"),
+    "en reell skalarliste skal fortsatt bli én rad");
+});
+
+// Sammenslåingen bytter OPPDELING, ikke innhold. `String()` på hver verdi
+// visket ut typen (`true` og `"true"` ble samme tekst) og grensene mellom
+// verdiene (en verdi med komma i seg så ut som to oppføringer). Godkjenneren
+// attesterer `diff_hash` over de eksakte verdiene (Codex P2).
+//
+// Kontroll: bytt `JSON.stringify` tilbake til `String` i `skalarListeRad`, så
+// blir denne rød.
+test("Diff: sammenslåtte listeverdier beholder JSON-type og grenser",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": {
+      ...DETALJ,
+      klassifisering_endringer: [],
+      diff: { endringer: [
+        { sti: "dataklasser[0]", type: "lagt_til", til: true },
+        { sti: "dataklasser[1]", type: "lagt_til", til: "true" },
+        { sti: "dataklasser[2]", type: "lagt_til", til: "a, b" },
+      ] },
+    }, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const rad = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.dataklasser"))
+      .querySelector("li");
+    assert.match(rad.textContent, /true, "true"/,
+      "boolsk `true` og strengen «true» må være til å skille fra hverandre "
+      + `(fikk «${rad.textContent}»)`);
+    assert.ok(rad.textContent.includes('"a, b"'),
+      "en verdi som selv inneholder komma må ha synlige grenser");
+  });
+
+test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const overskrifter = [...rot.querySelectorAll(".diff-element > summary")]
+      .map((s) => s.textContent);
+    const refusjon = overskrifter.find((o) => o.includes("refusjon.utfor"));
+    assert.ok(refusjon, "handlingen identifiseres ikke ved navn");
+    // Nettopp disse tre avgjør fullmakten, og skal kunne leses UTEN å utfolde.
+    assert.ok(refusjon.includes("M-41"), "modul mangler i overskriften");
+    assert.ok(refusjon.includes("auto"), "modus mangler i overskriften");
+    assert.ok(refusjon.includes("5000.00") && refusjon.includes("NOK"),
+      "beløpsgrensen mangler i overskriften");
+    // Delene må skilles i TEKSTEN, ikke bare visuelt: flex-gap er ingen
+    // avstand for en skjermleser, og «refusjon.utforM-41auto» er uleselig.
+    assert.ok(!/refusjon\.utforM-41/.test(refusjon),
+      "overskriftsdelene limes sammen uten skilletegn");
+  });
+
+// Det vanligste tilfellet er ikke en ny policy, men en JUSTERT: da inneholder
+// diffen bare det ene bladet som skiftet. Bygges overskriften utelukkende av
+// de endrede bladene, faller den tilbake til «handlinger[1]» — uten navn,
+// modul eller beløpsgrense. Godkjenneren får altså vite at noe endret seg,
+// men ikke på hvilken handling (Codex P2). Utkastets `innhold` er allerede
+// med i detaljsvaret og er fasit for hva elementet ER etter endringen.
+const ENDRET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    handlinger: [
+      { id: "ordre.bekreft", modul: "M-25", modus: "forslag" },
+      { id: "refusjon.utfor", modul: "M-41", modus: "auto",
+        grenser: { belop_maks: "5000.00", valuta: ["NOK"] } },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[1].modus", type: "endret", fra: "forslag", til: "auto" },
+  ] },
+};
+
+test("Diff: overskriften hentes fra hele utkastet, ikke bare fra det endrede",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": ENDRET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = rot.querySelector(".diff-element > summary").textContent;
+    assert.ok(opps.includes("refusjon.utfor"),
+      `overskriften sier ikke hvilken handling som endres: «${opps}»`);
+    assert.ok(opps.includes("M-41"), "modul mangler i overskriften");
+    assert.ok(opps.includes("5000.00") && opps.includes("NOK"),
+      "beløpsgrensen mangler i overskriften");
+    // Selve endringen skal fortsatt vise BEGGE sider.
+    const rad = rot.querySelector(".feltdiff li").textContent;
+    assert.ok(rad.includes("forslag") && rad.includes("auto"),
+      "en endret verdi må vise både fra og til");
+  });
+
+// Et slettet element finnes ikke i utkastet. Da er `fra`-verdiene i diffen
+// det eneste som forteller hva som forsvinner, og de må beholdes.
+const SLETTET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { handlinger: [] },
+  diff: { endringer: [
+    { sti: "handlinger[0].id", type: "fjernet", fra: "refusjon.utfor" },
+    { sti: "handlinger[0].modul", type: "fjernet", fra: "M-41" },
+    { sti: "handlinger[0].modus", type: "fjernet", fra: "auto" },
+  ] },
+};
+
+test("Diff: et slettet element beholder navnet sitt fra fra-verdiene",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": SLETTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = rot.querySelector(".diff-element > summary").textContent;
+    assert.ok(opps.includes("refusjon.utfor"),
+      `den fjernede handlingen mistet navnet sitt: «${opps}»`);
+    assert.ok(opps.includes("M-41"), "modulen forsvant fra overskriften");
+  });
+
+// Serverens diff sammenligner lister POSISJONELT. Fjernes den første av to
+// handlinger, blir `handlinger[0]` til bladet «id: A → B», og `handlinger[1]`
+// til de fjernede bladene til gamle B. Hentes overskriften utelukkende fra
+// utkastet, het BEGGE kortene «B» — og A, det som faktisk forsvant, sto ingen
+// steder (Codex P2).
+//
+// Kontroll: la `vis()` returnere bare den nye verdien, så blir denne rød.
+const FORSKJOVET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41", modus: "auto" },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].id", type: "endret",
+      fra: "ordre.bekreft", til: "refusjon.utfor" },
+    { sti: "handlinger[0].modul", type: "endret", fra: "M-25", til: "M-41" },
+    { sti: "handlinger[1].id", type: "fjernet", fra: "refusjon.utfor" },
+    { sti: "handlinger[1].modul", type: "fjernet", fra: "M-41" },
+  ] },
+};
+
+test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": FORSKJOVET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = [...rot.querySelectorAll(".diff-element > summary")]
+      .map((s) => s.textContent);
+    assert.equal(opps.length, 2, "to posisjoner er to kort");
+    assert.ok(opps.some((o) => o.includes("ordre.bekreft")),
+      "handlingen som ble fjernet står ikke i noen overskrift: "
+      + JSON.stringify(opps));
+    // Og kortet som BÆRER «A → B» må vise begge, ikke bare den nye.
+    const skiftet = opps.find((o) => o.includes("ordre.bekreft"));
+    assert.ok(skiftet.includes("refusjon.utfor"),
+      "kortet viser bare den ene siden av identitetsskiftet");
+    assert.ok(skiftet.includes("M-25") && skiftet.includes("M-41"),
+      "modulen skiftet også, og begge sider hører hjemme i overskriften");
+  });
+
+// Serveren sender diffstiene LEKSIKALSK sortert, så fra ti elementer og
+// oppover kommer «[10]» og «[11]» før «[2]». Sammenslåingen fjerner
+// indeksene, og da sto en masseendring i en annen rekkefølge enn lista
+// faktisk har — uten indeksene igjen til å avsløre det. Godkjenneren
+// attesterer `diff_hash` over de eksakte verdiene, rekkefølgen inkludert
+// (Codex P2).
+//
+// Kontroll: fjern sorteringen i `skalarListeRad`, så blir denne rød.
+const TOSIFRET_LISTE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { dataklasser: [...Array(12).keys()].map((i) => `k${i}`) },
+  diff: { endringer: [...Array(12).keys()]
+    .map((i) => ({ sti: `dataklasser[${i}]`, type: "lagt_til", til: `k${i}` }))
+    // Serverens leksikalske rekkefølge: [0], [1], [10], [11], [2], …
+    .sort((a, b) => a.sti.localeCompare(b.sti)) },
+};
+
+test("Diff: sammenslåtte listeverdier står i listas rekkefølge", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": TOSIFRET_LISTE_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const rad = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.dataklasser"))
+    .querySelector("li").textContent;
+  const rekkefolge = [...rad.matchAll(/k(\d+)/g)].map((m) => Number(m[1]));
+  assert.deepEqual(rekkefolge, [...Array(12).keys()],
+    `verdiene står ikke i listas rekkefølge: «${rad}»`);
+});
+
+// `retention[]` har ingen `id`, men skjemaet KREVER `dataklasse` — og det er
+// dataklassen en oppbevaringsregel handler om. Uten den som identitet het
+// hvert kort «retention[0]», «retention[1]» …, og med flere regler måtte
+// godkjenneren åpne hvert eneste kort for å finne ut hvilke data den endrede
+// regelen gjaldt (Codex P2).
+//
+// Kontroll: ta `dataklasse` ut av `IDENTITET`, så blir denne rød.
+const RETENTION_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    retention: [
+      { dataklasse: "persondata", aar_min: 5, regel: "gdpr" },
+      { dataklasse: "finansiell", aar_min: 10, regel: "bokforing" },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "retention[0].aar_min", type: "endret", fra: 3, til: 5 },
+    { sti: "retention[1].aar_min", type: "endret", fra: 7, til: 10 },
+  ] },
+};
+
+test("Diff: en oppbevaringsregel navngis av dataklassen sin", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": RETENTION_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = [...rot.querySelectorAll(".diff-element > summary")]
+    .map((s) => s.textContent);
+  assert.equal(opps.length, 2, "to oppbevaringsregler er to kort");
+  for (const k of ["persondata", "finansiell"]) {
+    assert.ok(opps.some((o) => o.includes(k)),
+      `ingen overskrift navngir dataklassen «${k}»: ${JSON.stringify(opps)}`);
+  }
+});
+
+// `tillatt_for` er en MENGDE av roller. Sto bare `tillatt_for[0]` i
+// overskriften, var en rolle lagt til ETTER den første usynlig i den lukkede
+// oppsummeringen — enda det å gi en ny rolle fullmakt er nettopp det serveren
+// klassifiserer som UTVIDER (Codex P2).
+//
+// Kontroll: sett `MENGDEFELT` tilbake til `tillatt_for[0]` i `NOKKELFELT`, så
+// blir denne rød.
+const NY_ROLLE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].tillatt_for[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41",
+        tillatt_for: ["admin", "ansatt", "regnskap"] },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].tillatt_for[1]", type: "lagt_til", til: "ansatt" },
+    { sti: "handlinger[0].tillatt_for[2]", type: "lagt_til", til: "regnskap" },
+  ] },
+};
+
+test("Diff: hver rolle som får fullmakt, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NY_ROLLE_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  for (const r of ["admin", "ansatt", "regnskap"]) {
+    assert.ok(opps.includes(r),
+      `rollen «${r}» mangler i overskriften: «${opps}»`);
+  }
+  // Rollene er en mengde, og skal skilles i TEKSTEN — «adminansatt» er ikke
+  // to roller for et menneske, og ikke for en skjermleser heller.
+  assert.ok(/admin,\s*ansatt/.test(opps),
+    `rollene limes sammen uten skilletegn: «${opps}»`);
+});
+
+// Byttes én rolle mot en annen, sammenligner serverens diff listene POSISJONELT
+// og melder ett `endret`-blad på indeks 0. Ble «borte» avgjort på indeks, fantes
+// indeks 0 fortsatt, og overskriften viste bare den nye rollen: den som mistet
+// fullmakten sto ingen steder (Codex P2). `admin` beholder samtidig fullmakten
+// sin på en annen indeks enn før, og skal IKKE meldes fjernet.
+//
+// Kontroll: avgjør `borte` på indeks igjen (`sider(k).ny === undefined`), så
+// blir denne rød.
+const BYTTET_ROLLE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].tillatt_for[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41", tillatt_for: ["ansatt", "admin"] },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].tillatt_for[0]", type: "endret",
+      fra: "admin", til: "ansatt" },
+    { sti: "handlinger[0].tillatt_for[1]", type: "endret",
+      fra: "regnskap", til: "admin" },
+  ] },
+};
+
+test("Diff: en rolle som mister fullmakten, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": BYTTET_ROLLE_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  const fjernet = t("ui.policyadmin.diff.fjernet");
+  assert.ok(opps.includes(`regnskap → ${fjernet}`),
+    `rollen som mistet fullmakten mangler i overskriften: «${opps}»`);
+  for (const r of ["ansatt", "admin"]) {
+    assert.ok(opps.includes(r), `rollen «${r}» mangler i overskriften: «${opps}»`);
+  }
+  // `admin` har fortsatt fullmakt — bare på en annen indeks. En posisjonell
+  // sammenligning ville påstått at rollen var borte.
+  assert.ok(!opps.includes(`admin → ${fjernet}`),
+    `en rolle som fortsatt har fullmakt meldes fjernet: «${opps}»`);
+});
+
+// `dataklasser_tillatt` er den andre fullmaktsbærende mengden på en handling,
+// og klassifikatoren behandler den som `tillatt_for`: en dataklasse lagt til er
+// UTVIDER. Den sto ikke i overskriften i det hele tatt, så handlingen hadde
+// nøyaktig samme lukkede oppsummering før og etter (Codex P2).
+//
+// Kontroll: ta `dataklasser_tillatt` ut av `MENGDEFELT`, så blir denne rød.
+const NY_DATAKLASSE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].dataklasser_tillatt[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41",
+        dataklasser_tillatt: ["intern", "sensitiv"] },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].dataklasser_tillatt[1]", type: "lagt_til",
+      til: "sensitiv" },
+  ] },
+};
+
+test("Diff: en ny dataklasse handlingen får bruke, står i overskriften",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": NY_DATAKLASSE_DIFF, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = rot.querySelector(".diff-element > summary").textContent;
+    for (const d of ["intern", "sensitiv"]) {
+      assert.ok(opps.includes(d),
+        `dataklassen «${d}» mangler i overskriften: «${opps}»`);
+    }
+    assert.ok(/intern,\s*sensitiv/.test(opps),
+      `dataklassene limes sammen uten skilletegn: «${opps}»`);
+  });
+
+// `grenser.valuta` er en LISTE av valutaer, men overskriften leste bare
+// indeks 0. Utvides den fra ["NOK"] til ["NOK", "EUR"], klassifiserer serveren
+// det som UTVIDER — mens overskriften sto uendret på «maks 5000.00 NOK», og den
+// nye valutaen var usynlig til kortet ble åpnet (Codex P2).
+//
+// Kontroll: sett `grenser.valuta[0]` tilbake i `BELOPSFELT`, så blir denne rød.
+const NY_VALUTA_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].grenser.valuta[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41",
+        grenser: { belop_maks: "5000.00", valuta: ["NOK", "EUR"] } },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].grenser.valuta[1]", type: "lagt_til", til: "EUR" },
+  ] },
+};
+
+test("Diff: hver valuta grensen gjelder i, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NY_VALUTA_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  for (const v of ["NOK", "EUR"]) {
+    assert.ok(opps.includes(v), `valutaen «${v}» mangler i overskriften: «${opps}»`);
+  }
+  assert.ok(/NOK,\s*EUR/.test(opps),
+    `valutaene limes sammen uten skilletegn: «${opps}»`);
+  assert.ok(opps.includes("5000.00"),
+    `grensen valutaene gjelder for, mangler: «${opps}»`);
+});
+
+// Fjernes et nøkkelfelt fra et element som fortsatt finnes, har utkastet
+// ingenting å hydrere overskriften med — og feltet forsvant da helt fra den.
+// Å fjerne `grenser.belop_maks` gjør en begrenset handling UBEGRENSET og
+// klassifiseres som UTVIDER, men overskriften sa bare «refusjon.utfor · M-41»
+// og lot den gamle grensen ligge tolv rader ned (Codex P2).
+//
+// Kontroll: la `vis()` returnere `undefined` når den nye verdien mangler, så
+// blir denne rød.
+const FJERNET_GRENSE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].grenser.belop_maks",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [{ id: "refusjon.utfor", modul: "M-41", grenser: {} }],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].grenser.belop_maks", type: "fjernet", fra: "5000.00" },
+    { sti: "handlinger[0].grenser.valuta[0]", type: "fjernet", fra: "NOK" },
+    { sti: "handlinger[0].modus", type: "fjernet", fra: "auto" },
+  ] },
+};
+
+test("Diff: nøkkelfelt som fjernes, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": FJERNET_GRENSE_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  assert.ok(opps.includes("5000.00"),
+    `den gamle grensen forsvant fra overskriften: «${opps}»`);
+  assert.ok(opps.includes(t("ui.policyadmin.diff.uten_grense")),
+    `overskriften sier ikke at handlingen er ubegrenset nå: «${opps}»`);
+  // Samme gjelder et vanlig nøkkelfelt: «auto» er borte, og det skal SES.
+  assert.ok(opps.includes("auto")
+    && opps.includes(t("ui.policyadmin.diff.fjernet")),
+    `et fjernet nøkkelfelt forsvant fra overskriften: «${opps}»`);
+  // Og en handling som fortsatt finnes skal ikke miste navnet sitt.
+  assert.ok(opps.includes("refusjon.utfor"), "handlingen mistet navnet sitt");
+});
+
+// `verifikatorer` har UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» er en
+// gyldig verifikator-id. Serverens flate sti skjøter map-nøkler med punktum,
+// og en oppdeling som leser punktum som skilletegn slo derfor to helt ulike
+// verifikatorer sammen til elementet «verifikatorer.foo» — bladene deres i
+// ett kort, og oppslaget i utkastet ned i nøkler som ikke finnes (Codex P2).
+//
+// Kontroll: la `delOppLedd` ignorere utkastet og dele på punktum, så blir
+// denne rød.
+const PUNKTUMNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      "foo.bar": { beskrivelse: "Bankintegrasjon", betrodd_for: ["betaling"] },
+      "foo.baz": { beskrivelse: "Fakturamottak", betrodd_for: ["mottak"] },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.bar.betrodd_for[0]", type: "lagt_til",
+      til: "betaling" },
+    { sti: "verifikatorer.foo.bar.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.baz.betrodd_for[0]", type: "lagt_til",
+      til: "mottak" },
+    { sti: "verifikatorer.foo.baz.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+  ] },
+};
+
+// Samme ubegrensede nøkkelnavn gjør «foo{}bar» til en gyldig verifikator-id.
+// Ble normaliseringen av klassifikatorens beholder-markør kjørt på bladdiffen
+// også, skrev den «verifikatorer.foo{}bar» om til «verifikatorer.foobar» — og
+// fantes BEGGE i policyen, pekte de to stiene på samme element (Codex P2).
+//
+// Kontroll: la `delOppSti` normalisere stien igjen, så blir denne rød.
+const KLAMMENOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      "foo{}bar": { beskrivelse: "Bankintegrasjon" },
+      foobar: { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo{}bar.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo{}bar.kan_fastsla_permanent", type: "lagt_til",
+      til: true },
+    { sti: "verifikatorer.foobar.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+    { sti: "verifikatorer.foobar.kan_fastsla_permanent", type: "lagt_til",
+      til: false },
+  ] },
+};
+
+test("Diff: «{}» inne i en gyldig map-nøkkel blir stående", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": KLAMMENOKKEL_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+  const kort = [...v.querySelectorAll(".diff-element")];
+  assert.equal(kort.length, 2,
+    `to verifikatorer er to kort (fant ${kort.length})`);
+  const bar = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+  assert.ok(bar, "verifikatorene ble slått sammen til ett kort");
+  assert.ok(!bar.textContent.includes("Fakturamottak"),
+    "en annen verifikators felt havnet i dette kortet");
+  assert.ok(bar.querySelector("summary").textContent.includes("foo{}bar"),
+    "overskriften navngir ikke verifikatoren: "
+    + `«${bar.querySelector("summary").textContent}»`);
+});
+
+test("Diff: to verifikatorer med punktum i id-en blir to kort", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": PUNKTUMNOKKEL_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+  const kort = [...v.querySelectorAll(".diff-element")];
+  assert.equal(kort.length, 2,
+    `to verifikatorer er to kort (fant ${kort.length})`);
+  const bar = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+  assert.ok(bar, "verifikatorene ble slått sammen til ett kort");
+  assert.ok(!bar.textContent.includes("Fakturamottak"),
+    "en annen verifikators felt havnet i dette kortet");
+  // Og oppslaget i utkastet må treffe den EKTE nøkkelen, ikke «foo».
+  assert.ok(bar.querySelector("summary").textContent.includes("foo.bar"),
+    "overskriften navngir ikke verifikatoren: "
+    + `«${bar.querySelector("summary").textContent}»`);
+});
+
+// Samme punktumnøkler, men SLETTET: da finnes ingen av dem i utkastet, og en
+// oppdeling som bare kjenner utkastet faller tilbake på første punktum. Begge
+// verifikatorene havnet da i ett kort som het «verifikatorer.foo» — nøyaktig
+// i det tilfellet der fullmakt FORSVINNER (Codex P2). Basen diffen måles mot
+// er den eneste kilden som fortsatt vet hvor de nøklene slutter.
+//
+// Kontroll: la `kilder` bare inneholde `detalj.innhold`, så blir denne rød.
+const SLETTET_PUNKTUMNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { tidssone: "UTC" },
+  base_innhold: {
+    verifikatorer: {
+      "foo.bar": { beskrivelse: "Bankintegrasjon" },
+      "foo.baz": { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.bar.beskrivelse", type: "fjernet",
+      fra: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.bar.kan_fastsla_permanent", type: "fjernet",
+      fra: true },
+    { sti: "verifikatorer.foo.baz.beskrivelse", type: "fjernet",
+      fra: "Fakturamottak" },
+    { sti: "verifikatorer.foo.baz.kan_fastsla_permanent", type: "fjernet",
+      fra: false },
+  ] },
+};
+
+test("Diff: to slettede verifikatorer med punktum i id-en blir to kort",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": SLETTET_PUNKTUMNOKKEL_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+    const kort = [...v.querySelectorAll(".diff-element")];
+    assert.equal(kort.length, 2,
+      `to slettede verifikatorer er to kort (fant ${kort.length})`);
+    const bar = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+    assert.ok(bar, "de slettede verifikatorene ble slått sammen til ett kort");
+    assert.ok(!bar.textContent.includes("Fakturamottak"),
+      "en annen slettet verifikators felt havnet i dette kortet");
+    for (const k of kort) {
+      const opps = k.querySelector("summary").textContent;
+      assert.ok(/foo\.ba[rz]/.test(opps),
+        `overskriften navngir ikke verifikatoren som forsvinner: «${opps}»`);
+    }
+  });
+
+// `verifikatorer` har ubegrensede nøkkelnavn, så en id kan også BEGYNNE med
+// et skilletegn: `[bank]` og `.faktura` er lovlige. `_flat` skjøter dem på med
+// nøyaktig ett punktum («verifikatorer.[bank]…», «verifikatorer..faktura…»),
+// men parseren tolket skilletegnet FØR den så på nodens nøkler: klammene ble
+// listeindeks og det ene punktumet forsvant. Begge falt tilbake til
+// samlegruppen `verifikatorer` (Codex P2, bekreftet blokkerende av eier).
+//
+// Kontroll: la `delOppLedd` tolke `[`/`.` før nøkkeloppslaget igjen, så blir
+// denne rød.
+const SKILLETEGNNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      "[bank]": { beskrivelse: "Bankintegrasjon" },
+      ".faktura": { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.[bank].beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.[bank].kan_fastsla_permanent", type: "endret",
+      fra: false, til: true },
+    { sti: "verifikatorer..faktura.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+    { sti: "verifikatorer..faktura.kan_fastsla_permanent", type: "lagt_til",
+      til: false },
+  ] },
+};
+
+// Og slettet: da finnes nøklene bare på før-siden, så oppdelingen må finne
+// grensene i basen — nøyaktig det tilfellet der fullmakt FORSVINNER.
+const SLETTET_SKILLETEGNNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { tidssone: "UTC" },
+  base_innhold: {
+    verifikatorer: {
+      "[bank]": { beskrivelse: "Bankintegrasjon" },
+      ".faktura": { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.[bank].beskrivelse", type: "fjernet",
+      fra: "Bankintegrasjon" },
+    { sti: "verifikatorer.[bank].kan_fastsla_permanent", type: "fjernet",
+      fra: true },
+    { sti: "verifikatorer..faktura.beskrivelse", type: "fjernet",
+      fra: "Fakturamottak" },
+    { sti: "verifikatorer..faktura.kan_fastsla_permanent", type: "fjernet",
+      fra: false },
+  ] },
+};
+
+for (const [hva, fikstur] of [
+  ["beholdt", SKILLETEGNNOKKEL_DIFF],
+  ["slettet", SLETTET_SKILLETEGNNOKKEL_DIFF],
+]) {
+  test(`Diff: en ${hva} map-nøkkel som starter med et skilletegn er én nøkkel`,
+    async () => {
+      SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": fikstur,
+        __post: async () => ({}) };
+      const rot = await aapneEndringer(nyHoved());
+      const v = gruppeMedNavn(rot,
+        t("ui.policyadmin.diff.gruppe.verifikatorer"));
+      const kort = [...v.querySelectorAll(".diff-element")];
+      assert.equal(kort.length, 2,
+        `to verifikatorer er to kort (fant ${kort.length})`);
+      const bank = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+      assert.ok(bank, "verifikatorene ble slått sammen til ett kort");
+      assert.ok(!bank.textContent.includes("Fakturamottak"),
+        "en annen verifikators felt havnet i dette kortet");
+      for (const [id, opps] of kort.map((k) =>
+        [k.textContent.includes("Bankintegrasjon") ? "[bank]" : ".faktura",
+          k.querySelector("summary").textContent])) {
+        assert.ok(opps.includes(id),
+          `overskriften navngir ikke verifikatoren «${id}»: «${opps}»`);
+      }
+    });
+}
+
+test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const unntak = [...rot.querySelectorAll(".diff-gruppe")].find((g) =>
+    g.querySelector(".diff-gruppenavn").textContent
+      === t("ui.policyadmin.diff.gruppe.unntak"));
+  const alle = unntak.querySelectorAll("li");
+  assert.equal(alle.length, 1,
+    "tre unntakskategorier er én beslutning — og én rad, ikke en wrapper "
+    + `rundt tre (fant ${alle.length})`);
+  for (const v of ["manglende_data", "over_grense", "svindelmistanke"]) {
+    assert.ok(alle[0].textContent.includes(v), `${v} forsvant`);
+  }
+});
+
+// Den viktigste testen i fila: grupperingen er PRESENTASJON. Forsvinner én
+// endring, attesterer godkjenneren noe hun ikke har sett.
+test("Diff: ingen endring forsvinner i grupperingen", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const tekst = rot.textContent;
+  for (const e of STOR_DIFF.diff.endringer) {
+    const verdi = String(e.type === "endret" ? e.til : e.til);
+    assert.ok(tekst.includes(verdi),
+      `verdien «${verdi}» (${e.sti}) finnes ikke i den grupperte diffen`);
+  }
+  // Og endringen som ikke er et tillegg skal vise BEGGE sider.
+  assert.ok(tekst.includes("UTC") && tekst.includes("Europe/Oslo"),
+    "en endret verdi må vise både fra og til");
+});
+
+// Grupperingen har lov til å folde sammen, men ikke til å skjule at noe kan
+// foldes ut. `summary` er `display: list-item` som standard, og det er den
+// standarden som gir nettleserens ▶/▼-markør (en `::marker` finnes bare på
+// listeelementer). Flex-oppsettet slo den av, så lukkede områder så ut som
+// statiske overskrifter — og en godkjenner som ikke ser at noe kan åpnes,
+// åpner ikke. jsdom har ingen layout å måle, så porten står på stilkilden.
+test("Diff: sammenleggbare områder viser at de KAN åpnes", () => {
+  const HER = dirname(fileURLToPath(import.meta.url));
+  const css = readFileSync(
+    join(HER, "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  const markor = regel(
+    ".diff-gruppe > summary::before, .diff-element > summary::before {");
+  assert.match(markor, /content:\s*""/,
+    "markøren må tegnes som form, ikke som et tegn en skjermleser leser opp "
+    + "oppå tilstanden `details` allerede melder selv");
+  assert.match(markor, /border-color:[^;]*currentColor/,
+    "markøren må være synlig i samme farge som teksten");
+  assert.match(regel(
+    ".diff-gruppe[open] > summary::before, .diff-element[open] > summary::before {"),
+    /transform:\s*rotate/, "åpen og lukket må se forskjellig ut");
+});
+
+test("Diff: den grupperte visningen er axe-ren", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  await aapneEndringer(h);
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
