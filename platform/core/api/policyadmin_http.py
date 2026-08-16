@@ -256,6 +256,66 @@ def valider_utkast_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def varsel_liste_endepunkt(tjeneste, request):
+    """Mine varsler. `policy:read` — å se at noe venter på deg krever ikke
+    fullmakt til å endre noe."""
+    from .app import _rid
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:read")
+        from . import varsel as v
+        kun = request.query_params.get("uleste") == "1"
+        return _ok({"varsler": v.innboks(conn, tenant=tenant, bruker_id=bid,
+                                         kun_uleste=kun),
+                    "uleste": v.antall_uleste(conn, tenant=tenant,
+                                              bruker_id=bid),
+                    "kanal": v.hent_kanal(conn, tenant=tenant, bruker_id=bid)},
+                   rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def varsel_lest_endepunkt(tjeneste, request):
+    """Merk ETT av MINE varsler som lest."""
+    from .app import _rid
+    rid = _rid(request)
+    try:
+        vid = int(request.path_params["varsel_id"])
+    except (TypeError, ValueError):
+        return _feil("request_feilformet", _rid(request))
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        from . import varsel as v
+        return _ok({"lest": v.merk_lest(conn, tenant=tenant, bruker_id=bid,
+                                        varsel_id=vid)}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def varselvalg_endepunkt(tjeneste, request):
+    """Valget eier ba om: e-post + portal, eller kun portal."""
+    from .app import _rid
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        from . import varsel as v
+        kanal = (_kropp(request) or {}).get("kanal")
+        try:
+            satt = v.sett_kanal(conn, tenant=tenant, bruker_id=bid,
+                                kanal=kanal)
+        except ValueError:
+            return _feil("request_feilformet", rid)
+        return _ok({"kanal": satt}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def forkast_utkast_endepunkt(tjeneste, request):
     from .app import _rid
     rid = _rid(request)

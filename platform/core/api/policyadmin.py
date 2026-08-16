@@ -39,7 +39,6 @@ from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
 from . import policyregister as _pr
-from . import varsel
 from .autorisasjon import scopes_for_roller
 from .mac_register import kanonisk_konvolutt
 
@@ -845,6 +844,25 @@ def _versjonsnokkel(versjon: str, ledd: int) -> tuple[tuple[int, str], ...]:
     return tuple((len(d), d) for d in ledd_ut)
 
 
+def _varsle(conn, tenant, aktor, request_id, utkast_id, policy_id,
+            risikoklasse, gjenstaar) -> None:
+    """Varsle dem som kan bringe runden videre. Bivirkning, aldri betingelse.
+
+    Importen ligger inne i funksjonen med vilje: `varsel` er et lag OVER
+    styringen, og styringen skal ikke få en importavhengighet til varslingen
+    som kan velte ved oppstart. Feiler noe her, er det et menneske som ikke får
+    en påminnelse — ikke en fullmaktsendring som stopper.
+    """
+    try:
+        from . import varsel as _v
+        _v.varsle_runde_venter(
+            conn, tenant=tenant, aktor=aktor, request_id=request_id,
+            utkast_id=utkast_id, policy_id=policy_id,
+            risikoklasse=risikoklasse, gjenstaar=gjenstaar)
+    except Exception:                                         # noqa: BLE001
+        pass
+
+
 def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
                      aktiv_versjon: str | None) -> str:
     """Versjonen aktiveringen kommer til å lagre er utkastets EGEN
@@ -1035,22 +1053,11 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         conn.rollback()
         raise Aktiveringsfeil("runde_allerede_aapen") from None
 
-    # Si fra til dem som kan bringe runden videre. En åpen runde venter på et
-    # MENNESKE, og fram til nå fikk hun aldri vite det — i praksis måtte eier
-    # si fra utenom systemet. Varselet skrives i SAMME transaksjon som runden:
-    # committes runden, finnes varselet; rulles runden tilbake, gjør varselet
-    # det også. En egen transaksjon kunne etterlatt et varsel om en runde som
-    # aldri ble åpnet.
-    #
-    # `varsle_runde_venter` kaster aldri og verner denne transaksjonen med en
-    # savepoint. Det er med vilje og går én vei: en fullmaktsendring skal ikke
-    # kunne feile fordi varslingen gjorde det. Konsekvensen av en varslingsfeil
-    # er at et menneske ikke får en påminnelse — ikke at styringen stopper.
-    varsel.varsle_runde_venter(
-        conn, tenant=tenant, aktor=aktor, request_id=request_id,
-        utkast_id=utkast_id, runde=runde, policy_id=policy_id,
-        risikoklasse=v["risikoklasse"],
-        gjenstaar=v["pakrevd_antall_godkjennere"])
+    # Runden er åpnet — NÅ venter den på noen. Varselet er en bivirkning og
+    # aldri en betingelse: `varsle_runde_venter` kaster ikke, så en
+    # fullmaktsendring kan ikke feile fordi varslingen gjorde det.
+    _varsle(conn, tenant, aktor, request_id, utkast_id, policy_id,
+            v["risikoklasse"], v["pakrevd_antall_godkjennere"])
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id, "runde": runde,
@@ -1301,6 +1308,12 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     antall = len(rader)
     ikke_forfatter = sum(1 for _b, ef, _r, _a in rader if not ef)
     if antall < r_pakrevd or ikke_forfatter < 1:
+        # Fortsatt ikke i mål. De som gjenstår skal vite det — og den som nå
+        # har attestert faller ut av mottakerlista av seg selv
+        # (`mottakere_for_runde`), så ingen får en påminnelse om noe de
+        # allerede har gjort.
+        _varsle(conn, tenant, aktor, request_id, utkast_id, policy_id,
+                r_risiko, max(0, r_pakrevd - antall))
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "venter_godkjennere", "utkast_id": utkast_id,
             "runde": r_nr, "antall": antall,
