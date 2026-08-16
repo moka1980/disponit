@@ -311,13 +311,21 @@ def valider_utkast_endepunkt(tjeneste, request):
 
 def varsel_liste_endepunkt(tjeneste, request):
     """Mine varsler. `policy:read` — å se at noe venter på deg krever ikke
-    fullmakt til å endre noe."""
+    fullmakt til å endre noe.
+
+    LESEAUTH, ikke `_browserkontekst` (Codex P2). Ruten er en GET og endrer
+    ingenting, så CSRF-vernet hører ikke hjemme her: det finnes for å hindre at
+    et annet nettsted får browseren til å UTFØRE noe med brukerens cookie, og en
+    liste over hva som venter på deg er ikke noe å utføre. Kravet var heller
+    ikke gratis — `hentJson` sender bevisst bare `Accept`, som hver eneste andre
+    GET i flaten, så innboksen svarte `403 csrf_ugyldig` på en helt gyldig
+    forespørsel. CSRF beholdes på de to POST-rutene, der den faktisk verner noe.
+    """
     from .app import _rid
     rid = _rid(request)
 
     def kjor(conn):
-        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
-                                       "policy:read")
+        tenant, bid = _leseauth(tjeneste, request, conn, rid)
         from . import varsel as v
         kun = request.query_params.get("uleste") == "1"
         return _ok({"varsler": v.innboks(conn, tenant=tenant, bruker_id=bid,

@@ -107,8 +107,9 @@ def test_innboksen_ser_egne_varsler_gjennom_endepunktet(klient):
     _legg_inn_varsel(bid, uid)
     cookie, csrf = _browsersesjon(bid)
 
-    r = klient.get("/v1/varsel", headers={"X-Disponit-CSRF": csrf},
-                   cookies={sesjonmodul.C_SESJON: cookie})
+    # INGEN CSRF-header: `hentJson` sender bare `Accept`, og det er slik flaten
+    # faktisk spør. Se `test_innboksen_krever_ikke_csrf_...` under.
+    r = klient.get("/v1/varsel", cookies={sesjonmodul.C_SESJON: cookie})
 
     assert r.status_code == 200, r.text
     body = r.json()
@@ -117,6 +118,42 @@ def test_innboksen_ser_egne_varsler_gjennom_endepunktet(klient):
         f"brukeren at ingenting venter: {body}")
     assert body["uleste"] == 1
     assert body["kanal"] == "epost_og_portal"
+
+
+@pg
+def test_innboksen_krever_ikke_csrf_men_mutasjonene_gjoer(klient):
+    """Codex P2: GET-en er lesende og skal ikke gates på CSRF — POST-ene skal.
+
+    CSRF-vernet finnes for å hindre at et annet nettsted får browseren til å
+    UTFØRE noe med brukerens cookie. En liste over hva som venter på deg er ikke
+    noe å utføre, og kravet var ikke gratis: `hentJson` sender bevisst bare
+    `Accept`, så innboksen svarte 403 på en helt gyldig forespørsel — flaten
+    kunne ikke laste den i det hele tatt.
+
+    Begge halvdelene måles her. Uten den andre kunne funnet «fikses» ved å
+    fjerne CSRF overalt, og det ville vært en sikkerhetsregresjon, ikke en fiks.
+
+    MUTASJONEN SOM DREPER DENNE: sett `_browserkontekst` tilbake på GET-en (da
+    dør første assert), eller bytt POST-ene til `_leseauth` (da dør den andre).
+    """
+    from api import sesjon as sesjonmodul
+    bid = _forvalter("csrf")
+    vid = _legg_inn_varsel(bid, "u-" + secrets.token_hex(6))
+    cookie, _csrf = _browsersesjon(bid)
+    ck = {sesjonmodul.C_SESJON: cookie}
+
+    assert klient.get("/v1/varsel", cookies=ck).status_code == 200, \
+        "lesende GET ble gatet på en header flaten ikke sender"
+
+    # …men mutasjonene står fortsatt bak CSRF.
+    assert klient.post(
+        f"/v1/varsel/{vid}/lest",
+        headers={"Idempotency-Key": secrets.token_hex(8)},
+        cookies=ck).status_code == 403, "CSRF-vernet falt på en mutasjon"
+    assert klient.post(
+        "/v1/varselvalg", json={"kanal": "kun_portal"},
+        headers={"Idempotency-Key": secrets.token_hex(8)},
+        cookies=ck).status_code == 403, "CSRF-vernet falt på en mutasjon"
 
 
 def _les(sql, *p):
