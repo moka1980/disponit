@@ -715,3 +715,39 @@ test("Avvist liste-GET river ikke bort ruten brukeren har navigert til", async (
     "policyadmins feiltilstand tegnet seg inn i en annen rute");
   globalThis.fetch = brukFetch;
 });
+
+// Codex P1: `paaFerdig` friskner opp detaljsiden når en handling er utført —
+// men den sto ubetinget. Klikket eier «Valider» og så «Rediger», lå POST-en
+// fortsatt ute mens editoren hadde tatt over `hoved`. Svaret kom, kalte
+// `aapneDetalj`, og erstattet editoren med detaljsiden — sammen med det eier
+// hadde rukket å skrive i den.
+test("Valider som fullfører etter «Rediger» river ikke bort editoren", async () => {
+  const gjenopprett = _medCsrf();
+  let slipp = null;
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null,
+      innhold: { meta: { policy_id: "p" } } },
+    __post: async () => {
+      await new Promise((r) => { slipp = r; });
+      return { ok: true, status: 200, json: async () => ({ utfall: "gyldig" }) };
+    },
+  };
+  const h = nyHoved();
+  const side = await _aapneDetaljMed(h, t("ui.policyadmin.handling.valider"));
+  _finn(side, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slipp);                     // valideringen er ute på nettet
+  _finn(side, t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.editor.tittel")));
+
+  slipp();
+  await vent(() => false, 20);                 // la svaret få tegne, om det vil
+  assert.ok(h.textContent.includes(t("ui.editor.tittel")),
+    "valideringssvaret rev bort editoren eier sto i");
+  assert.equal(_finn(h, t("ui.policyadmin.tilbake_til_liste")), undefined,
+    "detaljsiden tegnet seg over editoren");
+  gjenopprett();
+});

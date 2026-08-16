@@ -374,7 +374,17 @@ export function visPolicyadmin(hoved, ctx) {
           `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
           t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
         tilbakeKnapp(tilbakeTilListe),
-        detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid), aapneEditor));
+        // En handling som fullfører ETTER at eier har forlatt detaljsiden, skal
+        // ikke hente den tilbake (Codex P1). `paaFerdig` friskner opp siden
+        // etter Valider/Åpne runde/Attester — riktig så lenge siden er den man
+        // står i. Klikket eier «Valider» og så «Rediger», lå POST-en fortsatt
+        // ute mens editoren tok over `hoved`: svaret kom, kalte `aapneDetalj`,
+        // og erstattet editoren — med det hun hadde rukket å skrive i den.
+        // Oppfriskningen bæres derfor av visningen den ble startet fra.
+        // Selve utfallet annonseres uansett: handlingen ER utført, og det skal
+        // eier få vite selv om skjermen har gått videre.
+        detaljInnhold(detalj, uid, ctx,
+          () => { if (eierSkjermen(min)) aapneDetalj(uid); }, aapneEditor));
       fokuserOverskrift(hoved);
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
