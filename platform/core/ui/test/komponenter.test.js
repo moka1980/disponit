@@ -361,6 +361,26 @@ test("AppShell: uten varselkilde påstår statuslinja ingen null (Codex P2)", ()
     "statuslinja påstår null varsler den ikke har dekning for");
 });
 
+test("AppShell: varseltallet kan settes etter at skallet er tegnet", () => {
+  // 🔴 `/v1/varsel` er et nettkall og skallet tegnes synkront, så `varsler` er
+  // `null` ved bygging i praksis alltid. Uten en vei til å sette den senere
+  // sto linja på «ikke tilgjengelig» for godt — og telleren var uoppnåelig
+  // uansett hvor riktig `varsler`-parameteren ble behandlet.
+  const skall = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const status = () => skall.rot.querySelector(".skall-status").textContent;
+  assert.ok(status().includes(NB["ui.shell.status_varsler_ukjent"]));
+  skall.settVarsler(4);
+  assert.ok(status().includes(NB["ui.shell.status_varsler"]
+    .replace("{antall}", "4")), `statuslinja sier «${status()}»`);
+  assert.ok(!status().includes(NB["ui.shell.status_varsler_ukjent"]),
+    "det gamle «ikke tilgjengelig» ble stående ved siden av tallet");
+  // …og veien tilbake finnes: en oppfriskning som feiler skal kunne si at den
+  // ikke vet, i stedet for å la et foreldet tall bli stående.
+  skall.settVarsler(null);
+  assert.ok(status().includes(NB["ui.shell.status_varsler_ukjent"]));
+});
+
 test("AppShell: «sist oppdatert» er dataenes tid, ikke rendringens", () => {
   // 🔴 Feltet sto på `new Date()` ved bygging av skallet — altså klokka i
   // nettleseren i det treet tegnes. Ingenting synkroniseres der, så en

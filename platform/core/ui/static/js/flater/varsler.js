@@ -113,6 +113,11 @@ export function visVarsler(hoved, ctx) {
     merkVarselLest(v.id)
       .then(() => {
         meldLive(t("ui.varsler.merket_lest"));
+        // Skallets teller er den samme opplysningen, ett hakk unna: står den
+        // igjen på tallet fra innlastingen, teller den varsler brukeren
+        // nettopp har kvittert ut. Den oppdateres uavhengig av `eierSkjermen`
+        // under — skallet blir stående uansett hvor eier navigerer.
+        ctx.oppdaterVarseltall?.();
         // Oppfriskningen bæres av visningen den ble startet FRA. `medStatus`
         // fanger stempelet i det den kalles, så en `tegn()` startet herfra
         // etter en navigasjon ville fanget det NYE stempelet — og dessuten
@@ -140,6 +145,9 @@ export function visVarsler(hoved, ctx) {
     // id-en. Varselet navnga et utkast og sendte deg til lista over alle.
     // Nå er det én vei, og den er den samme i testen som i appen.
     merkVarselLest(v.id).catch(() => {}).then(() => {
+      // Ikke ventet på: navigasjonen er poenget med knappen, og skallets
+      // teller skal ikke kunne holde eier igjen på veien til handlingen.
+      ctx.oppdaterVarseltall?.();
       window.location.hash = v.ressurs_id
         ? `#/${rute}/${encodeURIComponent(v.ressurs_id)}`
         : `#/${rute}`;

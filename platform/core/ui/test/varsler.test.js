@@ -292,6 +292,41 @@ test("Oppfriskningen etter «merk lest» river ikke bort ruten eier gikk til",
     globalThis.fetch = brukFetch;
   });
 
+// Codex P2: skallets varselteller er den samme opplysningen ett hakk unna.
+// Blir den stående på tallet fra innlastingen, teller den varsler brukeren
+// nettopp har kvittert ut — og flaten er det eneste stedet det skjer.
+test("Varsler: skallets teller bes om å lese på nytt når et varsel merkes lest",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+      kanal: "epost_og_portal" } };
+    let oppdateringer = 0;
+    const h = nyHoved();
+    visVarsler(h, ctx({ oppdaterVarseltall: () => { oppdateringer += 1; } }));
+    await vent(() => h.querySelector(".varselrad"));
+    finn(h, t("ui.varsler.merk_lest")).dispatchEvent(new window.Event("click"));
+    await vent(() => oppdateringer > 0);
+    assert.equal(oppdateringer, 1,
+      "skallet fikk aldri beskjed om at innboksen har endret seg");
+  });
+
+test("Varsler: «Gå til» ber også skallet lese telleren på nytt", async () => {
+  POSTET = [];
+  SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+    kanal: "epost_og_portal" } };
+  let oppdateringer = 0;
+  const h = nyHoved();
+  window.location.hash = "#/varsler";
+  visVarsler(h, ctx({ oppdaterVarseltall: () => { oppdateringer += 1; } }));
+  await vent(() => h.querySelector(".varselrad"));
+  finn(h, t("ui.varsler.gaa_til")).dispatchEvent(new window.Event("click"));
+  await vent(() => window.location.hash !== "#/varsler");
+  assert.equal(window.location.hash, "#/policyadmin/u-1",
+    "telleren ble oppdatert på bekostning av navigasjonen");
+  assert.equal(oppdateringer, 1,
+    "å åpne varselet merker det lest, men skallet fikk ikke vite det");
+});
+
 test("Varsler: axe-ren, og radiogruppen har en legend", async () => {
   POSTET = [];
   SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,

@@ -128,6 +128,27 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   document.documentElement.setAttribute("data-visning", "app");
   sikreLiveRegion();
 
+  // VARSELTELLEREN I SKALLET (Codex P2). Skallet har alltid hatt plassen, men
+  // ingen fylte den: `visApp` sendte aldri `varsler`, så statusfeltet sa «ikke
+  // tilgjengelig» i hver eneste økt — også når `/v1/varsel` hadde uleste
+  // attesteringer å melde. Den som har valgt kun portal fikk dermed ingen
+  // proaktiv beskjed i det hele tatt og måtte åpne varselflaten for å oppdage
+  // om det fantes noe der.
+  //
+  // Bare for økter som HAR ruten: uten `policy:write`/`policy:activate` svarer
+  // `/v1/varsel` 403, og et kall som er dømt til å feile hører ikke hjemme i
+  // oppstarten. «Ikke tilgjengelig» er da også det sanne svaret.
+  //
+  // Feiler kallet, står feltet på «ikke tilgjengelig». Et tall er en påstand,
+  // og skallet skal ikke hevde at det er rolig fordi en GET falt.
+  const harVarsler = tilgjengeligeRuter.some((r) => r.nokkel === "varsler");
+  const oppdaterVarseltall = () => {
+    if (!harVarsler) return Promise.resolve();
+    return hentJson("/v1/varsel?uleste=1")
+      .then((d) => { if (aktivRuter === klientruter) skall.settVarsler(d.uleste); })
+      .catch(() => {});
+  };
+
   const ctx = {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
     // Tenantdata kommer fra `/v1/utrulling`, ikke fra klientpakken: serveren
@@ -137,6 +158,11 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
     tenanter: Array.isArray(utrulling.tenanter) ? utrulling.tenanter : [],
     moduler: tildelteModuler,
     paaUautorisert: () => tilInnlogging(),
+    // Varselflaten er den eneste som ENDRER tallet — merker lest, melder av —
+    // og må derfor kunne be skallet lese det på nytt. Uten dette sto telleren
+    // på verdien fra innlastingen mens innboksen tømte seg foran øynene på
+    // brukeren.
+    oppdaterVarseltall,
   };
   // Ruteren ser BARE flatene økten har rute til: ellers ville `#/admin` skrevet
   // rett i adressefeltet rendret admin uten `security:read`, siden `gjeldende()`
@@ -152,6 +178,11 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
     window.location.hash, tilgjengeligeRuter);
   if (dypLenke) window.location.hash = dypLenke;
   else klientruter.naviger();
+
+  // Etter at ruteren er satt: `oppdaterVarseltall` sjekker `aktivRuter` mot
+  // nettopp denne, så et svar som kommer etter et språkbytte eller en
+  // utlogging ikke skriver inn i et skall ingen ser.
+  oppdaterVarseltall();
 
   // Etter rutingen, ikke før: den første `naviger()` flytter ikke fokus selv
   // (`forste` i `ruter.js`), men flaten skriver i `hoved` — og fokus skal ende
