@@ -90,14 +90,28 @@ function normaliserKlassifikatorSti(sti) {
 // som elementet «verifikatorer.foo»: bladene deres havnet i ETT kort, og
 // oppslaget i utkastet fulgte nøkler som ikke finnes (Codex P2).
 //
-// Utkastet vet hvor en nøkkel slutter, så det er utkastet som deler opp
+// Policyen selv vet hvor en nøkkel slutter, så det er den som deler opp
 // stien: på hvert nivå er leddet den LENGSTE faktiske nøkkelen stien starter
-// med. Uten utkast (eller for klassifikatorstier, som ikke peker inn i det)
+// med. Uten kilde (eller for klassifikatorstier, som ikke peker inn i noen)
 // faller vi tilbake til punktum som skilletegn — samme oppførsel som før.
-function delOppLedd(sti, rot) {
+//
+// Men utkastet ALENE er bare den ene siden av endringen (Codex P2). Slettes
+// verifikatorene `foo.bar` og `foo.baz`, finnes ingen av nøklene i utkastet:
+// da falt begge stiene tilbake på første punktum, og de to slettede
+// verifikatorene ble ett kort under navnet «verifikatorer.foo». Nøyaktig det
+// tilfellet der fullmakt FORSVINNER var altså det som ble slått sammen.
+//
+// Derfor deles stien mot BEGGE sider: utkastet vet om nøkler som finnes
+// etter endringen, basen om dem som er borte. En nøkkel som finnes i én av
+// dem er en ekte nøkkelgrense, og lengste treff på tvers vinner.
+function delOppLedd(sti, kilder) {
   const ledd = [];
-  let rest = sti, node = rot;
+  let rest = sti;
   const inn = (n) => (n !== null && typeof n === "object" ? n : undefined);
+  let noder = (Array.isArray(kilder) ? kilder : [kilder])
+    .map(inn).filter((n) => n !== undefined);
+  const ned = (velg) => noder.map(velg).map(inn)
+    .filter((n) => n !== undefined);
   while (rest) {
     if (rest[0] === ".") { rest = rest.slice(1); continue; }
     if (rest[0] === "[") {
@@ -107,15 +121,14 @@ function delOppLedd(sti, rot) {
       const noekkel = rest.slice(1, j);
       ledd.push({ tekst: `[${noekkel}]`, noekkel, brakett: true,
         indeks: /^\d+$/.test(noekkel) });
-      const o = inn(node);
-      node = o && (Array.isArray(o) ? o[Number(noekkel)] : o[noekkel]);
+      noder = ned((n) => (Array.isArray(n) ? n[Number(noekkel)] : n[noekkel]));
       rest = rest.slice(j + 1);
       continue;
     }
     let navn = null;
-    const o = inn(node);
-    if (o && !Array.isArray(o)) {
-      for (const k of Object.keys(o)) {
+    for (const n of noder) {
+      if (Array.isArray(n)) continue;
+      for (const k of Object.keys(n)) {
         const etter = rest[k.length];
         if (!rest.startsWith(k)) continue;
         if (etter !== undefined && etter !== "." && etter !== "[") continue;
@@ -123,7 +136,7 @@ function delOppLedd(sti, rot) {
       }
     }
     if (navn === null) navn = /^[^.[]+/.exec(rest)[0];
-    node = o ? o[navn] : undefined;
+    noder = ned((n) => (Array.isArray(n) ? undefined : n[navn]));
     ledd.push({ tekst: navn, noekkel: navn, brakett: false, indeks: false });
     rest = rest.slice(navn.length);
   }
@@ -158,9 +171,9 @@ function settSammenLedd(ledd) {
 // slutt betyr skalarliste, og `dataklasser[0]`, `dataklasser[1]` … skal
 // samles til én rad `dataklasser[]` i stedet for én rad per indeks (Codex
 // P2). Toppnivålisten har ikke noe navngitt ledd, så elementet er gruppen.
-function delOppSti(raa, innhold) {
+function delOppSti(raa, kilder) {
   const sti = String(raa);
-  const ledd = delOppLedd(sti, innhold);
+  const ledd = delOppLedd(sti, kilder);
   if (!ledd.length) return { gruppe: sti, element: sti, rest: "" };
   const gruppe = ledd[0].tekst;
   // Første indeks som har et navngitt ledd under seg — der slutter elementet.
@@ -218,9 +231,13 @@ const BELOPSFELT = [
 
 // «handlinger[1]» / «menneskelig_overstyring.godkjennbare[0]» → verdien på den
 // stien i utkastet, eller `undefined` finnes den ikke.
-function slaaOppSti(rot, sti) {
-  let v = rot;
-  for (const l of delOppLedd(String(sti), rot)) {
+//
+// Oppdelingen ser BEGGE kildene — nøkkelgrensene finnes i den siden nøkkelen
+// finnes i — mens selve oppslaget bare går i utkastet (`kilder[0]`): det er
+// utkastet som er fasit for hva elementet ER etter endringen.
+function slaaOppSti(kilder, sti) {
+  let v = kilder[0];
+  for (const l of delOppLedd(String(sti), kilder)) {
     if (v === null || typeof v !== "object") return undefined;
     v = Array.isArray(v) ? v[Number(l.noekkel)] : v[l.noekkel];
     if (v === undefined) return undefined;
@@ -263,21 +280,21 @@ function flateFelt(verdi, prefiks = "", ut = new Map()) {
 // fra `fra`-verdiene. To kort som begge sa «B», og `A` — det som faktisk
 // forsvant — sto ingen steder (Codex P2). Derfor: endret feltet seg, viser
 // overskriften BEGGE sider.
-function elementOverskrift(element, blader, innhold) {
+function elementOverskrift(element, blader, kilder) {
   // FØR-tilstanden slik diffen beskriver den. `lagt_til` har ingen før.
   const foer = new Map();
   for (const e of blader) {
     if (e.type === "lagt_til") continue;
-    const { rest } = delOppSti(e.sti, innhold);
+    const { rest } = delOppSti(e.sti, kilder);
     if (rest) foer.set(rest, e.fra);
   }
   const felt = new Map();
-  const kilde = slaaOppSti(innhold, element);
+  const kilde = slaaOppSti(kilder, element);
   if (kilde !== undefined) {
     for (const [k, v] of flateFelt(kilde)) felt.set(k, v);
   } else {
     for (const e of blader) {
-      const { rest } = delOppSti(e.sti, innhold);
+      const { rest } = delOppSti(e.sti, kilder);
       const v = e.type === "fjernet" ? e.fra : e.til;
       if (rest) felt.set(rest, v);
     }
@@ -336,12 +353,12 @@ function skalarListeRad(element, blader) {
 // som «tidssone[]» — diffen påsto at feltet var en liste. Godkjenneren
 // attesterer strukturen hun ser, så en sti som ikke finnes i policyen er
 // ikke en kosmetisk feil (Codex P2).
-function erListeblad(e, innhold) {
-  return /^\[\d+\]$/.test(delOppSti(e.sti, innhold).rest);
+function erListeblad(e, kilder) {
+  return /^\[\d+\]$/.test(delOppSti(e.sti, kilder).rest);
 }
 
-function erBladetSelv(e, innhold) {
-  return !delOppSti(e.sti, innhold).rest;
+function erBladetSelv(e, kilder) {
+  return !delOppSti(e.sti, kilder).rest;
 }
 
 function feltdiffRad(blader) {
@@ -349,23 +366,23 @@ function feltdiffRad(blader) {
     el("ul", { class: "feltdiff" }, ...blader.map(bladRad)));
 }
 
-function elementBlokk(element, blader, innhold) {
+function elementBlokk(element, blader, kilder) {
   // Sammenslåing er BARE trygt for like tillegg/fjerninger. En `endret` verdi
   // har to sider, og den sammenslåtte raden viste bare den nye — `tidssone`
   // ble «Europe/Oslo» uten at «UTC» sto noe sted. Å miste utgangspunktet i en
   // fullmaktsdiff er nøyaktig det grupperingen ikke har lov til å gjøre, så
   // blandede eller endrede blader beholder én rad hver.
   const ensartet = blader.every((e) => e.type === blader[0].type);
-  if (blader.every((e) => erListeblad(e, innhold))) {
+  if (blader.every((e) => erListeblad(e, kilder))) {
     return (ensartet && blader[0].type !== "endret")
       ? skalarListeRad(element, blader)
       : feltdiffRad(blader);
   }
   // Elementet ER bladet: ingen felt under seg, ingen liste å slå sammen.
   // Det skal stå med sin egen sti, ikke pakkes i et kort og ikke få «[]».
-  if (blader.every((e) => erBladetSelv(e, innhold))) return feltdiffRad(blader);
+  if (blader.every((e) => erBladetSelv(e, kilder))) return feltdiffRad(blader);
 
-  const { navn, merker } = elementOverskrift(element, blader, innhold);
+  const { navn, merker } = elementOverskrift(element, blader, kilder);
   const detaljer = el("details", { class: "diff-element" });
   const opps = el("summary", {},
     el("span", { class: "diff-navn", text: navn }));
@@ -388,16 +405,22 @@ function feltDiff(detalj) {
     return el("p", { class: "muted", text: t("ui.policyadmin.ingen_endringer") });
   }
 
+  // Kildene stiene i diffen leses mot. Utkastet står FØRST — det er fasit for
+  // hva elementene er etter endringen, og dermed for overskriftene. Basen er
+  // med fordi en sti kan peke på noe som ikke lenger finnes: en slettet
+  // map-nøkkel har bare basen igjen som vet hvor nøkkelen slutter.
+  const kilder = [detalj.innhold, detalj.base_innhold];
+
   // Gruppene som UTVIDER fullmakt står først og står ÅPNE. Det er dem
   // fire-øyne-kravet finnes for; resten er kontekst man kan folde ut.
   const utvider = new Set((detalj.klassifisering_endringer || [])
     .filter((k) => k.klasse === "UTVIDER")
     .map((k) => delOppSti(normaliserKlassifikatorSti(k.sti),
-      detalj.innhold).gruppe));
+      kilder).gruppe));
 
   const grupper = new Map();
   for (const e of endr) {
-    const { gruppe, element } = delOppSti(e.sti, detalj.innhold);
+    const { gruppe, element } = delOppSti(e.sti, kilder);
     if (!grupper.has(gruppe)) grupper.set(gruppe, new Map());
     const g = grupper.get(gruppe);
     if (!g.has(element)) g.set(element, []);
@@ -435,7 +458,7 @@ function feltDiff(detalj) {
           .replace("{n}", String(antall)) }));
     blokk.append(opps, el("ul", { class: "diff-elementer" },
       ...[...elementer.keys()].sort((a, b) => a.localeCompare(b, "nb"))
-        .map((k) => elementBlokk(k, elementer.get(k), detalj.innhold))));
+        .map((k) => elementBlokk(k, elementer.get(k), kilder))));
     rot.append(blokk);
   }
   return rot;

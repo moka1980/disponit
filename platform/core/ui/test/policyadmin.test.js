@@ -1980,6 +1980,56 @@ test("Diff: to verifikatorer med punktum i id-en blir to kort", async () => {
     + `«${bar.querySelector("summary").textContent}»`);
 });
 
+// Samme punktumnøkler, men SLETTET: da finnes ingen av dem i utkastet, og en
+// oppdeling som bare kjenner utkastet faller tilbake på første punktum. Begge
+// verifikatorene havnet da i ett kort som het «verifikatorer.foo» — nøyaktig
+// i det tilfellet der fullmakt FORSVINNER (Codex P2). Basen diffen måles mot
+// er den eneste kilden som fortsatt vet hvor de nøklene slutter.
+//
+// Kontroll: la `kilder` bare inneholde `detalj.innhold`, så blir denne rød.
+const SLETTET_PUNKTUMNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { tidssone: "UTC" },
+  base_innhold: {
+    verifikatorer: {
+      "foo.bar": { beskrivelse: "Bankintegrasjon" },
+      "foo.baz": { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.bar.beskrivelse", type: "fjernet",
+      fra: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.bar.kan_fastsla_permanent", type: "fjernet",
+      fra: true },
+    { sti: "verifikatorer.foo.baz.beskrivelse", type: "fjernet",
+      fra: "Fakturamottak" },
+    { sti: "verifikatorer.foo.baz.kan_fastsla_permanent", type: "fjernet",
+      fra: false },
+  ] },
+};
+
+test("Diff: to slettede verifikatorer med punktum i id-en blir to kort",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": SLETTET_PUNKTUMNOKKEL_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+    const kort = [...v.querySelectorAll(".diff-element")];
+    assert.equal(kort.length, 2,
+      `to slettede verifikatorer er to kort (fant ${kort.length})`);
+    const bar = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+    assert.ok(bar, "de slettede verifikatorene ble slått sammen til ett kort");
+    assert.ok(!bar.textContent.includes("Fakturamottak"),
+      "en annen slettet verifikators felt havnet i dette kortet");
+    for (const k of kort) {
+      const opps = k.querySelector("summary").textContent;
+      assert.ok(/foo\.ba[rz]/.test(opps),
+        `overskriften navngir ikke verifikatoren som forsvinner: «${opps}»`);
+    }
+  });
+
 test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
     __post: async () => ({}) };
