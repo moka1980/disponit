@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB } from "./hjelp.js";
-import { hentI18n, settI18nForTest, sprak, t } from "../static/js/i18n.js";
+import { hentI18n, settI18nForTest, sprak, t, velgSprak }
+  from "../static/js/i18n.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
 const EN = JSON.parse(readFileSync(
@@ -119,3 +120,34 @@ test("hentI18n: settet er hentet, men ingenting er endret før det tas i bruk", 
     document.documentElement.setAttribute("lang", "nb");
   }
 });
+
+test("Ibruktakingen skriver språket i URL-en, også i det innloggede skallet",
+  async () => {
+    // Codex P2: speilingen lå i den offentlige renderen, mens `velgSprak` gir
+    // URL-en forrang overalt. Etter innlogging står returadressen med sitt
+    // ledd — `/?visning=kundeadmin&sprak=en` — og et bytte inne i skallet rørte
+    // bare lageret og modulen. Ved neste last vant det gamle leddet over det
+    // nye valget, og skallet falt tilbake til engelsk hver gang.
+    settI18nForTest(NB, "nb");
+    const rigg = riggTregEn();
+    rigg.slipp();
+    window.history.replaceState({}, "", "/?visning=kundeadmin&sprak=en");
+    try {
+      assert.equal(velgSprak(), "en", "riggen står ikke på det gamle leddet");
+
+      (await hentI18n("nb")).taIBruk();
+
+      assert.equal(new URLSearchParams(window.location.search).get("sprak"),
+        "nb", "URL-leddet ble stående på det gamle språket etter byttet");
+      assert.equal(new URLSearchParams(window.location.search).get("visning"),
+        "kundeadmin", "speilingen vasket bort resten av adressen");
+      assert.equal(velgSprak(), "nb",
+        "en ny last ville lest det gamle språket ut av URL-en igjen");
+    } finally {
+      rigg.gjenopprett();
+      window.history.replaceState({}, "", "/");
+      settI18nForTest(NB, "nb");
+      document.documentElement.setAttribute("lang", "nb");
+      document.documentElement.setAttribute("data-sprak", "nb");
+    }
+  });

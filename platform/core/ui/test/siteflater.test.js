@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
-import { settI18nForTest, t } from "../static/js/i18n.js";
+import { settI18nForTest, t, velgSprak } from "../static/js/i18n.js";
 import { visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
@@ -79,23 +79,23 @@ function nyHoved() {
   return m;
 }
 
-test("Landing: rendrer ekte plattformflate med retursti per innlogging", async () => {
+test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async () => {
+  window.history.replaceState({}, "", "/");
   const app = nyttAppBrett();
   await visInnlogging();
-  await vent(() => app.querySelectorAll("form").length === 2);
+  await vent(() => app.querySelector(".site-hovednav"));
   assert.ok(app.textContent.includes(t("site.hero.tittel")));
   // Forsiden selger TILBUDET, ikke byggestatusen: kundevendte navn og en
   // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
   assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
   assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
-  assert.ok(app.textContent.includes(t("site.problem_tittel")));
-  assert.ok(app.textContent.includes(t("site.svar_tittel")));
-  assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
-  // Hele produktomfanget skal være synlig: elleve områder, 45 modulnavn.
-  assert.ok(app.textContent.includes(t("site.katalog_tittel")));
-  assert.ok(app.textContent.includes(t("site.omrade.okonomi")));
-  assert.ok(app.textContent.includes(t("site.katalog.m42.navn")),
-    "modulkatalogen mangler på forsiden");
+  assert.equal(app.querySelectorAll(".site-hovednav a").length, 5);
+  assert.equal(app.querySelectorAll('.site-hovednav a[aria-current="page"]').length, 1);
+  assert.ok(app.querySelector(".site-sok input[type=search]"));
+  assert.ok(!app.textContent.includes(t("site.katalog.m42.navn")),
+    "modulkatalogen ligger fortsatt som en lang liste på forsiden");
+  assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 0,
+    "innloggingskortene ligger fortsatt på forsiden");
   // …men DRIFTSVOKABULARET skal ikke nå en anonym besøkende. Skillet er ikke
   // «modul» mot «ikke modul»: navnene ER tilbudet. Det som ikke hører hjemme
   // er de interne merkelappene — modulnumre og byggeregnskap.
@@ -103,12 +103,37 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
     "internt modulnummer på den publike forsiden");
   assert.ok(!/\b0\/45\b/.test(app.textContent),
     "byggeregnskap på den publike forsiden");
-  const retur = [...app.querySelectorAll('input[name="retursti"]')]
-    .map((n) => n.getAttribute("value"));
-  assert.deepEqual(retur, ["/?visning=kundeadmin", "/?visning=admin"]);
   assert.equal(document.documentElement.getAttribute("data-visning"), "landing");
   const b = await alvorligeBrudd(app);
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+test("Landing: tjenester har hele katalogen og søk filtrerer den", async () => {
+  window.history.replaceState({}, "", "/?side=tjenester&q=svindel");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  assert.ok(app.textContent.includes(t("site.katalog.m42.navn")));
+  assert.ok(!app.textContent.includes(t("site.katalog.m1.navn")));
+  assert.equal(app.querySelector('.site-hovednav a[aria-current="page"]').textContent,
+    t("site.nav.tjenester"));
+  const b = await alvorligeBrudd(app);
+  assert.equal(b.length, 0, beskrivBrudd(b));
+  window.history.replaceState({}, "", "/");
+});
+
+test("Landing: innlogging er en egen side med riktig retursti", async () => {
+  window.history.replaceState({}, "", "/?side=innlogging");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  const retur = [...app.querySelectorAll('input[name="retursti"]')]
+    .map((n) => n.getAttribute("value"));
+  // Språket er med i retursti-en (Codex P2): innlogging er den siste
+  // offentlige navigasjonen, og for den som ikke kan lagre valget er URL-en
+  // det ENESTE som bærer det over OIDC-runden. `trygg_retursti` beholder
+  // query-strengen på en lokal path-referanse, så leddet overlever turen.
+  assert.deepEqual(retur,
+    ["/?visning=kundeadmin&sprak=nb", "/?visning=admin&sprak=nb"]);
+  window.history.replaceState({}, "", "/");
 });
 
 test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async () => {
@@ -120,14 +145,14 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
   // forskjellig klasse.
   const app = nyttAppBrett();
   await visInnlogging();
-  await vent(() => app.querySelectorAll(".site-mini-card .site-badge").length > 0);
+  await vent(() => app.querySelectorAll(".site-feature .site-badge").length > 0);
   const css = ["base.css", "komponenter.css"]
     .map((f) => readFileSync(join(HER, "..", "static", "css", f), "utf-8"))
     .join("\n");
   const definert = new Set([...css.matchAll(/\.([A-Za-z_][-\w]*)/g)]
     .map((m) => m[1]));
 
-  const brikker = [...app.querySelectorAll(".site-mini-card .site-badge")];
+  const brikker = [...app.querySelectorAll(".site-feature .site-badge")];
   assert.equal(brikker.length, TILBUD.length,
     "hvert tilbudspunkt skal ha én tilgjengelighetsbrikke");
   for (const brikke of brikker) {
@@ -203,6 +228,99 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
   }
 });
 
+// Codex P2: de fem offentlige sidene byttet bare kroppen, mens tittelen ble
+// stående som den statiske `Disponit` fra `index.html`. Fanen, historikken og
+// skjermleserens sideannonsering kunne da ikke skille hjem fra tjenester fra
+// innlogging. Testen måler hver rute, og at tittelen følger språket: den er
+// visningstekst som alt annet.
+test("Landing: hver offentlig side har sin egen dokumenttittel", async () => {
+  const sider = ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"];
+  try {
+    const sett = new Set();
+    for (const side of sider) {
+      window.history.replaceState({}, "", side === "hjem" ? "/" : `/?side=${side}`);
+      nyttAppBrett();
+      await visInnlogging();
+      assert.ok(document.title.includes(NB[`site.nav.${side}`]),
+        `tittelen på «${side}» navngir ikke siden: ${document.title}`);
+      assert.ok(document.title.includes(NB["app.navn"]),
+        "tittelen sier ikke hvilket produkt fanen tilhører");
+      sett.add(document.title);
+    }
+    assert.equal(sett.size, sider.length,
+      "to offentlige sider deler tittel — da skiller ingenting dem i fanelista");
+
+    // Tittelen er tekst, ikke chrome: den skal bytte språk med resten.
+    const app = nyttAppBrett();
+    window.history.replaceState({}, "", "/?side=tjenester");
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"])
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => document.title.includes(EN["site.nav.tjenester"]));
+    assert.ok(document.title.includes(EN["site.nav.tjenester"]),
+      `tittelen står igjen på norsk etter språkbyttet: ${document.title}`);
+  } finally {
+    window.history.replaceState({}, "", "/");
+    document.documentElement.setAttribute("data-sprak", "nb");
+    settI18nForTest(NB, "nb");
+  }
+});
+
+// Codex P2: `byttTil` lagrer valget best effort, men lagringen KAN være nektet
+// (privat modus, herdet nettleser). Den offentlige navigasjonen er ordinære
+// `href`-er som laster dokumentet på nytt, så etter et klikk finnes valget kun
+// der det er skrevet. Uten språkleddet i URL-en leste neste side ingenting og
+// falt tilbake til `data-sprak="nb"` — en besøkende som byttet til engelsk fikk
+// norsk igjen ved første klikk i den nye navigasjonen. Testen kjører med
+// nektet `localStorage`, altså nøyaktig den brukeren, og krever at HVER vei
+// videre bærer språket: lenkene, søkeformen og adresselinja.
+test("Landing: språkvalget følger navigasjonen når lagring er nektet", async () => {
+  const app = nyttAppBrett();
+  const ekte = Object.getOwnPropertyDescriptor(window, "localStorage");
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    get() { throw new Error("lagring nektet"); },
+  });
+  try {
+    window.history.replaceState({}, "", "/");
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+
+    const lenker = [...app.querySelectorAll(".site-hovednav a, .site-logo, " +
+      ".site-cta a, .site-bunn-cta a, .site-footer a")];
+    assert.ok(lenker.length >= 8, "for få offentlige lenker til å måle noe");
+    for (const a of lenker) {
+      assert.equal(new URL(a.getAttribute("href"), "https://x.test")
+        .searchParams.get("sprak"), "en",
+        `${a.getAttribute("href")} mister språkvalget ved klikk`);
+    }
+    assert.equal(
+      app.querySelector('.site-sok input[name="sprak"]').getAttribute("value"),
+      "en", "søket sender brukeren tilbake til norsk");
+    assert.equal(new URLSearchParams(window.location.search).get("sprak"), "en",
+      "adresselinja sier fortsatt norsk — en oppdatering mister valget");
+
+    // Og den andre enden: en URL med språkleddet velges over dokumentets
+    // `data-sprak`, ellers hadde lenkene båret et valg ingen leser.
+    document.documentElement.setAttribute("data-sprak", "nb");
+    window.history.replaceState({}, "", "/?side=tjenester&sprak=en");
+    assert.equal(velgSprak(), "en");
+  } finally {
+    if (ekte) Object.defineProperty(window, "localStorage", ekte);
+    else delete window.localStorage;
+    window.history.replaceState({}, "", "/");
+    document.documentElement.setAttribute("data-sprak", "nb");
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Landing: et forbigått språkbytte tegner ikke over flaten som står", async () => {
   // Codex P2: byttet har TO ventepunkter, og bare det første var vernet.
   // `taIBruk` melder fra med `null` når et nyere valg har overtatt, men et
@@ -216,6 +334,7 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
   // andre byttet går rett gjennom med provider. Vinner det gamle svaret, bytter
   // forsiden ut innloggingsknappene med «ikke tilgjengelig» — en besøkende
   // mister veien inn fordi et kall de hadde forlatt kom i mål.
+  window.history.replaceState({}, "", "/?side=innlogging");
   const app = nyttAppBrett();
   const ekteFetch = globalThis.fetch;
   let slippOppsett = () => {};
@@ -247,24 +366,25 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
     // Andre klikk — samme knapp, for siden er ikke rendret på nytt ennå. Dette
     // byttet eier flaten fra nå, og det er det som kommer i mål først.
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
-    assert.equal(app.querySelectorAll("form").length, 2,
+    await vent(() => app.textContent.includes(EN["site.login.tittel"]));
+    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 2,
       "det gjeldende byttet rendret ikke innloggingsveiene");
 
     // …og så kommer det forlatte byttet i mål, med sitt provider-løse svar.
     slippOppsett();
     await vent(() => false, 20);         // la det forlatte kallet få kjøre ut
 
-    assert.equal(app.querySelectorAll("form").length, 2,
+    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 2,
       "et forbigått språkbytte skrev over flaten med sitt eget oppsett-svar");
     assert.ok(!app.textContent.includes(NB["ui.logg_inn_utilgjengelig"]),
       "forsiden endte i feiltilstand fra et kall brukeren hadde forlatt");
-    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+    assert.ok(app.textContent.includes(EN["site.login.tittel"]),
       "flaten det gjeldende byttet bygde står ikke lenger");
   } finally {
     slippOppsett();
     globalThis.fetch = ekteFetch;
     settI18nForTest(NB, "nb");
+    window.history.replaceState({}, "", "/");
   }
 });
 
@@ -564,4 +684,43 @@ test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {
   assert.equal(drift.querySelector('a[href="#/unntak"]'), null,
     "unntakssnarvei tilbudt uten exceptions:read");
   assert.ok(drift.querySelector('a[href="#/kundeadmin"]'));
+});
+
+test("Landing: hopp-lenka hopper FORBI navigasjonen, ikke til den", async () => {
+  // Fra #52, der feilen faktisk oppsto: topplinja lå INNE i
+  // `<main id="hovedinnhold">`, altså inne i målet for `.hoppelenke` i
+  // `index.html`. Da lander hoppet på toppen AV den gjentatte navigasjonen, og
+  // neste Tab går gjennom merket, alle nav-lenkene, søkefeltet og
+  // språkknappene — lenka sparer ingenting (WCAG 2.4.1).
+  //
+  // Denne forsiden gjør det riktig i dag. Testen finnes fordi forholdet er
+  // lett å bryte igjen ved neste omstrukturering, og fordi ingenting ellers
+  // måler det: den påstår RELASJONEN — navigasjon og søk utenfor målet,
+  // sideinnhold inni — ikke klassenavn.
+  window.history.replaceState({}, "", "/");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-hovednav"));
+
+  const maal = app.querySelector("#hovedinnhold");
+  assert.ok(maal, "hopp-målet #hovedinnhold finnes ikke");
+  assert.equal(maal.tagName, "MAIN", "hopp-målet er ikke hovedlandemerket");
+  assert.equal(maal.querySelector(".site-hovednav"), null,
+    "hovednavigasjonen står inne i hopp-målet — da hopper lenka til den");
+  assert.equal(maal.querySelector(".site-sok"), null,
+    "søkefeltet står inne i hopp-målet");
+  assert.ok(maal.textContent.includes(t("site.hero.tittel")),
+    "sideinnholdet står UTENFOR hopp-målet — da hopper lenka til ingenting");
+});
+
+test("Landing: en ukjent side gir hjem, ikke en tom flate", async () => {
+  // `?side=finnes-ikke` skal ikke ende i en side uten innhold. Fallet er
+  // stille i koden (siste ledd i ternærkjeden), og derfor verdt å låse.
+  window.history.replaceState({}, "", "/?side=finnes-ikke");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-hovednav"));
+  assert.ok(app.textContent.includes(t("site.hero.tittel")),
+    "en ukjent side ga en tom flate i stedet for hjem");
+  window.history.replaceState({}, "", "/");
 });
