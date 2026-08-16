@@ -241,6 +241,18 @@ test("Attester: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
 const _finn = (rot, tekst) => [...rot.querySelectorAll("button")]
   .find((b) => b.textContent.trim() === tekst);
 
+// Kvitteringen kommer i TO trinn, og trinn to er en egen oppgave (se
+// `kvitteringsBoks`): boksen settes inn tom, teksten kommer etterpå. Å vente på
+// elementet alene er derfor å vente på halve kvitteringen — testene venter på
+// den ferdige.
+const _ventKvittering = async (h) => {
+  await vent(() => {
+    const k = h.querySelector(".pa-kvittering");
+    return k && k.textContent.trim().length > 0;
+  });
+  return h.querySelector(".pa-kvittering");
+};
+
 function _medCsrf() {
   const desc = Object.getOwnPropertyDescriptor(
     window.Document.prototype, "cookie");
@@ -905,8 +917,7 @@ test("Attester: utfallet er SYNLIG etter gjentegningen, med antall som gjenstår
 
     // Kvitteringen skal stå i den NYE siden — altså etter at detaljen er hentet
     // og `sett(hoved, …)` har byttet ut alt innholdet.
-    await vent(() => h.querySelector(".pa-kvittering"));
-    const kvitt = h.querySelector(".pa-kvittering");
+    const kvitt = await _ventKvittering(h);
     assert.ok(kvitt, "utfallet av attesteringen er ikke synlig noe sted");
     assert.equal(kvitt.getAttribute("role"), "status",
       "utfallet må annonseres av seg selv, politt");
@@ -936,8 +947,7 @@ test("Valider: et gyldig utkast gir en synlig kvittering, ikke bare stillhet",
     await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
     _finn(h, t("ui.policyadmin.handling.valider"))
       .dispatchEvent(new window.Event("click"));
-    await vent(() => h.querySelector(".pa-kvittering"));
-    const kvitt = h.querySelector(".pa-kvittering");
+    const kvitt = await _ventKvittering(h);
     assert.ok(kvitt, "«Valider» ga ingen synlig tilbakemelding");
     assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"));
     assert.equal(kvitt.getAttribute("role"), "status");
@@ -962,7 +972,7 @@ test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
   await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
   _finn(h, t("ui.policyadmin.handling.valider"))
     .dispatchEvent(new window.Event("click"));
-  await vent(() => h.querySelector(".pa-kvittering"));
+  await _ventKvittering(h);
   // Tilbake til lista og inn igjen: en NY tegning av samme detalj.
   _finn(h, t("ui.policyadmin.tilbake_til_liste"))
     .dispatchEvent(new window.Event("click"));
@@ -999,8 +1009,7 @@ const _attesterMedUtfall = async (h, svar) => {
   [...bek.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
     .dispatchEvent(new window.Event("click"));
-  await vent(() => h.querySelector(".pa-kvittering"));
-  return h.querySelector(".pa-kvittering");
+  return _ventKvittering(h);
 };
 
 // Codex P2: terskelen har TO betingelser, men serverens `gjenstaar` teller bare
@@ -1095,10 +1104,19 @@ for (const navn of ["constructor", "toString", "__proto__"]) {
 // lyd. Regionen skal derfor stå i dokumentet FØRST, og teksten komme som en
 // egen endring etterpå.
 //
-// Testen ser på selve rekkefølgen, ikke på sluttresultatet: sluttilstanden er
-// jo lik uansett. Kontroll: legg teksten tilbake i `el("p", { text: … })`, så
-// kommer hele boksen som ÉN mutasjon og testen blir rød.
-test("Kvitteringen fylles ETTER at live-området står i dokumentet", async () => {
+// Codex P2 igjen, et hakk dypere: to DOM-endringer i SAMME oppgave beviser
+// ingenting. Nettleseren oppdaterer tilgjengelighetstreet mellom oppgaver, så
+// rakk den ikke å se regionen tom, er «tom → utfylt» ikke en endring i et
+// registrert live-område — bare en ferdig utfylt region som dukker opp, altså
+// nøyaktig det tause tilfellet. Rekkefølgen på mutasjonene ville sett riktig ut
+// likevel.
+//
+// Testen måler derfor OPPGAVESKILLET, ikke rekkefølgen. En MutationObserver
+// kjører som mikrooppgave på slutten av oppgaven som endret DOM-en: står
+// teksten allerede der når innsettingen meldes, skjedde begge delene i samme
+// oppgave. Kontroll: bytt `fyll` tilbake til et synkront `sett(linje, …)`, så
+// blir testen rød.
+test("Live-området rekker å bli registrert før teksten kommer", async () => {
   const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
     __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
@@ -1108,29 +1126,33 @@ test("Kvitteringen fylles ETTER at live-området står i dokumentet", async () =
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
   await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
 
-  const logg = [];
-  const obs = new window.MutationObserver((r) => logg.push(...r));
+  let tekstVedInnsetting = null;
+  const obs = new window.MutationObserver((poster) => {
+    for (const p of poster) {
+      const boks = [...p.addedNodes].find((n) => n.nodeType === 1
+        && (n.classList?.contains("pa-kvittering")
+          || n.querySelector?.(".pa-kvittering")));
+      if (!boks || tekstVedInnsetting !== null) continue;
+      const kv = boks.classList.contains("pa-kvittering")
+        ? boks : boks.querySelector(".pa-kvittering");
+      tekstVedInnsetting = kv.textContent;
+    }
+  });
   obs.observe(h, { childList: true, subtree: true, characterData: true });
   _finn(h, t("ui.policyadmin.handling.valider"))
     .dispatchEvent(new window.Event("click"));
-  await vent(() => h.querySelector(".pa-kvittering"));
-  logg.push(...obs.takeRecords());
+  const kvitt = await _ventKvittering(h);
   obs.disconnect();
 
-  const kvitt = h.querySelector(".pa-kvittering");
   assert.equal(kvitt.getAttribute("role"), "status");
   assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
     "teksten kom aldri inn i live-området");
-
-  const iInnsatt = logg.findIndex((r) => [...r.addedNodes].some(
-    (n) => n.nodeType === 1 && (n === kvitt || n.contains(kvitt))));
-  const iTekst = logg.findIndex((r) => kvitt.contains(r.target)
-    && [...r.addedNodes].some((n) => n.nodeType === 3
-      && n.data.includes(t("ui.policyadmin.validert"))));
-  assert.ok(iInnsatt >= 0, "kvitteringen ble aldri satt inn i `hoved`");
-  assert.ok(iTekst > iInnsatt,
-    "teksten lå allerede i live-området da det ble satt inn — da kan "
-    + "skjermleseren gå glipp av den");
+  assert.notEqual(tekstVedInnsetting, null,
+    "kvitteringen ble aldri satt inn i `hoved`");
+  assert.equal(tekstVedInnsetting, "",
+    "teksten sto der alt da innsettingen ble meldt — begge delene skjedde i "
+    + "samme oppgave, og da kan tilgjengelighetstreet aldri ha sett regionen "
+    + "tom");
 });
 
 // Eier P1 / Codex P2: kvitteringen var en naken modulglobal uten identitet.
@@ -1292,7 +1314,7 @@ test("Kvitteringen overlever at gjentegningen feiler", async () => {
     .dispatchEvent(new window.Event("click"));
   await vent(() => h.querySelector(".tilstand.feil"));
 
-  const kvitt = h.querySelector(".pa-kvittering");
+  const kvitt = await _ventKvittering(h);
   assert.ok(kvitt,
     "handlingen ble utført, men eier fikk ingen kvittering — da gjør hun den om");
   assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),

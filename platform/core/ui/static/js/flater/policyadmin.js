@@ -152,6 +152,18 @@ function taKvittering(uid) {
 // stille i lyd. Derfor to trinn: regionen først, teksten som en egen endring
 // ETTERPÅ, som live-området er laget for å fange opp.
 //
+// «Etterpå» må dessuten være en SENERE OPPGAVE, ikke bare en senere setning
+// (Codex P2). To DOM-endringer i samme oppgave er to endringer for DOM-en, men
+// ikke nødvendigvis to endringer for tilgjengelighetstreet: nettleseren
+// oppdaterer det treet mellom oppgaver, og rekker den ikke å se regionen tom,
+// er «tom → utfylt» aldri en ENDRING i et registrert live-område — bare en
+// ferdig utfylt region som dukker opp, altså nøyaktig det tause tilfellet vi
+// prøver å unngå. En MutationObserver kan bekrefte at rekkefølgen på
+// DOM-endringene er riktig, men ikke at treet ble oppdatert imellom.
+//
+// `setTimeout(…, 0)` gir den oppdateringen et sted å skje. Rekkefølgen for
+// øyet er uendret: teksten kommer i neste oppgave, ikke i neste sekund.
+//
 // Returnerer { rot, fyll } — den som setter inn `rot`, kaller `fyll()` etterpå.
 function kvitteringsBoks(k) {
   const linje = el("p", {});
@@ -159,7 +171,9 @@ function kvitteringsBoks(k) {
     class: `pa-kvittering pa-kvittering-${k.art}`,
     role: k.art === "feil" ? "alert" : "status",
   }, linje);
-  return { rot, fyll: () => sett(linje, k.tekst) };
+  // Er tegningen erstattet før oppgaven kjører, er `linje` frakoblet, og
+  // skrivingen er en uskadelig no-op — kvitteringen døde med sin tegning.
+  return { rot, fyll: () => setTimeout(() => sett(linje, k.tekst), 0) };
 }
 
 // En attestering har TRE utfallsfamilier, ikke to (Codex P2).
@@ -577,7 +591,8 @@ export function visPolicyadmin(hoved, ctx) {
       // Kvitteringsteksten settes ETTER at siden står og fokus er flyttet:
       // live-området skal fange en ENDRING i et område som allerede er i
       // tilgjengelighetstreet, og annonseringen skal ikke bli avbrutt av
-      // fokusflyttingen rett etterpå.
+      // fokusflyttingen rett etterpå. Selve skrivingen skjer i en senere
+      // oppgave — `kvitteringsBoks` sørger for det, og forklarer hvorfor.
       innhold.ferdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
