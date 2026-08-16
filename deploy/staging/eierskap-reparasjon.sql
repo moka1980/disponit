@@ -105,6 +105,7 @@ INSERT INTO _design VALUES
     -- én rolle for «funksjoner som med vilje ser på tvers av tenanter».
     ('FUNCTION', 'varselkandidater(integer)',                        'disponit_domene_eier'),
     ('FUNCTION', 'varsel_sett_epoststatus(bigint,text,text)',        'disponit_domene_eier'),
+    ('FUNCTION', 'varsel_rekoe_feilede(interval,integer)',           'disponit_domene_eier'),
     ('FUNCTION', 'registrer_artefakttype(text,text,integer,text,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'lagre_artefakt_staged(text,bigint,text,text,text,integer,text,bigint,integer,text,bytea,bytea,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'promoter_artefakt(uuid,text,bigint,text,bigint,text,text)', 'disponit_domene_eier'),

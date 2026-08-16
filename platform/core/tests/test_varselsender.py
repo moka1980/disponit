@@ -216,3 +216,40 @@ def test_rendre_viser_ukjent_nokkel_i_stedet_for_tomhet():
     ingenting; en rå nøkkel forteller sannheten."""
     assert varselsender.rendre({}, "varsel.finnes.ikke", {}) \
         == "varsel.finnes.ikke"
+
+
+@pg
+def test_feilet_epost_prøves_igjen_etter_backoff():
+    """En feilet sending er IKKE endelig.
+
+    `varselkandidater` plukker bare `koet`, så uten re-køing var `feilet` en
+    blindvei og forsøkstelleren død kode: ett forbigående SMTP-hikk mistet
+    e-posten for godt. Re-køingen er et eget steg nettopp for å beholde
+    garantien om at `koet` er den eneste sendbare tilstanden.
+
+    Kontroll: fjern `varsel_rekoe_feilede`-kallet i `kjor`, så blir denne rød.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "retry", "retry@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+
+        def alltid_feil(til, emne, tekst):
+            raise RuntimeError("midlertidig")
+
+        assert varselsender.kjor(c, send=alltid_feil)["feilet"] == 1
+        _kontekst(c)
+        # Umiddelbart etterpå skal den IKKE prøves igjen — backoff.
+        sendt, send = _samler()
+        assert varselsender.kjor(c, send=send)["sendt"] == 0, "ingen backoff"
+        _kontekst(c)
+        # Skru tiden tilbake, og den skal komme tilbake i køen.
+        c.execute("UPDATE varsel SET epost_ts = now() - interval '1 hour'"
+                  " WHERE tenant=%s AND bruker_id=%s", (TEN, b))
+        c.commit()
+        _kontekst(c)
+        assert varselsender.kjor(c, send=send)["sendt"] == 1, (
+            "en feilet e-post ble aldri prøvd igjen")
+    finally:
+        c.close()

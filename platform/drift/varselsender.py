@@ -27,6 +27,7 @@ from pathlib import Path
 
 GRENSE = int(os.environ.get("DISPONIT_VARSEL_GRENSE", "50"))
 MAKS_FORSOK = int(os.environ.get("DISPONIT_VARSEL_MAKS_FORSOK", "3"))
+BACKOFF_MIN = int(os.environ.get("DISPONIT_VARSEL_BACKOFF_MIN", "15"))
 
 
 def _locale(sprak: str) -> dict:
@@ -113,6 +114,12 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
                                                         tekst))
     tekster = _locale(sprak)
     emne = tekster.get("varsel.epost.emne", "Disponit")
+    # Først: gi feilede rader en ny sjanse. Egen SQL-funksjon, ikke et utvidet
+    # plukk — `koet` forblir den eneste sendbare tilstanden, så to sendere
+    # aldri kan ta samme rad.
+    conn.execute("SELECT varsel_rekoe_feilede(%s * interval '1 minute', %s)",
+                 (BACKOFF_MIN, MAKS_FORSOK))
+    conn.commit()
     rader = conn.execute("SELECT * FROM varselkandidater(%s)",
                          (GRENSE,)).fetchall()
     sendt = feilet = hoppet = 0

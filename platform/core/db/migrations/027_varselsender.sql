@@ -39,6 +39,7 @@
 -- ikke re-kjørbar — noe man først oppdager når man prøver.
 DROP FUNCTION IF EXISTS varselkandidater(int);
 DROP FUNCTION IF EXISTS varsel_sett_epoststatus(bigint, text, text);
+DROP FUNCTION IF EXISTS varsel_rekoe_feilede(interval, int);
 
 CREATE OR REPLACE FUNCTION varselkandidater(p_grense int)
 RETURNS TABLE (id bigint, tenant text, epost text, tekstnokkel text,
@@ -93,6 +94,42 @@ END $$;
 GRANT SELECT ON varsel, brukeridentitet TO disponit_domene_eier;
 GRANT UPDATE ON varsel TO disponit_domene_eier;
 
+-- RE-KØING: en feilet sending er ikke endelig.
+--
+-- Uten dette var `feilet` en blindvei: `varselkandidater` plukker bare `koet`,
+-- så en rad som feilet én gang ble aldri forsøkt igjen — og forsøkstelleren i
+-- senderen var død kode. Ett forbigående SMTP-hikk mistet e-posten for godt.
+--
+-- Re-køingen er et EGET steg, ikke en utvidelse av plukket, nettopp for å
+-- beholde garantien om at ingenting sendes to ganger: `koet` er fortsatt den
+-- ENESTE sendbare tilstanden, og `varsel_sett_epoststatus` flytter bare
+-- derfra. To sendere som kjører samtidig kan dermed ikke ta samme rad.
+--
+-- Backoff, ikke umiddelbar retry: en adresse som nettopp avviste, avviser
+-- sannsynligvis igjen. Og et tak på forsøk, så en adresse som aldri tar imot
+-- ikke banker på i evighet — raden blir uansett stående i portalen, som er
+-- der varselet egentlig bor.
+CREATE OR REPLACE FUNCTION varsel_rekoe_feilede(
+    p_backoff interval DEFAULT interval '15 minutes',
+    p_maks int DEFAULT 3)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE n int;
+BEGIN
+    UPDATE varsel
+       SET epost_status = 'koet'
+     WHERE epost_status = 'feilet'
+       AND epost_forsok < greatest(1, p_maks)
+       AND epost_ts < now() - p_backoff;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END $$;
+
+ALTER FUNCTION varsel_rekoe_feilede(interval, int) OWNER TO disponit_domene_eier;
+REVOKE ALL ON FUNCTION varsel_rekoe_feilede(interval, int) FROM PUBLIC;
 ALTER FUNCTION varselkandidater(int) OWNER TO disponit_domene_eier;
 ALTER FUNCTION varsel_sett_epoststatus(bigint, text, text)
     OWNER TO disponit_domene_eier;

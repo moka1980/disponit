@@ -19,6 +19,13 @@ from . import varselsender
 
 def main() -> int:
     from db.pg import koble
+    from db.hemmeligheter import last_credentials
+    # `LoadCredential` legger hemmelighetene som FILER i
+    # $CREDENTIALS_DIRECTORY — den setter ingen miljøvariabler. Uten dette
+    # kallet fant senderen aldri sin DB-URL og avsluttet med 1 hvert 5.
+    # minutt, mens køen ble liggende. Samme mekanisme som de andre unitene
+    # bruker; jeg hadde bare lest credentialen som om den var en env-variabel.
+    last_credentials()
     dsn = os.environ.get("DISPONIT_DATABASE_URL")
     if not dsn:
         print("AVBRUTT: DISPONIT_DATABASE_URL mangler", file=sys.stderr)
