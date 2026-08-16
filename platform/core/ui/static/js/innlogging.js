@@ -335,11 +335,26 @@ function erRute(hash) {
   return h === "" || h === "#" || h.startsWith("#/");
 }
 
-// Ukjent RUTE faller fortsatt tilbake til hjem — `#/finnes-ikke` skal ikke gi
-// en tom side. Det er bare ikke-ruter som slipper unna det fallet.
+// SIDEN ER EN TILSTAND, IKKE EN AVLESNING AV HASH-EN (Codex P2). Vernet lå
+// først bare i `hashchange`-lytteren, og det dekket nøyaktig ett tilfelle: selve
+// hash-byttet. Men flaten bygges også på nytt UTEN at hash-en rører seg — et
+// språkbytte kaller `visInnlogging` om igjen — og sto hash-en da på
+// `#hovedinnhold` etter et hopp, leste denne funksjonen fragmentet på nytt og
+// svarte «hjem». Brukeren som sto på Tjenester, hoppet til innholdet og byttet
+// språk, kom tilbake til Hjem uten å ha bedt om det.
+//
+// Derfor holder vi hvilken side som står, og hash-en får bare endre den når den
+// FAKTISK er en rute. Ukjent rute faller fortsatt tilbake til hjem —
+// `#/finnes-ikke` skal ikke gi en tom side — og et fragment endrer ingenting,
+// uansett hvem som spør og hvor mange ganger flaten bygges om.
+let _aktivSide = "hjem";
+
 function gjeldendeSide() {
-  const n = (window.location.hash || "").replace(/^#\//, "");
-  return SIDER.some((x) => x.nokkel === n) ? n : "hjem";
+  const hash = window.location.hash || "";
+  if (!erRute(hash)) return _aktivSide;
+  const n = hash.replace(/^#\//, "");
+  _aktivSide = SIDER.some((x) => x.nokkel === n) ? n : "hjem";
+  return _aktivSide;
 }
 
 // Sidens navn, ett sted. Nav-lenka og dokumenttittelen skal si det SAMME —

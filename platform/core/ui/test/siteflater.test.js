@@ -677,6 +677,39 @@ test("Forsiden: hopp-lenkas fragment bytter ikke side under føttene", async () 
   await vent(() => app.textContent.includes(t("site.svar_tittel")));
 });
 
+test("Forsiden: språkbytte etter et hopp beholder siden man står på", async () => {
+  // Codex P2: vernet over lå i `hashchange`-lytteren, og dekket derfor bare
+  // selve hash-byttet. Flaten bygges også om UTEN at hash-en rører seg — et
+  // språkbytte kaller `visInnlogging` på nytt — og da leste ruteparseren
+  // `#hovedinnhold` om igjen og svarte «hjem». Hoppet var stille og pent; det
+  // var det NESTE klikket som kastet brukeren ut av siden de leste.
+  const app = nyttAppBrett();
+  await paaSide(app, "tjenester");
+  await vent(() => app.textContent.includes(t("site.katalog_tittel")));
+
+  window.location.hash = "#hovedinnhold";
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+
+  try {
+    const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"]);
+    engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    // Språket SKAL bytte. Det er siden som ikke skal det.
+    await vent(() => app.textContent.includes(EN["site.katalog_tittel"]));
+    assert.ok(app.textContent.includes(EN["site.katalog_tittel"]),
+      "språkbyttet bygde Hjem i stedet for siden brukeren sto på");
+    const merket = [...app.querySelectorAll(".site-nav-lenke")]
+      .filter((a) => a.getAttribute("aria-current") === "page")
+      .map((a) => a.textContent);
+    assert.deepEqual(merket, [EN["site.nav.tjenester"]],
+      "markeringen fulgte fragmentet i stedet for siden");
+    assert.ok(document.title.startsWith(EN["site.nav.tjenester"]),
+      `dokumenttittelen ble «${document.title}» etter språkbyttet`);
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
+});
+
 test("Forsiden: hver side heter noe i historikk og faneveksler", async () => {
   // Codex P2: fem direkte navigerbare sider delte den statiske
   // `<title>Disponit</title>`. Fem faner uten forskjell, en tilbakeknapp uten
