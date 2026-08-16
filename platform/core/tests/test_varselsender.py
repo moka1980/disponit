@@ -1220,6 +1220,30 @@ _MAAL = re.compile(
     r"(?:(?P<skjema>[a-z_][a-z0-9_]*)\s*\.\s*)?"
     r"(?P<navn>[a-z_][a-z0-9_]*)\s*(?:\((?P<args>[^()]*)\))?")
 
+#: SAMME TYPE, ULIK STAVEMÅTE (Codex P2 på #71). `DROP FUNCTION
+#: varsel_klaim_epost(integer, integer)` fjerner nøyaktig den funksjonen
+#: `SENDERFUNKSJONER` kaller `(int,int)`: PostgreSQL slår begge opp til samme
+#: `pg_type` og kjenner ingen forskjell. Sammenlignes stavemåten bokstavelig,
+#: leser modellen aliaset som en ANNEN overlast, lar forrige `True` stå — og
+#: godtar at senderfunksjonen er borte.
+#:
+#: NØKLENE ER ALIASENE, VERDIEN ER DEN KANONISKE STAVEMÅTEN — som godt kan
+#: være flere ord, fordi argumentlisten deles på KOMMA og ikke på mellomrom:
+#: `varchar` og `character varying` blir begge det samme ene leddet. En ukjent
+#: type får stå som den er skrevet; å gjette utover det basen faktisk regner
+#: som synonymer, gjør ingen tvil mindre.
+_TYPESYNONYM = {
+    "integer": "int", "int4": "int",
+    "int8": "bigint",
+    "int2": "smallint",
+    "bool": "boolean",
+    "float4": "real",
+    "varchar": "character varying",
+    "decimal": "numeric",
+    "timestamptz": "timestamp with time zone",
+    "timetz": "time with time zone",
+}
+
 #: MÅLKLAUSULEN, ikke hele setningen (Codex P2 på #71). En setning kan NEVNE
 #: en signatur uten å virke på den — en vakt som
 #: `IF to_regprocedure('varsel_klaim_epost(int,int)') IS NOT NULL THEN REVOKE
@@ -1268,8 +1292,26 @@ def _setninger(sql):
 
 
 def _typeliste(argumenter):
-    """Argumentlisten som en sammenlignbar rekke av typer."""
-    return tuple(d.strip() for d in argumenter.split(",") if d.strip())
+    """Argumentlisten som en sammenlignbar rekke av typer.
+
+    Typene kanoniseres, jf. `_TYPESYNONYM`: basen slår `int`, `integer` og
+    `int4` opp til samme `pg_type`, så to signaturer som bare er ulikt
+    STAVET er den samme funksjonen.
+    """
+    return tuple(_TYPESYNONYM.get(d.strip(), d.strip())
+                 for d in argumenter.split(",") if d.strip())
+
+
+def _normalisert(signatur):
+    """En full signatur på formen modellen sammenligner med.
+
+    Navnet i små bokstaver, argumentene kanonisert og uten mellomrom rundt
+    komma. Den erstatter et rått `replace(" ", "")`, som ville limt sammen
+    en type som ER flere ord (`timestamp with time zone`) og gjort den
+    ugjenkjennelig mot den samme typen skrevet i en migrasjon.
+    """
+    navn, _, argumenter = signatur.lower().partition("(")
+    return f"{navn.strip()}({','.join(_typeliste(argumenter.rstrip(')')))})"
 
 
 def _referanser(tekst):
@@ -1368,7 +1410,7 @@ def _spill_av(filer, signaturer):
       tillegg: `DROP FUNCTION f` uten signatur er lovlig når navnet er
       entydig, og gjelder da enhver overlast.
     """
-    beskyttet = [s.replace(" ", "").lower() for s in signaturer]
+    beskyttet = [_normalisert(s) for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
     gjerdet = dict.fromkeys(beskyttet)
     spor = {sig: [] for sig in beskyttet}
@@ -1519,6 +1561,10 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       VIRKER på, og den forskjellen er hele signaturkravet. Sporet finnes i
       to utgaver — med og uten vakt — fordi den betingede utgaven ellers
       ville blitt fanget av regelen under, og målklausulen stått uprøvd.
+    * den samme signaturen STAVET ANNERLEDES — `(integer,integer)`, `(int4,
+      int4)`. Basen kjenner ingen forskjell; en modell som sammenligner
+      stavemåter gjør det, og lar da et gjerde stå rundt en funksjon som er
+      droppet.
     * et NAVN SOM BARE BEGYNNER LIKT, og et ANNET SKJEMA. Begge inneholder
       det beskyttede navnet som delstreng uten å være det objektet, og en
       lukkende setning om dem skal ikke lukke noe her.
@@ -1730,6 +1776,24 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: False}, (
         "en REVOKE på et navn som bare BEGYNNER likt lukker ingenting."
         f" Spor: {spor}")
+
+    # SAMME TYPE, ULIK STAVEMÅTE. `integer` og `int4` er `int` for basen, så
+    # en DROP skrevet slik fjerner nøyaktig den beskyttede funksjonen. Måltes
+    # stavemåten bokstavelig, leste modellen den som en annen overlast og lot
+    # gjerdet stå rundt noe som var borte.
+    for alias in ("integer, integer", "int4, int4", "INT, INTEGER"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP FUNCTION varsel_klaim_epost({alias});")], n)
+        assert gjerdet == {sig: None}, (
+            f"`{alias}` er den samme funksjonen som `(int,int)`."
+            f" Spor: {spor}")
+
+    # …og motprøven: en type som IKKE er et synonym er en annen overlast.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost(bigint, bigint);")],
+        n)[0] == {sig: True}, "`bigint` er ikke `int`"
 
     # Samme skille for skjemaet: et annet skjema er et annet objekt, og en
     # DROP der rører ikke den beskyttede funksjonen.
