@@ -41,6 +41,22 @@ ALTER TABLE varselvalg ALTER COLUMN sprak DROP NOT NULL;
 -- rundt språkoppslaget er borte. Samme regel som 028 selv skrev ned — en
 -- gjenskaping arver ingenting av seg selv og må skrives fra den siste
 -- kroppen, ikke fra den man husker.
+--
+-- HVORFOR DROP-EN ER LOVLIG SOM MIGRATOR — funksjonen eies av
+-- `disponit_domene_eier` siden 027, og migrator er medlem `WITH INHERIT
+-- FALSE`, altså IKKE eier i PostgreSQLs forstand. Likevel går DROP-en
+-- igjennom: for DROP godtar PostgreSQL eieren av SKJEMAET som alternativ til
+-- eieren av objektet, og både CI (`.github/workflows/ci.yml`) og staging
+-- (`deploy/staging/oppsett-postgresql.sh`) gjør `ALTER SCHEMA public OWNER TO
+-- disponit_migrator` før første migrasjon. Etter DROP-en er CREATE-en en
+-- FERSK funksjon eid av migrator, og `ALTER … OWNER TO` under trenger bare
+-- medlemskapet — som er nettopp det `WITH INHERIT FALSE` beholder.
+--
+-- Rekkefølgen er derfor den samme som 028 bruker, med vilje. Et
+-- `SET LOCAL ROLE` rundt DROP/CREATE her ville virket, men bare gjort 031
+-- ulik 027 og 028 — som er kjørt og immutable — og latt neste leser tro at
+-- de to er en annen sak. Det som faktisk bærer, er skjemaeierskapet over;
+-- flyttes DET, faller 028 først, ikke denne.
 DROP FUNCTION IF EXISTS varsel_klaim_epost(int, int);
 
 CREATE OR REPLACE FUNCTION varsel_klaim_epost(p_grense int,
