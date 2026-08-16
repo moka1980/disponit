@@ -4,6 +4,9 @@
 // (godkjenneren attesterer diffen hun SÅ, ikke versjonsnummeret).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
@@ -1746,6 +1749,33 @@ test("Diff: ingen endring forsvinner i grupperingen", async () => {
   // Og endringen som ikke er et tillegg skal vise BEGGE sider.
   assert.ok(tekst.includes("UTC") && tekst.includes("Europe/Oslo"),
     "en endret verdi må vise både fra og til");
+});
+
+// Grupperingen har lov til å folde sammen, men ikke til å skjule at noe kan
+// foldes ut. `summary` er `display: list-item` som standard, og det er den
+// standarden som gir nettleserens ▶/▼-markør (en `::marker` finnes bare på
+// listeelementer). Flex-oppsettet slo den av, så lukkede områder så ut som
+// statiske overskrifter — og en godkjenner som ikke ser at noe kan åpnes,
+// åpner ikke. jsdom har ingen layout å måle, så porten står på stilkilden.
+test("Diff: sammenleggbare områder viser at de KAN åpnes", () => {
+  const HER = dirname(fileURLToPath(import.meta.url));
+  const css = readFileSync(
+    join(HER, "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  const markor = regel(
+    ".diff-gruppe > summary::before, .diff-element > summary::before {");
+  assert.match(markor, /content:\s*""/,
+    "markøren må tegnes som form, ikke som et tegn en skjermleser leser opp "
+    + "oppå tilstanden `details` allerede melder selv");
+  assert.match(markor, /border-color:[^;]*currentColor/,
+    "markøren må være synlig i samme farge som teksten");
+  assert.match(regel(
+    ".diff-gruppe[open] > summary::before, .diff-element[open] > summary::before {"),
+    /transform:\s*rotate/, "åpen og lukket må se forskjellig ut");
 });
 
 test("Diff: den grupperte visningen er axe-ren", async () => {
