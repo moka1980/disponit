@@ -65,8 +65,18 @@ CREATE TABLE IF NOT EXISTS varsel (
     epost_feil      text
 );
 
--- Innboksen spør alltid «mine uleste, nyeste først». Delindeks: de leste er
--- de mange, og de er ikke det spørringen leter etter.
+-- Innboksen spørres på TO måter, og de trenger hvert sitt indeks.
+--
+--   `innboks(..., kun_uleste=False)` er STANDARDEN — portalvisningen «mine
+--   varsler, nyeste først», leste som uleste. Den kan ikke bruke delindeksen
+--   nedenfor, for spørringen innebærer ikke `lest_ts IS NULL`. Uten et fullt
+--   indeks ville den fått seq scan + sort over en voksende flertenant-tabell.
+CREATE INDEX IF NOT EXISTS varsel_innboks
+    ON varsel (tenant, bruker_id, opprettet DESC);
+--   `kun_uleste=True` og `antall_uleste` leter derimot etter de FÅ radene i en
+--   tabell der de leste blir de mange. Delindeksen beholdes fordi den blir
+--   liten og ikke vokser med historikken: den koster lite å vedlikeholde og
+--   holder ulest-telleren rask lenge etter at fullindekset er blitt stort.
 CREATE INDEX IF NOT EXISTS varsel_uleste
     ON varsel (tenant, bruker_id, opprettet DESC) WHERE lest_ts IS NULL;
 -- Senderen spør «hva står i kø», på tvers av tenanter (den kjører som drift).
