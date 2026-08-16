@@ -106,9 +106,9 @@ function normaliserKlassifikatorSti(sti) {
 // dem er en ekte nøkkelgrense, og lengste treff på tvers vinner.
 //
 // Men lengste faktiske nøkkel hjalp ikke så lenge skilletegnet ble TOLKET
-// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` hadde den
-// gangen ingen `propertyNames`-begrensning, så `[bank]` og `.foo` var lovlige
-// verifikator-id-er. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
+// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har ingen
+// mønsterbegrensning i skjemaet, så `[bank]` og `.foo` er lovlige
+// verifikator-id-er i en LAGRET policy. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
 // før den så på nodens nøkler: `verifikatorer..foo…` mistet det ene punktumet
 // som var en DEL av nøkkelen, og `verifikatorer.[bank]…` ble lest som
 // listeindeks. Begge falt tilbake til samlegruppen `verifikatorer`, og flere
@@ -169,13 +169,16 @@ function delOppLedd(sti, kilder) {
     // `verifikatorer.foo.beskrivelse` både beskrivelsen til `foo` og roten til
     // den andre. Lengste treff vant, så bladene til BEGGE havnet i ett kort med
     // den ene id-en som overskrift — og godkjenneren leste en tillitsendring på
-    // feil verifikator. Skjemaet forbyr nå skilletegn i id-en, så dette er
-    // uoppnåelig for en policy som kan aktiveres; men utkastdetaljen viser diff
-    // for utkast som ENNÅ ikke er validert (`policyadmin.hent_utkast_detalj`),
-    // så stien kan fortsatt nå hit. Da gjettes det ikke: resten tas som ETT
-    // ledd, så hvert blad får sitt eget kort med hele den rå stien som
-    // overskrift. Dårligere gruppering, men aldri feil tilskriving — og
-    // ingenting forsvinner.
+    // feil verifikator. Innføringskontrakten (`schema.valider_ny_policy`)
+    // avviser nå slike id-er i policyer på vei INN, men det er en framoverrettet
+    // regel: en policy som ble aktivert før regelen fantes kan fortsatt ha en
+    // slik id (den kan ikke gjøres ugyldig i ettertid uten å ta beslutningene
+    // til tenanten med i fallet — Codex P1 på #63), og den er nettopp BASEN
+    // diffen måles mot. Utkastdetaljen viser dessuten diff for utkast som ENNÅ
+    // ikke er validert (`policyadmin.hent_utkast_detalj`). Stien kan altså nå
+    // hit, og da gjettes det ikke: resten tas som ETT ledd, så hvert blad får
+    // sitt eget kort med hele den rå stien som overskrift. Dårligere
+    // gruppering, men aldri feil tilskriving — og ingenting forsvinner.
     if (flertydig) navn = rest;
     // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
     // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,

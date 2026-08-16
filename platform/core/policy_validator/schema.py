@@ -57,11 +57,77 @@ def _validator():
 
 
 def valider_policy(policy: object) -> list[str]:
-    """Returnerer komplett feilliste. Tom liste == gyldig. Kaster aldri."""
+    """LASTEKONTRAKTEN. Returnerer komplett feilliste. Tom == gyldig. Kaster aldri.
+
+    Dette er kravet en policy må oppfylle for å kunne TOLKES — og det er den
+    `hent_aktiv` revaliderer mot ved hver eneste forespørsel (v2 1.5). Derfor
+    er den bakoverkompatibel: en policy som var gyldig den dagen den ble
+    aktivert, må fortsatt være gyldig i dag. Nye krav hører hjemme i
+    `valider_ny_policy`.
+    """
     try:
         return _valider(policy)
     except Exception as e:  # siste skanse — aldri ukontrollert exception
         return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
+
+
+#: Skilletegnene i den flate diffstien (`policydiff._flat`):
+#: `verifikatorer.<id>.<felt>` skjøtes med punktum, lister med klammer.
+_DIFFSTI_SKILLETEGN = (".", "[")
+
+
+def valider_ny_policy(policy: object) -> list[str]:
+    """INNFØRINGSKONTRAKTEN: lastekontrakten + krav som bare gjelder policyer
+    som skal INN (registrering, utkastvalidering, malene vi selv leverer).
+
+    Hvorfor to kontrakter i stedet for én innstramming i skjemaet (Codex P1 på
+    PR #63): skjemaet er også lastekontrakten, og `hent_aktiv` revaliderer den
+    LAGREDE policyen mot det ved hver forespørsel. Strammer vi skjemaet, blir
+    enhver allerede aktiv policy som brøt det nye kravet `PolicyKorrupt` i det
+    utrullingen lander — tenanten mister alle policystyrte beslutninger
+    umiddelbart, uten å få sjansen til å aktivere en rettet versjon. Et krav
+    som først oppstår i dag kan derfor bare gjelde FRAMOVER: den gamle
+    policyen leses og virker som før, men neste versjon må rette id-en for å
+    slippe inn. Å migrere lagrede rader er ikke et alternativ — en verifikator-
+    id-endring er en semantisk policyendring som skal gjennom fire-øyne-veien
+    som alt annet, ikke en skjult skriving i en utrulling.
+
+    Rekkefølgen er bevisst: er lastekontrakten brutt, returneres KUN den.
+    Kravene under forutsetter at strukturen er på plass.
+    """
+    feil = valider_policy(policy)
+    if feil:
+        return feil
+    try:
+        return _valider_innforing(policy)          # type: ignore[arg-type]
+    except Exception as e:
+        return [f"intern valideringsfeil ({type(e).__name__}): {e}"]
+
+
+def _valider_innforing(policy: dict) -> list[str]:
+    # Verifikator-id-en er den ENESTE frie nøkkelen i en ellers lukket policy,
+    # og den havner UTOLKET i diffstien godkjenneren attesterer. Med id-ene
+    # `foo` og `foo.beskrivelse` er `verifikatorer.foo.beskrivelse` både
+    # beskrivelsen til `foo` og roten til den andre verifikatoren — og
+    # godkjenneren kan tilskrive en tillitsendring FEIL verifikator.
+    # Skilletegnene forbys derfor i id-en i stedet for å gjettes ut av stien i
+    # etterkant. Bevisst minimal: bare de to tegnene som skaper flertydigheten,
+    # ikke husmønsteret `^[a-z0-9_]+$`, så id-er som allerede gir en entydig
+    # diff fortsatt slipper gjennom. Tom id er også ute: den gir stien
+    # `verifikatorer.` og et blad uten eier.
+    feil: list[str] = []
+    for felt in ("verifikatorer", "verifikator_prioritet"):
+        for vid in policy.get(felt) or {}:
+            if not isinstance(vid, str):
+                continue                            # skjemaet har alt sagt fra
+            if not vid:
+                feil.append(f"{felt}: tom verifikator-id gir ingen entydig"
+                            " diffsti")
+            elif any(t in vid for t in _DIFFSTI_SKILLETEGN):
+                feil.append(
+                    f"{felt}: verifikator-id '{vid}' inneholder skilletegn fra"
+                    " diffstien (. eller [) og gjør stien flertydig")
+    return sorted(feil)
 
 
 def _valider(policy: object) -> list[str]:

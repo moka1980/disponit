@@ -257,8 +257,11 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
     # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
-    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
-    feil = _schema.valider_policy(innhold)
+    # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2). Her i
+    # INNFØRINGS-varianten: utkastet skal aktiveres, og porten inn er stedet
+    # der framoverrettede krav (entydig verifikator-id) hører hjemme — ikke i
+    # revalideringen av det som alt er aktivt (Codex P1 på #63).
+    feil = _schema.valider_ny_policy(innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -332,9 +335,11 @@ def hent_maler() -> list:
     """Bransjemalene (komplette policyer) som utgangspunkt for et nytt utkast.
     Rent lesende fra `policies/bransjemal-*.yaml` — ingen DB, ingen tenant
     (malene er felles). En mal som IKKE validerer mot den KANONISKE validatoren
-    (`schema.valider_policy` — skjema + semantikk, inkl. referanse-integritet og
-    modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke kunne
-    bli et «gyldig utgangspunkt»."""
+    (`schema.valider_ny_policy` — skjema + semantikk, inkl. referanse-integritet
+    og modus/vilkår, PR-014 R2) serveres ALDRI (fail-closed): den skal ikke
+    kunne bli et «gyldig utgangspunkt». Innføringsvarianten er den riktige her:
+    en mal er alltid en NY policy, og et utgangspunkt som ikke kan aktiveres er
+    ikke et utgangspunkt."""
     import yaml
     ut = []
     for f in sorted(_MAL_DIR.glob("bransjemal-*.yaml")):
@@ -344,7 +349,7 @@ def hent_maler() -> list:
             continue
         if not isinstance(innhold, dict):
             continue
-        if _schema.valider_policy(innhold):
+        if _schema.valider_ny_policy(innhold):
             continue                                # fail-closed: hopp over
         meta = innhold.get("meta") if isinstance(innhold.get("meta"), dict) else {}
         ut.append({"mal_id": f.stem.replace("bransjemal-", ""),

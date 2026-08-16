@@ -37,8 +37,7 @@
     },
     "verifikatorer": {
       "type": "object", "minProperties": 1,
-      "propertyNames": {"type": "string", "pattern": "^[^.\\[]+$",
-                        "description": "Codex P2 (PR-013/#61): verifikator-id-en er den ENESTE frie nøkkelen i en ellers lukket policy, og den havner UTOLKET i diffstien `verifikatorer.<id>.<felt>` (`policydiff._flat`). Punktum og klammer er skilletegnene i den stien, så en id som inneholder dem gjør stien flertydig: med id-ene `foo` og `foo.beskrivelse` er `verifikatorer.foo.beskrivelse` både beskrivelsen til `foo` og roten til den andre verifikatoren, og godkjenneren kan da tilskrive en tillitsendring FEIL verifikator. Skilletegnene forbys derfor i id-en i stedet for å gjettes ut av stien i etterkant. Bevisst minimal: bare de to tegnene som skaper flertydigheten, ikke husmønsteret `^[a-z0-9_]+$`, så eksisterende id-er som allerede gir en entydig diff fortsatt validerer."},
+      "description": "Kravet om at id-en må gi en ENTYDIG diffsti (ingen `.` eller `[`, Codex P2 på PR-013/#61) står IKKE her, men i innføringskontrakten `policy_validator.schema.valider_ny_policy`. Grunnen er at dette skjemaet også er LASTEKONTRAKTEN: `policyregister.hent_aktiv` revaliderer den lagrede policyen mot skjemaet ved hver forespørsel (fail-closed mot DB-korrupsjon), så en innstramming her ville gjort allerede aktive policyer med en slik id ugyldige med det samme — tenanten mister alle policystyrte beslutninger uten å rekke å rette id-en. Skjemaet beskriver derfor hva en LAGRET policy må være; innføringskontrakten hva en NY policy i tillegg må være.",
       "additionalProperties": {
         "type": "object", "additionalProperties": false, "required": ["betrodd_for"],
         "properties": {
@@ -52,9 +51,7 @@
     },
     "verifikator_prioritet": {
       "type": "object",
-      "description": "PR-007 / Scope v2 pkt. 1: prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden.",
-      "propertyNames": {"type": "string", "pattern": "^[^.\\[]+$",
-                        "description": "Samme entydighetskrav som `verifikatorer`: nøkkelen er en verifikator-id og havner utolket i diffstien `verifikator_prioritet.<id>`."},
+      "description": "PR-007 / Scope v2 pkt. 1: prioritet mellom verifikatorer som ALLE dekker settet. Lavest tall vinner; lik prioritet avgjøres av laveste verifikator_id, så ordningen er total og aldri avhengig av databaseorden. Nøkkelen er en verifikator-id og har samme entydighetskrav som `verifikatorer` — håndhevet i `valider_ny_policy`, av samme grunn som der.",
       "additionalProperties": {"type": "integer"}
     },
     "handlinger": {
