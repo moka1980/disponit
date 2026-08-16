@@ -17,8 +17,6 @@ from __future__ import annotations
 import ast
 import pathlib
 
-import pytest
-
 from .test_api import APPEND_ONLY_TRIGGERE
 
 ROT = pathlib.Path(__file__).resolve().parents[3]
@@ -68,15 +66,23 @@ def test_ankerraden_ryddes_med_triggeren_av():
         "triggeren skrus ikke på igjen — en avvæpnet sperre er ingen sperre")
 
 
-@pytest.mark.parametrize("tabell", sorted({t for t, _ in APPEND_ONLY_TRIGGERE}))
-def test_append_only_tabeller_ryddes_med_trigger(tabell):
+def test_append_only_tabeller_ryddes_med_trigger():
     """Rydder staging en append-only-tabell, må den håndtere sperren dens.
 
     Dette er selve koblingen: neste tabell som får en DELETE-sperre og havner i
     rundturens sletterekkefølge, kan ikke gli gjennom med sperren på.
+
+    Tabeller staging IKKE rydder, sier testen ingenting om — men de blir heller
+    ikke hoppet over: ett hopp i CI er ett bevis mindre, og porten i CI ser
+    ingen forskjell på «uaktuelt her» og «aldri kjørt».
     """
     tabeller, triggere = _oppryddingen()
-    if tabell not in tabeller:
-        pytest.skip(f"{tabell} ryddes ikke av staging-rundturen")
-    assert tabell in triggere, (
-        f"{tabell} er append-only, men staging sletter den med sperren på")
+    append_only = {t for t, _ in APPEND_ONLY_TRIGGERE}
+    maa_handteres = [t for t in tabeller if t in append_only]
+    assert maa_handteres, (
+        "ingen av staging-tabellene er append-only — da måler denne testen "
+        "ingenting, og listene har glidd fra hverandre")
+    mangler = [t for t in maa_handteres if t not in triggere]
+    assert not mangler, (
+        f"{', '.join(mangler)} er append-only, men staging sletter dem med "
+        "sperren på")
