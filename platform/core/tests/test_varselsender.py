@@ -1180,7 +1180,6 @@ _LAGER = re.compile(r"\bcreate\b.*\bfunction\b")
 #: PUBLIC som MOTTAKER, ikke som skjemanavn: `… ON FUNCTION public.f(…) TO
 #: disponit` og `… ON ALL SEQUENCES IN SCHEMA public TO …` inneholder begge
 #: delstrengen «public» uten å si noe om PUBLIC-ACL-en.
-_REVOKE_PUBLIC = re.compile(r"\brevoke\b.*\bfrom public\b")
 _GRANT_PUBLIC = re.compile(r"\bgrant\b.*\bto public\b")
 
 #: `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` åpner alle tre på én gang
@@ -1200,6 +1199,16 @@ _GRANT_ALLE_PUBLIC = re.compile(
 
 #: `f(int, int)` i en setning → `f(int,int)`, som i SENDERFUNKSJONER.
 _SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
+
+#: MÅLKLAUSULEN, ikke hele setningen (Codex P2 på #71). En setning kan NEVNE
+#: en signatur uten å virke på den — en vakt som
+#: `IF to_regprocedure('varsel_klaim_epost(int,int)') IS NOT NULL THEN REVOKE
+#: … varsel_klaim_epost(text) FROM PUBLIC` nevner den beskyttede signaturen og
+#: revokerer overlasten. Leses hele setningen, lukker overlastens REVOKE
+#: gjerdet for den kryss-tenante utgaven — nøyaktig det signaturkravet skulle
+#: hindre. Klausulen er derfor det som står MELLOM verbet og mottakeren.
+_REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
+_DROP_MAL = re.compile(r"\bdrop\s+function\b(?:\s+if\s+exists\b)?(.*)")
 
 
 def _setninger(sql):
@@ -1226,6 +1235,23 @@ def _signaturer(setning):
     return {m.group(0).replace(" ", "") for m in _SIGNATUR.finditer(setning)}
 
 
+def _rammer(klausul, sig, basenavn):
+    """Treffer MÅLKLAUSULEN denne signaturen?
+
+    Nevner klausulen én eller flere overlaster av basenavnet, gjelder den
+    bare dem den nevner: `f(text)` sier ingenting om `f(int,int)`.
+
+    Nevner den derimot basenavnet BART — `DROP FUNCTION f`, som PostgreSQL
+    godtar når navnet er entydig — finnes det ingen signatur å skille på, og
+    den gjelder enhver overlast. Tvilen faller da mot at den beskyttede
+    signaturen er truffet, som ellers i denne modellen.
+    """
+    if basenavn not in klausul:
+        return False
+    egne = {s for s in _signaturer(klausul) if s.startswith(basenavn + "(")}
+    return sig in egne if egne else True
+
+
 def _spill_av(filer, signaturer):
     """Gjerdetilstanden for hver signatur etter at `filer` er kjørt.
 
@@ -1238,10 +1264,13 @@ def _spill_av(filer, signaturer):
     som kan flytte PUBLICs EXECUTE må være representert, ellers leser
     avspillingen en åpen funksjon som lukket.
 
-    SIGNATUREN, IKKE BASENAVNET, er nøkkelen — og de tre setningstypene
-    behandler den ulikt, med vilje (Codex P2 på #71):
+    SIGNATUREN, IKKE BASENAVNET, er nøkkelen — og setningstypene behandler
+    den ulikt, med vilje (Codex P2 på #71):
 
-    * En REVOKE lukker BARE den signaturen den nevner. `f(text)` sier
+    * En REVOKE lukker BARE den signaturen MÅLKLAUSULEN nevner — det som står
+      mellom `REVOKE` og `FROM PUBLIC`, ikke det som står hvor som helst i
+      setningen. En vakt som nevner den beskyttede signaturen og revokerer en
+      overlast, lukker ingenting. `f(text)` sier
       ingenting om `f(int,int)`, og en overlast måtte ellers bare bli
       revokert av eieren for å skjule at den kryss-tenante utgaven står åpen.
     * En gjenskaping eller en `GRANT … TO PUBLIC` som nevner basenavnet
@@ -1251,6 +1280,12 @@ def _spill_av(filer, signaturer):
     * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
       hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
       før silen på navn — se `_GRANT_ALLE_PUBLIC`.
+    * En DROP setter tilbake til None: funksjonen er BORTE, ikke åpen. Uten
+      den grenen beholdt avspillingen `True` fra en tidligere REVOKE, og en
+      migrasjon som droppet uten å lage på nytt ga grønn port på noe som
+      ikke fantes. Den bruker samme målklausul som REVOKE-en, med ett
+      tillegg: `DROP FUNCTION f` uten signatur er lovlig når navnet er
+      entydig, og gjelder da enhver overlast.
     """
     beskyttet = [s.replace(" ", "").lower() for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
@@ -1263,7 +1298,6 @@ def _spill_av(filer, signaturer):
                 rolle = s.split()[3]
             elif s.startswith("reset role"):
                 rolle = None
-            nevnte = _signaturer(s)
             if _GRANT_ALLE_PUBLIC.search(s):
                 # Den ene setningen som åpner uten å nevne noe navn — måles
                 # derfor FØR silen på basenavn, ellers ville den aldri kommet
@@ -1278,7 +1312,18 @@ def _spill_av(filer, signaturer):
             for sig in beskyttet:
                 if basenavn[sig] not in s:
                     continue
-                if _LAGER.search(s):
+                fall = _DROP_MAL.search(s)
+                if fall and _rammer(fall.group(1), sig, basenavn[sig]):
+                    # BORTE, ikke bare uten gjerde. Uten dette sporet beholdt
+                    # avspillingen `True` fra en tidligere REVOKE, og en
+                    # migrasjon som droppet funksjonen uten å lage den igjen
+                    # ga grønn port på noe som ikke fantes. Det er samme
+                    # grunn som SENDERFUNKSJONER skrives ut for hånd: en
+                    # funksjon som FORSVINNER skal ikke kunne godtas stille.
+                    # `None` faller i sluttkravet, som er meningen.
+                    gjerdet[sig] = None
+                    spor[sig].append(f"{filnavn}: droppet")
+                elif _LAGER.search(s):
                     # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC.
                     gjerdet[sig] = False
                     spor[sig].append(f"{filnavn}: gjenskapt")
@@ -1291,7 +1336,8 @@ def _spill_av(filer, signaturer):
                     gjerdet[sig] = False
                     spor[sig].append(
                         f"{filnavn}: grant til public som {rolle or 'migrator'}")
-                elif _REVOKE_PUBLIC.search(s) and sig in nevnte:
+                elif (rev := _REVOKE_MAL.search(s)) and _rammer(
+                        rev.group(1), sig, basenavn[sig]):
                     # Som eier: gjerdet står. Som migrator: advarsel, og
                     # standard-ACL-en materialiseres — verre enn ingenting.
                     gjerdet[sig] = rolle == EIERROLLE
@@ -1331,6 +1377,9 @@ def test_gjerdet_staar_ved_slutten_av_migrasjonshistorikken():
         ((f.name, f.read_text(encoding="utf-8"))
          for f in sorted(mig.glob("[0-9][0-9][0-9]_*.sql"))), SENDERFUNKSJONER)
     for sig in gjerdet:
+        assert gjerdet[sig] is not None, (
+            f"{sig} finnes ikke etter siste migrasjon — den er droppet uten å"
+            f" bli laget igjen, eller aldri laget. Spor: {spor[sig]}")
         assert gjerdet[sig] is True, (
             f"PUBLIC har EXECUTE på {sig} etter siste migrasjon — en"
             f" gjenskaping uten nytt gjerde, en REVOKE utenfor"
@@ -1360,6 +1409,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       PUBLIC som ikke nevner navnet på det den åpner, og derfor den ene som
       silen på basenavn ikke fikk se. `ALL ROUTINES` er samme setning stavet
       om, og måles som samme sak.
+    * en DROP uten gjenskaping — funksjonen er da BORTE, og et gjerde rundt
+      ingenting er ikke et bevis. Uten dette sporet sto `True` fra forrige
+      REVOKE igjen som om den fortsatt gjaldt.
+    * en VAKT som nevner den beskyttede signaturen mens REVOKE-en tar en
+      overlast. Det er forskjellen på hva en setning NEVNER og hva den
+      VIRKER på, og den forskjellen er hele signaturkravet.
 
     Alle ville ellers blitt skjult for ACL-testen av oppryddingen i
     `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
@@ -1426,6 +1481,50 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         [("a.sql", lag + gjerde),
          ("b.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(text) ...;")],
         n)[0] == {sig: False}, "gjenskaping av overlast måles som åpning"
+
+    # En DROP uten gjenskaping: funksjonen er BORTE, ikke åpen — og et gjerde
+    # rundt ingenting er ikke et bevis. `None` faller i sluttkravet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost(int, int);")], n)
+    assert gjerdet == {sig: None}, \
+        f"en droppet funksjon skal ikke stå som gjerdet. Spor: {spor}"
+
+    # …men DROP + gjenskaping + nytt gjerde er 031s egen form, og skal stå.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION IF EXISTS varsel_klaim_epost(int, int);"
+                   + lag + gjerde)], n)[0] == {sig: True}, \
+        "drop + gjenskaping + gjerde som eier"
+
+    # En DROP av en OVERLAST rører ikke den beskyttede — samme signaturkrav
+    # som for REVOKE, og 027 gjør nettopp dette med `f(bigint, text, text)`.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION IF EXISTS varsel_klaim_epost(text);")],
+        n)[0] == {sig: True}, "en droppet overlast er ikke den beskyttede"
+
+    # …og en BAR DROP uten signatur, som PostgreSQL godtar når navnet er
+    # entydig, gjelder enhver overlast — også denne.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost;")], n)[0] == {
+        sig: None}, "bar DROP uten signatur treffer alle overlaster"
+
+    # Vakten er ikke målet: en betinget REVOKE som NEVNER den beskyttede
+    # signaturen, men bare tar overlasten, lukker ingenting.
+    vakt = ("DO $$\nBEGIN\n"
+            "    IF to_regprocedure('varsel_klaim_epost(int,int)')"
+            " IS NOT NULL THEN\n"
+            "        REVOKE ALL ON FUNCTION varsel_klaim_epost(text)"
+            " FROM PUBLIC;\n"
+            "    END IF;\nEND $$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag), ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                                   + vakt + " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en vakt som NEVNER signaturen er ikke en REVOKE som TAR den."
+        f" Spor: {spor}")
 
     # Den skjemabrede granten: åpner alle tre, og NEVNER INGEN AV DEM. Den
     # eneste veien til PUBLIC som ikke skriver navnet på det den åpner, og
