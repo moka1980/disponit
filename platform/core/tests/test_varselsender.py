@@ -16,7 +16,7 @@ import pytest
 from api import varsel
 from drift import varselsender
 
-from .test_api import MIGRATOR_DSN
+from .test_api import DSN, MIGRATOR_DSN
 
 pg = pytest.mark.skipif(not MIGRATOR_DSN,
                         reason="DISPONIT_MIGRATOR_DSN ikke satt")
@@ -300,6 +300,37 @@ def test_retryen_stopper_eksakt_paa_maks_forsok(monkeypatch):
         # Og raden står IGJEN i portalen. E-posten er kopien; innboksen er
         # sannheten, og den skal ikke kunne gå tapt med den siste sendingen.
         assert varsel.antall_uleste(c, tenant=TEN, bruker_id=b) == 1
+    finally:
+        c.close()
+
+
+@pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+def test_runtime_rollen_kan_kalle_senderens_funksjoner():
+    """Rollen som FAKTISK kjører senderen må kunne kalle de tre funksjonene.
+
+    Migrasjon 027 gjør `REVOKE ALL … FROM PUBLIC` på alle tre. EXECUTE er
+    PUBLIC som standard, så revokeringen er det som stenger døra — og uten et
+    tilsvarende GRANT er den stengt for alle utenom eieren. Senderen kobler med
+    runtime-DSN-en (`disponit`), som ikke er medlem av `disponit_domene_eier`.
+
+    Alle de andre testene her kobler som `disponit_migrator`, som ER medlem av
+    eierrollen. De ville derfor vært grønne mens hver eneste timerkjøring i
+    drift endte i «permission denied for function varselkandidater», med køen
+    urørt — samme klasse som de to andre P1-ene i denne runden.
+
+    Kontroll: fjern GRANT-linjene fra 027, og denne blir rød på nøyaktig den
+    feilmeldingen driften ville sett.
+    """
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        c.execute("SELECT * FROM varselkandidater(1)").fetchall()
+        c.execute("SELECT varsel_rekoe_feilede(interval '15 minutes', 3)")
+        # id -1 finnes ikke: kallet skal slippe gjennom rettighetssjekken og
+        # svare `false`, uten å røre en eneste rad.
+        assert c.execute("SELECT varsel_sett_epoststatus(-1,'sendt',NULL)"
+                         ).fetchone()[0] is False
+        c.rollback()
     finally:
         c.close()
 

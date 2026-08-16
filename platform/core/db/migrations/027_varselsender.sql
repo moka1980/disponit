@@ -135,3 +135,25 @@ ALTER FUNCTION varsel_sett_epoststatus(bigint, text, text)
     OWNER TO disponit_domene_eier;
 REVOKE ALL ON FUNCTION varselkandidater(int) FROM PUBLIC;
 REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, text, text) FROM PUBLIC;
+
+-- …OG SÅ TILBAKE TIL DEN ROLLEN SOM FAKTISK KALLER DEM.
+--
+-- EXECUTE er PUBLIC som standard i PostgreSQL, så `REVOKE … FROM PUBLIC` over
+-- er det som gjør funksjonene utilgjengelige — for ALLE utenom eieren. Uten
+-- linjene under kunne senderen ikke kalle en eneste av dem: unitten kobler med
+-- runtime-DSN-en (`skriv_cred varsel DISPONIT_DATABASE_URL "$DATABASE_URL"`),
+-- altså rollen `disponit`, og den er ikke medlem av `disponit_domene_eier`.
+-- Hver eneste timerkjøring ville endt i «permission denied for function
+-- varselkandidater», med køen urørt.
+--
+-- Og det ville ikke vist seg i CI: testene kobler som `disponit_migrator`, som
+-- ER medlem av eierrollen. Samme klasse som de to andre P1-ene i denne runden
+-- — grønn der den prøves, død der den kjører. `test_varselsender` måler derfor
+-- disse tre gjennom runtime-rollen, ikke gjennom migratorrollen.
+--
+-- Paret REVOKE + GRANT er husets form (009, 014, 016, 017, 019): revokeringen
+-- alene er ikke en tilgangsstyring, den er bare en stengt dør.
+GRANT EXECUTE ON FUNCTION varselkandidater(int) TO disponit;
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+    TO disponit;
+GRANT EXECUTE ON FUNCTION varsel_rekoe_feilede(interval, int) TO disponit;
