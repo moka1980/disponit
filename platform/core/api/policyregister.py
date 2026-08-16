@@ -98,6 +98,19 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     if (innhold.get("meta") or {}).get("versjon") != versjon:
         raise PolicyKorrupt(
             [f"meta.versjon != registerets versjon '{versjon}'"], innhold)
+    meta_pid = (innhold.get("meta") or {}).get("policy_id")
+    if meta_pid != policy_id:
+        # Den tredje av de samme tre — og den som manglet (Codex P1). Status og
+        # versjon ble revalidert mot registeret; identiteten var den eneste av
+        # de tre dokumentet fikk oppgi fritt. Spriker den, er raden indeksert
+        # under én policy mens motoren bygger beslutningens policyreferanse fra
+        # dokumentets egen (`engine.policyreferanse`). Beslutningen ville da
+        # blitt tatt — og logget — under en id ingen kan slå opp igjen, og
+        # M-37-gjenopprettingen ville lett etter en aktiv rad som ikke finnes.
+        # Fail-closed: en policy som ikke vet hvem den er, binder ingenting.
+        raise PolicyKorrupt(
+            [f"meta.policy_id '{meta_pid}' != registerets policy_id"
+             f" '{policy_id}'"], innhold)
     return innhold, lagret_hash
 
 

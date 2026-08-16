@@ -673,6 +673,70 @@ def test_porten_nullpadder_gammel_aktiv_versjon_i_monotonikontrollen():
         rt.close()
 
 
+@pg
+def test_porten_avviser_utkast_som_oppgir_en_annen_policy():
+    """🔴 P1: ingen runde åpnes på et dokument med fremmed identitet.
+
+    Et utkast validert FØR identitetskontrollen fantes kan bære avviket inn i
+    en runde. Da ville godkjennerne signert en aktivering som indekserer
+    policyen under én id mens motoren leser en annen ut av dokumentet — og
+    `hent_aktiv` ville avvist resultatet som korrupt etterpå. Porten stopper
+    det før noen signerer, med en kode eier kan handle på.
+
+    Kontroll: fjern `_krev_dokumentidentitet` i `opprett_aktiveringsrunde`, så
+    åpner runden og feilen flyttes til etter to signaturer.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    # Dokumentet oppgir en ANNEN policy enn raden det ligger under.
+    _utkast(uid, pid, a, {**_UTVIDER_INNHOLD,
+                          "meta": {"policy_id": "en-annen-policy",
+                                   "versjon": "1.1.0", "bransjemal": "test",
+                                   "status": "produksjon"}})
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "policy_id_avvik", e.value.kode
+    finally:
+        rt.rollback()
+        rt.close()
+
+
+@pg
+def test_hent_aktiv_avviser_rad_med_fremmed_dokumentidentitet():
+    """🔴 P1: beslutningsveien nekter å bruke en policy som ikke vet hvem den er.
+
+    Status og versjon revalideres mot registeret ved lasting; identiteten var
+    den ENESTE av de tre dokumentet fikk oppgi fritt. Spriker den, bygger
+    motoren policyreferansen sin fra en id ingen kan slå opp igjen — og
+    M-37-gjenopprettingen leter etter en aktiv rad som ikke finnes. Fail-closed
+    er det eneste ærlige: `PolicyKorrupt`, ikke en beslutning under feil navn.
+    """
+    from .test_bootstrap_ankerrad import _policy
+    pid = "pol-" + secrets.token_hex(3)
+    # Fullgyldig policy — skjema, hash, status og versjon skal ALLE passere, så
+    # det eneste som kan felle lasten er identiteten.
+    innhold = _policy("1.0.0", policy_id="en-annen-policy")
+    m = _mig()
+    try:
+        m.execute(
+            "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+            "status,innhold,aktiv) VALUES"
+            " (%s,%s,'1.0.0',%s,'produksjon',%s::jsonb,true)",
+            (TEN, pid, pr.innholds_hash(innhold), json.dumps(innhold)))
+        m.commit()
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "sys", "r1")
+        with pytest.raises(pr.PolicyKorrupt) as e:
+            pr.hent_aktiv(m, TEN, pid)
+        assert "meta.policy_id" in str(e.value), str(e.value)
+    finally:
+        m.rollback()
+        m.close()
+
+
 def _reparer(pid, versjon="9"):
     """Eiers reparasjon: den forvillede aktive raden ryddes, så peker og flagg
     er enige igjen (begge «ingen aktiv» — nøyaktig basen runden ble åpnet på)."""

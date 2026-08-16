@@ -241,12 +241,13 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("idempotenskonflikt")
     rad = conn.execute(
-        "SELECT innhold, status, utkastversjon FROM policyutkast WHERE"
-        " tenant=%s AND utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+        "SELECT innhold, status, utkastversjon, policy_id FROM policyutkast"
+        " WHERE tenant=%s AND utkast_id=%s FOR UPDATE",
+        (tenant, utkast_id)).fetchone()
     if rad is None:
         conn.rollback()
         raise Aktiveringsfeil("utkast_ukjent")
-    innhold, status, ver = rad
+    innhold, status, ver, policy_id = rad
     if status != "utkast":
         conn.rollback()
         raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
@@ -259,6 +260,16 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
     # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
     feil = _schema.valider_policy(innhold)
+    # Identiteten er ingen skjemasak: skjemaet ser bare dokumentet, og et
+    # dokument kan være helt gyldig og LIKEVEL oppgi en annen `meta.policy_id`
+    # enn raden det ligger under (Codex P1). Valideringen er stedet å stoppe
+    # det: det er her innholdet FRYSES, og et frosset dokument kan ikke rettes
+    # etterpå — bare erstattes av et nytt utkast. Avviket legges i feillisten
+    # sammen med skjemafeilene, så eier ser NØYAKTIG hva som må rettes i
+    # editoren, ikke bare at «noe» er galt.
+    avvik = _dokumentidentitet_avvik(policy_id, innhold)
+    if avvik is not None:
+        feil = list(feil) + [avvik]
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -409,6 +420,55 @@ def _krev_peker_synk(conn, tenant: str, policy_id: str,
             "aktiv_peker_usynk", f"peker={aktiv_versjon} flagg={flagget}")
 
 
+def _meta(innhold) -> dict:
+    """`innhold.meta` som dict — tomt kart om den mangler eller er noe annet."""
+    m = innhold.get("meta") if isinstance(innhold, dict) else None
+    return m if isinstance(m, dict) else {}
+
+
+def _dokumentidentitet_avvik(policy_id: str, innhold) -> str | None:
+    """-> forklaringen når dokumentets `meta.policy_id` IKKE er den utkastet
+    er registrert under, ellers None.
+
+    `policyutkast.policy_id` og `innhold.meta.policy_id` er to felter, men ÉN
+    sak. Endepunktet tar dem fra hver sin del av forespørselen, og
+    redigeringsveien skriver nytt innhold uten å røre radens `policy_id` — så
+    de kan skille lag uten at noe formatkrav protesterer.
+
+    Aktiveringen lagrer da innholdet under registerets id, mens motoren bygger
+    beslutningens policyreferanse fra DOKUMENTET
+    (`engine.policyreferanse`: `<meta.policy_id>@<meta.versjon>/<handling>`).
+    Revisjonsposten og M-37-gjenopprettingen slår derfor opp en id det ikke
+    finnes noen aktiv rad for, og sakene faller ut av automatisk behandling —
+    uten at noe utsagn underveis så galt ut.
+    """
+    innbakt = _meta(innhold).get("policy_id")
+    if innbakt == policy_id:
+        return None
+    return (f"meta.policy_id {innbakt!r} er ikke utkastets policy_id"
+            f" {policy_id!r}")
+
+
+def _krev_dokumentidentitet(policy_id: str, innhold) -> None:
+    """Som `_dokumentidentitet_avvik`, men for de styrte veiene: kaster
+    `Aktiveringsfeil("policy_id_avvik")`.
+
+    Kontrollen ligger både i `valider_utkast` (der dokumentet fryses) og her,
+    fordi et utkast validert FØR denne kontrollen fantes kan bære avviket inn i
+    en runde. Ingen skal signere på et dokument som aktiveres under en annen
+    identitet enn den det selv oppgir."""
+    avvik = _dokumentidentitet_avvik(policy_id, innhold)
+    if avvik is not None:
+        raise Aktiveringsfeil("policy_id_avvik", avvik)
+
+
+#: `aktiver_policy` reiser dokumentinvariantene sine som `check_violation` og
+#: NAVNGIR bruddet (`USING CONSTRAINT`). Navnet er det eneste som skiller dem
+#: fra hverandre i feilen kalleren ser — uten det ville et identitetsavvik blitt
+#: rapportert som `versjon_i_bruk`: riktig kansellering, feil beskjed til eier.
+#: Ukjent/uten navn → versjonsinvariantene fra 020, som er de eldste.
+_DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik"}
+
 #: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`).
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
@@ -448,8 +508,7 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     signaturer på et utkast som aldri kunne lande. Kontrollen speiler derfor
     `_krev_peker_synk` — den kjører før runden åpnes og før noen attesterer.
     -> versjonen som vil bli lagret. Kaster `Aktiveringsfeil`."""
-    meta = ny_innhold.get("meta") if isinstance(ny_innhold, dict) else None
-    ny = meta.get("versjon") if isinstance(meta, dict) else None
+    ny = _meta(ny_innhold).get("versjon")
     if not isinstance(ny, str) or not _SEMVER.match(ny):
         raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r}")
     if conn.execute(
@@ -505,8 +564,10 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ville gitt godkjennerne en diff mot feil base, og runden kunne uansett
     # ikke aktiveres etter en reparasjon.
     _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
-    # Og ingen runde åpnes på et utkast som ikke KAN lagres: versjonen det
-    # bærer må være semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
+    # Og ingen runde åpnes på et utkast som ikke KAN lagres: identiteten det
+    # bærer må være radens egen (migrasjon 022), og versjonen må være
+    # semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
+    _krev_dokumentidentitet(policy_id, ny_innhold)
     _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
@@ -655,8 +716,11 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     # flytter basen, så rekalken i steg 9 krever rebasering uansett.
     try:
         _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
-        # Samme argument for versjonen: en signatur på et utkast som ikke kan
-        # lagres er like verdiløs som en signatur på feil base.
+        # Samme argument for identiteten og versjonen: en signatur på et utkast
+        # som ikke kan lagres — eller som ville blitt lagret under en ANNEN
+        # policy enn den det selv oppgir — er like verdiløs som en signatur på
+        # feil base.
+        _krev_dokumentidentitet(policy_id, ny_innhold)
         _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     except Aktiveringsfeil:
         conn.rollback()
@@ -815,23 +879,29 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
-    except psycopg.errors.CheckViolation:
-        # Versjonsinvariantene i `aktiver_policy` (migrasjon 020): utkastets
-        # `meta.versjon` er borte, alt registrert, eller ikke nyere enn den
-        # aktive. Kontrollen i steg 5b fanger det som var der da runden ble
-        # bygget; hit kommer bare en versjon som ble tatt UTENOM den styrte
-        # veien i vinduet etterpå. Da er runden død: innholdet er frosset, så
-        # versjonen kan ikke økes uten et nytt utkast og nye signaturer.
-        # Runden kanselleres derfor med det samme — en runde som beviselig
-        # aldri kan aktiveres skal ikke stå åpen og se levende ut. Signaturene
-        # består (append-only); det er sporet av hva som faktisk ble godkjent.
+    except psycopg.errors.CheckViolation as e:
+        # Dokumentinvariantene i `aktiver_policy`: versjonen (migrasjon 020) er
+        # borte, alt registrert eller ikke nyere enn den aktive — eller
+        # identiteten (migrasjon 022) er en annen enn radens. Kontrollene i
+        # steg 5b fanger det som var der da runden ble bygget; hit kommer bare
+        # et avvik som oppsto UTENOM den styrte veien i vinduet etterpå. Da er
+        # runden død: innholdet er frosset, så verken versjon eller identitet
+        # kan rettes uten et nytt utkast og nye signaturer. Runden kanselleres
+        # derfor med det samme — en runde som beviselig aldri kan aktiveres
+        # skal ikke stå åpen og se levende ut. Signaturene består (append-only);
+        # det er sporet av hva som faktisk ble godkjent.
+        #
+        # Funksjonen NAVNGIR bruddet (`USING CONSTRAINT`), for de to slagene
+        # deler feilkode og krever hver sin forklaring til eier: «gi utkastet
+        # en ny versjon» hjelper ikke den som har skrevet feil policy_id.
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
         return _fullfor(conn, tenant, idempotency_key, {
-            "utfall": "versjon_i_bruk", "utkast_id": utkast_id,
-            "policy_id": policy_id, "runde": r_nr})
+            "utfall": _DOKUMENTBRUDD.get(e.diag.constraint_name,
+                                         "versjon_i_bruk"),
+            "utkast_id": utkast_id, "policy_id": policy_id, "runde": r_nr})
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
     return _fullfor(conn, tenant, idempotency_key, {

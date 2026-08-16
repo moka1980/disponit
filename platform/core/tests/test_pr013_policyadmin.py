@@ -270,10 +270,12 @@ def test_runtime_kan_ikke_skrive_policyer_direkte():
 def _validert_utkast(c, uid, pid, av="bruker-a", innhold=None,
                      versjon="1.1.0"):
     # Aktiveringen lagrer policyens EGEN `meta.versjon` som registerets
-    # `versjon` (migrasjon 020) — et utkast uten den kan ikke aktiveres, heller
-    # ikke i disse DB-nære testene.
+    # `versjon` (migrasjon 020) og krever at dokumentet bærer radens egen
+    # `meta.policy_id` (migrasjon 022) — et utkast uten dem kan ikke aktiveres,
+    # heller ikke i disse DB-nære testene.
     if innhold is None:
-        innhold = '{"meta":{"versjon":"' + versjon + '"},"a":1}'
+        innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"'
+                   + versjon + '"},"a":1}')
     c.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,status,"
         "innholds_hash,opprettet_av) VALUES (%s,%s,%s,%s::jsonb,'validert',%s,%s)",
@@ -361,7 +363,10 @@ def test_aktiver_policy_krever_semantisk_versjon():
     """
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
-    _validert_utkast(c, uid, pid, av="forf", innhold='{"a":1}')  # ingen meta
+    # Identiteten er på plass (migrasjon 022) — det er VERSJONEN som mangler,
+    # ellers ville testen bevist feil kontroll.
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold='{"meta":{"policy_id":"' + pid + '"},"a":1}')
     _runde(c, uid)
     _attest(c, uid, "forf", True)
     _attest(c, uid, "uavh", False)
@@ -422,6 +427,43 @@ def test_aktiver_policy_krever_nyere_versjon_enn_aktiv():
             r.execute("SELECT aktiver_policy(%s,%s,1,%s)", (TEN, uid, "2.0.0"))
         r.rollback()
     finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_krever_dokumentets_egen_policy_id():
+    """🔴 P1: dokumentet må bære den identiteten raden aktiveres under.
+
+    `policyutkast.policy_id` og `innhold.meta.policy_id` er to felter uten noen
+    binding mellom seg — redigeringsveien skriver nytt innhold uten å røre
+    radens id. Aktiveres et slikt utkast, indekseres policyen under én id mens
+    motoren bygger beslutningens policyreferanse fra dokumentets egen. Ingen av
+    de to halvdelene ser gale ut hver for seg; sakene bare slutter å finne
+    policyen sin.
+
+    Bruddet er NAVNGITT (`dokument_policy_id`), så kalleren kan skille det fra
+    versjonsinvariantene, som deler feilkode.
+
+    Kontroll: fjern steg 1b i migrasjon 022, så aktiverer denne uten å blunke.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf",
+                     innhold='{"meta":{"policy_id":"en-annen-policy",'
+                             '"versjon":"1.1.0"},"a":1}')
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as e:
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        assert e.value.diag.constraint_name == "dokument_policy_id", (
+            "bruddet må være navngitt — ellers rapporteres et identitetsavvik"
+            " som versjon_i_bruk")
+    finally:
+        r.rollback()
         r.close()
 
 

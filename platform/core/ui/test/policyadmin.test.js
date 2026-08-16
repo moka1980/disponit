@@ -1172,6 +1172,54 @@ test("Åpne runde: brukt versjon sier hva som må rettes", async () => {
   gjenopprett();
 });
 
+// Codex P1: dokumentet må oppgi den policyen utkastet er registrert under. Gjør
+// det ikke det, er hverken runden eller aktiveringen mulig — og «Handlingen
+// feilet» ville sendt eier tilbake til knappen i stedet for til `meta.policy_id`
+// i utkastet. Begge former må si det: 409 fra porten (`policy_id_avvik`) og
+// utfallet fra en kansellert runde (`dokument_avvik`).
+test("Attester: fremmed policy_id sier hva som må rettes (utfall)", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(),
+    { utfall: "dokument_avvik" });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.dokument_avvik")),
+  "eier fikk ikke vite at det er identiteten i utkastet som er feil");
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+  assert.equal(kvitt.getAttribute("role"), "alert");
+});
+
+test("Attester: fremmed policy_id som 409 sier det samme", async () => {
+  for (const kode of ["policy_id_avvik", "dokument_avvik"]) {
+    const kvitt = await _attesterMedPost(nyHoved(), async () => ({
+      ok: false, status: 409, json: async () => ({ feil: kode }) }));
+    assert.ok(kvitt.textContent.includes(t(`ui.policyadmin.utfall.${kode}`)),
+      `${kode} falt til «Handlingen feilet» og skjulte hva som må rettes`);
+    assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")));
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+  }
+});
+
+test("Åpne runde: fremmed policy_id sier hva som må rettes", async () => {
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "validert", utkastversjon: 2,
+      opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "validert", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 409,
+      json: async () => ({ feil: "policy_id_avvik" }) }),
+  };
+  const h = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.apne_runde"));
+  _finn(h, t("ui.policyadmin.handling.apne_runde"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering-feil"));
+  const tekst = h.querySelector(".pa-kvittering-feil").textContent;
+  assert.ok(tekst.includes(t("ui.policyadmin.utfall.policy_id_avvik")),
+    "ingen runde kan åpnes på et utkast med fremmed identitet");
+  assert.ok(!tekst.includes(t("ui.policyadmin.feilet")));
+  gjenopprett();
+});
+
 // `vent` er reservert for det ENE utfallet der ventingen faktisk ER svaret. Et
 // utfall flaten ikke kjenner, er ikke en bekreftet aktivering, og skal verken
 // se ut som en eller som en rolig venting (fail-closed).

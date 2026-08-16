@@ -23,9 +23,17 @@ _MAL = (Path(__file__).resolve().parents[3]
         / "policies" / "bransjemal-handverk-bygg.yaml")
 
 
-def _gyldig() -> dict:
-    """En kjent skjemagyldig policy (bransjemalen som CI allerede validerer)."""
-    return yaml.safe_load(_MAL.read_text(encoding="utf-8"))
+def _gyldig(pid: str | None = None) -> dict:
+    """En kjent skjemagyldig policy (bransjemalen som CI allerede validerer).
+
+    `pid` binder dokumentets `meta.policy_id` til utkastets policy_id. De to er
+    ÉN identitet (migrasjon 022) — et utkast der de spriker kan ikke valideres,
+    og malen bærer sin egen id inntil eier setter sin.
+    """
+    pol = yaml.safe_load(_MAL.read_text(encoding="utf-8"))
+    if pid is not None:
+        pol["meta"]["policy_id"] = pid
+    return pol
 
 
 def _rt():
@@ -95,7 +103,7 @@ def test_ruter_finnes_ikke_405_paa_feil_metode(klient):
 @pg
 def test_utkast_livssyklus_opprett_rediger_valider():
     pid = "pol-" + secrets.token_hex(3)
-    base = _gyldig()
+    base = _gyldig(pid)
     endret = copy.deepcopy(base)
     endret["roller"].append({"id": "ny_rolle", "beskrivelse": "lagt til"})
     rt = _rt()
@@ -319,6 +327,45 @@ def test_valider_fanger_auto_med_vilkaar_uten_vilkaar():
                        utkast_id=o["utkast_id"], forventet_utkastversjon=1)
         assert res["utfall"] == "ugyldig"
         assert any("auto_med_vilkaar" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_avviser_dokument_med_fremmed_policy_id():
+    """🔴 P1: identiteten er ÉN sak, og valideringen er der den fryses.
+
+    Malen bærer sin egen `meta.policy_id`. Lager eier et utkast under sin id
+    uten å rette dokumentets, er policyen skjemagyldig — og likevel umulig å
+    aktivere forsvarlig: raden ville blitt indeksert under utkastets id, mens
+    motoren bygger beslutningens policyreferanse fra dokumentets
+    (`engine.policyreferanse`). Revisjonsposten og M-37-gjenopprettingen ville
+    slått opp en id uten aktiv rad.
+
+    Kontroll: fjern identitetssjekken i `valider_utkast`, så blir denne rød med
+    utfall `validert` — og et dokument som aldri kunne fungert, frosset.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig()                     # malens id, IKKE utkastets
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig", res
+        assert any("meta.policy_id" in f for f in res["feil"]), res["feil"]
+        # Og innholdet er IKKE frosset: eier kan rette id-en og validere igjen.
+        det = policyadmin.hent_utkast_detalj(
+            rt, tenant=TEN, aktor="forf", request_id="r",
+            utkast_id=o["utkast_id"])
+        assert det["status"] == "utkast" and det["innholds_hash"] is None
+        _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=1,
+                 innhold=_gyldig(pid))
+        ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=2)
+        assert ok["utfall"] == "validert", ok
     finally:
         rt.close()
 

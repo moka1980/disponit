@@ -784,6 +784,9 @@ const UTFALLSART = new Map([
   // Versjonen utkastet bærer kan ikke lagres (tatt utenom den styrte veien
   // mens runden sto åpen). Runden er lukket; utkastet må få en ny versjon.
   ["versjon_i_bruk", "feil"],
+  // Dokumentet oppgir en annen policy enn utkastet er registrert under. Runden
+  // er lukket; innholdet er frosset, så det må et nytt utkast til.
+  ["dokument_avvik", "feil"],
 ]);
 
 // Feilkoder der «Handlingen feilet.» ville vært en løgn. Felles for dem er at
@@ -795,6 +798,8 @@ const GRUNNLAGSFEIL = new Map([
   ["aktiv_peker_usynk", "ui.policyadmin.utfall.aktiv_peker_usynk"],
   ["versjon_i_bruk", "ui.policyadmin.utfall.versjon_i_bruk"],
   ["versjon_mangler", "ui.policyadmin.utfall.versjon_mangler"],
+  ["policy_id_avvik", "ui.policyadmin.utfall.policy_id_avvik"],
+  ["dokument_avvik", "ui.policyadmin.utfall.dokument_avvik"],
 ]);
 
 // -> teksten for en grunnlagsfeil, ellers den generiske «Handlingen feilet.».
