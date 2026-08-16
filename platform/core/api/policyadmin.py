@@ -313,6 +313,11 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utkastversjon": ver, "opprettet_av": opprettet_av,
         "innholds_hash": innholds_hash, "base_versjon": aktiv,
         "innhold": innhold,                        # for redigering i editoren
+        # Basen diffen måles mot. Flaten trenger den for å LESE stiene i
+        # diffen: map-nøkler skjøtes med punktum, og en nøkkel som selv
+        # inneholder punktum har bare én kilde som vet hvor den slutter — den
+        # siden nøkkelen finnes i. En SLETTET nøkkel finnes bare her.
+        "base_innhold": base_innhold,
         "diff": v["diff"], "diff_hash": v["diff_hash"],
         "risikoklasse": v["risikoklasse"],
         "klassifisering_endringer": v["klassifisering_endringer"],
