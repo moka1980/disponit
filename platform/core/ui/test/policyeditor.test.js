@@ -355,56 +355,43 @@ test("Grenser: et tømt klokkeslett lager ikke et ugyldig tidsvindu", async () =
     false, "av/på-bryteren fjernet ikke tidsvinduet");
 });
 
-test("Grenser: et tidsvindu ingen kontroll kan vise, lagres ikke videre", async () => {
-  // Parseren skal ikke være løsere enn skjemaet: en verdi den plukker fra
-  // hverandre men ikke kan sette sammen igjen, gir velgere som viser ETT
-  // vindu mens modellen bærer et annet.
-  const policy = {
-    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+// Ett kort med én ugyldig lagret grense, klart til å åpnes.
+function medGrenser(grenser) {
+  return {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
+      status: "utkast" },
     roller: [{ id: "agent" }],
-    handlinger: [{ id: "betaling.utfor", modus: "manuell", tillatt_for: ["agent"],
-      grenser: { tidsvindu: "xyz-abc 99:99-16:00" } }],
+    handlinger: [{ id: "betaling.utfor", modus: "manuell",
+      tillatt_for: ["agent"], grenser }],
   };
-  Object.defineProperty(document, "cookie", { configurable: true,
-    get: () => "__Host-disponit_csrf=tok123" });
-  const h = nyHoved();
-  visPolicyeditor(h, ctx(), { startPolicy: policy });
-  await vent(() => h.querySelector(".editor-kort"));
-  POST = undefined;
-  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
-  await vent(() => POST);
-  assert.equal(
-    JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.tidsvindu,
-    "man-fre 08:00-16:00",
-    "modellen beholdt et vindu ingen kontroll på skjermen viste");
-});
+}
 
-test("Grenser: et tidsvindu som tegnes som AV, lagres ikke videre",
+function reparasjonsvalg(h, tekst) {
+  return [...h.querySelectorAll(".editor-reparasjon button")]
+    .find((k) => k.textContent.startsWith(tekst));
+}
+
+test("Grenser: en ugyldig lagret grense repareres av EIER, ikke av editoren",
   async () => {
-    // Codex P2. Et lagret utkast kan bære et `tidsvindu` som er tomt, null
-    // eller ikke en streng. Bryteren står da av og ingen kontroll tegnes —
-    // men verdien ble stående i `g`, så en helt urelatert endring sendte den
-    // med, og den kanoniske valideringen vraket den i stedet for å lese den
-    // viste av-tilstanden som «ingen grense». Til forskjell fra det tømte
-    // klokkeslettet ligger denne verdien der før eier rører noe.
+    // Eierverdikt (P1). Editoren muterte modellen allerede under tegning: en
+    // ugyldig verdi ble byttet ut med et oppdiktet standardvindu, og tomme/
+    // ikke-streng-verdier ble slettet. Da kunne eier åpne et eldre utkast,
+    // endre et HELT ANNET felt, lagre — og ha byttet ut eller fjernet en
+    // tidsgrense uten å velge det. Fravær av `tidsvindu` betyr ingen
+    // tidsbegrensning, så slettingen utvider fullmakten stille. Målt her:
+    // (1) åpning + urelatert endring rører ikke grensen, (2) lagring slipper
+    // ikke gjennom før eier har valgt.
     Object.defineProperty(document, "cookie", { configurable: true,
       get: () => "__Host-disponit_csrf=tok123" });
-    for (const tomt of ["", null, 0, { fra: "08:00" }]) {
-      const policy = {
-        meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
-          status: "utkast" },
-        roller: [{ id: "agent" }],
-        handlinger: [{ id: "betaling.utfor", modus: "manuell",
-          tillatt_for: ["agent"], grenser: { tidsvindu: tomt } }],
-      };
+    for (const raa of ["xyz-abc 99:99-16:00", "", null, 0, { fra: "08:00" }]) {
       const h = nyHoved();
-      visPolicyeditor(h, ctx(), { startPolicy: policy });
+      visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ tidsvindu: raa }) });
       await vent(() => h.querySelector(".editor-kort"));
       const kort = h.querySelector(".editor-kort");
-      const bryter = kort.querySelector('input[type="checkbox"]');
-      assert.equal(bryter.checked, false,
-        `${JSON.stringify(tomt)} ble vist som et tidsvindu`);
-      assert.equal(kort.querySelectorAll('input[type="time"]').length, 0);
+      assert.ok(kort.querySelector(".editor-reparasjon"),
+        `${JSON.stringify(raa)} ble ikke vist som en grense som må repareres`);
+      assert.equal(kort.querySelectorAll('input[type="time"]').length, 0,
+        "en uleselig verdi ble tegnet som et vindu");
 
       // Eier rører IKKE tidsvinduet — bare et annet felt på samme kort.
       const modus = [...kort.querySelectorAll("select")]
@@ -414,12 +401,51 @@ test("Grenser: et tidsvindu som tegnes som AV, lagres ikke videre",
       POST = undefined;
       finnKnapp(h, t("ui.editor.lagre"))
         .dispatchEvent(new window.Event("click"));
+      await vent(() => h.querySelector(".editor-feil"));
+      assert.equal(POST, undefined,
+        `${JSON.stringify(raa)} ble lagret uten at eier valgte reparasjon`);
+      // Etter det avviste forsøket er kortet tegnet på nytt fra modellen, og
+      // den viser fortsatt RÅVERDIEN: hverken erstattet eller slettet.
+      assert.ok([...h.querySelectorAll(".editor-reparasjon p")]
+        .some((p) => p.textContent.endsWith(`: ${JSON.stringify(raa)}`)),
+        `${JSON.stringify(raa)} ble endret av å åpne og lagre`);
+
+      // Eiers valg nummer én: fjern grensen. NÅ, og først nå, forsvinner den.
+      reparasjonsvalg(h, t("ui.editor.grense_fjern"))
+        .dispatchEvent(new window.Event("click"));
+      POST = undefined;
+      finnKnapp(h, t("ui.editor.lagre"))
+        .dispatchEvent(new window.Event("click"));
       await vent(() => POST);
-      assert.equal(
-        "tidsvindu" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser,
-        false,
-        `${JSON.stringify(tomt)} fulgte med på en urelatert lagring`);
+      const sendt = JSON.parse(POST.opts.body).innhold.handlinger[0];
+      assert.equal("tidsvindu" in sendt.grenser, false,
+        "eiers «fjern» fjernet ikke grensen");
+      assert.equal(sendt.modus, "alltid_stopp",
+        "den urelaterte endringen gikk tapt");
     }
+  });
+
+test("Grenser: standardvinduet er eiers valg, ikke editorens reparasjon",
+  async () => {
+    // Den andre veien ut av reparasjonstilstanden: eier kan sette standarden
+    // — men det er et klikk, ikke noe som skjer av seg selv når kortet tegnes.
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(),
+      { startPolicy: medGrenser({ tidsvindu: "xyz-abc 99:99-16:00" }) });
+    await vent(() => h.querySelector(".editor-kort"));
+    reparasjonsvalg(h, t("ui.editor.grense_sett_standard"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector('input[type="time"]'));
+    assert.equal(h.querySelectorAll(".editor-reparasjon").length, 0,
+      "reparasjonstilstanden ble stående etter eiers valg");
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.equal(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.tidsvindu,
+      "man-fre 08:00-16:00", "eiers valgte standardvindu ble ikke lagret");
   });
 
 test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
@@ -498,41 +524,59 @@ test("Grenser: en valuta policyen alt har, blir ikke stående to ganger",
       "nedtrekket la igjen en dublett serveren vraker");
   });
 
-test("Grenser: en valutaliste ingen kontroll kan vise, lagres ikke videre",
+test("Grenser: en valutaliste ingen kontroll kan vise, repareres av EIER",
   async () => {
-    // Samme regel som for tidsvinduet: nedtrekket viser ett normalisert sett,
-    // og da skal modellen bære DET. En dublett som lå der fra før, en bar
-    // streng eller en tom liste er former ingen kontroll her kan vise — de
-    // ville blitt stående usynlig og fulgt med på neste, urelaterte lagring.
+    // Samme regel som for tidsvinduet, på det andre feltet: en dublett som lå
+    // der fra før, en bar streng eller en tom liste er former nedtrekket ikke
+    // kan vise. Editoren normaliserte dem i det stille under tegning — altså
+    // den samme gjettingen eierverdiktet slo ned på. Nå står valget hos eier,
+    // og det som KAN berges vises før det skrives.
     const tilfeller = [
       [["EUR", "EUR"], ["EUR"]],
       ["NOK", ["NOK"]],
-      [[], undefined],
+      [["NOK", "chf"], ["NOK"]],
+      [[], null],
     ];
     Object.defineProperty(document, "cookie", { configurable: true,
       get: () => "__Host-disponit_csrf=tok123" });
-    for (const [inn, ut] of tilfeller) {
-      const policy = {
-        meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
-          status: "utkast" },
-        roller: [{ id: "agent" }],
-        handlinger: [{ id: "betaling.utfor", modus: "manuell",
-          tillatt_for: ["agent"], grenser: { valuta: inn } }],
-      };
+    for (const [inn, berget] of tilfeller) {
       const h = nyHoved();
-      visPolicyeditor(h, ctx(), { startPolicy: policy });
+      visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: inn }) });
       await vent(() => h.querySelector(".editor-kort"));
+      assert.ok(h.querySelector(".editor-reparasjon"),
+        `${JSON.stringify(inn)} ble ikke vist som en liste som må repareres`);
+      POST = undefined;
+      finnKnapp(h, t("ui.editor.lagre"))
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => h.querySelector(".editor-feil"));
+      assert.equal(POST, undefined,
+        `${JSON.stringify(inn)} ble lagret uten at eier valgte reparasjon`);
+      assert.ok([...h.querySelectorAll(".editor-reparasjon p")]
+        .some((p) => p.textContent.endsWith(`: ${JSON.stringify(inn)}`)),
+        `${JSON.stringify(inn)} ble endret av å åpne og lagre`);
+
+      // Er det koder å berge, skal «behold» vise NØYAKTIG hva den skriver.
+      const behold = reparasjonsvalg(h, t("ui.editor.grense_behold"));
+      if (berget === null) {
+        assert.equal(behold, undefined,
+          "en tom liste har ingenting å beholde, men ble tilbudt");
+      } else {
+        assert.equal(behold.textContent,
+          `${t("ui.editor.grense_behold")}: ${berget.join(", ")}`);
+      }
+      (behold || reparasjonsvalg(h, t("ui.editor.grense_fjern")))
+        .dispatchEvent(new window.Event("click"));
       POST = undefined;
       finnKnapp(h, t("ui.editor.lagre"))
         .dispatchEvent(new window.Event("click"));
       await vent(() => POST);
       const g = JSON.parse(POST.opts.body).innhold.handlinger[0].grenser;
-      if (ut === undefined) {
+      if (berget === null) {
         assert.equal("valuta" in g, false,
           `${JSON.stringify(inn)} ble stående i modellen`);
       } else {
-        assert.deepEqual(g.valuta, ut,
-          `${JSON.stringify(inn)} ble ikke normalisert`);
+        assert.deepEqual(g.valuta, berget,
+          `${JSON.stringify(inn)}: eiers valg ble ikke lagret`);
       }
     }
   });

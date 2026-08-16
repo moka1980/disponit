@@ -98,6 +98,7 @@ const TIDSVINDU_RE = new RegExp(
   `^(${DAG_RE})-(${DAG_RE}) (${KL_RE})-(${KL_RE})$`);
 const TIDSVINDU_STANDARD =
   { fraDag: "man", tilDag: "fre", fraKl: "08:00", tilKl: "16:00" };
+const settSammen = (d) => `${d.fraDag}-${d.tilDag} ${d.fraKl}-${d.tilKl}`;
 
 function tidsvinduDeler(verdi) {
   const m = TIDSVINDU_RE.exec(verdi || "");
@@ -105,23 +106,68 @@ function tidsvinduDeler(verdi) {
            : { ...TIDSVINDU_STANDARD };
 }
 
+// En lagret verdi er REPRESENTERBAR når en kontroll her kan vise den og skrive
+// den tilbake uendret. Er den ikke det, har editoren ingenting å gjette ut fra
+// — og å gjette er det farlige: åpner eier et eldre utkast med en ødelagt
+// tidsgrense og endrer et helt ANNET felt, ble grensen enten byttet ut med et
+// oppdiktet standardvindu eller slettet, bare fordi kortet ble tegnet. Fravær
+// av `tidsvindu` betyr INGEN tidsbegrensning, så den stille slettingen gjør en
+// policy som før ble avvist gyldig med bredere fullmakt enn eier har valgt.
+// Regelen er derfor: rør ikke råverdien, vis at den må repareres, og steng
+// lagringen til eier har valgt selv. Standardvinduet er fremdeles greit når
+// eier AKTIVT slår grensen på — da er det eiers valg, ikke vår reparasjon.
+function tidsvinduUleselig(g) {
+  // `undefined` serialiseres bort av `JSON.stringify` og er dermed det samme
+  // som fravær — der er det ingenting å reparere.
+  return "tidsvindu" in g && g.tidsvindu !== undefined
+    && !(typeof g.tidsvindu === "string" && TIDSVINDU_RE.test(g.tidsvindu));
+}
+
+const VALUTA_RE = /^[A-Z]{3}$/;
+
+// Samme regel på det andre feltet: `_valider_grenser` krever 1–10 unike koder
+// på formen `^[A-Z]{3}$`, og nedtrekket viser nøyaktig det. En dublett, en bar
+// streng eller en tom liste er former ingen kontroll her kan vise.
+function valutaUleselig(g) {
+  if (!("valuta" in g) || g.valuta === undefined) return false;
+  const v = g.valuta;
+  return !Array.isArray(v) || !v.length || v.length > 10
+    || v.some((k) => typeof k !== "string" || !VALUTA_RE.test(k))
+    || new Set(v).size !== v.length;
+}
+
+// Reparasjonsraden: råverdien SLIK DEN ER LAGRET, og eiers veier ut. Ingen av
+// dem skjer av seg selv — det er hele poenget. `JSON.stringify` fordi "" og
+// null og 0 må kunne skilles fra hverandre på skjermen.
+function reparasjon(etikett, raa, valg) {
+  const knapper = valg.map(([tekst, gjor]) => {
+    const k = el("button", { class: "knapp liten", type: "button", text: tekst });
+    k.addEventListener("click", gjor);
+    return k;
+  });
+  return el("div", { class: "editor-felt-gruppe" },
+    el("div", { class: "editor-reparasjon" },
+      el("p", { class: "felt-navn", text: etikett }),
+      el("p", { text: t("ui.editor.grense_ulesbar") }),
+      el("p", { class: "editor-hint",
+        text: `${t("ui.editor.grense_lagret_verdi")}: ${JSON.stringify(raa)}` }),
+      el("div", { class: "editor-rad" }, ...knapper)));
+}
+
 function tidsvinduVelger(g, tegnPaaNytt) {
-  const paa = typeof g.tidsvindu === "string" && g.tidsvindu !== "";
-  // Av på skjermen ER at grensen ikke finnes. En tom streng, null eller noe
-  // som ikke er en streng i det hele tatt kan ingen kontroll her tegne — den
-  // ville blitt stående usynlig i modellen, fulgt med på neste, urelaterte
-  // lagring, og blitt vraket av den kanoniske valideringen langt fra feltet
-  // som viste av. Dette er noe annet enn det tømte klokkeslettet under: her
-  // ligger verdien der ALLEREDE når editoren åpnes.
-  if (!paa) delete g.tidsvindu;
+  if (tidsvinduUleselig(g)) {
+    const standard = settSammen(TIDSVINDU_STANDARD);
+    return reparasjon(t("ui.editor.tidsvindu"), g.tidsvindu, [
+      [t("ui.editor.grense_fjern"),
+        () => { delete g.tidsvindu; tegnPaaNytt(); }],
+      [`${t("ui.editor.grense_sett_standard")}: ${standard}`,
+        () => { g.tidsvindu = standard; tegnPaaNytt(); }],
+    ]);
+  }
+  // Her er `g.tidsvindu` enten fraværende eller et vindu velgerne kan vise.
+  const paa = typeof g.tidsvindu === "string";
   const d = tidsvinduDeler(g.tidsvindu);
-  const skriv = () => {
-    g.tidsvindu = `${d.fraDag}-${d.tilDag} ${d.fraKl}-${d.tilKl}`;
-  };
-  // Et vindu som ikke lar seg lese, kan heller ikke vises. Velgerne står da på
-  // standarden, og modellen skal si det SAMME — ellers lagrer eier en streng
-  // ingen kontroll på skjermen viser.
-  if (paa && !TIDSVINDU_RE.test(g.tidsvindu)) skriv();
+  const skriv = () => { g.tidsvindu = settSammen(d); };
   const bryter = el("input", { type: "checkbox", class: "felt-bryter" });
   if (paa) bryter.setAttribute("checked", "");
   bryter.addEventListener("change", () => {
@@ -171,23 +217,24 @@ function tidsvinduVelger(g, tegnPaaNytt) {
 const VALUTA_INGEN = "";
 
 function valutaVelger(g, tegnPaaNytt) {
+  // Samme regel som for tidsvinduet: en lagret liste nedtrekket ikke kan vise,
+  // normaliseres ikke i det stille — eier velger. Det som KAN berges av koder
+  // vises som ett av valgene, så «behold» er en verdi eier ser før den skrives.
+  if (valutaUleselig(g)) {
+    const berget = [...new Set((Array.isArray(g.valuta) ? g.valuta : [g.valuta])
+      .filter((v) => typeof v === "string" && VALUTA_RE.test(v)))].slice(0, 10);
+    const valg = [[t("ui.editor.grense_fjern"),
+      () => { delete g.valuta; tegnPaaNytt(); }]];
+    if (berget.length) {
+      valg.push([`${t("ui.editor.grense_behold")}: ${berget.join(", ")}`,
+        () => { g.valuta = berget; tegnPaaNytt(); }]);
+    }
+    return reparasjon(t("ui.editor.valuta"), g.valuta, valg);
+  }
   // Valutaen er en liste i skjemaet, men i praksis én kode. Har policyen
   // flere, beholdes de: nedtrekket bytter den FØRSTE og sier fra om resten,
-  // i stedet for å kaste dem stille. Lista er et SETT: serveren vraker
-  // duplikater (`_valider_grenser` → `_unik`), og en kode som står to steder
-  // gjør den aktive policyen uleselig — `policy_korrupt`.
-  const raa = Array.isArray(g.valuta) ? g.valuta.filter(Boolean)
-    : (g.valuta ? [g.valuta] : []);
-  const valutaer = [...new Set(raa)];
-  // Nedtrekket viser det normaliserte settet; da skal modellen bære det
-  // samme. Ellers blir en form ingen kontroll her viser — en tom liste, en
-  // bar streng, en dublett fra før — stående usynlig og lagret videre.
-  if ("valuta" in g) {
-    if (!valutaer.length) delete g.valuta;
-    else if (!Array.isArray(g.valuta) || g.valuta.length !== valutaer.length) {
-      g.valuta = valutaer;
-    }
-  }
+  // i stedet for å kaste dem stille.
+  const valutaer = Array.isArray(g.valuta) ? g.valuta : [];
   const valgt = valutaer[0] || VALUTA_INGEN;
   // Halen er like valgbar som hodet. Ble valgene bygd av `valgt` alene, sto en
   // beholdt kode lenger bak — `["NOK","CHF"]` — nevnt i hintet uten å finnes i
@@ -271,6 +318,19 @@ function byggInnhold(policy) {
   return policy;                       // policy muteres in-place av feltene
 }
 
+// Porten står ved LAGRING, ikke ved tegning: det er lagringen som er den
+// farlige handlingen. En grense ingen kontroll kan vise, har eier ennå ikke
+// tatt stilling til — og da skal utkastet ikke kunne sendes med den, hverken
+// reparert av oss eller uendret. Returnerer handlingene som venter på et valg.
+function grenserSomVenterPaaValg(policy) {
+  const handlinger = Array.isArray(policy && policy.handlinger)
+    ? policy.handlinger : [];
+  return handlinger
+    .filter((h) => h && h.grenser && typeof h.grenser === "object"
+      && (tidsvinduUleselig(h.grenser) || valutaUleselig(h.grenser)))
+    .map((h) => h.id || "?");
+}
+
 export function visPolicyeditor(hoved, ctx, opts = {}) {
   // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn() }
   const st = { policy: null, utkast_id: opts.utkast_id || null,
@@ -282,6 +342,11 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     const pid = (st.policy.meta && st.policy.meta.policy_id || "").trim();
     if (!st.utkast_id && !pid) {
       st.feil = [t("ui.editor.policy_id_pakrevd")]; tegn(); return;
+    }
+    const venter = grenserSomVenterPaaValg(st.policy);
+    if (venter.length) {
+      st.feil = [`${t("ui.editor.grense_maa_repareres")}: ${venter.join(", ")}`];
+      tegn(); return;
     }
     // STABIL idempotensnøkkel per innhold (Codex R1): samme innhold → samme
     // nøkkel, så en retry etter tapt svar REPLAYer i stedet for å duplisere.
