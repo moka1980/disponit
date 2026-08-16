@@ -386,16 +386,18 @@ export async function visInnlogging(opsjoner = {}) {
   const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
   let provider = null;
+  // Miljøet avgjør om forsiden kan LOVE noe, og avlesningen er fail-closed:
+  // bare den eksakte strengen teller, så et manglende felt eller en feilet
+  // henting koster et løfte i stedet for å gi et. Verdien HOLDES lokalt her —
+  // se skrivepunktet under.
+  let iProduksjon = false;
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
-    // Miljøet avgjør om forsiden kan LOVE noe. Settes FØR rendringen under, og
-    // fail-closed: bare den eksakte strengen teller, så et manglende felt
-    // eller en feilet henting koster et løfte i stedet for å gi et.
-    settProduksjonsmiljo(o && o.miljo === "produksjon");
+    iProduksjon = !!(o && o.miljo === "produksjon");
   } catch {
     provider = null;
-    settProduksjonsmiljo(false);
+    iProduksjon = false;
   }
   // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
   // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
@@ -408,6 +410,23 @@ export async function visInnlogging(opsjoner = {}) {
     // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
     lokaliserSkiplenke();
   }
+
+  // ET FORBIGÅTT SVAR SKRIVER IKKE MILJØET (Codex P2). `settProduksjonsmiljo`
+  // sto FØR eierskapssjekkene, og skrev derfor en global verdi som kallet selv
+  // straks etterpå kunne miste retten til å bruke: rakk to språkbytter å
+  // overlappe, og det tapende oppsettkallet svarte sist — fordi det feilet
+  // eller manglet `miljo` — sto `false` igjen etter at vinneren hadde skrevet
+  // `true`. Rendringen ble riktig nok forkastet, men verdien ble stående.
+  //
+  // Med sider som bygges LAZY er det ikke lenger en skrivefeil som forsvinner
+  // ved neste tegning: Tjenester bygges først når man navigerer dit, og leser
+  // da `erTilgjengelig()` mot den stale verdien. En bruker som aldri gjorde
+  // noe galt fikk hele modultilbudet merket «Kommer» — og heltet fikk teksten
+  // som hører til en tom plattform — på en vert som var i produksjon.
+  //
+  // Skrivepunktet hører derfor ETTER begge eierskapssjekkene: den som eier
+  // flaten er den som eier miljøet den leses i.
+  settProduksjonsmiljo(iProduksjon);
 
   const ctx = { provider };
   const navplass = el("div", { class: "site-navplass" });

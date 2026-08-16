@@ -9,7 +9,8 @@ import { visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
-import { TILBUD, erTilgjengelig } from "../static/js/plattformdata.js";
+import { TILBUD, erTilgjengelig, produksjonsmiljo,
+  settProduksjonsmiljo } from "../static/js/plattformdata.js";
 import { siteTilbudMerke } from "../static/js/sitekomponenter.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
@@ -742,6 +743,47 @@ test("Forsiden: hver side heter noe i historikk og faneveksler", async () => {
       `tittelen ble stående på norsk: «${document.title}»`);
   } finally {
     settI18nForTest(NB, "nb");
+  }
+});
+
+test("Forsiden: et forbigått oppsett-svar skriver ikke produksjonsmiljøet", async () => {
+  // Codex P2: `settProduksjonsmiljo()` sto FØR eierskapssjekkene. Overlappet to
+  // språkbytter, og det TAPENDE oppsettkallet svarte sist — feilet, eller uten
+  // `miljo` — sto `false` igjen etter at vinneren hadde skrevet `true`. Selve
+  // rendringen ble riktig nok forkastet; verdien ble stående. Og med sider som
+  // bygges LAZY er ikke det en skrivefeil som forsvinner ved neste tegning:
+  // Tjenester bygges først når man navigerer dit, og leser da miljøet som står.
+  // Testen måler den delte verdien, ikke rendringen — det er den de senere
+  // sidene leser.
+  const app = nyttAppBrett();
+  const opprinnelig = globalThis.fetch;
+  const oppsett = (svar) => async (url) => {
+    if (url.split("?")[0] === "/ui/oppsett.json") {
+      return { ok: true, status: 200, json: async () => svar };
+    }
+    return opprinnelig(url);
+  };
+  try {
+    // Vinneren: en vert i produksjon.
+    globalThis.fetch = oppsett({ provider_id: "google", miljo: "produksjon" });
+    await visInnlogging();
+    await vent(() => app.querySelector("#sidetittel"));
+    assert.equal(produksjonsmiljo(), true, "vinnerens miljø ble aldri satt");
+
+    // Taperen: eldre kall, svarer sist, og svaret er uten `miljo`.
+    globalThis.fetch = oppsett({ provider_id: "google" });
+    await visInnlogging({ gjelderFortsatt: () => false });
+    assert.equal(produksjonsmiljo(), true,
+      "et forbigått kall skrev miljøet — en side som bygges senere leser det");
+
+    // Samme sak når kallet taper på språket i stedet: `taIBruk()` svarer `null`
+    // når et nyere valg eier settet, og da skal heller ingenting skrives.
+    await visInnlogging({ i18n: { taIBruk: () => null } });
+    assert.equal(produksjonsmiljo(), true,
+      "kallet som tapte språkvalget skrev miljøet");
+  } finally {
+    globalThis.fetch = opprinnelig;
+    settProduksjonsmiljo(false);   // staging er sannheten for resten av suiten
   }
 });
 
