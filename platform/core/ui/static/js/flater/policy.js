@@ -95,7 +95,8 @@ function identiteter(aktive) {
 async function hentAktiv() {
   try {
     const d = await hentJson("/v1/policy/aktiv");
-    return { aktive: [{ policy_id: d.policy_id, versjon: d.versjon }], dto: d };
+    return { aktive: [{ policy_id: d.policy_id, versjon: d.versjon,
+                        innholds_hash: d.innholds_hash }], dto: d };
   } catch (e) {
     if (e instanceof IkkeFunnetFeil) return { aktive: [], dto: null };
     if (!(e instanceof ApiFeil) || e.status < 500) throw e;
@@ -191,7 +192,12 @@ function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
                                        : t("ui.policy.slett_tekst")}`,
       primarTekst: t("ui.policy.slett"),
       farlig: true,
-      paaPrimar: () => slettPolicy(d.policy_id, slettNokkel)
+      // Identiteten som sendes er den seksjonen VISER — `merke(d)` over står
+      // for de samme to feltene. Aktiveres en ny versjon mellom lastingen og
+      // bekreftelsen, avviser serveren med `policy_endret` i stedet for å
+      // slette den nye policyen operatøren aldri så (Codex P1).
+      paaPrimar: () => slettPolicy(d.policy_id, d.versjon, d.innholds_hash,
+                                   slettNokkel)
         .then(() => {
           meldLive(t("ui.policy.slettet"));
           tegnPaaNytt();               // flaten viser nå TomTilstand — sant.
@@ -203,7 +209,13 @@ function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
             ? t("ui.policy.slett_i_bruk")
             : kode === "runde_allerede_aapen"
               ? t("ui.policy.slett_runde_aapen")
-              : t("ui.policy.slett_feilet");
+              : kode === "policy_endret"
+                // Visningen er foreldet, ikke gal — og forskjellen er hele
+                // poenget: eier må SE den nye versjonen før hun avgjør om den
+                // også skal bort. Flaten tegnes derfor ikke på nytt under
+                // henne; hun får vite at siden må lastes.
+                ? t("ui.policy.slett_endret")
+                : t("ui.policy.slett_feilet");
         }),
     });
   });

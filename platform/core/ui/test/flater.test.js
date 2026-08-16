@@ -461,10 +461,12 @@ test("Dashbord: tomme lister sier det, og siden er axe-ren", async () => {
 test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten",
   async () => {
     let postet = null;
+    let kropp = null;
     const brukFetch = globalThis.fetch;
     globalThis.fetch = async (url, opts) => {
       if (opts && opts.method === "POST") {
         postet = url.split("?")[0];
+        kropp = JSON.parse(opts.body);
         return { ok: true, status: 200,
           json: async () => ({ slettet: 1 }) };
       }
@@ -497,6 +499,11 @@ test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten"
       .dispatchEvent(new window.Event("click"));
     await vent(() => postet);
     assert.equal(postet, "/v1/policy/p/slett");
+    // ...og forespørselen bærer identiteten flaten VISTE (Codex P1). Uten den
+    // slettet serveren alle versjoner av `p`, også en som ble aktivert mens
+    // dialogen sto åpen. Kontroll: send `{}`, så blir denne rød.
+    assert.equal(kropp.versjon, "0.2.0");
+    assert.equal(kropp.innholds_hash, "a".repeat(64));
     // Flaten tegnes på nytt og viser at ingen policy er aktiv — sannheten,
     // ikke en foreldet visning av det som nettopp ble slettet.
     await vent(() => h.querySelector(".tilstand.tom"));
@@ -512,11 +519,13 @@ test("Policy: flere aktive → hver av dem kan slettes, ikke en blindvei",
     // en vei videre endte flaten i en generisk feiltilstand — slettehandlingen
     // var utilgjengelig nøyaktig når den trengtes.
     let postet = null;
+    let kropp = null;
     const brukFetch = globalThis.fetch;
     globalThis.fetch = async (url, opts) => {
       const sti = url.split("?")[0];
       if (opts && opts.method === "POST") {
         postet = sti;
+        kropp = JSON.parse(opts.body);
         return { ok: true, status: 200, json: async () => ({ slettet: 1 }) };
       }
       if (sti === "/v1/policy/aktiv") {
@@ -563,7 +572,50 @@ test("Policy: flere aktive → hver av dem kan slettes, ikke en blindvei",
       .dispatchEvent(new window.Event("click"));
     await vent(() => postet);
     assert.equal(postet, "/v1/policy/tjenestebedrift2/slett");
+    // Hver seksjon binder seg til SIN egen rad — ikke den andres, og ikke en
+    // identitet fra en liste den tilfeldigvis sto i.
+    assert.equal(kropp.innholds_hash, "b".repeat(64));
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en versjon som er aktivert i mellomtiden avvises, ikke slettes",
+  async () => {
+    // Kontroll: la `angreSeksjon` behandle `policy_endret` som en generisk
+    // feil, så blir denne rød. Avvisningen er ikke støy — den sier at
+    // visningen er FORELDET, og at eier må se den nye versjonen før hun
+    // avgjør om den også skal bort. Flaten tegnes derfor ikke på nytt under
+    // henne; den ber om en ny lasting.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method === "POST") {
+        return { ok: false, status: 409,
+          json: async () => ({ feil: "policy_endret" }) };
+      }
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: true, status: 200, json: async () => STD[sti] };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    [...h.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    const dlg = await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")))) &&
+      [...document.querySelectorAll('[role="dialog"]')]
+        .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(t("ui.policy.slett_endret")));
+    assert.ok(h.textContent.includes(t("ui.policy.slett_endret")),
+      "avvisningen forklarte ikke at visningen er foreldet");
+    assert.ok(!h.textContent.includes(t("ui.policy.slett_feilet")),
+      "en foreldet visning ble meldt som «slettingen feilet»");
     globalThis.fetch = brukFetch;
   });
 

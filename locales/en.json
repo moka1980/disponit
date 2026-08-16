@@ -724,5 +724,6 @@
   "ui.policy.slettet": "The policy has been deleted.",
   "ui.policy.slett_i_bruk": "This policy has governed decisions and cannot be deleted — the audit trail references it. It can be retired, not deleted.",
   "ui.policy.slett_runde_aapen": "An activation round is open for this policy. Close the round first.",
+  "ui.policy.slett_endret": "A different version of this policy was activated after this page was loaded, and nothing was deleted. Reload the page and review the new version before you decide.",
   "ui.policy.slett_feilet": "The deletion failed."
 }

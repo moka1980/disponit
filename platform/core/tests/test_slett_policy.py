@@ -13,7 +13,10 @@ Grensene er hele verdien av funksjonen:
     som har passert `utloper` skrives ned som `utlopt` før vernet teller, som
     i forkast og runde-åpning;
   * versjonene blir ledige igjen, så riktig opprettelse etterpå ikke stoppes
-    av 020-monotonien.
+    av 020-monotonien;
+  * og slettingen tar NØYAKTIG den policyen operatøren så — versjon +
+    innholdshash sammenlignes under låsen, så en versjon som ble aktivert
+    etter at siden ble lastet ikke rives med.
 """
 import json
 import secrets
@@ -43,12 +46,18 @@ def _rt(tenant=TEN):
     return c
 
 
+def _hash(pid, versjon):
+    """Innholdshashen raden får. UTLEDET, ikke tilfeldig, så `_slett` kan
+    oppgi den forventede identiteten uten at hvert kallsted må bære den."""
+    return f"h-{pid}-{versjon}"
+
+
 def _policyrad(c, pid, versjon="1.0.0", aktiv=True):
     innhold = {"meta": {"policy_id": pid, "versjon": versjon}}
     c.execute(
         "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
         "innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',%s::jsonb,%s)",
-        (TEN, pid, versjon, "h-" + secrets.token_hex(4),
+        (TEN, pid, versjon, _hash(pid, versjon),
          json.dumps(innhold), aktiv))
     c.execute(
         "INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon)"
@@ -57,9 +66,14 @@ def _policyrad(c, pid, versjon="1.0.0", aktiv=True):
         (TEN, pid, versjon if aktiv else None))
 
 
-def _slett(c, pid, tenant=TEN):
-    return c.execute("SELECT slett_ubrukt_policy(%s,%s)",
-                     (tenant, pid)).fetchone()[0]
+def _slett(c, pid, tenant=TEN, versjon="1.0.0", innholds_hash=None):
+    """Slettingen er BUNDET til den aktive policyen kalleren så — versjon +
+    innholdshash, den optimistiske låsen (Codex P1)."""
+    return c.execute(
+        "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+        (tenant, pid, versjon,
+         _hash(pid, versjon) if innholds_hash is None
+         else innholds_hash)).fetchone()[0]
 
 
 @pg
@@ -183,6 +197,7 @@ def test_forfalt_runde_blokkerer_ikke_sletting():
     try:
         res = policyadmin.slett_policy(
             rt, tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+            forventet_versjon="1.0.0", forventet_hash=_hash(pid, "1.0.0"),
             idempotency_key=idem, input_hash="ih-" + idem,
             naa=datetime.now(timezone.utc))
         assert res["slettet"] == 1
@@ -225,6 +240,8 @@ def test_levende_runde_blokkerer_fortsatt_etter_forfallsovergangen():
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
             policyadmin.slett_policy(
                 rt, tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+                forventet_versjon="1.0.0",
+                forventet_hash=_hash(pid, "1.0.0"),
                 idempotency_key=idem, input_hash="ih-" + idem,
                 naa=datetime.now(timezone.utc))
         assert e.value.kode == "runde_allerede_aapen"
@@ -287,8 +304,9 @@ def test_slettingen_er_idempotent_og_replayer_suksess():
     rt = _rt()
     try:
         kall = dict(tenant=TEN, aktor="test", request_id="r1",
-                    policy_id=pid, idempotency_key=idem,
-                    input_hash="ih-" + idem,
+                    policy_id=pid, forventet_versjon="1.0.0",
+                    forventet_hash=_hash(pid, "1.0.0"),
+                    idempotency_key=idem, input_hash="ih-" + idem,
                     naa=datetime.now(timezone.utc))
         forste = policyadmin.slett_policy(rt, **kall)
         assert forste["slettet"] == 1 and forste["policy_id"] == pid
@@ -332,8 +350,9 @@ def test_mislykket_sletting_brenner_ikke_nokkelen():
     rt = _rt()
     try:
         kall = dict(tenant=TEN, aktor="test", request_id="r1",
-                    policy_id=pid, idempotency_key=idem,
-                    input_hash="ih-" + idem,
+                    policy_id=pid, forventet_versjon="1.0.0",
+                    forventet_hash=_hash(pid, "1.0.0"),
+                    idempotency_key=idem, input_hash="ih-" + idem,
                     naa=datetime.now(timezone.utc))
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
             policyadmin.slett_policy(rt, **kall)
@@ -529,6 +548,155 @@ def test_en_loggreferanse_gjor_policyen_uslettelig_for_godt():
         m.close()
 
 
+# ---------------------------------------------------------------------------
+# BINDINGEN TIL DEN VERSJONEN OPERATØREN SÅ (Codex P1). Vilkårene over sier
+# hva som ikke kan slettes; dette sier HVA som slettes. Uten bindingen slettet
+# forespørselen alle versjoner av `policy_id` — også en som ble godkjent av
+# fire øyne og aktivert etter at siden ble lastet, eller mens slettingen sto i
+# kø bak policylåsen. Operatøren bekreftet én policy og mistet en annen.
+# ---------------------------------------------------------------------------
+
+def _aktiver_ny_versjon(c, pid, versjon):
+    """Gjør `versjon` aktiv, i `aktiver_policy` sin form: hoderaden låses
+    FØRST, forrige rad deaktiveres, den nye settes inn og pekeren flyttes."""
+    c.execute("SELECT 1 FROM policy_hode WHERE tenant=%s AND policy_id=%s"
+              " FOR UPDATE", (TEN, pid))
+    c.execute("UPDATE policyer SET aktiv=false WHERE tenant=%s"
+              " AND policy_id=%s AND aktiv", (TEN, pid))
+    _policyrad(c, pid, versjon)
+
+
+@pg
+def test_sletting_avvises_naar_en_annen_versjon_er_aktivert():
+    """Kontroll: fjern identitetssjekken i 032, så blir denne rød — og den
+    nye, attesterte versjonen forsvinner sammen med den gamle."""
+    import psycopg
+    from db.pg import sett_kontekst
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)                       # dette er det flaten VISTE
+    m.commit()
+    sett_kontekst(m, TEN, "test", "r0")
+    _aktiver_ny_versjon(m, pid, "1.1.0")     # ...og dette skjedde etterpå
+    m.commit()
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue) as e:
+            _slett(rt, pid, versjon="1.0.0")
+        # Feilen navngir det som faktisk står aktivt: det er den opplysningen
+        # eier trenger for å avgjøre om DEN også skal bort.
+        assert "1.1.0" in str(e.value), str(e.value)
+        rt.rollback()
+
+        sett_kontekst(rt, TEN, "test", "r2")
+        assert rt.execute(
+            "SELECT count(*) FROM policyer WHERE tenant=%s AND policy_id=%s",
+            (TEN, pid)).fetchone()[0] == 2, "rader ble slettet likevel"
+
+        # Vernet er en BINDING, ikke en blokade: ber eier om å slette den hun
+        # nå ser, går det gjennom — og da tar det, som før, hele policyen.
+        assert _slett(rt, pid, versjon="1.1.0") == 2
+        rt.commit()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_sletting_avvises_naar_innholdet_bak_versjonen_er_byttet():
+    """Versjonsnummeret alene er ikke en identitet: slettingen FRIGJØR
+    versjonene (det er en av grunnene den finnes), så `1.0.0` kan komme
+    tilbake med et helt annet innhold. Hashen er det som skiller dem."""
+    import psycopg
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _slett(rt, pid, versjon="1.0.0", innholds_hash="h-en-annen-policy")
+        rt.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_avvist_versjon_gir_policy_endret_og_brenner_ikke_nokkelen():
+    """Kartleggingen eier ser: `policy_endret`, ikke en generisk feil — og
+    nøkkelen står igjen ubrukt, så flaten kan laste på nytt og prøve mot den
+    versjonen som NÅ er aktiv, med samme nøkkel."""
+    from api import policyadmin
+    from db.pg import sett_kontekst
+    pid = "p-" + secrets.token_hex(3)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    sett_kontekst(m, TEN, "test", "r0")
+    _aktiver_ny_versjon(m, pid, "1.1.0")
+    m.commit()
+    rt = _rt()
+    try:
+        kall = dict(tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+                    idempotency_key=idem, input_hash="ih-" + idem,
+                    naa=datetime.now(timezone.utc))
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.slett_policy(
+                rt, forventet_versjon="1.0.0",
+                forventet_hash=_hash(pid, "1.0.0"), **kall)
+        assert e.value.kode == "policy_endret"
+
+        assert policyadmin.slett_policy(
+            rt, forventet_versjon="1.1.0",
+            forventet_hash=_hash(pid, "1.1.0"), **kall)["slettet"] == 2
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_sletting_som_venter_paa_laasen_river_ikke_den_nye_versjonen():
+    """Kappløpet finningen peker på: aktiveringen er I GANG når slettingen
+    kommer, så visningen var fersk da dialogen ble åpnet.
+
+    Sammenligningen må derfor skje ETTER at køen har løst seg — leses den
+    aktive raden før låsene, ser slettingen fortsatt den gamle versjonen,
+    finner den «uendret», og sletter den nye med.
+    """
+    import psycopg
+    from db.pg import sett_kontekst
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    sett_kontekst(m, TEN, "test", "r0")
+    rt = _rt()
+    try:
+        # Aktiveringen holder hoderaden, men har ikke committet.
+        _aktiver_ny_versjon(m, pid, "1.1.0")
+
+        # Slettingen kommer med den versjonen flaten viste, og blir stående i
+        # kø: den kan ikke avgjøre noe før aktiveringen er ferdig.
+        assert _sperret(rt, pid), "slettingen gikk forbi en aktivering i gang"
+        rt.rollback()
+
+        m.commit()
+        sett_kontekst(rt, TEN, "test", "r3")
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _slett(rt, pid, versjon="1.0.0")
+        rt.rollback()
+
+        sett_kontekst(rt, TEN, "test", "r4")
+        assert rt.execute(
+            "SELECT count(*) FROM policyer WHERE tenant=%s AND policy_id=%s",
+            (TEN, pid)).fetchone()[0] == 2, "den nye versjonen ble revet med"
+    finally:
+        rt.close()
+        m.close()
+
+
 @pg
 def test_sletting_krever_matchende_tenantkontekst():
     """SECURITY DEFINER omgår RLS — da er kontekstsjekken inne i funksjonen
@@ -541,7 +709,7 @@ def test_sletting_krever_matchende_tenantkontekst():
     rt = _rt(tenant="t-annen-" + secrets.token_hex(3))
     try:
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("SELECT slett_ubrukt_policy(%s,%s)", (TEN, pid))
+            _slett(rt, pid)
         rt.rollback()
     finally:
         rt.close()

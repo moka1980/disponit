@@ -178,8 +178,15 @@ export const redigerUtkast = (uid, utkastversjon, innhold,
 // versjonen).
 export const validerUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/valider`, "POST", { utkastversjon }, idem);
-export const slettPolicy = (policyId, idem = nyIdempotensnokkel()) =>
-  _muter(`/v1/policy/${encodeURIComponent(policyId)}/slett`, "POST", {}, idem);
+// slett krever identiteten til den aktive policyen flaten VISTE (`versjon` +
+// `innholds_hash`) — den optimistiske låsen, som `utkastversjon` er for
+// utkastene. Serveren sammenligner under policylåsen: er en ny versjon
+// aktivert siden siden ble lastet, avvises slettingen med `policy_endret` i
+// stedet for å rive med seg noe operatøren aldri så.
+export const slettPolicy = (policyId, versjon, innholdsHash,
+                            idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policy/${encodeURIComponent(policyId)}/slett`, "POST",
+         { versjon, innholds_hash: innholdsHash }, idem);
 export const merkVarselLest = (id, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/varsel/${id}/lest`, "POST", {}, idem);
 export const settVarselkanal = (kanal, sprak, idem = nyIdempotensnokkel()) =>

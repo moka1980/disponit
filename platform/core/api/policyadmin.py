@@ -699,11 +699,18 @@ def _lukk_forfalte_runder(conn: psycopg.Connection, tenant: str,
 
 
 def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
-                 request_id: str, policy_id: str, idempotency_key: str,
+                 request_id: str, policy_id: str, forventet_versjon: str,
+                 forventet_hash: str, idempotency_key: str,
                  input_hash: str, naa) -> dict:
     """Angre en feilopprettet policy: slett den som ALDRI har styrt en
     beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (032) — her
     ligger idempotensen og OVERGANGEN som lukker forfalte runder.
+
+    `forventet_versjon`/`forventet_hash` er den aktive policyen KLIENTEN SÅ, og
+    de sendes videre urørt: sammenligningen hører hjemme under policylåsen inne
+    i funksjonen (Codex P1), ikke i en lesning her ute som en aktivering kan gå
+    forbi mellom lesningen og kallet. Avviker de, er policyen byttet ut under
+    operatøren — `policy_endret`, ikke en sletting av noe hun aldri så.
 
     Idempotensen er ikke pynt på en `Idempotency-Key` endepunktet uansett
     krever (Codex P2). Slettingen er ENGANGS og irreversibel: går svaret tapt
@@ -730,8 +737,10 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
         raise Aktiveringsfeil("idempotenskonflikt")
     _lukk_forfalte_runder(conn, tenant, policy_id, naa)
     try:
-        n = conn.execute("SELECT slett_ubrukt_policy(%s,%s)",
-                         (tenant, policy_id)).fetchone()[0]
+        n = conn.execute(
+            "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+            (tenant, policy_id, forventet_versjon,
+             forventet_hash)).fetchone()[0]
     except psycopg.errors.CheckViolation as e:
         # Rollback tar claimet med seg, som ellers i modulen: en operasjon som
         # ikke skjedde skal ikke brenne nøkkelen. Retry på en policy som er i
@@ -740,6 +749,12 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
         raise Aktiveringsfeil(
             "policy_i_bruk" if "beslutning" in str(e)
             else "runde_allerede_aapen") from None
+    except psycopg.errors.InvalidParameterValue:
+        # Den aktive policyen er ikke den klienten så. Rollback som over: en
+        # sletting som ikke skjedde skal ikke brenne nøkkelen — flaten kan
+        # laste på nytt og prøve igjen mot den versjonen som NÅ står.
+        conn.rollback()
+        raise Aktiveringsfeil("policy_endret") from None
     except psycopg.errors.NoDataFound:
         conn.rollback()
         raise Aktiveringsfeil("policy_ukjent") from None

@@ -724,5 +724,6 @@
   "ui.policy.slettet": "Policyen er slettet.",
   "ui.policy.slett_i_bruk": "Policyen har styrt beslutninger og kan ikke slettes — revisjonssporet refererer den. Den kan avvikles, ikke slettes.",
   "ui.policy.slett_runde_aapen": "En aktiveringsrunde står åpen for denne policyen. Avslutt runden først.",
+  "ui.policy.slett_endret": "En annen versjon av policyen er aktivert etter at denne siden ble lastet, og ingenting ble slettet. Last siden på nytt og se den nye versjonen før du avgjør.",
   "ui.policy.slett_feilet": "Slettingen feilet."
 }

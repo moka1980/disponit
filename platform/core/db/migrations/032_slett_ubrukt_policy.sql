@@ -32,20 +32,52 @@
 -- `pid@versjon/handling`, og skjemaet forbyr `@` i policy_id, så prefikset er
 -- entydig. Escaping trengs ikke for `@`, men `_`/`%` i pid kan ikke
 -- forekomme (`^[a-z0-9-]+$`), så mønsteret kan ikke feiltreffe.
+--
+-- SLETTINGEN ER BUNDET TIL DEN VERSJONEN OPERATØREN SÅ (Codex P1). Kalleren
+-- oppgir `forventet_versjon`/`forventet_hash` — identiteten flaten VISTE — og
+-- de sammenlignes her, under låsen, mot den raden som faktisk står aktiv. Uten
+-- den bindingen slettet forespørselen ALLE versjoner av `policy_id`, også en
+-- som ble godkjent og aktivert etter at siden ble lastet (eller mens
+-- slettingen ventet på policylåsen): fire øyne attesterte en ny policy, en
+-- annen operatør bekreftet en dialog om den gamle, og tenanten sto igjen uten
+-- den nye. Kontrollen er den SAMME som `aktiver_policy` gjør på `base_versjon`
+-- («den godkjennerne diffet mot må fortsatt være aktiv»), speilvendt: den
+-- operatøren så må fortsatt være den aktive.
+--
+-- Sammenligningen leser `policyer`-raden med `aktiv`, ikke `policy_hode`-
+-- pekeren. De to er samme svar der hoderaden finnes (`policy_peker_konsistent`
+-- håndhever det ved commit), men policyer registrert før PR-013 er
+-- grandfathered UTEN hoderad — og de er nettopp de gamle feilene eier kan
+-- trenge å angre. Å lese pekeren ville gjort dem uslettelige. Raden er
+-- dessuten NØYAKTIG den `/v1/policy/aktiv` og `/v1/policy/aktive` serverte,
+-- så det som sammenlignes er det flaten faktisk viste.
+--
+-- HASHEN er med fordi versjonsnummeret alene ikke er en identitet: slettingen
+-- FRIGJØR versjonene (over), så `1.0.0` kan aktiveres på nytt med et annet
+-- innhold. Da ville en versjonssjekk alene sagt «uendret» om en policy som er
+-- byttet ut under operatøren. Paret (versjon, innholds_hash) er den identiteten
+-- begge leseendepunktene allerede gir ut.
 -- ============================================================
 
 -- DROP først (samme lærdom som 027): etter første kjøring eies funksjonen av
 -- policy_eier, og migrator kan ikke REPLACE noe den ikke eier — re-kjøringen
--- ville dødd med «must be owner».
+-- ville dødd med «must be owner». Den GAMLE toargumentsformen droppes også:
+-- den slettet uten å binde seg til en versjon, og skal ikke bli stående som en
+-- vei utenom kontrollen.
 DROP FUNCTION IF EXISTS slett_ubrukt_policy(TEXT, TEXT);
+DROP FUNCTION IF EXISTS slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT);
 
-CREATE OR REPLACE FUNCTION slett_ubrukt_policy(p_tenant TEXT, p_policy_id TEXT)
+CREATE OR REPLACE FUNCTION slett_ubrukt_policy(
+    p_tenant TEXT, p_policy_id TEXT,
+    p_forventet_versjon TEXT, p_forventet_hash TEXT)
 RETURNS int
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_versjon TEXT;
+    v_hash    TEXT;
     v_brukt int;
     v_apen  int;
     n       int;
@@ -55,6 +87,16 @@ BEGIN
     THEN
         RAISE EXCEPTION 'slett_ubrukt_policy: tenantkontekst mangler/avviker'
             USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- Den forventede identiteten er PÅKREVD, ikke valgfri. En NULL her ville
+    -- vært en sletting uten binding — altså akkurat den formen kontrollen
+    -- finnes for å fjerne — og et direkte kall utenom endepunktet skal ikke
+    -- kunne velge den bort (samme grunn som at alle andre vilkår står her
+    -- inne og ikke i kalleren).
+    IF p_forventet_versjon IS NULL OR p_forventet_hash IS NULL THEN
+        RAISE EXCEPTION 'slett_ubrukt_policy: forventet versjon/hash mangler'
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
     -- SERIALISERINGEN, og den må komme aller først.
@@ -90,6 +132,27 @@ BEGIN
     -- ferdige (og da finner den ingen aktiv base — som er sannheten).
     PERFORM 1 FROM policy_hode
       WHERE tenant = p_tenant AND policy_id = p_policy_id FOR UPDATE;
+
+    -- FØRST NÅ kan den aktive raden leses: en aktivering som var i gang har
+    -- committet (den holder samme hoderad `FOR UPDATE` gjennom hele
+    -- transaksjonen), og en ny kan ikke komme forbi før vi er ferdige. Leses
+    -- den før låsene, er svaret bare et øyeblikksbilde fra før køen — og
+    -- kontrollen ville vært den samme kappløpet den skal stoppe.
+    --
+    -- Kontrollen kommer FØR de øvrige vilkårene med vilje: er policyen byttet
+    -- ut under operatøren, er det DET hun må få vite. «Policyen har styrt
+    -- beslutninger» ville vært et sant utsagn om en annen policy enn den hun
+    -- ba om å få slettet.
+    SELECT versjon, innholds_hash INTO v_versjon, v_hash
+      FROM policyer
+     WHERE tenant = p_tenant AND policy_id = p_policy_id AND aktiv;
+    IF v_versjon IS DISTINCT FROM p_forventet_versjon
+       OR v_hash IS DISTINCT FROM p_forventet_hash THEN
+        RAISE EXCEPTION
+            'slett_ubrukt_policy: aktiv versjon er % (forventet %)',
+            coalesce(v_versjon, '(ingen)'), p_forventet_versjon
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
 
     SELECT count(*) INTO v_brukt FROM revisjonslogg
      WHERE tenant = p_tenant AND policy_id LIKE p_policy_id || '@%';
@@ -131,9 +194,11 @@ BEGIN
     RETURN n;
 END $$;
 
-ALTER FUNCTION slett_ubrukt_policy(TEXT, TEXT) OWNER TO disponit_policy_eier;
-REVOKE ALL ON FUNCTION slett_ubrukt_policy(TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION slett_ubrukt_policy(TEXT, TEXT) TO disponit;
+ALTER FUNCTION slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT)
+    OWNER TO disponit_policy_eier;
+REVOKE ALL ON FUNCTION slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT)
+    TO disponit;
 -- Eieren må selv kunne slette radene og lese loggen den kontrollerer mot.
 GRANT DELETE ON policyer TO disponit_policy_eier;
 GRANT SELECT ON revisjonslogg TO disponit_policy_eier;
