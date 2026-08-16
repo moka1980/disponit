@@ -484,3 +484,123 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // etter den på klassenavn i et tre den selv nettopp har satt inn.
   return { rot, hoved, settAktiv, velger, visKontekst };
 }
+
+// --- Faner (WAI-ARIA tabs) -------------------------------------------------
+//
+// Én lang skjemaside ber brukeren skrolle for å finne ut hva som gjenstår, og
+// gir ingen følelse av framdrift. Spesifikasjonen (§2.1) sier «maks 3
+// handlingsvalg per skjermbilde» og «alt innen 2 klikk» — begge deler forutsetter
+// at innholdet er delt i trinn.
+//
+// Mønsteret er tabs, ikke bare knapper: `role="tablist"` med piltaster,
+// `aria-selected`, og `aria-controls` til panelet. Uten det er fanene bare
+// lenker som ser ut som faner — en skjermleser får ingen beskjed om at det
+// FINNES flere paneler, og piltaster gjør ingenting.
+//
+// `trinn`: [{ nokkel, tittel, bygg: () => Node }]
+// Returnerer { rot, gaaTil, aktiv }.
+let _fanerTeller = 0;
+
+export function Faner({ trinn, start, paaBytte } = {}) {
+  let aktiv = start && trinn.some((s) => s.nokkel === start) ? start : trinn[0].nokkel;
+  // ID-ene var utledet av `nokkel` alene, så to fanesett med samme trinnavn
+  // fikk samme ID-er (Codex P2). Det er ikke et teoretisk sammentreff: i
+  // policyadmin åpner `paaFerdig` en oppfrisket detaljskuff UTEN å lukke den
+  // gamle, så begge fanesettene står i DOM-en samtidig. `getElementById` gir
+  // det FØRSTE treffet, og den nye dialogens `aria-controls`/`aria-labelledby`
+  // kunne dermed løses opp i den underliggende, inerte dialogen. Et løpenummer
+  // per instans holder hvert fanesett innenfor seg selv.
+  const merke = `faner${++_fanerTeller}`;
+  const faneId = (n) => `${merke}-fane-${n}`;
+  const panelId = (n) => `${merke}-panel-${n}`;
+  const faner = new Map();
+  const paneler = new Map();
+  const liste = el("div", { class: "faner-liste", role: "tablist",
+    "aria-label": t("ui.faner.merkelapp") });
+
+  // ETT panel per fane, ikke ett panel som bytter ID (Codex P2). Med den gamle
+  // løsningen lovet fanene mer enn DOM-en holdt: Roller og Handlinger
+  // annonserte `aria-controls="fane-panel-roller"`/`-handlinger` fra første
+  // tegning, mens det eneste panelet som fantes het `fane-panel-grunn`.
+  // Referansene pekte i tomme luften, og relasjonen var i praksis bare gyldig
+  // for den valgte fanen — selv om komponenten beskrives som et komplett
+  // WAI-ARIA-tabmønster. De inaktive panelene er `hidden`, så de er
+  // eksisterende mål uten å være innhold noen leser.
+  //
+  // Innholdet bygges fortsatt først når fanen velges: `bygg()` leser tilstand
+  // som endrer seg mellom tegninger, og skal ikke fryses ved konstruksjon.
+  function tegnPanel() {
+    for (const s of trinn) {
+      const p = paneler.get(s.nokkel);
+      if (s.nokkel === aktiv) { p.hidden = false; sett(p, s.bygg()); }
+      else { p.hidden = true; sett(p); }
+    }
+  }
+
+  function gaaTil(nokkel, flyttFokus) {
+    if (!trinn.some((s) => s.nokkel === nokkel)) return;
+    aktiv = nokkel;
+    for (const [k, kn] of faner) {
+      const valgt = k === aktiv;
+      kn.setAttribute("aria-selected", valgt ? "true" : "false");
+      // Bare den valgte fanen er i tab-rekkefølgen (WAI-ARIA: roving
+      // tabindex) — ellers må man tabbe gjennom alle fanene for å nå
+      // innholdet.
+      kn.setAttribute("tabindex", valgt ? "0" : "-1");
+      kn.classList.toggle("valgt", valgt);
+    }
+    tegnPanel();
+    if (flyttFokus) faner.get(aktiv).focus();
+    if (paaBytte) paaBytte(aktiv);
+  }
+
+  trinn.forEach((s, i) => {
+    const kn = el("button", { type: "button", class: "fane", id: faneId(s.nokkel),
+      role: "tab", text: s.tittel });
+    kn.setAttribute("aria-controls", panelId(s.nokkel));
+    kn.addEventListener("click", () => gaaTil(s.nokkel, false));
+    kn.addEventListener("keydown", (e) => {
+      const retning = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!retning) return;
+      e.preventDefault();
+      gaaTil(trinn[(i + retning + trinn.length) % trinn.length].nokkel, true);
+    });
+    faner.set(s.nokkel, kn);
+    liste.append(kn);
+    // Panelet er fokuserbart: er innholdet langt, skal Tab fra fanen lande i
+    // panelet og ikke hoppe forbi det.
+    paneler.set(s.nokkel, el("div", { class: "faner-panel", role: "tabpanel",
+      id: panelId(s.nokkel), "aria-labelledby": faneId(s.nokkel),
+      tabindex: "0", hidden: true }));
+  });
+
+  // Forrige/neste i tillegg til fanene: et skjema fylles ut i rekkefølge, og
+  // da skal veien videre være der hånden er — nederst i panelet.
+  const forrige = el("button", { type: "button", class: "knapp",
+    text: t("ui.faner.forrige") });
+  const neste = el("button", { type: "button", class: "knapp",
+    text: t("ui.faner.neste") });
+  function steg(retning) {
+    const i = trinn.findIndex((s) => s.nokkel === aktiv);
+    const ny = trinn[i + retning];
+    if (ny) gaaTil(ny.nokkel, true);
+  }
+  forrige.addEventListener("click", () => steg(-1));
+  neste.addEventListener("click", () => steg(1));
+
+  const styring = el("div", { class: "faner-styring" }, forrige, neste);
+  const rot = el("div", { class: "faner" }, liste, [...paneler.values()],
+    styring);
+
+  function oppdaterStyring() {
+    const i = trinn.findIndex((s) => s.nokkel === aktiv);
+    forrige.disabled = i === 0;
+    neste.disabled = i === trinn.length - 1;
+  }
+  const opprinnelig = gaaTil;
+  const medStyring = (n, f) => { opprinnelig(n, f); oppdaterStyring(); };
+  gaaTil = medStyring;
+  medStyring(aktiv, false);
+
+  return { rot, gaaTil: medStyring, aktiv: () => aktiv };
+}

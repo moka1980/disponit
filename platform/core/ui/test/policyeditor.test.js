@@ -54,6 +54,16 @@ function nyHoved() {
   const m = document.createElement("main"); m.id = "hovedinnhold"; m.tabIndex = -1;
   b.append(m); return m;
 }
+// Editoren er delt i trinn (§2.1). Testene må derfor si HVILKET trinn de
+// måler, i stedet for å anta at alt står på skjermen samtidig.
+function gaaTilFane(rot, tittel) {
+  const fane = [...rot.querySelectorAll('[role="tab"]')]
+    .find((f) => f.textContent === tittel);
+  if (!fane) throw new Error(`fant ikke fanen «${tittel}»`);
+  fane.dispatchEvent(new window.Event("click"));
+  return fane;
+}
+
 const finnKnapp = (rot, tekst) => [...rot.querySelectorAll("button")]
   .find((b) => b.textContent.trim() === tekst);
 
@@ -73,18 +83,25 @@ test("Ny: malvelger → skjema → lagre POSTer med CSRF + Idempotency-Key", asy
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   h.querySelector(".mal-kort").dispatchEvent(new window.Event("click"));
 
-  // Skjema: grunnopplysninger + roller + handlinger m/ modus.
+  // Skjemaet er delt i trinn: fanene finnes samtidig, innholdet ett og ett.
   await vent(() => h.querySelector(".editor-seksjon"));
+  const fanetitler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
+  assert.deepEqual(fanetitler, [t("ui.editor.fane.grunn"),
+    t("ui.editor.fane.roller"), t("ui.editor.fane.handlinger")]);
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   assert.ok(h.textContent.includes(t("ui.editor.roller")));
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   assert.ok(h.textContent.includes(t("ui.editor.handlinger")));
   assert.ok(h.textContent.includes("ordre.bekreft"));
   assert.ok(h.querySelector("select"), "modus-velger mangler");
+  gaaTilFane(h, t("ui.editor.fane.grunn"));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 
   // Sett policy_id (første tekstfelt = policy_id) og modus.
   const pid = h.querySelector("input.felt-inp");
   pid.value = "acme-netthandel";
   pid.dispatchEvent(new window.Event("input"));
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   const sel = h.querySelector("select");
   sel.value = "alltid_stopp";
   sel.dispatchEvent(new window.Event("change"));
@@ -144,6 +161,7 @@ test("Stabil nøkkel: retry etter nettverksfeil gjenbruker Idempotency-Key", asy
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
   await vent(() => h.querySelector(".editor-seksjon"));
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   const pid = h.querySelector("input.felt-inp");
   pid.value = "acme"; pid.dispatchEvent(new window.Event("input"));
 
@@ -163,6 +181,7 @@ test("Roller: legg til og fjern re-tegner", async () => {
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
   await vent(() => h.querySelector(".editor-seksjon"));
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   const foer = h.querySelectorAll(".editor-liste .editor-rad").length;
   finnKnapp(h, t("ui.editor.legg_til_rolle"))
     .dispatchEvent(new window.Event("click"));
@@ -183,6 +202,7 @@ test("Roller: en rolle handlinger peker på kan ikke fjernes ved et uhell", asyn
     handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] },
                  { id: "betaling.utfor", tillatt_for: ["agent"] }],
   } });
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   await vent(() => h.querySelectorAll(".editor-rad").length >= 2);
 
   const rader = [...h.querySelectorAll(".editor-rad")];
@@ -214,6 +234,7 @@ test("Roller: en rolle som BARE menneskelig overstyring bruker er også låst", 
     handlinger: [{ id: "faktura.bokfor", tillatt_for: [] }],
     menneskelig_overstyring: { krever_rolle: "okonomi", godkjennbare: [] },
   } });
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   await vent(() => h.querySelectorAll(".editor-rad").length >= 2);
 
   const rader = [...h.querySelectorAll(".editor-rad")];
@@ -269,6 +290,7 @@ async function velgMalMedAktiv(svarPaaAktiv) {
     await vent(() => h.querySelector(".mal-liste"));
     h.querySelector(".mal-kort").dispatchEvent(new window.Event("click"));
     await vent(() => h.querySelector(".editor-seksjon"));
+    // Policy-ID bor på grunnopplysninger — første trinn, altså allerede åpent.
     const felt = [...h.querySelectorAll(".felt")]
       .find((f) => f.textContent.includes(t("ui.editor.policy_id")));
     return { felt, inp: felt.querySelector("input"),
@@ -337,6 +359,7 @@ test("Roller: vakten regnes om når rolle-ID-en endres", async () => {
     roller: [{ id: "ubrukt" }],
     handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] }],
   } });
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   await vent(() => h.querySelector(".editor-liste .editor-rad"));
 
   const rad = rolleRad(h, "ubrukt");
@@ -376,6 +399,7 @@ test("Roller: navnebytte tar referansene med seg", async () => {
                  { id: "betaling.utfor", tillatt_for: ["agent"] }],
     menneskelig_overstyring: { krever_rolle: "agent", godkjennbare: [] },
   } });
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   await vent(() => h.querySelector(".editor-liste .editor-rad"));
 
   const rad = rolleRad(h, "agent");
@@ -420,6 +444,7 @@ test("Roller: et utkast med ødelagt `tillatt_for` kan fortsatt ÅPNES", async (
                  { id: "betaling.utfor", tillatt_for: 5 },
                  { id: "rapport.les", tillatt_for: ["okonomi"] }],
   } });
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   await vent(() => h.querySelector(".editor-liste .editor-rad"));
 
   const agent = rolleRad(h, "agent");
@@ -454,6 +479,7 @@ test("Roller: navnebytte som PASSERER en annen rolles id lar den i fred", async 
                  { id: "faktura.bokfor", tillatt_for: ["ad"] }],
     menneskelig_overstyring: { krever_rolle: "admin", godkjennbare: [] },
   } });
+  gaaTilFane(h, t("ui.editor.fane.roller"));
   await vent(() => h.querySelector(".editor-liste .editor-rad"));
 
   const rad = rolleRad(h, "ad");
@@ -491,6 +517,7 @@ test("Grenser: valuta og tidsvindu velges, de skrives ikke", async () => {
     get: () => "__Host-disponit_csrf=tok123" });
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: policy });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
 
   const kort = h.querySelector(".editor-kort");
@@ -540,6 +567,7 @@ test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () =>
     get: () => "__Host-disponit_csrf=tok123" });
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: policy });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
   const kort = h.querySelector(".editor-kort");
   const sel = [...kort.querySelectorAll("select")]
@@ -568,7 +596,8 @@ test("Grenser: en beholdt valuta i HALEN er like redigerbar som den første",
     const h = nyHoved();
     visPolicyeditor(h, ctx(),
       { startPolicy: medGrenser({ valuta: ["NOK", "CHF"] }) });
-    await vent(() => h.querySelector(".editor-kort"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".editor-kort"));
     assert.equal(valutaRader(h).length, 2,
       "en beholdt kode i halen har ingen rad å bli redigert fra");
     assert.equal(valutaRader(h)[1].querySelector("select").value, "CHF");
@@ -595,7 +624,8 @@ test("Grenser: nedtrekket tilbyr HELE den kanoniske valutamengden",
       get: () => "__Host-disponit_csrf=tok123" });
     const h = nyHoved();
     visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: ["NOK"] }) });
-    await vent(() => h.querySelector(".editor-kort"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".editor-kort"));
     const sel = [...h.querySelectorAll(".editor-kort select")]
       .find((s) => [...s.options].some((o) => o.value === "NOK"));
     for (const kode of ["CAD", "JPY", "CHF", "ZAR"]) {
@@ -626,6 +656,7 @@ test("Grenser: reparasjonen berger ingen kode serveren vraker", async () => {
   const h = nyHoved();
   visPolicyeditor(h, ctx(),
     { startPolicy: medGrenser({ valuta: ["XXX", "XXX"] }) });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
   assert.ok(h.querySelector(".editor-reparasjon"),
     "en liste av ikke-valutaer ble ikke vist som en grense som må repareres");
@@ -660,6 +691,7 @@ test("Grenser: beløpshintet TEGNES, og henger på feltet", async () => {
   };
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: policy });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
   const kort = h.querySelector(".editor-kort");
   const hint = [...kort.querySelectorAll(".felt-hint")]
@@ -689,6 +721,7 @@ test("Grenser: et tømt klokkeslett lager ikke et ugyldig tidsvindu", async () =
     get: () => "__Host-disponit_csrf=tok123" });
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: policy });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
   const kort = h.querySelector(".editor-kort");
   const klokker = [...kort.querySelectorAll('input[type="time"]')];
@@ -767,7 +800,8 @@ test("Grenser: en ugyldig lagret grense repareres av EIER, ikke av editoren",
     for (const raa of ["xyz-abc 99:99-16:00", "", null, 0, { fra: "08:00" }]) {
       const h = nyHoved();
       visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ tidsvindu: raa }) });
-      await vent(() => h.querySelector(".editor-kort"));
+      gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".editor-kort"));
       const kort = h.querySelector(".editor-kort");
       assert.ok(kort.querySelector(".editor-reparasjon"),
         `${JSON.stringify(raa)} ble ikke vist som en grense som må repareres`);
@@ -815,7 +849,8 @@ test("Grenser: standardvinduet er eiers valg, ikke editorens reparasjon",
     const h = nyHoved();
     visPolicyeditor(h, ctx(),
       { startPolicy: medGrenser({ tidsvindu: "xyz-abc 99:99-16:00" }) });
-    await vent(() => h.querySelector(".editor-kort"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".editor-kort"));
     reparasjonsvalg(h, t("ui.editor.grense_sett_standard"))
       .dispatchEvent(new window.Event("click"));
     await vent(() => h.querySelector('input[type="time"]'));
@@ -844,6 +879,7 @@ test("Grenser: valuta som mangler vises som uvalgt, ikke som NOK", async () => {
     get: () => "__Host-disponit_csrf=tok123" });
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: policy });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
   const kort = h.querySelector(".editor-kort");
   assert.equal(kort.querySelectorAll(".valuta-rad").length, 0,
@@ -885,7 +921,8 @@ test("Grenser: en valuta policyen alt har, kan ikke velges to ganger",
     const h = nyHoved();
     visPolicyeditor(h, ctx(),
       { startPolicy: medGrenser({ valuta: ["NOK", "EUR"] }) });
-    await vent(() => h.querySelector(".editor-kort"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".editor-kort"));
     const rader = valutaRader(h);
     assert.equal(rader.length, 2, "hver valuta har ikke sin egen rad");
     assert.equal(rader[0].querySelector("select").value, "NOK");
@@ -922,6 +959,7 @@ test("Grenser: en valuta kan LEGGES TIL, ikke bare byttes", async () => {
     get: () => "__Host-disponit_csrf=tok123" });
   const h = nyHoved();
   visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: ["NOK"] }) });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
   await vent(() => h.querySelector(".editor-kort"));
   assert.equal(valutaRader(h).length, 1);
   velgValuta(leggTilValuta(h), "EUR");
@@ -963,7 +1001,8 @@ test("Grenser: en valutaliste ingen kontroll kan vise, repareres av EIER",
     for (const [inn, berget] of tilfeller) {
       const h = nyHoved();
       visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: inn }) });
-      await vent(() => h.querySelector(".editor-kort"));
+      gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".editor-kort"));
       assert.ok(h.querySelector(".editor-reparasjon"),
         `${JSON.stringify(inn)} ble ikke vist som en liste som må repareres`);
       POST = undefined;

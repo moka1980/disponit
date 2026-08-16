@@ -80,8 +80,10 @@ export function Detaljpanel({ tittel, innhold }) {
 }
 
 // Bekreftelsesdialog: beskriver konsekvens; primær/avbryt; ESC + fokusretur.
-export function Bekreftelsesdialog({ tittel, tekst, primarTekst, paaPrimar,
-                                    farlig = false } = {}) {
+// `detaljer` er en valgfri node under setningen — for de bekreftelsene der
+// konsekvensen ikke lar seg si i én linje og må VISES (f.eks. en policy-diff).
+export function Bekreftelsesdialog({ tittel, tekst, detaljer, primarTekst,
+                                    paaPrimar, farlig = false } = {}) {
   const avbryt = el("button", { class: "knapp", type: "button",
     text: t("ui.avbryt") });
   const primar = el("button", {
@@ -89,7 +91,7 @@ export function Bekreftelsesdialog({ tittel, tekst, primarTekst, paaPrimar,
     text: primarTekst || t("ui.logg_ut_bekreft_primar") });
   const ctrl = aapneDialog({
     tittel, klasse: "bekreft",
-    innhold: el("p", { text: tekst }),
+    innhold: el("div", {}, el("p", { text: tekst }), detaljer || null),
     handlinger: [avbryt, primar],
   });
   avbryt.addEventListener("click", ctrl.lukk);

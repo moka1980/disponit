@@ -433,6 +433,7 @@
   "ui.policyadmin.handling.valider": "Valider",
   "ui.policyadmin.handling.apne_runde": "Åpne aktiveringsrunde",
   "ui.policyadmin.handling.attester": "Attester og aktiver",
+  "ui.policyadmin.attester_krever_diff": "Åpne «Endringer» og les diffen — attestering låses opp når du har sett den.",
   "ui.policyadmin.endring.lagt_til": "lagt til",
   "ui.policyadmin.endring.fjernet": "fjernet",
   "ui.policyadmin.endring.endret": "endret",
@@ -637,5 +638,14 @@
   "ui.shell.status_moduler": "{i_drift} av {totalt} moduler i drift",
   "ui.shell.status_varsler": "{antall} varsler",
   "ui.shell.status_varsler_ukjent": "Varseltall ikke tilgjengelig",
-  "ui.shell.status_oppdatert": "Sist oppdatert {tid}"
+  "ui.shell.status_oppdatert": "Sist oppdatert {tid}",
+  "ui.faner.merkelapp": "Trinn",
+  "ui.faner.forrige": "Forrige",
+  "ui.faner.neste": "Neste",
+  "ui.editor.fane.grunn": "Grunnopplysninger",
+  "ui.editor.fane.roller": "Roller",
+  "ui.editor.fane.handlinger": "Handlinger",
+  "ui.policyadmin.fane.oversikt": "Oversikt",
+  "ui.policyadmin.fane.endringer": "Endringer",
+  "ui.policyadmin.fane.fire_oyne": "Fire øyne"
 }

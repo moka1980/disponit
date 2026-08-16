@@ -433,6 +433,7 @@
   "ui.policyadmin.handling.valider": "Validate",
   "ui.policyadmin.handling.apne_runde": "Open activation round",
   "ui.policyadmin.handling.attester": "Attest and activate",
+  "ui.policyadmin.attester_krever_diff": "Open “Changes” and read the diff — attestation unlocks once you have seen it.",
   "ui.policyadmin.endring.lagt_til": "added",
   "ui.policyadmin.endring.fjernet": "removed",
   "ui.policyadmin.endring.endret": "changed",
@@ -637,5 +638,14 @@
   "ui.shell.status_moduler": "{i_drift} of {totalt} modules in production",
   "ui.shell.status_varsler": "{antall} alerts",
   "ui.shell.status_varsler_ukjent": "Alert count unavailable",
-  "ui.shell.status_oppdatert": "Last updated {tid}"
+  "ui.shell.status_oppdatert": "Last updated {tid}",
+  "ui.faner.merkelapp": "Steps",
+  "ui.faner.forrige": "Previous",
+  "ui.faner.neste": "Next",
+  "ui.editor.fane.grunn": "Basics",
+  "ui.editor.fane.roller": "Roles",
+  "ui.editor.fane.handlinger": "Actions",
+  "ui.policyadmin.fane.oversikt": "Overview",
+  "ui.policyadmin.fane.endringer": "Changes",
+  "ui.policyadmin.fane.fire_oyne": "Four eyes"
 }
