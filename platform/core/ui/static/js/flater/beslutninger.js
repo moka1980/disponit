@@ -66,7 +66,9 @@ function aapneDetalj(id, ctx) {
 }
 
 export function visBeslutninger(hoved, ctx) {
-  const st = { filter: null, rader: [], neste: null };
+  // `sort` bor her, ikke i tabellen: den bygges på nytt ved hvert filterbytte og
+  // hver «Vis mer», og eiers kolonnevalg skal ikke nullstilles av det.
+  const st = { filter: null, rader: [], neste: null, sort: null };
 
   function rad(r) {
     return {
@@ -107,6 +109,8 @@ export function visBeslutninger(hoved, ctx) {
             { nokkel: "beslutning", tittel: t("ui.kol.beslutning") },
           ],
           rader: st.rader.map(rad),
+          sort: st.sort,
+          paaSort: (s) => { st.sort = s; },
         })
       : TomTilstand({});
     sett(hoved,

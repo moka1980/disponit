@@ -13,8 +13,9 @@ import {
   Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive, Faner,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
-import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
-import { medStatus, flateHode, kvRad } from "./felles.js";
+import { visningsToken, erGjeldendeVisning } from "../ruter.js";
+import { Bekreftelsesdialog } from "../dialog.js";
+import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 
 function risikoBadge(klasse) {
@@ -122,18 +123,23 @@ let _hintTeller = 0;
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
 // Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
 // er tegnet, og er det som låser opp attestering (se attest-grenen).
-function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
+function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
   const boks = el("section", { class: "pa-handling",
     "aria-label": t("ui.policyadmin.handlinger") });
   const runde = detalj.aktiv_runde;
   let diffVist = () => {};
 
   if (detalj.status === "utkast") {
-    // Rediger: lukk detaljskuffen og åpne editoren på utkastet.
+    // Rediger går RETT til editoren. Da detaljen var en skuff, måtte skuffen
+    // lukkes først; som side er det ingenting å lukke — editoren overtar
+    // `hoved` selv. Ble lukkingen med videre, kalte den `tilbakeTilListe`, og
+    // det er ikke en DOM-operasjon: det starter en ny liste-GET (Codex P1).
+    // Den og editorens detalj-GET tegner i samme `hoved`, så kom listesvaret
+    // sist, erstattet det editoren — potensielt etter at eier hadde begynt å
+    // skrive, og da med det hun hadde skrevet.
     const rediger = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.rediger") });
     rediger.addEventListener("click", () => {
-      if (lukkPanel) lukkPanel();
       if (aapneEditor) aapneEditor({ utkast_id: uid });
     });
     // STABIL nøkkel per render (Codex R2): re-klikk = retry, ikke ny operasjon.
@@ -255,7 +261,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   return { rot: boks, diffVist };
 }
 
-function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
+function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
   const dl = el("dl", { class: "kv" });
   kvRad(dl, t("ui.policyadmin.kol.policy"), detalj.policy_id);
   kvRad(dl, t("ui.policyadmin.kol.status"),
@@ -288,7 +294,7 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   }
   // Handlingene bygges FØR fanene: attestering er låst til diffen er sett, og
   // `Faner` melder fra om det allerede under første tegning.
-  const handl = handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel);
+  const handl = handlinger(detalj, uid, ctx, paaFerdig, aapneEditor);
   // Venter utkastet på attestering, er diffen — ikke nøkkeltallene — det
   // godkjenneren er her for. Da åpner skuffen på «Endringer».
   const venterAttest = detalj.aktiv_runde
@@ -298,31 +304,111 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   return el("div", {}, faner.rot, handl.rot);
 }
 
-function aapneDetalj(uid, ctx, aapneEditor) {
-  hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-    let panel;
-    const lukk = () => { if (panel) panel.lukk(); };
-    panel = Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
-      innhold: detaljInnhold(detalj, uid, ctx,
-        () => aapneDetalj(uid, ctx, aapneEditor), aapneEditor, lukk) });
-  }).catch((e) => {
-    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-    Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
-      innhold: e instanceof IngenTilgangFeil
-        ? TilgangsVakt({}) : Feiltilstand({}) });
-  });
+function tilbakeKnapp(tilbakeTilListe) {
+  const b = el("button", { class: "knapp", type: "button",
+    text: t("ui.policyadmin.tilbake_til_liste") });
+  b.addEventListener("click", tilbakeTilListe);
+  return b;
 }
 
 export function visPolicyadmin(hoved, ctx) {
-  const st = { rader: [] };
+  // `sort` er eiers kolonnevalg, og det bor HER fordi flaten overlever
+  // tegningene — tabellen bygges på nytt hver gang lista lastes (Codex P2).
+  const st = { rader: [], sort: null };
+
+  // Eierskapet til `hoved` har TO nivåer, og et sent svar må bestå begge.
+  //
+  // Ruteren: alle flater deler ETT element, og et svar som er ute på nettet vet
+  // ikke at brukeren har navigert videre. Kom detaljsvaret etter at hun hadde
+  // valgt en annen toppnivårute, tegnet det seg selv over DEN flaten, mens
+  // menyvalget hennes ble stående markert (Codex P2). Stempelet fanges ved
+  // oppstart, og ruteren flytter det ved hver navigasjon.
+  //
+  // Flaten: stempelet står i ro så lenge man blir HER, men flaten bytter
+  // visning på egen hånd — liste, detalj, editor — og de kappløper om det samme
+  // elementet (Codex P2). Åpnet man utkast A og så B, besto begge svarene
+  // rutersjekken: svarte A sist, tegnet A seg over B, og skjermen viste et annet
+  // utkast enn det hun nettopp valgte. En «Prøv igjen» som fortsatt hang der da
+  // hun gikk tilbake til lista, gjorde det samme. Hvert visningsbytte teller
+  // derfor opp en egen generasjon.
+  //
+  // `fetch` kan ikke avbrytes bakover gjennom `hentJson`, så svaret slippes i
+  // stedet: er ETT av stemplene flyttet, er svaret foreldet og skal ikke røre
+  // skjermen.
+  const minRute = visningsToken(hoved);
+  let visning = 0;
+  const nyVisning = () => ++visning;
+  const eierSkjermen = (min) =>
+    erGjeldendeVisning(hoved, minRute) && visning === min;
 
   // Editoren tar over `hoved`. Ved lagring åpnes utkastets detalj; Avbryt/
   // fullført går tilbake til lista.
+  //
+  // Eierskapet stoppet ved editordøra (Codex P2): generasjonen ble talt opp
+  // her, men editoren fikk aldri vite hva den skulle måles mot. Den tegner
+  // ingenting før utkastet er hentet, så detaljsiden — med tilbakeknappen —
+  // blir stående mens GET-en er ute. Rakk eier å trykke «Tilbake», lastet lista,
+  // og editorsvaret tegnet seg etterpå rett over den. Editoren får derfor med
+  // seg SIN generasjon og sjekker den på hver asynkrone vei tilbake.
   function aapneEditor(opts) {
+    const min = nyVisning();   // editoren eier `hoved` nå; eldre svar slipper ikke til
     visPolicyeditor(hoved, ctx, {
       ...opts,
-      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor),
-      tilbake: last,
+      aapneUtkast: aapneDetalj,
+      tilbake: tilbakeTilListe,
+      eierSkjermen: () => eierSkjermen(min),
+    });
+  }
+
+  // Utkastet åpnes som en VANLIG SIDE i flaten, ikke som en skuff over den.
+  //
+  // Skuffen var feil form for det som skjer her: å attestere er ikke en rask
+  // sidehandling, det er hovedoppgaven. Den la et smalt panel over lista, og —
+  // verre — den sa ikke tydelig HVILKET utkast man sto i. Med to åpne runder
+  // endte de to attestasjonene på hvert sitt utkast, og ingen av dem kunne
+  // aktivere. Siden har utkastets policy-ID i overskriften og en synlig vei
+  // tilbake, slik editoren allerede gjør.
+  function aapneDetalj(uid) {
+    const min = nyVisning();
+    hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
+      if (!eierSkjermen(min)) return;
+      sett(hoved,
+        ...flateHode(
+          `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
+          t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
+        tilbakeKnapp(tilbakeTilListe),
+        // En handling som fullfører ETTER at eier har forlatt detaljsiden, skal
+        // ikke hente den tilbake (Codex P1). `paaFerdig` friskner opp siden
+        // etter Valider/Åpne runde/Attester — riktig så lenge siden er den man
+        // står i. Klikket eier «Valider» og så «Rediger», lå POST-en fortsatt
+        // ute mens editoren tok over `hoved`: svaret kom, kalte `aapneDetalj`,
+        // og erstattet editoren — med det hun hadde rukket å skrive i den.
+        // Oppfriskningen bæres derfor av visningen den ble startet fra.
+        // Selve utfallet annonseres uansett: handlingen ER utført, og det skal
+        // eier få vite selv om skjermen har gått videre.
+        detaljInnhold(detalj, uid, ctx,
+          () => { if (eierSkjermen(min)) aapneDetalj(uid); }, aapneEditor));
+      fokuserOverskrift(hoved);
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (!eierSkjermen(min)) return;
+      // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
+      // i det minste lista ligge under seg; siden erstattet HELE flaten med en
+      // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et
+      // forbigående 5xx eller et nettverksglipp ble dermed en blindvei man bare
+      // kom ut av ved å laste appen på nytt. Feiltilstanden er derfor en side
+      // som de andre: den beholder overskrift og tilbakeknapp.
+      //
+      // «Prøv igjen» tilbys bare der den kan hjelpe: 403 er ingen forbigående
+      // feil, og en knapp som lover et annet svar neste gang lyver.
+      sett(hoved,
+        ...flateHode(t("ui.policyadmin.detalj_tittel"),
+          t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
+        tilbakeKnapp(tilbakeTilListe),
+        e instanceof IngenTilgangFeil
+          ? TilgangsVakt({})
+          : Feiltilstand({ paaProvIgjen: () => aapneDetalj(uid) }));
+      fokuserOverskrift(hoved);
     });
   }
 
@@ -337,7 +423,7 @@ export function visPolicyadmin(hoved, ctx) {
       },
       sortverdi: { opprettet: u.opprettet, policy: u.policy_id },
       handling: { tekst: t("ui.aapne"),
-        paaKlikk: () => aapneDetalj(u.utkast_id, ctx, aapneEditor) },
+        paaKlikk: () => aapneDetalj(u.utkast_id) },
     };
   }
 
@@ -350,7 +436,7 @@ export function visPolicyadmin(hoved, ctx) {
     return bar;
   }
 
-  function tegn() {
+  function tegn(flyttFokus) {
     const innhold = st.rader.length
       ? DataTabell({
           captionTekst: t("ui.policyadmin.tittel"),
@@ -363,6 +449,8 @@ export function visPolicyadmin(hoved, ctx) {
               sorterbar: true },
           ],
           rader: st.rader.map(rad),
+          sort: st.sort,
+          paaSort: (s) => { st.sort = s; },
         })
       : TomTilstand({ tittel: t("ui.policyadmin.tom_tittel"),
                       tekst: t("ui.policyadmin.tom_tekst") });
@@ -370,13 +458,35 @@ export function visPolicyadmin(hoved, ctx) {
       ...flateHode(t("ui.policyadmin.tittel"), t("ui.policyadmin.undertittel")),
       verktoylinje(),
       innhold);
+    if (flyttFokus) fokuserOverskrift(hoved);
   }
 
-  function last() {
+  // `fokus` settes når lista er et RETURMÅL. Veien FRAM flytter fokus til
+  // detaljsidens overskrift; veien TILBAKE gjorde det ikke, og der forsvant
+  // fokus (Codex P2): `last()` river DOM-en synkront for lastetilstanden, så
+  // knappen tastaturbrukeren nettopp trykte på er borte, og fokus faller til
+  // `body`. Da starter tastaturnavigasjonen forfra, utenfor utkastlista.
+  //
+  // Ved første tegning skal den IKKE flytte fokus: der er det ruteren som eier
+  // fokus (`hoved.focus()`), og flaten skal ikke rykke det fra den.
+  //
+  // Fokuset gis til RAMMEN på samme måte som eierskapet: sjekken sto bare i
+  // `tegnFn`, altså på suksessveien, og en avvist liste-GET når aldri dit
+  // (Codex P2). Feilet «Tilbake» endte derfor med fokus på `body`. `medStatus`
+  // flytter det nå på de veiene den selv tegner.
+  function last(opts) {
+    const flyttFokus = !!(opts && opts.fokus);
+    const min = nyVisning();
+    // Eierskapet gis til RAMMEN, ikke bare sjekket i `tegnFn`: en avvist
+    // liste-GET når aldri `tegnFn`, og feiltilstanden `medStatus` tegner i
+    // stedet, traff skjermen uvoktet (Codex P2). `medStatus` vokter nå begge
+    // veier — her sier vi bare hvilken visning kallet ble startet under.
     medStatus(hoved, ctx, () => hentJson("/v1/policyutkast"), (d) => {
-      st.rader = (d && d.utkast) || []; tegn();
-    });
+      st.rader = (d && d.utkast) || []; tegn(flyttFokus);
+    }, () => eierSkjermen(min), flyttFokus);
   }
+
+  function tilbakeTilListe() { last({ fokus: true }); }
 
   last();
 }

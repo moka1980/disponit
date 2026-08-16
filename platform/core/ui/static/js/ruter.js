@@ -1,6 +1,24 @@
 // Klient-ruting via hash (#/oversikt …). Én skall-rute holder; ingen server-
 // side rutekonfig per flate. Ved navigasjon flyttes fokus til main-
 // landemerket (WCAG: SPA-navigasjon skal annonseres/flytte fokus).
+// --- Eierskap til `hoved` (Codex P2) --------------------------------------
+// Alle flater rendrer inn i ETT `hoved`-element, og en flate som venter på et
+// svar har ingen måte å vite at brukeren har navigert videre i mellomtiden. Et
+// treigt svar tegnet derfor over den NYE ruten, mens menyvalget hennes ble
+// stående markert — skjermen viste én flate og navigasjonen en annen.
+//
+// Ruteren er den eneste som vet når eierskapet skifter, så den stempler
+// elementet ved hver navigasjon. En flate leser stempelet ved oppstart og kan
+// sjekke `erGjeldendeVisning` før den skriver et sent svar til skjermen.
+// Uten ruter (f.eks. i test) står stempelet i ro på 0, og sjekken sier ja.
+const EIERSKAP = new WeakMap();
+
+export function visningsToken(node) { return EIERSKAP.get(node) || 0; }
+
+export function erGjeldendeVisning(node, token) {
+  return visningsToken(node) === token;
+}
+
 export function lagRuter(hoved, ctx, flater, settAktiv) {
   // Reserveruten er den FØRSTE flaten økten faktisk har, ikke hardkodet
   // `oversikt`. `flater` er allerede scope-filtrert av `tillatteFlater`, så en
@@ -25,6 +43,9 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
     // er å kaste. Skallet står igjen med sin egen tomtilstand.
     if (!r) return;
     settAktiv(r);
+    // Eierskapet skifter FØR den nye flaten får tegne: alt den forrige har
+    // ute på nettet er fra nå av foreldet.
+    EIERSKAP.set(hoved, visningsToken(hoved) + 1);
     flater[r](hoved, ctx);
     if (!forste && typeof hoved.focus === "function") hoved.focus();
     forste = false;

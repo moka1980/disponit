@@ -551,7 +551,16 @@ function grenserSomVenterPaaValg(policy) {
 }
 
 export function visPolicyeditor(hoved, ctx, opts = {}) {
-  // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn() }
+  // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn(), eierSkjermen? }
+  //
+  // Editoren deler `hoved` med flaten som åpnet den, og den tegner ingenting
+  // før utkastet (eller malkatalogen) er hentet — så den forrige siden, med sin
+  // tilbakeknapp, blir stående så lenge kallet er ute. Trykker eier «Tilbake»
+  // der, eier editoren ikke lenger skjermen, og svaret som kommer etterpå skal
+  // ikke tegne seg over det hun gikk til (Codex P2). Kalleren vet når eierskapet
+  // skifter; editoren spør bare. Uten `eierSkjermen` (frittstående bruk, test)
+  // er svaret alltid ja.
+  const eier = opts.eierSkjermen || (() => true);
   const st = { policy: null, utkast_id: opts.utkast_id || null,
                utkastversjon: null, feil: [], laster: true,
                nokkel: null, signatur: null,
@@ -583,12 +592,20 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       ? redigerUtkast(st.utkast_id, st.utkastversjon, innhold, st.nokkel)
       : opprettUtkast(pid, innhold, st.nokkel);
     jobb.then((res) => {
+      // Utfallet annonseres uansett: lagringen SKJEDDE, og det skal eier få vite
+      // selv om hun har gått videre. Det som er betinget, er å ta skjermen.
       meldLive(t("ui.editor.lagret"));
+      if (!eier()) return;
       const uid = res.utkast_id || st.utkast_id;
       if (opts.aapneUtkast) opts.aapneUtkast(uid);
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      st.feil = [t(`ui.editor.feil.${e.kode}`, t("ui.editor.lagring_feilet"))];
+      const melding = t(`ui.editor.feil.${e.kode}`, t("ui.editor.lagring_feilet"));
+      // Har eier forlatt editoren, er feilboksen ingen kanal — men en lagring
+      // som ikke gikk gjennom er hun nødt til å få vite om. Da sier vi det der
+      // det fortsatt høres.
+      if (!eier()) { meldLive(melding); return; }
+      st.feil = [melding];
       tegn();
     });
   }
@@ -640,12 +657,14 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
   // --- Last inn utgangspunkt: enten et eksisterende utkast, eller malvalg ---
   if (st.utkast_id) {
     hentJson(`/v1/policyutkast/${st.utkast_id}`).then((detalj) => {
+      if (!eier()) return;
       st.laster = false;
       st.utkastversjon = detalj.utkastversjon;
       st.policy = detalj.innhold || {};
       tegn();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (!eier()) return;
       st.laster = false; tegn();
     });
   } else if (opts.startPolicy) {
@@ -658,6 +677,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     // hjelpedata, så et avslag (403) eller et tvetydig register (500) stopper
     // ingenting — da blir bare `kjent: false`, og teksten lover mindre.
     Promise.all([hentMaler(), hentAktivPolicyId()]).then(([d, aktiv]) => {
+      if (!eier()) return;
       st.laster = false;
       st.aktiv = aktiv;
       visMalvelger(hoved, ctx, (d && d.maler) || [], (mal) => {
@@ -675,6 +695,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       }, opts.tilbake);
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (!eier()) return;
       st.laster = false; sett(hoved, Feiltilstand({}));
     });
   }

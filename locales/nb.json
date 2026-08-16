@@ -647,5 +647,7 @@
   "ui.editor.fane.handlinger": "Handlinger",
   "ui.policyadmin.fane.oversikt": "Oversikt",
   "ui.policyadmin.fane.endringer": "Endringer",
-  "ui.policyadmin.fane.fire_oyne": "Fire øyne"
+  "ui.policyadmin.fane.fire_oyne": "Fire øyne",
+  "ui.policyadmin.tilbake_til_liste": "← Tilbake til utkastene",
+  "ui.policyadmin.detalj_undertittel": "Utkast {id}"
 }

@@ -647,5 +647,7 @@
   "ui.editor.fane.handlinger": "Actions",
   "ui.policyadmin.fane.oversikt": "Overview",
   "ui.policyadmin.fane.endringer": "Changes",
-  "ui.policyadmin.fane.fire_oyne": "Four eyes"
+  "ui.policyadmin.fane.fire_oyne": "Four eyes",
+  "ui.policyadmin.tilbake_til_liste": "← Back to drafts",
+  "ui.policyadmin.detalj_undertittel": "Draft {id}"
 }

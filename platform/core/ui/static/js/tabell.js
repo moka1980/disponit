@@ -6,11 +6,28 @@
 import { el, sett } from "./dom.js";
 import { t } from "./i18n.js";
 
+// Sorteringen er BRUKERENS VALG, og den overlevde ikke at tabellen ble bygget
+// på nytt (Codex P2): `sortNokkel` startet på `null` i hver konstruksjon, mens
+// flatene rundt rekonstruerer ved enhver ny tegning — «Tilbake» fra en detalj,
+// et filterbytte, «Vis mer». Sorterte man på tidspunkt og åpnet en rad, sto man
+// i serverrekkefølgen igjen da man kom tilbake, og måtte sortere på nytt for
+// hver rad man så på. (Filkommentaren over lovet til og med det motsatte for
+// «Vis mer».)
+//
+// Tabellen kan ikke eie valget selv — den er borte ved neste tegning. Derfor
+// tar den imot `sort` som utgangspunkt og melder fra via `paaSort`, slik at
+// flaten som overlever tegningene kan holde det. Uten dem er oppførselen som
+// før: usortert.
 export function DataTabell({ captionTekst, kolonner, rader,
-                            handlingTittel } = {}) {
+                            handlingTittel, sort, paaSort } = {}) {
   const harHandling = rader.some((r) => r.handling);
-  let sortNokkel = null;
-  let sortRetning = "ascending";
+  // En nøkkel som ikke lenger er en sorterbar kolonne, ignoreres: kolonnesettet
+  // kan ha endret seg siden valget ble tatt, og en usynlig sortering ingen
+  // `aria-sort` peker på er verre enn ingen.
+  const sorterbare = kolonner.filter((k) => k.sorterbar).map((k) => k.nokkel);
+  let sortNokkel = sort && sorterbare.includes(sort.nokkel) ? sort.nokkel : null;
+  let sortRetning = sort && sort.retning === "descending"
+    ? "descending" : "ascending";
 
   const thead = el("thead");
   const tbody = el("tbody");
@@ -73,6 +90,7 @@ export function DataTabell({ captionTekst, kolonner, rader,
           if (sortNokkel === kol.nokkel) {
             sortRetning = sortRetning === "ascending" ? "descending" : "ascending";
           } else { sortNokkel = kol.nokkel; sortRetning = "ascending"; }
+          if (paaSort) paaSort({ nokkel: sortNokkel, retning: sortRetning });
           oppdaterSortIndikatorer(); tegnKropp();
         });
         th.append(b);
@@ -90,6 +108,10 @@ export function DataTabell({ captionTekst, kolonner, rader,
   }
 
   byggHode();
+  // Indikatorene settes også ved konstruksjon: et gjenopprettet valg som sorterte
+  // radene, men lot hver `aria-sort` stå på «none», ville sagt til skjermleseren
+  // at tabellen er usortert mens den ikke er det.
+  oppdaterSortIndikatorer();
   tegnKropp();
   return el("div", { class: "tablewrap" },
     el("table", {},

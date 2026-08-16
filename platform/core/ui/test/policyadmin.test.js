@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
+import { lagRuter } from "../static/js/ruter.js";
+import { el, sett } from "../static/js/dom.js";
 
 settI18nForTest(NB, "nb");
 
@@ -39,10 +41,18 @@ const LISTE = { utkast: [
     utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" },
 ] };
 
+// To utkast i lista — det som skal til for å kappløpe to detaljåpninger.
+const TO_UTKAST = { utkast: [
+  LISTE.utkast[0],
+  { utkast_id: "u-2", policy_id: "lonn-no", status: "validert",
+    utkastversjon: 1, opprettet: "2026-08-10T09:00:00+00:00" },
+] };
+
 let SVAR;
 globalThis.fetch = async (url, opts) => {
   const sti = url.split("?")[0];
   if (opts && opts.method) return SVAR.__post(url, opts);
+  if (SVAR.__get) SVAR.__get(sti);
   const d = SVAR[sti];
   return d ? { ok: true, status: 200, json: async () => d }
            : { ok: false, status: 404, json: async () => ({ feil: "x" }) };
@@ -80,8 +90,9 @@ test("Detalj: diff + risikoklasse PER endring + fire-øyne-status", async () => 
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  const dlg = document.querySelector('[role="dialog"]');
+  // Detaljene står i flaten nå, ikke i en skuff.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  const dlg = h;
   // Risikoklasse per endring (både UTVIDER og INNSNEVRER vises).
   // Skuffen er delt i trinn: klassifisering og diff bor under «Endringer»,
   // fire-øyne-status under sin egen fane. Testen navigerer dit i stedet for å
@@ -112,8 +123,9 @@ test("Attester: låst til diffen er sett — skuffen åpner PÅ «Endringer»", 
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  const dlg = document.querySelector('[role="dialog"]');
+  // Detaljene står i flaten nå, ikke i en skuff.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  const dlg = h;
   const valgt = [...dlg.querySelectorAll('[role="tab"]')]
     .find((f) => f.getAttribute("aria-selected") === "true");
   assert.equal(valgt.textContent, t("ui.policyadmin.fane.endringer"),
@@ -135,8 +147,8 @@ test("Attester: kvitteringen viser den granulære diffen, ikke bare hashen", asy
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  [...document.querySelector('[role="dialog"]').querySelectorAll("button")]
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  [...h.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
     .dispatchEvent(new window.Event("click"));
   await vent(() => [...document.querySelectorAll('[role="dialog"]')]
@@ -167,11 +179,10 @@ test("Attester: eksplisitt kvittering → CSRF-POST m/ Idempotency-Key + diff_ha
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
   const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === tekst);
-  const dlg = document.querySelector('[role="dialog"]');
-  const attest = finn(dlg, t("ui.policyadmin.handling.attester"));
+  const attest = finn(h, t("ui.policyadmin.handling.attester"));
   assert.ok(attest, "attester-knapp mangler");
   attest.dispatchEvent(new window.Event("click"));
   // Eksplisitt kvittering viser risikoklasse + diff-hash.
@@ -207,10 +218,10 @@ test("Attester: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
   const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === tekst);
-  finn(document.querySelector('[role="dialog"]'),
+  finn(h,
     t("ui.policyadmin.handling.attester")).dispatchEvent(new window.Event("click"));
   await vent(() => [...document.querySelectorAll('[role="dialog"]')]
     .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
@@ -242,31 +253,25 @@ function _medCsrf() {
 // knappen. `_aapneDetalj` venter på «en hvilken som helst dialog», og en
 // forrige tests sene async-rendring kan rekke å legge sin egen skuff i DOM-en
 // først — da tester man forrige tests tilstand og får en umulig feil.
+// Utkastet åpnes nå som en vanlig side i flaten, ikke som en skuff. Hjelperne
+// returnerer derfor `hoved` — det er der detaljene står — i stedet for å lete
+// etter `[role="dialog"]`.
 async function _aapneDetaljMed(h, tekst) {
-  document.querySelectorAll('.overlegg, [role="dialog"]')
-    .forEach((n) => n.remove());
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
-    .some((d) => _finn(d, tekst)));
-  return [...document.querySelectorAll('[role="dialog"]')]
-    .find((d) => _finn(d, tekst));
+  await vent(() => _finn(h, tekst));
+  return h;
 }
 
 async function _aapneDetalj(h) {
-  // Rens stale skuffer fra tidligere tester, så querySelector treffer den nye.
-  // BEGGE må ryddes: en skuff som ble bygget uten `.overlegg`-wrapperen ble
-  // stående igjen som `[role="dialog"]`, og neste test fant DEN i stedet for
-  // sin egen — med forrige tests knapper i seg. Det ga en «umulig» feil der
-  // testen lette etter Valider og fikk Åpne aktiveringsrunde.
-  document.querySelectorAll('.overlegg, [role="dialog"]')
-    .forEach((n) => n.remove());
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  return document.querySelector('[role="dialog"]');
+  // Detaljsiden er inne når tilbakeveien finnes — den bygges sammen med
+  // innholdet, og finnes ikke i lista.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  return h;
 }
 
 test("Valider: retry etter nettverksfeil gjenbruker Idempotency-Key", async () => {
@@ -406,4 +411,463 @@ test("Valider: 5xx sier «handlingen feilet», ikke «utkastet er ugyldig»", as
   assert.ok(!tekst.includes(t("ui.policyadmin.ugyldig")),
     "en serverfeil er ikke et bevis på at utkastet er ugyldig");
   gjenopprett();
+});
+
+test("Utkast: åpnes som side i flaten, med policy-ID synlig og vei tilbake", async () => {
+  // To åpne runder endte med hver sin attestasjon fordi flaten ikke sa hvilket
+  // utkast man sto i — skuffen viste «Detalj» uten identitet. Siden bærer nå
+  // policy-ID i overskriften og utkast-ID under, og har en synlig vei tilbake.
+  const h = nyHoved();
+  const dlg = await _aapneDetalj(h);
+
+  assert.equal(document.querySelectorAll('[role="dialog"]').length, 0,
+    "utkastet åpnet fortsatt som en skuff over flaten");
+  assert.ok(dlg.textContent.includes(DETALJ.policy_id),
+    "overskriften sier ikke HVILKEN policy utkastet gjelder");
+  assert.ok(dlg.textContent.includes("u-1"),
+    "utkast-ID vises ikke — to utkast ser like ut");
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "ingen synlig vei tilbake til lista");
+
+  // Fokus følger sidebyttet: uten det står fokus igjen på raden man klikket,
+  // i en liste som ikke er på skjermen lenger.
+  assert.match(document.activeElement.tagName, /^H[12]$/,
+    'fokus havnet ikke på sidens overskrift');
+
+  // …og tilbake fører faktisk tilbake.
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.ok(h.querySelector("tbody"), "kom ikke tilbake til utkastlista");
+});
+
+// Codex P1: da detaljen var en skuff, måtte «Rediger» lukke skuffen først. Som
+// side ble lukkingen til `tilbakeTilListe`, og den lukker ingenting — den
+// starter en ny liste-GET. Den og editorens detalj-GET tegner i samme `hoved`,
+// så et sent listesvar erstattet editoren, med det eier hadde rukket å skrive.
+test("Rediger: går rett til editoren uten å laste lista på nytt", async () => {
+  const get = [];
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null,
+      innhold: { meta: { policy_id: "p" } } },
+    __get: (sti) => get.push(sti),
+    __post: async () => ({}),
+  };
+  const h = nyHoved();
+  const side = await _aapneDetaljMed(h, t("ui.policyadmin.handling.rediger"));
+  get.length = 0;
+  _finn(side, t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.editor.tittel")));
+  assert.deepEqual(get.filter((s) => s === "/v1/policyutkast"), [],
+    "Rediger startet en liste-GET som kappløper med editoren om `hoved`");
+});
+
+// Codex P2: veien FRAM flyttet fokus til detaljsidens overskrift, veien
+// TILBAKE flyttet det ingensteds. `last()` river DOM-en synkront for
+// lastetilstanden, så knappen tastaturbrukeren nettopp trykte på er borte og
+// fokus faller til `body` — tastaturnavigasjonen starter forfra, utenfor lista.
+test("Tilbake til lista: fokus følger med, ikke til `body`", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  await _aapneDetalj(h);
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.notEqual(document.activeElement, document.body,
+    "fokus falt til body — tastaturnavigasjonen starter utenfor lista");
+  assert.ok(h.contains(document.activeElement), "fokus havnet utenfor flaten");
+  assert.equal(document.activeElement.textContent, t("ui.policyadmin.tittel"),
+    "fokus skal lande på listas overskrift");
+});
+
+// Codex P2: forrige fiks dekket bare SUKSESSVEIEN — `flyttFokus` ble konsumert
+// av `tegn(...)`, som en avvist liste-GET aldri når. `medStatus` river den
+// fokuserte tilbakeknappen synkront for lastetilstanden og tegner feilen, så
+// «Tilbake» som feilet lot fokus ligge på `body`: eier måtte navigere seg fram
+// til «Prøv igjen» forfra, i en flate hun nettopp sto i.
+test("Tilbake som FEILER: fokus følger med til feiltilstanden", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  await _aapneDetalj(h);
+
+  delete SVAR["/v1/policyutkast"];               // lista svarer 404 nå
+  const tilbake = _finn(h, t("ui.policyadmin.tilbake_til_liste"));
+  tilbake.focus();                               // slik en tastaturbruker står
+  tilbake.dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+
+  assert.notEqual(document.activeElement, document.body,
+    "fokus falt til body — eier må navigere seg fram til «Prøv igjen» forfra");
+  assert.ok(h.contains(document.activeElement), "fokus havnet utenfor flaten");
+  assert.match(document.activeElement.tagName, /^H[12]$/,
+    "fokus skal lande på feiltilstandens overskrift");
+
+  // «Prøv igjen» bærer fokusløftet videre: knappen forsvinner i det den
+  // trykkes, så et forsøk som lykkes skal lande der «Tilbake» skulle.
+  SVAR["/v1/policyutkast"] = LISTE;
+  _finn(h, t("ui.prov_igjen")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.equal(document.activeElement.textContent, t("ui.policyadmin.tittel"),
+    "fokus skal lande på listas overskrift etter et vellykket nytt forsøk");
+});
+
+// Codex P2: feilet detalj-GET erstattet HELE flaten med en naken feiltilstand.
+// Skuffen lot lista ligge under seg; siden gjorde et forbigående 5xx til en
+// blindvei man bare kom ut av ved å laste appen på nytt.
+test("Detalj: feilet lasting beholder vei tilbake OG tilbyr «Prøv igjen»", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };  // detalj → 404
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+
+  assert.ok(_finn(h, t("ui.prov_igjen")), "ingen vei ut av en forbigående feil");
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "feiltilstanden fjernet veien tilbake til lista");
+  assert.ok(h.textContent.includes("u-1"),
+    "feilsiden sier ikke hvilket utkast som ikke lot seg åpne");
+  assert.match(document.activeElement.tagName, /^H[12]$/,
+    "fokus ble stående i en liste som ikke er på skjermen lenger");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+
+  // «Prøv igjen» laster faktisk på nytt — og lykkes når serveren er tilbake.
+  SVAR["/v1/policyutkast/u-1"] = DETALJ;
+  _finn(h, t("ui.prov_igjen")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(DETALJ.policy_id));
+  assert.ok(_finn(h, t("ui.policyadmin.handling.attester")),
+    "«Prøv igjen» hentet ikke detaljen på nytt");
+});
+
+test("Detalj: tilbake fra feiltilstanden fører til lista", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };  // detalj → 404
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.ok(h.querySelector("tbody"), "kom ikke tilbake til utkastlista");
+});
+
+// Codex P2: alle flater rendrer i ETT `hoved`. Et detaljsvar som kom tilbake
+// etter at brukeren hadde valgt en annen toppnivårute, tegnet seg selv over
+// DEN flaten — mens menyvalget hennes ble stående markert. Skjermen viste én
+// flate og navigasjonen en annen.
+test("Treigt detaljsvar rører ikke ruten brukeren har navigert til", async () => {
+  let slipp = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policyutkast/u-1") {
+      await new Promise((r) => { slipp = r; });
+      return { ok: true, status: 200, json: async () => DETALJ };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };
+  const h = nyHoved();
+  const annenFlate = (hoved) => sett(hoved, el("h1", { text: "annen flate" }));
+
+  // Hashen settes FØR ruteren finnes, og `hashchange`-en den utløser slippes
+  // gjennom uten lytter: ellers kunne den re-montere flaten midt i testen og
+  // gjøre stempelet foreldet av seg selv — da hadde testen vært grønn uansett.
+  window.location.hash = "#/policyadmin";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(),
+    { policyadmin: visPolicyadmin, annen: annenFlate }, () => {});
+  ruter.naviger();
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => slipp);                       // detalj-GET er ute på nettet
+
+  // Brukeren navigerer videre mens svaret fortsatt er underveis. Ruteren
+  // kobles av med det samme: en `hashchange` som tegnet `annen` på nytt ville
+  // vasket bort sporet etter det foreldede svaret og skjult feilen.
+  window.location.hash = "#/annen";
+  ruter.naviger();
+  ruter.stopp();
+  assert.ok(h.textContent.includes("annen flate"));
+
+  slipp();
+  await vent(() => false, 20);                   // la svaret få tegne, om det vil
+  assert.ok(h.textContent.includes("annen flate"),
+    "det foreldede detaljsvaret rev bort ruten brukeren står i");
+  assert.equal(_finn(h, t("ui.policyadmin.tilbake_til_liste")), undefined,
+    "policyutkastet tegnet seg inn i en annen rute");
+
+  globalThis.fetch = brukFetch;
+});
+
+test("Detalj: 403 gir tilgangsvakt med vei tilbake, men INGEN «Prøv igjen»", async () => {
+  // 403 er ikke forbigående. En «Prøv igjen»-knapp der lover et annet svar
+  // neste gang, og det løftet holder den ikke.
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policyutkast/u-1") {
+      return { ok: false, status: 403, json: async () => ({ feil: "ingen_tilgang" }) };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.ingen-tilgang"));
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "403 stengte eier inne uten vei tilbake");
+  assert.equal(_finn(h, t("ui.prov_igjen")), undefined,
+    "«Prøv igjen» på 403 lover noe den ikke kan holde");
+  globalThis.fetch = brukFetch;
+});
+
+// Codex P2: rutersjekken alene er for grov. Den skifter bare når brukeren
+// bytter TOPPNIVÅRUTE, mens flaten bytter visning på egen hånd — og de
+// visningene kappløper om det samme `hoved`. Åpnet hun utkast A og så B, besto
+// begge svarene rutersjekken: svarte A sist, tegnet A seg over B.
+test("Detalj: treigt svar for A tegner seg ikke over utkastet B", async () => {
+  const slipp = {};
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const m = /^\/v1\/policyutkast\/(u-\d)$/.exec(url.split("?")[0]);
+    if (m) {
+      await new Promise((r) => { slipp[m[1]] = r; });
+      return { ok: true, status: 200, json: async () =>
+        Object.assign({}, DETALJ, { utkast_id: m[1], policy_id: `pol-${m[1]}` }) };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { "/v1/policyutkast": TO_UTKAST, __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelectorAll("tbody button").length === 2);
+
+  // Radrekkefølgen er tabellens, ikke vår: knappen hentes fra RADEN som bærer
+  // riktig policy-id, ikke fra en antatt indeks.
+  const aapne = (polId) => [...h.querySelectorAll("tbody tr")]
+    .find((tr) => tr.textContent.includes(polId)).querySelector("button");
+  aapne("faktura-no").dispatchEvent(new window.Event("click"));   // A = u-1
+  await vent(() => slipp["u-1"]);
+  aapne("lonn-no").dispatchEvent(new window.Event("click"));      // B = u-2
+  await vent(() => slipp["u-2"]);
+
+  slipp["u-2"]();                                  // B svarer først og tegnes
+  await vent(() => h.textContent.includes("pol-u-2"));
+  slipp["u-1"]();                                  // A svarer etterpå
+  await vent(() => false, 20);                     // la svaret få tegne, om det vil
+
+  assert.ok(h.textContent.includes("pol-u-2"),
+    "det foreldede svaret for A rev bort utkastet brukeren valgte");
+  assert.ok(!h.textContent.includes("pol-u-1"),
+    "utkast A tegnet seg over utkast B");
+  globalThis.fetch = brukFetch;
+});
+
+// Samme rot, andre vei: en «Prøv igjen» som fortsatt henger når brukeren har
+// gått tilbake til lista, skal ikke dra henne inn i detaljen igjen.
+test("Detalj: hengende «Prøv igjen» tegner ikke over lista man gikk tilbake til",
+  async () => {
+    let slipp = null;
+    let runde = 0;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (url.split("?")[0] === "/v1/policyutkast/u-1") {
+        if (++runde === 1) {
+          return { ok: false, status: 500, json: async () => ({ feil: "x" }) };
+        }
+        await new Promise((r) => { slipp = r; });
+        return { ok: true, status: 200, json: async () => DETALJ };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".tilstand.feil"));
+
+    _finn(h, t("ui.prov_igjen")).dispatchEvent(new window.Event("click"));
+    await vent(() => slipp);                       // forsøket er ute på nettet
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+
+    slipp();
+    await vent(() => false, 20);
+    assert.ok(h.querySelector("tbody"),
+      "det hengende forsøket dro brukeren ut av lista hun gikk tilbake til");
+    globalThis.fetch = brukFetch;
+  });
+
+// Codex P2: eierskapssjekken sto i `tegnFn`, altså bare på SUKSESSVEIEN. En
+// liste-GET som ble avvist etter at brukeren hadde byttet rute, nådde aldri
+// `tegnFn` — `medStatus` fanget avvisningen og tegnet policyadmins feiltilstand
+// rett over ruten hun sto i.
+test("Avvist liste-GET river ikke bort ruten brukeren har navigert til", async () => {
+  let feil = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policyutkast") {
+      await new Promise((r) => { feil = r; });
+      throw new TypeError("nettverket falt ut");
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { __post: async () => ({}) };
+  const h = nyHoved();
+  const annenFlate = (hoved) => sett(hoved, el("h1", { text: "annen flate" }));
+
+  window.location.hash = "#/policyadmin";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(),
+    { policyadmin: visPolicyadmin, annen: annenFlate }, () => {});
+  ruter.naviger();
+  await vent(() => feil);                          // liste-GET er ute på nettet
+
+  // Ruteren kobles av med det samme, slik at ingen `hashchange` kan tegne
+  // `annen` på nytt og vaske bort sporet etter det foreldede svaret.
+  window.location.hash = "#/annen";
+  ruter.naviger();
+  ruter.stopp();
+  assert.ok(h.textContent.includes("annen flate"));
+
+  feil();
+  await vent(() => false, 20);                     // la avvisningen få tegne, om den vil
+  assert.ok(h.textContent.includes("annen flate"),
+    "den avviste liste-GET-en rev bort ruten brukeren står i");
+  assert.equal(h.querySelector(".tilstand.feil"), null,
+    "policyadmins feiltilstand tegnet seg inn i en annen rute");
+  globalThis.fetch = brukFetch;
+});
+
+// Codex P1: `paaFerdig` friskner opp detaljsiden når en handling er utført —
+// men den sto ubetinget. Klikket eier «Valider» og så «Rediger», lå POST-en
+// fortsatt ute mens editoren hadde tatt over `hoved`. Svaret kom, kalte
+// `aapneDetalj`, og erstattet editoren med detaljsiden — sammen med det eier
+// hadde rukket å skrive i den.
+test("Valider som fullfører etter «Rediger» river ikke bort editoren", async () => {
+  const gjenopprett = _medCsrf();
+  let slipp = null;
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null,
+      innhold: { meta: { policy_id: "p" } } },
+    __post: async () => {
+      await new Promise((r) => { slipp = r; });
+      return { ok: true, status: 200, json: async () => ({ utfall: "gyldig" }) };
+    },
+  };
+  const h = nyHoved();
+  const side = await _aapneDetaljMed(h, t("ui.policyadmin.handling.valider"));
+  _finn(side, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slipp);                     // valideringen er ute på nettet
+  _finn(side, t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.editor.tittel")));
+
+  slipp();
+  await vent(() => false, 20);                 // la svaret få tegne, om det vil
+  assert.ok(h.textContent.includes(t("ui.editor.tittel")),
+    "valideringssvaret rev bort editoren eier sto i");
+  assert.equal(_finn(h, t("ui.policyadmin.tilbake_til_liste")), undefined,
+    "detaljsiden tegnet seg over editoren");
+  gjenopprett();
+});
+
+// Codex P2: eierskapet stoppet ved editordøra. `aapneEditor` talte opp
+// generasjonen, men editoren fikk aldri vite hva den skulle måles mot — og den
+// tegner ingenting før utkastet er hentet. Detaljsiden med tilbakeknappen blir
+// derfor stående mens GET-en er ute: rakk eier å trykke «Tilbake», lastet lista,
+// og editorsvaret tegnet seg etterpå rett over den.
+test("Editor: treigt utkastsvar tegner seg ikke over lista man gikk tilbake til",
+  async () => {
+    let slipp = null;
+    let runde = 0;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      // Første GET er detaljsidens; den andre er editorens, og det er den som
+      // skal henge mens eier finner veien tilbake.
+      if (url.split("?")[0] === "/v1/policyutkast/u-1" && ++runde === 2) {
+        await new Promise((r) => { slipp = r; });
+        return { ok: true, status: 200, json: async () =>
+          ({ ...DETALJ, status: "utkast", aktiv_runde: null,
+             innhold: { meta: { policy_id: "p" } } }) };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = {
+      "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+        status: "utkast", utkastversjon: 2,
+        opprettet: "2026-08-10T08:00:00+00:00" }] },
+      "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null,
+        innhold: { meta: { policy_id: "p" } } },
+      __post: async () => ({}),
+    };
+    const h = nyHoved();
+    const side = await _aapneDetaljMed(h, t("ui.policyadmin.handling.rediger"));
+    _finn(side, t("ui.policyadmin.handling.rediger"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slipp);                   // editorens GET er ute på nettet
+
+    // Detaljsiden står fremdeles — editoren har ikke tegnet noe ennå, og
+    // tilbakeknappen er dermed fortsatt eiers.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+
+    slipp();
+    await vent(() => false, 20);               // la svaret få tegne, om det vil
+    assert.ok(h.querySelector("tbody"),
+      "editorsvaret rev bort lista eier gikk tilbake til");
+    assert.ok(!h.textContent.includes(t("ui.editor.tittel")),
+      "editoren tegnet seg over lista");
+    globalThis.fetch = brukFetch;
+  });
+
+// Codex P2: sorteringen er eiers valg, men den bodde i `DataTabell` — og den
+// bygges på nytt hver gang lista lastes. «Tilbake» fra et utkast kastet dermed
+// kolonne og retning, og den som gikk gjennom flere utkast måtte sortere på nytt
+// for hvert eneste ett.
+test("Tilbake til lista: kolonnevalget står igjen", async () => {
+  SVAR = { "/v1/policyutkast": TO_UTKAST, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelectorAll("tbody button").length === 2);
+
+  const sorter = () => [...h.querySelectorAll("th button")]
+    .find((b) => b.textContent === t("ui.policyadmin.kol.policy"));
+  sorter().dispatchEvent(new window.Event("click"));      // stigende
+  sorter().dispatchEvent(new window.Event("click"));      // synkende
+  const forsteRad = () => h.querySelector("tbody tr").textContent;
+  assert.ok(forsteRad().includes("lonn-no"),
+    "sorteringen slo ikke inn — testen måler ikke det den tror");
+
+  // Raden hentes på policy-id, ikke på indeks: rekkefølgen er nettopp det som
+  // er under test.
+  [...h.querySelectorAll("tbody tr")]
+    .find((tr) => tr.textContent.includes("faktura-no"))
+    .querySelector("button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+
+  assert.ok(forsteRad().includes("lonn-no"),
+    "«Tilbake» kastet kolonnevalget og ga serverrekkefølgen tilbake");
+  const th = [...h.querySelectorAll("th")]
+    .find((x) => x.textContent.includes(t("ui.policyadmin.kol.policy")));
+  assert.equal(th.getAttribute("aria-sort"), "descending",
+    "radene var sortert, men aria-sort sa «usortert» til skjermleseren");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
