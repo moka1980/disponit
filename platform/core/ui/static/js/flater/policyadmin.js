@@ -121,56 +121,116 @@ function normaliserKlassifikatorSti(sti) {
 // indeks bare der de står UTEN punktum foran seg, altså der noden faktisk er
 // en liste. Da er `[bank]` etter et punktum en nøkkel og `[0]` uten punktum
 // en indeks, uten at parseren trenger å gjette.
+//
+// Men LENGSTE faktiske nøkkel er fortsatt en gjetning når to lovlige nøkler er
+// prefiks av hverandre (Codex P2). Finnes både verifikatoren `foo` og
+// verifikatoren `foo.betrodd_for`, hører bladet `verifikatorer.foo.betrodd_for[0]`
+// til `foo` — det er `foo` sin liste `betrodd_for` som fikk et nytt navn i seg —
+// men lengste treff valgte verifikatoren `foo.betrodd_for` og lot `[0]` bli
+// hengende som en indeks inn i et objekt som ikke er noen liste. Hvem `foo` er
+// betrodd av havnet dermed under overskriften til en HELT annen fullmakt, og
+// begge verifikatorene ble ett kort.
+//
+// Et nøkkelvalg som ikke lar RESTEN av stien gå opp, er derfor ikke et valg.
+// Oppdelingen prøver hver faktiske nøkkel stien starter med, lengste først, og
+// går hele veien ned før den bestemmer seg: den som er bekreftet av kildene i
+// hvert eneste ledd vinner med en gang. Går ingen av dem helt opp — stier ned i
+// noe som er borte fra begge sider, klassifikatorstier — er flest bekreftede
+// ledd det beste kildene kan si, og lengste treff avgjør ved likt, som før.
 function delOppLedd(sti, kilder) {
-  const ledd = [];
-  let rest = sti;
-  const inn = (n) => (n !== null && typeof n === "object" ? n : undefined);
-  let noder = (Array.isArray(kilder) ? kilder : [kilder])
-    .map(inn).filter((n) => n !== undefined);
-  const ned = (velg) => noder.map(velg).map(inn)
-    .filter((n) => n !== undefined);
+  const noder = (Array.isArray(kilder) ? kilder : [kilder])
+    .map(somNode).filter((n) => n !== undefined);
+  return besteOppdeling(String(sti), noder, true).ledd;
+}
+
+// Bare beholdere kan det gås videre ned i; et blad er ikke en node.
+function somNode(n) {
+  return n !== null && typeof n === "object" ? n : undefined;
+}
+
+// Ett ledd ned i kildene: nodene under `noekkel`, og om noen kilde faktisk HAR
+// det leddet. Et navngitt ledd gjelder aldri en liste; et klammeledd slår opp
+// indeksen i lister og nøkkelen i objekter (klassifikatoren skriver
+// map-oppslag med klammer). Bare egne nøkler teller — et arvet prototypenavn
+// er ikke en nøkkel i policyen.
+function stegNed(noder, noekkel, brakett) {
+  const velg = (n) => {
+    if (Array.isArray(n)) return brakett ? n[Number(noekkel)] : undefined;
+    return Object.prototype.hasOwnProperty.call(n, noekkel)
+      ? n[noekkel] : undefined;
+  };
+  return {
+    funnet: noder.some((n) => velg(n) !== undefined),
+    noder: noder.map(velg).map(somNode).filter((n) => n !== undefined),
+  };
+}
+
+// Beste oppdeling av `rest` under `noder`: leddene, hvor mange av dem kildene
+// bekreftet (`poeng`) og hvor mange det er i alt (`steg`). `poeng === steg` er
+// en sti som går opp hele veien.
+function besteOppdeling(rest, noder, forste) {
+  if (!rest) return { ledd: [], poeng: 0, steg: 0 };
+
   // Første ledd er en rotnøkkel uten skilletegn foran seg; senere ledd er
   // enten en klammeindeks eller ett punktum + nøkkel.
-  let forste = true;
-  while (rest) {
-    if (!forste && rest[0] === "[") {
-      const j = rest.indexOf("]");
-      if (j < 0) { ledd.push({ tekst: rest, noekkel: rest, brakett: true,
-        indeks: false }); break; }
-      const noekkel = rest.slice(1, j);
-      ledd.push({ tekst: `[${noekkel}]`, noekkel, brakett: true,
-        indeks: /^\d+$/.test(noekkel) });
-      noder = ned((n) => (Array.isArray(n) ? n[Number(noekkel)] : n[noekkel]));
-      rest = rest.slice(j + 1);
-      continue;
+  if (!forste && rest[0] === "[") {
+    const j = rest.indexOf("]");
+    if (j < 0) {
+      return { ledd: [{ tekst: rest, noekkel: rest, brakett: true,
+        indeks: false }], poeng: 0, steg: 1 };
     }
-    // Ett — og bare ett — punktum er skilletegnet. Resten hører nøkkelen til.
-    if (!forste) {
-      if (rest[0] === ".") rest = rest.slice(1);
-      if (!rest) break;
-    }
-    forste = false;
-    let navn = null;
-    for (const n of noder) {
-      if (Array.isArray(n)) continue;
-      for (const k of Object.keys(n)) {
-        const etter = rest[k.length];
-        if (!rest.startsWith(k)) continue;
-        if (etter !== undefined && etter !== "." && etter !== "[") continue;
-        if (navn === null || k.length > navn.length) navn = k;
-      }
-    }
-    // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
-    // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,
-    // som før. Ett innledende skilletegn hører likevel nøkkelen til — vi står
-    // rett etter det punktumet som skilte leddene, så `[bank]` og `.foo` tas
-    // hele i stedet for å bli indeks eller forsvinne.
-    if (navn === null) navn = /^[.[]?[^.[]*/.exec(rest)[0];
-    noder = ned((n) => (Array.isArray(n) ? undefined : n[navn]));
-    ledd.push({ tekst: navn, noekkel: navn, brakett: false, indeks: false });
-    rest = rest.slice(navn.length);
+    const noekkel = rest.slice(1, j);
+    const ned = stegNed(noder, noekkel, true);
+    const under = besteOppdeling(rest.slice(j + 1), ned.noder, false);
+    return {
+      ledd: [{ tekst: `[${noekkel}]`, noekkel, brakett: true,
+        indeks: /^\d+$/.test(noekkel) }, ...under.ledd],
+      poeng: (ned.funnet ? 1 : 0) + under.poeng,
+      steg: 1 + under.steg,
+    };
   }
-  return ledd;
+
+  // Ett — og bare ett — punktum er skilletegnet. Resten hører nøkkelen til.
+  let igjen = rest;
+  if (!forste) {
+    if (igjen[0] === ".") igjen = igjen.slice(1);
+    if (!igjen) return { ledd: [], poeng: 0, steg: 0 };
+  }
+
+  // Nøklene stien kan begynne med, lengste først. Den tomme nøkkelen er ikke
+  // med: den ville forbrukt null tegn og delt stien i det uendelige.
+  const navn = [];
+  for (const n of noder) {
+    if (Array.isArray(n)) continue;
+    for (const k of Object.keys(n)) {
+      const etter = igjen[k.length];
+      if (!k || !igjen.startsWith(k)) continue;
+      if (etter !== undefined && etter !== "." && etter !== "[") continue;
+      if (!navn.includes(k)) navn.push(k);
+    }
+  }
+  navn.sort((a, b) => b.length - a.length);
+  // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
+  // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,
+  // som før. Ett innledende skilletegn hører likevel nøkkelen til — vi står
+  // rett etter det punktumet som skilte leddene, så `[bank]` og `.foo` tas
+  // hele i stedet for å bli indeks eller forsvinne.
+  if (!navn.length) navn.push(/^[.[]?[^.[]*/.exec(igjen)[0]);
+
+  let best = null;
+  for (const k of navn) {
+    const ned = stegNed(noder, k, false);
+    const under = besteOppdeling(igjen.slice(k.length), ned.noder, false);
+    const bud = {
+      ledd: [{ tekst: k, noekkel: k, brakett: false, indeks: false },
+        ...under.ledd],
+      poeng: (ned.funnet ? 1 : 0) + under.poeng,
+      steg: 1 + under.steg,
+    };
+    if (bud.poeng === bud.steg) return bud;
+    if (best === null || bud.poeng > best.poeng) best = bud;
+  }
+  return best;
 }
 
 // Ledd → sti igjen. Klammeledd henger på uten punktum foran seg.

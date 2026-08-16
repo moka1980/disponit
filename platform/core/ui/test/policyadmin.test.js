@@ -2365,6 +2365,86 @@ for (const [hva, fikstur] of [
     });
 }
 
+// To lovlige verifikator-id-er kan være PREFIKS av hverandre: `foo` og
+// `foo.betrodd_for`. Da peker `verifikatorer.foo.betrodd_for[0]` på `foo` sin
+// liste `betrodd_for`, mens `verifikatorer.foo.betrodd_for.beskrivelse` peker
+// på verifikatoren `foo.betrodd_for`. Lengste treff tok begge til den lengste
+// id-en og lot `[0]` bli en indeks inn i et objekt som ikke er noen liste:
+// hvem `foo` er betrodd av havnet under en annen verifikators overskrift, og
+// de to ble ett kort (Codex P2).
+//
+// Kontroll: la `delOppLedd` velge lengste treff uten å prøve resten av stien,
+// så blir denne rød.
+const PREFIKSNOKKEL_INNHOLD = {
+  verifikatorer: {
+    foo: { betrodd_for: ["regnskap"], beskrivelse: "Bankintegrasjon" },
+    "foo.betrodd_for": { beskrivelse: "Fakturamottak" },
+  },
+};
+
+const PREFIKSNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: PREFIKSNOKKEL_INNHOLD,
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.betrodd_for[0]", type: "lagt_til",
+      til: "regnskap" },
+    { sti: "verifikatorer.foo.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.betrodd_for.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+  ] },
+};
+
+// Og slettet: da finnes begge nøklene bare i basen, så oppdelingen må prøve
+// resten av stien mot DEN siden — tilfellet der fullmakt forsvinner.
+const SLETTET_PREFIKSNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { tidssone: "UTC" },
+  base_innhold: PREFIKSNOKKEL_INNHOLD,
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.betrodd_for[0]", type: "fjernet",
+      fra: "regnskap" },
+    { sti: "verifikatorer.foo.beskrivelse", type: "fjernet",
+      fra: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.betrodd_for.beskrivelse", type: "fjernet",
+      fra: "Fakturamottak" },
+  ] },
+};
+
+for (const [hva, fikstur] of [
+  ["beholdt", PREFIKSNOKKEL_DIFF],
+  ["slettet", SLETTET_PREFIKSNOKKEL_DIFF],
+]) {
+  test(`Diff: en ${hva} map-nøkkel som er prefiks av en annen får sitt eget kort`,
+    async () => {
+      SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": fikstur,
+        __post: async () => ({}) };
+      const rot = await aapneEndringer(nyHoved());
+      const v = gruppeMedNavn(rot,
+        t("ui.policyadmin.diff.gruppe.verifikatorer"));
+      const kort = [...v.querySelectorAll(".diff-element")];
+      assert.equal(kort.length, 2,
+        `to verifikatorer er to kort (fant ${kort.length})`);
+      const kort_foo = kort.find((k) =>
+        k.querySelector("summary").textContent.includes("verifikatorer.foo")
+        && !k.querySelector("summary").textContent
+          .includes("verifikatorer.foo.betrodd_for"));
+      assert.ok(kort_foo, "verifikatoren «foo» fikk ikke sitt eget kort: "
+        + kort.map((k) => `«${k.querySelector("summary").textContent}»`)
+          .join(", "));
+      // Lista `betrodd_for` er `foo` sin, ikke den andre verifikatorens.
+      assert.ok(kort_foo.textContent.includes("regnskap"),
+        "hvem «foo» er betrodd av havnet i en annen verifikators kort");
+      const kort_lang = kort.find((k) => k !== kort_foo);
+      assert.ok(!kort_lang.textContent.includes("regnskap"),
+        "en annen verifikators betrodd_for havnet i dette kortet");
+      assert.ok(kort_lang.textContent.includes("Fakturamottak"),
+        "verifikatoren «foo.betrodd_for» mistet feltet sitt");
+    });
+}
+
 test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
     __post: async () => ({}) };
