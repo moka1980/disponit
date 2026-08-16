@@ -678,6 +678,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
+    def policy_aktive(request: Request) -> Response:
+        return lesing.policy_aktive(tjeneste, request)
+
     def utrulling(request: Request) -> Response:
         return lesing.utrulling(tjeneste, request)
 
@@ -768,6 +771,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/domeneattestasjon",
               unntak_domeneattestasjon, methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        # Lista over aktive policyer. Egen statisk sti, registrert
+        # sammen med `aktiv` og FØR mønsterrutene: den er utveien når
+        # `aktiv` (med rette) nekter å velge mellom flere.
+        Route("/v1/policy/aktive", policy_aktive, methods=["GET"]),
         # Utrullingsplanen: øktbundet, fordi den ellers måtte ligge i den
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
@@ -1159,6 +1166,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-015 §3: cross-tenant domeneautoritet er sitt EGET scope.
     ("POST", "/v1/unntak/{id:int}/domeneattestasjon"): "domains:adjudicate",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    ("GET",  "/v1/policy/aktive"):           "policy:read",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en

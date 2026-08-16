@@ -4,6 +4,8 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, slettPolicy, nyIdempotensnokkel, IkkeFunnetFeil, ApiFeil,
          UautorisertFeil } from "../api.js";
+// (`ApiFeil` brukes både til feilkoden fra slettingen og til 5xx-porten i
+// `hentAktiv` — se der.)
 import { VarselBanner, TomTilstand, meldLive } from "../komponenter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
 import { harScope } from "../sitekart.js";
@@ -56,25 +58,62 @@ function seksjon(tittel, barn) {
     el("h2", { text: tittel }), ...barn);
 }
 
+// `/v1/policy/aktiv` lover ÉN aktiv policy og svarer 500 (`intern_feil`) når
+// tenanten har flere — fail-closed, og riktig: et leseendepunkt skal ikke velge
+// hvilken policy som gjelder. Men NØYAKTIG den tilstanden er feilen «angre en
+// feilopprettet policy» finnes for (`tjenestebedrift1` og `tjenestebedrift2`
+// ble begge aktivert ved feil), så uten en vei videre her var slettehandlingen
+// utilgjengelig i det ene tilfellet den er skrevet for (Codex P2) — flaten
+// endte i en generisk feiltilstand, og eier var tilbake til håndskrevet SQL.
+//
+// Reparasjonen er `GET /v1/policy/aktive`, og den hentes bare når den trengs:
+// den normale veien er ETT kall, som før. Utløseren er 5xx, ikke feilKODEN:
+// «kunne ikke serveres som én» er det vi faktisk vet, og er grunnen at det er
+// FLERE, finnes reparasjonen. Er den noe annet (f.eks. `policy_korrupt` på den
+// ene aktive), står den opprinnelige feilen — vi bytter ikke ut en ærlig
+// feiltilstand med en villedende liste.
+async function hentAktiv() {
+  try {
+    const d = await hentJson("/v1/policy/aktiv");
+    return { aktive: [{ policy_id: d.policy_id, versjon: d.versjon }], dto: d };
+  } catch (e) {
+    if (e instanceof IkkeFunnetFeil) return { aktive: [], dto: null };
+    if (!(e instanceof ApiFeil) || e.status < 500) throw e;
+    let liste;
+    try { liste = await hentJson("/v1/policy/aktive"); }
+    catch { throw e; }
+    if (liste.policyer.length < 2) throw e;
+    return { aktive: liste.policyer, dto: null };
+  }
+}
+
 export function visPolicy(hoved, ctx) {
-  medStatus(hoved, ctx, async () => {
-    try { return await hentJson("/v1/policy/aktiv"); }
-    catch (e) { if (e instanceof IkkeFunnetFeil) return null; throw e; }
-  }, (d) => {
-    if (!d) {
+  medStatus(hoved, ctx, hentAktiv, ({ aktive, dto }) => {
+    const paaNytt = () => visPolicy(hoved, ctx);
+    if (!aktive.length) {
       sett(hoved, ...flateHode(t("ui.policy.tittel")), TomTilstand({}));
+      return;
+    }
+    if (!dto) {
+      // Flere aktive: policyen kan ikke VISES (hvilken av dem skulle det
+      // vært?), men den kan pekes på og slettes — og det er hele veien ut.
+      sett(hoved,
+        ...flateHode(t("ui.policy.tittel")),
+        VarselBanner({ art: "fare", tekst: t("ui.policy.flere_aktive") }),
+        ...aktive.map((p) => angreSeksjon(p, ctx, paaNytt, true)));
       return;
     }
     sett(hoved,
       ...flateHode(t("ui.policy.tittel"),
-        `${t("ui.policy.versjon")} ${d.versjon}`),
+        `${t("ui.policy.versjon")} ${dto.versjon}`),
       VarselBanner({ art: "guard", tekst: t("ui.policy.readonly") }),
       seksjon(t("ui.policy.roller"),
         [el("ul", { class: "liste" },
-          d.roller.map((r) => el("li", { text: r.id })))]),
-      seksjon(t("ui.policy.handlinger"), d.handlinger.map(handlingNode)),
-      seksjon(t("ui.policy.verifikatorer"), d.verifikatorer.map(verifikatorNode)),
-      angreSeksjon(d, ctx, () => visPolicy(hoved, ctx)));
+          dto.roller.map((r) => el("li", { text: r.id })))]),
+      seksjon(t("ui.policy.handlinger"), dto.handlinger.map(handlingNode)),
+      seksjon(t("ui.policy.verifikatorer"),
+        dto.verifikatorer.map(verifikatorNode)),
+      angreSeksjon(dto, ctx, paaNytt));
   });
 }
 
@@ -92,7 +131,7 @@ export function visPolicy(hoved, ctx) {
 // bekreftelsesdialog fram til en generisk feil fra serverens 403. En
 // forklaring man ikke kan handle på er ikke en forklaring, den er støy.
 // Lesingen står som før; det er bare mutasjonen som forsvinner.
-function angreSeksjon(d, ctx, tegnPaaNytt) {
+function angreSeksjon(d, ctx, tegnPaaNytt, navngi = false) {
   if (!harScope(ctx, "policy:write")) return null;
   // Nøkkelen er STABIL PER RENDER (samme R2-idiom som `apneRunde`), ikke per
   // klikk (Codex P2). Serveren lagrer og replayer nå slettesvaret, men den
@@ -132,9 +171,15 @@ function angreSeksjon(d, ctx, tegnPaaNytt) {
         }),
     });
   });
+  // Står det FLERE slett-seksjoner på flaten, må hver av dem si hvilken policy
+  // den gjelder — både synlig og for skjermleseren. En knapp som bare heter
+  // «Slett policy», gjentatt, er ikke et valg man kan ta.
+  const merke = `${d.policy_id} · ${t("ui.policy.versjon")} ${d.versjon}`;
   return el("section", { class: "policy-angre",
-    "aria-label": t("ui.policy.slett_tittel") },
+    "aria-label": navngi
+      ? `${t("ui.policy.slett_tittel")}: ${merke}` : t("ui.policy.slett_tittel") },
     el("h3", { text: t("ui.policy.slett_tittel") }),
+    navngi ? el("p", {}, el("strong", { text: merke })) : null,
     el("p", { class: "muted", text: t("ui.policy.slett_forklaring") }),
     b, status);
 }

@@ -717,6 +717,7 @@
   "ui.policy.slett_tittel": "Undo this policy",
   "ui.policy.slett": "Delete policy",
   "ui.policy.slett_forklaring": "If the policy was created by mistake, it can be deleted as long as it has never governed a decision. Drafts and attestations remain as history, and the version numbers become available again.",
+  "ui.policy.flere_aktive": "Several policies are active at the same time for this workspace. This is a fault state: the enforced policy cannot be shown until it is resolved. If one of them was created by mistake, it can be deleted here as long as it has never governed a decision.",
   "ui.policy.slett_tekst": "The policy is deleted and the tenant has no active policy until a new one is activated. This cannot be undone.",
   "ui.policy.slettet": "The policy has been deleted.",
   "ui.policy.slett_i_bruk": "This policy has governed decisions and cannot be deleted — the audit trail references it. It can be retired, not deleted.",

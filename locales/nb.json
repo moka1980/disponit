@@ -717,6 +717,7 @@
   "ui.policy.slett_tittel": "Angre policyen",
   "ui.policy.slett": "Slett policy",
   "ui.policy.slett_forklaring": "Er policyen opprettet ved en feil, kan den slettes så lenge den aldri har styrt en beslutning. Utkast og attestasjoner blir stående som historikk, og versjonsnumrene blir ledige igjen.",
+  "ui.policy.flere_aktive": "Flere policyer står aktive samtidig for arbeidsområdet. Det er en feiltilstand: policyen som håndheves kan ikke vises før den er ryddet opp. Er en av dem opprettet ved en feil, kan den slettes her så lenge den aldri har styrt en beslutning.",
   "ui.policy.slett_tekst": "Policyen slettes og tenanten står uten aktiv policy til en ny aktiveres. Handlingen kan ikke angres.",
   "ui.policy.slettet": "Policyen er slettet.",
   "ui.policy.slett_i_bruk": "Policyen har styrt beslutninger og kan ikke slettes — revisjonssporet refererer den. Den kan avvikles, ikke slettes.",

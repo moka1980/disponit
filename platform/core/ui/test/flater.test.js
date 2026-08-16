@@ -501,6 +501,90 @@ test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten"
     globalThis.fetch = brukFetch;
   });
 
+test("Policy: flere aktive → hver av dem kan slettes, ikke en blindvei",
+  async () => {
+    // Kontroll: la `hentAktiv` kaste videre på 5xx, så blir denne rød.
+    //
+    // Dette ER feilen funksjonen finnes for: to policyer ble aktivert ved en
+    // feil. `/v1/policy/aktiv` nekter da å velge (500 `intern_feil`), og uten
+    // en vei videre endte flaten i en generisk feiltilstand — slettehandlingen
+    // var utilgjengelig nøyaktig når den trengtes.
+    let postet = null;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method === "POST") {
+        postet = sti;
+        return { ok: true, status: 200, json: async () => ({ slettet: 1 }) };
+      }
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: true, status: 200, json: async () => ({ policyer: [
+          { policy_id: "tjenestebedrift1", versjon: "1.0.0",
+            innholds_hash: "a".repeat(64) },
+          { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+            innholds_hash: "b".repeat(64) }] }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.querySelectorAll(".policy-angre").length === 2);
+    assert.ok(!h.querySelector(".tilstand.feil"), "flaten endte i feiltilstand");
+    assert.ok(h.textContent.includes(t("ui.policy.flere_aktive")),
+      "tilstanden ble ikke forklart");
+    // Hver seksjon NAVNGIR sin policy — ellers er to like «Slett policy»-
+    // knapper ikke et valg noen kan ta.
+    const seksjoner = [...h.querySelectorAll(".policy-angre")];
+    assert.ok(seksjoner[0].textContent.includes("tjenestebedrift1"));
+    assert.ok(seksjoner[1].textContent.includes("tjenestebedrift2"));
+    // ...og den andre knappen sletter den ANDRE policyen.
+    [...seksjoner[1].querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    const dlg = await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes("tjenestebedrift2"))) &&
+      [...document.querySelectorAll('[role="dialog"]')]
+        .find((d) => d.textContent.includes("tjenestebedrift2"));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => postet);
+    assert.equal(postet, "/v1/policy/tjenestebedrift2/slett");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en 5xx som IKKE er flere aktive blir stående som feil",
+  async () => {
+    // Lista er reparasjonen for ÉN tilstand. Er den ene aktive policyen
+    // korrupt, skal flaten si at noe er galt — ikke bytte den ærlige
+    // feiltilstanden ut mot en liste som later som alt er i orden.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "policy_korrupt" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: true, status: 200, json: async () => ({ policyer: [
+          { policy_id: "p", versjon: "0.2.0",
+            innholds_hash: "a".repeat(64) }] }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.querySelector(".tilstand.feil"));
+    assert.ok(h.querySelector(".tilstand.feil"), "feilen ble skjult");
+    assert.ok(!h.querySelector(".policy-angre"));
+    globalThis.fetch = brukFetch;
+  });
+
 test("Policy: «i bruk»-avvisningen forklares, den gjemmes ikke", async () => {
   const brukFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {

@@ -976,3 +976,23 @@ def test_flere_aktive_policyer_er_sanitert_500(klient, migrator, malpolicy):
     kropp = r.json()
     assert kropp["feil"] == "intern_feil" and "request_id" in kropp
     assert "p-a" not in r.text and "p-b" not in r.text
+
+    # ...men den tilstanden er NØYAKTIG feilen «angre en feilopprettet policy»
+    # finnes for, og uten en vei til å SE begge var slettehandlingen på flaten
+    # utilgjengelig i det ene tilfellet den er skrevet for (Codex P2).
+    # `/v1/policy/aktive` enumererer, den velger fortsatt ingen: fail-closed
+    # står, men blindveien er borte.
+    r = klient.get("/v1/policy/aktive",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert [p["policy_id"] for p in r.json()["policyer"]] == ["p-a", "p-b"]
+
+
+@pg
+def test_aktive_policyer_krever_policy_read(klient, migrator, malpolicy):
+    """Lista er et LESEENDEPUNKT som alle andre: den henger på `policy:read`,
+    ikke på at kalleren tilfeldigvis skal slette noe."""
+    tok, _ = _lag_token(migrator, TENANT, "bruker", ["decisions:read"])
+    r = klient.get("/v1/policy/aktive",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 403 and r.json()["feil"] == "scope_mangler"
