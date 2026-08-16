@@ -223,6 +223,9 @@ const UTFALLSART = new Map([
   ["venter_godkjennere", "vent"],
   ["rebasering_kreves", "feil"],
   ["semantikk_endret", "feil"],
+  // Aktiv policy og peker er ute av synk: attestasjonen står, men aktiveringen
+  // kom ikke gjennom, og et nytt forsøk hjelper ikke før dataene er reparert.
+  ["aktiv_peker_usynk", "feil"],
 ]);
 
 // Terskelen har TO betingelser, og serverens `gjenstaar` teller bare den ene
@@ -284,6 +287,16 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
       }
       if (e instanceof ApiFeil && e.kode === "diff_utdatert") {
         _settKvittering(uid, "feil", t("ui.policyadmin.diff_utdatert"));
+        if (paaFerdig) paaFerdig();
+        return;
+      }
+      // Peker og flagg spriker: serveren nekter å ta imot attestasjonen, og
+      // den nekter uansett hvor mange ganger eier klikker. «Handlingen feilet»
+      // ville sendt henne inn i akkurat den runden — teksten her sier at det
+      // er DATAENE som må repareres, og at ventingen ikke er over av seg selv.
+      if (e instanceof ApiFeil && e.kode === "aktiv_peker_usynk") {
+        _settKvittering(uid, "feil",
+          t("ui.policyadmin.utfall.aktiv_peker_usynk"));
         if (paaFerdig) paaFerdig();
         return;
       }
@@ -413,10 +426,16 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
         // ute, er boksen frakoblet: da leses feilen opp i stedet for å
         // forsvinne (Codex P2, se `visEllerMeld`).
         boks.querySelectorAll(".pa-kvittering").forEach((n) => n.remove());
+        // Runden nektes åpnet fordi peker og flagg spriker: da er det ikke
+        // handlingen som feilet, det er grunnlaget som er ødelagt. Sier vi
+        // «Handlingen feilet», prøver eier igjen i det uendelige.
+        const tekst = (e instanceof ApiFeil && e.kode === "aktiv_peker_usynk")
+          ? t("ui.policyadmin.utfall.aktiv_peker_usynk")
+          : t("ui.policyadmin.feilet");
         visEllerMeld(boks,
           el("div", { class: "pa-kvittering pa-kvittering-feil", role: "alert" },
-            el("p", { text: t("ui.policyadmin.feilet") })),
-          t("ui.policyadmin.feilet"));
+            el("p", { text: tekst })),
+          tekst);
       }));
     boks.append(b);
     return { rot: boks, diffVist };

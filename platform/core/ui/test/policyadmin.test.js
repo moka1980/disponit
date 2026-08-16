@@ -994,9 +994,9 @@ test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
 //
 // Kontroll: sett `UTFALLSART` tilbake til «alt som ikke er aktivert = vent», så
 // blir testen rød.
-const _attesterMedUtfall = async (h, svar) => {
+const _attesterMedPost = async (h, post) => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
-    __post: async () => ({ ok: true, status: 200, json: async () => svar }) };
+    __post: post };
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
@@ -1012,6 +1012,9 @@ const _attesterMedUtfall = async (h, svar) => {
     .dispatchEvent(new window.Event("click"));
   return _ventKvittering(h);
 };
+
+const _attesterMedUtfall = (h, svar) => _attesterMedPost(h,
+  async () => ({ ok: true, status: 200, json: async () => svar }));
 
 // Codex P2: terskelen har TO betingelser, men serverens `gjenstaar` teller bare
 // den ene. Krever runden én godkjenning (INNSNEVRER/NØYTRAL) og forfatteren
@@ -1065,6 +1068,57 @@ test("Attester: semantikkendring er en FEIL, ikke en ventetilstand", async () =>
   assert.ok(kvitt.textContent.includes(
     t("ui.policyadmin.utfall.semantikk_endret")));
   assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+});
+
+// Codex P2: en usynk peker er den ENE feilen der et nytt forsøk er nytteløst —
+// dataene må repareres av noen med tilgang til basen. Sa flaten «Handlingen
+// feilet», sendte den eier inn i en runde med klikk som aldri kan lykkes, og
+// den nye teksten om reparasjon ble aldri vist til noen.
+//
+// Utfallet kommer i TO former: som 200 med `utfall` (attestasjonen ble tatt
+// imot, men aktiveringen kolliderte) og som 409 `ApiFeil` (serveren nektet å ta
+// imot attestasjonen i det hele tatt). Begge må si det samme.
+test("Attester: usynk peker sier at dataene må repareres (utfall)", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(),
+    { utfall: "aktiv_peker_usynk" });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.aktiv_peker_usynk")),
+  "eier fikk ikke vite at det er dataene, ikke handlingen, som må rettes");
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+  assert.equal(kvitt.getAttribute("role"), "alert");
+});
+
+test("Attester: usynk peker som 409 sier det samme som utfallet", async () => {
+  const kvitt = await _attesterMedPost(nyHoved(), async () => ({
+    ok: false, status: 409,
+    json: async () => ({ feil: "aktiv_peker_usynk" }) }));
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.aktiv_peker_usynk")),
+  "409-en falt til «Handlingen feilet» og skjulte at retry er nytteløst");
+  assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")));
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+});
+
+test("Åpne runde: usynk peker sier at dataene må repareres", async () => {
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "validert", utkastversjon: 2,
+      opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "validert", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 409,
+      json: async () => ({ feil: "aktiv_peker_usynk" }) }),
+  };
+  const h = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.apne_runde"));
+  _finn(h, t("ui.policyadmin.handling.apne_runde"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering-feil"));
+  const tekst = h.querySelector(".pa-kvittering-feil").textContent;
+  assert.ok(tekst.includes(t("ui.policyadmin.utfall.aktiv_peker_usynk")),
+    "runden kan ikke åpnes på en ødelagt base — det må stå her");
+  assert.ok(!tekst.includes(t("ui.policyadmin.feilet")));
+  gjenopprett();
 });
 
 // `vent` er reservert for det ENE utfallet der ventingen faktisk ER svaret. Et
