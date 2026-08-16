@@ -6,7 +6,7 @@
 import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, hentI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
-import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
+import { Feiltilstand, lokaliserSkiplenke, meldLive } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, settProduksjonsmiljo, heroTekstNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
@@ -157,6 +157,193 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
 // bruk her, ett skritt før treet bygges, slik at språket og flaten som bærer
 // det skifter i samme omgang. Uten opsjonen står språket som det står — riktig
 // for `tilInnlogging`, som ikke bytter språk i det hele tatt.
+function tilbudSeksjon() {
+  return el("section", { class: "kort site-section" },
+      el("div", { class: "site-section-head" },
+        el("div", {},
+          el("p", { class: "site-eyebrow", text: t("site.tilbud") }),
+          el("h2", { text: t("site.tilbud_tittel") })),
+        el("span", { class: "site-inline-note", text: t("site.tilbud_note") })),
+      el("div", { class: "site-grid site-grid-2" },
+        TILBUD.map((post) =>
+          el("article", { class: "site-mini-card" },
+            el("div", { class: "site-module-head" },
+              el("strong", { text: t(post.navn_nokkel) }),
+              siteTilbudMerke(erTilgjengelig(post.id))),
+            el("p", { text: t(post.tekst_nokkel) })))));
+}
+
+function problemSeksjon() {
+  return el("section", { class: "kort site-section" },
+      el("div", { class: "site-section-head" },
+        el("div", {},
+          el("p", { class: "site-eyebrow", text: t("site.problem") }),
+          el("h2", { text: t("site.problem_tittel") }))),
+      el("p", { class: "site-hero-text", text: t("site.problem_tekst") }),
+      el("div", { class: "site-grid site-grid-3" },
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("site.problem.manuelt_tittel") }),
+          el("p", { text: t("site.problem.manuelt_tekst") })),
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("site.problem.spredt_tittel") }),
+          el("p", { text: t("site.problem.spredt_tekst") })),
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("site.problem.etterpa_tittel") }),
+          el("p", { text: t("site.problem.etterpa_tekst") }))));
+}
+
+function argumentSeksjon() {
+  return el("section", { class: "site-grid site-grid-3" },
+      el("article", { class: "kort" },
+        el("p", { class: "site-eyebrow", text: t("site.argument.presisjon") }),
+        el("h2", { text: t("site.argument.presisjon_tittel") }),
+        el("p", { text: t("site.argument.presisjon_tekst") })),
+      el("article", { class: "kort" },
+        el("p", { class: "site-eyebrow", text: t("site.argument.plattform") }),
+        el("h2", { text: t("site.argument.plattform_tittel") }),
+        el("p", { text: t("site.argument.plattform_tekst") })),
+      el("article", { class: "kort" },
+        el("p", { class: "site-eyebrow", text: t("site.argument.kostnad") }),
+        el("h2", { text: t("site.argument.kostnad_tittel") }),
+        el("p", { text: t("site.argument.kostnad_tekst") })));
+}
+
+function arbeidsflytSeksjon() {
+  return el("section", { class: "kort site-section" },
+      el("div", { class: "site-section-head" },
+        el("div", {},
+          el("p", { class: "site-eyebrow", text: t("site.arbeidsflyt") }),
+          el("h2", { text: t("site.arbeidsflyt_tittel") }))),
+      el("div", { class: "site-grid site-grid-3" },
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("site.arbeidsflyt.styring_tittel") }),
+          el("p", { text: t("site.arbeidsflyt.styring_tekst") })),
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("site.arbeidsflyt.policy_tittel") }),
+          el("p", { text: t("site.arbeidsflyt.policy_tekst") })),
+        el("article", { class: "site-mini-card" },
+          el("strong", { text: t("site.arbeidsflyt.evidens_tittel") }),
+          el("p", { text: t("site.arbeidsflyt.evidens_tekst") }))));
+}
+
+function svarSeksjon() {
+  return el("section", { class: "kort site-section" },
+      el("div", { class: "site-section-head" },
+        el("div", {},
+          el("p", { class: "site-eyebrow", text: t("site.svar") }),
+          el("h2", { text: t("site.svar_tittel") }))),
+      el("dl", { class: "site-list" },
+        SPORSMAL.map(([sp, sv]) =>
+          el("div", {},
+            el("dt", {}, el("strong", { text: t(sp) })),
+            el("dd", { text: t(sv) })))));
+}
+
+let _sidelytter = null;
+
+// ---------------------------------------------------------------------------
+// SIDER. Forsiden var ÉN lang rulle: tilbud, katalog, problem, arbeidsflyt,
+// spørsmål og innlogging under hverandre. Spesifikasjonen
+// (`prototype/Ai-bedriftsagent-prototype-v5.html` §2.1/§2.3) sier det motsatte:
+// hovednavigasjon med 5–7 elementer på topp, minimalistisk innhold, maks tre
+// handlingsvalg per skjermbilde, alt innen to klikk.
+//
+// Hver side er en egen visning, og bare ÉN er i DOM-en om gangen. Det er ikke
+// bare mindre støy: en skjermleser slipper å vandre gjennom seksjoner ingen ba
+// om, og «hvor er jeg» besvares av `aria-current` i stedet for rullehøyden.
+const SIDER = [
+  { nokkel: "hjem", bygg: (ctx) => sideHjem(ctx) },
+  { nokkel: "tjenester", bygg: () => sideTjenester() },
+  { nokkel: "slik", bygg: () => sideSlik() },
+  { nokkel: "om", bygg: () => sideOm() },
+  { nokkel: "logg-inn", bygg: (ctx) => sideLoggInn(ctx) },
+];
+
+function sidetittel(tekst) {
+  // `tabindex="-1"` gjør overskriften fokuserbar uten å legge den i
+  // tab-rekkefølgen: fokus flyttes hit ved sidebytte, ellers står det igjen på
+  // lenka man klikket og bytte av innhold blir usynlig for tastatur og
+  // skjermleser (WCAG 2.4.3 / 4.1.3).
+  return el("h1", { id: "sidetittel", tabindex: "-1", text: tekst });
+}
+
+function sideHjem(ctx) {
+  return el("div", {},
+    el("section", { class: "site-hero" },
+      el("div", { class: "site-hero-copy" },
+        el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
+        sidetittel(t("site.hero.tittel")),
+        el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) }),
+        // Maks tre handlingsvalg (§2.1). Her er det to.
+        el("div", { class: "site-cta" },
+          el("a", { class: "knapp primar", href: "#/logg-inn",
+            text: t("site.cta.logg_inn") }),
+          el("a", { class: "knapp", href: "#/tjenester",
+            text: t("site.cta.se_tjenester") }))),
+      el("aside", { class: "kort site-hero-card" },
+        el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
+        el("h2", { text: t("site.hero.punkter_tittel") }),
+        el("ul", { class: "site-list" },
+          el("li", { text: t("site.hero.punkt.fullmakt") }),
+          el("li", { text: t("site.hero.punkt.stopp") }),
+          el("li", { text: t("site.hero.punkt.spor") })))));
+}
+
+function sideTjenester() {
+  return el("div", {},
+    sidetittel(t("site.nav.tjenester")),
+    el("p", { class: "site-hero-text", text: t("site.tjenester_ingress") }),
+    tilbudSeksjon(),
+    katalogseksjon());
+}
+
+function sideSlik() {
+  return el("div", {},
+    sidetittel(t("site.nav.slik")),
+    arbeidsflytSeksjon(),
+    problemSeksjon());
+}
+
+function sideOm() {
+  return el("div", {},
+    sidetittel(t("site.nav.om")),
+    argumentSeksjon(),
+    svarSeksjon());
+}
+
+function sideLoggInn(ctx) {
+  return el("div", {},
+    sidetittel(t("site.nav.logg_inn")),
+    el("section", { class: "site-grid site-grid-2" },
+      loginKort(ctx.provider, "kundeadmin", t("site.login.kunde_tittel"),
+        t("site.login.kunde_tekst"), t("site.login.kunde_knapp")),
+      loginKort(ctx.provider, "admin", t("site.login.admin_tittel"),
+        t("site.login.admin_tekst"), t("site.login.admin_knapp"))));
+}
+
+function gjeldendeSide() {
+  const n = (window.location.hash || "").replace(/^#\//, "");
+  return SIDER.some((x) => x.nokkel === n) ? n : "hjem";
+}
+
+// Fem elementer, innenfor §2.3 sine 5–7, i fast rekkefølge — så plasseringen
+// er forutsigbar fra side til side.
+function hovednav(aktiv) {
+  return el("nav", { class: "site-nav", "aria-label": t("site.nav.merkelapp") },
+    el("ul", { class: "site-nav-liste" },
+      SIDER.map((side) => {
+        const a = el("a", { class: "site-nav-lenke", href: `#/${side.nokkel}`,
+          text: t(`site.nav.${side.nokkel.replace("-", "_")}`) });
+        // `aria-current` svarer på «hvor er jeg». Markeringen er BÅDE farge og
+        // en understrek — farge alene er ikke informasjon (WCAG 1.4.1).
+        if (side.nokkel === aktiv) {
+          a.setAttribute("aria-current", "page");
+          a.classList.add("valgt");
+        }
+        return el("li", {}, a);
+      })));
+}
+
 export async function visInnlogging(opsjoner = {}) {
   const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
@@ -184,99 +371,48 @@ export async function visInnlogging(opsjoner = {}) {
     lokaliserSkiplenke();
   }
 
+  const ctx = { provider };
+  const navplass = el("div", { class: "site-navplass" });
+  const visning = el("div", { class: "site-visning" });
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
     tabindex: "-1" },
-    sprakvelger(),
-    el("section", { class: "site-hero" },
-      el("div", { class: "site-hero-copy" },
-        el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
-        el("h1", { text: t("site.hero.tittel") }),
-        el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) })),
-      el("aside", { class: "kort site-hero-card" },
-        el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
-        el("h2", { text: t("site.hero.punkter_tittel") }),
-        el("ul", { class: "site-list" },
-          el("li", { text: t("site.hero.punkt.fullmakt") }),
-          el("li", { text: t("site.hero.punkt.stopp") }),
-          el("li", { text: t("site.hero.punkt.spor") })))),
-    // TILBUDET først: hva kunden får, med en diskret tilgjengelighetsbrikke
-    // per punkt. Ikke et byggeregnskap — «Kommer» sier det samme som
-    // «planlagt» uten å gjøre forsiden til en statusrapport.
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.tilbud") }),
-          el("h2", { text: t("site.tilbud_tittel") })),
-        el("span", { class: "site-inline-note", text: t("site.tilbud_note") })),
-      el("div", { class: "site-grid site-grid-2" },
-        TILBUD.map((post) =>
-          el("article", { class: "site-mini-card" },
-            el("div", { class: "site-module-head" },
-              el("strong", { text: t(post.navn_nokkel) }),
-              siteTilbudMerke(erTilgjengelig(post.id))),
-            el("p", { text: t(post.tekst_nokkel) }))))),
-    katalogseksjon(),
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.problem") }),
-          el("h2", { text: t("site.problem_tittel") }))),
-      el("p", { class: "site-hero-text", text: t("site.problem_tekst") }),
-      el("div", { class: "site-grid site-grid-3" },
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.problem.manuelt_tittel") }),
-          el("p", { text: t("site.problem.manuelt_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.problem.spredt_tittel") }),
-          el("p", { text: t("site.problem.spredt_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.problem.etterpa_tittel") }),
-          el("p", { text: t("site.problem.etterpa_tekst") })))),
-    el("section", { class: "site-grid site-grid-3" },
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("site.argument.presisjon") }),
-        el("h2", { text: t("site.argument.presisjon_tittel") }),
-        el("p", { text: t("site.argument.presisjon_tekst") })),
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("site.argument.plattform") }),
-        el("h2", { text: t("site.argument.plattform_tittel") }),
-        el("p", { text: t("site.argument.plattform_tekst") })),
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("site.argument.kostnad") }),
-        el("h2", { text: t("site.argument.kostnad_tittel") }),
-        el("p", { text: t("site.argument.kostnad_tekst") }))),
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.arbeidsflyt") }),
-          el("h2", { text: t("site.arbeidsflyt_tittel") }))),
-      el("div", { class: "site-grid site-grid-3" },
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.arbeidsflyt.styring_tittel") }),
-          el("p", { text: t("site.arbeidsflyt.styring_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.arbeidsflyt.policy_tittel") }),
-          el("p", { text: t("site.arbeidsflyt.policy_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.arbeidsflyt.evidens_tittel") }),
-          el("p", { text: t("site.arbeidsflyt.evidens_tekst") })))),
-    // Rett svar på det en kjøper faktisk lurer på. Her hører honnørordene
-    // hjemme — ikke i et byggeregnskap øverst på siden.
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.svar") }),
-          el("h2", { text: t("site.svar_tittel") }))),
-      el("dl", { class: "site-list" },
-        SPORSMAL.map(([sp, sv]) =>
-          el("div", {},
-            el("dt", {}, el("strong", { text: t(sp) })),
-            el("dd", { text: t(sv) }))))),
-    el("section", { class: "site-grid site-grid-2" },
-      loginKort(provider, "kundeadmin", t("site.login.kunde_tittel"),
-        t("site.login.kunde_tekst"), t("site.login.kunde_knapp")),
-      loginKort(provider, "admin", t("site.login.admin_tittel"),
-        t("site.login.admin_tekst"), t("site.login.admin_knapp"))));
+    el("header", { class: "site-topp" },
+      el("a", { class: "site-merke", href: "#/hjem",
+        text: t("app.navn", "Disponit") }),
+      navplass,
+      sprakvelger()),
+    visning);
+
+  const tegnSide = (fokuser) => {
+    const aktiv = gjeldendeSide();
+    sett(navplass, hovednav(aktiv));
+    sett(visning, SIDER.find((x) => x.nokkel === aktiv).bygg(ctx));
+    document.documentElement.setAttribute("data-side", aktiv);
+    if (!fokuser) return;
+    const h = visning.querySelector("#sidetittel");
+    if (h) h.focus();
+    if (h) meldLive(h.textContent);
+  };
+
+  // ÉN lytter. Forsiden tegnes på nytt ved språkbytte, og to lyttere ville
+  // tegnet to ganger per klikk — og den gamle ville skrevet inn i et tre som
+  // ikke lenger er på skjermen.
+  if (_sidelytter) window.removeEventListener("hashchange", _sidelytter);
+  _sidelytter = () => {
+    // Lytteren skal ALDRI tegne inn i et tre som ikke står på skjermen. Etter
+    // innlogging eier app-ruteren hash-en (`#/oversikt` osv.), og denne
+    // visningen er for lengst byttet ut — uten denne sjekken ville forsiden
+    // bygget seg selv på nytt, i det stille, inne i en løsrevet node ved hvert
+    // eneste rutebytte i appen. Samme sjekk gjør testene uavhengige av
+    // hverandre: en hash som nullstilles for NESTE test tegner ikke i denne.
+    if (!visning.isConnected) {
+      window.removeEventListener("hashchange", _sidelytter);
+      return;
+    }
+    tegnSide(true);
+  };
+  window.addEventListener("hashchange", _sidelytter);
+  tegnSide(false);
 
   sett(app, hoved);
   app.setAttribute("aria-busy", "false");

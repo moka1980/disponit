@@ -61,7 +61,20 @@ async function vent(pred, n = 60) {
   return pred();
 }
 
+// Forsiden er nå navigert (§2.3): hver side er sin egen visning. Testene må
+// derfor si HVILKEN side de måler, i stedet for å anta at alt står på én.
+async function paaSide(app, nokkel) {
+  window.location.hash = `#/${nokkel}`;
+  await visInnlogging();
+  await vent(() => app.querySelector("#sidetittel"));
+  return app;
+}
+
 function nyttAppBrett() {
+  // Ruta er global tilstand. Uten denne nullstillingen arver hver test siden
+  // forrige test navigerte til, og «feilen» dukker opp i en test som ikke
+  // gjorde noe galt.
+  window.location.hash = "";
   const brett = nyttBrett();
   const app = document.createElement("div");
   app.id = "app";
@@ -81,21 +94,27 @@ function nyHoved() {
 
 test("Landing: rendrer ekte plattformflate med retursti per innlogging", async () => {
   const app = nyttAppBrett();
-  await visInnlogging();
+  await paaSide(app, "logg-inn");
   await vent(() => app.querySelectorAll("form").length === 2);
+  // Hjem bærer heltet; innloggingssiden bærer skjemaene. Begge måles.
+  await paaSide(app, "hjem");
   assert.ok(app.textContent.includes(t("site.hero.tittel")));
-  // Forsiden selger TILBUDET, ikke byggestatusen: kundevendte navn og en
-  // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
+  // Tjenester bærer tilbudet og hele katalogen: elleve områder, 45 navn.
+  await paaSide(app, "tjenester");
   assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
   assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
-  assert.ok(app.textContent.includes(t("site.problem_tittel")));
-  assert.ok(app.textContent.includes(t("site.svar_tittel")));
-  assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
-  // Hele produktomfanget skal være synlig: elleve områder, 45 modulnavn.
   assert.ok(app.textContent.includes(t("site.katalog_tittel")));
   assert.ok(app.textContent.includes(t("site.omrade.okonomi")));
   assert.ok(app.textContent.includes(t("site.katalog.m42.navn")),
-    "modulkatalogen mangler på forsiden");
+    "modulkatalogen mangler under Tjenester");
+  // «Slik virker det» og «Om produktet» bærer resten.
+  await paaSide(app, "slik");
+  assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
+  assert.ok(app.textContent.includes(t("site.problem_tittel")));
+  await paaSide(app, "om");
+  assert.ok(app.textContent.includes(t("site.svar_tittel")));
+  // Returstien måles der skjemaene faktisk står.
+  await paaSide(app, "logg-inn");
   // …men DRIFTSVOKABULARET skal ikke nå en anonym besøkende. Skillet er ikke
   // «modul» mot «ikke modul»: navnene ER tilbudet. Det som ikke hører hjemme
   // er de interne merkelappene — modulnumre og byggeregnskap.
@@ -119,7 +138,7 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
   // klassene må ha en definisjon i stilkilden, og de to tilstandene må ha
   // forskjellig klasse.
   const app = nyttAppBrett();
-  await visInnlogging();
+  await paaSide(app, "tjenester");
   await vent(() => app.querySelectorAll(".site-mini-card .site-badge").length > 0);
   const css = ["base.css", "komponenter.css"]
     .map((f) => readFileSync(join(HER, "..", "static", "css", f), "utf-8"))
@@ -235,6 +254,9 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
     return ekteFetch(url);
   };
   try {
+    // Skjemaene testen måler bor på innloggingssiden etter at forsiden ble
+    // navigert (§2.3). Vernet som måles er det samme.
+    window.location.hash = "#/logg-inn";
     await visInnlogging();
     await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
     const engelsk = [...app.querySelectorAll(".site-sprak-knapp")]
@@ -247,7 +269,7 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
     // Andre klikk — samme knapp, for siden er ikke rendret på nytt ennå. Dette
     // byttet eier flaten fra nå, og det er det som kommer i mål først.
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
+    await vent(() => app.textContent.includes(EN["site.nav.logg_inn"]));
     assert.equal(app.querySelectorAll("form").length, 2,
       "det gjeldende byttet rendret ikke innloggingsveiene");
 
@@ -259,7 +281,7 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
       "et forbigått språkbytte skrev over flaten med sitt eget oppsett-svar");
     assert.ok(!app.textContent.includes(NB["ui.logg_inn_utilgjengelig"]),
       "forsiden endte i feiltilstand fra et kall brukeren hadde forlatt");
-    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+    assert.ok(app.textContent.includes(EN["site.nav.logg_inn"]),
       "flaten det gjeldende byttet bygde står ikke lenger");
   } finally {
     slippOppsett();
@@ -564,4 +586,51 @@ test("Admin: policyaktivering tilbys bare med policy-forvaltningsscope", () => {
   assert.equal(drift.querySelector('a[href="#/unntak"]'), null,
     "unntakssnarvei tilbudt uten exceptions:read");
   assert.ok(drift.querySelector('a[href="#/kundeadmin"]'));
+});
+
+test("Forsiden er navigert: 5 elementer, én side om gangen, fokus følger", async () => {
+  // §2.3: hovednavigasjon med 5–7 elementer. §2.1: maks tre handlingsvalg per
+  // skjermbilde, alt innen to klikk. Den gamle forsiden var én rulle med ALT.
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-nav"));
+
+  const lenker = [...app.querySelectorAll(".site-nav-lenke")];
+  assert.ok(lenker.length >= 5 && lenker.length <= 7,
+    `hovednavigasjonen har ${lenker.length} elementer, ikke 5–7`);
+  assert.equal(app.querySelector(".site-nav").getAttribute("aria-label"),
+    t("site.nav.merkelapp"), "nav-landemerket mangler navn");
+
+  // Hjem er standard, og BARE hjem står i DOM-en.
+  assert.equal(lenker[0].getAttribute("aria-current"), "page");
+  assert.ok(app.textContent.includes(t("site.hero.tittel")));
+  assert.ok(!app.textContent.includes(t("site.katalog_tittel")),
+    "katalogen står på forsiden — da er den fortsatt én lang rulle");
+  assert.ok(!app.textContent.includes(t("site.svar_tittel")));
+
+  // Ett klikk til tjenester: innholdet byttes, markeringen flytter seg, og
+  // fokus lander på den nye overskriften — ellers vet ikke en tastaturbruker
+  // at siden ble byttet.
+  window.location.hash = "#/tjenester";
+  await vent(() => app.textContent.includes(t("site.katalog_tittel")));
+  assert.equal(document.activeElement.id, "sidetittel",
+    "fokus ble ikke flyttet til den nye sidens overskrift");
+  const naa = [...app.querySelectorAll(".site-nav-lenke")]
+    .filter((a) => a.getAttribute("aria-current") === "page");
+  assert.equal(naa.length, 1, "mer enn én side markert som gjeldende");
+  assert.equal(naa[0].textContent, t("site.nav.tjenester"));
+  assert.ok(!app.textContent.includes(t("site.hero.tittel")),
+    "forrige side står igjen i DOM-en");
+
+  const brudd = await alvorligeBrudd(app);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Forsiden: ukjent rute faller tilbake til hjem, den blir ikke tom", async () => {
+  const app = nyttAppBrett();
+  window.location.hash = "#/finnes-ikke";
+  await visInnlogging();
+  await vent(() => app.querySelector("#sidetittel"));
+  assert.ok(app.textContent.includes(t("site.hero.tittel")),
+    "en ukjent rute ga en tom side i stedet for hjem");
 });

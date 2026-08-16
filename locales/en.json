@@ -591,5 +591,14 @@
   "ui.dag.tor": "Thursday",
   "ui.dag.fre": "Friday",
   "ui.dag.lor": "Saturday",
-  "ui.dag.son": "Sunday"
+  "ui.dag.son": "Sunday",
+  "site.nav.merkelapp": "Main navigation",
+  "site.nav.hjem": "Home",
+  "site.nav.tjenester": "Services",
+  "site.nav.slik": "How it works",
+  "site.nav.om": "About",
+  "site.nav.logg_inn": "Sign in",
+  "site.cta.logg_inn": "Sign in",
+  "site.cta.se_tjenester": "See the services",
+  "site.tjenester_ingress": "The agent covers eleven business areas. Adopt one at a time — your authority applies the same way to all of them."
 }

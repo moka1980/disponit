@@ -591,5 +591,14 @@
   "ui.dag.tor": "torsdag",
   "ui.dag.fre": "fredag",
   "ui.dag.lor": "lørdag",
-  "ui.dag.son": "søndag"
+  "ui.dag.son": "søndag",
+  "site.nav.merkelapp": "Hovednavigasjon",
+  "site.nav.hjem": "Hjem",
+  "site.nav.tjenester": "Tjenester",
+  "site.nav.slik": "Slik virker det",
+  "site.nav.om": "Om produktet",
+  "site.nav.logg_inn": "Logg inn",
+  "site.cta.logg_inn": "Logg inn",
+  "site.cta.se_tjenester": "Se tjenestene",
+  "site.tjenester_ingress": "Agenten dekker elleve fagområder. Ta i bruk ett om gangen — fullmaktene dine gjelder likt for alle."
 }
