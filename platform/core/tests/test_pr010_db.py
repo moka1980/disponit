@@ -357,3 +357,24 @@ def test_profildata_hentes_bare_der_den_skal_vises():
         "profilen skal ikke koste en ekstra transaksjon"
     assert ident[0] < spor2.index("ROLLBACK"), \
         "profiloppslaget skal ligge i samme transaksjon som medlemskapet"
+
+
+def test_null_element_i_roller_velter_ikke_okten():
+    """`brukermedlemskap.roller` er `TEXT[] NOT NULL` — men NOT NULL gjelder
+    ARRAYET, ikke elementene: `{NULL,leser}` er en lovlig rad. Da `/v1/sesjon`
+    begynte å returnere `sorted(roller)`, sprakk svaret med TypeError på å
+    sammenligne `None` med en streng, og skallet nektet å laste for den
+    brukeren — en visningsdetalj som slo ut hele flaten.
+
+    Autorisasjonen har alltid tålt ukjente verdier (de gir ingen scopes), så
+    rollelista normaliseres samme vei: `None` er ingen rolle og faller bort.
+    """
+    from api import sesjon as s
+    conn = _TellendeConn([("t-x", "bid_1", 7),      # slaa_opp_sesjon
+                          None, None,               # sett_kontekst
+                          ([None, "leser"], 7)])    # brukermedlemskap
+    prin = s.slaa_opp_prinsipal(None, conn, _Foresporsel("c"), "rid")
+    assert prin[4] == ["leser"], "None er ingen rolle"
+    assert sorted(prin[4]) == ["leser"], "/v1/sesjon skal kunne sortere"
+    assert prin[2] == s.scopes_for_roller(["leser"]), \
+        "scopene skal være uendret av at et NULL-element falt bort"

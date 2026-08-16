@@ -594,8 +594,15 @@ def slaa_opp_prinsipal(tjeneste, conn, request: Request, rid: str,
     conn.rollback()
     if not gyldig:
         return None
-    roller = list(med[0] or ())
-    scopes = scopes_for_roller(med[0])
+    # `brukermedlemskap.roller` er `TEXT[] NOT NULL` — men det forbyr bare
+    # SELV arrayet å være NULL, ikke ELEMENTENE. `{admin,NULL}` er en lovlig
+    # rad, og et `None` blant strengene sprengte `sorted(roller)` i
+    # /v1/sesjon med TypeError (Codex P2): hele skallet nektet å laste for
+    # den brukeren. Autorisasjonen har alltid tålt slikt — `scopes_for_roller`
+    # gir en ukjent verdi ingen scopes — så rollelista normaliseres samme vei:
+    # bare strenger slipper gjennom, resten er ingen rolle og faller bort.
+    roller = [r for r in (med[0] or ()) if isinstance(r, str)]
+    scopes = scopes_for_roller(roller)
     epost = ident[0] if ident else None
     utloper = (_naa() + timedelta(hours=ABSOLUTT_TIMER)).isoformat()
     return tenant, bid, scopes, utloper, roller, epost
