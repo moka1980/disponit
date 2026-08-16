@@ -157,12 +157,27 @@ function skalarListeRad(element, blader) {
         + verdier.join(", ") }));
 }
 
-// Et blad er skalart når det ikke har noe felt under elementet — enten fordi
-// resten er tom («dataklasser[0]»), eller fordi den bare er en indeks
-// («unntak.kategorier[3]»). Åtte unntakskategorier er ÉN beslutning.
-function erSkalarblad(e) {
-  const rest = delOppSti(e.sti).rest;
-  return !rest || /^\[\d+\]$/.test(rest);
+// Et blad er MEDLEM AV EN LISTE bare når resten er en indeks
+// («dataklasser[0]», «unntak.kategorier[3]»). Åtte unntakskategorier er ÉN
+// beslutning, og slås sammen til én `[]`-rad.
+//
+// Et blad uten rest er derimot et helt vanlig skalarfelt («tidssone»,
+// «unntak.maks_auto_forsok»). Det ble tidligere regnet som skalarblad det
+// også, så ett enkelt lagt-til felt gikk gjennom `skalarListeRad` og kom ut
+// som «tidssone[]» — diffen påsto at feltet var en liste. Godkjenneren
+// attesterer strukturen hun ser, så en sti som ikke finnes i policyen er
+// ikke en kosmetisk feil (Codex P2).
+function erListeblad(e) {
+  return /^\[\d+\]$/.test(delOppSti(e.sti).rest);
+}
+
+function erBladetSelv(e) {
+  return !delOppSti(e.sti).rest;
+}
+
+function feltdiffRad(blader) {
+  return el("li", { class: "diff-elementrad" },
+    el("ul", { class: "feltdiff" }, ...blader.map(bladRad)));
 }
 
 function elementBlokk(element, blader) {
@@ -172,12 +187,14 @@ function elementBlokk(element, blader) {
   // fullmaktsdiff er nøyaktig det grupperingen ikke har lov til å gjøre, så
   // blandede eller endrede blader beholder én rad hver.
   const ensartet = blader.every((e) => e.type === blader[0].type);
-  if (blader.every(erSkalarblad)) {
+  if (blader.every(erListeblad)) {
     return (ensartet && blader[0].type !== "endret")
       ? skalarListeRad(element, blader)
-      : el("li", { class: "diff-elementrad" },
-        el("ul", { class: "feltdiff" }, ...blader.map(bladRad)));
+      : feltdiffRad(blader);
   }
+  // Elementet ER bladet: ingen felt under seg, ingen liste å slå sammen.
+  // Det skal stå med sin egen sti, ikke pakkes i et kort og ikke få «[]».
+  if (blader.every(erBladetSelv)) return feltdiffRad(blader);
 
   const { navn, merker } = elementOverskrift(element, blader);
   const detaljer = el("details", { class: "diff-element" });

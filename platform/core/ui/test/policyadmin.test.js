@@ -1663,6 +1663,38 @@ test("Diff: en skalarliste på toppnivå blir ÉN rad, ikke én per indeks",
     }
   });
 
+// Et enkelt lagt-til skalarfelt tilfredsstilte også «alle blader er
+// skalare», og gikk gjennom sammenslåingen som hektet på «[]». «tidssone»
+// ble vist som «tidssone[]» — diffen påsto at feltet var en liste.
+// Godkjenneren attesterer strukturen hun ser (Codex P2).
+const SKALAR_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  diff: { endringer: [
+    { sti: "tidssone", type: "lagt_til", til: "Europe/Oslo" },
+    { sti: "unntak.maks_auto_forsok", type: "lagt_til", til: 3 },
+    { sti: "unntak.kategorier[0]", type: "lagt_til", til: "over_grense" },
+    { sti: "unntak.kategorier[1]", type: "lagt_til", til: "manglende_data" },
+  ] },
+};
+
+test("Diff: et enkelt skalarfelt omdøpes ikke til en liste", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": SKALAR_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const stier = [...rot.querySelectorAll("code")].map((c) => c.textContent);
+  assert.ok(stier.includes("tidssone"),
+    `«tidssone» skal stå med sin egen sti (fant ${JSON.stringify(stier)})`);
+  assert.ok(!stier.includes("tidssone[]"),
+    "et skalarfelt ble presentert som en liste");
+  assert.ok(stier.includes("unntak.maks_auto_forsok")
+    && !stier.includes("unntak.maks_auto_forsok[]"),
+    "et skalarfelt under en gruppe ble presentert som en liste");
+  // Og den EKTE lista skal fortsatt slås sammen.
+  assert.ok(stier.includes("unntak.kategorier[]"),
+    "en reell skalarliste skal fortsatt bli én rad");
+});
+
 test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
   async () => {
     SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
