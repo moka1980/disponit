@@ -104,6 +104,23 @@ function normaliserKlassifikatorSti(sti) {
 // Derfor deles stien mot BEGGE sider: utkastet vet om nøkler som finnes
 // etter endringen, basen om dem som er borte. En nøkkel som finnes i én av
 // dem er en ekte nøkkelgrense, og lengste treff på tvers vinner.
+//
+// Men lengste faktiske nøkkel hjalp ikke så lenge skilletegnet ble TOLKET
+// først (Codex P2, bekreftet blokkerende av eier). `verifikatorer` har heller
+// ingen `propertyNames`-begrensning, så `[bank]` og `.foo` er lovlige
+// verifikator-id-er. Løkken behandlet `rest[0] === "."` og `rest[0] === "["`
+// før den så på nodens nøkler: `verifikatorer..foo…` mistet det ene punktumet
+// som var en DEL av nøkkelen, og `verifikatorer.[bank]…` ble lest som
+// listeindeks. Begge falt tilbake til samlegruppen `verifikatorer`, og flere
+// slike verifikatorer ble ett kort med feil — eller ingen — overskrift.
+//
+// Serverens `_flat` er entydig om hvor grensen går (`policydiff.py:18`): en
+// objektnøkkel skjøtes på med NØYAKTIG ett punktum foran seg, en listeindeks
+// med klammer og INTET punktum. Så et punktum er skilletegnet, og alt etter
+// det — punktum, klammer eller ikke — er begynnelsen på en nøkkel. Klammer er
+// indeks bare der de står UTEN punktum foran seg, altså der noden faktisk er
+// en liste. Da er `[bank]` etter et punktum en nøkkel og `[0]` uten punktum
+// en indeks, uten at parseren trenger å gjette.
 function delOppLedd(sti, kilder) {
   const ledd = [];
   let rest = sti;
@@ -112,9 +129,11 @@ function delOppLedd(sti, kilder) {
     .map(inn).filter((n) => n !== undefined);
   const ned = (velg) => noder.map(velg).map(inn)
     .filter((n) => n !== undefined);
+  // Første ledd er en rotnøkkel uten skilletegn foran seg; senere ledd er
+  // enten en klammeindeks eller ett punktum + nøkkel.
+  let forste = true;
   while (rest) {
-    if (rest[0] === ".") { rest = rest.slice(1); continue; }
-    if (rest[0] === "[") {
+    if (!forste && rest[0] === "[") {
       const j = rest.indexOf("]");
       if (j < 0) { ledd.push({ tekst: rest, noekkel: rest, brakett: true,
         indeks: false }); break; }
@@ -125,6 +144,12 @@ function delOppLedd(sti, kilder) {
       rest = rest.slice(j + 1);
       continue;
     }
+    // Ett — og bare ett — punktum er skilletegnet. Resten hører nøkkelen til.
+    if (!forste) {
+      if (rest[0] === ".") rest = rest.slice(1);
+      if (!rest) break;
+    }
+    forste = false;
     let navn = null;
     for (const n of noder) {
       if (Array.isArray(n)) continue;
@@ -135,7 +160,12 @@ function delOppLedd(sti, kilder) {
         if (navn === null || k.length > navn.length) navn = k;
       }
     }
-    if (navn === null) navn = /^[^.[]+/.exec(rest)[0];
+    // Ingen kilde vet om nøkkelen (klassifikatorstier, eller et ledd under noe
+    // som er borte fra begge sider): da er punktum og klammer skilletegn igjen,
+    // som før. Ett innledende skilletegn hører likevel nøkkelen til — vi står
+    // rett etter det punktumet som skilte leddene, så `[bank]` og `.foo` tas
+    // hele i stedet for å bli indeks eller forsvinne.
+    if (navn === null) navn = /^[.[]?[^.[]*/.exec(rest)[0];
     noder = ned((n) => (Array.isArray(n) ? undefined : n[navn]));
     ledd.push({ tekst: navn, noekkel: navn, brakett: false, indeks: false });
     rest = rest.slice(navn.length);

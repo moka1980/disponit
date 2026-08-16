@@ -2171,6 +2171,87 @@ test("Diff: to slettede verifikatorer med punktum i id-en blir to kort",
     }
   });
 
+// `verifikatorer` har ubegrensede nøkkelnavn, så en id kan også BEGYNNE med
+// et skilletegn: `[bank]` og `.faktura` er lovlige. `_flat` skjøter dem på med
+// nøyaktig ett punktum («verifikatorer.[bank]…», «verifikatorer..faktura…»),
+// men parseren tolket skilletegnet FØR den så på nodens nøkler: klammene ble
+// listeindeks og det ene punktumet forsvant. Begge falt tilbake til
+// samlegruppen `verifikatorer` (Codex P2, bekreftet blokkerende av eier).
+//
+// Kontroll: la `delOppLedd` tolke `[`/`.` før nøkkeloppslaget igjen, så blir
+// denne rød.
+const SKILLETEGNNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      "[bank]": { beskrivelse: "Bankintegrasjon" },
+      ".faktura": { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.[bank].beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.[bank].kan_fastsla_permanent", type: "endret",
+      fra: false, til: true },
+    { sti: "verifikatorer..faktura.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+    { sti: "verifikatorer..faktura.kan_fastsla_permanent", type: "lagt_til",
+      til: false },
+  ] },
+};
+
+// Og slettet: da finnes nøklene bare på før-siden, så oppdelingen må finne
+// grensene i basen — nøyaktig det tilfellet der fullmakt FORSVINNER.
+const SLETTET_SKILLETEGNNOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { tidssone: "UTC" },
+  base_innhold: {
+    verifikatorer: {
+      "[bank]": { beskrivelse: "Bankintegrasjon" },
+      ".faktura": { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.[bank].beskrivelse", type: "fjernet",
+      fra: "Bankintegrasjon" },
+    { sti: "verifikatorer.[bank].kan_fastsla_permanent", type: "fjernet",
+      fra: true },
+    { sti: "verifikatorer..faktura.beskrivelse", type: "fjernet",
+      fra: "Fakturamottak" },
+    { sti: "verifikatorer..faktura.kan_fastsla_permanent", type: "fjernet",
+      fra: false },
+  ] },
+};
+
+for (const [hva, fikstur] of [
+  ["beholdt", SKILLETEGNNOKKEL_DIFF],
+  ["slettet", SLETTET_SKILLETEGNNOKKEL_DIFF],
+]) {
+  test(`Diff: en ${hva} map-nøkkel som starter med et skilletegn er én nøkkel`,
+    async () => {
+      SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": fikstur,
+        __post: async () => ({}) };
+      const rot = await aapneEndringer(nyHoved());
+      const v = gruppeMedNavn(rot,
+        t("ui.policyadmin.diff.gruppe.verifikatorer"));
+      const kort = [...v.querySelectorAll(".diff-element")];
+      assert.equal(kort.length, 2,
+        `to verifikatorer er to kort (fant ${kort.length})`);
+      const bank = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+      assert.ok(bank, "verifikatorene ble slått sammen til ett kort");
+      assert.ok(!bank.textContent.includes("Fakturamottak"),
+        "en annen verifikators felt havnet i dette kortet");
+      for (const [id, opps] of kort.map((k) =>
+        [k.textContent.includes("Bankintegrasjon") ? "[bank]" : ".faktura",
+          k.querySelector("summary").textContent])) {
+        assert.ok(opps.includes(id),
+          `overskriften navngir ikke verifikatoren «${id}»: «${opps}»`);
+      }
+    });
+}
+
 test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
     __post: async () => ({}) };
