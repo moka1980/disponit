@@ -479,7 +479,9 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
     rid = _rid(request)
     conn = tjeneste.pool.hent()
     try:
-        prin = slaa_opp_prinsipal(tjeneste, conn, request, rid)
+        # `med_profil`: DETTE er endepunktet som viser hvem du er, og det
+        # eneste som skal betale for profiloppslaget.
+        prin = slaa_opp_prinsipal(tjeneste, conn, request, rid, med_profil=True)
         if prin is None:
             return _feilsvar("sesjon_ugyldig", rid)
         tenant, bid, scopes, utloper, roller, epost = prin
@@ -544,10 +546,16 @@ def sesjon_logout(tjeneste, request: Request) -> Response:
 # Enhetlig prinsipal: cookie XOR Bearer (v2 §8) + authz_version (v2 §3)
 # ---------------------------------------------------------------------------
 
-def slaa_opp_prinsipal(tjeneste, conn, request: Request, rid: str):
-    """-> (tenant, bruker_id, scopes, utloper_iso) for en gyldig
-    sesjonscookie, ellers None. Kaster SesjonFeil('dobbel_principal') hvis
-    BÅDE cookie og Authorization er satt."""
+def slaa_opp_prinsipal(tjeneste, conn, request: Request, rid: str,
+                       med_profil: bool = False):
+    """-> (tenant, bruker_id, scopes, utloper_iso, roller, epost) for en
+    gyldig sesjonscookie, ellers None. Kaster SesjonFeil('dobbel_principal')
+    hvis BÅDE cookie og Authorization er satt.
+
+    `epost` er VISNINGSDATA og hentes bare når `med_profil` er satt — den er
+    `None` for alle andre kall, uansett hva brukeren har registrert. Rollene
+    er derimot gratis: de ligger allerede i medlemskapsraden autorisasjonen
+    uansett må lese."""
     sesjon = request.cookies.get(C_SESJON)
     har_bearer = bool(request.headers.get("authorization"))
     if sesjon and har_bearer:
@@ -565,21 +573,29 @@ def slaa_opp_prinsipal(tjeneste, conn, request: Request, rid: str):
     med = conn.execute(
         "SELECT roller, authz_version FROM brukermedlemskap"
         " WHERE tenant=%s AND bruker_id=%s AND aktiv", (tenant, bid)).fetchone()
-    conn.rollback()
-    if med is None or med[1] != snapshot:
-        return None
-    roller = list(med[0] or ())
-    scopes = scopes_for_roller(med[0])
+    gyldig = med is not None and med[1] == snapshot
     # Hvem er dette? Fire øyne krever at TO FORSKJELLIGE prinsipaler
     # attesterer, og flaten kunne ikke vise hvem som var innlogget — bare
     # `bid_10e5674…`. Med to konti i samme nettleser er det ikke en
     # kosmetisk mangel: eier kunne attestert to ganger som samme prinsipal og
     # først fått vite det av primærnøkkelen. E-posten er øktens EGEN, og
     # hentes derfor uten videre autorisasjon.
+    #
+    # MEN: `_autentiser` kaller denne funksjonen for HVER cookie-autentisert
+    # lesning og mutasjon, og kaster profilen med én gang (Codex P2). Et
+    # ubetinget oppslag la derfor en ekstra spørring — og en egen transaksjon
+    # å rulle tilbake — på hvert eneste API-kall, for data bare /v1/sesjon
+    # viser. Én skjerm gjør flere slike kall. Derfor `med_profil`, og
+    # oppslaget ligger FØR rollbacken: samme transaksjon som medlemskapet, så
+    # profilen koster én spørring og ingen ny rundtur.
     ident = conn.execute(
         "SELECT profil->>'epost' FROM brukeridentitet WHERE bruker_id=%s",
-        (bid,)).fetchone()
+        (bid,)).fetchone() if (gyldig and med_profil) else None
     conn.rollback()
+    if not gyldig:
+        return None
+    roller = list(med[0] or ())
+    scopes = scopes_for_roller(med[0])
     epost = ident[0] if ident else None
     utloper = (_naa() + timedelta(hours=ABSOLUTT_TIMER)).isoformat()
     return tenant, bid, scopes, utloper, roller, epost
