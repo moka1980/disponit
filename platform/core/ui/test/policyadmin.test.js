@@ -1889,6 +1889,41 @@ test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
       "modulen skiftet også, og begge sider hører hjemme i overskriften");
   });
 
+// `retention[]` har ingen `id`, men skjemaet KREVER `dataklasse` — og det er
+// dataklassen en oppbevaringsregel handler om. Uten den som identitet het
+// hvert kort «retention[0]», «retention[1]» …, og med flere regler måtte
+// godkjenneren åpne hvert eneste kort for å finne ut hvilke data den endrede
+// regelen gjaldt (Codex P2).
+//
+// Kontroll: ta `dataklasse` ut av `IDENTITET`, så blir denne rød.
+const RETENTION_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    retention: [
+      { dataklasse: "persondata", aar_min: 5, regel: "gdpr" },
+      { dataklasse: "finansiell", aar_min: 10, regel: "bokforing" },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "retention[0].aar_min", type: "endret", fra: 3, til: 5 },
+    { sti: "retention[1].aar_min", type: "endret", fra: 7, til: 10 },
+  ] },
+};
+
+test("Diff: en oppbevaringsregel navngis av dataklassen sin", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": RETENTION_DIFF,
+    __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = [...rot.querySelectorAll(".diff-element > summary")]
+    .map((s) => s.textContent);
+  assert.equal(opps.length, 2, "to oppbevaringsregler er to kort");
+  for (const k of ["persondata", "finansiell"]) {
+    assert.ok(opps.some((o) => o.includes(k)),
+      `ingen overskrift navngir dataklassen «${k}»: ${JSON.stringify(opps)}`);
+  }
+});
+
 // `tillatt_for` er en MENGDE av roller. Sto bare `tillatt_for[0]` i
 // overskriften, var en rolle lagt til ETTER den første usynlig i den lukkede
 // oppsummeringen — enda det å gi en ny rolle fullmakt er nettopp det serveren

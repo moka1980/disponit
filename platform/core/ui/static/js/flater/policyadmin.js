@@ -216,7 +216,13 @@ function bladRad(e) {
 // hvert eneste kort for å finne ut hvilken handling og hvilken beløpsgrense
 // det gjaldt — akkurat den forskjellen kortene ble delt opp for å vise
 // (Codex P2). Rekkefølgen er prioritert: første felt som finnes, vinner.
-const IDENTITET = ["id", "handling"];
+//
+// `retention[]` er den tredje lista uten `id`: skjemaet KREVER `dataklasse`,
+// og det er dataklassen en oppbevaringsregel handler om. Uten den het hvert
+// kort «retention[0]», «retention[1]» …, og med flere regler måtte hvert
+// eneste kort åpnes for å finne ut hvilke data den endrede regelen gjaldt
+// (Codex P2).
+const IDENTITET = ["id", "handling", "dataklasse"];
 
 // Fullmaktsbærende felt, i den rekkefølgen de vises.
 const NOKKELFELT = ["modul", "modus", "grunnkode"];
