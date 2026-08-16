@@ -14,6 +14,7 @@ Grensene som prøves her er de som gjør forkastingen trygg:
 """
 import json
 import secrets
+from datetime import datetime, timezone
 
 import pytest
 
@@ -73,12 +74,37 @@ def _utkast(uid, status="validert", pid=None):
     return pid
 
 
-def _forkast(rt, uid, ver=1):
+def _forkast(rt, uid, ver=1, naa=None):
     idem = secrets.token_hex(8)
     return policyadmin.forkast_utkast(
         rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
         forventet_utkastversjon=ver, idempotency_key=idem,
-        input_hash=f"{TEN}\x1f{uid}\x1fforkast\x1f{ver}\x1f{idem}")
+        input_hash=f"{TEN}\x1f{uid}\x1fforkast\x1f{ver}\x1f{idem}",
+        naa=naa or datetime.now(timezone.utc))
+
+
+def _runde(uid, utloper, status="apen"):
+    """Legg inn en runde direkte — testene her prøver forkastingens grenser,
+    ikke runde-åpningen."""
+    m = _mig()
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        f" VALUES (%s,%s,1,'{status}','dh','ih','bh','UTVIDER','kh','1','0.2',"
+        f"'1','dah','1',2,now()+interval '{utloper}')", (TEN, uid))
+    m.commit()
+    m.close()
+
+
+def _rundestatus(uid):
+    m = _mig()
+    rad = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                    " AND utkast_id=%s AND runde=1", (TEN, uid)).fetchone()
+    m.close()
+    return rad[0] if rad else None
 
 
 def _status(uid):
@@ -130,23 +156,56 @@ def test_utkast_med_aapen_runde_kan_ikke_rives_bort():
     """
     uid = "u-" + secrets.token_hex(6)
     _utkast(uid, "validert")
-    m = _mig()
-    m.execute(
-        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
-        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
-        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
-        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
-        "pakrevd_antall_godkjennere,utloper)"
-        " VALUES (%s,%s,1,'apen','dh','ih','bh','UTVIDER','kh','1','0.2','1',"
-        "'dah','1',2,now()+interval '1 hour')", (TEN, uid))
-    m.commit()
-    m.close()
+    _runde(uid, "1 hour")
     rt = _rt()
     try:
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
             _forkast(rt, uid)
         assert "runde" in str(e.value.kode)
         assert _status(uid) == "validert", "utkastet ble forkastet likevel"
+        assert _rundestatus(uid) == "apen", "levende runde ble lukket"
+    finally:
+        rt.close()
+
+
+@pg
+def test_forfalt_runde_blokkerer_ikke_forkasting_for_alltid():
+    """En runde som har passert `utloper` er død, men ingenting satte den til
+    `utlopt`: `attester_aktivering` nekter den og ruller tilbake, så raden ble
+    liggende `apen`. Da så forkastingen en «åpen» runde for alltid, og
+    utkastet kunne ALDRI ryddes bort — flatens eneste «slett» var stengt av en
+    runde ingen kunne avslutte (Codex P2).
+
+    Kontroll: fjern `_lukk_forfalt_runde`-kallet i `forkast_utkast`, så blir
+    denne rød.
+    """
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, "validert")
+    _runde(uid, "-1 hour")
+    rt = _rt()
+    try:
+        res = _forkast(rt, uid)
+        rt.commit()
+        assert res["utfall"] == "forkastet"
+        assert _status(uid) == "forkastet"
+        assert _rundestatus(uid) == "utlopt", "runden ble stående åpen"
+    finally:
+        rt.close()
+
+
+@pg
+def test_forfalt_klar_runde_lukkes_ogsaa():
+    """`klar` er like fastlåst som `apen`: statusmaskinen i 012 tillater
+    `klar → utlopt`, og en forfalt runde kan uansett ikke aktiveres."""
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, "validert")
+    _runde(uid, "-5 minutes", status="klar")
+    rt = _rt()
+    try:
+        res = _forkast(rt, uid)
+        rt.commit()
+        assert res["utfall"] == "forkastet"
+        assert _rundestatus(uid) == "utlopt"
     finally:
         rt.close()
 
