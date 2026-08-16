@@ -676,5 +676,6 @@
   "ui.policyadmin.forkast.tekst": "The draft stays on record as discarded and cannot be used again. No active policy changes — this is a proposal, not an authority.",
   "ui.policyadmin.forkast.maal": "draft {utkast}, version {versjon}",
   "ui.policyadmin.forkast.ukjent": "We do not know whether the discard went through: the network did not answer, and the attempt was retried once. Refresh and check the draft's status before trying again.",
-  "ui.policyadmin.forkastet": "The draft has been discarded."
+  "ui.policyadmin.forkastet": "The draft has been discarded.",
+  "ui.policyadmin.utfall.status_ikke_produksjon": "The draft must have meta.status “produksjon” before it can be activated — templates ship as “utkast”."
 }

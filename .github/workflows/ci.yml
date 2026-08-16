@@ -187,6 +187,15 @@ jobs:
         run: python platform/core/examples/run_synthetic.py
       - name: "UI-kontrakt (V1): backend leverer feltene M-1-flaten leser"
         run: python -m pytest platform/core/tests/test_ui_kontrakt.py -q
+      # Styringskjeden ende-til-ende på en FERSK, normalt bootstrappet tenant.
+      # Enhetstestene var grønne gjennom hele august mens fire defekter i
+      # nettopp denne kjeden nådde produksjon — de målte deler, ikke bruk.
+      # Rundturen går hele veien til terminaltilstand, inkludert at den
+      # aktiverte policyen faktisk kan HENTES etterpå.
+      - name: "Policy-rundtur: bootstrap → fire øyne → aktivering → bruk"
+        env:
+          DISPONIT_REPO: ${{ github.workspace }}
+        run: python deploy/staging/policy-rundtur.py
 
   # PR-011: M-1 kundeflate — egen node-jobb. axe-core + komponent-/flate-/
   # kontraktstester (gate 1/6/7/9/10/11 + no-hardkodet-tekst + V3). WCAG-

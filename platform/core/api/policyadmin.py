@@ -165,6 +165,27 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     if tilstand == "konflikt":
         conn.rollback()
         raise Aktiveringsfeil("idempotenskonflikt")
+    # Dokumentets `meta.status` settes HER, ikke av mennesket.
+    #
+    # Bransjemalene bærer `status: utkast` — riktig for en mal. Men aktiveringen
+    # skriver `produksjon` i registeret, og `hent_aktiv` krever at de to er
+    # like; et utkast som bar malens status videre ble derfor aktivert til en
+    # policy som ble avvist som korrupt ved HVER beslutning. Eier laget to
+    # slike (`tjenestebedrift1`, `tjenestebedrift2`) uten at noe sa fra.
+    #
+    # Editoren eksponerer ikke feltet, og skal ikke gjøre det: arbeidsflyt-
+    # statusen ligger i `policyutkast.status` (utkast → validert → godkjent →
+    # aktivert). `meta.status` beskriver hva dokumentet ER som registrert
+    # policy, altså en KONSEKVENS av å bli aktivert — ikke et valg. Å be
+    # mennesket skrive «produksjon» i et fritekstfelt ville bare flyttet
+    # feilen.
+    #
+    # Normaliseringen skjer ved opprettelsen, FØR valideringen fryser
+    # `innholds_hash`: det som valideres, differes og attesteres er da det
+    # samme dokumentet som blir aktivert.
+    if isinstance(innhold.get("meta"), dict):
+        innhold = {**innhold,
+                   "meta": {**innhold["meta"], "status": "produksjon"}}
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
     utkast_id = "u-" + secrets.token_hex(8)
     conn.execute(
@@ -589,6 +610,20 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     ny = meta.get("versjon") if isinstance(meta, dict) else None
     if not isinstance(ny, str) or not _SEMVER.match(ny):
         raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r}")
+    # Dokumentets EGEN status må si `produksjon`, for det er statusen
+    # aktiveringen skriver i registeret — og `hent_aktiv` krever at de to er
+    # like. Bransjemalene har `status: utkast` (riktig for et forslag), så et
+    # utkast laget rett fra mal bærer den videre. Aktiveringen svarte da
+    # «aktivert», mens HVER påfølgende beslutning avviste den ferske policyen:
+    #   PolicyKorrupt: meta.status 'utkast' != registerets status 'produksjon'
+    # Funnet av policy-rundturen, ikke av en bruker — som er hele poenget med
+    # den. Kontrollen står her, sammen med versjonskontrollen, så den slår til
+    # FØR runden åpnes: å oppdage det etter to signaturer ville kastet bort en
+    # hel fire-øyne-runde på et utkast som aldri kunne lande.
+    dstatus = meta.get("status") if isinstance(meta, dict) else None
+    if dstatus != "produksjon":
+        raise Aktiveringsfeil("status_ikke_produksjon",
+                              f"meta.status={dstatus!r}")
     if conn.execute(
             "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND versjon=%s", (tenant, policy_id, ny)).fetchone():
