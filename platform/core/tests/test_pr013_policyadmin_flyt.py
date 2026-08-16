@@ -1811,6 +1811,120 @@ def test_aktivering_pensjonerer_hele_rundens_varsler():
 
 
 @pg
+def test_replay_forsoner_en_pensjonering_som_feilet(monkeypatch):
+    """Codex P2: en feilet pensjonering var ENDELIG.
+
+    Motstykket til forsoningen av VARSLINGEN, og samme mekanikk: oppryddingen
+    er skjermet med vilje — en fullmaktsendring skal ikke velte fordi den
+    feilet — men runden ble aktivert og committet likevel, mens godkjennernes
+    uleste, e-postkøede varsler ble stående og be dem attestere noe som var
+    ferdig. Klientens retry kunne ikke reparere det: replay-grenen svarte med
+    det lagrede utfallet før noen pensjonering ble forsøkt. Og senderen fanger
+    det ikke opp — den er kryss-tenant og vet med vilje ingenting om runder,
+    så e-posten går ut.
+
+    Her feiler pensjoneringen på den attesteringen som aktiverer (samme utfall
+    som en transient databasefeil: savepointet rulles tilbake, runden
+    aktiveres likevel), og retryen med SAMME nøkkel og input skal rydde det
+    som ble stående.
+
+    Kontroll: fjern `_forson_rundepensjonering`-kallet i replay-grenen, så
+    blir denne rød — varslene står igjen uleste og køet.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forsonp-forf", ["policyforvalter"])
+    b = _medlem("forsonp-uavh", ["policyforvalter"])
+    c = _medlem("forsonp-taus", ["policyforvalter"])   # svarer aldri
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        # Pensjoneringen gjør ingenting, som om hvert kall hadde feilet og
+        # blitt rullet tilbake til savepointet sitt. Den slås av FØR
+        # forfatterens attestering: steg 7c rydder hennes eget varsel, og et
+        # hull som allerede var lukket kunne ikke skilt fiksen fra fraværet.
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        _attester(rt, uid, a, r["diff_hash"])
+        assert _attester(rt, uid, b, r["diff_hash"],
+                         idem=idem)["utfall"] == "aktivert"
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    assert all(lest is None for lest, _ in v.values()), (
+        "forutsetningen holder ikke: noe ble pensjonert likevel")
+
+    # Retry med samme nøkkel og input. Svaret er det lagrede — men køen ryddes.
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        r2 = _attester(rt, uid, b, r["diff_hash"], idem=idem)
+    finally:
+        rt.close()
+    assert r2["utfall"] == "aktivert", "retryen gjorde noe annet enn å replaye"
+
+    etter = _varsler(uid)
+    assert {a, b, c} <= set(etter), f"varsler forsvant: {set(etter)}"
+    for bid, hvem in ((a, "forfatteren"), (b, "godkjenneren"),
+                      (c, "den som aldri svarte")):
+        assert etter[bid][0] is not None, (
+            f"{hvem} har fortsatt et ulest varsel om en runde som er brukt")
+        assert etter[bid][1] == "ikke_aktuelt", (
+            f"e-posten til {hvem} står fortsatt i kø etter replayen")
+
+
+@pg
+def test_replay_pensjonerer_ikke_en_runde_som_fortsatt_venter(monkeypatch):
+    """Forsoningen skal rydde et hull, ikke rive et levende varsel bort.
+
+    Venter runden fortsatt på andre godkjennere, er deres varsler SANNE — det
+    er bare aktørens eget som er ferdig (steg 7c). En forsoning som pensjonerte
+    hele runden her ville gjort innboksen taus om noe som faktisk venter, som
+    er den samme feilen som en innboks som lyver — bare motsatt vei.
+
+    Kontroll: bytt `bruker_id=aktor`-grenen i `_forson_rundepensjonering` med
+    en full pensjonering, så blir denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forsonv-forf", ["policyforvalter"])
+    b = _medlem("forsonv-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        # Forfatteren attesterer; runden venter fortsatt på den uavhengige.
+        assert _attester(rt, uid, a, r["diff_hash"],
+                         idem=idem)["utfall"] == "venter_godkjennere"
+    finally:
+        rt.close()
+    assert all(lest is None for lest, _ in _varsler(uid).values())
+
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        _attester(rt, uid, a, r["diff_hash"], idem=idem)
+    finally:
+        rt.close()
+
+    etter = _varsler(uid)
+    assert etter[a][0] is not None, \
+        "aktørens eget varsel ble ikke ryddet av forsoningen"
+    assert etter[b][0] is None, (
+        "forsoningen pensjonerte et varsel om en runde som fortsatt venter"
+        " på nettopp den godkjenneren")
+    assert etter[b][1] == "koet", "e-posten til den som venter ble avlyst"
+
+
+@pg
 def test_forfalt_runde_pensjonerer_varslene_sine():
     """Samme regel på den stille veien ut: en runde som forfaller.
 
