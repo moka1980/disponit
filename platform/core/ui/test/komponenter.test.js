@@ -358,3 +358,38 @@ test("AppShell: et modulvalg fyller kontekstpanelet", async () => {
   assert.ok(panel.textContent.includes(NB["site.omrade.okonomi"]),
     "området vises ikke i kontekstpanelet");
 });
+
+test("AppShell: modulvalget merkes og panelet tar imot fokus", () => {
+  // 🔴 ET VALG SOM IKKE SIER FRA ER IKKE ET VALG (Codex P2). Panelet ble fylt
+  // et helt annet sted i treet mens fokus ble stående på en uendret knapp:
+  // ingen valgt-tilstand, ingen kunngjøring, og på stablet visning lå panelet
+  // under hele 45-modulersmenyen.
+  const brett = nyttBrett();
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(rot);
+  const panel = rot.querySelector(".skall-kontekst");
+  assert.equal(panel.getAttribute("tabindex"), "-1",
+    "panelet kan ikke ta imot fokus");
+
+  const knapp = (nokkel) => [...rot.querySelectorAll(".skall-modul")]
+    .find((b) => b.textContent === NB[nokkel]);
+  knapp("site.katalog.m13.navn").dispatchEvent(new window.Event("click"));
+  assert.equal(knapp("site.katalog.m13.navn").getAttribute("aria-current"),
+    "true", "den valgte modulen er ikke merket");
+  assert.equal(rot.ownerDocument.activeElement, panel,
+    "fokus fulgte ikke med til det oppdaterte panelet");
+
+  // Ett valg om gangen: forrige merking skal bort.
+  knapp("site.katalog.m14.navn").dispatchEvent(new window.Event("click"));
+  assert.equal(knapp("site.katalog.m13.navn").getAttribute("aria-current"), null,
+    "to moduler står som valgt samtidig");
+
+  // Og merkingen overlever at menyen tegnes på nytt av søket — panelet viser
+  // fortsatt modulen, så knappen må fortsatt si at den er valgt.
+  const felt = rot.querySelector("#skall-sok");
+  felt.value = "faktura";
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(knapp("site.katalog.m14.navn").getAttribute("aria-current"),
+    "true", "valget forsvant da søket tegnet menyen på nytt");
+});

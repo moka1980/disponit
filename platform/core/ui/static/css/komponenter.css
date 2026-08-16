@@ -767,6 +767,16 @@ html[data-visning="landing"] .skall-hoved {
 
 .skall-modul:hover { background: var(--paper); }
 
+/* Den valgte modulen skal SES, ikke bare ligge i panelet. Markeringen bæres av
+   to kanaler — vekt og en kant — i tillegg til flaten, så den ikke er avhengig
+   av at forskjellen på to bakgrunner er synlig. */
+.skall-modul[aria-current="true"] {
+  background: var(--paper);
+  border-left: 3px solid var(--ink);
+  font-weight: 600;
+  padding-left: calc(var(--sp-2) - 3px);
+}
+
 .skall-kontekst-tittel { font-size: 1.05rem; margin: 0 0 var(--sp-2); }
 .skall-kontekst-liste { display: grid; gap: var(--sp-1) var(--sp-2);
   grid-template-columns: auto 1fr; margin: 0; }

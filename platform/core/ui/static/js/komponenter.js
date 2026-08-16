@@ -273,7 +273,14 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // Venstremenyen kan skjules (§2.3), og bryteren bærer `aria-expanded` — en
   // meny som forsvinner uten at kontrollen sier fra er en meny som er borte
   // for den som ikke ser den forsvinne.
-  const kontekst = el("aside", { class: "skall-kontekst",
+  //
+  // Kontekstpanelet tar imot FOKUS når et modulvalg fyller det (Codex P2).
+  // Uten det skjedde valget i stillhet: fokus ble stående på en knapp som ikke
+  // endret seg, panelet ligger et helt annet sted i treet, og ingenting sa at
+  // det var oppdatert. På den stablede visningen lå det i tillegg under hele
+  // 45-modulersmenyen, altså langt utenfor skjermen. `tabindex="-1"` gjør det
+  // til et mål man kan sendes til uten å legge det inn i tabrekkefølgen.
+  const kontekst = el("aside", { class: "skall-kontekst", tabindex: "-1",
     "aria-label": t("ui.shell.kontekst") },
     el("p", { class: "muted", text: t("ui.shell.kontekst_tom") }));
 
@@ -289,9 +296,24 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     el("label", { class: "sr-only", for: "skall-sok",
       text: t("ui.shell.sok_merkelapp") }), sokefelt);
 
+  // HVILKEN MODUL SER JEG PÅ (Codex P2). Valget er en tilstand menyen bærer,
+  // ikke en engangshendelse: knappene tegnes på nytt for hvert tastetrykk i
+  // søket, og uten at valget er lagret her ville markeringen forsvunnet i det
+  // brukeren skrev én bokstav — mens panelet fortsatt viste modulen.
+  let valgtModul = null;
+  const modulknapper = new Map();
+
+  function merkValgt() {
+    for (const [n, kn] of modulknapper) {
+      if (n === valgtModul) kn.setAttribute("aria-current", "true");
+      else kn.removeAttribute("aria-current");
+    }
+  }
+
   function tegnModuler(filter) {
     const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
     const grupper = [];
+    modulknapper.clear();
     for (const omrade of OMRADER) {
       const treff = omrade.moduler.filter((n) =>
         !q || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(valgtSprak || "nb")
@@ -305,16 +327,23 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
             const kn = el("button", { type: "button", class: "skall-modul",
               text: t(`site.katalog.m${n}.navn`) });
             kn.addEventListener("click", () => visKontekst(n));
+            modulknapper.set(n, kn);
             return el("li", {}, kn);
           }))));
     }
     // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting.
     sett(modulliste, grupper.length ? grupper
       : el("p", { class: "muted", text: t("ui.shell.moduler_tomt") }));
+    merkValgt();
   }
 
-  function visKontekst(n) {
+  // `fokuser` er sant for brukerens eget klikk og usant for et programmatisk
+  // oppslag: den som fyller panelet uten at brukeren ba om det, skal ikke rykke
+  // fokus ut av der brukeren står.
+  function visKontekst(n, { fokuser = true } = {}) {
     const status = modulStatus(n);
+    valgtModul = n;
+    merkValgt();
     sett(kontekst,
       el("h2", { class: "skall-kontekst-tittel",
         text: t(`site.katalog.m${n}.navn`) }),
@@ -325,6 +354,11 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
         el("dd", {}, siteStatusMerke(status)),
         el("dt", { text: t("ui.shell.kontekst_fase") }),
         el("dd", { text: String(faseFor(n)) })));
+    // Fokus flyttes ETTER at innholdet står der, ellers leses det tomme
+    // panelet. Da følger både skjermleseren og skjermbildet med — nettleseren
+    // ruller til det fokuserte elementet, som er hele poenget når panelet
+    // ligger under en 45-modulersmeny på en liten skjerm.
+    if (fokuser) kontekst.focus();
   }
 
   sokefelt.addEventListener("input", () => tegnModuler(sokefelt.value));
