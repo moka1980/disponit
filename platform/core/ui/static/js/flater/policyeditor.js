@@ -514,14 +514,27 @@ function policyIdHint(aktiv) {
   return t("ui.editor.policy_id_hint_avloser").replace("{id}", aktiv.id);
 }
 
-function metaSeksjon(policy, erNy, aktiv) {
+// Hjelpeteksten under det LÅSTE feltet. Vanligvis er det bare regelen —
+// identiteten velges ved opprettelse. Men er dokumentets id rettet ved
+// innlasting (`avstemIdentitet`), er det en endring eier ikke gjorde selv, og
+// da skal hun se BÅDE at den skjedde og hva som sto der: et låst felt som
+// stille bytter verdi er ikke en reparasjon eier kan gå god for.
+function policyIdLaastHint(rettetFra) {
+  if (!rettetFra) return t("ui.editor.policy_id_laast");
+  // Teksten nevner den gamle id-en mer enn én gang (hva som sto der, og hva
+  // eier gjør om det var den hun ville ha) — `split/join` bytter ALLE, der
+  // `replace` med en streng bare hadde tatt den første.
+  return t("ui.editor.policy_id_rettet").split("{id}").join(rettetFra);
+}
+
+function metaSeksjon(policy, erNy, aktiv, rettetFra) {
   policy.meta = (policy.meta && typeof policy.meta === "object") ? policy.meta : {};
   const m = policy.meta;
   const felt = [
     // policy_id er identiteten; kan settes ved NY, låst ved redigering.
     tekstfelt(t("ui.editor.policy_id"), m.policy_id || "",
       (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" },
-      erNy ? policyIdHint(aktiv) : t("ui.editor.policy_id_laast")),
+      erNy ? policyIdHint(aktiv) : policyIdLaastHint(rettetFra)),
     tekstfelt(t("ui.editor.bedrift"), m.bedrift || "",
       (v) => { m.bedrift = v || undefined; }),
     tekstfelt(t("ui.editor.versjon"), m.versjon || "",
@@ -535,6 +548,39 @@ function metaSeksjon(policy, erNy, aktiv) {
 // Bygg det som skal lagres: hele malen/utkastet med redigerte felt oppå.
 function byggInnhold(policy) {
   return policy;                       // policy muteres in-place av feltene
+}
+
+// Radens `policy_id` og dokumentets `meta.policy_id` er ÉN identitet skrevet to
+// steder, og spriker de, er det RADEN som gjelder: den er det utkastet er
+// registrert under, den kan ikke endres etterpå, og det er den aktiveringen
+// lagrer under. Bare dokumentet kan rettes.
+//
+// Utkastet fødes med malens id (opprettelsen tar id-en fra forespørselen og
+// innholdet fra malen), så et utkast opprettet før serveren begynte å kreve
+// samsvar kan godt bære en fremmed id. Da nekter valideringen å fryse det og
+// viser eier tilbake hit — der feltet er låst, fordi identiteten velges ved
+// opprettelse. Uten denne avstemmingen er utkastet dermed innelåst: den ENESTE
+// feilen kan ikke rettes noe sted, og et ellers redigerbart utkast må forlates.
+//
+// Derfor fylles feltet fra raden ved innlasting. Skjermen viser da identiteten
+// utkastet FAKTISK har, og første lagring skriver den inn i dokumentet —
+// reparasjonen er selve redigeringen, ikke et eget verktøy. Feltet forblir
+// låst: eier får ikke velge en ANNEN id, for det ville bare gjenskape avviket
+// (`rediger_utkast` rører aldri radens id). En annen identitet krever et nytt
+// utkast, som hjelpeteksten alltid har sagt.
+// -> id-en dokumentet oppga, når den ble rettet bort; ellers null.
+function avstemIdentitet(policy, radId) {
+  if (!radId) return null;             // ukjent rad-id: ingenting å avstemme mot
+  policy.meta = (policy.meta && typeof policy.meta === "object")
+    ? policy.meta : {};
+  const iDokumentet = policy.meta.policy_id;
+  if (iDokumentet === radId) return null;
+  policy.meta.policy_id = radId;
+  // Et TOMT felt er ingen påstand om en annen policy — det er bare ufylt, og
+  // da er utfyllingen ikke verdt en advarsel. Vi melder fra om det som
+  // faktisk er en rettelse: en id dokumentet oppga, og som nå er borte.
+  return (typeof iDokumentet === "string" && iDokumentet.trim())
+    ? iDokumentet : null;
 }
 
 // Porten står ved LAGRING, ikke ved tegning: det er lagringen som er den
@@ -567,14 +613,22 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
                // Hva GJELDER i dag? `kjent: false` er utgangspunktet, ikke en
                // feiltilstand: før oppslaget har svart vet flaten ingenting,
                // og skal derfor heller ikke påstå noe om avløsning.
-               aktiv: { kjent: false, id: null } };
+               aktiv: { kjent: false, id: null },
+               // Ble dokumentets id rettet mot radens ved innlasting? Da bærer
+               // hjelpeteksten den gamle verdien (`policyIdLaastHint`).
+               rettetFra: null };
 
   function lagre() {
-    const innhold = byggInnhold(st.policy);
     const pid = (st.policy.meta && st.policy.meta.policy_id || "").trim();
     if (!st.utkast_id && !pid) {
       st.feil = [t("ui.editor.policy_id_pakrevd")]; tegn(); return;
     }
+    // Raden opprettes fra den TRIMMEDE id-en, så dokumentet må bære nøyaktig
+    // den samme — ikke feltets råtekst. Et utkast født med « acme» i
+    // dokumentet og `acme` i raden er allerede i avvik i det det lagres, og
+    // ville vært innelåst fra første stund (feltet låses etter opprettelse).
+    if (!st.utkast_id) st.policy.meta.policy_id = pid;
+    const innhold = byggInnhold(st.policy);
     const venter = grenserSomVenterPaaValg(st.policy);
     if (venter.length) {
       st.feil = [`${t("ui.editor.grense_maa_repareres")}: ${venter.join(", ")}`];
@@ -638,7 +692,8 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       paaBytte: (n) => { st.fane = n; },
       trinn: [
         { nokkel: "grunn", tittel: t("ui.editor.fane.grunn"),
-          bygg: () => metaSeksjon(st.policy, !st.utkast_id, st.aktiv) },
+          bygg: () => metaSeksjon(st.policy, !st.utkast_id, st.aktiv,
+                                  st.rettetFra) },
         { nokkel: "roller", tittel: t("ui.editor.fane.roller"),
           bygg: () => rollerSeksjon(st.policy, tegn) },
         { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
@@ -661,6 +716,9 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       st.laster = false;
       st.utkastversjon = detalj.utkastversjon;
       st.policy = detalj.innhold || {};
+      // Identiteten avstemmes FØR første tegning: feltet er låst, så det eier
+      // ser her er det eneste hun kan forholde seg til.
+      st.rettetFra = avstemIdentitet(st.policy, detalj.policy_id);
       tegn();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }

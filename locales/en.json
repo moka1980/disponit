@@ -599,6 +599,7 @@
   "ui.editor.policy_id_hint_avloser": "At least 3 characters: lowercase letters, digits and hyphens. “{id}” is the policy in force today — keep it to supersede that policy. A different id creates a new policy alongside it.",
   "ui.editor.policy_id_hint_ingen_aktiv": "At least 3 characters: lowercase letters, digits and hyphens. No policy is active today, so this one becomes the first.",
   "ui.editor.policy_id_laast": "The identity is locked after creation. For a different id, create a new draft.",
+  "ui.editor.policy_id_rettet": "The draft named “{id}” in its document, but is registered under the id above. The field has been corrected to the registered id — save to correct the document. If the draft is meant for “{id}”, create a new draft under that id.",
   "ui.editor.belop_hint": "A number with up to two decimals, no spaces.",
   "ui.editor.valuta_ingen": "No currency restriction",
   "ui.editor.valuta_legg_til": "Add currency",
