@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""Policy-rundtur ende-til-ende: bootstrap → fire øyne → aktivering → BESLUTNING.
+
+Søsteren til `r1-rundtur.py`. Den beviser M-37-kjeden; denne beviser
+STYRINGSKJEDEN: at en fersk tenant, satt opp nøyaktig som `init-tenant.sh`
+gjør det, kan få en policy gjennom fire øyne og faktisk BRUKE den etterpå.
+
+Den finnes fordi vi manglet den. Tre defekter nådde produksjon i august 2026,
+alle i denne kjeden, alle funnet av eieren én om gangen mens han attesterte:
+
+  * ankerraden (`policy_hode`) ble aldri skrevet av bootstrap, så FØRSTE
+    styrte aktivering på enhver normalt oppsatt tenant døde med
+    `UniqueViolation` — HTTP 500 midt i en fire-øyne-runde;
+  * aktiveringen lagret `versjon` fra en teller («1») mens dokumentet sa
+    «0.2.0». `hent_aktiv` krever at de er like, så den ferske policyen ble
+    avvist som `PolicyKorrupt` ved HVER beslutning. Aktiveringen svarte
+    «aktivert»; policyen var ubrukelig;
+  * monotonikontrollen sammenlignet versjonsledd uten nullpadding, så
+    «2.0.0» passerte mot en aktiv «2» — samme versjon, ny korrupsjon.
+
+Hver av dem ville falt ut av ÉN gjennomkjøring. Poenget med rundturen er
+derfor ikke å teste enheter — det gjør pytest — men å gå HELE veien til
+TERMINALTILSTAND på ekte data. En kjede som stopper ett sted skjuler alle
+portene bak.
+
+Kjøres mot en lokal base (samme miljø som pytest):
+    source ~/tools/disponit_testmiljo.sh
+    DISPONIT_REPO=$PWD python3 deploy/staging/policy-rundtur.py
+
+Grønn = styringskjeden virker faktisk.
+"""
+import copy
+import os
+import secrets
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO = Path(os.environ.get("DISPONIT_REPO", Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(REPO / "platform/core"))
+
+DSN = os.environ["DISPONIT_TEST_DSN"]
+MIGRATOR = os.environ["DISPONIT_TEST_MIGRATOR_DSN"]
+TENANT = "t-pol-" + secrets.token_hex(3)
+
+# Samme kastbare KEK som pytest bruker (test_api.KEK). Rundturen kjører KUN
+# mot den lokale testbasen — DSN-ene over peker dit — og bootstrappen trenger
+# en KEK for å pakke tenantens DEK. Settes den utenfra, brukes den i stedet.
+os.environ.setdefault("DISPONIT_KEK", "b" * 64)
+
+_FEIL = 0
+
+
+def port(navn: str, ok: bool, detalj: str = "") -> None:
+    """Én port. Rundturen stopper ALDRI på første feil — vi vil se hvor mange
+    av dem som er nede, ikke bare den første. Det var nettopp det som gjorde
+    august dyr: én defekt per runde."""
+    global _FEIL
+    if ok:
+        print(f"  \033[32m✓\033[0m {navn}" + (f" — {detalj}" if detalj else ""))
+    else:
+        _FEIL += 1
+        print(f"  \033[31m✗ {navn}\033[0m" + (f" — {detalj}" if detalj else ""))
+
+
+def naa():
+    return datetime.now(timezone.utc)
+
+
+def main() -> int:                                        # noqa: C901
+    import yaml
+    from db.pg import koble, sett_kontekst
+    from api import policyadmin
+    from api import policyregister as pr
+    from api.mac_register import MacRegister
+
+    mac = MacRegister({"mk1": {"rolle": "signerer",
+                               "hemmelighet": "m" * 40}})
+    mig = koble(MIGRATOR)
+    sett_kontekst(mig, TENANT, "rundtur", "r0")
+
+    # ---------------------------------------------------------------- 1
+    print("\n== 1  bootstrap, nøyaktig som init-tenant.sh ==")
+    from db import kryptering
+    kryptering.hent_eller_opprett_aktiv_dek(mig, TENANT)
+    grunnpolicy = yaml.safe_load(
+        (REPO / "policies/bransjemal-tjenestebedrift.yaml").read_text("utf-8"))
+    pid = grunnpolicy["meta"]["policy_id"]
+    pr.registrer(mig, TENANT, grunnpolicy, grunnpolicy["meta"]["status"])
+    mig.commit()
+    sett_kontekst(mig, TENANT, "rundtur", "r1")
+
+    def flagg_og_peker():
+        a = mig.execute("SELECT versjon FROM policyer WHERE tenant=%s"
+                        " AND policy_id=%s AND aktiv", (TENANT, pid)).fetchone()
+        p = mig.execute("SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+                        " AND policy_id=%s", (TENANT, pid)).fetchone()
+        return (a[0] if a else None), (p[0] if p else None)
+
+    aktiv, peker = flagg_og_peker()
+    # PORT A — bootstrap-defekten. Uten ankerraden er peker None mens flagget
+    # peker på en versjon, og første styrte aktivering kolliderer.
+    port("bootstrap etterlater peker == flagg", aktiv is not None and aktiv == peker,
+         f"flagg={aktiv} peker={peker}")
+
+    # To mennesker: forfatteren og en UAVHENGIG godkjenner. Fire øyne krever
+    # at minst én ikke er den som skrev utkastet.
+    def medlem(navn, roller, tenant=None):
+        ten = tenant or TENANT
+        bid = mig.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " ON CONFLICT (issuer,sub) DO UPDATE SET sub=EXCLUDED.sub"
+            " RETURNING bruker_id",
+            ("https://idp.example", f"{ten}-{navn}")).fetchone()[0]
+        arr = "ARRAY[" + ",".join(f"'{r}'" for r in roller) + "]"
+        mig.execute(f"INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+                    f" VALUES (%s,%s,{arr}) ON CONFLICT (tenant,bruker_id)"
+                    f" DO UPDATE SET roller=EXCLUDED.roller, aktiv=true",
+                    (ten, bid))
+        mig.commit()
+        sett_kontekst(mig, ten, "rundtur", "r1")
+        return bid
+
+    forfatter = medlem("forfatter", ["policyforvalter"])
+    godkjenner = medlem("godkjenner", ["policyforvalter"])
+
+    # ---------------------------------------------------------------- 2
+    def livslop(ny_versjon: str, muter, merke: str, *, tenant=None,
+                aktorer=None):
+        """Hele veien: utkast → validert → runde → to attestasjoner → aktivert."""
+        print(f"\n== {merke}  fire-øyne-livsløp mot {ny_versjon} ==")
+        TEN = tenant or TENANT
+        forf, godkj = aktorer or (forfatter, godkjenner)
+        rt = koble(DSN)
+        innhold = copy.deepcopy(grunnpolicy)
+        innhold["meta"] = {**innhold["meta"], "versjon": ny_versjon,
+                           "status": "produksjon"}
+        muter(innhold)
+        idem = secrets.token_hex(8)
+        res = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor=forf, request_id="r",
+            policy_id=pid, innhold=innhold, idempotency_key=idem,
+            input_hash=f"{TEN}\x1fny\x1f{idem}")
+        rt.commit()
+        uid = res["utkast_id"]
+        port("utkast opprettet", bool(uid),
+             f"{uid} basert på {res.get('base_versjon')}")
+
+        idem = secrets.token_hex(8)
+        v = policyadmin.valider_utkast(
+            rt, tenant=TEN, aktor=forf, request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1, idempotency_key=idem,
+            input_hash=f"{TEN}\x1f{uid}\x1fvalider\x1f1\x1f{idem}")
+        rt.commit()
+        port("utkastet validerer", v.get("utfall") == "validert",
+             str(v.get("feil") or v.get("utfall")))
+        if v.get("utfall") != "validert":
+            rt.close()
+            return None
+
+        idem = secrets.token_hex(8)
+        runde = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=forf, request_id="r",
+            idempotency_key=idem,
+            input_hash=f"{TEN}\x1f{uid}\x1fapne\x1f{idem}", naa=naa())
+        rt.commit()
+        dh = runde["diff_hash"]
+        port("runde åpnet", bool(dh),
+             f"risiko={runde.get('risikoklasse')} "
+             f"påkrevd={runde.get('pakrevd_antall_godkjennere')}")
+
+        def attester(aktor):
+            idem = secrets.token_hex(8)
+            r = policyadmin.attester_aktivering(
+                rt, mac, tenant=TEN, aktor=aktor, request_id="r",
+                utkast_id=uid, forventet_diff_hash=dh, idempotency_key=idem,
+                input_hash=f"{TEN}\x1f{uid}\x1f{aktor}\x1f{dh}\x1f{idem}",
+                naa=naa())
+            rt.commit()
+            return r
+
+        a1 = attester(forf)
+        port("forfatterens attestasjon aktiverer IKKE alene",
+             a1.get("utfall") == "venter_godkjennere", str(a1.get("utfall")))
+        a2 = attester(godkj)
+        # PORT B1 — her døde produksjon på UniqueViolation.
+        port("uavhengig godkjenner fullfører aktiveringen",
+             a2.get("utfall") == "aktivert",
+             f"utfall={a2.get('utfall')} versjon={a2.get('versjon')}")
+        rt.close()
+        return uid if a2.get("utfall") == "aktivert" else None
+
+    livslop("0.3.0", lambda p: p.setdefault("dataklasser", []), "2")
+
+    # ---------------------------------------------------------------- 3
+    print("\n== 3  registeret etter aktivering ==")
+    sett_kontekst(mig, TENANT, "rundtur", "r2")
+    rad = mig.execute(
+        "SELECT versjon, innhold->'meta'->>'versjon', status FROM policyer"
+        " WHERE tenant=%s AND policy_id=%s AND aktiv", (TENANT, pid)).fetchone()
+    # PORT B2 — versjon-fra-teller-defekten. Kolonnen MÅ være dokumentets egen
+    # versjon; ellers avviser `hent_aktiv` policyen som korrupt.
+    port("kolonnen bærer dokumentets egen versjon",
+         bool(rad) and rad[0] == rad[1], f"kolonne={rad[0]} dokument={rad[1]}"
+         if rad else "ingen aktiv rad")
+    port("statusen er produksjon", bool(rad) and rad[2] == "produksjon",
+         rad[2] if rad else "-")
+    aktiv, peker = flagg_og_peker()
+    port("flagg og peker er fortsatt enige", aktiv == peker,
+         f"flagg={aktiv} peker={peker}")
+
+    # ---------------------------------------------------------------- 4
+    print("\n== 4  den aktiverte policyen kan FAKTISK brukes ==")
+    rt = koble(DSN)
+    try:
+        # `hent_aktiv` kjører normalt inne i forespørselsveien, der
+        # `sett_kontekst` alt er kalt. Uten den filtrerer RLS bort raden, og
+        # porten ville rapportert PolicyUkjent uansett hvor frisk policyen var
+        # — den ville målt sin egen glemsomhet. (Første utgave gjorde nettopp
+        # det.)
+        sett_kontekst(rt, TENANT, "rundtur", "r5")
+        p, h = pr.hent_aktiv(rt, TENANT, pid)
+        # PORT C — dette er porten som ville avslørt at «aktivert» ikke betyr
+        # «brukbar». Uten den ser en korrupt aktivering ut som en vellykket.
+        port("hent_aktiv leverer policyen", isinstance(p, dict) and bool(h),
+             f"versjon={p.get('meta', {}).get('versjon')}")
+    except Exception as e:                                   # noqa: BLE001
+        port("hent_aktiv leverer policyen", False,
+             f"{type(e).__name__}: {str(e)[:120]}")
+    finally:
+        rt.close()
+
+    # ---------------------------------------------------------------- 5
+    livslop("0.4.0", lambda p: p.setdefault("dataklasser", []), "5")
+
+    # ---------------------------------------------------------------- 6
+    print("\n== 6  monotoni mot en LEGACY-formet versjon ==")
+    # Tellerens tid etterlot rader med bare «2». `{2,0,0} > {2}` er sant både i
+    # Postgres og Python når leddene ikke nullpaddes, så «2.0.0» ville passert
+    # som «nyere» enn «2» — samme versjon, ny korrupsjon oppå den gamle. En
+    # fersk tenant treffer aldri dette av seg selv; formen må lages.
+    #
+    # Porten kjører en EKTE aktivering og krever at den STOPPER. Første utgave
+    # spurte Postgres om array-semantikk i stedet — den målte databasen, ikke
+    # produktet, og kunne aldri blitt grønn uansett hva `aktiver_policy` gjorde.
+    import json as _json
+    legacy = "t-legacy-" + secrets.token_hex(3)
+    sett_kontekst(mig, legacy, "rundtur", "r3")
+    kryptering.hent_eller_opprett_aktiv_dek(mig, legacy)
+    lp = copy.deepcopy(grunnpolicy)
+    lp["meta"] = {**lp["meta"], "versjon": "2"}
+    mig.execute(
+        "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
+        "innhold,aktiv) VALUES (%s,%s,'2',%s,'produksjon',%s::jsonb,true)",
+        (legacy, pid, pr.innholds_hash(lp), _json.dumps(lp)))
+    mig.execute("INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon)"
+                " VALUES (%s,%s,'2')", (legacy, pid))
+    mig.commit()
+    sett_kontekst(mig, legacy, "rundtur", "r4")
+    lf = medlem("lforfatter", ["policyforvalter"], tenant=legacy)
+    lg = medlem("lgodkjenner", ["policyforvalter"], tenant=legacy)
+    # Kjeden SKAL brytes. Hvor den brytes er et produktvalg — i dag stopper
+    # `_krev_ny_versjon` den alt ved runde-åpning, altså før noen attesterer,
+    # som er bedre enn å stoppe den til slutt. Porten krever derfor bare at den
+    # STOPPER, ikke hvor.
+    try:
+        livslop("2.0.0", lambda p: None, "6", tenant=legacy, aktorer=(lf, lg))
+        port("«2.0.0» aktiveres IKKE mot en aktiv «2»", False,
+             "kjeden gikk helt gjennom — monotonivakten er nede")
+    except Exception as e:                                    # noqa: BLE001
+        port("«2.0.0» aktiveres IKKE mot en aktiv «2»", True,
+             f"{type(e).__name__}: {str(e)[:80]}")
+
+    print("\n== 7  et utkast rett fra malen skal STOPPES, ikke korrumperes ==")
+    # Bransjemalene har `status: utkast` — riktig for et forslag. Bærer utkastet
+    # den videre, skriver aktiveringen `produksjon` i registeret mens dokumentet
+    # sier `utkast`, og `hent_aktiv` avviser policyen som korrupt ved HVER
+    # beslutning. Aktiveringen svarte «aktivert»; policyen var ubrukelig.
+    #
+    # Rundturen fant nettopp dette i sin første ekte kjøring (port 4 ble rød).
+    # Denne porten holder på funnet: den forfaller til malens egen status og
+    # krever at kjeden stopper FØR runden åpnes.
+    malten = "t-mal-" + secrets.token_hex(3)
+    sett_kontekst(mig, malten, "rundtur", "r6")
+    kryptering.hent_eller_opprett_aktiv_dek(mig, malten)
+    pr.registrer(mig, malten, grunnpolicy, grunnpolicy["meta"]["status"])
+    mig.commit()
+    sett_kontekst(mig, malten, "rundtur", "r7")
+    mf = medlem("mforfatter", ["policyforvalter"], tenant=malten)
+    mg = medlem("mgodkjenner", ["policyforvalter"], tenant=malten)
+    try:
+        livslop("0.9.0", lambda pol: pol["meta"].update(
+                    {"status": grunnpolicy["meta"]["status"]}),
+                "7", tenant=malten, aktorer=(mf, mg))
+        port("mal-status «utkast» aktiveres IKKE", False,
+             "kjeden gikk gjennom — policyen ville vært korrupt ved bruk")
+    except Exception as e:                                    # noqa: BLE001
+        port("mal-status «utkast» aktiveres IKKE", True,
+             f"{type(e).__name__}: {str(e)[:80]}")
+
+    mig.close()
+
+    print("\n" + "=" * 62)
+    if _FEIL:
+        print(f"\033[31mRUNDTUR RØD — {_FEIL} port(er) nede.\033[0m "
+              "Styringskjeden er IKKE hel.")
+        return 1
+    print("\033[32mRUNDTUR GRØNN\033[0m — bootstrap, fire øyne, aktivering, "
+          "register og bruk henger sammen.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

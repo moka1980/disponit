@@ -589,6 +589,20 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     ny = meta.get("versjon") if isinstance(meta, dict) else None
     if not isinstance(ny, str) or not _SEMVER.match(ny):
         raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r}")
+    # Dokumentets EGEN status må si `produksjon`, for det er statusen
+    # aktiveringen skriver i registeret — og `hent_aktiv` krever at de to er
+    # like. Bransjemalene har `status: utkast` (riktig for et forslag), så et
+    # utkast laget rett fra mal bærer den videre. Aktiveringen svarte da
+    # «aktivert», mens HVER påfølgende beslutning avviste den ferske policyen:
+    #   PolicyKorrupt: meta.status 'utkast' != registerets status 'produksjon'
+    # Funnet av policy-rundturen, ikke av en bruker — som er hele poenget med
+    # den. Kontrollen står her, sammen med versjonskontrollen, så den slår til
+    # FØR runden åpnes: å oppdage det etter to signaturer ville kastet bort en
+    # hel fire-øyne-runde på et utkast som aldri kunne lande.
+    dstatus = meta.get("status") if isinstance(meta, dict) else None
+    if dstatus != "produksjon":
+        raise Aktiveringsfeil("status_ikke_produksjon",
+                              f"meta.status={dstatus!r}")
     if conn.execute(
             "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND versjon=%s", (tenant, policy_id, ny)).fetchone():
