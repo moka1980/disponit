@@ -1107,6 +1107,12 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
     tilstanden utrullingen arver. Da må attesteringen ta den — og ta den FØR
     signaturen skrives: en attestasjon på et utkast som ikke kan aktiveres er
     ingen godkjenning, bare et spor som må ryddes.
+
+    Og runden må LUKKES (Codex P2). Kravet måler det frosne innholdet, så
+    avslaget er permanent — rullet vi bare tilbake, sto runden `apen` og så
+    levende ut: flaten tilbyr bare «attester», hvert forsøk gir samme feil, og
+    `forkast_utkast` nekter et utkast med en levende runde. Eier sto fast til
+    runden utløp av seg selv. Siste ledd her er derfor at hun kommer VIDERE.
     """
     pid = "pol-" + secrets.token_hex(3)
     a = _medlem("forf", ["policyforvalter"])
@@ -1118,10 +1124,8 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
                             lambda *_a, **_k: None)
         r = _apne(rt, uid, a)                  # runden fra «før utrullingen»
         monkeypatch.undo()                     # ... og så lander den
-        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
-            _attester(rt, uid, a, r["diff_hash"])
-        assert e.value.kode == "utkast_ugyldig", e.value.kode
-        rt.rollback()
+        svar = _attester(rt, uid, a, r["diff_hash"])
+        assert svar["utfall"] == "utkast_ugyldig", svar
     finally:
         rt.close()
     m = _mig()
@@ -1130,9 +1134,26 @@ def test_apen_runde_fra_for_utrullingen_kan_ikke_attesteres(monkeypatch):
             "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
             " utkast_id=%s", (TEN, uid)).fetchone()[0] == 0, (
             "signaturen ble skrevet på et utkast som ikke kan aktiveres")
+        rstatus = m.execute(
+            "SELECT status FROM aktiveringsrunde WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
     finally:
         m.rollback(); m.close()
+    assert rstatus == "kansellert", rstatus
     assert _aktiv_versjon(pid) is None
+
+    # Veien ut er åpen: uten kanselleringen nektet `forkast_utkast` fordi
+    # runden var levende, og eier hadde ingen handling igjen på flaten.
+    rt = _rt()
+    try:
+        idem = secrets.token_hex(8)
+        f = policyadmin.forkast_utkast(
+            rt, tenant=TEN, aktor=a, request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1, idempotency_key=idem, input_hash=idem,
+            naa=_naa())
+        assert f["utfall"] == "forkastet", f
+    finally:
+        rt.close()
 
 
 @pg

@@ -1105,19 +1105,45 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     # flytter basen, så rekalken i steg 9 krever rebasering uansett.
     try:
         _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
-        # Samme argument for identiteten, statusen og versjonen: en signatur på
-        # et utkast som ikke kan lagres — eller som ville blitt lagret under en
-        # ANNEN policy enn den det selv oppgir, eller som en policy det ikke
-        # sier at det er — er like verdiløs som en signatur på feil base.
+    except Aktiveringsfeil:
+        # Pekeren er det ENE som kan repareres uten et nytt utkast, og runden
+        # skal derfor overleve: steg 7b lar den fullføres når eier har rettet
+        # dataene. Kansellerte vi her, rev vi bort den veien.
+        conn.rollback()
+        raise
+
+    # Så kravene på DOKUMENTET. Samme argument som for basen: en signatur på et
+    # utkast som ikke kan lagres — eller som ville blitt lagret under en ANNEN
+    # policy enn den det selv oppgir, eller som en policy det ikke sier at det
+    # er — er like verdiløs som en signatur på feil base.
+    try:
         _krev_dokumentidentitet(policy_id, ny_innhold)
         _krev_produksjonsstatus(ny_innhold)
         _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
         # Og for de framoverrettede kravene: runden kan ha vært åpen da
         # utrullingen som innførte dem landet.
         _krev_innforingskrav(ny_innhold)
-    except Aktiveringsfeil:
-        conn.rollback()
-        raise
+    except Aktiveringsfeil as e:
+        # RUNDEN KANSELLERES, den kastes ikke bare ut av (Codex P2). Alle fire
+        # kravene her måler det FROSNE innholdet, så et avslag er permanent:
+        # verken versjonen, identiteten, statusen eller en verifikator-id kan
+        # rettes uten et nytt utkast og nye signaturer. Rullet vi bare tilbake,
+        # ble runden stående `apen` og så levende ut — og eier sto fast. Flaten
+        # tilbyr bare «attester» på en åpen runde, hvert forsøk gir samme feil,
+        # og `forkast_utkast` nekter et utkast med en LEVENDE runde. Da var det
+        # ingen vei ut før runden utløp av seg selv.
+        #
+        # Aktiveringsveien har gjort nøyaktig dette hele tiden
+        # (`_kanseller_runde` på `check_violation` fra `aktiver_policy`); det
+        # som manglet var at attesteringen — som møter de samme bruddene
+        # FØRST — gjorde det samme. Signaturene som alt er avgitt består
+        # (append-only), og ingen ny skrives: en signatur på et utkast som ikke
+        # kan aktiveres er ingen godkjenning.
+        #
+        # Utfallet er feilkoden selv, så eier får vite hva som må rettes — som
+        # `_DOKUMENTBRUDD` gjør det på aktiveringsveien.
+        return _kanseller_runde(conn, tenant, idempotency_key, utkast_id,
+                                policy_id, r_nr, e.kode)
 
     # --- 6. Bygg + MAC-signer konvolutten fra LÅSTE data -------------------
     er_forfatter = (aktor == opprettet_av)
