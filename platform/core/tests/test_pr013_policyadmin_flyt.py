@@ -1208,3 +1208,81 @@ def test_ferdig_attestert_runde_fra_for_utrullingen_aktiverer_ikke(monkeypatch):
     assert rstatus == "kansellert", rstatus
     assert antall_attest == 2
     assert ustatus == "validert", ustatus
+
+
+# --------------------------------------------------------------------------
+# Codex P2 på denne PR-en: ankerkravet er også et framoverrettet krav, og også
+# det må stå i SQL — ikke bare i `schema._valider_innforing`.
+# --------------------------------------------------------------------------
+
+#: Handlings-id med en avsluttende linjeskift. Skjemagyldig for Pythons `re`
+#: (`$` matcher rett FØR en avsluttende linjeskift), ulesbar for alle andre:
+#: `engine.les_policyref` måler med `fullmatch`, og databasens `~` leser `$`
+#: som ekte slutt.
+_ANKERHALE_INNHOLD = {
+    "roller": [{"id": "r1"}],
+    "handlinger": [{"id": "faktura.send\n"}]}
+
+
+@pg
+def test_ankerhale_stoppes_av_db_grensen_nar_python_porten_er_passert(monkeypatch):
+    """🔴 Codex P2: `_valider_innforing` fikk ankerkravet — SQL-grensen ikke.
+
+    Samme to hull som verifikator-id-kravet: et utkast kan ha blitt validert og
+    fullt attestert FØR utrullingen, og `aktiver_policy` er grantet direkte til
+    runtime-rollen. Slapp halen gjennom her, ble policyen AKTIVERT — og først
+    da oppdages det: `les_policyref` klarer ikke lese
+    `<policy_id>@<versjon>/<handling>`, så hver beslutning under policyen
+    produserer evidens uten policyidentitet.
+
+    Utfallet må dessuten være `utkast_ugyldig` og ikke `versjon_i_bruk`:
+    kontrollen deler SQLSTATE med versjonsinvariantene fra 020, og bare
+    `CONSTRAINT`-navnet skiller dem.
+
+    Kontroll: fjern 4d fra migrasjon 025, så aktiveres utkastet.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _ANKERHALE_INNHOLD)
+    rt = _rt()
+    try:
+        monkeypatch.setattr(policyadmin, "_krev_innforingskrav",
+                            lambda *_a, **_k: None)
+        r = _apne(rt, uid, a)
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        siste = _attester(rt, uid, b, r["diff_hash"])
+        assert siste["utfall"] == "utkast_ugyldig", siste
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) is None, "utkastet ble aktivert"
+
+
+@pg
+def test_db_grensen_maler_bare_differansen_ikke_hele_lastekontrakten():
+    """Motprøven, og den er hele grunnen til at 4d er skrevet som den er.
+
+    `h1` mangler punktumet mønsteret krever og feiler BEGGE lesningene — det er
+    en helt vanlig skjemafeil som lastekontrakten sier fra om ved validering.
+    Målte SQL-grensen hele mønsteret i stedet for differansen, ville en runde
+    blitt KANSELLERT med «bryter et nytt krav» for et dokument som ganske
+    enkelt er strukturelt ødelagt. Det er nøyaktig sammenblandingen
+    innførings- og lastekontrakten ble delt i to for å unngå, og den samme
+    feilen `_pattern_ecma` alt er rettet for på Python-siden.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)            # handlinger[].id = 'h1'
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] \
+            == "venter_godkjennere"
+        assert _attester(rt, uid, b, r["diff_hash"])["utfall"] == "aktivert"
+    finally:
+        rt.close()
+    assert _aktiv_versjon(pid) == "1.1.0"

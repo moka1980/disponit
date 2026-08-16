@@ -731,9 +731,13 @@ def _krev_produksjonsstatus(innhold) -> None:
 #: `verifikator_id_entydig` (migrasjon 022) hører hjemme i samme tabell selv om
 #: den kom en annen vei: den deler SQLSTATE med de andre og krever sin egen
 #: retting av eier. Én tabell, ikke en tabell og et unntak ved siden av.
+#: `policyref_lesbar` (migrasjon 025) er samme sak én gang til: et framoverrettet
+#: krav fra innføringskontrakten, speilet i SQL fordi Python-porten kan være
+#: passert før utrullingen. Eier retter det på samme måte, så koden er den samme.
 _DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
                   "dokument_status": "dokument_avvik",
-                  "verifikator_id_entydig": "utkast_ugyldig"}
+                  "verifikator_id_entydig": "utkast_ugyldig",
+                  "policyref_lesbar": "utkast_ugyldig"}
 
 #: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`), men med
 #: ASCII-sifre EKSPLISITT (Codex P2). Pythons `\d` matcher hele Unicodes

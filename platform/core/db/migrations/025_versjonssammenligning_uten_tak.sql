@@ -36,6 +36,12 @@
 -- problemet til en grense noen må vedlikeholde. En sammenligning uten tak
 -- trenger ingen grense.
 --
+-- 🔴 OG ETT HULL TIL (Codex, tredje runde): ankerkravet fra
+-- `schema._valider_innforing` hadde ingen speiling her. Se 4d — kort sagt kan
+-- Python-porten være passert før utrullingen, og et `handlinger[].id` med
+-- avsluttende linjeskift gjør `engine.les_policyref` ute av stand til å lese
+-- referansen etter at policyen er aktivert.
+--
 -- Funksjonen erstattes i sin helhet (024 er siste versjon); alt annet er
 -- uendret. `db/kjorer.py` verifiserer SHA-256 på hver anvendt migrasjon, så
 -- 020–023 kan ikke rettes i ettertid — rettelsen hører hjemme her. DENNE filen
@@ -73,6 +79,7 @@ DECLARE
     v_bredde        INT;
     v_dok           JSONB;
     v_ugyldig_id    TEXT;
+    v_ulesbar_ref   TEXT;
     v_dok_pid       TEXT;
     v_dok_status    TEXT;
     v_i             INT;
@@ -296,6 +303,62 @@ BEGIN
     --     BÆRES VIDERE: denne migrasjonen erstatter hele kroppen til
     --     `aktiver_policy`, så en invariant som ikke står her er droppet
     --     — stille. 022 og denne kom hver sin vei inn i samme funksjon.
+
+    -- 4d. POLICYREFERANSEN MÅ VÆRE LESBAR (Codex P2 på denne PR-en).
+    --     `_valider_innforing` fikk ankerkravet — mønstrene målt med ECMA-262
+    --     sin `$` i stedet for Pythons, som også matcher rett FØR en
+    --     avsluttende linjeskift. Den porten står i Python, og har samme to
+    --     hull som verifikator-id-kravet over: et utkast som ble validert og
+    --     fullt attestert FØR utrullingen bærer statusen sin videre hit, og
+    --     runtime-rollen kan kalle denne funksjonen direkte.
+    --
+    --     Utfallet uten gaten er ikke en pen feil. `engine.les_policyref`
+    --     leser `<policy_id>@<versjon>/<handling>` med `fullmatch`, altså
+    --     ekte slutt. Et `handlinger[].id` = 'foo.bar' + linjeskift blir
+    --     aktivert her og gjør referansen ULESBAR i motoren: beslutningen
+    --     produserer evidens uten policyidentitet, og det oppdages først
+    --     etter at policyen er i produksjon.
+    --
+    --     OMFANGET er de tre feltene referansen bygges av — det er nøyaktig
+    --     de feltene bruddet forplanter seg gjennom. `meta.versjon` er alt
+    --     dekket i 4b (PostgreSQLs `~` leser `$` som ekte slutt), så det som
+    --     står igjen er identiteten og handlings-id-ene.
+    --
+    --     Og som `_pattern_ecma`: KUN DIFFERANSEN mot lastekontrakten. En
+    --     verdi som feiler BEGGE lesningene — en handlings-id uten punktum,
+    --     f.eks. — er en helt vanlig skjemafeil som lastekontrakten sier fra
+    --     om ved validering. Reiste vi den her, ville en runde blitt
+    --     KANSELLERT med «bryter et nytt krav» for et dokument som ganske
+    --     enkelt er strukturelt ødelagt, og det er sammenblandingen de to
+    --     kontraktene ble delt for å unngå. Differansen er derfor målt
+    --     eksplisitt: verdien har en avsluttende linjeskift (som PostgreSQL
+    --     avviser og Python slipper gjennom), og resten matcher mønsteret.
+    SELECT string_agg(format('%s: %L', x.felt, x.verdi), ', '
+                      ORDER BY x.felt, x.verdi)
+      INTO v_ulesbar_ref
+      FROM (SELECT 'meta.policy_id'::TEXT AS felt,
+                   v_policy_id            AS verdi,
+                   '^[a-z0-9-]+$'::TEXT   AS monster
+            UNION ALL
+            SELECT 'handlinger[].id', e.el ->> 'id',
+                   '^[a-z0-9_]+(\.[a-z0-9_]+)+$'
+              FROM jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(v_dok -> 'handlinger') = 'array'
+                            THEN v_dok -> 'handlinger'
+                            ELSE '[]'::jsonb END) AS e(el)
+             WHERE jsonb_typeof(e.el) = 'object') AS x
+     WHERE x.verdi IS NOT NULL
+       AND right(x.verdi, 1) = E'\n'
+       -- Pythons `$` godtar ÉN avsluttende linjeskift, ikke flere: matcher
+       -- resten mønsteret, er dette presis den strengen lastekontrakten
+       -- slapp gjennom og databasen aldri kunne lest.
+       AND left(x.verdi, length(x.verdi) - 1) ~ x.monster;
+    IF v_ulesbar_ref IS NOT NULL THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % har felt som gjør '
+            'policyreferansen ulesbar (%)', p_utkast_id, v_ulesbar_ref
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'policyref_lesbar';
+    END IF;
 
     -- 5. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).
     IF v_aktiv IS NOT NULL THEN
