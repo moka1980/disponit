@@ -666,6 +666,14 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     #         i DB-en, ikke her — Codex P1 R1), leser innholdet fra utkastet, og
     #         lukker runde+utkast atomisk. Et direkte runtime-kall utenom denne
     #         orkestreringen når aldri forbi funksjonens egne kontroller.
+    # Savepointet er ikke pynt: attestasjonen i steg 7 ligger i DENNE
+    # transaksjonen, og denne godkjenneren er den som fylte terskelen. En full
+    # rollback her ville tatt HENNES godkjenning med i fallet — runden ville
+    # stått åpen og under terskel igjen, og hun måtte attestert på nytt, stikk i
+    # strid med at en usynk peker skal REPARERES og ikke re-attesteres (Codex
+    # P1). Savepointet ruller derfor tilbake NØYAKTIG aktiveringsforsøket, og
+    # attestasjonen committes med det deterministiske utfallet.
+    conn.execute("SAVEPOINT aktiveringsforsok")
     try:
         ny_versjon = conn.execute(
             "SELECT aktiver_policy(%s,%s,%s,%s)",
@@ -673,17 +681,22 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     except psycopg.errors.SerializationFailure:
         # En konkurrerende aktivering vant kappløpet i funksjonens egen lås.
         # Funksjonen er serialiseringspunktet (V10) — flyttet base = rebasering.
+        # Her ER runden død (basen godkjennerne så finnes ikke lenger), så
+        # attestasjonen har ingenting å bevares til: en ny runde krever nye.
         conn.rollback()
         raise Aktiveringsfeil("rebasering_kreves") from None
     except psycopg.errors.UniqueViolation:
         # `en_aktiv_per_policy` slo til: det finnes en aktiv policyrad som
-        # pekeren ikke kjenner til. Årsaken er rettet over (bootstrap skriver
-        # nå ankerraden), men en base som allerede ER usynk skal ikke møte
-        # eier som «Exception in ASGI application». Den skal si hva som er
-        # galt, og den skal la runden stå — dataene må repareres, ikke
-        # attesteres på nytt.
-        conn.rollback()
-        raise Aktiveringsfeil("aktiv_peker_usynk") from None
+        # pekeren ikke kjenner til. Kontrollen i steg 5b fanger drift som ALT
+        # var der; hit kommer bare drift som oppsto i vinduet mellom kontrollen
+        # og aktiveringen. Runden får stå, attestasjonen består, og eier får et
+        # utfall som sier hva som er galt — ikke «Exception in ASGI
+        # application», og ikke en tapt godkjenning.
+        conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
+        return _fullfor(conn, tenant, idempotency_key, {
+            "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
+            "policy_id": policy_id, "runde": r_nr})
+    conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,

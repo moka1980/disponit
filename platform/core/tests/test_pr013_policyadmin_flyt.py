@@ -507,3 +507,58 @@ def test_usynk_peker_stopper_attestering_for_signaturen_skrives():
             "attestasjonen ble skrevet på et grunnlag som ikke kan aktiveres")
     finally:
         m.rollback(); m.close()
+
+
+@pg
+def test_terskelattestasjonen_overlever_drift_i_aktiveringsvinduet(monkeypatch):
+    """Drift som oppstår ETTER kontrollen skal ikke spise godkjenningen.
+
+    Attestasjonen ligger i SAMME transaksjon som aktiveringsforsøket. En full
+    rollback ville tatt den siste godkjennerens signatur med i fallet: runden
+    ville stått åpen og under terskel igjen, og hun måtte attestert på nytt —
+    stikk i strid med at en usynk peker skal REPARERES, ikke re-attesteres.
+
+    Vinduet mellom kontrollen i steg 5b og selve aktiveringen er ekte, men
+    trangt (en samtidig commit). Kontrollen nøytraliseres derfor her for å
+    treffe nøyaktig det vinduet deterministisk — det som testes er hva
+    aktiveringsforsøket gjør når delindeksen slår til, ikke kontrollen.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}],
+                          "handlinger": [{"id": "h1"}]})   # UTVIDER, pakrevd 2
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        dh = r["diff_hash"]
+        assert r["pakrevd_antall_godkjennere"] == 2
+        assert _attester(rt, uid, a, dh)["utfall"] == "venter_godkjennere"
+        _drift(pid)                    # samtidig commit i vinduet
+        monkeypatch.setattr(policyadmin, "_krev_peker_synk",
+                            lambda *_a, **_k: None)
+        r2 = _attester(rt, uid, b, dh, idem=idem)
+        assert r2["utfall"] == "aktiv_peker_usynk", r2
+        # Deterministisk: en replay med samme nøkkel gir NØYAKTIG samme svar.
+        r3 = _attester(rt, uid, b, dh, idem=idem)
+        assert r3["utfall"] == "aktiv_peker_usynk" and r3.get("replay") is True
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        antall = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        aktive = m.execute(
+            "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s AND"
+            " aktiv", (TEN, pid)).fetchall()
+    finally:
+        m.rollback(); m.close()
+    assert antall == 2, "terskel-attestasjonen gikk tapt sammen med aktiveringen"
+    assert rstatus == "apen", "runden skal stå — dataene repareres, ikke runden"
+    assert [x[0] for x in aktive] == ["9"], "noe ble aktivert tross usynk peker"
+    assert _aktiv_versjon(pid) is None
