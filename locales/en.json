@@ -634,5 +634,6 @@
   "ui.shell.vis_meny": "Show module menu",
   "ui.shell.status_moduler": "{i_drift} of {totalt} modules in production",
   "ui.shell.status_varsler": "{antall} alerts",
+  "ui.shell.status_varsler_ukjent": "Alert count unavailable",
   "ui.shell.status_oppdatert": "Last updated {tid}"
 }

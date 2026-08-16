@@ -278,6 +278,19 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   assert.ok(status.includes("3"), "varseltallet vises ikke");
 });
 
+test("AppShell: uten varselkilde påstår statuslinja ingen null (Codex P2)", () => {
+  // 🔴 `app.js` sender ikke `varsler` — det finnes ingen varselkilde ennå. Med
+  // fallback til 0 sa hver eneste økt i produksjon «0 varsler», uansett hva som
+  // var på gang. Ingen teller er noe annet enn ingen varsler.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });
+  const status = rot.querySelector(".skall-status").textContent;
+  assert.ok(status.includes(NB["ui.shell.status_varsler_ukjent"]),
+    `statuslinja sier «${status}» uten å ha et varseltall`);
+  assert.ok(!/\b0 varsler\b/.test(status),
+    "statuslinja påstår null varsler den ikke har dekning for");
+});
+
 test("AppShell: modulmenyen kan skjules, og bryteren sier fra", async () => {
   const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
     ruter: [{ nokkel: "oversikt" }], paaSprak: () => {}, paaLoggUt: () => {} });

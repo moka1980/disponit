@@ -382,14 +382,21 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // Statuslinja sier hva som FAKTISK gjelder. Spesifikasjonens eksempel («45
   // moduler aktive») er en illustrasjon, ikke en verdi: tallet utledes av
   // MODULSTATUS, så linja ikke kan love drift registeret ikke bærer.
+  //
+  // INGEN TELLER ER IKKE NULL VARSLER (Codex P2). `varsler` falt tidligere
+  // tilbake på 0, og siden `app.js` aldri sender den inn — det finnes ingen
+  // varselkilde å sende fra ennå — sa hver eneste økt i produksjon «0 varsler»
+  // uansett hva som var på gang. Et tall er en påstand: mangler grunnlaget, sier
+  // linja at tallet ikke er tilgjengelig i stedet for å hevde at alt er rolig.
   const telling = plattformTelling();
   const statuslinje = el("footer", { class: "skall-status", role: "status" },
     el("span", { text: t("ui.shell.status_moduler")
       .replace("{i_drift}", String(telling.iDrift))
       .replace("{totalt}", String(telling.totalt)) }),
     el("span", { text: "·" }),
-    el("span", { text: t("ui.shell.status_varsler")
-      .replace("{antall}", String(varsler == null ? 0 : varsler)) }),
+    el("span", { text: varsler == null
+      ? t("ui.shell.status_varsler_ukjent")
+      : t("ui.shell.status_varsler").replace("{antall}", String(varsler)) }),
     el("span", { text: "·" }),
     el("span", { text: t("ui.shell.status_oppdatert")
       .replace("{tid}", new Date().toLocaleTimeString(valgtSprak || "nb",
