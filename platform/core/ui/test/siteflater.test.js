@@ -651,6 +651,32 @@ test("Forsiden: hopp-lenka hopper FORBI navigasjonen, ikke til den", async () =>
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Forsiden: hopp-lenkas fragment bytter ikke side under føttene", async () => {
+  // Codex P2: `.hoppelenke` setter hash til `#hovedinnhold`. Ruteparseren så
+  // en hash den ikke kjente igjen og falt tilbake til hjem, så et hopp til
+  // innholdet FRA Tjenester byttet siden ut med Hjem — fokus landet i et
+  // innhold brukeren aldri ba om, og siden de leste var borte.
+  const app = nyttAppBrett();
+  await paaSide(app, "tjenester");
+  await vent(() => app.textContent.includes(t("site.katalog_tittel")));
+
+  window.location.hash = "#hovedinnhold";
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+
+  assert.ok(app.textContent.includes(t("site.katalog_tittel")),
+    "fragmentet fra hopp-lenka kastet brukeren tilbake til Hjem");
+  const merket = [...app.querySelectorAll(".site-nav-lenke")]
+    .filter((a) => a.getAttribute("aria-current") === "page")
+    .map((a) => a.textContent);
+  assert.deepEqual(merket, [t("site.nav.tjenester")],
+    "markeringen flyttet seg selv om ingen rute ble bedt om");
+
+  // Og en ekte rute skal fortsatt bytte side — vernet er mot fragmenter, ikke
+  // mot navigasjon.
+  window.location.hash = "#/om";
+  await vent(() => app.textContent.includes(t("site.svar_tittel")));
+});
+
 test("Forsiden: ukjent rute faller tilbake til hjem, den blir ikke tom", async () => {
   const app = nyttAppBrett();
   window.location.hash = "#/finnes-ikke";

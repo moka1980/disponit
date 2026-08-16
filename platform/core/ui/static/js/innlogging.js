@@ -321,6 +321,21 @@ function sideLoggInn(ctx) {
         t("site.login.admin_tekst"), t("site.login.admin_knapp"))));
 }
 
+// EN HASH ER IKKE ALLTID EN RUTE (Codex P2). `#/tjenester` er en rute;
+// `#hovedinnhold` fra hopp-lenka er et FRAGMENT — et sted på siden nettleseren
+// skal flytte fokus til, ikke en side som skal byttes. Forskjellen står i
+// `#/`-prefikset, og uten den skilnaden svelget «ukjent rute → hjem» fragmentet
+// og kastet brukeren tilbake til Hjem: den som sto på Tjenester og trykket
+// «Hopp til innhold» mistet siden de leste, midt i handlingen som skulle spare
+// dem for tastetrykk. Tom hash teller som rute (hjem) — går man tilbake til
+// `/` uten fragment, er det en ekte navigasjon til forsiden.
+function erRute(hash) {
+  const h = hash || "";
+  return h === "" || h === "#" || h.startsWith("#/");
+}
+
+// Ukjent RUTE faller fortsatt tilbake til hjem — `#/finnes-ikke` skal ikke gi
+// en tom side. Det er bare ikke-ruter som slipper unna det fallet.
 function gjeldendeSide() {
   const n = (window.location.hash || "").replace(/^#\//, "");
   return SIDER.some((x) => x.nokkel === n) ? n : "hjem";
@@ -417,6 +432,12 @@ export async function visInnlogging(opsjoner = {}) {
       window.removeEventListener("hashchange", _sidelytter);
       return;
     }
+    // …og den skal heller ikke tegne når hash-en ikke er en rute (Codex P2).
+    // Hopp-lenka setter `#hovedinnhold`: nettleseren flytter fokus dit selv, og
+    // det er ALT som skal skje. Uten denne linja gikk fragmentet gjennom
+    // «ukjent rute → hjem», og et hopp til innholdet byttet ut siden man sto
+    // på — så fokus landet i et innhold brukeren aldri ba om.
+    if (!erRute(window.location.hash)) return;
     tegnSide(true);
   };
   window.addEventListener("hashchange", _sidelytter);
