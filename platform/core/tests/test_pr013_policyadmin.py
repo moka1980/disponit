@@ -36,9 +36,11 @@ def _policyrad(c, pid, versjon, aktiv=False):
         (TEN, pid, versjon, secrets.token_hex(32), aktiv))
 
 
-def _hode(c, pid, aktiv_versjon=None, neste=1):
-    c.execute("INSERT INTO policy_hode (tenant,policy_id,neste_versjon,"
-              "aktiv_versjon) VALUES (%s,%s,%s,%s)", (TEN, pid, neste, aktiv_versjon))
+def _hode(c, pid, aktiv_versjon=None):
+    # `neste_versjon` er borte (migrasjon 020): versjonen kommer fra policyens
+    # egen `meta.versjon`, ikke fra en teller på ankerraden.
+    c.execute("INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon)"
+              " VALUES (%s,%s,%s)", (TEN, pid, aktiv_versjon))
 
 
 def _utkast(c, uid, pid, av="bruker-a", status="utkast", innhold='{"a":1}'):
@@ -114,7 +116,7 @@ def test_avledet_aktiv_peker_konsistens():
     try:
         _policyrad(c, "p2", "1", aktiv=True)
         _policyrad(c, "p2", "2", aktiv=False)   # finnes, men ikke aktiv
-        _hode(c, "p2", aktiv_versjon="1", neste=3)
+        _hode(c, "p2", aktiv_versjon="1")
         c.commit()                       # konsistent: peker=1, aktiv-rad=1 → OK
         # Flytt PEKEREN til versjon 2 mens den aktive raden fortsatt er 1 —
         # delindeksen fanger ikke dette (kun én aktiv rad); den DEFERRED
@@ -265,7 +267,13 @@ def test_runtime_kan_ikke_skrive_policyer_direkte():
         r.close()
 
 
-def _validert_utkast(c, uid, pid, av="bruker-a", innhold='{"a":1}'):
+def _validert_utkast(c, uid, pid, av="bruker-a", innhold=None,
+                     versjon="1.1.0"):
+    # Aktiveringen lagrer policyens EGEN `meta.versjon` som registerets
+    # `versjon` (migrasjon 020) — et utkast uten den kan ikke aktiveres, heller
+    # ikke i disse DB-nære testene.
+    if innhold is None:
+        innhold = '{"meta":{"versjon":"' + versjon + '"},"a":1}'
     c.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,status,"
         "innholds_hash,opprettet_av) VALUES (%s,%s,%s,%s::jsonb,'validert',%s,%s)",
@@ -343,13 +351,88 @@ def test_aktiver_policy_full_runde_aktiverer_nøyaktig_en():
 
 
 @pg
+def test_aktiver_policy_krever_semantisk_versjon():
+    """🔴 Versjonen registeret lagrer er utkastets EGEN `meta.versjon`.
+
+    Mangler den (eller er den ikke på formen 1.2.3), kan raden ikke lagres:
+    `policyregister.hent_aktiv` krever at kolonnen og dokumentet er enige, så
+    en aktivering uten den ville etterlatt en policy beslutningsveien avviser
+    som korrupt — etter å ha svart «aktivert». Funksjonen nekter i stedet.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf", innhold='{"a":1}')  # ingen meta
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_avviser_versjon_som_alt_er_registrert():
+    """En versjon kan ikke skrives to ganger for samme policy.
+
+    Uten kontrollen ville PK-en felt INSERT-en som en rå `unique_violation` —
+    ikke til å skille fra pekerdriften kalleren behandler helt annerledes.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _policyrad(c, pid, "1.1.0")             # finnes, men er ikke aktiv
+    _validert_utkast(c, uid, pid, av="forf", versjon="1.1.0")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_krever_nyere_versjon_enn_aktiv():
+    """Monotoni: etterfølgeren må være NYERE enn den aktive.
+
+    Det var jobben telleren `neste_versjon` gjorde. Når versjonen kommer fra
+    dokumentet, må kravet håndheves eksplisitt — ellers kunne en aktivering
+    flytte policyen bakover uten at noe sa fra.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _policyrad(c, pid, "2.0.0", aktiv=True)
+    _hode(c, pid, aktiv_versjon="2.0.0")
+    _validert_utkast(c, uid, pid, av="forf", versjon="1.9.9")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,%s)", (TEN, uid, "2.0.0"))
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
 def test_aktiver_policy_stale_base_serialization_failure():
     """Base flyttet siden runden åpnet: aktiv er v1, men kallet tror base er
     deny-all (NULL) → serialization_failure (rebasering)."""
     c = _c()
     pid = "pol-" + secrets.token_hex(3)
     _policyrad(c, pid, "1", aktiv=True)
-    _hode(c, pid, aktiv_versjon="1", neste=2)
+    _hode(c, pid, aktiv_versjon="1")
     uid = "u-" + secrets.token_hex(4)
     _validert_utkast(c, uid, pid, av="forf")
     _runde(c, uid)

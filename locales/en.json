@@ -651,5 +651,8 @@
   "ui.policyadmin.tilbake_til_liste": "← Back to drafts",
   "ui.policyadmin.detalj_undertittel": "Draft {id}",
   "ui.policyadmin.utfall.venter_antall": "{avgitt} approval(s) given, {gjenstaar} remaining.",
-  "ui.policyadmin.utfall.mangler_uavhengig": "At least one approver must be someone other than the author."
+  "ui.policyadmin.utfall.mangler_uavhengig": "At least one approver must be someone other than the author.",
+  "ui.policyadmin.utfall.aktiv_peker_usynk": "The active policy and its pointer are out of sync — the data must be repaired before activation.",
+  "ui.policyadmin.utfall.versjon_i_bruk": "The draft's version number is already registered, or is not newer than the active version. Increase \"meta.versjon\" in the draft and validate again.",
+  "ui.policyadmin.utfall.versjon_mangler": "The draft has no valid version number in \"meta.versjon\" (the form 1.2.3). Fix it in the draft and validate again."
 }

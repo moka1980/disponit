@@ -223,7 +223,30 @@ const UTFALLSART = new Map([
   ["venter_godkjennere", "vent"],
   ["rebasering_kreves", "feil"],
   ["semantikk_endret", "feil"],
+  // Aktiv policy og peker er ute av synk: attestasjonen står, men aktiveringen
+  // kom ikke gjennom, og et nytt forsøk hjelper ikke før dataene er reparert.
+  ["aktiv_peker_usynk", "feil"],
+  // Versjonen utkastet bærer kan ikke lagres (tatt utenom den styrte veien
+  // mens runden sto åpen). Runden er lukket; utkastet må få en ny versjon.
+  ["versjon_i_bruk", "feil"],
 ]);
+
+// Feilkoder der «Handlingen feilet.» ville vært en løgn. Felles for dem er at
+// det ikke er HANDLINGEN som gikk galt, men grunnlaget den hviler på — et nytt
+// klikk endrer ingenting, og eier trenger å vite hva som faktisk må rettes.
+// Kartet holder kodene ett sted, så en ny kode ikke kan bli hengende igjen i
+// den ene av de to feilveiene (runde-åpning og attestering).
+const GRUNNLAGSFEIL = new Map([
+  ["aktiv_peker_usynk", "ui.policyadmin.utfall.aktiv_peker_usynk"],
+  ["versjon_i_bruk", "ui.policyadmin.utfall.versjon_i_bruk"],
+  ["versjon_mangler", "ui.policyadmin.utfall.versjon_mangler"],
+]);
+
+// -> teksten for en grunnlagsfeil, ellers den generiske «Handlingen feilet.».
+function grunnlagsfeiltekst(e) {
+  const nokkel = (e instanceof ApiFeil) ? GRUNNLAGSFEIL.get(e.kode) : undefined;
+  return nokkel ? t(nokkel) : t("ui.policyadmin.feilet");
+}
 
 // Terskelen har TO betingelser, og serverens `gjenstaar` teller bare den ene
 // (Codex P2). Feltet er `max(0, påkrevd - antall)` — et rent talloppgjør — mens
@@ -284,6 +307,16 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
       }
       if (e instanceof ApiFeil && e.kode === "diff_utdatert") {
         _settKvittering(uid, "feil", t("ui.policyadmin.diff_utdatert"));
+        if (paaFerdig) paaFerdig();
+        return;
+      }
+      // Grunnlaget er galt (peker og flagg spriker, eller versjonen utkastet
+      // bærer kan ikke lagres): serveren nekter å ta imot attestasjonen, og
+      // den nekter uansett hvor mange ganger eier klikker. «Handlingen feilet»
+      // ville sendt henne inn i akkurat den runden — tekstene her sier hva som
+      // må rettes, og at ventingen ikke er over av seg selv.
+      if (e instanceof ApiFeil && GRUNNLAGSFEIL.has(e.kode)) {
+        _settKvittering(uid, "feil", grunnlagsfeiltekst(e));
         if (paaFerdig) paaFerdig();
         return;
       }
@@ -413,10 +446,15 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
         // ute, er boksen frakoblet: da leses feilen opp i stedet for å
         // forsvinne (Codex P2, se `visEllerMeld`).
         boks.querySelectorAll(".pa-kvittering").forEach((n) => n.remove());
+        // Runden nektes åpnet fordi grunnlaget ikke holder (peker og flagg
+        // spriker, eller utkastets versjon kan ikke lagres): da er det ikke
+        // handlingen som feilet. Sier vi «Handlingen feilet», prøver eier
+        // igjen i det uendelige.
+        const tekst = grunnlagsfeiltekst(e);
         visEllerMeld(boks,
           el("div", { class: "pa-kvittering pa-kvittering-feil", role: "alert" },
-            el("p", { text: t("ui.policyadmin.feilet") })),
-          t("ui.policyadmin.feilet"));
+            el("p", { text: tekst })),
+          tekst);
       }));
     boks.append(b);
     return { rot: boks, diffVist };

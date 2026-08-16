@@ -55,23 +55,30 @@ def main() -> int:
     for t in ("arbeidskapabiliteter", "kvitteringskapabiliteter"):
         mig.execute(f"DELETE FROM {t} WHERE tenant=%s", (TENANT,))
     mig.execute("RESET ROLE")
+    # Append-only-tabeller hever ubetinget ved DELETE — oppryddingen slår
+    # triggeren av, sletter, og slår den på igjen. `policy_hode` kom hit da
+    # bootstrap begynte å skrive ankerraden: i drift skal pekerens historikk
+    # ikke kunne viskes ut, men en bevis-rundtur må kunne nullstille tenanten
+    # sin. Den må dessuten komme FØR `policyer` — pekeren har FK dit, og
+    # rekkefølgen i lista under er sletterekkefølgen.
+    APPEND_ONLY = {"unntak_historikk": "historikk_ingen_endring",
+                   "unntak": "unntak_ingen_delete",
+                   "revisjonslogg": "revisjonslogg_ingen_endring",
+                   "oppdrag": "oppdrag_ingen_delete",
+                   "reparasjonsoperasjoner": "reparasjon_vakt",
+                   "tenant_nokler": "tenant_nokler_ingen_delete",
+                   "policy_hode": "hode_ingen_sletting"}
     for tab in ("oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
-                "unntak", "revisjonslogg", "idempotens", "policyer",
+                "unntak", "revisjonslogg", "idempotens",
+                "policy_hode", "policyer",
                 "tenant_nokler", "attestasjon_jti", "frekvens_hendelser"):
-        if tab in ("unntak_historikk", "unntak", "revisjonslogg", "oppdrag",
-                   "reparasjonsoperasjoner", "tenant_nokler"):
-            trig = {"unntak_historikk": "historikk_ingen_endring",
-                    "unntak": "unntak_ingen_delete",
-                    "revisjonslogg": "revisjonslogg_ingen_endring",
-                    "oppdrag": "oppdrag_ingen_delete",
-                    "reparasjonsoperasjoner": "reparasjon_vakt",
-                    "tenant_nokler": "tenant_nokler_ingen_delete"}[tab]
+        trig = APPEND_ONLY.get(tab)
+        if trig:
             mig.execute(f"ALTER TABLE {tab} DISABLE TRIGGER {trig}")
         mig.execute("SELECT set_config('disponit.tenant',%s,true),"
                     "       set_config('disponit.aktor','oppsett',true)", (TENANT,))
         mig.execute(f"DELETE FROM {tab} WHERE tenant=%s", (TENANT,))
-        if tab in ("unntak_historikk", "unntak", "revisjonslogg", "oppdrag",
-                   "reparasjonsoperasjoner", "tenant_nokler"):
+        if trig:
             mig.execute(f"ALTER TABLE {tab} ENABLE TRIGGER {trig}")
     mig.execute("DELETE FROM api_tokener WHERE tenant=%s", (TENANT,))
     mig.commit()

@@ -135,6 +135,32 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         conn.execute("UPDATE policyer SET aktiv=false"
                      " WHERE tenant=%s AND policy_id=%s AND aktiv",
                      (tenant, pid))
+    else:
+        # `aktiver=False` på DEN VERSJONEN SOM ER AKTIV er ikke en
+        # registrering — det er en avvikling, og den skal ikke skje som
+        # bivirkning av en re-registrering.
+        #
+        # Upserten under setter `aktiv = EXCLUDED.aktiv`. Kalles funksjonen
+        # med samme versjon og `aktiver=False`, slås altså flagget av på den
+        # gjeldende raden mens pekeren blir stående. Det er speilbildet av
+        # rotårsaken denne fiksen handler om — og verre: `hent_aktiv` finner
+        # da INGEN aktiv rad og kaster `PolicyUkjent` på hver beslutning,
+        # mens styringslaget fortsatt tror en policy er i kraft. Tenanten
+        # mister policyen sin uten at noe sier fra.
+        #
+        # Å avvikle en policy i kraft er en styringshandling. Den skal ha sin
+        # egen, sporede vei — ikke denne.
+        rad = conn.execute(
+            "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND versjon=%s AND aktiv", (tenant, pid, versjon)).fetchone()
+        peker = conn.execute(
+            "SELECT 1 FROM policy_hode WHERE tenant=%s AND policy_id=%s"
+            " AND aktiv_versjon=%s", (tenant, pid, versjon)).fetchone()
+        if rad or peker:
+            raise PolicyKorrupt(
+                [f"kan ikke registrere versjon {versjon} med aktiver=False:"
+                 " den er den gjeldende aktive versjonen — avvikling er en"
+                 " egen, styrt handling"], policy)
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
         " status, innhold, aktiv) VALUES (%s,%s,%s,%s,%s,%s,%s)"
@@ -142,4 +168,22 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
         "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv",
         (tenant, pid, versjon, h, status, json.dumps(policy), aktiver))
+    if aktiver:
+        # Ankerraden MÅ følge med. Den styrte aktiveringen
+        # (`aktiver_policy`) leser `policy_hode.aktiv_versjon`, IKKE
+        # `policyer.aktiv`. Skrev vi bare flagget — som denne funksjonen
+        # gjorde — trodde den at ingenting var aktivt, hoppet derfor over
+        # «deaktiver forrige», og INSERT-en kolliderte med delindeksen
+        # `en_aktiv_per_policy`. Symptomet var HTTP 500 midt i en
+        # fire-øyne-runde, på en tenant satt opp helt normalt via
+        # init-tenant.sh, og det rammet FØRSTE styrte aktivering for enhver
+        # slik tenant. Delindeksen holdt — men den holdt ved å velte
+        # forespørselen, ikke ved å hindre at pekeren kom ut av synk.
+        conn.execute(
+            "INSERT INTO policy_hode (tenant, policy_id, aktiv_versjon)"
+            " VALUES (%s,%s,%s)"
+            " ON CONFLICT (tenant, policy_id) DO UPDATE"
+            " SET aktiv_versjon = EXCLUDED.aktiv_versjon,"
+            "     revisjon = policy_hode.revisjon + 1",
+            (tenant, pid, versjon))
     return h

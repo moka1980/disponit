@@ -382,6 +382,72 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
     return rad[0] if rad else None
 
 
+def _krev_peker_synk(conn, tenant: str, policy_id: str,
+                     aktiv_versjon: str | None) -> None:
+    """Pekeren (`policy_hode.aktiv_versjon`) og flagget (`policyer.aktiv`) er to
+    utsagn om NØYAKTIG samme sak. Spriker de, er ikke bare aktiveringen i fare —
+    HELE runden bygger på feil grunnlag: `_base` følger pekeren, så en tom peker
+    over en aktiv policyrad gir en diff mot `DENY_ALL_V1`, en risikoklasse regnet
+    ut fra det, og godkjennere som signerer NØYAKTIG den feilen. Repareres
+    pekeren etterpå, flytter basen seg, og rekalken under låsen krever
+    rebasering: attestasjonene var da verdiløse fra det øyeblikket de ble avgitt.
+
+    Derfor stoppes drift HER — før runden åpnes og før noen attesterer — ikke
+    først når `en_aktiv_per_policy` velter INSERT-en inne i `aktiver_policy`.
+    Kaster `Aktiveringsfeil("aktiv_peker_usynk")`; dataene må repareres."""
+    rad = conn.execute(
+        "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s AND aktiv",
+        (tenant, policy_id)).fetchone()
+    flagget = rad[0] if rad else None
+    if flagget != aktiv_versjon:
+        raise Aktiveringsfeil(
+            "aktiv_peker_usynk", f"peker={aktiv_versjon} flagg={flagget}")
+
+
+#: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`).
+_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+#: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
+#: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
+_TALLVERSJON = re.compile(r"^\d+(\.\d+)*$")
+
+
+def _versjonsnokkel(versjon: str) -> tuple[int, ...]:
+    return tuple(int(d) for d in versjon.split("."))
+
+
+def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
+                     aktiv_versjon: str | None) -> str:
+    """Versjonen aktiveringen kommer til å lagre er utkastets EGEN
+    `meta.versjon` (migrasjon 020: dokumentet eier versjonen, registerkolonnen
+    indekserer det). Da må den holde MENS runden bygges, ikke bare når
+    `aktiver_policy` til slutt låser hodet:
+
+    * uten en semantisk `meta.versjon` kan utkastet ikke aktiveres i det hele
+      tatt (`policyregister.hent_aktiv` krever at kolonnen og dokumentet er
+      enige — ellers er den ferske policyen korrupt for beslutningsveien);
+    * er versjonen alt registrert, eller ikke nyere enn den aktive, kan den
+      ikke skrives — og det er ingenting godkjennerne kan gjøre med det. Eier
+      må øke `meta.versjon` i utkastet og validere på nytt.
+
+    Å oppdage dette først ved aktivering ville kastet bort en hel runde: to
+    signaturer på et utkast som aldri kunne lande. Kontrollen speiler derfor
+    `_krev_peker_synk` — den kjører før runden åpnes og før noen attesterer.
+    -> versjonen som vil bli lagret. Kaster `Aktiveringsfeil`."""
+    meta = ny_innhold.get("meta") if isinstance(ny_innhold, dict) else None
+    ny = meta.get("versjon") if isinstance(meta, dict) else None
+    if not isinstance(ny, str) or not _SEMVER.match(ny):
+        raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r}")
+    if conn.execute(
+            "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND versjon=%s", (tenant, policy_id, ny)).fetchone():
+        raise Aktiveringsfeil("versjon_i_bruk", f"versjon={ny} finnes")
+    if aktiv_versjon is not None and _TALLVERSJON.match(aktiv_versjon) \
+            and _versjonsnokkel(ny) <= _versjonsnokkel(aktiv_versjon):
+        raise Aktiveringsfeil(
+            "versjon_i_bruk", f"versjon={ny} ikke nyere enn {aktiv_versjon}")
+    return ny
+
+
 # --------------------------------------------------------------------------
 # 1. Runde-åpning.
 # --------------------------------------------------------------------------
@@ -418,6 +484,13 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         raise Aktiveringsfeil("utkast_ikke_validert", "mangler innholds_hash")
 
     aktiv_versjon = _hode_aktiv_versjon(conn, tenant, policy_id)
+    # Ingen runde åpnes på en base vi ikke stoler på (Codex P1): en usynk peker
+    # ville gitt godkjennerne en diff mot feil base, og runden kunne uansett
+    # ikke aktiveres etter en reparasjon.
+    _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
+    # Og ingen runde åpnes på et utkast som ikke KAN lagres: versjonen det
+    # bærer må være semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
+    _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -451,6 +524,37 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         "pakrevd_antall_godkjennere": v["pakrevd_antall_godkjennere"],
         "base_versjon": aktiv_versjon,
     })
+
+
+def _kan_gjenoppta_aktivering(conn, tenant: str, utkast_id: str, runde: int,
+                              aktor: str, diff_hash: str, pakrevd: int) -> bool:
+    """Er en ny innsending fra en godkjenner som ALT har attestert et lovlig
+    forsøk på å fullføre aktiveringen — eller bare en dublett?
+
+    Lovlig KUN når runden allerede er på terskel (antall ≥ påkrevd OG minst én
+    ikke-forfatter) og aktørens eksisterende attestasjon binder NØYAKTIG denne
+    rundens diff. Da er signaturene på plass, runden er fortsatt åpen, og det
+    eneste som gjenstår er aktiveringen: nøyaktig tilstanden `aktiv_peker_usynk`
+    etterlater. Innsendingen skriver ingen ny signatur — den kjører de samme
+    kontrollene og forsøker aktiveringen om igjen.
+
+    Er runden IKKE på terskel, er det ingenting å gjenoppta: runden venter på
+    ANDRE godkjennere, og dubletten er en konflikt (`allerede_attestert`).
+    Fire-øyne-gaten står urørt — terskelen måles her på de lagrede radene, og
+    `aktiver_policy` verifiserer den uansett selv som policy-eieren."""
+    egen = conn.execute(
+        "SELECT diff_hash FROM aktiveringsattestasjon WHERE tenant=%s AND"
+        " utkast_id=%s AND runde=%s AND bruker_id=%s",
+        (tenant, utkast_id, runde, aktor)).fetchone()
+    if egen is None or egen[0] != diff_hash:
+        # Kollisjonen kom fra noe annet enn aktørens egen attestasjon på denne
+        # diffen (f.eks. `jti`) — da er dette ikke en gjenopptakelse.
+        return False
+    antall, uavhengige = conn.execute(
+        "SELECT count(*), count(*) FILTER (WHERE NOT er_forfatter) FROM"
+        " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+        (tenant, utkast_id, runde)).fetchone()
+    return antall >= pakrevd and uavhengige >= 1
 
 
 # --------------------------------------------------------------------------
@@ -526,6 +630,21 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         conn.rollback()
         raise Aktiveringsfeil("diff_utdatert")
 
+    # --- 5b. Basen må være TROVERDIG før noen signerer på den (Codex P1) ----
+    # En runde kan ha vært åpen da drift oppsto (eller ha blitt åpnet før denne
+    # kontrollen fantes). En godkjenner skal ikke få avgi en attestasjon som er
+    # verdiløs i det øyeblikket den skrives: attesterer hun en diff mot en base
+    # pekeren ikke er enig i, kan runden ikke aktiveres — og en reparasjon
+    # flytter basen, så rekalken i steg 9 krever rebasering uansett.
+    try:
+        _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
+        # Samme argument for versjonen: en signatur på et utkast som ikke kan
+        # lagres er like verdiløs som en signatur på feil base.
+        _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
+    except Aktiveringsfeil:
+        conn.rollback()
+        raise
+
     # --- 6. Bygg + MAC-signer konvolutten fra LÅSTE data -------------------
     er_forfatter = (aktor == opprettet_av)
     konvolutt = {
@@ -557,6 +676,10 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     konvolutt_hash = hashlib.sha256(kanonisk_konvolutt(konvolutt)).hexdigest()
 
     # --- 7. Skriv attestasjonen (append-only; trigger vokter er_forfatter) --
+    # Savepointet gjør at en kollisjon kan BESVARES i stedet for å velte
+    # transaksjonen: en godkjenner som alt har attestert er som regel en
+    # konflikt, men ikke alltid (steg 7b).
+    conn.execute("SAVEPOINT attestasjonsforsok")
     try:
         conn.execute(
             "INSERT INTO aktiveringsattestasjon (tenant, utkast_id, runde,"
@@ -569,8 +692,25 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
              KONVOLUTTVERSJON, konvolutt_hash, mac, mac_key_id,
              konvolutt["jti"], r_utloper))
     except psycopg.errors.UniqueViolation:
-        conn.rollback()
-        raise Aktiveringsfeil("allerede_attestert") from None
+        # --- 7b. Samme godkjenner, samme runde, én gang til ----------------
+        # Append-only-nøkkelen stopper en NY signatur — men innsendingen kan
+        # være det eneste gjenværende forsøket på å FULLFØRE en runde som alt
+        # står på terskel. Det skjer etter `aktiv_peker_usynk` i steg 10:
+        # attestasjonen ble bevart, runden står åpen, og etter at eier har
+        # reparert dataene finnes det ingen annen vei inn — samme
+        # idempotensnøkkel replayer bare det lagrede utfallet, og en ny nøkkel
+        # traff før dette punktet. Uten denne veien står en runde på NØYAKTIG
+        # terskel fast til en ekstra kvalifisert person signerer unødig.
+        conn.execute("ROLLBACK TO SAVEPOINT attestasjonsforsok")
+        if not _kan_gjenoppta_aktivering(conn, tenant, utkast_id, r_nr, aktor,
+                                         r_diff_hash, r_pakrevd):
+            conn.rollback()
+            raise Aktiveringsfeil("allerede_attestert") from None
+        # Faller gjennom til steg 8: ingen ny signatur skrives, men terskelen,
+        # reautoriseringen, rekalken og selve aktiveringen kjøres på nytt —
+        # med nøyaktig de samme kontrollene som første gang.
+    else:
+        conn.execute("RELEASE SAVEPOINT attestasjonsforsok")
 
     # --- 8. Terskel (V6): antall ≥ påkrevd OG minst én ikke-forfatter -------
     rader = conn.execute(
@@ -628,6 +768,14 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     #         i DB-en, ikke her — Codex P1 R1), leser innholdet fra utkastet, og
     #         lukker runde+utkast atomisk. Et direkte runtime-kall utenom denne
     #         orkestreringen når aldri forbi funksjonens egne kontroller.
+    # Savepointet er ikke pynt: attestasjonen i steg 7 ligger i DENNE
+    # transaksjonen, og denne godkjenneren er den som fylte terskelen. En full
+    # rollback her ville tatt HENNES godkjenning med i fallet — runden ville
+    # stått åpen og under terskel igjen, og hun måtte attestert på nytt, stikk i
+    # strid med at en usynk peker skal REPARERES og ikke re-attesteres (Codex
+    # P1). Savepointet ruller derfor tilbake NØYAKTIG aktiveringsforsøket, og
+    # attestasjonen committes med det deterministiske utfallet.
+    conn.execute("SAVEPOINT aktiveringsforsok")
     try:
         ny_versjon = conn.execute(
             "SELECT aktiver_policy(%s,%s,%s,%s)",
@@ -635,8 +783,39 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     except psycopg.errors.SerializationFailure:
         # En konkurrerende aktivering vant kappløpet i funksjonens egen lås.
         # Funksjonen er serialiseringspunktet (V10) — flyttet base = rebasering.
+        # Her ER runden død (basen godkjennerne så finnes ikke lenger), så
+        # attestasjonen har ingenting å bevares til: en ny runde krever nye.
         conn.rollback()
         raise Aktiveringsfeil("rebasering_kreves") from None
+    except psycopg.errors.UniqueViolation:
+        # `en_aktiv_per_policy` slo til: det finnes en aktiv policyrad som
+        # pekeren ikke kjenner til. Kontrollen i steg 5b fanger drift som ALT
+        # var der; hit kommer bare drift som oppsto i vinduet mellom kontrollen
+        # og aktiveringen. Runden får stå, attestasjonen består, og eier får et
+        # utfall som sier hva som er galt — ikke «Exception in ASGI
+        # application», og ikke en tapt godkjenning.
+        conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
+        return _fullfor(conn, tenant, idempotency_key, {
+            "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
+            "policy_id": policy_id, "runde": r_nr})
+    except psycopg.errors.CheckViolation:
+        # Versjonsinvariantene i `aktiver_policy` (migrasjon 020): utkastets
+        # `meta.versjon` er borte, alt registrert, eller ikke nyere enn den
+        # aktive. Kontrollen i steg 5b fanger det som var der da runden ble
+        # bygget; hit kommer bare en versjon som ble tatt UTENOM den styrte
+        # veien i vinduet etterpå. Da er runden død: innholdet er frosset, så
+        # versjonen kan ikke økes uten et nytt utkast og nye signaturer.
+        # Runden kanselleres derfor med det samme — en runde som beviselig
+        # aldri kan aktiveres skal ikke stå åpen og se levende ut. Signaturene
+        # består (append-only); det er sporet av hva som faktisk ble godkjent.
+        conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
+        conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
+                     " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+                     (tenant, utkast_id, r_nr))
+        return _fullfor(conn, tenant, idempotency_key, {
+            "utfall": "versjon_i_bruk", "utkast_id": utkast_id,
+            "policy_id": policy_id, "runde": r_nr})
+    conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,
