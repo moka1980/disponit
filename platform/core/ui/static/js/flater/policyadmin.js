@@ -295,6 +295,26 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
 
 let _hintTeller = 0;
 
+// Feil fra en handling som IKKE friskner opp siden, tegnes rett i
+// handlingsboksen — synlig, ikke bare hørbar. Men boksen hører til DEN
+// tegningen som lagde den, og POST-en er ute på nettet mens eier fortsatt kan
+// klikke (Codex P2). Rakk hun «Tilbake» eller «Rediger» først, har `sett`
+// byttet ut hele `hoved`, og `boks` henger i et frakoblet tre når svaret
+// kommer. Et `append` dit er da verken synlig ELLER hørbar: `role="alert"`
+// annonserer ingenting utenfor dokumentet. Da vi gjorde feilen synlig, mistet
+// vi altså det ene sporet — `meldLive` — som overlevde navigasjon, og en
+// mislykket handling ble helt stille.
+//
+// Boksen i dokumentet er fortsatt riktig sted: den ER et assertivt
+// live-område og leses opp av seg selv, så et `meldLive` i tillegg ville gitt
+// to konkurrerende opplesninger for ett klikk. Er den frakoblet, finnes det
+// ingen skjerm å vise noe på, og utfallet går til den varige live-regionen i
+// stedet. ÉN annonsering i begge tilfeller — bare ikke null.
+function visEllerMeld(boks, node, talemelding) {
+  if (boks.isConnected) { boks.append(node); return; }
+  meldLive(talemelding);
+}
+
 // Handlingsknappene avhenger av utkastets tilstand: utkast → Valider; validert
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
 // Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
@@ -339,13 +359,18 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
     // stedet for å anta «ugyldig»: en nettverksfeil, 403, 409 eller 5xx sier
     // ingenting om utkastet, og skal ikke få eier til å lete etter feil i en
     // policy som kan være helt i orden.
+    // Samme frakoblingsproblem som «Åpne runde» (se `visEllerMeld`): også
+    // valideringen kan svare etter at eier har forlatt siden, og en feilliste
+    // tegnet inn i et dødt tre er ingen tilbakemelding.
     const visFeil = (overskrift, linjer) => {
       boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
-      boks.append(el("div", { class: "pa-valfeil", role: "alert" },
-        el("p", { text: overskrift }),
-        ...(linjer.length
-          ? [el("ul", {}, ...linjer.map((f) => el("li", { text: String(f) })))]
-          : [])));
+      visEllerMeld(boks,
+        el("div", { class: "pa-valfeil", role: "alert" },
+          el("p", { text: overskrift }),
+          ...(linjer.length
+            ? [el("ul", {}, ...linjer.map((f) => el("li", { text: String(f) })))]
+            : [])),
+        [overskrift, ...linjer.map(String)].join(" "));
     };
     b.addEventListener("click", () =>
       validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
@@ -384,10 +409,14 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         // Ingen gjentegning her, så feilen tegnes rett i handlingsboksen —
-        // synlig, ikke bare hørbar.
+        // synlig, ikke bare hørbar. Og har eier gått videre mens POST-en lå
+        // ute, er boksen frakoblet: da leses feilen opp i stedet for å
+        // forsvinne (Codex P2, se `visEllerMeld`).
         boks.querySelectorAll(".pa-kvittering").forEach((n) => n.remove());
-        boks.append(el("div", { class: "pa-kvittering pa-kvittering-feil",
-          role: "alert" }, el("p", { text: t("ui.policyadmin.feilet") })));
+        visEllerMeld(boks,
+          el("div", { class: "pa-kvittering pa-kvittering-feil", role: "alert" },
+            el("p", { text: t("ui.policyadmin.feilet") })),
+          t("ui.policyadmin.feilet"));
       }));
     boks.append(b);
     return { rot: boks, diffVist };

@@ -1400,3 +1400,91 @@ test("Utfallet leses opp selv om gjentegningen mister skjermen underveis",
       "et gammelt utfall ble vist som om det var ferskt");
     globalThis.fetch = brukFetch;
   });
+
+// Codex P2: «Åpne runde» friskner ikke opp siden ved feil — feilen tegnes rett
+// i handlingsboksen, som skal være synlig og ikke bare hørbar. Men boksen hører
+// til DEN tegningen som lagde den, og POST-en er ute på nettet mens eier
+// fortsatt kan klikke. Rakk hun «Tilbake» først, hadde `sett` byttet ut hele
+// `hoved`, og alerten ble hengt inn i et frakoblet tre: usynlig fordi det ikke
+// står på skjermen, OG stumt fordi `role="alert"` ikke annonserer noe utenfor
+// dokumentet. Da feilen ble gjort synlig, mistet den altså `meldLive` — det
+// ene sporet som overlevde navigasjon — og en mislykket handling ble helt
+// stille. Eier tror runden er åpnet.
+//
+// Kontroll: bytt `visEllerMeld` tilbake til et rått `boks.append(…)`, så blir
+// testen rød.
+test("En handling som feiler etter at eier har gått videre, blir hørt",
+  async () => {
+    const gjenopprett = _medCsrf();
+    let slippPost = null;
+    SVAR = {
+      "/v1/policyutkast": LISTE,
+      // Validert uten runde → «Åpne runde».
+      "/v1/policyutkast/u-1": { ...DETALJ, aktiv_runde: null },
+      __post: async () => {
+        await new Promise((r) => { slippPost = r; });
+        return { ok: false, status: 500, json: async () => ({ feil: "x" }) };
+      },
+    };
+    const h = await _aapneDetaljMed(nyHoved(),
+      t("ui.policyadmin.handling.apne_runde"));
+
+    meldLive("");                        // ren startlinje å måle mot
+    _finn(h, t("ui.policyadmin.handling.apne_runde"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippPost);         // POST-en er ute på nettet
+
+    // Eier venter ikke på svaret — hun går tilbake til lista.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+    slippPost();
+    await vent(() => false, 20);
+
+    const live = [...document.querySelectorAll('[aria-live="polite"]')]
+      .map((n) => n.textContent).join(" ");
+    assert.ok(live.includes(t("ui.policyadmin.feilet")),
+      "runden ble ikke åpnet, og eier fikk ingen beskjed om det");
+    assert.equal(h.querySelectorAll(".pa-kvittering-feil").length, 0,
+      "feilen rev eier tilbake til en side hun hadde forlatt");
+    gjenopprett();
+  });
+
+// Samme frakobling gjelder valideringens feilliste: også den tegnes rett i
+// handlingsboksen, og også den kan svare etter at eier har forlatt siden.
+// Kontroll: bytt `visEllerMeld` i `visFeil` tilbake til `boks.append(…)`.
+test("Valideringsfeil som lander etter navigasjon, blir hørt", async () => {
+  const gjenopprett = _medCsrf();
+  let slippPost = null;
+  SVAR = {
+    "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => {
+      await new Promise((r) => { slippPost = r; });
+      return { ok: false, status: 422, json: async () => ({
+        feil: "policy_ugyldig", detaljer: ["rolle mangler"] }) };
+    },
+  };
+  const h = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+
+  meldLive("");
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slippPost);
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  slippPost();
+  await vent(() => false, 20);
+
+  const live = [...document.querySelectorAll('[aria-live="polite"]')]
+    .map((n) => n.textContent).join(" ");
+  assert.ok(live.includes(t("ui.policyadmin.ugyldig")),
+    "utkastet var ugyldig, men eier fikk aldri vite det");
+  assert.ok(live.includes("rolle mangler"),
+    "serverens egen feilliste forsvant med den frakoblede boksen");
+  assert.equal(h.querySelectorAll(".pa-valfeil").length, 0,
+    "feillista ble tegnet inn i en side eier hadde forlatt");
+  gjenopprett();
+});
