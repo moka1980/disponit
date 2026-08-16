@@ -1651,6 +1651,53 @@ def test_gjenstaaende_attesteringer_telles_ned_i_varslene():
 
 
 @pg
+def test_manglende_uavhengig_attestasjon_telles_som_gjenstaaende():
+    """Codex P2: nedtellingen må telle BEGGE betingelsene i terskelen.
+
+    En `INNSNEVRER`-runde krever bare én attestasjon — men den må komme fra en
+    som ikke er forfatter. Attesterer forfatteren først, blir `pakrevd - antall`
+    null mens runden fortsatt står åpen og venter på nøyaktig den ene personen
+    som ennå ikke har svart. Han leste da at null attestasjoner gjenstår, og
+    e-posten hans sa det samme.
+
+    Kontroll: bytt `_gjenstaar_effektivt` i steg 8 tilbake til
+    `max(0, r_pakrevd - antall)`, så blir denne rød med `gjenstaar == 0` både i
+    svaret og i varselet til den uavhengige godkjenneren.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    _aktiv_base(pid, {"roller": [{"id": "r1"}, {"id": "r2"}]})
+    a = _medlem("uavh-forf", ["policyforvalter"])
+    b = _medlem("uavh-godk", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}]})   # fjerner r2 → INNSNEVRER
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert r["pakrevd_antall_godkjennere"] == 1
+        r1 = _attester(rt, uid, a, r["diff_hash"])
+        assert r1["utfall"] == "venter_godkjennere"
+        assert r1["mangler_uavhengig"] is True
+        assert r1["gjenstaar"] == 1, (
+            "svaret sier at ingenting gjenstår, men runden venter fortsatt "
+            f"på en uavhengig godkjenner: {r1}")
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        param = {x[0]: x[1] for x in m.execute(
+            "SELECT bruker_id, parametre FROM varsel WHERE tenant=%s"
+            " AND ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND hendelse='1'", (TEN, uid)).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+    assert param[b]["gjenstaar"] == 1, (
+        "den uavhengige godkjenneren — den eneste som kan bringe runden "
+        f"videre — får beskjed om at ingenting gjenstår: {param[b]}")
+
+
+@pg
 def test_aktivering_pensjonerer_hele_rundens_varsler():
     """Når runden er brukt, venter den ikke på noen — heller ikke på dem som
     aldri rakk å svare.

@@ -376,6 +376,27 @@ def _runde_status(status: str, utloper, naa) -> str:
     return status
 
 
+def _gjenstaar_effektivt(pakrevd: int, antall: int, ikke_forfatter: int) -> int:
+    """Hvor mange attestasjoner som FAKTISK gjenstår før runden kan aktiveres.
+
+    Terskelen (V6) har to betingelser: `antall >= pakrevd` OG minst én
+    attestasjon fra en ikke-forfatter. `pakrevd - antall` teller bare den
+    første, og for en `INNSNEVRER`/`NØYTRAL`-runde er `pakrevd` 1 — så når
+    forfatteren attesterer først, blir differansen 0 mens runden fortsatt
+    venter på den uavhengige godkjenneren (Codex P2). Han fikk da beskjed om
+    at null attestasjoner gjenstår, samtidig som hans egen var den eneste som
+    manglet. E-posten sa det samme: den rendres fra de samme parametrene.
+
+    Kravet om en uavhengig attestasjon er derfor et eget ledd i maksimum: står
+    det igjen, gjenstår det minst én uansett hva differansen sier.
+
+    Flaten regner det samme ut fra `mangler_uavhengig` i svaret
+    (`gjenstaarIgjen`); det som skrives inn i varselet har ikke det feltet å
+    støtte seg på, og må bære tallet ferdig.
+    """
+    return max(0, pakrevd - antall, 0 if ikke_forfatter >= 1 else 1)
+
+
 def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
                           request_id: str, lagret: dict, naa) -> int:
     """Kjør varslingen for en alt åpnet runde på nytt. -> antall opprettet.
@@ -412,7 +433,10 @@ def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
         "SELECT r.status, r.utloper, r.pakrevd_antall_godkjennere,"
         " (SELECT count(*) FROM aktiveringsattestasjon a"
         "   WHERE a.tenant=r.tenant AND a.utkast_id=r.utkast_id"
-        "     AND a.runde=r.runde)"
+        "     AND a.runde=r.runde),"
+        " (SELECT count(*) FROM aktiveringsattestasjon a"
+        "   WHERE a.tenant=r.tenant AND a.utkast_id=r.utkast_id"
+        "     AND a.runde=r.runde AND NOT a.er_forfatter)"
         " FROM aktiveringsrunde r"
         " WHERE r.tenant=%s AND r.utkast_id=%s AND r.runde=%s",
         (tenant, utkast_id, runde)).fetchone())
@@ -425,6 +449,9 @@ def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
     # Med det lagrede påkrevd-tallet ville varselet som endelig kom frem sagt
     # at alle attestasjonene gjenstår — det ville vært det samme feiltrinnet
     # `oppdater_gjenstaar` finnes for, bare i den veien som skal REPARERE.
+    # Og av samme grunn regnes det gjennom `_gjenstaar_effektivt`: har
+    # forfatteren rukket å attestere i vinduet, er differansen 0 mens den
+    # uavhengige godkjenneren fortsatt mangler.
     pakrevd = rad[2] if rad[2] is not None else lagret.get(
         "pakrevd_antall_godkjennere", 0)
     return varsel.varsle_runde_venter(
@@ -432,7 +459,7 @@ def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
         utkast_id=utkast_id, runde=int(runde),
         policy_id=lagret.get("policy_id", ""),
         risikoklasse=lagret.get("risikoklasse", ""),
-        gjenstaar=max(0, pakrevd - rad[3]))
+        gjenstaar=_gjenstaar_effektivt(pakrevd, rad[3], rad[4]))
 
 
 def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
@@ -1390,13 +1417,13 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # den som faktisk skal handle sto igjen med tallet fra åpningen og
         # sa «2 gjenstår» når bare hans egen sto igjen. E-posten sa det samme:
         # den rendres fra de samme parametrene, ved sending.
+        gjenstaar = _gjenstaar_effektivt(r_pakrevd, antall, ikke_forfatter)
         varsel.oppdater_gjenstaar(conn, tenant=tenant, utkast_id=utkast_id,
-                                  runde=r_nr,
-                                  gjenstaar=max(0, r_pakrevd - antall))
+                                  runde=r_nr, gjenstaar=gjenstaar)
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "venter_godkjennere", "utkast_id": utkast_id,
             "runde": r_nr, "antall": antall,
-            "gjenstaar": max(0, r_pakrevd - antall),
+            "gjenstaar": gjenstaar,
             "mangler_uavhengig": ikke_forfatter < 1})
 
     # --- 8b. REAUTORISER ALLE godkjennere ved aktivering (Codex R2) ---------
