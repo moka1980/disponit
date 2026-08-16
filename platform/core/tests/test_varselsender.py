@@ -1208,8 +1208,17 @@ _GRANT_PUBLIC = re.compile(r"\bgrant\b.*" + _TIL_PUBLIC)
 _GRANT_ALLE_PUBLIC = re.compile(
     r"\bgrant\b.*\bon all (?:functions|routines) in schema\b.*" + _TIL_PUBLIC)
 
-#: `f(int, int)` i en setning → `f(int,int)`, som i SENDERFUNKSJONER.
-_SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
+#: ET MÅL ER ET OBJEKT, IKKE EN DELSTRENG (Codex P2 på #71). Et objektnavn i
+#: SQL er `[skjema.]navn[(argumenter)]`, og hver av de tre delene skiller
+#: funksjoner fra hverandre: `varsel_rekoe_helper(interval)` INNEHOLDER
+#: `varsel_rekoe` uten å være den, og `annet_skjema.varsel_rekoe(…)` er et
+#: annet objekt med samme navn. Med delstrengsjekk slapp begge inn — og
+#: verre: fordi ingen av dem har en signatur som BEGYNNER på `varsel_rekoe(`,
+#: falt de ned i «bart navn»-grenen og lukket gjerdet for den beskyttede
+#: funksjonen på vegne av en helt annen.
+_MAAL = re.compile(
+    r"(?:(?P<skjema>[a-z_][a-z0-9_]*)\s*\.\s*)?"
+    r"(?P<navn>[a-z_][a-z0-9_]*)\s*(?:\((?P<args>[^()]*)\))?")
 
 #: MÅLKLAUSULEN, ikke hele setningen (Codex P2 på #71). En setning kan NEVNE
 #: en signatur uten å virke på den — en vakt som
@@ -1258,26 +1267,65 @@ def _setninger(sql):
             yield s
 
 
-def _signaturer(setning):
-    """Alle `navn(argumenter)` i setningen, normalisert uten mellomrom."""
-    return {m.group(0).replace(" ", "") for m in _SIGNATUR.finditer(setning)}
+def _typeliste(argumenter):
+    """Argumentlisten som en sammenlignbar rekke av typer."""
+    return tuple(d.strip() for d in argumenter.split(",") if d.strip())
+
+
+def _referanser(tekst):
+    """Hvert objektnavn i teksten, som `(skjema, navn, argumenter)`.
+
+    `argumenter` er None når navnet står uten parentes — som er forskjellen
+    på `DROP FUNCTION f` (enhver overlast) og `DROP FUNCTION f(text)` (én).
+    Nøkkelord som `on` og `function` kommer med som navn uten argumenter;
+    de er harmløse, fordi de aldri er lik et basenavn vi leter etter.
+    """
+    for m in _MAAL.finditer(tekst):
+        yield m.group("skjema"), m.group("navn"), m.group("args")
+
+
+def _nevner(tekst, basenavn):
+    """Nevner teksten basenavnet som et OBJEKTNAVN — ikke som delstreng?
+
+    Silen foran målingen. Den er med vilje blind for skjema: en setning som
+    åpner gjerdet skal måles selv om den skriver et annet skjemanavn, av
+    samme grunn som `_GRANT_ALLE_PUBLIC` ikke sjekker skjema. Navnet må
+    derimot være HELE navnet — `varsel_rekoe_helper` er ikke `varsel_rekoe`,
+    og en migrasjon som lager eller granter hjelperen skal ikke rødme
+    porten for den beskyttede funksjonen.
+    """
+    return any(navn == basenavn for _skjema, navn, _args in _referanser(tekst))
 
 
 def _rammer(klausul, sig, basenavn):
-    """Treffer MÅLKLAUSULEN denne signaturen?
+    """Treffer MÅLKLAUSULEN denne signaturen — som OBJEKT, ikke som tekst?
 
-    Nevner klausulen én eller flere overlaster av basenavnet, gjelder den
-    bare dem den nevner: `f(text)` sier ingenting om `f(int,int)`.
+    Brukes av de LUKKENDE grenene (REVOKE, DROP), og der er tvilens retning
+    motsatt av ellers: det som skal til for å regne gjerdet som lukket, må
+    være hele identiteten. Alle tre delene av objektnavnet kreves derfor:
 
-    Nevner den derimot basenavnet BART — `DROP FUNCTION f`, som PostgreSQL
-    godtar når navnet er entydig — finnes det ingen signatur å skille på, og
-    den gjelder enhver overlast. Tvilen faller da mot at den beskyttede
+    * SKJEMAET må være uskrevet eller `public`. `annet.varsel_rekoe(…)` er et
+      annet objekt, og en REVOKE på det sier ingenting om vårt.
+    * NAVNET må være hele navnet, ikke en delstreng. `varsel_rekoe_helper`
+      inneholder `varsel_rekoe` uten å være den — og ville ellers falt ned i
+      «bart navn»-grenen under og lukket gjerdet på vegne av en fremmed.
+    * ARGUMENTENE må stemme når de er skrevet: `f(text)` sier ingenting om
+      `f(int,int)`.
+
+    Står navnet BART — `DROP FUNCTION f`, som PostgreSQL godtar når navnet er
+    entydig — finnes det ingen argumentliste å skille på, og setningen
+    gjelder enhver overlast. Tvilen faller da mot at den beskyttede
     signaturen er truffet, som ellers i denne modellen.
     """
-    if basenavn not in klausul:
+    egne = [args for skjema, navn, args in _referanser(klausul)
+            if navn == basenavn and skjema in (None, "public")]
+    if not egne:
         return False
-    egne = {s for s in _signaturer(klausul) if s.startswith(basenavn + "(")}
-    return sig in egne if egne else True
+    med_args = [a for a in egne if a is not None]
+    if not med_args:
+        return True
+    onsket = _typeliste(sig.split("(", 1)[1].rstrip(")"))
+    return any(_typeliste(a) == onsket for a in med_args)
 
 
 def _spill_av(filer, signaturer):
@@ -1343,7 +1391,7 @@ def _spill_av(filer, signaturer):
                         f" {rolle or 'migrator'}")
                 continue
             for sig in beskyttet:
-                if basenavn[sig] not in s:
+                if not _nevner(s, basenavn[sig]):
                     continue
                 fall = _DROP_MAL.search(s)
                 if fall and _rammer(fall.group(1), sig, basenavn[sig]):
@@ -1471,6 +1519,9 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       VIRKER på, og den forskjellen er hele signaturkravet. Sporet finnes i
       to utgaver — med og uten vakt — fordi den betingede utgaven ellers
       ville blitt fanget av regelen under, og målklausulen stått uprøvd.
+    * et NAVN SOM BARE BEGYNNER LIKT, og et ANNET SKJEMA. Begge inneholder
+      det beskyttede navnet som delstreng uten å være det objektet, og en
+      lukkende setning om dem skal ikke lukke noe her.
     * en BETINGET revoke: som eier beviser den ingenting (vakten kan være
       usann), som migrator er den fortsatt en åpning. Og motprøven, som er
       den dyre halvdelen: den skal ikke RIVE et gjerde som alt står, ellers
@@ -1664,6 +1715,34 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
                        " public.varsel_klaim_epost(int, int)"
                        " TO disponit_varselsender;")], n)[0] == {
         sig: True}, "skjemanavnet `public` er ikke PUBLIC"
+
+    # ET NAVN SOM BEGYNNER LIKT ER ET ANNET NAVN. `varsel_klaim_epost_hjelper`
+    # inneholder hele det beskyttede navnet som delstreng, men er en annen
+    # funksjon — og fordi ingen av signaturene i setningen begynner på
+    # `varsel_klaim_epost(`, falt den før dette ned i «bart navn»-grenen og
+    # lukket gjerdet på vegne av en fremmed.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost_hjelper(interval) FROM PUBLIC;"
+                   " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE på et navn som bare BEGYNNER likt lukker ingenting."
+        f" Spor: {spor}")
+
+    # Samme skille for skjemaet: et annet skjema er et annet objekt, og en
+    # DROP der rører ikke den beskyttede funksjonen.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION annet.varsel_klaim_epost(int, int);")],
+        n)[0] == {sig: True}, "en DROP i et annet skjema er et annet objekt"
+
+    # …men `public.` UTSKREVET er det samme objektet som det uskrevne.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION public.varsel_klaim_epost(int, int);")],
+        n)[0] == {sig: None}, "`public.` utskrevet er samme objekt"
 
     # …og motprøven til den skjemabrede: samme form, annen mottaker.
     assert _spill_av([("a.sql", lag + gjerde),
