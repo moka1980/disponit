@@ -51,6 +51,13 @@ STANDARDKANAL = "epost_og_portal"
 #: nå, og en e-post som er ute kan ikke kalles hjem — den hører til fortiden,
 #: som `sendt`. Å sette den `ikke_aktuelt` ville dessuten stjålet klaimet fra
 #: senderen som holder det.
+#:
+#: Det forutsetter at `under_sending` varer så lenge sendingen varer, og ikke
+#: lenger. Senderen klaimte lenge en bunke på opptil 50 rader og committet
+#: hele bunken før den første e-posten gikk ut (Codex P2); da lå den siste
+#: raden utenfor dette settet i minutter uten å være i noe SMTP-kall, og en
+#: avmelding gjort i det vinduet nådde den ikke. `varselsender.kjor` klaimer
+#: derfor én rad om gangen og sender den med det samme.
 I_KO = "('koet', 'feilet')"
 
 #: Sentinel fra `skjermet`: steget feilet. Skilt fra `None`, som er et helt

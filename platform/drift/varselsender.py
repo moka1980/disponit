@@ -119,6 +119,27 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
     er usynlig for den andre senderen, og da ville vi vært like langt så snart
     SMTP-kallet tok tid.
 
+    ÉN RAD OM GANGEN (Codex P2). Klaimet hentet først opptil `GRENSE` rader og
+    committet HELE bunken til `under_sending` før det første SMTP-kallet. Da
+    lå rad nummer femti klaimet mens de 49 foran ble sendt — minutter, ikke
+    mikrosekunder — og i det vinduet kunne mottakeren lese varselet, melde seg
+    av e-post eller få runden lukket under seg. Ingen av de tre veiene avlyser
+    en `under_sending`-rad, og det er med vilje: den raden er i et SMTP-kall,
+    og en e-post som er ute kan ikke kalles hjem. Men med et bunkeklaim var
+    den premissen usann for alle radene bak den første, og den bufrede løkka
+    sendte dem likevel.
+
+    Klaimvinduet er derfor gjort like langt som sendingen det verner: hver
+    runde klaimer nøyaktig én rad og sender den med det samme. `GRENSE` er
+    fortsatt taket for hvor mange rader én kjøring tar — nå som antall runder,
+    ikke som bunkestørrelse — og FIFO-en er den samme, siden klaimet ordner på
+    `opprettet`. Prisen er én tur til databasen per e-post, som er ingenting
+    ved siden av et SMTP-kall.
+
+    Det er også det som gjør `varsel.I_KO` sant: en avmelding rekker nå alle
+    radene som ennå ikke er i luften, fordi ingen rad er klaimet før den skal
+    sendes.
+
     Hver rad står for seg: én adresse som ikke tar imot skal ikke stoppe resten
     av køen.
 
@@ -147,10 +168,6 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
         "                    %s * interval '1 minute')",
         (BACKOFF_MIN, MAKS_FORSOK, LEASE_MIN)).fetchone()[0]
     conn.commit()
-    # Klaimet: `koet` → `under_sending` i samme setning som leser radene.
-    rader = conn.execute("SELECT * FROM varsel_klaim_epost(%s,%s)",
-                         (GRENSE, MAKS_FORSOK)).fetchall()
-    conn.commit()          # …og ut av alle andres kø FØR første SMTP-kall.
     sendt = feilet = mistet = 0
 
     def _sett(vid, status, feil=None):
@@ -160,7 +177,16 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
         conn.commit()
         return beholdt
 
-    for vid, _tenant, epost, nokkel, parametre, forsok in rader:
+    for _ in range(max(1, GRENSE)):
+        # Klaimet: `koet` → `under_sending` i samme setning som leser raden.
+        # ÉN rad, og den sendes med det samme: vinduet der raden er tatt ut av
+        # køen skal ikke være lengre enn sendingen det verner.
+        rad = conn.execute("SELECT * FROM varsel_klaim_epost(%s,%s)",
+                           (1, MAKS_FORSOK)).fetchone()
+        conn.commit()      # …og ut av alle andres kø FØR SMTP-kallet.
+        if rad is None:
+            break          # køen er tom — ingenting mer å hente denne runden.
+        vid, _tenant, epost, nokkel, parametre, forsok = rad
         try:
             send(epost, emne, rendre(tekster, nokkel, parametre))
         except Exception as e:                                # noqa: BLE001

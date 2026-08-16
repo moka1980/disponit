@@ -542,6 +542,68 @@ def test_lest_i_portalen_gir_ingen_epost():
 
 
 @pg
+def test_en_rad_bak_i_koen_klaimes_ikke_foer_den_skal_sendes():
+    """Codex P2: et bunkeklaim tar radene ut av køen for tidlig.
+
+    Klaimet hentet opptil `GRENSE` rader og committet HELE bunken til
+    `under_sending` før det første SMTP-kallet. Rad nummer to lå da klaimet
+    mens rad én ble sendt — og `merk_lest`, avmeldingen og pensjoneringen rører
+    med vilje ikke `under_sending`, siden en e-post som er i luften ikke kan
+    kalles hjem. For radene BAK den første var den premissen usann: de var ikke
+    i noe SMTP-kall, bare bufret i Python, og de ble sendt likevel.
+
+    Her leser mottakeren av rad to varselet sitt i portalen mens rad én er inne
+    i `send()` — nøyaktig det vinduet timeren på fem minutter etterlater. Med
+    ett klaim per rad står rad to fortsatt `koet` i det øyeblikket, og
+    avlysningen når den.
+
+    Testen sier ikke hvilken av de to som sendes først: begge radene skrives i
+    samme transaksjon, så `opprettet` er identisk og FIFO-en er uavgjort. Den
+    som kommer først avlyser den andre, og målet er at nøyaktig ÉN e-post går
+    ut — det holder uansett hvem av dem det ble.
+
+    Kontroll: bytt klaimet tilbake til `(GRENSE, MAKS_FORSOK)` med en
+    `fetchall()` utenfor løkka, så blir denne rød med to sendte e-poster.
+    """
+    c = _conn()
+    annen = _conn()
+    try:
+        en = _bruker(c, "bunke-en", "bunke-en@example.test")
+        to = _bruker(c, "bunke-to", "bunke-to@example.test")
+        _ko(c, en, "u-" + secrets.token_hex(4))
+        _ko(c, to, "u-" + secrets.token_hex(4))
+        c.commit()
+        _kontekst(c)
+        vid = {b: varsel.innboks(c, tenant=TEN, bruker_id=b)[0]["id"]
+               for b in (en, to)}
+        andre = {"bunke-en@example.test": to, "bunke-to@example.test": en}
+
+        sendt = []
+
+        def send(til, _emne, _tekst):
+            sendt.append(til)
+            # Den ANDRE mottakeren leser varselet sitt i portalen mens denne
+            # e-posten er inne i SMTP-kallet.
+            b = andre[til]
+            _kontekst(annen)
+            varsel.merk_lest(annen, tenant=TEN, bruker_id=b,
+                             varsel_id=vid[b])
+            annen.commit()
+
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert len(sendt) == 1, (
+            "raden bak i køen var alt klaimet da hun leste den, og e-posten "
+            f"gikk ut likevel: {sendt}")
+        st = c.execute("SELECT epost_status FROM varsel WHERE id=%s",
+                       (vid[andre[sendt[0]]],)).fetchone()
+        assert st == ("ikke_aktuelt",), st
+    finally:
+        annen.close()
+        c.close()
+
+
+@pg
 def test_klaimet_tar_aldri_en_rad_som_er_lest():
     """Den siste porten før SMTP, uavhengig av hvem som satte `lest_ts`.
 
