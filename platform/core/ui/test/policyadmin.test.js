@@ -1846,6 +1846,49 @@ test("Diff: et slettet element beholder navnet sitt fra fra-verdiene",
     assert.ok(opps.includes("M-41"), "modulen forsvant fra overskriften");
   });
 
+// Serverens diff sammenligner lister POSISJONELT. Fjernes den første av to
+// handlinger, blir `handlinger[0]` til bladet «id: A → B», og `handlinger[1]`
+// til de fjernede bladene til gamle B. Hentes overskriften utelukkende fra
+// utkastet, het BEGGE kortene «B» — og A, det som faktisk forsvant, sto ingen
+// steder (Codex P2).
+//
+// Kontroll: la `vis()` returnere bare den nye verdien, så blir denne rød.
+const FORSKJOVET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41", modus: "auto" },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].id", type: "endret",
+      fra: "ordre.bekreft", til: "refusjon.utfor" },
+    { sti: "handlinger[0].modul", type: "endret", fra: "M-25", til: "M-41" },
+    { sti: "handlinger[1].id", type: "fjernet", fra: "refusjon.utfor" },
+    { sti: "handlinger[1].modul", type: "fjernet", fra: "M-41" },
+  ] },
+};
+
+test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": FORSKJOVET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = [...rot.querySelectorAll(".diff-element > summary")]
+      .map((s) => s.textContent);
+    assert.equal(opps.length, 2, "to posisjoner er to kort");
+    assert.ok(opps.some((o) => o.includes("ordre.bekreft")),
+      "handlingen som ble fjernet står ikke i noen overskrift: "
+      + JSON.stringify(opps));
+    // Og kortet som BÆRER «A → B» må vise begge, ikke bare den nye.
+    const skiftet = opps.find((o) => o.includes("ordre.bekreft"));
+    assert.ok(skiftet.includes("refusjon.utfor"),
+      "kortet viser bare den ene siden av identitetsskiftet");
+    assert.ok(skiftet.includes("M-25") && skiftet.includes("M-41"),
+      "modulen skiftet også, og begge sider hører hjemme i overskriften");
+  });
+
 test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
     __post: async () => ({}) };

@@ -180,7 +180,23 @@ function flateFelt(verdi, prefiks = "", ut = new Map()) {
 // er kilden når elementet finnes der. Et SLETTET element finnes ikke i
 // utkastet — der er `fra`-verdiene i diffen det eneste som forteller hva som
 // forsvinner, og de beholdes.
+//
+// Men å hente overskriften fra utkastet ALENE er å påstå at elementet alltid
+// har vært det det er nå. Serverens diff sammenligner lister POSISJONELT, så
+// fjernes `A` fra `[A, B]` blir `handlinger[0]` til bladet «id: A → B» —
+// og et kort som hentet navnet sitt fra utkastets `handlinger[0]` het bare
+// «B». Det slettede `handlinger[1]`-kortet rekonstruerte samtidig gamle `B`
+// fra `fra`-verdiene. To kort som begge sa «B», og `A` — det som faktisk
+// forsvant — sto ingen steder (Codex P2). Derfor: endret feltet seg, viser
+// overskriften BEGGE sider.
 function elementOverskrift(element, blader, innhold) {
+  // FØR-tilstanden slik diffen beskriver den. `lagt_til` har ingen før.
+  const foer = new Map();
+  for (const e of blader) {
+    if (e.type === "lagt_til") continue;
+    const { rest } = delOppSti(e.sti);
+    if (rest) foer.set(rest, e.fra);
+  }
   const felt = new Map();
   const kilde = slaaOppSti(innhold, element);
   if (kilde !== undefined) {
@@ -192,21 +208,27 @@ function elementOverskrift(element, blader, innhold) {
       if (rest) felt.set(rest, v);
     }
   }
-  const navn = IDENTITET.map((f) => felt.get(f))
-    .find((v) => v !== undefined && v !== null) ?? element;
+  // Et slettet element rekonstrueres fra sine egne `fra`-verdier, så før og
+  // etter er like der — pilen dukker bare opp når feltet faktisk skiftet.
+  const vis = (f) => {
+    const ny = felt.get(f), gml = foer.get(f);
+    if (ny === undefined || ny === null) return undefined;
+    return (gml !== undefined && gml !== null && gml !== ny)
+      ? `${gml} → ${ny}` : String(ny);
+  };
+  const navn = IDENTITET.map(vis).find((v) => v !== undefined) ?? String(element);
   const merker = [];
   for (const f of NOKKELFELT) {
-    const v = felt.get(f);
-    if (v === undefined || v === null) continue;
-    merker.push(String(v));
+    const v = vis(f);
+    if (v !== undefined) merker.push(v);
   }
   for (const [belop, valuta] of BELOPSFELT) {
-    const v = felt.get(belop);
-    if (v === undefined || v === null) continue;
-    const val = felt.get(valuta);
-    merker.push(`${t("ui.policyadmin.diff.maks")} ${v}${val ? " " + val : ""}`);
+    const b = vis(belop);
+    if (b === undefined) continue;
+    const v = vis(valuta);
+    merker.push(`${t("ui.policyadmin.diff.maks")} ${b}${v ? " " + v : ""}`);
   }
-  return { navn: String(navn), merker, felt };
+  return { navn, merker, felt };
 }
 
 // En liste av rene verdier («unntak.kategorier[]», «dataklasser[]») blir én
