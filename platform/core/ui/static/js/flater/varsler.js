@@ -11,8 +11,9 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, merkVarselLest, settVarselkanal, UautorisertFeil } from "../api.js";
-import { Tidspunkt, TomTilstand, Feiltilstand, meldLive } from "../komponenter.js";
-import { flateHode } from "./felles.js";
+import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
+import { flateHode, medStatus } from "./felles.js";
+import { visningsToken, erGjeldendeVisning } from "../ruter.js";
 
 // Et varsel uten VEI TIL HANDLINGEN er bare støy. Hver art vet hvilken flate
 // den hører til, så «attestering venter» kan klikkes rett til utkastet.
@@ -76,8 +77,24 @@ function kanalvelger(kanal, paaValg) {
 }
 
 export function visVarsler(hoved, ctx, opts = {}) {
-  const tegn = () => {
-    hentJson("/v1/varsel").then((d) => {
+  // Eierskapet til `hoved` (Codex P2). Alle flater rendrer inn i ETT element,
+  // og en innboks-GET som er ute på nettet vet ikke at eier har navigert
+  // videre. Kom svaret etterpå, tegnet innboksen seg over den nye ruten mens
+  // menyvalget hennes ble stående markert — skjermen viste én flate og
+  // navigasjonen en annen.
+  //
+  // Selve tegningen gis derfor til `medStatus`, som vokter suksess, 403 OG
+  // feilveien for alle flatene. Det siste er ikke pynt: en avvist GET nådde
+  // aldri tegningen, og den gamle koden erstattet ruten eier sto i med
+  // innboksens feiltilstand — komplett med en «Prøv igjen» som laster noe
+  // annet enn det skjermen viser. 403 er også en egen tilstand nå; før ble
+  // «du har ikke tilgang» vist som en forbigående feil man kunne prøve igjen.
+  const minRute = visningsToken(hoved);
+  const eierSkjermen = () => erGjeldendeVisning(hoved, minRute);
+
+  const tegn = () => medStatus(hoved, ctx,
+    () => hentJson("/v1/varsel"),
+    (d) => {
       const varsler = d.varsler || [];
       const liste = varsler.length
         ? el("ul", { class: "varselliste",
@@ -90,15 +107,20 @@ export function visVarsler(hoved, ctx, opts = {}) {
           t("ui.varsler.undertittel").replace("{n}", String(d.uleste || 0))),
         kanalvelger(d.kanal, settKanal),
         liste);
-    }).catch((e) => {
-      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      sett(hoved, Feiltilstand({ paaProvIgjen: tegn }));
     });
-  };
 
   function merkLest(v) {
     merkVarselLest(v.id)
-      .then(() => { meldLive(t("ui.varsler.merket_lest")); tegn(); })
+      .then(() => {
+        meldLive(t("ui.varsler.merket_lest"));
+        // Oppfriskningen bæres av visningen den ble startet FRA. `medStatus`
+        // fanger stempelet i det den kalles, så en `tegn()` startet herfra
+        // etter en navigasjon ville fanget det NYE stempelet — og dessuten
+        // tegnet lastetilstanden synkront, altså vasket bort den nye ruten før
+        // svaret i det hele tatt var ute. Utfallet dør ikke stille: `meldLive`
+        // over sier fra uansett hvor eier står.
+        if (eierSkjermen()) tegn();
+      })
       .catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         meldLive(t("ui.varsler.feilet"));
@@ -121,7 +143,10 @@ export function visVarsler(hoved, ctx, opts = {}) {
       .catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         meldLive(t("ui.varsler.feilet"));
-        tegn();                       // vis den FAKTISKE tilstanden igjen
+        // Vis den FAKTISKE tilstanden igjen — men bare hvis eier fortsatt står
+        // her. Radioknappen som viser feil valg er borte fra skjermen uansett
+        // når hun har navigert videre.
+        if (eierSkjermen()) tegn();
       });
   }
 

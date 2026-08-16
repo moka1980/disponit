@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visVarsler } from "../static/js/flater/varsler.js";
+import { lagRuter } from "../static/js/ruter.js";
+import { el, sett } from "../static/js/dom.js";
 
 settI18nForTest(NB, "nb");
 
@@ -136,6 +138,91 @@ test("Varsler: tom innboks sier det, i stedet for å vise ingenting", async () =
   assert.ok(h.textContent.includes(t("ui.varsler.tom")));
   assert.equal(h.querySelector(".varselrad"), null);
 });
+
+// Codex P2: innboksen tegnet svaret sitt ubetinget. Var GET-en fortsatt ute da
+// eier navigerte videre, tegnet varselflaten seg over den nye ruten — mens
+// menyen fortsatt markerte den hun valgte.
+test("Et sent innbokssvar tegner seg ikke over ruten eier gikk til", async () => {
+  POSTET = [];
+  let slipp = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/varsel" && !(opts && opts.method)) {
+      await new Promise((r) => { slipp = r; });
+      return { ok: true, status: 200, json: async () => ({
+        varsler: [VARSEL], uleste: 1, kanal: "epost_og_portal" }) };
+    }
+    return brukFetch(url, opts);
+  };
+  const h = nyHoved();
+  const annenFlate = (hoved) => sett(hoved, el("h1", { text: "annen flate" }));
+
+  window.location.hash = "#/varsler";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(), { varsler: visVarsler, annen: annenFlate },
+    () => {});
+  ruter.naviger();
+  await vent(() => slipp);                        // innboks-GET er ute på nettet
+
+  // Ruteren kobles av med det samme: en `hashchange` som tegnet `annen` på
+  // nytt ville vasket bort sporet etter det foreldede svaret.
+  window.location.hash = "#/annen";
+  ruter.naviger();
+  ruter.stopp();
+  assert.ok(h.textContent.includes("annen flate"));
+
+  slipp();
+  await vent(() => false, 20);                    // la svaret få tegne, om det vil
+  assert.ok(h.textContent.includes("annen flate"),
+    "innboksen tegnet seg over ruten eier står i");
+  assert.equal(h.querySelector(".varselrad"), null,
+    "varsellista havnet inne i en annen rute");
+  globalThis.fetch = brukFetch;
+});
+
+// Samme kappløp, men startet av oppfriskningen etter «merk som lest». Den er
+// verre enn GET-en over: `medStatus` tegner lastetilstanden SYNKRONT, så en
+// ubetinget `tegn()` herfra vasket bort den nye ruten allerede før svaret var
+// ute på nettet.
+test("Oppfriskningen etter «merk lest» river ikke bort ruten eier gikk til",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+      kanal: "epost_og_portal" } };
+    let slippPost = null;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (opts && opts.method && url.includes("/lest")) {
+        await new Promise((r) => { slippPost = r; });
+        POSTET.push({ sti: url.split("?")[0], body: null });
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    const annenFlate = (hoved) => sett(hoved, el("h1", { text: "annen flate" }));
+
+    window.location.hash = "#/varsler";
+    await vent(() => false, 5);
+    const ruter = lagRuter(h, ctx(), { varsler: visVarsler, annen: annenFlate },
+      () => {});
+    ruter.naviger();
+    await vent(() => h.querySelector(".varselrad"));
+    finn(h, t("ui.varsler.merk_lest")).dispatchEvent(new window.Event("click"));
+    await vent(() => slippPost);                  // merkingen er ute på nettet
+
+    window.location.hash = "#/annen";
+    ruter.naviger();
+    ruter.stopp();
+
+    slippPost();
+    await vent(() => false, 20);                  // la oppfriskningen få tegne
+    assert.ok(h.textContent.includes("annen flate"),
+      "oppfriskningen rev bort ruten eier står i");
+    assert.equal(h.querySelector(".varselliste"), null,
+      "innboksen tegnet seg inn i en annen rute");
+    globalThis.fetch = brukFetch;
+  });
 
 test("Varsler: axe-ren, og radiogruppen har en legend", async () => {
   POSTET = [];
