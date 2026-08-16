@@ -112,6 +112,7 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   const tilgjengeligeRuter = byggRuter(sesjon);
   const skall = AppShell({
     tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: tilgjengeligeRuter,
+    brukerId: sesjon.bruker_id, epost: sesjon.epost, roller: sesjon.roller,
     paaSprak: byttSprak, paaLoggUt: bekreftLoggUt,
   });
   sett(app, skall.rot);

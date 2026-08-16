@@ -170,3 +170,306 @@ test("Roller: legg til og fjern re-tegner", async () => {
     h.querySelectorAll(".editor-liste .editor-rad").length === foer + 1);
   assert.equal(h.querySelectorAll(".editor-liste .editor-rad").length, foer + 1);
 });
+
+test("Roller: en rolle handlinger peker på kan ikke fjernes ved et uhell", async () => {
+  // Dette er feilen som faktisk skjedde: eier fjernet rollen `agent`, og fikk
+  // seks valideringsfeil som pekte på handlinger han aldri hadde rørt.
+  // Referansen er kjent i det øyeblikket knappen tegnes, så flaten skal si det
+  // DER — ikke la validatoren si det etterpå.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }, { id: "ubrukt" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] },
+                 { id: "betaling.utfor", tillatt_for: ["agent"] }],
+  } });
+  await vent(() => h.querySelectorAll(".editor-rad").length >= 2);
+
+  const rader = [...h.querySelectorAll(".editor-rad")];
+  const iBruk = rader.find((r) => r.textContent.includes("faktura.bokfor"));
+  assert.ok(iBruk, "raden sier ikke hvilke handlinger som holder rollen");
+  const sperret = iBruk.querySelector("button");
+  assert.ok(sperret.hasAttribute("disabled"),
+    "en rolle i bruk kunne fjernes — da blir policyen ugyldig ved validering");
+  assert.ok(sperret.getAttribute("title").includes("betaling.utfor"),
+    "forklaringen nevner ikke alle handlingene som holder rollen");
+
+  // …og en UBRUKT rolle skal fortsatt kunne fjernes. En vakt som sperrer alt
+  // er ikke en vakt, den er en blokkering.
+  const fri = rader.find((r) => !r.textContent.includes("faktura.bokfor")
+    && r.querySelector("button"));
+  assert.ok(!fri.querySelector("button").hasAttribute("disabled"),
+    "en ubrukt rolle skal kunne fjernes");
+});
+
+test("Roller: en rolle som BARE menneskelig overstyring bruker er også låst", async () => {
+  // `menneskelig_overstyring.krever_rolle` er en rollereferanse på lik linje
+  // med `tillatt_for`: schema.py avviser policyen med «ukjent rolle» når den
+  // mangler. Uten den i vakten så rollen fjernbar ut, og knappen førte rett i
+  // den samme fella vakten er til for å stenge.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-2", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "okonomi" }, { id: "ubrukt" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: [] }],
+    menneskelig_overstyring: { krever_rolle: "okonomi", godkjennbare: [] },
+  } });
+  await vent(() => h.querySelectorAll(".editor-rad").length >= 2);
+
+  const rader = [...h.querySelectorAll(".editor-rad")];
+  const merke = t("ui.editor.rolle_i_bruk_overstyring");
+  const overstyring = rader.find((r) => r.textContent.includes(merke));
+  assert.ok(overstyring, "raden sier ikke at overstyringen holder rollen");
+  assert.ok(overstyring.querySelector("button").hasAttribute("disabled"),
+    "rollen overstyringen krever kunne fjernes — policyen blir da ugyldig");
+
+  const fri = rader.find((r) => !r.textContent.includes(merke)
+    && r.querySelector("button"));
+  assert.ok(!fri.querySelector("button").hasAttribute("disabled"),
+    "en ubrukt rolle skal fortsatt kunne fjernes");
+});
+
+test("Policy-ID: malen foreslår sin egen id, og regelen står ved feltet", async () => {
+  // Feltet var tomt, uten format og uten å si hva id-en brukes til. En ny id
+  // lager en NY policy ved siden av den som gjelder — i stedet for å avløse
+  // den — og «01» ble avvist av skjemaet uten at noen fikk vite hvorfor.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "tjenestebedrift-no", versjon: "0.2.0",
+            bransjemal: "tjenestebedrift-no", status: "utkast" },
+    roller: [], handlinger: [],
+  } });
+  await vent(() => h.querySelector(".felt-inp"));
+  const felt = [...h.querySelectorAll(".felt")]
+    .find((f) => f.textContent.includes(t("ui.editor.policy_id")));
+  assert.ok(felt.textContent.includes("3"),
+    "regelen om minst 3 tegn står ikke ved feltet");
+  const hint = felt.querySelector(".felt-hint");
+  assert.ok(hint, "ingen hjelpetekst");
+  assert.equal(felt.querySelector("input").getAttribute("aria-describedby"),
+    hint.id, "hjelpeteksten er ikke koblet til feltet for skjermlesere");
+});
+
+// --- Hva policy-id-en FAKTISK gjør avhenger av hva som gjelder i dag -----
+
+// Hjelpeteksten lovet universelt at man «beholder malens id for å avløse
+// policyen som gjelder i dag». Det kunne klienten ikke vite: aktivering er per
+// `policy_id`, katalogen har flere maler, og en kunde som opprettet policyen
+// med sin EGEN id har ikke malens id i det hele tatt. Følger man rådet der,
+// får man en NY policyserie ved siden av — mens den gamle fortsatt gjelder.
+async function velgMalMedAktiv(svarPaaAktiv) {
+  const ekte = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policy/aktiv") return svarPaaAktiv();
+    return ekte(url, opts);
+  };
+  try {
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { aapneUtkast: () => {} });
+    await vent(() => h.querySelector(".mal-liste"));
+    h.querySelector(".mal-kort").dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".editor-seksjon"));
+    const felt = [...h.querySelectorAll(".felt")]
+      .find((f) => f.textContent.includes(t("ui.editor.policy_id")));
+    return { felt, inp: felt.querySelector("input"),
+             hint: felt.querySelector(".felt-hint").textContent };
+  } finally {
+    globalThis.fetch = ekte;
+  }
+}
+
+test("Policy-ID: feltet fylles med den AKTIVE policyens id, ikke malens", async () => {
+  const { inp, hint } = await velgMalMedAktiv(() => ({
+    ok: true, status: 200,
+    json: async () => ({ policy_id: "acme-netthandel", versjon: "1.0.0" }) }));
+  assert.equal(inp.value, "acme-netthandel",
+    "malens id ble foreslått som om den var dagens policy — den avløser " +
+    "ingenting, den lager en ny policyserie ved siden av");
+  assert.ok(hint.includes("acme-netthandel"),
+    "teksten sier ikke hvilken id som faktisk gjelder i dag");
+  assert.ok(!hint.includes("netthandel-no") || hint.includes("acme"),
+    "teksten peker fortsatt på malens id");
+});
+
+test("Policy-ID: uten aktiv policy loves ingen avløsning", async () => {
+  // 404 = vi VET at ingenting gjelder. Da er det ingenting å avløse, og
+  // teksten skal si nettopp det i stedet for å love det motsatte.
+  const { inp, hint } = await velgMalMedAktiv(() => ({
+    ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) }));
+  assert.equal(inp.value, "netthandel-no",
+    "uten aktiv policy er malens egen id et greit forslag");
+  assert.equal(hint, t("ui.editor.policy_id_hint_ingen_aktiv"));
+});
+
+test("Policy-ID: uten svar på hva som gjelder påstås ingenting", async () => {
+  // 403 (ingen `policy:read`) og 500 (registeret har flere aktive og nekter å
+  // velge én) betyr at flaten IKKE VET. Da skal den si regelen — samme id
+  // viderefører serien, en annen lager en ny — og ikke hva som gjelder.
+  const { inp, hint } = await velgMalMedAktiv(() => ({
+    ok: false, status: 403, json: async () => ({ feil: "ingen_tilgang" }) }));
+  assert.equal(inp.value, "netthandel-no");
+  assert.equal(hint, t("ui.editor.policy_id_hint"));
+  assert.ok(!hint.includes(t("ui.editor.policy_id_hint_ingen_aktiv")),
+    "flaten påstår at ingenting gjelder, men den vet det ikke");
+});
+
+// --- Rolle-ID-en er REDIGERBAR, og vakten må følge med -------------------
+
+const rolleRad = (h, idVerdi) =>
+  [...h.querySelectorAll(".editor-liste .editor-rad")]
+    .find((r) => r.querySelector("input.felt-inp").value === idVerdi);
+
+function skrivId(rad, verdi) {
+  const inp = rad.querySelector("input.felt-inp");
+  inp.value = verdi;
+  inp.dispatchEvent(new window.Event("input"));
+}
+
+test("Roller: vakten regnes om når rolle-ID-en endres", async () => {
+  // Vakten ble regnet ut ÉN gang, da raden ble tegnet, mens ID-feltet
+  // fortsatte å mutere `r.id` uten å tegne om. Retter eier et ugyldig utkast
+  // ved å gi den UBRUKTE rollen det navnet `tillatt_for` peker på, sto «Fjern»
+  // igjen aktiv fra forrige navn — og kunne fjerne rollen som nå var påkrevd.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-3", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "ubrukt" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] }],
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const rad = rolleRad(h, "ubrukt");
+  const fjern = rad.querySelector("button");
+  assert.ok(!fjern.hasAttribute("disabled"), "ubrukt rolle skal kunne fjernes");
+
+  skrivId(rad, "agent");
+  assert.ok(fjern.hasAttribute("disabled"),
+    "rollen er nå referert av faktura.bokfor, men «Fjern» sto igjen aktiv");
+  assert.ok(rad.textContent.includes("faktura.bokfor"),
+    "raden sier ikke hvem som holder rollen etter navnebyttet");
+
+  // Og klikket skal ikke slippe gjennom selv om knappen skulle stå feil:
+  // referansene avgjør i det øyeblikket det klikkes, ikke da raden ble tegnet.
+  fjern.dispatchEvent(new window.Event("click"));
+  assert.ok(rolleRad(h, "agent"), "en referert rolle ble fjernet ved klikk");
+});
+
+test("Roller: navnebytte tar referansene med seg", async () => {
+  // Å endre rolle-ID-en er et NAVNEBYTTE, ikke en ny rolle. Uten at
+  // referansene følger med, gjorde `agent` → `agent-ny` handlingenes
+  // `tillatt_for: ["agent"]` foreldreløse — nøyaktig den «ukjent
+  // rolle»-tilstanden fjerningsvakten finnes for å stenge, bare via en annen
+  // dør. Tømming underveis skal IKKE propagere: eier som sletter feltet for å
+  // skrive noe nytt, skal ikke få `tillatt_for: [""]` på veien.
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { aapneUtkast: () => {}, startPolicy: {
+    meta: { policy_id: "p-4", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] },
+                 { id: "betaling.utfor", tillatt_for: ["agent"] }],
+    menneskelig_overstyring: { krever_rolle: "agent", godkjennbare: [] },
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const rad = rolleRad(h, "agent");
+  assert.ok(rad.querySelector("button").hasAttribute("disabled"),
+    "rollen er i bruk og skal være låst før navnebyttet");
+  skrivId(rad, "");                       // tømmer først …
+  skrivId(rad, "agent-ny");               // … og skriver så det nye navnet
+
+  assert.ok(rad.querySelector("button").hasAttribute("disabled"),
+    "rollen er fortsatt i bruk etter navnebyttet, men vakten slapp den fri");
+  assert.ok(rad.textContent.includes("faktura.bokfor")
+    && rad.textContent.includes("betaling.utfor"),
+    "referansene fulgte ikke med navnebyttet");
+
+  // Det som faktisk LAGRES er fasiten — DOM-en kan ha rett av andre grunner.
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const sendt = JSON.parse(POST.opts.body).innhold;
+  for (const handling of sendt.handlinger) {
+    assert.deepEqual(handling.tillatt_for, ["agent-ny"],
+      `${handling.id} peker på et rollenavn som ikke finnes`);
+  }
+  assert.equal(sendt.menneskelig_overstyring.krever_rolle, "agent-ny",
+    "menneskelig_overstyring peker på et rollenavn som ikke finnes");
+  assert.equal(sendt.roller[0].id, "agent-ny");
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
+test("Roller: et utkast med ødelagt `tillatt_for` kan fortsatt ÅPNES", async () => {
+  // Utkast opprettes og redigeres uten skjemavalidering — den er et eget steg
+  // — så `handlinger[].tillatt_for` kan inneholde et objekt eller et tall.
+  // Server-siden klassifiserer bevisst en ikke-liste som «tom» framfor å
+  // avvise den, så verdien når fram hit. Med `.includes` rett på verdien kastet
+  // editoren `TypeError` mens den TEGNET, og eieren kunne ikke åpne utkastet
+  // for å reparere nettopp det som var galt.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-6", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "agent" }, { id: "okonomi" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: { rolle: "agent" } },
+                 { id: "betaling.utfor", tillatt_for: 5 },
+                 { id: "rapport.les", tillatt_for: ["okonomi"] }],
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const agent = rolleRad(h, "agent");
+  assert.ok(agent, "editoren tegnet ikke rollene for et ødelagt utkast");
+  assert.ok(!agent.querySelector("button").hasAttribute("disabled"),
+    "en ikke-liste er ingen rollereferanse og skal ikke låse raden");
+  // …og en ekte referanse i samme utkast holder fortsatt sin rolle låst.
+  assert.ok(rolleRad(h, "okonomi").querySelector("button")
+    .hasAttribute("disabled"),
+    "den GYLDIGE referansen ble borte sammen med de ødelagte");
+});
+
+test("Roller: navnebytte som PASSERER en annen rolles id lar den i fred", async () => {
+  // Navnet skrives tegn for tegn. Med rollene `admin` og `ad` går veien til
+  // `admin2` gjennom `admin`: `ad` → `adm` → `admi` → `admin` → `admin2`. Med
+  // global tekstutskifting slukte raden den ekte `admin`-rollens referanser i
+  // det mellomsteget, og neste tastetrykk flyttet dem videre — `rapport.les`
+  // ble stille flyttet fra `admin` til `admin2`. Resultatet er strukturelt
+  // gyldig, så servervalideringen fanger det ikke; det er nettopp derfor det
+  // må stanses her.
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { aapneUtkast: () => {}, startPolicy: {
+    meta: { policy_id: "p-5", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "admin" }, { id: "ad" }],
+    handlinger: [{ id: "rapport.les", tillatt_for: ["admin"] },
+                 { id: "faktura.bokfor", tillatt_for: ["ad"] }],
+    menneskelig_overstyring: { krever_rolle: "admin", godkjennbare: [] },
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const rad = rolleRad(h, "ad");
+  for (const steg of ["adm", "admi", "admin", "admin2"]) skrivId(rad, steg);
+
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const sendt = JSON.parse(POST.opts.body).innhold;
+  const av = (id) => sendt.handlinger.find((x) => x.id === id).tillatt_for;
+  assert.deepEqual(av("faktura.bokfor"), ["admin2"],
+    "den redigerte rollens egen referanse fulgte ikke med navnebyttet");
+  assert.deepEqual(av("rapport.les"), ["admin"],
+    "en ANNEN rolles referanse ble dratt med navnebyttet — stille "
+    + "rettighetsendring som validatoren ikke fanger");
+  assert.equal(sendt.menneskelig_overstyring.krever_rolle, "admin",
+    "overstyringen pekte på `admin` og skal fortsatt gjøre det");
+  assert.deepEqual(sendt.roller.map((r) => r.id), ["admin", "admin2"]);
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});

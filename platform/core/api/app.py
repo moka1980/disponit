@@ -846,7 +846,7 @@ def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
         if prin is None:
             tjeneste.logg.hendelse("sesjon_ugyldig", rid)
             raise kjerne.Feilsvar("sesjon_ugyldig")
-        tenant, bid, scopes, _utloper = prin
+        tenant, bid, scopes, _utloper, _roller, _epost = prin
         auth = Autentisert(tenant, "bruker", scopes, f"sesjon:{bid}")
         if paakrevd_scope not in scopes:
             tjeneste.logg.hendelse("scope_mangler", rid, tenant,

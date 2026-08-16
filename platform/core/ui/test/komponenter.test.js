@@ -1,6 +1,9 @@
 // axe + oppførsel på komponentbiblioteket (gate 6/7, «fra første komponent»).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
@@ -13,6 +16,8 @@ import {
 } from "../static/js/sitekomponenter.js";
 import { DataTabell } from "../static/js/tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../static/js/dialog.js";
+
+const HER = dirname(fileURLToPath(import.meta.url));
 
 settI18nForTest(NB, "nb");
 
@@ -180,4 +185,59 @@ test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () 
   assert.ok(rot.textContent.includes(`4 · ${t("ui.shell.ruter")}`));
   const b = await alvorligeBrudd(rot);   // hel-side-regler PÅ (har main+nav)
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+// «Hvem er jeg» må overleve at e-posten mangler: OIDC-kravet er valgfritt, og
+// prinsipalen er `bruker_id`. Uten fallbacken forsvant hele kontrollen —
+// inkludert rollene — for den brukeren som trengte den mest.
+test("AppShell: viser bruker_id når e-post mangler, med roller", () => {
+  const ruter = [{ nokkel: "oversikt" }];
+  const utenEpost = AppShell({
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
+    brukerId: "bid_10e5674", roller: ["godkjenner"],
+    paaSprak: () => {}, paaLoggUt: () => {},
+  }).rot;
+  const bruker = utenEpost.querySelector(".skall-bruker");
+  assert.ok(bruker, "kontrollen skal finnes uten e-post");
+  assert.equal(bruker.querySelector(".skall-bruker-navn").textContent,
+    "bid_10e5674");
+  assert.ok(bruker.textContent.includes(t("ui.rolle.godkjenner")),
+    "rollene skal vises selv om e-posten mangler");
+
+  // Med e-post: den er navnelinja, men id-en står fortsatt der — to konti kan
+  // dele en ubekreftet e-post, og da er id-en det eneste som skiller dem.
+  const medEpost = AppShell({
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
+    brukerId: "bid_10e5674", epost: "kari@acme.no", roller: ["godkjenner"],
+    paaSprak: () => {}, paaLoggUt: () => {},
+  }).rot;
+  assert.equal(medEpost.querySelector(".skall-bruker-navn").textContent,
+    "kari@acme.no");
+  assert.equal(medEpost.querySelector(".skall-bruker-id").textContent,
+    "bid_10e5674");
+});
+
+// Etiketten er brukerens data, ikke vår: en gyldig OIDC-e-post kan være svært
+// lang, og `bruker_id` er én ubrytelig token. Uten `min-width: 0` er et
+// flex-element «aldri smalere enn innholdet», og den lange linja dyttet
+// topplinja bredere enn viewporten — språkvelger og «Logg ut» havnet i
+// horisontal overflyt. jsdom har ingen layout å måle, så porten står på
+// stilkilden: reglene MÅ være der, ellers er det ingenting som stopper det.
+test("skall-bruker: lange prinsipal-etiketter kan krympe og brytes", () => {
+  const css = readFileSync(
+    join(HER, "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  assert.match(regel(".skall-bruker {"), /min-width:\s*0/,
+    "uten min-width: 0 kan ikke etiketten krympe, og topplinja flyter over");
+  const bryt = regel(".skall-bruker-navn,");
+  assert.match(bryt, /overflow-wrap:\s*(anywhere|break-word)/,
+    "navnelinja må kunne brytes — den har ingen mellomrom å brekke på");
+  for (const k of ["skall-bruker-navn", "skall-bruker-id",
+                   "skall-bruker-roller"]) {
+    assert.ok(bryt.includes(k), `${k} skal omfattes av brytingsregelen`);
+  }
 });
