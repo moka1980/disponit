@@ -41,6 +41,13 @@ const LISTE = { utkast: [
     utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" },
 ] };
 
+// To utkast i lista — det som skal til for å kappløpe to detaljåpninger.
+const TO_UTKAST = { utkast: [
+  LISTE.utkast[0],
+  { utkast_id: "u-2", policy_id: "lonn-no", status: "validert",
+    utkastversjon: 1, opprettet: "2026-08-10T09:00:00+00:00" },
+] };
+
 let SVAR;
 globalThis.fetch = async (url, opts) => {
   const sti = url.split("?")[0];
@@ -588,3 +595,82 @@ test("Detalj: 403 gir tilgangsvakt med vei tilbake, men INGEN «Prøv igjen»", 
     "«Prøv igjen» på 403 lover noe den ikke kan holde");
   globalThis.fetch = brukFetch;
 });
+
+// Codex P2: rutersjekken alene er for grov. Den skifter bare når brukeren
+// bytter TOPPNIVÅRUTE, mens flaten bytter visning på egen hånd — og de
+// visningene kappløper om det samme `hoved`. Åpnet hun utkast A og så B, besto
+// begge svarene rutersjekken: svarte A sist, tegnet A seg over B.
+test("Detalj: treigt svar for A tegner seg ikke over utkastet B", async () => {
+  const slipp = {};
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const m = /^\/v1\/policyutkast\/(u-\d)$/.exec(url.split("?")[0]);
+    if (m) {
+      await new Promise((r) => { slipp[m[1]] = r; });
+      return { ok: true, status: 200, json: async () =>
+        Object.assign({}, DETALJ, { utkast_id: m[1], policy_id: `pol-${m[1]}` }) };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { "/v1/policyutkast": TO_UTKAST, __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelectorAll("tbody button").length === 2);
+
+  // Radrekkefølgen er tabellens, ikke vår: knappen hentes fra RADEN som bærer
+  // riktig policy-id, ikke fra en antatt indeks.
+  const aapne = (polId) => [...h.querySelectorAll("tbody tr")]
+    .find((tr) => tr.textContent.includes(polId)).querySelector("button");
+  aapne("faktura-no").dispatchEvent(new window.Event("click"));   // A = u-1
+  await vent(() => slipp["u-1"]);
+  aapne("lonn-no").dispatchEvent(new window.Event("click"));      // B = u-2
+  await vent(() => slipp["u-2"]);
+
+  slipp["u-2"]();                                  // B svarer først og tegnes
+  await vent(() => h.textContent.includes("pol-u-2"));
+  slipp["u-1"]();                                  // A svarer etterpå
+  await vent(() => false, 20);                     // la svaret få tegne, om det vil
+
+  assert.ok(h.textContent.includes("pol-u-2"),
+    "det foreldede svaret for A rev bort utkastet brukeren valgte");
+  assert.ok(!h.textContent.includes("pol-u-1"),
+    "utkast A tegnet seg over utkast B");
+  globalThis.fetch = brukFetch;
+});
+
+// Samme rot, andre vei: en «Prøv igjen» som fortsatt henger når brukeren har
+// gått tilbake til lista, skal ikke dra henne inn i detaljen igjen.
+test("Detalj: hengende «Prøv igjen» tegner ikke over lista man gikk tilbake til",
+  async () => {
+    let slipp = null;
+    let runde = 0;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (url.split("?")[0] === "/v1/policyutkast/u-1") {
+        if (++runde === 1) {
+          return { ok: false, status: 500, json: async () => ({ feil: "x" }) };
+        }
+        await new Promise((r) => { slipp = r; });
+        return { ok: true, status: 200, json: async () => DETALJ };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".tilstand.feil"));
+
+    _finn(h, t("ui.prov_igjen")).dispatchEvent(new window.Event("click"));
+    await vent(() => slipp);                       // forsøket er ute på nettet
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+
+    slipp();
+    await vent(() => false, 20);
+    assert.ok(h.querySelector("tbody"),
+      "det hengende forsøket dro brukeren ut av lista hun gikk tilbake til");
+    globalThis.fetch = brukFetch;
+  });

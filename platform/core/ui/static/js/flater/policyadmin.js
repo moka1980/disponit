@@ -321,19 +321,35 @@ function fokuserOverskrift(hoved) {
 export function visPolicyadmin(hoved, ctx) {
   const st = { rader: [] };
 
-  // Flatens eierskap til `hoved`, fanget ved oppstart. Alle flater deler ETT
-  // element, og et svar som er ute på nettet vet ikke at brukeren har navigert
-  // videre: kom detaljsvaret etter at hun hadde valgt en annen toppnivårute,
-  // tegnet det seg selv over DEN flaten, mens menyvalget hennes ble stående
-  // markert (Codex P2). `fetch` her kan ikke avbrytes bakover gjennom
-  // `hentJson`, så svaret slippes i stedet: er stempelet flyttet, er dette
-  // svaret foreldet og skal ikke røre skjermen.
-  const minVisning = visningsToken(hoved);
-  const eierSkjermen = () => erGjeldendeVisning(hoved, minVisning);
+  // Eierskapet til `hoved` har TO nivåer, og et sent svar må bestå begge.
+  //
+  // Ruteren: alle flater deler ETT element, og et svar som er ute på nettet vet
+  // ikke at brukeren har navigert videre. Kom detaljsvaret etter at hun hadde
+  // valgt en annen toppnivårute, tegnet det seg selv over DEN flaten, mens
+  // menyvalget hennes ble stående markert (Codex P2). Stempelet fanges ved
+  // oppstart, og ruteren flytter det ved hver navigasjon.
+  //
+  // Flaten: stempelet står i ro så lenge man blir HER, men flaten bytter
+  // visning på egen hånd — liste, detalj, editor — og de kappløper om det samme
+  // elementet (Codex P2). Åpnet man utkast A og så B, besto begge svarene
+  // rutersjekken: svarte A sist, tegnet A seg over B, og skjermen viste et annet
+  // utkast enn det hun nettopp valgte. En «Prøv igjen» som fortsatt hang der da
+  // hun gikk tilbake til lista, gjorde det samme. Hvert visningsbytte teller
+  // derfor opp en egen generasjon.
+  //
+  // `fetch` kan ikke avbrytes bakover gjennom `hentJson`, så svaret slippes i
+  // stedet: er ETT av stemplene flyttet, er svaret foreldet og skal ikke røre
+  // skjermen.
+  const minRute = visningsToken(hoved);
+  let visning = 0;
+  const nyVisning = () => ++visning;
+  const eierSkjermen = (min) =>
+    erGjeldendeVisning(hoved, minRute) && visning === min;
 
   // Editoren tar over `hoved`. Ved lagring åpnes utkastets detalj; Avbryt/
   // fullført går tilbake til lista.
   function aapneEditor(opts) {
+    nyVisning();          // editoren eier `hoved` nå; eldre svar slipper ikke til
     visPolicyeditor(hoved, ctx, {
       ...opts,
       aapneUtkast: aapneDetalj,
@@ -350,8 +366,9 @@ export function visPolicyadmin(hoved, ctx) {
   // aktivere. Siden har utkastets policy-ID i overskriften og en synlig vei
   // tilbake, slik editoren allerede gjør.
   function aapneDetalj(uid) {
+    const min = nyVisning();
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-      if (!eierSkjermen()) return;
+      if (!eierSkjermen(min)) return;
       sett(hoved,
         ...flateHode(
           `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
@@ -361,7 +378,7 @@ export function visPolicyadmin(hoved, ctx) {
       fokuserOverskrift(hoved);
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (!eierSkjermen()) return;
+      if (!eierSkjermen(min)) return;
       // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
       // i det minste lista ligge under seg; siden erstattet HELE flaten med en
       // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et
@@ -439,8 +456,9 @@ export function visPolicyadmin(hoved, ctx) {
   // fokus (`hoved.focus()`), og flaten skal ikke rykke det fra den.
   function last(opts) {
     const flyttFokus = !!(opts && opts.fokus);
+    const min = nyVisning();
     medStatus(hoved, ctx, () => hentJson("/v1/policyutkast"), (d) => {
-      if (!eierSkjermen()) return;         // samme foreldelse som i detaljen
+      if (!eierSkjermen(min)) return;      // samme foreldelse som i detaljen
       st.rader = (d && d.utkast) || []; tegn(flyttFokus);
     });
   }
