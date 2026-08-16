@@ -1594,6 +1594,75 @@ test("Diff: «{}»-markøren fra klassifikatoren peker på samme gruppe som diff
       "gruppen som utvider fullmakt skal bære samme merking som risikolista");
   });
 
+// To feil i samme uttrykk for hva et «element» er (Codex P2 × 2).
+//
+// `menneskelig_overstyring.godkjennbare[0].handling`: elementet stoppet før
+// indeksen, så ALLE overstyringene havnet i ett kort med samlestien som
+// eneste overskrift. Det er en fullmaktsbærende liste — hvilken handling og
+// hvilket beløp per overstyring er nettopp det godkjenneren skal skille.
+//
+// `dataklasser[0]`: her ble den indekserte stien selv elementnøkkelen, så
+// hver indeks ble sin egen rad — stikk i strid med løftet om ÉN rad for
+// `dataklasser[]`.
+const NOSTET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  diff: { endringer: [
+    { sti: "menneskelig_overstyring.godkjennbare[0].handling",
+      type: "lagt_til", til: "refusjon.utfor" },
+    { sti: "menneskelig_overstyring.godkjennbare[0].belop_maks",
+      type: "lagt_til", til: "5000.00" },
+    { sti: "menneskelig_overstyring.godkjennbare[1].handling",
+      type: "lagt_til", til: "ordre.kanseller" },
+    { sti: "menneskelig_overstyring.godkjennbare[1].belop_maks",
+      type: "lagt_til", til: "250000.00" },
+    { sti: "dataklasser[0]", type: "lagt_til", til: "personopplysninger" },
+    { sti: "dataklasser[1]", type: "lagt_til", til: "regnskapsdata" },
+    { sti: "dataklasser[2]", type: "lagt_til", til: "kontonummer" },
+  ] },
+};
+
+function gruppeMedNavn(rot, navn) {
+  return [...rot.querySelectorAll(".diff-gruppe")].find((g) =>
+    g.querySelector(".diff-gruppenavn").textContent === navn);
+}
+
+test("Diff: hver oppføring i en nøstet objektliste blir sitt eget kort",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NOSTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const mo = gruppeMedNavn(rot, t(
+      "ui.policyadmin.diff.gruppe.menneskelig_overstyring",
+      "menneskelig_overstyring"));
+    const kort = [...mo.querySelectorAll(".diff-element")];
+    assert.equal(kort.length, 2,
+      "to overstyringer er to beslutninger — og to kort "
+      + `(fant ${kort.length})`);
+    // Og hver av dem må bære SINE egne verdier, ikke naboens.
+    const refusjon = kort.find((k) => k.textContent.includes("refusjon.utfor"));
+    const ordre = kort.find((k) => k.textContent.includes("ordre.kanseller"));
+    assert.ok(refusjon && ordre, "overstyringene ble ikke skilt fra hverandre");
+    assert.ok(refusjon.textContent.includes("5000.00")
+      && !refusjon.textContent.includes("250000.00"),
+      "beløpsgrensene ble blandet mellom overstyringene");
+  });
+
+test("Diff: en skalarliste på toppnivå blir ÉN rad, ikke én per indeks",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NOSTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const dk = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.dataklasser"));
+    const rader = dk.querySelectorAll("li");
+    assert.equal(rader.length, 1,
+      `tre dataklasser er én rad, ikke ${rader.length}`);
+    assert.equal(rader[0].querySelector("code").textContent, "dataklasser[]");
+    for (const v of ["personopplysninger", "regnskapsdata", "kontonummer"]) {
+      assert.ok(rader[0].textContent.includes(v), `${v} forsvant`);
+    }
+  });
+
 test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
   async () => {
     SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,

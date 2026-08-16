@@ -73,13 +73,31 @@ function normaliserSti(sti) {
 //                                     element: "handlinger[0]", rest: … }
 // Skalarledd i en liste («unntak.kategorier[3]») har ingen rest — de slås
 // sammen til én rad for hele lista lenger nede.
+//
+// Elementet er den ENHETEN godkjenneren tar stilling til, og det er hvor
+// listen ligger som avgjør hvor den enheten er — ikke hvor dypt i stien vi
+// har kommet. Derfor: første indekserte ledd som har felt UNDER seg er
+// elementet. `handlinger[0].vilkaar[2].navn` → `handlinger[0]` (én handling
+// per kort, ikke ett kort per vilkår), og
+// `menneskelig_overstyring.godkjennbare[0].handling` →
+// `…godkjennbare[0]` — ett kort per overstyring. Uten indeksen havnet alle
+// overstyringene i ETT kort med bare samlestien som overskrift, og det er
+// nettopp handling og beløp per overstyring godkjenneren skal skille
+// mellom (Codex P2).
+//
+// Har ingen indeks felt under seg, er det ingen liste av objekter, og
+// elementet er gruppen + ett navngitt ledd (`verifikatorer.v1`,
+// `unntak.kategorier`). Da MÅ indeksen bli stående i resten: en indeks til
+// slutt betyr skalarliste, og `dataklasser[0]`, `dataklasser[1]` … skal
+// samles til én rad `dataklasser[]` i stedet for én rad per indeks (Codex
+// P2). Toppnivålisten har ikke noe navngitt ledd, så elementet er gruppen.
 function delOppSti(raa) {
   const sti = normaliserSti(raa);
   const m = /^([^.[]+)/.exec(sti);
   const gruppe = m ? m[1] : sti;
-  // Elementet er første ledd som er indeksert eller nøklet ETTER gruppen.
-  const e = /^([^.[]+(?:\[\d+\]|\.[^.[]+))/.exec(sti);
-  const element = e ? e[1] : gruppe;
+  const iListe = /^(.*?\[\d+\])(?=\.)/.exec(sti);
+  const navngitt = /^([^.[]+\.[^.[]+)/.exec(sti);
+  const element = iListe ? iListe[1] : (navngitt ? navngitt[1] : gruppe);
   const rest = sti.slice(element.length).replace(/^\./, "");
   return { gruppe, element, rest };
 }
