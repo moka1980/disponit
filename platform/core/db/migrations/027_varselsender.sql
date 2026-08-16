@@ -99,6 +99,14 @@ DROP FUNCTION IF EXISTS varsel_rekoe(interval, int, interval);
 -- lease etter at den ble lest, ville ellers gått rett ut. Klaimet er den siste
 -- porten før SMTP, og derfor den som må stille spørsmålet.
 --
+-- OG EN AVMELDING GJELDER OGSÅ HER (Codex P2). Samme resonnement, ett hakk
+-- videre: `sett_kanal` avlyser hele køen (`I_KO`), men lar med vilje en rad som
+-- er `under_sending` stå — den er i et SMTP-kall, og en e-post som er ute kan
+-- ikke kalles hjem. Dør senderen FØR sendingen, kom den raden tilbake til
+-- `koet` gjennom leasen, og avmeldingen som ble committet i mellomtiden fantes
+-- det da ingen som spurte om. Klaimet spør nå: fravær av rad er standarden
+-- (`epost_og_portal`), så `NOT EXISTS … kun_portal` er hele testen.
+--
 -- Ordningen er FIFO på `opprettet` — den eldste ventende varsles først, som i
 -- innboksen.
 CREATE OR REPLACE FUNCTION varsel_klaim_epost(p_grense int,
@@ -123,6 +131,10 @@ AS $$
                        AND (b.profil->>'epost') IS NOT NULL
                        AND (b.profil->>'epost_verifisert')::boolean IS TRUE
                        AND k.epost_forsok < greatest(1, coalesce(p_maks, 3))
+                       AND NOT EXISTS (SELECT 1 FROM varselvalg vv
+                                        WHERE vv.tenant = k.tenant
+                                          AND vv.bruker_id = k.bruker_id
+                                          AND vv.kanal = 'kun_portal')
                      ORDER BY k.opprettet
                      LIMIT greatest(1, least(coalesce(p_grense, 50), 500))
                      FOR UPDATE OF k SKIP LOCKED)
@@ -166,7 +178,7 @@ END $$;
 -- ellers feiler funksjonen med InsufficientPrivilege uansett hvem som kaller
 -- den. Rettighetene er minimale og med vilje asymmetriske: LES på de to
 -- tabellene funksjonen slår opp i, SKRIV bare på statusfeltene i .
-GRANT SELECT ON varsel, brukeridentitet TO disponit_domene_eier;
+GRANT SELECT ON varsel, brukeridentitet, varselvalg TO disponit_domene_eier;
 GRANT UPDATE ON varsel TO disponit_domene_eier;
 
 -- RE-KØING: en rad som ikke kom frem er ikke ferdig — men den er heller ikke
@@ -199,6 +211,25 @@ GRANT UPDATE ON varsel TO disponit_domene_eier;
 --
 -- Re-køingen er et EGET steg, ikke en utvidelse av klaimet: `koet` er
 -- fortsatt den eneste tilstanden et klaim kan ta fra.
+--
+-- EN GJENOPPTATT RAD ARVER IKKE EN AVMELDING (Codex P2). Meldte mottakeren
+-- seg av mens raden sto `under_sending`, lot `sett_kanal` det klaimet stå med
+-- vilje — raden var i et SMTP-kall. Døde senderen før sendingen, løftet
+-- leasen den blindt tilbake til `koet`, og avmeldingen var borte: den hadde
+-- alt kjørt, og ingen kjører den igjen. Raden går derfor til `ikke_aktuelt`
+-- når valget nå er `kun_portal`, altså dit `sett_kanal` ville sendt den om
+-- den hadde vært synlig for den.
+--
+-- Klaimet spør om det samme, og det er ikke overflødig: de to svarer på hver
+-- sin vei inn. Denne stenger døra for de radene RE-KØINGEN slipper gjennom;
+-- klaimet er den siste porten før SMTP og gjelder også en rad som havnet i
+-- `koet` på en måte ingen har tenkt på ennå. En avmelding som virker bare når
+-- man kommer inn den ene veien, er ikke en avmelding.
+--
+-- Returverdien teller bare det som faktisk kom I KØ igjen. En rad som ble
+-- avlyst er ikke gjenkøet, og `gjenkoet=1` i journalen for en e-post som
+-- aldri skal sendes ville vært en tallmessig løgn i den ene linjen driften
+-- faktisk leser.
 CREATE OR REPLACE FUNCTION varsel_rekoe(
     p_backoff interval DEFAULT interval '15 minutes',
     p_maks int DEFAULT 3,
@@ -210,15 +241,24 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE n int;
 BEGIN
-    UPDATE varsel
-       SET epost_status = 'koet'
-     WHERE epost_forsok < greatest(1, p_maks)
-       AND epost_ts IS NOT NULL
-       AND ((epost_status = 'feilet'
-             AND epost_ts < now() - p_backoff)
-         OR (epost_status = 'under_sending'
-             AND epost_ts < now() - greatest(p_lease, interval '5 minutes')));
-    GET DIAGNOSTICS n = ROW_COUNT;
+    WITH gjenopptatt AS (
+        UPDATE varsel v
+           SET epost_status = CASE
+                   WHEN EXISTS (SELECT 1 FROM varselvalg vv
+                                 WHERE vv.tenant = v.tenant
+                                   AND vv.bruker_id = v.bruker_id
+                                   AND vv.kanal = 'kun_portal')
+                   THEN 'ikke_aktuelt' ELSE 'koet' END
+         WHERE v.epost_forsok < greatest(1, p_maks)
+           AND v.epost_ts IS NOT NULL
+           AND ((v.epost_status = 'feilet'
+                 AND v.epost_ts < now() - p_backoff)
+             OR (v.epost_status = 'under_sending'
+                 AND v.epost_ts < now()
+                     - greatest(p_lease, interval '5 minutes')))
+        RETURNING v.epost_status AS ny_status)
+    SELECT count(*) FILTER (WHERE ny_status = 'koet')
+      INTO n FROM gjenopptatt;
     RETURN n;
 END $$;
 

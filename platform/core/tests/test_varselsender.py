@@ -530,6 +530,101 @@ def test_klaim_fra_en_doed_kjoring_kommer_tilbake_naar_leasen_loper_ut():
 
 
 @pg
+def test_avmelding_overlever_at_klaimet_kommer_tilbake_fra_en_lease():
+    """Codex P2: en gjenopptatt rad arvet ikke avmeldingen.
+
+    `sett_kanal` avlyser hele køen (`I_KO`), men lar en rad som er
+    `under_sending` stå — med vilje: den er i et SMTP-kall, og en e-post som
+    er ute kan ikke kalles hjem. Døde senderen FØR sendingen, løftet leasen
+    raden blindt tilbake til `koet`, og avmeldingen var borte: den hadde alt
+    kjørt, og ingen kjører den igjen. Mottakeren fikk e-posten hun sa nei til.
+
+    Rekkefølgen her er nettopp den: krasjen fabrikkeres FØRST, avmeldingen
+    kommer ETTERPÅ og ser derfor ikke raden — akkurat som i drift.
+
+    Målt gjennom SENDEREN, ikke bare på kolonnen: det er re-køingen som er den
+    ene halvdelen, og klaimet den andre.
+
+    Kontroll: ta CASE-uttrykket ut av `varsel_rekoe`, og raden kommer tilbake
+    som `koet` — da bet klaimets eget `varselvalg`-filter i stedet, og
+    e-posten går fortsatt ikke ut, men statusen forteller ikke lenger hvorfor.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "leaseav", "leaseav@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        _kontekst(c)
+        # Klaimet som døde, med leasen alt utløpt.
+        assert c.execute("UPDATE varsel SET epost_status='under_sending',"
+                         " epost_ts=now() - interval '2 hours', epost_forsok=1"
+                         " WHERE tenant=%s AND bruker_id=%s RETURNING id",
+                         (TEN, b)).fetchall(), "krasjen ble aldri fabrikkert"
+        c.commit()
+        _kontekst(c)
+        # Avmeldingen kommer nå — og skal IKKE røre den klaimede raden.
+        varsel.sett_kanal(c, tenant=TEN, bruker_id=b, kanal="kun_portal")
+        c.commit()
+        _kontekst(c)
+        assert c.execute("SELECT epost_status FROM varsel WHERE tenant=%s"
+                         " AND bruker_id=%s", (TEN, b)).fetchone()[0] \
+            == "under_sending", (
+            "forutsetningen holder ikke: avmeldingen tok det aktive klaimet")
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt if t == "leaseav@example.test"] == [], (
+            "en avmeldt rad ble sendt etter at leasen løftet den tilbake")
+        assert c.execute("SELECT epost_status FROM varsel WHERE tenant=%s"
+                         " AND bruker_id=%s", (TEN, b)).fetchone()[0] \
+            == "ikke_aktuelt", (
+            "raden kom tilbake i køen i stedet for å bli avlyst — den ville"
+            " blitt liggende og bli forsøkt igjen ved hver kjøring")
+    finally:
+        c.close()
+
+
+@pg
+def test_klaimet_tar_aldri_en_avmeldt_rad_uansett_hvordan_den_kom_i_koen():
+    """Den siste porten før SMTP spør om kanalvalget selv.
+
+    Re-køingen avlyser de radene DEN slipper gjennom, men klaimet kan ikke
+    lene seg på at det er den eneste veien inn i `koet`: en rad som havnet der
+    på en måte ingen har tenkt på ennå, ville gått rett ut. Samme
+    begrunnelse som `lest_ts IS NULL` i klaimets eget filter.
+
+    Avmeldingen skrives her direkte i `varselvalg` og ikke gjennom
+    `sett_kanal`, nettopp for å FORBIGÅ oppryddingen: det som måles er
+    klaimet alene.
+
+    Kontroll: fjern `NOT EXISTS … kun_portal` fra klaimet, så blir denne rød.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "klaimav", "klaimav@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.execute("INSERT INTO varselvalg (tenant, bruker_id, kanal)"
+                  " VALUES (%s,%s,'kun_portal') ON CONFLICT (tenant, bruker_id)"
+                  " DO UPDATE SET kanal='kun_portal'", (TEN, b))
+        c.commit()
+        _kontekst(c)
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt if t == "klaimav@example.test"] == [], (
+            "klaimet tok en rad mottakeren har meldt seg av")
+        st = c.execute("SELECT epost_status, epost_forsok FROM varsel"
+                       " WHERE tenant=%s AND bruker_id=%s",
+                       (TEN, b)).fetchone()
+        # Urørt: ikke klaimet, og forsøkstelleren ikke brent.
+        assert st == ("koet", 0), st
+    finally:
+        c.close()
+
+
+@pg
 def test_avmelding_stopper_ogsaa_en_rad_som_venter_paa_nytt_forsok():
     """Køen er ikke `koet` alene lenger, og de som AVLYSER en sending må mene
     det samme som den som sender.

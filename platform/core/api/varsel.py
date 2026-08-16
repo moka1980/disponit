@@ -462,6 +462,14 @@ def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
     forsøk blir løftet tilbake i køen av `varsel_rekoe`, og en avmelding som
     ikke tar den, avlyser bare det som tilfeldigvis ikke hadde feilet ennå.
 
+    En rad som er `under_sending` står bevisst UTENFOR `I_KO`: den er i et
+    SMTP-kall akkurat nå, og en e-post som er ute kan ikke kalles hjem — å
+    sette den `ikke_aktuelt` ville dessuten stjålet klaimet fra senderen som
+    holder det. Dør senderen før sendingen, fanges raden opp av `varsel_rekoe`,
+    som sender den til `ikke_aktuelt` i stedet for `koet` når valget da er
+    `kun_portal` (Codex P2). Ellers ville avmeldingen vært borte: den har alt
+    kjørt, og ingen kjører den igjen.
+
     Motsatt vei re-køes INGENTING. `ikke_aktuelt` er et bevisst fravær, og å
     vekke det opp igjen ville sendt e-post om runder som kan ha rukket å bli
     både attestert og lukket i mellomtiden. Nye varsler etter omvalget får
