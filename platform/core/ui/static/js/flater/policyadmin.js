@@ -15,7 +15,7 @@ import {
 import { DataTabell } from "../tabell.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
-import { medStatus, flateHode, kvRad } from "./felles.js";
+import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 
 function risikoBadge(klasse) {
@@ -311,13 +311,6 @@ function tilbakeKnapp(tilbakeTilListe) {
   return b;
 }
 
-// Fokus til sidens overskrift: siden ble byttet ut, og uten dette står fokus
-// igjen på raden man klikket i en liste som ikke er der lenger.
-function fokuserOverskrift(hoved) {
-  const h = hoved.querySelector("h1, h2");
-  if (h) { h.setAttribute("tabindex", "-1"); h.focus(); }
-}
-
 export function visPolicyadmin(hoved, ctx) {
   // `sort` er eiers kolonnevalg, og det bor HER fordi flaten overlever
   // tegningene — tabellen bygges på nytt hver gang lista lastes (Codex P2).
@@ -476,6 +469,11 @@ export function visPolicyadmin(hoved, ctx) {
   //
   // Ved første tegning skal den IKKE flytte fokus: der er det ruteren som eier
   // fokus (`hoved.focus()`), og flaten skal ikke rykke det fra den.
+  //
+  // Fokuset gis til RAMMEN på samme måte som eierskapet: sjekken sto bare i
+  // `tegnFn`, altså på suksessveien, og en avvist liste-GET når aldri dit
+  // (Codex P2). Feilet «Tilbake» endte derfor med fokus på `body`. `medStatus`
+  // flytter det nå på de veiene den selv tegner.
   function last(opts) {
     const flyttFokus = !!(opts && opts.fokus);
     const min = nyVisning();
@@ -485,7 +483,7 @@ export function visPolicyadmin(hoved, ctx) {
     // veier — her sier vi bare hvilken visning kallet ble startet under.
     medStatus(hoved, ctx, () => hentJson("/v1/policyutkast"), (d) => {
       st.rader = (d && d.utkast) || []; tegn(flyttFokus);
-    }, () => eierSkjermen(min));
+    }, () => eierSkjermen(min), flyttFokus);
   }
 
   function tilbakeTilListe() { last({ fokus: true }); }

@@ -484,6 +484,38 @@ test("Tilbake til lista: fokus følger med, ikke til `body`", async () => {
     "fokus skal lande på listas overskrift");
 });
 
+// Codex P2: forrige fiks dekket bare SUKSESSVEIEN — `flyttFokus` ble konsumert
+// av `tegn(...)`, som en avvist liste-GET aldri når. `medStatus` river den
+// fokuserte tilbakeknappen synkront for lastetilstanden og tegner feilen, så
+// «Tilbake» som feilet lot fokus ligge på `body`: eier måtte navigere seg fram
+// til «Prøv igjen» forfra, i en flate hun nettopp sto i.
+test("Tilbake som FEILER: fokus følger med til feiltilstanden", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  await _aapneDetalj(h);
+
+  delete SVAR["/v1/policyutkast"];               // lista svarer 404 nå
+  const tilbake = _finn(h, t("ui.policyadmin.tilbake_til_liste"));
+  tilbake.focus();                               // slik en tastaturbruker står
+  tilbake.dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+
+  assert.notEqual(document.activeElement, document.body,
+    "fokus falt til body — eier må navigere seg fram til «Prøv igjen» forfra");
+  assert.ok(h.contains(document.activeElement), "fokus havnet utenfor flaten");
+  assert.match(document.activeElement.tagName, /^H[12]$/,
+    "fokus skal lande på feiltilstandens overskrift");
+
+  // «Prøv igjen» bærer fokusløftet videre: knappen forsvinner i det den
+  // trykkes, så et forsøk som lykkes skal lande der «Tilbake» skulle.
+  SVAR["/v1/policyutkast"] = LISTE;
+  _finn(h, t("ui.prov_igjen")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.equal(document.activeElement.textContent, t("ui.policyadmin.tittel"),
+    "fokus skal lande på listas overskrift etter et vellykket nytt forsøk");
+});
+
 // Codex P2: feilet detalj-GET erstattet HELE flaten med en naken feiltilstand.
 // Skuffen lot lista ligge under seg; siden gjorde et forbigående 5xx til en
 // blindvei man bare kom ut av ved å laste appen på nytt.
