@@ -276,6 +276,44 @@ def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
     return 0 if res is FEILET else len(res)
 
 
+def oppdater_gjenstaar(conn: psycopg.Connection, *, tenant: str,
+                       utkast_id: str, runde: int, gjenstaar: int) -> int:
+    """«{gjenstaar} attestasjon(er) gjenstår» må fortsatt være sant. -> antall.
+
+    Tallet er et PARAMETER på raden, og parametrene ble skrevet én gang, da
+    runden åpnet (Codex P2). Krever runden to godkjenninger, sto det `2` i
+    hvert varsel for alltid — også etter at forfatteren attesterte. Den
+    uavhengige godkjenneren leste da at to gjenstår når det bare var hans egen
+    igjen, og e-posten som gikk ut etterpå sa det samme: den rendres fra de
+    samme parametrene, ved sending. Tallet er ikke pynt, det er det som skiller
+    «du er den siste» fra «dette kan vente».
+
+    Alternativet var å utlede tallet ved visning. Det ville flyttet
+    rundetilstanden inn i innboksen OG inn i senderen — som er kryss-tenant og
+    med vilje ikke vet noe om aktiveringsrunder. Parameteret oppdateres derfor
+    der tallet faktisk endrer seg: ved hver attestering.
+
+    Bare ULESTE varsler røres. Et lest varsel er historie — mottakeren har
+    kvittert det ut, og å skrive om teksten under henne ville vært å endre noe
+    hun alt har sett. `pensjoner_runde` har dessuten nettopp satt aktørens egen
+    rad lest, så hennes varsel faller ut av dette av seg selv.
+
+    KASTER ALDRI (regel 2): dette kalles midt i attesteringsflyten, og en
+    fullmaktsendring skal ikke kunne feile fordi en varseltekst ikke lot seg
+    oppdatere. Derfor `skjermet`, som resten av modulen.
+    """
+    res = skjermet(conn, lambda: conn.execute(
+        "UPDATE varsel SET parametre ="
+        " jsonb_set(parametre, '{gjenstaar}', to_jsonb(%s::int))"
+        " WHERE tenant=%s AND art='attestering_venter'"
+        "   AND ressurs_type='policyutkast' AND ressurs_id=%s"
+        "   AND hendelse=%s AND lest_ts IS NULL"
+        "   AND parametre->>'gjenstaar' IS DISTINCT FROM %s::text"
+        " RETURNING id",
+        (gjenstaar, tenant, utkast_id, str(runde), gjenstaar)).fetchall())
+    return 0 if res is FEILET else len(res)
+
+
 def innboks(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
             kun_uleste: bool = False, grense: int = 50) -> list[dict]:
     """Mottakerens egne varsler: ULESTE FØRST, deretter nyeste først.

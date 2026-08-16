@@ -409,19 +409,30 @@ def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
     if not utkast_id or not runde:
         return 0
     rad = varsel.skjermet(conn, lambda: conn.execute(
-        "SELECT status, utloper FROM aktiveringsrunde"
-        " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+        "SELECT r.status, r.utloper, r.pakrevd_antall_godkjennere,"
+        " (SELECT count(*) FROM aktiveringsattestasjon a"
+        "   WHERE a.tenant=r.tenant AND a.utkast_id=r.utkast_id"
+        "     AND a.runde=r.runde)"
+        " FROM aktiveringsrunde r"
+        " WHERE r.tenant=%s AND r.utkast_id=%s AND r.runde=%s",
         (tenant, utkast_id, runde)).fetchone())
     if rad is varsel.FEILET or rad is None:
         return 0
     if _runde_status(rad[0], rad[1], naa) != "apen":
         return 0
+    # Tallet leses NÅ, ikke fra det lagrede utfallet: forsoningen kjøres etter
+    # at runden ble åpnet, og noen kan ha rukket å attestere i mellomtiden.
+    # Med det lagrede påkrevd-tallet ville varselet som endelig kom frem sagt
+    # at alle attestasjonene gjenstår — det ville vært det samme feiltrinnet
+    # `oppdater_gjenstaar` finnes for, bare i den veien som skal REPARERE.
+    pakrevd = rad[2] if rad[2] is not None else lagret.get(
+        "pakrevd_antall_godkjennere", 0)
     return varsel.varsle_runde_venter(
         conn, tenant=tenant, aktor=aktor, request_id=request_id,
         utkast_id=utkast_id, runde=int(runde),
         policy_id=lagret.get("policy_id", ""),
         risikoklasse=lagret.get("risikoklasse", ""),
-        gjenstaar=lagret.get("pakrevd_antall_godkjennere", 0))
+        gjenstaar=max(0, pakrevd - rad[3]))
 
 
 def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
@@ -1373,6 +1384,15 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     antall = len(rader)
     ikke_forfatter = sum(1 for _b, ef, _r, _a in rader if not ef)
     if antall < r_pakrevd or ikke_forfatter < 1:
+        # Det samme tallet inn i varslene til dem som fortsatt venter (Codex
+        # P2). Før ble det regnet ut BARE for dette svaret — altså bare for
+        # den som nettopp attesterte og dermed er ferdig — mens varselet til
+        # den som faktisk skal handle sto igjen med tallet fra åpningen og
+        # sa «2 gjenstår» når bare hans egen sto igjen. E-posten sa det samme:
+        # den rendres fra de samme parametrene, ved sending.
+        varsel.oppdater_gjenstaar(conn, tenant=tenant, utkast_id=utkast_id,
+                                  runde=r_nr,
+                                  gjenstaar=max(0, r_pakrevd - antall))
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "venter_godkjennere", "utkast_id": utkast_id,
             "runde": r_nr, "antall": antall,

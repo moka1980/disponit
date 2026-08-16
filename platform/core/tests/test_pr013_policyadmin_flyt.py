@@ -1603,6 +1603,54 @@ def test_attestering_pensjonerer_aktoerens_eget_varsel():
 
 
 @pg
+def test_gjenstaaende_attesteringer_telles_ned_i_varslene():
+    """Codex P2: «{gjenstaar} attestasjon(er) gjenstår» må fortsatt være sant.
+
+    Parametrene ble skrevet én gang, da runden åpnet. Krever runden to
+    godkjenninger, sto det `2` i hvert varsel for alltid — også etter at
+    forfatteren attesterte. Den uavhengige godkjenneren, som er den eneste
+    som faktisk kan bringe runden videre, leste da at to gjenstår når det bare
+    var hans egen igjen. Tallet skiller «du er den siste» fra «dette kan
+    vente», og e-posten sier det samme: den rendres fra de samme parametrene,
+    ved sending.
+
+    Forfatterens eget varsel er pensjonert av steg 7c og skal IKKE skrives om
+    — et lest varsel er historie.
+
+    Kontroll: fjern `varsel.oppdater_gjenstaar`-kallet i steg 8, så blir denne
+    rød med `gjenstaar == 2` i det varselet som fortsatt venter.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("teller-forf", ["policyforvalter"])
+    b = _medlem("teller-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert r["pakrevd_antall_godkjennere"] == 2
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] == (
+            "venter_godkjennere")
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        param = {x[0]: x[1] for x in m.execute(
+            "SELECT bruker_id, parametre FROM varsel WHERE tenant=%s"
+            " AND ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND hendelse='1'", (TEN, uid)).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+    assert param[b]["gjenstaar"] == 1, (
+        "godkjenneren som er den siste som gjenstår, blir fortalt at to "
+        f"attesteringer gjenstår: {param[b]}")
+    assert param[a]["gjenstaar"] == 2, (
+        "forfatterens alt leste varsel ble skrevet om under henne")
+
+
+@pg
 def test_aktivering_pensjonerer_hele_rundens_varsler():
     """Når runden er brukt, venter den ikke på noen — heller ikke på dem som
     aldri rakk å svare.
