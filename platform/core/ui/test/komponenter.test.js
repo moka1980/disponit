@@ -6,12 +6,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
+import { el } from "../static/js/dom.js";
 import { plattformTelling } from "../static/js/plattformdata.js";
 import { KATALOG } from "../static/js/katalog.js";
 import {
   BeslutningBadge, KategoriTag, Tidspunkt, BegrunnelseKjede, StatusTidslinje,
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
-  VarselBanner, CursorNavigasjon, SensitiveData, AppShell,
+  VarselBanner, CursorNavigasjon, SensitiveData, AppShell, Faner,
 } from "../static/js/komponenter.js";
 import {
   siteFaseMerke, siteModuleKort, siteStatusMerke,
@@ -533,4 +534,62 @@ test("AppShell: modulmenyen viser tenantens tildeling, ikke katalogen", () => {
   assert.ok(tom.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ingen"]),
     "en tom tildeling forveksles med et søk uten treff");
+});
+
+test("Faner: ARIA-mønsteret, ikke bare knapper som ser ut som faner", async () => {
+  const { rot } = Faner({ trinn: [
+    { nokkel: "a", tittel: "A", bygg: () => el("p", { text: "innhold A" }) },
+    { nokkel: "b", tittel: "B", bygg: () => el("p", { text: "innhold B" }) },
+    { nokkel: "c", tittel: "C", bygg: () => el("p", { text: "innhold C" }) },
+  ] });
+  nyttBrett().append(rot);
+
+  const faner = [...rot.querySelectorAll('[role="tab"]')];
+  assert.equal(faner.length, 3);
+  assert.equal(rot.querySelector('[role="tablist"]').getAttribute("aria-label"),
+    t("ui.faner.merkelapp"));
+
+  // Bare det aktive panelet er i DOM-en, og fanen peker på det.
+  const panel = rot.querySelector('[role="tabpanel"]');
+  assert.equal(panel.textContent, "innhold A");
+  assert.equal(faner[0].getAttribute("aria-controls"), panel.id);
+  assert.equal(panel.getAttribute("aria-labelledby"), faner[0].id);
+
+  // Roving tabindex: bare den valgte fanen er i tab-rekkefølgen. Uten dette
+  // må man tabbe gjennom ALLE fanene for å nå innholdet.
+  assert.deepEqual(faner.map((f) => f.getAttribute("tabindex")), ["0", "-1", "-1"]);
+  assert.deepEqual(faner.map((f) => f.getAttribute("aria-selected")),
+    ["true", "false", "false"]);
+
+  // Piltaster flytter valget OG fokus — det er det som skiller en fane fra en
+  // knapp som bare ser ut som en fane.
+  faner[0].dispatchEvent(new window.KeyboardEvent("keydown",
+    { key: "ArrowRight", bubbles: true }));
+  assert.equal(rot.querySelector('[role="tabpanel"]').textContent, "innhold B");
+  assert.equal(document.activeElement, faner[1]);
+  assert.equal(faner[1].getAttribute("aria-selected"), "true");
+
+  // Venstre fra første går rundt til siste (WAI-ARIA-mønsteret).
+  faner[1].dispatchEvent(new window.KeyboardEvent("keydown",
+    { key: "ArrowLeft", bubbles: true }));
+  assert.equal(faner[0].getAttribute("aria-selected"), "true");
+});
+
+test("Faner: forrige/neste følger trinnene og stopper i endene", async () => {
+  const { rot } = Faner({ trinn: [
+    { nokkel: "a", tittel: "A", bygg: () => el("p", { text: "A" }) },
+    { nokkel: "b", tittel: "B", bygg: () => el("p", { text: "B" }) },
+  ] });
+  nyttBrett().append(rot);
+  const forrige = [...rot.querySelectorAll(".faner-styring button")][0];
+  const neste = [...rot.querySelectorAll(".faner-styring button")][1];
+
+  // På første trinn er «forrige» meningsløs — og da skal den være deaktivert,
+  // ikke bare gjøre ingenting når man trykker.
+  assert.equal(forrige.disabled, true, "«forrige» er aktiv på første trinn");
+  assert.equal(neste.disabled, false);
+  neste.dispatchEvent(new window.Event("click"));
+  assert.equal(rot.querySelector('[role="tabpanel"]').textContent, "B");
+  assert.equal(neste.disabled, true, "«neste» er aktiv på siste trinn");
+  assert.equal(forrige.disabled, false);
 });

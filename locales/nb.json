@@ -637,5 +637,14 @@
   "ui.shell.status_moduler": "{i_drift} av {totalt} moduler i drift",
   "ui.shell.status_varsler": "{antall} varsler",
   "ui.shell.status_varsler_ukjent": "Varseltall ikke tilgjengelig",
-  "ui.shell.status_oppdatert": "Sist oppdatert {tid}"
+  "ui.shell.status_oppdatert": "Sist oppdatert {tid}",
+  "ui.faner.merkelapp": "Trinn",
+  "ui.faner.forrige": "Forrige",
+  "ui.faner.neste": "Neste",
+  "ui.editor.fane.grunn": "Grunnopplysninger",
+  "ui.editor.fane.roller": "Roller",
+  "ui.editor.fane.handlinger": "Handlinger",
+  "ui.policyadmin.fane.oversikt": "Oversikt",
+  "ui.policyadmin.fane.endringer": "Endringer",
+  "ui.policyadmin.fane.fire_oyne": "Fire øyne"
 }

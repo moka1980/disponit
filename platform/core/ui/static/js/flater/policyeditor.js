@@ -15,7 +15,7 @@ import {
   nyIdempotensnokkel,
   UautorisertFeil, ApiFeil,
 } from "../api.js";
-import { meldLive, TomTilstand, Feiltilstand } from "../komponenter.js";
+import { meldLive, TomTilstand, Feiltilstand, Faner } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
 const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
@@ -612,11 +612,25 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
           el("ul", {}, ...st.feil.map((f) => el("li", { text: f }))))
       : null;
 
+    // Tre trinn i stedet for én rulle (§2.1): grunnopplysninger → roller →
+    // handlinger. Fanen som var åpen huskes over en re-rendring — uten det
+    // ville hvert tastetrykk som utløser `tegn()` kastet eier tilbake til
+    // trinn 1, midt i utfyllingen.
+    const faner = Faner({
+      start: st.fane,
+      paaBytte: (n) => { st.fane = n; },
+      trinn: [
+        { nokkel: "grunn", tittel: t("ui.editor.fane.grunn"),
+          bygg: () => metaSeksjon(st.policy, !st.utkast_id, st.aktiv) },
+        { nokkel: "roller", tittel: t("ui.editor.fane.roller"),
+          bygg: () => rollerSeksjon(st.policy, tegn) },
+        { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
+          bygg: () => handlingerSeksjon(st.policy, tegn) },
+      ],
+    });
     const barn = [
       ...flateHode(t("ui.editor.tittel"), t("ui.editor.undertittel")),
-      metaSeksjon(st.policy, !st.utkast_id, st.aktiv),
-      rollerSeksjon(st.policy, tegn),
-      handlingerSeksjon(st.policy, tegn),
+      faner.rot,
     ];
     if (feilboks) barn.push(feilboks);
     barn.push(knapper);

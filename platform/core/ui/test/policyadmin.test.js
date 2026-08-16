@@ -83,9 +83,17 @@ test("Detalj: diff + risikoklasse PER endring + fire-øyne-status", async () => 
   await vent(() => document.querySelector('[role="dialog"]'));
   const dlg = document.querySelector('[role="dialog"]');
   // Risikoklasse per endring (både UTVIDER og INNSNEVRER vises).
+  // Skuffen er delt i trinn: klassifisering og diff bor under «Endringer»,
+  // fire-øyne-status under sin egen fane. Testen navigerer dit i stedet for å
+  // anta at alt står under hverandre.
+  const gaaTil = (tittel) => [...dlg.querySelectorAll('[role="tab"]')]
+    .find((f) => f.textContent === tittel)
+    .dispatchEvent(new window.Event("click"));
+  gaaTil(t("ui.policyadmin.fane.endringer"));
   assert.ok(dlg.textContent.includes(t("risiko.UTVIDER")));
   assert.ok(dlg.textContent.includes(t("risiko.INNSNEVRER")));
   assert.ok(dlg.textContent.includes("roller[]"));
+  gaaTil(t("ui.policyadmin.fane.fire_oyne"));
   // Fire-øyne-status: 1/2 + forfatter markert.
   assert.ok(dlg.textContent.includes("1 / 2"));
   assert.ok(dlg.textContent.includes(t("ui.policyadmin.forfatter")));

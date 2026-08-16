@@ -10,7 +10,7 @@ import {
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
-  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive,
+  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive, Faner,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
@@ -233,16 +233,29 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   kvRad(dl, t("ui.policyadmin.risikoklasse"),
     risikoBadge(detalj.risikoklasse));
 
-  const rot = el("div", {}, dl,
-    el("h3", { text: t("ui.policyadmin.klassifisering") }),
-    risikoEndringer(detalj),
-    el("h3", { text: t("ui.policyadmin.diff") }),
-    feltDiff(detalj));
+  // Skuffen var samme lange rulle som editoren: nøkkeltall, klassifisering,
+  // diff og fire-øyne-status under hverandre, og handlingene nederst — etter
+  // alt man måtte skrolle forbi. Nå er innholdet trinn, mens HANDLINGENE står
+  // fast utenfor fanene: det man skal GJØRE med utkastet skal ikke ligge og
+  // gjemme seg bak et fanevalg.
+  const trinn = [
+    { nokkel: "oversikt", tittel: t("ui.policyadmin.fane.oversikt"),
+      bygg: () => el("div", {}, dl) },
+    { nokkel: "endringer", tittel: t("ui.policyadmin.fane.endringer"),
+      bygg: () => el("div", {},
+        el("h3", { text: t("ui.policyadmin.klassifisering") }),
+        risikoEndringer(detalj),
+        el("h3", { text: t("ui.policyadmin.diff") }),
+        feltDiff(detalj)) },
+  ];
   if (detalj.aktiv_runde) {
-    rot.append(el("h3", { text: t("ui.policyadmin.fire_oyne") }),
-      fireOyneStatus(detalj.aktiv_runde));
+    trinn.push({ nokkel: "fire_oyne", tittel: t("ui.policyadmin.fane.fire_oyne"),
+      bygg: () => el("div", {},
+        el("h3", { text: t("ui.policyadmin.fire_oyne") }),
+        fireOyneStatus(detalj.aktiv_runde)) });
   }
-  rot.append(handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel));
+  const rot = el("div", {}, Faner({ trinn }).rot,
+    handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel));
   return rot;
 }
 

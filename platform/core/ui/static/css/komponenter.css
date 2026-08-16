@@ -796,3 +796,47 @@ html[data-visning="landing"] .skall-hoved {
   margin-top: var(--sp-6);
   padding-top: var(--sp-3);
 }
+
+/* --- Faner: trinn i stedet for én lang rulle (§2.1) ---------------------- */
+.faner-liste {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-4);
+}
+
+.fane {
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.fane:hover { color: var(--ink); }
+
+/* Valgt trinn markeres med farge OG en tydelig understrek — farge alene er
+   ikke informasjon (WCAG 1.4.1). */
+.fane.valgt {
+  border-bottom-color: var(--info);
+  color: var(--ink);
+}
+
+/* Panelet er fokuserbart; da må fokusmarkeringen være synlig på det også. */
+.faner-panel:focus-visible {
+  outline: var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+.faner-styring {
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: space-between;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+}
