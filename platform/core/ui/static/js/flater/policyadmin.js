@@ -142,6 +142,24 @@ function taKvittering(uid) {
   return k && k.uid === uid ? k : null;
 }
 
+// Plikten over gjelder HELE veien, ikke bare fram til tegningen er startet
+// (Codex P2). Å ta kvitteringen ut med én gang lukket det ene tapsvinduet —
+// handlingen som fullførte etter at eier hadde navigert bort — men åpnet et
+// annet rett etter: kvitteringen er nå denne tegningens eiendom, og faller
+// tegningen bort MENS detalj-GET-en er ute, faller kvitteringen med den. Eier
+// rakk å trykke «Tilbake» i sekundet mellom POST og GET, og fikk dermed ingen
+// bekreftelse i det hele tatt på en fullmaktshandling som faktisk ble utført.
+// Ikke feil kvittering, ikke gammel kvittering — ingen.
+//
+// Det er samme svar som i `paaFerdig`: skjermen kan ikke vise utfallet lenger,
+// men skjermleseren kan fortsatt si det. Den varige live-regionen hører til
+// dokumentet, ikke til tegningen, og overlever navigasjonen som drepte boksen.
+// Ingen kvitteringsboks når skjermen her, så det finnes heller ingenting å
+// konkurrere med om opplesningen.
+function meldTaptKvittering(k) {
+  if (k) meldLive(k.tekst);
+}
+
 // Live-området settes inn TOMT og fylles først når det står i dokumentet
 // (Codex P2). Et `role="status"` annonserer ikke pålitelig tekst som lå der
 // allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
@@ -277,6 +295,26 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
 
 let _hintTeller = 0;
 
+// Feil fra en handling som IKKE friskner opp siden, tegnes rett i
+// handlingsboksen — synlig, ikke bare hørbar. Men boksen hører til DEN
+// tegningen som lagde den, og POST-en er ute på nettet mens eier fortsatt kan
+// klikke (Codex P2). Rakk hun «Tilbake» eller «Rediger» først, har `sett`
+// byttet ut hele `hoved`, og `boks` henger i et frakoblet tre når svaret
+// kommer. Et `append` dit er da verken synlig ELLER hørbar: `role="alert"`
+// annonserer ingenting utenfor dokumentet. Da vi gjorde feilen synlig, mistet
+// vi altså det ene sporet — `meldLive` — som overlevde navigasjon, og en
+// mislykket handling ble helt stille.
+//
+// Boksen i dokumentet er fortsatt riktig sted: den ER et assertivt
+// live-område og leses opp av seg selv, så et `meldLive` i tillegg ville gitt
+// to konkurrerende opplesninger for ett klikk. Er den frakoblet, finnes det
+// ingen skjerm å vise noe på, og utfallet går til den varige live-regionen i
+// stedet. ÉN annonsering i begge tilfeller — bare ikke null.
+function visEllerMeld(boks, node, talemelding) {
+  if (boks.isConnected) { boks.append(node); return; }
+  meldLive(talemelding);
+}
+
 // Handlingsknappene avhenger av utkastets tilstand: utkast → Valider; validert
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
 // Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
@@ -321,13 +359,18 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
     // stedet for å anta «ugyldig»: en nettverksfeil, 403, 409 eller 5xx sier
     // ingenting om utkastet, og skal ikke få eier til å lete etter feil i en
     // policy som kan være helt i orden.
+    // Samme frakoblingsproblem som «Åpne runde» (se `visEllerMeld`): også
+    // valideringen kan svare etter at eier har forlatt siden, og en feilliste
+    // tegnet inn i et dødt tre er ingen tilbakemelding.
     const visFeil = (overskrift, linjer) => {
       boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
-      boks.append(el("div", { class: "pa-valfeil", role: "alert" },
-        el("p", { text: overskrift }),
-        ...(linjer.length
-          ? [el("ul", {}, ...linjer.map((f) => el("li", { text: String(f) })))]
-          : [])));
+      visEllerMeld(boks,
+        el("div", { class: "pa-valfeil", role: "alert" },
+          el("p", { text: overskrift }),
+          ...(linjer.length
+            ? [el("ul", {}, ...linjer.map((f) => el("li", { text: String(f) })))]
+            : [])),
+        [overskrift, ...linjer.map(String)].join(" "));
     };
     b.addEventListener("click", () =>
       validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
@@ -366,10 +409,14 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         // Ingen gjentegning her, så feilen tegnes rett i handlingsboksen —
-        // synlig, ikke bare hørbar.
+        // synlig, ikke bare hørbar. Og har eier gått videre mens POST-en lå
+        // ute, er boksen frakoblet: da leses feilen opp i stedet for å
+        // forsvinne (Codex P2, se `visEllerMeld`).
         boks.querySelectorAll(".pa-kvittering").forEach((n) => n.remove());
-        boks.append(el("div", { class: "pa-kvittering pa-kvittering-feil",
-          role: "alert" }, el("p", { text: t("ui.policyadmin.feilet") })));
+        visEllerMeld(boks,
+          el("div", { class: "pa-kvittering pa-kvittering-feil", role: "alert" },
+            el("p", { text: t("ui.policyadmin.feilet") })),
+          t("ui.policyadmin.feilet"));
       }));
     boks.append(b);
     return { rot: boks, diffVist };
@@ -551,9 +598,12 @@ export function visPolicyadmin(hoved, ctx) {
     // den kan ikke lenger forbrukes av et annet utkast. Men så lenge tegningen
     // FORTSATT eier skjermen, skal den vise kvitteringen sin uansett hvordan
     // den ender: begge grenene under tegner den.
+    //
+    // Og eier ikke tegningen skjermen lenger, dør ikke utfallet stille: begge
+    // grenene melder det til live-området i stedet (`meldTaptKvittering`).
     const kvitt = taKvittering(uid);
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-      if (!eierSkjermen(min)) return;
+      if (!eierSkjermen(min)) { meldTaptKvittering(kvitt); return; }
       // En handling som fullfører ETTER at eier har forlatt detaljsiden, skal
       // ikke hente den tilbake (Codex P1). `paaFerdig` friskner opp siden
       // etter Valider/Åpne runde/Attester — riktig så lenge siden er den man
@@ -578,8 +628,7 @@ export function visPolicyadmin(hoved, ctx) {
       // kvitteringsboks å konkurrere med.
       const innhold = detaljInnhold(detalj, uid, ctx, () => {
         if (eierSkjermen(min)) { aapneDetalj(uid); return; }
-        const tapt = taKvittering(uid);
-        if (tapt) meldLive(tapt.tekst);
+        meldTaptKvittering(taKvittering(uid));
       }, aapneEditor, kvitt);
       sett(hoved,
         ...flateHode(
@@ -595,8 +644,11 @@ export function visPolicyadmin(hoved, ctx) {
       // oppgave — `kvitteringsBoks` sørger for det, og forklarer hvorfor.
       innhold.ferdig();
     }).catch((e) => {
+      // 401 er ikke navigasjon: sesjonen er ute, `paaUautorisert` sender eier
+      // til innlogging, og et utfall lest opp inn i den overgangen ville blitt
+      // overskrevet av innloggingssiden uansett. Kvitteringen faller her.
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      if (!eierSkjermen(min)) return;
+      if (!eierSkjermen(min)) { meldTaptKvittering(kvitt); return; }
       // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
       // i det minste lista ligge under seg; siden erstattet HELE flaten med en
       // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et

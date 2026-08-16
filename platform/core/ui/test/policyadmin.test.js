@@ -9,6 +9,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
 import { lagRuter } from "../static/js/ruter.js";
 import { el, sett } from "../static/js/dom.js";
+import { meldLive } from "../static/js/komponenter.js";
 
 settI18nForTest(NB, "nb");
 
@@ -1326,4 +1327,164 @@ test("Kvitteringen overlever at gjentegningen feiler", async () => {
     "veien ut av den feilede gjentegningen forsvant");
   assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// Codex P2: å ta kvitteringen ut når tegningen STARTER lukket ett tapsvindu og
+// åpnet et annet rett etter. Fullførte POST-en mens eier fortsatt sto i
+// detaljen, kalte `paaFerdig` riktignok `aapneDetalj` — men da er kvitteringen
+// alt tatt ut av modulen og eid av en tegning som ennå bare er en GET på
+// nettet. Gikk eier tilbake i det sekundet, returnerte både `.then` og
+// `.catch` på eierskapssjekken, og kvitteringen var borte for godt: ikke feil
+// kvittering, ikke gammel kvittering — INGEN. Eier fikk null tilbakemelding på
+// en fullmaktshandling som faktisk ble utført, og det nærliggende neste
+// trekket er da å gjøre den om igjen.
+//
+// Dette er et ANNET vindu enn det `paaFerdig` alt dekker: der navigerte eier
+// FØR POST-en var i havn, her etter. Den grenen redder ikke dette tilfellet.
+//
+// Kontroll: fjern `meldTaptKvittering(kvitt)` fra eierskapsreturen i `.then`,
+// så blir testen rød.
+test("Utfallet leses opp selv om gjentegningen mister skjermen underveis",
+  async () => {
+    let slippGet = null;
+    let gets = 0;
+    const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+    SVAR = {
+      "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": utkast,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+    };
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      // Første GET tegner detaljen. Den ANDRE er gjentegningen `paaFerdig()`
+      // starter etter valideringen — POST-en er da ferdig og kvitteringen tatt
+      // ut av modulen, mens GET-en holdes ute på nettet.
+      if (sti === "/v1/policyutkast/u-1" && !(opts && opts.method)
+          && ++gets === 2) {
+        await new Promise((r) => { slippGet = r; });
+        return { ok: true, status: 200, json: async () => utkast };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+
+    meldLive("");                        // ren startlinje å måle mot
+    _finn(h, t("ui.policyadmin.handling.valider"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippGet);          // POST i havn, gjentegningen ute
+
+    // Eier venter ikke på gjentegningen — hun går tilbake til lista.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+    slippGet();
+    await vent(() => false, 20);
+
+    const live = [...document.querySelectorAll('[aria-live="polite"]')]
+      .map((n) => n.textContent).join(" ");
+    assert.ok(live.includes(t("ui.policyadmin.validert")),
+      "valideringen ble utført, men utfallet forsvant med tegningen");
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "det foreldede svaret hentet eier tilbake til detaljsiden");
+
+    // Og den skal ikke ligge igjen og dukke opp neste gang utkastet åpnes.
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+    await vent(() => false, 20);
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "et gammelt utfall ble vist som om det var ferskt");
+    globalThis.fetch = brukFetch;
+  });
+
+// Codex P2: «Åpne runde» friskner ikke opp siden ved feil — feilen tegnes rett
+// i handlingsboksen, som skal være synlig og ikke bare hørbar. Men boksen hører
+// til DEN tegningen som lagde den, og POST-en er ute på nettet mens eier
+// fortsatt kan klikke. Rakk hun «Tilbake» først, hadde `sett` byttet ut hele
+// `hoved`, og alerten ble hengt inn i et frakoblet tre: usynlig fordi det ikke
+// står på skjermen, OG stumt fordi `role="alert"` ikke annonserer noe utenfor
+// dokumentet. Da feilen ble gjort synlig, mistet den altså `meldLive` — det
+// ene sporet som overlevde navigasjon — og en mislykket handling ble helt
+// stille. Eier tror runden er åpnet.
+//
+// Kontroll: bytt `visEllerMeld` tilbake til et rått `boks.append(…)`, så blir
+// testen rød.
+test("En handling som feiler etter at eier har gått videre, blir hørt",
+  async () => {
+    const gjenopprett = _medCsrf();
+    let slippPost = null;
+    SVAR = {
+      "/v1/policyutkast": LISTE,
+      // Validert uten runde → «Åpne runde».
+      "/v1/policyutkast/u-1": { ...DETALJ, aktiv_runde: null },
+      __post: async () => {
+        await new Promise((r) => { slippPost = r; });
+        return { ok: false, status: 500, json: async () => ({ feil: "x" }) };
+      },
+    };
+    const h = await _aapneDetaljMed(nyHoved(),
+      t("ui.policyadmin.handling.apne_runde"));
+
+    meldLive("");                        // ren startlinje å måle mot
+    _finn(h, t("ui.policyadmin.handling.apne_runde"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippPost);         // POST-en er ute på nettet
+
+    // Eier venter ikke på svaret — hun går tilbake til lista.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+    slippPost();
+    await vent(() => false, 20);
+
+    const live = [...document.querySelectorAll('[aria-live="polite"]')]
+      .map((n) => n.textContent).join(" ");
+    assert.ok(live.includes(t("ui.policyadmin.feilet")),
+      "runden ble ikke åpnet, og eier fikk ingen beskjed om det");
+    assert.equal(h.querySelectorAll(".pa-kvittering-feil").length, 0,
+      "feilen rev eier tilbake til en side hun hadde forlatt");
+    gjenopprett();
+  });
+
+// Samme frakobling gjelder valideringens feilliste: også den tegnes rett i
+// handlingsboksen, og også den kan svare etter at eier har forlatt siden.
+// Kontroll: bytt `visEllerMeld` i `visFeil` tilbake til `boks.append(…)`.
+test("Valideringsfeil som lander etter navigasjon, blir hørt", async () => {
+  const gjenopprett = _medCsrf();
+  let slippPost = null;
+  SVAR = {
+    "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    __post: async () => {
+      await new Promise((r) => { slippPost = r; });
+      return { ok: false, status: 422, json: async () => ({
+        feil: "policy_ugyldig", detaljer: ["rolle mangler"] }) };
+    },
+  };
+  const h = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.valider"));
+
+  meldLive("");
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slippPost);
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  slippPost();
+  await vent(() => false, 20);
+
+  const live = [...document.querySelectorAll('[aria-live="polite"]')]
+    .map((n) => n.textContent).join(" ");
+  assert.ok(live.includes(t("ui.policyadmin.ugyldig")),
+    "utkastet var ugyldig, men eier fikk aldri vite det");
+  assert.ok(live.includes("rolle mangler"),
+    "serverens egen feilliste forsvant med den frakoblede boksen");
+  assert.equal(h.querySelectorAll(".pa-valfeil").length, 0,
+    "feillista ble tegnet inn i en side eier hadde forlatt");
+  gjenopprett();
 });
