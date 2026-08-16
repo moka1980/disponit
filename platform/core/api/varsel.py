@@ -21,9 +21,14 @@ TRE REGLER SOM STYRER DENNE MODULEN:
    varslingsproblem som blokkerer styringen.
 
 3. **Teksten lagres ikke, bare nøkkel + parametre.** Locale-kontrakten sier at
-   synlig tekst kommer fra `locales/`, og varselet skal leses på MOTTAKERENS
-   språk — ikke på det avsenderen tilfeldigvis hadde. E-posten rendres når den
-   sendes, ikke når den køes.
+   synlig tekst kommer fra `locales/`. I innboksen gir det mottakerens eget
+   språk — flaten rendrer nøkkelen med det språket leseren har valgt, ikke det
+   avsenderen tilfeldigvis hadde. E-POSTEN gjør det ikke: språkvalget i
+   portalen lever i nettleseren, og ingen serverlagret språkpreferanse finnes,
+   så senderen rendrer i installasjonens språk (`DISPONIT_VARSEL_SPRAK`,
+   standard `nb`). At nøkkelen lagres og ikke setningen er det som gjør den
+   dagen en preferanse finnes billig: den vil da gjelde også for det som alt
+   står i kø.
 
 Hvem som skal varsles ved en åpen runde er IKKE «alle med rollen»: det er de
 som faktisk kan bringe runden videre. Attesterer man allerede, er man ferdig —

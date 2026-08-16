@@ -225,6 +225,88 @@ def test_rendre_viser_ukjent_nokkel_i_stedet_for_tomhet():
         == "varsel.finnes.ikke"
 
 
+# ---------------------------------------------------------------------------
+# SPRÅKET (eiers P2). Modulteksten lovte «mottakerens språk». Innboksen holder
+# det løftet — den rendrer nøkkelen i nettleseren med leserens eget valg — men
+# e-posten kan ikke: portalens språkvalg lever i URL-ledd og `localStorage`,
+# profil-DTO-en fra IdP-en er lukket til tre felt, og `varselvalg` bærer bare
+# kanalvalget. Det finnes altså ingen serverlagret preferanse å slå opp.
+#
+# Løftet er derfor avgrenset til det som er sant, og testene under måler
+# nettopp avgrensningen: ETT språk for hele kjøringen, valgt av
+# installasjonen. Uten dem ville «det er sånn med vilje» og «det er en feil
+# ingen har sett» sett helt like ut i koden.
+# ---------------------------------------------------------------------------
+
+def test_spraket_er_installasjonens_valg_og_ikke_en_konstant(monkeypatch):
+    """`DISPONIT_VARSEL_SPRAK` velger språket; `nb` er standarden.
+
+    Uten dette leddet var «nb» en standardverdi i signaturen til `kjor`, og en
+    engelskspråklig installasjon måtte endre kode for å få engelsk e-post —
+    eller finne den ene kalleren og gi den et argument. Testen er uten `@pg`:
+    den måler valget, ikke køen.
+    """
+    import importlib
+
+    monkeypatch.setenv("DISPONIT_VARSEL_SPRAK", "en")
+    modul = importlib.reload(varselsender)
+    try:
+        assert modul.SPRAK == "en"
+        monkeypatch.delenv("DISPONIT_VARSEL_SPRAK")
+        assert importlib.reload(varselsender).SPRAK == "nb", \
+            "standarden er ikke lenger plattformens reservespråk"
+    finally:
+        # Modulen er delt med de andre testene i denne filen; last den
+        # tilbake til miljøet de kjører i.
+        importlib.reload(varselsender)
+
+
+@pg
+def test_hele_koen_rendres_i_ett_sprak_uansett_mottaker(monkeypatch):
+    """Den ærlige avgrensningen, målt: to mottakere, samme språk.
+
+    Dette er IKKE en test som feirer en mangel. Den låser at mangelen er
+    kjent og avgrenset: køen er kryss-tenant, `varsel_klaim_epost` returnerer
+    ingen språkpreferanse, og et locale lastes per KJØRING. Skulle noen senere
+    la klaimet bære språket og velge locale per rad, er det denne testen som
+    skal skrives om — og det er hele poenget med at den finnes.
+
+    Språket settes til `en` for å skille de to tilfellene fra hverandre: med
+    `nb` ville en test som IKKE lastet noe locale i det hele tatt sett like
+    grønn ut.
+    """
+    monkeypatch.setattr(varselsender, "SPRAK", "en")
+    engelsk = varselsender._locale("en")
+    norsk = varselsender._locale("nb")
+    nokkel = "varsel.attestering_venter"
+    assert engelsk[nokkel] != norsk[nokkel], (
+        "nb og en har samme tekst for nøkkelen — da kan ikke denne testen"
+        " skille språkene, og porten er verdiløs")
+
+    c = _conn()
+    try:
+        for navn in ("sprak-a", "sprak-b"):
+            b = _bruker(c, navn, f"{navn}@example.test")
+            _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+
+        mine = [(til, emne, tekst) for til, emne, tekst in sendt
+                if til.startswith("sprak-")]
+        assert len(mine) == 2, f"forventet to sendinger, fikk {mine}"
+        forventet = varselsender.rendre(
+            engelsk, nokkel, {"policy_id": "p", "runde": 1,
+                              "risikoklasse": "UTVIDER", "gjenstaar": 1})
+        for til, emne, tekst in mine:
+            assert tekst == forventet, (
+                f"{til} fikk ikke installasjonens språk: {tekst!r}")
+            assert emne == engelsk["varsel.epost.emne"]
+    finally:
+        c.close()
+
+
 @pg
 def test_feilet_epost_prøves_igjen_etter_backoff():
     """En feilet sending er IKKE endelig.

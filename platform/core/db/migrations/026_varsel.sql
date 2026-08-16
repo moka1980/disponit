@@ -26,9 +26,18 @@
 --
 -- TEKSTEN LAGRES IKKE. Bare `tekstnokkel` + `parametre`, som resten av
 -- plattformen: locale-kontrakten sier at all synlig tekst kommer fra
--- `locales/`, og et varsel skal leses på MOTTAKERENS språk — ikke på språket
--- avsenderen tilfeldigvis hadde da hendelsen skjedde. Det avgjør også
--- e-posten: den rendres når den sendes, ikke når den køes.
+-- `locales/`. I INNBOKSEN gir det mottakerens eget språk — flaten rendrer
+-- nøkkelen med det språket leseren har valgt, ikke det avsenderen tilfeldigvis
+-- hadde da hendelsen skjedde.
+--
+-- E-POSTEN ER EN ANNEN SAK, og det skal stå her og ikke bare i senderen:
+-- språkvalget i portalen lever i nettleseren (URL-ledd + `localStorage`, se
+-- `ui/static/js/i18n.js`), og INGEN serverlagret språkpreferanse finnes —
+-- profil-DTO-en fra IdP-en er lukket til tre felt, og `varselvalg` bærer bare
+-- kanalvalget. Senderen kan derfor ikke vite hvilket språk mottakeren leser
+-- på; den rendrer i INSTALLASJONENS språk. At nøkkelen og ikke setningen
+-- lagres er likevel det som gjør det billig å rette senere: den dagen en
+-- lagret preferanse finnes, gjelder den også for det som alt står i kø.
 --
 -- Varsler er IKKE append-only som revisjonsloggen. De er driftsdata: de leses,
 -- de blir gamle, og de skal kunne ryddes. Revisjonssporet for selve

@@ -6,9 +6,28 @@ uansett, mottakeren ser det neste gang hun logger inn, og driften skal ikke
 vekkes av at én e-post ikke gikk.
 
 TEKSTEN RENDRES HER, ikke i databasen. Raden bærer `tekstnokkel` + `parametre`,
-og lokaliseringen skjer ved sending — da leses varselet på mottakerens språk,
-og en rettet oversettelse gjelder også for det som alt står i kø. Databasen
-skal ikke kunne noe språk.
+og lokaliseringen skjer ved sending — så en rettet oversettelse gjelder også
+for det som alt står i kø. Databasen skal ikke kunne noe språk.
+
+SPRÅKET ER INSTALLASJONENS, IKKE MOTTAKERENS — og det skal stå rett ut (eiers
+P2). Modulteksten lovte tidligere at e-posten ble lest «på mottakerens språk».
+Det er sant i INNBOKSEN, som rendrer nøkkelen i nettleseren med leserens eget
+valg, men det kan ikke være sant her: portalens språkvalg lever i URL-ledd og
+`localStorage` (`ui/static/js/i18n.js`), profil-DTO-en fra IdP-en er lukket
+til tre felt (`visningsnavn`, `epost`, `epost_verifisert`) og `varselvalg`
+bærer bare kanalvalget. Det finnes altså ingen serverlagret språkpreferanse å
+slå opp, og `varsel_klaim_epost` returnerer ingen — en kjøring laster ett
+locale og bruker det på hele den kryss-tenante køen.
+
+Løftet er derfor avgrenset til det som er sant, og gjort til et VALG i stedet
+for en konstant: `DISPONIT_VARSEL_SPRAK` bestemmer språket for
+installasjonen, med `nb` som standard. En engelskspråklig installasjon er da
+en env-endring, ikke en kodeendring — men det er fortsatt ETT språk for alle
+mottakere, og det er den ærlige beskrivelsen inntil en preferanse lagres.
+
+Den dagen den lagres, er dette den korte veien: la klaimet returnere språket
+per rad og velg locale i løkka. At nøkkelen og ikke setningen lagres er
+nettopp det som gjør at det da også gjelder for køen.
 
 SMTP-oppsettet kommer fra credentials, aldri fra koden. Eier: WCAGvakts konto
 (`send.one.com:587`) brukes til TEST og byttes senere — derfor er avsender og
@@ -34,6 +53,11 @@ BACKOFF_MIN = int(os.environ.get("DISPONIT_VARSEL_BACKOFF_MIN", "15"))
 #: for en sending som fortsatt pågår — da ville den gjenskapt dobbeltsendingen
 #: klaimet finnes for å hindre.
 LEASE_MIN = int(os.environ.get("DISPONIT_VARSEL_LEASE_MIN", "30"))
+#: Språket HELE kjøringen rendres i. Se modulteksten: det finnes ingen
+#: serverlagret språkpreferanse per mottaker, så dette er installasjonens
+#: valg — ikke den enkeltes. `nb` er standarden fordi det er plattformens
+#: reservespråk (`locales/nb.json`, `i18n.js`).
+SPRAK = os.environ.get("DISPONIT_VARSEL_SPRAK", "nb")
 
 
 def _locale(sprak: str) -> dict:
@@ -100,11 +124,18 @@ def _send_ekte(oppsett: dict, til: str, emne: str, tekst: str) -> None:
         s.send_message(m)
 
 
-def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
+def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     """Tøm køen én gang. -> {sendt, feilet, gjenkoet, mistet}.
 
     `send` er injiserbar, så testene kan måle HVA som ville blitt sendt uten en
     e-postserver. Standard er ekte SMTP.
+
+    `sprak` er INSTALLASJONENS språk, ikke mottakerens, og standarden er
+    `DISPONIT_VARSEL_SPRAK` (`nb`) — ikke en hardkodet «nb» i signaturen.
+    Forskjellen er at driften kan velge språk uten en kodeendring, og at
+    valget står ett sted i stedet for hos hver kaller. Ett locale lastes for
+    hele kjøringen fordi køen er kryss-tenant og klaimet ikke bærer noe språk;
+    se modulteksten for hvorfor det ikke finnes noe å bære.
 
     RADEN KLAIMES FØR SMTP, og klaimet COMMITTES før sendingen begynner. Det er
     hele forskjellen på denne løkka og den forrige (Codex P1): før plukket den
@@ -157,7 +188,7 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
                 "grunn": "smtp_ikke_konfigurert"}
     send = send or (lambda til, emne, tekst: _send_ekte(oppsett, til, emne,
                                                         tekst))
-    tekster = _locale(sprak)
+    tekster = _locale(sprak or SPRAK)
     emne = tekster.get("varsel.epost.emne", "Disponit")
     # Først: tilbake i køen med det som ikke kom frem — feilede rader som har
     # ventet ut backoffen, og klaim fra en kjøring som døde underveis. Egen

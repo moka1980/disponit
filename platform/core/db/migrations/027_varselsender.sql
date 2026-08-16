@@ -18,7 +18,13 @@
 --   * ingen `lest_ts`, ingen historikk, ingen andre tenanters tilstand.
 --
 -- Teksten sendes IKKE herfra: funksjonen gir `tekstnokkel` + `parametre`, og
--- senderen rendrer på mottakerens språk. Databasen skal ikke kunne noe språk.
+-- senderen rendrer. Databasen skal ikke kunne noe språk.
+--
+-- Og den rendrer i INSTALLASJONENS språk, ikke mottakerens: funksjonen
+-- returnerer ingen språkpreferanse fordi ingen finnes å returnere —
+-- portalens språkvalg lever i nettleseren. Det står her fordi det er her
+-- feltlista avgjøres: skal e-posten en dag følge mottakeren, er det denne
+-- returtypen som må bære språket.
 --
 -- Oppdateringen av status går gjennom sin egen funksjon, så senderen aldri får
 -- generell UPDATE på tvers av tenanter: den kan flytte en rad fra sitt eget
