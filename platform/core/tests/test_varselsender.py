@@ -408,9 +408,15 @@ def test_klaim_fra_en_doed_kjoring_kommer_tilbake_naar_leasen_loper_ut():
         b = _bruker(c, "krasj", "krasj@example.test")
         _ko(c, b, "u-" + secrets.token_hex(4))
         c.commit()
-        c.execute("UPDATE varsel SET epost_status='under_sending',"
-                  " epost_ts=now(), epost_forsok=1"
-                  " WHERE tenant=%s AND bruker_id=%s", (TEN, b))
+        _kontekst(c)
+        # …og RETURNING, ikke bare UPDATE: uten konteksten over filtrerer RLS
+        # bort raden, krasjen blir aldri fabrikkert, og testen måler at en
+        # helt vanlig `koet`-rad blir sendt — grønn på feil grunnlag hvis den
+        # hadde stått uten lease, rød og forvirrende når leasen virker.
+        assert c.execute("UPDATE varsel SET epost_status='under_sending',"
+                         " epost_ts=now(), epost_forsok=1"
+                         " WHERE tenant=%s AND bruker_id=%s RETURNING id",
+                         (TEN, b)).fetchall(), "krasjen ble aldri fabrikkert"
         c.commit()
         _kontekst(c)
 
