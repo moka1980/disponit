@@ -1338,6 +1338,18 @@ _EIERSKIFTE = re.compile(
 #: FORAN verbet: en setning på toppnivå har ingenting foran seg.
 _BETINGET = re.compile(r"\b(?:if|elsif|elseif|case|when)\b")
 
+#: `SET LOCAL ROLE` ER ÉN AV FLERE FORMER (Codex P2 på #71). PostgreSQL
+#: skriver rolleskiftet som `SET [LOCAL | SESSION] ROLE [TO] navn`, og
+#: modellen kjente bare den ene. En `SET ROLE disponit_migrator` etter et
+#: stykke arbeid som eier gikk derfor upåaktet hen, og en REVOKE etterpå ble
+#: bokført på den GAMLE rollen — modellen leste et gjerde der klyngen kjørte
+#: setningen som ikke-eier, advarte, og lot PUBLIC beholde EXECUTE.
+#:
+#: `NONE` er ikke et rollenavn, men PostgreSQLs egen måte å skrive «tilbake
+#: til innloggingsrollen» på, og betyr det samme som `RESET ROLE`.
+_ROLLESKIFTE = re.compile(
+    r"^set\s+(?:(local|session)\s+)?role\s+(?:to\s+)?([a-z_][a-z0-9_]*)")
+
 #: EN VAKT SOM STREKKER SEG OVER FLERE SETNINGER (Codex P2 på #71). Vakten
 #: over måler bare teksten FORAN verbet i den SAMME setningen, og en
 #: plpgsql-gren er ikke én setning: `IF … THEN RAISE NOTICE …; REVOKE …;
@@ -1627,13 +1639,21 @@ def _spill_av(filer, signaturer):
     gjerdet = dict.fromkeys(beskyttet)
     eier = dict.fromkeys(beskyttet)
     spor = {sig: [] for sig in beskyttet}
+    sesjonsrolle = None                   # None = migrator, kjørerens rolle
     for filnavn, sql in filer:
-        rolle = None                      # None = migrator, kjørerens rolle
+        # `db.kjorer.migrer` kjører HVER fil i sin egen transaksjon på den
+        # SAMME sesjonen. Et `SET LOCAL ROLE` varer derfor bare ut filen,
+        # mens et `SET ROLE` uten `LOCAL` blir stående inn i den neste — og
+        # den forskjellen er nettopp hvem en senere REVOKE kjøres som.
+        rolle = sesjonsrolle
         for s, under_vakt in _setninger(sql):
-            if s.startswith("set local role "):
-                rolle = s.split()[3]
+            if skift := _ROLLESKIFTE.match(s):
+                ny = None if skift.group(2) == "none" else skift.group(2)
+                rolle = ny
+                if skift.group(1) != "local":
+                    sesjonsrolle = ny
             elif s.startswith("reset role"):
-                rolle = None
+                rolle = sesjonsrolle = None
             aktiv = rolle or MIGRATORROLLE
             if _GRANT_ALLE_PUBLIC.search(s):
                 # Den ene setningen som åpner uten å nevne noe navn — måles
@@ -1818,6 +1838,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
       `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
       inne i en DO-blokk er betinget», og målt langt mer enn den vet.
+    * et ROLLESKIFTE SKREVET PÅ EN ANNEN MÅTE — `SET ROLE`, `SET SESSION
+      ROLE`, `SET ROLE TO`, `SET ROLE NONE`. Særlig skiftet TILBAKE: ses det
+      ikke, bokføres en senere REVOKE på den gamle rollen, og modellen leser
+      et gjerde der klyngen bare advarte. Med skillet som gjør `LOCAL` til
+      noe annet enn støy: sesjonsformen overlever inn i neste fil,
+      transaksjonsformen ikke.
     * samme vakt i en TAGGET blokk — `DO $acl$ … $acl$`. `$$` er bare det
       navnløse tilfellet, og en tagget blokk ble hverken strøket som kropp
       eller pakket ut som blokk. Med motprøvene at taggen PARES: en fremmed
@@ -2155,6 +2181,66 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         [("a.sql", lag + gjerde),
          ("b.sql", "DROP FUNCTION public.varsel_klaim_epost(int, int);")],
         n)[0] == {sig: None}, "`public.` utskrevet er samme objekt"
+
+    # ROLLESKIFTET HAR FLERE FORMER. `SET ROLE`, `SET SESSION ROLE` og
+    # `SET ROLE TO` gjør det samme som `SET LOCAL ROLE` for spørsmålet
+    # modellen stiller: hvem kjører den neste setningen.
+    for form in ("SET ROLE disponit_domene_eier",
+                 "SET SESSION ROLE disponit_domene_eier",
+                 "SET ROLE TO disponit_domene_eier"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + f"{form};"
+                             " REVOKE ALL ON FUNCTION"
+                             " varsel_klaim_epost(int, int) FROM PUBLIC;"
+                             " RESET ROLE;")], n)
+        assert gjerdet == {sig: True}, (
+            f"`{form}` er et rolleskifte. Spor: {spor}")
+
+    # …og den veien funnet faktisk peker: et rolleskifte TILBAKE som ikke
+    # ses, lar en senere REVOKE bli bokført på den gamle rollen. Her kjører
+    # den som migrator, som ikke eier funksjonen — PostgreSQL advarer bare.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier;"
+                         " SET ROLE disponit_migrator;"
+                         " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                         " FROM PUBLIC; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE etter `SET ROLE disponit_migrator` er ikke eierens."
+        f" Spor: {spor}")
+
+    # …og `SET ROLE NONE`, som er PostgreSQLs egen skrivemåte for det samme
+    # som `RESET ROLE`: TILBAKE TIL INNLOGGINGSROLLEN, ikke over til en rolle
+    # som heter «none». Forskjellen måles der den er observerbar — på en
+    # funksjon migrator selv eier, der migrators egen REVOKE lukker gjerdet.
+    for tilbake in ("SET ROLE NONE", "RESET ROLE"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", "CREATE OR REPLACE FUNCTION"
+                       " varsel_klaim_epost(int, int) ...;"
+                       " SET ROLE disponit_domene_eier;"
+                       f" {tilbake};"
+                       " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                       " FROM PUBLIC;")], n)
+        assert gjerdet == {sig: True}, (
+            f"`{tilbake}` fører tilbake til migrator, som eier denne."
+            f" Spor: {spor}")
+
+    # …og skillet mellom de to formene, som er hele grunnen til at `LOCAL`
+    # står der: hver fil er sin egen TRANSAKSJON på den SAMME sesjonen. Et
+    # `SET ROLE` blir stående inn i neste fil; et `SET LOCAL ROLE` gjør det
+    # ikke.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET ROLE disponit_domene_eier;"),
+         ("b.sql", "REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC;")], n)
+    assert gjerdet == {sig: True}, (
+        "et `SET ROLE` uten `LOCAL` varer ut sesjonen." f" Spor: {spor}")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier;"),
+         ("b.sql", "REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                   " FROM PUBLIC;")], n)
+    assert gjerdet == {sig: False}, (
+        "et `SET LOCAL ROLE` faller bort når transaksjonen gjør det."
+        f" Spor: {spor}")
 
     # DOLLARSITERING HAR EN TAGG. `$$` er bare det navnløse tilfellet, og en
     # `DO $acl$ … $acl$` ble hverken strøket som kropp eller pakket ut som
