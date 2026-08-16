@@ -65,9 +65,16 @@ CREATE TABLE IF NOT EXISTS varsel (
     lest_ts         timestamptz,
     -- E-postens tilstand. `ikke_aktuelt` når mottakeren har valgt kun portal:
     -- da er det et bevisst fravær, ikke en feilet sending.
+    --
+    -- `under_sending` er senderens KLAIM (027): en rad som er tatt ut av køen
+    -- og committet som tatt FØR SMTP-kallet begynner. Uten en slik tilstand
+    -- var plukket en ren `SELECT` av `koet`, og to sendere som overlappet
+    -- kunne hente samme rad, begge sende e-posten, og først etterpå
+    -- konkurrere om statusen — en e-post er ikke noe en tapt UPDATE kan
+    -- trekke tilbake (Codex P1).
     epost_status    text NOT NULL DEFAULT 'koet'
-                    CHECK (epost_status IN ('koet', 'sendt', 'feilet',
-                                            'ikke_aktuelt')),
+                    CHECK (epost_status IN ('koet', 'under_sending', 'sendt',
+                                            'feilet', 'ikke_aktuelt')),
     epost_forsok    integer NOT NULL DEFAULT 0 CHECK (epost_forsok >= 0),
     epost_ts        timestamptz,
     epost_feil      text
@@ -98,6 +105,14 @@ CREATE INDEX IF NOT EXISTS varsel_uleste
 -- Senderen spør «hva står i kø», på tvers av tenanter (den kjører som drift).
 CREATE INDEX IF NOT EXISTS varsel_koet
     ON varsel (epost_status, opprettet) WHERE epost_status = 'koet';
+-- …og re-køingen (027) spør det motsatte, hver eneste kjøring: «hvem har
+-- feilet ferdig backoff, og hvilket klaim har løpt ut?» Uten dette leddet blir
+-- det en seq scan over hele flertenant-tabellen hvert 5. minutt. Delindeksen
+-- vokser ikke med historikken: `sendt` og `ikke_aktuelt` er terminale og
+-- faller ut av den, så den holder bare det som fortsatt er underveis.
+CREATE INDEX IF NOT EXISTS varsel_ufullfort
+    ON varsel (epost_status, epost_ts)
+ WHERE epost_status IN ('under_sending', 'feilet');
 -- Samme hendelse skal ikke kunne varsle samme person to ganger. Uten dette
 -- ville en retry av runde-åpningen fylt innboksen med duplikater.
 --

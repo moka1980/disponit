@@ -2,8 +2,11 @@
 
 Grensene som prøves her er de som gjør senderen trygg å la stå og gå:
   * den sender BARE til verifiserte adresser;
-  * den plukker bare `koet`, aldri leste eller alt sendte;
-  * to samtidige sendere kan ikke sende samme varsel to ganger;
+  * den KLAIMER raden før SMTP, aldri leste eller alt sendte;
+  * to samtidige sendere kan ikke sende samme varsel to ganger — heller ikke
+    når den ene starter mens den andre står midt i SMTP-kallet;
+  * et klaim fra en kjøring som døde kommer tilbake i køen når leasen løper
+    ut, og ikke ett minutt før;
   * én adresse som ikke tar imot stopper ikke resten av køen;
   * uten SMTP-oppsett rører den ikke køen — et manglende oppsett er en
     driftstilstand, ikke en egenskap ved varselet;
@@ -77,7 +80,7 @@ def test_sender_bare_til_verifiserte_adresser():
     """En uverifisert e-post i profilen er en PÅSTAND fra en IdP, ikke et
     bevis. Et varsel om en fullmaktsrunde skal ikke dit.
 
-    Kontroll: fjern `epost_verifisert`-leddet i `varselkandidater`, så blir
+    Kontroll: fjern `epost_verifisert`-leddet i `varsel_klaim_epost`, så blir
     denne rød med to mottakere.
     """
     c = _conn()
@@ -98,8 +101,12 @@ def test_sender_bare_til_verifiserte_adresser():
 
 @pg
 def test_samme_varsel_sendes_ikke_to_ganger():
-    """`varsel_sett_epoststatus` flytter bare `koet` → `sendt`. To sendere som
-    kjører samtidig kan derfor ikke sende det samme varselet to ganger."""
+    """Sekvensielt: en rad som er sendt er ute av køen for godt.
+
+    Dette er den enkle halvdelen — «neste kjøring etter sendt». Den samtidige
+    halvdelen, der kjøring nr. 2 starter mens nr. 1 står i SMTP-kallet, måles
+    i `test_to_samtidige_sendere_sender_ikke_samme_epost_to_ganger`.
+    """
     c = _conn()
     try:
         b = _bruker(c, "en", "en@example.test")
@@ -222,12 +229,12 @@ def test_rendre_viser_ukjent_nokkel_i_stedet_for_tomhet():
 def test_feilet_epost_prøves_igjen_etter_backoff():
     """En feilet sending er IKKE endelig.
 
-    `varselkandidater` plukker bare `koet`, så uten re-køing var `feilet` en
-    blindvei og forsøkstelleren død kode: ett forbigående SMTP-hikk mistet
-    e-posten for godt. Re-køingen er et eget steg nettopp for å beholde
-    garantien om at `koet` er den eneste sendbare tilstanden.
+    Klaimet tar bare `koet`, så uten re-køing var `feilet` en blindvei og
+    forsøkstelleren død kode: ett forbigående SMTP-hikk mistet e-posten for
+    godt. Re-køingen er et eget steg nettopp for å beholde garantien om at
+    `koet` er den eneste tilstanden et klaim kan ta fra.
 
-    Kontroll: fjern `varsel_rekoe_feilede`-kallet i `kjor`, så blir denne rød.
+    Kontroll: fjern `varsel_rekoe`-kallet i `kjor`, så blir denne rød.
     """
     c = _conn()
     try:
@@ -304,6 +311,136 @@ def test_retryen_stopper_eksakt_paa_maks_forsok(monkeypatch):
         c.close()
 
 
+# ---------------------------------------------------------------------------
+# Codex P1 (PR-068): plukket er et KLAIM, ikke en lesning.
+#
+# Testene over er sekvensielle og beviser bare «neste kjøring etter sendt».
+# Funnet var det de ikke rørte: to kjøringer som OVERLAPPER. Timeren går hvert
+# 5. minutt, en treg SMTP-server gjør en kjøring lengre enn det, og med et
+# plukk som bare LESTE `koet` hentet begge samme rad, sendte begge e-posten og
+# konkurrerte om statusen etterpå. At den andre UPDATE-en traff null rader er
+# en opplysning som kommer for sent — SMTP er utført.
+# ---------------------------------------------------------------------------
+
+@pg
+def test_to_samtidige_sendere_sender_ikke_samme_epost_to_ganger():
+    """To forbindelser, og den andre starter INNE i den førstes SMTP-kall.
+
+    Krysningen er hele poenget: kjører de etter hverandre, er selv det gamle
+    plukket trygt. `send`-callbacken er nøyaktig det stedet der en ekte sender
+    står og venter på en server, så en kjøring nr. 2 som starter der er den
+    overlappen driften faktisk får.
+
+    Kontroll: bytt `varsel_klaim_epost` tilbake til et plukk som bare SELECTer
+    `koet`, og denne blir rød på at nr. 2 sendte den samme e-posten en gang
+    til.
+
+    Det assertes på MIN adresse og ikke på tellerne: senderen er kryss-tenant,
+    så begge kjøringene tar med seg det andre tester har lagt i køen.
+    """
+    c1 = _conn()
+    c2 = _conn()
+    minadresse = "samtidig@example.test"
+    try:
+        b = _bruker(c1, "samtidig", minadresse)
+        _ko(c1, b, "u-" + secrets.token_hex(4))
+        c1.commit()
+
+        en: list[str] = []
+        to: list[str] = []
+        krysset: list[str] = []
+
+        def send_en(til, emne, tekst):
+            en.append(til)
+            if til != minadresse or krysset:
+                return
+            krysset.append(til)
+            # Sett fra en ANNEN forbindelse, midt i sendingen: raden er alt
+            # tatt ut av køen. Det er denne tilstanden `kjor` under lener seg
+            # på — og den samme som lease-testen fabrikkerer.
+            st = c2.execute("SELECT epost_status FROM varsel WHERE tenant=%s"
+                            " AND bruker_id=%s", (TEN, b)).fetchone()
+            assert st == ("under_sending",), (
+                f"raden er {st} midt i sendingen — klaimet ble aldri "
+                "committet, og nr. 2 ser den fortsatt som ledig")
+            c2.commit()
+            varselsender.kjor(c2, send=lambda t, _e, _x: to.append(t))
+
+        res1 = varselsender.kjor(c1, send=send_en)
+        _kontekst(c1)
+
+        assert krysset, "krysningen skjedde aldri — testen målte ingenting"
+        assert res1["mistet"] == 0, (
+            "senderen mistet et klaim den holdt — returverdien fra "
+            "statusoppdateringen sier ifra, og den skal leses")
+        assert en.count(minadresse) == 1, en
+        assert to.count(minadresse) == 0, (
+            "den samtidige senderen sendte den samme e-posten en gang til")
+        st = c1.execute("SELECT epost_status, epost_forsok FROM varsel"
+                        " WHERE tenant=%s AND bruker_id=%s",
+                        (TEN, b)).fetchone()
+        assert st == ("sendt", 1), (
+            f"{st} — ett forsøk, og det ble talt én gang")
+    finally:
+        c1.close()
+        c2.close()
+
+
+@pg
+def test_klaim_fra_en_doed_kjoring_kommer_tilbake_naar_leasen_loper_ut():
+    """Prisen for å ta raden ut av køen FØR sendingen: dør prosessen der, er
+    raden klaimet av noen som ikke finnes.
+
+    Uten en lease ville den blitt liggende `under_sending` for alltid — en
+    stille tilstand ingen overvåker, og et varsel som aldri når frem. Med
+    leasen kommer den tilbake, men først når den har løpt ut: en lease som
+    utløper mens sendingen pågår ville gjenskapt nøyaktig den dobbeltsendingen
+    klaimet finnes for å hindre. Begge halvdelene måles her.
+
+    Krasjen fabrikkeres med en direkte UPDATE og ikke ved å drepe et ekte
+    klaim, av én grunn: klaimet er kryss-tenant og kan ikke siktes på én rad,
+    så et avbrutt ekte klaim ville etterlatt ANDRE testers rader låst til
+    leasen løp ut. At tilstanden er den samme som klaimet skriver, er målt i
+    testen over — fra en annen forbindelse, midt i sendingen.
+    """
+    c = _conn()
+    try:
+        b = _bruker(c, "krasj", "krasj@example.test")
+        _ko(c, b, "u-" + secrets.token_hex(4))
+        c.commit()
+        c.execute("UPDATE varsel SET epost_status='under_sending',"
+                  " epost_ts=now(), epost_forsok=1"
+                  " WHERE tenant=%s AND bruker_id=%s", (TEN, b))
+        c.commit()
+        _kontekst(c)
+
+        sendt, send = _samler()
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt if t == "krasj@example.test"] == [], (
+            "raden ble tatt tilbake mens sendingen kunne pågå — leasen bet "
+            "ikke")
+
+        # Skru klokka forbi leasen, og den skal komme tilbake i køen.
+        c.execute("UPDATE varsel SET epost_ts = now() - interval '2 hours'"
+                  " WHERE tenant=%s AND bruker_id=%s", (TEN, b))
+        c.commit()
+        _kontekst(c)
+        varselsender.kjor(c, send=send)
+        _kontekst(c)
+        assert [t for t, _e, _x in sendt
+                if t == "krasj@example.test"] == ["krasj@example.test"], (
+            "et klaim fra en død kjøring ble aldri gjenopptatt")
+        st = c.execute("SELECT epost_status, epost_forsok FROM varsel"
+                       " WHERE tenant=%s AND bruker_id=%s",
+                       (TEN, b)).fetchone()
+        # Forsøket som døde er TALT: et forsøk er noe som er påbegynt, ellers
+        # ville en krasjsløyfe aldri nådd taket.
+        assert st == ("sendt", 2), st
+    finally:
+        c.close()
+
+
 @pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 def test_runtime_rollen_kan_kalle_senderens_funksjoner():
     """Rollen som FAKTISK kjører senderen må kunne kalle de tre funksjonene.
@@ -315,17 +452,22 @@ def test_runtime_rollen_kan_kalle_senderens_funksjoner():
 
     Alle de andre testene her kobler som `disponit_migrator`, som ER medlem av
     eierrollen. De ville derfor vært grønne mens hver eneste timerkjøring i
-    drift endte i «permission denied for function varselkandidater», med køen
+    drift endte i «permission denied for function varsel_klaim_epost», med køen
     urørt — samme klasse som de to andre P1-ene i denne runden.
 
     Kontroll: fjern GRANT-linjene fra 027, og denne blir rød på nøyaktig den
     feilmeldingen driften ville sett.
+
+    `rollback()` til slutt er IKKE opprydding her: klaimet og re-køingen er
+    UPDATE-er, ikke oppslag, så uten den ville denne rettighetsprøven tatt
+    rader ut av køen for de andre testene.
     """
     from db.pg import koble
     c = koble(DSN)
     try:
-        c.execute("SELECT * FROM varselkandidater(1)").fetchall()
-        c.execute("SELECT varsel_rekoe_feilede(interval '15 minutes', 3)")
+        c.execute("SELECT * FROM varsel_klaim_epost(1, 3)").fetchall()
+        c.execute("SELECT varsel_rekoe(interval '15 minutes', 3,"
+                  " interval '30 minutes')")
         # id -1 finnes ikke: kallet skal slippe gjennom rettighetssjekken og
         # svare `false`, uten å røre en eneste rad.
         assert c.execute("SELECT varsel_sett_epoststatus(-1,'sendt',NULL)"
@@ -374,7 +516,7 @@ def test_inngangspunktet_leser_dsn_fra_credential_katalogen(tmp_path,
     monkeypatch.setattr(db.pg, "koble", _koble)
     monkeypatch.setattr(kjor_varselsender.varselsender, "kjor",
                         lambda conn: {"sendt": 0, "feilet": 0,
-                                      "hoppet_over": 0})
+                                      "gjenkoet": 0})
 
     assert kjor_varselsender.main() == 0, \
         "senderen avbrøt selv om credentialen lå i katalogen unitten laster"

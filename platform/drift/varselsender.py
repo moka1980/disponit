@@ -22,12 +22,18 @@ import json
 import os
 import smtplib
 import ssl
+import sys
 from email.message import EmailMessage
 from pathlib import Path
 
 GRENSE = int(os.environ.get("DISPONIT_VARSEL_GRENSE", "50"))
 MAKS_FORSOK = int(os.environ.get("DISPONIT_VARSEL_MAKS_FORSOK", "3"))
 BACKOFF_MIN = int(os.environ.get("DISPONIT_VARSEL_BACKOFF_MIN", "15"))
+#: Hvor lenge et klaim gjelder før en annen kjøring kan ta raden igjen.
+#: MYE lengre enn SMTP-timeouten (20 s) med vilje: leasen skal aldri løpe ut
+#: for en sending som fortsatt pågår — da ville den gjenskapt dobbeltsendingen
+#: klaimet finnes for å hindre.
+LEASE_MIN = int(os.environ.get("DISPONIT_VARSEL_LEASE_MIN", "30"))
 
 
 def _locale(sprak: str) -> dict:
@@ -95,52 +101,82 @@ def _send_ekte(oppsett: dict, til: str, emne: str, tekst: str) -> None:
 
 
 def kjor(conn, *, send=None, oppsett=None, sprak: str = "nb") -> dict:
-    """Tøm køen én gang. -> {sendt, feilet, hoppet_over}.
+    """Tøm køen én gang. -> {sendt, feilet, gjenkoet, mistet}.
 
     `send` er injiserbar, så testene kan måle HVA som ville blitt sendt uten en
     e-postserver. Standard er ekte SMTP.
 
+    RADEN KLAIMES FØR SMTP, og klaimet COMMITTES før sendingen begynner. Det er
+    hele forskjellen på denne løkka og den forrige (Codex P1): før plukket den
+    `koet`-rader med en ren SELECT og flyttet statusen etter at e-posten var
+    ute. To sendere som overlappet — timeren går hvert 5. minutt, og en treg
+    SMTP-server gjør en kjøring lengre enn det — hentet da samme rad og sendte
+    begge e-posten. At den andre statusoppdateringen returnerte `false` var en
+    opplysning som kom for sent: SMTP er utført, og en sendt e-post kan ingen
+    ROLLBACK hente hjem igjen.
+
+    Committen mellom klaim og sending er ikke en detalj: en uncommittet UPDATE
+    er usynlig for den andre senderen, og da ville vi vært like langt så snart
+    SMTP-kallet tok tid.
+
     Hver rad står for seg: én adresse som ikke tar imot skal ikke stoppe resten
-    av køen. Det er også derfor statusen settes per rad gjennom
-    `varsel_sett_epoststatus`, som bare flytter `koet` → `sendt|feilet` og
-    dermed ikke kan sende det samme to ganger om to sendere kjører samtidig.
+    av køen.
+
+    `mistet` teller de radene der statusoppdateringen ikke fant klaimet igjen.
+    Med en lease som er mye lengre enn SMTP-timeouten skal det aldri skje — og
+    nettopp derfor skal det ikke forbli usagt hvis det gjør det: et tapt klaim
+    betyr at raden kan bli sendt en gang til, altså at tallene i denne
+    beregningen er de eneste stedet det ville vist seg. Før ble returverdien
+    kastet uten å bli lest.
     """
     oppsett = oppsett or _smtp_oppsett()
     if oppsett is None and send is None:
         # Ikke konfigurert. Si det tydelig og la køen ligge urørt.
-        return {"sendt": 0, "feilet": 0, "hoppet_over": 0,
+        return {"sendt": 0, "feilet": 0, "gjenkoet": 0, "mistet": 0,
                 "grunn": "smtp_ikke_konfigurert"}
     send = send or (lambda til, emne, tekst: _send_ekte(oppsett, til, emne,
                                                         tekst))
     tekster = _locale(sprak)
     emne = tekster.get("varsel.epost.emne", "Disponit")
-    # Først: gi feilede rader en ny sjanse. Egen SQL-funksjon, ikke et utvidet
-    # plukk — `koet` forblir den eneste sendbare tilstanden, så to sendere
-    # aldri kan ta samme rad.
-    conn.execute("SELECT varsel_rekoe_feilede(%s * interval '1 minute', %s)",
-                 (BACKOFF_MIN, MAKS_FORSOK))
+    # Først: tilbake i køen med det som ikke kom frem — feilede rader som har
+    # ventet ut backoffen, og klaim fra en kjøring som døde underveis. Egen
+    # SQL-funksjon, ikke et utvidet klaim: `koet` forblir den eneste tilstanden
+    # et klaim kan ta fra.
+    gjenkoet = conn.execute(
+        "SELECT varsel_rekoe(%s * interval '1 minute', %s,"
+        "                    %s * interval '1 minute')",
+        (BACKOFF_MIN, MAKS_FORSOK, LEASE_MIN)).fetchone()[0]
     conn.commit()
-    rader = conn.execute("SELECT * FROM varselkandidater(%s)",
-                         (GRENSE,)).fetchall()
-    sendt = feilet = hoppet = 0
+    # Klaimet: `koet` → `under_sending` i samme setning som leser radene.
+    rader = conn.execute("SELECT * FROM varsel_klaim_epost(%s,%s)",
+                         (GRENSE, MAKS_FORSOK)).fetchall()
+    conn.commit()          # …og ut av alle andres kø FØR første SMTP-kall.
+    sendt = feilet = mistet = 0
+
+    def _sett(vid, status, feil=None):
+        beholdt = conn.execute(
+            "SELECT varsel_sett_epoststatus(%s,%s,%s)",
+            (vid, status, feil)).fetchone()[0]
+        conn.commit()
+        return beholdt
+
     for vid, _tenant, epost, nokkel, parametre, forsok in rader:
-        if forsok >= MAKS_FORSOK:
-            # Gitt opp for lenge siden. Raden blir stående i portalen — det er
-            # der varselet egentlig bor — men vi slutter å plage serveren.
-            conn.execute("SELECT varsel_sett_epoststatus(%s,'feilet',%s)",
-                         (vid, "maks forsøk nådd"))
-            conn.commit()
-            hoppet += 1
-            continue
         try:
             send(epost, emne, rendre(tekster, nokkel, parametre))
         except Exception as e:                                # noqa: BLE001
-            conn.execute("SELECT varsel_sett_epoststatus(%s,'feilet',%s)",
-                         (vid, f"{type(e).__name__}: {e}"))
-            conn.commit()
+            beholdt = _sett(vid, "feilet",
+                            f"forsøk {forsok}/{MAKS_FORSOK}: "
+                            f"{type(e).__name__}: {e}")
             feilet += 1
-            continue
-        conn.execute("SELECT varsel_sett_epoststatus(%s,'sendt',NULL)", (vid,))
-        conn.commit()
-        sendt += 1
-    return {"sendt": sendt, "feilet": feilet, "hoppet_over": hoppet}
+        else:
+            beholdt = _sett(vid, "sendt")
+            sendt += 1
+        if not beholdt:
+            # Klaimet var ikke vårt lenger. Skal ikke kunne skje med en lease
+            # som er mye lengre enn SMTP-timeouten — og da er det nettopp det
+            # som gjør det verdt å si fra om: raden kan bli sendt en gang til.
+            mistet += 1
+            print(f"varselsender: ADVARSEL mistet klaim på varsel {vid}",
+                  file=sys.stderr)
+    return {"sendt": sendt, "feilet": feilet, "gjenkoet": gjenkoet,
+            "mistet": mistet}

@@ -6,9 +6,13 @@
 # ikke en driftsfeil, og telles på raden i stedet.
 #
 # Senderen ser på TVERS av tenanter, men aldri med BYPASSRLS på egen rolle:
-# den når `varsel` kun gjennom `varselkandidater()` og
-# `varsel_sett_epoststatus()` (migrasjon 027), som er SECURITY DEFINER og
-# returnerer nøyaktig de feltene en e-post trenger.
+# den når `varsel` kun gjennom `varsel_klaim_epost()`,
+# `varsel_sett_epoststatus()` og `varsel_rekoe()` (migrasjon 027), som er
+# SECURITY DEFINER og returnerer nøyaktig de feltene en e-post trenger.
+#
+# Raden KLAIMES før SMTP og klaimet committes først: to kjøringer som
+# overlapper — timeren går oftere enn en treg SMTP-server svarer — skal ikke
+# kunne sende den samme e-posten hver sin gang.
 #
 # SMTP-oppsettet er credentials, ikke kode. Eier bruker WCAGvakts konto til
 # TEST; avsender og vert er derfor konfigurasjon, så byttet senere blir en
