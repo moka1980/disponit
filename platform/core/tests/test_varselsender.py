@@ -1183,6 +1183,21 @@ _LAGER = re.compile(r"\bcreate\b.*\bfunction\b")
 _REVOKE_PUBLIC = re.compile(r"\brevoke\b.*\bfrom public\b")
 _GRANT_PUBLIC = re.compile(r"\bgrant\b.*\bto public\b")
 
+#: `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` åpner alle tre på én gang
+#: og NEVNER INGEN AV DEM (Codex P2 på #71). Setningen slapp derfor gjennom
+#: silen på basenavn før den rakk å bli målt — den eneste veien til PUBLIC som
+#: ikke skriver navnet på det den åpner. `ROUTINES` er PostgreSQLs eget
+#: synonym og må stå med, ellers er hullet bare stavet om.
+#:
+#: SKJEMANAVNET SJEKKES IKKE. Avspillingen sporer ikke hvilket skjema
+#: funksjonene bor i, og en modell som gjetter «bare `public` teller» ville
+#: vært stille den dagen de flyttes. Tvilen faller mot åpent, som ellers her:
+#: en grant i et annet skjema gir en falsk alarm noen må se på, ikke et hull
+#: ingen ser. Motprøven om `public` som skjemanavn gjelder ikke — her er PUBLIC
+#: MOTTAKEREN, og det er utvetydig.
+_GRANT_ALLE_PUBLIC = re.compile(
+    r"\bgrant\b.*\bon all (?:functions|routines) in schema\b.*\bto public\b")
+
 #: `f(int, int)` i en setning → `f(int,int)`, som i SENDERFUNKSJONER.
 _SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
 
@@ -1233,6 +1248,9 @@ def _spill_av(filer, signaturer):
       åpner, uansett hvilken signatur den bærer. Asymmetrien er retningen
       på tvilen: en overlast for mye målt som åpen gir en falsk alarm noen
       må se på, mens en for lite gir en åpen kryss-tenant funksjon ingen ser.
+    * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
+      hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
+      før silen på navn — se `_GRANT_ALLE_PUBLIC`.
     """
     beskyttet = [s.replace(" ", "").lower() for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
@@ -1246,6 +1264,17 @@ def _spill_av(filer, signaturer):
             elif s.startswith("reset role"):
                 rolle = None
             nevnte = _signaturer(s)
+            if _GRANT_ALLE_PUBLIC.search(s):
+                # Den ene setningen som åpner uten å nevne noe navn — måles
+                # derfor FØR silen på basenavn, ellers ville den aldri kommet
+                # så langt. Den treffer alle tre samtidig, som er nettopp
+                # grunnen til at den er verdt et eget spor.
+                for sig in beskyttet:
+                    gjerdet[sig] = False
+                    spor[sig].append(
+                        f"{filnavn}: skjemabred grant til public som"
+                        f" {rolle or 'migrator'}")
+                continue
             for sig in beskyttet:
                 if basenavn[sig] not in s:
                     continue
@@ -1327,8 +1356,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       feilskrevet mottaker ville hatt.
     * en REVOKE på en OVERLAST — den skal ikke kunne lukke gjerdet for den
       kryss-tenante signaturen på vegne av en annen.
+    * `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` — den ene veien til
+      PUBLIC som ikke nevner navnet på det den åpner, og derfor den ene som
+      silen på basenavn ikke fikk se. `ALL ROUTINES` er samme setning stavet
+      om, og måles som samme sak.
 
-    Alle fire ville ellers blitt skjult for ACL-testen av oppryddingen i
+    Alle ville ellers blitt skjult for ACL-testen av oppryddingen i
     `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
 
     Og motprøven: skjemanavnet `public` i en grant til en annen rolle skal
@@ -1394,12 +1427,29 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
          ("b.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(text) ...;")],
         n)[0] == {sig: False}, "gjenskaping av overlast måles som åpning"
 
+    # Den skjemabrede granten: åpner alle tre, og NEVNER INGEN AV DEM. Den
+    # eneste veien til PUBLIC som ikke skriver navnet på det den åpner, og
+    # derfor den eneste som må måles før silen på basenavn.
+    for form in ("ALL FUNCTIONS", "ALL ROUTINES"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"GRANT EXECUTE ON {form} IN SCHEMA public"
+                       " TO PUBLIC;")], n)
+        assert gjerdet == {sig: False}, \
+            f"skjemabred grant ({form}) skal åpne gjerdet. Spor: {spor}"
+
     # Motprøven: `public` som SKJEMA, og en helt annen mottaker.
     assert _spill_av([("a.sql", lag + gjerde),
                       ("b.sql", "GRANT EXECUTE ON FUNCTION"
                        " public.varsel_klaim_epost(int, int)"
                        " TO disponit_varselsender;")], n)[0] == {
         sig: True}, "skjemanavnet `public` er ikke PUBLIC"
+
+    # …og motprøven til den skjemabrede: samme form, annen mottaker.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA"
+                       " public TO disponit_varselsender;")], n)[0] == {
+        sig: True}, "skjemabred grant til en NAVNGITT rolle er ikke PUBLIC"
 
 
 def _execute_mottakere(conn, signatur):
