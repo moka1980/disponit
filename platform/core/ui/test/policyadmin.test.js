@@ -1889,6 +1889,35 @@ test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
       "modulen skiftet også, og begge sider hører hjemme i overskriften");
   });
 
+// Serveren sender diffstiene LEKSIKALSK sortert, så fra ti elementer og
+// oppover kommer «[10]» og «[11]» før «[2]». Sammenslåingen fjerner
+// indeksene, og da sto en masseendring i en annen rekkefølge enn lista
+// faktisk har — uten indeksene igjen til å avsløre det. Godkjenneren
+// attesterer `diff_hash` over de eksakte verdiene, rekkefølgen inkludert
+// (Codex P2).
+//
+// Kontroll: fjern sorteringen i `skalarListeRad`, så blir denne rød.
+const TOSIFRET_LISTE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { dataklasser: [...Array(12).keys()].map((i) => `k${i}`) },
+  diff: { endringer: [...Array(12).keys()]
+    .map((i) => ({ sti: `dataklasser[${i}]`, type: "lagt_til", til: `k${i}` }))
+    // Serverens leksikalske rekkefølge: [0], [1], [10], [11], [2], …
+    .sort((a, b) => a.sti.localeCompare(b.sti)) },
+};
+
+test("Diff: sammenslåtte listeverdier står i listas rekkefølge", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": TOSIFRET_LISTE_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const rad = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.dataklasser"))
+    .querySelector("li").textContent;
+  const rekkefolge = [...rad.matchAll(/k(\d+)/g)].map((m) => Number(m[1]));
+  assert.deepEqual(rekkefolge, [...Array(12).keys()],
+    `verdiene står ikke i listas rekkefølge: «${rad}»`);
+});
+
 // `retention[]` har ingen `id`, men skjemaet KREVER `dataklasse` — og det er
 // dataklassen en oppbevaringsregel handler om. Uten den som identitet het
 // hvert kort «retention[0]», «retention[1]» …, og med flere regler måtte

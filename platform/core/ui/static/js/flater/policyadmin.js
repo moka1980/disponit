@@ -391,8 +391,16 @@ function elementOverskrift(element, blader, kilder) {
 // komma var ikke til å skille fra to oppføringer. Godkjenneren attesterer
 // `diff_hash` over de EKSAKTE verdiene, så en visning hun ikke kan lese
 // verdiene tilbake fra, er ikke en lesbar diff (Codex P2).
-function skalarListeRad(element, blader) {
-  const verdier = blader.map((e) =>
+//
+// Og rekkefølgen er en del av de verdiene. Serveren sender diffstiene
+// LEKSIKALSK sortert, så fra ti elementer og oppover kommer «[10]» og «[11]»
+// før «[2]». Sammenslåingen fjerner indeksene, og da sto en masseendring i en
+// annen rekkefølge enn lista faktisk har — uten indeksene igjen til å
+// avsløre det (Codex P2). Bladene sorteres derfor på indeksen sin, numerisk.
+function skalarListeRad(element, blader, kilder) {
+  const iRekkefolge = [...blader].sort((a, b) =>
+    listeIndeks(a, kilder) - listeIndeks(b, kilder));
+  const verdier = iRekkefolge.map((e) =>
     JSON.stringify(e.type === "fjernet" ? e.fra : e.til));
   const type = blader[0].type;
   return el("li", {},
@@ -416,6 +424,15 @@ function erListeblad(e, kilder) {
   return /^\[\d+\]$/.test(delOppSti(e.sti, kilder).rest);
 }
 
+// «unntak.kategorier[3]» → 3. Samme oppdeling som over, så en map-nøkkel med
+// klammer i seg ikke forveksles med en listeindeks. Et blad uten indeks har
+// ingen plass i lista og sorteres sist; `sort` er stabil, så innbyrdes
+// rekkefølge er som den kom.
+function listeIndeks(e, kilder) {
+  const m = /^\[(\d+)\]$/.exec(delOppSti(e.sti, kilder).rest);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+
 function erBladetSelv(e, kilder) {
   return !delOppSti(e.sti, kilder).rest;
 }
@@ -434,7 +451,7 @@ function elementBlokk(element, blader, kilder) {
   const ensartet = blader.every((e) => e.type === blader[0].type);
   if (blader.every((e) => erListeblad(e, kilder))) {
     return (ensartet && blader[0].type !== "endret")
-      ? skalarListeRad(element, blader)
+      ? skalarListeRad(element, blader, kilder)
       : feltdiffRad(blader);
   }
   // Elementet ER bladet: ingen felt under seg, ingen liste å slå sammen.
