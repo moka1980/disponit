@@ -157,15 +157,32 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     if not isinstance(innhold, dict):
         conn.rollback()
         raise Aktiveringsfeil("utkast_feilformet")
+    # Idempotensen FØRST — den er eldre enn ethvert krav vi legger på
+    # innholdet. En nøkkel som lyktes før en innstramming ble rullet ut har et
+    # lagret svar, og replay-kontrakten er NØYAKTIG det svaret: en klient som
+    # mistet responsen og prøver på nytt skal få utkastet sitt, ikke en
+    # avvisning av en id som alt ER raden hennes. Sto kontrollen foran, ville
+    # innstrammingen gjort gamle, vellykkede opprettelser usynlige for eieren
+    # deres — utkastet finnes, men hun får aldri vite id-en. (Codex P2.)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
     # Identiteten LÅSES her — den kan ikke endres etterpå. To krav må derfor
     # holde ved opprettelsen, begge Codex P2, og begge fordi et utkast som
     # bryter dem er DØDFØDT: eier kan ikke rette raden, bare forlate utkastet.
+    # Kravene gjelder bare et FERSKT krav på nøkkelen (`ny`), og `rollback()`
+    # under ruller posten tilbake sammen med resten av transaksjonen: en
+    # forespørsel som aldri kunne blitt et utkast brenner ikke nøkkelen.
     #
     # FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
     # dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
     # ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
-    # beskjeden. Kontrollen står FØR idempotensposten: en forespørsel som aldri
-    # kunne blitt et utkast skal heller ikke brenne nøkkelen.
+    # beskjeden.
     if not _POLICY_ID.fullmatch(policy_id or ""):
         conn.rollback()
         raise Aktiveringsfeil("policy_id_ugyldig", f"policy_id={policy_id!r}")
@@ -179,14 +196,6 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
             "utkast_feilformet",
             f"policy_id levner ikke plass til en versjon i registernøkkelen"
             f" ({_nokkelbytes(tenant, policy_id)} byte)")
-    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
-                                         input_hash, request_id)
-    if tilstand == "replay":
-        conn.rollback()
-        return lagret
-    if tilstand == "konflikt":
-        conn.rollback()
-        raise Aktiveringsfeil("idempotenskonflikt")
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
     utkast_id = "u-" + secrets.token_hex(8)
     conn.execute(

@@ -6,6 +6,7 @@ stopper det de skal FØR noe røres, og at utkast-CRUD-funksjonene (opprett →
 rediger → valider) håndhever optimistisk lås + skjemavalidering + frysing.
 """
 import copy
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -388,6 +389,58 @@ def test_opprett_avviser_radidentitet_dokumentet_ikke_kan_baere():
         o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
                      policy_id="acme", innhold=_gyldig("acme"))
         assert o["policy_id"] == "acme"
+    finally:
+        rt.close()
+
+
+@pg
+def test_identitetskravet_bryter_ikke_replay_av_eldre_opprettelse(monkeypatch):
+    """🔴 P2: innstrammingen er yngre enn nøklene den møter.
+
+    Et utkast opprettet FØR identitetskravet ble rullet ut kan bære en id
+    kravet nå avviser. Mister klienten responsen og prøver på nytt med samme
+    `Idempotency-Key`, er svaret hun har krav på det LAGREDE — utkastet finnes
+    jo. Sto kontrollen foran `_idempotent_start`, fikk hun `policy_id_ugyldig`
+    i stedet, og da er utkastet usynlig for eieren sin: hun får aldri vite
+    id-en, og kan verken bruke eller rydde det bort.
+
+    Kontroll: flytt de to identitetskravene tilbake foran idempotensposten, så
+    blir denne rød på replayen — og den andre halvdelen viser hvorfor de sto
+    der: et FERSKT krav som avvises skal ikke brenne nøkkelen.
+    """
+    gammel = "LEGACY-" + secrets.token_hex(3)
+    k = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        # Opprettelsen «før utrullingen»: kravet fantes ikke da.
+        monkeypatch.setattr(policyadmin, "_POLICY_ID", re.compile(r".+"))
+        a = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=gammel,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k)
+        monkeypatch.undo()
+        # Utrullingen har landet; klienten prøver på nytt med samme nøkkel.
+        b = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=gammel,
+            innhold=_gyldig(), idempotency_key=k, input_hash=k)
+        assert b.get("replay") is True
+        assert b["utkast_id"] == a["utkast_id"]
+        assert b["policy_id"] == gammel
+
+        # Og et FERSKT krav som avvises brenner ikke nøkkelen: `rollback()`
+        # ruller idempotensposten tilbake sammen med resten, så den samme
+        # nøkkelen kan brukes om igjen når eier retter id-en.
+        ny = secrets.token_hex(8)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.opprett_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", policy_id="ACME",
+                innhold=_gyldig("ACME"), idempotency_key=ny, input_hash=ny)
+        assert e.value.kode == "policy_id_ugyldig"
+        rt.rollback()
+        pid = "pol-" + secrets.token_hex(3)
+        o = policyadmin.opprett_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid,
+            innhold=_gyldig(pid), idempotency_key=ny, input_hash=ny)
+        assert o.get("replay") is not True and o["policy_id"] == pid
     finally:
         rt.close()
 
