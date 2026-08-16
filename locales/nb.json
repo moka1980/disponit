@@ -14,6 +14,7 @@
   "site.nav.produkt": "Om produktet",
   "site.nav.sikkerhet": "Sikkerhet",
   "site.nav.innlogging": "Logg inn",
+  "site.dokumenttittel": "{side} – {app}",
   "site.sok.label": "Søk i tjenester",
   "site.sok.placeholder": "Søk i 45 tjenester",
   "site.sok.knapp": "Søk",

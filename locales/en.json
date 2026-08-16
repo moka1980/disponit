@@ -14,6 +14,7 @@
   "site.nav.produkt": "About the product",
   "site.nav.sikkerhet": "Security",
   "site.nav.innlogging": "Log in",
+  "site.dokumenttittel": "{side} – {app}",
   "site.sok.label": "Search services",
   "site.sok.placeholder": "Search 45 services",
   "site.sok.knapp": "Search",

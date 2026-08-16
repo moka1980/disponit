@@ -329,6 +329,19 @@ function innloggingSide(provider) {
 // minnetilstand, og med nektet lagring falt begge tilbake til norsk.
 // `replaceState` og ikke `pushState`: et språkbytte er ikke et nytt sted i
 // historikken, og «tilbake» skal føre dit brukeren kom fra.
+// De fem offentlige sidene byttet bare kroppen; tittelen ble stående som den
+// statiske `Disponit` fra `index.html` (Codex P2). Da sier verken fanen,
+// historikken eller skjermleserens sideannonsering hvilken av dem som er åpen
+// — fem åpne faner het det samme, og «tilbake» var et gjett. Tittelen settes
+// derfor per rute, av samme navn som står i navigasjonen: det brukeren klikket
+// på, er det siden heter. Mønsteret ligger i locale-settet, ikke her — også en
+// tittel er visningstekst (RUTINER pkt. 5).
+function settDokumenttittel(side) {
+  document.title = t("site.dokumenttittel", "{side} – {app}")
+    .replace("{side}", t(`site.nav.${side}`))
+    .replace("{app}", t("app.navn", "Disponit"));
+}
+
 function speilSprakIUrl() {
   try {
     const url = new URL(window.location.href);
@@ -384,6 +397,7 @@ export async function visInnlogging(opsjoner = {}) {
   }
 
   const side = lesSide();
+  settDokumenttittel(side);
   const sideinnhold = side === "tjenester" ? tjenesterSide()
     : side === "produkt" ? produktSide()
       : side === "sikkerhet" ? sikkerhetSide()

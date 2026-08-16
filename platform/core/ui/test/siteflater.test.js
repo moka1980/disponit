@@ -228,6 +228,46 @@ test("Landing: hoppelenka følger språkbyttet", async () => {
   }
 });
 
+// Codex P2: de fem offentlige sidene byttet bare kroppen, mens tittelen ble
+// stående som den statiske `Disponit` fra `index.html`. Fanen, historikken og
+// skjermleserens sideannonsering kunne da ikke skille hjem fra tjenester fra
+// innlogging. Testen måler hver rute, og at tittelen følger språket: den er
+// visningstekst som alt annet.
+test("Landing: hver offentlig side har sin egen dokumenttittel", async () => {
+  const sider = ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"];
+  try {
+    const sett = new Set();
+    for (const side of sider) {
+      window.history.replaceState({}, "", side === "hjem" ? "/" : `/?side=${side}`);
+      nyttAppBrett();
+      await visInnlogging();
+      assert.ok(document.title.includes(NB[`site.nav.${side}`]),
+        `tittelen på «${side}» navngir ikke siden: ${document.title}`);
+      assert.ok(document.title.includes(NB["app.navn"]),
+        "tittelen sier ikke hvilket produkt fanen tilhører");
+      sett.add(document.title);
+    }
+    assert.equal(sett.size, sider.length,
+      "to offentlige sider deler tittel — da skiller ingenting dem i fanelista");
+
+    // Tittelen er tekst, ikke chrome: den skal bytte språk med resten.
+    const app = nyttAppBrett();
+    window.history.replaceState({}, "", "/?side=tjenester");
+    await visInnlogging();
+    await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+    [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"])
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => document.title.includes(EN["site.nav.tjenester"]));
+    assert.ok(document.title.includes(EN["site.nav.tjenester"]),
+      `tittelen står igjen på norsk etter språkbyttet: ${document.title}`);
+  } finally {
+    window.history.replaceState({}, "", "/");
+    document.documentElement.setAttribute("data-sprak", "nb");
+    settI18nForTest(NB, "nb");
+  }
+});
+
 // Codex P2: `byttTil` lagrer valget best effort, men lagringen KAN være nektet
 // (privat modus, herdet nettleser). Den offentlige navigasjonen er ordinære
 // `href`-er som laster dokumentet på nytt, så etter et klikk finnes valget kun
