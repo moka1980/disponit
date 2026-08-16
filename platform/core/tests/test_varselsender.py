@@ -530,6 +530,98 @@ def test_klaim_fra_en_doed_kjoring_kommer_tilbake_naar_leasen_loper_ut():
 
 
 @pg
+def test_et_utloept_klaim_kan_ikke_fullfoere_erstatterens_sending():
+    """Codex P2: fullføringen må gjelde DETTE klaimet, ikke bare denne raden.
+
+    Leasen gjør at én rad kan være klaimet to ganger etter hverandre, og med
+    et gjerde på `id` + `under_sending` alene kunne den FØRSTE senderen
+    fullføre den ANDRE sitt levende klaim: A pauses forbi leasen, re-køingen
+    løfter raden tilbake, B klaimer og står i SMTP-kallet — og der er raden
+    `under_sending` igjen, altså akkurat det A sin oppdatering spurte etter.
+    A skrev da `sendt` over B sin sending, og B fant ingenting å skrive
+    resultatet sitt på: en e-post som faktisk gikk ut, uten en rad som sier
+    hva som skjedde med den.
+
+    Krysningen ligger inne i `send`, som i samtidighetstesten: det er der en
+    ekte sender står og venter på en server, og det eneste øyeblikket B sitt
+    klaim er levende.
+
+    Kontroll: fjern `AND epost_klaim = p_klaim` fra `varsel_sett_epoststatus`,
+    og A sin sene fullføring blir sann — testen blir rød på at B sitt klaim
+    ble skrevet over.
+    """
+    c1 = _conn()
+    c2 = _conn()
+    minadresse = "utloept@example.test"
+    try:
+        b = _bruker(c1, "utloept", minadresse)
+        _ko(c1, b, "u-" + secrets.token_hex(4))
+        c1.commit()
+        _kontekst(c1)
+
+        # A sitt klaim, fabrikkert med en direkte UPDATE av samme grunn som i
+        # lease-testen: et ekte klaim er kryss-tenant og kan ikke siktes på én
+        # rad. Tokenet er en fersk uuid — nøyaktig det klaimet selv skriver.
+        # Klokka står alt forbi leasen, så re-køingen i `kjor` tar den.
+        vid, tokena = c1.execute(
+            "UPDATE varsel SET epost_status='under_sending', epost_forsok=1,"
+            " epost_klaim=gen_random_uuid(),"
+            " epost_ts=now() - interval '2 hours'"
+            " WHERE tenant=%s AND bruker_id=%s"
+            " RETURNING id, epost_klaim", (TEN, b)).fetchone()
+        c1.commit()
+        _kontekst(c1)
+
+        krysset: list[str] = []
+        sendt: list[str] = []
+
+        def send_b(til, _emne, _tekst):
+            sendt.append(til)
+            if til != minadresse or krysset:
+                return
+            krysset.append(til)
+            _kontekst(c1)
+            # B holder raden NÅ. Tokenet er et annet enn A sitt — klaimet
+            # skriver en fersk uuid hver gang, og re-køingen nullet A sin.
+            st, tokenb = c1.execute(
+                "SELECT epost_status, epost_klaim FROM varsel WHERE id=%s",
+                (vid,)).fetchone()
+            assert st == "under_sending", f"raden er {st}, ikke B sitt klaim"
+            assert tokenb is not None and tokenb != tokena, (
+                "klaimet gjenbrukte tokenet fra det utløpte klaimet — da "
+                "skiller ingenting de to fra hverandre")
+            # …og her våkner A, midt i B sin sending.
+            assert c1.execute(
+                "SELECT varsel_sett_epoststatus(%s,%s,'sendt',NULL)",
+                (vid, tokena)).fetchone()[0] is False, (
+                "et utløpt klaim fullførte erstatterens sending")
+            c1.commit()
+            _kontekst(c1)
+            st, token = c1.execute(
+                "SELECT epost_status, epost_klaim FROM varsel WHERE id=%s",
+                (vid,)).fetchone()
+            assert (st, token) == ("under_sending", tokenb), (
+                f"({st}, {token}) — A rørte B sitt klaim likevel")
+            c1.commit()
+
+        res = varselsender.kjor(c2, send=send_b)
+        _kontekst(c1)
+
+        assert krysset, "krysningen skjedde aldri — testen målte ingenting"
+        assert sendt.count(minadresse) == 1, sendt
+        assert res["mistet"] == 0, (
+            "B mistet sitt eget klaim — fullføringen krever tokenet, og B "
+            "hadde det")
+        st = c1.execute("SELECT epost_status, epost_klaim, epost_forsok"
+                        " FROM varsel WHERE id=%s", (vid,)).fetchone()
+        # `sendt`, av B, og tokenet er nullet: raden er ikke klaimet av noen.
+        assert st == ("sendt", None, 2), st
+    finally:
+        c1.close()
+        c2.close()
+
+
+@pg
 def test_avmelding_overlever_at_klaimet_kommer_tilbake_fra_en_lease():
     """Codex P2: en gjenopptatt rad arvet ikke avmeldingen.
 
@@ -845,7 +937,7 @@ def test_klaimet_tar_aldri_en_rad_som_er_lest():
 #: forsvant.
 SENDERFUNKSJONER = [
     "varsel_klaim_epost(int,int)",
-    "varsel_sett_epoststatus(bigint,text,text)",
+    "varsel_sett_epoststatus(bigint,uuid,text,text)",
     "varsel_rekoe(interval,int,interval)",
 ]
 
@@ -979,7 +1071,8 @@ def test_runtime_rollen_naar_ikke_senderens_funksjoner():
                 ("SELECT * FROM varsel_klaim_epost(1, 3)", ()),
                 ("SELECT varsel_rekoe(interval '15 minutes', 3,"
                  " interval '30 minutes')", ()),
-                ("SELECT varsel_sett_epoststatus(-1,'sendt',NULL)", ())):
+                ("SELECT varsel_sett_epoststatus(-1, gen_random_uuid(),"
+                 " 'sendt', NULL)", ())):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 c.execute(sql, argumenter).fetchall()
             c.rollback()

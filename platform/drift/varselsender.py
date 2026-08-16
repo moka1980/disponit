@@ -180,6 +180,16 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     betyr at raden kan bli sendt en gang til, altså at tallene i denne
     beregningen er de eneste stedet det ville vist seg. Før ble returverdien
     kastet uten å bli lest.
+
+    KLAIMET BÆRER ET TOKEN, og fullføringen krever det (Codex P2). `id` +
+    `under_sending` skiller ikke to klaim fra hverandre, og etter en
+    lease-gjenopptaking er det nettopp to: pauses denne kjøringen forbi
+    leasen, rekøes raden og klaimes av en annen sender, står den
+    `under_sending` igjen når vi våkner. Uten tokenet traff vår `sendt` da den
+    ANDRES levende klaim, og den senderen — som faktisk holdt på å sende —
+    hadde ikke lenger noe sted å skrive resultatet sitt. Med tokenet blir vår
+    fullføring `false`, raden telles som `mistet`, og advarselen står i
+    journalen der driften ser den.
     """
     oppsett = oppsett or _smtp_oppsett()
     if oppsett is None and send is None:
@@ -201,10 +211,14 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     conn.commit()
     sendt = feilet = mistet = 0
 
-    def _sett(vid, status, feil=None):
+    def _sett(vid, klaim, status, feil=None):
+        # Tokenet er med, ikke bare id-en: fullføringen gjelder DETTE klaimet.
+        # Kom raden tilbake gjennom leasen og ble klaimet på nytt mens vi sto i
+        # SMTP-kallet, finner vi ikke vårt eget klaim igjen — og skal ikke
+        # skrive over den andres levende sending.
         beholdt = conn.execute(
-            "SELECT varsel_sett_epoststatus(%s,%s,%s)",
-            (vid, status, feil)).fetchone()[0]
+            "SELECT varsel_sett_epoststatus(%s,%s,%s,%s)",
+            (vid, klaim, status, feil)).fetchone()[0]
         conn.commit()
         return beholdt
 
@@ -217,16 +231,16 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
         conn.commit()      # …og ut av alle andres kø FØR SMTP-kallet.
         if rad is None:
             break          # køen er tom — ingenting mer å hente denne runden.
-        vid, _tenant, epost, nokkel, parametre, forsok = rad
+        vid, _tenant, epost, nokkel, parametre, forsok, klaim = rad
         try:
             send(epost, emne, rendre(tekster, nokkel, parametre))
         except Exception as e:                                # noqa: BLE001
-            beholdt = _sett(vid, "feilet",
+            beholdt = _sett(vid, klaim, "feilet",
                             f"forsøk {forsok}/{MAKS_FORSOK}: "
                             f"{type(e).__name__}: {e}")
             feilet += 1
         else:
-            beholdt = _sett(vid, "sendt")
+            beholdt = _sett(vid, klaim, "sendt")
             sendt += 1
         if not beholdt:
             # Klaimet var ikke vårt lenger. Skal ikke kunne skje med en lease

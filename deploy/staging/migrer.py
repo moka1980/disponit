@@ -208,7 +208,7 @@ GRANT USAGE ON SCHEMA public TO {rolle};
 VARSELSENDER_RETTIGHETER = """
 SET LOCAL ROLE disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
-GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
 """
 

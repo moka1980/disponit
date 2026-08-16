@@ -70,6 +70,7 @@
 DROP FUNCTION IF EXISTS varselkandidater(int);
 DROP FUNCTION IF EXISTS varsel_klaim_epost(int, int);
 DROP FUNCTION IF EXISTS varsel_sett_epoststatus(bigint, text, text);
+DROP FUNCTION IF EXISTS varsel_sett_epoststatus(bigint, uuid, text, text);
 DROP FUNCTION IF EXISTS varsel_rekoe_feilede(interval, int);
 DROP FUNCTION IF EXISTS varsel_rekoe(interval, int, interval);
 
@@ -107,12 +108,22 @@ DROP FUNCTION IF EXISTS varsel_rekoe(interval, int, interval);
 -- det da ingen som spurte om. Klaimet spør nå: fravær av rad er standarden
 -- (`epost_og_portal`), så `NOT EXISTS … kun_portal` er hele testen.
 --
+-- KLAIMET HAR EN IDENTITET, IKKE BARE EN TILSTAND (Codex P2). `under_sending`
+-- sier at raden er tatt; tokenet sier av HVEM. Uten det var fullføringen
+-- gjerdet på `id` + status alene, og leasen gjorde det gjerdet for grovt:
+-- sender A pauses forbi leasen, re-køingen løfter raden tilbake, sender B
+-- klaimer og begynner å sende — og når A våkner, står raden `under_sending`
+-- igjen, så A sin fullføring traff. Da skrev A `sendt` over B sitt LEVENDE
+-- klaim, B sin egen oppdatering fant ingenting, og resultatet av den sendingen
+-- som faktisk pågikk hadde ingen plass å bli skrevet. Tokenet er ferskt for
+-- hvert klaim, så et utløpt klaim kan ikke fullføre erstatteren sin.
+--
 -- Ordningen er FIFO på `opprettet` — den eldste ventende varsles først, som i
 -- innboksen.
 CREATE OR REPLACE FUNCTION varsel_klaim_epost(p_grense int,
                                               p_maks int DEFAULT 3)
 RETURNS TABLE (id bigint, tenant text, epost text, tekstnokkel text,
-               parametre jsonb, forsok int)
+               parametre jsonb, forsok int, klaim uuid)
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
@@ -120,6 +131,7 @@ AS $$
     UPDATE varsel v
        SET epost_status = 'under_sending',
            epost_ts     = now(),
+           epost_klaim  = gen_random_uuid(),
            epost_forsok = v.epost_forsok + 1
       FROM brukeridentitet i
      WHERE i.bruker_id = v.bruker_id
@@ -139,14 +151,14 @@ AS $$
                      LIMIT greatest(1, least(coalesce(p_grense, 50), 500))
                      FOR UPDATE OF k SKIP LOCKED)
  RETURNING v.id, v.tenant, i.profil->>'epost', v.tekstnokkel, v.parametre,
-           v.epost_forsok;
+           v.epost_forsok, v.epost_klaim;
 $$;
 
 -- `sendt` er terminalt. `feilet` beholder forsøkstelleren klaimet satte, så en
 -- adresse som aldri tar imot ikke prøves i evighet — men raden BLIR STÅENDE i
 -- portalen: innboksen er sannheten, e-posten er kopien.
 CREATE OR REPLACE FUNCTION varsel_sett_epoststatus(
-    p_id bigint, p_status text, p_feil text DEFAULT NULL)
+    p_id bigint, p_klaim uuid, p_status text, p_feil text DEFAULT NULL)
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -162,14 +174,35 @@ BEGIN
     -- raden. En rad i `koet` kan ikke settes `sendt` uten å ha vært gjennom
     -- klaimet, og en rad som alt er `sendt` kan ikke settes om.
     --
+    -- OG BARE FOR SITT EGET KLAIM (Codex P2). Statusen alene skiller ikke to
+    -- klaim fra hverandre, og etter en lease-gjenopptaking er det nettopp to
+    -- den må skille: den døde og den levende. Tokenet er det klaimet skrev og
+    -- returnerte, så en sender som våkner etter leasen finner ikke sitt eget
+    -- klaim igjen — den får `false`, teller `mistet`, og sier fra. Uten
+    -- tokenet skrev den i stedet over den andres sending, som er den samme
+    -- feilen én gang til: en e-post er ikke noe en tapt UPDATE kan hente hjem.
+    --
+    -- `p_klaim` har ingen DEFAULT med vilje: en kaller som ikke har et token
+    -- har heller ikke et klaim, og skal stoppes ved signaturen. Og
+    -- sammenligningen er `=`, ikke `IS NOT DISTINCT FROM`: NULL matcher da
+    -- ingenting, så en rad som på et vis står `under_sending` uten token
+    -- kan ikke fullføres av en kaller som heller ikke har et. Feiler den
+    -- veien, feiler den lukket.
+    --
+    -- Tokenet NULLES ved fullføringen: raden er ikke lenger klaimet av noen.
+    -- En rad som senere rekøes fra `feilet` får sitt eget, ferske token av
+    -- klaimet som tar den.
+    --
     -- Telleren økes IKKE her: det gjorde klaimet. Ble den økt begge steder,
     -- ville et forsøk kostet to, og `MAKS_FORSOK` betydd halvparten av det
     -- den sier.
     UPDATE varsel
        SET epost_status = p_status,
            epost_ts     = now(),
+           epost_klaim  = NULL,
            epost_feil   = left(p_feil, 500)
-     WHERE id = p_id AND epost_status = 'under_sending';
+     WHERE id = p_id AND epost_status = 'under_sending'
+       AND epost_klaim = p_klaim;
     GET DIAGNOSTICS n = ROW_COUNT;
     RETURN n = 1;
 END $$;
@@ -248,7 +281,13 @@ BEGIN
                                  WHERE vv.tenant = v.tenant
                                    AND vv.bruker_id = v.bruker_id
                                    AND vv.kanal = 'kun_portal')
-                   THEN 'ikke_aktuelt' ELSE 'koet' END
+                   THEN 'ikke_aktuelt' ELSE 'koet' END,
+               -- Klaimet er dødt i det raden forlater `under_sending`, og
+               -- tokenet dør med det. Det er ikke bare opprydding: fra dette
+               -- øyeblikket kan senderen som holdt det ikke fullføre raden,
+               -- heller ikke i vinduet FØR noen andre har klaimet den på
+               -- nytt. Tilstanden sier da sannheten — ingen holder denne.
+               epost_klaim = NULL
          WHERE v.epost_forsok < greatest(1, p_maks)
            AND v.epost_ts IS NOT NULL
            AND ((v.epost_status = 'feilet'
@@ -265,7 +304,7 @@ END $$;
 ALTER FUNCTION varsel_rekoe(interval, int, interval)
     OWNER TO disponit_domene_eier;
 ALTER FUNCTION varsel_klaim_epost(int, int) OWNER TO disponit_domene_eier;
-ALTER FUNCTION varsel_sett_epoststatus(bigint, text, text)
+ALTER FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text)
     OWNER TO disponit_domene_eier;
 
 -- ------------------------------------------------------------
@@ -290,7 +329,8 @@ SET LOCAL ROLE disponit_domene_eier;
 
 REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM PUBLIC;
 REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;
-REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text)
+    FROM PUBLIC;
 
 -- …OG SÅ TIL DEN ROLLEN SOM FAKTISK KALLER DEM — OG BARE DEN.
 --
@@ -329,7 +369,8 @@ BEGIN
                 WHERE rolname = 'disponit_varselsender') THEN
         GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)
             TO disponit_varselsender;
-        GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+        GRANT EXECUTE ON FUNCTION
+            varsel_sett_epoststatus(bigint, uuid, text, text)
             TO disponit_varselsender;
         GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval)
             TO disponit_varselsender;
@@ -356,7 +397,7 @@ END $$;
 -- kalte funksjonene som PUBLIC. At de nå feiler uten denne linjen er selve
 -- beviset på at gjerdet står.
 GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO disponit_migrator;
-GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text)
     TO disponit_migrator;
 GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval)
     TO disponit_migrator;
@@ -365,7 +406,7 @@ GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval)
 -- EXECUTE, trekkes det tilbake her. Migrasjonen er idempotent, og en grant
 -- som var feil skal ikke overleve fordi den ble gitt før porten fantes.
 REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM disponit;
-REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text)
     FROM disponit;
 REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM disponit;
 

@@ -104,7 +104,7 @@ INSERT INTO _design VALUES
     -- 027: varselsenderens kryss-tenant-vindu. Samme eier og samme grunn —
     -- én rolle for «funksjoner som med vilje ser på tvers av tenanter».
     ('FUNCTION', 'varsel_klaim_epost(integer,integer)',              'disponit_domene_eier'),
-    ('FUNCTION', 'varsel_sett_epoststatus(bigint,text,text)',        'disponit_domene_eier'),
+    ('FUNCTION', 'varsel_sett_epoststatus(bigint,uuid,text,text)',        'disponit_domene_eier'),
     ('FUNCTION', 'varsel_rekoe(interval,integer,interval)',          'disponit_domene_eier'),
     ('FUNCTION', 'registrer_artefakttype(text,text,integer,text,text,text)', 'disponit_domene_eier'),
     ('FUNCTION', 'lagre_artefakt_staged(text,bigint,text,text,text,integer,text,bigint,integer,text,bytea,bytea,text,text)', 'disponit_domene_eier'),

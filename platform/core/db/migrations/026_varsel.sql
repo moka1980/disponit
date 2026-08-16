@@ -85,6 +85,19 @@ CREATE TABLE IF NOT EXISTS varsel (
                     CHECK (epost_status IN ('koet', 'under_sending', 'sendt',
                                             'feilet', 'ikke_aktuelt')),
     epost_forsok    integer NOT NULL DEFAULT 0 CHECK (epost_forsok >= 0),
+    -- HVEM sitt klaim (Codex P2). `under_sending` sier at raden er tatt, ikke
+    -- av hvem, og med en lease som gjenopptar døde klaim er det ikke nok:
+    -- kommer sender A tilbake etter at leasen løp ut og B har rekøet og
+    -- klaimet raden på nytt, står raden `under_sending` igjen — men det er
+    -- B sitt klaim. En fullføring gjerdet på status alene ville da latt A
+    -- skrive `sendt` over B sin levende sending, og B ville stått igjen uten
+    -- noe sted å skrive sitt eget resultat.
+    --
+    -- Tokenet gjør klaimet identifiserbart: klaimet setter en fersk uuid og
+    -- returnerer den, fullføringen krever nøyaktig den, og gjenopptakingen
+    -- nuller den ut. Da eier hver fullføring bare sitt eget klaim, og et
+    -- utløpt klaim kan ikke røre erstatteren sin.
+    epost_klaim     uuid,
     epost_ts        timestamptz,
     epost_feil      text
 );
