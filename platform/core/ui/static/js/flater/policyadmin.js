@@ -116,12 +116,17 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
   return forsok(0);
 }
 
+let _hintTeller = 0;
+
 // Handlingsknappene avhenger av utkastets tilstand: utkast → Valider; validert
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
+// Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
+// er tegnet, og er det som låser opp attestering (se attest-grenen).
 function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   const boks = el("section", { class: "pa-handling",
     "aria-label": t("ui.policyadmin.handlinger") });
   const runde = detalj.aktiv_runde;
+  let diffVist = () => {};
 
   if (detalj.status === "utkast") {
     // Rediger: lukk detaljskuffen og åpne editoren på utkastet.
@@ -179,7 +184,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
         visFeil(t("ui.policyadmin.feilet"), []);
       }));
     boks.append(rediger, b);
-    return boks;
+    return { rot: boks, diffVist };
   }
 
   if (detalj.status === "validert"
@@ -196,12 +201,31 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
         meldLive(t("ui.policyadmin.feilet"));
       }));
     boks.append(b);
-    return boks;
+    return { rot: boks, diffVist };
   }
 
   if (runde && ["apen", "klar"].includes(runde.status)) {
     const b = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.attester") });
+    // Invarianten øverst i fila er at diffen ALLTID vises før noe aktiveres.
+    // Da innholdet ble delt i faner, ble den stille brutt (Codex P1):
+    // handlingene står — med vilje — fast utenfor fanene, mens diffen flyttet
+    // inn i «Endringer». En godkjenner kunne dermed attestere rett fra
+    // «Oversikt» uten å ha åpnet diffen én eneste gang, og bekreftelsen viste
+    // bare risikoklasse og en ugjennomsiktig hash: ingenting hun kunne lese
+    // fullmaktsendringen ut av. Knappen er derfor låst til diffpanelet
+    // FAKTISK er tegnet, og bekreftelsen viser selve endringene.
+    const hintId = `pa-attest-hint-${++_hintTeller}`;
+    const hint = el("p", { class: "sub", id: hintId,
+      text: t("ui.policyadmin.attester_krever_diff") });
+    b.disabled = true;
+    b.setAttribute("aria-describedby", hintId);
+    diffVist = () => {
+      if (!b.disabled) return;
+      b.disabled = false;
+      b.removeAttribute("aria-describedby");
+      hint.remove();
+    };
     b.addEventListener("click", () => {
       // Eksplisitt kvittering: mennesket ser risikoklasse + diff-hash det
       // binder seg til FØR aktivering (attesterer diffen, ikke versjonsnr).
@@ -211,16 +235,24 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
         tekst: `${t("ui.policyadmin.du_aktiverer")}: `
           + `${detalj.policy_id} · ${t(`risiko.${runde.risikoklasse}`,
             runde.risikoklasse)} · ${t("ui.policyadmin.diff_hash")} ${kort}`,
+        // Hashen identifiserer diffen, men SIER den ikke. Den granulære
+        // endringslista står derfor i selve bekreftelsen — det er den man
+        // binder seg til.
+        detaljer: el("div", { class: "bekreft-diff" },
+          el("h3", { text: t("ui.policyadmin.klassifisering") }),
+          risikoEndringer(detalj),
+          el("h3", { text: t("ui.policyadmin.diff") }),
+          feltDiff(detalj)),
         primarTekst: t("ui.policyadmin.handling.attester"),
         farlig: runde.risikoklasse === "UTVIDER",
         paaPrimar: () => utfoerAttest(uid, runde.diff_hash, paaFerdig, ctx),
       });
     });
-    boks.append(b);
-    return boks;
+    boks.append(b, hint);
+    return { rot: boks, diffVist };
   }
 
-  return boks;
+  return { rot: boks, diffVist };
 }
 
 function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
@@ -254,9 +286,16 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
         el("h3", { text: t("ui.policyadmin.fire_oyne") }),
         fireOyneStatus(detalj.aktiv_runde)) });
   }
-  const rot = el("div", {}, Faner({ trinn }).rot,
-    handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel));
-  return rot;
+  // Handlingene bygges FØR fanene: attestering er låst til diffen er sett, og
+  // `Faner` melder fra om det allerede under første tegning.
+  const handl = handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel);
+  // Venter utkastet på attestering, er diffen — ikke nøkkeltallene — det
+  // godkjenneren er her for. Da åpner skuffen på «Endringer».
+  const venterAttest = detalj.aktiv_runde
+    && ["apen", "klar"].includes(detalj.aktiv_runde.status);
+  const faner = Faner({ trinn, start: venterAttest ? "endringer" : "oversikt",
+    paaBytte: (nokkel) => { if (nokkel === "endringer") handl.diffVist(); } });
+  return el("div", {}, faner.rot, handl.rot);
 }
 
 function aapneDetalj(uid, ctx, aapneEditor) {

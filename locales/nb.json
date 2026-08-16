@@ -433,6 +433,7 @@
   "ui.policyadmin.handling.valider": "Valider",
   "ui.policyadmin.handling.apne_runde": "Åpne aktiveringsrunde",
   "ui.policyadmin.handling.attester": "Attester og aktiver",
+  "ui.policyadmin.attester_krever_diff": "Åpne «Endringer» og les diffen — attestering låses opp når du har sett den.",
   "ui.policyadmin.endring.lagt_til": "lagt til",
   "ui.policyadmin.endring.fjernet": "fjernet",
   "ui.policyadmin.endring.endret": "endret",

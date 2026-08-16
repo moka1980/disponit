@@ -100,6 +100,57 @@ test("Detalj: diff + risikoklasse PER endring + fire-øyne-status", async () => 
   assert.equal((await alvorligeBrudd(dlg, { fragment: true })).length, 0);
 });
 
+// Codex P1: fanene flyttet diffen bak et fanevalg mens attester-knappen ble
+// stående fast utenfor dem — en godkjenner kunne aktivere fra «Oversikt» uten
+// å ha sett hva hun aktiverte. Kontroll: settes starttrinnet tilbake til
+// «oversikt», eller kobles `paaBytte` fra handlingene, forblir knappen låst og
+// denne testen blir rød.
+test("Attester: låst til diffen er sett — skuffen åpner PÅ «Endringer»", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  const valgt = [...dlg.querySelectorAll('[role="tab"]')]
+    .find((f) => f.getAttribute("aria-selected") === "true");
+  assert.equal(valgt.textContent, t("ui.policyadmin.fane.endringer"),
+    "utkast som venter på attestering skal åpne på diffen");
+  assert.ok(dlg.textContent.includes("roller[]"), "diffen er ikke synlig");
+  const attest = [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"));
+  assert.equal(attest.disabled, false, "diffen er sett — knappen skal være åpen");
+  assert.equal(attest.getAttribute("aria-describedby"), null);
+  assert.equal(dlg.querySelectorAll(".pa-handling p.sub").length, 0,
+    "hintet skal fjernes når låsen er åpnet");
+  assert.equal((await alvorligeBrudd(dlg, { fragment: true })).length, 0);
+});
+
+test("Attester: kvitteringen viser den granulære diffen, ikke bare hashen", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  [...document.querySelector('[role="dialog"]').querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+  // Hashen identifiserer diffen; den SIER den ikke. Selve endringene skal stå
+  // i bekreftelsen man binder seg til.
+  assert.ok(bek.textContent.includes("roller[0].id"), "felt-diff mangler");
+  assert.ok(bek.textContent.includes("roller[]"), "klassifisering mangler");
+  assert.ok(bek.textContent.includes(t("risiko.INNSNEVRER")));
+  assert.equal((await alvorligeBrudd(bek, { fragment: true })).length, 0);
+});
+
 test("Attester: eksplisitt kvittering → CSRF-POST m/ Idempotency-Key + diff_hash", async () => {
   const kalt = [];
   const cookieDesc = Object.getOwnPropertyDescriptor(
