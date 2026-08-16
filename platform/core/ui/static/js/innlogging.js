@@ -373,9 +373,17 @@ export async function visInnlogging(opsjoner = {}) {
 
   const ctx = { provider };
   const navplass = el("div", { class: "site-navplass" });
-  const visning = el("div", { class: "site-visning" });
-  const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
-    tabindex: "-1" },
+  // HOPP-MÅLET ER `<main>`, OG TOPPLINJA STÅR UTENFOR DET (Codex P2). Headeren
+  // lå inne i `#hovedinnhold`, altså inne i målet for `.hoppelenke`: en
+  // tastaturbruker som hoppet «til innhold» landet på toppen AV navigasjonen
+  // den skal forbi, og neste Tab gikk gjennom merket, alle fem nav-lenkene og
+  // språkknappene. En hopp-lenke som ikke hopper over den gjentatte
+  // navigasjonen gjør ingenting (WCAG 2.4.1) — den koster bare et tastetrykk.
+  // Formen er den samme som `AppShell` allerede har: et skall-element eier
+  // topplinja, og `<main>` eier bare sidens eget innhold.
+  const visning = el("main", { id: "hovedinnhold", class: "site-visning",
+    tabindex: "-1" });
+  const hoved = el("div", { class: "skall-hoved site-shell" },
     el("header", { class: "site-topp" },
       el("a", { class: "site-merke", href: "#/hjem",
         text: t("app.navn", "Disponit") }),

@@ -626,6 +626,31 @@ test("Forsiden er navigert: 5 elementer, én side om gangen, fokus følger", asy
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("Forsiden: hopp-lenka hopper FORBI navigasjonen, ikke til den", async () => {
+  // Codex P2: header og hovednavigasjon lå inne i `<main id="hovedinnhold">`,
+  // altså inne i målet for `.hoppelenke` i `index.html`. Da lander hoppet på
+  // toppen AV den gjentatte navigasjonen, og neste Tab går gjennom merket, alle
+  // fem nav-lenkene og språkknappene — lenka sparer ingenting (WCAG 2.4.1).
+  // Testen måler forholdet, ikke klassenavnene: NAVIGASJONEN UTENFOR MÅLET,
+  // SIDEINNHOLDET INNI. Er begge deler inne, hopper man til ingenting.
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-nav"));
+
+  const maal = app.querySelector("#hovedinnhold");
+  assert.ok(maal, "hopp-målet #hovedinnhold finnes ikke på forsiden");
+  assert.equal(maal.tagName, "MAIN", "hopp-målet er ikke hovedlandemerket");
+  assert.equal(maal.querySelector(".site-nav"), null,
+    "hovednavigasjonen står inne i hopp-målet — da hopper lenka til den");
+  assert.equal(maal.querySelector(".site-topp"), null,
+    "topplinja står inne i hopp-målet");
+  assert.ok(maal.contains(app.querySelector("#sidetittel")),
+    "hopp-målet bærer ikke sidens overskrift — da hopper lenka til tomhet");
+
+  const brudd = await alvorligeBrudd(app);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Forsiden: ukjent rute faller tilbake til hjem, den blir ikke tom", async () => {
   const app = nyttAppBrett();
   window.location.hash = "#/finnes-ikke";
