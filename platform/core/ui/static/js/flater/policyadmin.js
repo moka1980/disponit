@@ -262,7 +262,14 @@ const NOKKELFELT = ["modul", "modus", "grunnkode"];
 // klassifiserer serveren det som UTVIDER — men overskriften viste fortsatt
 // bare «admin», og den rollen som nettopp FIKK fullmakt var den ene som ikke
 // var å se (Codex P2). Hele mengden hører hjemme der, i indeksrekkefølge.
-const MENGDEFELT = ["tillatt_for"];
+//
+// `dataklasser_tillatt` er den andre mengden av samme slag, og klassifikatoren
+// behandler de to likt (`klassifikator.py:313-316`): begge er fullmaktsbærende,
+// og en dataklasse lagt til er UTVIDER. Den sto ikke i overskriften i det hele
+// tatt, så en handling som gikk fra ["intern"] til ["intern", "sensitiv"] hadde
+// nøyaktig samme lukkede oppsummering som før (Codex P2). Hvem som får gjøre
+// noe og hvilke data de får gjøre det MED, er samme spørsmål.
+const MENGDEFELT = ["tillatt_for", "dataklasser_tillatt"];
 
 // Beløpsgrense + valutaen den er i — de hører sammen i én merkelapp, og de to
 // listene plasserer dem forskjellig: `handlinger[].grenser.belop_maks` mot

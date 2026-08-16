@@ -2033,6 +2033,42 @@ test("Diff: en rolle som mister fullmakten, står i overskriften", async () => {
     `en rolle som fortsatt har fullmakt meldes fjernet: «${opps}»`);
 });
 
+// `dataklasser_tillatt` er den andre fullmaktsbærende mengden på en handling,
+// og klassifikatoren behandler den som `tillatt_for`: en dataklasse lagt til er
+// UTVIDER. Den sto ikke i overskriften i det hele tatt, så handlingen hadde
+// nøyaktig samme lukkede oppsummering før og etter (Codex P2).
+//
+// Kontroll: ta `dataklasser_tillatt` ut av `MENGDEFELT`, så blir denne rød.
+const NY_DATAKLASSE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].dataklasser_tillatt[]",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [
+      { id: "refusjon.utfor", modul: "M-41",
+        dataklasser_tillatt: ["intern", "sensitiv"] },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].dataklasser_tillatt[1]", type: "lagt_til",
+      til: "sensitiv" },
+  ] },
+};
+
+test("Diff: en ny dataklasse handlingen får bruke, står i overskriften",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": NY_DATAKLASSE_DIFF, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = rot.querySelector(".diff-element > summary").textContent;
+    for (const d of ["intern", "sensitiv"]) {
+      assert.ok(opps.includes(d),
+        `dataklassen «${d}» mangler i overskriften: «${opps}»`);
+    }
+    assert.ok(/intern,\s*sensitiv/.test(opps),
+      `dataklassene limes sammen uten skilletegn: «${opps}»`);
+  });
+
 // `grenser.valuta` er en LISTE av valutaer, men overskriften leste bare
 // indeks 0. Utvides den fra ["NOK"] til ["NOK", "EUR"], klassifiserer serveren
 // det som UTVIDER — mens overskriften sto uendret på «maks 5000.00 NOK», og den
