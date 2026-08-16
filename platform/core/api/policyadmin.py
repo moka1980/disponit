@@ -404,6 +404,50 @@ def _krev_peker_synk(conn, tenant: str, policy_id: str,
             "aktiv_peker_usynk", f"peker={aktiv_versjon} flagg={flagget}")
 
 
+#: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`).
+_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+#: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
+#: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
+_TALLVERSJON = re.compile(r"^\d+(\.\d+)*$")
+
+
+def _versjonsnokkel(versjon: str) -> tuple[int, ...]:
+    return tuple(int(d) for d in versjon.split("."))
+
+
+def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
+                     aktiv_versjon: str | None) -> str:
+    """Versjonen aktiveringen kommer til å lagre er utkastets EGEN
+    `meta.versjon` (migrasjon 020: dokumentet eier versjonen, registerkolonnen
+    indekserer det). Da må den holde MENS runden bygges, ikke bare når
+    `aktiver_policy` til slutt låser hodet:
+
+    * uten en semantisk `meta.versjon` kan utkastet ikke aktiveres i det hele
+      tatt (`policyregister.hent_aktiv` krever at kolonnen og dokumentet er
+      enige — ellers er den ferske policyen korrupt for beslutningsveien);
+    * er versjonen alt registrert, eller ikke nyere enn den aktive, kan den
+      ikke skrives — og det er ingenting godkjennerne kan gjøre med det. Eier
+      må øke `meta.versjon` i utkastet og validere på nytt.
+
+    Å oppdage dette først ved aktivering ville kastet bort en hel runde: to
+    signaturer på et utkast som aldri kunne lande. Kontrollen speiler derfor
+    `_krev_peker_synk` — den kjører før runden åpnes og før noen attesterer.
+    -> versjonen som vil bli lagret. Kaster `Aktiveringsfeil`."""
+    meta = ny_innhold.get("meta") if isinstance(ny_innhold, dict) else None
+    ny = meta.get("versjon") if isinstance(meta, dict) else None
+    if not isinstance(ny, str) or not _SEMVER.match(ny):
+        raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r}")
+    if conn.execute(
+            "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND versjon=%s", (tenant, policy_id, ny)).fetchone():
+        raise Aktiveringsfeil("versjon_i_bruk", f"versjon={ny} finnes")
+    if aktiv_versjon is not None and _TALLVERSJON.match(aktiv_versjon) \
+            and _versjonsnokkel(ny) <= _versjonsnokkel(aktiv_versjon):
+        raise Aktiveringsfeil(
+            "versjon_i_bruk", f"versjon={ny} ikke nyere enn {aktiv_versjon}")
+    return ny
+
+
 # --------------------------------------------------------------------------
 # 1. Runde-åpning.
 # --------------------------------------------------------------------------
@@ -444,6 +488,9 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ville gitt godkjennerne en diff mot feil base, og runden kunne uansett
     # ikke aktiveres etter en reparasjon.
     _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
+    # Og ingen runde åpnes på et utkast som ikke KAN lagres: versjonen det
+    # bærer må være semantisk, ubrukt og nyere enn den aktive (migrasjon 020).
+    _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -591,6 +638,9 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     # flytter basen, så rekalken i steg 9 krever rebasering uansett.
     try:
         _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
+        # Samme argument for versjonen: en signatur på et utkast som ikke kan
+        # lagres er like verdiløs som en signatur på feil base.
+        _krev_ny_versjon(conn, tenant, policy_id, ny_innhold, aktiv_versjon)
     except Aktiveringsfeil:
         conn.rollback()
         raise
@@ -747,6 +797,23 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
+            "policy_id": policy_id, "runde": r_nr})
+    except psycopg.errors.CheckViolation:
+        # Versjonsinvariantene i `aktiver_policy` (migrasjon 020): utkastets
+        # `meta.versjon` er borte, alt registrert, eller ikke nyere enn den
+        # aktive. Kontrollen i steg 5b fanger det som var der da runden ble
+        # bygget; hit kommer bare en versjon som ble tatt UTENOM den styrte
+        # veien i vinduet etterpå. Da er runden død: innholdet er frosset, så
+        # versjonen kan ikke økes uten et nytt utkast og nye signaturer.
+        # Runden kanselleres derfor med det samme — en runde som beviselig
+        # aldri kan aktiveres skal ikke stå åpen og se levende ut. Signaturene
+        # består (append-only); det er sporet av hva som faktisk ble godkjent.
+        conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
+        conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
+                     " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+                     (tenant, utkast_id, r_nr))
+        return _fullfor(conn, tenant, idempotency_key, {
+            "utfall": "versjon_i_bruk", "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 

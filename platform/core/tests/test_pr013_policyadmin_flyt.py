@@ -65,8 +65,27 @@ def _medlem(sub, roller):
     return bid
 
 
-def _utkast(uid, pid, opprettet_av, innhold, status="validert"):
+def _med_meta(pid, innhold, versjon):
+    """Utkast-/basefragment + den `meta` en ekte policy alltid bærer.
+
+    Aktiveringen lagrer nå policyens EGEN `meta.versjon` som registerets
+    `versjon` (migrasjon 020) — et fragment uten `meta` er derfor ikke lenger
+    et utkast som kan aktiveres, og var det i praksis aldri: skjemaet krever
+    `meta.versjon` på formen 1.2.3 for at et utkast skal kunne valideres.
+    Feltene her er alle klassifisert NØYTRALE, så risikoklassen i testene
+    avgjøres fortsatt av regelendringen alene.
+    """
+    if "meta" in innhold:
+        return innhold
+    return {**innhold,
+            "meta": {"policy_id": pid, "versjon": versjon,
+                     "bransjemal": "test", "status": "produksjon"}}
+
+
+def _utkast(uid, pid, opprettet_av, innhold, status="validert",
+            versjon="1.1.0"):
     m = _mig()
+    innhold = _med_meta(pid, innhold, versjon)
     h = pr.innholds_hash(innhold)
     m.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
@@ -77,19 +96,19 @@ def _utkast(uid, pid, opprettet_av, innhold, status="validert"):
     return h
 
 
-def _aktiv_base(pid, innhold, versjon="1"):
+def _aktiv_base(pid, innhold, versjon="1.0.0"):
     """Sett en aktiv base-policy direkte (konsistent peker) for INNSNEVRER-/
     rebaseringstestene, uten å kjøre hele førstegangsaktiveringen."""
     m = _mig()
+    innhold = _med_meta(pid, innhold, versjon)
     h = pr.innholds_hash(innhold)
     m.execute(
         "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
         "innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',%s::jsonb,true)",
         (TEN, pid, versjon, h, json.dumps(innhold)))
     m.execute(
-        "INSERT INTO policy_hode (tenant,policy_id,neste_versjon,aktiv_versjon,"
-        "revisjon) VALUES (%s,%s,%s,%s,1)",
-        (TEN, pid, int(versjon) + 1, versjon))
+        "INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon,revisjon)"
+        " VALUES (%s,%s,%s,1)", (TEN, pid, versjon))
     m.commit()
     m.close()
 
@@ -146,11 +165,11 @@ def test_forste_policy_utvider_krever_to_godkjennere_aktiveres():
         # Uavhengig godkjenner → terskel nådd → aktivert via herdet funksjon.
         r2 = _attester(rt, uid, b, dh)
         assert r2["utfall"] == "aktivert", r2
-        assert r2["versjon"] == "1"
+        assert r2["versjon"] == "1.1.0", "registeret skal bære utkastets egen versjon"
     finally:
         rt.close()
 
-    assert _aktiv_versjon(pid) == "1"
+    assert _aktiv_versjon(pid) == "1.1.0"
     m = _mig()
     try:
         antall_aktiv = m.execute(
@@ -205,13 +224,13 @@ def test_innsnevrer_krever_en_uavhengig_godkjenner():
         r1 = _attester(rt, uid, a, dh)
         assert r1["utfall"] == "venter_godkjennere"
         assert r1["mangler_uavhengig"] is True
-        # Uavhengig → aktivert (ny versjon 2, forrige deaktivert).
+        # Uavhengig → aktivert (utkastets versjon, forrige deaktivert).
         r2 = _attester(rt, uid, b, dh)
         assert r2["utfall"] == "aktivert"
-        assert r2["versjon"] == "2"
+        assert r2["versjon"] == "1.1.0"
     finally:
         rt.close()
-    assert _aktiv_versjon(pid) == "2"
+    assert _aktiv_versjon(pid) == "1.1.0"
 
 
 @pg
@@ -268,7 +287,7 @@ def test_rebasering_ved_flyttet_base():
     finally:
         rt.close()
     # Basen fra den konkurrerende aktiveringen står — utkastet ble ikke aktivert.
-    assert _aktiv_versjon(pid) == "1"
+    assert _aktiv_versjon(pid) == "1.0.0"
 
 
 @pg
@@ -339,8 +358,12 @@ def test_samtidig_aktivering_deler_godkjennere_ingen_vranglaas():
     b = _medlem("uavh", ["policyforvalter"])
     d1 = "utk-" + secrets.token_hex(3)
     d2 = "utk-" + secrets.token_hex(3)
-    _utkast(d1, pid, a, {"roller": [{"id": "r1"}], "handlinger": [{"id": "h1"}]})
-    _utkast(d2, pid, b, {"roller": [{"id": "r2"}], "handlinger": [{"id": "h2"}]})
+    # Ulike versjoner: to reelle, uavhengige utkast på samme policy. Taperen
+    # stoppes av at BASEN flyttet seg (rebasering), ikke av et versjonskrasj.
+    _utkast(d1, pid, a, {"roller": [{"id": "r1"}], "handlinger": [{"id": "h1"}]},
+            versjon="1.1.0")
+    _utkast(d2, pid, b, {"roller": [{"id": "r2"}], "handlinger": [{"id": "h2"}]},
+            versjon="1.2.0")
     s = _rt()
     try:
         r1 = _apne(s, d1, a)
@@ -566,6 +589,56 @@ def test_terskelattestasjonen_overlever_drift_i_aktiveringsvinduet(monkeypatch):
     assert rstatus == "apen", "runden skal stå — dataene repareres, ikke runden"
     assert [x[0] for x in aktive] == ["9"], "noe ble aktivert tross usynk peker"
     assert _aktiv_versjon(pid) is None
+
+
+@pg
+def test_bootstrappet_tenant_aktiveres_og_kan_LESES_av_beslutningsveien():
+    """Hele poenget med ankerraden, målt der det faktisk teller.
+
+    En tenant satt opp som `init-tenant.sh` gjør det (registrer + aktiver),
+    kjører en full styrt runde — og resultatet må være LESBART for
+    beslutningsveien. Det var det ikke: aktiveringen allokerte versjonen fra
+    telleren `neste_versjon` og lagret «1», mens dokumentet bar «1.1.0».
+    `hent_aktiv` krever at de to er enige, så hver forespørsel etterpå avviste
+    den ferske policyen som KORRUPT — etter at runden hadde svart «aktivert».
+
+    Kontroll: lar man aktiveringen allokere fra en teller igjen, blir denne rød
+    på `PolicyKorrupt`, ikke på aktiveringen.
+    """
+    from api import policyregister
+    from .test_bootstrap_ankerrad import _policy
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+
+    m = _mig()
+    pr.registrer(m, TEN, _policy("1.0.0", policy_id=pid), "produksjon")
+    m.commit()
+    m.close()
+
+    ny = _policy("1.1.0", policy_id=pid)
+    ny["roller"] = [*ny["roller"], {"id": "agent2"}]
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, ny)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        dh = r["diff_hash"]
+        _attester(rt, uid, a, dh)
+        r2 = _attester(rt, uid, b, dh)
+        assert r2["utfall"] == "aktivert", r2
+        assert r2["versjon"] == "1.1.0", r2
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        innhold, _h = policyregister.hent_aktiv(m, TEN, pid)
+    finally:
+        m.rollback()
+        m.close()
+    assert innhold["meta"]["versjon"] == "1.1.0"
+    assert {r["id"] for r in innhold["roller"]} == {"agent", "agent2"}
 
 
 def _reparer(pid, versjon="9"):

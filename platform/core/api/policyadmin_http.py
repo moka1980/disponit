@@ -28,6 +28,7 @@ _FEIL_HTTP = {
     "allerede_attestert": 409, "rebasering_kreves": 409,
     "semantikk_endret": 409, "base_mangler": 409, "base_korrupt": 409,
     "aktiv_peker_usynk": 409,
+    "versjon_i_bruk": 409, "versjon_mangler": 409,
     "idempotenskonflikt": 409, "sikkerhet": 409,
     "scope_mangler": 403, "mangler_medlemskap": 403,
     "token_ugyldig": 401, "rate_grense": 429,

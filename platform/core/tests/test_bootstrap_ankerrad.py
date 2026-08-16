@@ -50,11 +50,12 @@ def _commit_og_les(c, tenant):
     sett_kontekst(c, tenant, "sys", "r1")
 
 
-def _policy(versjon: str, status: str = "produksjon") -> dict:
+def _policy(versjon: str, status: str = "produksjon",
+            policy_id: str = "anker-test") -> dict:
     """Minste GYLDIGE policy — validatoren kjører inne i `registrer`."""
     return {
         "schema_version": "0.2",
-        "meta": {"policy_id": "anker-test", "versjon": versjon,
+        "meta": {"policy_id": policy_id, "versjon": versjon,
                  "status": status, "bransjemal": "plattform"},
         "tidssone": "Europe/Oslo",
         "dataklasser": ["offentlig"],

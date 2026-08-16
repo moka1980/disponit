@@ -1121,6 +1121,54 @@ test("Åpne runde: usynk peker sier at dataene må repareres", async () => {
   gjenopprett();
 });
 
+// Codex P1: versjonen registeret lagrer er utkastets EGEN `meta.versjon`. Er
+// den brukt fra før, ikke nyere enn den aktive, eller ikke der i det hele tatt,
+// kan utkastet ikke aktiveres — og INGEN mengde klikk endrer det. Handlingen
+// eier må gjøre er å øke versjonen i utkastet, så den setningen må fram.
+test("Attester: brukt versjon sier at utkastet må få ny versjon (utfall)",
+  async () => {
+    const kvitt = await _attesterMedUtfall(nyHoved(),
+      { utfall: "versjon_i_bruk" });
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.versjon_i_bruk")),
+    "eier fikk ikke vite at det er versjonen i utkastet som må økes");
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+    assert.equal(kvitt.getAttribute("role"), "alert");
+  });
+
+test("Attester: versjonsfeil som 409 sier det samme som utfallet", async () => {
+  for (const kode of ["versjon_i_bruk", "versjon_mangler"]) {
+    const kvitt = await _attesterMedPost(nyHoved(), async () => ({
+      ok: false, status: 409, json: async () => ({ feil: kode }) }));
+    assert.ok(kvitt.textContent.includes(t(`ui.policyadmin.utfall.${kode}`)),
+      `${kode} falt til «Handlingen feilet» og skjulte hva som må rettes`);
+    assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")));
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+  }
+});
+
+test("Åpne runde: brukt versjon sier hva som må rettes", async () => {
+  const gjenopprett = _medCsrf();
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "validert", utkastversjon: 2,
+      opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "validert", aktiv_runde: null },
+    __post: async () => ({ ok: false, status: 409,
+      json: async () => ({ feil: "versjon_i_bruk" }) }),
+  };
+  const h = await _aapneDetaljMed(nyHoved(),
+    t("ui.policyadmin.handling.apne_runde"));
+  _finn(h, t("ui.policyadmin.handling.apne_runde"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering-feil"));
+  const tekst = h.querySelector(".pa-kvittering-feil").textContent;
+  assert.ok(tekst.includes(t("ui.policyadmin.utfall.versjon_i_bruk")),
+    "ingen runde kan åpnes på et utkast som ikke kan lagres — det må stå her");
+  assert.ok(!tekst.includes(t("ui.policyadmin.feilet")));
+  gjenopprett();
+});
+
 // `vent` er reservert for det ENE utfallet der ventingen faktisk ER svaret. Et
 // utfall flaten ikke kjenner, er ikke en bekreftet aktivering, og skal verken
 // se ut som en eller som en rolig venting (fail-closed).

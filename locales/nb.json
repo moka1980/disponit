@@ -652,5 +652,7 @@
   "ui.policyadmin.detalj_undertittel": "Utkast {id}",
   "ui.policyadmin.utfall.venter_antall": "{avgitt} av godkjenningene er avgitt, {gjenstaar} gjenstår.",
   "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet.",
-  "ui.policyadmin.utfall.aktiv_peker_usynk": "Aktiv policy og peker er ute av synk — dataene må repareres før aktivering."
+  "ui.policyadmin.utfall.aktiv_peker_usynk": "Aktiv policy og peker er ute av synk — dataene må repareres før aktivering.",
+  "ui.policyadmin.utfall.versjon_i_bruk": "Versjonsnummeret i utkastet er allerede registrert, eller ikke nyere enn den aktive versjonen. Øk «meta.versjon» i utkastet og valider på nytt.",
+  "ui.policyadmin.utfall.versjon_mangler": "Utkastet mangler et gyldig versjonsnummer i «meta.versjon» (formen 1.2.3). Rett det i utkastet og valider på nytt."
 }
