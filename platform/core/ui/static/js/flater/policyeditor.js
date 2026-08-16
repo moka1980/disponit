@@ -77,32 +77,81 @@ function referanserTilRolle(policy, rolleId) {
   return ut;
 }
 
+// Å endre rolle-ID-en er et NAVNEBYTTE, ikke en ny rolle: referansene som
+// pekte på det gamle navnet skal fortsatt peke på den samme rollen. Uten dette
+// gjorde `agent` → `agent-ny` handlingenes `tillatt_for: ["agent"]` foreldreløs,
+// og policyen havnet i nøyaktig samme «ukjent rolle»-tilstand som
+// fjerningsvakten finnes for å stenge — bare via en annen dør.
+//
+// Tomt navn propagerer IKKE: eier som tømmer feltet for å skrive noe nytt skal
+// ikke få `tillatt_for: [""]` underveis. Navnebyttet går derfor fra siste
+// IKKE-tomme id til den nye.
+function doepOmRolle(policy, gammel, ny) {
+  if (!gammel || !ny || gammel === ny) return false;
+  for (const h of policy.handlinger || []) {
+    if (!Array.isArray(h.tillatt_for)) continue;
+    h.tillatt_for = h.tillatt_for.map((x) => (x === gammel ? ny : x));
+  }
+  const mo = policy.menneskelig_overstyring;
+  if (mo && mo.krever_rolle === gammel) mo.krever_rolle = ny;
+  return true;
+}
+
 function rollerSeksjon(policy, tegnPaaNytt) {
   policy.roller = Array.isArray(policy.roller) ? policy.roller : [];
   const liste = el("div", { class: "editor-liste" });
+  // Vaktene til ALLE radene, så et navnebytte i én rad kan tegne om de andre:
+  // `ubrukt` → `agent` gjør raden låst, og den gamle `agent`-raden fri.
+  const vakter = [];
   policy.roller.forEach((r, i) => {
-    const brukt = referanserTilRolle(policy, r.id);
-    const rad = el("div", { class: "editor-rad" },
-      tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => { r.id = v; }),
-      tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",
-        (v) => { r.beskrivelse = v || undefined; }));
     const fjern = el("button", { class: "knapp liten", type: "button",
       text: t("ui.editor.fjern") });
-    // En rolle i bruk får ikke en «Fjern»-knapp som fører rett i grøfta.
-    // Knappen blir stående, men deaktivert, med hvilke handlinger som holder
-    // rollen — så eier kan flytte dem først hvis det ER meningen.
-    if (brukt.length) {
-      fjern.setAttribute("disabled", "");
-      fjern.setAttribute("title",
-        `${t("ui.editor.rolle_i_bruk")}: ${brukt.join(", ")}`);
-      rad.append(el("p", { class: "editor-hint",
-        text: `${t("ui.editor.rolle_i_bruk")} (${brukt.length}): ${brukt.join(", ")}` }));
-    } else {
-      fjern.addEventListener("click", () => {
-        policy.roller.splice(i, 1); tegnPaaNytt();
-      });
-    }
-    rad.append(fjern);
+    const hint = el("p", { class: "editor-hint" });
+    // Vakten ble tidligere regnet ut ÉN gang, da raden ble tegnet, mens
+    // ID-feltet fortsatte å mutere `r.id` uten å tegne om (Codex P2). Retter
+    // eier et ugyldig utkast ved å gi en ubrukt rolle det navnet `tillatt_for`
+    // peker på, sto «Fjern» igjen aktiv fra forrige navn — og fjernet en rolle
+    // som nå var påkrevd. Vakten regnes derfor om for hvert tastetrykk.
+    const oppdaterVakt = () => {
+      const brukt = referanserTilRolle(policy, r.id);
+      // En rolle i bruk får ikke en «Fjern»-knapp som fører rett i grøfta.
+      // Knappen blir stående, men deaktivert, med hvilke handlinger som holder
+      // rollen — så eier kan flytte dem først hvis det ER meningen.
+      if (brukt.length) {
+        fjern.setAttribute("disabled", "");
+        fjern.setAttribute("title",
+          `${t("ui.editor.rolle_i_bruk")}: ${brukt.join(", ")}`);
+        hint.textContent =
+          `${t("ui.editor.rolle_i_bruk")} (${brukt.length}): ${brukt.join(", ")}`;
+        hint.removeAttribute("hidden");
+      } else {
+        fjern.removeAttribute("disabled");
+        fjern.removeAttribute("title");
+        hint.textContent = "";
+        hint.setAttribute("hidden", "");
+      }
+      return brukt;
+    };
+    vakter.push(oppdaterVakt);
+    let sisteId = r.id || "";
+    const rad = el("div", { class: "editor-rad" },
+      tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => {
+        r.id = v;
+        doepOmRolle(policy, sisteId, v);
+        if (v) sisteId = v;
+        for (const oppdater of vakter) oppdater();
+      }),
+      tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",
+        (v) => { r.beskrivelse = v || undefined; }));
+    fjern.addEventListener("click", () => {
+      // Siste port: knappen kan ha blitt aktiv i et tidligere tegnetrinn, og
+      // en deaktivert knapp er uansett bare en UI-tilstand. Referansene
+      // avgjør, i det øyeblikket det klikkes.
+      if (oppdaterVakt().length) return;
+      policy.roller.splice(i, 1); tegnPaaNytt();
+    });
+    rad.append(hint, fjern);
+    oppdaterVakt();
     liste.append(rad);
   });
   const legg = el("button", { class: "knapp", type: "button",

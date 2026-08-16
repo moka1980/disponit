@@ -249,3 +249,94 @@ test("Policy-ID: malen foreslår sin egen id, og regelen står ved feltet", asyn
   assert.equal(felt.querySelector("input").getAttribute("aria-describedby"),
     hint.id, "hjelpeteksten er ikke koblet til feltet for skjermlesere");
 });
+
+// --- Rolle-ID-en er REDIGERBAR, og vakten må følge med -------------------
+
+const rolleRad = (h, idVerdi) =>
+  [...h.querySelectorAll(".editor-liste .editor-rad")]
+    .find((r) => r.querySelector("input.felt-inp").value === idVerdi);
+
+function skrivId(rad, verdi) {
+  const inp = rad.querySelector("input.felt-inp");
+  inp.value = verdi;
+  inp.dispatchEvent(new window.Event("input"));
+}
+
+test("Roller: vakten regnes om når rolle-ID-en endres", async () => {
+  // Vakten ble regnet ut ÉN gang, da raden ble tegnet, mens ID-feltet
+  // fortsatte å mutere `r.id` uten å tegne om. Retter eier et ugyldig utkast
+  // ved å gi den UBRUKTE rollen det navnet `tillatt_for` peker på, sto «Fjern»
+  // igjen aktiv fra forrige navn — og kunne fjerne rollen som nå var påkrevd.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-3", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "ubrukt" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] }],
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const rad = rolleRad(h, "ubrukt");
+  const fjern = rad.querySelector("button");
+  assert.ok(!fjern.hasAttribute("disabled"), "ubrukt rolle skal kunne fjernes");
+
+  skrivId(rad, "agent");
+  assert.ok(fjern.hasAttribute("disabled"),
+    "rollen er nå referert av faktura.bokfor, men «Fjern» sto igjen aktiv");
+  assert.ok(rad.textContent.includes("faktura.bokfor"),
+    "raden sier ikke hvem som holder rollen etter navnebyttet");
+
+  // Og klikket skal ikke slippe gjennom selv om knappen skulle stå feil:
+  // referansene avgjør i det øyeblikket det klikkes, ikke da raden ble tegnet.
+  fjern.dispatchEvent(new window.Event("click"));
+  assert.ok(rolleRad(h, "agent"), "en referert rolle ble fjernet ved klikk");
+});
+
+test("Roller: navnebytte tar referansene med seg", async () => {
+  // Å endre rolle-ID-en er et NAVNEBYTTE, ikke en ny rolle. Uten at
+  // referansene følger med, gjorde `agent` → `agent-ny` handlingenes
+  // `tillatt_for: ["agent"]` foreldreløse — nøyaktig den «ukjent
+  // rolle»-tilstanden fjerningsvakten finnes for å stenge, bare via en annen
+  // dør. Tømming underveis skal IKKE propagere: eier som sletter feltet for å
+  // skrive noe nytt, skal ikke få `tillatt_for: [""]` på veien.
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { aapneUtkast: () => {}, startPolicy: {
+    meta: { policy_id: "p-4", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "agent" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] },
+                 { id: "betaling.utfor", tillatt_for: ["agent"] }],
+    menneskelig_overstyring: { krever_rolle: "agent", godkjennbare: [] },
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const rad = rolleRad(h, "agent");
+  assert.ok(rad.querySelector("button").hasAttribute("disabled"),
+    "rollen er i bruk og skal være låst før navnebyttet");
+  skrivId(rad, "");                       // tømmer først …
+  skrivId(rad, "agent-ny");               // … og skriver så det nye navnet
+
+  assert.ok(rad.querySelector("button").hasAttribute("disabled"),
+    "rollen er fortsatt i bruk etter navnebyttet, men vakten slapp den fri");
+  assert.ok(rad.textContent.includes("faktura.bokfor")
+    && rad.textContent.includes("betaling.utfor"),
+    "referansene fulgte ikke med navnebyttet");
+
+  // Det som faktisk LAGRES er fasiten — DOM-en kan ha rett av andre grunner.
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const sendt = JSON.parse(POST.opts.body).innhold;
+  for (const handling of sendt.handlinger) {
+    assert.deepEqual(handling.tillatt_for, ["agent-ny"],
+      `${handling.id} peker på et rollenavn som ikke finnes`);
+  }
+  assert.equal(sendt.menneskelig_overstyring.krever_rolle, "agent-ny",
+    "menneskelig_overstyring peker på et rollenavn som ikke finnes");
+  assert.equal(sendt.roller[0].id, "agent-ny");
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
