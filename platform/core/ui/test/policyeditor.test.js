@@ -1270,3 +1270,33 @@ test("Handlinger: valget overlever re-rendringen feltene utløser", async () => 
     .includes("refusjon.utfor"),
   "re-rendringen kastet eier tilbake til første handling");
 });
+
+test("Handlinger: velgeren viser modusen som faktisk vil bli lagret",
+  async () => {
+    // Velgerknappen bærer handlingens MODUS — det raskeste svaret på «hva gjør
+    // denne». Muterte modusfeltet bare modellen, sto knappen igjen med den
+    // gamle verdien til noe ANNET tilfeldigvis tegnet fanen på nytt, og
+    // navigatoren motsa da verdien som ville blitt lagret.
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: TO_HANDLINGER() });
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".handling-velger"));
+
+    const knapp = () => [...h.querySelectorAll(".handling-velger-knapp")]
+      .find((b) => b.textContent.includes("ordre.bekreft"));
+    assert.ok(knapp().textContent.includes(t("modus.auto")));
+
+    const modus = [...h.querySelectorAll(".editor-kort select")]
+      .find((s) => [...s.options].some((o) => o.value === "alltid_stopp"));
+    modus.value = "alltid_stopp";
+    modus.dispatchEvent(new window.Event("change"));
+
+    await vent(() => knapp()
+      && knapp().textContent.includes(t("modus.alltid_stopp")));
+    assert.ok(knapp().textContent.includes(t("modus.alltid_stopp")),
+      "velgeren reklamerte fortsatt for den gamle modusen");
+    // Og valget står: modusendringen skal ikke kaste eier til første handling
+    // eller bytte hvilket kort som vises.
+    assert.ok(h.querySelector(".editor-kort").textContent
+      .includes("ordre.bekreft"));
+  });

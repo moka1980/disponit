@@ -499,7 +499,15 @@ function handlingKort(h, tegnPaaNytt) {
   const g = h.grenser;
   return el("div", { class: "editor-kort" },
     el("h4", {}, el("code", { text: h.id || "?" })),
-    velg(t("ui.editor.modus"), h.modus, MODUS, "modus.", (v) => { h.modus = v; }),
+    // `tegnPaaNytt()` er ikke overflødig her (Codex P2): handlingsvelgeren
+    // over kortet viser hver handlings MODUS — det raskeste svaret på «hva
+    // gjør denne». Muterte vi bare `h.modus`, ble knappen stående med den
+    // gamle verdien til noe ANNET tilfeldigvis tegnet på nytt (valuta,
+    // tidsvindu), og navigatoren motsa da verdien som faktisk ville blitt
+    // lagret. Samme form som bryteren i tidsvinduvelgeren: en endring som
+    // vises et annet sted enn der den gjøres, tegner flaten på nytt.
+    velg(t("ui.editor.modus"), h.modus, MODUS, "modus.",
+      (v) => { h.modus = v; tegnPaaNytt(); }),
     tekstfelt(t("ui.editor.belop_maks"), g.belop_maks == null ? "" : g.belop_maks,
       (v) => {
         v = v.trim();
