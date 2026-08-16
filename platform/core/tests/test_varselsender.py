@@ -1177,10 +1177,21 @@ _DO_BLOKK = re.compile(r"\bdo\s*\$\$(.*?)\$\$", re.S | re.I)
 #: grant …»), og et krav om at setningen BEGYNNER med `grant` ville gjort
 #: nettopp de blokkene usynlige igjen.
 _LAGER = re.compile(r"\bcreate\b.*\bfunction\b")
+
 #: PUBLIC som MOTTAKER, ikke som skjemanavn: `… ON FUNCTION public.f(…) TO
 #: disponit` og `… ON ALL SEQUENCES IN SCHEMA public TO …` inneholder begge
 #: delstrengen «public» uten å si noe om PUBLIC-ACL-en.
-_GRANT_PUBLIC = re.compile(r"\bgrant\b.*\bto public\b")
+#:
+#: PUBLIC KAN STÅ HVOR SOM HELST I MOTTAKERLISTEN (Codex P2 på #71). En GRANT
+#: tar en LISTE av mottakere, og `… TO disponit_varselsender, PUBLIC` gir
+#: PUBLIC EXECUTE like fullt som en enslig `TO PUBLIC` — men inneholder ikke
+#: delstrengen «to public», så den gamle formen så den ikke. Mottakerlisten er
+#: alt som står ETTER `TO`, og det er nettopp det som skiller de to
+#: betydningene av ordet: skjemanavnet `public` står alltid FORAN `TO`
+#: (`ON FUNCTION public.f(…)`, `IN SCHEMA public`), mottakeren alltid etter.
+#: Motprøvene i kontrolltesten holder derfor fortsatt.
+_TIL_PUBLIC = r"\bto\b.*\bpublic\b"
+_GRANT_PUBLIC = re.compile(r"\bgrant\b.*" + _TIL_PUBLIC)
 
 #: `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` åpner alle tre på én gang
 #: og NEVNER INGEN AV DEM (Codex P2 på #71). Setningen slapp derfor gjennom
@@ -1195,7 +1206,7 @@ _GRANT_PUBLIC = re.compile(r"\bgrant\b.*\bto public\b")
 #: ingen ser. Motprøven om `public` som skjemanavn gjelder ikke — her er PUBLIC
 #: MOTTAKEREN, og det er utvetydig.
 _GRANT_ALLE_PUBLIC = re.compile(
-    r"\bgrant\b.*\bon all (?:functions|routines) in schema\b.*\bto public\b")
+    r"\bgrant\b.*\bon all (?:functions|routines) in schema\b.*" + _TIL_PUBLIC)
 
 #: `f(int, int)` i en setning → `f(int,int)`, som i SENDERFUNKSJONER.
 _SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
@@ -1430,6 +1441,9 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     * `GRANT … TO PUBLIC` etter et gjerde som sto. Den er ikke hypotetisk på
       en annen måte enn de to andre: 027 og 028 granter begge EXECUTE
       eksplisitt, og en mottaker skrevet feil er én redigering unna.
+    * samme grant med PUBLIC som ETT NAVN BLANT FLERE — `TO
+      disponit_varselsender, PUBLIC`. Mottakeren er en LISTE, og formen leser
+      som en helt vanlig grant til senderrollen helt til komma-et.
     * samme grant INNE I EN `DO`-BLOKK. 027, 030 og 031 legger alle den
       betingede senderrollegranten der, så det er nettopp formen en
       feilskrevet mottaker ville hatt.
@@ -1483,6 +1497,16 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: False}, \
         f"GRANT tilbake til PUBLIC skal åpne gjerdet. Spor: {spor}"
     assert "b.sql: grant til public som migrator" in spor[sig]
+
+    # …og PUBLIC som ETT NAVN BLANT FLERE i mottakerlisten. En GRANT tar en
+    # liste, og denne formen ser ut som en helt vanlig grant til senderrollen
+    # helt til man leser komma-et. Den gir PUBLIC EXECUTE like fullt.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO disponit_varselsender, PUBLIC;")], n)
+    assert gjerdet == {sig: False}, \
+        f"PUBLIC i en mottakerliste skal åpne gjerdet. Spor: {spor}"
 
     # Samme grant, men betinget inne i en DO-blokk — formen 027/030/031
     # bruker for senderrollen, og den `_KROPP` ville strøket som en kropp.
