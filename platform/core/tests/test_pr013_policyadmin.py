@@ -505,17 +505,28 @@ def test_aktiver_policy_avviser_flertydig_verifikator_id(vid, felt):
         with pytest.raises(psycopg.errors.CheckViolation) as ei:
             r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
         assert "flertydig" in str(ei.value)
-        r.rollback()
-        # …og ingenting ble skrevet: policyen er ikke registrert, og utkastet
-        # står fortsatt som `validert` (feilen rullet hele kallet tilbake).
-        assert r.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
-                         " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 0
-        assert r.execute("SELECT status FROM policyutkast WHERE tenant=%s"
-                         " AND utkast_id=%s", (TEN, uid)).fetchone()[0] \
-            == "validert"
     finally:
         r.rollback()
         r.close()
+
+    # …og ingenting ble skrevet: policyen er ikke registrert, og utkastet står
+    # fortsatt som `validert` (feilen rullet hele kallet tilbake).
+    #
+    # Kontrollen tas på en FERSK forbindelse, ikke på `r` etter rullebakken:
+    # `set_config(..., false)` er transaksjonell som alt annet SET, så
+    # rollbacken over tok tenant-konteksten med seg — og uten den skjuler RLS
+    # radene. En «0 rader»-påstand ville da vært sann uansett hva funksjonen
+    # hadde skrevet, altså en test som ikke kan feile.
+    c = _c()
+    try:
+        assert c.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                         " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 0
+        assert c.execute("SELECT status FROM policyutkast WHERE tenant=%s"
+                         " AND utkast_id=%s", (TEN, uid)).fetchone()[0] \
+            == "validert"
+    finally:
+        c.rollback()
+        c.close()
 
 
 @pg
