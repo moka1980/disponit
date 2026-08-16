@@ -1402,6 +1402,20 @@ _AAPNER = re.compile(
 _LUKKER = re.compile(r"\bend\s+(?:if|case)\b")
 
 
+def _er_escapestreng(sql, i):
+    """Er apostrofen på `i` starten på en `E'…'`, der `\\'` er ETT tegn?
+
+    PREFIKSET HØRER TIL KONSTANTEN (Codex P2 på #74). PostgreSQL skriver
+    tekstkonstanter på flere former, og `E'…'` er den ene der bakstreken er
+    en escape. Prefikset er en bokstav rett foran apostrofen, og bare når
+    den bokstaven ikke selv er slutten på et navn: `e'x'` er en
+    escape-konstant, mens `verdie` fulgt av `'x'` er et navn og en vanlig
+    konstant.
+    """
+    return (i > 0 and sql[i - 1] in "eE"
+            and not (i > 1 and (sql[i - 2].isalnum() or sql[i - 2] in "_$")))
+
+
 def _uten_kommentarer(sql):
     """SQL-en slik BASEN leser den: uten kommentarer av noe slag.
 
@@ -1422,6 +1436,9 @@ def _uten_kommentarer(sql):
       inne i en `--`-linje er tekst, og en `--` inne i en blokk likeså.
     * En apostrof åpner en STRENGKONSTANT, og der er `--` og `/*` bare tegn.
       Strengene beholdes ordrett — det er bare kommentarene som skal bort.
+    * En `E'…'` slutter ikke på en `\\'`. Leses bakstreken som et vanlig tegn,
+      slutter konstanten for tidlig, og halen — som godt kan inneholde en
+      `--` — leses som kode.
 
     Blokken erstattes av ett mellomrom, ikke ingenting: `revoke/**/all` er to
     ord for basen, og skal være to ord her også.
@@ -1444,9 +1461,12 @@ def _uten_kommentarer(sql):
                     i += 1
             ut.append(" ")
         elif sql[i] == "'":
+            escape = _er_escapestreng(sql, i)
             j = i + 1
             while j < n:
-                if sql[j] != "'":
+                if escape and sql[j] == "\\" and j + 1 < n:
+                    j += 2          # `\'` er ETT tegn i en E-streng
+                elif sql[j] != "'":
                     j += 1
                 elif sql.startswith("''", j):
                     j += 2          # doblet apostrof er ETT tegn, ikke slutt
@@ -1463,7 +1483,36 @@ def _uten_kommentarer(sql):
 
 #: En strengkonstant, med PostgreSQLs doblede apostrof som eneste unntak:
 #: `'det''s'` er ÉN konstant, ikke to som støter mot hverandre.
-_STRENG = re.compile(r"'(?:''|[^'])*'")
+#:
+#: EN KONSTANT KAN HA ET PREFIKS (Codex P2 på #74). `E'…'` og `U&'…'` er
+#: like gyldige skrivemåter som den bare, og modellen kjente bare den bare.
+#: Prefikset ble derfor stående igjen UTENFOR markøren, og en
+#: `EXECUTE E'GRANT EXECUTE … TO PUBLIC'` maskerte til `execute e<markør>`
+#: — som `_DYNAMISK` ikke treffer. Den dynamiske granten falt dermed ut av
+#: avspillingen, og gjerdet ble stående True mens PUBLIC fikk EXECUTE
+#: tilbake. Prefikset er en DEL av konstanten, og går inn i markøren med
+#: den.
+#:
+#: `E` er dessuten den ene formen der BAKSTREKEN er en escape: `\'` slutter
+#: ikke konstanten. `U&` bruker bakstreken til unicode-punkter i stedet, og
+#: dobler apostrofen som den bare formen — derfor to grener og ikke én.
+#: Bokstaven må stå fritt: `verdie` fulgt av `'x'` er et navn og en vanlig
+#: konstant, ikke en escape-konstant.
+_STRENG = re.compile(
+    r"(?<![0-9a-z_$])e'(?:''|\\.|[^'\\])*'"
+    r"|(?<![0-9a-z_$])u&'(?:''|[^'])*'"
+    r"|'(?:''|[^'])*'",
+    re.IGNORECASE | re.DOTALL)
+
+#: Escape-sekvensene i en `E'…'`, redusert til det denne modellen trenger:
+#: `''` og `\'` er en apostrof, `\b\f\n\r\t` er tomrom — og tomrom er
+#: nettopp det normaliseringen uansett klapper sammen — og ellers er tegnet
+#: etter bakstreken seg selv (`\\` er en bakstrek). De NUMERISKE formene
+#: (`\101`, `\x41`, unicode-punktene) dekodes ikke: en ACL-setning skrevet slik
+#: finnes ikke i disse migrasjonene, og et treff mistes heller enn å bli
+#: diktet opp. Som for dynamisk SQL bygget av en variabel er det en grense,
+#: ikke en fullstendighet.
+_ESCAPE = re.compile(r"''|\\(.)", re.DOTALL)
 
 #: Markøren bruker NUL, som ikke kan stå i SQL-tekst — og som ingen av
 #: uttrykkene over kan forveksle med et navn eller et nøkkelord.
@@ -1503,14 +1552,37 @@ def _uten_strenger(tekst):
     Markøren er nummerert fordi innholdet trengs igjen: en `EXECUTE '…'` er
     ekte SQL som KJØRER, og den skilles ut for seg — se `_DYNAMISK`. Alt
     annet er inert tekst, og skal måles som det.
+
+    Gir `(maskert, konstanter)`, der hver konstant er `(prefiks, innhold)`:
+    prefikset — `e`, `u&` eller ingenting — hører til konstanten og går inn
+    i markøren med den, slik at `EXECUTE E'…'` er den samme formen som
+    `EXECUTE '…'` for `_DYNAMISK`. Det er bare `_klartekst` som trenger å
+    vite hvilken skrivemåte som sto der.
     """
     innhold = []
 
     def bytt(m):
-        innhold.append(m.group(0)[1:-1].replace("''", "'"))
+        rå = m.group(0)
+        # Den FØRSTE apostrofen åpner konstanten; alt foran den er prefiks.
+        q = rå.index("'")
+        prefiks, tekst = rå[:q].lower(), rå[q + 1:-1]
+        innhold.append((prefiks,
+                        _ESCAPE.sub(_uten_escape, tekst) if prefiks == "e"
+                        else tekst.replace("''", "'")))
         return _MARKOER.format(len(innhold) - 1)
 
     return _STRENG.sub(bytt, tekst), innhold
+
+
+def _uten_escape(m):
+    """Én escape-sekvens i en `E'…'` redusert til tegnet den står for."""
+    tegn = m.group(1)
+    if tegn is None:                      # `''`
+        return "'"
+    # `\n` og de andre er TOMROM, ikke bokstaven n: ble de lest bokstavelig,
+    # ble `'REVOKE ALL\nON FUNCTION …'` til `revoke allnon function …`, og
+    # en ekte setning falt ut av avspillingen.
+    return " " if tegn in "bfnrtv" else tegn
 
 
 def _klartekst(setning, strenger):
@@ -1520,12 +1592,15 @@ def _klartekst(setning, strenger):
     Den som spør etter setningene for å lese REKKEFØLGEN — nullingen i 031
     mot RLS-vinduet, for eksempel — skal se teksten som er der, `'nb'` og
     alt. Konstanten normaliseres på samme måte som resten av setningen, slik
-    at den leses likt uansett hvordan den er brutt over linjer.
+    at den leses likt uansett hvordan den er brutt over linjer, og prefikset
+    følger med: `E'…'` sto det, og `e'…'` skal det leses som.
     """
-    return _MARKOER_MAL.sub(
-        lambda m: "'" + " ".join(strenger[int(m.group(1))].split()).lower()
-                  .replace("'", "''") + "'",
-        setning)
+    def igjen(m):
+        prefiks, tekst = strenger[int(m.group(1))]
+        return (prefiks + "'"
+                + " ".join(tekst.split()).lower().replace("'", "''") + "'")
+
+    return _MARKOER_MAL.sub(igjen, setning)
 
 
 def _delt(tekst, i_blokk):
@@ -1567,7 +1642,7 @@ def _delt(tekst, i_blokk):
             # bevis, og lot gjerdet stå der klyngen — med usann vakt — ikke
             # hadde revokert noe.
             betinget = dybde > 0 or bool(_BETINGET.search(s[:m.start()]))
-            for bit in strenger[int(m.group(1))].split(";"):
+            for bit in strenger[int(m.group(1))][1].split(";"):
                 if kjort := " ".join(bit.split()).lower():
                     yield kjort, kjort, betinget
         if i_blokk:
@@ -2470,6 +2545,93 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: True}, (
         "en dynamisk REVOKE ETTER `END IF` er ubetinget og lukker gjerdet."
         f" Spor: {spor}")
+
+    # EN KONSTANT KAN HA ET PREFIKS. `E'…'` og `U&'…'` er like gyldige
+    # skrivemåter som den bare, og modellen kjente bare den bare. Prefikset
+    # ble stående igjen utenfor markøren, `EXECUTE E'…'` maskerte til
+    # `execute e<markør>`, og den dynamiske setningen falt ut av
+    # avspillingen — den farlige veien: en GRANT til PUBLIC ble usynlig og
+    # gjerdet ble stående True.
+    for pre in ("E", "e", "U&", "u&"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DO $$\nBEGIN\n    EXECUTE {pre}'GRANT EXECUTE ON"
+                       " FUNCTION varsel_klaim_epost(int, int) TO PUBLIC';\n"
+                       "END $$;")], n)
+        assert gjerdet == {sig: False}, (
+            f"`{pre}'…'` er en strengkonstant som alle andre, og en dynamisk"
+            f" GRANT skrevet slik åpner gjerdet. Spor: {spor}")
+
+        # …og den samme veien: prefikset skal ikke gjøre setningen usynlig,
+        # bare fordi den peker riktig vei denne gangen.
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier;"
+                             f" DO $$\nBEGIN\n    EXECUTE {pre}'REVOKE ALL ON"
+                             " FUNCTION varsel_klaim_epost(int, int)"
+                             " FROM PUBLIC';\nEND $$; RESET ROLE;")], n)
+        assert gjerdet == {sig: True}, (
+            f"en dynamisk REVOKE skrevet `{pre}'…'` er et gjerde som alle"
+            f" andre. Spor: {spor}")
+
+    # BAKSTREKEN ER EN ESCAPE I EN `E'…'`, og bare der. Slutter konstanten
+    # på den første `\'`, blir halen — som godt kan inneholde en `--` —
+    # lest som kode, og den gjenværende teksten forskjøvet med den. Her ville
+    # `-- it\'s fine` blitt strøket som kommentar og GRANT-en delt i to.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE E'GRANT EXECUTE ON FUNCTION"
+                   " varsel_klaim_epost(int, int) TO PUBLIC"
+                   " -- it\\'s fine';\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en `\\'` avslutter ikke en E-streng, og halen er tekst — ikke en"
+        f" kommentar som deler setningen. Spor: {spor}")
+
+    # …og `\n` I EN E-STRENG ER TOMROM, ikke bokstaven n. Ble den lest
+    # bokstavelig, sto det `fromnpublic` igjen der setningen sier
+    # `FROM\nPUBLIC`, og en ekte REVOKE falt ut av avspillingen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE E'REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM\\nPUBLIC';\n"
+                         "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        f"`\\n` i en E-streng er tomrom, ikke en bokstav. Spor: {spor}")
+
+    # MOTPRØVEN, og den som gjør prefikset til noe annet enn «hopp over
+    # bokstaven foran»: en SITERT E-streng er like inert som en bar. Den er
+    # ikke kode av å ha et prefiks — det er `EXECUTE` foran som avgjør.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                   "    RAISE NOTICE E'REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+                   "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT i en E-streng er ikke et gjerde."
+        f" Spor: {spor}")
+
+    assert _uten_strenger("select kolonne'a''b'")[1] == [("", "a'b")], \
+        "`kolonne` fulgt av `'…'` er et navn og en bar konstant"
+    assert _uten_strenger(r"select E'a\'b'")[1] == [("e", "a'b")], \
+        "`E'…'` er én konstant, og `\\'` er apostrofen i den"
+
+    # DEN SAMME REGELEN I KOMMENTARSTRYKEREN. Den hopper over konstantene
+    # nettopp for at en `--` inne i en tekst ikke skal bli en kommentar, og
+    # må derfor kjenne den samme slutten som maskeringen. Gjør den ikke det,
+    # slutter E-strengen på den første `\'`, og halen — med `--` i seg — blir
+    # strøket som kommentar, med alt som fulgte på den linjen.
+    assert _uten_kommentarer(r"raise notice E'a\'b -- c';") == \
+        r"raise notice E'a\'b -- c';", \
+        "en `--` inne i en E-streng er tekst, ikke en kommentar"
+
+    # …og motprøven, som er det som gjør prefikset til en REGEL og ikke til
+    # «hopp over bokstaven foran»: en `e` som er SLUTTEN PÅ ET NAVN er ikke
+    # et prefiks. `kolonne'a\'` er da en HEL bar konstant — bakstreken er et
+    # vanlig tegn i den — og `-- c'` etter den er en ekte kommentar.
+    assert (_uten_kommentarer(r"select kolonne'a\'b -- c'")
+            == r"select kolonne'a\'b "), (
+        "`kolonne` fulgt av `'…'` er et navn og en bar konstant — og der er"
+        " bakstreken bare et tegn")
 
     # Å FLYTTE ET NAVN ER Å FJERNE DET. Funksjonen lever videre — det gjør
     # ikke navnet senderen kaller, og et gjerde rundt et navn som er borte er
