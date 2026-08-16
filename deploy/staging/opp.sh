@@ -53,7 +53,8 @@ disponit-helse.service disponit-helse.timer
 disponit-rydd-pending.service disponit-rydd-pending.timer
 disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
-disponit-artefaktrydding.service disponit-artefaktrydding.timer"
+disponit-artefaktrydding.service disponit-artefaktrydding.timer
+disponit-varselsender.service disponit-varselsender.timer"
 if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
   echo "kjører som før."
@@ -195,6 +196,9 @@ skriv_cred() {  # katalog navn verdi
   chmod 600 "/etc/disponit/$1/$2"
 }
 skriv_cred api DATABASE_URL          "$DATABASE_URL"
+# Senderen leser køen som runtime-rollen; SMTP-oppsettet er valgfritt og
+# legges inn separat (se unit-filen).
+skriv_cred varsel DISPONIT_DATABASE_URL "$DATABASE_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"

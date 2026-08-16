@@ -700,5 +700,6 @@
   "ui.varsler.kanal.kun_portal": "Message in the portal only",
   "ui.varsler.kanal_lagret": "Your notification preference has been saved.",
   "ui.varsler.feilet": "The action failed.",
-  "varsel.attestering_venter": "Policy {policy_id} is waiting for your attestation (round {runde}, risk {risikoklasse}) — {gjenstaar} attestation(s) remaining."
+  "varsel.attestering_venter": "Policy {policy_id} is waiting for your attestation (round {runde}, risk {risikoklasse}) — {gjenstaar} attestation(s) remaining.",
+  "varsel.epost.emne": "Disponit: something is waiting for you"
 }

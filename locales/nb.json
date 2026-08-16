@@ -700,5 +700,6 @@
   "ui.varsler.kanal.kun_portal": "Bare melding i portalen",
   "ui.varsler.kanal_lagret": "Varslingsvalget er lagret.",
   "ui.varsler.feilet": "Handlingen feilet.",
-  "varsel.attestering_venter": "Policyen {policy_id} venter på din attestering (runde {runde}, risiko {risikoklasse}) — {gjenstaar} attestasjon(er) gjenstår."
+  "varsel.attestering_venter": "Policyen {policy_id} venter på din attestering (runde {runde}, risiko {risikoklasse}) — {gjenstaar} attestasjon(er) gjenstår.",
+  "varsel.epost.emne": "Disponit: noe venter på deg"
 }

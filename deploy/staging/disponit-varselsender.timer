@@ -1,0 +1,17 @@
+# Hvert 5. minutt.
+#
+# Kadensen er en avveining mot ETT menneske som venter: en godkjenner som
+# nettopp fikk en runde i fanget bør høre om det mens hun fortsatt sitter der.
+# Samtidig er dette e-post — sekunder betyr ingenting, og en tettere kadens
+# ville bare gitt flere tomme oppkoblinger mot SMTP-serveren.
+
+[Unit]
+Description=Disponit varselsendertimer
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

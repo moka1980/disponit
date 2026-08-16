@@ -72,6 +72,10 @@ GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattes
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
 GRANT SELECT, INSERT, UPDATE ON varsel TO {rolle};
+-- Senderen når varsler på tvers av tenanter KUN gjennom de to SECURITY
+-- DEFINER-funksjonene i migrasjon 027 — aldri med BYPASSRLS på egen rolle.
+GRANT EXECUTE ON FUNCTION varselkandidater(int) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text) TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
