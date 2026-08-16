@@ -1210,6 +1210,14 @@ _SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
 _REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
 _DROP_MAL = re.compile(r"\bdrop\s+function\b(?:\s+if\s+exists\b)?(.*)")
 
+#: EN VAKT FORAN SETNINGEN (Codex P2 på #71). Etter at DO-blokker pakkes ut,
+#: kommer innmaten med plpgsql-innpakningen foran — og er den innpakningen en
+#: BETINGELSE, vet ikke kilden om setningen kjørte i det hele tatt. Formen er
+#: alt i bruk i 027/030/031 for den betingede senderrollegranten, så en
+#: `IF … THEN REVOKE … FROM PUBLIC` er én redigering unna. Måles på teksten
+#: FORAN verbet: en setning på toppnivå har ingenting foran seg.
+_BETINGET = re.compile(r"\b(?:if|elsif|elseif|case|when)\b")
+
 
 def _setninger(sql):
     """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
@@ -1277,6 +1285,11 @@ def _spill_av(filer, signaturer):
       åpner, uansett hvilken signatur den bærer. Asymmetrien er retningen
       på tvilen: en overlast for mye målt som åpen gir en falsk alarm noen
       må se på, mens en for lite gir en åpen kryss-tenant funksjon ingen ser.
+    * En BETINGET REVOKE er ikke bevis. Står den under en vakt som kan være
+      usann i klyngen, revokeres ingenting — som eier løfter den derfor ikke
+      tilstanden til True. Som migrator måles den fortsatt som åpning: holder
+      vakten, materialiserer den standard-ACL-en. Tvilen faller begge veier
+      mot åpent.
     * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
       hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
       før silen på navn — se `_GRANT_ALLE_PUBLIC`.
@@ -1338,11 +1351,28 @@ def _spill_av(filer, signaturer):
                         f"{filnavn}: grant til public som {rolle or 'migrator'}")
                 elif (rev := _REVOKE_MAL.search(s)) and _rammer(
                         rev.group(1), sig, basenavn[sig]):
-                    # Som eier: gjerdet står. Som migrator: advarsel, og
-                    # standard-ACL-en materialiseres — verre enn ingenting.
-                    gjerdet[sig] = rolle == EIERROLLE
-                    spor[sig].append(
-                        f"{filnavn}: revoke som {rolle or 'migrator'}")
+                    betinget = _BETINGET.search(s[:rev.start()])
+                    if betinget and rolle == EIERROLLE:
+                        # Vakten kan være usann i klyngen, og da revokeres
+                        # ingenting. En setning som KANSKJE kjørte er ikke
+                        # bevis for at gjerdet står, så tilstanden holdes der
+                        # den var i stedet for å bli løftet til True. Var den
+                        # alt False, blir den stående False — og det er
+                        # nettopp den utgangen som ellers ble skjult av
+                        # oppryddingen i `deploy/staging/migrer.py`.
+                        spor[sig].append(
+                            f"{filnavn}: betinget revoke som eier"
+                            f" — kjørte kanskje ikke")
+                    else:
+                        # Som eier: gjerdet står. Som migrator: advarsel, og
+                        # standard-ACL-en materialiseres — verre enn
+                        # ingenting. En BETINGET revoke som migrator måles
+                        # også som åpning: holder vakten, gjør den nettopp
+                        # den skaden, og tvilen faller mot åpent.
+                        gjerdet[sig] = rolle == EIERROLLE
+                        spor[sig].append(
+                            f"{filnavn}: {'betinget ' if betinget else ''}"
+                            f"revoke som {rolle or 'migrator'}")
     return gjerdet, spor
 
 
@@ -1414,7 +1444,13 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       REVOKE igjen som om den fortsatt gjaldt.
     * en VAKT som nevner den beskyttede signaturen mens REVOKE-en tar en
       overlast. Det er forskjellen på hva en setning NEVNER og hva den
-      VIRKER på, og den forskjellen er hele signaturkravet.
+      VIRKER på, og den forskjellen er hele signaturkravet. Sporet finnes i
+      to utgaver — med og uten vakt — fordi den betingede utgaven ellers
+      ville blitt fanget av regelen under, og målklausulen stått uprøvd.
+    * en BETINGET revoke: som eier beviser den ingenting (vakten kan være
+      usann), som migrator er den fortsatt en åpning. Og motprøven, som er
+      den dyre halvdelen: den skal ikke RIVE et gjerde som alt står, ellers
+      blir enhver betinget opprydding en falsk alarm.
 
     Alle ville ellers blitt skjult for ACL-testen av oppryddingen i
     `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
@@ -1482,6 +1518,35 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
          ("b.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(text) ...;")],
         n)[0] == {sig: False}, "gjenskaping av overlast måles som åpning"
 
+    # En BETINGET revoke er ikke bevis: er vakten usann i klyngen, revokeres
+    # ingenting, og den gjenskapte funksjonen står åpen bak en setning som
+    # LESER som et gjerde.
+    betinget_gjerde = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                       "    IF EXISTS (SELECT 1 FROM pg_roles"
+                       " WHERE rolname = 'disponit_varselsender') THEN\n"
+                       "        REVOKE ALL ON FUNCTION"
+                       " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                       "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + betinget_gjerde)], n)
+    assert gjerdet == {sig: False}, \
+        f"en betinget revoke som eier er ikke et gjerde. Spor: {spor}"
+
+    # …men den river heller ikke ned et gjerde som ALT står: den kan bare la
+    # være å bevise noe. Uten dette ville regelen over vært en dyr no-op som
+    # gjorde enhver betinget opprydding til en falsk alarm.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", betinget_gjerde)], n)[0] == {sig: True}, \
+        "en betinget revoke skal ikke rive et gjerde som står"
+
+    # Som MIGRATOR er den fortsatt en åpning: holder vakten, materialiserer
+    # REVOKE-en standard-ACL-en, og det er verre enn ingenting.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", betinget_gjerde.replace(
+             "SET LOCAL ROLE disponit_domene_eier; ", ""))], n)
+    assert gjerdet == {sig: False}, \
+        f"betinget revoke som migrator er en åpning. Spor: {spor}"
+
     # En DROP uten gjenskaping: funksjonen er BORTE, ikke åpen — og et gjerde
     # rundt ingenting er ikke et bevis. `None` faller i sluttkravet.
     gjerdet, spor = _spill_av(
@@ -1525,6 +1590,24 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: False}, (
         "en vakt som NEVNER signaturen er ikke en REVOKE som TAR den."
         f" Spor: {spor}")
+
+    # Samme skille, men UTEN vakt — ellers ville regelen om betingede revoker
+    # målt dette sporet i stedet, og målklausulen stått uprøvd. Løkkeformen er
+    # 030s egen: en signaturliste i en `FOREACH`, som nevner den beskyttede
+    # signaturen i hodet mens setningen under tar en annen.
+    loekke = ("DO $$\nDECLARE s text;\nBEGIN\n"
+              "    FOREACH s IN ARRAY"
+              " ARRAY['varsel_klaim_epost(int,int)']\n"
+              "    LOOP\n"
+              "        REVOKE ALL ON FUNCTION varsel_klaim_epost(text)"
+              " FROM PUBLIC;\n"
+              "    END LOOP;\nEND $$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag), ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                                   + loekke + " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en ubetinget REVOKE på en overlast lukker ikke den beskyttede, selv"
+        f" om setningen NEVNER den. Spor: {spor}")
 
     # Den skjemabrede granten: åpner alle tre, og NEVNER INGEN AV DEM. Den
     # eneste veien til PUBLIC som ikke skriver navnet på det den åpner, og
