@@ -189,8 +189,13 @@ function valutaVelger(g, tegnPaaNytt) {
     }
   }
   const valgt = valutaer[0] || VALUTA_INGEN;
-  const valgbare = valgt && !VALUTAER.includes(valgt)
-    ? [valgt, ...VALUTAER] : VALUTAER;
+  // Halen er like valgbar som hodet. Ble valgene bygd av `valgt` alene, sto en
+  // beholdt kode lenger bak — `["NOK","CHF"]` — nevnt i hintet uten å finnes i
+  // nedtrekket: eier kunne se CHF, men ikke fjerne NOK og beholde den, slik
+  // fritekstfeltet tillot. Skjemaet og `_valider_grenser` godtar enhver
+  // ISO 4217-kode, så det er lista vår som er smal — ikke policyen som er feil.
+  const ekstra = valutaer.filter((v) => !VALUTAER.includes(v));
+  const valgbare = [...ekstra, ...VALUTAER];
   const sel = el("select", { class: "felt-inp" });
   const rad = (v, tekst) => {
     const o = el("option", { value: v, text: tekst });

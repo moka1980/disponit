@@ -253,6 +253,39 @@ test("Grenser: et nedtrekk kaster aldri en valuta policyen alt har", async () =>
     ["NOK", "EUR"], "de øvrige valutaene ble kastet");
 });
 
+test("Grenser: en beholdt valuta i HALEN kan velges, ikke bare nevnes",
+  async () => {
+    // Codex P2. Valgene ble bygd av `valgt` + standardlista, så en kode som lå
+    // BAK den første — `["NOK","CHF"]` — sto i hintet uten å finnes i
+    // nedtrekket. Eier kunne dermed ikke fjerne NOK og beholde CHF, slik det
+    // gamle fritekstfeltet tillot, selv om skjemaet godtar begge.
+    const policy = {
+      meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
+        status: "utkast" },
+      roller: [{ id: "agent" }],
+      handlinger: [{ id: "betaling.utfor", modus: "manuell",
+        tillatt_for: ["agent"], grenser: { valuta: ["NOK", "CHF"] } }],
+    };
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: policy });
+    await vent(() => h.querySelector(".editor-kort"));
+    const sel = [...h.querySelectorAll(".editor-kort select")]
+      .find((s) => [...s.options].some((o) => o.value === "NOK"));
+    assert.equal(sel.value, "NOK");
+    assert.ok([...sel.options].some((o) => o.value === "CHF"),
+      "en beholdt kode i halen mangler i nedtrekket");
+    sel.value = "CHF";
+    sel.dispatchEvent(new window.Event("change"));
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.deepEqual(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta, ["CHF"],
+      "eier kunne ikke fjerne NOK og beholde CHF");
+  });
+
 test("Grenser: beløpshintet TEGNES, og henger på feltet", async () => {
   // Codex P2. Hintet ble sendt som et femte argument til en `tekstfelt` som
   // tok fire — så det forsvant i begge språk, og beløpsfeltet sto igjen uten
