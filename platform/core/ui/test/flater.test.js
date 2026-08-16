@@ -558,6 +558,45 @@ test("Policy: flere aktive → hver av dem kan slettes, ikke en blindvei",
     globalThis.fetch = brukFetch;
   });
 
+test("Policy: en leser uten policy:write ser HVILKE som står aktive",
+  async () => {
+    // Kontroll: flytt identitetene tilbake inn i `angreSeksjon`, så blir
+    // denne rød. `leser`, `admin` og `sikkerhet` har `policy:read` uten
+    // `policy:write`. Uten dette fikk de varselet om at arbeidsområdet er i
+    // en feiltilstand — og ikke ett ord om hvilke policyer det gjaldt.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: true, status: 200, json: async () => ({ policyer: [
+          { policy_id: "tjenestebedrift1", versjon: "1.0.0",
+            innholds_hash: "a".repeat(64) },
+          { policy_id: "tjenestebedrift2", versjon: "2.0.0",
+            innholds_hash: "b".repeat(64) }] }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read"] }));
+    await vent(() => h.textContent.includes("tjenestebedrift2"));
+    assert.ok(h.textContent.includes(t("ui.policy.flere_aktive")));
+    assert.ok(h.textContent.includes("tjenestebedrift1"));
+    // Versjonen er med: to rader som bare sier «tjenestebedrift1» og
+    // «tjenestebedrift2» sier ikke hvilke RADER som skal ryddes.
+    assert.ok(h.textContent.includes("2.0.0"), "versjonen mangler");
+    // ...men mutasjonen står ikke for dem.
+    assert.equal(h.querySelectorAll(".policy-angre").length, 0);
+    assert.ok(![...h.querySelectorAll("button")]
+      .some((b) => b.textContent.trim() === t("ui.policy.slett")),
+      "slett-knappen sto for en leser uten policy:write");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    globalThis.fetch = brukFetch;
+  });
+
 test("Policy: en 5xx som IKKE er flere aktive blir stående som feil",
   async () => {
     // Lista er reparasjonen for ÉN tilstand. Er den ene aktive policyen

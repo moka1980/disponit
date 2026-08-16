@@ -58,6 +58,26 @@ function seksjon(tittel, barn) {
     el("h2", { text: tittel }), ...barn);
 }
 
+//: Identiteten til én policy — samme form overalt den nevnes, så «den andre
+//: der» aldri må gjettes ut av rekkefølgen på skjermen.
+function merke(p) {
+  return `${p.policy_id} · ${t("ui.policy.versjon")} ${p.versjon}`;
+}
+
+// Hvilke policyer som står aktive, for ALLE som kan lese policyen (Codex P2).
+// Sto identitetene bare i `angreSeksjon`, forsvant de sammen med den bak
+// `policy:write` — og `leser`, `admin` og `sikkerhet` har `policy:read` uten
+// skrivetilgang. De satt da igjen med et varsel om at arbeidsområdet er i en
+// feiltilstand og ingen opplysning om HVA den gjelder: ikke nok til å melde
+// fra, ikke nok til å be en forvalter rydde. Det er nettopp opplysningen
+// `policy:read` GIR rett til — det er bare mutasjonen som ikke skal stå for
+// dem, og den er portet der den hører hjemme, på knappen.
+function identiteter(aktive) {
+  return seksjon(t("ui.policy.aktive"),
+    [el("ul", { class: "liste" },
+      aktive.map((p) => el("li", { text: merke(p) })))]);
+}
+
 // `/v1/policy/aktiv` lover ÉN aktiv policy og svarer 500 (`intern_feil`) når
 // tenanten har flere — fail-closed, og riktig: et leseendepunkt skal ikke velge
 // hvilken policy som gjelder. Men NØYAKTIG den tilstanden er feilen «angre en
@@ -96,10 +116,13 @@ export function visPolicy(hoved, ctx) {
     }
     if (!dto) {
       // Flere aktive: policyen kan ikke VISES (hvilken av dem skulle det
-      // vært?), men den kan pekes på og slettes — og det er hele veien ut.
+      // vært?), men de kan pekes på — og for den som har lov til å rydde,
+      // slettes. Identitetene står FØRST og uavhengig av skrivetilgang:
+      // de er innholdet i feiltilstanden, ikke en del av handlingen.
       sett(hoved,
         ...flateHode(t("ui.policy.tittel")),
         VarselBanner({ art: "fare", tekst: t("ui.policy.flere_aktive") }),
+        identiteter(aktive),
         ...aktive.map((p) => angreSeksjon(p, ctx, paaNytt, true)));
       return;
     }
@@ -174,12 +197,12 @@ function angreSeksjon(d, ctx, tegnPaaNytt, navngi = false) {
   // Står det FLERE slett-seksjoner på flaten, må hver av dem si hvilken policy
   // den gjelder — både synlig og for skjermleseren. En knapp som bare heter
   // «Slett policy», gjentatt, er ikke et valg man kan ta.
-  const merke = `${d.policy_id} · ${t("ui.policy.versjon")} ${d.versjon}`;
+  const navn = merke(d);
   return el("section", { class: "policy-angre",
     "aria-label": navngi
-      ? `${t("ui.policy.slett_tittel")}: ${merke}` : t("ui.policy.slett_tittel") },
+      ? `${t("ui.policy.slett_tittel")}: ${navn}` : t("ui.policy.slett_tittel") },
     el("h3", { text: t("ui.policy.slett_tittel") }),
-    navngi ? el("p", {}, el("strong", { text: merke })) : null,
+    navngi ? el("p", {}, el("strong", { text: navn })) : null,
     el("p", { class: "muted", text: t("ui.policy.slett_forklaring") }),
     b, status);
 }
