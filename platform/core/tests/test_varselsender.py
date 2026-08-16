@@ -387,7 +387,9 @@ def test_031_nuller_de_historiske_nb_ene_innenfor_RLS_vinduet():
     """
     sql = (Path(__file__).resolve().parents[1] / "db/migrations"
            / "031_varsel_sprak_ikke_uttrykt.sql").read_text(encoding="utf-8")
-    setninger = list(_setninger(sql))
+    # Bare teksten her: `_setninger` gir også «står setningen under en vakt»,
+    # og det er ACL-avspillingens spørsmål, ikke rekkefølgens.
+    setninger = [s for s, _under_vakt in _setninger(sql)]
 
     def hvor(nal):
         traff = [i for i, s in enumerate(setninger) if nal in s]
@@ -1162,6 +1164,12 @@ SENDERROLLE = "disponit_varselsender"
 
 EIERROLLE = "disponit_domene_eier"
 
+#: Rollen migrasjonene kjøres SOM når ingen `SET LOCAL ROLE` er i kraft —
+#: `db.kjorer.migrer`, CI og staging bruker alle den. Avspillingen trenger et
+#: NAVN og ikke bare «ingen rolle», fordi eierskap sammenlignes med den
+#: aktive rollen: en funksjon migrator selv har laget og beholdt, EIER den.
+MIGRATORROLLE = "disponit_migrator"
+
 _KOMMENTAR = re.compile(r"--[^\n]*")
 _KROPP = re.compile(r"\$\$.*?\$\$", re.S)
 
@@ -1262,6 +1270,16 @@ _REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
 #: er hullet bare skrevet på nytt.
 _DROP_MAL = re.compile(
     r"\bdrop\s+(?:function|routine)\b(?:\s+if\s+exists\b)?(.*)")
+
+#: EIERSKIFTET (Codex P2 på #71). `ALTER FUNCTION … OWNER TO x` er den ene
+#: setningen som bestemmer hvem en senere `REVOKE … FROM PUBLIC` må kjøres
+#: som. Uten den grenen satte modellen «kjører som `disponit_domene_eier`»
+#: lik «eier funksjonen» — en gjenskaping som ved et uhell ble overført til
+#: en annen eier, fulgt av den velkjente `SET LOCAL ROLE disponit_domene_eier;
+#: REVOKE …`, ble da regnet som et gjerde, mens PostgreSQL bare advarer og
+#: lar standard-ACL-en (EXECUTE for PUBLIC) stå.
+_EIERSKIFTE = re.compile(
+    r"\balter\s+(?:function|routine)\b(.*?)\bowner\s+to\s+([a-z_][a-z0-9_]*)")
 
 #: EN VAKT FORAN SETNINGEN (Codex P2 på #71). Etter at DO-blokker pakkes ut,
 #: kommer innmaten med plpgsql-innpakningen foran — og er den innpakningen en
@@ -1443,6 +1461,12 @@ def _spill_av(filer, signaturer):
     * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
       hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
       før silen på navn — se `_GRANT_ALLE_PUBLIC`.
+    * EIERSKAPET FØLGES, ikke rollenavnet. En REVOKE lukker bare når den
+      aktive rollen faktisk EIER funksjonen — det er det PostgreSQL spør
+      etter, og en `ALTER … OWNER TO` kan ha flyttet det. Eieren settes av
+      gjenskapingen (den som kjører den, eier resultatet) og av eierskiftet.
+      Migrator som beholder sin egen funksjon, EIER den; `disponit_domene_eier`
+      med en funksjon som er overført til en annen, gjør det ikke.
     * En DROP setter tilbake til None: funksjonen er BORTE, ikke åpen. Uten
       den grenen beholdt avspillingen `True` fra en tidligere REVOKE, og en
       migrasjon som droppet uten å lage på nytt ga grønn port på noe som
@@ -1453,6 +1477,7 @@ def _spill_av(filer, signaturer):
     beskyttet = [_normalisert(s) for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
     gjerdet = dict.fromkeys(beskyttet)
+    eier = dict.fromkeys(beskyttet)
     spor = {sig: [] for sig in beskyttet}
     for filnavn, sql in filer:
         rolle = None                      # None = migrator, kjørerens rolle
@@ -1461,6 +1486,7 @@ def _spill_av(filer, signaturer):
                 rolle = s.split()[3]
             elif s.startswith("reset role"):
                 rolle = None
+            aktiv = rolle or MIGRATORROLLE
             if _GRANT_ALLE_PUBLIC.search(s):
                 # Den ene setningen som åpner uten å nevne noe navn — måles
                 # derfor FØR silen på basenavn, ellers ville den aldri kommet
@@ -1469,8 +1495,7 @@ def _spill_av(filer, signaturer):
                 for sig in beskyttet:
                     gjerdet[sig] = False
                     spor[sig].append(
-                        f"{filnavn}: skjemabred grant til public som"
-                        f" {rolle or 'migrator'}")
+                        f"{filnavn}: skjemabred grant til public som {aktiv}")
                 continue
             for sig in beskyttet:
                 if not _nevner(s, basenavn[sig]):
@@ -1485,11 +1510,22 @@ def _spill_av(filer, signaturer):
                     # funksjon som FORSVINNER skal ikke kunne godtas stille.
                     # `None` faller i sluttkravet, som er meningen.
                     gjerdet[sig] = None
+                    eier[sig] = None
                     spor[sig].append(f"{filnavn}: droppet")
+                elif (eie := _EIERSKIFTE.search(s)) and _rammer(
+                        eie.group(1), sig, basenavn[sig]):
+                    # Eierskapet flyttes. ACL-en følger ikke med, så gjerdet
+                    # står der det sto — men HVEM som kan lukke det senere,
+                    # er nettopp det som endret seg.
+                    eier[sig] = eie.group(2)
+                    spor[sig].append(f"{filnavn}: eier nå {eier[sig]}")
                 elif _LAGER.search(s):
-                    # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC.
+                    # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC —
+                    # og EIEREN er den som kjører setningen, ikke den som
+                    # eide den forrige funksjonen med samme navn.
                     gjerdet[sig] = False
-                    spor[sig].append(f"{filnavn}: gjenskapt")
+                    eier[sig] = aktiv
+                    spor[sig].append(f"{filnavn}: gjenskapt av {aktiv}")
                 elif _GRANT_PUBLIC.search(s):
                     # Gjerdet ned igjen, og uten dette sporet ville
                     # avspillingen beholdt True fra en tidligere REVOKE. At
@@ -1497,8 +1533,7 @@ def _spill_av(filer, signaturer):
                     # da bare gi en WARNING — endrer ikke svaret: det usikre
                     # tilfellet skal måles som åpent, ikke antas lukket.
                     gjerdet[sig] = False
-                    spor[sig].append(
-                        f"{filnavn}: grant til public som {rolle or 'migrator'}")
+                    spor[sig].append(f"{filnavn}: grant til public som {aktiv}")
                 elif (rev := _REVOKE_MAL.search(s)) and _rammer(
                         rev.group(1), sig, basenavn[sig]):
                     # Vakten kan stå i den SAMME setningen (`IF … THEN
@@ -1506,7 +1541,10 @@ def _spill_av(filer, signaturer):
                     # REVOKE …`). Begge er den samme grenen for basen, og
                     # ingen av dem er bevis for at REVOKE-en kjørte.
                     betinget = under_vakt or _BETINGET.search(s[:rev.start()])
-                    if betinget and rolle == EIERROLLE:
+                    # EIER, ikke rollenavn: det er eierskapet PostgreSQL
+                    # spør etter, og en gjenskaping kan ha flyttet det.
+                    er_eier = aktiv == eier[sig]
+                    if betinget and er_eier:
                         # Vakten kan være usann i klyngen, og da revokeres
                         # ingenting. En setning som KANSKJE kjørte er ikke
                         # bevis for at gjerdet står, så tilstanden holdes der
@@ -1523,10 +1561,11 @@ def _spill_av(filer, signaturer):
                         # ingenting. En BETINGET revoke som migrator måles
                         # også som åpning: holder vakten, gjør den nettopp
                         # den skaden, og tvilen faller mot åpent.
-                        gjerdet[sig] = rolle == EIERROLLE
+                        gjerdet[sig] = er_eier
                         spor[sig].append(
                             f"{filnavn}: {'betinget ' if betinget else ''}"
-                            f"revoke som {rolle or 'migrator'}")
+                            f"revoke som {aktiv}"
+                            f"{'' if er_eier else f' (eier: {eier[sig]})'}")
     return gjerdet, spor
 
 
@@ -1616,6 +1655,11 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       usann), som migrator er den fortsatt en åpning. Og motprøven, som er
       den dyre halvdelen: den skal ikke RIVE et gjerde som alt står, ellers
       blir enhver betinget opprydding en falsk alarm.
+    * en gjenskaping som overfører funksjonen til en ANNEN eier, med den
+      velkjente `SET LOCAL ROLE disponit_domene_eier; REVOKE …` etterpå. Den
+      leser som 027 og 031, og lukker likevel ingenting. Med motprøven at
+      MIGRATOR som beholder sin egen funksjon FAKTISK eier den — ellers måler
+      regelen et rollenavn, ikke et eierskap.
     * samme vakt, men ÅPNET I EN TIDLIGERE SETNING — `IF … THEN RAISE …;
       REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
       `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
@@ -1630,7 +1674,13 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     """
     sig = "varsel_klaim_epost(int,int)"
     n = [sig]
-    lag = "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
+    # Formen 027/028/031 bruker: migrator lager funksjonen, OVERFØRER den til
+    # domeneeieren, og gjerder den så inne som den eieren. Eierskiftet er en
+    # del av `lag`, ikke pynt — det er det som gjør `gjerde` under til en
+    # REVOKE fra funksjonens EIER og ikke bare fra en rolle med riktig navn.
+    lag = ("CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
+           " ALTER FUNCTION varsel_klaim_epost(int, int)"
+           " OWNER TO disponit_domene_eier;")
     gjerde = ("SET LOCAL ROLE disponit_domene_eier;"
               " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
               " FROM PUBLIC; RESET ROLE;")
@@ -1651,7 +1701,7 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
                                ("b.sql", etterpaa)], n)
     assert gjerdet == {sig: False}, \
         f"GRANT tilbake til PUBLIC skal åpne gjerdet. Spor: {spor}"
-    assert "b.sql: grant til public som migrator" in spor[sig]
+    assert f"b.sql: grant til public som {MIGRATORROLLE}" in spor[sig]
 
     # …og PUBLIC som ETT NAVN BLANT FLERE i mottakerlisten. En GRANT tar en
     # liste, og denne formen ser ut som en helt vanlig grant til senderrollen
@@ -1854,6 +1904,31 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
                    " RESET ROLE;")], n)
     assert gjerdet == {sig: False}, (
         "en REVOKE på et navn som bare BEGYNNER likt lukker ingenting."
+        f" Spor: {spor}")
+
+    # EIERSKAP, IKKE ROLLENAVN. En gjenskaping som ved et uhell overfører
+    # funksjonen til en ANNEN eier, og så følger den velkjente halen
+    # `SET LOCAL ROLE disponit_domene_eier; REVOKE …`, ser ut nøyaktig som
+    # 027 og 031 — men PostgreSQL advarer bare, og standard-ACL-en (EXECUTE
+    # for PUBLIC) blir stående.
+    feil_eier = lag.replace("OWNER TO disponit_domene_eier",
+                            "OWNER TO disponit_annen_eier") + gjerde
+    assert feil_eier != lag + gjerde
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde), ("b.sql", feil_eier)], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE fra en rolle som ikke EIER funksjonen er ikke et gjerde,"
+        f" uansett hva rollen heter. Spor: {spor}")
+
+    # …og motprøven, som viser at det er EIERSKAPET som måles og ikke navnet
+    # `disponit_domene_eier`: beholder migrator funksjonen selv, EIER
+    # migrator den — og da lukker migrators egen REVOKE gjerdet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int)"
+                   " ...; REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC;")], n)
+    assert gjerdet == {sig: True}, (
+        "migrator EIER en funksjon den selv har laget og beholdt."
         f" Spor: {spor}")
 
     # SAMME TYPE, ULIK STAVEMÅTE. `integer` og `int4` er `int` for basen, så
