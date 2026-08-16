@@ -654,5 +654,20 @@
   "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet.",
   "ui.policyadmin.utfall.aktiv_peker_usynk": "Aktiv policy og peker er ute av synk — dataene må repareres før aktivering.",
   "ui.policyadmin.utfall.versjon_i_bruk": "Versjonsnummeret i utkastet er allerede registrert, eller ikke nyere enn den aktive versjonen. Øk «meta.versjon» i utkastet og valider på nytt.",
-  "ui.policyadmin.utfall.versjon_mangler": "Utkastet mangler et gyldig versjonsnummer i «meta.versjon» (formen 1.2.3). Rett det i utkastet og valider på nytt."
+  "ui.policyadmin.utfall.versjon_mangler": "Utkastet mangler et gyldig versjonsnummer i «meta.versjon» (formen 1.2.3). Rett det i utkastet og valider på nytt.",
+  "ui.policyadmin.diff.sammendrag": "{antall} endringer i {omrader} områder. Områder som utvider fullmakt står åpne øverst.",
+  "ui.policyadmin.diff.antall_endringer": "{n} endringer",
+  "ui.policyadmin.diff.antall_felt": "{n} felt",
+  "ui.policyadmin.diff.maks": "maks",
+  "ui.policyadmin.diff.fjernet": "fjernet",
+  "ui.policyadmin.diff.uten_grense": "uten grense",
+  "ui.policyadmin.diff.gruppe.handlinger": "Handlinger agenten kan utføre",
+  "ui.policyadmin.diff.gruppe.roller": "Roller",
+  "ui.policyadmin.diff.gruppe.verifikatorer": "Verifikatorer",
+  "ui.policyadmin.diff.gruppe.frister": "Frister",
+  "ui.policyadmin.diff.gruppe.retention": "Oppbevaring",
+  "ui.policyadmin.diff.gruppe.unntak": "Unntakshåndtering",
+  "ui.policyadmin.diff.gruppe.dataklasser": "Dataklasser",
+  "ui.policyadmin.diff.gruppe.tidssone": "Tidssone",
+  "ui.policyadmin.diff.gruppe.meta": "Metadata"
 }
