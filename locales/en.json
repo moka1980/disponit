@@ -561,6 +561,8 @@
   "site.katalog_note": "Planned product scope: {antall} modules across four phases. What is available today is listed under “What you get”.",
   "ui.policyadmin.ugyldig_uten_detaljer": "The draft is invalid, but the server gave no reason.",
   "ui.rolle.leser": "reader",
+  "ui.rolle.sikkerhet": "security",
+  "ui.rolle.admin": "administrator",
   "ui.rolle.godkjenner": "approver",
   "ui.rolle.policyforvalter": "policy manager",
   "ui.rolle.domeneadjudikator": "domain adjudicator",
