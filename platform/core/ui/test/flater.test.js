@@ -478,7 +478,7 @@ test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten"
       return brukFetch(url, opts);
     };
     const h = nyHoved();
-    visPolicy(h, ctx());
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
     await vent(() => h.textContent.includes(t("ui.policy.slett")));
     [...h.querySelectorAll("button")]
       .find((b) => b.textContent.trim() === t("ui.policy.slett"))
@@ -512,7 +512,7 @@ test("Policy: «i bruk»-avvisningen forklares, den gjemmes ikke", async () => {
   };
   SVAR = { ...STD };
   const h = nyHoved();
-  visPolicy(h, ctx());
+  visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
   await vent(() => h.textContent.includes(t("ui.policy.slett")));
   [...h.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === t("ui.policy.slett"))
@@ -526,4 +526,22 @@ test("Policy: «i bruk»-avvisningen forklares, den gjemmes ikke", async () => {
   assert.ok(h.textContent.includes(t("ui.policy.slett_i_bruk")),
     "avvisningen må FORKLARE skillet slett/avvikle — ikke bare feile");
   globalThis.fetch = brukFetch;
+});
+
+test("Policy: en leser uten policy:write får ikke slett-seksjonen", async () => {
+  // Flaten nås med `policy:read`, og `leser`/`admin`/`sikkerhet` har nettopp
+  // det og ikke `policy:write`. «Vis vakten så den kan forstås» gjelder
+  // TILSTAND, ikke TILGANG: for dem finnes ingen tilstand som gjør knappen
+  // brukbar, så den ville bare invitert gjennom en irreversibel
+  // bekreftelsesdialog fram til serverens 403.
+  SVAR = { ...STD };
+  const h = nyHoved();
+  visPolicy(h, ctx({ scopes: ["policy:read"] }));
+  await vent(() => h.textContent.includes(t("ui.policy.roller")));
+  assert.ok(!h.querySelector(".policy-angre"), "slett-seksjonen ble vist");
+  assert.ok(![...h.querySelectorAll("button")]
+    .some((b) => b.textContent.trim() === t("ui.policy.slett")));
+  // Lesingen står igjen — det er BARE mutasjonen som forsvinner.
+  assert.ok(h.textContent.includes("utbetaling"));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });

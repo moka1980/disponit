@@ -5,6 +5,7 @@ import { t } from "../i18n.js";
 import { hentJson, slettPolicy, IkkeFunnetFeil, ApiFeil, UautorisertFeil } from "../api.js";
 import { VarselBanner, TomTilstand, meldLive } from "../komponenter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
+import { harScope } from "../sitekart.js";
 import { medStatus, flateHode } from "./felles.js";
 
 function grenserNode(g) {
@@ -78,11 +79,20 @@ export function visPolicy(hoved, ctx) {
 
 // «Angre» for en feilopprettet policy. Serveren (`slett_ubrukt_policy`, 030)
 // håndhever HELE vilkåret: aldri styrt en beslutning, ingen åpen runde.
-// Knappen står derfor alltid for policyforvalteren, og en avvisning kommer
+// Knappen står derfor alltid for policyFORVALTEREN, og en avvisning kommer
 // tilbake som en FORKLARING («policyen har styrt beslutninger — den kan
 // avvikles, ikke slettes»), ikke som en skjult knapp: en vakt man kan se er
 // en vakt man kan forstå.
+//
+// Men det argumentet gjelder TILSTAND, ikke TILGANG (Codex P2). Denne flaten
+// nås med `policy:read`, og `leser`, `admin` og `sikkerhet` har nettopp det og
+// ikke `policy:write`. For dem er det ingen tilstand som noen gang kan gjøre
+// knappen brukbar — den ville bare invitert dem gjennom en irreversibel
+// bekreftelsesdialog fram til en generisk feil fra serverens 403. En
+// forklaring man ikke kan handle på er ikke en forklaring, den er støy.
+// Lesingen står som før; det er bare mutasjonen som forsvinner.
 function angreSeksjon(d, ctx, tegnPaaNytt) {
+  if (!harScope(ctx, "policy:write")) return null;
   const status = el("p", { class: "muted", role: "status", text: "" });
   const b = el("button", { class: "knapp fare", type: "button",
     text: t("ui.policy.slett") });
