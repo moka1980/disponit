@@ -2,7 +2,8 @@
 // versjonert flyt). Menneskelesbar visning av den lukkede PolicyDTO-en.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, slettPolicy, IkkeFunnetFeil, ApiFeil, UautorisertFeil } from "../api.js";
+import { hentJson, slettPolicy, nyIdempotensnokkel, IkkeFunnetFeil, ApiFeil,
+         UautorisertFeil } from "../api.js";
 import { VarselBanner, TomTilstand, meldLive } from "../komponenter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
 import { harScope } from "../sitekart.js";
@@ -93,6 +94,19 @@ export function visPolicy(hoved, ctx) {
 // Lesingen står som før; det er bare mutasjonen som forsvinner.
 function angreSeksjon(d, ctx, tegnPaaNytt) {
   if (!harScope(ctx, "policy:write")) return null;
+  // Nøkkelen er STABIL PER RENDER (samme R2-idiom som `apneRunde`), ikke per
+  // klikk (Codex P2). Serveren lagrer og replayer nå slettesvaret, men den
+  // evnen er verdiløs om kalleren roterer nøkkelen: går svaret tapt på veien
+  // tilbake, er policyen borte, og et nytt klikk med FERSK nøkkel er en ny
+  // operasjon som møter `policy_ukjent` — den endelige feilmeldingen på en
+  // operasjon som faktisk lyktes, altså nøyaktig det replayen skulle hindre.
+  // Med samme nøkkel svarer serveren det lagrede svaret, og flaten kommer
+  // videre. Per render er riktig grense i begge ender: en avvisning
+  // (`policy_i_bruk`, `runde_allerede_aapen`) ruller tilbake claimet server-
+  // side, så seksjonen står igjen med en ubrukt nøkkel og kan prøve på nytt,
+  // mens et vellykket slett tegner flaten på nytt — og den neste seksjonen
+  // gjelder en annen policy og får sin egen nøkkel.
+  const slettNokkel = nyIdempotensnokkel();
   const status = el("p", { class: "muted", role: "status", text: "" });
   const b = el("button", { class: "knapp fare", type: "button",
     text: t("ui.policy.slett") });
@@ -102,7 +116,7 @@ function angreSeksjon(d, ctx, tegnPaaNytt) {
       tekst: `${d.policy_id} · ${t("ui.policy.slett_tekst")}`,
       primarTekst: t("ui.policy.slett"),
       farlig: true,
-      paaPrimar: () => slettPolicy(d.policy_id)
+      paaPrimar: () => slettPolicy(d.policy_id, slettNokkel)
         .then(() => {
           meldLive(t("ui.policy.slettet"));
           tegnPaaNytt();               // flaten viser nå TomTilstand — sant.

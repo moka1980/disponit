@@ -545,3 +545,46 @@ test("Policy: en leser uten policy:write får ikke slett-seksjonen", async () =>
   assert.ok(h.textContent.includes("utbetaling"));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+test("Policy: en retry av slettingen gjenbruker idempotensnøkkelen",
+  async () => {
+    // Serveren lagrer og replayer slettesvaret, men bare når nøkkelen er den
+    // SAMME. Roterer klienten den, er retryen en ny operasjon på en policy som
+    // alt er borte → `policy_ukjent`: en endelig feil på noe som lyktes.
+    const nokler = [];
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (opts && opts.method === "POST") {
+        nokler.push(opts.headers["Idempotency-Key"]);
+        // Første forsøk: svaret går tapt på veien tilbake.
+        if (nokler.length === 1) throw new TypeError("nettverk");
+        return { ok: true, status: 200,
+          json: async () => ({ slettet: 1, policy_id: "p" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = { ...STD };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    const slett = async () => {
+      [...h.querySelectorAll("button")]
+        .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => [...document.querySelectorAll('[role="dialog"]')].length);
+      const dlg = [...document.querySelectorAll('[role="dialog"]')].pop();
+      [...dlg.querySelectorAll("button")]
+        .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+        .dispatchEvent(new window.Event("click"));
+    };
+    await slett();
+    await vent(() => nokler.length === 1);
+    // Nettverksfeilen etterlater seksjonen — og dermed nøkkelen — på plass.
+    await vent(() => h.textContent.includes(t("ui.policy.slett_feilet")));
+    await slett();
+    await vent(() => nokler.length === 2);
+    assert.ok(nokler[0], "ingen Idempotency-Key ble sendt");
+    assert.equal(nokler[1], nokler[0],
+      "retryen roterte nøkkelen — serveren kan da ikke replaye");
+    globalThis.fetch = brukFetch;
+  });
