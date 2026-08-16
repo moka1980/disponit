@@ -253,3 +253,93 @@ def test_feilet_epost_prøves_igjen_etter_backoff():
             "en feilet e-post ble aldri prøvd igjen")
     finally:
         c.close()
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 (PR-068): credential-veien er en del av inngangspunktet.
+#
+# `LoadCredential=` setter `$CREDENTIALS_DIRECTORY` — den setter ingen
+# miljøvariabel. Hoppes hydreringen over, ser `main()` aldri DSN-en den
+# faktisk HAR fått, og senderen avbryter ved hver eneste timerkjøring. Alle
+# testene over gir `kjor()` en ferdig forbindelse og kan derfor ikke se det:
+# feilen lå i veien fra unit til prosess, ikke i sendingen. Reviewet ba om
+# nettopp den veien målt.
+# ---------------------------------------------------------------------------
+
+def test_inngangspunktet_leser_dsn_fra_credential_katalogen(tmp_path,
+                                                            monkeypatch):
+    """Den faktiske veien: unit → $CREDENTIALS_DIRECTORY → os.environ → DSN.
+
+    Kontroll: fjern `last_credentials()` fra `main()`, og denne dør på
+    «DISPONIT_DATABASE_URL mangler» — nøyaktig linjen journalen ville vist.
+    """
+    import db.pg
+    from drift import kjor_varselsender
+
+    (tmp_path / "DISPONIT_DATABASE_URL").write_text("postgresql:///falsk\n",
+                                                    encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+    monkeypatch.delenv("DISPONIT_DATABASE_URL", raising=False)
+
+    sett = {}
+
+    class _Falsk:
+        def close(self):
+            sett["lukket"] = True
+
+    def _koble(dsn):
+        sett["dsn"] = dsn
+        return _Falsk()
+
+    monkeypatch.setattr(db.pg, "koble", _koble)
+    monkeypatch.setattr(kjor_varselsender.varselsender, "kjor",
+                        lambda conn: {"sendt": 0, "feilet": 0,
+                                      "hoppet_over": 0})
+
+    assert kjor_varselsender.main() == 0, \
+        "senderen avbrøt selv om credentialen lå i katalogen unitten laster"
+    assert sett["dsn"] == "postgresql:///falsk", sett
+    assert sett.get("lukket"), "forbindelsen ble ikke lukket"
+
+
+def test_hver_unit_med_loadcredential_hydrerer_dem():
+    """Porten, ikke bare fiksen: hvert inngangspunkt en unit starter med
+    `LoadCredential=` MÅ kalle `last_credentials()`.
+
+    Tre jobber husket det hver for seg, den fjerde glemte det — og glemselen
+    er usynlig overalt utenom under systemd. Da er koblingen unit → hydrering
+    det som skal måles, ikke den enkelte jobbens hukommelse.
+    """
+    import ast
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    maalt = 0
+    for unit in sorted((rot / "deploy/staging").glob("*.service")):
+        tekst = unit.read_text(encoding="utf-8")
+        if "LoadCredential=" not in tekst:
+            continue
+        m = re.search(r"^ExecStart=\S+/python -m ([\w.]+)", tekst, re.M)
+        if not m:
+            continue          # ikke et `python -m`-inngangspunkt (api, cli)
+        # Modulen slås opp slik unitten selv slår den opp — WorkingDirectory
+        # og PYTHONPATH — så porten følger unitten hvis noen flytter en modul.
+        soek = re.findall(r"^(?:WorkingDirectory=|Environment=PYTHONPATH=)"
+                          r"(\S+)", tekst, re.M)
+        assert soek, f"{unit.name}: verken WorkingDirectory eller PYTHONPATH"
+        treff = [p for p in
+                 (rot / s.replace("/opt/disponit/aktiv/", "")
+                  / (m.group(1).replace(".", "/") + ".py") for s in soek)
+                 if p.exists()]
+        assert treff, f"{unit.name}: fant ikke {m.group(1)} i {soek}"
+        # AST, ikke grep: en docstring som NEVNER hydreringen er ikke en
+        # hydrering. Første utgave av porten var grønn på nettopp det.
+        kalles = any(
+            isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "last_credentials"
+            for n in ast.walk(ast.parse(treff[0].read_text(encoding="utf-8"))))
+        assert kalles, (
+            f"{unit.name} laster credentials, men {m.group(1)} hydrerer dem "
+            "aldri — den avbryter på en miljøvariabel den HAR fått")
+        maalt += 1
+    assert maalt >= 3, f"porten målte bare {maalt} units — regexen råtnet"
