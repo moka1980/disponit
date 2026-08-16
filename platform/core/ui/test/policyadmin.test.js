@@ -1698,6 +1698,34 @@ test("Diff: et enkelt skalarfelt omdøpes ikke til en liste", async () => {
     "en reell skalarliste skal fortsatt bli én rad");
 });
 
+// Sammenslåingen bytter OPPDELING, ikke innhold. `String()` på hver verdi
+// visket ut typen (`true` og `"true"` ble samme tekst) og grensene mellom
+// verdiene (en verdi med komma i seg så ut som to oppføringer). Godkjenneren
+// attesterer `diff_hash` over de eksakte verdiene (Codex P2).
+//
+// Kontroll: bytt `JSON.stringify` tilbake til `String` i `skalarListeRad`, så
+// blir denne rød.
+test("Diff: sammenslåtte listeverdier beholder JSON-type og grenser",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": {
+      ...DETALJ,
+      klassifisering_endringer: [],
+      diff: { endringer: [
+        { sti: "dataklasser[0]", type: "lagt_til", til: true },
+        { sti: "dataklasser[1]", type: "lagt_til", til: "true" },
+        { sti: "dataklasser[2]", type: "lagt_til", til: "a, b" },
+      ] },
+    }, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const rad = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.dataklasser"))
+      .querySelector("li");
+    assert.match(rad.textContent, /true, "true"/,
+      "boolsk `true` og strengen «true» må være til å skille fra hverandre "
+      + `(fikk «${rad.textContent}»)`);
+    assert.ok(rad.textContent.includes('"a, b"'),
+      "en verdi som selv inneholder komma må ha synlige grenser");
+  });
+
 test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
   async () => {
     SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,

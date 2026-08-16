@@ -189,9 +189,16 @@ function elementOverskrift(element, blader, innhold) {
 // En liste av rene verdier («unntak.kategorier[]», «dataklasser[]») blir én
 // rad med alle verdiene, ikke én rad per indeks. Åtte kategorier er én
 // beslutning, ikke åtte.
+//
+// Verdiene serialiseres som JSON, akkurat som i enkeltradene: sammenslåingen
+// bytter oppdeling, ikke innhold. `String()` visket ut både type og grenser —
+// lista `[true, "true"]` ble «true, true», og en verdi som selv inneholder
+// komma var ikke til å skille fra to oppføringer. Godkjenneren attesterer
+// `diff_hash` over de EKSAKTE verdiene, så en visning hun ikke kan lese
+// verdiene tilbake fra, er ikke en lesbar diff (Codex P2).
 function skalarListeRad(element, blader) {
   const verdier = blader.map((e) =>
-    String(e.type === "fjernet" ? e.fra : e.til));
+    JSON.stringify(e.type === "fjernet" ? e.fra : e.til));
   const type = blader[0].type;
   return el("li", {},
     el("code", { text: `${element.replace(/\[\d+\]$/, "")}[]` }),
