@@ -96,6 +96,16 @@ ALTER TABLE varselvalg FORCE ROW LEVEL SECURITY;
 -- ulik 027 og 028 — som er kjørt og immutable — og latt neste leser tro at
 -- de to er en annen sak. Det som faktisk bærer, er skjemaeierskapet over;
 -- flyttes DET, faller 028 først, ikke denne.
+--
+-- OG DET STÅR IKKE LENGER BARE HER (Codex P1 på #71, andre runde). En
+-- påstand om hva basen gjør hører hjemme i en måling, ikke i en kommentar:
+-- `test_skjemaeieren_kan_droppe_en_funksjon_den_ikke_eier` i
+-- `platform/core/tests/test_varselsender.py` kjører nøyaktig denne
+-- setningen som migrator mot den migrerte basen, asserterer forutsetningene
+-- den hviler på (funksjonen eid av domeneeieren, skjemaet av migrator,
+-- medlemskap uten arv), og har motprøven: flyttes skjemaeierskapet, avviser
+-- PostgreSQL den samme setningen. Holder ikke påstanden, blir CI rød her —
+-- i stedet for at en migrasjon stopper halvveis i drift.
 DROP FUNCTION IF EXISTS varsel_klaim_epost(int, int);
 
 CREATE OR REPLACE FUNCTION varsel_klaim_epost(p_grense int,

@@ -2431,6 +2431,78 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         sig: True}, "skjemabred grant til en NAVNGITT rolle er ikke PUBLIC"
 
 
+@pg
+def test_skjemaeieren_kan_droppe_en_funksjon_den_ikke_eier():
+    """Forutsetningen 027, 028 og 031 alle hviler på — MÅLT, ikke antatt.
+
+    Alle tre dropper `varsel_klaim_epost` som `disponit_migrator`, mens
+    funksjonen siden 027 eies av `disponit_domene_eier` og migrator er
+    medlem `WITH INHERIT FALSE` — altså ikke eier i PostgreSQLs forstand.
+    Det som bærer, er at PostgreSQL for DROP godtar eieren av SKJEMAET som
+    alternativ til eieren av objektet, og at både CI (`.github/workflows/
+    ci.yml`) og staging (`deploy/staging/oppsett-postgresql.sh`) gjør
+    `ALTER SCHEMA public OWNER TO disponit_migrator` før første migrasjon.
+
+    Den forutsetningen har til nå bare stått som en KOMMENTAR i 031 (Codex
+    P1 på #71, to runder). En påstand om hva basen gjør, hører hjemme i en
+    måling: holder den ikke, feiler denne testen i stedet for at en
+    migrasjon stopper halvveis i produksjon. Og motprøven under sier hva
+    som faktisk bærer — flyttes skjemaeierskapet, faller 027 og 028 først,
+    ikke 031, og da er DENNE testen stedet det står forklart.
+
+    Begge målingene gjøres i hver sin transaksjon som RULLES TILBAKE. DDL er
+    transaksjonelt i PostgreSQL, så basen er den samme etterpå — og det
+    asserteres, ikke antas.
+    """
+    import psycopg
+    sig = "varsel_klaim_epost(int,int)"
+    c = _conn()
+    try:
+        # Forutsetningene, som er halve poenget: er noen av dem falske, er
+        # ikke denne testen et bevis for noe som helst.
+        eier, skjemaeier, medlem, arver = c.execute(
+            "SELECT pg_get_userbyid(p.proowner),"
+            "       pg_get_userbyid(n.nspowner),"
+            "       pg_has_role(%s, %s, 'MEMBER'),"
+            "       pg_has_role(%s, %s, 'USAGE')"
+            "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE p.oid = %s::regprocedure",
+            (MIGRATORROLLE, EIERROLLE, MIGRATORROLLE, EIERROLLE,
+             sig)).fetchone()
+        assert eier == EIERROLLE, f"{sig} eies av {eier}, ikke {EIERROLLE}"
+        assert skjemaeier == MIGRATORROLLE, (
+            f"skjemaet `public` eies av {skjemaeier} — da er det ikke"
+            f" skjemaeierskapet 031s DROP hviler på")
+        assert medlem, "migrator er ikke medlem av eierrollen"
+        assert not arver, (
+            "migrator ARVER eierrollen — da er dette ikke lenger et"
+            " spørsmål om skjemaeierskap, og `WITH INHERIT FALSE` er borte")
+
+        # Selve påstanden: dette er setningen 028 kjørte og 031 kjører.
+        c.execute("DROP FUNCTION varsel_klaim_epost(int, int)")
+        assert c.execute("SELECT to_regprocedure(%s)",
+                         (sig,)).fetchone()[0] is None, "DROP-en gjorde intet"
+        c.rollback()
+
+        # MOTPRØVEN: det er SKJEMAEIERSKAPET som bærer, ikke medlemskapet og
+        # ikke noe annet. Flyttes skjemaet til domeneeieren, avviser
+        # PostgreSQL nøyaktig den samme setningen.
+        c.execute(f"ALTER SCHEMA public OWNER TO {EIERROLLE}")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("DROP FUNCTION varsel_klaim_epost(int, int)")
+        c.rollback()
+        assert c.execute(
+            "SELECT pg_get_userbyid(nspowner) FROM pg_namespace"
+            " WHERE nspname='public'").fetchone()[0] == MIGRATORROLLE, \
+            "skjemaeierskapet ble ikke rullet tilbake"
+        assert c.execute("SELECT to_regprocedure(%s)",
+                         (sig,)).fetchone()[0] is not None, \
+            "funksjonen ble ikke rullet tilbake"
+    finally:
+        c.rollback()
+        c.close()
+
+
 def _execute_mottakere(conn, signatur):
     """Hvem har EXECUTE på funksjonen — lest av ACL-en, ikke av et kall.
 
