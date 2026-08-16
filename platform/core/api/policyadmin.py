@@ -39,6 +39,7 @@ from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
 from . import policyregister as _pr
+from . import varsel
 from .autorisasjon import scopes_for_roller
 from .mac_register import kanonisk_konvolutt
 
@@ -1033,6 +1034,23 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         # en_aktiv_aktiveringsrunde: allerede en åpen/klar runde for utkastet.
         conn.rollback()
         raise Aktiveringsfeil("runde_allerede_aapen") from None
+
+    # Si fra til dem som kan bringe runden videre. En åpen runde venter på et
+    # MENNESKE, og fram til nå fikk hun aldri vite det — i praksis måtte eier
+    # si fra utenom systemet. Varselet skrives i SAMME transaksjon som runden:
+    # committes runden, finnes varselet; rulles runden tilbake, gjør varselet
+    # det også. En egen transaksjon kunne etterlatt et varsel om en runde som
+    # aldri ble åpnet.
+    #
+    # `varsle_runde_venter` kaster aldri og verner denne transaksjonen med en
+    # savepoint. Det er med vilje og går én vei: en fullmaktsendring skal ikke
+    # kunne feile fordi varslingen gjorde det. Konsekvensen av en varslingsfeil
+    # er at et menneske ikke får en påminnelse — ikke at styringen stopper.
+    varsel.varsle_runde_venter(
+        conn, tenant=tenant, aktor=aktor, request_id=request_id,
+        utkast_id=utkast_id, runde=runde, policy_id=policy_id,
+        risikoklasse=v["risikoklasse"],
+        gjenstaar=v["pakrevd_antall_godkjennere"])
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id, "runde": runde,

@@ -1375,3 +1375,57 @@ def test_db_grensen_maler_bare_differansen_ikke_hele_lastekontrakten():
     finally:
         rt.close()
     assert _aktiv_versjon(pid) == "1.1.0"
+
+
+@pg
+def test_apen_runde_varsler_dem_som_kan_bringe_den_videre():
+    """🔴 P1 (Codex): åpningen av en runde må FAKTISK varsle.
+
+    En åpen runde venter på et menneske, og fram til nå fikk hun aldri vite
+    det — i praksis måtte eier si fra utenom systemet. Tjenestelaget fantes,
+    men ingen produksjonsvei kalte det: `varsle_runde_venter` var bare
+    referert fra sin egen modul og sin egen test, så flyten skrev aldri en
+    eneste `varsel`-rad.
+
+    Testen går den EKTE veien — runtime-rollen, `opprett_aktiveringsrunde`,
+    committet — så den måler samtidig at rollen har rettighetene den trenger.
+
+    Kontroll: fjern `varsel.varsle_runde_venter`-kallet i
+    `opprett_aktiveringsrunde`, så blir denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("varsel-forf", ["policyforvalter"])
+    b = _medlem("varsel-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert r["runde"] == 1
+        assert r["pakrevd_antall_godkjennere"] == 2
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        rader = {x[0]: x for x in m.execute(
+            "SELECT bruker_id, art, hendelse, tekstnokkel, parametre,"
+            " epost_status FROM varsel WHERE tenant=%s"
+            " AND ressurs_type='policyutkast' AND ressurs_id=%s",
+            (TEN, uid)).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+    # Begge kan bringe runden videre: ingen har attestert ennå, og forfatteren
+    # teller — hun kan bare ikke fullføre fire øyne alene.
+    assert {a, b} <= set(rader), (
+        f"runden ble åpnet uten å varsle noen; mottakere={set(rader)}")
+    _, art, hendelse, nokkel, param, epost = rader[b]
+    assert art == "attestering_venter"
+    assert hendelse == "1", "rundenummeret må være varselets hendelsesidentitet"
+    assert nokkel == "varsel.attestering_venter", (
+        "teksten lagres ikke — bare nøkkelen, så varselet kan leses på "
+        "MOTTAKERENS språk")
+    assert param["policy_id"] == pid and param["runde"] == 1
+    assert param["gjenstaar"] == 2
+    assert epost == "koet", "standardvalget er e-post OG portal"
