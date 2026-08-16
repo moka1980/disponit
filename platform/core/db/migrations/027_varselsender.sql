@@ -24,6 +24,14 @@
 -- generell UPDATE på tvers av tenanter: den kan flytte en rad fra sitt eget
 -- klaim til `sendt`/`feilet`, og ingenting annet.
 --
+-- OG EVNEN LIGGER HOS SENDEREN ALENE (eiers P1). Funksjonene er smale, men de
+-- er fortsatt en kryss-tenant-kapabilitet, og hvem som får KALLE dem er
+-- derfor like mye av vernet som hva de returnerer. EXECUTE gis kun til
+-- `disponit_varselsender` — en egen LOGIN-rolle uten en eneste
+-- tabellrettighet, med sin egen DSN i sin egen credential — aldri til
+-- runtime-rollen `disponit` som betjener forespørsler. Se GRANT-blokken
+-- nederst i filen.
+--
 -- PLUKKET ER ET KLAIM, IKKE EN LESNING (Codex P1).
 --
 -- Første utgave var en ren `SELECT` av `koet`-rader, og statusen ble flyttet
@@ -210,31 +218,95 @@ END $$;
 
 ALTER FUNCTION varsel_rekoe(interval, int, interval)
     OWNER TO disponit_domene_eier;
-REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM PUBLIC;
 ALTER FUNCTION varsel_klaim_epost(int, int) OWNER TO disponit_domene_eier;
 ALTER FUNCTION varsel_sett_epoststatus(bigint, text, text)
     OWNER TO disponit_domene_eier;
+
+-- ------------------------------------------------------------
+-- GJERDET, SATT AV EIEREN SELV.
+--
+-- `SET LOCAL ROLE` er ikke pynt her, og 019 lærte det på den harde måten:
+-- kjøres `REVOKE … FROM PUBLIC` av en rolle som IKKE eier funksjonen,
+-- ADVARER PostgreSQL og går videre — men materialiserer samtidig standard-
+-- ACL-en, som for en funksjon er EXECUTE for PUBLIC. Migrator eier ikke
+-- disse tre etter `ALTER … OWNER TO` over, og er dessuten medlem av
+-- eierrollen `WITH INHERIT FALSE`. Uten rolleskiftet var default-deny-en
+-- altså ikke bare uinnført, den var snudd: HVER rolle i klyngen kunne kalle
+-- `varsel_klaim_epost` og lese alle tenanters mottakeradresser. Og ingen
+-- test ville sett det, fordi et privilegium PUBLIC allerede har aldri
+-- feiler — derfor måler `test_varselsender` gjerdet på ACL-en, ikke på at
+-- et kall lykkes.
+--
+-- Medlemskapet gir fortsatt SET ROLE (en eksplisitt, sporbar handling, ikke
+-- stille arv), og `SET LOCAL` varer bare ut kjørerens transaksjon.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_domene_eier;
+
+REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM PUBLIC;
 REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;
 REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, text, text) FROM PUBLIC;
 
--- …OG SÅ TILBAKE TIL DEN ROLLEN SOM FAKTISK KALLER DEM.
+-- …OG SÅ TIL DEN ROLLEN SOM FAKTISK KALLER DEM — OG BARE DEN.
 --
 -- EXECUTE er PUBLIC som standard i PostgreSQL, så `REVOKE … FROM PUBLIC` over
--- er det som gjør funksjonene utilgjengelige — for ALLE utenom eieren. Uten
--- linjene under kunne senderen ikke kalle en eneste av dem: unitten kobler med
--- runtime-DSN-en (`skriv_cred varsel DISPONIT_DATABASE_URL "$DATABASE_URL"`),
--- altså rollen `disponit`, og den er ikke medlem av `disponit_domene_eier`.
--- Hver eneste timerkjøring ville endt i «permission denied for function
--- varsel_klaim_epost», med køen urørt.
+-- er det som gjør funksjonene utilgjengelige. Uten et tilsvarende GRANT kunne
+-- senderen ikke kalle en eneste av dem, og hver eneste timerkjøring endt i
+-- «permission denied for function varsel_klaim_epost», med køen urørt.
 --
--- Og det ville ikke vist seg i CI: testene kobler som `disponit_migrator`, som
--- ER medlem av eierrollen. Samme klasse som de to andre P1-ene i denne runden
--- — grønn der den prøves, død der den kjører. `test_varselsender` måler derfor
--- disse tre gjennom runtime-rollen, ikke gjennom migratorrollen.
+-- MEN IKKE TIL `disponit` (eiers P1). Første utgave grantet alle tre til
+-- runtime-rollen, fordi unitten koblet med runtime-DSN-en. Da fulgte evnen
+-- med til hele web-API-prosessen: `varsel_klaim_epost` er med vilje
+-- SECURITY DEFINER og kryss-tenant, og returnerer tenant, VERIFISERT
+-- e-postadresse, tekstnøkkel og parametre for alle kunders køede varsler.
+-- RLS verner ikke mot den — omgåelsen er nettopp funksjonens formål — så en
+-- kompromittert forespørselsvei kunne lest ut mottakerlisten for hele
+-- installasjonen og tømt køen. Det bryter husets rollemodell (egne DB-roller
+-- for M-37, tokenadmin, egress og domenejobbene), og for en evne bare ett
+-- oneshot trenger.
 --
--- Paret REVOKE + GRANT er husets form (009, 014, 016, 017, 019): revokeringen
--- alene er ikke en tilgangsstyring, den er bare en stengt dør.
-GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO disponit;
-GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
-    TO disponit;
-GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO disponit;
+-- Senderen har derfor sin EGEN rolle med sin EGEN DSN
+-- (`oppsett-postgresql.sh`: `$VARSELSENDER` + `DISPONIT_VARSEL_URL`;
+-- `opp.sh`: `skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"`).
+-- Den rollen eier ingenting og har ingen tabellrettigheter — de tre
+-- funksjonene er alt den kan gjøre i denne basen.
+--
+-- Betinget på EXISTS, av samme grunn som 019s grants til `disponit_domener`:
+-- roller er KLYNGEobjekter og opprettes av `oppsett-postgresql.sh`, aldri i
+-- en migrasjon (migrator har ikke CREATEROLE og skal ikke ha det).
+-- CI-arbeidsflyten speiler normalt rolleoppsettet, men `.github/workflows/`
+-- kan ikke endres herfra; en bar GRANT ville derfor feilet migrasjonen i CI
+-- med «role does not exist». Staging får grantene, og en senere
+-- CI-oppdatering som legger til rollen får dem også — uten en ny migrasjon.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = 'disponit_varselsender') THEN
+        GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)
+            TO disponit_varselsender;
+        GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+            TO disponit_varselsender;
+        GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval)
+            TO disponit_varselsender;
+    END IF;
+END $$;
+
+-- Og hadde en TIDLIGERE kjøring av denne migrasjonen gitt runtime-rollen
+-- EXECUTE, trekkes det tilbake her. Migrasjonen er idempotent, og en grant
+-- som var feil skal ikke overleve fordi den ble gitt før porten fantes.
+REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM disponit;
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+    FROM disponit;
+REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM disponit;
+
+RESET ROLE;
+
+-- Schema-USAGE kan bare gis av skjemaeieren (migrator), derfor etter
+-- RESET ROLE. Uten den er EXECUTE på funksjonene verdiløs: oppslaget av
+-- navnet skjer i skjemaet.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = 'disponit_varselsender') THEN
+        GRANT USAGE ON SCHEMA public TO disponit_varselsender;
+    END IF;
+END $$;

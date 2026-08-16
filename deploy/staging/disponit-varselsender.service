@@ -10,6 +10,13 @@
 # `varsel_sett_epoststatus()` og `varsel_rekoe()` (migrasjon 027), som er
 # SECURITY DEFINER og returnerer nøyaktig de feltene en e-post trenger.
 #
+# Og credentialen under er senderens EGEN (eiers P1): den bærer DSN-en til
+# `disponit_varselsender`, ikke runtime-DSN-en. Rollen eier ingenting og har
+# ingen tabellrettigheter — de tre funksjonene er alt den kan gjøre. Delte
+# den DSN med API-et, ville EXECUTE måttet gis til `disponit`, og da hadde
+# hele forespørselsveien kunnet lese ut alle tenanters mottakeradresser og
+# tømme køen. En smal funksjon er ikke et vern hvis alle kan kalle den.
+#
 # Raden KLAIMES før SMTP og klaimet committes først: to kjøringer som
 # overlapper — timeren går oftere enn en treg SMTP-server svarer — skal ikke
 # kunne sende den samme e-posten hver sin gang.

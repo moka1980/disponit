@@ -202,11 +202,21 @@ skriv_cred() {  # katalog navn verdi
   chmod 600 "/etc/disponit/$1/$2"
 }
 skriv_cred api DATABASE_URL          "$DATABASE_URL"
-# Senderen leser køen som runtime-rollen. Katalogen må finnes FØR `skriv_cred`
-# skriver i den — uten `install -d` feilet omdirigeringen, og den feilen ville
-# først vist seg som en sender uten DB-URL.
+# Katalogen må finnes FØR `skriv_cred` skriver i den — uten `install -d`
+# feilet omdirigeringen, og den feilen ville først vist seg som en sender uten
+# DB-URL.
+#
+# EGEN ROLLE, EGEN CREDENTIAL (eiers P1). Her sto `"$DATABASE_URL"`, altså
+# runtime-rollen — og da måtte migrasjon 027 gi kryss-tenant-funksjonene til
+# `disponit`, som hele web-API-et kobler som. Senderen autentiserer nå som
+# `disponit_varselsender`, en rolle hvis eneste evne i basen er de tre
+# funksjonene. Ingen fallback til `$DATABASE_URL`: en fallback ville vært en
+# stille vei tilbake til nøyaktig den delingen dette fjerner — og med
+# grantene borte fra `disponit` ville den uansett bare gitt
+# «permission denied» ved første timerkjøring. `set -u` gjør en manglende
+# DSN til en avbrutt utrulling i stedet.
 install -d -m 700 /etc/disponit/varsel
-skriv_cred varsel DISPONIT_DATABASE_URL "$DATABASE_URL"
+skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"

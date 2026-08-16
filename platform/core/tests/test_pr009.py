@@ -403,14 +403,20 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     env.update({n: f"verdi-{n}" for n in (
         "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
         "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
-        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL")})
+        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL",
+        "DISPONIT_VARSEL_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
     assert res.returncode == 0, \
         f"credential-materialiseringen feilet på en fersk rot:\n{res.stderr}"
+    # EGEN DSN, ikke runtime-DSN-en (eiers P1). Verdien er det som avgjør
+    # hvilken DB-ROLLE senderen autentiserer som, og dermed om kryss-tenant-
+    # funksjonene måtte grantes til `disponit` — altså til hele web-API-et.
+    # `set -eu` over gjør en manglende DISPONIT_VARSEL_URL til en avbrutt
+    # utrulling; her måles at det er DEN verdien som havner i credentialen.
     assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text(
-        encoding="utf-8") == "verdi-DATABASE_URL"
+        encoding="utf-8") == "verdi-DISPONIT_VARSEL_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():

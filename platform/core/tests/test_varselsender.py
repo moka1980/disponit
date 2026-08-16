@@ -648,38 +648,159 @@ def test_klaimet_tar_aldri_en_rad_som_er_lest():
         c.close()
 
 
-@pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
-def test_runtime_rollen_kan_kalle_senderens_funksjoner():
-    """Rollen som FAKTISK kjører senderen må kunne kalle de tre funksjonene.
+# ---------------------------------------------------------------------------
+# TILLITSGRENSEN (eiers P1): hvem som får KALLE de tre funksjonene.
+#
+# Funksjonene er smale, men de er en KRYSS-TENANT-kapabilitet:
+# `varsel_klaim_epost` er SECURITY DEFINER og returnerer tenant, verifisert
+# e-postadresse, tekstnøkkel og parametre for alle tenanters køede varsler.
+# RLS verner ikke mot den — omgåelsen er formålet. Da er «hvem kan kalle den»
+# like mye av vernet som «hva returnerer den», og det er en egenskap ved
+# ACL-en, ikke ved kroppen.
+#
+# Første utgave grantet alle tre til runtime-rollen `disponit`, fordi unitten
+# koblet med runtime-DSN-en. Hele web-API-prosessen hadde dermed evnen for å
+# betjene ett oneshot.
+# ---------------------------------------------------------------------------
 
-    Migrasjon 027 gjør `REVOKE ALL … FROM PUBLIC` på alle tre. EXECUTE er
-    PUBLIC som standard, så revokeringen er det som stenger døra — og uten et
-    tilsvarende GRANT er den stengt for alle utenom eieren. Senderen kobler med
-    runtime-DSN-en (`disponit`), som ikke er medlem av `disponit_domene_eier`.
+#: Signaturene skrives ut i stedet for å hentes fra katalogen: en test som
+#: spør basen hvilke funksjoner 027 laget, ville godtatt at en av dem
+#: forsvant.
+SENDERFUNKSJONER = [
+    "varsel_klaim_epost(int,int)",
+    "varsel_sett_epoststatus(bigint,text,text)",
+    "varsel_rekoe(interval,int,interval)",
+]
 
-    Alle de andre testene her kobler som `disponit_migrator`, som ER medlem av
-    eierrollen. De ville derfor vært grønne mens hver eneste timerkjøring i
-    drift endte i «permission denied for function varsel_klaim_epost», med køen
-    urørt — samme klasse som de to andre P1-ene i denne runden.
+SENDERROLLE = "disponit_varselsender"
 
-    Kontroll: fjern GRANT-linjene fra 027, og denne blir rød på nøyaktig den
-    feilmeldingen driften ville sett.
 
-    `rollback()` til slutt er IKKE opprydding her: klaimet og re-køingen er
-    UPDATE-er, ikke oppslag, så uten den ville denne rettighetsprøven tatt
-    rader ut av køen for de andre testene.
+def _execute_mottakere(conn, signatur):
+    """Hvem har EXECUTE på funksjonen — lest av ACL-en, ikke av et kall.
+
+    `aclexplode` på en NULL-ACL gir ingen rader; en funksjon uten eksplisitt
+    ACL har standardverdien, altså EXECUTE for PUBLIC. `coalesce` med
+    `acldefault` gjør den underforståtte tilstanden synlig, slik at en
+    REVOKE som mislyktes stille ikke leses som «ingen har tilgang».
+    PUBLIC kommer ut som `-`.
     """
+    rader = conn.execute(
+        "SELECT a.grantee::regrole::text"
+        "  FROM pg_proc p,"
+        "       aclexplode(coalesce(p.proacl,"
+        "                  acldefault('f', p.proowner))) a"
+        " WHERE p.oid = %s::regprocedure AND a.privilege_type='EXECUTE'",
+        (signatur,)).fetchall()
+    conn.rollback()
+    return {r[0] for r in rader}
+
+
+@pg
+def test_bare_senderrollen_har_execute_paa_kryss_tenant_funksjonene():
+    """Gjerdet måles på ACL-en, ikke på at et kall lykkes.
+
+    En `REVOKE … FROM PUBLIC` kan MISLYKKES STILLE: kjøres den av en rolle som
+    ikke eier funksjonen, advarer PostgreSQL og går videre — men
+    materialiserer samtidig standard-ACL-en, som for en funksjon er EXECUTE
+    for PUBLIC. Migrator eier ikke disse tre etter `ALTER … OWNER TO`, og
+    arver ikke eierrollen (`WITH INHERIT FALSE`). Derfor står REVOKE og GRANT
+    i 027 inne i `SET LOCAL ROLE disponit_domene_eier`, og derfor måles
+    resultatet her: et privilegium PUBLIC allerede har, feiler aldri i en
+    funksjonell test.
+
+    Rollen er et KLYNGEobjekt og finnes ikke i alle baser porten måles i (CI
+    speiler ikke `oppsett-postgresql.sh` for denne ennå, og
+    `.github/workflows/` kan ikke endres herfra). Å hoppe over testen da ville
+    latt grensen stå ubevist i nettopp den basen CI kjører — derfor er den
+    delen som gjelder uansett base skrevet uten rollen: INGEN utenom eieren og
+    senderrollen skal ha EXECUTE. Finnes senderrollen i tillegg (staging),
+    måles den positivt oppå.
+    """
+    tillatt = {"disponit_domene_eier", SENDERROLLE}
+    c = _conn()
+    try:
+        for sig in SENDERFUNKSJONER:
+            mottakere = _execute_mottakere(c, sig)
+            assert "-" not in mottakere, f"PUBLIC har EXECUTE på {sig}"
+            assert "disponit" not in mottakere, (
+                f"runtime-rollen har EXECUTE på {sig} — hele web-API-prosessen"
+                " kan da lese og endre varselkø på tvers av alle tenanter")
+            assert mottakere <= tillatt, \
+                f"uventede mottakere av EXECUTE på {sig}: {mottakere - tillatt}"
+
+        finnes = c.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                           (SENDERROLLE,)).fetchone()
+        c.rollback()
+        if not finnes:
+            return
+        for sig in SENDERFUNKSJONER:
+            assert c.execute(
+                "SELECT has_function_privilege(%s,%s,'EXECUTE')",
+                (SENDERROLLE, sig)).fetchone()[0] is True, \
+                f"senderrollen mangler EXECUTE på {sig} — køen ville stått urørt"
+        assert c.execute("SELECT has_schema_privilege(%s,'public','USAGE')",
+                         (SENDERROLLE,)).fetchone()[0] is True
+        c.rollback()
+    finally:
+        c.close()
+
+
+@pg
+def test_senderrollen_har_ingen_tabellrettigheter():
+    """Rollen skal kunne tre funksjoner og INGENTING annet.
+
+    En egen rolle som samtidig hadde SELECT på `varsel` ville vært en
+    omskrivning av problemet, ikke en løsning: da lå kryss-tenant-lesningen
+    fortsatt åpen — bare uten SECURITY DEFINER-funksjonens avgrensning til
+    verifiserte adresser og køede rader. (RLS ville filtrert, men rollen er
+    ikke tenant-bundet, og `varselvalg`/`brukeridentitet` er det som
+    interesserer en angriper.)
+    """
+    c = _conn()
+    try:
+        if not c.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                         (SENDERROLLE,)).fetchone():
+            c.rollback()
+            return
+        rader = c.execute(
+            "SELECT table_name, privilege_type"
+            "  FROM information_schema.table_privileges"
+            " WHERE grantee=%s", (SENDERROLLE,)).fetchall()
+        c.rollback()
+        assert rader == [], f"senderrollen har tabellrettigheter: {rader}"
+    finally:
+        c.close()
+
+
+@pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+def test_runtime_rollen_naar_ikke_senderens_funksjoner():
+    """Og den andre veien, gjennom en ekte forbindelse: API-rollen nektes.
+
+    ACL-testen over leser katalogen; denne kobler som `disponit` — den rollen
+    web-API-et faktisk betjener forespørsler med — og krever
+    `InsufficientPrivilege` på alle tre. Det er den formen et forsøk fra en
+    kompromittert forespørselsvei ville hatt.
+
+    Hver av dem i sin EGEN transaksjon: den første feilen setter forbindelsen
+    i `InFailedSqlTransaction`, og da ville de to neste «feilet» uansett
+    rettighet — altså vært grønne av feil grunn.
+
+    Kontroll: sett `GRANT EXECUTE … TO disponit` tilbake i 027, og denne blir
+    rød.
+    """
+    import psycopg
+
     from db.pg import koble
     c = koble(DSN)
     try:
-        c.execute("SELECT * FROM varsel_klaim_epost(1, 3)").fetchall()
-        c.execute("SELECT varsel_rekoe(interval '15 minutes', 3,"
-                  " interval '30 minutes')")
-        # id -1 finnes ikke: kallet skal slippe gjennom rettighetssjekken og
-        # svare `false`, uten å røre en eneste rad.
-        assert c.execute("SELECT varsel_sett_epoststatus(-1,'sendt',NULL)"
-                         ).fetchone()[0] is False
-        c.rollback()
+        for sql, argumenter in (
+                ("SELECT * FROM varsel_klaim_epost(1, 3)", ()),
+                ("SELECT varsel_rekoe(interval '15 minutes', 3,"
+                 " interval '30 minutes')", ()),
+                ("SELECT varsel_sett_epoststatus(-1,'sendt',NULL)", ())):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                c.execute(sql, argumenter).fetchall()
+            c.rollback()
     finally:
         c.close()
 

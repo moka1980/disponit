@@ -68,15 +68,16 @@ GRANT SELECT ON policyer TO {rolle};
 -- `aktiver_policy` (EXECUTE gitt i migrasjon 013).
 GRANT SELECT ON policy_hode TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattestasjon TO {rolle};
--- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
--- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
--- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
+-- Varsler: flaten leser og merker som lest; tjenesten oppretter. Ingen DELETE
+-- — rydding er en driftsoppgave med egen rolle, ikke noe forespørselsveien
+-- skal kunne gjøre. RLS avgrenser radene til innloggerens egen tenant.
 GRANT SELECT, INSERT, UPDATE ON varsel TO {rolle};
--- Senderen når varsler på tvers av tenanter KUN gjennom de tre SECURITY
--- DEFINER-funksjonene i migrasjon 027 — aldri med BYPASSRLS på egen rolle.
-GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
-GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text) TO {rolle};
-GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
+-- De tre kryss-tenant-funksjonene i migrasjon 027 står bevisst IKKE her
+-- (eiers P1). `varsel_klaim_epost` er SECURITY DEFINER og returnerer tenant,
+-- verifisert e-postadresse, tekstnøkkel og parametre for ALLE tenanters køede
+-- varsler; RLS verner ikke mot den. Et EXECUTE til runtime ville gitt hele
+-- web-API-prosessen den evnen for å betjene ett oneshot. EXECUTE gis kun til
+-- `disponit_varselsender`, i migrasjon 027 og i blokken nederst her.
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
@@ -182,6 +183,33 @@ GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+"""
+
+# PR-068 (eiers P1): e-postsenderens rolle. Den eier ingenting, har ingen
+# tabellrettigheter, og kan gjøre NØYAKTIG tre ting i denne basen — de tre
+# funksjonene migrasjon 027 lager. Kryss-tenant-evnen ligger dermed hos det
+# ene oneshotet som trenger den, ikke hos web-API-prosessen.
+#
+# `SET LOCAL ROLE` av samme grunn som i M37-blokken: bare EIEREN kan gi bort
+# rettigheter på et objekt, og migrator eier ikke disse funksjonene (027
+# flytter eierskapet til `disponit_domene_eier`). Medlemskapet er
+# `WITH INHERIT FALSE`, så rettigheten arves ikke — men SET ROLE er fortsatt
+# mulig, og brukes her, eksplisitt og avgrenset til disse tre GRANT-ene.
+#
+# Grantene står OGSÅ i migrasjon 027, betinget på at rollen finnes, slik at de
+# overlever en skjemagjenoppbygging (testenes _nullstill + re-migrer). Det er
+# ikke en duplisering uten grunn: en migrasjon kjøres ÉN gang og registreres
+# med checksum, så på en base der 027 alt er anvendt før rollen fantes, ville
+# grantene aldri kommet. Denne blokken kjører ved hver utrulling.
+VARSELSENDER_SCHEMA = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+"""
+
+VARSELSENDER_RETTIGHETER = """
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
 """
 
 TOKEN_ADMIN_RETTIGHETER = """
@@ -316,6 +344,23 @@ def main(argv: list[str] | None = None) -> int:
         else:
             conn.rollback()
             print(f"hopper over {arbeider}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
+        # PR-068: senderrollen — betinget som de to over. NULLSTILL_TABELLER
+        # er med med vilje: skulle en tidligere kjøring ha gitt den en
+        # tabellrettighet, skal den bort. Rollen skal kunne tre funksjoner og
+        # ingenting annet.
+        sender = "disponit_varselsender"
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                        (sender,)).fetchone():
+            conn.execute(NULLSTILL_TABELLER.format(rolle=sender))
+            conn.execute(VARSELSENDER_SCHEMA.format(rolle=sender))
+            conn.commit()
+            conn.execute(VARSELSENDER_RETTIGHETER.format(rolle=sender))
+            conn.commit()      # avslutter SET LOCAL ROLE
+            print(f"rettigheter satt for {sender}")
+        else:
+            conn.rollback()
+            print(f"hopper over {sender}: rollen finnes ikke"
                   " (opprettes av oppsett-postgresql.sh)")
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.
