@@ -382,6 +382,28 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
     return rad[0] if rad else None
 
 
+def _krev_peker_synk(conn, tenant: str, policy_id: str,
+                     aktiv_versjon: str | None) -> None:
+    """Pekeren (`policy_hode.aktiv_versjon`) og flagget (`policyer.aktiv`) er to
+    utsagn om NØYAKTIG samme sak. Spriker de, er ikke bare aktiveringen i fare —
+    HELE runden bygger på feil grunnlag: `_base` følger pekeren, så en tom peker
+    over en aktiv policyrad gir en diff mot `DENY_ALL_V1`, en risikoklasse regnet
+    ut fra det, og godkjennere som signerer NØYAKTIG den feilen. Repareres
+    pekeren etterpå, flytter basen seg, og rekalken under låsen krever
+    rebasering: attestasjonene var da verdiløse fra det øyeblikket de ble avgitt.
+
+    Derfor stoppes drift HER — før runden åpnes og før noen attesterer — ikke
+    først når `en_aktiv_per_policy` velter INSERT-en inne i `aktiver_policy`.
+    Kaster `Aktiveringsfeil("aktiv_peker_usynk")`; dataene må repareres."""
+    rad = conn.execute(
+        "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s AND aktiv",
+        (tenant, policy_id)).fetchone()
+    flagget = rad[0] if rad else None
+    if flagget != aktiv_versjon:
+        raise Aktiveringsfeil(
+            "aktiv_peker_usynk", f"peker={aktiv_versjon} flagg={flagget}")
+
+
 # --------------------------------------------------------------------------
 # 1. Runde-åpning.
 # --------------------------------------------------------------------------
@@ -418,6 +440,10 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         raise Aktiveringsfeil("utkast_ikke_validert", "mangler innholds_hash")
 
     aktiv_versjon = _hode_aktiv_versjon(conn, tenant, policy_id)
+    # Ingen runde åpnes på en base vi ikke stoler på (Codex P1): en usynk peker
+    # ville gitt godkjennerne en diff mot feil base, og runden kunne uansett
+    # ikke aktiveres etter en reparasjon.
+    _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -525,6 +551,18 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     if forventet_diff_hash != r_diff_hash:
         conn.rollback()
         raise Aktiveringsfeil("diff_utdatert")
+
+    # --- 5b. Basen må være TROVERDIG før noen signerer på den (Codex P1) ----
+    # En runde kan ha vært åpen da drift oppsto (eller ha blitt åpnet før denne
+    # kontrollen fantes). En godkjenner skal ikke få avgi en attestasjon som er
+    # verdiløs i det øyeblikket den skrives: attesterer hun en diff mot en base
+    # pekeren ikke er enig i, kan runden ikke aktiveres — og en reparasjon
+    # flytter basen, så rekalken i steg 9 krever rebasering uansett.
+    try:
+        _krev_peker_synk(conn, tenant, policy_id, aktiv_versjon)
+    except Aktiveringsfeil:
+        conn.rollback()
+        raise
 
     # --- 6. Bygg + MAC-signer konvolutten fra LÅSTE data -------------------
     er_forfatter = (aktor == opprettet_av)

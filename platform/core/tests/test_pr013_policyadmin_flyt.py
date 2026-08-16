@@ -424,3 +424,86 @@ def test_idempotent_replay():
         assert r2["utfall"] == r1["utfall"] == "venter_godkjennere"
     finally:
         rt.close()
+
+
+# --------------------------------------------------------------------------
+# Pekerdrift (Codex P1): peker og flagg som spriker skal stoppe runden FØR
+# noen signerer, ikke først når `en_aktiv_per_policy` velter aktiveringen.
+# --------------------------------------------------------------------------
+
+def _drift(pid, versjon="9"):
+    """Nøyaktig prod-tilstanden: en AKTIV policyrad uten ankerrad.
+
+    Slik så en tenant ut etter `init-tenant.sh` før denne PR-en — og det er
+    tilstanden runden ikke har lov til å bygge på.
+    """
+    innhold = {"roller": [{"id": "rDrift"}]}
+    m = _mig()
+    m.execute(
+        "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
+        "innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',%s::jsonb,true)",
+        (TEN, pid, versjon, pr.innholds_hash(innhold), json.dumps(innhold)))
+    m.commit()
+    m.close()
+
+
+@pg
+def test_usynk_peker_stopper_runde_apning():
+    """En runde skal ikke ÅPNES på en base pekeren ikke er enig i.
+
+    Uten kontrollen leser runde-åpningen NULL-pekeren, differ mot DENY_ALL_V1
+    og lar godkjennerne signere en klassifisering som er regnet ut fra feil
+    base — en runde som uansett ikke kan aktiveres etter en reparasjon.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}]})
+    _drift(pid)
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "aktiv_peker_usynk", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        assert m.execute("SELECT count(*) FROM aktiveringsrunde WHERE tenant=%s"
+                         " AND utkast_id=%s", (TEN, uid)).fetchone()[0] == 0, (
+            "runden ble åpnet på en usynk base")
+    finally:
+        m.rollback(); m.close()
+
+
+@pg
+def test_usynk_peker_stopper_attestering_for_signaturen_skrives():
+    """Oppstår driften ETTER at runden åpnet, stoppes den ved attesteringen.
+
+    Og den stoppes FØR attestasjonen skrives: en signatur på et grunnlag som
+    ikke kan aktiveres er ingen godkjenning. Eier skal få vite at dataene må
+    repareres — ikke at «handlingen feilet».
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}]})
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)          # ren base: ingen aktiv rad, ingen peker
+        _drift(pid)                    # ... og så kommer driften
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _attester(rt, uid, a, r["diff_hash"])
+        assert e.value.kode == "aktiv_peker_usynk", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        assert m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0] == 0, (
+            "attestasjonen ble skrevet på et grunnlag som ikke kan aktiveres")
+    finally:
+        m.rollback(); m.close()
