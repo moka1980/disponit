@@ -751,3 +751,53 @@ test("Valider som fullfører etter «Rediger» river ikke bort editoren", async 
     "detaljsiden tegnet seg over editoren");
   gjenopprett();
 });
+
+// Codex P2: eierskapet stoppet ved editordøra. `aapneEditor` talte opp
+// generasjonen, men editoren fikk aldri vite hva den skulle måles mot — og den
+// tegner ingenting før utkastet er hentet. Detaljsiden med tilbakeknappen blir
+// derfor stående mens GET-en er ute: rakk eier å trykke «Tilbake», lastet lista,
+// og editorsvaret tegnet seg etterpå rett over den.
+test("Editor: treigt utkastsvar tegner seg ikke over lista man gikk tilbake til",
+  async () => {
+    let slipp = null;
+    let runde = 0;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      // Første GET er detaljsidens; den andre er editorens, og det er den som
+      // skal henge mens eier finner veien tilbake.
+      if (url.split("?")[0] === "/v1/policyutkast/u-1" && ++runde === 2) {
+        await new Promise((r) => { slipp = r; });
+        return { ok: true, status: 200, json: async () =>
+          ({ ...DETALJ, status: "utkast", aktiv_runde: null,
+             innhold: { meta: { policy_id: "p" } } }) };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = {
+      "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+        status: "utkast", utkastversjon: 2,
+        opprettet: "2026-08-10T08:00:00+00:00" }] },
+      "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null,
+        innhold: { meta: { policy_id: "p" } } },
+      __post: async () => ({}),
+    };
+    const h = nyHoved();
+    const side = await _aapneDetaljMed(h, t("ui.policyadmin.handling.rediger"));
+    _finn(side, t("ui.policyadmin.handling.rediger"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slipp);                   // editorens GET er ute på nettet
+
+    // Detaljsiden står fremdeles — editoren har ikke tegnet noe ennå, og
+    // tilbakeknappen er dermed fortsatt eiers.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector("tbody"));
+
+    slipp();
+    await vent(() => false, 20);               // la svaret få tegne, om det vil
+    assert.ok(h.querySelector("tbody"),
+      "editorsvaret rev bort lista eier gikk tilbake til");
+    assert.ok(!h.textContent.includes(t("ui.editor.tittel")),
+      "editoren tegnet seg over lista");
+    globalThis.fetch = brukFetch;
+  });

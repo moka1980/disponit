@@ -348,12 +348,20 @@ export function visPolicyadmin(hoved, ctx) {
 
   // Editoren tar over `hoved`. Ved lagring åpnes utkastets detalj; Avbryt/
   // fullført går tilbake til lista.
+  //
+  // Eierskapet stoppet ved editordøra (Codex P2): generasjonen ble talt opp
+  // her, men editoren fikk aldri vite hva den skulle måles mot. Den tegner
+  // ingenting før utkastet er hentet, så detaljsiden — med tilbakeknappen —
+  // blir stående mens GET-en er ute. Rakk eier å trykke «Tilbake», lastet lista,
+  // og editorsvaret tegnet seg etterpå rett over den. Editoren får derfor med
+  // seg SIN generasjon og sjekker den på hver asynkrone vei tilbake.
   function aapneEditor(opts) {
-    nyVisning();          // editoren eier `hoved` nå; eldre svar slipper ikke til
+    const min = nyVisning();   // editoren eier `hoved` nå; eldre svar slipper ikke til
     visPolicyeditor(hoved, ctx, {
       ...opts,
       aapneUtkast: aapneDetalj,
       tilbake: tilbakeTilListe,
+      eierSkjermen: () => eierSkjermen(min),
     });
   }
 
