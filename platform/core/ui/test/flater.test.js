@@ -489,6 +489,8 @@ test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten"
     const dlg = [...document.querySelectorAll('[role="dialog"]')]
       .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")));
     assert.ok(dlg.textContent.includes("p"), "dialogen navngir ikke policyen");
+    // ÉN aktiv policy: da er «tenanten står uten aktiv policy etterpå» sant.
+    assert.ok(dlg.textContent.includes(t("ui.policy.slett_tekst")));
     assert.equal(postet, null, "slettet FØR eier bekreftet");
     [...dlg.querySelectorAll("button")]
       .find((b) => b.textContent.trim() === t("ui.policy.slett"))
@@ -549,6 +551,13 @@ test("Policy: flere aktive → hver av dem kan slettes, ikke en blindvei",
       .find((d) => d.textContent.includes("tjenestebedrift2"))) &&
       [...document.querySelectorAll('[role="dialog"]')]
         .find((d) => d.textContent.includes("tjenestebedrift2"));
+    // Bekreftelsen beskriver tilstanden slettingen faktisk etterlater:
+    // `tjenestebedrift1` blir stående og styrer beslutninger videre.
+    // Kontroll: bruk `slett_tekst` her også, så blir denne rød.
+    assert.ok(dlg.textContent.includes(t("ui.policy.slett_tekst_flere")),
+      "bekreftelsen beskrev ikke de øvrige aktive");
+    assert.ok(!dlg.textContent.includes(t("ui.policy.slett_tekst")),
+      "bekreftelsen lovet at tenanten blir stående uten aktiv policy");
     [...dlg.querySelectorAll("button")]
       .find((b) => b.textContent.trim() === t("ui.policy.slett"))
       .dispatchEvent(new window.Event("click"));

@@ -720,6 +720,7 @@
   "ui.policy.flere_aktive": "Flere policyer står aktive samtidig for arbeidsområdet. Det er en feiltilstand: policyen som håndheves kan ikke vises før den er ryddet opp. Er en av dem opprettet ved en feil, kan den slettes her så lenge den aldri har styrt en beslutning.",
   "ui.policy.aktive": "Policyer som står aktive",
   "ui.policy.slett_tekst": "Policyen slettes og tenanten står uten aktiv policy til en ny aktiveres. Handlingen kan ikke angres.",
+  "ui.policy.slett_tekst_flere": "Bare denne policyen slettes. De øvrige som står aktive blir stående og styrer beslutninger videre. Handlingen kan ikke angres.",
   "ui.policy.slettet": "Policyen er slettet.",
   "ui.policy.slett_i_bruk": "Policyen har styrt beslutninger og kan ikke slettes — revisjonssporet refererer den. Den kan avvikles, ikke slettes.",
   "ui.policy.slett_runde_aapen": "En aktiveringsrunde står åpen for denne policyen. Avslutt runden først.",

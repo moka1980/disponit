@@ -154,7 +154,12 @@ export function visPolicy(hoved, ctx) {
 // bekreftelsesdialog fram til en generisk feil fra serverens 403. En
 // forklaring man ikke kan handle på er ikke en forklaring, den er støy.
 // Lesingen står som før; det er bare mutasjonen som forsvinner.
-function angreSeksjon(d, ctx, tegnPaaNytt, navngi = false) {
+//
+// `flere` sier at DENNE policyen er én av flere som står aktive. Det styrer
+// to ting som begge følger av nettopp det: seksjonen navngir sin policy (to
+// like «Slett policy»-knapper er ikke et valg), og bekreftelsen beskriver den
+// tilstanden slettingen faktisk etterlater.
+function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
   if (!harScope(ctx, "policy:write")) return null;
   // Nøkkelen er STABIL PER RENDER (samme R2-idiom som `apneRunde`), ikke per
   // klikk (Codex P2). Serveren lagrer og replayer nå slettesvaret, men den
@@ -175,7 +180,15 @@ function angreSeksjon(d, ctx, tegnPaaNytt, navngi = false) {
   b.addEventListener("click", () => {
     Bekreftelsesdialog({
       tittel: t("ui.policy.slett_tittel"),
-      tekst: `${d.policy_id} · ${t("ui.policy.slett_tekst")}`,
+      // Bekreftelsen må beskrive tilstanden ETTER slettingen, og den er ikke
+      // den samme i de to visningene (Codex P2). Endepunktet sletter kun
+      // `d.policy_id`: står tenanten med FLERE aktive, blir de øvrige stående
+      // og styrer beslutninger videre. «Tenanten står uten aktiv policy» ville
+      // der vært direkte galt — og galt på den farligste måten, som det siste
+      // en operatør leser før et irreversibelt valg: den som tror at
+      // håndhevingen stopper, sletter for å stoppe den.
+      tekst: `${d.policy_id} · ${flere ? t("ui.policy.slett_tekst_flere")
+                                       : t("ui.policy.slett_tekst")}`,
       primarTekst: t("ui.policy.slett"),
       farlig: true,
       paaPrimar: () => slettPolicy(d.policy_id, slettNokkel)
@@ -199,10 +212,10 @@ function angreSeksjon(d, ctx, tegnPaaNytt, navngi = false) {
   // «Slett policy», gjentatt, er ikke et valg man kan ta.
   const navn = merke(d);
   return el("section", { class: "policy-angre",
-    "aria-label": navngi
+    "aria-label": flere
       ? `${t("ui.policy.slett_tittel")}: ${navn}` : t("ui.policy.slett_tittel") },
     el("h3", { text: t("ui.policy.slett_tittel") }),
-    navngi ? el("p", {}, el("strong", { text: navn })) : null,
+    flere ? el("p", {}, el("strong", { text: navn })) : null,
     el("p", { class: "muted", text: t("ui.policy.slett_forklaring") }),
     b, status);
 }
