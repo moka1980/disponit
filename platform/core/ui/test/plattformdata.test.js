@@ -81,24 +81,49 @@ test("erTilgjengelig: brikka følger BEGGE aksene", () => {
 });
 
 test("heroTekstNokkelFor: delvis utrulling har sin egen tekst", () => {
-  // Presensformen («agenten håndterer utbetalinger, purringer, oppfølging og
-  // rapportering») lover ALLE fire områdene. Den er derfor bare sann når
-  // hvert tilbudspunkt er i drift. Ett `some()` slo den på ved den FØRSTE
-  // modulen som gikk i drift, mens tre brikker fortsatt sa «Kommer» — samme
-  // selvmotsigelse som med null i drift, bare flyttet (Codex P2).
+  // «Alle områdene under er i drift» lover ALLE fire punktene, og er derfor
+  // bare sann når hvert tilbudspunkt er i drift. Ett `some()` slo den på ved
+  // den FØRSTE modulen som gikk i drift, mens tre brikker fortsatt sa
+  // «Kommer» — samme selvmotsigelse som med null i drift, bare flyttet
+  // (Codex P2).
   assert.equal(heroTekstNokkelFor(0, 4), "site.hero.tekst_bygges");
   assert.equal(heroTekstNokkelFor(1, 4), "site.hero.tekst_delvis",
     "én av fire i drift lover ikke alle fire");
   assert.equal(heroTekstNokkelFor(3, 4), "site.hero.tekst_delvis",
     "tre av fire i drift lover fortsatt ikke alle fire");
   assert.equal(heroTekstNokkelFor(4, 4), "site.hero.tekst");
-  // Alle tre nøklene må finnes på BEGGE språk — ellers ville en delvis
+  // Alle nøklene må finnes på BEGGE språk — ellers ville en delvis
   // utrulling rendret selve nøkkelen som brødtekst på forsiden, og bare på
-  // det språket ingen husket å fylle.
+  // det språket ingen husket å fylle. `site.hero.tilbud` står i samme liste
+  // fordi den rendres i ALLE tre tilstandene, ikke bare én av dem.
   for (const [sprak, sett] of LOKALER) {
-    for (const nokkel of ["site.hero.tekst", "site.hero.tekst_bygges",
-                          "site.hero.tekst_delvis"]) {
+    for (const nokkel of ["site.hero.tilbud", "site.hero.tekst",
+                          "site.hero.tekst_bygges", "site.hero.tekst_delvis"]) {
       assert.ok(sett[nokkel], `${nokkel} mangler i locales/${sprak}.json`);
+    }
+  }
+});
+
+test("site.hero.tilbud: tilbudsteksten overlever hver utrullingstilstand", () => {
+  // Tilbudsbeskrivelsen lå inni `tekst_bygges`, altså i den ENE nøkkelen som
+  // velges når ingenting er i drift. Første modul i drift ville byttet den
+  // ut med `tekst_delvis` og tatt hele beskrivelsen med seg (Codex P2).
+  //
+  // Testen bevoktes av innholdet, ikke av lengden: står et av områdene som
+  // BARE tilbudsteksten nevner i en utrullingsavhengig nøkkel, har noen
+  // flyttet beskrivelsen tilbake dit den forsvinner igjen.
+  const utrullingsavhengige = ["site.hero.tekst", "site.hero.tekst_bygges",
+                               "site.hero.tekst_delvis"];
+  for (const [sprak, sett] of LOKALER) {
+    const tilbud = sett["site.hero.tilbud"];
+    for (const omrade of ["compliance", "HR"]) {
+      assert.ok(tilbud.includes(omrade),
+        `site.hero.tilbud nevner ikke ${omrade} i locales/${sprak}.json`);
+      for (const nokkel of utrullingsavhengige) {
+        assert.ok(!sett[nokkel].includes(omrade),
+          `${nokkel} bærer tilbudsteksten (${omrade}) i locales/${sprak}.json` +
+          " — den forsvinner da i de andre utrullingstilstandene");
+      }
     }
   }
 });

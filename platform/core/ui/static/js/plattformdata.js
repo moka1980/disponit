@@ -194,23 +194,32 @@ export function erTilgjengelig(id) {
   return erTilgjengeligFor(modulStatus(id), _produksjonsmiljo);
 }
 
-// Hovedløftet i heltet er formulert i presens («agenten håndterer …»), men
+// Statuslinja i heltet var formulert i presens («agenten håndterer …»), men
 // med null moduler i drift rendres hvert eneste tilbudspunkt under det som
 // «Kommer». Forsiden motsa da seg selv innenfor én skjermhøyde (Codex P2).
 // Teksten velges derfor av den SAMME `MODULSTATUS` som brikkene.
 //
 // Utrullingen har TRE tilstander, ikke to (Codex P2, andre runde): et
-// `some()` lot den første modulen som gikk i drift slå på presensformen, og
-// den lover ALLE fire områdene selv om tre brikker fortsatt sier «Kommer» —
-// samme selvmotsigelse, bare flyttet fra null til delvis. Presensformen over
-// hele linja krever derfor at HVERT tilbudspunkt er i drift; er noen, men
-// ikke alle, i drift, har delvis-formen sin egen tekst som lover det som
-// står merket «Tilgjengelig» og sier at resten bygges.
+// `some()` lot den første modulen som gikk i drift slå på «alle områdene er
+// i drift», selv om tre brikker fortsatt sa «Kommer» — samme selvmotsigelse,
+// bare flyttet fra null til delvis. Den formen krever derfor at HVERT
+// tilbudspunkt er i drift; er noen, men ikke alle, i drift, har delvis-formen
+// sin egen tekst som peker på det som står merket «Tilgjengelig» og sier at
+// resten bygges.
 //
 // Selve valget er skilt ut som en ren funksjon av tellingene, så alle tre
 // tilstandene kan pinnes i test uten å forfalske `MODULSTATUS` — den
 // beholder én kilde, og delvis-tilfellet trenger ikke vente på at en modul
 // faktisk går i drift før noen oppdager at teksten er feil.
+//
+// Nøklene her sier BARE hvor langt utrullingen har kommet (Codex P2, tredje
+// runde). Den samlede tilbudsbeskrivelsen — alle områdene Disponit dekker —
+// lå en periode inni `tekst_bygges`, altså i den ene nøkkelen som forsvinner
+// i det den FØRSTE modulen går i drift: hele beskrivelsen ville da falt bort
+// og etterlatt den gamle firepunkts-innrammingen. Tilbudet er ikke en
+// funksjon av utrullingen, så det står i `site.hero.tilbud`, som rendres
+// uansett tilstand. Da har hver tekst én jobb, og det finnes ikke lenger en
+// tilstand som mister innhold.
 export function heroTekstNokkelFor(iDrift, totalt) {
   if (iDrift <= 0) return "site.hero.tekst_bygges";
   return iDrift >= totalt ? "site.hero.tekst" : "site.hero.tekst_delvis";
