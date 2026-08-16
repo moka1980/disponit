@@ -43,6 +43,7 @@ let SVAR;
 globalThis.fetch = async (url, opts) => {
   const sti = url.split("?")[0];
   if (opts && opts.method) return SVAR.__post(url, opts);
+  if (SVAR.__get) SVAR.__get(sti);
   const d = SVAR[sti];
   return d ? { ok: true, status: 200, json: async () => d }
            : { ok: false, status: 404, json: async () => ({ feil: "x" }) };
@@ -429,4 +430,28 @@ test("Utkast: åpnes som side i flaten, med policy-ID synlig og vei tilbake", as
     .dispatchEvent(new window.Event("click"));
   await vent(() => h.querySelector("tbody"));
   assert.ok(h.querySelector("tbody"), "kom ikke tilbake til utkastlista");
+});
+
+// Codex P1: da detaljen var en skuff, måtte «Rediger» lukke skuffen først. Som
+// side ble lukkingen til `tilbakeTilListe`, og den lukker ingenting — den
+// starter en ny liste-GET. Den og editorens detalj-GET tegner i samme `hoved`,
+// så et sent listesvar erstattet editoren, med det eier hadde rukket å skrive.
+test("Rediger: går rett til editoren uten å laste lista på nytt", async () => {
+  const get = [];
+  SVAR = {
+    "/v1/policyutkast": { utkast: [{ utkast_id: "u-1", policy_id: "p",
+      status: "utkast", utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" }] },
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null,
+      innhold: { meta: { policy_id: "p" } } },
+    __get: (sti) => get.push(sti),
+    __post: async () => ({}),
+  };
+  const h = nyHoved();
+  const side = await _aapneDetaljMed(h, t("ui.policyadmin.handling.rediger"));
+  get.length = 0;
+  _finn(side, t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.editor.tittel")));
+  assert.deepEqual(get.filter((s) => s === "/v1/policyutkast"), [],
+    "Rediger startet en liste-GET som kappløper med editoren om `hoved`");
 });

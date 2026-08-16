@@ -122,18 +122,23 @@ let _hintTeller = 0;
 // uten runde → Åpne runde; åpen/klar runde → Attester (m/ eksplisitt kvittering).
 // Returnerer { rot, diffVist } — `diffVist` melder fra at diffpanelet faktisk
 // er tegnet, og er det som låser opp attestering (se attest-grenen).
-function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
+function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
   const boks = el("section", { class: "pa-handling",
     "aria-label": t("ui.policyadmin.handlinger") });
   const runde = detalj.aktiv_runde;
   let diffVist = () => {};
 
   if (detalj.status === "utkast") {
-    // Rediger: lukk detaljskuffen og åpne editoren på utkastet.
+    // Rediger går RETT til editoren. Da detaljen var en skuff, måtte skuffen
+    // lukkes først; som side er det ingenting å lukke — editoren overtar
+    // `hoved` selv. Ble lukkingen med videre, kalte den `tilbakeTilListe`, og
+    // det er ikke en DOM-operasjon: det starter en ny liste-GET (Codex P1).
+    // Den og editorens detalj-GET tegner i samme `hoved`, så kom listesvaret
+    // sist, erstattet det editoren — potensielt etter at eier hadde begynt å
+    // skrive, og da med det hun hadde skrevet.
     const rediger = el("button", { class: "knapp", type: "button",
       text: t("ui.policyadmin.handling.rediger") });
     rediger.addEventListener("click", () => {
-      if (lukkPanel) lukkPanel();
       if (aapneEditor) aapneEditor({ utkast_id: uid });
     });
     // STABIL nøkkel per render (Codex R2): re-klikk = retry, ikke ny operasjon.
@@ -255,7 +260,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   return { rot: boks, diffVist };
 }
 
-function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
+function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
   const dl = el("dl", { class: "kv" });
   kvRad(dl, t("ui.policyadmin.kol.policy"), detalj.policy_id);
   kvRad(dl, t("ui.policyadmin.kol.status"),
@@ -288,7 +293,7 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   }
   // Handlingene bygges FØR fanene: attestering er låst til diffen er sett, og
   // `Faner` melder fra om det allerede under første tegning.
-  const handl = handlinger(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel);
+  const handl = handlinger(detalj, uid, ctx, paaFerdig, aapneEditor);
   // Venter utkastet på attestering, er diffen — ikke nøkkeltallene — det
   // godkjenneren er her for. Da åpner skuffen på «Endringer».
   const venterAttest = detalj.aktiv_runde
@@ -318,7 +323,7 @@ function aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe) {
       tilbake,
       detaljInnhold(detalj, uid, ctx,
         () => aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe),
-        aapneEditor, tilbakeTilListe));
+        aapneEditor));
     // Fokus til overskriften: siden ble byttet ut, og uten dette står fokus
     // igjen på raden man klikket i en liste som ikke er der lenger.
     const h = hoved.querySelector("h2, h1");
