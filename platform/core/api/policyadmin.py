@@ -473,6 +473,11 @@ def _dokumentavvik(policy_id: str, innhold) -> list[str]:
         avvik.append(
             f"meta.status {status!r} må være {_AKTIVERINGSSTATUS!r} — en"
             " fire-øyne-runde aktiverer policyen som produksjonspolicy")
+    versjon = _meta(innhold).get("versjon")
+    if isinstance(versjon, str) and len(versjon) > _MAKS_VERSJONSLENGDE:
+        avvik.append(
+            f"meta.versjon er {len(versjon)} tegn — maks er"
+            f" {_MAKS_VERSJONSLENGDE}")
     return avvik
 
 
@@ -520,6 +525,16 @@ _DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
 
 #: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`).
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+#: Lengste versjon registeret KAN lagre. Ikke en smakssak: `versjon` er del av
+#: primærnøkkelen `(tenant, policy_id, versjon)`, og en btree-oppføring har et
+#: hardt tak (~2704 byte på 8 KiB-sider) som de tre feltene deler. Skjemaet
+#: setter ingen grense, og API-ets kroppsgrense slipper gjennom ledd på titusener
+#: av sifre — uten dette ville en slik versjon passert alle kontrollene og først
+#: veltet på INSERT-en, som `ProgramLimitExceeded`: en uhåndtert 500 midt i
+#: fire-øyne-runden, etter at godkjennerne hadde signert. 512 er flere hundre
+#: ganger lengre enn en ekte semver og fortsatt trygt under indeksgrensen.
+#: Migrasjon 024 håndhever det samme tallet som siste skanse.
+_MAKS_VERSJONSLENGDE = 512
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
 #: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
 _TALLVERSJON = re.compile(r"^\d+(\.\d+)*$")
@@ -567,8 +582,12 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     `_krev_peker_synk` — den kjører før runden åpnes og før noen attesterer.
     -> versjonen som vil bli lagret. Kaster `Aktiveringsfeil`."""
     ny = _meta(ny_innhold).get("versjon")
-    if not isinstance(ny, str) or not _SEMVER.match(ny):
-        raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r}")
+    if not isinstance(ny, str) or not _SEMVER.match(ny) \
+            or len(ny) > _MAKS_VERSJONSLENGDE:
+        # Formen OG lengden: en versjon registeret ikke kan lagre er like
+        # umulig å aktivere som en som mangler (se `_MAKS_VERSJONSLENGDE`), og
+        # skal stoppes her — ikke som en indeksfeil etter to signaturer.
+        raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r:.80}")
     if conn.execute(
             "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND versjon=%s", (tenant, policy_id, ny)).fetchone():

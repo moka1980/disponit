@@ -1,5 +1,5 @@
 -- ============================================================
--- 024 — Versjonsleddene sammenlignes uten 32-bits cast (Codex P2)
+-- 024 — Versjonsleddene sammenlignes uten tallcast i det hele tatt (Codex P2)
 --
 -- 🔴 FUNNET: monotonikontrollen caster leddene til `int[]`. Skjemaet setter
 -- ingen øvre grense på et versjonsledd (`policy-schema-v0.2.json`:
@@ -12,26 +12,37 @@
 -- senere styrte aktivering for den policyen samme cast. Policyen blir umulig å
 -- avløse gjennom den styrte veien, uten at noen feilmelding sier hvorfor.
 --
--- Porten hadde samme sykdom i egen form: `_versjonsnokkel` brukte `int()`, og
--- CPython nekter å konvertere strenger over 4300 sifre. Den sammenligner nå
--- (antall sifre, sifrene) — ubegrenset, og nøyaktig tallorden for ikke-negative
--- heltall.
+-- 🔴 OG ETT TAK TIL (Codex, andre runde): `numeric` er ikke ubegrenset heller.
+-- Heltallsdelen tar 131 072 sifre, og API-ets kroppsgrense på 256 KiB slipper
+-- gjennom et ledd på ~140 000. Da reiste `::numeric[]` samme feil, og selv om
+-- underblokken gjorde den om til et pent `check_violation`, var utfallet feil:
+-- runden ble KANSELLERT som `versjon_i_bruk` for en versjon som i virkeligheten
+-- er nyere, og som porten (Python) hadde godtatt. To gater som er uenige om
+-- samme dokument er verre enn én som er streng.
 --
--- 🟢 RETNINGEN: `numeric[]`, som er vilkårlig presist, i stedet for `int[]`.
--- I tillegg fanger en underblokk ENHVER castfeil og gjør den om til
--- `check_violation` — det deterministiske utfallet kalleren allerede kan
--- besvare (runden kanselleres, signaturene består). En versjon vi ikke kan
--- sammenligne, er en versjon vi ikke aktiverer; det er fail-closed, og det er
--- aldri en 500.
+-- 🟢 RETNINGEN: ingen tallcast. Leddene sammenlignes som (ANTALL SIFRE,
+-- SIFRENE) etter at innledende nuller er strøket — for ikke-negative heltall er
+-- det nøyaktig tallordenen, og det har ikke noe tak overhodet. Tekst-
+-- sammenligningen tvinges til `COLLATE "C"` så ordenen er sifferordenen og
+-- ikke en lokaltilpasset kollasjon.
+--
+-- Dette er PRESIS samme algoritme som porten bruker
+-- (`policyadmin._versjonsnokkel`), og det er poenget: de to gatene måler
+-- samme dokument likt, i stedet for å møtes i et hjørne der den ene sier
+-- «nyere» og den andre kansellerer runden.
 --
 -- Alternativet Codex nevner — å sette en sifergrense i skjemaet — er ikke
 -- valgt: det ville avvist dokumenter skjemaet i dag godtar, og flyttet
--- problemet til en grense noen må vedlikeholde. Ubegrenset sammenligning
+-- problemet til en grense noen må vedlikeholde. En sammenligning uten tak
 -- trenger ingen grense.
 --
 -- Funksjonen erstattes i sin helhet (023 er siste versjon); alt annet er
 -- uendret. `db/kjorer.py` verifiserer SHA-256 på hver anvendt migrasjon, så
--- 020–023 kan ikke rettes i ettertid — rettelsen hører hjemme her.
+-- 020–023 kan ikke rettes i ettertid — rettelsen hører hjemme her. DENNE filen
+-- er derimot rettet i seg selv, ikke etterfulgt av en 025: 024 har aldri vært
+-- på `main`, den er ny i samme PR, og reglen som gjør historikken immutable
+-- gjelder ANVENDTE migrasjoner. En 025 som erstattet en 024 ingen har kjørt,
+-- ville vært historikk om vår egen review-runde, ikke om databasen.
 -- ============================================================
 
 SET LOCAL ROLE disponit_policy_eier;
@@ -62,6 +73,10 @@ DECLARE
     v_bredde        INT;
     v_dok_pid       TEXT;
     v_dok_status    TEXT;
+    v_i             INT;
+    v_a             TEXT;
+    v_b             TEXT;
+    v_nyere         BOOLEAN;
 BEGIN
     -- 1. Utkastet — låst. Innholdet som aktiveres kommer HERFRA, ikke fra
     --    kalleren (så det som aktiveres er nøyaktig det som ble attestert).
@@ -171,9 +186,18 @@ BEGIN
     --     med hoderaden låst, så ingen annen STYRT aktivering kan legge seg
     --     imellom dette og INSERT-en i steg 5.
     v_ny := v_innhold -> 'meta' ->> 'versjon';
-    IF v_ny IS NULL OR v_ny !~ '^[0-9]+\.[0-9]+\.[0-9]+$' THEN
-        RAISE EXCEPTION 'aktiver_policy: utkast % mangler semantisk '
-            'meta.versjon (%)', p_utkast_id, coalesce(v_ny, '<null>')
+    -- Formen OG lengden. `versjon` er del av primærnøkkelen, og en btree-
+    -- oppføring har et hardt tak (~2704 byte) som tenant, policy_id og versjon
+    -- deler. Uten lengdekravet ville en versjon på titusener av sifre — som
+    -- skjemaet tillater — passert hit og først veltet på INSERT-en i steg 5,
+    -- som `program_limit_exceeded`: en uhåndtert 500 etter at godkjennerne
+    -- hadde signert. Porten håndhever samme tall
+    -- (`policyadmin._MAKS_VERSJONSLENGDE`); dette er siste skanse.
+    IF v_ny IS NULL OR v_ny !~ '^[0-9]+\.[0-9]+\.[0-9]+$'
+       OR length(v_ny) > 512 THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % mangler brukbar '
+            'meta.versjon (lengde %)', p_utkast_id,
+            coalesce(length(v_ny), 0)
             USING ERRCODE = 'check_violation';
     END IF;
     IF EXISTS (SELECT 1 FROM public.policyer
@@ -186,10 +210,11 @@ BEGIN
     -- (registrert før PR-013) kan bære hva som helst i TEXT-kolonnen, og en
     -- versjon vi ikke kan lese som tall, kan vi heller ikke måle mot.
     --
-    -- Leddene NULLPADDES til samme bredde FØR sammenligningen (se 021):
-    -- array-sammenligningen lar ellers {2,0,0} slå {2} — likt prefiks, lengst
-    -- vinner — og en aktiv «2» fra den gamle telleren ville sluppet gjennom
-    -- dokumentversjonen «2.0.0», som er den samme versjonen, ikke en nyere.
+    -- Leddene NULLPADDES til samme bredde FØR sammenligningen (se 021): uten
+    -- det slår «2.0.0» en aktiv «2» — likt prefiks, flest ledd vinner — og en
+    -- aktiv «2» fra den gamle telleren ville sluppet gjennom nøyaktig den
+    -- versjonen den allerede bærer, som ikke er en nyere versjon i det hele
+    -- tatt. Paddet til samme bredde er «2» det den betyr: 2.0.0.
     IF v_aktiv IS NOT NULL AND v_aktiv ~ '^[0-9]+(\.[0-9]+)*$' THEN
         v_ny_ledd    := string_to_array(v_ny, '.');
         v_aktiv_ledd := string_to_array(v_aktiv, '.');
@@ -199,28 +224,30 @@ BEGIN
                       || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
         v_aktiv_ledd := (v_aktiv_ledd
                       || array_fill('0'::text, ARRAY[v_bredde]))[1:v_bredde];
-        -- `numeric`, ikke `int` (se toppen): et skjemagyldig ledd kan ligge
-        -- over 2^31, og en 32-bits cast reiser da `numeric_value_out_of_range`
-        -- — en feil kalleren ikke håndterer, altså HTTP 500 midt i en
-        -- fire-øyne-runde. Underblokken fanger i tillegg ENHVER castfeil og
-        -- gjør den om til det deterministiske `check_violation`: en versjon vi
-        -- ikke kan sammenligne, er en versjon vi ikke aktiverer.
-        BEGIN
-            IF v_ny_ledd::numeric[] <= v_aktiv_ledd::numeric[] THEN
-                RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn '
-                    'aktiv % (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
-                    USING ERRCODE = 'check_violation';
+        -- INGEN tallcast (se toppen): både `int` og `numeric` har et tak, og
+        -- skjemaet har ingen. Leddene måles som (antall sifre, sifrene) med
+        -- innledende nuller strøket — nøyaktig tallorden for ikke-negative
+        -- heltall, uten øvre grense. `COLLATE "C"` gjør at teksten sorterer på
+        -- sifrene selv, ikke etter en lokaltilpasset kollasjon.
+        v_nyere := NULL;                       -- NULL = like så langt
+        FOR v_i IN 1..v_bredde LOOP
+            v_a := ltrim(v_ny_ledd[v_i], '0');
+            v_b := ltrim(v_aktiv_ledd[v_i], '0');
+            IF length(v_a) <> length(v_b) THEN
+                v_nyere := length(v_a) > length(v_b);
+                EXIT;
+            ELSIF v_a COLLATE "C" <> v_b THEN
+                v_nyere := v_a COLLATE "C" > v_b;
+                EXIT;
             END IF;
-        -- `data_exception` er HELE klasse 22 — inkludert 22003
-        -- (`numeric_value_out_of_range`) og 22P02 (ugyldig talltekst). Vår egen
-        -- kontroll over reiser `check_violation` (klasse 23) og fanges derfor
-        -- IKKE her; den går rett ut, som den skal.
-        EXCEPTION
-            WHEN data_exception THEN
-                RAISE EXCEPTION 'aktiver_policy: versjon % kan ikke '
-                    'sammenlignes med aktiv % (%/%)', v_ny, v_aktiv, p_tenant,
-                    v_policy_id USING ERRCODE = 'check_violation';
-        END;
+        END LOOP;
+        -- `IS NOT TRUE` dekker begge nei-ene: leddene var like hele veien
+        -- (v_nyere = NULL, altså SAMME versjon) eller den nye lå under.
+        IF v_nyere IS NOT TRUE THEN
+            RAISE EXCEPTION 'aktiver_policy: versjon % er ikke nyere enn '
+                'aktiv % (%/%)', v_ny, v_aktiv, p_tenant, v_policy_id
+                USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
 
     -- 5. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).

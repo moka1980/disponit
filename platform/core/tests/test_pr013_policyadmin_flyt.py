@@ -785,6 +785,38 @@ def test_versjonsnokkel_maaler_uten_ovre_grense():
     assert n("2147483648.0.0", 3) > n("2147483647.0.0", 3)   # over int4
     stor = "9" * 5000                       # over CPythons int-grense (4300)
     assert n(f"{stor}.0.0", 3) > n("2147483648.0.0", 3)
+    # Og over Postgres' `numeric`-tak (131 072 sifre), som var det ANDRE taket
+    # Codex fant: begge gatene måler nå det samme, uten tak noe sted.
+    enorm = "9" * 140000
+    assert n(f"{enorm}.0.0", 3) > n(f"{'9' * 139999}.0.0", 3)
+
+
+@pg
+def test_porten_avviser_versjon_registeret_ikke_kan_lagre():
+    """🔴 En versjon som ikke KAN lagres skal ikke koste to signaturer.
+
+    `versjon` er del av primærnøkkelen, og btree-oppføringen har et hardt tak.
+    Skjemaet setter ingen grense og API-ets kroppsgrense slipper gjennom ledd på
+    titusener av sifre, så uten dette passerte en slik versjon alle kontrollene
+    og veltet først på INSERT-en inne i `aktiver_policy` — som
+    `ProgramLimitExceeded`, altså en uhåndtert 500 etter at godkjennerne hadde
+    signert.
+
+    Kontroll: fjern lengdekravet i `_krev_ny_versjon`, så blir denne rød ved at
+    runden ÅPNER på en versjon som aldri kan skrives.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, dict(_UTVIDER_INNHOLD), versjon="9" * 600 + ".0.0")
+    rt = _rt()
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, a)
+        assert e.value.kode == "versjon_mangler", e.value.kode
+    finally:
+        rt.rollback()
+        rt.close()
 
 
 def _ekte_pk_kollisjon(pid):

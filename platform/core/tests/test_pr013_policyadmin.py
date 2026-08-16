@@ -487,7 +487,7 @@ def test_aktiver_policy_sammenligner_versjonsledd_over_int32():
     """
     c = _c()
     uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
-    stor = "2147483648.0.0"                      # 2^31 — over int4
+    stor = "2147483648.0.0"                      # 2^31 — over int4 og int8-cast
     _policyrad(c, pid, stor, aktiv=True)
     _hode(c, pid, aktiv_versjon=stor)
     _validert_utkast(c, uid, pid, av="forf", versjon="2147483647.9.9")
@@ -528,6 +528,35 @@ def test_aktiver_policy_aktiverer_versjonsledd_over_int32():
         assert ny == "4294967296.0.0", ny
         r.rollback()
     finally:
+        r.close()
+
+
+@pg
+def test_aktiver_policy_avviser_versjon_som_sprenger_primaernokkelen():
+    """🔴 Siste skanse mot en versjon registeret ikke kan lagre.
+
+    `numeric` har også et tak (131 072 sifre), og kroppsgrensen slipper gjennom
+    mer enn det — men lenge før dét sprenger versjonen btree-oppføringen i
+    primærnøkkelen. Slapp den forbi, ville INSERT-en i steg 5 reist
+    `program_limit_exceeded`: en uhåndtert 500 etter fire-øyne. Nå er den et
+    `check_violation`, som kalleren besvarer med en kansellert runde.
+
+    Kontroll: fjern lengdekravet i migrasjon 024, så blir denne rød med
+    `ProgramLimitExceeded` i stedet.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _validert_utkast(c, uid, pid, av="forf", versjon="9" * 600 + ".0.0")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,NULL)", (TEN, uid))
+    finally:
+        r.rollback()
         r.close()
 
 
