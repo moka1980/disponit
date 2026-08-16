@@ -370,6 +370,41 @@ def test_uten_eget_valg_gjelder_INSTALLASJONENS_sprak():
         c.close()
 
 
+def test_031_nuller_de_historiske_nb_ene_innenfor_RLS_vinduet():
+    """Engangsnullingen i 031, målt på KILDEN — den kan ikke måles på basen.
+
+    Migrasjonen kjører én gang, og etter den er en lagret 'nb' et EKTE
+    uttrykk. En test som skrev 'nb' og så etter NULL ville altså måle noe
+    annet enn det den later som. Det som derimot kan brekke stille, er
+    REKKEFØLGEN, og den måles her (Codex P2 på #71):
+
+    * FØR `DROP NOT NULL` ville UPDATE-en feilet — høyt, og altså ufarlig.
+    * UTENFOR `NO FORCE ROW LEVEL SECURITY` ville den truffet NULL RADER:
+      `varselvalg` står med FORCE (026), politikken `tenant_isolasjon`
+      sammenligner mot `current_setting('disponit.tenant')`, og den er uset
+      under migrering. Migrasjonen ville gått grønn uten å ha gjort noe, og
+      funnet stått som lukket. Det er den utgangen denne testen finnes for.
+    """
+    sql = (Path(__file__).resolve().parents[1] / "db/migrations"
+           / "031_varsel_sprak_ikke_uttrykt.sql").read_text(encoding="utf-8")
+    setninger = list(_setninger(sql))
+
+    def hvor(nal):
+        traff = [i for i, s in enumerate(setninger) if nal in s]
+        assert len(traff) == 1, f"{nal!r} forventet én gang, fikk {traff}"
+        return traff[0]
+
+    nulling = hvor("update varselvalg set sprak = null")
+    assert "where sprak = 'nb'" in setninger[nulling], (
+        "nullingen skal treffe 'nb' og bare 'nb' — en lagret 'en' kunne bare"
+        " komme fra en klient som uttrykkelig sendte den")
+    assert hvor("drop not null") < nulling, "NOT NULL må være borte først"
+    assert (hvor("varselvalg no force row level security") < nulling
+            < hvor("varselvalg force row level security")), (
+        "nullingen står utenfor RLS-vinduet og ville truffet null rader —"
+        " grønn migrasjon, uendret data")
+
+
 @pg
 def test_feilet_epost_prøves_igjen_etter_backoff():
     """En feilet sending er IKKE endelig.

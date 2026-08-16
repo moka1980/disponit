@@ -21,10 +21,31 @@
 -- dokumentasjonen alltid har lovet. En bruker som HAR uttrykt et språk får
 -- fortsatt sitt, uendret.
 --
--- INGEN DATA SKRIVES OM. En lagret 'nb' regnes som uttrykt og gjettes ikke
--- på nytt. Det er heller ikke nødvendig: kolonnen kom i 028, og 026–029
--- ruller ut sammen, så det finnes ingen base der `varselvalg`-rader er eldre
--- enn kolonnen og ble stemplet 'nb' av selve ALTER-en.
+-- DE 'nb'-ENE SOM ALT ER SKREVET, NULLES (Codex P2 på #71). Første utgave av
+-- dette avsnittet sa at ingen data trengte å skrives om, og begrunnet det med
+-- at ingen `varselvalg`-rad er eldre enn kolonnen — 026–029 ruller ut sammen,
+-- så `ALTER`-ens DEFAULT stemplet aldri noen eksisterende rad. Det stemmer,
+-- og det dekker bare halvparten: rader skrevet ETTER 028 gikk gjennom
+-- `sett_kanal`, som skrev `coalesce(%s,'nb')` ved INSERT. Endepunktet tillater
+-- uttrykkelig at språket utelates (`kropp.get("sprak")`), så en klient som
+-- ikke sendte noe fikk raden sin stemplet 'nb' — «ikke uttrykt», lagret som et
+-- valg. På en `DISPONIT_VARSEL_SPRAK=en`-installasjon ville nettopp de
+-- brukerne fortsatt fått norsk e-post etter 031, som er funnet 031 finnes for.
+--
+-- DE TO TILFELLENE KAN IKKE SKILLES I DATAEN. «Valgte norsk» og «sa ingenting»
+-- ble skrevet med samme byte, fordi kolonnen FØR denne migrasjonen ikke hadde
+-- noen verdi for «vet ikke». Da er ingen lagret 'nb' et troverdig vitne om et
+-- valg, og den ærlige lesningen av en kolonne hvis betydning endres her, er at
+-- den historiske 'nb'-en er ukjent — ikke uttrykt.
+--
+-- KOSTNADEN, skrevet ned med vilje: en bruker som FAKTISK valgte norsk på en
+-- engelsk installasjon havner tilbake på installasjonens språk. På en
+-- `nb`-installasjon — standarden — er nullingen ikke observerbar i det hele
+-- tatt, og på en `en`-installasjon er den akkurat den rettingen funnet ber om,
+-- minus den lille gruppen. Valget er selvreparerende: neste gang hun rører
+-- kanalvalget, lagres språket hennes igjen — og fra og med 031 er en lagret
+-- 'nb' et EKTE uttrykk som aldri nulles på nytt. Retningen på tvilen er den
+-- samme som ellers i dette funnet: et fravær skal ikke få gå for et valg.
 --
 -- GJERDET: denne filen gjenskaper `varsel_klaim_epost`, og en DROP tar ACL-en
 -- med seg. REVOKE-en står derfor inne i `SET LOCAL ROLE` — det var akkurat
@@ -36,6 +57,24 @@
 -- for de uttrykte verdiene står urørt.
 ALTER TABLE varselvalg ALTER COLUMN sprak DROP DEFAULT;
 ALTER TABLE varselvalg ALTER COLUMN sprak DROP NOT NULL;
+
+-- Engangsnullingen av de historiske 'nb'-ene, jf. avsnittet over. Den må stå
+-- ETTER `DROP NOT NULL` — før den ville hver rad brutt begrensningen — og den
+-- er nødvendigvis grovkornet, fordi skillet den skulle brukt ikke ble lagret.
+-- 'en' røres ikke: den verdien kunne bare komme fra en klient som uttrykkelig
+-- sendte den, og er derfor et valg uansett hvilken vei tvilen faller.
+--
+-- RLS-VINDUET, nøyaktig som 029: `varselvalg` står med `FORCE ROW LEVEL
+-- SECURITY` (026), og politikken `tenant_isolasjon` sammenligner mot
+-- `current_setting('disponit.tenant')` — som er uset under migrering. Uten
+-- `NO FORCE` ville UPDATE-en truffet NULL RADER og migrasjonen gått grønn uten
+-- å ha gjort noe, som er den verste utgangen: funnet ville stått som lukket.
+-- `NO FORCE` unntar bare tabelleieren (migrator, som opprettet tabellen i
+-- 026), og `ALTER TABLE` holder ACCESS EXCLUSIVE, så ingen annen sesjon leser
+-- i vinduet. Vanlige roller er urørt hele veien.
+ALTER TABLE varselvalg NO FORCE ROW LEVEL SECURITY;
+UPDATE varselvalg SET sprak = NULL WHERE sprak = 'nb';
+ALTER TABLE varselvalg FORCE ROW LEVEL SECURITY;
 
 -- Kroppen er DEN GJELDENDE 028-kroppen, ordrett, med ÉN endring: `coalesce`
 -- rundt språkoppslaget er borte. Samme regel som 028 selv skrev ned — en
