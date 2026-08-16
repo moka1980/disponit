@@ -172,6 +172,84 @@ def test_utkast_og_runder_roeres_ikke_av_slettingen():
         m.close()
 
 
+@pg
+def test_slettingen_er_idempotent_og_replayer_suksess():
+    """Kontroll: fjern `_idempotent_start`/`_fullfor` fra
+    `policyadmin.slett_policy`, så blir denne rød.
+
+    Slettingen er engangs og irreversibel. Mister klienten svaret — grunnen
+    til at `Idempotency-Key` er påkrevd i det hele tatt — er policyen borte, og
+    retryen møtte `policy_ukjent`: en endelig FEIL på en operasjon som lyktes,
+    på en flate som fortsatt viste policyen som aktiv.
+    """
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    rt = _rt()
+    try:
+        kall = dict(tenant=TEN, aktor="test", request_id="r1",
+                    policy_id=pid, idempotency_key=idem,
+                    input_hash="ih-" + idem)
+        forste = policyadmin.slett_policy(rt, **kall)
+        assert forste["slettet"] == 1 and forste["policy_id"] == pid
+
+        # Nøyaktig samme forespørsel én gang til: SAMME svar, ikke policy_ukjent.
+        andre = policyadmin.slett_policy(rt, **kall)
+        assert andre["slettet"] == 1 and andre["policy_id"] == pid
+        assert andre.get("replay") is True
+
+        # Samme nøkkel på en ANNEN operasjon er en konflikt, ikke en replay.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.slett_policy(rt, **{**kall, "input_hash": "ih-annet"})
+        assert e.value.kode == "idempotenskonflikt"
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_mislykket_sletting_brenner_ikke_nokkelen():
+    """En operasjon som IKKE skjedde skal ikke låse nøkkelen: eier må kunne
+    rydde opp (lukke runden) og prøve på nytt med samme nøkkel."""
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av) VALUES (%s,%s,%s,'{}'::jsonb,'forf')", (TEN, uid, pid))
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,1,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()+interval '1 hour')", (TEN, uid))
+    m.commit()
+    rt = _rt()
+    try:
+        kall = dict(tenant=TEN, aktor="test", request_id="r1",
+                    policy_id=pid, idempotency_key=idem,
+                    input_hash="ih-" + idem)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.slett_policy(rt, **kall)
+        assert e.value.kode == "runde_allerede_aapen"
+
+        m.execute("UPDATE aktiveringsrunde SET status='kansellert'"
+                  " WHERE tenant=%s AND utkast_id=%s", (TEN, uid))
+        m.commit()
+        assert policyadmin.slett_policy(rt, **kall)["slettet"] == 1
+    finally:
+        rt.close()
+        m.close()
+
+
 # ---------------------------------------------------------------------------
 # Serialisering mot BRUK (Codex P1 + P2). Garantien «aldri brukt» er ikke et
 # utsagn om øyeblikket funksjonen kikker — den må holde over hele vinduet der

@@ -656,6 +656,51 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utfall": "forkastet", "utkast_id": utkast_id})
 
 
+def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                 request_id: str, policy_id: str, idempotency_key: str,
+                 input_hash: str) -> dict:
+    """Angre en feilopprettet policy: slett den som ALDRI har styrt en
+    beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (030) — her
+    ligger idempotensen, og bare den.
+
+    Idempotensen er ikke pynt på en `Idempotency-Key` endepunktet uansett
+    krever (Codex P2). Slettingen er ENGANGS og irreversibel: går svaret tapt
+    på veien tilbake — nettopp det retry-en finnes for — er policyen borte, og
+    et nytt forsøk med samme nøkkel møtte `policy_ukjent`. Eier fikk da en
+    endelig feilmelding på en operasjon som FAKTISK lyktes, ble stående på en
+    flate som viste den slettede policyen som aktiv, og hvert nye forsøk sa det
+    samme til hun lastet siden på nytt. Med claimet på plass svarer replayen
+    NØYAKTIG det lagrede svaret, og flaten kommer videre.
+
+    Kalleren eier tx; `_fullfor` committer.
+    """
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    try:
+        n = conn.execute("SELECT slett_ubrukt_policy(%s,%s)",
+                         (tenant, policy_id)).fetchone()[0]
+    except psycopg.errors.CheckViolation as e:
+        # Rollback tar claimet med seg, som ellers i modulen: en operasjon som
+        # ikke skjedde skal ikke brenne nøkkelen. Retry på en policy som er i
+        # bruk gir samme forklaring hver gang — det er sannheten om tilstanden.
+        conn.rollback()
+        raise Aktiveringsfeil(
+            "policy_i_bruk" if "beslutning" in str(e)
+            else "runde_allerede_aapen") from None
+    except psycopg.errors.NoDataFound:
+        conn.rollback()
+        raise Aktiveringsfeil("policy_ukjent") from None
+    return _fullfor(conn, tenant, idempotency_key,
+                    {"slettet": n, "policy_id": policy_id})
+
+
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
                        request_id: str, utkast_id: str, naa) -> dict:
     """Utkastet + diffen mot aktiv base + klassifisering + evt. åpen runde med

@@ -382,9 +382,9 @@ def varselvalg_endepunkt(tjeneste, request):
 
 def slett_policy_endepunkt(tjeneste, request):
     """Angre en feilopprettet policy: slett den som ALDRI har styrt en
-    beslutning. Alle vilkårene håndheves i `slett_ubrukt_policy` (030) —
-    endepunktet oversetter bare feilkodene til domenesvar."""
-    import psycopg
+    beslutning. Vilkårene håndheves i `slett_ubrukt_policy` (030), idempotensen
+    i `policyadmin.slett_policy` — endepunktet binder bare nøkkelen til
+    operasjonen og lar `_med_conn` oversette feilkodene."""
     from .app import _rid
     rid = _rid(request)
     policy_id = request.path_params["policy_id"]
@@ -392,21 +392,14 @@ def slett_policy_endepunkt(tjeneste, request):
     def kjor(conn):
         tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
                                        "policy:write")
-        _krev_idem(request, rid)
-        from db.pg import sett_kontekst
-        sett_kontekst(conn, tenant, bid, rid)
-        try:
-            n = conn.execute("SELECT slett_ubrukt_policy(%s,%s)",
-                             (tenant, policy_id)).fetchone()[0]
-        except psycopg.errors.CheckViolation as e:
-            conn.rollback()
-            kode = "policy_i_bruk" if "beslutning" in str(e)                 else "runde_allerede_aapen"
-            return _feil(kode, rid)
-        except psycopg.errors.NoDataFound:
-            conn.rollback()
-            return _feil("policy_ukjent", rid)
-        conn.commit()
-        return _ok({"slettet": n, "policy_id": policy_id}, rid)
+        idem = _krev_idem(request, rid)
+        # `policy_id` INNGÅR i hashen: samme nøkkel brukt på en ANNEN policy er
+        # en annen operasjon og skal gi konflikt, ikke replay av forrige svar.
+        ih = _input_hash(tenant, bid, "slett_policy", policy_id, idem)
+        res = policyadmin.slett_policy(
+            conn, tenant=tenant, aktor=bid, request_id=rid,
+            policy_id=policy_id, idempotency_key=idem, input_hash=ih)
+        return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
