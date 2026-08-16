@@ -186,7 +186,8 @@ export function visStatus(container, tilstand) {
 
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
-                          epost, roller, paaSprak, paaLoggUt } = {}) {
+                          brukerId, epost, roller, paaSprak,
+                          paaLoggUt } = {}) {
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
   // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
@@ -214,9 +215,21 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     // ganger som samme bruker og først fått vite det av primærnøkkelen.
     // Rollene står ved siden av: «hvilken rolle har jeg» skal ikke kreve at
     // man leser en policy for å finne ut av.
-    epost
-      ? el("span", { class: "skall-bruker", title: epost },
-        el("span", { class: "skall-bruker-epost", text: epost }),
+    //
+    // PRINSIPALEN ER `bruker_id`, IKKE E-POSTEN (Codex P2). `api/oidc.py`
+    // lagrer `epost` som None når utstederen utelater kravet — da forsvant
+    // hele kontrollen, roller og alt, for nettopp den brukeren som ikke har
+    // noe annet å kjenne seg igjen på. E-posten er dessuten ikke nøkkelen:
+    // den kan være ubekreftet og delt av flere `(issuer, sub)`, så to konti
+    // med samme e-post ville sett identiske ut i fire-øyne-flyten. Derfor
+    // vises `bruker_id` alltid, med e-posten i tillegg når den finnes.
+    (epost || brukerId)
+      ? el("span", { class: "skall-bruker",
+        title: [epost, brukerId].filter(Boolean).join(" · ") },
+        el("span", { class: "skall-bruker-navn", text: epost || brukerId }),
+        epost && brukerId
+          ? el("span", { class: "skall-bruker-id", text: brukerId })
+          : null,
         Array.isArray(roller) && roller.length
           ? el("span", { class: "skall-bruker-roller",
             text: roller.map((r) => t(`ui.rolle.${r}`, r)).join(", ") })

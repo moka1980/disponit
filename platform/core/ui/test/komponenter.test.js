@@ -181,3 +181,33 @@ test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () 
   const b = await alvorligeBrudd(rot);   // hel-side-regler PÅ (har main+nav)
   assert.equal(b.length, 0, beskrivBrudd(b));
 });
+
+// «Hvem er jeg» må overleve at e-posten mangler: OIDC-kravet er valgfritt, og
+// prinsipalen er `bruker_id`. Uten fallbacken forsvant hele kontrollen —
+// inkludert rollene — for den brukeren som trengte den mest.
+test("AppShell: viser bruker_id når e-post mangler, med roller", () => {
+  const ruter = [{ nokkel: "oversikt" }];
+  const utenEpost = AppShell({
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
+    brukerId: "bid_10e5674", roller: ["godkjenner"],
+    paaSprak: () => {}, paaLoggUt: () => {},
+  }).rot;
+  const bruker = utenEpost.querySelector(".skall-bruker");
+  assert.ok(bruker, "kontrollen skal finnes uten e-post");
+  assert.equal(bruker.querySelector(".skall-bruker-navn").textContent,
+    "bid_10e5674");
+  assert.ok(bruker.textContent.includes(t("ui.rolle.godkjenner")),
+    "rollene skal vises selv om e-posten mangler");
+
+  // Med e-post: den er navnelinja, men id-en står fortsatt der — to konti kan
+  // dele en ubekreftet e-post, og da er id-en det eneste som skiller dem.
+  const medEpost = AppShell({
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
+    brukerId: "bid_10e5674", epost: "kari@acme.no", roller: ["godkjenner"],
+    paaSprak: () => {}, paaLoggUt: () => {},
+  }).rot;
+  assert.equal(medEpost.querySelector(".skall-bruker-navn").textContent,
+    "kari@acme.no");
+  assert.equal(medEpost.querySelector(".skall-bruker-id").textContent,
+    "bid_10e5674");
+});

@@ -375,7 +375,12 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   text-align: right;
 }
 
-.skall-bruker-epost { color: var(--ink); font-weight: 600; }
+/* Navnelinja er e-posten når den finnes, ellers `bruker_id` — begge deler er
+   «hvem er jeg», og linja skal se lik ut uansett hvilken av dem som fylte
+   den. Står e-posten der, følger id-en under: det er den som faktisk
+   identifiserer prinsipalen i fire-øyne-kontrollen. */
+.skall-bruker-navn { color: var(--ink); font-weight: 600; }
+.skall-bruker-id,
 .skall-bruker-roller { color: var(--muted); font-size: 0.85em; }
 
 /* Hjelpetekst under et felt: reglene feltet håndhever, sagt før man skriver. */
