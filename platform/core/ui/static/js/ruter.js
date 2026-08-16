@@ -29,14 +29,35 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
   // sin, så en vanlig kundeøkt får fortsatt `oversikt`.
   const reserve = Object.keys(flater)[0] || null;
 
-  function gjeldende() {
+  // Hash-en er `#/<rute>` eller `#/<rute>/<mål>`, og målet er det flaten skal
+  // åpne PÅ SEG SELV — et utkast, en sak. Uten det leddet hadde ruteren ingen
+  // måte å bære en henvisning på, og en flate som ville sende eier til et
+  // bestemt objekt måtte lene seg på en callback ruteren aldri gir den: i
+  // produksjon kalles hver flate med `(hoved, ctx)`, så «Gå til» fra
+  // varselinnboksen kastet `ressurs_id` og landet på lista (Codex P2).
+  //
+  // Målet er ETT ledd og prosent-dekodes, slik at en id med skråstrek eller
+  // mellomrom overlever turen gjennom adressefeltet. En ødelagt escape-sekvens
+  // skal ikke rive ned navigasjonen — da bæres det rå leddet videre, og flaten
+  // svarer det den ville svart på en ukjent id.
+  function deler() {
     const h = (window.location.hash || "").replace(/^#\/?/, "");
-    return flater[h] ? h : reserve;
+    const skille = h.indexOf("/");
+    const rute = skille === -1 ? h : h.slice(0, skille);
+    const raa = skille === -1 ? "" : h.slice(skille + 1);
+    if (!flater[rute]) return { rute: reserve, mal: null };
+    let mal = null;
+    if (raa) {
+      try { mal = decodeURIComponent(raa); } catch { mal = raa; }
+    }
+    return { rute, mal };
   }
+
+  function gjeldende() { return deler().rute; }
 
   let forste = true;
   function naviger() {
-    const r = gjeldende();
+    const { rute: r, mal } = deler();
     // Ingen rute i det hele tatt: en økt hvis roller ikke ga ETT kjent scope
     // (`scopes_for_roller` er default-deny og gir tom mengde for ukjente
     // roller). Da finnes det ingen flate å vise, og alternativet til å la være
@@ -46,7 +67,7 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
     // Eierskapet skifter FØR den nye flaten får tegne: alt den forrige har
     // ute på nettet er fra nå av foreldet.
     EIERSKAP.set(hoved, visningsToken(hoved) + 1);
-    flater[r](hoved, ctx);
+    flater[r](hoved, ctx, mal);
     if (!forste && typeof hoved.focus === "function") hoved.focus();
     forste = false;
   }

@@ -1243,7 +1243,7 @@ function tilbakeKnapp(tilbakeTilListe) {
   return b;
 }
 
-export function visPolicyadmin(hoved, ctx) {
+export function visPolicyadmin(hoved, ctx, mal) {
   // `sort` er eiers kolonnevalg, og det bor HER fordi flaten overlever
   // tegningene — tabellen bygges på nytt hver gang lista lastes (Codex P2).
   const st = { rader: [], sort: null };
@@ -1467,5 +1467,11 @@ export function visPolicyadmin(hoved, ctx) {
 
   function tilbakeTilListe() { last({ fokus: true }); }
 
-  last();
+  // `mal` er utkastet ruteren ble bedt om å åpne (`#/policyadmin/<utkast_id>`).
+  // Det er veien fra et varsel til HANDLINGEN: uten den kom godkjenneren til
+  // lista og måtte lete fram igjen det utkastet varselet nettopp navnga
+  // (Codex P2). Tilbakeknappen på detaljsiden fører til lista som ellers, så
+  // dyplenken er en inngang og ikke en blindvei.
+  if (mal) aapneDetalj(mal);
+  else last();
 }

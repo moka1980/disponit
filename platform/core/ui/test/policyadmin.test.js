@@ -2861,3 +2861,31 @@ test("Forkast: axe-ren, og knappen er merket som farlig", async () => {
     .classList.contains("fare"));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// Codex P2: veien fra et varsel til HANDLINGEN. Varselet navngir ett utkast,
+// og `#/policyadmin/<utkast_id>` er hvordan ruteren bærer det navnet inn i
+// flaten. Uten dette landet godkjenneren på lista over alle utkast og måtte
+// finne igjen det hun nettopp ble varslet om.
+test("Dyplenke til et utkast åpner utkastet, ikke lista", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const hentet = [];
+  SVAR.__get = (sti) => hentet.push(sti);
+  const h = nyHoved();
+
+  window.location.hash = "#/policyadmin/u-1";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(), { policyadmin: visPolicyadmin }, () => {});
+  ruter.naviger();
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  ruter.stopp();
+
+  assert.ok(h.textContent.includes(DETALJ.policy_id),
+    "detaljsiden for det varslede utkastet ble ikke åpnet");
+  // Ikke bare «detaljen kom fram til slutt»: lista skal ikke ha vært innom.
+  assert.ok(!hentet.includes("/v1/policyutkast"),
+    "flaten gikk veien om lista i stedet for rett til utkastet");
+  // Dyplenken er en inngang, ikke en blindvei: veien tilbake til lista står.
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "detaljsiden mangler vei tilbake");
+});

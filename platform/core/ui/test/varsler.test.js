@@ -86,7 +86,6 @@ test("Varsler: «Gå til» merker lest OG navigerer — også hvis merkingen fei
     POSTET = [];
     SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
       kanal: "epost_og_portal" } };
-    const gaatt = [];
     // La merkingen FEILE. Uten dette prøves aldri `.catch`, og testen ville
     // vært grønn også om en feilet merking blokkerte navigasjonen — akkurat
     // det den påstår at den utelukker.
@@ -99,12 +98,18 @@ test("Varsler: «Gå til» merker lest OG navigerer — også hvis merkingen fei
       return brukFetch(url, opts);
     };
     const h = nyHoved();
-    visVarsler(h, ctx(), { gaaTil: (rute, id) => gaatt.push([rute, id]) });
+    window.location.hash = "#/varsler";
+    visVarsler(h, ctx());
     await vent(() => h.querySelector(".varselrad"));
     finn(h, t("ui.varsler.gaa_til")).dispatchEvent(new window.Event("click"));
-    await vent(() => gaatt.length > 0);
-    assert.deepEqual(gaatt[0], ["policyadmin", "u-1"],
-      "varselet førte ikke til handlingen");
+    // Codex P2: testen ga tidligere flaten en `gaaTil`-callback og målte den.
+    // Den callbacken finnes ikke i appen — ruteren kaller hver flate med
+    // `(hoved, ctx)` — så det som ble målt var en vei ingen bruker gikk, mens
+    // den ekte veien kastet `ressurs_id` og landet på lista. Nå måles hash-en,
+    // altså nøyaktig det produksjon gjør.
+    await vent(() => window.location.hash !== "#/varsler");
+    assert.equal(window.location.hash, "#/policyadmin/u-1",
+      "varselet førte ikke til HANDLINGEN, bare til flaten");
     assert.ok(POSTET.some((p) => p.sti === "/v1/varsel/1/lest"),
       "å åpne varselet skal også merke det lest");
     globalThis.fetch = brukFetch;

@@ -76,7 +76,7 @@ function kanalvelger(kanal, paaValg) {
   return gruppe;
 }
 
-export function visVarsler(hoved, ctx, opts = {}) {
+export function visVarsler(hoved, ctx) {
   // Eierskapet til `hoved` (Codex P2). Alle flater rendrer inn i ETT element,
   // og en innboks-GET som er ute på nettet vet ikke at eier har navigert
   // videre. Kom svaret etterpå, tegnet innboksen seg over den nye ruten mens
@@ -131,9 +131,18 @@ export function visVarsler(hoved, ctx, opts = {}) {
     // Merk lest FØRST, men ikke la en feilet merking stoppe navigasjonen:
     // poenget er å komme til handlingen. Et varsel som blir stående ulest er
     // en irritasjon; å ikke komme fram er en blokkering.
+    //
+    // Navigasjonen går gjennom HASH-EN, og bærer `ressurs_id` som mål
+    // (Codex P2). Før fantes to veier: en `opts.gaaTil` med id-en, og et fall
+    // tilbake til `#/<rute>` uten. I produksjon kalles hver flate med
+    // `(hoved, ctx)` — callbacken fantes ALDRI der, bare i testen som skulle
+    // bevise veien — så fallet var den eneste virkelige veien, og det kastet
+    // id-en. Varselet navnga et utkast og sendte deg til lista over alle.
+    // Nå er det én vei, og den er den samme i testen som i appen.
     merkVarselLest(v.id).catch(() => {}).then(() => {
-      if (opts.gaaTil) opts.gaaTil(rute, v.ressurs_id);
-      else window.location.hash = `#/${rute}`;
+      window.location.hash = v.ressurs_id
+        ? `#/${rute}/${encodeURIComponent(v.ressurs_id)}`
+        : `#/${rute}`;
     });
   }
 
