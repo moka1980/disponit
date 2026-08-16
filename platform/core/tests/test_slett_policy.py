@@ -461,6 +461,65 @@ def test_to_beslutninger_staar_ikke_i_ko_bak_hverandre():
 
 
 @pg
+def test_en_loggreferanse_gjor_policyen_uslettelig_for_godt():
+    """Vernet for de lesestiene som IKKE tar policylåsen (Codex P1).
+
+    `m37.arbeider._aktiv_policy` (reparasjonsplanlegging) og
+    `api.app._ingest_verifikasjon` (aktiv autoritet før bevis godtas) leser
+    den aktive policyen en REVISJONSREFERANSE navngir, gjennom
+    `policyregister.hent_aktiv_bak_loggreferanse`. Låsen i `hent_aktiv` er
+    for lesere som ennå ikke har et spor; disse to har det allerede, og
+    sporet er nøyaktig raden 030 teller når den avgjør «aldri brukt».
+
+    Testen holder begge halvdelene av det argumentet fast, for det er
+    sammen de utgjør vernet:
+      1. lesestien finner faktisk policyen bak referansen (ellers måler
+         punkt 2 noe annet enn det veien gjør);
+      2. fra det øyeblikket referansen står, avviser slettingen;
+      3. og referansen kan ikke fjernes igjen — `revisjonslogg` er
+         append-only (001), også for migratorrollen. Uten den er «avvist
+         nå» bare en utsettelse.
+
+    Flyttes en av disse lesningene til en policy-id som IKKE kommer fra
+    loggen, faller argumentet — og da trenger den veien sitt eget vern.
+    """
+    import psycopg
+    pid = "p-" + secrets.token_hex(3)
+    ref = f"{pid}@1.0.0/purring.send"
+    m = _mig()
+    _policyrad(m, pid)
+    logg_id = m.execute(
+        "INSERT INTO revisjonslogg (tenant, ts, policy_id, beslutning,"
+        " begrunnelse, input_hash) VALUES (%s, now(), %s, 'TILLAT',"
+        " '{}', 'ih-' || %s) RETURNING id",
+        (TEN, ref, secrets.token_hex(4))).fetchone()[0]
+    m.commit()
+    rt = _rt()
+    try:
+        # 1. Veien de to lesestiene faktisk går.
+        p = pr.hent_aktiv_bak_loggreferanse(rt, TEN, ref)
+        assert p is not None, "lesestien fant ikke policyen bak referansen"
+        assert p[0]["meta"]["policy_id"] == pid
+
+        # 2. Og med referansen på plass er policyen ikke slettbar.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            _slett(rt, pid)
+        rt.rollback()
+
+        # 3. Referansen kan ikke fjernes — så «ikke slettbar» er permanent.
+        # Feilen MÅ komme fra append-only-triggeren: en rettighetsfeil ville
+        # sagt at migratoren ikke fikk lov nettopp her, ikke at raden står.
+        with pytest.raises(psycopg.Error) as e:
+            m.execute("DELETE FROM revisjonslogg WHERE tenant=%s AND id=%s",
+                      (TEN, logg_id))
+        assert "append-only" in str(e.value)
+        m.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_sletting_krever_matchende_tenantkontekst():
     """SECURITY DEFINER omgår RLS — da er kontekstsjekken inne i funksjonen
     hele tenant-isolasjonen. Kontroll: fjern den, så blir denne rød."""

@@ -2269,17 +2269,22 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
             "SELECT r.policy_id, u.handling FROM revisjonslogg r JOIN unntak u"
             "   ON u.tenant=r.tenant AND u.loggpost_id=r.id"
             " WHERE u.tenant=%s AND u.id=%s", (tenant, unntak_id)).fetchone()
-        from policy_validator.engine import les_policyref
-        ref = les_policyref(policy_ref[0]) if policy_ref else None
-        prad = conn.execute(
-            "SELECT innhold FROM policyer WHERE tenant=%s AND policy_id=%s"
-            "   AND aktiv", (tenant, ref[0])).fetchone() if ref else None
+        # Ett oppslag, én definisjon: `hent_aktiv_bak_loggreferanse` tolker
+        # referansen og leser den aktive policyen den navngir — samme vei som
+        # M-37 bruker når en reparasjon planlegges. Se den for hvorfor veien
+        # ikke tar policylåsen mot sletting (Codex P1): unntakets loggrad ER
+        # referansen `slett_ubrukt_policy` teller, og `revisjonslogg` er
+        # append-only, så policyen bak den kan ikke slettes — verken i
+        # vinduet mellom lesingen her og commit, eller noen gang senere.
+        from .policyregister import hent_aktiv_bak_loggreferanse
+        aktiv = hent_aktiv_bak_loggreferanse(
+            conn, tenant, policy_ref[0] if policy_ref else None)
     except psycopg.Error:
         raise
-    if prad is None or not isinstance(prad[0], dict):
+    if aktiv is None:
         conn.rollback()
         return _feilsvar("policy_ukjent", rid)
-    policy = prad[0]
+    policy = aktiv[0]
 
     verifikator = konvolutt["verifikator"]
     betrodd_alle = True
@@ -2303,11 +2308,12 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
     # handlingen. Taket overstyrer verifikatorens eget `utloper` — en
     # verifikator som setter utløp ett år frem kan ikke selv utvide hvor
     # gammelt et faktum tenanten godtar.
-    # MÅLHANDLINGEN kommer fra saken, ikke fra policyreferansen:
-    # `les_policyref` returnerer (policy_id, VERSJON), ikke handlingen.
-    # Med `ref[1]` sto det «1.0.0» der en handlings-id skulle stå, oppslaget
-    # traff ingenting, og taket var stille fraværende — altså en kontroll
-    # som så ut til å finnes og aldri kunne fyre.
+    # MÅLHANDLINGEN kommer fra unntaket (`u.handling`, altså `policy_ref[1]`),
+    # ikke fra policyreferansen: `les_policyref` leser (policy_id, VERSJON) ut
+    # av den, aldri handlingen. Med referansens andre ledd sto det «1.0.0» der
+    # en handlings-id skulle stå, oppslaget traff ingenting, og taket var
+    # stille fraværende — altså en kontroll som så ut til å finnes og aldri
+    # kunne fyre.
     handling_def = next(
         (h for h in (policy.get("handlinger") or [])
          if isinstance(h, dict) and h.get("id") == policy_ref[1]), {})
