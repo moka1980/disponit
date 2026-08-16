@@ -1889,6 +1889,45 @@ test("Diff: en handling som forsvinner når indeksene forskyves, blir synlig",
       "modulen skiftet også, og begge sider hører hjemme i overskriften");
   });
 
+// Fjernes et nøkkelfelt fra et element som fortsatt finnes, har utkastet
+// ingenting å hydrere overskriften med — og feltet forsvant da helt fra den.
+// Å fjerne `grenser.belop_maks` gjør en begrenset handling UBEGRENSET og
+// klassifiseres som UTVIDER, men overskriften sa bare «refusjon.utfor · M-41»
+// og lot den gamle grensen ligge tolv rader ned (Codex P2).
+//
+// Kontroll: la `vis()` returnere `undefined` når den nye verdien mangler, så
+// blir denne rød.
+const FJERNET_GRENSE_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [{ sti: "handlinger[].grenser.belop_maks",
+    klasse: "UTVIDER" }],
+  innhold: {
+    handlinger: [{ id: "refusjon.utfor", modul: "M-41", grenser: {} }],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[0].grenser.belop_maks", type: "fjernet", fra: "5000.00" },
+    { sti: "handlinger[0].grenser.valuta[0]", type: "fjernet", fra: "NOK" },
+    { sti: "handlinger[0].modus", type: "fjernet", fra: "auto" },
+  ] },
+};
+
+test("Diff: nøkkelfelt som fjernes, står i overskriften", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": FJERNET_GRENSE_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const opps = rot.querySelector(".diff-element > summary").textContent;
+  assert.ok(opps.includes("5000.00"),
+    `den gamle grensen forsvant fra overskriften: «${opps}»`);
+  assert.ok(opps.includes(t("ui.policyadmin.diff.uten_grense")),
+    `overskriften sier ikke at handlingen er ubegrenset nå: «${opps}»`);
+  // Samme gjelder et vanlig nøkkelfelt: «auto» er borte, og det skal SES.
+  assert.ok(opps.includes("auto")
+    && opps.includes(t("ui.policyadmin.diff.fjernet")),
+    `et fjernet nøkkelfelt forsvant fra overskriften: «${opps}»`);
+  // Og en handling som fortsatt finnes skal ikke miste navnet sitt.
+  assert.ok(opps.includes("refusjon.utfor"), "handlingen mistet navnet sitt");
+});
+
 // `verifikatorer` har UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» er en
 // gyldig verifikator-id. Serverens flate sti skjøter map-nøkler med punktum,
 // og en oppdeling som leser punktum som skilletegn slo derfor to helt ulike

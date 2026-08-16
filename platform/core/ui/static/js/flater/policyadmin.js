@@ -299,13 +299,28 @@ function elementOverskrift(element, blader, kilder) {
       if (rest) felt.set(rest, v);
     }
   }
+  // Rå før/etter for ett felt, så sammensatte merkelapper kan sette pilen der
+  // den hører hjemme.
+  const sider = (f) => {
+    const tom = (v) => (v === undefined || v === null ? undefined : String(v));
+    return { ny: tom(felt.get(f)), gml: tom(foer.get(f)) };
+  };
   // Et slettet element rekonstrueres fra sine egne `fra`-verdier, så før og
   // etter er like der — pilen dukker bare opp når feltet faktisk skiftet.
+  //
+  // Et FJERNET felt på et element som fortsatt finnes, har ingen ny verdi å
+  // hydrere med, og ble derfor borte fra overskriften helt (Codex P2). Men
+  // «feltet er borte» er ikke det samme som «feltet er uinteressant»: å fjerne
+  // `modus` eller `grunnkode` er en endring av fullmakt, og skal leses uten å
+  // åpne kortet. Finnes bare før-siden, er det den som vises — med pil til at
+  // den ikke gjelder lenger.
   const vis = (f) => {
-    const ny = felt.get(f), gml = foer.get(f);
-    if (ny === undefined || ny === null) return undefined;
-    return (gml !== undefined && gml !== null && gml !== ny)
-      ? `${gml} → ${ny}` : String(ny);
+    const { ny, gml } = sider(f);
+    if (ny === undefined) {
+      return gml === undefined ? undefined
+        : `${gml} → ${t("ui.policyadmin.diff.fjernet")}`;
+    }
+    return (gml !== undefined && gml !== ny) ? `${gml} → ${ny}` : ny;
   };
   const navn = IDENTITET.map(vis).find((v) => v !== undefined) ?? String(element);
   const merker = [];
@@ -314,10 +329,21 @@ function elementOverskrift(element, blader, kilder) {
     if (v !== undefined) merker.push(v);
   }
   for (const [belop, valuta] of BELOPSFELT) {
-    const b = vis(belop);
-    if (b === undefined) continue;
-    const v = vis(valuta);
-    merker.push(`${t("ui.policyadmin.diff.maks")} ${b}${v ? " " + v : ""}`);
+    const b = sider(belop), v = sider(valuta);
+    if (b.ny === undefined && b.gml === undefined) continue;
+    const maks = t("ui.policyadmin.diff.maks");
+    // Beløpsgrensen er ett tall MED en valuta, så når grensen forsvinner hører
+    // pilen til paret og ikke til hver halvdel: «maks 5000.00 NOK → uten
+    // grense». Det er den mest utvidende endringen som finnes på en handling —
+    // en begrenset fullmakt blir ubegrenset — og den skal stå i overskriften.
+    if (b.ny === undefined) {
+      const val = v.gml ?? v.ny;
+      merker.push(`${maks} ${b.gml}${val ? " " + val : ""} → `
+        + t("ui.policyadmin.diff.uten_grense"));
+      continue;
+    }
+    const val = vis(valuta);
+    merker.push(`${maks} ${vis(belop)}${val ? " " + val : ""}`);
   }
   return { navn, merker, felt };
 }

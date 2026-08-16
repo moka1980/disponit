@@ -656,6 +656,8 @@
   "ui.policyadmin.diff.antall_endringer": "{n} endringer",
   "ui.policyadmin.diff.antall_felt": "{n} felt",
   "ui.policyadmin.diff.maks": "maks",
+  "ui.policyadmin.diff.fjernet": "fjernet",
+  "ui.policyadmin.diff.uten_grense": "uten grense",
   "ui.policyadmin.diff.gruppe.handlinger": "Handlinger agenten kan utføre",
   "ui.policyadmin.diff.gruppe.roller": "Roller",
   "ui.policyadmin.diff.gruppe.verifikatorer": "Verifikatorer",
