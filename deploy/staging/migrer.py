@@ -68,6 +68,11 @@ GRANT SELECT ON policyer TO {rolle};
 -- `aktiver_policy` (EXECUTE gitt i migrasjon 013).
 GRANT SELECT ON policy_hode TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattestasjon TO {rolle};
+-- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
+-- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
+-- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
+GRANT SELECT, INSERT, UPDATE ON varsel TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
 -- overgangsfunksjonene (CP2), som `aktiver_policy`. En direkte skriving fra
