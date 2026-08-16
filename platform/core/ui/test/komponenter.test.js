@@ -585,6 +585,35 @@ test("Faner: ARIA-mønsteret, ikke bare knapper som ser ut som faner", async () 
   assert.equal(faner[0].getAttribute("aria-selected"), "true");
 });
 
+// Codex P2: ID-ene var utledet av `nokkel` alene. To fanesett med samme
+// trinnavn i DOM-en samtidig — som når policyadmins `paaFerdig` åpner en
+// oppfrisket skuff uten å lukke den gamle — fikk da duplikate ID-er, og
+// `getElementById` ga det FØRSTE treffet: den nye dialogens referanser løste
+// seg opp i den underliggende, inerte.
+test("Faner: to fanesett med samme trinnavn låner ikke ID-er av hverandre", () => {
+  const lag = () => Faner({ trinn: [
+    { nokkel: "a", tittel: "A", bygg: () => el("p", { text: "A" }) },
+    { nokkel: "b", tittel: "B", bygg: () => el("p", { text: "B" }) },
+  ] }).rot;
+  const brett = nyttBrett();
+  const forst = lag();
+  const andre = lag();
+  brett.append(forst, andre);
+
+  const ider = [...brett.querySelectorAll("[id]")].map((n) => n.id);
+  assert.equal(new Set(ider).size, ider.length, `duplikate ID-er: ${ider}`);
+
+  // Hver fane skal treffe et panel i SITT EGET fanesett — ikke naboens.
+  for (const rot of [forst, andre]) {
+    for (const f of rot.querySelectorAll('[role="tab"]')) {
+      const mal = document.getElementById(f.getAttribute("aria-controls"));
+      assert.ok(mal, "aria-controls uten mål");
+      assert.ok(rot.contains(mal), "fanen peker på et panel i et annet fanesett");
+      assert.equal(document.getElementById(mal.getAttribute("aria-labelledby")), f);
+    }
+  }
+});
+
 test("Faner: forrige/neste følger trinnene og stopper i endene", async () => {
   const { rot } = Faner({ trinn: [
     { nokkel: "a", tittel: "A", bygg: () => el("p", { text: "A" }) },

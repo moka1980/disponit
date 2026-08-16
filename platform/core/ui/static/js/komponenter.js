@@ -499,8 +499,20 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
 //
 // `trinn`: [{ nokkel, tittel, bygg: () => Node }]
 // Returnerer { rot, gaaTil, aktiv }.
+let _fanerTeller = 0;
+
 export function Faner({ trinn, start, paaBytte } = {}) {
   let aktiv = start && trinn.some((s) => s.nokkel === start) ? start : trinn[0].nokkel;
+  // ID-ene var utledet av `nokkel` alene, så to fanesett med samme trinnavn
+  // fikk samme ID-er (Codex P2). Det er ikke et teoretisk sammentreff: i
+  // policyadmin åpner `paaFerdig` en oppfrisket detaljskuff UTEN å lukke den
+  // gamle, så begge fanesettene står i DOM-en samtidig. `getElementById` gir
+  // det FØRSTE treffet, og den nye dialogens `aria-controls`/`aria-labelledby`
+  // kunne dermed løses opp i den underliggende, inerte dialogen. Et løpenummer
+  // per instans holder hvert fanesett innenfor seg selv.
+  const merke = `faner${++_fanerTeller}`;
+  const faneId = (n) => `${merke}-fane-${n}`;
+  const panelId = (n) => `${merke}-panel-${n}`;
   const faner = new Map();
   const paneler = new Map();
   const liste = el("div", { class: "faner-liste", role: "tablist",
@@ -543,9 +555,9 @@ export function Faner({ trinn, start, paaBytte } = {}) {
   }
 
   trinn.forEach((s, i) => {
-    const kn = el("button", { type: "button", class: "fane", id: `fane-${s.nokkel}`,
+    const kn = el("button", { type: "button", class: "fane", id: faneId(s.nokkel),
       role: "tab", text: s.tittel });
-    kn.setAttribute("aria-controls", `fane-panel-${s.nokkel}`);
+    kn.setAttribute("aria-controls", panelId(s.nokkel));
     kn.addEventListener("click", () => gaaTil(s.nokkel, false));
     kn.addEventListener("keydown", (e) => {
       const retning = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
@@ -558,7 +570,7 @@ export function Faner({ trinn, start, paaBytte } = {}) {
     // Panelet er fokuserbart: er innholdet langt, skal Tab fra fanen lande i
     // panelet og ikke hoppe forbi det.
     paneler.set(s.nokkel, el("div", { class: "faner-panel", role: "tabpanel",
-      id: `fane-panel-${s.nokkel}`, "aria-labelledby": `fane-${s.nokkel}`,
+      id: panelId(s.nokkel), "aria-labelledby": faneId(s.nokkel),
       tabindex: "0", hidden: true }));
   });
 
