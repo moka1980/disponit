@@ -1130,6 +1130,12 @@ EIERROLLE = "disponit_domene_eier"
 _KOMMENTAR = re.compile(r"--[^\n]*")
 _KROPP = re.compile(r"\$\$.*?\$\$", re.S)
 
+#: PUBLIC som MOTTAKER, ikke som skjemanavn: `… ON FUNCTION public.f(…) TO
+#: disponit` og `… ON ALL SEQUENCES IN SCHEMA public TO …` inneholder begge
+#: delstrengen «public» uten å si noe om PUBLIC-ACL-en.
+_FRA_PUBLIC = re.compile(r"\bfrom public\b")
+_TIL_PUBLIC = re.compile(r"\bto public\b")
+
 
 def _setninger(sql):
     """Migrasjonsfilens setninger, uten kommentarer og funksjonskropper.
@@ -1142,6 +1148,51 @@ def _setninger(sql):
         s = " ".join(rå.split()).lower()
         if s:
             yield s
+
+
+def _spill_av(filer, navn):
+    """Gjerdetilstanden for hver funksjon i `navn` etter at `filer` er kjørt.
+
+    `filer` er (filnavn, sql)-par i kjørerekkefølge. Returnerer `(gjerdet,
+    spor)`, der gjerdet er None = funksjonen finnes ikke ennå, False = den
+    finnes med EXECUTE for PUBLIC, True = gjerdet står.
+
+    Modellen er ACL-ens tilstand, ikke en tekstsjekk per fil: hver setning
+    som kan flytte PUBLICs EXECUTE må være representert, ellers leser
+    avspillingen en åpen funksjon som lukket.
+    """
+    gjerdet = dict.fromkeys(navn)
+    spor = {n: [] for n in navn}
+    for filnavn, sql in filer:
+        rolle = None                      # None = migrator, kjørerens rolle
+        for s in _setninger(sql):
+            if s.startswith("set local role "):
+                rolle = s.split()[3]
+            elif s.startswith("reset role"):
+                rolle = None
+            for n in navn:
+                if n not in s:
+                    continue
+                if s.startswith("create ") and " function " in f" {s} ":
+                    # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC.
+                    gjerdet[n] = False
+                    spor[n].append(f"{filnavn}: gjenskapt")
+                elif s.startswith("revoke ") and _FRA_PUBLIC.search(s):
+                    # Som eier: gjerdet står. Som migrator: advarsel, og
+                    # standard-ACL-en materialiseres — verre enn ingenting.
+                    gjerdet[n] = rolle == EIERROLLE
+                    spor[n].append(f"{filnavn}: revoke som {rolle or 'migrator'}")
+                elif s.startswith("grant ") and _TIL_PUBLIC.search(s):
+                    # Gjerdet ned igjen, og uten dette sporet ville
+                    # avspillingen beholdt True fra en tidligere REVOKE
+                    # (Codex P2 på #71). At granten kan komme fra en rolle
+                    # uten grant option — og da bare gi en WARNING — endrer
+                    # ikke svaret: det usikre tilfellet skal måles som åpent,
+                    # ikke antas lukket. Da feiler testen, og noen ser etter.
+                    gjerdet[n] = False
+                    spor[n].append(
+                        f"{filnavn}: grant til public som {rolle or 'migrator'}")
+    return gjerdet, spor
 
 
 def test_gjerdet_staar_ved_slutten_av_migrasjonshistorikken():
@@ -1172,33 +1223,67 @@ def test_gjerdet_staar_ved_slutten_av_migrasjonshistorikken():
     """
     mig = Path(__file__).resolve().parents[1] / "db/migrations"
     navn = [s.split("(")[0] for s in SENDERFUNKSJONER]
-    # None = funksjonen finnes ikke ennå. False = den finnes med åpen ACL.
-    gjerdet = dict.fromkeys(navn)
-    spor = {n: [] for n in navn}
-    for fil in sorted(mig.glob("[0-9][0-9][0-9]_*.sql")):
-        rolle = None                      # None = migrator, kjørerens rolle
-        for s in _setninger(fil.read_text(encoding="utf-8")):
-            if s.startswith("set local role "):
-                rolle = s.split()[3]
-            elif s.startswith("reset role"):
-                rolle = None
-            for n in navn:
-                if n not in s:
-                    continue
-                if s.startswith("create ") and " function " in f" {s} ":
-                    # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC.
-                    gjerdet[n] = False
-                    spor[n].append(f"{fil.name}: gjenskapt")
-                elif s.startswith("revoke ") and " public" in s:
-                    # Som eier: gjerdet står. Som migrator: advarsel, og
-                    # standard-ACL-en materialiseres — verre enn ingenting.
-                    gjerdet[n] = rolle == EIERROLLE
-                    spor[n].append(f"{fil.name}: revoke som {rolle or 'migrator'}")
+    gjerdet, spor = _spill_av(
+        ((f.name, f.read_text(encoding="utf-8"))
+         for f in sorted(mig.glob("[0-9][0-9][0-9]_*.sql"))), navn)
     for n in navn:
         assert gjerdet[n] is True, (
             f"PUBLIC har EXECUTE på {n} etter siste migrasjon — en"
-            f" gjenskaping uten nytt gjerde, eller en REVOKE utenfor"
-            f" `SET LOCAL ROLE {EIERROLLE}`. Spor: {spor[n]}")
+            f" gjenskaping uten nytt gjerde, en REVOKE utenfor"
+            f" `SET LOCAL ROLE {EIERROLLE}`, eller en GRANT tilbake til"
+            f" PUBLIC. Spor: {spor[n]}")
+
+
+def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
+    """Kontroll på selve målestokken: porten over er bare så god som denne.
+
+    Avspillingen er en modell av ACL-en, og en modell som ikke kjenner en
+    setning leser den som om den ikke fantes. Da blir testen over grønn av
+    at den er blind — den verste formen for grønn, fordi den ser ut som et
+    bevis. Hvert spor her er en vei PUBLIC kan få EXECUTE på nytt:
+
+    * gjenskaping uten nytt gjerde — DROP-en tar ACL-en med seg (028, P1),
+    * REVOKE som migrator — WARNING, og standard-ACL-en materialiseres,
+    * `GRANT … TO PUBLIC` etter et gjerde som sto (Codex P2 på #71). Den
+      siste er ikke hypotetisk på en annen måte enn de to andre: 027 og 028
+      granter begge EXECUTE eksplisitt, og en mottaker skrevet feil er én
+      redigering unna. Oppryddingen i `deploy/staging/migrer.py` ville
+      dessuten skjult den for ACL-testen, akkurat som den skjulte P1-en.
+
+    Og motprøven: skjemanavnet `public` i en grant til en annen rolle skal
+    IKKE leses som PUBLIC — ellers ville modellen slått ut på 027s egne
+    granter og gjort porten til støy.
+    """
+    n = ["varsel_klaim_epost"]
+    lag = "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
+    gjerde = ("SET LOCAL ROLE disponit_domene_eier;"
+              " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+              " FROM PUBLIC; RESET ROLE;")
+
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {
+        "varsel_klaim_epost": True}, "gjerde satt av eieren skal stå"
+
+    assert _spill_av([("a.sql", lag + gjerde), ("b.sql", lag)], n)[0] == {
+        "varsel_klaim_epost": False}, "gjenskaping uten nytt gjerde"
+
+    assert _spill_av([("a.sql", lag + "REVOKE ALL ON FUNCTION"
+                       " varsel_klaim_epost(int, int) FROM PUBLIC;")], n)[0] \
+        == {"varsel_klaim_epost": False}, "REVOKE som migrator er ikke gjerde"
+
+    etterpaa = ("GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                " TO PUBLIC;")
+    gjerdet, spor = _spill_av([("a.sql", lag + gjerde),
+                               ("b.sql", etterpaa)], n)
+    assert gjerdet == {"varsel_klaim_epost": False}, \
+        f"GRANT tilbake til PUBLIC skal åpne gjerdet. Spor: {spor}"
+    assert "b.sql: grant til public som migrator" in spor["varsel_klaim_epost"]
+
+    # Motprøven: `public` som SKJEMA, og en helt annen mottaker.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", "GRANT EXECUTE ON FUNCTION"
+                       " public.varsel_klaim_epost(int, int)"
+                       " TO disponit_varselsender;")], n)[0] == {
+        "varsel_klaim_epost": True}, "skjemanavnet `public` er ikke PUBLIC"
 
 
 def _execute_mottakere(conn, signatur):
