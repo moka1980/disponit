@@ -284,9 +284,20 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     "aria-label": t("ui.shell.kontekst") },
     el("p", { class: "muted", text: t("ui.shell.kontekst_tom") }));
 
+  // OVERSKRIFTSNIVÅENE MÅ HENGE SAMMEN (Codex P2). De elleve gruppene sto som
+  // `h3` uten noe på nivå 2 over seg, så den som navigerer på overskrifter
+  // begynte på nivå 3 — under et hull. Sonens `aria-label` hjelper ikke: en
+  // etikett på et landemerke er ikke en overskrift og lager ikke et nivå.
+  //
+  // Menyen får derfor sin egen `h2`. Den er visuelt skjult fordi sonen alt SER
+  // ut som en meny for den som ser den; det er hierarkiet som manglet, ikke
+  // pynten. Sonen merkes av selve overskriften i stedet for av en kopi av
+  // teksten: én kilde, og de to kan ikke komme fra hverandre.
   const modulliste = el("div", { class: "skall-modulliste" });
+  const menytittel = el("h2", { class: "sr-only", id: "modulmeny-tittel",
+    text: t("ui.shell.moduler") });
   const venstre = el("aside", { class: "skall-venstre", id: "modulmeny",
-    "aria-label": t("ui.shell.moduler") }, modulliste);
+    "aria-labelledby": "modulmeny-tittel" }, menytittel, modulliste);
 
   // Søket filtrerer modulmenyen. Det er det eneste søket har å søke i her, og
   // et søkefelt som later som det gjør mer ville vært verre enn ingen.

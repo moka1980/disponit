@@ -285,6 +285,31 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   assert.ok(status.includes("3"), "varseltallet vises ikke");
 });
 
+test("AppShell: modulmenyens overskriftsnivåer henger sammen (Codex P2)", () => {
+  // 🔴 De elleve gruppene sto som `h3` uten noe på nivå 2 over seg: den som
+  // navigerer på overskrifter begynte på nivå 3, under et hull. Sonens
+  // `aria-label` er en etikett på et landemerke, ikke en overskrift — den
+  // lager ikke nivået som mangler.
+  const { rot } = AppShell({ tenant: "Acme", sprak: "nb", aktiv: "oversikt",
+    ruter: [{ nokkel: "oversikt" }], moduler: ALLE_MODULER,
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  const meny = rot.querySelector(".skall-venstre");
+  const nivaer = [...meny.querySelectorAll("h1, h2, h3, h4, h5, h6")]
+    .map((h) => Number(h.tagName[1]));
+  assert.equal(nivaer[0], 2,
+    `modulmenyen starter på nivå ${nivaer[0]} — gruppene har ingen forelder`);
+  assert.ok(nivaer.slice(1).every((n) => n === 3),
+    "gruppene ligger ikke ett nivå under menyens egen overskrift");
+
+  // Overskriften er ETIKETTEN på sonen, ikke en kopi av den: to tekster som
+  // sier det samme kan komme fra hverandre.
+  const tittel = meny.querySelector("h2");
+  assert.equal(meny.getAttribute("aria-labelledby"), tittel.id);
+  assert.equal(tittel.textContent, NB["ui.shell.moduler"]);
+  assert.equal(meny.getAttribute("aria-label"), null,
+    "sonen bærer både en etikett og en overskrift");
+});
+
 test("AppShell: uten varselkilde påstår statuslinja ingen null (Codex P2)", () => {
   // 🔴 `app.js` sender ikke `varsler` — det finnes ingen varselkilde ennå. Med
   // fallback til 0 sa hver eneste økt i produksjon «0 varsler», uansett hva som
