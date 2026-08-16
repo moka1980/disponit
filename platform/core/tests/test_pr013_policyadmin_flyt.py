@@ -16,6 +16,7 @@ import secrets
 import threading
 from datetime import datetime, timezone
 
+import psycopg
 import pytest
 
 from api import policyadmin
@@ -764,6 +765,104 @@ def test_hent_aktiv_avviser_rad_med_fremmed_dokumentidentitet():
     finally:
         m.rollback()
         m.close()
+
+
+def _ekte_pk_kollisjon(pid):
+    """-> en EKTE `UniqueViolation` fra `policyer_pkey`.
+
+    Ikke en konstruert exception: routingen leser `diag.constraint_name`, og en
+    håndlaget feil har ingen. Da ville testen bevist at fallbacken virker, ikke
+    at PK-bruddet gjenkjennes. Denne kommer fra databasen, med navnet i seg.
+    """
+    innhold = {"roller": [{"id": "rPk"}]}
+    m = _mig()
+    try:
+        rad = (TEN, pid, "7.7.7", pr.innholds_hash(innhold),
+               json.dumps(innhold))
+        sql = ("INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+               "status,innhold,aktiv) VALUES (%s,%s,%s,%s,'produksjon',"
+               "%s::jsonb,false)")
+        m.execute(sql, rad)
+        m.commit()
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "sys", "r1")
+        try:
+            m.execute(sql, rad)
+        except psycopg.errors.UniqueViolation as e:
+            assert e.diag.constraint_name == "policyer_pkey", \
+                e.diag.constraint_name
+            return e
+        raise AssertionError("dubletten ble akseptert — PK-en er borte")
+    finally:
+        m.rollback()
+        m.close()
+
+
+class _KollisjonIAktiveringen:
+    """Forbindelsen, men `aktiver_policy` reiser den oppgitte feilen.
+
+    Vinduet finnes bare inne i funksjonen — mellom dens egen ubrukt-kontroll og
+    INSERT-en — og kan ikke treffes utenfra uten å skrive om funksjonen. Alt
+    ANNET i veien er ekte: savepointet, kanselleringen, idempotenslagringen og
+    committen kjører mot databasen som vanlig.
+    """
+
+    def __init__(self, ekte, feil):
+        self._ekte, self._feil = ekte, feil
+
+    def execute(self, sql, params=None, **kw):
+        if "aktiver_policy" in str(sql):
+            raise self._feil
+        return self._ekte.execute(sql, params, **kw)
+
+    def __getattr__(self, navn):
+        return getattr(self._ekte, navn)
+
+
+@pg
+def test_pk_kollisjon_kansellerer_runden_i_stedet_for_a_meldes_som_drift():
+    """🔴 P2: en tapt versjon er ikke en usynk peker.
+
+    INSERT-en i `aktiver_policy` kan bryte to ulike unike krav, og de betyr
+    motsatte ting for eier. `en_aktiv_per_policy` = pekeren må repareres, og
+    runden er gyldig etterpå. `policyer_pkey` = versjonen ble registrert av en
+    annen skriver i vinduet, pekeren er i synk, og runden er DØD: innholdet er
+    frosset, så versjonen kan ikke økes uten et nytt utkast.
+
+    Uten routing meldte begge `aktiv_peker_usynk`: eier ble sendt for å
+    reparere en usynk som ikke fantes, og runden ble stående åpen og se levende
+    ut selv om den aldri kunne aktiveres.
+
+    Kontroll: fjern `policyer_pkey`-grenen, så blir denne rød med utfall
+    `aktiv_peker_usynk` og en runde som fortsatt står åpen.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)             # UTVIDER, pakrevd 2
+    feil = _ekte_pk_kollisjon(pid)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        dh = r["diff_hash"]
+        assert _attester(rt, uid, a, dh)["utfall"] == "venter_godkjennere"
+        svar = _attester(_KollisjonIAktiveringen(rt, feil), uid, b, dh)
+        assert svar["utfall"] == "versjon_i_bruk", svar
+    finally:
+        rt.close()
+    m = _mig()
+    try:
+        rstatus = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        antall = m.execute(
+            "SELECT count(*) FROM aktiveringsattestasjon WHERE tenant=%s AND"
+            " utkast_id=%s", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback(); m.close()
+    assert rstatus == "kansellert", (
+        "en runde som beviselig aldri kan aktiveres ble stående åpen")
+    assert antall == 2, "signaturene skal bestå — de er sporet av hva som ble godkjent"
 
 
 def _reparer(pid, versjon="9"):

@@ -900,14 +900,30 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # attestasjonen har ingenting å bevares til: en ny runde krever nye.
         conn.rollback()
         raise Aktiveringsfeil("rebasering_kreves") from None
-    except psycopg.errors.UniqueViolation:
-        # `en_aktiv_per_policy` slo til: det finnes en aktiv policyrad som
-        # pekeren ikke kjenner til. Kontrollen i steg 5b fanger drift som ALT
-        # var der; hit kommer bare drift som oppsto i vinduet mellom kontrollen
-        # og aktiveringen. Runden får stå, attestasjonen består, og eier får et
-        # utfall som sier hva som er galt — ikke «Exception in ASGI
-        # application», og ikke en tapt godkjenning.
+    except psycopg.errors.UniqueViolation as e:
+        # INSERT-en i steg 5 kan bryte TO ulike unike krav, og de betyr helt
+        # ulike ting for eier (Codex P2):
+        #
+        #   * `en_aktiv_per_policy` — det finnes en aktiv policyrad pekeren
+        #     ikke kjenner til. Pekeren er ute av synk og MÅ repareres; et nytt
+        #     forsøk hjelper ikke, men runden er fortsatt gyldig etterpå. Den
+        #     får derfor stå, og attestasjonen består.
+        #   * `policyer_pkey` — versjonen utkastet bærer ble registrert av en
+        #     annen skriver i vinduet mellom funksjonens egen ubrukt-kontroll og
+        #     INSERT-en. Pekeren er helt i synk; det er VERSJONEN som er borte,
+        #     permanent: innholdet er frosset, så den kan ikke økes uten et nytt
+        #     utkast. Meldte vi «reparer dataene» her, ville eier lett etter en
+        #     usynk som ikke finnes — og runden ville blitt stående åpen og se
+        #     levende ut selv om den beviselig aldri kan aktiveres.
+        #
+        # Ukjent/uten navn behandles som pekerdrift, som før: INSERT-en er den
+        # eneste setningen i funksjonen som kan reise et unikt brudd, og
+        # alternativet ville vært å kansellere en runde på et brudd vi ikke har
+        # forstått. Å bevare er det reversible valget.
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
+        if e.diag.constraint_name == "policyer_pkey":
+            return _kanseller_runde(conn, tenant, idempotency_key, utkast_id,
+                                    policy_id, r_nr, "versjon_i_bruk")
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "aktiv_peker_usynk", "utkast_id": utkast_id,
             "policy_id": policy_id, "runde": r_nr})
@@ -927,18 +943,32 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # deler feilkode og krever hver sin forklaring til eier: «gi utkastet
         # en ny versjon» hjelper ikke den som har skrevet feil policy_id.
         conn.execute("ROLLBACK TO SAVEPOINT aktiveringsforsok")
-        conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
-                     " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
-                     (tenant, utkast_id, r_nr))
-        return _fullfor(conn, tenant, idempotency_key, {
-            "utfall": _DOKUMENTBRUDD.get(e.diag.constraint_name,
-                                         "versjon_i_bruk"),
-            "utkast_id": utkast_id, "policy_id": policy_id, "runde": r_nr})
+        return _kanseller_runde(
+            conn, tenant, idempotency_key, utkast_id, policy_id, r_nr,
+            _DOKUMENTBRUDD.get(e.diag.constraint_name, "versjon_i_bruk"))
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,
         "versjon": ny_versjon, "runde": r_nr, "risikoklasse": r_risiko})
+
+
+def _kanseller_runde(conn, tenant: str, idempotency_key: str, utkast_id: str,
+                     policy_id: str, runde: int, utfall: str) -> dict:
+    """Lukk en runde som beviselig ALDRI kan aktiveres, og svar deterministisk.
+
+    Felles for utfallene som havner her: det frosne utkastet kan ikke lagres
+    slik det står (versjonen er tatt, identiteten eller statusen stemmer ikke),
+    og innholdet kan ikke rettes — bare erstattes. En runde som ser levende ut
+    og aldri kan lykkes, er verre enn ingen runde: godkjennere venter på noe som
+    ikke kommer. Signaturene består (append-only); de er sporet av hva som
+    faktisk ble godkjent."""
+    conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
+                 " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+                 (tenant, utkast_id, runde))
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utfall": utfall, "utkast_id": utkast_id, "policy_id": policy_id,
+        "runde": runde})
 
 
 def _reautoriser_godkjennere(conn, tenant: str, attestasjoner) -> str | None:
