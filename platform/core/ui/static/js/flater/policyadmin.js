@@ -130,11 +130,24 @@ function taKvittering(uid) {
   return k && k.uid === uid ? k : null;
 }
 
+// Live-området settes inn TOMT og fylles først når det står i dokumentet
+// (Codex P2). Et `role="status"` annonserer ikke pålitelig tekst som lå der
+// allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
+// bare `role="alert"` som vanligvis får. Bygget vi hele boksen ferdig utfylt og
+// satte den inn som del av ett stort undertre, kunne altså nettopp de POSITIVE
+// utfallene («validert», «venter på godkjennere») bli tause for skjermleseren —
+// samme klasse feil som den vi kom fra, bare et hakk dypere: synlig på skjermen,
+// stille i lyd. Derfor to trinn: regionen først, teksten som en egen endring
+// ETTERPÅ, som live-området er laget for å fange opp.
+//
+// Returnerer { rot, fyll } — den som setter inn `rot`, kaller `fyll()` etterpå.
 function kvitteringsBoks(k) {
-  return el("div", {
+  const linje = el("p", {});
+  const rot = el("div", {
     class: `pa-kvittering pa-kvittering-${k.art}`,
     role: k.art === "feil" ? "alert" : "status",
-  }, el("p", { text: k.tekst }));
+  }, linje);
+  return { rot, fyll: () => sett(linje, k.tekst) };
 }
 
 // ÉN idempotensnøkkel per aktiveringsforsøk — gjenbrukes ved nettverksretry, så
@@ -379,8 +392,13 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, kvitt) {
   // nederst ved knappen, som kan være utenfor skjermen etter gjentegningen.
   // Den kommer inn utenfra: den som STARTET tegningen har tatt den, så en
   // tegning som aldri når skjermen ikke etterlater seg en kvittering.
-  return el("div", {}, ...(kvitt ? [kvitteringsBoks(kvitt)] : []),
-    faner.rot, handl.rot);
+  const boks = kvitt ? kvitteringsBoks(kvitt) : null;
+  // { rot, ferdig } — `ferdig()` kalles av den som har SATT INN `rot`, og fyller
+  // live-området når det først står i dokumentet.
+  return {
+    rot: el("div", {}, ...(boks ? [boks.rot] : []), faner.rot, handl.rot),
+    ferdig: () => { if (boks) boks.fyll(); },
+  };
 }
 
 function tilbakeKnapp(tilbakeTilListe) {
@@ -453,14 +471,20 @@ export function visPolicyadmin(hoved, ctx) {
     const kvitt = taKvittering(uid);
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
       if (!eierSkjermen(min)) return;
+      const innhold = detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid),
+        aapneEditor, kvitt);
       sett(hoved,
         ...flateHode(
           `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
           t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
         tilbakeKnapp(tilbakeTilListe),
-        detaljInnhold(detalj, uid, ctx, () => aapneDetalj(uid), aapneEditor,
-          kvitt));
+        innhold.rot);
       fokuserOverskrift(hoved);
+      // Kvitteringsteksten settes ETTER at siden står og fokus er flyttet:
+      // live-området skal fange en ENDRING i et område som allerede er i
+      // tilgjengelighetstreet, og annonseringen skal ikke bli avbrutt av
+      // fokusflyttingen rett etterpå.
+      innhold.ferdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (!eierSkjermen(min)) return;

@@ -817,6 +817,52 @@ test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
     "kvitteringen ble hengende igjen og bekrefter noe som ikke skjedde nå");
 });
 
+// Codex P2: et `role="status"` annonserer ikke pålitelig tekst som lå der
+// allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
+// bare `role="alert"` som vanligvis får. Bygde vi kvitteringsboksen ferdig
+// utfylt og satte hele undertreet inn i ett jafs, kunne altså nettopp de
+// POSITIVE utfallene bli tause for skjermleseren: synlig på skjermen, stille i
+// lyd. Regionen skal derfor stå i dokumentet FØRST, og teksten komme som en
+// egen endring etterpå.
+//
+// Testen ser på selve rekkefølgen, ikke på sluttresultatet: sluttilstanden er
+// jo lik uansett. Kontroll: legg teksten tilbake i `el("p", { text: … })`, så
+// kommer hele boksen som ÉN mutasjon og testen blir rød.
+test("Kvitteringen fylles ETTER at live-området står i dokumentet", async () => {
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+
+  const logg = [];
+  const obs = new window.MutationObserver((r) => logg.push(...r));
+  obs.observe(h, { childList: true, subtree: true, characterData: true });
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering"));
+  logg.push(...obs.takeRecords());
+  obs.disconnect();
+
+  const kvitt = h.querySelector(".pa-kvittering");
+  assert.equal(kvitt.getAttribute("role"), "status");
+  assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
+    "teksten kom aldri inn i live-området");
+
+  const iInnsatt = logg.findIndex((r) => [...r.addedNodes].some(
+    (n) => n.nodeType === 1 && (n === kvitt || n.contains(kvitt))));
+  const iTekst = logg.findIndex((r) => kvitt.contains(r.target)
+    && [...r.addedNodes].some((n) => n.nodeType === 3
+      && n.data.includes(t("ui.policyadmin.validert"))));
+  assert.ok(iInnsatt >= 0, "kvitteringen ble aldri satt inn i `hoved`");
+  assert.ok(iTekst > iInnsatt,
+    "teksten lå allerede i live-området da det ble satt inn — da kan "
+    + "skjermleseren gå glipp av den");
+});
+
 // Eier P1 / Codex P2: kvitteringen var en naken modulglobal uten identitet.
 // Attesterte man A og gikk tilbake mens gjentegningen av A fortsatt var ute på
 // nettet, avviste eierskapssjekken den tegningen — men kvitteringen ble
