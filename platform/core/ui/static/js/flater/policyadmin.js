@@ -123,12 +123,55 @@ function bladRad(e) {
 // rader ned.
 const NOKKELFELT = ["modul", "modus", "grenser.belop_maks", "tillatt_for[0]"];
 
-function elementOverskrift(element, blader) {
+// «handlinger[1]» / «menneskelig_overstyring.godkjennbare[0]» → verdien på den
+// stien i utkastet, eller `undefined` finnes den ikke.
+function slaaOppSti(rot, sti) {
+  let v = rot;
+  for (const ledd of String(sti).match(/[^.[\]]+/g) || []) {
+    if (v === null || typeof v !== "object") return undefined;
+    v = Array.isArray(v) ? v[Number(ledd)] : v[ledd];
+    if (v === undefined) return undefined;
+  }
+  return v;
+}
+
+// Flater et element ut til de samme rest-stiene bladdiffen bruker
+// («id», «grenser.belop_maks», «grenser.valuta[0]») — samme form som
+// serverens `_flat`, så oppslagene under treffer uansett kilde.
+function flateFelt(verdi, prefiks = "", ut = new Map()) {
+  if (Array.isArray(verdi)) {
+    verdi.forEach((v, i) => flateFelt(v, `${prefiks}[${i}]`, ut));
+  } else if (verdi !== null && typeof verdi === "object") {
+    for (const [k, v] of Object.entries(verdi)) {
+      flateFelt(v, prefiks ? `${prefiks}.${k}` : k, ut);
+    }
+  } else if (prefiks) {
+    ut.set(prefiks, verdi);
+  }
+  return ut;
+}
+
+// Overskriften bygges fra HELE utkastet, ikke bare fra bladene som endret
+// seg. Endres en handling som allerede finnes — si `handlinger[1].modus` —
+// inneholder diffen verken `id` eller `modul`, og overskriften falt tilbake
+// til «handlinger[1]». Nettopp den vanligste endringen fortalte altså ikke
+// godkjenneren HVILKEN handling hun tar stilling til (Codex P2).
+//
+// Utkastets `innhold` er fasit for hva elementet ER etter endringen, så det
+// er kilden når elementet finnes der. Et SLETTET element finnes ikke i
+// utkastet — der er `fra`-verdiene i diffen det eneste som forteller hva som
+// forsvinner, og de beholdes.
+function elementOverskrift(element, blader, innhold) {
   const felt = new Map();
-  for (const e of blader) {
-    const { rest } = delOppSti(e.sti);
-    const v = e.type === "fjernet" ? e.fra : e.til;
-    if (rest) felt.set(rest, v);
+  const kilde = slaaOppSti(innhold, element);
+  if (kilde !== undefined) {
+    for (const [k, v] of flateFelt(kilde)) felt.set(k, v);
+  } else {
+    for (const e of blader) {
+      const { rest } = delOppSti(e.sti);
+      const v = e.type === "fjernet" ? e.fra : e.til;
+      if (rest) felt.set(rest, v);
+    }
   }
   const navn = felt.get("id") || element;
   const merker = [];
@@ -180,7 +223,7 @@ function feltdiffRad(blader) {
     el("ul", { class: "feltdiff" }, ...blader.map(bladRad)));
 }
 
-function elementBlokk(element, blader) {
+function elementBlokk(element, blader, innhold) {
   // Sammenslåing er BARE trygt for like tillegg/fjerninger. En `endret` verdi
   // har to sider, og den sammenslåtte raden viste bare den nye — `tidssone`
   // ble «Europe/Oslo» uten at «UTC» sto noe sted. Å miste utgangspunktet i en
@@ -196,7 +239,7 @@ function elementBlokk(element, blader) {
   // Det skal stå med sin egen sti, ikke pakkes i et kort og ikke få «[]».
   if (blader.every(erBladetSelv)) return feltdiffRad(blader);
 
-  const { navn, merker } = elementOverskrift(element, blader);
+  const { navn, merker } = elementOverskrift(element, blader, innhold);
   const detaljer = el("details", { class: "diff-element" });
   const opps = el("summary", {},
     el("span", { class: "diff-navn", text: navn }));
@@ -265,7 +308,7 @@ function feltDiff(detalj) {
           .replace("{n}", String(antall)) }));
     blokk.append(opps, el("ul", { class: "diff-elementer" },
       ...[...elementer.keys()].sort((a, b) => a.localeCompare(b, "nb"))
-        .map((k) => elementBlokk(k, elementer.get(k)))));
+        .map((k) => elementBlokk(k, elementer.get(k), detalj.innhold))));
     rot.append(blokk);
   }
   return rot;

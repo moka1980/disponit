@@ -1718,6 +1718,68 @@ test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
       "overskriftsdelene limes sammen uten skilletegn");
   });
 
+// Det vanligste tilfellet er ikke en ny policy, men en JUSTERT: da inneholder
+// diffen bare det ene bladet som skiftet. Bygges overskriften utelukkende av
+// de endrede bladene, faller den tilbake til «handlinger[1]» — uten navn,
+// modul eller beløpsgrense. Godkjenneren får altså vite at noe endret seg,
+// men ikke på hvilken handling (Codex P2). Utkastets `innhold` er allerede
+// med i detaljsvaret og er fasit for hva elementet ER etter endringen.
+const ENDRET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    handlinger: [
+      { id: "ordre.bekreft", modul: "M-25", modus: "forslag" },
+      { id: "refusjon.utfor", modul: "M-41", modus: "auto",
+        grenser: { belop_maks: "5000.00", valuta: ["NOK"] } },
+    ],
+  },
+  diff: { endringer: [
+    { sti: "handlinger[1].modus", type: "endret", fra: "forslag", til: "auto" },
+  ] },
+};
+
+test("Diff: overskriften hentes fra hele utkastet, ikke bare fra det endrede",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": ENDRET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = rot.querySelector(".diff-element > summary").textContent;
+    assert.ok(opps.includes("refusjon.utfor"),
+      `overskriften sier ikke hvilken handling som endres: «${opps}»`);
+    assert.ok(opps.includes("M-41"), "modul mangler i overskriften");
+    assert.ok(opps.includes("5000.00") && opps.includes("NOK"),
+      "beløpsgrensen mangler i overskriften");
+    // Selve endringen skal fortsatt vise BEGGE sider.
+    const rad = rot.querySelector(".feltdiff li").textContent;
+    assert.ok(rad.includes("forslag") && rad.includes("auto"),
+      "en endret verdi må vise både fra og til");
+  });
+
+// Et slettet element finnes ikke i utkastet. Da er `fra`-verdiene i diffen
+// det eneste som forteller hva som forsvinner, og de må beholdes.
+const SLETTET_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: { handlinger: [] },
+  diff: { endringer: [
+    { sti: "handlinger[0].id", type: "fjernet", fra: "refusjon.utfor" },
+    { sti: "handlinger[0].modul", type: "fjernet", fra: "M-41" },
+    { sti: "handlinger[0].modus", type: "fjernet", fra: "auto" },
+  ] },
+};
+
+test("Diff: et slettet element beholder navnet sitt fra fra-verdiene",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": SLETTET_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const opps = rot.querySelector(".diff-element > summary").textContent;
+    assert.ok(opps.includes("refusjon.utfor"),
+      `den fjernede handlingen mistet navnet sitt: «${opps}»`);
+    assert.ok(opps.includes("M-41"), "modulen forsvant fra overskriften");
+  });
+
 test("Diff: en liste av rene verdier blir ÉN rad, ikke én per indeks", async () => {
   SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
     __post: async () => ({}) };
