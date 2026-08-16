@@ -651,5 +651,6 @@
   "ui.policyadmin.tilbake_til_liste": "← Tilbake til utkastene",
   "ui.policyadmin.detalj_undertittel": "Utkast {id}",
   "ui.policyadmin.utfall.venter_antall": "{avgitt} av godkjenningene er avgitt, {gjenstaar} gjenstår.",
-  "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet."
+  "ui.policyadmin.utfall.mangler_uavhengig": "Minst én godkjenner må være en annen enn den som skrev utkastet.",
+  "ui.policyadmin.utfall.aktiv_peker_usynk": "Aktiv policy og peker er ute av synk — dataene må repareres før aktivering."
 }

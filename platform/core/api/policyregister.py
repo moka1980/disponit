@@ -142,4 +142,22 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
         "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv",
         (tenant, pid, versjon, h, status, json.dumps(policy), aktiver))
+    if aktiver:
+        # Ankerraden MÅ følge med. Den styrte aktiveringen
+        # (`aktiver_policy`) leser `policy_hode.aktiv_versjon`, IKKE
+        # `policyer.aktiv`. Skrev vi bare flagget — som denne funksjonen
+        # gjorde — trodde den at ingenting var aktivt, hoppet derfor over
+        # «deaktiver forrige», og INSERT-en kolliderte med delindeksen
+        # `en_aktiv_per_policy`. Symptomet var HTTP 500 midt i en
+        # fire-øyne-runde, på en tenant satt opp helt normalt via
+        # init-tenant.sh, og det rammet FØRSTE styrte aktivering for enhver
+        # slik tenant. Delindeksen holdt — men den holdt ved å velte
+        # forespørselen, ikke ved å hindre at pekeren kom ut av synk.
+        conn.execute(
+            "INSERT INTO policy_hode (tenant, policy_id, aktiv_versjon)"
+            " VALUES (%s,%s,%s)"
+            " ON CONFLICT (tenant, policy_id) DO UPDATE"
+            " SET aktiv_versjon = EXCLUDED.aktiv_versjon,"
+            "     revisjon = policy_hode.revisjon + 1",
+            (tenant, pid, versjon))
     return h

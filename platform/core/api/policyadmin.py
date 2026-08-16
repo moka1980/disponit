@@ -637,6 +637,15 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # Funksjonen er serialiseringspunktet (V10) — flyttet base = rebasering.
         conn.rollback()
         raise Aktiveringsfeil("rebasering_kreves") from None
+    except psycopg.errors.UniqueViolation:
+        # `en_aktiv_per_policy` slo til: det finnes en aktiv policyrad som
+        # pekeren ikke kjenner til. Årsaken er rettet over (bootstrap skriver
+        # nå ankerraden), men en base som allerede ER usynk skal ikke møte
+        # eier som «Exception in ASGI application». Den skal si hva som er
+        # galt, og den skal la runden stå — dataene må repareres, ikke
+        # attesteres på nytt.
+        conn.rollback()
+        raise Aktiveringsfeil("aktiv_peker_usynk") from None
 
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,

@@ -51,6 +51,12 @@ def dekker(*koder: str):
 # ---------------------------------------------------------------------------
 
 APPEND_ONLY_TRIGGERE = (
+    # PR-013: ankerraden er append-only med vilje — pekerens historikk skal
+    # ikke kunne viskes ut. Den måtte inn her da `policyregister.registrer`
+    # begynte å skrive den (bootstrap skrev før BARE `policyer.aktiv`, og lot
+    # pekeren stå tom — nettopp usynken som ga UniqueViolation i produksjon).
+    # Uten dette feiler oppryddingen på FK-en fra `policy_hode` til `policyer`.
+    ("policy_hode", "hode_ingen_sletting"),
     ("unntak_historikk", "historikk_ingen_endring"),
     ("unntak", "unntak_ingen_delete"),
     ("unntak", "unntak_historikkforing"),
@@ -94,7 +100,9 @@ RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag 
                  "verifikasjonsbevis",
                  "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
                  "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
-                 "policyer", "tenant_nokler", "frekvens_hendelser",
+                 # `policy_hode` FØR `policyer`: pekeren har FK dit.
+                 "policy_hode", "policyer", "tenant_nokler",
+                 "frekvens_hendelser",
                  "domenekontroll_hendelse", "domenekontroll")
 
 
