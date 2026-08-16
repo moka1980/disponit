@@ -203,6 +203,30 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
             "policy_id_for_stor",
             f"policy_id levner ikke plass til en versjon i registernøkkelen"
             f" ({_nokkelbytes(tenant, policy_id)} byte)")
+    # Identiteten er godkjent. Så INNHOLDET, og her retter vi i stedet for å
+    # avvise — statusen er ikke eiers valg (se under).
+    #
+    # Dokumentets `meta.status` settes HER, ikke av mennesket.
+    #
+    # Bransjemalene bærer `status: utkast` — riktig for en mal. Men aktiveringen
+    # skriver `produksjon` i registeret, og `hent_aktiv` krever at de to er
+    # like; et utkast som bar malens status videre ble derfor aktivert til en
+    # policy som ble avvist som korrupt ved HVER beslutning. Eier laget to
+    # slike (`tjenestebedrift1`, `tjenestebedrift2`) uten at noe sa fra.
+    #
+    # Editoren eksponerer ikke feltet, og skal ikke gjøre det: arbeidsflyt-
+    # statusen ligger i `policyutkast.status` (utkast → validert → godkjent →
+    # aktivert). `meta.status` beskriver hva dokumentet ER som registrert
+    # policy, altså en KONSEKVENS av å bli aktivert — ikke et valg. Å be
+    # mennesket skrive «produksjon» i et fritekstfelt ville bare flyttet
+    # feilen.
+    #
+    # Normaliseringen skjer ved opprettelsen, FØR valideringen fryser
+    # `innholds_hash`: det som valideres, differes og attesteres er da det
+    # samme dokumentet som blir aktivert.
+    if isinstance(innhold.get("meta"), dict):
+        innhold = {**innhold,
+                   "meta": {**innhold["meta"], "status": "produksjon"}}
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
     utkast_id = "u-" + secrets.token_hex(8)
     conn.execute(
@@ -845,6 +869,13 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
         # å aktivere som en versjon som mangler (se `_MAKS_NOKKELBYTES`), og
         # skal stoppes her — ikke som en indeksfeil etter to signaturer.
         raise Aktiveringsfeil("versjon_mangler", f"meta.versjon={ny!r:.80}")
+    # STATUSKRAVET FRA #67 BÆRES VIDERE, men det bor et annet sted her.
+    # `main` la det inne i denne funksjonen fordi den ikke hadde noen annen
+    # felles port; denne grenen har `_krev_produksjonsstatus`, som kalles rett
+    # FØR dette kallet på begge veiene (runde-åpning og attestering) og har
+    # migrasjon 024 som siste skanse. En kopi her ville aldri kunnet fyre — den
+    # ville stått som en invariant ingen test kunne felle. Invarianten er den
+    # samme, og den slår til på nøyaktig samme tidspunkt.
     if conn.execute(
             "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND versjon=%s", (tenant, policy_id, ny)).fetchone():

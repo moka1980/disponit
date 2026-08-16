@@ -662,7 +662,7 @@
   "ui.policyadmin.utfall.versjon_i_bruk": "Versjonsnummeret i utkastet er allerede registrert, eller ikke nyere enn den aktive versjonen. Øk «meta.versjon» i utkastet og valider på nytt.",
   "ui.policyadmin.utfall.versjon_mangler": "Utkastet mangler et gyldig versjonsnummer i «meta.versjon» (formen 1.2.3). Rett det i utkastet og valider på nytt.",
   "ui.policyadmin.utfall.policy_id_avvik": "Utkastet oppgir en annen policy i «meta.policy_id» enn den det er registrert under. Rett id-en i utkastet og valider på nytt.",
-  "ui.policyadmin.utfall.status_ikke_produksjon": "Utkastet må ha «meta.status»: «produksjon» for å kunne aktiveres. Rett statusen i utkastet og valider på nytt.",
+  "ui.policyadmin.utfall.status_ikke_produksjon": "Utkastet må ha «meta.status»: «produksjon» for å kunne aktiveres — bransjemalene står som «utkast». Nye utkast får statusen satt automatisk; dette utkastet er eldre og må lages på nytt.",
   "ui.policyadmin.utfall.dokument_avvik": "Utkastet stemmer ikke med policyen det aktiveres som («meta.policy_id» eller «meta.status»). Runden er lukket — innholdet er frosset, så det må lages et nytt utkast.",
   "ui.policyadmin.utfall.utkast_ugyldig": "Utkastet bryter et krav som gjelder alle policyer som aktiveres nå — det ble validert før kravet kom. Rett utkastet og valider på nytt.",
   "ui.policyadmin.diff.sammendrag": "{antall} endringer i {omrader} områder. Områder som utvider fullmakt står åpne øverst.",
