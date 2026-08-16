@@ -84,22 +84,59 @@ function referanserTilRolle(policy, rolleId) {
 // og policyen havnet i nøyaktig samme «ukjent rolle»-tilstand som
 // fjerningsvakten finnes for å stenge — bare via en annen dør.
 //
-// Tomt navn propagerer IKKE: eier som tømmer feltet for å skrive noe nytt skal
-// ikke få `tillatt_for: [""]` underveis. Navnebyttet går derfor fra siste
-// IKKE-tomme id til den nye.
-function doepOmRolle(policy, gammel, ny) {
-  if (!gammel || !ny || gammel === ny) return false;
-  for (const h of policy.handlinger || []) {
-    if (!Array.isArray(h.tillatt_for)) continue;
-    h.tillatt_for = h.tillatt_for.map((x) => (x === gammel ? ny : x));
+// Men navnebyttet kan IKKE gjøres som global tekstutskifting (Codex P2). Et
+// navn skrives tegn for tegn, og underveis passerer det gjerne en ANNEN rolles
+// id: med rollene `admin` og `ad` går `ad` → `adm` → `admi` → `admin` →
+// `admin2`. I mellomsteget slukte raden den ekte `admin`-rollens referanser,
+// og neste tastetrykk flyttet dem videre til `admin2` — en stille
+// rettighetsendring som er STRUKTURELT gyldig, så validatoren på serveren sier
+// ingenting.
+//
+// Referansene eies derfor av RADEN, ikke av strengen som står i den: hvert
+// referansepunkt er et STED (handling nr. 2 sin første `tillatt_for`-plass,
+// eller overstyringsfeltet), knyttet til én rad ved tegning. Et navnebytte
+// skriver bare radens egne punkter.
+function referansepunkter(policy) {
+  const punkter = [];
+  const handlinger = Array.isArray(policy.handlinger) ? policy.handlinger : [];
+  for (const h of handlinger) {
+    if (!h || !Array.isArray(h.tillatt_for)) continue;
+    h.tillatt_for.forEach((_, i) => punkter.push({
+      merkelapp: h.id,
+      les: () => h.tillatt_for[i],
+      skriv: (ny) => { h.tillatt_for[i] = ny; },
+    }));
   }
   const mo = policy.menneskelig_overstyring;
-  if (mo && mo.krever_rolle === gammel) mo.krever_rolle = ny;
-  return true;
+  if (mo && typeof mo === "object") {
+    punkter.push({
+      merkelapp: t("ui.editor.rolle_i_bruk_overstyring"),
+      les: () => mo.krever_rolle,
+      skriv: (ny) => { mo.krever_rolle = ny; },
+    });
+  }
+  return punkter;
+}
+
+// Hvert referansepunkt får ÉN eier: raden som har id-en punktet peker på i det
+// seksjonen tegnes. Rekkefølgen avgjør ved duplikate rolle-id-er (et utkast kan
+// ha dem), og et punkt ingen rad eier blir stående i fred — det er en «ukjent
+// rolle»-referanse validatoren skal si ifra om, ikke noe et navnebytte i en
+// annen rad skal dra med seg.
+function fordelReferanser(roller, policy) {
+  const ledige = referansepunkter(policy);
+  return roller.map((r) => {
+    const id = r && r.id;
+    if (!id) return [];
+    const mine = ledige.filter((p) => p.les() === id);
+    for (const p of mine) ledige.splice(ledige.indexOf(p), 1);
+    return mine;
+  });
 }
 
 function rollerSeksjon(policy, tegnPaaNytt) {
   policy.roller = Array.isArray(policy.roller) ? policy.roller : [];
+  const eide = fordelReferanser(policy.roller, policy);
   const liste = el("div", { class: "editor-liste" });
   // Vaktene til ALLE radene, så et navnebytte i én rad kan tegne om de andre:
   // `ubrukt` → `agent` gjør raden låst, og den gamle `agent`-raden fri.
@@ -134,12 +171,13 @@ function rollerSeksjon(policy, tegnPaaNytt) {
       return brukt;
     };
     vakter.push(oppdaterVakt);
-    let sisteId = r.id || "";
     const rad = el("div", { class: "editor-rad" },
       tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => {
         r.id = v;
-        doepOmRolle(policy, sisteId, v);
-        if (v) sisteId = v;
+        // Tomt navn propagerer IKKE: eier som tømmer feltet for å skrive noe
+        // nytt skal ikke få `tillatt_for: [""]` underveis. Referansene blir
+        // stående på forrige navn til det nye er skrevet.
+        if (v) for (const punkt of eide[i]) punkt.skriv(v);
         for (const oppdater of vakter) oppdater();
       }),
       tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",

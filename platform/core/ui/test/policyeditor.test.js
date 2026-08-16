@@ -403,3 +403,45 @@ test("Roller: navnebytte tar referansene med seg", async () => {
   assert.equal(sendt.roller[0].id, "agent-ny");
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
+
+test("Roller: navnebytte som PASSERER en annen rolles id lar den i fred", async () => {
+  // Navnet skrives tegn for tegn. Med rollene `admin` og `ad` går veien til
+  // `admin2` gjennom `admin`: `ad` → `adm` → `admi` → `admin` → `admin2`. Med
+  // global tekstutskifting slukte raden den ekte `admin`-rollens referanser i
+  // det mellomsteget, og neste tastetrykk flyttet dem videre — `rapport.les`
+  // ble stille flyttet fra `admin` til `admin2`. Resultatet er strukturelt
+  // gyldig, så servervalideringen fanger det ikke; det er nettopp derfor det
+  // må stanses her.
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { aapneUtkast: () => {}, startPolicy: {
+    meta: { policy_id: "p-5", versjon: "0.1.0", bransjemal: "x",
+            status: "utkast" },
+    roller: [{ id: "admin" }, { id: "ad" }],
+    handlinger: [{ id: "rapport.les", tillatt_for: ["admin"] },
+                 { id: "faktura.bokfor", tillatt_for: ["ad"] }],
+    menneskelig_overstyring: { krever_rolle: "admin", godkjennbare: [] },
+  } });
+  await vent(() => h.querySelector(".editor-liste .editor-rad"));
+
+  const rad = rolleRad(h, "ad");
+  for (const steg of ["adm", "admi", "admin", "admin2"]) skrivId(rad, steg);
+
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  const sendt = JSON.parse(POST.opts.body).innhold;
+  const av = (id) => sendt.handlinger.find((x) => x.id === id).tillatt_for;
+  assert.deepEqual(av("faktura.bokfor"), ["admin2"],
+    "den redigerte rollens egen referanse fulgte ikke med navnebyttet");
+  assert.deepEqual(av("rapport.les"), ["admin"],
+    "en ANNEN rolles referanse ble dratt med navnebyttet — stille "
+    + "rettighetsendring som validatoren ikke fanger");
+  assert.equal(sendt.menneskelig_overstyring.krever_rolle, "admin",
+    "overstyringen pekte på `admin` og skal fortsatt gjøre det");
+  assert.deepEqual(sendt.roller.map((r) => r.id), ["admin", "admin2"]);
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
