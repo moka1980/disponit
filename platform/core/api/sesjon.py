@@ -482,9 +482,10 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
         prin = slaa_opp_prinsipal(tjeneste, conn, request, rid)
         if prin is None:
             return _feilsvar("sesjon_ugyldig", rid)
-        tenant, bid, scopes, utloper = prin
+        tenant, bid, scopes, utloper, roller, epost = prin
         return kanonisk_json(
             {"tenant": tenant, "bruker_id": bid, "scopes": sorted(scopes),
+             "roller": sorted(roller), "epost": epost,
              "utloper": utloper, "request_id": rid}, 200, {"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)
@@ -567,8 +568,18 @@ def slaa_opp_prinsipal(tjeneste, conn, request: Request, rid: str):
     conn.rollback()
     if med is None or med[1] != snapshot:
         return None
+    roller = list(med[0] or ())
     scopes = scopes_for_roller(med[0])
-    # utloper hentes ikke via den herdede funksjonen (den skjuler hasher);
-    # for /v1/sesjon rapporteres et relativt tak.
+    # Hvem er dette? Fire øyne krever at TO FORSKJELLIGE prinsipaler
+    # attesterer, og flaten kunne ikke vise hvem som var innlogget — bare
+    # `bid_10e5674…`. Med to konti i samme nettleser er det ikke en
+    # kosmetisk mangel: eier kunne attestert to ganger som samme prinsipal og
+    # først fått vite det av primærnøkkelen. E-posten er øktens EGEN, og
+    # hentes derfor uten videre autorisasjon.
+    ident = conn.execute(
+        "SELECT profil->>'epost' FROM brukeridentitet WHERE bruker_id=%s",
+        (bid,)).fetchone()
+    conn.rollback()
+    epost = ident[0] if ident else None
     utloper = (_naa() + timedelta(hours=ABSOLUTT_TIMER)).isoformat()
-    return tenant, bid, scopes, utloper
+    return tenant, bid, scopes, utloper, roller, epost

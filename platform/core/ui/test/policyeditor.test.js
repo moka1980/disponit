@@ -170,3 +170,55 @@ test("Roller: legg til og fjern re-tegner", async () => {
     h.querySelectorAll(".editor-liste .editor-rad").length === foer + 1);
   assert.equal(h.querySelectorAll(".editor-liste .editor-rad").length, foer + 1);
 });
+
+test("Roller: en rolle handlinger peker på kan ikke fjernes ved et uhell", async () => {
+  // Dette er feilen som faktisk skjedde: eier fjernet rollen `agent`, og fikk
+  // seks valideringsfeil som pekte på handlinger han aldri hadde rørt.
+  // Referansen er kjent i det øyeblikket knappen tegnes, så flaten skal si det
+  // DER — ikke la validatoren si det etterpå.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x", status: "utkast" },
+    roller: [{ id: "agent" }, { id: "ubrukt" }],
+    handlinger: [{ id: "faktura.bokfor", tillatt_for: ["agent"] },
+                 { id: "betaling.utfor", tillatt_for: ["agent"] }],
+  } });
+  await vent(() => h.querySelectorAll(".editor-rad").length >= 2);
+
+  const rader = [...h.querySelectorAll(".editor-rad")];
+  const iBruk = rader.find((r) => r.textContent.includes("faktura.bokfor"));
+  assert.ok(iBruk, "raden sier ikke hvilke handlinger som holder rollen");
+  const sperret = iBruk.querySelector("button");
+  assert.ok(sperret.hasAttribute("disabled"),
+    "en rolle i bruk kunne fjernes — da blir policyen ugyldig ved validering");
+  assert.ok(sperret.getAttribute("title").includes("betaling.utfor"),
+    "forklaringen nevner ikke alle handlingene som holder rollen");
+
+  // …og en UBRUKT rolle skal fortsatt kunne fjernes. En vakt som sperrer alt
+  // er ikke en vakt, den er en blokkering.
+  const fri = rader.find((r) => !r.textContent.includes("faktura.bokfor")
+    && r.querySelector("button"));
+  assert.ok(!fri.querySelector("button").hasAttribute("disabled"),
+    "en ubrukt rolle skal kunne fjernes");
+});
+
+test("Policy-ID: malen foreslår sin egen id, og regelen står ved feltet", async () => {
+  // Feltet var tomt, uten format og uten å si hva id-en brukes til. En ny id
+  // lager en NY policy ved siden av den som gjelder — i stedet for å avløse
+  // den — og «01» ble avvist av skjemaet uten at noen fikk vite hvorfor.
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: {
+    meta: { policy_id: "tjenestebedrift-no", versjon: "0.2.0",
+            bransjemal: "tjenestebedrift-no", status: "utkast" },
+    roller: [], handlinger: [],
+  } });
+  await vent(() => h.querySelector(".felt-inp"));
+  const felt = [...h.querySelectorAll(".felt")]
+    .find((f) => f.textContent.includes(t("ui.editor.policy_id")));
+  assert.ok(felt.textContent.includes("3"),
+    "regelen om minst 3 tegn står ikke ved feltet");
+  const hint = felt.querySelector(".felt-hint");
+  assert.ok(hint, "ingen hjelpetekst");
+  assert.equal(felt.querySelector("input").getAttribute("aria-describedby"),
+    hint.id, "hjelpeteksten er ikke koblet til feltet for skjermlesere");
+});

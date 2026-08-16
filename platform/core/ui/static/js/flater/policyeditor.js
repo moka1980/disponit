@@ -19,7 +19,11 @@ import { flateHode } from "./felles.js";
 
 const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
 
-function tekstfelt(etikett, verdi, paaEndre, attrs = {}) {
+// `hint` er reglene feltet faktisk håndhever, sagt FØR man skriver. Uten den
+// måtte eier gjette formatet og få svaret fra validatoren etterpå — og bare
+// hvis feilen i det hele tatt nådde skjermen. Knyttes med `aria-describedby`,
+// så den leses opp sammen med etiketten.
+function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = null) {
   const inp = el("input", {
     type: "text", value: verdi == null ? "" : String(verdi),
     class: "felt-inp", ...attrs,
@@ -27,8 +31,15 @@ function tekstfelt(etikett, verdi, paaEndre, attrs = {}) {
   inp.addEventListener("input", () => paaEndre(inp.value));
   const id = "f-" + Math.random().toString(36).slice(2, 9);
   inp.id = id;
+  if (!hint) {
+    return el("label", { class: "felt" },
+      el("span", { class: "felt-navn", text: etikett }), inp);
+  }
+  const hid = `${id}-hint`;
+  inp.setAttribute("aria-describedby", hid);
   return el("label", { class: "felt" },
-    el("span", { class: "felt-navn", text: etikett }), inp);
+    el("span", { class: "felt-navn", text: etikett }), inp,
+    el("span", { class: "felt-hint", id: hid, text: hint }));
 }
 
 function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
@@ -43,19 +54,43 @@ function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
     el("span", { class: "felt-navn", text: etikett }), sel);
 }
 
+// Hvilke handlinger peker på rollen? En referert rolle kan ikke bare fjernes:
+// `tillatt_for` ville stått igjen med et navn som ikke finnes, og validatoren
+// avviser hele policyen med «ukjent rolle» — én linje per handling. Det er
+// nøyaktig det som skjedde: eier fjernet en rolle og fikk seks feil som pekte
+// på handlinger han aldri hadde rørt.
+function handlingerSomBruker(policy, rolleId) {
+  if (!rolleId) return [];
+  return (policy.handlinger || [])
+    .filter((h) => (h.tillatt_for || []).includes(rolleId))
+    .map((h) => h.id);
+}
+
 function rollerSeksjon(policy, tegnPaaNytt) {
   policy.roller = Array.isArray(policy.roller) ? policy.roller : [];
   const liste = el("div", { class: "editor-liste" });
   policy.roller.forEach((r, i) => {
+    const brukt = handlingerSomBruker(policy, r.id);
     const rad = el("div", { class: "editor-rad" },
       tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => { r.id = v; }),
       tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",
         (v) => { r.beskrivelse = v || undefined; }));
     const fjern = el("button", { class: "knapp liten", type: "button",
       text: t("ui.editor.fjern") });
-    fjern.addEventListener("click", () => {
-      policy.roller.splice(i, 1); tegnPaaNytt();
-    });
+    // En rolle i bruk får ikke en «Fjern»-knapp som fører rett i grøfta.
+    // Knappen blir stående, men deaktivert, med hvilke handlinger som holder
+    // rollen — så eier kan flytte dem først hvis det ER meningen.
+    if (brukt.length) {
+      fjern.setAttribute("disabled", "");
+      fjern.setAttribute("title",
+        `${t("ui.editor.rolle_i_bruk")}: ${brukt.join(", ")}`);
+      rad.append(el("p", { class: "editor-hint",
+        text: `${t("ui.editor.rolle_i_bruk")} (${brukt.length}): ${brukt.join(", ")}` }));
+    } else {
+      fjern.addEventListener("click", () => {
+        policy.roller.splice(i, 1); tegnPaaNytt();
+      });
+    }
     rad.append(fjern);
     liste.append(rad);
   });
@@ -107,7 +142,8 @@ function metaSeksjon(policy, erNy) {
   const felt = [
     // policy_id er identiteten; kan settes ved NY, låst ved redigering.
     tekstfelt(t("ui.editor.policy_id"), m.policy_id || "",
-      (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" }),
+      (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" },
+      erNy ? t("ui.editor.policy_id_hint") : t("ui.editor.policy_id_laast")),
     tekstfelt(t("ui.editor.bedrift"), m.bedrift || "",
       (v) => { m.bedrift = v || undefined; }),
     tekstfelt(t("ui.editor.versjon"), m.versjon || "",
@@ -208,7 +244,10 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
       st.laster = false;
       visMalvelger(hoved, ctx, (d && d.maler) || [], (mal) => {
         st.policy = JSON.parse(JSON.stringify(mal.innhold));
-        if (st.policy.meta) st.policy.meta.policy_id = "";   // eier setter id
+        // Malen FORESLÅR sin egen id i stedet for å tømme feltet: et tomt felt
+        // ba eier finne på en identitet uten å si hva den brukes til eller
+        // hvilket format den krever — og en ny id lager en NY policy ved siden
+        // av den som gjelder, i stedet for å avløse den. Kan overskrives.
         tegn();
       }, opts.tilbake);
     }).catch((e) => {

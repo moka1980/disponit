@@ -186,7 +186,7 @@ export function visStatus(container, tilstand) {
 
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
-                          paaSprak, paaLoggUt } = {}) {
+                          epost, roller, paaSprak, paaLoggUt } = {}) {
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
   // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
@@ -208,6 +208,20 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
       el("span", { class: "skall-merke", text: t("app.navn", "Disponit") }),
       el("span", { class: "skall-undertekst", text: t("ui.shell.undertittel") })),
     tenant ? el("span", { class: "skall-tenant", text: tenant }) : null,
+    // HVEM ER JEG. Skallet viste tenant og et ruteantall, men aldri hvilken
+    // bruker økten tilhørte. Fire øyne krever at TO FORSKJELLIGE prinsipaler
+    // attesterer, og med to konti i samme nettleser kunne eier attestert to
+    // ganger som samme bruker og først fått vite det av primærnøkkelen.
+    // Rollene står ved siden av: «hvilken rolle har jeg» skal ikke kreve at
+    // man leser en policy for å finne ut av.
+    epost
+      ? el("span", { class: "skall-bruker", title: epost },
+        el("span", { class: "skall-bruker-epost", text: epost }),
+        Array.isArray(roller) && roller.length
+          ? el("span", { class: "skall-bruker-roller",
+            text: roller.map((r) => t(`ui.rolle.${r}`, r)).join(", ") })
+          : null)
+      : null,
     el("span", { class: "skall-ruteantall",
       text: `${ruter.length} · ${t("ui.shell.ruter")}` }),
     el("div", { class: "skall-hoyre" }, velger, loggUt));

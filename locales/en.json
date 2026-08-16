@@ -559,5 +559,12 @@
   "site.katalog": "The whole platform",
   "site.katalog_tittel": "One agent platform, eleven business areas",
   "site.katalog_note": "Planned product scope: {antall} modules across four phases. What is available today is listed under “What you get”.",
-  "ui.policyadmin.ugyldig_uten_detaljer": "The draft is invalid, but the server gave no reason."
+  "ui.policyadmin.ugyldig_uten_detaljer": "The draft is invalid, but the server gave no reason.",
+  "ui.rolle.leser": "reader",
+  "ui.rolle.godkjenner": "approver",
+  "ui.rolle.policyforvalter": "policy manager",
+  "ui.rolle.domeneadjudikator": "domain adjudicator",
+  "ui.editor.rolle_i_bruk": "Role is in use",
+  "ui.editor.policy_id_hint": "At least 3 characters: lowercase letters, digits and hyphens. Keep the template's id to supersede the policy in force today.",
+  "ui.editor.policy_id_laast": "The identity is locked after creation. For a different id, create a new draft."
 }
