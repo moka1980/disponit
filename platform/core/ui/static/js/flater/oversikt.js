@@ -26,12 +26,20 @@ function stat(klasse, tall, tekst) {
     el("span", { text: tekst }));
 }
 
-// Statusene som betyr «venter på et menneske». Løst/avvist er ferdig
-// saksbehandling og hører ikke hjemme under «prioriterte varsler» — å vise
-// dem der ville lært eier at listen kan ignoreres.
-const AAPNE = new Set(["ny", "under_behandling", "manuell",
-                       "venter_verifikasjon", "verifikasjon_klar",
-                       "verifikasjon_retry_klar"]);
+// Hvilke saker som er ÅPNE avgjøres av serveren (`GET /v1/unntak?status=apen`),
+// ikke her. To ting gikk galt da denne flaten svarte på det selv med en
+// tillatelsesliste over statuser:
+//
+//   * listen var en KOPI av statusmaskinen i migrasjon 011, og kopien hadde
+//     alt sakket etter — de fire godkjenningsstatusene fra PR-012
+//     (`venter_godkjenning`, `venter_andre_godkjenner`, `godkjenning_klar`,
+//     `venter_utførelse`) manglet, så saker som ventet på en godkjenner
+//     forsvant fra «prioriterte varsler» mens de var på sitt mest prioriterte;
+//   * og filtreringen skjedde ETTER serverens `LIMIT`. Var de åtte ferskeste
+//     sakene løst eller avvist, viste dashbordet «ingenting venter» selv om
+//     en eldre åpen sak lå rett bak sidegrensen.
+//
+// Begge forsvinner når spørsmålet stilles der dataene er.
 
 // Én selvstendig dashbordblokk: overskrift + eget lastings-/feilløp.
 // `tegnInnhold(data) -> node`. Feiler lastingen, får blokken sin egen
@@ -61,7 +69,7 @@ function lenkeknapp(tekst, hash) {
 }
 
 function unntaksliste(rader) {
-  const aapne = rader.filter((r) => AAPNE.has(r.status)).slice(0, 5);
+  const aapne = rader.slice(0, 5);
   if (!aapne.length) {
     return TomTilstand({ tittel: t("ui.dashbord.ingen_varsler"),
       tekst: t("ui.dashbord.ingen_varsler_tekst") });
@@ -132,7 +140,7 @@ export function visOversikt(hoved, ctx) {
 
   hoved.append(el("div", { class: "dash-grid" },
     blokk(ctx, t("ui.dashbord.varsler"),
-      () => hentJson("/v1/unntak", { limit: 8 }),
+      () => hentJson("/v1/unntak", { limit: 8, status: "apen" }),
       (d) => unntaksliste(d.saker || [])),
     blokk(ctx, t("ui.dashbord.aktivitet"),
       () => hentJson("/v1/beslutninger", { limit: 8 }),

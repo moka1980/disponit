@@ -66,6 +66,16 @@ STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
 YTELSESKRAV_PER_SEK = 100
 STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
+#: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
+#: (migrasjon 011) venter på et menneske eller en maskin, og er dermed «åpen».
+#: Denne veien rundt — terminal er listet opp, åpen er «resten» — er ikke
+#: smakssak: en tillatelsesliste over åpne statuser MÅ vedlikeholdes hver gang
+#: statusmaskinen vokser, og gjør den ikke det, forsvinner saker som venter på
+#: en godkjenner stille ut av køen. Nøyaktig det skjedde med dashbordets
+#: `AAPNE`-liste, som manglet alle fire godkjenningsstatusene fra PR-012.
+#: Blir det noen gang en tredje terminal status, står den her — og ingen andre
+#: steder.
+TERMINALE_UNNTAKSSTATUSER = ("løst", "avvist")
 MIGRASJONSMAPPE = Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 
@@ -1027,9 +1037,15 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                                        scope="security:read")
                 return _feilsvar("scope_mangler", rid)
 
+            # `apen` er ikke en status i tabellen, men et SPØRSMÅL: «hva
+            # venter fortsatt på noen?». Det må besvares her og ikke av
+            # klienten, fordi filtrering skjer FØR `LIMIT`. Filtrerte
+            # klienten selv, ville en side med åtte ferdigbehandlede saker
+            # sett tom ut selv om det lå en uløst sak rett bak sidegrensen —
+            # og `neste_cursor` ville aldri blitt fulgt.
             status = request.query_params.get("status")
             if status is not None and status not in ("ny", "under_behandling",
-                                                     "løst", "avvist"):
+                                                     "løst", "avvist", "apen"):
                 return _feilsvar("request_feilformet", rid)
             try:
                 grense = min(
@@ -1054,7 +1070,10 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                    " sakstype FROM unntak"
                    " WHERE tenant=%s AND sakstype=%s")
             args: list = [auth.tenant, sakstype]
-            if status is not None:
+            if status == "apen":
+                sql += " AND NOT (status = ANY(%s))"
+                args.append(list(TERMINALE_UNNTAKSSTATUSER))
+            elif status is not None:
                 sql += " AND status=%s"
                 args.append(status)
             if etter is not None:

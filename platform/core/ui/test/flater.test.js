@@ -414,22 +414,35 @@ test("Dashbord: en feilet blokk feller ikke de andre", async () => {
   assert.equal(feil.length, 1, "feilen skal være avgrenset til sin blokk");
 });
 
-test("Dashbord: løste og avviste unntak er ikke «prioriterte varsler»",
+test("Dashbord: åpne varsler avgrenses av SERVEREN, ikke av flaten",
   async () => {
+    // Avgrensningen må ligge foran `LIMIT`. Filtrerte flaten selv, ville en
+    // side der de åtte ferskeste sakene er ferdigbehandlet blitt vist som
+    // «ingenting venter» — med en uløst sak rett bak sidegrensen. Derfor
+    // sjekker testen SPØRSMÅLET som stilles, ikke etterbehandlingen av svaret.
+    let spurt = null;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (url.startsWith("/v1/unntak?")) spurt = url;
+      return brukFetch(url, opts);
+    };
+    // Serveren svarer med en godkjenningsstatus flatens gamle tillatelses-
+    // liste ikke kjente: den saken ventet på et menneske og forsvant likevel.
     SVAR = { ...STD, "/v1/unntak": { saker: [
-      { id: 1, ts: "2026-08-09T09:00:00+00:00", handling: "ferdig.sak",
-        kategori: "over_grense", prioritet: "hoy", status: "løst" },
-      { id: 2, ts: "2026-08-09T09:01:00+00:00", handling: "avvist.sak",
-        kategori: "over_grense", prioritet: "hoy", status: "avvist" },
       { id: 3, ts: "2026-08-09T09:02:00+00:00", handling: "venter.sak",
-        kategori: "over_grense", prioritet: "hoy", status: "ny" },
+        kategori: "over_grense", prioritet: "hoy",
+        status: "venter_godkjenning" },
     ], neste_cursor: null } };
     const h = nyHoved();
-    visOversikt(h, ctx());
-    await vent(() => h.textContent.includes("venter.sak"));
-    assert.ok(!h.textContent.includes("ferdig.sak"),
-      "en løst sak sto som prioritert varsel — listen lærer folk å ignorere den");
-    assert.ok(!h.textContent.includes("avvist.sak"));
+    try {
+      visOversikt(h, ctx());
+      await vent(() => h.textContent.includes("venter.sak"));
+      assert.ok(spurt && new URLSearchParams(spurt.split("?")[1])
+        .get("status") === "apen",
+      `dashbordet ba ikke om kun åpne saker: ${spurt}`);
+    } finally {
+      globalThis.fetch = brukFetch;
+    }
   });
 
 test("Dashbord: tomme lister sier det, og siden er axe-ren", async () => {

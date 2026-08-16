@@ -852,6 +852,48 @@ def test_identisk_404_for_ukjent_og_annen_tenants_id(klient, migrator,
 
 
 @pg
+def test_status_apen_er_hele_statusmaskinen_minus_de_terminale(
+        klient, migrator, policy):
+    """`?status=apen` må dekke ALT som ikke er ferdigbehandlet — også de fire
+    godkjenningsstatusene fra PR-012.
+
+    Dashbordet spurte tidligere om de åtte ferskeste sakene i ALLE statuser og
+    silte selv, med en tillatelsesliste som var en utdatert kopi av
+    statusmaskinen i 011. To feil i én: saker som ventet på en godkjenner ble
+    aldri vist, og silingen skjedde ETTER `LIMIT`, så åtte ferdige saker
+    gjemte en uløst sak bak sidegrensen.
+
+    Kontroll: legg en av de ikke-terminale statusene tilbake i en
+    tillatelsesliste-form, eller filtrer etter `LIMIT`, så blir denne rød.
+    """
+    tok, _ = _lesetoken(migrator, scopes=("exceptions:read",))
+    ikke_terminale = ("ny", "under_behandling", "manuell", "venter_utførelse",
+                      "venter_verifikasjon", "verifikasjon_klar",
+                      "verifikasjon_retry_klar", "venter_godkjenning",
+                      "venter_andre_godkjenner", "godkjenning_klar")
+    apne = {_lag_sak(migrator, TENANT, status=s)[0] for s in ikke_terminale}
+    # De terminale sist, altså SOM DE FERSKESTE. Det er hele poenget: siler
+    # noen etter `LIMIT`, spiser disse to plassene i sidevinduet.
+    for s in ("løst", "avvist"):
+        _lag_sak(migrator, TENANT, status=s)
+
+    # Nøyaktig like mange plasser som det finnes åpne saker jeg nettopp lagde.
+    # Kom silingen etter grensen, ville svaret hatt åtte rader, ikke ti — og
+    # de to eldste åpne sakene mine hadde falt ut bak sidegrensen.
+    r = _hent(klient, "/v1/unntak", tok, status="apen",
+              limit=len(ikke_terminale))
+    assert r.status_code == 200
+    saker = r.json()["saker"]
+    assert {s["id"] for s in saker} == apne, \
+        "åpne saker mangler eller terminale slapp inn"
+    assert not {s["status"] for s in saker} & {"løst", "avvist"}
+
+    # Pseudo-statusen utvider ikke det som ellers er lov å spørre om.
+    assert _hent(klient, "/v1/unntak", tok,
+                 status="åpen").status_code == 400
+
+
+@pg
 def test_unntaksdetalj_og_historikk(klient, migrator, policy):
     tok, _ = _lesetoken(migrator, scopes=("exceptions:read",))
     sak, loggpost = _lag_sak(migrator, TENANT)
