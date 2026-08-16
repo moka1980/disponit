@@ -1170,7 +1170,6 @@ EIERROLLE = "disponit_domene_eier"
 #: aktive rollen: en funksjon migrator selv har laget og beholdt, EIER den.
 MIGRATORROLLE = "disponit_migrator"
 
-_KOMMENTAR = re.compile(r"--[^\n]*")
 _KROPP = re.compile(r"\$\$.*?\$\$", re.S)
 
 #: En `DO $$ … $$`-blokk ser ut som en funksjonskropp og er noe helt annet:
@@ -1307,6 +1306,65 @@ _AAPNER = re.compile(
 _LUKKER = re.compile(r"\bend\s+(?:if|case)\b")
 
 
+def _uten_kommentarer(sql):
+    """SQL-en slik BASEN leser den: uten kommentarer av noe slag.
+
+    EN KOMMENTAR ER IKKE EN SETNING (Codex P2 på #71). Modellen strøk bare
+    `--`-kommentarer, og PostgreSQL har to former. Et `/* … */` som
+    DOKUMENTERER den påkrevde eierrekkefølgen — nøyaktig den slags merknad
+    disse migrasjonene er fulle av — ble derfor liggende igjen i strømmen, og
+    `_REVOKE_MAL` leste den utkommenterte teksten som en utført REVOKE fra
+    eieren. Verre: semikolonet inne i eksempelet delte setningen, så en
+    etterfølgende `RESET ROLE` kunne bli borte og rollen stå igjen feil.
+
+    Formen må leses, ikke søkes etter, av tre grunner:
+
+    * `/* … */` NØSTER i PostgreSQL, i motsetning til C. Et ikke-grådig regex
+      ville avsluttet på den første `*/` og sluppet resten av den ytre
+      kommentaren inn igjen.
+    * Hvilken form som gjelder, avgjøres av hvem som BEGYNNER først: en `/*`
+      inne i en `--`-linje er tekst, og en `--` inne i en blokk likeså.
+    * En apostrof åpner en STRENGKONSTANT, og der er `--` og `/*` bare tegn.
+      Strengene beholdes ordrett — det er bare kommentarene som skal bort.
+
+    Blokken erstattes av ett mellomrom, ikke ingenting: `revoke/**/all` er to
+    ord for basen, og skal være to ord her også.
+    """
+    ut, i, n = [], 0, len(sql)
+    while i < n:
+        if sql.startswith("--", i):
+            slutt = sql.find("\n", i)
+            # Nylinjen beholdes: den er skillet mellom to `--`-kommenterte
+            # linjer, og uten den ville de to blitt limt sammen til én.
+            i = n if slutt < 0 else slutt
+        elif sql.startswith("/*", i):
+            dybde, i = 1, i + 2
+            while i < n and dybde:
+                if sql.startswith("/*", i):
+                    dybde, i = dybde + 1, i + 2
+                elif sql.startswith("*/", i):
+                    dybde, i = dybde - 1, i + 2
+                else:
+                    i += 1
+            ut.append(" ")
+        elif sql[i] == "'":
+            j = i + 1
+            while j < n:
+                if sql[j] != "'":
+                    j += 1
+                elif sql.startswith("''", j):
+                    j += 2          # doblet apostrof er ETT tegn, ikke slutt
+                else:
+                    j += 1
+                    break
+            ut.append(sql[i:j])
+            i = j
+        else:
+            ut.append(sql[i])
+            i += 1
+    return "".join(ut)
+
+
 def _delt(tekst, i_blokk):
     """Setningene i et tekststykke, hver med «står den under en vakt?».
 
@@ -1340,7 +1398,7 @@ def _setninger(sql):
     limes inn i filteksten: grensen mellom «inne i en blokk» og «på toppnivå»
     er nettopp det tellingen over trenger for å vite hva som er en gren.
     """
-    uten_kommentar = _KOMMENTAR.sub("", sql)
+    uten_kommentar = _uten_kommentarer(sql)
     pos = 0
     for m in _DO_BLOKK.finditer(uten_kommentar):
         yield from _delt(uten_kommentar[pos:m.start()], False)
@@ -1664,6 +1722,11 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       REVOKE …`. Semikolonet deler teksten, ikke grenen. Med motprøven at
       `END IF` faktisk LUKKER den: ellers ville regelen bare betydd «alt
       inne i en DO-blokk er betinget», og målt langt mer enn den vet.
+    * en UTKOMMENTERT REVOKE — i begge PostgreSQLs kommentarformer, og
+      nøstet. En merknad som dokumenterer den påkrevde eierrekkefølgen er
+      ikke en utført setning. Med motprøvene at strykingen ikke SLUKER: det
+      som står rundt kommentaren måles fortsatt, og en apostrof inne i den
+      åpner ingen strengkonstant.
 
     Alle ville ellers blitt skjult for ACL-testen av oppryddingen i
     `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
@@ -1961,6 +2024,55 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         [("a.sql", lag + gjerde),
          ("b.sql", "DROP FUNCTION public.varsel_klaim_epost(int, int);")],
         n)[0] == {sig: None}, "`public.` utskrevet er samme objekt"
+
+    # EN KOMMENTAR ER IKKE EN SETNING. Et `/* … */` som DOKUMENTERER den
+    # påkrevde eierrekkefølgen er nøyaktig den slags merknad disse filene er
+    # fulle av — og ble lest som en utført REVOKE fra eieren.
+    kommentert = ("/* Slik SKAL gjerdet settes:\n"
+                  "   SET LOCAL ROLE disponit_domene_eier;\n"
+                  "   REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
+                  " FROM PUBLIC;\n"
+                  "   RESET ROLE;\n"
+                  " */\n")
+    gjerdet, spor = _spill_av([("a.sql", lag + kommentert)], n)
+    assert gjerdet == {sig: False}, (
+        "en utkommentert REVOKE er ikke et gjerde." f" Spor: {spor}")
+
+    # …også NØSTET, som PostgreSQL godtar og C ikke gjør. Et ikke-grådig
+    # regex ville avsluttet på den første `*/` og sluppet resten inn igjen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "/* ytre /* indre */ SET LOCAL ROLE"
+                         " disponit_domene_eier; REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC; */")], n)
+    assert gjerdet == {sig: False}, (
+        "en nøstet blokkkommentar er fortsatt kommentar." f" Spor: {spor}")
+
+    # …og den samme formen med `--`, som var den ene modellen alt kjente.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "-- REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC;\n")], n)
+    assert gjerdet == {sig: False}, f"utkommentert med `--`. Spor: {spor}"
+
+    # …og motprøvene, som er det som skiller en stryking fra en sluking:
+    # setningene RUNDT kommentaren skal fortsatt måles, og en apostrof inne i
+    # kommentaren skal ikke ta med seg resten av filen som en streng.
+    assert _spill_av(
+        [("a.sql", lag + "/* eierens gjerde, jf. 027 */ " + gjerde)],
+        n)[0] == {sig: True}, "en kommentar foran skal ikke skjule gjerdet"
+    assert _spill_av(
+        [("a.sql", lag + "/* eier'ens gjerde */ " + gjerde)], n)[0] == {
+        sig: True}, "en apostrof i en kommentar er ikke en strengkonstant"
+
+    # …og den motsatte veien, som er den strengregelen faktisk finnes for:
+    # inne i en STRENGKONSTANT er `/*` og `--` bare tegn. Leses de som
+    # kommentarstart, sluker en notistekst som SITERER SQL resten av filen —
+    # og gjerdet under forsvinner sammen med den.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "DO $$ BEGIN RAISE NOTICE 'gjerdet settes i /* en"
+                         " blokk'; END $$;" + gjerde)], n)
+    assert gjerdet == {sig: True}, (
+        "en kommentarstart inne i en strengkonstant er ikke en kommentar."
+        f" Spor: {spor}")
 
     # …og motprøven til den skjemabrede: samme form, annen mottaker.
     assert _spill_av([("a.sql", lag + gjerde),
