@@ -507,6 +507,16 @@ def test_en_loggreferanse_gjor_policyen_uslettelig_for_godt():
         rt.rollback()
 
         # 3. Referansen kan ikke fjernes — så «ikke slettbar» er permanent.
+        # Konteksten settes på nytt FØRST: `sett_kontekst` er transaksjons-
+        # lokal (`set_config(..., true)`) og døde med commiten over. Uten den
+        # skjuler RLS raden, DELETE treffer null rader, triggeren fyrer aldri
+        # — og testen ville bestått på at den ikke fant noe å slette.
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r0")
+        assert m.execute(
+            "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND id=%s",
+            (TEN, logg_id)).fetchone()[0] == 1, \
+            "referansen er ikke synlig — da måler DELETE-en under ingenting"
         # Feilen MÅ komme fra append-only-triggeren: en rettighetsfeil ville
         # sagt at migratoren ikke fikk lov nettopp her, ikke at raden står.
         with pytest.raises(psycopg.Error) as e:
