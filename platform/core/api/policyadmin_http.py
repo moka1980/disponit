@@ -112,9 +112,34 @@ def _kropp(request) -> dict:
     return body
 
 
+def _gjenopprett_kontekst(conn, tenant: str, bid: str, rid: str) -> None:
+    """Sett `disponit.*` på nytt etter at auth rullet tilbake (Codex P1).
+
+    BEGGE auth-hjelperne under må `conn.rollback()`: sesjonsoppslaget kjører
+    som en egen liten transaksjon, og den skal ikke bli hengende åpen inn i
+    selve arbeidet. Men `sett_kontekst` er `SET LOCAL` — den dør med nøyaktig
+    den rollbacken. Etter auth er `disponit.tenant` altså UNSET, og med FORCE
+    RLS på (migrasjon 026 for `varsel`/`varselvalg`) betyr unset «ingen rader»:
+    innboksen blir tom, `merk_lest` treffer null rader, og en `INSERT` feiler
+    WITH CHECK. Fail-closed — man får ikke feil tenants data, man får ingen.
+
+    `policyadmin`-tjenestene skjuler dette ved at hver av dem setter konteksten
+    selv med én gang. Varselveien kaller tabellene direkte og hadde ingen slik
+    linje, og det er ikke tilfeldig: en invariant som hver enkelt kaller må
+    huske på, blir før eller siden glemt. Derfor settes den her, i den samme
+    funksjonen som river den ned. Tjenestenes egne kall blir da en ufarlig
+    gjentakelse av nøyaktig de samme tre verdiene.
+    """
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, tenant, bid, rid)
+
+
 def _browserkontekst(tjeneste, request, conn, rid: str, scope: str):
     """auth (browsersesjon, gitt scope) + CSRF. -> (tenant, bid). Reiser
-    `_Avbrudd` med ferdig feilsvar. Speiler `handling_endepunkt` (PR-012)."""
+    `_Avbrudd` med ferdig feilsvar. Speiler `handling_endepunkt` (PR-012).
+
+    Ved retur er `disponit.tenant/aktor/request_id` satt for den nye
+    transaksjonen — se `_gjenopprett_kontekst`."""
     from . import kjerne
     from . import sesjon as sesjonmodul
     from .app import _autentiser
@@ -133,11 +158,14 @@ def _browserkontekst(tjeneste, request, conn, rid: str, scope: str):
         raise _Avbrudd(_feil("csrf_ugyldig", rid))
     tenant = auth.tenant
     bid = auth.token_id.split("sesjon:", 1)[-1]
+    _gjenopprett_kontekst(conn, tenant, bid, rid)
     return tenant, bid
 
 
 def _leseauth(tjeneste, request, conn, rid: str):
-    """auth for en lesende rute (`policy:read`, ingen CSRF). -> (tenant, bid)."""
+    """auth for en lesende rute (`policy:read`, ingen CSRF). -> (tenant, bid).
+
+    Setter konteksten på nytt etter rollbacken, som `_browserkontekst`."""
     from . import kjerne
     from .app import _autentiser
     try:
@@ -146,6 +174,7 @@ def _leseauth(tjeneste, request, conn, rid: str):
         raise _Avbrudd(_feil(f.kode, rid))
     bid = auth.token_id.split("sesjon:", 1)[-1]
     conn.rollback()
+    _gjenopprett_kontekst(conn, auth.tenant, bid, rid)
     return auth.tenant, bid
 
 
