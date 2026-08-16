@@ -72,15 +72,3 @@ export const OMRADER = [
 ];
 
 export const KATALOG_ANTALL = KATALOG.length;
-
-// Oppslag for kontekstpanelet: hvilket område og hvilken fase en modul hører
-// til. Utledes av KATALOG, så det finnes ingen andre kilde å drive fra.
-export function omradeFor(n) {
-  const post = KATALOG.find((k) => k.n === n);
-  return post ? post.omrade : null;
-}
-
-export function faseFor(n) {
-  const post = KATALOG.find((k) => k.n === n);
-  return post ? post.fase : null;
-}

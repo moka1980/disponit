@@ -4,7 +4,8 @@
 // tidslinje bærer også glyf + tekst.
 import { el, sett } from "./dom.js";
 import { t, sprak } from "./i18n.js";
-import { OMRADER, omradeFor, faseFor } from "./katalog.js";
+import { OMRADER } from "./katalog.js";
+import { omradeFor, faseFor } from "./katalogoppslag.js";
 import { modulStatus, plattformTelling } from "./plattformdata.js";
 import { siteStatusMerke } from "./sitekomponenter.js";
 
