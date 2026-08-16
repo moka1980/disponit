@@ -336,6 +336,31 @@ BEGIN
     END IF;
 END $$;
 
+-- MIGRATOR FÅR DEM OGSÅ, og det er ikke en oppmykning av grensen over.
+-- Migrator eier skjemaet og er MEDLEM av `disponit_domene_eier` (kreves for
+-- `ALTER … OWNER TO` lenger oppe). Medlemskapet er `WITH INHERIT FALSE`, så
+-- rettigheten arves ikke — men `SET ROLE` står åpen, som her i denne filen.
+-- En GRANT gir den altså ingenting den ikke allerede kan ta; den fjerner et
+-- `SET ROLE` fra testriggen, og ingenting annet. Samme form og samme
+-- begrunnelse som 019 bruker for `degrader_forbigatte_utfordrere`.
+--
+-- Det er grunnen til at den står her og ikke i P1-ens forbudte selskap:
+-- funnet handlet om `disponit`, rollen som betjener HTTP-forespørsler. En
+-- kompromittert forespørselsvei er en trussel; en kompromittert migrator er
+-- allerede skjemaeier og trenger ingen snarvei.
+--
+-- Og uten den kunne modulens tester ikke måle senderen i det hele tatt:
+-- senderrollen er et klyngeobjekt som ikke finnes i CI, og testene bygger
+-- tilstanden sin på migrator-forbindelsen. Det var ikke synlig før, fordi
+-- `REVOKE … FROM PUBLIC` kjørte som en ikke-eier og MISLYKTES STILLE — testene
+-- kalte funksjonene som PUBLIC. At de nå feiler uten denne linjen er selve
+-- beviset på at gjerdet står.
+GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO disponit_migrator;
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, text, text)
+    TO disponit_migrator;
+GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval)
+    TO disponit_migrator;
+
 -- Og hadde en TIDLIGERE kjøring av denne migrasjonen gitt runtime-rollen
 -- EXECUTE, trekkes det tilbake her. Migrasjonen er idempotent, og en grant
 -- som var feil skal ikke overleve fordi den ble gitt før porten fantes.

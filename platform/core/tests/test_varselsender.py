@@ -893,7 +893,12 @@ def test_bare_senderrollen_har_execute_paa_kryss_tenant_funksjonene():
     senderrollen skal ha EXECUTE. Finnes senderrollen i tillegg (staging),
     måles den positivt oppå.
     """
-    tillatt = {"disponit_domene_eier", SENDERROLLE}
+    # `disponit_migrator` er med fordi den eier skjemaet og er MEDLEM av
+    # eierrollen: den kan `SET ROLE disponit_domene_eier` og kalle funksjonene
+    # uansett. Grantet fjerner et `SET ROLE` fra testriggen og gir ingen ny
+    # evne. Rollen som IKKE skal stå her er `disponit` — den som betjener
+    # HTTP-forespørsler — og det er den asserten under måler eksplisitt.
+    tillatt = {"disponit_domene_eier", "disponit_migrator", SENDERROLLE}
     c = _conn()
     try:
         for sig in SENDERFUNKSJONER:
