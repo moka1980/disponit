@@ -1,4 +1,4 @@
-"""Angre en feilopprettet policy — slett den som ALDRI er brukt (030).
+"""Angre en feilopprettet policy — slett den som ALDRI er brukt (032).
 
 Behovet er målt: `tjenestebedrift1` og `tjenestebedrift2` ble aktivert ved
 feil, og eneste vei ut var håndskrevet SQL som postgres, to ganger på én dag.
@@ -90,7 +90,7 @@ def test_ubrukt_policy_slettes_og_versjonen_blir_ledig():
 
 @pg
 def test_policy_som_har_styrt_en_beslutning_kan_aldri_slettes():
-    """Kontroll: fjern revisjonslogg-sjekken i 030, så blir denne rød —
+    """Kontroll: fjern revisjonslogg-sjekken i 032, så blir denne rød —
     og loggen ville pekt på en policy som ikke finnes."""
     import psycopg
     pid = "p-" + secrets.token_hex(3)
@@ -469,7 +469,7 @@ def test_en_loggreferanse_gjor_policyen_uslettelig_for_godt():
     den aktive policyen en REVISJONSREFERANSE navngir, gjennom
     `policyregister.hent_aktiv_bak_loggreferanse`. Låsen i `hent_aktiv` er
     for lesere som ennå ikke har et spor; disse to har det allerede, og
-    sporet er nøyaktig raden 030 teller når den avgjør «aldri brukt».
+    sporet er nøyaktig raden 032 teller når den avgjør «aldri brukt».
 
     Testen holder begge halvdelene av det argumentet fast, for det er
     sammen de utgjør vernet:

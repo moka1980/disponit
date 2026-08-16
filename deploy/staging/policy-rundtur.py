@@ -324,7 +324,7 @@ def main() -> int:                                        # noqa: C901
     print("\n== 8  angre: en aktivert, ALDRI brukt policy kan slettes ==")
     # Eiers behov, målt to ganger i produksjon (tjenestebedrift1/2): aktivert
     # ved feil, og eneste vei ut var håndskrevet SQL. `slett_ubrukt_policy`
-    # (030) er den styrte veien: den nekter hvis policyen har styrt én
+    # (032) er den styrte veien: den nekter hvis policyen har styrt én
     # beslutning, bevarer utkast/attestasjoner, og frigjør versjonsnumrene.
     rt8 = koble(DSN)
     try:

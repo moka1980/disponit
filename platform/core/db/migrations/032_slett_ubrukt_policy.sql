@@ -1,5 +1,5 @@
 -- ============================================================
--- 030 — Angre en feilopprettet policy: slett den som ALDRI er brukt
+-- 032 — Angre en feilopprettet policy: slett den som ALDRI er brukt
 --
 -- Eier: «det skal også være mulig at en policy er opprettet at man kan angre
 -- og slette den.» Behovet er målt, ikke tenkt: `tjenestebedrift1` og

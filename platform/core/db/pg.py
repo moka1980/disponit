@@ -69,7 +69,7 @@ def policylasnokkel(tenant: str, policy_id: str) -> str:
 
     Nøkkelen er tekst og hashes med `hashtextextended(nøkkel, 0)`, akkurat som
     jti-låsen i `api.kjerne`. Den SAMME strengen bygges i SQL av
-    `slett_ubrukt_policy` (migrasjon 030) — endres formen her, må den endres
+    `slett_ubrukt_policy` (migrasjon 032) — endres formen her, må den endres
     der, og omvendt. Derfor står den ett sted i Python og er skrevet ut i
     klartekst i migrasjonens kommentar.
     """

@@ -456,7 +456,7 @@ test("Dashbord: tomme lister sier det, og siden er axe-ren", async () => {
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
 
-// --- Angre en feilopprettet policy (030) -----------------------------------
+// --- Angre en feilopprettet policy (032) -----------------------------------
 
 test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten",
   async () => {

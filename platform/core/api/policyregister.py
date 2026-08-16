@@ -59,7 +59,7 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     Krever at kalleren har satt `disponit.tenant` (db.pg.sett_kontekst).
 
     Låsen FØRST, og delt (Codex P1). Uten den kunne `slett_ubrukt_policy`
-    (030) kile seg inn i dette vinduet: beslutningen leser policyen her,
+    (032) kile seg inn i dette vinduet: beslutningen leser policyen her,
     slettingen ser en revisjonslogg uten spor av den, sletter — og så
     committer beslutningen revisjonsraden sin, som nå peker på en policy som
     ikke finnes. `FOR UPDATE` på `policy_hode` inne i slettefunksjonen stengte
@@ -144,7 +144,7 @@ def hent_aktiv_bak_loggreferanse(
     spor: beslutningen har ikke skrevet revisjonsraden sin, runde-åpningen
     har ikke satt inn runden. De må holde slettingen ute til referansen
     STÅR. Her står den allerede — og den er nettopp den raden
-    `slett_ubrukt_policy` (030) teller når den avgjør «aldri brukt»
+    `slett_ubrukt_policy` (032) teller når den avgjør «aldri brukt»
     (`policy_id LIKE pid || '@%'`). En policy som er navngitt av en loggrad
     er derfor allerede uslettelig, og permanent: `revisjonslogg` er
     append-only (001, `revisjonslogg_er_append_only` avviser UPDATE, DELETE

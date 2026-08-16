@@ -140,7 +140,7 @@ export function visPolicy(hoved, ctx) {
   });
 }
 
-// «Angre» for en feilopprettet policy. Serveren (`slett_ubrukt_policy`, 030)
+// «Angre» for en feilopprettet policy. Serveren (`slett_ubrukt_policy`, 032)
 // håndhever HELE vilkåret: aldri styrt en beslutning, ingen åpen runde.
 // Knappen står derfor alltid for policyFORVALTEREN, og en avvisning kommer
 // tilbake som en FORKLARING («policyen har styrt beslutninger — den kan

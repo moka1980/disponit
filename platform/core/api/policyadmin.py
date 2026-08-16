@@ -702,7 +702,7 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
                  request_id: str, policy_id: str, idempotency_key: str,
                  input_hash: str, naa) -> dict:
     """Angre en feilopprettet policy: slett den som ALDRI har styrt en
-    beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (030) — her
+    beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (032) — her
     ligger idempotensen og OVERGANGEN som lukker forfalte runder.
 
     Idempotensen er ikke pynt på en `Idempotency-Key` endepunktet uansett
@@ -864,7 +864,7 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
     oppretter den ALDRI her (en forkastet runde skal ikke etterlate en tom
     hoderad).
 
-    Men mot SLETTING (`slett_ubrukt_policy`, 030) holdt det ikke å ikke låse
+    Men mot SLETTING (`slett_ubrukt_policy`, 032) holdt det ikke å ikke låse
     (Codex P2). Slettingen lover at den ikke etterlater attestasjoner i omløp,
     og kontrollerer det ved å telle åpne runder. En naken SELECT her lot
     runde-åpningen validere basen, slettingen telle null runder og committe, og

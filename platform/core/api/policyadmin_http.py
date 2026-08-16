@@ -382,7 +382,7 @@ def varselvalg_endepunkt(tjeneste, request):
 
 def slett_policy_endepunkt(tjeneste, request):
     """Angre en feilopprettet policy: slett den som ALDRI har styrt en
-    beslutning. Vilkårene håndheves i `slett_ubrukt_policy` (030), idempotensen
+    beslutning. Vilkårene håndheves i `slett_ubrukt_policy` (032), idempotensen
     i `policyadmin.slett_policy` — endepunktet binder bare nøkkelen til
     operasjonen og lar `_med_conn` oversette feilkodene."""
     from .app import _rid
