@@ -76,11 +76,19 @@ CREATE TABLE IF NOT EXISTS varsel (
 -- Innboksen spørres på TO måter, og de trenger hvert sitt indeks.
 --
 --   `innboks(..., kun_uleste=False)` er STANDARDEN — portalvisningen «mine
---   varsler, nyeste først», leste som uleste. Den kan ikke bruke delindeksen
---   nedenfor, for spørringen innebærer ikke `lest_ts IS NULL`. Uten et fullt
---   indeks ville den fått seq scan + sort over en voksende flertenant-tabell.
+--   varsler, uleste først, deretter nyeste først», leste som uleste. Den kan
+--   ikke bruke delindeksen nedenfor, for spørringen innebærer ikke
+--   `lest_ts IS NULL`. Uten et fullt indeks ville den fått seq scan + sort
+--   over en voksende flertenant-tabell.
+--
+--   `(lest_ts IS NULL) DESC` står som eget ledd fordi det er sorteringens
+--   FØRSTE nøkkel: uleste først er det som gjør ulest-telleren sann, siden en
+--   ren `opprettet DESC` skjøv et gammelt ulest varsel ut av siden så snart
+--   det lå nok nyere leste over det (Codex P2). Uten leddet i indekset ville
+--   den prioriteringen kostet en sortering av hele brukerens historikk ved
+--   hver eneste henting.
 CREATE INDEX IF NOT EXISTS varsel_innboks
-    ON varsel (tenant, bruker_id, opprettet DESC);
+    ON varsel (tenant, bruker_id, ((lest_ts IS NULL)) DESC, opprettet DESC);
 --   `kun_uleste=True` og `antall_uleste` leter derimot etter de FÅ radene i en
 --   tabell der de leste blir de mange. Delindeksen beholdes fordi den blir
 --   liten og ikke vokser med historikken: den koster lite å vedlikeholde og

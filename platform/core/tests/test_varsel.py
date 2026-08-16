@@ -265,6 +265,104 @@ def test_ingen_kan_merke_en_kollegas_varsel_som_lest():
 
 
 @pg
+def test_et_ulest_varsel_faller_ikke_ut_av_siden_det_telles_paa():
+    """Telleren og lista skal ikke kunne si to forskjellige ting.
+
+    Med ren `opprettet DESC` ble et gammelt ulest varsel skjovet ut av siden
+    sa snart det la `grense` NYERE leste over det — mens `antall_uleste`
+    fortsatt talte det. Innboksen sa «1 ulest» og viste ingen. Flaten har
+    hverken paginering eller ulest-filter, sa varselet var da uten vei fram i
+    det hele tatt: godkjenneren fikk vite at noe ventet, men ikke hva.
+
+    Kontroll: fjern `(lest_ts IS NULL) DESC` fra ORDER BY i `innboks`, så blir
+    denne rød — det gamle uleste varselet er ikke på siden.
+
+    Tidsstemplene settes EKSPLISITT. `opprettet` har `DEFAULT now()`, og `now()`
+    er transaksjonens starttid: alle radene som lages her ville fått nøyaktig
+    samme tidspunkt, «eldre» og «nyere» ville ikke betydd noe, og testen ville
+    målt en vilkårlig rekkefølge i stedet for sorteringen.
+    """
+    c = _conn()
+    try:
+        eier = _bruker(c, "sidemann")
+        gammelt = "u-" + secrets.token_hex(6)
+        varsel.opprett(c, tenant=TEN, bruker_id=eier, art="attestering_venter",
+                       ressurs_type="policyutkast", ressurs_id=gammelt,
+                       tekstnokkel="varsel.attestering_venter")
+        c.execute("UPDATE varsel SET opprettet=now() - interval '30 days'"
+                  " WHERE tenant=%s AND bruker_id=%s AND ressurs_id=%s",
+                  (TEN, eier, gammelt))
+        # Fem NYERE varsler som alle er lest. Med grense=3 fyller de siden.
+        for i in range(5):
+            rid = "u-" + secrets.token_hex(6)
+            varsel.opprett(c, tenant=TEN, bruker_id=eier,
+                           art="attestering_venter",
+                           ressurs_type="policyutkast", ressurs_id=rid,
+                           tekstnokkel="varsel.attestering_venter")
+            c.execute("UPDATE varsel SET lest_ts=now(),"
+                      " opprettet=now() - make_interval(days => %s)"
+                      " WHERE tenant=%s AND bruker_id=%s AND ressurs_id=%s",
+                      (i, TEN, eier, rid))
+
+        assert varsel.antall_uleste(c, tenant=TEN, bruker_id=eier) == 1
+        side = varsel.innboks(c, tenant=TEN, bruker_id=eier, grense=3)
+        assert len(side) == 3
+        assert side[0]["ressurs_id"] == gammelt, \
+            "det uleste varselet lå ikke øverst"
+        assert not side[0]["lest"]
+        # Resten av siden er de nyeste leste — prioriteringen bytter ikke ut
+        # sorteringen, den kommer FORAN den.
+        assert all(v["lest"] for v in side[1:])
+        assert [v["opprettet"] for v in side[1:]] \
+            == sorted((v["opprettet"] for v in side[1:]), reverse=True)
+    finally:
+        c.close()
+
+
+@pg
+def test_flere_uleste_enn_siden_rommer_kan_likevel_toemmes():
+    """Er de uleste flere enn `grense`, viser siden `grense` uleste.
+
+    Det er ikke en løgn, men heller ikke alt — så veien ut må finnes: merkes
+    ett som lest, faller det ned under de uleste, og det neste kommer til syne.
+    Før fantes ingen slik vei: de uleste utenfor siden var uoppnåelige uansett
+    hva mottakeren gjorde.
+    """
+    c = _conn()
+    try:
+        eier = _bruker(c, "koe")
+        ider = []
+        for i in range(4):
+            rid = "u-" + secrets.token_hex(6)
+            varsel.opprett(c, tenant=TEN, bruker_id=eier,
+                           art="attestering_venter",
+                           ressurs_type="policyutkast", ressurs_id=rid,
+                           tekstnokkel="varsel.attestering_venter")
+            # Eksplisitt tid: `now()` er transaksjonens starttid, så uten dette
+            # ville alle fire delt tidspunkt og «den eldste faller ut» vært en
+            # vilkårlighet i stedet for en sortering.
+            c.execute("UPDATE varsel SET opprettet=now() - make_interval(days => %s)"
+                      " WHERE tenant=%s AND bruker_id=%s AND ressurs_id=%s",
+                      (i, TEN, eier, rid))
+            ider.append(rid)
+
+        side = varsel.innboks(c, tenant=TEN, bruker_id=eier, grense=3)
+        assert len(side) == 3 and all(not v["lest"] for v in side)
+        skjult = [r for r in ider if r not in {v["ressurs_id"] for v in side}]
+        assert len(skjult) == 1, "testen måler ikke det den tror"
+        assert skjult[0] == ider[-1], "det eldste uleste skulle vært det skjulte"
+
+        # Mottakeren rydder ett av dem. Da skal det skjulte komme fram.
+        varsel.merk_lest(c, tenant=TEN, bruker_id=eier,
+                         varsel_id=side[0]["id"])
+        etter = varsel.innboks(c, tenant=TEN, bruker_id=eier, grense=3)
+        assert skjult[0] in {v["ressurs_id"] for v in etter}, \
+            "et ulest varsel var uoppnåelig uansett hva mottakeren gjorde"
+    finally:
+        c.close()
+
+
+@pg
 def test_varsling_velter_aldri_handlingen():
     """Den viktigste testen her.
 

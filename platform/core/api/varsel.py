@@ -253,13 +253,31 @@ def pensjoner_runde(conn: psycopg.Connection, *, tenant: str, utkast_id: str,
 
 def innboks(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
             kun_uleste: bool = False, grense: int = 50) -> list[dict]:
-    """Mottakerens egne varsler, nyeste først."""
+    """Mottakerens egne varsler: ULESTE FØRST, deretter nyeste først.
+
+    Uleste først er ikke en smakssak, det er det som gjør telleren sann
+    (Codex P2). Med ren `opprettet DESC` og en side på `grense` rader var et
+    gammelt ulest varsel skjøvet ut av siden så snart det lå `grense` NYERE
+    leste over det — mens `antall_uleste` fortsatt talte det. Innboksen sa da
+    «1 ulest» og viste ikke ett eneste ulest varsel, uten paginering eller
+    ulest-filter å finne det med. Og det er nettopp det uleste som er hele
+    poenget: varselet er en oppfordring om noe som VENTER.
+
+    Er det flere uleste enn `grense`, viser siden `grense` uleste — ikke en
+    løgn, men heller ikke alt. Køen tømmes likevel: merkes ett som lest,
+    faller det ned under de uleste ved neste henting, og det neste kommer til
+    syne. Før fantes ingen slik vei i det hele tatt.
+
+    Sorteringen er dekket av `varsel_innboks` (migrasjon 026), som har
+    `(lest_ts IS NULL) DESC` som eget ledd — uten det ville standardvisningen
+    sortert en voksende flertenant-tabell for hver henting.
+    """
     sql = ("SELECT id, art, ressurs_type, ressurs_id, tekstnokkel, parametre,"
            " opprettet, lest_ts FROM varsel"
            " WHERE tenant=%s AND bruker_id=%s")
     if kun_uleste:
         sql += " AND lest_ts IS NULL"
-    sql += " ORDER BY opprettet DESC LIMIT %s"
+    sql += " ORDER BY (lest_ts IS NULL) DESC, opprettet DESC LIMIT %s"
     return [{"id": r[0], "art": r[1], "ressurs_type": r[2], "ressurs_id": r[3],
              "tekstnokkel": r[4], "parametre": r[5],
              "opprettet": r[6].isoformat(),
