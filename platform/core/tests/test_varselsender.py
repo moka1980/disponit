@@ -1310,6 +1310,20 @@ _TYPEORD = frozenset((
 #: hindre. Klausulen er derfor det som står MELLOM verbet og mottakeren.
 _REVOKE_MAL = re.compile(r"\brevoke\b(.*?)\bfrom\s+public\b")
 
+#: EN REVOKE SOM IKKE TAR PRIVILEGIET (Codex P2 på #71). `REVOKE GRANT OPTION
+#: FOR EXECUTE ON FUNCTION f(…) FROM PUBLIC` er en lovlig REVOKE som treffer
+#: den beskyttede signaturen — og fjerner likevel ikke EXECUTE. Den tar bare
+#: PUBLICs adgang til å GI privilegiet videre; PUBLIC beholder sitt eget.
+#: Setningen leste derfor som et gjerde mens funksjonen sto like åpen, og
+#: `deploy/staging/migrer.py`s opprydding ville skjult resten.
+#:
+#: Formen kan bare stå ETTER verbet — PostgreSQL skriver den som
+#: `REVOKE [GRANT OPTION FOR] privilegier ON … FROM …` — så klausulen måles
+#: fra begynnelsen. Den flytter INGENTING i denne modellen, i noen av
+#: retningene: den kan ikke gi PUBLIC EXECUTE, og den kan ikke bevise at
+#: EXECUTE er borte. Et gjerde som alt står, står derfor videre.
+_GRANT_OPSJON = re.compile(r"^\s*grant\s+option\s+for\b")
+
 #: `ROUTINE` ER SAMME SLETTING, STAVET OM (Codex P2 på #71). PostgreSQL godtar
 #: `DROP ROUTINE f(int,int)` som en generisk form som treffer funksjonen like
 #: godt som `DROP FUNCTION`. Kjente modellen bare den ene stavemåten, sto
@@ -1618,6 +1632,12 @@ def _spill_av(filer, signaturer):
       tilstanden til True. Som migrator måles den fortsatt som åpning: holder
       vakten, materialiserer den standard-ACL-en. Tvilen faller begge veier
       mot åpent.
+    * EN `REVOKE GRANT OPTION FOR …` TAR IKKE PRIVILEGIET (Codex P2 på #71).
+      Den fjerner bare PUBLICs adgang til å gi EXECUTE videre, og lar PUBLIC
+      beholde sitt eget. Den er derfor hverken bevis eller åpning, og lar
+      tilstanden stå — den ene setningsformen her som med vilje ikke flytter
+      noe. Uten den grenen leste en slik REVOKE som et gjerde rundt en
+      funksjon PUBLIC fortsatt kunne kalle.
     * En SKJEMABRED `GRANT … ON ALL FUNCTIONS IN SCHEMA … TO PUBLIC` nevner
       hverken signatur eller basenavn, og åpner alle tre. Den måles derfor
       før silen på navn — se `_GRANT_ALLE_PUBLIC`.
@@ -1732,6 +1752,17 @@ def _spill_av(filer, signaturer):
                     # tilfellet skal måles som åpent, ikke antas lukket.
                     gjerdet[sig] = False
                     spor[sig].append(f"{filnavn}: grant til public som {aktiv}")
+                elif (rev := _REVOKE_MAL.search(s)) and _rammer(
+                        rev.group(1), sig, basenavn[sig]) and (
+                            _GRANT_OPSJON.match(rev.group(1))):
+                    # EN REVOKE SOM IKKE TAR PRIVILEGIET. `GRANT OPTION FOR`
+                    # tar bare PUBLICs adgang til å gi EXECUTE VIDERE — selve
+                    # EXECUTE blir stående. Setningen beviser derfor
+                    # ingenting, og river heller ingenting: tilstanden holdes
+                    # der den var, uansett hvem som kjører den.
+                    spor[sig].append(
+                        f"{filnavn}: revoke av GRANT OPTION som {aktiv}"
+                        f" — EXECUTE står igjen")
                 elif (rev := _REVOKE_MAL.search(s)) and _rammer(
                         rev.group(1), sig, basenavn[sig]):
                     # Vakten kan stå i den SAMME setningen (`IF … THEN
@@ -2192,6 +2223,24 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
             [("a.sql", lag + gjerde),
              ("b.sql", f"DROP FUNCTION varsel_klaim_epost({annen});")],
             n)[0] == {sig: True}, f"`{annen}` er ikke `(int,int)`"
+
+    # EN REVOKE SOM IKKE TAR PRIVILEGIET. `GRANT OPTION FOR` er en lovlig
+    # REVOKE på nøyaktig den beskyttede signaturen, kjørt av eieren — og den
+    # fjerner likevel ikke EXECUTE. Leses den som et gjerde, er porten grønn
+    # på en funksjon PUBLIC fortsatt kan kalle.
+    opsjon = ("SET LOCAL ROLE disponit_domene_eier;"
+              " REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION"
+              " varsel_klaim_epost(int, int) FROM PUBLIC; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + opsjon)], n)
+    assert gjerdet == {sig: False}, (
+        "`REVOKE GRANT OPTION FOR` tar ikke EXECUTE, og er ikke et gjerde."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er det som skiller regelen fra «alt med ordet grant
+    # i seg teller ikke»: den river heller ikke ned et gjerde som ALT står.
+    # Setningen flytter ingenting, i noen av retningene.
+    assert _spill_av([("a.sql", lag + gjerde), ("b.sql", opsjon)], n)[0] == {
+        sig: True}, "en grant option-revoke rører ikke et gjerde som står"
 
     assert _type("p_ts timestamp with time zone") \
         == "timestamp with time zone", "flerordstypen skal stå hel"
