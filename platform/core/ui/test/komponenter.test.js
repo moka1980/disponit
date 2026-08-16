@@ -289,6 +289,42 @@ test("AppShell: modulmenyen kan skjules, og bryteren sier fra", async () => {
   assert.equal(bryter.getAttribute("aria-expanded"), "false",
     "menyen ble skjult uten at bryteren sa fra");
   assert.equal(rot.querySelector(".skall-venstre").hidden, true);
+
+  // 🔴 Å SKJULE MENYEN SKAL GI PLASS, IKKE FLYTTE SONENE (Codex P1).
+  // Rutenettet var autoplassert: forsvant første barn, rykket `main` inn i
+  // sidebarkolonnen og kontekstpanelet inn i midten. jsdom har ingen layout,
+  // så porten står på de to tingene som styrer den — tilstanden på kroppen og
+  // de navngitte områdene i stilkilden.
+  const kropp = rot.querySelector(".skall-kropp");
+  assert.equal(kropp.dataset.meny, "skjult",
+    "kroppen sier ikke fra at menysonen er borte");
+  bryter.dispatchEvent(new window.Event("click"));
+  assert.equal(kropp.dataset.meny, "apen");
+});
+
+test("skall-kropp: sonene er navngitte, også når menyen er skjult", () => {
+  const css = readFileSync(
+    join(HER, "..", "static", "css", "komponenter.css"), "utf-8");
+  const regel = (velger) => {
+    const i = css.indexOf(velger);
+    assert.ok(i >= 0, `${velger} skal finnes i stilkilden`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+  assert.match(regel(".skall-kropp {"),
+    /grid-template-areas:\s*"venstre hoved kontekst"/,
+    "uten navngitte områder faller sonene der autoplasseringen vil");
+  const skjult = regel('.skall-kropp[data-meny="skjult"] {');
+  assert.match(skjult, /grid-template-areas:\s*"hoved kontekst"/,
+    "skjult meny må ha sitt eget oppsett, ellers står en tom kolonne igjen");
+  assert.match(skjult, /grid-template-columns:\s*minmax\(0, 1fr\)/,
+    "plassen etter menyen skal tilfalle hovedinnholdet");
+  for (const sone of ["venstre", "hoved", "kontekst"]) {
+    assert.match(css, new RegExp(`\\.skall-kropp > \\.skall-${sone} \\{[^}]*grid-area: ${sone}`),
+      `${sone} er ikke bundet til sin egen sone`);
+  }
+  // `order` snur pikslene uten å snu fokus — den skal ikke tilbake.
+  assert.ok(!/\.skall-hoved\s*\{\s*order:/.test(css),
+    "visuell omrokering av sonene bryter fokusrekkefølgen");
 });
 
 test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () => {

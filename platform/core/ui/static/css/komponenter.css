@@ -682,19 +682,53 @@ html[data-visning="landing"] .skall-hoved {
 }
 
 /* --- Portalskall, §2.3: topp · venstre · sentrum · høyre · bunn ---------- */
+
+/* SONENE HAR NAVN, DE TELLES IKKE (Codex P1). Rutenettet sto på ren
+   autoplassering: hvert barn falt i neste ledige kolonne. Da bryteren skjulte
+   modulmenyen, forsvant første barn ut av flyten — og resten rykket én kolonne
+   til venstre. `main` havnet i sidebarkolonnen på 12–16rem, kontekstpanelet i
+   midten, og høyre kolonne sto tom. Handlingen som skulle GI plass til arbeidet
+   klemte det altså sammen til en tredjedel.
+   Med navngitte områder ligger sonen fast uansett hvilke barn som finnes, og
+   den skjulte menyen har sitt eget oppsett der plassen faktisk tilfaller
+   `main`. */
 .skall-kropp {
   display: grid;
   gap: var(--sp-4);
   grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr) minmax(14rem, 20rem);
+  grid-template-areas: "venstre hoved kontekst";
   align-items: start;
 }
 
-/* Under bruddpunktet stables sonene: modulmenyen og kontekstpanelet er
-   tilleggsinformasjon, og hovedinnholdet skal komme først på en liten skjerm. */
+.skall-kropp[data-meny="skjult"] {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
+  grid-template-areas: "hoved kontekst";
+}
+
+/* Bare som soner i skallkroppen: `.skall-hoved` brukes også av forsiden og
+   innloggingen, som ikke ligger i dette rutenettet. */
+.skall-kropp > .skall-venstre { grid-area: venstre; }
+.skall-kropp > .skall-hoved { grid-area: hoved; }
+.skall-kropp > .skall-kontekst { grid-area: kontekst; }
+
+/* Under bruddpunktet stables sonene i DOM-rekkefølge: venstre · hoved ·
+   kontekst. Rekkefølgen ble tidligere snudd visuelt med `order`, slik at
+   hovedinnholdet kom først på liten skjerm — men `order` flytter bare pikslene.
+   Tastatur og skjermleser følger DOM-en, så etter bryteren i toppen ble
+   brukeren ført NEDENFOR det synlige hovedinnholdet, gjennom alle 45
+   modulknappene, og først da opp igjen. Hoppelenka i `index.html` løser den
+   samme mobilsituasjonen uten å skille syn fra fokus, og modullista får i
+   stedet en høydegrense her så hovedinnholdet er innen rekkevidde. */
 @media (max-width: 60rem) {
-  .skall-kropp { grid-template-columns: 1fr; }
-  .skall-venstre, .skall-kontekst { order: 2; }
-  .skall-hoved { order: 1; }
+  .skall-kropp {
+    grid-template-columns: 1fr;
+    grid-template-areas: "venstre" "hoved" "kontekst";
+  }
+  .skall-kropp[data-meny="skjult"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "hoved" "kontekst";
+  }
+  .skall-modulliste { max-height: 40vh; overflow-y: auto; }
 }
 
 .skall-venstre, .skall-kontekst {

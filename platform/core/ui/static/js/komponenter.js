@@ -339,6 +339,10 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     skjul.setAttribute("aria-expanded", apen ? "false" : "true");
     skjul.textContent = apen ? t("ui.shell.vis_meny") : t("ui.shell.skjul_meny");
     venstre.hidden = apen;
+    // Rutenettet må VITE at sonen er borte (Codex P1): `hidden` alene tok
+    // menyen ut av flyten, og et autoplassert rutenett flyttet da `main` inn i
+    // sidebarkolonnen. Tilstanden står på kroppen, og CSS bytter oppsett.
+    kropp.dataset.meny = apen ? "skjult" : "apen";
   });
 
   // Statuslinja sier hva som FAKTISK gjelder. Spesifikasjonens eksempel («45
@@ -357,7 +361,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
       .replace("{tid}", new Date().toLocaleTimeString(valgtSprak || "nb",
         { hour: "2-digit", minute: "2-digit" })) }));
 
-  const kropp = el("div", { class: "skall-kropp" }, venstre, hoved, kontekst);
+  const kropp = el("div", { class: "skall-kropp", "data-meny": "apen" },
+    venstre, hoved, kontekst);
   const rot = el("div", { class: "skall" }, topp, nav, sok, skjul, kropp,
     statuslinje);
   // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
