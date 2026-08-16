@@ -13,7 +13,7 @@ import {
   Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive, Faner,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
-import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
+import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 
@@ -298,18 +298,34 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, lukkPanel) {
   return el("div", {}, faner.rot, handl.rot);
 }
 
-function aapneDetalj(uid, ctx, aapneEditor) {
+// Utkastet åpnes som en VANLIG SIDE i flaten, ikke som en skuff over den.
+//
+// Skuffen var feil form for det som skjer her: å attestere er ikke en rask
+// sidehandling, det er hovedoppgaven. Den la et smalt panel over lista, og —
+// verre — den sa ikke tydelig HVILKET utkast man sto i. Med to åpne runder
+// endte de to attestasjonene på hvert sitt utkast, og ingen av dem kunne
+// aktivere. Siden har utkastets policy-ID i overskriften og en synlig vei
+// tilbake, slik editoren allerede gjør.
+function aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe) {
   hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-    let panel;
-    const lukk = () => { if (panel) panel.lukk(); };
-    panel = Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
-      innhold: detaljInnhold(detalj, uid, ctx,
-        () => aapneDetalj(uid, ctx, aapneEditor), aapneEditor, lukk) });
+    const tilbake = el("button", { class: "knapp", type: "button",
+      text: t("ui.policyadmin.tilbake_til_liste") });
+    tilbake.addEventListener("click", tilbakeTilListe);
+    sett(hoved,
+      ...flateHode(
+        `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
+        t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
+      tilbake,
+      detaljInnhold(detalj, uid, ctx,
+        () => aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe),
+        aapneEditor, tilbakeTilListe));
+    // Fokus til overskriften: siden ble byttet ut, og uten dette står fokus
+    // igjen på raden man klikket i en liste som ikke er der lenger.
+    const h = hoved.querySelector("h2, h1");
+    if (h) { h.setAttribute("tabindex", "-1"); h.focus(); }
   }).catch((e) => {
     if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-    Detaljpanel({ tittel: t("ui.policyadmin.detalj_tittel"),
-      innhold: e instanceof IngenTilgangFeil
-        ? TilgangsVakt({}) : Feiltilstand({}) });
+    sett(hoved, e instanceof IngenTilgangFeil ? TilgangsVakt({}) : Feiltilstand({}));
   });
 }
 
@@ -321,7 +337,7 @@ export function visPolicyadmin(hoved, ctx) {
   function aapneEditor(opts) {
     visPolicyeditor(hoved, ctx, {
       ...opts,
-      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor),
+      aapneUtkast: (u) => aapneDetalj(u, ctx, aapneEditor, hoved, last),
       tilbake: last,
     });
   }
@@ -337,7 +353,7 @@ export function visPolicyadmin(hoved, ctx) {
       },
       sortverdi: { opprettet: u.opprettet, policy: u.policy_id },
       handling: { tekst: t("ui.aapne"),
-        paaKlikk: () => aapneDetalj(u.utkast_id, ctx, aapneEditor) },
+        paaKlikk: () => aapneDetalj(u.utkast_id, ctx, aapneEditor, hoved, last) },
     };
   }
 

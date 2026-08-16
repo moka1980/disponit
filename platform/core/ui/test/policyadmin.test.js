@@ -80,8 +80,9 @@ test("Detalj: diff + risikoklasse PER endring + fire-øyne-status", async () => 
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  const dlg = document.querySelector('[role="dialog"]');
+  // Detaljene står i flaten nå, ikke i en skuff.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  const dlg = h;
   // Risikoklasse per endring (både UTVIDER og INNSNEVRER vises).
   // Skuffen er delt i trinn: klassifisering og diff bor under «Endringer»,
   // fire-øyne-status under sin egen fane. Testen navigerer dit i stedet for å
@@ -112,8 +113,9 @@ test("Attester: låst til diffen er sett — skuffen åpner PÅ «Endringer»", 
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  const dlg = document.querySelector('[role="dialog"]');
+  // Detaljene står i flaten nå, ikke i en skuff.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  const dlg = h;
   const valgt = [...dlg.querySelectorAll('[role="tab"]')]
     .find((f) => f.getAttribute("aria-selected") === "true");
   assert.equal(valgt.textContent, t("ui.policyadmin.fane.endringer"),
@@ -135,8 +137,8 @@ test("Attester: kvitteringen viser den granulære diffen, ikke bare hashen", asy
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  [...document.querySelector('[role="dialog"]').querySelectorAll("button")]
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  [...h.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
     .dispatchEvent(new window.Event("click"));
   await vent(() => [...document.querySelectorAll('[role="dialog"]')]
@@ -167,11 +169,10 @@ test("Attester: eksplisitt kvittering → CSRF-POST m/ Idempotency-Key + diff_ha
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
   const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === tekst);
-  const dlg = document.querySelector('[role="dialog"]');
-  const attest = finn(dlg, t("ui.policyadmin.handling.attester"));
+  const attest = finn(h, t("ui.policyadmin.handling.attester"));
   assert.ok(attest, "attester-knapp mangler");
   attest.dispatchEvent(new window.Event("click"));
   // Eksplisitt kvittering viser risikoklasse + diff-hash.
@@ -207,10 +208,10 @@ test("Attester: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
   const finn = (rot, tekst) => [...rot.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === tekst);
-  finn(document.querySelector('[role="dialog"]'),
+  finn(h,
     t("ui.policyadmin.handling.attester")).dispatchEvent(new window.Event("click"));
   await vent(() => [...document.querySelectorAll('[role="dialog"]')]
     .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
@@ -242,31 +243,25 @@ function _medCsrf() {
 // knappen. `_aapneDetalj` venter på «en hvilken som helst dialog», og en
 // forrige tests sene async-rendring kan rekke å legge sin egen skuff i DOM-en
 // først — da tester man forrige tests tilstand og får en umulig feil.
+// Utkastet åpnes nå som en vanlig side i flaten, ikke som en skuff. Hjelperne
+// returnerer derfor `hoved` — det er der detaljene står — i stedet for å lete
+// etter `[role="dialog"]`.
 async function _aapneDetaljMed(h, tekst) {
-  document.querySelectorAll('.overlegg, [role="dialog"]')
-    .forEach((n) => n.remove());
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
-    .some((d) => _finn(d, tekst)));
-  return [...document.querySelectorAll('[role="dialog"]')]
-    .find((d) => _finn(d, tekst));
+  await vent(() => _finn(h, tekst));
+  return h;
 }
 
 async function _aapneDetalj(h) {
-  // Rens stale skuffer fra tidligere tester, så querySelector treffer den nye.
-  // BEGGE må ryddes: en skuff som ble bygget uten `.overlegg`-wrapperen ble
-  // stående igjen som `[role="dialog"]`, og neste test fant DEN i stedet for
-  // sin egen — med forrige tests knapper i seg. Det ga en «umulig» feil der
-  // testen lette etter Valider og fikk Åpne aktiveringsrunde.
-  document.querySelectorAll('.overlegg, [role="dialog"]')
-    .forEach((n) => n.remove());
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => document.querySelector('[role="dialog"]'));
-  return document.querySelector('[role="dialog"]');
+  // Detaljsiden er inne når tilbakeveien finnes — den bygges sammen med
+  // innholdet, og finnes ikke i lista.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  return h;
 }
 
 test("Valider: retry etter nettverksfeil gjenbruker Idempotency-Key", async () => {
@@ -406,4 +401,32 @@ test("Valider: 5xx sier «handlingen feilet», ikke «utkastet er ugyldig»", as
   assert.ok(!tekst.includes(t("ui.policyadmin.ugyldig")),
     "en serverfeil er ikke et bevis på at utkastet er ugyldig");
   gjenopprett();
+});
+
+test("Utkast: åpnes som side i flaten, med policy-ID synlig og vei tilbake", async () => {
+  // To åpne runder endte med hver sin attestasjon fordi flaten ikke sa hvilket
+  // utkast man sto i — skuffen viste «Detalj» uten identitet. Siden bærer nå
+  // policy-ID i overskriften og utkast-ID under, og har en synlig vei tilbake.
+  const h = nyHoved();
+  const dlg = await _aapneDetalj(h);
+
+  assert.equal(document.querySelectorAll('[role="dialog"]').length, 0,
+    "utkastet åpnet fortsatt som en skuff over flaten");
+  assert.ok(dlg.textContent.includes(DETALJ.policy_id),
+    "overskriften sier ikke HVILKEN policy utkastet gjelder");
+  assert.ok(dlg.textContent.includes("u-1"),
+    "utkast-ID vises ikke — to utkast ser like ut");
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "ingen synlig vei tilbake til lista");
+
+  // Fokus følger sidebyttet: uten det står fokus igjen på raden man klikket,
+  // i en liste som ikke er på skjermen lenger.
+  assert.match(document.activeElement.tagName, /^H[12]$/,
+    'fokus havnet ikke på sidens overskrift');
+
+  // …og tilbake fører faktisk tilbake.
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.ok(h.querySelector("tbody"), "kom ikke tilbake til utkastlista");
 });
