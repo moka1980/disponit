@@ -166,7 +166,7 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
     # beskjeden. Kontrollen står FØR idempotensposten: en forespørsel som aldri
     # kunne blitt et utkast skal heller ikke brenne nøkkelen.
-    if not _POLICY_ID.match(policy_id or ""):
+    if not _POLICY_ID.fullmatch(policy_id or ""):
         conn.rollback()
         raise Aktiveringsfeil("policy_id_ugyldig", f"policy_id={policy_id!r}")
     # Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
@@ -474,6 +474,9 @@ def _meta(innhold) -> dict:
 #: gjetning på hvilken policy eier mente, og identiteten er det ene feltet som
 #: ikke kan rettes etterpå. Editoren trimmer allerede FØR den sender (`2d94532`),
 #: så dette rammer bare direkte API-kall — der et tydelig avslag er riktig svar.
+#:
+#: Måles med `fullmatch` av samme grunn som `_SEMVER`: `"acme\n"` er ikke en
+#: skjemagyldig id, men Pythons `$` godtar halen.
 _POLICY_ID = re.compile(r"^[a-z0-9-]{3,}$")
 
 
@@ -525,7 +528,7 @@ def _dokumentavvik(policy_id: str, innhold, tenant: str = "") -> list[str]:
     # btree-oppføring. Begge må stanses FØR frysingen: etterpå kan versjonen
     # ikke økes, og runden er tapt.
     versjon = _meta(innhold).get("versjon")
-    if isinstance(versjon, str) and not _SEMVER.match(versjon):
+    if isinstance(versjon, str) and not _SEMVER.fullmatch(versjon):
         avvik.append(
             f"meta.versjon {versjon[:40]!r} må være tre tall skilt med punktum"
             " (ASCII-sifre, formen 1.2.3)")
@@ -588,6 +591,15 @@ _DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
 #: Uten dette godtok porten altså en versjon som er både feilordnet og
 #: ulagringsbar, åpnet runden, og lot bruddet komme etter attestasjonene — med
 #: en kansellert runde som resultat. De to gatene skal måle det samme.
+#:
+#: Måles med `fullmatch`, ikke `match` (Codex P2). `$` er ikke slutten på
+#: strengen i Python — den matcher også rett før en avsluttende linjeskift — så
+#: `"1.2.3\n"` slapp gjennom både her og skjemaet, mens migrasjonenes `$` leser
+#: den som ekte slutt og avviser den. Samme sykdom som unicode-sifrene over,
+#: samme utfall: frosset og attestert utkast, brudd først i aktiveringen,
+#: kansellert runde. Skjemasiden er lukket i `policy_validator.schema`
+#: (`_ecma_ankre`); `fullmatch` her gjør porten uavhengig av hva `re` mener om
+#: ankrene. Ankrene i mønsteret beholdes fordi det er en KOPI av skjemaets.
 _SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 #: Største SAMLEDE nøkkel registeret kan lagre, i byte. `policyer_pkey` er
 #: `(tenant, policy_id, versjon)`, og en btree-oppføring har et hardt tak
@@ -664,7 +676,7 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
     `_krev_peker_synk` — den kjører før runden åpnes og før noen attesterer.
     -> versjonen som vil bli lagret. Kaster `Aktiveringsfeil`."""
     ny = _meta(ny_innhold).get("versjon")
-    if not isinstance(ny, str) or not _SEMVER.match(ny) \
+    if not isinstance(ny, str) or not _SEMVER.fullmatch(ny) \
             or _nokkelbytes(tenant, policy_id, ny) > _MAKS_NOKKELBYTES:
         # Formen OG plassen: en nøkkel registeret ikke kan lagre er like umulig
         # å aktivere som en versjon som mangler (se `_MAKS_NOKKELBYTES`), og
@@ -674,7 +686,7 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
             "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND versjon=%s", (tenant, policy_id, ny)).fetchone():
         raise Aktiveringsfeil("versjon_i_bruk", f"versjon={ny} finnes")
-    if aktiv_versjon is not None and _TALLVERSJON.match(aktiv_versjon):
+    if aktiv_versjon is not None and _TALLVERSJON.fullmatch(aktiv_versjon):
         ledd = max(ny.count("."), aktiv_versjon.count(".")) + 1
         if _versjonsnokkel(ny, ledd) <= _versjonsnokkel(aktiv_versjon, ledd):
             raise Aktiveringsfeil(

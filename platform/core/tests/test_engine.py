@@ -65,6 +65,81 @@ def test_ukjente_felter_avvises(tjeneste):
     assert any("hemmelig_bakdor" in f for f in valider_policy(p))
 
 
+def test_skjemamonstre_bruker_ekte_slutt_ikke_pythons(tjeneste):
+    """🔴 P2: `$` er ikke slutten på strengen i Python — den matcher også rett
+    før en avsluttende linjeskift.
+
+    JSON Schema er ECMA-262, der `$` uten `m`-flagget ER slutten. `jsonschema`
+    kjører mønstrene gjennom `re`, så hele skjemaet arvet lekkasjen: `"1.2.3\\n"`
+    var skjemagyldig. Databasen leser `$` strengt (migrasjon 020–024), så
+    utkastet ble frosset og attestert her og veltet først i `aktiver_policy` —
+    rapportert som `versjon_i_bruk`, altså feil beskjed på et tidspunkt der
+    `meta.versjon` ikke lenger kan rettes.
+
+    Halen rammer ikke bare versjonen: en `handlinger[].id` med linjeskift er
+    like skjemagyldig, og da avviser `les_policyref` referansen som uleselig —
+    evidens uten policyidentitet.
+
+    Kontroll: bytt `_Validator` tilbake til `jsonschema.Draft202012Validator`,
+    så blir denne rød ved at feillisten er tom.
+    """
+    for sti, verdi in ((("meta", "versjon"), "1.2.3\n"),
+                       (("meta", "policy_id"), "tjenestebedrift-no\n")):
+        p = yaml.safe_load(yaml.safe_dump(tjeneste))
+        p[sti[0]][sti[1]] = verdi
+        assert any(sti[1] in f for f in valider_policy(p)), \
+            f"{sti[1]} med linjeskift slapp gjennom skjemaet"
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    p["handlinger"][0]["id"] += "\n"
+    assert valider_policy(p), "handling-id med linjeskift slapp gjennom"
+
+
+def test_ecma_ankre_rorer_ikke_klasser_og_escaper():
+    """Oversettelsen `^`→`\\A`, `$`→`\\Z` gjelder ANKRE, ikke tegnene.
+
+    Inne i en tegnklasse er `^` negasjon og `$` et vanlig tegn, og `\\$` er en
+    escapet dollar. Blind erstatning ville endret hva mønstrene matcher, ikke
+    bare hvor de er forankret.
+    """
+    from policy_validator.schema import _ecma_ankre, _strengt_monster
+    assert _ecma_ankre(r"^[a-z]+$") == r"\A[a-z]+\Z"
+    assert _ecma_ankre(r"^[^$]+$") == r"\A[^$]+\Z"
+    assert _ecma_ankre(r"^\$\d+$") == r"\A\$\d+\Z"
+    assert _ecma_ankre(r"^[A-Za-z_+-]+$") == r"\A[A-Za-z_+-]+\Z"
+    assert _strengt_monster(r"^[0-9]+$").search("12")
+    assert not _strengt_monster(r"^[0-9]+$").search("12\n")
+
+
+def test_alle_skjemamonstre_kompilerer_etter_ankeroversettelsen():
+    """Oversettelsen kjøres på HVERT mønster i skjemaet, ikke bare de vi husket.
+
+    En `pattern` som ikke lenger kompilerer ville blitt en `intern
+    valideringsfeil` på hver eneste forespørsel — validatoren revalideres per
+    kall — så den skal felles her, ikke i produksjon.
+    """
+    import json
+    from policy_validator.schema import _SKJEMA_STI, _strengt_monster
+    funnet = []
+
+    def gaa(o):
+        if isinstance(o, dict):
+            if isinstance(o.get("pattern"), str):
+                funnet.append(o["pattern"])
+            for v in o.values():
+                gaa(v)
+        elif isinstance(o, list):
+            for v in o:
+                gaa(v)
+
+    gaa(json.loads(_SKJEMA_STI.read_text(encoding="utf-8")))
+    assert funnet, "fant ingen mønstre i skjemaet — gikk letingen i stykker?"
+    for m in funnet:
+        oversatt = _strengt_monster(m)          # kaster om den ikke kompilerer
+        if m.endswith("$"):
+            assert oversatt.pattern.endswith(r"\Z"), \
+                f"{m!r} ble ikke forankret: {oversatt.pattern!r}"
+
+
 def test_tekstlig_frekvens_avvises(tjeneste):
     p = yaml.safe_load(yaml.safe_dump(tjeneste))
     p["handlinger"][3]["grenser"]["frekvens"] = "1 per faktura per 14 dager"

@@ -813,6 +813,33 @@ def test_versjonsformen_krever_ascii_sifre():
     assert any("meta.versjon" in a for a in avvik), avvik
 
 
+def test_versjonsformen_har_ekte_slutt():
+    """🔴 P2: `"1.2.3\\n"` er ikke en versjon — men Pythons `$` synes det.
+
+    `$` matcher også rett FØR en avsluttende linjeskift, så både skjemaet og
+    `_SEMVER.match()` godtok halen. Migrasjonenes `$` gjør det ikke, så
+    utkastet ble frosset og attestert, og bruddet kom i `aktiver_policy` — der
+    runden ble kansellert som `versjon_i_bruk`, en beskjed eier ikke kan handle
+    på fordi `meta.versjon` da ikke lenger kan rettes.
+
+    Samme hale på RADENS identitet er like dødfødt: `"acme\\n"` kan aldri
+    skrives inn i dokumentet, og raden kan ikke rettes.
+
+    Kontroll: bytt `fullmatch` tilbake til `match`, så blir denne rød.
+    """
+    from api.policyadmin import (_POLICY_ID, _SEMVER, _TALLVERSJON,
+                                 _dokumentavvik)
+    assert _SEMVER.fullmatch("1.2.3")
+    assert not _SEMVER.fullmatch("1.2.3\n"), "hale slipper gjennom porten"
+    assert not _TALLVERSJON.fullmatch("2\n")
+    assert _POLICY_ID.fullmatch("acme")
+    assert not _POLICY_ID.fullmatch("acme\n")
+    # Og valideringen sier fra MENS utkastet kan rettes.
+    avvik = _dokumentavvik("p", {"meta": {"policy_id": "p", "versjon": "1.2.3\n",
+                                          "status": "produksjon"}})
+    assert any("meta.versjon" in a for a in avvik), avvik
+
+
 @pg
 def test_porten_avviser_versjon_registeret_ikke_kan_lagre():
     """🔴 En versjon som ikke KAN lagres skal ikke koste to signaturer.

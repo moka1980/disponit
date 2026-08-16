@@ -13,12 +13,89 @@ feilliste, ikke exception (review: «AttributeError i validatoren»).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import jsonschema
 
 _SKJEMA_STI = Path(__file__).resolve().parents[3] / "policies" / "policy-schema-v0.2.json"
+
+
+# --------------------------------------------------------------------------
+# Mønstre måles med ECMA-262-ankre, ikke Pythons (Codex P2).
+# --------------------------------------------------------------------------
+# JSON Schema definerer `pattern` som ECMA-262, og der betyr `$` — uten
+# `m`-flagget — slutten på strengen. Pythons `re` gjør det ikke: `$` matcher
+# OGSÅ rett før en avsluttende linjeskift. `jsonschema` kjører mønstrene
+# gjennom `re`, så hele skjemaet arvet den lekkasjen: `"1.2.3\n"` matchet
+# `^\d+\.\d+\.\d+$` og var fullt skjemagyldig.
+#
+# Halen kom ikke gratis. Databasen leser `$` som ekte slutt (migrasjon 020–024
+# bruker samme form), så utkastet ble FRYST og attestert her, og bruddet dukket
+# opp først inne i `aktiver_policy` — der runden ble kansellert som
+# `versjon_i_bruk`: feil beskjed, og på et tidspunkt der `meta.versjon` ikke
+# lenger kan rettes. Det samme gjelder de andre mønstrene, hver på sin måte:
+# en `handlinger[].id` med hale er skjemagyldig, men `engine.les_policyref`
+# avviser den som uleselig policyreferanse, altså evidens uten identitet.
+#
+# Derfor oversettes ankrene før mønsteret kompileres: `^` → `\A`, `$` → `\Z`.
+# Det er ECMA-semantikken bokstavelig, ikke en innstramming vi finner på — og
+# den gjelder ALLE skjemaets mønstre, så ingen av dem kan glemmes.
+def _ecma_ankre(monster: str) -> str:
+    """Skjemaets ECMA-mønster med ankre Python leser likt: `^`→`\\A`, `$`→`\\Z`.
+
+    Escapede tegn (`\\$`) og tegnklasser (`[^a]`, `[$]`) røres ikke — der er
+    `^`/`$` ikke ankre, og en blind erstatning ville endret hva mønsteret
+    matcher.
+    """
+    ut: list[str] = []
+    i, n, i_klasse = 0, len(monster), False
+    while i < n:
+        c = monster[i]
+        if c == "\\" and i + 1 < n:
+            ut.append(monster[i:i + 2])
+            i += 2
+            continue
+        if i_klasse:
+            if c == "]":
+                i_klasse = False
+        elif c == "[":
+            i_klasse = True
+        elif c == "^":
+            c = r"\A"
+        elif c == "$":
+            c = r"\Z"
+        ut.append(c)
+        i += 1
+    return "".join(ut)
+
+
+#: Mønstrene kommer fra skjemafilen, altså en lukket mengde — cachen vokser ikke
+#: med trafikken. Samme grunn som validatorcachen under: revalidering skjer per
+#: forespørsel, og rekompilering per mønster ville kostet der.
+_MONSTER_CACHE: dict[str, re.Pattern] = {}
+
+
+def _strengt_monster(monster: str) -> re.Pattern:
+    kompilert = _MONSTER_CACHE.get(monster)
+    if kompilert is None:
+        kompilert = re.compile(_ecma_ankre(monster))
+        _MONSTER_CACHE[monster] = kompilert
+    return kompilert
+
+
+def _pattern_ecma(validator, monster, instans, skjema):
+    """`pattern`-nøkkelordet med ECMA-ankre. Feilteksten er `jsonschema`s egen,
+    så feillistene kallerne allerede leser ser uendret ut."""
+    if validator.is_type(instans, "string") \
+            and not _strengt_monster(monster).search(instans):
+        yield jsonschema.ValidationError(
+            f"{instans!r} does not match {monster!r}")
+
+
+_Validator = jsonschema.validators.extend(
+    jsonschema.Draft202012Validator, {"pattern": _pattern_ecma})
 
 # Validatoren bygges ÉN gang per skjemaversjon, ikke per kall.
 #
@@ -42,7 +119,6 @@ def _last_skjema() -> dict:
 
 
 def _validator():
-    import jsonschema
     try:
         st = _SKJEMA_STI.stat()
         nokkel = (str(_SKJEMA_STI), st.st_mtime_ns, st.st_size)
@@ -50,7 +126,7 @@ def _validator():
         nokkel = (str(_SKJEMA_STI), None, None)
     v = _VALIDATOR_CACHE.get(nokkel)
     if v is None:
-        v = jsonschema.Draft202012Validator(_last_skjema())
+        v = _Validator(_last_skjema())
         _VALIDATOR_CACHE.clear()      # kun én versjon om gangen
         _VALIDATOR_CACHE[nokkel] = v
     return v
