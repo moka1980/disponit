@@ -1375,3 +1375,594 @@ def test_db_grensen_maler_bare_differansen_ikke_hele_lastekontrakten():
     finally:
         rt.close()
     assert _aktiv_versjon(pid) == "1.1.0"
+
+
+@pg
+def test_apen_runde_varsler_dem_som_kan_bringe_den_videre():
+    """🔴 P1 (Codex): åpningen av en runde må FAKTISK varsle.
+
+    En åpen runde venter på et menneske, og fram til nå fikk hun aldri vite
+    det — i praksis måtte eier si fra utenom systemet. Tjenestelaget fantes,
+    men ingen produksjonsvei kalte det: `varsle_runde_venter` var bare
+    referert fra sin egen modul og sin egen test, så flyten skrev aldri en
+    eneste `varsel`-rad.
+
+    Testen går den EKTE veien — runtime-rollen, `opprett_aktiveringsrunde`,
+    committet — så den måler samtidig at rollen har rettighetene den trenger.
+
+    Kontroll: fjern `varsel.varsle_runde_venter`-kallet i
+    `opprett_aktiveringsrunde`, så blir denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("varsel-forf", ["policyforvalter"])
+    b = _medlem("varsel-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert r["runde"] == 1
+        assert r["pakrevd_antall_godkjennere"] == 2
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        rader = {x[0]: x for x in m.execute(
+            "SELECT bruker_id, art, hendelse, tekstnokkel, parametre,"
+            " epost_status FROM varsel WHERE tenant=%s"
+            " AND ressurs_type='policyutkast' AND ressurs_id=%s",
+            (TEN, uid)).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+    # Begge kan bringe runden videre: ingen har attestert ennå, og forfatteren
+    # teller — hun kan bare ikke fullføre fire øyne alene.
+    assert {a, b} <= set(rader), (
+        f"runden ble åpnet uten å varsle noen; mottakere={set(rader)}")
+    _, art, hendelse, nokkel, param, epost = rader[b]
+    assert art == "attestering_venter"
+    assert hendelse == "1", "rundenummeret må være varselets hendelsesidentitet"
+    assert nokkel == "varsel.attestering_venter", (
+        "teksten lagres ikke — bare nøkkelen, så varselet kan leses på "
+        "MOTTAKERENS språk")
+    assert param["policy_id"] == pid and param["runde"] == 1
+    assert param["gjenstaar"] == 2
+    assert epost == "koet", "standardvalget er e-post OG portal"
+
+
+@pg
+def test_replay_forsoner_en_varsling_som_feilet(monkeypatch):
+    """Codex P2: en feilet varsling var ENDELIG.
+
+    Varslingen er best effort med vilje — en fullmaktsendring skal ikke kunne
+    velte fordi varslingen gjorde det. Men prisen var at feilen ikke kunne
+    repareres av noe som helst: runden ble committet, den sto åpen og ventet
+    på godkjennere som aldri fikk beskjed, og klienten som prøvde på nytt med
+    samme idempotensnøkkel gikk ut i `replay`-grenen FØR varslingen ble
+    forsøkt. Retryen som skulle vært reparasjonen, hoppet over den.
+
+    Her feiler varslingen på første forsøk (samme utfall som en transient
+    databasefeil: savepointet rulles tilbake, runden committes likevel), og
+    retryen med SAMME nøkkel og input skal opprette det som mangler.
+
+    Kontroll: fjern `_forson_rundevarsling`-kallet i replay-grenen, så blir
+    denne rød — ingen varsler etter retryen.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forson-forf", ["policyforvalter"])
+    b = _medlem("forson-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    # Første forsøk: varslingen gjør ingenting, som om hvert steg hadde feilet
+    # og blitt rullet tilbake til savepointet sitt.
+    ekte = policyadmin.varsel.varsle_runde_venter
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter",
+                        lambda *a, **k: 0)
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fapne\x1f{idem}"
+    rt = _rt()
+    try:
+        r1 = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+    assert r1["runde"] == 1
+    assert _varsler(uid) == {}, "forutsetningen holder ikke: noe ble varslet"
+
+    # Retry med samme nøkkel og input. Svaret er det lagrede — men hullet
+    # lukkes.
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter", ekte)
+    rt = _rt()
+    try:
+        r2 = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r2",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+    assert r2.get("replay") is True, "retryen åpnet en NY runde"
+    assert r2["runde"] == r1["runde"] and r2["diff_hash"] == r1["diff_hash"]
+
+    etter = _varsler(uid)
+    assert {a, b} <= set(etter), (
+        f"replayen forsonet ikke varslingen; mottakere={set(etter)}")
+    assert all(lest is None for lest, _ in etter.values()), \
+        "et forsonet varsel skal være ULEST — det venter fortsatt"
+
+
+@pg
+def test_replay_varsler_ikke_om_en_runde_som_ikke_lenger_venter(monkeypatch):
+    """Forsoningen skal reparere et hull, ikke lage en ny løgn.
+
+    Er runden aktivert, kansellert eller forfalt i mellomtiden, venter den ikke
+    på noen — og et varsel opprettet da ville bedt godkjennere om å attestere
+    noe som ikke kan attesteres. Samme predikat som skrive- og lesestien
+    (`_runde_status`), så de tre aldri blir uenige om hva «forfalt» betyr.
+
+    Kontroll: fjern `_runde_status`-sjekken i `_forson_rundevarsling`, så blir
+    denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forfall-forf", ["policyforvalter"])
+    _medlem("forfall-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    ekte = policyadmin.varsel.varsle_runde_venter
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter",
+                        lambda *a, **k: 0)
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fapne\x1f{idem}"
+    rt = _rt()
+    try:
+        policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+
+    # Runden forfaller før retryen kommer.
+    m = _mig()
+    try:
+        m.execute("UPDATE aktiveringsrunde SET utloper=now() - interval '1 h'"
+                  " WHERE tenant=%s AND utkast_id=%s AND runde=1", (TEN, uid))
+        m.commit()
+    finally:
+        m.close()
+
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter", ekte)
+    rt = _rt()
+    try:
+        policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r2",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+
+    assert _varsler(uid) == {}, (
+        "forsoningen varslet om en runde som ikke lenger venter på noen")
+
+
+@pg
+def test_forsoningen_holder_runden_laast_gjennom_varselopprettelsen(monkeypatch):
+    """Codex P2: «åpen» var bare sant i det øyeblikket spørringen svarte.
+
+    Forsoningen leste rundens status og satte DERETTER inn varslene. I vinduet
+    imellom kunne den siste attesteringen lukke runden og kjøre
+    `pensjoner_runde` — som ikke traff noe, fordi radene ennå ikke fantes. For
+    nettopp de mottakerne forsoningen finnes for (den opprinnelige raden
+    MANGLER) kan `ON CONFLICT` heller ikke fange dem, så de satt igjen med et
+    ulest, e-postkøet varsel om en runde som var ferdig. Veien som skulle
+    reparere en løgn, laget en ny.
+
+    Målt slik det virker: forsoningen kjøres på én forbindelse UTEN å committe,
+    og en annen forbindelse prøver å ta rundens rad `FOR UPDATE NOWAIT` — den
+    låsen attesteringen tar i steg 4. Blir den nektet, kan ingen attestering
+    lukke runden før varslene er på plass og committet.
+
+    `NOWAIT` og ikke en tråd med tidsavbrudd: en test som VENTER på en lås
+    beviser bare at noe tok tid. Denne svarer ja eller nei med det samme.
+
+    Kontroll: ta `FOR UPDATE` ut av `_les_under_laas`, og NOWAIT-kallet går
+    gjennom.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("laas-forf", ["policyforvalter"])
+    _medlem("laas-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    # Åpningen med varslingen slått av: hullet forsoningen skal fylle.
+    monkeypatch.setattr(policyadmin.varsel, "varsle_runde_venter",
+                        lambda *a, **k: 0)
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fapne\x1f{idem}"
+    rt = _rt()
+    try:
+        lagret = policyadmin.opprett_aktiveringsrunde(
+            rt, tenant=TEN, utkast_id=uid, aktor=a, request_id="r",
+            idempotency_key=idem, input_hash=ih, naa=_naa())
+    finally:
+        rt.close()
+    assert _varsler(uid) == {}, "forutsetningen holder ikke: noe ble varslet"
+    monkeypatch.undo()
+
+    from db.pg import sett_kontekst
+    forsoner = _rt()
+    annen = _rt()
+    try:
+        sett_kontekst(forsoner, TEN, a, "r-forson")
+        antall = policyadmin._forson_rundevarsling(
+            forsoner, TEN, a, "r-forson", lagret, _naa())
+        assert antall > 0, "forsoningen opprettet ingen varsler å verne om"
+
+        sett_kontekst(annen, TEN, a, "r-annen")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            annen.execute(
+                "SELECT 1 FROM aktiveringsrunde WHERE tenant=%s"
+                " AND utkast_id=%s AND runde=1 FOR UPDATE NOWAIT",
+                (TEN, uid)).fetchone()
+        annen.rollback()
+        forsoner.commit()
+
+        # …og etter commiten er runden fri igjen: låsen varer så lenge den
+        # trengs, ikke lenger.
+        sett_kontekst(annen, TEN, a, "r-annen2")
+        assert annen.execute(
+            "SELECT 1 FROM aktiveringsrunde WHERE tenant=%s"
+            " AND utkast_id=%s AND runde=1 FOR UPDATE NOWAIT",
+            (TEN, uid)).fetchone() is not None
+        annen.rollback()
+    finally:
+        forsoner.close()
+        annen.close()
+
+    assert set(_varsler(uid)), "forsoningen etterlot ingen varsler"
+
+
+def _varsler(uid, runde=1):
+    """{bruker_id: (lest_ts, epost_status)} for rundens varsler."""
+    m = _mig()
+    try:
+        return {r[0]: (r[1], r[2]) for r in m.execute(
+            "SELECT bruker_id, lest_ts, epost_status FROM varsel"
+            " WHERE tenant=%s AND ressurs_type='policyutkast'"
+            " AND ressurs_id=%s AND hendelse=%s",
+            (TEN, uid, str(runde))).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+
+@pg
+def test_attestering_pensjonerer_aktoerens_eget_varsel():
+    """Codex P2: et varsel skal slutte å vente når handlingen er gjort.
+
+    Varselet er en OPPFORDRING — «attesteringen venter på deg» — ikke en
+    kvittering. I den vanligste flyten attesterer forfatteren rett etter at hun
+    har åpnet runden, og uten dette ber innboksen hennes om at hun skal gjøre
+    det hun nettopp gjorde. En innboks som lyver om hva som venter, blir en
+    innboks folk slutter å se på.
+
+    Men KUN hennes rad: runden venter fortsatt på den uavhengige godkjenneren,
+    og hans varsel skal stå urørt. Det er den grensen som gjør dette til en
+    pensjonering og ikke en tømming.
+
+    Kontroll: fjern kallet i steg 7c, så blir første assert rød; utvid det til
+    hele runden (dropp `bruker_id`), så blir den andre det.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("pens-forf", ["policyforvalter"])
+    b = _medlem("pens-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert _varsler(uid)[a][0] is None, "forfatteren ble varslet — og venter"
+        r1 = _attester(rt, uid, a, r["diff_hash"])
+        assert r1["utfall"] == "venter_godkjennere", r1
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    assert v[a][0] is not None, (
+        "forfatteren har attestert, men innboksen hennes ber henne fortsatt "
+        "om å attestere")
+    assert v[a][1] == "ikke_aktuelt", (
+        "varselet er ryddet, men e-posten står fortsatt i kø — senderen ville "
+        "bedt henne om det samme i den kanalen hun ikke kan lukke selv")
+    assert v[b][0] is None, (
+        "den uavhengige godkjenneren fikk varselet sitt ryddet bort av en "
+        "ANNENS attestering — runden venter fortsatt på ham")
+    assert v[b][1] == "koet"
+
+
+@pg
+def test_gjenstaaende_attesteringer_telles_ned_i_varslene():
+    """Codex P2: «{gjenstaar} attestasjon(er) gjenstår» må fortsatt være sant.
+
+    Parametrene ble skrevet én gang, da runden åpnet. Krever runden to
+    godkjenninger, sto det `2` i hvert varsel for alltid — også etter at
+    forfatteren attesterte. Den uavhengige godkjenneren, som er den eneste
+    som faktisk kan bringe runden videre, leste da at to gjenstår når det bare
+    var hans egen igjen. Tallet skiller «du er den siste» fra «dette kan
+    vente», og e-posten sier det samme: den rendres fra de samme parametrene,
+    ved sending.
+
+    Forfatterens eget varsel er pensjonert av steg 7c og skal IKKE skrives om
+    — et lest varsel er historie.
+
+    Kontroll: fjern `varsel.oppdater_gjenstaar`-kallet i steg 8, så blir denne
+    rød med `gjenstaar == 2` i det varselet som fortsatt venter.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("teller-forf", ["policyforvalter"])
+    b = _medlem("teller-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert r["pakrevd_antall_godkjennere"] == 2
+        assert _attester(rt, uid, a, r["diff_hash"])["utfall"] == (
+            "venter_godkjennere")
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        param = {x[0]: x[1] for x in m.execute(
+            "SELECT bruker_id, parametre FROM varsel WHERE tenant=%s"
+            " AND ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND hendelse='1'", (TEN, uid)).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+    assert param[b]["gjenstaar"] == 1, (
+        "godkjenneren som er den siste som gjenstår, blir fortalt at to "
+        f"attesteringer gjenstår: {param[b]}")
+    assert param[a]["gjenstaar"] == 2, (
+        "forfatterens alt leste varsel ble skrevet om under henne")
+
+
+@pg
+def test_manglende_uavhengig_attestasjon_telles_som_gjenstaaende():
+    """Codex P2: nedtellingen må telle BEGGE betingelsene i terskelen.
+
+    En `INNSNEVRER`-runde krever bare én attestasjon — men den må komme fra en
+    som ikke er forfatter. Attesterer forfatteren først, blir `pakrevd - antall`
+    null mens runden fortsatt står åpen og venter på nøyaktig den ene personen
+    som ennå ikke har svart. Han leste da at null attestasjoner gjenstår, og
+    e-posten hans sa det samme.
+
+    Kontroll: bytt `_gjenstaar_effektivt` i steg 8 tilbake til
+    `max(0, r_pakrevd - antall)`, så blir denne rød med `gjenstaar == 0` både i
+    svaret og i varselet til den uavhengige godkjenneren.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    _aktiv_base(pid, {"roller": [{"id": "r1"}, {"id": "r2"}]})
+    a = _medlem("uavh-forf", ["policyforvalter"])
+    b = _medlem("uavh-godk", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, {"roller": [{"id": "r1"}]})   # fjerner r2 → INNSNEVRER
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        assert r["pakrevd_antall_godkjennere"] == 1
+        r1 = _attester(rt, uid, a, r["diff_hash"])
+        assert r1["utfall"] == "venter_godkjennere"
+        assert r1["mangler_uavhengig"] is True
+        assert r1["gjenstaar"] == 1, (
+            "svaret sier at ingenting gjenstår, men runden venter fortsatt "
+            f"på en uavhengig godkjenner: {r1}")
+    finally:
+        rt.close()
+
+    m = _mig()
+    try:
+        param = {x[0]: x[1] for x in m.execute(
+            "SELECT bruker_id, parametre FROM varsel WHERE tenant=%s"
+            " AND ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND hendelse='1'", (TEN, uid)).fetchall()}
+    finally:
+        m.rollback(); m.close()
+
+    assert param[b]["gjenstaar"] == 1, (
+        "den uavhengige godkjenneren — den eneste som kan bringe runden "
+        f"videre — får beskjed om at ingenting gjenstår: {param[b]}")
+
+
+@pg
+def test_aktivering_pensjonerer_hele_rundens_varsler():
+    """Når runden er brukt, venter den ikke på noen — heller ikke på dem som
+    aldri rakk å svare.
+
+    Uten dette blir hvert gjenstående varsel stående ulest for alltid, og
+    eneste vei ut er at hver enkelt trykker «merk som lest» på et varsel om noe
+    som ikke finnes lenger.
+
+    Kontroll: fjern `pensjoner_runde`-kallet etter `RELEASE SAVEPOINT
+    aktiveringsforsok`, så blir denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("brukt-forf", ["policyforvalter"])
+    b = _medlem("brukt-uavh", ["policyforvalter"])
+    c = _medlem("brukt-taus", ["policyforvalter"])   # svarer aldri
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        _attester(rt, uid, a, r["diff_hash"])
+        assert _attester(rt, uid, b, r["diff_hash"])["utfall"] == "aktivert"
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    assert {a, b, c} <= set(v), f"forventet varsel til alle tre, fikk {set(v)}"
+    for bid, hvem in ((a, "forfatteren"), (b, "godkjenneren"),
+                      (c, "den som aldri svarte")):
+        assert v[bid][0] is not None, (
+            f"{hvem} har fortsatt et ulest varsel om en runde som er brukt")
+        assert v[bid][1] == "ikke_aktuelt", (
+            f"e-posten til {hvem} står fortsatt i kø etter at runden er lukket")
+
+
+@pg
+def test_replay_forsoner_en_pensjonering_som_feilet(monkeypatch):
+    """Codex P2: en feilet pensjonering var ENDELIG.
+
+    Motstykket til forsoningen av VARSLINGEN, og samme mekanikk: oppryddingen
+    er skjermet med vilje — en fullmaktsendring skal ikke velte fordi den
+    feilet — men runden ble aktivert og committet likevel, mens godkjennernes
+    uleste, e-postkøede varsler ble stående og be dem attestere noe som var
+    ferdig. Klientens retry kunne ikke reparere det: replay-grenen svarte med
+    det lagrede utfallet før noen pensjonering ble forsøkt. Og senderen fanger
+    det ikke opp — den er kryss-tenant og vet med vilje ingenting om runder,
+    så e-posten går ut.
+
+    Her feiler pensjoneringen på den attesteringen som aktiverer (samme utfall
+    som en transient databasefeil: savepointet rulles tilbake, runden
+    aktiveres likevel), og retryen med SAMME nøkkel og input skal rydde det
+    som ble stående.
+
+    Kontroll: fjern `_forson_rundepensjonering`-kallet i replay-grenen, så
+    blir denne rød — varslene står igjen uleste og køet.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forsonp-forf", ["policyforvalter"])
+    b = _medlem("forsonp-uavh", ["policyforvalter"])
+    c = _medlem("forsonp-taus", ["policyforvalter"])   # svarer aldri
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        # Pensjoneringen gjør ingenting, som om hvert kall hadde feilet og
+        # blitt rullet tilbake til savepointet sitt. Den slås av FØR
+        # forfatterens attestering: steg 7c rydder hennes eget varsel, og et
+        # hull som allerede var lukket kunne ikke skilt fiksen fra fraværet.
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        _attester(rt, uid, a, r["diff_hash"])
+        assert _attester(rt, uid, b, r["diff_hash"],
+                         idem=idem)["utfall"] == "aktivert"
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    assert all(lest is None for lest, _ in v.values()), (
+        "forutsetningen holder ikke: noe ble pensjonert likevel")
+
+    # Retry med samme nøkkel og input. Svaret er det lagrede — men køen ryddes.
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        r2 = _attester(rt, uid, b, r["diff_hash"], idem=idem)
+    finally:
+        rt.close()
+    assert r2["utfall"] == "aktivert", "retryen gjorde noe annet enn å replaye"
+
+    etter = _varsler(uid)
+    assert {a, b, c} <= set(etter), f"varsler forsvant: {set(etter)}"
+    for bid, hvem in ((a, "forfatteren"), (b, "godkjenneren"),
+                      (c, "den som aldri svarte")):
+        assert etter[bid][0] is not None, (
+            f"{hvem} har fortsatt et ulest varsel om en runde som er brukt")
+        assert etter[bid][1] == "ikke_aktuelt", (
+            f"e-posten til {hvem} står fortsatt i kø etter replayen")
+
+
+@pg
+def test_replay_pensjonerer_ikke_en_runde_som_fortsatt_venter(monkeypatch):
+    """Forsoningen skal rydde et hull, ikke rive et levende varsel bort.
+
+    Venter runden fortsatt på andre godkjennere, er deres varsler SANNE — det
+    er bare aktørens eget som er ferdig (steg 7c). En forsoning som pensjonerte
+    hele runden her ville gjort innboksen taus om noe som faktisk venter, som
+    er den samme feilen som en innboks som lyver — bare motsatt vei.
+
+    Kontroll: bytt `bruker_id=aktor`-grenen i `_forson_rundepensjonering` med
+    en full pensjonering, så blir denne rød.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forsonv-forf", ["policyforvalter"])
+    b = _medlem("forsonv-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        r = _apne(rt, uid, a)
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        # Forfatteren attesterer; runden venter fortsatt på den uavhengige.
+        assert _attester(rt, uid, a, r["diff_hash"],
+                         idem=idem)["utfall"] == "venter_godkjennere"
+    finally:
+        rt.close()
+    assert all(lest is None for lest, _ in _varsler(uid).values())
+
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        _attester(rt, uid, a, r["diff_hash"], idem=idem)
+    finally:
+        rt.close()
+
+    etter = _varsler(uid)
+    assert etter[a][0] is not None, \
+        "aktørens eget varsel ble ikke ryddet av forsoningen"
+    assert etter[b][0] is None, (
+        "forsoningen pensjonerte et varsel om en runde som fortsatt venter"
+        " på nettopp den godkjenneren")
+    assert etter[b][1] == "koet", "e-posten til den som venter ble avlyst"
+
+
+@pg
+def test_forfalt_runde_pensjonerer_varslene_sine():
+    """Samme regel på den stille veien ut: en runde som forfaller.
+
+    Ingen handling utløser den — den skjer fordi tiden gikk — så uten
+    pensjonering her er det nettopp de rundene ingen fulgte opp som blir
+    stående og maser i innboksen for alltid.
+
+    Kontroll: fjern `pensjoner_runde`-kallet i `_lukk_forfalt_runde`.
+    """
+    from datetime import timedelta
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("utl-forf", ["policyforvalter"])
+    b = _medlem("utl-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+    rt = _rt()
+    try:
+        _apne(rt, uid, a)
+        assert all(x[0] is None for x in _varsler(uid).values())
+        # Forfallet oppdages av neste handling på utkastet — her forkastingen,
+        # som er den ENESTE veien eier har til å rydde et dødt forslag.
+        uv = _mig()
+        try:
+            versjon = uv.execute(
+                "SELECT utkastversjon FROM policyutkast WHERE tenant=%s AND"
+                " utkast_id=%s", (TEN, uid)).fetchone()[0]
+        finally:
+            uv.rollback(); uv.close()
+        idem = secrets.token_hex(8)
+        policyadmin.forkast_utkast(
+            rt, tenant=TEN, aktor=a, request_id="r", utkast_id=uid,
+            forventet_utkastversjon=versjon, idempotency_key=idem,
+            input_hash=idem, naa=_naa() + timedelta(days=30))
+    finally:
+        rt.close()
+
+    v = _varsler(uid)
+    for bid, hvem in ((a, "forfatteren"), (b, "godkjenneren")):
+        assert v[bid][0] is not None, (
+            f"runden forfalt, men {hvem} blir bedt om å attestere den fortsatt")
+        assert v[bid][1] == "ikke_aktuelt"

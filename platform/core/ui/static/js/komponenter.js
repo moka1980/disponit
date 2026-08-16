@@ -454,16 +454,29 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // Tidspunktet kommer derfor fra den som HAR et: `oppdatert`. Uten et slikt
   // tidsstempel står påstanden ikke der i det hele tatt — en manglende
   // opplysning er ærligere enn en oppdiktet.
+  //
+  // TALLET KOMMER ETTER SKALLET (Codex P2). `/v1/varsel` er et nettkall, og
+  // skallet tegnes synkront — så `varsler` er `null` ved bygging i praksis
+  // alltid, og uten en vei til å SETTE den senere sto linja på «ikke
+  // tilgjengelig» for godt. Nettopp den brukeren som har valgt kun portal
+  // hadde da ingen proaktiv beskjed om at en attestering venter, og måtte
+  // åpne varselflaten for å finne ut om det fantes noe å finne ut av.
+  // `settVarsler` gis derfor ut sammen med `settAktiv`, og feltet skrives om
+  // på plass. Statuslinja er `role="status"`, så tallet blir også annonsert
+  // når det kommer — og igjen når det endrer seg.
   const telling = plattformTelling();
   const oppdatertTid = oppdatert == null ? null
     : (oppdatert instanceof Date ? oppdatert : new Date(oppdatert));
+  const varselstatus = (n) => (n == null
+    ? t("ui.shell.status_varsler_ukjent")
+    : t("ui.shell.status_varsler").replace("{antall}", String(n)));
+  const varselfelt = el("span", { text: varselstatus(varsler) });
+  const settVarsler = (n) => { varselfelt.textContent = varselstatus(n); };
   const deler = [
     el("span", { text: t("ui.shell.status_moduler")
       .replace("{i_drift}", String(telling.iDrift))
       .replace("{totalt}", String(telling.totalt)) }),
-    el("span", { text: varsler == null
-      ? t("ui.shell.status_varsler_ukjent")
-      : t("ui.shell.status_varsler").replace("{antall}", String(varsler)) }),
+    varselfelt,
   ];
   if (oppdatertTid && !Number.isNaN(oppdatertTid.getTime())) {
     deler.push(el("span", { text: t("ui.shell.status_oppdatert")
@@ -482,7 +495,7 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
   // tilbake på kontrollen brukeren nettopp brukte (Codex P2) — uten å lete
   // etter den på klassenavn i et tre den selv nettopp har satt inn.
-  return { rot, hoved, settAktiv, velger, visKontekst };
+  return { rot, hoved, settAktiv, settVarsler, velger, visKontekst };
 }
 
 // --- Faner (WAI-ARIA tabs) -------------------------------------------------

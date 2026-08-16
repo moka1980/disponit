@@ -39,6 +39,7 @@ from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
 from . import policyregister as _pr
+from . import varsel
 from .autorisasjon import scopes_for_roller
 from .mac_register import kanonisk_konvolutt
 
@@ -375,6 +376,182 @@ def _runde_status(status: str, utloper, naa) -> str:
     return status
 
 
+def _gjenstaar_effektivt(pakrevd: int, antall: int, ikke_forfatter: int) -> int:
+    """Hvor mange attestasjoner som FAKTISK gjenstår før runden kan aktiveres.
+
+    Terskelen (V6) har to betingelser: `antall >= pakrevd` OG minst én
+    attestasjon fra en ikke-forfatter. `pakrevd - antall` teller bare den
+    første, og for en `INNSNEVRER`/`NØYTRAL`-runde er `pakrevd` 1 — så når
+    forfatteren attesterer først, blir differansen 0 mens runden fortsatt
+    venter på den uavhengige godkjenneren (Codex P2). Han fikk da beskjed om
+    at null attestasjoner gjenstår, samtidig som hans egen var den eneste som
+    manglet. E-posten sa det samme: den rendres fra de samme parametrene.
+
+    Kravet om en uavhengig attestasjon er derfor et eget ledd i maksimum: står
+    det igjen, gjenstår det minst én uansett hva differansen sier.
+
+    Flaten regner det samme ut fra `mangler_uavhengig` i svaret
+    (`gjenstaarIgjen`); det som skrives inn i varselet har ikke det feltet å
+    støtte seg på, og må bære tallet ferdig.
+    """
+    return max(0, pakrevd - antall, 0 if ikke_forfatter >= 1 else 1)
+
+
+def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
+                          request_id: str, lagret: dict, naa) -> int:
+    """Kjør varslingen for en alt åpnet runde på nytt. -> antall opprettet.
+
+    Varslingen er best effort med vilje (regel 2 i `varsel`): feiler den, blir
+    runden committet likevel, for en fullmaktsendring skal ikke kunne velte av
+    en varslingsfeil. Men prisen var at feilen var ENDELIG (Codex P2). Runden
+    sto åpen og ventet på godkjennere som aldri fikk vite det, og en klient som
+    prøvde på nytt med samme idempotensnøkkel gikk ut i `replay`-grenen FØR
+    varslingen i det hele tatt ble forsøkt — nettopp den retryen som skulle
+    reparert det, hoppet over reparasjonen.
+
+    Varslingen er idempotent i seg selv (`ON CONFLICT DO NOTHING` på
+    hendelsesnøkkelen), så en gjentakelse er gratis når ingenting mangler og
+    fyller nøyaktig hullet når noe gjør det. Det er derfor dette kan gjøres
+    uten å telle eller huske noe: TILSTANDEN er allerede lagret — det er den
+    åpne runden.
+
+    Bare en runde som fortsatt VENTER varsles på nytt. Er den attestert,
+    aktivert, kansellert eller forfalt, er det ikke lenger sant at den venter
+    på noen, og et varsel opprettet her ville vært en ny løgn i stedet for en
+    reparasjon av en gammel. `_runde_status` avgjør det — samme predikat som
+    skrive- og lesestien ellers, så de tre aldri blir uenige om «forfalt».
+
+    Oppslaget kjøres SKJERMET. Det er et spørsmål til den samme databasen som
+    nettopp kan ha sviktet, og et uskjermet oppslag her ville veltet replayen —
+    altså gjort varslingen til det den lovte å aldri bli: noe som velter
+    handlingen.
+    """
+    utkast_id, runde = lagret.get("utkast_id"), lagret.get("runde")
+    if not utkast_id or not runde:
+        return 0
+
+    def _les_under_laas():
+        # RUNDEN LÅSES FØRST (Codex P2). Uten låsen var «åpen» bare sant i det
+        # øyeblikket spørringen svarte: den siste attesteringen kunne lukke
+        # runden og kjøre `pensjoner_runde` i vinduet før innsettingen under,
+        # og da traff ikke pensjoneringen de radene som ennå ikke fantes.
+        # `ON CONFLICT` kan ikke fange dem heller — for de mottakerne
+        # forsoningen finnes for, er det nettopp den opprinnelige raden som
+        # MANGLER. Resultatet var et ulest, e-postkøet varsel om en runde som
+        # var ferdig, altså en ny løgn skapt av veien som skulle reparere en.
+        #
+        # Låsen holder til kallerens commit, så attesteringen kan ikke lukke
+        # runden før varslene finnes — og finner den dem, pensjonerer den dem.
+        #
+        # Låsrekkefølgen kan ikke gi vranglås: attesteringen tar utkastet
+        # først og runden etterpå, denne veien tar KUN runden og venter aldri
+        # på utkastet. Ingen sirkel.
+        laast = conn.execute(
+            "SELECT status, utloper, pakrevd_antall_godkjennere"
+            "  FROM aktiveringsrunde"
+            " WHERE tenant=%s AND utkast_id=%s AND runde=%s FOR UPDATE",
+            (tenant, utkast_id, runde)).fetchone()
+        if laast is None:
+            return None
+        antall, ikke_forfatter = conn.execute(
+            "SELECT count(*), count(*) FILTER (WHERE NOT er_forfatter)"
+            "  FROM aktiveringsattestasjon"
+            " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
+            (tenant, utkast_id, runde)).fetchone()
+        return (*laast, antall, ikke_forfatter)
+
+    rad = varsel.skjermet(conn, _les_under_laas)
+    if rad is varsel.FEILET or rad is None:
+        return 0
+    if _runde_status(rad[0], rad[1], naa) != "apen":
+        return 0
+    # Tallet leses NÅ, ikke fra det lagrede utfallet: forsoningen kjøres etter
+    # at runden ble åpnet, og noen kan ha rukket å attestere i mellomtiden.
+    # Med det lagrede påkrevd-tallet ville varselet som endelig kom frem sagt
+    # at alle attestasjonene gjenstår — det ville vært det samme feiltrinnet
+    # `oppdater_gjenstaar` finnes for, bare i den veien som skal REPARERE.
+    # Og av samme grunn regnes det gjennom `_gjenstaar_effektivt`: har
+    # forfatteren rukket å attestere i vinduet, er differansen 0 mens den
+    # uavhengige godkjenneren fortsatt mangler.
+    pakrevd = rad[2] if rad[2] is not None else lagret.get(
+        "pakrevd_antall_godkjennere", 0)
+    return varsel.varsle_runde_venter(
+        conn, tenant=tenant, aktor=aktor, request_id=request_id,
+        utkast_id=utkast_id, runde=int(runde),
+        policy_id=lagret.get("policy_id", ""),
+        risikoklasse=lagret.get("risikoklasse", ""),
+        gjenstaar=_gjenstaar_effektivt(pakrevd, rad[3], rad[4]))
+
+
+def _forson_rundepensjonering(conn: psycopg.Connection, tenant: str,
+                              aktor: str, utkast_id: str, naa) -> int:
+    """Rydd varsler som en best effort-pensjonering kan ha etterlatt.
+    -> antall ryddet.
+
+    Motstykket til `_forson_rundevarsling`, og av samme grunn (Codex P2):
+    `pensjoner_runde` er skjermet med vilje — en fullmaktsendring skal ikke
+    kunne velte fordi en opprydding gjorde det — men prisen var at feilen var
+    ENDELIG. Traff en forbigående databasefeil oppryddingen, ble runden
+    aktivert og committet likevel, og godkjennernes uleste, e-postkøede varsler
+    ble stående og be dem attestere noe som var ferdig. Klientens retry kunne
+    ikke reparere det: replay-grenen svarte med det lagrede utfallet FØR noen
+    pensjonering ble forsøkt. Og senderen kan ikke fange det opp — den er
+    kryss-tenant og vet med vilje ingenting om aktiveringsrunder, så e-posten
+    gikk ut.
+
+    TILSTANDEN, IKKE DET LAGREDE SVARET, avgjør hva som ryddes. Utfallene
+    `rebasering_kreves` og `semantikk_endret` bærer ikke engang rundenummeret,
+    så en forsoning som leste `lagret["runde"]` ville hoppet over nettopp de
+    veiene der pensjoneringen er den eneste oppryddingen. Sannheten står i
+    basen: en runde som ikke lenger venter, med varsler som fortsatt gjør det.
+
+      * Runden er IKKE lenger åpen (brukt, kansellert, forfalt) → hele rundens
+        varsler pensjoneres. Forfalt måles med `_runde_status`, samme predikat
+        som skrive- og lesestien, så en runde som har passert `utloper` uten at
+        noen har rukket å lukke raden regnes med.
+      * Runden er fortsatt åpen, men AKTØREN har alt attestert → kun hennes
+        egen rad. Det er steg 7c som kan ha feilet; de andre venter fortsatt,
+        og deres varsler er sanne.
+
+    EXISTS-leddet gjør dette gratis i normaltilfellet: står det ingenting
+    igjen, finner spørringen ingen runder, og ingen UPDATE kjøres.
+
+    Skjermet, som alt annet varslingsarbeid: en forsoning som velter replayen
+    ville vært verre enn hullet den lukker.
+    """
+    def _kandidater():
+        return conn.execute(
+            "SELECT r.runde, r.status, r.utloper,"
+            "       EXISTS (SELECT 1 FROM aktiveringsattestasjon a"
+            "                WHERE a.tenant=r.tenant AND a.utkast_id=r.utkast_id"
+            "                  AND a.runde=r.runde AND a.bruker_id=%s)"
+            "  FROM aktiveringsrunde r"
+            " WHERE r.tenant=%s AND r.utkast_id=%s"
+            "   AND EXISTS (SELECT 1 FROM varsel v"
+            "                WHERE v.tenant=r.tenant"
+            "                  AND v.art='attestering_venter'"
+            "                  AND v.ressurs_type='policyutkast'"
+            "                  AND v.ressurs_id=r.utkast_id"
+            "                  AND v.hendelse=r.runde::text"
+            "                  AND (v.lest_ts IS NULL"
+            f"                       OR v.epost_status IN {varsel.I_KO}))",
+            (aktor, tenant, utkast_id)).fetchall()
+
+    rader = varsel.skjermet(conn, _kandidater)
+    if rader is varsel.FEILET or not rader:
+        return 0
+    ryddet = 0
+    for runde, status, utloper, aktor_attesterte in rader:
+        if _runde_status(status, utloper, naa) != "apen":
+            ryddet += varsel.pensjoner_runde(
+                conn, tenant=tenant, utkast_id=utkast_id, runde=runde)
+        elif aktor_attesterte:
+            ryddet += varsel.pensjoner_runde(
+                conn, tenant=tenant, utkast_id=utkast_id, runde=runde,
+                bruker_id=aktor)
+    return ryddet
+
+
 def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
                         naa) -> bool:
     """Lås utkastets aktive runde, og lukk den (`apen|klar → utlopt`) om den
@@ -415,6 +592,9 @@ def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
     conn.execute(
         "UPDATE aktiveringsrunde SET status='utlopt' WHERE tenant=%s"
         " AND utkast_id=%s AND runde=%s", (tenant, utkast_id, r_nr))
+    # Runden er død; varselet om den skal ikke bli stående og be folk om å
+    # attestere noe som ikke lenger kan attesteres (Codex P2).
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id, runde=r_nr)
     return False
 
 
@@ -971,7 +1151,19 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Replayen gjentar ikke handlingen — runden er åpnet, og svaret er
+        # nøyaktig det lagrede. Men den FORSONER varslingen (Codex P2): den er
+        # best effort, så den kan ha feilet mens runden ble committet, og fram
+        # til nå var det en endelig feil. Retryen som skulle reparert det, gikk
+        # ut her uten å prøve. Varslingen er idempotent, så dette oppretter kun
+        # det som faktisk mangler.
+        #
+        # Derfor `commit()` og ikke `rollback()`: forsoningen har ingen verdi
+        # hvis den kastes på vei ut. Ingenting annet er skrevet i denne
+        # transaksjonen — idempotens-INSERT-en traff `DO NOTHING`, og
+        # advisory-låsen slippes likt av begge.
+        _forson_rundevarsling(conn, tenant, aktor, request_id, lagret, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -1034,6 +1226,23 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
         conn.rollback()
         raise Aktiveringsfeil("runde_allerede_aapen") from None
 
+    # Si fra til dem som kan bringe runden videre. En åpen runde venter på et
+    # MENNESKE, og fram til nå fikk hun aldri vite det — i praksis måtte eier
+    # si fra utenom systemet. Varselet skrives i SAMME transaksjon som runden:
+    # committes runden, finnes varselet; rulles runden tilbake, gjør varselet
+    # det også. En egen transaksjon kunne etterlatt et varsel om en runde som
+    # aldri ble åpnet.
+    #
+    # `varsle_runde_venter` kaster aldri og verner denne transaksjonen med en
+    # savepoint. Det er med vilje og går én vei: en fullmaktsendring skal ikke
+    # kunne feile fordi varslingen gjorde det. Konsekvensen av en varslingsfeil
+    # er at et menneske ikke får en påminnelse — ikke at styringen stopper.
+    varsel.varsle_runde_venter(
+        conn, tenant=tenant, aktor=aktor, request_id=request_id,
+        utkast_id=utkast_id, runde=runde, policy_id=policy_id,
+        risikoklasse=v["risikoklasse"],
+        gjenstaar=v["pakrevd_antall_godkjennere"])
+
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id, "runde": runde,
         "diff": v["diff"], "diff_hash": v["diff_hash"],
@@ -1093,7 +1302,19 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Handlingen gjentas ikke — attestasjonen er skrevet og svaret er det
+        # lagrede. Men PENSJONERINGEN forsones (Codex P2): den er best effort,
+        # så den kan ha feilet mens runden ble aktivert og committet, og fram
+        # til nå var det en endelig feil — replayen svarte her uten å prøve.
+        # Uleste, e-postkøede varsler ble da stående og be om en attestering
+        # som var ferdig, og senderen kan ikke se det: den vet med vilje
+        # ingenting om runder.
+        #
+        # `commit()` og ikke `rollback()`, som i åpningens replay: en forsoning
+        # som kastes på vei ut har ingen verdi. Ingenting annet er skrevet i
+        # denne transaksjonen — idempotens-INSERT-en traff `DO NOTHING`.
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -1275,6 +1496,15 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     else:
         conn.execute("RELEASE SAVEPOINT attestasjonsforsok")
 
+    # --- 7c. Aktørens EGET varsel er ferdig -------------------------------
+    # Hun har attestert; oppfordringen «venter på deg» er ikke sann lenger,
+    # uansett om runden fortsatt venter på ANDRE. I den vanligste flyten
+    # attesterer forfatteren rett etter at runden ble åpnet, og uten dette ville
+    # hennes egen innboks bedt henne om å gjøre det hun nettopp gjorde
+    # (Codex P2). Kun HENNES rad — de andre godkjennerne venter fortsatt.
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                           runde=r_nr, bruker_id=aktor)
+
     # --- 8. Terskel (V6): antall ≥ påkrevd OG minst én ikke-forfatter -------
     rader = conn.execute(
         "SELECT bruker_id, er_forfatter, rolle, authz_version FROM"
@@ -1283,10 +1513,19 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     antall = len(rader)
     ikke_forfatter = sum(1 for _b, ef, _r, _a in rader if not ef)
     if antall < r_pakrevd or ikke_forfatter < 1:
+        # Det samme tallet inn i varslene til dem som fortsatt venter (Codex
+        # P2). Før ble det regnet ut BARE for dette svaret — altså bare for
+        # den som nettopp attesterte og dermed er ferdig — mens varselet til
+        # den som faktisk skal handle sto igjen med tallet fra åpningen og
+        # sa «2 gjenstår» når bare hans egen sto igjen. E-posten sa det samme:
+        # den rendres fra de samme parametrene, ved sending.
+        gjenstaar = _gjenstaar_effektivt(r_pakrevd, antall, ikke_forfatter)
+        varsel.oppdater_gjenstaar(conn, tenant=tenant, utkast_id=utkast_id,
+                                  runde=r_nr, gjenstaar=gjenstaar)
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "venter_godkjennere", "utkast_id": utkast_id,
             "runde": r_nr, "antall": antall,
-            "gjenstaar": max(0, r_pakrevd - antall),
+            "gjenstaar": gjenstaar,
             "mangler_uavhengig": ikke_forfatter < 1})
 
     # --- 8b. REAUTORISER ALLE godkjennere ved aktivering (Codex R2) ---------
@@ -1314,6 +1553,8 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
+        varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                               runde=r_nr)
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "rebasering_kreves", "utkast_id": utkast_id})
     if (v["klassifikatorversjon"] != r_klassver
@@ -1323,6 +1564,8 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                      (tenant, utkast_id, r_nr))
+        varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                               runde=r_nr)
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "semantikk_endret", "utkast_id": utkast_id})
 
@@ -1407,6 +1650,10 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
             _DOKUMENTBRUDD.get(e.diag.constraint_name, "versjon_i_bruk"))
     conn.execute("RELEASE SAVEPOINT aktiveringsforsok")
 
+    # Runden er brukt. Ingen venter lenger på noen — heller ikke de
+    # godkjennerne som aldri rakk å svare (Codex P2).
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id, runde=r_nr)
+
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "aktivert", "utkast_id": utkast_id, "policy_id": policy_id,
         "versjon": ny_versjon, "runde": r_nr, "risikoklasse": r_risiko})
@@ -1425,6 +1672,10 @@ def _kanseller_runde(conn, tenant: str, idempotency_key: str, utkast_id: str,
     conn.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                  " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
                  (tenant, utkast_id, runde))
+    # Godkjennerne ventet på noe som aldri kan komme; varselet skal si det
+    # samme som runden gjør (Codex P2).
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                           runde=runde)
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": utfall, "utkast_id": utkast_id, "policy_id": policy_id,
         "runde": runde})

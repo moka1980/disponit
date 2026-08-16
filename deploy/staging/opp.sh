@@ -53,7 +53,8 @@ disponit-helse.service disponit-helse.timer
 disponit-rydd-pending.service disponit-rydd-pending.timer
 disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
-disponit-artefaktrydding.service disponit-artefaktrydding.timer"
+disponit-artefaktrydding.service disponit-artefaktrydding.timer
+disponit-varselsender.service disponit-varselsender.timer"
 if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
   echo "kjører som før."
@@ -81,6 +82,23 @@ fi
 # rydding stå ute av drift uten at utrullingen sa fra. Gaten hører derfor
 # hjemme her, FØR første mutasjon: feiler den, er systemet beviselig urørt.
 # Lesingen skjer i en subshell, så miljøfilen ikke lekker inn i preflighten.
+# Samme port for varselsenderens DSN (Codex P1 på #68): min første utgave
+# kontrollerte den nede ved `skriv_cred` — MIDT i den muterende fasen, etter
+# at tjenester var stoppet og credentials skrevet. En «preflight» som feiler
+# etter første mutasjon er ingen preflight; den etterlater et halvt utrullet
+# system med beskjed om at ingenting skulle vært rørt. Porten hører hjemme
+# HER, der DOMAINS-porten allerede står, av nøyaktig samme grunn.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_VARSEL_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_VARSEL_URL mangler i $MILJOFIL."
+  echo "Varselsenderen (disponit-varselsender.timer) trenger sin egen"
+  echo "DB-rolle (disponit_varselsender) — uten DSN-en ville den fått"
+  echo "API-ets, som ikke har EXECUTE på senderfunksjonene. Kjør"
+  echo "deploy/staging/oppsett-postgresql.sh (idempotent) først; den"
+  echo "oppretter rollen og skriver DSN-en. Kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+
 if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "AVBRUTT: DISPONIT_DOMAINS_URL mangler i $MILJOFIL."
   echo "Driftstimerne (disponit-domenerevalidering, disponit-artefaktrydding)"
@@ -189,12 +207,37 @@ if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
   echo "på nytt når $MILJOFIL står stille og sier 'staging'."
   exit 1
 fi
+# Hver katalog `skriv_cred` skriver i MÅ opprettes FØR den skrives i —
+# `skriv_cred` er en `printf >`-omdirigering, og uten katalogen feiler den i
+# den MUTERENDE fasen, etter at preflighten er passert. På en vert som har
+# rullet ut før, ligger katalogen igjen fra forrige gang og hullet er usynlig;
+# det er den ferske verten som treffer det. `test_pr009` måler koblingen mot
+# kilden, så den neste credential-katalogen er dekket uten at noen husker det.
 install -d -m 700 /etc/disponit/api /etc/disponit/m37
 skriv_cred() {  # katalog navn verdi
   printf '%s' "$3" > "/etc/disponit/$1/$2"
   chmod 600 "/etc/disponit/$1/$2"
 }
 skriv_cred api DATABASE_URL          "$DATABASE_URL"
+# Senderen leser køen som runtime-rollen. Katalogen må finnes FØR `skriv_cred`
+# skriver i den — uten `install -d` feilet omdirigeringen, og den feilen ville
+# først vist seg som en sender uten DB-URL.
+install -d -m 700 /etc/disponit/varsel
+# SENDERENS EGEN DSN — aldri API-ets. Preflighten beviste at variabelen
+# fantes FØR første mutasjon, men lesingen over er en NY lesing av samme fil
+# (Codex P2, samme funn som DISPONIT_MILJO-porten rett over): byttes fila
+# mellom de to lesingene, godkjente preflighten en verdi som aldri skrives —
+# og en tom verdi her ville materialisert en tom credential som senderen
+# først oppdager ved neste timerkjøring. Sjekken står derfor på SAMME
+# shell-variabel som skrives, uten ny lesing av fila imellom.
+if [ -z "${DISPONIT_VARSEL_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_VARSEL_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env} mellom"
+  echo "preflighten og materialiseringen — fila er byttet eller redigert"
+  echo "mens utrullingen kjørte. Ingen varsel-credential er skrevet."
+  echo "Kjør opp.sh på nytt når ${MILJOFIL:-/etc/disponit/staging.env} står stille."
+  exit 1
+fi
+skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -265,6 +308,8 @@ skriv_cred domener DISPONIT_RESOLVERE   "${DISPONIT_RESOLVERE:-}"
 # først når begge arbeiderne faktisk er stille.
 systemctl stop disponit-helse.timer disponit-m37.service \
     disponit-api.service disponit-api.socket 2>/dev/null || true
+systemctl stop disponit-varselsender.timer disponit-varselsender.service \
+    2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer \
     disponit-domenerevalidering.service \
@@ -319,6 +364,11 @@ systemctl enable --now disponit-helse.timer disponit-rydd-pending.timer \
 # er Type=oneshot bak en .timer — enable --now på TIMEREN, ikke tjenesten.
 systemctl enable --now disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer
+# Varselsenderen: samme form, og den MÅ startes igjen her. Steg 5 stopper
+# timeren i vedlikeholdsvinduet — uten denne linjen var utrullingen det som
+# slo senderen av, permanent, og køen ville bare vokst. Timeren, ikke
+# tjenesten: oneshot-en er timerens å starte.
+systemctl enable --now disponit-varselsender.timer
 
 KLAR=nei
 for _ in $(seq 1 30); do

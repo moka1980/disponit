@@ -1243,7 +1243,7 @@ function tilbakeKnapp(tilbakeTilListe) {
   return b;
 }
 
-export function visPolicyadmin(hoved, ctx) {
+export function visPolicyadmin(hoved, ctx, mal) {
   // `sort` er eiers kolonnevalg, og det bor HER fordi flaten overlever
   // tegningene — tabellen bygges på nytt hver gang lista lastes (Codex P2).
   const st = { rader: [], sort: null };
@@ -1465,7 +1465,32 @@ export function visPolicyadmin(hoved, ctx) {
     }, () => eierSkjermen(min), flyttFokus);
   }
 
-  function tilbakeTilListe() { last({ fokus: true }); }
+  // DYPLENKEN RYDDES NÅR DETALJSIDEN FORLATES (Codex P3). Kom man inn via
+  // `#/policyadmin/<utkast_id>` — veien fra et varsel — sto hashen igjen og
+  // pekte på utkastet mens skjermen viste lista. Da var adressefeltet og
+  // skjermen uenige, og uenigheten var ikke bare kosmetisk: en refresh åpnet
+  // detaljsiden på nytt, og historikken pekte fortsatt på en visning eier
+  // hadde gått ut av.
+  //
+  // `replaceState` og ikke en ny navigasjon: målet er å FJERNE det ledet, ikke
+  // å legge en ny oppføring oppå det. Den utløser heller ingen `hashchange`,
+  // så lista tegnes én gang — av `last()` under, som eier fokusflyttingen —
+  // og ikke også en gang til av ruteren.
+  function ryddDyplenke() {
+    const h = window.location.hash || "";
+    if (!/^#\/?policyadmin\/./.test(h)) return;
+    const hist = window.history;
+    if (!hist || typeof hist.replaceState !== "function") return;
+    hist.replaceState(null, "", "#/policyadmin");
+  }
 
-  last();
+  function tilbakeTilListe() { ryddDyplenke(); last({ fokus: true }); }
+
+  // `mal` er utkastet ruteren ble bedt om å åpne (`#/policyadmin/<utkast_id>`).
+  // Det er veien fra et varsel til HANDLINGEN: uten den kom godkjenneren til
+  // lista og måtte lete fram igjen det utkastet varselet nettopp navnga
+  // (Codex P2). Tilbakeknappen på detaljsiden fører til lista som ellers, så
+  // dyplenken er en inngang og ikke en blindvei.
+  if (mal) aapneDetalj(mal);
+  else last();
 }

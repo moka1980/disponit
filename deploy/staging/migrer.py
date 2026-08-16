@@ -68,6 +68,25 @@ GRANT SELECT ON policyer TO {rolle};
 -- `aktiver_policy` (EXECUTE gitt i migrasjon 013).
 GRANT SELECT ON policy_hode TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattestasjon TO {rolle};
+-- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
+-- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
+-- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
+GRANT SELECT, INSERT, UPDATE ON varsel TO {rolle};
+-- Senderfunksjonene er BEVISST utelatt her (Codex P1): de er kryss-tenant,
+-- og web-API-rollen skal ikke kunne enumerere andre tenanters varsler om
+-- forespørselsveien kompromitteres. De tilhører `disponit_varselsender` alene —
+-- se VARSLER_RETTIGHETER. REVOKE fordi eldre kjøringer av dette skriptet
+-- faktisk ga dem: en grant som bare slutter å bli GITT er ikke trukket
+-- tilbake.
+SET LOCAL ROLE disponit_domene_eier;
+REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM {rolle};
+REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) FROM {rolle};
+REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM {rolle};
+RESET ROLE;
+GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
 -- overgangsfunksjonene (CP2), som `aktiver_policy`. En direkte skriving fra
@@ -172,6 +191,20 @@ GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+"""
+
+# Senderfunksjonene eies av `disponit_domene_eier` (kryss-tenant, BYPASSRLS),
+# og migrator er medlem `WITH INHERIT FALSE` — uten SET LOCAL ROLE blir hver
+# GRANT en STILLE WARNING («no privileges were granted») og rollen står uten
+# noe som helst. Nøyaktig samme felle og samme løsning som M37_RETTIGHETER
+# over; skjemagranten må derimot gis som migrator, som eier skjemaet.
+VARSLER_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
+RESET ROLE;
 """
 
 TOKEN_ADMIN_RETTIGHETER = """
@@ -306,6 +339,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             conn.rollback()
             print(f"hopper over {arbeider}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
+        # Varselsenderens rolle — betinget som de andre, av samme grunn.
+        # KUN de tre funksjonene: SECURITY DEFINER gjør tabellgrants
+        # unødvendige, og fraværet av dem ER poenget med rollen (Codex P1:
+        # et kompromittert web-API skal ikke ha senderens kryss-tenant-vindu).
+        varsler = "disponit_varselsender"
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                        (varsler,)).fetchone():
+            conn.execute(VARSLER_RETTIGHETER.format(rolle=varsler))
+            conn.commit()
+            print(f"rettigheter satt for {varsler}")
+        else:
+            conn.rollback()
+            print(f"hopper over {varsler}: rollen finnes ikke"
                   " (opprettes av oppsett-postgresql.sh)")
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.

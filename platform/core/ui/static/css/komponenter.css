@@ -367,6 +367,20 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .diff-navn { font-family: var(--font-mono); }
 .diff-merke { border: 1px solid var(--line); border-radius: var(--radius-pill);
   padding: 0 var(--sp-2); font-size: 0.85em; color: var(--muted); }
+/* Varselinnboksen. Ulest markeres med BÅDE en kantstripe og fet tekst — farge
+   alene bærer ikke betydning (WCAG 1.4.1), og en stripe er ikke lesbar for
+   den som ikke ser den. */
+.varselliste { list-style: none; margin: 0; padding: 0; }
+.varselrad { border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--sp-3); margin: 0 0 var(--sp-2); }
+.varsel-ulest { border-left: 4px solid var(--info); background: var(--info-bg); }
+.varsel-ulest .varseltekst { font-weight: 600; }
+.varseltekst { margin: 0 0 var(--sp-1); }
+.varselknapper { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
+.varselvalg { border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--sp-3); margin: 0 0 var(--sp-4); }
+.varselvalg-rad { display: flex; gap: var(--sp-2); align-items: center;
+  margin: var(--sp-1) 0; }
 .knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
 .mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);

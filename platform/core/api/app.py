@@ -712,6 +712,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_valider_utkast(request: Request) -> Response:
         return policyadmin_http.valider_utkast_endepunkt(tjeneste, request)
 
+    def pa_varsel_liste(request: Request) -> Response:
+        return policyadmin_http.varsel_liste_endepunkt(tjeneste, request)
+
+    def pa_varsel_lest(request: Request) -> Response:
+        return policyadmin_http.varsel_lest_endepunkt(tjeneste, request)
+
+    def pa_varselvalg(request: Request) -> Response:
+        return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
+
     def pa_forkast_utkast(request: Request) -> Response:
         return policyadmin_http.forkast_utkast_endepunkt(tjeneste, request)
 
@@ -758,6 +767,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/policyutkast", pa_list_utkast, methods=["GET"]),
         Route("/v1/policyutkast/{utkast_id:str}/valider", pa_valider_utkast,
               methods=["POST"]),
+        Route("/v1/varsel", pa_varsel_liste, methods=["GET"]),
+        Route("/v1/varsel/{varsel_id:str}/lest", pa_varsel_lest,
+              methods=["POST"]),
+        Route("/v1/varselvalg", pa_varselvalg, methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/forkast", pa_forkast_utkast,
               methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/aktiveringsrunde",
@@ -1133,6 +1146,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
+    ("GET",  "/v1/varsel"):                  "policy:read",
+    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:write",
+    ("POST", "/v1/varselvalg"):              "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/aktiveringsrunde"): "policy:activate",
     ("POST", "/v1/policyutkast/{utkast_id:str}/attester"): "policy:activate",

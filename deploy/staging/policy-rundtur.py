@@ -178,6 +178,20 @@ def main() -> int:                                        # noqa: C901
             rt.commit()
             return r
 
+        # Runden er åpen og venter på noen. Da SKAL den som kan bringe den
+        # videre ha fått beskjed — det var hele grunnen til at eier måtte si
+        # fra utenom systemet. Varselet skal treffe godkjenneren, ikke
+        # forfatteren som nettopp åpnet runden.
+        from api import varsel as _v
+        # Uten tenantkontekst filtrerer RLS bort medlemskapene, og porten ville
+        # målt sin egen glemsomhet — samme felle som port 4 hadde.
+        sett_kontekst(rt, TEN, "rundtur", "rv")
+        mott = _v.mottakere_for_runde(rt, TEN, uid, runde["runde"])
+        uleste = _v.antall_uleste(rt, tenant=TEN, bruker_id=godkj)
+        port("godkjenneren er varslet om at runden venter",
+             godkj in mott and uleste >= 1,
+             f"mottakere={len(mott)} uleste_hos_godkjenner={uleste}")
+
         a1 = attester(forf)
         port("forfatterens attestasjon aktiverer IKKE alene",
              a1.get("utfall") == "venter_godkjennere", str(a1.get("utfall")))

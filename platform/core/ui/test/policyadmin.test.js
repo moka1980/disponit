@@ -2861,3 +2861,59 @@ test("Forkast: axe-ren, og knappen er merket som farlig", async () => {
     .classList.contains("fare"));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// Codex P2: veien fra et varsel til HANDLINGEN. Varselet navngir ett utkast,
+// og `#/policyadmin/<utkast_id>` er hvordan ruteren bærer det navnet inn i
+// flaten. Uten dette landet godkjenneren på lista over alle utkast og måtte
+// finne igjen det hun nettopp ble varslet om.
+test("Dyplenke til et utkast åpner utkastet, ikke lista", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const hentet = [];
+  SVAR.__get = (sti) => hentet.push(sti);
+  const h = nyHoved();
+
+  window.location.hash = "#/policyadmin/u-1";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(), { policyadmin: visPolicyadmin }, () => {});
+  ruter.naviger();
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  ruter.stopp();
+
+  assert.ok(h.textContent.includes(DETALJ.policy_id),
+    "detaljsiden for det varslede utkastet ble ikke åpnet");
+  // Ikke bare «detaljen kom fram til slutt»: lista skal ikke ha vært innom.
+  assert.ok(!hentet.includes("/v1/policyutkast"),
+    "flaten gikk veien om lista i stedet for rett til utkastet");
+  // Dyplenken er en inngang, ikke en blindvei: veien tilbake til lista står.
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "detaljsiden mangler vei tilbake");
+});
+
+// Codex P3: hashen ble stående på utkastet etter at eier gikk tilbake til
+// lista. Skjermen og adressefeltet sa da hver sin ting — og uenigheten er ikke
+// kosmetisk: en refresh åpnet detaljsiden på nytt, og historikken pekte
+// fortsatt på en visning hun hadde gått ut av.
+test("Veien tilbake fra en dyplenket detalj rydder også lenken", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+
+  window.location.hash = "#/policyadmin/u-1";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(), { policyadmin: visPolicyadmin }, () => {});
+  ruter.naviger();
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  ruter.stopp();
+
+  assert.equal(window.location.hash, "#/policyadmin",
+    "hashen peker fortsatt på utkastet mens skjermen viser lista — en "
+    + "refresh ville åpnet detaljsiden på nytt");
+  // …og lista står der, tegnet ÉN gang: `replaceState` utløser ingen
+  // `hashchange`, så ruteren tegner ikke flaten på nytt oppå denne.
+  assert.ok(h.querySelector("tbody"), "lista kom ikke fram");
+});

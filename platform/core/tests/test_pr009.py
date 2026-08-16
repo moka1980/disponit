@@ -348,6 +348,169 @@ def test_p1_preflight_skjer_for_forste_mutasjon():
             f"mutasjonen {mutasjon!r} står FØR preflight-gaten"
 
 
+def test_p2_varsel_dsn_regates_paa_verdien_som_skrives(tmp_path):
+    """Codex P2: preflighten leser miljøfila i en SUBSHELL og kaster verdien;
+    materialiseringen leser fila PÅ NYTT. Byttes fila mellom de to lesingene,
+    godkjente preflighten en verdi som aldri skrives — samme funn som
+    DISPONIT_MILJO-porten allerede dekker, og løsningen speiler den: sjekken
+    står på samme shell-variabel som skrives.
+
+    Beviset er atferd, ikke løfte: credentialblokken kjøres UTEN
+    DISPONIT_VARSEL_URL i miljøet — som er nøyaktig tilstanden etter et
+    filbytte — og skal avbryte uten å etterlate en varsel-credential.
+    """
+    rot = tmp_path / "etc-disponit"
+    venv = tmp_path / "rot/.venv/bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("#!/bin/sh\necho signatur-stub\n",
+                                 encoding="utf-8")
+    (venv / "python").chmod(0o755)
+    blokk = _credentialblokken().replace("/etc/disponit", str(rot))
+    env = {"ROT": str(tmp_path / "rot"), "KILDE": str(ROT),
+           "PATH": "/usr/bin:/bin"}
+    env.update({n: f"verdi-{n}" for n in (
+        "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
+        "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
+        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL")})
+    # BEVISST TOM, ikke bare fraværende: en fraværende variabel stoppes
+    # uansett av `set -u` ved skrivingen — med en dårligere melding, men
+    # stoppet. Den TOMME er tilfellet bare re-gaten fanger: `set -u` slipper
+    # den gjennom, og uten gaten materialiseres en tom credential som
+    # senderen først oppdager ved neste timerkjøring. Første utgave av denne
+    # testen brukte fraværende og var grønn også uten gaten — den målte
+    # `set -u`, ikke rettelsen.
+    env["DISPONIT_VARSEL_URL"] = ""
+    import subprocess
+    res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
+                         capture_output=True, text=True, env=env)
+    assert res.returncode != 0, \
+        "blokken skrev credentials med en DSN preflighten aldri så"
+    assert "DISPONIT_VARSEL_URL" in res.stdout + res.stderr
+    assert not (rot / "varsel/DISPONIT_DATABASE_URL").exists(), \
+        "en tom/manglende DSN ble materialisert likevel"
+
+
+def test_p2_ingen_ny_fillesing_mellom_regaten_og_skrivingen():
+    """Og plasseringen, målt på kilden som de andre plasseringstestene:
+    mellom re-gaten og `skriv_cred varsel` leses miljøfila ikke igjen — da
+    finnes det ikke noe vindu mellom godkjenningen og verdien."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    regate = opp.index('[ -z "${DISPONIT_VARSEL_URL:-}" ]')
+    skriving = opp.index("skriv_cred varsel DISPONIT_DATABASE_URL")
+    assert regate < skriving, "re-gaten står ETTER skrivingen"
+    mellom = opp[regate:skriving]
+    assert '. "$MILJOFIL"' not in mellom, \
+        "miljøfila leses på nytt mellom re-gaten og skrivingen"
+
+
+def test_p1_varsel_dsn_gates_for_forste_mutasjon():
+    """Codex P1 på #68, samme kontrakt som testen over: porten for
+    DISPONIT_VARSEL_URL står FØR hver muterende kommando. Første utgave
+    kontrollerte den nede ved `skriv_cred` — midt i den muterende fasen,
+    etter at tjenester var stoppet — og en preflight som feiler etter første
+    mutasjon er ingen preflight. Målt på kilden, så en omflytting ikke kan
+    skje stille."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    gate = opp.index('[ -n "${DISPONIT_VARSEL_URL:-}" ]')
+    for mutasjon in ("groupadd", "useradd", "usermod", "skriv_cred api",
+                     "systemctl stop", "install -m 755", "install -m 644",
+                     "install -m 440", "ln -sfn"):
+        pos = opp.index(mutasjon)
+        assert gate < pos, \
+            f"mutasjonen {mutasjon!r} står FØR varsel-DSN-porten"
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 (PR-068): credential-katalogen må finnes FØR den skrives i.
+#
+# `skriv_cred` er `printf > /etc/disponit/<kat>/<navn>` — ingen katalog, ingen
+# fil, og feilen kommer i den MUTERENDE fasen, lenge etter preflighten. På en
+# vert som har rullet ut før, ligger katalogen igjen fra forrige gang og
+# hullet er usynlig. Det er den FERSKE verten som treffer det, og det er
+# derfor den som måles her.
+# ---------------------------------------------------------------------------
+
+CRED_START = "install -d -m 700 /etc/disponit/api"
+CRED_SLUTT = "skriv_cred domener DISPONIT_RESOLVERE"
+
+
+def _credentialblokken() -> str:
+    """Materialiseringen av credentials, ordrett fra opp.sh."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    start = opp.index(CRED_START)
+    slutt = opp.index("\n", opp.index(CRED_SLUTT, start))
+    return opp[start:slutt]
+
+
+def test_p1_hver_skriv_cred_katalog_opprettes_forst():
+    """Kilden: hver `skriv_cred <kat>` har en `install -d` av NØYAKTIG den
+    katalogen FØR seg. Porten er generell med vilje — den neste
+    credential-katalogen noen legger til er dekket uten at noen husker det."""
+    blokk = _credentialblokken()
+    import re
+    opprettet: dict[str, int] = {}
+    for m in re.finditer(r"^install -d -m 700 (.+)$", blokk, re.M):
+        for sti in m.group(1).split():
+            opprettet.setdefault(sti.rsplit("/", 1)[-1], m.start())
+    for m in re.finditer(r"^skriv_cred (\w+) ", blokk, re.M):
+        kat = m.group(1)
+        assert kat in opprettet, \
+            f"skriv_cred skriver i /etc/disponit/{kat}, som aldri opprettes"
+        assert opprettet[kat] < m.start(), \
+            f"/etc/disponit/{kat} opprettes ETTER at det skrives i"
+
+
+def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
+    """Og beviset: kjør blokken mot en TOM falsk rot. En manglende katalog
+    er da en ikke-null exit, ikke en fil ingen la merke til manglet."""
+    rot = tmp_path / "etc-disponit"
+    venv = tmp_path / "rot/.venv/bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("#!/bin/sh\necho signatur-stub\n",
+                                 encoding="utf-8")
+    (venv / "python").chmod(0o755)
+    blokk = _credentialblokken().replace("/etc/disponit", str(rot))
+    env = {"ROT": str(tmp_path / "rot"), "KILDE": str(ROT),
+           "PATH": "/usr/bin:/bin"}
+    env.update({n: f"verdi-{n}" for n in (
+        "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
+        "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
+        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL",
+        "DISPONIT_VARSEL_URL")})
+    import subprocess
+    res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
+                         capture_output=True, text=True, env=env)
+    assert res.returncode == 0, \
+        f"credential-materialiseringen feilet på en fersk rot:\n{res.stderr}"
+    # SENDERENS dsn, aldri API-ets (Codex P1). Denne asserten sa tidligere
+    # `verdi-DATABASE_URL` — den KODIFISERTE feilen reviewet fant: at
+    # senderen fikk web-API-rollens DSN og dermed dens rettigheter.
+    assert (rot / "varsel/DISPONIT_DATABASE_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_VARSEL_URL"
+
+
+def test_hver_installert_timer_blir_ogsa_startet():
+    """En timer i `UNITS` som ingen `enable --now` nevner, er en jobb som
+    aldri kjører.
+
+    Verre enn det, etter at vedlikeholdsvinduet lærte å stoppe den: da er
+    utrullingen selv det som slår jobben AV — og ingenting slår den på igjen.
+    Installasjonen (`UNITS`) og oppstarten sto som to lister ingen sammenlignet;
+    her er sammenligningen.
+    """
+    import re
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    # Linjefortsettelser først: enable-listene er brukket over flere linjer,
+    # og en port som bare leser den første linjen måler halve lista.
+    opp = opp.replace("\\\n", " ")
+    units = re.search(r'^UNITS="(.*?)"', opp, re.M | re.S).group(1).split()
+    startet = " ".join(re.findall(r"systemctl enable --now (.*)", opp))
+    for u in units:
+        if u.endswith(".timer"):
+            assert u in startet, \
+                f"{u} installeres, men blir aldri startet av opp.sh"
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):

@@ -76,6 +76,30 @@ def _ok(res: dict, rid: str, http: int = 200):
     return JSONResponse(res, status_code=http, headers={"x-request-id": rid})
 
 
+def _ok_lagret(conn, res: dict, rid: str, http: int = 200):
+    """`_ok`, men transaksjonen committes FØRST (Codex P1).
+
+    Poolen gir ALDRI en forbindelse tilbake med en åpen transaksjon:
+    `Tilkoblingspool.gi_tilbake` ruller ubetinget tilbake, nettopp for at
+    SET LOCAL-verdier og låser ikke skal følge med inn i neste tenants
+    forespørsel. Et 200-svar er derfor ikke i seg selv et løfte om at noe ble
+    lagret — uten commit blir svaret sendt og skrivingen kastet i samme
+    åndedrag. Det er den verste feilklassen vi kan lage: en flate som viser
+    lagret tilstand som ikke finnes, og en bruker som skrur av e-postvarsler og
+    fortsetter å få dem.
+
+    Policyadmin-veiene rammes ikke: hver av dem ender i `policyadmin._fullfor`,
+    som committer sammen med idempotensraden. Varselmutasjonene har ingen
+    idempotensrad å committe med — de er naturlig idempotente («lest» og «kanal»
+    er tilstander, ikke hendelser — å sette dem to ganger er samme svar) — så
+    commit-en må stå her. Den ligger i svarhjelperen og ikke i tjenesten fordi
+    det er endepunktet som eier forbindelsen; `varsel`-funksjonene kalles også
+    fra aktiveringsflyten, midt inne i en transaksjon de ikke får røre.
+    """
+    conn.commit()
+    return _ok(res, rid, http)
+
+
 def _krev_idem(request, rid: str) -> str:
     """`Idempotency-Key` er PÅKREVD på ALLE skriveruter (spec, Codex P1 R3).
     Reiser `_Avbrudd` med 400 hvis den mangler."""
@@ -112,9 +136,34 @@ def _kropp(request) -> dict:
     return body
 
 
+def _gjenopprett_kontekst(conn, tenant: str, bid: str, rid: str) -> None:
+    """Sett `disponit.*` på nytt etter at auth rullet tilbake (Codex P1).
+
+    BEGGE auth-hjelperne under må `conn.rollback()`: sesjonsoppslaget kjører
+    som en egen liten transaksjon, og den skal ikke bli hengende åpen inn i
+    selve arbeidet. Men `sett_kontekst` er `SET LOCAL` — den dør med nøyaktig
+    den rollbacken. Etter auth er `disponit.tenant` altså UNSET, og med FORCE
+    RLS på (migrasjon 026 for `varsel`/`varselvalg`) betyr unset «ingen rader»:
+    innboksen blir tom, `merk_lest` treffer null rader, og en `INSERT` feiler
+    WITH CHECK. Fail-closed — man får ikke feil tenants data, man får ingen.
+
+    `policyadmin`-tjenestene skjuler dette ved at hver av dem setter konteksten
+    selv med én gang. Varselveien kaller tabellene direkte og hadde ingen slik
+    linje, og det er ikke tilfeldig: en invariant som hver enkelt kaller må
+    huske på, blir før eller siden glemt. Derfor settes den her, i den samme
+    funksjonen som river den ned. Tjenestenes egne kall blir da en ufarlig
+    gjentakelse av nøyaktig de samme tre verdiene.
+    """
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, tenant, bid, rid)
+
+
 def _browserkontekst(tjeneste, request, conn, rid: str, scope: str):
     """auth (browsersesjon, gitt scope) + CSRF. -> (tenant, bid). Reiser
-    `_Avbrudd` med ferdig feilsvar. Speiler `handling_endepunkt` (PR-012)."""
+    `_Avbrudd` med ferdig feilsvar. Speiler `handling_endepunkt` (PR-012).
+
+    Ved retur er `disponit.tenant/aktor/request_id` satt for den nye
+    transaksjonen — se `_gjenopprett_kontekst`."""
     from . import kjerne
     from . import sesjon as sesjonmodul
     from .app import _autentiser
@@ -133,11 +182,14 @@ def _browserkontekst(tjeneste, request, conn, rid: str, scope: str):
         raise _Avbrudd(_feil("csrf_ugyldig", rid))
     tenant = auth.tenant
     bid = auth.token_id.split("sesjon:", 1)[-1]
+    _gjenopprett_kontekst(conn, tenant, bid, rid)
     return tenant, bid
 
 
 def _leseauth(tjeneste, request, conn, rid: str):
-    """auth for en lesende rute (`policy:read`, ingen CSRF). -> (tenant, bid)."""
+    """auth for en lesende rute (`policy:read`, ingen CSRF). -> (tenant, bid).
+
+    Setter konteksten på nytt etter rollbacken, som `_browserkontekst`."""
     from . import kjerne
     from .app import _autentiser
     try:
@@ -146,6 +198,7 @@ def _leseauth(tjeneste, request, conn, rid: str):
         raise _Avbrudd(_feil(f.kode, rid))
     bid = auth.token_id.split("sesjon:", 1)[-1]
     conn.rollback()
+    _gjenopprett_kontekst(conn, auth.tenant, bid, rid)
     return auth.tenant, bid
 
 
@@ -252,6 +305,76 @@ def valider_utkast_endepunkt(tjeneste, request):
                                  "request_id": rid}, status_code=422,
                                 headers={"x-request-id": rid})
         return _ok(res, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def varsel_liste_endepunkt(tjeneste, request):
+    """Mine varsler. `policy:read` — å se at noe venter på deg krever ikke
+    fullmakt til å endre noe.
+
+    LESEAUTH, ikke `_browserkontekst` (Codex P2). Ruten er en GET og endrer
+    ingenting, så CSRF-vernet hører ikke hjemme her: det finnes for å hindre at
+    et annet nettsted får browseren til å UTFØRE noe med brukerens cookie, og en
+    liste over hva som venter på deg er ikke noe å utføre. Kravet var heller
+    ikke gratis — `hentJson` sender bevisst bare `Accept`, som hver eneste andre
+    GET i flaten, så innboksen svarte `403 csrf_ugyldig` på en helt gyldig
+    forespørsel. CSRF beholdes på de to POST-rutene, der den faktisk verner noe.
+    """
+    from .app import _rid
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _leseauth(tjeneste, request, conn, rid)
+        from . import varsel as v
+        kun = request.query_params.get("uleste") == "1"
+        return _ok({"varsler": v.innboks(conn, tenant=tenant, bruker_id=bid,
+                                         kun_uleste=kun),
+                    "uleste": v.antall_uleste(conn, tenant=tenant,
+                                              bruker_id=bid),
+                    "kanal": v.hent_kanal(conn, tenant=tenant, bruker_id=bid)},
+                   rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def varsel_lest_endepunkt(tjeneste, request):
+    """Merk ETT av MINE varsler som lest."""
+    from .app import _rid
+    rid = _rid(request)
+    try:
+        vid = int(request.path_params["varsel_id"])
+    except (TypeError, ValueError):
+        return _feil("request_feilformet", _rid(request))
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        from . import varsel as v
+        return _ok_lagret(
+            conn, {"lest": v.merk_lest(conn, tenant=tenant, bruker_id=bid,
+                                       varsel_id=vid)}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def varselvalg_endepunkt(tjeneste, request):
+    """Valget eier ba om: e-post + portal, eller kun portal."""
+    from .app import _rid
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        from . import varsel as v
+        kropp = _kropp(request) or {}
+        try:
+            satt = v.sett_kanal(conn, tenant=tenant, bruker_id=bid,
+                                kanal=kropp.get("kanal"),
+                                sprak=kropp.get("sprak"))
+        except ValueError:
+            return _feil("request_feilformet", rid)
+        return _ok_lagret(conn, {"kanal": satt}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

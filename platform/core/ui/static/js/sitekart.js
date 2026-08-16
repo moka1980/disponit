@@ -56,6 +56,9 @@ export function byggRuter(sesjon) {
     .filter((r) => !r.scope || harScope(sesjon, r.scope))
     .map((r) => ({ nokkel: r.nokkel }));
   if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "policyadmin" });
+  // Varsler krever ikke fullmakt til å ENDRE noe — å se at noe venter på deg
+  // er en leserettighet. Kan du forvalte policy, kan du også bli ventet på.
+  if (kanForvaltePolicy(sesjon)) ruter.push({ nokkel: "varsler" });
   // Admin-flaten har TO lovlige innganger, og de er ikke den samme autoriteten:
   // `security:read` gir den tenantbundne ops-økten sin EGEN utrullingsrad, mens
   // `platform:admin` er plattformdriften som ser kontrollplanet. Krevde ruten

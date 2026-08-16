@@ -13,6 +13,53 @@ function rigg(flater) {
   return { hoved, aktive, ruter };
 }
 
+// Codex P2: en flate hadde ingen måte å be om et BESTEMT objekt på. Varselet
+// «policyutkast u-1 venter på deg» kunne bare sende eier til policyadmin-lista
+// og la henne lete fram igjen det utkastet varselet nettopp navnga.
+test("lagRuter: hash-en bærer et mål, og flaten får det", () => {
+  window.location.hash = "#/policyadmin/u-1";
+  const sett = [];
+  const { ruter, aktive } = rigg({
+    oversikt: (h, c, mal) => sett.push(["oversikt", mal]),
+    policyadmin: (h, c, mal) => sett.push(["policyadmin", mal]),
+  });
+  ruter.naviger();
+  assert.deepEqual(sett, [["policyadmin", "u-1"]]);
+  // Ruten er fortsatt ruten: menyen markerer `policyadmin`, ikke «u-1».
+  assert.deepEqual(aktive, ["policyadmin"]);
+  assert.equal(ruter.gjeldende(), "policyadmin");
+});
+
+test("lagRuter: uten mål får flaten null, og ukjent rute faller til reserven",
+  () => {
+    const sett = [];
+    const flater = {
+      oversikt: (h, c, mal) => sett.push(["oversikt", mal]),
+      policyadmin: (h, c, mal) => sett.push(["policyadmin", mal]),
+    };
+
+    window.location.hash = "#/policyadmin";
+    rigg(flater).ruter.naviger();
+    assert.deepEqual(sett.pop(), ["policyadmin", null]);
+
+    // En id med tegn som må escapes overlever turen gjennom adressefeltet.
+    window.location.hash = `#/policyadmin/${encodeURIComponent("u/1 2")}`;
+    rigg(flater).ruter.naviger();
+    assert.deepEqual(sett.pop(), ["policyadmin", "u/1 2"]);
+
+    // En ødelagt escape-sekvens skal ikke rive ned navigasjonen: det rå leddet
+    // bæres videre, og flaten svarer det den ville svart på en ukjent id.
+    window.location.hash = "#/policyadmin/%E0%A4A";
+    assert.doesNotThrow(() => rigg(flater).ruter.naviger());
+    assert.equal(sett.pop()[0], "policyadmin");
+
+    // Et mål på en rute økten IKKE har er ingen bakvei inn: reserven tegnes,
+    // og målet følger ikke med til en flate det ikke var ment for.
+    window.location.hash = "#/finnesikke/u-1";
+    rigg(flater).ruter.naviger();
+    assert.deepEqual(sett.pop(), ["oversikt", null]);
+  });
+
 test("lagRuter: ugyldig hash faller til en rute økten FAKTISK har", () => {
   // En økt uten `decisions:read` har ingen `oversikt` i kartet. Med hardkodet
   // reserve slo dette rett i `flater["oversikt"](...)` — et kall på
