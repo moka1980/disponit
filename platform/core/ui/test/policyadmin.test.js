@@ -1651,6 +1651,44 @@ test("Diff: hver oppføring i en nøstet objektliste blir sitt eget kort",
       "beløpsgrensene ble blandet mellom overstyringene");
   });
 
+// Å dele overstyringene i hvert sitt kort hjelper ikke hvis alle kortene har
+// samme overskrift. `godkjennbare[]` har ingen `id` — skjemaet krever
+// `grunnkode` + `handling` — så overskriften ble «…godkjennbare[n] · N felt»,
+// og godkjenneren måtte åpne hvert kort for å finne handlingen og
+// beløpsgrensen (Codex P2).
+//
+// Kontroll: fjern `handling` fra `IDENTITET` og `["belop_maks", "valuta"]`
+// fra `BELOPSFELT`, så blir denne rød.
+test("Diff: en overstyring identifiseres på handling og beløp, ikke på indeks",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": {
+      ...NOSTET_DIFF,
+      diff: { endringer: [
+        ...NOSTET_DIFF.diff.endringer,
+        { sti: "menneskelig_overstyring.godkjennbare[0].grunnkode",
+          type: "lagt_til", til: "belop_over_grense" },
+        { sti: "menneskelig_overstyring.godkjennbare[0].valuta",
+          type: "lagt_til", til: "NOK" },
+      ] },
+    }, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const mo = gruppeMedNavn(rot, t(
+      "ui.policyadmin.diff.gruppe.menneskelig_overstyring",
+      "menneskelig_overstyring"));
+    const opps = [...mo.querySelectorAll(".diff-element > summary")]
+      .map((s) => s.textContent);
+    const refusjon = opps.find((o) => o.includes("refusjon.utfor"));
+    assert.ok(refusjon,
+      "overstyringen identifiseres ikke ved handling, bare ved indeks "
+      + `(${JSON.stringify(opps)})`);
+    assert.ok(refusjon.includes("belop_over_grense"),
+      "grunnkoden — hva overstyringen gjelder — mangler i overskriften");
+    assert.ok(refusjon.includes("5000.00") && refusjon.includes("NOK"),
+      "beløpsgrensen er selve fullmakten, og mangler i overskriften");
+    assert.ok(opps.some((o) => o.includes("ordre.kanseller")),
+      "den andre overstyringen har fortsatt bare indeksen som overskrift");
+  });
+
 test("Diff: en skalarliste på toppnivå blir ÉN rad, ikke én per indeks",
   async () => {
     SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": NOSTET_DIFF,

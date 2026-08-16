@@ -118,10 +118,29 @@ function bladRad(e) {
 }
 
 // Overskriften på et element skal si HVA elementet er, ikke hvor det står i
-// JSON-en. `id` er navnet mennesket kjenner; modul/modus/beløpsgrense er det
-// som avgjør fullmakten, og hører derfor hjemme i overskriften og ikke tolv
-// rader ned.
-const NOKKELFELT = ["modul", "modus", "grenser.belop_maks", "tillatt_for[0]"];
+// JSON-en. Identiteten er navnet mennesket kjenner elementet ved; nøkkelfeltene
+// er de som avgjør fullmakten, og hører derfor hjemme i overskriften og ikke
+// tolv rader ned.
+//
+// `id` er identiteten for `handlinger[]` og `roller[]`, men
+// `menneskelig_overstyring.godkjennbare[]` HAR ingen `id` (skjemaet krever
+// `grunnkode` + `handling`). Overskriften falt derfor tilbake til
+// «…godkjennbare[2]», og med flere overstyringer måtte godkjenneren åpne
+// hvert eneste kort for å finne ut hvilken handling og hvilken beløpsgrense
+// det gjaldt — akkurat den forskjellen kortene ble delt opp for å vise
+// (Codex P2). Rekkefølgen er prioritert: første felt som finnes, vinner.
+const IDENTITET = ["id", "handling"];
+
+// Fullmaktsbærende felt, i den rekkefølgen de vises.
+const NOKKELFELT = ["modul", "modus", "grunnkode", "tillatt_for[0]"];
+
+// Beløpsgrense + valutaen den er i — de hører sammen i én merkelapp, og de to
+// listene plasserer dem forskjellig: `handlinger[].grenser.belop_maks` mot
+// `godkjennbare[].belop_maks`.
+const BELOPSFELT = [
+  ["grenser.belop_maks", "grenser.valuta[0]"],
+  ["belop_maks", "valuta"],
+];
 
 // «handlinger[1]» / «menneskelig_overstyring.godkjennbare[0]» → verdien på den
 // stien i utkastet, eller `undefined` finnes den ikke.
@@ -173,15 +192,19 @@ function elementOverskrift(element, blader, innhold) {
       if (rest) felt.set(rest, v);
     }
   }
-  const navn = felt.get("id") || element;
+  const navn = IDENTITET.map((f) => felt.get(f))
+    .find((v) => v !== undefined && v !== null) ?? element;
   const merker = [];
   for (const f of NOKKELFELT) {
     const v = felt.get(f);
     if (v === undefined || v === null) continue;
-    merker.push(f === "grenser.belop_maks"
-      ? `${t("ui.policyadmin.diff.maks")} ${v}${
-        felt.get("grenser.valuta[0]") ? " " + felt.get("grenser.valuta[0]") : ""}`
-      : String(v));
+    merker.push(String(v));
+  }
+  for (const [belop, valuta] of BELOPSFELT) {
+    const v = felt.get(belop);
+    if (v === undefined || v === null) continue;
+    const val = felt.get(valuta);
+    merker.push(`${t("ui.policyadmin.diff.maks")} ${v}${val ? " " + val : ""}`);
   }
   return { navn: String(navn), merker, felt };
 }
