@@ -550,8 +550,17 @@ test("Faner: ARIA-mønsteret, ikke bare knapper som ser ut som faner", async () 
     t("ui.faner.merkelapp"));
 
   // Bare det aktive panelet er i DOM-en, og fanen peker på det.
-  const panel = rot.querySelector('[role="tabpanel"]');
+  const panel = rot.querySelector('[role="tabpanel"]:not([hidden])');
   assert.equal(panel.textContent, "innhold A");
+  // Ett panel per fane, og NØYAKTIG ett synlig. De inaktive må finnes i
+  // DOM-en, ellers peker fanenes `aria-controls` på ID-er som ikke er der.
+  assert.equal(rot.querySelectorAll('[role="tabpanel"]').length, 3);
+  assert.equal(rot.querySelectorAll('[role="tabpanel"]:not([hidden])').length, 1);
+  for (const f of faner) {
+    const id = f.getAttribute("aria-controls");
+    assert.ok(rot.querySelector(`#${id}`),
+      `fanen «${f.textContent}» peker på panelet ${id}, som ikke finnes`);
+  }
   assert.equal(faner[0].getAttribute("aria-controls"), panel.id);
   assert.equal(panel.getAttribute("aria-labelledby"), faner[0].id);
 
@@ -565,7 +574,7 @@ test("Faner: ARIA-mønsteret, ikke bare knapper som ser ut som faner", async () 
   // knapp som bare ser ut som en fane.
   faner[0].dispatchEvent(new window.KeyboardEvent("keydown",
     { key: "ArrowRight", bubbles: true }));
-  assert.equal(rot.querySelector('[role="tabpanel"]').textContent, "innhold B");
+  assert.equal(rot.querySelector('[role="tabpanel"]:not([hidden])').textContent, "innhold B");
   assert.equal(document.activeElement, faner[1]);
   assert.equal(faner[1].getAttribute("aria-selected"), "true");
 
@@ -589,7 +598,7 @@ test("Faner: forrige/neste følger trinnene og stopper i endene", async () => {
   assert.equal(forrige.disabled, true, "«forrige» er aktiv på første trinn");
   assert.equal(neste.disabled, false);
   neste.dispatchEvent(new window.Event("click"));
-  assert.equal(rot.querySelector('[role="tabpanel"]').textContent, "B");
+  assert.equal(rot.querySelector('[role="tabpanel"]:not([hidden])').textContent, "B");
   assert.equal(neste.disabled, true, "«neste» er aktiv på siste trinn");
   assert.equal(forrige.disabled, false);
 });
