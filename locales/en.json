@@ -575,6 +575,8 @@
   "ui.editor.belop_hint": "A number with up to two decimals, no spaces.",
   "ui.editor.valuta_ingen": "No currency restriction",
   "ui.editor.valuta_flere": "The policy has several currencies",
+  "ui.editor.valuta_vanlige": "Common",
+  "ui.editor.valuta_ovrige": "All currencies",
   "ui.editor.tidsvindu_fra_dag": "From day",
   "ui.editor.tidsvindu_til_dag": "To day",
   "ui.editor.tidsvindu_fra_kl": "From",

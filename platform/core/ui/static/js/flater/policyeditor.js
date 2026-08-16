@@ -218,10 +218,36 @@ function rollerSeksjon(policy, tegnPaaNytt) {
 // desimaler. Et felt som bare kan produsere gyldige verdier trenger ingen av
 // delene.
 
-// `^[A-Z]{3}$` i skjemaet. NOK står først fordi det er standarden her; de
-// øvrige er de vi faktisk møter. En policy med en annen kode beholder den
-// (den legges inn i lista), så et nedtrekk aldri kan slette data.
-const VALUTAER = ["NOK", "EUR", "USD", "SEK", "DKK", "GBP"];
+// Valutamengden er ISO 4217 slik `lesing.py` fører den — ikke `^[A-Z]{3}$`,
+// og ikke en håndskrevet kortliste. Skjemaets mønster er for VIDT («XXX» er
+// tre store bokstaver, men ingen valuta man kan sette en beløpsgrense i), og
+// en kortliste er for SMAL: eier som skal sette CAD, CHF eller JPY hadde
+// ingen vei dit, selv om serveren godtar dem. Begge feilene ender samme sted
+// — en policy editoren sier ja til og `_valider_grenser` leser som
+// `policy_korrupt`. `test_ui_kontrakt.py` pinner denne lista mot `ISO4217`,
+// så en ny kode i registeret sier fra her og ikke hos en kunde.
+const VALUTAER = [
+  "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN",
+  "BAM", "BBD", "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL",
+  "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHF", "CLP", "CNY",
+  "COP", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP",
+  "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD",
+  "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR",
+  "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF",
+  "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL",
+  "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR",
+  "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR",
+  "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR",
+  "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD",
+  "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB",
+  "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX",
+  "USD", "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XOF",
+  "XPF", "YER", "ZAR", "ZMW", "ZWG",
+];
+// 155 koder er en lang rulle å bla i for den som skal velge NOK. De vi
+// faktisk møter står derfor øverst i sin egen gruppe — uten at det gjør noen
+// av de øvrige utilgjengelige.
+const VANLIGE_VALUTAER = ["NOK", "EUR", "USD", "SEK", "DKK", "GBP"];
 const DAGER = ["man", "tir", "ons", "tor", "fre", "lor", "son"];
 // Nøyaktig delene skjemaet godtar — verken mer eller mindre. Er den løsere enn
 // skjemaet, plukker parseren fra hverandre en verdi den ikke kan sette sammen
@@ -257,17 +283,17 @@ function tidsvinduUleselig(g) {
     && !(typeof g.tidsvindu === "string" && TIDSVINDU_RE.test(g.tidsvindu));
 }
 
-const VALUTA_RE = /^[A-Z]{3}$/;
+// Samme regel på det andre feltet, og med den samme autoriteten:
+// `_valider_grenser` krever 1–10 unike koder som finnes i `ISO4217`. En
+// dublett, en bar streng, en tom liste — eller «XXX», som består skjemaets
+// mønster uten å være en valuta — er former nedtrekket ikke kan vise.
+const erValuta = (k) => typeof k === "string" && VALUTAER.includes(k);
 
-// Samme regel på det andre feltet: `_valider_grenser` krever 1–10 unike koder
-// på formen `^[A-Z]{3}$`, og nedtrekket viser nøyaktig det. En dublett, en bar
-// streng eller en tom liste er former ingen kontroll her kan vise.
 function valutaUleselig(g) {
   if (!("valuta" in g) || g.valuta === undefined) return false;
   const v = g.valuta;
   return !Array.isArray(v) || !v.length || v.length > 10
-    || v.some((k) => typeof k !== "string" || !VALUTA_RE.test(k))
-    || new Set(v).size !== v.length;
+    || v.some((k) => !erValuta(k)) || new Set(v).size !== v.length;
 }
 
 // Reparasjonsraden: råverdien SLIK DEN ER LAGRET, og eiers veier ut. Ingen av
@@ -355,8 +381,12 @@ function valutaVelger(g, tegnPaaNytt) {
   // normaliseres ikke i det stille — eier velger. Det som KAN berges av koder
   // vises som ett av valgene, så «behold» er en verdi eier ser før den skrives.
   if (valutaUleselig(g)) {
+    // Berging måles mot den KANONISKE mengden, ikke mot mønsteret: `["XXX",
+    // "XXX"]` ville ellers blitt berget til `["XXX"]`, sluppet gjennom porten
+    // og aktivert — og så lest som `policy_korrupt` av `_valider_grenser`.
+    // Da hadde reparasjonen bare flyttet feilen lenger unna feltet.
     const berget = [...new Set((Array.isArray(g.valuta) ? g.valuta : [g.valuta])
-      .filter((v) => typeof v === "string" && VALUTA_RE.test(v)))].slice(0, 10);
+      .filter(erValuta))].slice(0, 10);
     const valg = [[t("ui.editor.grense_fjern"),
       () => { delete g.valuta; tegnPaaNytt(); }]];
     if (berget.length) {
@@ -370,21 +400,25 @@ function valutaVelger(g, tegnPaaNytt) {
   // i stedet for å kaste dem stille.
   const valutaer = Array.isArray(g.valuta) ? g.valuta : [];
   const valgt = valutaer[0] || VALUTA_INGEN;
-  // Halen er like valgbar som hodet. Ble valgene bygd av `valgt` alene, sto en
-  // beholdt kode lenger bak — `["NOK","CHF"]` — nevnt i hintet uten å finnes i
-  // nedtrekket: eier kunne se CHF, men ikke fjerne NOK og beholde den, slik
-  // fritekstfeltet tillot. Skjemaet og `_valider_grenser` godtar enhver
-  // ISO 4217-kode, så det er lista vår som er smal — ikke policyen som er feil.
-  const ekstra = valutaer.filter((v) => !VALUTAER.includes(v));
-  const valgbare = [...ekstra, ...VALUTAER];
+  // Hele den kanoniske mengden er valgbar. Med bare seks koder i lista hadde
+  // eier som skulle sette CAD, CHF eller JPY ingen vei dit — nedtrekket var
+  // smalere enn fullmakten serveren faktisk godtar, og det gamle
+  // fritekstfeltet kunne mer enn erstatningen. De vanlige står i sin egen
+  // gruppe øverst, så kortlisten er en snarvei og ikke et tak.
   const sel = el("select", { class: "felt-inp" });
-  const rad = (v, tekst) => {
+  const rad = (foreldre, v, tekst) => {
     const o = el("option", { value: v, text: tekst });
     if (v === valgt) o.selected = true;
-    sel.append(o);
+    foreldre.append(o);
   };
-  rad(VALUTA_INGEN, t("ui.editor.valuta_ingen"));
-  for (const v of valgbare) rad(v, v);           // valutakoder oversettes ikke
+  rad(sel, VALUTA_INGEN, t("ui.editor.valuta_ingen"));
+  const vanlige = el("optgroup", { label: t("ui.editor.valuta_vanlige") });
+  const ovrige = el("optgroup", { label: t("ui.editor.valuta_ovrige") });
+  for (const v of VANLIGE_VALUTAER) rad(vanlige, v, v);  // koder oversettes ikke
+  for (const v of VALUTAER) {
+    if (!VANLIGE_VALUTAER.includes(v)) rad(ovrige, v, v);
+  }
+  sel.append(vanlige, ovrige);
   sel.addEventListener("change", () => {
     if (sel.value === VALUTA_INGEN) delete g.valuta;
     // Den valgte koden kan alt stå lenger bak i lista: `["NOK","EUR"]` + valg

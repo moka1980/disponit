@@ -589,6 +589,70 @@ test("Grenser: en beholdt valuta i HALEN kan velges, ikke bare nevnes",
       "eier kunne ikke fjerne NOK og beholde CHF");
   });
 
+test("Grenser: nedtrekket tilbyr HELE den kanoniske valutamengden",
+  async () => {
+    // Codex P2. Nedtrekket bar seks koder pluss de policyen alt hadde. Eier
+    // som skulle sette CAD, CHF eller JPY hadde derfor ingen vei dit, selv om
+    // `_valider_grenser` godtar dem — erstatningen kunne mindre enn
+    // fritekstfeltet den avløste. Autoriteten er `ISO4217` i lesing.py;
+    // `test_ui_kontrakt.py` pinner lista mot den, denne måler kontrollen.
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: medGrenser({ valuta: ["NOK"] }) });
+    await vent(() => h.querySelector(".editor-kort"));
+    const sel = [...h.querySelectorAll(".editor-kort select")]
+      .find((s) => [...s.options].some((o) => o.value === "NOK"));
+    for (const kode of ["CAD", "JPY", "CHF", "ZAR"]) {
+      assert.ok([...sel.options].some((o) => o.value === kode),
+        `${kode} godtas av serveren, men kan ikke velges`);
+    }
+    // «XXX» er tre store bokstaver og består skjemaets mønster — men det er
+    // ingen valuta, og en policy med den leses som `policy_korrupt`.
+    assert.equal([...sel.options].some((o) => o.value === "XXX"), false,
+      "nedtrekket kan produsere en kode _valider_grenser vraker");
+    sel.value = "JPY";
+    sel.dispatchEvent(new window.Event("change"));
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.deepEqual(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].grenser.valuta, ["JPY"],
+      "eiers valg utenfor kortlista ble ikke lagret");
+  });
+
+test("Grenser: reparasjonen berger ingen kode serveren vraker", async () => {
+  // Codex P2. «Behold» målte mot `^[A-Z]{3}$`, så `["XXX","XXX"]` ble berget
+  // til `["XXX"]` — porten åpnet, utkastet kunne aktiveres, og først ved
+  // neste lesning av den AKTIVE policyen kom svaret: `policy_korrupt`. Da
+  // hadde reparasjonen bare flyttet feilen lenger unna feltet som viste den.
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(),
+    { startPolicy: medGrenser({ valuta: ["XXX", "XXX"] }) });
+  await vent(() => h.querySelector(".editor-kort"));
+  assert.ok(h.querySelector(".editor-reparasjon"),
+    "en liste av ikke-valutaer ble ikke vist som en grense som må repareres");
+  assert.equal(reparasjonsvalg(h, t("ui.editor.grense_behold")), undefined,
+    "«behold» tilbød en kode _valider_grenser vraker");
+
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".editor-feil"));
+  assert.equal(POST, undefined, "et utkast med «XXX» slapp gjennom porten");
+
+  // Veien ut finnes, den er bare eiers: fjern grensen.
+  reparasjonsvalg(h, t("ui.editor.grense_fjern"))
+    .dispatchEvent(new window.Event("click"));
+  POST = undefined;
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(
+    "valuta" in JSON.parse(POST.opts.body).innhold.handlinger[0].grenser, false,
+    "eiers «fjern» fjernet ikke grensen");
+});
+
 test("Grenser: beløpshintet TEGNES, og henger på feltet", async () => {
   // Codex P2. Hintet ble sendt som et femte argument til en `tekstfelt` som
   // tok fire — så det forsvant i begge språk, og beløpsfeltet sto igjen uten
