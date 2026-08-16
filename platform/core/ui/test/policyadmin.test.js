@@ -455,3 +455,67 @@ test("Rediger: går rett til editoren uten å laste lista på nytt", async () =>
   assert.deepEqual(get.filter((s) => s === "/v1/policyutkast"), [],
     "Rediger startet en liste-GET som kappløper med editoren om `hoved`");
 });
+
+// Codex P2: feilet detalj-GET erstattet HELE flaten med en naken feiltilstand.
+// Skuffen lot lista ligge under seg; siden gjorde et forbigående 5xx til en
+// blindvei man bare kom ut av ved å laste appen på nytt.
+test("Detalj: feilet lasting beholder vei tilbake OG tilbyr «Prøv igjen»", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };  // detalj → 404
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+
+  assert.ok(_finn(h, t("ui.prov_igjen")), "ingen vei ut av en forbigående feil");
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "feiltilstanden fjernet veien tilbake til lista");
+  assert.ok(h.textContent.includes("u-1"),
+    "feilsiden sier ikke hvilket utkast som ikke lot seg åpne");
+  assert.match(document.activeElement.tagName, /^H[12]$/,
+    "fokus ble stående i en liste som ikke er på skjermen lenger");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+
+  // «Prøv igjen» laster faktisk på nytt — og lykkes når serveren er tilbake.
+  SVAR["/v1/policyutkast/u-1"] = DETALJ;
+  _finn(h, t("ui.prov_igjen")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(DETALJ.policy_id));
+  assert.ok(_finn(h, t("ui.policyadmin.handling.attester")),
+    "«Prøv igjen» hentet ikke detaljen på nytt");
+});
+
+test("Detalj: tilbake fra feiltilstanden fører til lista", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };  // detalj → 404
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  assert.ok(h.querySelector("tbody"), "kom ikke tilbake til utkastlista");
+});
+
+test("Detalj: 403 gir tilgangsvakt med vei tilbake, men INGEN «Prøv igjen»", async () => {
+  // 403 er ikke forbigående. En «Prøv igjen»-knapp der lover et annet svar
+  // neste gang, og det løftet holder den ikke.
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/policyutkast/u-1") {
+      return { ok: false, status: 403, json: async () => ({ feil: "ingen_tilgang" }) };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { "/v1/policyutkast": LISTE, __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.ingen-tilgang"));
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+    "403 stengte eier inne uten vei tilbake");
+  assert.equal(_finn(h, t("ui.prov_igjen")), undefined,
+    "«Prøv igjen» på 403 lover noe den ikke kan holde");
+  globalThis.fetch = brukFetch;
+});

@@ -311,26 +311,49 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
 // endte de to attestasjonene på hvert sitt utkast, og ingen av dem kunne
 // aktivere. Siden har utkastets policy-ID i overskriften og en synlig vei
 // tilbake, slik editoren allerede gjør.
+function tilbakeKnapp(tilbakeTilListe) {
+  const b = el("button", { class: "knapp", type: "button",
+    text: t("ui.policyadmin.tilbake_til_liste") });
+  b.addEventListener("click", tilbakeTilListe);
+  return b;
+}
+
+// Fokus til sidens overskrift: siden ble byttet ut, og uten dette står fokus
+// igjen på raden man klikket i en liste som ikke er der lenger.
+function fokuserOverskrift(hoved) {
+  const h = hoved.querySelector("h1, h2");
+  if (h) { h.setAttribute("tabindex", "-1"); h.focus(); }
+}
+
 function aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe) {
+  const paaNytt = () => aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe);
   hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
-    const tilbake = el("button", { class: "knapp", type: "button",
-      text: t("ui.policyadmin.tilbake_til_liste") });
-    tilbake.addEventListener("click", tilbakeTilListe);
     sett(hoved,
       ...flateHode(
         `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
         t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
-      tilbake,
-      detaljInnhold(detalj, uid, ctx,
-        () => aapneDetalj(uid, ctx, aapneEditor, hoved, tilbakeTilListe),
-        aapneEditor));
-    // Fokus til overskriften: siden ble byttet ut, og uten dette står fokus
-    // igjen på raden man klikket i en liste som ikke er der lenger.
-    const h = hoved.querySelector("h2, h1");
-    if (h) { h.setAttribute("tabindex", "-1"); h.focus(); }
+      tilbakeKnapp(tilbakeTilListe),
+      detaljInnhold(detalj, uid, ctx, paaNytt, aapneEditor));
+    fokuserOverskrift(hoved);
   }).catch((e) => {
     if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-    sett(hoved, e instanceof IngenTilgangFeil ? TilgangsVakt({}) : Feiltilstand({}));
+    // En feilet detalj-GET skal ikke stenge eier inne (Codex P2). Skuffen lot
+    // i det minste lista ligge under seg; siden erstattet HELE flaten med en
+    // naken feiltilstand — uten «Prøv igjen» og uten vei tilbake. Et forbigående
+    // 5xx eller et nettverksglipp ble dermed en blindvei man bare kom ut av ved
+    // å laste appen på nytt. Feiltilstanden er derfor en side som de andre: den
+    // beholder overskrift og tilbakeknapp.
+    //
+    // «Prøv igjen» tilbys bare der den kan hjelpe: 403 er ingen forbigående
+    // feil, og en knapp som lover et annet svar neste gang lyver.
+    sett(hoved,
+      ...flateHode(t("ui.policyadmin.detalj_tittel"),
+        t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
+      tilbakeKnapp(tilbakeTilListe),
+      e instanceof IngenTilgangFeil
+        ? TilgangsVakt({})
+        : Feiltilstand({ paaProvIgjen: paaNytt }));
+    fokuserOverskrift(hoved);
   });
 }
 
