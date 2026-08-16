@@ -79,23 +79,23 @@ function nyHoved() {
   return m;
 }
 
-test("Landing: rendrer ekte plattformflate med retursti per innlogging", async () => {
+test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async () => {
+  window.history.replaceState({}, "", "/");
   const app = nyttAppBrett();
   await visInnlogging();
-  await vent(() => app.querySelectorAll("form").length === 2);
+  await vent(() => app.querySelector(".site-hovednav"));
   assert.ok(app.textContent.includes(t("site.hero.tittel")));
   // Forsiden selger TILBUDET, ikke byggestatusen: kundevendte navn og en
   // tilgjengelighetsbrikke, ikke modulnumre og «0/45 i drift».
   assert.ok(app.textContent.includes(t("site.tilbud_tittel")));
   assert.ok(app.textContent.includes(t("site.tilbud.fullmakt.navn")));
-  assert.ok(app.textContent.includes(t("site.problem_tittel")));
-  assert.ok(app.textContent.includes(t("site.svar_tittel")));
-  assert.ok(app.textContent.includes(t("site.arbeidsflyt_tittel")));
-  // Hele produktomfanget skal være synlig: elleve områder, 45 modulnavn.
-  assert.ok(app.textContent.includes(t("site.katalog_tittel")));
-  assert.ok(app.textContent.includes(t("site.omrade.okonomi")));
-  assert.ok(app.textContent.includes(t("site.katalog.m42.navn")),
-    "modulkatalogen mangler på forsiden");
+  assert.equal(app.querySelectorAll(".site-hovednav a").length, 5);
+  assert.equal(app.querySelectorAll('.site-hovednav a[aria-current="page"]').length, 1);
+  assert.ok(app.querySelector(".site-sok input[type=search]"));
+  assert.ok(!app.textContent.includes(t("site.katalog.m42.navn")),
+    "modulkatalogen ligger fortsatt som en lang liste på forsiden");
+  assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 0,
+    "innloggingskortene ligger fortsatt på forsiden");
   // …men DRIFTSVOKABULARET skal ikke nå en anonym besøkende. Skillet er ikke
   // «modul» mot «ikke modul»: navnene ER tilbudet. Det som ikke hører hjemme
   // er de interne merkelappene — modulnumre og byggeregnskap.
@@ -103,12 +103,32 @@ test("Landing: rendrer ekte plattformflate med retursti per innlogging", async (
     "internt modulnummer på den publike forsiden");
   assert.ok(!/\b0\/45\b/.test(app.textContent),
     "byggeregnskap på den publike forsiden");
-  const retur = [...app.querySelectorAll('input[name="retursti"]')]
-    .map((n) => n.getAttribute("value"));
-  assert.deepEqual(retur, ["/?visning=kundeadmin", "/?visning=admin"]);
   assert.equal(document.documentElement.getAttribute("data-visning"), "landing");
   const b = await alvorligeBrudd(app);
   assert.equal(b.length, 0, beskrivBrudd(b));
+});
+
+test("Landing: tjenester har hele katalogen og søk filtrerer den", async () => {
+  window.history.replaceState({}, "", "/?side=tjenester&q=svindel");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  assert.ok(app.textContent.includes(t("site.katalog.m42.navn")));
+  assert.ok(!app.textContent.includes(t("site.katalog.m1.navn")));
+  assert.equal(app.querySelector('.site-hovednav a[aria-current="page"]').textContent,
+    t("site.nav.tjenester"));
+  const b = await alvorligeBrudd(app);
+  assert.equal(b.length, 0, beskrivBrudd(b));
+  window.history.replaceState({}, "", "/");
+});
+
+test("Landing: innlogging er en egen side med riktig retursti", async () => {
+  window.history.replaceState({}, "", "/?side=innlogging");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  const retur = [...app.querySelectorAll('input[name="retursti"]')]
+    .map((n) => n.getAttribute("value"));
+  assert.deepEqual(retur, ["/?visning=kundeadmin", "/?visning=admin"]);
+  window.history.replaceState({}, "", "/");
 });
 
 test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async () => {
@@ -120,14 +140,14 @@ test("Landing: tilgjengelighetsbrikkene har CSS som faktisk skiller dem", async 
   // forskjellig klasse.
   const app = nyttAppBrett();
   await visInnlogging();
-  await vent(() => app.querySelectorAll(".site-mini-card .site-badge").length > 0);
+  await vent(() => app.querySelectorAll(".site-feature .site-badge").length > 0);
   const css = ["base.css", "komponenter.css"]
     .map((f) => readFileSync(join(HER, "..", "static", "css", f), "utf-8"))
     .join("\n");
   const definert = new Set([...css.matchAll(/\.([A-Za-z_][-\w]*)/g)]
     .map((m) => m[1]));
 
-  const brikker = [...app.querySelectorAll(".site-mini-card .site-badge")];
+  const brikker = [...app.querySelectorAll(".site-feature .site-badge")];
   assert.equal(brikker.length, TILBUD.length,
     "hvert tilbudspunkt skal ha én tilgjengelighetsbrikke");
   for (const brikke of brikker) {
@@ -216,6 +236,7 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
   // andre byttet går rett gjennom med provider. Vinner det gamle svaret, bytter
   // forsiden ut innloggingsknappene med «ikke tilgjengelig» — en besøkende
   // mister veien inn fordi et kall de hadde forlatt kom i mål.
+  window.history.replaceState({}, "", "/?side=innlogging");
   const app = nyttAppBrett();
   const ekteFetch = globalThis.fetch;
   let slippOppsett = () => {};
@@ -247,24 +268,25 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
     // Andre klikk — samme knapp, for siden er ikke rendret på nytt ennå. Dette
     // byttet eier flaten fra nå, og det er det som kommer i mål først.
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await vent(() => app.textContent.includes(EN["site.hero.tittel"]));
-    assert.equal(app.querySelectorAll("form").length, 2,
+    await vent(() => app.textContent.includes(EN["site.login.tittel"]));
+    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 2,
       "det gjeldende byttet rendret ikke innloggingsveiene");
 
     // …og så kommer det forlatte byttet i mål, med sitt provider-løse svar.
     slippOppsett();
     await vent(() => false, 20);         // la det forlatte kallet få kjøre ut
 
-    assert.equal(app.querySelectorAll("form").length, 2,
+    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 2,
       "et forbigått språkbytte skrev over flaten med sitt eget oppsett-svar");
     assert.ok(!app.textContent.includes(NB["ui.logg_inn_utilgjengelig"]),
       "forsiden endte i feiltilstand fra et kall brukeren hadde forlatt");
-    assert.ok(app.textContent.includes(EN["site.hero.tittel"]),
+    assert.ok(app.textContent.includes(EN["site.login.tittel"]),
       "flaten det gjeldende byttet bygde står ikke lenger");
   } finally {
     slippOppsett();
     globalThis.fetch = ekteFetch;
     settI18nForTest(NB, "nb");
+    window.history.replaceState({}, "", "/");
   }
 });
 

@@ -21,6 +21,7 @@
   --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem;
   --sp-6:1.5rem; --sp-8:2rem;
   --radius:8px; --radius-sm:4px;
+  --radius-lg:24px; --radius-pill:999px;
   /* Fokus (WCAG 2.4.7) — brukes på ALT interaktivt */
   --focus:3px solid var(--info); --focus-offset:2px;
   /* UI-lag (M-1): skygge, lagdeling og breakpoint hører hjemme HER, aldri
@@ -33,6 +34,7 @@
   --z-innhold:0; --z-topplinje:10; --z-overlegg:30; --z-skuff:40;
   --bp-smal:720px;
   --innhold-maks:1100px;
+  --site-maks:1240px;
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

@@ -18,16 +18,60 @@ import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 // dekker), ikke en leveranseplan, og 45 «Kommer»-merker ville gjort seksjonen
 // til nettopp det byggeregnskapet forsiden ble ryddet for. Hva som kjører i
 // dag står ett sted: brikkene i «Hva du får».
+function lesSide() {
+  const side = new URLSearchParams(window.location.search).get("side") || "hjem";
+  return ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"].includes(side)
+    ? side : "hjem";
+}
+
+function offentligTopp(side) {
+  const lenker = ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"];
+  const nav = el("nav", { class: "site-hovednav", "aria-label": t("site.nav.hoved") },
+    el("ul", {}, lenker.map((nokkel) => {
+      const attrs = {
+        href: nokkel === "hjem" ? "/" : `/?side=${nokkel}`,
+        text: t(`site.nav.${nokkel}`),
+      };
+      if (nokkel === side) attrs["aria-current"] = "page";
+      return el("li", {}, el("a", attrs));
+    })));
+  const sok = el("form", { class: "site-sok", method: "get", action: "/" },
+    el("input", { type: "hidden", name: "side", value: "tjenester" }),
+    el("label", { class: "sr-only", for: "site-sokefelt", text: t("site.sok.label") }),
+    el("input", { id: "site-sokefelt", name: "q", type: "search",
+      placeholder: t("site.sok.placeholder"), value: side === "tjenester"
+        ? new URLSearchParams(window.location.search).get("q") || "" : "" }),
+    el("button", { type: "submit", text: t("site.sok.knapp") }));
+  return el("header", { class: "site-topp" },
+    el("div", { class: "site-topp-rad" },
+      el("a", { class: "site-logo", href: "/", "aria-label": t("site.nav.logo") },
+        el("span", { "aria-hidden": "true", text: "D" }),
+        el("strong", { text: t("app.navn", "Disponit") })),
+      nav,
+      sprakvelger()),
+    el("div", { class: "site-sok-rad" }, sok));
+}
+
 function katalogseksjon() {
+  const sok = (new URLSearchParams(window.location.search).get("q") || "")
+    .trim().toLocaleLowerCase(sprak());
+  const omrader = OMRADER.map((omrade) => ({
+    ...omrade,
+    moduler: omrade.moduler.filter((n) =>
+      !sok || t(`site.katalog.m${n}.navn`).toLocaleLowerCase(sprak()).includes(sok)),
+  })).filter((omrade) => omrade.moduler.length);
+  const antall = omrader.reduce((sum, omrade) => sum + omrade.moduler.length, 0);
   return el("section", { class: "kort site-section" },
     el("div", { class: "site-section-head" },
       el("div", {},
         el("p", { class: "site-eyebrow", text: t("site.katalog") }),
         el("h2", { text: t("site.katalog_tittel") })),
-      el("span", { class: "site-inline-note",
-        text: t("site.katalog_note").replace("{antall}", KATALOG_ANTALL) })),
+      el("span", { class: "site-inline-note", text: sok
+        ? t("site.sok.resultat").replace("{antall}", antall)
+        : t("site.katalog_note").replace("{antall}", KATALOG_ANTALL) })),
+    antall === 0 ? el("p", { class: "site-tom", text: t("site.sok.tom") }) :
     el("div", { class: "site-grid site-grid-3" },
-      OMRADER.map((omrade) =>
+      omrader.map((omrade) =>
         el("article", { class: "site-mini-card" },
           el("strong", { text: t(`site.omrade.${omrade.id}`) }),
           el("ul", { class: "site-list site-list-tett" },
@@ -147,6 +191,123 @@ function loginKort(provider, visning, tittel, tekst, knapp) {
   return kort;
 }
 
+function tilbudseksjon() {
+  return el("section", { class: "site-section site-tilbud" },
+    el("div", { class: "site-section-head" }, el("div", {},
+      el("p", { class: "site-eyebrow", text: t("site.tilbud") }),
+      el("h2", { text: t("site.tilbud_tittel") }))),
+    el("div", { class: "site-grid site-grid-2" }, TILBUD.map((post, indeks) =>
+      el("article", { class: "site-feature" },
+        el("span", { class: "site-feature-nr", "aria-hidden": "true",
+          text: String(indeks + 1).padStart(2, "0") }),
+        el("div", {},
+          el("div", { class: "site-module-head" },
+            el("h3", { text: t(post.navn_nokkel) }),
+            siteTilbudMerke(erTilgjengelig(post.id))),
+          el("p", { text: t(post.tekst_nokkel) }))))));
+}
+
+function hjemSide() {
+  return [
+    el("section", { class: "site-hero site-hero-ny" },
+      el("div", { class: "site-hero-copy" },
+        el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
+        el("h1", { text: t("site.hero.tittel") }),
+        el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) }),
+        el("div", { class: "site-cta" },
+          el("a", { class: "knapp primar", href: "/?side=tjenester",
+            text: t("site.cta.tjenester") }),
+          el("a", { class: "knapp", href: "/?side=produkt",
+            text: t("site.cta.produkt") }))),
+      el("aside", { class: "site-signal", "aria-label": t("site.hero.punkter_tittel") },
+        el("span", { class: "site-orbit", "aria-hidden": "true" }),
+        el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
+        el("h2", { text: t("site.hero.punkter_tittel") }),
+        el("ul", { class: "site-checklist" },
+          el("li", { text: t("site.hero.punkt.fullmakt") }),
+          el("li", { text: t("site.hero.punkt.stopp") }),
+          el("li", { text: t("site.hero.punkt.spor") })))),
+    tilbudseksjon(),
+    el("section", { class: "site-bunn-cta" },
+      el("div", {}, el("p", { class: "site-eyebrow", text: t("site.cta.kicker") }),
+        el("h2", { text: t("site.cta.tittel") })),
+      el("a", { class: "knapp primar", href: "/?side=innlogging",
+        text: t("site.nav.innlogging") })),
+  ];
+}
+
+function produktSide() {
+  return [
+    sideIntroduksjon("site.problem", "site.problem_tittel", "site.problem_tekst"),
+    el("section", { class: "site-grid site-grid-3" },
+      ["manuelt", "spredt", "etterpa"].map((n) => el("article", { class: "site-feature" },
+        el("h2", { text: t(`site.problem.${n}_tittel`) }),
+        el("p", { text: t(`site.problem.${n}_tekst`) })))),
+    el("section", { class: "site-section" },
+      el("p", { class: "site-eyebrow", text: t("site.arbeidsflyt") }),
+      el("h2", { text: t("site.arbeidsflyt_tittel") }),
+      el("ol", { class: "site-steg" },
+        ["styring", "policy", "evidens"].map((n, i) => el("li", {},
+          el("span", { "aria-hidden": "true", text: String(i + 1) }),
+          el("div", {}, el("h3", { text: t(`site.arbeidsflyt.${n}_tittel`) }),
+            el("p", { text: t(`site.arbeidsflyt.${n}_tekst`) })))))),
+    svarseksjon(),
+  ];
+}
+
+function sideIntroduksjon(kicker, tittel, tekst) {
+  return el("header", { class: "site-sideintro" },
+    el("p", { class: "site-eyebrow", text: t(kicker) }),
+    el("h1", { text: t(tittel) }),
+    el("p", { class: "site-hero-text", text: t(tekst) }));
+}
+
+function svarseksjon() {
+  return el("section", { class: "site-section site-sporsmal" },
+    el("p", { class: "site-eyebrow", text: t("site.svar") }),
+    el("h2", { text: t("site.svar_tittel") }),
+    el("dl", {}, SPORSMAL.map(([sp, sv]) => el("div", {},
+      el("dt", { text: t(sp) }), el("dd", { text: t(sv) })))));
+}
+
+function sikkerhetSide() {
+  return [
+    sideIntroduksjon("site.security.kicker", "site.security.tittel", "site.security.tekst"),
+    el("section", { class: "site-grid site-grid-3" },
+      ["presisjon", "plattform", "kostnad"].map((n) =>
+        el("article", { class: "site-feature" },
+          el("p", { class: "site-eyebrow", text: t(`site.argument.${n}`) }),
+          el("h2", { text: t(`site.argument.${n}_tittel`) }),
+          el("p", { text: t(`site.argument.${n}_tekst`) })))),
+    svarseksjon(),
+  ];
+}
+
+function tjenesterSide() {
+  return [
+    sideIntroduksjon("site.katalog", "site.tjenester.tittel", "site.tjenester.tekst"),
+    katalogseksjon(),
+  ];
+}
+
+function innloggingSide(provider) {
+  return [
+    sideIntroduksjon("site.login.kicker", "site.login.tittel", "site.login.tekst"),
+    el("section", { class: "site-grid site-grid-2" },
+      loginKort(provider, "kundeadmin", t("site.login.kunde_tittel"),
+        t("site.login.kunde_tekst"), t("site.login.kunde_knapp")),
+      loginKort(provider, "admin", t("site.login.admin_tittel"),
+        t("site.login.admin_tekst"), t("site.login.admin_knapp"))),
+  ];
+}
+
+function offentligBunn() {
+  return el("footer", { class: "site-footer" },
+    el("strong", { text: t("app.navn", "Disponit") }),
+    el("p", { text: t("site.footer.tekst") }),
+    el("a", { href: "/?side=sikkerhet", text: t("site.nav.sikkerhet") }));
+}
+
 // `gjelderFortsatt` er kallerens rett til å tegne, målt ETTER ventepunktet
 // under: den som kalte kan ha blitt forbigått mens oppsettet ble hentet, og et
 // forlatt kall skal da trekke seg stille i stedet for å skrive over flaten som
@@ -184,101 +345,15 @@ export async function visInnlogging(opsjoner = {}) {
     lokaliserSkiplenke();
   }
 
+  const side = lesSide();
+  const sideinnhold = side === "tjenester" ? tjenesterSide()
+    : side === "produkt" ? produktSide()
+      : side === "sikkerhet" ? sikkerhetSide()
+        : side === "innlogging" ? innloggingSide(provider) : hjemSide();
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved site-shell",
-    tabindex: "-1" },
-    sprakvelger(),
-    el("section", { class: "site-hero" },
-      el("div", { class: "site-hero-copy" },
-        el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
-        el("h1", { text: t("site.hero.tittel") }),
-        el("p", { class: "site-hero-text", text: t(heroTekstNokkel()) })),
-      el("aside", { class: "kort site-hero-card" },
-        el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
-        el("h2", { text: t("site.hero.punkter_tittel") }),
-        el("ul", { class: "site-list" },
-          el("li", { text: t("site.hero.punkt.fullmakt") }),
-          el("li", { text: t("site.hero.punkt.stopp") }),
-          el("li", { text: t("site.hero.punkt.spor") })))),
-    // TILBUDET først: hva kunden får, med en diskret tilgjengelighetsbrikke
-    // per punkt. Ikke et byggeregnskap — «Kommer» sier det samme som
-    // «planlagt» uten å gjøre forsiden til en statusrapport.
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.tilbud") }),
-          el("h2", { text: t("site.tilbud_tittel") })),
-        el("span", { class: "site-inline-note", text: t("site.tilbud_note") })),
-      el("div", { class: "site-grid site-grid-2" },
-        TILBUD.map((post) =>
-          el("article", { class: "site-mini-card" },
-            el("div", { class: "site-module-head" },
-              el("strong", { text: t(post.navn_nokkel) }),
-              siteTilbudMerke(erTilgjengelig(post.id))),
-            el("p", { text: t(post.tekst_nokkel) }))))),
-    katalogseksjon(),
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.problem") }),
-          el("h2", { text: t("site.problem_tittel") }))),
-      el("p", { class: "site-hero-text", text: t("site.problem_tekst") }),
-      el("div", { class: "site-grid site-grid-3" },
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.problem.manuelt_tittel") }),
-          el("p", { text: t("site.problem.manuelt_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.problem.spredt_tittel") }),
-          el("p", { text: t("site.problem.spredt_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.problem.etterpa_tittel") }),
-          el("p", { text: t("site.problem.etterpa_tekst") })))),
-    el("section", { class: "site-grid site-grid-3" },
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("site.argument.presisjon") }),
-        el("h2", { text: t("site.argument.presisjon_tittel") }),
-        el("p", { text: t("site.argument.presisjon_tekst") })),
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("site.argument.plattform") }),
-        el("h2", { text: t("site.argument.plattform_tittel") }),
-        el("p", { text: t("site.argument.plattform_tekst") })),
-      el("article", { class: "kort" },
-        el("p", { class: "site-eyebrow", text: t("site.argument.kostnad") }),
-        el("h2", { text: t("site.argument.kostnad_tittel") }),
-        el("p", { text: t("site.argument.kostnad_tekst") }))),
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.arbeidsflyt") }),
-          el("h2", { text: t("site.arbeidsflyt_tittel") }))),
-      el("div", { class: "site-grid site-grid-3" },
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.arbeidsflyt.styring_tittel") }),
-          el("p", { text: t("site.arbeidsflyt.styring_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.arbeidsflyt.policy_tittel") }),
-          el("p", { text: t("site.arbeidsflyt.policy_tekst") })),
-        el("article", { class: "site-mini-card" },
-          el("strong", { text: t("site.arbeidsflyt.evidens_tittel") }),
-          el("p", { text: t("site.arbeidsflyt.evidens_tekst") })))),
-    // Rett svar på det en kjøper faktisk lurer på. Her hører honnørordene
-    // hjemme — ikke i et byggeregnskap øverst på siden.
-    el("section", { class: "kort site-section" },
-      el("div", { class: "site-section-head" },
-        el("div", {},
-          el("p", { class: "site-eyebrow", text: t("site.svar") }),
-          el("h2", { text: t("site.svar_tittel") }))),
-      el("dl", { class: "site-list" },
-        SPORSMAL.map(([sp, sv]) =>
-          el("div", {},
-            el("dt", {}, el("strong", { text: t(sp) })),
-            el("dd", { text: t(sv) }))))),
-    el("section", { class: "site-grid site-grid-2" },
-      loginKort(provider, "kundeadmin", t("site.login.kunde_tittel"),
-        t("site.login.kunde_tekst"), t("site.login.kunde_knapp")),
-      loginKort(provider, "admin", t("site.login.admin_tittel"),
-        t("site.login.admin_tekst"), t("site.login.admin_knapp"))));
+    tabindex: "-1" }, ...sideinnhold);
 
-  sett(app, hoved);
+  sett(app, offentligTopp(side), hoved, offentligBunn());
   app.setAttribute("aria-busy", "false");
   document.documentElement.setAttribute("data-visning", "landing");
 

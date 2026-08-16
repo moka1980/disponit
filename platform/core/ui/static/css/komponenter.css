@@ -416,6 +416,225 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   max-width: 22ch;
 }
 
+/* Offentlig nettsted 2026: separate toppnivåer, ikke én lang produktside. */
+.site-topp {
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-topplinje);
+}
+.site-topp-rad, .site-sok-rad, .site-footer {
+  margin: 0 auto;
+  max-width: var(--site-maks);
+  padding-left: var(--sp-6);
+  padding-right: var(--sp-6);
+}
+.site-topp-rad {
+  align-items: center;
+  display: flex;
+  gap: var(--sp-6);
+  min-height: 4.75rem;
+}
+.site-logo {
+  align-items: center;
+  color: var(--ink);
+  display: inline-flex;
+  font-size: 1.15rem;
+  gap: var(--sp-2);
+  text-decoration: none;
+}
+.site-logo > span {
+  align-items: center;
+  background: var(--ink);
+  border-radius: var(--radius-sm);
+  color: var(--card);
+  display: inline-flex;
+  height: 2rem;
+  justify-content: center;
+  width: 2rem;
+}
+.site-hovednav { margin-left: auto; }
+.site-hovednav ul {
+  align-items: center;
+  display: flex;
+  gap: var(--sp-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.site-hovednav a {
+  border-radius: var(--radius-pill);
+  color: var(--ink);
+  display: inline-flex;
+  min-height: 2.75rem;
+  padding: var(--sp-2) var(--sp-3);
+  text-decoration: none;
+}
+.site-hovednav a:hover { background: var(--paper); }
+.site-hovednav a[aria-current="page"] {
+  background: var(--ink);
+  color: var(--card);
+  font-weight: 600;
+}
+.site-topp .site-sprak { margin: 0; }
+.site-sok-rad { padding-bottom: var(--sp-3); }
+.site-sok {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: flex-end;
+}
+.site-sok input, .site-sok button {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  min-height: 2.75rem;
+}
+.site-sok input {
+  border-radius: var(--radius-pill);
+  max-width: 18rem;
+  padding: var(--sp-2) var(--sp-4);
+  width: 100%;
+}
+.site-sok button {
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-weight: 600;
+  padding: var(--sp-2) var(--sp-4);
+}
+html[data-visning="landing"] .skall-hoved {
+  max-width: var(--site-maks);
+  padding: var(--sp-8) var(--sp-6);
+}
+.site-hero-ny { min-height: 34rem; }
+.site-hero-ny .site-hero-copy {
+  align-content: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: var(--sp-8) 0;
+}
+.site-hero-ny h1, .site-sideintro h1 {
+  font-size: clamp(2.5rem, 6vw, 5.4rem);
+  letter-spacing: -.045em;
+  line-height: 1.02;
+  max-width: 14ch;
+}
+.site-hero-ny .site-hero-text { font-size: 1.2rem; }
+.site-signal {
+  align-content: end;
+  background: var(--ink);
+  border-radius: var(--radius-lg);
+  color: var(--card);
+  display: grid;
+  overflow: hidden;
+  padding: var(--sp-8);
+  position: relative;
+}
+.site-signal .site-eyebrow { color: var(--card); }
+.site-signal h2 { font-size: 1.8rem; max-width: 15ch; }
+.site-orbit {
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  height: 18rem;
+  position: absolute;
+  right: -5rem;
+  top: -5rem;
+  width: 18rem;
+}
+.site-orbit::after {
+  background: var(--auto-bg);
+  border-radius: 50%;
+  content: "";
+  height: 4rem;
+  left: 2rem;
+  position: absolute;
+  top: 9rem;
+  width: 4rem;
+}
+.site-checklist { display: grid; gap: var(--sp-3); list-style: none; padding: 0; }
+.site-checklist li { border-top: 1px solid var(--muted); padding-top: var(--sp-3); }
+.site-cta { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-6); }
+.site-cta .knapp, .site-bunn-cta .knapp { min-height: 2.75rem; text-decoration: none; }
+.site-section { padding: var(--sp-8) 0; }
+.site-tilbud { border-top: 1px solid var(--line); }
+.site-feature {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-6) 0;
+}
+.site-feature h2, .site-feature h3 { margin: 0; }
+.site-feature p { color: var(--muted); margin-bottom: 0; }
+.site-feature-nr { color: var(--info); font-family: var(--font-mono); }
+.site-sideintro {
+  border-bottom: 1px solid var(--line);
+  padding: var(--sp-8) 0;
+}
+.site-sideintro .site-hero-text { max-width: 48rem; }
+.site-steg { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
+.site-steg li {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--sp-6);
+  grid-template-columns: 3rem minmax(0, 1fr);
+  padding: var(--sp-6) 0;
+}
+.site-steg li > span { color: var(--info); font-family: var(--font-mono); }
+.site-steg h3, .site-steg p { margin-top: 0; }
+.site-sporsmal dl { margin: 0; }
+.site-sporsmal dl > div {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--sp-6);
+  grid-template-columns: minmax(12rem, .7fr) minmax(0, 1.3fr);
+  padding: var(--sp-6) 0;
+}
+.site-sporsmal dt { font-weight: 700; }
+.site-sporsmal dd { color: var(--muted); margin: 0; }
+.site-bunn-cta {
+  align-items: center;
+  background: var(--info-bg);
+  border-radius: var(--radius-lg);
+  display: flex;
+  gap: var(--sp-6);
+  justify-content: space-between;
+  padding: var(--sp-8);
+}
+.site-bunn-cta h2 { margin: 0; }
+.site-footer {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: var(--sp-4);
+  margin-top: var(--sp-8);
+  min-height: 6rem;
+}
+.site-footer p { color: var(--muted); margin-right: auto; }
+.site-tom { color: var(--muted); padding: var(--sp-8) 0; }
+
+@media (max-width: 860px) {
+  .site-topp { position: static; }
+  .site-topp-rad { align-items: flex-start; flex-wrap: wrap; padding-top: var(--sp-3); }
+  .site-hovednav { order: 3; width: 100%; }
+  .site-hovednav ul { flex-wrap: wrap; width: auto; }
+  .site-topp .site-sprak { margin-left: auto; }
+  .site-sok { justify-content: stretch; }
+  .site-sok input { max-width: none; }
+  .site-hero-ny { min-height: 0; }
+  .site-sporsmal dl > div { grid-template-columns: 1fr; gap: var(--sp-2); }
+  .site-bunn-cta, .site-footer { align-items: flex-start; flex-direction: column; }
+  .site-footer { padding-bottom: var(--sp-6); padding-top: var(--sp-6); }
+}
+
+@media (max-width: 560px) {
+  .site-topp-rad, .site-sok-rad, .site-footer { padding-left: var(--sp-3); padding-right: var(--sp-3); }
+  html[data-visning="landing"] .skall-hoved { padding: var(--sp-6) var(--sp-3); }
+  .site-hero-ny h1, .site-sideintro h1 { font-size: 2.5rem; }
+  .site-signal { padding: var(--sp-6); }
+}
+
 /* Navnelinja er e-posten når den finnes, ellers `bruker_id` — begge deler er
    «hvem er jeg», og linja skal se lik ut uansett hvilken av dem som fylte
    den. Står e-posten der, følger id-en under: det er den som faktisk
