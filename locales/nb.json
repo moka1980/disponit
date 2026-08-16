@@ -450,7 +450,7 @@
   "ui.editor.handlinger_hjelp": "For hver handling: velg automatiseringsmodus og sett grensene (beløpstak, valuta, tidsvindu).",
   "ui.editor.modus": "Modus",
   "ui.editor.belop_maks": "Beløpstak",
-  "ui.editor.valuta": "Valuta (kommaseparert)",
+  "ui.editor.valuta": "Valuta",
   "ui.editor.tidsvindu": "Tidsvindu",
   "ui.editor.lagre": "Lagre utkast",
   "ui.editor.avbryt": "Avbryt",

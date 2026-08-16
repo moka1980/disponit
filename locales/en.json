@@ -450,7 +450,7 @@
   "ui.editor.handlinger_hjelp": "For each action: choose the automation mode and set the limits (amount cap, currency, time window).",
   "ui.editor.modus": "Mode",
   "ui.editor.belop_maks": "Amount cap",
-  "ui.editor.valuta": "Currency (comma-separated)",
+  "ui.editor.valuta": "Currency",
   "ui.editor.tidsvindu": "Time window",
   "ui.editor.lagre": "Save draft",
   "ui.editor.avbryt": "Cancel",
