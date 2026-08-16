@@ -1130,11 +1130,26 @@ EIERROLLE = "disponit_domene_eier"
 _KOMMENTAR = re.compile(r"--[^\n]*")
 _KROPP = re.compile(r"\$\$.*?\$\$", re.S)
 
+#: En `DO $$ … $$`-blokk ser ut som en funksjonskropp og er noe helt annet:
+#: den KJØRES av migrasjonen, og innholdet er ekte DDL og rettighetsutsagn.
+#: 027, 030 og 031 legger alle den betingede granten til senderrollen der.
+#: Ble blokken strøket sammen med kroppene, var en `GRANT … TO PUBLIC` med
+#: feilskrevet mottaker inne i en slik blokk usynlig for porten.
+_DO_BLOKK = re.compile(r"\bdo\s*\$\$(.*?)\$\$", re.S | re.I)
+
+#: Setningene måles med SØK, ikke `startswith`: innmaten i en utpakket
+#: DO-blokk kommer med plpgsql-innpakning foran («begin if exists (…) then
+#: grant …»), og et krav om at setningen BEGYNNER med `grant` ville gjort
+#: nettopp de blokkene usynlige igjen.
+_LAGER = re.compile(r"\bcreate\b.*\bfunction\b")
 #: PUBLIC som MOTTAKER, ikke som skjemanavn: `… ON FUNCTION public.f(…) TO
 #: disponit` og `… ON ALL SEQUENCES IN SCHEMA public TO …` inneholder begge
 #: delstrengen «public» uten å si noe om PUBLIC-ACL-en.
-_FRA_PUBLIC = re.compile(r"\bfrom public\b")
-_TIL_PUBLIC = re.compile(r"\bto public\b")
+_REVOKE_PUBLIC = re.compile(r"\brevoke\b.*\bfrom public\b")
+_GRANT_PUBLIC = re.compile(r"\bgrant\b.*\bto public\b")
+
+#: `f(int, int)` i en setning → `f(int,int)`, som i SENDERFUNKSJONER.
+_SIGNATUR = re.compile(r"[a-z_][a-z0-9_]*\s*\([^()]*\)")
 
 
 def _setninger(sql):
@@ -1143,26 +1158,51 @@ def _setninger(sql):
     Kroppene fjernes fordi de inneholder både `;` og — i kommentarform —
     nettopp de ordene denne testen leter etter. Det som er igjen er filens
     DDL og rettighetsutsagn, i den rekkefølgen basen ser dem.
+
+    DO-blokker er unntaket: de PAKKES UT i stedet for å strykes, slik at
+    setningene inni dem splittes og måles som alle andre. En blokk er ikke en
+    kropp — den er kode som kjører.
     """
-    for rå in _KROPP.sub(" ", _KOMMENTAR.sub("", sql)).split(";"):
+    uten_kommentar = _KOMMENTAR.sub("", sql)
+    utpakket = _DO_BLOKK.sub(lambda m: f" {m.group(1)} ", uten_kommentar)
+    for rå in _KROPP.sub(" ", utpakket).split(";"):
         s = " ".join(rå.split()).lower()
         if s:
             yield s
 
 
-def _spill_av(filer, navn):
-    """Gjerdetilstanden for hver funksjon i `navn` etter at `filer` er kjørt.
+def _signaturer(setning):
+    """Alle `navn(argumenter)` i setningen, normalisert uten mellomrom."""
+    return {m.group(0).replace(" ", "") for m in _SIGNATUR.finditer(setning)}
 
-    `filer` er (filnavn, sql)-par i kjørerekkefølge. Returnerer `(gjerdet,
-    spor)`, der gjerdet er None = funksjonen finnes ikke ennå, False = den
-    finnes med EXECUTE for PUBLIC, True = gjerdet står.
+
+def _spill_av(filer, signaturer):
+    """Gjerdetilstanden for hver signatur etter at `filer` er kjørt.
+
+    `filer` er (filnavn, sql)-par i kjørerekkefølge, `signaturer` fulle
+    signaturer på formen `f(int,int)`. Returnerer `(gjerdet, spor)`, der
+    gjerdet er None = funksjonen finnes ikke ennå, False = den finnes med
+    EXECUTE for PUBLIC, True = gjerdet står.
 
     Modellen er ACL-ens tilstand, ikke en tekstsjekk per fil: hver setning
     som kan flytte PUBLICs EXECUTE må være representert, ellers leser
     avspillingen en åpen funksjon som lukket.
+
+    SIGNATUREN, IKKE BASENAVNET, er nøkkelen — og de tre setningstypene
+    behandler den ulikt, med vilje (Codex P2 på #71):
+
+    * En REVOKE lukker BARE den signaturen den nevner. `f(text)` sier
+      ingenting om `f(int,int)`, og en overlast måtte ellers bare bli
+      revokert av eieren for å skjule at den kryss-tenante utgaven står åpen.
+    * En gjenskaping eller en `GRANT … TO PUBLIC` som nevner basenavnet
+      åpner, uansett hvilken signatur den bærer. Asymmetrien er retningen
+      på tvilen: en overlast for mye målt som åpen gir en falsk alarm noen
+      må se på, mens en for lite gir en åpen kryss-tenant funksjon ingen ser.
     """
-    gjerdet = dict.fromkeys(navn)
-    spor = {n: [] for n in navn}
+    beskyttet = [s.replace(" ", "").lower() for s in signaturer]
+    basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
+    gjerdet = dict.fromkeys(beskyttet)
+    spor = {sig: [] for sig in beskyttet}
     for filnavn, sql in filer:
         rolle = None                      # None = migrator, kjørerens rolle
         for s in _setninger(sql):
@@ -1170,28 +1210,29 @@ def _spill_av(filer, navn):
                 rolle = s.split()[3]
             elif s.startswith("reset role"):
                 rolle = None
-            for n in navn:
-                if n not in s:
+            nevnte = _signaturer(s)
+            for sig in beskyttet:
+                if basenavn[sig] not in s:
                     continue
-                if s.startswith("create ") and " function " in f" {s} ":
+                if _LAGER.search(s):
                     # Ny eller gjenskapt: ACL-en er standard, altså PUBLIC.
-                    gjerdet[n] = False
-                    spor[n].append(f"{filnavn}: gjenskapt")
-                elif s.startswith("revoke ") and _FRA_PUBLIC.search(s):
+                    gjerdet[sig] = False
+                    spor[sig].append(f"{filnavn}: gjenskapt")
+                elif _GRANT_PUBLIC.search(s):
+                    # Gjerdet ned igjen, og uten dette sporet ville
+                    # avspillingen beholdt True fra en tidligere REVOKE. At
+                    # granten kan komme fra en rolle uten grant option — og
+                    # da bare gi en WARNING — endrer ikke svaret: det usikre
+                    # tilfellet skal måles som åpent, ikke antas lukket.
+                    gjerdet[sig] = False
+                    spor[sig].append(
+                        f"{filnavn}: grant til public som {rolle or 'migrator'}")
+                elif _REVOKE_PUBLIC.search(s) and sig in nevnte:
                     # Som eier: gjerdet står. Som migrator: advarsel, og
                     # standard-ACL-en materialiseres — verre enn ingenting.
-                    gjerdet[n] = rolle == EIERROLLE
-                    spor[n].append(f"{filnavn}: revoke som {rolle or 'migrator'}")
-                elif s.startswith("grant ") and _TIL_PUBLIC.search(s):
-                    # Gjerdet ned igjen, og uten dette sporet ville
-                    # avspillingen beholdt True fra en tidligere REVOKE
-                    # (Codex P2 på #71). At granten kan komme fra en rolle
-                    # uten grant option — og da bare gi en WARNING — endrer
-                    # ikke svaret: det usikre tilfellet skal måles som åpent,
-                    # ikke antas lukket. Da feiler testen, og noen ser etter.
-                    gjerdet[n] = False
-                    spor[n].append(
-                        f"{filnavn}: grant til public som {rolle or 'migrator'}")
+                    gjerdet[sig] = rolle == EIERROLLE
+                    spor[sig].append(
+                        f"{filnavn}: revoke som {rolle or 'migrator'}")
     return gjerdet, spor
 
 
@@ -1222,16 +1263,15 @@ def test_gjerdet_staar_ved_slutten_av_migrasjonshistorikken():
     sette det opp igjen, feiler her.
     """
     mig = Path(__file__).resolve().parents[1] / "db/migrations"
-    navn = [s.split("(")[0] for s in SENDERFUNKSJONER]
     gjerdet, spor = _spill_av(
         ((f.name, f.read_text(encoding="utf-8"))
-         for f in sorted(mig.glob("[0-9][0-9][0-9]_*.sql"))), navn)
-    for n in navn:
-        assert gjerdet[n] is True, (
-            f"PUBLIC har EXECUTE på {n} etter siste migrasjon — en"
+         for f in sorted(mig.glob("[0-9][0-9][0-9]_*.sql"))), SENDERFUNKSJONER)
+    for sig in gjerdet:
+        assert gjerdet[sig] is True, (
+            f"PUBLIC har EXECUTE på {sig} etter siste migrasjon — en"
             f" gjenskaping uten nytt gjerde, en REVOKE utenfor"
             f" `SET LOCAL ROLE {EIERROLLE}`, eller en GRANT tilbake til"
-            f" PUBLIC. Spor: {spor[n]}")
+            f" PUBLIC. Spor: {spor[sig]}")
 
 
 def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
@@ -1244,46 +1284,87 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
 
     * gjenskaping uten nytt gjerde — DROP-en tar ACL-en med seg (028, P1),
     * REVOKE som migrator — WARNING, og standard-ACL-en materialiseres,
-    * `GRANT … TO PUBLIC` etter et gjerde som sto (Codex P2 på #71). Den
-      siste er ikke hypotetisk på en annen måte enn de to andre: 027 og 028
-      granter begge EXECUTE eksplisitt, og en mottaker skrevet feil er én
-      redigering unna. Oppryddingen i `deploy/staging/migrer.py` ville
-      dessuten skjult den for ACL-testen, akkurat som den skjulte P1-en.
+    * `GRANT … TO PUBLIC` etter et gjerde som sto. Den er ikke hypotetisk på
+      en annen måte enn de to andre: 027 og 028 granter begge EXECUTE
+      eksplisitt, og en mottaker skrevet feil er én redigering unna.
+    * samme grant INNE I EN `DO`-BLOKK. 027, 030 og 031 legger alle den
+      betingede senderrollegranten der, så det er nettopp formen en
+      feilskrevet mottaker ville hatt.
+    * en REVOKE på en OVERLAST — den skal ikke kunne lukke gjerdet for den
+      kryss-tenante signaturen på vegne av en annen.
+
+    Alle fire ville ellers blitt skjult for ACL-testen av oppryddingen i
+    `deploy/staging/migrer.py`, akkurat som P1-en i 028 ble det.
 
     Og motprøven: skjemanavnet `public` i en grant til en annen rolle skal
     IKKE leses som PUBLIC — ellers ville modellen slått ut på 027s egne
     granter og gjort porten til støy.
     """
-    n = ["varsel_klaim_epost"]
+    sig = "varsel_klaim_epost(int,int)"
+    n = [sig]
     lag = "CREATE OR REPLACE FUNCTION varsel_klaim_epost(int, int) ...;"
     gjerde = ("SET LOCAL ROLE disponit_domene_eier;"
               " REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int)"
               " FROM PUBLIC; RESET ROLE;")
 
-    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {
-        "varsel_klaim_epost": True}, "gjerde satt av eieren skal stå"
+    assert _spill_av([("a.sql", lag + gjerde)], n)[0] == {sig: True}, \
+        "gjerde satt av eieren skal stå"
 
     assert _spill_av([("a.sql", lag + gjerde), ("b.sql", lag)], n)[0] == {
-        "varsel_klaim_epost": False}, "gjenskaping uten nytt gjerde"
+        sig: False}, "gjenskaping uten nytt gjerde"
 
     assert _spill_av([("a.sql", lag + "REVOKE ALL ON FUNCTION"
                        " varsel_klaim_epost(int, int) FROM PUBLIC;")], n)[0] \
-        == {"varsel_klaim_epost": False}, "REVOKE som migrator er ikke gjerde"
+        == {sig: False}, "REVOKE som migrator er ikke gjerde"
 
     etterpaa = ("GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
                 " TO PUBLIC;")
     gjerdet, spor = _spill_av([("a.sql", lag + gjerde),
                                ("b.sql", etterpaa)], n)
-    assert gjerdet == {"varsel_klaim_epost": False}, \
+    assert gjerdet == {sig: False}, \
         f"GRANT tilbake til PUBLIC skal åpne gjerdet. Spor: {spor}"
-    assert "b.sql: grant til public som migrator" in spor["varsel_klaim_epost"]
+    assert "b.sql: grant til public som migrator" in spor[sig]
+
+    # Samme grant, men betinget inne i en DO-blokk — formen 027/030/031
+    # bruker for senderrollen, og den `_KROPP` ville strøket som en kropp.
+    i_do = ("DO $$\nBEGIN\n"
+            "    IF EXISTS (SELECT 1 FROM pg_roles"
+            " WHERE rolname = 'disponit_varselsender') THEN\n"
+            "        GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+            " TO PUBLIC;\n"
+            "    END IF;\nEND $$;")
+    gjerdet, spor = _spill_av([("a.sql", lag + gjerde), ("b.sql", i_do)], n)
+    assert gjerdet == {sig: False}, \
+        f"GRANT til PUBLIC i en DO-blokk skal åpne gjerdet. Spor: {spor}"
+
+    # …og den samme blokken med RIKTIG mottaker skal ikke røre gjerdet.
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", i_do.replace("TO PUBLIC",
+                                             "TO disponit_varselsender"))],
+                     n)[0] == {sig: True}, "DO-blokk med riktig mottaker"
+
+    # En OVERLAST lukker ikke gjerdet for den kryss-tenante signaturen…
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " REVOKE ALL ON FUNCTION varsel_klaim_epost(text)"
+                   " FROM PUBLIC; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, \
+        f"REVOKE på `f(text)` sier ingenting om `f(int,int)`. Spor: {spor}"
+
+    # …men en gjenskaping av en overlast regnes som åpning, fordi tvilen
+    # skal falle mot åpent. Dette er den falske alarmen asymmetrien koster.
+    assert _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "CREATE OR REPLACE FUNCTION varsel_klaim_epost(text) ...;")],
+        n)[0] == {sig: False}, "gjenskaping av overlast måles som åpning"
 
     # Motprøven: `public` som SKJEMA, og en helt annen mottaker.
     assert _spill_av([("a.sql", lag + gjerde),
                       ("b.sql", "GRANT EXECUTE ON FUNCTION"
                        " public.varsel_klaim_epost(int, int)"
                        " TO disponit_varselsender;")], n)[0] == {
-        "varsel_klaim_epost": True}, "skjemanavnet `public` er ikke PUBLIC"
+        sig: True}, "skjemanavnet `public` er ikke PUBLIC"
 
 
 def _execute_mottakere(conn, signatur):
