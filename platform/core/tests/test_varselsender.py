@@ -1265,6 +1265,42 @@ _TYPESYNONYM = {
     "timetz": "time with time zone",
 }
 
+#: ET ARGUMENT ER MER ENN EN TYPE (Codex P2 på #71). PostgreSQL skriver et
+#: argument som `[modus] [navn] type [DEFAULT uttrykk]`, og alle formene er
+#: lovlige identiteter for den SAMME funksjonen: `DROP FUNCTION
+#: varsel_klaim_epost(p_grense integer, p_maks integer)` treffer nøyaktig den
+#: `(int,int)` beskytter. Ble `p_grense integer` lest som selve typen, traff
+#: ikke `_rammer` — og en DROP av senderfunksjonen lot `True` fra forrige
+#: REVOKE stå, som er nettopp utgangen DROP-grenen finnes for.
+#:
+#: Modus er en fast, kort liste, og `OUT` er den ene som betyr noe for
+#: IDENTITETEN: PostgreSQL slår opp en funksjon på INN-typene alene, så
+#: `f(int, OUT text)` og `f(int)` er samme funksjon og begge skrivemåtene er
+#: lovlige i en DROP. NAVNET er derimot ikke gjenkjennelig i seg selv, så
+#: skillet må gå på det som ER kjent: en type. Ordene under er ord som kan
+#: BEGYNNE et typenavn, og formene med mellomrom er de eneste typene i
+#: PostgreSQL som består av flere ord.
+_MODUS = frozenset(("in", "out", "inout", "variadic"))
+
+_FLERORDSTYPER = frozenset((
+    "double precision", "character varying", "bit varying",
+    "timestamp with time zone", "timestamp without time zone",
+    "time with time zone", "time without time zone",
+))
+
+_TYPEORD = frozenset((
+    "int", "integer", "int2", "int4", "int8", "smallint", "bigint",
+    "serial", "smallserial", "bigserial", "serial4", "serial8",
+    "numeric", "decimal", "real", "float4", "float8", "double", "money",
+    "bool", "boolean", "bit", "text", "char", "character", "varchar",
+    "name", "bytea", "uuid", "json", "jsonb", "xml",
+    "date", "time", "timetz", "timestamp", "timestamptz", "interval",
+    "inet", "cidr", "macaddr", "macaddr8", "tsvector", "tsquery",
+    "oid", "regclass", "regproc", "regprocedure", "regtype", "regrole",
+    "record", "void", "trigger", "internal", "cstring", "unknown",
+    "anyelement", "anyarray", "anynonarray", "anyenum", "anycompatible",
+))
+
 #: MÅLKLAUSULEN, ikke hele setningen (Codex P2 på #71). En setning kan NEVNE
 #: en signatur uten å virke på den — en vakt som
 #: `IF to_regprocedure('varsel_klaim_epost(int,int)') IS NOT NULL THEN REVOKE
@@ -1421,15 +1457,55 @@ def _setninger(sql):
     yield from _delt(uten_kommentar[pos:], False)
 
 
+def _type(ledd):
+    """Ett argument redusert til TYPEN det er, kanonisert.
+
+    Skallet rundt typen — modus (`IN`/`OUT`/`INOUT`/`VARIADIC`), et
+    parameternavn og en `DEFAULT`-hale — hører til ERKLÆRINGEN og ikke til
+    funksjonens identitet. Basen ser `(p_grense integer, p_maks integer)` og
+    `(int,int)` som samme funksjon; gjør ikke modellen det, treffer den ikke
+    en DROP som er skrevet med navn.
+
+    Et `OUT`-argument gir `None`: det er ikke en del av identiteten i det
+    hele tatt. PostgreSQL slår opp funksjonen på INN-typene alene, så
+    `f(int, OUT text)` er den samme funksjonen som `f(int)` — og begge
+    skrivemåtene er lovlige i en DROP.
+
+    Navnet kjennes ikke igjen i seg selv, så det skrelles av det som ER
+    kjent: står det mer enn ett ord igjen, og de ordene ikke til sammen er
+    en av PostgreSQLs flerordstyper, er det første ordet et navn — med det
+    ene forbeholdet at et ord som ikke KAN begynne en type, alltid er det.
+    Betingelsen `ord_[1] in _TYPEORD` er det som skiller `text text` (navn +
+    type) fra en ukjent type skrevet i to ord.
+    """
+    ord_ = [o for o in ledd.lower().split() if o]
+    if ord_ and ord_[0] in _MODUS:
+        if ord_[0] == "out":
+            return None
+        ord_ = ord_[1:]
+    for i, o in enumerate(ord_):
+        if o == "default" or o == "=":
+            ord_ = ord_[:i]
+            break
+    while (len(ord_) > 1 and " ".join(ord_) not in _FLERORDSTYPER
+           and (ord_[0] not in _TYPEORD or ord_[1] in _TYPEORD)):
+        ord_ = ord_[1:]
+    t = " ".join(ord_)
+    return _TYPESYNONYM.get(t, t)
+
+
 def _typeliste(argumenter):
     """Argumentlisten som en sammenlignbar rekke av typer.
 
     Typene kanoniseres, jf. `_TYPESYNONYM`: basen slår `int`, `integer` og
     `int4` opp til samme `pg_type`, så to signaturer som bare er ulikt
-    STAVET er den samme funksjonen.
+    STAVET er den samme funksjonen. Og hvert ledd skrelles først for modus,
+    navn og standardverdi, jf. `_type`: de er heller ikke en del av
+    identiteten. `OUT`-argumenter faller helt bort — de teller ikke med i
+    oppslaget basen gjør.
     """
-    return tuple(_TYPESYNONYM.get(d.strip(), d.strip())
-                 for d in argumenter.split(",") if d.strip())
+    return tuple(t for t in (_type(d) for d in argumenter.split(","))
+                 if t)
 
 
 def _normalisert(signatur):
@@ -1720,6 +1796,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
       int4)`. Basen kjenner ingen forskjell; en modell som sammenligner
       stavemåter gjør det, og lar da et gjerde stå rundt en funksjon som er
       droppet.
+    * den samme signaturen SKREVET SOM EN ERKLÆRING — med modus,
+      parameternavn og `DEFAULT`. Alle er lovlige identiteter for den samme
+      funksjonen, og 027 og 031 erklærer den selv slik. `OUT` teller ikke
+      med i det hele tatt. Med motprøvene at skrellingen ikke bare tar
+      siste ord: en annen type med navn foran er fortsatt en annen
+      overlast, og en flerordstype skal stå hel.
     * et NAVN SOM BARE BEGYNNER LIKT, og et ANNET SKJEMA. Begge inneholder
       det beskyttede navnet som delstreng uten å være det objektet, og en
       lukkende setning om dem skal ikke lukke noe her.
@@ -2023,6 +2105,37 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
         assert gjerdet == {sig: None}, (
             f"`{alias}` er den samme funksjonen som `(int,int)`."
             f" Spor: {spor}")
+
+    # ET ARGUMENT ER MER ENN EN TYPE. `[modus] [navn] type [DEFAULT …]` er
+    # alle lovlige måter å skrive den SAMME funksjonen på — 027 og 031
+    # erklærer den selv med navn og standardverdi — og hver av dem dropper
+    # nøyaktig den signaturen `(int,int)` beskytter.
+    for skrivemaate in ("p_grense integer, p_maks integer",
+                        "IN p_grense int, IN p_maks int",
+                        "p_grense int, p_maks int DEFAULT 3",
+                        "IN p_grense integer, INOUT p_maks int4 DEFAULT 3",
+                        "p_grense int, p_maks int, OUT p_status text"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP FUNCTION varsel_klaim_epost({skrivemaate});")], n)
+        assert gjerdet == {sig: None}, (
+            f"`{skrivemaate}` er den samme funksjonen som `(int,int)`."
+            f" Spor: {spor}")
+
+    # …og motprøvene, som er det som gjør skrellingen til noe annet enn «ta
+    # siste ord»: en ANNEN type med navn foran er fortsatt en annen overlast,
+    # og en type som ER flere ord skal ikke miste halvparten av seg selv.
+    for annen in ("p_a bigint, p_b bigint",
+                  "p_ts timestamp with time zone"):
+        assert _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DROP FUNCTION varsel_klaim_epost({annen});")],
+            n)[0] == {sig: True}, f"`{annen}` er ikke `(int,int)`"
+
+    assert _type("p_ts timestamp with time zone") \
+        == "timestamp with time zone", "flerordstypen skal stå hel"
+    assert _type("timestamptz") == "timestamp with time zone"
+    assert _type("VARIADIC p_liste text[]") == "text[]"
 
     # …og motprøven: en type som IKKE er et synonym er en annen overlast.
     assert _spill_av(
