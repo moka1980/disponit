@@ -134,6 +134,69 @@ test("Varsler: kanalvalget kan settes til kun portal", async () => {
     "kun_portal");
 });
 
+// Codex P2: to raske kanalvalg lå på nettet samtidig, og da avgjorde nettet —
+// ikke brukeren — hvilket valg som ble stående. Et tregt `kun_portal` kunne
+// committe ETTER et senere `epost_og_portal`: serveren slo av e-posten mens
+// flaten viste den på, begge kallene meldte «lagret», og ingenting leste
+// tilstanden tilbake.
+test("Varsler: to raske kanalvalg skriver i den rekkefølgen de ble tatt",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [], uleste: 0,
+      kanal: "epost_og_portal" } };
+    const brukFetch = globalThis.fetch;
+    const fullfort = [];
+    let slippTreg = null;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method && sti === "/v1/varselvalg") {
+        const kanal = JSON.parse(opts.body).kanal;
+        POSTET.push({ sti, body: { kanal } });
+        // Det FØRSTE valget er det trege — nettopp den rekkefølgen som gjorde
+        // det gamle utfallet feil.
+        if (kanal === "kun_portal") {
+          await new Promise((r) => { slippTreg = r; });
+        }
+        fullfort.push(kanal);
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visVarsler(h, ctx());
+    await vent(() => h.querySelector(".varselvalg"));
+    const inn = (v) => [...h.querySelectorAll('input[name="varselkanal"]')]
+      .find((i) => i.value === v);
+    const kun = inn("kun_portal");
+    const begge = inn("epost_og_portal");
+
+    kun.checked = true;
+    kun.dispatchEvent(new window.Event("change"));
+    await vent(() => slippTreg);
+    // Låsen er den første halvdelen: i en ekte nettleser kan hun ikke klikke
+    // om igjen mens lagringen pågår.
+    assert.ok(kun.disabled && begge.disabled,
+      "kanalvelgeren står åpen for et nytt klikk midt i en lagring");
+
+    // …og køen er den andre. Her klikkes det likevel — det er det som måler
+    // køen, og det er det en dispatch fra tastaturet eller en gjenoppfrisket
+    // knapp kan gjøre uansett hva `disabled` sier.
+    begge.checked = true;
+    begge.dispatchEvent(new window.Event("change"));
+    await vent(() => false, 5);
+    assert.deepEqual(POSTET.map((p) => p.body.kanal), ["kun_portal"],
+      "det andre valget ble sendt før det første var committet");
+
+    slippTreg();
+    await vent(() => fullfort.length === 2);
+    assert.deepEqual(fullfort, ["kun_portal", "epost_og_portal"],
+      "valget hun tok sist ble ikke skrevet sist");
+    await vent(() => !kun.disabled);
+    assert.ok(!kun.disabled && !begge.disabled,
+      "kanalvelgeren ble stående låst etter at køen var tom");
+    globalThis.fetch = brukFetch;
+  });
+
 test("Varsler: tom innboks sier det, i stedet for å vise ingenting", async () => {
   POSTET = [];
   SVAR = { "/v1/varsel": { varsler: [], uleste: 0, kanal: "kun_portal" } };

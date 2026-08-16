@@ -146,12 +146,50 @@ export function visVarsler(hoved, ctx) {
     });
   }
 
+  // KANALVALGET SERIALISERES (Codex P2). To raske klikk ga før to POST-er som
+  // lå på nettet samtidig, og da er det nettet — ikke brukeren — som avgjør
+  // hvilken som committer sist: et tregt `kun_portal` kunne lande ETTER et
+  // senere `epost_og_portal`, og da sto flaten og viste e-post påslått mens
+  // serveren hadde slått den av. Begge kallene meldte «lagret», og ingen av
+  // dem leste tilstanden tilbake, så det fantes ingen vei til å oppdage det.
+  //
+  // Tre ledd, og de trengs hver for seg: køen gjør at det SISTE klikket også
+  // skriver sist; låsen gjør at det vanligste tilfellet — to klikk på rappen —
+  // ikke oppstår i det hele tatt; og bare det siste valget får si «lagret», så
+  // kvitteringen gjelder det som faktisk står igjen.
+  let kanalko = Promise.resolve();
+  let kanalventende = 0;
+  let sisteKanalvalg = null;
+  let kanalfeilet = false;
+
+  function laasKanalvelger(av) {
+    for (const inn of hoved.querySelectorAll('input[name="varselkanal"]')) {
+      inn.disabled = av;
+    }
+  }
+
   function settKanal(kanal) {
-    settVarselkanal(kanal)
-      .then(() => { meldLive(t("ui.varsler.kanal_lagret")); })
-      .catch((e) => {
+    sisteKanalvalg = kanal;
+    kanalventende += 1;
+    laasKanalvelger(true);
+    kanalko = kanalko
+      .then(() => settVarselkanal(kanal))
+      .then(() => {
+        // Bare kvittering for det valget som står igjen. Kom det et nytt
+        // klikk mens dette var ute, er «lagret» om det gamle valget en
+        // opplysning som er sann og villedende på samme tid.
+        if (kanal === sisteKanalvalg) meldLive(t("ui.varsler.kanal_lagret"));
+      }, (e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         meldLive(t("ui.varsler.feilet"));
+        kanalfeilet = true;
+      })
+      .then(() => {
+        kanalventende -= 1;
+        if (kanalventende > 0) return;   // flere valg står i kø; lås videre
+        laasKanalvelger(false);
+        if (!kanalfeilet) return;
+        kanalfeilet = false;
         // Vis den FAKTISKE tilstanden igjen — men bare hvis eier fortsatt står
         // her. Radioknappen som viser feil valg er borte fra skjermen uansett
         // når hun har navigert videre.
