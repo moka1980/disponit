@@ -45,6 +45,16 @@
   --bp-smal:720px;
   --innhold-maks:1100px;
   --site-maks:1240px;
+  /* Den klebrige toppen på den offentlige flaten: navigasjonsraden og
+     søkeraden. Høyden bor HER fordi to uavhengige regler må dele nøyaktig
+     samme tall — radenes egen `min-height`, og scroll-offset for hopp-til-
+     innhold. Uten offset landet #hovedinnhold under den klebrige toppen, så
+     overskriften tastaturbrukeren nettopp hoppet til var skjult (Codex P2).
+     Summen står som `calc`, ikke som et tredje tall, slik at den ikke kan
+     drive fra radene den beskriver. */
+  --site-topp-rad-h:4.75rem;
+  --site-sok-rad-h:3.5rem;
+  --site-topp-h:calc(var(--site-topp-rad-h) + var(--site-sok-rad-h));
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

@@ -434,7 +434,7 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   align-items: center;
   display: flex;
   gap: var(--sp-6);
-  min-height: 4.75rem;
+  min-height: var(--site-topp-rad-h);
 }
 .site-logo {
   align-items: center;
@@ -478,7 +478,17 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   font-weight: 600;
 }
 .site-topp .site-sprak { margin: 0; }
-.site-sok-rad { padding-bottom: var(--sp-3); }
+.site-sok-rad { min-height: var(--site-sok-rad-h); padding-bottom: var(--sp-3); }
+
+/* Hopp-til-innhold (WCAG 2.4.1) skal lande på innholdet, ikke bak toppen.
+   `.site-topp` er klebrig og dekker viewportens øverste kant, så et ublokkert
+   hopp scrollet #hovedinnhold helt opp — UNDER toppen — og både overskriften
+   og den fokuserte regionens øvre kant var skjult til brukeren scrollet
+   tilbake (Codex P2). `scroll-margin-top` gjelder når fokus flyttes til målet,
+   `scroll-padding-top` når nettleseren hopper til ankeret; begge veier inn i
+   #hovedinnhold finnes, så begge får offset. */
+html[data-visning="landing"] { scroll-padding-top: var(--site-topp-h); }
+html[data-visning="landing"] #hovedinnhold { scroll-margin-top: var(--site-topp-h); }
 .site-sok {
   display: flex;
   gap: var(--sp-2);
@@ -615,7 +625,11 @@ html[data-visning="landing"] .skall-hoved {
 .site-tom { color: var(--muted); padding: var(--sp-8) 0; }
 
 @media (max-width: 860px) {
+  /* Toppen slutter å klebe her, og da skal offsetet bort med den: ellers
+     stopper hoppet en skjermhøyde for tidlig og etterlater et tomt felt. */
   .site-topp { position: static; }
+  html[data-visning="landing"] { scroll-padding-top: 0; }
+  html[data-visning="landing"] #hovedinnhold { scroll-margin-top: 0; }
   .site-topp-rad { align-items: flex-start; flex-wrap: wrap; padding-top: var(--sp-3); }
   .site-hovednav { order: 3; width: 100%; }
   .site-hovednav ul { flex-wrap: wrap; width: auto; }
