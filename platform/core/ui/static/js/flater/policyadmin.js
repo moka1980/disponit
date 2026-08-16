@@ -57,11 +57,24 @@ function risikoEndringer(detalj) {
 // kort per element i stedet for én rad per blad, og en presis oppsummering på
 // hver overskrift så gruppen kan vurderes uten å åpnes.
 
+// Klassifikatoren merker objekt-map-er med «{}» («verifikatorer{}»,
+// «verifikator_prioritet{}»), mens bladdiffen navngir de samme feltene uten
+// markør («verifikatorer.v1.betrodd_for[0]»). Markøren sier hva slags
+// beholder feltet er, ikke hvilket felt det er, så den må bort før de to
+// visningene sammenlignes — ellers er «verifikatorer{}» og «verifikatorer»
+// to forskjellige grupper, og en verifikator som UTVIDER fullmakten blir
+// verken sortert først, åpnet eller merket (Codex P1). Nettopp den gruppen
+// er grunnen til at fire øyne kreves.
+function normaliserSti(sti) {
+  return String(sti).replace(/\{\}/g, "");
+}
+
 // «handlinger[0].vilkaar[2].navn» → { gruppe: "handlinger",
 //                                     element: "handlinger[0]", rest: … }
 // Skalarledd i en liste («unntak.kategorier[3]») har ingen rest — de slås
 // sammen til én rad for hele lista lenger nede.
-function delOppSti(sti) {
+function delOppSti(raa) {
+  const sti = normaliserSti(raa);
   const m = /^([^.[]+)/.exec(sti);
   const gruppe = m ? m[1] : sti;
   // Elementet er første ledd som er indeksert eller nøklet ETTER gruppen.

@@ -1555,6 +1555,45 @@ test("Diff: grupperes per område, og de som utvider fullmakt står åpne øvers
       "tidssone utvider ikke fullmakt og skal ikke stjele plass");
   });
 
+// Klassifikatoren skriver «verifikatorer{}» / «verifikator_prioritet{}» —
+// «{}» sier at beholderen er en objekt-map, mens bladdiffen navngir de samme
+// feltene uten markør. Beholdes markøren i gruppenavnet, er «verifikatorer{}»
+// og «verifikatorer» to forskjellige grupper, og en verifikator som UTVIDER
+// fullmakten blir verken sortert først, åpnet eller merket (Codex P1).
+// Kontroll: fjern `normaliserSti`, så blir denne rød.
+const VERIFIKATOR_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [
+    { sti: "verifikatorer{}", klasse: "UTVIDER" },
+    { sti: "tidssone", klasse: "NØYTRAL" },
+  ],
+  diff: { endringer: [
+    { sti: "tidssone", type: "endret", fra: "UTC", til: "Europe/Oslo" },
+    { sti: "verifikatorer.v_prognose.betrodd_for[0]", type: "lagt_til",
+      til: "ordre.bekreft" },
+    { sti: "verifikatorer.v_prognose.kan_fastsla_permanent", type: "lagt_til",
+      til: true },
+  ] },
+};
+
+test("Diff: «{}»-markøren fra klassifikatoren peker på samme gruppe som diffen",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": VERIFIKATOR_DIFF,
+      __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const grupper = [...rot.querySelectorAll(".diff-gruppe")];
+    const verif = grupper.find((g) =>
+      g.querySelector(".diff-gruppenavn").textContent
+        === t("ui.policyadmin.diff.gruppe.verifikatorer"));
+    assert.ok(verif, "verifikatorene ble ikke en egen gruppe");
+    assert.equal(grupper[0], verif,
+      "gruppen som utvider fullmakt skal sorteres først");
+    assert.ok(verif.hasAttribute("open"),
+      "en gruppe som utvider fullmakt skal stå åpen");
+    assert.ok(verif.querySelector('[data-risiko="UTVIDER"]'),
+      "gruppen som utvider fullmakt skal bære samme merking som risikolista");
+  });
+
 test("Diff: overskriften sier hva handlingen ER, ikke hvor den står i JSON-en",
   async () => {
     SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": STOR_DIFF,
