@@ -241,6 +241,10 @@ def test_mislykket_sletting_brenner_ikke_nokkelen():
             policyadmin.slett_policy(rt, **kall)
         assert e.value.kode == "runde_allerede_aapen"
 
+        # Konteksten er `SET LOCAL` og døde med commit-en over — uten denne
+        # linja treffer UPDATE-en null rader bak RLS, og runden blir stående.
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r0")
         m.execute("UPDATE aktiveringsrunde SET status='kansellert'"
                   " WHERE tenant=%s AND utkast_id=%s", (TEN, uid))
         m.commit()
@@ -258,9 +262,14 @@ def test_mislykket_sletting_brenner_ikke_nokkelen():
 # ---------------------------------------------------------------------------
 
 def _sperret(c, pid, ms=400):
-    """Prøv å slette med en kort låsefrist. -> True hvis vi ble sperret."""
+    """Prøv å slette med en kort låsefrist. -> True hvis vi ble sperret.
+
+    `set_config(..., true)` og ikke `SET LOCAL`: `SET` tar ikke bind-parametre
+    (`syntax error at or near "$1"`), og en interpolert streng i en test er en
+    vane man ikke vil ha. Samme form som `db.pg.sett_tenant` bruker.
+    """
     import psycopg
-    c.execute("SET LOCAL lock_timeout = %s", (f"{ms}ms",))
+    c.execute("SELECT set_config('lock_timeout', %s, true)", (f"{ms}ms",))
     try:
         _slett(c, pid)
         return False
@@ -343,7 +352,7 @@ def test_to_beslutninger_staar_ikke_i_ko_bak_hverandre():
     try:
         from db.pg import laas_policy_delt
         laas_policy_delt(a, TEN, pid)
-        b.execute("SET LOCAL lock_timeout = '400ms'")
+        b.execute("SELECT set_config('lock_timeout', '400ms', true)")
         laas_policy_delt(b, TEN, pid)   # skal ikke kaste
         a.rollback()
         b.rollback()
