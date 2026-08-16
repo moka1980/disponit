@@ -505,7 +505,7 @@ _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _TALLVERSJON = re.compile(r"^\d+(\.\d+)*$")
 
 
-def _versjonsnokkel(versjon: str, ledd: int) -> tuple[int, ...]:
+def _versjonsnokkel(versjon: str, ledd: int) -> tuple[tuple[int, str], ...]:
     """Tallpunktet versjon som sammenlignbar nøkkel, NULLPADDET til `ledd`.
 
     Paddingen er ikke kosmetikk. Uten den sorterer tuppelsammenligningen
@@ -513,10 +513,19 @@ def _versjonsnokkel(versjon: str, ledd: int) -> tuple[int, ...]:
     nøyaktig formen de eldre radene bærer («1», «2», skrevet av telleren
     migrasjon 020 fjerner), så en aktiv «2»-rad ville sluppet gjennom
     dokumentversjonen «2.0.0»: samme versjon, ikke en nyere. Padder vi begge
-    til samme bredde, blir «2» → (2, 0, 0) og de to er like — som de er.
+    til samme bredde, blir «2» → 2.0.0 og de to er like — som de er.
+
+    Leddet sammenlignes som (ANTALL SIFRE, sifrene) etter at innledende nuller
+    er strøket, ikke som `int` (Codex P2). For ikke-negative heltall gir det
+    nøyaktig tallordenen — og det er UBEGRENSET. `int()` er ikke det: CPython
+    nekter å konvertere strenger over 4300 sifre (`sys.set_int_max_str_digits`),
+    og skjemaet setter ingen grense på hvor mange sifre `meta.versjon` kan ha.
+    Et skjemagyldig utkast kunne altså felt PORTEN med `ValueError` — samme
+    sykdom som `::int[]`-casten i databasen hadde, bare på denne siden.
     """
-    tall = tuple(int(d) for d in versjon.split("."))
-    return tall + (0,) * (ledd - len(tall))
+    ledd_ut = [d.lstrip("0") or "0" for d in versjon.split(".")]
+    ledd_ut += ["0"] * (ledd - len(ledd_ut))
+    return tuple((len(d), d) for d in ledd_ut)
 
 
 def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,

@@ -469,6 +469,69 @@ def test_aktiver_policy_krever_dokumentets_egen_policy_id():
 
 
 @pg
+def test_aktiver_policy_sammenligner_versjonsledd_over_int32():
+    """🔴 P2: et versjonsledd over 2^31 skal avvises, ikke velte forespørselen.
+
+    Skjemaet setter ingen øvre grense på et ledd, så «2147483648.0.0» er et
+    gyldig utkast. Med `::int[]` reiste sammenligningen
+    `numeric_value_out_of_range` — ikke den `check_violation` kalleren
+    håndterer — og runden døde med HTTP 500 og tapt attestasjon. Verre: var en
+    slik versjon først AKTIV, traff hver senere aktivering samme cast.
+
+    Her er den aktive versjonen den store, og utkastet ligger UNDER den: riktig
+    svar er en ren `check_violation` (ikke nyere), levert av en sammenligning
+    som faktisk klarte å måle tallene.
+
+    Kontroll: sett casten tilbake til `::int[]`, så blir denne rød med
+    `NumericValueOutOfRange`.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    stor = "2147483648.0.0"                      # 2^31 — over int4
+    _policyrad(c, pid, stor, aktiv=True)
+    _hode(c, pid, aktiv_versjon=stor)
+    _validert_utkast(c, uid, pid, av="forf", versjon="2147483647.9.9")
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            r.execute("SELECT aktiver_policy(%s,%s,1,%s)", (TEN, uid, stor))
+    finally:
+        r.rollback()
+        r.close()
+
+
+@pg
+def test_aktiver_policy_aktiverer_versjonsledd_over_int32():
+    """Og den store versjonen skal kunne AKTIVERES — ikke bare avvises.
+
+    En kontroll som bare svarer «nei» på store tall er ikke en fiks: da er
+    policyen like fastlåst, bare med en penere feil. Her ligger utkastet OVER
+    den aktive, og aktiveringen skal gå gjennom.
+    """
+    c = _c()
+    uid, pid = "u-" + secrets.token_hex(4), "pol-" + secrets.token_hex(3)
+    _policyrad(c, pid, "2147483648.0.0", aktiv=True)
+    _hode(c, pid, aktiv_versjon="2147483648.0.0")
+    _validert_utkast(c, uid, pid, av="forf", versjon="4294967296.0.0")  # 2^32
+    _runde(c, uid)
+    _attest(c, uid, "forf", True)
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        ny = r.execute("SELECT aktiver_policy(%s,%s,1,%s)",
+                       (TEN, uid, "2147483648.0.0")).fetchone()[0]
+        assert ny == "4294967296.0.0", ny
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
 def test_aktiver_policy_krever_at_dokumentet_sier_produksjon():
     """🔴 P1: raden skrives som `produksjon` — dokumentet må si det samme.
 

@@ -767,6 +767,26 @@ def test_hent_aktiv_avviser_rad_med_fremmed_dokumentidentitet():
         m.close()
 
 
+def test_versjonsnokkel_maaler_uten_ovre_grense():
+    """🔴 P2: porten hadde databasens 32-bits-problem i sin egen form.
+
+    `_versjonsnokkel` brukte `int()`, og CPython nekter å konvertere strenger
+    over 4300 sifre. Skjemaet setter ingen grense på `meta.versjon`, så et
+    skjemagyldig utkast kunne felt PORTEN med `ValueError` — HTTP 500 der det
+    skulle stått et utfall. Nøkkelen sammenligner nå (antall sifre, sifrene):
+    ubegrenset, og nøyaktig tallorden for ikke-negative heltall.
+
+    Kjører uten database: kontrollen er ren.
+    """
+    n = policyadmin._versjonsnokkel
+    assert n("2", 3) == n("2.0.0", 3), "«2» fra den gamle telleren ER 2.0.0"
+    assert n("2.0.1", 3) > n("2.0.0", 3)
+    assert n("10.0.0", 3) > n("9.0.0", 3), "sammenlignet som tekst, ikke tall"
+    assert n("2147483648.0.0", 3) > n("2147483647.0.0", 3)   # over int4
+    stor = "9" * 5000                       # over CPythons int-grense (4300)
+    assert n(f"{stor}.0.0", 3) > n("2147483648.0.0", 3)
+
+
 def _ekte_pk_kollisjon(pid):
     """-> en EKTE `UniqueViolation` fra `policyer_pkey`.
 
