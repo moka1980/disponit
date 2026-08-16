@@ -1139,10 +1139,32 @@ test("Attester: brukt versjon sier at utkastet må få ny versjon (utfall)",
     assert.equal(kvitt.getAttribute("role"), "alert");
   });
 
-test("Attester: versjonsfeil som 409 sier det samme som utfallet", async () => {
-  for (const kode of ["versjon_i_bruk", "versjon_mangler"]) {
+// Codex P2 på #63: `utkast_ugyldig` kommer også som UTFALL, ikke bare som
+// feilkode — runden kan ha vært ferdig attestert da kravet kom, og da er det
+// migrasjon 022 i DB-grensen som stopper aktiveringen. Utfallet deler SQLSTATE
+// med versjonsinvariantene, så uten skillet ville eier fått «versjonen er i
+// bruk» om en verifikator-id og økt versjonen uten at noe ble bedre.
+test("Attester: utkast_ugyldig som utfall peker på innholdet, ikke versjonen",
+  async () => {
+    const kvitt = await _attesterMedUtfall(nyHoved(),
+      { utfall: "utkast_ugyldig" });
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.utkast_ugyldig")),
+    "eier fikk ikke vite at det er utkastets innhold som må rettes");
+    assert.ok(!kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.versjon_i_bruk")),
+    "eier ble sendt til versjonsnummeret for en feil i innholdet");
+    assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+    assert.equal(kvitt.getAttribute("role"), "alert");
+  });
+
+// Codex P2 på #63: `utkast_ugyldig` er 422, ikke 409 — det er INNHOLDET som er
+// ugyldig, ikke tilstanden. Grunnlagsteksten må følge koden, ikke statusen.
+test("Attester: grunnlagsfeil sier det samme som utfallet", async () => {
+  for (const [kode, status] of [["versjon_i_bruk", 409],
+    ["versjon_mangler", 409], ["utkast_ugyldig", 422]]) {
     const kvitt = await _attesterMedPost(nyHoved(), async () => ({
-      ok: false, status: 409, json: async () => ({ feil: kode }) }));
+      ok: false, status, json: async () => ({ feil: kode }) }));
     assert.ok(kvitt.textContent.includes(t(`ui.policyadmin.utfall.${kode}`)),
       `${kode} falt til «Handlingen feilet» og skjulte hva som må rettes`);
     assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.feilet")));
@@ -2245,8 +2267,11 @@ test("Diff: nøkkelfelt som fjernes, står i overskriften", async () => {
   assert.ok(opps.includes("refusjon.utfor"), "handlingen mistet navnet sitt");
 });
 
-// `verifikatorer` har UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» er en
-// gyldig verifikator-id. Serverens flate sti skjøter map-nøkler med punktum,
+// `verifikatorer` hadde UBEGRENSEDE nøkkelnavn i skjemaet, så «foo.bar» var en
+// gyldig verifikator-id. Skjemaet forbyr nå punktum og klammer i id-en, men
+// utkastdetaljen viser diff også for utkast som ennå ikke er validert, så
+// oppdelingen må fortsatt tåle stien.
+// Serverens flate sti skjøter map-nøkler med punktum,
 // og en oppdeling som leser punktum som skilletegn slo derfor to helt ulike
 // verifikatorer sammen til elementet «verifikatorer.foo» — bladene deres i
 // ett kort, og oppslaget i utkastet ned i nøkler som ikke finnes (Codex P2).
@@ -2274,7 +2299,8 @@ const PUNKTUMNOKKEL_DIFF = {
   ] },
 };
 
-// Samme ubegrensede nøkkelnavn gjør «foo{}bar» til en gyldig verifikator-id.
+// Samme frie nøkkelnavn gjør «foo{}bar» til en gyldig verifikator-id — «{}» er
+// ikke et skilletegn i den flate stien, så innstrammingen over rører den ikke.
 // Ble normaliseringen av klassifikatorens beholder-markør kjørt på bladdiffen
 // også, skrev den «verifikatorer.foo{}bar» om til «verifikatorer.foobar» — og
 // fantes BEGGE i policyen, pekte de to stiene på samme element (Codex P2).
@@ -2335,6 +2361,70 @@ test("Diff: to verifikatorer med punktum i id-en blir to kort", async () => {
     "overskriften navngir ikke verifikatoren: "
     + `«${bar.querySelector("summary").textContent}»`);
 });
+
+// Den verre varianten av de frie nøkkelnavnene: id-ene `foo` OG
+// `foo.beskrivelse` finnes SAMTIDIG. Da er `verifikatorer.foo.beskrivelse`
+// både beskrivelsen til `foo` og roten til den andre verifikatoren — stien er
+// EKTE flertydig, og ingen parser kan lese den riktig. Lengste treff gjettet
+// på den lengste id-en, så beskrivelsen til `foo` havnet i kortet til
+// `foo.beskrivelse`, sammen med DENS felt: godkjenneren leste en
+// tillitsendring på feil verifikator (Codex P2 på #61).
+//
+// Skjemaet forbyr nå punktum og klammer i verifikator-id-en, så en policy som
+// kan AKTIVERES kan ikke komme hit. Men utkastdetaljen viser diff også for et
+// utkast som ennå ikke er validert (`policyadmin.hent_utkast_detalj`), så
+// stien kan fortsatt nå UI-et. Da gjettes det ikke: det flertydige bladet blir
+// stående som ett ledd med hele den rå stien, så det får sitt EGET kort i
+// stedet for å bli lagt inn under en annen verifikator. Dårligere gruppering,
+// men aldri feil tilskriving — og ingenting forsvinner.
+//
+// Kontroll: la `delOppLedd` gjette på lengste treff igjen, så blir denne rød.
+const FLERTYDIG_NOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      foo: { beskrivelse: "Bankintegrasjon", betrodd_for: ["vilkaar_a"] },
+      "foo.beskrivelse": { beskrivelse: "Fakturamottak",
+        betrodd_for: ["vilkaar_b"] },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo.betrodd_for[0]", type: "lagt_til",
+      til: "vilkaar_a" },
+    { sti: "verifikatorer.foo.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo.beskrivelse.betrodd_for[0]", type: "lagt_til",
+      til: "vilkaar_b" },
+    { sti: "verifikatorer.foo.beskrivelse.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+  ] },
+};
+
+test("Diff: flertydig verifikator-id blander ikke to verifikatorer",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": FLERTYDIG_NOKKEL_DIFF, __post: async () => ({}) };
+    const rot = await aapneEndringer(nyHoved());
+    const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+    const kort = [...v.querySelectorAll(".diff-element")];
+    // Selve funnet: ingen kort tilskriver den ene verifikatoren den andres
+    // felt. `vilkaar_a`/`vilkaar_b` er tillitsendringen — den som må treffe
+    // riktig verifikator.
+    for (const k of kort) {
+      const tekst = k.textContent;
+      assert.ok(!(tekst.includes("vilkaar_a") && tekst.includes("vilkaar_b")),
+        `to verifikatorers betrodd_for i ett kort: «${tekst}»`);
+      assert.ok(
+        !(tekst.includes("Bankintegrasjon") && tekst.includes("Fakturamottak")),
+        `to verifikatorer slått sammen i ett kort: «${tekst}»`);
+    }
+    // Og ingenting forsvinner: alle fire bladene står fortsatt et sted.
+    for (const s of ["vilkaar_a", "vilkaar_b", "Bankintegrasjon",
+      "Fakturamottak"]) {
+      assert.ok(v.textContent.includes(s), `«${s}» forsvant fra diffen`);
+    }
+  });
 
 // Samme punktumnøkler, men SLETTET: da finnes ingen av dem i utkastet, og en
 // oppdeling som bare kjenner utkastet faller tilbake på første punktum. Begge

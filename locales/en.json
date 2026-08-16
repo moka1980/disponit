@@ -655,6 +655,7 @@
   "ui.policyadmin.utfall.aktiv_peker_usynk": "The active policy and its pointer are out of sync — the data must be repaired before activation.",
   "ui.policyadmin.utfall.versjon_i_bruk": "The draft's version number is already registered, or is not newer than the active version. Increase \"meta.versjon\" in the draft and validate again.",
   "ui.policyadmin.utfall.versjon_mangler": "The draft has no valid version number in \"meta.versjon\" (the form 1.2.3). Fix it in the draft and validate again.",
+  "ui.policyadmin.utfall.utkast_ugyldig": "The draft breaks a requirement that applies to every policy activated from now on — it was validated before the requirement existed. Fix the draft and validate again.",
   "ui.policyadmin.diff.sammendrag": "{antall} changes across {omrader} areas. Areas that expand authority are open at the top.",
   "ui.policyadmin.diff.antall_endringer": "{n} changes",
   "ui.policyadmin.diff.antall_felt": "{n} fields",
