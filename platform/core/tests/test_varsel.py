@@ -255,6 +255,54 @@ def test_varsling_velter_aldri_handlingen():
 
 
 @pg
+def test_varslingsfeil_lar_kallerens_transaksjon_leve():
+    """Codex P1, og den egentlige versjonen av testen over.
+
+    Den forrige målte bare at Python ikke kastet — og skjulte resten ved å
+    rulle tilbake med én gang. Men kalleren EIER transaksjonen og deler
+    forbindelse med varslingen: feiler en spørring her, står PostgreSQL i
+    abortert tilstand, og kallerens neste setning (og `commit()`) feiler
+    uansett hvor pent unntaket ble svelget. Varslingen ville altså veltet
+    nøyaktig den fullmaktsendringen den lovte å ikke røre.
+
+    Her rives `varsel`-tabellen bort MIDT i en ellers sunn transaksjon, og de
+    to tingene som faktisk betyr noe måles: forbindelsen er brukbar etterpå,
+    og kallerens eget arbeid står igjen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `with conn.transaction()` fra
+    `varsle_runde_venter` (da dør første assert), eller bytt savepointet mot
+    `conn.rollback()` (da dør den andre — kallerens utkast forsvinner).
+    """
+    ten = TEN + "-sp"
+    c = _conn(ten)
+    try:
+        b = _bruker(c, "savepoint", tenant=ten)
+        uid = "u-" + secrets.token_hex(6)
+        # Kallerens eget arbeid, gjort FØR varslingen — som i aktiveringsflyten.
+        c.execute(
+            "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+            "opprettet_av) VALUES (%s,%s,'p','{}'::jsonb,%s)", (ten, uid, b))
+        # Riv bordet under varslingen. DDL-en er del av denne transaksjonen og
+        # forsvinner med rollbacken i `finally` — den lekker ikke til andre.
+        c.execute("ALTER TABLE varsel RENAME TO varsel_borte_under_test")
+        n = varsel.varsle_runde_venter(
+            c, tenant=ten, aktor="test", request_id="r", utkast_id=uid,
+            runde=1, policy_id="p", risikoklasse="UTVIDER", gjenstaar=1)
+        assert n == 0, "varslingen skal rapportere 0, ikke kaste"
+        assert c.execute("SELECT 1").fetchone()[0] == 1, (
+            "transaksjonen er abortert — kalleren kan verken skrive videre "
+            "eller committe, og varselet har veltet handlingen")
+        assert c.execute(
+            "SELECT count(*) FROM policyutkast WHERE tenant=%s AND utkast_id=%s",
+            (ten, uid)).fetchone()[0] == 1, (
+            "kallerens eget arbeid ble rullet tilbake av varslingen — en "
+            "savepoint skal angre varselet, ikke handlingen")
+    finally:
+        c.rollback()
+        c.close()
+
+
+@pg
 def test_ukjent_kanal_avvises():
     """En feilstavet kanal skal ikke stille slå av varslingen."""
     c = _conn()

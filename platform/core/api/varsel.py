@@ -116,22 +116,42 @@ def varsle_runde_venter(conn: psycopg.Connection, *, tenant: str, aktor: str,
     ikke kunne feile fordi varslingen gjorde det. Feiler noe her, er
     konsekvensen at et menneske ikke får en påminnelse — ikke at styringen
     stopper. Den motsatte avveiningen ville vært uforsvarlig.
+
+    Å fange unntaket er IKKE nok til å holde det løftet. Kalleren eier
+    transaksjonen og deler forbindelse med oss: feiler en spørring her, står
+    PostgreSQL i abortert tilstand, og da feiler kallerens NESTE setning — og
+    `commit()` — uansett hvor pent vi svelget feilen i Python. Varslingen ville
+    altså veltet nøyaktig den handlingen den lovte å ikke røre. Derfor kjøres
+    hver del under `with conn.transaction()`: en SAVEPOINT som rulles tilbake
+    ved feil, slik at forbindelsen er brukbar igjen og kallerens eget arbeid
+    står urørt.
+
+    Savepointet er PER MOTTAKER, ikke ett rundt hele sløyfa. Den typiske
+    feilen rammer én rad (en identitet er slettet, en rad kolliderer), og de
+    andre godkjennerne skal ikke miste varselet sitt fordi den ene feilet.
     """
     try:
-        sett_kontekst(conn, tenant, aktor, request_id)
-        n = 0
-        for bid in mottakere_for_runde(conn, tenant, utkast_id, runde):
-            if opprett(conn, tenant=tenant, bruker_id=bid,
-                       art="attestering_venter", ressurs_type="policyutkast",
-                       ressurs_id=utkast_id, hendelse=str(runde),
-                       tekstnokkel="varsel.attestering_venter",
-                       parametre={"policy_id": policy_id, "runde": runde,
-                                  "risikoklasse": risikoklasse,
-                                  "gjenstaar": gjenstaar}):
-                n += 1
-        return n
+        with conn.transaction():
+            sett_kontekst(conn, tenant, aktor, request_id)
+            mottakere = mottakere_for_runde(conn, tenant, utkast_id, runde)
     except Exception:                                         # noqa: BLE001
         return 0
+    n = 0
+    for bid in mottakere:
+        try:
+            with conn.transaction():
+                if opprett(conn, tenant=tenant, bruker_id=bid,
+                           art="attestering_venter",
+                           ressurs_type="policyutkast",
+                           ressurs_id=utkast_id, hendelse=str(runde),
+                           tekstnokkel="varsel.attestering_venter",
+                           parametre={"policy_id": policy_id, "runde": runde,
+                                      "risikoklasse": risikoklasse,
+                                      "gjenstaar": gjenstaar}):
+                    n += 1
+        except Exception:                                     # noqa: BLE001
+            continue
+    return n
 
 
 def innboks(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
