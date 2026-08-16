@@ -871,3 +871,328 @@ test("Tilbake til lista: kolonnevalget står igjen", async () => {
     "radene var sortert, men aria-sort sa «usortert» til skjermleseren");
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// Eier attesterte, så ingenting skje, og meldte «jeg klikker, men får ikke
+// beskjed at den er validert og attestert». Serveren hadde svart korrekt hele
+// tiden — «venter_godkjennere», 1 avgitt av 2 — men svaret nådde aldri
+// skjermen: det gikk til `meldLive` (aria-live), og et halvt sekund senere
+// tegnet `paaFerdig()` hele siden på nytt.
+//
+// Kontroll for begge testene under: bytt `_settKvittering(...)` tilbake til
+// `meldLive(...)`, eller la `detaljInnhold` slutte å tegne `taKvittering()`,
+// så blir de røde. Å asserte på et aria-live-område ville IKKE fanget feilen —
+// den gamle koden fylte jo nettopp det.
+test("Attester: utfallet er SYNLIG etter gjentegningen, med antall som gjenstår",
+  async () => {
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({
+        utfall: "venter_godkjennere", antall: 1, gjenstaar: 1,
+        mangler_uavhengig: true }) }) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+    _finn(h, t("ui.policyadmin.handling.attester"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+    const bek = [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+    [...bek.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+      .dispatchEvent(new window.Event("click"));
+
+    // Kvitteringen skal stå i den NYE siden — altså etter at detaljen er hentet
+    // og `sett(hoved, …)` har byttet ut alt innholdet.
+    await vent(() => h.querySelector(".pa-kvittering"));
+    const kvitt = h.querySelector(".pa-kvittering");
+    assert.ok(kvitt, "utfallet av attesteringen er ikke synlig noe sted");
+    assert.equal(kvitt.getAttribute("role"), "status",
+      "utfallet må annonseres av seg selv, politt");
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.venter_godkjennere")));
+    // Tallene er hele poenget: «venter på flere godkjennere» uten «1 av 2»
+    // sier ikke om det står på deg eller på noen andre.
+    assert.ok(kvitt.textContent.includes("1"), "antall avgitt/gjenstår mangler");
+    assert.ok(kvitt.textContent.includes(
+      t("ui.policyadmin.utfall.mangler_uavhengig")),
+    "at det MÅ være en annen enn forfatteren, er den avgjørende opplysningen");
+    assert.ok(!kvitt.textContent.includes("{avgitt}")
+      && !kvitt.textContent.includes("{gjenstaar}"),
+    "plassholderne er ikke fylt inn");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+test("Valider: et gyldig utkast gir en synlig kvittering, ikke bare stillhet",
+  async () => {
+    const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+    _finn(h, t("ui.policyadmin.handling.valider"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".pa-kvittering"));
+    const kvitt = h.querySelector(".pa-kvittering");
+    assert.ok(kvitt, "«Valider» ga ingen synlig tilbakemelding");
+    assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"));
+    assert.equal(kvitt.getAttribute("role"), "status");
+    // Suksess og feil skal ikke se like ut.
+    assert.ok(kvitt.classList.contains("pa-kvittering-ok"));
+    assert.equal(h.querySelectorAll(".pa-valfeil").length, 0,
+      "et gyldig utkast skal ikke vise feilboksen");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Kvitteringen hører til handlingen som nettopp skjedde. Uten «forbruk én
+// gang» ville den blitt hengende igjen og bekreftet en attestering på nytt
+// hver gang siden ble tegnet av en helt annen grunn.
+test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering"));
+  // Tilbake til lista og inn igjen: en NY tegning av samme detalj.
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+  assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+    "kvitteringen ble hengende igjen og bekrefter noe som ikke skjedde nå");
+});
+
+// Codex P2: `rebasering_kreves` og `semantikk_endret` er TERMINALE utfall —
+// serveren har kansellert aktiveringsrunden og krever en ny handling av eier —
+// men de kommer som 200. De traff derfor `.then`, der alt som ikke var
+// `aktivert` ble klassifisert som «vent», og en kansellert runde fikk samme
+// rolige ventestil som en runde som går sin gang. Samme `rebasering_kreves`
+// ble vist som FEIL når den kom som `ApiFeil`: ett utfall, to farger, og den
+// villedende av dem sa «len deg tilbake» til noen som må åpne ny runde.
+//
+// Kontroll: sett `UTFALLSART` tilbake til «alt som ikke er aktivert = vent», så
+// blir testen rød.
+const _attesterMedUtfall = async (h, svar) => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({ ok: true, status: 200, json: async () => svar }) };
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+  _finn(h, t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+    .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+  const bek = [...document.querySelectorAll('[role="dialog"]')]
+    .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+  [...bek.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering"));
+  return h.querySelector(".pa-kvittering");
+};
+
+test("Attester: kansellert runde er en FEIL, ikke en ventetilstand", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(),
+    { utfall: "rebasering_kreves" });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.rebasering_kreves")));
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"),
+    "en kansellert runde ble vist med ventestil — eier tror hun kan vente");
+  assert.ok(!kvitt.classList.contains("pa-kvittering-vent"));
+  assert.equal(kvitt.getAttribute("role"), "alert",
+    "et terminalt utfall krever handling og skal ikke annonseres politt");
+});
+
+test("Attester: semantikkendring er en FEIL, ikke en ventetilstand", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(),
+    { utfall: "semantikk_endret" });
+  assert.ok(kvitt.textContent.includes(
+    t("ui.policyadmin.utfall.semantikk_endret")));
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+});
+
+// `vent` er reservert for det ENE utfallet der ventingen faktisk ER svaret. Et
+// utfall flaten ikke kjenner, er ikke en bekreftet aktivering, og skal verken
+// se ut som en eller som en rolig venting (fail-closed).
+test("Attester: ukjent utfall bekrefter ingenting", async () => {
+  const kvitt = await _attesterMedUtfall(nyHoved(), { utfall: "noe_nytt" });
+  assert.ok(kvitt.classList.contains("pa-kvittering-feil"));
+  assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.utfall.ukjent"));
+  assert.ok(!kvitt.textContent.includes(t("ui.policyadmin.utfall.aktivert")),
+    "et ukjent utfall skal ikke påstå at policyen er aktivert");
+});
+
+// Codex P2: et `role="status"` annonserer ikke pålitelig tekst som lå der
+// allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
+// bare `role="alert"` som vanligvis får. Bygde vi kvitteringsboksen ferdig
+// utfylt og satte hele undertreet inn i ett jafs, kunne altså nettopp de
+// POSITIVE utfallene bli tause for skjermleseren: synlig på skjermen, stille i
+// lyd. Regionen skal derfor stå i dokumentet FØRST, og teksten komme som en
+// egen endring etterpå.
+//
+// Testen ser på selve rekkefølgen, ikke på sluttresultatet: sluttilstanden er
+// jo lik uansett. Kontroll: legg teksten tilbake i `el("p", { text: … })`, så
+// kommer hele boksen som ÉN mutasjon og testen blir rød.
+test("Kvitteringen fylles ETTER at live-området står i dokumentet", async () => {
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+
+  const logg = [];
+  const obs = new window.MutationObserver((r) => logg.push(...r));
+  obs.observe(h, { childList: true, subtree: true, characterData: true });
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".pa-kvittering"));
+  logg.push(...obs.takeRecords());
+  obs.disconnect();
+
+  const kvitt = h.querySelector(".pa-kvittering");
+  assert.equal(kvitt.getAttribute("role"), "status");
+  assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
+    "teksten kom aldri inn i live-området");
+
+  const iInnsatt = logg.findIndex((r) => [...r.addedNodes].some(
+    (n) => n.nodeType === 1 && (n === kvitt || n.contains(kvitt))));
+  const iTekst = logg.findIndex((r) => kvitt.contains(r.target)
+    && [...r.addedNodes].some((n) => n.nodeType === 3
+      && n.data.includes(t("ui.policyadmin.validert"))));
+  assert.ok(iInnsatt >= 0, "kvitteringen ble aldri satt inn i `hoved`");
+  assert.ok(iTekst > iInnsatt,
+    "teksten lå allerede i live-området da det ble satt inn — da kan "
+    + "skjermleseren gå glipp av den");
+});
+
+// Eier P1 / Codex P2: kvitteringen var en naken modulglobal uten identitet.
+// Attesterte man A og gikk tilbake mens gjentegningen av A fortsatt var ute på
+// nettet, avviste eierskapssjekken den tegningen — men kvitteringen ble
+// liggende igjen i modulen. Neste utkast som ble tegnet, forbrukte den, og
+// skjermen bekreftet «attestert — venter på godkjennere» på FEIL policy. I en
+// styringsflate er det den verste formen for feil: den bekrefter en
+// fullmaktshandling på et annet objekt enn det handlingen traff.
+//
+// Kontroll: la `taKvittering` slutte å kreve `uid`, eller flytt kallet tilbake
+// ned i `detaljInnhold`, så blir testen rød.
+test("Kvitteringen for A lekker ikke til B når A-tegningen aldri kom fram",
+  async () => {
+    let slippA = null;
+    let aRunde = 0;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policyutkast/u-1" && !(opts && opts.method)) {
+        // Første GET tegner detaljen. Den ANDRE er gjentegningen `paaFerdig()`
+        // starter etter attesteringen — den holdes ute på nettet.
+        if (++aRunde === 2) await new Promise((r) => { slippA = r; });
+        return { ok: true, status: 200, json: async () => DETALJ };
+      }
+      if (sti === "/v1/policyutkast/u-2") {
+        return { ok: true, status: 200, json: async () => Object.assign(
+          {}, DETALJ, { utkast_id: "u-2", policy_id: "lonn-no" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = { "/v1/policyutkast": TO_UTKAST,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({
+        utfall: "venter_godkjennere", antall: 1, gjenstaar: 1,
+        mangler_uavhengig: true }) }) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelectorAll("tbody button").length === 2);
+    const aapne = (polId) => [...h.querySelectorAll("tbody tr")]
+      .find((tr) => tr.textContent.includes(polId)).querySelector("button");
+
+    aapne("faktura-no").dispatchEvent(new window.Event("click"));   // A = u-1
+    await vent(() => _finn(h, t("ui.policyadmin.handling.attester")));
+    _finn(h, t("ui.policyadmin.handling.attester"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer"))));
+    const bek = [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policyadmin.du_aktiverer")));
+    [...bek.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippA);            // gjentegningen av A er ute på nettet
+
+    // Eier gir opp å vente og går tilbake, så inn i et ANNET utkast.
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelectorAll("tbody button").length === 2);
+    aapne("lonn-no").dispatchEvent(new window.Event("click"));      // B = u-2
+    await vent(() => h.textContent.includes("lonn-no")
+      && _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "attesteringen av A ble kvittert ut på utkast B");
+
+    // Og den skal heller ikke dukke opp når det foreldede A-svaret lander.
+    slippA();
+    await vent(() => false, 20);
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "det foreldede A-svaret tegnet kvitteringen sin inn i utkast B");
+    assert.ok(h.textContent.includes("lonn-no"),
+      "det foreldede A-svaret rev bort utkastet eier står i");
+    globalThis.fetch = brukFetch;
+  });
+
+// Codex P2: kvitteringen ble forbrukt da tegningen startet, men feilgrenen
+// tegnet den aldri. Lyktes handlingen mens den påfølgende detalj-GET-en feilet,
+// fikk eier INGEN tilbakemelding på noe som FAKTISK ble utført — bare en naken
+// feiltilstand — og «Prøv igjen» kunne ikke hente kvitteringen tilbake, for den
+// var borte for godt. Det nærliggende neste trekket er da å gjøre handlingen om
+// igjen. Utfallet av HANDLINGEN og utfallet av OPPFRISKNINGEN er to
+// forskjellige ting, og begge er sanne samtidig.
+//
+// Kontroll: fjern tegningen av `boks` i `.catch`-grenen, så blir testen rød.
+test("Kvitteringen overlever at gjentegningen feiler", async () => {
+  let gets = 0;
+  SVAR = {
+    "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": { ...DETALJ, status: "utkast", aktiv_runde: null },
+    // Første GET tegner detaljen. Den ANDRE er gjentegningen `paaFerdig()`
+    // starter etter valideringen — den svarer 404.
+    __get: (sti) => {
+      if (sti === "/v1/policyutkast/u-1" && ++gets === 2) delete SVAR[sti];
+    },
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+  };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".tilstand.feil"));
+
+  const kvitt = h.querySelector(".pa-kvittering");
+  assert.ok(kvitt,
+    "handlingen ble utført, men eier fikk ingen kvittering — da gjør hun den om");
+  assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
+    "kvitteringen ble tegnet tom");
+  assert.ok(kvitt.classList.contains("pa-kvittering-ok"),
+    "det var oppfriskningen som feilet, ikke handlingen");
+  // Feiltilstanden skal fortsatt stå: den sier noe annet enn kvitteringen.
+  assert.ok(_finn(h, t("ui.prov_igjen")),
+    "veien ut av den feilede gjentegningen forsvant");
+  assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});

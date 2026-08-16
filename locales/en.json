@@ -451,7 +451,7 @@
   "ui.policyadmin.utfall.venter_godkjennere": "Attested — awaiting more approvers.",
   "ui.policyadmin.utfall.rebasering_kreves": "The basis has changed — rebasing required.",
   "ui.policyadmin.utfall.semantikk_endret": "Engine semantics changed — open a new round.",
-  "ui.policyadmin.utfall.ukjent": "The action is done.",
+  "ui.policyadmin.utfall.ukjent": "Unknown outcome — check the state of the draft before continuing.",
   "risiko.UTVIDER": "Expands authority",
   "risiko.INNSNEVRER": "Narrows",
   "risiko.NØYTRAL": "Neutral",
@@ -649,5 +649,7 @@
   "ui.policyadmin.fane.endringer": "Changes",
   "ui.policyadmin.fane.fire_oyne": "Four eyes",
   "ui.policyadmin.tilbake_til_liste": "← Back to drafts",
-  "ui.policyadmin.detalj_undertittel": "Draft {id}"
+  "ui.policyadmin.detalj_undertittel": "Draft {id}",
+  "ui.policyadmin.utfall.venter_antall": "{avgitt} approval(s) given, {gjenstaar} remaining.",
+  "ui.policyadmin.utfall.mangler_uavhengig": "At least one approver must be someone other than the author."
 }

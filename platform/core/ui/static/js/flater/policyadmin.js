@@ -10,7 +10,7 @@ import {
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
-  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, meldLive, Faner,
+  Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, Faner,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -84,6 +84,98 @@ function fireOyneStatus(runde) {
       text: t("ui.policyadmin.ingen_attestasjoner") }));
 }
 
+// Utfallet av en handling skal SES, ikke bare annonseres — og det må overleve
+// gjentegningen.
+//
+// To feil lå oppå hverandre her. Utfallet gikk bare til `meldLive`, altså
+// aria-live-området: en skjermleser fikk beskjed, skjermen var uendret. Og selv
+// om det HADDE blitt tegnet, ville det forsvunnet umiddelbart, for hver
+// vellykket handling kaller `paaFerdig()` → `aapneDetalj()` → `sett(hoved, …)`,
+// som bytter ut hele siden. Eier attesterte, så ingenting, og konkluderte med
+// at klikket ikke virket — mens serveren hadde svart «venter_godkjennere: 1
+// avgitt, 1 gjenstår».
+//
+// Utfallet legges derfor til side og tegnes inn i den NYE siden, rett under
+// overskriften der fokus havner. Det er en `role="status"`, som er et politt
+// live-område: innsettingen annonseres av seg selv, så det skal IKKE følges av
+// et `meldLive` — da ville ett klikk gitt to konkurrerende opplesninger (samme
+// funn Codex hadde på valideringsboksen).
+//
+// Kvitteringen BÆRER HVILKET UTKAST den gjelder, og lever bare fram til den
+// tegningen handlingen selv startet (Codex P2 / eier P1). Uten det var den en
+// naken modulglobal: attesterte man A og gikk tilbake før detalj-GET-en kom,
+// avviste `eierSkjermen(min)` tegningen — men kvitteringen ble liggende. Neste
+// utkast som ble tegnet, HVILKET SOM HELST, forbrukte den og viste
+// «attestert / venter på godkjennere» på feil policy. I en styringsflate er
+// det ikke en kosmetisk feil: skjermen bekrefter da en fullmaktsendring på et
+// annet objekt enn det handlingen traff.
+let _ventendeKvittering = null;
+
+function _settKvittering(uid, art, tekst) {
+  _ventendeKvittering = { uid, art, tekst };
+}
+
+// Forbrukes ÉN gang, og bare av utkastet den gjelder: kvitteringen hører til
+// handlingen som nettopp skjedde, og skal verken dukke opp igjen neste gang
+// siden tegnes av andre grunner, eller på et annet utkast.
+//
+// Den tas UT av modulen med én gang tegningen starter — ikke når det tegnes.
+// Da eier den enkelte tegningen kvitteringen alene: blir tegningen foreldet,
+// dør kvitteringen med den i stedet for å bli liggende og vente på en tilfeldig
+// neste tegning. En kvittering som er satt for et annet utkast er per
+// definisjon foreldet her, og forkastes.
+//
+// Å eie den innebærer også en PLIKT: en tegning som fortsatt eier skjermen må
+// tegne kvitteringen sin, også når selve oppfriskningen feiler. Ellers bytter
+// vi én feil (kvittering på feil utkast) mot en annen (ingen kvittering for en
+// handling som faktisk ble utført).
+function taKvittering(uid) {
+  const k = _ventendeKvittering;
+  _ventendeKvittering = null;
+  return k && k.uid === uid ? k : null;
+}
+
+// Live-området settes inn TOMT og fylles først når det står i dokumentet
+// (Codex P2). Et `role="status"` annonserer ikke pålitelig tekst som lå der
+// allerede da området kom inn i tilgjengelighetstreet — den oppførselen er det
+// bare `role="alert"` som vanligvis får. Bygget vi hele boksen ferdig utfylt og
+// satte den inn som del av ett stort undertre, kunne altså nettopp de POSITIVE
+// utfallene («validert», «venter på godkjennere») bli tause for skjermleseren —
+// samme klasse feil som den vi kom fra, bare et hakk dypere: synlig på skjermen,
+// stille i lyd. Derfor to trinn: regionen først, teksten som en egen endring
+// ETTERPÅ, som live-området er laget for å fange opp.
+//
+// Returnerer { rot, fyll } — den som setter inn `rot`, kaller `fyll()` etterpå.
+function kvitteringsBoks(k) {
+  const linje = el("p", {});
+  const rot = el("div", {
+    class: `pa-kvittering pa-kvittering-${k.art}`,
+    role: k.art === "feil" ? "alert" : "status",
+  }, linje);
+  return { rot, fyll: () => sett(linje, k.tekst) };
+}
+
+// En attestering har TRE utfallsfamilier, ikke to (Codex P2).
+//
+// `rebasering_kreves` og `semantikk_endret` er TERMINALE: serveren har
+// KANSELLERT aktiveringsrunden (se `policyadmin.py` — runden settes til
+// 'kansellert' rett før svaret) og krever en ny handling av eier. Men de kommer
+// som 200, ikke som feil, så de traff `.then` — og der ble alt som ikke var
+// `aktivert` klassifisert som «vent». En kansellert runde fikk dermed samme
+// rolige ventestil som en runde som går sin gang, mens SAMME `rebasering_kreves`
+// ble vist som feil når den kom som `ApiFeil`. Samme utfall, to farger, og den
+// mest villedende av dem sa «len deg tilbake» til noen som må åpne ny runde.
+//
+// Kartet er derfor eksplisitt, og alt ukjent faller til `feil`: et utfall denne
+// flaten ikke kjenner, er ikke en bekreftet aktivering, og skal ikke se ut som
+// en. `vent` er reservert for det ENE utfallet der ventingen er svaret.
+const UTFALLSART = {
+  aktivert: "ok",
+  venter_godkjennere: "vent",
+  rebasering_kreves: "feil",
+  semantikk_endret: "feil",
+};
+
 // ÉN idempotensnøkkel per aktiveringsforsøk — gjenbrukes ved nettverksretry, så
 // serveren ser samme nøkkel og ikke aktiverer to ganger.
 function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
@@ -91,8 +183,21 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
   const forsok = (attempt) =>
     attesterAktivering(uid, diffHash, nokkel).then((svar) => {
       const utfall = (svar && svar.utfall) || "";
-      meldLive(t(`ui.policyadmin.utfall.${utfall}`,
-        t("ui.policyadmin.utfall.ukjent")));
+      // «Venter på flere godkjennere» skal si HVOR MANGE, og om det som
+      // mangler er en UAVHENGIG godkjenner. Det er opplysningen som avgjør hva
+      // du gjør videre, og den lå i svaret hele tiden.
+      let tekst = t(`ui.policyadmin.utfall.${utfall}`,
+        t("ui.policyadmin.utfall.ukjent"));
+      if (utfall === "venter_godkjennere") {
+        tekst += " " + t("ui.policyadmin.utfall.venter_antall")
+          .replace("{avgitt}", String(svar.antall != null ? svar.antall : "?"))
+          .replace("{gjenstaar}",
+                   String(svar.gjenstaar != null ? svar.gjenstaar : "?"));
+        if (svar.mangler_uavhengig) {
+          tekst += " " + t("ui.policyadmin.utfall.mangler_uavhengig");
+        }
+      }
+      _settKvittering(uid, UTFALLSART[utfall] || "feil", tekst);
       if (paaFerdig) paaFerdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -102,16 +207,17 @@ function utfoerAttest(uid, diffHash, paaFerdig, ctx) {
         return forsok(1);
       }
       if (e instanceof ApiFeil && e.kode === "rebasering_kreves") {
-        meldLive(t("ui.policyadmin.utfall.rebasering_kreves"));
+        _settKvittering(uid, "feil",
+          t("ui.policyadmin.utfall.rebasering_kreves"));
         if (paaFerdig) paaFerdig();
         return;
       }
       if (e instanceof ApiFeil && e.kode === "diff_utdatert") {
-        meldLive(t("ui.policyadmin.diff_utdatert"));
+        _settKvittering(uid, "feil", t("ui.policyadmin.diff_utdatert"));
         if (paaFerdig) paaFerdig();
         return;
       }
-      meldLive(t("ui.policyadmin.feilet"));
+      _settKvittering(uid, "feil", t("ui.policyadmin.feilet"));
       if (paaFerdig) paaFerdig();
     });
   return forsok(0);
@@ -174,7 +280,10 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
     b.addEventListener("click", () =>
       validerUtkast(uid, detalj.utkastversjon, valNokkel).then(() => {
         boks.querySelectorAll(".pa-valfeil").forEach((n) => n.remove());
-        meldLive(t("ui.policyadmin.validert"));
+        // «Valider» hadde samme feil som «Attester»: et grønt utfall gikk bare
+        // til aria-live, og siden ble tegnet på nytt i samme åndedrag. Eier så
+        // et klikk uten virkning enten utkastet var gyldig eller ikke.
+        _settKvittering(uid, "ok", t("ui.policyadmin.validert"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
@@ -200,11 +309,15 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
       text: t("ui.policyadmin.handling.apne_runde") });
     b.addEventListener("click", () =>
       apneRunde(uid, rundeNokkel).then(() => {
-        meldLive(t("ui.policyadmin.runde_apnet"));
+        _settKvittering(uid, "ok", t("ui.policyadmin.runde_apnet"));
         if (paaFerdig) paaFerdig();
       }).catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        meldLive(t("ui.policyadmin.feilet"));
+        // Ingen gjentegning her, så feilen tegnes rett i handlingsboksen —
+        // synlig, ikke bare hørbar.
+        boks.querySelectorAll(".pa-kvittering").forEach((n) => n.remove());
+        boks.append(el("div", { class: "pa-kvittering pa-kvittering-feil",
+          role: "alert" }, el("p", { text: t("ui.policyadmin.feilet") })));
       }));
     boks.append(b);
     return { rot: boks, diffVist };
@@ -261,7 +374,7 @@ function handlinger(detalj, uid, ctx, paaFerdig, aapneEditor) {
   return { rot: boks, diffVist };
 }
 
-function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
+function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor, kvitt) {
   const dl = el("dl", { class: "kv" });
   kvRad(dl, t("ui.policyadmin.kol.policy"), detalj.policy_id);
   kvRad(dl, t("ui.policyadmin.kol.status"),
@@ -301,7 +414,17 @@ function detaljInnhold(detalj, uid, ctx, paaFerdig, aapneEditor) {
     && ["apen", "klar"].includes(detalj.aktiv_runde.status);
   const faner = Faner({ trinn, start: venterAttest ? "endringer" : "oversikt",
     paaBytte: (nokkel) => { if (nokkel === "endringer") handl.diffVist(); } });
-  return el("div", {}, faner.rot, handl.rot);
+  // Kvitteringen står ØVERST, rett under overskriften fokus settes til — ikke
+  // nederst ved knappen, som kan være utenfor skjermen etter gjentegningen.
+  // Den kommer inn utenfra: den som STARTET tegningen har tatt den, så en
+  // tegning som aldri når skjermen ikke etterlater seg en kvittering.
+  const boks = kvitt ? kvitteringsBoks(kvitt) : null;
+  // { rot, ferdig } — `ferdig()` kalles av den som har SATT INN `rot`, og fyller
+  // live-området når det først står i dokumentet.
+  return {
+    rot: el("div", {}, ...(boks ? [boks.rot] : []), faner.rot, handl.rot),
+    ferdig: () => { if (boks) boks.fyll(); },
+  };
 }
 
 function tilbakeKnapp(tilbakeTilListe) {
@@ -370,25 +493,38 @@ export function visPolicyadmin(hoved, ctx) {
   // tilbake, slik editoren allerede gjør.
   function aapneDetalj(uid) {
     const min = nyVisning();
+    // Kvitteringen hentes HER, ikke nede i tegningen: fra nå av er den DENNE
+    // tegningens eiendom og ligger ikke igjen i modulen. Kommer svaret etter at
+    // eier har navigert bort, faller kvitteringen bort sammen med tegningen —
+    // den kan ikke lenger forbrukes av et annet utkast. Men så lenge tegningen
+    // FORTSATT eier skjermen, skal den vise kvitteringen sin uansett hvordan
+    // den ender: begge grenene under tegner den.
+    const kvitt = taKvittering(uid);
     hentJson(`/v1/policyutkast/${uid}`).then((detalj) => {
       if (!eierSkjermen(min)) return;
+      // En handling som fullfører ETTER at eier har forlatt detaljsiden, skal
+      // ikke hente den tilbake (Codex P1). `paaFerdig` friskner opp siden
+      // etter Valider/Åpne runde/Attester — riktig så lenge siden er den man
+      // står i. Klikket eier «Valider» og så «Rediger», lå POST-en fortsatt
+      // ute mens editoren tok over `hoved`: svaret kom, kalte `aapneDetalj`,
+      // og erstattet editoren — med det hun hadde rukket å skrive i den.
+      // Oppfriskningen bæres derfor av visningen den ble startet fra.
+      // Selve utfallet annonseres uansett: handlingen ER utført, og det skal
+      // eier få vite selv om skjermen har gått videre.
+      const innhold = detaljInnhold(detalj, uid, ctx,
+        () => { if (eierSkjermen(min)) aapneDetalj(uid); }, aapneEditor, kvitt);
       sett(hoved,
         ...flateHode(
           `${t("ui.policyadmin.detalj_tittel")}: ${detalj.policy_id}`,
           t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
         tilbakeKnapp(tilbakeTilListe),
-        // En handling som fullfører ETTER at eier har forlatt detaljsiden, skal
-        // ikke hente den tilbake (Codex P1). `paaFerdig` friskner opp siden
-        // etter Valider/Åpne runde/Attester — riktig så lenge siden er den man
-        // står i. Klikket eier «Valider» og så «Rediger», lå POST-en fortsatt
-        // ute mens editoren tok over `hoved`: svaret kom, kalte `aapneDetalj`,
-        // og erstattet editoren — med det hun hadde rukket å skrive i den.
-        // Oppfriskningen bæres derfor av visningen den ble startet fra.
-        // Selve utfallet annonseres uansett: handlingen ER utført, og det skal
-        // eier få vite selv om skjermen har gått videre.
-        detaljInnhold(detalj, uid, ctx,
-          () => { if (eierSkjermen(min)) aapneDetalj(uid); }, aapneEditor));
+        innhold.rot);
       fokuserOverskrift(hoved);
+      // Kvitteringsteksten settes ETTER at siden står og fokus er flyttet:
+      // live-området skal fange en ENDRING i et område som allerede er i
+      // tilgjengelighetstreet, og annonseringen skal ikke bli avbrutt av
+      // fokusflyttingen rett etterpå.
+      innhold.ferdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (!eierSkjermen(min)) return;
@@ -401,14 +537,26 @@ export function visPolicyadmin(hoved, ctx) {
       //
       // «Prøv igjen» tilbys bare der den kan hjelpe: 403 er ingen forbigående
       // feil, og en knapp som lover et annet svar neste gang lyver.
+      //
+      // Kvitteringen følger tegningen HIT også (Codex P2). Utfallet av
+      // HANDLINGEN og utfallet av OPPFRISKNINGEN er to forskjellige ting:
+      // attesteringen lyktes, det er gjentegningen som feilet. Uten dette ble
+      // kvitteringen forbrukt da tegningen startet og så aldri tegnet — eier
+      // fikk INGEN tilbakemelding på en fullført fullmaktshandling, og «Prøv
+      // igjen» kunne ikke hente den tilbake, for den var borte for godt. Det
+      // nærliggende neste trekket er da å attestere om igjen. Derfor står
+      // begge: hva som skjedde, og at siden ikke kunne hentes etterpå.
+      const boks = kvitt ? kvitteringsBoks(kvitt) : null;
       sett(hoved,
         ...flateHode(t("ui.policyadmin.detalj_tittel"),
           t("ui.policyadmin.detalj_undertittel").replace("{id}", uid)),
         tilbakeKnapp(tilbakeTilListe),
+        ...(boks ? [boks.rot] : []),
         e instanceof IngenTilgangFeil
           ? TilgangsVakt({})
           : Feiltilstand({ paaProvIgjen: () => aapneDetalj(uid) }));
       fokuserOverskrift(hoved);
+      if (boks) boks.fyll();
     });
   }
 
