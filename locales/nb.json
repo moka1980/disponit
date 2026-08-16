@@ -600,6 +600,7 @@
   "ui.editor.policy_id_hint_ingen_aktiv": "Minst 3 tegn: små bokstaver, tall og bindestrek. Ingen policy er aktiv i dag, så denne blir den første.",
   "ui.editor.policy_id_laast": "Identiteten er låst etter opprettelse. Trenger du en annen id, lag et nytt utkast.",
   "ui.editor.policy_id_rettet": "Utkastet oppga «{id}» i dokumentet, men er registrert under id-en over. Feltet er rettet til den registrerte id-en — lagre for å rette dokumentet. Skal utkastet gjelde «{id}», lag et nytt utkast under den id-en.",
+  "ui.editor.status_laast": "Utkastet lagres og aktiveres som produksjonspolicy. Statusen er ikke et valg her: en fire-øyne-runde aktiverer alltid produksjonsversjonen.",
   "ui.editor.belop_hint": "Tall med inntil to desimaler, uten mellomrom.",
   "ui.editor.valuta_ingen": "Ingen valutabegrensning",
   "ui.editor.valuta_legg_til": "Legg til valuta",

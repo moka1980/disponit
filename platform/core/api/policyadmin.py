@@ -260,16 +260,16 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # Den KANONISKE validatoren: skjema + lag-2-semantikk (referanse-integritet,
     # modus/vilkår osv.) — samme port motoren bruker (PR-014 R2).
     feil = _schema.valider_policy(innhold)
-    # Identiteten er ingen skjemasak: skjemaet ser bare dokumentet, og et
-    # dokument kan være helt gyldig og LIKEVEL oppgi en annen `meta.policy_id`
-    # enn raden det ligger under (Codex P1). Valideringen er stedet å stoppe
-    # det: det er her innholdet FRYSES, og et frosset dokument kan ikke rettes
-    # etterpå — bare erstattes av et nytt utkast. Avviket legges i feillisten
-    # sammen med skjemafeilene, så eier ser NØYAKTIG hva som må rettes i
-    # editoren, ikke bare at «noe» er galt.
-    avvik = _dokumentidentitet_avvik(policy_id, innhold)
-    if avvik is not None:
-        feil = list(feil) + [avvik]
+    # Identiteten og statusen er ingen skjemasak: skjemaet ser bare dokumentet,
+    # og et dokument kan være helt gyldig og LIKEVEL oppgi en annen
+    # `meta.policy_id` enn raden det ligger under, eller en `meta.status` som
+    # ikke er den aktiveringen skriver (Codex P1). Valideringen er stedet å
+    # stoppe begge: det er her innholdet FRYSES, og et frosset dokument kan ikke
+    # rettes etterpå — bare erstattes av et nytt utkast. Fanget vi det først ved
+    # rundeåpning, sto eier igjen med et validert utkast hun verken kunne
+    # aktivere eller redigere. Avvikene legges i feillisten sammen med
+    # skjemafeilene, så eier ser NØYAKTIG hva som må rettes i editoren.
+    feil = list(feil) + _dokumentavvik(policy_id, innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -420,6 +420,13 @@ def _krev_peker_synk(conn, tenant: str, policy_id: str,
             "aktiv_peker_usynk", f"peker={aktiv_versjon} flagg={flagget}")
 
 
+#: Statusen den STYRTE aktiveringen skriver i registeret (`aktiver_policy`
+#: steg 5: `status = 'produksjon'`). Hvilke statuser en LASTET policy får ha er
+#: miljøstyrt (`policyregister.tillatte_statuser`) — hva fire-øyne-veien
+#: aktiverer, er det ikke: den aktiverer produksjonspolicyer, i alle miljøer.
+_AKTIVERINGSSTATUS = "produksjon"
+
+
 def _meta(innhold) -> dict:
     """`innhold.meta` som dict — tomt kart om den mangler eller er noe annet."""
     m = innhold.get("meta") if isinstance(innhold, dict) else None
@@ -449,6 +456,26 @@ def _dokumentidentitet_avvik(policy_id: str, innhold) -> str | None:
             f" {policy_id!r}")
 
 
+def _dokumentavvik(policy_id: str, innhold) -> list[str]:
+    """Alt som gjør at det frosne dokumentet ikke KAN aktiveres slik det står.
+
+    Kravene er identiske med portens (`_krev_dokumentidentitet`,
+    `_krev_produksjonsstatus`) og databasens (migrasjon 022/023) — samlet her
+    fordi valideringen trenger dem som TEKST, ikke som feil: der er de ennå til
+    å rette. Etter frysingen er de ikke det.
+    """
+    avvik = []
+    identitet = _dokumentidentitet_avvik(policy_id, innhold)
+    if identitet is not None:
+        avvik.append(identitet)
+    status = _meta(innhold).get("status")
+    if status != _AKTIVERINGSSTATUS:
+        avvik.append(
+            f"meta.status {status!r} må være {_AKTIVERINGSSTATUS!r} — en"
+            " fire-øyne-runde aktiverer policyen som produksjonspolicy")
+    return avvik
+
+
 def _krev_dokumentidentitet(policy_id: str, innhold) -> None:
     """Som `_dokumentidentitet_avvik`, men for de styrte veiene: kaster
     `Aktiveringsfeil("policy_id_avvik")`.
@@ -460,13 +487,6 @@ def _krev_dokumentidentitet(policy_id: str, innhold) -> None:
     avvik = _dokumentidentitet_avvik(policy_id, innhold)
     if avvik is not None:
         raise Aktiveringsfeil("policy_id_avvik", avvik)
-
-
-#: Statusen den STYRTE aktiveringen skriver i registeret (`aktiver_policy`
-#: steg 5: `status = 'produksjon'`). Hvilke statuser en LASTET policy får ha er
-#: miljøstyrt (`policyregister.tillatte_statuser`) — hva fire-øyne-veien
-#: aktiverer, er det ikke: den aktiverer produksjonspolicyer, i alle miljøer.
-_AKTIVERINGSSTATUS = "produksjon"
 
 
 def _krev_produksjonsstatus(innhold) -> None:

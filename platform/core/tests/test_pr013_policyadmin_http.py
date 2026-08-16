@@ -26,13 +26,15 @@ _MAL = (Path(__file__).resolve().parents[3]
 def _gyldig(pid: str | None = None) -> dict:
     """En kjent skjemagyldig policy (bransjemalen som CI allerede validerer).
 
-    `pid` binder dokumentets `meta.policy_id` til utkastets policy_id. De to er
-    ÉN identitet (migrasjon 022) — et utkast der de spriker kan ikke valideres,
-    og malen bærer sin egen id inntil eier setter sin.
+    `pid` gjør malen til et UTKAST slik editoren gjør det: identiteten bindes
+    til utkastets policy_id (migrasjon 022), og statusen settes til den
+    aktiveringen skriver (023). Malen bærer sin egen id og `status: utkast` —
+    riktig for en mal, men et utkast som beholder dem kan ikke valideres.
     """
     pol = yaml.safe_load(_MAL.read_text(encoding="utf-8"))
     if pid is not None:
         pol["meta"]["policy_id"] = pid
+        pol["meta"]["status"] = "produksjon"
     return pol
 
 
@@ -360,6 +362,44 @@ def test_valider_avviser_dokument_med_fremmed_policy_id():
             rt, tenant=TEN, aktor="forf", request_id="r",
             utkast_id=o["utkast_id"])
         assert det["status"] == "utkast" and det["innholds_hash"] is None
+        _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
+                 utkast_id=o["utkast_id"], forventet_utkastversjon=1,
+                 innhold=_gyldig(pid))
+        ok = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                      utkast_id=o["utkast_id"], forventet_utkastversjon=2)
+        assert ok["utfall"] == "validert", ok
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_avviser_malstatus_mens_utkastet_ennaa_kan_rettes():
+    """🔴 P1: en mal bærer `status: utkast` — og fryses den slik, er den låst.
+
+    Alle tre bransjemalene oppgir `meta.status: utkast`, editoren har ingen
+    statuskontroll, og aktiveringen skriver `produksjon`. Fanget vi det først
+    ved rundeåpning, sto eier igjen med et VALIDERT utkast: frosset innhold hun
+    ikke kunne redigere, og en runde som ikke kunne åpnes. Normale UI-lagde
+    policyer kunne dermed ikke aktiveres i det hele tatt.
+
+    Kravet står derfor der utkastet ennå er redigerbart, og editoren setter
+    statusen når den bygger innholdet.
+
+    Kontroll: fjern statusdelen av `_dokumentavvik`, så blir denne rød med
+    utfall `validert` — og utkastet innelåst.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig(pid)
+    pol["meta"]["status"] = "utkast"          # slik malen kommer
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig", res
+        assert any("meta.status" in f for f in res["feil"]), res["feil"]
+        # Utkastet er IKKE frosset: eier retter statusen og validerer igjen.
         _rediger(rt, tenant=TEN, aktor="forf", request_id="r",
                  utkast_id=o["utkast_id"], forventet_utkastversjon=1,
                  innhold=_gyldig(pid))

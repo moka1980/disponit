@@ -120,10 +120,33 @@ test("Ny: malvelger → skjema → lagre POSTer med CSRF + Idempotency-Key", asy
   const sendt = JSON.parse(POST.opts.body);
   assert.equal(sendt.policy_id, "acme-netthandel");
   assert.equal(sendt.innhold.handlinger[0].modus, "alltid_stopp");
+  // Codex P1: malen bærer `status: utkast`. Lagres den slik, validerer
+  // utkastet ikke — og etter frysing kan statusen ikke rettes noe sted, for
+  // editoren har ingen statuskontroll. Utkastet blir derfor bygget som det
+  // aktiveringen faktisk skriver.
+  assert.equal(sendt.innhold.meta.status, "produksjon",
+    "utkastet ble lagret med malens status og kan ikke aktiveres");
   await vent(() => aapnet === "u-ny");
   assert.equal(aapnet, "u-ny");
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
+
+test("Grunnopplysninger: eier får VITE at utkastet blir en produksjonspolicy",
+  async () => {
+    // Statusen skrives inn i dokumentet ved lagring. En stille endring av et
+    // felt eier tror hun eier, er ikke greit — så den står i klartekst, som en
+    // opplysning og ikke som et valg (de andre statusene kan ikke aktiveres).
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: {
+      meta: { policy_id: "acme", versjon: "1.0.0", bransjemal: "x",
+              status: "utkast" },
+      roller: [], handlinger: [],
+    } });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    assert.ok(h.textContent.includes(t("ui.editor.status_laast")),
+      "editoren sier ikke hva utkastet lagres som");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
 
 test("Rediger: laster utkastets innhold og PUTer med utkastversjon", async () => {
   const cookieDesc = Object.getOwnPropertyDescriptor(

@@ -540,14 +540,45 @@ function metaSeksjon(policy, erNy, aktiv, rettetFra) {
     tekstfelt(t("ui.editor.versjon"), m.versjon || "",
       (v) => { m.versjon = v; }),
   ];
+  // Statusen er ikke et felt eier fyller ut — den er en opplysning om hva
+  // utkastet blir. Å skrive den inn i dokumentet uten å si det ville vært en
+  // stille endring av noe eier tror hun eier; å tilby den som et valg ville
+  // vært en løgn, for de andre verdiene kan ikke aktiveres i det hele tatt.
+  felt.push(el("p", { class: "felt-hint", text: t("ui.editor.status_laast") }));
   return el("section", { class: "editor-seksjon",
     "aria-label": t("ui.editor.meta") },
     el("h3", { text: t("ui.editor.meta") }), ...felt);
 }
 
+// Statusen den STYRTE aktiveringen skriver i registeret. Editoren har ingen
+// statuskontroll, og skal ikke ha en: det finnes bare ett utfall for et utkast
+// herfra — fire-øyne-runden, som aktiverer det som produksjonspolicy.
+const AKTIVERINGSSTATUS = "produksjon";
+
+// Malene bærer `meta.status: utkast` (alle tre i `policies/`), og det er riktig
+// FOR EN MAL — den er ikke en policy i kraft. Men et utkast bygget på den er på
+// vei ett sted: gjennom fire-øyne-runden, som skriver `produksjon` i registeret.
+// `policyregister.hent_aktiv` krever at dokumentet sier det samme, så et utkast
+// som beholder malens status kan ikke aktiveres (Codex P1).
+//
+// Uten dette var utkastet INNELÅST, akkurat som med en fremmed id: valideringen
+// frøs dokumentet, rundeåpningen avviste det, og statusfeltet finnes ikke i
+// editoren — så den eneste feilen kunne ikke rettes noe sted.
+//
+// Statusen settes derfor der utkastet BYGGES, ikke etterpå: det er ikke et valg
+// eier tar bort fra henne, det er den eneste verdien et utkast herfra kan ha.
+function settAktiveringsstatus(policy) {
+  policy.meta = (policy.meta && typeof policy.meta === "object")
+    ? policy.meta : {};
+  policy.meta.status = AKTIVERINGSSTATUS;
+  return policy;
+}
+
 // Bygg det som skal lagres: hele malen/utkastet med redigerte felt oppå.
 function byggInnhold(policy) {
-  return policy;                       // policy muteres in-place av feltene
+  // `policy` muteres in-place av feltene; statusen er det ene feltet ingen av
+  // dem skriver, og den må stå i det som lagres.
+  return settAktiveringsstatus(policy);
 }
 
 // Radens `policy_id` og dokumentets `meta.policy_id` er ÉN identitet skrevet to
