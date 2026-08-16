@@ -670,5 +670,9 @@
   "ui.policyadmin.diff.gruppe.unntak": "Unntakshåndtering",
   "ui.policyadmin.diff.gruppe.dataklasser": "Dataklasser",
   "ui.policyadmin.diff.gruppe.tidssone": "Tidssone",
-  "ui.policyadmin.diff.gruppe.meta": "Metadata"
+  "ui.policyadmin.diff.gruppe.meta": "Metadata",
+  "ui.policyadmin.handling.forkast": "Forkast utkast",
+  "ui.policyadmin.forkast.tittel": "Forkast utkastet?",
+  "ui.policyadmin.forkast.tekst": "Utkastet blir stående som forkastet og kan ikke tas i bruk igjen. Ingen aktiv policy endres — dette er et forslag, ikke en fullmakt.",
+  "ui.policyadmin.forkastet": "Utkastet er forkastet."
 }

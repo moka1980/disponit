@@ -670,5 +670,9 @@
   "ui.policyadmin.diff.gruppe.unntak": "Exception handling",
   "ui.policyadmin.diff.gruppe.dataklasser": "Data classes",
   "ui.policyadmin.diff.gruppe.tidssone": "Time zone",
-  "ui.policyadmin.diff.gruppe.meta": "Metadata"
+  "ui.policyadmin.diff.gruppe.meta": "Metadata",
+  "ui.policyadmin.handling.forkast": "Discard draft",
+  "ui.policyadmin.forkast.tittel": "Discard this draft?",
+  "ui.policyadmin.forkast.tekst": "The draft stays on record as discarded and cannot be used again. No active policy changes — this is a proposal, not an authority.",
+  "ui.policyadmin.forkastet": "The draft has been discarded."
 }

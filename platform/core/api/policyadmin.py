@@ -275,6 +275,65 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utfall": "validert", "utkast_id": utkast_id, "innholds_hash": h})
 
 
+def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                   request_id: str, utkast_id: str, forventet_utkastversjon,
+                   idempotency_key: str, input_hash: str) -> dict:
+    """Forkast et utkast: status → `forkastet`. TERMINALT (statusmaskinen i
+    migrasjon 012 slipper ingen vei ut igjen).
+
+    Et utkast er et FORSLAG, ikke en policy. Å forkaste det endrer ingen
+    fullmakt — ingen agent får lov til noe mer eller mindre av det — så det
+    krever ikke fire øyne. Derfor er dette også det ENESTE «slett» flaten
+    tilbyr: en policy som HAR styrt beslutninger kan ikke fjernes, for da
+    ville revisjonssporet pekt på noe som ikke finnes lenger.
+
+    To ting nektes:
+      * en ÅPEN eller KLAR runde — der er attestasjoner i omløp, og et utkast
+        skal ikke kunne rives bort under godkjennerne mens de vurderer det.
+        Runden må avsluttes først;
+      * `godkjent` — da HAR fire øyne sagt ja, og å kaste den godkjenningen er
+        en annen handling enn å rydde bort et forslag ingen har vurdert.
+
+    Idempotensnøkkelen bindes til utkastversjonen som ellers i denne modulen.
+    Kalleren eier tx.
+    """
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    rad = conn.execute(
+        "SELECT status, utkastversjon FROM policyutkast WHERE"
+        " tenant=%s AND utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    status, ver = rad
+    if status not in ("utkast", "validert"):
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    if not isinstance(forventet_utkastversjon, int) \
+            or isinstance(forventet_utkastversjon, bool) \
+            or forventet_utkastversjon != ver:
+        conn.rollback()
+        raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
+    aapen = conn.execute(
+        "SELECT 1 FROM aktiveringsrunde WHERE tenant=%s AND utkast_id=%s"
+        " AND status IN ('apen','klar')", (tenant, utkast_id)).fetchone()
+    if aapen:
+        conn.rollback()
+        raise Aktiveringsfeil("runde_allerede_aapen")
+    conn.execute(
+        "UPDATE policyutkast SET status='forkastet'"
+        " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utfall": "forkastet", "utkast_id": utkast_id})
+
+
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
                        request_id: str, utkast_id: str) -> dict:
     """Utkastet + diffen mot aktiv base + klassifisering + evt. åpen runde med

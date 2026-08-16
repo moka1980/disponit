@@ -178,6 +178,8 @@ export const redigerUtkast = (uid, utkastversjon, innhold,
 // versjonen).
 export const validerUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/valider`, "POST", { utkastversjon }, idem);
+export const forkastUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policyutkast/${uid}/forkast`, "POST", { utkastversjon }, idem);
 export const apneRunde = (uid, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {}, idem);
 export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
