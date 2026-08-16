@@ -241,6 +241,17 @@ test("Attester: nettverksretry GJENBRUKER samme Idempotency-Key", async () => {
 const _finn = (rot, tekst) => [...rot.querySelectorAll("button")]
   .find((b) => b.textContent.trim() === tekst);
 
+// Kvitteringsregionen settes inn TOM og fylles i en senere oppgave (se
+// `fyllSenere` i flaten). «Kvitteringen er der» betyr derfor at regionen står
+// OG er fylt — å vente på selve elementet ville fanget mellomtilstanden.
+const _ventKvittering = async (h) => {
+  await vent(() => {
+    const k = h.querySelector(".pa-kvittering");
+    return !!k && k.textContent.trim() !== "";
+  });
+  return h.querySelector(".pa-kvittering");
+};
+
 function _medCsrf() {
   const desc = Object.getOwnPropertyDescriptor(
     window.Document.prototype, "cookie");
@@ -749,8 +760,7 @@ test("Attester: utfallet er SYNLIG etter gjentegningen, med antall som gjenstår
 
     // Kvitteringen skal stå i den NYE siden — altså etter at detaljen er hentet
     // og `sett(hoved, …)` har byttet ut alt innholdet.
-    await vent(() => h.querySelector(".pa-kvittering"));
-    const kvitt = h.querySelector(".pa-kvittering");
+    const kvitt = await _ventKvittering(h);
     assert.ok(kvitt, "utfallet av attesteringen er ikke synlig noe sted");
     assert.equal(kvitt.getAttribute("role"), "status",
       "utfallet må annonseres av seg selv, politt");
@@ -780,8 +790,7 @@ test("Valider: et gyldig utkast gir en synlig kvittering, ikke bare stillhet",
     await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
     _finn(h, t("ui.policyadmin.handling.valider"))
       .dispatchEvent(new window.Event("click"));
-    await vent(() => h.querySelector(".pa-kvittering"));
-    const kvitt = h.querySelector(".pa-kvittering");
+    const kvitt = await _ventKvittering(h);
     assert.ok(kvitt, "«Valider» ga ingen synlig tilbakemelding");
     assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"));
     assert.equal(kvitt.getAttribute("role"), "status");
@@ -806,7 +815,7 @@ test("Kvitteringen vises ÉN gang, ikke ved neste gjentegning", async () => {
   await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
   _finn(h, t("ui.policyadmin.handling.valider"))
     .dispatchEvent(new window.Event("click"));
-  await vent(() => h.querySelector(".pa-kvittering"));
+  await _ventKvittering(h);
   // Tilbake til lista og inn igjen: en NY tegning av samme detalj.
   _finn(h, t("ui.policyadmin.tilbake_til_liste"))
     .dispatchEvent(new window.Event("click"));
@@ -843,8 +852,7 @@ const _attesterMedUtfall = async (h, svar) => {
   [...bek.querySelectorAll("button")]
     .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.attester"))
     .dispatchEvent(new window.Event("click"));
-  await vent(() => h.querySelector(".pa-kvittering"));
-  return h.querySelector(".pa-kvittering");
+  return _ventKvittering(h);
 };
 
 test("Attester: kansellert runde er en FEIL, ikke en ventetilstand", async () => {
@@ -904,11 +912,10 @@ test("Kvitteringen fylles ETTER at live-området står i dokumentet", async () =
   obs.observe(h, { childList: true, subtree: true, characterData: true });
   _finn(h, t("ui.policyadmin.handling.valider"))
     .dispatchEvent(new window.Event("click"));
-  await vent(() => h.querySelector(".pa-kvittering"));
+  const kvitt = await _ventKvittering(h);
   logg.push(...obs.takeRecords());
   obs.disconnect();
 
-  const kvitt = h.querySelector(".pa-kvittering");
   assert.equal(kvitt.getAttribute("role"), "status");
   assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
     "teksten kom aldri inn i live-området");
@@ -1027,7 +1034,7 @@ test("Kvitteringen overlever at gjentegningen feiler", async () => {
     .dispatchEvent(new window.Event("click"));
   await vent(() => h.querySelector(".tilstand.feil"));
 
-  const kvitt = h.querySelector(".pa-kvittering");
+  const kvitt = await _ventKvittering(h);
   assert.ok(kvitt,
     "handlingen ble utført, men eier fikk ingen kvittering — da gjør hun den om");
   assert.equal(kvitt.textContent.trim(), t("ui.policyadmin.validert"),
@@ -1040,3 +1047,91 @@ test("Kvitteringen overlever at gjentegningen feiler", async () => {
   assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// Codex P2, andre runde: to mutasjoner er ikke to OPPGAVER. Innsettingen og
+// utfyllingen lå fortsatt i samme JavaScript-oppgave, og en skjermleser leser
+// ikke mutasjonsloggen — den ser tilgjengelighetstreet slik det står når
+// oppgaven er ferdig. Da står et `role="status"` som er nytt OG utfylt i samme
+// omgang, altså ingen ENDRING å annonsere: nøyaktig den tause kvitteringen vi
+// kom fra, ett hakk dypere.
+//
+// Testen måler oppgaveskillet, ikke rekkefølgen: en MutationObserver samler
+// alle mutasjoner fra ÉN oppgave i ÉTT kall. Skjer innsetting og utfylling i
+// samme oppgave, kommer de i samme bunt. Er de skilt, kommer utfyllingen i en
+// SENERE bunt.
+//
+// Kontroll: kall `innhold.ferdig()` direkte i stedet for `fyllSenere(...)`, så
+// havner begge i samme bunt og testen blir rød.
+test("Kvitteringen fylles i en SENERE oppgave enn innsettingen", async () => {
+  const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx());
+  await vent(() => h.querySelector("tbody button"));
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+
+  // Én bunt = én oppgaves mutasjoner; observatøren kalles én gang per oppgave.
+  const bunter = [];
+  const obs = new window.MutationObserver((r) => bunter.push(r));
+  obs.observe(h, { childList: true, subtree: true, characterData: true });
+  _finn(h, t("ui.policyadmin.handling.valider"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => {
+    const k = h.querySelector(".pa-kvittering");
+    return k && k.textContent.trim() === t("ui.policyadmin.validert");
+  });
+  obs.disconnect();
+
+  const kvitt = h.querySelector(".pa-kvittering");
+  assert.equal(kvitt.getAttribute("role"), "status");
+  const iInnsatt = bunter.findIndex((b) => b.some((r) => [...r.addedNodes]
+    .some((n) => n.nodeType === 1 && (n === kvitt || n.contains(kvitt)))));
+  const iTekst = bunter.findIndex((b) => b.some((r) => kvitt.contains(r.target)
+    && [...r.addedNodes].some((n) => n.nodeType === 3
+      && n.data.includes(t("ui.policyadmin.validert")))));
+  assert.ok(iInnsatt >= 0, "kvitteringen ble aldri satt inn i `hoved`");
+  assert.ok(iTekst >= 0, "teksten kom aldri inn i live-området");
+  assert.ok(iTekst > iInnsatt,
+    "regionen ble satt inn og fylt i SAMME oppgave — skjermleseren ser da et "
+    + "ferdig utfylt live-område og har ingen endring å annonsere");
+});
+
+// Utsettelsen arver eierskapskravet: rekker eier å navigere videre i vinduet
+// mellom innsettingen og utfyllingen, skal den foreldede tegningen ikke røre
+// skjermen — et live-område som fylles da, ANNONSERER inn i en skjerm eier har
+// forlatt.
+//
+// Testen holder på selve regionen i stedet for å søke den opp igjen: den blir
+// jo uansett byttet ut av den nye tegningen, og da ville en utfylling av den
+// gamle vært usynlig for en `querySelector`.
+//
+// Kontroll: fjern `eierSkjermen(min)`-sjekken i `fyllSenere`, så blir testen
+// rød.
+test("Den utsatte utfyllingen slipper ikke til på en foreldet tegning",
+  async () => {
+    const utkast = { ...DETALJ, status: "utkast", aktiv_runde: null };
+    SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": utkast,
+      __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx());
+    await vent(() => h.querySelector("tbody button"));
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.handling.valider")));
+    _finn(h, t("ui.policyadmin.handling.valider"))
+      .dispatchEvent(new window.Event("click"));
+    // I det kvitteringsregionen står — men før den er fylt — går eier tilbake.
+    await vent(() => h.querySelector(".pa-kvittering"));
+    const region = h.querySelector(".pa-kvittering");
+    assert.equal(region.textContent.trim(), "",
+      "regionen var alt fylt; da måler ikke testen det den skal");
+    _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+      .dispatchEvent(new window.Event("click"));
+
+    await vent(() => false, 20);
+    assert.equal(region.textContent.trim(), "",
+      "en tegning eier har navigert bort fra fylte live-området sitt likevel");
+    assert.equal(h.querySelectorAll(".pa-kvittering").length, 0,
+      "kvitteringen ble stående etter at eier gikk tilbake til lista");
+  });

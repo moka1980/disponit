@@ -145,6 +145,10 @@ function taKvittering(uid) {
 // stille i lyd. Derfor to trinn: regionen først, teksten som en egen endring
 // ETTERPÅ, som live-området er laget for å fange opp.
 //
+// «Etterpå» betyr i en SENERE OPPGAVE, ikke bare i en senere mutasjon: en
+// skjermleser leser ikke mutasjonsloggen, den ser tilgjengelighetstreet slik
+// det står når oppgaven er ferdig (Codex P2, andre runde). Se `fyllSenere`.
+//
 // Returnerer { rot, fyll } — den som setter inn `rot`, kaller `fyll()` etterpå.
 function kvitteringsBoks(k) {
   const linje = el("p", {});
@@ -469,6 +473,27 @@ export function visPolicyadmin(hoved, ctx) {
   const eierSkjermen = (min) =>
     erGjeldendeVisning(hoved, minRute) && visning === min;
 
+  // Kvitteringsteksten legges inn i en SENERE OPPGAVE, ikke bare i en senere
+  // mutasjon (Codex P2).
+  //
+  // Forrige runde delte innsettingen og utfyllingen i to DOM-endringer, men
+  // begge lå fortsatt i samme JavaScript-oppgave. Det er ikke nok: en
+  // skjermleser leser ikke mutasjonsloggen, den ser tilgjengelighetstreet slik
+  // det står når oppgaven er ferdig — og da står et `role="status"` som var
+  // nytt OG utfylt i samme omgang. Det er nøyaktig utgangspunktet igjen: ingen
+  // ENDRING å annonsere i et område som allerede var i treet, altså synlig på
+  // skjermen og stille i lyd.
+  //
+  // Med `setTimeout(…, 0)` rekker regionen å bli en del av treet som tom, og
+  // teksten kommer som en reell endring etterpå.
+  //
+  // Utsettelsen arver eierskapskravet: rekker eier å navigere videre i
+  // mellomtiden, skal en foreldet tegning ikke røre skjermen — heller ikke med
+  // en kvitteringstekst.
+  const fyllSenere = (min, fyll) => setTimeout(() => {
+    if (eierSkjermen(min)) fyll();
+  }, 0);
+
   // Editoren tar over `hoved`. Ved lagring åpnes utkastets detalj; Avbryt/
   // fullført går tilbake til lista.
   function aapneEditor(opts) {
@@ -508,11 +533,11 @@ export function visPolicyadmin(hoved, ctx) {
         tilbakeKnapp(tilbakeTilListe),
         innhold.rot);
       fokuserOverskrift(hoved);
-      // Kvitteringsteksten settes ETTER at siden står og fokus er flyttet:
-      // live-området skal fange en ENDRING i et område som allerede er i
-      // tilgjengelighetstreet, og annonseringen skal ikke bli avbrutt av
-      // fokusflyttingen rett etterpå.
-      innhold.ferdig();
+      // Kvitteringsteksten settes ETTER at siden står og fokus er flyttet, og
+      // i en egen oppgave: live-området skal fange en ENDRING i et område som
+      // allerede er i tilgjengelighetstreet, og annonseringen skal ikke bli
+      // avbrutt av fokusflyttingen rett etterpå.
+      fyllSenere(min, innhold.ferdig);
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (!eierSkjermen(min)) return;
@@ -544,7 +569,7 @@ export function visPolicyadmin(hoved, ctx) {
           ? TilgangsVakt({})
           : Feiltilstand({ paaProvIgjen: () => aapneDetalj(uid) }));
       fokuserOverskrift(hoved);
-      if (boks) boks.fyll();
+      if (boks) fyllSenere(min, boks.fyll);
     });
   }
 
