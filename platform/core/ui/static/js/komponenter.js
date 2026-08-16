@@ -502,19 +502,27 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
 export function Faner({ trinn, start, paaBytte } = {}) {
   let aktiv = start && trinn.some((s) => s.nokkel === start) ? start : trinn[0].nokkel;
   const faner = new Map();
-  const panel = el("div", { class: "faner-panel" });
+  const paneler = new Map();
   const liste = el("div", { class: "faner-liste", role: "tablist",
     "aria-label": t("ui.faner.merkelapp") });
 
+  // ETT panel per fane, ikke ett panel som bytter ID (Codex P2). Med den gamle
+  // løsningen lovet fanene mer enn DOM-en holdt: Roller og Handlinger
+  // annonserte `aria-controls="fane-panel-roller"`/`-handlinger` fra første
+  // tegning, mens det eneste panelet som fantes het `fane-panel-grunn`.
+  // Referansene pekte i tomme luften, og relasjonen var i praksis bare gyldig
+  // for den valgte fanen — selv om komponenten beskrives som et komplett
+  // WAI-ARIA-tabmønster. De inaktive panelene er `hidden`, så de er
+  // eksisterende mål uten å være innhold noen leser.
+  //
+  // Innholdet bygges fortsatt først når fanen velges: `bygg()` leser tilstand
+  // som endrer seg mellom tegninger, og skal ikke fryses ved konstruksjon.
   function tegnPanel() {
-    const t0 = trinn.find((s) => s.nokkel === aktiv);
-    panel.setAttribute("role", "tabpanel");
-    panel.setAttribute("id", `fane-panel-${t0.nokkel}`);
-    panel.setAttribute("aria-labelledby", `fane-${t0.nokkel}`);
-    // Panelet er fokuserbart: er innholdet langt, skal Tab fra fanen lande i
-    // panelet og ikke hoppe forbi det.
-    panel.setAttribute("tabindex", "0");
-    sett(panel, t0.bygg());
+    for (const s of trinn) {
+      const p = paneler.get(s.nokkel);
+      if (s.nokkel === aktiv) { p.hidden = false; sett(p, s.bygg()); }
+      else { p.hidden = true; sett(p); }
+    }
   }
 
   function gaaTil(nokkel, flyttFokus) {
@@ -547,6 +555,11 @@ export function Faner({ trinn, start, paaBytte } = {}) {
     });
     faner.set(s.nokkel, kn);
     liste.append(kn);
+    // Panelet er fokuserbart: er innholdet langt, skal Tab fra fanen lande i
+    // panelet og ikke hoppe forbi det.
+    paneler.set(s.nokkel, el("div", { class: "faner-panel", role: "tabpanel",
+      id: `fane-panel-${s.nokkel}`, "aria-labelledby": `fane-${s.nokkel}`,
+      tabindex: "0", hidden: true }));
   });
 
   // Forrige/neste i tillegg til fanene: et skjema fylles ut i rekkefølge, og
@@ -564,7 +577,8 @@ export function Faner({ trinn, start, paaBytte } = {}) {
   neste.addEventListener("click", () => steg(1));
 
   const styring = el("div", { class: "faner-styring" }, forrige, neste);
-  const rot = el("div", { class: "faner" }, liste, panel, styring);
+  const rot = el("div", { class: "faner" }, liste, [...paneler.values()],
+    styring);
 
   function oppdaterStyring() {
     const i = trinn.findIndex((s) => s.nokkel === aktiv);
