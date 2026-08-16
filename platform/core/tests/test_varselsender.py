@@ -1460,19 +1460,86 @@ def _uten_kommentarer(sql):
     return "".join(ut)
 
 
+#: En strengkonstant, med PostgreSQLs doblede apostrof som eneste unntak:
+#: `'det''s'` er ÉN konstant, ikke to som støter mot hverandre.
+_STRENG = re.compile(r"'(?:''|[^'])*'")
+
+#: Markøren bruker NUL, som ikke kan stå i SQL-tekst — og som ingen av
+#: uttrykkene over kan forveksle med et navn eller et nøkkelord.
+_MARKOER = "\x00{}\x00"
+
+#: DEN ENE STRENGEN SOM LIKEVEL KJØRER (Codex P2 på #71). plpgsql `EXECUTE`
+#: tar en tekst og utfører den som SQL, og 003 bruker formen alt
+#: (`EXECUTE format('ALTER TABLE %I …', t)`). Ble den maskert bort sammen med
+#: logglinjene, hadde maskeringen laget et NYTT hull i den farlige retningen:
+#: en `EXECUTE 'GRANT EXECUTE … TO PUBLIC'` ville blitt usynlig. Innholdet
+#: spilles derfor av som egne setninger, i den samme grenen og rollen.
+#:
+#: `format(…)` regnes med fordi det er formen som faktisk brukes. Bygges
+#: SQL-en derimot av en VARIABEL, ser ingen kildetest hva den blir — og en
+#: `%I` eller `%s` i malen er samme sak i det små: den treffer ingen
+#: signatur, og en REVOKE skrevet slik beviser derfor ingenting. Det er
+#: riktig vei på tvilen, men verdt å vite om.
+_DYNAMISK = re.compile(r"\bexecute\s+(?:format\s*\(\s*)?\x00(\d+)\x00")
+
+
+def _uten_strenger(tekst):
+    """Teksten med hver strengkonstant byttet ut med en nummerert markør.
+
+    EN STRENGKONSTANT ER IKKE EN SETNING (Codex P2 på #71). Kommentarene var
+    bare den ene halvparten av «tekst som ser ut som SQL uten å være det».
+    Den andre er apostrofene: `RAISE NOTICE 'REVOKE ALL ON FUNCTION
+    varsel_klaim_epost(int,int) FROM PUBLIC'` — nøyaktig den slags melding en
+    opprydding logger — sto igjen ordrett i strømmen, og `_REVOKE_MAL` leste
+    den som en utført REVOKE fra eieren. Etter en gjenskaping som lot
+    funksjonen stå åpen, løftet altså en LOGGLINJE gjerdet til True.
+
+    Verre, og av samme grunn som for blokkommentarene: et semikolon inne i
+    konstanten delte setningen. En vakt eller en `RESET ROLE` kunne dermed
+    havne på feil side av skillet, og både gren og rolle bli bokført feil.
+
+    Markøren er nummerert fordi innholdet trengs igjen: en `EXECUTE '…'` er
+    ekte SQL som KJØRER, og den skilles ut for seg — se `_DYNAMISK`. Alt
+    annet er inert tekst, og skal måles som det.
+    """
+    innhold = []
+
+    def bytt(m):
+        innhold.append(m.group(0)[1:-1].replace("''", "'"))
+        return _MARKOER.format(len(innhold) - 1)
+
+    return _STRENG.sub(bytt, tekst), innhold
+
+
 def _delt(tekst, i_blokk):
     """Setningene i et tekststykke, hver med «står den under en vakt?».
 
     Dybden telles bare inne i en DO-blokk: på toppnivå i en migrasjonsfil
     finnes det ingen plpgsql-gren en setning kan stå under.
+
+    Strengkonstantene maskeres FØR splittingen på semikolon, slik at et
+    semikolon inne i en konstant ikke deler en setning i to — og slik at
+    hverken vakttellingen eller ACL-uttrykkene leser inert tekst som kode.
     """
     dybde = 0
-    for rå in _KROPP.sub(" ", tekst).split(";"):
+    uten_streng, strenger = _uten_strenger(_KROPP.sub(" ", tekst))
+    for rå in uten_streng.split(";"):
         s = " ".join(rå.split()).lower()
         if not s:
             continue
         yield s, dybde > 0
+        # …og den ene teksten som likevel er kode. Den spilles av HER, altså
+        # på plassen der `EXECUTE` står, med den vakten som gjelder der.
+        # Innholdet kan selv være flere setninger — plpgsql godtar det — så
+        # det splittes på semikolon som alt annet.
+        for m in _DYNAMISK.finditer(s):
+            for bit in strenger[int(m.group(1))].split(";"):
+                if kjort := " ".join(bit.split()).lower():
+                    yield kjort, dybde > 0
         if i_blokk:
+            # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
+            # en logglinje lukker ingen gren, og en `IF … THEN` i en
+            # feilmelding åpner ingen.
             dybde = max(0, dybde + len(_AAPNER.findall(s))
                         - len(_LUKKER.findall(s)))
 
@@ -2131,6 +2198,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
 
     # Vakten er ikke målet: en betinget REVOKE som NEVNER den beskyttede
     # signaturen, men bare tar overlasten, lukker ingenting.
+    #
+    # MERK at nevningen her står i en STRENGKONSTANT, og etter maskeringen er
+    # den borte før målingen i det hele tatt skjer. Sporet holder derfor to
+    # regler oppe samtidig, og isolerer ingen av dem. Målklausul-regelens
+    # egen last bæres av overlastsporet over og av løkkeformen under —
+    # begge er mutasjonstestet mot at `_rammer` fjernes fra REVOKE-grenen.
     vakt = ("DO $$\nBEGIN\n"
             "    IF to_regprocedure('varsel_klaim_epost(int,int)')"
             " IS NOT NULL THEN\n"
@@ -2148,6 +2221,12 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     # målt dette sporet i stedet, og målklausulen stått uprøvd. Løkkeformen er
     # 030s egen: en signaturliste i en `FOREACH`, som nevner den beskyttede
     # signaturen i hodet mens setningen under tar en annen.
+    #
+    # Signaturlisten er strengkonstanter og maskeres bort, så nevningen i
+    # hodet er ikke lenger det som prøves. Det som står igjen — og som er
+    # grunnen til at sporet blir værende — er at REVOKE-en tar en OVERLAST
+    # uten vakt: fjernes `_rammer` fra REVOKE-grenen, lukker denne setningen
+    # gjerdet for `(int,int)`, og sporet faller. Det er mutasjonstestet.
     loekke = ("DO $$\nDECLARE s text;\nBEGIN\n"
               "    FOREACH s IN ARRAY"
               " ARRAY['varsel_klaim_epost(int,int)']\n"
@@ -2257,6 +2336,60 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
             [("a.sql", lag + gjerde),
              ("b.sql", f"DROP FUNCTION varsel_klaim_epost({annen});")],
             n)[0] == {sig: True}, f"`{annen}` er ikke `(int,int)`"
+
+    # EN STRENGKONSTANT ER IKKE EN SETNING. En logglinje som SITERER den
+    # påkrevde ACL-en — den slags merknad disse migrasjonene er fulle av —
+    # ble lest som en utført REVOKE fra eieren, og løftet gjerdet til True
+    # rundt en funksjon gjenskapingen nettopp hadde latt stå åpen.
+    inert = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+             "    RAISE NOTICE 'REVOKE ALL ON FUNCTION"
+             " varsel_klaim_epost(int,int) FROM PUBLIC';\n"
+             "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag), ("b.sql", inert)], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT i en logglinje er ikke et gjerde."
+        f" Spor: {spor}")
+
+    # …og et SEMIKOLON INNE I KONSTANTEN deler ingen setning. Gjorde det
+    # det, havnet vakten og `RESET ROLE` på feil side av skillet — samme
+    # skade som blokkommentarene gjorde før de ble strøket. `END IF` i den
+    # samme teksten lukker heller ingen gren: REVOKE-en under står fortsatt
+    # under vakten, og er derfor ikke bevis.
+    delt_av_streng = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                      "    IF EXISTS (SELECT 1 FROM pg_roles"
+                      " WHERE rolname = 'disponit_varselsender') THEN\n"
+                      "        RAISE NOTICE 'rydder opp; END IF';\n"
+                      "        REVOKE ALL ON FUNCTION"
+                      " varsel_klaim_epost(int, int) FROM PUBLIC;\n"
+                      "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + delt_av_streng)], n)
+    assert gjerdet == {sig: False}, (
+        "et semikolon eller en `END IF` inne i en tekst er ikke SQL."
+        f" Spor: {spor}")
+
+    # …og motprøven, som er det som gjør maskeringen til noe annet enn en ny
+    # blindsone: EN `EXECUTE '…'` KJØRER. Maskeres den bort sammen med
+    # logglinjene, blir dynamisk SQL usynlig — og det er den farlige
+    # retningen. Som eier lukker den gjerdet, akkurat som den skrevne
+    # formen.
+    dynamisk = ("SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                "    EXECUTE 'REVOKE ALL ON FUNCTION"
+                " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+                "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + dynamisk)], n)
+    assert gjerdet == {sig: True}, (
+        "en dynamisk REVOKE fra eieren er et gjerde som alle andre."
+        f" Spor: {spor}")
+
+    # …og den samme veien tilbake: `EXECUTE format('GRANT … TO PUBLIC')` er
+    # formen 003 alt bruker for annen DDL, og den åpner gjerdet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO PUBLIC');\n"
+                   "END $$;")], n)
+    assert gjerdet == {sig: False}, (
+        f"en dynamisk GRANT til PUBLIC åpner gjerdet. Spor: {spor}")
 
     # Å FLYTTE ET NAVN ER Å FJERNE DET. Funksjonen lever videre — det gjør
     # ikke navnet senderen kaller, og et gjerde rundt et navn som er borte er
