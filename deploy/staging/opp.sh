@@ -190,13 +190,13 @@ if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
   echo "på nytt når $MILJOFIL står stille og sier 'staging'."
   exit 1
 fi
-# Hver katalog `skriv_cred` skriver i MÅ opprettes her først. `skriv_cred` er
-# en `printf >`-omdirigering: står katalogen ikke der, feiler den — og den
-# feiler i den MUTERENDE fasen, etter at preflighten er passert og
-# credentials alt er delvis skrevet om. På en vert som har rullet ut før,
-# finnes katalogen fra forrige gang og feilen er usynlig; det er nøyaktig
-# den ferske verten som treffer den. `test_pr009` måler koblingen mot kilden.
-install -d -m 700 /etc/disponit/api /etc/disponit/m37 /etc/disponit/varsel
+# Hver katalog `skriv_cred` skriver i MÅ opprettes FØR den skrives i —
+# `skriv_cred` er en `printf >`-omdirigering, og uten katalogen feiler den i
+# den MUTERENDE fasen, etter at preflighten er passert. På en vert som har
+# rullet ut før, ligger katalogen igjen fra forrige gang og hullet er usynlig;
+# det er den ferske verten som treffer det. `test_pr009` måler koblingen mot
+# kilden, så den neste credential-katalogen er dekket uten at noen husker det.
+install -d -m 700 /etc/disponit/api /etc/disponit/m37
 skriv_cred() {  # katalog navn verdi
   printf '%s' "$3" > "/etc/disponit/$1/$2"
   chmod 600 "/etc/disponit/$1/$2"
@@ -333,6 +333,11 @@ systemctl enable --now disponit-helse.timer disponit-rydd-pending.timer \
 # er Type=oneshot bak en .timer — enable --now på TIMEREN, ikke tjenesten.
 systemctl enable --now disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer
+# Varselsenderen: samme form, og den MÅ startes igjen her. Steg 5 stopper
+# timeren i vedlikeholdsvinduet — uten denne linjen var utrullingen det som
+# slo senderen av, permanent, og køen ville bare vokst. Timeren, ikke
+# tjenesten: oneshot-en er timerens å starte.
+systemctl enable --now disponit-varselsender.timer
 
 KLAR=nei
 for _ in $(seq 1 30); do

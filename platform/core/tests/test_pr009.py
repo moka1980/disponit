@@ -412,6 +412,28 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         == "verdi-DATABASE_URL"
 
 
+def test_hver_installert_timer_blir_ogsa_startet():
+    """En timer i `UNITS` som ingen `enable --now` nevner, er en jobb som
+    aldri kjører.
+
+    Verre enn det, etter at vedlikeholdsvinduet lærte å stoppe den: da er
+    utrullingen selv det som slår jobben AV — og ingenting slår den på igjen.
+    Installasjonen (`UNITS`) og oppstarten sto som to lister ingen sammenlignet;
+    her er sammenligningen.
+    """
+    import re
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    # Linjefortsettelser først: enable-listene er brukket over flere linjer,
+    # og en port som bare leser den første linjen måler halve lista.
+    opp = opp.replace("\\\n", " ")
+    units = re.search(r'^UNITS="(.*?)"', opp, re.M | re.S).group(1).split()
+    startet = " ".join(re.findall(r"systemctl enable --now (.*)", opp))
+    for u in units:
+        if u.endswith(".timer"):
+            assert u in startet, \
+                f"{u} installeres, men blir aldri startet av opp.sh"
+
+
 @pg
 def test_rydd_pending_tar_kun_foreldede(migrator, miljo, monkeypatch,
                                         capsys):
