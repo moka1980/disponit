@@ -2889,3 +2889,31 @@ test("Dyplenke til et utkast åpner utkastet, ikke lista", async () => {
   assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
     "detaljsiden mangler vei tilbake");
 });
+
+// Codex P3: hashen ble stående på utkastet etter at eier gikk tilbake til
+// lista. Skjermen og adressefeltet sa da hver sin ting — og uenigheten er ikke
+// kosmetisk: en refresh åpnet detaljsiden på nytt, og historikken pekte
+// fortsatt på en visning hun hadde gått ut av.
+test("Veien tilbake fra en dyplenket detalj rydder også lenken", async () => {
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    __post: async () => ({}) };
+  const h = nyHoved();
+
+  window.location.hash = "#/policyadmin/u-1";
+  await vent(() => false, 5);
+  const ruter = lagRuter(h, ctx(), { policyadmin: visPolicyadmin }, () => {});
+  ruter.naviger();
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+
+  _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector("tbody"));
+  ruter.stopp();
+
+  assert.equal(window.location.hash, "#/policyadmin",
+    "hashen peker fortsatt på utkastet mens skjermen viser lista — en "
+    + "refresh ville åpnet detaljsiden på nytt");
+  // …og lista står der, tegnet ÉN gang: `replaceState` utløser ingen
+  // `hashchange`, så ruteren tegner ikke flaten på nytt oppå denne.
+  assert.ok(h.querySelector("tbody"), "lista kom ikke fram");
+});
