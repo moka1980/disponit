@@ -440,7 +440,7 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   align-items: center;
   color: var(--ink);
   display: inline-flex;
-  font-size: 1.15rem;
+  font-size: var(--fs-logo);
   gap: var(--sp-2);
   text-decoration: none;
 }
@@ -516,12 +516,12 @@ html[data-visning="landing"] .skall-hoved {
   padding: var(--sp-8) 0;
 }
 .site-hero-ny h1, .site-sideintro h1 {
-  font-size: clamp(2.5rem, 6vw, 5.4rem);
-  letter-spacing: -.045em;
-  line-height: 1.02;
-  max-width: 14ch;
+  font-size: var(--fs-display);
+  letter-spacing: var(--ls-display);
+  line-height: var(--lh-display);
+  max-width: var(--maks-display);
 }
-.site-hero-ny .site-hero-text { font-size: 1.2rem; }
+.site-hero-ny .site-hero-text { font-size: var(--fs-ingress); }
 .site-signal {
   align-content: end;
   background: var(--ink);
@@ -533,7 +533,7 @@ html[data-visning="landing"] .skall-hoved {
   position: relative;
 }
 .site-signal .site-eyebrow { color: var(--card); }
-.site-signal h2 { font-size: 1.8rem; max-width: 15ch; }
+.site-signal h2 { font-size: var(--fs-tittel); max-width: var(--maks-tittel); }
 .site-orbit {
   border: 1px solid var(--muted);
   border-radius: 50%;
@@ -572,7 +572,7 @@ html[data-visning="landing"] .skall-hoved {
   border-bottom: 1px solid var(--line);
   padding: var(--sp-8) 0;
 }
-.site-sideintro .site-hero-text { max-width: 48rem; }
+.site-sideintro .site-hero-text { max-width: var(--maks-ingress); }
 .site-steg { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
 .site-steg li {
   border-top: 1px solid var(--line);
@@ -631,7 +631,7 @@ html[data-visning="landing"] .skall-hoved {
 @media (max-width: 560px) {
   .site-topp-rad, .site-sok-rad, .site-footer { padding-left: var(--sp-3); padding-right: var(--sp-3); }
   html[data-visning="landing"] .skall-hoved { padding: var(--sp-6) var(--sp-3); }
-  .site-hero-ny h1, .site-sideintro h1 { font-size: 2.5rem; }
+  .site-hero-ny h1, .site-sideintro h1 { font-size: var(--fs-display-smal); }
   .site-signal { padding: var(--sp-6); }
 }
 

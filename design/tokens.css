@@ -17,6 +17,16 @@
   --font-sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
   --font-mono:ui-monospace,"Cascadia Mono","JetBrains Mono",monospace;
   --fs-base:1rem; --lh-base:1.55;
+  /* Display-trinnene den offentlige flaten bruker: hero- og sidetitler,
+     ingressen under dem, signalkortets overskrift og logolinja. Disse lå som
+     tall i komponenten (Codex P2) — da ville en global justering av typografi
+     latt nettopp de største overskriftene bli stående igjen. `-smal` er
+     trinnet under 560px, `ls`/`lh` hører til display-trinnet og ikke til
+     brødteksten, og `maks-*` er tekstmålet (linjelengden) for hvert trinn. */
+  --fs-display:clamp(2.5rem, 6vw, 5.4rem); --fs-display-smal:2.5rem;
+  --ls-display:-.045em; --lh-display:1.02;
+  --fs-ingress:1.2rem; --fs-tittel:1.8rem; --fs-logo:1.15rem;
+  --maks-display:14ch; --maks-tittel:15ch; --maks-ingress:48rem;
   /* Avstander og form */
   --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem;
   --sp-6:1.5rem; --sp-8:2rem;
