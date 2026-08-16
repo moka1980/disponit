@@ -8,6 +8,7 @@ her beviser vi at feltene UI-et faktisk konsumerer, finnes.
 
 Kildegrep, ikke DB: feltnavnene står som strengliteraler i handlerne.
 """
+import json
 import re
 from pathlib import Path
 
@@ -99,6 +100,27 @@ def test_rolleguiden_lover_bare_fullmakter_rollen_faktisk_har():
         assert scopes == set(ROLLE_TIL_SCOPES[rolle]), (
             f"rolleguiden for {rolle!r} er ute av takt med autorisasjon.py: "
             f"guide={sorted(scopes)} kanonisk={sorted(ROLLE_TIL_SCOPES[rolle])}")
+
+
+def test_hver_kanonisk_rolle_har_navn_i_begge_lokalene():
+    """Skallet viser øktens roller med `t("ui.rolle.<rolle>")`, og fallbacken
+    er den rå norske identifikatoren. Mangler nøkkelen, står det «sikkerhet» i
+    et ellers engelsk grensesnitt — og den som skal vite hvilken fullmakt hen
+    sitter med, får et ord hen ikke nødvendigvis leser.
+
+    Rollemengden eies av `ROLLE_TIL_SCOPES`. Legges en rolle til der, skal
+    denne porten si fra med én gang, ikke først når en kunde med den rollen
+    logger inn."""
+    from api.autorisasjon import ROLLE_TIL_SCOPES
+
+    rot = Path(__file__).resolve().parents[3] / "locales"
+    for sprak in ("nb", "en"):
+        tekster = json.loads((rot / f"{sprak}.json").read_text(encoding="utf-8"))
+        for rolle in ROLLE_TIL_SCOPES:
+            nokkel = f"ui.rolle.{rolle}"
+            assert tekster.get(nokkel), (
+                f"{sprak}.json mangler {nokkel!r} — skallet ville vist den rå "
+                f"identifikatoren {rolle!r} i stedet for et rollenavn")
 
 
 def test_ingen_tenantdata_i_offentlige_ressurser():

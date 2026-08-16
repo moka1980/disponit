@@ -11,7 +11,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentMaler, hentJson, opprettUtkast, redigerUtkast, nyIdempotensnokkel,
+  hentMaler, hentAktivPolicyId, hentJson, opprettUtkast, redigerUtkast,
+  nyIdempotensnokkel,
   UautorisertFeil, ApiFeil,
 } from "../api.js";
 import { meldLive, TomTilstand, Feiltilstand } from "../komponenter.js";
@@ -19,7 +20,11 @@ import { flateHode } from "./felles.js";
 
 const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
 
-function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = "") {
+// `hint` er reglene feltet faktisk håndhever, sagt FØR man skriver. Uten den
+// måtte eier gjette formatet og få svaret fra validatoren etterpå — og bare
+// hvis feilen i det hele tatt nådde skjermen. Knyttes med `aria-describedby`,
+// så den leses opp sammen med etiketten.
+function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = null) {
   const inp = el("input", {
     type: "text", value: verdi == null ? "" : String(verdi),
     class: "felt-inp", ...attrs,
@@ -27,16 +32,16 @@ function tekstfelt(etikett, verdi, paaEndre, attrs = {}, hint = "") {
   inp.addEventListener("input", () => paaEndre(inp.value));
   const id = "f-" + Math.random().toString(36).slice(2, 9);
   inp.id = id;
-  // Et hint som ikke tegnes, hjelper ingen. Det henger på feltet via
-  // `aria-describedby`, så en skjermleser leser formen SAMMEN med etiketten —
-  // ikke som løs tekst i nærheten, eller ikke i det hele tatt. `span`, ikke
-  // `p`: innholdet i en `label` er fraseinnhold.
-  const hintNode = hint
-    ? el("span", { class: "felt-hint", id: `${id}-hint`, text: hint })
-    : null;
-  if (hintNode) inp.setAttribute("aria-describedby", hintNode.id);
+  // `span`, ikke `p`: innholdet i en `label` er fraseinnhold.
+  if (!hint) {
+    return el("label", { class: "felt" },
+      el("span", { class: "felt-navn", text: etikett }), inp);
+  }
+  const hid = `${id}-hint`;
+  inp.setAttribute("aria-describedby", hid);
   return el("label", { class: "felt" },
-    el("span", { class: "felt-navn", text: etikett }), inp, hintNode);
+    el("span", { class: "felt-navn", text: etikett }), inp,
+    el("span", { class: "felt-hint", id: hid, text: hint }));
 }
 
 function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
@@ -51,20 +56,149 @@ function velg(etikett, verdi, valg, oversettPrefiks, paaEndre) {
     el("span", { class: "felt-navn", text: etikett }), sel);
 }
 
+// Hva peker på rollen? En referert rolle kan ikke bare fjernes: referansen
+// ville stått igjen med et navn som ikke finnes, og validatoren avviser hele
+// policyen med «ukjent rolle» — én linje per handling. Det er nøyaktig det
+// som skjedde: eier fjernet en rolle og fikk seks feil som pekte på
+// handlinger han aldri hadde rørt.
+//
+// `menneskelig_overstyring.krever_rolle` er en rollereferanse på lik linje med
+// `tillatt_for` (Codex P2): `policy_validator/schema.py` avviser policyen på
+// nøyaktig samme måte når DEN rollen mangler. Så lenge vakten bare så på
+// handlingene, framsto en rolle som kun brukes til overstyring som fjernbar —
+// og knappen førte rett i den fella vakten er til for å stenge.
+//
+// Vakten leser referansepunktene, som hopper over `tillatt_for` som ikke er en
+// liste (Codex P2). Et ULAGRET utkast kan inneholde hva som helst der:
+// opprett/rediger tar imot en vilkårlig dict, og skjemavalideringen er et eget
+// steg — server-siden klassifiserer til og med bevisst en ikke-liste her som
+// «tom» framfor å avvise den, så verdien når fram til detaljsvaret. Med
+// `.includes` rett på verdien kastet editoren `TypeError` mens den TEGNET, og
+// eieren kunne dermed ikke åpne utkastet for å REPARERE det. En ikke-liste har
+// ingen rollereferanser; eieren slipper inn og kan rette den.
+function referanserTilRolle(policy, rolleId) {
+  if (!rolleId) return [];
+  const ut = [];
+  for (const punkt of referansepunkter(policy)) {
+    if (punkt.les() !== rolleId) continue;
+    if (!ut.includes(punkt.merkelapp)) ut.push(punkt.merkelapp);
+  }
+  return ut;
+}
+
+// Å endre rolle-ID-en er et NAVNEBYTTE, ikke en ny rolle: referansene som
+// pekte på det gamle navnet skal fortsatt peke på den samme rollen. Uten dette
+// gjorde `agent` → `agent-ny` handlingenes `tillatt_for: ["agent"]` foreldreløs,
+// og policyen havnet i nøyaktig samme «ukjent rolle»-tilstand som
+// fjerningsvakten finnes for å stenge — bare via en annen dør.
+//
+// Men navnebyttet kan IKKE gjøres som global tekstutskifting (Codex P2). Et
+// navn skrives tegn for tegn, og underveis passerer det gjerne en ANNEN rolles
+// id: med rollene `admin` og `ad` går `ad` → `adm` → `admi` → `admin` →
+// `admin2`. I mellomsteget slukte raden den ekte `admin`-rollens referanser,
+// og neste tastetrykk flyttet dem videre til `admin2` — en stille
+// rettighetsendring som er STRUKTURELT gyldig, så validatoren på serveren sier
+// ingenting.
+//
+// Referansene eies derfor av RADEN, ikke av strengen som står i den: hvert
+// referansepunkt er et STED (handling nr. 2 sin første `tillatt_for`-plass,
+// eller overstyringsfeltet), knyttet til én rad ved tegning. Et navnebytte
+// skriver bare radens egne punkter.
+function referansepunkter(policy) {
+  const punkter = [];
+  const handlinger = Array.isArray(policy.handlinger) ? policy.handlinger : [];
+  for (const h of handlinger) {
+    if (!h || !Array.isArray(h.tillatt_for)) continue;
+    h.tillatt_for.forEach((_, i) => punkter.push({
+      merkelapp: h.id,
+      les: () => h.tillatt_for[i],
+      skriv: (ny) => { h.tillatt_for[i] = ny; },
+    }));
+  }
+  const mo = policy.menneskelig_overstyring;
+  if (mo && typeof mo === "object") {
+    punkter.push({
+      merkelapp: t("ui.editor.rolle_i_bruk_overstyring"),
+      les: () => mo.krever_rolle,
+      skriv: (ny) => { mo.krever_rolle = ny; },
+    });
+  }
+  return punkter;
+}
+
+// Hvert referansepunkt får ÉN eier: raden som har id-en punktet peker på i det
+// seksjonen tegnes. Rekkefølgen avgjør ved duplikate rolle-id-er (et utkast kan
+// ha dem), og et punkt ingen rad eier blir stående i fred — det er en «ukjent
+// rolle»-referanse validatoren skal si ifra om, ikke noe et navnebytte i en
+// annen rad skal dra med seg.
+function fordelReferanser(roller, policy) {
+  const ledige = referansepunkter(policy);
+  return roller.map((r) => {
+    const id = r && r.id;
+    if (!id) return [];
+    const mine = ledige.filter((p) => p.les() === id);
+    for (const p of mine) ledige.splice(ledige.indexOf(p), 1);
+    return mine;
+  });
+}
+
 function rollerSeksjon(policy, tegnPaaNytt) {
   policy.roller = Array.isArray(policy.roller) ? policy.roller : [];
+  const eide = fordelReferanser(policy.roller, policy);
   const liste = el("div", { class: "editor-liste" });
+  // Vaktene til ALLE radene, så et navnebytte i én rad kan tegne om de andre:
+  // `ubrukt` → `agent` gjør raden låst, og den gamle `agent`-raden fri.
+  const vakter = [];
   policy.roller.forEach((r, i) => {
-    const rad = el("div", { class: "editor-rad" },
-      tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => { r.id = v; }),
-      tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",
-        (v) => { r.beskrivelse = v || undefined; }));
     const fjern = el("button", { class: "knapp liten", type: "button",
       text: t("ui.editor.fjern") });
+    const hint = el("p", { class: "editor-hint" });
+    // Vakten ble tidligere regnet ut ÉN gang, da raden ble tegnet, mens
+    // ID-feltet fortsatte å mutere `r.id` uten å tegne om (Codex P2). Retter
+    // eier et ugyldig utkast ved å gi en ubrukt rolle det navnet `tillatt_for`
+    // peker på, sto «Fjern» igjen aktiv fra forrige navn — og fjernet en rolle
+    // som nå var påkrevd. Vakten regnes derfor om for hvert tastetrykk.
+    const oppdaterVakt = () => {
+      const brukt = referanserTilRolle(policy, r.id);
+      // En rolle i bruk får ikke en «Fjern»-knapp som fører rett i grøfta.
+      // Knappen blir stående, men deaktivert, med hvilke handlinger som holder
+      // rollen — så eier kan flytte dem først hvis det ER meningen.
+      if (brukt.length) {
+        fjern.setAttribute("disabled", "");
+        fjern.setAttribute("title",
+          `${t("ui.editor.rolle_i_bruk")}: ${brukt.join(", ")}`);
+        hint.textContent =
+          `${t("ui.editor.rolle_i_bruk")} (${brukt.length}): ${brukt.join(", ")}`;
+        hint.removeAttribute("hidden");
+      } else {
+        fjern.removeAttribute("disabled");
+        fjern.removeAttribute("title");
+        hint.textContent = "";
+        hint.setAttribute("hidden", "");
+      }
+      return brukt;
+    };
+    vakter.push(oppdaterVakt);
+    const rad = el("div", { class: "editor-rad" },
+      tekstfelt(t("ui.editor.rolle_id"), r.id, (v) => {
+        r.id = v;
+        // Tomt navn propagerer IKKE: eier som tømmer feltet for å skrive noe
+        // nytt skal ikke få `tillatt_for: [""]` underveis. Referansene blir
+        // stående på forrige navn til det nye er skrevet.
+        if (v) for (const punkt of eide[i]) punkt.skriv(v);
+        for (const oppdater of vakter) oppdater();
+      }),
+      tekstfelt(t("ui.editor.rolle_beskrivelse"), r.beskrivelse || "",
+        (v) => { r.beskrivelse = v || undefined; }));
     fjern.addEventListener("click", () => {
+      // Siste port: knappen kan ha blitt aktiv i et tidligere tegnetrinn, og
+      // en deaktivert knapp er uansett bare en UI-tilstand. Referansene
+      // avgjør, i det øyeblikket det klikkes.
+      if (oppdaterVakt().length) return;
       policy.roller.splice(i, 1); tegnPaaNytt();
     });
-    rad.append(fjern);
+    rad.append(hint, fjern);
+    oppdaterVakt();
     liste.append(rad);
   });
   const legg = el("button", { class: "knapp", type: "button",
@@ -296,13 +430,33 @@ function handlingerSeksjon(policy, tegnPaaNytt) {
     ...kort);
 }
 
-function metaSeksjon(policy, erNy) {
+// Hva kan vi SI om policy-id-en? Teksten lovet universelt at man «beholder
+// malens id for å avløse policyen som gjelder i dag» (Codex P1). Det er ikke
+// noe klienten kunne vite: aktivering er per `policy_id`, katalogen har flere
+// maler (`tjenestebedrift-no`, `netthandel-no`, `handverk-bygg-no`), og en
+// kunde som opprettet policyen med sin EGEN id har ikke malens id i det hele
+// tatt. Følger man rådet der, får man en ny policyserie ved siden av den som
+// gjelder — mens den gamle fortsatt er i kraft.
+//
+// Derfor sier hjelpeteksten bare det oppslaget faktisk dekker:
+//   kjent + id  → «<id> gjelder i dag; behold den for å avløse den»
+//   kjent, ingen aktiv → «det finnes ingen aktiv policy; dette blir den første»
+//   ukjent (403/500) → den kontraktsriktige regelen, uten å påstå hva som
+//                      gjelder: samme id viderefører serien, en annen lager ny.
+function policyIdHint(aktiv) {
+  if (!aktiv || !aktiv.kjent) return t("ui.editor.policy_id_hint");
+  if (!aktiv.id) return t("ui.editor.policy_id_hint_ingen_aktiv");
+  return t("ui.editor.policy_id_hint_avloser").replace("{id}", aktiv.id);
+}
+
+function metaSeksjon(policy, erNy, aktiv) {
   policy.meta = (policy.meta && typeof policy.meta === "object") ? policy.meta : {};
   const m = policy.meta;
   const felt = [
     // policy_id er identiteten; kan settes ved NY, låst ved redigering.
     tekstfelt(t("ui.editor.policy_id"), m.policy_id || "",
-      (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" }),
+      (v) => { m.policy_id = v; }, erNy ? {} : { disabled: "" },
+      erNy ? policyIdHint(aktiv) : t("ui.editor.policy_id_laast")),
     tekstfelt(t("ui.editor.bedrift"), m.bedrift || "",
       (v) => { m.bedrift = v || undefined; }),
     tekstfelt(t("ui.editor.versjon"), m.versjon || "",
@@ -335,7 +489,11 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
   // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn() }
   const st = { policy: null, utkast_id: opts.utkast_id || null,
                utkastversjon: null, feil: [], laster: true,
-               nokkel: null, signatur: null };
+               nokkel: null, signatur: null,
+               // Hva GJELDER i dag? `kjent: false` er utgangspunktet, ikke en
+               // feiltilstand: før oppslaget har svart vet flaten ingenting,
+               // og skal derfor heller ikke påstå noe om avløsning.
+               aktiv: { kjent: false, id: null } };
 
   function lagre() {
     const innhold = byggInnhold(st.policy);
@@ -391,7 +549,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
 
     const barn = [
       ...flateHode(t("ui.editor.tittel"), t("ui.editor.undertittel")),
-      metaSeksjon(st.policy, !st.utkast_id),
+      metaSeksjon(st.policy, !st.utkast_id, st.aktiv),
       rollerSeksjon(st.policy, tegn),
       handlingerSeksjon(st.policy, tegn),
     ];
@@ -416,12 +574,24 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     st.policy = JSON.parse(JSON.stringify(opts.startPolicy));
     tegn();
   } else {
-    // Malvelger.
-    hentMaler().then((d) => {
+    // Malvelger. Hvilken policy som GJELDER hentes samtidig: uten den kan
+    // flaten verken foreslå riktig id eller si sant om hva id-en gjør. Den er
+    // hjelpedata, så et avslag (403) eller et tvetydig register (500) stopper
+    // ingenting — da blir bare `kjent: false`, og teksten lover mindre.
+    Promise.all([hentMaler(), hentAktivPolicyId()]).then(([d, aktiv]) => {
       st.laster = false;
+      st.aktiv = aktiv;
       visMalvelger(hoved, ctx, (d && d.maler) || [], (mal) => {
         st.policy = JSON.parse(JSON.stringify(mal.innhold));
-        if (st.policy.meta) st.policy.meta.policy_id = "";   // eier setter id
+        st.policy.meta = (st.policy.meta && typeof st.policy.meta === "object")
+          ? st.policy.meta : {};
+        // Feltet fylles med den AKTIVE policyens id når vi kjenner den — det
+        // er den, ikke malens id, som avgjør om utkastet avløser dagens policy
+        // eller starter en ny serie ved siden av (Codex P1). Kjenner vi den
+        // ikke, står malens egen id igjen som forslag: et tomt felt ba eier
+        // finne på en identitet uten å si hva den brukes til eller hvilket
+        // format den krever. Begge deler kan overskrives.
+        if (st.aktiv.kjent && st.aktiv.id) st.policy.meta.policy_id = st.aktiv.id;
         tegn();
       }, opts.tilbake);
     }).catch((e) => {
