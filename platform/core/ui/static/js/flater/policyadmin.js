@@ -65,8 +65,20 @@ function risikoEndringer(detalj) {
 // to forskjellige grupper, og en verifikator som UTVIDER fullmakten blir
 // verken sortert først, åpnet eller merket (Codex P1). Nettopp den gruppen
 // er grunnen til at fire øyne kreves.
-function normaliserSti(sti) {
-  return String(sti).replace(/\{\}/g, "");
+//
+// Men markøren finnes BARE i klassifikatorens stier, og normaliseringen lå på
+// felles vei: også bladdiffen ble skrevet om (Codex P2). `verifikatorer` har
+// ubegrensede nøkkelnavn, så `foo{}bar` er en gyldig verifikator-id — og den
+// ble normalisert til `foobar`. Fantes begge i policyen, pekte de to stiene på
+// samme element: bladene deres havnet i ett kort, under den andres overskrift.
+// Å reparere klassifikatorsammenligningen ved å forfalske diffens egne stier
+// er å bytte ett usett fullmaktsskifte mot et annet.
+//
+// Normaliseringen hører derfor til der klassifikatorstien LESES, og treffer
+// bare markørposisjonen: `{}` som avslutter et ledd (foran `.`, `[` eller
+// slutten). `verifikatorer{}[foo{}bar]` beholder nøkkelen sin.
+function normaliserKlassifikatorSti(sti) {
+  return String(sti).replace(/\{\}(?=$|[.[])/g, "");
 }
 
 // Serverens flate sti (`policydiff._flat`) skjøter map-nøkler med punktum og
@@ -147,7 +159,7 @@ function settSammenLedd(ledd) {
 // samles til én rad `dataklasser[]` i stedet for én rad per indeks (Codex
 // P2). Toppnivålisten har ikke noe navngitt ledd, så elementet er gruppen.
 function delOppSti(raa, innhold) {
-  const sti = normaliserSti(raa);
+  const sti = String(raa);
   const ledd = delOppLedd(sti, innhold);
   if (!ledd.length) return { gruppe: sti, element: sti, rest: "" };
   const gruppe = ledd[0].tekst;
@@ -380,7 +392,8 @@ function feltDiff(detalj) {
   // fire-øyne-kravet finnes for; resten er kontekst man kan folde ut.
   const utvider = new Set((detalj.klassifisering_endringer || [])
     .filter((k) => k.klasse === "UTVIDER")
-    .map((k) => delOppSti(k.sti, detalj.innhold).gruppe));
+    .map((k) => delOppSti(normaliserKlassifikatorSti(k.sti),
+      detalj.innhold).gruppe));
 
   const grupper = new Map();
   for (const e of endr) {

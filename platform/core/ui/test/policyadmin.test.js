@@ -1563,7 +1563,7 @@ test("Diff: grupperes per område, og de som utvider fullmakt står åpne øvers
 // feltene uten markør. Beholdes markøren i gruppenavnet, er «verifikatorer{}»
 // og «verifikatorer» to forskjellige grupper, og en verifikator som UTVIDER
 // fullmakten blir verken sortert først, åpnet eller merket (Codex P1).
-// Kontroll: fjern `normaliserSti`, så blir denne rød.
+// Kontroll: fjern `normaliserKlassifikatorSti`, så blir denne rød.
 const VERIFIKATOR_DIFF = {
   ...DETALJ,
   klassifisering_endringer: [
@@ -1917,6 +1917,50 @@ const PUNKTUMNOKKEL_DIFF = {
       til: "Fakturamottak" },
   ] },
 };
+
+// Samme ubegrensede nøkkelnavn gjør «foo{}bar» til en gyldig verifikator-id.
+// Ble normaliseringen av klassifikatorens beholder-markør kjørt på bladdiffen
+// også, skrev den «verifikatorer.foo{}bar» om til «verifikatorer.foobar» — og
+// fantes BEGGE i policyen, pekte de to stiene på samme element (Codex P2).
+//
+// Kontroll: la `delOppSti` normalisere stien igjen, så blir denne rød.
+const KLAMMENOKKEL_DIFF = {
+  ...DETALJ,
+  klassifisering_endringer: [],
+  innhold: {
+    verifikatorer: {
+      "foo{}bar": { beskrivelse: "Bankintegrasjon" },
+      foobar: { beskrivelse: "Fakturamottak" },
+    },
+  },
+  diff: { endringer: [
+    { sti: "verifikatorer.foo{}bar.beskrivelse", type: "lagt_til",
+      til: "Bankintegrasjon" },
+    { sti: "verifikatorer.foo{}bar.kan_fastsla_permanent", type: "lagt_til",
+      til: true },
+    { sti: "verifikatorer.foobar.beskrivelse", type: "lagt_til",
+      til: "Fakturamottak" },
+    { sti: "verifikatorer.foobar.kan_fastsla_permanent", type: "lagt_til",
+      til: false },
+  ] },
+};
+
+test("Diff: «{}» inne i en gyldig map-nøkkel blir stående", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policyutkast/u-1": KLAMMENOKKEL_DIFF, __post: async () => ({}) };
+  const rot = await aapneEndringer(nyHoved());
+  const v = gruppeMedNavn(rot, t("ui.policyadmin.diff.gruppe.verifikatorer"));
+  const kort = [...v.querySelectorAll(".diff-element")];
+  assert.equal(kort.length, 2,
+    `to verifikatorer er to kort (fant ${kort.length})`);
+  const bar = kort.find((k) => k.textContent.includes("Bankintegrasjon"));
+  assert.ok(bar, "verifikatorene ble slått sammen til ett kort");
+  assert.ok(!bar.textContent.includes("Fakturamottak"),
+    "en annen verifikators felt havnet i dette kortet");
+  assert.ok(bar.querySelector("summary").textContent.includes("foo{}bar"),
+    "overskriften navngir ikke verifikatoren: "
+    + `«${bar.querySelector("summary").textContent}»`);
+});
 
 test("Diff: to verifikatorer med punktum i id-en blir to kort", async () => {
   SVAR = { "/v1/policyutkast": LISTE,
