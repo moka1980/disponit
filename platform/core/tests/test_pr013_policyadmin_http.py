@@ -411,6 +411,33 @@ def test_valider_avviser_malstatus_mens_utkastet_ennaa_kan_rettes():
 
 
 @pg
+def test_valider_avviser_unicode_sifre_i_versjonen():
+    """🔴 P2: skjemaet godtar «١.٠.٠» — databasen gjør det ikke.
+
+    `jsonschema` bruker Pythons `\\d`, som dekker hele Unicodes
+    desimalsiffer-kategori; migrasjonene bruker `[0-9]`. Uten kontrollen her ble
+    utkastet FRYST med en versjon databasen ville avvist, runden åpnet, og
+    bruddet kom først etter attestasjonene.
+
+    Kontroll: sett `_SEMVER` tilbake til `\\d`, så blir denne rød med utfall
+    `validert`.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    pol = _gyldig(pid)
+    pol["meta"]["versjon"] = "١.٠.٠"        # ١.٠.٠
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=pol)
+        res = _valider(rt, tenant=TEN, aktor="forf", request_id="r",
+                       utkast_id=o["utkast_id"], forventet_utkastversjon=1)
+        assert res["utfall"] == "ugyldig", res
+        assert any("meta.versjon" in f for f in res["feil"]), res["feil"]
+    finally:
+        rt.close()
+
+
+@pg
 def test_maler_endepunkt_uautentisert_avvises(klient):
     r = klient.get("/v1/policymaler")
     assert r.status_code == 401

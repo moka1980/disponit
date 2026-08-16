@@ -791,6 +791,28 @@ def test_versjonsnokkel_maaler_uten_ovre_grense():
     assert n(f"{enorm}.0.0", 3) > n(f"{'9' * 139999}.0.0", 3)
 
 
+def test_versjonsformen_krever_ascii_sifre():
+    """🔴 P2: «١.٠.٠» er skjemagyldig for Python, men ikke for databasen.
+
+    `\\d` i Python — og dermed i `jsonschema` — matcher HELE Unicodes
+    desimalsiffer-kategori, mens migrasjonene bruker `[0-9]`. Med en
+    unicode-versjon godtok porten et utkast databasen ville avvist, og
+    sifferstrengen sorterer dessuten feil: «١» ligger over «2» i tekst. Runden
+    åpnet, godkjennerne signerte, og bruddet kom først i aktiveringen — som en
+    kansellert runde.
+
+    Kjører uten database: kontrollen er ren.
+    """
+    from api.policyadmin import _SEMVER, _TALLVERSJON, _dokumentavvik
+    assert _SEMVER.match("1.0.0")
+    assert not _SEMVER.match("١.٠.٠"), "unicode-sifre slipper gjennom porten"
+    assert not _TALLVERSJON.match("٢")
+    # Og valideringen sier fra MENS utkastet kan rettes.
+    avvik = _dokumentavvik("p", {"meta": {"policy_id": "p", "versjon": "١.٠.٠",
+                                          "status": "produksjon"}})
+    assert any("meta.versjon" in a for a in avvik), avvik
+
+
 @pg
 def test_porten_avviser_versjon_registeret_ikke_kan_lagre():
     """🔴 En versjon som ikke KAN lagres skal ikke koste to signaturer.

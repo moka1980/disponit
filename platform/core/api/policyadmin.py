@@ -473,8 +473,19 @@ def _dokumentavvik(policy_id: str, innhold) -> list[str]:
         avvik.append(
             f"meta.status {status!r} må være {_AKTIVERINGSSTATUS!r} — en"
             " fire-øyne-runde aktiverer policyen som produksjonspolicy")
+    # Versjonen måles her OG i `_krev_ny_versjon`, men med ulik hensikt: der er
+    # den en feil, her er den en tekst eier kan handle på. Skjemaet slipper
+    # gjennom to former registeret ikke kan bære — unicode-sifre (Pythons `\d`,
+    # og dermed `jsonschema`, godtar hele desimalsiffer-kategorien mens
+    # databasen krever `[0-9]`) og en lengde som sprenger primærnøkkelens
+    # btree-oppføring. Begge må stanses FØR frysingen: etterpå kan versjonen
+    # ikke økes, og runden er tapt.
     versjon = _meta(innhold).get("versjon")
-    if isinstance(versjon, str) and len(versjon) > _MAKS_VERSJONSLENGDE:
+    if isinstance(versjon, str) and not _SEMVER.match(versjon):
+        avvik.append(
+            f"meta.versjon {versjon[:40]!r} må være tre tall skilt med punktum"
+            " (ASCII-sifre, formen 1.2.3)")
+    elif isinstance(versjon, str) and len(versjon) > _MAKS_VERSJONSLENGDE:
         avvik.append(
             f"meta.versjon er {len(versjon)} tegn — maks er"
             f" {_MAKS_VERSJONSLENGDE}")
@@ -523,8 +534,15 @@ def _krev_produksjonsstatus(innhold) -> None:
 _DOKUMENTBRUDD = {"dokument_policy_id": "dokument_avvik",
                   "dokument_status": "dokument_avvik"}
 
-#: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`).
-_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+#: Skjemaets versjonsform (`policy-schema-v0.2.json`: `meta.versjon`), men med
+#: ASCII-sifre EKSPLISITT (Codex P2). Pythons `\d` matcher hele Unicodes
+#: desimalsiffer-kategori, og det gjør `jsonschema` også — så «١.٠.٠» er
+#: skjemagyldig. Databasen bruker `[0-9]` (migrasjon 020–024) og avviser den, og
+#: nøkkelen under sammenligner sifrene som TEKST, der «١» sorterer over «2».
+#: Uten dette godtok porten altså en versjon som er både feilordnet og
+#: ulagringsbar, åpnet runden, og lot bruddet komme etter attestasjonene — med
+#: en kansellert runde som resultat. De to gatene skal måle det samme.
+_SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 #: Lengste versjon registeret KAN lagre. Ikke en smakssak: `versjon` er del av
 #: primærnøkkelen `(tenant, policy_id, versjon)`, og en btree-oppføring har et
 #: hardt tak (~2704 byte på 8 KiB-sider) som de tre feltene deler. Skjemaet
@@ -537,7 +555,7 @@ _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _MAKS_VERSJONSLENGDE = 512
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
 #: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
-_TALLVERSJON = re.compile(r"^\d+(\.\d+)*$")
+_TALLVERSJON = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 
 
 def _versjonsnokkel(versjon: str, ledd: int) -> tuple[tuple[int, str], ...]:
