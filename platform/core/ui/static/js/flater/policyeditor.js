@@ -25,6 +25,25 @@ const MODUS = ["auto", "auto_med_vilkaar", "alltid_stopp"];
 // er der for at eier skal møte kravet ved feltet, ikke etter en rundtur.
 const POLICY_ID_FORM = /^[a-z0-9-]{3,}$/;
 
+// ... og STØRRELSEN (Codex P3). `policyer_pkey` er `(tenant, policy_id,
+// versjon)`, og de tre deler btree-oppføringens tak — serveren regner budsjettet
+// som `_MAKS_NOKKELBYTES - _VERSJONSRESERVE` MINUS tenantens egne byte.
+// Klienten kjenner ikke tenanten, så den kan ikke speile grensen eksakt.
+//
+// Den speiler derfor den TENANT-UAVHENGIGE delen: en id over dette taket
+// avvises av enhver tenant, så kontrollen kan aldri avvise noe serveren ville
+// godtatt. Båndet rett under taket er fortsatt serverens å svare på — og den
+// svarer nå `policy_id_for_stor`, ikke `utkast_feilformet`, så eier får vite at
+// det er id-en som skal forkortes og ikke dokumentet som skal repareres.
+const POLICY_ID_MAKS_BYTE = 2400 - 64;
+
+// UTF-8-byte, som `octet_length` i Postgres og `_nokkelbytes` i porten —
+// `String.length` teller UTF-16-enheter og ville sagt for lite om en id med
+// tegn utenfor ASCII.
+function byteLengde(s) {
+  return new TextEncoder().encode(s).length;
+}
+
 // `hint` er reglene feltet faktisk håndhever, sagt FØR man skriver. Uten den
 // måtte eier gjette formatet og få svaret fra validatoren etterpå — og bare
 // hvis feilen i det hele tatt nådde skjermen. Knyttes med `aria-describedby`,
@@ -667,6 +686,13 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
     // lagring hun trodde gikk gjennom.
     if (!st.utkast_id && !POLICY_ID_FORM.test(pid)) {
       st.feil = [t("ui.editor.policy_id_ugyldig")]; tegn(); return;
+    }
+    // Formen er i orden, men id-en kan fortsatt være for stor for
+    // registernøkkelen. Egen melding: «for lang» er ikke «feil tegn», og en id
+    // som er feil på begge måter skal høre om formen først — den er det eier
+    // faktisk må velge om igjen.
+    if (!st.utkast_id && byteLengde(pid) > POLICY_ID_MAKS_BYTE) {
+      st.feil = [t("ui.editor.policy_id_for_stor")]; tegn(); return;
     }
     // Raden opprettes fra den TRIMMEDE id-en, så dokumentet må bære nøyaktig
     // den samme — ikke feltets råtekst. Et utkast født med « acme» i

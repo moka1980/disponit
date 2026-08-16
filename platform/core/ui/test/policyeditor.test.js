@@ -233,6 +233,42 @@ test("Ny: en policy-ID som bryter formen stoppes før lagring", async () => {
   if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
 });
 
+// Codex P3: en id med riktig FORM kan fortsatt være for stor for
+// registernøkkelen, og «for lang» er ikke «feil tegn». Serveren har fått en
+// egen kode (`policy_id_for_stor`) fordi `utkast_feilformet` ble oversatt til
+// «innholdet er ikke gyldig JSON-struktur» — eier ble sendt for å reparere et
+// dokument som var helt i orden. Her møter hun det ved feltet i stedet.
+test("Ny: en policy-ID over registernøkkelens tak stoppes med egen melding",
+     async () => {
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  POST = undefined;
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: MAL, aapneUtkast: () => {} });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  const pid = h.querySelector("input.felt-inp");
+
+  // Skjemagyldig form, 2500 byte: over det tenant-uavhengige taket.
+  pid.value = "a".repeat(2500);
+  pid.dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.editor.policy_id_for_stor")));
+  assert.ok(h.textContent.includes(t("ui.editor.policy_id_for_stor")));
+  assert.equal(POST, undefined, "for stor id skal ikke ha blitt sendt");
+
+  // En lang, men lagringsbar id går gjennom — kontrollen er et tak, ikke en
+  // ny formregel, og den avviser aldri noe serveren ville godtatt.
+  const lang = "a".repeat(200);
+  pid.value = lang;
+  pid.dispatchEvent(new window.Event("input"));
+  finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+  await vent(() => POST);
+  assert.equal(JSON.parse(POST.opts.body).policy_id, lang);
+  if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+});
+
 test("Ny: id-en trimmes likt i raden og i dokumentet", async () => {
   // Raden opprettes fra den trimmede id-en. Bar dokumentet råteksten, ville
   // utkastet vært i avvik allerede ved fødselen — og låst ute av valideringen

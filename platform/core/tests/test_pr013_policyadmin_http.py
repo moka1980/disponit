@@ -535,6 +535,13 @@ def test_opprett_avviser_policy_id_som_ikke_levner_plass_til_en_versjon():
 
     Kontroll: fjern nøkkelkontrollen i `opprett_utkast`, så blir denne grønn på
     opprettelsen og rød hos godkjennerne.
+
+    Koden er EGEN (Codex P3). `utkast_feilformet` oversettes av editoren til
+    «innholdet er ikke gyldig JSON-struktur», og HTTP-laget slipper bare koden
+    videre — detaljen når aldri skjermen. Eier ble altså sendt for å reparere et
+    dokument som er helt i orden, mens det eneste som må gjøres er å forkorte
+    id-en. `policy_id_for_stor` er 400, som `policy_id_ugyldig`: en feil i
+    forespørselen, ikke en tilstand som kan endre seg.
     """
     pid = "p" + "o" * 2500
     rt = _rt()
@@ -542,7 +549,14 @@ def test_opprett_avviser_policy_id_som_ikke_levner_plass_til_en_versjon():
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
             _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
                      policy_id=pid, innhold=_gyldig())
-        assert e.value.kode == "utkast_feilformet", e.value.kode
+        assert e.value.kode == "policy_id_for_stor", e.value.kode
+        rt.rollback()
+        # Formen først, størrelsen etterpå: en id som er feil på begge måter
+        # skal høre om formen — den er det eier faktisk må velge om igjen.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e2:
+            _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id="P" + "O" * 2500, innhold=_gyldig())
+        assert e2.value.kode == "policy_id_ugyldig", e2.value.kode
         rt.rollback()
         # En vanlig id går fortsatt gjennom — kontrollen er en grense, ikke en dør.
         assert _opprett(rt, tenant=TEN, aktor="forf", request_id="r",

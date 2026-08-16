@@ -34,6 +34,11 @@ _FEIL_HTTP = {
     # FORESPØRSELEN, ikke en tilstandskonflikt. Ingenting i basen kan endre seg
     # slik at det samme kallet plutselig lykkes.
     "policy_id_ugyldig": 400,
+    # Samme kategori: id-en har riktig FORM, men er for stor til å dele
+    # registerets primærnøkkel med en versjon. Egen kode fordi eier ellers fikk
+    # `utkast_feilformet` og ble bedt om å reparere dokumentet sitt i stedet for
+    # å forkorte id-en (Codex P3).
+    "policy_id_for_stor": 400,
     "dokument_avvik": 409,
     "idempotenskonflikt": 409, "sikkerhet": 409,
     "scope_mangler": 403, "mangler_medlemskap": 403,

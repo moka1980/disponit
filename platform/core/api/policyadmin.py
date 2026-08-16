@@ -190,10 +190,17 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
     # plass. Da er det opprettelsen som skal si nei, ikke en validering hun
     # aldri kan tilfredsstille.
+    #
+    # EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
+    # koden videre — detaljen under når aldri skjermen — og editoren oversetter
+    # `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
+    # altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
+    # eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
+    # ikke feil form: `_POLICY_ID` over har alt sagt ja til den.
     if _nokkelbytes(tenant, policy_id) > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
         conn.rollback()
         raise Aktiveringsfeil(
-            "utkast_feilformet",
+            "policy_id_for_stor",
             f"policy_id levner ikke plass til en versjon i registernøkkelen"
             f" ({_nokkelbytes(tenant, policy_id)} byte)")
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
