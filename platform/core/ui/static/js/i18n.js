@@ -16,6 +16,10 @@ let _sprak = "nb";
 // lageret fordi den er det eksplisitte valget for NETTOPP denne navigasjonen
 // — og fordi en delt lenke da åpner på språket den ble delt på, uansett hva
 // mottakerens forrige besøk la igjen.
+//
+// At URL-en har forrang, forplikter: leddet MÅ skrives hver gang språket
+// skifter, ellers vinner et gammelt ledd over et nytt valg (se
+// `speilSprakIUrl` ved ibruktakingen).
 export function velgSprak() {
   // Rekkefølge: URL → lagret valg → <html data-sprak> → nettleser → nb.
   let s = null;
@@ -66,6 +70,25 @@ export function lagreSprak(s) {
 // lastet — og etter en forkastet henting rapportert et språk som aldri kom.
 let _lasteNr = 0;
 
+// URL-LEDDET SKRIVES DER SPRÅKET COMMITES, IKKE DER SIDEN TEGNES (Codex P2).
+// Speilingen lå i den offentlige renderen, mens `velgSprak` gir URL-en forrang
+// OVERALT. Etter innlogging står returadressen med sitt ledd — `/?visning=
+// kundeadmin&sprak=en` — og et språkbytte inne i skallet skrev bare lageret og
+// modulen: URL-en ble stående på `en`, og ved neste last vant det gamle leddet
+// over det nye valget. Skallet falt tilbake til engelsk, om og om igjen.
+// Ibruktakingen er det ene stedet begge flatene passerer, så leddet hører
+// hjemme her — sammen med `lang` og `data-sprak`, de andre stedene språket
+// står skrevet. `replaceState` fordi dette ikke er en navigasjon: byttet skal
+// ikke legge et steg i historikken brukeren må klikke seg forbi.
+function speilSprakIUrl(s) {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("sprak") === s) return;
+    url.searchParams.set("sprak", s);
+    window.history.replaceState(window.history.state, "", url);
+  } catch { /* språket lever uansett i økten — URL-en er bare et ekko */ }
+}
+
 export async function hentI18n(sprak) {
   const nr = ++_lasteNr;
   const s = SPRAK.includes(sprak) ? sprak : "nb";
@@ -85,6 +108,7 @@ export async function hentI18n(sprak) {
       _kart = kart;
       document.documentElement.setAttribute("lang", _sprak);
       document.documentElement.setAttribute("data-sprak", _sprak);
+      speilSprakIUrl(_sprak);
       return _sprak;
     },
   };

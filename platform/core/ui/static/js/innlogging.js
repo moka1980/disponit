@@ -342,15 +342,6 @@ function settDokumenttittel(side) {
     .replace("{app}", t("app.navn", "Disponit"));
 }
 
-function speilSprakIUrl() {
-  try {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("sprak") === sprak()) return;
-    url.searchParams.set("sprak", sprak());
-    window.history.replaceState(window.history.state, "", url);
-  } catch { /* språket lever uansett i økten — URL-en er bare et ekko */ }
-}
-
 function offentligBunn() {
   return el("footer", { class: "site-footer" },
     el("strong", { text: t("app.navn", "Disponit") }),
@@ -390,10 +381,11 @@ export async function visInnlogging(opsjoner = {}) {
   // Nå — og ikke tidligere — er alt til stede for å bytte flaten. `null` fra
   // `taIBruk` betyr at et nyere valg eier språket; da tegner vi ikke.
   if (opsjoner.i18n) {
+    // `taIBruk` speiler selv språket i URL-en: leddet skrives der språket
+    // commites, ikke her, slik at også skallet holder URL-en à jour.
     if (opsjoner.i18n.taIBruk() === null) return;
     // Hoppelenka står UTENFOR `#app` og overlever rendringen under (Codex P2).
     lokaliserSkiplenke();
-    speilSprakIUrl();
   }
 
   const side = lesSide();
