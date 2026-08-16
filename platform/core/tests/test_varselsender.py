@@ -521,7 +521,10 @@ def test_lest_i_portalen_gir_ingen_epost():
         b = _bruker(c, "leser", "leser@example.test")
         _ko(c, b, "u-" + secrets.token_hex(4))
         c.commit()
-        vid = varsel.innboks(c, tenant=TEN, bruker_id=b)[0]["id"]
+        _kontekst(c)   # `SET LOCAL` døde med committen; uten den ser RLS null
+        rader = varsel.innboks(c, tenant=TEN, bruker_id=b)
+        assert len(rader) == 1, rader
+        vid = rader[0]["id"]
         assert varsel.merk_lest(c, tenant=TEN, bruker_id=b, varsel_id=vid)
         c.commit()
         _kontekst(c)
