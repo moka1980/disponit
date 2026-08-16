@@ -954,6 +954,23 @@ function forkastForsok(uid, versjon, nokkel, forsok, ctx, paaFerdig) {
     });
 }
 
+// HVILKET utkast? Bekreftelsen viste bare `policy_id`, og det er ikke en
+// identifikator for et utkast (Codex P2): en policyserie kan ha FLERE utkast
+// samtidig — skjemaet og `opprett_utkast` tillater det uttrykkelig — og de
+// deler `policy_id`. To dialoger for to forskjellige forslag i samme serie var
+// da ord for ord like. Det er én dialog for mye å ta feil av når handlingen er
+// uopprettelig og eier kan ha flere utkast oppe.
+//
+// `utkast_id` er det som faktisk peker på raden som forkastes, og
+// utkastversjonen er tilstanden nøkkelen bindes til — den samme versjonen
+// serveren avviser handlingen på hvis den har flyttet seg siden eier så den.
+// Serien først, fordi det er der eier orienterer seg; så det som skiller.
+function forkastMaal(detalj, uid) {
+  return `${detalj.policy_id} · ${t("ui.policyadmin.forkast.maal")
+    .replace("{utkast}", uid)
+    .replace("{versjon}", String(detalj.utkastversjon))}`;
+}
+
 function forkastKnapp(detalj, uid, ctx, paaFerdig) {
   // STABIL nøkkel per render: re-klikk er retry, ikke en ny operasjon.
   const nokkel = nyIdempotensnokkel();
@@ -962,7 +979,7 @@ function forkastKnapp(detalj, uid, ctx, paaFerdig) {
   b.addEventListener("click", () => {
     Bekreftelsesdialog({
       tittel: t("ui.policyadmin.forkast.tittel"),
-      tekst: `${detalj.policy_id} · ${t("ui.policyadmin.forkast.tekst")}`,
+      tekst: `${forkastMaal(detalj, uid)} · ${t("ui.policyadmin.forkast.tekst")}`,
       primarTekst: t("ui.policyadmin.handling.forkast"),
       farlig: true,
       paaPrimar: () => forkastForsok(uid, detalj.utkastversjon, nokkel, 0,
