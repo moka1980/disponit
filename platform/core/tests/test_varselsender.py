@@ -1556,9 +1556,20 @@ def _delt(tekst, i_blokk):
         # det splittes på semikolon som alt annet. Den er sin egen klartekst:
         # det er nettopp teksten som kjører.
         for m in _DYNAMISK.finditer(s):
+            # VAKTEN FØLGER MED UT AV TEKSTEN (Codex P2 på #74). `dybde`
+            # teller grenene som åpnet i en TIDLIGERE setning, og oppdateres
+            # først nedenfor — men `IF … THEN EXECUTE '…'` er ETT
+            # semikolonfragment, så en gren som åpner rett foran `EXECUTE`
+            # er ennå ikke talt. Den utpakkede teksten mister dessuten
+            # `IF`-forstavelsen, så leseren kan ikke finne vakten selv slik
+            # den gjør for skrevne setninger. Ble den derfor spilt av som
+            # ubetinget, leste modellen en betinget dynamisk REVOKE som
+            # bevis, og lot gjerdet stå der klyngen — med usann vakt — ikke
+            # hadde revokert noe.
+            betinget = dybde > 0 or bool(_BETINGET.search(s[:m.start()]))
             for bit in strenger[int(m.group(1))].split(";"):
                 if kjort := " ".join(bit.split()).lower():
-                    yield kjort, kjort, dybde > 0
+                    yield kjort, kjort, betinget
         if i_blokk:
             # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
             # en logglinje lukker ingen gren, og en `IF … THEN` i en
@@ -2417,6 +2428,48 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
                    "END $$;")], n)
     assert gjerdet == {sig: False}, (
         f"en dynamisk GRANT til PUBLIC åpner gjerdet. Spor: {spor}")
+
+    # …og VAKTEN GJELDER OGSÅ DEN. `IF … THEN EXECUTE '…'` er ETT
+    # semikolonfragment: grentellingen ser `IF`-en først i fragmentet
+    # ETTER, og teksten som pakkes ut har ingen `IF` foran seg å bli lest
+    # på. En betinget dynamisk REVOKE ble derfor spilt av som ubetinget og
+    # løftet gjerdet til True — mens klyngen, med usann vakt, ikke revokerte
+    # noe som helst.
+    betinget_dynamisk = (
+        "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_roles"
+        " WHERE rolname = 'disponit_varselsender') THEN\n"
+        "        EXECUTE 'REVOKE ALL ON FUNCTION"
+        " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+        "    END IF;\nEND $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + betinget_dynamisk)], n)
+    assert gjerdet == {sig: False}, (
+        "en dynamisk REVOKE under en vakt er ikke bevis for at gjerdet står,"
+        f" heller ikke når vakten står i den samme setningen. Spor: {spor}")
+
+    # …og motprøven, av samme grunn som for den skrevne formen: den river
+    # ikke ned et gjerde som alt står. Uten den ville regelen lest som «alt
+    # med en `IF` i nærheten teller ikke».
+    assert _spill_av([("a.sql", lag + gjerde),
+                      ("b.sql", betinget_dynamisk)], n)[0] == {sig: True}, \
+        "en betinget dynamisk revoke skal ikke rive et gjerde som står"
+
+    # …og `END IF` LUKKER GRENEN her også: en dynamisk REVOKE ETTER den står
+    # ubetinget, og lukker gjerdet. Det er dette som skiller «vakten i det
+    # samme fragmentet» fra «en `IF` hvor som helst i blokken».
+    etter_end_if = (
+        "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+        "    IF EXISTS (SELECT 1 FROM pg_roles"
+        " WHERE rolname = 'disponit_varselsender') THEN\n"
+        "        RAISE NOTICE 'rydder opp';\n"
+        "    END IF;\n"
+        "    EXECUTE 'REVOKE ALL ON FUNCTION"
+        " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+        "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag + etter_end_if)], n)
+    assert gjerdet == {sig: True}, (
+        "en dynamisk REVOKE ETTER `END IF` er ubetinget og lukker gjerdet."
+        f" Spor: {spor}")
 
     # Å FLYTTE ET NAVN ER Å FJERNE DET. Funksjonen lever videre — det gjør
     # ikke navnet senderen kaller, og et gjerde rundt et navn som er borte er
