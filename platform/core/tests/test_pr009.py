@@ -348,6 +348,61 @@ def test_p1_preflight_skjer_for_forste_mutasjon():
             f"mutasjonen {mutasjon!r} står FØR preflight-gaten"
 
 
+def test_p2_varsel_dsn_regates_paa_verdien_som_skrives(tmp_path):
+    """Codex P2: preflighten leser miljøfila i en SUBSHELL og kaster verdien;
+    materialiseringen leser fila PÅ NYTT. Byttes fila mellom de to lesingene,
+    godkjente preflighten en verdi som aldri skrives — samme funn som
+    DISPONIT_MILJO-porten allerede dekker, og løsningen speiler den: sjekken
+    står på samme shell-variabel som skrives.
+
+    Beviset er atferd, ikke løfte: credentialblokken kjøres UTEN
+    DISPONIT_VARSEL_URL i miljøet — som er nøyaktig tilstanden etter et
+    filbytte — og skal avbryte uten å etterlate en varsel-credential.
+    """
+    rot = tmp_path / "etc-disponit"
+    venv = tmp_path / "rot/.venv/bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("#!/bin/sh\necho signatur-stub\n",
+                                 encoding="utf-8")
+    (venv / "python").chmod(0o755)
+    blokk = _credentialblokken().replace("/etc/disponit", str(rot))
+    env = {"ROT": str(tmp_path / "rot"), "KILDE": str(ROT),
+           "PATH": "/usr/bin:/bin"}
+    env.update({n: f"verdi-{n}" for n in (
+        "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
+        "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
+        "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL")})
+    # BEVISST TOM, ikke bare fraværende: en fraværende variabel stoppes
+    # uansett av `set -u` ved skrivingen — med en dårligere melding, men
+    # stoppet. Den TOMME er tilfellet bare re-gaten fanger: `set -u` slipper
+    # den gjennom, og uten gaten materialiseres en tom credential som
+    # senderen først oppdager ved neste timerkjøring. Første utgave av denne
+    # testen brukte fraværende og var grønn også uten gaten — den målte
+    # `set -u`, ikke rettelsen.
+    env["DISPONIT_VARSEL_URL"] = ""
+    import subprocess
+    res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
+                         capture_output=True, text=True, env=env)
+    assert res.returncode != 0, \
+        "blokken skrev credentials med en DSN preflighten aldri så"
+    assert "DISPONIT_VARSEL_URL" in res.stdout + res.stderr
+    assert not (rot / "varsel/DISPONIT_DATABASE_URL").exists(), \
+        "en tom/manglende DSN ble materialisert likevel"
+
+
+def test_p2_ingen_ny_fillesing_mellom_regaten_og_skrivingen():
+    """Og plasseringen, målt på kilden som de andre plasseringstestene:
+    mellom re-gaten og `skriv_cred varsel` leses miljøfila ikke igjen — da
+    finnes det ikke noe vindu mellom godkjenningen og verdien."""
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    regate = opp.index('[ -z "${DISPONIT_VARSEL_URL:-}" ]')
+    skriving = opp.index("skriv_cred varsel DISPONIT_DATABASE_URL")
+    assert regate < skriving, "re-gaten står ETTER skrivingen"
+    mellom = opp[regate:skriving]
+    assert '. "$MILJOFIL"' not in mellom, \
+        "miljøfila leses på nytt mellom re-gaten og skrivingen"
+
+
 def test_p1_varsel_dsn_gates_for_forste_mutasjon():
     """Codex P1 på #68, samme kontrakt som testen over: porten for
     DISPONIT_VARSEL_URL står FØR hver muterende kommando. Første utgave

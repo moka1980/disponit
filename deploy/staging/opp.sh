@@ -223,8 +223,20 @@ skriv_cred api DATABASE_URL          "$DATABASE_URL"
 # skriver i den — uten `install -d` feilet omdirigeringen, og den feilen ville
 # først vist seg som en sender uten DB-URL.
 install -d -m 700 /etc/disponit/varsel
-# SENDERENS EGEN DSN — aldri API-ets. At variabelen finnes er alt bevist i
-# preflighten (før første mutasjon); her bare materialiseres den.
+# SENDERENS EGEN DSN — aldri API-ets. Preflighten beviste at variabelen
+# fantes FØR første mutasjon, men lesingen over er en NY lesing av samme fil
+# (Codex P2, samme funn som DISPONIT_MILJO-porten rett over): byttes fila
+# mellom de to lesingene, godkjente preflighten en verdi som aldri skrives —
+# og en tom verdi her ville materialisert en tom credential som senderen
+# først oppdager ved neste timerkjøring. Sjekken står derfor på SAMME
+# shell-variabel som skrives, uten ny lesing av fila imellom.
+if [ -z "${DISPONIT_VARSEL_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_VARSEL_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env} mellom"
+  echo "preflighten og materialiseringen — fila er byttet eller redigert"
+  echo "mens utrullingen kjørte. Ingen varsel-credential er skrevet."
+  echo "Kjør opp.sh på nytt når ${MILJOFIL:-/etc/disponit/staging.env} står stille."
+  exit 1
+fi
 skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
