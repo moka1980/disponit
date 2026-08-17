@@ -9,10 +9,20 @@ SERVERKONTEKSTENS, aldri motorens.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
 from .motor import Motorfeil, Motorresultat, heltall
+
+#: SAMME mønster som `rapportskjema._HOSTNAME`. Det står ikke importert,
+#: men gjentatt med en test som binder de to sammen: skjemaet er
+#: innholdsadressert og hashet, og en import ville gjort saneringen
+#: avhengig av at ingen noen gang endrer mønsteret der uten å tenke på
+#: hva det gjør med kappingen her.
+_VERT = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\Z")
 
 _ALVOR = ("kritisk", "alvorlig", "moderat", "lav")
 MAKS_FUNN = 500
@@ -160,16 +170,28 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     # (Codex P2): proxyen teller per subressurs, så den samme verten kan
     # komme igjen mange ganger. Summeringen er ærlig — tallet blir det
     # totale — og den gjør at taket sjelden treffer i det hele tatt.
+    #
+    # En uleselig rad FEILER, den forkastes ikke (Codex P2). En tom
+    # `dekningsbegrensninger` betyr i rapportkontrakten «ingen kjente
+    # begrensninger» — ikke «vi klarte ikke lese dem». Ble radene stille
+    # droppet, kunne en ødelagt proxy produsere PROMOTERT evidens som
+    # påstår ren dekning nettopp når dekningen er ukjent. Det er den ene
+    # løgnen hele feltet finnes for å hindre (014b B3), og den er verre enn
+    # et feilet oppdrag: et feilet oppdrag ser man.
     samlet: dict[tuple, dict] = {}
     for b in resultat.blokkert:
         if not isinstance(b, dict):
-            continue
+            raise Motorfeil("blokkert-post uleselig")
         vert = str(b.get("vert") or "").split("/")[0].split("?")[0].lower()
-        if not vert:
-            continue
+        # Verten må også være en vert. Uten denne ville en «nesten-vert»
+        # (`http://x.example/`, en tom streng, et tall) blitt til en
+        # ValidationError langt unna i stedet for den dokumenterte
+        # feil-kvitteringen — samme utfall som `_ren_url` finnes for.
+        if not _VERT.match(vert) or len(vert) > 253:
+            raise Motorfeil("blokkert-post har ikke et lesbart vertsnavn")
         art = (b.get("art") if b.get("art") in
                ("stilark", "font", "skript", "bilde", "annet") else "annet")
-        nokkel = (vert[:253], art)
+        nokkel = (vert, art)
         post = samlet.setdefault(nokkel, {"vert": nokkel[0], "antall": 0,
                                           "art": art})
         post["antall"] += max(1, _antall(b.get("antall"), 1))

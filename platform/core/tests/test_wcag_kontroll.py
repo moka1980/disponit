@@ -975,6 +975,77 @@ def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
     assert r3["dekningsbegrensninger"][0]["vert"] == "tung.example"
 
 
+def test_uleselig_dekningsbegrensning_feiler_i_stedet_for_aa_forsvinne():
+    """Codex P2: en uleselig blokkert-post ble STILLE forkastet.
+
+    Rapportkontrakten sier at en tom `dekningsbegrensninger` betyr «ingen
+    kjente begrensninger» — ikke «vi klarte ikke lese dem». En ødelagt
+    proxy kunne derfor gi PROMOTERT evidens som påstår ren dekning nøyaktig
+    når dekningen er ukjent. Det er den ene løgnen hele feltet finnes for å
+    hindre (014b B3), og den er verre enn et feilet oppdrag: et feilet
+    oppdrag ser man.
+
+    Kontroll: bytt de to `raise Motorfeil` tilbake til `continue`, så blir
+    denne rød — og den siste påstanden («ingen kjente begrensninger») blir
+    en rapport ingen kan skille fra sannheten.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    for daarlig in ("ikke-en-dict", None, 42,
+                    {"vert": None, "antall": 5, "art": "font"},
+                    {"antall": 5, "art": "font"},
+                    {"vert": "", "antall": 5},
+                    {"vert": "http://x.example/", "antall": 1},
+                    {"vert": "ikke_en_vert", "antall": 1},
+                    {"vert": "x" * 300 + ".example", "antall": 1}):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(blokkert=(daarlig,)),
+                 payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+
+    # Motsatsen: en ekte tom liste betyr fortsatt «ingen kjente
+    # begrensninger», og den påstanden skal fortsatt kunne uttrykkes.
+    r = bygg(_motorresultat(blokkert=()),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert r["dekningsbegrensninger"] == []
+
+
+def test_vertsmoensteret_slipper_aldri_forbi_skjemaet():
+    """Saneringen må aldri være SLAPPERE enn skjemaet.
+
+    Slapp den gjennom noe skjemaet avviser, ville posten blitt en
+    ValidationError langt unna i stedet for den dokumenterte
+    feil-kvitteringen — nøyaktig den taushet denne runden lukker. Kravet er
+    derfor en inklusjon, ikke en likhet: alt `_VERT` godtar, godtar
+    skjemaet.
+
+    Mønsteret står GJENTATT i rapport.py, ikke importert: skjemaet er
+    innholdsadressert og hashet, og en import ville koblet saneringen til
+    et mønster ingen kan endre uten å endre skjemaets identitet. Denne
+    testen er bindingen mellom de to i stedet.
+
+    Den ene bevisste asymmetrien er halen: `_VERT` bruker `\\Z`, skjemaet
+    `$`, og Pythons `$` matcher OGSÅ rett før en avsluttende linjeskift
+    (samme lekkasje `date-time`-formatsjekken dokumenterer). Saneringen er
+    altså strengere der, og det er den trygge retningen — «vertsnavn med
+    hale» er ikke et vertsnavn.
+
+    Kontroll: gjør `_VERT` slappere enn `_HOSTNAME` (f.eks. tillat `_`), så
+    blir denne rød."""
+    import re
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import _VERT
+    skjemaets = re.compile(rapportskjema._HOSTNAME)
+    for v in ("fonts.example", "a.b.c.example", "x1-2.example", "e.xn--p1ai",
+              "ikke_en_vert", "-a.example", "a-.example", "enkeltledd",
+              "", "a..example", "A.EXAMPLE", "a.example\n", "a.example/x"):
+        if _VERT.match(v):
+            assert skjemaets.match(v), \
+                f"{v!r}: saneringen slipper gjennom noe skjemaet avviser"
+    # ... og asymmetrien er NØYAKTIG halen, ikke noe annet.
+    assert not _VERT.match("a.example\n") and skjemaets.match("a.example\n")
+
+
 def test_motorutdata_er_ubetrodd():
     """Port 12/§2: ikke-https-URL og uleselige poster er Motorfeil — aldri
     en rapport. Digester fra motoren finnes ikke som begrep: miljøblokka
