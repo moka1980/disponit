@@ -691,6 +691,7 @@
   "ui.policyadmin.handling.slett": "Slett",
   "ui.policyadmin.gjenapne.tittel": "Gjenåpne utkastet for redigering?",
   "ui.policyadmin.gjenapne.tekst": "Utkastet går tilbake til redigerbar tilstand og må valideres og attesteres på nytt før det kan aktiveres. En åpen aktiveringsrunde trekkes tilbake.",
+  "ui.policyadmin.gjenapnet": "Utkastet er gjenåpnet for redigering.",
   "ui.varsler.tittel": "Varsler",
   "ui.varsler.undertittel": "{n} uleste",
   "ui.varsler.tom": "Ingenting venter på deg",

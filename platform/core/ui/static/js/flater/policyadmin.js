@@ -1409,24 +1409,36 @@ export function visPolicyadmin(hoved, ctx, mal) {
   // én-retry-med-samme-nøkkel som detaljsidens `forkastKnapp` — men utfallet
   // tegnes i lista, der eier står, ikke i en kvittering en fremtidig
   // detaljside skulle ha forbrukt.
+  // Utfallet av en listehandling hører til VISNINGEN den ble startet fra
+  // (Codex P1, samme regel som detaljsidens `paaFerdig`): svaret kan komme
+  // etter at eier har navigert videre, og da skal det verken tegne lista
+  // over det hun står i eller åpne en editor over en annen rute. Er
+  // visningen forlatt, går utfallet til live-regionen i stedet — hørbart,
+  // aldri null (samme mønster som `meldTaptKvittering`).
+  function meldEllerTapt(min, art, tekst) {
+    if (eierSkjermen(min)) { meldOgLast(art, tekst); return; }
+    meldLive(tekst);
+  }
+
   function slettFraListe(u) {
     const nokkel = nyIdempotensnokkel();
-    const kjor = (forsok) => forkastUtkast(u.utkast_id, u.utkastversjon, nokkel)
-      .then(() => meldOgLast("ok", t("ui.policyadmin.forkastet")))
-      .catch((e) => {
-        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
-          return kjor(1);
-        }
-        meldOgLast("feil", e instanceof ApiFeil && e.status === 0
-          ? t("ui.policyadmin.forkast.ukjent") : t("ui.policyadmin.feilet"));
-      });
+    const kjor = (forsok, min) =>
+      forkastUtkast(u.utkast_id, u.utkastversjon, nokkel)
+        .then(() => meldEllerTapt(min, "ok", t("ui.policyadmin.forkastet")))
+        .catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
+            return kjor(1, min);
+          }
+          meldEllerTapt(min, "feil", e instanceof ApiFeil && e.status === 0
+            ? t("ui.policyadmin.forkast.ukjent") : t("ui.policyadmin.feilet"));
+        });
     Bekreftelsesdialog({
       tittel: t("ui.policyadmin.forkast.tittel"),
       tekst: `${forkastMaal(u, u.utkast_id)} · ${t("ui.policyadmin.forkast.tekst")}`,
       primarTekst: t("ui.policyadmin.handling.forkast"),
       farlig: true,
-      paaPrimar: () => kjor(0),
+      paaPrimar: () => kjor(0, nyVisning()),
     });
   }
 
@@ -1435,20 +1447,30 @@ export function visPolicyadmin(hoved, ctx, mal) {
   // runde trekkes tilbake av serveren; dialogen sier det FØR klikket.
   function redigerValidert(u) {
     const nokkel = nyIdempotensnokkel();
-    const kjor = (forsok) => gjenapneUtkast(u.utkast_id, u.utkastversjon, nokkel)
-      .then(() => aapneEditor({ utkast_id: u.utkast_id }))
-      .catch((e) => {
-        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
-          return kjor(1);
-        }
-        meldOgLast("feil", t("ui.policyadmin.feilet"));
-      });
+    const kjor = (forsok, min) =>
+      gjenapneUtkast(u.utkast_id, u.utkastversjon, nokkel)
+        .then(() => {
+          // Editoren åpnes bare hvis eier fortsatt står i visningen som ba om
+          // den (Codex P1): et sent svar skal ikke tegne en foreldet editor
+          // over ruten hun gikk til — og der kan hun ha begynt på noe.
+          // Gjenåpningen HAR skjedd (utkastet står som `utkast`); den er
+          // synlig neste gang lista lastes, så det eneste som droppes er
+          // navigasjonen.
+          if (eierSkjermen(min)) aapneEditor({ utkast_id: u.utkast_id });
+          else meldLive(t("ui.policyadmin.gjenapnet"));
+        })
+        .catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
+            return kjor(1, min);
+          }
+          meldEllerTapt(min, "feil", t("ui.policyadmin.feilet"));
+        });
     Bekreftelsesdialog({
       tittel: t("ui.policyadmin.gjenapne.tittel"),
       tekst: `${forkastMaal(u, u.utkast_id)} · ${t("ui.policyadmin.gjenapne.tekst")}`,
       primarTekst: t("ui.policyadmin.handling.rediger"),
-      paaPrimar: () => kjor(0),
+      paaPrimar: () => kjor(0, nyVisning()),
     });
   }
 

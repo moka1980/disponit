@@ -3099,3 +3099,44 @@ test("Policyadmin: Rediger på et validert utkast gjenåpner og åpner editoren"
     // ... og editoren tok over flaten (den henter utkastet og viser tittelen).
     await vent(() => h.textContent.includes(t("ui.editor.tittel")));
   });
+
+test("Policyadmin: et sent gjenåpne-svar åpner ikke editoren over en annen"
+  + " visning", async () => {
+  // Codex P1: eier bekrefter gjenåpningen, navigerer videre mens POST-en er
+  // ute — og svaret kalte `aapneEditor` betingelsesløst: en foreldet editor
+  // tegnet seg over ruten hun sto i, med det hun hadde begynt på der.
+  // Kontroll: fjern `eierSkjermen(min)`-vilkåret i `redigerValidert`, så
+  // blir denne rød.
+  let slippGjenapne = null;
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    "/v1/policy/aktive": { policyer: [] },
+    __post: async () => {
+      await new Promise((r) => { slippGjenapne = r; });
+      return { ok: true, status: 200, json: async () =>
+        ({ utkast_id: "u-1", status: "utkast", utkastversjon: 2 }) };
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector("tbody"));
+  [...h.querySelectorAll(".handling-celle button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  [...document.querySelector('[role="dialog"]').querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slippGjenapne);           // POST-en henger på nettet
+
+  // Eier går videre: åpner utkastets detaljside.
+  [...h.querySelectorAll(".handling-celle button")]
+    .find((b) => b.textContent.trim() === t("ui.aapne"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.policyadmin.tilbake_til_liste")));
+
+  slippGjenapne();
+  await vent(() => false, 20);               // la svaret få tegne, om det vil
+  assert.ok(!h.textContent.includes(t("ui.editor.tittel")),
+    "det sene svaret tegnet editoren over visningen eier gikk til");
+  assert.ok(h.textContent.includes(t("ui.policyadmin.tilbake_til_liste")),
+    "detaljsiden eier sto i ble revet bort");
+});
