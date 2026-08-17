@@ -115,12 +115,17 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " ALLTID 403, aldri 204: «du har ikke lov» og «det finnes ikke"
         " arbeid» må aldri se like ut fra utsiden (035, port 18–19)."
         " Reaktivering krever ny onboarding; rotasjon plukker aldri opp"
-        " ny epoch.")),
+        " ny epoch. Også svaret når en kapabilitet skal INNLØSES etter at"
+        " et nødstopp har bumpet epoch: fullmakten var gyldig da den ble"
+        " utstedt, men deploymenten er det ikke lenger.")),
     Feilvei("modul_ikke_claimbar", 403, ("sikkerhet",), None, notat=(
         "Modultokenets deployment er ikke `claiming`, eller modulen er"
         " ikke aktiv. Eksplisitt avslag (035, port 10): en draining"
         " release kan fortsatt kvittere og laste opp innen evidensfrist,"
-        " men aldri claime — og det skal SIES, ikke se ut som tom kø.")),
+        " men aldri claime — og det skal SIES, ikke se ut som tom kø."
+        " På INNLØSNINGSveiene (kvittering/artefakt) leses kun modulens"
+        " status, aldri livsløpet: nettopp fordi en draining deployment"
+        " skal få levere ferdig, mens en nødstoppet ikke skal.")),
     Feilvei("onboarding_avvist", 403, ("sikkerhet",), None, notat=(
         "Innløsning avvist: ukjent id, feil hemmelighet, allerede brukt"
         " eller utløpt — SAMME svar utad for alle fire (035, port 4/6):"

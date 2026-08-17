@@ -119,6 +119,10 @@ SET LOCAL ROLE disponit_modul_eier;
 GRANT EXECUTE ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION verifiser_modultoken(TEXT) TO {rolle};
+-- Revalideringen ved innløsning av en kapabilitet: uten EXECUTE her ville
+-- hver kvittering og hver artefaktopplasting fra et modultoken svart
+-- `permission denied`.
+GRANT EXECUTE ON FUNCTION modultoken_fortsatt_autorisert(UUID, TEXT, TEXT, TEXT, BIGINT) TO {rolle};
 GRANT EXECUTE ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) TO {rolle};
 -- ... og INGEN direkte tabelltilgang (klarsignalet §3). Tabellene eies av

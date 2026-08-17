@@ -746,6 +746,80 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
        AND t.utloper > now();
 $$;
 
+-- REVALIDERING VED INNLØSNING AV EN KAPABILITET (Codex P1).
+--
+-- `preauth` eier og LUKKER sin egen transaksjon: tokenet verifiseres der,
+-- og forretningstransaksjonen starter etterpå. Mellom de to committene kan
+-- `noddeaktiver_modul` ha kjørt — og den lover å terminere tokenfamilien
+-- ØYEBLIKKELIG. Men `ModulAutentisert`-objektet lever videre over
+-- transaksjonsgrensen: et token som nødstoppet faktisk drepte, er fortsatt
+-- representert som en autentisert deployment i requesten som alt er i
+-- gang. Kapabilitetsinnløsningene sammenligner kun identitet (modul, miljø,
+-- release) og ser hverken tokenets tilstand, modulens status eller epoch,
+-- så en kvittering eller et artefakt fra den stoppede deploymenten gikk
+-- inn likevel. Claim-veien har ikke hullet: `claim_neste_oppdrag`
+-- re-verifiserer under modul-låsen.
+--
+-- Denne funksjonen er den samme re-verifiseringen for de to
+-- innløsningsveiene, og den er ÉN funksjon fordi regelen er én: to kopier
+-- ville drevet fra hverandre, akkurat som `_forbruk_kapabilitet` sine to
+-- grener gjorde.
+--
+-- Låsen er DELT, som claim-ens: den serialiserer mot nødstopp/reaktivering
+-- (som tar den eksklusivt) uten at to samtidige leveranser fra samme modul
+-- venter på hverandre. Den holdes ut transaksjonen, så innløsningen som
+-- følger etter kan ikke bli overkjørt av et nødstopp underveis.
+--
+-- Livsløpet sjekkes IKKE. En `draining` deployment SKAL få levere
+-- resultatet av arbeid den alt har claimet — det er hele poenget med en
+-- graceful drain. Nødstoppet skiller seg fra den ved epoch-bumpen og
+-- tilbakekallingen, og det er nettopp dem denne porten leser.
+CREATE OR REPLACE FUNCTION modultoken_fortsatt_autorisert(
+    p_token_id UUID, p_modul_id TEXT, p_miljo TEXT, p_release_id TEXT,
+    p_utstedt_epoch BIGINT)
+RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_status TEXT; v_epoch BIGINT;
+BEGIN
+    PERFORM pg_advisory_xact_lock_shared(
+        hashtextextended('modul:' || p_modul_id, 0));
+    -- MODULEN FØRST, deretter tokenet — samme rekkefølge som claim-portens
+    -- (`_modulporten` i app-laget), og det er ikke en stilsak: nødstoppet
+    -- gjør BEGGE deler i én transaksjon (epoch++ og tilbakekalling av hele
+    -- familien). Leste vi tokenet først, ville nettopp nødstoppet — det
+    -- denne porten finnes for — svart «tokenet ditt er ugyldig» der claim
+    -- svarer «modulen er stoppet», om den samme hendelsen. Deploymenten
+    -- skal få den samme dommen uansett hvilken dør den står i.
+    SELECT h.status, h.module_epoch INTO v_status, v_epoch
+      FROM public.modulhode h WHERE h.modul_id = p_modul_id;
+    -- Fra `aktiv` er `nodeaktivert` den eneste utgangen (statusmaskinen i
+    -- 014), så en modul som ikke lenger er aktiv når kapabiliteten skal
+    -- innløses, ER stoppet — ikke midlertidig et annet sted i livsløpet.
+    IF NOT FOUND OR v_status <> 'aktiv' THEN
+        RETURN 'modul_ikke_claimbar';
+    END IF;
+    IF v_epoch IS DISTINCT FROM p_utstedt_epoch THEN
+        RETURN 'modulepoch_utdatert';
+    END IF;
+    -- Tokenet selv: tilbakekalt (manuell tilbakekalling av NETTOPP dette
+    -- tokenet, eller en rotasjonsnåde som løp ut mens requesten pågikk)
+    -- eller utløpt => ingen autentisert deployment lenger. Identiteten må
+    -- dessuten fortsatt være DEN requesten ble autentisert som — et token
+    -- kan ikke flytte seg mellom deployments, men porten sammenligner
+    -- heller enn å anta det.
+    PERFORM 1 FROM public.modultoken t
+     WHERE t.token_id = p_token_id
+       AND t.modul_id = p_modul_id
+       AND t.miljo IS NOT DISTINCT FROM p_miljo
+       AND t.release_id IS NOT DISTINCT FROM p_release_id
+       AND (t.tilbakekalt_ts IS NULL OR t.tilbakekalt_ts > now())
+       AND t.utloper > now();
+    IF NOT FOUND THEN
+        RETURN 'token_ugyldig';
+    END IF;
+    RETURN 'ok';
+END $$;
+
 -- Selvrotasjon: modulens token bytter seg selv, fritt innenfor
 -- familiehorisonten, uten menneske. Radlås på forgjengeren + den partielle
 -- unikheten på `forgjenger` = én etterfølger (portene 20–21, 27–30).
@@ -1534,6 +1608,7 @@ SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION verifiser_modultoken(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION modultoken_fortsatt_autorisert(UUID, TEXT, TEXT, TEXT, BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) FROM PUBLIC;
 -- Runtime (API-et) er den eneste nettverksveien inn; utstedelse og

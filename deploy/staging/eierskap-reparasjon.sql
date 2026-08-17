@@ -111,6 +111,7 @@ INSERT INTO _design VALUES
     -- signaturene: reparasjonen kjører FØR migrer.py.
     ('FUNCTION', 'innlos_onboarding(uuid,text,uuid,text,integer,text,uuid)', 'disponit_modul_eier'),
     ('FUNCTION', 'verifiser_modultoken(text)',                         'disponit_modul_eier'),
+    ('FUNCTION', 'modultoken_fortsatt_autorisert(uuid,text,text,text,bigint)', 'disponit_modul_eier'),
     -- Siste ledd er rotasjonens idempotensnøkkel (035, Codex P1) — den gamle
     -- femargumentsformen finnes ikke lenger, migrasjonen dropper den.
     -- INGEN SEMIKOLON I KOMMENTARENE HER: både reparasjonskjøringen og

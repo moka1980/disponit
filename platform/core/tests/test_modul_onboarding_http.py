@@ -915,6 +915,154 @@ def test_kvitteringskapabiliteten_innloses_kun_av_deploymenten_som_claimet(
         a.tjeneste.pool.lukk()
 
 
+@pg
+def test_nodstopp_etter_preauth_stopper_innlosningen(migrator, miljo,
+                                                     monkeypatch):
+    """Codex P1: `preauth` eier og LUKKER sin egen transaksjon, og
+    forretningstransaksjonen starter etterpå. Committer et nødstopp mellom
+    de to, er tokenet drept i basen — men `ModulAutentisert`-objektet lever
+    videre i requesten som alt er i gang, og innløsningsfunksjonene
+    sammenligner kun IDENTITET (modul/miljø/release). Uten revalideringen
+    kom både kvitteringen og artefaktet fra den nødstoppede deploymenten
+    inn, og «terminerer tokenfamilien øyeblikkelig» var et løfte
+    plattformen ikke holdt. Claim-veien hadde aldri hullet —
+    `claim_neste_oppdrag` re-verifiserer under modul-låsen.
+
+    Vinneren av kappløpet er avgjort på forhånd: nødstoppet legges inn fra
+    en EGEN tilkobling i det `preauth` har returnert, altså nøyaktig i
+    vinduet mellom de to committene. Etter det er tokenet dødt, så hver vei
+    får sin egen modul og sitt eget claim — et andre forsøk med samme token
+    ville stoppet alt i `preauth` og bevist ingenting.
+
+    Svaret er `modul_ikke_claimbar` (403), det SAMME claim-veien gir for et
+    nødstopp: den samme hendelsen skal se lik ut uansett hvilken dør
+    deploymenten står i.
+
+    Kontroll: fjern `_modultoken_revalidert`-kallet foran én av de to
+    innløsningene, så blir den veien 200/403-signatur igjen og denne rød."""
+    import psycopg
+    from starlette.testclient import TestClient
+    from api import app as appmodul
+    from api.app import lag_app
+
+    ekte_preauth = appmodul.preauth
+    bevaepnet, traff = [], []
+
+    def _nodstopp_i_vinduet(tjeneste, conn, authorization, request_id=""):
+        auth = ekte_preauth(tjeneste, conn, authorization, request_id)
+        if bevaepnet and isinstance(auth, appmodul.ModulAutentisert):
+            modul = bevaepnet.pop()
+            traff.append(modul)
+            sidekanal = psycopg.connect(MIGRATOR_DSN)
+            try:
+                sidekanal.execute("SET ROLE disponit_modules_admin")
+                sidekanal.execute(
+                    "SELECT noddeaktiver_modul(%s,'nodstopp i vinduet','test')",
+                    (modul,))
+                sidekanal.commit()
+            finally:
+                sidekanal.close()
+        return auth
+
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            for vei in ("artefakt", "kvittering"):
+                t = f"t{_u()}"
+                prefiks = f"h{_u()}."
+                _kjent_type(monkeypatch, t, prefiks)
+                modul, rel = _kjede(migrator, typenavn=t,
+                                    artefakttype=f"kvit.o{_u()}.rapport")
+                sak, logg = _lag_sak(migrator, TENANT)
+                opp_id, _ = _lag_oppdrag_type(
+                    migrator, TENANT, sak, logg, oppdragstype=t,
+                    eiermodul=modul, handling=prefiks + "send")
+                migrator.commit()
+                mtk, _ignorert = _onboard_token(c, migrator, modul, rel)
+                r = c.post("/v1/oppdrag/claim", json={},
+                           headers={"authorization": f"Bearer {mtk}"})
+                assert r.status_code == 200, r.text
+                claim = r.json()
+
+                # Herfra og til svaret er nødstoppet ladd.
+                monkeypatch.setattr(appmodul, "preauth", _nodstopp_i_vinduet)
+                bevaepnet.append(modul)
+                if vei == "artefakt":
+                    r = c.post("/v1/artefakt",
+                               json={"kapabilitet_jti":
+                                     claim["opplasting"]["jti"],
+                                     "rapport": {"funn": 0}},
+                               headers={"authorization": f"Bearer {mtk}"})
+                else:
+                    r = c.post("/v1/oppdrag/kvittering",
+                               json={"kvittering_jti": claim["kvittering_jti"],
+                                     "oppdrag_id": opp_id, "resultat": "ok"},
+                               headers={"authorization": f"Bearer {mtk}"})
+                monkeypatch.setattr(appmodul, "preauth", ekte_preauth)
+                assert traff and traff[-1] == modul, \
+                    f"nødstoppet traff aldri vinduet ({vei})"
+                assert (r.status_code, r.json()["feil"]) == (
+                    403, "modul_ikke_claimbar"), (vei, r.text)
+
+                # Og ingenting ble forbrukt: kapabiliteten står ubrukt, og
+                # oppdraget er fortsatt plukket — nødstoppet stoppet, det
+                # forstyrret ikke.
+                _sett_kontekst(migrator, TENANT)
+                assert migrator.execute(
+                    "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                    (TENANT, opp_id)).fetchone() == ("plukket",)
+                migrator.rollback()
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
+def test_draining_deployment_far_fortsatt_levere(migrator, miljo, monkeypatch):
+    """Motstykket til testen over, og grunnen til at revalideringen leser
+    STATUS og epoch — aldri livsløpet. En `draining` release skal få levere
+    ferdig det den alt har claimet; det er hele poenget med en graceful
+    drain, og feilkatalogen lover det (`modul_ikke_claimbar`). Et nødstopp
+    skiller seg fra dreneringen ved epoch-bumpen og tilbakekallingen, ikke
+    ved livsløpet — begge setter deploymenten `draining`.
+
+    Kontroll: legg `livslop = 'claiming'` inn i
+    `modultoken_fortsatt_autorisert`, så blir denne rød mens den over
+    fortsatt er grønn."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    t = f"t{_u()}"
+    prefiks = f"h{_u()}."
+    _kjent_type(monkeypatch, t, prefiks)
+    modul, rel = _kjede(migrator, typenavn=t,
+                        artefakttype=f"kvit.o{_u()}.rapport")
+    sak, logg = _lag_sak(migrator, TENANT)
+    _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=t,
+                      eiermodul=modul, handling=prefiks + "send")
+    migrator.commit()
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ignorert = _onboard_token(c, migrator, modul, rel)
+            r = c.post("/v1/oppdrag/claim", json={},
+                       headers={"authorization": f"Bearer {mtk}"})
+            assert r.status_code == 200, r.text
+            jti = r.json()["opplasting"]["jti"]
+
+            # Dreneringen: samme livsløpsovergang nødstoppet gjør, men uten
+            # epoch-bump og uten tilbakekalling.
+            migrator.execute("UPDATE moduldeployment SET livslop='draining'"
+                             " WHERE modul_id=%s", (modul,))
+            migrator.commit()
+
+            r = c.post("/v1/artefakt",
+                       json={"kapabilitet_jti": jti, "rapport": {"funn": 0}},
+                       headers={"authorization": f"Bearer {mtk}"})
+            assert r.status_code == 200, r.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
 def test_bootstrap_veien_kan_ikke_utstede_claimdyktige_tokener():
     """Port 24 (deploy-port): token-cli nekter `orders:execute`-scopes —
     claim-fullmakt kommer KUN fra onboardingen. Kontroll: fjern vaktleddet i

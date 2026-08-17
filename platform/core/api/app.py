@@ -638,6 +638,50 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
         conn.commit()      # pre-auth eier og lukker sin egen transaksjon
 
 
+def _modultoken_revalidert(tjeneste: Tjeneste, conn: psycopg.Connection,
+                           auth: Autentisert, rid: str) -> Response | None:
+    """Er deploymenten FORTSATT autorisert, her og nå? -> None = ja.
+
+    Codex P1. `preauth` eier og LUKKER sin egen transaksjon, og
+    forretningstransaksjonen starter etterpå. Mellom de to committene kan
+    `noddeaktiver_modul` ha kjørt — det nødstoppet som er annonsert å
+    terminere tokenfamilien ØYEBLIKKELIG. Men `ModulAutentisert`-objektet
+    lever videre over transaksjonsgrensen: et token nødstoppet faktisk
+    drepte, er fortsatt representert som en autentisert deployment i
+    requesten som alt er i gang. Kapabilitetsinnløsningene sammenligner kun
+    IDENTITET (modul, miljø, release) og leser hverken tokenets tilstand,
+    modulens status eller epoch — så kvitteringen eller artefaktet fra den
+    stoppede deploymenten gikk inn likevel, og stoppet var et løfte
+    plattformen ikke holdt.
+
+    Claim-veien har ikke hullet: `claim_neste_oppdrag` re-verifiserer det
+    samme under modul-låsen. Dette er den re-verifiseringen for de to
+    INNLØSNINGSveiene, og porten står FØR innløsningen: låsen den tar er
+    transaksjonsbundet, så et nødstopp kan ikke gli inn mellom dommen og
+    forbruket.
+
+    ÉN funksjon for begge veiene, og dommen selv ligger i databasen
+    (`modultoken_fortsatt_autorisert`) — den er ikke sammensatt av tre
+    oppslag herfra som et nødstopp kunne kilt seg inn mellom.
+
+    Et legacy-api-token har ingen deployment å revalidere; scope-porten er
+    hele dets autorisasjon, og den er alt passert.
+    """
+    if not isinstance(auth, ModulAutentisert):
+        return None
+    utfall = conn.execute(
+        "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)",
+        (auth.modultoken_id, auth.modul_id, auth.miljo, auth.release_id,
+         auth.utstedt_epoch)).fetchone()[0]
+    if utfall == "ok":
+        return None
+    conn.rollback()
+    tjeneste.logg.hendelse(utfall, rid, auth.tenant, modul=auth.modul_id,
+                           miljo=auth.miljo, release=auth.release_id,
+                           utstedt=auth.utstedt_epoch)
+    return _feilsvar(utfall, rid)
+
+
 def kanonisk_json(kropp: dict, status: int = 200,
                   headers: dict | None = None) -> Response:
     """Alle svar serialiseres med SORTERTE nøkler.
@@ -2001,6 +2045,15 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     #    deploymenten. Med et legacy-api-token finnes ingen — NULL matcher
     #    da kun kapabiliteter som selv er deploymentløse (fail-closed begge
     #    veier), som på opplastingsveien.
+    #
+    #    Codex P1, neste runde: identiteten er ikke NOK. `preauth` lukket
+    #    sin egen transaksjon, og et nødstopp som committet etterpå har
+    #    drept tokenet uten at dette `auth`-objektet vet det. Derfor
+    #    revalideres deploymenten FØR innløsningen, under modul-låsen —
+    #    ellers kunne den stoppede deploymenten fortsatt avslutte jobben.
+    revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+    if revalidering is not None:
+        return revalidering
     d_miljo = getattr(auth, "miljo", None)
     d_release = getattr(auth, "release_id", None)
     kap = conn.execute(
@@ -2428,6 +2481,15 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         # som ikke autentiserte requesten. Med et legacy-api-token finnes
         # ingen autentisert deployment — NULL matcher da kun kapabiliteter
         # som selv er miljøløse (fail-closed begge veier).
+        #
+        # Codex P1, neste runde: og identiteten er ikke NOK — den er en
+        # PÅSTAND fra en pre-auth-transaksjon som er lukket. Et nødstopp
+        # som committet etterpå drepte tokenet, men `auth` husker det ikke.
+        # Revalideringen står derfor før innløsningen, som på
+        # kvitteringsveien.
+        revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+        if revalidering is not None:
+            return revalidering
         d_miljo = getattr(auth, "miljo", None)
         d_release = getattr(auth, "release_id", None)
         bind = conn.execute(
