@@ -6,7 +6,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  hentJson, validerUtkast, forkastUtkast, apneRunde, attesterAktivering,
+  hentJson, validerUtkast, forkastUtkast, gjenapneUtkast, apneRunde,
+  attesterAktivering,
   UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
@@ -1247,7 +1248,12 @@ function tilbakeKnapp(tilbakeTilListe) {
 export function visPolicyadmin(hoved, ctx, mal) {
   // `sort` er eiers kolonnevalg, og det bor HER fordi flaten overlever
   // tegningene — tabellen bygges på nytt hver gang lista lastes (Codex P2).
-  const st = { rader: [], sort: null };
+  // `melding` er utfallet av en LISTE-handling (slett/gjenåpne fra en rad):
+  // den overlever gjentegningen `last()` utløser og tegnes som synlig alert
+  // over tabellen — samme lærdom som kvitteringene på detaljsiden: et utfall
+  // som bare går til aria-live er usynlig, og et utfall tegnet FØR
+  // gjentegningen er borte.
+  const st = { rader: [], sort: null, melding: null };
 
   // Eierskapet til `hoved` har TO nivåer, og et sent svar må bestå begge.
   //
@@ -1392,7 +1398,85 @@ export function visPolicyadmin(hoved, ctx, mal) {
     });
   }
 
+  // Utfallet av en listehandling: sett meldingen, last lista på nytt.
+  // Fokus flyttes til overskriften — knappen som ble klikket kan være borte.
+  function meldOgLast(art, tekst) {
+    st.melding = { art, tekst };
+    last({ fokus: true });
+  }
+
+  // Slett fra LISTA (= forkast utkastet). Samme dialog, mål-tekst og
+  // én-retry-med-samme-nøkkel som detaljsidens `forkastKnapp` — men utfallet
+  // tegnes i lista, der eier står, ikke i en kvittering en fremtidig
+  // detaljside skulle ha forbrukt.
+  function slettFraListe(u) {
+    const nokkel = nyIdempotensnokkel();
+    const kjor = (forsok) => forkastUtkast(u.utkast_id, u.utkastversjon, nokkel)
+      .then(() => meldOgLast("ok", t("ui.policyadmin.forkastet")))
+      .catch((e) => {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
+          return kjor(1);
+        }
+        meldOgLast("feil", e instanceof ApiFeil && e.status === 0
+          ? t("ui.policyadmin.forkast.ukjent") : t("ui.policyadmin.feilet"));
+      });
+    Bekreftelsesdialog({
+      tittel: t("ui.policyadmin.forkast.tittel"),
+      tekst: `${forkastMaal(u, u.utkast_id)} · ${t("ui.policyadmin.forkast.tekst")}`,
+      primarTekst: t("ui.policyadmin.handling.forkast"),
+      farlig: true,
+      paaPrimar: () => kjor(0),
+    });
+  }
+
+  // Rediger et VALIDERT utkast: gjenåpne (validert → utkast, ny validering
+  // og ny runde kreves — eiers krav 17/8), og gå rett i editoren. En åpen
+  // runde trekkes tilbake av serveren; dialogen sier det FØR klikket.
+  function redigerValidert(u) {
+    const nokkel = nyIdempotensnokkel();
+    const kjor = (forsok) => gjenapneUtkast(u.utkast_id, u.utkastversjon, nokkel)
+      .then(() => aapneEditor({ utkast_id: u.utkast_id }))
+      .catch((e) => {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
+          return kjor(1);
+        }
+        meldOgLast("feil", t("ui.policyadmin.feilet"));
+      });
+    Bekreftelsesdialog({
+      tittel: t("ui.policyadmin.gjenapne.tittel"),
+      tekst: `${forkastMaal(u, u.utkast_id)} · ${t("ui.policyadmin.gjenapne.tekst")}`,
+      primarTekst: t("ui.policyadmin.handling.rediger"),
+      paaPrimar: () => kjor(0),
+    });
+  }
+
   function rad(u) {
+    // Eiers krav: «slett, endre og åpne skal stå ved siden av hverandre» —
+    // handlingene bor PÅ raden, ikke bak detaljsiden. Hva som er mulig følger
+    // statusen: et terminalt utkast (aktivert/forkastet) kan bare åpnes; et
+    // validert kan gjenåpnes for redigering; utkast og validert kan slettes.
+    // Aria-navnet binder hver knapp til sin rad — tre «Slett» på rad er
+    // ellers ikke et valg for en skjermleser.
+    const navn = (tekst) => `${tekst}: ${u.policy_id} · ${u.utkast_id}`;
+    const handlinger = [{ tekst: t("ui.aapne"),
+      tilgjengeligNavn: navn(t("ui.aapne")),
+      paaKlikk: () => aapneDetalj(u.utkast_id) }];
+    if (u.status === "utkast") {
+      handlinger.push({ tekst: t("ui.policyadmin.handling.rediger"),
+        tilgjengeligNavn: navn(t("ui.policyadmin.handling.rediger")),
+        paaKlikk: () => aapneEditor({ utkast_id: u.utkast_id }) });
+    } else if (u.status === "validert") {
+      handlinger.push({ tekst: t("ui.policyadmin.handling.rediger"),
+        tilgjengeligNavn: navn(t("ui.policyadmin.handling.rediger")),
+        paaKlikk: () => redigerValidert(u) });
+    }
+    if (u.status === "utkast" || u.status === "validert") {
+      handlinger.push({ tekst: t("ui.policyadmin.handling.slett"),
+        tilgjengeligNavn: navn(t("ui.policyadmin.handling.slett")),
+        farlig: true, paaKlikk: () => slettFraListe(u) });
+    }
     return {
       id: u.utkast_id,
       celler: {
@@ -1402,8 +1486,7 @@ export function visPolicyadmin(hoved, ctx, mal) {
         opprettet: Tidspunkt(u.opprettet),
       },
       sortverdi: { opprettet: u.opprettet, policy: u.policy_id },
-      handling: { tekst: t("ui.aapne"),
-        paaKlikk: () => aapneDetalj(u.utkast_id) },
+      handlinger,
     };
   }
 
@@ -1434,6 +1517,10 @@ export function visPolicyadmin(hoved, ctx, mal) {
         })
       : TomTilstand({ tittel: t("ui.policyadmin.tom_tittel"),
                       tekst: t("ui.policyadmin.tom_tekst") });
+    // Utfallet av forrige listehandling tegnes SAMMEN MED den nye lista og
+    // forbrukes: neste tegning uten ny handling viser den ikke igjen.
+    const melding = st.melding;
+    st.melding = null;
     sett(hoved,
       ...flateHode(t("ui.policyadmin.tittel"), t("ui.policyadmin.undertittel")),
       // Eier lette etter slettingen HER — ved «Nytt utkast» og utkastlista —
@@ -1442,6 +1529,11 @@ export function visPolicyadmin(hoved, ctx, mal) {
       // etter en sletting, siden aktiverte utkast peker på policyen.
       aktivePolicyerSeksjon(ctx, () => last({ fokus: true })),
       verktoylinje(),
+      melding
+        ? el("p", { role: "alert",
+            class: melding.art === "ok" ? "banner" : "pa-valfeil",
+            text: melding.tekst })
+        : null,
       innhold);
     if (flyttFokus) fokuserOverskrift(hoved);
   }

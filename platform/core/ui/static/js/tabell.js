@@ -20,7 +20,13 @@ import { t } from "./i18n.js";
 // før: usortert.
 export function DataTabell({ captionTekst, kolonner, rader,
                             handlingTittel, sort, paaSort } = {}) {
-  const harHandling = rader.some((r) => r.handling);
+  // En rad kan bære ÉN handling (`handling`) eller FLERE side ved side
+  // (`handlinger`) — eiers krav: «slett, endre og åpne skal stå ved siden av
+  // hverandre». Normaliseringen skjer her, så resten av tabellen har ett
+  // begrep.
+  const radHandlinger = (r) =>
+    r.handlinger || (r.handling ? [r.handling] : []);
+  const harHandling = rader.some((r) => radHandlinger(r).length);
   // En nøkkel som ikke lenger er en sorterbar kolonne, ignoreres: kolonnesettet
   // kan ha endret seg siden valget ble tatt, og en usynlig sortering ingen
   // `aria-sort` peker på er verre enn ingen.
@@ -53,10 +59,15 @@ export function DataTabell({ captionTekst, kolonner, rader,
       }
       if (harHandling) {
         const celle = el("td", { class: "handling-celle" });
-        if (r.handling) {
-          const b = el("button", { class: "knapp lenkeknapp", type: "button",
-            text: r.handling.tekst || t("ui.aapne") });
-          b.addEventListener("click", r.handling.paaKlikk);
+        for (const h of radHandlinger(r)) {
+          const b = el("button", {
+            class: `knapp lenkeknapp${h.farlig ? " fare" : ""}`,
+            type: "button", text: h.tekst || t("ui.aapne"),
+            // To rader kan bære samme knappetekst («Slett», «Slett») — for
+            // skjermleseren må hver si HVILKEN rad den gjelder.
+            ...(h.tilgjengeligNavn
+              ? { "aria-label": h.tilgjengeligNavn } : {}) });
+          b.addEventListener("click", h.paaKlikk);
           celle.append(b);
         }
         tr.append(celle);

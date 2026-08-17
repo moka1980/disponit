@@ -229,6 +229,26 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         innhold = {**innhold,
                    "meta": {**innhold["meta"], "status": "produksjon"}}
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
+    # `meta.versjon` normaliseres etter samme prinsipp som `meta.status` over:
+    # et utkast som er DØDFØDT slik det opprettes, skal ikke opprettes slik.
+    # Redigerer man en eksisterende policy, arver utkastet dokumentets egen
+    # versjon — altså nøyaktig den som er aktiv — og eiers utkast 17/8 bar
+    # 0.3.0 hele veien gjennom validering før rundeåpningen avviste det med
+    # et uforklart 409. En versjon som alt er opptatt byttes derfor med den
+    # neste ledige VED OPPRETTELSEN, mens en versjon eier selv har satt
+    # HØYERE ikke røres (den er et gyldig valg, ikke en arv). Valideringen
+    # (`_versjonsavvik`) står uansett som port for det som redigeres inn
+    # senere.
+    if isinstance(innhold.get("meta"), dict) \
+            and isinstance(innhold["meta"].get("versjon"), str) \
+            and _SEMVER.fullmatch(innhold["meta"]["versjon"]):
+        try:
+            _krev_ny_versjon(conn, tenant, policy_id, innhold, aktiv)
+        except Aktiveringsfeil:
+            forslag = _neste_ledige_versjon(conn, tenant, policy_id, aktiv)
+            if forslag:
+                innhold = {**innhold,
+                           "meta": {**innhold["meta"], "versjon": forslag}}
     utkast_id = "u-" + secrets.token_hex(8)
     conn.execute(
         "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
@@ -337,6 +357,16 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # aktivere eller redigere. Avvikene legges i feillisten sammen med
     # skjemafeilene, så eier ser NØYAKTIG hva som må rettes i editoren.
     feil = list(feil) + _dokumentavvik(policy_id, innhold, tenant)
+    # Versjonen måles mot REGISTERET her — ikke først ved rundeåpning. Eiers
+    # utkast 17/8 bar den aktive policyens egen versjon (0.3.0), gikk
+    # gjennom valideringen med glans, og døde så med `versjon_i_bruk` i et
+    # 409 ingen flate forklarte. Valideringen er stedet eier fortsatt kan
+    # RETTE: etter frysingen kan versjonen ikke økes, og et validert utkast
+    # med opptatt versjon er en blindgate (den kan bare gjenåpnes/erstattes).
+    # Porten `_krev_ny_versjon` består uendret ved rundeåpning og attestering;
+    # her brukes den som PRØVE, så de to aldri kan mene noe ulikt om samme
+    # versjon.
+    feil = feil + _versjonsavvik(conn, tenant, policy_id, innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -598,6 +628,94 @@ def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
     return False
 
 
+def _kanseller_levende_runde(conn: psycopg.Connection, tenant: str,
+                             utkast_id: str, naa) -> None:
+    """Trekk utkastets ÅPNE runde tilbake, fordi eieren av forslaget trekker
+    selve forslaget (gjenåpning eller forkasting).
+
+    Runden er en FORESPØRSEL om godkjenning, ikke en fullmakt: å kansellere
+    den gir ingen agent lov til noe mer eller mindre. Og etter handlingen som
+    kaller hit kan runden uansett aldri lykkes — et gjenåpnet utkast mister
+    `innholds_hash`-en runden er frosset mot, et forkastet utkast finnes ikke
+    som forslag lenger. Å la runden stå «åpen» ville bedt godkjennere signere
+    på noe som ikke kan aktiveres (nøyaktig tilstanden `_kanseller_runde`
+    finnes for å avvikle). Eier sto i praksis fast i 24 timer (RUNDE_TTL) på
+    et utkast han selv eide — seks slettinger på rad døde mot den samme
+    runden 17/8 før dette ble en kodesti.
+
+    En `klar` runde røres ALDRI her: da er utkastet `godkjent`, og både
+    gjenåpning og forkasting avviser den statusen før de kommer hit — fire
+    øyne som HAR sagt ja avvikles ikke som et forslag ingen har vurdert.
+    Attestasjonene består uansett (append-only); de tilhører runden.
+
+    Kalleren eier tx og holder utkastraden — samme låsrekkefølge som
+    `_lukk_forfalt_runde` (utkast, så runde)."""
+    if not _lukk_forfalt_runde(conn, tenant, utkast_id, naa):
+        return                     # ingen levende runde — ingenting å trekke
+    rad = conn.execute(
+        "SELECT runde FROM aktiveringsrunde WHERE tenant=%s AND utkast_id=%s"
+        " AND status='apen' FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        return
+    conn.execute(
+        "UPDATE aktiveringsrunde SET status='kansellert' WHERE tenant=%s"
+        " AND utkast_id=%s AND runde=%s", (tenant, utkast_id, rad[0]))
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                           runde=rad[0])
+
+
+def gjenapne_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                    request_id: str, utkast_id: str, forventet_utkastversjon,
+                    idempotency_key: str, input_hash: str, naa) -> dict:
+    """Gjenåpne et VALIDERT utkast for redigering: status `validert → utkast`,
+    `innholds_hash` nullstilles (migrasjon 033), og en åpen runde trekkes
+    tilbake (`_kanseller_levende_runde`).
+
+    Eiers krav (17/8): «man må kunne redigere samme policy selv etter
+    validering … men da kan den igjen bli attestert og validert.» Uten denne
+    veien var et validert utkast med en feil en blindgate — eneste utvei var
+    å forkaste alt og begynne på nytt, og en åpen runde sperret til og med
+    forkastingen i 24 timer.
+
+    Ingen snarvei rundt fire øyne: det gjenåpnede utkastet må valideres på
+    nytt (ny hash-frysing) og gjennom en HELT NY runde med nye attestasjoner
+    før noe aktiveres. `godkjent` avvises som i `forkast_utkast` — en
+    godkjenning avvikles ikke ved å redigere den bort.
+
+    Idempotensnøkkelen bindes til utkastversjonen som ellers i modulen.
+    Kalleren eier tx."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    rad = conn.execute(
+        "SELECT status, utkastversjon FROM policyutkast WHERE"
+        " tenant=%s AND utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    status, ver = rad
+    if status != "validert":
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    if not isinstance(forventet_utkastversjon, int) \
+            or isinstance(forventet_utkastversjon, bool) \
+            or forventet_utkastversjon != ver:
+        conn.rollback()
+        raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
+    _kanseller_levende_runde(conn, tenant, utkast_id, naa)
+    conn.execute(
+        "UPDATE policyutkast SET status='utkast', innholds_hash=NULL"
+        " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utkast_id": utkast_id, "status": "utkast", "utkastversjon": ver})
+
+
 def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, utkast_id: str, forventet_utkastversjon,
                    idempotency_key: str, input_hash: str, naa) -> dict:
@@ -610,14 +728,19 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilbyr: en policy som HAR styrt beslutninger kan ikke fjernes, for da
     ville revisjonssporet pekt på noe som ikke finnes lenger.
 
-    To ting nektes:
-      * en LEVENDE åpen eller klar runde — der er attestasjoner i omløp, og et
-        utkast skal ikke kunne rives bort under godkjennerne mens de vurderer
-        det. Runden må avsluttes først. En runde som har passert `utloper` er
-        derimot ikke lenger i omløp: ingen kan attestere den, og den lukkes
-        her (se `_lukk_forfalt_runde`) i stedet for å blokkere for alltid;
-      * `godkjent` — da HAR fire øyne sagt ja, og å kaste den godkjenningen er
-        en annen handling enn å rydde bort et forslag ingen har vurdert.
+    Én ting nektes: `godkjent` — da HAR fire øyne sagt ja, og å kaste den
+    godkjenningen er en annen handling enn å rydde bort et forslag ingen har
+    vurdert.
+
+    En ÅPEN runde nektes IKKE lenger — den trekkes tilbake
+    (`_kanseller_levende_runde`). Den forrige regelen («runden må avsluttes
+    først») fantes for å verne godkjennere mot at grunnlaget rives bort under
+    dem, men den vernet ingen: et forkastet utkast kan uansett aldri
+    aktiveres, så en «vernet» runde var bare en runde som ba folk signere på
+    et dødt forslag — og eier, som selv eide både utkastet og runden, sto
+    fast i opptil 24 timer (RUNDE_TTL) uten noen kodesti som kunne avslutte
+    runden. Å trekke sitt eget forslag tilbake er forfatterens rett; ingen
+    fullmakt endres av det, og attestasjonene består (append-only).
 
     Idempotensnøkkelen bindes til utkastversjonen som ellers i denne modulen.
     Kalleren eier tx.
@@ -646,9 +769,7 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
             or forventet_utkastversjon != ver:
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
-    if _lukk_forfalt_runde(conn, tenant, utkast_id, naa):
-        conn.rollback()
-        raise Aktiveringsfeil("runde_allerede_aapen")
+    _kanseller_levende_runde(conn, tenant, utkast_id, naa)
     conn.execute(
         "UPDATE policyutkast SET status='forkastet'"
         " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
@@ -658,8 +779,10 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
 
 def _lukk_forfalte_runder(conn: psycopg.Connection, tenant: str,
                           policy_id: str, naa) -> None:
-    """Kjør `apen|klar → utlopt`-overgangen på hver av policyens runder som har
-    passert `utloper`, før slettingen teller runder «i omløp».
+    """Rydd policyens runder av veien for en bekreftet sletting: forfalte
+    runder lukkes (`utlopt`), levende ÅPNE runder trekkes tilbake
+    (`kansellert`, se løkka under) — begge før slettingen teller runder
+    «i omløp». Kun `klar` (godkjent utkast) blir stående og blokkerer.
 
     Uten dette blokkerte en forfalt runde slettingen for alltid (Codex P2).
     Vernet i `slett_ubrukt_policy` teller `status IN ('apen','klar')` — den
@@ -695,7 +818,14 @@ def _lukk_forfalte_runder(conn: psycopg.Connection, tenant: str,
     for (utkast_id,) in rader:
         conn.execute("SELECT 1 FROM policyutkast WHERE tenant=%s"
                      " AND utkast_id=%s FOR UPDATE", (tenant, utkast_id))
-        _lukk_forfalt_runde(conn, tenant, utkast_id, naa)
+        # Også LEVENDE åpne runder trekkes tilbake, ikke bare forfalte: eier
+        # har nettopp bekreftet at policyen skal bort, og en runde som venter
+        # på å aktivere den kan bare gjenskape det han fjerner. Seks slettinger
+        # på rad døde 17/8 mot en levende runde på et ANNET utkast av samme
+        # policy — en tilstand flaten verken viste eller kunne løse opp. En
+        # `klar` runde (utkastet er `godkjent`) røres fortsatt ikke; den telles
+        # av `slett_ubrukt_policy` under policylåsen og blokkerer med rette.
+        _kanseller_levende_runde(conn, tenant, utkast_id, naa)
 
 
 def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
@@ -1192,6 +1322,63 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
                 "versjon_i_bruk",
                 f"versjon={ny} ikke nyere enn {aktiv_versjon}")
     return ny
+
+
+def _neste_ledige_versjon(conn, tenant: str, policy_id: str,
+                          aktiv_versjon: str | None) -> str | None:
+    """Det minste versjonsnummeret som er STØRRE enn alt registeret kjenner:
+    siste ledd i den høyeste kjente versjonen, pluss én, hoppende over
+    eventuelle registrerte kollisjoner. -> None når ingenting er kjent (da
+    finnes det ingen kollisjon å foreslå seg forbi).
+
+    Sammenligningen bruker `_versjonsnokkel` med samme ledd-utvidelse som
+    `_krev_ny_versjon` — én forståelse av «nyere», ikke to."""
+    kjente = [r[0] for r in conn.execute(
+        "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s",
+        (tenant, policy_id)).fetchall()]
+    if isinstance(aktiv_versjon, str):
+        kjente.append(aktiv_versjon)
+    kjente = [v for v in kjente if isinstance(v, str) and _SEMVER.fullmatch(v)]
+    if not kjente:
+        return None
+    ledd = max(v.count(".") for v in kjente) + 1
+    topp = max(kjente, key=lambda v: _versjonsnokkel(v, ledd))
+    deler = topp.split(".")
+    opptatt = set(kjente)
+    while True:
+        deler[-1] = str(int(deler[-1]) + 1)
+        kandidat = ".".join(deler)
+        if kandidat not in opptatt and not conn.execute(
+                "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
+                " AND versjon=%s", (tenant, policy_id, kandidat)).fetchone():
+            return kandidat
+
+
+def _versjonsavvik(conn, tenant: str, policy_id: str, innhold) -> list[str]:
+    """`meta.versjon` målt mot registeret, som TEKST eier kan handle på —
+    valideringens søsken til `_dokumentavvik`, men med databasen i hånden.
+
+    Prøven ER porten: `_krev_ny_versjon` kjøres og utfallet oversettes, så
+    valideringen og rundeåpningen aldri kan mene noe ulikt om samme versjon.
+    Formfeil (ikke-semver) rapporteres alt av `_dokumentavvik` og gjentas
+    ikke her."""
+    versjon = _meta(innhold).get("versjon")
+    if not isinstance(versjon, str) or not _SEMVER.fullmatch(versjon):
+        return []
+    aktiv = _hode_aktiv_versjon(conn, tenant, policy_id)
+    try:
+        _krev_ny_versjon(conn, tenant, policy_id, innhold, aktiv)
+        return []
+    except Aktiveringsfeil:
+        forslag = _neste_ledige_versjon(conn, tenant, policy_id, aktiv)
+        rad = (f"meta.versjon {versjon} er versjonen som er aktiv nå"
+               if versjon == aktiv
+               else f"meta.versjon {versjon} er allerede registrert eller"
+                    f" ikke høyere enn den aktive ({aktiv or 'ingen'})")
+        if forslag:
+            rad += f" — sett en høyere versjon, for eksempel {forslag}"
+        return [rad + ". En aktivering lagrer utkastets egen meta.versjon,"
+                " så den må være ny og høyere enn den aktive"]
 
 
 def _krev_innforingskrav(ny_innhold) -> None:

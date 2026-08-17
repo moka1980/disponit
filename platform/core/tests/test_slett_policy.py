@@ -278,6 +278,55 @@ def test_apen_runde_blokkerer_sletting():
 
 
 @pg
+def test_aapen_runde_trekkes_tilbake_av_slettingen():
+    """Eiers 17/8-tilstand, gjenskapt: policyen har et ELDRE validert utkast
+    med en LEVENDE åpen runde, og seks slettinger på rad døde med 409 mot
+    den. Eier har nettopp bekreftet at policyen skal bort — en runde som
+    venter på å aktivere den kan bare gjenskape det han fjerner. Slettingen
+    trekker runden tilbake (`kansellert`) og fullfører.
+
+    Kontroll: bytt `_kanseller_levende_runde` med `_lukk_forfalt_runde` i
+    `_lukk_forfalte_runder`-løkka, så blir denne rød (runden er levende og
+    blokkerer igjen)."""
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av) VALUES (%s,%s,%s,'{}'::jsonb,'forf')", (TEN, uid, pid))
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,1,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()+interval '1 hour')", (TEN, uid))
+    m.commit()
+    rt = _rt()
+    try:
+        res = policyadmin.slett_policy(
+            rt, tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+            forventet_versjon="1.0.0", forventet_hash=_hash(pid, "1.0.0"),
+            idempotency_key=idem, input_hash="ih-" + idem,
+            naa=datetime.now(timezone.utc))
+        assert res["slettet"] == 1
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r0")
+        assert m.execute(
+            "SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+            " AND utkast_id=%s", (TEN, uid)).fetchone() == ("kansellert",)
+        assert m.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                         " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 0
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_forfalt_runde_blokkerer_ikke_sletting():
     """Kontroll: fjern `_lukk_forfalte_runder`-kallet i
     `policyadmin.slett_policy`, så blir denne rød.
@@ -330,9 +379,13 @@ def test_forfalt_runde_blokkerer_ikke_sletting():
 
 
 @pg
-def test_levende_runde_blokkerer_fortsatt_etter_forfallsovergangen():
-    """Motstykket: overgangen skal lukke de DØDE rundene, ikke svekke vernet.
-    En runde som fortsatt kan attesteres blokkerer som før."""
+def test_klar_runde_blokkerer_fortsatt_slettingen():
+    """Grensen for tilbaketrekkingen: en `klar` runde har fire øyne bak seg
+    (utkastet er `godkjent`), og den avvikles ikke som et forslag ingen har
+    vurdert — den blokkerer slettingen som før. En levende `apen` runde
+    trekkes derimot tilbake av slettingen selv (eiers 17/8-tilstand: seks
+    slettinger døde mot en åpen runde på et annet utkast av samme policy) —
+    se `test_aapen_runde_trekkes_tilbake_av_slettingen`."""
     from api import policyadmin
     pid = "p-" + secrets.token_hex(3)
     uid = "u-" + secrets.token_hex(6)
@@ -348,7 +401,7 @@ def test_levende_runde_blokkerer_fortsatt_etter_forfallsovergangen():
         "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
         "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
         "pakrevd_antall_godkjennere,utloper)"
-        " VALUES (%s,%s,1,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        " VALUES (%s,%s,1,'klar','d','i','b','UTVIDER','k','1','0.2','1',"
         "'dh','1',2,now()+interval '1 hour')", (TEN, uid))
     m.commit()
     rt = _rt()
@@ -365,7 +418,7 @@ def test_levende_runde_blokkerer_fortsatt_etter_forfallsovergangen():
         sett_kontekst(m, TEN, "test", "r0")
         assert m.execute(
             "SELECT status FROM aktiveringsrunde WHERE tenant=%s"
-            " AND utkast_id=%s", (TEN, uid)).fetchone() == ("apen",)
+            " AND utkast_id=%s", (TEN, uid)).fetchone() == ("klar",)
         assert m.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
                          " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 1
     finally:
@@ -540,7 +593,8 @@ def test_slettingen_er_idempotent_og_replayer_suksess():
 @pg
 def test_mislykket_sletting_brenner_ikke_nokkelen():
     """En operasjon som IKKE skjedde skal ikke låse nøkkelen: eier må kunne
-    rydde opp (lukke runden) og prøve på nytt med samme nøkkel."""
+    rydde opp (lukke runden) og prøve på nytt med samme nøkkel. Runden er
+    `klar` — den typen slettingen fortsatt nekter på."""
     from api import policyadmin
     pid = "p-" + secrets.token_hex(3)
     uid = "u-" + secrets.token_hex(6)
@@ -556,7 +610,7 @@ def test_mislykket_sletting_brenner_ikke_nokkelen():
         "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
         "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
         "pakrevd_antall_godkjennere,utloper)"
-        " VALUES (%s,%s,1,'apen','d','i','b','UTVIDER','k','1','0.2','1',"
+        " VALUES (%s,%s,1,'klar','d','i','b','UTVIDER','k','1','0.2','1',"
         "'dh','1',2,now()+interval '1 hour')", (TEN, uid))
     m.commit()
     rt = _rt()
