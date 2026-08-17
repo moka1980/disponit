@@ -120,6 +120,72 @@ def test_skjemalageret_er_immutabelt_for_alltid(migrator):
         migrator.rollback()
 
 
+def _migrasjonsporten_036() -> str:
+    """Selve DO-blokka fra 036, hentet ut av migrasjonsfilen.
+
+    Testen kjører migrasjonens EGEN tekst, ikke en avskrift: en avskrift
+    ville blitt stående grønn den dagen noen svekket blokka i filen."""
+    from pathlib import Path
+    sql = (Path(__file__).resolve().parents[1]
+           / "db/migrations/036_wcag_kontroll.sql").read_text(encoding="utf-8")
+    merke = "artefaktskjema mangler for registrerte"
+    blokker = [b for b in sql.split("DO $$") if merke in b]
+    assert len(blokker) == 1, "fant ikke migrasjonsporten i 036"
+    return "DO $$" + blokker[0].split("END $$;")[0] + "END $$;"
+
+
+@pg
+def test_migrasjonsporten_krever_skjema_for_alle_gamle_typer(migrator):
+    """Codex P1: 036 slår på et UBETINGET skjemaoppslag i `/v1/artefakt`.
+
+    Seeden i punkt 6 dekker den ene typen 035 la inn, men
+    `registrer_artefakttype` har vært kallbar siden 016/035, og enhver type
+    som ble registrert på en OPPGRADERT base før 036 bærer en `skjema_hash`
+    uten rad i `artefaktskjema` — bindingen er en hash, ikke en
+    fremmednøkkel, så ingenting stoppet det. En artefakttype som tok imot
+    opplastninger i går ville blitt fullstendig ubrukelig i det
+    migrasjonen kjørte, og ikke reparerbar bakover: både skjemaraden og
+    typebindingen er immutable, så bare NØYAKTIG det skjemaet hashen peker
+    på kan fikse den.
+
+    Innholdet kan ikke bakfylles fra basen (den har hashen, ikke skjemaet),
+    så porten stopper migrasjonen i stedet. Feilen kommer da ved deploy,
+    hos den som kan registrere skjemaene, ikke hos en modul midt i et
+    oppdrag.
+
+    Kontroll: fjern DO-blokka i punkt 7 av 036, så blir denne rød.
+    """
+    port = _migrasjonsporten_036()
+    modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    _plukket_oppdrag_med_binding(migrator, modul, kh)   # lager kontrakten
+
+    # En type med et registrert skjema slipper porten forbi. (Den delte
+    # testbasen kan bære grandfathered bindinger fra andre tester, så det
+    # som sjekkes er at porten ikke navngir VÅR type — ikke at hele basen
+    # er ren.)
+    at_ok = _streng_type(migrator, modul, kh)
+    try:
+        migrator.execute(port)
+    except psycopg.errors.InvalidParameterValue as e:
+        assert at_ok not in str(e), "porten stoppet en type med skjema"
+    migrator.rollback()
+
+    # ... og en «grandfathered» binding — hash uten skjemarad, slik bare et
+    # direkte INSERT fra før 036 kunne lagd den — stopper migrasjonen.
+    at = f"kontroll.b{secrets.token_hex(3)}.rapport"
+    migrator.execute(
+        "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
+        " kontraktversjon, kontrakt_hash, skjema_hash)"
+        " VALUES (%s,%s,1,%s,%s)", (at, modul, kh, "c" * 64))
+    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
+        migrator.execute(port)
+    # Meldingen navngir typen OG hashen: den som kjører deployen trenger
+    # begge for å registrere riktig skjema før migrasjonen prøves igjen.
+    assert at in str(ei.value) and "c" * 64 in str(ei.value)
+    migrator.rollback()
+
+
 @pg
 def test_registrene_taaler_ikke_truncate(migrator):
     """Codex P2: TRUNCATE fyrer INGEN rad-trigger, så
