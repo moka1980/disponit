@@ -290,3 +290,57 @@ def test_feil_utkastversjon_avvises():
         assert _status(uid) == "validert"
     finally:
         rt.close()
+
+
+@pg
+def test_forkast_replay_forsoner_en_feilet_varselrydding(monkeypatch):
+    """Samme klasse som gjenåpningens replay-forsoning (Codex P2): runden ble
+    kansellert og committet, ryddingen var best effort og feilet, og retryen
+    gikk ut i replay-grenen uten å prøve på nytt.
+
+    Kontroll: fjern `_forson_rundepensjonering`-kallet i forkastingens
+    replay-gren, så blir denne rød."""
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, "validert")
+    _runde(uid, "1 hour")
+    m = _mig()
+    bid = m.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+        " RETURNING bruker_id",
+        ("https://idp.example", f"{TEN}-godkj-{uid}")).fetchone()[0]
+    m.execute(
+        "INSERT INTO varsel (tenant,bruker_id,art,ressurs_type,ressurs_id,"
+        "hendelse,tekstnokkel) VALUES (%s,%s,'attestering_venter',"
+        "'policyutkast',%s,'1','varsel.attestering_venter')", (TEN, bid, uid))
+    m.commit()
+
+    def uleste():
+        return m.execute(
+            "SELECT count(*) FROM varsel WHERE tenant=%s AND"
+            " ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND lest_ts IS NULL", (TEN, uid)).fetchone()[0]
+
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fforkast\x1f1\x1f{idem}"
+    kall = dict(tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=1, idempotency_key=idem,
+                input_hash=ih, naa=datetime.now(timezone.utc))
+    rt = _rt()
+    try:
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        policyadmin.forkast_utkast(rt, **kall)
+        monkeypatch.undo()
+        assert _rundestatus(uid) == "kansellert"
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "sys", "r0")
+        assert uleste() == 1, "forutsetningen holder ikke"
+
+        res = policyadmin.forkast_utkast(rt, **kall)
+        assert res["utfall"] == "forkastet"
+        sett_kontekst(m, TEN, "sys", "r0")
+        assert uleste() == 0, \
+            "replayen lot varselet be om en attestering som ikke finnes"
+    finally:
+        rt.close()
+        m.close()

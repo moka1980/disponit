@@ -366,12 +366,25 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # Porten `_krev_ny_versjon` består uendret ved rundeåpning og attestering;
     # her brukes den som PRØVE, så de to aldri kan mene noe ulikt om samme
     # versjon.
-    feil = feil + _versjonsavvik(conn, tenant, policy_id, innhold)
+    reg_feil = _versjonsavvik(conn, tenant, policy_id, innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
+        # Registeravviket tas med som tekst — utkastet er uansett ugyldig av
+        # dokumentgrunner, og de kan ikke rettes uten en ny versjon (ny nøkkel).
         return _fullfor(conn, tenant, idempotency_key, {
-            "utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil})
+            "utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil + reg_feil})
+    if reg_feil:
+        # Er REGISTERET eneste innvending, caches svaret IKKE (Codex P2):
+        # dokumentfeilene over er egenskaper ved det uforanderlige utkastet og
+        # tåler et replay, men registeret flytter seg — slettes policyen som
+        # holder versjonen (slettingen frigjør uttrykkelig versjonsnumrene),
+        # er det samme utkastet gyldig. Et cachet «ugyldig» ville da replayet
+        # en foreldet dom uten å spørre registeret, og flaten gjenbruker med
+        # rette nøkkelen sin per render. Rollback tar claimet med seg — en
+        # validering som ikke frøs noe skal ikke brenne nøkkelen.
+        conn.rollback()
+        return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": reg_feil}
     h = _pr.innholds_hash(innhold)
     conn.execute(
         "UPDATE policyutkast SET status='validert', innholds_hash=%s"
@@ -688,7 +701,15 @@ def gjenapne_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Handlingen gjentas ikke — men PENSJONERINGEN forsones (samme
+        # begrunnelse og mønster som attesteringens replay): kanselleringen av
+        # runden er committet, mens varselryddingen er best effort og kan ha
+        # feilet. Uten forsoningen her var retryen som skulle reparere det ute
+        # av døra før noen opprydding ble forsøkt. `commit()`, ikke
+        # `rollback()` — en forsoning som kastes på vei ut har ingen verdi,
+        # og ingenting annet er skrevet (idempotens-INSERT traff DO NOTHING).
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -709,11 +730,20 @@ def gjenapne_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
     _kanseller_levende_runde(conn, tenant, utkast_id, naa)
+    # Versjonen BUMPES i selve overgangen (Codex P1): gjenåpningen gjør raden
+    # redigerbar igjen, og hver editor som lastet utkastet FØR valideringen
+    # holder fortsatt versjon N. Sto raden igjen på N, passerte en slik
+    # foreldet editor både status- og versjonssjekken i `rediger_utkast` og
+    # overskrev det gjenåpnede utkastet stille — nøyaktig det den optimistiske
+    # låsen finnes for å hindre. Med N+1 er ALLE krav fra før valideringen
+    # ugyldige; den som vil redigere må laste utkastet på nytt.
+    ny = ver + 1
     conn.execute(
-        "UPDATE policyutkast SET status='utkast', innholds_hash=NULL"
-        " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
+        "UPDATE policyutkast SET status='utkast', innholds_hash=NULL,"
+        " utkastversjon=%s WHERE tenant=%s AND utkast_id=%s",
+        (ny, tenant, utkast_id))
     return _fullfor(conn, tenant, idempotency_key, {
-        "utkast_id": utkast_id, "status": "utkast", "utkastversjon": ver})
+        "utkast_id": utkast_id, "status": "utkast", "utkastversjon": ny})
 
 
 def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
@@ -749,7 +779,10 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Se gjenåpningens replay: kanselleringen av runden er committet, men
+        # varselryddingen er best effort — forson den før svaret går ut.
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -860,7 +893,18 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Slettingen kansellerte policyens åpne runder; ryddingen av varslene
+        # deres er best effort og kan ha feilet. Forson per utkast — samme
+        # klasse som gjenåpningens og forkastingens replay, bare at policyen
+        # kan ha flere utkast med runder.
+        for (uid,) in conn.execute(
+                "SELECT DISTINCT r.utkast_id FROM aktiveringsrunde r"
+                "  JOIN policyutkast u ON u.tenant=r.tenant"
+                "   AND u.utkast_id=r.utkast_id"
+                " WHERE r.tenant=%s AND u.policy_id=%s ORDER BY 1",
+                (tenant, policy_id)).fetchall():
+            _forson_rundepensjonering(conn, tenant, aktor, uid, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()

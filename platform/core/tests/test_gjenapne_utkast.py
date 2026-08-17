@@ -162,6 +162,17 @@ def test_validert_utkast_kan_gjenapnes_redigeres_og_valideres_paa_nytt():
         status, hash_, ver = _rad(uid)
         assert status == "utkast"
         assert hash_ is None, "hashen ble stående etter gjenåpningen"
+        # Gjenåpningen BUMPER den optimistiske låsen (Codex P1): en editor som
+        # lastet utkastet FØR valideringen holder fortsatt den gamle
+        # versjonen, og uten bumpen passerte den både status- og
+        # versjonssjekken i `rediger_utkast` og overskrev det gjenåpnede
+        # utkastet stille. Kontroll: fjern `utkastversjon=%s`-leddet fra
+        # gjenåpningens UPDATE, så blir begge assertene her røde.
+        assert res["utkastversjon"] == 2 and ver == 2, (res, ver)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _rediger(rt, uid, 1, _dokument(pid, "9.9.9"))
+        assert "utdatert" in e.value.kode, \
+            "en foreldet editor fikk skrive over det gjenåpnede utkastet"
 
         nytt = _dokument(pid, "1.2.0")
         r2 = _rediger(rt, uid, ver, nytt)
@@ -325,5 +336,117 @@ def test_opprett_bytter_arvet_opptatt_versjon_med_neste_ledige():
                        (TEN, uid2)).fetchone()[0]
         m.close()
         assert v2 == "2.0.0", v2
+    finally:
+        rt.close()
+
+
+def _identitet_og_varsel(uid):
+    """En godkjenner-identitet med et ulest attestering-venter-varsel for
+    utkastets runde 1 — tilstanden en vellykket varsling etterlater."""
+    m = _mig()
+    bid = m.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+        " RETURNING bruker_id",
+        ("https://idp.example", f"{TEN}-godkj-{uid}")).fetchone()[0]
+    m.execute(
+        "INSERT INTO varsel (tenant,bruker_id,art,ressurs_type,ressurs_id,"
+        "hendelse,tekstnokkel) VALUES (%s,%s,'attestering_venter',"
+        "'policyutkast',%s,'1','varsel.attestering_venter')", (TEN, bid, uid))
+    m.commit()
+    m.close()
+
+
+def _uleste_varsler(uid):
+    m = _mig()
+    try:
+        return m.execute(
+            "SELECT count(*) FROM varsel WHERE tenant=%s AND"
+            " ressurs_type='policyutkast' AND ressurs_id=%s"
+            " AND lest_ts IS NULL", (TEN, uid)).fetchone()[0]
+    finally:
+        m.rollback()
+        m.close()
+
+
+@pg
+def test_gjenapne_replay_forsoner_en_feilet_varselrydding(monkeypatch):
+    """Codex P2, samme klasse som attesteringens replay-forsoning: runden
+    kanselleres og committes, men varselryddingen er skjermet best effort —
+    feiler den, sto godkjennernes uleste varsler og ba om en attestering
+    ingen kan gjøre, og retryen svarte fra replay-grenen uten å prøve.
+
+    Kontroll: fjern `_forson_rundepensjonering`-kallet i gjenåpningens
+    replay-gren, så blir denne rød."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "validert")
+    _runde(uid, "1 hour")
+    _identitet_og_varsel(uid)
+
+    idem = secrets.token_hex(8)
+    ih = f"{TEN}\x1f{uid}\x1fgjenapne\x1f1\x1f{idem}"
+    kall = dict(tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=1, idempotency_key=idem,
+                input_hash=ih, naa=datetime.now(timezone.utc))
+    rt = _rt()
+    try:
+        # Første forsøk: ryddingen «feiler» (gjør ingenting), som etter en
+        # transient databasefeil bak skjermen.
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        policyadmin.gjenapne_utkast(rt, **kall)
+        monkeypatch.undo()
+        assert _rundestatus(uid) == "kansellert"
+        assert _uleste_varsler(uid) == 1, "forutsetningen holder ikke"
+
+        # Retry med samme nøkkel: svaret er det lagrede, men hullet tettes.
+        res = policyadmin.gjenapne_utkast(rt, **kall)
+        assert res["status"] == "utkast"
+        assert _uleste_varsler(uid) == 0, \
+            "replayen lot varselet be om en attestering som ikke finnes"
+    finally:
+        rt.close()
+
+
+@pg
+def test_valider_cacher_ikke_en_dom_registeret_kan_endre():
+    """Codex P2: «versjonen er opptatt» er en dom om REGISTERET, ikke om
+    utkastet — og registeret flytter seg: slettingen frigjør uttrykkelig
+    versjonsnumrene. Et cachet «ugyldig» ville replayet den foreldede dommen
+    for alltid, og flaten gjenbruker med rette nøkkelen sin per render.
+
+    Kontroll: la registerfeilene gå gjennom `_fullfor` som dokumentfeilene,
+    så blir denne rød på siste assert."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid, "1.1.0")
+    hasj = m.execute("SELECT innholds_hash FROM policyer WHERE tenant=%s"
+                     " AND policy_id=%s", (TEN, pid)).fetchone()[0]
+    m.commit(); m.close()
+    _utkast(uid, pid, status="utkast", versjon="1.1.0")
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        def valider_med_samme_nokkel():
+            return policyadmin.valider_utkast(
+                rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=1, idempotency_key=idem,
+                input_hash="ih-" + idem)
+
+        v1 = valider_med_samme_nokkel()
+        assert v1["utfall"] == "ugyldig", v1
+
+        # Konflikten forsvinner: policyen som holdt versjonen slettes styrt.
+        from db.pg import sett_kontekst
+        sett_kontekst(rt, TEN, "forf", "r-slett")
+        rt.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                   (TEN, pid, "1.1.0", hasj))
+        rt.commit()
+
+        v2 = valider_med_samme_nokkel()
+        assert v2["utfall"] == "validert", (
+            "et replay pinnet registertilstanden fra før slettingen", v2)
     finally:
         rt.close()

@@ -436,9 +436,12 @@ def main() -> int:                                        # noqa: C901
         innhold9r["meta"] = {**innhold9r["meta"], "versjon": redigert_v,
                              "status": "produksjon"}
         idem = secrets.token_hex(8)
+        # Gjenåpningen BUMPET utkastversjonen (Codex P1) — redigeringen må
+        # bruke den returnerte, ikke den man husket fra før valideringen.
         r = policyadmin.rediger_utkast(
             rt9, tenant=TENANT, aktor=forfatter, request_id="r",
-            utkast_id=uid9, forventet_utkastversjon=1, innhold=innhold9r,
+            utkast_id=uid9, forventet_utkastversjon=g["utkastversjon"],
+            innhold=innhold9r,
             idempotency_key=idem, input_hash=f"ih9-{idem}")
         idem = secrets.token_hex(8)
         v2 = policyadmin.valider_utkast(
