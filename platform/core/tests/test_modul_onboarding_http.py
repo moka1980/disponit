@@ -609,7 +609,9 @@ def test_kapabiliteten_innloses_kun_av_deploymenten_som_claimet(migrator,
             r = c.post("/v1/artefakt",
                        json={"kapabilitet_jti": jti, "rapport": {"funn": 0}},
                        headers={"authorization": f"Bearer {stg}"})
-            assert r.status_code == 403 and \
+            # `kapabilitet_ugyldig` er 401 i feiltabellen: en fullmakt som
+            # ikke er denne deploymentens, er ikke en fullmakt.
+            assert r.status_code == 401 and \
                 r.json()["feil"] == "kapabilitet_ugyldig", r.text
 
             # Og deploymenten som faktisk claimet, kommer fortsatt inn.
