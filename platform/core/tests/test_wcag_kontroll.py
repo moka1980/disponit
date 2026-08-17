@@ -1752,7 +1752,7 @@ def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
     `registrer_artefaktskjema`, så blir SQL-halvdelen under grønn på et
     skjema som aldri kan brukes.
     """
-    from api.artefaktskjema import Skjemaugyldig, registrer
+    from api.artefaktskjema import Skjemaugyldig, registrer, skjemafeil
     from db.pg import koble
 
     # 1) Python-veien avviser FØR den rører databasen.
@@ -1777,11 +1777,40 @@ def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
         for daarlig in ({"type": "strng"},
                         {"type": ["object", "strng"]},
                         {"type": 7},
+                        {"type": []},
+                        {"type": ["object", "object"]},
                         {"properties": {"a": {"type": "objekt"}}},
                         {"$defs": {"d": {"type": "tall"}}},
                         {"allOf": [{"type": "object"}, {"type": "strng"}]},
                         {"items": {"type": "strng"}},
-                        {"if": {"type": "strng"}}):
+                        {"if": {"type": "strng"}},
+                        # Runde 3: nøkkelord med feil VERDITYPE. Hvert av
+                        # disse er et lovlig JSON-objekt som `check_schema()`
+                        # avviser — altså samme permanente skade som en
+                        # ugyldig `type`, og alle gikk gjennom SQL-veien.
+                        {"required": "resultat"},
+                        {"required": ["a", "a"]},
+                        {"required": [1]},
+                        {"minLength": "x"},
+                        {"maxItems": -1},
+                        {"minItems": 1.5},
+                        {"multipleOf": 0},
+                        {"uniqueItems": "ja"},
+                        {"pattern": 7},
+                        {"title": []},
+                        {"enum": "abc"},
+                        {"dependentRequired": {"a": "b"}},
+                        {"$vocabulary": {"u": "ja"}},
+                        # ... og bæreren av subskjemaer med feil form:
+                        # vakten hoppet STILLE over disse.
+                        {"properties": "x"},
+                        {"allOf": "x"},
+                        {"allOf": []},
+                        {"properties": {"a": {"required": "b"}}}):
+            # Parity: SQL-vakten skal treffe NØYAKTIG det Python-vakten
+            # treffer. Går de to fra hverandre, er den ene veien enten et
+            # hull eller en avvisning av et lovlig skjema.
+            assert skjemafeil(daarlig), daarlig
             kanon, h = _jcs_hash(daarlig)
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 d.execute("SELECT registrer_artefaktskjema(%s,%s,'test')",
@@ -1796,7 +1825,18 @@ def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
                      {"additionalProperties": False,
                       "properties": {"a": {"type": "integer"}}},
                      {"prefixItems": [{"type": "string"}], "items": True},
+                     # Riktige verdityper for de samme nøkkelordene — og et
+                     # UKJENT nøkkelord, som Draft 2020-12 sier skal
+                     # ignoreres. Avviste vakten det, ville SQL-veien blitt
+                     # strengere enn Python-veien: et nytt avvik, motsatt vei.
+                     {"required": ["a"], "minLength": 0, "maxItems": 3,
+                      "multipleOf": 2.5, "uniqueItems": True,
+                      "pattern": "^a$", "title": "t", "enum": [1, "a"],
+                      "dependentRequired": {"a": ["b"]},
+                      "ukjentNokkelord": {"hva": "som helst"}},
+                     {"properties": {"a": {"required": ["b"]}}},
                      dict(_rapportskjema_kopi(), x=secrets.token_hex(3))):
+            assert not skjemafeil(godt), godt
             kanon, h = _jcs_hash(godt)
             assert d.execute("SELECT registrer_artefaktskjema(%s,%s,'test')",
                              (kanon, h)).fetchone()[0] == h

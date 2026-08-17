@@ -119,18 +119,38 @@ SET LOCAL ROLE disponit_modul_eier;
 -- — så aldri Python-sjekken. Derfor står denne vakten på SQL-siden, der
 -- ingen kaller kan gå utenom.
 --
--- Den validerer ikke HELE Draft 2020-12; det kan plpgsql ikke, og den
--- later ikke som. Den tar den ene klassen feil som er både STILLE og
--- PERMANENT: en ugyldig `type`. `{"type": "strng"}` er et lovlig
--- JSON-objekt, passerer alle formkrav, og får deretter validatoren til å
--- kaste `UnknownType` på hver eneste opplastning — og siden både
--- skjemaraden og typebindingen er immutable, kan typen aldri repareres.
+-- Runde 3 (Codex P2): første versjon så bare på `type` og på formen til
+-- de subskjemaene den rakk å nå. `{"required": "x"}` og
+-- `{"minLength": "x"}` gikk derfor rett gjennom SQL-veien — og de er
+-- NØYAKTIG samme skade som en ugyldig `type`: `check_schema()` i Python
+-- avviser dem, så artefakttypen som bindes til hashen dør på hver
+-- opplastning, permanent, fordi både skjemaraden og typebindingen er
+-- immutable.
+--
+-- Vakten dekker nå hele NØKKELORDGRAMMATIKKEN i Draft 2020-12: hvert
+-- nøkkelord metaskjemaet gir en fast verditype er sjekket mot den typen,
+-- rekursivt. Det er det metaskjemaet i all hovedsak ER — resten (uri-,
+-- regex- og `format`-syntaks) er annotasjoner `check_schema()` heller
+-- ikke håndhever som feil. Grensen står fortsatt uttalt: plpgsql kjører
+-- ingen JSON Schema-validator, og funksjonen later ikke som.
+--
+-- To ting er verdt å skrive ned:
+--
+--   * ER nøkkelordet der, MÅ typen stemme. Første versjon sjekket
+--     `IF jsonb_typeof(...) = 'array'` før den gikk inn i `allOf` — altså
+--     hoppet den STILLE over `{"allOf": "x"}`, som er den samme feilen
+--     den skulle fange. Fravær er lovlig; feil type er det ikke.
+--   * Ukjente nøkkelord slipper gjennom med vilje. Draft 2020-12 sier
+--     eksplisitt at de ignoreres, og `check_schema()` godtar dem — en
+--     avvisning her ville gjort SQL-veien STRENGERE enn Python-veien og
+--     dermed blitt et nytt, motsatt avvik mellom de to.
 --
 -- Rekursjonen følger de stedene Draft 2020-12 FAKTISK plasserer
 -- subskjemaer. Det er hele grunnen til at den kan gjøres uten falske
 -- treff: en naiv `$.**.type` ville også truffet et felt som tilfeldigvis
 -- HETER «type» (`properties.type`), og avvist et fullt lovlig skjema for
--- alltid.
+-- alltid. Av samme grunn gås `enum`, `const`, `default` og `examples`
+-- ALDRI inn i: der er innholdet data, ikke skjema.
 CREATE OR REPLACE FUNCTION public._artefaktskjema_typefeil(p_skjema JSONB)
 RETURNS TEXT LANGUAGE plpgsql IMMUTABLE
 SET search_path = pg_catalog AS $$
@@ -147,8 +167,25 @@ DECLARE
     k_ett   CONSTANT TEXT[] := ARRAY['items','contains','not','if','then',
                                      'else','additionalProperties',
                                      'propertyNames','unevaluatedItems',
-                                     'unevaluatedProperties'];
-    v_t JSONB; v_e JSONB; v_n TEXT; v_feil TEXT;
+                                     'unevaluatedProperties','contentSchema'];
+    -- Nøkkelord metaskjemaet gir en FAST verditype.
+    k_streng CONSTANT TEXT[] := ARRAY['$id','$schema','$ref','$anchor',
+                                      '$dynamicRef','$dynamicAnchor',
+                                      '$comment','title','description',
+                                      'pattern','format','contentEncoding',
+                                      'contentMediaType'];
+    k_bool  CONSTANT TEXT[] := ARRAY['uniqueItems','deprecated','readOnly',
+                                     'writeOnly'];
+    k_tall  CONSTANT TEXT[] := ARRAY['maximum','minimum','exclusiveMaximum',
+                                     'exclusiveMinimum'];
+    -- Ikke-negative heltall (`minLength`, `maxItems`, ...).
+    k_antall CONSTANT TEXT[] := ARRAY['maxLength','minLength','maxItems',
+                                      'minItems','maxContains','minContains',
+                                      'maxProperties','minProperties'];
+    -- Lister av data, ikke av subskjemaer — sjekkes som lister, gås aldri
+    -- inn i.
+    k_dataliste CONSTANT TEXT[] := ARRAY['enum','examples'];
+    v_t JSONB; v_e JSONB; v_n TEXT; v_feil TEXT; v_num NUMERIC;
 BEGIN
     -- Et boolsk subskjema er lovlig i 2020-12 (`true`/`false`).
     IF jsonb_typeof(p_skjema) = 'boolean' THEN
@@ -166,6 +203,17 @@ BEGIN
                 RETURN format('ukjent type %L', v_t #>> '{}');
             END IF;
         ELSIF jsonb_typeof(v_t) = 'array' THEN
+            -- Metaskjemaet krever minst ett element og unike verdier;
+            -- `{"type": []}` matcher ingenting og ville drept typen like
+            -- permanent som en stavefeil.
+            IF jsonb_array_length(v_t) = 0 THEN
+                RETURN 'type-listen er tom';
+            END IF;
+            IF (SELECT count(*) FROM jsonb_array_elements(v_t))
+               <> (SELECT count(DISTINCT e.value) FROM
+                     jsonb_array_elements(v_t) AS e) THEN
+                RETURN 'type-listen har duplikater';
+            END IF;
             FOR v_e IN SELECT * FROM jsonb_array_elements(v_t) LOOP
                 IF jsonb_typeof(v_e) <> 'string'
                    OR NOT (v_e #>> '{}' = ANY(k_type)) THEN
@@ -178,8 +226,118 @@ BEGIN
         END IF;
     END IF;
 
+    -- Nøkkelord med fast verditype. ER de der, MÅ typen stemme.
+    FOREACH v_n IN ARRAY k_streng LOOP
+        IF p_skjema ? v_n AND jsonb_typeof(p_skjema -> v_n) <> 'string' THEN
+            RETURN format('%s må være streng, er %s', v_n,
+                          jsonb_typeof(p_skjema -> v_n));
+        END IF;
+    END LOOP;
+    FOREACH v_n IN ARRAY k_bool LOOP
+        IF p_skjema ? v_n AND jsonb_typeof(p_skjema -> v_n) <> 'boolean' THEN
+            RETURN format('%s må være boolsk, er %s', v_n,
+                          jsonb_typeof(p_skjema -> v_n));
+        END IF;
+    END LOOP;
+    FOREACH v_n IN ARRAY k_tall LOOP
+        IF p_skjema ? v_n AND jsonb_typeof(p_skjema -> v_n) <> 'number' THEN
+            RETURN format('%s må være tall, er %s', v_n,
+                          jsonb_typeof(p_skjema -> v_n));
+        END IF;
+    END LOOP;
+    FOREACH v_n IN ARRAY k_antall LOOP
+        IF p_skjema ? v_n THEN
+            IF jsonb_typeof(p_skjema -> v_n) <> 'number' THEN
+                RETURN format('%s må være tall, er %s', v_n,
+                              jsonb_typeof(p_skjema -> v_n));
+            END IF;
+            v_num := (p_skjema ->> v_n)::numeric;
+            IF v_num < 0 OR v_num <> trunc(v_num) THEN
+                RETURN format('%s må være et ikke-negativt heltall, er %s',
+                              v_n, v_num);
+            END IF;
+        END IF;
+    END LOOP;
+    IF p_skjema ? 'multipleOf' THEN
+        IF jsonb_typeof(p_skjema -> 'multipleOf') <> 'number' THEN
+            RETURN format('multipleOf må være tall, er %s',
+                          jsonb_typeof(p_skjema -> 'multipleOf'));
+        END IF;
+        IF (p_skjema ->> 'multipleOf')::numeric <= 0 THEN
+            RETURN 'multipleOf må være større enn 0';
+        END IF;
+    END IF;
+    FOREACH v_n IN ARRAY k_dataliste LOOP
+        IF p_skjema ? v_n AND jsonb_typeof(p_skjema -> v_n) <> 'array' THEN
+            RETURN format('%s må være liste, er %s', v_n,
+                          jsonb_typeof(p_skjema -> v_n));
+        END IF;
+    END LOOP;
+    -- `required` er en liste av STRENGER. `{"required": "resultat"}` er den
+    -- klassiske: den ser ut som den virker, og validatoren avviser den.
+    IF p_skjema ? 'required' THEN
+        IF jsonb_typeof(p_skjema -> 'required') <> 'array' THEN
+            RETURN format('required må være liste, er %s',
+                          jsonb_typeof(p_skjema -> 'required'));
+        END IF;
+        FOR v_e IN SELECT * FROM jsonb_array_elements(p_skjema -> 'required')
+        LOOP
+            IF jsonb_typeof(v_e) <> 'string' THEN
+                RETURN format('required-element må være streng, er %s',
+                              jsonb_typeof(v_e));
+            END IF;
+        END LOOP;
+        IF (SELECT count(*) FROM
+              jsonb_array_elements(p_skjema -> 'required'))
+           <> (SELECT count(DISTINCT e.value) FROM
+                 jsonb_array_elements(p_skjema -> 'required') AS e) THEN
+            RETURN 'required har duplikater';
+        END IF;
+    END IF;
+    -- `dependentRequired`: objekt av strenglister.
+    IF p_skjema ? 'dependentRequired' THEN
+        IF jsonb_typeof(p_skjema -> 'dependentRequired') <> 'object' THEN
+            RETURN format('dependentRequired må være objekt, er %s',
+                          jsonb_typeof(p_skjema -> 'dependentRequired'));
+        END IF;
+        FOR v_t IN SELECT value FROM jsonb_each(p_skjema -> 'dependentRequired')
+        LOOP
+            IF jsonb_typeof(v_t) <> 'array' THEN
+                RETURN format('dependentRequired-verdi må være liste, er %s',
+                              jsonb_typeof(v_t));
+            END IF;
+            FOR v_e IN SELECT * FROM jsonb_array_elements(v_t) LOOP
+                IF jsonb_typeof(v_e) <> 'string' THEN
+                    RETURN format('dependentRequired-element må være streng,'
+                                  ' er %s', jsonb_typeof(v_e));
+                END IF;
+            END LOOP;
+        END LOOP;
+    END IF;
+    -- `$vocabulary`: objekt av boolske verdier.
+    IF p_skjema ? '$vocabulary' THEN
+        IF jsonb_typeof(p_skjema -> '$vocabulary') <> 'object' THEN
+            RETURN format('$vocabulary må være objekt, er %s',
+                          jsonb_typeof(p_skjema -> '$vocabulary'));
+        END IF;
+        FOR v_e IN SELECT value FROM jsonb_each(p_skjema -> '$vocabulary')
+        LOOP
+            IF jsonb_typeof(v_e) <> 'boolean' THEN
+                RETURN format('$vocabulary-verdi må være boolsk, er %s',
+                              jsonb_typeof(v_e));
+            END IF;
+        END LOOP;
+    END IF;
+
+    -- Subskjemaene. ER nøkkelordet der, må BÆREREN ha riktig form også —
+    -- `{"properties": "x"}` og `{"allOf": "x"}` slapp gjennom da sjekken
+    -- sto som `IF jsonb_typeof(...) = 'object'` og bare hoppet over.
     FOREACH v_n IN ARRAY k_kart LOOP
-        IF jsonb_typeof(p_skjema -> v_n) = 'object' THEN
+        IF p_skjema ? v_n THEN
+            IF jsonb_typeof(p_skjema -> v_n) <> 'object' THEN
+                RETURN format('%s må være objekt, er %s', v_n,
+                              jsonb_typeof(p_skjema -> v_n));
+            END IF;
             FOR v_e IN SELECT value FROM jsonb_each(p_skjema -> v_n) LOOP
                 v_feil := public._artefaktskjema_typefeil(v_e);
                 IF v_feil IS NOT NULL THEN
@@ -189,7 +347,14 @@ BEGIN
         END IF;
     END LOOP;
     FOREACH v_n IN ARRAY k_liste LOOP
-        IF jsonb_typeof(p_skjema -> v_n) = 'array' THEN
+        IF p_skjema ? v_n THEN
+            IF jsonb_typeof(p_skjema -> v_n) <> 'array' THEN
+                RETURN format('%s må være liste, er %s', v_n,
+                              jsonb_typeof(p_skjema -> v_n));
+            END IF;
+            IF jsonb_array_length(p_skjema -> v_n) = 0 THEN
+                RETURN format('%s må ha minst ett subskjema', v_n);
+            END IF;
             FOR v_e IN SELECT * FROM jsonb_array_elements(p_skjema -> v_n)
             LOOP
                 v_feil := public._artefaktskjema_typefeil(v_e);
@@ -236,13 +401,15 @@ BEGIN
     -- registreringsveien derfra). Grensen står uttalt her i stedet for at
     -- funksjonen later som den har kontrollert mer enn den har.
     --
-    -- Men SQL-siden er ikke lenger tom (Codex P2, runde 2): begge
+    -- Men SQL-siden er ikke tom (Codex P2, runde 2 og 3): begge
     -- admin-rollene har EXECUTE, så en direkte kaller ser aldri
     -- Python-sjekken, og gapet er ikke reparerbart etterpå — skjemaraden
     -- OG typebindingen er immutable, så en artefakttype bundet til et
     -- ødelagt skjema ville dødd på hver opplastning for alltid. Derfor
-    -- kjøres `_artefaktskjema_typefeil` her: den fanger den ene klassen
-    -- feil som er både stille og permanent, uansett hvem som kaller.
+    -- kjøres `_artefaktskjema_typefeil` her, og den dekker nå hele
+    -- nøkkelordgrammatikken i Draft 2020-12 — ikke bare `type`, men også
+    -- `{"required": "x"}` og `{"minLength": "x"}`, som `check_schema()`
+    -- avviser og SQL-veien slapp gjennom.
     --
     -- `valider()` kjører metasjekken en tredje gang, før innhold måles,
     -- slik at et skjema som likevel skulle ha kommet inn gir en ærlig
