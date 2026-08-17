@@ -761,13 +761,27 @@ INSERT INTO artefakttype_register
 --    `admin`-medlemmene i plattformtenanten (kallerens serverkonfig).
 --    Unikhetsnøkkelen (bruker · art · ressurs · hendelse=terskel) gjør
 --    sveipen idempotent — hver terskel varsles én gang per familie.
+--
+--    KANALVALGET GJELDER OGSÅ HER (Codex P1). `varsel.epost_status` har
+--    DEFAULT 'koet', så en insert som utelater kolonnen køer e-post til
+--    ALLE — også dem som har valgt `kun_portal`. Denne funksjonen gjør
+--    derfor nøyaktig det `varsel.opprett` gjør i Python: tar mottakerens
+--    kanalvalg-lås (advisory-klasse 615774026, andre halvdel hashen av
+--    tenant + bruker — samme nøkkel som `varsel.KANALVALGNOKKEL`, ellers
+--    serialiserer de to veiene ikke mot hverandre i det hele tatt), LESER
+--    valget under den låsen, og setter `ikke_aktuelt` for portal-bare
+--    mottakere. Uten låsen kunne en avmelding som skjer akkurat nå ha
+--    ryddet køen FØR raden vår ble satt inn, og e-posten gått ut likevel.
+--    Mottakerne låses i STIGENDE bruker_id, samme retning som
+--    `varsel.mottakere_for_runde` sorterer — motsatt retning ville vært
+--    en vranglås mot en aktiveringsrunde som åpnes samtidig.
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_modul_eier;
 
 CREATE OR REPLACE FUNCTION varsle_tokenfamilie_utlop(p_tenant TEXT)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_n INT := 0; f RECORD; t INT;
+DECLARE v_n INT := 0; f RECORD; b RECORD; t INT; v_kanal TEXT; v_id BIGINT;
 BEGIN
     -- varsel/brukermedlemskap står under FORCE RLS med tenant-GUC-en som
     -- predikat — funksjonen setter den LOKALT for sin egen transaksjon.
@@ -789,22 +803,43 @@ BEGIN
                                    OR mt.tilbakekalt_ts > now())
                               AND mt.utloper > now())
         LOOP
-            INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
-                                       ressurs_id, hendelse, tekstnokkel,
-                                       parametre)
-            SELECT p_tenant, b.bruker_id, 'tokenfamilie_utloper',
-                   'modultoken', f.onboarding_id::text, t::text,
-                   'varsel.tokenfamilie_utloper',
-                   jsonb_build_object('modul_id', f.modul_id,
-                                      'miljo', f.miljo,
-                                      'release_id', f.release_id,
-                                      'familie_utloper', f.familie_utloper,
-                                      'dager', t)
-              FROM public.brukermedlemskap b
-             WHERE b.tenant = p_tenant AND b.aktiv
-               AND 'admin' = ANY (b.roller)
-                ON CONFLICT DO NOTHING;
-            v_n := v_n + 1;
+            FOR b IN
+                SELECT bm.bruker_id FROM public.brukermedlemskap bm
+                 WHERE bm.tenant = p_tenant AND bm.aktiv
+                   AND 'admin' = ANY (bm.roller)
+                 ORDER BY bm.bruker_id
+            LOOP
+                PERFORM pg_advisory_xact_lock(
+                    615774026, hashtext(p_tenant || E'\x1f' || b.bruker_id));
+                SELECT vv.kanal INTO v_kanal FROM public.varselvalg vv
+                 WHERE vv.tenant = p_tenant AND vv.bruker_id = b.bruker_id;
+                -- Fraværende rad er IKKE «av»: standarden er e-post +
+                -- portal, samme regel som `varsel._kanal`.
+                INSERT INTO public.varsel (tenant, bruker_id, art,
+                                           ressurs_type, ressurs_id, hendelse,
+                                           tekstnokkel, parametre,
+                                           epost_status)
+                VALUES (p_tenant, b.bruker_id, 'tokenfamilie_utloper',
+                        'modultoken', f.onboarding_id::text, t::text,
+                        'varsel.tokenfamilie_utloper',
+                        jsonb_build_object('modul_id', f.modul_id,
+                                           'miljo', f.miljo,
+                                           'release_id', f.release_id,
+                                           'familie_utloper',
+                                           f.familie_utloper,
+                                           'dager', t),
+                        CASE WHEN COALESCE(v_kanal, 'epost_og_portal')
+                                  = 'kun_portal'
+                             THEN 'ikke_aktuelt' ELSE 'koet' END)
+                     ON CONFLICT DO NOTHING
+                  RETURNING id INTO v_id;
+                -- INTO setter v_id til NULL når ON CONFLICT slukte raden,
+                -- så telleren er FAKTISK opprettede varsler — ikke antall
+                -- familier sveipen så på.
+                IF v_id IS NOT NULL THEN
+                    v_n := v_n + 1;
+                END IF;
+            END LOOP;
         END LOOP;
     END LOOP;
     RETURN v_n;
@@ -821,3 +856,5 @@ RESET ROLE;
 -- funksjonen tilfredsstiller via tenant-GUC-en.
 GRANT SELECT ON brukermedlemskap TO disponit_modul_eier;
 GRANT INSERT ON varsel TO disponit_modul_eier;
+-- ... og lese kanalvalget, ellers kunne funksjonen ikke respektert det.
+GRANT SELECT ON varselvalg TO disponit_modul_eier;

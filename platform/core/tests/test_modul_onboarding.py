@@ -769,3 +769,69 @@ def test_familieutlop_varsles_30_7_1_idempotent():
     finally:
         rt.close()
         m.close()
+
+
+@pg
+def test_familievarselet_respekterer_kun_portal():
+    """Codex P1: `varsel.epost_status` har DEFAULT 'koet', så en insert som
+    utelot kolonnen sendte e-post også til dem som har valgt `kun_portal`.
+    Sveipen leser nå kanalvalget under SAMME advisory-lås som
+    `varsel.opprett`. Kontroll: dropp epost_status-kolonnen fra INSERT-en i
+    `varsle_tokenfamilie_utlop`, så blir denne rød."""
+    from api.varsel import KANALVALGNOKKEL
+    # Nøkkelen står som en literal i migrasjonen (SQL kan ikke importere
+    # Python) — ulike nøkler ville betydd at de to veiene ikke serialiserer
+    # mot hverandre i det hele tatt, altså nøyaktig kappløpet låsen finnes
+    # for. Denne asserten er det eneste som binder dem sammen.
+    assert KANALVALGNOKKEL == 615774026
+
+    m = _c()
+    rt = _rt()
+    ten = "t-famkanal-" + secrets.token_hex(3)
+    try:
+        avmeldt = m.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " RETURNING bruker_id",
+            ("https://idp.example", f"{ten}-portal")).fetchone()[0]
+        paameldt = m.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " RETURNING bruker_id",
+            ("https://idp.example", f"{ten}-epost")).fetchone()[0]
+        from db.pg import sett_kontekst
+        sett_kontekst(m, ten, "sys", "r0")
+        for b in (avmeldt, paameldt):
+            m.execute("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+                      " VALUES (%s,%s,ARRAY['admin'])", (ten, b))
+        m.execute("INSERT INTO varselvalg (tenant,bruker_id,kanal)"
+                  " VALUES (%s,%s,'kun_portal')", (ten, avmeldt))
+        # ... og den andre har INGEN rad: et fravær er ikke «av».
+        m.commit()
+
+        modul, rel, _, _ = _deployment_med_typer(m)
+        o = uuid.uuid4()
+        m.execute(
+            "INSERT INTO modul_onboarding (onboarding_id,modul_id,miljo,"
+            "release_id,hemmelighet_hash,familie_utloper,utstedt_av,"
+            "utloper,innlost_ts) VALUES (%s,%s,'staging',%s,%s,"
+            "now()+make_interval(days => 5),'t',now(),now())",
+            (o, modul, rel, _hex64()))
+        m.execute(
+            "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+            "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,utloper)"
+            " SELECT %s,%s,onboarding_id,familie_utloper,modul_id,miljo,"
+            "release_id,0,familie_utloper FROM modul_onboarding"
+            " WHERE onboarding_id=%s", (uuid.uuid4(), _hex64(), o))
+        m.commit()
+
+        rt.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
+        rt.commit()
+        sett_kontekst(m, ten, "sys", "r1")
+        rader = dict(m.execute(
+            "SELECT bruker_id, epost_status FROM varsel WHERE tenant=%s"
+            " AND art='tokenfamilie_utloper' AND ressurs_id=%s"
+            " AND hendelse='7'", (ten, str(o))).fetchall())
+        m.rollback()
+        assert rader == {avmeldt: "ikke_aktuelt", paameldt: "koet"}, rader
+    finally:
+        rt.close()
+        m.close()
