@@ -718,6 +718,7 @@
   "ui.policy.slett": "Delete policy",
   "ui.policy.slett_forklaring": "If the policy was created by mistake, it can be deleted as long as it has never governed a decision. Drafts and attestations remain as history, and the version numbers become available again.",
   "ui.policy.flere_aktive": "Several policies are active at the same time for this workspace. This is a fault state: the enforced policy cannot be shown until it is resolved. If one of them was created by mistake, it can be deleted here as long as it has never governed a decision.",
+  "ui.policy.korrupt_aktiv": "The active policy cannot be read — its content is not valid, so the policy cannot be shown. This is a fault state: enforcement rejects decisions for as long as it stands. If the policy was created by mistake, it can be deleted here as long as it has never governed a decision.",
   "ui.policy.aktive": "Policies currently active",
   "ui.policy.slett_tekst": "The policy is deleted and the tenant has no active policy until a new one is activated. This cannot be undone.",
   "ui.policy.slett_tekst_flere": "Only this policy is deleted. The others that are active remain and continue to govern decisions. This cannot be undone.",

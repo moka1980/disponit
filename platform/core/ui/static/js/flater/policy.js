@@ -88,10 +88,18 @@ function identiteter(aktive) {
 //
 // Reparasjonen er `GET /v1/policy/aktive`, og den hentes bare når den trengs:
 // den normale veien er ETT kall, som før. Utløseren er 5xx, ikke feilKODEN:
-// «kunne ikke serveres som én» er det vi faktisk vet, og er grunnen at det er
-// FLERE, finnes reparasjonen. Er den noe annet (f.eks. `policy_korrupt` på den
-// ene aktive), står den opprinnelige feilen — vi bytter ikke ut en ærlig
-// feiltilstand med en villedende liste.
+// «kunne ikke serveres som én» er det vi faktisk vet.
+//
+// Men hvor mange rader reserven må finne for at den skal tas i bruk, avhenger
+// av HVA den opprinnelige feilen sa (Codex P2). `intern_feil` betyr «det er
+// flere» — kommer reserven tilbake med én, er tilstanden en annen enn den
+// feilen beskrev, og da står den opprinnelige feilen heller enn en liste som
+// ikke forklarer noe. `policy_korrupt` betyr derimot «raden kan ikke TOLKES»,
+// og det er sant også når den er alene: `/v1/policy/aktive` bygger med vilje
+// ingen DTO nettopp for at en korrupt rad skal kunne pekes på og ryddes. Med
+// terskelen 2 i begge tilfeller var den ENSLIGE korrupte policyen den eneste
+// som ikke kunne ryddes fra flaten — blindveien reserven finnes for, ett hakk
+// lenger inn.
 async function hentAktiv() {
   try {
     const d = await hentJson("/v1/policy/aktiv");
@@ -113,7 +121,7 @@ async function hentAktiv() {
       if (f instanceof UautorisertFeil || f instanceof IngenTilgangFeil) throw f;
       throw e;
     }
-    if (liste.policyer.length < 2) throw e;
+    if (liste.policyer.length < (e.kode === "policy_korrupt" ? 1 : 2)) throw e;
     return { aktive: liste.policyer, dto: null };
   }
 }
@@ -126,15 +134,24 @@ export function visPolicy(hoved, ctx) {
       return;
     }
     if (!dto) {
-      // Flere aktive: policyen kan ikke VISES (hvilken av dem skulle det
-      // vært?), men de kan pekes på — og for den som har lov til å rydde,
-      // slettes. Identitetene står FØRST og uavhengig av skrivetilgang:
-      // de er innholdet i feiltilstanden, ikke en del av handlingen.
+      // Policyen kan ikke VISES — enten fordi det er flere av dem (hvilken av
+      // dem skulle det vært?), eller fordi den ene ikke lar seg tolke. Men de
+      // kan pekes på, og for den som har lov til å rydde, slettes.
+      // Identitetene står FØRST og uavhengig av skrivetilgang: de er
+      // innholdet i feiltilstanden, ikke en del av handlingen.
+      //
+      // Hvilken av de to feiltilstandene det er, leses av LISTA og ikke av
+      // feilkoden som førte oss hit: banneret og bekreftelsen skal beskrive
+      // det flaten faktisk viser. Én rad ⇒ korrupt (bare den veien slipper en
+      // enslig rad gjennom i `hentAktiv`), og da er «de øvrige blir stående»
+      // usant — tenanten står uten aktiv policy etterpå, som ellers.
+      const flere = aktive.length > 1;
       sett(hoved,
         ...flateHode(t("ui.policy.tittel")),
-        VarselBanner({ art: "fare", tekst: t("ui.policy.flere_aktive") }),
+        VarselBanner({ art: "fare",
+          tekst: t(flere ? "ui.policy.flere_aktive" : "ui.policy.korrupt_aktiv") }),
         identiteter(aktive),
-        ...aktive.map((p) => angreSeksjon(p, ctx, paaNytt, true)));
+        ...aktive.map((p) => angreSeksjon(p, ctx, paaNytt, flere)));
       return;
     }
     sett(hoved,

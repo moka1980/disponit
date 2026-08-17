@@ -718,6 +718,7 @@
   "ui.policy.slett": "Slett policy",
   "ui.policy.slett_forklaring": "Er policyen opprettet ved en feil, kan den slettes så lenge den aldri har styrt en beslutning. Utkast og attestasjoner blir stående som historikk, og versjonsnumrene blir ledige igjen.",
   "ui.policy.flere_aktive": "Flere policyer står aktive samtidig for arbeidsområdet. Det er en feiltilstand: policyen som håndheves kan ikke vises før den er ryddet opp. Er en av dem opprettet ved en feil, kan den slettes her så lenge den aldri har styrt en beslutning.",
+  "ui.policy.korrupt_aktiv": "Den aktive policyen kan ikke leses — innholdet er ikke gyldig, og policyen kan derfor ikke vises. Det er en feiltilstand: håndhevingen avviser beslutninger så lenge den står. Er policyen opprettet ved en feil, kan den slettes her så lenge den aldri har styrt en beslutning.",
   "ui.policy.aktive": "Policyer som står aktive",
   "ui.policy.slett_tekst": "Policyen slettes og tenanten står uten aktiv policy til en ny aktiveres. Handlingen kan ikke angres.",
   "ui.policy.slett_tekst_flere": "Bare denne policyen slettes. De øvrige som står aktive blir stående og styrer beslutninger videre. Handlingen kan ikke angres.",

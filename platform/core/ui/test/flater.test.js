@@ -658,17 +658,17 @@ test("Policy: en leser uten policy:write ser HVILKE som står aktive",
     globalThis.fetch = brukFetch;
   });
 
-test("Policy: en 5xx som IKKE er flere aktive blir stående som feil",
+test("Policy: en 5xx reserven ikke forklarer blir stående som feil",
   async () => {
-    // Lista er reparasjonen for ÉN tilstand. Er den ene aktive policyen
-    // korrupt, skal flaten si at noe er galt — ikke bytte den ærlige
-    // feiltilstanden ut mot en liste som later som alt er i orden.
+    // `intern_feil` sier «det er FLERE». Kommer reserven tilbake med én, er
+    // tilstanden en annen enn feilen beskrev — da står den ærlige
+    // feiltilstanden, i stedet for en liste som later som alt er i orden.
     const brukFetch = globalThis.fetch;
     globalThis.fetch = async (url, opts) => {
       const sti = url.split("?")[0];
       if (sti === "/v1/policy/aktiv") {
         return { ok: false, status: 500,
-          json: async () => ({ feil: "policy_korrupt" }) };
+          json: async () => ({ feil: "intern_feil" }) };
       }
       if (sti === "/v1/policy/aktive") {
         return { ok: true, status: 200, json: async () => ({ policyer: [
@@ -684,6 +684,60 @@ test("Policy: en 5xx som IKKE er flere aktive blir stående som feil",
     assert.ok(!h.querySelector(".policy-angre"));
     globalThis.fetch = brukFetch;
   });
+
+test("Policy: en ENSLIG korrupt aktiv policy kan ryddes", async () => {
+  // `policy_korrupt` sier «raden kan ikke TOLKES», og det er sant også når
+  // den er alene. `/v1/policy/aktive` bygger med vilje ingen DTO nettopp for
+  // at en slik rad skal kunne pekes på og slettes — med terskelen 2 var den
+  // enslige korrupte policyen den ENESTE som ikke kunne ryddes fra flaten.
+  let postet = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const sti = url.split("?")[0];
+    if (opts && opts.method === "POST") {
+      postet = sti;
+      return { ok: true, status: 200, json: async () => ({ slettet: 1 }) };
+    }
+    if (sti === "/v1/policy/aktiv") {
+      return { ok: false, status: 500,
+        json: async () => ({ feil: "policy_korrupt" }) };
+    }
+    if (sti === "/v1/policy/aktive") {
+      return { ok: true, status: 200, json: async () => ({ policyer: [
+        { policy_id: "korruptbedrift", versjon: "0.2.0",
+          innholds_hash: "a".repeat(64) }] }) };
+    }
+    return brukFetch(url, opts);
+  };
+  const h = nyHoved();
+  visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+  await vent(() => h.querySelector(".policy-angre"));
+  assert.ok(!h.querySelector(".tilstand.feil"), "blindveien sto igjen");
+  // Banneret beskriver DENNE feiltilstanden, ikke «flere aktive»: det er én.
+  assert.ok(h.textContent.includes(t("ui.policy.korrupt_aktiv")),
+    "banneret forklarte ikke at policyen er ulesbar");
+  assert.ok(!h.textContent.includes(t("ui.policy.flere_aktive")));
+  assert.ok(h.textContent.includes("korruptbedrift"), "identiteten sto ikke");
+  [...h.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  const dlg = await vent(() =>
+    document.querySelector('[role="dialog"]')) &&
+    document.querySelector('[role="dialog"]');
+  // ... og bekreftelsen sier det sanne: etterpå står tenanten uten aktiv
+  // policy. «De øvrige blir stående» ville vært galt — det er ingen øvrige.
+  assert.ok(dlg.textContent.includes(t("ui.policy.slett_tekst")),
+    "bekreftelsen beskrev ikke tilstanden etter slettingen");
+  assert.ok(!dlg.textContent.includes(t("ui.policy.slett_tekst_flere")),
+    "bekreftelsen lovet øvrige aktive som ikke finnes");
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => postet);
+  assert.equal(postet, "/v1/policy/korruptbedrift/slett");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  globalThis.fetch = brukFetch;
+});
 
 test("Policy: en utløpt økt under reservekallet sender til innlogging",
   async () => {
