@@ -1052,6 +1052,62 @@ def test_mynting_tar_modullaasen_som_epoch_endringene():
 
 
 @pg
+def test_tilbakekalling_serialiseres_med_den_pagaende_requesten():
+    """Codex P1: tilbakekallingen tok bare RADlåsen — og motparten tar ingen.
+
+    `modultoken_fortsatt_autorisert` er porten claim og begge
+    kapabilitetsinnløsningene står bak. Den leser tokenraden uten
+    `FOR UPDATE` og verner dommen sin med den DELTE `modul:<id>`-låsen, som
+    den holder ut transaksjonen nettopp for at ingenting skal endre seg
+    mellom dommen og forbruket. En tilbakekalling som bare låste raden delte
+    derfor ingen lås med den: den kunne committe midt i vinduet, og
+    requesten fortsatte å bruke et token eieren nettopp hadde trukket.
+
+    Prøven tar den delte låsen slik en ekte request gjør det — gjennom
+    validatoren, ikke med et rått `pg_advisory_xact_lock` — og ser at
+    tilbakekallingen VENTER. Deretter slippes den, og tilbakekallingen går
+    gjennom med en gang: låsen serialiserer, den blokkerer ikke.
+
+    Kontroll: fjern `pg_advisory_xact_lock`-linja i
+    `tilbakekall_modultoken`, så uteblir `LockNotAvailable`.
+    """
+    m = _c()
+    rt = _rt()
+    holder = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        mac, miljo, rel, epoch = m.execute(
+            "SELECT token_mac, miljo, release_id, utstedt_epoch"
+            "  FROM modultoken WHERE token_id=%s", (tid,)).fetchone()
+
+        # En request er i gang: porten har sagt ja, og holder den delte
+        # låsen til den er ferdig med å forbruke kapabiliteten sin.
+        assert holder.execute(
+            "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)",
+            (tid, modul, miljo, rel, epoch)).fetchone()[0] == "ok"
+
+        rt.execute("SET LOCAL lock_timeout='400ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            rt.execute(
+                "SELECT tilbakekall_modultoken(%s,'kompromittert','test')",
+                (tid,))
+        rt.rollback()
+
+        holder.rollback()               # requesten er ferdig, låsen slippes
+        rt.execute("SET LOCAL lock_timeout='400ms'")
+        rt.execute("SELECT tilbakekall_modultoken(%s,'kompromittert','test')",
+                   (tid,))
+        rt.commit()
+        assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
+                          (mac,)).fetchone() is None
+        rt.rollback()
+    finally:
+        holder.close()
+        rt.close()
+        m.close()
+
+
+@pg
 def test_innlosning_etter_nodstopp_myntes_ikke():
     """Codex P1, andre halvdel: for rotasjonen holder låsen alene — et
     nødstopp har da tilbakekalt forgjengeren, og rotasjonen faller på det.

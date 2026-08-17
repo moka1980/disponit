@@ -1054,16 +1054,43 @@ END $$;
 -- rotasjonsnåde (fremtidig tilbakekalt_ts) er IKKE dødt ennå — nåden
 -- finnes for in-flight-requests, ikke for kompromitterte tokener, så
 -- her kappes den til now(). Triggeren tillater nettopp den retningen.
+--
+-- MODUL-LÅSEN FØR RADLÅSEN (Codex P1). Radlåsen alene var ikke nok, og
+-- grunnen er at motparten ikke tar radlås i det hele tatt:
+-- `modultoken_fortsatt_autorisert` — porten claim og de to
+-- kapabilitetsinnløsningene står bak — leser tokenraden UTEN `FOR UPDATE` og
+-- verner dommen sin med den DELTE `modul:<id>`-låsen, som den holder ut
+-- transaksjonen nettopp for at ingenting skal endre seg mellom dommen og
+-- forbruket. En tilbakekalling som bare tok radlåsen delte ingen lås med
+-- den, og kunne derfor committe midt i vinduet: requesten fikk sin
+-- «fortsatt autorisert», og fortsatte å bruke et token som var eksplisitt
+-- tilbakekalt før den var ferdig. Med den EKSKLUSIVE modul-låsen først må
+-- tilbakekallingen vente til de pågående requestene har sluppet den delte,
+-- og etter det ser hver ny request tilbakekallingen. Nødstoppet tar den
+-- samme låsen i den samme retningen (lås → rad), og rekkefølgen er derfor
+-- også vernet mot vranglås.
+--
+-- Modulen slås opp FØR låsen, uten lås, og det er trygt: `modul_id` er
+-- immutabel på raden (identitetstriggeren), så verdien vi låser på kan ikke
+-- ha vært en annen. Finnes ikke raden, er det en ukjent token uansett hvem
+-- som spør, og da er det ingenting å serialisere mot.
 CREATE OR REPLACE FUNCTION tilbakekall_modultoken(
     p_token_id UUID, p_grunn TEXT, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE t RECORD;
+DECLARE t RECORD; v_modul TEXT;
 BEGIN
     IF p_grunn IS NULL OR length(btrim(p_grunn)) = 0 THEN
         RAISE EXCEPTION 'tilbakekalling: grunn er obligatorisk'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    SELECT mt.modul_id INTO v_modul FROM public.modultoken mt
+     WHERE mt.token_id = p_token_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'tilbakekalling: ukjent token'
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || v_modul, 0));
     SELECT * INTO t FROM public.modultoken mt
      WHERE mt.token_id = p_token_id FOR UPDATE;
     IF NOT FOUND THEN
