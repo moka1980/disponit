@@ -7,7 +7,7 @@ Alle nettverkskall går gjennom en injisert `klient` (httpx-kompatibel /
 Starlette TestClient), og signering av kvitteringen gjennom en injisert
 `signer` — kontrakten (PR-006) eies av plattformen, ikke av denne fila.
 
-Feilhåndteringens tre utfall:
+Feilhåndteringens utfall:
   * Ingen oppdrag (204) → stille retur.
   * Motorfeil / skjemabrudd i egen rapport → kvittering `avbrutt` UTEN
     artefakt: et delvis artefakt finnes ikke (§10 siste rad), men
@@ -15,6 +15,13 @@ Feilhåndteringens tre utfall:
     ville latt fristen gjøre jobben og M-37 gjette.
   * Full suksess → artefakt + kvittering `utfort` med den serverberegnede
     hashen fra opplastingssvaret (den, og bare den, signeres).
+  * Kvittering AVVIST (Codex P1) → `ukvittert`. Kvitteringsendepunktet er
+    ikke en varsling som alltid går igjennom: fencing, hashvalidering og
+    artefaktpromotering kan avvise den (409), og serveren kan feile (5xx).
+    Da er oppdraget IKKE ferdig hos plattformen — artefaktet kan til og
+    med være karantenesatt — og et `utfort` herfra ville fått en
+    planlegger til å tro at kjøringen var i havn. Utfallet er eget nettopp
+    fordi det ikke er det samme som en ærlig motorfeil.
 """
 from __future__ import annotations
 
@@ -25,8 +32,15 @@ from .motor import Motorfeil
 from .rapport import bygg
 
 
+def _kvittert(rk) -> bool:
+    """Godtok plattformen kvitteringen? Kun 2xx teller — 409 (fencing,
+    hashavvik, avvist promotering) og 5xx betyr at oppdraget står igjen
+    uferdig hos plattformen."""
+    return 200 <= rk.status_code < 300
+
+
 def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
-    """-> {"utfall": "tomt"|"utfort"|"avbrutt", ...}."""
+    """-> {"utfall": "tomt"|"utfort"|"avbrutt"|"ukvittert", ...}."""
     hode = {"authorization": f"Bearer {token}"}
     r = klient.post("/v1/oppdrag/claim", json={}, headers=hode)
     if r.status_code == 204:
@@ -62,7 +76,8 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "motor_avbrutt"})
         return {"utfall": "avbrutt", "grunn": type(e).__name__,
-                "kvittering_status": rk.status_code}
+                "kvittering_status": rk.status_code,
+                "kvittert": _kvittert(rk)}
 
     opplasting = claim.get("opplasting")
     if not opplasting:
@@ -72,7 +87,8 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "ingen_opplastingskapabilitet"})
         return {"utfall": "avbrutt", "grunn": "ingen_kapabilitet",
-                "kvittering_status": rk.status_code}
+                "kvittering_status": rk.status_code,
+                "kvittert": _kvittert(rk)}
 
     ro = klient.post("/v1/artefakt",
                      json={"kapabilitet_jti": opplasting["jti"],
@@ -83,6 +99,13 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     rk = kvitter({**kvittering_basis, "resultat": "utfort",
                   "artefakt_id": artefakt["artefakt_id"],
                   "klartekst_sha256": artefakt["klartekst_sha256"]})
-    return {"utfall": "utfort", "artefakt_id": artefakt["artefakt_id"],
+    svar = {"artefakt_id": artefakt["artefakt_id"],
             "kvittering_status": rk.status_code,
             "sider": len(rapport["sider_kontrollert"])}
+    if not _kvittert(rk):
+        # Rapporten er bygget og lastet opp, men plattformen tok IKKE imot
+        # kvitteringen — oppdraget er uferdig der, og artefaktet kan være
+        # karantenesatt. Å melde `utfort` her ville vært modulens ord mot
+        # plattformens tilstand, og planleggeren ville trodd på modulen.
+        return {"utfall": "ukvittert", **svar}
+    return {"utfall": "utfort", **svar}

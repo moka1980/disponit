@@ -734,3 +734,62 @@ def test_motorfeil_gir_avbrutt_uten_artefakt(migrator, miljo, monkeypatch):
             assert n == 0, "motorfeil etterlot et delvis artefakt"
     finally:
         a.tjeneste.pool.lukk()
+
+
+# --------------------------------------------------------------------------
+# Kvitteringssvaret (Codex P1) — ingen Postgres: kjeden mot en stubklient.
+# --------------------------------------------------------------------------
+
+class _Svar:
+    def __init__(self, status, kropp=None):
+        self.status_code, self._kropp = status, kropp or {}
+
+    def json(self):
+        return self._kropp
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise AssertionError(f"uventet {self.status_code}")
+
+
+class _Stubklient:
+    """Claim → opplasting → kvittering, med valgbar kvitteringsstatus."""
+
+    def __init__(self, kvitteringsstatus):
+        self.kvitteringsstatus = kvitteringsstatus
+
+    def post(self, sti, json=None, headers=None):
+        if sti == "/v1/oppdrag/claim":
+            return _Svar(200, {
+                "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
+                "repair_operation_id": "r", "owner_claim_id": "o",
+                "owner_generation": 0,
+                "payload": {"mal_url": "https://kunde.example/",
+                            "kravsett": "wcag21_aa", "omfang": "enkeltside"},
+                "opplasting": {"jti": "kap"}})
+        if sti == "/v1/artefakt":
+            return _Svar(200, {"artefakt_id": "a-1",
+                               "klartekst_sha256": "b" * 64})
+        assert sti == "/v1/oppdrag/kvittering", sti
+        return _Svar(self.kvitteringsstatus, {})
+
+
+def test_avvist_kvittering_er_ikke_utfort():
+    """Codex P1: 409 fra kvitteringsendepunktet (fencing, hashavvik,
+    avvist promotering) eller 5xx betyr at oppdraget står IGJEN uferdig hos
+    plattformen. Meldte controlleren `utfort` uansett, ville en planlegger
+    tro at kjøringen var i havn — modulens ord mot plattformens tilstand.
+    Kontroll: fjern _kvittert-sjekken i controlleren, så blir denne rød."""
+    from modules.wcag_audit import controller
+    motor = FakeMotor(resultat=_motorresultat())
+    for status in (409, 500):
+        res = controller.kjor_en(_Stubklient(status), "tk", motor,
+                                 _kontekst(), lambda k: k)
+        assert res["utfall"] == "ukvittert", res
+        assert res["kvittering_status"] == status
+        # Artefaktet ER lastet opp — utfallet skjuler ikke det, det nekter
+        # bare å kalle kjøringen ferdig.
+        assert res["artefakt_id"] == "a-1"
+    ok = controller.kjor_en(_Stubklient(200), "tk", motor, _kontekst(),
+                            lambda k: k)
+    assert ok["utfall"] == "utfort", ok
