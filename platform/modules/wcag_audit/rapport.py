@@ -19,6 +19,28 @@ MAKS_FUNN = 500
 MAKS_EKSEMPLER = 10
 MAKS_SELEKTOR = 200
 MAKS_BEGRENSNINGER = 200
+#: Artefaktets harde grense (014b §7, DB-CHECK + `/v1/artefakt`): 1 MiB
+#: JCS-KANONISERTE byte. Antallsgrensene over holder den IKKE av seg selv —
+#: 500 funn à ti 200-tegns eksempler er alene over en megabyte, og skjemaet
+#: godtar den rapporten. Måles derfor i byte, med SAMME kanonisering som
+#: serveren bruker, før opplasting.
+MAKS_BYTES = 1 << 20
+#: Eksempeltak vi faller ned gjennom når rapporten er for stor. Eksemplene
+#: er ILLUSTRASJON (selektorer); regel_id, alvorlighet og antall er selve
+#: funnet. Derfor ofres eksemplene først, funnlisten sist.
+_NEDTRAPPING = (5, 2, 0)
+
+
+def _kanoniske_bytes(rapport: dict) -> bytes:
+    """Rapporten slik SERVEREN vil måle den.
+
+    `/v1/artefakt` avviser på `len(jcs.kanoniske_bytes(rapport)) > 1 MiB`,
+    så modulen må måle med nøyaktig den funksjonen. En egen tilnærming her
+    ville vært et annet tall enn det som faktisk avgjør — og differansen
+    ville vist seg som en avvist opplasting, ikke som en for stor rapport.
+    """
+    from policy_validator import jcs
+    return jcs.kanoniske_bytes(rapport)
 
 
 def _ren_url(raa: str) -> str:
@@ -151,7 +173,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
         verdi = verdi if verdi is not None else len(begrensninger)
         begrensninger = begrensninger[:MAKS_BEGRENSNINGER]
 
-    return {
+    rapport = {
         "kravsett": payload.get("kravsett"),
         "regelsett_versjon": resultat.regelsett_versjon,
         "kjort_ts": datetime.now(timezone.utc).isoformat(),
@@ -167,3 +189,55 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
                    "timezone")},
         "manuelle_kriterier_vurdert": False,
     }
+    return _under_taket(rapport)
+
+
+def _under_taket(rapport: dict) -> dict:
+    """Rapporten under 1 MiB kanonisk — ærlig kappet, eller Motorfeil.
+
+    Antallsgrensene over er IKKE nok (Codex P1): en støyende kontroll nær
+    skjemamaksima — 500 funn à ti 200-tegns eksempler og 128-tegns
+    regel-id-er, pluss 50 lange URL-er — passerer skjemavalideringen og
+    blir likevel avvist av `/v1/artefakt` på 1 048 576 byte. Da falt
+    `ro.raise_for_status()` i controlleren ut UTEN feil-kvittering, og
+    oppdraget ble stående claimet til fristen.
+
+    Kappingen er ærlig på samme måte som de andre takene: eksemplene
+    ofres først (de illustrerer), funnlisten sist (den ER funnene), og
+    `avkortet.truffet` settes i det vi rører noe. `sammendrag` røres
+    ALDRI — det teller alt motoren fant, og er sannheten om omfanget selv
+    når listene er kortet ned.
+    """
+    n = len(_kanoniske_bytes(rapport))
+    if n <= MAKS_BYTES:
+        return rapport
+
+    # Første kapping vinner tak/verdi, som ellers i `bygg` — men `truffet`
+    # settes uansett, og det er det feltet en leser stoler på.
+    def _si_fra():
+        a = rapport["avkortet"]
+        a["truffet"] = True
+        if a["tak"] is None:
+            a["tak"], a["verdi"] = MAKS_BYTES, n
+
+    for tak in _NEDTRAPPING:
+        for f in rapport["funn"]:
+            del f["eksempler"][tak:]
+        _si_fra()
+        if len(_kanoniske_bytes(rapport)) <= MAKS_BYTES:
+            return rapport
+
+    # Eksemplene er borte og den er fortsatt for stor: kapp funnlisten.
+    # Halvering, ikke ett og ett — kanoniseringen er ikke gratis, og en
+    # rapport skal ikke koste 500 serialiseringer å pakke.
+    while rapport["funn"]:
+        del rapport["funn"][len(rapport["funn"]) // 2:]      # 1 → 0, tømmes
+        if len(_kanoniske_bytes(rapport)) <= MAKS_BYTES:
+            return rapport
+    if len(_kanoniske_bytes(rapport)) <= MAKS_BYTES:
+        return rapport
+    # Uten funn i det hele tatt er resten av rapporten taklagt av skjemaet
+    # (50 sider, 200 begrensninger) og kan ikke nå 1 MiB — kommer vi hit,
+    # er noe annet galt enn støy. Da feiler oppdraget ÆRLIG, med den
+    # dokumenterte feil-kvitteringen, i stedet for på en avvist opplasting.
+    raise Motorfeil("rapporten er over 1 MiB selv uten funn")

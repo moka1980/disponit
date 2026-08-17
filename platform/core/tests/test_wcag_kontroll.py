@@ -958,10 +958,16 @@ class _Svar:
 class _Stubklient:
     """Claim → opplasting → kvittering, med valgbar kvitteringsstatus."""
 
-    def __init__(self, kvitteringsstatus):
+    def __init__(self, kvitteringsstatus, opplastingsstatus=200):
         self.kvitteringsstatus = kvitteringsstatus
+        self.opplastingsstatus = opplastingsstatus
+        self.kvitteringer = []
 
     def post(self, sti, json=None, headers=None):
+        if sti == "/v1/artefakt" and self.opplastingsstatus != 200:
+            return _Svar(self.opplastingsstatus, {})
+        if sti == "/v1/oppdrag/kvittering":
+            self.kvitteringer.append(json)
         if sti == "/v1/oppdrag/claim":
             return _Svar(200, {
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
@@ -996,6 +1002,62 @@ def test_avvist_kvittering_er_ikke_utfort():
     ok = controller.kjor_en(_Stubklient(200), "tk", motor, _kontekst(),
                             lambda k: k)
     assert ok["utfall"] == "utfort", ok
+
+
+def test_avvist_opplasting_gir_feilkvittering():
+    """Codex P1: `ro.raise_for_status()` kastet ut av kjøreløkka når
+    plattformen avviste artefaktet (413/400 på 1 MiB-taket, 409 på
+    fencing, 5xx). Da fikk plattformen ALDRI vite noe, og oppdraget stod
+    claimet til fristen. Kontroll: bytt statussjekken i controlleren
+    tilbake til `raise_for_status()`, så blir denne rød."""
+    from modules.wcag_audit import controller
+    motor = FakeMotor(resultat=_motorresultat())
+    for status in (400, 409, 413, 500):
+        klient = _Stubklient(200, opplastingsstatus=status)
+        res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                 lambda k: k)
+        assert res["utfall"] == "avbrutt", res
+        assert res["opplasting_status"] == status
+        assert res["kvittert"] is True
+        # ... og kvitteringen er FAKTISK sendt, med ærlig feilkode.
+        assert len(klient.kvitteringer) == 1
+        assert klient.kvitteringer[0]["resultat"] == "feilet"
+        assert klient.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+        # Aldri et artefakt-id: det finnes ikke noe artefakt å vise til.
+        assert "artefakt_id" not in res
+
+
+def test_rapporten_holdes_under_1_mib():
+    """Codex P1: antallsgrensene alene holder ikke 1 MiB-taket — 500 funn
+    à ti 200-tegns eksempler passerer skjemaet og blir avvist av
+    `/v1/artefakt`. Rapporten måles nå med SERVERENS kanonisering og
+    kappes ærlig før opplasting. Kontroll: fjern `_under_taket`-kallet i
+    `bygg`, så blir denne rød."""
+    import jsonschema
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import (MAKS_BYTES, _kanoniske_bytes,
+                                            bygg)
+
+    # Verstefallsrapporten: maks funn, maks eksempler, maks selektorlengde.
+    stor = tuple({"regel_id": f"regel-{i:04d}" + "x" * 110,
+                  "alvorlighet": "alvorlig", "antall": 3,
+                  "eksempler": [f"#n{i}-{j}" + "s" * 190 for j in range(10)]}
+                 for i in range(500))
+    r = bygg(_motorresultat(funn=stor), payload={"kravsett": "wcag21_aa"},
+             kontekst=_kontekst())
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r)
+    assert len(_kanoniske_bytes(r)) <= MAKS_BYTES
+    assert r["avkortet"]["truffet"] is True
+    # SAMMENDRAGET er urørt: kappingen gjelder listene, ikke sannheten om
+    # omfanget (500 funn à 3 forekomster).
+    assert r["sammendrag"]["alvorlig"] == 1500
+    # En normal rapport røres ikke.
+    liten = bygg(_motorresultat(funn=(
+        {"regel_id": "r1", "alvorlighet": "lav", "antall": 1,
+         "eksempler": ["#a"]},)),
+        payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert liten["funn"][0]["eksempler"] == ["#a"]
+    assert liten["avkortet"]["truffet"] is False
 
 
 # --------------------------------------------------------------------------

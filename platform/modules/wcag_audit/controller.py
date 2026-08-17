@@ -13,6 +13,10 @@ Feilhåndteringens utfall:
     artefakt: et delvis artefakt finnes ikke (§10 siste rad), men
     plattformen skal få vite at oppdraget er FERDIG mislykket — taushet
     ville latt fristen gjøre jobben og M-37 gjette.
+  * Opplastingen AVVIST (Codex P1) → samme `avbrutt`, med feilkode
+    `opplasting_avvist`. Rapporten ble bygget, men kom ikke frem, og et
+    unntak ut av kjøreløkka her ville etterlatt oppdraget claimet uten et
+    ord til plattformen.
   * Full suksess → artefakt + kvittering `utfort` med den serverberegnede
     hashen fra opplastingssvaret (den, og bare den, signeres).
   * Kvittering AVVIST (Codex P1) → `ukvittert`. Kvitteringsendepunktet er
@@ -93,7 +97,19 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     ro = klient.post("/v1/artefakt",
                      json={"kapabilitet_jti": opplasting["jti"],
                            "rapport": rapport}, headers=hode)
-    ro.raise_for_status()
+    if not 200 <= ro.status_code < 300:
+        # AVVIST OPPLASTING (Codex P1): `ro.raise_for_status()` kastet ut
+        # av kjøreløkka uten kvittering, og oppdraget ble stående claimet
+        # til fristen — akkurat den taushetslinjen §10 forbyr, og det
+        # motsatte av det denne fila selv sier («en avvist opplasting her
+        # er en MOTORFEIL sett fra oppdraget»). Rapporten er bygget, men
+        # den kom ikke frem: da er oppdraget ærlig mislykket.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "opplasting_avvist"})
+        return {"utfall": "avbrutt", "grunn": "opplasting_avvist",
+                "opplasting_status": ro.status_code,
+                "kvittering_status": rk.status_code,
+                "kvittert": _kvittert(rk)}
     artefakt = ro.json()
 
     rk = kvitter({**kvittering_basis, "resultat": "utfort",
