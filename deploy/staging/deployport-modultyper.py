@@ -12,10 +12,18 @@ typeregistreringen (`platform/core/oppdragskontrakt.OPPDRAGSTYPER`):
      (Legacy-unntak: `reinnsending`/`verifikasjon`-radene fra CP5-testene
      bærer UNIKE navn nettopp for å ikke smitte — de fanges også.)
 
-  2. En `ekstern_lesing`-kontrakt hvis registrerte oppdragstype mangler
-     `krever_malautorisasjon: true`: da har aktiveringsporten (§6) intet
-     autorisasjonsbegrep å håndheve, og en handling med observerbar
-     trafikk ut kunne aktiveres uten positivt autorisert mål.
+  2. MISMATCH MELLOM KLASSE OG AUTORISASJONSKRAV, begge veier:
+     * en `ekstern_lesing`-kontrakt hvis registrerte oppdragstype mangler
+       `krever_malautorisasjon: true`: da har aktiveringsporten (§6) intet
+       autorisasjonsbegrep å håndheve, og en handling med observerbar
+       trafikk ut kunne aktiveres uten positivt autorisert mål;
+     * (Codex P1) en type som KREVER målautorisasjon, registrert under en
+       kontrakt som ikke er `ekstern_lesing`. Da leser
+       `_krev_ekstern_lesing_port` typens klasse, ser noe annet enn
+       ekstern_lesing, og hopper over hele porten — både frekvenstaket og
+       målautorisasjonen. Handlingen leser fortsatt ut på nettet; det er
+       bare håndhevingen som er borte. Manglende kontraktrad teller som
+       avvik: den er heller ikke `ekstern_lesing`.
 
   3. (Codex P1) En rad hvis `eiermodul` avviker fra den kodefestede
      `Oppdragstype.eiermodul`. Autoriteten er registerraden — nettopp
@@ -73,6 +81,21 @@ def kontroller(conn) -> list[str]:
                 f"kontrakt ({eiermodul}) men den kodefestede typen mangler"
                 " krever_malautorisasjon — aktiveringsporten har da intet"
                 " autorisasjonsbegrep å håndheve")
+        elif t.krever_malautorisasjon and klasse != "ekstern_lesing":
+            # (Codex P1) DEN ANDRE RETNINGEN, og den farligste av de to:
+            # porten så bare avviket over, så en type som KREVER
+            # målautorisasjon kunne registreres under en sideeffektfri
+            # kontrakt og passere. `_krev_ekstern_lesing_port` leser da
+            # typens klasse, ser at den ikke er ekstern_lesing, og hopper
+            # over HELE porten — både frekvenstaket og målautorisasjonen.
+            # Handlingen leser fortsatt ut på nettet; det er bare
+            # håndhevingen som forsvant.
+            feil.append(
+                f"'{typenavn}' krever målautorisasjon, men er registrert"
+                f" under en {klasse or 'ukjent/manglende'}-kontrakt"
+                f" ({eiermodul}) — aktiveringsporten hopper da over både"
+                " frekvens og målautorisasjon, og handlingen kan aktiveres"
+                " uten noen av dem")
     return feil
 
 

@@ -511,10 +511,12 @@ def test_aktiveringsporten_haandheves_ved_rundeaapning(migrator):
 
 @pg
 def test_deployportene_register_mot_kodefestet_type(migrator, monkeypatch):
-    """Port 6: registerrad uten kodefestet type → rød. Port 32:
-    ekstern_lesing-kontrakt med type uten krever_malautorisasjon → rød.
-    Grønn tilstand er den positive motsatsen. Kontroll: fjern LEFT JOIN-en
-    (port 32-grenen) i `kontroller()`, så blir andre halvdel grønn på
+    """Port 6: registerrad uten kodefestet type → rød. Port 32: klasse og
+    autorisasjonskrav må stemme BEGGE veier — ekstern_lesing-kontrakt med
+    type uten krever_malautorisasjon, OG type med krever_malautorisasjon
+    under en kontrakt som ikke er ekstern_lesing. Grønn tilstand er den
+    positive motsatsen i hvert tilfelle. Kontroll: fjern LEFT JOIN-en
+    (port 32-grenene) i `kontroller()`, så blir andre halvdel grønn på
     feil grunnlag."""
     import importlib.util
     from pathlib import Path
@@ -590,6 +592,43 @@ def test_deployportene_register_mot_kodefestet_type(migrator, monkeypatch):
     feil = mod.kontroller(migrator)
     migrator.rollback()
     assert not any(ukjent in f for f in feil), feil
+
+    # Codex P1, DEN ANDRE RETNINGEN: en type som KREVER målautorisasjon,
+    # registrert under en sideeffektfri kontrakt. Porten så bare det
+    # motsatte avviket, mens `_krev_ekstern_lesing_port` leser typens
+    # klasse, ser noe annet enn ekstern_lesing og hopper over HELE porten
+    # — både frekvens og målautorisasjon. Rød.
+    # Kontroll: fjern elif-grenen i `kontroller()`, så blir denne rød.
+    kh2 = "k-" + secrets.token_hex(8)
+    fri = f"deployport{secrets.token_hex(3)}"
+    migrator.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
+        "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
+        "reversibilitet) VALUES (%s,2,%s,'p','k','sideeffektfri','direkte')",
+        (modul, kh2))
+    migrator.execute(
+        "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
+        "kontraktversjon,kontrakt_hash) VALUES (%s,%s,2,%s)",
+        (fri, modul, kh2))
+    migrator.commit()
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, fri, ok.Oppdragstype(
+        navn=fri, handlingsprefikser=(f"{fri}.",),
+        felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+        eiermodul=modul, krever_malautorisasjon=True,
+        malautorisasjonsdomene="web_hostname"))
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert any("målautorisasjon" in f and fri in f for f in feil), feil
+
+    # Grønn motsats for samme rad: uten autorisasjonskravet er en
+    # sideeffektfri registrering helt i orden.
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, fri, ok.Oppdragstype(
+        navn=fri, handlingsprefikser=(f"{fri}.",),
+        felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+        eiermodul=modul))
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert not any(fri in f for f in feil), feil
 
 
 # --------------------------------------------------------------------------
