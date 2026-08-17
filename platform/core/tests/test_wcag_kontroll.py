@@ -292,3 +292,176 @@ def test_malautorisasjonsvilkar_er_lukket_og_immutabelt(migrator):
         c.rollback()
     finally:
         c.close()
+
+
+# --------------------------------------------------------------------------
+# Aktiveringsporten (§6, portene 31, 34–37)
+# --------------------------------------------------------------------------
+
+def _ekstern_lesing_modul(migrator_):
+    modul = "m-" + secrets.token_hex(4)
+    migrator_.execute("INSERT INTO modulhode (modul_id) VALUES (%s)", (modul,))
+    migrator_.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
+        "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
+        "reversibilitet) VALUES (%s,1,%s,'p','k','ekstern_lesing','direkte')",
+        (modul, "k-" + secrets.token_hex(8)))
+    migrator_.commit()
+    return modul
+
+
+def _handling(modul, *, frekvens=True, vilkaar=("domenekontroll_verifisert",),
+              hid="kontroll.wcag.nettsted"):
+    h = {"id": hid, "modul": modul, "modus": "auto",
+         "ved_brudd": "unntakskø",
+         "vilkaar": [{"navn": v, "verifikator": "v1"} for v in vilkaar],
+         "reversering": {"type": "direkte"}}
+    if frekvens:
+        h["grenser"] = {"frekvens": {"maks": 4, "periode_antall": 1,
+                                     "periode_enhet": "dager"}}
+    return h
+
+
+@pg
+def test_aktiveringsporten_for_ekstern_lesing(migrator):
+    """Portene 31, 34–37 på funksjonsnivå (kallstedene prøves i
+    integrasjonstesten under). Kontroll: fjern frekvens- eller
+    vilkårsgrenen i `_krev_ekstern_lesing_port`, så blir hver sin gren rød."""
+    from api import policyadmin
+    from db.pg import koble
+    modul = _ekstern_lesing_modul(migrator)
+    c = _mk_admin("disponit_modules_admin")
+    try:
+        c.execute("SELECT registrer_malautorisasjonsvilkar("
+                  "'gyldig_men_ikke_mal','web_hostname','test')")
+        c.commit()
+    finally:
+        c.close()
+    rt = koble(DSN)
+    try:
+        def port(h):
+            policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [h]})
+
+        # 31: uten frekvensgrense → avvist under låsen.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            port(_handling(modul, frekvens=False))
+        assert e.value.kode == "ekstern_lesing_uten_frekvens"
+        # 34: gyldig, men IKKE målautoriserende vilkår → avvist. Vilkåret
+        # `forfall_passert_dager` finnes i policyer — det har bare ingen rad.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            port(_handling(modul, vilkaar=("forfall_passert_dager",)))
+        assert e.value.kode == "malautorisasjon_mangler"
+        # 36: navnelikhet teller aldri — bare rader.
+        with pytest.raises(policyadmin.Aktiveringsfeil):
+            port(_handling(modul, vilkaar=("domenekontroll_verifisert2",)))
+        # 37: rad finnes, men for FEIL måldomene? (Alle rader er
+        # web_hostname i v1 — probes med et vilkår registrert riktig, mot en
+        # handling hvis TYPE mangler målautorisasjonsbegrep.)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            port(_handling(modul, hid="kontroll.wcag_ukjent.ting"))
+        assert "oppdragstype" in (e.value.detalj or "")
+        # 35: positiv motsats — domenekontroll_verifisert + frekvens godtas.
+        port(_handling(modul))
+        # ... og en handling mot en modul UTEN ekstern_lesing er urørt.
+        policyadmin._krev_ekstern_lesing_port(
+            rt, {"handlinger": [_handling("m-finnes-ikke", frekvens=False,
+                                          vilkaar=())]})
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_aktiveringsporten_haandheves_ved_rundeaapning(migrator):
+    """Integrasjonen: kallstedet i `opprett_aktiveringsrunde` (samme mønster
+    som `_krev_innforingskrav`). Kontroll: fjern
+    `_krev_ekstern_lesing_port`-kallet der, så blir denne rød."""
+    from .test_pr013_policyadmin_flyt import TEN, _apne, _medlem, _utkast
+    from api import policyadmin
+    modul = _ekstern_lesing_modul(migrator)
+    forf = _medlem("wcagforf-" + secrets.token_hex(2), ["policyforvalter"])
+    pid = "pol-" + secrets.token_hex(3)
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, forf, {"roller": [{"id": "r1"}],
+                             "handlinger": [_handling(modul, vilkaar=())]})
+    from db.pg import koble
+    rt = koble(DSN)
+    try:
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _apne(rt, uid, forf)
+        assert e.value.kode == "malautorisasjon_mangler", e.value.kode
+        rt.rollback()
+    finally:
+        rt.close()
+    # ... og med vilkåret på plass åpner runden.
+    uid2 = "utk-" + secrets.token_hex(3)
+    _utkast(uid2, pid, forf, {"roller": [{"id": "r1"}],
+                              "handlinger": [_handling(modul)]})
+    rt = koble(DSN)
+    try:
+        r = _apne(rt, uid2, forf)
+        assert r["diff_hash"]
+    finally:
+        rt.close()
+
+
+# --------------------------------------------------------------------------
+# Deploy-portene (§5, portene 6 og 32)
+# --------------------------------------------------------------------------
+
+@pg
+def test_deployportene_register_mot_kodefestet_type(migrator, monkeypatch):
+    """Port 6: registerrad uten kodefestet type → rød. Port 32:
+    ekstern_lesing-kontrakt med type uten krever_malautorisasjon → rød.
+    Grønn tilstand er den positive motsatsen. Kontroll: fjern LEFT JOIN-en
+    (port 32-grenen) i `kontroller()`, så blir andre halvdel grønn på
+    feil grunnlag."""
+    import importlib.util
+    from pathlib import Path
+    sti = (Path(__file__).resolve().parents[3]
+           / "deploy/staging/deployport-modultyper.py")
+    spec = importlib.util.spec_from_file_location("deployport_test", sti)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    import oppdragskontrakt as ok
+
+    modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    migrator.execute("INSERT INTO modulhode (modul_id) VALUES (%s)", (modul,))
+    migrator.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
+        "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
+        "reversibilitet) VALUES (%s,1,%s,'p','k','ekstern_lesing','direkte')",
+        (modul, kh))
+    ukjent = f"deployport{secrets.token_hex(3)}"
+    migrator.execute(
+        "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
+        "kontraktversjon,kontrakt_hash) VALUES (%s,%s,1,%s)",
+        (ukjent, modul, kh))
+    migrator.commit()
+
+    # Port 6: raden er ukjent for koden → rød med typenavnet i meldingen.
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert any(ukjent in f for f in feil), feil
+
+    # Port 32: kodefest typen, men UTEN målautorisasjonsflagget → fortsatt
+    # rød, nå på autorisasjonsbegrepet.
+    t = ok.Oppdragstype(navn=ukjent, handlingsprefikser=(f"{ukjent}.",),
+                        felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+                        eiermodul=modul)
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, ukjent, t)
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert any("krever_malautorisasjon" in f and ukjent in f for f in feil), \
+        feil
+
+    # Grønn motsats: flagg + domene på plass → ingen feil for VÅR rad.
+    t2 = ok.Oppdragstype(navn=ukjent, handlingsprefikser=(f"{ukjent}.",),
+                         felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+                         eiermodul=modul, krever_malautorisasjon=True,
+                         malautorisasjonsdomene="web_hostname")
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, ukjent, t2)
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert not any(ukjent in f for f in feil), feil

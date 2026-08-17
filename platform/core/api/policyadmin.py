@@ -1488,6 +1488,63 @@ def _versjonsavvik(conn, tenant: str, policy_id: str, innhold) -> list[str]:
                 " så den må være ny og høyere enn den aktive"]
 
 
+def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
+    """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
+    aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
+    `_krev_innforingskrav`): en handling som refererer en modul med en
+    `ekstern_lesing`-kontrakt kan bare aktiveres når
+
+      1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
+         et tak policyen selv bærer), og
+      2. handlingens vilkår inneholder minst ETT som har rad i
+         `malautorisasjonsvilkar` med `maldomene` lik oppdragstypens
+         `malautorisasjonsdomene`.
+
+    Begge er POSITIVE krav. `krever_malautorisasjon: true` i den kodefestede
+    typen uttrykker et behov, ikke et bevis — ukjent vilkårstype, manglende
+    rad eller feil måldomene avviser aktiveringen. Fail-closed også når
+    handlingen ikke matcher noen målautorisasjonsbærende type: da finnes
+    det ikke noe vilkår som KAN telle, og en ekstern_lesing-handling uten
+    autorisasjonsbegrep skal ikke gjennom fire øyne på flaks.
+
+    Vilkåret står i policyen fordi det gjør kravet synlig og reviewbart —
+    men plattformregelen her gjelder uansett og kan ikke fjernes med fire
+    øyne (014b §4-mønsteret: håndhevingen bor hos plattformen).
+    """
+    import oppdragskontrakt
+    for h in (ny_innhold.get("handlinger") or []):
+        if not isinstance(h, dict):
+            continue
+        modul = h.get("modul")
+        if not isinstance(modul, str) or not conn.execute(
+                "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
+                " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
+                (modul,)).fetchone():
+            continue
+        hid = h.get("id") if isinstance(h.get("id"), str) else ""
+        grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
+            else {}
+        if not isinstance(grenser.get("frekvens"), dict):
+            raise Aktiveringsfeil("ekstern_lesing_uten_frekvens",
+                                  f"handling={hid or '?'}")
+        t = oppdragskontrakt.type_for_handling(hid)
+        if t is None or not t.krever_malautorisasjon \
+                or t.malautorisasjonsdomene is None:
+            raise Aktiveringsfeil(
+                "malautorisasjon_mangler",
+                f"handling={hid or '?'}: ingen målautorisasjonsbærende"
+                " oppdragstype")
+        navn = [v.get("navn") for v in (h.get("vilkaar") or [])
+                if isinstance(v, dict) and isinstance(v.get("navn"), str)]
+        navn += [v for v in (h.get("vilkaar") or []) if isinstance(v, str)]
+        if not navn or conn.execute(
+                "SELECT 1 FROM malautorisasjonsvilkar WHERE"
+                " vilkar_type = ANY(%s) AND maldomene = %s LIMIT 1",
+                (navn, t.malautorisasjonsdomene)).fetchone() is None:
+            raise Aktiveringsfeil("malautorisasjon_mangler",
+                                  f"handling={hid or '?'}")
+
+
 def _krev_innforingskrav(ny_innhold) -> None:
     """Utkastet må oppfylle de FRAMOVERRETTEDE kravene for å kunne aktiveres —
     ikke bare ha oppfylt dem den gangen det ble validert.
@@ -1620,6 +1677,7 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ... eller som ikke oppfyller de framoverrettede kravene: `validert` kan
     # stamme fra før kravet fantes, og status alene er ingen kvittering.
     _krev_innforingskrav(ny_innhold)
+    _krev_ekstern_lesing_port(conn, ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -1814,6 +1872,7 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # Og for de framoverrettede kravene: runden kan ha vært åpen da
         # utrullingen som innførte dem landet.
         _krev_innforingskrav(ny_innhold)
+        _krev_ekstern_lesing_port(conn, ny_innhold)
     except Aktiveringsfeil as e:
         # RUNDEN KANSELLERES, den kastes ikke bare ut av (Codex P2). Alle fire
         # kravene her måler det FROSNE innholdet, så et avslag er permanent:
