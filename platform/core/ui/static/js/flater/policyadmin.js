@@ -1440,7 +1440,7 @@ export function visPolicyadmin(hoved, ctx, mal) {
       // ikke på den lesende policy-flaten. Seksjonen eier sitt eget
       // liv (henter /v1/policy/aktive selv); `last` frisker opp utkastlista
       // etter en sletting, siden aktiverte utkast peker på policyen.
-      aktivePolicyerSeksjon(ctx, () => last()),
+      aktivePolicyerSeksjon(ctx, () => last({ fokus: true })),
       verktoylinje(),
       innhold);
     if (flyttFokus) fokuserOverskrift(hoved);

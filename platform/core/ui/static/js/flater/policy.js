@@ -184,9 +184,8 @@ export function visPolicy(hoved, ctx) {
 // Lesingen står som før; det er bare mutasjonen som forsvinner.
 //
 // `flere` sier at DENNE policyen er én av flere som står aktive. Det styrer
-// to ting som begge følger av nettopp det: seksjonen navngir sin policy (to
-// like «Slett policy»-knapper er ikke et valg), og bekreftelsen beskriver den
-// tilstanden slettingen faktisk etterlater.
+// bekreftelsesteksten, som må beskrive tilstanden slettingen faktisk
+// etterlater; policyens identitet vises alltid, uavhengig av flagget.
 // GJENBRUKES av policyadmin: eier lette etter slettingen DER utkastlista og
 // «Nytt utkast» bor — ikke på den lesende policy-flaten. Seksjonen henter
 // selv de aktive policyene og rendrer én angre-blokk per policy; `paaEndret`
@@ -288,15 +287,18 @@ function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
         }),
     });
   });
-  // Står det FLERE slett-seksjoner på flaten, må hver av dem si hvilken policy
-  // den gjelder — både synlig og for skjermleseren. En knapp som bare heter
-  // «Slett policy», gjentatt, er ikke et valg man kan ta.
+  // Seksjonen navngir ALLTID policyen sin — synlig og i aria-label. Det
+  // startet som et flertallsbehov (to like «Slett policy»-knapper er ikke et
+  // valg), men identiteten var bundet til `flere`-flagget: i normaltilfellet
+  // med ÉN aktiv policy viste seksjonen bare generisk tekst og en
+  // slett-knapp, og operatøren så først HVA hun slettet inne i den
+  // irreversible bekreftelsen (Codex P2). Identiteten står nå uavhengig av
+  // flagget; `flere` styrer kun bekreftelsesteksten over.
   const navn = merke(d);
   return el("section", { class: "policy-angre",
-    "aria-label": flere
-      ? `${t("ui.policy.slett_tittel")}: ${navn}` : t("ui.policy.slett_tittel") },
+    "aria-label": `${t("ui.policy.slett_tittel")}: ${navn}` },
     el("h3", { text: t("ui.policy.slett_tittel") }),
-    flere ? el("p", {}, el("strong", { text: navn })) : null,
+    el("p", {}, el("strong", { text: navn })),
     el("p", { class: "muted", text: t("ui.policy.slett_forklaring") }),
     b, status);
 }

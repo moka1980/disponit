@@ -2943,6 +2943,49 @@ test("Policyadmin: aktive policyer vises øverst, med sletting", async () => {
   assert.ok([...h.querySelectorAll(".aktive-policyer button")]
     .some((b) => b.textContent.trim() === t("ui.policy.slett")),
   "slett-knappen mangler der eier leter");
+  // Identiteten vises OGSÅ når policyen er alene (Codex P2): operatøren skal
+  // se hva hun sletter FØR den irreversible bekreftelsen, ikke først inne i
+  // den. Kontroll: bind `merke(d)`-linja til `flere`-flagget igjen, så blir
+  // denne rød — mocken over har nøyaktig én aktiv policy.
+  const angre = h.querySelector(".policy-angre");
+  assert.ok(angre.textContent.includes(
+    `tjenestebedrift2 · ${t("ui.policy.versjon")} 1.0.0`),
+  "policyens identitet er usynlig i normaltilfellet med én aktiv");
+  assert.ok(angre.getAttribute("aria-label").includes("tjenestebedrift2"),
+    "skjermleseren får ikke vite hvilken policy seksjonen gjelder");
+});
+
+test("Policyadmin: fokus lander på overskriften etter sletting", async () => {
+  // Codex P2: bekreftelsesdialogen gir fokus tilbake til slett-knappen, men
+  // en vellykket sletting fjerner den knappen og tegner lista på nytt —
+  // uten `{ fokus: true }` sto tastaturbrukeren igjen på <body>. Speiler
+  // de andre brukerutløste liste-returene: fokus skal til flatens h1.
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+        innholds_hash: "h2" }] },
+    __post: async () => ({ ok: true, status: 200,
+      json: async () => ({ slettet: 1 }) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector(".policy-angre"));
+  // Etter slettingen finnes policyen ikke lenger blant de aktive.
+  SVAR["/v1/policy/aktive"] = { policyer: [] };
+  [...h.querySelectorAll(".policy-angre button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => !h.querySelector(".policy-angre")
+    && h.textContent.includes(t("ui.policy.aktive_ingen")));
+  await vent(() => document.activeElement
+    && document.activeElement.tagName === "H1");
+  assert.equal(document.activeElement.textContent,
+    t("ui.policyadmin.tittel"),
+    "fokus ble ikke flyttet til flatens overskrift etter slettingen");
 });
 
 test("Policyadmin: uten policy:write vises ingen slette-seksjon", async () => {
