@@ -132,6 +132,15 @@ def _attester(rt, uid, aktor, diff_hash, idem=None):
         naa=_naa())
 
 
+def _gjenapne(rt, uid, aktor, idem=None, ver=1):
+    idem = idem or secrets.token_hex(8)
+    return policyadmin.gjenapne_utkast(
+        rt, tenant=TEN, aktor=aktor, request_id="r", utkast_id=uid,
+        forventet_utkastversjon=ver, idempotency_key=idem,
+        input_hash=f"{TEN}\x1f{uid}\x1fgjenapne\x1f{ver}\x1f{idem}",
+        naa=_naa())
+
+
 def _aktiv_versjon(pid):
     m = _mig()
     rad = m.execute("SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s AND"
@@ -1922,6 +1931,77 @@ def test_replay_pensjonerer_ikke_en_runde_som_fortsatt_venter(monkeypatch):
         "forsoningen pensjonerte et varsel om en runde som fortsatt venter"
         " på nettopp den godkjenneren")
     assert etter[b][1] == "koet", "e-posten til den som venter ble avlyst"
+
+
+@pg
+def test_gjenapning_replay_forsoner_en_pensjonering_som_feilet(monkeypatch):
+    """Codex P2 på #76: gjenåpningens replay svarte uten å rydde.
+
+    #76 ga `_kanseller_levende_runde` to nye kallsteder — gjenåpning og
+    forkasting — men bare attesteringen hadde forsoningen. Mekanikken er den
+    samme som over: pensjoneringen er skjermet med vilje, så en forbigående
+    databasefeil der lot runden bli committet `kansellert` mens godkjennernes
+    uleste, e-postkøede varsler ble stående og be dem attestere en runde som
+    ikke lenger tar imot attestasjoner. Og her var feilen ENDELIG: replay-grenen
+    svarte med det lagrede utfallet uten å forsøke opprydding, så retryen eier
+    faktisk gjør, kunne ikke reparere det.
+
+    Kontroll: fjern `_forson_rundepensjonering`-kallet i gjenåpningens
+    replay-gren, så blir denne rød — varslene står igjen uleste og køet.
+    """
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("gjenapnep-forf", ["policyforvalter"])
+    b = _medlem("gjenapnep-uavh", ["policyforvalter"])
+    uid = "utk-" + secrets.token_hex(3)
+    _utkast(uid, pid, a, _UTVIDER_INNHOLD)
+
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        _apne(rt, uid, a)          # åpen runde + varsler til godkjennerne
+        # Pensjoneringen gjør ingenting, som om hvert kall hadde feilet og
+        # blitt rullet tilbake til savepointet sitt.
+        monkeypatch.setattr(policyadmin.varsel, "pensjoner_runde",
+                            lambda *a, **k: 0)
+        g = _gjenapne(rt, uid, a, idem=idem)
+        assert g["status"] == "utkast", g
+    finally:
+        rt.close()
+
+    assert _rundestatus(uid) == "kansellert", \
+        "forutsetningen holder ikke: runden ble ikke trukket tilbake"
+    assert all(lest is None for lest, _ in _varsler(uid).values()), \
+        "forutsetningen holder ikke: noe ble pensjonert likevel"
+
+    # Retry med samme nøkkel og input. Svaret er det lagrede — men køen ryddes.
+    monkeypatch.undo()
+    rt = _rt()
+    try:
+        g2 = _gjenapne(rt, uid, a, idem=idem)
+    finally:
+        rt.close()
+    assert g2.get("replay") is True, "retryen gjorde noe annet enn å replaye"
+    assert g2["status"] == "utkast", g2
+
+    etter = _varsler(uid)
+    assert {a, b} <= set(etter), f"varsler forsvant: {set(etter)}"
+    for bid in (a, b):
+        assert etter[bid][0] is not None, (
+            f"{bid} har fortsatt et ulest varsel om en runde som er trukket"
+            " tilbake")
+        assert etter[bid][1] == "ikke_aktuelt", (
+            f"e-posten til {bid} står fortsatt i kø etter replayen")
+
+
+def _rundestatus(uid, runde=1):
+    m = _mig()
+    try:
+        rad = m.execute("SELECT status FROM aktiveringsrunde WHERE tenant=%s"
+                        " AND utkast_id=%s AND runde=%s",
+                        (TEN, uid, runde)).fetchone()
+        return rad[0] if rad else None
+    finally:
+        m.rollback(); m.close()
 
 
 @pg

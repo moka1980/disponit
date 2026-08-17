@@ -548,6 +548,15 @@ def _forson_rundepensjonering(conn: psycopg.Connection, tenant: str,
 
     Skjermet, som alt annet varslingsarbeid: en forsoning som velter replayen
     ville vært verre enn hullet den lukker.
+
+    KALLES FRA HVER REPLAY-GREN SOM KAN HA KANSELLERT EN RUNDE, ikke bare
+    attesteringens (Codex P2 på #76). #76 ga `_kanseller_levende_runde` tre nye
+    veier — gjenåpning, forkasting og sletting av policyen — og hver av dem
+    committer runden som `kansellert` selv om pensjoneringen feiler. Er den
+    skjermede oppryddingen den ENESTE oppryddingen, er replayen den eneste
+    anledningen til å ta den igjen; en gren som svarer uten å forsøke, gjør
+    feilen endelig. Slettingen forsoner policy-bredt (alle utkastene under
+    policyen), de andre for sitt ene utkast.
     """
     def _kandidater():
         return conn.execute(
@@ -688,7 +697,18 @@ def gjenapne_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Gjenåpningen gjentas ikke — utkastet er tint og svaret er det
+        # lagrede. Men PENSJONERINGEN forsones, som i attesteringens replay
+        # (Codex P2 på #76): `_kanseller_levende_runde` retirerer varslene med
+        # `varsel.pensjoner_runde`, som er skjermet med vilje, så en forbigående
+        # databasefeil der lot runden bli committet `kansellert` mens
+        # godkjennernes uleste, e-postkøede varsler ble stående og be dem
+        # attestere en runde som ikke lenger tar imot attestasjoner. Fram til nå
+        # var feilen ENDELIG: retryen eier faktisk gjør, svarte her uten å
+        # forsøke opprydding, og senderen kan ikke fange det opp — den er
+        # kryss-tenant og vet med vilje ingenting om aktiveringsrunder.
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -769,7 +789,13 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Samme forsoning som i gjenåpningens replay (Codex P2 på #76):
+        # forkastingen trakk også en levende runde tilbake, og pensjoneringen
+        # av rundens varsler er skjermet. Feilet den, sto varslene igjen og ba
+        # om attestering av et forslag som ikke finnes lenger — og replayen var
+        # den eneste anledningen til å rette det.
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -880,7 +906,19 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Tredje veien til det samme hullet (Codex P2 på #76, samme funn):
+        # `_lukk_forfalte_runder` går gjennom `_kanseller_levende_runde` for
+        # HVERT utkast under policyen, og pensjoneringen der er skjermet. Feilet
+        # den mens slettingen ble committet, sto varslene igjen og ba om
+        # attestering av en policy som ikke finnes lenger — det mest
+        # forvirrende av tilfellene, siden verken runden eller policyen er der.
+        # Slettingen er engangs, så replayen er den ENESTE anledningen: her er
+        # forsoningen policy-bred, ikke bundet til ett utkast.
+        for (uid,) in conn.execute(
+                "SELECT utkast_id FROM policyutkast WHERE tenant=%s"
+                " AND policy_id=%s ORDER BY 1", (tenant, policy_id)).fetchall():
+            _forson_rundepensjonering(conn, tenant, aktor, uid, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
