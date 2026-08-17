@@ -39,7 +39,15 @@ def _kropp(request: Request, *, tillatt: frozenset[str]) -> dict | None:
     raa = request.scope.get("state", {}).get("kropp", b"")
     try:
         data = json.loads(raa.decode("utf-8")) if raa else {}
-    except ValueError:
+    except (ValueError, RecursionError):
+        # Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig, dypt
+        # nøstet dokument på noen få kilobyte (≈2 000 nivåer) ligger godt
+        # under kroppsgrensen på 256 KiB og treffer likevel
+        # rekursjonsgrensen — RecursionError er en RuntimeError, ikke en
+        # ValueError. Uten den her slapp dybden ut som generisk 500 på alle
+        # onboarding-rutene, og på den UAUTENTISERTE `/innlos` var det en
+        # gratis feil-/tilgjengelighetsflate. Dybde er klientinput; svaret
+        # er det dokumenterte `request_feilformet`, som i artefaktparseren.
         return None
     if not isinstance(data, dict) or set(data) - tillatt:
         return None
