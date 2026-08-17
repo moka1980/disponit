@@ -736,9 +736,24 @@ def _eiermodul_for(handling: str) -> str:
     på `eiermodul = modul_id`, så et ubundet oppdrag ville vært synlig for
     alle moduler. Kolonnen er NOT NULL nettopp for at «ubundet» ikke skal
     finnes som tilstand.
+
+    ER EIEREN DEKLARERT, ER DET DEN SOM GJELDER (Codex P1). PR-014c ga
+    `Oppdragstype` et `eiermodul`-felt med en EKTE modul-id
+    (`m_wcag_audit`), og det er den id-en kontrakten, deploymenten og
+    tokenet er registrert på. `eiermodul:<typenavn>` ville skrevet
+    `eiermodul:kontroll.wcag.nettsted` i raden, og siden claim krever
+    `oppdrag.eiermodul = auth.modul_id`, kunne controlleren aldri claimet
+    sitt eget oppdrag — det ville ligget til fristen uten at noen så det.
+
+    De eierløse legacy-typene beholder det SYNTETISKE navnet: for dem
+    finnes det ingen modulrad å peke på, og eksisterende rader
+    (`eiermodul:reinnsending`, `eiermodul:verifikasjon`) skal fortsatt
+    kunne claimes av de samme tokenene.
     """
     t = oppdragsskjema.type_for_handling(handling)
-    return f"eiermodul:{t.navn}" if t is not None else "eiermodul:ukjent"
+    if t is None:
+        return "eiermodul:ukjent"
+    return t.eiermodul or f"eiermodul:{t.navn}"
 
 
 # ---------------------------------------------------------------------------

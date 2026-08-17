@@ -38,9 +38,14 @@ class Oppdragstype:
     felter: frozenset[str]
     paakrevde: frozenset[str]
     beskrivelse: str = ""
-    #: PR-014c: eiermodulen typen hører til — informativt her (autoriteten
-    #: er registerraden + releasens kontrakt), men deploy-porten krysser
-    #: de to kildene, og da må begge kunne leses.
+    #: PR-014c: eiermodulen typen hører til, som EKTE modul-id
+    #: (`m_wcag_audit`) — aldri det syntetiske `eiermodul:<navn>`.
+    #: Autoriteten for HVA modulen får claime er fortsatt registerraden +
+    #: releasens kontrakt, og deploy-porten krysser de to kildene. Men
+    #: feltet er ikke bare informativt (Codex P1): `_eiermodul_for` binder
+    #: nye oppdrag til nettopp denne id-en, fordi claim krever
+    #: `oppdrag.eiermodul = auth.modul_id`. Er den None, er typen eierløs
+    #: (legacy) og oppdraget bindes til det syntetiske navnet som før.
     eiermodul: str | None = None
     #: PR-014c §5–6: `krever_malautorisasjon` uttrykker et BEHOV, ikke et
     #: bevis — handlingen trenger et positivt autorisert mål. De to feltene

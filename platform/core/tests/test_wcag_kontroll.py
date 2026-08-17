@@ -631,6 +631,29 @@ def test_deployportene_register_mot_kodefestet_type(migrator, monkeypatch):
     assert not any(fri in f for f in feil), feil
 
 
+def test_oppdraget_bindes_til_den_deklarerte_eiermodulen():
+    """Codex P1: `_eiermodul_for` skrev `eiermodul:<typenavn>` for ALLE
+    typer, også den nye. Oppdraget fikk da
+    `eiermodul:kontroll.wcag.nettsted`, mens kontrakt, deployment og token
+    står på `m_wcag_audit` — og claim krever `oppdrag.eiermodul =
+    auth.modul_id`. Controlleren kunne aldri claimet sitt eget oppdrag; det
+    ville ligget til fristen uten at noen så det.
+    Kontroll: bytt tilbake til `f"eiermodul:{t.navn}"`, så blir denne
+    rød."""
+    import oppdragskontrakt as ok
+    from m37.arbeider import _eiermodul_for
+
+    assert _eiermodul_for("kontroll.wcag.nettsted.kjor") == "m_wcag_audit"
+    assert (_eiermodul_for("kontroll.wcag.nettsted.kjor")
+            == ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"].eiermodul)
+    # De eierløse legacy-typene beholder det SYNTETISKE navnet — for dem
+    # finnes ingen modulrad, og eksisterende rader og tokener peker hit.
+    assert _eiermodul_for("purring.send") == "eiermodul:reinnsending"
+    assert _eiermodul_for("verifiser.belop") == "eiermodul:verifikasjon"
+    # Ukjent handling er fortsatt fail-closed: en modul-id ingen har.
+    assert _eiermodul_for("noe.helt.annet") == "eiermodul:ukjent"
+
+
 # --------------------------------------------------------------------------
 # Rapportbygging og sanitering (portene 8–12) — modulen selv.
 # --------------------------------------------------------------------------
