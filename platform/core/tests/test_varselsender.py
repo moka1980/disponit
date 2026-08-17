@@ -1446,6 +1446,10 @@ def _uten_kommentarer(sql):
     * En `E'…'` slutter ikke på en `\\'`. Leses bakstreken som et vanlig tegn,
       slutter konstanten for tidlig, og halen — som godt kan inneholde en
       `--` — leses som kode.
+    * EN `"…"` ER ET NAVN, og der er apostrofen bare et tegn (Codex P2 på
+      #74). `"customer's"` er en fullt lovlig identifikator, og leses
+      apostrofen i den som starten på en konstant, slutter den falske
+      konstanten først på neste apostrof i filen — med alt som lå imellom.
 
     Blokken erstattes av ett mellomrom, ikke ingenting: `revoke/**/all` er to
     ord for basen, og skal være to ord her også.
@@ -1482,6 +1486,22 @@ def _uten_kommentarer(sql):
                     break
             ut.append(sql[i:j])
             i = j
+        elif sql[i] == '"':
+            # En sitert IDENTIFIKATOR. Den beholdes ordrett som konstantene,
+            # men av motsatt grunn: her er det ikke teksten som skal skånes,
+            # det er apostrofen inni den som ikke skal få åpne noe.
+            # `""` er en apostrof-doblingens tvilling — ETT tegn, ikke slutt.
+            j = i + 1
+            while j < n:
+                if sql.startswith('""', j):
+                    j += 2
+                elif sql[j] != '"':
+                    j += 1
+                else:
+                    j += 1
+                    break
+            ut.append(sql[i:j])
+            i = j
         else:
             ut.append(sql[i])
             i += 1
@@ -1505,8 +1525,22 @@ def _uten_kommentarer(sql):
 #: dobler apostrofen som den bare formen — derfor to grener og ikke én.
 #: Bokstaven må stå fritt: `verdie` fulgt av `'x'` er et navn og en vanlig
 #: konstant, ikke en escape-konstant.
+#:
+#: EN SITERT IDENTIFIKATOR ER IKKE EN KONSTANT (Codex P2 på #74), og den
+#: står FØRST i uttrykket nettopp derfor. `"customer's"` er et lovlig navn,
+#: og apostrofen i det er et tegn i navnet — ikke starten på noe. Uten den
+#: grenen leste modellen apostrofen som en åpning, og den falske konstanten
+#: sluttet først på neste apostrof i filen: alt imellom — semikolonene, og
+#: en `GRANT EXECUTE … TO PUBLIC` — forsvant inn i én markør, og gjerdet ble
+#: stående True mens PUBLIC var åpnet igjen.
+#:
+#: Grenen treffer først fordi den regexmotoren skanner venstre mot høyre:
+#: står identifikatoren foran, er apostrofene i den spist før en konstant
+#: kan begynne på dem. `bytt` gir den tilbake urørt — den skal hverken
+#: maskeres eller spilles av, bare passere.
 _STRENG = re.compile(
-    r"(?<![0-9a-z_$])e'(?:''|\\.|[^'\\])*'"
+    r'"(?:""|[^"])*"'
+    r"|(?<![0-9a-z_$])e'(?:''|\\.|[^'\\])*'"
     r"|(?<![0-9a-z_$])u&'(?:''|[^'])*'"
     r"|'(?:''|[^'])*'",
     re.IGNORECASE | re.DOTALL)
@@ -1580,11 +1614,17 @@ def _uten_strenger(tekst):
     i markøren med den, slik at `EXECUTE E'…'` er den samme formen som
     `EXECUTE '…'` for `_DYNAMISK`. Det er bare `_klartekst` som trenger å
     vite hvilken skrivemåte som sto der.
+
+    En SITERT IDENTIFIKATOR passerer urørt: den er med i uttrykket bare for
+    å spise sine egne apostrofer, slik at `"customer's"` ikke åpner en
+    konstant som sluker resten av setningen — se `_STRENG`.
     """
     innhold = []
 
     def bytt(m):
         rå = m.group(0)
+        if rå.startswith('"'):
+            return rå
         # Den FØRSTE apostrofen åpner konstanten; alt foran den er prefiks.
         q = rå.index("'")
         prefiks, tekst = rå[:q].lower(), rå[q + 1:-1]
@@ -2876,6 +2916,65 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
             == r"select kolonne'a\'b "), (
         "`kolonne` fulgt av `'…'` er et navn og en bar konstant — og der er"
         " bakstreken bare et tegn")
+
+    # EN `"…"` ER ET NAVN, IKKE EN KONSTANT. `"customer's"` er en lovlig
+    # identifikator, og apostrofen i den er et tegn i navnet. Leses den som
+    # en åpning, slutter den falske konstanten først på neste apostrof i
+    # filen — her `'x'` i COMMENT-en — og alt imellom, semikolonene og en
+    # `GRANT EXECUTE … TO PUBLIC`, forsvinner inn i én markør. Gjerdet ble
+    # da stående True mens PUBLIC var åpnet igjen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "CREATE TABLE \"customer's\" (id int);"
+                   " GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO PUBLIC;"
+                   " COMMENT ON TABLE \"customer's\" IS 'x';")], n)
+    assert gjerdet == {sig: False}, (
+        "apostrofen i en sitert identifikator åpner ingen konstant, og skal"
+        f" ikke sluke setningen etter den. Spor: {spor}")
+
+    # …og motprøven, som er den som gjør identifikatorgrenen til noe annet
+    # enn «apostrofer teller ikke etter en `"`»: konstanten ETTER en sitert
+    # identifikator maskeres fortsatt, og en REVOKE sitert i den er like
+    # inert som ellers. Ble maskeringen slått av, ville denne lest som et
+    # gjerde.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " COMMENT ON TABLE \"customer's\" IS 'REVOKE ALL ON"
+                   " FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC';"
+                   " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE sitert i en konstant etter en sitert identifikator er"
+        f" fortsatt bare tekst. Spor: {spor}")
+
+    # …og den andre motprøven, som er grunnen til at identifikatoren gis
+    # tilbake URØRT og ikke bare maskeres bort sammen med konstantene: et
+    # sitert navn er FORTSATT navnet. `"varsel_klaim_epost"(int,int)` er
+    # den beskyttede funksjonen, og en GRANT til PUBLIC skrevet slik åpner
+    # gjerdet. Ble navnet maskert, ville nettopp den setningen blitt usynlig
+    # — den farlige retningen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", 'GRANT EXECUTE ON FUNCTION "varsel_klaim_epost"(int, int)'
+                   " TO PUBLIC;")], n)
+    assert gjerdet == {sig: False}, (
+        "et sitert navn er det samme navnet, og en GRANT til PUBLIC skrevet"
+        f" slik åpner gjerdet. Spor: {spor}")
+
+    # …og den samme regelen i kommentarstrykeren, av samme grunn som for
+    # konstantene: en `--` inne i et NAVN er tegn i navnet, ikke en
+    # kommentar som stryker resten av linjen.
+    assert _uten_kommentarer('select "a--b" from t;') == \
+        'select "a--b" from t;', \
+        "en `--` inne i en sitert identifikator er tegn i navnet"
+
+    # …og `""` er identifikatorens egen dobling — ETT tegn, ikke slutt.
+    # Leses den som slutt, står den andre halvdelen igjen som kode, og en
+    # `--` etter den stryker linjen den ikke skulle rørt.
+    assert _uten_kommentarer('select "a""--b" from t;') == \
+        'select "a""--b" from t;', \
+        "`\"\"` er ett tegn i en sitert identifikator, ikke slutten på den"
 
     # Å FLYTTE ET NAVN ER Å FJERNE DET. Funksjonen lever videre — det gjør
     # ikke navnet senderen kaller, og et gjerde rundt et navn som er borte er
