@@ -1589,8 +1589,49 @@ _MARKOER_MAL = re.compile(r"\x00(\d+)\x00")
 _DYNAMISK = re.compile(
     r"\bexecute\s*(?:\(\s*)*(?:format\s*\(\s*)?\x00(\d+)\x00")
 
+#: Det samme uttrykket, men for den DOLLARSITERTE skrivemåten — og den må
+#: leses FØR `_KROPP` (Codex P2 på #74). `EXECUTE $sql$GRANT EXECUTE … TO
+#: PUBLIC$sql$` er en fullt vanlig dynamisk setning, og `$sql$…$sql$` ser
+#: for `_KROPP` ut som en funksjonskropp: nyttelasten ble strøket før
+#: `_DYNAMISK` fikk se den, og gjerdet ble stående True mens PUBLIC hadde
+#: fått EXECUTE. Formen er dessuten den man NÅR til når teksten selv er
+#: full av apostrofer — altså nettopp i en ACL-setning som siterer noe.
+#:
+#: Prefikset — `EXECUTE`, parentesene og et eventuelt `format(` — er med i
+#: uttrykket som group 1, slik at det står igjen foran markøren og
+#: `_DYNAMISK` kjenner den igjen som den apostrofsiterte formen. Taggen er
+#: en tilbakereferanse av samme grunn som i `_KROPP`: `$a$ … $b$ … $a$` er
+#: ÉN tekst.
+_DYNAMISK_DOLLAR = re.compile(
+    r"(\bexecute\s*(?:\(\s*)*(?:format\s*\(\s*)?)" + _TAGG + r"(.*?)\$\2\$",
+    re.S | re.I)
 
-def _uten_strenger(tekst):
+
+def _uten_dollarnyttelast(tekst, innhold):
+    """De dollarsiterte tekstene `EXECUTE` KJØRER, byttet ut med markører.
+
+    Kjøres FØR `_KROPP` stryker kroppene, og legger nyttelastene i den samme
+    konstanttabellen som apostrofformen bruker. Da er det bare ÉN form
+    `_DYNAMISK` og avspillingen trenger å kjenne.
+
+    Bare de som står etter `EXECUTE` flyttes over. En dollarsitert tekst
+    ellers i filen ER en funksjonskropp — det er den `_KROPP` finnes for —
+    og en regel som tok dem alle, ville pakket ut hver kropp i historikken
+    som om den kjørte.
+
+    Innholdet lagres RÅTT: en dollarsitert tekst har ingen escaping i det
+    hele tatt, så `''` i den er to apostrofer og ikke én. Taggen tas vare på
+    som «prefiks», slik at `_klartekst` kan skrive setningen tilbake slik
+    den står.
+    """
+    def bytt(m):
+        innhold.append(("$" + m.group(2) + "$", m.group(3)))
+        return m.group(1) + _MARKOER.format(len(innhold) - 1)
+
+    return _DYNAMISK_DOLLAR.sub(bytt, tekst)
+
+
+def _uten_strenger(tekst, innhold=None):
     """Teksten med hver strengkonstant byttet ut med en nummerert markør.
 
     EN STRENGKONSTANT ER IKKE EN SETNING (Codex P2 på #71). Kommentarene var
@@ -1618,8 +1659,12 @@ def _uten_strenger(tekst):
     En SITERT IDENTIFIKATOR passerer urørt: den er med i uttrykket bare for
     å spise sine egne apostrofer, slik at `"customer's"` ikke åpner en
     konstant som sluker resten av setningen — se `_STRENG`.
+
+    `innhold` kan gis inn ferdig påbegynt. Da nummereres konstantene videre
+    i den samme tabellen, slik at de dollarsiterte nyttelastene — som må
+    plukkes ut før `_KROPP` — og de apostrofsiterte deler ÉN nummerering.
     """
-    innhold = []
+    innhold = [] if innhold is None else innhold
 
     def bytt(m):
         rå = m.group(0)
@@ -1656,11 +1701,17 @@ def _klartekst(setning, strenger):
     alt. Konstanten normaliseres på samme måte som resten av setningen, slik
     at den leses likt uansett hvordan den er brutt over linjer, og prefikset
     følger med: `E'…'` sto det, og `e'…'` skal det leses som.
+
+    En DOLLARSITERT nyttelast skrives tilbake med taggen sin, ikke med
+    apostrofer: `$sql$…$sql$` har ingen escaping i det hele tatt, og en
+    dobling av apostrofene i den ville vært en annen tekst.
     """
     def igjen(m):
         prefiks, tekst = strenger[int(m.group(1))]
-        return (prefiks + "'"
-                + " ".join(tekst.split()).lower().replace("'", "''") + "'")
+        flat = " ".join(tekst.split()).lower()
+        if prefiks.startswith("$"):
+            return prefiks + flat + prefiks
+        return prefiks + "'" + flat.replace("'", "''") + "'"
 
     return _MARKOER_MAL.sub(igjen, setning)
 
@@ -1680,12 +1731,19 @@ def _delt(tekst, i_blokk, arvet_vakt=False):
     semikolon inne i en konstant ikke deler en setning i to — og slik at
     hverken vakttellingen eller ACL-uttrykkene leser inert tekst som kode.
 
+    De DOLLARSITERTE nyttelastene plukkes ut aller først, FØR `_KROPP`
+    stryker kroppene: `EXECUTE $sql$…$sql$` er en dynamisk setning, og
+    `$sql$…$sql$` ser ut som en kropp. Etterpå er de vanlige konstanter i
+    den samme tabellen, og resten av leddet ser bare én form.
+
     `arvet_vakt` er vakten en KALLER har målt for teksten som helhet — den
     brukes av den dynamiske grenen under, der teksten som kjøres arver
     vakten fra `EXECUTE`-setningen den sto i.
     """
     dybde = 0
-    uten_streng, strenger = _uten_strenger(_KROPP.sub(" ", tekst))
+    strenger = []
+    uten_streng, strenger = _uten_strenger(
+        _KROPP.sub(" ", _uten_dollarnyttelast(tekst, strenger)), strenger)
     for rå in uten_streng.split(";"):
         s = " ".join(rå.split()).lower()
         if not s:
@@ -2732,6 +2790,77 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: True}, (
         "en konstant i en parentes er ikke kode — det er `EXECUTE` foran som"
         f" kjører den. Spor: {spor}")
+
+    # …og NYTTELASTEN KAN VÆRE DOLLARSITERT. `EXECUTE $sql$…$sql$` er en
+    # fullt vanlig dynamisk setning, og formen er nettopp den man når til
+    # når teksten selv er full av apostrofer — altså i en ACL-setning som
+    # siterer noe. For `_KROPP` så den ut som en funksjonskropp: nyttelasten
+    # ble strøket før `_DYNAMISK` fikk se den, og gjerdet ble stående True
+    # mens PUBLIC hadde fått EXECUTE.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $do$\nBEGIN\n    EXECUTE $sql$GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO PUBLIC$sql$;\n"
+                   "END $do$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en dollarsitert dynamisk GRANT er en GRANT, ikke en kropp."
+        f" Spor: {spor}")
+
+    # …og den samme veien: som eier lukker den, akkurat som apostrofformen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $do$\n"
+                         "BEGIN\n    EXECUTE $sql$REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC$sql$;\n"
+                         "END $do$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en dollarsitert dynamisk REVOKE fra eieren er et gjerde som alle"
+        f" andre. Spor: {spor}")
+
+    # …og MOTPRØVEN, som er den som holder `_KROPP` i live ved siden av den
+    # nye grenen: en dollarsitert tekst uten `EXECUTE` foran er en KROPP, og
+    # en kropp kjører ikke av å bli laget. Ble dollartekstene pakket UT i
+    # stedet for å bli strøket, ville hver funksjonskropp i historikken blitt
+    # spilt av som SQL — og det er mutasjonstestet at dette sporet faller da.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "CREATE FUNCTION hjelper() RETURNS void LANGUAGE plpgsql"
+                   " AS $$ BEGIN GRANT EXECUTE ON FUNCTION"
+                   " varsel_klaim_epost(int, int) TO PUBLIC; END $$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en GRANT som står i en KROPP kjører ikke av at kroppen lages."
+        f" Spor: {spor}")
+
+    # …og den samme grensen ett lag ned: en dollarsitert tekst INNE I
+    # nyttelasten er sitert der også, og `SELECT $q$…$q$` velger den bare ut.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $do$\nBEGIN\n"
+                   "    EXECUTE $sql$SELECT $q$REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC$q$ $sql$;\n"
+                   "END $do$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT i den kjørte teksten er ikke et gjerde,"
+        f" heller ikke dollarsitert. Spor: {spor}")
+
+    # …og en APOSTROF i nyttelasten er grunnen til at formen brukes: den
+    # maskeres der, og en ekte GRANT ved siden av den er fortsatt kode.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $do$\nBEGIN\n    EXECUTE $sql$SELECT 'x'; GRANT"
+                   " EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO PUBLIC$sql$;\nEND $do$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en ekte GRANT ved siden av en apostrofsitert tekst i en"
+        f" dollarsitert nyttelast åpner gjerdet. Spor: {spor}")
+
+    # …og den SKREVNE formen er fortsatt den skrevne: en dollarsitert tekst
+    # skrives tilbake med taggen sin og ikke med apostrofer. `$sql$…$sql$`
+    # har ingen escaping i det hele tatt, så en dobling ville vært en annen
+    # tekst — og det er denne formen 031-sporet leser rekkefølge på.
+    assert [s for s, _, _ in _setninger(
+        "DO $do$ BEGIN EXECUTE $sql$GRANT a TO b$sql$; END $do$;")][0] == \
+        "begin execute $sql$grant a to b$sql$", \
+        "en dollarsitert nyttelast skrives tilbake med taggen sin"
 
     # …OG DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL. Nyttelasten ble før
     # gitt videre rå, og som sin egen maskerte form — som om den ikke selv
