@@ -28,6 +28,16 @@ MAKS_STDOUT = 1 << 20
 #: stderr leses aldri som data; vi beholder en snipp til feilmeldingen og
 #: kaster resten.
 MAKS_STDERR = 4096
+#: Dypeste nøsting vi TAR IMOT (Codex P1). Rapportstrukturen er flat —
+#: `funn[].eksempler[]` er det dypeste leddet, godt under ti — så taket er
+#: rundhåndet mot ekte motorer og likevel langt under enhver rekursjons-
+#: grense. Uten det kunne en motor sende `[[[[...]]]]` godt innenfor
+#: MAKS_STDOUT og velte controlleren med RecursionError i stedet for å få
+#: den dokumenterte feilkvitteringen: `json.loads` er bare det FØRSTE
+#: stedet som rekurserer, `jsonschema`-valideringen og JCS-kanoniseringen
+#: gjør det samme lenger nede. Derfor stanses dybden ved INNGANGEN, ikke
+#: ved hvert enkelt rekursjonspunkt.
+MAKS_DYBDE = 32
 
 
 def _les_med_tak(strom, tak: int) -> tuple[bytes, bool]:
@@ -62,6 +72,40 @@ def _drener(strom, behold: int, ut: list) -> None:
     except (OSError, ValueError):
         pass                       # strømmen ble lukket under oss
     ut.append(b"".join(biter))
+
+
+def _for_dypt(raa: bytes, tak: int) -> bool:
+    """Er nøstingen i JSON-teksten dypere enn `tak`?
+
+    En løkke over bytene, ikke rekursjon — poenget er nettopp å svare UTEN
+    å bruke stakken selv. Klammer inne i strenger teller ikke; en
+    JSON-streng kan inneholde `[` og `\\"` uten at det er struktur.
+
+    Svaret trenger ikke være presist for ugyldig JSON: er teksten søppel,
+    avvises den uansett av `json.loads` rett etterpå. Vakten skal bare
+    hindre at parseren i det hele tatt får begynne på noe for dypt."""
+    dybde = maks = 0
+    i_streng = escape = False
+    for b in raa:
+        if i_streng:
+            if escape:
+                escape = False
+            elif b == 0x5C:                      # \
+                escape = True
+            elif b == 0x22:                      # "
+                i_streng = False
+            continue
+        if b == 0x22:
+            i_streng = True
+        elif b in (0x5B, 0x7B):                  # [ {
+            dybde += 1
+            if dybde > maks:
+                maks = dybde
+                if maks > tak:
+                    return True
+        elif b in (0x5D, 0x7D):                  # ] }
+            dybde -= 1
+    return False
 
 
 #: Egen prosessgruppe for motoren (Codex P1). Uten den er `p.kill()` bare
@@ -301,6 +345,9 @@ class Kommandomotor:
             hale = "".join(c for c in raa if c.isprintable())[:200].strip()
             raise Motorfeil(f"motor exit {p.returncode}"
                             + (f": {hale}" if hale else ""))
+        if _for_dypt(ut, MAKS_DYBDE):
+            raise Motorfeil(
+                f"motorutdata er nøstet dypere enn {MAKS_DYBDE} nivåer")
         try:
             d = json.loads(ut.decode("utf-8"))
             return Motorresultat(
@@ -313,5 +360,10 @@ class Kommandomotor:
                 funn=tuple(d.get("funn") or ()),
                 blokkert=tuple(d.get("blokkert") or ()),
                 avkortet=tuple(d.get("avkortet") or (False, None, None)))
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError, RecursionError) as e:
+            # `RecursionError` står her som ANDRE skanse (Codex P1):
+            # dybdevakten over skal ha tatt nøstingen først, men et unntak
+            # herfra slipper forbi `controller.kjor_en` — som bare fanger
+            # Motorfeil og ValidationError — og etterlater det claimede
+            # oppdraget ufullført til fristen i stedet for å kvittere.
             raise Motorfeil("motorutdata uleselig") from e

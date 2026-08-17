@@ -1590,6 +1590,52 @@ def test_motorutdata_er_bundet_i_minnet():
             treg.kjor({})
 
 
+def test_dypt_nostet_motorutdata_er_motorfeil():
+    """Codex P1: `json.loads` rekurserer, og fangsten manglet RecursionError.
+
+    `[[[[...]]]]` er noen få kilobyte for tusenvis av nivåer — altså godt
+    innenfor MAKS_STDOUT, så størrelsesvakten ser ingenting. Parseren
+    treffer rekursjonsgrensen og kaster RecursionError, som verken er
+    ValueError, KeyError eller TypeError: unntaket går ut av
+    `controller.kjor_en` (som kun fanger Motorfeil og ValidationError), og
+    det claimede oppdraget står ufullført til fristen i stedet for å få
+    den dokumenterte feilkvitteringen.
+
+    Vakten står FØR parsingen, ikke bare rundt den: `json.loads` er det
+    første stedet som rekurserer, men skjemavalideringen og
+    JCS-kanoniseringen lenger nede gjør akkurat det samme, så dybden må
+    stanses ved inngangen.
+
+    Kontroll: fjern `_for_dypt`-sjekken i `kjor` OG `RecursionError` fra
+    except-tuppelen, så bobler RecursionError ut av `m.kjor` igjen.
+    """
+    from modules.wcag_audit.motor import Kommandomotor, MAKS_DYBDE, Motorfeil
+
+    dypt = "[" * 20000 + "]" * 20000
+    m = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % dypt))
+    with pytest.raises(Motorfeil, match="nøstet dypere"):
+        m.kjor({})
+
+    # ...men et ekte, flatt svar skal fortsatt gå igjennom, og et som bare
+    # så vidt holder seg innenfor taket også.
+    god = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": 5,
+                      "funn": [{"regel_id": "a", "alvorlighet": "alvorlig",
+                                "antall": 1, "eksempler": ["#x"]}]})
+    m2 = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % god))
+    assert m2.kjor({}).varighet_ms == 5
+    assert MAKS_DYBDE > 8, "taket må være rundhåndet mot ekte rapporter"
+
+    # Klammer INNE i en streng er tekst, ikke struktur — en selektor med
+    # `[aria-label]` skal ikke telle mot dybden.
+    med_klammer = json.dumps(
+        {"regelsett_versjon": "axe-4.10", "varighet_ms": 5,
+         "funn": [{"regel_id": "a", "alvorlighet": "alvorlig", "antall": 1,
+                   "eksempler": ["[[[" * 200 + '\\"']}]})
+    m3 = Kommandomotor(_motorkommando(
+        "import sys;sys.stdout.write(%r)" % med_klammer))
+    assert m3.kjor({}).varighet_ms == 5
+
+
 def test_motoren_arver_aldri_controllerens_hemmeligheter(tmp_path,
                                                          monkeypatch):
     """Codex P1: `Popen` uten `env=` arver HELE controllerens miljø.
