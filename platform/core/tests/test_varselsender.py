@@ -1886,8 +1886,18 @@ def _delt(tekst, i_blokk, arvet_vakt=False, strenger=None):
             #
             # Og er formen `format(…)` med KONSTANTE argumenter, er det den
             # UTREGNEDE teksten som kjører — se `_nyttelast`.
-            yield from _delt(_uten_kommentarer(_nyttelast(s, m, strenger)),
-                             False, betinget, strenger)
+            #
+            # EN `DO`-BLOKK I NYTTELASTEN ER EN DO-BLOKK (Codex P2 på #74).
+            # Teksten ble gitt rett til `_delt`, som stryker alt
+            # dollarsitert som kropper — og `EXECUTE 'DO $$ BEGIN GRANT …
+            # TO PUBLIC; END $$'` er nettopp en dollarsitert tekst.
+            # PostgreSQL KJØRER den indre blokken; modellen strøk den, og
+            # gjerdet ble stående True mens PUBLIC hadde fått EXECUTE. Den
+            # kjørte teksten går derfor gjennom det samme leddet som
+            # filteksten, `_stykker`, der en `DO` pakkes ut i stedet for å
+            # strykes.
+            yield from _stykker(_nyttelast(s, m, strenger), strenger,
+                                betinget)
         if i_blokk:
             # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
             # en logglinje lukker ingen gren, og en `IF … THEN` i en
@@ -1927,13 +1937,32 @@ def _setninger(sql):
     stykke: markørene i stykkene peker inn i den, og et lag som lagde sin
     egen tabell ville lest dem feil.
     """
-    maskert, strenger = _uten_strenger(_uten_kommentarer(sql))
+    return _stykker(sql, None)
+
+
+def _stykker(tekst, strenger, arvet_vakt=False):
+    """En tekst delt om DO-blokkene sine, hvert stykke målt av `_delt`.
+
+    Leddet `_setninger` er, skilt ut for seg fordi det gjelder ALL tekst som
+    kjøres — ikke bare filen (Codex P2 på #74). En `EXECUTE`-nyttelast er
+    SQL på samme måte som filen er det, og en `DO`-blokk i den er kode som
+    kjører: `EXECUTE 'DO $$ BEGIN GRANT EXECUTE … TO PUBLIC; END $$'` gir
+    PUBLIC EXECUTE. Ble nyttelasten gitt rett til `_delt`, strøk `_KROPP`
+    den indre blokken som en funksjonskropp, og gjerdet ble stående True.
+    At det er den SAMME funksjonen som brukes begge steder, er hele poenget:
+    et lag til av dynamisk SQL måles da likt, uten en egen regel for hvert.
+
+    `strenger` er konstanttabellen kalleren alt har begynt på — `None` for
+    filen selv, som starter sin egen. `arvet_vakt` er vakten teksten som
+    helhet står under, og følger med ned i hvert stykke.
+    """
+    maskert, strenger = _uten_strenger(_uten_kommentarer(tekst), strenger)
     pos = 0
     for m in _DO_BLOKK.finditer(maskert):
-        yield from _delt(maskert[pos:m.start()], False, strenger=strenger)
-        yield from _delt(m.group(2), True, strenger=strenger)
+        yield from _delt(maskert[pos:m.start()], False, arvet_vakt, strenger)
+        yield from _delt(m.group(2), True, arvet_vakt, strenger)
         pos = m.end()
-    yield from _delt(maskert[pos:], False, strenger=strenger)
+    yield from _delt(maskert[pos:], False, arvet_vakt, strenger)
 
 
 def _type(ledd):
@@ -3093,6 +3122,73 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: False}, (
         "en ekte GRANT ved siden av en apostrofsitert tekst i en"
         f" dollarsitert nyttelast åpner gjerdet. Spor: {spor}")
+
+    # …OG EN `DO`-BLOKK I NYTTELASTEN ER EN DO-BLOKK (Codex P2 på #74).
+    # `EXECUTE 'DO $$ … $$'` er en helt vanlig innpakning, og PostgreSQL
+    # KJØRER den indre blokken. Nyttelasten gikk før rett til splittingen,
+    # som stryker alt dollarsitert som funksjonskropper — og den indre
+    # blokken ble dermed strøket, med GRANT-en i seg. Gjerdet ble stående
+    # True mens PUBLIC hadde fått EXECUTE.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $ytre$\nBEGIN\n    EXECUTE 'DO $$ BEGIN GRANT EXECUTE"
+                   " ON FUNCTION varsel_klaim_epost(int, int) TO PUBLIC;"
+                   " END $$';\nEND $ytre$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en DO-blokk i en EXECUTE-nyttelast er kode som kjører."
+        f" Spor: {spor}")
+
+    # …og den samme veien tilbake, som eier.
+    indre_revoke = ("DO $ytre$\nBEGIN\n    EXECUTE 'DO $$ BEGIN REVOKE ALL ON"
+                    " FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;"
+                    " END $$';\nEND $ytre$;")
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; "
+                         + indre_revoke + " RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en REVOKE i en DO-blokk i en nyttelast er et gjerde som alle andre."
+        f" Spor: {spor}")
+
+    # …og VAKTEN følger med HELE veien ned: gjennom `EXECUTE`-setningen, inn
+    # i nyttelasten og videre inn i den indre blokken. En betinget REVOKE er
+    # ikke bevis, uansett hvor mange lag den står i.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; "
+                         + indre_revoke.replace(
+                             "BEGIN\n    EXECUTE", "BEGIN\n    IF nei THEN"
+                             " EXECUTE").replace("$$';\n", "$$'; END IF;\n")
+                         + " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en betinget REVOKE er ikke bevis, heller ikke i en DO-blokk i en"
+        f" nyttelast. Spor: {spor}")
+
+    # …og MOTPRØVEN som skiller en BLOKK fra en KROPP ett lag ned: en
+    # `CREATE FUNCTION … AS $$ … $$` i nyttelasten LAGER en funksjon, og en
+    # kropp kjører ikke av å bli laget. Ble hver dollartekst i nyttelasten
+    # pakket ut, ville denne GRANT-en åpnet gjerdet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $ytre$\nBEGIN\n    EXECUTE 'CREATE FUNCTION hjelper()"
+                   " RETURNS void LANGUAGE plpgsql AS $$ BEGIN GRANT EXECUTE"
+                   " ON FUNCTION varsel_klaim_epost(int, int) TO PUBLIC;"
+                   " END $$';\nEND $ytre$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en GRANT i en KROPP kjører ikke av at kroppen lages, heller ikke"
+        f" når `CREATE FUNCTION` selv står i en nyttelast. Spor: {spor}")
+
+    # …og den andre motprøven: maskeringen står FØR blokkeletingen i
+    # nyttelasten også, så en DO-blokk som bare er SITERT i den kjørte
+    # teksten er fortsatt inert.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $ytre$\nBEGIN\n"
+                   "    EXECUTE 'COMMENT ON FUNCTION"
+                   " varsel_klaim_epost(int, int) IS ''DO $$ BEGIN REVOKE ALL"
+                   " ON FUNCTION varsel_klaim_epost(int, int) FROM PUBLIC;"
+                   " END $$''';\nEND $ytre$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en DO-blokk som bare er sitert i nyttelasten lagrer en kommentar og"
+        f" kjører ingenting. Spor: {spor}")
 
     # …og den SKREVNE formen er fortsatt den skrevne: en dollarsitert tekst
     # skrives tilbake med taggen sin og ikke med apostrofer. `$sql$…$sql$`
