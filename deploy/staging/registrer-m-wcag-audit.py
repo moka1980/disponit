@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO / "platform"))
 
 import psycopg  # noqa: E402
 
-from api.artefaktskjema import skjemafeil  # noqa: E402
+from api.artefaktskjema import Skjemaugyldig, registrer  # noqa: E402
 from modules.wcag_audit import rapportskjema  # noqa: E402
 
 MODUL = "m_wcag_audit"
@@ -78,17 +78,7 @@ def main() -> int:
     _hex64("kontrakt_hash", kontrakt_hash)
     _hex64("payload_skjema_hash", payload_hash)
     _hex64("kvittering_skjema_hash", kvittering_hash)
-    # META-SJEKKEN FØR INNSETTING (Codex P2): skjemaraden og typebindingen
-    # er immutable for alltid, så et ugyldig skjema kan ikke rettes — det
-    # kan bare gjøre hver opplastning til en valideringsfeil. plpgsql kan
-    # ikke metavalidere; her kan vi.
-    feil = skjemafeil(rapportskjema.SKJEMA)
-    if feil:
-        raise SystemExit("rapportskjemaet er ikke et gyldig Draft 2020-12-"
-                         "skjema: " + "; ".join(feil))
     dsn = os.environ["DISPONIT_MIGRATOR_URL"]
-    kanon = rapportskjema.kanonisk().decode("utf-8")
-    h = rapportskjema.skjema_hash()
     m_hash = manifest_hash()
     with psycopg.connect(dsn) as c:
         c.execute("SET ROLE disponit_modules_admin")
@@ -106,8 +96,14 @@ def main() -> int:
                   (MODUL, release_id, kontrakt_hash, m_hash, digest))
         c.execute("SELECT registrer_oppdragstype(%s, %s, 1, %s, 'deploy')",
                   (OPPDRAGSTYPE, MODUL, kontrakt_hash))
-        c.execute("SELECT registrer_artefaktskjema(%s, %s, 'deploy')",
-                  (kanon, h))
+        # Gjennom DEN DELTE registreringsveien (Codex P2): den eier
+        # metasjekken, kanoniseringen og hashen samlet, så neste
+        # deploy-verktøy arver dem i stedet for å gjenta dem — kanskje
+        # ulikt, mot en rad som er immutabel for alltid.
+        try:
+            h = registrer(c, rapportskjema.SKJEMA, "deploy")
+        except Skjemaugyldig as e:
+            raise SystemExit(f"rapportskjemaet kan ikke registreres: {e}")
         c.execute("RESET ROLE")
         c.execute("SET ROLE disponit_domains_admin")
         c.execute("SELECT registrer_artefakttype(%s, %s, 1, %s, %s,"

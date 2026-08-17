@@ -102,6 +102,45 @@ def skjemafeil(skjema) -> list[str]:
     return []
 
 
+class Skjemaugyldig(ValueError):
+    """Skjemaet er ikke et gyldig Draft 2020-12-skjema. Fail-closed: da
+    registreres det ikke, og ingen artefakttype kan bindes til det."""
+
+
+def registrer(conn: psycopg.Connection, skjema: dict, aktor: str) -> str:
+    """Registrer skjemaet gjennom den herdede funksjonen. -> skjema_hash.
+
+    DEN DELTE REGISTRERINGSVEIEN (Codex P2). Metasjekken lå først bare i
+    WCAG-deploy-skriptet, altså hos ÉN kaller. Neste deploy-verktøy ville
+    ikke arvet den, og gapet er ikke reparerbart i ettertid: både
+    skjemaraden og typebindingen er immutable, så et ødelagt skjema gjør
+    artefakttypen permanent ubrukelig.
+
+    Alt som skal registrere et artefaktskjema fra Python går derfor
+    HERFRA. Funksjonen eier tre ting kalleren ellers måtte gjenta likt
+    hver gang, og som er feil om de gjøres ulikt:
+
+      1. metasjekken (`skjemafeil`) FØR noe skrives,
+      2. kanoniseringen (JCS — det er de bytene hashen er over), og
+      3. hashen, regnet ut av nøyaktig de bytene som sendes.
+
+    SQL-siden har sin egen, uavhengige vakt (`_artefaktskjema_typefeil` i
+    migrasjon 036), fordi begge admin-rollene fortsatt har EXECUTE og en
+    direkte SQL-kaller aldri ser denne funksjonen.
+    """
+    import hashlib
+
+    from policy_validator import jcs
+    feil = skjemafeil(skjema)
+    if feil:
+        raise Skjemaugyldig("; ".join(feil))
+    kanon = jcs.kanoniske_bytes(skjema)
+    h = hashlib.sha256(kanon).hexdigest()
+    conn.execute("SELECT registrer_artefaktskjema(%s, %s, %s)",
+                 (kanon.decode("utf-8"), h, aktor))
+    return h
+
+
 def valider(skjema: dict, innhold: dict) -> list[str]:
     """-> feilliste (tom = gyldig). Draft 2020-12, samme validatorfamilie
     som policyskjemaet, MED format-checkeren over. Feilene er tekst for

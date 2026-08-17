@@ -80,6 +80,103 @@ INSERT INTO malautorisasjonsvilkar (vilkar_type, maldomene)
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_modul_eier;
 
+-- Codex P2, runde 2: metasjekken lå bare i det ene deploy-skriptet, mens
+-- BEGGE admin-rollene fortsatt har EXECUTE på registreringsfunksjonen. En
+-- direkte SQL-kaller — psql, et fremtidig deploy-verktøy, et retry-skript
+-- — så aldri Python-sjekken. Derfor står denne vakten på SQL-siden, der
+-- ingen kaller kan gå utenom.
+--
+-- Den validerer ikke HELE Draft 2020-12; det kan plpgsql ikke, og den
+-- later ikke som. Den tar den ene klassen feil som er både STILLE og
+-- PERMANENT: en ugyldig `type`. `{"type": "strng"}` er et lovlig
+-- JSON-objekt, passerer alle formkrav, og får deretter validatoren til å
+-- kaste `UnknownType` på hver eneste opplastning — og siden både
+-- skjemaraden og typebindingen er immutable, kan typen aldri repareres.
+--
+-- Rekursjonen følger de stedene Draft 2020-12 FAKTISK plasserer
+-- subskjemaer. Det er hele grunnen til at den kan gjøres uten falske
+-- treff: en naiv `$.**.type` ville også truffet et felt som tilfeldigvis
+-- HETER «type» (`properties.type`), og avvist et fullt lovlig skjema for
+-- alltid.
+CREATE OR REPLACE FUNCTION public._artefaktskjema_typefeil(p_skjema JSONB)
+RETURNS TEXT LANGUAGE plpgsql IMMUTABLE
+SET search_path = pg_catalog AS $$
+DECLARE
+    k_type  CONSTANT TEXT[] := ARRAY['object','array','string','number',
+                                     'integer','boolean','null'];
+    -- Objekter der HVER VERDI er et subskjema.
+    k_kart  CONSTANT TEXT[] := ARRAY['properties','patternProperties',
+                                     '$defs','definitions',
+                                     'dependentSchemas'];
+    -- Lister av subskjemaer.
+    k_liste CONSTANT TEXT[] := ARRAY['allOf','anyOf','oneOf','prefixItems'];
+    -- Ett subskjema direkte.
+    k_ett   CONSTANT TEXT[] := ARRAY['items','contains','not','if','then',
+                                     'else','additionalProperties',
+                                     'propertyNames','unevaluatedItems',
+                                     'unevaluatedProperties'];
+    v_t JSONB; v_e JSONB; v_n TEXT; v_feil TEXT;
+BEGIN
+    -- Et boolsk subskjema er lovlig i 2020-12 (`true`/`false`).
+    IF jsonb_typeof(p_skjema) = 'boolean' THEN
+        RETURN NULL;
+    END IF;
+    IF jsonb_typeof(p_skjema) <> 'object' THEN
+        RETURN format('subskjema er %s, må være objekt eller boolsk',
+                      jsonb_typeof(p_skjema));
+    END IF;
+
+    v_t := p_skjema -> 'type';
+    IF v_t IS NOT NULL THEN
+        IF jsonb_typeof(v_t) = 'string' THEN
+            IF NOT (v_t #>> '{}' = ANY(k_type)) THEN
+                RETURN format('ukjent type %L', v_t #>> '{}');
+            END IF;
+        ELSIF jsonb_typeof(v_t) = 'array' THEN
+            FOR v_e IN SELECT * FROM jsonb_array_elements(v_t) LOOP
+                IF jsonb_typeof(v_e) <> 'string'
+                   OR NOT (v_e #>> '{}' = ANY(k_type)) THEN
+                    RETURN format('ukjent type %s', v_e::text);
+                END IF;
+            END LOOP;
+        ELSE
+            RETURN format('type må være streng eller liste, er %s',
+                          jsonb_typeof(v_t));
+        END IF;
+    END IF;
+
+    FOREACH v_n IN ARRAY k_kart LOOP
+        IF jsonb_typeof(p_skjema -> v_n) = 'object' THEN
+            FOR v_e IN SELECT value FROM jsonb_each(p_skjema -> v_n) LOOP
+                v_feil := public._artefaktskjema_typefeil(v_e);
+                IF v_feil IS NOT NULL THEN
+                    RETURN v_n || '/' || v_feil;
+                END IF;
+            END LOOP;
+        END IF;
+    END LOOP;
+    FOREACH v_n IN ARRAY k_liste LOOP
+        IF jsonb_typeof(p_skjema -> v_n) = 'array' THEN
+            FOR v_e IN SELECT * FROM jsonb_array_elements(p_skjema -> v_n)
+            LOOP
+                v_feil := public._artefaktskjema_typefeil(v_e);
+                IF v_feil IS NOT NULL THEN
+                    RETURN v_n || '/' || v_feil;
+                END IF;
+            END LOOP;
+        END IF;
+    END LOOP;
+    FOREACH v_n IN ARRAY k_ett LOOP
+        IF p_skjema ? v_n THEN
+            v_feil := public._artefaktskjema_typefeil(p_skjema -> v_n);
+            IF v_feil IS NOT NULL THEN
+                RETURN v_n || '/' || v_feil;
+            END IF;
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END $$;
+
 -- Skjemaregistrering: hashen REKALKULERES fra innholdet (port 16) —
 -- sha256 over de kanoniske bytene kalleren sender. Kanonisiteten (JCS)
 -- er KALLERENS kontrakt: alle veier inn går via
@@ -92,7 +189,7 @@ CREATE OR REPLACE FUNCTION registrer_artefaktskjema(
     p_kanonisk TEXT, p_oppgitt_hash TEXT, p_aktor TEXT)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_hash TEXT; v_skjema JSONB;
+DECLARE v_hash TEXT; v_skjema JSONB; v_typefeil TEXT;
 BEGIN
     v_hash := encode(sha256(convert_to(p_kanonisk, 'UTF8')), 'hex');
     IF v_hash IS DISTINCT FROM p_oppgitt_hash THEN
@@ -101,22 +198,29 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     v_skjema := p_kanonisk::jsonb;
-    -- Codex P2: objekt-sjekken er ALT plpgsql kan si om skjemaformen —
-    -- en JSON Schema-metavalidering krever validatoren selv, og den bor i
-    -- Python. Grensen står her, uttalt, i stedet for at funksjonen later
-    -- som den har kontrollert mer enn den har: `{"type": "strng"}` er et
-    -- objekt og passerer denne raden.
+    -- Full JSON Schema-metavalidering krever validatoren selv, og den bor i
+    -- Python (`api.artefaktskjema.registrer`, som er DEN delte
+    -- registreringsveien derfra). Grensen står uttalt her i stedet for at
+    -- funksjonen later som den har kontrollert mer enn den har.
     --
-    -- Konsekvensen om ingen andre sjekket: skjemaraden og typebindingen er
-    -- immutable for alltid, så en artefakttype bundet til et ødelagt skjema
-    -- kunne ALDRI repareres — hver opplastning og promotering ville dødd på
-    -- et ufanget UnknownType fra validatoren. Metasjekken kjøres derfor på
-    -- begge sider av den udødelige raden, av `api.artefaktskjema.skjemafeil`:
-    -- registreringsveien (deploy-skriptet) kjører den FØR dette kallet, og
-    -- `valider()` kjører den før innhold måles, slik at et skjema som
-    -- likevel skulle ha kommet inn gir en ærlig avvisning, ikke en 500-er.
+    -- Men SQL-siden er ikke lenger tom (Codex P2, runde 2): begge
+    -- admin-rollene har EXECUTE, så en direkte kaller ser aldri
+    -- Python-sjekken, og gapet er ikke reparerbart etterpå — skjemaraden
+    -- OG typebindingen er immutable, så en artefakttype bundet til et
+    -- ødelagt skjema ville dødd på hver opplastning for alltid. Derfor
+    -- kjøres `_artefaktskjema_typefeil` her: den fanger den ene klassen
+    -- feil som er både stille og permanent, uansett hvem som kaller.
+    --
+    -- `valider()` kjører metasjekken en tredje gang, før innhold måles,
+    -- slik at et skjema som likevel skulle ha kommet inn gir en ærlig
+    -- avvisning i stedet for en 500-er.
     IF jsonb_typeof(v_skjema) <> 'object' THEN
         RAISE EXCEPTION 'artefaktskjema: skjemaet må være et objekt'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_typefeil := public._artefaktskjema_typefeil(v_skjema);
+    IF v_typefeil IS NOT NULL THEN
+        RAISE EXCEPTION 'artefaktskjema: ugyldig skjema — %', v_typefeil
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     INSERT INTO public.artefaktskjema (skjema_hash, skjema)
@@ -163,6 +267,7 @@ BEGIN
                                    'maldomene', p_maldomene));
 END $$;
 
+REVOKE ALL ON FUNCTION public._artefaktskjema_typefeil(JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION registrer_artefaktskjema(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION registrer_malautorisasjonsvilkar(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION registrer_artefaktskjema(TEXT, TEXT, TEXT)

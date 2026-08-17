@@ -1339,6 +1339,95 @@ def test_odelagt_skjema_avvises_i_stedet_for_aa_kaste():
     assert feil and "JSON Schema" in feil[0]
 
 
+@pg
+def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
+    """Codex P2, runde 2: metasjekken lå bare i WCAG-deploy-skriptet, altså
+    hos ÉN kaller — mens begge admin-rollene fortsatt har EXECUTE på
+    `registrer_artefaktskjema`. Et fremtidig deploy-verktøy eller en
+    direkte SQL-kaller kunne registrere `{"type": "strng"}`, binde en
+    immutabel artefakttype til den, og gjøre hver eneste opplastning til en
+    valideringsfeil — uten vei tilbake.
+
+    Nå står gaten to steder som ikke kan omgås hver for seg:
+    `api.artefaktskjema.registrer` er DEN delte Python-veien, og
+    `_artefaktskjema_typefeil` er SQL-sidens egen vakt.
+
+    Kontroll: fjern `_artefaktskjema_typefeil`-kallet i
+    `registrer_artefaktskjema`, så blir SQL-halvdelen under grønn på et
+    skjema som aldri kan brukes.
+    """
+    from api.artefaktskjema import Skjemaugyldig, registrer
+    from db.pg import koble
+
+    # 1) Python-veien avviser FØR den rører databasen.
+    c = _mk_admin("disponit_modules_admin")
+    try:
+        with pytest.raises(Skjemaugyldig):
+            registrer(c, {"type": "strng"}, "test")
+        c.rollback()
+        # ... og den lykkelige veien gir samme hash som innholdsadressen.
+        unikt = {"type": "object",
+                 "properties": {"a": {"type": "string",
+                                      "x": secrets.token_hex(3)}}}
+        _, forventet = _jcs_hash(unikt)
+        assert registrer(c, unikt, "test") == forventet
+        c.commit()
+    finally:
+        c.close()
+
+    # 2) SQL-veien avviser den direkte kalleren som aldri så Python.
+    d = _mk_admin("disponit_modules_admin")
+    try:
+        for daarlig in ({"type": "strng"},
+                        {"type": ["object", "strng"]},
+                        {"type": 7},
+                        {"properties": {"a": {"type": "objekt"}}},
+                        {"$defs": {"d": {"type": "tall"}}},
+                        {"allOf": [{"type": "object"}, {"type": "strng"}]},
+                        {"items": {"type": "strng"}},
+                        {"if": {"type": "strng"}}):
+            kanon, h = _jcs_hash(daarlig)
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                d.execute("SELECT registrer_artefaktskjema(%s,%s,'test')",
+                          (kanon, h))
+            d.rollback()
+        # Motsatsen — og den er poenget med å følge de EKTE
+        # subskjema-stedene i stedet for et naivt `$.**.type`: et felt som
+        # tilfeldigvis HETER «type» er ikke nøkkelordet `type`, og et slikt
+        # skjema er fullt lovlig.
+        for godt in ({"type": ["object", "null"]},
+                     {"properties": {"type": {"type": "string"}}},
+                     {"additionalProperties": False,
+                      "properties": {"a": {"type": "integer"}}},
+                     {"prefixItems": [{"type": "string"}], "items": True},
+                     dict(_rapportskjema_kopi(), x=secrets.token_hex(3))):
+            kanon, h = _jcs_hash(godt)
+            assert d.execute("SELECT registrer_artefaktskjema(%s,%s,'test')",
+                             (kanon, h)).fetchone()[0] == h
+        d.commit()
+    finally:
+        d.close()
+
+    # 3) Det ødelagte skjemaet ble ALDRI en rad — ingen artefakttype kan
+    #    bindes til noe som ikke finnes.
+    r = koble(DSN)
+    try:
+        _, h_daarlig = _jcs_hash({"type": "strng"})
+        assert r.execute("SELECT count(*) FROM artefaktskjema"
+                         " WHERE skjema_hash=%s",
+                         (h_daarlig,)).fetchone()[0] == 0
+        r.rollback()
+    finally:
+        r.close()
+
+
+def _rapportskjema_kopi() -> dict:
+    """Det EKTE rapportskjemaet — den strengeste prøven på at vakten ikke
+    gir falske treff: går den rød her, ville PR-014c ikke kunnet deployes."""
+    from modules.wcag_audit import rapportskjema
+    return dict(rapportskjema.SKJEMA)
+
+
 # --------------------------------------------------------------------------
 # Kommandomotoren mot en EKTE (og fiendtlig) underprosess — Codex P1.
 # --------------------------------------------------------------------------
