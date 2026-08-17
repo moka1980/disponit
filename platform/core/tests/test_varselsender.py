@@ -1587,7 +1587,20 @@ _MARKOER_MAL = re.compile(r"\x00(\d+)\x00")
 #: den samme blindsonen skrevet om. Det er markøren rett etter som gjør
 #: treffet, og en markør kan bare komme av en konstant som faktisk sto der.
 _DYNAMISK = re.compile(
-    r"\bexecute\s*(?:\(\s*)*(?:format\s*\(\s*)?\x00(\d+)\x00")
+    r"\bexecute\s*(?:\(\s*)*(?P<fmt>format\s*\(\s*)?\x00(?P<mal>\d+)\x00")
+
+#: ARGUMENTLISTEN til en `format(…)`, lest fra kommaet etter malen og fram
+#: til parentesen som lukker kallet. Bare markører teller: står det en
+#: VARIABEL i listen, treffer ikke uttrykket i det hele tatt, og malen
+#: spilles av som før. Det er den samme grensen som for SQL bygget av en
+#: variabel — modellen dikter ikke opp en verdi den ikke kan se.
+_FORMAT_HALE = re.compile(r"((?:\s*,\s*\x00\d+\x00)*)\s*\)")
+
+#: Én spesifikator i en `format`-mal. PostgreSQL har `%s`, `%I`, `%L` og
+#: `%%`. Bredde- og posisjonsformene (`%1$s`, `%-10s`) er IKKE med: de
+#: finnes ikke i disse migrasjonene, og en mal som bruker dem, lar heller
+#: være å bli løst enn å bli gjettet på — se `_formatert`.
+_FORMAT_SPEK = re.compile(r"%(.)", re.DOTALL)
 
 #: Det samme uttrykket, men for den DOLLARSITERTE skrivemåten — og den må
 #: leses FØR `_KROPP` (Codex P2 på #74). `EXECUTE $sql$GRANT EXECUTE … TO
@@ -1690,6 +1703,65 @@ def _uten_escape(m):
     # ble `'REVOKE ALL\nON FUNCTION …'` til `revoke allnon function …`, og
     # en ekte setning falt ut av avspillingen.
     return " " if tegn in "bfnrtv" else tegn
+
+
+def _formatert(mal, argumenter):
+    """`format(mal, …)` regnet ut, eller `None` om malen ikke lot seg løse.
+
+    KONSTANTE ARGUMENTER ER KJENTE (Codex P2 på #74). `EXECUTE
+    format('GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int,int) TO %I',
+    'PUBLIC')` er en helt vanlig dynamisk GRANT, men modellen spilte av
+    MALEN — med `%I` i behold. `_GRANT_PUBLIC` fikk da aldri se mottakeren,
+    og gjerdet ble stående True mens PUBLIC hadde fått EXECUTE tilbake.
+    Argumentene står jo skrevet i filen: det som er KJENT, skal regnes ut,
+    og det er bare det ukjente som er en grense.
+
+    `%s` og `%I` settes inn RÅTT. `quote_ident` ville satt anførselstegn om
+    navnet trengte det, men modellen leser mottakere og navn som ord, og et
+    sitert `"PUBLIC"` er den samme mottakeren for den. `%L` siteres derimot,
+    for da ER resultatet en konstant: `format('SELECT %L', 'REVOKE … FROM
+    PUBLIC')` velger bare ut en tekst, og avspillingen skal maskere den bort
+    igjen som den konstanten den er.
+
+    Gir `None` når malen har en spesifikator modellen ikke kjenner, eller
+    når antallet ikke går opp mot argumentene. Da spilles malen av som før:
+    et treff mistes heller enn å bli diktet opp.
+    """
+    ut, i, brukt = [], 0, 0
+    for m in _FORMAT_SPEK.finditer(mal):
+        ut.append(mal[i:m.start()])
+        i = m.end()
+        spek = m.group(1)
+        if spek == "%":
+            ut.append("%")
+        elif spek not in "sIL" or brukt >= len(argumenter):
+            return None
+        else:
+            verdi = argumenter[brukt]
+            brukt += 1
+            ut.append("'" + verdi.replace("'", "''") + "'" if spek == "L"
+                      else verdi)
+    if brukt != len(argumenter):
+        return None
+    return "".join(ut) + mal[i:]
+
+
+def _nyttelast(maskert, treff, strenger):
+    """Teksten et `EXECUTE`-treff faktisk kjører.
+
+    Er formen `format(…)`, og står ALLE argumentene som konstanter, regnes
+    malen ut — se `_formatert`. Ellers er nyttelasten malen selv: en
+    variabel i listen er nettopp det ingen kildetest kan se verdien av.
+    """
+    mal = strenger[int(treff.group("mal"))][1]
+    if not treff.group("fmt"):
+        return mal
+    hale = _FORMAT_HALE.match(maskert, treff.end())
+    if hale is None:
+        return mal
+    løst = _formatert(mal, [strenger[int(i)][1]
+                            for i in _MARKOER_MAL.findall(hale.group(1))])
+    return mal if løst is None else løst
 
 
 def _klartekst(setning, strenger):
@@ -1796,7 +1868,10 @@ def _delt(tekst, i_blokk, arvet_vakt=False, strenger=None):
             # og en markør i den peker inn i kallerens tabell. Fikk laget
             # under sin egen, pekte den samme markøren et annet sted, eller
             # ingen steder.
-            yield from _delt(_uten_kommentarer(strenger[int(m.group(1))][1]),
+            #
+            # Og er formen `format(…)` med KONSTANTE argumenter, er det den
+            # UTREGNEDE teksten som kjører — se `_nyttelast`.
+            yield from _delt(_uten_kommentarer(_nyttelast(s, m, strenger)),
                              False, betinget, strenger)
         if i_blokk:
             # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
@@ -2846,6 +2921,101 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: True}, (
         "en konstant i en parentes er ikke kode — det er `EXECUTE` foran som"
         f" kjører den. Spor: {spor}")
+
+    # …og et KONSTANT `format`-argument er en kjent verdi. `format('… TO %I',
+    # 'PUBLIC')` er en helt vanlig dynamisk GRANT, men modellen spilte av
+    # MALEN — med `%I` i behold — og `_GRANT_PUBLIC` fikk aldri se
+    # mottakeren. Gjerdet ble stående True mens PUBLIC hadde fått EXECUTE.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO %I',"
+                   " 'PUBLIC');\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        "et konstant `format`-argument står skrevet i filen, og skal regnes"
+        f" ut. Spor: {spor}")
+
+    # …og den samme veien tilbake, som er den som viser at `%I` settes inn
+    # som et NAVN og ikke i anførselstegn: en `%I` som ble sitert, ville gitt
+    # `REVOKE … ON FUNCTION "varsel_klaim_epost"(int, int)`, og den treffer
+    # ingen signatur.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE format('REVOKE ALL ON FUNCTION"
+                         " %I(int, int) FROM PUBLIC',"
+                         " 'varsel_klaim_epost');\nEND $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en dynamisk REVOKE med konstant navn treffer signaturen sin."
+        f" Spor: {spor}")
+
+    # …og MOTPRØVEN som skiller `%L` fra de to andre: `%L` er PostgreSQLs
+    # egen sitering, så resultatet er en KONSTANT. `format('SELECT %L', 'REVOKE
+    # … FROM PUBLIC')` velger bare ut en tekst — ble verdien satt inn rått,
+    # leste modellen den siterte REVOKE-en som et gjerde eieren hadde satt.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE format('SELECT %L', 'REVOKE ALL ON"
+                         " FUNCTION varsel_klaim_epost(int, int) FROM"
+                         " PUBLIC');\nEND $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en `%L` siteres, og en sitert REVOKE er ikke et gjerde."
+        f" Spor: {spor}")
+
+    # …og `%%` er ETT tegn og ikke en plassholder: teller den som en, går
+    # argumentene ut av takt og hele malen faller tilbake til å bli spilt av
+    # med plassholderne i behold.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO %I %% %s',"
+                   " 'PUBLIC', 'x');\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        f"`%%` er en prosent, ikke et argument. Spor: {spor}")
+
+    # …og GRENSEN, som er den samme som for all annen SQL bygget av noe
+    # ukjent: står det en VARIABEL i argumentlisten, ser ingen kildetest hva
+    # den blir. Da spilles malen av som før, med `%I` i behold — et treff
+    # mistes heller enn å bli diktet opp.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE format('GRANT EXECUTE ON"
+                   " FUNCTION varsel_klaim_epost(int, int) TO %I',"
+                   " mottaker);\nEND $$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en variabel som `format`-argument er ukjent, og modellen dikter den"
+        f" ikke opp. Spor: {spor}")
+
+    # …og den skarpe kanten på den grensen: et argument som er DELVIS
+    # konstant, er ukjent HELT. `prefiks || 'varsel_klaim_epost'` inneholder
+    # en konstant, men verdien er det bare basen som vet — og en modell som
+    # plukket konstanten ut av uttrykket, ville lest en REVOKE mot et navn
+    # den ikke kan vite at treffer, og satt et gjerde som ikke finnes.
+    # Derfor krever argumentlisten markører HELE VEIEN, ikke bare et treff
+    # på en markør i den.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE format('REVOKE ALL ON FUNCTION"
+                         " %I(int, int) FROM PUBLIC',"
+                         " prefiks || 'varsel_klaim_epost');\n"
+                         "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "et delvis konstant argument er ukjent, og konstanten i det er ikke"
+        f" verdien. Spor: {spor}")
+
+    # …og den samme grensen der den er lettest å lese: en mal modellen ikke
+    # kjenner formen på, LØSES IKKE. `%1$s` og de andre bredde-/posisjons-
+    # formene finnes ikke i disse migrasjonene, og et antall som ikke går
+    # opp er like ukjent. `None` betyr «spill av malen som før».
+    assert _formatert("a %s b", ["x"]) == "a x b", \
+        "`%s` er verdien slik den står"
+    assert _formatert("%L", ["a'b"]) == "'a''b'", \
+        "`%L` er PostgreSQLs egen sitering, og apostrofen dobles i den"
+    assert _formatert("%1$s", ["x"]) is None, \
+        "en posisjonsform er en mal modellen ikke kjenner"
+    assert _formatert("%s %s", ["x"]) is None, \
+        "flere plassholdere enn argumenter går ikke opp"
+    assert _formatert("ingen", ["x"]) is None, \
+        "flere argumenter enn plassholdere går ikke opp heller"
 
     # …og NYTTELASTEN KAN VÆRE DOLLARSITERT. `EXECUTE $sql$…$sql$` er en
     # fullt vanlig dynamisk setning, og formen er nettopp den man når til
