@@ -10,6 +10,7 @@ Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
 import hashlib
 import json
+import os
 import secrets
 import sys
 import threading
@@ -1587,6 +1588,47 @@ def test_motorutdata_er_bundet_i_minnet():
         treg = Kommandomotor(_motorkommando(kropp), tidsavbrudd_s=2)
         with pytest.raises(Motorfeil, match="TimeoutExpired"):
             treg.kjor({})
+
+
+def test_motoren_arver_aldri_controllerens_hemmeligheter(tmp_path,
+                                                         monkeypatch):
+    """Codex P1: `Popen` uten `env=` arver HELE controllerens miljø.
+
+    Og controllerens miljø er nettopp der hemmelighetene bor:
+    `db.hemmeligheter.last_credentials` leser systemd-credentials —
+    modultoken, signeringsnøkler, DSN med passord — inn i `os.environ` ved
+    oppstart. Motoren er ubetrodd kode som i tillegg gjengir ubetrodde
+    kundesider i Chromium, så «motoren kjører uten credentials» var et
+    løfte bare kommandolinjen holdt: prosessen kunne lese controllerens
+    fulle plattformautoritet ut av sitt eget miljø og bruke den mot API-et.
+
+    Kontroll: ta bort `env=_motormiljo()` i `Kommandomotor.kjor`, så finner
+    løkka under tokenet igjen i motorens miljø.
+    """
+    from modules.wcag_audit.motor import Kommandomotor
+
+    miljofil = tmp_path / "miljo.json"
+    monkeypatch.setenv("DISPONIT_MODUL_TOKEN", "hemmelig-token-abc123")
+    monkeypatch.setenv("DISPONIT_DB_DSN",
+                       "postgres://u:passord@localhost/disponit")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+
+    god = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": 5})
+    m = Kommandomotor(_motorkommando(
+        "import json,os,sys,pathlib;"
+        "pathlib.Path(%r).write_text(json.dumps(dict(os.environ)),"
+        " encoding='utf-8');"
+        "sys.stdout.write(%r)" % (str(miljofil), god)))
+    assert m.kjor({}).regelsett_versjon == "axe-4.10"
+
+    sett = json.loads(miljofil.read_text(encoding="utf-8"))
+    for navn, verdi in sett.items():
+        assert "hemmelig-token-abc123" not in verdi, f"{navn} bar tokenet"
+        assert "passord" not in verdi, f"{navn} bar DSN-passordet"
+    assert not [n for n in sett if n.startswith("DISPONIT_")], (
+        f"DISPONIT_*-variabler nådde motoren: {sorted(sett)}")
+    # ...men motoren skal fortsatt kunne finne runtime-binæren sin.
+    assert "PATH" in sett, "allowlisten vasket bort PATH også"
 
 
 def test_numerisk_overflyt_fra_motoren_er_motorfeil():

@@ -112,6 +112,34 @@ def _drep_treet(p, gruppe) -> None:
         pass
 
 
+#: Miljøet motoren FÅR (Codex P1). `Popen` arver ellers HELE controllerens
+#: miljø, og `db.hemmeligheter.last_credentials` hydrerer nettopp
+#: systemd-credentials — modultoken, signeringsnøkler, DSN med passord —
+#: inn i `os.environ` ved oppstart. Motoren er ubetrodd kode (axe-core i
+#: headless Chromium, som selv kjører ubetrodde kundesider): «motoren har
+#: ingen credentials» var derfor et løfte bare kommandolinjen holdt, mens
+#: `os.environ` rakte den controllerens fulle plattformautoritet.
+#:
+#: Listen er en ALLOWLIST, ikke en denylist: en ny hemmelighet skal ikke
+#: kunne lekke ut ved at noen glemte å føre den opp. Bare det en
+#: container-runtime trenger for i det hele tatt å starte står her, og
+#: ingen `DISPONIT_*` — modulens egen konfigurasjon når motoren gjennom
+#: payloaden på stdin, ikke gjennom miljøet.
+MILJO_ALLOWLIST = (
+    "PATH",                # å finne runtime-binæren
+    "HOME",                # runtimens egen config-katalog
+    "TMPDIR",              # Chromium skriver mye midlertidig
+    "XDG_RUNTIME_DIR",     # rootless podman
+    "DOCKER_HOST", "CONTAINER_HOST",   # eksplisitt socket
+    "LANG", "LC_ALL", "TZ",            # lokalisering av utdata
+)
+
+
+def _motormiljo() -> dict:
+    """Det allowlistede miljøet, med de variablene som faktisk er satt."""
+    return {n: os.environ[n] for n in MILJO_ALLOWLIST if n in os.environ}
+
+
 @dataclass(frozen=True)
 class Motorresultat:
     regelsett_versjon: str
@@ -205,10 +233,14 @@ class Kommandomotor:
         # starter Chromium. Uten `start_new_session` ligger barnebarnet i
         # VÅR gruppe, og drapet ved fristen traff bare mellomleddet — se
         # `_drep_treet`.
+        #
+        # VASKET MILJØ (Codex P1): `env=` er eksplisitt, aldri arvet — se
+        # `MILJO_ALLOWLIST`.
         try:
             p = subprocess.Popen(
                 self.kommando, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=_motormiljo(),
                 start_new_session=_EGEN_GRUPPE)
         except OSError as e:
             raise Motorfeil(f"motorkjøring: {type(e).__name__}") from e
