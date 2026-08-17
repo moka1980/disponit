@@ -716,7 +716,7 @@
   "ui.editor.handling_posisjon": "Action {n} of {av}",
   "ui.policy.slett_tittel": "Undo this policy",
   "ui.policy.slett": "Delete policy",
-  "ui.policy.slett_forklaring": "If the policy was created by mistake, it can be deleted as long as it has never governed a decision. Drafts and attestations remain as history, and the version numbers become available again.",
+  "ui.policy.slett_forklaring": "If the policy was created by mistake, it can be deleted as long as it has never governed a decision. Drafts and attestations remain as history. The version numbers become available again — except a version that approvers attested against: it remains as inactive history so the attestation can still be read, and its number stays occupied.",
   "ui.policy.flere_aktive": "Several policies are active at the same time for this workspace. This is a fault state: the enforced policy cannot be shown until it is resolved. If one of them was created by mistake, it can be deleted here as long as it has never governed a decision.",
   "ui.policy.korrupt_aktiv": "The active policy cannot be read — its content is not valid, so the policy cannot be shown. This is a fault state: enforcement rejects decisions for as long as it stands. If the policy was created by mistake, it can be deleted here as long as it has never governed a decision.",
   "ui.policy.aktive": "Policies currently active",

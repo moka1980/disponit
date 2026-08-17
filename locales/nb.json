@@ -716,7 +716,7 @@
   "ui.editor.handling_posisjon": "Handling {n} av {av}",
   "ui.policy.slett_tittel": "Angre policyen",
   "ui.policy.slett": "Slett policy",
-  "ui.policy.slett_forklaring": "Er policyen opprettet ved en feil, kan den slettes så lenge den aldri har styrt en beslutning. Utkast og attestasjoner blir stående som historikk, og versjonsnumrene blir ledige igjen.",
+  "ui.policy.slett_forklaring": "Er policyen opprettet ved en feil, kan den slettes så lenge den aldri har styrt en beslutning. Utkast og attestasjoner blir stående som historikk. Versjonsnumrene blir ledige igjen — unntatt en versjon som godkjennere har attestert mot: den blir stående som inaktiv historikk, så attestasjonen fortsatt kan leses, og nummeret forblir opptatt.",
   "ui.policy.flere_aktive": "Flere policyer står aktive samtidig for arbeidsområdet. Det er en feiltilstand: policyen som håndheves kan ikke vises før den er ryddet opp. Er en av dem opprettet ved en feil, kan den slettes her så lenge den aldri har styrt en beslutning.",
   "ui.policy.korrupt_aktiv": "Den aktive policyen kan ikke leses — innholdet er ikke gyldig, og policyen kan derfor ikke vises. Det er en feiltilstand: håndhevingen avviser beslutninger så lenge den står. Er policyen opprettet ved en feil, kan den slettes her så lenge den aldri har styrt en beslutning.",
   "ui.policy.aktive": "Policyer som står aktive",
