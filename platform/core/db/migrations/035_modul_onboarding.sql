@@ -805,7 +805,7 @@ SET LOCAL ROLE disponit_modul_eier;
 CREATE OR REPLACE FUNCTION varsle_tokenfamilie_utlop(p_tenant TEXT)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_n INT := 0; f RECORD; b RECORD; t INT; v_kanal TEXT; v_id BIGINT;
+DECLARE v_n INT := 0; f RECORD; b RECORD; t INT; v_kanal TEXT; v_rader INT;
 BEGIN
     -- varsel/brukermedlemskap står under FORCE RLS med tenant-GUC-en som
     -- predikat — funksjonen setter den LOKALT for sin egen transaksjon.
@@ -855,14 +855,16 @@ BEGIN
                         CASE WHEN COALESCE(v_kanal, 'epost_og_portal')
                                   = 'kun_portal'
                              THEN 'ikke_aktuelt' ELSE 'koet' END)
-                     ON CONFLICT DO NOTHING
-                  RETURNING id INTO v_id;
-                -- INTO setter v_id til NULL når ON CONFLICT slukte raden,
-                -- så telleren er FAKTISK opprettede varsler — ikke antall
-                -- familier sveipen så på.
-                IF v_id IS NOT NULL THEN
-                    v_n := v_n + 1;
-                END IF;
+                     ON CONFLICT DO NOTHING;
+                -- ROW_COUNT og ikke RETURNING: eieren har INSERT på
+                -- `varsel`, ikke SELECT, og RETURNING ville krevd
+                -- lesetilgang på kolonnen. En skrivefunksjon skal ikke
+                -- måtte kunne LESE hele varseltabellen for å telle sine
+                -- egne innsettinger. ON CONFLICT DO NOTHING gir 0 når
+                -- raden alt fantes, så telleren er FAKTISK opprettede
+                -- varsler — ikke antall familier sveipen så på.
+                GET DIAGNOSTICS v_rader = ROW_COUNT;
+                v_n := v_n + v_rader;
             END LOOP;
         END LOOP;
     END LOOP;

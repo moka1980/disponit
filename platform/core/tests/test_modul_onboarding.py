@@ -412,6 +412,10 @@ def test_tilbakekalling_kapper_rotasjonsnaaden_umiddelbart():
         assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
                           (mac,)).fetchone() is None
         rt.rollback()
+        # FRISK snapshot: `now()` er transaksjonens starttid, og m-en har
+        # stått åpen siden før tilbakekallingen — uten dette sammenlignes
+        # fristen med en klokke som er eldre enn den.
+        m.rollback()
         rad = m.execute(
             "SELECT tilbakekalt_ts <= now(), tilbakekalt_grunn FROM"
             " modultoken WHERE token_id=%s", (tid,)).fetchone()
