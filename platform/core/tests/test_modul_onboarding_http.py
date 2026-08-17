@@ -384,6 +384,61 @@ def test_testprefikset_utledes_aldri_for_produksjon(migrator, miljo,
 
 
 @pg
+def test_testprefikset_ser_tokenets_eget_miljo_ikke_kontraktens(migrator,
+                                                                miljo,
+                                                                monkeypatch):
+    """Codex P2: test-artefaktporten spurte «finnes denne kontrakten i
+    produksjon et sted?» og ikke «hvilket miljø claimet nå?». Er samme
+    kontrakt deployet i BÅDE staging og produksjon, forsvant staging-
+    deploymentens `test.`-type i det produksjonsdeploymenten kom til —
+    selvtesten sluttet å virke uten at noe sa fra. Miljøet står i
+    modultokenet. Kontroll: la `er_produksjon` gå på EXISTS-oppslaget for
+    ModulAutentisert igjen, så blir denne rød."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    prefiks = f"h{_u()}."
+    _kjent_type(monkeypatch, typenavn, prefiks)
+    modul, rel = _kjede(migrator, typenavn=typenavn, miljo_="staging",
+                        artefakttype=f"test.o{_u()}.selvtest")
+    # SAMME release og kontrakt, også deployet i produksjon og claiming.
+    khash = migrator.execute(
+        "SELECT kontrakt_hash FROM modulrelease WHERE modul_id=%s"
+        " AND release_id=%s", (modul, rel)).fetchone()[0]
+    migrator.execute(
+        "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
+        "kontrakt_hash,miljo,livslop) VALUES (%s,%s,1,%s,'produksjon',"
+        "'claiming')", (modul, rel, khash))
+    sak, logg = _lag_sak(migrator, TENANT)
+    _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=typenavn,
+                      eiermodul=modul, handling=prefiks + "send")
+    migrator.commit()
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel,
+                                    miljo_="staging")
+            r = c.post("/v1/oppdrag/claim", json={},
+                       headers={"authorization": f"Bearer {mtk}"})
+            assert r.status_code == 200, r.text
+            svar = r.json()
+            assert svar["opplasting"] is not None, (
+                "staging-tokenet mistet selvtest-kapabiliteten fordi"
+                " kontrakten OGSÅ står i produksjon")
+            assert svar["opplasting"]["artefakttype"].startswith("test.")
+            # ... og bindingen bærer tokenets EGEN release.
+            _sett_kontekst(migrator, TENANT)
+            binding = migrator.execute(
+                "SELECT release_id FROM artefaktkapabilitet WHERE jti=%s",
+                (svar["opplasting"]["jti"],)).fetchone()
+            migrator.rollback()
+            assert binding == (rel,), binding
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
 def test_modultoken_faar_bruke_kapabilitetene_claimen_delte_ut(migrator, miljo,
                                                                monkeypatch):
     """Codex P1: et modultoken bærer ingen scopes, så de gamle

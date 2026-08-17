@@ -1515,9 +1515,28 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
                 " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
                 (tenant, opp_id)).fetchone()
+            #
+            # Codex (P2): utledningen over er for LEGACY-api-tokener, som
+            # ikke bærer noen deployment i det hele tatt. Et modultoken
+            # BÆRER sin — release og miljø ble bundet ved onboardingen, og
+            # claimen har alt verifisert at nettopp den deploymenten er
+            # `claiming` med gjeldende epoch. Da er et oppslag som ikke kan
+            # skille staging fra produksjon både unødvendig og feil: er
+            # samme kontrakt deployet i BEGGE miljøer, ga det «tvetydig
+            # release» (ingen kapabilitet) eller — verre — produksjonssvaret
+            # på et staging-token, se `er_produksjon` under.
+            if isinstance(auth, ModulAutentisert):
+                autentisert_release, autentisert_miljo = (auth.release_id,
+                                                          auth.miljo)
+            else:
+                autentisert_release = autentisert_miljo = None
             if oppdragsrad is not None and oppdragsrad[0] is not None \
-                    and oppdragsrad[1] is not None and "," not in oppdragsrad[1]:
+                    and (autentisert_release is not None
+                         or (oppdragsrad[1] is not None
+                             and "," not in oppdragsrad[1])):
                 (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
+                if autentisert_release is not None:
+                    o_release = autentisert_release
                 # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
                 # modulen + kontrakten. Finnes ingen registrert type, utstedes
                 # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
@@ -1531,18 +1550,29 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 # fail-closed regel som RELEASE-tvetydigheten over: er valget
                 # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
                 # `test.`-prefikset er reservert (035 §8): det utledes
-                # ALDRI når kontraktens claiming-deployment står i
-                # produksjon — selvtest-artefakter skal ikke kunne bære
-                # kundedata, og en testtype i produksjonskjeden er en
-                # konfigurasjonsfeil, ikke en fullmakt. Filteret står i
-                # SQL-en så «nøyaktig én type»-regelen teller de typene som
-                # faktisk kan utstedes.
-                er_produksjon = bool(conn.execute(
-                    "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
-                    " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
-                    "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
-                    "   AND dp.miljo='produksjon')",
-                    (o_modul, o_kv, o_khash)).fetchone()[0])
+                # ALDRI når DENNE claimen kommer fra produksjon —
+                # selvtest-artefakter skal ikke kunne bære kundedata, og en
+                # testtype i produksjonskjeden er en konfigurasjonsfeil,
+                # ikke en fullmakt. Filteret står i SQL-en så «nøyaktig én
+                # type»-regelen teller de typene som faktisk kan utstedes.
+                #
+                # Codex (P2): porten spør om DEN AUTENTISERTE claimens
+                # miljø, ikke om kontrakten finnes i produksjon et sted.
+                # Med et modultoken står miljøet i tokenet. Uten et
+                # modultoken finnes ingen autentisert deployment å spørre,
+                # og da er «finnes den i produksjon» det nærmeste
+                # fail-closed svaret — et legacy-token er miljøløst, og å
+                # anta staging for det ville vært å gjette den veien som
+                # slipper mest ut.
+                if autentisert_miljo is not None:
+                    er_produksjon = autentisert_miljo == "produksjon"
+                else:
+                    er_produksjon = bool(conn.execute(
+                        "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
+                        " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
+                        "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
+                        "   AND dp.miljo='produksjon')",
+                        (o_modul, o_kv, o_khash)).fetchone()[0])
                 typerader = conn.execute(
                     "SELECT artefakttype FROM artefakttype_register"
                     " WHERE eiermodul=%s AND kontraktversjon=%s"
