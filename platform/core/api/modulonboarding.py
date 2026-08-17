@@ -279,11 +279,20 @@ def roter_endepunkt(tjeneste, request: Request) -> Response:
         except psycopg.errors.InvalidParameterValue:
             conn.rollback()
             return _feilsvar("onboarding_avvist", rid)
+        # Codex P2: den FAKTISKE fristen, ikke påstanden «15 minutter».
+        # Nåden er et kvarter fra nå bare når forgjengeren var urørt: sto
+        # den alt i et nådevindu fra en tidligere hendelse, gjelder den
+        # gamle fristen, og et gjentatt forsøk sent i nåden arver den samme.
+        # Verifikasjonen håndhever dessuten `utloper`, så en rotasjon rett
+        # før tokenets egen utløp — eller mot familiehorisonten — gir
+        # sekunder, ikke et kvarter. En klient som planla overlappende
+        # overlevering på et kvarter som ikke fantes, fikk overleveringen
+        # kuttet midt i. Serveren regner fristen under låsen og sier den.
         return kanonisk_json({
             "token": f"mtk_{ny_id}.{ny_secret}",
             "utloper": rad[1].isoformat(),
             "familie_utloper": rad[2].isoformat(),
-            "forgjenger_gyldig_til": "15 minutter",
+            "forgjenger_gyldig_til": rad[3].isoformat(),
             "request_id": rid}, 201, {"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)

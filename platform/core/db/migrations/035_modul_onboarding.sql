@@ -583,15 +583,30 @@ $$;
 -- Formen endret seg (ny parameter), så den gamle signaturen må vekk før
 -- REPLACE — ellers står to overlaster igjen og 5-argumentskallet blir
 -- tvetydig.
+--
+-- OG SVARET SIER NÅR FORGJENGEREN FAKTISK DØR (Codex P2). Funksjonen
+-- returnerer nå den fristen i stedet for at HTTP-laget påstår «15
+-- minutter». Nåden er 15 minutter FRA NÅ bare når forgjengeren var
+-- urørt: var den alt i et nådevindu fra en tidligere hendelse, står den
+-- gamle fristen (triggeren gjør et satt tilbakekalt_ts uforanderlig), og
+-- et gjentatt forsøk sent i nåden arver den samme. Verifikasjonen
+-- håndhever dessuten `utloper`, så roterer noen minuttet før tokenets
+-- egen utløp — eller mot familiehorisonten, som `utloper` er kappet mot —
+-- er forgjengeren gyldig i sekunder, ikke i et kvarter. En klient som
+-- planla overlappende overlevering på et kvarter som ikke fantes, ville
+-- fått den overleveringen kuttet midt i.
 DROP FUNCTION IF EXISTS roter_modultoken(UUID, UUID, TEXT, INT, TEXT);
+-- Returtypen fikk en kolonne til, og en ren REPLACE kan ikke endre den.
+DROP FUNCTION IF EXISTS roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID);
 CREATE OR REPLACE FUNCTION roter_modultoken(
     p_forgjenger UUID, p_ny_token_id UUID, p_ny_mac TEXT,
     p_token_dager INT, p_aktor TEXT, p_rotasjon_id UUID DEFAULT NULL)
 RETURNS TABLE (token_id UUID, utloper TIMESTAMPTZ,
-               familie_utloper TIMESTAMPTZ)
+               familie_utloper TIMESTAMPTZ,
+               forgjenger_gyldig_til TIMESTAMPTZ)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE g RECORD; v_utloper TIMESTAMPTZ; v_modul TEXT; e RECORD; s RECORD;
-        v_forsok SMALLINT := 1;
+        v_forsok SMALLINT := 1; v_forgjenger_til TIMESTAMPTZ;
 BEGIN
     -- MODULLÅSEN FØRST (Codex P1) — se `innlos_onboarding`. Uten den kunne
     -- rotasjonen legge inn en etterfølger som nødstoppets alt startede
@@ -699,11 +714,19 @@ BEGIN
     -- Var den alt i nådevindu (grace fra en tidligere hendelse), står den
     -- fristen — triggeren gjør et satt tilbakekalt_ts uforanderlig.
     IF g.tilbakekalt_ts IS NULL THEN
+        v_forgjenger_til := now() + interval '15 minutes';
         UPDATE public.modultoken
-           SET tilbakekalt_ts = now() + interval '15 minutes',
+           SET tilbakekalt_ts = v_forgjenger_til,
                tilbakekalt_grunn = 'rotert'
          WHERE public.modultoken.token_id = p_forgjenger;
+    ELSE
+        v_forgjenger_til := g.tilbakekalt_ts;
     END IF;
+    -- DEN FAKTISKE FRISTEN (Codex P2), ikke nåden alene: `verifiser_modultoken`
+    -- håndhever BÅDE tilbakekallingen og `utloper`, så den første av dem er
+    -- fasiten. Familiehorisonten er allerede inne i `utloper` (CHECK-en
+    -- `token_innenfor_familie` kapper den mot horisonten).
+    v_forgjenger_til := LEAST(v_forgjenger_til, g.utloper);
     INSERT INTO public.modultoken_hendelse
         (onboarding_id, token_id, modul_id, miljo, release_id, hendelse,
          aktor, detalj)
@@ -712,7 +735,8 @@ BEGIN
                 jsonb_build_object('forgjenger', p_forgjenger::text,
                                    'rotasjon_id', p_rotasjon_id::text,
                                    'forsok', v_forsok));
-    RETURN QUERY SELECT p_ny_token_id, v_utloper, g.familie_utloper;
+    RETURN QUERY SELECT p_ny_token_id, v_utloper, g.familie_utloper,
+                        v_forgjenger_til;
 END $$;
 
 -- Eksplisitt tilbakekalling (`modules:onboard`): umiddelbar, auditert

@@ -503,6 +503,82 @@ def test_en_forgjenger_faar_noyaktig_en_etterfolger():
 
 
 @pg
+def test_rotasjonen_returnerer_forgjengerens_faktiske_frist():
+    """Codex P2: svaret sa alltid «15 minutter», uansett hva forgjengeren
+    faktisk hadde igjen. Nåden er et kvarter FRA NÅ bare når forgjengeren
+    var urørt; sto den alt i et nådevindu fra en tidligere hendelse, gjelder
+    den gamle fristen (et satt tilbakekalt_ts kan bare fremskyndes). Og
+    `verifiser_modultoken` håndhever `utloper` også, så en rotasjon rett før
+    tokenets egen utløp gir sekunder, ikke et kvarter. En klient som planla
+    overlappende overlevering på et kvarter som ikke fantes, fikk
+    overleveringen kuttet midt i.
+
+    Tre tilfeller, én funksjon: det urørte tokenet (nåden gjelder), det som
+    utløper før nåden er omme (utløpet gjelder), og det gjentatte forsøket
+    (arver forgjengerens frist, den forlenges ikke).
+
+    Kontroll: sett `forgjenger_gyldig_til` til `now() + interval
+    '15 minutes'` uten LEAST-en, så blir denne rød."""
+    m = _c()
+    rt = _rt()
+    try:
+        # 1. Urørt forgjenger: fristen ER nåden, og den er et kvarter unna.
+        modul, tid, _ = _token(rt, m)
+        ny = rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                        (tid, uuid.uuid4(), _hex64())).fetchone()
+        rt.commit()
+        faktisk = m.execute(
+            "SELECT tilbakekalt_ts FROM modultoken WHERE token_id=%s",
+            (tid,)).fetchone()[0]
+        assert ny[3] == faktisk, (ny[3], faktisk)
+        # `clock_timestamp`, ikke `now()`: sistnevnte er transaksjonens
+        # starttid, og denne forbindelsen har alt stått en stund.
+        naa = m.execute("SELECT clock_timestamp()").fetchone()[0]
+        assert 840 < (ny[3] - naa).total_seconds() <= 900, ny[3]
+        m.rollback()
+
+        # 2. Forgjenger som utløper FØR nåden er omme: utløpet er fristen.
+        modul2, rel2, _, _ = _deployment_med_typer(m)
+        o2, t2 = uuid.uuid4(), uuid.uuid4()
+        m.execute(
+            "INSERT INTO modul_onboarding (onboarding_id,modul_id,miljo,"
+            "release_id,hemmelighet_hash,familie_utloper,utstedt_av,utloper,"
+            "innlost_ts) VALUES (%s,%s,'staging',%s,%s,"
+            "now()+interval '4 minutes','t',now(),now())",
+            (o2, modul2, rel2, _hex64()))
+        m.execute(
+            "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+            "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+            "utloper) SELECT %s,%s,onboarding_id,familie_utloper,modul_id,"
+            "miljo,release_id,0,familie_utloper FROM modul_onboarding"
+            " WHERE onboarding_id=%s", (t2, _hex64(), o2))
+        m.commit()
+        kort = m.execute("SELECT utloper FROM modultoken WHERE token_id=%s",
+                         (t2,)).fetchone()[0]
+        ny2 = rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                         (t2, uuid.uuid4(), _hex64())).fetchone()
+        rt.commit()
+        assert ny2[3] == kort, (ny2[3], kort)
+
+        # 3. Gjentatt forsøk: forgjengeren står alt i nåde fra forsøk 1, og
+        #    den fristen FORLENGES IKKE av at det kommer et forsøk til.
+        modul3, tid3, _ = _token(rt, m)
+        rot = uuid.uuid4()
+        a1 = rt.execute(
+            "SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+            (tid3, uuid.uuid4(), _hex64(), rot)).fetchone()
+        rt.commit()
+        a2 = rt.execute(
+            "SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+            (tid3, uuid.uuid4(), _hex64(), rot)).fetchone()
+        rt.commit()
+        assert a2[3] == a1[3], (a1[3], a2[3])
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_rotasjon_kappes_mot_familiehorisonten_og_stopper_ved_den():
     """Portene 27/29: nær fristen → utloper == familie_utloper, aldri
     senere; etter fristen → avvist, ny onboarding kreves."""
