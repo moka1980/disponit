@@ -701,6 +701,80 @@ def test_kapabiliteten_innloses_kun_av_deploymenten_som_claimet(migrator,
         a.tjeneste.pool.lukk()
 
 
+@pg
+def test_kvitteringskapabiliteten_innloses_kun_av_deploymenten_som_claimet(
+        migrator, miljo, monkeypatch):
+    """Codex P1: samme hull som over, på KVITTERINGEN — og der er innsatsen
+    høyere, siden kvitteringen avslutter oppdraget. Kvitteringsveien slipper
+    alle modultokener for modulen forbi scope-porten (retten ER
+    kapabilitetens), og innløsningen sammenlignet bare `auth.rolle`, som er
+    modulens id. En delt eller feilrutet `kvittering_jti` lot dermed
+    staging-deploymenten levere resultatet for produksjonsdeploymentens
+    claim. Kapabiliteten bærer nå miljø + release, og innløsningen krever
+    HELE den autentiserte deploymenten.
+
+    Porten prøves der den er: staging-tokenet skal falle på
+    `kapabilitet_ugyldig` (401), mens produksjonstokenet kommer forbi den og
+    videre til SIGNATUR-porten — som er den neste ekte porten på veien.
+
+    Kontroll: send NULL i stedet for `d_miljo`/`d_release` fra
+    `_ingest_kvittering`, eller fjern miljøleddene i
+    `innlos_kvitteringskapabilitet`, så blir denne rød."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    prefiks = f"h{_u()}."
+    _kjent_type(monkeypatch, typenavn, prefiks)
+    modul, rel = _kjede(migrator, typenavn=typenavn, miljo_="produksjon")
+    khash = migrator.execute(
+        "SELECT kontrakt_hash FROM modulrelease WHERE modul_id=%s"
+        " AND release_id=%s", (modul, rel)).fetchone()[0]
+    migrator.execute(
+        "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
+        "kontrakt_hash,miljo,livslop) VALUES (%s,%s,1,%s,'staging',"
+        "'claiming')", (modul, rel, khash))
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp_id, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
+                                  oppdragstype=typenavn, eiermodul=modul,
+                                  handling=prefiks + "send")
+    migrator.commit()
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            prod = _onboard_token(c, migrator, modul, rel,
+                                  miljo_="produksjon")[0]
+            stg = _onboard_token(c, migrator, modul, rel, miljo_="staging")[0]
+            r = c.post("/v1/oppdrag/claim", json={},
+                       headers={"authorization": f"Bearer {prod}"})
+            assert r.status_code == 200, r.text
+            jti = r.json()["kvittering_jti"]
+            kropp = {"kvittering_jti": jti, "oppdrag_id": opp_id,
+                     "resultat": "ok"}
+
+            r = c.post("/v1/oppdrag/kvittering", json=kropp,
+                       headers={"authorization": f"Bearer {stg}"})
+            assert r.status_code == 401 and \
+                r.json()["feil"] == "kapabilitet_ugyldig", r.text
+
+            # Deploymenten som claimet kommer forbi kapabilitetsporten og
+            # helt frem til signaturen (kroppen her er usignert).
+            r = c.post("/v1/oppdrag/kvittering", json=kropp,
+                       headers={"authorization": f"Bearer {prod}"})
+            assert r.status_code == 403 and \
+                r.json()["feil"] == "kvittering_signatur_ugyldig", r.text
+
+            # Tabellen eies av m37_claimer; migrator er medlem WITH INHERIT
+            # FALSE og må ta rollen eksplisitt for å lese den.
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            assert migrator.execute(
+                "SELECT miljo, release_id FROM kvitteringskapabiliteter"
+                " WHERE jti=%s", (jti,)).fetchone() == ("produksjon", rel)
+            migrator.rollback()
+    finally:
+        a.tjeneste.pool.lukk()
+
+
 def test_bootstrap_veien_kan_ikke_utstede_claimdyktige_tokener():
     """Port 24 (deploy-port): token-cli nekter `orders:execute`-scopes —
     claim-fullmakt kommer KUN fra onboardingen. Kontroll: fjern vaktleddet i

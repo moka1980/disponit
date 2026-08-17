@@ -1114,6 +1114,162 @@ RESET ROLE;
 -- `utsted_artefaktkapabilitet` leser deploymentregisteret (som 017 måtte
 -- gi den `modulrelease` for release-porten). Kjøres som migrator (eier).
 GRANT SELECT ON moduldeployment TO disponit_domene_eier;
+
+-- ------------------------------------------------------------
+-- 5c. KVITTERINGSkapabiliteten bindes til deploymenten som claimet
+--     (Codex P1)
+--
+-- Samme hull som 5b lukket for opplastingen, på den andre kapabiliteten —
+-- og her er innsatsen høyere: kvitteringen AVSLUTTER oppdraget.
+--
+-- 005 binder kvitteringskapabiliteten til oppdraget og til `modul_id`, og
+-- innløsningen sammenligner nettopp `modul_id`. For et modultoken er det
+-- MODULENS id, ikke deploymentens — den er DELT mellom alle levende
+-- deployments av modulen (staging og produksjon, eller to releaser under
+-- hver sin kontraktversjon), som hver har sitt eget token.
+-- Kvitteringsveien slipper i tillegg alle modultokener forbi scope-porten
+-- med vilje (retten ER kapabilitetens, og den er smalere enn scopet).
+-- Blir en `kvittering_jti` delt eller feilrutet, kunne altså en
+-- staging-deployment — eller en utgått release som fortsatt holder et
+-- levende token — levere resultatet for arbeid produksjonsdeploymenten
+-- claimet, og fullføre eller på annen måte mutere den jobben. Til forskjell
+-- fra opplastingskapabiliteten registrerte denne aldri hvilken deployment
+-- som faktisk claimet, så det fantes ingenting å sammenligne mot.
+--
+-- Regelen er 5b-s, ord for ord: kapabiliteten stempler deploymenten den
+-- ble utstedt til, og innløsningen krever HELE den autentiserte
+-- deploymenten. NULL = ingen autentisert deployment (legacy api-token) og
+-- matcher kun rader som selv er deploymentløse — fail-closed begge veier.
+-- ------------------------------------------------------------
+-- ALT i dette avsnittet kjøres som `disponit_m37_claimer`, ikke som
+-- migrator: både tabellen og de to funksjonene EIES av den rollen (se
+-- designtabellen i eierskap-reparasjon.sql). ALTER TABLE og CREATE TRIGGER
+-- krever eierskap, og migrators medlemskap er `WITH INHERIT FALSE` — uten
+-- SET LOCAL ROLE feiler avsnittet på rettigheter. Det er forskjellen fra
+-- 5b, der `artefaktkapabilitet` eies av migrator.
+SET LOCAL ROLE disponit_m37_claimer;
+
+ALTER TABLE kvitteringskapabiliteter ADD COLUMN IF NOT EXISTS miljo TEXT;
+ALTER TABLE kvitteringskapabiliteter ADD COLUMN IF NOT EXISTS release_id TEXT;
+
+-- Bindingsfelt = uforanderlig. Egen trigger i stedet for å utvide 005s
+-- statusmaskin herfra: samme valg som `artefaktkapabilitet_miljo` i 5b —
+-- mindre å drifte, og de to kan ikke komme i utakt ved en senere endring i
+-- 005. En kapabilitet som kunne få deploymenten sin omskrevet i ettertid
+-- ville vært nøyaktig den porten dette avsnittet lukker, bare med et
+-- UPDATE i stedet for en feilrutet jti.
+CREATE OR REPLACE FUNCTION kvitteringskapabilitet_deployment_frosset()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.miljo IS DISTINCT FROM OLD.miljo
+       OR NEW.release_id IS DISTINCT FROM OLD.release_id THEN
+        RAISE EXCEPTION 'kvitteringskapabiliteter: deploymentbindingen er'
+            ' uforanderlig';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS kvitteringskapabilitet_deployment
+    ON kvitteringskapabiliteter;
+CREATE TRIGGER kvitteringskapabilitet_deployment BEFORE UPDATE
+    ON kvitteringskapabiliteter
+    FOR EACH ROW EXECUTE FUNCTION kvitteringskapabilitet_deployment_frosset();
+
+-- Utstedelsen: to haleargumenter, DEFAULT NULL så kall som ennå ikke
+-- sender dem (legacy api-token) fortsatt treffer. Formen endret seg, så
+-- den gamle signaturen må vekk før REPLACE — ellers står to overlaster
+-- igjen og de gamle kallene blir tvetydige.
+DROP FUNCTION IF EXISTS utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT);
+CREATE OR REPLACE FUNCTION utsted_kvitteringskapabilitet(
+        p_oppdrag_id BIGINT, p_owner_claim_id TEXT, p_owner_generation INT,
+        p_jti TEXT, p_miljo TEXT DEFAULT NULL,
+        p_release_id TEXT DEFAULT NULL)
+RETURNS TABLE (jti TEXT, utloper TIMESTAMPTZ)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE r RECORD;
+BEGIN
+    IF p_jti IS NULL OR p_jti !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'utsted_kvitteringskapabilitet: ugyldig jti-format';
+    END IF;
+    SELECT o.tenant, o.eiermodul, o.evidensfrist INTO r
+      FROM public.oppdrag o
+     WHERE o.id = p_oppdrag_id
+       AND o.owner_claim_id = p_owner_claim_id
+       AND o.owner_generation = p_owner_generation
+       AND o.status = 'plukket';
+    IF NOT FOUND THEN
+        RETURN;   -- ikke vår claim: ingen kapabilitet
+    END IF;
+    -- 035: er miljøet oppgitt, er kalleren en autentisert deployment, og da
+    -- MÅ paret være en faktisk deployment av eiermodulen. Uten denne porten
+    -- kunne en kapabilitet stemples med en deployment som ikke finnes, og
+    -- innløsningsporten under ville sluppet inn den som gjettet den samme
+    -- verdien. Halvt oppgitt er ikke oppgitt: miljø uten release ville gitt
+    -- en binding innløsningen ikke kan sammenligne fullt ut.
+    IF p_miljo IS NOT NULL OR p_release_id IS NOT NULL THEN
+        IF p_miljo IS NULL OR p_release_id IS NULL THEN
+            RAISE EXCEPTION 'utsted_kvitteringskapabilitet: miljo og release'
+                ' oppgis sammen eller ikke i det hele tatt'
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        PERFORM 1 FROM public.moduldeployment d
+         WHERE d.modul_id = r.eiermodul AND d.release_id = p_release_id
+           AND d.miljo = p_miljo;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'utsted_kvitteringskapabilitet: %/% er ikke'
+                ' deployet i miljo %', r.eiermodul, p_release_id, p_miljo
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+    END IF;
+    INSERT INTO public.kvitteringskapabiliteter
+        (jti, tenant, oppdrag_id, modul_id, owner_claim_id, owner_generation,
+         miljo, release_id, utloper)
+    VALUES (p_jti, r.tenant, p_oppdrag_id, r.eiermodul, p_owner_claim_id,
+            p_owner_generation, p_miljo, p_release_id, r.evidensfrist);
+    jti := p_jti;
+    utloper := r.evidensfrist;
+    RETURN NEXT;
+END $$;
+
+-- Innløsningen: 005s kropp, med deploymentporten. `p_miljo`/`p_release_id`
+-- er den AUTENTISERTE deploymenten, ikke noe kalleren kan velge fritt for
+-- seg selv — HTTP-laget leser dem av modultokenet. Er de NULL (legacy
+-- api-token), matcher innløsningen kun kapabiliteter som selv er
+-- deploymentløse; et modultokens kapabilitet kan altså ikke hentes ut av en
+-- miljøløs credential heller.
+DROP FUNCTION IF EXISTS innlos_kvitteringskapabilitet(TEXT, TEXT);
+CREATE OR REPLACE FUNCTION innlos_kvitteringskapabilitet(
+        p_jti TEXT, p_modul_id TEXT, p_miljo TEXT DEFAULT NULL,
+        p_release_id TEXT DEFAULT NULL)
+RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, owner_claim_id TEXT,
+               owner_generation INT, status TEXT, resultathash TEXT)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+    SELECT k.tenant, k.oppdrag_id, k.owner_claim_id, k.owner_generation,
+           k.status, k.resultathash
+      FROM public.kvitteringskapabiliteter k
+     WHERE k.jti = p_jti
+       AND k.modul_id = p_modul_id
+       AND k.miljo IS NOT DISTINCT FROM p_miljo
+       -- Miljøet skiller de to verdenene; er det satt, er kalleren en
+       -- autentisert deployment og DA må releasen stemme også (to releaser
+       -- av samme modul kan være claiming i samme miljø under hver sin
+       -- kontraktversjon).
+       AND (p_miljo IS NULL
+            OR k.release_id IS NOT DISTINCT FROM p_release_id)
+       AND k.status <> 'feilet'
+       AND k.utloper > pg_catalog.now()
+$$;
+
+REVOKE ALL ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+RESET ROLE;
+-- SECURITY DEFINER kjører som m37_claimer: den nye deploymentporten i
+-- `utsted_kvitteringskapabilitet` leser deploymentregisteret. Kjøres som
+-- migrator (eier av tabellen).
+GRANT SELECT ON moduldeployment TO disponit_m37_claimer;
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT) FROM PUBLIC;

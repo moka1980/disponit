@@ -65,6 +65,15 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'frigi_hengende_kapabiliteter()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_utlopte_claims()',                           'disponit_m37_claimer'),
     ('FUNCTION', 'innlos_kvitteringskapabilitet(text,text)',         'disponit_m37_claimer'),
+    -- 035 la til haleargumentene for DEPLOYMENTEN i begge kvitterings-
+    -- funksjonene, som for artefaktkapabiliteten lenger nede. BEGGE formene
+    -- står her: reparasjonen kjører FØR migrer.py, så en base som ennå ikke
+    -- har kjørt 035 har de gamle signaturene installert og eid av
+    -- m37_claimer. Sto de ikke her, ville steg 2 flyttet dem til migrator —
+    -- og 035, som dropper dem under SET LOCAL ROLE disponit_m37_claimer,
+    -- ville feilet på eierskap.
+    ('FUNCTION', 'innlos_kvitteringskapabilitet(text,text,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'kvitteringskapabilitet_deployment_frosset()',       'disponit_m37_claimer'),
     ('FUNCTION', 'kapabilitet_innenfor_claim()',                     'disponit_m37_claimer'),
     ('FUNCTION', 'kapabilitet_statusmaskin()',                       'disponit_m37_claimer'),
     ('FUNCTION', 'knytt_verifikasjonsoppdrag(text,bigint,text,integer,bigint)', 'disponit_m37_claimer'),
@@ -79,6 +88,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'tenanter_uten_policysnapshot()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'utsted_arbeidskapabilitet(text,integer,text,integer)', 'disponit_m37_claimer'),
     ('FUNCTION', 'utsted_kvitteringskapabilitet(bigint,text,integer,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'utsted_kvitteringskapabilitet(bigint,text,integer,text,text,text)', 'disponit_m37_claimer'),
     -- 013 (PR-013): den herdede aktiveringsfunksjonen. Eid av
     -- disponit_policy_eier fordi policyer/policy_hode er off-limits for runtime
     -- (runtime får KUN EXECUTE). Ny privilegert eier — paritetstesten dekker den.

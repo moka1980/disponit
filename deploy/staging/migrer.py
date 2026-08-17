@@ -169,8 +169,12 @@ GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT, TEXT, TEX
 GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, JSONB, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT) TO {rolle};
-GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT) TO {rolle};
-GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
+-- 035: begge fikk haleargumenter for DEPLOYMENTEN (miljø + release).
+-- Signaturen her MÅ følge migrasjonen — 035 dropper de gamle formene, og
+-- en GRANT mot en signatur som ikke finnes er en hard feil, ikke en
+-- advarsel.
+GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 -- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.

@@ -1507,11 +1507,23 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                     return _feilsvar("db_utilgjengelig", rid)
                 verifikasjonsgen = vg[0]
 
+            # Codex P1: kapabiliteten stempler DEPLOYMENTEN som claimet, ikke
+            # bare modulen. `modul_id` er delt mellom alle levende
+            # deployments av modulen, og kvitteringsveien slipper dem alle
+            # forbi scope-porten (retten er kapabilitetens) — uten miljø og
+            # release å sammenligne mot kunne en staging-deployment, eller en
+            # utgått release med et fortsatt levende token, levere resultatet
+            # for produksjonsdeploymentens claim og avslutte den jobben.
+            # `claim_miljo`/`claim_release` er tokenets, ikke noe kalleren
+            # oppgir; med et legacy-api-token er de NULL, og kapabiliteten
+            # blir deploymentløs (og kan da bare innløses av en like
+            # deploymentløs credential).
             kvittering_jti = secrets.token_hex(16)
             kap = conn.execute(
                 "SELECT jti, utloper FROM utsted_kvitteringskapabilitet("
-                "%s,%s,%s,%s)",
-                (opp_id, claim_id, owner_gen, kvittering_jti)).fetchone()
+                "%s,%s,%s,%s,%s,%s)",
+                (opp_id, claim_id, owner_gen, kvittering_jti,
+                 claim_miljo, claim_release)).fetchone()
             if kap is None:
                 conn.rollback()
                 tjeneste.logg.hendelse("db_utilgjengelig", rid, tenant,
@@ -1949,10 +1961,24 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
 
     # 1. Kapabiliteten. `modul_id` sammenlignes inne i funksjonen, så en
     #    annen modul kan ikke innløse en kapabilitet den har fått tak i.
+    #
+    #    Codex P1: `auth.rolle` er MODULENS id, og den er delt mellom alle
+    #    levende deployments av modulen — staging og produksjon, eller to
+    #    releaser under hver sin kontraktversjon, hver med sitt eget
+    #    modultoken. Kvitteringsveien slipper dem alle forbi scope-porten
+    #    med vilje (retten ER kapabilitetens), så modulnavnet alene var
+    #    ingen port: en delt eller feilrutet `kvittering_jti` lot en annen
+    #    deployment enn den som claimet levere resultatet og avslutte
+    #    jobben. Innløsningen krever derfor HELE den autentiserte
+    #    deploymenten. Med et legacy-api-token finnes ingen — NULL matcher
+    #    da kun kapabiliteter som selv er deploymentløse (fail-closed begge
+    #    veier), som på opplastingsveien.
+    d_miljo = getattr(auth, "miljo", None)
+    d_release = getattr(auth, "release_id", None)
     kap = conn.execute(
         "SELECT tenant, oppdrag_id, owner_claim_id, owner_generation, status,"
-        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s)",
-        (jti, auth.rolle)).fetchone()
+        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
+        (jti, auth.rolle, d_miljo, d_release)).fetchone()
     if kap is None:
         conn.rollback()
         tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, auth.tenant)
