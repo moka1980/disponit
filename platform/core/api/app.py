@@ -1706,7 +1706,16 @@ def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
         if auth is None or auth.kapabilitet is not None:
             tjeneste.logg.hendelse("token_ugyldig", rid)
             return _feilsvar("token_ugyldig", rid)
-        if not _modulscope(auth):
+        # 035: et modultoken bærer INGEN scopes — det svarer på ett spørsmål
+        # (hvilken deployment er dette?), og fullmakten til å kvittere er
+        # ikke tokenets, men OPPDRAGETS: `kvittering_jti` ble utstedt av
+        # claim-en, er bundet til nøyaktig ett oppdrag OG til eiermodulen,
+        # og innløses mot `auth.rolle` noen linjer ned. Den bindingen er
+        # smalere enn `orders:execute:<prefiks>` kunne vært, så
+        # legacy-porten er ikke bare uoppfylt her — den er overflødig.
+        # Uten dette unntaket kunne en onboardet deployment claime arbeid
+        # den aldri fikk levere resultatet av.
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope=ORDRESCOPE + "<prefiks>")
             return _feilsvar("scope_mangler", rid)
@@ -2256,7 +2265,14 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
-        if "artifacts:upload" not in auth.scopes:
+        # 035: samme unntak som kvitteringen — modultokenet har ingen
+        # scopes, og opplastingsretten er `kapabilitet_jti`-ens, ikke
+        # tokenets. Artefaktkapabiliteten deles ut av claim-en, er bundet
+        # til oppdrag + eiermodul + release/kontrakt/epoch, og innløses
+        # mot `auth.rolle` under. En claim uten opplastingskapabilitet gir
+        # ingen jti, og da stopper `innlos_artefaktkapabilitet` requesten.
+        if not isinstance(auth, ModulAutentisert) \
+                and "artifacts:upload" not in auth.scopes:
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope="artifacts:upload")
             return _feilsvar("scope_mangler", rid)

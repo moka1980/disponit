@@ -383,6 +383,58 @@ def test_testprefikset_utledes_aldri_for_produksjon(migrator, miljo,
         a.tjeneste.pool.lukk()
 
 
+@pg
+def test_modultoken_faar_bruke_kapabilitetene_claimen_delte_ut(migrator, miljo,
+                                                               monkeypatch):
+    """Codex P1: et modultoken bærer ingen scopes, så de gamle
+    scope-portene på kvitteringen og opplastingen låste onboardet arbeid
+    inne — claimen lyktes, men verken resultatet eller artefaktet kom
+    noen vei, og token-cli utsteder ikke lenger et legacy-token som kunne
+    tatt jobben. Fullmakten er OPPDRAGETS (jti-en fra claimen), ikke
+    tokenets. Kontroll: fjern ModulAutentisert-unntakene i
+    `_artefakt_upload`/`_oppdrag_kvittering`, så blir denne rød."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    prefiks = f"h{_u()}."
+    _kjent_type(monkeypatch, typenavn, prefiks)
+    modul, rel = _kjede(migrator, typenavn=typenavn,
+                        artefakttype=f"kvit.o{_u()}.selvtest")
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp_id, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
+                                  oppdragstype=typenavn, eiermodul=modul,
+                                  handling=prefiks + "send")
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            r = c.post("/v1/oppdrag/claim", json={}, headers=hode)
+            assert r.status_code == 200, r.text
+            svar = r.json()
+
+            # Opplastingen går HELE veien — ikke `scope_mangler`.
+            r = c.post("/v1/artefakt",
+                       json={"kapabilitet_jti": svar["opplasting"]["jti"],
+                             "rapport": {"funn": 0}}, headers=hode)
+            assert r.status_code == 200, r.text
+            assert len(r.json()["klartekst_sha256"]) == 64
+
+            # Kvitteringen slipper forbi scope-porten og inn i den
+            # jti-bundne innløsningen: en usignert kropp faller på
+            # SIGNATUREN, som er den porten som faktisk skal ta den.
+            r = c.post("/v1/oppdrag/kvittering",
+                       json={"kvittering_jti": svar["kvittering_jti"],
+                             "oppdrag_id": opp_id, "resultat": "ok"},
+                       headers=hode)
+            assert r.json().get("feil") != "scope_mangler", r.text
+            assert r.status_code == 403 and \
+                r.json()["feil"] == "kvittering_signatur_ugyldig", r.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
 def test_bootstrap_veien_kan_ikke_utstede_claimdyktige_tokener():
     """Port 24 (deploy-port): token-cli nekter `orders:execute`-scopes —
     claim-fullmakt kommer KUN fra onboardingen. Kontroll: fjern vaktleddet i
