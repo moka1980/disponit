@@ -215,10 +215,19 @@ SIKKERHETSKODER = frozenset({
     # ANNEN kanonisering er ikke en formfeil å rette — det er noen som har
     # signert andre bytes enn vi verifiserer.
     "attestasjon_kanonisering_ukjent",
+    # PR-014c: målbindingen. En hendelse som ber om ekstern lesing av et
+    # ANNET mål enn autorisasjonen dekker, er ikke en formfeil å rette —
+    # det er trafikk ut mot noe ingen har godkjent, med et bevis som ser
+    # gyldig ut. Samme kø som en attestasjon på feil ressurs.
+    "malautorisasjon_feil_mal", "malautorisasjon_mal_ugyldig",
 })
 
 #: Feil i plattformen selv, ikke i forespørselen.
-DRIFTSKODER = frozenset({"policy_korrupt", "motor_exception"})
+DRIFTSKODER = frozenset({"policy_korrupt", "motor_exception",
+                         # Et måldomene uten kjent hendelsesfelt er en
+                         # kodefeil hos OSS: typen deklarerer et krav
+                         # plattformen ikke vet hvordan den skal binde.
+                         "malautorisasjon_domene_ukjent"})
 
 #: Feil i POLICYEN — noen må rette et dokument. Handlingsbart, altså
 #: ordinær kø (v2 Del 4: «Autentisert, handlingsbar policyfeil ... m37»).

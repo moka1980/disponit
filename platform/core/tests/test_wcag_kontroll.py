@@ -474,6 +474,116 @@ def test_porten_leser_kontrakten_som_eier_typen(migrator, monkeypatch):
         rt.close()
 
 
+def test_malautorisasjonen_bindes_til_verten_som_kontrolleres():
+    """Codex P1: aktiveringsporten beviste bare at handlingen BÆRER et
+    vilkår som er registrert for `web_hostname` — ikke at autorisasjonen
+    dekker verten i `mal_url`. Kjøretidsbindingen sammenlignet
+    `ressurs_id`, men verken den eller porten så på `mal_url`.
+
+    En hendelse kunne derfor gjenbruke en ekte, gyldig
+    `domenekontroll_verifisert`-attestasjon med sin egen `ressurs_id` og be
+    om kontroll av et helt annet vertsnavn: trafikk ut mot et mål ingen har
+    autorisert, med et bevis som ser gyldig ut hele veien.
+
+    Bindingen legges på `ressurs_id` fordi det feltet allerede ligger i
+    `BINDINGSFELT` — altså inne i de SIGNERTE bytene — og
+    `kontroller_binding` krever allerede at attestasjonen bærer samme verdi
+    som hendelsen. Kreves det at hendelsens `ressurs_id` ER det
+    normaliserte vertsnavnet, arver attestasjonen bindingen gratis.
+
+    Kontroll: la `malbindingsbrudd` returnere None for `web_hostname`, så
+    slipper hendelsen med feil vert gjennom og denne blir rød.
+    """
+    import oppdragskontrakt as ok
+
+    def brudd(**ev):
+        return ok.malbindingsbrudd(ev.get("handling"), ev)
+
+    # Riktig vert: ingen brudd. `ressurs_id` ER vertsnavnet.
+    assert brudd(handling="kontroll.wcag.nettsted",
+                 mal_url="https://kunde.example/a/b",
+                 ressurs_id="kunde.example") is None
+    # Normalformen: store bokstaver, port, credentials og rotprikk er
+    # samme vert — ellers ville hver av dem vært et gratis omgåelsestegn.
+    for url in ("https://KUNDE.Example/", "https://kunde.example:443/",
+                "https://kunde.example./", "https://u:p@kunde.example/"):
+        assert brudd(handling="kontroll.wcag.nettsted", mal_url=url,
+                     ressurs_id="kunde.example") is None, url
+    # Selve hullet: gyldig autorisasjon for én vert, kontroll av en annen.
+    k, d = brudd(handling="kontroll.wcag.nettsted",
+                 mal_url="https://offer.example/",
+                 ressurs_id="kunde.example")
+    assert k == "malautorisasjon_feil_mal"
+    assert d["forventet"] == "offer.example"
+    # Ugyldig eller manglende mål er fail-closed, ikke en åpen port.
+    for url in (None, "", "http://kunde.example/", "https://",
+                "ikke en url", "https://kunde.example:99999/"):
+        assert brudd(handling="kontroll.wcag.nettsted", mal_url=url,
+                     ressurs_id="kunde.example")[0] == \
+            "malautorisasjon_mal_ugyldig", url
+    # Et måldomene plattformen ikke vet hvordan den binder skal stoppe,
+    # ikke passere stille.
+    ukjent = ok.Oppdragstype(
+        navn="kontroll.ukjentdomene.ting",
+        handlingsprefikser=("kontroll.ukjentdomene.",),
+        felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+        krever_malautorisasjon=True, malautorisasjonsdomene="ip_range")
+    ok.OPPDRAGSTYPER["kontroll.ukjentdomene.ting"] = ukjent
+    try:
+        assert brudd(handling="kontroll.ukjentdomene.ting",
+                     mal_url="https://k.example/",
+                     ressurs_id="k.example")[0] == \
+            "malautorisasjon_domene_ukjent"
+    finally:
+        del ok.OPPDRAGSTYPER["kontroll.ukjentdomene.ting"]
+    # Typer UTEN målautorisasjonsdomene er urørt — porten gjelder bare der
+    # typen selv sier at målet må være autorisert.
+    assert brudd(handling="purring.sen", ressurs_id="fak-1") is None
+    assert brudd(handling="helt.ukjent", ressurs_id="x") is None
+    assert brudd(handling=None) is None
+
+    # ... og koden er klassifisert: uten rad i tabellene ville et brudd
+    # blitt STOPP uten M-37-sak, altså et sikkerhetsavvik ingen ser.
+    from api.feil import DRIFTSKODER, SIKKERHETSKODER, sakstype_for
+    assert "malautorisasjon_feil_mal" in SIKKERHETSKODER
+    assert "malautorisasjon_mal_ugyldig" in SIKKERHETSKODER
+    assert "malautorisasjon_domene_ukjent" in DRIFTSKODER
+    assert sakstype_for("STOPP", "malautorisasjon_feil_mal", None) == \
+        ("sikkerhet", "hoy")
+
+
+@pg
+def test_malbindingsporten_staar_i_beslutningsveien(migrator):
+    """Porten hører hjemme i `sikker_beslutning_pg`, ikke i `api.kjerne`:
+    det er den ENE veien alle evalueringer går (kjernen,
+    unntaksbehandlingen, og det som måtte komme). En port på
+    forespørselsveien alene ville vært en port med en dør ved siden av.
+
+    Kontroll: fjern målbindingskallet i `sikker_beslutning_pg`, så blir
+    denne rød — hendelsen med feil vert blir evaluert i stedet for stoppet.
+    """
+    import yaml
+    from db.pg import koble, sikker_beslutning_pg
+    from policy_validator.engine import STOPP, EvaluationContext
+    from .conftest import POLICIES
+    policy = yaml.safe_load(
+        (POLICIES / "bransjemal-tjenestebedrift.yaml").read_text(
+            encoding="utf-8"))
+    ctx = EvaluationContext("t-pg", "agent", True, "api_token")
+    ev = {"handling": "kontroll.wcag.nettsted",
+          "mal_url": "https://offer.example/",
+          "ressurs_id": "kunde.example"}
+    c = koble(DSN)
+    try:
+        d = sikker_beslutning_pg(policy, ctx, ev, c, naa=None, nokler=None)
+        assert d.beslutning == STOPP
+        assert d.begrunnelse[-1].kode == "malautorisasjon_feil_mal", \
+            d.begrunnelse[-1].kode
+        c.rollback()
+    finally:
+        c.close()
+
+
 @pg
 def test_uregistrert_kodefestet_type_feiler_lukket(migrator):
     """Codex P1: den kodefestede typen fantes, DB-registreringen manglet.

@@ -169,6 +169,74 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
     return None
 
 
+#: Måldomenene og hvilket hendelsesfelt de peker på. Lukket på samme måte
+#: som `OPPDRAGSTYPER`: et ukjent domene er en feil, ikke en port som er av.
+MALDOMENEFELT: dict[str, str] = {"web_hostname": "mal_url"}
+
+
+def normaliser_vertsnavn(raa: object) -> str | None:
+    """https-URL -> vertsnavn i normalform, ellers None.
+
+    `urlsplit().hostname` gjør småbokstaver og fjerner credentials og port;
+    en avsluttende rotprikk (`example.com.`) fjernes fordi den navngir
+    NØYAKTIG samme vert og ellers ville vært et gratis omgåelsestegn.
+    `d.port` er en property som selv kaster på ulovlig port — den leses
+    inne i vakten slik at et ubetrodd felt gir None, aldri et unntak.
+    """
+    from urllib.parse import urlsplit
+    if not isinstance(raa, str) or not raa:
+        return None
+    try:
+        d = urlsplit(raa)
+        vert, _ = d.hostname, d.port
+    except ValueError:
+        return None
+    if d.scheme != "https" or not vert:
+        return None
+    return vert.rstrip(".") or None
+
+
+def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:
+    """None == målautorisasjonen gjelder DEN verten som faktisk kontrolleres.
+
+    Codex P1: aktiveringsporten beviste bare at handlingen bærer et vilkår
+    som er REGISTRERT for `web_hostname` — ikke at attestasjonen dekker
+    verten i `mal_url`. Kjøretidsbindingen sammenlignet `ressurs_id`, men
+    ingen av dem så på `mal_url`. En hendelse kunne derfor gjenbruke en
+    ekte, gyldig `domenekontroll_verifisert`-attestasjon med sin egen
+    `ressurs_id` og be om kontroll av et HELT ANNET vertsnavn — altså
+    trafikk ut mot et mål ingen har autorisert, med et bevis som ser
+    perfekt ut hele veien.
+
+    Bindingen legges på `ressurs_id` og ikke på et nytt felt med vilje:
+    `ressurs_id` ligger allerede i `BINDINGSFELT`, altså inne i de SIGNERTE
+    bytene, og `attestering.kontroller_binding` krever allerede at
+    attestasjonen bærer samme verdi som hendelsen. Kreves det at hendelsens
+    `ressurs_id` ER det normaliserte vertsnavnet, arver attestasjonen
+    bindingen gratis — uten en formatendring som måtte rulles ut på tvers
+    av verifikatorer før den kunne håndheves.
+
+    -> (kode, detaljer) ved brudd, slik at kalleren kan lage sin egen Grunn.
+    """
+    t = type_for_handling(handling) if isinstance(handling, str) else None
+    if t is None or t.malautorisasjonsdomene is None:
+        return None
+    felt = MALDOMENEFELT.get(t.malautorisasjonsdomene)
+    if felt is None:
+        # Et måldomene ingen vet hvilket felt peker på kan ikke bindes, og
+        # da skal handlingen ikke gå. Fail-closed er hele posituren her.
+        return ("malautorisasjon_domene_ukjent",
+                {"domene": t.malautorisasjonsdomene})
+    vert = normaliser_vertsnavn(event.get(felt))
+    if vert is None:
+        return ("malautorisasjon_mal_ugyldig", {"felt": felt})
+    if event.get("ressurs_id") != vert:
+        return ("malautorisasjon_feil_mal",
+                {"forventet": vert,
+                 "i_forespoersel": str(event.get("ressurs_id"))})
+    return None
+
+
 def minimer(oppdragstype: str, payload: dict) -> dict:
     """Payloaden slik eiermodulen får se den. Kaster Oppdragstypeukjent.
 
