@@ -835,6 +835,67 @@ def test_sletting_avvises_naar_innholdet_bak_versjonen_er_byttet():
 
 
 @pg
+def test_policy_som_alt_er_slettet_gir_ukjent_ikke_endret():
+    """«Finnes ikke» og «er byttet ut» er to ulike svar, og eier handler
+    ulikt på dem.
+
+    Kontroll: fjern NOT FOUND-grenen i 032, så blir denne rød. Uten den står
+    `v_versjon`/`v_hash` som NULL, og sammenligningen mot den PÅKREVDE
+    ikke-NULL identiteten er alltid sann — en policy en annen operatør alt
+    har slettet kom ut som `policy_endret`, og flaten fortalte om en ny
+    versjon som ikke finnes. Målingen `v_antall = 0` lenger nede kunne aldri
+    ta den: den sto ETTER sammenligningen.
+    """
+    from api import policyadmin
+    pid = "p-" + secrets.token_hex(3)
+    idem = "idem-" + secrets.token_hex(8)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    rt = _rt()
+    try:
+        kall = dict(tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+                    forventet_versjon="1.0.0",
+                    forventet_hash=_hash(pid, "1.0.0"),
+                    naa=datetime.now(timezone.utc))
+        # Den første slettingen lykkes...
+        assert policyadmin.slett_policy(
+            rt, idempotency_key=idem, input_hash="ih-" + idem,
+            **kall)["slettet"] == 1
+        # ...og en NY forespørsel (egen nøkkel, altså ingen replay) møter
+        # sannheten: policyen finnes ikke.
+        idem2 = "idem-" + secrets.token_hex(8)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.slett_policy(
+                rt, idempotency_key=idem2, input_hash="ih-" + idem2, **kall)
+        assert e.value.kode == "policy_ukjent"
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_policy_uten_aktiv_rad_er_ukjent_ikke_endret():
+    """Den andre formen av samme svar: radene står igjen som historikk (her
+    en versjon bevart som attestasjonsbase ville stått), men ingen av dem er
+    aktiv. Det er ingen aktiv policy å angre — `policy_ukjent`, ikke en
+    påstand om at en annen versjon er aktivert."""
+    import psycopg
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid, aktiv=False)
+    m.commit()
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.NoDataFound):
+            _slett(rt, pid)
+        rt.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_avvist_versjon_gir_policy_endret_og_brenner_ikke_nokkelen():
     """Kartleggingen eier ser: `policy_endret`, ikke en generisk feil — og
     nøkkelen står igjen ubrukt, så flaten kan laste på nytt og prøve mot den

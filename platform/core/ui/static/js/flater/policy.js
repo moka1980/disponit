@@ -242,7 +242,16 @@ function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
                 // også skal bort. Flaten tegnes derfor ikke på nytt under
                 // henne; hun får vite at siden må lastes.
                 ? t("ui.policy.slett_endret")
-                : t("ui.policy.slett_feilet");
+                // `policy_ukjent` er en NABO til `policy_endret`, og den fikk
+                // tidligere den andres forklaring: 032 målte «finnes ikke»
+                // etter identitetssammenligningen, så en policy en annen
+                // operatør alt hadde slettet kom ut som «en ny versjon er
+                // aktivert». Nå skilles de i databasen — og da må de skilles
+                // her også, ellers ender det sanne svaret som «slettingen
+                // feilet» på en sletting som allerede har skjedd.
+                : kode === "policy_ukjent"
+                  ? t("ui.policy.slett_ukjent")
+                  : t("ui.policy.slett_feilet");
         }),
     });
   });

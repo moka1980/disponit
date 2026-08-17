@@ -619,6 +619,46 @@ test("Policy: en versjon som er aktivert i mellomtiden avvises, ikke slettes",
     globalThis.fetch = brukFetch;
   });
 
+test("Policy: en policy en annen alt har slettet er UKJENT, ikke endret",
+  async () => {
+    // Naboen til testen over, og den 032 tidligere svarte feil på: «finnes
+    // ikke» ble målt ETTER identitetssammenligningen, så en policy en annen
+    // operatør alt hadde slettet kom ut som `policy_endret` — flaten sendte
+    // eier på leting etter en ny versjon som ikke finnes. Nå skilles de i
+    // databasen, og skillet må bæres helt ut hit.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method === "POST") {
+        return { ok: false, status: 404,
+          json: async () => ({ feil: "policy_ukjent" }) };
+      }
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: true, status: 200, json: async () => STD[sti] };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    [...h.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    const dlg = await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")))) &&
+      [...document.querySelectorAll('[role="dialog"]')]
+        .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(t("ui.policy.slett_ukjent")));
+    assert.ok(h.textContent.includes(t("ui.policy.slett_ukjent")));
+    assert.ok(!h.textContent.includes(t("ui.policy.slett_endret")),
+      "en slettet policy ble meldt som en aktivert ny versjon");
+    assert.ok(!h.textContent.includes(t("ui.policy.slett_feilet")));
+    globalThis.fetch = brukFetch;
+  });
+
 test("Policy: en leser uten policy:write ser HVILKE som står aktive",
   async () => {
     // Kontroll: flytt identitetene tilbake inn i `angreSeksjon`, så blir

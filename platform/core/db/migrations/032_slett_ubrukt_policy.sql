@@ -85,7 +85,6 @@ DECLARE
     v_hash    TEXT;
     v_brukt  int;
     v_apen   int;
-    v_antall int;
     n        int;
 BEGIN
     IF p_tenant IS NULL OR btrim(p_tenant) = ''
@@ -152,11 +151,31 @@ BEGIN
     SELECT versjon, innholds_hash INTO v_versjon, v_hash
       FROM policyer
      WHERE tenant = p_tenant AND policy_id = p_policy_id AND aktiv;
+
+    -- «FINNES IKKE» MÅLES FØR IDENTITETEN SAMMENLIGNES (Codex P2). Er det
+    -- ingen aktiv rad, står `v_versjon`/`v_hash` som NULL, og sammenligningen
+    -- under er da `NULL IS DISTINCT FROM <påkrevd ikke-NULL>` — alltid sann.
+    -- En policy en annen operatør allerede har slettet kom derfor ut som
+    -- `policy_endret`, og flaten fortalte at en ANNEN VERSJON er aktivert:
+    -- en usann forklaring, og en som sender eier på leting etter en versjon
+    -- som ikke finnes. Målingen lenger nede (`v_antall = 0`) kunne aldri ta
+    -- den — den står etter denne sammenligningen, og enhver forespørsel bærer
+    -- den påkrevde ikke-NULL identiteten.
+    --
+    -- «Ingen aktiv rad» dekker begge formene av det samme svaret: policyen er
+    -- borte i sin helhet, eller den står igjen som ren historikk (versjoner
+    -- bevart som attestasjonsbase, se DELETE-en under). I begge tilfeller er
+    -- det ingen aktiv policy å angre, og `policy_ukjent` er det sanne svaret.
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'slett_ubrukt_policy: policyen finnes ikke'
+            USING ERRCODE = 'no_data_found';
+    END IF;
+
     IF v_versjon IS DISTINCT FROM p_forventet_versjon
        OR v_hash IS DISTINCT FROM p_forventet_hash THEN
         RAISE EXCEPTION
             'slett_ubrukt_policy: aktiv versjon er % (forventet %)',
-            coalesce(v_versjon, '(ingen)'), p_forventet_versjon
+            v_versjon, p_forventet_versjon
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
@@ -211,14 +230,11 @@ BEGIN
        SET aktiv_versjon = NULL, revisjon = revisjon + 1
      WHERE tenant = p_tenant AND policy_id = p_policy_id;
 
-    -- «Finnes ikke» måles FØR slettingen, ikke som «null rader forsvant»
-    -- (under kan begge deler være sant av helt ulike grunner).
-    SELECT count(*) INTO v_antall FROM policyer
-     WHERE tenant = p_tenant AND policy_id = p_policy_id;
-    IF v_antall = 0 THEN
-        RAISE EXCEPTION 'slett_ubrukt_policy: policyen finnes ikke'
-            USING ERRCODE = 'no_data_found';
-    END IF;
+    -- («Finnes ikke» sto tidligere HER, som en telling av rader etter at
+    -- pekeren var nullstilt. Den kunne aldri fyre: identitetskontrollen over
+    -- passeres bare når en aktiv rad finnes, så tellingen var minst 1 hver
+    -- gang den ble nådd. Målingen står nå der den kan si noe — på den aktive
+    -- raden, før identiteten sammenlignes.)
 
     -- Pekeren er nullstilt, og da kan ingen rad stå igjen som aktiv:
     -- `policy_peker_konsistent` (012) håndhever «peker NULL ⇔ ingen aktiv
