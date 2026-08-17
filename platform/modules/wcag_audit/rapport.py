@@ -83,6 +83,9 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
 
     sammendrag = {k: 0 for k in _ALVOR}
     funn = []
+    # Flest eksempler ETT enkelt funn hadde (Codex P2): kappet vi en
+    # eksempelliste, er rapporten avkortet, og da skal `avkortet` si det.
+    maks_eksempler_sett = 0
     for f in resultat.funn:
         if not isinstance(f, dict) or f.get("alvorlighet") not in _ALVOR:
             raise Motorfeil("funn-post uleselig")
@@ -91,15 +94,26 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
             continue
         sammendrag[f["alvorlighet"]] += antall
         if len(funn) < MAKS_FUNN:
+            eksempler = list(f.get("eksempler") or [])
+            maks_eksempler_sett = max(maks_eksempler_sett, len(eksempler))
             funn.append({
                 "regel_id": str(f.get("regel_id"))[:128],
                 "alvorlighet": f["alvorlighet"],
                 "antall": antall,
                 "eksempler": [str(e)[:MAKS_SELEKTOR]
-                              for e in (f.get("eksempler") or [])
-                              [:MAKS_EKSEMPLER]]})
+                              for e in eksempler[:MAKS_EKSEMPLER]]})
 
     truffet, tak, verdi = (tuple(resultat.avkortet) + (None, None, None))[:3]
+    # Kappet VI en eksempelliste, er rapporten avkortet (Codex P2). Uten
+    # dette kunne den promoterte evidensen påstå `truffet: false` samtidig
+    # som den utelot kjente eksempler — feltet skal aldri love mer
+    # fullstendighet enn det som faktisk står i rapporten. Verdien er det
+    # STØRSTE observerte eksempelantallet: taket er per funn, så det er den
+    # tellingen taket ble målt mot.
+    if maks_eksempler_sett > MAKS_EKSEMPLER:
+        truffet = True
+        tak = tak if tak is not None else MAKS_EKSEMPLER
+        verdi = verdi if verdi is not None else maks_eksempler_sett
     # Kappet VI funnlisten, er rapporten avkortet uansett hva proxyen sa —
     # `avkortet` skal aldri love mer fullstendighet enn det som står i den.
     if len(resultat.funn) > MAKS_FUNN:

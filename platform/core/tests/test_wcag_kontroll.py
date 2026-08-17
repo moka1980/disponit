@@ -653,6 +653,33 @@ def test_rapporten_kutter_aerlig_over_500_funn():
     assert r["sammendrag"]["lav"] == 600
 
 
+def test_kappet_eksempelliste_sier_fra_i_avkortet():
+    """Codex P2: eksempellisten kappes på 10 per funn — og DA er rapporten
+    avkortet. Uten dette kunne den promoterte evidensen påstå
+    `truffet: false` samtidig som den utelot kjente eksempler.
+    Kontroll: fjern `maks_eksempler_sett`-blokka i `bygg`, så blir denne
+    rød."""
+    import jsonschema
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import MAKS_EKSEMPLER, bygg
+
+    ett = ({"regel_id": "r1", "alvorlighet": "alvorlig", "antall": 25,
+            "eksempler": [f"#node-{i}" for i in range(25)]},)
+    r = bygg(_motorresultat(funn=ett),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r)
+    assert len(r["funn"][0]["eksempler"]) == MAKS_EKSEMPLER
+    assert r["avkortet"]["truffet"] is True
+    assert r["avkortet"]["tak"] == MAKS_EKSEMPLER
+    assert r["avkortet"]["verdi"] == 25
+    # ... og NØYAKTIG på taket er ingen kapping: feltet skal ikke rope ulv.
+    paa_taket = ({"regel_id": "r1", "alvorlighet": "lav", "antall": 1,
+                  "eksempler": [f"#n{i}" for i in range(MAKS_EKSEMPLER)]},)
+    r2 = bygg(_motorresultat(funn=paa_taket),
+              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert r2["avkortet"]["truffet"] is False
+
+
 def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
     """Codex P2: lista ble kappet på 200 UTEN at `avkortet` endret seg —
     den promoterte evidensen kunne påstå at ingenting var utelatt samtidig
