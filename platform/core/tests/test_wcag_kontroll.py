@@ -614,7 +614,7 @@ def test_malbindingsporten_staar_i_beslutningsveien(migrator):
     `kunde.example` i kolonnen.
     """
     import yaml
-    from db.pg import koble, sikker_beslutning_pg
+    from db.pg import koble, sett_tenant, sikker_beslutning_pg
     from policy_validator.engine import STOPP, EvaluationContext
     from .conftest import POLICIES
     policy = yaml.safe_load(
@@ -633,6 +633,14 @@ def test_malbindingsporten_staar_i_beslutningsveien(migrator):
 
         # ...og det som ble SKREVET til klartekstkolonnen bærer ingen av
         # verdiene — verken vertsnavnet fra payloaden eller ressurs-id-en.
+        #
+        # `sett_tenant` er ikke pynt: migrasjon 002 har FORCE ROW LEVEL
+        # SECURITY på `revisjonslogg`, og `_skriv_loggpost` setter
+        # `disponit.tenant` med SET LOCAL — den dør med skrivetransaksjonen.
+        # Uten dette leser vi gjennom et TOMT RLS-vindu, og en test som
+        # skulle bevise at verdiene er borte ville bestått fordi den ikke
+        # så noen rad i det hele tatt.
+        sett_tenant(c, "t-pg")
         rad = c.execute(
             "SELECT begrunnelse::text FROM revisjonslogg"
             " WHERE tenant=%s ORDER BY id DESC LIMIT 1", ("t-pg",)).fetchone()
