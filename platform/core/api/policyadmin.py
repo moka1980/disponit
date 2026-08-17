@@ -746,9 +746,16 @@ def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
         # ikke skjedde skal ikke brenne nøkkelen. Retry på en policy som er i
         # bruk gir samme forklaring hver gang — det er sannheten om tilstanden.
         conn.rollback()
+        # Prøven står på RUNDEN, ikke på bruken. Vilkårsbruddene fra 032 er nå
+        # tre, ikke to: styrt en beslutning, åpen runde, og en referanse
+        # retensjonsvakta (V3) fant og funksjonen oversatte. Bare det midterste
+        # har en egen forklaring på flaten; de to andre sier begge at policyen
+        # er referert og må avvikles i stedet. Med testen på «beslutning» ville
+        # den nye, oversatte avvisningen falt ut som `runde_allerede_aapen` —
+        # en feilmelding om en runde som ikke finnes.
         raise Aktiveringsfeil(
-            "policy_i_bruk" if "beslutning" in str(e)
-            else "runde_allerede_aapen") from None
+            "runde_allerede_aapen" if "aktiveringsrunde" in str(e)
+            else "policy_i_bruk") from None
     except psycopg.errors.InvalidParameterValue:
         # Den aktive policyen er ikke den klienten så. Rollback som over: en
         # sletting som ikke skjedde skal ikke brenne nøkkelen — flaten kan

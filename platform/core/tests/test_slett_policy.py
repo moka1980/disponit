@@ -132,6 +132,122 @@ def test_policy_som_har_styrt_en_beslutning_kan_aldri_slettes():
 
 
 @pg
+def test_beslutning_kjennes_igjen_naar_loggen_bruker_dokumentets_id():
+    """Bruksprøven må se sporet også når id-ene spriker (Codex P2).
+
+    En eldre rad kan ha en annen `policy_id` i databasen enn i dokumentet —
+    identitetskontrollen kom først i PR-013, og `/v1/policy/aktive` eksponerer
+    nettopp slike rader så de kan ryddes. Beslutninger den gangen skrev
+    DOKUMENTETS id i `revisjonslogg.policy_id`, så prefikstesten fant
+    ingenting. Raden var likevel ikke slettbar — `policy_retention_vakt`
+    matcher `policy_content_hash` — men vakten kaster `P0001`, og en policy
+    som HAR styrt beslutninger fikk en 500 i stedet for `policy_i_bruk`.
+
+    Kontroll: fjern hash-leddet fra bruksprøven i 032, så blir denne rød på
+    `RaiseException` — altså på nøyaktig den 500-en.
+    """
+    import psycopg
+    pid = "p-" + secrets.token_hex(3)
+    dok_pid = "p-dok-" + secrets.token_hex(3)     # id-en dokumentet bærer
+    m = _mig()
+    m.execute(
+        "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,status,"
+        "innhold,aktiv) VALUES (%s,%s,'1.0.0',%s,'produksjon',%s::jsonb,true)",
+        (TEN, pid, _hash(pid, "1.0.0"),
+         json.dumps({"meta": {"policy_id": dok_pid, "versjon": "1.0.0"}})))
+    m.execute(
+        "INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon)"
+        " VALUES (%s,%s,'1.0.0') ON CONFLICT (tenant,policy_id)"
+        " DO UPDATE SET aktiv_versjon=EXCLUDED.aktiv_versjon", (TEN, pid))
+    # Sporet bærer dokumentets id — men snapshothashen til raden som slettes.
+    m.execute(
+        "INSERT INTO revisjonslogg (tenant, ts, policy_id, policy_content_hash,"
+        " beslutning, begrunnelse, input_hash) VALUES (%s, now(), %s, %s,"
+        " 'TILLAT', '{}', 'ih-' || %s)",
+        (TEN, f"{dok_pid}@1.0.0/purring.send", _hash(pid, "1.0.0"),
+         secrets.token_hex(4)))
+    m.commit()
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as e:
+            _slett(rt, pid)
+        assert "beslutning" in str(e.value), \
+            "avvisningen kom ikke fra bruksprøven — da er den fortsatt en 500"
+        rt.rollback()
+        from db.pg import sett_kontekst
+        sett_kontekst(rt, TEN, "test", "r2")
+        assert rt.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                          " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 1
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_retensjonsvakten_avvises_som_vilkaarsbrudd_ikke_som_intern_feil():
+    """Vakten kjenner referanser bruksprøven med vilje ikke teller (Codex P2).
+
+    `policy_retention_vakt` (V3) beskytter også ikke-terminale unntak, oppdrag
+    og reparasjonsoperasjoner. Å kopiere det settet inn i 032 ville vært en
+    fjerde definisjon av «referert»; vakten er siste ord. Men den kaster
+    `P0001`, og uoversatt ble det en 500 der svaret skulle vært
+    `policy_i_bruk`. Her står referansen i et unntak som ennå er i behandling,
+    og INGEN revisjonsrad peker på hashen — så bare vakten kan stoppe den.
+
+    Kontroll: fjern EXCEPTION-blokken rundt DELETE-en i 032, så blir denne rød
+    på `RaiseException`.
+    """
+    import psycopg
+    pid = "p-" + secrets.token_hex(3)
+    m = _mig()
+    _policyrad(m, pid)
+    m.execute("INSERT INTO tenant_nokler (tenant,key_id,wrapped_dek,aktiv)"
+              " VALUES (%s,'k-slett',%s,true) ON CONFLICT DO NOTHING",
+              (TEN, b"\x00" * 44))
+    # Loggposten unntaket henger på peker på en ANNEN policy: sporet er ikke
+    # det som blokkerer her, saken er det.
+    lid = m.execute(
+        "INSERT INTO revisjonslogg (tenant, ts, policy_id, beslutning,"
+        " begrunnelse, input_hash) VALUES (%s, now(), 'p-annen@1.0.0/x',"
+        " 'UNNTAK', '{}', 'ih-' || %s) RETURNING id",
+        (TEN, secrets.token_hex(4))).fetchone()[0]
+    m.execute(
+        "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+        "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,"
+        "policy_versjon,policy_content_hash,status) VALUES (%s,%s,"
+        "'faktura.bokfor','over_grense',%s,'k-slett',%s,3,'1.0.0',%s,'ny')",
+        (TEN, lid, b"\x00", b"\x00" * 12, _hash(pid, "1.0.0")))
+    m.commit()
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.CheckViolation) as e:
+            _slett(rt, pid)
+        assert "unntak" in str(e.value), \
+            f"vaktens forklaring gikk tapt i oversettelsen: {e.value}"
+        rt.rollback()
+
+        # …og hele veien ut: koden flaten får er `policy_i_bruk`, ikke en
+        # `runde_allerede_aapen` om en runde som ikke finnes.
+        from api import policyadmin
+        idem = "idem-" + secrets.token_hex(8)
+        with pytest.raises(policyadmin.Aktiveringsfeil) as f:
+            policyadmin.slett_policy(
+                rt, tenant=TEN, aktor="test", request_id="r1", policy_id=pid,
+                forventet_versjon="1.0.0", forventet_hash=_hash(pid, "1.0.0"),
+                idempotency_key=idem, input_hash="ih-" + idem,
+                naa=datetime.now(timezone.utc))
+        assert f.value.kode == "policy_i_bruk", f.value.kode
+
+        from db.pg import sett_kontekst
+        sett_kontekst(rt, TEN, "test", "r2")
+        assert rt.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                          " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 1
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_apen_runde_blokkerer_sletting():
     import psycopg
     pid = "p-" + secrets.token_hex(3)

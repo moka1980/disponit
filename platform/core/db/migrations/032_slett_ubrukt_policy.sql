@@ -28,10 +28,12 @@
 --     `utloper` — en overgang som var forfalt uansett, ikke en opprydding;
 --     attestasjonene blir stående.
 --
--- `revisjonslogg`-kontrollen bruker `LIKE pid || '@%'`: loggformatet er
--- `pid@versjon/handling`, og skjemaet forbyr `@` i policy_id, så prefikset er
--- entydig. Escaping trengs ikke for `@`, men `_`/`%` i pid kan ikke
--- forekomme (`^[a-z0-9-]+$`), så mønsteret kan ikke feiltreffe.
+-- `revisjonslogg`-kontrollen spør på TO former, og må gjøre det: `LIKE
+-- pid || '@%'` (loggformatet er `pid@versjon/handling`, og skjemaet forbyr `@`
+-- i policy_id, så prefikset er entydig — escaping trengs ikke for `@`, og
+-- `_`/`%` kan ikke forekomme i en pid, `^[a-z0-9-]+$`) OG snapshothashen til
+-- hver versjon som slettes. Den siste er der fordi id-en i databasen og id-en
+-- i dokumentet kan sprike på gamle rader; se ved selve prøven under.
 --
 -- SLETTINGEN ER BUNDET TIL DEN VERSJONEN OPERATØREN SÅ (Codex P1). Kalleren
 -- oppgir `forventet_versjon`/`forventet_hash` — identiteten flaten VISTE — og
@@ -154,8 +156,29 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
-    SELECT count(*) INTO v_brukt FROM revisjonslogg
-     WHERE tenant = p_tenant AND policy_id LIKE p_policy_id || '@%';
+    -- BRUKSPRØVEN MÅ VÆRE MINST SÅ VID SOM RETENSJONSVAKTA (Codex P2).
+    -- Prefikset alene var det ikke. `policy_id` i databasen og
+    -- `innhold.meta.policy_id` i dokumentet er samme verdi for alt som er
+    -- registrert etter identitetskontrollen i PR-013 — men eldre rader kan ha
+    -- ulike, og beslutninger tatt den gangen skrev DOKUMENTETS id inn i
+    -- `revisjonslogg.policy_id`. Prefikstesten så da null spor på en policy
+    -- som har styrt beslutninger. DELETE-en ble riktignok stoppet likevel, av
+    -- `policy_retention_vakt` (V3) som matcher `policy_content_hash` — men
+    -- den kaster `P0001`, ikke et vilkårsbrudd, så flaten fikk en 500 der
+    -- svaret skulle vært `policy_i_bruk`. Det er samme rad som avgjør; det var
+    -- bare to ulike spørsmål om den.
+    --
+    -- Nå spør denne det samme som vakten: hashen til HVER versjon som skal
+    -- slettes. Prefikset står ved siden av, ikke i stedet for —
+    -- `revisjonslogg.policy_content_hash` er nullbar (den kom i 003, og ble
+    -- aldri satt NOT NULL), så de eldste sporene har bare id-en å kjennes på.
+    -- Sammen dekker de begge former.
+    SELECT count(*) INTO v_brukt FROM revisjonslogg r
+     WHERE r.tenant = p_tenant
+       AND (r.policy_id LIKE p_policy_id || '@%'
+            OR r.policy_content_hash IN (
+                SELECT p.innholds_hash FROM policyer p
+                 WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id));
     IF v_brukt > 0 THEN
         RAISE EXCEPTION
             'slett_ubrukt_policy: policyen har styrt % beslutning(er)', v_brukt
@@ -184,9 +207,23 @@ BEGIN
        SET aktiv_versjon = NULL, revisjon = revisjon + 1
      WHERE tenant = p_tenant AND policy_id = p_policy_id;
 
-    DELETE FROM policyer
-     WHERE tenant = p_tenant AND policy_id = p_policy_id;
-    GET DIAGNOSTICS n = ROW_COUNT;
+    -- Retensjonsvakta er siste ord, og den skal HØRES. `policy_retention_vakt`
+    -- (V3) kjenner referanser denne funksjonen med vilje ikke teller opp selv
+    -- — ikke-terminale unntak, oppdrag, reparasjonsoperasjoner — og en fjerde
+    -- kopi av det settet her inne ville vært den duplikatformen resten av
+    -- modulen er skrevet for å unngå. Men vakten kaster `P0001`, og en
+    -- uoversatt `P0001` blir en 500: en policy som ER referert fikk «noe gikk
+    -- galt» i stedet for grunnen. Avvisningen oversettes derfor her, til det
+    -- samme vilkårsbruddet de øvrige grensene bruker, med vaktens egen
+    -- forklaring i behold.
+    BEGIN
+        DELETE FROM policyer
+         WHERE tenant = p_tenant AND policy_id = p_policy_id;
+        GET DIAGNOSTICS n = ROW_COUNT;
+    EXCEPTION WHEN raise_exception THEN
+        RAISE EXCEPTION 'slett_ubrukt_policy: %', SQLERRM
+            USING ERRCODE = 'check_violation';
+    END;
     IF n = 0 THEN
         RAISE EXCEPTION 'slett_ubrukt_policy: policyen finnes ikke'
             USING ERRCODE = 'no_data_found';
