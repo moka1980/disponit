@@ -26,6 +26,11 @@ Feilhåndteringens utfall:
     med være karantenesatt — og et `utfort` herfra ville fått en
     planlegger til å tro at kjøringen var i havn. Utfallet er eget nettopp
     fordi det ikke er det samme som en ærlig motorfeil.
+  * SEN EVIDENS (Codex P1) → samme `ukvittert`. Blir kjøringen ferdig
+    etter `utforelsesfrist`, men før `evidensfrist`, svarer endepunktet
+    202 med `lagret_uten_statusendring`: evidensen er bevart, men
+    plattformen har BEVISST latt oppdraget være ufullført. En 2xx er
+    derfor ikke i seg selv et statusskifte — se `_kvittert`.
 """
 from __future__ import annotations
 
@@ -36,11 +41,37 @@ from .motor import Motorfeil
 from .rapport import bygg
 
 
+#: Kroppsstatusene som betyr at plattformen FAKTISK skiftet status på
+#: oppdraget — de to `/v1/oppdrag/kvittering` gir sammen med 200.
+_STATUSSKIFTE = ("utfort", "feilet")
+
+
 def _kvittert(rk) -> bool:
-    """Godtok plattformen kvitteringen? Kun 2xx teller — 409 (fencing,
-    hashavvik, avvist promotering) og 5xx betyr at oppdraget står igjen
-    uferdig hos plattformen."""
-    return 200 <= rk.status_code < 300
+    """Skiftet plattformen status på oppdraget?
+
+    Kun 2xx teller — 409 (fencing, hashavvik, avvist promotering) og 5xx
+    betyr at oppdraget står igjen uferdig hos plattformen.
+
+    Men 2xx er IKKE nok (Codex P1). Fullfører kjøringen etter
+    `utforelsesfrist`, men før `evidensfrist`, svarer endepunktet 202 med
+    `status: "lagret_uten_statusendring"`: evidensen er bevart, og det er
+    HELE det som skjedde — `unntak.status` står urørt, oppdraget er
+    bevisst latt ufullført. Å lese den 202-en som en kvittering ga
+    `utfall: "utfort"` for et oppdrag plattformen selv regner som uferdig,
+    og en planlegger som tror på modulens ord slutter da å følge opp noe
+    som aldri ble avsluttet.
+
+    Derfor kreves BÅDE 2xx og en kroppsstatus som navngir skiftet. En
+    kropp vi ikke kan lese (ikke JSON, ikke et objekt) er heller ingen
+    bekreftelse: da vet vi ikke hva som skjedde, og «vet ikke» skal
+    behandles som uferdig, ikke som ferdig."""
+    if not 200 <= rk.status_code < 300:
+        return False
+    try:
+        kropp = rk.json()
+    except ValueError:
+        return False
+    return isinstance(kropp, dict) and kropp.get("status") in _STATUSSKIFTE
 
 
 def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:

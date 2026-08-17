@@ -1287,12 +1287,27 @@ class _Svar:
 
 
 class _Stubklient:
-    """Claim → opplasting → kvittering, med valgbar kvitteringsstatus."""
+    """Claim → opplasting → kvittering, med valgbar kvitteringsstatus.
 
-    def __init__(self, kvitteringsstatus, opplastingsstatus=200):
+    Kvitteringskroppen speiler det EKTE endepunktet i `app.py`: 200 bærer
+    `status: "utfort"|"feilet"` (statusskiftet skjedde), mens sen evidens
+    gir 202 med `lagret_uten_statusendring`. Kroppen er ikke pynt i
+    stubben — controlleren leser den nettopp for å skille de to."""
+
+    def __init__(self, kvitteringsstatus, opplastingsstatus=200,
+                 kvitteringskropp=None):
         self.kvitteringsstatus = kvitteringsstatus
         self.opplastingsstatus = opplastingsstatus
+        self.kvitteringskropp = kvitteringskropp
         self.kvitteringer = []
+
+    def _kvitteringssvar(self, sendt):
+        if self.kvitteringskropp is not None:
+            return _Svar(self.kvitteringsstatus, self.kvitteringskropp)
+        if self.kvitteringsstatus == 200:
+            return _Svar(200, {"status": sendt.get("resultat"),
+                               "oppdrag_id": 1, "unntak_id": 1})
+        return _Svar(self.kvitteringsstatus, {})
 
     def post(self, sti, json=None, headers=None):
         if sti == "/v1/artefakt" and self.opplastingsstatus != 200:
@@ -1311,7 +1326,7 @@ class _Stubklient:
             return _Svar(200, {"artefakt_id": "a-1",
                                "klartekst_sha256": "b" * 64})
         assert sti == "/v1/oppdrag/kvittering", sti
-        return _Svar(self.kvitteringsstatus, {})
+        return self._kvitteringssvar(json or {})
 
 
 def test_avvist_kvittering_er_ikke_utfort():
@@ -1330,6 +1345,55 @@ def test_avvist_kvittering_er_ikke_utfort():
         # Artefaktet ER lastet opp — utfallet skjuler ikke det, det nekter
         # bare å kalle kjøringen ferdig.
         assert res["artefakt_id"] == "a-1"
+    ok = controller.kjor_en(_Stubklient(200), "tk", motor, _kontekst(),
+                            lambda k: k)
+    assert ok["utfall"] == "utfort", ok
+
+
+def test_sen_evidens_202_er_ikke_utfort():
+    """Codex P1: `2xx` alene var ikke bevis for at oppdraget ble ferdig.
+
+    Fullfører kjøringen etter `utforelsesfrist`, men før `evidensfrist`,
+    svarer `/v1/oppdrag/kvittering` 202 med
+    `status: "lagret_uten_statusendring"`: evidensen BEVARES, og det er
+    hele det som skjedde — `unntak.status` står urørt, og plattformen har
+    bevisst latt oppdraget være ufullført. `_kvittert` så bare
+    statuskoden, leste 202 som en godtatt kvittering, og controlleren
+    meldte `utfall: "utfort"`. Da har modulen sagt at kjøringen var i
+    havn om et oppdrag plattformen selv regner som uavsluttet, og
+    planleggeren slutter å følge opp noe som aldri ble avsluttet.
+
+    Kontroll: sett `_kvittert` tilbake til `200 <= status < 300`, så blir
+    202-en `utfort` igjen.
+    """
+    from modules.wcag_audit import controller
+    motor = FakeMotor(resultat=_motorresultat())
+
+    sen = _Stubklient(202, kvitteringskropp={
+        "status": "lagret_uten_statusendring", "oppdrag_id": 1})
+    res = controller.kjor_en(sen, "tk", motor, _kontekst(), lambda k: k)
+    assert res["utfall"] == "ukvittert", res
+    assert res["kvittering_status"] == 202
+    # Artefaktet ER lastet opp; utfallet skjuler det ikke.
+    assert res["artefakt_id"] == "a-1"
+
+    # En kropp vi ikke kan lese er heller ingen bekreftelse: «vet ikke»
+    # skal behandles som uferdig, ikke som ferdig.
+    class _Ulesbar(_Stubklient):
+        def _kvitteringssvar(self, sendt):
+            class _S:
+                status_code = 200
+
+                def json(self):
+                    raise ValueError("ikke JSON")
+            return _S()
+
+    res = controller.kjor_en(_Ulesbar(200), "tk", motor, _kontekst(),
+                             lambda k: k)
+    assert res["utfall"] == "ukvittert", res
+
+    # ...og det EKTE statusskiftet (200 + status i kroppen) er fortsatt
+    # utfort, ellers ville vakten gjort alle kjøringer uferdige.
     ok = controller.kjor_en(_Stubklient(200), "tk", motor, _kontekst(),
                             lambda k: k)
     assert ok["utfall"] == "utfort", ok
