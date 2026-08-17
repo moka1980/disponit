@@ -7,12 +7,31 @@ overganger, som alt annet i 014a).
 Kjøres på staging når modulen skal inn i sjekklisterunden:
 
     DISPONIT_MIGRATOR_URL=… python3 deploy/staging/registrer-m-wcag-audit.py \
-        <release_id> <kontrakt_hash> <artifact_digest>
+        <release_id> <kontrakt_hash> <artifact_digest> \
+        <payload_skjema_hash> <kvittering_skjema_hash>
+
+HVER HASH ER SITT EGET DOKUMENT (Codex P1). WCAG-payloaden, PR-006-
+kvitteringen, rapportskjemaet og manifestet er fire forskjellige
+dokumenter; gjenbrukte man rapportskjemaets digest for alle fire, skrev
+skriptet FALSK proveniens i rader som er immutable for alltid — og et
+senere forsøk med de riktige hashene ville blitt avvist som
+immutabilitetskonflikt, uten vei tilbake. Derfor:
+
+  * rapportskjemaet — REGNES UT her (`rapportskjema.skjema_hash()`), det
+    er modulens eget dokument og ligger i koden;
+  * manifestet — REGNES UT her fra `manifest.yaml` på disk, sha256 over
+    filens bytes (samme «manifest på disk = register»-disiplin som
+    deploy-porten, 014a §7);
+  * payload- og kvitteringsskjemaet — TAS IMOT, de eies av
+    release-materialet (014b) og plattformkontrakten (PR-006), ikke av
+    denne fila. Formen valideres før noe skrives.
 
 Idempotent: alle funksjonene er no-op på identisk innhold. Skriptet
 registrerer ALDRI status `aktiv` — aksept er sjekklistens (manifestet).
 """
+import hashlib
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -28,28 +47,54 @@ from modules.wcag_audit import rapportskjema  # noqa: E402
 MODUL = "m_wcag_audit"
 OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 ARTEFAKTTYPE = "kontroll.wcag.rapport"
+MANIFEST = Path("platform/modules/wcag_audit/manifest.yaml")
+
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _hex64(navn: str, verdi: str) -> str:
+    """Formsjekk FØR skriving: radene under er immutable, så en feilformet
+    hash må stoppe her — etterpå finnes det ingen retting, bare en
+    konflikt."""
+    if not _HEX64.match(verdi or ""):
+        raise SystemExit(f"{navn} må være 64 hex-tegn (sha256), fikk"
+                         f" {verdi!r}")
+    return verdi
+
+
+def manifest_hash() -> str:
+    """sha256 over manifestets bytes på disk — manifestets EGEN hash, ikke
+    et annet dokuments."""
+    return hashlib.sha256((REPO / MANIFEST).read_bytes()).hexdigest()
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 6:
         print(__doc__, file=sys.stderr)
         return 2
-    release_id, kontrakt_hash, digest = sys.argv[1:4]
+    (release_id, kontrakt_hash, digest, payload_hash,
+     kvittering_hash) = sys.argv[1:6]
+    _hex64("kontrakt_hash", kontrakt_hash)
+    _hex64("payload_skjema_hash", payload_hash)
+    _hex64("kvittering_skjema_hash", kvittering_hash)
     dsn = os.environ["DISPONIT_MIGRATOR_URL"]
     kanon = rapportskjema.kanonisk().decode("utf-8")
     h = rapportskjema.skjema_hash()
+    m_hash = manifest_hash()
     with psycopg.connect(dsn) as c:
         c.execute("SET ROLE disponit_modules_admin")
         c.execute("SELECT installer_modul(%s, 'deploy')", (MODUL,))
-        # Kontrakten: ekstern_lesing + direkte reversibel (§4). payload-/
-        # kvitteringsskjema-hashene er rapportskjemaets (payloaden er den
-        # lukkede fire-felts-formen i oppdragskontrakt; kontraktens
-        # skjemahasher binder release-materialet).
+        # Kontrakten: ekstern_lesing + direkte reversibel (§4). payload- og
+        # kvitteringsskjemahashene er de OPPGITTE — de binder
+        # release-materialets payloadform og PR-006-kvitteringen, to
+        # dokumenter denne fila verken eier eller kan regne ut.
         c.execute("SELECT registrer_kontrakt(%s, 1, %s, %s, %s,"
                   " 'ekstern_lesing', 'direkte', 'deploy')",
-                  (MODUL, kontrakt_hash, h, h))
+                  (MODUL, kontrakt_hash, payload_hash, kvittering_hash))
+        # Releasen bærer MANIFESTETS hash, ikke rapportskjemaets.
         c.execute("SELECT registrer_release(%s, %s, 1, %s, %s, %s,"
-                  " 'deploy')", (MODUL, release_id, kontrakt_hash, h, digest))
+                  " 'deploy')",
+                  (MODUL, release_id, kontrakt_hash, m_hash, digest))
         c.execute("SELECT registrer_oppdragstype(%s, %s, 1, %s, 'deploy')",
                   (OPPDRAGSTYPE, MODUL, kontrakt_hash))
         c.execute("SELECT registrer_artefaktskjema(%s, %s, 'deploy')",
