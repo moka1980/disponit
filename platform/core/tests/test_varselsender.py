@@ -1603,7 +1603,7 @@ def _klartekst(setning, strenger):
     return _MARKOER_MAL.sub(igjen, setning)
 
 
-def _delt(tekst, i_blokk):
+def _delt(tekst, i_blokk, arvet_vakt=False):
     """Setningene i et tekststykke, hver på to former og med sin vakt.
 
     Gir `(setning, maskert, betinget)`: `setning` er teksten slik den står
@@ -1617,6 +1617,10 @@ def _delt(tekst, i_blokk):
     Strengkonstantene maskeres FØR splittingen på semikolon, slik at et
     semikolon inne i en konstant ikke deler en setning i to — og slik at
     hverken vakttellingen eller ACL-uttrykkene leser inert tekst som kode.
+
+    `arvet_vakt` er vakten en KALLER har målt for teksten som helhet — den
+    brukes av den dynamiske grenen under, der teksten som kjøres arver
+    vakten fra `EXECUTE`-setningen den sto i.
     """
     dybde = 0
     uten_streng, strenger = _uten_strenger(_KROPP.sub(" ", tekst))
@@ -1624,12 +1628,9 @@ def _delt(tekst, i_blokk):
         s = " ".join(rå.split()).lower()
         if not s:
             continue
-        yield _klartekst(s, strenger), s, dybde > 0
+        yield _klartekst(s, strenger), s, arvet_vakt or dybde > 0
         # …og den ene teksten som likevel er kode. Den spilles av HER, altså
         # på plassen der `EXECUTE` står, med den vakten som gjelder der.
-        # Innholdet kan selv være flere setninger — plpgsql godtar det — så
-        # det splittes på semikolon som alt annet. Den er sin egen klartekst:
-        # det er nettopp teksten som kjører.
         for m in _DYNAMISK.finditer(s):
             # VAKTEN FØLGER MED UT AV TEKSTEN (Codex P2 på #74). `dybde`
             # teller grenene som åpnet i en TIDLIGERE setning, og oppdateres
@@ -1641,10 +1642,30 @@ def _delt(tekst, i_blokk):
             # ubetinget, leste modellen en betinget dynamisk REVOKE som
             # bevis, og lot gjerdet stå der klyngen — med usann vakt — ikke
             # hadde revokert noe.
-            betinget = dybde > 0 or bool(_BETINGET.search(s[:m.start()]))
-            for bit in strenger[int(m.group(1))][1].split(";"):
-                if kjort := " ".join(bit.split()).lower():
-                    yield kjort, kjort, betinget
+            betinget = (arvet_vakt or dybde > 0
+                        or bool(_BETINGET.search(s[:m.start()])))
+            # DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL (Codex P2 på
+            # #74). Innholdet ble før gitt videre RÅTT, og som sin egen
+            # maskerte form — altså som om det hverken kunne inneholde
+            # kommentarer eller strengkonstanter. Men en `EXECUTE 'SELECT
+            # ''REVOKE … FROM PUBLIC'''` VELGER bare ut en tekst; den
+            # revokerer ingenting. Modellen leste den siterte teksten som en
+            # utført REVOKE fra eieren og løftet gjerdet til True mens PUBLIC
+            # beholdt EXECUTE — nøyaktig den blindsonen maskeringen av
+            # filteksten ble lagt inn for å lukke, én omvei unna.
+            #
+            # Teksten går derfor gjennom det SAMME leddet som filen selv:
+            # kommentarene strykes, konstantene maskeres, og splittingen på
+            # semikolon skjer etterpå — så et semikolon inne i en tekst
+            # deler ingen setning her heller. At det er den samme funksjonen
+            # som kalles, er hele poenget: en `EXECUTE` inne i den kjørte
+            # teksten måles da likt, uten en egen regel for hvert lag.
+            #
+            # `i_blokk` er False: nyttelasten er SQL, ikke plpgsql, så det
+            # finnes ingen gren å telle i den. Vakten den står under, følger
+            # med som `arvet_vakt`.
+            yield from _delt(_uten_kommentarer(strenger[int(m.group(1))][1]),
+                             False, betinget)
         if i_blokk:
             # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
             # en logglinje lukker ingen gren, og en `IF … THEN` i en
@@ -2503,6 +2524,61 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
                    "END $$;")], n)
     assert gjerdet == {sig: False}, (
         f"en dynamisk GRANT til PUBLIC åpner gjerdet. Spor: {spor}")
+
+    # …OG DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL. Nyttelasten ble før
+    # gitt videre rå, og som sin egen maskerte form — som om den ikke selv
+    # kunne inneholde en strengkonstant. En `EXECUTE 'SELECT ''REVOKE …'''`
+    # VELGER da bare ut en tekst i basen, men leste i modellen som en utført
+    # REVOKE fra eieren: gjerdet ble True mens PUBLIC beholdt EXECUTE. Det er
+    # den samme blindsonen maskeringen av filteksten lukket, ett lag ned.
+    sitert_i_execute = (
+        "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+        "    EXECUTE 'SELECT ''REVOKE ALL ON FUNCTION"
+        " varsel_klaim_epost(int,int) FROM PUBLIC''';\n"
+        "END $$; RESET ROLE;")
+    gjerdet, spor = _spill_av([("a.sql", lag), ("b.sql", sitert_i_execute)], n)
+    assert gjerdet == {sig: False}, (
+        "en REVOKE som bare er SITERT inne i den kjørte teksten er ikke et"
+        f" gjerde — `SELECT` velger den ut, den kjører ikke. Spor: {spor}")
+
+    # …og motprøven, som er det som skiller maskeringen fra «alt inne i en
+    # EXECUTE teller ikke»: en EKTE setning ved siden av den siterte er
+    # fortsatt kode. Semikolonet inne i konstanten deler heller ingen
+    # setning her — ellers hadde GRANT-en blitt hakket i to og forsvunnet.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    EXECUTE 'SELECT ''; GRANT ingenting'';"
+                   " GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                   " TO PUBLIC';\nEND $$;")], n)
+    assert gjerdet == {sig: False}, (
+        "en ekte GRANT ved siden av en sitert tekst i den samme nyttelasten"
+        f" åpner gjerdet. Spor: {spor}")
+
+    # …og KOMMENTARENE I NYTTELASTEN er basens kommentarer. En `--` inni den
+    # kjørte teksten kommenterer ut resten av linjen for PostgreSQL også, så
+    # en ACL-setning skrevet der utføres ikke — og skal ikke måles som om den
+    # ble det.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                   "    EXECUTE 'SELECT 1; -- REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC';\n"
+                   "END $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en utkommentert REVOKE inne i den kjørte teksten utføres ikke, og"
+        f" er ikke et gjerde. Spor: {spor}")
+
+    # …og motprøven til DEN: kommentarstrykingen skal ta kommentaren, ikke
+    # setningen foran den. Ellers ville regelen gjort enhver dokumentert
+    # dynamisk REVOKE usynlig — den farlige retningen, én gang til.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + "SET LOCAL ROLE disponit_domene_eier; DO $$\nBEGIN\n"
+                         "    EXECUTE 'REVOKE ALL ON FUNCTION"
+                         " varsel_klaim_epost(int, int) FROM PUBLIC"
+                         " -- gjerdet, jf. 030';\nEND $$; RESET ROLE;")], n)
+    assert gjerdet == {sig: True}, (
+        "en kommentar ETTER en dynamisk REVOKE stryker kommentaren, ikke"
+        f" REVOKE-en. Spor: {spor}")
 
     # …og VAKTEN GJELDER OGSÅ DEN. `IF … THEN EXECUTE '…'` er ETT
     # semikolonfragment: grentellingen ser `IF`-en først i fragmentet
