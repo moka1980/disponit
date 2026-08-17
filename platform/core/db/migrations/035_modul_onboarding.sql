@@ -300,6 +300,22 @@ CREATE TRIGGER modultoken_identitet_immutable
 -- stedet for forgjenger, og nøkkelen er `innlosning_id`. Uten den grenen
 -- kunne to ulike innløsninger av samme hemmelighet dele familiens
 -- førstegenerasjon bare de valgte hvert sitt forsøksnummer.
+--
+-- OG SØSKENFLOKKEN FORSEGLES AV KONVERGENSEN (Codex P2). Retten til å prøve
+-- på nytt finnes for ÉN situasjon: ingen vet hvilket søsken deploymenten
+-- fikk, så alle må leve. I det ett av dem BRUKES til å rotere, er det
+-- bevist — `roter_modultoken` kapper de andre, og spørsmålet retten svarte
+-- på finnes ikke lenger. Et forsøk etter det punktet er ikke en tapt pakke:
+-- det er en fersk, levende credential ved siden av kjeden, som lever ut
+-- familiens 30 døgn og kan claime. Tidsvinduet stanser den ikke —
+-- hemmeligheten har 60 minutter og nådevinduet et kvarter, begge lenge nok
+-- til at konvergensen rekker å skje først — og forsøkstelleren stanser den
+-- ikke, for den teller de tilbakekalte søsknene med og gir bare et NYTT
+-- nummer. Regelen er derfor: har et søsken alt fått en etterfølger, er
+-- flokken lukket. Den står HER, i lagringen, fordi den er en invariant om
+-- radene og ikke om noen kodevei — funksjonene sier den samme tingen med en
+-- lesbar grunn. Begge myntingsveiene tar modullåsen, så konvergensen og et
+-- gjentatt forsøk kan ikke løpe forbi hverandre: den ene ser den andre.
 CREATE OR REPLACE FUNCTION modultoken_soesken_vakt()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
@@ -321,6 +337,16 @@ BEGIN
                 ' som startet denne familien', NEW.innlosning_forsok
                 USING ERRCODE = 'check_violation';
         END IF;
+        PERFORM 1 FROM public.modultoken t
+          JOIN public.modultoken b ON b.forgjenger = t.token_id
+         WHERE t.onboarding_id = NEW.onboarding_id
+           AND t.forgjenger IS NULL
+           AND t.innlosning_id IS NOT DISTINCT FROM NEW.innlosning_id;
+        IF FOUND THEN
+            RAISE EXCEPTION 'modultoken: innlosningen er forseglet — et'
+                ' soesken er alt tatt i bruk'
+                USING ERRCODE = 'check_violation';
+        END IF;
         RETURN NEW;
     END IF;
     IF NEW.rotasjon_forsok = 1 THEN
@@ -337,6 +363,15 @@ BEGIN
         RAISE EXCEPTION 'modultoken: forsok % horer ikke til rotasjonen som'
             ' startet pa dette tokenet', NEW.rotasjon_forsok
             USING ERRCODE = 'check_violation';
+    END IF;
+    -- Samme forsegling ett hakk ned: søsknene er forgjengerens etterfølgere,
+    -- og har en av DEM fått en etterfølger, er rotasjonen avgjort.
+    PERFORM 1 FROM public.modultoken t
+      JOIN public.modultoken b ON b.forgjenger = t.token_id
+     WHERE t.forgjenger = NEW.forgjenger;
+    IF FOUND THEN
+        RAISE EXCEPTION 'modultoken: rotasjonen er forseglet — et soesken er'
+            ' alt tatt i bruk' USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END $$;
@@ -512,6 +547,14 @@ END $$;
 -- avvist. Å prøve på nytt krever altså både hemmeligheten OG nøkkelen som
 -- aldri forlot deploymenten.
 --
+-- OG KONVERGENSEN FORSEGLER DEN (Codex P2, runde 6). Grensene over er alle
+-- tid og antall; den som betyr noe er en HENDELSE. Roterer deploymenten fra
+-- ett av søsknene, er det bevist hvilket den holder, og de andre kappes —
+-- da svarer et nytt forsøk ikke lenger på noe spørsmål, det legger bare et
+-- ferskt, levende førstegenerasjons-token ved siden av kjeden, med rett til
+-- å claime helt til familiehorisonten. Etter det punktet er innløsningen
+-- lukket.
+--
 -- Formen endret seg (ny parameter), så den gamle signaturen må vekk før
 -- REPLACE.
 DROP FUNCTION IF EXISTS innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT);
@@ -574,9 +617,32 @@ BEGIN
                 v_grunn := 'innlosning_avvist';
                 v_forsok := 1;
             ELSE
-                v_forsok := v_forsok + 1;
-                IF v_forsok > 5 THEN
-                    v_grunn := 'innlosning_forsokstak';
+                -- KONVERGENSEN FORSEGLER INNLØSNINGEN (Codex P2). Retten
+                -- til å prøve på nytt varer så lenge det er UKJENT hvilket
+                -- søsken deploymenten fikk. Roterer den fra ett av dem, er
+                -- det svart på: `roter_modultoken` kapper de andre, og et
+                -- forsøk etter det ville satt inn et ferskt, LEVENDE
+                -- førstegenerasjons-token ved siden av kjeden — med rett
+                -- til å claime helt til familiehorisonten om 30 døgn.
+                -- Hverken hemmelighetens 60 minutter eller taket stanser
+                -- det: telleren teller de tilbakekalte søsknene med og
+                -- deler bare ut neste nummer. Modullåsen over gjør at
+                -- konvergensen og dette forsøket ikke kan løpe forbi
+                -- hverandre. Lagringen bærer den samme regelen
+                -- (`modultoken_soesken_vakt`); her får den sin grunn.
+                PERFORM 1 FROM public.modultoken t
+                  JOIN public.modultoken b ON b.forgjenger = t.token_id
+                 WHERE t.onboarding_id = o.onboarding_id
+                   AND t.forgjenger IS NULL
+                   AND t.innlosning_id = p_innlosning_id;
+                IF FOUND THEN
+                    v_grunn := 'innlosning_forseglet';
+                    v_forsok := 1;
+                ELSE
+                    v_forsok := v_forsok + 1;
+                    IF v_forsok > 5 THEN
+                        v_grunn := 'innlosning_forsokstak';
+                    END IF;
                 END IF;
             END IF;
         END IF;
@@ -714,6 +780,10 @@ $$;
 -- KONVERGENS: neste rotasjon FRA et av søsknene beviser hvilket
 -- deploymenten faktisk holder. De andre tilbakekalles da umiddelbart —
 -- de er beviselig ikke i bruk, og de skal ikke ligge og leve i 30 dager.
+-- Og konvergensen FORSEGLER flokken (Codex P2, runde 6): etter den er
+-- spørsmålet besvart, og et nytt forsøk i den samme rotasjonen ville bare
+-- lagt en fersk, levende credential ved siden av kjeden. Nådevinduet er
+-- ikke grensen — hendelsen er.
 --
 -- Formen endret seg (ny parameter), så den gamle signaturen må vekk før
 -- REPLACE — ellers står to overlaster igjen og 5-argumentskallet blir
@@ -841,6 +911,20 @@ BEGIN
         -- nåden faller kallet på tilbakekallingssjekken over, lenge før
         -- denne grenen. Gjenopprettelsen lever altså nøyaktig like lenge som
         -- forgjengeren selv — og hvert eneste forsøk står i sporet under.
+        --
+        -- OG KONVERGENSEN FORSEGLER FLOKKEN (Codex P2). Nådevinduet alene
+        -- er ikke grensen: brukes ETT av søsknene til å rotere videre, er
+        -- det bevist hvilket deploymenten holder, de andre kappes — og et
+        -- forsøk etter det punktet er ikke en tapt pakke lenger, men en ny
+        -- levende credential ved siden av kjeden. Spørsmålet retten til å
+        -- prøve på nytt svarte på finnes ikke mer.
+        PERFORM 1 FROM public.modultoken t
+          JOIN public.modultoken b ON b.forgjenger = t.token_id
+         WHERE t.forgjenger = p_forgjenger;
+        IF FOUND THEN
+            RAISE EXCEPTION 'rotasjon: rotasjonen er forseglet — et soesken'
+                ' er alt tatt i bruk' USING ERRCODE = 'unique_violation';
+        END IF;
         SELECT max(t.rotasjon_forsok) + 1 INTO v_forsok
           FROM public.modultoken t WHERE t.forgjenger = p_forgjenger;
         IF v_forsok > 5 THEN

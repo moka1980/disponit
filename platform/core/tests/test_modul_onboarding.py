@@ -362,6 +362,69 @@ def test_gjentatt_innlosning_er_gjenopprettelig_og_har_et_tak():
 
 
 @pg
+def test_innlosningen_forsegles_av_konvergensen():
+    """Codex P2: retten til å prøve på nytt varer så lenge det er UKJENT
+    hvilket søsken deploymenten fikk. Roterer den fra ett av dem, er det
+    svart på — de andre kappes — og et forsøk ETTER det punktet er ingen
+    tapt pakke: det er et ferskt, LEVENDE førstegenerasjons-token ved siden
+    av kjeden, med rett til å claime helt til familiehorisonten.
+
+    Verken hemmelighetens 60 minutter eller taket stanser det: telleren
+    teller de tilbakekalte søsknene med og deler bare ut neste nummer.
+
+    Kontroll: fjern forseglingssjekken i `innlos_onboarding`, så gir det
+    siste forsøket et token i stedet for `innlosning_forseglet`."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, rel, _, _ = _deployment_med_typer(m)
+        hh = _hex64()
+        oid, _ = _utsted(rt, modul, "staging", rel, hemmelighet_hash=hh)
+        nokkel = uuid.uuid4()
+        t1, _ = _innlos(rt, oid, hh, innlosning_id=nokkel)
+        t2, rad2 = _innlos(rt, oid, hh, innlosning_id=nokkel)
+        rt.commit()
+        assert rad2[7] is None, rad2      # to søsken, begge lever
+
+        # Deploymenten beviser hvilket den holder. Taket er ikke nådd —
+        # forsøk 3 av 5 står ledig — så det er KONVERGENSEN som må stenge.
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                   (t2, uuid.uuid4(), _hex64()))
+        rt.commit()
+
+        _, etter = _innlos(rt, oid, hh, innlosning_id=nokkel)
+        rt.commit()
+        assert etter[7] == "innlosning_forseglet", etter
+        # Ingen ny førstegenerasjon kom inn, og avvisningen står i sporet.
+        assert m.execute(
+            "SELECT count(*) FROM modultoken WHERE onboarding_id=%s AND"
+            " forgjenger IS NULL", (oid,)).fetchone()[0] == 2
+        assert m.execute(
+            "SELECT count(*) FROM modultoken_hendelse WHERE onboarding_id=%s"
+            " AND hendelse='avvist_bruk' AND detalj->>'grunn'="
+            "'innlosning_forseglet'", (oid,)).fetchone()[0] == 1
+
+        # Og regelen bor i LAGRINGEN, ikke bare i funksjonen: migratoren selv
+        # kommer heller ikke inn med et nytt forsøk i den forseglede flokken.
+        rad = m.execute("SELECT onboarding_id, familie_utloper, modul_id,"
+                        " miljo, release_id, utstedt_epoch FROM modultoken"
+                        " WHERE token_id=%s", (t1,)).fetchone()
+        with pytest.raises(psycopg.errors.CheckViolation,
+                           match="innlosningen er forseglet"):
+            m.execute(
+                "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+                "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+                "innlosning_id,innlosning_forsok,utloper)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,3,now()+"
+                "interval '1 day')",
+                (uuid.uuid4(), _hex64()) + tuple(rad) + (nokkel,))
+        m.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_innlosningssoesken_hoerer_til_samme_innlosning():
     """Vakten i lagringen, uavhengig av funksjonen: et forsøk > 1 er neste
     forsøk i den innløsningen forsøk 1 startet. Uten den kunne to ULIKE
@@ -549,6 +612,63 @@ def test_gjentatte_forsok_har_et_tak_i_lagringen():
         rt.rollback()
         assert m.execute("SELECT count(*) FROM modultoken WHERE forgjenger=%s",
                          (tid,)).fetchone()[0] == 5
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_rotasjonen_forsegles_av_konvergensen():
+    """Codex P2, samme regel ett hakk ned: nådevinduet er ikke grensen for
+    det gjentatte rotasjonsforsøket — HENDELSEN er. Brukes ett av søsknene
+    til å rotere videre, er det bevist hvilket deploymenten holder, de andre
+    kappes, og et nytt forsøk i den samme rotasjonen ville bare lagt en
+    fersk, levende credential ved siden av kjeden. Forgjengeren er fortsatt
+    i nåde og taket er ikke nådd, så ingen av de andre grensene stenger.
+
+    Kontroll: fjern forseglingssjekken i `roter_modultoken`, så gir det
+    siste forsøket et token i stedet for en konflikt."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        nokkel = uuid.uuid4()
+        forste = uuid.uuid4()
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                   (tid, forste, _hex64(), nokkel))
+        rt.commit()
+        andre = uuid.uuid4()
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                   (tid, andre, _hex64(), nokkel))
+        rt.commit()
+
+        # Konvergensen: deploymenten roterer videre fra det den holder.
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                   (andre, uuid.uuid4(), _hex64()))
+        rt.commit()
+
+        with pytest.raises(psycopg.errors.UniqueViolation,
+                           match="forseglet"):
+            rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                       (tid, uuid.uuid4(), _hex64(), nokkel))
+        rt.rollback()
+        assert m.execute("SELECT count(*) FROM modultoken WHERE forgjenger=%s",
+                         (tid,)).fetchone()[0] == 2
+
+        # ... og lagringen sier det samme til migratoren selv.
+        rad = m.execute("SELECT onboarding_id, familie_utloper, modul_id,"
+                        " miljo, release_id, utstedt_epoch FROM modultoken"
+                        " WHERE token_id=%s", (tid,)).fetchone()
+        with pytest.raises(psycopg.errors.CheckViolation,
+                           match="rotasjonen er forseglet"):
+            m.execute(
+                "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+                "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+                "forgjenger,rotasjon_id,rotasjon_forsok,utloper)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,3,now()+"
+                "interval '1 day')",
+                (uuid.uuid4(), _hex64()) + tuple(rad) + (tid, nokkel))
+        m.rollback()
     finally:
         rt.close()
         m.close()

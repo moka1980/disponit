@@ -299,13 +299,22 @@ def roter_endepunkt(tjeneste, request: Request) -> Response:
                  _mac(tjeneste.pepper, ny_secret), TOKEN_DAGER,
                  f"modul:{auth.modul_id}", rotasjon_id)).fetchone()
             conn.commit()
-        except psycopg.errors.UniqueViolation:
+        except (psycopg.errors.UniqueViolation,
+                psycopg.errors.CheckViolation):
             # To ULIKE rotasjoner: lagringen lot én vinne. Taperen har
             # fortsatt sitt gamle token i nådevinduet og kan hente
             # etterfølgeren der den ble levert — dette er en konflikt, ikke
             # en feil hos serveren. Det GJENTATTE forsøket (samme
             # `rotasjon_id`) havner her først når taket på fem forsøk er
-            # nådd; da er dette ikke lenger en tapt pakke.
+            # nådd, eller når rotasjonen er FORSEGLET av konvergensen
+            # (Codex P2) — begge betyr at dette ikke lenger er en tapt
+            # pakke.
+            #
+            # CHECK-bruddet er lagringens egne vakter på det gjentatte
+            # forsøket (`modultoken_soesken_vakt`). Funksjonen sjekker det
+            # samme under modul- og radlåsen, så de skal ikke kunne treffes
+            # herfra — men en vakt som KAN fyre skal ha et definert svar og
+            # ikke en 500, samme fail-closed som innløsningsruten.
             conn.rollback()
             return _feilsvar("onboarding_avvist", rid, 409)
         except psycopg.errors.InvalidParameterValue:
