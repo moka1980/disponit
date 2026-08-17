@@ -739,3 +739,73 @@ INSERT INTO artefakttype_register
            'e30ef85662f0967117cf3d0dc2e28b9efd3da50b501429be79bd8e5cea5fc40e'
     WHERE NOT EXISTS (SELECT 1 FROM artefakttype_register
                        WHERE artefakttype = 'test.onboarding.kvittering');
+
+-- ------------------------------------------------------------
+-- 8. Familiehorisont-varslene (30/7/1 døgn, klarsignalet §5): en modul
+--    som ikke er rullet på et år stopper og krever et menneske — det
+--    skal VARSLES, ikke oppdages. Varslene skrives av senderens
+--    pre-pass via denne funksjonen (varselsender-rollen eier ingenting
+--    og har ellers ingen vei inn i modultoken); mottakerne er de aktive
+--    `admin`-medlemmene i plattformtenanten (kallerens serverkonfig).
+--    Unikhetsnøkkelen (bruker · art · ressurs · hendelse=terskel) gjør
+--    sveipen idempotent — hver terskel varsles én gang per familie.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_modul_eier;
+
+CREATE OR REPLACE FUNCTION varsle_tokenfamilie_utlop(p_tenant TEXT)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_n INT := 0; f RECORD; t INT;
+BEGIN
+    -- varsel/brukermedlemskap står under FORCE RLS med tenant-GUC-en som
+    -- predikat — funksjonen setter den LOKALT for sin egen transaksjon.
+    PERFORM set_config('disponit.tenant', p_tenant, true);
+    PERFORM set_config('disponit.aktor', 'tokenfamilievarsel', true);
+    FOREACH t IN ARRAY ARRAY[30, 7, 1] LOOP
+        FOR f IN
+            SELECT o.onboarding_id, o.modul_id, o.miljo, o.release_id,
+                   o.familie_utloper
+              FROM public.modul_onboarding o
+             WHERE o.innlost_ts IS NOT NULL
+               AND o.familie_utloper > now()
+               AND o.familie_utloper <= now() + make_interval(days => t)
+               -- bare familier med et LEVENDE token: en familie der alt
+               -- er tilbakekalt/utløpt har ingenting å miste ved fristen.
+               AND EXISTS (SELECT 1 FROM public.modultoken mt
+                            WHERE mt.onboarding_id = o.onboarding_id
+                              AND (mt.tilbakekalt_ts IS NULL
+                                   OR mt.tilbakekalt_ts > now())
+                              AND mt.utloper > now())
+        LOOP
+            INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
+                                       ressurs_id, hendelse, tekstnokkel,
+                                       parametre)
+            SELECT p_tenant, b.bruker_id, 'tokenfamilie_utloper',
+                   'modultoken', f.onboarding_id::text, t::text,
+                   'varsel.tokenfamilie_utloper',
+                   jsonb_build_object('modul_id', f.modul_id,
+                                      'miljo', f.miljo,
+                                      'release_id', f.release_id,
+                                      'familie_utloper', f.familie_utloper,
+                                      'dager', t)
+              FROM public.brukermedlemskap b
+             WHERE b.tenant = p_tenant AND b.aktiv
+               AND 'admin' = ANY (b.roller)
+                ON CONFLICT DO NOTHING;
+            v_n := v_n + 1;
+        END LOOP;
+    END LOOP;
+    RETURN v_n;
+END $$;
+
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(TEXT)
+    TO disponit_varselsender;
+GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(TEXT) TO disponit;
+
+RESET ROLE;
+-- Eieren trenger lese modul_onboarding/modultoken (har det, §-grantene
+-- over) og skrive varsel + lese medlemskap — begge under FORCE RLS, som
+-- funksjonen tilfredsstiller via tenant-GUC-en.
+GRANT SELECT ON brukermedlemskap TO disponit_modul_eier;
+GRANT INSERT ON varsel TO disponit_modul_eier;

@@ -705,6 +705,7 @@
   "ui.varsler.kanal_lagret": "Your notification preference has been saved.",
   "ui.varsler.feilet": "The action failed.",
   "varsel.attestering_venter": "Policy {policy_id} is waiting for your attestation (round {runde}, risk {risikoklasse}) — {gjenstaar} attestation(s) remaining.",
+  "varsel.tokenfamilie_utloper": "The module token family for {modul_id} ({miljo}, release {release_id}) reaches its absolute horizon {familie_utloper} in {dager} days — plan a new onboarding.",
   "varsel.epost.emne": "Disponit: something is waiting for you",
   "ui.dashbord.varsler": "Priority alerts",
   "ui.dashbord.aktivitet": "Recent activity",

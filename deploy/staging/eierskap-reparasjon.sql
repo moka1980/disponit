@@ -99,6 +99,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'verifiser_modultoken(text)',                         'disponit_modul_eier'),
     ('FUNCTION', 'roter_modultoken(uuid,uuid,text,integer,text)',      'disponit_modul_eier'),
     ('FUNCTION', 'tilbakekall_modultoken(uuid,text,text)',             'disponit_modul_eier'),
+    ('FUNCTION', 'varsle_tokenfamilie_utlop(text)',                    'disponit_modul_eier'),
     ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),

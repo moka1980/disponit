@@ -606,3 +606,97 @@ def test_seedet_testtype_er_registrert_og_reservert():
         assert status != "aktiv"
     finally:
         m.close()
+
+
+# --------------------------------------------------------------------------
+# Familiehorisont-varslene (port 32): 30/7/1 døgn, idempotent, kun levende
+# familier, kun plattformtenantens aktive admin-medlemmer.
+# --------------------------------------------------------------------------
+
+@pg
+def test_familieutlop_varsles_30_7_1_idempotent():
+    """Kontroll: fjern EXISTS-leddet for levende token i
+    `varsle_tokenfamilie_utlop`, så blir dødfamilie-asserten rød; fjern
+    ON CONFLICT-nøkkelen, så dobler antallet ved andre kjøring."""
+    m = _c()
+    rt = _rt()
+    ten = "t-famvarsel-" + secrets.token_hex(3)
+    try:
+        # Plattformtenant med én aktiv admin og én ikke-admin.
+        admin = m.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " RETURNING bruker_id",
+            ("https://idp.example", f"{ten}-adm")).fetchone()[0]
+        leser = m.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " RETURNING bruker_id",
+            ("https://idp.example", f"{ten}-leser")).fetchone()[0]
+        from db.pg import sett_kontekst
+        sett_kontekst(m, ten, "sys", "r0")
+        m.execute("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+                  " VALUES (%s,%s,ARRAY['admin','leser'])", (ten, admin))
+        m.execute("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+                  " VALUES (%s,%s,ARRAY['leser'])", (ten, leser))
+        m.commit()
+
+        def familie(dager_igjen, med_levende_token=True):
+            modul, rel, _, _ = _deployment_med_typer(m)
+            o = uuid.uuid4()
+            m.execute(
+                "INSERT INTO modul_onboarding (onboarding_id,modul_id,miljo,"
+                "release_id,hemmelighet_hash,familie_utloper,utstedt_av,"
+                "utloper,innlost_ts) VALUES (%s,%s,'staging',%s,%s,"
+                "now()+make_interval(days => %s),'t',now(),now())",
+                (o, modul, rel, _hex64(), dager_igjen))
+            m.execute(
+                "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+                "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+                "utloper,tilbakekalt_ts,tilbakekalt_grunn)"
+                " SELECT %s,%s,onboarding_id,familie_utloper,modul_id,miljo,"
+                "release_id,0,familie_utloper,%s,%s FROM modul_onboarding"
+                " WHERE onboarding_id=%s",
+                (uuid.uuid4(), _hex64(), None, None, o))
+            if not med_levende_token:
+                m.execute("UPDATE modultoken SET tilbakekalt_ts=now(),"
+                          " tilbakekalt_grunn='drept' WHERE onboarding_id=%s"
+                          " AND tilbakekalt_ts IS NULL", (o,))
+            m.commit()
+            return o
+
+        naer = familie(5)             # innenfor 30 OG 7, ikke 1
+        dod = familie(5, med_levende_token=False)
+        fjern = familie(200)          # utenfor alle tersklene
+
+        rt.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
+        rt.commit()
+        sett_kontekst(m, ten, "sys", "r1")
+        # Sveipen er PLATTFORMVID (den skal se alle familier, også dem andre
+        # tester har etterlatt) — asserten scopes derfor til DENNE testens
+        # familier.
+        mine = {str(naer), str(dod), str(fjern)}
+        rader = [r for r in m.execute(
+            "SELECT bruker_id, ressurs_id, hendelse FROM varsel"
+            " WHERE tenant=%s AND art='tokenfamilie_utloper'"
+            " ORDER BY hendelse", (ten,)).fetchall() if r[1] in mine]
+        m.rollback()
+        assert {(r[1], r[2]) for r in rader} == {(str(naer), "30"),
+                                                 (str(naer), "7")}, rader
+        assert all(r[0] == admin for r in rader), \
+            "varselet traff andre enn plattformadminene"
+        assert not any(r[1] == str(dod) for r in rader), \
+            "en familie uten levende token ble varslet"
+        assert not any(r[1] == str(fjern) for r in rader)
+
+        # Idempotent: andre sveip legger ingenting til.
+        rt.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
+        rt.commit()
+        sett_kontekst(m, ten, "sys", "r2")
+        n = m.execute(
+            "SELECT count(*) FROM varsel WHERE tenant=%s"
+            " AND art='tokenfamilie_utloper' AND ressurs_id = ANY(%s)",
+            (ten, list(mine))).fetchone()[0]
+        m.rollback()
+        assert n == 2, n
+    finally:
+        rt.close()
+        m.close()
