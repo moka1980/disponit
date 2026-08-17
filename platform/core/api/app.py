@@ -740,6 +740,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_forkast_utkast(request: Request) -> Response:
         return policyadmin_http.forkast_utkast_endepunkt(tjeneste, request)
 
+    def pa_gjenapne_utkast(request: Request) -> Response:
+        return policyadmin_http.gjenapne_utkast_endepunkt(tjeneste, request)
+
     def pa_apne_runde(request: Request) -> Response:
         return policyadmin_http.apne_runde_endepunkt(tjeneste, request)
 
@@ -794,6 +797,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/policy/{policy_id:str}/slett", pa_slett_policy,
               methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/forkast", pa_forkast_utkast,
+              methods=["POST"]),
+        Route("/v1/policyutkast/{utkast_id:str}/gjenapne", pa_gjenapne_utkast,
               methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/aktiveringsrunde",
               pa_apne_runde, methods=["POST"]),
@@ -1183,6 +1188,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/varselvalg"):              "policy:write",
     ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
+    ("POST", "/v1/policyutkast/{utkast_id:str}/gjenapne"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/aktiveringsrunde"): "policy:activate",
     ("POST", "/v1/policyutkast/{utkast_id:str}/attester"): "policy:activate",
     ("GET",  "/v1/policyutkast/{utkast_id:str}"): "policy:read",

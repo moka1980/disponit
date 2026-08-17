@@ -8,8 +8,9 @@ i stedet.
 
 Grensene som prøves her er de som gjør forkastingen trygg:
   * bare `utkast` og `validert` (et `godkjent` utkast har fire øyne bak seg);
-  * aldri mens en runde er åpen — attestasjoner i omløp skal ikke kunne rives
-    bort under godkjennerne;
+  * en ÅPEN runde trekkes tilbake (`kansellert`) i samme handling — å nekte
+    lot eier stå fast i opptil 24 timer på sitt eget forslag (17/8), og en
+    runde på et forkastet utkast kunne uansett aldri aktiveres;
   * terminalt: statusmaskinen slipper ingen vei ut igjen.
 """
 import json
@@ -154,22 +155,29 @@ def test_forkastet_er_terminalt():
 
 
 @pg
-def test_utkast_med_aapen_runde_kan_ikke_rives_bort():
-    """Attestasjoner i omløp. En godkjenner som står midt i en vurdering skal
-    ikke oppdage at forslaget er borte — runden avsluttes først.
+def test_aapen_runde_trekkes_tilbake_ved_forkasting():
+    """Å forkaste forslaget trekker den åpne runden tilbake (`kansellert`) i
+    samme handling — den forrige regelen («runden må avsluttes først») vernet
+    ingen: et forkastet utkast kan uansett aldri aktiveres, og eier hadde
+    ingen kodesti som kunne avslutte sin egen runde. Han sto fast i opptil
+    24 timer (RUNDE_TTL) på et forslag han selv eide (17/8: seks slettinger
+    på rad døde mot samme runde). Varselet pensjoneres samtidig — godkjennere
+    skal ikke bes attestere et forslag som er trukket.
 
-    Kontroll: fjern `aapen`-sjekken i `forkast_utkast`, så blir denne rød.
+    Kontroll: fjern `_kanseller_levende_runde`-kallet i `forkast_utkast`, så
+    blir denne rød (runden blokkerer igjen).
     """
     uid = "u-" + secrets.token_hex(6)
     _utkast(uid, "validert")
     _runde(uid, "1 hour")
     rt = _rt()
     try:
-        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
-            _forkast(rt, uid)
-        assert "runde" in str(e.value.kode)
-        assert _status(uid) == "validert", "utkastet ble forkastet likevel"
-        assert _rundestatus(uid) == "apen", "levende runde ble lukket"
+        res = _forkast(rt, uid)
+        rt.commit()
+        assert res["utfall"] == "forkastet"
+        assert _status(uid) == "forkastet"
+        assert _rundestatus(uid) == "kansellert", \
+            "runden ble ikke trukket tilbake"
     finally:
         rt.close()
 
@@ -245,8 +253,8 @@ def test_detalj_melder_forfalt_runde_som_utlopt():
 @pg
 def test_detalj_lar_levende_runde_staa():
     """Motstykket: en runde som ikke har passert `utloper` skal fortsatt meldes
-    som åpen, ellers ville flaten tilby forkasting mens attestasjoner er i
-    omløp — og serveren ville nektet den med `runde_allerede_aapen`."""
+    som åpen — flaten må vite at en forkasting eller gjenåpning kommer til å
+    trekke en LEVENDE runde tilbake, så dialogen kan si det før klikket."""
     uid = "u-" + secrets.token_hex(6)
     _utkast(uid, "validert")
     _runde(uid, "1 hour")

@@ -453,6 +453,30 @@ def forkast_utkast_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def gjenapne_utkast_endepunkt(tjeneste, request):
+    from .app import _rid
+    rid = _rid(request)
+    utkast_id = request.path_params["utkast_id"]
+
+    def kjor(conn):
+        from datetime import datetime, timezone
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        idem = _krev_idem(request, rid)
+        body = _kropp(request)
+        uv = body.get("utkastversjon")
+        if not isinstance(uv, int) or isinstance(uv, bool):
+            return _feil("request_feilformet", rid)
+        ih = _input_hash(tenant, bid, "gjenapne", utkast_id, uv, idem)
+        res = policyadmin.gjenapne_utkast(
+            conn, tenant=tenant, aktor=bid, request_id=rid, utkast_id=utkast_id,
+            forventet_utkastversjon=uv, idempotency_key=idem, input_hash=ih,
+            naa=datetime.now(timezone.utc))
+        return _ok(res, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def apne_runde_endepunkt(tjeneste, request):
     from .app import _rid
     rid = _rid(request)

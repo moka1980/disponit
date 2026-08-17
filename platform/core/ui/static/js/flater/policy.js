@@ -234,7 +234,12 @@ function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
   // mens et vellykket slett tegner flaten på nytt — og den neste seksjonen
   // gjelder en annen policy og får sin egen nøkkel.
   const slettNokkel = nyIdempotensnokkel();
-  const status = el("p", { class: "muted", role: "status", text: "" });
+  // FEIL SKAL SES, ikke bare kunne leses opp: eier klikket «Slett policy»
+  // seks ganger 17/8, fikk seks 409-er, og oppfattet det som at «handlingen
+  // liksom utføres» — avvisningen sto i en dempet liten linje med polite
+  // opplesning. `role="alert"` annonserer seg selv når teksten settes, og
+  // `.pa-valfeil`-rammen (samme som valideringsfeilene) gjør den synlig.
+  const status = el("p", { role: "alert", text: "" });
   const b = el("button", { class: "knapp fare", type: "button",
     text: t("ui.policy.slett") });
   b.addEventListener("click", () => {
@@ -284,6 +289,7 @@ function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
                 : kode === "policy_ukjent"
                   ? t("ui.policy.slett_ukjent")
                   : t("ui.policy.slett_feilet");
+          status.className = "pa-valfeil";
         }),
     });
   });

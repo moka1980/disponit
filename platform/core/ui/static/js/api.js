@@ -193,6 +193,9 @@ export const settVarselkanal = (kanal, sprak, idem = nyIdempotensnokkel()) =>
   _muter("/v1/varselvalg", "POST", { kanal, sprak }, idem);
 export const forkastUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/forkast`, "POST", { utkastversjon }, idem);
+export const gjenapneUtkast = (uid, utkastversjon,
+                               idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policyutkast/${uid}/gjenapne`, "POST", { utkastversjon }, idem);
 export const apneRunde = (uid, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {}, idem);
 export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
