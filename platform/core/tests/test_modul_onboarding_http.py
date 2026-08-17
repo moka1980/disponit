@@ -1099,12 +1099,15 @@ def test_tilbakekalling_i_vinduet_stopper_claimen(migrator, miljo, monkeypatch):
     prefiks = f"h{_u()}."
     _kjent_type(monkeypatch, t, prefiks)
     modul, rel = _kjede(migrator, typenavn=t)
-    sak, logg = _lag_sak(migrator, TENANT)
     # TO oppdrag: det første beviser at køen leverer, det andre står igjen
-    # som det porten skal nekte å dele ut.
-    _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=t,
-                      eiermodul=modul, handling=prefiks + "send")
-    opp2, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=t,
+    # som det porten skal nekte å dele ut. Hver sin SAK — reparasjons-
+    # operasjonen er unik per (sak, målhandling), så to oppdrag under samme
+    # sak og handling ville delt rad og brutt FK-en på det andre.
+    sak1, logg1 = _lag_sak(migrator, TENANT)
+    sak2, logg2 = _lag_sak(migrator, TENANT)
+    opp1, _ = _lag_oppdrag_type(migrator, TENANT, sak1, logg1, oppdragstype=t,
+                                eiermodul=modul, handling=prefiks + "send")
+    opp2, _ = _lag_oppdrag_type(migrator, TENANT, sak2, logg2, oppdragstype=t,
                                 eiermodul=modul, handling=prefiks + "send")
     migrator.commit()
 
@@ -1148,13 +1151,17 @@ def test_tilbakekalling_i_vinduet_stopper_claimen(migrator, miljo, monkeypatch):
             assert (r.status_code, r.json()["feil"]) == (
                 401, "token_ugyldig"), r.text
 
-            # ... og oppdraget ble ikke rørt: porten stanset, den forstyrret
-            # ikke. Et `plukket` her ville betydd at claimen skjedde og
-            # svaret bare ble kastet — arbeid tildelt et dødt token.
+            # ... og det andre oppdraget ble ikke rørt: porten stanset, den
+            # forstyrret ikke. To `plukket` her ville betydd at claimen
+            # skjedde og svaret bare ble kastet — arbeid tildelt et dødt
+            # token. Rekkefølgen køen deler ut i er ikke testens sak, så
+            # påstanden er at NØYAKTIG ett av de to står igjen.
             _sett_kontekst(migrator, TENANT)
-            assert migrator.execute(
-                "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
-                (TENANT, opp2)).fetchone() == ("opprettet",)
+            statuser = sorted(
+                s for (s,) in migrator.execute(
+                    "SELECT status FROM oppdrag WHERE tenant=%s"
+                    " AND id = ANY(%s)", (TENANT, [opp1, opp2])).fetchall())
+            assert statuser == ["opprettet", "plukket"], statuser
             migrator.rollback()
     finally:
         a.tjeneste.pool.lukk()

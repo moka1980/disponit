@@ -1713,7 +1713,7 @@ def _valgfrie_roller():
         for m in re.finditer(
                 r"(?is)\bIF\s+(NOT\s+)?EXISTS\s*\(\s*SELECT\s+1\s+FROM"
                 r"\s+pg_roles\s+WHERE\s+rolname\s*=\s*'([a-z_0-9]+)'",
-                _uten_kommentarer(fil.read_text())):
+                _uten_kommentarer(fil.read_text(encoding="utf-8"))):
             if not m.group(1):
                 valgfrie.add(m.group(2))
     return mig, valgfrie
@@ -1745,7 +1745,8 @@ def test_ingen_bar_rettighet_til_en_valgfri_rolle_i_035():
     assert {"disponit", "disponit_varselsender"} <= valgfrie, (
         f"utledningen fant ikke de kjente valgfrie rollene: {valgfrie}")
 
-    sql = _uten_kommentarer((mig / "035_modul_onboarding.sql").read_text())
+    sql = _uten_kommentarer(
+        (mig / "035_modul_onboarding.sql").read_text(encoding="utf-8"))
     blokker = [(m.start(), m.end()) for m in
                re.finditer(r"(?is)\bDO\s*\$\$.*?END\s*\$\$\s*;", sql)]
 
