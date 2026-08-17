@@ -1,0 +1,254 @@
+"""Modul-onboarding over HTTP (035): hemmelighet → token → rotasjon.
+
+To faser (klarsignalet §5): mennesket med `modules:onboard` får en
+ENGANGSHEMMELIGHET (60 min, hashet, vist én gang); deploymenten bytter den
+i sitt langlivede token ved oppstart. Tokenet skal aldri passere et
+menneske, en config-fil eller en deploy-logg — derfor er innløsningen
+maskinens eget kall, autentisert av selve hemmeligheten.
+
+LUKKEDE SKJEMAER hele veien (portene 7–8): en request som sender
+identitetsfelt endepunktet selv slår opp (modul/release/miljø/epoch ved
+innløsning og rotasjon) avvises — identiteten kommer fra RADEN og TOKENET,
+aldri fra requesten.
+
+Wire-formater (vist én gang, aldri lagret i klartekst):
+  hemmelighet:  ``onb_<onboarding_id>.<secret>``
+  modultoken:   ``mtk_<token_id>.<secret>``
+Begge verifiseres som pepper-MAC (samme mekanisme som `api_tokener`).
+"""
+from __future__ import annotations
+
+import json
+import secrets
+import uuid
+
+import psycopg
+from starlette.requests import Request
+from starlette.responses import Response
+
+#: Serverkonfigurerte frister (klarsignalet §5) — aldri fra requesten.
+FAMILIE_DAGER = 365
+TOKEN_DAGER = 30
+HEMMELIGHET_TTL_MIN = 60
+
+ONBOARD_SCOPE = "modules:onboard"
+
+
+def _kropp(request: Request, *, tillatt: frozenset[str]) -> dict | None:
+    """Lukket skjema: KUN nøklene i `tillatt`. -> None ved brudd."""
+    raa = request.scope.get("state", {}).get("kropp", b"")
+    try:
+        data = json.loads(raa.decode("utf-8")) if raa else {}
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or set(data) - tillatt:
+        return None
+    return data
+
+
+def utsted_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/modul/onboarding — fase 1. Krever `modules:onboard` på et
+    Bearer-token; vilkårene (claiming, aktiv/staging_verifisert, registrert
+    oppdragstype) er MASKINVERIFISERTE i `utsted_onboarding_hemmelighet` —
+    scopet gir retten til å forsøke, ikke retten til å bestemme."""
+    from .app import _rid, _feilsvar, preauth, kanonisk_json, _mac
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"),
+                       rid)
+        if auth is None or auth.kapabilitet is not None \
+                or getattr(auth, "modul_id", None) is not None:
+            # Verken kapabiliteter eller MODULTOKENER kan onboarde nye
+            # moduler — et stjålet modultoken skal ikke kunne formere seg.
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if ONBOARD_SCOPE not in auth.scopes:
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ONBOARD_SCOPE)
+            return _feilsvar("scope_mangler", rid)
+        data = _kropp(request,
+                      tillatt=frozenset({"modul_id", "miljo", "release_id"}))
+        if data is None or not all(
+                isinstance(data.get(k), str) and data.get(k)
+                for k in ("modul_id", "miljo", "release_id")):
+            return _feilsvar("request_feilformet", rid)
+        oid = uuid.uuid4()
+        hemmelighet = secrets.token_hex(32)
+        try:
+            rad = conn.execute(
+                "SELECT * FROM utsted_onboarding_hemmelighet("
+                "%s,%s,%s,%s,%s,%s,%s,%s)",
+                (data["modul_id"], data["miljo"], data["release_id"], oid,
+                 _mac(tjeneste.pepper, hemmelighet), FAMILIE_DAGER,
+                 HEMMELIGHET_TTL_MIN, auth.aktor)).fetchone()
+            conn.commit()
+        except (psycopg.errors.NoDataFound,
+                psycopg.errors.InvalidParameterValue,
+                psycopg.errors.UniqueViolation) as e:
+            conn.rollback()
+            # Operatøren er autentisert og autorisert — vilkåret som feilet
+            # SKAL forklares (dette er ingen orakelflate): det står i loggen
+            # og i svaret som lukket kode + diagnostisk tekst.
+            tjeneste.logg.hendelse("onboarding_vilkaar", rid, auth.tenant,
+                                   detalj=str(e).split("\n")[0][:160])
+            return kanonisk_json(
+                {"feil": "request_feilformet",
+                 "detalj": str(e).split("\n")[0][:160],
+                 "request_id": rid}, 409, {"x-request-id": rid})
+        # Hemmeligheten vises ÉN gang. Den finnes ellers bare som MAC.
+        return kanonisk_json({
+            "onboarding_id": str(oid),
+            "hemmelighet": f"onb_{oid}.{hemmelighet}",
+            "utloper": rad[1].isoformat(),
+            "familie_utloper": rad[2].isoformat(),
+            "request_id": rid}, 201, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def innlos_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/modul/onboarding/innlos — fase 2. Hemmeligheten ER
+    autentiseringen; kroppen er LUKKET til nøyaktig {hemmelighet}: en
+    request som sender modul_id/release_id avvises (port 7 — identiteten
+    kommer fra raden). Alle avvisningsgrunner er samme svar (intet orakel)."""
+    from .app import _rid, _feilsvar, kanonisk_json, _mac
+    rid = _rid(request)
+    data = _kropp(request, tillatt=frozenset({"hemmelighet"}))
+    if data is None or not isinstance(data.get("hemmelighet"), str):
+        return _feilsvar("request_feilformet", rid)
+    raa = data["hemmelighet"]
+    if not raa.startswith("onb_") or "." not in raa:
+        return _feilsvar("onboarding_avvist", rid)
+    oid_del, _, secret = raa[4:].partition(".")
+    try:
+        oid = uuid.UUID(oid_del)
+    except ValueError:
+        return _feilsvar("onboarding_avvist", rid)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        # Rate på onboarding-id-en: hemmeligheten er 256 bit, men et fritt
+        # antall forsøk er fortsatt et gratis orakel for et stjålet id-ledd.
+        if not tjeneste.rate.slipp_gjennom(f"onb:{oid}"):
+            tjeneste.logg.hendelse("rate_grense", rid)
+            return _feilsvar("rate_grense", rid)
+        tid = uuid.uuid4()
+        token_secret = secrets.token_hex(32)
+        try:
+            rad = conn.execute(
+                "SELECT * FROM innlos_onboarding(%s,%s,%s,%s,%s,%s)",
+                (oid, _mac(tjeneste.pepper, secret), tid,
+                 _mac(tjeneste.pepper, token_secret), TOKEN_DAGER,
+                 f"innlosning:{oid}")).fetchone()
+            conn.commit()
+        except (psycopg.errors.NoDataFound,
+                psycopg.errors.InvalidParameterValue):
+            conn.rollback()
+            tjeneste.logg.hendelse("onboarding_avvist", rid)
+            return _feilsvar("onboarding_avvist", rid)
+        # Tokenet vises ÉN gang — det passerer aldri et menneske eller en
+        # deploy-logg; deploymenten holder det i minnet og roterer selv.
+        return kanonisk_json({
+            "token": f"mtk_{tid}.{token_secret}",
+            "modul_id": rad[1], "miljo": rad[2], "release_id": rad[3],
+            "utloper": rad[5].isoformat(),
+            "familie_utloper": rad[6].isoformat(),
+            "request_id": rid}, 201, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def roter_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/modul/token/roter — selvrotasjon, autentisert av tokenet
+    selv. Tom (eller helt fraværende) kropp: rotasjonen har ingen lovlige
+    parametre — levetid og frist er serverens (port 8-formen)."""
+    from .app import _rid, _feilsvar, preauth, kanonisk_json, _mac
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"),
+                       rid)
+        if auth is None or getattr(auth, "modul_id", None) is None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+            return _feilsvar("rate_grense", rid)
+        if _kropp(request, tillatt=frozenset()) is None:
+            return _feilsvar("request_feilformet", rid)
+        ny_id = uuid.uuid4()
+        ny_secret = secrets.token_hex(32)
+        try:
+            rad = conn.execute(
+                "SELECT * FROM roter_modultoken(%s,%s,%s,%s,%s)",
+                (auth.modultoken_id, ny_id,
+                 _mac(tjeneste.pepper, ny_secret), TOKEN_DAGER,
+                 f"modul:{auth.modul_id}")).fetchone()
+            conn.commit()
+        except psycopg.errors.UniqueViolation:
+            # To samtidige rotasjoner: lagringen (UNIQUE forgjenger) lot én
+            # vinne. Taperen har fortsatt sitt gamle token i nådevinduet og
+            # kan hente etterfølgeren der den ble levert — dette er en
+            # konflikt, ikke en feil hos serveren.
+            conn.rollback()
+            return _feilsvar("onboarding_avvist", rid, 409)
+        except psycopg.errors.InvalidParameterValue:
+            conn.rollback()
+            return _feilsvar("onboarding_avvist", rid)
+        return kanonisk_json({
+            "token": f"mtk_{ny_id}.{ny_secret}",
+            "utloper": rad[1].isoformat(),
+            "familie_utloper": rad[2].isoformat(),
+            "forgjenger_gyldig_til": "15 minutter",
+            "request_id": rid}, 201, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def tilbakekall_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/modul/token/tilbakekall — `modules:onboard`, umiddelbar,
+    auditert grunn."""
+    from .app import _rid, _feilsvar, preauth, kanonisk_json
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"),
+                       rid)
+        if auth is None or auth.kapabilitet is not None \
+                or getattr(auth, "modul_id", None) is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if ONBOARD_SCOPE not in auth.scopes:
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ONBOARD_SCOPE)
+            return _feilsvar("scope_mangler", rid)
+        data = _kropp(request, tillatt=frozenset({"token_id", "grunn"}))
+        if data is None or not isinstance(data.get("grunn"), str) \
+                or not data["grunn"].strip():
+            return _feilsvar("request_feilformet", rid)
+        try:
+            tid = uuid.UUID(str(data.get("token_id")))
+        except ValueError:
+            return _feilsvar("request_feilformet", rid)
+        try:
+            conn.execute("SELECT tilbakekall_modultoken(%s,%s,%s)",
+                         (tid, data["grunn"], auth.aktor))
+            conn.commit()
+        except psycopg.errors.NoDataFound:
+            conn.rollback()
+            return _feilsvar("ikke_funnet", rid)
+        return kanonisk_json({"tilbakekalt": str(tid), "request_id": rid},
+                             200, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)

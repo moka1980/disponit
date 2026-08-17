@@ -91,6 +91,14 @@ INSERT INTO _design VALUES
     -- disponit_modul_eier fordi registertabellene er off-limits for runtime
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.
     ('FUNCTION', 'installer_modul(text,text)',                        'disponit_modul_eier'),
+    -- 035: modul-onboarding — utstedelse/innløsning/rotasjon/tilbakekalling
+    -- eies av modul_eier — runtime når tabellene KUN gjennom funksjonene
+    -- (verifiser_modultoken er den eneste leseveien).
+    ('FUNCTION', 'utsted_onboarding_hemmelighet(text,text,text,uuid,text,integer,integer,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'innlos_onboarding(uuid,text,uuid,text,integer,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'verifiser_modultoken(text)',                         'disponit_modul_eier'),
+    ('FUNCTION', 'roter_modultoken(uuid,uuid,text,integer,text)',      'disponit_modul_eier'),
+    ('FUNCTION', 'tilbakekall_modultoken(uuid,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),

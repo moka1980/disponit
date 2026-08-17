@@ -487,6 +487,27 @@ class Autentisert:
             kilde="arbeidskapabilitet" if self.kapabilitet else "api_token")
 
 
+class ModulAutentisert(Autentisert):
+    """En autentisert MODULDEPLOYMENT (035): tokenet svarer på nøyaktig ett
+    spørsmål — hvilken deployment er dette? Alt annet (livsløp, status,
+    epoch-gyldighet, oppdrags-/artefakttyper) slås opp ved HVER bruk via
+    releasens kontrakt; scopes lagres aldri og utledes aldri her.
+
+    `tenant` er modul-id-en (kun logg/rate — modultokener er tenantløse;
+    forretningstenanten kommer alltid fra det claimede oppdraget), `rolle`
+    er modul-id-en (samme konvensjon som modulens api-tokener: claim-SQL-en
+    bruker rollen som eiermodul)."""
+    __slots__ = ("modul_id", "miljo", "release_id", "utstedt_epoch",
+                 "modultoken_id")
+
+    def __init__(self, modul_id, miljo, release_id, utstedt_epoch,
+                 modultoken_id):
+        super().__init__(modul_id, modul_id, (), f"mtk_{modultoken_id}")
+        self.modul_id, self.miljo = modul_id, miljo
+        self.release_id, self.utstedt_epoch = release_id, utstedt_epoch
+        self.modultoken_id = modultoken_id
+
+
 def _mac(pepper: str, secret: str) -> str:
     return hmac.new(pepper.encode("utf-8"), secret.encode("utf-8"),
                     hashlib.sha256).hexdigest()
@@ -563,6 +584,24 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
         if not authorization or not authorization.startswith("Bearer "):
             return None
         raa = authorization[7:].strip()
+        if raa.startswith("mtk_"):
+            # Modultoken (035): `mtk_<token_id>.<secret>`. Oppslaget går via
+            # den herdede `verifiser_modultoken` (runtime har hverken SELECT
+            # eller skriving på modultoken) og er gyldighets-filtrert der:
+            # tilbakekalt-og-forbi eller utløpt → ingen rad. Token-id-en i
+            # wire-formatet må MATCHE radens (ellers kunne en gjettet id
+            # pares med en stjålet MAC fra et annet token).
+            tid_del, _, msecret = raa[4:].partition(".")
+            if not tid_del or not msecret:
+                return None
+            mrad = conn.execute(
+                "SELECT token_id, modul_id, miljo, release_id, utstedt_epoch"
+                "  FROM verifiser_modultoken(%s)",
+                (_mac(tjeneste.pepper, msecret),)).fetchone()
+            if mrad is None or str(mrad[0]) != tid_del:
+                return None
+            return ModulAutentisert(mrad[1], mrad[2], mrad[3], mrad[4],
+                                    mrad[0])
         token_id, _, secret = raa.partition(".")
         if not token_id or not secret:
             return None
@@ -749,6 +788,22 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_attester(request: Request) -> Response:
         return policyadmin_http.attester_endepunkt(tjeneste, request)
 
+    # 035: modul-onboarding — hemmelighet, innløsning, rotasjon,
+    # tilbakekalling. Maskin-/ops-endepunkter (Bearer), aldri browserøkt.
+    from . import modulonboarding
+
+    def mo_utsted(request: Request) -> Response:
+        return modulonboarding.utsted_endepunkt(tjeneste, request)
+
+    def mo_innlos(request: Request) -> Response:
+        return modulonboarding.innlos_endepunkt(tjeneste, request)
+
+    def mo_roter(request: Request) -> Response:
+        return modulonboarding.roter_endepunkt(tjeneste, request)
+
+    def mo_tilbakekall(request: Request) -> Response:
+        return modulonboarding.tilbakekall_endepunkt(tjeneste, request)
+
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
         Route("/v1/unntak", unntak, methods=["GET"]),
@@ -757,6 +812,13 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # databasen direkte — det er en av de åtte evidensbevisene, og en
         # statisk sjekk i testsuiten håndhever den.
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
+        # 035: onboarding-rutene er statiske stier, registrert her sammen
+        # med de andre maskinrutene.
+        Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
+        Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
+        Route("/v1/modul/token/roter", mo_roter, methods=["POST"]),
+        Route("/v1/modul/token/tilbakekall", mo_tilbakekall,
+              methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
         Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
@@ -1180,6 +1242,14 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",
+    # 035: modul-onboarding. Maskin-/ops-ruter; scope-porten håndheves
+    # inne i endepunktene (Bearer/modultoken, aldri browserøkt) — samme
+    # deklarasjonsform som /v1/oppdrag/*. Innløsningen autentiseres av
+    # selve engangshemmeligheten, rotasjonen av modultokenet.
+    ("POST", "/v1/modul/onboarding"):        "modules:onboard",
+    ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
+    ("POST", "/v1/modul/token/roter"):       "modultoken",
+    ("POST", "/v1/modul/token/tilbakekall"): "modules:onboard",
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
@@ -1245,11 +1315,83 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
-        prefikser = _modulscope(auth)
-        if not prefikser:
-            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
-                                   scope=ORDRESCOPE + "<prefiks>")
-            return _feilsvar("scope_mangler", rid)
+
+        # LUKKET SKJEMA (035, port 8): claim har INGEN lovlige parametre.
+        # En request som sender release/miljø/epoch — eller hva som helst
+        # annet — AVVISES, den ignoreres ikke: identiteten kommer fra
+        # tokenet, og en klient som prøver å sende den skal få vite at den
+        # veien ikke finnes, ikke lures til å tro at den virket.
+        raa_kropp = request.scope.get("state", {}).get("kropp", b"")
+        if raa_kropp:
+            try:
+                kropp_data = json.loads(raa_kropp.decode("utf-8"))
+            except ValueError:
+                return _feilsvar("request_feilformet", rid)
+            if kropp_data not in ({}, None):
+                tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant,
+                                       feiltype="claim_med_parametre")
+                return _feilsvar("request_feilformet", rid)
+
+        claim_release = claim_miljo = claim_epoch = None
+        if isinstance(auth, ModulAutentisert):
+            # TOKENET AUTENTISERER, REGISTERET AUTORISERER (035 §2/§6).
+            # Deployment, status og epoch pre-portes her med EKSPLISITTE
+            # avslag — «du har ikke lov» og «det finnes ikke arbeid» må
+            # aldri se like ut (port 18–19). claim_neste_oppdrag
+            # re-verifiserer det samme under modul-låsen; pre-porten er
+            # for svarets ærlighet, ikke for sikkerheten.
+            drad = conn.execute(
+                "SELECT d.livslop, h.status, h.module_epoch,"
+                " d.kontraktversjon, d.kontrakt_hash"
+                "  FROM moduldeployment d"
+                "  JOIN modulhode h ON h.modul_id = d.modul_id"
+                " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id=%s",
+                (auth.modul_id, auth.miljo, auth.release_id)).fetchone()
+            if drad is None or drad[0] != "claiming" or drad[1] != "aktiv":
+                conn.rollback()
+                tjeneste.logg.hendelse("modul_ikke_claimbar", rid,
+                                       auth.tenant,
+                                       livslop=drad[0] if drad else "borte",
+                                       status=drad[1] if drad else "borte")
+                return _feilsvar("modul_ikke_claimbar", rid)
+            if drad[2] != auth.utstedt_epoch:
+                conn.rollback()
+                tjeneste.logg.hendelse("modulepoch_utdatert", rid,
+                                       auth.tenant,
+                                       utstedt=auth.utstedt_epoch,
+                                       gjeldende=drad[2])
+                return _feilsvar("modulepoch_utdatert", rid)
+            # Autorisasjonen utledes ved BRUK, via releasens kontrakt: raden
+            # må matche eiermodul OG begge kontraktfeltene (positiv
+            # tillatelsesliste). En type registrert under en ANNEN kontrakt
+            # bidrar med ingenting — parallelle kontrakter holder seg fra
+            # hverandre begge veier (port 33–34). Typenavnet oversettes til
+            # handlingsprefikser gjennom den LUKKEDE typeregistreringen i
+            # `oppdragskontrakt`; en registerrad uten kodefestet type
+            # bidrar med ingenting (fail-closed).
+            typerader = conn.execute(
+                "SELECT oppdragstype FROM oppdragstype_register"
+                " WHERE eiermodul=%s AND kontraktversjon=%s"
+                "   AND kontrakt_hash=%s",
+                (auth.modul_id, drad[3], drad[4])).fetchall()
+            prefikser = sorted({
+                pre for (typenavn,) in typerader
+                for pre in getattr(
+                    oppdragskontrakt.OPPDRAGSTYPER.get(typenavn),
+                    "handlingsprefikser", ())})
+            if not prefikser:
+                conn.rollback()
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope="utledet:ordre")
+                return _feilsvar("scope_mangler", rid)
+            claim_release, claim_miljo = auth.release_id, auth.miljo
+            claim_epoch = auth.utstedt_epoch
+        else:
+            prefikser = _modulscope(auth)
+            if not prefikser:
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope=ORDRESCOPE + "<prefiks>")
+                return _feilsvar("scope_mangler", rid)
 
         claim_id = secrets.token_hex(16)
         try:
@@ -1265,7 +1407,8 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 " repair_operation_id, payload_kryptert, key_id, nonce,"
                 " owner_generation, utforelsesfrist, evidensfrist"
                 "  FROM claim_neste_oppdrag(%s, %s, %s, %s, %s, %s, %s)",
-                (auth.rolle, prefikser, claim_id, 300, None, None, None)).fetchone()
+                (auth.rolle, prefikser, claim_id, 300, claim_release,
+                 claim_miljo, claim_epoch)).fetchone()
             if rad is None:
                 conn.rollback()
                 return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,
@@ -1387,11 +1530,26 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 # ingen on-demand-utstedelse (se docstringen over) — samme
                 # fail-closed regel som RELEASE-tvetydigheten over: er valget
                 # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
+                # `test.`-prefikset er reservert (035 §8): det utledes
+                # ALDRI når kontraktens claiming-deployment står i
+                # produksjon — selvtest-artefakter skal ikke kunne bære
+                # kundedata, og en testtype i produksjonskjeden er en
+                # konfigurasjonsfeil, ikke en fullmakt. Filteret står i
+                # SQL-en så «nøyaktig én type»-regelen teller de typene som
+                # faktisk kan utstedes.
+                er_produksjon = bool(conn.execute(
+                    "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
+                    " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
+                    "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
+                    "   AND dp.miljo='produksjon')",
+                    (o_modul, o_kv, o_khash)).fetchone()[0])
                 typerader = conn.execute(
                     "SELECT artefakttype FROM artefakttype_register"
                     " WHERE eiermodul=%s AND kontraktversjon=%s"
-                    "   AND kontrakt_hash=%s ORDER BY artefakttype LIMIT 2",
-                    (o_modul, o_kv, o_khash)).fetchall()
+                    "   AND kontrakt_hash=%s"
+                    "   AND NOT (artefakttype LIKE 'test.%%' AND %s)"
+                    " ORDER BY artefakttype LIMIT 2",
+                    (o_modul, o_kv, o_khash, er_produksjon)).fetchall()
                 typerad = typerader[0] if len(typerader) == 1 else None
                 if typerad is not None:
                     # Levetid = evidensfristen, ALDRI lengre (port 23). 017
