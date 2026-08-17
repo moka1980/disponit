@@ -1639,7 +1639,22 @@ REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM PUBLIC;
 -- i migrer.py den samme REVOKE-en på DEN rollen (tabellene eies av
 -- modul_eier, så `NULLSTILL_TABELLER` — som bare rører migrators egne
 -- tabeller — når dem ikke).
-REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM disponit;
+--
+-- BETINGET PÅ EXISTS (Codex P1): en REVOKE mot en rolle som ikke finnes er
+-- ikke en no-op, den er «role does not exist» — og hele migrasjonen kjører i
+-- én transaksjon. Er runtime en ANNEN rolle enn standarden, finnes ikke
+-- `disponit` i klyngen, og 035 ville veltet før migrer.py rakk å gi noen
+-- rettigheter i det hele tatt. Samme mønster som 010/019/027 bruker for
+-- roller de ikke selv oppretter: roller er KLYNGEobjekter, migrator har ikke
+-- CREATEROLE, og en migrasjon kan derfor aldri anta at en navngitt rolle er
+-- der.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+        REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse
+            FROM disponit;
+    END IF;
+END $$;
 
 -- ------------------------------------------------------------
 -- 6. Varsling: familiehorisonten skal varsles (30/7/1 døgn), ikke
@@ -1817,10 +1832,28 @@ END $$;
 -- `varsel_klaim_epost`/`varsel_rekoe` unna `disponit`. REVOKE-en står fordi
 -- en tidligere versjon av denne migrasjonen GA grantet: en rettighet som
 -- bare slutter å bli gitt, er ikke trukket tilbake.
+--
+-- BEGGE ROLLENE ER VALGFRIE, OG INGEN AV DEM OPPRETTES HER (Codex P1).
+-- `disponit_varselsender` er en egen LOGIN-rolle for tidsstyringen som
+-- `oppsett-postgresql.sh` lager; en installasjon uten den er lovlig, og
+-- migrer.py har nettopp en `pg_roles`-sjekk før `VARSLER_RETTIGHETER`. Men
+-- den sjekken kommer ETTER migrasjonene: en bar GRANT her velter 035 med
+-- «role does not exist» lenge før fallbacken får se saken, og da kommer
+-- installasjonen aldri opp. `disponit` er tilsvarende bare standardnavnet på
+-- runtime. 027 gir de tre søsterfunksjonene sine grants under akkurat denne
+-- vakten — den samme hører hjemme her.
 REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(TEXT) FROM disponit;
-GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(TEXT)
-    TO disponit_varselsender;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+        REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(TEXT) FROM disponit;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = 'disponit_varselsender') THEN
+        GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(TEXT)
+            TO disponit_varselsender;
+    END IF;
+END $$;
 
 RESET ROLE;
 -- Eieren trenger lese modul_onboarding/modultoken (har det, §-grantene

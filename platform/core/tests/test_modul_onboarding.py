@@ -10,6 +10,7 @@ claim-svar) prøves i `test_modul_onboarding_http.py`.
 
 Alle tester konstruerer egen tilstand. Ingen delt fixture.
 """
+import re
 import secrets
 import threading
 import uuid
@@ -1633,3 +1634,80 @@ def test_onboardingrettighetene_folger_den_valgte_runtime_rollen():
     finally:
         m.rollback()
         m.close()
+
+
+def _uten_kommentarer(sql):
+    return re.sub(r"--[^\n]*", "", sql)
+
+
+def _valgfrie_roller():
+    """Rollene korpuset selv sier er VALGFRIE.
+
+    Regelen utledes, den huskes ikke: en rolle er valgfri nettopp når en
+    migrasjon vokter et grant til den med `IF EXISTS (… pg_roles …)` og
+    hopper over det. Den motsatte formen — `IF NOT EXISTS … RAISE`, som
+    005/007 bruker for `disponit_m37_claimer` — sier det stikk motsatte:
+    rollen er et KRAV, og en bar GRANT til den er riktig, for da har
+    migrasjonen alt stanset med en lesbar beskjed.
+    """
+    from pathlib import Path
+    mig = Path(__file__).resolve().parents[1] / "db/migrations"
+    valgfrie = set()
+    for fil in sorted(mig.glob("*.sql")):
+        for m in re.finditer(
+                r"(?is)\bIF\s+(NOT\s+)?EXISTS\s*\(\s*SELECT\s+1\s+FROM"
+                r"\s+pg_roles\s+WHERE\s+rolname\s*=\s*'([a-z_0-9]+)'",
+                _uten_kommentarer(fil.read_text())):
+            if not m.group(1):
+                valgfrie.add(m.group(2))
+    return mig, valgfrie
+
+
+def test_ingen_bar_rettighet_til_en_valgfri_rolle_i_035():
+    """Codex P1: roller er KLYNGEobjekter, og 035 oppretter ingen av dem.
+
+    `disponit_varselsender` er tidsstyringens egen LOGIN-rolle, laget av
+    `oppsett-postgresql.sh`; en installasjon uten tidsstyring har den ikke.
+    `disponit` er bare STANDARDNAVNET på runtime — deploy-inngangen er
+    `migrer.py [runtime-rolle]`. En bar `GRANT`/`REVOKE` mot en rolle som
+    ikke finnes er ikke en no-op: den er «role does not exist», og hele
+    migrasjonen kjører i én transaksjon. Da velter 035, og fallbacken i
+    migrer.py — som nettopp sjekker `pg_roles` før `VARSLER_RETTIGHETER` —
+    får aldri se saken, for den kommer ETTER migrasjonene. Installasjonen
+    kommer ikke opp i det hele tatt.
+
+    Testen er statisk fordi den ekte prøven ikke kan skrives: å måle dette
+    mot klyngen krever en klynge UTEN rollen, og migratoren har verken
+    CREATEROLE eller DROP ROLE — CI har alltid begge rollene, så hullet er
+    per konstruksjon usynlig for enhver kjørende test. Regelen utledes av
+    korpuset (`_valgfrie_roller`) i stedet for å listes her, slik at en NY
+    valgfri rolle blir dekket den dagen noen vokter den et sted.
+
+    Kontroll: fjern DO-blokken rundt en av dem i 035, så blir denne rød.
+    """
+    mig, valgfrie = _valgfrie_roller()
+    assert {"disponit", "disponit_varselsender"} <= valgfrie, (
+        f"utledningen fant ikke de kjente valgfrie rollene: {valgfrie}")
+
+    sql = _uten_kommentarer((mig / "035_modul_onboarding.sql").read_text())
+    blokker = [(m.start(), m.end()) for m in
+               re.finditer(r"(?is)\bDO\s*\$\$.*?END\s*\$\$\s*;", sql)]
+
+    bare = []
+    for setning in re.finditer(r"(?is)\b(?:GRANT|REVOKE)\b[^;]*;", sql):
+        for rolle in valgfrie:
+            if not re.search(rf"\b{rolle}\b", setning.group(0)):
+                continue
+            # Vakten må ligge i DEN blokken setningen står i, og gjelde
+            # NØYAKTIG denne rollen: en blokk som vokter senderrollen
+            # dekker ikke en REVOKE mot runtime som er smuglet inn i den.
+            omsluttende = [b for b in blokker
+                           if b[0] <= setning.start() <= setning.end() <= b[1]]
+            if not (omsluttende and re.search(
+                    rf"rolname\s*=\s*'{rolle}'",
+                    sql[omsluttende[0][0]:omsluttende[0][1]])):
+                bare.append((rolle, " ".join(setning.group(0).split())[:90]))
+
+    assert bare == [], (
+        "035 gir/trekker rettigheter til en valgfri rolle uten"
+        f" `pg_roles`-vakt — migrasjonen velter der rollen mangler: {bare}")
