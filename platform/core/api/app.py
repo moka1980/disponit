@@ -2190,6 +2190,30 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdrag_id=oppdrag_id, grunn="klartekst_sha256")
         return _feilsvar("request_feilformet", rid)
 
+    # Codex P1: en SUKSESS for en artefaktproduserende type må BÆRE
+    # artefaktet. `er_utforelseskvittering` krever ingen av artefaktfeltene,
+    # og hele artefaktgrenen nedenfor står under `if art_id is not None` —
+    # en vellykket kvittering uten `artefakt_id` hoppet derfor over
+    # promotering, bindingskontroll, epoch-sjekk OG skjemarevalideringen og
+    # falt rett ned i statusskiftet: `oppdrag.status = utfort`, `unntak =
+    # løst`, uten en eneste rapport å vise til. En WCAG-kontroll uten
+    # evidens er ikke en utført kontroll, og her ville ingen engang sett at
+    # den manglet.
+    #
+    # Kravet står på TYPEN (`produserer_artefakt`), ikke som en fast liste
+    # her: legacy-typer uten artefakt er helt urørt, og en FEILET kvittering
+    # har per definisjon ingen rapport og skal fortsatt kunne meldes uten.
+    # Sjekken ligger sammen med de andre strukturvaktene, altså FØR
+    # kapabiliteten forbrukes — en kvittering vi avviser skal ikke brenne
+    # den controllerens ene sjanse til å levere den samme rapporten på nytt.
+    if oppdragskontrakt.mangler_artefaktevidens(oppdragstype, kvittering):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="artefakt_paakrevd",
+                               oppdragstype=oppdragstype)
+        return _feilsvar("request_feilformet", rid)
+
     ny_hash = _resultathash(kvittering)
 
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten

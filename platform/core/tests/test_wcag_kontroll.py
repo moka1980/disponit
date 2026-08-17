@@ -1294,7 +1294,11 @@ def _wcag_kjede(migrator_, monkeypatch):
         navn=typenavn, handlingsprefikser=(f"kontroll.w{u}.",),
         felter=ekte.felter, paakrevde=ekte.paakrevde,
         eiermodul=f"m-{u}", krever_malautorisasjon=True,
-        malautorisasjonsdomene="web_hostname"))
+        malautorisasjonsdomene="web_hostname",
+        # Aliaset skal speile den EKTE typen felt for felt — leses flagget
+        # fra `ekte`, kan det aldri gli fra hverandre uten at kjeden her
+        # slutter å bevise det den påstår å bevise.
+        produserer_artefakt=ekte.produserer_artefakt))
 
     modul, rel = f"m-{u}", f"r-{u}"
     kh = "k-" + secrets.token_hex(8)
@@ -1434,6 +1438,125 @@ def test_motorfeil_gir_avbrutt_uten_artefakt(migrator, miljo, monkeypatch):
                 " oppdrag_id=%s", (TENANT, opp)).fetchone()[0]
             migrator.rollback()
             assert n == 0, "motorfeil etterlot et delvis artefakt"
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+def test_suksess_uten_artefakt_er_ufullstendig_for_typen():
+    """Codex P1: kontraktsiden av «en WCAG-suksess må BÆRE rapporten».
+
+    `er_utforelseskvittering` krever ingen av artefaktfeltene, så en
+    vellykket kvittering uten `artefakt_id` var strukturelt lovlig — og i
+    endepunktet står HELE artefaktgrenen under `if art_id is not None`.
+    Den kvitteringen hoppet altså over promotering, bindingskontroll,
+    epoch-sjekk og skjemarevalidering, og falt rett ned i statusskiftet.
+
+    Regelen bor på TYPEN og ikke som en fast liste i `app.py`: det er
+    typen som bestemmer om resultatet leveres som artefakt.
+    """
+    import oppdragskontrakt as ok
+
+    ferdig = {"resultat": "utfort", "artefakt_id": "a-1"}
+    naken = {"resultat": "utfort"}
+    feilet = {"resultat": "feilet", "feilkode": "motor_avbrutt"}
+
+    assert ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"].produserer_artefakt
+    assert ok.mangler_artefaktevidens("kontroll.wcag.nettsted", naken)
+    # En eksplisitt `null` er samme mangel som et felt som ikke er der.
+    assert ok.mangler_artefaktevidens(
+        "kontroll.wcag.nettsted", {"resultat": "utfort", "artefakt_id": None})
+    # ... men en FEILET kjøring har per definisjon ingen rapport, og en
+    # suksess som bærer artefaktet er nettopp det vi vil ha.
+    for kropp in (ferdig, feilet):
+        assert not ok.mangler_artefaktevidens("kontroll.wcag.nettsted",
+                                              kropp), kropp
+
+    # Typer uten artefakt er HELT urørt — legacy-kvitteringer skal ikke
+    # begynne å kreve noe de aldri har hatt.
+    assert not ok.OPPDRAGSTYPER["reinnsending"].produserer_artefakt
+    for t in ("reinnsending", "verifikasjon", "ukjent.type", None, 5):
+        assert not ok.mangler_artefaktevidens(t, naken), t
+    assert not ok.mangler_artefaktevidens("kontroll.wcag.nettsted", "ikke dict")
+
+    # Sammenhengen i selve typen: opplastingskapabiliteten til
+    # `/v1/artefakt` er modulbundet, så en EIERLØS type kan aldri levere
+    # artefaktet den ville blitt krevd for.
+    for t in ok.OPPDRAGSTYPER.values():
+        assert t.valider() == [], t.navn
+    eierlos = ok.Oppdragstype(
+        navn="x", handlingsprefikser=("x.",), felter=frozenset(),
+        paakrevde=frozenset(), produserer_artefakt=True)
+    assert any("produserer_artefakt" in f for f in eierlos.valider())
+
+
+@pg
+def test_suksesskvittering_uten_artefakt_avslutter_ingenting(migrator, miljo,
+                                                             monkeypatch):
+    """Codex P1, plattformsiden: en buggy controller skal ikke kunne
+    avslutte en WCAG-kontroll uten evidens.
+
+    Kvitteringen her er ekte signert, fersk og innenfor fristen — den
+    mangler bare `artefakt_id`. Før fiksen hoppet den over hele
+    artefaktgrenen og falt rett ned i statusskiftet: `oppdrag.status =
+    utfort` og `unntak = løst`, uten en eneste rapport. Ingen alarm, ingen
+    karantene — bare et oppdrag som ser ferdig ut.
+
+    Testen krever også at KAPABILITETEN overlever avvisningen: sjekken
+    står blant strukturvaktene, altså før forbruket, så controlleren
+    beholder sin ene sjanse til å levere resultatet ordentlig.
+
+    Kontroll: fjern `mangler_artefaktevidens`-blokken i kvittering-
+    ingesten, så blir kvitteringen godtatt med 200 og oppdraget `utfort`.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_m37 import _signer_kvittering
+    from .test_modul_onboarding_http import _onboard_token
+
+    modul, rel, opp = _wcag_kjede(migrator, monkeypatch)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            claim = c.post("/v1/oppdrag/claim", json={}, headers=hode).json()
+            basis = {"oppdrag_id": claim["oppdrag_id"],
+                     "tenant": claim["tenant"],
+                     "kvittering_jti": claim["kvittering_jti"],
+                     "repair_operation_id": claim["repair_operation_id"],
+                     "owner_claim_id": claim["owner_claim_id"],
+                     "owner_generation": claim["owner_generation"],
+                     "ressurs_id": "kunde.example"}
+            rk = c.post("/v1/oppdrag/kvittering",
+                        json=_signer_kvittering({**basis,
+                                                 "resultat": "utfort"}),
+                        headers=hode)
+            assert rk.status_code == 400, rk.text
+            assert rk.json()["feil"] == "request_feilformet", rk.text
+
+            _sett_kontekst(migrator, TENANT)
+            st, unntak_id = migrator.execute(
+                "SELECT status, unntak_id FROM oppdrag WHERE tenant=%s AND"
+                " id=%s", (TENANT, opp)).fetchone()
+            ust = migrator.execute(
+                "SELECT status FROM unntak WHERE tenant=%s AND id=%s",
+                (TENANT, unntak_id)).fetchone()[0]
+            migrator.rollback()
+            assert st == "plukket", st
+            assert ust != "løst", ust
+
+            # Kapabiliteten er IKKE brent: den samme kvitterings-jti-en
+            # bærer fortsatt et ærlig resultat. (Her: `feilet`, som ikke
+            # krever artefakt — en suksess ville trengt en full
+            # opplasting, og det er `test_controlleren_hele_veien` sitt
+            # ærend.)
+            rk2 = c.post("/v1/oppdrag/kvittering",
+                         json=_signer_kvittering(
+                             {**basis, "resultat": "feilet",
+                              "feilkode": "motor_avbrutt"}),
+                         headers=hode)
+            assert rk2.status_code == 200, rk2.text
+            assert rk2.json()["status"] == "feilet", rk2.text
     finally:
         a.tjeneste.pool.lukk()
 

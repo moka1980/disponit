@@ -56,6 +56,12 @@ class Oppdragstype:
     #: aldri det ene uten det andre.
     krever_malautorisasjon: bool = False
     malautorisasjonsdomene: str | None = None
+    #: PR-014c §7 (Codex P1): typen leverer resultatet sitt som et
+    #: ARTEFAKT. Da er en vellykket kvittering UTEN `artefakt_id` ikke en
+    #: variant, men en selvmotsigelse: oppdraget påstår at kontrollen ble
+    #: utført samtidig som det ikke finnes noen rapport å vise til. Se
+    #: `mangler_artefaktevidens`.
+    produserer_artefakt: bool = False
 
     def valider(self) -> list[str]:
         feil = []
@@ -73,6 +79,11 @@ class Oppdragstype:
                         " malautorisasjonsdomene må settes sammen — et krav"
                         " uten domene kan ingen rad tilfredsstille, og et"
                         " domene uten krav er en port ingen går gjennom")
+        if self.produserer_artefakt and self.eiermodul is None:
+            feil.append(f"{self.navn}: produserer_artefakt uten eiermodul —"
+                        " opplastingskapabiliteten til `/v1/artefakt` er"
+                        " modulbundet, så en eierløs type kan aldri levere"
+                        " artefaktet kvitteringen ville blitt krevd for")
         return feil
 
 
@@ -147,6 +158,7 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         eiermodul="m_wcag_audit",
         krever_malautorisasjon=True,
         malautorisasjonsdomene="web_hostname",
+        produserer_artefakt=True,
         beskrivelse=("PR-014c: automatisk WCAG-kontroll av et positivt"
                      " autorisert hostname. `ekstern_lesing`-klassen:"
                      " observerbar trafikk ut, ingen ekstern mutasjon;"
@@ -614,3 +626,31 @@ def er_utforelseskvittering(kropp: object) -> bool:
     forbudte = {"attestert_resultat", "vilkaar", "verification_generation",
                 "vilkaarsverdier", "fase1_repair_operation_id"}
     return not (set(kropp) & forbudte)
+
+
+def mangler_artefaktevidens(oppdragstype: object, kropp: object) -> bool:
+    """True == kvitteringen melder SUKSESS for en artefaktproduserende
+    type uten å bære artefaktet (Codex P1).
+
+    `er_utforelseskvittering` krever ingen av artefaktfeltene, og
+    artefaktgrenen i kvitteringsendepunktet står under `if art_id is not
+    None`. En vellykket kvittering uten `artefakt_id` hoppet derfor over
+    HELE den grenen — promotering, bindingskontroll, epoch-sjekk og
+    skjemarevalidering — og falt rett ned i statusskiftet: oppdraget ble
+    `utfort` og unntaket `løst`, uten at det fantes en eneste rapport å
+    vise til. En kontroll ingen kan lese er ikke en utført kontroll, og
+    her ville ingen engang sett at den manglet.
+
+    Regelen står på TYPEN og ikke som en fast liste i endepunktet: det er
+    typen som bestemmer om resultatet leveres som artefakt, og eldre
+    typer uten artefakt (`reinnsending`) skal være helt urørt.
+
+    Vurderes bare for suksess: en FEILET kvittering har per definisjon
+    ingen rapport, og skal fortsatt kunne meldes uten en."""
+    t = (OPPDRAGSTYPER.get(oppdragstype)
+         if isinstance(oppdragstype, str) else None)
+    if t is None or not t.produserer_artefakt:
+        return False
+    if not isinstance(kropp, dict) or kropp.get("resultat") != "utfort":
+        return False
+    return kropp.get("artefakt_id") is None
