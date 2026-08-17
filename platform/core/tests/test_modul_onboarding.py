@@ -661,6 +661,27 @@ def test_identitetsfeltene_er_immutable_og_hendelser_append_only():
 
 
 @pg
+def test_append_only_tabellene_taaler_ikke_truncate():
+    """Codex P2: TRUNCATE fyrer INGEN rad-trigger. Uten en statement-vakt
+    kunne tabelleieren tømt hele det annonserte revisjonssporet — og
+    tokenkjeden og familieankrene med det — uten å møte en eneste av
+    immutabilitetsvaktene.
+
+    CASCADE så FK-sperren (FeatureNotSupported) ikke skygger for vakten som
+    faktisk prøves: BEFORE TRUNCATE fyrer først. Kontroll: fjern
+    `*_ingen_truncate`-triggerne i 035, så blir denne rød.
+    """
+    m = _c()
+    try:
+        for t in ("modultoken_hendelse", "modultoken", "modul_onboarding"):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                m.execute(f"TRUNCATE {t} CASCADE")
+            m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_hemmeligheten_finnes_kun_hashet():
     """Port 3 (DB-halvdelen): kolonnen KAN ikke bære klartekst — CHECK
     krever 64 hex. Klartekst-halvdelen (vist én gang) prøves i HTTP."""

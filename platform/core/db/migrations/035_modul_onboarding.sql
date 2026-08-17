@@ -195,6 +195,24 @@ CREATE TRIGGER modultoken_hendelse_append_only
     BEFORE UPDATE OR DELETE ON modultoken_hendelse
     FOR EACH ROW EXECUTE FUNCTION avvis_endring();
 
+-- TRUNCATE fyrer INGEN rad-trigger (Codex P2): vaktene over ser den ikke,
+-- og tabelleieren kunne tømt hele det annonserte append-only sporet — og
+-- tokenkjeden og familieankrene med det — uten motstand. Statement-vakt på
+-- alle tre tabellene, samme mønster som 014/016 bruker på sine append-only
+-- tabeller. Den gjelder også eieren og migratoren; en TRUNCATE her er
+-- alltid en feil, aldri en driftsoppgave.
+DROP TRIGGER IF EXISTS onboarding_ingen_truncate ON modul_onboarding;
+CREATE TRIGGER onboarding_ingen_truncate BEFORE TRUNCATE ON modul_onboarding
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
+DROP TRIGGER IF EXISTS modultoken_ingen_truncate ON modultoken;
+CREATE TRIGGER modultoken_ingen_truncate BEFORE TRUNCATE ON modultoken
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
+DROP TRIGGER IF EXISTS modultoken_hendelse_ingen_truncate
+    ON modultoken_hendelse;
+CREATE TRIGGER modultoken_hendelse_ingen_truncate
+    BEFORE TRUNCATE ON modultoken_hendelse
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
+
 -- ------------------------------------------------------------
 -- 3. Herdede funksjoner (SECURITY DEFINER, eier disponit_modul_eier,
 --    search_path=pg_catalog). Scopet gir retten til å FORSØKE, ikke
