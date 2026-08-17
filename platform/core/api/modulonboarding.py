@@ -128,14 +128,36 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
 
 def innlos_endepunkt(tjeneste, request: Request) -> Response:
     """POST /v1/modul/onboarding/innlos — fase 2. Hemmeligheten ER
-    autentiseringen; kroppen er LUKKET til nøyaktig {hemmelighet}: en
-    request som sender modul_id/release_id avvises (port 7 — identiteten
-    kommer fra raden). Alle avvisningsgrunner er samme svar (intet orakel)."""
+    autentiseringen; kroppen er LUKKET til `hemmelighet` og den valgfrie
+    `innlosning_id`: en request som sender modul_id/release_id avvises
+    (port 7 — identiteten kommer fra raden). Alle avvisningsgrunner er
+    samme svar (intet orakel).
+
+    HVORFOR NØKKELEN FINNES (Codex P1): tokenets hemmelighet mynter
+    serveren og viser den ÉN gang. Committer databasen mens 201-svaret går
+    tapt på veien hjem — en tidsavbrutt forbindelse, en død proxy — holder
+    INGEN tokenet, mens onboarding-hemmeligheten er stemplet brukt og
+    tokenet bare finnes som MAC. Et nytt forsøk fikk `onboarding_avvist`,
+    og modulen måtte onboardes på nytt av et menneske fordi en pakke ble
+    borte. Deploymenten skal derfor generere `innlosning_id` ÉN gang per
+    innløsning og sende SAMME verdi i hvert forsøk; da mynter serveren
+    neste forsøk i SAMME innløsning, og alle forsøkene lever — serveren vet
+    ikke om det første svaret gikk tapt eller bare var forsinket, og skal
+    ikke drepe en credential som kan være levert. Uten nøkkel er en brukt
+    hemmelighet avvist, som før. Nøyaktig samme form som rotasjonens
+    `rotasjon_id`; se `roter_endepunkt`."""
     from .app import _rid, _feilsvar, kanonisk_json, _mac
     rid = _rid(request)
-    data = _kropp(request, tillatt=frozenset({"hemmelighet"}))
+    data = _kropp(request,
+                  tillatt=frozenset({"hemmelighet", "innlosning_id"}))
     if data is None or not isinstance(data.get("hemmelighet"), str):
         return _feilsvar("request_feilformet", rid)
+    innlosning_id = None
+    if "innlosning_id" in data:
+        try:
+            innlosning_id = uuid.UUID(str(data["innlosning_id"]))
+        except ValueError:
+            return _feilsvar("request_feilformet", rid)
     raa = data["hemmelighet"]
     if not raa.startswith("onb_") or "." not in raa:
         return _feilsvar("onboarding_avvist", rid)
@@ -177,10 +199,10 @@ def innlos_endepunkt(tjeneste, request: Request) -> Response:
         token_secret = secrets.token_hex(32)
         try:
             rad = conn.execute(
-                "SELECT * FROM innlos_onboarding(%s,%s,%s,%s,%s,%s)",
+                "SELECT * FROM innlos_onboarding(%s,%s,%s,%s,%s,%s,%s)",
                 (oid, _mac(tjeneste.pepper, secret), tid,
                  _mac(tjeneste.pepper, token_secret), TOKEN_DAGER,
-                 f"innlosning:{oid}")).fetchone()
+                 f"innlosning:{oid}", innlosning_id)).fetchone()
             # Codex P2: en AVVISNING committes, den rulles ikke tilbake.
             # Funksjonen har da skrevet `avvist_bruk` i det append-only
             # sporet og returnert `avvist` satt i stedet for å raise — et
@@ -195,8 +217,18 @@ def innlos_endepunkt(tjeneste, request: Request) -> Response:
                 tjeneste.logg.hendelse("onboarding_avvist", rid)
                 return _feilsvar("onboarding_avvist", rid)
         except (psycopg.errors.NoDataFound,
-                psycopg.errors.InvalidParameterValue):
+                psycopg.errors.InvalidParameterValue,
+                psycopg.errors.UniqueViolation,
+                psycopg.errors.CheckViolation):
             # Ukjent onboarding-id: ingen rad å tilskrive en hendelse.
+            #
+            # Unikhets-/CHECK-bruddene er lagringens egne vakter på det
+            # gjentatte forsøket (`ett_innlosningsforsok`,
+            # `modultoken_soesken_vakt`). Funksjonen serialiserer forsøkene
+            # under radlåsen, så de skal ikke kunne treffes derfra — men en
+            # vakt som kan fyre skal ha et DEFINERT svar, ikke en 500:
+            # fail-closed, samme avvisning som alt annet, og hemmeligheten
+            # er urørt.
             conn.rollback()
             tjeneste.logg.hendelse("onboarding_avvist", rid)
             return _feilsvar("onboarding_avvist", rid)

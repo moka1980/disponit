@@ -492,6 +492,92 @@ def test_rotasjon_taaler_at_svaret_gikk_tapt(migrator, miljo, monkeypatch):
 
 
 @pg
+def test_innlosningen_taaler_at_svaret_gikk_tapt(migrator, miljo,
+                                                 monkeypatch):
+    """Codex P1: samme tapte pakke som rotasjonen tåler, på utvekslingen som
+    STARTER familien. Deploymenten innløser, databasen committer, og 201-et
+    kommer aldri frem. Da holder ingen tokenet — det finnes bare som MAC —
+    mens hemmeligheten er stemplet brukt. Før svarte et nytt forsøk
+    `onboarding_avvist`, og modulen måtte onboardes på nytt av et menneske
+    fordi en pakke ble borte.
+
+    Med samme `innlosning_id` mynter serveren neste forsøk i samme
+    innløsning, og BEGGE tokenene lever: serveren vet ikke om det første
+    svaret gikk tapt eller bare var forsinket, og skal ikke drepe en
+    credential deploymenten kan ha lagret.
+
+    Uten nøkkel — og med en ANNEN nøkkel — er en brukt hemmelighet fortsatt
+    avvist. Og konvergensen: roterer deploymenten fra det ene tokenet, er
+    det bevist hvilket den holder, og søskenet kappes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `p_innlosning_id`-grenen i
+    `innlos_onboarding`, så faller det gjentatte forsøket til 403."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    _kjent_type(monkeypatch, typenavn, f"h{_u()}.")
+    modul, rel = _kjede(migrator, typenavn=typenavn)
+    ops, _ = _lag_token(migrator, TENANT, "drift", ["modules:onboard"])
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            r = c.post("/v1/modul/onboarding",
+                       json={"modul_id": modul, "miljo": "staging",
+                             "release_id": rel},
+                       headers={"authorization": f"Bearer {ops}"})
+            assert r.status_code == 201, r.text
+            hemmelighet = r.json()["hemmelighet"]
+
+            nokkel = str(uuid.uuid4())
+            r1 = c.post("/v1/modul/onboarding/innlos",
+                        json={"hemmelighet": hemmelighet,
+                              "innlosning_id": nokkel})
+            assert r1.status_code == 201, r1.text
+            tapt = r1.json()["token"]      # ... svaret «kom aldri frem»
+
+            # Uten nøkkel er hemmeligheten brukt opp, som før.
+            assert c.post("/v1/modul/onboarding/innlos",
+                          json={"hemmelighet": hemmelighet}
+                          ).status_code == 403
+            # En ANNEN nøkkel er ikke det samme forsøket om igjen.
+            assert c.post("/v1/modul/onboarding/innlos",
+                          json={"hemmelighet": hemmelighet,
+                                "innlosning_id": str(uuid.uuid4())}
+                          ).status_code == 403
+
+            r2 = c.post("/v1/modul/onboarding/innlos",
+                        json={"hemmelighet": hemmelighet,
+                              "innlosning_id": nokkel})
+            assert r2.status_code == 201, r2.text
+            fersk = r2.json()["token"]
+            assert fersk != tapt
+            # BEGGE virker: deploymenten bruker den den faktisk fikk.
+            for tok in (fersk, tapt):
+                rr = c.post("/v1/oppdrag/claim", json={},
+                            headers={"authorization": f"Bearer {tok}"})
+                assert rr.status_code == 204, (tok[:12], rr.text)
+
+            # KONVERGENS: rotasjon fra det ene beviser hvilket som er i
+            # bruk — søskenet kappes umiddelbart.
+            rr = c.post("/v1/modul/token/roter", json={},
+                        headers={"authorization": f"Bearer {fersk}"})
+            assert rr.status_code == 201, rr.text
+            rr = c.post("/v1/oppdrag/claim", json={},
+                        headers={"authorization": f"Bearer {tapt}"})
+            assert rr.status_code == 401, rr.text
+
+            # En nøkkel som ikke er en UUID er en formfeil, ikke et forsøk.
+            rr = c.post("/v1/modul/onboarding/innlos",
+                        json={"hemmelighet": hemmelighet,
+                              "innlosning_id": "x"})
+            assert (rr.status_code,
+                    rr.json()["feil"]) == (400, "request_feilformet"), rr.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
 def test_testprefikset_utledes_aldri_for_produksjon(migrator, miljo,
                                                     monkeypatch):
     """§8/deploy-port: en `test.`-artefakttype gir INGEN opplastings-

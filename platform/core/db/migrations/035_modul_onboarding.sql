@@ -99,6 +99,35 @@ CREATE TABLE IF NOT EXISTS modultoken (
     -- står i lagringen: fem forsøk, så er dette ikke lenger en tapt pakke.
     rotasjon_forsok  SMALLINT NOT NULL DEFAULT 1
                      CHECK (rotasjon_forsok BETWEEN 1 AND 5),
+    -- INNLØSNINGENS idempotensnøkkel (Codex P1). Nøyaktig samme problem som
+    -- rotasjonens, på familiens FØRSTE token: hemmeligheten mynter serveren
+    -- og viser den én gang, og går 201-svaret tapt på veien hjem, holder
+    -- ingen tokenet — mens hemmeligheten er stemplet brukt og bare finnes
+    -- som MAC. Deploymenten kunne verken hente tokenet eller innløse på
+    -- nytt, og onboardingen krevde et menneske og en ny operatørutstedt
+    -- hemmelighet. Rotasjonen har løst dette siden runde 3; utvekslingen
+    -- som starter familien hadde det ikke.
+    --
+    -- Samme form, samme grunner: nøkkelen identifiserer FORSØKET, ikke
+    -- tokenet, og et gjentatt forsøk mynter et SØSKEN i stedet for å rive
+    -- ned det forrige — serveren vet ikke om det første svaret gikk tapt
+    -- eller bare var forsinket. NULL på roterte tokener (de har en
+    -- forgjenger) og på klienter som ikke sender nøkkelen; de får
+    -- avvisning som før.
+    innlosning_id    UUID,
+    innlosning_forsok SMALLINT NOT NULL DEFAULT 1
+                     CHECK (innlosning_forsok BETWEEN 1 AND 5),
+    -- De to tellerne hører til hver sin generasjon og skal ikke kunne
+    -- blandes: et rotert token har ingen innløsning å prøve på nytt, og
+    -- familiens første token har ingen rotasjon. Uten BEGGE veiene ville
+    -- søskenvakten kunne gås rundt — den greiner på `forgjenger`, og en rad
+    -- med feil generasjons teller i seg havner da i feil gren.
+    CONSTRAINT innlosning_kun_forstegenerasjon CHECK (
+        forgjenger IS NULL
+        OR (innlosning_id IS NULL AND innlosning_forsok = 1)),
+    CONSTRAINT rotasjon_kun_etterfolgere CHECK (
+        forgjenger IS NOT NULL
+        OR (rotasjon_id IS NULL AND rotasjon_forsok = 1)),
     opprettet        TIMESTAMPTZ NOT NULL DEFAULT now(),
     utloper          TIMESTAMPTZ NOT NULL,    -- v1: 30 døgn
     tilbakekalt_ts   TIMESTAMPTZ,
@@ -138,6 +167,18 @@ CREATE INDEX IF NOT EXISTS modultoken_levende
 DROP INDEX IF EXISTS en_etterfolger_per_token;
 CREATE UNIQUE INDEX IF NOT EXISTS ett_forsok_per_rotasjon
     ON modultoken (forgjenger, rotasjon_forsok);
+
+-- ETT FØRSTEGENERASJONS-TOKEN PER FORSØK (Codex P1) — indeksen over sier
+-- det samme om rotasjonen, men den nøkler på `forgjenger`, som er NULL for
+-- familiens første token. NULL-er er distinkte i en unik indeks, så
+-- førstegenerasjonen sto helt uten lagringsgaranti; den hvilte på
+-- `innlost_ts`-sjekken inne i funksjonen alene. Nå bærer lagringen den
+-- samme regelen: hver onboarding har ett token per forsøksnummer, og taket
+-- i CHECK-en får et reelt gulv å stå på. `modultoken_soesken_vakt` under
+-- holder søsknene til én og samme `innlosning_id`.
+CREATE UNIQUE INDEX IF NOT EXISTS ett_innlosningsforsok
+    ON modultoken (onboarding_id, innlosning_forsok)
+    WHERE forgjenger IS NULL;
 
 -- Append-only revisjonsspor: utstedt, innløst, rotert, tilbakekalt,
 -- avvist bruk. Speiler modulregister_hendelse i form.
@@ -231,6 +272,8 @@ CREATE TRIGGER modultoken_identitet_immutable
         OR NEW.forgjenger      IS DISTINCT FROM OLD.forgjenger
         OR NEW.rotasjon_id     IS DISTINCT FROM OLD.rotasjon_id
         OR NEW.rotasjon_forsok IS DISTINCT FROM OLD.rotasjon_forsok
+        OR NEW.innlosning_id   IS DISTINCT FROM OLD.innlosning_id
+        OR NEW.innlosning_forsok IS DISTINCT FROM OLD.innlosning_forsok
         OR NEW.utloper         IS DISTINCT FROM OLD.utloper
         OR NEW.opprettet       IS DISTINCT FROM OLD.opprettet
         OR (OLD.tilbakekalt_ts IS NOT NULL
@@ -251,9 +294,35 @@ CREATE TRIGGER modultoken_identitet_immutable
 -- altså nettopp familiegreningen én-etterfølger-regelen finnes for å
 -- stoppe. Sjekken leser en COMMITTET rad (forsøk 1); en samtidig, ennå
 -- ucommittet forsøk-1-rad er usynlig her og gir avvisning — fail-closed.
+--
+-- OG DEN GJELDER BEGGE GENERASJONENE (Codex P1): et gjentatt INNLØSNINGS-
+-- forsøk er samme sak ett hakk lenger opp — søsknene deler onboarding i
+-- stedet for forgjenger, og nøkkelen er `innlosning_id`. Uten den grenen
+-- kunne to ulike innløsninger av samme hemmelighet dele familiens
+-- førstegenerasjon bare de valgte hvert sitt forsøksnummer.
 CREATE OR REPLACE FUNCTION modultoken_soesken_vakt()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
+    IF NEW.forgjenger IS NULL THEN
+        -- Familiens FØRSTE generasjon: innløsningens forsøk gjelder.
+        IF NEW.innlosning_forsok = 1 THEN
+            RETURN NEW;
+        END IF;
+        IF NEW.innlosning_id IS NULL THEN
+            RAISE EXCEPTION 'modultoken: gjentatt innlosningsforsok krever'
+                ' innlosningsnokkel' USING ERRCODE = 'check_violation';
+        END IF;
+        PERFORM 1 FROM public.modultoken t
+         WHERE t.onboarding_id = NEW.onboarding_id
+           AND t.forgjenger IS NULL AND t.innlosning_forsok = 1
+           AND t.innlosning_id IS NOT DISTINCT FROM NEW.innlosning_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'modultoken: forsok % horer ikke til innlosningen'
+                ' som startet denne familien', NEW.innlosning_forsok
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF NEW.rotasjon_forsok = 1 THEN
         RETURN NEW;
     END IF;
@@ -417,16 +486,45 @@ END $$;
 -- fortsatt samme svar utad — intet orakel for gjettverk).
 --
 -- Formen endret seg, så den gamle signaturen må vekk før REPLACE.
+--
+-- OG DEN ER GJENOPPRETTELIG ETTER ET TAPT SVAR (Codex P1). Committer
+-- databasen mens 201-svaret går tapt på veien hjem — tidsavbrutt
+-- forbindelse, død proxy — har deploymenten ingenting: tokenet finnes bare
+-- som MAC, og hemmeligheten er stemplet brukt. Et nytt forsøk fikk
+-- `onboarding_avvist`, og onboardingen krevde et menneske og en ny
+-- operatørutstedt hemmelighet, for en pakke som ble borte. Rotasjonen har
+-- båret en idempotensnøkkel siden runde 3; utvekslingen som STARTER
+-- familien manglet den, og det er nøyaktig samme normale feilsituasjon.
+--
+-- Formen er rotasjonens, ord for ord: deploymenten genererer
+-- `innlosning_id` ÉN gang og sender SAMME verdi i hvert forsøk. Kommer den
+-- igjen, mynter innløsningen NESTE FORSØK i samme innløsning — den river
+-- ikke ned det forrige, for serveren vet ikke om det første svaret gikk
+-- tapt eller bare var forsinket, og en deployment som fikk det ville blitt
+-- låst ute i samme øyeblikk. Alle søsknene lever; deploymenten bruker det
+-- den faktisk fikk, og neste rotasjon fra ett av dem beviser hvilket (de
+-- andre kappes da av `roter_modultoken`).
+--
+-- Vinduet er ikke ubegrenset, og det er verdt å si hva som binder det:
+-- hemmeligheten må fortsatt stemme, den må være innenfor sine egne 60
+-- minutter, modulen må være åpen med SAMME epoch — og taket er fem forsøk.
+-- Uten nøkkel, eller med en annen nøkkel, er en brukt hemmelighet fortsatt
+-- avvist. Å prøve på nytt krever altså både hemmeligheten OG nøkkelen som
+-- aldri forlot deploymenten.
+--
+-- Formen endret seg (ny parameter), så den gamle signaturen må vekk før
+-- REPLACE.
 DROP FUNCTION IF EXISTS innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT);
 CREATE OR REPLACE FUNCTION innlos_onboarding(
     p_onboarding_id UUID, p_hemmelighet_hash TEXT,
-    p_token_id UUID, p_token_mac TEXT, p_token_dager INT, p_aktor TEXT)
+    p_token_id UUID, p_token_mac TEXT, p_token_dager INT, p_aktor TEXT,
+    p_innlosning_id UUID DEFAULT NULL)
 RETURNS TABLE (token_id UUID, modul_id TEXT, miljo TEXT, release_id TEXT,
                utstedt_epoch BIGINT, utloper TIMESTAMPTZ,
                familie_utloper TIMESTAMPTZ, avvist TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE o RECORD; v_epoch BIGINT; v_utloper TIMESTAMPTZ; v_grunn TEXT;
-        v_modul TEXT; v_status TEXT;
+        v_modul TEXT; v_status TEXT; v_forsok SMALLINT := 1;
 BEGIN
     -- MODULLÅSEN FØRST (Codex P1). Mynting og epoch-endring må serialisere:
     -- uten låsen kan et token fødes inne i nødstoppets allerede tatte
@@ -455,10 +553,37 @@ BEGIN
     -- klartekst finnes aldri her. Feil hemmelighet, brukt hemmelighet og
     -- utløpt hemmelighet er SAMME feil utad (ingen orakel for gjettverk);
     -- grunnene skilles bare i sporet, som er der de er til nytte.
-    IF o.hemmelighet_hash IS DISTINCT FROM p_hemmelighet_hash
-       OR o.innlost_ts IS NOT NULL THEN
+    IF o.hemmelighet_hash IS DISTINCT FROM p_hemmelighet_hash THEN
         v_grunn := 'innlosning_avvist';
-    ELSIF o.utloper < now() THEN
+    ELSIF o.innlost_ts IS NOT NULL THEN
+        -- Hemmeligheten er brukt. Det ENESTE som kommer inn her er et
+        -- gjentatt forsøk i den samme innløsningen: rett nøkkel, og et
+        -- forsøk 1 som faktisk finnes. Radlåsen over serialiserer
+        -- forsøkene mot hverandre, så tellingen kan ikke løpe fra seg selv.
+        IF p_innlosning_id IS NULL THEN
+            v_grunn := 'innlosning_avvist';
+        ELSE
+            SELECT max(t.innlosning_forsok) INTO v_forsok
+              FROM public.modultoken t
+             WHERE t.onboarding_id = o.onboarding_id
+               AND t.forgjenger IS NULL
+               AND t.innlosning_id = p_innlosning_id;
+            IF v_forsok IS NULL THEN
+                -- Riktig hemmelighet, men en nøkkel som aldri startet
+                -- denne innløsningen: like avvist som ingen nøkkel.
+                v_grunn := 'innlosning_avvist';
+                v_forsok := 1;
+            ELSE
+                v_forsok := v_forsok + 1;
+                IF v_forsok > 5 THEN
+                    v_grunn := 'innlosning_forsokstak';
+                END IF;
+            END IF;
+        END IF;
+    END IF;
+    -- TTL-en gjelder også det gjentatte forsøket: gjenopprettelsen lever
+    -- nøyaktig like lenge som hemmeligheten selv, ikke ett minutt lenger.
+    IF v_grunn IS NULL AND o.utloper < now() THEN
         v_grunn := 'innlosning_utlopt';
     END IF;
     -- Modulens tilstand LESES UNDER MODULLÅSEN (Codex P1). For rotasjonen
@@ -513,18 +638,28 @@ BEGIN
     -- ARVER denne verdien og plukker aldri opp en ny (port 23).
     v_utloper := LEAST(now() + make_interval(days => p_token_dager),
                        o.familie_utloper);
-    UPDATE public.modul_onboarding SET innlost_ts = now()
-     WHERE modul_onboarding.onboarding_id = p_onboarding_id;
+    -- Stemplingen skjer ÉN gang. Er den alt satt, er dette et gjentatt
+    -- forsøk, og et nytt UPDATE ville uansett falt på immutabilitets-
+    -- triggeren (innløsningen er monoton: NULL → satt, aldri endret).
+    IF o.innlost_ts IS NULL THEN
+        UPDATE public.modul_onboarding SET innlost_ts = now()
+         WHERE modul_onboarding.onboarding_id = p_onboarding_id;
+    END IF;
     INSERT INTO public.modultoken
         (token_id, token_mac, onboarding_id, familie_utloper, modul_id,
-         miljo, release_id, utstedt_epoch, forgjenger, utloper)
+         miljo, release_id, utstedt_epoch, forgjenger, utloper,
+         innlosning_id, innlosning_forsok)
         VALUES (p_token_id, p_token_mac, o.onboarding_id, o.familie_utloper,
-                o.modul_id, o.miljo, o.release_id, v_epoch, NULL, v_utloper);
+                o.modul_id, o.miljo, o.release_id, v_epoch, NULL, v_utloper,
+                p_innlosning_id, v_forsok);
     INSERT INTO public.modultoken_hendelse
         (onboarding_id, token_id, modul_id, miljo, release_id, hendelse,
-         aktor)
+         aktor, detalj)
         VALUES (o.onboarding_id, p_token_id, o.modul_id, o.miljo,
-                o.release_id, 'innlost', p_aktor);
+                o.release_id, 'innlost', p_aktor,
+                jsonb_build_object('forsok', v_forsok,
+                                   'innlosning_id',
+                                   p_innlosning_id::text));
     RETURN QUERY SELECT p_token_id, o.modul_id, o.miljo, o.release_id,
                         v_epoch, v_utloper, o.familie_utloper, NULL::TEXT;
 END $$;
@@ -647,10 +782,22 @@ BEGIN
     -- hvilket av sine egne søsken deploymenten faktisk holder. De andre
     -- kappes her, umiddelbart — de ble aldri tatt i bruk, og skal ikke
     -- ligge og leve ut sine 30 dager ved siden av kjeden.
-    IF g.forgjenger IS NOT NULL THEN
+    --
+    -- Og det gjelder BEGGE generasjonene (Codex P1): er forgjengeren selv
+    -- familiens første token, er søsknene de andre INNLØSNINGSforsøkene —
+    -- samme onboarding, samme `innlosning_id`, ingen forgjenger. Uten denne
+    -- grenen ville inntil fem fullverdige tokener fra en gjenopprettet
+    -- innløsning levd side om side i 30 døgn, selv etter at det var bevist
+    -- hvilket deploymenten holder.
+    IF g.forgjenger IS NOT NULL OR g.innlosning_id IS NOT NULL THEN
         FOR s IN
             SELECT * FROM public.modultoken t
-             WHERE t.forgjenger = g.forgjenger
+             WHERE (CASE WHEN g.forgjenger IS NOT NULL
+                         THEN t.forgjenger = g.forgjenger
+                         ELSE t.forgjenger IS NULL
+                              AND t.onboarding_id = g.onboarding_id
+                              AND t.innlosning_id = g.innlosning_id
+                    END)
                AND t.token_id <> g.token_id
                AND t.tilbakekalt_ts IS NULL
              FOR UPDATE
@@ -1296,14 +1443,14 @@ RESET ROLE;
 GRANT SELECT ON moduldeployment TO disponit_m37_claimer;
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION verifiser_modultoken(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) FROM PUBLIC;
 -- Runtime (API-et) er den eneste nettverksveien inn; utstedelse og
 -- tilbakekalling er i tillegg scope-gatet (`modules:onboard`) i HTTP-laget.
 GRANT EXECUTE ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) TO disponit;
-GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT) TO disponit;
+GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) TO disponit;
 GRANT EXECUTE ON FUNCTION verifiser_modultoken(TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) TO disponit;
 GRANT EXECUTE ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) TO disponit;

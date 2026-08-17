@@ -92,11 +92,13 @@ def _utsted(rt, modul, miljo, rel, *, dager=365, ttl=60, oid=None,
                     hemmelighet_hash or _hex64(), dager, ttl)).fetchone()
 
 
-def _innlos(rt, oid, hemmelighet_hash, *, dager=30, tid=None, mac=None):
+def _innlos(rt, oid, hemmelighet_hash, *, dager=30, tid=None, mac=None,
+            innlosning_id=None):
     tid = tid or uuid.uuid4()
     rad = rt.execute(
-        "SELECT * FROM innlos_onboarding(%s,%s,%s,%s,%s,'test')",
-        (oid, hemmelighet_hash, tid, mac or _hex64(), dager)).fetchone()
+        "SELECT * FROM innlos_onboarding(%s,%s,%s,%s,%s,'test',%s)",
+        (oid, hemmelighet_hash, tid, mac or _hex64(), dager,
+         innlosning_id)).fetchone()
     return tid, rad
 
 
@@ -278,6 +280,124 @@ def test_utlopt_hemmelighet_avvises():
         # ... og hemmeligheten er IKKE merket brukt av forsøket.
         assert m.execute("SELECT innlost_ts FROM modul_onboarding WHERE"
                          " onboarding_id=%s", (oid,)).fetchone()[0] is None
+        m.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_gjentatt_innlosning_er_gjenopprettelig_og_har_et_tak():
+    """Codex P1: den tapte pakken på utvekslingen som STARTER familien.
+
+    Committer databasen mens 201-svaret går tapt, holder ingen tokenet (det
+    finnes bare som MAC) mens hemmeligheten er stemplet brukt — og et nytt
+    forsøk var avvist. Med samme `innlosning_id` mynter innløsningen neste
+    forsøk i samme innløsning, og alle søsknene lever: serveren vet ikke om
+    det første svaret gikk tapt eller bare var forsinket.
+
+    Taket er fem, som for rotasjonen, og over det er dette ikke lenger en
+    tapt pakke. Uten nøkkel — og med en ANNEN nøkkel — er en brukt
+    hemmelighet fortsatt avvist.
+
+    Kontroll: fjern `p_innlosning_id`-grenen i `innlos_onboarding`, så blir
+    det andre forsøket `innlosning_avvist`."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, rel, _, _ = _deployment_med_typer(m)
+        hh = _hex64()
+        oid, _ = _utsted(rt, modul, "staging", rel, hemmelighet_hash=hh)
+        nokkel = uuid.uuid4()
+        t1, rad1 = _innlos(rt, oid, hh, innlosning_id=nokkel)
+        rt.commit()
+        assert rad1[7] is None and rad1[0] == t1, rad1
+
+        # Uten nøkkel: brukt hemmelighet, avvist som før.
+        _, uten = _innlos(rt, oid, hh)
+        rt.commit()
+        assert uten[7] == "innlosning_avvist", uten
+        # Annen nøkkel: ikke det samme forsøket om igjen.
+        _, annen = _innlos(rt, oid, hh, innlosning_id=uuid.uuid4())
+        rt.commit()
+        assert annen[7] == "innlosning_avvist", annen
+
+        # Samme nøkkel: neste forsøk, og forgjengeren lever fortsatt.
+        tokener = [t1]
+        for _ in range(4):
+            tid, rad = _innlos(rt, oid, hh, innlosning_id=nokkel)
+            rt.commit()
+            assert rad[7] is None, rad
+            tokener.append(tid)
+        # Taket: femte forsøk var det siste.
+        _, over = _innlos(rt, oid, hh, innlosning_id=nokkel)
+        rt.commit()
+        assert over[7] == "innlosning_forsokstak", over
+
+        rader = m.execute(
+            "SELECT innlosning_forsok, tilbakekalt_ts FROM modultoken"
+            " WHERE onboarding_id=%s ORDER BY innlosning_forsok",
+            (oid,)).fetchall()
+        m.rollback()
+        assert [r[0] for r in rader] == [1, 2, 3, 4, 5], rader
+        assert all(r[1] is None for r in rader), (
+            "et gjentatt forsøk drepte et søsken som kan være levert")
+
+        # KONVERGENS: rotasjon fra ett av søsknene beviser hvilket
+        # deploymenten holder — de andre kappes.
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                   (tokener[2], uuid.uuid4(), _hex64()))
+        rt.commit()
+        etter = dict(m.execute(
+            "SELECT token_id, tilbakekalt_grunn FROM modultoken"
+            " WHERE onboarding_id=%s AND forgjenger IS NULL",
+            (oid,)).fetchall())
+        m.rollback()
+        # Den som roterte står i sin egen nåde; de fire andre er kappet.
+        assert etter.pop(tokener[2]) == "rotert", etter
+        assert set(etter.values()) == {"soesken_ikke_valgt"}, etter
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_innlosningssoesken_hoerer_til_samme_innlosning():
+    """Vakten i lagringen, uavhengig av funksjonen: et forsøk > 1 er neste
+    forsøk i den innløsningen forsøk 1 startet. Uten den kunne to ULIKE
+    innløsninger av samme hemmelighet delt familiens førstegenerasjon bare
+    de valgte hvert sitt forsøksnummer — altså nettopp familiegreningen
+    regelen finnes for å stoppe.
+
+    Kontroll: fjern førstegenerasjonsgrenen i `modultoken_soesken_vakt`."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, rel, _, _ = _deployment_med_typer(m)
+        hh = _hex64()
+        oid, _ = _utsted(rt, modul, "staging", rel, hemmelighet_hash=hh)
+        nokkel = uuid.uuid4()
+        _innlos(rt, oid, hh, innlosning_id=nokkel)
+        rt.commit()
+        felles = ("INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+                  "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+                  "utloper,innlosning_id,innlosning_forsok) SELECT %s,%s,"
+                  "onboarding_id,familie_utloper,modul_id,miljo,release_id,"
+                  "0,familie_utloper,%s,%s FROM modul_onboarding"
+                  " WHERE onboarding_id=%s")
+        # Annen nøkkel på forsøk 2: hører ikke til innløsningen.
+        with pytest.raises(psycopg.errors.CheckViolation,
+                           match="horer ikke til innlosningen"):
+            m.execute(felles, (uuid.uuid4(), _hex64(), uuid.uuid4(), 2, oid))
+        m.rollback()
+        # Ingen nøkkel på forsøk 2: like avvist.
+        with pytest.raises(psycopg.errors.CheckViolation,
+                           match="krever innlosningsnokkel"):
+            m.execute(felles, (uuid.uuid4(), _hex64(), None, 2, oid))
+        m.rollback()
+        # Og to forsøk 1 på samme onboarding er unikhetsbrudd.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            m.execute(felles, (uuid.uuid4(), _hex64(), nokkel, 1, oid))
         m.rollback()
     finally:
         rt.close()
