@@ -1085,7 +1085,12 @@ def test_familiefristen_kan_ikke_flyttes_av_noen_skrivevei():
                       " familie_utloper + interval '1 day'"
                       " WHERE token_id=%s", (tid,))
         m.rollback()
-        # 37/41: INSERT med frist/deployment som ikke matcher familieraden
+        # 37/41: INSERT med frist/deployment som ikke matcher familieraden.
+        # Prøves mot den UBRUKTE familien `o2`, ikke mot `oid`: sistnevnte
+        # har alt sitt førstegenerasjons-token, og `ett_innlosningsforsok`
+        # ville da fyrt FØR kompositt-FK-en (unike indekser sjekkes under
+        # innsettingen, FK-er som triggere etterpå) — porten som prøves her
+        # er FK-en, og den skal være den som svarer.
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             m.execute(
                 "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
@@ -1093,7 +1098,7 @@ def test_familiefristen_kan_ikke_flyttes_av_noen_skrivevei():
                 "utloper) SELECT gen_random_uuid(),%s,onboarding_id,"
                 "familie_utloper + interval '1 day',modul_id,miljo,"
                 "release_id,0,familie_utloper FROM modul_onboarding"
-                " WHERE onboarding_id=%s", (_hex64(), oid))
+                " WHERE onboarding_id=%s", (_hex64(), o2))
         m.rollback()
         # 39: reparenting til annen familie + senere frist i ÉN setning
         modul3, tid3, _ = _token(rt, m, familie_dager=700)
