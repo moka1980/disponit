@@ -1716,7 +1716,7 @@ def _klartekst(setning, strenger):
     return _MARKOER_MAL.sub(igjen, setning)
 
 
-def _delt(tekst, i_blokk, arvet_vakt=False):
+def _delt(tekst, i_blokk, arvet_vakt=False, strenger=None):
     """Setningene i et tekststykke, hver på to former og med sin vakt.
 
     Gir `(setning, maskert, betinget)`: `setning` er teksten slik den står
@@ -1739,9 +1739,15 @@ def _delt(tekst, i_blokk, arvet_vakt=False):
     `arvet_vakt` er vakten en KALLER har målt for teksten som helhet — den
     brukes av den dynamiske grenen under, der teksten som kjøres arver
     vakten fra `EXECUTE`-setningen den sto i.
+
+    `strenger` er konstanttabellen KALLEREN alt har begynt på. `_setninger`
+    maskerer filen FØR den leter etter DO-blokker, og gir da både den
+    maskerte teksten og tabellen videre hit; en tekst som ikke er maskert
+    fra før, maskeres her og får sin egen tabell. Å maskere en alt maskert
+    tekst er ingenting: markørene inneholder ingen apostrof.
     """
     dybde = 0
-    strenger = []
+    strenger = [] if strenger is None else strenger
     uten_streng, strenger = _uten_strenger(
         _KROPP.sub(" ", _uten_dollarnyttelast(tekst, strenger)), strenger)
     for rå in uten_streng.split(";"):
@@ -1784,8 +1790,14 @@ def _delt(tekst, i_blokk, arvet_vakt=False):
             # `i_blokk` er False: nyttelasten er SQL, ikke plpgsql, så det
             # finnes ingen gren å telle i den. Vakten den står under, følger
             # med som `arvet_vakt`.
+            #
+            # Tabellen er DEN SAMME. Nyttelasten kan selv være maskert —
+            # `_setninger` maskerer filen før den leter etter DO-blokker —
+            # og en markør i den peker inn i kallerens tabell. Fikk laget
+            # under sin egen, pekte den samme markøren et annet sted, eller
+            # ingen steder.
             yield from _delt(_uten_kommentarer(strenger[int(m.group(1))][1]),
-                             False, betinget)
+                             False, betinget, strenger)
         if i_blokk:
             # Vakttellingen leser den MASKERTE setningen: en `END IF` inne i
             # en logglinje lukker ingen gren, og en `IF … THEN` i en
@@ -1811,14 +1823,27 @@ def _setninger(sql):
     kropp — den er kode som kjører. Og de pakkes ut STYKKEVIS, ikke ved å
     limes inn i filteksten: grensen mellom «inne i en blokk» og «på toppnivå»
     er nettopp det tellingen over trenger for å vite hva som er en gren.
+
+    EN DO-BLOKK I EN KONSTANT ER IKKE EN DO-BLOKK (Codex P2 på #74).
+    Blokkene ble lett opp i den rå teksten, altså FØR maskeringen — og en
+    `COMMENT ON FUNCTION … IS 'DO $$ BEGIN REVOKE … FROM PUBLIC; END $$'`
+    ble derfor pakket ut og spilt av som eierens SQL. PostgreSQL lagrer bare
+    kommentaren; modellen løftet et åpent gjerde til True på den. Det er den
+    samme blindsonen konstantmaskeringen ble lagt inn for å lukke, ett steg
+    tidligere i leddet enn maskeringen selv sto.
+
+    Filen maskeres derfor FØRST, og blokkene letes opp i den maskerte
+    teksten. Konstanttabellen gis videre til `_delt` sammen med hvert
+    stykke: markørene i stykkene peker inn i den, og et lag som lagde sin
+    egen tabell ville lest dem feil.
     """
-    uten_kommentar = _uten_kommentarer(sql)
+    maskert, strenger = _uten_strenger(_uten_kommentarer(sql))
     pos = 0
-    for m in _DO_BLOKK.finditer(uten_kommentar):
-        yield from _delt(uten_kommentar[pos:m.start()], False)
-        yield from _delt(m.group(2), True)
+    for m in _DO_BLOKK.finditer(maskert):
+        yield from _delt(maskert[pos:m.start()], False, strenger=strenger)
+        yield from _delt(m.group(2), True, strenger=strenger)
         pos = m.end()
-    yield from _delt(uten_kommentar[pos:], False)
+    yield from _delt(maskert[pos:], False, strenger=strenger)
 
 
 def _type(ledd):
@@ -2735,6 +2760,37 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     assert gjerdet == {sig: False}, (
         "et semikolon eller en `END IF` inne i en tekst er ikke SQL."
         f" Spor: {spor}")
+
+    # …og EN DO-BLOKK I EN KONSTANT ER IKKE EN DO-BLOKK. Blokkene ble lett
+    # opp i den RÅ teksten, altså før maskeringen, så en kommentartekst med
+    # formen i seg ble pakket ut og spilt av som eierens SQL. PostgreSQL
+    # lagrer bare kommentaren — modellen løftet et åpent gjerde til True på
+    # den. Det er den samme blindsonen maskeringen finnes for, ett steg
+    # tidligere i leddet enn maskeringen selv sto.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "SET LOCAL ROLE disponit_domene_eier;"
+                   " COMMENT ON FUNCTION varsel_klaim_epost(int, int) IS"
+                   " 'DO $$ BEGIN REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC; END $$';"
+                   " RESET ROLE;")], n)
+    assert gjerdet == {sig: False}, (
+        "en DO-blokk som bare er SITERT i en kommentartekst kjører ikke, og"
+        f" er ikke et gjerde. Spor: {spor}")
+
+    # …og motprøven, som er den som skiller regelen fra «DO-blokker teller
+    # ikke»: en EKTE blokk ETTER den siterte pakkes fortsatt ut, og vakten i
+    # den telles. Ble maskeringen for bred, ville 027, 030 og 031 — som alle
+    # legger den betingede senderrollegranten i en DO-blokk — blitt usynlige.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "COMMENT ON FUNCTION varsel_klaim_epost(int, int) IS"
+                   " 'DO $$ BEGIN REVOKE ALL ON FUNCTION"
+                   " varsel_klaim_epost(int, int) FROM PUBLIC; END $$';"
+                   + i_do)], n)
+    assert gjerdet == {sig: False}, (
+        "en ekte DO-blokk etter en sitert er fortsatt kode, og GRANT-en i"
+        f" den åpner gjerdet. Spor: {spor}")
 
     # …og motprøven, som er det som gjør maskeringen til noe annet enn en ny
     # blindsone: EN `EXECUTE '…'` KJØRER. Maskeres den bort sammen med
