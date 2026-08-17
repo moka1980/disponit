@@ -146,9 +146,22 @@ def innlos_endepunkt(tjeneste, request: Request) -> Response:
                 (oid, _mac(tjeneste.pepper, secret), tid,
                  _mac(tjeneste.pepper, token_secret), TOKEN_DAGER,
                  f"innlosning:{oid}")).fetchone()
+            # Codex P2: en AVVISNING committes, den rulles ikke tilbake.
+            # Funksjonen har da skrevet `avvist_bruk` i det append-only
+            # sporet og returnert `avvist` satt i stedet for å raise — et
+            # RAISE ville rullet nettopp den hendelsen bort igjen, og
+            # sporet ville aldri sett et eneste mislykket forsøk. Intet
+            # token er opprettet og hemmeligheten er urørt, så det eneste
+            # som committes er revisjonsraden. Kvoten på forsøk (og altså
+            # på rader) er rate-grensen over.
+            avvist = rad is None or rad[7] is not None
             conn.commit()
+            if avvist:
+                tjeneste.logg.hendelse("onboarding_avvist", rid)
+                return _feilsvar("onboarding_avvist", rid)
         except (psycopg.errors.NoDataFound,
                 psycopg.errors.InvalidParameterValue):
+            # Ukjent onboarding-id: ingen rad å tilskrive en hendelse.
             conn.rollback()
             tjeneste.logg.hendelse("onboarding_avvist", rid)
             return _feilsvar("onboarding_avvist", rid)

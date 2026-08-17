@@ -164,7 +164,11 @@ def test_ett_ubrukt_onboarding_per_deployment_men_utlopt_erstattes():
 @pg
 def test_innlosning_er_engangs(monkeypatch=None):
     """Port 4: innløst to ganger → andre avvist, kun ett token. Og feil
-    hemmelighet er SAMME feil utad som brukt hemmelighet (intet orakel)."""
+    hemmelighet er SAMME feil utad som brukt hemmelighet (intet orakel).
+
+    Codex P2: avvisningen RAISER ikke — den returnerer `avvist` satt, så
+    `avvist_bruk`-hendelsen overlever committen. Kontroll: bytt returen i
+    `innlos_onboarding` tilbake til RAISE, så blir sporet tomt her."""
     m = _c()
     rt = _rt()
     try:
@@ -175,11 +179,24 @@ def test_innlosning_er_engangs(monkeypatch=None):
         tid, rad = _innlos(rt, oid, hh)
         rt.commit()
         assert rad[1] == modul and rad[4] == 0     # modul_id, utstedt_epoch
-        with pytest.raises(psycopg.errors.InvalidParameterValue):
-            _innlos(rt, oid, hh)
-        rt.rollback()
+        assert rad[7] is None                      # avvist
+        # ... andre gang med RIKTIG hemmelighet, og en gang med FEIL:
+        # samme utfall, og begge havner i sporet.
+        for hash_ in (hh, _hex64()):
+            _, avslag = _innlos(rt, oid, hash_)
+            assert avslag[7] == "innlosning_avvist", avslag
+            assert avslag[0] is None               # ingen token_id
+            rt.commit()
         assert m.execute("SELECT count(*) FROM modultoken WHERE"
                          " modul_id=%s", (modul,)).fetchone()[0] == 1
+        # Revisjonssporet HUSKER forsøkene — det er hele poenget med at
+        # avvisningen committes i stedet for å raise.
+        rader = m.execute(
+            "SELECT detalj->>'grunn' FROM modultoken_hendelse"
+            " WHERE onboarding_id=%s AND hendelse='avvist_bruk'",
+            (oid,)).fetchall()
+        m.rollback()
+        assert rader == [("innlosning_avvist",)] * 2, rader
     finally:
         rt.close()
         m.close()
@@ -201,9 +218,9 @@ def test_to_samtidige_innlosninger_gir_noyaktig_ett_token():
         def prov():
             rt = _rt()
             try:
-                _innlos(rt, oid, hh)
+                _, rad = _innlos(rt, oid, hh)
                 rt.commit()
-                utfall.append("ok")
+                utfall.append("avvist" if rad[7] is not None else "ok")
             except psycopg.errors.InvalidParameterValue:
                 rt.rollback()
                 utfall.append("avvist")
@@ -221,7 +238,10 @@ def test_to_samtidige_innlosninger_gir_noyaktig_ett_token():
 
 @pg
 def test_utlopt_hemmelighet_avvises():
-    """Port 6: > TTL → avvist. TTL-en er serverens, ikke requestens."""
+    """Port 6: > TTL → avvist. TTL-en er serverens, ikke requestens.
+
+    Også utløpet auditeres nå (Codex P2) — grunnen skiller seg i SPORET,
+    aldri i svaret utad."""
     m = _c()
     rt = _rt()
     try:
@@ -234,9 +254,19 @@ def test_utlopt_hemmelighet_avvises():
             " VALUES (%s,%s,'staging',%s,%s,now()+interval '365 days','t',"
             " now()-interval '1 second')", (oid, modul, rel, hh))
         m.commit()
-        with pytest.raises(psycopg.errors.InvalidParameterValue):
-            _innlos(rt, oid, hh)
-        rt.rollback()
+        _, rad = _innlos(rt, oid, hh)
+        rt.commit()
+        assert rad[7] == "innlosning_utlopt" and rad[0] is None, rad
+        spor = m.execute(
+            "SELECT detalj->>'grunn' FROM modultoken_hendelse"
+            " WHERE onboarding_id=%s AND hendelse='avvist_bruk'",
+            (oid,)).fetchall()
+        m.rollback()
+        assert spor == [("innlosning_utlopt",)], spor
+        # ... og hemmeligheten er IKKE merket brukt av forsøket.
+        assert m.execute("SELECT innlost_ts FROM modul_onboarding WHERE"
+                         " onboarding_id=%s", (oid,)).fetchone()[0] is None
+        m.rollback()
     finally:
         rt.close()
         m.close()

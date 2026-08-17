@@ -280,38 +280,62 @@ END $$;
 -- som tokenet opprettes; radlåsen serialiserer to samtidige innløsninger
 -- (portene 4–5). IDENTITET FRA RADEN, ALDRI FRA REQUESTEN: kalleren
 -- oppgir bare onboarding_id + hash; modul/miljø/release leses her.
+--
+-- EN AVVISNING RAISER IKKE (Codex P2). Den skriver `avvist_bruk` i det
+-- append-only sporet og RETURNERER `avvist` satt. Årsaken er mekanisk:
+-- en INSERT etterfulgt av RAISE i samme transaksjon rulles tilbake av
+-- nettopp den exceptionen, og HTTP-laget ruller uansett tilbake etterpå
+-- — det annonserte revisjonssporet fikk altså aldri se et eneste
+-- mislykket innløsningsforsøk, som er den ene hendelsen det finnes for.
+-- Kalleren committer og svarer 403; grunnen står KUN i sporet, aldri i
+-- svaret (feil hemmelighet, brukt hemmelighet og utløpt hemmelighet er
+-- fortsatt samme svar utad — intet orakel for gjettverk).
+--
+-- Formen endret seg, så den gamle signaturen må vekk før REPLACE.
+DROP FUNCTION IF EXISTS innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT);
 CREATE OR REPLACE FUNCTION innlos_onboarding(
     p_onboarding_id UUID, p_hemmelighet_hash TEXT,
     p_token_id UUID, p_token_mac TEXT, p_token_dager INT, p_aktor TEXT)
 RETURNS TABLE (token_id UUID, modul_id TEXT, miljo TEXT, release_id TEXT,
                utstedt_epoch BIGINT, utloper TIMESTAMPTZ,
-               familie_utloper TIMESTAMPTZ)
+               familie_utloper TIMESTAMPTZ, avvist TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE o RECORD; v_epoch BIGINT; v_utloper TIMESTAMPTZ;
+DECLARE o RECORD; v_epoch BIGINT; v_utloper TIMESTAMPTZ; v_grunn TEXT;
 BEGIN
     SELECT * INTO o FROM public.modul_onboarding ob
      WHERE ob.onboarding_id = p_onboarding_id FOR UPDATE;
     IF NOT FOUND THEN
+        -- UKJENT id raiser fortsatt: det finnes ingen rad å tilskrive
+        -- hendelsen (modul/miljø/release er NOT NULL), og et gjettet
+        -- id-ledd skal ikke kunne fylle en append-only tabell.
         RAISE EXCEPTION 'innlosning: ukjent onboarding'
             USING ERRCODE = 'no_data_found';
     END IF;
     -- Hemmeligheten sammenlignes som pepper-MAC (kalleren har regnet den) —
-    -- klartekst finnes aldri her. Feil hemmelighet og brukt hemmelighet er
-    -- SAMME feil utad (ingen orakel for gjettverk).
+    -- klartekst finnes aldri her. Feil hemmelighet, brukt hemmelighet og
+    -- utløpt hemmelighet er SAMME feil utad (ingen orakel for gjettverk);
+    -- grunnene skilles bare i sporet, som er der de er til nytte.
     IF o.hemmelighet_hash IS DISTINCT FROM p_hemmelighet_hash
        OR o.innlost_ts IS NOT NULL THEN
+        v_grunn := 'innlosning_avvist';
+    ELSIF o.utloper < now() THEN
+        v_grunn := 'innlosning_utlopt';
+    END IF;
+    IF v_grunn IS NOT NULL THEN
         INSERT INTO public.modultoken_hendelse
             (onboarding_id, modul_id, miljo, release_id, hendelse, aktor,
              detalj)
             VALUES (o.onboarding_id, o.modul_id, o.miljo, o.release_id,
                     'avvist_bruk', p_aktor,
-                    jsonb_build_object('grunn', 'innlosning_avvist'));
-        RAISE EXCEPTION 'innlosning: avvist'
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    IF o.utloper < now() THEN
-        RAISE EXCEPTION 'innlosning: hemmeligheten er utlopt'
-            USING ERRCODE = 'invalid_parameter_value';
+                    jsonb_build_object('grunn', v_grunn));
+        -- Ingen RAISE: transaksjonen skal COMMITTE, ellers forsvinner
+        -- hendelsen sammen med avvisningen. Intet token er opprettet, og
+        -- hemmeligheten er urørt — en utløpt/feil hemmelighet blir ikke
+        -- «brukt» av at noen prøvde.
+        RETURN QUERY SELECT NULL::UUID, NULL::TEXT, NULL::TEXT, NULL::TEXT,
+                            NULL::BIGINT, NULL::TIMESTAMPTZ,
+                            NULL::TIMESTAMPTZ, v_grunn;
+        RETURN;
     END IF;
     -- Epoch fryses i tokenet NÅ. Claim-veien krever likhet med gjeldende
     -- epoch ved hver bruk; rotasjon ARVER denne verdien og plukker aldri
@@ -333,7 +357,7 @@ BEGIN
         VALUES (o.onboarding_id, p_token_id, o.modul_id, o.miljo,
                 o.release_id, 'innlost', p_aktor);
     RETURN QUERY SELECT p_token_id, o.modul_id, o.miljo, o.release_id,
-                        v_epoch, v_utloper, o.familie_utloper;
+                        v_epoch, v_utloper, o.familie_utloper, NULL::TEXT;
 END $$;
 
 -- Verifisering ved bruk (claim/rotasjon): rent lesende oppslag på MAC.

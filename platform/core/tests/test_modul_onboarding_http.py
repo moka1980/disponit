@@ -133,6 +133,14 @@ def test_full_kjede_hemmelighet_token_claim_kapabilitet(migrator, miljo,
                        json={"hemmelighet": utstedt["hemmelighet"]})
             assert (r.status_code, r.json()["feil"]) == (
                 403, "onboarding_avvist"), r.text
+            # Codex P2: og det avviste forsøket står i sporet ETTER at
+            # requesten er ferdig — avvisningen committes, den raiser ikke.
+            spor = migrator.execute(
+                "SELECT count(*) FROM modultoken_hendelse WHERE"
+                " onboarding_id=%s AND hendelse='avvist_bruk'",
+                (utstedt["onboarding_id"],)).fetchone()[0]
+            migrator.rollback()
+            assert spor == 1, "avvist innløsning ble ikke revidert"
 
             r = c.post("/v1/oppdrag/claim", json={},
                        headers={"authorization": f"Bearer {mtk}"})
