@@ -727,5 +727,8 @@
   "ui.policy.slett_runde_aapen": "An activation round is open for this policy. Close the round first.",
   "ui.policy.slett_endret": "A different version of this policy was activated after this page was loaded, and nothing was deleted. Reload the page and review the new version before you decide.",
   "ui.policy.slett_ukjent": "This policy is no longer active — someone else may already have deleted it. Reload the page to see what applies now.",
-  "ui.policy.slett_feilet": "The deletion failed."
+  "ui.policy.slett_feilet": "The deletion failed.",
+  "ui.policy.aktive_tittel": "Active policies",
+  "ui.policy.aktive_forklaring": "The policies in force right now. A policy created by mistake can be deleted here, as long as it has never governed a decision.",
+  "ui.policy.aktive_ingen": "No active policy — activate a draft below."
 }

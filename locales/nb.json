@@ -727,5 +727,8 @@
   "ui.policy.slett_runde_aapen": "En aktiveringsrunde står åpen for denne policyen. Avslutt runden først.",
   "ui.policy.slett_endret": "En annen versjon av policyen er aktivert etter at denne siden ble lastet, og ingenting ble slettet. Last siden på nytt og se den nye versjonen før du avgjør.",
   "ui.policy.slett_ukjent": "Policyen står ikke lenger aktiv — den kan allerede være slettet av en annen. Last siden på nytt for å se hva som gjelder nå.",
-  "ui.policy.slett_feilet": "Slettingen feilet."
+  "ui.policy.slett_feilet": "Slettingen feilet.",
+  "ui.policy.aktive_tittel": "Aktive policyer",
+  "ui.policy.aktive_forklaring": "Policyene som gjelder nå. En policy som ble opprettet ved en feil kan slettes her, så lenge den aldri har styrt en beslutning.",
+  "ui.policy.aktive_ingen": "Ingen aktiv policy — aktiver et utkast under."
 }

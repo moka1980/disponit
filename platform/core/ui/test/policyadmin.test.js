@@ -2917,3 +2917,85 @@ test("Veien tilbake fra en dyplenket detalj rydder også lenken", async () => {
   // `hashchange`, så ruteren tegner ikke flaten på nytt oppå denne.
   assert.ok(h.querySelector("tbody"), "lista kom ikke fram");
 });
+
+// --- «Aktive policyer» med sletting BOR i policyadministrasjonen -----------
+// Eier: «angre policy eller slett policy ser jeg på ingen steder, den bør
+// være her ved siden av …» — han sto i utkastlista. Slettingen fantes, men
+// på den lesende policy-flaten; en handling ingen finner, finnes ikke.
+
+test("Policyadmin: aktive policyer vises øverst, med sletting", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+        innholds_hash: "h2" }] },
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector(".aktive-policyer")
+    && h.textContent.includes("tjenestebedrift2"));
+  assert.ok(h.textContent.includes(t("ui.policy.aktive_tittel")));
+  // …og seksjonen står FØR utkastlista: det er der eier leter.
+  const seksjon = h.querySelector(".aktive-policyer");
+  const tabell = h.querySelector("table");
+  assert.ok(seksjon.compareDocumentPosition(tabell)
+    & Node.DOCUMENT_POSITION_FOLLOWING,
+  "aktive policyer må stå over utkastlista");
+  assert.ok([...h.querySelectorAll(".aktive-policyer button")]
+    .some((b) => b.textContent.trim() === t("ui.policy.slett")),
+  "slett-knappen mangler der eier leter");
+  // Identiteten vises OGSÅ når policyen er alene (Codex P2): operatøren skal
+  // se hva hun sletter FØR den irreversible bekreftelsen, ikke først inne i
+  // den. Kontroll: bind `merke(d)`-linja til `flere`-flagget igjen, så blir
+  // denne rød — mocken over har nøyaktig én aktiv policy.
+  const angre = h.querySelector(".policy-angre");
+  assert.ok(angre.textContent.includes(
+    `tjenestebedrift2 · ${t("ui.policy.versjon")} 1.0.0`),
+  "policyens identitet er usynlig i normaltilfellet med én aktiv");
+  assert.ok(angre.getAttribute("aria-label").includes("tjenestebedrift2"),
+    "skjermleseren får ikke vite hvilken policy seksjonen gjelder");
+});
+
+test("Policyadmin: fokus lander på overskriften etter sletting", async () => {
+  // Codex P2: bekreftelsesdialogen gir fokus tilbake til slett-knappen, men
+  // en vellykket sletting fjerner den knappen og tegner lista på nytt —
+  // uten `{ fokus: true }` sto tastaturbrukeren igjen på <body>. Speiler
+  // de andre brukerutløste liste-returene: fokus skal til flatens h1.
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+        innholds_hash: "h2" }] },
+    __post: async () => ({ ok: true, status: 200,
+      json: async () => ({ slettet: 1 }) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector(".policy-angre"));
+  // Etter slettingen finnes policyen ikke lenger blant de aktive.
+  SVAR["/v1/policy/aktive"] = { policyer: [] };
+  [...h.querySelectorAll(".policy-angre button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => !h.querySelector(".policy-angre")
+    && h.textContent.includes(t("ui.policy.aktive_ingen")));
+  await vent(() => document.activeElement
+    && document.activeElement.tagName === "H1");
+  assert.equal(document.activeElement.textContent,
+    t("ui.policyadmin.tittel"),
+    "fokus ble ikke flyttet til flatens overskrift etter slettingen");
+});
+
+test("Policyadmin: uten policy:write vises ingen slette-seksjon", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "p", versjon: "1.0.0", innholds_hash: "h" }] },
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:read"] }));
+  await vent(() => h.querySelector("tbody"));
+  assert.equal(h.querySelector(".aktive-policyer h2"), null,
+    "lesere skal ikke inviteres inn i en sletting de ikke kan utføre");
+});

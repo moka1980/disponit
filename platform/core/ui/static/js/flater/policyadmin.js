@@ -18,6 +18,7 @@ import { visningsToken, erGjeldendeVisning } from "../ruter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
+import { aktivePolicyerSeksjon } from "./policy.js";
 
 function risikoBadge(klasse) {
   return el("span", {
@@ -1435,6 +1436,11 @@ export function visPolicyadmin(hoved, ctx, mal) {
                       tekst: t("ui.policyadmin.tom_tekst") });
     sett(hoved,
       ...flateHode(t("ui.policyadmin.tittel"), t("ui.policyadmin.undertittel")),
+      // Eier lette etter slettingen HER — ved «Nytt utkast» og utkastlista —
+      // ikke på den lesende policy-flaten. Seksjonen eier sitt eget
+      // liv (henter /v1/policy/aktive selv); `last` frisker opp utkastlista
+      // etter en sletting, siden aktiverte utkast peker på policyen.
+      aktivePolicyerSeksjon(ctx, () => last({ fokus: true })),
       verktoylinje(),
       innhold);
     if (flyttFokus) fokuserOverskrift(hoved);
