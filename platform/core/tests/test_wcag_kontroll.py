@@ -410,10 +410,13 @@ def test_aktiveringsporten_for_ekstern_lesing(migrator):
         assert "oppdragstype" in (e.value.detalj or "")
         # 35: positiv motsats — domenekontroll_verifisert + frekvens godtas.
         port(_handling(modul))
-        # ... og en handling mot en modul UTEN ekstern_lesing er urørt.
+        # ... og en handling uten målautorisasjonsbærende type, mot en modul
+        # UTEN ekstern_lesing, er urørt. (Handlings-id-en må velges utenfor
+        # `kontroll.wcag.`: den prefiksen ER den kodefestede WCAG-typen, og
+        # den gates nå på sin egen deklarasjon — se testen under.)
         policyadmin._krev_ekstern_lesing_port(
             rt, {"handlinger": [_handling("m-finnes-ikke", frekvens=False,
-                                          vilkaar=())]})
+                                          vilkaar=(), hid="purring.sen")]})
         rt.rollback()
     finally:
         rt.close()
@@ -466,6 +469,56 @@ def test_porten_leser_kontrakten_som_eier_typen(migrator, monkeypatch):
         with pytest.raises(policyadmin.Aktiveringsfeil):
             policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
                 _handling(modul, frekvens=False, vilkaar=())]})
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_uregistrert_kodefestet_type_feiler_lukket(migrator):
+    """Codex P1: den kodefestede typen fantes, DB-registreringen manglet.
+
+    `_typens_sideeffektklasse` ga da None, og porten falt tilbake på en
+    modulbred prøve mot `handlinger[].modul`. Men det feltet er POLICYENS
+    modulidentifikator (`M-23`), mens kontrakten er registrert på
+    `m_wcag_audit` — to navnerom. Oppslaget fant ingenting, handlingen ble
+    lest som ikke-ekstern, og BÅDE frekvens- og målautorisasjonsporten ble
+    hoppet over for nøyaktig den handlingstypen de er bygget for.
+
+    Tilstanden er nåbar: `registrer-m-wcag-audit.py` kjøres manuelt, og
+    deploy-porten sjekker bare DB-rader som mangler i koden, ikke omvendt.
+
+    Nå er koden autoriteten når registeret ikke har tatt igjen:
+    `krever_malautorisasjon` i den kodefestede typen betyr at porten
+    gjelder, uansett hva `modul` sier.
+
+    Kontroll: la den uregistrerte kodefestede typen falle tilbake på den
+    modulbrede prøven igjen, så blir denne rød — handlingen slipper
+    gjennom uten frekvens og uten målautorisasjon.
+    """
+    from api import policyadmin
+    from db.pg import koble
+    rt = koble(DSN)
+    try:
+        # `M-23` finnes ikke i modulkontrakt (og skal ikke gjøre det —
+        # det er policynavnerommet). Typen kontroll.wcag.nettsted er ikke
+        # registrert i denne databasen.
+        assert policyadmin._typens_sideeffektklasse(
+            rt, "kontroll.wcag.nettsted") is None
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+                _handling("M-23", frekvens=False, vilkaar=())]})
+        assert e.value.kode == "ekstern_lesing_uten_frekvens", e.value.kode
+        # Med frekvens, men uten målautoriserende vilkår: andre porten.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+                _handling("M-23", vilkaar=("forfall_passert_dager",))]})
+        assert e.value.kode == "malautorisasjon_mangler", e.value.kode
+        # En type UTEN kodefestet målautorisasjon er urørt av dette —
+        # der gjelder fortsatt den konservative modulbrede prøven.
+        policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+            _handling("M-23", frekvens=False, vilkaar=(),
+                      hid="purring.sen")]})
         rt.rollback()
     finally:
         rt.close()

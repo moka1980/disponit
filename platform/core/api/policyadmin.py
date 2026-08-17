@@ -1515,8 +1515,9 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
     `_krev_innforingskrav`): en handling hvis OPPDRAGSTYPE eies av en
     `ekstern_lesing`-kontrakt (`_typens_sideeffektklasse`; er typen ikke
-    registrert, faller vi konservativt tilbake på modulen) kan bare
-    aktiveres når
+    registrert, gjelder porten likevel når den KODEFESTEDE typen krever
+    målautorisasjon, ellers faller vi konservativt tilbake på den
+    deklarerte eiermodulen) kan bare aktiveres når
 
       1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
          et tak policyen selv bærer), og
@@ -1540,22 +1541,40 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
         if not isinstance(h, dict):
             continue
         modul = h.get("modul")
-        if not isinstance(modul, str):
-            continue
         hid = h.get("id") if isinstance(h.get("id"), str) else ""
         t = oppdragskontrakt.type_for_handling(hid)
         klasse = (_typens_sideeffektklasse(conn, t.navn)
                   if t is not None else None)
-        if klasse is None:
-            # Handlingen har ingen REGISTRERT type å lese klassen av (ennå).
-            # Da faller vi tilbake på den konservative modulbrede prøven:
-            # bærer modulen en ekstern_lesing-kontrakt, gjelder porten.
-            # Fail-closed er posituren her — det er den motsatte retningen
-            # (å slippe noe forbi) som koster.
-            if not conn.execute(
+        if klasse is None and t is not None and t.krever_malautorisasjon:
+            # Den KODEFESTEDE typen bærer målautorisasjonsbehov, men har ingen
+            # registrert rad ennå. Tilstanden er nåbar (Codex P1):
+            # `registrer-m-wcag-audit.py` kjøres manuelt, og deploy-porten
+            # sjekker bare DB-rader som mangler i koden, ikke omvendt.
+            #
+            # Den gamle veien falt her tilbake på den modulbrede prøven — og
+            # den prøven leser `handlinger[].modul`, som er POLICYENS
+            # modulidentifikator (`M-23`), et annet navnerom enn
+            # modulregisteret (`m_wcag_audit`). Oppslaget fant derfor
+            # ingenting, handlingen ble klassifisert som ikke-ekstern, og
+            # BEGGE portene ble hoppet over for nettopp den handlingstypen de
+            # er bygget for.
+            #
+            # Koden er autoriteten når registeret ikke har tatt igjen:
+            # deklarasjonen `krever_malautorisasjon` sier at dette er en
+            # ekstern lesing, og da gjelder porten uansett hva som står i
+            # `modul`. Fail-closed, og uavhengig av navnerommet.
+            pass
+        elif klasse is None:
+            # Ingen registrert type OG ingen kodefestet målautorisasjon: da
+            # faller vi tilbake på den konservative modulbrede prøven. Er
+            # eiermodulen deklarert i koden, er DEN identiteten registeret
+            # kjenner — `handlinger[].modul` er policyens navnerom og kan
+            # ikke slås opp i `modulkontrakt`.
+            eier = (t.eiermodul if t is not None and t.eiermodul else modul)
+            if not isinstance(eier, str) or not conn.execute(
                     "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
                     " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
-                    (modul,)).fetchone():
+                    (eier,)).fetchone():
                 continue
         elif klasse != "ekstern_lesing":
             # Typen handlingen faktisk er registrert som eies av en annen
