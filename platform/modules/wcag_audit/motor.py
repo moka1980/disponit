@@ -13,6 +13,8 @@ egen identitet.
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -60,6 +62,54 @@ def _drener(strom, behold: int, ut: list) -> None:
     except (OSError, ValueError):
         pass                       # strømmen ble lukket under oss
     ut.append(b"".join(biter))
+
+
+#: Egen prosessgruppe for motoren (Codex P1). Uten den er `p.kill()` bare
+#: ETT drap: den ekte motoren starter Chromium, Chromium arver stdout, og
+#: barnebarnet lever videre med rørenden åpen. `_les_med_tak` venter på EOF
+#: og får den aldri — så den annonserte fristen kan overskrides uten grense
+#: mens foreldreløse nettlesere fortsetter å kjøre. Med egen gruppe treffer
+#: SIGKILL hele treet, rørene lukkes, og lesingen slipper løs.
+_EGEN_GRUPPE = hasattr(os, "setsid") and hasattr(os, "killpg")
+
+
+def _motorgruppe(p):
+    """Motorens prosessgruppe, lest MENS barnet er ureapet — eller None.
+
+    Den leses én gang, rett etter oppstart, og bæres videre som et tall.
+    Slås den opp på nytt etter at `p.wait()` har høstet barnet, spør vi om
+    en pid vi ikke lenger eier — og et gjenbrukt pid-nummer ville pekt på
+    en fremmed gruppe. Så lenge gruppa har medlemmer, holder kjernen
+    nummeret reservert, så den fanget verdien er den trygge.
+
+    Er gruppa VÅR EGEN, gir vi None. Det er ikke pynt: slo
+    `start_new_session` feil, ville et `killpg` her tatt ned den
+    credential-bærende controllerhosten selv.
+    """
+    if not _EGEN_GRUPPE:
+        return None
+    try:
+        gruppe = os.getpgid(p.pid)
+        return None if gruppe == os.getpgid(0) else gruppe
+    except OSError:
+        return None
+
+
+def _drep_treet(p, gruppe) -> None:
+    """SIGKILL til HELE prosessgruppa — ikke bare motorprosessen.
+
+    Uten gruppe (eller om gruppa alt er tom) faller vi tilbake til
+    `p.kill()`: samme oppførsel som før, aldri verre."""
+    if gruppe is not None:
+        try:
+            os.killpg(gruppe, signal.SIGKILL)
+            return
+        except OSError:
+            pass          # gruppa er alt tom, eller vi mangler rett
+    try:
+        p.kill()
+    except OSError:
+        pass
 
 
 @dataclass(frozen=True)
@@ -150,18 +200,25 @@ class Kommandomotor:
         # stdout mot MAKS_STDOUT, stderr dreneres mot MAKS_STDERR, og en
         # vakthund dreper prosessen ved tidsavbruddet — så en motor som
         # spyr ut data møter en Motorfeil, ikke en tom controllerhost.
+        #
+        # EGEN PROSESSGRUPPE (Codex P1): motoren er en container som selv
+        # starter Chromium. Uten `start_new_session` ligger barnebarnet i
+        # VÅR gruppe, og drapet ved fristen traff bare mellomleddet — se
+        # `_drep_treet`.
         try:
             p = subprocess.Popen(
                 self.kommando, stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=_EGEN_GRUPPE)
         except OSError as e:
             raise Motorfeil(f"motorkjøring: {type(e).__name__}") from e
 
+        gruppe = _motorgruppe(p)
         drept = threading.Event()
 
         def _tidsavbrudd():
             drept.set()
-            p.kill()
+            _drep_treet(p, gruppe)
 
         vakt = threading.Timer(self.tidsavbrudd_s, _tidsavbrudd)
         vakt.daemon = True
@@ -186,9 +243,14 @@ class Kommandomotor:
             p.wait()          # stdout er tom; vakthunden bærer fristen
         finally:
             vakt.cancel()
-            if p.poll() is None:
-                p.kill()
-                p.wait()
+            # HELE treet, ALLTID — også når motorprosessen selv alt har
+            # avsluttet (Codex P1). `if p.poll() is None` var nettopp
+            # hullet: den ekte motoren kan avslutte i det den har skrevet
+            # JSON-en, mens Chromium lever videre med rørenden åpen. Da så
+            # vakten en ferdig prosess og lot barnebarnet stå igjen som en
+            # foreldreløs nettleser. Er gruppa tom, er `killpg` en no-op.
+            _drep_treet(p, gruppe)
+            p.wait()
             drener.join(timeout=1)
             for s in (p.stdin, p.stdout, p.stderr):
                 try:

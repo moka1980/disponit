@@ -1734,3 +1734,71 @@ def test_eksempellisten_maa_vaere_en_liste():
         r = bygg(_med(raa), payload={"kravsett": "wcag21_aa"},
                  kontekst=_kontekst())
         assert r["funn"][0]["eksempler"] == ventet
+
+
+def _prosessen_er_dod(pid: int) -> bool:
+    """Borte fra prosesstabellen, eller en zombie som venter på å høstes.
+
+    Barnebarnet blir foreldreløst i det motorprosessen dør, så det er
+    init-prosessen som høster liket — og hvor fort den gjør det er ikke
+    noe testen kan styre. `Z` er derfor like godt som borte: SIGKILL har
+    truffet, prosessen kjører ikke lenger."""
+    import os
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            stat = f.read()
+    except OSError:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True                  # borte
+        return False                     # lever, uten /proc å spørre
+    return stat.rsplit(") ", 1)[1].split()[0] == "Z"
+
+
+def test_tidsavbruddet_dreper_hele_prosesstreet(tmp_path):
+    """Codex P1: fristen kunne overskrides uten grense.
+
+    Den ekte motoren er en container som starter Chromium, og Chromium
+    ARVER stdout. `p.kill()` traff bare mellomleddet: barnebarnet levde
+    videre med rørenden åpen, `_les_med_tak` ventet på en EOF som aldri
+    kom, og den annonserte fristen (opptil en time) ble til «så lenge
+    nettleseren måtte finne på» — mens foreldreløse nettlesere hopet seg
+    opp på hosten. `if p.poll() is None` i `finally` gjorde det verre:
+    dør motorprosessen selv i det den har skrevet JSON-en, så vakten en
+    ferdig prosess og ryddet ingenting.
+
+    Her er motoren en prosess som starter et barnebarn og AVSLUTTER med
+    én gang. Barnebarnet arver stdout og sover i 20 s.
+
+    Kontroll: ta bort `start_new_session`/`_drep_treet` og la
+    `_tidsavbrudd` kalle `p.kill()`, så bruker `m.kjor` 20 sekunder i
+    stedet for 1 — og barnebarnet lever fortsatt når den endelig gir opp.
+    """
+    from modules.wcag_audit.motor import Kommandomotor, Motorfeil
+
+    pidfil = tmp_path / "barnebarn.pid"
+    barn = ("import os, pathlib, time; "
+            "pathlib.Path(%r).write_text(str(os.getpid())); "
+            "time.sleep(20)" % str(pidfil))
+    motor = ("import subprocess, sys; "
+             "subprocess.Popen([sys.executable, '-c', %r])" % barn)
+
+    m = Kommandomotor(_motorkommando(motor), tidsavbrudd_s=1)
+    start = time.monotonic()
+    with pytest.raises(Motorfeil):
+        m.kjor({})
+    brukt = time.monotonic() - start
+    assert brukt < 8, (
+        f"lesingen ventet på barnebarnets rørende i {brukt:.1f}s — fristen "
+        f"var 1s")
+
+    # ...og barnebarnet skal være drept, ikke bare glemt.
+    frist = time.monotonic() + 5
+    while time.monotonic() < frist and not pidfil.exists():
+        time.sleep(0.05)
+    assert pidfil.exists(), "barnebarnet rakk aldri å skrive pid-en sin"
+    pid = int(pidfil.read_text())
+    while time.monotonic() < frist and not _prosessen_er_dod(pid):
+        time.sleep(0.05)
+    assert _prosessen_er_dod(pid), f"barnebarnet {pid} lever videre"
