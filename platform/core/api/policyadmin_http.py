@@ -30,6 +30,11 @@ _FEIL_HTTP = {
     "aktiv_peker_usynk": 409,
     "versjon_i_bruk": 409, "versjon_mangler": 409,
     "policy_id_avvik": 409, "status_ikke_produksjon": 409,
+    "policy_i_bruk": 409, "policy_ukjent": 404,
+    # Den aktive policyen er ikke lenger den klienten så da den ba om
+    # slettingen (optimistisk lås, som `utkastversjon_utdatert`): 409, og
+    # flaten laster på nytt.
+    "policy_endret": 409,
     # 400, ikke 409: en `policy_id` som bryter formen er en feil i
     # FORESPØRSELEN, ikke en tilstandskonflikt. Ingenting i basen kan endre seg
     # slik at det samme kallet plutselig lykkes.
@@ -375,6 +380,51 @@ def varselvalg_endepunkt(tjeneste, request):
         except ValueError:
             return _feil("request_feilformet", rid)
         return _ok_lagret(conn, {"kanal": satt}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def slett_policy_endepunkt(tjeneste, request):
+    """Angre en feilopprettet policy: slett den som ALDRI har styrt en
+    beslutning. Vilkårene håndheves i `slett_ubrukt_policy` (032), idempotensen
+    i `policyadmin.slett_policy` — endepunktet binder bare nøkkelen til
+    operasjonen og lar `_med_conn` oversette feilkodene.
+
+    Kroppen bærer den aktive policyen klienten SÅ (`versjon` +
+    `innholds_hash`), som `forkast`/`valider` bærer `utkastversjon` (Codex P1).
+    Begge er PÅKREVD: en kropp uten dem er en sletting uten binding, og det er
+    nettopp den formen som kunne rive en policy som ble aktivert etter at siden
+    ble lastet. Verdiene er de leseendepunktene ga ut; de sammenlignes ikke
+    her, men under policylåsen inne i funksjonen."""
+    from .app import _rid
+    rid = _rid(request)
+    policy_id = request.path_params["policy_id"]
+
+    def kjor(conn):
+        from datetime import datetime, timezone
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:write")
+        idem = _krev_idem(request, rid)
+        body = _kropp(request)
+        versjon = body.get("versjon")
+        innholds_hash = body.get("innholds_hash")
+        if not isinstance(versjon, str) or not versjon.strip() \
+                or not isinstance(innholds_hash, str) \
+                or not innholds_hash.strip():
+            return _feil("request_feilformet", rid)
+        # `policy_id` INNGÅR i hashen: samme nøkkel brukt på en ANNEN policy er
+        # en annen operasjon og skal gi konflikt, ikke replay av forrige svar.
+        # Den forventede identiteten INNGÅR av samme grunn (som i `valider`):
+        # samme nøkkel mot en annen aktiv versjon er en annen operasjon, og
+        # skal ikke replaye svaret fra slettingen av den forrige.
+        ih = _input_hash(tenant, bid, "slett_policy", policy_id, versjon,
+                         innholds_hash, idem)
+        res = policyadmin.slett_policy(
+            conn, tenant=tenant, aktor=bid, request_id=rid,
+            policy_id=policy_id, forventet_versjon=versjon,
+            forventet_hash=innholds_hash, idempotency_key=idem, input_hash=ih,
+            naa=datetime.now(timezone.utc))
+        return _ok(res, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

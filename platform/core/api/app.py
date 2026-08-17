@@ -66,6 +66,16 @@ STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
 YTELSESKRAV_PER_SEK = 100
 STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
+#: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
+#: (migrasjon 011) venter på et menneske eller en maskin, og er dermed «åpen».
+#: Denne veien rundt — terminal er listet opp, åpen er «resten» — er ikke
+#: smakssak: en tillatelsesliste over åpne statuser MÅ vedlikeholdes hver gang
+#: statusmaskinen vokser, og gjør den ikke det, forsvinner saker som venter på
+#: en godkjenner stille ut av køen. Nøyaktig det skjedde med dashbordets
+#: `AAPNE`-liste, som manglet alle fire godkjenningsstatusene fra PR-012.
+#: Blir det noen gang en tredje terminal status, står den her — og ingen andre
+#: steder.
+TERMINALE_UNNTAKSSTATUSER = ("løst", "avvist")
 MIGRASJONSMAPPE = Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 
@@ -668,6 +678,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
+    def policy_aktive(request: Request) -> Response:
+        return lesing.policy_aktive(tjeneste, request)
+
     def utrulling(request: Request) -> Response:
         return lesing.utrulling(tjeneste, request)
 
@@ -721,6 +734,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_varselvalg(request: Request) -> Response:
         return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
 
+    def pa_slett_policy(request: Request) -> Response:
+        return policyadmin_http.slett_policy_endepunkt(tjeneste, request)
+
     def pa_forkast_utkast(request: Request) -> Response:
         return policyadmin_http.forkast_utkast_endepunkt(tjeneste, request)
 
@@ -755,6 +771,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/domeneattestasjon",
               unntak_domeneattestasjon, methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        # Lista over aktive policyer. Egen statisk sti, registrert
+        # sammen med `aktiv` og FØR mønsterrutene: den er utveien når
+        # `aktiv` (med rette) nekter å velge mellom flere.
+        Route("/v1/policy/aktive", policy_aktive, methods=["GET"]),
         # Utrullingsplanen: øktbundet, fordi den ellers måtte ligge i den
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
@@ -771,6 +791,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/varsel/{varsel_id:str}/lest", pa_varsel_lest,
               methods=["POST"]),
         Route("/v1/varselvalg", pa_varselvalg, methods=["POST"]),
+        Route("/v1/policy/{policy_id:str}/slett", pa_slett_policy,
+              methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/forkast", pa_forkast_utkast,
               methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/aktiveringsrunde",
@@ -1022,9 +1044,15 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                                        scope="security:read")
                 return _feilsvar("scope_mangler", rid)
 
+            # `apen` er ikke en status i tabellen, men et SPØRSMÅL: «hva
+            # venter fortsatt på noen?». Det må besvares her og ikke av
+            # klienten, fordi filtrering skjer FØR `LIMIT`. Filtrerte
+            # klienten selv, ville en side med åtte ferdigbehandlede saker
+            # sett tom ut selv om det lå en uløst sak rett bak sidegrensen —
+            # og `neste_cursor` ville aldri blitt fulgt.
             status = request.query_params.get("status")
             if status is not None and status not in ("ny", "under_behandling",
-                                                     "løst", "avvist"):
+                                                     "løst", "avvist", "apen"):
                 return _feilsvar("request_feilformet", rid)
             try:
                 grense = min(
@@ -1049,7 +1077,10 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                    " sakstype FROM unntak"
                    " WHERE tenant=%s AND sakstype=%s")
             args: list = [auth.tenant, sakstype]
-            if status is not None:
+            if status == "apen":
+                sql += " AND NOT (status = ANY(%s))"
+                args.append(list(TERMINALE_UNNTAKSSTATUSER))
+            elif status is not None:
                 sql += " AND status=%s"
                 args.append(status)
             if etter is not None:
@@ -1135,6 +1166,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-015 §3: cross-tenant domeneautoritet er sitt EGET scope.
     ("POST", "/v1/unntak/{id:int}/domeneattestasjon"): "domains:adjudicate",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    ("GET",  "/v1/policy/aktive"):           "policy:read",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en
@@ -1149,6 +1181,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/varsel"):                  "policy:read",
     ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:write",
     ("POST", "/v1/varselvalg"):              "policy:write",
+    ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/aktiveringsrunde"): "policy:activate",
     ("POST", "/v1/policyutkast/{utkast_id:str}/attester"): "policy:activate",
@@ -2236,17 +2269,22 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
             "SELECT r.policy_id, u.handling FROM revisjonslogg r JOIN unntak u"
             "   ON u.tenant=r.tenant AND u.loggpost_id=r.id"
             " WHERE u.tenant=%s AND u.id=%s", (tenant, unntak_id)).fetchone()
-        from policy_validator.engine import les_policyref
-        ref = les_policyref(policy_ref[0]) if policy_ref else None
-        prad = conn.execute(
-            "SELECT innhold FROM policyer WHERE tenant=%s AND policy_id=%s"
-            "   AND aktiv", (tenant, ref[0])).fetchone() if ref else None
+        # Ett oppslag, én definisjon: `hent_aktiv_bak_loggreferanse` tolker
+        # referansen og leser den aktive policyen den navngir — samme vei som
+        # M-37 bruker når en reparasjon planlegges. Se den for hvorfor veien
+        # ikke tar policylåsen mot sletting (Codex P1): unntakets loggrad ER
+        # referansen `slett_ubrukt_policy` teller, og `revisjonslogg` er
+        # append-only, så policyen bak den kan ikke slettes — verken i
+        # vinduet mellom lesingen her og commit, eller noen gang senere.
+        from .policyregister import hent_aktiv_bak_loggreferanse
+        aktiv = hent_aktiv_bak_loggreferanse(
+            conn, tenant, policy_ref[0] if policy_ref else None)
     except psycopg.Error:
         raise
-    if prad is None or not isinstance(prad[0], dict):
+    if aktiv is None:
         conn.rollback()
         return _feilsvar("policy_ukjent", rid)
-    policy = prad[0]
+    policy = aktiv[0]
 
     verifikator = konvolutt["verifikator"]
     betrodd_alle = True
@@ -2270,11 +2308,12 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
     # handlingen. Taket overstyrer verifikatorens eget `utloper` — en
     # verifikator som setter utløp ett år frem kan ikke selv utvide hvor
     # gammelt et faktum tenanten godtar.
-    # MÅLHANDLINGEN kommer fra saken, ikke fra policyreferansen:
-    # `les_policyref` returnerer (policy_id, VERSJON), ikke handlingen.
-    # Med `ref[1]` sto det «1.0.0» der en handlings-id skulle stå, oppslaget
-    # traff ingenting, og taket var stille fraværende — altså en kontroll
-    # som så ut til å finnes og aldri kunne fyre.
+    # MÅLHANDLINGEN kommer fra unntaket (`u.handling`, altså `policy_ref[1]`),
+    # ikke fra policyreferansen: `les_policyref` leser (policy_id, VERSJON) ut
+    # av den, aldri handlingen. Med referansens andre ledd sto det «1.0.0» der
+    # en handlings-id skulle stå, oppslaget traff ingenting, og taket var
+    # stille fraværende — altså en kontroll som så ut til å finnes og aldri
+    # kunne fyre.
     handling_def = next(
         (h for h in (policy.get("handlinger") or [])
          if isinstance(h, dict) and h.get("id") == policy_ref[1]), {})

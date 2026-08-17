@@ -38,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 
 from api.kjerne import Transaksjonsvakt
+from api.policyregister import hent_aktiv_bak_loggreferanse
 from db import kryptering
 from db.pg import koble, sett_kontekst
 from policy_validator.engine import les_policyref
@@ -316,6 +317,12 @@ def _aktiv_policy(conn, sak: Sak) -> tuple[dict, str] | None:
     Snapshotet på saken styrer retry, ikke hvilke regler som gjelder nå —
     ellers ville en rettet policy ikke fått virkning på saker som allerede
     lå i kø, som er nettopp de sakene rettelsen ofte er til for.
+
+    Oppslaget går gjennom `policyregister.hent_aktiv_bak_loggreferanse`, som
+    er den ene definisjonen av «den aktive policyen en revisjonsreferanse
+    navngir» — se den for hvorfor denne veien ikke tar policylåsen mot
+    sletting (Codex P1): loggraden under ER referansen slettingen teller, og
+    `revisjonslogg` er append-only.
     """
     rad = conn.execute(
         "SELECT r.policy_id FROM revisjonslogg r"
@@ -324,19 +331,14 @@ def _aktiv_policy(conn, sak: Sak) -> tuple[dict, str] | None:
     # Kolonnen bærer en POLICYREFERANSE, ikke en policy-id. Uten
     # `les_policyref` traff oppslaget aldri noe, og arbeideren
     # klassifiserte HVER sak som `manuell` med `aktiv_policy_utilgjengelig`
-    # — altså behandlet den ingenting i det hele tatt.
-    ref = les_policyref(rad[0]) if rad else None
-    if ref is None:
-        return None
-    p = conn.execute(
-        "SELECT innhold, innholds_hash FROM policyer"
-        " WHERE tenant=%s AND policy_id=%s AND aktiv",
-        (sak.tenant, ref[0])).fetchone()
-    if p is None or not isinstance(p[0], dict):
+    # — altså behandlet den ingenting i det hele tatt. Tolkningen bor nå
+    # inne i oppslaget, sammen med selve lesingen.
+    p = hent_aktiv_bak_loggreferanse(conn, sak.tenant, rad[0] if rad else None)
+    if p is None:
         return None
     if valider_policy(p[0]):
         return None            # korrupt aktiv policy: ingen automatikk
-    return p[0], p[1]
+    return p
 
 
 def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str

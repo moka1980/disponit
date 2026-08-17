@@ -41,6 +41,9 @@ KONTRAKT = {
                          "belop_maks", "valuta", "tidsvindu", "frekvens",
                          "offentlig_id", "betrodd_for",
                          "kan_fastsla_permanent"],
+    # Lista over aktive policyer: utveien når `/v1/policy/aktiv` (med rette)
+    # ikke kan velge mellom flere. Flaten leser NØYAKTIG disse feltene.
+    "/v1/policy/aktive": ["policyer", "policy_id", "versjon"],
     "/v1/sesjon": ["tenant", "scopes"],
     # Utrullingsplanen. Feltene leses av flater/admin.js og
     # flater/kundeadmin.js — de har ingen tenanttabell å falle tilbake på.

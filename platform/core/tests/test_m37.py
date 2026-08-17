@@ -312,7 +312,7 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
              snapshot=3, hash_="1" * 64, versjon="1.0.0", sakstype="normal",
              policy_id=FIXTURE_POLICY_ID,
              grunnkode="attestasjon_mangler",
-             vilkaar="forfall_passert_dager"):
+             vilkaar="forfall_passert_dager", status="ny"):
     """En unntaksrad med policysnapshot, som API-veien ville laget den."""
     _sett_kontekst(conn, tenant)
     logg = conn.execute(
@@ -332,13 +332,17 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
               "kategori": kategori, "begrunnelse": [grunnkode],
               **({"manglende_vilkaar": vilkaar} if vilkaar else {})},
         tenant, key_id)
+    # `status` settes ved INSERT og ikke med en etterfølgende UPDATE: statusen
+    # er lovlig per CHECK-en i 011, men overgangsvakten `unntak_laas` er en
+    # BEFORE UPDATE-trigger, så en test som vil FØDE en sak midt i
+    # godkjenningsflyten må gjøre det her — ikke ved å hoppe dit etterpå.
     sak = conn.execute(
         "INSERT INTO unntak (tenant, loggpost_id, handling, kategori, sakstype,"
         " payload_kryptert, key_id, nonce, maks_auto_forsok_snapshot,"
-        " policy_versjon, policy_content_hash)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        " policy_versjon, policy_content_hash, status)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (tenant, logg, handling, kategori, sakstype, ct, key_id, nonce,
-         snapshot, versjon, hash_)).fetchone()[0]
+         snapshot, versjon, hash_, status)).fetchone()[0]
     conn.commit()
     return int(sak), int(logg)
 

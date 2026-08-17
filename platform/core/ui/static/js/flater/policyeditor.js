@@ -499,7 +499,15 @@ function handlingKort(h, tegnPaaNytt) {
   const g = h.grenser;
   return el("div", { class: "editor-kort" },
     el("h4", {}, el("code", { text: h.id || "?" })),
-    velg(t("ui.editor.modus"), h.modus, MODUS, "modus.", (v) => { h.modus = v; }),
+    // `tegnPaaNytt()` er ikke overflødig her (Codex P2): handlingsvelgeren
+    // over kortet viser hver handlings MODUS — det raskeste svaret på «hva
+    // gjør denne». Muterte vi bare `h.modus`, ble knappen stående med den
+    // gamle verdien til noe ANNET tilfeldigvis tegnet på nytt (valuta,
+    // tidsvindu), og navigatoren motsa da verdien som faktisk ville blitt
+    // lagret. Samme form som bryteren i tidsvinduvelgeren: en endring som
+    // vises et annet sted enn der den gjøres, tegner flaten på nytt.
+    velg(t("ui.editor.modus"), h.modus, MODUS, "modus.",
+      (v) => { h.modus = v; tegnPaaNytt(); }),
     tekstfelt(t("ui.editor.belop_maks"), g.belop_maks == null ? "" : g.belop_maks,
       (v) => {
         v = v.trim();
@@ -509,14 +517,75 @@ function handlingKort(h, tegnPaaNytt) {
     tidsvinduVelger(g, tegnPaaNytt));
 }
 
-function handlingerSeksjon(policy, tegnPaaNytt) {
+function handlingerSeksjon(policy, tegnPaaNytt, st) {
   policy.handlinger = Array.isArray(policy.handlinger) ? policy.handlinger : [];
-  const kort = policy.handlinger.map((h) => handlingKort(h, tegnPaaNytt));
+  const handlinger = policy.handlinger;
+  if (!handlinger.length) {
+    return el("section", { class: "editor-seksjon",
+      "aria-label": t("ui.editor.handlinger") },
+      el("h3", { text: t("ui.editor.handlinger") }),
+      el("p", { class: "muted", text: t("ui.editor.handlinger_hjelp") }));
+  }
+
+  // ÉN handling om gangen, ikke alle stablet. En bransjemal har gjerne sju
+  // handlinger med beløpsgrense, valutaliste og tidsvindu hver — som én
+  // rulle var fanen «veldig lang» (eiers ord), og feltene til handling fire
+  // hadde ingen synlig tilhørighet når overskriften dens var rullet ut av
+  // skjermen. Velgeren viser id + modus per handling (modus er det
+  // raskeste svaret på «hva gjør denne»), kortet under viser den valgte,
+  // og forrige/neste går sekvensielt — samme navigasjonsform som `Faner`.
+  //
+  // Valget huskes i editorens `st` og overlever re-rendringene feltene
+  // utløser (valuta/tidsvindu tegner på nytt) — uten det hoppet fanen
+  // tilbake til første handling hver gang man la til en valuta på den femte.
+  // INDEKS, ikke id (Codex P2): et utkast kan bære duplikate handlings-id-er
+  // helt til valideringen avviser det (`rediger_utkast` lagrer uten
+  // unikhetskrav), og et id-oppslag gjorde duplikat nr. 2 unåelig — begge
+  // velgerknappene sto som valgt, og «Neste» hoppet tilbake til den første.
+  if (!Number.isInteger(st.handlingValgt)
+      || st.handlingValgt < 0 || st.handlingValgt >= handlinger.length) {
+    st.handlingValgt = 0;
+  }
+  const i = st.handlingValgt;
+  const valgt = handlinger[i];
+
+  const velgerknapper = handlinger.map((h, j) => {
+    const b = el("button", { class: "knapp liten handling-velger-knapp",
+      type: "button", "aria-pressed": String(j === i) },
+      el("code", { text: h.id || "?" }),
+      el("span", { class: "sub", text: ` ${t(`modus.${h.modus}`, h.modus)}` }));
+    b.addEventListener("click", () => {
+      if (j === i) return;
+      st.handlingValgt = j;
+      tegnPaaNytt();
+    });
+    return b;
+  });
+
+  const forrige = el("button", { class: "knapp liten", type: "button",
+    text: t("ui.editor.handling_forrige") });
+  forrige.disabled = i === 0;
+  forrige.addEventListener("click", () => {
+    st.handlingValgt = i - 1; tegnPaaNytt();
+  });
+  const neste = el("button", { class: "knapp liten", type: "button",
+    text: t("ui.editor.handling_neste") });
+  neste.disabled = i === handlinger.length - 1;
+  neste.addEventListener("click", () => {
+    st.handlingValgt = i + 1; tegnPaaNytt();
+  });
+
   return el("section", { class: "editor-seksjon",
     "aria-label": t("ui.editor.handlinger") },
     el("h3", { text: t("ui.editor.handlinger") }),
     el("p", { class: "muted", text: t("ui.editor.handlinger_hjelp") }),
-    ...kort);
+    el("div", { class: "handling-velger", role: "group",
+      "aria-label": t("ui.editor.handling_velg") }, ...velgerknapper),
+    el("p", { class: "sub", text: t("ui.editor.handling_posisjon")
+      .replace("{n}", String(i + 1))
+      .replace("{av}", String(handlinger.length)) }),
+    handlingKort(valgt, tegnPaaNytt),
+    el("div", { class: "editor-knapper" }, forrige, neste));
 }
 
 // Hva kan vi SI om policy-id-en? Teksten lovet universelt at man «beholder
@@ -768,7 +837,7 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
         { nokkel: "roller", tittel: t("ui.editor.fane.roller"),
           bygg: () => rollerSeksjon(st.policy, tegn) },
         { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
-          bygg: () => handlingerSeksjon(st.policy, tegn) },
+          bygg: () => handlingerSeksjon(st.policy, tegn, st) },
       ],
     });
     const barn = [

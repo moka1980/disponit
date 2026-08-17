@@ -19,7 +19,6 @@ transaksjonen, RLS+FORCE, identisk 404 for ukjent og annen tenants ID.
 """
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -802,6 +801,39 @@ def _valider_grenser(g: dict | None) -> list[str]:
     return feil
 
 
+def policy_aktive(tjeneste, request: Request) -> Response:
+    """ENUMERER de aktive policyene. Ingen DTO, ingen tolkning — bare hvilke
+    som er aktive, i policy_id-rekkefølge.
+
+    Dette er utveien fra tilstanden `/v1/policy/aktiv` med rette nekter å
+    servere (Codex P2). Det endepunktet lover ÉN aktiv policy, og svarer
+    `intern_feil` når tenanten har flere — fail-closed, fordi å velge en av dem
+    ville vært å bestemme kundens gjeldende policy i et leseendepunkt. Men
+    NØYAKTIG den tilstanden er feilen «angre en feilopprettet policy» finnes
+    for: `tjenestebedrift1` og `tjenestebedrift2` ble begge aktivert ved feil.
+    Uten en vei til å SE begge, var flatens slettehandling utilgjengelig i det
+    ene tilfellet den er skrevet for, og eier satt igjen med håndskrevet SQL —
+    altså der vi startet.
+
+    Fail-closed står: her velges ingen gjeldende policy, og ingen policy
+    serveres som håndhevet. Svaret er en LISTE, og at den kan ha lengde 2 er
+    hele poenget. Derfor bygges heller ingen `PolicyDTO`: en korrupt rad skal
+    kunne PEKES PÅ og slettes, ikke gjøre lista uleselig (`policy_korrupt` her
+    ville gjenskapt blindveien ett hakk lenger inn).
+    """
+    def _fn(conn, auth, rid):
+        rader = conn.execute(
+            "SELECT policy_id, versjon, innholds_hash FROM policyer"
+            " WHERE tenant=%s AND aktiv ORDER BY policy_id, versjon",
+            (auth.tenant,)).fetchall()
+        return kanonisk_json({
+            "policyer": [{"policy_id": p, "versjon": v, "innholds_hash": h}
+                         for p, v, h in rader],
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "policy:read", _fn)
+
+
 def policy_aktiv(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         rader = conn.execute(
@@ -819,8 +851,27 @@ def policy_aktiv(tjeneste, request: Request) -> Response:
                                    art="drift", aktive=len(rader))
             return _feilsvar("intern_feil", rid)
         policy_id, versjon, innholds_hash, innhold = rader[0]
-        if isinstance(innhold, str):
-            innhold = json.loads(innhold)
+        # Å avgjøre at raden ikke KAN tolkes er en del av tolkningen, ikke et
+        # forarbeid til den (Codex P2). `innhold` er JSONB, og registeret
+        # skriver alltid et objekt (`registrer` validerer før den skriver), så
+        # en verdi som kommer tilbake som noe annet enn et dict ER en korrupt
+        # rad — nøyaktig dommen `hent_aktiv` feller på beslutningsveien
+        # («policyinnholdet er ikke et objekt»).
+        #
+        # Reparsingen som sto her tok samme rad feil i begge retninger. En
+        # JSONB-STRENG som ikke er JSON (`"not-json"`) kastet JSONDecodeError
+        # UTENFOR try-en under, altså en generisk 500 i stedet for
+        # `policy_korrupt` — og flatens reserve tar bare én rad når koden er
+        # `policy_korrupt`, så nettopp den ENSLIGE korrupte policyen ble
+        # uslettelig fra flaten igjen. En DOBBELTKODET streng gikk motsatt
+        # vei: parset til et objekt og ble servert som en frisk policy her,
+        # mens hver beslutning på den svarte `policy_korrupt`. Ett register,
+        # to svar på om raden er gyldig, er en verre feil enn den vi kom for.
+        if not isinstance(innhold, dict):
+            tjeneste.logg.hendelse("policy_korrupt", rid, auth.tenant,
+                                   art="drift",
+                                   feiltype=type(innhold).__name__)
+            return _feilsvar("policy_korrupt", rid)
         try:
             dto = bygg_policy_dto(policy_id, versjon, innholds_hash, innhold)
         except (KeyError, ValueError, TypeError, InvalidOperation) as e:

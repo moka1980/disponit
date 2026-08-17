@@ -34,7 +34,7 @@ from datetime import timedelta
 
 import psycopg
 
-from db.pg import sett_kontekst
+from db.pg import laas_policy_delt, sett_kontekst
 from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
@@ -656,6 +656,119 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utfall": "forkastet", "utkast_id": utkast_id})
 
 
+def _lukk_forfalte_runder(conn: psycopg.Connection, tenant: str,
+                          policy_id: str, naa) -> None:
+    """Kjør `apen|klar → utlopt`-overgangen på hver av policyens runder som har
+    passert `utloper`, før slettingen teller runder «i omløp».
+
+    Uten dette blokkerte en forfalt runde slettingen for alltid (Codex P2).
+    Vernet i `slett_ubrukt_policy` teller `status IN ('apen','klar')` — den
+    LAGREDE statusen — og den er ikke en løgn, bare foreldet: overgangen til
+    `utlopt` skjer først når en skrivesti kommer forbi. Kom ingen forbi, sto
+    runden `apen` i det uendelige, og en ubrukt policy med en runde ingen kan
+    attestere (`attester_aktivering` nekter den med `runde_utlopt`) svarte
+    `runde_allerede_aapen` hver eneste gang. Vilkåret «ingen attestasjoner i
+    omløp» var oppfylt; det var bare ingen som hadde skrevet det ned.
+
+    Overgangen kjøres, den utelates ikke i et predikat: `_lukk_forfalt_runde`
+    er den ENE definisjonen av «forfalt» (`_runde_status`), og en fjerde kopi —
+    denne gangen i SQL, med sin egen klokke — er nøyaktig det de tre andre
+    veiene er skrevet for å unngå. Den pensjonerer dessuten varselet, så
+    godkjennerne slutter å bli bedt om å attestere en runde som nå heller ikke
+    har en policy å aktivere.
+
+    LÅSREKKEFØLGEN er `opprett_aktiveringsrunde` sin: utkastraden, så runden,
+    og FØRST DERETTER den eksklusive policylåsen inne i `slett_ubrukt_policy`.
+    Motsatt vei ville laget en sirkel mot en runde-åpning som holder utkastet
+    og venter på den delte låsen. Utkastene låses i utkast_id-rekkefølge, så to
+    slettinger på samme policy heller ikke kan gå i ring.
+
+    Kommer en NY runde til etter skanningen, er den ikke forfalt (en runde
+    åpnes med `utloper` i framtiden) — og da SKAL den blokkere. Den telles av
+    `slett_ubrukt_policy` under policylåsen, som er stedet det avgjøres.
+    """
+    rader = conn.execute(
+        "SELECT DISTINCT r.utkast_id FROM aktiveringsrunde r"
+        "  JOIN policyutkast u ON u.tenant=r.tenant AND u.utkast_id=r.utkast_id"
+        " WHERE r.tenant=%s AND u.policy_id=%s AND r.status IN ('apen','klar')"
+        " ORDER BY 1", (tenant, policy_id)).fetchall()
+    for (utkast_id,) in rader:
+        conn.execute("SELECT 1 FROM policyutkast WHERE tenant=%s"
+                     " AND utkast_id=%s FOR UPDATE", (tenant, utkast_id))
+        _lukk_forfalt_runde(conn, tenant, utkast_id, naa)
+
+
+def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                 request_id: str, policy_id: str, forventet_versjon: str,
+                 forventet_hash: str, idempotency_key: str,
+                 input_hash: str, naa) -> dict:
+    """Angre en feilopprettet policy: slett den som ALDRI har styrt en
+    beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (032) — her
+    ligger idempotensen og OVERGANGEN som lukker forfalte runder.
+
+    `forventet_versjon`/`forventet_hash` er den aktive policyen KLIENTEN SÅ, og
+    de sendes videre urørt: sammenligningen hører hjemme under policylåsen inne
+    i funksjonen (Codex P1), ikke i en lesning her ute som en aktivering kan gå
+    forbi mellom lesningen og kallet. Avviker de, er policyen byttet ut under
+    operatøren — `policy_endret`, ikke en sletting av noe hun aldri så.
+
+    Idempotensen er ikke pynt på en `Idempotency-Key` endepunktet uansett
+    krever (Codex P2). Slettingen er ENGANGS og irreversibel: går svaret tapt
+    på veien tilbake — nettopp det retry-en finnes for — er policyen borte, og
+    et nytt forsøk med samme nøkkel møtte `policy_ukjent`. Eier fikk da en
+    endelig feilmelding på en operasjon som FAKTISK lyktes, ble stående på en
+    flate som viste den slettede policyen som aktiv, og hvert nye forsøk sa det
+    samme til hun lastet siden på nytt. Med claimet på plass svarer replayen
+    NØYAKTIG det lagrede svaret, og flaten kommer videre.
+
+    `naa` er klokka forfalte runder måles mot, som i `forkast_utkast` og
+    `opprett_aktiveringsrunde` — se `_lukk_forfalte_runder` under.
+
+    Kalleren eier tx; `_fullfor` committer.
+    """
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        conn.rollback()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    _lukk_forfalte_runder(conn, tenant, policy_id, naa)
+    try:
+        n = conn.execute(
+            "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+            (tenant, policy_id, forventet_versjon,
+             forventet_hash)).fetchone()[0]
+    except psycopg.errors.CheckViolation as e:
+        # Rollback tar claimet med seg, som ellers i modulen: en operasjon som
+        # ikke skjedde skal ikke brenne nøkkelen. Retry på en policy som er i
+        # bruk gir samme forklaring hver gang — det er sannheten om tilstanden.
+        conn.rollback()
+        # Prøven står på RUNDEN, ikke på bruken. Vilkårsbruddene fra 032 er nå
+        # tre, ikke to: styrt en beslutning, åpen runde, og en referanse
+        # retensjonsvakta (V3) fant og funksjonen oversatte. Bare det midterste
+        # har en egen forklaring på flaten; de to andre sier begge at policyen
+        # er referert og må avvikles i stedet. Med testen på «beslutning» ville
+        # den nye, oversatte avvisningen falt ut som `runde_allerede_aapen` —
+        # en feilmelding om en runde som ikke finnes.
+        raise Aktiveringsfeil(
+            "runde_allerede_aapen" if "aktiveringsrunde" in str(e)
+            else "policy_i_bruk") from None
+    except psycopg.errors.InvalidParameterValue:
+        # Den aktive policyen er ikke den klienten så. Rollback som over: en
+        # sletting som ikke skjedde skal ikke brenne nøkkelen — flaten kan
+        # laste på nytt og prøve igjen mot den versjonen som NÅ står.
+        conn.rollback()
+        raise Aktiveringsfeil("policy_endret") from None
+    except psycopg.errors.NoDataFound:
+        conn.rollback()
+        raise Aktiveringsfeil("policy_ukjent") from None
+    return _fullfor(conn, tenant, idempotency_key,
+                    {"slettet": n, "policy_id": policy_id})
+
+
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
                        request_id: str, utkast_id: str, naa) -> dict:
     """Utkastet + diffen mot aktiv base + klassifisering + evt. åpen runde med
@@ -771,7 +884,19 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
     `serialization_failure`). Finnes ikke hoderaden (helt ny policy), er basen
     deny-all og funksjonen oppretter ankerraden idempotent ved aktivering — vi
     oppretter den ALDRI her (en forkastet runde skal ikke etterlate en tom
-    hoderad)."""
+    hoderad).
+
+    Men mot SLETTING (`slett_ubrukt_policy`, 032) holdt det ikke å ikke låse
+    (Codex P2). Slettingen lover at den ikke etterlater attestasjoner i omløp,
+    og kontrollerer det ved å telle åpne runder. En naken SELECT her lot
+    runde-åpningen validere basen, slettingen telle null runder og committe, og
+    så runde-INSERT-en lande på en policy som ikke lenger finnes — godkjennere
+    sendt inn i en runde som aldri kan aktiveres. Den delte låsen på policyen
+    holder til denne transaksjonen committer, altså til runden STÅR, og
+    slettingens eksklusive lås på samme nøkkel ser den. Radlås er ikke et
+    alternativ: `FOR SHARE` krever UPDATE-privilegium, som runtime ikke har.
+    """
+    laas_policy_delt(conn, tenant, policy_id)
     rad = conn.execute(
         "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s AND policy_id=%s",
         (tenant, policy_id)).fetchone()

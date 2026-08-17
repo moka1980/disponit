@@ -57,7 +57,19 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     forespørselen er kun et navn innenfor den tenanten — den kan aldri peke
     ut en annen tenants policy, verken via spørringen eller via RLS.
     Krever at kalleren har satt `disponit.tenant` (db.pg.sett_kontekst).
+
+    Låsen FØRST, og delt (Codex P1). Uten den kunne `slett_ubrukt_policy`
+    (032) kile seg inn i dette vinduet: beslutningen leser policyen her,
+    slettingen ser en revisjonslogg uten spor av den, sletter — og så
+    committer beslutningen revisjonsraden sin, som nå peker på en policy som
+    ikke finnes. `FOR UPDATE` på `policy_hode` inne i slettefunksjonen stengte
+    ikke det vinduet, for denne veien rører aldri `policy_hode`. Den delte
+    låsen holder til kallerens transaksjon committer, altså til revisjonsraden
+    STÅR — og slettingens eksklusive lås på samme nøkkel venter på nettopp det.
+    Delte låser blokkerer ikke hverandre, så beslutninger går som før.
     """
+    from db.pg import laas_policy_delt
+    laas_policy_delt(conn, tenant, policy_id)
     rad = conn.execute(
         "SELECT innhold, innholds_hash, status, versjon FROM policyer"
         " WHERE tenant=%s AND policy_id=%s AND aktiv",
@@ -114,6 +126,51 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     return innhold, lagret_hash
 
 
+def hent_aktiv_bak_loggreferanse(
+        conn: psycopg.Connection, tenant: str,
+        loggreferanse: object) -> tuple[dict, str] | None:
+    """Den AKTIVE policyen som en revisjonsreferanse navngir, ellers None.
+
+    `loggreferanse` er en `revisjonslogg.policy_id`-verdi — `pid@versjon/
+    handling` — lest ut av en COMMITTET loggrad for SAMME tenant. Det er
+    ikke en formalitet, det er hele sikkerheten i funksjonen, og derfor er
+    det den eneste inngangen: de to kallerne (`m37.arbeider._aktiv_policy`
+    når en reparasjon planlegges, og `api.app._ingest_verifikasjon` når
+    aktiv autoritet måles før bevis godtas) leser loggraden og sender
+    verdien hit uten å ha en policy-id å gi.
+
+    HVORFOR INGEN `laas_policy_delt` HER (Codex P1). Låsen i `hent_aktiv` og
+    `policyadmin._hode_aktiv_versjon` finnes for lesere som ennå IKKE har et
+    spor: beslutningen har ikke skrevet revisjonsraden sin, runde-åpningen
+    har ikke satt inn runden. De må holde slettingen ute til referansen
+    STÅR. Her står den allerede — og den er nettopp den raden
+    `slett_ubrukt_policy` (032) teller når den avgjør «aldri brukt»
+    (`policy_id LIKE pid || '@%'`). En policy som er navngitt av en loggrad
+    er derfor allerede uslettelig, og permanent: `revisjonslogg` er
+    append-only (001, `revisjonslogg_er_append_only` avviser UPDATE, DELETE
+    og TRUNCATE), så referansen kan ikke fjernes igjen.
+
+    Låsen ville heller ikke løst noe for en leser UTEN et spor: den utsetter
+    slettingen til leseren committer, men leseren etterlater ingenting
+    slettingen kan se — policyen ville blitt slettet like etterpå, med
+    autorisasjonen like foreldet. Vernet er referansen; låsen er bare måten
+    en referanse som er UNDERVEIS rekker frem. Skulle en fremtidig kaller
+    trenge den aktive policyen uten å ha en loggreferanse, er den derfor
+    ikke en kaller av denne funksjonen — den må ha sitt eget vern.
+    """
+    from policy_validator.engine import les_policyref
+    ref = les_policyref(loggreferanse)
+    if ref is None:
+        return None                # ingen verifiserbar policyidentitet
+    rad = conn.execute(
+        "SELECT innhold, innholds_hash FROM policyer"
+        " WHERE tenant=%s AND policy_id=%s AND aktiv",
+        (tenant, ref[0])).fetchone()
+    if rad is None or not isinstance(rad[0], dict):
+        return None
+    return rad[0], rad[1]
+
+
 def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
               status: str, aktiver: bool = True) -> str:
     """Legger inn en policyversjon, eventuelt som den aktive. -> innholds_hash.
@@ -148,6 +205,13 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
             [f"meta.status '{meta.get('status')}' != oppgitt status '{status}'"],
             policy)
     pid, versjon, h = meta["policy_id"], meta["versjon"], innholds_hash(policy)
+    # Samme per-policy-lås som husets øvrige skrivere (Codex P2 på #73): en
+    # `registrer(..., aktiver=False)` hvis INSERT ennå ikke var committet da
+    # slettingens DELETE tok sitt snapshot, ville overlevd slettingen —
+    # endepunktet melder suksess mens en versjon står igjen og okkuperer
+    # nummeret sitt. Delt lås venter på sletterens eksklusive, og omvendt.
+    from db.pg import laas_policy_delt
+    laas_policy_delt(conn, tenant, pid)
     if aktiver:
         conn.execute("UPDATE policyer SET aktiv=false"
                      " WHERE tenant=%s AND policy_id=%s AND aktiv",

@@ -1192,3 +1192,111 @@ test("Grenser: en valutaliste ingen kontroll kan vise, repareres av EIER",
       }
     }
   });
+
+// --- Handlinger: ÉN om gangen, ikke alle stablet ---------------------------
+// Eier: «action-fanen er fortsatt veldig lang … velge en og en». En bransjemal
+// har gjerne sju handlinger med beløpsgrense, valutaliste og tidsvindu hver.
+
+const TO_HANDLINGER = () => ({
+  meta: { policy_id: "p-1", versjon: "0.1.0", bransjemal: "x",
+    status: "utkast" },
+  roller: [{ id: "agent" }],
+  handlinger: [
+    { id: "ordre.bekreft", modul: "M-25", modus: "auto",
+      grenser: { belop_maks: "1000.00", valuta: ["NOK"] } },
+    { id: "refusjon.utfor", modul: "M-41", modus: "alltid_stopp",
+      grenser: { belop_maks: "500.00" } }],
+});
+
+test("Handlinger: bare ETT kort vises, velgeren bytter", async () => {
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: TO_HANDLINGER() });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".handling-velger"));
+
+  assert.equal(h.querySelectorAll(".editor-kort").length, 1,
+    "alle handlingene sto stablet — det var nettopp den lange rullen");
+  assert.ok(h.querySelector(".editor-kort").textContent
+    .includes("ordre.bekreft"));
+  assert.ok(h.textContent.includes(
+    t("ui.editor.handling_posisjon").replace("{n}", "1").replace("{av}", "2")));
+
+  const knapp = [...h.querySelectorAll(".handling-velger-knapp")]
+    .find((b) => b.textContent.includes("refusjon.utfor"));
+  assert.equal(knapp.getAttribute("aria-pressed"), "false");
+  knapp.dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".editor-kort")
+    .textContent.includes("refusjon.utfor"));
+  assert.equal(h.querySelectorAll(".editor-kort").length, 1);
+});
+
+test("Handlinger: forrige/neste går sekvensielt og stopper i endene",
+  async () => {
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: TO_HANDLINGER() });
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".handling-velger"));
+    const finn = (tekst) => [...h.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === tekst);
+
+    assert.ok(finn(t("ui.editor.handling_forrige")).disabled,
+      "«forrige» skal være død på første handling");
+    finn(t("ui.editor.handling_neste")).dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".editor-kort")
+      .textContent.includes("refusjon.utfor"));
+    assert.ok(finn(t("ui.editor.handling_neste")).disabled,
+      "«neste» skal være død på siste handling");
+    assert.ok(!finn(t("ui.editor.handling_forrige")).disabled);
+  });
+
+test("Handlinger: valget overlever re-rendringen feltene utløser", async () => {
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: TO_HANDLINGER() });
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.querySelector(".handling-velger"));
+  [...h.querySelectorAll(".handling-velger-knapp")]
+    .find((b) => b.textContent.includes("refusjon.utfor"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector(".editor-kort")
+    .textContent.includes("refusjon.utfor"));
+
+  // Å velge en valuta tegner hele fanen på nytt. Uten husket valg hoppet
+  // fanen tilbake til første handling — midt i redigeringen av den andre.
+  const nedtrekk = [...h.querySelectorAll(".editor-kort select")].pop();
+  nedtrekk.value = "EUR";
+  nedtrekk.dispatchEvent(new window.Event("change"));
+  await vent(() => h.querySelector(".editor-kort"));
+  assert.ok(h.querySelector(".editor-kort").textContent
+    .includes("refusjon.utfor"),
+  "re-rendringen kastet eier tilbake til første handling");
+});
+
+test("Handlinger: velgeren viser modusen som faktisk vil bli lagret",
+  async () => {
+    // Velgerknappen bærer handlingens MODUS — det raskeste svaret på «hva gjør
+    // denne». Muterte modusfeltet bare modellen, sto knappen igjen med den
+    // gamle verdien til noe ANNET tilfeldigvis tegnet fanen på nytt, og
+    // navigatoren motsa da verdien som ville blitt lagret.
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: TO_HANDLINGER() });
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".handling-velger"));
+
+    const knapp = () => [...h.querySelectorAll(".handling-velger-knapp")]
+      .find((b) => b.textContent.includes("ordre.bekreft"));
+    assert.ok(knapp().textContent.includes(t("modus.auto")));
+
+    const modus = [...h.querySelectorAll(".editor-kort select")]
+      .find((s) => [...s.options].some((o) => o.value === "alltid_stopp"));
+    modus.value = "alltid_stopp";
+    modus.dispatchEvent(new window.Event("change"));
+
+    await vent(() => knapp()
+      && knapp().textContent.includes(t("modus.alltid_stopp")));
+    assert.ok(knapp().textContent.includes(t("modus.alltid_stopp")),
+      "velgeren reklamerte fortsatt for den gamle modusen");
+    // Og valget står: modusendringen skal ikke kaste eier til første handling
+    // eller bytte hvilket kort som vises.
+    assert.ok(h.querySelector(".editor-kort").textContent
+      .includes("ordre.bekreft"));
+  });

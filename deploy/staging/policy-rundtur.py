@@ -321,6 +321,45 @@ def main() -> int:                                        # noqa: C901
     finally:
         rt2.close()
 
+    print("\n== 8  angre: en aktivert, ALDRI brukt policy kan slettes ==")
+    # Eiers behov, målt to ganger i produksjon (tjenestebedrift1/2): aktivert
+    # ved feil, og eneste vei ut var håndskrevet SQL. `slett_ubrukt_policy`
+    # (032) er den styrte veien: den nekter hvis policyen har styrt én
+    # beslutning, bevarer utkast/attestasjoner, og frigjør versjonsnumrene.
+    rt8 = koble(DSN)
+    try:
+        sett_kontekst(rt8, malten, "rundtur", "r9")
+        # Slettingen er bundet til den policyen kalleren SÅ: versjon +
+        # innholdshash, nøyaktig som `/v1/policy/aktiv` serverer dem. Er en ny
+        # versjon aktivert i mellomtiden, avvises slettingen i stedet for å ta
+        # den nye med seg.
+        aktiv = rt8.execute(
+            "SELECT versjon, innholds_hash FROM policyer"
+            " WHERE tenant=%s AND policy_id=%s AND aktiv",
+            (malten, pid)).fetchone()
+        n_slettet = rt8.execute(
+            "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+            (malten, pid, aktiv[0], aktiv[1])).fetchone()[0]
+        rt8.commit()
+        sett_kontekst(rt8, malten, "rundtur", "r10")
+        port("policyen slettes (aldri brukt)", n_slettet >= 1,
+             f"{n_slettet} versjonsrad(er)")
+        try:
+            pr.hent_aktiv(rt8, malten, pid)
+            port("tenanten står ærlig uten aktiv policy", False,
+                 "hent_aktiv fant fortsatt en policy")
+        except Exception as e:                                # noqa: BLE001
+            port("tenanten står ærlig uten aktiv policy",
+                 type(e).__name__ == "PolicyUkjent", type(e).__name__)
+        # Historien består: utkastet som ble attestert står som `aktivert`.
+        rad = rt8.execute(
+            "SELECT count(*) FROM policyutkast WHERE tenant=%s"
+            " AND policy_id=%s AND status='aktivert'", (malten, pid)).fetchone()
+        port("attestasjonshistorikken består", rad[0] >= 1,
+             f"{rad[0]} aktiverte utkast")
+    finally:
+        rt8.close()
+
     mig.close()
 
     print("\n" + "=" * 62)
