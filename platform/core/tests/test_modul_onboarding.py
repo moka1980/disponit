@@ -530,6 +530,101 @@ def test_epoch_okning_terminerer_familien_og_rotasjon_arver_aldri_ny():
         m.close()
 
 
+@pg
+def test_mynting_tar_modullaasen_som_epoch_endringene():
+    """Codex P1: nødstoppet er en UPDATE på et snapshot. Et token som fødes
+    inne i det snapshotet blir aldri sett — og altså aldri drept — av
+    stoppet, og overlever som et levende token i en terminert familie.
+    Serialiseringen finnes allerede (`modul:<id>`-låsen som
+    `noddeaktiver_modul`/`reaktiver_modul` tar); den manglet i BEGGE
+    myntingsveiene.
+
+    Prøven er direkte: hold låsen i en annen transaksjon, og se at både
+    innløsning og rotasjon VENTER på den. Kontroll: fjern
+    `pg_advisory_xact_lock`-linja i `innlos_onboarding`/`roter_modultoken`,
+    så går kallet gjennom og `LockNotAvailable` uteblir.
+    """
+    m = _c()
+    rt = _rt()
+    holder = _c()
+    try:
+        modul, rel, _, _ = _deployment_med_typer(m)
+        hh = _hex64()
+        oid, _ = _utsted(rt, modul, "staging", rel, hemmelighet_hash=hh)
+        rt.commit()
+
+        holder.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('modul:'||%s,0))",
+            (modul,))                       # holdes til rollback under
+
+        rt.execute("SET LOCAL lock_timeout='400ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            _innlos(rt, oid, hh)
+        rt.rollback()
+
+        holder.rollback()                   # låsen slippes
+        tid, rad = _innlos(rt, oid, hh)
+        rt.commit()
+        assert rad[7] is None, rad
+
+        # ... og rotasjonen står i samme kø.
+        holder.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('modul:'||%s,0))",
+            (modul,))
+        rt.execute("SET LOCAL lock_timeout='400ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                       (tid, uuid.uuid4(), _hex64()))
+        rt.rollback()
+        holder.rollback()
+    finally:
+        holder.close()
+        rt.close()
+        m.close()
+
+
+@pg
+def test_innlosning_etter_nodstopp_myntes_ikke():
+    """Codex P1, andre halvdel: for rotasjonen holder låsen alene — et
+    nødstopp har da tilbakekalt forgjengeren, og rotasjonen faller på det.
+    Innløsningen har ingen forgjenger å falle på: uten et vilkår ville en
+    innløsning som starter ETTER stoppet født et helt nytt, levende token
+    for en nettopp terminert modul. Hemmeligheten er urørt — den kan brukes
+    når modulen er tilbake.
+
+    Kontroll: fjern `innlosning_modul_stengt`-grenen, så blir denne rød."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, rel, _, _ = _deployment_med_typer(m)
+        hh = _hex64()
+        oid, _ = _utsted(rt, modul, "staging", rel, hemmelighet_hash=hh)
+        rt.commit()
+        m.execute("SET ROLE disponit_modules_admin")
+        m.execute("SELECT noddeaktiver_modul(%s,'test av 035','test')",
+                  (modul,))
+        m.execute("RESET ROLE")
+        m.commit()
+
+        _, rad = _innlos(rt, oid, hh)
+        rt.commit()
+        assert rad[7] == "innlosning_modul_stengt" and rad[0] is None, rad
+        assert m.execute("SELECT count(*) FROM modultoken WHERE modul_id=%s",
+                         (modul,)).fetchone()[0] == 0
+        # Avvisningen står i sporet, og hemmeligheten er IKKE brukt opp.
+        assert m.execute(
+            "SELECT detalj->>'grunn' FROM modultoken_hendelse"
+            " WHERE onboarding_id=%s AND hendelse='avvist_bruk'",
+            (oid,)).fetchall() == [("innlosning_modul_stengt",)]
+        assert m.execute("SELECT innlost_ts FROM modul_onboarding"
+                         " WHERE onboarding_id=%s", (oid,)).fetchone()[0] \
+            is None
+        m.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
 # --------------------------------------------------------------------------
 # Lagringskontrakten (portene 25, 31, 35–42) — den holder for ALLE roller,
 # også migrator (tabelleier) og dermed funksjonseierne.

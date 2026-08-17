@@ -319,13 +319,28 @@ RETURNS TABLE (token_id UUID, modul_id TEXT, miljo TEXT, release_id TEXT,
                familie_utloper TIMESTAMPTZ, avvist TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE o RECORD; v_epoch BIGINT; v_utloper TIMESTAMPTZ; v_grunn TEXT;
+        v_modul TEXT; v_status TEXT;
 BEGIN
-    SELECT * INTO o FROM public.modul_onboarding ob
-     WHERE ob.onboarding_id = p_onboarding_id FOR UPDATE;
+    -- MODULLÅSEN FØRST (Codex P1). Mynting og epoch-endring må serialisere:
+    -- uten låsen kan et token fødes inne i nødstoppets allerede tatte
+    -- snapshot, og overleve en «terminering» som aldri så det. Låsen tas før
+    -- radlåsen — samme rekkefølge som `noddeaktiver_modul`/`reaktiver_modul`
+    -- (modullås → radlåser), ellers er dette en vranglås i stedet for en
+    -- serialisering. `modul_id` er uforanderlig (identitetstriggeren), så
+    -- det ulåste oppslaget som gir NØKKELEN kan ikke bli feil.
+    SELECT ob.modul_id INTO v_modul FROM public.modul_onboarding ob
+     WHERE ob.onboarding_id = p_onboarding_id;
     IF NOT FOUND THEN
         -- UKJENT id raiser fortsatt: det finnes ingen rad å tilskrive
         -- hendelsen (modul/miljø/release er NOT NULL), og et gjettet
         -- id-ledd skal ikke kunne fylle en append-only tabell.
+        RAISE EXCEPTION 'innlosning: ukjent onboarding'
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || v_modul, 0));
+    SELECT * INTO o FROM public.modul_onboarding ob
+     WHERE ob.onboarding_id = p_onboarding_id FOR UPDATE;
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'innlosning: ukjent onboarding'
             USING ERRCODE = 'no_data_found';
     END IF;
@@ -338,6 +353,23 @@ BEGIN
         v_grunn := 'innlosning_avvist';
     ELSIF o.utloper < now() THEN
         v_grunn := 'innlosning_utlopt';
+    END IF;
+    -- Modulens tilstand LESES UNDER MODULLÅSEN (Codex P1). For rotasjonen
+    -- er låsen nok — et nødstopp har da alt tilbakekalt forgjengeren, og
+    -- rotasjonen faller på det. Her finnes det ingen forgjenger å
+    -- tilbakekalle: en innløsning som starter ETTER stoppet ville født et
+    -- helt nytt, levende token for en modul som nettopp ble terminert.
+    -- Vilkåret er utstedelsens eget (`staging_verifisert`/`aktiv`), så en
+    -- nødstoppet — og en reaktivert, ennå ikke re-verifisert — modul ikke
+    -- får nye tokener. Hemmeligheten er URØRT: den kan innløses når modulen
+    -- er tilbake, innenfor sin egen TTL.
+    IF v_grunn IS NULL THEN
+        SELECT h.status, h.module_epoch INTO v_status, v_epoch
+          FROM public.modulhode h WHERE h.modul_id = o.modul_id;
+        IF v_status IS NULL
+           OR v_status NOT IN ('staging_verifisert', 'aktiv') THEN
+            v_grunn := 'innlosning_modul_stengt';
+        END IF;
     END IF;
     IF v_grunn IS NOT NULL THEN
         INSERT INTO public.modultoken_hendelse
@@ -355,11 +387,10 @@ BEGIN
                             NULL::TIMESTAMPTZ, v_grunn;
         RETURN;
     END IF;
-    -- Epoch fryses i tokenet NÅ. Claim-veien krever likhet med gjeldende
-    -- epoch ved hver bruk; rotasjon ARVER denne verdien og plukker aldri
-    -- opp en ny (port 23).
-    SELECT h.module_epoch INTO v_epoch FROM public.modulhode h
-     WHERE h.modul_id = o.modul_id;
+    -- Epoch fryses i tokenet NÅ — verdien er lest over, under modullåsen,
+    -- så den kan ikke ha blitt bumpet mellom lesningen og innsettingen.
+    -- Claim-veien krever likhet med gjeldende epoch ved hver bruk; rotasjon
+    -- ARVER denne verdien og plukker aldri opp en ny (port 23).
     v_utloper := LEAST(now() + make_interval(days => p_token_dager),
                        o.familie_utloper);
     UPDATE public.modul_onboarding SET innlost_ts = now()
@@ -406,8 +437,23 @@ CREATE OR REPLACE FUNCTION roter_modultoken(
 RETURNS TABLE (token_id UUID, utloper TIMESTAMPTZ,
                familie_utloper TIMESTAMPTZ)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE g RECORD; v_utloper TIMESTAMPTZ;
+DECLARE g RECORD; v_utloper TIMESTAMPTZ; v_modul TEXT;
 BEGIN
+    -- MODULLÅSEN FØRST (Codex P1) — se `innlos_onboarding`. Uten den kunne
+    -- rotasjonen legge inn en etterfølger som nødstoppets alt startede
+    -- UPDATE aldri så: stoppet tilbakekalte forgjengeren, etterfølgeren
+    -- overlevde, og den kan rotere videre og bruke utestående
+    -- oppdragsfullmakter. Med låsen skjer rotasjonen enten HELT før stoppet
+    -- (som da ser og dreper etterfølgeren) eller HELT etter det — og da er
+    -- forgjengeren tilbakekalt, som avvises rett under. `modul_id` er
+    -- uforanderlig, så nøkkeloppslaget kan tas uten radlås.
+    SELECT t.modul_id INTO v_modul FROM public.modultoken t
+     WHERE t.token_id = p_forgjenger;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'rotasjon: ukjent token'
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || v_modul, 0));
     SELECT * INTO g FROM public.modultoken t
      WHERE t.token_id = p_forgjenger FOR UPDATE;
     IF NOT FOUND THEN
