@@ -196,6 +196,30 @@ def normaliser_vertsnavn(raa: object) -> str | None:
     return vert.rstrip(".") or None
 
 
+def avtrykk(raa: object) -> str:
+    """Kort, stabilt avtrykk av en verdi — til revisjonsspor, ikke til
+    gjenoppretting.
+
+    `Grunn.params` ender i `revisjonslogg.begrunnelse`, som er en
+    KLARTEKST-kolonne: alt som legges der blir liggende permanent, utenfor
+    det krypterte sporet. Ressurs-ID-er og payload-avledede verdier
+    (vertsnavn fra `mal_url`) hører ikke hjemme der.
+
+    Avtrykket bevarer det etterforskningen faktisk trenger — er det samme
+    verdi som sist? er de to sidene like? — uten å publisere verdien. Det
+    er bevisst IKKE en hemmelighold-mekanisme: et vertsnavn har lav
+    entropi, så den som allerede har en kandidat kan bekrefte den. Skillet
+    er mellom å KUNNE bekrefte en mistanke og å FÅ utlevert kundens
+    identifikator av loggen selv.
+    """
+    import hashlib
+    # Typenavnet er med i det som hashes, så `None` og strengen `"None"`
+    # ikke får samme avtrykk — ellers ville de vært umulige å skille i
+    # sporet.
+    return hashlib.sha256(
+        f"{type(raa).__name__}:{raa}".encode("utf-8")).hexdigest()[:16]
+
+
 def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:
     """None == målautorisasjonen gjelder DEN verten som faktisk kontrolleres.
 
@@ -231,9 +255,23 @@ def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:
     if vert is None:
         return ("malautorisasjon_mal_ugyldig", {"felt": felt})
     if event.get("ressurs_id") != vert:
+        # KLARTEKSTLEKKASJEN (Codex P1). Detaljene her blir til
+        # `Grunn.params`, og `sikker_beslutning_pg` serialiserer dem inn i
+        # `revisjonslogg.begrunnelse` — en klartekstkolonne. Kopierte vi
+        # `vert` og `ressurs_id` ordrett dit, la en HVILKEN SOM HELST
+        # innsender igjen en vilkårlig kundeidentifikator og et vertsnavn
+        # fra payloaden permanent i klartekst, utenfor det krypterte
+        # sporet, ved å sende en forespørsel som feiler. Resten av
+        # plattformen behandler nettopp de verdiene som kryptert data og
+        # legger bare grunnkoder i kolonnen.
+        #
+        # Igjen står feltnavnet (som er konfigurasjon, ikke data) og to
+        # avtrykk: nok til å se at de to sidene er ULIKE og til å knytte
+        # gjentatte forsøk sammen, uten å publisere verdiene.
         return ("malautorisasjon_feil_mal",
-                {"forventet": vert,
-                 "i_forespoersel": str(event.get("ressurs_id"))})
+                {"felt": felt,
+                 "forventet_avtrykk": avtrykk(vert),
+                 "i_forespoersel_avtrykk": avtrykk(event.get("ressurs_id"))})
     return None
 
 

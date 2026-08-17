@@ -549,7 +549,12 @@ def test_malautorisasjonen_bindes_til_verten_som_kontrolleres():
                  mal_url="https://offer.example/",
                  ressurs_id="kunde.example")
     assert k == "malautorisasjon_feil_mal"
-    assert d["forventet"] == "offer.example"
+    # Detaljene navngir FELTET og bærer avtrykk — aldri verdiene selv; de
+    # ender i klartekstkolonnen `revisjonslogg.begrunnelse`.
+    assert d["felt"] == "mal_url"
+    assert d["forventet_avtrykk"] == ok.avtrykk("offer.example")
+    assert d["i_forespoersel_avtrykk"] == ok.avtrykk("kunde.example")
+    assert d["forventet_avtrykk"] != d["i_forespoersel_avtrykk"]
     # Ugyldig eller manglende mål er fail-closed, ikke en åpen port.
     for url in (None, "", "http://kunde.example/", "https://",
                 "ikke en url", "https://kunde.example:99999/"):
@@ -596,6 +601,17 @@ def test_malbindingsporten_staar_i_beslutningsveien(migrator):
 
     Kontroll: fjern målbindingskallet i `sikker_beslutning_pg`, så blir
     denne rød — hendelsen med feil vert blir evaluert i stedet for stoppet.
+
+    Testen leser også `revisjonslogg.begrunnelse` (Codex P1): den kolonnen
+    er KLARTEKST, og bruddetaljene havner der. Kopierte porten `vert` og
+    `ressurs_id` ordrett inn i `Grunn.params`, la en hvilken som helst
+    innsender igjen en kundeidentifikator og et vertsnavn fra payloaden
+    permanent i klartekst — utenfor det krypterte sporet — bare ved å
+    sende en forespørsel som feiler.
+
+    Kontroll (lekkasjen): bytt detaljene tilbake til `{"forventet": vert,
+    "i_forespoersel": str(...)}`, så finner løkka under `offer.example` og
+    `kunde.example` i kolonnen.
     """
     import yaml
     from db.pg import koble, sikker_beslutning_pg
@@ -614,6 +630,18 @@ def test_malbindingsporten_staar_i_beslutningsveien(migrator):
         assert d.beslutning == STOPP
         assert d.begrunnelse[-1].kode == "malautorisasjon_feil_mal", \
             d.begrunnelse[-1].kode
+
+        # ...og det som ble SKREVET til klartekstkolonnen bærer ingen av
+        # verdiene — verken vertsnavnet fra payloaden eller ressurs-id-en.
+        rad = c.execute(
+            "SELECT begrunnelse::text FROM revisjonslogg"
+            " WHERE tenant=%s ORDER BY id DESC LIMIT 1", ("t-pg",)).fetchone()
+        assert rad is not None, "brudd uten loggpost"
+        skrevet = rad[0]
+        assert "malautorisasjon_feil_mal" in skrevet, skrevet
+        for verdi in ("offer.example", "kunde.example"):
+            assert verdi not in skrevet, (
+                f"{verdi!r} lekket til revisjonslogg.begrunnelse: {skrevet}")
         c.rollback()
     finally:
         c.close()
