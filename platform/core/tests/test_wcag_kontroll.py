@@ -942,6 +942,27 @@ def test_formatsjekk_avviser_ugyldig_kjort_ts():
         jsonschema.Draft202012Validator.FORMAT_CHECKER.checkers
 
 
+def test_odelagt_skjema_avvises_i_stedet_for_aa_kaste():
+    """Codex P2: `registrer_artefaktskjema` sjekker bare at JSON-en er et
+    objekt, så `{"type": "strng"}` kunne registreres og bindes til en
+    artefakttype. Da døde HVER opplastning og promotering på et ufanget
+    UnknownType fra validatoren — og fordi både skjemaraden og
+    typebindingen er immutable, kunne typen aldri repareres. Metasjekken
+    kjøres på begge sider av den udødelige raden. Kontroll: fjern
+    skjemafeil-kallet i `valider`, så kaster denne i stedet for å avvise."""
+    from api.artefaktskjema import skjemafeil, valider
+    assert skjemafeil({"type": "strng"})
+    assert skjemafeil({"required": "ikke-en-liste"})
+    assert not skjemafeil({"type": "object"})
+    # Registreringsveien kjører NØYAKTIG denne sjekken på det skjemaet den
+    # er i ferd med å gjøre udødelig.
+    from modules.wcag_audit import rapportskjema
+    assert not skjemafeil(rapportskjema.SKJEMA)
+    # ... og kom et ødelagt skjema likevel inn, er svaret en feilliste.
+    feil = valider({"type": "strng"}, {"a": 1})
+    assert feil and "JSON Schema" in feil[0]
+
+
 # --------------------------------------------------------------------------
 # Kommandomotoren mot en EKTE (og fiendtlig) underprosess — Codex P1.
 # --------------------------------------------------------------------------

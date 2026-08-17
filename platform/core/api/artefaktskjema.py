@@ -78,12 +78,41 @@ def hent_skjema(conn: psycopg.Connection, artefakttype: str) -> dict | None:
     return rad[0] if rad else None
 
 
+def skjemafeil(skjema) -> list[str]:
+    """-> feilliste (tom = gyldig Draft 2020-12-skjema). META-sjekken.
+
+    Codex P2: `registrer_artefaktskjema` kontrollerer bare at JSON-en er et
+    OBJEKT — plpgsql kan ikke kjøre en JSON Schema-metavalidering, og skal
+    ikke late som. Uten denne sjekken kunne en administrator registrere
+    `{"type": "strng"}`, binde en artefakttype til hashen, og deretter få
+    HVER opplastning og promotering til å dø på et ufanget `UnknownType`
+    fra validatoren — og fordi både skjemaraden og typebindingen er
+    immutable, kunne typen aldri repareres.
+
+    Sjekken hører derfor til på begge sider av den udødelige raden:
+    registreringsveien (deploy-skriptet) kjører den FØR innsetting, og
+    `valider` under kjører den før innhold måles, slik at et skjema som
+    likevel skulle ha kommet inn gir en ærlig avvisning i stedet for en
+    500-er.
+    """
+    try:
+        jsonschema.Draft202012Validator.check_schema(skjema)
+    except jsonschema.exceptions.SchemaError as e:
+        return [f"<skjema>: ugyldig JSON Schema — {e.message[:160]}"]
+    return []
+
+
 def valider(skjema: dict, innhold: dict) -> list[str]:
     """-> feilliste (tom = gyldig). Draft 2020-12, samme validatorfamilie
     som policyskjemaet, MED format-checkeren over. Feilene er tekst for
     LOGGEN — de sendes aldri ordrett til klienten (innholdet kan bære
     persondata)."""
-    feil = []
+    # Et ødelagt skjema måler ingenting: uten denne linjen kaster
+    # `iter_errors` under (UnknownType) og opplastningen blir en 500-er i
+    # stedet for en avvisning.
+    feil = skjemafeil(skjema)
+    if feil:
+        return feil
     validator = jsonschema.Draft202012Validator(
         skjema, format_checker=FORMATSJEKKER)
     for e in sorted(validator.iter_errors(innhold),

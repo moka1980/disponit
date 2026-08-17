@@ -101,6 +101,20 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     v_skjema := p_kanonisk::jsonb;
+    -- Codex P2: objekt-sjekken er ALT plpgsql kan si om skjemaformen —
+    -- en JSON Schema-metavalidering krever validatoren selv, og den bor i
+    -- Python. Grensen står her, uttalt, i stedet for at funksjonen later
+    -- som den har kontrollert mer enn den har: `{"type": "strng"}` er et
+    -- objekt og passerer denne raden.
+    --
+    -- Konsekvensen om ingen andre sjekket: skjemaraden og typebindingen er
+    -- immutable for alltid, så en artefakttype bundet til et ødelagt skjema
+    -- kunne ALDRI repareres — hver opplastning og promotering ville dødd på
+    -- et ufanget UnknownType fra validatoren. Metasjekken kjøres derfor på
+    -- begge sider av den udødelige raden, av `api.artefaktskjema.skjemafeil`:
+    -- registreringsveien (deploy-skriptet) kjører den FØR dette kallet, og
+    -- `valider()` kjører den før innhold måles, slik at et skjema som
+    -- likevel skulle ha kommet inn gir en ærlig avvisning, ikke en 500-er.
     IF jsonb_typeof(v_skjema) <> 'object' THEN
         RAISE EXCEPTION 'artefaktskjema: skjemaet må være et objekt'
             USING ERRCODE = 'invalid_parameter_value';

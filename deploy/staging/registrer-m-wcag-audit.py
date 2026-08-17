@@ -42,6 +42,7 @@ sys.path.insert(0, str(REPO / "platform"))
 
 import psycopg  # noqa: E402
 
+from api.artefaktskjema import skjemafeil  # noqa: E402
 from modules.wcag_audit import rapportskjema  # noqa: E402
 
 MODUL = "m_wcag_audit"
@@ -77,6 +78,14 @@ def main() -> int:
     _hex64("kontrakt_hash", kontrakt_hash)
     _hex64("payload_skjema_hash", payload_hash)
     _hex64("kvittering_skjema_hash", kvittering_hash)
+    # META-SJEKKEN FØR INNSETTING (Codex P2): skjemaraden og typebindingen
+    # er immutable for alltid, så et ugyldig skjema kan ikke rettes — det
+    # kan bare gjøre hver opplastning til en valideringsfeil. plpgsql kan
+    # ikke metavalidere; her kan vi.
+    feil = skjemafeil(rapportskjema.SKJEMA)
+    if feil:
+        raise SystemExit("rapportskjemaet er ikke et gyldig Draft 2020-12-"
+                         "skjema: " + "; ".join(feil))
     dsn = os.environ["DISPONIT_MIGRATOR_URL"]
     kanon = rapportskjema.kanonisk().decode("utf-8")
     h = rapportskjema.skjema_hash()
