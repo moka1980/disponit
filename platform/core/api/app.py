@@ -1325,7 +1325,16 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         if raa_kropp:
             try:
                 kropp_data = json.loads(raa_kropp.decode("utf-8"))
-            except ValueError:
+            except (ValueError, RecursionError):
+                # Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig,
+                # dypt nøstet dokument på noen få kilobyte (≈2 000 nivåer)
+                # ligger godt under kroppsgrensen på 256 KiB og treffer
+                # likevel rekursjonsgrensen — RecursionError er en
+                # RuntimeError, ikke en ValueError, så `except ValueError`
+                # alene slapp den ut som generisk 500 i stedet for det
+                # dokumenterte `request_feilformet`. Dybde er klientinput,
+                # og denne parseren er ny i 035; onboarding- og
+                # artefaktparserne fanger den allerede.
                 return _feilsvar("request_feilformet", rid)
             if kropp_data not in ({}, None):
                 tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant,

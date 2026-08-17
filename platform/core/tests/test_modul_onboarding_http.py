@@ -317,6 +317,43 @@ def test_token_kan_ikke_claime_annen_modul_eller_release(migrator, miljo,
 
 
 @pg
+def test_claim_med_dypt_nostet_kropp_er_request_feil(migrator, miljo,
+                                                     monkeypatch):
+    """Codex P2: `json.loads` er REKURSIV. Claim-rutens LUKKEDE skjema
+    parser kroppen for å kunne avvise parametre — og et syntaktisk gyldig,
+    dypt nøstet dokument på noen få kilobyte (langt under kroppsgrensen på
+    256 KiB) traff rekursjonsgrensen. RecursionError er en RuntimeError,
+    ikke en ValueError, så `except ValueError` alene slapp den ut som
+    generisk 500 i stedet for det dokumenterte `request_feilformet`.
+
+    Kroppen bygges som TEKST: `json.dumps` av en 5 000-dyp struktur ville
+    tatt livet av testen selv, ikke serveren.
+
+    MUTASJONEN SOM DREPER DENNE: fjern RecursionError fra except-en rundt
+    claim-kroppens `json.loads`."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    _kjent_type(monkeypatch, typenavn, f"h{_u()}.")
+    modul, rel = _kjede(migrator, typenavn=typenavn)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            dybde = 5000
+            kropp = '{"a":' * dybde + "1" + "}" * dybde
+            assert len(kropp) < 100_000, "testkroppen skal være liten"
+            r = c.post("/v1/oppdrag/claim", content=kropp,
+                       headers={"authorization": f"Bearer {mtk}",
+                                "content-type": "application/json"})
+            assert (r.status_code, r.json()["feil"]) == (
+                400, "request_feilformet"), r.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
 def test_rotasjon_over_http_og_tilbakekalling(migrator, miljo, monkeypatch):
     """Portene 20–22 over nettverket: rotasjonen svarer med nytt token (vist
     én gang), forgjengeren har nådevindu, en andre rotasjon av samme
