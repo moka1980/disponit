@@ -2,9 +2,10 @@
 skjemagyldig rapport ut — eller Motorfeil, aldri et delvis artefakt.
 
 Saneringen er ÆRLIG kutting: URL-er strippes for query/fragment,
-selektorer kappes til 200 tegn, maks 10 eksempler per regel og maks 500
-funn — og når funnlisten kappes, sier `avkortet` det (den lyver aldri om
-at alt kom med). Miljøblokka er SERVERKONTEKSTENS, aldri motorens.
+selektorer kappes til 200 tegn, maks 10 eksempler per regel, maks 500
+funn og maks 200 dekningsbegrensninger — og kappes EN AV LISTENE, sier
+`avkortet` det (den lyver aldri om at alt kom med). Miljøblokka er
+SERVERKONTEKSTENS, aldri motorens.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ _ALVOR = ("kritisk", "alvorlig", "moderat", "lav")
 MAKS_FUNN = 500
 MAKS_EKSEMPLER = 10
 MAKS_SELEKTOR = 200
+MAKS_BEGRENSNINGER = 200
 
 
 def _ren_url(raa: str) -> str:
@@ -95,19 +97,36 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
         truffet, tak = True, (tak if tak is not None else MAKS_FUNN)
         verdi = verdi if verdi is not None else len(resultat.funn)
 
-    begrensninger = []
+    # Dekningsbegrensningene SLÅS SAMMEN per (vert, art) før taket måles
+    # (Codex P2): proxyen teller per subressurs, så den samme verten kan
+    # komme igjen mange ganger. Summeringen er ærlig — tallet blir det
+    # totale — og den gjør at taket sjelden treffer i det hele tatt.
+    samlet: dict[tuple, dict] = {}
     for b in resultat.blokkert:
         if not isinstance(b, dict):
             continue
         vert = str(b.get("vert") or "").split("/")[0].split("?")[0].lower()
         if not vert:
             continue
-        begrensninger.append({
-            "vert": vert[:253],
-            "antall": max(1, _antall(b.get("antall"), 1)),
-            "art": b.get("art") if b.get("art") in
-                   ("stilark", "font", "skript", "bilde", "annet")
-                   else "annet"})
+        art = (b.get("art") if b.get("art") in
+               ("stilark", "font", "skript", "bilde", "annet") else "annet")
+        nokkel = (vert[:253], art)
+        post = samlet.setdefault(nokkel, {"vert": nokkel[0], "antall": 0,
+                                          "art": art})
+        post["antall"] += max(1, _antall(b.get("antall"), 1))
+    # Størst først: treffer taket likevel, er det de STØRSTE
+    # begrensningene som kommer med, ikke de tilfeldig første.
+    begrensninger = sorted(samlet.values(),
+                           key=lambda p: (-p["antall"], p["vert"], p["art"]))
+    # ... og kappes lista, SIER `avkortet` det. Uten dette kunne den
+    # promoterte evidensen påstå at ingenting var utelatt samtidig som den
+    # utelot kjente dekningsbegrensninger — stikk i strid med hele
+    # poenget med feltet (014b B3).
+    if len(begrensninger) > MAKS_BEGRENSNINGER:
+        truffet = True
+        tak = tak if tak is not None else MAKS_BEGRENSNINGER
+        verdi = verdi if verdi is not None else len(begrensninger)
+        begrensninger = begrensninger[:MAKS_BEGRENSNINGER]
 
     return {
         "kravsett": payload.get("kravsett"),
@@ -118,7 +137,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
         "funn": funn,
         "sammendrag": sammendrag,
         "avkortet": {"truffet": bool(truffet), "tak": tak, "verdi": verdi},
-        "dekningsbegrensninger": begrensninger[:200],
+        "dekningsbegrensninger": begrensninger,
         "miljo": {k: kontekst[k] for k in
                   ("axe_versjon", "chromium_versjon",
                    "container_image_digest", "viewport", "locale",

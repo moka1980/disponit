@@ -554,6 +554,42 @@ def test_rapporten_kutter_aerlig_over_500_funn():
     assert r["sammendrag"]["lav"] == 600
 
 
+def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
+    """Codex P2: lista ble kappet på 200 UTEN at `avkortet` endret seg —
+    den promoterte evidensen kunne påstå at ingenting var utelatt samtidig
+    som den utelot kjente dekningsbegrensninger (014b B3). Nå slås like
+    (vert, art) sammen først, og treffer taket likevel, sier `avkortet`
+    fra. Kontroll: fjern taksjekken, så blir denne rød."""
+    import jsonschema
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import MAKS_BEGRENSNINGER, bygg
+
+    # Samme vert to ganger → én post med summert antall, ikke to.
+    r = bygg(_motorresultat(blokkert=(
+        {"vert": "fonts.example", "antall": 2, "art": "font"},
+        {"vert": "fonts.example/x?q=1", "antall": 3, "art": "font"})),
+        payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert r["dekningsbegrensninger"] == [{"vert": "fonts.example",
+                                           "antall": 5, "art": "font"}]
+    assert r["avkortet"]["truffet"] is False
+
+    # Flere unike verter enn taket → kappet, og `avkortet` sier det.
+    mange = tuple({"vert": f"v{i}.example", "antall": 1, "art": "font"}
+                  for i in range(MAKS_BEGRENSNINGER + 25))
+    r2 = bygg(_motorresultat(blokkert=mange),
+              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r2)
+    assert len(r2["dekningsbegrensninger"]) == MAKS_BEGRENSNINGER
+    assert r2["avkortet"]["truffet"] is True
+    assert r2["avkortet"]["verdi"] == MAKS_BEGRENSNINGER + 25
+
+    # Størst først: treffer taket, er det de STØRSTE som kommer med.
+    tunge = ({"vert": "tung.example", "antall": 99, "art": "skript"},) + mange
+    r3 = bygg(_motorresultat(blokkert=tunge),
+              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert r3["dekningsbegrensninger"][0]["vert"] == "tung.example"
+
+
 def test_motorutdata_er_ubetrodd():
     """Port 12/§2: ikke-https-URL og uleselige poster er Motorfeil — aldri
     en rapport. Digester fra motoren finnes ikke som begrep: miljøblokka
