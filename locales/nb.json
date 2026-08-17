@@ -705,6 +705,7 @@
   "ui.varsler.kanal_lagret": "Varslingsvalget er lagret.",
   "ui.varsler.feilet": "Handlingen feilet.",
   "varsel.attestering_venter": "Policyen {policy_id} venter på din attestering (runde {runde}, risiko {risikoklasse}) — {gjenstaar} attestasjon(er) gjenstår.",
+  "varsel.tokenfamilie_utloper": "Modultokenfamilien for {modul_id} ({miljo}, release {release_id}) når den absolutte horisonten {familie_utloper} om {dager} døgn — planlegg ny onboarding.",
   "varsel.epost.emne": "Disponit: noe venter på deg",
   "ui.dashbord.varsler": "Prioriterte varsler",
   "ui.dashbord.aktivitet": "Siste aktiviteter",

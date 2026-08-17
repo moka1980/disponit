@@ -82,6 +82,17 @@ def test_designtabellen_speiler_migrasjonene():
     Python-utdraget konsistent)."""
     design = _design_fra_sql()
     assert len(design) >= 23, "designtabellen har mistet rader"
+    # ... og INGEN rad er kuttet bort av parsingen. Både denne testen og
+    # `_kjor_reparasjon` deler filen på setningsskilletegnet, så ett eneste
+    # semikolon i en KOMMENTAR inne i VALUES-listen halverer designtabellen
+    # — stille, med en fortsatt «grønn nok» radtelling. Fasiten er hvor
+    # mange rader filen faktisk deklarerer.
+    import re
+    alle = len(re.findall(r"\('(?:TABLE|FUNCTION)',",
+                          REPARASJON.read_text(encoding="utf-8")))
+    assert len(design) == alle, (
+        f"parsingen ser {len(design)} av {alle} deklarerte rader — et"
+        " semikolon i en kommentar kutter VALUES-listen")
     assert set(design.values()) == {"disponit_authenticator",
                                     "disponit_policy_eier",
                                     "disponit_modul_eier",

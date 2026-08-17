@@ -209,16 +209,39 @@ class Rategrense:
     faktisk leser den.
     """
 
+    #: Taket på antall nøkler som holdes samtidig (Codex P1). Nøkkelen er
+    #: ikke alltid en identitet SERVEREN har utstedt: den uautentiserte
+    #: innløsningsruten nøkler på onboarding-id-en fra kroppen, altså på
+    #: KLIENTINPUT. En dict som bare vokser er da en gratis minneflate —
+    #: hver ferske id la igjen en liste ingen noensinne ser på igjen, siden
+    #: opprydding bare skjer når nøyaktig samme nøkkel kommer tilbake.
+    #: Over taket feies alle nøkler uten treff i vinduet; de er per
+    #: definisjon uten betydning for en grense som bare ser 60 sekunder
+    #: bakover.
+    NOKKELTAK = 4096
+
     def __init__(self, per_minutt: int) -> None:
         self.per_minutt = per_minutt
         self._treff: dict[str, list[float]] = {}
         self._laas = threading.Lock()
 
-    def slipp_gjennom(self, nokkel: str, naa: float | None = None) -> bool:
+    def slipp_gjennom(self, nokkel: str, naa: float | None = None, *,
+                      tak: int | None = None) -> bool:
+        """`tak` overstyrer budsjettet for NØYAKTIG denne nøkkelen.
+
+        Ruter som trenger et eget, strammere budsjett enn prosessens
+        standard (12 000/min, satt av ytelsesporten) sender det inn her i
+        stedet for å holde sin egen grense — én bøtteimplementasjon, ett
+        sted å lese om vinduet.
+        """
         naa = naa if naa is not None else time.monotonic()
+        grense = tak if tak is not None else self.per_minutt
         with self._laas:
+            if len(self._treff) > self.NOKKELTAK:
+                self._treff = {k: v for k, v in self._treff.items()
+                               if v and v[-1] > naa - 60.0}
             tider = [t for t in self._treff.get(nokkel, ()) if t > naa - 60.0]
-            if len(tider) >= self.per_minutt:
+            if len(tider) >= grense:
                 self._treff[nokkel] = tider
                 return False
             tider.append(naa)
@@ -487,6 +510,27 @@ class Autentisert:
             kilde="arbeidskapabilitet" if self.kapabilitet else "api_token")
 
 
+class ModulAutentisert(Autentisert):
+    """En autentisert MODULDEPLOYMENT (035): tokenet svarer på nøyaktig ett
+    spørsmål — hvilken deployment er dette? Alt annet (livsløp, status,
+    epoch-gyldighet, oppdrags-/artefakttyper) slås opp ved HVER bruk via
+    releasens kontrakt; scopes lagres aldri og utledes aldri her.
+
+    `tenant` er modul-id-en (kun logg/rate — modultokener er tenantløse;
+    forretningstenanten kommer alltid fra det claimede oppdraget), `rolle`
+    er modul-id-en (samme konvensjon som modulens api-tokener: claim-SQL-en
+    bruker rollen som eiermodul)."""
+    __slots__ = ("modul_id", "miljo", "release_id", "utstedt_epoch",
+                 "modultoken_id")
+
+    def __init__(self, modul_id, miljo, release_id, utstedt_epoch,
+                 modultoken_id):
+        super().__init__(modul_id, modul_id, (), f"mtk_{modultoken_id}")
+        self.modul_id, self.miljo = modul_id, miljo
+        self.release_id, self.utstedt_epoch = release_id, utstedt_epoch
+        self.modultoken_id = modultoken_id
+
+
 def _mac(pepper: str, secret: str) -> str:
     return hmac.new(pepper.encode("utf-8"), secret.encode("utf-8"),
                     hashlib.sha256).hexdigest()
@@ -563,6 +607,24 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
         if not authorization or not authorization.startswith("Bearer "):
             return None
         raa = authorization[7:].strip()
+        if raa.startswith("mtk_"):
+            # Modultoken (035): `mtk_<token_id>.<secret>`. Oppslaget går via
+            # den herdede `verifiser_modultoken` (runtime har hverken SELECT
+            # eller skriving på modultoken) og er gyldighets-filtrert der:
+            # tilbakekalt-og-forbi eller utløpt → ingen rad. Token-id-en i
+            # wire-formatet må MATCHE radens (ellers kunne en gjettet id
+            # pares med en stjålet MAC fra et annet token).
+            tid_del, _, msecret = raa[4:].partition(".")
+            if not tid_del or not msecret:
+                return None
+            mrad = conn.execute(
+                "SELECT token_id, modul_id, miljo, release_id, utstedt_epoch"
+                "  FROM verifiser_modultoken(%s)",
+                (_mac(tjeneste.pepper, msecret),)).fetchone()
+            if mrad is None or str(mrad[0]) != tid_del:
+                return None
+            return ModulAutentisert(mrad[1], mrad[2], mrad[3], mrad[4],
+                                    mrad[0])
         token_id, _, secret = raa.partition(".")
         if not token_id or not secret:
             return None
@@ -574,6 +636,54 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
         return Autentisert(rad[0], rad[1], rad[2], token_id)
     finally:
         conn.commit()      # pre-auth eier og lukker sin egen transaksjon
+
+
+def _modultoken_revalidert(tjeneste: Tjeneste, conn: psycopg.Connection,
+                           auth: Autentisert, rid: str) -> Response | None:
+    """Er deploymenten FORTSATT autorisert, her og nå? -> None = ja.
+
+    Codex P1. `preauth` eier og LUKKER sin egen transaksjon, og
+    forretningstransaksjonen starter etterpå. Mellom de to committene kan
+    `noddeaktiver_modul` ha kjørt — det nødstoppet som er annonsert å
+    terminere tokenfamilien ØYEBLIKKELIG. Men `ModulAutentisert`-objektet
+    lever videre over transaksjonsgrensen: et token nødstoppet faktisk
+    drepte, er fortsatt representert som en autentisert deployment i
+    requesten som alt er i gang. Kapabilitetsinnløsningene sammenligner kun
+    IDENTITET (modul, miljø, release) og leser hverken tokenets tilstand,
+    modulens status eller epoch — så kvitteringen eller artefaktet fra den
+    stoppede deploymenten gikk inn likevel, og stoppet var et løfte
+    plattformen ikke holdt.
+
+    ALLE TRE VEIENE BRUKER DEN (Codex P1). Først de to innløsningsveiene;
+    siden også claim-porten. Claim-veien så lenge ut til å være dekket av at
+    `claim_neste_oppdrag` re-verifiserer under modul-låsen, men den
+    re-verifiseringen gjelder REGISTERET — deployment, status, epoch.
+    Funksjonen får ingen token-id og kan derfor ikke se `tilbakekalt_ts`, så
+    en eksplisitt tilbakekalling midt i requesten stanset ingenting: det
+    tilbakekalte tokenet ble tildelt nytt arbeid. Porten står FØR bruken på
+    alle tre stedene, og låsen den tar er transaksjonsbundet — et nødstopp
+    eller en tilbakekalling kan ikke gli inn mellom dommen og forbruket.
+
+    ÉN funksjon for begge veiene, og dommen selv ligger i databasen
+    (`modultoken_fortsatt_autorisert`) — den er ikke sammensatt av tre
+    oppslag herfra som et nødstopp kunne kilt seg inn mellom.
+
+    Et legacy-api-token har ingen deployment å revalidere; scope-porten er
+    hele dets autorisasjon, og den er alt passert.
+    """
+    if not isinstance(auth, ModulAutentisert):
+        return None
+    utfall = conn.execute(
+        "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)",
+        (auth.modultoken_id, auth.modul_id, auth.miljo, auth.release_id,
+         auth.utstedt_epoch)).fetchone()[0]
+    if utfall == "ok":
+        return None
+    conn.rollback()
+    tjeneste.logg.hendelse(utfall, rid, auth.tenant, modul=auth.modul_id,
+                           miljo=auth.miljo, release=auth.release_id,
+                           utstedt=auth.utstedt_epoch)
+    return _feilsvar(utfall, rid)
 
 
 def kanonisk_json(kropp: dict, status: int = 200,
@@ -749,6 +859,22 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_attester(request: Request) -> Response:
         return policyadmin_http.attester_endepunkt(tjeneste, request)
 
+    # 035: modul-onboarding — hemmelighet, innløsning, rotasjon,
+    # tilbakekalling. Maskin-/ops-endepunkter (Bearer), aldri browserøkt.
+    from . import modulonboarding
+
+    def mo_utsted(request: Request) -> Response:
+        return modulonboarding.utsted_endepunkt(tjeneste, request)
+
+    def mo_innlos(request: Request) -> Response:
+        return modulonboarding.innlos_endepunkt(tjeneste, request)
+
+    def mo_roter(request: Request) -> Response:
+        return modulonboarding.roter_endepunkt(tjeneste, request)
+
+    def mo_tilbakekall(request: Request) -> Response:
+        return modulonboarding.tilbakekall_endepunkt(tjeneste, request)
+
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
         Route("/v1/unntak", unntak, methods=["GET"]),
@@ -757,6 +883,13 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # databasen direkte — det er en av de åtte evidensbevisene, og en
         # statisk sjekk i testsuiten håndhever den.
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
+        # 035: onboarding-rutene er statiske stier, registrert her sammen
+        # med de andre maskinrutene.
+        Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
+        Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
+        Route("/v1/modul/token/roter", mo_roter, methods=["POST"]),
+        Route("/v1/modul/token/tilbakekall", mo_tilbakekall,
+              methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
         Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
@@ -1180,6 +1313,14 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",
+    # 035: modul-onboarding. Maskin-/ops-ruter; scope-porten håndheves
+    # inne i endepunktene (Bearer/modultoken, aldri browserøkt) — samme
+    # deklarasjonsform som /v1/oppdrag/*. Innløsningen autentiseres av
+    # selve engangshemmeligheten, rotasjonen av modultokenet.
+    ("POST", "/v1/modul/onboarding"):        "modules:onboard",
+    ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
+    ("POST", "/v1/modul/token/roter"):       "modultoken",
+    ("POST", "/v1/modul/token/tilbakekall"): "modules:onboard",
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
@@ -1245,11 +1386,120 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
-        prefikser = _modulscope(auth)
-        if not prefikser:
-            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
-                                   scope=ORDRESCOPE + "<prefiks>")
-            return _feilsvar("scope_mangler", rid)
+
+        # LUKKET SKJEMA (035, port 8): claim har INGEN lovlige parametre.
+        # En request som sender release/miljø/epoch — eller hva som helst
+        # annet — AVVISES, den ignoreres ikke: identiteten kommer fra
+        # tokenet, og en klient som prøver å sende den skal få vite at den
+        # veien ikke finnes, ikke lures til å tro at den virket.
+        raa_kropp = request.scope.get("state", {}).get("kropp", b"")
+        if raa_kropp:
+            try:
+                kropp_data = json.loads(raa_kropp.decode("utf-8"))
+            except (ValueError, RecursionError):
+                # Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig,
+                # dypt nøstet dokument på noen få kilobyte (≈2 000 nivåer)
+                # ligger godt under kroppsgrensen på 256 KiB og treffer
+                # likevel rekursjonsgrensen — RecursionError er en
+                # RuntimeError, ikke en ValueError, så `except ValueError`
+                # alene slapp den ut som generisk 500 i stedet for det
+                # dokumenterte `request_feilformet`. Dybde er klientinput,
+                # og denne parseren er ny i 035; onboarding- og
+                # artefaktparserne fanger den allerede.
+                return _feilsvar("request_feilformet", rid)
+            if kropp_data not in ({}, None):
+                tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant,
+                                       feiltype="claim_med_parametre")
+                return _feilsvar("request_feilformet", rid)
+
+        # TOKENET AUTENTISERER, REGISTERET AUTORISERER (035 §2/§6).
+        # Token, deployment, status og epoch portes med EKSPLISITTE avslag —
+        # «du har ikke lov» og «det finnes ikke arbeid» må aldri se like ut
+        # (port 18–19). Porten er ÉN funksjon fordi den leses to ganger —
+        # før claimen og etter et tomt resultat — og to kopier av den samme
+        # dommen ville drevet fra hverandre.
+        def _modulporten():
+            """(drad, feilsvar): feilsvar er None når modulen får claime.
+
+            TOKENET REVALIDERES FØRST (Codex P1), og det er ikke en
+            omorganisering: fram til nå leste porten bare REGISTERET —
+            deployment, modulstatus, epoch — mens tokenraden aldri ble sett
+            igjen etter `preauth`, som eier og LUKKER sin egen transaksjon.
+            `claim_neste_oppdrag` kunne ikke ta den heller: den får ingen
+            token-id og har ingenting å slå opp `tilbakekalt_ts` på. En
+            eksplisitt tilbakekalling som committer mellom `preauth` og
+            claimen traff derfor ingen port i det hele tatt, og det
+            tilbakekalte tokenet fikk tildelt nytt arbeid — stikk i strid
+            med at endepunktet lover ØYEBLIKKELIG virkning.
+
+            Revalideringen er den SAMME funksjonen de to
+            innløsningsveiene bruker, og det er hele poenget: dommen «er
+            denne deploymenten fortsatt autorisert?» skal være én regel, én
+            gang, ikke en kopi per dør. Den tar den delte modul-låsen, og
+            låsen er transaksjonsbundet — den holdes altså HELE veien fram
+            til `claim_neste_oppdrag` har tildelt. Et nødstopp eller en
+            tilbakekalling kan ikke gli inn mellom dommen og tildelingen.
+
+            Modulstatus og epoch leses derfor ikke lenger her: de var de
+            samme to sjekkene, ULÅST, og etter revalideringen kan de per
+            konstruksjon ikke fyre — de ville stått som død kode som ser ut
+            som en port. Igjen står det som er DEPLOYMENTENS eget og som
+            revalideringen med vilje ikke ser: livsløpet (en `draining`
+            deployment skal ikke få NYTT arbeid, men skal få levere det den
+            har) og kontraktfeltene autorisasjonen utledes fra.
+            """
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return None, revalidering
+            drad = conn.execute(
+                "SELECT d.livslop, d.kontraktversjon, d.kontrakt_hash"
+                "  FROM moduldeployment d"
+                " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id=%s",
+                (auth.modul_id, auth.miljo, auth.release_id)).fetchone()
+            if drad is None or drad[0] != "claiming":
+                conn.rollback()
+                tjeneste.logg.hendelse("modul_ikke_claimbar", rid,
+                                       auth.tenant,
+                                       livslop=drad[0] if drad else "borte")
+                return None, _feilsvar("modul_ikke_claimbar", rid)
+            return drad, None
+
+        claim_release = claim_miljo = claim_epoch = None
+        if isinstance(auth, ModulAutentisert):
+            drad, portsvar = _modulporten()
+            if portsvar is not None:
+                return portsvar
+            # Autorisasjonen utledes ved BRUK, via releasens kontrakt: raden
+            # må matche eiermodul OG begge kontraktfeltene (positiv
+            # tillatelsesliste). En type registrert under en ANNEN kontrakt
+            # bidrar med ingenting — parallelle kontrakter holder seg fra
+            # hverandre begge veier (port 33–34). Typenavnet oversettes til
+            # handlingsprefikser gjennom den LUKKEDE typeregistreringen i
+            # `oppdragskontrakt`; en registerrad uten kodefestet type
+            # bidrar med ingenting (fail-closed).
+            typerader = conn.execute(
+                "SELECT oppdragstype FROM oppdragstype_register"
+                " WHERE eiermodul=%s AND kontraktversjon=%s"
+                "   AND kontrakt_hash=%s",
+                (auth.modul_id, drad[1], drad[2])).fetchall()
+            prefikser = sorted({
+                pre for (typenavn,) in typerader
+                for pre in getattr(
+                    oppdragskontrakt.OPPDRAGSTYPER.get(typenavn),
+                    "handlingsprefikser", ())})
+            if not prefikser:
+                conn.rollback()
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope="utledet:ordre")
+                return _feilsvar("scope_mangler", rid)
+            claim_release, claim_miljo = auth.release_id, auth.miljo
+            claim_epoch = auth.utstedt_epoch
+        else:
+            prefikser = _modulscope(auth)
+            if not prefikser:
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope=ORDRESCOPE + "<prefiks>")
+                return _feilsvar("scope_mangler", rid)
 
         claim_id = secrets.token_hex(16)
         try:
@@ -1265,9 +1515,29 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 " repair_operation_id, payload_kryptert, key_id, nonce,"
                 " owner_generation, utforelsesfrist, evidensfrist"
                 "  FROM claim_neste_oppdrag(%s, %s, %s, %s, %s, %s, %s)",
-                (auth.rolle, prefikser, claim_id, 300, None, None, None)).fetchone()
+                (auth.rolle, prefikser, claim_id, 300, claim_release,
+                 claim_miljo, claim_epoch)).fetchone()
             if rad is None:
                 conn.rollback()
+                # Codex P2: TOM KØ ER EN PÅSTAND OM ARBEID, IKKE OM TILLATELSE.
+                #
+                # Pre-porten over leses UTEN modul-låsen. Rekker
+                # `noddeaktiver_modul`, en drenering eller et epoch-bytte å
+                # committe etter den lesningen, men før claim_neste_oppdrag
+                # får låsen, forkaster SQL-funksjonen med rette hver kandidat
+                # og returnerer ingen rad. Da er 204 en LØGN: modulen mistet
+                # lov til å claime, og fikk beskjed om at det ikke fantes
+                # arbeid — nøyaktig sammenblandingen port 18–19 forbyr, og
+                # den som får en nøddeaktivert modul til å polle videre i
+                # stedet for å stanse. Rollbacken over avsluttet
+                # transaksjonen, så porten leses her på nytt og ser det som
+                # faktisk er committet. Holder autorisasjonen fortsatt, var
+                # køen virkelig tom.
+                if isinstance(auth, ModulAutentisert):
+                    _, portsvar = _modulporten()
+                    if portsvar is not None:
+                        return portsvar
+                    conn.rollback()
                 return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,
                                      {"x-request-id": rid})
 
@@ -1332,11 +1602,23 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                     return _feilsvar("db_utilgjengelig", rid)
                 verifikasjonsgen = vg[0]
 
+            # Codex P1: kapabiliteten stempler DEPLOYMENTEN som claimet, ikke
+            # bare modulen. `modul_id` er delt mellom alle levende
+            # deployments av modulen, og kvitteringsveien slipper dem alle
+            # forbi scope-porten (retten er kapabilitetens) — uten miljø og
+            # release å sammenligne mot kunne en staging-deployment, eller en
+            # utgått release med et fortsatt levende token, levere resultatet
+            # for produksjonsdeploymentens claim og avslutte den jobben.
+            # `claim_miljo`/`claim_release` er tokenets, ikke noe kalleren
+            # oppgir; med et legacy-api-token er de NULL, og kapabiliteten
+            # blir deploymentløs (og kan da bare innløses av en like
+            # deploymentløs credential).
             kvittering_jti = secrets.token_hex(16)
             kap = conn.execute(
                 "SELECT jti, utloper FROM utsted_kvitteringskapabilitet("
-                "%s,%s,%s,%s)",
-                (opp_id, claim_id, owner_gen, kvittering_jti)).fetchone()
+                "%s,%s,%s,%s,%s,%s)",
+                (opp_id, claim_id, owner_gen, kvittering_jti,
+                 claim_miljo, claim_release)).fetchone()
             if kap is None:
                 conn.rollback()
                 tjeneste.logg.hendelse("db_utilgjengelig", rid, tenant,
@@ -1372,9 +1654,28 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
                 " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
                 (tenant, opp_id)).fetchone()
+            #
+            # Codex (P2): utledningen over er for LEGACY-api-tokener, som
+            # ikke bærer noen deployment i det hele tatt. Et modultoken
+            # BÆRER sin — release og miljø ble bundet ved onboardingen, og
+            # claimen har alt verifisert at nettopp den deploymenten er
+            # `claiming` med gjeldende epoch. Da er et oppslag som ikke kan
+            # skille staging fra produksjon både unødvendig og feil: er
+            # samme kontrakt deployet i BEGGE miljøer, ga det «tvetydig
+            # release» (ingen kapabilitet) eller — verre — produksjonssvaret
+            # på et staging-token, se `er_produksjon` under.
+            if isinstance(auth, ModulAutentisert):
+                autentisert_release, autentisert_miljo = (auth.release_id,
+                                                          auth.miljo)
+            else:
+                autentisert_release = autentisert_miljo = None
             if oppdragsrad is not None and oppdragsrad[0] is not None \
-                    and oppdragsrad[1] is not None and "," not in oppdragsrad[1]:
+                    and (autentisert_release is not None
+                         or (oppdragsrad[1] is not None
+                             and "," not in oppdragsrad[1])):
                 (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
+                if autentisert_release is not None:
+                    o_release = autentisert_release
                 # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
                 # modulen + kontrakten. Finnes ingen registrert type, utstedes
                 # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
@@ -1387,11 +1688,37 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 # ingen on-demand-utstedelse (se docstringen over) — samme
                 # fail-closed regel som RELEASE-tvetydigheten over: er valget
                 # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
+                # `test.`-prefikset er reservert (035 §8): det utledes
+                # ALDRI når DENNE claimen kommer fra produksjon —
+                # selvtest-artefakter skal ikke kunne bære kundedata, og en
+                # testtype i produksjonskjeden er en konfigurasjonsfeil,
+                # ikke en fullmakt. Filteret står i SQL-en så «nøyaktig én
+                # type»-regelen teller de typene som faktisk kan utstedes.
+                #
+                # Codex (P2): porten spør om DEN AUTENTISERTE claimens
+                # miljø, ikke om kontrakten finnes i produksjon et sted.
+                # Med et modultoken står miljøet i tokenet. Uten et
+                # modultoken finnes ingen autentisert deployment å spørre,
+                # og da er «finnes den i produksjon» det nærmeste
+                # fail-closed svaret — et legacy-token er miljøløst, og å
+                # anta staging for det ville vært å gjette den veien som
+                # slipper mest ut.
+                if autentisert_miljo is not None:
+                    er_produksjon = autentisert_miljo == "produksjon"
+                else:
+                    er_produksjon = bool(conn.execute(
+                        "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
+                        " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
+                        "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
+                        "   AND dp.miljo='produksjon')",
+                        (o_modul, o_kv, o_khash)).fetchone()[0])
                 typerader = conn.execute(
                     "SELECT artefakttype FROM artefakttype_register"
                     " WHERE eiermodul=%s AND kontraktversjon=%s"
-                    "   AND kontrakt_hash=%s ORDER BY artefakttype LIMIT 2",
-                    (o_modul, o_kv, o_khash)).fetchall()
+                    "   AND kontrakt_hash=%s"
+                    "   AND NOT (artefakttype LIKE 'test.%%' AND %s)"
+                    " ORDER BY artefakttype LIMIT 2",
+                    (o_modul, o_kv, o_khash, er_produksjon)).fetchall()
                 typerad = typerader[0] if len(typerader) == 1 else None
                 if typerad is not None:
                     # Levetid = evidensfristen, ALDRI lengre (port 23). 017
@@ -1421,12 +1748,18 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                         # raden. Endret epoch mellom claim og utstedelse gir
                         # ingen kapabilitet (port 24) — funksjonen matcher
                         # o.module_epoch og feiler.
+                        #
+                        # Codex P1: kapabiliteten stemples med DEPLOYMENTENS
+                        # miljø når claimen kom fra et modultoken, så
+                        # innløsningen kan kreve hele den autentiserte
+                        # deploymenten (`_artefakt_upload`). Et legacy-token
+                        # har ingen — da står miljøet NULL, som før.
                         orad = conn.execute(
                             "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
-                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
                              o_epoch, typerad[0], opplasting_jti,
-                             min(igjen, 3600))).fetchone()
+                             min(igjen, 3600), autentisert_miljo)).fetchone()
                         # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
                         # over gjør `utloper <= evidensfrist` til en identitet,
                         # men den identiteten hviler på 017s klemming — og en
@@ -1548,7 +1881,16 @@ def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
         if auth is None or auth.kapabilitet is not None:
             tjeneste.logg.hendelse("token_ugyldig", rid)
             return _feilsvar("token_ugyldig", rid)
-        if not _modulscope(auth):
+        # 035: et modultoken bærer INGEN scopes — det svarer på ett spørsmål
+        # (hvilken deployment er dette?), og fullmakten til å kvittere er
+        # ikke tokenets, men OPPDRAGETS: `kvittering_jti` ble utstedt av
+        # claim-en, er bundet til nøyaktig ett oppdrag OG til eiermodulen,
+        # og innløses mot `auth.rolle` noen linjer ned. Den bindingen er
+        # smalere enn `orders:execute:<prefiks>` kunne vært, så
+        # legacy-porten er ikke bare uoppfylt her — den er overflødig.
+        # Uten dette unntaket kunne en onboardet deployment claime arbeid
+        # den aldri fikk levere resultatet av.
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope=ORDRESCOPE + "<prefiks>")
             return _feilsvar("scope_mangler", rid)
@@ -1714,10 +2056,33 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
 
     # 1. Kapabiliteten. `modul_id` sammenlignes inne i funksjonen, så en
     #    annen modul kan ikke innløse en kapabilitet den har fått tak i.
+    #
+    #    Codex P1: `auth.rolle` er MODULENS id, og den er delt mellom alle
+    #    levende deployments av modulen — staging og produksjon, eller to
+    #    releaser under hver sin kontraktversjon, hver med sitt eget
+    #    modultoken. Kvitteringsveien slipper dem alle forbi scope-porten
+    #    med vilje (retten ER kapabilitetens), så modulnavnet alene var
+    #    ingen port: en delt eller feilrutet `kvittering_jti` lot en annen
+    #    deployment enn den som claimet levere resultatet og avslutte
+    #    jobben. Innløsningen krever derfor HELE den autentiserte
+    #    deploymenten. Med et legacy-api-token finnes ingen — NULL matcher
+    #    da kun kapabiliteter som selv er deploymentløse (fail-closed begge
+    #    veier), som på opplastingsveien.
+    #
+    #    Codex P1, neste runde: identiteten er ikke NOK. `preauth` lukket
+    #    sin egen transaksjon, og et nødstopp som committet etterpå har
+    #    drept tokenet uten at dette `auth`-objektet vet det. Derfor
+    #    revalideres deploymenten FØR innløsningen, under modul-låsen —
+    #    ellers kunne den stoppede deploymenten fortsatt avslutte jobben.
+    revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+    if revalidering is not None:
+        return revalidering
+    d_miljo = getattr(auth, "miljo", None)
+    d_release = getattr(auth, "release_id", None)
     kap = conn.execute(
         "SELECT tenant, oppdrag_id, owner_claim_id, owner_generation, status,"
-        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s)",
-        (jti, auth.rolle)).fetchone()
+        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
+        (jti, auth.rolle, d_miljo, d_release)).fetchone()
     if kap is None:
         conn.rollback()
         tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, auth.tenant)
@@ -2098,7 +2463,14 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
-        if "artifacts:upload" not in auth.scopes:
+        # 035: samme unntak som kvitteringen — modultokenet har ingen
+        # scopes, og opplastingsretten er `kapabilitet_jti`-ens, ikke
+        # tokenets. Artefaktkapabiliteten deles ut av claim-en, er bundet
+        # til oppdrag + eiermodul + release/kontrakt/epoch, og innløses
+        # mot `auth.rolle` under. En claim uten opplastingskapabilitet gir
+        # ingen jti, og da stopper `innlos_artefaktkapabilitet` requesten.
+        if not isinstance(auth, ModulAutentisert) \
+                and "artifacts:upload" not in auth.scopes:
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope="artifacts:upload")
             return _feilsvar("scope_mangler", rid)
@@ -2119,12 +2491,35 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         if not isinstance(jti, str) or not isinstance(rapport, dict):
             return _feilsvar("request_feilformet", rid)
 
-        # Innløs kapabiliteten — KUN for den holdende modulen (auth.rolle).
+        # Innløs kapabiliteten — KUN for den holdende DEPLOYMENTEN.
+        #
+        # Codex P1: `auth.rolle` er modulens id, ikke deploymentens. En modul
+        # kan ha flere levende deployments samtidig (staging og produksjon,
+        # eller to releaser under hver sin kontraktversjon), hver med sitt
+        # eget modultoken — og unntaket over slipper dem alle forbi
+        # scope-porten. Uten miljø og release i innløsningen kunne en
+        # staging-arbeider som fikk en jti utstedt til produksjons-
+        # deploymenten levere rapporten, og API-et ville ført evidensen på
+        # den releasen kapabiliteten bar: en attestering fra en deployment
+        # som ikke autentiserte requesten. Med et legacy-api-token finnes
+        # ingen autentisert deployment — NULL matcher da kun kapabiliteter
+        # som selv er miljøløse (fail-closed begge veier).
+        #
+        # Codex P1, neste runde: og identiteten er ikke NOK — den er en
+        # PÅSTAND fra en pre-auth-transaksjon som er lukket. Et nødstopp
+        # som committet etterpå drepte tokenet, men `auth` husker det ikke.
+        # Revalideringen står derfor før innløsningen, som på
+        # kvitteringsveien.
+        revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+        if revalidering is not None:
+            return revalidering
+        d_miljo = getattr(auth, "miljo", None)
+        d_release = getattr(auth, "release_id", None)
         bind = conn.execute(
             "SELECT tenant, oppdrag_id, release_id, kontraktversjon,"
             " kontrakt_hash, module_epoch, artefakttype"
-            "  FROM innlos_artefaktkapabilitet(%s, %s)",
-            (jti, auth.rolle)).fetchone()
+            "  FROM innlos_artefaktkapabilitet(%s, %s, %s, %s)",
+            (jti, auth.rolle, d_miljo, d_release)).fetchone()
         if bind is None:
             conn.rollback()
             tjeneste.logg.hendelse("kapabilitet_ugyldig", rid)

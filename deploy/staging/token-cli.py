@@ -104,6 +104,16 @@ def opprett(conn, pepper: str, tenant: str, rolle: str, scopes: list[str],
     autentisere. Aktivering er et EGET, eksplisitt steg som først skjer
     når hemmeligheten beviselig er levert (v4 §1).
     """
+    # 035, port 24 (deploy-port): CLI-en kan ALDRI utstede et claim-dyktig
+    # token. Eiermodulers claim-fullmakt (`orders:execute:*`) kommer KUN fra
+    # modul-onboarding (engangshemmelighet → modultoken, bundet til
+    # deployment/release/epoch) — et api-token med ordre-scopes ville vært
+    # nettopp den ubundne, spoofbare identiteten onboardingen fjerner.
+    ordre = sorted(sc for sc in scopes if sc.startswith("orders:execute"))
+    if ordre:
+        raise SystemExit(
+            "AVBRUTT: orders:execute-scopes utstedes aldri herfra — bruk"
+            f" modul-onboarding (035). Avvist: {', '.join(ordre)}")
     token_id = "tk_" + secrets.token_hex(8)
     secret = secrets.token_urlsafe(32)          # >= 256 bits CSPRNG
     conn.execute(

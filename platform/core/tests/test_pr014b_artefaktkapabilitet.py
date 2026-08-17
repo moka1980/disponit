@@ -53,7 +53,7 @@ def _plukket_oppdrag_med_binding(conn, modul, kh):
         ma.commit()
     finally:
         ma.close()
-    at = "at-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"
     da = _mk_admin("disponit_domains_admin")
     try:
         da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,'sh','sys')",

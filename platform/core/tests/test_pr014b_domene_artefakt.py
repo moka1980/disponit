@@ -154,7 +154,7 @@ def _artefakt(conn, tenant, oppdrag_id, at, modul, kh, *, jti=None, ver=1):
 
 @pg
 def test_artefakt_statemaskin_og_frosset_binding(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -181,7 +181,7 @@ def test_artefakt_statemaskin_og_frosset_binding(migrator):
 
 @pg
 def test_artefakt_ciphertext_kan_kun_nulles(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -226,7 +226,7 @@ def test_artefakt_ciphertext_kan_kun_nulles(migrator):
 
 @pg
 def test_ett_promotert_per_oppdrag(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -245,7 +245,7 @@ def test_ett_promotert_per_oppdrag(migrator):
 
 @pg
 def test_artefakttype_immutable(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     with pytest.raises(psycopg.errors.RaiseException):
@@ -615,7 +615,7 @@ def test_runtime_kan_ikke_kalle_domenefunksjoner(migrator):
 # ---------------- artefakt-funksjoner ----------------
 
 def _artefakt_oppsett(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -634,7 +634,7 @@ def _artefakt_oppsett(migrator):
 
 @pg
 def test_promoter_epoch_avvik_port37(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -668,7 +668,7 @@ def test_promoter_idempotent_validerer_binding(migrator):
     funksjon «promotert» på et kall med feil oppdrag, feil release, feil epoch
     eller feil signert hash, og applikasjonen leser det som verifisert evidens.
     """
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -703,7 +703,7 @@ def test_promoter_idempotent_validerer_binding(migrator):
 
 def _gammelt_staged_artefakt(migrator, *, evidensfrist):
     """Staged artefakt > 24 t gammelt på et oppdrag med gitt evidensfrist."""
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -806,7 +806,7 @@ def test_b4_overtakelsessak_idempotent_port11(migrator):
 def test_karantene_bevares_gjennom_rydd(migrator):
     # Codex §7 pkt. 8: et karantenesatt artefakt (uverifisert kvittering) må
     # OVERLEVE oppryddingen — den rører kun 'staged'.
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -978,7 +978,7 @@ def test_artefakt_dek_ref_frosset(migrator):
     ciphertext/hash/tilstand står urørt.
 
     MUTASJONEN SOM DREPER DENNE: fjern dek_ref fra frys-sjekken i artefakt_statemaskin."""
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)

@@ -86,6 +86,13 @@ REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM {rolle};
 REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) FROM {rolle};
 REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM {rolle};
 RESET ROLE;
+-- 035: familiehorisont-sveipen er senderens pre-pass og hører til samme
+-- grense — den tar tenanten som parameter og setter DENS RLS-kontekst, så
+-- et grant her ville gitt forespørselsveien et kryss-tenant-vindu.
+SET LOCAL ROLE disponit_modul_eier;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM {rolle};
+RESET ROLE;
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
@@ -94,6 +101,35 @@ GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
+-- 017/035: artefaktkapabiliteten. Funksjonene eies av `disponit_domene_eier`
+-- (SECURITY DEFINER-veien inn i kapabilitetstabellen), så grantene MÅ gis
+-- som eieren — som migrator blir de en stille WARNING, samme felle som
+-- M37_RETTIGHETER under. 035 gir begge et haleargument for deploymenten og
+-- DROPper de gamle formene; signaturene her må derfor følge 035 eksakt.
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+-- 035: modul-onboarding og modultokener. Hele denne veien er
+-- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har
+-- verken lesing eller skriving på tabellene bak dem. `verifiser_modultoken`
+-- er selve autentiseringen av et modultoken, så uten EXECUTE her svarer
+-- API-et `permission denied` på hver eneste modulforespørsel.
+SET LOCAL ROLE disponit_modul_eier;
+GRANT EXECUTE ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION verifiser_modultoken(TEXT) TO {rolle};
+-- Revalideringen ved innløsning av en kapabilitet: uten EXECUTE her ville
+-- hver kvittering og hver artefaktopplasting fra et modultoken svart
+-- `permission denied`.
+GRANT EXECUTE ON FUNCTION modultoken_fortsatt_autorisert(UUID, TEXT, TEXT, TEXT, BIGINT) TO {rolle};
+GRANT EXECUTE ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) TO {rolle};
+-- ... og INGEN direkte tabelltilgang (klarsignalet §3). Tabellene eies av
+-- modul_eier, så `NULLSTILL_TABELLER` (som bare rører migrators egne
+-- tabeller) når dem ikke; REVOKE-en må stå her, som eieren.
+REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM {rolle};
+RESET ROLE;
 -- PR-006: outbox-protokollen. `oppdrag` og `reparasjonsoperasjoner` er
 -- append+status som `unntak` — INSERT og status-UPDATE, aldri DELETE.
 -- `arbeidskapabiliteter` står bevisst IKKE her: den eies av
@@ -162,8 +198,12 @@ GRANT EXECUTE ON FUNCTION claim_neste_oppdrag(TEXT, TEXT[], TEXT, INT, TEXT, TEX
 GRANT EXECUTE ON FUNCTION registrer_verifikasjonsbevis(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT, INT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION start_verifikasjonsgenerasjon(TEXT, BIGINT, TEXT, INT, JSONB, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION knytt_verifikasjonsoppdrag(TEXT, BIGINT, TEXT, INT, BIGINT) TO {rolle};
-GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT) TO {rolle};
-GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
+-- 035: begge fikk haleargumenter for DEPLOYMENTEN (miljø + release).
+-- Signaturen her MÅ følge migrasjonen — 035 dropper de gamle formene, og
+-- en GRANT mot en signatur som ikke finnes er en hard feil, ikke en
+-- advarsel.
+GRANT EXECUTE ON FUNCTION utsted_kvitteringskapabilitet(BIGINT, TEXT, INT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_kvitteringskapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 -- `arkiver_policyversjon` gis IKKE til runtime. Arkivering er en
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
@@ -204,6 +244,11 @@ SET LOCAL ROLE disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
+RESET ROLE;
+-- 035: familiehorisont-sveipen (senderens pre-pass). Eies av en ANNEN rolle
+-- enn de tre over, derfor sin egen SET LOCAL ROLE.
+SET LOCAL ROLE disponit_modul_eier;
+GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(text) TO {rolle};
 RESET ROLE;
 """
 

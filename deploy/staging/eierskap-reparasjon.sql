@@ -65,6 +65,15 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'frigi_hengende_kapabiliteter()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_utlopte_claims()',                           'disponit_m37_claimer'),
     ('FUNCTION', 'innlos_kvitteringskapabilitet(text,text)',         'disponit_m37_claimer'),
+    -- 035 la til haleargumentene for DEPLOYMENTEN i begge kvitterings-
+    -- funksjonene, som for artefaktkapabiliteten lenger nede. BEGGE formene
+    -- står her: reparasjonen kjører FØR migrer.py, så en base som ennå ikke
+    -- har kjørt 035 har de gamle signaturene installert og eid av
+    -- m37_claimer. Sto de ikke her, ville steg 2 flyttet dem til migrator —
+    -- og 035, som dropper dem under SET LOCAL ROLE disponit_m37_claimer,
+    -- ville feilet på eierskap.
+    ('FUNCTION', 'innlos_kvitteringskapabilitet(text,text,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'kvitteringskapabilitet_deployment_frosset()',       'disponit_m37_claimer'),
     ('FUNCTION', 'kapabilitet_innenfor_claim()',                     'disponit_m37_claimer'),
     ('FUNCTION', 'kapabilitet_statusmaskin()',                       'disponit_m37_claimer'),
     ('FUNCTION', 'knytt_verifikasjonsoppdrag(text,bigint,text,integer,bigint)', 'disponit_m37_claimer'),
@@ -79,6 +88,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'tenanter_uten_policysnapshot()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'utsted_arbeidskapabilitet(text,integer,text,integer)', 'disponit_m37_claimer'),
     ('FUNCTION', 'utsted_kvitteringskapabilitet(bigint,text,integer,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'utsted_kvitteringskapabilitet(bigint,text,integer,text,text,text)', 'disponit_m37_claimer'),
     -- 013 (PR-013): den herdede aktiveringsfunksjonen. Eid av
     -- disponit_policy_eier fordi policyer/policy_hode er off-limits for runtime
     -- (runtime får KUN EXECUTE). Ny privilegert eier — paritetstesten dekker den.
@@ -91,6 +101,26 @@ INSERT INTO _design VALUES
     -- disponit_modul_eier fordi registertabellene er off-limits for runtime
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.
     ('FUNCTION', 'installer_modul(text,text)',                        'disponit_modul_eier'),
+    -- 035: modul-onboarding — utstedelse/innløsning/rotasjon/tilbakekalling
+    -- eies av modul_eier — runtime når tabellene KUN gjennom funksjonene
+    -- (verifiser_modultoken er den eneste leseveien).
+    ('FUNCTION', 'utsted_onboarding_hemmelighet(text,text,text,uuid,text,integer,integer,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'innlos_onboarding(uuid,text,uuid,text,integer,text)', 'disponit_modul_eier'),
+    -- 035 la til innløsningens idempotensnøkkel som haleargument. BEGGE
+    -- formene står her, av samme grunn som for de andre utvidede
+    -- signaturene: reparasjonen kjører FØR migrer.py.
+    ('FUNCTION', 'innlos_onboarding(uuid,text,uuid,text,integer,text,uuid)', 'disponit_modul_eier'),
+    ('FUNCTION', 'verifiser_modultoken(text)',                         'disponit_modul_eier'),
+    ('FUNCTION', 'modultoken_fortsatt_autorisert(uuid,text,text,text,bigint)', 'disponit_modul_eier'),
+    -- Siste ledd er rotasjonens idempotensnøkkel (035, Codex P1) — den gamle
+    -- femargumentsformen finnes ikke lenger, migrasjonen dropper den.
+    -- INGEN SEMIKOLON I KOMMENTARENE HER: både reparasjonskjøringen og
+    -- paritetstesten deler filen på setningsskilletegnet, så et semikolon i
+    -- prosa kutter designtabellen på midten og lar resten av radene
+    -- forsvinne stille.
+    ('FUNCTION', 'roter_modultoken(uuid,uuid,text,integer,text,uuid)', 'disponit_modul_eier'),
+    ('FUNCTION', 'tilbakekall_modultoken(uuid,text,text)',             'disponit_modul_eier'),
+    ('FUNCTION', 'varsle_tokenfamilie_utlop(text)',                    'disponit_modul_eier'),
     ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),
@@ -120,6 +150,15 @@ INSERT INTO _design VALUES
     -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
     ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),
     ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier'),
+    -- 035 la til haleargumentet for MILJØ i begge (kapabiliteten bindes til
+    -- hele den autentiserte deploymenten, ikke bare modulen). BEGGE formene
+    -- står her, som for den gamle claim-signaturen: reparasjonen kjører FØR
+    -- migrer.py, så en base som ennå ikke har kjørt 035 har de gamle
+    -- signaturene installert og eid av domene_eier. Sto de ikke her, ville
+    -- steg 2 flyttet dem til migrator — og 035, som dropper dem under
+    -- SET LOCAL ROLE disponit_domene_eier, ville feilet på eierskap.
+    ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text,text,text)',  'disponit_domene_eier'),
     -- PR-015: fire øyne + de bundne driftsformene (migrasjon 019). Samme eier
     -- som resten av domenelaget — avgjørelsen er iboende kryss-tenant, og
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
