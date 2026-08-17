@@ -1458,6 +1458,68 @@ def test_avvist_opplasting_gir_feilkvittering():
         assert "artefakt_id" not in res
 
 
+def test_avvist_feilkvittering_er_heller_ikke_ferdig():
+    """Codex P1: feilgrenene meldte `avbrutt` uansett hva plattformen
+    svarte på feil-kvitteringen.
+
+    `avbrutt` betyr FERDIG mislykket. Blir feil-kvitteringen avvist med
+    409/5xx — eller lagret som sen evidens med 202 — er det nettopp det
+    plattformen IKKE har bekreftet: oppdraget står fortsatt claimet og
+    uferdig der, akkurat som når en suksesskvittering blir avvist.
+    Suksessgrenen leste `_kvittert`, feilgrenene gjorde det ikke, og
+    forskjellen var vilkårlig: en planlegger som tror på `avbrutt` slutter
+    å følge et oppdrag som aldri ble avsluttet.
+
+    Kontroll: sett feilgrenene tilbake til `{"utfall": "avbrutt", ...}`, så
+    blir denne rød — `ukvittert` blir `avbrutt` igjen på alle tre veier.
+    """
+    from modules.wcag_audit import controller
+    ok_motor = FakeMotor(resultat=_motorresultat())
+
+    class _UtenKapabilitet(_Stubklient):
+        def post(self, sti, json=None, headers=None):
+            r = super().post(sti, json=json, headers=headers)
+            if sti == "/v1/oppdrag/claim":
+                return _Svar(200, {**r.json(), "opplasting": None})
+            return r
+
+    # De tre feilveiene: motorfeil, ingen opplastingskapabilitet, avvist
+    # opplasting — hver med en feil-kvittering plattformen ikke godtok.
+    veier = (
+        ("Motorfeil", lambda s: (_Stubklient(s), FakeMotor(feil="krasj"))),
+        ("ingen_kapabilitet", lambda s: (_UtenKapabilitet(s), ok_motor)),
+        ("opplasting_avvist",
+         lambda s: (_Stubklient(s, opplastingsstatus=413), ok_motor)))
+
+    for grunn, lag in veier:
+        for status in (409, 500):
+            klient, motor = lag(status)
+            res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                     lambda k: k)
+            assert res["utfall"] == "ukvittert", (grunn, status, res)
+            assert res["kvittert"] is False, (grunn, res)
+            # Grunnen står uansett: hvorfor kjøringen feilet er like sant
+            # om kvitteringen kom frem eller ikke.
+            assert res["grunn"] == grunn, res
+            assert len(klient.kvitteringer) == 1, grunn
+
+        # Sen evidens (202) er samme sak: evidensen er bevart, men
+        # plattformen har bevisst latt oppdraget være ufullført.
+        klient, motor = lag(202)
+        klient.kvitteringskropp = {"status": "lagret_uten_statusendring"}
+        res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                 lambda k: k)
+        assert res["utfall"] == "ukvittert", (grunn, res)
+
+        # ... og en godtatt feil-kvittering er fortsatt `avbrutt`, ellers
+        # ville vakten gjort alle feilede kjøringer uavklarte.
+        klient, motor = lag(200)
+        res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                 lambda k: k)
+        assert res["utfall"] == "avbrutt", (grunn, res)
+        assert res["kvittert"] is True, (grunn, res)
+
+
 def test_rapporten_holdes_under_1_mib():
     """Codex P1: antallsgrensene alene holder ikke 1 MiB-taket — 500 funn
     à ti 200-tegns eksempler passerer skjemaet og blir avvist av

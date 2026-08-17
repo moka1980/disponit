@@ -31,6 +31,12 @@ Feilhåndteringens utfall:
     202 med `lagret_uten_statusendring`: evidensen er bevart, men
     plattformen har BEVISST latt oppdraget være ufullført. En 2xx er
     derfor ikke i seg selv et statusskifte — se `_kvittert`.
+
+`avbrutt` over betyr FERDIG mislykket, og forutsetter derfor at
+plattformen tok imot feil-kvitteringen. Gjorde den ikke det, er utfallet
+`ukvittert` også på feilveiene (Codex P1) — se `_feilutfall`. `grunn` står
+uansett: hvorfor kjøringen feilet er like sant om kvitteringen kom frem
+eller ikke.
 """
 from __future__ import annotations
 
@@ -74,6 +80,28 @@ def _kvittert(rk) -> bool:
     return isinstance(kropp, dict) and kropp.get("status") in _STATUSSKIFTE
 
 
+def _feilutfall(rk, grunn: str, **ekstra) -> dict:
+    """Utfallet for en kjøring som feilet — avledet av `_kvittert`, ikke
+    antatt (Codex P1).
+
+    Feilgrenene meldte `avbrutt` uansett hva plattformen svarte på
+    feil-kvitteringen. `avbrutt` betyr «oppdraget er FERDIG mislykket», og
+    det er nettopp det plattformen ikke har bekreftet når kvitteringen ble
+    avvist med 409/5xx eller lagret som sen evidens med 202: da står
+    oppdraget fortsatt claimet og uferdig der, akkurat som når en
+    SUKSESS-kvittering blir avvist. Suksessgrenen har lest `_kvittert`
+    siden forrige runde; feilgrenene gjorde det ikke, og forskjellen var
+    vilkårlig — en planlegger som tror på `avbrutt` slutter å følge et
+    oppdrag som aldri ble avsluttet.
+
+    `grunn` og `kvittering_status` blir stående uansett utfall: hvorfor
+    kjøringen feilet er like sant om kvitteringen kom frem eller ikke."""
+    kvittert = _kvittert(rk)
+    return {"utfall": "avbrutt" if kvittert else "ukvittert",
+            "grunn": grunn, "kvittering_status": rk.status_code,
+            "kvittert": kvittert, **ekstra}
+
+
 def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     """-> {"utfall": "tomt"|"utfort"|"avbrutt"|"ukvittert", ...}."""
     hode = {"authorization": f"Bearer {token}"}
@@ -110,9 +138,7 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     except (Motorfeil, jsonschema.ValidationError) as e:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "motor_avbrutt"})
-        return {"utfall": "avbrutt", "grunn": type(e).__name__,
-                "kvittering_status": rk.status_code,
-                "kvittert": _kvittert(rk)}
+        return _feilutfall(rk, type(e).__name__)
 
     opplasting = claim.get("opplasting")
     if not opplasting:
@@ -121,9 +147,7 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         # rapporten kan ikke leveres, oppdraget feiler ærlig.
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "ingen_opplastingskapabilitet"})
-        return {"utfall": "avbrutt", "grunn": "ingen_kapabilitet",
-                "kvittering_status": rk.status_code,
-                "kvittert": _kvittert(rk)}
+        return _feilutfall(rk, "ingen_kapabilitet")
 
     ro = klient.post("/v1/artefakt",
                      json={"kapabilitet_jti": opplasting["jti"],
@@ -137,10 +161,8 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         # den kom ikke frem: da er oppdraget ærlig mislykket.
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "opplasting_avvist"})
-        return {"utfall": "avbrutt", "grunn": "opplasting_avvist",
-                "opplasting_status": ro.status_code,
-                "kvittering_status": rk.status_code,
-                "kvittert": _kvittert(rk)}
+        return _feilutfall(rk, "opplasting_avvist",
+                           opplasting_status=ro.status_code)
     artefakt = ro.json()
 
     rk = kvitter({**kvittering_basis, "resultat": "utfort",
