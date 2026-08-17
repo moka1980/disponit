@@ -1071,10 +1071,13 @@ def test_bare_runtime_og_eier_har_execute_paa_slettingen():
 
 
 def _utkastrad(c, uid, pid, status, innholds_hash=None):
-    """Et utkast i en gitt status. `innholds_hash` er bindingen til
-    generasjonen utkastet ble: `aktiver_policy` skriver utkastets frosne hash
-    inn i policyraden, så et aktivert utkast og dets policyversjon deler
-    hash."""
+    """Et utkast i en gitt status.
+
+    Bindingen til generasjonen settes IKKE her: `aktivert_revisjon` er
+    server-utledet (migrasjon 034), og triggeren stempler raden med hodets
+    revisjon i det den blir `aktivert` — også når den fødes slik, som her.
+    Hoderaden må derfor finnes først; det er `_policyrad` som lager den.
+    """
     c.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
         "innholds_hash,status,opprettet_av)"
@@ -1106,12 +1109,8 @@ def test_lista_er_arbeidskoen_ikke_historikken():
              ("u-val-" + secrets.token_hex(4), pid_levende, "validert"),
              ("u-utk-" + secrets.token_hex(4), pid_slettet, "utkast")]
     for uid, pid, status in rader:
-        # Det aktiverte utkastet for den LEVENDE policyen bærer hashen til
-        # den aktive raden — det er slik aktiveringen etterlater det.
         _utkastrad(m, uid, pid, status,
-                   _hash(pid, "1.0.0") if uid.startswith("u-lva-")
-                   else "h-" + secrets.token_hex(8) if status != "utkast"
-                   else None)
+                   _hash(pid, "1.0.0") if status != "utkast" else None)
     m.commit()
     rt = _rt()
     try:
@@ -1137,6 +1136,10 @@ def test_gjenbrukt_policy_id_gjenoppliver_ikke_slettet_generasjon():
     denne id-en» slipper DEN SLETTEDE generasjonens utkast tilbake inn i
     arbeidskøen — presentert som gjeldende tilstand ved siden av
     erstatningen (Codex P2).
+
+    Erstatningen får her en ANNEN versjon (2.0.0) enn den slettede. Det er
+    det milde tilfellet — se testen under for det harde, der dokumentet er
+    identisk og hashen dermed kolliderer også.
 
     Kontroll: bytt prøven i `list_utkast` tilbake til `policy_hode`-pekeren,
     så blir denne rød.
@@ -1172,4 +1175,100 @@ def test_gjenbrukt_policy_id_gjenoppliver_ikke_slettet_generasjon():
             "den slettede generasjonen kom tilbake da id-en ble gjenbrukt"
     finally:
         rt.close()
+        m.close()
+
+
+@pg
+def test_identisk_gjenskapt_policy_gjenoppliver_ikke_slettet_generasjon():
+    """Det HARDE gjenbruket: erstatningen er samme dokument, samme versjon
+    (Codex P2, andre runde). 032 sletter radene og frigjør versjonene nettopp
+    for at dette skal være lov — og `innholds_hash` er deterministisk av
+    innholdet, så erstatningen får da NØYAKTIG samme hash som den slettede
+    generasjonen. En prøve som sammenligner innhold kan ikke skille dem: den
+    er sann for begge, og den slettede generasjonen sto igjen i arbeidskøen
+    ved siden av erstatningen, presentert som gjeldende tilstand.
+
+    Skillet må derfor være en identitet som ikke kan gjenbrukes.
+    `policy_hode.revisjon` er det: den bumpes av både aktiveringen og
+    slettingen, og telles aldri ned. De to utkastene her bærer to ulike tall,
+    og bare det ene er hodets nåværende.
+
+    Kontroll: bytt prøven i `list_utkast` tilbake til `innholds_hash` mot den
+    aktive raden, så blir denne rød (og den forrige testen forblir grønn —
+    det var nettopp derfor versjonsbyttet der ikke fanget dette).
+    """
+    from api import policyadmin
+    from db.pg import sett_kontekst
+    pid = "p-" + secrets.token_hex(3)
+    u_gammel = "u-gml-" + secrets.token_hex(4)
+    u_ny = "u-ny-" + secrets.token_hex(4)
+    m = _mig()
+    _policyrad(m, pid)                                   # 1.0.0
+    _utkastrad(m, u_gammel, pid, "aktivert", _hash(pid, "1.0.0"))
+    m.commit()
+    rt = _rt()
+    try:
+        assert _slett(rt, pid) == 1
+        rt.commit()
+
+        # Gjenskapt med SAMME id, SAMME versjon, SAMME innhold — og dermed
+        # samme innholdshash som den slettede generasjonen.
+        sett_kontekst(m, TEN, "test", "r3")
+        _policyrad(m, pid, versjon="1.0.0")
+        _utkastrad(m, u_ny, pid, "aktivert", _hash(pid, "1.0.0"))
+        m.commit()
+
+        # Forutsetningen testen hviler på: hashene ER like.
+        hasher = {h for (h,) in m.execute(
+            "SELECT innholds_hash FROM policyutkast WHERE tenant=%s"
+            " AND utkast_id IN (%s,%s)", (TEN, u_gammel, u_ny)).fetchall()}
+        assert len(hasher) == 1, f"testen måler ikke kollisjonen: {hasher}"
+
+        sett_kontekst(rt, TEN, "test", "r4")
+        vist = {r["utkast_id"] for r in policyadmin.list_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid)}
+        assert u_ny in vist, "erstatningen mangler i arbeidskøen"
+        assert u_gammel not in vist, \
+            "den slettede generasjonen kom tilbake da innholdet ble gjenskapt"
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_aktivert_revisjon_er_server_utledet():
+    """Stempelet er et VITNESBYRD om aktiveringen, ikke en påstand kalleren
+    kan komme med. Runtime har UPDATE på `policyutkast`, så en kolonne
+    kalleren kunne fylt ville vært en identitet kalleren kunne diktet — og da
+    var vi tilbake til å gjette generasjonen. Triggeren (034) setter verdien
+    ved overgangen til `aktivert` og holder den ellers uendret, uansett hva
+    som skrives utenfra."""
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid)
+    m.commit()
+    try:
+        # Skrevet inn ved fødselen: overskrives av hodets revisjon.
+        m.execute(
+            "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+            "innholds_hash,status,opprettet_av,aktivert_revisjon)"
+            " VALUES (%s,%s,%s,'{}'::jsonb,%s,'aktivert','forf',9999)",
+            (TEN, uid, pid, _hash(pid, "1.0.0")))
+        hode, stemplet = m.execute(
+            "SELECT h.revisjon, u.aktivert_revisjon FROM policyutkast u"
+            " JOIN policy_hode h ON h.tenant=u.tenant"
+            "  AND h.policy_id=u.policy_id"
+            " WHERE u.tenant=%s AND u.utkast_id=%s", (TEN, uid)).fetchone()
+        assert stemplet == hode, (stemplet, hode)
+
+        # Skrevet inn etterpå: rullet tilbake til det triggeren satte.
+        m.execute("UPDATE policyutkast SET aktivert_revisjon=9999"
+                  " WHERE tenant=%s AND utkast_id=%s", (TEN, uid))
+        etter = m.execute(
+            "SELECT aktivert_revisjon FROM policyutkast WHERE tenant=%s"
+            " AND utkast_id=%s", (TEN, uid)).fetchone()[0]
+        assert etter == hode, etter
+    finally:
+        m.rollback()
         m.close()

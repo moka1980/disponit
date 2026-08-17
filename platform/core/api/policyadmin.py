@@ -1046,27 +1046,37 @@ def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         aktiverte utkastet som ER den aktive policyen vises fortsatt — det er
         gjeldende tilstand, ikke et lik.
 
-    RADEN BINDES TIL INNHOLDET, IKKE TIL ID-EN (Codex P2). Prøven var først
-    «finnes det en aktiv-peker for `policy_id`», og en policy_id blir LEDIG
-    igjen etter sletting: 032 nullstiller pekeren og frigjør versjonsnumrene,
-    nettopp så en riktig opprettelse etterpå ikke stoppes av 020-monotonien.
-    Aktiveres en erstatning under samme id, blir pekeren ikke-NULL igjen — og
-    da ble den slettede generasjonens utkast gjenopplivet i arbeidskøen, side
-    om side med erstatningen og presentert som gjeldende tilstand. Id-en
-    alene er altså ikke en identitet; det er den samme lærdommen 032 skriver
-    ut om `forventet_versjon`/`forventet_hash`, der versjonsnummeret alene
-    kunne peke på et helt annet dokument.
+    RADEN BINDES TIL GENERASJONEN, IKKE TIL NOE GJENBRUKBART (Codex P2, to
+    runder). Prøven må svare på «ble dette utkastet den generasjonen som er
+    aktiv NÅ», og de to nærliggende svarene er begge gjenbrukbare:
 
-    Bindingen som holder er hashen: `aktiver_policy` (013) skriver utkastets
-    frosne `innholds_hash` inn i policyraden den oppretter, så et aktivert
-    utkast og generasjonen det ble, bærer samme hash. Prøven leser derfor den
-    AKTIVE raden i `policyer` og sammenligner hashen. Den raden er lest, ikke
-    pekeren, av samme grunn som i 032: policyer registrert før PR-013 er
-    grandfathered uten hoderad, og raden med `aktiv` er nøyaktig den
-    `/v1/policy/aktiv` serverer (`policy_peker_konsistent` håndhever at de to
-    er samme svar der hoderaden finnes). Et utkast uten frosset hash kan
-    aldri være aktivert (013 avviser det), så sammenligningen er aldri NULL
-    for en rad prøven gjelder.
+      * `policy_id` alene: en id blir LEDIG igjen etter sletting — 032
+        nullstiller pekeren og frigjør versjonsnumrene, nettopp så en riktig
+        opprettelse etterpå ikke stoppes av 020-monotonien. Aktiveres en
+        erstatning under samme id, er pekeren ikke-NULL på nytt, og det
+        SLETTEDE utkastet kom tilbake i køen som «gjeldende tilstand».
+      * `innholds_hash`: 020 gjør versjonen til DOKUMENTETS versjon, og siden
+        032 sletter radene kan nøyaktig samme dokument aktiveres om igjen.
+        Hashen er deterministisk av innholdet, så erstatningen får da samme
+        hash som den slettede generasjonen — og prøven ble sann for BEGGE.
+
+    Begge er beskrivelser, og en beskrivelse kan passe på to generasjoner
+    samtidig. Identiteten som ikke kan gjenbrukes er `policy_hode.revisjon`:
+    en teller som bare går oppover, +1 for hver aktivering og +1 for hver
+    sletting, aldri nullstilt, på en ankerrad som aldri slettes. Migrasjon
+    034 stempler utkastet med den telleren i det aktiveringen skjer
+    (`aktivert_revisjon`, server-utledet av trigger), og prøven her er derfor
+    en likhet mellom to tall: hodets revisjon er fortsatt den dette utkastet
+    laget. Gjenbrukt id, gjenbrukt versjon og gjenbrukt innhold gjør den ikke
+    sann for en generasjon som er borte.
+
+    `aktiv_versjon IS NOT NULL` står ved siden av likheten, ikke i stedet for
+    den: en sletting bumper også telleren, så likheten alene ville holdt — men
+    den dagen en ny vei fjerner en policy uten å røre `revisjon`, er det denne
+    linjen som gjør at et lik ikke vises. Pekeren kan leses her (og ikke bare
+    `policyer`-raden, slik 032 må gjøre) fordi hvert `aktivert` utkast har
+    gått gjennom `aktiver_policy`, som oppretter hoderaden før den rører
+    utkastet: en grandfathered policy uten hoderad har ingen utkast å skjule.
 
     Et AVLØST aktivert utkast faller dermed også ut, og det er riktig for en
     arbeidskø: `aktivert` er terminalt (statusmaskinen i 012/033), så raden
@@ -1078,9 +1088,10 @@ def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     sett_kontekst(conn, tenant, aktor, request_id)
     vilkaar = (" AND u.status <> 'forkastet'"
                " AND (u.status <> 'aktivert' OR EXISTS ("
-               "      SELECT 1 FROM policyer p WHERE p.tenant=u.tenant"
-               "        AND p.policy_id=u.policy_id AND p.aktiv"
-               "        AND p.innholds_hash=u.innholds_hash))")
+               "      SELECT 1 FROM policy_hode h WHERE h.tenant=u.tenant"
+               "        AND h.policy_id=u.policy_id"
+               "        AND h.aktiv_versjon IS NOT NULL"
+               "        AND h.revisjon=u.aktivert_revisjon))")
     if policy_id:
         rows = conn.execute(
             "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
