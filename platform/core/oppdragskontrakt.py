@@ -38,6 +38,18 @@ class Oppdragstype:
     felter: frozenset[str]
     paakrevde: frozenset[str]
     beskrivelse: str = ""
+    #: PR-014c: eiermodulen typen hører til — informativt her (autoriteten
+    #: er registerraden + releasens kontrakt), men deploy-porten krysser
+    #: de to kildene, og da må begge kunne leses.
+    eiermodul: str | None = None
+    #: PR-014c §5–6: `krever_malautorisasjon` uttrykker et BEHOV, ikke et
+    #: bevis — handlingen trenger et positivt autorisert mål. De to feltene
+    #: står SAMMEN fordi de må matche hver sin side av aktiveringsporten:
+    #: flagget sier at porten gjelder, domenet sier hvilke rader i
+    #: `malautorisasjonsvilkar` som kan tilfredsstille den. Implementer
+    #: aldri det ene uten det andre.
+    krever_malautorisasjon: bool = False
+    malautorisasjonsdomene: str | None = None
 
     def valider(self) -> list[str]:
         feil = []
@@ -49,6 +61,12 @@ class Oppdragstype:
         if not self.handlingsprefikser:
             feil.append(f"{self.navn}: ingen handlingsprefikser — da kan"
                         " ingen handling matche typen")
+        if self.krever_malautorisasjon != (
+                self.malautorisasjonsdomene is not None):
+            feil.append(f"{self.navn}: krever_malautorisasjon og"
+                        " malautorisasjonsdomene må settes sammen — et krav"
+                        " uten domene kan ingen rad tilfredsstille, og et"
+                        " domene uten krav er en port ingen går gjennom")
         return feil
 
 
@@ -72,7 +90,17 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " som skal utføres på nytt etter at dataene foreligger.")),
     "verifikasjon": Oppdragstype(
         navn="verifikasjon",
-        handlingsprefikser=("verifiser.", "kontroll."),
+        # PR-014c: `kontroll.`-prefikset er AVGITT til WCAG-kontrollen.
+        # Det var en ubrukt reservasjon — hver produsent bygger
+        # verifikasjonshandlinger som `verifiser.<vilkår>` (reparasjoner.py),
+        # og ingen kodevei eller test har noensinne laget en
+        # `kontroll.*`-handling for denne typen. Å beholde det ville brutt
+        # disjunkthetsinvarianten under (`kontroll.wcag.` ⊂ `kontroll.`) og
+        # gitt feil type ved oppslag. Konsekvensen er fail-closed: en
+        # fremtidig `kontroll.*`-handling som IKKE er WCAG-kontrollens
+        # matcher ingen type og avvises ved minimering — støyende, aldri
+        # feilrutet.
+        handlingsprefikser=("verifiser.",),
         # Ingen beløp: et verifikasjonsoppdrag skal slå opp mot en
         # autoritativ kilde, ikke få vite hva saken gjaldt i kroner.
         #
@@ -98,6 +126,26 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         beskrivelse=("v3-delta pkt. 5: alle oppslag mot autoritative kilder"
                      " er sideeffektfrie oppdrag utført av en modul med egne"
                      " fullmakter. M-37 rører aldri ERP/bank/CRM selv.")),
+    # PR-014c: den første handlingsmodulen. LUKKET payload — de fire
+    # feltene er ALT modulen får se: ingen tenantnavn, ingen
+    # kundeidentifikator, ingen kontaktdata. `mal_url` er normalisert av
+    # urlkontrakten før oppdraget opprettes; `kravsett` er lukket enum
+    # (en ny verdi skal være en feil, ikke stillhet) — begge håndheves
+    # ved OPPRETTELSEN (bestillingsveien), minimeringen her er siste
+    # skanse for feltBREDDEN.
+    "kontroll.wcag.nettsted": Oppdragstype(
+        navn="kontroll.wcag.nettsted",
+        handlingsprefikser=("kontroll.wcag.",),
+        felter=frozenset({"mal_url", "kravsett", "omfang", "maks_sider"}),
+        paakrevde=frozenset({"mal_url", "kravsett", "omfang"}),
+        eiermodul="m_wcag_audit",
+        krever_malautorisasjon=True,
+        malautorisasjonsdomene="web_hostname",
+        beskrivelse=("PR-014c: automatisk WCAG-kontroll av et positivt"
+                     " autorisert hostname. `ekstern_lesing`-klassen:"
+                     " observerbar trafikk ut, ingen ekstern mutasjon;"
+                     " målautorisasjon + frekvens håndheves av"
+                     " aktiveringsporten, egress/robots av 014b.")),
 }
 
 

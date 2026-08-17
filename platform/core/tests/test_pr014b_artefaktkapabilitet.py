@@ -56,7 +56,13 @@ def _plukket_oppdrag_med_binding(conn, modul, kh):
     at = f"at.t{secrets.token_hex(4)}.kvittering"
     da = _mk_admin("disponit_domains_admin")
     try:
-        da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,'sh','sys')",
+        da.execute("SELECT registrer_artefaktskjema("
+                   "'{\"type\":\"object\"}',%s,'sys')",
+                   ("a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909"
+                    "dcb7054738c0",))
+        da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,"
+                   "'a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909"
+                   "dcb7054738c0','sys')",
                    (at, modul, kh))
         da.commit()
     finally:

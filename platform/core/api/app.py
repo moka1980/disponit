@@ -41,6 +41,7 @@ from .mac_register import last_mac_register
 from policy_validator.engine import EvaluationContext
 
 from . import cursor as cursormodul
+from . import artefaktskjema
 from . import feil as feiltabell
 from . import kjerne
 
@@ -2359,6 +2360,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         promotert = (art is not None and naa_epoch is not None
                      and opp_epoch == naa_epoch[0])
         if promotert:
+            # PR-014c §8 pkt. 2: REVALIDER MOT SAMME SKJEMA i samme
+            # transaksjon som statusovergangen. Skjemaet er immutabelt, så
+            # dette er ikke forsvar mot endring — det er forsvar mot at en
+            # fremtidig opplastingsvei glemmer valideringen ved opplasting.
+            # Brudd (eller uvaliderbart innhold) → IKKE promotert → samme
+            # karantene + sikkerhetssak som binding-/epoch-avvik under:
+            # artefaktet bevares for etterforskning, aldri som evidens.
+            arad = conn.execute(
+                "SELECT artefakttype, ciphertext, nonce, dek_ref FROM"
+                " artefakt WHERE tenant=%s AND artefakt_id=%s",
+                (tenant, art_id)).fetchone()
+            promotert = arad is not None
+            if promotert:
+                skjema = artefaktskjema.hent_skjema(conn, arad[0])
+                if skjema is None:
+                    promotert = False
+                else:
+                    try:
+                        dek = kryptering.hent_dek(conn, tenant, arad[3])
+                        innhold = kryptering.dekrypter(
+                            dek, bytes(arad[1]), bytes(arad[2]), tenant,
+                            arad[3])
+                    except Exception:                         # noqa: BLE001
+                        # Udekrypterbart innhold er per definisjon
+                        # uvaliderbart — samme utfall, aldri en 500.
+                        promotert = False
+                        innhold = None
+                    if innhold is not None                             and artefaktskjema.valider(skjema, innhold):
+                        promotert = False
+        if promotert:
             try:
                 # SAVEPOINT: en promoteringsfeil (epoch-drift/bindingsavvik) må
                 # IKKE rulle tilbake kapabilitet-brenningen + resultathashen som
@@ -2529,6 +2560,27 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
 
         # Tenant fra kapabiliteten. Server-beregnet JCS-hash + størrelse.
         sett_kontekst(conn, tenant, auth.aktor, rid)
+
+        # PR-014c §8 pkt. 1: SKJEMAVALIDERING FØR KRYPTERING. Kapabiliteten
+        # bærer artefakttypen; typen binder en skjema_hash; hashen slår opp
+        # skjemaet. Ingen skjemarad → avvist (innhold ingen kan validere
+        # tas ikke imot); brudd → avvist, med detaljene i sikkerhetsloggen
+        # og aldri i svaret (rapportinnhold kan bære persondata).
+        skjema = artefaktskjema.hent_skjema(conn, artefakttype)
+        if skjema is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("artefaktskjema_mangler", rid, tenant,
+                                   art="drift", artefakttype=artefakttype)
+            return _feilsvar("artefaktskjema_mangler", rid)
+        skjemafeil = artefaktskjema.valider(skjema, rapport)
+        if skjemafeil:
+            conn.rollback()
+            tjeneste.logg.hendelse("artefakt_skjemabrudd", rid, tenant,
+                                   art="sikkerhet", artefakttype=artefakttype,
+                                   antall=len(skjemafeil),
+                                   forste=skjemafeil[0][:160])
+            return _feilsvar("artefakt_skjemabrudd", rid)
+
         try:
             kanon = jcs.kanoniske_bytes(rapport)
         except (jcs.Ikkekanoniserbar, UnicodeEncodeError, RecursionError):

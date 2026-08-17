@@ -130,6 +130,18 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "Innløsning avvist: ukjent id, feil hemmelighet, allerede brukt"
         " eller utløpt — SAMME svar utad for alle fire (035, port 4/6):"
         " et skille ville vært et orakel for gjettverk.")),
+    # --- PR-014c: artefakt-skjemavalidering -------------------------------
+    Feilvei("artefakt_skjemabrudd", 422, ("sikkerhet",), None, notat=(
+        "Rapporten bryter artefakttypens skjema — avvist VED OPPLASTING,"
+        " før kryptering (014c §8 pkt. 1). Sikkerhetslogg, ikke sak:"
+        " modulen er autentisert, og et skjemabrudd fra en godkjent"
+        " controller er noe drift skal SE. Detaljene står i loggen, aldri"
+        " i svaret (innholdet kan bære persondata).")),
+    Feilvei("artefaktskjema_mangler", 422, ("drift",), None, notat=(
+        "Artefakttypens skjema_hash har ingen rad i artefaktskjema —"
+        " konfigurasjonsfeil (typen ble registrert før 036s positive"
+        " regel). Innhold ingen kan validere tas ikke imot; raden må"
+        " registreres via registrer_artefaktskjema().")),
     # --- PR-008: lese-API ----------------------------------------------
     Feilvei("ikke_funnet", 404, ("avvis",), None, notat=(
         "Detalj-ID som ikke finnes OG detalj-ID hos en annen tenant gir"
