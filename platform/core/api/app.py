@@ -1364,14 +1364,16 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                                        feiltype="claim_med_parametre")
                 return _feilsvar("request_feilformet", rid)
 
-        claim_release = claim_miljo = claim_epoch = None
-        if isinstance(auth, ModulAutentisert):
-            # TOKENET AUTENTISERER, REGISTERET AUTORISERER (035 §2/§6).
-            # Deployment, status og epoch pre-portes her med EKSPLISITTE
-            # avslag — «du har ikke lov» og «det finnes ikke arbeid» må
-            # aldri se like ut (port 18–19). claim_neste_oppdrag
-            # re-verifiserer det samme under modul-låsen; pre-porten er
-            # for svarets ærlighet, ikke for sikkerheten.
+        # TOKENET AUTENTISERER, REGISTERET AUTORISERER (035 §2/§6).
+        # Deployment, status og epoch portes med EKSPLISITTE avslag — «du
+        # har ikke lov» og «det finnes ikke arbeid» må aldri se like ut
+        # (port 18–19). claim_neste_oppdrag re-verifiserer det samme under
+        # modul-låsen; porten her er for svarets ærlighet, ikke for
+        # sikkerheten. Den er ÉN funksjon fordi den leses to ganger — før
+        # claimen og etter et tomt resultat — og to kopier av den samme
+        # dommen ville drevet fra hverandre.
+        def _modulporten():
+            """(drad, feilsvar): feilsvar er None når modulen får claime."""
             drad = conn.execute(
                 "SELECT d.livslop, h.status, h.module_epoch,"
                 " d.kontraktversjon, d.kontrakt_hash"
@@ -1385,14 +1387,21 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                                        auth.tenant,
                                        livslop=drad[0] if drad else "borte",
                                        status=drad[1] if drad else "borte")
-                return _feilsvar("modul_ikke_claimbar", rid)
+                return None, _feilsvar("modul_ikke_claimbar", rid)
             if drad[2] != auth.utstedt_epoch:
                 conn.rollback()
                 tjeneste.logg.hendelse("modulepoch_utdatert", rid,
                                        auth.tenant,
                                        utstedt=auth.utstedt_epoch,
                                        gjeldende=drad[2])
-                return _feilsvar("modulepoch_utdatert", rid)
+                return None, _feilsvar("modulepoch_utdatert", rid)
+            return drad, None
+
+        claim_release = claim_miljo = claim_epoch = None
+        if isinstance(auth, ModulAutentisert):
+            drad, portsvar = _modulporten()
+            if portsvar is not None:
+                return portsvar
             # Autorisasjonen utledes ved BRUK, via releasens kontrakt: raden
             # må matche eiermodul OG begge kontraktfeltene (positiv
             # tillatelsesliste). En type registrert under en ANNEN kontrakt
@@ -1443,6 +1452,25 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                  claim_miljo, claim_epoch)).fetchone()
             if rad is None:
                 conn.rollback()
+                # Codex P2: TOM KØ ER EN PÅSTAND OM ARBEID, IKKE OM TILLATELSE.
+                #
+                # Pre-porten over leses UTEN modul-låsen. Rekker
+                # `noddeaktiver_modul`, en drenering eller et epoch-bytte å
+                # committe etter den lesningen, men før claim_neste_oppdrag
+                # får låsen, forkaster SQL-funksjonen med rette hver kandidat
+                # og returnerer ingen rad. Da er 204 en LØGN: modulen mistet
+                # lov til å claime, og fikk beskjed om at det ikke fantes
+                # arbeid — nøyaktig sammenblandingen port 18–19 forbyr, og
+                # den som får en nøddeaktivert modul til å polle videre i
+                # stedet for å stanse. Rollbacken over avsluttet
+                # transaksjonen, så porten leses her på nytt og ser det som
+                # faktisk er committet. Holder autorisasjonen fortsatt, var
+                # køen virkelig tom.
+                if isinstance(auth, ModulAutentisert):
+                    _, portsvar = _modulporten()
+                    if portsvar is not None:
+                        return portsvar
+                    conn.rollback()
                 return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,
                                      {"x-request-id": rid})
 

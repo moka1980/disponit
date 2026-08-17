@@ -287,6 +287,60 @@ def test_epoch_og_draining_er_403_aldri_204(migrator, miljo, monkeypatch):
 
 
 @pg
+@dekker("modul_ikke_claimbar")
+def test_tapt_autorisasjon_under_claimen_er_403_ikke_204(migrator, miljo,
+                                                         monkeypatch):
+    """Codex P2 / port 18–19: pre-porten leses UTEN modul-låsen. Mister
+    modulen lov til å claime ETTER den lesningen, men før
+    `claim_neste_oppdrag` får låsen, forkaster SQL-funksjonen hver kandidat
+    og returnerer ingen rad. Svaret skal da være 403 modul_ikke_claimbar —
+    et 204 ville sagt «ingen jobber» til en modul som nettopp mistet
+    fullmakten, og fått den til å polle videre i stedet for å stanse.
+
+    Vinduet treffes deterministisk: `claim_id = secrets.token_hex(16)` er
+    det siste steget mellom porten og claimen, så dreneringen legges inn
+    derfra — fra en egen tilkobling, siden testtråden står blokkert i
+    requesten."""
+    import psycopg
+    from starlette.testclient import TestClient
+    from api import app as appmodul
+    from api.app import lag_app
+
+    t = f"t{_u()}"
+    _kjent_type(monkeypatch, t, f"h{_u()}.")
+    modul, rel = _kjede(migrator, typenavn=t)
+    a = lag_app(DSN)
+    ekte_token_hex = secrets.token_hex
+    traff = []
+
+    def _drener_i_vinduet(n=32):
+        if n == 16 and not traff:
+            traff.append(True)
+            sidekanal = psycopg.connect(MIGRATOR_DSN)
+            try:
+                sidekanal.execute(
+                    "UPDATE moduldeployment SET livslop='draining'"
+                    " WHERE modul_id=%s", (modul,))
+                sidekanal.commit()
+            finally:
+                sidekanal.close()
+        return ekte_token_hex(n)
+
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            monkeypatch.setattr(appmodul.secrets, "token_hex",
+                                _drener_i_vinduet)
+            r = c.post("/v1/oppdrag/claim", json={},
+                       headers={"authorization": f"Bearer {mtk}"})
+            assert traff, "dreneringen traff aldri claim-vinduet"
+            assert (r.status_code, r.json()["feil"]) == (
+                403, "modul_ikke_claimbar"), r.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
 def test_token_kan_ikke_claime_annen_modul_eller_release(migrator, miljo,
                                                          monkeypatch):
     """Portene 9/11: tokenets deployment-identitet er hele autorisasjonen —
