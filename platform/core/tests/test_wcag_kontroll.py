@@ -373,6 +373,58 @@ def test_aktiveringsporten_for_ekstern_lesing(migrator):
 
 
 @pg
+def test_porten_leser_kontrakten_som_eier_typen(migrator, monkeypatch):
+    """Codex P2: porten prøvde modulbredt (`LIMIT 1` på modulkontrakt).
+    Kontraktrader er immutable og blir stående, så en modul som EN GANG
+    hadde en ekstern_lesing-kontrakt fikk hver eneste handling klassifisert
+    som ekstern lesing — også de som nå tilhører en nyere sideeffektfri
+    kontrakt. Slike moduler kunne dermed ikke lenger aktivere ellers
+    gyldige policyer. Nå leses klassen av kontrakten som EIER handlingens
+    registrerte oppdragstype. Kontroll: bytt tilbake til den modulbrede
+    prøven, så blir denne rød."""
+    import oppdragskontrakt as ok
+    from api import policyadmin
+    from db.pg import koble
+
+    modul = _ekstern_lesing_modul(migrator)          # gammel, immutabel rad
+    # ... samme modul får en NYERE, sideeffektfri kontrakt, og handlingens
+    # oppdragstype registreres under NETTOPP den.
+    kh2 = "k-" + secrets.token_hex(8)
+    migrator.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
+        "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
+        "reversibilitet) VALUES (%s,2,%s,'p','k','sideeffektfri','direkte')",
+        (modul, kh2))
+    u = secrets.token_hex(4)
+    typenavn = f"stille.w{u}.jobb"
+    migrator.execute(
+        "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
+        "kontraktversjon,kontrakt_hash) VALUES (%s,%s,2,%s)",
+        (typenavn, modul, kh2))
+    migrator.commit()
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, typenavn, ok.Oppdragstype(
+        navn=typenavn, handlingsprefikser=(f"stille.w{u}.",),
+        felter=frozenset({"ressurs_id"}), paakrevde=frozenset(),
+        eiermodul=modul))
+
+    rt = koble(DSN)
+    try:
+        # Uten frekvens og uten målautoriserende vilkår — og likevel grønn,
+        # for handlingen er ikke ekstern lesing.
+        policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+            _handling(modul, frekvens=False, vilkaar=(),
+                      hid=f"stille.w{u}.jobb")]})
+        # Motsatsen: en handling uten registrert type treffer fortsatt den
+        # konservative modulbrede prøven.
+        with pytest.raises(policyadmin.Aktiveringsfeil):
+            policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+                _handling(modul, frekvens=False, vilkaar=())]})
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_aktiveringsporten_haandheves_ved_rundeaapning(migrator):
     """Integrasjonen: kallstedet i `opprett_aktiveringsrunde` (samme mønster
     som `_krev_innforingskrav`). Kontroll: fjern

@@ -1488,11 +1488,35 @@ def _versjonsavvik(conn, tenant: str, policy_id: str, innhold) -> list[str]:
                 " så den må være ny og høyere enn den aktive"]
 
 
+def _typens_sideeffektklasse(conn, oppdragstype: str) -> str | None:
+    """Sideeffektklassen til kontrakten som EIER oppdragstypen — join på
+    hele identiteten (eiermodul, kontraktversjon, kontrakt_hash), ikke bare
+    modulen. -> None når typen ikke er registrert.
+
+    Codex P2: en modulbred prøve leser feil rad. Kontraktrader er
+    immutable og blir stående for alltid, så en modul som EN GANG hadde en
+    `ekstern_lesing`-kontrakt bærer den videre — og en modulbred `LIMIT 1`
+    ville klassifisert HVER handling for den modulen som ekstern lesing,
+    også de som nå tilhører en nyere `sideeffektfri`-kontrakt. Følgen var
+    ikke bare en unødvendig port: slike moduler kunne ikke lenger aktivere
+    ellers gyldige policyer uten frekvens- og målautorisasjonsfelter som
+    ikke hører hjemme der."""
+    rad = conn.execute(
+        "SELECT k.sideeffektklasse FROM oppdragstype_register r"
+        "  JOIN modulkontrakt k ON k.modul_id = r.eiermodul"
+        "   AND k.kontraktversjon = r.kontraktversjon"
+        "   AND k.kontrakt_hash = r.kontrakt_hash"
+        " WHERE r.oppdragstype = %s", (oppdragstype,)).fetchone()
+    return rad[0] if rad else None
+
+
 def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
     aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
-    `_krev_innforingskrav`): en handling som refererer en modul med en
-    `ekstern_lesing`-kontrakt kan bare aktiveres når
+    `_krev_innforingskrav`): en handling hvis OPPDRAGSTYPE eies av en
+    `ekstern_lesing`-kontrakt (`_typens_sideeffektklasse`; er typen ikke
+    registrert, faller vi konservativt tilbake på modulen) kan bare
+    aktiveres når
 
       1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
          et tak policyen selv bærer), og
@@ -1516,18 +1540,33 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
         if not isinstance(h, dict):
             continue
         modul = h.get("modul")
-        if not isinstance(modul, str) or not conn.execute(
-                "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
-                " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
-                (modul,)).fetchone():
+        if not isinstance(modul, str):
             continue
         hid = h.get("id") if isinstance(h.get("id"), str) else ""
+        t = oppdragskontrakt.type_for_handling(hid)
+        klasse = (_typens_sideeffektklasse(conn, t.navn)
+                  if t is not None else None)
+        if klasse is None:
+            # Handlingen har ingen REGISTRERT type å lese klassen av (ennå).
+            # Da faller vi tilbake på den konservative modulbrede prøven:
+            # bærer modulen en ekstern_lesing-kontrakt, gjelder porten.
+            # Fail-closed er posituren her — det er den motsatte retningen
+            # (å slippe noe forbi) som koster.
+            if not conn.execute(
+                    "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
+                    " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
+                    (modul,)).fetchone():
+                continue
+        elif klasse != "ekstern_lesing":
+            # Typen handlingen faktisk er registrert som eies av en annen
+            # kontrakt. At modulen ET STED har en gammel ekstern_lesing-rad
+            # sier ingenting om DENNE handlingen.
+            continue
         grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
             else {}
         if not isinstance(grenser.get("frekvens"), dict):
             raise Aktiveringsfeil("ekstern_lesing_uten_frekvens",
                                   f"handling={hid or '?'}")
-        t = oppdragskontrakt.type_for_handling(hid)
         if t is None or not t.krever_malautorisasjon \
                 or t.malautorisasjonsdomene is None:
             raise Aktiveringsfeil(
