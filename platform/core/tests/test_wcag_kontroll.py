@@ -1645,3 +1645,53 @@ def test_numerisk_overflyt_fra_motoren_er_motorfeil():
                 {"regel_id": f"r{i}", "alvorlighet": "lav", "antall": ledd,
                  "eksempler": []} for i in range(4))),
              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+
+
+def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
+    """Codex P1: `int()` trunkerer mot null i STILLHET.
+
+    Stillheten er skaden. `antall: 0.9` ble `0`, og `rapport.bygg` hopper
+    over funn med `antall < 1` — et funn motoren FANT forsvant ut av en
+    rapport som ellers ser komplett ut, uten et eneste ærlighetsfelt som
+    sier fra. `antall: 1.9` ble `1` og understøtter `sammendrag`, og
+    `varighet_ms: 12.7` ble skrevet om på samme vis. Alle tre er
+    heltallsfelter i kontrakten, så et brøktall er utdata vi ikke kan
+    lese — det skal gi den dokumenterte feilkvitteringen, ikke en
+    avrunding modulen finner på selv.
+
+    Kontroll: fjern `is_integer()`-vakten i `motor.heltall`, så blir
+    `bygg(...)` grønn igjen med et funn som mangler og et sammendrag som
+    er for lavt.
+    """
+    from modules.wcag_audit.motor import Kommandomotor, Motorfeil, heltall
+    from modules.wcag_audit.rapport import bygg
+
+    for raa in (0.9, 1.9, -0.5, 2.5, 1e-3):
+        with pytest.raises(Motorfeil):
+            heltall(raa)
+    # Hele tall SKAL fortsatt slippe gjennom, også som float: en motor som
+    # skriver `3.0` i JSON gir oss en float uten at noe er tapt.
+    assert heltall(3.0) == 3 and heltall(0.0) == 0 and heltall(-7.0) == -7
+
+    # Funnet som forsvant: 0.9 ble 0, og 0 < 1 droppes stille.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(funn=({"regel_id": "color-contrast",
+                                   "alvorlighet": "alvorlig",
+                                   "antall": 0.9, "eksempler": []},)),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    # Samme port, samme svar, for de andre ubetrodde tallveiene.
+    for over in ({"blokkert": ({"vert": "f.example", "antall": 2.5,
+                                "art": "font"},)},
+                 {"avkortet": (True, 10.5, 3.5)}):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
+                 kontekst=_kontekst())
+
+    # `varighet_ms` fra en ekte motorkjøring: trunkert før, Motorfeil nå.
+    brok = json.dumps({"regelsett_versjon": "axe-4.10",
+                       "varighet_ms": 12.7, "sider": [], "funn": [],
+                       "blokkert": [], "avkortet": [False, None, None]})
+    m = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % brok),
+                      tidsavbrudd_s=30)
+    with pytest.raises(Motorfeil):
+        m.kjor({})

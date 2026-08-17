@@ -105,9 +105,23 @@ def heltall(raa) -> int:
       * `10**20` -> konverterer fint, men er `Ikkekanoniserbar` senere.
 
     Derfor: én port, brukt av BÅDE motoravlesningen og `rapport._antall`.
+
+    BRØKTALL AVVISES (Codex P1). `int()` trunkerer mot null i STILLHET, og
+    stillheten er skaden: `antall: 0.9` ble `0`, og `rapport.bygg` hopper
+    over funn med `antall < 1` — et funn motoren FANT forsvant ut av en
+    rapport som ellers ser komplett ut, uten et ærlighetsfelt som sier
+    fra. `antall: 1.9` ble `1` og understøttet `sammendrag`, og
+    `varighet_ms: 12.7` ble skrevet om på samme vis. Feltene er heltall i
+    kontrakten, så et ikke-helt tall er utdata vi ikke kan lese — altså
+    Motorfeil, ikke en avrunding modulen finner på selv.
     """
     if isinstance(raa, bool) or not isinstance(raa, (int, float, str)):
         raise Motorfeil("tall fra motoren er ikke et tall")
+    # `float.is_integer()` er False for både `inf` og `nan`, så vakten
+    # dekker dem også — men `int()` under står igjen som selvstendig
+    # skanse, ikke som eneste.
+    if isinstance(raa, float) and not raa.is_integer():
+        raise Motorfeil("tall fra motoren er ikke et heltall")
     try:
         n = int(raa)
     except (TypeError, ValueError, OverflowError) as e:
