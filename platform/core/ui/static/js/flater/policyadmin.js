@@ -1405,20 +1405,45 @@ export function visPolicyadmin(hoved, ctx, mal) {
     last({ fokus: true });
   }
 
+  // LISTEHANDLINGENS EGET EIERSKAP (Codex P1 på #76). Handlingene på radene
+  // startes fra lista, men de eier ikke skjermen mens POST-en er ute: eier kan
+  // rekke å åpne et utkast, gå i editoren eller bytte rute før svaret kommer.
+  // Generasjonen fanges derfor ved KLIKKET, og alle veier tilbake måles mot
+  // den — akkurat som detaljsidens asynkrone handlinger gjør.
+  //
+  // Uten dette gikk begge veier rett på skjermen. `meldOgLast` kaller `last()`,
+  // som river `hoved` SYNKRONT for lastetilstanden (`medStatus` viser «laster»
+  // før den sjekker noe): utkastlista tegnet seg da over den visningen eier
+  // faktisk sto i. Og verre på suksessveien i `redigerValidert`: `aapneEditor`
+  // teller opp generasjonen selv, så den kunne ikke avvises av noen — den
+  // åpnet policyeditoren over en annen rute og kastet det eier hadde begynt på
+  // der.
+  //
+  // Er visningen tapt, dør ikke utfallet stille: handlingen ble utført, og
+  // teksten leses opp i det varige live-området, samme svar som en tapt
+  // kvittering får. Skjermen kan ikke vise det lenger; skjermleseren kan
+  // fortsatt si det.
+  const naavaerendeVisning = () => visning;
+  function meldListeutfall(min, art, tekst) {
+    if (eierSkjermen(min)) { meldOgLast(art, tekst); return; }
+    meldLive(tekst);
+  }
+
   // Slett fra LISTA (= forkast utkastet). Samme dialog, mål-tekst og
   // én-retry-med-samme-nøkkel som detaljsidens `forkastKnapp` — men utfallet
   // tegnes i lista, der eier står, ikke i en kvittering en fremtidig
   // detaljside skulle ha forbrukt.
   function slettFraListe(u) {
     const nokkel = nyIdempotensnokkel();
+    const min = naavaerendeVisning();
     const kjor = (forsok) => forkastUtkast(u.utkast_id, u.utkastversjon, nokkel)
-      .then(() => meldOgLast("ok", t("ui.policyadmin.forkastet")))
+      .then(() => meldListeutfall(min, "ok", t("ui.policyadmin.forkastet")))
       .catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
           return kjor(1);
         }
-        meldOgLast("feil", e instanceof ApiFeil && e.status === 0
+        meldListeutfall(min, "feil", e instanceof ApiFeil && e.status === 0
           ? t("ui.policyadmin.forkast.ukjent") : t("ui.policyadmin.feilet"));
       });
     Bekreftelsesdialog({
@@ -1435,14 +1460,25 @@ export function visPolicyadmin(hoved, ctx, mal) {
   // runde trekkes tilbake av serveren; dialogen sier det FØR klikket.
   function redigerValidert(u) {
     const nokkel = nyIdempotensnokkel();
+    const min = naavaerendeVisning();
     const kjor = (forsok) => gjenapneUtkast(u.utkast_id, u.utkastversjon, nokkel)
-      .then(() => aapneEditor({ utkast_id: u.utkast_id }))
+      .then(() => {
+        // Gjenåpningen ER utført på serveren uansett hvor eier står nå, så
+        // utfallet meldes — men editoren åpnes bare hvis lista fortsatt eier
+        // skjermen. `aapneEditor` teller opp generasjonen selv og kan derfor
+        // ikke avvises lenger nede; sjekken må stå her.
+        if (!eierSkjermen(min)) {
+          meldLive(t("ui.policyadmin.gjenapnet"));
+          return;
+        }
+        aapneEditor({ utkast_id: u.utkast_id });
+      })
       .catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         if (e instanceof ApiFeil && e.status === 0 && forsok === 0) {
           return kjor(1);
         }
-        meldOgLast("feil", t("ui.policyadmin.feilet"));
+        meldListeutfall(min, "feil", t("ui.policyadmin.feilet"));
       });
     Bekreftelsesdialog({
       tittel: t("ui.policyadmin.gjenapne.tittel"),

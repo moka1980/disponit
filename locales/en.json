@@ -691,6 +691,7 @@
   "ui.policyadmin.handling.slett": "Delete",
   "ui.policyadmin.gjenapne.tittel": "Reopen this draft for editing?",
   "ui.policyadmin.gjenapne.tekst": "The draft returns to an editable state and must be validated and attested again before it can be activated. Any open activation round is withdrawn.",
+  "ui.policyadmin.gjenapnet": "The draft has been reopened for editing.",
   "ui.varsler.tittel": "Notifications",
   "ui.varsler.undertittel": "{n} unread",
   "ui.varsler.tom": "Nothing is waiting for you",

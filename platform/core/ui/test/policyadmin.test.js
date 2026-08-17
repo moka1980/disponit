@@ -3099,3 +3099,60 @@ test("Policyadmin: Rediger på et validert utkast gjenåpner og åpner editoren"
     // ... og editoren tok over flaten (den henter utkastet og viser tittelen).
     await vent(() => h.textContent.includes(t("ui.editor.tittel")));
   });
+
+// Codex P1 på #76: `redigerValidert` åpnet editoren UBETINGET når POST-en kom
+// tilbake. `aapneEditor` teller opp generasjonen selv, så den kunne ikke
+// avvises av noen lenger nede i kjeden — den tok over `hoved` uansett hva eier
+// hadde rukket å gå til i mellomtiden, og det hun hadde begynt på der, var
+// borte. Handlingen startes fra lista og må måles mot LISTAS generasjon.
+//
+// Kontroll: fjern `eierSkjermen(min)`-sjekken i `redigerValidert`, så blir
+// denne rød — editoren tegner seg over detaljsiden.
+test("Gjenåpning som lander etter at eier gikk videre, tar ikke over skjermen",
+  async () => {
+    const gjenopprett = _medCsrf();
+    let slippPost = null;
+    SVAR = {
+      "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": DETALJ,
+      "/v1/policy/aktive": { policyer: [] },
+      __post: async () => {
+        await new Promise((r) => { slippPost = r; });
+        return { ok: true, status: 200, json: async () =>
+          ({ utkast_id: "u-1", status: "utkast", utkastversjon: 3 }) };
+      },
+    };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+    await vent(() => h.querySelector("tbody"));
+
+    meldLive("");
+    [...h.querySelectorAll(".handling-celle button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => document.querySelector('[role="dialog"]'));
+    [...document.querySelector('[role="dialog"]').querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => slippPost);            // gjenåpningen er ute på nettet
+
+    // Eier går videre INNE i flaten mens POST-en henger: hun åpner utkastet.
+    // Ruterstempelet står stille, så bare flatens egen generasjon skiller dem
+    // — nøyaktig det vinduet fiksen dekker.
+    h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+    await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste")));
+
+    slippPost();
+    await vent(() => false, 20);            // la svaret få tegne, om det vil
+
+    assert.ok(!h.textContent.includes(t("ui.editor.tittel")),
+      "editoren tegnet seg over siden eier hadde gått til");
+    assert.ok(_finn(h, t("ui.policyadmin.tilbake_til_liste")),
+      "detaljsiden eier sto i, ble revet bort");
+    // Gjenåpningen ER utført på serveren — utfallet skal ikke dø stille.
+    const live = [...document.querySelectorAll('[aria-live="polite"]')]
+      .map((n) => n.textContent).join(" ");
+    assert.ok(live.includes(t("ui.policyadmin.gjenapnet")),
+      "utkastet ble gjenåpnet, men eier fikk aldri vite det");
+    gjenopprett();
+  });
