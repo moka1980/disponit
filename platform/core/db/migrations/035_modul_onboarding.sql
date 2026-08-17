@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS modul_onboarding (
     release_id       TEXT NOT NULL,
     hemmelighet_hash TEXT NOT NULL CHECK (hemmelighet_hash ~ '^[0-9a-f]{64}$'),
     familie_utloper  TIMESTAMPTZ NOT NULL,   -- ABSOLUTT horisont (§5)
+    -- Hemmeligheten bærer sin egen epoch (Codex P1): en ubrukt hemmelighet
+    -- utstedt FØR et nødstopp overlevde stoppet — `noddeaktiver_modul` og
+    -- `reaktiver_modul` tilbakekaller tokener, ikke hemmeligheter. Etter
+    -- reaktiveringen, mens de 60 minuttene ennå løp, kunne den mynte et
+    -- helt gjeldende token og gå rundt kravet om NY onboarding. Innløsningen
+    -- krever nå likhet med modulens epoch, lest under modullåsen, akkurat
+    -- som tokenet gjør ved hver claim. DEFAULT 0 er epochen en modul som
+    -- aldri er nødstoppet har — den gjelder rader satt inn utenom
+    -- funksjonen (tester, manuelle rader), aldri utstedelsen selv.
+    utstedt_epoch    BIGINT NOT NULL DEFAULT 0,
     utstedt_av       TEXT NOT NULL,
     utstedt_ts       TIMESTAMPTZ NOT NULL DEFAULT now(),
     utloper          TIMESTAMPTZ NOT NULL,   -- hemmelighetens TTL (60 min)
@@ -155,6 +165,7 @@ CREATE TRIGGER onboarding_familiefrist_immutable
         OR NEW.miljo            IS DISTINCT FROM OLD.miljo
         OR NEW.release_id       IS DISTINCT FROM OLD.release_id
         OR NEW.hemmelighet_hash IS DISTINCT FROM OLD.hemmelighet_hash
+        OR NEW.utstedt_epoch    IS DISTINCT FROM OLD.utstedt_epoch
         OR NEW.utloper          IS DISTINCT FROM OLD.utloper
         OR NEW.utstedt_ts       IS DISTINCT FROM OLD.utstedt_ts
         OR NEW.utstedt_av       IS DISTINCT FROM OLD.utstedt_av
@@ -268,8 +279,16 @@ RETURNS TABLE (onboarding_id UUID, utloper TIMESTAMPTZ,
                familie_utloper TIMESTAMPTZ)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT; v_kv INT; v_kh TEXT; v_utloper TIMESTAMPTZ;
-        v_familie TIMESTAMPTZ;
+        v_familie TIMESTAMPTZ; v_epoch BIGINT;
 BEGIN
+    -- MODULLÅSEN FØRST, så deployment-låsen — samme rekkefølge som
+    -- innløsning og rotasjon (modullås → resten), ellers er dette en
+    -- vranglås i stedet for en serialisering. Modullåsen er ny her (Codex
+    -- P1): epochen som STEMPLES i hemmeligheten må leses i samme
+    -- serialisering som epoch-endringene, ellers kan et nødstopp legge seg
+    -- mellom lesningen og INSERT-en og hemmeligheten fødes med en epoch som
+    -- alt er foreldet.
+    PERFORM pg_advisory_xact_lock(hashtextextended('modul:' || p_modul_id, 0));
     -- Serialiser mot innløsning/re-utstedelse for samme deployment.
     PERFORM pg_advisory_xact_lock(hashtextextended(
         'modulonboarding:' || p_modul_id || ':' || p_miljo || ':'
@@ -283,8 +302,8 @@ BEGIN
             ' ikke claiming', p_modul_id, p_miljo, p_release_id
             USING ERRCODE = 'no_data_found';
     END IF;
-    SELECT h.status INTO v_status FROM public.modulhode h
-     WHERE h.modul_id = p_modul_id;
+    SELECT h.status, h.module_epoch INTO v_status, v_epoch
+      FROM public.modulhode h WHERE h.modul_id = p_modul_id;
     IF v_status IS NULL
        OR v_status NOT IN ('staging_verifisert', 'aktiv') THEN
         RAISE EXCEPTION 'onboarding: modul % er % (krever staging_verifisert'
@@ -308,17 +327,24 @@ BEGIN
     -- den har aldri produsert et token (FK-en peker bare på innløste
     -- familier), så den kan trygt erstattes. En UBRUKT som fortsatt lever
     -- står — unik-indeksen avviser da denne utstedelsen, med vilje.
+    --
+    -- Med ett tillegg: en ubrukt hemmelighet fra en TIDLIGERE EPOCH kan
+    -- ikke lenger innløses (sjekken i `innlos_onboarding`), så den er ikke
+    -- en hemmelighet i drift — den er søppel etter et nødstopp. Den skal
+    -- ikke stå igjen og se levende ut for et menneske som leser tabellen,
+    -- og den skal aldri kunne blokkere en ny utstedelse via
+    -- `ett_ubrukt_onboarding`.
     DELETE FROM public.modul_onboarding o
      WHERE o.modul_id = p_modul_id AND o.miljo = p_miljo
        AND o.release_id = p_release_id AND o.innlost_ts IS NULL
-       AND o.utloper < now();
+       AND (o.utloper < now() OR o.utstedt_epoch IS DISTINCT FROM v_epoch);
     v_utloper := now() + make_interval(mins => p_ttl_minutter);
     v_familie := now() + make_interval(days => p_familie_dager);
     INSERT INTO public.modul_onboarding
         (onboarding_id, modul_id, miljo, release_id, hemmelighet_hash,
-         familie_utloper, utstedt_av, utloper)
+         familie_utloper, utstedt_epoch, utstedt_av, utloper)
         VALUES (p_onboarding_id, p_modul_id, p_miljo, p_release_id,
-                p_hemmelighet_hash, v_familie, p_aktor, v_utloper);
+                p_hemmelighet_hash, v_familie, v_epoch, p_aktor, v_utloper);
     INSERT INTO public.modultoken_hendelse
         (onboarding_id, modul_id, miljo, release_id, hendelse, aktor)
         VALUES (p_onboarding_id, p_modul_id, p_miljo, p_release_id,
@@ -402,6 +428,19 @@ BEGIN
         IF v_status IS NULL
            OR v_status NOT IN ('staging_verifisert', 'aktiv') THEN
             v_grunn := 'innlosning_modul_stengt';
+        -- HEMMELIGHETEN BÆRER SIN EGEN EPOCH (Codex P1). Statussjekken over
+        -- fanger et PÅGÅENDE nødstopp, men ikke et OVERSTÅTT: er modulen
+        -- nødstoppet og siden reaktivert og re-verifisert, står statusen
+        -- igjen på `aktiv`/`staging_verifisert`, mens epochen har steget to
+        -- ganger. En hemmelighet utstedt før stoppet — ubrukt, og fortsatt
+        -- innenfor sine 60 minutter — ville da myntet et fullt gjeldende
+        -- token og gått rundt kravet om ny onboarding etter reaktivering.
+        -- Epochen leses her, under modullåsen, og må være DEN SAMME som ved
+        -- utstedelsen. Avvisningen er én av de vanlige: samme svar utad,
+        -- egen grunn i sporet. Hemmeligheten røres ikke — den kan bare
+        -- aldri mer bli et token, for epochen kommer aldri tilbake.
+        ELSIF o.utstedt_epoch IS DISTINCT FROM v_epoch THEN
+            v_grunn := 'innlosning_epoch_endret';
         END IF;
     END IF;
     IF v_grunn IS NOT NULL THEN

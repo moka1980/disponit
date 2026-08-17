@@ -682,6 +682,52 @@ def test_innlosning_etter_nodstopp_myntes_ikke():
         m.close()
 
 
+@pg
+def test_hemmelighet_fra_for_nodstoppet_myntes_ikke_etter_reaktivering():
+    """Codex P1: statussjekken fanger et PÅGÅENDE nødstopp, ikke et
+    overstått. Etter reaktivering står status igjen på `staging_verifisert`
+    mens epochen har steget to ganger — og en ubrukt hemmelighet fra før
+    stoppet (fortsatt innenfor sine 60 minutter) ville myntet et fullt
+    gjeldende token, forbi kravet om NY onboarding etter reaktivering.
+    Hemmeligheten bærer nå epochen sin, og innløsningen krever likhet.
+
+    Kontroll: fjern `innlosning_epoch_endret`-grenen, så blir denne rød.
+    """
+    m = _c()
+    rt = _rt()
+    try:
+        modul, rel, _, _ = _deployment_med_typer(m)
+        hh = _hex64()
+        oid, _ = _utsted(rt, modul, "staging", rel, hemmelighet_hash=hh)
+        rt.commit()
+        assert m.execute("SELECT utstedt_epoch FROM modul_onboarding"
+                         " WHERE onboarding_id=%s", (oid,)).fetchone()[0] == 0
+        m.execute("SET ROLE disponit_modules_admin")
+        m.execute("SELECT noddeaktiver_modul(%s,'test av 035','test')",
+                  (modul,))
+        m.execute("SELECT reaktiver_modul(%s,1,'test')", (modul,))
+        m.execute("RESET ROLE")
+        m.commit()
+        # Modulen er tilbake i en status innløsningen ellers godtar.
+        assert m.execute("SELECT status, module_epoch FROM modulhode"
+                         " WHERE modul_id=%s", (modul,)).fetchone() \
+            == ("staging_verifisert", 2)
+
+        _, rad = _innlos(rt, oid, hh)
+        rt.commit()
+        assert rad[7] == "innlosning_epoch_endret" and rad[0] is None, rad
+        assert m.execute("SELECT count(*) FROM modultoken WHERE modul_id=%s",
+                         (modul,)).fetchone()[0] == 0
+        assert m.execute(
+            "SELECT detalj->>'grunn' FROM modultoken_hendelse"
+            " WHERE onboarding_id=%s AND hendelse='avvist_bruk'",
+            (oid,)).fetchall() == [("innlosning_epoch_endret",)]
+        m.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
 # --------------------------------------------------------------------------
 # Lagringskontrakten (portene 25, 31, 35–42) — den holder for ALLE roller,
 # også migrator (tabelleier) og dermed funksjonseierne.
