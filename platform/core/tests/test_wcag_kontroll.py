@@ -719,6 +719,21 @@ def test_motorutdata_er_ubetrodd():
         with pytest.raises(Motorfeil):
             bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
                  kontekst=_kontekst())
+    # Codex P1: og en uleselig PORT i URL-en. `urlsplit` godtar strengen —
+    # det er `d.port` som kaster, og stod det uttrykket utenfor vakten,
+    # var utfallet den samme nakne ValueError ut av kjøreløkka.
+    # Kontroll: flytt `port` ut av try-blokka i `_ren_url`, så blir denne
+    # rød på ValueError i stedet for å passere på Motorfeil.
+    for url in ("https://example.com:not-a-port/", "https://example.com:99999/",
+                "https://example.com:-1/"):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(sider=({"url": url, "status": "ok"},)),
+                 payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    # ... men en LOVLIG eksplisitt port skal fortsatt bæres videre.
+    r = bygg(_motorresultat(sider=({"url": "https://example.com:8443/a?q=1#f",
+                                    "status": "ok"},)),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert r["sider_kontrollert"][0]["url"] == "https://example.com:8443/a"
 
 
 # --------------------------------------------------------------------------

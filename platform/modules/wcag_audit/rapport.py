@@ -22,15 +22,24 @@ MAKS_BEGRENSNINGER = 200
 
 
 def _ren_url(raa: str) -> str:
-    """https-URL uten query, fragment og credentials — eller Motorfeil."""
+    """https-URL uten query, fragment og credentials — eller Motorfeil.
+
+    HELE parsingen står innenfor vakten (Codex P1), også `d.port`: den er
+    en property som SELV kaster ValueError på `https://x.example:not-a-
+    port/` og på portnumre utenfor 1–65535. Stod den utenfor, ville en
+    naken ValueError sluppet forbi `controller.kjor_en` (som kun fanger
+    Motorfeil og ValidationError) og latt det claimede oppdraget stå
+    ufullført til fristen — samme taushet §10 forbyr for `_antall`.
+    """
     try:
         d = urlsplit(str(raa))
+        vert, port = d.hostname, d.port
     except ValueError as e:
         raise Motorfeil("uleselig url fra motoren") from e
-    if d.scheme != "https" or not d.hostname:
+    if d.scheme != "https" or not vert:
         raise Motorfeil("motoren rapporterte en ikke-https-url")
-    vert = d.hostname + (f":{d.port}" if d.port else "")
-    return urlunsplit(("https", vert, d.path or "/", "", ""))
+    return urlunsplit(("https", vert + (f":{port}" if port else ""),
+                       d.path or "/", "", ""))
 
 
 def _antall(raa, standard: int) -> int:
