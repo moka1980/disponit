@@ -81,6 +81,44 @@ class Motorfeil(Exception):
     kvitteringen), aldri produsere et delvis artefakt (§10 siste rad)."""
 
 
+#: Største heltall JCS kan kanonisere tapsfritt: `jcs._tall` avviser
+#: `abs(x) > 2**53 - 1` som `Ikkekanoniserbar`. Rapportskjemaet setter INGEN
+#: øvre grense på `antall`/`varighet_ms`, så et tall herfra kunne passere
+#: både konverteringen og skjemaet, og først smelle under kanoniseringen
+#: rett før opplasting — som en `TypeError`, utenfor det `controller.kjor_en`
+#: fanger. Grensen hører derfor til HER, ved inngangen fra ubetrodde data.
+MAKS_HELTALL = 2 ** 53 - 1
+
+
+def heltall(raa) -> int:
+    """Ubetrodd tall fra motoren som kanoniserbart heltall — eller
+    Motorfeil, ALDRI en naken ValueError, TypeError eller OverflowError.
+
+    De tre feilmodusene er samme feil sett fra tre kanter, og alle tre
+    slipper forbi `controller.kjor_en` (som kun fanger Motorfeil og
+    ValidationError) og lar det claimede oppdraget stå ufullført til
+    fristen — nøyaktig taushetens utfall §10 forbyr:
+
+      * `"ukjent"` -> ValueError
+      * `{"a": 1}` / None -> TypeError
+      * `1e309` (JSON-tall som blir `inf`) -> OverflowError
+      * `10**20` -> konverterer fint, men er `Ikkekanoniserbar` senere.
+
+    Derfor: én port, brukt av BÅDE motoravlesningen og `rapport._antall`.
+    """
+    if isinstance(raa, bool) or not isinstance(raa, (int, float, str)):
+        raise Motorfeil("tall fra motoren er ikke et tall")
+    try:
+        n = int(raa)
+    except (TypeError, ValueError, OverflowError) as e:
+        raise Motorfeil("tall fra motoren er ikke et tall") from e
+    if abs(n) > MAKS_HELTALL:
+        raise Motorfeil(
+            f"tall fra motoren er utenfor det kanoniserbare området"
+            f" (|n| > {MAKS_HELTALL})")
+    return n
+
+
 class Kommandomotor:
     """Kjør den konfigurerte motorkommandoen (containeren) og les JSON på
     stdout. Kommandoen kommer fra drift-config (DISPONIT_WCAG_MOTOR), aldri
@@ -159,7 +197,10 @@ class Kommandomotor:
             d = json.loads(ut.decode("utf-8"))
             return Motorresultat(
                 regelsett_versjon=str(d["regelsett_versjon"])[:64],
-                varighet_ms=max(0, int(d["varighet_ms"])),
+                # `heltall` kaster Motorfeil direkte (ikke ValueError), så
+                # `varighet_ms: 1e309` gir den dokumenterte feilkvitteringen
+                # i stedet for en OverflowError ut av kjøreløkka.
+                varighet_ms=max(0, heltall(d["varighet_ms"])),
                 sider=tuple(d.get("sider") or ()),
                 funn=tuple(d.get("funn") or ()),
                 blokkert=tuple(d.get("blokkert") or ()),

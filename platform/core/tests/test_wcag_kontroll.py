@@ -1230,3 +1230,61 @@ def test_motorutdata_er_bundet_i_minnet():
         treg = Kommandomotor(_motorkommando(kropp), tidsavbrudd_s=2)
         with pytest.raises(Motorfeil, match="TimeoutExpired"):
             treg.kjor({})
+
+
+def test_numerisk_overflyt_fra_motoren_er_motorfeil():
+    """Codex P1: konverteringsvaktene fanget bare ValueError og TypeError.
+
+    Tre feilmoduser slapp forbi, og alle tre ender samme sted — et unntak
+    ut av `controller.kjor_en` (som kun fanger Motorfeil og
+    ValidationError), altså et claimet oppdrag som står ufullført til
+    fristen i stedet for å bli kvittert som feilet:
+
+      * `1e309` er gyldig JSON, blir `inf`, og `int(inf)` er OverflowError;
+      * `10**20` konverterer fint, passerer skjemaet (som ikke har noe
+        øvre tak) og er `Ikkekanoniserbar` først under kanoniseringen;
+      * en SUM over 500 funn kan gå over det trygge området selv når hvert
+        ledd lå under.
+
+    Kontroll: ta `OverflowError` ut av `motor.heltall`, eller fjern
+    `MAKS_HELTALL`-sjekken, eller la `_kanoniske_bytes` slippe
+    `Ikkekanoniserbar` videre — hver av de tre gjør denne rød med et annet
+    unntak enn Motorfeil.
+    """
+    from modules.wcag_audit.motor import (Kommandomotor, MAKS_HELTALL,
+                                          Motorfeil, heltall)
+    from modules.wcag_audit.rapport import bygg
+
+    # Porten selv, på alle tre kantene.
+    for raa in ("ukjent", {"a": 1}, None, True, float("inf"), float("nan"),
+                1e309, MAKS_HELTALL + 1, -(MAKS_HELTALL + 1), 10 ** 20):
+        with pytest.raises(Motorfeil):
+            heltall(raa)
+    assert heltall(MAKS_HELTALL) == MAKS_HELTALL and heltall("42") == 42
+
+    # `varighet_ms: 1e309` fra en ekte motorkjøring: OverflowError før.
+    over = json.dumps({"regelsett_versjon": "axe-4.10",
+                       "varighet_ms": 1e309, "sider": [], "funn": [],
+                       "blokkert": [], "avkortet": [False, None, None]})
+    m = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % over),
+                      tidsavbrudd_s=30)
+    with pytest.raises(Motorfeil):
+        m.kjor({})
+
+    # `antall` og `avkortet` er samme eksponering, i rapportbyggingen.
+    for over in ({"funn": ({"regel_id": "r", "alvorlighet": "lav",
+                            "antall": 10 ** 20, "eksempler": []},)},
+                 {"blokkert": ({"vert": "f.example", "antall": 10 ** 20,
+                                "art": "font"},)},
+                 {"avkortet": (True, 10 ** 20, 10 ** 20)}):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
+                 kontekst=_kontekst())
+
+    # Summen: hvert ledd er lovlig, `sammendrag` blir det ikke.
+    ledd = MAKS_HELTALL // 3
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(funn=tuple(
+                {"regel_id": f"r{i}", "alvorlighet": "lav", "antall": ledd,
+                 "eksempler": []} for i in range(4))),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())

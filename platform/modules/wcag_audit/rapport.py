@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
-from .motor import Motorfeil, Motorresultat
+from .motor import Motorfeil, Motorresultat, heltall
 
 _ALVOR = ("kritisk", "alvorlig", "moderat", "lav")
 MAKS_FUNN = 500
@@ -38,9 +38,19 @@ def _kanoniske_bytes(rapport: dict) -> bytes:
     så modulen må måle med nøyaktig den funksjonen. En egen tilnærming her
     ville vært et annet tall enn det som faktisk avgjør — og differansen
     ville vist seg som en avvist opplasting, ikke som en for stor rapport.
+
+    `Ikkekanoniserbar` oversettes til Motorfeil (Codex P1). Den er en
+    `TypeError`, ikke noe `controller.kjor_en` fanger, og den kan nås av
+    tall som hver for seg passerte inngangsporten: `sammendrag` SUMMERER
+    500 funn, og summen kan gå over JCS sitt trygge område selv om hvert
+    ledd lå under. Dette er siste skanse — porten i `motor.heltall` tar
+    enkeltverdiene, denne tar alt som kan oppstå etterpå.
     """
     from policy_validator import jcs
-    return jcs.kanoniske_bytes(rapport)
+    try:
+        return jcs.kanoniske_bytes(rapport)
+    except jcs.Ikkekanoniserbar as e:
+        raise Motorfeil(f"rapporten kan ikke kanoniseres: {e}") from e
 
 
 def _ren_url(raa: str) -> str:
@@ -66,22 +76,21 @@ def _ren_url(raa: str) -> str:
 
 def _antall(raa, standard: int) -> int:
     """Motorens telling som heltall — eller Motorfeil, ALDRI en naken
-    ValueError.
+    ValueError/TypeError/OverflowError.
 
     Motorutdata er ubetrodd (§2): `{"antall": "ukjent"}` skal gi den
     dokumenterte feil-kvitteringen. `controller.kjor_en` fanger kun
     Motorfeil og ValidationError, så en konverteringsfeil herfra ville
     sluppet ut av controllerløkka og latt det claimede oppdraget stå
     ufullført til fristen — nøyaktig taushetenes utfall §10 forbyr.
+
+    Selve konverteringen er `motor.heltall` (Codex P1): den fanger også
+    overflyt (`1e309`) og tall over JCS sitt trygge område, som ellers
+    hadde smelt først under kanoniseringen rett før opplasting.
     """
     if raa is None or raa == "":
         return standard
-    if isinstance(raa, bool) or not isinstance(raa, (int, float, str)):
-        raise Motorfeil("antall fra motoren er ikke et tall")
-    try:
-        return int(raa)
-    except (TypeError, ValueError) as e:
-        raise Motorfeil("antall fra motoren er ikke et tall") from e
+    return heltall(raa)
 
 
 def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
@@ -126,6 +135,11 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
                               for e in eksempler[:MAKS_EKSEMPLER]]})
 
     truffet, tak, verdi = (tuple(resultat.avkortet) + (None, None, None))[:3]
+    # `tak` og `verdi` er RÅ motortall som går rett inn i et heltallsfelt
+    # uten øvre skjemagrense — samme eksponering som `antall`, og derfor
+    # gjennom samme port (Codex P1).
+    tak = None if tak is None else max(0, heltall(tak))
+    verdi = None if verdi is None else max(0, heltall(verdi))
     # Kappet VI en eksempelliste, er rapporten avkortet (Codex P2). Uten
     # dette kunne den promoterte evidensen påstå `truffet: false` samtidig
     # som den utelot kjente eksempler — feltet skal aldri love mer
