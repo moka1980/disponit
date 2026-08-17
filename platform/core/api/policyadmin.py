@@ -1040,10 +1040,37 @@ def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
 
       * `forkastet` — et slettet forslag. Det er terminalt og har ingen
         handling igjen; å vise det for alltid var nøyaktig det eier meldte.
-      * `aktivert` der policyen siden er SLETTET (ingen aktiv-peker i
-        `policy_hode`): raden sto igjen som «Aktivert» om en policy som ikke
-        finnes. Et aktivert utkast for en LEVENDE policy vises fortsatt —
-        det er gjeldende tilstand, ikke et lik.
+      * `aktivert` som IKKE er gjeldende tilstand: enten fordi policyen siden
+        er slettet (raden sto igjen som «Aktivert» om en policy som ikke
+        finnes), eller fordi en senere aktivering har avløst den. Det
+        aktiverte utkastet som ER den aktive policyen vises fortsatt — det er
+        gjeldende tilstand, ikke et lik.
+
+    RADEN BINDES TIL INNHOLDET, IKKE TIL ID-EN (Codex P2). Prøven var først
+    «finnes det en aktiv-peker for `policy_id`», og en policy_id blir LEDIG
+    igjen etter sletting: 032 nullstiller pekeren og frigjør versjonsnumrene,
+    nettopp så en riktig opprettelse etterpå ikke stoppes av 020-monotonien.
+    Aktiveres en erstatning under samme id, blir pekeren ikke-NULL igjen — og
+    da ble den slettede generasjonens utkast gjenopplivet i arbeidskøen, side
+    om side med erstatningen og presentert som gjeldende tilstand. Id-en
+    alene er altså ikke en identitet; det er den samme lærdommen 032 skriver
+    ut om `forventet_versjon`/`forventet_hash`, der versjonsnummeret alene
+    kunne peke på et helt annet dokument.
+
+    Bindingen som holder er hashen: `aktiver_policy` (013) skriver utkastets
+    frosne `innholds_hash` inn i policyraden den oppretter, så et aktivert
+    utkast og generasjonen det ble, bærer samme hash. Prøven leser derfor den
+    AKTIVE raden i `policyer` og sammenligner hashen. Den raden er lest, ikke
+    pekeren, av samme grunn som i 032: policyer registrert før PR-013 er
+    grandfathered uten hoderad, og raden med `aktiv` er nøyaktig den
+    `/v1/policy/aktiv` serverer (`policy_peker_konsistent` håndhever at de to
+    er samme svar der hoderaden finnes). Et utkast uten frosset hash kan
+    aldri være aktivert (013 avviser det), så sammenligningen er aldri NULL
+    for en rad prøven gjelder.
+
+    Et AVLØST aktivert utkast faller dermed også ut, og det er riktig for en
+    arbeidskø: `aktivert` er terminalt (statusmaskinen i 012/033), så raden
+    har ingen handling igjen uansett.
 
     Radene finnes fremdeles i basen — de er attestasjonshistorikkens ankre
     (slettingen i 032 bevarer dem uttrykkelig) og nås via detalj-ruten.
@@ -1051,9 +1078,9 @@ def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     sett_kontekst(conn, tenant, aktor, request_id)
     vilkaar = (" AND u.status <> 'forkastet'"
                " AND (u.status <> 'aktivert' OR EXISTS ("
-               "      SELECT 1 FROM policy_hode h WHERE h.tenant=u.tenant"
-               "        AND h.policy_id=u.policy_id"
-               "        AND h.aktiv_versjon IS NOT NULL))")
+               "      SELECT 1 FROM policyer p WHERE p.tenant=u.tenant"
+               "        AND p.policy_id=u.policy_id AND p.aktiv"
+               "        AND p.innholds_hash=u.innholds_hash))")
     if policy_id:
         rows = conn.execute(
             "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"

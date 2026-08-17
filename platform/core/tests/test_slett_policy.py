@@ -1070,13 +1070,26 @@ def test_bare_runtime_og_eier_har_execute_paa_slettingen():
         c.close()
 
 
+def _utkastrad(c, uid, pid, status, innholds_hash=None):
+    """Et utkast i en gitt status. `innholds_hash` er bindingen til
+    generasjonen utkastet ble: `aktiver_policy` skriver utkastets frosne hash
+    inn i policyraden, så et aktivert utkast og dets policyversjon deler
+    hash."""
+    c.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "innholds_hash,status,opprettet_av)"
+        " VALUES (%s,%s,%s,'{}'::jsonb,%s,%s,'forf')",
+        (TEN, uid, pid, innholds_hash, status))
+
+
 @pg
 def test_lista_er_arbeidskoen_ikke_historikken():
     """Eier 17/8: «når man sletter en policy skal det fjernes helt fra
     listen». Et forkastet utkast og et aktivert utkast for en SLETTET policy
     er historikk — de består i basen som attestasjonsankre, men de har ingen
-    handling igjen og skal ikke stå i arbeidskøen for alltid. Et aktivert
-    utkast for en LEVENDE policy er derimot gjeldende tilstand og vises.
+    handling igjen og skal ikke stå i arbeidskøen for alltid. Det aktiverte
+    utkastet som ER den aktive policyen, er derimot gjeldende tilstand og
+    vises.
 
     Kontroll: fjern `vilkaar`-strengen i `list_utkast`, så blir denne rød.
     """
@@ -1093,13 +1106,12 @@ def test_lista_er_arbeidskoen_ikke_historikken():
              ("u-val-" + secrets.token_hex(4), pid_levende, "validert"),
              ("u-utk-" + secrets.token_hex(4), pid_slettet, "utkast")]
     for uid, pid, status in rader:
-        m.execute(
-            "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
-            "innholds_hash,status,opprettet_av)"
-            " VALUES (%s,%s,%s,'{}'::jsonb,%s,%s,'forf')",
-            (TEN, uid, pid,
-             "h-" + secrets.token_hex(8) if status != "utkast" else None,
-             status))
+        # Det aktiverte utkastet for den LEVENDE policyen bærer hashen til
+        # den aktive raden — det er slik aktiveringen etterlater det.
+        _utkastrad(m, uid, pid, status,
+                   _hash(pid, "1.0.0") if uid.startswith("u-lva-")
+                   else "h-" + secrets.token_hex(8) if status != "utkast"
+                   else None)
     m.commit()
     rt = _rt()
     try:
@@ -1111,6 +1123,53 @@ def test_lista_er_arbeidskoen_ikke_historikken():
             "et aktivert utkast for en SLETTET policy ble stående"
         assert (vist & mine) == {rader[2][0], rader[3][0], rader[4][0]}, \
             (vist & mine)
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_gjenbrukt_policy_id_gjenoppliver_ikke_slettet_generasjon():
+    """En policy_id blir LEDIG igjen etter sletting — 032 frigjør til og med
+    versjonsnumrene, så en riktig opprettelse etterpå ikke stoppes av
+    020-monotonien. Aktiveres en erstatning under samme id, er pekeren
+    ikke-NULL igjen, og en prøve som bare spør «finnes det en aktiv-peker for
+    denne id-en» slipper DEN SLETTEDE generasjonens utkast tilbake inn i
+    arbeidskøen — presentert som gjeldende tilstand ved siden av
+    erstatningen (Codex P2).
+
+    Kontroll: bytt prøven i `list_utkast` tilbake til `policy_hode`-pekeren,
+    så blir denne rød.
+    """
+    from api import policyadmin
+    from db.pg import sett_kontekst
+    pid = "p-" + secrets.token_hex(3)
+    u_gammel = "u-gml-" + secrets.token_hex(4)
+    u_ny = "u-ny-" + secrets.token_hex(4)
+    m = _mig()
+    _policyrad(m, pid)                                   # generasjon 1.0.0
+    _utkastrad(m, u_gammel, pid, "aktivert", _hash(pid, "1.0.0"))
+    m.commit()
+    rt = _rt()
+    try:
+        assert _slett(rt, pid) == 1                      # angre feilen
+        rt.commit()
+        sett_kontekst(rt, TEN, "test", "r2")
+        assert u_gammel not in {r["utkast_id"] for r in policyadmin.list_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r")}
+
+        # Erstatningen opprettes og aktiveres under SAMME policy_id.
+        sett_kontekst(m, TEN, "test", "r3")
+        _policyrad(m, pid, versjon="2.0.0")
+        _utkastrad(m, u_ny, pid, "aktivert", _hash(pid, "2.0.0"))
+        m.commit()
+
+        sett_kontekst(rt, TEN, "test", "r4")
+        vist = {r["utkast_id"] for r in policyadmin.list_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r", policy_id=pid)}
+        assert u_ny in vist, "erstatningen mangler i arbeidskøen"
+        assert u_gammel not in vist, \
+            "den slettede generasjonen kom tilbake da id-en ble gjenbrukt"
     finally:
         rt.close()
         m.close()
