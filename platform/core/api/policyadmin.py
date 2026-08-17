@@ -709,11 +709,31 @@ def gjenapne_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
     _kanseller_levende_runde(conn, tenant, utkast_id, naa)
+    # GJENÅPNINGEN TELLER OPP VERSJONEN (Codex P1 på #76). Uten dette var den
+    # den ENESTE skrivestien som flyttet utkastet uten å røre den optimistiske
+    # låsen — og nettopp den stien krysser frysingen, der låsen er alt eier
+    # har. En editor som lastet versjon N mens utkastet sto `utkast`, mistet
+    # normalt skrivetilgangen i det noen validerte: `rediger_utkast` avviser
+    # status `validert`. Gjenåpningen ga den tilbake, med versjonen urørt på
+    # N, så det gamle skjemaet besto BÅDE statuskravet og versjonskravet og
+    # skrev rett over det gjenåpnede utkastet — stille, fordi ingenting i
+    # svaret tydet på at noe var tapt. Låsen er til for akkurat dette.
+    #
+    # Versjonen er derfor livsløpets teller, ikke innholdets: den sier «dette
+    # utkastet er ikke det du så», og et utkast som har vært gjennom frysing
+    # og gjenåpning ER ikke det. Trigger-invarianten i 012 krever bare at en
+    # INNHOLDSENDRING øker versjonen; å øke den uten å endre innhold er fritt.
+    #
+    # Den økte versjonen returneres, så klienten som gjenåpnet kan skrive
+    # videre uten en ekstra GET — alle ANDRE forespørsler fra før frysingen
+    # er nå ugyldige, som de skal være.
+    ny = ver + 1
     conn.execute(
-        "UPDATE policyutkast SET status='utkast', innholds_hash=NULL"
-        " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
+        "UPDATE policyutkast SET status='utkast', innholds_hash=NULL,"
+        " utkastversjon=%s WHERE tenant=%s AND utkast_id=%s",
+        (ny, tenant, utkast_id))
     return _fullfor(conn, tenant, idempotency_key, {
-        "utkast_id": utkast_id, "status": "utkast", "utkastversjon": ver})
+        "utkast_id": utkast_id, "status": "utkast", "utkastversjon": ny})
 
 
 def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,

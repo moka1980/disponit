@@ -426,8 +426,9 @@ def main() -> int:                                        # noqa: C901
             " AND utkast_id=%s", (TENANT, uid9)).fetchone()[0]
         port("gjenåpningen trekker runden og tiner utkastet",
              g.get("status") == "utkast" and rstatus == "kansellert"
-             and hasj is None,
-             f"status={g.get('status')} runde={rstatus} hash={hasj!r}")
+             and hasj is None and g.get("utkastversjon") == 2,
+             f"status={g.get('status')} runde={rstatus} hash={hasj!r}"
+             f" versjon={g.get('utkastversjon')}")
 
         deler = lagret_v.split(".")
         deler[-1] = str(int(deler[-1]) + 1)
@@ -436,9 +437,13 @@ def main() -> int:                                        # noqa: C901
         innhold9r["meta"] = {**innhold9r["meta"], "versjon": redigert_v,
                              "status": "produksjon"}
         idem = secrets.token_hex(8)
+        # Versjonen gjenåpningen svarte med, ikke 1: gjenåpningen teller opp
+        # den optimistiske låsen (Codex P1 på #76), så et hardkodet 1 her
+        # ville vært nøyaktig det utdaterte skjemaet fiksen stenger ute.
         r = policyadmin.rediger_utkast(
             rt9, tenant=TENANT, aktor=forfatter, request_id="r",
-            utkast_id=uid9, forventet_utkastversjon=1, innhold=innhold9r,
+            utkast_id=uid9, forventet_utkastversjon=g["utkastversjon"],
+            innhold=innhold9r,
             idempotency_key=idem, input_hash=f"ih9-{idem}")
         idem = secrets.token_hex(8)
         v2 = policyadmin.valider_utkast(

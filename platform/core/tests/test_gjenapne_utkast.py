@@ -230,6 +230,45 @@ def test_feil_utkastversjon_avvises():
 
 
 @pg
+def test_gjenapning_ugyldiggjor_skjemaet_fra_for_frysingen():
+    """Gjenåpningen teller opp den optimistiske låsen (Codex P1 på #76).
+
+    Kappløpet: en editor laster utkastet på versjon N mens det står `utkast`.
+    Så validerer noen andre — nå avviser `rediger_utkast` status `validert`,
+    så det gamle skjemaet er ufarlig. Men gjenåpningen ga skrivetilgangen
+    tilbake, og lot versjonen stå på N: da besto det gamle skjemaet både
+    statuskravet og versjonskravet, og skrev STILLE over det gjenåpnede
+    utkastet. Den som gjenåpnet, gjorde det for å redigere.
+
+    Kontroll: fjern `utkastversjon=%s` fra gjenåpningens UPDATE, så blir
+    denne rød — den utdaterte redigeringen slipper gjennom igjen.
+    """
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    _utkast(uid, pid, "utkast")
+    rt = _rt()
+    try:
+        gammel_ver = _rad(uid)[2]          # versjonen editoren lastet
+        v = _valider(rt, uid, gammel_ver)
+        assert v["utfall"] == "validert", v
+
+        g = _gjenapne(rt, uid, ver=gammel_ver)
+        assert g["utkastversjon"] == gammel_ver + 1, g
+        assert _rad(uid)[2] == gammel_ver + 1, "versjonen ble ikke talt opp"
+
+        # Det gamle skjemaet skriver mot versjonen det lastet — og avvises nå.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            _rediger(rt, uid, gammel_ver, _dokument(pid, "9.9.9"))
+        assert "utdatert" in e.value.kode, e.value.kode
+
+        # ...mens den som gjenåpnet, skriver videre på svaret sitt.
+        r = _rediger(rt, uid, g["utkastversjon"], _dokument(pid, "1.2.0"))
+        assert r["utkastversjon"] == gammel_ver + 2, r
+    finally:
+        rt.close()
+
+
+@pg
 def test_hashen_er_fortsatt_frosset_i_alle_andre_retninger():
     """033-kontrollen: migrasjonen åpnet ÉN overgang, ikke frysingen.
 
