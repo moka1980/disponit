@@ -31,6 +31,26 @@ def _ren_url(raa: str) -> str:
     return urlunsplit(("https", vert, d.path or "/", "", ""))
 
 
+def _antall(raa, standard: int) -> int:
+    """Motorens telling som heltall — eller Motorfeil, ALDRI en naken
+    ValueError.
+
+    Motorutdata er ubetrodd (§2): `{"antall": "ukjent"}` skal gi den
+    dokumenterte feil-kvitteringen. `controller.kjor_en` fanger kun
+    Motorfeil og ValidationError, så en konverteringsfeil herfra ville
+    sluppet ut av controllerløkka og latt det claimede oppdraget stå
+    ufullført til fristen — nøyaktig taushetenes utfall §10 forbyr.
+    """
+    if raa is None or raa == "":
+        return standard
+    if isinstance(raa, bool) or not isinstance(raa, (int, float, str)):
+        raise Motorfeil("antall fra motoren er ikke et tall")
+    try:
+        return int(raa)
+    except (TypeError, ValueError) as e:
+        raise Motorfeil("antall fra motoren er ikke et tall") from e
+
+
 def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     """-> rapport-dict, klar for skjemavalidering (som controlleren ALLTID
     kjører selv før opplasting — serveren validerer uansett, men modulen
@@ -55,7 +75,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     for f in resultat.funn:
         if not isinstance(f, dict) or f.get("alvorlighet") not in _ALVOR:
             raise Motorfeil("funn-post uleselig")
-        antall = int(f.get("antall") or 0)
+        antall = _antall(f.get("antall"), 0)
         if antall < 1:
             continue
         sammendrag[f["alvorlighet"]] += antall
@@ -84,7 +104,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
             continue
         begrensninger.append({
             "vert": vert[:253],
-            "antall": max(1, int(b.get("antall") or 1)),
+            "antall": max(1, _antall(b.get("antall"), 1)),
             "art": b.get("art") if b.get("art") in
                    ("stilark", "font", "skript", "bilde", "annet")
                    else "annet"})

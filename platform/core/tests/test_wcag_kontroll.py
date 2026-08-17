@@ -547,6 +547,17 @@ def test_motorutdata_er_ubetrodd():
         bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
              kontekst={k: v for k, v in _kontekst().items()
                        if k != "container_image_digest"})
+    # Codex P1: et uleselig ANTALL er også ubetrodd inndata. Konverteringen
+    # ga ValueError, som controlleren ikke fanger — da hadde unntaket
+    # sluppet ut av kjøreløkka og latt oppdraget stå claimet i stedet for
+    # å bli kvittert som feilet. Begge tellingene, funn og blokkert.
+    for over in ({"funn": ({"regel_id": "r", "alvorlighet": "lav",
+                            "antall": "ukjent", "eksempler": []},)},
+                 {"blokkert": ({"vert": "f.example", "antall": {"a": 1},
+                                "art": "font"},)}):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
+                 kontekst=_kontekst())
 
 
 # --------------------------------------------------------------------------
