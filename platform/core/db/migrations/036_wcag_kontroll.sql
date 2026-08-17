@@ -51,6 +51,22 @@ CREATE TRIGGER artefaktskjema_immutable
     BEFORE UPDATE OR DELETE ON artefaktskjema
     FOR EACH ROW EXECUTE FUNCTION avvis_endring();
 
+-- Codex P2: TRUNCATE fyrer INGEN rad-trigger i PostgreSQL, så vakten over
+-- ser den ikke. Og her finnes ingen fremmednøkkel fra
+-- `artefakttype_register.skjema_hash` som kunne stoppet den indirekte:
+-- bindingen er en HASH, ikke en referanse. Tabelleieren kunne derfor tømt
+-- hele skjemalageret i ett statement, og etterlatt hver registrerte
+-- artefakttype uten et oppslagbart skjema — altså hver opplastning avvist,
+-- for alltid, siden både skjemarader og typebindinger er immutable.
+--
+-- Statement-vakt, samme mønster som 014/016/035 bruker på sine append-only
+-- registre. Den gjelder også eieren og migratoren: en TRUNCATE her er
+-- alltid en feil, aldri en driftsoppgave.
+DROP TRIGGER IF EXISTS artefaktskjema_ingen_truncate ON artefaktskjema;
+CREATE TRIGGER artefaktskjema_ingen_truncate
+    BEFORE TRUNCATE ON artefaktskjema
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
+
 -- ------------------------------------------------------------
 -- 2. Sideeffektklassen `ekstern_lesing`
 -- ------------------------------------------------------------
@@ -74,6 +90,23 @@ CREATE TABLE IF NOT EXISTS malautorisasjonsvilkar (
 INSERT INTO malautorisasjonsvilkar (vilkar_type, maldomene)
     VALUES ('domenekontroll_verifisert', 'web_hostname')
     ON CONFLICT (vilkar_type) DO NOTHING;
+
+-- Samme vakt her, og av samme grunn: `registrer_malautorisasjonsvilkar`
+-- sier «raden er immutabel» i sin egen feilmelding, men tabellen hadde
+-- ingen trigger som gjorde påstanden sann. Et register aktiveringsporten
+-- leser POSITIVT — bare rader teller — er ikke bare noe som ikke skal
+-- endres: en fjernet rad slår av målautorisasjonskravet for alle policyer
+-- som bruker vilkåret, i stillhet.
+DROP TRIGGER IF EXISTS malautorisasjonsvilkar_immutable
+    ON malautorisasjonsvilkar;
+CREATE TRIGGER malautorisasjonsvilkar_immutable
+    BEFORE UPDATE OR DELETE ON malautorisasjonsvilkar
+    FOR EACH ROW EXECUTE FUNCTION avvis_endring();
+DROP TRIGGER IF EXISTS malautorisasjonsvilkar_ingen_truncate
+    ON malautorisasjonsvilkar;
+CREATE TRIGGER malautorisasjonsvilkar_ingen_truncate
+    BEFORE TRUNCATE ON malautorisasjonsvilkar
+    FOR EACH STATEMENT EXECUTE FUNCTION avvis_endring();
 
 -- ------------------------------------------------------------
 -- 4. Herdede funksjoner (eier: disponit_modul_eier, som 035)

@@ -120,6 +120,40 @@ def test_skjemalageret_er_immutabelt_for_alltid(migrator):
 
 
 @pg
+def test_registrene_taaler_ikke_truncate(migrator):
+    """Codex P2: TRUNCATE fyrer INGEN rad-trigger, så
+    `artefaktskjema_immutable` så den aldri. Og her finnes ingen
+    fremmednøkkel som kunne stoppet den indirekte:
+    `artefakttype_register.skjema_hash` er en HASH, ikke en referanse.
+    Tabelleieren kunne derfor tømt hele skjemalageret i ett statement og
+    etterlatt hver registrerte artefakttype uten et oppslagbart skjema —
+    altså hver opplastning avvist, for alltid, siden både skjemarader og
+    typebindinger er immutable.
+
+    `malautorisasjonsvilkar` hadde samme hull og verre retning: registeret
+    leses POSITIVT av aktiveringsporten (bare rader teller), så en tømt
+    tabell slår av målautorisasjonskravet i stillhet. Funksjonens egen
+    feilmelding lovet «raden er immutabel»; ingen trigger gjorde det sant.
+
+    CASCADE så en eventuell FK-sperre (FeatureNotSupported) ikke skygger
+    for vakten som faktisk prøves — BEFORE TRUNCATE fyrer først. Kontroll:
+    fjern `*_ingen_truncate`-triggerne i 036, så blir denne rød.
+    """
+    for t in ("artefaktskjema", "malautorisasjonsvilkar"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(f"TRUNCATE {t} CASCADE")
+        migrator.rollback()
+    # ... og radveien for målautorisasjonsregisteret, som manglet helt.
+    for sql in ("UPDATE malautorisasjonsvilkar SET maldomene='web_hostname'"
+                " WHERE vilkar_type='domenekontroll_verifisert'",
+                "DELETE FROM malautorisasjonsvilkar"
+                " WHERE vilkar_type='domenekontroll_verifisert'"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(sql)
+        migrator.rollback()
+
+
+@pg
 def test_artefakttype_krever_registrert_skjema(migrator):
     """Port 15 (registersiden): positiv regel, fail-closed. Kontroll: fjern
     eksistenssjekken i 036-kroppen, så blir denne rød."""
