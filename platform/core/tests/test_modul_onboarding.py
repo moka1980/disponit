@@ -1448,3 +1448,68 @@ def test_familiesveipen_er_stengt_for_web_runtime():
         rt.rollback()
     finally:
         rt.close()
+
+
+#: Funksjonene runtime MÅ kunne kalle for at modulveien skal virke i det
+#: hele tatt. Signaturene er 035-formene: en GRANT mot en signatur som ikke
+#: finnes er en hard feil, så listen holder migrer.py og migrasjonen i takt.
+RUNTIMEFUNKSJONER_035 = (
+    "utsted_onboarding_hemmelighet(text,text,text,uuid,text,int,int,text)",
+    "innlos_onboarding(uuid,text,uuid,text,int,text,uuid)",
+    "verifiser_modultoken(text)",
+    "roter_modultoken(uuid,uuid,text,int,text,uuid)",
+    "tilbakekall_modultoken(uuid,text,text)",
+    "utsted_artefaktkapabilitet"
+    "(text,bigint,text,text,int,text,bigint,text,text,int,text)",
+    "innlos_artefaktkapabilitet(text,text,text,text)",
+)
+
+
+@pg
+def test_onboardingrettighetene_folger_den_valgte_runtime_rollen():
+    """Codex P2: deploy-inngangen er `migrer.py [runtime-rolle]`.
+
+    Sto EXECUTE-en hardkodet til literalen `disponit` i 035, fikk enhver
+    ANNEN valgt rolle `permission denied` på hver eneste onboarding- og
+    modultokenforespørsel — inkludert `verifiser_modultoken`, som ER
+    autentiseringen av modultokenet — samtidig som migratoren meldte at
+    rettighetene var satt for den rollen. Med `disponit` som runtime var
+    hullet usynlig, og CI kjører nettopp `migrer.py disponit`.
+
+    Prøven måler derfor det literalen skjuler: rettighetsblokken kjøres på
+    en rolle som IKKE er runtime (`disponit_varselsender` finnes allerede og
+    skal ikke ha noe av dette), og etterpå rulles alt tilbake — ingen
+    rettighet blir stående. `før`-sjekken er porten mot en falsk grønn:
+    hadde rollen tilgangen på forhånd, målte testen ingenting.
+
+    Kontroll: flytt grantene tilbake til `TO disponit` i 035, så blir denne
+    rød mens hele resten av suiten står grønn."""
+    from .test_kjorer_og_kryptering import _migrer_modul
+    modul = _migrer_modul()
+    annen = "disponit_varselsender"
+    m = _c()
+    try:
+        har = "SELECT has_function_privilege(%s, %s, 'EXECUTE')"
+        fikk_pa_forhand = [f for f in RUNTIMEFUNKSJONER_035
+                           if m.execute(har, (annen, f)).fetchone()[0]]
+        assert fikk_pa_forhand == [], (
+            f"{annen} hadde EXECUTE før rettighetsblokken kjørte:"
+            f" {fikk_pa_forhand} — prøven måler da ingenting")
+
+        m.execute(modul.RETTIGHETER.format(rolle=annen))
+
+        mangler = [f for f in RUNTIMEFUNKSJONER_035
+                   if not m.execute(har, (annen, f)).fetchone()[0]]
+        assert mangler == [], (
+            f"runtime-rollen {annen} står uten EXECUTE på: {mangler}")
+
+        # ... og tabellene bak funksjonene er fortsatt stengt for runtime:
+        # veien inn er SECURITY DEFINER-funksjonen, ikke et bordgrant.
+        apne = [t for t in ("modul_onboarding", "modultoken",
+                            "modultoken_hendelse")
+                if m.execute("SELECT has_table_privilege(%s, %s, 'SELECT')",
+                             (annen, t)).fetchone()[0]]
+        assert apne == [], f"runtime fikk direkte tabelltilgang: {apne}"
+    finally:
+        m.rollback()
+        m.close()

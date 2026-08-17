@@ -1278,8 +1278,13 @@ END $$;
 
 REVOKE ALL ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO disponit;
-GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO disponit;
+-- EXECUTE til runtime gis IKKE her (Codex P2). Migrator kalles som
+-- `migrer.py [runtime-rolle]`, og en literal `disponit` her etterlater
+-- enhver ANNEN valgt rolle uten tilgang — 017 ga grantet til literalen, og
+-- fordi dette avsnittet DROPper de gamle signaturene, forsvinner det
+-- grantet med dem uansett. Runtimetilgangen står derfor der den er
+-- parameterisert på den valgte rollen: `RETTIGHETER` i migrer.py, samme
+-- sted som kvitteringskapabilitetens tvillingfunksjoner (M37_RETTIGHETER).
 RESET ROLE;
 -- SECURITY DEFINER kjører som domene_eier: den nye miljøporten i
 -- `utsted_artefaktkapabilitet` leser deploymentregisteret (som 017 måtte
@@ -1449,12 +1454,17 @@ REVOKE ALL ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) FROM 
 REVOKE ALL ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) FROM PUBLIC;
 -- Runtime (API-et) er den eneste nettverksveien inn; utstedelse og
 -- tilbakekalling er i tillegg scope-gatet (`modules:onboard`) i HTTP-laget.
-GRANT EXECUTE ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) TO disponit;
-GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) TO disponit;
-GRANT EXECUTE ON FUNCTION verifiser_modultoken(TEXT) TO disponit;
-GRANT EXECUTE ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) TO disponit;
-GRANT EXECUTE ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) TO disponit;
-
+--
+-- Men EXECUTE-en til runtime gis IKKE herfra (Codex P2). Deploy-inngangen
+-- er `migrer.py [runtime-rolle]`: velges en annen rolle enn literalen
+-- `disponit`, ville et grant her gitt tilgangen til feil rolle, og den
+-- valgte rollen ville fått `permission denied` på HVER onboarding- og
+-- modultokenforespørsel — inkludert `verifiser_modultoken`, som er
+-- autentiseringen selv — mens migratoren meldte at rettighetene var satt.
+-- Runtimetilgangen bor derfor i `RETTIGHETER` i migrer.py, parameterisert
+-- på den valgte rollen, nøyaktig som de herdede M-37-funksjonene og
+-- kvitteringskapabiliteten i denne migrasjonen. Her står bare
+-- default-deny: uten et grant kan ingen rolle kalle dem.
 RESET ROLE;
 
 -- Eieren (modul_eier) må kunne SKRIVE de nye tabellene når funksjonene
@@ -1466,6 +1476,10 @@ GRANT SELECT, INSERT ON modultoken_hendelse TO disponit_modul_eier;
 -- Runtime og modulroller har INGEN direkte skriving (klarsignalet §3) —
 -- og heller ingen lesing: `verifiser_modultoken` er lese-veien.
 REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM PUBLIC;
+-- Literalen er standardrollen; er runtime en annen rolle, tar `RETTIGHETER`
+-- i migrer.py den samme REVOKE-en på DEN rollen (tabellene eies av
+-- modul_eier, så `NULLSTILL_TABELLER` — som bare rører migrators egne
+-- tabeller — når dem ikke).
 REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM disponit;
 
 -- ------------------------------------------------------------

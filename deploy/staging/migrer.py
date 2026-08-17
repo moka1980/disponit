@@ -101,6 +101,31 @@ GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
+-- 017/035: artefaktkapabiliteten. Funksjonene eies av `disponit_domene_eier`
+-- (SECURITY DEFINER-veien inn i kapabilitetstabellen), så grantene MÅ gis
+-- som eieren — som migrator blir de en stille WARNING, samme felle som
+-- M37_RETTIGHETER under. 035 gir begge et haleargument for deploymenten og
+-- DROPper de gamle formene; signaturene her må derfor følge 035 eksakt.
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+-- 035: modul-onboarding og modultokener. Hele denne veien er
+-- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har
+-- verken lesing eller skriving på tabellene bak dem. `verifiser_modultoken`
+-- er selve autentiseringen av et modultoken, så uten EXECUTE her svarer
+-- API-et `permission denied` på hver eneste modulforespørsel.
+SET LOCAL ROLE disponit_modul_eier;
+GRANT EXECUTE ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION verifiser_modultoken(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION roter_modultoken(UUID, UUID, TEXT, INT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION tilbakekall_modultoken(UUID, TEXT, TEXT) TO {rolle};
+-- ... og INGEN direkte tabelltilgang (klarsignalet §3). Tabellene eies av
+-- modul_eier, så `NULLSTILL_TABELLER` (som bare rører migrators egne
+-- tabeller) når dem ikke; REVOKE-en må stå her, som eieren.
+REVOKE ALL ON modul_onboarding, modultoken, modultoken_hendelse FROM {rolle};
+RESET ROLE;
 -- PR-006: outbox-protokollen. `oppdrag` og `reparasjonsoperasjoner` er
 -- append+status som `unntak` — INSERT og status-UPDATE, aldri DELETE.
 -- `arbeidskapabiliteter` står bevisst IKKE her: den eies av
