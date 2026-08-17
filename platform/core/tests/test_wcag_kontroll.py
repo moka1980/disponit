@@ -11,6 +11,7 @@ Alle tester konstruerer egen tilstand. Ingen delt fixture.
 import hashlib
 import json
 import secrets
+import sys
 
 import psycopg
 import pytest
@@ -818,3 +819,59 @@ def test_avvist_kvittering_er_ikke_utfort():
     ok = controller.kjor_en(_Stubklient(200), "tk", motor, _kontekst(),
                             lambda k: k)
     assert ok["utfall"] == "utfort", ok
+
+
+# --------------------------------------------------------------------------
+# Kommandomotoren mot en EKTE (og fiendtlig) underprosess — Codex P1.
+# --------------------------------------------------------------------------
+
+def _motorkommando(kropp):
+    return [sys.executable, "-c", kropp]
+
+
+def test_motorutdata_er_bundet_i_minnet():
+    """Codex P1: `capture_output=True` bufret stdout og stderr uten tak i
+    opptil en time, i den CREDENTIAL-bærende prosessen. Rapportens senere
+    1 MiB-grense hjelper ikke: minnet er brukt før JSON-parsingen. En
+    motor som spyr ut data skal møte Motorfeil, ikke spise
+    controllerhosten. Kontroll: bytt tilbake til subprocess.run med
+    capture_output, så henger denne testen på minne i stedet for å bestå."""
+    from modules.wcag_audit.motor import (Kommandomotor, Motorfeil,
+                                          MAKS_STDOUT)
+    god = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": 5,
+                      "sider": [{"url": "https://a.example/",
+                                 "status": "ok"}],
+                      "funn": [], "blokkert": [],
+                      "avkortet": [False, None, None]})
+
+    # Lykkelig vei: payloaden når stdin, JSON-en leses tilbake.
+    m = Kommandomotor(_motorkommando(
+        "import sys,json;d=json.load(sys.stdin);assert d['mal_url'];"
+        "sys.stdout.write(%r)" % god))
+    r = m.kjor({"mal_url": "https://kunde.example/"})
+    assert r.regelsett_versjon == "axe-4.10" and r.varighet_ms == 5
+
+    # Uendelig stdout: avbrytes ved taket, ikke ved minnetaket til hosten.
+    uendelig = Kommandomotor(_motorkommando(
+        "import sys\nwhile True: sys.stdout.buffer.write(b'x'*65536)"),
+        tidsavbrudd_s=30)
+    with pytest.raises(Motorfeil, match=str(MAKS_STDOUT)):
+        uendelig.kjor({})
+
+    # Mye stderr: dreneres (ellers vranglåser motoren på full rørbuffer),
+    # og bare en snipp beholdes til feilmeldingen.
+    prat = Kommandomotor(_motorkommando(
+        "import sys\nfor i in range(400): sys.stderr.buffer.write(b'e'*65536)"
+        "\nsys.exit(3)"), tidsavbrudd_s=60)
+    with pytest.raises(Motorfeil, match="motor exit 3") as ei:
+        prat.kjor({})
+    assert len(str(ei.value)) < 400, "stderr slapp inn i meldingen ubundet"
+
+    # Fristen bæres av vakthunden, også når motoren har lukket stdout og
+    # lever videre — den veien hang tidligere til timeouten uansett.
+    for kropp in ("import time;time.sleep(300)",
+                  "import sys,os,time;sys.stdout.write(%r);"
+                  "sys.stdout.flush();os.close(1);time.sleep(300)" % god):
+        treg = Kommandomotor(_motorkommando(kropp), tidsavbrudd_s=2)
+        with pytest.raises(Motorfeil, match="TimeoutExpired"):
+            treg.kjor({})
