@@ -12,6 +12,8 @@ import hashlib
 import json
 import secrets
 import sys
+import threading
+import time
 
 import psycopg
 import pytest
@@ -293,6 +295,51 @@ def test_malautorisasjonsvilkar_er_lukket_og_immutabelt(migrator):
         c.rollback()
     finally:
         c.close()
+
+
+@pg
+def test_malautorisasjonsvilkar_serialiserer_samtidig_registrering(migrator):
+    """Codex P2: check-then-insert uten lås. To samtidige registreringer av
+    samme NYE vilkår så begge «finnes ikke» og gikk videre til INSERT; én
+    vant, den andre fikk PK-brudd — selv om innholdet var identisk og
+    funksjonen LOVER en idempotent no-op i nettopp det tilfellet.
+
+    Kontroll: fjern pg_advisory_xact_lock i migrasjonen, så blir den andre
+    forbindelsen liggende på unikhetsindeksen i stedet, og feiler med
+    UniqueViolation i det den første committer."""
+    vt = "vilkar_" + secrets.token_hex(4)
+    a, b = (_mk_admin("disponit_modules_admin"),
+            _mk_admin("disponit_modules_admin"))
+    feil, startet = [], threading.Event()
+
+    def registrer_b():
+        startet.set()
+        try:
+            b.execute("SELECT registrer_malautorisasjonsvilkar(%s,"
+                      "'web_hostname','test')", (vt,))
+            b.commit()
+        except Exception as e:                       # noqa: BLE001
+            feil.append(e)
+
+    try:
+        a.execute("SELECT registrer_malautorisasjonsvilkar(%s,"
+                  "'web_hostname','test')", (vt,))   # holder låsen, uåpnet
+        t = threading.Thread(target=registrer_b, daemon=True)
+        t.start()
+        startet.wait(5)
+        time.sleep(0.5)
+        assert t.is_alive(), "den andre forbindelsen ble ikke serialisert"
+        a.commit()
+        t.join(15)
+        assert not t.is_alive(), "den andre forbindelsen ble aldri ferdig"
+        assert not feil, feil                        # idempotent, ikke PK-brudd
+        assert migrator.execute(
+            "SELECT count(*) FROM malautorisasjonsvilkar WHERE"
+            " vilkar_type=%s", (vt,)).fetchone() == (1,)
+        migrator.rollback()
+    finally:
+        a.close()
+        b.close()
 
 
 # --------------------------------------------------------------------------

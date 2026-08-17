@@ -135,6 +135,15 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_eksisterende TEXT;
 BEGIN
+    -- Codex P2: serialiser check-then-insert på vilkårsidentiteten (samme
+    -- mønster som `registrer_kontrakt` og `registrer_artefakttype`). Uten
+    -- låsen kan to samtidige registreringer av samme NYE (vilkar_type,
+    -- maldomene) — deploy og administrasjon, eller et retry — begge se
+    -- «finnes ikke» her og gå videre til INSERT; én vinner, den andre får
+    -- PK-brudd selv om innholdet er identisk. Funksjonen LOVER en
+    -- idempotent no-op i nettopp det tilfellet.
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('malautorisasjonsvilkar:' || p_vilkar_type, 0));
     SELECT maldomene INTO v_eksisterende
       FROM public.malautorisasjonsvilkar WHERE vilkar_type = p_vilkar_type;
     IF FOUND THEN
