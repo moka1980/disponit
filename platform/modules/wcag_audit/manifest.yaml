@@ -59,8 +59,17 @@ staging_sjekkliste:
   ytelse_bestatt:
     status: nei
     notat: >-
-      Frister 30 min (enkeltside) / 90 min (nettsted);
+      Frister 30 min (enkeltside) / 60 min (nettsted);
       kontroll.ti_kjoringer_signert_innen_frist = 10/10 (§12).
+      NEDJUSTERT FRA 90 MIN (Codex P2): opplastingskapabiliteten claimen
+      utsteder klemmes til maks 3600 s (migrasjon 017), og det finnes
+      ingen fornyelsesvei — en kontroll som bruker 90 min ville møtt et
+      utløpt opplastingstoken, altså feilet ETTER at hele jobben var
+      gjort. Motorens tidsavbrudd (Kommandomotor, 3600 s som standard)
+      peker på det samme taket. En annonsert frist stacken ikke kan holde
+      er et løfte om noe annet enn det som skjer; 90 min krever
+      kapabilitetsfornyelse først, og det er en plattformendring med egen
+      spec-runde — ikke en konstant å skru opp her.
   rollback_testet:
     status: nei
     notat: >-
