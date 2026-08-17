@@ -1218,7 +1218,10 @@ def test_identisk_gjenskapt_policy_gjenoppliver_ikke_slettet_generasjon():
         _utkastrad(m, u_ny, pid, "aktivert", _hash(pid, "1.0.0"))
         m.commit()
 
-        # Forutsetningen testen hviler på: hashene ER like.
+        # Forutsetningen testen hviler på: hashene ER like. (Kontekst på nytt
+        # etter commit — `sett_kontekst` er SET LOCAL, og uten den ser en
+        # lesing null rader og «kollisjonen» ville sett ut som fravær av en.)
+        sett_kontekst(m, TEN, "test", "r5")
         hasher = {h for (h,) in m.execute(
             "SELECT innholds_hash FROM policyutkast WHERE tenant=%s"
             " AND utkast_id IN (%s,%s)", (TEN, u_gammel, u_ny)).fetchall()}
@@ -1243,11 +1246,13 @@ def test_aktivert_revisjon_er_server_utledet():
     var vi tilbake til å gjette generasjonen. Triggeren (034) setter verdien
     ved overgangen til `aktivert` og holder den ellers uendret, uansett hva
     som skrives utenfra."""
+    from db.pg import sett_kontekst
     pid = "p-" + secrets.token_hex(3)
     uid = "u-" + secrets.token_hex(6)
     m = _mig()
     _policyrad(m, pid)
     m.commit()
+    sett_kontekst(m, TEN, "test", "r2")   # SET LOCAL — borte etter commit
     try:
         # Skrevet inn ved fødselen: overskrives av hodets revisjon.
         m.execute(
