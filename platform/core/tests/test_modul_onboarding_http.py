@@ -1063,6 +1063,103 @@ def test_draining_deployment_far_fortsatt_levere(migrator, miljo, monkeypatch):
         a.tjeneste.pool.lukk()
 
 
+@pg
+@dekker("token_ugyldig")
+def test_tilbakekalling_i_vinduet_stopper_claimen(migrator, miljo, monkeypatch):
+    """Codex P1: eksplisitt tilbakekalling er lovet ØYEBLIKKELIG, og
+    claim-veien holdt ikke løftet.
+
+    `preauth` eier og LUKKER sin egen transaksjon, så tokenet er verifisert
+    og glemt før forretningstransaksjonen begynner. Porten som kom etterpå
+    leste bare REGISTERET — deployment, modulstatus, epoch — og
+    `claim_neste_oppdrag` kunne ikke fylle hullet: den får ingen token-id og
+    har ingenting å slå opp `tilbakekalt_ts` på. En tilbakekalling som
+    committet i det vinduet stoppet derfor ingenting; det tilbakekalte
+    tokenet fikk tildelt NYTT arbeid, og eieren som nettopp trakk en
+    kompromittert legitimasjon hadde ingen grunn til å tro det.
+
+    Kappløpet er avgjort på forhånd: tilbakekallingen legges inn fra en EGEN
+    tilkobling i det `preauth` har returnert — nøyaktig mellom de to
+    committene. Samme grep som nødstopptesten over.
+
+    KØEN ER IKKE TOM, og det er hele beviset: uten porten ville denne
+    requesten fått oppdraget. Kontrollen står i testen — først et claim som
+    lykkes (200) med det samme oppsettet, så det samme claimet med
+    tilbakekallingen ladd. Ville køen vært tom, ville et 204 sett ut som en
+    bestått port.
+
+    Kontroll: fjern `_modultoken_revalidert`-kallet i `_modulporten`, så blir
+    denne rød — requesten claimer da oppdrag nummer to."""
+    import psycopg
+    from starlette.testclient import TestClient
+    from api import app as appmodul
+    from api.app import lag_app
+
+    t = f"t{_u()}"
+    prefiks = f"h{_u()}."
+    _kjent_type(monkeypatch, t, prefiks)
+    modul, rel = _kjede(migrator, typenavn=t)
+    sak, logg = _lag_sak(migrator, TENANT)
+    # TO oppdrag: det første beviser at køen leverer, det andre står igjen
+    # som det porten skal nekte å dele ut.
+    _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=t,
+                      eiermodul=modul, handling=prefiks + "send")
+    opp2, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=t,
+                                eiermodul=modul, handling=prefiks + "send")
+    migrator.commit()
+
+    ekte_preauth = appmodul.preauth
+    ladd, traff = [], []
+
+    def _tilbakekall_i_vinduet(tjeneste, conn, authorization, request_id=""):
+        auth = ekte_preauth(tjeneste, conn, authorization, request_id)
+        if ladd and isinstance(auth, appmodul.ModulAutentisert):
+            ladd.pop()
+            traff.append(auth.modultoken_id)
+            sidekanal = psycopg.connect(DSN)
+            try:
+                sidekanal.execute(
+                    "SELECT tilbakekall_modultoken(%s,'kompromittert','test')",
+                    (auth.modultoken_id,))
+                sidekanal.commit()
+            finally:
+                sidekanal.close()
+        return auth
+
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ignorert = _onboard_token(c, migrator, modul, rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            assert c.post("/v1/oppdrag/claim", json={},
+                          headers=hode).status_code == 200, "køen leverer"
+
+            monkeypatch.setattr(appmodul, "preauth", _tilbakekall_i_vinduet)
+            ladd.append(True)
+            r = c.post("/v1/oppdrag/claim", json={}, headers=hode)
+            monkeypatch.setattr(appmodul, "preauth", ekte_preauth)
+
+            assert traff, "tilbakekallingen traff aldri vinduet"
+            # 401, ikke 403: tokenet ER dødt, og neste forsøk stanser alt i
+            # `preauth` med den samme koden. Nødstoppet svarer 403
+            # `modul_ikke_claimbar` fordi det er MODULEN som er stengt mens
+            # legitimasjonen fortsatt er en legitimasjon — samme hendelse,
+            # samme dom, uansett hvilken dør deploymenten står i.
+            assert (r.status_code, r.json()["feil"]) == (
+                401, "token_ugyldig"), r.text
+
+            # ... og oppdraget ble ikke rørt: porten stanset, den forstyrret
+            # ikke. Et `plukket` her ville betydd at claimen skjedde og
+            # svaret bare ble kastet — arbeid tildelt et dødt token.
+            _sett_kontekst(migrator, TENANT)
+            assert migrator.execute(
+                "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+                (TENANT, opp2)).fetchone() == ("opprettet",)
+            migrator.rollback()
+    finally:
+        a.tjeneste.pool.lukk()
+
+
 def test_bootstrap_veien_kan_ikke_utstede_claimdyktige_tokener():
     """Port 24 (deploy-port): token-cli nekter `orders:execute`-scopes —
     claim-fullmakt kommer KUN fra onboardingen. Kontroll: fjern vaktleddet i

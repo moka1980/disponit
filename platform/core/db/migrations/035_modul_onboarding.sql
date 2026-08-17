@@ -757,13 +757,18 @@ $$;
 -- gang. Kapabilitetsinnløsningene sammenligner kun identitet (modul, miljø,
 -- release) og ser hverken tokenets tilstand, modulens status eller epoch,
 -- så en kvittering eller et artefakt fra den stoppede deploymenten gikk
--- inn likevel. Claim-veien har ikke hullet: `claim_neste_oppdrag`
--- re-verifiserer under modul-låsen.
+-- inn likevel.
 --
--- Denne funksjonen er den samme re-verifiseringen for de to
--- innløsningsveiene, og den er ÉN funksjon fordi regelen er én: to kopier
--- ville drevet fra hverandre, akkurat som `_forbruk_kapabilitet` sine to
--- grener gjorde.
+-- OGSÅ CLAIM-VEIEN (Codex P1). Den så dekket ut fordi `claim_neste_oppdrag`
+-- re-verifiserer under modul-låsen — men den re-verifiseringen gjelder
+-- REGISTERET: deployment, status, epoch. Funksjonen får ingen token-id og
+-- har ingenting å slå opp `tilbakekalt_ts` på, så en EKSPLISITT
+-- tilbakekalling av nettopp dette tokenet passerte ubemerket og fikk
+-- tildelt nytt arbeid, enda endepunktet lover øyeblikkelig virkning.
+--
+-- Denne funksjonen er den samme re-verifiseringen for alle tre veiene, og
+-- den er ÉN funksjon fordi regelen er én: tre kopier ville drevet fra
+-- hverandre, akkurat som `_forbruk_kapabilitet` sine to grener gjorde.
 --
 -- Låsen er DELT, som claim-ens: den serialiserer mot nødstopp/reaktivering
 -- (som tar den eksklusivt) uten at to samtidige leveranser fra samme modul

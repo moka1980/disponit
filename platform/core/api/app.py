@@ -654,11 +654,15 @@ def _modultoken_revalidert(tjeneste: Tjeneste, conn: psycopg.Connection,
     stoppede deploymenten gikk inn likevel, og stoppet var et løfte
     plattformen ikke holdt.
 
-    Claim-veien har ikke hullet: `claim_neste_oppdrag` re-verifiserer det
-    samme under modul-låsen. Dette er den re-verifiseringen for de to
-    INNLØSNINGSveiene, og porten står FØR innløsningen: låsen den tar er
-    transaksjonsbundet, så et nødstopp kan ikke gli inn mellom dommen og
-    forbruket.
+    ALLE TRE VEIENE BRUKER DEN (Codex P1). Først de to innløsningsveiene;
+    siden også claim-porten. Claim-veien så lenge ut til å være dekket av at
+    `claim_neste_oppdrag` re-verifiserer under modul-låsen, men den
+    re-verifiseringen gjelder REGISTERET — deployment, status, epoch.
+    Funksjonen får ingen token-id og kan derfor ikke se `tilbakekalt_ts`, så
+    en eksplisitt tilbakekalling midt i requesten stanset ingenting: det
+    tilbakekalte tokenet ble tildelt nytt arbeid. Porten står FØR bruken på
+    alle tre stedene, og låsen den tar er transaksjonsbundet — et nødstopp
+    eller en tilbakekalling kan ikke gli inn mellom dommen og forbruket.
 
     ÉN funksjon for begge veiene, og dommen selv ligger i databasen
     (`modultoken_fortsatt_autorisert`) — den er ikke sammensatt av tre
@@ -1409,36 +1413,55 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 return _feilsvar("request_feilformet", rid)
 
         # TOKENET AUTENTISERER, REGISTERET AUTORISERER (035 §2/§6).
-        # Deployment, status og epoch portes med EKSPLISITTE avslag — «du
-        # har ikke lov» og «det finnes ikke arbeid» må aldri se like ut
-        # (port 18–19). claim_neste_oppdrag re-verifiserer det samme under
-        # modul-låsen; porten her er for svarets ærlighet, ikke for
-        # sikkerheten. Den er ÉN funksjon fordi den leses to ganger — før
-        # claimen og etter et tomt resultat — og to kopier av den samme
+        # Token, deployment, status og epoch portes med EKSPLISITTE avslag —
+        # «du har ikke lov» og «det finnes ikke arbeid» må aldri se like ut
+        # (port 18–19). Porten er ÉN funksjon fordi den leses to ganger —
+        # før claimen og etter et tomt resultat — og to kopier av den samme
         # dommen ville drevet fra hverandre.
         def _modulporten():
-            """(drad, feilsvar): feilsvar er None når modulen får claime."""
+            """(drad, feilsvar): feilsvar er None når modulen får claime.
+
+            TOKENET REVALIDERES FØRST (Codex P1), og det er ikke en
+            omorganisering: fram til nå leste porten bare REGISTERET —
+            deployment, modulstatus, epoch — mens tokenraden aldri ble sett
+            igjen etter `preauth`, som eier og LUKKER sin egen transaksjon.
+            `claim_neste_oppdrag` kunne ikke ta den heller: den får ingen
+            token-id og har ingenting å slå opp `tilbakekalt_ts` på. En
+            eksplisitt tilbakekalling som committer mellom `preauth` og
+            claimen traff derfor ingen port i det hele tatt, og det
+            tilbakekalte tokenet fikk tildelt nytt arbeid — stikk i strid
+            med at endepunktet lover ØYEBLIKKELIG virkning.
+
+            Revalideringen er den SAMME funksjonen de to
+            innløsningsveiene bruker, og det er hele poenget: dommen «er
+            denne deploymenten fortsatt autorisert?» skal være én regel, én
+            gang, ikke en kopi per dør. Den tar den delte modul-låsen, og
+            låsen er transaksjonsbundet — den holdes altså HELE veien fram
+            til `claim_neste_oppdrag` har tildelt. Et nødstopp eller en
+            tilbakekalling kan ikke gli inn mellom dommen og tildelingen.
+
+            Modulstatus og epoch leses derfor ikke lenger her: de var de
+            samme to sjekkene, ULÅST, og etter revalideringen kan de per
+            konstruksjon ikke fyre — de ville stått som død kode som ser ut
+            som en port. Igjen står det som er DEPLOYMENTENS eget og som
+            revalideringen med vilje ikke ser: livsløpet (en `draining`
+            deployment skal ikke få NYTT arbeid, men skal få levere det den
+            har) og kontraktfeltene autorisasjonen utledes fra.
+            """
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return None, revalidering
             drad = conn.execute(
-                "SELECT d.livslop, h.status, h.module_epoch,"
-                " d.kontraktversjon, d.kontrakt_hash"
+                "SELECT d.livslop, d.kontraktversjon, d.kontrakt_hash"
                 "  FROM moduldeployment d"
-                "  JOIN modulhode h ON h.modul_id = d.modul_id"
                 " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id=%s",
                 (auth.modul_id, auth.miljo, auth.release_id)).fetchone()
-            if drad is None or drad[0] != "claiming" or drad[1] != "aktiv":
+            if drad is None or drad[0] != "claiming":
                 conn.rollback()
                 tjeneste.logg.hendelse("modul_ikke_claimbar", rid,
                                        auth.tenant,
-                                       livslop=drad[0] if drad else "borte",
-                                       status=drad[1] if drad else "borte")
+                                       livslop=drad[0] if drad else "borte")
                 return None, _feilsvar("modul_ikke_claimbar", rid)
-            if drad[2] != auth.utstedt_epoch:
-                conn.rollback()
-                tjeneste.logg.hendelse("modulepoch_utdatert", rid,
-                                       auth.tenant,
-                                       utstedt=auth.utstedt_epoch,
-                                       gjeldende=drad[2])
-                return None, _feilsvar("modulepoch_utdatert", rid)
             return drad, None
 
         claim_release = claim_miljo = claim_epoch = None
@@ -1458,7 +1481,7 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 "SELECT oppdragstype FROM oppdragstype_register"
                 " WHERE eiermodul=%s AND kontraktversjon=%s"
                 "   AND kontrakt_hash=%s",
-                (auth.modul_id, drad[3], drad[4])).fetchall()
+                (auth.modul_id, drad[1], drad[2])).fetchall()
             prefikser = sorted({
                 pre for (typenavn,) in typerader
                 for pre in getattr(
