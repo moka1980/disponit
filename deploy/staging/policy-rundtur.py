@@ -329,8 +329,17 @@ def main() -> int:                                        # noqa: C901
     rt8 = koble(DSN)
     try:
         sett_kontekst(rt8, malten, "rundtur", "r9")
-        n_slettet = rt8.execute("SELECT slett_ubrukt_policy(%s,%s)",
-                                (malten, pid)).fetchone()[0]
+        # Slettingen er bundet til den policyen kalleren SÅ: versjon +
+        # innholdshash, nøyaktig som `/v1/policy/aktiv` serverer dem. Er en ny
+        # versjon aktivert i mellomtiden, avvises slettingen i stedet for å ta
+        # den nye med seg.
+        aktiv = rt8.execute(
+            "SELECT versjon, innholds_hash FROM policyer"
+            " WHERE tenant=%s AND policy_id=%s AND aktiv",
+            (malten, pid)).fetchone()
+        n_slettet = rt8.execute(
+            "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+            (malten, pid, aktiv[0], aktiv[1])).fetchone()[0]
         rt8.commit()
         sett_kontekst(rt8, malten, "rundtur", "r10")
         port("policyen slettes (aldri brukt)", n_slettet >= 1,
