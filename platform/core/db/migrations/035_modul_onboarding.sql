@@ -79,10 +79,10 @@ CREATE TABLE IF NOT EXISTS modultoken (
     miljo            TEXT NOT NULL,
     release_id       TEXT NOT NULL,
     utstedt_epoch    BIGINT NOT NULL,
-    -- Én-etterfølger-garantien I LAGRINGEN, ikke bare i rotasjonsfunksjonens
+    -- Én-rotasjon-garantien I LAGRINGEN, ikke bare i rotasjonsfunksjonens
     -- radlås: to samtidige rotasjoner kan aldri begge committe en
-    -- etterfølger (portene 21, 30). Unikheten står nå som et PARTIELT
-    -- indeks under tabellen — se `en_etterfolger_per_token`.
+    -- etterfølger (portene 21, 30). Unikheten står som en indeks under
+    -- tabellen — se `ett_forsok_per_rotasjon`.
     forgjenger       UUID REFERENCES modultoken (token_id),
     -- Rotasjonens idempotensnøkkel (Codex P1): deploymentens egen id for
     -- FORSØKET, ikke for tokenet. Den gjør et gjentatt forsøk etter et tapt
@@ -90,6 +90,15 @@ CREATE TABLE IF NOT EXISTS modultoken (
     -- konflikt. NULL på familiens første token (det er ingen rotasjon) og
     -- på klienter som ikke sender nøkkelen — de får konflikt som før.
     rotasjon_id      UUID,
+    -- Forsøksnummeret INNENFOR rotasjonen (Codex P1). Et gjentatt forsøk
+    -- etter et tapt svar mynter et SØSKEN, det river ikke ned det forrige:
+    -- serveren kan ikke vite om den første hemmeligheten kom frem, og en
+    -- deployment som har lagret den ville blitt låst ute i det øyeblikket
+    -- den ble tilbakekalt. Alle søsknene tilhører samme `rotasjon_id`, og
+    -- alle er levende — deploymenten bruker den den faktisk fikk. Taket
+    -- står i lagringen: fem forsøk, så er dette ikke lenger en tapt pakke.
+    rotasjon_forsok  SMALLINT NOT NULL DEFAULT 1
+                     CHECK (rotasjon_forsok BETWEEN 1 AND 5),
     opprettet        TIMESTAMPTZ NOT NULL DEFAULT now(),
     utloper          TIMESTAMPTZ NOT NULL,    -- v1: 30 døgn
     tilbakekalt_ts   TIMESTAMPTZ,
@@ -109,19 +118,26 @@ CREATE INDEX IF NOT EXISTS modultoken_levende
     ON modultoken (modul_id, miljo, release_id)
     WHERE tilbakekalt_ts IS NULL;
 
--- ÉN ETTERFØLGER PER TOKEN — med nøyaktig ett unntak (Codex P1): en
--- etterfølger som er erklært ULEVERT. Rotasjonen mynter etterfølgerens
--- hemmelighet på serveren og viser den ÉN gang; går svaret tapt på veien
--- hjem, holder ingen den, mens raden fortsatt okkuperer forgjengerens
--- eneste etterfølgerplass. Da var modulen låst ute til et menneske
--- onboardet den på nytt. `erstattet_etter_tapt_svar` er den ene grunnen
--- som frigjør plassen, og den settes KUN når det gjentatte forsøket bærer
--- samme `rotasjon_id` — to ekte samtidige rotasjoner treffer indeksen som
--- før. Den ulevert-erklærte raden slettes aldri; den står tilbakekalt i
--- kjeden, så revisjonssporet viser at forsøket skjedde.
-CREATE UNIQUE INDEX IF NOT EXISTS en_etterfolger_per_token
-    ON modultoken (forgjenger)
-    WHERE tilbakekalt_grunn IS DISTINCT FROM 'erstattet_etter_tapt_svar';
+-- ÉN ROTASJON PER TOKEN — og ett forsøk per nummer i den (Codex P1).
+--
+-- Garantien som betyr noe er at forgjengeren har nøyaktig ÉN rotasjon:
+-- to ekte samtidige rotasjoner vil begge sette inn sitt forsøk nummer 1,
+-- og lagringen lar bare den ene komme inn (portene 21, 30) — akkurat som
+-- før. Det ET GJENTATT FORSØK etter et tapt svar får, er neste nummer i
+-- SAMME rotasjon; at hvert nummer er unikt gir taket i CHECK-en et reelt
+-- gulv å stå på. Vakten `modultoken_soesken_vakt` under holder søsknene
+-- til én og samme `rotasjon_id`.
+--
+-- Den forrige formen (unik på `forgjenger`, med `erstattet_etter_tapt_svar`
+-- som fribillett) er borte: den løste det tapte svaret ved å TILBAKEKALLE
+-- etterfølgeren fra forrige forsøk og utstede en ny hemmelighet. Men
+-- serveren kan ikke vite om det første svaret kom frem — var det bare
+-- forsinket, satt deploymenten igjen med et token som nettopp ble drept,
+-- og den kastet forgjengeren sin. Retten til å prøve på nytt skal ikke
+-- kunne drepe en credential som kan være levert.
+DROP INDEX IF EXISTS en_etterfolger_per_token;
+CREATE UNIQUE INDEX IF NOT EXISTS ett_forsok_per_rotasjon
+    ON modultoken (forgjenger, rotasjon_forsok);
 
 -- Append-only revisjonsspor: utstedt, innløst, rotert, tilbakekalt,
 -- avvist bruk. Speiler modulregister_hendelse i form.
@@ -214,6 +230,7 @@ CREATE TRIGGER modultoken_identitet_immutable
         OR NEW.utstedt_epoch   IS DISTINCT FROM OLD.utstedt_epoch
         OR NEW.forgjenger      IS DISTINCT FROM OLD.forgjenger
         OR NEW.rotasjon_id     IS DISTINCT FROM OLD.rotasjon_id
+        OR NEW.rotasjon_forsok IS DISTINCT FROM OLD.rotasjon_forsok
         OR NEW.utloper         IS DISTINCT FROM OLD.utloper
         OR NEW.opprettet       IS DISTINCT FROM OLD.opprettet
         OR (OLD.tilbakekalt_ts IS NOT NULL
@@ -226,6 +243,37 @@ CREATE TRIGGER modultoken_identitet_immutable
         OR (NEW.tilbakekalt_ts IS NULL
             AND NEW.tilbakekalt_grunn IS DISTINCT FROM OLD.tilbakekalt_grunn))
     EXECUTE FUNCTION avvis_endring();
+
+-- SØSKEN HØRER TIL SAMME ROTASJON (Codex P1). Indeksen over sier at hvert
+-- forsøksnummer er unikt; denne sier hva et forsøk > 1 ER: neste forsøk i
+-- den rotasjonen forsøk 1 startet, med samme nøkkel. Uten den kunne to
+-- ulike rotasjoner dele forgjengeren bare de valgte hvert sitt nummer —
+-- altså nettopp familiegreningen én-etterfølger-regelen finnes for å
+-- stoppe. Sjekken leser en COMMITTET rad (forsøk 1); en samtidig, ennå
+-- ucommittet forsøk-1-rad er usynlig her og gir avvisning — fail-closed.
+CREATE OR REPLACE FUNCTION modultoken_soesken_vakt()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.rotasjon_forsok = 1 THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.rotasjon_id IS NULL OR NEW.forgjenger IS NULL THEN
+        RAISE EXCEPTION 'modultoken: gjentatt forsok krever forgjenger og'
+            ' rotasjonsnokkel' USING ERRCODE = 'check_violation';
+    END IF;
+    PERFORM 1 FROM public.modultoken t
+     WHERE t.forgjenger = NEW.forgjenger AND t.rotasjon_forsok = 1
+       AND t.rotasjon_id IS NOT DISTINCT FROM NEW.rotasjon_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'modultoken: forsok % horer ikke til rotasjonen som'
+            ' startet pa dette tokenet', NEW.rotasjon_forsok
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS modultoken_soesken ON modultoken;
+CREATE TRIGGER modultoken_soesken BEFORE INSERT ON modultoken
+    FOR EACH ROW EXECUTE FUNCTION modultoken_soesken_vakt();
 
 -- Tokener slettes aldri — de tilbakekalles. Kjeden (forgjenger) er
 -- revisjonsspor.
@@ -510,12 +558,27 @@ $$;
 -- etterfølgerplass. Deploymenten prøvde da igjen med sitt fortsatt gyldige
 -- token, fikk 409, og var ute av drift så snart nåden løp ut — en tapt
 -- pakke krevde et menneske og en ny onboarding. Derfor bærer forsøket en
--- idempotensnøkkel: kommer det samme `rotasjon_id` en gang til, ERKLÆRES
--- den udelte etterfølgeren ulevert (tilbakekalt her og nå, egen grunn, i
--- revisjonssporet) og et nytt forsøk mynter en fersk etterfølger. Uten
--- nøkkel — eller med en ANNEN nøkkel — er dette fortsatt en konflikt, som
--- før: det er nettopp forskjellen på «samme forsøk om igjen» og «to
--- rotasjoner».
+-- idempotensnøkkel: kommer det samme `rotasjon_id` en gang til, mynter
+-- rotasjonen NESTE FORSØK i samme rotasjon. Uten nøkkel — eller med en
+-- ANNEN nøkkel — er dette fortsatt en konflikt: det er nettopp forskjellen
+-- på «samme forsøk om igjen» og «to rotasjoner».
+--
+-- OG DET GJENTATTE FORSØKET RIVER IKKE NED DET FORRIGE (Codex P1, runde 3).
+-- Første utgave tilbakekalte etterfølgeren fra forrige forsøk og kalte den
+-- ulevert. Men serveren VET ikke at svaret gikk tapt — den vet bare at det
+-- kom en request til. Var det første svaret levert, eller bare forsinket,
+-- satt deploymenten igjen med et token som nettopp ble drept, kastet
+-- forgjengeren og var ute av drift umiddelbart; to samtidige automatiske
+-- retries kunne gjøre det samme mot hverandre. Derfor lever ALLE forsøkene
+-- i en rotasjon: deploymenten bruker den hemmeligheten den faktisk fikk,
+-- uansett hvilket forsøk som nådde frem. Det er ingen familiegrening —
+-- alle søsknene tilhører samme `rotasjon_id`, og veien hit krever et
+-- LEVENDE forgjenger-token, så vinduet er nådevinduet. Taket er fem
+-- forsøk (CHECK i lagringen); over det er dette ikke lenger en tapt pakke.
+--
+-- KONVERGENS: neste rotasjon FRA et av søsknene beviser hvilket
+-- deploymenten faktisk holder. De andre tilbakekalles da umiddelbart —
+-- de er beviselig ikke i bruk, og de skal ikke ligge og leve i 30 dager.
 --
 -- Formen endret seg (ny parameter), så den gamle signaturen må vekk før
 -- REPLACE — ellers står to overlaster igjen og 5-argumentskallet blir
@@ -527,7 +590,8 @@ CREATE OR REPLACE FUNCTION roter_modultoken(
 RETURNS TABLE (token_id UUID, utloper TIMESTAMPTZ,
                familie_utloper TIMESTAMPTZ)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
-DECLARE g RECORD; v_utloper TIMESTAMPTZ; v_modul TEXT; e RECORD;
+DECLARE g RECORD; v_utloper TIMESTAMPTZ; v_modul TEXT; e RECORD; s RECORD;
+        v_forsok SMALLINT := 1;
 BEGIN
     -- MODULLÅSEN FØRST (Codex P1) — se `innlos_onboarding`. Uten den kunne
     -- rotasjonen legge inn en etterfølger som nødstoppets alt startede
@@ -564,51 +628,73 @@ BEGIN
         RAISE EXCEPTION 'rotasjon: familiehorisonten er passert — ny'
             ' onboarding kreves' USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- KONVERGENS FØRST: at forgjengeren selv brukes til å rotere, beviser
+    -- hvilket av sine egne søsken deploymenten faktisk holder. De andre
+    -- kappes her, umiddelbart — de ble aldri tatt i bruk, og skal ikke
+    -- ligge og leve ut sine 30 dager ved siden av kjeden.
+    IF g.forgjenger IS NOT NULL THEN
+        FOR s IN
+            SELECT * FROM public.modultoken t
+             WHERE t.forgjenger = g.forgjenger
+               AND t.token_id <> g.token_id
+               AND t.tilbakekalt_ts IS NULL
+             FOR UPDATE
+        LOOP
+            UPDATE public.modultoken
+               SET tilbakekalt_ts = now(),
+                   tilbakekalt_grunn = 'soesken_ikke_valgt'
+             WHERE public.modultoken.token_id = s.token_id;
+            INSERT INTO public.modultoken_hendelse
+                (onboarding_id, token_id, modul_id, miljo, release_id,
+                 hendelse, aktor, detalj)
+                VALUES (s.onboarding_id, s.token_id, s.modul_id, s.miljo,
+                        s.release_id, 'tilbakekalt', p_aktor,
+                        jsonb_build_object('grunn', 'soesken_ikke_valgt',
+                                           'valgt', g.token_id::text));
+        END LOOP;
+    END IF;
     -- Har forgjengeren alt en etterfølger, er dette enten SAMME forsøk om
     -- igjen (svaret gikk tapt) eller en ekte konflikt. Bare nøkkelen kan
-    -- skille dem, og bare den første er gjenopprettelig.
+    -- skille dem, og bare den første er gjenopprettelig. Forsøk 1 er raden
+    -- som eier rotasjonen; låsen på den serialiserer de gjentatte
+    -- forsøkene mot hverandre.
     SELECT * INTO e FROM public.modultoken t
-     WHERE t.forgjenger = p_forgjenger
-       AND t.tilbakekalt_grunn IS DISTINCT FROM 'erstattet_etter_tapt_svar'
+     WHERE t.forgjenger = p_forgjenger AND t.rotasjon_forsok = 1
      FOR UPDATE;
     IF FOUND THEN
         IF p_rotasjon_id IS NULL
            OR e.rotasjon_id IS DISTINCT FROM p_rotasjon_id THEN
-            -- Samme feil som den partielle unikheten ville gitt, bare tatt
-            -- her hvor grunnen kan sies: HTTP-laget svarer 409 på begge.
+            -- Samme feil som unikheten ville gitt, bare tatt her hvor
+            -- grunnen kan sies: HTTP-laget svarer 409 på begge.
             RAISE EXCEPTION 'rotasjon: forgjengeren har alt en etterfolger'
                 USING ERRCODE = 'unique_violation';
         END IF;
-        -- Ulevert: ingen har hemmeligheten, så den kappes UMIDDELBART (ingen
-        -- nåde — det er ingen in-flight-request å skåne). Grunnen er den ene
-        -- som frigjør etterfølgerplassen i indeksen.
+        -- Samme forsøk om igjen: neste nummer i rotasjonen. Ingenting
+        -- tilbakekalles — hemmeligheten fra et tidligere forsøk KAN være
+        -- levert, og da er den deploymentens eneste credential.
         --
         -- Vinduet er ikke ubegrenset, og det er verdt å si hvorfor: veien hit
         -- krever et LEVENDE forgjenger-token, og forgjengeren ble
         -- tilbakekalt med 15 minutters nåde av det første forsøket. Etter
         -- nåden faller kallet på tilbakekallingssjekken over, lenge før
         -- denne grenen. Gjenopprettelsen lever altså nøyaktig like lenge som
-        -- forgjengeren selv — og hver eneste bruk står i sporet under.
-        UPDATE public.modultoken
-           SET tilbakekalt_ts = now(),
-               tilbakekalt_grunn = 'erstattet_etter_tapt_svar'
-         WHERE public.modultoken.token_id = e.token_id;
-        INSERT INTO public.modultoken_hendelse
-            (onboarding_id, token_id, modul_id, miljo, release_id, hendelse,
-             aktor, detalj)
-            VALUES (e.onboarding_id, e.token_id, e.modul_id, e.miljo,
-                    e.release_id, 'tilbakekalt', p_aktor,
-                    jsonb_build_object('grunn', 'erstattet_etter_tapt_svar',
-                                       'rotasjon_id', p_rotasjon_id::text));
+        -- forgjengeren selv — og hvert eneste forsøk står i sporet under.
+        SELECT max(t.rotasjon_forsok) + 1 INTO v_forsok
+          FROM public.modultoken t WHERE t.forgjenger = p_forgjenger;
+        IF v_forsok > 5 THEN
+            RAISE EXCEPTION 'rotasjon: for mange gjentatte forsok pa samme'
+                ' rotasjon' USING ERRCODE = 'unique_violation';
+        END IF;
     END IF;
     v_utloper := LEAST(now() + make_interval(days => p_token_dager),
                        g.familie_utloper);
     INSERT INTO public.modultoken
         (token_id, token_mac, onboarding_id, familie_utloper, modul_id,
-         miljo, release_id, utstedt_epoch, forgjenger, utloper, rotasjon_id)
+         miljo, release_id, utstedt_epoch, forgjenger, utloper, rotasjon_id,
+         rotasjon_forsok)
         VALUES (p_ny_token_id, p_ny_mac, g.onboarding_id, g.familie_utloper,
                 g.modul_id, g.miljo, g.release_id, g.utstedt_epoch,
-                p_forgjenger, v_utloper, p_rotasjon_id);
+                p_forgjenger, v_utloper, p_rotasjon_id, v_forsok);
     -- Nåden: forgjengeren dør om 15 minutter uansett hva som skjer videre.
     -- Var den alt i nådevindu (grace fra en tidligere hendelse), står den
     -- fristen — triggeren gjør et satt tilbakekalt_ts uforanderlig.
@@ -624,7 +710,8 @@ BEGIN
         VALUES (g.onboarding_id, p_ny_token_id, g.modul_id, g.miljo,
                 g.release_id, 'rotert', p_aktor,
                 jsonb_build_object('forgjenger', p_forgjenger::text,
-                                   'rotasjon_id', p_rotasjon_id::text));
+                                   'rotasjon_id', p_rotasjon_id::text,
+                                   'forsok', v_forsok));
     RETURN QUERY SELECT p_ny_token_id, v_utloper, g.familie_utloper;
 END $$;
 

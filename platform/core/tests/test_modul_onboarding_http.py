@@ -367,7 +367,12 @@ def test_rotasjon_taaler_at_svaret_gikk_tapt(migrator, miljo, monkeypatch):
     gyldige token. Før fikk den 409 og var ute av drift 15 minutter senere
     — etterfølgerens hemmelighet fantes ikke hos noen, men okkuperte
     plassen. Sender den samme `rotasjon_id`, får den i stedet et ferskt,
-    brukbart token; det uleverte er dødt med det samme.
+    brukbart token.
+
+    Codex P1 (runde 3): og det FØRSTE svaret lever fortsatt. Serveren vet
+    ikke om det gikk tapt eller bare var forsinket, så begge tokenene må
+    virke — ellers kan et gjentatt forsøk drepe nettopp den hemmeligheten
+    deploymenten satt igjen med.
 
     En ANNEN nøkkel er fortsatt 409: det er da to rotasjoner, ikke ett
     forsøk om igjen."""
@@ -392,11 +397,11 @@ def test_rotasjon_taaler_at_svaret_gikk_tapt(migrator, miljo, monkeypatch):
             assert r2.status_code == 201, r2.text
             fersk = r2.json()["token"]
             assert fersk != tapt
-            # Det ferske virker; det uleverte er dødt (ikke i nåde).
-            for tok, kode in ((fersk, 204), (tapt, 401)):
+            # BEGGE virker: deploymenten bruker den den faktisk fikk.
+            for tok in (fersk, tapt):
                 rr = c.post("/v1/oppdrag/claim", json={},
                             headers={"authorization": f"Bearer {tok}"})
-                assert rr.status_code == kode, (tok[:12], rr.text)
+                assert rr.status_code == 204, (tok[:12], rr.text)
 
             # Ny nøkkel fra samme forgjenger = ekte konflikt.
             r3 = c.post("/v1/modul/token/roter",

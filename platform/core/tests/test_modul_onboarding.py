@@ -337,10 +337,15 @@ def test_gjentatt_rotasjon_med_samme_noekkel_gjenoppretter_tapt_svar():
     201-svaret tapt, holder INGEN etterfølgeren — men raden opptar
     forgjengerens eneste etterfølgerplass, og modulen var før dette ute av
     drift så snart nåden løp ut, til et menneske onboardet på nytt. Med
-    idempotensnøkkelen erklæres den udelte etterfølgeren ULEVERT og et
-    ferskt token utstedes; en ANNEN nøkkel (eller ingen) er fortsatt en
-    konflikt — det er nettopp forskjellen på «samme forsøk om igjen» og
-    «to rotasjoner».
+    idempotensnøkkelen mynter det gjentatte forsøket neste forsøk i SAMME
+    rotasjon; en ANNEN nøkkel (eller ingen) er fortsatt en konflikt — det er
+    nettopp forskjellen på «samme forsøk om igjen» og «to rotasjoner».
+
+    Codex P1 (runde 3): forsøkene tar IKKE livet av hverandre. Serveren vet
+    ikke om det forrige svaret gikk tapt eller bare var forsinket, så en
+    tilbakekalling av forrige forsøk kunne drept nettopp den hemmeligheten
+    deploymenten hadde lagret. BEGGE lever, og deploymenten bruker den den
+    fikk.
 
     Kontroll: fjern `rotasjon_id`-grenen i `roter_modultoken`, så gir det
     gjentatte forsøket `UniqueViolation` i stedet for et token."""
@@ -349,10 +354,10 @@ def test_gjentatt_rotasjon_med_samme_noekkel_gjenoppretter_tapt_svar():
     try:
         modul, tid, _ = _token(rt, m)
         nokkel = uuid.uuid4()
-        tapt = uuid.uuid4()
+        forste, forste_mac = uuid.uuid4(), _hex64()
         rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
-                   (tid, tapt, _hex64(), nokkel))
-        rt.commit()                       # ... og svaret kom aldri frem
+                   (tid, forste, forste_mac, nokkel))
+        rt.commit()                       # ... og svaret kom kanskje aldri frem
 
         fersk, mac = uuid.uuid4(), _hex64()
         rad = rt.execute(
@@ -360,19 +365,30 @@ def test_gjentatt_rotasjon_med_samme_noekkel_gjenoppretter_tapt_svar():
             (tid, fersk, mac, nokkel)).fetchone()
         rt.commit()
         assert rad[0] == fersk, rad
-        # Det ferske tokenet lever; det uleverte er dødt UMIDDELBART (ingen
-        # nåde — det finnes ingen in-flight-request å skåne).
+        # BEGGE forsøkene lever: serveren kan ikke vite hvilket svar som kom
+        # frem, og skal ikke drepe en hemmelighet som kan være i bruk.
         assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
                           (mac,)).fetchone() is not None
+        assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
+                          (forste_mac,)).fetchone() is not None
+        assert m.execute(
+            "SELECT rotasjon_forsok, tilbakekalt_ts FROM modultoken"
+            " WHERE token_id=%s", (fersk,)).fetchone() == (2, None)
+        # ... og forsøket står i det append-only sporet.
+        assert (fersk,) in m.execute(
+            "SELECT token_id FROM modultoken_hendelse WHERE hendelse="
+            "'rotert' AND detalj->>'forsok'='2'").fetchall()
+        m.rollback()
+
+        # KONVERGENS: rotasjonen videre fra det tokenet deploymenten faktisk
+        # holder, dreper søskenet den aldri tok i bruk.
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                   (fersk, uuid.uuid4(), _hex64(), uuid.uuid4()))
+        rt.commit()
         assert m.execute(
             "SELECT tilbakekalt_ts <= now(), tilbakekalt_grunn FROM"
-            " modultoken WHERE token_id=%s", (tapt,)).fetchone() \
-            == (True, "erstattet_etter_tapt_svar")
-        # ... og forsøket står i det append-only sporet.
-        assert (tapt,) in m.execute(
-            "SELECT token_id FROM modultoken_hendelse WHERE hendelse="
-            "'tilbakekalt' AND detalj->>'grunn'='erstattet_etter_tapt_svar'"
-        ).fetchall()
+            " modultoken WHERE token_id=%s", (forste,)).fetchone() \
+            == (True, "soesken_ikke_valgt")
         m.rollback()
 
         # En ANNEN nøkkel er en ekte konflikt — og det er også fraværet av
@@ -389,9 +405,74 @@ def test_gjentatt_rotasjon_med_samme_noekkel_gjenoppretter_tapt_svar():
 
 
 @pg
+def test_gjentatte_forsok_har_et_tak_i_lagringen():
+    """Retten til å prøve på nytt er ikke en rett til å mynte i det
+    uendelige: fem forsøk per rotasjon, håndhevet av CHECK-en i lagringen
+    (og av funksjonen, som svarer 409 før den treffer den).
+
+    Kontroll: fjern taksjekken i `roter_modultoken`, så faller kallet på
+    CheckViolation i stedet — og fjernes CHECK-en også, blir denne rød."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        nokkel = uuid.uuid4()
+        for _ in range(5):
+            rt.execute(
+                "SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                (tid, uuid.uuid4(), _hex64(), nokkel))
+            rt.commit()
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            rt.execute(
+                "SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                (tid, uuid.uuid4(), _hex64(), nokkel))
+        rt.rollback()
+        assert m.execute("SELECT count(*) FROM modultoken WHERE forgjenger=%s",
+                         (tid,)).fetchone()[0] == 5
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_soesken_hoerer_til_samme_rotasjon():
+    """Vakten i lagringen: et forsøk > 1 er neste forsøk i den rotasjonen
+    forsøk 1 startet. Uten den kunne to ULIKE rotasjoner delt forgjengeren
+    bare de valgte hvert sitt nummer — nettopp familiegreningen
+    én-rotasjon-regelen finnes for å stoppe.
+
+    Kontroll: fjern `modultoken_soesken`-triggeren, så blir denne rød."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                   (tid, uuid.uuid4(), _hex64(), uuid.uuid4()))
+        rt.commit()
+        rad = m.execute("SELECT onboarding_id, familie_utloper, modul_id,"
+                        " miljo, release_id, utstedt_epoch FROM modultoken"
+                        " WHERE token_id=%s", (tid,)).fetchone()
+        # Migratoren selv — annen rotasjonsnøkkel, ledig forsøksnummer.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+                "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+                "forgjenger,rotasjon_id,rotasjon_forsok,utloper)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,2,now()+"
+                "interval '1 day')",
+                (uuid.uuid4(), _hex64()) + tuple(rad) + (tid, uuid.uuid4()))
+        m.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_en_forgjenger_faar_noyaktig_en_etterfolger():
-    """Portene 21/30: unikheten på `forgjenger` er garantien I LAGRINGEN —
-    den andre rotasjonen taper uansett timing."""
+    """Portene 21/30: unikheten på (`forgjenger`, `rotasjon_forsok`) er
+    garantien I LAGRINGEN — to ULIKE rotasjoner setter begge inn sitt forsøk
+    nummer 1, og den andre taper uansett timing. (Gjentatte forsøk i SAMME
+    rotasjon er en annen sak; de har egen test.)"""
     m = _c()
     rt = _rt()
     try:
@@ -403,6 +484,19 @@ def test_en_forgjenger_faar_noyaktig_en_etterfolger():
             rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
                        (tid, uuid.uuid4(), _hex64()))
         rt.rollback()
+        # ... og lagringen tar den også når funksjonens gren omgås: samme
+        # forsøksnummer to ganger på samme forgjenger.
+        rad = m.execute("SELECT onboarding_id, familie_utloper, modul_id,"
+                        " miljo, release_id, utstedt_epoch FROM modultoken"
+                        " WHERE token_id=%s", (tid,)).fetchone()
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            m.execute(
+                "INSERT INTO modultoken (token_id,token_mac,onboarding_id,"
+                "familie_utloper,modul_id,miljo,release_id,utstedt_epoch,"
+                "forgjenger,utloper) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                "now()+interval '1 day')",
+                (uuid.uuid4(), _hex64()) + tuple(rad) + (tid,))
+        m.rollback()
     finally:
         rt.close()
         m.close()

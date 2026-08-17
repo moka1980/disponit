@@ -199,8 +199,15 @@ def roter_endepunkt(tjeneste, request: Request) -> Response:
     konflikt, og modulen var ute av drift 15 minutter senere, til et
     menneske onboardet den på nytt. Deploymenten skal derfor generere
     `rotasjon_id` ÉN gang per rotasjon og sende SAMME verdi i hvert forsøk;
-    da erklæres den udelte etterfølgeren ulevert og et ferskt token
-    utstedes. Uten nøkkel er svaret 409, som før."""
+    da mynter serveren neste forsøk i SAMME rotasjon. Uten nøkkel er svaret
+    409, som før.
+
+    Og forsøkene TAR IKKE LIVET AV HVERANDRE (Codex P1, runde 3): serveren
+    vet ikke om det forrige svaret gikk tapt eller bare var forsinket, så
+    et forsøk som tilbakekalte forgjengerens forrige etterfølger kunne
+    drepe nettopp den hemmeligheten deploymenten hadde lagret. Alle
+    forsøkene i én rotasjon lever; deploymenten bruker den den fikk. Taket
+    er fem forsøk, og over det er svaret 409."""
     from .app import _rid, _feilsvar, preauth, kanonisk_json, _mac
     rid = _rid(request)
     try:
@@ -238,7 +245,8 @@ def roter_endepunkt(tjeneste, request: Request) -> Response:
             # fortsatt sitt gamle token i nådevinduet og kan hente
             # etterfølgeren der den ble levert — dette er en konflikt, ikke
             # en feil hos serveren. Det GJENTATTE forsøket (samme
-            # `rotasjon_id`) havner aldri her; det får et ferskt token.
+            # `rotasjon_id`) havner her først når taket på fem forsøk er
+            # nådd; da er dette ikke lenger en tapt pakke.
             conn.rollback()
             return _feilsvar("onboarding_avvist", rid, 409)
         except psycopg.errors.InvalidParameterValue:
