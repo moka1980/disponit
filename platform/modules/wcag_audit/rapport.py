@@ -55,11 +55,29 @@ def _kanoniske_bytes(rapport: dict) -> bytes:
     500 funn, og summen kan gå over JCS sitt trygge område selv om hvert
     ledd lå under. Dette er siste skanse — porten i `motor.heltall` tar
     enkeltverdiene, denne tar alt som kan oppstå etterpå.
+
+    `UnicodeEncodeError` hører til SAMME skanse (Codex P1): en escaped
+    ensom surrogate fra motoren — `{"regel_id": "\\ud800"}` — er lovlig
+    JSON-tekst, så `json.loads` gir den fra seg som en helt vanlig `str`,
+    og `_tekst` ser en ikke-tom streng. Først `kanoniser(...).encode(
+    "utf-8")` oppdager at kodepunktet ikke KAN uttrykkes i UTF-8, og den
+    kaster UnicodeEncodeError (en ValueError), ikke Ikkekanoniserbar.
+    Den fanges hverken her eller av `controller.kjor_en`, så unntaket
+    forlot kjøringen uten feil-kvittering og lot det claimede oppdraget
+    stå ufullført til fristen — nøyaktig taushetens utfall §10 forbyr.
+    `/v1/artefakt` oversetter allerede den samme feilen til
+    `request_feilformet`; modulen skal ikke sende det serveren uansett
+    avviser.
+
+    Fangsten står HER og ikke i `_tekst` med vilje: den dekker hver
+    eneste streng i rapporten — `regel_id`, eksempler, `vert`, URL-er,
+    `regelsett_versjon` — fordi `bygg` alltid ender i `_under_taket`, og
+    ikke bare de feltene som tilfeldigvis går gjennom én port.
     """
     from policy_validator import jcs
     try:
         return jcs.kanoniske_bytes(rapport)
-    except jcs.Ikkekanoniserbar as e:
+    except (jcs.Ikkekanoniserbar, UnicodeEncodeError) as e:
         raise Motorfeil(f"rapporten kan ikke kanoniseres: {e}") from e
 
 

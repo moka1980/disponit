@@ -2222,6 +2222,67 @@ def test_tekstfeltene_fra_motoren_ma_vaere_ekte_strenger():
     assert r["funn"][0]["eksempler"] == ["#a", "x" * 200]
 
 
+def test_ensom_surrogat_fra_motoren_er_motorfeil():
+    """Codex P1: en escaped ensom surrogate er en streng helt fram til
+    kanoniseringen, og der kastet den UnicodeEncodeError — ikke
+    Ikkekanoniserbar.
+
+    `{"regel_id": "\\ud800"}` er lovlig JSON-TEKST. `json.loads` gir den
+    fra seg som en helt vanlig `str` av lengde 1, så størrelsesvakten,
+    `_tekst` (ikke-tom streng — sant) og skjemaets `minLength: 1` sier
+    alle ja. Først `kanoniser(...).encode("utf-8")` oppdager at
+    kodepunktet ikke kan uttrykkes i UTF-8.
+
+    UnicodeEncodeError er en ValueError, ikke en TypeError, så den gamle
+    `except jcs.Ikkekanoniserbar` gikk klar av den — og
+    `controller.kjor_en` fanger kun Motorfeil og ValidationError.
+    Unntaket forlot altså kjøringen UTEN feil-kvittering, og det claimede
+    oppdraget ble stående ufullført til fristen: taushetens utfall §10
+    forbyr. `/v1/artefakt` oversetter allerede nøyaktig samme feil til
+    `request_feilformet`.
+
+    Kontroll: ta `UnicodeEncodeError` ut av except-tuppelen i
+    `_kanoniske_bytes`, så bobler den ut av `bygg` igjen — testen fanger
+    det ved å kreve Motorfeil, ikke bare «et unntak».
+    """
+    from policy_validator import jcs
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    # Premisset: dette ER en streng etter parsing, og det ER
+    # kanoniseringen som feiler — med UnicodeEncodeError, ikke
+    # Ikkekanoniserbar.
+    ensom = json.loads('{"x": "\\ud800"}')["x"]
+    assert isinstance(ensom, str) and len(ensom) == 1
+    with pytest.raises(UnicodeEncodeError):
+        jcs.kanoniske_bytes({"x": ensom})
+    assert not isinstance(
+        UnicodeEncodeError("utf-8", "", 0, 1, ""), jcs.Ikkekanoniserbar), (
+        "hadde den vært en Ikkekanoniserbar, ville den gamle fangsten holdt")
+
+    def _bygg(**over):
+        f = {"regel_id": "color-contrast", "alvorlighet": "alvorlig",
+             "antall": 3, "eksempler": ["#a"]}
+        f.update(over)
+        return bygg(_motorresultat(funn=(f,)),
+                    payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+
+    # Hvert strengfelt i rapporten, ikke bare de som går gjennom `_tekst`:
+    # fangsten står i `_kanoniske_bytes`, som HELE `bygg` ender i.
+    with pytest.raises(Motorfeil, match="kanoniseres"):
+        _bygg(regel_id=ensom)
+    with pytest.raises(Motorfeil, match="kanoniseres"):
+        _bygg(eksempler=["#a", ensom])
+    with pytest.raises(Motorfeil, match="kanoniseres"):
+        bygg(_motorresultat(regelsett_versjon="axe-4.10" + ensom),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+
+    # Halvparten av et EKTE surrogatpar er ikke en ensom surrogate: et
+    # tegn utenfor BMP skal fortsatt gå rett igjennom.
+    r = _bygg(regel_id="emoji-\U0001f600", eksempler=["#a\U0001f600"])
+    assert r["funn"][0]["regel_id"] == "emoji-\U0001f600"
+
+
 def _prosessen_er_dod(pid: int) -> bool:
     """Borte fra prosesstabellen, eller en zombie som venter på å høstes.
 
