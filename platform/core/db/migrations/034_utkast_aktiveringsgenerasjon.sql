@@ -74,17 +74,28 @@ ALTER TABLE policyutkast
 -- migrasjonen, kan ikke rekonstrueres eksakt: den koblingen er nettopp det
 -- basen aldri lagret. Det beste tilgjengelige vitnet er den prøven koden
 -- brukte fram til nå — utkastets frosne hash mot den AKTIVE policyraden — og
--- backfillen stempler de utkastene med hodets nåværende revisjon. Resultatet
--- er at lista viser nøyaktig det samme for historiske rader som den gjorde
--- før migrasjonen, mens alt som aktiveres ETTERPÅ har et eksakt stempel.
+-- backfillen stempler de utkastene med hodets nåværende revisjon. Der vitnet
+-- er entydig viser lista da nøyaktig det samme for historiske rader som den
+-- gjorde før migrasjonen, mens alt som aktiveres ETTERPÅ har et eksakt
+-- stempel.
 --
--- `DISTINCT ON` er der for det ene tilfellet der det gamle vitnet er
--- flertydig: har kollisjonen over ALT skjedd i basen, matcher hashen både den
--- slettede generasjonens utkast og erstatningens. Da velges det NYESTE
--- utkastet, som er det erstatningen kom fra — så selv en base som allerede
--- bærer feilen kommer ut riktig, med ett synlig utkast i stedet for to.
--- Utkast uten treff står igjen med NULL, og NULL er «kan ikke vises som
--- gjeldende»: fail-closed, som resten av modulen.
+-- ER VITNET FLERTYDIG, STEMPLES INGENTING (Codex P2). Har kollisjonen over
+-- alt skjedd i basen, matcher hashen både den slettede generasjonens utkast
+-- og erstatningens, og da finnes det ikke noe i basen som skiller dem. Et
+-- første forsøk gjettet på det NYESTE utkastet, som om opprettelsesrekkefølge
+-- var aktiveringsrekkefølge. Det er den ikke: et utkast kan ligge lenge før
+-- det aktiveres. Lages B før A, aktiveres A, slettes policyen og aktiveres så
+-- B med samme innhold, peker «nyeste» på A — den SLETTEDE generasjonen — og
+-- backfillen ville stemplet nettopp den raden som skal skjules, og skjult den
+-- som lever. En gjetning som kan ta feil på begge sider er verre enn ingen.
+--
+-- `NOT EXISTS`-leddet stempler derfor bare når det gamle vitnet peker på
+-- NØYAKTIG ett utkast. Flertydige treff står igjen med NULL, og NULL er «kan
+-- ikke vises som gjeldende»: da forsvinner begge radene fra køen i stedet for
+-- at feil rad utgir seg for å være gjeldende tilstand. Ingenting går tapt —
+-- radene består i basen og nås via detalj-ruten — og det gjelder uansett bare
+-- utkast som ble aktivert FØR denne migrasjonen, i en base som allerede bærer
+-- kollisjonen. Alt som aktiveres etterpå har et eksakt stempel.
 --
 -- RLS-VINDUET er det samme grepet og den samme grunnen som i 008 og 029:
 -- tabellene står med FORCE ROW LEVEL SECURITY mot `disponit.tenant`, migrator
@@ -99,19 +110,18 @@ ALTER TABLE policyer     NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE policy_hode  NO FORCE ROW LEVEL SECURITY;
 
 UPDATE policyutkast u
-   SET aktivert_revisjon = k.revisjon
-  FROM (SELECT DISTINCT ON (x.tenant, x.policy_id)
-               x.tenant, x.utkast_id, h.revisjon
-          FROM policyutkast x
-          JOIN policyer p
-            ON p.tenant = x.tenant AND p.policy_id = x.policy_id
-           AND p.aktiv AND p.innholds_hash = x.innholds_hash
-          JOIN policy_hode h
-            ON h.tenant = x.tenant AND h.policy_id = x.policy_id
-         WHERE x.status = 'aktivert' AND x.innholds_hash IS NOT NULL
-         ORDER BY x.tenant, x.policy_id, x.opprettet DESC, x.utkast_id DESC
-       ) k
- WHERE u.tenant = k.tenant AND u.utkast_id = k.utkast_id;
+   SET aktivert_revisjon = h.revisjon
+  FROM policyer p, policy_hode h
+ WHERE u.status = 'aktivert' AND u.innholds_hash IS NOT NULL
+   AND p.tenant = u.tenant AND p.policy_id = u.policy_id
+   AND p.aktiv AND p.innholds_hash = u.innholds_hash
+   AND h.tenant = u.tenant AND h.policy_id = u.policy_id
+   AND NOT EXISTS (SELECT 1 FROM policyutkast a
+                    WHERE a.tenant = u.tenant
+                      AND a.policy_id = u.policy_id
+                      AND a.status = 'aktivert'
+                      AND a.innholds_hash = u.innholds_hash
+                      AND a.utkast_id <> u.utkast_id);
 
 ALTER TABLE policyutkast FORCE ROW LEVEL SECURITY;
 ALTER TABLE policyer     FORCE ROW LEVEL SECURITY;
