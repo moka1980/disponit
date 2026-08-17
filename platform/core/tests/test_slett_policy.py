@@ -987,3 +987,30 @@ def test_sletting_krever_matchende_tenantkontekst():
     finally:
         rt.close()
         m.close()
+
+
+@pg
+def test_bare_runtime_og_eier_har_execute_paa_slettingen():
+    """Codex P1: REVOKE/GRANT sto etter ALTER OWNER som naken migrator —
+    stille WARNING, og funksjonen beholdt PostgreSQLs PUBLIC EXECUTE: enhver
+    DB-innlogging kunne kalle en SECURITY DEFINER-sletting og tilfredsstille
+    tenantsjekken ved å sette GUC-en selv. Speiler varselsenderens ACL-vakt:
+    gjerdet måles på ACL-en, ikke på at et kall lykkes.
+
+    Kontroll: fjern SET LOCAL ROLE rundt halen i 032, så blir denne rød med
+    `-` (PUBLIC) i mengden."""
+    c = _mig()
+    try:
+        rader = c.execute(
+            "SELECT a.grantee::regrole::text"
+            "  FROM pg_proc p,"
+            "       aclexplode(coalesce(p.proacl,"
+            "                  acldefault('f', p.proowner))) a"
+            " WHERE p.oid = 'slett_ubrukt_policy(text,text,text,text)'"
+            "       ::regprocedure AND a.privilege_type='EXECUTE'").fetchall()
+        c.rollback()
+        mottakere = {r[0] for r in rader}
+        assert "-" not in mottakere, "PUBLIC har EXECUTE på slettingen"
+        assert mottakere <= {"disponit_policy_eier", "disponit"}, mottakere
+    finally:
+        c.close()

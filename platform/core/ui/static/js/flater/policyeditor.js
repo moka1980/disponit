@@ -538,20 +538,25 @@ function handlingerSeksjon(policy, tegnPaaNytt, st) {
   // Valget huskes i editorens `st` og overlever re-rendringene feltene
   // utløser (valuta/tidsvindu tegner på nytt) — uten det hoppet fanen
   // tilbake til første handling hver gang man la til en valuta på den femte.
-  if (!handlinger.some((h) => h.id === st.handlingValgt)) {
-    st.handlingValgt = handlinger[0].id;
+  // INDEKS, ikke id (Codex P2): et utkast kan bære duplikate handlings-id-er
+  // helt til valideringen avviser det (`rediger_utkast` lagrer uten
+  // unikhetskrav), og et id-oppslag gjorde duplikat nr. 2 unåelig — begge
+  // velgerknappene sto som valgt, og «Neste» hoppet tilbake til den første.
+  if (!Number.isInteger(st.handlingValgt)
+      || st.handlingValgt < 0 || st.handlingValgt >= handlinger.length) {
+    st.handlingValgt = 0;
   }
-  const i = handlinger.findIndex((h) => h.id === st.handlingValgt);
+  const i = st.handlingValgt;
   const valgt = handlinger[i];
 
-  const velgerknapper = handlinger.map((h) => {
+  const velgerknapper = handlinger.map((h, j) => {
     const b = el("button", { class: "knapp liten handling-velger-knapp",
-      type: "button", "aria-pressed": String(h.id === st.handlingValgt) },
+      type: "button", "aria-pressed": String(j === i) },
       el("code", { text: h.id || "?" }),
       el("span", { class: "sub", text: ` ${t(`modus.${h.modus}`, h.modus)}` }));
     b.addEventListener("click", () => {
-      if (h.id === st.handlingValgt) return;
-      st.handlingValgt = h.id;
+      if (j === i) return;
+      st.handlingValgt = j;
       tegnPaaNytt();
     });
     return b;
@@ -561,13 +566,13 @@ function handlingerSeksjon(policy, tegnPaaNytt, st) {
     text: t("ui.editor.handling_forrige") });
   forrige.disabled = i === 0;
   forrige.addEventListener("click", () => {
-    st.handlingValgt = handlinger[i - 1].id; tegnPaaNytt();
+    st.handlingValgt = i - 1; tegnPaaNytt();
   });
   const neste = el("button", { class: "knapp liten", type: "button",
     text: t("ui.editor.handling_neste") });
   neste.disabled = i === handlinger.length - 1;
   neste.addEventListener("click", () => {
-    st.handlingValgt = handlinger[i + 1].id; tegnPaaNytt();
+    st.handlingValgt = i + 1; tegnPaaNytt();
   });
 
   return el("section", { class: "editor-seksjon",

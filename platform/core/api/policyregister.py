@@ -205,6 +205,13 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
             [f"meta.status '{meta.get('status')}' != oppgitt status '{status}'"],
             policy)
     pid, versjon, h = meta["policy_id"], meta["versjon"], innholds_hash(policy)
+    # Samme per-policy-lås som husets øvrige skrivere (Codex P2 på #73): en
+    # `registrer(..., aktiver=False)` hvis INSERT ennå ikke var committet da
+    # slettingens DELETE tok sitt snapshot, ville overlevd slettingen —
+    # endepunktet melder suksess mens en versjon står igjen og okkuperer
+    # nummeret sitt. Delt lås venter på sletterens eksklusive, og omvendt.
+    from db.pg import laas_policy_delt
+    laas_policy_delt(conn, tenant, pid)
     if aktiver:
         conn.execute("UPDATE policyer SET aktiv=false"
                      " WHERE tenant=%s AND policy_id=%s AND aktiv",

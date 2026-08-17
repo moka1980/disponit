@@ -286,9 +286,16 @@ END $$;
 
 ALTER FUNCTION slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT)
     OWNER TO disponit_policy_eier;
+-- REVOKE/GRANT som EIEREN (Codex P1, samme klasse 028 dokumenterer): etter
+-- ALTER OWNER er migrator bare et INHERIT FALSE-medlem, og en naken REVOKE
+-- blir en stille WARNING — funksjonen beholder PostgreSQLs standard
+-- PUBLIC EXECUTE, og enhver DB-innlogging kan kalle en SECURITY
+-- DEFINER-sletting og tilfredsstille tenantsjekken ved å sette GUC-en selv.
+SET LOCAL ROLE disponit_policy_eier;
 REVOKE ALL ON FUNCTION slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION slett_ubrukt_policy(TEXT, TEXT, TEXT, TEXT)
     TO disponit;
+RESET ROLE;
 -- Eieren må selv kunne slette radene og lese loggen den kontrollerer mot.
 GRANT DELETE ON policyer TO disponit_policy_eier;
 GRANT SELECT ON revisjonslogg TO disponit_policy_eier;
