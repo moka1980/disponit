@@ -1538,7 +1538,22 @@ _MARKOER_MAL = re.compile(r"\x00(\d+)\x00")
 #: `%I` eller `%s` i malen er samme sak i det små: den treffer ingen
 #: signatur, og en REVOKE skrevet slik beviser derfor ingenting. Det er
 #: riktig vei på tvilen, men verdt å vite om.
-_DYNAMISK = re.compile(r"\bexecute\s+(?:format\s*\(\s*)?\x00(\d+)\x00")
+#:
+#: `EXECUTE` TAR ET UTTRYKK, IKKE EN TEKST (Codex P2 på #74). Uttrykket kan
+#: stå i parentes — `EXECUTE ('GRANT EXECUTE … TO PUBLIC')` er nøyaktig den
+#: samme setningen som uten — og modellen krevde markøren RETT etter
+#: `EXECUTE`, med `format(` som eneste unntak. En parentes foran var derfor
+#: nok til at den dynamiske setningen aldri ble spilt av, og gjerdet ble
+#: stående True mens PUBLIC fikk EXECUTE. Parentesene er en skrivemåte, ikke
+#: en betydning, og telles som det: `EXECUTE ((format('…')))` er den samme
+#: teksten som kjøres.
+#:
+#: Mellomrommet er `\s*` og ikke `\s+`: `EXECUTE'…'` er lovlig — apostrofen
+#: avslutter nøkkelordet for lexeren — og et krav om mellomrom ville vært
+#: den samme blindsonen skrevet om. Det er markøren rett etter som gjør
+#: treffet, og en markør kan bare komme av en konstant som faktisk sto der.
+_DYNAMISK = re.compile(
+    r"\bexecute\s*(?:\(\s*)*(?:format\s*\(\s*)?\x00(\d+)\x00")
 
 
 def _uten_strenger(tekst):
@@ -2646,6 +2661,37 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
                    "END $$;")], n)
     assert gjerdet == {sig: False}, (
         f"en dynamisk GRANT til PUBLIC åpner gjerdet. Spor: {spor}")
+
+    # …og `EXECUTE` TAR ET UTTRYKK, ikke en tekst. En PARENTES rundt det er
+    # en skrivemåte og ikke en betydning — `EXECUTE ('…')` kjører den samme
+    # teksten — men modellen krevde markøren rett etter `EXECUTE`, med
+    # `format(` som eneste unntak. Én parentes var derfor nok til at den
+    # dynamiske granten aldri ble spilt av, og gjerdet ble stående True mens
+    # PUBLIC hadde fått EXECUTE.
+    for uttrykk in ("('GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                    " TO PUBLIC')",
+                    "((format('GRANT EXECUTE ON FUNCTION"
+                    " varsel_klaim_epost(int, int) TO PUBLIC')))",
+                    "'GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int)"
+                    " TO PUBLIC'"):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"DO $$\nBEGIN\n    EXECUTE {uttrykk};\nEND $$;")], n)
+        assert gjerdet == {sig: False}, (
+            "en dynamisk GRANT åpner gjerdet uansett hvor mange parenteser"
+            f" uttrykket står i. Spor: {spor}")
+
+    # …og motprøven, som er den som gjør parentesene til en del av `EXECUTE`
+    # og ikke til «en konstant i en parentes er kode»: den samme teksten i en
+    # parentes UTEN `EXECUTE` foran er like inert som før. Det er nøkkelordet
+    # som kjører teksten, ikke parentesen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DO $$\nBEGIN\n    PERFORM ('GRANT EXECUTE ON FUNCTION"
+                   " varsel_klaim_epost(int, int) TO PUBLIC');\nEND $$;")], n)
+    assert gjerdet == {sig: True}, (
+        "en konstant i en parentes er ikke kode — det er `EXECUTE` foran som"
+        f" kjører den. Spor: {spor}")
 
     # …OG DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL. Nyttelasten ble før
     # gitt videre rå, og som sin egen maskerte form — som om den ikke selv
