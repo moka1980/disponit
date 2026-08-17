@@ -103,6 +103,31 @@ def _antall(raa, standard: int) -> int:
     return heltall(raa)
 
 
+def _eksempelliste(raa) -> list:
+    """Motorens eksempler som liste — eller Motorfeil (Codex P1).
+
+    `list(raa or [])` var to feil i én linje, og begge er stille:
+
+      * `"button.x"` er iterabel, så listen ble ETT ELEMENT PER TEGN.
+        Kappet til `MAKS_EKSEMPLER` ble det ti enkelttegn som ser ut som
+        selektorer og går videre som PROMOTERT evidens — eksempler
+        modulen fant på selv, ikke noe motoren rapporterte. Samtidig satt
+        det `maks_eksempler_sett` og kunne slå `avkortet` på.
+      * `5` er ikke iterabel: `list(5)` er en naken TypeError, og
+        `controller.kjor_en` fanger kun Motorfeil og ValidationError. Det
+        claimede oppdraget ble stående ufullført til fristen — taushetens
+        utfall §10 forbyr.
+
+    Bare list/tuple er en eksempelliste. `None` og tom liste betyr «ingen
+    eksempler», som er lovlig; alt annet er utdata vi ikke kan lese.
+    """
+    if raa is None:
+        return []
+    if not isinstance(raa, (list, tuple)):
+        raise Motorfeil("eksempellisten fra motoren er ikke en liste")
+    return list(raa)
+
+
 def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     """-> rapport-dict, klar for skjemavalidering (som controlleren ALLTID
     kjører selv før opplasting — serveren validerer uansett, men modulen
@@ -135,7 +160,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
             continue
         sammendrag[f["alvorlighet"]] += antall
         if len(funn) < MAKS_FUNN:
-            eksempler = list(f.get("eksempler") or [])
+            eksempler = _eksempelliste(f.get("eksempler"))
             maks_eksempler_sett = max(maks_eksempler_sett, len(eksempler))
             funn.append({
                 "regel_id": str(f.get("regel_id"))[:128],

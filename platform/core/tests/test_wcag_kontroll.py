@@ -1695,3 +1695,42 @@ def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
                       tidsavbrudd_s=30)
     with pytest.raises(Motorfeil):
         m.kjor({})
+
+
+def test_eksempellisten_maa_vaere_en_liste():
+    """Codex P1: `list(f.get("eksempler") or [])` var to feil i én linje.
+
+      * En STRENG er iterabel: `"button.x"` ble ett element per tegn, og
+        etter kappingen sto det ti enkelttegn i rapporten som ser ut som
+        selektorer. Det er FABRIKERTE eksempler — evidens modulen fant på
+        selv — og de blir promotert som om motoren hadde rapportert dem.
+        På veien satte de også `maks_eksempler_sett` og kunne slå
+        `avkortet` på uten at noe var kappet.
+      * Et TALL er ikke iterabel: `list(5)` er en naken TypeError, og
+        `controller.kjor_en` fanger kun Motorfeil og ValidationError, så
+        det claimede oppdraget ble stående ufullført til fristen i stedet
+        for å få en feilkvittering.
+
+    Kontroll: bytt `_eksempelliste(...)` tilbake til
+    `list(f.get("eksempler") or [])`, så gir strengen ti enkelttegn i
+    stedet for Motorfeil, og tallet gir TypeError i stedet for Motorfeil.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _med(eksempler):
+        return _motorresultat(funn=({"regel_id": "color-contrast",
+                                     "alvorlighet": "alvorlig", "antall": 3,
+                                     "eksempler": eksempler},))
+
+    for raa in ("button.x", 5, 5.0, {"a": "#b"}, True, b"#a"):
+        with pytest.raises(Motorfeil):
+            bygg(_med(raa), payload={"kravsett": "wcag21_aa"},
+                 kontekst=_kontekst())
+
+    # Det lovlige skal fortsatt være lovlig: liste, tuppel og «ingenting».
+    for raa, ventet in ((["#a", "#b"], ["#a", "#b"]), (("#a",), ["#a"]),
+                        ([], []), (None, [])):
+        r = bygg(_med(raa), payload={"kravsett": "wcag21_aa"},
+                 kontekst=_kontekst())
+        assert r["funn"][0]["eksempler"] == ventet
