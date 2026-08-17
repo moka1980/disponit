@@ -1409,9 +1409,16 @@ def test_registrer_artefakttype_navneform_og_prefiksoverlapp():
     try:
         modul, rel, ver, khash = _deployment_med_typer(m)
         m.execute("SET ROLE disponit_modules_admin")
+        # PR-014c: typeregistrering krever registrert skjema (positiv regel).
+        m.execute("SELECT registrer_artefaktskjema("
+                  "'{\"type\":\"object\"}',"
+                  "'a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909"
+                  "dcb7054738c0','test')")
         def reg(navn):
             m.execute("SELECT registrer_artefakttype(%s,%s,%s,%s,%s,'test')",
-                      (navn, modul, ver, khash, _hex64()))
+                      (navn, modul, ver, khash,
+                       "a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091"
+                       "b909dcb7054738c0"))
         stamme = f"a{secrets.token_hex(3)}"
         reg(f"{stamme}.b.c")
         m.commit()

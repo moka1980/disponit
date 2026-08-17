@@ -465,3 +465,261 @@ def test_deployportene_register_mot_kodefestet_type(migrator, monkeypatch):
     feil = mod.kontroller(migrator)
     migrator.rollback()
     assert not any(ukjent in f for f in feil), feil
+
+
+# --------------------------------------------------------------------------
+# Rapportbygging og sanitering (portene 8–12) — modulen selv.
+# --------------------------------------------------------------------------
+
+def _kontekst():
+    return {"axe_versjon": "4.10.0", "chromium_versjon": "127.0",
+            "container_image_digest": "sha256:" + "a" * 64,
+            "viewport": "1280x800", "locale": "nb-NO",
+            "timezone": "Europe/Oslo"}
+
+
+def _motorresultat(**over):
+    from modules.wcag_audit.motor import Motorresultat
+    basis = dict(
+        regelsett_versjon="axe-4.10", varighet_ms=1234,
+        sider=({"url": "https://kunde.example/side?sporing=1#topp",
+                "status": "ok"},),
+        funn=({"regel_id": "color-contrast", "alvorlighet": "alvorlig",
+               "antall": 3, "eksempler": ["#a", "x" * 500]},),
+        blokkert=({"vert": "fonts.example", "antall": 2, "art": "font"},),
+        avkortet=(False, None, None))
+    basis.update(over)
+    return Motorresultat(**basis)
+
+
+def test_rapporten_saneres_og_validerer():
+    """Portene 11–12 + skjemarunden: URL uten query/fragment, selektor
+    kappet til 200 tegn, maks 10 eksempler, miljø fra SERVERKONTEKSTEN —
+    og resultatet validerer mot det innholdsadresserte skjemaet."""
+    import jsonschema
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import bygg
+    r = bygg(_motorresultat(),
+             payload={"kravsett": "wcag21_aa", "mal_url": "https://k.no/",
+                      "omfang": "enkeltside"},
+             kontekst=_kontekst())
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r)
+    assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/side"
+    assert len(r["funn"][0]["eksempler"][1]) == 200
+    assert r["miljo"]["container_image_digest"].startswith("sha256:")
+    assert r["manuelle_kriterier_vurdert"] is False
+    assert r["dekningsbegrensninger"][0] == {"vert": "fonts.example",
+                                             "antall": 2, "art": "font"}
+
+
+def test_rapporten_kutter_aerlig_over_500_funn():
+    """Port 11: over 500 funn kappes — og `avkortet` SIER det (aldri mer
+    fullstendighet enn innholdet bærer). Kontroll: fjern
+    truffet-oppdateringen i `bygg`, så blir denne rød."""
+    from modules.wcag_audit.rapport import bygg
+    mange = tuple({"regel_id": f"r{i}", "alvorlighet": "lav", "antall": 1,
+                   "eksempler": []} for i in range(600))
+    r = bygg(_motorresultat(funn=mange),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    assert len(r["funn"]) == 500
+    assert r["avkortet"]["truffet"] is True and r["avkortet"]["verdi"] == 600
+    # ... men SAMMENDRAGET teller alt motoren fant — kappingen gjelder
+    # eksempellisten, ikke sannheten om omfanget.
+    assert r["sammendrag"]["lav"] == 600
+
+
+def test_motorutdata_er_ubetrodd():
+    """Port 12/§2: ikke-https-URL og uleselige poster er Motorfeil — aldri
+    en rapport. Digester fra motoren finnes ikke som begrep: miljøblokka
+    tar KUN serverkontekstens nøkler (port 10)."""
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "http://klartekst.example/",
+                                    "status": "ok"},)),
+             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=()), payload={"kravsett": "wcag21_aa"},
+             kontekst=_kontekst())
+    with pytest.raises(KeyError):
+        # En kontekst uten digest er en konfigurasjonsfeil hos OSS —
+        # den skal smelle, ikke fylles fra motorens påstander.
+        bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
+             kontekst={k: v for k, v in _kontekst().items()
+                       if k != "container_image_digest"})
+
+
+# --------------------------------------------------------------------------
+# Controlleren ende-til-ende med FakeMotor (port 23 + 25s CI-halvdel:
+# kjeden bevarer tellingene; motor-ekte fasit måles på staging).
+# --------------------------------------------------------------------------
+
+class FakeMotor:
+    def __init__(self, resultat=None, feil=None):
+        self.resultat, self.feil = resultat, feil
+        self.payloads = []
+
+    def kjor(self, payload):
+        from modules.wcag_audit.motor import Motorfeil
+        self.payloads.append(payload)
+        if self.feil:
+            raise Motorfeil(self.feil)
+        return self.resultat
+
+
+def _wcag_kjede(migrator_, monkeypatch):
+    """Modulkjede + oppdrag for et ALIAS av wcag-typen (unike navn per
+    kjøring — den delte testbasen tåler ikke det globale navnet; den EKTE
+    registreringen gjøres av deploy-skriptet og prøves på staging)."""
+    import oppdragskontrakt as ok
+    from modules.wcag_audit import rapportskjema
+    u = secrets.token_hex(4)
+    typenavn = f"kontroll.w{u}.nettsted"
+    at = f"kontroll.w{u}.rapport"
+    ekte = ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, typenavn, ok.Oppdragstype(
+        navn=typenavn, handlingsprefikser=(f"kontroll.w{u}.",),
+        felter=ekte.felter, paakrevde=ekte.paakrevde,
+        eiermodul=f"m-{u}", krever_malautorisasjon=True,
+        malautorisasjonsdomene="web_hostname"))
+
+    modul, rel = f"m-{u}", f"r-{u}"
+    kh = "k-" + secrets.token_hex(8)
+    migrator_.execute("INSERT INTO modulhode (modul_id,status) VALUES"
+                      " (%s,'aktiv')", (modul,))
+    migrator_.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
+        "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
+        "reversibilitet) VALUES (%s,1,%s,'p','k','ekstern_lesing','direkte')",
+        (modul, kh))
+    migrator_.execute(
+        "INSERT INTO modulrelease (modul_id,release_id,kontraktversjon,"
+        "kontrakt_hash,manifest_hash,artifact_digest)"
+        " VALUES (%s,%s,1,%s,'mh','ad')", (modul, rel, kh))
+    migrator_.execute(
+        "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
+        "kontrakt_hash,miljo,livslop) VALUES (%s,%s,1,%s,'staging',"
+        "'claiming')", (modul, rel, kh))
+    migrator_.execute(
+        "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
+        "kontraktversjon,kontrakt_hash) VALUES (%s,%s,1,%s)",
+        (typenavn, modul, kh))
+    migrator_.execute(
+        "INSERT INTO artefaktskjema (skjema_hash, skjema) VALUES (%s,%s)"
+        " ON CONFLICT (skjema_hash) DO NOTHING",
+        (rapportskjema.skjema_hash(),
+         rapportskjema.kanonisk().decode("utf-8")))
+    migrator_.execute(
+        "INSERT INTO artefakttype_register (artefakttype,eiermodul,"
+        "kontraktversjon,kontrakt_hash,skjema_hash) VALUES (%s,%s,1,%s,%s)",
+        (at, modul, kh, rapportskjema.skjema_hash()))
+    migrator_.commit()
+
+    # Oppdraget: M-37-forankret (outboxens NOT NULL-trio), payload = den
+    # LUKKEDE fire-felts-formen + ressurs_id (som minimeres bort — port 5).
+    from db import kryptering
+    from .test_m37 import _lag_sak
+    sak, logg = _lag_sak(migrator_, TENANT)
+    rid = secrets.token_hex(32)
+    handling = f"kontroll.w{u}.nettsted"
+    _sett_kontekst(migrator_, TENANT)
+    migrator_.execute(
+        "INSERT INTO reparasjonsoperasjoner (tenant, unntak_id,"
+        " repair_operation_id, repair_generation, handler_id,"
+        " handler_versjon, maalhandling, input_hash, kategori)"
+        " VALUES (%s,%s,%s,0,'wcag','1',%s,%s,'manglende_data')",
+        (TENANT, sak, rid, handling, secrets.token_hex(32)))
+    beslutning = migrator_.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'test','arbeidskapabilitet','ih2','p@1.0.0/x.y',"
+        " 'TILLAT','[]',%s) RETURNING id", (TENANT, rid)).fetchone()[0]
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator_, TENANT)
+    payload = {"mal_url": "https://kunde.example/", "kravsett": "wcag21_aa",
+               "omfang": "enkeltside", "maks_sider": 1,
+               "ressurs_id": "hemmelig-ref"}
+    ct, nonce = kryptering.krypter(dek, payload, TENANT, key_id)
+    opp = migrator_.execute(
+        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        " repair_operation_id, oppdragstype, handling, eiermodul,"
+        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
+        " beslutning_loggpost_id, koblingsstatus)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        " now()+interval '30 minutes', now()+interval '30 minutes',"
+        " %s,'KOBLET') RETURNING id",
+        (TENANT, sak, logg, rid, typenavn, handling, modul, ct, key_id,
+         nonce, beslutning)).fetchone()[0]
+    migrator_.commit()
+    return modul, rel, int(opp)
+
+
+@pg
+def test_controlleren_hele_veien_med_fakemotor(migrator, miljo, monkeypatch):
+    """Hele kjeden gjennom EKTE plattform (onboarding → claim m/ token →
+    minimert payload (port 5) → rapportbygging → skjemavalidert opplasting →
+    signert kvittering → PROMOTERT artefakt). FakeMotor bærer fasiten:
+    tellingene inn == tellingene i det promoterte artefaktet."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from db import kryptering
+    from modules.wcag_audit import controller
+    from .test_m37 import _signer_kvittering
+    from .test_modul_onboarding_http import _onboard_token
+
+    modul, rel, opp = _wcag_kjede(migrator, monkeypatch)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            motor = FakeMotor(resultat=_motorresultat())
+            res = controller.kjor_en(c, mtk, motor, _kontekst(),
+                                     _signer_kvittering)
+            assert res["utfall"] == "utfort", res
+            assert res["kvittering_status"] == 200, res
+            # Port 5: modulen så KUN de fire payloadfeltene.
+            assert set(motor.payloads[0]) == {"mal_url", "kravsett",
+                                              "omfang", "maks_sider"}
+            _sett_kontekst(migrator, TENANT)
+            tilstand, ct, nonce, ref = migrator.execute(
+                "SELECT tilstand, ciphertext, nonce, dek_ref FROM artefakt"
+                " WHERE artefakt_id=%s", (res["artefakt_id"],)).fetchone()
+            assert tilstand == "promotert", tilstand
+            dek = kryptering.hent_dek(migrator, TENANT, ref)
+            rapport = kryptering.dekrypter(dek, bytes(ct), bytes(nonce),
+                                           TENANT, ref)
+            migrator.rollback()
+            # Fasiten: tellingen fra motoren står ordrett i evidensen.
+            assert rapport["sammendrag"]["alvorlig"] == 3
+            assert rapport["sider_kontrollert"][0]["url"] \
+                == "https://kunde.example/side"
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
+def test_motorfeil_gir_avbrutt_uten_artefakt(migrator, miljo, monkeypatch):
+    """§10 siste rad: skjemabrudd/motorfeil → oppdraget feiler, INGEN delvis
+    artefakt — og plattformen får en kvittering som sier det."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from modules.wcag_audit import controller
+    from .test_m37 import _signer_kvittering
+    from .test_modul_onboarding_http import _onboard_token
+
+    modul, rel, opp = _wcag_kjede(migrator, monkeypatch)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            motor = FakeMotor(feil="chromium krasjet")
+            res = controller.kjor_en(c, mtk, motor, _kontekst(),
+                                     _signer_kvittering)
+            assert res["utfall"] == "avbrutt", res
+            _sett_kontekst(migrator, TENANT)
+            n = migrator.execute(
+                "SELECT count(*) FROM artefakt WHERE tenant=%s AND"
+                " oppdrag_id=%s", (TENANT, opp)).fetchone()[0]
+            migrator.rollback()
+            assert n == 0, "motorfeil etterlot et delvis artefakt"
+    finally:
+        a.tjeneste.pool.lukk()

@@ -55,11 +55,19 @@ def _kjede(conn, *, status="aktiv", livslop="claiming", miljo_="staging",
             "kontraktversjon,kontrakt_hash) VALUES (%s,%s,1,%s)",
             (typenavn, modul, khash))
     if artefakttype:
+        # PR-014c: opplastingen skjemavalideres — testtypene bindes til det
+        # permissive objektskjemaet ({"type": "object"}, JCS-hashet).
+        conn.execute(
+            "INSERT INTO artefaktskjema (skjema_hash, skjema)"
+            " VALUES (%s, '{\"type\": \"object\"}'::jsonb)"
+            " ON CONFLICT (skjema_hash) DO NOTHING",
+            ("a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0",))
         conn.execute(
             "INSERT INTO artefakttype_register (artefakttype,eiermodul,"
             "kontraktversjon,kontrakt_hash,skjema_hash)"
             " VALUES (%s,%s,1,%s,%s)",
-            (artefakttype, modul, khash, secrets.token_hex(32)))
+            (artefakttype, modul, khash,
+             "a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0"))
     conn.commit()
     return modul, rel
 
