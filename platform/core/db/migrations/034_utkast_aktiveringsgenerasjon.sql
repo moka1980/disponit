@@ -28,12 +28,19 @@
 -- punkt i FORTIDEN, og da hjelper ingen mengde beskrivelser av innholdet.
 --
 -- Det som ER unikt, og som allerede finnes, er `policy_hode.revisjon`: en
--- teller som bare går oppover — +1 for hver aktivering (013, videreført
--- gjennom 020–025) og +1 for hver sletting (032) — og som ingen kode noen
--- gang nullstiller eller teller ned. Ankerraden slettes heller aldri
--- (`hode_ingen_sletting`, 012). Et tall derfra er derfor ett bestemt punkt i
--- policyens liv, og kan aldri komme igjen, uansett hvor mange ganger id-en,
--- versjonen eller innholdet gjenbrukes.
+-- teller som bare går oppover, og som ingen kode noen gang nullstiller eller
+-- teller ned. Ankerraden slettes heller aldri (`hode_ingen_sletting`, 012).
+-- Tre veier skriver den, og alle tre teller OPP: den styrte aktiveringen
+-- (013, videreført gjennom 020–025), slettingen (032) og
+-- `policyregister.registrer` når den aktiverer — oppsett-/token-veien som
+-- skriver `policyer` direkte, helt uten utkast. Et tall derfra er derfor ett
+-- bestemt punkt i policyens liv, og kan aldri komme igjen, uansett hvor mange
+-- ganger id-en, versjonen eller innholdet gjenbrukes.
+--
+-- Den tredje veien er også grunnen til at prøven er RIKTIG konservativ:
+-- skrives en ny generasjon utenom utkastveien, er den aktive generasjonen
+-- ikke lenger den utkastet laget, og utkastet forsvinner fra køen. Det er
+-- sant — og fail-closed, som er retningen en visningsregel skal bomme i.
 --
 -- 034 LAGRER svaret i stedet for å utlede det: `policyutkast.aktivert_revisjon`
 -- settes i det utkastet blir `aktivert`. Prøven i lista blir da en likhet
@@ -63,72 +70,56 @@ ALTER TABLE policyutkast
     ADD COLUMN IF NOT EXISTS aktivert_revisjon BIGINT;
 
 -- ------------------------------------------------------------
--- BACKFILL — og den må kjøre FØR triggeren opprettes.
+-- INGEN BACKFILL. Historiske rader står med NULL, og det er svaret.
 --
--- Triggeren under fryser kolonnen for alt annet enn selve overgangen til
--- `aktivert`. En backfill etterpå ville derfor blitt stille overskrevet med
--- den gamle verdien (NULL) — en UPDATE som rapporterer suksess og ikke gjør
--- noe. Rekkefølgen her er altså en del av logikken, ikke en smakssak.
+-- Koblingen «hvilket utkast ble hvilken generasjon» er nøyaktig det basen
+-- ALDRI lagret — det er hele grunnen til at denne migrasjonen finnes. For
+-- rader som ble aktivert før den, finnes den derfor ikke å hente noe sted, og
+-- alt en backfill kan gjøre er å GJETTE ut fra beskrivelser. To forsøk ble
+-- skrevet og begge var gale, hver på sin måte (Codex P2, to runder):
 --
--- Hva som er RIKTIG verdi for et utkast som ble aktivert før denne
--- migrasjonen, kan ikke rekonstrueres eksakt: den koblingen er nettopp det
--- basen aldri lagret. Det beste tilgjengelige vitnet er den prøven koden
--- brukte fram til nå — utkastets frosne hash mot den AKTIVE policyraden — og
--- backfillen stempler de utkastene med hodets nåværende revisjon. Der vitnet
--- er entydig viser lista da nøyaktig det samme for historiske rader som den
--- gjorde før migrasjonen, mens alt som aktiveres ETTERPÅ har et eksakt
--- stempel.
+--   * «det nyeste utkastet med matchende hash» leste opprettelsesrekkefølge
+--     som aktiveringsrekkefølge. Et utkast kan ligge lenge før det aktiveres,
+--     så lages B før A, aktiveres A, slettes policyen og aktiveres så B med
+--     samme innhold, peker «nyeste» på A — den SLETTEDE generasjonen.
+--   * «bare når hashen peker på ett eneste utkast» antok at den aktive
+--     generasjonen i det hele tatt kom fra et utkast. Det gjør den ikke
+--     nødvendigvis: `policyregister.registrer` skriver `policyer` direkte og
+--     teller opp `policy_hode.revisjon` UTEN noe utkast (oppsett-/token-veien).
+--     Slettes en policy og gjenskapes den samme veien, er det gamle utkastet
+--     det ENESTE som matcher hashen — entydig, og likevel feil.
 --
--- ER VITNET FLERTYDIG, STEMPLES INGENTING (Codex P2). Har kollisjonen over
--- alt skjedd i basen, matcher hashen både den slettede generasjonens utkast
--- og erstatningens, og da finnes det ikke noe i basen som skiller dem. Et
--- første forsøk gjettet på det NYESTE utkastet, som om opprettelsesrekkefølge
--- var aktiveringsrekkefølge. Det er den ikke: et utkast kan ligge lenge før
--- det aktiveres. Lages B før A, aktiveres A, slettes policyen og aktiveres så
--- B med samme innhold, peker «nyeste» på A — den SLETTEDE generasjonen — og
--- backfillen ville stemplet nettopp den raden som skal skjules, og skjult den
--- som lever. En gjetning som kan ta feil på begge sider er verre enn ingen.
+-- Begge gjetningene feiler i samme retning: de stempler den SLETTEDE
+-- generasjonens utkast som gjeldende, altså nøyaktig den feilen 034 finnes
+-- for å fjerne. En rekonstruksjon som kan gjeninnføre feilen den skulle
+-- rydde opp i, er verre enn ingen rekonstruksjon — og et tredje forsøk ville
+-- vært en ny gjetning på samme manglende opplysning.
 --
--- `NOT EXISTS`-leddet stempler derfor bare når det gamle vitnet peker på
--- NØYAKTIG ett utkast. Flertydige treff står igjen med NULL, og NULL er «kan
--- ikke vises som gjeldende»: da forsvinner begge radene fra køen i stedet for
--- at feil rad utgir seg for å være gjeldende tilstand. Ingenting går tapt —
--- radene består i basen og nås via detalj-ruten — og det gjelder uansett bare
--- utkast som ble aktivert FØR denne migrasjonen, i en base som allerede bærer
--- kollisjonen. Alt som aktiveres etterpå har et eksakt stempel.
+-- NULL er allerede det riktige, fail-closed svaret: «kan ikke vises som
+-- gjeldende». KOSTNADEN, sagt rett ut: rett etter oppgraderingen forsvinner
+-- også de aktiverte utkastene som ER gjeldende, fra arbeidskøen. Det er en
+-- akseptabel pris her, og bare her:
+--   * `aktivert` er terminalt (012/033) — raden har ingen handling igjen, så
+--     det som går tapt er en visning av tilstand, ikke en arbeidsoppgave;
+--   * radene består i basen som attestasjonsankre og nås via detalj-ruten;
+--   * policylista viser den levende policyen uansett;
+--   * og det retter seg selv: neste aktivering av policyen stempler eksakt.
+-- Alternativet — å vise dem på en gjetning — kan presentere en SLETTET policy
+-- som gjeldende tilstand, og det er den feilen eier meldte.
 --
--- RLS-VINDUET er det samme grepet og den samme grunnen som i 008 og 029:
--- tabellene står med FORCE ROW LEVEL SECURITY mot `disponit.tenant`, migrator
--- har ingen tenantkontekst, og backfillen er kryss-tenant av natur. Med FORCE
--- på ville UPDATE-en truffet null rader og migrasjonen sett ut som en suksess.
--- NO FORCE unntar KUN tabelleieren, og `ALTER TABLE` holder ACCESS EXCLUSIVE,
--- så ingen annen sesjon kan lese i vinduet; feiler noe underveis, rulles også
--- RLS-endringen tilbake med transaksjonen.
+-- (Uten backfill trengs heller ikke RLS-vinduet fra 008/029: det fantes bare
+-- fordi migrator måtte lese på tvers av tenanter. Én ALTER TABLE med ACCESS
+-- EXCLUSIVE mindre på tre varme tabeller under oppgradering.)
 -- ------------------------------------------------------------
-ALTER TABLE policyutkast NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE policyer     NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy_hode  NO FORCE ROW LEVEL SECURITY;
-
-UPDATE policyutkast u
-   SET aktivert_revisjon = h.revisjon
-  FROM policyer p, policy_hode h
- WHERE u.status = 'aktivert' AND u.innholds_hash IS NOT NULL
-   AND p.tenant = u.tenant AND p.policy_id = u.policy_id
-   AND p.aktiv AND p.innholds_hash = u.innholds_hash
-   AND h.tenant = u.tenant AND h.policy_id = u.policy_id
-   AND NOT EXISTS (SELECT 1 FROM policyutkast a
-                    WHERE a.tenant = u.tenant
-                      AND a.policy_id = u.policy_id
-                      AND a.status = 'aktivert'
-                      AND a.innholds_hash = u.innholds_hash
-                      AND a.utkast_id <> u.utkast_id);
-
-ALTER TABLE policyutkast FORCE ROW LEVEL SECURITY;
-ALTER TABLE policyer     FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy_hode  FORCE ROW LEVEL SECURITY;
 
 -- ------------------------------------------------------------
--- STEMPELET. Egen trigger, ikke et nytt vilkår i `policyutkast_kolonnelaas`:
+-- STEMPELET.  --  MERK for en senere migrasjon som måtte ville fylle
+-- kolonnen for historiske rader: triggeren under fryser den for alt annet
+-- enn selve overgangen til `aktivert`, så en naken UPDATE etterpå blir
+-- STILLE overskrevet med den gamle verdien — en skriving som rapporterer
+-- suksess og ikke gjør noe.
+--
+-- Egen trigger, ikke et nytt vilkår i `policyutkast_kolonnelaas`: Egen trigger, ikke et nytt vilkår i `policyutkast_kolonnelaas`:
 -- den funksjonen NEKTER (den er en lås og kaster), denne SETTER. Å blande de
 -- to rollene i én kropp ville gjort begge vanskeligere å lese, og 033 viste
 -- hva det koster å måtte kopiere en kropp riktig for å endre ett vilkår.
