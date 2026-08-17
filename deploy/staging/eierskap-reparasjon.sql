@@ -135,6 +135,15 @@ INSERT INTO _design VALUES
     -- `bruk_artefaktkapabilitet` er fjernet (forbruk skjer i staged-writen).
     ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer)', 'disponit_domene_eier'),
     ('FUNCTION', 'innlos_artefaktkapabilitet(text,text)',            'disponit_domene_eier'),
+    -- 035 la til haleargumentet for MILJØ i begge (kapabiliteten bindes til
+    -- hele den autentiserte deploymenten, ikke bare modulen). BEGGE formene
+    -- står her, som for den gamle claim-signaturen: reparasjonen kjører FØR
+    -- migrer.py, så en base som ennå ikke har kjørt 035 har de gamle
+    -- signaturene installert og eid av domene_eier. Sto de ikke her, ville
+    -- steg 2 flyttet dem til migrator — og 035, som dropper dem under
+    -- SET LOCAL ROLE disponit_domene_eier, ville feilet på eierskap.
+    ('FUNCTION', 'utsted_artefaktkapabilitet(text,bigint,text,text,integer,text,bigint,text,text,integer,text)', 'disponit_domene_eier'),
+    ('FUNCTION', 'innlos_artefaktkapabilitet(text,text,text,text)',  'disponit_domene_eier'),
     -- PR-015: fire øyne + de bundne driftsformene (migrasjon 019). Samme eier
     -- som resten av domenelaget — avgjørelsen er iboende kryss-tenant, og
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny

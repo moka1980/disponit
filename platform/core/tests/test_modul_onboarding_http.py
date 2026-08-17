@@ -551,6 +551,76 @@ def test_modultoken_faar_bruke_kapabilitetene_claimen_delte_ut(migrator, miljo,
         a.tjeneste.pool.lukk()
 
 
+@pg
+def test_kapabiliteten_innloses_kun_av_deploymenten_som_claimet(migrator,
+                                                                miljo,
+                                                                monkeypatch):
+    """Codex P1: opplastingsunntaket slipper ALLE modultokener for modulen
+    forbi scope-porten, og innløsningen sammenlignet bare modul-id-en. Er
+    samme modul deployet i både staging og produksjon, kunne en
+    staging-arbeider som fikk en jti utstedt til produksjonsdeploymenten
+    levere rapporten — og API-et ville ført evidensen på produksjons-
+    releasen, altså attestert en deployment som ikke autentiserte
+    requesten. Kapabiliteten bærer nå miljøet sitt, og innløsningen krever
+    HELE den autentiserte deploymenten.
+
+    Kontroll: fjern miljø-/release-leddene i `innlos_artefaktkapabilitet`
+    (eller send NULL fra `_artefakt_upload`), så blir denne rød.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    prefiks = f"h{_u()}."
+    _kjent_type(monkeypatch, typenavn, prefiks)
+    modul, rel = _kjede(migrator, typenavn=typenavn, miljo_="produksjon",
+                        artefakttype=f"kvit.o{_u()}.rapport")
+    # SAMME release og kontrakt, også deployet i staging og claiming: to
+    # levende deployments av én modul, med hvert sitt modultoken.
+    khash = migrator.execute(
+        "SELECT kontrakt_hash FROM modulrelease WHERE modul_id=%s"
+        " AND release_id=%s", (modul, rel)).fetchone()[0]
+    migrator.execute(
+        "INSERT INTO moduldeployment (modul_id,release_id,kontraktversjon,"
+        "kontrakt_hash,miljo,livslop) VALUES (%s,%s,1,%s,'staging',"
+        "'claiming')", (modul, rel, khash))
+    sak, logg = _lag_sak(migrator, TENANT)
+    _lag_oppdrag_type(migrator, TENANT, sak, logg, oppdragstype=typenavn,
+                      eiermodul=modul, handling=prefiks + "send")
+    migrator.commit()
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            prod = _onboard_token(c, migrator, modul, rel,
+                                  miljo_="produksjon")[0]
+            stg = _onboard_token(c, migrator, modul, rel, miljo_="staging")[0]
+            r = c.post("/v1/oppdrag/claim", json={},
+                       headers={"authorization": f"Bearer {prod}"})
+            assert r.status_code == 200, r.text
+            jti = r.json()["opplasting"]["jti"]
+
+            # Staging-tokenet slipper forbi scope-porten (unntaket), men
+            # kapabiliteten er produksjonsdeploymentens.
+            r = c.post("/v1/artefakt",
+                       json={"kapabilitet_jti": jti, "rapport": {"funn": 0}},
+                       headers={"authorization": f"Bearer {stg}"})
+            assert r.status_code == 403 and \
+                r.json()["feil"] == "kapabilitet_ugyldig", r.text
+
+            # Og deploymenten som faktisk claimet, kommer fortsatt inn.
+            r = c.post("/v1/artefakt",
+                       json={"kapabilitet_jti": jti, "rapport": {"funn": 0}},
+                       headers={"authorization": f"Bearer {prod}"})
+            assert r.status_code == 200, r.text
+            _sett_kontekst(migrator, TENANT)
+            assert migrator.execute(
+                "SELECT miljo FROM artefaktkapabilitet WHERE jti=%s",
+                (jti,)).fetchone() == ("produksjon",)
+            migrator.rollback()
+    finally:
+        a.tjeneste.pool.lukk()
+
+
 def test_bootstrap_veien_kan_ikke_utstede_claimdyktige_tokener():
     """Port 24 (deploy-port): token-cli nekter `orders:execute`-scopes —
     claim-fullmakt kommer KUN fra onboardingen. Kontroll: fjern vaktleddet i

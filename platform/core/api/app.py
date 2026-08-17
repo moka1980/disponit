@@ -1609,12 +1609,18 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                         # raden. Endret epoch mellom claim og utstedelse gir
                         # ingen kapabilitet (port 24) — funksjonen matcher
                         # o.module_epoch og feiler.
+                        #
+                        # Codex P1: kapabiliteten stemples med DEPLOYMENTENS
+                        # miljø når claimen kom fra et modultoken, så
+                        # innløsningen kan kreve hele den autentiserte
+                        # deploymenten (`_artefakt_upload`). Et legacy-token
+                        # har ingen — da står miljøet NULL, som før.
                         orad = conn.execute(
                             "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
-                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
                              o_epoch, typerad[0], opplasting_jti,
-                             min(igjen, 3600))).fetchone()
+                             min(igjen, 3600), autentisert_miljo)).fetchone()
                         # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
                         # over gjør `utloper <= evidensfrist` til en identitet,
                         # men den identiteten hviler på 017s klemming — og en
@@ -2323,12 +2329,26 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         if not isinstance(jti, str) or not isinstance(rapport, dict):
             return _feilsvar("request_feilformet", rid)
 
-        # Innløs kapabiliteten — KUN for den holdende modulen (auth.rolle).
+        # Innløs kapabiliteten — KUN for den holdende DEPLOYMENTEN.
+        #
+        # Codex P1: `auth.rolle` er modulens id, ikke deploymentens. En modul
+        # kan ha flere levende deployments samtidig (staging og produksjon,
+        # eller to releaser under hver sin kontraktversjon), hver med sitt
+        # eget modultoken — og unntaket over slipper dem alle forbi
+        # scope-porten. Uten miljø og release i innløsningen kunne en
+        # staging-arbeider som fikk en jti utstedt til produksjons-
+        # deploymenten levere rapporten, og API-et ville ført evidensen på
+        # den releasen kapabiliteten bar: en attestering fra en deployment
+        # som ikke autentiserte requesten. Med et legacy-api-token finnes
+        # ingen autentisert deployment — NULL matcher da kun kapabiliteter
+        # som selv er miljøløse (fail-closed begge veier).
+        d_miljo = getattr(auth, "miljo", None)
+        d_release = getattr(auth, "release_id", None)
         bind = conn.execute(
             "SELECT tenant, oppdrag_id, release_id, kontraktversjon,"
             " kontrakt_hash, module_epoch, artefakttype"
-            "  FROM innlos_artefaktkapabilitet(%s, %s)",
-            (jti, auth.rolle)).fetchone()
+            "  FROM innlos_artefaktkapabilitet(%s, %s, %s, %s)",
+            (jti, auth.rolle, d_miljo, d_release)).fetchone()
         if bind is None:
             conn.rollback()
             tjeneste.logg.hendelse("kapabilitet_ugyldig", rid)

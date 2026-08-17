@@ -868,6 +868,165 @@ REVOKE ALL ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT)
 GRANT EXECUTE ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT) TO disponit_domains_admin;
 GRANT EXECUTE ON FUNCTION registrer_artefakttype(TEXT, TEXT, INT, TEXT, TEXT, TEXT) TO disponit_modules_admin;
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 5b. Artefaktkapabiliteten bindes til HELE deploymenten (Codex P1)
+--
+-- 017 binder kapabiliteten til modul · release · kontrakt · epoch, og
+-- innløsningen sammenligner bare `modul_id` — som for et modultoken er
+-- modulens id, ikke deploymentens. Med 035 er det ikke lenger nok: en
+-- modul kan ha flere LEVENDE deployments samtidig (staging og produksjon,
+-- eller to releaser under hver sin kontraktversjon), hver med sitt eget
+-- modultoken. Opplastingsendepunktet slipper alle modultokener forbi
+-- scope-porten (retten ER kapabilitetens), så en staging-arbeider som får
+-- en jti utstedt til produksjonsdeploymenten — delt eller feilrutet
+-- arbeidsutdeling — kunne levere rapporten, og API-et ville ført evidensen
+-- på den releasen kapabiliteten bar. Da attesterer sporet en deployment
+-- som ikke autentiserte requesten. Miljøet er det ene leddet tabellen
+-- manglet; releasen står der alt.
+--
+-- Regelen: kapabiliteten stempler miljøet den ble utstedt i, og
+-- innløsningen krever HELE den autentiserte deploymenten. NULL betyr
+-- «ingen autentisert deployment» (legacy api-token) og matcher kun rader
+-- som selv er miljøløse — fail-closed begge veier.
+-- ------------------------------------------------------------
+ALTER TABLE artefaktkapabilitet ADD COLUMN IF NOT EXISTS miljo TEXT;
+
+-- Bindingsfelt = uforanderlig, som de øvrige i 017s statusmaskin. Egen
+-- trigger i stedet for en kopi av hele statusmaskinen hit: mindre å drifte,
+-- og den kan ikke komme i utakt med 017 ved en senere endring der.
+CREATE OR REPLACE FUNCTION artefaktkapabilitet_miljo_frosset()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NEW.miljo IS DISTINCT FROM OLD.miljo THEN
+        RAISE EXCEPTION 'artefaktkapabilitet: miljo er uforanderlig';
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS artefaktkapabilitet_miljo ON artefaktkapabilitet;
+CREATE TRIGGER artefaktkapabilitet_miljo BEFORE UPDATE ON artefaktkapabilitet
+    FOR EACH ROW EXECUTE FUNCTION artefaktkapabilitet_miljo_frosset();
+
+SET LOCAL ROLE disponit_domene_eier;
+
+-- Formen endret seg (nytt haleargument), så de gamle signaturene må vekk
+-- før REPLACE — ellers står to overlaster igjen og de gamle kallene blir
+-- tvetydige. Nykommeren har DEFAULT NULL nettopp så de kallene fortsatt
+-- treffer, med «ingen autentisert deployment».
+DROP FUNCTION IF EXISTS utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT,
+    INT, TEXT, BIGINT, TEXT, TEXT, INT);
+CREATE OR REPLACE FUNCTION utsted_artefaktkapabilitet(
+    p_tenant TEXT, p_oppdrag_id BIGINT, p_modul_id TEXT, p_release_id TEXT,
+    p_kontraktversjon INT, p_kontrakt_hash TEXT, p_module_epoch BIGINT,
+    p_artefakttype TEXT, p_jti TEXT, p_levetid_s INT DEFAULT 900,
+    p_miljo TEXT DEFAULT NULL)
+RETURNS TABLE (jti TEXT, utloper TIMESTAMPTZ)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_lev INT := least(greatest(coalesce(p_levetid_s, 900), 60), 3600);
+        v_utloper TIMESTAMPTZ := now() + (v_lev || ' seconds')::INTERVAL;
+BEGIN
+    IF p_jti IS NULL OR p_jti !~ '^[0-9a-f]{32,}$' THEN
+        RAISE EXCEPTION 'utsted_artefaktkapabilitet: ugyldig jti-format';
+    END IF;
+    PERFORM 1 FROM public.oppdrag o
+     WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id AND o.status = 'plukket'
+       AND o.modul_id IS NOT DISTINCT FROM p_modul_id
+       AND o.kontraktversjon IS NOT DISTINCT FROM p_kontraktversjon
+       AND o.kontrakt_hash IS NOT DISTINCT FROM p_kontrakt_hash
+       AND o.module_epoch IS NOT DISTINCT FROM p_module_epoch;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'utsted_artefaktkapabilitet: oppdrag %/% er ikke plukket '
+            'med matchende kontraktbinding', p_tenant, p_oppdrag_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Codex: artefakttypen MÅ være registrert til NETTOPP denne modulen+kontrakten
+    -- — ellers kunne en kapabilitet for modul A navngi en type registrert til
+    -- modul B, og opplastingen lykkes med feil type/skjema.
+    PERFORM 1 FROM public.artefakttype_register atr
+     WHERE atr.artefakttype = p_artefakttype AND atr.eiermodul = p_modul_id
+       AND atr.kontraktversjon = p_kontraktversjon
+       AND atr.kontrakt_hash = p_kontrakt_hash;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'utsted_artefaktkapabilitet: artefakttype % er ikke '
+            'registrert for modulen/kontrakten', p_artefakttype
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Codex P2: release_id VERIFISERES også. Oppdraget stempler kun modul/
+    -- kontrakt/epoch ved claim — IKKE release — så uten denne porten kunne en
+    -- gyldig claimet jobb tilskrives en vilkårlig/ikke-eksisterende release, som
+    -- promoteringen senere leser tilbake fra artefaktet. Krev at (modul, release,
+    -- kontrakt) er en REGISTRERT release (samme kontrakt som kapabiliteten).
+    PERFORM 1 FROM public.modulrelease mr
+     WHERE mr.modul_id = p_modul_id AND mr.release_id = p_release_id
+       AND mr.kontraktversjon = p_kontraktversjon
+       AND mr.kontrakt_hash = p_kontrakt_hash;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'utsted_artefaktkapabilitet: release % er ikke registrert '
+            'for modulen/kontrakten', p_release_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- 035: miljøet MÅ være en faktisk deployment av nettopp denne releasen —
+    -- ellers kunne en kapabilitet stemples med et miljø modulen ikke er
+    -- deployet i, og innløsningsporten under ville sluppet feil arbeider inn.
+    IF p_miljo IS NOT NULL THEN
+        PERFORM 1 FROM public.moduldeployment d
+         WHERE d.modul_id = p_modul_id AND d.release_id = p_release_id
+           AND d.miljo = p_miljo;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'utsted_artefaktkapabilitet: %/% er ikke deployet '
+                'i miljo %', p_modul_id, p_release_id, p_miljo
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+    END IF;
+    INSERT INTO public.artefaktkapabilitet (jti, tenant, oppdrag_id, modul_id,
+        release_id, kontraktversjon, kontrakt_hash, module_epoch, artefakttype,
+        miljo, utloper)
+        VALUES (p_jti, p_tenant, p_oppdrag_id, p_modul_id, p_release_id,
+                p_kontraktversjon, p_kontrakt_hash, p_module_epoch, p_artefakttype,
+                p_miljo, v_utloper);
+    RETURN QUERY SELECT p_jti, v_utloper;
+END $$;
+
+-- Innløs (idempotent, brenner IKKE): 017s kropp, med deploymentporten.
+-- `p_miljo`/`p_release_id` er den AUTENTISERTE deploymenten, ikke noe
+-- kalleren kan velge fritt for seg selv: HTTP-laget leser dem av
+-- modultokenet. Er de NULL (legacy api-token), matcher innløsningen kun
+-- kapabiliteter som selv er miljøløse — et modultokens kapabilitet kan
+-- altså ikke hentes ut av en miljøløs credential heller.
+DROP FUNCTION IF EXISTS innlos_artefaktkapabilitet(TEXT, TEXT);
+CREATE OR REPLACE FUNCTION innlos_artefaktkapabilitet(
+    p_jti TEXT, p_modul_id TEXT, p_miljo TEXT DEFAULT NULL,
+    p_release_id TEXT DEFAULT NULL)
+RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, release_id TEXT,
+               kontraktversjon INT, kontrakt_hash TEXT, module_epoch BIGINT,
+               artefakttype TEXT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    RETURN QUERY
+    SELECT k.tenant, k.oppdrag_id, k.release_id, k.kontraktversjon,
+           k.kontrakt_hash, k.module_epoch, k.artefakttype
+      FROM public.artefaktkapabilitet k
+     WHERE k.jti = p_jti AND k.modul_id = p_modul_id
+       AND k.miljo IS NOT DISTINCT FROM p_miljo
+       -- Miljøet skiller de to verdenene; er det satt, er kalleren en
+       -- autentisert deployment og DA må releasen stemme også (to releaser
+       -- av samme modul kan være claiming i samme miljø under hver sin
+       -- kontraktversjon).
+       AND (p_miljo IS NULL
+            OR k.release_id IS NOT DISTINCT FROM p_release_id)
+       AND k.status <> 'feilet'
+       AND (k.status = 'brukt' OR k.utloper > now());
+END $$;
+
+REVOKE ALL ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO disponit;
+GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO disponit;
+RESET ROLE;
+-- SECURITY DEFINER kjører som domene_eier: den nye miljøporten i
+-- `utsted_artefaktkapabilitet` leser deploymentregisteret (som 017 måtte
+-- gi den `modulrelease` for release-porten). Kjøres som migrator (eier).
+GRANT SELECT ON moduldeployment TO disponit_domene_eier;
 SET LOCAL ROLE disponit_modul_eier;
 REVOKE ALL ON FUNCTION utsted_onboarding_hemmelighet(TEXT, TEXT, TEXT, UUID, TEXT, INT, INT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION innlos_onboarding(UUID, TEXT, UUID, TEXT, INT, TEXT) FROM PUBLIC;
