@@ -813,6 +813,39 @@ def test_identitetsfeltene_er_immutable_og_hendelser_append_only():
 
 
 @pg
+def test_grunn_alene_er_ingen_tilbakekalling():
+    """Codex P2: en ren grunn-endring på et LEVENDE token var usynlig for
+    identitetstriggeren — den så bare på OLD.tilbakekalt_ts. Da kunne
+    eieren skrive en tilbakekallingsgrunn på et token som fortsatt virker,
+    og sporet ville lyve om tilstanden. Grunnen følger døden: den kan bare
+    settes i samme UPDATE som flytter tilbakekalt_ts.
+
+    Kontroll: fjern det siste OR-leddet i `modultoken_identitet_immutable`,
+    så blir denne rød.
+    """
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        for grunn in ("erstattet_etter_tapt_svar", "rotert", "hva som helst"):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                m.execute("UPDATE modultoken SET tilbakekalt_grunn=%s"
+                          " WHERE token_id=%s", (grunn, tid))
+            m.rollback()
+        # Kontrollen den andre veien: grunn SAMMEN med en ekte død går inn.
+        m.execute("UPDATE modultoken SET tilbakekalt_ts=now(),"
+                  " tilbakekalt_grunn='kompromittert' WHERE token_id=%s",
+                  (tid,))
+        m.commit()
+        assert m.execute("SELECT tilbakekalt_grunn FROM modultoken"
+                         " WHERE token_id=%s", (tid,)).fetchone()[0] \
+            == "kompromittert"
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_append_only_tabellene_taaler_ikke_truncate():
     """Codex P2: TRUNCATE fyrer INGEN rad-trigger. Uten en statement-vakt
     kunne tabelleieren tømt hele det annonserte revisjonssporet — og

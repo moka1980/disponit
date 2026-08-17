@@ -181,6 +181,14 @@ CREATE TRIGGER onboarding_slettevern
 -- grunn kan bare endres sammen med en fremskynding, så et dødt token
 -- aldri får omskrevet historikken sin. Hele regelen står i WHEN-leddet
 -- — ikke i prosatekst.
+--
+-- OG EN GRUNN ALENE ER ALDRI EN TILBAKEKALLING (Codex P2): på et LEVENDE
+-- token (tilbakekalt_ts NULL) var en ren grunn-endring usynlig for regelen
+-- over, siden den bare så på OLD.tilbakekalt_ts. Da kunne eieren eller
+-- `disponit_modul_eier` skrive en tilbakekallingsgrunn på et token som
+-- fortsatt virker — sporet ville lyve om tokenets tilstand. Grunnen følger
+-- døden, ikke omvendt: den kan bare settes eller endres i samme UPDATE som
+-- flytter tilbakekalt_ts (NULL → satt, eller fremskyndet).
 DROP TRIGGER IF EXISTS modultoken_identitet_immutable ON modultoken;
 CREATE TRIGGER modultoken_identitet_immutable
     BEFORE UPDATE ON modultoken
@@ -202,7 +210,10 @@ CREATE TRIGGER modultoken_identitet_immutable
               OR NEW.tilbakekalt_ts > OLD.tilbakekalt_ts
               OR (NEW.tilbakekalt_ts = OLD.tilbakekalt_ts
                   AND NEW.tilbakekalt_grunn
-                      IS DISTINCT FROM OLD.tilbakekalt_grunn))))
+                      IS DISTINCT FROM OLD.tilbakekalt_grunn)))
+        -- Levende token: grunnen kan ikke røres uten at raden faktisk dør.
+        OR (NEW.tilbakekalt_ts IS NULL
+            AND NEW.tilbakekalt_grunn IS DISTINCT FROM OLD.tilbakekalt_grunn))
     EXECUTE FUNCTION avvis_endring();
 
 -- Tokener slettes aldri — de tilbakekalles. Kjeden (forgjenger) er
