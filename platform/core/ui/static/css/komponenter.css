@@ -89,6 +89,11 @@
 
 /* DataTabell */
 .tablewrap { overflow-x: auto; }
+/* Radhandlingene (Åpne | Rediger | Slett) sto skulder ved skulder uten
+   mellomrom — eier: «det står tett i hverandre». Luften ligger på cellen,
+   ikke på knappene, så en rad med én handling er upåvirket. */
+.handling-celle { white-space: nowrap; }
+.handling-celle .knapp + .knapp { margin-left: 0.75rem; }
 table { width: 100%; border-collapse: collapse; }
 caption { text-align: left; }
 th, td {

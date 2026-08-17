@@ -1033,18 +1033,38 @@ def hent_maler() -> list:
 
 def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                 request_id: str, policy_id: str | None = None) -> list:
-    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende."""
+    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende.
+
+    Lista er ARBEIDSKØEN, ikke historikken (eier 17/8: «når man sletter en
+    policy skal det fjernes helt fra listen»). To radtyper holdes derfor ute:
+
+      * `forkastet` — et slettet forslag. Det er terminalt og har ingen
+        handling igjen; å vise det for alltid var nøyaktig det eier meldte.
+      * `aktivert` der policyen siden er SLETTET (ingen aktiv-peker i
+        `policy_hode`): raden sto igjen som «Aktivert» om en policy som ikke
+        finnes. Et aktivert utkast for en LEVENDE policy vises fortsatt —
+        det er gjeldende tilstand, ikke et lik.
+
+    Radene finnes fremdeles i basen — de er attestasjonshistorikkens ankre
+    (slettingen i 032 bevarer dem uttrykkelig) og nås via detalj-ruten.
+    Skjulingen er en visningsregel, ingen sletting."""
     sett_kontekst(conn, tenant, aktor, request_id)
+    vilkaar = (" AND u.status <> 'forkastet'"
+               " AND (u.status <> 'aktivert' OR EXISTS ("
+               "      SELECT 1 FROM policy_hode h WHERE h.tenant=u.tenant"
+               "        AND h.policy_id=u.policy_id"
+               "        AND h.aktiv_versjon IS NOT NULL))")
     if policy_id:
         rows = conn.execute(
-            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
-            " FROM policyutkast WHERE tenant=%s AND policy_id=%s"
-            " ORDER BY opprettet DESC", (tenant, policy_id)).fetchall()
+            "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
+            " u.opprettet FROM policyutkast u WHERE u.tenant=%s"
+            " AND u.policy_id=%s" + vilkaar +
+            " ORDER BY u.opprettet DESC", (tenant, policy_id)).fetchall()
     else:
         rows = conn.execute(
-            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
-            " FROM policyutkast WHERE tenant=%s ORDER BY opprettet DESC",
-            (tenant,)).fetchall()
+            "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
+            " u.opprettet FROM policyutkast u WHERE u.tenant=%s" + vilkaar +
+            " ORDER BY u.opprettet DESC", (tenant,)).fetchall()
     conn.rollback()
     return [{"utkast_id": u, "policy_id": p, "status": s, "utkastversjon": vv,
              "opprettet": o.isoformat()} for u, p, s, vv, o in rows]

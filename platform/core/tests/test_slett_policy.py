@@ -1068,3 +1068,49 @@ def test_bare_runtime_og_eier_har_execute_paa_slettingen():
         assert mottakere <= {"disponit_policy_eier", "disponit"}, mottakere
     finally:
         c.close()
+
+
+@pg
+def test_lista_er_arbeidskoen_ikke_historikken():
+    """Eier 17/8: «når man sletter en policy skal det fjernes helt fra
+    listen». Et forkastet utkast og et aktivert utkast for en SLETTET policy
+    er historikk — de består i basen som attestasjonsankre, men de har ingen
+    handling igjen og skal ikke stå i arbeidskøen for alltid. Et aktivert
+    utkast for en LEVENDE policy er derimot gjeldende tilstand og vises.
+
+    Kontroll: fjern `vilkaar`-strengen i `list_utkast`, så blir denne rød.
+    """
+    from api import policyadmin
+    m = _mig()
+    pid_slettet = "p-" + secrets.token_hex(3)   # policy uten aktiv-peker
+    pid_levende = "p-" + secrets.token_hex(3)
+    _policyrad(m, pid_levende)                  # hode med aktiv_versjon
+    m.execute("INSERT INTO policy_hode (tenant,policy_id,aktiv_versjon)"
+              " VALUES (%s,%s,NULL)", (TEN, pid_slettet))
+    rader = [("u-frk-" + secrets.token_hex(4), pid_levende, "forkastet"),
+             ("u-dda-" + secrets.token_hex(4), pid_slettet, "aktivert"),
+             ("u-lva-" + secrets.token_hex(4), pid_levende, "aktivert"),
+             ("u-val-" + secrets.token_hex(4), pid_levende, "validert"),
+             ("u-utk-" + secrets.token_hex(4), pid_slettet, "utkast")]
+    for uid, pid, status in rader:
+        m.execute(
+            "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+            "innholds_hash,status,opprettet_av)"
+            " VALUES (%s,%s,%s,'{}'::jsonb,%s,%s,'forf')",
+            (TEN, uid, pid,
+             "h-" + secrets.token_hex(8) if status != "utkast" else None,
+             status))
+    m.commit()
+    rt = _rt()
+    try:
+        vist = {r["utkast_id"] for r in policyadmin.list_utkast(
+            rt, tenant=TEN, aktor="forf", request_id="r")}
+        mine = {uid for uid, _, _ in rader}
+        assert rader[0][0] not in vist, "et forkastet utkast ble stående"
+        assert rader[1][0] not in vist, \
+            "et aktivert utkast for en SLETTET policy ble stående"
+        assert (vist & mine) == {rader[2][0], rader[3][0], rader[4][0]}, \
+            (vist & mine)
+    finally:
+        rt.close()
+        m.close()
