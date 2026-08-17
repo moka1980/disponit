@@ -118,8 +118,8 @@ def _rediger(rt, uid, ver, innhold):
         idempotency_key=idem, input_hash="ih-" + idem)
 
 
-def _valider(rt, uid, ver):
-    idem = secrets.token_hex(8)
+def _valider(rt, uid, ver, idem=None):
+    idem = idem or secrets.token_hex(8)
     return policyadmin.valider_utkast(
         rt, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
         forventet_utkastversjon=ver, idempotency_key=idem,
@@ -326,6 +326,55 @@ def test_valider_sier_fra_om_opptatt_versjon_med_forslag():
         r = _rediger(rt, uid, 1, _dokument(pid, "1.1.1"))
         v2 = _valider(rt, uid, r["utkastversjon"])
         assert v2["utfall"] == "validert", v2
+    finally:
+        rt.close()
+
+
+@pg
+def test_opptatt_versjon_caches_ikke_paa_idempotensnokkelen():
+    """Codex P2 på #76: et registeravhengig avvik overlevde registeret.
+
+    Bindingen til `utkastversjon` dekker det UTKASTET kan gjøre, og bare det.
+    `_versjonsavvik` måler mot `policyer` og den aktive pekeren, som flytter
+    seg uten at utkastet røres — og slettingen frigjør versjonsnummer med
+    vilje. Eier fikk altså «velg en høyere versjon», slettet den
+    feilopprettede policyen som holdt nummeret — nettopp det feilteksten
+    inviterer til — og fikk så det samme svaret om igjen om en kollisjon som
+    ikke fantes lenger. Flaten gjenbruker valideringsnøkkelen for gjentatte
+    klikk på samme tegning, så «prøv igjen» var i praksis ikke et nytt
+    spørsmål til registeret i det hele tatt.
+
+    Kontroll: la den registeravhengige grenen gå til `_fullfor` som før, så
+    blir denne rød — replayet svarer `ugyldig` om en versjon som er ledig.
+    """
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid, "1.1.0")
+    m.commit(); m.close()
+    _utkast(uid, pid, status="utkast", versjon="1.1.0")   # arver den aktive
+    idem = secrets.token_hex(8)
+    rt = _rt()
+    try:
+        v = _valider(rt, uid, 1, idem=idem)
+        assert v["utfall"] == "ugyldig", v
+
+        # Eier gjør det feilteksten ber om: fjerner policyen som holdt
+        # nummeret. Samme spor som `slett_ubrukt_policy` (032) etterlater —
+        # pekeren nullstilles, raden forsvinner, versjonen er ledig igjen.
+        m = _mig()
+        m.execute("UPDATE policy_hode SET aktiv_versjon=NULL, revisjon=revisjon+1"
+                  " WHERE tenant=%s AND policy_id=%s", (TEN, pid))
+        m.execute("DELETE FROM policyer WHERE tenant=%s AND policy_id=%s",
+                  (TEN, pid))
+        m.commit(); m.close()
+
+        # SAMME nøkkel og samme input — flatens «prøv igjen» på samme tegning.
+        # Nøkkelen ble ikke brent, for det ugyldige utfallet skrev ingenting.
+        v2 = _valider(rt, uid, 1, idem=idem)
+        assert v2["utfall"] == "validert", (
+            "et cachet registeravvik overlevde registeret: %r" % (v2,))
+        assert _rad(uid)[0] == "validert"
     finally:
         rt.close()
 

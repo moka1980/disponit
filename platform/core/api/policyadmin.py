@@ -310,10 +310,14 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
 
     Idempotensnøkkelen er BUNDET til utkastversjonen (Codex R3): klienten sender
     versjonen den validerer, den inngår i `input_hash`, og den LÅSTE radens
-    faktiske versjon må stemme (ellers `utkastversjon_utdatert`). Både gyldig OG
-    ugyldig resultat CACHES (én validering av én versjon = ett svar); et forsøk
-    med samme nøkkel på et endret utkast får `idempotenskonflikt`, ikke et stille
-    replay av et stale svar. Kalleren eier tx."""
+    faktiske versjon må stemme (ellers `utkastversjon_utdatert`). Et gyldig
+    resultat CACHES, og et ugyldig gjør det også SÅ LENGE det bare handler om
+    utkastet selv (én validering av én versjon = ett svar); et forsøk med samme
+    nøkkel på et endret utkast får `idempotenskonflikt`, ikke et stille replay
+    av et stale svar.
+
+    UNNTAKET er feil som kommer fra REGISTERET, ikke fra dokumentet — se
+    `_versjonsavvik`-kallet under. Kalleren eier tx."""
     sett_kontekst(conn, tenant, aktor, request_id)
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
@@ -366,10 +370,34 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # Porten `_krev_ny_versjon` består uendret ved rundeåpning og attestering;
     # her brukes den som PRØVE, så de to aldri kan mene noe ulikt om samme
     # versjon.
-    feil = feil + _versjonsavvik(conn, tenant, policy_id, innhold)
+    registeravvik = _versjonsavvik(conn, tenant, policy_id, innhold)
+    feil = feil + registeravvik
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
+        #
+        # MEN IKKE NÅR FEILEN KOMMER FRA REGISTERET (Codex P2 på #76).
+        # Bindingen til `utkastversjon` dekker det utkastet kan gjøre, og bare
+        # det: `_versjonsavvik` måler mot `policyer` og den aktive pekeren, som
+        # endrer seg UTEN at utkastet røres — og slettingen frigjør
+        # versjonsnummer med vilje. Et cachet `versjon_i_bruk` overlevde derfor
+        # den kolliderende policyen: eier fikk beskjed om å velge en ny versjon,
+        # slettet den feilopprettede policyen som holdt nummeret — nettopp det
+        # feilteksten inviterer til — og fikk så det samme svaret om igjen, om
+        # en kollisjon som ikke fantes lenger. Flaten gjenbruker dessuten
+        # valideringsnøkkelen for gjentatte klikk på samme tegning, så «prøv
+        # igjen» var i praksis ikke et nytt spørsmål til registeret i det hele
+        # tatt. Blindgata fiksen på #76 var ment å åpne, var stengt igjen med et
+        # cachet svar.
+        #
+        # Et ugyldig utfall SKREV INGENTING — ingen frysing, ingen
+        # statusovergang — så nøkkelen har ingen handling å verne. `rollback()`
+        # tar claimet med seg, som i `slett_policy`s CheckViolation-gren: en
+        # operasjon som ikke skjedde skal ikke brenne nøkkelen. Neste forsøk
+        # spør registeret på nytt og får sannheten nå.
+        if registeravvik:
+            conn.rollback()
+            return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil}
         return _fullfor(conn, tenant, idempotency_key, {
             "utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil})
     h = _pr.innholds_hash(innhold)
@@ -1419,7 +1447,13 @@ def _versjonsavvik(conn, tenant: str, policy_id: str, innhold) -> list[str]:
     Prøven ER porten: `_krev_ny_versjon` kjøres og utfallet oversettes, så
     valideringen og rundeåpningen aldri kan mene noe ulikt om samme versjon.
     Formfeil (ikke-semver) rapporteres alt av `_dokumentavvik` og gjentas
-    ikke her."""
+    ikke her.
+
+    SVARET HERFRA HAR KORT HOLDBARHET, og det er `valider_utkast` sitt ansvar:
+    dette er den ene avviksporten som leser noe UTENFOR utkastet — `policyer`
+    og den aktive pekeren — og de flytter seg uten at utkastet røres (en
+    sletting frigjør versjonsnummeret med vilje). Et utfall herfra caches derfor
+    ikke på idempotensnøkkelen; se `valider_utkast` (Codex P2 på #76)."""
     versjon = _meta(innhold).get("versjon")
     if not isinstance(versjon, str) or not _SEMVER.fullmatch(versjon):
         return []
