@@ -1044,6 +1044,52 @@ def test_policy_aktiv_uten_policy_er_404(klient, migrator):
     assert r.status_code == 404 and r.json()["feil"] == "ikke_funnet"
 
 
+@pg
+@dekker("policy_korrupt")
+def test_policy_aktiv_ikke_objekt_er_korrupt_ikke_generisk_500(klient,
+                                                               migrator,
+                                                               policy):
+    """En JSONB-verdi som ikke er et objekt skal KLASSIFISERES som korrupt.
+
+    `"not-json"` er gyldig JSONB og kommer tilbake som en Python-streng.
+    Reparsingen som sto her kastet da JSONDecodeError utenfor korrupsjons-
+    håndteringen, altså en generisk 500 — og flatens reserve tar bare én rad
+    når koden er `policy_korrupt`, så nettopp den ENSLIGE korrupte policyen
+    ble stående uslettelig fra flaten. Feilkoden er derfor det bindende her,
+    ikke bare statuskoden.
+    """
+    tok, _ = _lesetoken(migrator, scopes=("policy:read",))
+    migrator.execute("UPDATE policyer SET innhold=%s::jsonb"
+                     " WHERE tenant=%s AND aktiv",
+                     (json.dumps("not-json"), TENANT))
+    migrator.commit()
+    r = _hent(klient, "/v1/policy/aktiv", tok)
+    assert r.status_code == 500, r.text
+    assert r.json()["feil"] == "policy_korrupt"
+
+
+@pg
+@dekker("policy_korrupt")
+def test_policy_aktiv_dobbeltkodet_innhold_serveres_ikke_som_frisk(klient,
+                                                                  migrator,
+                                                                  policy):
+    """Motsatt retning av testen over, samme rot.
+
+    Et dobbeltkodet innhold — en JSONB-streng som INNEHOLDER policyens JSON —
+    ble parset tilbake til et objekt og servert som en frisk policy, mens
+    `hent_aktiv` på beslutningsveien kalte samme rad `policy_korrupt`. Ett
+    register kan ikke gi to svar på om raden er gyldig.
+    """
+    tok, _ = _lesetoken(migrator, scopes=("policy:read",))
+    migrator.execute("UPDATE policyer SET innhold=%s::jsonb"
+                     " WHERE tenant=%s AND aktiv",
+                     (json.dumps(json.dumps(policy)), TENANT))
+    migrator.commit()
+    r = _hent(klient, "/v1/policy/aktiv", tok)
+    assert r.status_code == 500, r.text
+    assert r.json()["feil"] == "policy_korrupt"
+
+
 # ===========================================================================
 # DTO-validatoren — vilkår V5: grense-1 / grense / grense+1
 # ===========================================================================

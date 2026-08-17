@@ -19,7 +19,6 @@ transaksjonen, RLS+FORCE, identisk 404 for ukjent og annen tenants ID.
 """
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -852,8 +851,27 @@ def policy_aktiv(tjeneste, request: Request) -> Response:
                                    art="drift", aktive=len(rader))
             return _feilsvar("intern_feil", rid)
         policy_id, versjon, innholds_hash, innhold = rader[0]
-        if isinstance(innhold, str):
-            innhold = json.loads(innhold)
+        # Å avgjøre at raden ikke KAN tolkes er en del av tolkningen, ikke et
+        # forarbeid til den (Codex P2). `innhold` er JSONB, og registeret
+        # skriver alltid et objekt (`registrer` validerer før den skriver), så
+        # en verdi som kommer tilbake som noe annet enn et dict ER en korrupt
+        # rad — nøyaktig dommen `hent_aktiv` feller på beslutningsveien
+        # («policyinnholdet er ikke et objekt»).
+        #
+        # Reparsingen som sto her tok samme rad feil i begge retninger. En
+        # JSONB-STRENG som ikke er JSON (`"not-json"`) kastet JSONDecodeError
+        # UTENFOR try-en under, altså en generisk 500 i stedet for
+        # `policy_korrupt` — og flatens reserve tar bare én rad når koden er
+        # `policy_korrupt`, så nettopp den ENSLIGE korrupte policyen ble
+        # uslettelig fra flaten igjen. En DOBBELTKODET streng gikk motsatt
+        # vei: parset til et objekt og ble servert som en frisk policy her,
+        # mens hver beslutning på den svarte `policy_korrupt`. Ett register,
+        # to svar på om raden er gyldig, er en verre feil enn den vi kom for.
+        if not isinstance(innhold, dict):
+            tjeneste.logg.hendelse("policy_korrupt", rid, auth.tenant,
+                                   art="drift",
+                                   feiltype=type(innhold).__name__)
+            return _feilsvar("policy_korrupt", rid)
         try:
             dto = bygg_policy_dto(policy_id, versjon, innholds_hash, innhold)
         except (KeyError, ValueError, TypeError, InvalidOperation) as e:
