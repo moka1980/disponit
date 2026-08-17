@@ -179,8 +179,20 @@ def innlos_endepunkt(tjeneste, request: Request) -> Response:
 
 def roter_endepunkt(tjeneste, request: Request) -> Response:
     """POST /v1/modul/token/roter — selvrotasjon, autentisert av tokenet
-    selv. Tom (eller helt fraværende) kropp: rotasjonen har ingen lovlige
-    parametre — levetid og frist er serverens (port 8-formen)."""
+    selv. Kroppen er lukket til nøyaktig ÉN valgfri nøkkel: `rotasjon_id`.
+    Levetid og frister er fortsatt serverens (port 8-formen) — nøkkelen er
+    ingen parameter til rotasjonen, den IDENTIFISERER FORSØKET.
+
+    HVORFOR NØKKELEN FINNES (Codex P1): etterfølgerens hemmelighet mynter
+    serveren og viser den én gang. Går 201-svaret tapt på veien hjem — en
+    tidsavbrutt forbindelse, en død proxy — holder INGEN etterfølgeren,
+    men raden opptar forgjengerens eneste etterfølgerplass. Uten en
+    idempotensnøkkel var det gjentatte forsøket umulig å skille fra en ekte
+    konflikt, og modulen var ute av drift 15 minutter senere, til et
+    menneske onboardet den på nytt. Deploymenten skal derfor generere
+    `rotasjon_id` ÉN gang per rotasjon og sende SAMME verdi i hvert forsøk;
+    da erklæres den udelte etterfølgeren ulevert og et ferskt token
+    utstedes. Uten nøkkel er svaret 409, som før."""
     from .app import _rid, _feilsvar, preauth, kanonisk_json, _mac
     rid = _rid(request)
     try:
@@ -195,22 +207,30 @@ def roter_endepunkt(tjeneste, request: Request) -> Response:
             return _feilsvar("token_ugyldig", rid)
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             return _feilsvar("rate_grense", rid)
-        if _kropp(request, tillatt=frozenset()) is None:
+        data = _kropp(request, tillatt=frozenset({"rotasjon_id"}))
+        if data is None:
             return _feilsvar("request_feilformet", rid)
+        rotasjon_id = None
+        if "rotasjon_id" in data:
+            try:
+                rotasjon_id = uuid.UUID(str(data["rotasjon_id"]))
+            except ValueError:
+                return _feilsvar("request_feilformet", rid)
         ny_id = uuid.uuid4()
         ny_secret = secrets.token_hex(32)
         try:
             rad = conn.execute(
-                "SELECT * FROM roter_modultoken(%s,%s,%s,%s,%s)",
+                "SELECT * FROM roter_modultoken(%s,%s,%s,%s,%s,%s)",
                 (auth.modultoken_id, ny_id,
                  _mac(tjeneste.pepper, ny_secret), TOKEN_DAGER,
-                 f"modul:{auth.modul_id}")).fetchone()
+                 f"modul:{auth.modul_id}", rotasjon_id)).fetchone()
             conn.commit()
         except psycopg.errors.UniqueViolation:
-            # To samtidige rotasjoner: lagringen (UNIQUE forgjenger) lot én
-            # vinne. Taperen har fortsatt sitt gamle token i nådevinduet og
-            # kan hente etterfølgeren der den ble levert — dette er en
-            # konflikt, ikke en feil hos serveren.
+            # To ULIKE rotasjoner: lagringen lot én vinne. Taperen har
+            # fortsatt sitt gamle token i nådevinduet og kan hente
+            # etterfølgeren der den ble levert — dette er en konflikt, ikke
+            # en feil hos serveren. Det GJENTATTE forsøket (samme
+            # `rotasjon_id`) havner aldri her; det får et ferskt token.
             conn.rollback()
             return _feilsvar("onboarding_avvist", rid, 409)
         except psycopg.errors.InvalidParameterValue:

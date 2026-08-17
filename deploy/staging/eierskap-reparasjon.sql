@@ -97,7 +97,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'utsted_onboarding_hemmelighet(text,text,text,uuid,text,integer,integer,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'innlos_onboarding(uuid,text,uuid,text,integer,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'verifiser_modultoken(text)',                         'disponit_modul_eier'),
-    ('FUNCTION', 'roter_modultoken(uuid,uuid,text,integer,text)',      'disponit_modul_eier'),
+    -- Siste ledd er rotasjonens idempotensnøkkel (035, Codex P1); den gamle
+    -- femargumentsformen finnes ikke lenger, migrasjonen dropper den.
+    ('FUNCTION', 'roter_modultoken(uuid,uuid,text,integer,text,uuid)', 'disponit_modul_eier'),
     ('FUNCTION', 'tilbakekall_modultoken(uuid,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'varsle_tokenfamilie_utlop(text)',                    'disponit_modul_eier'),
     ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),

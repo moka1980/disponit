@@ -361,6 +361,59 @@ def test_rotasjon_over_http_og_tilbakekalling(migrator, miljo, monkeypatch):
 
 
 @pg
+def test_rotasjon_taaler_at_svaret_gikk_tapt(migrator, miljo, monkeypatch):
+    """Codex P1 over nettverket: deploymenten roterer, svaret kommer aldri
+    frem (tidsavbrudd, død proxy), og den prøver igjen med SITT fortsatt
+    gyldige token. Før fikk den 409 og var ute av drift 15 minutter senere
+    — etterfølgerens hemmelighet fantes ikke hos noen, men okkuperte
+    plassen. Sender den samme `rotasjon_id`, får den i stedet et ferskt,
+    brukbart token; det uleverte er dødt med det samme.
+
+    En ANNEN nøkkel er fortsatt 409: det er da to rotasjoner, ikke ett
+    forsøk om igjen."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    typenavn = f"t{_u()}"
+    _kjent_type(monkeypatch, typenavn, f"h{_u()}.")
+    modul, rel = _kjede(migrator, typenavn=typenavn)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            nokkel = str(uuid.uuid4())
+            r = c.post("/v1/modul/token/roter", json={"rotasjon_id": nokkel},
+                       headers={"authorization": f"Bearer {mtk}"})
+            assert r.status_code == 201, r.text
+            tapt = r.json()["token"]        # ... svaret «kom aldri frem»
+
+            r2 = c.post("/v1/modul/token/roter", json={"rotasjon_id": nokkel},
+                        headers={"authorization": f"Bearer {mtk}"})
+            assert r2.status_code == 201, r2.text
+            fersk = r2.json()["token"]
+            assert fersk != tapt
+            # Det ferske virker; det uleverte er dødt (ikke i nåde).
+            for tok, kode in ((fersk, 204), (tapt, 401)):
+                rr = c.post("/v1/oppdrag/claim", json={},
+                            headers={"authorization": f"Bearer {tok}"})
+                assert rr.status_code == kode, (tok[:12], rr.text)
+
+            # Ny nøkkel fra samme forgjenger = ekte konflikt.
+            r3 = c.post("/v1/modul/token/roter",
+                        json={"rotasjon_id": str(uuid.uuid4())},
+                        headers={"authorization": f"Bearer {mtk}"})
+            assert r3.status_code == 409, r3.text
+            # ... og en nøkkel som ikke er en UUID er en formfeil, ikke et
+            # forsøk: lukket skjema hele veien.
+            r4 = c.post("/v1/modul/token/roter", json={"rotasjon_id": "x"},
+                        headers={"authorization": f"Bearer {mtk}"})
+            assert (r4.status_code,
+                    r4.json()["feil"]) == (400, "request_feilformet"), r4.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
 def test_testprefikset_utledes_aldri_for_produksjon(migrator, miljo,
                                                     monkeypatch):
     """§8/deploy-port: en `test.`-artefakttype gir INGEN opplastings-

@@ -332,9 +332,66 @@ def test_rotasjon_ny_virker_forgjenger_faar_naade_kjeden_sporbar():
 
 
 @pg
+def test_gjentatt_rotasjon_med_samme_noekkel_gjenoppretter_tapt_svar():
+    """Codex P1: hemmeligheten mynter serveren og viser den ÉN gang. Går
+    201-svaret tapt, holder INGEN etterfølgeren — men raden opptar
+    forgjengerens eneste etterfølgerplass, og modulen var før dette ute av
+    drift så snart nåden løp ut, til et menneske onboardet på nytt. Med
+    idempotensnøkkelen erklæres den udelte etterfølgeren ULEVERT og et
+    ferskt token utstedes; en ANNEN nøkkel (eller ingen) er fortsatt en
+    konflikt — det er nettopp forskjellen på «samme forsøk om igjen» og
+    «to rotasjoner».
+
+    Kontroll: fjern `rotasjon_id`-grenen i `roter_modultoken`, så gir det
+    gjentatte forsøket `UniqueViolation` i stedet for et token."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        nokkel = uuid.uuid4()
+        tapt = uuid.uuid4()
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                   (tid, tapt, _hex64(), nokkel))
+        rt.commit()                       # ... og svaret kom aldri frem
+
+        fersk, mac = uuid.uuid4(), _hex64()
+        rad = rt.execute(
+            "SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+            (tid, fersk, mac, nokkel)).fetchone()
+        rt.commit()
+        assert rad[0] == fersk, rad
+        # Det ferske tokenet lever; det uleverte er dødt UMIDDELBART (ingen
+        # nåde — det finnes ingen in-flight-request å skåne).
+        assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
+                          (mac,)).fetchone() is not None
+        assert m.execute(
+            "SELECT tilbakekalt_ts <= now(), tilbakekalt_grunn FROM"
+            " modultoken WHERE token_id=%s", (tapt,)).fetchone() \
+            == (True, "erstattet_etter_tapt_svar")
+        # ... og forsøket står i det append-only sporet.
+        assert (tapt,) in m.execute(
+            "SELECT token_id FROM modultoken_hendelse WHERE hendelse="
+            "'tilbakekalt' AND detalj->>'grunn'='erstattet_etter_tapt_svar'"
+        ).fetchall()
+        m.rollback()
+
+        # En ANNEN nøkkel er en ekte konflikt — og det er også fraværet av
+        # nøkkel: et forsøk som ikke identifiserer seg kan ikke gjenkjennes.
+        for arg in (uuid.uuid4(), None):
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                rt.execute(
+                    "SELECT * FROM roter_modultoken(%s,%s,%s,30,'test',%s)",
+                    (tid, uuid.uuid4(), _hex64(), arg))
+            rt.rollback()
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_en_forgjenger_faar_noyaktig_en_etterfolger():
-    """Portene 21/30: UNIQUE(forgjenger) er garantien I LAGRINGEN — den
-    andre rotasjonen taper uansett timing."""
+    """Portene 21/30: unikheten på `forgjenger` er garantien I LAGRINGEN —
+    den andre rotasjonen taper uansett timing."""
     m = _c()
     rt = _rt()
     try:
