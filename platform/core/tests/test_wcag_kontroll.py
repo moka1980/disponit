@@ -822,6 +822,39 @@ def test_avvist_kvittering_er_ikke_utfort():
 
 
 # --------------------------------------------------------------------------
+# `format` er en REGEL, ikke en annotasjon — Codex P2.
+# --------------------------------------------------------------------------
+
+def test_formatsjekk_avviser_ugyldig_kjort_ts():
+    """Draft202012Validator behandler `format` som annotasjon uten en
+    format-checker, så rapportskjemaets `kjort_ts: {format: date-time}` var
+    ren dokumentasjon: `"i går"` passerte begge de annonserte
+    valideringspunktene og ble promotert. Kontroll: fjern
+    format_checker-argumentet i `valider`, så slipper alle de ugyldige
+    gjennom."""
+    from api.artefaktskjema import valider
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import bygg
+    rapport = bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
+                   kontekst=_kontekst())
+    assert not valider(rapportskjema.SKJEMA, rapport)
+    # Små t/z er RFC 3339 (§5.6) og skal fortsatt passere.
+    assert not valider(rapportskjema.SKJEMA,
+                       {**rapport, "kjort_ts": "2026-08-17t21:03:32z"})
+    for ugyldig in ("i går", "2026-08-17", "2026-08-17T21:03:32",
+                    "2026-02-31T00:00:00Z", "2026-08-17T25:00:00Z",
+                    "2026-08-17T21:03:32+00:00\n"):
+        feil = valider(rapportskjema.SKJEMA, {**rapport,
+                                              "kjort_ts": ugyldig})
+        assert any("kjort_ts" in f for f in feil), (ugyldig, feil)
+    # Den DELTE, globale checkeren skal ikke være endret av importen — vi
+    # eier vår egen kopi.
+    import jsonschema
+    assert "date-time" not in \
+        jsonschema.Draft202012Validator.FORMAT_CHECKER.checkers
+
+
+# --------------------------------------------------------------------------
 # Kommandomotoren mot en EKTE (og fiendtlig) underprosess — Codex P1.
 # --------------------------------------------------------------------------
 

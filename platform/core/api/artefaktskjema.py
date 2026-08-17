@@ -18,10 +18,52 @@ ingen kan validere.
 """
 from __future__ import annotations
 
+import copy
 import json
+import re
+from datetime import datetime
 
 import jsonschema
 import psycopg
+
+# --------------------------------------------------------------------------
+# `format` MÅ SJEKKES (Codex P2)
+# --------------------------------------------------------------------------
+# `Draft202012Validator` behandler `format` som en ANNOTASJON med mindre den
+# får en format-checker. Rapportskjemaets `kjort_ts: {format: date-time}`
+# var derfor ren dokumentasjon: et artefakt med `kjort_ts: "i går"` passerte
+# BEGGE de annonserte valideringspunktene og ble promotert.
+#
+# Å bare sende `Draft202012Validator.FORMAT_CHECKER` er IKKE nok, og det er
+# den lumske delen: jsonschema sjekker `date-time` bare når den valgfrie
+# `rfc3339-validator` er installert, og ellers hopper den STILLE over
+# formatet. Da hadde fiksen sett riktig ut i koden og fortsatt sluppet
+# gjennom nøyaktig den verdien funnet handler om. Derfor registreres
+# `date-time` her, uten ny avhengighet — grammatikken fra RFC 3339 §5.6,
+# og deretter `fromisoformat` for det grammatikken ikke fanger (31. februar).
+#
+# `\Z`, ikke `$`: Pythons `$` matcher OGSÅ rett før en avsluttende
+# linjeskift (samme lekkasje som policyskjemaets ECMA-ankre dokumenterer),
+# og «gyldig tidsstempel med hale» er ikke et gyldig tidsstempel.
+_RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}"
+                      r"(\.\d+)?([Zz]|[+-]\d{2}:\d{2})\Z")
+
+FORMATSJEKKER = copy.deepcopy(jsonschema.Draft202012Validator.FORMAT_CHECKER)
+
+
+@FORMATSJEKKER.checks("date-time")
+def _er_rfc3339(verdi) -> bool:
+    """Typen er skjemaets jobb — formatet uttaler seg kun om strenger."""
+    if not isinstance(verdi, str):
+        return True
+    if not _RFC3339.match(verdi):
+        return False
+    try:
+        # RFC 3339 tillater små `t`/`z`; `fromisoformat` gjør det ikke.
+        datetime.fromisoformat(verdi.replace("t", "T").replace("z", "Z"))
+    except ValueError:
+        return False
+    return True
 
 
 def hent_skjema(conn: psycopg.Connection, artefakttype: str) -> dict | None:
@@ -38,10 +80,12 @@ def hent_skjema(conn: psycopg.Connection, artefakttype: str) -> dict | None:
 
 def valider(skjema: dict, innhold: dict) -> list[str]:
     """-> feilliste (tom = gyldig). Draft 2020-12, samme validatorfamilie
-    som policyskjemaet. Feilene er tekst for LOGGEN — de sendes aldri
-    ordrett til klienten (innholdet kan bære persondata)."""
+    som policyskjemaet, MED format-checkeren over. Feilene er tekst for
+    LOGGEN — de sendes aldri ordrett til klienten (innholdet kan bære
+    persondata)."""
     feil = []
-    validator = jsonschema.Draft202012Validator(skjema)
+    validator = jsonschema.Draft202012Validator(
+        skjema, format_checker=FORMATSJEKKER)
     for e in sorted(validator.iter_errors(innhold),
                     key=lambda e: list(e.absolute_path)):
         sti = "/".join(str(p) for p in e.absolute_path) or "<rot>"
