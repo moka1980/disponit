@@ -1354,6 +1354,13 @@ _DROP_MAL = re.compile(
 _NAVNESKIFTE = re.compile(
     r"\balter\s+(?:function|routine)\b(.*?)\b(rename\s+to|set\s+schema)\b")
 
+#: DET NYE NAVNET, altså det som står ETTER verbet: et bart navn for `RENAME
+#: TO`, et skjemanavn for `SET SCHEMA`. Begge formene tar ett ord — PostgreSQL
+#: godtar ikke `RENAME TO annet.f` — så det er nettopp ett ord som leses. Et
+#: sitert navn (`"Tmp"`) treffer ikke, og da vet modellen ikke hvor funksjonen
+#: tok veien: sporet slippes, og navnet blir stående som borte.
+_ETTER_SKIFTET = re.compile(r"\s*([a-z_][a-z0-9_]*)")
+
 #: EIERSKIFTET (Codex P2 på #71). `ALTER FUNCTION … OWNER TO x` er den ene
 #: setningen som bestemmer hvem en senere `REVOKE … FROM PUBLIC` må kjøres
 #: som. Uten den grenen satte modellen «kjører som `disponit_domene_eier`»
@@ -1789,7 +1796,7 @@ def _nevner(tekst, basenavn):
     return any(navn == basenavn for _skjema, navn, _args in _referanser(tekst))
 
 
-def _rammer(klausul, sig, basenavn):
+def _rammer(klausul, sig, basenavn, skjema="public"):
     """Treffer MÅLKLAUSULEN denne signaturen — som OBJEKT, ikke som tekst?
 
     Brukes av de LUKKENDE grenene (REVOKE, DROP), og der er tvilens retning
@@ -1808,9 +1815,16 @@ def _rammer(klausul, sig, basenavn):
     entydig — finnes det ingen argumentliste å skille på, og setningen
     gjelder enhver overlast. Tvilen faller da mot at den beskyttede
     signaturen er truffet, som ellers i denne modellen.
+
+    `skjema` er skjemaet objektet FAKTISK bor i, og er `public` for alt annet
+    enn en funksjon som er flyttet ut (se `_spill_av`). At `public` også kan
+    stå USKREVET er ikke en slapphet, men søkestien under migrering; et annet
+    skjema må derimot stå skrevet, for en ukvalifisert `ALTER FUNCTION tmp(…)`
+    finner ikke `arkiv.tmp`.
     """
-    egne = [args for skjema, navn, args in _referanser(klausul)
-            if navn == basenavn and skjema in (None, "public")]
+    godtatt = (None, "public") if skjema == "public" else (skjema,)
+    egne = [args for sk, navn, args in _referanser(klausul)
+            if navn == basenavn and sk in godtatt]
     if not egne:
         return False
     med_args = [a for a in egne if a is not None]
@@ -1818,6 +1832,23 @@ def _rammer(klausul, sig, basenavn):
         return True
     onsket = _typeliste(sig.split("(", 1)[1].rstrip(")"))
     return any(_typeliste(a) == onsket for a in med_args)
+
+
+def _nytt_sted(sted, nav, s):
+    """Hvor identiteten står ETTER en `RENAME TO` eller `SET SCHEMA`.
+
+    `sted` er `(skjema, navn)` før setningen, `nav` treffet fra
+    `_NAVNESKIFTE`. En omdøping bytter navnet og lar skjemaet stå; en
+    skjemaflytting gjør det motsatte. Gir None når navnet etter verbet ikke
+    er et bart navn — da vet ikke modellen hvor funksjonen tok veien, og det
+    er nettopp den tvilen som skal falle mot «borte».
+    """
+    videre = _ETTER_SKIFTET.match(s, nav.end())
+    if not videre:
+        return None
+    skjema, navn = sted
+    return ((skjema, videre.group(1)) if nav.group(2).startswith("rename")
+            else (videre.group(1), navn))
 
 
 def _spill_av(filer, signaturer):
@@ -1883,11 +1914,33 @@ def _spill_av(filer, signaturer):
       ukvalifiserte navnet `varselsender.kjor` kaller — er borte, og
       tilstanden settes til None som for en DROP. Uten den grenen sto `True`
       fra forrige REVOKE igjen som et gjerde rundt et navn som ikke fantes.
+    * …OG DEN HAR EN VEI TILBAKE (Codex P2 på #74). En DROP er endelig, en
+      flytting er det ikke: `RENAME TO tmp` fulgt av `RENAME TO f` — eller
+      `SET SCHEMA arkiv` fulgt av `SET SCHEMA public` — setter funksjonen
+      tilbake på plass, MED ACL-en og eieren sin, for de følger objektet og
+      ikke navnet. Modellen kjente bare utgangen: `_rammer` godtar en kilde
+      som alt heter det beskyttede navnet i `public`, og en identitet som
+      ikke gjør det lenger, kunne aldri bli den igjen. En fullt lovlig
+      arkivering-og-tilbakeføring endte derfor på None, og kildeporten rødmet
+      på en funksjon som sto der med gjerdet sitt.
+
+      Identiteten som flyttes bokføres derfor i `flyttet` — hvor den tok
+      veien, og tilstanden den tok med seg — og en flytting TILBAKE til
+      `public.<basenavn>` gir tilstanden tilbake. Tvilen faller mot «borte»
+      hele veien: sporet slippes så snart noe annet rører enten det flyttede
+      eller det beskyttede navnet, og en BETINGET tilbakeføring gir det ikke
+      tilbake i det hele tatt. Utfallet er da None — en falsk alarm noen må
+      se på, som er den billige utgangen, og ikke et gjerde rundt et navn
+      som ikke finnes.
     """
     beskyttet = [_normalisert(s) for s in signaturer]
     basenavn = {sig: sig.split("(")[0] for sig in beskyttet}
     gjerdet = dict.fromkeys(beskyttet)
     eier = dict.fromkeys(beskyttet)
+    # `(skjema, navn, gjerde, eier)` for en funksjon som er flyttet UT av det
+    # beskyttede navnet, og None ellers: veien tilbake, og tilstanden som
+    # venter i den andre enden.
+    flyttet = dict.fromkeys(beskyttet)
     spor = {sig: [] for sig in beskyttet}
     sesjonsrolle = None                   # None = migrator, kjørerens rolle
     for filnavn, sql in filer:
@@ -1914,10 +1967,68 @@ def _spill_av(filer, signaturer):
                 # grunnen til at den er verdt et eget spor.
                 for sig in beskyttet:
                     gjerdet[sig] = False
+                    # …og den nevner heller ikke det FLYTTEDE navnet, men kan
+                    # godt ha åpnet det: setningen er skjemabred. Tilstanden
+                    # som venter på en tilbakeføring er dermed ikke lenger
+                    # den som ble lagt til side, og sporet slippes.
+                    flyttet[sig] = None
                     spor[sig].append(
                         f"{filnavn}: skjemabred grant til public som {aktiv}")
                 continue
             for sig in beskyttet:
+                if sted := flyttet[sig]:
+                    # VEIEN TILBAKE (Codex P2 på #74). Funksjonen er flyttet
+                    # ut av det beskyttede navnet, og setningene som gjelder
+                    # den, treffer nå den ANDRE identiteten — som `_rammer`
+                    # nedenfor per definisjon ikke kjenner. De måles her, før
+                    # silen på basenavn, av samme grunn som den skjemabrede
+                    # granten måles før den: ellers kom de aldri så langt.
+                    if (nav := _NAVNESKIFTE.search(s)) and _rammer(
+                            nav.group(1), sig, sted[1], sted[0]):
+                        nytt = _nytt_sted(sted[:2], nav, s)
+                        # EN BETINGET TILBAKEFØRING GIR INGENTING TILBAKE.
+                        # Holder ikke vakten, står funksjonen der den ble
+                        # flyttet, og et gjerde levert tilbake til et navn som
+                        # ikke finnes er nøyaktig utgangen flyttegrenen ble
+                        # lagt inn for å hindre. Tvilen faller mot «borte».
+                        if under_vakt or _BETINGET.search(s[:nav.start()]):
+                            flyttet[sig] = None
+                            spor[sig].append(
+                                f"{filnavn}: betinget {nav.group(2)} av det"
+                                f" flyttede navnet — veien tilbake slippes")
+                        elif nytt == ("public", basenavn[sig]):
+                            # …og ACL-en og eieren følger OBJEKTET, ikke
+                            # navnet: tilstanden som ble lagt til side er
+                            # nettopp den funksjonen kommer tilbake med.
+                            gjerdet[sig], eier[sig] = sted[2], sted[3]
+                            flyttet[sig] = None
+                            spor[sig].append(
+                                f"{filnavn}: {nav.group(2)} — navnet er"
+                                f" tilbake, med gjerdet {gjerdet[sig]}")
+                        elif nytt:
+                            flyttet[sig] = (*nytt, sted[2], sted[3])
+                            spor[sig].append(
+                                f"{filnavn}: {nav.group(2)} — nå"
+                                f" {nytt[0]}.{nytt[1]}")
+                        else:
+                            flyttet[sig] = None
+                            spor[sig].append(
+                                f"{filnavn}: flyttet til et navn modellen"
+                                f" ikke kan lese — borte")
+                        continue
+                    if _nevner(s, sted[1]) or _nevner(s, basenavn[sig]):
+                        # ALT ANNET ENN EN FLYTTING BRYTER RUNDTUREN. En
+                        # GRANT, en REVOKE, et eierskifte eller en DROP på
+                        # den flyttede funksjonen — eller en gjenskaping av
+                        # det beskyttede navnet mens den er borte — gjør
+                        # tilstanden som ble lagt til side ugyldig, og
+                        # modellen kan ikke levere den tilbake. Sporet
+                        # slippes, navnet blir stående som borte, og det er
+                        # en falsk alarm og ikke et hull.
+                        flyttet[sig] = None
+                        spor[sig].append(
+                            f"{filnavn}: rører den flyttede funksjonen —"
+                            f" veien tilbake slippes")
                 if not _nevner(s, basenavn[sig]):
                     continue
                 fall = _DROP_MAL.search(s)
@@ -1938,10 +2049,21 @@ def _spill_av(filer, signaturer):
                     # godt leve videre under et nytt navn eller i et annet
                     # skjema — men navnet senderen kaller, finnes ikke, og et
                     # gjerde rundt et navn som er borte er ikke et bevis.
+                    #
+                    # …men i motsetning til en DROP er den ikke ENDELIG:
+                    # objektet lever, og med det ACL-en og eieren sin. Hvor
+                    # det tok veien bokføres derfor sammen med tilstanden det
+                    # tok med seg, slik at en flytting TILBAKE kan levere den
+                    # (Codex P2 på #74). Kan ikke målet leses, er det ingen
+                    # vei tilbake å bokføre, og navnet er bare borte.
+                    nytt = _nytt_sted(("public", basenavn[sig]), nav, s)
+                    flyttet[sig] = (None if nytt is None
+                                    else (*nytt, gjerdet[sig], eier[sig]))
                     gjerdet[sig] = None
                     eier[sig] = None
+                    hvor = f", står nå som {nytt[0]}.{nytt[1]}" if nytt else ""
                     spor[sig].append(
-                        f"{filnavn}: {nav.group(2)} — navnet er borte")
+                        f"{filnavn}: {nav.group(2)} — navnet er borte{hvor}")
                 elif (eie := _EIERSKIFTE.search(s)) and _rammer(
                         eie.group(1), sig, basenavn[sig]):
                     # Eierskapet flyttes. ACL-en følger ikke med, så gjerdet
@@ -2739,6 +2861,142 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
          ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
                    " RENAME TO varsel_klaim_epost_v1;" + lag + gjerde)],
         n)[0] == {sig: True}, "omdøping + gjenskaping + nytt gjerde"
+
+    # …OG FLYTTINGEN HAR EN VEI TILBAKE. En DROP er endelig; en flytting er
+    # det ikke. Objektet lever, og ACL-en og eieren følger DET og ikke navnet
+    # — så en arkivering og en tilbakeføring er en fullt lovlig runde som
+    # ender akkurat der den begynte. Modellen kjente bare utgangen: `_rammer`
+    # godtar en kilde som alt heter det beskyttede navnet i `public`, og en
+    # identitet som ikke gjorde det lenger, kunne aldri bli den igjen. Runden
+    # endte derfor på None, og kildeporten rødmet på en funksjon som sto der
+    # med gjerdet sitt.
+    for ut, inn in (("RENAME TO tmp_kle", "ALTER FUNCTION tmp_kle(int, int)"
+                     " RENAME TO varsel_klaim_epost"),
+                    ("SET SCHEMA arkiv",
+                     "ALTER FUNCTION arkiv.varsel_klaim_epost(int, int)"
+                     " SET SCHEMA public")):
+        gjerdet, spor = _spill_av(
+            [("a.sql", lag + gjerde),
+             ("b.sql", f"ALTER FUNCTION varsel_klaim_epost(int, int) {ut};"),
+             ("c.sql", f"{inn};")], n)
+        assert gjerdet == {sig: True}, (
+            f"`{ut}` og tilbake igjen er den samme funksjonen, med det samme"
+            f" gjerdet. Spor: {spor}")
+
+    # …også I TO STEG, som er den eneste veien tilbake når BEGGE delene av
+    # navnet er flyttet. Mellomsteget nevner ikke det beskyttede navnet i det
+    # hele tatt, og måles derfor på den flyttede identiteten — ikke på silen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"
+                   " ALTER FUNCTION tmp_kle(int, int) SET SCHEMA arkiv;"),
+         ("c.sql", "ALTER FUNCTION arkiv.tmp_kle(int, int) SET SCHEMA public;"
+                   " ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: True}, (
+        f"to steg ut og to steg inn er den samme runden. Spor: {spor}")
+
+    # …og TILSTANDEN BÆRES, den dikters ikke opp. Er gjerdet nede når
+    # funksjonen flyttes, er det nede når den kommer tilbake — ellers ville
+    # veien tilbake vært en gratis herding.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: False}, (
+        "en funksjon som flyttes UTEN gjerde kommer tilbake uten gjerde."
+        f" Spor: {spor}")
+
+    # MOTPRØVENE, og de er det som gjør veien tilbake til noe annet enn et
+    # hull: den gjelder BARE identiteten som faktisk ble flyttet ut, og bare
+    # når ingenting annet har skjedd med den underveis.
+    #
+    # En ANNEN funksjon som døpes om TIL det beskyttede navnet er ikke den
+    # beskyttede som kommer tilbake — den er en fremmed med riktig navn, og
+    # ACL-en er dens egen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "DROP FUNCTION varsel_klaim_epost(int, int);"),
+         ("c.sql", "ALTER FUNCTION en_annen(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: None}, (
+        "en DROP er endelig — en fremmed med det riktige navnet leverer"
+        f" ingen tilstand tilbake. Spor: {spor}")
+
+    # …og en OVERLAST av det flyttede navnet er heller ikke det flyttede
+    # objektet: argumentene må stemme, som overalt ellers i modellen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(text)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: None}, (
+        f"`tmp_kle(text)` er ikke `tmp_kle(int,int)`. Spor: {spor}")
+
+    # …og et USKREVET skjema finner ikke en funksjon som er flyttet UT av
+    # `public`: søkestien under migrering er `public`, så `ALTER FUNCTION
+    # varsel_klaim_epost(int,int) SET SCHEMA public` treffer ingenting når
+    # objektet står i `arkiv`.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " SET SCHEMA arkiv;"),
+         ("c.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " SET SCHEMA public;")], n)
+    assert gjerdet == {sig: None}, (
+        "en ukvalifisert ALTER finner ikke `arkiv.varsel_klaim_epost`."
+        f" Spor: {spor}")
+
+    # …og EN BETINGET TILBAKEFØRING gir ingenting tilbake. Holder ikke
+    # vakten, står funksjonen der den ble flyttet — og et gjerde levert
+    # tilbake til et navn som ikke finnes er nøyaktig utgangen flyttegrenen
+    # ble lagt inn for å hindre.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"),
+         ("c.sql", "DO $$\nBEGIN\n    IF EXISTS (SELECT 1 FROM pg_proc"
+                   " WHERE proname = 'tmp_kle') THEN\n"
+                   "        ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;\n"
+                   "    END IF;\nEND $$;")], n)
+    assert gjerdet == {sig: None}, (
+        "en betinget tilbakeføring er ikke bevis for at navnet er tilbake."
+        f" Spor: {spor}")
+
+    # …og ALT ANNET SOM RØRER DEN FLYTTEDE FUNKSJONEN bryter runden: en GRANT
+    # til PUBLIC på det arkiverte navnet gjør tilstanden som ble lagt til
+    # side ugyldig, og modellen kan ikke levere den tilbake. Utfallet er
+    # None — en falsk alarm noen må se på, og ikke et gjerde modellen tror
+    # står rundt en funksjon PUBLIC nettopp fikk EXECUTE på.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"
+                   " GRANT EXECUTE ON FUNCTION tmp_kle(int, int) TO PUBLIC;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: None}, (
+        "en GRANT til PUBLIC på det flyttede navnet bryter runden — det som"
+        f" kommer tilbake er ikke det som ble lagt til side. Spor: {spor}")
+
+    # …og det samme for den SKJEMABREDE granten, som ikke nevner noe navn i
+    # det hele tatt og derfor måles før silen.
+    gjerdet, spor = _spill_av(
+        [("a.sql", lag + gjerde),
+         ("b.sql", "ALTER FUNCTION varsel_klaim_epost(int, int)"
+                   " RENAME TO tmp_kle;"
+                   " GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public"
+                   " TO PUBLIC;"),
+         ("c.sql", "ALTER FUNCTION tmp_kle(int, int)"
+                   " RENAME TO varsel_klaim_epost;")], n)
+    assert gjerdet == {sig: False}, (
+        "en skjemabred grant treffer også det arkiverte navnet, og runden"
+        f" leverer ingen gammel tilstand tilbake. Spor: {spor}")
 
     # EN REVOKE SOM IKKE TAR PRIVILEGIET. `GRANT OPTION FOR` er en lovlig
     # REVOKE på nøyaktig den beskyttede signaturen, kjørt av eieren — og den
