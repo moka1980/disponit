@@ -3,7 +3,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, slettPolicy, nyIdempotensnokkel, IkkeFunnetFeil, ApiFeil,
-         UautorisertFeil } from "../api.js";
+         UautorisertFeil, IngenTilgangFeil } from "../api.js";
 // (`ApiFeil` brukes både til feilkoden fra slettingen og til 5xx-porten i
 // `hentAktiv` — se der.)
 import { VarselBanner, TomTilstand, meldLive } from "../komponenter.js";
@@ -102,7 +102,17 @@ async function hentAktiv() {
     if (!(e instanceof ApiFeil) || e.status < 500) throw e;
     let liste;
     try { liste = await hentJson("/v1/policy/aktive"); }
-    catch { throw e; }
+    catch (f) {
+      // Reserven har lov til å mislykkes — da står den opprinnelige feilen,
+      // for den er det vi faktisk vet om policyen. Men 401 og 403 er ikke et
+      // utsagn om policyen i det hele tatt, de er et utsagn om ØKTEN (Codex
+      // P2): utløper eller trekkes sesjonen mellom de to kallene, ville
+      // `throw e` gitt en «prøv igjen»-feilside med en knapp som aldri kan
+      // lykkes — i stedet for innloggingen `medStatus` sender alle andre 401
+      // til. Rammens globale håndtering gjelder også det andre kallet.
+      if (f instanceof UautorisertFeil || f instanceof IngenTilgangFeil) throw f;
+      throw e;
+    }
     if (liste.policyer.length < 2) throw e;
     return { aktive: liste.policyer, dto: null };
   }

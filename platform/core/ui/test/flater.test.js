@@ -685,6 +685,64 @@ test("Policy: en 5xx som IKKE er flere aktive blir stående som feil",
     globalThis.fetch = brukFetch;
   });
 
+test("Policy: en utløpt økt under reservekallet sender til innlogging",
+  async () => {
+    // Kontroll: la reserven fange alt og kaste den opprinnelige 5xx-en, så
+    // blir denne rød — og eier får en «prøv igjen»-knapp som aldri kan lykkes.
+    //
+    // 401 fra det andre kallet er ikke et utsagn om policyen, det er et utsagn
+    // om økten: den er ute, og da gjelder rammens globale håndtering også her.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: false, status: 401,
+          json: async () => ({ feil: "uautorisert" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    let ua = false;
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"],
+                       paaUautorisert: () => { ua = true; } }));
+    await vent(() => ua);
+    assert.ok(ua, "401 fra reserven ble svelget som en vanlig feil");
+    assert.ok(!h.querySelector(".tilstand.feil"));
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en trukket tilgang under reservekallet gir ingen-tilgang",
+  async () => {
+    // Samme sak for 403: rollen er trukket mellom de to kallene. «Prøv igjen»
+    // ville vært en løgn om at det finnes noe å prøve.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: false, status: 403,
+          json: async () => ({ feil: "ingen_tilgang" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    let ua = false;
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"],
+                       paaUautorisert: () => { ua = true; } }));
+    await vent(() => h.querySelector(".tilstand.ingen-tilgang"));
+    assert.ok(h.querySelector(".tilstand.ingen-tilgang"),
+      "403 fra reserven ble en generisk feiltilstand");
+    assert.ok(!ua, "403 skal IKKE utløse innlogging");
+    globalThis.fetch = brukFetch;
+  });
+
 test("Policy: «i bruk»-avvisningen forklares, den gjemmes ikke", async () => {
   const brukFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
