@@ -1770,9 +1770,24 @@ def _klartekst(setning, strenger):
     Maskeringen er ACL-avspillingens verktøy, ikke en egenskap ved filen.
     Den som spør etter setningene for å lese REKKEFØLGEN — nullingen i 031
     mot RLS-vinduet, for eksempel — skal se teksten som er der, `'nb'` og
-    alt. Konstanten normaliseres på samme måte som resten av setningen, slik
-    at den leses likt uansett hvordan den er brutt over linjer, og prefikset
-    følger med: `E'…'` sto det, og `e'…'` skal det leses som.
+    alt. Tomrommet i konstanten klappes sammen som i resten av setningen,
+    slik at den leses likt uansett hvordan den er brutt over linjer, og
+    prefikset følger med: `E'…'` sto det, og `e'…'` skal det leses som.
+
+    STORE OG SMÅ BOKSTAVER ER IKKE DET SAMME I EN KONSTANT (Codex P2 på
+    #74). Normaliseringen småskrev HELE setningen, konstantinnholdet med —
+    og det er en normalisering som bare gjelder SYNTAKS. PostgreSQL slår
+    `SELECT` og `select` opp likt, men `sprak = 'NB'` og `sprak = 'nb'`
+    sammenligner mot to forskjellige verdier. Ble 031-nullingen skrevet om
+    til `'NB'`, ville den ikke lenger truffet en eneste lagret `'nb'` — og
+    gjenskrivingen småskrev den tilbake, så porten som måler nettopp den
+    nullingen ble stående grønn på en migrasjon som ikke gjorde noe.
+    Konstanten er en VERDI, og gis tilbake med sin egen skrivemåte.
+
+    ACL-avspillingen merker ikke forskjellen: den måler den MASKERTE formen,
+    der konstantene er markører — og der de likevel kommer tilbake som SQL,
+    nemlig i en `EXECUTE`-nyttelast, småskriver `_delt` teksten på nytt som
+    den setningen den da er.
 
     En DOLLARSITERT nyttelast skrives tilbake med taggen sin, ikke med
     apostrofer: `$sql$…$sql$` har ingen escaping i det hele tatt, og en
@@ -1780,7 +1795,7 @@ def _klartekst(setning, strenger):
     """
     def igjen(m):
         prefiks, tekst = strenger[int(m.group(1))]
-        flat = " ".join(tekst.split()).lower()
+        flat = " ".join(tekst.split())
         if prefiks.startswith("$"):
             return prefiks + flat + prefiks
         return prefiks + "'" + flat.replace("'", "''") + "'"
@@ -3083,10 +3098,43 @@ def test_avspillingen_ser_hver_vei_gjerdet_kan_falle():
     # skrives tilbake med taggen sin og ikke med apostrofer. `$sql$…$sql$`
     # har ingen escaping i det hele tatt, så en dobling ville vært en annen
     # tekst — og det er denne formen 031-sporet leser rekkefølge på.
+    #
+    # Og INNHOLDET er den verdien som sto der, med sin egen skrivemåte:
+    # normaliseringen til småbokstaver gjelder SYNTAKS. `execute` og
+    # `$sql$` er syntaks; `GRANT a TO b` er innholdet i en konstant, og
+    # PostgreSQL sammenligner ikke to konstanter likt fordi de er stavet
+    # med ulike bokstavstørrelser.
     assert [s for s, _, _ in _setninger(
         "DO $do$ BEGIN EXECUTE $sql$GRANT a TO b$sql$; END $do$;")][0] == \
-        "begin execute $sql$grant a to b$sql$", \
-        "en dollarsitert nyttelast skrives tilbake med taggen sin"
+        "begin execute $sql$GRANT a TO b$sql$", \
+        "en dollarsitert nyttelast skrives tilbake med taggen og innholdet"
+
+    # …OG DEN SAMME REGELEN DER DEN FAKTISK BETYR NOE (Codex P2 på #74).
+    # `sprak = 'NB'` og `sprak = 'nb'` treffer to forskjellige verdier i
+    # basen. Småskrev gjenskrivingen konstanten, leste 031-sporet en
+    # omskrevet predikat som om den sto uendret, og porten som skal fange
+    # nettopp den omskrivingen ble stående grønn på en migrasjon som ikke
+    # ville truffet en eneste lagret rad.
+    assert [s for s, _, _ in _setninger(
+        "UPDATE varselvalg SET sprak = NULL WHERE sprak = 'NB';")] == \
+        ["update varselvalg set sprak = null where sprak = 'NB'"], \
+        "en konstant er en VERDI, og skrivemåten i den er ikke syntaks"
+
+    # …og motprøven som holder normaliseringen i live ved siden av: TOMROMMET
+    # i konstanten klappes fortsatt sammen, ellers ville en setning brutt
+    # over linjer lest annerledes enn den samme på én linje.
+    assert [s for s, _, _ in _setninger("SELECT 'A\n   B';")] == \
+        ["select 'A B'"], \
+        "tomrommet i en konstant er skrivemåte, bokstavstørrelsen er ikke"
+
+    # …og den ene veien konstanten LIKEVEL blir SQL: en `EXECUTE`-nyttelast
+    # kjører, og der er den syntaks igjen. Da småskrives den som den
+    # setningen den er — det er nettopp derfor avspillingen ikke merker
+    # forskjellen på den skrevne formen.
+    assert [s for s, _, _ in _setninger(
+        "DO $$ BEGIN EXECUTE 'GRANT a TO b'; END $$;")][1] == \
+        "grant a to b", \
+        "teksten `EXECUTE` kjører er en SETNING, og normaliseres som en"
 
     # …OG DEN KJØRTE TEKSTEN ER SQL, IKKE FERDIGMÅLT SQL. Nyttelasten ble før
     # gitt videre rå, og som sin egen maskerte form — som om den ikke selv
