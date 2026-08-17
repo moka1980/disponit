@@ -402,6 +402,102 @@ def test_utkast_og_runder_roeres_ikke_av_slettingen():
 
 
 @pg
+def test_versjonen_en_runde_ble_attestert_mot_blir_staaende():
+    """Basen for en runde er en del av det attestasjonene BETYR (Codex P2).
+
+    Runden lagrer `base_policy_hash`, ikke basedokumentet, og godkjennerne
+    signerte en DIFF mellom basen og utkastet. Slettes basen, står runden og
+    attestasjonene igjen — men det de sier ja til kan ikke lenger leses. Her
+    er 1.0.0 base for runden som aktiverte 1.1.0: 1.1.0 slettes, 1.0.0 blir
+    stående som historikk, og inaktiv (`policy_peker_konsistent` tåler ikke
+    annet når pekeren er nullstilt).
+
+    Kontroll: fjern NOT EXISTS-leddet fra DELETE-en i 032, så blir denne rød.
+    """
+    from db.pg import sett_kontekst
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid)                                   # 1.0.0, basen
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av,status) VALUES (%s,%s,%s,'{}'::jsonb,'forf','aktivert')",
+        (TEN, uid, pid))
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,1,'brukt','d','i',%s,'UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()+interval '1 hour')",
+        (TEN, uid, _hash(pid, "1.0.0")))
+    m.commit()
+    sett_kontekst(m, TEN, "test", "r0")
+    _aktiver_ny_versjon(m, pid, "1.1.0")                 # runden aktiverte 1.1.0
+    m.commit()
+    rt = _rt()
+    try:
+        # Operatøren ser 1.1.0, og det er den bindingen slettingen tar.
+        assert _slett(rt, pid, versjon="1.1.0") == 1, \
+            "basen skulle ikke vært talt med blant de slettede"
+        rt.commit()
+        sett_kontekst(rt, TEN, "test", "r2")
+        rader = rt.execute(
+            "SELECT versjon, aktiv FROM policyer WHERE tenant=%s"
+            " AND policy_id=%s ORDER BY versjon", (TEN, pid)).fetchall()
+        assert rader == [("1.0.0", False)], rader
+        # Pekeren er nullstilt: policyen styrer ingenting lenger.
+        assert rt.execute(
+            "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+            " AND policy_id=%s", (TEN, pid)).fetchone() == (None,)
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_bootstrap_policy_slettes_i_sin_helhet():
+    """Vernet over skal ikke gjøre normaltilfellet uslettelig.
+
+    Den første aktiveringen måles mot `DENY_ALL_V1` — en konstant i koden, ikke
+    en rad — så en bootstrap-runde peker aldri på en lagret versjon. En policy
+    med én versjon, aktivert ved feil, forsvinner derfor helt: det er nøyaktig
+    `tjenestebedrift1`/`tjenestebedrift2`, tilfellet funksjonen ble skrevet for.
+    """
+    from policy_validator.semantikk import DENY_ALL_HASH
+    pid = "p-" + secrets.token_hex(3)
+    uid = "u-" + secrets.token_hex(6)
+    m = _mig()
+    _policyrad(m, pid)
+    m.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "opprettet_av,status) VALUES (%s,%s,%s,'{}'::jsonb,'forf','aktivert')",
+        (TEN, uid, pid))
+    m.execute(
+        "INSERT INTO aktiveringsrunde (tenant,utkast_id,runde,status,"
+        "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
+        "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
+        "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
+        "pakrevd_antall_godkjennere,utloper)"
+        " VALUES (%s,%s,1,'brukt','d','i',%s,'UTVIDER','k','1','0.2','1',"
+        "'dh','1',2,now()+interval '1 hour')",
+        (TEN, uid, DENY_ALL_HASH))
+    m.commit()
+    rt = _rt()
+    try:
+        assert _slett(rt, pid) == 1
+        rt.commit()
+        from db.pg import sett_kontekst
+        sett_kontekst(rt, TEN, "test", "r2")
+        assert rt.execute("SELECT count(*) FROM policyer WHERE tenant=%s"
+                          " AND policy_id=%s", (TEN, pid)).fetchone()[0] == 0
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_slettingen_er_idempotent_og_replayer_suksess():
     """Kontroll: fjern `_idempotent_start`/`_fullfor` fra
     `policyadmin.slett_policy`, så blir denne rød.

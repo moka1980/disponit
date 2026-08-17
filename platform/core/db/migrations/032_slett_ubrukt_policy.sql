@@ -20,7 +20,10 @@
 --   * pekeren nullstilles (ankerraden BESTÅR — den er append-only med vilje,
 --     og `revisjon` teller også denne hendelsen);
 --   * policyens rader i `policyer` slettes — versjonene blir ledige igjen,
---     så en riktig opprettelse etterpå ikke stoppes av 020-monotonien;
+--     så en riktig opprettelse etterpå ikke stoppes av 020-monotonien. ETT
+--     unntak: en versjon som er BASE for en aktiveringsrunde blir stående
+--     (inaktiv), fordi attestasjonene på den runden er signaturer på en diff
+--     mot nettopp det dokumentet, og runden lagrer bare hashen av det;
 --   * utkast og runder RØRES IKKE: at mennesker attesterte er et faktum om
 --     fortiden, og det skal stå igjen selv om resultatet angres. (Nøyaktig
 --     det de manuelle oppryddingene bevarte.) Det ENESTE kalleren skriver på
@@ -80,9 +83,10 @@ AS $$
 DECLARE
     v_versjon TEXT;
     v_hash    TEXT;
-    v_brukt int;
-    v_apen  int;
-    n       int;
+    v_brukt  int;
+    v_apen   int;
+    v_antall int;
+    n        int;
 BEGIN
     IF p_tenant IS NULL OR btrim(p_tenant) = ''
        OR current_setting('disponit.tenant', true) IS DISTINCT FROM p_tenant
@@ -207,6 +211,23 @@ BEGIN
        SET aktiv_versjon = NULL, revisjon = revisjon + 1
      WHERE tenant = p_tenant AND policy_id = p_policy_id;
 
+    -- «Finnes ikke» måles FØR slettingen, ikke som «null rader forsvant»
+    -- (under kan begge deler være sant av helt ulike grunner).
+    SELECT count(*) INTO v_antall FROM policyer
+     WHERE tenant = p_tenant AND policy_id = p_policy_id;
+    IF v_antall = 0 THEN
+        RAISE EXCEPTION 'slett_ubrukt_policy: policyen finnes ikke'
+            USING ERRCODE = 'no_data_found';
+    END IF;
+
+    -- Pekeren er nullstilt, og da kan ingen rad stå igjen som aktiv:
+    -- `policy_peker_konsistent` (012) håndhever «peker NULL ⇔ ingen aktiv
+    -- rad» ved commit. Flagget tas derfor ned FØR slettingen — for raden kan
+    -- være en base som blir stående (under). Slettes den likevel, er
+    -- oppdateringen virkningsløs.
+    UPDATE policyer SET aktiv = false
+     WHERE tenant = p_tenant AND policy_id = p_policy_id AND aktiv;
+
     -- Retensjonsvakta er siste ord, og den skal HØRES. `policy_retention_vakt`
     -- (V3) kjenner referanser denne funksjonen med vilje ikke teller opp selv
     -- — ikke-terminale unntak, oppdrag, reparasjonsoperasjoner — og en fjerde
@@ -216,18 +237,34 @@ BEGIN
     -- galt» i stedet for grunnen. Avvisningen oversettes derfor her, til det
     -- samme vilkårsbruddet de øvrige grensene bruker, med vaktens egen
     -- forklaring i behold.
+    --
+    -- EN VERSJON SOM ER BASE FOR EN RUNDE BLIR STÅENDE (Codex P2). Runden
+    -- lagrer `base_policy_hash`, ikke basedokumentet, og attestasjonene er
+    -- signaturer på en DIFF mellom den basen og utkastet. Slettes basen, står
+    -- runden og attestasjonene igjen — men det de sier ja til kan ikke lenger
+    -- leses. «Utkast og runder røres ikke» ville da vært sant om radene og
+    -- usant om historikken de er der for å bære. (Bootstrap-runder rammes
+    -- ikke: den første aktiveringen måles mot `DENY_ALL_V1`, en konstant i
+    -- koden, så en policy med én versjon slettes i sin helhet som før — som
+    -- er nettopp tilfellet funksjonen ble skrevet for.)
+    --
+    -- Versjonene som blir stående er ikke aktive (flagget over), så de styrer
+    -- ingenting; de er historikk på linje med utkastene og attestasjonene.
+    -- Numrene deres forblir opptatt — det er prisen for at godkjenningen kan
+    -- leses — mens alle andre versjonsnumre frigjøres som før.
     BEGIN
-        DELETE FROM policyer
-         WHERE tenant = p_tenant AND policy_id = p_policy_id;
+        DELETE FROM policyer p
+         WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
+           AND NOT EXISTS (
+                 SELECT 1 FROM aktiveringsrunde r JOIN policyutkast u
+                     ON u.tenant = r.tenant AND u.utkast_id = r.utkast_id
+                  WHERE r.tenant = p_tenant AND u.policy_id = p_policy_id
+                    AND r.base_policy_hash = p.innholds_hash);
         GET DIAGNOSTICS n = ROW_COUNT;
     EXCEPTION WHEN raise_exception THEN
         RAISE EXCEPTION 'slett_ubrukt_policy: %', SQLERRM
             USING ERRCODE = 'check_violation';
     END;
-    IF n = 0 THEN
-        RAISE EXCEPTION 'slett_ubrukt_policy: policyen finnes ikke'
-            USING ERRCODE = 'no_data_found';
-    END IF;
     RETURN n;
 END $$;
 
