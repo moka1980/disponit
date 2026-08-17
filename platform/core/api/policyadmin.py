@@ -1062,8 +1062,13 @@ def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
 
     Begge er beskrivelser, og en beskrivelse kan passe på to generasjoner
     samtidig. Identiteten som ikke kan gjenbrukes er `policy_hode.revisjon`:
-    en teller som bare går oppover, +1 for hver aktivering og +1 for hver
-    sletting, aldri nullstilt, på en ankerrad som aldri slettes. Migrasjon
+    en teller som bare går oppover, aldri nullstilt, på en ankerrad som aldri
+    slettes. Tre veier skriver den, og alle tre teller OPP — den styrte
+    aktiveringen, slettingen (032) og `policyregister.registrer` når den
+    aktiverer (oppsett-/token-veien, som skriver `policyer` helt uten
+    utkast). Den siste er også grunnen til at prøven er riktig konservativ:
+    skrives en ny generasjon utenom utkastveien, er den aktive generasjonen
+    ikke lenger den utkastet laget, og utkastet forsvinner fra køen. Migrasjon
     034 stempler utkastet med den telleren i det aktiveringen skjer
     (`aktivert_revisjon`, server-utledet av trigger), og prøven her er derfor
     en likhet mellom to tall: hodets revisjon er fortsatt den dette utkastet
