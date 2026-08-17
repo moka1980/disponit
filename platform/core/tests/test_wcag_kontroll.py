@@ -1779,7 +1779,7 @@ def test_tidsavbruddet_dreper_hele_prosesstreet(tmp_path):
 
     pidfil = tmp_path / "barnebarn.pid"
     barn = ("import os, pathlib, time; "
-            "pathlib.Path(%r).write_text(str(os.getpid())); "
+            "pathlib.Path(%r).write_text(str(os.getpid()), encoding='utf-8'); "
             "time.sleep(20)" % str(pidfil))
     motor = ("import subprocess, sys; "
              "subprocess.Popen([sys.executable, '-c', %r])" % barn)
@@ -1798,7 +1798,61 @@ def test_tidsavbruddet_dreper_hele_prosesstreet(tmp_path):
     while time.monotonic() < frist and not pidfil.exists():
         time.sleep(0.05)
     assert pidfil.exists(), "barnebarnet rakk aldri å skrive pid-en sin"
-    pid = int(pidfil.read_text())
+    pid = int(pidfil.read_text(encoding="utf-8"))
     while time.monotonic() < frist and not _prosessen_er_dod(pid):
         time.sleep(0.05)
     assert _prosessen_er_dod(pid), f"barnebarnet {pid} lever videre"
+
+
+def test_skjemafeil_lekker_aldri_artefaktverdien():
+    """Codex P1: `e.message` er bygget rundt den FEILENDE VERDIEN.
+
+    Bryter et felt `type`, `enum`, `pattern` eller `format`, står verdien
+    ordrett i teksten — `'alice@example.com' is not of type 'integer'` —
+    og `_artefakt_upload` skrev nettopp den teksten til `Sikkerhetslogg`
+    (`forste=skjemafeil[0][:160]`). Den loggen har «ALDRI payload» som
+    kontrakt og går til stderr: rapportklartekst med persondata og alt,
+    ut av det krypterte sporet og inn i driftsloggene — for et artefakt
+    som ble AVVIST og aldri skulle etterlatt seg innhold noe sted.
+
+    Stien lekker på samme vis når skjemaet tillater frie nøkler: da er det
+    brytende leddet innsenderens egen nøkkel.
+
+    Kontroll: bytt `_bruddkode(e)` tilbake til `e.message[:160]`, eller la
+    `_sti` bruke `absolute_path` rått, så finner løkka under verdien igjen.
+    """
+    from api.artefaktskjema import valider
+
+    hemmelig = "alice@example.com"
+    skjema = {"type": "object",
+              "properties": {
+                  "antall": {"type": "integer"},
+                  "alvor": {"enum": ["lav", "hoy"]},
+                  "vert": {"type": "string", "pattern": "^[a-z]+$"},
+                  "kjort_ts": {"type": "string", "format": "date-time"},
+                  "fritt": {"type": "object",
+                            "additionalProperties": {"type": "integer"}}}}
+    innhold = {"antall": hemmelig, "alvor": hemmelig, "vert": hemmelig,
+               "kjort_ts": hemmelig, "fritt": {hemmelig: hemmelig}}
+    feil = valider(skjema, innhold)
+    assert len(feil) >= 5, feil
+    for f in feil:
+        assert hemmelig not in f, f
+        assert "alice" not in f, f
+    # Nytteverdien skal være i behold: hvilket FELT og hvilket KRAV.
+    samlet = " | ".join(feil)
+    for ventet in ("antall", "alvor", "vert", "kjort_ts",
+                   "type=", "enum=", "pattern=", "format="):
+        assert ventet in samlet, (ventet, samlet)
+    # ...men den frie nøkkelen er innsenderens, ikke skjemaets, og skal
+    # stå som `<felt>`.
+    assert "fritt/<felt>" in samlet, samlet
+
+    # Samme port på det EKTE rapportskjemaet, på veien som faktisk logges.
+    from modules.wcag_audit import rapportskjema
+    from modules.wcag_audit.rapport import bygg
+    rapport = bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
+                   kontekst=_kontekst())
+    feil = valider(rapportskjema.SKJEMA, {**rapport, "kjort_ts": hemmelig})
+    assert feil and all(hemmelig not in f for f in feil), feil
+    assert any("kjort_ts" in f for f in feil), feil

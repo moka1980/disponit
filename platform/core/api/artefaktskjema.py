@@ -141,11 +141,63 @@ def registrer(conn: psycopg.Connection, skjema: dict, aktor: str) -> str:
     return h
 
 
+def _bruddkode(e) -> str:
+    """Bruddet beskrevet av SKJEMAET, aldri av innholdet (Codex P1).
+
+    `e.message` er bygget rundt den feilende VERDIEN: bryter et felt
+    `type`, `enum`, `pattern` eller `format`, står verdien ordrett i
+    teksten (`'alice@example.com' is not of type 'integer'`). Den teksten
+    gikk rett i `Sikkerhetslogg`, som har «ALDRI payload» som kontrakt og
+    skriver til stderr — altså rapportklartekst, med persondata og alt,
+    ut av det krypterte sporet og inn i driftsloggene.
+
+    Det som blir igjen her, kommer utelukkende fra skjemaet: hvilket
+    nøkkelord som brøt, og hva nøkkelordet KREVDE. Skjemaet er en
+    registrert, innholdsadressert plattformartefakt — ikke kundedata — så
+    den siden er trygg å logge, og den er også den eneste som forteller en
+    driftsperson noe brukbart: hvor det brøt (`_sti`) og hva som var
+    kravet. Det er nok til å feilsøke en avvist opplasting uten å ha sett
+    et eneste tegn av rapporten.
+
+    `additionalProperties: false` er verdt et eget ord: DER er de
+    fornærmende navnene innholdets egne nøkler, og de står bare i
+    `e.message`. `validator_value` er `False`, så de faller ut av seg selv.
+    """
+    nokkel = str(getattr(e, "validator", "?"))
+    try:
+        krav = json.dumps(getattr(e, "validator_value", None),
+                          ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        krav = "<ikke serialiserbart>"
+    return f"{nokkel}={krav[:80]}"
+
+
+def _sti(e) -> str:
+    """Stien til bruddet, med bare skjemakjente ledd (Codex P1).
+
+    `absolute_path` er stien i INNHOLDET, og de fleste leddene er trygge:
+    et listeindeks er et tall, og et feltnavn skjemaet selv nevner er
+    skjemadata. Men tillater skjemaet frie nøkler (`additionalProperties`
+    som et delskjema), er det brytende leddet innholdets EGEN nøkkel — som
+    like gjerne kan være en e-postadresse som et feltnavn. Å logge den
+    ville vært samme lekkasje som `e.message`, bare gjennom stien.
+
+    Derfor: tall beholdes, og navn beholdes bare når `absolute_schema_path`
+    nevner dem — altså når det er skjemaet, ikke innsenderen, som fant på
+    navnet. Resten blir `<felt>`.
+    """
+    kjent = {str(s) for s in e.absolute_schema_path}
+    deler = [str(p) if isinstance(p, int) or str(p) in kjent else "<felt>"
+             for p in e.absolute_path]
+    return "/".join(deler)[:120] or "<rot>"
+
+
 def valider(skjema: dict, innhold: dict) -> list[str]:
     """-> feilliste (tom = gyldig). Draft 2020-12, samme validatorfamilie
     som policyskjemaet, MED format-checkeren over. Feilene er tekst for
     LOGGEN — de sendes aldri ordrett til klienten (innholdet kan bære
-    persondata)."""
+    persondata), og de INNEHOLDER heller ikke innholdet selv: se
+    `_bruddkode`."""
     # Et ødelagt skjema måler ingenting: uten denne linjen kaster
     # `iter_errors` under (UnknownType) og opplastningen blir en 500-er i
     # stedet for en avvisning.
@@ -156,8 +208,7 @@ def valider(skjema: dict, innhold: dict) -> list[str]:
         skjema, format_checker=FORMATSJEKKER)
     for e in sorted(validator.iter_errors(innhold),
                     key=lambda e: list(e.absolute_path)):
-        sti = "/".join(str(p) for p in e.absolute_path) or "<rot>"
-        feil.append(f"{sti}: {e.message[:160]}")
+        feil.append(f"{_sti(e)}: {_bruddkode(e)}")
         if len(feil) >= 20:
             feil.append("… (avkortet)")
             break
