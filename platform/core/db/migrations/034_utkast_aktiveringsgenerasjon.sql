@@ -113,13 +113,14 @@ ALTER TABLE policyutkast
 -- ------------------------------------------------------------
 
 -- ------------------------------------------------------------
--- STEMPELET.  --  MERK for en senere migrasjon som måtte ville fylle
--- kolonnen for historiske rader: triggeren under fryser den for alt annet
--- enn selve overgangen til `aktivert`, så en naken UPDATE etterpå blir
--- STILLE overskrevet med den gamle verdien — en skriving som rapporterer
--- suksess og ikke gjør noe.
+-- STEMPELET.
 --
--- Egen trigger, ikke et nytt vilkår i `policyutkast_kolonnelaas`: Egen trigger, ikke et nytt vilkår i `policyutkast_kolonnelaas`:
+-- MERK for en senere migrasjon som måtte ville fylle kolonnen for historiske
+-- rader: triggeren under fryser den for alt annet enn selve overgangen til
+-- `aktivert`, så en naken UPDATE etterpå blir STILLE overskrevet med den
+-- gamle verdien — en skriving som rapporterer suksess og ikke gjør noe.
+--
+-- Egen trigger, ikke et nytt vilkår i `policyutkast_kolonnelaas`:
 -- den funksjonen NEKTER (den er en lås og kaster), denne SETTER. Å blande de
 -- to rollene i én kropp ville gjort begge vanskeligere å lese, og 033 viste
 -- hva det koster å måtte kopiere en kropp riktig for å endre ett vilkår.
