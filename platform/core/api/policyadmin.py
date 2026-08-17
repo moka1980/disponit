@@ -1033,18 +1033,81 @@ def hent_maler() -> list:
 
 def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                 request_id: str, policy_id: str | None = None) -> list:
-    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende."""
+    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende.
+
+    Lista er ARBEIDSKØEN, ikke historikken (eier 17/8: «når man sletter en
+    policy skal det fjernes helt fra listen»). To radtyper holdes derfor ute:
+
+      * `forkastet` — et slettet forslag. Det er terminalt og har ingen
+        handling igjen; å vise det for alltid var nøyaktig det eier meldte.
+      * `aktivert` som IKKE er gjeldende tilstand: enten fordi policyen siden
+        er slettet (raden sto igjen som «Aktivert» om en policy som ikke
+        finnes), eller fordi en senere aktivering har avløst den. Det
+        aktiverte utkastet som ER den aktive policyen vises fortsatt — det er
+        gjeldende tilstand, ikke et lik.
+
+    RADEN BINDES TIL GENERASJONEN, IKKE TIL NOE GJENBRUKBART (Codex P2, to
+    runder). Prøven må svare på «ble dette utkastet den generasjonen som er
+    aktiv NÅ», og de to nærliggende svarene er begge gjenbrukbare:
+
+      * `policy_id` alene: en id blir LEDIG igjen etter sletting — 032
+        nullstiller pekeren og frigjør versjonsnumrene, nettopp så en riktig
+        opprettelse etterpå ikke stoppes av 020-monotonien. Aktiveres en
+        erstatning under samme id, er pekeren ikke-NULL på nytt, og det
+        SLETTEDE utkastet kom tilbake i køen som «gjeldende tilstand».
+      * `innholds_hash`: 020 gjør versjonen til DOKUMENTETS versjon, og siden
+        032 sletter radene kan nøyaktig samme dokument aktiveres om igjen.
+        Hashen er deterministisk av innholdet, så erstatningen får da samme
+        hash som den slettede generasjonen — og prøven ble sann for BEGGE.
+
+    Begge er beskrivelser, og en beskrivelse kan passe på to generasjoner
+    samtidig. Identiteten som ikke kan gjenbrukes er `policy_hode.revisjon`:
+    en teller som bare går oppover, aldri nullstilt, på en ankerrad som aldri
+    slettes. Tre veier skriver den, og alle tre teller OPP — den styrte
+    aktiveringen, slettingen (032) og `policyregister.registrer` når den
+    aktiverer (oppsett-/token-veien, som skriver `policyer` helt uten
+    utkast). Den siste er også grunnen til at prøven er riktig konservativ:
+    skrives en ny generasjon utenom utkastveien, er den aktive generasjonen
+    ikke lenger den utkastet laget, og utkastet forsvinner fra køen. Migrasjon
+    034 stempler utkastet med den telleren i det aktiveringen skjer
+    (`aktivert_revisjon`, server-utledet av trigger), og prøven her er derfor
+    en likhet mellom to tall: hodets revisjon er fortsatt den dette utkastet
+    laget. Gjenbrukt id, gjenbrukt versjon og gjenbrukt innhold gjør den ikke
+    sann for en generasjon som er borte.
+
+    `aktiv_versjon IS NOT NULL` står ved siden av likheten, ikke i stedet for
+    den: en sletting bumper også telleren, så likheten alene ville holdt — men
+    den dagen en ny vei fjerner en policy uten å røre `revisjon`, er det denne
+    linjen som gjør at et lik ikke vises. Pekeren kan leses her (og ikke bare
+    `policyer`-raden, slik 032 må gjøre) fordi hvert `aktivert` utkast har
+    gått gjennom `aktiver_policy`, som oppretter hoderaden før den rører
+    utkastet: en grandfathered policy uten hoderad har ingen utkast å skjule.
+
+    Et AVLØST aktivert utkast faller dermed også ut, og det er riktig for en
+    arbeidskø: `aktivert` er terminalt (statusmaskinen i 012/033), så raden
+    har ingen handling igjen uansett.
+
+    Radene finnes fremdeles i basen — de er attestasjonshistorikkens ankre
+    (slettingen i 032 bevarer dem uttrykkelig) og nås via detalj-ruten.
+    Skjulingen er en visningsregel, ingen sletting."""
     sett_kontekst(conn, tenant, aktor, request_id)
+    vilkaar = (" AND u.status <> 'forkastet'"
+               " AND (u.status <> 'aktivert' OR EXISTS ("
+               "      SELECT 1 FROM policy_hode h WHERE h.tenant=u.tenant"
+               "        AND h.policy_id=u.policy_id"
+               "        AND h.aktiv_versjon IS NOT NULL"
+               "        AND h.revisjon=u.aktivert_revisjon))")
     if policy_id:
         rows = conn.execute(
-            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
-            " FROM policyutkast WHERE tenant=%s AND policy_id=%s"
-            " ORDER BY opprettet DESC", (tenant, policy_id)).fetchall()
+            "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
+            " u.opprettet FROM policyutkast u WHERE u.tenant=%s"
+            " AND u.policy_id=%s" + vilkaar +
+            " ORDER BY u.opprettet DESC", (tenant, policy_id)).fetchall()
     else:
         rows = conn.execute(
-            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
-            " FROM policyutkast WHERE tenant=%s ORDER BY opprettet DESC",
-            (tenant,)).fetchall()
+            "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
+            " u.opprettet FROM policyutkast u WHERE u.tenant=%s" + vilkaar +
+            " ORDER BY u.opprettet DESC", (tenant,)).fetchall()
     conn.rollback()
     return [{"utkast_id": u, "policy_id": p, "status": s, "utkastversjon": vv,
              "opprettet": o.isoformat()} for u, p, s, vv, o in rows]
