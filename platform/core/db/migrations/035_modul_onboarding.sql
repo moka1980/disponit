@@ -871,10 +871,18 @@ BEGIN
     RETURN v_n;
 END $$;
 
+-- KUN SENDERROLLEN (Codex P1). Funksjonen er kryss-tenant: den tar tenanten
+-- som parameter, setter DENS RLS-kontekst, leser dens aktive administratorer
+-- og køer varsler til dem. Et grant til web-runtime ville gitt en
+-- kompromittert forespørselsvei nøyaktig det vinduet `disponit_varselsender`
+-- finnes for å nekte den — samme grunn som `migrer.py` bevisst holder
+-- `varsel_klaim_epost`/`varsel_rekoe` unna `disponit`. REVOKE-en står fordi
+-- en tidligere versjon av denne migrasjonen GA grantet: en rettighet som
+-- bare slutter å bli gitt, er ikke trukket tilbake.
 REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(TEXT) FROM disponit;
 GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(TEXT)
     TO disponit_varselsender;
-GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(TEXT) TO disponit;
 
 RESET ROLE;
 -- Eieren trenger lese modul_onboarding/modultoken (har det, §-grantene

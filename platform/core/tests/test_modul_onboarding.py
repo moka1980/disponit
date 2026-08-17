@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN
+from .test_api import DSN, MIGRATOR_DSN, VARSEL_DSN
 
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
@@ -31,6 +31,18 @@ def _c():
 def _rt():
     from db.pg import koble
     return koble(DSN)
+
+
+def _vs():
+    """Senderrollen — den ENESTE som får kalle familiehorisont-sveipen.
+
+    Sveipen er kryss-tenant (den setter den oppgitte tenantens RLS-kontekst),
+    så den hører til `disponit_varselsender` alene, ikke til web-runtime.
+    Faller tilbake til migratoren i miljøer uten senderens DSN; CI setter den,
+    og der er det senderrollen som faktisk prøves.
+    """
+    from db.pg import koble
+    return koble(VARSEL_DSN or MIGRATOR_DSN)
 
 
 def _mid():
@@ -722,7 +734,7 @@ def test_familieutlop_varsles_30_7_1_idempotent():
     `varsle_tokenfamilie_utlop`, så blir dødfamilie-asserten rød; fjern
     ON CONFLICT-nøkkelen, så dobler antallet ved andre kjøring."""
     m = _c()
-    rt = _rt()
+    vs = _vs()
     ten = "t-famvarsel-" + secrets.token_hex(3)
     try:
         # Plattformtenant med én aktiv admin og én ikke-admin.
@@ -770,8 +782,8 @@ def test_familieutlop_varsles_30_7_1_idempotent():
         dod = familie(5, med_levende_token=False)
         fjern = familie(200)          # utenfor alle tersklene
 
-        rt.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
-        rt.commit()
+        vs.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
+        vs.commit()
         sett_kontekst(m, ten, "sys", "r1")
         # Sveipen er PLATTFORMVID (den skal se alle familier, også dem andre
         # tester har etterlatt) — asserten scopes derfor til DENNE testens
@@ -791,8 +803,8 @@ def test_familieutlop_varsles_30_7_1_idempotent():
         assert not any(r[1] == str(fjern) for r in rader)
 
         # Idempotent: andre sveip legger ingenting til.
-        rt.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
-        rt.commit()
+        vs.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
+        vs.commit()
         sett_kontekst(m, ten, "sys", "r2")
         n = m.execute(
             "SELECT count(*) FROM varsel WHERE tenant=%s"
@@ -801,7 +813,7 @@ def test_familieutlop_varsles_30_7_1_idempotent():
         m.rollback()
         assert n == 2, n
     finally:
-        rt.close()
+        vs.close()
         m.close()
 
 
@@ -820,7 +832,7 @@ def test_familievarselet_respekterer_kun_portal():
     assert KANALVALGNOKKEL == 615774026
 
     m = _c()
-    rt = _rt()
+    vs = _vs()
     ten = "t-famkanal-" + secrets.token_hex(3)
     try:
         avmeldt = m.execute(
@@ -857,8 +869,8 @@ def test_familievarselet_respekterer_kun_portal():
             " WHERE onboarding_id=%s", (uuid.uuid4(), _hex64(), o))
         m.commit()
 
-        rt.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
-        rt.commit()
+        vs.execute("SELECT varsle_tokenfamilie_utlop(%s)", (ten,))
+        vs.commit()
         sett_kontekst(m, ten, "sys", "r1")
         rader = dict(m.execute(
             "SELECT bruker_id, epost_status FROM varsel WHERE tenant=%s"
@@ -867,5 +879,25 @@ def test_familievarselet_respekterer_kun_portal():
         m.rollback()
         assert rader == {avmeldt: "ikke_aktuelt", paameldt: "koet"}, rader
     finally:
-        rt.close()
+        vs.close()
         m.close()
+
+
+@pg
+def test_familiesveipen_er_stengt_for_web_runtime():
+    """Codex P1: sveipen er KRYSS-TENANT — den tar tenanten som parameter,
+    setter dens RLS-kontekst, leser dens administratorer og skriver varsler
+    til dem. Da hører den til `disponit_varselsender` alene, akkurat som
+    `varsel_klaim_epost`/`varsel_rekoe`: et grant til web-runtime ville gitt
+    en kompromittert forespørselsvei nøyaktig det vinduet senderrollen finnes
+    for å nekte den.
+
+    Kontroll: gi `GRANT EXECUTE ... TO disponit` tilbake i 035 (eller fjern
+    REVOKE-en i `migrer.py`), så blir denne rød."""
+    rt = _rt()
+    try:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT varsle_tokenfamilie_utlop('disponit')")
+        rt.rollback()
+    finally:
+        rt.close()

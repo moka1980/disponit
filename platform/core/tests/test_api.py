@@ -23,6 +23,10 @@ from policy_validator import attestering
 
 DSN = os.environ.get("DISPONIT_TEST_DSN")
 MIGRATOR_DSN = os.environ.get("DISPONIT_TEST_MIGRATOR_DSN") or DSN
+#: Senderrollen. De kryss-tenant senderfunksjonene er BARE hennes (Codex P1),
+#: så en test som prøver dem må koble som henne — migratoren arver ingenting
+#: (WITH INHERIT FALSE) og web-runtime skal nektes. CI setter variabelen.
+VARSEL_DSN = os.environ.get("DISPONIT_TEST_VARSEL_DSN")
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 TENANT = "t-api"

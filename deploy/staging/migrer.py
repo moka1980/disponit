@@ -86,6 +86,13 @@ REVOKE ALL ON FUNCTION varsel_klaim_epost(int, int) FROM {rolle};
 REVOKE ALL ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) FROM {rolle};
 REVOKE ALL ON FUNCTION varsel_rekoe(interval, int, interval) FROM {rolle};
 RESET ROLE;
+-- 035: familiehorisont-sveipen er senderens pre-pass og hører til samme
+-- grense — den tar tenanten som parameter og setter DENS RLS-kontekst, så
+-- et grant her ville gitt forespørselsveien et kryss-tenant-vindu.
+SET LOCAL ROLE disponit_modul_eier;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsle_tokenfamilie_utlop(text) FROM {rolle};
+RESET ROLE;
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
 -- INGEN INSERT/UPDATE/DELETE på registertabellene. Alle skriv går via de herdede
@@ -204,6 +211,11 @@ SET LOCAL ROLE disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION varsel_klaim_epost(int, int) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsel_sett_epoststatus(bigint, uuid, text, text) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsel_rekoe(interval, int, interval) TO {rolle};
+RESET ROLE;
+-- 035: familiehorisont-sveipen (senderens pre-pass). Eies av en ANNEN rolle
+-- enn de tre over, derfor sin egen SET LOCAL ROLE.
+SET LOCAL ROLE disponit_modul_eier;
+GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(text) TO {rolle};
 RESET ROLE;
 """
 
