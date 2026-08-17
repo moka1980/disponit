@@ -32,6 +32,11 @@ Feilhåndteringens utfall:
     plattformen har BEVISST latt oppdraget være ufullført. En 2xx er
     derfor ikke i seg selv et statusskifte — se `_kvittert`.
 
+Kvitteringen bindes til den KONTROLLERTE VERTEN (Codex P1): `ressurs_id`
+er det normaliserte vertsnavnet fra `mal_url`, samme verdi og samme
+funksjon som `oppdragskontrakt.malbindingsbrudd` krever av hendelsen — se
+`_ressursbinding`.
+
 `avbrutt` over betyr FERDIG mislykket, og forutsetter derfor at
 plattformen tok imot feil-kvitteringen. Gjorde den ikke det, er utfallet
 `ukvittert` også på feilveiene (Codex P1) — se `_feilutfall`. `grunn` står
@@ -50,6 +55,56 @@ from .rapport import bygg
 #: Kroppsstatusene som betyr at plattformen FAKTISK skiftet status på
 #: oppdraget — de to `/v1/oppdrag/kvittering` gir sammen med 200.
 _STATUSSKIFTE = ("utfort", "feilet")
+
+#: Modulens egen oppdragstype. Den står her, ikke som en gjetning på hva
+#: claimet inneholdt: controlleren betjener nøyaktig én type, og det er
+#: den typen som deklarerer hvilket måldomene kvitteringen skal bindes til.
+OPPDRAGSTYPE = "kontroll.wcag.nettsted"
+
+
+def _malfelt() -> str | None:
+    """Payloadfeltet som bærer målet for VÅR oppdragstype — lest ut av
+    plattformens egen typedeklarasjon, ikke gjentatt her.
+
+    `oppdragskontrakt` er allerede en kjøretidsavhengighet for modulen
+    (`rapport` kanoniserer med `policy_validator`), men importen står ved
+    kallstedet av samme grunn som der: modulens IMPORTTID skal ikke være
+    bundet til plattformkjernen.
+    """
+    from oppdragskontrakt import MALDOMENEFELT, OPPDRAGSTYPER
+    t = OPPDRAGSTYPER.get(OPPDRAGSTYPE)
+    if t is None or t.malautorisasjonsdomene is None:
+        return None
+    return MALDOMENEFELT.get(t.malautorisasjonsdomene)
+
+
+def _ressursbinding(payload: dict) -> str | None:
+    """Kvitteringens `ressurs_id`: den kontrollerte VERTEN (Codex P1).
+
+    `payload.get("ressurs_id", "")` ga tom streng for HVER ENESTE
+    WCAG-kvittering. Det er ikke et uhell i payloaden — `oppdragskontrakt`
+    minimerer typen til `mal_url`, `kravsett`, `omfang` og `maks_sider`
+    med vilje, så feltet finnes ikke å hente. Controlleren signerte altså
+    hver kvittering, både suksess og feil, med en TOM ressursbinding, mens
+    `resultathash` på plattformsiden regner `ressurs_id` som en del av
+    resultatet.
+
+    Den autoriserte ressursen er det normaliserte vertsnavnet fra
+    `mal_url` — det er nøyaktig den likheten `malbindingsbrudd` krever av
+    hendelsen (`event["ressurs_id"] == normaliser_vertsnavn(mal_url)`).
+    Kvitteringen bindes derfor til SAMME verdi, med SAMME funksjon: en
+    egen normalisering her ville vært en annen streng ved første
+    rotprikk eller store bokstaver, og da hadde bindingen vært pynt.
+
+    Verten er heller ikke ny eksponering: den er en del av `mal_url`, som
+    alt står i det tenantskopede oppdraget kvitteringen hører til.
+
+    -> None når målet ikke lar seg lese. Da har modulen ingenting å binde
+    kvitteringen til, og fail-closed er posituren: se `kjor_en`.
+    """
+    from oppdragskontrakt import normaliser_vertsnavn
+    felt = _malfelt()
+    return None if felt is None else normaliser_vertsnavn(payload.get(felt))
 
 
 def _kvittert(rk) -> bool:
@@ -112,19 +167,32 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     claim = r.json()
     payload = claim["payload"]
 
+    vert = _ressursbinding(payload)
     kvittering_basis = {
         "oppdrag_id": claim["oppdrag_id"], "tenant": claim["tenant"],
         "kvittering_jti": claim["kvittering_jti"],
         "repair_operation_id": claim["repair_operation_id"],
         "owner_claim_id": claim["owner_claim_id"],
         "owner_generation": claim["owner_generation"],
-        "ressurs_id": payload.get("ressurs_id", ""),
+        "ressurs_id": vert or "",
     }
 
     def kvitter(kropp):
         rk = klient.post("/v1/oppdrag/kvittering", json=signer(kropp),
                          headers=hode)
         return rk
+
+    if vert is None:
+        # Lar målet seg ikke lese, har modulen ingenting å binde
+        # kvitteringen til — og et claim som kom hit BURDE ha et lesbart
+        # `mal_url`: `malbindingsbrudd` avviste alt annet da oppdraget ble
+        # opprettet. Å kontrollere «noe» og signere en tom binding er den
+        # ene tilstanden denne fiksen finnes for å hindre, så motoren
+        # startes ikke i det hele tatt. Plattformen får en ærlig feilkode
+        # i stedet for taushet.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "malbinding_mangler"})
+        return _feilutfall(rk, "malbinding_mangler")
 
     try:
         resultat = motor.kjor(payload)

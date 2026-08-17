@@ -1458,6 +1458,68 @@ def test_avvist_opplasting_gir_feilkvittering():
         assert "artefakt_id" not in res
 
 
+def test_kvitteringen_bindes_til_verten_som_ble_kontrollert():
+    """Codex P1: `payload.get("ressurs_id", "")` ga TOM binding på hver
+    eneste WCAG-kvittering.
+
+    Feltet mangler ikke ved et uhell: `oppdragskontrakt` minimerer typen
+    til `mal_url`, `kravsett`, `omfang` og `maks_sider` med vilje, så det
+    finnes ikke noe `ressurs_id` å hente ut av payloaden. Controlleren
+    signerte altså både suksess- og feilkvitteringer med `""`, mens
+    plattformen regner `ressurs_id` som en del av `resultathash` — evidens
+    uten binding til det som faktisk ble kontrollert.
+
+    Den autoriserte ressursen ER det normaliserte vertsnavnet: det er
+    nøyaktig likheten `malbindingsbrudd` krever av hendelsen. Testen
+    binder de to sammen i stedet for å gjenta strengen — går kvitteringens
+    verdi gjennom plattformens egen målbindingsport, kan ikke modulen
+    normalisere annerledes enn porten uten at dette blir rødt.
+
+    Kontroll: sett `ressurs_id` tilbake til
+    `payload.get("ressurs_id", "")`, så blir denne rød med tom binding.
+    """
+    import oppdragskontrakt as ok
+    from modules.wcag_audit import controller
+
+    klient = _Stubklient(200)
+    motor = FakeMotor(resultat=_motorresultat())
+    res = controller.kjor_en(klient, "tk", motor, _kontekst(), lambda k: k)
+    assert res["utfall"] == "utfort", res
+    kvittering = klient.kvitteringer[0]
+    mal = motor.payloads[0]["mal_url"]
+    assert kvittering["ressurs_id"] == "kunde.example", kvittering
+    assert ok.malbindingsbrudd(
+        "kontroll.wcag.nettsted",
+        {"mal_url": mal, "ressurs_id": kvittering["ressurs_id"]}) is None
+
+    # Feilveiene bærer SAMME binding — en feilkvittering uten ressurs er
+    # like ubundet som en suksesskvittering uten.
+    feil = _Stubklient(200)
+    controller.kjor_en(feil, "tk", FakeMotor(feil="krasj"), _kontekst(),
+                       lambda k: k)
+    assert feil.kvitteringer[0]["ressurs_id"] == "kunde.example"
+
+    # Lar målet seg ikke lese, startes motoren ikke i det hele tatt: å
+    # kontrollere «noe» og signere en tom binding er nettopp tilstanden
+    # fiksen finnes for. Plattformen får en ærlig feilkode i stedet.
+    class _UtenMal(_Stubklient):
+        def post(self, sti, json=None, headers=None):
+            r = super().post(sti, json=json, headers=headers)
+            if sti == "/v1/oppdrag/claim":
+                kropp = r.json()
+                return _Svar(200, {**kropp,
+                                   "payload": {**kropp["payload"],
+                                               "mal_url": "http://x/"}})
+            return r
+
+    stum = FakeMotor(resultat=_motorresultat())
+    blind = _UtenMal(200)
+    res = controller.kjor_en(blind, "tk", stum, _kontekst(), lambda k: k)
+    assert res["grunn"] == "malbinding_mangler", res
+    assert stum.payloads == [], "motoren kjørte uten en bindbar vert"
+    assert blind.kvitteringer[0]["feilkode"] == "malbinding_mangler"
+
+
 def test_avvist_feilkvittering_er_heller_ikke_ferdig():
     """Codex P1: feilgrenene meldte `avbrutt` uansett hva plattformen
     svarte på feil-kvitteringen.
