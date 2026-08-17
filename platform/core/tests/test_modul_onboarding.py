@@ -357,6 +357,75 @@ def test_rotasjon_kappes_mot_familiehorisonten_og_stopper_ved_den():
 
 
 @pg
+def test_tilbakekalling_kapper_rotasjonsnaaden_umiddelbart():
+    """Port 22: nåden er for in-flight-requests, ikke for kompromitterte
+    tokener. Roterer man først (forgjengeren får 15 minutters nåde) og
+    tilbakekaller forgjengeren eksplisitt etterpå, skal den dø NÅ — ikke
+    om 15 minutter. Kontroll: gjør triggeren uforanderlig igjen (avvis
+    all endring av et satt tilbakekalt_ts), så blir denne rød."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        mac = m.execute("SELECT token_mac FROM modultoken WHERE token_id=%s",
+                        (tid,)).fetchone()[0]
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                   (tid, uuid.uuid4(), _hex64()))
+        rt.commit()
+        # nåden gjelder: forgjengeren verifiserer fortsatt
+        assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
+                          (mac,)).fetchone() is not None
+        rt.rollback()
+        rt.execute("SELECT tilbakekall_modultoken(%s,'kompromittert','test')",
+                   (tid,))
+        rt.commit()
+        assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
+                          (mac,)).fetchone() is None
+        rt.rollback()
+        rad = m.execute(
+            "SELECT tilbakekalt_ts <= now(), tilbakekalt_grunn FROM"
+            " modultoken WHERE token_id=%s", (tid,)).fetchone()
+        assert rad == (True, "kompromittert"), rad
+        # ... og revisjonssporet har begge hendelsene
+        assert m.execute(
+            "SELECT count(*) FROM modultoken_hendelse WHERE token_id=%s"
+            " AND hendelse='tilbakekalt'", (tid,)).fetchone()[0] == 1
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
+def test_nodstopp_kapper_ogsaa_tokener_i_rotasjonsnaade():
+    """Port 23: et nødstopp er unntakstilstanden nåden finnes for å unngå
+    — også tokener med fremtidig tilbakekalt_ts kappes til now()."""
+    m = _c()
+    rt = _rt()
+    try:
+        modul, tid, _ = _token(rt, m)
+        mac = m.execute("SELECT token_mac FROM modultoken WHERE token_id=%s",
+                        (tid,)).fetchone()[0]
+        rt.execute("SELECT * FROM roter_modultoken(%s,%s,%s,30,'test')",
+                   (tid, uuid.uuid4(), _hex64()))
+        rt.commit()
+        m.execute("SET ROLE disponit_modules_admin")
+        m.execute("SELECT noddeaktiver_modul(%s,'test av 035','test')",
+                  (modul,))
+        m.execute("RESET ROLE")
+        m.commit()
+        assert rt.execute("SELECT * FROM verifiser_modultoken(%s)",
+                          (mac,)).fetchone() is None
+        rt.rollback()
+        rad = m.execute(
+            "SELECT tilbakekalt_ts <= now(), tilbakekalt_grunn FROM"
+            " modultoken WHERE token_id=%s", (tid,)).fetchone()
+        assert rad == (True, "epoch_okning_nodstopp"), rad
+    finally:
+        rt.close()
+        m.close()
+
+
+@pg
 def test_tilbakekalt_token_avvises_umiddelbart_og_gjenopplives_aldri():
     """Portene 22/42: eksplisitt tilbakekalling er umiddelbar; nulling av
     tilbakekalt_ts avvises av lagringen — også for migrator/eier."""

@@ -152,8 +152,14 @@ CREATE TRIGGER onboarding_slettevern
     EXECUTE FUNCTION avvis_endring();
 
 -- Tokenets identitet er immutabel; tilbakekalling er eneste lovlige
--- mutasjon, og den er MONOTON: NULL → satt, deretter aldri endret og
--- aldri nullet. Hele regelen står i WHEN-leddet — ikke i prosatekst.
+-- mutasjon, og den er MONOTON MOT DØDEN: NULL → satt, og deretter kun
+-- FREMSKYNDET (ny frist strengt tidligere enn den gamle), aldri utsatt,
+-- aldri nullet. Retningen — ikke uforanderligheten — er invarianten:
+-- rotasjonens 15-minutters nåde er et FREMTIDIG tilbakekalt_ts, og en
+-- eksplisitt tilbakekalling må kunne kappe den nåden umiddelbart. En
+-- grunn kan bare endres sammen med en fremskynding, så et dødt token
+-- aldri får omskrevet historikken sin. Hele regelen står i WHEN-leddet
+-- — ikke i prosatekst.
 DROP TRIGGER IF EXISTS modultoken_identitet_immutable ON modultoken;
 CREATE TRIGGER modultoken_identitet_immutable
     BEFORE UPDATE ON modultoken
@@ -170,9 +176,11 @@ CREATE TRIGGER modultoken_identitet_immutable
         OR NEW.utloper         IS DISTINCT FROM OLD.utloper
         OR NEW.opprettet       IS DISTINCT FROM OLD.opprettet
         OR (OLD.tilbakekalt_ts IS NOT NULL
-            AND (NEW.tilbakekalt_ts    IS DISTINCT FROM OLD.tilbakekalt_ts
-              OR NEW.tilbakekalt_grunn IS DISTINCT FROM OLD.tilbakekalt_grunn))
-        OR (NEW.tilbakekalt_ts IS NULL AND OLD.tilbakekalt_ts IS NOT NULL))
+            AND (NEW.tilbakekalt_ts IS NULL
+              OR NEW.tilbakekalt_ts > OLD.tilbakekalt_ts
+              OR (NEW.tilbakekalt_ts = OLD.tilbakekalt_ts
+                  AND NEW.tilbakekalt_grunn
+                      IS DISTINCT FROM OLD.tilbakekalt_grunn))))
     EXECUTE FUNCTION avvis_endring();
 
 -- Tokener slettes aldri — de tilbakekalles. Kjeden (forgjenger) er
@@ -405,9 +413,10 @@ BEGIN
 END $$;
 
 -- Eksplisitt tilbakekalling (`modules:onboard`): umiddelbar, auditert
--- grunn. Idempotent overfor et allerede dødt token; et token i
--- rotasjonsnåde kan ikke få fristen ENDRET (triggeren) — det dør senest
--- ved nådefristen.
+-- grunn. Idempotent overfor et allerede dødt token. Et token i
+-- rotasjonsnåde (fremtidig tilbakekalt_ts) er IKKE dødt ennå — nåden
+-- finnes for in-flight-requests, ikke for kompromitterte tokener, så
+-- her kappes den til now(). Triggeren tillater nettopp den retningen.
 CREATE OR REPLACE FUNCTION tilbakekall_modultoken(
     p_token_id UUID, p_grunn TEXT, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
@@ -424,9 +433,10 @@ BEGIN
         RAISE EXCEPTION 'tilbakekalling: ukjent token'
             USING ERRCODE = 'no_data_found';
     END IF;
-    IF t.tilbakekalt_ts IS NOT NULL THEN
-        RETURN;                                   -- idempotent
+    IF t.tilbakekalt_ts IS NOT NULL AND t.tilbakekalt_ts <= now() THEN
+        RETURN;                                   -- alt dødt: idempotent
     END IF;
+    -- Enten NULL (levende) eller fremtidig (nåde) — begge kappes til now().
     UPDATE public.modultoken SET tilbakekalt_ts = now(),
                                  tilbakekalt_grunn = p_grunn
      WHERE public.modultoken.token_id = p_token_id;
@@ -494,10 +504,8 @@ BEGIN
     END LOOP;
     -- 035: epoch-økningen terminerer tokenfamilien I SAMME TRANSAKSJON.
     -- Umiddelbart (ingen nåde): et nødstopp ER unntakstilstanden nåden
-    -- finnes for å unngå. Tokener alt i rotasjonsnåde (fremtidig
-    -- tilbakekalt_ts) kan ikke få fristen endret (immutabilitetstriggeren)
-    -- — de dør senest ved nådefristen, og hver bruk i mellomtiden avvises
-    -- uansett av epoch-porten i claim/kvittering/opplasting.
+    -- finnes for å unngå. Også tokener i rotasjonsnåde (fremtidig
+    -- tilbakekalt_ts) kappes til now() — triggeren tillater fremskynding.
     INSERT INTO public.modultoken_hendelse
         (onboarding_id, token_id, modul_id, miljo, release_id, hendelse,
          aktor, detalj)
@@ -505,10 +513,12 @@ BEGIN
                t.release_id, 'tilbakekalt', p_aktor,
                jsonb_build_object('grunn', 'epoch_okning_nodstopp')
           FROM public.modultoken t
-         WHERE t.modul_id = p_modul_id AND t.tilbakekalt_ts IS NULL;
+         WHERE t.modul_id = p_modul_id
+           AND (t.tilbakekalt_ts IS NULL OR t.tilbakekalt_ts > now());
     UPDATE public.modultoken SET tilbakekalt_ts = now(),
                                  tilbakekalt_grunn = 'epoch_okning_nodstopp'
-     WHERE modul_id = p_modul_id AND tilbakekalt_ts IS NULL;
+     WHERE modul_id = p_modul_id
+       AND (tilbakekalt_ts IS NULL OR tilbakekalt_ts > now());
     INSERT INTO public.modulregister_hendelse
         (modul_id, hendelse, fra_status, til_status, module_epoch, aktor,
          begrunnelse)
@@ -553,10 +563,12 @@ BEGIN
                t.release_id, 'tilbakekalt', p_aktor,
                jsonb_build_object('grunn', 'epoch_okning_reaktivering')
           FROM public.modultoken t
-         WHERE t.modul_id = p_modul_id AND t.tilbakekalt_ts IS NULL;
+         WHERE t.modul_id = p_modul_id
+           AND (t.tilbakekalt_ts IS NULL OR t.tilbakekalt_ts > now());
     UPDATE public.modultoken SET tilbakekalt_ts = now(),
                               tilbakekalt_grunn = 'epoch_okning_reaktivering'
-     WHERE modul_id = p_modul_id AND tilbakekalt_ts IS NULL;
+     WHERE modul_id = p_modul_id
+       AND (tilbakekalt_ts IS NULL OR tilbakekalt_ts > now());
     INSERT INTO public.modulregister_hendelse
         (modul_id, hendelse, fra_status, til_status, module_epoch, aktor)
         VALUES (p_modul_id, 'reaktivering', 'nodeaktivert', 'staging_verifisert',
