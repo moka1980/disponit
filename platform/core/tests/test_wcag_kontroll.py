@@ -1590,6 +1590,37 @@ def test_motorutdata_er_bundet_i_minnet():
             treg.kjor({})
 
 
+def test_regelsettversjon_fra_motoren_ma_vaere_en_streng():
+    """Codex P1: `str(...)` fant på en versjon i stedet for å feile.
+
+    `regelsett_versjon: null` ble `"None"`, `4.10` ble `"4.1"`, og et
+    objekt ble `"{'a': 1}"`. Alle tre passerer skjemaets `minLength: 1`,
+    så rapporten ble PROMOTERT med en fabrikkert versjon. Versjonen er
+    hele proveniensen: den sier hvilke regler evidensen ble målt mot, og
+    er det som gjør en kontroll etterprøvbar. En leser som ser `None` tror
+    det står noe der.
+
+    Kontroll: bytt tilbake til `str(d["regelsett_versjon"])[:64]`, så
+    består motoren under med `"None"` i stedet for å gi Motorfeil.
+    """
+    from modules.wcag_audit.motor import (Kommandomotor, Motorfeil,
+                                          regelsettversjon)
+
+    for daarlig in (None, 4.10, {"a": 1}, ["axe"], True, "", "   "):
+        with pytest.raises(Motorfeil, match="regelsett_versjon"):
+            regelsettversjon(daarlig)
+
+    # Hele veien gjennom motoren: `null` skal bli Motorfeil, ikke "None".
+    null = json.dumps({"regelsett_versjon": None, "varighet_ms": 5})
+    m = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % null))
+    with pytest.raises(Motorfeil, match="regelsett_versjon"):
+        m.kjor({})
+
+    # Ekte versjoner går igjennom, trimmes, og kappes fortsatt ved 64.
+    assert regelsettversjon(" axe-4.10 ") == "axe-4.10"
+    assert regelsettversjon("v" * 100) == "v" * 64
+
+
 def test_dypt_nostet_motorutdata_er_motorfeil():
     """Codex P1: `json.loads` rekurserer, og fangsten manglet RecursionError.
 

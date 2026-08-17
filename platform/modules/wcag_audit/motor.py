@@ -255,6 +255,29 @@ def heltall(raa) -> int:
     return n
 
 
+def regelsettversjon(raa) -> str:
+    """Motorens regelsettversjon som ekte streng — eller Motorfeil.
+
+    `str(raa)[:64]` var en STILLE OPPFINNELSE (Codex P1): `null` ble
+    `"None"`, `4.10` ble `"4.1"`, og `{"a": 1}` ble `"{'a': 1}"` — alle
+    tre passerer skjemaets `minLength: 1`, så rapporten ble PROMOTERT med
+    en fabrikkert versjon. Og versjonen er ikke pynt: den er hele
+    proveniensen som gjør evidensen tolkbar og etterprøvbar. En leser som
+    ser `axe-4.10` vet hvilke regler som gjaldt; en som ser `None` tror
+    det står noe der.
+
+    En motor som ikke kan oppgi sin egen regelsettversjon, har ikke levert
+    en kontroll vi kan lese — altså Motorfeil, med den dokumenterte
+    feilkvitteringen, ikke en rapport med gjettet innhold.
+    """
+    if not isinstance(raa, str):
+        raise Motorfeil("regelsett_versjon fra motoren er ikke en streng")
+    v = raa.strip()
+    if not v:
+        raise Motorfeil("regelsett_versjon fra motoren er tom")
+    return v[:64]
+
+
 class Kommandomotor:
     """Kjør den konfigurerte motorkommandoen (containeren) og les JSON på
     stdout. Kommandoen kommer fra drift-config (DISPONIT_WCAG_MOTOR), aldri
@@ -351,7 +374,10 @@ class Kommandomotor:
         try:
             d = json.loads(ut.decode("utf-8"))
             return Motorresultat(
-                regelsett_versjon=str(d["regelsett_versjon"])[:64],
+                # `regelsettversjon` kaster Motorfeil direkte: en fabrikkert
+                # `"None"` ville passert skjemaet og blitt promotert som
+                # proveniens.
+                regelsett_versjon=regelsettversjon(d["regelsett_versjon"]),
                 # `heltall` kaster Motorfeil direkte (ikke ValueError), så
                 # `varighet_ms: 1e309` gir den dokumenterte feilkvitteringen
                 # i stedet for en OverflowError ut av kjøreløkka.
