@@ -103,6 +103,34 @@ def _antall(raa, standard: int) -> int:
     return heltall(raa)
 
 
+def _tekst(raa, felt: str) -> str:
+    """Et tekstfelt fra motoren som EKTE streng — eller Motorfeil (Codex P1).
+
+    `str(...)` fant på verdier i stedet for å avvise dem, og fabrikatet var
+    skjemagyldig hele veien:
+
+      * `regel_id` mangler → `str(None)` er `"None"`, som passerer
+        `minLength: 1`. Rapporten ble PROMOTERT med en regel-id motoren
+        aldri rapporterte, og en leser som slår opp `None` i regelsettet
+        finner ingenting og tror det er regelsettet som er utdatert.
+      * `regel_id: {"id": 1}` → `"{'id': 1}"`. Samme sak, men verre: nå
+        står det en repr av en datastruktur der leseren venter en id.
+      * Et eksempel som ikke er en streng (`{"selector": ".x"}`, `5`) ble
+        på samme vis en «selektor» ingen kan kjøre — fabrikert evidens i
+        akkurat det feltet som skal la noen etterprøve funnet.
+
+    Motorutdata er ubetrodd (§2): et felt vi ikke kan lese er en motorfeil,
+    ikke noe modulen skal gjette seg til. Tomme strenger avvises også —
+    `""` bryter skjemaets `minLength: 1` for `regel_id`, og en tom selektor
+    er ikke et eksempel.
+    """
+    if not isinstance(raa, str):
+        raise Motorfeil(f"{felt} fra motoren er ikke en streng")
+    if not raa:
+        raise Motorfeil(f"{felt} fra motoren er tom")
+    return raa
+
+
 def _eksempelliste(raa) -> list:
     """Motorens eksempler som liste — eller Motorfeil (Codex P1).
 
@@ -163,10 +191,10 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
             eksempler = _eksempelliste(f.get("eksempler"))
             maks_eksempler_sett = max(maks_eksempler_sett, len(eksempler))
             funn.append({
-                "regel_id": str(f.get("regel_id"))[:128],
+                "regel_id": _tekst(f.get("regel_id"), "regel_id")[:128],
                 "alvorlighet": f["alvorlighet"],
                 "antall": antall,
-                "eksempler": [str(e)[:MAKS_SELEKTOR]
+                "eksempler": [_tekst(e, "eksempel")[:MAKS_SELEKTOR]
                               for e in eksempler[:MAKS_EKSEMPLER]]})
 
     truffet, tak, verdi = (tuple(resultat.avkortet) + (None, None, None))[:3]

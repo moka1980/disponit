@@ -1955,6 +1955,43 @@ def test_eksempellisten_maa_vaere_en_liste():
         assert r["funn"][0]["eksempler"] == ventet
 
 
+def test_tekstfeltene_fra_motoren_ma_vaere_ekte_strenger():
+    """Codex P1: `str(f.get("regel_id"))[:128]` og `str(e)` FANT PÅ verdier
+    i stedet for å avvise dem, og fabrikatet passerte skjemaet.
+
+    Mangler `regel_id`, blir `str(None)` til `"None"` — en streng med
+    lengde 4, altså innenfor `minLength: 1`. Rapporten promoteres da med
+    en regel-id motoren aldri rapporterte, og den som leser evidensen slår
+    opp `None` i regelsettet, finner ingenting og tror regelsettet er
+    utdatert. En dict blir `"{'id': 1}"`: en repr der leseren venter en id.
+    Samme sak for eksemplene, som er selve etterprøvbarheten — en
+    «selektor» ingen kan kjøre er fabrikert evidens.
+
+    Kontroll: bytt `_tekst(...)` tilbake til `str(...)` i `bygg`, så blir
+    `regel_id` `"None"` i stedet for Motorfeil, og eksempelet `"5"`.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _bygg(**over):
+        f = {"regel_id": "color-contrast", "alvorlighet": "alvorlig",
+             "antall": 3, "eksempler": ["#a"]}
+        f.update(over)
+        return bygg(_motorresultat(funn=(f,)),
+                    payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+
+    for raa in (None, {"id": 1}, 5, 5.0, True, b"color-contrast", ""):
+        with pytest.raises(Motorfeil):
+            _bygg(regel_id=raa)
+        with pytest.raises(Motorfeil):
+            _bygg(eksempler=["#a", raa])
+
+    # Ekte strenger går fortsatt gjennom — også den som må kappes.
+    r = _bygg(regel_id="r" * 200, eksempler=["#a", "x" * 500])
+    assert r["funn"][0]["regel_id"] == "r" * 128
+    assert r["funn"][0]["eksempler"] == ["#a", "x" * 200]
+
+
 def _prosessen_er_dod(pid: int) -> bool:
     """Borte fra prosesstabellen, eller en zombie som venter på å høstes.
 
