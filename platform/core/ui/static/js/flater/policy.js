@@ -6,7 +6,7 @@ import { hentJson, slettPolicy, nyIdempotensnokkel, IkkeFunnetFeil, ApiFeil,
          UautorisertFeil, IngenTilgangFeil } from "../api.js";
 // (`ApiFeil` brukes både til feilkoden fra slettingen og til 5xx-porten i
 // `hentAktiv` — se der.)
-import { VarselBanner, TomTilstand, meldLive } from "../komponenter.js";
+import { VarselBanner, TomTilstand, Feiltilstand, meldLive } from "../komponenter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
 import { harScope } from "../sitekart.js";
 import { medStatus, flateHode } from "./felles.js";
@@ -187,6 +187,39 @@ export function visPolicy(hoved, ctx) {
 // to ting som begge følger av nettopp det: seksjonen navngir sin policy (to
 // like «Slett policy»-knapper er ikke et valg), og bekreftelsen beskriver den
 // tilstanden slettingen faktisk etterlater.
+// GJENBRUKES av policyadmin: eier lette etter slettingen DER utkastlista og
+// «Nytt utkast» bor — ikke på den lesende policy-flaten. Seksjonen henter
+// selv de aktive policyene og rendrer én angre-blokk per policy; `paaEndret`
+// lar verten friske opp sitt eget innhold etter en sletting.
+export function aktivePolicyerSeksjon(ctx, paaEndret) {
+  if (!harScope(ctx, "policy:write")) return el("div", {});
+  const rot = el("section", { class: "aktive-policyer",
+    "aria-label": t("ui.policy.aktive_tittel") });
+  const last = () => {
+    sett(rot, el("h2", { text: t("ui.policy.aktive_tittel") }),
+      el("p", { class: "muted", text: t("ui.policy.aktive_forklaring") }),
+      el("p", { class: "muted", text: t("ui.laster") }));
+    hentJson("/v1/policy/aktive").then((d) => {
+      const policyer = d.policyer || [];
+      sett(rot, el("h2", { text: t("ui.policy.aktive_tittel") }),
+        el("p", { class: "muted", text: t("ui.policy.aktive_forklaring") }),
+        ...(policyer.length
+          ? policyer.map((pd) => angreSeksjon(pd, ctx, () => {
+              last();
+              if (paaEndret) paaEndret();
+            }, policyer.length > 1))
+          : [el("p", { class: "muted",
+              text: t("ui.policy.aktive_ingen") })]));
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(rot, el("h2", { text: t("ui.policy.aktive_tittel") }),
+        Feiltilstand({ paaProvIgjen: last }));
+    });
+  };
+  last();
+  return rot;
+}
+
 function angreSeksjon(d, ctx, tegnPaaNytt, flere = false) {
   if (!harScope(ctx, "policy:write")) return null;
   // Nøkkelen er STABIL PER RENDER (samme R2-idiom som `apneRunde`), ikke per
