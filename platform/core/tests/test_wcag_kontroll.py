@@ -466,6 +466,31 @@ def test_deployportene_register_mot_kodefestet_type(migrator, monkeypatch):
     migrator.rollback()
     assert not any(ukjent in f for f in feil), feil
 
+    # Codex P1: samme rad, men koden sier at typen eies av en ANNEN modul.
+    # Registerraden er autoriteten claim-veien utleder prefiksene fra, så
+    # avviket ville gitt den registrerte modulen rekkevidde over payloads
+    # ment for den kodefestede eieren. Rød.
+    t3 = ok.Oppdragstype(navn=ukjent, handlingsprefikser=(f"{ukjent}.",),
+                         felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+                         eiermodul="m_en_helt_annen",
+                         krever_malautorisasjon=True,
+                         malautorisasjonsdomene="web_hostname")
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, ukjent, t3)
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert any("m_en_helt_annen" in f and ukjent in f for f in feil), feil
+
+    # ... men en type UTEN kodefestet eier (legacy) skal ikke fanges av
+    # eierporten — et krav kan ikke håndheves mot en taus kilde.
+    t4 = ok.Oppdragstype(navn=ukjent, handlingsprefikser=(f"{ukjent}.",),
+                         felter=frozenset({"mal_url"}), paakrevde=frozenset(),
+                         krever_malautorisasjon=True,
+                         malautorisasjonsdomene="web_hostname")
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, ukjent, t4)
+    feil = mod.kontroller(migrator)
+    migrator.rollback()
+    assert not any(ukjent in f for f in feil), feil
+
 
 # --------------------------------------------------------------------------
 # Rapportbygging og sanitering (portene 8–12) — modulen selv.

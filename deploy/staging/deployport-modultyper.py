@@ -3,7 +3,7 @@
 FØR den nye releasen aktiveres. Rød port = deploy stopper (samme mønster
 som «manifest på disk ≠ register», 014a §7).
 
-To porter, begge kryssjekker REGISTERET (databasen) mot den KODEFESTEDE
+Tre porter, alle kryssjekker REGISTERET (databasen) mot den KODEFESTEDE
 typeregistreringen (`platform/core/oppdragskontrakt.OPPDRAGSTYPER`):
 
   1. En rad i `oppdragstype_register` uten kodefestet type: raden gir
@@ -16,6 +16,16 @@ typeregistreringen (`platform/core/oppdragskontrakt.OPPDRAGSTYPER`):
      `krever_malautorisasjon: true`: da har aktiveringsporten (§6) intet
      autorisasjonsbegrep å håndheve, og en handling med observerbar
      trafikk ut kunne aktiveres uten positivt autorisert mål.
+
+  3. (Codex P1) En rad hvis `eiermodul` avviker fra den kodefestede
+     `Oppdragstype.eiermodul`. Autoriteten er registerraden — nettopp
+     derfor er avviket farlig: claim-veien utleder handlingsprefiksene
+     fra typen den REGISTRERTE modulen eier, så en rad som tildeler
+     `kontroll.wcag.nettsted` til en annen modul gir den modulen
+     `kontroll.wcag.`-rekkevidde og dermed payloads ment for
+     `m_wcag_audit`. Porten gjelder kun når koden faktisk NAVNGIR en
+     eier (`eiermodul` er None for de eierløse legacy-typene) — et krav
+     kan ikke håndheves mot en kilde som ikke uttaler seg.
 
 Kjøres med RUNTIME-DSN (kun SELECT). Exit 0 = grønn, 1 = stopp.
 """
@@ -50,6 +60,13 @@ def kontroller(conn) -> list[str]:
                 f" {eiermodul}) uten kodefestet type i OPPDRAGSTYPER —"
                 " raden gir ingen prefikser og et token uten rekkevidde")
             continue
+        if t.eiermodul is not None and eiermodul != t.eiermodul:
+            feil.append(
+                f"'{typenavn}' er registrert med eiermodul {eiermodul!r},"
+                f" men den kodefestede typen eies av {t.eiermodul!r} —"
+                " claim-veien utleder prefiksene fra registerraden, så den"
+                " registrerte modulen ville fått rekkevidde over payloads"
+                " ment for den kodefestede eieren")
         if klasse == "ekstern_lesing" and not t.krever_malautorisasjon:
             feil.append(
                 f"'{typenavn}' er registrert under en ekstern_lesing-"
