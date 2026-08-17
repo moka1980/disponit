@@ -17,6 +17,7 @@ gjort feltbredden til en funksjon av navnet på handlingen.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 
@@ -174,6 +175,22 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
 MALDOMENEFELT: dict[str, str] = {"web_hostname": "mal_url"}
 
 
+#: Vertsnavnet i den ENE formen Python og nettleseren garantert leser
+#: likt: ren ASCII, bokstaver/siffer/bindestrek, minst to etiketter, og en
+#: toppetikett som begynner med en bokstav.
+#:
+#: Alt utenfor dette er ikke «uvanlig», det er TVETYDIG — se
+#: `normaliser_vertsnavn`. Punycode (`xn--p1ai`) er med vilje innenfor:
+#: den formen er allerede nettleserens egen normalform, så de to sidene
+#: leser den likt. Toppetiketten «begynner med bokstav» er det som skiller
+#: et DNS-navn fra en IPv4-lignende verdi (`0x7f.1`, `127.0.0.1`), som
+#: nettleseren normaliserer med helt egne regler.
+_VERTSNAVN = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*"
+    r"\.[a-z]([a-z0-9-]{0,61}[a-z0-9])?\Z")
+
+
 def normaliser_vertsnavn(raa: object) -> str | None:
     """https-URL -> vertsnavn i normalform, ellers None.
 
@@ -182,9 +199,47 @@ def normaliser_vertsnavn(raa: object) -> str | None:
     NØYAKTIG samme vert og ellers ville vært et gratis omgåelsestegn.
     `d.port` er en property som selv kaster på ulovlig port — den leses
     inne i vakten slik at et ubetrodd felt gir None, aldri et unntak.
+
+    DEN SOM LESER URL-EN TIL SLUTT ER CHROMIUM (Codex P1). `mal_url` går
+    UENDRET videre til motoren, mens denne funksjonen avgjør hvilken vert
+    plattformen mener er autorisert — både i `malbindingsbrudd` og i
+    kvitteringens `ressurs_id`. Er Python og WHATWG-parseren uenige om
+    hvor verten slutter, navngir HELE plattformen én vert mens nettleseren
+    besøker en annen:
+
+      * `https://allowed.example\\@evil.example/` — for WHATWG er
+        omvendt skråstrek det samme som `/` i en special-scheme-URL, så
+        authority er `allowed.example` og resten er sti. `urlsplit` regner
+        `\\` som en helt vanlig tegn i netloc, tar delen etter SISTE `@`
+        som vert, og svarer `evil.example`. Attestasjonen for
+        `evil.example` — en vert angriperen faktisk kontrollerer — ville
+        altså passert bindingen, mens trafikken gikk til
+        `allowed.example`. Nøyaktig den uautoriserte utgående trafikken
+        målautorisasjonen finnes for å hindre, med et bevis som ser
+        gyldig ut hele veien.
+      * `https://evil%2eexample/`, `https://пример.example/`,
+        `https://evil.example。x/` — nettleseren prosentdekoder,
+        IDNA-mapper og deler på ideografisk punktum; `urlsplit` gjør
+        ingen av delene og gir en annen streng.
+
+    Vakten er derfor todelt, og begge deler trengs: omvendt skråstrek
+    avvises på RÅSTRENGEN (i den farlige formen over er `hostname` en
+    plettfri LDH-streng, så et mønster alene ser ingenting), og verten må
+    stå i `_VERTSNAVN` — den formen begge parsere leser likt.
+
+    Å avvise er riktig utfall og ikke et tap: kalleren behandler None som
+    `malautorisasjon_mal_ugyldig` / manglende binding, altså fail-closed.
+    En vert som er tvetydig for nettleseren er en vert plattformen ikke
+    KAN love noe om, og en bestilling ingen kan lese entydig skal stoppe
+    hos den som bestilte den.
     """
     from urllib.parse import urlsplit
     if not isinstance(raa, str) or not raa:
+        return None
+    # FØR parsingen: `urlsplit` skjuler den — se `hostname` over.
+    # Nettleseren skriver om `\` til `/` overalt i en special-scheme-URL,
+    # også i stien, så URL-en motoren HENTER er ikke den som ble bestilt.
+    if "\\" in raa:
         return None
     try:
         d = urlsplit(raa)
@@ -193,7 +248,10 @@ def normaliser_vertsnavn(raa: object) -> str | None:
         return None
     if d.scheme != "https" or not vert:
         return None
-    return vert.rstrip(".") or None
+    vert = vert.rstrip(".")
+    if len(vert) > 253 or not _VERTSNAVN.match(vert):
+        return None
+    return vert
 
 
 def avtrykk(raa: object) -> str:

@@ -658,6 +658,72 @@ def test_malautorisasjonen_bindes_til_verten_som_kontrolleres():
         ("sikkerhet", "hoy")
 
 
+def test_maalet_leses_som_nettleseren_leser_det():
+    """Codex P1: `mal_url` går UENDRET til motoren, så det er Chromium som
+    leser den til slutt — og WHATWG-parseren er uenig med `urlsplit`.
+
+    `https://allowed.example\\@evil.example/`: for WHATWG er omvendt
+    skråstrek det samme som `/` i en special-scheme-URL, så authority er
+    `allowed.example` og `@evil.example/` er sti. `urlsplit` regner `\\`
+    som et helt vanlig tegn i netloc, tar delen etter SISTE `@` som vert
+    og svarer `evil.example`.
+
+    Det er den farlige retningen: en angriper som faktisk kontrollerer
+    `evil.example` kan skaffe en EKTE `domenekontroll_verifisert` for den
+    verten, sende `ressurs_id: "evil.example"`, og passere bindingen —
+    mens nettleseren besøker `allowed.example`. Både `malbindingsbrudd` og
+    kvitteringens `ressurs_id` ville da navngitt en helt annen vert enn
+    den som faktisk ble kontrollert.
+
+    Kontroll: fjern `\\`-vakten i `normaliser_vertsnavn`, så blir
+    `evil.example` godtatt igjen og første seksjon blir rød.
+    """
+    import oppdragskontrakt as ok
+    from modules.wcag_audit.controller import _ressursbinding
+
+    def brudd(**ev):
+        return ok.malbindingsbrudd(ev.get("handling"), ev)
+
+    # Selve hullet: attestasjon for verten `urlsplit` ser, trafikk til den
+    # nettleseren ser. Bestillingen skal STOPPE, ikke velge en av dem.
+    tvetydig = "https://allowed.example\\@evil.example/"
+    assert ok.normaliser_vertsnavn(tvetydig) is None
+    for rid in ("evil.example", "allowed.example"):
+        assert brudd(handling="kontroll.wcag.nettsted", mal_url=tvetydig,
+                     ressurs_id=rid)[0] == "malautorisasjon_mal_ugyldig", rid
+
+    # Samme uenighet, andre stavemåter: nettleseren prosentdekoder,
+    # IDNA-mapper og deler på ideografisk punktum. `urlsplit` gjør ingen
+    # av delene, så strengene ville pekt på hver sin vert.
+    for url in ("https://evil%2eexample/",       # prosentdekodes
+                "https://пример.example/",
+                "https://evil.example。x/",  # ideografisk punktum
+                "https://0x7f.1/",               # IPv4-lignende
+                "https://127.0.0.1/", "https://[::1]/",
+                "https://kunde.example\\evil.example/",
+                "https://kunde.example/a\\b"):   # sti, men samme omskriving
+        assert ok.normaliser_vertsnavn(url) is None, url
+
+    # ... og vanlige mål er urørt, inkludert punycode: den formen ER
+    # nettleserens egen normalform, så begge parsere leser den likt.
+    for url, vent in (("https://kunde.example/a/b", "kunde.example"),
+                      ("https://KUNDE.Example./", "kunde.example"),
+                      ("https://u:p@kunde.example:443/", "kunde.example"),
+                      ("https://a-b.c-d.example/", "a-b.c-d.example"),
+                      ("https://xn--p1ai.example/", "xn--p1ai.example"),
+                      ("https://k.no/", "k.no")):
+        assert ok.normaliser_vertsnavn(url) == vent, url
+    assert brudd(handling="kontroll.wcag.nettsted",
+                 mal_url="https://kunde.example/a/b",
+                 ressurs_id="kunde.example") is None
+
+    # Kvitteringens binding arver vakten fordi den bruker SAMME funksjon —
+    # ellers ville modulen signert en vert plattformen aldri autoriserte.
+    assert _ressursbinding({"mal_url": tvetydig}) is None
+    assert _ressursbinding({"mal_url": "https://kunde.example/"}) == \
+        "kunde.example"
+
+
 @pg
 def test_malbindingsporten_staar_i_beslutningsveien(migrator):
     """Porten hører hjemme i `sikker_beslutning_pg`, ikke i `api.kjerne`:
