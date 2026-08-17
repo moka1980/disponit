@@ -31,6 +31,14 @@ FAMILIE_DAGER = 365
 TOKEN_DAGER = 30
 HEMMELIGHET_TTL_MIN = 60
 
+#: Budsjett for HELE den uautentiserte innløsningsruten, per minutt og per
+#: prosess (Codex P1). Det er ikke prosessens standardgrense: den er satt av
+#: ytelsesporten (12 000/min) for beslutningsveien, og innløsning er ingen
+#: varm sløyfe — den skjer én gang per utrulling. Grensen skal derfor kunne
+#: være liten nok til å bety noe for en flate der kalleren selv velger
+#: nøkkelen sin.
+INNLOS_RATE_PER_MIN = 60
+
 ONBOARD_SCOPE = "modules:onboard"
 
 
@@ -136,16 +144,35 @@ def innlos_endepunkt(tjeneste, request: Request) -> Response:
         oid = uuid.UUID(oid_del)
     except ValueError:
         return _feilsvar("onboarding_avvist", rid)
+    # RATEN FØR TILKOBLINGEN, OG RUTEN FØR ID-EN (Codex P1).
+    #
+    # To feil i én linje. Nøkkelen var utelukkende onboarding-id-en fra
+    # kroppen — altså KALLERENS EGEN INPUT: en angriper som sender en fersk,
+    # gyldig UUID i hver request treffer aldri samme bøtte, slipper alltid
+    # gjennom, og trenger verken hemmelighet eller kjent id for å holde
+    # `innlos_onboarding` i gang mot Postgres i det uendelige. Og siden
+    # sjekken sto ETTER `pool.hent()`, hadde hver slik request alt tatt en
+    # pool-tilkobling — nettopp ressursen grensen finnes for å verne.
+    #
+    # Per-id-grensen BLIR STÅENDE: den er brute-force-vernet for et stjålet
+    # id-ledd (hemmeligheten er 256 bit, men et fritt antall forsøk er
+    # fortsatt et gratis orakel). Over den ligger et budsjett for HELE ruten,
+    # som ingen valgt id kan gå utenom. Rutebudsjettet sjekkes først, så en
+    # id-flom ikke kan fylle nøkkelrommet på veien.
+    #
+    # Ærlig om kostnaden: et delt budsjett betyr at støy på ruten kan
+    # forsinke en LEGITIM innløsning. Det er en akseptert bytte her —
+    # innløsning skjer ved utrulling, ikke i en varm sløyfe, og alternativet
+    # er ubegrenset databasetrafikk fra en uautentisert flate.
+    if not tjeneste.rate.slipp_gjennom("onb:innlos", tak=INNLOS_RATE_PER_MIN) \
+            or not tjeneste.rate.slipp_gjennom(f"onb:{oid}"):
+        tjeneste.logg.hendelse("rate_grense", rid)
+        return _feilsvar("rate_grense", rid)
     try:
         conn = tjeneste.pool.hent()
     except (TimeoutError, psycopg.Error):
         return _feilsvar("db_utilgjengelig", rid)
     try:
-        # Rate på onboarding-id-en: hemmeligheten er 256 bit, men et fritt
-        # antall forsøk er fortsatt et gratis orakel for et stjålet id-ledd.
-        if not tjeneste.rate.slipp_gjennom(f"onb:{oid}"):
-            tjeneste.logg.hendelse("rate_grense", rid)
-            return _feilsvar("rate_grense", rid)
         tid = uuid.uuid4()
         token_secret = secrets.token_hex(32)
         try:

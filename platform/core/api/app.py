@@ -209,16 +209,39 @@ class Rategrense:
     faktisk leser den.
     """
 
+    #: Taket på antall nøkler som holdes samtidig (Codex P1). Nøkkelen er
+    #: ikke alltid en identitet SERVEREN har utstedt: den uautentiserte
+    #: innløsningsruten nøkler på onboarding-id-en fra kroppen, altså på
+    #: KLIENTINPUT. En dict som bare vokser er da en gratis minneflate —
+    #: hver ferske id la igjen en liste ingen noensinne ser på igjen, siden
+    #: opprydding bare skjer når nøyaktig samme nøkkel kommer tilbake.
+    #: Over taket feies alle nøkler uten treff i vinduet; de er per
+    #: definisjon uten betydning for en grense som bare ser 60 sekunder
+    #: bakover.
+    NOKKELTAK = 4096
+
     def __init__(self, per_minutt: int) -> None:
         self.per_minutt = per_minutt
         self._treff: dict[str, list[float]] = {}
         self._laas = threading.Lock()
 
-    def slipp_gjennom(self, nokkel: str, naa: float | None = None) -> bool:
+    def slipp_gjennom(self, nokkel: str, naa: float | None = None, *,
+                      tak: int | None = None) -> bool:
+        """`tak` overstyrer budsjettet for NØYAKTIG denne nøkkelen.
+
+        Ruter som trenger et eget, strammere budsjett enn prosessens
+        standard (12 000/min, satt av ytelsesporten) sender det inn her i
+        stedet for å holde sin egen grense — én bøtteimplementasjon, ett
+        sted å lese om vinduet.
+        """
         naa = naa if naa is not None else time.monotonic()
+        grense = tak if tak is not None else self.per_minutt
         with self._laas:
+            if len(self._treff) > self.NOKKELTAK:
+                self._treff = {k: v for k, v in self._treff.items()
+                               if v and v[-1] > naa - 60.0}
             tider = [t for t in self._treff.get(nokkel, ()) if t > naa - 60.0]
-            if len(tider) >= self.per_minutt:
+            if len(tider) >= grense:
                 self._treff[nokkel] = tider
                 return False
             tider.append(naa)

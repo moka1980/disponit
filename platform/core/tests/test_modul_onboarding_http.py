@@ -317,6 +317,42 @@ def test_token_kan_ikke_claime_annen_modul_eller_release(migrator, miljo,
 
 
 @pg
+def test_innlosning_rates_selv_nar_kalleren_varierer_id_en(migrator, miljo,
+                                                           monkeypatch):
+    """Codex P1: ratenøkkelen var UTELUKKENDE onboarding-id-en fra kroppen,
+    altså kallerens egen input. En angriper som sender en fersk, gyldig
+    UUID i hver request traff aldri samme bøtte, slapp alltid gjennom, tok
+    en pool-tilkobling og kjørte `innlos_onboarding` mot Postgres — uten å
+    kjenne verken hemmelighet eller en eneste ekte onboarding-id.
+
+    Rutebudsjettet er nøkkelen ingen valgt id kan gå utenom. Tallet
+    monkeypatches ned her; det som prøves er at grensen finnes og at den
+    ikke lar seg omgå av variasjon.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `onb:innlos`-sjekken og la bare
+    `onb:<id>` stå igjen."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    import api.modulonboarding as mo
+
+    monkeypatch.setattr(mo, "INNLOS_RATE_PER_MIN", 3)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            koder = []
+            for _ in range(5):
+                # FERSK id hver gang: per-id-bøtta ser aldri samme nøkkel.
+                falsk = f"onb_{uuid.uuid4()}.{secrets.token_hex(32)}"
+                r = c.post("/v1/modul/onboarding/innlos",
+                           json={"hemmelighet": falsk})
+                koder.append(r.status_code)
+            assert koder[:3] == [403, 403, 403], koder
+            assert koder[3:] == [429, 429], koder
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
 def test_claim_med_dypt_nostet_kropp_er_request_feil(migrator, miljo,
                                                      monkeypatch):
     """Codex P2: `json.loads` er REKURSIV. Claim-rutens LUKKEDE skjema
