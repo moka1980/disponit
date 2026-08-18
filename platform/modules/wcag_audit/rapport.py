@@ -253,6 +253,37 @@ def _eksempelliste(raa) -> list:
     return list(raa)
 
 
+def _sidestatus(raa) -> str:
+    """Motorens sidestatus som EKTE enumverdi — eller Motorfeil (Codex P1).
+
+    `raa if raa in ("ok", "feilet") else "feilet"` var en STILLE OMSKRIVING,
+    og den skrev alltid samme vei: mot en påstand om at siden feilet.
+
+      * `status` mangler helt → rapporten sier `feilet` for en side
+        motoren aldri sa noe om.
+      * `status: "OK"`, `status: "ferdig"`, `status: null`, `status: 3` →
+        samme sak. Verdien er skjemagyldig, så den går rett gjennom
+        valideringen og videre til PROMOTERT evidens.
+
+    Det er ikke en sanering, det er fabrikert evidens: rapporten hevder en
+    sidefeil hos kunden som motoren ikke rapporterte, og det er nøyaktig
+    den slags påstand promotert evidens ikke skal kunne bære — en leser som
+    ser `feilet` tror kontrollen faktisk møtte en side som ikke lot seg
+    kontrollere. At retningen er «pessimistisk» gjør den ikke ufarlig: en
+    WCAG-rapport med fabrikerte sidefeil er et funn mot et nettsted ingen
+    har målt.
+
+    Ubetrodde utdata vi ikke kan lese er en motorfeil (§2), og den
+    dokumenterte veien for uleselig motorutdata er feil-kvitteringen — ikke
+    en rapport modulen har fylt hullene i selv. `isinstance(..., str)` står
+    der fordi enumen er strenger: uten den ville `True` og `1` blitt
+    sammenlignet med tall-likhet et annet sted i koden en dag.
+    """
+    if not isinstance(raa, str) or raa not in ("ok", "feilet"):
+        raise Motorfeil("status fra motoren er ikke 'ok' eller 'feilet'")
+    return raa
+
+
 def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     """-> rapport-dict, klar for skjemavalidering (som controlleren ALLTID
     kjører selv før opplasting — serveren validerer uansett, men modulen
@@ -270,8 +301,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
         if not isinstance(s, dict):
             raise Motorfeil("side-post uleselig")
         sider.append({"url": _ren_url(s.get("url"), autorisert_vert),
-                      "status": s.get("status")
-                      if s.get("status") in ("ok", "feilet") else "feilet"})
+                      "status": _sidestatus(s.get("status"))})
     if not sider:
         raise Motorfeil("motoren kontrollerte ingen sider")
 

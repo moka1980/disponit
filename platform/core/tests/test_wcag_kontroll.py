@@ -1353,6 +1353,43 @@ def test_rapporterte_sider_bindes_til_det_autoriserte_maalet():
              kontekst=_kontekst())
 
 
+def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
+    """Codex P1: en `status` vi ikke kan lese ble skrevet om til `feilet`.
+
+    Omskrivingen var skjemagyldig hele veien, så den endte i PROMOTERT
+    evidens: rapporten påsto en sidefeil hos kunden som motoren aldri
+    rapporterte. Manglende felt, `"OK"`, `null`, et tall — alle ble til
+    samme fabrikkerte påstand. Uleselige motorutdata skal gi den
+    dokumenterte feil-kvitteringen (§2), ikke en rapport modulen har fylt
+    hullene i selv.
+
+    Kontroll: bytt `_sidestatus(...)` tilbake til
+    `s.get("status") if s.get("status") in ("ok", "feilet") else "feilet"`,
+    så blir denne rød — hver eneste variant passerer da som `feilet`.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+    for side in ({"url": "https://kunde.example/side"},          # mangler
+                 {"url": "https://kunde.example/side", "status": None},
+                 {"url": "https://kunde.example/side", "status": "OK"},
+                 {"url": "https://kunde.example/side", "status": "ferdig"},
+                 {"url": "https://kunde.example/side", "status": ""},
+                 {"url": "https://kunde.example/side", "status": 3},
+                 {"url": "https://kunde.example/side", "status": True},
+                 {"url": "https://kunde.example/side",
+                  "status": ["ok"]}):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(sider=(side,)),
+                 payload=_payload(), kontekst=_kontekst())
+    # Motsatsen: begge de ekte enumverdiene bæres videre uendret — porten
+    # avviser det uleselige, den skriver ikke om det lesbare.
+    for status in ("ok", "feilet"):
+        r = bygg(_motorresultat(sider=({"url": "https://kunde.example/side",
+                                        "status": status},)),
+                 payload=_payload(), kontekst=_kontekst())
+        assert r["sider_kontrollert"][0]["status"] == status
+
+
 def test_kvittering_og_rapport_binder_til_samme_vert():
     """Codex P1: kvitteringens `ressurs_id` og rapportens sidebinding er
     ÉN avledning (`oppdragskontrakt.malvert`), ikke to.
