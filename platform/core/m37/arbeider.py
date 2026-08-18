@@ -73,6 +73,12 @@ KAPABILITET_S = 60
 UTFORELSESFRIST_S = 24 * 3600
 EVIDENSFRIST_S = 30 * 24 * 3600
 
+#: Hvor ofte domenekonflikter drenereres til M-37-saker (039, Codex P1).
+#: Sjeldnere enn hovedløkkens sekund: en konflikt venter uansett på et
+#: menneske med to par øyne, og et oppslag per sekund på en tabell som
+#: normalt har null kandidater er ren støy.
+KONFLIKTDRENERING_S = 60
+
 
 class Leasetap(RuntimeError):
     """Fencing-WHERE traff null rader. Alt arbeid på saken avbrytes."""
@@ -278,6 +284,47 @@ def frigi_utlopte(conn: psycopg.Connection) -> int:
     antall = conn.execute("SELECT frigi_utlopte_claims()").fetchone()[0]
     conn.commit()
     return int(antall)
+
+
+def drener_domenekonflikter(conn: psycopg.Connection) -> dict:
+    """Domeneovertakelser som venter på sin M-37-sak (039, Codex P1).
+
+    Overtakelsen skjer i basen, men SAKEN krever tenantens DEK og runtime-DML
+    — nøyaktig det denne prosessen har og verifiseringsarbeideren
+    (`disponit_domener`) med vilje ikke har. Uten dreneringen mistet den
+    forbigåtte tenanten autorisasjonen mens utfordreren sto uløselig i
+    `avklaring_kreves`: bare `avgjor_domeneovertakelse` kan løfte noen ut, og
+    den nås bare gjennom en sak.
+
+    Her, og ikke i en egen unit: dette ER unntakskøens prosess, og en sak som
+    skal behandles av M-37 hører hjemme der M-37 alt har både nøkkelen og
+    køen. `sikre_ventende_overtakelsessaker` er idempotent per (hostname,
+    generasjon), så et kall som finner alt gjort koster ett oppslag.
+
+    En UVENTET databasefeil (manglende grant, funksjon som ikke er utrullet,
+    skjemafeil) fanges ikke opp her (Codex P2): den navngis i journalen og
+    kastes videre. Ellers ville en feil som rammer HVER rad blitt liggende som
+    en `feilet`-oppføring i en utskrift ingen alarmerer på, mens løkken skrev
+    heartbeat `ok` og hver eneste overtakelse ble stående uten sak.
+    """
+    from api.domeneovertakelse import sikre_ventende_overtakelsessaker
+    try:
+        res = sikre_ventende_overtakelsessaker(conn)
+    except psycopg.OperationalError:
+        raise             # tapt forbindelse: hovedløkkens egen, kjente vei
+    except psycopg.Error as e:
+        print(json.dumps({"hendelse": "domenekonflikt_drenering_svikt",
+                          "feiltype": type(e).__name__}), flush=True)
+        raise
+    # Bare når noe faktisk skjedde: en tom drenering er normaltilstanden og
+    # skal ikke fylle journalen hvert minutt. `foreldet` teller med — en rad
+    # som flyttet seg mellom plukket og saken er ikke en feil, men den er
+    # heller ikke ingenting: skjer det ofte for samme hostnavn, er det en
+    # overtakelseskarusell noen bør se på.
+    if res["saker"] or res["feilet"] or res.get("foreldet"):
+        print(json.dumps({"hendelse": "domenekonflikt_drenert", **res}),
+              flush=True)
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -870,6 +917,9 @@ def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
     klient = Beslutningsklient(basis_url)
     behandlet = 0
     runder = 0
+    # Første syklus drenerer alltid: en konflikt som oppstod mens arbeideren
+    # var nede skal ikke måtte vente et helt intervall på sin sak.
+    neste_drenering = 0.0
     try:
         while maks_runder is None or runder < maks_runder:
             runder += 1
@@ -878,6 +928,9 @@ def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
                 if conn is None or conn.closed:
                     conn = koble(dsn)
                 frigi_utlopte(conn)
+                if time.monotonic() >= neste_drenering:
+                    neste_drenering = time.monotonic() + KONFLIKTDRENERING_S
+                    drener_domenekonflikter(conn)
                 res = behandle_en(conn, klient)
             except psycopg.OperationalError:
                 status, res = "db_utilgjengelig", None

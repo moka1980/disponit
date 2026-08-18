@@ -14,6 +14,14 @@ import { flateHode, kvRad } from "./felles.js";
 
 const ALVOR = ["kritisk", "alvorlig", "moderat", "lav"];
 
+// Overskriftsnivåene (§7). Flaten eier h1, delen som monteres i en fane eier
+// NIVA_DEL — og rapportens egne bolker er BARN av delen, ikke søsken av den.
+// De to står her sammen fordi de bare gir mening i forhold til hverandre:
+// flyttes delen et nivå, må bolkene følge med, ellers hopper disposisjonen.
+const NIVA_DEL = 2;
+const DEL = `h${NIVA_DEL}`;
+const BOLK = `h${NIVA_DEL + 1}`;
+
 function tabell(captionKode, kolonner, rader) {
   const thead = el("thead", {}, el("tr", {},
     ...kolonner.map((k) => el("th", { scope: "col", text: k }))));
@@ -37,11 +45,11 @@ function rapportInnhold(d) {
   for (const a of ALVOR) {
     kvRad(dl, t(`alvorlighet.${a}`), String(r.sammendrag[a]));
   }
-  rot.append(el("h2", { text: t("ui.rapport.sammendrag") }), dl);
+  rot.append(el(BOLK, { text: t("ui.rapport.sammendrag") }), dl);
 
   // ÆRLIGHETEN — alltid som tekst i selve rapporten (§7).
   const aerlighet = el("div", { class: "rapport-aerlighet" },
-    el("h2", { text: t("ui.rapport.dekning") }),
+    el(BOLK, { text: t("ui.rapport.dekning") }),
     el("p", { text: t("ui.rapport.manuelle_ikke_vurdert") }));
   if (r.avkortet && r.avkortet.truffet) {
     aerlighet.append(el("p", {
@@ -59,14 +67,14 @@ function rapportInnhold(d) {
   }
   rot.append(aerlighet);
 
-  rot.append(el("h2", { text: t("ui.rapport.sider") }),
+  rot.append(el(BOLK, { text: t("ui.rapport.sider") }),
     tabell("ui.rapport.sider_caption",
       [t("ui.rapport.kol.url"), t("ui.rapport.kol.status")],
       r.sider_kontrollert.map((s) =>
         [s.url, t(`sidestatus.${s.status}`, s.status)])));
 
   const funn = r.funn || [];
-  rot.append(el("h2", { text: t("ui.rapport.funn") }));
+  rot.append(el(BOLK, { text: t("ui.rapport.funn") }));
   if (funn.length) {
     rot.append(tabell("ui.rapport.funn_caption",
       [t("ui.rapport.kol.regel"), t("ui.rapport.kol.alvorlighet"),
@@ -161,7 +169,11 @@ export function visRapport(hoved, ctx) {
     }
   });
 
+  // Inne i WCAG-kontroll-fanene: samleflaten eier h1, delene er NIVA_DEL
+  // (overskriftsnivåer i rekkefølge, §7). Rapportens bolker ligger under
+  // denne — se BOLK.
   sett(hoved,
-    ...flateHode(t("ui.rapport.tittel"), t("ui.rapport.under")),
+    el(DEL, { text: t("ui.rapport.tittel") }),
+    el("p", { class: "sub", text: t("ui.rapport.under") }),
     form, resultat);
 }

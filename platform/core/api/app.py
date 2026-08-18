@@ -865,6 +865,13 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
 
     # 038: bestillingsveien — kundeflatens produsent inn i beslutningsveien.
     from . import bestilling as bestillingsmodul
+    from . import domener as domenermodul
+
+    def dm_liste(request: Request) -> Response:
+        return domenermodul.liste_endepunkt(tjeneste, request)
+
+    def dm_utsted(request: Request) -> Response:
+        return domenermodul.utsted_endepunkt(tjeneste, request)
 
     def bs_bestill(request: Request) -> Response:
         return bestillingsmodul.bestill_endepunkt(tjeneste, request)
@@ -896,6 +903,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # 035: onboarding-rutene er statiske stier, registrert her sammen
         # med de andre maskinrutene.
         Route("/v1/bestilling", bs_bestill, methods=["POST"]),
+        Route("/v1/domener", dm_liste, methods=["GET"]),
+        Route("/v1/domener", dm_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
         Route("/v1/modul/token/roter", mo_roter, methods=["POST"]),
@@ -1336,6 +1345,13 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # deklarasjonsform som /v1/oppdrag/*. Innløsningen autentiseres av
     # selve engangshemmeligheten, rotasjonen av modultokenet.
     ("POST", "/v1/bestilling"):              "bestilling:opprett",
+    # 039: selvbetjent domeneverifisering — samme autoritet som bestilling
+    # (domeneregisteret ER porten bestillingsveien håndhever).
+    # GET er en LESERUTE og følger leseinvariantens scopes (pr008-porten):
+    # å SE domenelisten er lesing av egen tilstand; å ENDRE den krever
+    # bestilling:opprett. Flaten selv ligger uansett bak admin-ruten.
+    ("GET",  "/v1/domener"):                 "decisions:read",
+    ("POST", "/v1/domener"):                 "bestilling:opprett",
     ("POST", "/v1/modul/onboarding"):        "modules:onboard",
     ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
     ("POST", "/v1/modul/token/roter"):       "modultoken",

@@ -55,6 +55,7 @@ disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
 disponit-artefaktrydding.service disponit-artefaktrydding.timer
 disponit-evidensreaper.service disponit-evidensreaper.timer
+disponit-domeneverifisering.service disponit-domeneverifisering.timer
 disponit-varselsender.service disponit-varselsender.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -123,6 +124,52 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "startet i 'permission denied'. Kjør deploy/staging/oppsett-postgresql.sh"
   echo "på nytt (den oppretter rollen disponit_domener og skriver DSN-en),"
   echo "og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 039 (Codex P2): ARBEIDERPORTEN — grantet og legitimasjonen må bygge på
+# SAMME invariant. Migrasjonen nøkler EXECUTE på
+# `ventende_overtakelseskonflikter` til om rollen `disponit_arbeider` finnes i
+# basen; `skriv_cred m37` under velger legitimasjonen på om
+# DISPONIT_ARBEIDER_URL er satt. De to kan avvike, og avviket er STILLE:
+# finnes rollen uten variabelen, kjører m37 som `disponit` mot en funksjon
+# runtime nettopp mistet, og hver domeneovertakelse blir stående i
+# `avklaring_kreves` uten sak. Fallbacken i `skriv_cred`-linjen er derfor bare
+# gyldig når rollen HELLER IKKE finnes — og det er nøyaktig det denne porten
+# krever. Lesende (`pg_roles`), i subshell, FØR første mutasjon.
+if ! ARBEIDERROLLE=$( set -a; . "$MILJOFIL"; set +a
+      "$ROT/.venv/bin/python" -c '
+import os, psycopg
+with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+    print("ja" if c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s",
+                            ("disponit_arbeider",)).fetchone() else "nei")
+' 2>&1 ); then
+  echo "AVBRUTT: kunne ikke lese rollekatalogen (pg_roles) i runtime-basen."
+  echo "$ARBEIDERROLLE" | tail -3
+  echo "Porten avgjør om m37-unitten skal ha den dedikerte arbeiderrollen"
+  echo "eller runtime-DSN-en, og den gjetter ikke."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+ARBEIDER_DSN_SATT=$( set -a; . "$MILJOFIL"; set +a
+  if [ -n "${DISPONIT_ARBEIDER_URL:-}" ]; then echo ja; else echo nei; fi )
+if ! vurder_arbeiderskille "$ARBEIDER_DSN_SATT" "$ARBEIDERROLLE"; then
+  echo "AVBRUTT: M-37s rolleskille er halvferdig — basen og $MILJOFIL sier"
+  echo "ikke det samme (rollen disponit_arbeider finnes: $ARBEIDERROLLE,"
+  echo "DISPONIT_ARBEIDER_URL satt: $ARBEIDER_DSN_SATT)."
+  if [ "$ARBEIDERROLLE" = ja ]; then
+    echo "Rollen finnes, så migrasjon 039 har GITT den EXECUTE på"
+    echo "ventende_overtakelseskonflikter og REVOKET den fra disponit. Uten"
+    echo "DSN-en ville m37-unitten koblet seg opp som disponit og feilet på"
+    echo "hver eneste konfliktdrenering — mens hver domeneovertakelse ble"
+    echo "stående uten M-37-sak."
+  else
+    echo "DSN-en peker på en rolle som ikke finnes i basen: m37-unitten"
+    echo "ville ikke kunne autentisere i det hele tatt."
+  fi
+  echo "Kjør deploy/staging/oppsett-postgresql.sh (idempotent) — den"
+  echo "oppretter rollen OG skriver DSN-en, slik at de to følges ad — og"
+  echo "kjør så opp.sh igjen."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -330,7 +377,9 @@ systemctl stop disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer disponit-evidensreaper.timer \
     disponit-domenerevalidering.service \
     disponit-artefaktrydding.service \
-    disponit-evidensreaper.service 2>/dev/null || true
+    disponit-evidensreaper.service \
+    disponit-domeneverifisering.timer \
+    disponit-domeneverifisering.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
@@ -401,6 +450,8 @@ systemctl enable --now disponit-domenerevalidering.timer \
 # 038 §5: evidensfrist-reaperen — samme form (oneshot bak timer, kjøres
 # som disponit-domener; hele regelen ligger i reap_evidensfrister i basen).
 systemctl enable --now disponit-evidensreaper.timer
+# 039: selvbetjent domeneverifisering — hvert 5. minutt.
+systemctl enable --now disponit-domeneverifisering.timer
 # Varselsenderen: samme form, og den MÅ startes igjen her. Steg 5 stopper
 # timeren i vedlikeholdsvinduet — uten denne linjen var utrullingen det som
 # slo senderen av, permanent, og køen ville bare vokst. Timeren, ikke
