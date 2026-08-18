@@ -2045,6 +2045,14 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
 
     subprocess.run(["install", "-d", "-m", "750", "-o", "root",
                     "-g", ARBEIDER_BRUKER, str(DRIFT_KONF)], check=True)
+    # FORELDEREN må kunne traverseres (målt: 700 på /etc/disponit ga
+    # PermissionError på kontekst.json — en fil arbeideren hadde lesrett
+    # til, bak en katalog den ikke kunne gå gjennom). Samme grep som
+    # oppsett-postgresql.sh gjør per deploy; her i tillegg fordi fase 9
+    # er idriftsettelsen og ikke skal avhenge av NESTE deploy.
+    subprocess.run(["chgrp", ARBEIDER_BRUKER, str(DRIFT_KONF.parent)],
+                   check=True)
+    subprocess.run(["chmod", "710", str(DRIFT_KONF.parent)], check=True)
 
     def _skriv(navn: str, innhold: str, *, lesbar_for_arbeideren: bool):
         """Filen skrives, så rettes rettighetene — i den rekkefølgen, slik
