@@ -633,6 +633,52 @@ def test_konfliktoppramsingen_er_arbeiderens_alene(migrator):
         assert mottakere == {"disponit"}, mottakere
 
 
+def test_utrullingen_maaler_samme_invariant_som_grantet():
+    """Codex P2: grantet nøkles til at ROLLEN `disponit_arbeider` finnes,
+    mens `opp.sh` valgte m37-legitimasjonen på om DISPONIT_ARBEIDER_URL er
+    SATT. To ulike fakta om samme rolleskille — og avviket er stille: finnes
+    rollen uten variabelen (halvferdig rolleutrulling), kobler arbeideren seg
+    opp som `disponit` mot funksjonen 039 nettopp REVOKET fra runtime, og hver
+    domeneovertakelse blir stående i `avklaring_kreves` uten sak.
+
+    Porten er derfor ENIGHET mellom basen og miljøfilen, målt FØR første
+    mutasjon. Verdikten kjøres mot den rene funksjonen i lib-opp.sh, slik
+    helsekodeporten gjør — ingen base, ingen utrulling.
+
+    MUTASJONEN SOM DREPER DENNE: la `vurder_arbeiderskille` godta ja:nei (og
+    dermed la fallbacken gjelde med rollen på plass), eller fjern kallet fra
+    `opp.sh`s preflight.
+    """
+    import subprocess
+    from pathlib import Path
+
+    rot = Path(__file__).resolve().parents[3]
+    lib = rot / "deploy/staging/lib-opp.sh"
+
+    def verdikt(dsn, rolle):
+        return subprocess.run(
+            ["bash", "-c",
+             f'. {lib}; vurder_arbeiderskille "{dsn}" "{rolle}"'],
+            capture_output=True, text=True).returncode
+
+    assert verdikt("ja", "ja") == 0, "dedikert rolle OG DSN: sammenhengende"
+    assert verdikt("nei", "nei") == 0, "verken rolle eller DSN: fallbacken"
+    assert verdikt("nei", "ja") != 0, \
+        "rollen finnes, men m37 ville kjørt som disponit — grantet er borte"
+    assert verdikt("ja", "nei") != 0, \
+        "DSN-en peker på en rolle som ikke finnes"
+    for ukjent in ("", "kanskje", "JA", "1"):
+        assert verdikt(ukjent, "ja") != 0, f"{ukjent!r} skal være fail-closed"
+        assert verdikt("ja", ukjent) != 0, f"{ukjent!r} skal være fail-closed"
+
+    # ... og at porten faktisk STÅR i preflighten, før første mutasjon.
+    opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    assert "vurder_arbeiderskille" in opp, "porten kalles ikke fra opp.sh"
+    assert (opp.index("vurder_arbeiderskille")
+            < opp.index("HERFRA MUTERES SYSTEMET")), \
+        "porten står etter første mutasjon — da er den ingen preflight"
+
+
 def _admin():
     """migrator SET ROLE domains_admin (committed → overlever rollback)."""
     from db.pg import koble

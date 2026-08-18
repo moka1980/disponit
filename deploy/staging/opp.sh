@@ -127,6 +127,52 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_DOMAINS_URL:-}" ] ); then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# 039 (Codex P2): ARBEIDERPORTEN — grantet og legitimasjonen må bygge på
+# SAMME invariant. Migrasjonen nøkler EXECUTE på
+# `ventende_overtakelseskonflikter` til om rollen `disponit_arbeider` finnes i
+# basen; `skriv_cred m37` under velger legitimasjonen på om
+# DISPONIT_ARBEIDER_URL er satt. De to kan avvike, og avviket er STILLE:
+# finnes rollen uten variabelen, kjører m37 som `disponit` mot en funksjon
+# runtime nettopp mistet, og hver domeneovertakelse blir stående i
+# `avklaring_kreves` uten sak. Fallbacken i `skriv_cred`-linjen er derfor bare
+# gyldig når rollen HELLER IKKE finnes — og det er nøyaktig det denne porten
+# krever. Lesende (`pg_roles`), i subshell, FØR første mutasjon.
+if ! ARBEIDERROLLE=$( set -a; . "$MILJOFIL"; set +a
+      "$ROT/.venv/bin/python" -c '
+import os, psycopg
+with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+    print("ja" if c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s",
+                            ("disponit_arbeider",)).fetchone() else "nei")
+' 2>&1 ); then
+  echo "AVBRUTT: kunne ikke lese rollekatalogen (pg_roles) i runtime-basen."
+  echo "$ARBEIDERROLLE" | tail -3
+  echo "Porten avgjør om m37-unitten skal ha den dedikerte arbeiderrollen"
+  echo "eller runtime-DSN-en, og den gjetter ikke."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+ARBEIDER_DSN_SATT=$( set -a; . "$MILJOFIL"; set +a
+  if [ -n "${DISPONIT_ARBEIDER_URL:-}" ]; then echo ja; else echo nei; fi )
+if ! vurder_arbeiderskille "$ARBEIDER_DSN_SATT" "$ARBEIDERROLLE"; then
+  echo "AVBRUTT: M-37s rolleskille er halvferdig — basen og $MILJOFIL sier"
+  echo "ikke det samme (rollen disponit_arbeider finnes: $ARBEIDERROLLE,"
+  echo "DISPONIT_ARBEIDER_URL satt: $ARBEIDER_DSN_SATT)."
+  if [ "$ARBEIDERROLLE" = ja ]; then
+    echo "Rollen finnes, så migrasjon 039 har GITT den EXECUTE på"
+    echo "ventende_overtakelseskonflikter og REVOKET den fra disponit. Uten"
+    echo "DSN-en ville m37-unitten koblet seg opp som disponit og feilet på"
+    echo "hver eneste konfliktdrenering — mens hver domeneovertakelse ble"
+    echo "stående uten M-37-sak."
+  else
+    echo "DSN-en peker på en rolle som ikke finnes i basen: m37-unitten"
+    echo "ville ikke kunne autentisere i det hele tatt."
+  fi
+  echo "Kjør deploy/staging/oppsett-postgresql.sh (idempotent) — den"
+  echo "oppretter rollen OG skriver DSN-en, slik at de to følges ad — og"
+  echo "kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015 (Codex P1): RESOLVERPORTEN kjøres FØR første mutasjon, ikke først ved
 # timeraktivering. `skriv_cred domener DISPONIT_RESOLVERE` skrev tidligere
 # hva som helst — også tom streng — og utrullingen rapporterte suksess fordi

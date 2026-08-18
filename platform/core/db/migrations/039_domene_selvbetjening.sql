@@ -291,6 +291,16 @@ BEGIN
     -- dokumenterte fallbacken i `opp.sh` — og da ER runtime arbeideren.
     -- Å revoke der ville ikke sikret noe, bare tatt dreneringen ned og
     -- etterlatt hver konflikt uten sak.
+    --
+    -- ROLLEN er invarianten, og utrullingen måles mot NØYAKTIG den samme
+    -- (Codex P2): `opp.sh` valgte legitimasjonen på om DISPONIT_ARBEIDER_URL
+    -- var SATT, altså et annet faktum enn dette. Finnes rollen uten at
+    -- variabelen gjør det — en halvferdig rolleutrulling — kjører m37 som
+    -- `disponit` mot en funksjon REVOKE-en over nettopp tok fra den, og hver
+    -- overtakelse blir stående uten sak. Derfor står `vurder_arbeiderskille`
+    -- i `opp.sh`s preflight og krever at basen og miljøfilen sier det samme,
+    -- FØR første mutasjon. Migrasjonen kan ikke lese en miljøfil; utrullingen
+    -- kan lese `pg_roles`, og gjør det.
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_arbeider') THEN
         GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
             TO disponit_arbeider;
