@@ -66,8 +66,13 @@ test("WCAG kontroll: én flate, tre faner, riktig ARIA-mønster, axe rent", asyn
   const faner = h.querySelectorAll('[role="tab"]');
   assert.equal(faner.length, 3);
   assert.ok(h.querySelector('[role="tablist"]'));
-  // Bestill-fanen er aktiv og bærer bestillingsskjemaet
-  assert.ok(h.querySelector("#bf-hostname"));
+  // Domener-fanen er først OG startfane (flytens rekkefølge: verifiser
+  // domenet før bestillingen) — den bærer domeneskjemaet.
+  assert.ok(h.querySelector("#dm-host"));
+  const titler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
+  assert.deepEqual(titler, [t("ui.wcag.fane.domener"), t("ui.wcag.fane.bestill"),
+                            t("ui.wcag.fane.rapporter")],
+    "rekkefølgen er flyten: Domener → Bestill → Rapporter");
   const brudd = await alvorligeBrudd(h, { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
@@ -102,6 +107,7 @@ test("WCAG kontroll: fanebytte bevarer utfylt skjema", async () => {
   KALL = []; SVAR = TOMME_DOMENER;
   const h = nyHoved();
   visWcagKontroll(h, ctx());
+  fane(h, "bestill");   // startfanen er Domener — gå til skjemaet først
   const inp = h.querySelector("#bf-hostname");
   inp.value = "kunde.example";
   fane(h, "rapporter");
@@ -200,7 +206,7 @@ test("Domener: fanen henter status på nytt ved hver aktivering", async () => {
   };
   const h = nyHoved();
   visWcagKontroll(h, ctx());
-  fane(h, "domener");
+  // Domener ER startfanen: monteringen er første aktivering, ingen klikk.
   await vent(() => h.querySelector(".domeneliste table"));
   const foer = KALL.filter((k) => k.sti === "/v1/domener").length;
   assert.equal(foer, 1, "første aktivering henter listen");
