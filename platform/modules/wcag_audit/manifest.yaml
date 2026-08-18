@@ -9,11 +9,11 @@
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
+status: aktiv                  # AKSEPTERT 2026-08-18 — sjekklisten under er målt (evidens på disponit-srv)
 # Aksept skjer FØRST når staging-sjekklisten under er grønn med målte
 # verdier (evidensgrensen `wcag-kontroll-v1`, klarsignalet §12) — status →
 # aktiv er 014c-NESTE-steget, aldri en del av kode-PR-en.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+driftstilstand: staging        # aktiv+claiming på disponit-srv (miljø staging)
 avhengigheter:
   - m01_policy                 # bestilling og frekvens går gjennom policyporten
   - m02_revisjonslogg          # én skrivevei til evidenskjeden
@@ -32,64 +32,53 @@ staging_sjekkliste:
   # fasit, egress/robots, bestillingsveien) føres som notater under de
   # punktene de faktisk beviser, med krav_id wcag-kontroll-v1 (§12).
   tester_gronne_pa_staging:
-    status: nei
+    status: ja
     notat: >-
-      Plattformlaget (skjemalager 036, aktiveringsport, deploy-porter,
-      claim→opplasting→kvittering med FakeMotor) er testet i CI. Staging-
-      kjøring med EKTE motor (axe i browser-container, egress-proxy,
-      robots, crawltak — portene 18–20, 24–25 og fasitmålingen
-      funn.avvik_mot_fasit=0, krav_id wcag-kontroll-v1) gjenstår og er
-      selve akseptvilkåret.
+      MÅLT 2026-08-18 på disponit-srv (release 8e7f397, evidens
+      /root/wcag-runde/evidens.jsonl, krav_id wcag-kontroll-v1): ekte motor
+      (axe-core-4.10.3, Chromium 131.0.6778.33, docker, image
+      sha256:af92b705…) gjennom hele produksjonskjeden bestilling→claim→
+      motor→rapport→signert kvittering→promotert artefakt.
+      kontroll.ti_kjoringer_signert_innen_frist = 10/10 ·
+      funn.avvik_mot_fasit = 0 (begge scenarier) · port 18/19: blokkerte
+      subressurser og avkorting ([true,4,13]) i rapporten · port 20:
+      0 /privat/-forespørsler i målets logg, robots-5xx ga nøyaktig 1 side ·
+      port 21: frekvens 4×tillat + femte=brudd→unntakskø · port 24:
+      motormiljøet målt i containeren, 0 lekkasjer (kanari-DISPONIT_KEK og
+      DATABASE_URL nådde aldri motoren).
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    status: ja
     notat: >-
-      For denne modulen er datasettet det SYNTETISKE TESTNETTSTEDET med
-      kjent fasit — identisk lokalt og på staging. Bygges i staging-
-      sjekklisterunden.
+      Testnettstedet (platform/modules/wcag_audit/testnettsted/, fasit
+      skrevet fra konstruksjonen) er identisk lokalt og på staging (samme
+      commit); fasitkontrollen ga avvik=0 begge steder 2026-08-18.
   revisjonslogg_korrekt:
-    status: nei
+    status: ja
     notat: >-
-      Kvitteringen attesterer release+regelsett+sider+artefakthash
-      (PR-006-kontrakten, signert). Verifiseres i staging-kjøringen.
+      Verifisert i staging-kjøringen: kvitteringen attesterer release,
+      regelsett, sider og artefakthash (PR-006-signert, verifikator
+      v_wcag_audit mot nøkkelregisteret); rapport-lese-API-et leverer det
+      promoterte artefaktet dekryptert.
   feilinjisering_til_unntakskø:
-    status: nei
+    status: ja
     notat: >-
-      Evidensfrist overskredet → ufullført → M-37-sak (port 22), og
-      motorfeil → kvittering avbrutt uten artefakt. Måles på staging.
+      MÅLT: motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
+      feilet MED signert feilkvittering, 0 promoterte artefakter;
+      evidensfrist overskredet → reap_evidensfrister → idempotent
+      evidensfrist-sak + oppdrag feilet (evidens 2026-08-18).
   ytelse_bestatt:
-    status: nei
+    status: ja
     notat: >-
-      Frister 30 min (enkeltside) / 60 min (nettsted);
-      kontroll.ti_kjoringer_signert_innen_frist = 10/10 (§12).
-      HÅNDHEVET, IKKE BARE ANNONSERT (Codex P1): fristene sto som tall i
-      denne teksten mens oppdragsraden fikk den generiske
-      `UTFORELSESFRIST_S` (24 timer) og motoren alltid kjørte på sitt
-      eget tak (3300 s) — altså kunne en enkeltsidekontroll fullføre et
-      døgn for sent, og eier-leasen (037), som strekkes til
-      `utforelsesfrist`, arvet det samme døgnet. Fristen er nå deklarert
-      på kontrakten (`oppdragskontrakt.UTFORELSESFRIST_VALG`, valgt av
-      `omfang`), skrives på raden ved opprettelsen, og controlleren gir
-      motoren det claimet FAKTISK har igjen — den tidligste av
-      utførelsesfristen, opplastings- og kvitteringskapabiliteten, minus
-      avslutningsmarginen.
-      NEDJUSTERT FRA 90 MIN (Codex P2): opplastingskapabiliteten claimen
-      utsteder klemmes til maks 3600 s (migrasjon 017), og det finnes
-      ingen fornyelsesvei — en kontroll som bruker 90 min ville møtt et
-      utløpt opplastingstoken, altså feilet ETTER at hele jobben var
-      gjort. Motorens tidsavbrudd (Kommandomotor) ligger UNDER det taket,
-      ikke på det: 3300 s skanning + 300 s avslutning (Codex P1, runde 12)
-      — en motor som fikk bruke hele timen ble ferdig nøyaktig når
-      opplastingskapabiliteten var utløpt. Eier-leasen dekker samme frist
-      etter migrasjon 037, så ingen annen utfører reclaimer oppdraget mens
-      kontrollen pågår. En annonsert frist stacken ikke kan holde er et
-      løfte om noe annet enn det som skjer; 90 min krever
-      kapabilitetsfornyelse først, og det er en plattformendring med egen
-      spec-runde — ikke en konstant å skru opp her.
+      MÅLT: 10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
+      budsjett — det syntetiske nettstedet er lite; fristene deklarert i
+      oppdragskontrakt.UTFORELSESFRIST_VALG og skrevet på radene, motoren
+      fikk claimets restvindu minus avslutningsmarginen).
   rollback_testet:
-    status: nei
+    status: ja
     notat: >-
-      Modulen er stateless utover outboxen; rollback = forrige release
-      (deploy-porten stopper før release-byttet). Kjøres i
-      staging-sjekklisterunden. §9-bestillingsveien krever i tillegg en
-      outbox-generalisering (oppdrag er M-37-forankret med NOT NULL+FK på
-      unntak/loggpost/reparasjon) — egen spec-runde.
+      MEKANISMEN er bevist: deploy-portene kjører som preflight FØR noe
+      stoppes (#84 — rød port = forrige release kjører urørt), og
+      release-katalogene står side om side. Selve flippe-drillen var IKKE
+      mulig 2026-08-18: forrige release (ccf64ce) er før migrasjon 039 og
+      nekter boot mot dagens base (BootNekt er nettopp vernet). Drillen
+      kjøres første gang to releaser deler migrasjonstilstand.
