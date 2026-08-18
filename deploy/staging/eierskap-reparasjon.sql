@@ -218,6 +218,7 @@ INSERT INTO _design VALUES
     -- 039: selvbetjent domeneverifisering — plukk + DB-holdt bevis
     ('FUNCTION', 'ventende_domenechallenges(integer)',                 'disponit_domene_eier'),
     ('FUNCTION', 'bekreft_domenechallenge(text,text,text,text[])',     'disponit_domene_eier'),
+    ('FUNCTION', 'bekreft_overtakelseskonflikt(text,text,text,bigint)',     'disponit_domene_eier'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),
