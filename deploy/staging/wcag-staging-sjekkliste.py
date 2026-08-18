@@ -1152,12 +1152,40 @@ def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
     logg = subprocess.run(["journalctl", "-u", ARBEIDER, "-n", "20",
                            "--no-pager", "-o", "cat"],
                           capture_output=True, text=True).stdout
+    i_drift = aktiv == "active" and "wcag_arbeider_oppe" in logg
+    # EN RØD KLARHETSMÅLING RULLER TILBAKE AKTIVERINGEN (Codex P1, runde 5).
+    # `enable --now` er PERSISTENT: uniten overlever reboot og starter av
+    # seg selv. Målingen over kommer etter, og en rød måling betyr nettopp
+    # at vi ikke vet om arbeideren duger — den kan stå i `Restart=on-failure`
+    # og prøve igjen hvert tiende sekund, eller bare ha brukt mer enn de
+    # seks sekundene vi ga den. Begge deler ender med en arbeider som
+    # SENERE claimer ekte oppdrag, på tvers av den målingen som skulle
+    # gate aktiveringen. `_ROEDE` stopper resten av sjekklista, men den
+    # rører ikke systemd.
+    #
+    # Derfor: er predikatet usant, stoppes og disables uniten igjen, og
+    # tilbakerullingen er SELV evidens. Aktivering er en tilstand på
+    # verten, ikke en linje i en rapport — den må rulles tilbake på verten.
+    if not i_drift:
+        av = subprocess.run(["systemctl", "disable", "--now", ARBEIDER],
+                            capture_output=True, text=True)
+        etterpaa = subprocess.run(["systemctl", "is-enabled", ARBEIDER],
+                                  capture_output=True,
+                                  text=True).stdout.strip()
+        evidens("fase9_aktivering_rullet_tilbake", unit=ARBEIDER,
+                grunn="klarhetsmålingen var rød",
+                kommando="systemctl disable --now",
+                returkode=av.returncode, er_enablet=etterpaa,
+                # Tilbakerullingen må SELV kunne bli rød: blir uniten
+                # stående enablet etter dette, er nettopp det utfallet
+                # denne grenen finnes for å hindre.
+                ok=etterpaa in ("disabled", "static", "masked"))
     evidens("fase9_arbeider_i_drift", unit=ARBEIDER, status=aktiv,
             motor=motor, konfig=str(DRIFT_KONF),
             oppe="wcag_arbeider_oppe" in logg,
             nektet=[l for l in logg.splitlines()
                     if "oppstart_nektet" in l][:2],
-            ok=aktiv == "active" and "wcag_arbeider_oppe" in logg)
+            ok=i_drift)
 
 
 def main() -> int:

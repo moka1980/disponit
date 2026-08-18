@@ -424,6 +424,34 @@ def test_begge_robots_portene_kan_bli_roede():
     assert "_ROEDE.append(hendelse)" in sjekk
 
 
+def test_roed_klarhetsmaaling_ruller_tilbake_aktiveringen():
+    """Codex P1, runde 5: `enable --now` er persistent, målingen kom etter.
+
+    Fase 9 enabler uniten og MÅLER så om den kom opp. En rød måling betyr
+    nettopp at vi ikke vet om arbeideren duger — den kan stå i
+    `Restart=on-failure`, eller bare ha brukt mer enn de seks sekundene
+    vi ga den. Uten en tilbakerulling ble den likevel stående enablet, og
+    en arbeider som overlever reboot claimer ekte oppdrag på tvers av den
+    målingen som skulle gate aktiveringen. `_ROEDE` stopper resten av
+    sjekklista, men den rører ikke systemd."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Predikatet regnes ÉN gang og brukes begge steder — to skrivemåter
+    # av samme påstand kunne ellers drive fra hverandre.
+    assert 'i_drift = aktiv == "active" and "wcag_arbeider_oppe" in logg' \
+        in sjekk
+    assert "if not i_drift:" in sjekk
+    assert "ok=i_drift)" in sjekk
+
+    rulling = sjekk.split("if not i_drift:", 1)[1].split("\n    evidens(", 1)[0]
+    assert '"systemctl", "disable", "--now", ARBEIDER' in rulling, \
+        "aktivering er en tilstand på verten og må rulles tilbake der"
+    # ... og tilbakerullingen er SELV en måling som kan bli rød: blir
+    # uniten stående enablet, er det nettopp utfallet grenen skal hindre.
+    assert '"systemctl", "is-enabled", ARBEIDER' in rulling
+    assert 'ok=etterpaa in ("disabled", "static", "masked")' in rulling
+
+
 def test_varigheten_dekker_oppslaget_og_robots():
     """Codex P2: klokka startet etter oppslaget og robots-hentingen.
 
