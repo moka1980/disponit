@@ -299,7 +299,16 @@ def motorkommando(args) -> list[str]:
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             *MOTORGRENSER,
             "-e", "MOTOR_TLS_USIKKER=1",
-            "-e", f"MOTOR_VERTSKART={VERT}=127.0.0.1",
+            # BEGGE de syntetiske vertsnavnene sjekklisten selv setter opp
+            # (Codex P2, runde 2). Kartet nevnte bare `VERT`, mens fase 3
+            # seeder `TENANT_FREKVENS` på `VERT_FREKVENS` og fase 6 lar de
+            # fire tillatte frekvensbestillingene dreneres gjennom motoren.
+            # `_pin_mal_ip` slår opp hvert navn som ikke står i kartet, og
+            # et `.test`-navn løser ikke — jobbene ble derfor motorfeil, ikke
+            # kjøringer. Begge navnene peker på det ene testnettstedet på
+            # loopback; det er samme fixture, ikke to.
+            "-e", f"MOTOR_VERTSKART={VERT}=127.0.0.1,"
+                  f"{VERT_FREKVENS}=127.0.0.1",
             "disponit-wcag-motor"]
 
 
@@ -878,8 +887,18 @@ def fase6(m, http, mtk, motorkmd, digest):
     else:
         raise SystemExit(f"køen tømmes ikke: {drenert} — fase 7 ville"
                          " feilinjisert mot et annet oppdrag enn sitt eget")
-    evidens("fase6_ko_drenert", utfall=drenert,
-            krav="tom kø før feilinjiseringen i fase 7")
+    # DRENERINGEN ER OGSÅ EN MÅLING (Codex P2, runde 2). Porten sendte
+    # ingen `ok=`, og `evidens()` rødmerker kun på `ok is False` — den kunne
+    # altså ikke bli rød. Hver drenert jobb er et EKTE WCAG-oppdrag på den
+    # ekte veien, så `avbrutt`/`ukvittert` her er en motorfeil som skal
+    # stoppe runden, ikke en tom kø som skal passere stille. Kravet er
+    # begge deler: køen må være tom FØR fase 7, og de fire tillatte
+    # frekvensbestillingene må faktisk ha kjørt ferdig.
+    tillatt = sum(1 for u in utfall if u == "tillat")
+    evidens("fase6_ko_drenert", utfall=drenert, tillatt=tillatt,
+            krav="tom kø før fase 7 — og hver drenert jobb `utfort`",
+            ok=len(drenert) >= tillatt
+            and all(u == "utfort" for u in drenert))
 
     # 24: motoren kjører uten credentials — mål containerens faktiske miljø.
     #
