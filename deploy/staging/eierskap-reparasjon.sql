@@ -222,8 +222,10 @@ INSERT INTO _design VALUES
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),
     -- 039 (Codex P1): den ENESTE utstedelsesformen runtime far. Binder
-    -- p_tenant til kallerens tenantkontekst (krev_tenantkontekst, 038);
-    -- 016s raa utsted_challenge er REVOKEd fra runtime.
+    -- p_tenant til kallerens tenantkontekst (krev_tenantkontekst, 038) —
+    -- 016s raa utsted_challenge er REVOKEd fra runtime. INGEN semikolon i
+    -- denne kommentaren: bade reparasjonen og pariteten deler filen paa
+    -- setningsskilletegnet, og ett semikolon her kutter VALUES-listen.
     ('FUNCTION', 'utsted_challenge_selvbetjent(text,text,boolean,text,text)', 'disponit_domene_eier');
 
 DO $$

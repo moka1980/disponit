@@ -438,21 +438,31 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
         (ANNEN_TENANT, dov.idempotensnokkel(vert, gen))).fetchone()[0] == 0
     migrator.rollback()
 
-    res = dov.sikre_ventende_overtakelsessaker(migrator, grense=500)
-    mine = [s for s in res["saker"] if s["hostname"] == vert]
-    assert res["feilet"] == [], res
-    assert len(mine) == 1, res
-    sak = mine[0]["unntak_id"]
-    assert mine[0]["tenant"] == ANNEN_TENANT
+    # Dreneringen kjøres over en RUNTIME-forbindelse, ikke migrator: det er
+    # nøyaktig rettighetene M-37-arbeideren har (`disponit_arbeider` får
+    # runtime-grantsettet), og `ventende_overtakelseskonflikter` er gitt til
+    # den rollen — aldri til migrator, som ikke er medlem av den.
+    rt = _rt()
+    try:
+        res = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
+        mine = [s for s in res["saker"] if s["hostname"] == vert]
+        assert res["feilet"] == [], res
+        assert len(mine) == 1, res
+        sak = mine[0]["unntak_id"]
+        assert mine[0]["tenant"] == ANNEN_TENANT
+
+        # Raden står fortsatt i `avklaring_kreves` (bare M-37 kan flytte den),
+        # så neste drenering finner den igjen — og skal GJENBRUKE saken.
+        res2 = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
+        mine2 = [s for s in res2["saker"] if s["hostname"] == vert]
+        assert [s["unntak_id"] for s in mine2] == [sak], res2
+    finally:
+        rt.close()
+
     # Saken er en ekte overtakelsessak, bundet til konfliktens generasjon.
+    _sett_kontekst(migrator, ANNEN_TENANT)
     assert dov.slaa_opp_sak(migrator, ANNEN_TENANT, sak) == (vert, gen)
     migrator.rollback()
-
-    # Raden står fortsatt i `avklaring_kreves` (bare M-37 kan flytte den), så
-    # neste drenering finner den igjen — og skal GJENBRUKE saken.
-    res2 = dov.sikre_ventende_overtakelsessaker(migrator, grense=500)
-    mine2 = [s for s in res2["saker"] if s["hostname"] == vert]
-    assert [s["unntak_id"] for s in mine2] == [sak], res2
 
     _sett_kontekst(migrator, ANNEN_TENANT)
     antall = migrator.execute(

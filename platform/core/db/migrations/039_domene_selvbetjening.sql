@@ -186,6 +186,7 @@ GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT) TO disponit;
 -- (`disponit_domains_admin`) er en kryss-tenant ADMINISTRASJONSvei og
 -- setter ingen tenantkontekst — en port der ville brutt den, ikke sikret
 -- den.
+--
 -- Innpakningen KØER OGSÅ utstedelsen (Codex P2). 016s `utsted_challenge`
 -- bytter hash og vindu men lar `status` stå — med vilje, for at en
 -- re-utstedelse ikke skal kunne flytte en rad. `ventende_domenechallenges`
