@@ -733,17 +733,44 @@ def fase6(m, http, mtk, motorkmd, digest):
             krav="tom kø før feilinjiseringen i fase 7")
 
     # 24: motoren kjører uten credentials — mål containerens faktiske miljø.
+    #
+    # OG DEN MOTOREN SOM FAKTISK ER KONFIGURERT (Codex P1). Overstyringen
+    # sto bak `motorkmd[0] == "docker"`, så med den rootless `podman
+    # run`-kommandoen uniten foreskriver, falt målingen tilbake på et bart
+    # `env` PÅ VERTEN. Miljøet her bærer med vilje `DISPONIT_KEK` og
+    # `DATABASE_URL`, så `lekk` ble nødvendigvis ikke-tom: porten kunne
+    # ALDRI passere for nettopp den sikre utrullingen den finnes for å
+    # måle. `--entrypoint` er lik for docker og podman, så overstyringen
+    # bygges av den KONFIGURERTE kommandoen uansett runtime.
     kanari = "KANARI_" + secrets.token_hex(8)
-    ut = subprocess.run(
-        motorkmd[:-1] + ["--entrypoint", "env", motorkmd[-1]]
-        if motorkmd[0] == "docker" else ["env"],
-        env={**os.environ, "DISPONIT_KEK": kanari,
-             "DATABASE_URL": "postgresql://hemmelig"},
-        capture_output=True, text=True)
-    lekk = [l for l in ut.stdout.splitlines()
-            if l.startswith("DISPONIT_") or kanari in l
-            or "DATABASE_URL" in l]
-    evidens("port24_motormiljo", lekkasjer=lekk, ok=not lekk)
+    runtime = Path(motorkmd[0]).name if motorkmd else ""
+    if runtime in ("docker", "podman", "nerdctl") and "run" in motorkmd:
+        # Imaget står sist; `--entrypoint` må stå foran det.
+        kmd = motorkmd[:-1] + ["--entrypoint", "env", motorkmd[-1]]
+    else:
+        # En motorkommando som ikke er en containerkjøring kan ikke måles
+        # her — og en umålt port er ikke en bestått port. Å måle verten i
+        # stedet ville vært å svare på et annet spørsmål.
+        kmd = None
+        evidens("port24_motormiljo", maalt=False, runtime=runtime,
+                grunn="motorkommandoen er ingen containerkjøring — porten"
+                      " måler containerens miljø, ikke sjekklistevertens",
+                ok=False)
+    if kmd is not None:
+        ut = subprocess.run(
+            kmd, env={**os.environ, "DISPONIT_KEK": kanari,
+                      "DATABASE_URL": "postgresql://hemmelig"},
+            capture_output=True, text=True)
+        lekk = [l for l in ut.stdout.splitlines()
+                if l.startswith("DISPONIT_") or kanari in l
+                or "DATABASE_URL" in l]
+        # En kjøring som ikke kom i gang har heller ingen lekkasjer å vise
+        # — og ville dermed sett ut som en bestått port. Returkoden er en
+        # del av målingen, ikke en detalj.
+        evidens("port24_motormiljo", maalt=True, runtime=runtime,
+                returkode=ut.returncode, lekkasjer=lekk,
+                feil=ut.stderr.strip()[:200],
+                ok=ut.returncode == 0 and not lekk)
 
 
 # ---------------------------------------------------------------------------
