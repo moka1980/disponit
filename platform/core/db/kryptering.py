@@ -164,9 +164,35 @@ def intensjon_aad(unntak_id: int, target_action: str, hi_skjemaversjon: int,
 
 def krypter(dek: bytes, payload: dict, tenant: str, key_id: str,
             *, ekstra_aad: bytes | None = None) -> tuple[bytes, bytes]:
-    """-> (payload_kryptert = ct||tag, nonce)"""
+    """-> (payload_kryptert = ct||tag, nonce)
+
+    SERIALISERINGEN MÅ VÆRE TOTAL (Codex P2), av samme grunn som
+    `tekstbytes.utf8` finnes: payloaden bærer UBETRODDE strenger fra
+    hendelsen, og `json.loads` godtar `"\\ud800"`. Et ensomt surrogat blir
+    en helt alminnelig `str` som Pythons strenge UTF-8-koder nekter å
+    skrive.
+
+    `ensure_ascii=False` gjorde derfor DENNE linja til stedet avsenderen
+    kunne kaste fra — midt i transaksjonen som skriver revisjonsraden.
+    `input_hash` ble gjort total, men verdien lever videre i
+    `minimer_payload`, og `UnicodeEncodeError` her rullet tilbake den
+    alt skrevne loggposten og ga `logging_feilet`: nøyaktig den
+    revisjonssporbypassen den fiksen skulle lukke, ett steg lenger ned.
+
+    `ensure_ascii=True` er den totale formen HER, og ikke
+    `tekstbytes.utf8`: JSON-en skal `json.loads`-es tilbake i
+    `dekrypter`, og escapen `\\ud800` er nettopp den formen som gir
+    surrogatet uendret tilbake. `surrogatepass` ville gitt bytes
+    `json.loads` selv nekter å lese, altså et ciphertext ingen kan åpne.
+    Escapingen er injektiv — `json.dumps` skiller en ekte streng `\\ud800`
+    fra kodeenheten, den skriver `\\\\ud800` for den første — så ingen to
+    ulike payloads kan kollidere.
+
+    Eksisterende rader er urørt: nonce-en er tilfeldig, så ingen
+    ciphertext er reproduserbar uansett, og `dekrypter` leser begge
+    skrivemåtene."""
     nonce = secrets.token_bytes(12)
-    data = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+    data = json.dumps(payload, ensure_ascii=True, sort_keys=True,
                       separators=(",", ":")).encode()
     return AESGCM(dek).encrypt(nonce, data, _aad(tenant, key_id, ekstra_aad)), nonce
 
