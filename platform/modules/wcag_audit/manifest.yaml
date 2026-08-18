@@ -31,10 +31,37 @@ staging_sjekkliste:
   # plattformens seks akseptpunkter. 014c-spesifikke bevis (syntetisk
   # fasit, egress/robots, bestillingsveien) føres som notater under de
   # punktene de faktisk beviser, med krav_id wcag-kontroll-v1 (§12).
+  #
+  # MÅLINGEN ER GJORT, MEN IKKE BUNDET (Codex P1 på #89).
+  #
+  # Målerunden 2026-08-18 på disponit-srv er ekte, og tallene under er dens
+  # tall. Men de er FRITEKST: ingen av punktene har `krav_id`, det finnes
+  # ingen `artefakt`/`artefakt_sha256`/`bevismaalinger`, artefaktet ligger
+  # utenfor repoet (/root/wcag-runde/evidens.jsonl på serveren), og
+  # `wcag-kontroll-v1` er ikke registrert i `manifestskjema.KRAVGRENSER`.
+  #
+  # KONSEKVENSEN ER MÅLT, IKKE PÅSTÅTT: `valider_artefakter` hopper
+  # eksplisitt over hvert `ja` som mangler `krav_id` (linjen «ja uten
+  # krav_id krever ikke artefakt»). Sto punktene `ja`, ville CI verifisert
+  # NULL av målingene aksepten hviler på — evidensporten ville vært åpen,
+  # ikke bestått. Og RUTINER.md er kategorisk: «Et sjekklistepunkt uten
+  # definert, målbar grense regnes som `nei` — en port man ikke kan måle,
+  # er ingen port.» `wcag-kontroll-v1` har ingen definert grense ennå.
+  #
+  # DERFOR STÅR PUNKTENE `nei` MED MÅLINGEN BEVART. Notatene er ikke
+  # slettet — de dokumenterer hva runden faktisk viste, slik at den som
+  # binder evidensen slipper å måle på nytt. Veien til `ja` er den samme
+  # for alle fem: sjekk inn artefaktet under deploy/staging/artefakter/,
+  # registrer `wcag-kontroll-v1` i KRAVGRENSER med grensene fra §12, og
+  # bind hvert punkt med krav_id + artefakt + artefakt_sha256 +
+  # bevismaalinger. Da måler porten tallene på nytt ved hver CI-kjøring,
+  # og et `ja` betyr noe. (`rollback_testet` er en annen sak: der mangler
+  # selve drillen — se punktet nederst.)
   tester_gronne_pa_staging:
-    status: ja
+    status: nei
     notat: >-
-      MÅLT 2026-08-18 på disponit-srv (release 8e7f397, evidens
+      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
+      På disponit-srv (release 8e7f397, evidens
       /root/wcag-runde/evidens.jsonl, krav_id wcag-kontroll-v1): ekte motor
       (axe-core-4.10.3, Chromium 131.0.6778.33, docker, image
       sha256:af92b705…) gjennom hele produksjonskjeden bestilling→claim→
@@ -47,29 +74,33 @@ staging_sjekkliste:
       motormiljøet målt i containeren, 0 lekkasjer (kanari-DISPONIT_KEK og
       DATABASE_URL nådde aldri motoren).
   syntetisk_datasett_likt_lokalt:
-    status: ja
+    status: nei
     notat: >-
+      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
       Testnettstedet (platform/modules/wcag_audit/testnettsted/, fasit
       skrevet fra konstruksjonen) er identisk lokalt og på staging (samme
       commit); fasitkontrollen ga avvik=0 begge steder 2026-08-18.
   revisjonslogg_korrekt:
-    status: ja
+    status: nei
     notat: >-
+      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
       Verifisert i staging-kjøringen: kvitteringen attesterer release,
       regelsett, sider og artefakthash (PR-006-signert, verifikator
       v_wcag_audit mot nøkkelregisteret); rapport-lese-API-et leverer det
       promoterte artefaktet dekryptert.
   feilinjisering_til_unntakskø:
-    status: ja
+    status: nei
     notat: >-
-      MÅLT: motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
+      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
+      Motorfeil (kommando exit 1) → kvittering 'avbrutt', oppdrag
       feilet MED signert feilkvittering, 0 promoterte artefakter;
       evidensfrist overskredet → reap_evidensfrister → idempotent
       evidensfrist-sak + oppdrag feilet (evidens 2026-08-18).
   ytelse_bestatt:
-    status: ja
+    status: nei
     notat: >-
-      MÅLT: 10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
+      MÅLT 2026-08-18, IKKE BUNDET (mangler krav_id/artefakt i repoet).
+      10/10 kjøringer signert innen frist (verste 2.1 s mot 1800/3600 s
       budsjett — det syntetiske nettstedet er lite; fristene deklarert i
       oppdragskontrakt.UTFORELSESFRIST_VALG og skrevet på radene, motoren
       fikk claimets restvindu minus avslutningsmarginen).
