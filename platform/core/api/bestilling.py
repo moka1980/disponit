@@ -58,20 +58,35 @@ class Bestillingstype:
     eiermodul: str
     kravsett: tuple[str, ...]
     omfang: tuple[str, ...]
-    #: evidensfrist per omfang, sekunder (§9: 30 min / 90 min)
-    frister_s: dict
 
 
 #: Kodefestet og lukket (port 13); deploy-porten krysser mot
 #: `oppdragstype_register` (port 14) i deployport-modultyper.py.
+#:
+#: FRISTEN STÅR IKKE HER (Codex P1). Første utgave bar sin egen
+#: `frister_s`-tabell med 90 min for `nettsted`, og den var både en
+#: DUPLIKAT og feil: `oppdragskontrakt.UTFORELSESFRIST_VALG` deklarerer
+#: 30/60 min, WCAG-manifestet lover det samme, og 90-minutterstallet var
+#: nettopp det som ble NEDJUSTERT fordi stacken ikke kan holde det —
+#: claimets eier-lease (037) og opplastingskapabiliteten (017) klemmes
+#: begge til 3600 s, og ingen av dem har en fornyelsesvei. En kontroll
+#: som lovlig brukte 90 min mistet dermed opplastingstokenet OG leasen
+#: sin mens det nye 90-minutters utførelsesvinduet fortsatt sto åpent:
+#: en annen controller kunne reclaime det samme oppdraget og starte
+#: duplisert trafikk mot kundens nettsted, før den første uansett feilet
+#: på opplastingen med hele jobben gjort.
+#:
+#: Fristen hører til KONTRAKTEN, og det er dét som gjør den til én frist:
+#: samme tabell som arbeideren (`m37.arbeider._opprett_oppdrag`) og
+#: controlleren leser. Et nytt omfang kan da ikke få en frist her som
+#: ingen annen del av stacken kjenner.
 BESTILLINGSTYPER: dict[str, Bestillingstype] = {
     "kontroll.wcag.nettsted": Bestillingstype(
         handling="kontroll.wcag.nettsted",
         oppdragstype="kontroll.wcag.nettsted",
         eiermodul="m_wcag_audit",
         kravsett=("wcag21_aa",),
-        omfang=("enkeltside", "nettsted"),
-        frister_s={"enkeltside": 1800, "nettsted": 5400}),
+        omfang=("enkeltside", "nettsted")),
 }
 
 _HOSTNAME = re.compile(
@@ -256,7 +271,26 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             payload = {k: norm[k] for k in ("mal_url", "kravsett", "omfang",
                                             "maks_sider")}
             ct, nonce = kryptering.krypter(dek, payload, tenant, key_id)
-            frist_s = bt.frister_s[norm["omfang"]]
+            # Typens EGEN frist, fra kontrakten — samme oppslag og samme
+            # tabell som arbeiderveien bruker (Codex P1). `payload` er
+            # nøyaktig den minimerte formen `utforelsesfrist_s` velger på.
+            import oppdragskontrakt
+            frist_s = oppdragskontrakt.utforelsesfrist_s(bt.oppdragstype,
+                                                         payload)
+            if frist_s is None:
+                # Uoppnåelig så lenge den statiske porten under står (se
+                # `test_bestillingstyper_arver_kontraktens_frist`), og
+                # bevisst en 500 og ikke en stille reservefrist: en type
+                # uten deklarert frist ville arvet den generiske
+                # 24-timersfristen, og for en `ekstern_lesing`-kanal mot
+                # kundens nettsted er det ikke en romslig frist — det er
+                # et døgnlangt vindu bestillingen aldri ba om.
+                conn.rollback()
+                tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                       art="drift",
+                                       grunn="utforelsesfrist_mangler",
+                                       oppdragstype=bt.oppdragstype)
+                return _feilsvar("intern_feil", rid)
             naa = datetime.now(timezone.utc)
             try:
                 oppdrag_id = int(conn.execute(

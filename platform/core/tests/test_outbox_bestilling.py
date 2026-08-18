@@ -613,6 +613,40 @@ def test_feltparitet_mellom_skjema_og_intensjonshash():
     assert intensjonshash(a) == intensjonshash(b)
 
 
+def test_bestillingstyper_arver_kontraktens_frist():
+    """Codex P1 (statisk): bestillingsflaten har INGEN egen fristtabell.
+
+    Første utgave bar `frister_s={"enkeltside": 1800, "nettsted": 5400}`.
+    De 90 minuttene var både en duplikat av kontrakten OG feil: både
+    eier-leasen (037) og opplastingskapabiliteten (017) klemmes til 3600 s
+    uten fornyelsesvei, så en kontroll som lovlig brukte 90 min mistet
+    begge mens dens eget utførelsesvindu fortsatt sto åpent — en annen
+    controller kunne reclaime oppdraget og starte duplisert trafikk mot
+    kundens nettsted.
+
+    Porten er mekanisk: HVERT omfang en bestillingstype tilbyr må ha en
+    frist i `oppdragskontrakt.UTFORELSESFRIST_VALG`, og ingen av dem kan
+    overstige det taket resten av stacken faktisk holder.
+    """
+    import oppdragskontrakt
+    from api.bestilling import BESTILLINGSTYPER
+
+    #: Taket claim-leasen (037) og opplastingskapabiliteten (017) deler.
+    TAK_S = 3600
+    assert not hasattr(next(iter(BESTILLINGSTYPER.values())), "frister_s"), \
+        "bestillingsflaten har fått sin egen fristtabell tilbake"
+    for navn, bt in BESTILLINGSTYPER.items():
+        for omfang in bt.omfang:
+            frist = oppdragskontrakt.utforelsesfrist_s(
+                bt.oppdragstype, {"omfang": omfang})
+            assert frist is not None, \
+                f"{navn}/{omfang}: ingen frist deklarert på kontrakten"
+            assert 0 < frist <= TAK_S, \
+                (f"{navn}/{omfang}: {frist} s overstiger claim-leasens og"
+                 f" opplastingskapabilitetens tak på {TAK_S} s — det er"
+                 " ingen fornyelsesvei for noen av dem")
+
+
 # ==========================================================================
 # Konsumentveiene (§5, portene 23–29)
 # ==========================================================================
