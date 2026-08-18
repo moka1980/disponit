@@ -1065,7 +1065,16 @@ def test_konteksten_avledes_av_den_effektive_motoren():
     assert 'lag = (d.get("RootFS") or {}).get("Layers") or []' in ident
     assert "for felt in sorted(kfg):" in ident
     assert "if felt in IKKE_ATFERD:\n            continue" in ident
-    assert 'return {"lag": lag, "konfig": konfig}' in ident
+    assert 'return {"lag": lag, "konfig": konfig, "plattform": plattform}' \
+        in ident
+    # PLATTFORMEN STÅR UTENFOR `Config` (Codex P1, runde 3): `Os`,
+    # `Architecture` og `Variant` er toppnivåfelt, så et image bygget for
+    # en annen arkitektur hadde samme lag og samme konfig og passerte som
+    # identisk — kjøretiden ville enten emulert det (en annen kjøring enn
+    # runden målte) eller feilet på hver motorstart, etter at arbeideren
+    # meldte seg klar.
+    assert 'for felt in ("Os", "Architecture", "Variant"):' in ident
+    assert "plattform[felt] = n" in ident
     # Helsesjekken står i `Config` hos docker og på toppnivå hos podman:
     # leses den bare ett sted, er releasen ULIK seg selv i de to
     # motorene og gaten stenger døren på riktig image.

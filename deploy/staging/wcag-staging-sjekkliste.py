@@ -1529,7 +1529,7 @@ def _normalisert(verdi):
 def _image_identitet(forspann, ref: str) -> dict | None:
     """Imagets identitet, lest med EN gitt kjøretidskontekst.
 
-    -> `{"lag": diff_ids, "konfig": atferdsfeltene}`, ellers None.
+    -> `{"lag": diff_ids, "konfig": …, "plattform": …}`, ellers None.
 
     LAGKJEDEN ALENE ER IKKE IDENTITET (Codex P1): et image bygget `FROM`
     releasen som bare overstyrer `ENTRYPOINT`, `USER` eller `ENV` har
@@ -1548,9 +1548,19 @@ def _image_identitet(forspann, ref: str) -> dict | None:
     volum — og fase 9 satte det i drift som «likeverdig». Det er
     feltene som IKKE er atferd som må navngis, ikke de som er det.
 
+    PLATTFORMEN LIGGER UTENFOR KONFIGEN (Codex P1, runde 3): `Os`,
+    `Architecture` og `Variant` står på toppnivå i inspect-utdataen, ikke
+    i `Config`, så et image med samme lag og samme konfig men bygget for
+    en annen arkitektur var identisk for gaten. Kjøretiden bruker
+    nettopp de feltene til å velge kompatibilitet og emulering: et
+    arm64-image i et amd64-lager blir enten emulert — altså en annen
+    kjøring enn runden målte — eller feiler på hver eneste motorstart,
+    mens arbeideren melder seg klar og claimer arbeid først. Plattformen
+    er derfor en del av identiteten.
+
     Verdiene normaliseres (`_normalisert`) fordi de to motorene skriver
     tomhet ulikt, og en falsk ulikhet her stenger døren på et image som
-    er helt likt. `Env` sorteres i tillegg: rekkefølgen er ikke atferd."""
+    er helt likt."""
     ut = subprocess.run([*forspann, "image", "inspect", "--format",
                          "{{json .}}", ref], capture_output=True, text=True)
     if ut.returncode != 0:
@@ -1583,7 +1593,13 @@ def _image_identitet(forspann, ref: str) -> dict | None:
         n = _normalisert(verdi)
         if n is not None:
             konfig[felt] = n
-    return {"lag": lag, "konfig": konfig}
+    # PLATTFORMEN STÅR PÅ TOPPNIVÅ, ikke i konfigen — se docstringen.
+    plattform = {}
+    for felt in ("Os", "Architecture", "Variant"):
+        n = _normalisert(d.get(felt))
+        if n is not None:
+            plattform[felt] = n
+    return {"lag": lag, "konfig": konfig, "plattform": plattform}
 
 
 def _docker_identitet(digest: str) -> dict | None:
