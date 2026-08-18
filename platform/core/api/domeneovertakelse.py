@@ -23,6 +23,9 @@ er per definisjon en menneskelig/sikkerhetsavgjørelse.
 """
 import hashlib
 import json
+import secrets
+
+import psycopg
 
 from api import kjerne
 
@@ -60,13 +63,12 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     former av samme navn gitt to idempotensnøkler for én konflikt.
 
     Degraderingen av forbigåtte utfordrere (A→B→C, §3) gjøres IKKE herfra
-    (Codex): et kall her hadde ingen virkning, for denne funksjonen har ingen
-    produksjonskaller — konfliktsignalet fra `verifiser_domenekontroll()`
-    håndteres ennå ikke av noen utrullet kodevei. Invarianten hører uansett
-    hjemme på selve overgangen, ikke hos en kaller som må huske den: migrasjon
-    019 §3.25 henger `degrader_forbigatte_utfordrere` på `hostname_binding` —
-    flyttes bindingen, degraderes alle andre i `avklaring_kreves` i samme
-    transaksjon, uansett hvem som utløste overtakelsen.
+    (Codex): invarianten hører hjemme på selve overgangen, ikke hos en kaller
+    som må huske den. Migrasjon 019 §3.25 henger
+    `degrader_forbigatte_utfordrere` på `hostname_binding` — flyttes bindingen,
+    degraderes alle andre i `avklaring_kreves` i samme transaksjon, uansett
+    hvem som utløste overtakelsen. Det gjelder også dreneringen under, som
+    kaller hit for konflikter den ikke selv utløste.
     """
     key = idempotensnokkel(hostname, generasjon)
     # Codex: serialiser på den avledede nøkkelen. `revisjonslogg` har kun en
@@ -115,6 +117,71 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
         conn, tenant_ny, loggpost, handling=HANDLING,
         kategori=FAMILIE, sakstype="sikkerhet", prioritet="hoy",
         payload=payload, snapshot=kjerne.UKJENT_SNAPSHOT)
+
+
+#: Aktøren dreneringen skriver saken som. Ikke et menneske og ikke API-et:
+#: konflikten ble oppdaget av en maskin, og revisjonssporet skal si det.
+DRENERINGSAKTOR = "domenekonfliktdrenering"
+
+
+def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
+                                     grense: int = 100) -> dict:
+    """Opprett M-37-saken for hver konflikt som står uten en (Codex P1).
+
+    `verifiser_domenekontroll` gjør overtakelsen og adjudikasjonskravet i ÉN
+    transaksjon — A tilbakekalles, B settes `avklaring_kreves` med motparten på
+    raden — men SAKEN kan ikke lages der. `opprett_overtakelsessak` krypterer
+    payloaden med tenantens DEK (KEK-en lever i prosessen, ikke i basen) og
+    skriver `revisjonslogg` + `unntak`: runtime-autoritet med nøkkelmateriale.
+    Verken basen eller verifiseringsarbeideren (`disponit_domener` — EXECUTE på
+    nøyaktig to funksjoner) har den, og skal ikke ha den. Uten en vei videre
+    var utfallet det verst mulige: A mistet autorisasjonen, B ble stående i
+    `avklaring_kreves`, og siden bare `avgjor_domeneovertakelse` kan løfte noen
+    ut av avklaring — og den nås bare gjennom en sak — kunne ingen av dem
+    noensinne bli løst.
+
+    Signalet er derfor ikke en melding som kan gå tapt, men TILSTANDEN selv:
+    en rad i `avklaring_kreves` med `konflikt_motpart` ER en konflikt som
+    venter på sin sak (`ventende_overtakelseskonflikter`, migrasjon 039).
+    Dreneringen kjøres fra en prosess som HAR autoriteten (M-37-arbeideren),
+    én rad om gangen med konteksten bundet til RADENS tenant — samme form som
+    `reap_evidensfrister` (038 §5).
+
+    Idempotent i to lag: nøkkelen er (hostname, generasjon) under advisory-lås,
+    så en konflikt får ÉN sak uansett hvor mange ganger vi drenerer, og en rad
+    som alt har sin sak koster kun oppslaget. Faller prosessen ut midt i, står
+    radene igjen og neste syklus finner dem på nytt — det finnes ingen kø å
+    reparere, og derfor ingen kø som kan bli inkonsistent med tilstanden.
+
+    Én rads feil stopper ikke de andre: mangler ÉN tenant sin KEK, skal ikke
+    alle andres konflikter bli ustelt. Feilen telles og navngis. Men en tapt
+    FORBINDELSE er ikke en radfeil — den kastes videre, slik at arbeiderens
+    hovedløkke kobler opp på nytt i stedet for å rapportere «100 rader feilet».
+    """
+    from db.pg import sett_kontekst
+    rader = conn.execute(
+        "SELECT tenant, hostname, motpart, generasjon"
+        " FROM ventende_overtakelseskonflikter(%s)", (grense,)).fetchall()
+    conn.rollback()
+    res = {"funnet": len(rader), "saker": [], "feilet": []}
+    for tenant, hostname, motpart, generasjon in rader:
+        rid = "drenering-" + secrets.token_hex(8)
+        try:
+            sett_kontekst(conn, tenant, aktor, rid)
+            uid = opprett_overtakelsessak(
+                conn, tenant_ny=tenant, hostname=hostname,
+                tenant_tapt=motpart, generasjon=int(generasjon), aktor=aktor)
+            conn.commit()
+        except psycopg.OperationalError:
+            raise
+        except (kjerne.Feilsvar, psycopg.Error, ValueError) as e:
+            conn.rollback()
+            res["feilet"].append({"tenant": tenant, "hostname": hostname,
+                                  "feiltype": type(e).__name__})
+            continue
+        res["saker"].append({"tenant": tenant, "hostname": hostname,
+                             "unntak_id": uid})
+    return res
 
 
 def slaa_opp_sak(conn, tenant: str, unntak_id: int) -> tuple[str, int] | None:

@@ -403,10 +403,17 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
     alle avklarings-/overtakelsesportene urørt.
 
     `konflikt:*`-svar TELLES OG NAVNGIS, men saken opprettes ikke herfra:
-    `opprett_overtakelsessak` krever runtime-skriverettigheter denne
-    rollen med vilje ikke har (og har per 039 ingen utrullet kaller —
-    se kommentaren i api/domeneovertakelse.py). Raden står da trygt i
-    `avklaring_kreves`, synlig i driftsloggen.
+    `opprett_overtakelsessak` krypterer payloaden med tenantens DEK og
+    skriver `revisjonslogg` + `unntak` — runtime-autoritet med
+    nøkkelmateriale, som denne rollen med vilje ikke har.
+
+    Den blir likevel opprettet (Codex P1). Konflikten er ikke en melding
+    som må videreformidles, men en TILSTAND: raden står `avklaring_kreves`
+    med `konflikt_motpart`, og M-37-arbeideren — som HAR både DEK og
+    runtime-DML — drenerer nøyaktig de radene til saker
+    (`sikre_ventende_overtakelsessaker`, migrasjon 039). Loggposten her er
+    derfor et driftsspor, ikke den eneste sporen av konflikten: dør denne
+    prosessen rett etter commiten, finner dreneringen raden uansett.
     """
     res = {"plukket": 0, "verifisert": 0, "konflikt": 0, "uenige": 0,
            "ikke_bevist": 0, "annet": 0}

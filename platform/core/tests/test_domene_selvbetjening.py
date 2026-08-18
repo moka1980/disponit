@@ -11,7 +11,8 @@ import secrets
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN, TENANT, migrator, miljo  # noqa: F401
+from .test_api import (DSN, MIGRATOR_DSN, TENANT, ANNEN_TENANT,  # noqa: F401
+                       migrator, miljo)
 from .test_api import dekker
 from .test_m37 import _sett_kontekst
 from .test_outbox_bestilling import (_adminsesjon, _rt, app,  # noqa: F401
@@ -256,3 +257,98 @@ def test_verifiseringspasset_ende_til_ende(migrator, klient):
         (TENANT, vert)).fetchone()[0]
     migrator.rollback()
     assert status == "verifisert"
+
+
+def _admin():
+    """migrator SET ROLE domains_admin (committed → overlever rollback)."""
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    c.execute("SET ROLE disponit_domains_admin")
+    c.commit()
+    return c
+
+
+def _gen(conn, tenant, hostname):
+    _sett_kontekst(conn, tenant)
+    g = conn.execute(
+        "SELECT autorisasjonsgenerasjon FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s", (tenant, hostname)).fetchone()[0]
+    conn.rollback()
+    return int(g)
+
+
+@pg
+def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
+    """Codex P1: en overtakelse UTEN en sak er en dødvei — A har mistet
+    autorisasjonen og B står i `avklaring_kreves`, som bare
+    `avgjor_domeneovertakelse` kan løfte noen ut av, og den nås bare gjennom
+    en sak. Verifiseringsarbeideren kan ikke lage den (ingen DEK, ingen DML),
+    så TILSTANDEN er signalet: dreneringen finner raden og lager saken.
+
+    Måler også idempotensen: to dreneringer gir ÉN sak for konflikten.
+    """
+    from api import domeneovertakelse as dov
+
+    vert = f"kfl{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))
+        a.commit()
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, vert)).fetchone()[0]
+        a.commit()
+    finally:
+        a.close()
+    assert svar == f"konflikt:{TENANT}", svar
+    gen = _gen(migrator, ANNEN_TENANT, vert)
+
+    # Ingen sak ennå: overtakelsen skjedde i basen, saken krever DEK + DML.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM unntak u JOIN revisjonslogg r"
+        "   ON r.tenant=u.tenant AND r.id=u.loggpost_id"
+        " WHERE u.tenant=%s AND r.idempotency_key=%s",
+        (ANNEN_TENANT, dov.idempotensnokkel(vert, gen))).fetchone()[0] == 0
+    migrator.rollback()
+
+    res = dov.sikre_ventende_overtakelsessaker(migrator, grense=500)
+    mine = [s for s in res["saker"] if s["hostname"] == vert]
+    assert res["feilet"] == [], res
+    assert len(mine) == 1, res
+    sak = mine[0]["unntak_id"]
+    assert mine[0]["tenant"] == ANNEN_TENANT
+    # Saken er en ekte overtakelsessak, bundet til konfliktens generasjon.
+    assert dov.slaa_opp_sak(migrator, ANNEN_TENANT, sak) == (vert, gen)
+    migrator.rollback()
+
+    # Raden står fortsatt i `avklaring_kreves` (bare M-37 kan flytte den), så
+    # neste drenering finner den igjen — og skal GJENBRUKE saken.
+    res2 = dov.sikre_ventende_overtakelsessaker(migrator, grense=500)
+    mine2 = [s for s in res2["saker"] if s["hostname"] == vert]
+    assert [s["unntak_id"] for s in mine2] == [sak], res2
+
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    antall = migrator.execute(
+        "SELECT count(*) FROM unntak u JOIN revisjonslogg r"
+        "   ON r.tenant=u.tenant AND r.id=u.loggpost_id"
+        " WHERE u.tenant=%s AND u.kategori=%s AND r.idempotency_key=%s",
+        (ANNEN_TENANT, dov.FAMILIE,
+         dov.idempotensnokkel(vert, gen))).fetchone()[0]
+    migrator.rollback()
+    assert antall == 1, "én konflikt ga mer enn én sak"
+
+
+def test_arbeideren_drenerer_konflikter_i_hovedlokka():
+    """Dreneringen er UTRULLET, ikke bare tilgjengelig: M-37-arbeiderens
+    hovedløkke kaller den. Uten kallet ville funksjonen over hatt nøyaktig
+    samme mangel som `opprett_overtakelsessak` hadde — riktig kropp, ingen
+    produksjonskaller."""
+    import inspect
+
+    from m37 import arbeider
+
+    assert "drener_domenekonflikter" in inspect.getsource(arbeider.kjor), \
+        "hovedløkken drenerer ikke domenekonflikter"
+    assert "sikre_ventende_overtakelsessaker" in inspect.getsource(
+        arbeider.drener_domenekonflikter)

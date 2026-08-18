@@ -94,9 +94,54 @@ BEGIN
         p_tenant, p_hostname, v_wildcard, p_aktor);
 END $$;
 
+-- ------------------------------------------------------------
+-- Konflikter som venter på sin M-37-sak (Codex P1).
+--
+-- `verifiser_domenekontroll` gjør overtakelsen OG adjudikasjonskravet i én
+-- transaksjon: A tilbakekalles, B settes `avklaring_kreves` med motparten
+-- på raden, og signalet `konflikt:<A>` returneres. SAKEN kan ikke opprettes
+-- der: `opprett_overtakelsessak` krypterer payloaden med tenantens DEK
+-- (KEK-en lever i prosessen, ikke i basen) og skriver `revisjonslogg` +
+-- `unntak`. Det er runtime-autoritet basen ikke har, og som
+-- verifiseringsarbeideren (`disponit_domener` — EXECUTE på nøyaktig to
+-- funksjoner) med vilje ikke får.
+--
+-- Uten en vei videre var utfallet det verst mulige: A mistet
+-- autorisasjonen, B ble stående i `avklaring_kreves`, og fordi KUN
+-- `avgjor_domeneovertakelse` kan løfte noen ut av avklaring — og den nås
+-- bare gjennom en sak — kunne ingen av dem noensinne bli løst.
+--
+-- Signalet er derfor ikke en melding som kan gå tapt, men TILSTANDEN selv:
+-- en rad i `avklaring_kreves` MED `konflikt_motpart` ER en konflikt som
+-- venter på sin sak. `sikre_ventende_overtakelsessaker()` (M-37-arbeideren,
+-- runtime-rolle + KEK) drenerer den, én rad om gangen med konteksten bundet
+-- til RADENS tenant — samme form som `reap_evidensfrister` (038 §5). Faller
+-- prosessen ut midt i, står radene igjen og neste syklus finner dem på nytt:
+-- det finnes ingen kø å reparere.
+--
+-- Utvalget filtrerer IKKE bort rader som alt har sin sak. Det ville krevd
+-- SELECT på `unntak`/`revisjonslogg` for domeneeieren — en utvidelse av
+-- eierens rekkevidde for en ren ytelsesdetalj. Idempotensen ligger der den
+-- hører hjemme, i `opprett_overtakelsessak` (nøkkel = hostname+generasjon,
+-- under advisory-lås), og en konflikt som venter på et menneske koster da
+-- ett oppslag per dreneringssyklus.
+CREATE OR REPLACE FUNCTION ventende_overtakelseskonflikter(
+    p_grense INT DEFAULT 100)
+RETURNS TABLE (tenant TEXT, hostname TEXT, motpart TEXT, generasjon BIGINT)
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT d.tenant, d.hostname, d.konflikt_motpart,
+           d.autorisasjonsgenerasjon
+      FROM public.domenekontroll d
+     WHERE d.status = 'avklaring_kreves'
+       AND d.konflikt_motpart IS NOT NULL
+     ORDER BY d.hostname, d.tenant
+     LIMIT p_grense
+$$;
+
 REVOKE ALL ON FUNCTION ventende_domenechallenges(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION bekreft_domenechallenge(TEXT, TEXT, TEXT, TEXT[])
     FROM PUBLIC;
+REVOKE ALL ON FUNCTION ventende_overtakelseskonflikter(INT) FROM PUBLIC;
 
 DO $$
 BEGIN
@@ -106,7 +151,15 @@ BEGIN
         GRANT EXECUTE ON FUNCTION bekreft_domenechallenge(TEXT, TEXT, TEXT,
             TEXT[]) TO disponit_domener;
     END IF;
+    -- Dreneringen kjøres av M-37-arbeideren, som har DEK/KEK og runtime-DML.
+    -- Den rollen er `disponit_arbeider` i drift; lokalt/test kjører samme vei
+    -- som runtime (038-presedensen), derfor begge.
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_arbeider') THEN
+        GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
+            TO disponit_arbeider;
+    END IF;
 END $$;
+GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT) TO disponit;
 
 -- Selvbetjeningens skriveende: kunden (via runtime-API-et, tenantbundet
 -- økt + CSRF) kan be om en utfordring for sitt eget hostname. Funksjonen
