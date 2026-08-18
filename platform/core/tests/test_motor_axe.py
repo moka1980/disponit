@@ -357,6 +357,28 @@ def test_nettleserkonteksten_er_den_som_attesteres():
         assert funnet == {verdi}, (felt, funnet)
 
 
+def test_begge_robots_portene_kan_bli_roede():
+    """Codex P1: en port som ikke kan bli rød er ingen port.
+
+    `evidens` legger bare en måling i `_ROEDE` når den SIER at den feilet
+    (`ok=False`), og de to obligatoriske robots-målingene i fase 6 sto uten
+    `ok` i det hele tatt. Forespørsler under `/privat/` i målets egen
+    access-logg, en avbrutt 5xx-kjøring, eller en crawl som dekket et annet
+    antall sider enn den ene tillatte, kunne derfor alle passere — og fase
+    9 enablet produksjonsarbeideren på en tom `_ROEDE`."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    for port, krav in (("port20_robots", "ok=privat == 0"),
+                       ("port20_robots_5xx",
+                        'ok=res.get("utfall") == "utfort" and sider == 1')):
+        blokk = sjekk.split(f'evidens("{port}"', 1)[1].split("\n\n", 1)[0]
+        assert krav in blokk, (port, blokk)
+    # Og gatingen selv: fase 9 leser `_ROEDE`, som `evidens` fyller på
+    # NØYAKTIG dette signalet.
+    assert 'if felt.get("ok") is False:' in sjekk
+    assert "_ROEDE.append(hendelse)" in sjekk
+
+
 def test_varigheten_dekker_oppslaget_og_robots():
     """Codex P2: klokka startet etter oppslaget og robots-hentingen.
 

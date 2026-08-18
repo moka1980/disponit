@@ -734,7 +734,18 @@ def fase6(m, http, mtk, motorkmd, digest):
     privat = sum(1 for linje in logg.open()
                  if "/privat/" in json.loads(linje)["sti"]) \
         if logg.exists() else -1
-    evidens("port20_robots", privat_forisporsler=privat, krav=0)
+    # BEGGE ROBOTS-MÅLINGENE GATER AKTIVERINGEN (Codex P1). Linjene sto
+    # uten `ok`, og `evidens` legger bare en måling i `_ROEDE` når den
+    # SIER at den feilet. De to obligatoriske robots-portene kunne derfor
+    # begge slå til — forespørsler under `/privat/` i målets egen logg, en
+    # avbrutt 5xx-kjøring, en crawl som dekket et annet antall sider enn
+    # den ene tillatte — mens fase 9 så en tom `_ROEDE` og enablet
+    # produksjonsarbeideren. En port som ikke kan bli rød er ingen port.
+    #
+    # `privat == -1` (ingen access-logg) er også rødt: da finnes det
+    # ingen måling, og en umålt port er ikke en bestått port.
+    evidens("port20_robots", privat_forisporsler=privat, krav=0,
+            ok=privat == 0)
 
     # 20b: robots 5xx → ingen crawl (kun mal_url).
     _start_testnett(robots_5xx=True)
@@ -748,8 +759,13 @@ def fase6(m, http, mtk, motorkmd, digest):
     res = _kontroller_kjor(mtk, motorkmd, digest)
     rr = _rapport(http, lese_tok, r.json()["oppdrag_id"])
     sider = len(rr.json().get("rapport", {}).get("sider_kontrollert", []))
+    # Kravet er BEGGE deler: kjøringen må ha fullført (en avbrutt motor
+    # kontrollerer trivielt «bare én side»), og rapporten må dekke
+    # nøyaktig den ene bestilte siden — ikke null, og ikke de fire
+    # bestillingen ba om. `sider` er 0 om rapporten uteble.
     evidens("port20_robots_5xx", utfall=res.get("utfall"),
-            sider_kontrollert=sider, krav=1)
+            sider_kontrollert=sider, krav=1,
+            ok=res.get("utfall") == "utfort" and sider == 1)
     _start_testnett(robots_5xx=False)
 
     # 21: frekvensgrensen — femte bestilling samme døgn → unntakskø.
