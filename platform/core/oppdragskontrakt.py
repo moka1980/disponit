@@ -186,6 +186,16 @@ def type_for_handling(handling: str) -> Oppdragstype | None:
 #: som `OPPDRAGSTYPER`: et ukjent domene er en feil, ikke en port som er av.
 MALDOMENEFELT: dict[str, str] = {"web_hostname": "mal_url"}
 
+#: Hendelsesfeltet som BÆRER målbindingen. Det er `ressurs_id` og ikke et
+#: nytt felt fordi `ressurs_id` alt ligger i `BINDINGSFELT`, altså inne i
+#: de signerte bytene, og `attestering.kontroller_binding` alt krever at
+#: attestasjonen bærer samme verdi som hendelsen — se `malbindingsbrudd`.
+#: Navnet står som konstant fordi flere porter må vite HVILKET felt som er
+#: server-bundet: kjøretidsbindingen krever at det er det normaliserte
+#: målet, og aktiveringsporten krever at frekvenstelleren grupperer på
+#: nettopp det (ellers teller taket per forespørsel, ikke per mål).
+MALBINDINGSFELT = "ressurs_id"
+
 
 #: Vertsnavnet i den ENE formen Python og nettleseren garantert leser
 #: likt: ren ASCII, bokstaver/siffer/bindestrek, minst to etiketter, og en
@@ -354,7 +364,7 @@ def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:
     vert = normaliser_vertsnavn(event.get(felt))
     if vert is None:
         return ("malautorisasjon_mal_ugyldig", {"felt": felt})
-    if event.get("ressurs_id") != vert:
+    if event.get(MALBINDINGSFELT) != vert:
         # KLARTEKSTLEKKASJEN (Codex P1). Detaljene her blir til
         # `Grunn.params`, og `sikker_beslutning_pg` serialiserer dem inn i
         # `revisjonslogg.begrunnelse` — en klartekstkolonne. Kopierte vi
@@ -371,7 +381,8 @@ def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:
         return ("malautorisasjon_feil_mal",
                 {"felt": felt,
                  "forventet_avtrykk": avtrykk(vert),
-                 "i_forespoersel_avtrykk": avtrykk(event.get("ressurs_id"))})
+                 "i_forespoersel_avtrykk": avtrykk(
+                     event.get(MALBINDINGSFELT))})
     return None
 
 

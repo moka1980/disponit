@@ -504,14 +504,18 @@ def _ekstern_lesing_modul(migrator_):
 
 
 def _handling(modul, *, frekvens=True, vilkaar=("domenekontroll_verifisert",),
-              hid="kontroll.wcag.nettsted"):
+              hid="kontroll.wcag.nettsted", gruppering="ressurs_id"):
     h = {"id": hid, "modul": modul, "modus": "auto",
          "ved_brudd": "unntakskø",
          "vilkaar": [{"navn": v, "verifikator": "v1"} for v in vilkaar],
          "reversering": {"type": "direkte"}}
     if frekvens:
+        # `grupperingsnokkel` er `ressurs_id` fordi aktiveringsporten
+        # krever det (Codex P2): telleren skal følge MÅLET, ikke en
+        # verdi innsenderen kan variere per forespørsel.
         h["grenser"] = {"frekvens": {"maks": 4, "periode_antall": 1,
-                                     "periode_enhet": "dager"}}
+                                     "periode_enhet": "dager",
+                                     "grupperingsnokkel": gruppering}}
     return h
 
 
@@ -539,6 +543,15 @@ def test_aktiveringsporten_for_ekstern_lesing(migrator):
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:
             port(_handling(modul, frekvens=False))
         assert e.value.kode == "ekstern_lesing_uten_frekvens"
+        # 31b (Codex P2): MED frekvens, men gruppert på noe innsenderen
+        # kan variere fritt. Motoren teller per `event[grupperingsnokkel]`,
+        # så én bøtte per forespørsel er ingen grense mot det nettstedet
+        # taket gjelder — den obligatoriske porten blir ren seremoni.
+        # Kontroll: fjern grupperingsgrenen, så blir denne rød.
+        for fritt in ("forespoersel_id", "tidspunkt", "mal_url", "", None):
+            with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+                port(_handling(modul, gruppering=fritt))
+            assert e.value.kode == "frekvens_uten_malbinding", e.value.kode
         # 34: gyldig, men IKKE målautoriserende vilkår → avvist. Vilkåret
         # `forfall_passert_dager` finnes i policyer — det har bare ingen rad.
         with pytest.raises(policyadmin.Aktiveringsfeil) as e:

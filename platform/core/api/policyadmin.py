@@ -1520,17 +1520,35 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     deklarerte eiermodulen) kan bare aktiveres når
 
       1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
-         et tak policyen selv bærer), og
-      2. handlingens vilkår inneholder minst ETT som har rad i
+         et tak policyen selv bærer),
+      2. frekvensen grupperes på `ressurs_id` — altså på MÅLET, og
+      3. handlingens vilkår inneholder minst ETT som har rad i
          `malautorisasjonsvilkar` med `maldomene` lik oppdragstypens
          `malautorisasjonsdomene`.
 
-    Begge er POSITIVE krav. `krever_malautorisasjon: true` i den kodefestede
+    Alle tre er POSITIVE krav. `krever_malautorisasjon: true` i den kodefestede
     typen uttrykker et behov, ikke et bevis — ukjent vilkårstype, manglende
     rad eller feil måldomene avviser aktiveringen. Fail-closed også når
     handlingen ikke matcher noen målautorisasjonsbærende type: da finnes
     det ikke noe vilkår som KAN telle, og en ekstern_lesing-handling uten
     autorisasjonsbegrep skal ikke gjennom fire øyne på flaks.
+
+    Krav 2 er det som gjør krav 1 til et TAK (Codex P2). Motoren i
+    `policy_validator` teller per `event[grupperingsnokkel]`, og
+    grupperingsnøkkelen er et feltnavn fra tenantens eget payload-domene:
+    peker den på noe innsenderen kan variere fritt — en forespørsels-id,
+    en tidsstempelstreng — får hver eneste forespørsel sin egen bøtte, og
+    grensen «10 per time» blir «ubegrenset per time» mot ETT og samme
+    nettsted. Da er den obligatoriske frekvensporten ren seremoni i
+    nøyaktig den trafikken den ble innført for å begrense.
+
+    `ressurs_id` er det ene feltet som IKKE er fritt: for en
+    målautorisasjonsbærende type krever `malbindingsbrudd` at
+    `event["ressurs_id"]` ER det normaliserte vertsnavnet i målfeltet, og
+    attestasjonen bærer samme verdi inne i de signerte bytene. Bøtta
+    følger derfor målet, ikke innsenderens fantasi. Kravet stilles kun
+    for typer som faktisk bærer den bindingen — for andre finnes det
+    ingen server-bundet nøkkel å kreve, og da ville kravet vært pynt.
 
     Vilkåret står i policyen fordi det gjør kravet synlig og reviewbart —
     men plattformregelen her gjelder uansett og kan ikke fjernes med fire
@@ -1592,6 +1610,15 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
                 "malautorisasjon_mangler",
                 f"handling={hid or '?'}: ingen målautorisasjonsbærende"
                 " oppdragstype")
+        # Frekvensen må telle PER MÅL (Codex P2). Se docstringen: en fritt
+        # valgt grupperingsnøkkel gir én bøtte per forespørsel, og da er
+        # taket over ingen grense mot det nettstedet det gjelder.
+        if grenser["frekvens"].get("grupperingsnokkel") != \
+                oppdragskontrakt.MALBINDINGSFELT:
+            raise Aktiveringsfeil(
+                "frekvens_uten_malbinding",
+                f"handling={hid or '?'}: grupperingsnokkel må være"
+                f" {oppdragskontrakt.MALBINDINGSFELT}")
         navn = [v.get("navn") for v in (h.get("vilkaar") or [])
                 if isinstance(v, dict) and isinstance(v.get("navn"), str)]
         navn += [v for v in (h.get("vilkaar") or []) if isinstance(v, str)]
