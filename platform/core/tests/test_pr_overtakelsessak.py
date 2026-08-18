@@ -889,6 +889,39 @@ def test_port32_36_roller_og_synlighet(migrator):
 
 
 @pg
+def test_reservert_navnerom_er_tomt_for_kundeflater(migrator):
+    """Codex P1 (FORTIDEN): §8s triggere er BEFORE INSERT og sier
+    ingenting om rader som alt sto der.
+
+    Rullet 041 på en base der en kunde ALLEREDE het `__plattform_domener`,
+    begynte §10 å skrive plattformens saker under kundens tenant-id — og
+    kundens helt ordinære RLS-kontekst falt sammen med plattformens. §8.1
+    stopper migrasjonen på en slik kollisjon; denne porten måler
+    resultatet: på en migrert base finnes ingen kundeflate i navnerommet.
+
+    Målingen må SE alle tenanter, ellers er den ingen måling (§1s felle):
+    `brukermedlemskap` er FORCE RLS med ren GUC-policy og leses under
+    BYPASSRLS-rollen, `policyer` under claimeren (m37_dispatcher).
+    """
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+    bm = migrator.execute(
+        r"SELECT count(*) FROM brukermedlemskap WHERE tenant LIKE E'\\_\\_%'"
+    ).fetchone()[0]
+    migrator.rollback()
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    pol = migrator.execute(
+        r"SELECT count(*) FROM policyer WHERE tenant LIKE E'\\_\\_%'"
+    ).fetchone()[0]
+    migrator.rollback()
+    tok = migrator.execute(
+        r"SELECT count(*) FROM api_tokener WHERE tenant LIKE E'\\_\\_%'"
+    ).fetchone()[0]
+    migrator.rollback()
+    assert (bm, pol, tok) == (0, 0, 0), \
+        f"kundeflate i reservert navnerom: medlemskap={bm} policy={pol} token={tok}"
+
+
+@pg
 def test_port37_python_veien_er_stengt(migrator):
     """Port 37: `opprett_overtakelsessak` kan ikke skape en andre sak — den
     feller kalleren FØR noe når basen, og sakstallet står."""

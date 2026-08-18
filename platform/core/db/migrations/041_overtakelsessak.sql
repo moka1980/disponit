@@ -435,6 +435,71 @@ CREATE TRIGGER policyer_ikke_reservert
   BEFORE INSERT ON policyer
   FOR EACH ROW EXECUTE FUNCTION krev_ikke_reservert_tenant();
 
+-- 8.1 FORTIDEN (Codex P1). Triggerne over er BEFORE INSERT og sier
+-- ingenting om rader som ALT står der. Ruller 041 på en base der en
+-- kunde allerede heter `__plattform_domener` — det gamle
+-- tenant-formatet hadde ingen skranke mot prefikset — begynner §10 å
+-- skrive plattformens overtakelsessaker under KUNDENS tenant-id. Da er
+-- hele §9/§2-gjerdet borte i ett slag: kundens helt ordinære
+-- RLS-kontekst (`disponit.tenant`) faller sammen med plattformens, og
+-- kunden ser og kan røre saker som avgjør andre tenanters domener.
+--
+-- Å «migrere» kollisjonen er ikke noe en migrasjon kan gjøre trygt: en
+-- tenant-id er identitet på tvers av nesten hver tabell, og et
+-- automatisk navnebytte ville brutt evidenskjeder ingen har bedt om å få
+-- brutt. Migrasjonen STOPPER derfor, navngir kollisjonen, og lar en
+-- operatør flytte kunden først.
+--
+-- TRE ROLLER, TRE SYNSFELT — ikke stil, men tvang: en sjekk som ikke ser
+-- radene er ingen sjekk (§1 målte nøyaktig den fellen). `brukermedlemskap`
+-- er FORCE RLS med en ren GUC-policy, så bare en BYPASSRLS-rolle ser alle
+-- tenanter; `policyer`/`unntak`/`revisjonslogg` ses av claimeren gjennom
+-- den CURRENT_USER-baserte m37_dispatcher-policyen; `api_tokener` har
+-- ingen RLS og eies av authenticator, som migrator arver.
+SET LOCAL ROLE disponit_domene_eier;
+DO $$
+DECLARE v TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT tenant, ', ') INTO v
+    FROM public.brukermedlemskap WHERE tenant LIKE E'\\_\\_%';
+  IF v IS NOT NULL THEN
+    RAISE EXCEPTION '041 §8: brukermedlemskap bruker alt det reserverte '
+      '__-navnerommet (%) — flytt kunden før 041 rulles', v;
+  END IF;
+END $$;
+RESET ROLE;
+
+SET LOCAL ROLE disponit_m37_claimer;
+DO $$
+DECLARE v TEXT;
+BEGIN
+  -- `unntak`/`revisjonslogg` sjekkes FØR §10 finnes: etterpå er
+  -- plattformens EGNE rader der, og spørringen ville svart på seg selv.
+  SELECT string_agg(DISTINCT k.t, ', ') INTO v FROM (
+      SELECT 'policyer:' || tenant AS t FROM public.policyer
+       WHERE tenant LIKE E'\\_\\_%'
+      UNION SELECT 'unntak:' || tenant FROM public.unntak
+       WHERE tenant LIKE E'\\_\\_%'
+      UNION SELECT 'revisjonslogg:' || tenant FROM public.revisjonslogg
+       WHERE tenant LIKE E'\\_\\_%') k;
+  IF v IS NOT NULL THEN
+    RAISE EXCEPTION '041 §8: reservert __-navnerom er alt i bruk (%) — '
+      'flytt kunden før 041 rulles', v;
+  END IF;
+END $$;
+RESET ROLE;
+
+DO $$
+DECLARE v TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT tenant, ', ') INTO v
+    FROM public.api_tokener WHERE tenant LIKE E'\\_\\_%';
+  IF v IS NOT NULL THEN
+    RAISE EXCEPTION '041 §8: api_tokener bruker alt det reserverte '
+      '__-navnerommet (%) — flytt kunden før 041 rulles', v;
+  END IF;
+END $$;
+
 -- ------------------------------------------------------------
 -- 9. Adjudikator-synligheten (RLS + minst mulig grant)
 -- ------------------------------------------------------------
