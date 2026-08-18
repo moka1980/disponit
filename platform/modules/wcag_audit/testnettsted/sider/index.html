@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fasitbutikken</title>
+<link rel="stylesheet" href="/statisk/stil.css">
+<link rel="stylesheet" href="https://ekstern-cdn.example/pynt.css">
+<script src="https://ekstern-cdn.example/sporing.js" defer></script>
+</head>
+<body>
+<main>
+<h1>Fasitbutikken</h1>
+<p>Syntetisk testnettsted med KJENT fasit for staging-sjekklisten.</p>
+
+<!-- brudd 1+2: image-alt (kritisk) -->
+<img src="/statisk/vare1.png" width="60" height="40">
+<img src="/statisk/vare2.png" width="60" height="40">
+<!-- ekstern subressurs (bilde) — skal BLOKKERES og telles -->
+<img src="https://ekstern-cdn.example/banner.png" alt="Kampanjebanner" width="60" height="40">
+
+<!-- brudd 3: label (kritisk) -->
+<form action="/sok">
+  <input type="text" name="q">
+  <!-- brudd 4: button-name (kritisk) -->
+  <button type="submit"></button>
+</form>
+
+<!-- brudd 5: link-name (alvorlig) -->
+<a href="/om.html"></a>
+
+<!-- brudd 6+7: color-contrast (alvorlig) — 2 elementer -->
+<p style="color:#9a9a9a;background:#8a8a8a;">Nesten usynlig avsnitt.</p>
+<span style="color:#9a9a9a;background:#8a8a8a;">Nesten usynlig etikett.</span>
+
+<nav aria-label="Innhold">
+<ul>
+<li><a href="/om.html">Om oss</a></li>
+<li><a href="/kontakt.html">Kontakt</a></li>
+<li><a href="/side-3.html">Katalog</a></li>
+<li><a href="/privat/hemmelig.html">Internt</a></li>
+</ul>
+</nav>
+</main>
+</body>
+</html>
