@@ -276,11 +276,26 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
                               for e in eksempler[:MAKS_EKSEMPLER]]})
 
     truffet, tak, verdi = (tuple(resultat.avkortet) + (None, None, None))[:3]
+    # `truffet` er en PÅSTAND, ikke et hint (Codex P2): `bool(truffet)`
+    # gjorde `[0, null, null]` om til det skjemagyldige `truffet: false`
+    # og `"false"` om til `true`. Den falske retningen er den farlige —
+    # promotert evidens som påstår at ingenting var utelatt, i det ene
+    # feltet leseren har for å vite hva rapporten IKKE dekker (014b B3),
+    # nettopp når controlleren ikke klarte å lese dekningssignalet.
+    if not isinstance(truffet, bool):
+        raise Motorfeil("avkortet.truffet fra motoren er ikke boolsk")
     # `tak` og `verdi` er RÅ motortall som går rett inn i et heltallsfelt
     # uten øvre skjemagrense — samme eksponering som `antall`, og derfor
     # gjennom samme port (Codex P1).
     tak = None if tak is None else max(0, heltall(tak))
     verdi = None if verdi is None else max(0, heltall(verdi))
+    # ... og trippelen må være enig med seg selv (Codex P2): en telling
+    # OVER sitt eget tak er per definisjon et truffet tak. `(false, 10, 25)`
+    # er ikke en beskjeden rapport, det er to motstridende påstander, og
+    # å velge den ene for motoren ville vært å finne på et dekningssignal.
+    if not truffet and tak is not None and verdi is not None and verdi > tak:
+        raise Motorfeil(
+            "avkortet motsier seg selv: verdi over taket, men truffet er usann")
     # Kappet VI en eksempelliste, er rapporten avkortet (Codex P2). Uten
     # dette kunne den promoterte evidensen påstå `truffet: false` samtidig
     # som den utelot kjente eksempler — feltet skal aldri love mer

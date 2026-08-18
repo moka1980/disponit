@@ -2503,6 +2503,54 @@ def test_eksempellisten_maa_vaere_en_liste():
         assert r["funn"][0]["eksempler"] == ventet
 
 
+def test_dekningssignalet_avvises_i_stedet_for_aa_tvangskonverteres():
+    """Codex P2: `avkortet` er en PÅSTAND om hva rapporten ikke dekker.
+
+    `bool(truffet)` gjorde `[0, null, null]` til det skjemagyldige
+    `truffet: false` og `"false"` til `true`, og `tuple(raa or ...)`
+    gjorde strengen `"false"` til trippelen `('f','a','l','s','e')`.
+    Den falske retningen er den farlige: promotert evidens som påstår at
+    ingenting var utelatt, nettopp når controlleren ikke klarte å lese
+    dekningssignalet — den ene løgnen feltet finnes for å hindre (014b B3).
+
+    Kontroll: bytt `avkortet(...)` tilbake til `tuple(raa or (...))` i
+    `motor`, så blir `"false"` til `truffet: true`; og bytt
+    isinstance-sjekken i `bygg` tilbake til `bool(truffet)`, så blir
+    `[0, null, null]` til `truffet: false`.
+    """
+    from modules.wcag_audit.motor import Motorfeil, avkortet
+    from modules.wcag_audit.rapport import bygg
+
+    # Formen, der den ble ødelagt: motoravlesningen.
+    for raa in ("false", "", {"truffet": False}, {"a": 1},
+                (True, 10, 25, "ekstra")):
+        with pytest.raises(Motorfeil):
+            avkortet(raa)
+    # «Ingenting» betyr fortsatt ingenting avkortet.
+    for raa in (None, [], ()):
+        assert avkortet(raa) == (False, None, None)
+    assert avkortet([True, 10, 25]) == (True, 10, 25)
+
+    # Trippelen, der taket måles: flagget må være boolsk...
+    for daarlig in (0, 1, "false", None, [], 1.0):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(avkortet=(daarlig, None, None)),
+                 payload=_payload(), kontekst=_kontekst())
+    # ... og den må være enig med seg selv: en telling over sitt eget tak
+    # ER et truffet tak, og å velge den ene påstanden for motoren ville
+    # vært å finne på et dekningssignal.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(avkortet=(False, 10, 25)),
+             payload=_payload(), kontekst=_kontekst())
+    # Det sammenhengende skal fortsatt gå igjennom, begge veier.
+    r = bygg(_motorresultat(avkortet=(False, 10, 3)),
+             payload=_payload(), kontekst=_kontekst())
+    assert r["avkortet"] == {"truffet": False, "tak": 10, "verdi": 3}
+    r2 = bygg(_motorresultat(avkortet=(True, 10, 25)),
+              payload=_payload(), kontekst=_kontekst())
+    assert r2["avkortet"] == {"truffet": True, "tak": 10, "verdi": 25}
+
+
 def test_tekstfeltene_fra_motoren_ma_vaere_ekte_strenger():
     """Codex P1: `str(f.get("regel_id"))[:128]` og `str(e)` FANT PÅ verdier
     i stedet for å avvise dem, og fabrikatet passerte skjemaet.

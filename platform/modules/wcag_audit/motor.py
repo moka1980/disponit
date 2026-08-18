@@ -278,6 +278,36 @@ def regelsettversjon(raa) -> str:
     return v[:64]
 
 
+def avkortet(raa) -> tuple:
+    """Proxyens taktelling som EKTE triplett — eller Motorfeil (Codex P2).
+
+    `tuple(raa or (False, None, None))` var stille på tre måter, og alle
+    tre endte som skjemagyldig `avkortet` i PROMOTERT evidens:
+
+      * `"false"` er iterabel, så trippelen ble `('f','a','l','s','e')`
+        og `truffet` ble tegnet `'f'` — sant for `bool(...)`. Motoren sa
+        «ikke avkortet» og rapporten sa «avkortet».
+      * `{"truffet": false}` ble `('truffet',)` — nøklene, ikke verdiene.
+      * en lengre liste ble stille kappet til tre ledd, altså utdata vi
+        ikke leste ferdig.
+
+    Dekningssignalet er den ene tingen leseren bruker for å vite hva
+    rapporten IKKE dekker (014b B3). Kan vi ikke lese det, har vi ikke en
+    rapport — vi har en gjetning, og da er et ærlig feilet oppdrag riktig
+    utfall. Selve TRIPPELEN kontrolleres i `rapport.bygg`, der taket måles;
+    her står bare formen, fordi det er her den ble ødelagt.
+    """
+    if raa is None:
+        return (False, None, None)
+    if not isinstance(raa, (list, tuple)):
+        raise Motorfeil("avkortet fra motoren er ikke en liste")
+    if not raa:
+        return (False, None, None)
+    if len(raa) > 3:
+        raise Motorfeil("avkortet fra motoren har mer enn tre ledd")
+    return tuple(raa)
+
+
 class Kommandomotor:
     """Kjør den konfigurerte motorkommandoen (containeren) og les JSON på
     stdout. Kommandoen kommer fra drift-config (DISPONIT_WCAG_MOTOR), aldri
@@ -385,7 +415,7 @@ class Kommandomotor:
                 sider=tuple(d.get("sider") or ()),
                 funn=tuple(d.get("funn") or ()),
                 blokkert=tuple(d.get("blokkert") or ()),
-                avkortet=tuple(d.get("avkortet") or (False, None, None)))
+                avkortet=avkortet(d.get("avkortet")))
         except (ValueError, KeyError, TypeError, RecursionError) as e:
             # `RecursionError` står her som ANDRE skanse (Codex P1):
             # dybdevakten over skal ha tatt nøstingen først, men et unntak
