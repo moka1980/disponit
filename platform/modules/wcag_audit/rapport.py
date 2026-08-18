@@ -172,10 +172,32 @@ def _antall(raa, standard: int) -> int:
     Selve konverteringen er `motor.heltall` (Codex P1): den fanger også
     overflyt (`1e309`) og tall over JCS sitt trygge område, som ellers
     hadde smelt først under kanoniseringen rett før opplasting.
+
+    UNDER ÉN ER UTENFOR KONTRAKTEN (Codex P1, runde 11). Begge feltene
+    dette tallet ender i har `minimum: 1` i rapportskjemaet, og et tall
+    under det er ubetrodde utdata vi ikke kan lese — ikke noe modulen
+    skal reparere for motoren. De to reparasjonene som sto her gjorde
+    hver sin løgn skjemagyldig:
+
+      * funn: `antall < 1` ble hoppet over, og HELE funnet forsvant.
+        `heltall` fanger alt `antall: 0.9` nettopp fordi den stillheten
+        er skaden — men `-3` og `0` er ekte heltall, så de slapp forbi
+        porten og traff `continue`. Rapporten ble da promotert med en
+        kortere funnliste enn motoren fant, uten et eneste felt som sier
+        fra: `sammendrag` teller det ikke, `avkortet` gjelder tak, ikke
+        forkastede rader.
+      * dekningsbegrensninger: `max(1, ...)` skrev `0` og `-5` om til
+        `1` — en telling modulen fant på selv, i det feltet 014b B3 har
+        for å si hva rapporten IKKE dekker.
+
+    `standard` gjelder KUN når feltet mangler. Er standarden selv under
+    1 (funn), betyr det at feltet er påkrevd — og da er en manglende
+    telling like uleselig som en ugyldig.
     """
-    if raa is None or raa == "":
-        return standard
-    return heltall(raa)
+    n = standard if raa is None or raa == "" else heltall(raa)
+    if n < 1:
+        raise Motorfeil("antall fra motoren er under 1")
+    return n
 
 
 def _tekst(raa, felt: str) -> str:
@@ -261,9 +283,10 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     for f in resultat.funn:
         if not isinstance(f, dict) or f.get("alvorlighet") not in _ALVOR:
             raise Motorfeil("funn-post uleselig")
+        # Standarden er 0, altså under skjemaets minimum: `antall` er
+        # PÅKREVD i et funn, og `_antall` avviser både det manglende og
+        # det ugyldige i stedet for å slette funnet (Codex P1).
         antall = _antall(f.get("antall"), 0)
-        if antall < 1:
-            continue
         sammendrag[f["alvorlighet"]] += antall
         if len(funn) < MAKS_FUNN:
             eksempler = _eksempelliste(f.get("eksempler"))
@@ -340,7 +363,11 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
         nokkel = (vert, art)
         post = samlet.setdefault(nokkel, {"vert": nokkel[0], "antall": 0,
                                           "art": art})
-        post["antall"] += max(1, _antall(b.get("antall"), 1))
+        # Ingen `max(1, ...)`: `_antall` avviser en telling under 1 i
+        # stedet for at modulen finner på en (Codex P1). Standarden 1
+        # gjelder bare den manglende tellingen — raden ER en kjent
+        # begrensning, og «minst én» er da det raden selv sier.
+        post["antall"] += _antall(b.get("antall"), 1)
     # Størst først: treffer taket likevel, er det de STØRSTE
     # begrensningene som kommer med, ikke de tilfeldig første.
     begrensninger = sorted(samlet.values(),

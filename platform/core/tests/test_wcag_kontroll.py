@@ -2531,6 +2531,56 @@ def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
         m.kjor({})
 
 
+def test_telling_under_en_avvises_ikke_repareres():
+    """Codex P1, runde 11: `heltall` lukket brøkveien, ikke heltallsveien.
+
+    `antall: -3` og `antall: 0` er ekte heltall og passerte porten. Da sto
+    de to reparasjonene igjen, én i hver retning:
+
+      * funn: `if antall < 1: continue` slettet HELE funnet. Rapporten ble
+        promotert med en kortere funnliste enn motoren fant, og ingenting
+        sa fra — `sammendrag` teller ikke det som ble forkastet, og
+        `avkortet` handler om tak, ikke om rader vi kastet.
+      * dekningsbegrensninger: `max(1, ...)` skrev tallet om til `1`, en
+        telling modulen fant på selv i det ene feltet 014b B3 har for å si
+        hva rapporten IKKE dekker.
+
+    Kontroll: sett `< 1`-vakten i `_antall` tilbake til `return`, så blir
+    første blokk grønn med et funn borte og et sammendrag som er 0.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    for ugyldig in (-3, 0, -1):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(funn=({"regel_id": "color-contrast",
+                                       "alvorlighet": "alvorlig",
+                                       "antall": ugyldig,
+                                       "eksempler": []},)),
+                 payload=_payload(), kontekst=_kontekst())
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(blokkert=({"vert": "f.example",
+                                           "antall": ugyldig,
+                                           "art": "font"},)),
+                 payload=_payload(), kontekst=_kontekst())
+
+    # `antall` er PÅKREVD i et funn (rapportskjemaet), så en manglende
+    # telling er like uleselig som en ugyldig — ikke et funn som stille
+    # forsvinner.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(funn=({"regel_id": "color-contrast",
+                                   "alvorlighet": "alvorlig",
+                                   "eksempler": []},)),
+             payload=_payload(), kontekst=_kontekst())
+
+    # Den lovlige veien står: en blokkert-rad UTEN telling er fortsatt en
+    # kjent begrensning, og «minst én» er da det raden selv sier.
+    r = bygg(_motorresultat(blokkert=({"vert": "f.example", "art": "font"},)),
+             payload=_payload(), kontekst=_kontekst())
+    assert r["dekningsbegrensninger"] == [{"vert": "f.example", "antall": 1,
+                                           "art": "font"}]
+
+
 def test_eksempellisten_maa_vaere_en_liste():
     """Codex P1: `list(f.get("eksempler") or [])` var to feil i én linje.
 
