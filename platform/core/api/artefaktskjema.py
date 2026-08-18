@@ -156,7 +156,17 @@ _IKKE_EVALUERT = frozenset({"$defs", "definitions", "contentSchema"})
 #: (de henger på `if`), og heller ikke `dependentSchemas` (den henger på at
 #: instansen har nøkkelen). Se `_syklusfeil`.
 _PA_STEDET_NOKKEL = frozenset({"not", "if"})
-_PA_STEDET_LISTE = frozenset({"allOf", "anyOf", "oneOf"})
+#: LISTENE der HVER gren evalueres. `allOf` er åpenbar. `oneOf` hører også
+#: hjemme her, og det er verdt å si hvorfor: den stopper ikke ved første
+#: gren som holder — nøkkelordet må vite om FLERE holder, så validatoren
+#: kjører `is_valid` over resten. Alle grenene måles altså, uansett
+#: instans.
+_PA_STEDET_LISTE = frozenset({"allOf", "oneOf"})
+#: `anyOf` KORTSLUTTER (Codex P2). Validatoren går grenene i rekkefølge og
+#: `break`-er på den første som holder, så bare GREN 0 evalueres
+#: ubetinget; resten henger på at alle de foregående feilet — altså på
+#: instansen, akkurat som `then`/`else`. Se `_syklusfeil`.
+_ANYOF = "anyOf"
 
 
 def _evalueringsbarn(sti, s):
@@ -400,12 +410,24 @@ def _syklusfeil(noder: dict, refmal: dict) -> list[str]:
     Betingelsen er ikke «en syklus», og forskjellen er hele poenget:
 
       * En kant teller bare når delskjemaet evalueres PÅ STEDET og
-        UBETINGET — `$ref`, `$dynamicRef`, `allOf`/`anyOf`/`oneOf`, `not`
-        og `if`. Alle sender NØYAKTIG samme instans videre uten at noe blir
+        UBETINGET — `$ref`, `$dynamicRef`, `allOf`, `oneOf`, `not` og `if`.
+        Alle sender NØYAKTIG samme instans videre uten at noe blir
         forbrukt, så en runde i den grafen er en runde uten framdrift.
         `{"$ref": "#/$defs/a", "$defs": {"a": {"allOf": [{"$ref": "#"}]}}}`
         er derfor like uendelig som `{"$ref": "#"}`, selv om ingen av
         kantene er to `$ref` på rad.
+      * `anyOf` KORTSLUTTER, og bare gren 0 er ubetinget (Codex P2).
+        Validatoren `break`-er på den første grenen som holder, så
+        `{"anyOf": [true, {"$ref": "#"}]}` validerer HVER instans uten å
+        røre den rekursive grenen — den ble likevel avvist da alle grenene
+        fikk en ubetinget kant, og det er en falsk avvisning av et
+        brukbart skjema, like udødelig som en falsk godkjenning. Gren 0
+        evalueres derimot alltid, så `{"anyOf": [{"$ref": "#"}, true]}`
+        ryker fortsatt, og avvises fortsatt. Grenene ETTER 0 henger på at
+        alle de foregående feilet — altså på instansen — og hører derfor
+        sammen med `then`/`else` under.
+        (`oneOf` kortslutter IKKE: den må vite om flere grener holder, og
+        måler resten med `is_valid`. Den blir stående som ubetinget.)
       * `properties`, `items` og resten går NED i instansen. Ekte rekursive
         skjemaer lever der, og de terminerer fordi instansen er endelig.
         De er lovlige og skal forbli det.
@@ -447,6 +469,9 @@ def _syklusfeil(noder: dict, refmal: dict) -> list[str]:
                 elif nokkel in _PA_STEDET_LISTE and isinstance(verdi, list):
                     ut.extend(sti + (nokkel, str(i))
                               for i in range(len(verdi)))
+                elif nokkel == _ANYOF and isinstance(verdi, list) and verdi:
+                    # Bare den FØRSTE grenen — se `_ANYOF`.
+                    ut.append(sti + (nokkel, "0"))
         kanter[sti] = [m for m in ut if m in naadd]
 
     GRA, SVART = 1, 2

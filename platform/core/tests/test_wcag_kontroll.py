@@ -3033,6 +3033,38 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     feil = valider(betinget_dep, {"x": 1})
     assert feil and "kommer ikke tilbake" in feil[0]
 
+    # Codex P2, runde 4: `anyOf` KORTSLUTTER, og bare GREN 0 er ubetinget.
+    # Validatoren går grenene i rekkefølge og `break`-er på den første som
+    # holder, så `{"anyOf": [true, {"$ref": "#"}]}` validerer hver eneste
+    # instans uten å røre den rekursive grenen. Med en ubetinget kant fra
+    # ALLE grener ble det brukbare skjemaet avvist ved registrering — og
+    # den falske avvisningen er like udødelig som en falsk godkjenning.
+    # Kontroll: legg `anyOf` tilbake i `_PA_STEDET_LISTE`, så avvises
+    # `kortslutter` under.
+    kortslutter = {"anyOf": [True, {"$ref": "#"}]}
+    assert not skjemafeil(kortslutter)
+    assert not valider(kortslutter, {"p": 1})
+    # Gren 0 evalueres derimot ALLTID, så den siden avvises fortsatt —
+    # både alene og med en gren etter seg.
+    for uendelig in ({"anyOf": [{"$ref": "#"}]},
+                     {"anyOf": [{"$ref": "#"}, True]},
+                     {"$ref": "#/$defs/a",
+                      "$defs": {"a": {"anyOf": [{"$ref": "#"}]}}}):
+        feil = skjemafeil(uendelig)
+        assert feil and "syklus" in feil[0], uendelig
+        assert valider(uendelig, {"p": 1}), uendelig
+    # En SENERE gren er betinget på at de foregående feilet — altså på
+    # instansen, akkurat som `then`. Nettet er `RecursionError`-fangsten.
+    betinget_anyof = {"anyOf": [{"type": "string"}, {"$ref": "#"}]}
+    assert not skjemafeil(betinget_anyof)
+    assert not valider(betinget_anyof, "x")
+    feil = valider(betinget_anyof, 5)
+    assert feil and "kommer ikke tilbake" in feil[0]
+    # `oneOf` kortslutter IKKE — den må vite om FLERE grener holder, og
+    # måler resten med `is_valid`. Alle grenene er derfor ubetinget.
+    feil = skjemafeil({"oneOf": [True, {"$ref": "#"}]})
+    assert feil and "syklus" in feil[0]
+
     # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
     # JSON ville avvist disse to — og den falske avvisningen er like
     # endelig som en falsk godkjenning, siden raden er udødelig.
