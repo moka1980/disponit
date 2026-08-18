@@ -160,6 +160,27 @@ WEBRTC_AV = (
 #: da verken sende eller motta UDP.
 WEBRTC_BRYTER = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
 
+#: 2xx-statuser som IKKE etterlater et dokument (RFC 9110 §15.3.5/§15.3.6).
+#: Chromium navigerer ikke i det hele tatt på dem — den blir stående der
+#: den var — så det finnes ingen DOM å kontrollere.
+TOMME_STATUS = frozenset({204, 205})
+
+
+def _navigasjon_ok(status: int) -> bool:
+    """Ga navigasjonen et dokument axe kan kontrollere? (Codex P2, runde 5)
+
+    Porten var `status == 200`, og 200 er ikke det eneste vellykkede
+    svaret. Et gyldig HTML-GET kan lovlig svare 201, 202 eller 203 —
+    Playwright laster dokumentet som ellers — mens siden ble merket
+    `feilet` og axe hoppet over den. Rapporten meldte da en
+    navigasjonsfeil for en side som svarte helt normalt, i stedet for
+    tilgjengelighetsfunnene den faktisk hadde.
+
+    `TOMME_STATUS` holdes utenfor: der er `feilet` riktig utfall, for det
+    er ingen side å kontrollere. Alt utenfor 2xx er som før."""
+    return 200 <= status < 300 and status not in TOMME_STATUS
+
+
 #: Navigasjonsfrist per side — romslig for et lokalt testnettsted, liten
 #: mot claim-fristen. Motoren som helhet drepes uansett av Kommandomotors
 #: vakthund; denne finnes for at ÉN hengende side skal gi `feilet` på den
@@ -895,7 +916,7 @@ def main() -> int:
             besokt += 1
             try:
                 svar = page.goto(url, wait_until="load")
-                ok = svar is not None and svar.status == 200
+                ok = svar is not None and _navigasjon_ok(svar.status)
             except Exception:
                 ok = False
             # SIDEN ER DEN VI FAKTISK LANDET PÅ (Codex P1). `page.goto`

@@ -589,6 +589,28 @@ def test_crawlen_rapporterer_og_loeser_mot_den_landede_url_en():
     assert n(o, f"{o}/gammel", "a.html") == f"{o}/a.html"
 
 
+def test_alle_2xx_med_dokument_er_en_vellykket_navigasjon():
+    """Codex P2, runde 5: 200 er ikke det eneste vellykkede svaret.
+
+    Et gyldig HTML-GET kan lovlig svare 201, 202 eller 203 — Playwright
+    laster dokumentet som ellers — mens `status == 200` merket siden
+    `feilet` og hoppet over axe. Den promoterte rapporten meldte da en
+    navigasjonsfeil for en side som svarte helt normalt, i stedet for
+    tilgjengelighetsfunnene den faktisk hadde."""
+    for s in (200, 201, 202, 203, 206, 226, 299):
+        assert kjor._navigasjon_ok(s) is True, s
+    # 204/205 etterlater INGEN side: Chromium navigerer ikke i det hele
+    # tatt, så `feilet` er riktig utfall — det er ingen DOM å kontrollere.
+    for s in (204, 205):
+        assert kjor._navigasjon_ok(s) is False, s
+    assert kjor.TOMME_STATUS == frozenset({204, 205})
+    # Alt utenfor 2xx er som før.
+    for s in (100, 199, 300, 301, 400, 404, 500, 503):
+        assert kjor._navigasjon_ok(s) is False, s
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "ok = svar is not None and _navigasjon_ok(svar.status)" in kilde
+
+
 def test_lenker_loeses_mot_dokumentets_base():
     """Codex P2, runde 5: `<base href>` er dokumentets svar, ikke vårt.
 
