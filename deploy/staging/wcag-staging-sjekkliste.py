@@ -11,6 +11,19 @@ verdier føres inn for hånd i egen commit, med denne fila som kilde.
     sudo -E python3 deploy/staging/wcag-staging-sjekkliste.py \
         --evidens /root/wcag-runde/evidens.jsonl [--fase N] [--motor CMD]
 
+IDEMPOTENSEN ER EKTE, IKKE EN PÅSTAND (Codex P2): hver bestilling får en
+nøkkel avledet av rundens id (`RUNDE/runde-id`, eller WCAG_RUNDE_ID) og
+bestillingskroppen — se `_idem`. En gjenkjøring av samme fase i samme
+runde REPLAYER derfor beslutningene i stedet for å ta nye. Det er ikke
+kosmetikk: frekvensgrensen er 12/dag per `mal_url`, og en full runde
+bruker nøyaktig 12 på `/index.html` (10 i fase 5, 1 i fase 6, 1 i fase
+7). Med nøkler som endret seg per forsøk ga en gjenkjøring
+`frekvensgrense_naadd` der fasiten krever 10/10 grønne.
+
+En NY runde krever en ny id (tøm rundekatalogen eller sett
+WCAG_RUNDE_ID) — og treffer taket uansett om den kjøres samme døgn som
+den forrige. Da er det grensen som virker, ikke en feil.
+
 Faser (idempotente; --fase kjører én, default alle i rekkefølge):
   1 forutsetninger   nøkkelregister, docker-image, testnettsted m/ TLS
   2 registrering     kontrakt/release/typer via de herdede funksjonene +
@@ -389,6 +402,51 @@ def fase4(m, http, pepper):
 # Fase 5 — fasitmålingen (10 kjøringer innen frist)
 # ---------------------------------------------------------------------------
 
+def _rundeid() -> str:
+    """Rundens IDENTITET — stabil på tvers av gjenkjøringer (Codex P2).
+
+    Idempotensnøklene under avledes av denne. Den skrives én gang til
+    `RUNDE/runde-id` og gjenbrukes så lenge rundekatalogen står — samme
+    mekanikk som `RUNDE/modultoken` alt bruker for å overleve `--fase N`.
+    `WCAG_RUNDE_ID` overstyrer for den som vil navngi runden selv.
+
+    En NY runde krever en ny id (tøm rundekatalogen eller sett
+    WCAG_RUNDE_ID). Merk at frekvensgrensen er 12/dag per `mal_url` og at
+    en full runde bruker nøyaktig 12 på `/index.html`: en ny runde samme
+    døgn treffer taket uansett nøkler, og det er grensen som virker, ikke
+    en feil."""
+    fil = RUNDE / "runde-id"
+    if fil.exists():
+        rid = fil.read_text().strip()
+        if rid:
+            return rid
+    RUNDE.mkdir(parents=True, exist_ok=True)
+    rid = os.environ.get("WCAG_RUNDE_ID", "").strip() or (
+        "r" + secrets.token_hex(6))
+    fil.write_text(rid)
+    return rid
+
+
+def _idem(merkelapp: str, kropp: dict) -> str:
+    """Idempotensnøkkel som er STABIL for samme runde + samme bestilling.
+
+    `secrets.token_hex()` per kall gjorde hver gjenkjøring til en NY
+    forretningshandling: samme `mal_url` fikk en ny frekvensreservasjon i
+    stedet for å replaye beslutningen. Fasene er dokumentert som
+    idempotente, og fase 5 alene bruker 10 av tenantens 12 daglige
+    slots — så en gjenkjøring ga `frekvensgrense_naadd` der fasiten
+    krever 10/10 grønne. En nøkkel som endrer seg per forsøk er ingen
+    idempotensnøkkel.
+
+    Kroppens hash er med i nøkkelen med vilje: endres bestillingen, blir
+    den en ny nøkkel i stedet for `idempotenskonflikt` mot den gamle
+    (kjernen avviser samme nøkkel med annen intensjon)."""
+    h = hashlib.sha256(
+        json.dumps(kropp, sort_keys=True, ensure_ascii=False)
+        .encode("utf-8")).hexdigest()
+    return f"{_rundeid()}-{merkelapp}-{h[:12]}"
+
+
 def _bestill(http, cookie, csrf, kropp, nokkel=None):
     from api import sesjon as sesjonmodul
     hoder = {"X-Disponit-CSRF": csrf}
@@ -450,12 +508,10 @@ def fase5(m, http, mtk, motorkmd, digest):
         fasit = json.loads((TESTNETT / "fasit.json").read_text())
         sp = fasit["scenarier"][scenario]["payload"]
         start = time.monotonic()
-        r = _bestill(http, cookie, csrf,
-                     {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
-                      "sti": sp["sti"], "kravsett": sp["kravsett"],
-                      "omfang": sp["omfang"],
-                      "maks_sider": sp["maks_sider"]},
-                     "runde-" + secrets.token_hex(8))
+        kropp = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
+                 "sti": sp["sti"], "kravsett": sp["kravsett"],
+                 "omfang": sp["omfang"], "maks_sider": sp["maks_sider"]}
+        r = _bestill(http, cookie, csrf, kropp, _idem(f"f5-{i:02d}", kropp))
         if r.status_code != 200 or r.json().get("beslutning") != "tillat":
             evidens("kjoring_avvist", i=i, status=r.status_code,
                     svar=r.json())
@@ -512,11 +568,10 @@ def fase6(m, http, mtk, motorkmd, digest):
     _start_testnett(robots_5xx=True)
     cookie, csrf = _adminokt(m, TENANT)
     lese_tok = _lesetoken(m, TENANT)
-    r = _bestill(http, cookie, csrf,
-                 {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
-                  "sti": "/index.html", "kravsett": "wcag21_aa",
-                  "omfang": "nettsted", "maks_sider": 4},
-                 "r5xx-" + secrets.token_hex(6))
+    kropp = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
+             "sti": "/index.html", "kravsett": "wcag21_aa",
+             "omfang": "nettsted", "maks_sider": 4}
+    r = _bestill(http, cookie, csrf, kropp, _idem("f6-r5xx", kropp))
     r.raise_for_status()
     res = _kontroller_kjor(mtk, motorkmd, digest)
     rr = http.get(f"/v1/rapport/{r.json()['oppdrag_id']}",
@@ -530,11 +585,10 @@ def fase6(m, http, mtk, motorkmd, digest):
     ck2, cs2 = _adminokt(m, TENANT_FREKVENS)
     utfall = []
     for i in range(5):
-        r = _bestill(http, ck2, cs2,
-                     {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
-                      "sti": "/index.html", "kravsett": "wcag21_aa",
-                      "omfang": "enkeltside"},
-                     f"frekv-{i}-" + secrets.token_hex(4))
+        kropp = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
+                 "sti": "/index.html", "kravsett": "wcag21_aa",
+                 "omfang": "enkeltside"}
+        r = _bestill(http, ck2, cs2, kropp, _idem(f"f6-frekv-{i}", kropp))
         utfall.append(r.json().get("beslutning"))
     evidens("port21_frekvens", utfall=utfall,
             krav="4 tillat + 1 ikke-tillat",
@@ -561,11 +615,10 @@ def fase6(m, http, mtk, motorkmd, digest):
 def fase7(m, http, mtk, digest):
     # Motorfeil → kvittering avbrutt, INTET artefakt.
     cookie, csrf = _adminokt(m, TENANT)
-    r = _bestill(http, cookie, csrf,
-                 {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
-                  "sti": "/index.html", "kravsett": "wcag21_aa",
-                  "omfang": "enkeltside"},
-                 "feil-" + secrets.token_hex(6))
+    kropp = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
+             "sti": "/index.html", "kravsett": "wcag21_aa",
+             "omfang": "enkeltside"}
+    r = _bestill(http, cookie, csrf, kropp, _idem("f7-motorfeil", kropp))
     r.raise_for_status()
     oid = r.json()["oppdrag_id"]
     res = _kontroller_kjor(mtk, ["false"], digest)
@@ -582,11 +635,10 @@ def fase7(m, http, mtk, digest):
             ok=res.get("utfall") == "avbrutt" and art == 0)
 
     # Evidensfrist → reaper → M-37-sak, oppdrag feilet (port 22/23).
-    r2 = _bestill(http, cookie, csrf,
-                  {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
-                   "sti": "/om.html", "kravsett": "wcag21_aa",
-                   "omfang": "enkeltside"},
-                  "frist-" + secrets.token_hex(6))
+    kropp2 = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
+              "sti": "/om.html", "kravsett": "wcag21_aa",
+              "omfang": "enkeltside"}
+    r2 = _bestill(http, cookie, csrf, kropp2, _idem("f7-frist", kropp2))
     r2.raise_for_status()
     oid2 = r2.json()["oppdrag_id"]
     _kontekst(m, TENANT)
