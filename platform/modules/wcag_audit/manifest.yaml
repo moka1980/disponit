@@ -9,11 +9,34 @@
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
 versjon: 0.1.0
-status: aktiv                  # AKSEPTERT 2026-08-18 — sjekklisten under er målt (evidens på disponit-srv)
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # Aksept skjer FØRST når staging-sjekklisten under er grønn med målte
 # verdier (evidensgrensen `wcag-kontroll-v1`, klarsignalet §12) — status →
 # aktiv er 014c-NESTE-steget, aldri en del av kode-PR-en.
-driftstilstand: staging        # aktiv+claiming på disponit-srv (miljø staging)
+#
+# FLIPPET STO `aktiv` I DENNE PR-EN OG ER TATT TILBAKE (Codex P1 på #89).
+# Ikke fordi målerunden var dårlig — den var ekte — men fordi aksepten er
+# en PORT, og porten var ikke bestått da flagget ble satt:
+#
+#   1. `rollback_testet` er `nei`. Flippedrillen KAN ikke kjøres ennå
+#      (forrige release er før migrasjon 039 og nekter boot mot dagens
+#      base), så ingen kan lukke det punktet i dag. RUTINER.md pkt. 6 er
+#      kategorisk: «en modul settes ikke til `aktiv` i registeret før alle
+#      sjekklistepunkter er ja.» Regelen har ingen unntak å påberope seg —
+#      bootstrap-unntaket gjelder fase 1-plattformmodulene, ikke denne.
+#   2. De fem andre punktene er målt, men ikke BUNDET gjennom
+#      evidensporten (se blokken over `staging_sjekkliste`), så CI
+#      verifiserer ingen av tallene aksepten skulle hvile på.
+#
+# Et `aktiv` her ville dermed vært et flagg uten port bak seg — og
+# `driftstilstand` arver: settes den `staging` mens status ikke er `aktiv`,
+# gir `registry.valider` «drift krever aktiv». De to feltene flyttes
+# sammen, når porten faktisk er bestått.
+#
+# m02_revisjonslogg BLE aktivert i denne PR-en og forblir aktiv: den
+# beslutningen står på egne ben (delt m01-evidens, alle punkter `ja`,
+# artefaktene bundet) og er uavhengig av WCAG-modulens akseptport.
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # bestilling og frekvens går gjennom policyporten
   - m02_revisjonslogg          # én skrivevei til evidenskjeden
