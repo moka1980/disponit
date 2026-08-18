@@ -42,6 +42,9 @@ FAMILIE = "domeneovertakelse"
 #: som skiller VÅRE rader fra alt annet som deler idempotensnavnerommet.
 HANDLING = "domene.overtakelse"
 
+#: 040: sakens eier — reservert plattformtenant, aldri en kunde (port 35).
+PLATTFORMTENANT = "__plattform_domener"
+
 
 def idempotensnokkel(hostname: str, generasjon: int) -> str:
     return f"{FAMILIE}:{hostname}:{generasjon}"
@@ -50,73 +53,20 @@ def idempotensnokkel(hostname: str, generasjon: int) -> str:
 def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
                             tenant_tapt: str, generasjon: int,
                             aktor: str) -> int:
-    """Opprett (eller gjenbruk) overtakelsessaken. Returnerer `unntak_id`.
+    """STENGT (040, port 37): saker opprettes av `sikre_overtakelsessak()`
+    i basen, i SAMME transaksjon som overtakelsen — aldri herfra.
 
-    Kalleren MÅ ha satt `disponit.tenant = tenant_ny` (RLS). `generasjon` er
-    B-radens `autorisasjonsgenerasjon` etter overtakelsen — monoton, altså unik
-    per konflikt.
-
-    `hostname` er alltid kanonisk her: nøkkelen bygges på det samme navnet som
-    ble sendt til `verifiser_domenekontroll`, og migrasjon 018 (§0) avviser
-    enhver annen tekstlig form FØR konflikten i det hele tatt kan oppstå. Det
-    er nettopp derfor §0 validerer i stedet for å normalisere — ellers kunne to
-    former av samme navn gitt to idempotensnøkler for én konflikt.
-
-    Degraderingen av forbigåtte utfordrere (A→B→C, §3) gjøres IKKE herfra
-    (Codex): invarianten hører hjemme på selve overgangen, ikke hos en kaller
-    som må huske den. Migrasjon 019 §3.25 henger
-    `degrader_forbigatte_utfordrere` på `hostname_binding` — flyttes bindingen,
-    degraderes alle andre i `avklaring_kreves` i samme transaksjon, uansett
-    hvem som utløste overtakelsen. Det gjelder også dreneringen under, som
-    kaller hit for konflikter den ikke selv utløste.
+    Funksjonen står igjen som et gjerde, ikke som en vei: to sak-skapere
+    for samme hendelse er en parallell sakskilde, og python-veien skrev
+    dessuten saken på UTFORDRERENS tenant med kryptert payload — begge
+    deler er nå feil modell (saken bor på `__plattform_domener` med
+    `payload_type='referanse'`). Et kall hit er alltid en programmeringsfeil
+    og skal felle kalleren høyt, ikke lage en andre sak stille.
     """
-    key = idempotensnokkel(hostname, generasjon)
-    # Codex: serialiser på den avledede nøkkelen. `revisjonslogg` har kun en
-    # IKKE-unik indeks på (tenant, idempotency_key), så to samtidige retry-arbeidere
-    # kunne begge se «ingen rad» og opprette hver sin sak. Advisory-låsen (transaks-
-    # jonsscopet) gjør sjekk-og-opprett atomisk per (tenant, hostname, generasjon).
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                 (tenant_ny + ":" + key,))
-    # Codex: slå opp SAKEN direkte, scopet til overtakelsesfamilien — ikke en
-    # vilkårlig loggpost med samme nøkkel. `revisjonslogg.idempotency_key` er et
-    # DELT, KALLERSTYRT navnerom (`/v1/beslutning` skriver klientens
-    # Idempotency-Key rett inn) med kun en IKKE-unik indeks. Gikk oppslaget via
-    # loggposten først, kunne en fremmed rad som alt het
-    # `domeneovertakelse:<hostname>:<generasjon>` kapre idempotensen på to måter:
-    # uten `unntak` fant vi ingen sak og opprettet en NY ved hvert retry (én
-    # konflikt → mange M-37-saker), og MED et urelatert `unntak` returnerte vi
-    # den fremmede saken som om den var overtakelsessaken — og konflikten fikk
-    # aldri sin egen sak, mens B ble stående i `avklaring_kreves` for alltid.
-    # Joinen bærer både `kilde`/`kategori` og `handling`, altså nøyaktig det
-    # denne funksjonen selv skriver; en fremmed rad kan ikke matche.
-    sak = conn.execute(
-        "SELECT u.id FROM unntak u"
-        " JOIN revisjonslogg r ON r.tenant = u.tenant AND r.id = u.loggpost_id"
-        " WHERE u.tenant=%s AND u.kategori=%s AND u.handling=%s"
-        "   AND r.kilde=%s AND r.idempotency_key=%s"
-        " ORDER BY u.id LIMIT 1",
-        (tenant_ny, FAMILIE, HANDLING, FAMILIE, key)).fetchone()
-    if sak is not None:
-        return int(sak[0])   # idempotent: saken finnes alt for denne konflikten
-
-    loggpost = int(conn.execute(
-        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash, policy_id,"
-        " beslutning, begrunnelse, idempotency_key)"
-        " VALUES (%s,%s,%s,%s,%s,'UNNTAK','[]',%s) RETURNING id",
-        (tenant_ny, aktor, FAMILIE,
-         hashlib.sha256(key.encode()).hexdigest(), FAMILIE, key)).fetchone()[0])
-
-    payload = {
-        "hostname": hostname,
-        "tenant_tapt": tenant_tapt,     # A — bevis bevart, men tilbakekalt
-        "tenant_ny": tenant_ny,         # B — avklaring_kreves inntil avgjørelse
-        "generasjon": generasjon,
-        "familie": FAMILIE,
-    }
-    return kjerne._skriv_unntak(
-        conn, tenant_ny, loggpost, handling=HANDLING,
-        kategori=FAMILIE, sakstype="sikkerhet", prioritet="hoy",
-        payload=payload, snapshot=kjerne.UKJENT_SNAPSHOT)
+    raise RuntimeError(
+        "opprett_overtakelsessak er stengt (040): saker opprettes av "
+        "sikre_overtakelsessak() i basen, i samme transaksjon som "
+        "overtakelsen — python-veien kan ikke skape en sak")
 
 
 #: Aktøren dreneringen skriver saken som. Ikke et menneske og ikke API-et:
@@ -124,163 +74,80 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
 DRENERINGSAKTOR = "domenekonfliktdrenering"
 
 
-def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
-                                     grense: int = 100) -> dict:
-    """Opprett M-37-saken for hver konflikt som står uten en (Codex P1).
+def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
+    """VAKTBIKKJE (040): hver konflikt skal ALLEREDE ha sin sak.
 
-    `verifiser_domenekontroll` gjør overtakelsen og adjudikasjonskravet i ÉN
-    transaksjon — A tilbakekalles, B settes `avklaring_kreves` med motparten på
-    raden — men SAKEN kan ikke lages der. `opprett_overtakelsessak` krypterer
-    payloaden med tenantens DEK (KEK-en lever i prosessen, ikke i basen) og
-    skriver `revisjonslogg` + `unntak`: runtime-autoritet med nøkkelmateriale.
-    Verken basen eller verifiseringsarbeideren (`disponit_domener` — EXECUTE på
-    nøyaktig to funksjoner) har den, og skal ikke ha den. Uten en vei videre
-    var utfallet det verst mulige: A mistet autorisasjonen, B ble stående i
-    `avklaring_kreves`, og siden bare `avgjor_domeneovertakelse` kan løfte noen
-    ut av avklaring — og den nås bare gjennom en sak — kunne ingen av dem
-    noensinne bli løst.
+    Før 040 måtte saken lages i etterkant, herfra, med tenantens DEK —
+    `sikre_overtakelsessaker`-dreneringen. Nå lages den av
+    `sikre_overtakelsessak()` i SAMME transaksjon som overtakelsen, og
+    `domenekontroll_avklaring_krever_sak` (040 §7) avviser enhver ny
+    `avklaring_kreves` uten gjeldende sak ved commit. En konflikt uten sak
+    kan altså bare være en rad fra FØR 040 — en utrullingsanomali, ikke en
+    kø som skal dreneres.
 
-    Signalet er derfor ikke en melding som kan gå tapt, men TILSTANDEN selv:
-    en rad i `avklaring_kreves` med `konflikt_motpart` ER en konflikt som
-    venter på sin sak (`ventende_overtakelseskonflikter`, migrasjon 039).
-    Dreneringen kjøres fra en prosess som HAR autoriteten (M-37-arbeideren),
-    én rad om gangen med konteksten bundet til RADENS tenant — samme form som
-    `reap_evidensfrister` (038 §5).
-
-    Konflikten REVALIDERES før saken lages (Codex P2). Plukket committer — det
-    er stempelet som gjør utvalget roterende — og slipper dermed radlåsen før
-    saken finnes. Tar en tredje tenant hostnavnet i mellomtiden, degraderer
-    `degrader_forbigatte_utfordrere` (019 §3.2) den valgte utfordreren og øker
-    generasjonen, og siden `opprett_overtakelsessak` hverken tar
-    hostname-låsen eller ser på domeneraden, ville saken blitt laget fra den
-    FORELDEDE `(motpart, generasjon)`-tuppelen: en M-37-sak ingen avgjørelse
-    kan lukke, fordi `avgjor_domeneovertakelse` gjerder på generasjonen.
-    `bekreft_overtakelseskonflikt` (039) tar hostnavnets egen advisory-lås —
-    transaksjonell, altså holdt gjennom saksopprettelsen og commiten under —
-    og krever at status, motpart OG generasjon står nøyaktig slik plukket så
-    dem. Står de ikke det, er raden en ANNEN konflikt enn den vi plukket:
-    den telles som `foreldet` og hentes av neste syklus med sine ferske verdier.
-
-    Idempotent i to lag: nøkkelen er (hostname, generasjon) under advisory-lås,
-    så en konflikt får ÉN sak uansett hvor mange ganger vi drenerer, og en rad
-    som alt har sin sak koster kun oppslaget. Utvalget ROTERER (Codex P2):
-    plukket stempler radene det tar og tar de minst nylig drenerte først, ellers
-    ville de første `grense` konfliktene — som blir stående til et menneske har
-    avgjort dem — okkupert hvert eneste utvalg, og konflikt nummer `grense`+1
-    aldri fått sin sak. Faller prosessen ut midt i, står
-    radene igjen og neste syklus finner dem på nytt — det finnes ingen kø å
-    reparere, og derfor ingen kø som kan bli inkonsistent med tilstanden.
-
-    Én rads feil stopper ikke de andre: mangler ÉN tenant sin KEK, skal ikke
-    alle andres konflikter bli ustelt. Feilen telles og navngis. Men bare
-    RADENS egne feil (Codex P2) — de som er en egenskap ved denne tenanten og
-    ikke ved utrullingen: `tenantnokkel_mangler` (KEK-en er borte for én
-    tenant) og ugyldige radverdier. `psycopg.Error` i vid forstand fanget også
-    `InsufficientPrivilege`, `UndefinedTable` og skjemafeil — som rammer HVER
-    rad — og skrev dem inn i et resultat bare `drener_domenekonflikter`
-    printer, mens M-37-løkkens heartbeat sto `ok`: hver eneste overtakelse
-    kunne bli stående uten sak mens arbeideren så frisk ut. Uventede DB-feil
-    kastes derfor videre, som ellers i denne løkken, og feller prosessen slik
-    at systemd — ikke en stille journalrad — bærer signalet.
+    Vakten beholder plukket (`ventende_overtakelseskonflikter`, 039):
+    stempelet gjør utvalget roterende, så hver konflikt blir sett. For hver
+    plukket rad verifiseres at saken finnes på `__plattform_domener` med
+    RADENS utfordrer og generasjon. Mangler den, TELLES og NAVNGIS den —
+    det finnes ingen python-vei til å lage den (port 37), og en stille
+    teller ville vært å flagge et hull uten å lukke det: raden krever en
+    operatør, og journalen skal si det hver syklus til den er borte.
     """
     from db.pg import sett_kontekst
     rader = conn.execute(
         "SELECT tenant, hostname, motpart, generasjon"
         " FROM ventende_overtakelseskonflikter(%s)", (grense,)).fetchall()
-    # COMMIT, ikke rollback (Codex P2). Plukket STEMPLER radene
-    # (`konflikt_drenert`, 039), og det er stempelet som gjør utvalget
-    # roterende: en konflikt står `avklaring_kreves` til et menneske har
-    # avgjort saken, så uten rotasjon ville de første `grense` radene okkupert
-    # hvert eneste utvalg og konflikt nummer `grense`+1 aldri fått sin sak.
-    # Egen transaksjon, før radarbeidet: saksopprettelsen under committer per
-    # rad med sin egen tenantkontekst.
+    # COMMIT, ikke rollback: plukket STEMPLER radene, og stempelet er
+    # rotasjonen (039) — uten den okkuperte de første `grense` konfliktene
+    # hvert utvalg.
     conn.commit()
-    res = {"funnet": len(rader), "saker": [], "feilet": [], "foreldet": []}
+    res = {"funnet": len(rader), "med_sak": 0, "uten_sak": []}
     for tenant, hostname, motpart, generasjon in rader:
-        rid = "drenering-" + secrets.token_hex(8)
-        try:
-            sett_kontekst(conn, tenant, aktor, rid)
-            # Porten OG saken i SAMME transaksjon: advisory-låsen er
-            # transaksjonell, så den holdes helt fram til commiten under. Ble
-            # den sluppet imellom, hadde revalideringen bare gjort vinduet
-            # smalere, ikke lukket det.
-            fersk = conn.execute(
-                "SELECT bekreft_overtakelseskonflikt(%s,%s,%s,%s)",
-                (tenant, hostname, motpart, int(generasjon))).fetchone()[0]
-            if not fersk:
-                # Raden har flyttet seg siden plukket — typisk en tredje
-                # tenant som tok hostnavnet og degraderte denne utfordreren.
-                # Da er `(motpart, generasjon)` vi holder en annen konflikt
-                # enn den som står der nå, og en sak bygget på den kunne
-                # ingen avgjørelse lukket. Ingen feil: neste syklus finner
-                # radens FERSKE verdier.
-                conn.rollback()
-                res["foreldet"].append({"tenant": tenant,
-                                        "hostname": hostname,
-                                        "generasjon": int(generasjon)})
-                continue
-            uid = opprett_overtakelsessak(
-                conn, tenant_ny=tenant, hostname=hostname,
-                tenant_tapt=motpart, generasjon=int(generasjon), aktor=aktor)
-            conn.commit()
-        except (kjerne.Feilsvar, ValueError) as e:
-            # RADENS egen feil: KEK-en mangler for NETTOPP denne tenanten
-            # (`tenantnokkel_mangler`), eller radens verdier er ubrukelige.
-            # Andre tenanters konflikter skal ikke bli ustelt av det.
-            conn.rollback()
-            res["feilet"].append({"tenant": tenant, "hostname": hostname,
-                                  "feiltype": type(e).__name__})
-            continue
-        except psycopg.Error:
-            # ALT ANNET fra basen er utrullingen, ikke raden (Codex P2):
-            # manglende grant, funksjon/tabell som ikke er utrullet, en tapt
-            # forbindelse. Talt som «rad nummer n feilet» ville det stått i et
-            # resultat ingen alarmerer på, mens M-37-løkkens heartbeat sto
-            # `ok` og HVER overtakelse ble stående uten sak. Kastet videre
-            # feller det arbeiderprosessen — samme kontrakt som resten av
-            # hovedløkken, der bare `OperationalError` gir en ny oppkobling.
-            try:
-                conn.rollback()
-            except psycopg.Error:
-                pass          # forbindelsen er borte; feilen bærer signalet
-            raise
-        res["saker"].append({"tenant": tenant, "hostname": hostname,
-                             "unntak_id": uid})
+        rid = "konfliktvakt-" + secrets.token_hex(8)
+        # Saken bor på plattformtenanten — lesingen skjer i DENS
+        # RLS-kontekst, aldri kundens.
+        sett_kontekst(conn, PLATTFORMTENANT, "konfliktvakt", rid)
+        sak = conn.execute(
+            "SELECT 1 FROM unntak"
+            " WHERE hostname_ref=%s AND sakskilde='domeneovertakelse'"
+            "   AND NOT terminal AND utfordrer_tenant=%s"
+            "   AND autorisasjonsgenerasjon=%s",
+            (hostname, tenant, int(generasjon))).fetchone()
+        conn.rollback()
+        if sak is None:
+            res["uten_sak"].append({"tenant": tenant, "hostname": hostname,
+                                    "generasjon": int(generasjon)})
+        else:
+            res["med_sak"] += 1
     return res
 
 
-def slaa_opp_sak(conn, tenant: str, unntak_id: int) -> tuple[str, int] | None:
-    """(hostname, saksrevisjon) for en overtakelsessak. None hvis det ikke ER en.
+def slaa_opp_sak(conn, unntak_id: int) -> tuple[str, int, str] | None:
+    """(hostname, generasjon, utfordrer_tenant) for en ÅPEN overtakelsessak.
 
-    Leses av IDEMPOTENSNØKKELEN, ikke av den krypterte payloaden:
-    `domeneovertakelse:<hostname>:<generasjon>` er nøyaktig de to feltene vi
-    trenger, i klartekst, og den er skrevet av `opprett_overtakelsessak` selv.
-    Å dekryptere payloaden for å lese to felter som alt står i nøkkelen ville
-    vært en omvei med en DEK i hånda.
+    040: saken bor på `__plattform_domener` og bærer feltene sine som
+    KOLONNER (`payload_type='referanse'`) — hostnavnet og generasjonen leses
+    derfor rett av raden, ikke lenger ut av en idempotensnøkkel. Synligheten
+    er adjudikatorens: lesingen skjer under `SET LOCAL ROLE
+    disponit_domains_adjudicator`, som RLS-policyen i 040 §9 avgrenser til
+    nøyaktig `sakskilde='domeneovertakelse'`. Ingen tenantkontekst — en
+    kundesesjons RLS-snitt ser aldri saken, og skal ikke det (port 33).
 
-    Joinen bærer `kategori`/`handling`/`kilde` slik oppslaget i
-    `opprett_overtakelsessak` gjør — en fremmed rad i det DELTE
-    idempotensnavnerommet kan ikke matche og dermed ikke låne seg
-    adjudikasjonsveien.
+    `SET LOCAL` + `rollback` hos kalleren: rollen forlates med
+    transaksjonen, så ingen senere spørring på samme forbindelse arver den.
+    Terminal sak → None: en lukket sak kan ikke attesteres (samme svar som
+    «finnes ikke» — adjudikasjonsveien skiller ikke, port 5 gjør).
     """
+    conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
     rad = conn.execute(
-        "SELECT r.idempotency_key FROM unntak u"
-        " JOIN revisjonslogg r ON r.tenant = u.tenant AND r.id = u.loggpost_id"
-        " WHERE u.id=%s AND u.tenant=%s AND u.kategori=%s AND u.handling=%s"
-        "   AND r.kilde=%s",
-        (unntak_id, tenant, FAMILIE, HANDLING, FAMILIE)).fetchone()
-    if rad is None:
+        "SELECT hostname_ref, autorisasjonsgenerasjon, utfordrer_tenant"
+        "  FROM unntak"
+        " WHERE id=%s AND sakskilde='domeneovertakelse' AND NOT terminal",
+        (unntak_id,)).fetchone()
+    conn.execute("RESET ROLE")
+    if rad is None or rad[0] is None or rad[1] is None or rad[2] is None:
         return None
-    key = rad[0] or ""
-    # `<familie>:<hostname>:<generasjon>` — hostnavnet er kanonisk (018 avviser
-    # alt annet før konflikten kan oppstå), så det inneholder aldri kolon.
-    biter = key.split(":")
-    if len(biter) != 3 or biter[0] != FAMILIE:
-        return None
-    try:
-        return biter[1], int(biter[2])
-    except ValueError:
-        return None
+    return rad[0], int(rad[1]), rad[2]
 
 
 def attester_endepunkt(tjeneste, request, unntak_id: int):
@@ -345,14 +212,18 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             return _feilsvar("csrf_ugyldig", rid)
         bruker_id = rad[1]
 
-        from db.pg import sett_kontekst
-        tenant = auth.tenant
-        sett_kontekst(conn, tenant, auth.token_id, rid)
-        sak = slaa_opp_sak(conn, tenant, unntak_id)
+        # 040: saken leses under adjudikatorrollen (den bor på
+        # `__plattform_domener`); rollback forlater rollen med transaksjonen.
+        sak = slaa_opp_sak(conn, unntak_id)
+        conn.rollback()
         if sak is None:
-            conn.rollback()
             return _feilsvar("ikke_funnet", rid)
-        hostname, generasjon_ved_opprettelse = sak
+        hostname, generasjon_ved_opprettelse, utfordrer_tenant = sak
+        # Attestasjonen avgis i UTFORDRERENS saksunivers: `p_tenant` er
+        # utfordreren saken navngir (019-kontrakten), aldri adjudikatorens
+        # egen tenant — de to er ulike parter fra og med 040.
+        from db.pg import sett_kontekst
+        sett_kontekst(conn, utfordrer_tenant, auth.token_id, rid)
 
         # Aktøren er sesjonens bruker-id, ikke noe klienten oppgir: «ingen
         # enkelt aktør produserer begge» er håndhevet av primærnøkkelen, og en
@@ -365,8 +236,8 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             # generasjonen — en konflikt ingen attestant faktisk har sett.
             svar = conn.execute(
                 "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
-                (tenant, unntak_id, hostname, utfall, vinnende.strip(),
-                 aktor, generasjon_ved_opprettelse,
+                (utfordrer_tenant, unntak_id, hostname, utfall,
+                 vinnende.strip(), aktor, generasjon_ved_opprettelse,
                  bruker_id)).fetchone()[0]
             # Codex (P2): tallet leses i SAMME transaksjon som stemmen, mens
             # domeneraden fortsatt er låst av funksjonen — ikke etter commit.
@@ -415,5 +286,57 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             {"feil": "krever_to_attestasjoner", "avgitt": antall, "krever": 2,
              "hostname": hostname, "request_id": rid},
             409, {"x-request-id": rid})
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def saker_endepunkt(tjeneste, request):
+    """GET /v1/domeneovertakelse/saker — adjudikatorkøen (040 §5).
+
+    EGEN visning, atskilt fra tenantens unntakskø: adjudikatoren skal se
+    partene og revisjonen for å kunne avgjøre, og nettopp derfor kan denne
+    listen aldri gå gjennom en kundesesjons RLS-snitt. Scope-gatet
+    (`domains:adjudicate`), lesingen under `SET LOCAL ROLE` — samme to-lags
+    gjerde som attestasjonsendepunktet. Lesende GET uten CSRF (pr008-
+    invarianten: en GET bærer aldri et mutasjonsscope).
+    """
+    import psycopg
+
+    from . import kjerne
+    from .app import _autentiser, _feilsvar, _rid, kanonisk_json
+
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid,
+                               ADJUDIKASJONSSCOPE)
+        except kjerne.Feilsvar as f:
+            return _feilsvar(f.kode, rid)
+        del auth   # køen er plattformens, ikke tenantens — ingen kontekst
+        conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+        rader = conn.execute(
+            "SELECT id, hostname_ref, saksrevisjon, autorisasjonsgenerasjon,"
+            "       utfordrer_tenant, tapt_tenant, status, ts"
+            "  FROM unntak"
+            " WHERE sakskilde='domeneovertakelse' AND NOT terminal"
+            " ORDER BY ts, id").fetchall()
+        conn.execute("RESET ROLE")
+        conn.rollback()
+        saker = [{"unntak_id": int(r[0]), "hostname": r[1],
+                  "saksrevisjon": int(r[2]),
+                  "autorisasjonsgenerasjon": int(r[3]),
+                  "utfordrer_tenant": r[4], "tapt_tenant": r[5],
+                  "status": r[6], "ts": r[7].isoformat()} for r in rader]
+        return kanonisk_json({"saker": saker, "request_id": rid}, 200,
+                             {"x-request-id": rid})
+    except psycopg.Error as e:
+        conn.rollback()
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                               feiltype=type(e).__name__)
+        return _feilsvar("db_utilgjengelig", rid)
     finally:
         tjeneste.pool.gi_tilbake(conn)

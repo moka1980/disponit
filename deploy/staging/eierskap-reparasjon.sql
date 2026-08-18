@@ -219,6 +219,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'ventende_domenechallenges(integer)',                 'disponit_domene_eier'),
     ('FUNCTION', 'bekreft_domenechallenge(text,text,text,text[])',     'disponit_domene_eier'),
     ('FUNCTION', 'bekreft_overtakelseskonflikt(text,text,text,bigint)',     'disponit_domene_eier'),
+    -- 040: overtakelsessaken. sikre_overtakelsessak er claimer-eid (én
+    -- skrivevei til unntak/revisjonslogg, som resten av M-37-flaten);
+    -- varsle_overtakelse er domene_eier-eid og kalles kun fra
+    -- verifiser_domenekontroll (EXCEPTION-svelgende, port 41).
+    ('FUNCTION', 'sikre_overtakelsessak(text,bigint,text,text,bigint,bigint,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'varsle_overtakelse(text,text,text)',                 'disponit_domene_eier'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),

@@ -274,8 +274,12 @@ def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
         rad = conn.execute(
             "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
             " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
-            " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s)"
+            " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
+            # 040: sakskilde er defaultløs (port 12) — kjernens egne saker er
+            # policybrudd; payload_type eksplisitt av samme grunn som kilden.
+            " payload_type, sakskilde)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s,"
+            "         'kryptert','policybrudd')"
             " RETURNING id",
             (tenant, loggpost_id, handling, kategori, sakstype, prioritet,
              ct, key_id, nonce, snapshot.maks_auto_forsok, snapshot.versjon,
@@ -297,10 +301,11 @@ def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
         " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
         " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
         " handlingsintensjon_kryptert, hi_key_id, hi_nonce, hi_integritet_hash,"
-        " hi_skjemaversjon, intensjon_policy_hash, intensjon_pakrevd)"
+        " hi_skjemaversjon, intensjon_policy_hash, intensjon_pakrevd,"
+        " payload_type, sakskilde)"
         " OVERRIDING SYSTEM VALUE"
         " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s,"
-        "         %s,%s,%s,%s,%s,%s,true)"
+        "         %s,%s,%s,%s,%s,%s,true,'kryptert','policybrudd')"
         " RETURNING id",
         (nid, tenant, loggpost_id, handling, kategori, sakstype, prioritet,
          ct, key_id, nonce, snapshot.maks_auto_forsok, snapshot.versjon,

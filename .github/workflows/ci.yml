@@ -76,6 +76,12 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domene_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_admin NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_admin TO disponit_migrator WITH INHERIT FALSE"
+          # 040: adjudikatorrollen — NOLOGIN, KUN policy-avgrenset SELECT.
+          # Runtime faar SET (aldri arv); migrator faar medlemskap saa
+          # rebuilds og negative rolletester kan SET ROLE til den.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_adjudicator NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_adjudicator TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_adjudicator TO disponit WITH INHERIT FALSE, SET TRUE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"

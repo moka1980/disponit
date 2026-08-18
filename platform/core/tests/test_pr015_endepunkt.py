@@ -43,8 +43,12 @@ def _admin():
 
 
 def _overtakelsessak(hostname, taper="taper-tenant-pr015"):
-    """Kjør taper→TEN-overtakelsen og opprett M-37-saken. -> unntak_id."""
-    from api import domeneovertakelse as dov
+    """Kjør taper→TEN-overtakelsen. -> unntak_id.
+
+    040: saken lages av `sikre_overtakelsessak()` i SAMME transaksjon som
+    konflikten — fixturen skal ikke (og kan ikke, port 37) lage den selv.
+    Den slås opp der den bor: på plattformtenanten, som kolonner.
+    """
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -58,14 +62,12 @@ def _overtakelsessak(hostname, taper="taper-tenant-pr015"):
     assert svar.startswith("konflikt:"), svar
     m = _mig()
     try:
-        _sett_kontekst(m, TEN)
-        gen = int(m.execute(
-            "SELECT autorisasjonsgenerasjon FROM domenekontroll"
-            " WHERE tenant=%s AND hostname=%s", (TEN, hostname)).fetchone()[0])
-        sak = dov.opprett_overtakelsessak(
-            m, tenant_ny=TEN, hostname=hostname,
-            tenant_tapt=svar.split(":", 1)[1], generasjon=gen, aktor="sys")
-        m.commit()
+        _sett_kontekst(m, "__plattform_domener")
+        sak = int(m.execute(
+            "SELECT id FROM unntak WHERE hostname_ref=%s"
+            "  AND sakskilde='domeneovertakelse' AND NOT terminal",
+            (hostname,)).fetchone()[0])
+        m.rollback()
         return sak
     finally:
         m.close()
