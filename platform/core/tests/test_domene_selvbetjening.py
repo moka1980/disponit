@@ -1058,6 +1058,201 @@ def test_en_forbigatt_utfordrer_forbruker_ogsaa_utfordringen(migrator):
     assert c_status == "avklaring_kreves", c_status
 
 
+def _engangsopprydningen() -> str:
+    """Engangssetningen fra 039, hentet ut av migrasjonsteksten selv.
+
+    Den kjører ÉN gang, ved utrulling, mot en base som alt har rader — og er
+    dermed umulig å måle gjennom fikstur-basen der migrasjonen for lengst er
+    kjørt. Setningen leses derfor ut og kjøres mot tilstand testen bygger selv,
+    på nøyaktig den formen som faktisk rulles ut.
+    """
+    from .conftest import CORE
+
+    sql = (CORE / "db/migrations/039_domene_selvbetjening.sql").read_text(
+        encoding="utf-8")
+    anker = "UPDATE public.domenekontroll d\n   SET challenge_token_hash"
+    assert sql.count(anker) == 1, \
+        "engangsopprydningen finnes ikke lenger på den formen testen måler"
+    start = sql.index(anker)
+    return sql[start:sql.index(";", start) + 1]
+
+
+@pg
+def test_opprydningen_sparer_en_ventende_reapplikasjon(migrator):
+    """Codex P2: engangsopprydningen slettet operatørens reapplikasjon.
+
+    039 forbruker utfordringen i BEGGE utgangene av avklaringen, og rydder
+    én gang etter de utgangene som ble gjort FØR migrasjonen. Den ryddingen
+    tok hver `tilbakekalt`-rad med motpart og levende hash — på antakelsen om
+    at en slik rad ikke KAN ha fått en ny utfordring, siden selvbetjeningen
+    åpnes her.
+
+    Antakelsen holdt ikke: `utsted_challenge` har hele tiden vært grantet til
+    `disponit_domene_eier`, og en operatør som utstedte på nytt for en avvist
+    kandidat var nettopp den manuelle reapplikasjonsveien. Den kunden har alt
+    publisert det NYE tokenet sitt — og opprydningen slettet hashen under
+    henne, så posten ble ubeviselig uten at noen ba henne gjøre noe.
+
+    Skillet er hendelsesloggen: utstedt ETTER siste `avklaring_avvist`/
+    `forbigatt` er en ventende reapplikasjon, utstedt før er den etterlatte
+    posten. Alle radene her bærer samme signatur; bare rekkefølgen skiller.
+
+    Rad C måler at rekkefølgen leses av hendelsenes sekvens-ID-er og ikke av
+    `now()` (Codex P2): operatørens transaksjon åpnes FØR avvisningen, men
+    utsteder først etter at den har committet. Transaksjonsklokka gir da et
+    `challenge_utstedt` som ser eldre ut enn avvisningen det kom etter.
+
+    MUTASJONEN SOM DREPER DENNE: la opprydningen predikere på signaturen
+    alene (uten hendelsesrekkefølgen), bytt `max(id)` mot «finnes en eldre
+    utgang» — da fredes en hash som nettopp ble etterlatt i runde to — eller
+    bytt sekvens-ID-ene tilbake mot `ts`, som feller rad C.
+    """
+    def _sett_utfordring(vert, token, utstedt_sql):
+        """Den ETTERLATTE hashen: satt rett på raden, uten en ny
+        `challenge_utstedt`-hendelse — nøyaktig 019-formens utfall, der
+        utfordringen ble stående fra FØR utgangen av avklaringen."""
+        h = hashlib.sha256(token.encode()).hexdigest()
+        migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+        migrator.execute(
+            "UPDATE domenekontroll SET challenge_token_hash=%s,"
+            f" challenge_utstedt={utstedt_sql},"
+            " challenge_utloper=now()+interval '6 days'"
+            " WHERE tenant=%s AND hostname=%s", (h, ANNEN_TENANT, vert))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+    def _reapplikasjon(conn, vert):
+        """Operatørens manuelle vei tilbake: `utsted_challenge` som
+        `disponit_domene_eier`, som stempler raden OG legger hendelsen."""
+        conn.execute("SELECT utsted_challenge(%s,%s,false,%s,'operator')",
+                     (ANNEN_TENANT, vert,
+                      hashlib.sha256(
+                          secrets.token_hex(32).encode()).hexdigest()))
+        conn.commit()
+
+    def _eierkonn():
+        from db.pg import koble
+        c = koble(MIGRATOR_DSN)
+        c.execute("SET ROLE disponit_domene_eier")
+        c.commit()
+        return c
+
+    def _utstedt_og_utgang(vert):
+        """(`challenge_utstedt` på raden, `ts` for siste utgang) — begge
+        transaksjonsklokker, som er nettopp det opprydningen IKKE leser."""
+        migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+        rad = migrator.execute(
+            "SELECT d.challenge_utstedt,"
+            " (SELECT max(h.ts) FROM domenekontroll_hendelse h"
+            "   WHERE h.tenant=d.tenant AND h.hostname=d.hostname"
+            "     AND h.hendelse IN ('avklaring_avvist','forbigatt'))"
+            " FROM domenekontroll d WHERE d.tenant=%s AND d.hostname=%s",
+            (ANNEN_TENANT, vert)).fetchone()
+        migrator.execute("RESET ROLE")
+        migrator.rollback()
+        return rad
+
+    def _hash(vert):
+        migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+        rad = migrator.execute(
+            "SELECT status, konflikt_motpart, challenge_token_hash,"
+            " challenge_utstedt, challenge_utloper, challenge_forsokt"
+            " FROM domenekontroll WHERE tenant=%s AND hostname=%s",
+            (ANNEN_TENANT, vert)).fetchone()
+        migrator.execute("RESET ROLE")
+        migrator.rollback()
+        return rad
+
+    def _avvist_kandidat():
+        """En rad i den tilstanden opprydningen ser etter: `tilbakekalt` med
+        motpart, etter en ekte M-37-avvisning (som legger `avklaring_avvist`
+        i hendelsesloggen)."""
+        vert = f"rydd{secrets.token_hex(4)}.example"
+        token = secrets.token_hex(32)
+        a = _admin()
+        try:
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (TENANT, vert))
+            a.commit()
+        finally:
+            a.close()
+        rt = _rt()
+        try:
+            _sett_kontekst(rt, ANNEN_TENANT)
+            rt.execute(
+                "SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                (ANNEN_TENANT, vert,
+                 hashlib.sha256(token.encode()).hexdigest()))
+            rt.commit()
+        finally:
+            rt.close()
+        svar = _som_eier(
+            migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+            (ANNEN_TENANT, vert, [token]))[0]
+        migrator.commit()
+        assert svar == f"konflikt:{TENANT}", svar
+        gen = _gen(migrator, ANNEN_TENANT, vert)
+        a = _admin()
+        try:
+            a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'m37')",
+                      (ANNEN_TENANT, vert, gen))
+            a.commit()
+        finally:
+            a.close()
+        return vert
+
+    # A) Den ETTERLATTE posten: 019-formens utfall — utfordringen sto igjen
+    #    fra konflikten, altså utstedt FØR avvisningen.
+    etterlatt = _avvist_kandidat()
+    _sett_utfordring(etterlatt, secrets.token_hex(32),
+                     "now()-interval '1 day'")
+    # B) Operatørens REAPPLIKASJON: samme signatur, men utstedt ETTER
+    #    avvisningen — kunden har det nye tokenet og har publisert det.
+    reapplikasjon = _avvist_kandidat()
+    op = _eierkonn()
+    try:
+        _reapplikasjon(op, reapplikasjon)
+        # C) Samme reapplikasjon, men fra en transaksjon som ALT var åpen da
+        #    avvisningen ble gjort. `now()` er transaksjonens starttid, så
+        #    stempelet ser eldre ut enn avvisningen det kom etter — mens
+        #    hendelsens sekvens-ID, tildelt ved INSERT, står i riktig
+        #    rekkefølge. Den første setningen åpner transaksjonen.
+        op.execute("SELECT now()")
+        forsinket = _avvist_kandidat()
+        _reapplikasjon(op, forsinket)
+    finally:
+        op.close()
+
+    utstedt, utgang = _utstedt_og_utgang(forsinket)
+    assert utstedt < utgang, (
+        "oppsettet ga ikke den inverterte klokka scenariet handler om "
+        f"({utstedt} skulle vært før {utgang})")
+
+    for vert in (etterlatt, reapplikasjon, forsinket):
+        rad = _hash(vert)
+        assert rad[0] == "tilbakekalt" and rad[1] == TENANT, (vert, rad)
+        assert rad[2] is not None, (vert, rad)
+
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+    migrator.execute(_engangsopprydningen())
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+
+    assert _hash(etterlatt)[2] is None, \
+        "den etterlatte posten overlevde opprydningen — reapplikasjons" \
+        "plukket tar raden med det samme, på et bevis kunden aldri fornyet"
+    for vert, hva in ((reapplikasjon, "operatørens reapplikasjon"),
+                      (forsinket, "reapplikasjonen fra en transaksjon åpnet "
+                                  "før avvisningen")):
+        beholdt = _hash(vert)
+        assert beholdt[2] is not None and beholdt[4] is not None, \
+            f"opprydningen slettet {hva} — utstedt ETTER avvisningen, med " \
+            "kundens nye TXT-post alt i sonen"
+        # Og reapplikasjonen er fortsatt en rad arbeideren kan bevise.
+        assert (ANNEN_TENANT, vert) in _alle_ventende(migrator), \
+            f"{hva} ble bevart, men likevel ikke plukket"
+
+
 def _arbeiderkonn():
     """M-37-arbeiderens forbindelse (Codex P1).
 
