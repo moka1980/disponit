@@ -110,10 +110,31 @@ def hent_skjema(conn: psycopg.Connection, artefakttype: str) -> dict | None:
     return rad[0] if rad else None
 
 
-#: Nøkkelord hvis verdi ER et delskjema (lista `items` fra eldre drafter
-#: håndteres av samme gren — den er ufarlig å tåle).
+# --------------------------------------------------------------------------
+# BARE NØKKELORD METASKJEMAET SELV VALIDERER (Codex P2)
+# --------------------------------------------------------------------------
+# Listene under bestemmer hva `_delskjemaer` regner som en SKJEMAPOSISJON, og
+# den avgjørelsen brukes til å godkjenne en `$ref`-destinasjon udødelig. Da
+# er det ett krav som må holde for hvert eneste nøkkelord her: metaskjemaet
+# for Draft 2020-12 må selv validere verdien som et skjema. Ellers godkjenner
+# vandringen en destinasjon `check_schema` aldri så på.
+#
+# `additionalItems` sto her og brøt nettopp det. Nøkkelordet er FJERNET i
+# 2020-12 — det er ikke blant metaskjemaets `properties`, i motsetning til
+# `definitions` og `dependencies`, som er beholdt som deprecated MED
+# metavalidering. Verdien er derfor en ren annotasjon, umetavalidert, og
+# `{"additionalItems": {"type": "strng"}, "$ref": "#/additionalItems"}` ga
+# ingen `skjemafeil()` mens `iter_errors` kastet `UnknownType` — eller
+# `AttributeError` når verdien var en streng. Ingen av dem er i
+# `_OPPSLAGSFEIL`, så den permanente 500-eren var tilbake i en udødelig rad.
+#
+# `additionalItems` er samtidig det ENESTE nøkkelordet i listene som manglet
+# metavalidering; de øvrige er kontrollert mot metaskjemaets egne
+# `properties`. Nye nøkkelord skal måles på samme måte før de føres opp.
+
+#: Nøkkelord hvis verdi ER et delskjema.
 _SKJEMA_NOKKEL = frozenset({
-    "additionalProperties", "additionalItems", "items", "contains", "not",
+    "additionalProperties", "items", "contains", "not",
     "if", "then", "else", "propertyNames", "unevaluatedItems",
     "unevaluatedProperties", "contentSchema"})
 #: Nøkkelord hvis verdi er en LISTE av delskjemaer.
@@ -145,6 +166,12 @@ def _delskjemaer(skjema):
     yields derfor på lik linje (kallerne siler selv på `dict`), fordi
     STIEN dit er en gyldig referansedestinasjon: `{"$defs": {"a": true},
     "$ref": "#/$defs/a"}` er et brukbart skjema.
+
+    Vandringen kjøres ALLTID etter `check_schema` (se `skjemafeil`), og det
+    er den rekkefølgen som gjør posisjonene brukbare som `$ref`-mål: hver
+    posisjon her er allerede metavalidert. `_SKJEMA_NOKKEL` tas derfor bare
+    som ett delskjema — en LISTE der (draft-07-formen av `items`) er ikke
+    et gyldig 2020-12-skjema og har alt blitt avvist av metasjekken.
     """
     ko = [((), skjema)]
     while ko:
@@ -154,11 +181,7 @@ def _delskjemaer(skjema):
             continue
         for nokkel, verdi in s.items():
             if nokkel in _SKJEMA_NOKKEL:
-                if isinstance(verdi, list):
-                    ko.extend((sti + (nokkel, str(i)), v)
-                              for i, v in enumerate(verdi))
-                else:
-                    ko.append((sti + (nokkel,), verdi))
+                ko.append((sti + (nokkel,), verdi))
             elif nokkel in _SKJEMA_LISTE and isinstance(verdi, list):
                 ko.extend((sti + (nokkel, str(i)), v)
                           for i, v in enumerate(verdi))

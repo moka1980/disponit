@@ -2841,6 +2841,55 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     assert skjemafeil({"prefixItems": [{"type": "string"}],
                        "properties": {"p": {"$ref": "#/prefixItems/00"}}})
 
+    # Codex P2, runde 3: `additionalItems` ER FJERNET I 2020-12. Det står
+    # ikke i metaskjemaets `properties` — i motsetning til `definitions` og
+    # `dependencies`, som er beholdt som deprecated MED metavalidering — så
+    # verdien er en ren annotasjon `check_schema` aldri ser på. Sto
+    # nøkkelordet i `_SKJEMA_NOKKEL`, ble den umetavaliderte verdien
+    # likevel en godkjent `$ref`-destinasjon, og `iter_errors` kastet
+    # `UnknownType` (eller `AttributeError` på en streng) forbi
+    # `_OPPSLAGSFEIL`: permanent 500-er i en udødelig rad. Kontroll: legg
+    # `additionalItems` tilbake i `_SKJEMA_NOKKEL`, så kaster de to
+    # `valider`-kallene under i stedet for å avvise.
+    for legacy in ({"additionalItems": {"type": "strng"},
+                    "$ref": "#/additionalItems"},
+                   {"additionalItems": "ikke et skjema",
+                    "$ref": "#/additionalItems"}):
+        assert skjemafeil(legacy), legacy
+        feil = valider(legacy, {"p": 1})
+        assert feil and "skjema" in feil[0], legacy
+
+    # Nøkkelordet er fortsatt lovlig SOM annotasjon — det er bare ingen
+    # referansedestinasjon. En falsk avvisning her ville vært like udødelig.
+    assert not skjemafeil({"additionalItems": {"type": "strng"},
+                           "properties": {"p": {"type": "string"}}})
+
+    # ... og `definitions`, som metaskjemaet FAKTISK validerer, står.
+    legacy_defs = {"definitions": {"t": {"type": "string"}},
+                   "properties": {"p": {"$ref": "#/definitions/t"}}}
+    assert not skjemafeil(legacy_defs)
+    assert not valider(legacy_defs, {"p": "x"})
+    assert valider(legacy_defs, {"p": 1})
+    assert skjemafeil({"definitions": {"t": {"type": "strng"}}})
+
+    # Hvert nøkkelord vandringen godtar som skjemaposisjon MÅ være et
+    # metaskjemaet selv validerer — det er hele grunnen til at posisjonen
+    # er trygg å godkjenne udødelig. Sjekken står her, ikke som en
+    # kommentar, så neste tillegg i listene måles på samme krav.
+    import jsonschema_specifications
+    from api import artefaktskjema as _a
+    _BASE = "https://json-schema.org/draft/2020-12/"
+    _meta = jsonschema_specifications.REGISTRY[_BASE + "schema"].contents
+    _metanokler = set(_meta.get("properties", {}))
+    for _delref in _meta.get("allOf", []):
+        _uri = _delref["$ref"]
+        _uri = _BASE + _uri if _uri.startswith("meta/") else _uri
+        _metanokler |= set(
+            jsonschema_specifications.REGISTRY[_uri].contents.get(
+                "properties", {}))
+    _vandret = _a._SKJEMA_NOKKEL | _a._SKJEMA_LISTE | _a._SKJEMA_KART
+    assert _vandret <= _metanokler, sorted(_vandret - _metanokler)
+
     # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
     # JSON ville avvist disse to — og den falske avvisningen er like
     # endelig som en falsk godkjenning, siden raden er udødelig.
