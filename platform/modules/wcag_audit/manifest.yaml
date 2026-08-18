@@ -74,11 +74,29 @@ staging_sjekkliste:
       oppdragskontrakt.UTFORELSESFRIST_VALG og skrevet på radene, motoren
       fikk claimets restvindu minus avslutningsmarginen).
   rollback_testet:
-    status: ja
+    # NEI, og det er en reell mangel — ikke en formalitet (samme form som
+    # M-37s eget rollback-punkt).
+    #
+    # Punktet sto `ja` fram til Codex' P1 på denne PR-en, med et notat som
+    # i samme åndedrag sa at drillen IKKE var mulig. Et punkt som beviser
+    # sin egen `nei` i fritekst mens feltet sier `ja`, er verre enn et
+    # ærlig `nei`: sjekklisten er 100 %-porten for aksept, og et slikt `ja`
+    # aktiverer en modul UTEN demonstrert gjenopprettingsvei.
+    #
+    # DET SOM FAKTISK ER BEVIST er MEKANISMEN, ikke rollbacken: deploy-
+    # portene kjører som preflight FØR noe stoppes (#84 — rød port = forrige
+    # release kjører urørt), og release-katalogene står side om side. Det er
+    # evidens for at en mislykket utrulling ikke river ned det som kjører —
+    # ikke for at WCAG-arbeideren kan flippes tilbake til forrige release
+    # mot en kompatibel base, som er nettopp det dette punktet måler.
+    #
+    # HVORFOR DRILLEN IKKE KUNNE KJØRES 2026-08-18: forrige release
+    # (ccf64ce) er før migrasjon 039 og nekter boot mot dagens base —
+    # BootNekt er selve vernet. Drillen kjøres første gang to releaser
+    # deler migrasjonstilstand, og FØRST da kan punktet bli `ja`.
+    status: nei
     notat: >-
-      MEKANISMEN er bevist: deploy-portene kjører som preflight FØR noe
-      stoppes (#84 — rød port = forrige release kjører urørt), og
-      release-katalogene står side om side. Selve flippe-drillen var IKKE
-      mulig 2026-08-18: forrige release (ccf64ce) er før migrasjon 039 og
-      nekter boot mot dagens base (BootNekt er nettopp vernet). Drillen
-      kjøres første gang to releaser deler migrasjonstilstand.
+      Flippedrillen (WCAG-arbeideren tilbake til forrige release mot
+      kompatibel base) er IKKE kjørt. Preflight-portene i #84 beviser
+      mekanismen rundt release-byttet, men er ikke en rollback av denne
+      modulen. Kjøres første gang to releaser deler migrasjonstilstand.
