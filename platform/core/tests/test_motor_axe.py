@@ -1085,13 +1085,20 @@ def test_konteksten_avledes_av_den_effektive_motoren():
     # avvik — og et falskt avvik stenger døren på et identisk image.
     norm = sjekk.split("def _normalisert(", 1)[1].split("\ndef ", 1)[0]
     assert "return verdi if verdi else None" in norm
-    assert "_normalisert(verdi)" in ident
+    assert "_normalisert(kfg[felt])" in ident
     # ... men en TOM BEHOLDER er ikke tomhet: `Volumes` og
     # `ExposedPorts` er mengder der meningen ligger i nøkkelen og
     # verdien alltid er `{}`. Faller nøkkelen ut, er «volum erklært» og
     # «ingen volumer» samme identitet igjen — nøyaktig hullet runden
     # skulle lukke.
     assert "if n is not None or isinstance(v, (dict, list, tuple)):" in norm
+    # ... og listene sammenlignes i REKKEFØLGE (Codex P2, runde 3):
+    # miljøtabellen kan ha samme nøkkel to ganger, og prosessen ser den
+    # slik den står. Ble den sortert, var `['MODE=safe', 'MODE=unsafe']`
+    # og den omvendte rekkefølgen samme identitet — to ulike kjøringer
+    # godkjent som én.
+    assert 'sorted(kfg[felt] or []) if felt == "Env"' not in ident
+    assert "[_normalisert(x) for x in verdi] or None" in norm
     # Ingen dom på tomt grunnlag: et image uten lesbar lagkjede er `None`,
     # og `None == ventet` er usant — gaten stenger, den godkjenner ikke.
     assert "if not lag:\n        return None" in ident

@@ -1602,8 +1602,15 @@ def _image_identitet(forspann, ref: str) -> dict | None:
     for felt in sorted(kfg):
         if felt in IKKE_ATFERD:
             continue
-        verdi = sorted(kfg[felt] or []) if felt == "Env" else kfg[felt]
-        n = _normalisert(verdi)
+        # LISTENE SAMMENLIGNES I REKKEFØLGE, også `Env` (Codex P2, runde
+        # 3): OCI krever ikke unike navn i miljøtabellen, og prosessen
+        # ser den slik den står — `getenv` treffer den første oppføringen
+        # og `environ` kan leses i sin helhet. Sortert ble
+        # `['MODE=safe', 'MODE=unsafe']` og den omvendte rekkefølgen
+        # samme identitet, altså to ULIKE kjøringer godkjent som én.
+        # Rekkefølgen kommer fra konfigblobben og er den samme i begge
+        # motorene, så den koster ingen falsk ulikhet.
+        n = _normalisert(kfg[felt])
         if n is not None:
             konfig[felt] = n
     # PLATTFORMEN STÅR PÅ TOPPNIVÅ, ikke i konfigen — se docstringen.
