@@ -504,6 +504,22 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         # — samme svar som `bestilling_idempotens` gir utenfor vinduet, og
         # fortsatt uten en eneste ny beslutning.
         #
+        # ... OG ROMMET ER VÅRT ALENE (Codex P1, runde 5). Lesingen under
+        # STOLER på raden den finner: er den der, er beslutningen tatt, og
+        # for et TILLAT lenkes oppdraget til dens loggpost uten at noe av
+        # det opprinnelige grunnlaget etterprøves — det KAN ikke etterprøves
+        # her, siden hele poenget er at input-hashen ikke lar seg regne ut
+        # på nytt (attestasjonen hviler på mutabel domenetilstand, se over).
+        # Men `idempotens` er DELT: `/v1/beslutning` førte klientens egen
+        # `Idempotency-Key` rett inn i samme tabell, og kjernenøkkelen her
+        # er en deterministisk funksjon av data klienten selv sendte. En
+        # kaller hos samme tenant med `decision:write` kunne dermed regne ut
+        # nøkkelen, kjøre sin EGEN beslutning under den, og la denne
+        # lesingen plukke opp svaret som om det var bestillingens.
+        # `kjerne.RESERVERTE_NOKKELROM` stenger rommet: en klientvalgt
+        # nøkkel som begynner på `bestilling:` avvises av kjernen før den
+        # rører databasen. Tilliten her hviler på DEN porten.
+        #
         # `left(...) = ` og ikke et intervall (`nokkel >= a AND < b`):
         # intervallet ville lest nøkkelen i databasens COLLATION, og under
         # en ikke-C collation er punktum og kolon ikke nødvendigvis der

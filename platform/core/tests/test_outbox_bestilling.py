@@ -731,6 +731,53 @@ def test_beslutningene_serialiseres_paa_klientens_nokkel(migrator, klient):
 
 
 @pg
+@dekker("idempotensnokkel_reservert")
+def test_kaller_kan_ikke_plante_raden_gjenopprettingen_stoler_paa(
+        migrator, klient, token):
+    """Codex P1, runde 5: `idempotens` er ETT rom, delt av endepunktene.
+
+    Bestillingens gjenoppretting leser `idempotens.respons` for
+    kjernenøkkelen som BEVIS på en committet beslutning, og lenker for et
+    TILLAT oppdraget til dens loggpost uten å etterprøve grunnlaget — det
+    lar seg ikke etterprøve her, siden input-hashen ikke kan regnes ut på
+    nytt (attestasjonen hviler på mutabel domenetilstand).
+
+    Kjernenøkkelen er samtidig en DETERMINISTISK funksjon av klientens egen
+    nøkkel og kropp. `/v1/beslutning` førte klientens `Idempotency-Key` rett
+    inn i den samme tabellen, så en kaller hos samme tenant med
+    `decision:write` kunne regne ut nøkkelen, kjøre sin EGEN beslutning
+    under den, og la bestillingen arve et svar den aldri tok.
+
+    Kontroll: fjern `klientvalgt_nokkel=True` i `app.py`, eller tøm
+    `kjerne.RESERVERTE_NOKKELROM`, så blir denne rød.
+    """
+    p = _wcag_policy(migrator)
+    tok, _ = token()
+    nokkel = "n-" + secrets.token_hex(8)
+    forfalsket = _kjernenokkel(nokkel)
+    assert forfalsket.startswith("bestilling:"), forfalsket
+
+    r = klient.post("/v1/beslutning",
+                    json={"policy_id": p["meta"]["policy_id"], "event": {}},
+                    headers={"authorization": f"Bearer {tok}",
+                             "idempotency-key": forfalsket})
+    assert (r.status_code, r.json()["feil"]) == (
+        400, "idempotensnokkel_reservert"), r.text
+
+    # Ingen rad, ingen loggpost: forsøket fikk ikke engang legge beslag på
+    # nøkkelen. Blir det stående en `paagaar`-rad, er bestillingens neste
+    # forsøk blokkert av en fremmed.
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM idempotens WHERE tenant=%s AND nokkel=%s",
+        (TENANT, forfalsket)).fetchone()[0] == 0
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s", (TENANT, forfalsket)).fetchone()[0] == 0
+    migrator.rollback()
+
+
+@pg
 @dekker("bestilling_hostname_uverifisert")
 def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
     """Port 9 (sikkerhetsinvariant): avvist FØR beslutningen — ingen
