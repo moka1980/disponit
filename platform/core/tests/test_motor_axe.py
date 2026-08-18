@@ -1053,12 +1053,36 @@ def test_konteksten_avledes_av_den_effektive_motoren():
     # nøyaktig samme diff_ids. Identiteten bærer derfor konfigen som
     # bestemmer hva som faktisk starter — ellers kan gaten godkjenne en
     # motor som kjører noe annet enn runden målte.
-    assert 'ATFERDSFELT = ("Entrypoint", "Cmd", "Env", "User",' \
-        ' "WorkingDir")' in sjekk
+    #
+    # ... og konfigen sammenlignes i sin HELHET (Codex P1, runde 2). En
+    # håndplukket liste over «atferdsfelt» glemte `Healthcheck` og
+    # `Volumes`: et image som bare legger til en helsesjekk eller et
+    # volum passerte som identisk, men kjører en ekstra periodisk
+    # kommando og monterer et automatisk volum. Det som navngis er
+    # derfor feltene som IKKE er atferd — ukjente felt teller MED.
+    assert "IKKE_ATFERD = frozenset(" in sjekk
     ident = sjekk.split("def _image_identitet(", 1)[1].split("\ndef ", 1)[0]
     assert 'lag = (d.get("RootFS") or {}).get("Layers") or []' in ident
-    assert "for felt in ATFERDSFELT:" in ident
+    assert "for felt in sorted(kfg):" in ident
+    assert "if felt in IKKE_ATFERD:\n            continue" in ident
     assert 'return {"lag": lag, "konfig": konfig}' in ident
+    # Helsesjekken står i `Config` hos docker og på toppnivå hos podman:
+    # leses den bare ett sted, er releasen ULIK seg selv i de to
+    # motorene og gaten stenger døren på riktig image.
+    assert 'for navn in ("Healthcheck", "HealthCheck"):' in ident
+    assert 'kfg["Healthcheck"] = d[navn]' in ident
+    # Tomhet skrives ulikt av de to motorene (null / [] / false / 0 /
+    # utelatt felt). Uten sammenslåingen blir hvert slikt felt et falskt
+    # avvik — og et falskt avvik stenger døren på et identisk image.
+    norm = sjekk.split("def _normalisert(", 1)[1].split("\ndef ", 1)[0]
+    assert "return verdi if verdi else None" in norm
+    assert "_normalisert(verdi)" in ident
+    # ... men en TOM BEHOLDER er ikke tomhet: `Volumes` og
+    # `ExposedPorts` er mengder der meningen ligger i nøkkelen og
+    # verdien alltid er `{}`. Faller nøkkelen ut, er «volum erklært» og
+    # «ingen volumer» samme identitet igjen — nøyaktig hullet runden
+    # skulle lukke.
+    assert "if n is not None or isinstance(v, (dict, list, tuple)):" in norm
     # Ingen dom på tomt grunnlag: et image uten lesbar lagkjede er `None`,
     # og `None == ventet` er usant — gaten stenger, den godkjenner ikke.
     assert "if not lag:\n        return None" in ident

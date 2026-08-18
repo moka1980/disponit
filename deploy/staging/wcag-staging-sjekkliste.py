@@ -1478,9 +1478,52 @@ def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
     return ut.stdout.strip().split(":")[-1], "lest i arbeiderens eget lager"
 
 
-#: Konfigfeltene som bestemmer hva imaget FAKTISK kjører. Lagkjeden er
-#: filsystemet; disse er kommandoen, brukeren og miljøet den starter i.
-ATFERDSFELT = ("Entrypoint", "Cmd", "Env", "User", "WorkingDir")
+#: Konfigfeltene som IKKE er atferd, men avtrykk av BYGGECONTAINEREN:
+#: docker fører dem med fra det gamle containerformatet (`Image` er
+#: forelderens ref, `Hostname`/`Domainname`/`MacAddress` er defaults for
+#: en container som aldri kjørte), podman skriver dem ikke i det hele
+#: tatt. Ingen av dem endrer hva imaget kjører, og å sammenligne dem
+#: ville stengt døren på et helt identisk image.
+#:
+#: Alt ANNET i konfigen sammenlignes — dette er en nektliste, ikke en
+#: tillatelsesliste (Codex P1, runde 2). En tillatelsesliste er et hull
+#: som vokser av seg selv: hvert felt noen glemmer — `Healthcheck`,
+#: `Volumes`, `ExposedPorts`, `StopSignal`, eller et felt en fremtidig
+#: motorversjon finner på — blir usynlig for gaten, og et image bygget
+#: `FROM` releasen som bare legger til en helsesjekk eller et volum
+#: passerer som «identisk». Ukjente felt teller derfor MED: de gjør et
+#: ulikt image ulikt, ikke usynlig.
+IKKE_ATFERD = frozenset({"Image", "Hostname", "Domainname", "MacAddress"})
+
+
+def _normalisert(verdi):
+    """Konfigverdien uten skrivemåteforskjeller mellom motorene.
+
+    TOMT ER ÉN VERDI: «ingen entrypoint» skrives som `null`, `[]` eller
+    et utelatt felt om hverandre, `Tty`/`ArgsEscaped` som `false` i
+    docker og ingenting i podman, `StopTimeout` som `0` eller `null`.
+    Uten denne sammenslåingen ville nektlista over måttet vokse med hvert
+    slikt felt — og et FALSKT avvik her stenger døren på et image som er
+    helt likt. Dicter sorteres (nøkkelrekkefølge er ikke atferd) og tomme
+    SKALARER faller ut, så «feltet mangler» og «feltet er tomt» blir
+    samme identitet.
+
+    En tom BEHOLDER er derimot ikke tomhet: `Volumes` og `ExposedPorts`
+    er mengder der meningen ligger i NØKKELEN og verdien alltid er `{}`.
+    Faller de nøklene ut, er `{"/data": {}}` og «ingen volumer» samme
+    identitet — og et image bygget `FROM` releasen som bare erklærer et
+    volum passerer igjen som likeverdig. Nøkkelen beholdes derfor."""
+    if isinstance(verdi, dict):
+        d = {}
+        for k in sorted(verdi):
+            v = verdi[k]
+            n = _normalisert(v)
+            if n is not None or isinstance(v, (dict, list, tuple)):
+                d[k] = n
+        return d or None
+    if isinstance(verdi, (list, tuple)):
+        return [_normalisert(x) for x in verdi] or None
+    return verdi if verdi else None
 
 
 def _image_identitet(forspann, ref: str) -> dict | None:
@@ -1496,11 +1539,18 @@ def _image_identitet(forspann, ref: str) -> dict | None:
     `WCAG_DRIFT_MOTOR`-overstyring sette i drift en motor som kjører noe
     annet enn runden målte, med releasens digest på kvitteringen.
 
-    Identiteten er derfor lagkjeden PLUSS `ATFERDSFELT`. Feltene
-    normaliseres (manglende og tom liste er samme sak; `Env` sorteres —
-    rekkefølgen er ikke atferd) fordi de to motorene skriver dem litt
-    ulikt, og en falsk ulikhet her stenger døren på et image som er helt
-    likt."""
+    Identiteten er derfor lagkjeden PLUSS HELE konfigen — alt unntatt
+    `IKKE_ATFERD` (Codex P1, runde 2). En håndplukket liste over
+    «atferdsfelt» glemte `Healthcheck` og `Volumes`: et image bygget
+    `FROM` releasen som bare legger til en helsesjekk eller en
+    volumdeklarasjon har samme lag og samme håndplukkede felt, men
+    kjører en ekstra periodisk kommando og monterer et automatisk
+    volum — og fase 9 satte det i drift som «likeverdig». Det er
+    feltene som IKKE er atferd som må navngis, ikke de som er det.
+
+    Verdiene normaliseres (`_normalisert`) fordi de to motorene skriver
+    tomhet ulikt, og en falsk ulikhet her stenger døren på et image som
+    er helt likt. `Env` sorteres i tillegg: rekkefølgen er ikke atferd."""
     ut = subprocess.run([*forspann, "image", "inspect", "--format",
                          "{{json .}}", ref], capture_output=True, text=True)
     if ut.returncode != 0:
@@ -1516,16 +1566,23 @@ def _image_identitet(forspann, ref: str) -> dict | None:
     lag = (d.get("RootFS") or {}).get("Layers") or []
     if not lag:
         return None
-    kfg = d.get("Config") or {}
+    kfg = dict(d.get("Config") or {})
+    # HELSESJEKKEN STÅR TO STEDER: docker legger den i `Config`, podman
+    # løfter den til toppnivå i inspect-utdataen. Samme atferd — en
+    # periodisk kommando i containeren — men leses den bare ett sted, ser
+    # et image med helsesjekk ULIKT ut i de to motorene, og gaten stenger
+    # døren på releasen selv.
+    for navn in ("Healthcheck", "HealthCheck"):
+        if not kfg.get("Healthcheck") and d.get(navn):
+            kfg["Healthcheck"] = d[navn]
     konfig = {}
-    for felt in ATFERDSFELT:
-        verdi = kfg.get(felt)
-        if felt == "Env":
-            konfig[felt] = sorted(verdi or [])
-        elif felt in ("Entrypoint", "Cmd"):
-            konfig[felt] = list(verdi or [])
-        else:
-            konfig[felt] = verdi or ""
+    for felt in sorted(kfg):
+        if felt in IKKE_ATFERD:
+            continue
+        verdi = sorted(kfg[felt] or []) if felt == "Env" else kfg[felt]
+        n = _normalisert(verdi)
+        if n is not None:
+            konfig[felt] = n
     return {"lag": lag, "konfig": konfig}
 
 
