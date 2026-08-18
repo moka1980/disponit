@@ -89,6 +89,9 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # krever at releasen er claiming) — uten override kunne runneren åpne
 # døren én gang, men aldri gjenåpne den etter en rød fase 9. Funnet ved
 # å kjøre: uidmap manglet, fase 9 stengte, og wcag-r1 var brent.
+# Den nye id-en er BARE halve veien tilbake (Codex P1, runde 15): modulen
+# står `nodeaktivert`, og den tilstanden slipper hverken `sett_modulstatus`
+# eller `bytt_release` inn. Fase 2 kaller derfor `_gjenapne_modulen` først.
 RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r1"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
@@ -345,6 +348,61 @@ def motorkommando(args) -> list[str]:
 # Fase 2 — registrering + aktivering (staging)
 # ---------------------------------------------------------------------------
 
+def _gjenapne_modulen(m) -> None:
+    """Nødstoppets vei tilbake, FØR releasebyttet (Codex P1, runde 15).
+
+    `WCAG_RELEASE`-overstyringen ble lagt inn for gjenopprettingen etter en
+    rød fase 9 — men den halve veien virket ikke: `_steng_doeren` har latt
+    modulen stå `nodeaktivert`, og BÅDE `sett_modulstatus` og `bytt_release`
+    avviser eksplisitt den tilstanden («reaktiveres kun via reaktiver_modul»,
+    «modul % er nodeaktivert»). Begge feilene falt i fase 2 sin brede
+    `psycopg.Error`-gren, som fører dem som idempotente hopp, og runden døde
+    først på sluttilstandssjekken. Overstyringen kunne altså aldri gjenåpne
+    noe uten at operatøren først kjørte en udokumentert reaktivering for
+    hånd — nøyaktig det arbeidet den skulle fjerne.
+
+    Reaktiveringen er plattformens egen gjerdede vei, symmetrisk med
+    stengingen: `reaktiver_modul` krever den NÅVÆRENDE epochen (fenced), går
+    til `staging_verifisert` — der releasebyttet under starter — og bumper
+    epochen én gang til mens den tilbakekaller hele tokenfamilien. Runden må
+    derfor gjøre onboardingen (fase 4) om; det følger allerede av at
+    `TOKEN_FIL` er bundet til releasen, og den er per definisjon en ny.
+
+    Feiler reaktiveringen, er det IKKE et idempotent hopp: da står modulen
+    fortsatt nødstoppet, og alt fase 2 gjør etterpå måler en dør som ikke
+    kan åpnes. Den felles derfor her, med sin egen feil.
+    """
+    rad = m.execute("SELECT status, module_epoch FROM modulhode"
+                    " WHERE modul_id=%s", (MODUL,)).fetchone()
+    m.rollback()
+    if rad is None or rad[0] != "nodeaktivert":
+        return
+    epoch = rad[1]
+    try:
+        with m.cursor() as c:
+            c.execute("SET ROLE disponit_modules_admin")
+            c.execute("SELECT reaktiver_modul(%s,%s,'wcag-runde')",
+                      (MODUL, epoch))
+            c.execute("RESET ROLE")
+        m.commit()
+    except psycopg.Error as e:
+        m.rollback()
+        evidens("fase2_reaktivering_feilet", modul=MODUL, epoch=epoch,
+                feiltype=type(e).__name__, feil=str(e)[:200], ok=False)
+        raise SystemExit(
+            f"modulen er nodeaktivert og lot seg ikke reaktivere: {e}")
+    etter = m.execute("SELECT status, module_epoch FROM modulhode"
+                      " WHERE modul_id=%s", (MODUL,)).fetchone()
+    m.rollback()
+    evidens("fase2_modul_reaktivert", modul=MODUL, fra_epoch=epoch,
+            status=etter[0] if etter else None,
+            epoch=etter[1] if etter else None,
+            release=RELEASE,
+            merknad="tokenfamilien er tilbakekalt av epoch-bumpen —"
+                    " onboardingen (fase 4) må gjøres om",
+            ok=etter == ("staging_verifisert", epoch + 1))
+
+
 def fase2(m, migrator_dsn, digest):
     ph = hashlib.sha256((KONTRAKT / "payload-skjema.json")
                         .read_bytes()).hexdigest()
@@ -372,6 +430,10 @@ def fase2(m, migrator_dsn, digest):
         env=env, capture_output=True, text=True)
     if ut.returncode != 0:
         raise SystemExit(f"registrering feilet:\n{ut.stdout}\n{ut.stderr}")
+    # NØDSTOPPETS VEI TILBAKE FØRST (Codex P1, runde 15): står modulen
+    # `nodeaktivert`, avviser både `sett_modulstatus` og `bytt_release` under
+    # den tilstanden, og feilene ville blitt svelget som hoppede kall.
+    _gjenapne_modulen(m)
     with m.cursor() as c:
         c.execute("SET ROLE disponit_modules_admin")
         for kall, args in (

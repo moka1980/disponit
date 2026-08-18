@@ -941,6 +941,46 @@ def test_en_paabegynt_runde_beholder_identiteten_over_formatbyttet():
     assert '{"release": RELEASE, "runde_id": rid}' in rundeid
 
 
+def test_gjenapningen_reaktiverer_modulen_for_releasebyttet():
+    """Codex P1, runde 15: den nye release-id-en var bare halve veien ut.
+
+    `WCAG_RELEASE`-overstyringen finnes for gjenopprettingen etter en rød
+    fase 9 — men `_steng_doeren` har da latt modulen stå `nodeaktivert`, og
+    BEGGE kallene fase 2 bruker for å åpne døren avviser eksplisitt den
+    tilstanden: `sett_modulstatus` («reaktiveres kun via reaktiver_modul»)
+    og `bytt_release` («modul % er nodeaktivert»). Begge feilene falt i den
+    brede `psycopg.Error`-grenen som fører dem som idempotente hopp, så
+    runden gikk videre og døde først på sluttilstandssjekken. Overstyringen
+    kunne dermed aldri gjenåpne noe uten en udokumentert manuell
+    reaktivering først — akkurat det arbeidet den skulle fjerne.
+
+    Veien tilbake er plattformens egen, symmetrisk med stengingen:
+    `reaktiver_modul` er epoch-gjerdet og lander på `staging_verifisert`,
+    der releasebyttet starter."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Reaktiveringen skjer FØR overgangskjeden, ikke inni den.
+    fase2 = sjekk.split("def fase2(", 1)[1].split("\ndef ", 1)[0]
+    assert "_gjenapne_modulen(m)" in fase2
+    assert fase2.index("_gjenapne_modulen(m)") < fase2.index(
+        '("bytt_release(%s,\'staging\',%s,1,%s,\'wcag-runde\')"')
+    kropp = sjekk.split("def _gjenapne_modulen(", 1)[1].split("\ndef ", 1)[0]
+    # Den rører bare den ene tilstanden nødstoppet etterlater.
+    assert 'if rad is None or rad[0] != "nodeaktivert":' in kropp
+    assert "        return" in kropp
+    # ... og går plattformens gjerdede vei, med den NÅVÆRENDE epochen.
+    assert "SELECT reaktiver_modul(%s,%s,'wcag-runde')" in kropp
+    assert "(MODUL, epoch)" in kropp
+    # En feilet reaktivering er IKKE et idempotent hopp: da står modulen
+    # fortsatt nødstoppet, og alt fase 2 gjør etterpå måler en dør som ikke
+    # kan åpnes. Den felles her, med sin egen feil.
+    assert 'evidens("fase2_reaktivering_feilet"' in kropp
+    assert "raise SystemExit(" in kropp
+    # Reaktiveringen er selv en måling: `staging_verifisert` og epoch++.
+    assert 'evidens("fase2_modul_reaktivert"' in kropp
+    assert 'ok=etter == ("staging_verifisert", epoch + 1)' in kropp
+
+
 def test_konteksten_avledes_av_den_effektive_motoren():
     """Codex P2, runde 6: `WCAG_DRIFT_MOTOR` overstyrer HELE kommandoen.
 
