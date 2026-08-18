@@ -1340,21 +1340,78 @@ RESET ROLE;
 -- konflikten oppsto. En oppgradering skal ikke sende en ny bølge
 -- e-poster om en tvist som har stått i ukevis.
 --
--- domene_eier eier funksjonen: BYPASSRLS er PÅKREVD (kryss-tenant-
--- skannet over `domenekontroll`, som har FORCE RLS med en ren
--- GUC-policy), og rollen har fra 019 §-grantene nøyaktig det den
--- trenger ellers — SELECT på `unntak`/`revisjonslogg`, INSERT på
--- `unntak_historikk`, EXECUTE på `sikre_overtakelsessak` (§10).
--- Funksjonen er IDEMPOTENT (den hopper over konflikter som alt har
--- gjeldende sak) og står igjen som operatørens reparasjonsvei.
+-- TO EIERE, ETT STEG (målt i CI): skannet over `domenekontroll` krever
+-- BYPASSRLS og hører derfor til `domene_eier` — men ARKIVMERKINGEN leser
+-- og skriver `unntak_historikk`, og domene_eier har fra 019 kun INSERT
+-- der (bevisst: domenelaget skal kunne notere, ikke bla i kundens
+-- sakshistorikk). Merkingen ligger derfor hos `m37_claimer`, som eier
+-- den skriveveien fra før og ser radene via m37_dispatcher-policyen.
+-- Alternativet — et nytt SELECT-grant til domene_eier — ville utvidet
+-- domenelagets leseflate for å slippe å dele en funksjon i to.
+-- Begge er IDEMPOTENTE og står igjen som operatørens reparasjonsvei.
 -- ------------------------------------------------------------
+SET LOCAL ROLE disponit_m37_claimer;
+
+CREATE OR REPLACE FUNCTION arkivmerk_pre041_overtakelsessaker(
+    p_aktor TEXT, p_request_id TEXT)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE g RECORD; v_sak BIGINT; v_merket INT := 0;
+BEGIN
+    -- Den gamle python-saken kan IKKE bli en `domeneovertakelse`-sak: den
+    -- bor hos kunden (§6/port 36 flytter aldri en sak mellom tenants),
+    -- payloaden er kryptert med kundens DEK, og §2s CHECK krever
+    -- plattformformen. Den blir stående som `policybrudd` — men ikke som
+    -- en ANONYM `policybrudd`: historikken navngir plattformsaken som
+    -- overtok, så den ene raden en operatør møter i unntakskøen forteller
+    -- selv hvorfor den ikke lenger kan avgjøres der. Gjenkjennelsen er
+    -- radens egen kategori/handling + loggpostens kilde, altså nøyaktig
+    -- det den gamle `opprett_overtakelsessak` skrev.
+    FOR g IN
+        SELECT u.tenant, u.id,
+               split_part(r.idempotency_key, ':', 2) AS hostname
+          FROM public.unntak u
+          JOIN public.revisjonslogg r
+            ON r.tenant = u.tenant AND r.id = u.loggpost_id
+         WHERE u.sakskilde = 'policybrudd' AND NOT u.terminal
+           AND u.kategori = 'domeneovertakelse'
+           AND u.handling = 'domene.overtakelse'
+           AND r.kilde = 'domeneovertakelse'
+           AND r.idempotency_key LIKE 'domeneovertakelse:%'
+           AND NOT EXISTS (
+                 SELECT 1 FROM public.unntak_historikk hh
+                  WHERE hh.tenant = u.tenant AND hh.unntak_id = u.id
+                    AND hh.hendelse = 'overtakelsessak_migrert')
+    LOOP
+        SELECT n.id INTO v_sak FROM public.unntak n
+         WHERE n.tenant = '__plattform_domener'
+           AND n.hostname_ref = g.hostname
+           AND n.sakskilde = 'domeneovertakelse' AND NOT n.terminal
+           AND n.utfordrer_tenant = g.tenant;
+        INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
+            aktor, request_id, detalj)
+        VALUES (g.tenant, g.id, 'overtakelsessak_migrert', p_aktor,
+                p_request_id,
+                jsonb_build_object('familie', 'domeneovertakelse',
+                                   'hostname', g.hostname,
+                                   'plattformsak', v_sak));
+        v_merket := v_merket + 1;
+    END LOOP;
+    RETURN v_merket;
+END $$;
+REVOKE ALL ON FUNCTION arkivmerk_pre041_overtakelsessaker(TEXT, TEXT)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION arkivmerk_pre041_overtakelsessaker(TEXT, TEXT)
+    TO disponit_domene_eier;
+
+RESET ROLE;
 SET LOCAL ROLE disponit_domene_eier;
 
 CREATE OR REPLACE FUNCTION migrer_pre041_overtakelseskonflikter(
     p_aktor TEXT DEFAULT 'migrasjon041')
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE k RECORD; g RECORD; v_a BIGINT; v_b BIGINT; v_sak BIGINT;
+DECLARE k RECORD; v_a BIGINT; v_b BIGINT;
         v_laget INT := 0; v_merket INT := 0; v_uten JSONB := '[]'::jsonb;
         v_rid TEXT;
 BEGIN
@@ -1407,44 +1464,11 @@ BEGIN
         v_laget := v_laget + 1;
     END LOOP;
 
-    -- Den gamle python-saken kan IKKE bli en `domeneovertakelse`-sak: den
-    -- bor hos kunden (§6/port 36 flytter aldri en sak mellom tenants),
-    -- payloaden er kryptert med kundens DEK, og §2s CHECK krever
-    -- plattformformen. Den blir stående som `policybrudd` — men ikke som
-    -- en ANONYM `policybrudd`: historikken navngir plattformsaken som
-    -- overtok, så den ene raden en operatør møter i unntakskøen forteller
-    -- selv hvorfor den ikke lenger kan avgjøres her. Gjenkjennelsen er
-    -- radens egen kategori/handling + loggpostens kilde, altså nøyaktig
-    -- det den gamle `opprett_overtakelsessak` skrev.
-    FOR g IN
-        SELECT u.tenant, u.id,
-               split_part(r.idempotency_key, ':', 2) AS hostname
-          FROM public.unntak u
-          JOIN public.revisjonslogg r
-            ON r.tenant = u.tenant AND r.id = u.loggpost_id
-         WHERE u.sakskilde = 'policybrudd' AND NOT u.terminal
-           AND u.kategori = 'domeneovertakelse'
-           AND u.handling = 'domene.overtakelse'
-           AND r.kilde = 'domeneovertakelse'
-           AND r.idempotency_key LIKE 'domeneovertakelse:%'
-           AND NOT EXISTS (
-                 SELECT 1 FROM public.unntak_historikk hh
-                  WHERE hh.tenant = u.tenant AND hh.unntak_id = u.id
-                    AND hh.hendelse = 'overtakelsessak_migrert')
-    LOOP
-        SELECT n.id INTO v_sak FROM public.unntak n
-         WHERE n.tenant = '__plattform_domener'
-           AND n.hostname_ref = g.hostname
-           AND n.sakskilde = 'domeneovertakelse' AND NOT n.terminal
-           AND n.utfordrer_tenant = g.tenant;
-        INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
-            aktor, request_id, detalj)
-        VALUES (g.tenant, g.id, 'overtakelsessak_migrert', p_aktor, v_rid,
-                jsonb_build_object('familie', 'domeneovertakelse',
-                                   'hostname', g.hostname,
-                                   'plattformsak', v_sak));
-        v_merket := v_merket + 1;
-    END LOOP;
+    -- Arkivmerkingen av de gamle python-sakene er claimerens (se hodet):
+    -- den leser og skriver `unntak_historikk`, som domenelaget kun har
+    -- INSERT på. Den kjøres ETTER løkken, så plattformsaken den navngir
+    -- finnes.
+    v_merket := public.arkivmerk_pre041_overtakelsessaker(p_aktor, v_rid);
 
     RETURN jsonb_build_object('saker_opprettet', v_laget,
                               'arkivmerket', v_merket, 'uten_sak', v_uten);

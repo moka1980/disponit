@@ -234,6 +234,10 @@ INSERT INTO _design VALUES
     -- migrasjonen og staar igjen som operatoerens reparasjonsvei.
     -- INGEN semikolon i denne kommentaren heller (se raden over)
     ('FUNCTION', 'migrer_pre041_overtakelseskonflikter(text)',         'disponit_domene_eier'),
+    -- ... og arkivmerkingen av de gamle python-sakene er claimerens:
+    -- den leser og skriver unntak_historikk, der domenelaget kun har
+    -- INSERT. Maalt i CI, ikke resonnert frem.
+    ('FUNCTION', 'arkivmerk_pre041_overtakelsessaker(text,text)',      'disponit_m37_claimer'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),
