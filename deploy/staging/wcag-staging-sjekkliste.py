@@ -259,11 +259,31 @@ def _start_testnett(*, robots_5xx: bool):
     return logg
 
 
+#: RESSURSGRENSER PÅ MOTORCONTAINEREN (Codex P1, runde 6). Launcheren ga
+#: en vilkårlig, KUNDEKONTROLLERT side en host-nettverket Chromium uten
+#: minne-, prosess- eller CPU-grense. En side som allokerer aggressivt
+#: eller åpner mange workers kunne dermed spise vertens RAM eller
+#: prosesstabell og ta ned API-et ved siden av — controllerens klokkefrist
+#: stopper en LANG kjøring, ikke en grådig.
+#:
+#: Grensene står ETT sted og gjelder både målerunden og driften: en
+#: akseptmåling gjort uten dem måler en annen motor enn den som kjører.
+#: `--memory-swap` lik `--memory` slår av swap-påslaget (ellers får
+#: containeren det dobbelte gjennom disk), og `--pids-limit` er
+#: prosesstabellen. CPU-taket ligger på UNITEN (`CPUQuota=`), ikke her:
+#: rootless podman får ikke cpu-kontrolleren delegert på en vanlig
+#: systemd-vert, så `--cpus` ville feilet ved første claim — og unitens
+#: cgroup inneholder containerens, så taket der omslutter begge.
+MOTORGRENSER = ["--memory", "2g", "--memory-swap", "2g",
+                "--pids-limit", "512"]
+
+
 def motorkommando(args) -> list[str]:
     if args.motor:
         return shlex.split(args.motor)
     return ["docker", "run", "--rm", "-i", "--network", "host",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            *MOTORGRENSER,
             "-e", "MOTOR_TLS_USIKKER=1",
             "-e", f"MOTOR_VERTSKART={VERT}=127.0.0.1",
             "disponit-wcag-motor"]
@@ -1077,6 +1097,10 @@ def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
     motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
         "podman", "run", "--rm", "-i", "--network", "host",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        # Nettleseren kjører kundens side: `MOTORGRENSER` er minnet og
+        # prosesstabellen den kan bruke, unitens `CPUQuota=`/`MemoryMax=`
+        # er backstoppet rundt hele arbeideren.
+        *MOTORGRENSER,
         # Image-ID-en, ikke taggen: taggen er mutabel, og kvitteringen
         # attesterer nøyaktig denne digesten som container_image_digest.
         digest.split(":")[-1]])

@@ -4,7 +4,15 @@
 # DISPONIT_WCAG_MOTOR blir da:
 #
 #   podman run --rm -i --network host --cap-drop ALL \
-#       --security-opt no-new-privileges disponit-wcag-motor@<digest>
+#       --security-opt no-new-privileges \
+#       --memory 2g --memory-swap 2g --pids-limit 512 \
+#       disponit-wcag-motor@<digest>
+#
+# RESSURSGRENSENE HØRER TIL LAUNCHEREN (Codex P1): siden i nettleseren er
+# kundens, og uten dem kunne én grådig side spise vertens RAM eller
+# prosesstabell. Verdiene er sjekklistens `MOTORGRENSER`; CPU-taket ligger
+# på uniten (`CPUQuota=`), fordi rootless podman ikke får cpu-kontrolleren
+# delegert.
 #
 # ROOTLESS podman, ikke docker (Codex P1): arbeideren som starter denne
 # kommandoen er nettvendt, og `docker`-gruppemedlemskapet den ellers

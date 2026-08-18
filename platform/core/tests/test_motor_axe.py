@@ -452,6 +452,47 @@ def test_roed_klarhetsmaaling_ruller_tilbake_aktiveringen():
     assert 'ok=etterpaa in ("disabled", "static", "masked")' in rulling
 
 
+def test_motorcontaineren_har_ressursgrenser():
+    """Codex P1, runde 6: nettleseren kjører en KUNDEKONTROLLERT side.
+
+    Launcheren ga den host-nettverk og ingen grense for minne, prosesser
+    eller CPU. En side som allokerer aggressivt eller åpner mange workers
+    kunne dermed spise vertens RAM eller prosesstabell og ta ned API-et
+    ved siden av — klokkefristen stopper en LANG kjøring, ikke en grådig.
+
+    Grensene står ETT sted (`MOTORGRENSER`) og gjelder både målerunden og
+    driften: en akseptmåling gjort uten dem måler en annen motor enn den
+    som kjører."""
+    import re
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    unit = (ROT / "deploy/staging/disponit-wcag-audit.service").read_text(
+        encoding="utf-8")
+    bygg = (MOTOR / "bygg.sh").read_text(encoding="utf-8")
+
+    assert 'MOTORGRENSER = ["--memory", "2g", "--memory-swap", "2g",' in sjekk
+    assert '"--pids-limit", "512"]' in sjekk
+    # BEGGE launcherne: målerundens docker-kommando og driftens podman.
+    assert sjekk.count("*MOTORGRENSER,") == 2, \
+        "målerunden og driften skal kjøre motoren under samme grenser"
+
+    # Unitens cgroup inneholder containerens, så taket der omslutter begge
+    # — også om noen setter en launcher uten grenser.
+    tall = {k: v for k, v in re.findall(r"^(MemoryMax|MemorySwapMax|TasksMax"
+                                        r"|CPUQuota)=(\S+)$", unit,
+                                        re.MULTILINE)}
+    assert set(tall) == {"MemoryMax", "MemorySwapMax", "TasksMax", "CPUQuota"}
+    assert tall["MemorySwapMax"] == "0"
+    # Backstoppet må ligge OVER containerens egne grenser: er det strammere,
+    # dør arbeideren før grensen den skulle sikre, får virke.
+    assert int(tall["TasksMax"]) > 512
+    assert int(tall["MemoryMax"].rstrip("G")) > 2
+
+    # ... og dokumentasjonen viser den kommandoen koden faktisk skriver.
+    for d in (unit, bygg):
+        assert "--memory 2g --memory-swap 2g --pids-limit 512" in d
+
+
 def test_varigheten_dekker_oppslaget_og_robots():
     """Codex P2: klokka startet etter oppslaget og robots-hentingen.
 
