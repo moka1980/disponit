@@ -1809,7 +1809,8 @@ def _wcag_kjede(migrator_, monkeypatch):
         "kontraktversjon,kontrakt_hash) VALUES (%s,%s,1,%s)",
         (typenavn, modul, kh))
     migrator_.execute(
-        "INSERT INTO artefaktskjema (skjema_hash, skjema) VALUES (%s,%s)"
+        # Bytene i `kanonisk`: hashen er over dem, og `skjema` utledes.
+        "INSERT INTO artefaktskjema (skjema_hash, kanonisk) VALUES (%s,%s)"
         " ON CONFLICT (skjema_hash) DO NOTHING",
         (rapportskjema.skjema_hash(),
          rapportskjema.kanonisk().decode("utf-8")))
