@@ -1659,6 +1659,61 @@ def test_punktsegmenter_er_ikke_en_annen_side():
         _kjor("https://kunde.example/a/../side", "https://kunde.example/a/side")
 
 
+def test_prosentkoding_er_ikke_en_annen_side():
+    """Codex P2: `/café` og `/caf%C3%A9` er ÉN side for nettleseren.
+
+    Tredje utgave av samme dyre feilretning som `:443` og punktsegmentene
+    bar: `urlsplit` gir stien tegn for tegn, mens WHATWG-parseren i
+    Chromium prosentkoder den mens den navigerer og rapporterer den kodede
+    formen. Bestilte noen `/café`, sammenlignet `enkeltside`-porten den rå
+    Unicode-formen med motorens kodede, fant dem ulike, og lot oppdraget
+    feile ETTER at den eksterne kontrollen var gjort — trafikken mot
+    kundens nettsted var allerede brukt, og siden var den bestilte.
+
+    Kontroll: fjern `_nettleserkodet(...)` fra `_delt_url`, så blir hvert
+    par under rødt.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _kjor(bestilt, levert):
+        return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
+                    payload=_payload(mal_url=bestilt), kontekst=_kontekst())
+
+    # Samme side, uansett hvilken av de to som bærer den rå formen — og
+    # rapporten navngir den på ÉN måte, den nettleseren faktisk ba om.
+    # Siste paret viser at KODINGEN GÅR BARE ÉN VEI: `%` kodes aldri om
+    # igjen. Ble den det, hadde normaliseringen selv laget avviket den
+    # skal fjerne, og en allerede kodet sti aldri matchet seg selv.
+    for bestilt, levert, ventet in (
+            ("https://kunde.example/café", "https://kunde.example/caf%C3%A9",
+             "https://kunde.example/caf%C3%A9"),
+            ("https://kunde.example/caf%C3%A9", "https://kunde.example/café",
+             "https://kunde.example/caf%C3%A9"),
+            # Mellomrom og de øvrige tegnene i WHATWG-settet kodes likt.
+            ("https://kunde.example/en side",
+             "https://kunde.example/en%20side",
+             "https://kunde.example/en%20side"),
+            ("https://kunde.example/a`b", "https://kunde.example/a%60b",
+             "https://kunde.example/a%60b"),
+            ("https://kunde.example/a{b}", "https://kunde.example/a%7Bb%7D",
+             "https://kunde.example/a%7Bb%7D"),
+            # ... og punktsegmentene leses fortsatt, kodingen rører dem ikke.
+            ("https://kunde.example/a/../café",
+             "https://kunde.example/caf%C3%A9",
+             "https://kunde.example/caf%C3%A9"),
+            ("https://kunde.example/caf%C3%A9",
+             "https://kunde.example/caf%C3%A9",
+             "https://kunde.example/caf%C3%A9")):
+        r = _kjor(bestilt, levert)
+        assert r["sider_kontrollert"][0]["url"] == ventet, (bestilt, levert)
+
+    # ... og en ekte annen sti er fortsatt en annen side. Kodingen slår
+    # ikke sammen det serveren skiller.
+    with pytest.raises(Motorfeil):
+        _kjor("https://kunde.example/café", "https://kunde.example/cafe")
+
+
 def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
     """Codex P1: en `status` vi ikke kan lese ble skrevet om til `feilet`.
 

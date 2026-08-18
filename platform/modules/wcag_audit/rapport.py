@@ -152,6 +152,49 @@ def _ren_url(raa: str, autorisert_vert: str) -> str:
     return _delt_url(raa, autorisert_vert)[0]
 
 
+#: WHATWG sitt «path percent-encode set»: C0-kontrolltegn og mellomrom,
+#: `"`, `<`, `>`, backtick, `{`, `}`, DEL — og alt over ASCII, som UTF-8.
+#: `?` og `#` står i settet, men `urlsplit` har alt delt dem av før stien
+#: kommer hit, så de kan ikke nå denne funksjonen som rå tegn.
+_STI_KODES = '"<>`{}'
+
+
+def _nettleserkodet(sti: str) -> str:
+    """Stien slik NETTLEREN skriver den: prosentkodet etter WHATWG-settet
+    (Codex P2).
+
+    `urlsplit` er en parser og rører ikke tegnene. WHATWG-parseren i
+    Chromium prosentkoder stien mens den navigerer, så en bestilling på
+    `https://kunde.example/café` rapporteres tilbake som
+    `https://kunde.example/caf%C3%A9`. Sammenlignet `enkeltside`-porten
+    den rå Unicode-formen med motorens kodede, fant den dem ulike og lot
+    oppdraget feile ETTER at den eksterne kontrollen var gjort — tredje
+    utgave av samme dyre feilretning som `:443` og punktsegmentene bar.
+    To skrivemåter av én sti er ikke to sider.
+
+    Kodingen går BARE én vei, aldri tilbake:
+
+      * `%` kodes ALDRI. Det gjør funksjonen idempotent — `caf%C3%A9` er
+        allerede den formen nettleseren rapporterer, og skulle den blitt
+        til `caf%25C3%25A9`, hadde normaliseringen selv laget avviket den
+        er her for å fjerne. Nettleseren lar også en løs `%` stå.
+      * Vi DEKODER ikke unødvendige escapes og skriver ikke om
+        `%c3%a9` til `%C3%A9`. Nettleseren gjør ingen av delene, og en
+        normalisering som gjetter feil vei gjør to ULIKE sider like —
+        feilretningen her skal være avvisning (se `_delt_url` om query-en).
+
+    Som `_uten_punktsegmenter` står den i `_delt_url`, altså på BEGGE
+    sider av sammenligningen: to normaliseringer ville vært to svar.
+    """
+    ut: list[str] = []
+    for tegn in sti:
+        if tegn == "%" or ("\x20" < tegn < "\x7f" and tegn not in _STI_KODES):
+            ut.append(tegn)
+        else:
+            ut.extend(f"%{b:02X}" for b in tegn.encode("utf-8"))
+    return "".join(ut)
+
+
 def _uten_punktsegmenter(sti: str) -> str:
     """Stien slik NETTLESEREN leser den: `.` og `..` løst opp (Codex P2).
 
@@ -186,11 +229,11 @@ def _uten_punktsegmenter(sti: str) -> str:
     `_bestilt_url` låner nettopp denne funksjonen: to normaliseringer
     ville vært to svar.
 
-    Resten av stien røres IKKE — prosentkoding utenfor punktsegmentene,
-    store bokstaver og tomme segmenter står som de står. En normalisering
-    som gjetter feil vei gjør to ULIKE sider like, og feilretningen her
-    skal være avvisning, ikke stille sammenslåing (se `_delt_url` om
-    query-en).
+    Resten av stien røres IKKE HER — store bokstaver og tomme segmenter
+    står som de står, og prosentkodingen er `_nettleserkodet` sin jobb,
+    ikke denne. En normalisering som gjetter feil vei gjør to ULIKE sider
+    like, og feilretningen her skal være avvisning, ikke stille
+    sammenslåing (se `_delt_url` om query-en).
     """
     #: `%2e`/`%2E` er punktum for WHATWG-parseren, derfor `.lower()`.
     segmenter = sti.split("/")[1:]
@@ -269,7 +312,12 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     # PUNKTSEGMENTER ER IKKE EN DEL AV IDENTITETEN (Codex P2). `d.path`
     # er råstrengens sti; nettleseren løser `.`/`..` mens den navigerer og
     # rapporterer den løste formen tilbake — se `_uten_punktsegmenter`.
-    sti = _uten_punktsegmenter(d.path or "/")
+    # PROSENTKODINGEN ER HELLER IKKE EN DEL AV IDENTITETEN (Codex P2):
+    # nettleseren koder stien mens den navigerer, så `/café` kommer
+    # tilbake som `/caf%C3%A9` — se `_nettleserkodet`. Kodingen står
+    # FØRST: den rører verken `.` eller `%2e`, så punktsegmentene leses
+    # likt uansett, og en allerede kodet sti går uendret gjennom begge.
+    sti = _uten_punktsegmenter(_nettleserkodet(d.path or "/"))
     return (urlunsplit(("https", nettsted, sti, "", "")),
             urlunsplit(("https", nettsted, sti, d.query, "")))
 
