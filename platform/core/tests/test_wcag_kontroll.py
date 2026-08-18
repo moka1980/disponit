@@ -1791,6 +1791,93 @@ def test_prosentkoding_er_ikke_en_annen_side():
         _kjor("https://kunde.example/café", "https://kunde.example/cafe")
 
 
+def test_kodesettet_er_rfc_ens_og_ikke_en_nettlesers_bordoppslag():
+    """Codex P2, fjerde runde på URL-identitet: `^` manglet i sti-settet.
+
+    De tre foregående rundene (`:443`, punktsegmenter, prosentkoding)
+    jaktet alle på «hvilke tegn koder Chromium?». Svaret var nytt hver
+    gang — `^` står IKKE i WHATWG sitt path-sett, men Chromium koder det
+    likevel, og en ærlig `/a^b` ble avvist mot motorens `/a%5Eb` etter at
+    kundens nettsted var skannet.
+
+    Fiksen slutter å svare på det spørsmålet. Normaliseringen kjører på
+    BEGGE sider, og `%` kodes aldri om, så et OVERSETT av nettleserens
+    sett er trygt: koder motoren tegnet, står den kodede formen på begge
+    sider; koder den ikke, koder vi begge. Settet er derfor RFC 3986 sitt
+    — alt som ikke kan stå rått i en sti.
+
+    Kontroll: sett `_STI_KODES` tilbake til `'\"<>`{}'`, så blir hvert par
+    under rødt.
+    """
+    from modules.wcag_audit.rapport import bygg
+
+    def _kjor(bestilt, levert):
+        return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
+                    payload=_payload(mal_url=bestilt), kontekst=_kontekst())
+
+    for tegn, kode in (("^", "%5E"), ("|", "%7C"),
+                       ("[", "%5B"), ("]", "%5D")):
+        ventet = f"https://kunde.example/a{kode}b"
+        # Rå bestilling mot kodet motorutdata ...
+        assert _kjor(f"https://kunde.example/a{tegn}b",
+                     ventet)["sider_kontrollert"][0]["url"] == ventet, tegn
+        # ... og motsatt vei, som er den nettleseren IKKE koder.
+        assert _kjor(ventet, f"https://kunde.example/a{tegn}b")[
+            "sider_kontrollert"][0]["url"] == ventet, tegn
+
+    # Tegn RFC-en tillater rått står urørt: de har en lovlig rå form, så
+    # en over-koding her ville slått sammen to sider serveren skiller.
+    for tegn in (",", ";", "=", "+", ":", "@", "$", "!", "*", "(", ")"):
+        url = f"https://kunde.example/a{tegn}b"
+        assert _kjor(url, url)["sider_kontrollert"][0]["url"] == url, tegn
+
+
+def test_query_baerer_nettleserens_prosentkoding():
+    """Codex P2: `?q=café` og `?q=caf%C3%A9` er ÉN side for nettleseren.
+
+    Query-en ble sammenlignet rå. Chromium koder den mens den navigerer,
+    så bestillingens `?q=café` møtte motorens `?q=caf%C3%A9` som to ulike
+    strenger, og den ærlige rapporten ble avvist ETTER at trafikken mot
+    kundens nettsted var brukt — samme feil som stien bar, ett felt til
+    høyre.
+
+    Det som IKKE normaliseres er like viktig: rekkefølgen på parametrene
+    og skillet mellom `+` og `%20`. En server kan lese `+` som mellomrom
+    og `%2B` som pluss, og en normalisering som gjetter der ville slått
+    sammen to sider serveren skiller.
+
+    Kontroll: bytt `nettleserlest_query(d.query)` mot `d.query` i
+    `_delt_url`, så blir det første paret rødt.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _kjor(bestilt, levert):
+        return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
+                    payload=_payload(mal_url=bestilt), kontekst=_kontekst())
+
+    # Samme side — uansett hvilken side som bærer den rå formen.
+    for bestilt, levert in (
+            ("https://kunde.example/r?q=café", "https://kunde.example/r?q=caf%C3%A9"),
+            ("https://kunde.example/r?q=caf%C3%A9", "https://kunde.example/r?q=café"),
+            # `'` koder nettleseren i query-en for https, `^` likeså.
+            ("https://kunde.example/r?q=a'b", "https://kunde.example/r?q=a%27b"),
+            ("https://kunde.example/r?q=a^b", "https://kunde.example/r?q=a%5Eb"),
+            # ... og mellomrom, som er det klassiske tilfellet.
+            ("https://kunde.example/r?q=a b", "https://kunde.example/r?q=a%20b")):
+        # Rapporten bærer fortsatt ikke query-en videre.
+        assert _kjor(bestilt, levert)["sider_kontrollert"][0]["url"] == (
+            "https://kunde.example/r"), (bestilt, levert)
+
+    # `+` er IKKE `%20`, og rekkefølgen er ikke sortert bort.
+    for bestilt, levert in (
+            ("https://kunde.example/r?q=a+b", "https://kunde.example/r?q=a%20b"),
+            ("https://kunde.example/r?q=a+b", "https://kunde.example/r?q=a%2Bb"),
+            ("https://kunde.example/r?a=1&b=2", "https://kunde.example/r?b=2&a=1")):
+        with pytest.raises(Motorfeil):
+            _kjor(bestilt, levert)
+
+
 def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
     """Codex P1: en `status` vi ikke kan lese ble skrevet om til `feilet`.
 

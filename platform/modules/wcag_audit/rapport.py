@@ -177,14 +177,23 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     Å kreve likhet der ville avvist ærlige kjøringer uten å hindre en
     eneste forveksling av to sider serveren kan skille.
 
-    Query-en sammenlignes RÅTT, tegn for tegn, uten omskriving av
-    prosentkoding, parameterrekkefølge eller `+` mot `%20`: to
+    QUERY-EN BÆRER NETTLESERENS PROSENTKODING (Codex P2), akkurat som
+    stien gjør det. Den sto rå her, og da traff `?q=café` samme feil som
+    `/café` gjorde ett nivå opp: Chromium koder query-en mens den
+    navigerer og rapporterer `?q=caf%C3%A9` tilbake, så bestillingens rå
+    form og motorens kodede var to strenger — og den ærlige rapporten ble
+    avvist ETTER at kundens nettsted var skannet.
+
+    Parameterrekkefølgen og `+` mot `%20` står fortsatt urørt: to
     skrivemåter kan bety det samme for én server og noe helt annet for en
     annen, og en normalisering som gjetter feil vei gjør to ULIKE sider
-    like. Feilretningen her skal være avvisning (Motorfeil), ikke en
+    like. Det er BARE nettleserens egen omskriving som speiles — se
+    `oppdragskontrakt.nettleserlest_query` for hvorfor det skillet holder.
+    Feilretningen her skal ellers være avvisning (Motorfeil), ikke en
     stille sammenslåing.
     """
-    from oppdragskontrakt import normaliser_vertsnavn, rapporturl
+    from oppdragskontrakt import (
+        nettleserlest_query, normaliser_vertsnavn, rapporturl)
     try:
         d = urlsplit(str(raa))
         vert = d.hostname
@@ -209,7 +218,14 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     ren = rapporturl(raa)
     if ren is None:
         raise Motorfeil("uleselig url fra motoren")
-    return (ren, ren + (f"?{d.query}" if d.query else ""))
+    try:
+        query = nettleserlest_query(d.query)
+    except UnicodeEncodeError as e:
+        # Samme grunn som `rapporturl` svarer None på en løs surrogat: en
+        # query ingen nettleser kan sende er en uleselig URL, ikke et
+        # unntak som får slippe ut av motoravlesningen.
+        raise Motorfeil("uleselig url fra motoren") from e
+    return (ren, ren + (f"?{query}" if d.query else ""))
 
 
 def _antall(raa, standard: int) -> int:

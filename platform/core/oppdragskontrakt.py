@@ -295,20 +295,50 @@ def normaliser_vertsnavn(raa: object) -> str | None:
     return vert
 
 
-#: WHATWG sitt «path percent-encode set»: C0-kontrolltegn og mellomrom,
-#: `"`, `<`, `>`, backtick, `{`, `}`, DEL — og alt over ASCII, som UTF-8.
-#: `?` og `#` står i settet, men `urlsplit` har alt delt dem av før stien
-#: kommer hit, så de kan ikke nå denne funksjonen som rå tegn.
-_STI_KODES = '"<>`{}'
+#: Tegnene som prosentkodes I TILLEGG til C0-kontrolltegn, mellomrom, DEL
+#: og alt over ASCII (som UTF-8) — for STIEN.
+#:
+#: Settet er RFC 3986 sitt, ikke én nettlesers: det er nøyaktig de
+#: ASCII-tegnene som ikke kan stå rått i en sti (`path` tillater
+#: `unreserved`, `pct-encoded`, `sub-delims`, `:` og `@`). `?` og `#` står
+#: der også, men `urlsplit` har alt delt dem av før stien kommer hit, og
+#: `\` avvises i sin helhet av `normaliser_vertsnavn`.
+#:
+#: HVORFOR RFC-ENS SETT OG IKKE CHROMIUMS BORDOPPSLAG (Codex P2, fjerde
+#: runde på URL-identitet): de tre foregående rundene jaktet alle på
+#: «hvilke tegn koder nettleseren?», og svaret var nytt hver gang — sist
+#: `^`, som WHATWG holder utenfor sitt path-sett mens Chromium koder det.
+#: Det spørsmålet trenger vi ikke svare på. Normaliseringen kjører på
+#: BEGGE sider av sammenligningen (bestillingen og motorens utdata), og
+#: `%` kodes aldri om, så det er trygt å kode et OVERSETT av det motoren
+#: koder: koder motoren `^`, står `%5E` på begge sider allerede; koder den
+#: ikke, gjør vi begge sider til `%5E`. Symmetrien — ikke tabellen — er
+#: det som holder.
+#:
+#: Og over-kodingen kan ikke slå sammen to sider serveren skiller, nettopp
+#: fordi settet er RFC-ens: disse tegnene kan ikke stå rått i en gyldig
+#: sti, så det finnes ingen rå form å forveksle den kodede med. Tegn som
+#: ER lovlige rått (`,`, `;`, `=`, `+`, `:`, `@` ...) rører vi ikke.
+_STI_KODES = '"<>`{}^|[]'
+
+#: Samme sett for QUERY-en, som tillater alt stien gjør pluss `/` og `?`.
+#: `'` kommer i tillegg: RFC-en tillater den rått, men nettleseren koder
+#: den i query-en for special-schemes (`https`), så en rå `'` overlever
+#: aldri en ekte navigasjon — serveren ser `%27` uansett.
+#:
+#: `+` er IKKE med, og `%2B` dekodes aldri. De to betyr hver sin ting for
+#: en form-kodet server (`+` er mellomrom, `%2B` er pluss), og det er
+#: nettopp skillet mellom `+` og `%20` som ikke skal viskes ut her.
+_QUERY_KODES = _STI_KODES + "'"
 
 
-def _nettleserkodet(sti: str) -> str:
-    """Stien slik NETTLESEREN SKRIVER den: prosentkodet etter WHATWG-settet.
+def _nettleserkodet(tekst: str, kodes: str = _STI_KODES) -> str:
+    """Delen slik NETTLESEREN SKRIVER den: prosentkodet etter `kodes`.
 
     `urlsplit` er en parser og rører ikke tegnene. WHATWG-parseren i
-    Chromium prosentkoder stien mens den navigerer, så en bestilling på
-    `https://kunde.example/café` besøkes og rapporteres som
-    `https://kunde.example/caf%C3%A9`.
+    Chromium prosentkoder mens den navigerer, så en bestilling på
+    `https://kunde.example/café?q=café` besøkes og rapporteres som
+    `https://kunde.example/caf%C3%A9?q=caf%C3%A9`.
 
     Kodingen går BARE én vei, aldri tilbake:
 
@@ -320,10 +350,13 @@ def _nettleserkodet(sti: str) -> str:
         `%c3%a9` til `%C3%A9`. Nettleseren gjør ingen av delene, og en
         normalisering som gjetter feil vei gjør to ULIKE sider like —
         feilretningen skal være avvisning, ikke stille sammenslåing.
+
+    Rekkefølgen er urørt: dette er en passering tegn for tegn, ikke en
+    parsing. Query-parametre kommer ut i den rekkefølgen de kom inn.
     """
     ut: list[str] = []
-    for tegn in sti:
-        if tegn == "%" or ("\x20" < tegn < "\x7f" and tegn not in _STI_KODES):
+    for tegn in tekst:
+        if tegn == "%" or ("\x20" < tegn < "\x7f" and tegn not in kodes):
             ut.append(tegn)
         else:
             ut.extend(f"%{b:02X}" for b in tegn.encode("utf-8"))
@@ -390,6 +423,24 @@ def nettleserlest_sti(sti: str) -> str:
     return _uten_punktsegmenter(_nettleserkodet(sti))
 
 
+def nettleserlest_query(query: str) -> str:
+    """Query-en slik nettleseren SKRIVER den — prosentkodet etter
+    `_QUERY_KODES`.
+
+    Punktsegmenter finnes ikke her: `..` i en query er data, ikke
+    navigasjon, og skal stå som den står. Det er BARE kodingen som er
+    felles med stien.
+
+    Rekkefølge og form ellers er urørt (Codex P2). En query er ubetrodd
+    data for oss — vi vet ikke om serveren ruter på `a=1&b=2` og `b=2&a=1`
+    likt, og vi vet ikke om den leser `+` som mellomrom. Det eneste vi vet
+    er hva NETTLESEREN gjør før serveren ser noe: den prosentkoder tegnene
+    som ikke kan stå rått. Da er det bare den omskrivingen som skal
+    speiles, ikke en sortering eller en `+`/`%20`-tolkning.
+    """
+    return _nettleserkodet(query, _QUERY_KODES)
+
+
 def rapporturl(raa: object) -> str | None:
     """https-URL i RAPPORTFORM — vert i normalform, ikke-standard port,
     nettleserlest sti, uten query og fragment. -> None når URL-en ikke lar
@@ -407,6 +458,12 @@ def rapporturl(raa: object) -> str | None:
     videre — de skiller faktisk to endepunkter fra hverandre. Skjemaet er
     alltid https her, så 443 er den eneste standardporten som kan dukke
     opp.
+
+    EN LØS SURROGAT gir None, ikke et unntak: `json.loads` leverer
+    `"\\ud800"` som et tegn `str.encode` ikke kan skrive, og en URL ingen
+    nettleser kan be om er nettopp en URL som ikke lar seg lese entydig.
+    Sto den nakne `UnicodeEncodeError` igjen, ville den sluppet ut av
+    forhåndsporten som noe annet enn et avvist felt.
     """
     from urllib.parse import urlsplit, urlunsplit
     vert = normaliser_vertsnavn(raa)
@@ -416,8 +473,11 @@ def rapporturl(raa: object) -> str | None:
     # så en ulovlig port ga None over og kan ikke kaste her.
     d = urlsplit(str(raa))
     nettsted = vert + (f":{d.port}" if d.port and d.port != 443 else "")
-    return urlunsplit(
-        ("https", nettsted, nettleserlest_sti(d.path or "/"), "", ""))
+    try:
+        sti = nettleserlest_sti(d.path or "/")
+    except UnicodeEncodeError:
+        return None
+    return urlunsplit(("https", nettsted, sti, "", ""))
 
 
 def malvert(oppdragstype: object, payload: object) -> str | None:
