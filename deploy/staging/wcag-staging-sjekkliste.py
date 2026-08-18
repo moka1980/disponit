@@ -155,27 +155,35 @@ class Http:
             headers=h)
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
-                return r.status, json.loads(r.read() or b"{}")
+                return r.status, json.loads(r.read() or b"{}"), _hoder(
+                    r.headers)
         except urllib.error.HTTPError as e:
             try:
-                return e.code, json.loads(e.read() or b"{}")
+                return e.code, json.loads(e.read() or b"{}"), _hoder(e.headers)
             except ValueError:
-                return e.code, {}
+                return e.code, {}, _hoder(e.headers)
 
     def post(self, sti, json=None, headers=None, cookies=None, **kw):
-        st, kropp = self._kall("POST", sti, kw.get("kropp", json),
-                               headers, cookies)
-        return _Svar(st, kropp)
+        st, kropp, hoder = self._kall("POST", sti, kw.get("kropp", json),
+                                      headers, cookies)
+        return _Svar(st, kropp, hoder)
 
     def get(self, sti, headers=None, cookies=None):
-        st, kropp = self._kall("GET", sti, None, headers, cookies)
-        return _Svar(st, kropp)
+        st, kropp, hoder = self._kall("GET", sti, None, headers, cookies)
+        return _Svar(st, kropp, hoder)
+
+
+def _hoder(raa) -> dict:
+    """Svarhodene med SMÅ navn — HTTP-hodenavn er case-insensitive, og en
+    oppslagsnøkkel som avhenger av serverens skrivemåte er ingen nøkkel."""
+    return {str(k).lower(): v for k, v in (raa or {}).items()}
 
 
 class _Svar:
-    def __init__(self, status, kropp):
+    def __init__(self, status, kropp, hoder=None):
         self.status_code = status
         self._kropp = kropp
+        self.headers = hoder or {}
 
     def json(self):
         return self._kropp
@@ -570,6 +578,11 @@ def _fasitkontroll(scenario: str, rapport: dict) -> list[str]:
     return fk.avvik(s, motorformet)
 
 
+def _rapport(http, lese_tok, oid):
+    return http.get(f"/v1/rapport/{oid}",
+                    headers={"authorization": f"Bearer {lese_tok}"})
+
+
 def fase5(m, http, mtk, motorkmd, digest):
     cookie, csrf = _adminokt(m, TENANT)
     lese_tok = _lesetoken(m, TENANT)
@@ -588,18 +601,39 @@ def fase5(m, http, mtk, motorkmd, digest):
                     svar=r.json())
             continue
         oid = r.json()["oppdrag_id"]
-        res = _kontroller_kjor(mtk, motorkmd, digest)
-        varighet = time.monotonic() - start
+        # ET GJENSPILL ER IKKE ET NYTT OPPDRAG (Codex P1). Med de stabile
+        # `_idem`-nøklene svarer `/v1/bestilling` `idempotent-replay` på en
+        # gjenkjøring av samme fase i samme runde: beslutningen er tatt, og
+        # oppdraget er som regel alt UTFØRT. `_kontroller_kjor` claimer
+        # likevel globalt, fant ingenting å gjøre og ga `utfall: "tomt"` —
+        # altså 0/10 for en runde der ti gyldige rapporter lå ferdige.
+        # Gjenkjøringen målte dermed køen, ikke resultatet.
+        #
+        # Finnes rapporten, ER kjøringen gjort: da kontrolleres DEN mot
+        # fasiten i stedet for at motoren kjøres om igjen. Finnes den ikke
+        # (beslutningen ble tatt, men utførelsen kom aldri i mål), er
+        # oppdraget fortsatt claimbart og motoren skal kjøre som før.
+        gjenspill = r.headers.get("idempotent-replay") == "1"
+        rr = _rapport(http, lese_tok, oid) if gjenspill else None
+        alt_utfort = rr is not None and rr.status_code == 200
+        if alt_utfort:
+            res, varighet = {"utfall": "utfort"}, None
+        else:
+            res = _kontroller_kjor(mtk, motorkmd, digest)
+            varighet = time.monotonic() - start
+            rr = _rapport(http, lese_tok, oid)
         frist = 1800 if sp["omfang"] == "enkeltside" else 3600
-        rr = http.get(f"/v1/rapport/{oid}",
-                      headers={"authorization": f"Bearer {lese_tok}"})
         avvik = (_fasitkontroll(scenario, rr.json()["rapport"])
                  if rr.status_code == 200 else [f"rapport {rr.status_code}"])
-        ok = (res.get("utfall") == "utfort" and varighet < frist
-              and not avvik)
+        # Fristen ble målt da kjøringen faktisk skjedde, og den målingen
+        # står i evidensfila fra den runden. Et gjenspill kan ikke måle den
+        # på nytt, og skal ikke late som.
+        ok = (res.get("utfall") == "utfort" and not avvik
+              and (alt_utfort or varighet < frist))
         gronne += ok
         evidens("kjoring", i=i, scenario=scenario, oppdrag=oid,
-                utfall=res.get("utfall"), varighet_s=round(varighet, 1),
+                utfall=res.get("utfall"), gjenspill=alt_utfort,
+                varighet_s=None if varighet is None else round(varighet, 1),
                 frist_s=frist, avvik_mot_fasit=len(avvik),
                 avvik=avvik[:5], ok=ok)
     evidens("fase5_resultat",
@@ -645,8 +679,7 @@ def fase6(m, http, mtk, motorkmd, digest):
     r = _bestill(http, cookie, csrf, kropp, _idem("f6-r5xx", kropp))
     r.raise_for_status()
     res = _kontroller_kjor(mtk, motorkmd, digest)
-    rr = http.get(f"/v1/rapport/{r.json()['oppdrag_id']}",
-                  headers={"authorization": f"Bearer {lese_tok}"})
+    rr = _rapport(http, lese_tok, r.json()["oppdrag_id"])
     sider = len(rr.json().get("rapport", {}).get("sider_kontrollert", []))
     evidens("port20_robots_5xx", utfall=res.get("utfall"),
             sider_kontrollert=sider, krav=1)
