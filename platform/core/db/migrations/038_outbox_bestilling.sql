@@ -359,11 +359,24 @@ BEGIN
                 p_oppdrag_id, p_arsak)
         RETURNING id INTO v_id;
     EXCEPTION WHEN unique_violation THEN
-        -- Kappløpstaperen: vinnerens ikke-terminale sak er svaret.
+        -- Kappløpstaperen: vinnerens ikke-terminale sak er svaret, og den
+        -- er FERDIG — vinneren har alt skrevet koblingshendelsen sin.
+        --
+        -- Codex P2: retur HERFRA, ikke gjennom innsettingsveien under.
+        -- Sakskoblingen er én HENDELSE, ikke en tilstand: raden er
+        -- idempotent fordi indeksen gjør den det, men historikken er
+        -- append-only og teller. Falt taperen ut i den felles halen,
+        -- fikk ETT oppdrag TO `sak_for_oppdrag`-rader for den samme
+        -- koblingen — og det skjer i praksis, med samtidige sene
+        -- kvitteringer eller sikkerhetskonflikter fra hver sin
+        -- claim-generasjon. Å telle hendelser i sporet er nettopp det
+        -- sporet er til for.
         SELECT u.id INTO v_id FROM public.unntak u
          WHERE u.tenant = p_tenant AND u.oppdrag_id = p_oppdrag_id
            AND u.arsak = p_arsak AND NOT u.terminal;
+        RETURN v_id;
     END;
+    -- Kun på INNSETTINGSVEIEN: koblingen skjedde nettopp, her.
     INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
                                          aktor, request_id, detalj)
     VALUES (p_tenant, v_id, 'sak_for_oppdrag', p_aktor, p_request_id,

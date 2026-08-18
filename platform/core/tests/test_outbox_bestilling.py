@@ -230,8 +230,17 @@ def test_to_samtidige_sikre_sak_gir_noyaktig_en(migrator):
     n = migrator.execute(
         "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
         " AND arsak='evidensfrist'", (TENANT, oid)).fetchone()[0]
+    # Codex P2: og NØYAKTIG én koblingshendelse. Raden er idempotent fordi
+    # indeksen gjør den det, men historikken er append-only og teller —
+    # taperen skrev tidligere sin egen `sak_for_oppdrag` oppå vinnerens,
+    # så den samme koblingen ble ført to ganger i revisjonssporet.
+    h = migrator.execute(
+        "SELECT count(*) FROM unntak_historikk WHERE tenant=%s"
+        " AND unntak_id=%s AND hendelse='sak_for_oppdrag'",
+        (TENANT, resultater[0])).fetchone()[0]
     migrator.rollback()
     assert n == 1, n
+    assert h == 1, f"koblingshendelsen ble ført {h} ganger"
 
 
 @pg
