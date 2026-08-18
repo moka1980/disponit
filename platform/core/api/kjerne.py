@@ -358,16 +358,54 @@ def _krev_kapabilitet(conn: psycopg.Connection, kap, event: dict,
         raise Feilsvar("kapabilitet_fencing_tapt")
 
 
+#: Nøkkelrom PLATTFORMEN avleder selv, og som en KALLER derfor ikke får
+#: skrive i. `idempotens` (og `revisjonslogg.idempotency_key`) er ETT rom
+#: delt av alle endepunktene, og de avledede nøklene er per definisjon
+#: forutsigbare: de er deterministiske funksjoner av data klienten selv
+#: sendte inn. Uten denne porten kan en kaller med tilgang til et endepunkt
+#: som fører sin egen `Idempotency-Key` videre (`/v1/beslutning`) SKRIVE
+#: raden en annen vei senere LESER som sitt eget spor.
+#:
+#: Prefiksene her er de som leses tilbake som bevis:
+#:   * `bestilling:` — `api.bestilling.kjernenokkelprefiks`; gjenopprettingen
+#:     i krasjvinduet leser `idempotens.respons` for nøkkelen som DEN
+#:     committede beslutningen, og lenker et WCAG-oppdrag til dens loggpost.
+#:   * `domeneovertakelse:` — `api.domeneovertakelse.idempotensnokkel`; saken
+#:     slås opp på nøkkelen (019 §3.24, `slaa_opp_sak`).
+#:
+#: Listen er en HVITLISTE snudd på hodet, og det er en kjent svakhet: et nytt
+#: avledet nøkkelrom må føres inn her. Alternativet — å gjøre nøkkelen
+#: uforfalskbar — finnes ikke uten en hemmelighet, fordi gjenopprettingen må
+#: kunne utlede nøkkelen på nytt i en HELT ANNEN prosess av bare det
+#: forespørselen selv bærer.
+RESERVERTE_NOKKELROM: tuple[str, ...] = ("bestilling:", "domeneovertakelse:")
+
+
+def er_reservert_nokkel(idempotency_key: str) -> bool:
+    """Ligger nøkkelen i et rom plattformen avleder selv?"""
+    return any(idempotency_key.startswith(p) for p in RESERVERTE_NOKKELROM)
+
+
 def behandle(conn: psycopg.Connection, ctx, *, policy_id: str, event: dict,
              idempotency_key: str, request_id: str, aktor: str,
              nokler: dict, naa: datetime | None = None,
-             sporing: Sporing | None = None, kapabilitet=None) -> Svar:
+             sporing: Sporing | None = None, kapabilitet=None,
+             klientvalgt_nokkel: bool = False) -> Svar:
     """De elleve stegene. Én transaksjon, ett commit-punkt.
 
     Kaller aldri `conn.commit()`/`conn.rollback()` andre steder enn her, og
     ingenting den kaller har lov til det heller — derfor sendes
     `ytre_transaksjon=True` videre til `sikker_beslutning_pg`.
+
+    `klientvalgt_nokkel` sier om `idempotency_key` kommer RÅ fra kalleren.
+    Den er `False` som standard med vilje: et nytt endepunkt som fører en
+    klientnøkkel videre må si det HØYT, og porten under er da ikke noe man
+    kan glemme å slå på — den er noe man må velge bort.
     """
+    if klientvalgt_nokkel and er_reservert_nokkel(idempotency_key):
+        # Ingen DB-arbeid, ingen lås, ingen `idempotens`-rad: forsøket skal
+        # ikke engang få legge beslag på nøkkelen det ba om.
+        raise Feilsvar("idempotensnokkel_reservert")
     naa = naa or datetime.now(timezone.utc)
     sporing = sporing if sporing is not None else Sporing()
     tenant = ctx.tenant_id

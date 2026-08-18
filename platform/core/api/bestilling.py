@@ -156,6 +156,80 @@ def intensjonshash(normalisert: dict) -> str:
     return hashlib.sha256(jcs.kanoniske_bytes(intensjon)).hexdigest()
 
 
+def kjernenokkelprefiks(nokkel: str) -> str:
+    """Alt av kjernenøkkelen som følger av KLIENTENS nøkkel alene.
+
+    Klientnøkkelen står som en sha256 nettopp for at dette skal være et
+    entydig prefiks: nøkkelen er 8–200 tegn klientvalgt tekst og kan
+    inneholde `:`, så `bestilling:{nokkel}:` ville matchet en ANNEN
+    nøkkels kjernenøkkel (`abc` mot `abc:x`). Med et 64-hex ledd er
+    prefikset fast og kan ikke gli over på en fremmed nøkkel.
+
+    Prisen er lesbarheten i `revisjonslogg.idempotency_key`; den betales
+    med vitende og vilje, og `bestilling_idempotens` bærer fortsatt
+    klientnøkkelen i klartekst for den som skal feilsøke.
+    """
+    return "bestilling:" + hashlib.sha256(
+        nokkel.encode("utf-8")).hexdigest() + ":"
+
+
+def laasenavn_for(tenant: str, nokkel: str) -> str:
+    """Navnet på advisory-låsen som serialiserer KLIENTENS nøkkel.
+
+    Samme form som kjernens egen (`kjerne.behandle` steg 2): `\\x1f` er
+    en separator ingen av leddene kan inneholde, så to par kan ikke
+    kollapse til samme navn. Låsen er en ANNEN enn kjernens — den låser
+    klientnøkkelen, kjernens låser kjernenøkkelen — og tas alltid FØR
+    den, i hver eneste forespørsel: to låser i fast rekkefølge kan ikke
+    danne en syklus.
+    """
+    return f"{tenant}\x1fbestillingsnokkel\x1f{nokkel}"
+
+
+def kjernenokkel_for(nokkel: str, hash_: str) -> str:
+    """Kjernens idempotensnøkkel — BÆRER INTENSJONEN (Codex P1).
+
+    Nøkkelen var `bestilling:<klientens nøkkel>` alene, og den formen har
+    et hull i nøyaktig det vinduet gjenopprettingen finnes for: dør
+    prosessen etter at `kjerne.behandle` har committet, men før
+    `bestilling_idempotens` er skrevet, finnes det ikke lenger noe
+    varig spor av HVA klienten ba om. Konfliktporten
+    (`intensjonshash`-sammenligningen over `bestilling_idempotens`) har
+    ingen rad å sammenligne mot, så en retry med samme nøkkel og en ANNEN
+    lovlig kropp fant den gamle beslutningen på nøkkelen alene — og halen
+    krypterte så retryens `norm` som oppdragets payload. Et TILLAT gitt
+    for én side ble dermed oppdraget «crawl 50 sider av nettstedet»,
+    lenket til en beslutning som aldri vurderte det.
+
+    Intensjonshashen er derfor en DEL av nøkkelen. Da er selve oppslaget
+    sammenligningen: finnes raden, gjaldt beslutningen nøyaktig denne
+    intensjonen, og ingen egen sjekk kan gli fra den.
+
+    En retry med en annen kropp i det samme vinduet treffer da ingen rad
+    og ARVER aldri den forrige beslutningen. (Utenfor vinduet, som er
+    normaltilfellet, står `bestilling_idempotens`-raden og gir
+    `idempotenskonflikt` som før: ingen ny beslutning, ingen kvote brent.)
+
+    MEN INTENSJONEN DELER IKKE NØKKELROMMET (Codex P1, runde 4). Bar
+    nøkkelen intensjonen ALENE, ble den også serialiseringen: kjernen
+    låser og claimer per kjernenøkkel (`behandle` steg 2–3), så to lovlige
+    kropper under samme klientnøkkel fikk hver sin lås, hver sin
+    beslutning, hver sin kvoteplass og hvert sitt oppdrag — og den siste
+    `ON CONFLICT DO NOTHING` etterlot bare det ene oppdraget uten
+    klientnøkkelen sin. Endepunktets lovede «samme nøkkel, ulik intensjon
+    ⇒ konflikt» var da omgått, både i krasjvinduet og i to helt vanlige
+    samtidige forsøk.
+
+    Nøkkelen bærer derfor BEGGE deler, i to atskilte ledd: klientnøkkelen
+    som et fast 64-hex prefiks (se `kjernenokkelprefiks`) og intensjonen
+    etter det. Prefikset gjør oppslaget intensjonsUAVHENGIG — vi kan se
+    at det finnes en committet beslutning på nøkkelen uten å vite hvilken
+    intensjon den gjaldt — mens halen gjør sammenligningen. Samtidigheten
+    holdes fra hverandre av `laasenavn_for`, som låser klientnøkkelen selv.
+    """
+    return kjernenokkelprefiks(nokkel) + hash_
+
+
 #: Gyldighetspredikatet, ORDRETT fra `v_domeneautorisasjon.gyldig`
 #: (016 §6). Egress-autoriteten slipper bare gjennom et domene som ER
 #: dette, og bestillingsporten må stille samme spørsmål: en bestilling
@@ -170,18 +244,22 @@ DOMENE_GYLDIG_SQL = (
     " AND siste_vellykkede_revalidering > now() - interval '72 hours'")
 
 
-def _verifisert_hostname(conn, tenant: str, hostname: str) -> bool:
+def _verifisert_hostname(conn, tenant: str, hostname: str):
     """Positivt autorisert mål VED OPPRETTELSE (portene 9–10): en
     `verifisert`, ikke-utløpt, FERSK revalidert domenekontroll for
     nøyaktig dette hostnamet. Wildcard teller ikke her — bestillingen
     gjelder ett konkret mål.
 
-    NULL-veiene er fail-closed, som i visningen: mangler `utloper` eller
+    -> `siste_vellykkede_revalidering` (verifikasjonens tidspunkt — det
+    plattformattestasjonen under attesterer) eller None. NULL-veiene er
+    fail-closed, som i visningen: mangler `utloper` eller
     `siste_vellykkede_revalidering`, er raden ikke et bevis på noe."""
-    return conn.execute(
-        "SELECT 1 FROM domenekontroll WHERE tenant=%s AND hostname=%s"
+    rad = conn.execute(
+        "SELECT siste_vellykkede_revalidering FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s"
         " AND (" + DOMENE_GYLDIG_SQL + ")",
-        (tenant, hostname)).fetchone() is not None
+        (tenant, hostname)).fetchone()
+    return rad[0] if rad else None
 
 
 def bestill_endepunkt(tjeneste, request: Request) -> Response:
@@ -193,6 +271,9 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         conn = tjeneste.pool.hent()
     except (TimeoutError, psycopg.Error):
         return _feilsvar("db_utilgjengelig", rid)
+    #: Sesjonslåsen på klientens idempotensnøkkel, satt når den er tatt —
+    #: se serialiseringen under og opprydningen i `finally`.
+    laasenavn = None
     try:
         try:
             tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
@@ -242,6 +323,37 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                                    grunn="idempotensnokkel_lengde")
             return _feilsvar("request_feilformet", rid)
 
+        # BESLUTNINGENE SERIALISERES PÅ KLIENTENS NØKKEL (Codex P1).
+        # Kjernen serialiserer per KJERNEnøkkel, og den bærer intensjonen:
+        # to lovlige kropper under samme `Idempotency-Key` fikk derfor hver
+        # sin lås og kunne begge committe en beslutning — to kvoteplasser,
+        # to oppdrag, og en `ON CONFLICT DO NOTHING` som etterlot det ene
+        # oppdraget uten klientnøkkelen sin. Endepunktets lovede «samme
+        # nøkkel, ulik intensjon ⇒ konflikt» var da omgått av selve
+        # nøkkelvalget.
+        #
+        # Låsen dekker HELE veien fra gjenspill-lesingen til bokføringen,
+        # og den kan ikke være en xact-lås: kjernen committer inne i
+        # `behandle`, og en xact-lås tatt her ville sluppet nettopp der
+        # vinduet er. Sesjonslåsen slippes derfor eksplisitt i `finally` —
+        # og en tilkobling som IKKE fikk sluppet den, lukkes i stedet for å
+        # gå tilbake i poolen med en fremmed lås på seg.
+        #
+        # `try` og ikke en ventende lås: en nøkkel som er opptatt NÅ har en
+        # forespørsel i arbeid, og den er per definisjon en konflikt på
+        # nøkkelen (409). Ingen beslutning tas, ingen kvote brennes, og
+        # klientens neste forsøk møter enten gjenspillet eller konflikten
+        # — men aldri en pool-tilkobling som står og venter.
+        if nokkel:
+            navn = laasenavn_for(tenant, nokkel)
+            fikk = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+                (navn,)).fetchone()[0]
+            conn.rollback()
+            if not fikk:
+                return _feilsvar("idempotenskonflikt", rid)
+            laasenavn = navn
+
         from db.pg import sett_kontekst
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
         # GJENSPILL FØR HOSTNAME-PORTEN (Codex P2). Porten er en
@@ -277,7 +389,8 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 return kanonisk_json(
                     {**lagret, "request_id": rid}, 200,
                     {"x-request-id": rid, "idempotent-replay": "1"})
-        if not _verifisert_hostname(conn, tenant, hostname):
+        verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
+        if verifisert_ts is None:
             conn.rollback()
             tjeneste.logg.hendelse("bestilling_hostname_uverifisert", rid,
                                    tenant, art="sikkerhet",
@@ -339,7 +452,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             return _feilsvar("bestillingstype_utilgjengelig", rid)
         conn.rollback()
 
-        kjernenokkel = ("bestilling:" + nokkel) if nokkel \
+        kjernenokkel = kjernenokkel_for(nokkel, hash_) if nokkel \
             else "bestilling-eng:" + secrets.token_hex(16)
         # Tenantens AKTIVE policy er beslutningsgrunnlaget — bestilleren
         # velger aldri policy (eller modul, frist, epoch — feltene finnes
@@ -348,58 +461,188 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         # GJENOPPRETTING FØLGER BESLUTNINGEN, IKKE KLOKKA (Codex P2).
         # Dør prosessen etter at `kjerne.behandle` har committet, men før
         # oppdraget og `bestilling_idempotens` er skrevet, er kjernens
-        # egen idempotensrad det eneste sporet av forsøket. Kjernens
-        # input-hash dekker policy-id-en, så en retry etter at tenanten
-        # har byttet til en ANNEN policy ville regnet ut en ny hash og
-        # fått `idempotenskonflikt` — for alltid, og med en committet
-        # TILLAT-beslutning stående uten oppdraget sitt. Har nøkkelen alt
-        # en beslutning, gjenoppretter vi derfor med DEN policyen: da
-        # treffer hashen, kjernen gjenspiller sitt eget svar, og halen
-        # under fullfører bestillingen. Loggposten er den samme raden
-        # halen leser oppdraget fra, og dens `policy_id` er en
-        # policyREFERANSE (`<id>@<versjon>/<handling>`) — ren id hentes ut
-        # med `les_policyref`, som i unntaksveien.
+        # egen idempotensrad det eneste sporet av forsøket.
+        #
+        # GRUNNLAGET GJENSKAPES IKKE — DET LESES (Codex P2, runde 2). Første
+        # utgave gjenopprettet bare POLICYEN og bygget resten av hendelsen
+        # på nytt for å treffe kjernens input-hash og utløse gjenspillet.
+        # Men hendelsen bærer også plattformens domenekontroll-attestasjon,
+        # og DEN er avledet av `siste_vellykkede_revalidering` — MUTABEL
+        # domenetilstand. Lykkes den planlagte revalideringen i nettopp det
+        # vinduet, får retryen et nytt `utstedt`/`utloper`, en ny `jti`, en
+        # ny signatur og dermed en ny input-hash: `idempotenskonflikt`, for
+        # alltid, med en committet TILLAT-beslutning stående uten oppdraget
+        # sitt. Å gjenopprette policyen men gjette på attestasjonen var å
+        # løse halve problemet.
+        #
+        # Kjernen lagrer SELV svaret sitt (`idempotens.respons`, satt i
+        # samme transaksjon som loggposten), og et gjenspill er per kontrakt
+        # nøyaktig den raden byte for byte. Er den der, er beslutningen alt
+        # tatt: da leser vi den, og bygger verken hendelse eller attestasjon
+        # på nytt. Ingen avledning av mutabel tilstand kan da komme i veien
+        # for at halen får fullført bestillingen.
+        #
+        # OPPSLAGET ER SELV INTENSJONSSJEKKEN (Codex P1, runde 3). Nøkkelen
+        # bærer `hash_` — se `kjernenokkel_for`. Uten det gjenbrukte denne
+        # lesingen en committet beslutning på KLIENTENS nøkkel alene, i det
+        # ene vinduet der `bestilling_idempotens` ennå ikke finnes og
+        # konfliktporten over derfor ikke har noe å sammenligne. Da kunne en
+        # retry med en annen lovlig kropp arve beslutningen og få halen til
+        # å kryptere SIN payload inn i den.
+        #
+        # ... OG DET SPØR PÅ KLIENTNØKKELEN, IKKE PÅ INTENSJONEN (Codex P1,
+        # runde 4). Sto oppslaget på hele kjernenøkkelen, var det BLINDT for
+        # en committet beslutning under en annen intensjon: retryen fant
+        # ingen rad, gikk videre og tok sin EGEN beslutning — enda en
+        # kvoteplass og enda et oppdrag på en nøkkel som per kontrakt bærer
+        # nøyaktig én. Låsen over stenger de samtidige tilfellene, men
+        # nettopp her er den borte: den døde med prosessen som krasjet.
+        #
+        # Vi spør derfor på PREFIKSET (klientnøkkelen alene) og leser
+        # intensjonen ut av raden vi fant. Er den vår, er beslutningen tatt
+        # og vi leser svaret; er den en annens, er dette `idempotenskonflikt`
+        # — samme svar som `bestilling_idempotens` gir utenfor vinduet, og
+        # fortsatt uten en eneste ny beslutning.
+        #
+        # ... OG ROMMET ER VÅRT ALENE (Codex P1, runde 5). Lesingen under
+        # STOLER på raden den finner: er den der, er beslutningen tatt, og
+        # for et TILLAT lenkes oppdraget til dens loggpost uten at noe av
+        # det opprinnelige grunnlaget etterprøves — det KAN ikke etterprøves
+        # her, siden hele poenget er at input-hashen ikke lar seg regne ut
+        # på nytt (attestasjonen hviler på mutabel domenetilstand, se over).
+        # Men `idempotens` er DELT: `/v1/beslutning` førte klientens egen
+        # `Idempotency-Key` rett inn i samme tabell, og kjernenøkkelen her
+        # er en deterministisk funksjon av data klienten selv sendte. En
+        # kaller hos samme tenant med `decision:write` kunne dermed regne ut
+        # nøkkelen, kjøre sin EGEN beslutning under den, og la denne
+        # lesingen plukke opp svaret som om det var bestillingens.
+        # `kjerne.RESERVERTE_NOKKELROM` stenger rommet: en klientvalgt
+        # nøkkel som begynner på `bestilling:` avvises av kjernen før den
+        # rører databasen. Tilliten her hviler på DEN porten.
+        #
+        # `left(...) = ` og ikke et intervall (`nokkel >= a AND < b`):
+        # intervallet ville lest nøkkelen i databasens COLLATION, og under
+        # en ikke-C collation er punktum og kolon ikke nødvendigvis der
+        # byte-rekkefølgen har dem — altså et oppslag som kan bomme på
+        # raden det finnes for. Prefikssammenligningen er collation-fri.
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
-        policy_id = None
-        if nokkel:
-            from policy_validator.engine import les_policyref
-            forrige = conn.execute(
-                "SELECT policy_id FROM revisjonslogg WHERE tenant=%s AND"
-                " idempotency_key=%s ORDER BY id DESC LIMIT 1",
-                (tenant, kjernenokkel)).fetchone()
-            ref = les_policyref(forrige[0]) if forrige else None
-            if ref is not None:
-                policy_id = ref[0]
-        if policy_id is None:
+        prefiks = kjernenokkelprefiks(nokkel) if nokkel else None
+        tidligere = conn.execute(
+            "SELECT nokkel, respons FROM idempotens"
+            " WHERE tenant=%s AND left(nokkel, %s) = %s AND status='ferdig'",
+            (tenant, len(prefiks), prefiks)).fetchall() if nokkel else []
+        conn.rollback()
+        beslutninger = {rad[0]: rad[1] for rad in tidligere}
+        # `ferdig_har_respons` (003) garanterer at en ferdig rad HAR en
+        # respons, så `None` her betyr «ingen rad», aldri «tom rad».
+        gjenopprettet = beslutninger.get(kjernenokkel)
+        if gjenopprettet is None and beslutninger:
+            # En committet beslutning på nøkkelen, for en ANNEN intensjon.
+            # Kvoten er urørt, og halen til den beslutningen kan fortsatt
+            # fullføre seg selv når klienten retryer med SIN kropp.
+            # Ingen loggpost: `idempotenskonflikt` er `avvis` i feiltabellen
+            # — kun et HTTP-svar — og skal svare likt uansett hvilken av de
+            # to radene som fant konflikten.
+            return _feilsvar("idempotenskonflikt", rid)
+
+        if gjenopprettet is not None:
+            # Beslutningen ER tatt og committet: svaret er kjernens eget,
+            # lest som det står. Nøyaktig det objektet gjenspillet i
+            # `kjerne._flyt` ville returnert — uten å gå gjennom hendelsen
+            # som bygde det, og dermed uten å avlede noe av tilstand som
+            # kan ha flyttet seg siden beslutningen falt.
+            respons = dict(gjenopprettet)
+            svar = kjerne.Svar(int(respons.get("http", 200)), respons,
+                               respons.get("unntak_id"), replay=True)
+            tjeneste.logg.hendelse("bestilling_gjenopprettet", rid, tenant,
+                                   art="drift",
+                                   beslutning=respons.get("beslutning"))
+        else:
+            sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
             prad = conn.execute(
                 "SELECT policy_id FROM policyer WHERE tenant=%s AND aktiv",
                 (tenant,)).fetchall()
+            conn.rollback()
             if len(prad) != 1:
-                conn.rollback()
                 return _feilsvar("policy_ukjent", rid)
             policy_id = prad[0][0]
-        conn.rollback()
 
-        # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at den
-        # ER det normaliserte vertsnavnet fra `mal_url` — ikke URL-en.
-        event = {"handling": bt.handling, "ressurs_id": hostname,
-                 "mal_url": norm["mal_url"], "kravsett": norm["kravsett"],
-                 "omfang": norm["omfang"],
-                 "maks_sider": norm["maks_sider"],
-                 "dataklasser": ["offentlig"],
-                 "dataklasser_kilde": "connector"}
-        from policy_validator.engine import EvaluationContext
-        ctx = EvaluationContext(
-            tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,
-            kilde="api_token")
-        try:
-            svar = kjerne.behandle(
-                conn, ctx, policy_id=policy_id, event=event,
-                idempotency_key=kjernenokkel, request_id=rid,
-                aktor=f"bruker:{bid}", nokler=tjeneste.nokler)
-        except kjerne.Feilsvar as f:
-            tjeneste.logg.hendelse(f.kode, rid, tenant, art="sikkerhet")
-            return _feilsvar(f.kode, rid)
+            # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at
+            # den ER det normaliserte vertsnavnet fra `mal_url`, ikke URL-en.
+            event = {"handling": bt.handling, "ressurs_id": hostname,
+                     "mal_url": norm["mal_url"], "kravsett": norm["kravsett"],
+                     "omfang": norm["omfang"],
+                     "maks_sider": norm["maks_sider"],
+                     "dataklasser": ["offentlig"],
+                     "dataklasser_kilde": "connector"}
+            # PLATTFORMEN ATTESTERER SIN EGEN DOMENEKONTROLL.
+            # Aktiveringsporten (036) KREVER at en ekstern_lesing-handling
+            # bærer et registrert målautorisasjonsvilkår
+            # (domenekontroll_verifisert) — og motoren krever så en
+            # attestasjon fra en betrodd verifikator for hvert vilkår i
+            # handlingen. Uten denne ville altså enhver bestilling under en
+            # LOVLIG AKTIVERT policy endt i unntakskøen med
+            # attestasjon_mangler: porten som verifiserte målet over (og
+            # fastholder ferskheten, 72 t) er nettopp verifikatoren, men den
+            # sa det aldri i attestasjonsformen motoren leser.
+            #
+            # Verifikatoren er PLATTFORMENS (`v_domenekontroll`): registeret
+            # i DISPONIT_ATT_NOKLER bærer nøkkelen, og tenantens policy
+            # velger selv om den stoler på den (`verifikatorer`-blokken +
+            # `betrodd_for: [domenekontroll_verifisert]`). Mangler nøkkelen i
+            # registeret, mintes ingenting — beslutningen tar da vilkårsveien
+            # den alltid tok (unntakskø), og driftsloggen navngir hvorfor.
+            dk_nokler = (tjeneste.nokler or {}).get("v_domenekontroll") or {}
+            if dk_nokler:
+                # DETERMINISTISK, forankret i selve verifikasjonen:
+                # `utstedt` er domenekontrollens
+                # `siste_vellykkede_revalidering` og `utloper` dens
+                # 72-timers ferskhetsvindu — attestasjonen UTTALER nøyaktig
+                # det porten over målte, verken mer eller ferskere.
+                #
+                # Grenen kjøres BARE når det ikke finnes en committet
+                # beslutning for nøkkelen (se over). Det er hele grunnen til
+                # at avledningen får hvile på mutabel domenetilstand: en
+                # retry etter en ny revalidering leser beslutningen sin i
+                # stedet for å bygge attestasjonen på nytt, og møter derfor
+                # ikke lenger en input-hash som har flyttet seg.
+                from policy_validator import attestering
+                nid = sorted(dk_nokler)[0]
+                # jti-en er engangs (kjernen brenner den i beslutningens
+                # transaksjon) og må derfor være unik PER BESLUTNING:
+                # nøkkelen inn i avledningen er kjernens idempotensnøkkel,
+                # så to bestillinger samme dag deler aldri jti.
+                jti_grunnlag = (f"{tenant}|{hostname}|{kjernenokkel}|"
+                                f"{verifisert_ts.isoformat()}")
+                event["attestasjoner"] = {
+                    "domenekontroll_verifisert": attestering.signer({
+                        "verifikator": "v_domenekontroll",
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": "domenekontroll_verifisert",
+                        "ressurs_id": hostname, "policy_id": policy_id,
+                        "utstedt": verifisert_ts.isoformat(),
+                        "utloper": (verifisert_ts
+                                    + timedelta(hours=72)).isoformat(),
+                        "jti": "dk-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": True,
+                    }, nid, dk_nokler[nid])}
+            else:
+                tjeneste.logg.hendelse(
+                    "domenekontroll_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
+            from policy_validator.engine import EvaluationContext
+            ctx = EvaluationContext(
+                tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,
+                kilde="api_token")
+            try:
+                svar = kjerne.behandle(
+                    conn, ctx, policy_id=policy_id, event=event,
+                    idempotency_key=kjernenokkel, request_id=rid,
+                    aktor=f"bruker:{bid}", nokler=tjeneste.nokler)
+            except kjerne.Feilsvar as f:
+                tjeneste.logg.hendelse(f.kode, rid, tenant, art="sikkerhet")
+                return _feilsvar(f.kode, rid)
 
         beslutning = str(svar.kropp.get("beslutning") or "").upper()
         utfall = {"TILLAT": "tillat", "STOPP": "stopp"}.get(
@@ -485,4 +728,23 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         return kanonisk_json({**kropp, "request_id": rid}, 200,
                              {"x-request-id": rid})
     finally:
+        # SESJONSLÅSEN SLIPPES HER, ELLER SÅ GÅR TILKOBLINGEN IKKE TILBAKE.
+        # `gi_tilbake` ruller tilbake før den legger tilkoblingen i poolen,
+        # men en sesjonslås overlever en rollback: ble den stående, ville
+        # neste forespørsel på SAMME tilkobling arvet en lås ingen holder,
+        # og klientnøkkelen vært blokkert til tilkoblingen døde. Går
+        # slippet galt, lukker vi heller tilkoblingen — poolen teller den
+        # ned selv, og en ny er billigere enn en foreldreløs lås.
+        if laasenavn is not None:
+            try:
+                conn.rollback()
+                conn.execute(
+                    "SELECT pg_advisory_unlock(hashtextextended(%s, 0))",
+                    (laasenavn,))
+                conn.rollback()
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         tjeneste.pool.gi_tilbake(conn)

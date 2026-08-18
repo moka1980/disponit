@@ -163,6 +163,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "igjen når modulen er aktiv. Hvilket vilkår som sviktet står i "
         "driftsloggen (`grunn`), aldri i svaret — ellers er 503-en et "
         "kart over hvilke moduler som er nede.")),
+    Feilvei("idempotensnokkel_reservert", 400, ("sikkerhet",), None,
+            aggregert=True, notat=(
+        "Kalleren ba om en idempotensnøkkel i et nøkkelrom PLATTFORMEN "
+        "avleder selv (`kjerne.RESERVERTE_NOKKELROM`). `idempotens` er "
+        "delt mellom endepunktene, og bestillingens gjenoppretting STOLER "
+        "på raden den finner der: kunne en kaller skrive i det rommet, "
+        "kunne den plante svaret gjenopprettingen leser. Sikkerhetslogg — "
+        "en lovlig klient treffer aldri denne.")),
     Feilvei("domene_challenge_avvist", 409, ("sikkerhet",), None, notat=(
         "utsted_challenge nektet (016): raden står i avklaring/overtakelse "
         "eller bryter en vakt der. 409, ikke 400: kroppen er velformet — "

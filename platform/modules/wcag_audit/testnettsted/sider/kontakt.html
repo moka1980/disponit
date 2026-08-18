@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kontakt</title>
+<link rel="stylesheet" href="/statisk/stil.css">
+</head>
+<body>
+<main>
+
+<h1>Kontakt oss</h1>
+<form action="/send">
+  <input type="email" name="epost">
+  <input type="tel" name="telefon">
+  <button type="submit">Send</button>
+</form>
+
+<!-- QUERY-LENKE: ingen brudd, men den skal OPPDAGES av crawlen. En
+     crawler som kaster lenker med query utelater dynamiske sider i
+     stillhet, og melder samtidig et for lavt avkortingstall. Målet
+     hentes aldri i denne runden (taket er 4 sider, og den havner sist
+     i køen), så fasiten måler nettopp oppdagelsen. -->
+<nav aria-label="Snarveier">
+<ul>
+<li><a href="/sok?q=tilgjengelighet">Søk etter tilgjengelighet</a></li>
+</ul>
+</nav>
+
+</main>
+</body>
+</html>

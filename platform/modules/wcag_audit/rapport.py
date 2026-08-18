@@ -423,11 +423,21 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     # rapporten skal ikke bære query-en, men `enkeltside`-porten under må
     # sammenligne med den (Codex P1) — se `_delt_url`.
     identiteter = []
+    # Og HVA motoren ble sendt fra, når den landet et annet sted — se
+    # `bestilt_url` i motorkontrakten og `enkeltside`-porten under. Feltet
+    # er valgfritt og reiser ALDRI inn i rapporten; det er en påstand om
+    # navigasjonen, ikke om siden.
+    fra_url = []
     for s in resultat.sider:
         if not isinstance(s, dict):
             raise Motorfeil("side-post uleselig")
         ren, identitet = _delt_url(s.get("url"), autorisert_vert)
         identiteter.append(identitet)
+        # Samme kanonisering og samme vertsbinding som siden selv: en
+        # `bestilt_url` utenfor det autoriserte målet er Motorfeil, ikke
+        # noe vi stryker i stillhet.
+        fra_url.append(None if s.get("bestilt_url") is None
+                       else _delt_url(s["bestilt_url"], autorisert_vert)[1])
         sider.append({"url": ren, "status": _sidestatus(s.get("status"))})
     if not sider:
         raise Motorfeil("motoren kontrollerte ingen sider")
@@ -458,7 +468,22 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
             f" {maks_sider}")
     if omfang == "enkeltside":
         bestilt = _bestilt_url(payload, autorisert_vert)
-        if identiteter[0] != bestilt:
+        # OMDIRIGERINGEN ER EN LOVLIG VEI HIT (Codex P1). Porten krevde at
+        # første sides identitet VAR den bestilte, og etter at motoren
+        # begynte å navngi siden den faktisk landet på, ble hver eneste
+        # kontroll av en URL som omdirigerer avvist her: `/side` → `/side/`
+        # er ikke et sjeldent tilfelle, det er normalen på halve nettet.
+        # Kunden fikk `motor_avbrutt` og ingen rapport, for en kjøring som
+        # gikk helt riktig — og alternativet, å la motoren melde tilbake
+        # den BESTILTE URL-en, er nettopp løgnen forrige runde fjernet.
+        #
+        # Motoren attesterer derfor navigasjonen (`bestilt_url`), og porten
+        # godtar den landede siden når attestasjonen navngir det bestilte
+        # målet. Bindingen er like stram som før mot det den finnes for: en
+        # motor som kontrollerer `/annet` uten å si at noen sendte den dit,
+        # avvises som før — og en `bestilt_url` er selv bundet til det
+        # autoriserte målet og kanonisert med samme funksjon som siden.
+        if bestilt not in (identiteter[0], fra_url[0]):
             raise Motorfeil(
                 "motoren kontrollerte en annen side enn den bestilte")
 

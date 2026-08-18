@@ -579,7 +579,8 @@ def _sikre_typeregistrering():
 
 
 def _wcag_policy(migrator_, *, med_handling=True,
-                 ved_brudd="unntakskø", tillatt_for=("bestiller",)):
+                 ved_brudd="unntakskø", tillatt_for=("bestiller",),
+                 med_vilkaar=False, vilkar_verifikator="v_domenekontroll"):
     """Aktiv policy for TENANT — bransjemalen + wcag-handlingen (vilkaar
     tom i TESTEN: motorens attestasjonskrav for målautorisasjonsvilkåret
     er policyforfatningens sak; her prøves BESTILLINGSVEIEN)."""
@@ -603,7 +604,24 @@ def _wcag_policy(migrator_, *, med_handling=True,
             "grenser": {"frekvens": {"maks": 4, "periode_antall": 1,
                                      "periode_enhet": "dager",
                                      "grupperingsnokkel": "mal_url"}},
+            # `med_vilkaar` = AKTIVERINGSFORMEN: nøyaktig policyen
+            # aktiveringsporten krever for en ekstern_lesing-modul
+            # (målautorisasjonsvilkår + frekvens). Bestillingsveien må da
+            # selv attestere domenekontrollen — det er DEN kjeden
+            # test_vilkarspolicy_far_tillat måler.
+            **({"vilkaar": [{"navn": "domenekontroll_verifisert",
+                             "verifikator": vilkar_verifikator}]}
+               if med_vilkaar else {}),
             "reversering": {"type": "direkte"}})
+        if med_vilkaar:
+            # ID-en er BÅDE policyens tillitsvalg og nøkkeloppslaget:
+            # motoren slår opp attestasjonens verifikator i policyens
+            # `verifikatorer` — plattformattestasjonen sier
+            # `v_domenekontroll`, så en policy som stoler på noe annet
+            # (negativkontrollen) skal stoppe.
+            p["verifikatorer"][vilkar_verifikator] = {
+                "beskrivelse": "Plattformens domenekontroll",
+                "betrodd_for": ["domenekontroll_verifisert"]}
     policyregister.registrer(migrator_, TENANT, p, p["meta"]["status"])
     migrator_.commit()
     _sikre_typeregistrering()
@@ -644,6 +662,121 @@ def _gyldig_kropp(host="kunde.example", **over):
     return k
 
 
+def _kjernenokkel(nokkel, kropp=None):
+    """Kjernens idempotensnøkkel for en bestilling.
+
+    Nøkkelen bærer BÅDE klientens nøkkel og intensjonshashen (Codex P1),
+    og formen eies av `bestilling.kjernenokkel_for`. Testene avleder den
+    derfra i stedet for å skrive den av: skrevet av, ville de fortsatt
+    vært grønne den dagen produksjonskoden byttet form."""
+    import api.bestilling as bm
+    n = bm.normaliser(TENANT, kropp if kropp is not None else _gyldig_kropp())
+    return bm.kjernenokkel_for(nokkel, bm.intensjonshash(n))
+
+
+@pg
+def test_beslutningene_serialiseres_paa_klientens_nokkel(migrator, klient):
+    """Codex P1: kjernen serialiserer på KJERNEnøkkelen, og den bærer
+    intensjonen.
+
+    To lovlige kropper under samme `Idempotency-Key` fikk derfor hver sin
+    advisory-lås i `kjerne.behandle`, og begge kunne committe en
+    beslutning: to kvoteplasser, to oppdrag — og den siste `ON CONFLICT
+    ... DO NOTHING` etterlot det ene oppdraget uten klientnøkkelen sin.
+    Konfliktgarantien var omgått av selve nøkkelvalget, uten at noe
+    krasjet.
+
+    Samtidigheten måles her deterministisk: en ANNEN tilkobling holder
+    nøkkelens lås mens forespørselen går inn. Endepunktet skal da svare
+    409 uten å ta noen beslutning i det hele tatt.
+
+    Kontroll: fjern `pg_try_advisory_lock`-blokka i `bestill_endepunkt`,
+    så blir denne rød.
+    """
+    import api.bestilling as bm
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    kropp = _gyldig_kropp()
+
+    laas = psycopg.connect(DSN)
+    try:
+        navn = bm.laasenavn_for(TENANT, nokkel)
+        assert laas.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+            (navn,)).fetchone()[0] is True
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+        assert (r.status_code, r.json()["feil"]) == (
+            409, "idempotenskonflikt"), r.text
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+            " idempotency_key=%s",
+            (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 0, \
+            "en forespørsel som ikke fikk låsen tok likevel en beslutning"
+        migrator.rollback()
+    finally:
+        laas.execute("SELECT pg_advisory_unlock_all()")
+        laas.close()
+
+    # ... og når låsen er sluppet, går nøyaktig den samme forespørselen
+    # gjennom: låsen er en serialisering, ikke en permanent stenging. Det
+    # beviser samtidig at endepunktet SLIPPER sin egen lås — den andre
+    # kjøringen under tar den samme.
+    for _ in range(2):
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+        assert r.status_code == 200, r.text
+        assert r.json()["beslutning"] == "tillat", r.text
+
+
+@pg
+@dekker("idempotensnokkel_reservert")
+def test_kaller_kan_ikke_plante_raden_gjenopprettingen_stoler_paa(
+        migrator, klient, token):
+    """Codex P1, runde 5: `idempotens` er ETT rom, delt av endepunktene.
+
+    Bestillingens gjenoppretting leser `idempotens.respons` for
+    kjernenøkkelen som BEVIS på en committet beslutning, og lenker for et
+    TILLAT oppdraget til dens loggpost uten å etterprøve grunnlaget — det
+    lar seg ikke etterprøve her, siden input-hashen ikke kan regnes ut på
+    nytt (attestasjonen hviler på mutabel domenetilstand).
+
+    Kjernenøkkelen er samtidig en DETERMINISTISK funksjon av klientens egen
+    nøkkel og kropp. `/v1/beslutning` førte klientens `Idempotency-Key` rett
+    inn i den samme tabellen, så en kaller hos samme tenant med
+    `decision:write` kunne regne ut nøkkelen, kjøre sin EGEN beslutning
+    under den, og la bestillingen arve et svar den aldri tok.
+
+    Kontroll: fjern `klientvalgt_nokkel=True` i `app.py`, eller tøm
+    `kjerne.RESERVERTE_NOKKELROM`, så blir denne rød.
+    """
+    p = _wcag_policy(migrator)
+    tok, _ = token()
+    nokkel = "n-" + secrets.token_hex(8)
+    forfalsket = _kjernenokkel(nokkel)
+    assert forfalsket.startswith("bestilling:"), forfalsket
+
+    r = klient.post("/v1/beslutning",
+                    json={"policy_id": p["meta"]["policy_id"], "event": {}},
+                    headers={"authorization": f"Bearer {tok}",
+                             "idempotency-key": forfalsket})
+    assert (r.status_code, r.json()["feil"]) == (
+        400, "idempotensnokkel_reservert"), r.text
+
+    # Ingen rad, ingen loggpost: forsøket fikk ikke engang legge beslag på
+    # nøkkelen. Blir det stående en `paagaar`-rad, er bestillingens neste
+    # forsøk blokkert av en fremmed.
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM idempotens WHERE tenant=%s AND nokkel=%s",
+        (TENANT, forfalsket)).fetchone()[0] == 0
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s", (TENANT, forfalsket)).fetchone()[0] == 0
+    migrator.rollback()
+
+
 @pg
 @dekker("bestilling_hostname_uverifisert")
 def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
@@ -653,14 +786,15 @@ def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
     _wcag_policy(migrator)
     cookie, csrf = _adminsesjon()
     nokkel = "n-" + secrets.token_hex(8)
-    r = _bestill(klient, cookie, csrf, _gyldig_kropp("fremmed.example"),
-                 nokkel)
+    kropp = _gyldig_kropp("fremmed.example")
+    r = _bestill(klient, cookie, csrf, kropp, nokkel)
     assert (r.status_code, r.json()["feil"]) == (
         403, "bestilling_hostname_uverifisert"), r.text
     _sett_kontekst(migrator, TENANT)
     n = migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for et uautorisert mål"
 
@@ -690,7 +824,7 @@ def test_foreldet_revalidering_er_ikke_et_autorisert_maal(migrator, klient):
     _sett_kontekst(migrator, TENANT)
     n = migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s", (TENANT, _kjernenokkel(nokkel))).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for et foreldet domene"
 
@@ -820,7 +954,7 @@ def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
     _sett_kontekst(migrator, TENANT)
     logg = migrator.execute(
         "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
-        (TENANT, "bestilling:" + nokkel)).fetchall()
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchall()
     assert len(logg) == 1, "beslutningen skulle vært committet av kjernen"
     assert migrator.execute(
         "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s AND"
@@ -852,13 +986,164 @@ def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
     assert migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
         " idempotency_key=%s",
-        (TENANT, "bestilling:" + nokkel)).fetchone()[0] == 1, \
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 1, \
         "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
     assert migrator.execute(
         "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
         (TENANT, svar["oppdrag_id"])).fetchone()[0] == logg[0][0], \
         "oppdraget ble ikke koblet til den opprinnelige beslutningen"
     migrator.rollback()
+
+
+@pg
+def test_gjenoppretting_taaler_ny_revalidering_i_vinduet(migrator, klient,
+                                                         monkeypatch):
+    """Codex P2, runde 2: gjenopprettingen skal ikke bygge attestasjonen om.
+
+    Forrige runde gjenopprettet POLICYEN og bygget resten av hendelsen på
+    nytt for å treffe kjernens input-hash. Men hendelsen bærer også
+    plattformens domenekontroll-attestasjon, og den er avledet av
+    `siste_vellykkede_revalidering` — MUTABEL domenetilstand. Lykkes den
+    planlagte revalideringen i nettopp krasjvinduet, får retryen nytt
+    `utstedt`/`utloper`, ny `jti`, ny signatur og dermed ny input-hash:
+    `idempotenskonflikt`, for alltid, med en committet TILLAT-beslutning
+    (kvote brent) stående uten oppdraget sitt.
+
+    Samme krasjsimulering som policytesten over: en oppdragstype uten
+    deklarert frist gir 500 etter kjernens commit.
+    """
+    import oppdragskontrakt
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example",
+                      revalidert="now() - interval '20 hours'")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    kropp = _gyldig_kropp()
+
+    # (1) Beslutningen committes; halen dør før oppdrag og bokføring.
+    with monkeypatch.context() as mp:
+        mp.setattr(oppdragskontrakt, "utforelsesfrist_s",
+                   lambda *a, **k: None)
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (500, "intern_feil"), r.text
+    _sett_kontekst(migrator, TENANT)
+    logg = migrator.execute(
+        "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchall()
+    assert len(logg) == 1, "beslutningen skulle vært committet av kjernen"
+    migrator.rollback()
+
+    # (2) Den planlagte revalideringen lykkes — attestasjonsgrunnlaget
+    #     flytter seg. Domenet er fortsatt gyldig; det er nettopp poenget.
+    _verifiser_domene(migrator, "kunde.example", revalidert="now()")
+
+    # (3) Retryen FULLFØRER beslutningen som alt er tatt, uten å bygge
+    #     attestasjonen om — og dermed uten idempotenskonflikt.
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r2.status_code == 200, r2.text
+    svar = r2.json()
+    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 1, \
+        "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
+    assert migrator.execute(
+        "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
+        (TENANT, svar["oppdrag_id"])).fetchone()[0] == logg[0][0], \
+        "oppdraget ble ikke koblet til den opprinnelige beslutningen"
+    migrator.rollback()
+
+
+@pg
+def test_gjenoppretting_arver_ikke_en_annen_intensjon(migrator, klient,
+                                                      monkeypatch):
+    """Krasjvinduet må hverken arve beslutningen eller ta en ny (Codex P1).
+
+    `bestilling_idempotens` er konfliktporten — men i vinduet mellom
+    kjernens commit og bokføringen finnes ikke raden ennå.
+
+    Runde 3: sto kjernens nøkkel på klientens nøkkel ALENE, fant
+    gjenopprettingen den committede beslutningen uansett hva retryen ba
+    om, og halen krypterte retryens payload inn i den: et TILLAT gitt for
+    én side ble oppdraget «crawl 50 sider».
+
+    Runde 4: intensjonen inn i nøkkelen løste arven, men delte samtidig
+    nøkkelrommet. Retryen fant da ingen rad på SIN kjernenøkkel og tok sin
+    EGEN beslutning — en ny kvoteplass og et nytt oppdrag på en
+    klientnøkkel som per kontrakt bærer nøyaktig én. Endepunktets lovede
+    «samme nøkkel, ulik intensjon ⇒ konflikt» gjaldt altså overalt unntatt
+    her.
+
+    Nå er begge deler dekket: oppslaget spør på klientnøkkelens prefiks og
+    leser intensjonen ut av raden det fant.
+
+    Kontroll: sett oppslaget tilbake til hele `kjernenokkel`, så blir
+    konfliktpåstanden under rød; fjern `hash_` fra nøkkelen, så blir
+    payload-påstanden det.
+    """
+    import oppdragskontrakt
+    from db import kryptering
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    enkeltside = _gyldig_kropp()
+    nettsted = _gyldig_kropp(omfang="nettsted", maks_sider=50)
+
+    # (1) Beslutningen for ENKELTSIDE committes; halen dør før bokføringen.
+    with monkeypatch.context() as mp:
+        mp.setattr(oppdragskontrakt, "utforelsesfrist_s",
+                   lambda *a, **k: None)
+        r = _bestill(klient, cookie, csrf, enkeltside, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (500, "intern_feil"), r.text
+    _sett_kontekst(migrator, TENANT)
+    forrige = migrator.execute(
+        "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, enkeltside))).fetchall()
+    assert len(forrige) == 1, "beslutningen skulle vært committet av kjernen"
+    migrator.rollback()
+
+    # (2) Retryen bruker SAMME nøkkel, men ber om noe annet: konflikt.
+    #     Nøkkelen bærer alt én beslutning, og den gjaldt noe annet.
+    r2 = _bestill(klient, cookie, csrf, nettsted, nokkel)
+    assert (r2.status_code, r2.json()["feil"]) == (409, "idempotenskonflikt"), \
+        r2.text
+
+    # (3) INGEN ny beslutning, intet nytt oppdrag: hverken på nettstedets
+    #     kjernenøkkel eller på enkeltsidens.
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, nettsted))).fetchone()[0] == 0, \
+        "retryen tok en NY beslutning på en nøkkel som alt hadde en"
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " beslutning_loggpost_id=%s",
+        (TENANT, forrige[0][0])).fetchone()[0] == 0, \
+        "retryen skrev et oppdrag på beslutningen om en ANNEN intensjon"
+    migrator.rollback()
+
+    # (4) Og den OPPRINNELIGE intensjonen kan fortsatt fullføre seg selv:
+    #     beslutningen fra (1) er tatt, så retryen med samme kropp leser
+    #     den og skriver oppdraget halen aldri rakk.
+    r3 = _bestill(klient, cookie, csrf, enkeltside, nokkel)
+    assert r3.status_code == 200, r3.text
+    svar = r3.json()
+    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
+    _sett_kontekst(migrator, TENANT)
+    rad = migrator.execute(
+        "SELECT beslutning_loggpost_id, payload_kryptert, key_id, nonce"
+        " FROM oppdrag WHERE tenant=%s AND id=%s",
+        (TENANT, svar["oppdrag_id"])).fetchone()
+    assert rad[0] == forrige[0][0], \
+        "gjenopprettingen tok en ny beslutning i stedet for å lese sin egen"
+    dek = kryptering.hent_dek(migrator, TENANT, rad[2])
+    payload = kryptering.dekrypter(dek, rad[1], rad[3], TENANT, rad[2])
+    migrator.rollback()
+    assert payload["omfang"] == "enkeltside", payload
 
 
 @pg
@@ -904,7 +1189,7 @@ def test_stopp_gir_kode_og_intet_oppdrag(migrator, klient):
     rad = migrator.execute(
         "SELECT beslutning FROM revisjonslogg WHERE tenant=%s AND"
         " idempotency_key=%s", (TENANT,
-                                "bestilling:" + nokkel)).fetchone()
+                                _kjernenokkel(nokkel))).fetchone()
     n = migrator.execute("SELECT count(*) FROM oppdrag WHERE tenant=%s"
                          " AND opprinnelse='beslutning'",
                          (TENANT,)).fetchone()[0]
@@ -1092,6 +1377,40 @@ def test_gjenspill_overlever_at_domenet_mister_verifiseringen(migrator,
                   "n-" + secrets.token_hex(8))
     assert (r3.status_code, r3.json()["feil"]) == (
         403, "bestilling_hostname_uverifisert"), r3.text
+
+
+@pg
+def test_vilkarspolicy_far_tillat_via_plattformattestasjonen(migrator,
+                                                             klient):
+    """AKTIVERINGSFORMEN hele veien: policyen bærer målautorisasjons-
+    vilkåret aktiveringsporten krever — og bestillingen får likevel
+    TILLAT, fordi plattformen selv attesterer domenekontrollen den
+    nettopp verifiserte. Uten mintingen i bestilling.py ender denne i
+    unntakskøen med attestasjon_mangler (kontrollen: negativtesten
+    under, der policyen stoler på en annen verifikator)."""
+    _wcag_policy(migrator, med_vilkaar=True)
+    _verifiser_domene(migrator, "vilkaar.example")
+    cookie, csrf = _adminsesjon()
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp("vilkaar.example"),
+                 "n-" + secrets.token_hex(8))
+    assert r.status_code == 200, r.text
+    assert r.json()["beslutning"] == "tillat", r.text
+    assert r.json()["oppdrag_id"]
+
+
+@pg
+def test_vilkarspolicy_med_fremmed_verifikator_stopper(migrator, klient):
+    """Negativkontrollen: policyen stoler KUN på `v_annen` — plattformens
+    attestasjon (v_domenekontroll) teller da ikke, og motoren stopper
+    med verifikator_ikke_betrodd. Beviser at TILLAT over kommer fra en
+    VERIFISERT attestasjon, ikke fra at vilkårsporten ble borte."""
+    _wcag_policy(migrator, med_vilkaar=True, vilkar_verifikator="v_annen")
+    _verifiser_domene(migrator, "vilkaar2.example")
+    cookie, csrf = _adminsesjon()
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp("vilkaar2.example"),
+                 "n-" + secrets.token_hex(8))
+    assert r.status_code == 200, r.text
+    assert r.json()["beslutning"] != "tillat", r.text
 
 
 @pg
@@ -1450,7 +1769,7 @@ def test_uregistrert_type_nektes_for_beslutningen(migrator, klient,
     _sett_kontekst(migrator, TENANT)
     n = migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s", (TENANT, _kjernenokkel(nokkel))).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for en type uten utfører"
 
@@ -1516,7 +1835,7 @@ def _bestill_mot(migrator_, klient_, monkeypatch, modul, oppdragstype):
     _sett_kontekst(migrator_, TENANT)
     n = migrator_.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s", (TENANT, _kjernenokkel(nokkel))).fetchone()[0]
     migrator_.rollback()
     return r, n
 

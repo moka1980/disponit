@@ -55,6 +55,7 @@ disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
 disponit-artefaktrydding.service disponit-artefaktrydding.timer
 disponit-evidensreaper.service disponit-evidensreaper.timer
+disponit-wcag-audit.service
 disponit-domeneverifisering.service disponit-domeneverifisering.timer
 disponit-varselsender.service disponit-varselsender.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
@@ -230,9 +231,64 @@ getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
 # PR-015: driftstimerne (revalidering + rydding) får sin EGEN Unix-bruker,
 # samme skille som API/M-37/helse — et kompromittert timerkjøring skal ikke
 # arve noen annen tjenestes fullmakter, og omvendt.
-for b in disponit-api disponit-m37 disponit-helse disponit-domener; do
+# PR-014c (Codex P1): disponit-wcag hører HIT, ikke i sjekklisterunden.
+# `disponit-wcag-audit.service` har `User=disponit-wcag`, og uten brukeren
+# feiler uniten på oppstart uansett hvor riktig konfigurasjonen er skrevet
+# — identiteten er utrullingens ansvar, som for alle de andre tjenestene.
+for b in disponit-api disponit-m37 disponit-helse disponit-domener \
+         disponit-wcag; do
   getent passwd "$b" >/dev/null || \
     useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
+done
+
+# SUBORDINATE ID-ER FOR DEN ROOTLESSE ARBEIDEREN (PR-014c, Codex P1).
+# `disponit-wcag-audit.service` kjører motoren med rootless podman, og et
+# rootless user-namespace bygges av områdene i /etc/subuid og /etc/subgid.
+# `useradd --system` deler ikke ut slike områder — systembrukere får dem
+# ikke automatisk — og uten dem feiler `podman run` med «cannot find
+# UID/GID in /etc/subuid» på HVER eneste kontroll, uansett hvor riktig
+# uniten og konfigurasjonen er skrevet. Identiteten er utrullingens
+# ansvar, og det er også dette den består av.
+SUBID_ANTALL=65536
+tildel_subid() {                        # $1=fil  $2=usermod-flagg
+  local fil="$1" flagg="$2" start=524288
+  [ -f "$fil" ] || : > "$fil"
+  if grep -q '^disponit-wcag:' "$fil"; then return 0; fi
+  # Første område fra 524288 som ikke overlapper noe som alt står der.
+  while awk -F: -v s="$start" -v n="$SUBID_ANTALL" \
+        '$2+0 < s+n && $2+0 + $3+0 > s { treff=1 } END { exit !treff }' \
+        "$fil"; do
+    start=$((start + SUBID_ANTALL))
+  done
+  usermod "$flagg" "$start-$((start + SUBID_ANTALL - 1))" disponit-wcag
+}
+tildel_subid /etc/subuid --add-subuids
+tildel_subid /etc/subgid --add-subgids
+# ... og et HJEM, fordi rootless podman legger BILDELAGERET der
+# ($HOME/.local/share/containers/storage). Brukeren ble opprettet med
+# `--no-create-home` som de andre tjenestene, og uten en skrivbar
+# hjemmekatalog kan podman verken laste inn motorimaget eller finne det
+# igjen etterpå. systemd setter $HOME fra kontodatabasen for `User=`, så
+# uniten trenger ingen egen Environment-linje.
+WCAG_HJEM=/var/lib/disponit-wcag
+install -d -m 700 -o disponit-wcag -g disponit-wcag "$WCAG_HJEM"
+usermod -d "$WCAG_HJEM" disponit-wcag
+for f in /etc/subuid /etc/subgid; do
+  grep -q '^disponit-wcag:' "$f" || {
+    echo "AVBRUTT: fikk ikke tildelt subordinate ID-er i $f for" \
+         "disponit-wcag — rootless podman kan ikke bygge namespacet." >&2
+    exit 1
+  }
+done
+# Hjelperne selv er shadow-utils' setuid-binærer (pakken `uidmap` på
+# Debian/Ubuntu). Mangler de, er områdene over riktige men ubrukelige.
+# Dette stopper IKKE utrullingen — resten av plattformen er uavhengig av
+# wcag-motoren — men det skal være synlig i loggen, og fase 9 i
+# staging-sjekklisten måler det samme før den enabler uniten.
+for h in newuidmap newgidmap; do
+  command -v "$h" >/dev/null || \
+    echo "MERK: $h mangler (pakken uidmap) — rootless podman, og dermed" \
+         "wcag-motoren, vil ikke starte." >&2
 done
 # nginx-brukeren meldes inn i disponit-proxy av PR-009b — ALDRI her, og
 # aldri M-37: gruppen ER tillitsgrensen. Helsesjekkeren er medlem som
@@ -378,6 +434,7 @@ systemctl stop disponit-domenerevalidering.timer \
     disponit-domenerevalidering.service \
     disponit-artefaktrydding.service \
     disponit-evidensreaper.service \
+    disponit-wcag-audit.service \
     disponit-domeneverifisering.timer \
     disponit-domeneverifisering.service 2>/dev/null || true
 
@@ -450,6 +507,12 @@ systemctl enable --now disponit-domenerevalidering.timer \
 # 038 §5: evidensfrist-reaperen — samme form (oneshot bak timer, kjøres
 # som disponit-domener; hele regelen ligger i reap_evidensfrister i basen).
 systemctl enable --now disponit-evidensreaper.timer
+# m_wcag_audit-arbeideren INSTALLERES men enables IKKE her: den skal
+# først i drift når modulen er AKSEPTERT (manifest-sjekklisten grønn,
+# status aktiv). Var den alt enablet av aksept-runden, startes den igjen.
+if systemctl is-enabled disponit-wcag-audit.service >/dev/null 2>&1; then
+  systemctl start disponit-wcag-audit.service
+fi
 # 039: selvbetjent domeneverifisering — hvert 5. minutt.
 systemctl enable --now disponit-domeneverifisering.timer
 # Varselsenderen: samme form, og den MÅ startes igjen her. Steg 5 stopper

@@ -1684,6 +1684,76 @@ def test_rapporten_holder_seg_innenfor_det_bestilte_omfanget():
     assert len(r["sider_kontrollert"]) == 2
 
 
+def test_enkeltsideporten_godtar_en_attestert_omdirigering():
+    """Codex P1: bindingen sto igjen da motoren begynte å navngi landingen.
+
+    Motoren rapporterer siden den FAKTISK kontrollerte — riktig, og
+    nødvendig: alternativet er å påstå at `/gammel` ble undersøkt når det
+    var `/ny` som ble det. Men `enkeltside`-porten krevde fortsatt at
+    første sides identitet VAR den bestilte, så hver eneste kontroll av en
+    URL som omdirigerer endte som `motor_avbrutt` uten promotert rapport.
+    `/side` → `/side/` er ikke et sjeldent tilfelle; det er normalen.
+
+    Motoren attesterer derfor navigasjonen (`bestilt_url`), og porten leser
+    den. Bindingen står like stramt mot det den finnes for: en side ingen
+    sendte motoren til, avvises som før.
+
+    Kontroll: fjern `fra_url` fra porten i `bygg`, så blir motsatsen rød.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    # Landet et annet sted, MED attestasjon om hvor den ble sendt fra:
+    # rapporten navngir landingen, og porten godtar den.
+    r = bygg(_motorresultat(sider=({"url": "https://kunde.example/ny",
+                                    "status": "ok",
+                                    "bestilt_url":
+                                        "https://kunde.example/side"},)),
+             payload=_payload(), kontekst=_kontekst())
+    assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/ny"
+    # ... og feltet reiser ALDRI inn i rapporten: det er en påstand om
+    # navigasjonen, ikke om siden (og skjemaet er urørt).
+    assert set(r["sider_kontrollert"][0]) == {"url", "status"}
+
+    # Uten attestasjon er `/ny` fortsatt en annen side enn den bestilte.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "https://kunde.example/ny",
+                                    "status": "ok"},)),
+             payload=_payload(), kontekst=_kontekst())
+    # En attestasjon som navngir en TREDJE side hjelper ikke: den må være
+    # den bestilte.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "https://kunde.example/ny",
+                                    "status": "ok",
+                                    "bestilt_url":
+                                        "https://kunde.example/annet"},)),
+             payload=_payload(), kontekst=_kontekst())
+    # Og attestasjonen er selv bundet til det autoriserte målet, med samme
+    # kanonisering som siden — en `bestilt_url` utenfor målet er Motorfeil,
+    # ikke noe som strykes i stillhet.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "https://kunde.example/ny",
+                                    "status": "ok",
+                                    "bestilt_url":
+                                        "https://angriper.example/side"},)),
+             payload=_payload(), kontekst=_kontekst())
+    # Query-en er bærende her som overalt ellers: `?id=1` er ikke `?id=2`.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "https://kunde.example/ny",
+                                    "status": "ok",
+                                    "bestilt_url":
+                                        "https://kunde.example/side?id=2"},)),
+             payload=_payload(mal_url="https://kunde.example/side?id=1"),
+             kontekst=_kontekst())
+    r = bygg(_motorresultat(sider=({"url": "https://kunde.example/ny",
+                                    "status": "ok",
+                                    "bestilt_url":
+                                        "https://KUNDE.example./side?id=1"},)),
+             payload=_payload(mal_url="https://kunde.example/side?id=1"),
+             kontekst=_kontekst())
+    assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/ny"
+
+
 def test_enkeltsideporten_leser_query_som_del_av_siden():
     """Codex P1: query-en er BÆRENDE for sideidentiteten, ikke pynt.
 
@@ -4298,6 +4368,47 @@ def test_falsy_samling_fra_motoren_er_ikke_en_tom_liste():
             _motorkommando("import sys;sys.stdout.write(%r)" % ut))
         with pytest.raises(Motorfeil, match="funn"):
             m.kjor({})
+
+
+def test_leveringens_verstefall_holder_seg_i_lukkevinduet():
+    """Codex P2, runde 5: retryen hadde ingen forbindelse til marginen.
+
+    `_skannefrist` reserverer `AVSLUTNINGSMARGIN_S` til alt som skjer etter
+    skanningen. Men arbeiderens HTTP-klient sto med en fast
+    `timeout=120` ved siden av: `lever` prøver `LEVERINGSFORSOK` ganger,
+    for opplastingen og igjen for kvitteringen, så en plattform som tar
+    imot forbindelsen og så tier kunne bruke over 480 sekunder på
+    opplastingen ALENE — mot de 300 marginen ga hele avslutningen. En
+    skanning som ble ferdig nær fristen sin lot da
+    kvitteringskapabiliteten løpe ut mens arbeideren fortsatt ventet.
+
+    Testen regner VERSTEFALLET av de samme konstantene koden bruker, og
+    binder det til marginen. Skrus `LEVERINGSFORSOK` opp eller marginen
+    ned uten at fristen følger med, blir denne rød."""
+    from modules.wcag_audit import controller
+    from modules.wcag_audit.motor import AVSLUTNINGSMARGIN_S
+
+    frist = controller.http_frist_s()
+    kall = controller.LEVERINGSFORSOK * controller.LEVERINGSRUNDER
+    pauser = controller.LEVERINGSRUNDER * sum(
+        controller.LEVERINGSPAUSE_S * f
+        for f in range(controller.LEVERINGSFORSOK))
+    verstefall = kall * frist + pauser + controller.AVSLUTNINGSARBEID_S
+    assert verstefall <= AVSLUTNINGSMARGIN_S, (verstefall, frist)
+    # ... og fristen skal være det marginen faktisk gir, ikke et vilkårlig
+    # mindre tall: hele budsjettet er til for å BRUKES når plattformen er
+    # treg, bare ikke til å overskrides.
+    assert verstefall == pytest.approx(AVSLUTNINGSMARGIN_S)
+    # Gulvet: en absurd liten margin gir en kort frist, ikke en negativ.
+    assert controller.http_frist_s(margin_s=1) == 1.0
+
+    # Og arbeideren BRUKER den — den faste 120-eren er borte.
+    from pathlib import Path
+    kilde = (Path(__file__).resolve().parents[2]
+             / "drift/wcag_audit_arbeider.py").read_text(encoding="utf-8")
+    assert "timeout=120" not in kilde
+    assert "timeout=self.frist_s" in kilde
+    assert "KlientHTTP(api, controller.http_frist_s())" in kilde
 
 
 def test_motorfristen_lar_det_bli_tid_igjen_til_opplastingen():

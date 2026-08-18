@@ -1129,7 +1129,17 @@ def _beslutning(tjeneste: Tjeneste, request: Request) -> Response:
                 conn, auth.kontekst(), policy_id=data["policy_id"],
                 event=data["event"], idempotency_key=nokkel.strip(),
                 request_id=rid, aktor=auth.aktor, nokler=tjeneste.nokler,
-                kapabilitet=auth.kapabilitet)
+                kapabilitet=auth.kapabilitet,
+                # DETTE ER DET ENESTE ENDEPUNKTET SOM FØRER KLIENTENS NØKKEL
+                # RETT INN I `idempotens` (Codex P1). Rommet er delt: en
+                # annen vei — bestillingens gjenoppretting — LESER en rad
+                # derfra som bevis på sin egen committede beslutning, og
+                # nøkkelen den leser på er en deterministisk funksjon av det
+                # klienten selv sendte. Uten flagget kunne en kaller med
+                # `decision:write` hos samme tenant pre-skrive nøyaktig den
+                # raden og få bestillingen til å arve en beslutning den
+                # aldri tok. `kjerne.RESERVERTE_NOKKELROM` bærer regelen.
+                klientvalgt_nokkel=True)
         except kjerne.Feilsvar as f:
             art = "drift" if "drift" in f.rad.routing else "sikkerhet"
             tjeneste.logg.hendelse(f.kode, rid, auth.tenant, art=art)
