@@ -413,31 +413,55 @@ END $$;
 --
 -- Skillet leses av hendelsesloggen, ikke av gjetning: utgangen av avklaringen
 -- ETTERLATER et spor (`avklaring_avvist` fra avvisningen, `forbigatt` fra
--- degraderingen), og `utsted_challenge` stempler `challenge_utstedt`. Er
--- utfordringen utstedt ETTER den siste utgangen, er den en reapplikasjon som
--- venter på beviset sitt, og den røres ikke. Er den eldre, er den nettopp den
--- posten ingen har bedt kunden fjerne — og den ryddes.
+-- degraderingen), og `utsted_challenge` skriver `challenge_utstedt` i SAMME
+-- transaksjon som den setter hashen. Er utfordringen utstedt ETTER den siste
+-- utgangen, er den en reapplikasjon som venter på beviset sitt, og den røres
+-- ikke. Er den eldre, er den nettopp den posten ingen har bedt kunden fjerne
+-- — og den ryddes.
 --
--- `max(ts)`, ikke «finnes det en eldre utgang»: en rad kan ha vært gjennom
--- flere runder (avvist → ny utfordring → ny avklaring → avvist igjen), og da
--- er det bare den SISTE utgangen som sier noe om utfordringen som står der nå.
--- En eldre utgang ville ellers fredet en hash som nettopp ble etterlatt.
+-- REKKEFØLGE LESES AV SEKVENSEN, IKKE AV KLOKKA (Codex P2). Formen over
+-- sammenlignet `challenge_utstedt` mot hendelsens `ts` — begge `now()`, som i
+-- PostgreSQL er transaksjonens STARTTID, ikke setningens. En operatør som
+-- åpnet transaksjonen sin FØR en M-37-avvisning, men rakk `utsted_challenge`
+-- først etter at avvisningen committet (eller etter å ha ventet bak radlåsen
+-- hennes), fikk dermed et stempel som ser ELDRE ut enn avvisningen den kom
+-- etter — og opprydningen slettet nøyaktig den ferske hashen den er bygget
+-- for å spare. `domenekontroll_hendelse.id` er en IDENTITY: den tildeles ved
+-- INSERT, i den rekkefølgen setningene faktisk kjørte, uansett hvor lenge
+-- transaksjonene har stått åpne. Sammenligningen går derfor på id.
 --
--- Finnes ingen slik hendelse i det hele tatt — eller står hashen uten
--- `challenge_utstedt` — ryddes raden: begge veiene inn i tilstanden skriver
--- hendelsen i SAMME transaksjon som statusen, så en rad uten spor er ingen
--- reapplikasjon vi kan dokumentere, og løkka skal fortsatt være stengt.
+-- (Innsettingsrekkefølge er heller ikke commit-rekkefølge, men her er de ikke
+-- fri: `utsted_challenge` gjør radoppdateringen FØR hendelsen sin, og begge
+-- utgangene låser samme rad. Skriverne serialiseres altså på raden, og den
+-- som fikk id-en sist er den som skrev raden sist.)
+--
+-- `max(id)` over utgangene, ikke «finnes det en eldre utgang»: en rad kan ha
+-- vært gjennom flere runder (avvist → ny utfordring → ny avklaring → avvist
+-- igjen), og da er det bare den SISTE utgangen som sier noe om utfordringen
+-- som står der nå. En eldre utgang ville ellers fredet en hash som nettopp
+-- ble etterlatt.
+--
+-- Finnes ingen slik utgang i det hele tatt — eller står hashen uten en eneste
+-- `challenge_utstedt`-hendelse — ryddes raden: `max(...)` er da NULL,
+-- sammenligningen er ukjent, og `NOT EXISTS` slår til. Begge veiene inn i
+-- tilstanden skriver hendelsen i SAMME transaksjon som statusen, så en rad
+-- uten spor er ingen reapplikasjon vi kan dokumentere, og løkka skal
+-- fortsatt være stengt.
 UPDATE public.domenekontroll d
    SET challenge_token_hash = NULL, challenge_utstedt = NULL,
        challenge_utloper = NULL, challenge_forsokt = NULL
  WHERE d.status = 'tilbakekalt' AND d.konflikt_motpart IS NOT NULL
    AND d.challenge_token_hash IS NOT NULL
-   AND coalesce(d.challenge_utstedt, '-infinity'::timestamptz)
-       <= coalesce((SELECT max(h.ts)
-                      FROM public.domenekontroll_hendelse h
-                     WHERE h.tenant = d.tenant AND h.hostname = d.hostname
-                       AND h.hendelse IN ('avklaring_avvist', 'forbigatt')),
-                   'infinity'::timestamptz);
+   AND NOT EXISTS (SELECT 1
+                     FROM public.domenekontroll_hendelse u
+                    WHERE u.tenant = d.tenant AND u.hostname = d.hostname
+                      AND u.hendelse = 'challenge_utstedt'
+                      AND u.id > (SELECT max(h.id)
+                                    FROM public.domenekontroll_hendelse h
+                                   WHERE h.tenant = d.tenant
+                                     AND h.hostname = d.hostname
+                                     AND h.hendelse IN ('avklaring_avvist',
+                                                        'forbigatt')));
 
 -- ------------------------------------------------------------
 -- Konflikter som venter på sin M-37-sak (Codex P1).
