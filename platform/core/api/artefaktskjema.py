@@ -193,13 +193,32 @@ def _delskjemaer(skjema):
 def _pekerledd(fragment: str) -> tuple[str, ...]:
     """Leddene i en JSON-peker (RFC 6901), avescapet.
 
-    Fragmentet prosentdekodes FØR `~1`/`~0`, i den rekkefølgen RFC 6901 §6
-    krever: `~` er `%7E` på veien inn, og gjøres de motsatt vei blir et
-    ærlig `~0` lest som et bokstavelig `~`.
+    HELE fragmentet prosentdekodes FØRST, deretter splittes det på `/`, og
+    til slutt avescapes `~1`/`~0` per ledd. Alle tre stegene og rekkefølgen
+    mellom dem er RFC 6901 §6, og de to første er også nøyaktig det
+    resolveren gjør — `referencing._core.Resource.pointer` er
+    `unquote(pointer[1:]).split("/")`, og gamle `RefResolver` gjorde
+    `unquote(fragment).split("/")`.
+
+    Å dekode PER LEDD, altså etter splittingen, er en annen funksjon
+    (Codex P2). `#/$defs/a%2Fb` ble da ett ledd `("$defs", "a/b")` og
+    traff `{"$defs": {"a/b": ...}}`, mens resolveren dekoder først og
+    leter etter `/$defs/a/b` — som ikke finnes. Sjekken godkjente altså
+    et skjema resolveren avviser, og siden `registrer()` leser en tom
+    `skjemafeil()` som klarsignal for den udødelige raden, ville
+    artefakttypen vært permanent bundet til et skjema HVER opplasting
+    blir avvist mot. En sjekk som svarer på et annet spørsmål enn
+    validatoren stiller, er ikke en sjekk.
+
+    At `~`-avescapingen kommer SIST er samme krav sett fra motsatt side:
+    `~` er `%7E` på veien inn, og snus rekkefølgen blir et ærlig `~0`
+    lest som et bokstavelig `~`. Dobbeltkoding faller ut riktig av seg
+    selv — `%252F` blir de tre tegnene `%2F` etter det ene dekodingssteget
+    og deler derfor ikke leddet, akkurat som hos resolveren.
     """
     from urllib.parse import unquote
-    return tuple(unquote(raa).replace("~1", "/").replace("~0", "~")
-                 for raa in fragment.split("/")[1:])
+    return tuple(ledd.replace("~1", "/").replace("~0", "~")
+                 for ledd in unquote(fragment).split("/")[1:])
 
 
 def _referansefeil(skjema) -> list[str]:

@@ -2890,6 +2890,38 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     _vandret = _a._SKJEMA_NOKKEL | _a._SKJEMA_LISTE | _a._SKJEMA_KART
     assert _vandret <= _metanokler, sorted(_vandret - _metanokler)
 
+    # Codex P2, runde 3: PEKEREN DEKODES FØR DEN SPLITTES. Resolveren gjør
+    # `unquote(peker).split("/")` — dekodingen først, splittingen etterpå —
+    # så `#/$defs/a%2Fb` er for den `/$defs/a/b`, ikke ett ledd `a/b`.
+    # Dekodet vi per ledd, godkjente sjekken et skjema resolveren avviser
+    # med `PointerToNowhere`, og `registrer()` leser den tomme feillista som
+    # klarsignal: artefakttypen ble udødelig bundet til et skjema HVER
+    # opplasting avvises mot. Kontroll: flytt `unquote` inn i løkka i
+    # `_pekerledd`, så slipper det første skjemaet under gjennom.
+    assert skjemafeil({"$defs": {"a/b": {"type": "string"}},
+                       "properties": {"p": {"$ref": "#/$defs/a%2Fb"}}})
+    # Feilen går begge veier, og den andre retningen er en FALSK
+    # AVVISNING — like udødelig: en kodet `/` som resolveren deler på,
+    # ble ett ledd og traff ingenting. Dekodet først deler den, og
+    # pekeren lander der resolveren lander.
+    prosent_ok = {"$defs": {"a": {"$defs": {"b": {"type": "string"}}}},
+                  "properties": {"p": {"$ref": "#/$defs/a%2F$defs%2Fb"}}}
+    assert not skjemafeil(prosent_ok)
+    assert not valider(prosent_ok, {"p": "x"})
+    assert valider(prosent_ok, {"p": 1})
+    # Prosentkoding av et ledd som IKKE inneholder skilletegnet er lovlig
+    # og treffer, akkurat som hos resolveren.
+    assert not skjemafeil({"$defs": {"tø": {"type": "string"}},
+                           "properties": {"p": {"$ref": "#/$defs/t%C3%B8"}}})
+    # Dobbeltkoding deler ikke leddet: `%252F` blir de tre tegnene `%2F`
+    # etter det ene dekodingssteget, og navnet er da bokstavelig `a%2Fb`.
+    assert not skjemafeil({"$defs": {"a%2Fb": {"type": "string"}},
+                           "properties": {"p": {"$ref": "#/$defs/a%252Fb"}}})
+    # `~0` avescapes SIST. Snus rekkefølgen leses `%7E0` som `~0` og
+    # dermed som `~`, og pekeren treffer feil navn.
+    assert not skjemafeil({"$defs": {"a~0b": {"type": "string"}},
+                           "properties": {"p": {"$ref": "#/$defs/a%7E00b"}}})
+
     # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
     # JSON ville avvist disse to — og den falske avvisningen er like
     # endelig som en falsk godkjenning, siden raden er udødelig.
