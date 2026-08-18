@@ -2807,6 +2807,40 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     assert skjemafeil({"$id": "https://a.example/rot",
                        "$defs": {"t": {"$id": "under"}}})
 
+    # Codex P2, runde 2: AT PEKEREN TREFFER NOE ER IKKE NOK — den må
+    # treffe en SKJEMAPOSISJON. `{"x": "ikke et skjema", "$ref": "#/x"}`
+    # metavalideres (`x` er et ukjent nøkkelord, altså en annotasjon
+    # `check_schema` ikke ser på), og en peker-eksisterer-sjekk slapp det
+    # gjennom. Så leser `jsonschema` strengen som et skjema og kaster
+    # AttributeError — ikke blant `_OPPSLAGSFEIL` — og den permanente
+    # 500-eren er tilbake i en udødelig rad. Kontroll: bytt
+    # `posisjoner`-medlemskapet i `_referansefeil` mot en sjekk på at
+    # noden bare finnes, så kaster de fire `valider`-kallene under.
+    for umetavalidert in ({"x": "ikke et skjema", "$ref": "#/x"},
+                          {"x": {"type": "strng"}, "$ref": "#/x"},
+                          {"const": {"a": {}},
+                           "properties": {"p": {"$ref": "#/const/a"}}},
+                          {"enum": [{"type": "string"}],
+                           "properties": {"p": {"$ref": "#/enum/0"}}}):
+        assert skjemafeil(umetavalidert), umetavalidert
+        feil = valider(umetavalidert, {"p": 1})
+        assert feil and "skjema" in feil[0], umetavalidert
+
+    # ... men en ekte skjemaposisjon står, også når den er `true`/`false`
+    # (som ER skjemaer) eller ligger på en listeindeks.
+    bool_ref = {"$defs": {"alt": True},
+                "properties": {"p": {"$ref": "#/$defs/alt"}}}
+    assert not skjemafeil(bool_ref)
+    assert not valider(bool_ref, {"p": 1})
+    indeks = {"prefixItems": [{"type": "string"}],
+              "properties": {"p": {"$ref": "#/prefixItems/0"}}}
+    assert not skjemafeil(indeks)
+    assert not valider(indeks, {"p": "x"})
+    assert valider(indeks, {"p": 1})
+    # En ikke-kanonisk indeks er ingen posisjon.
+    assert skjemafeil({"prefixItems": [{"type": "string"}],
+                       "properties": {"p": {"$ref": "#/prefixItems/00"}}})
+
     # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
     # JSON ville avvist disse to — og den falske avvisningen er like
     # endelig som en falsk godkjenning, siden raden er udødelig.

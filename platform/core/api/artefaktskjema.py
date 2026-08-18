@@ -126,7 +126,9 @@ _SKJEMA_KART = frozenset({
 
 
 def _delskjemaer(skjema):
-    """Hver SKJEMAPOSISJON i dokumentet, dokumentet selv inkludert.
+    """Hver SKJEMAPOSISJON i dokumentet, dokumentet selv inkludert, som
+    `(sti, delskjema)` — `sti` er JSON-pekerleddene ned dit, allerede
+    avescapet (altså `("$defs", "a/b")`, ikke `("$defs", "a~1b")`).
 
     Vandringen er nøkkelordstyrt, ikke en blind rekursjon over all JSON, og
     forskjellen er ikke akademisk. `{"const": {"$ref": "..."}}` er DATA:
@@ -138,49 +140,43 @@ def _delskjemaer(skjema):
 
     Ukjente nøkkelord gås heller ikke inn i: for Draft 2020-12 er de
     ANNOTASJONER, og en `$ref` inne i en annotasjon evalueres aldri.
+
+    `true`/`false` er også skjemaer — de bare inneholder ingenting. De
+    yields derfor på lik linje (kallerne siler selv på `dict`), fordi
+    STIEN dit er en gyldig referansedestinasjon: `{"$defs": {"a": true},
+    "$ref": "#/$defs/a"}` er et brukbart skjema.
     """
-    ko = [skjema]
+    ko = [((), skjema)]
     while ko:
-        s = ko.pop()
-        # `true`/`false` er også skjemaer — de bare inneholder ingenting.
+        sti, s = ko.pop()
+        yield sti, s
         if not isinstance(s, dict):
             continue
-        yield s
         for nokkel, verdi in s.items():
             if nokkel in _SKJEMA_NOKKEL:
-                ko.extend(verdi if isinstance(verdi, list) else [verdi])
+                if isinstance(verdi, list):
+                    ko.extend((sti + (nokkel, str(i)), v)
+                              for i, v in enumerate(verdi))
+                else:
+                    ko.append((sti + (nokkel,), verdi))
             elif nokkel in _SKJEMA_LISTE and isinstance(verdi, list):
-                ko.extend(verdi)
+                ko.extend((sti + (nokkel, str(i)), v)
+                          for i, v in enumerate(verdi))
             elif nokkel in _SKJEMA_KART and isinstance(verdi, dict):
-                ko.extend(verdi.values())
+                ko.extend((sti + (nokkel, navn), v)
+                          for navn, v in verdi.items())
 
 
-def _peker_treffer(dokument, fragment: str) -> bool:
-    """Løser en JSON-peker (RFC 6901) mot dokumentet. -> traff den noe?
+def _pekerledd(fragment: str) -> tuple[str, ...]:
+    """Leddene i en JSON-peker (RFC 6901), avescapet.
 
     Fragmentet prosentdekodes FØR `~1`/`~0`, i den rekkefølgen RFC 6901 §6
     krever: `~` er `%7E` på veien inn, og gjøres de motsatt vei blir et
     ærlig `~0` lest som et bokstavelig `~`.
     """
     from urllib.parse import unquote
-    node = dokument
-    for raa in fragment.split("/")[1:]:
-        ledd = unquote(raa).replace("~1", "/").replace("~0", "~")
-        if isinstance(node, dict):
-            if ledd not in node:
-                return False
-            node = node[ledd]
-        elif isinstance(node, list):
-            # Peker inn i en liste må være et kanonisk indekstall.
-            if not ledd.isdigit() or (len(ledd) > 1 and ledd[0] == "0"):
-                return False
-            i = int(ledd)
-            if i >= len(node):
-                return False
-            node = node[i]
-        else:
-            return False
-    return True
+    return tuple(unquote(raa).replace("~1", "/").replace("~0", "~")
+                 for raa in fragment.split("/")[1:])
 
 
 def _referansefeil(skjema) -> list[str]:
@@ -222,21 +218,44 @@ def _referansefeil(skjema) -> list[str]:
     sjekken under noe annet enn validatoren gjør. En sjekk som ikke kan
     følge omadresseringen skal si fra, ikke gjette. Rot-`$id` flytter
     ingenting og står.
+
+    PEKEREN MÅ TREFFE EN SKJEMAPOSISJON, IKKE BARE EN NODE (Codex P2).
+    At `#/x` lar seg SLÅ OPP sier ingenting om at det som ligger der er
+    et skjema. `{"x": "ikke et skjema", "$ref": "#/x"}` metavalideres —
+    `x` er et ukjent nøkkelord, altså en annotasjon `check_schema` ikke
+    ser på — og en peker-eksisterer-sjekk slipper det gjennom. Så
+    behandler `jsonschema` strengen som et skjema og kaster
+    `AttributeError`, som ikke er blant `_OPPSLAGSFEIL`: den permanente
+    500-eren denne sjekken finnes for å hindre, tilbake i samme rad.
+    `{"x": {"type": "strng"}, "$ref": "#/x"}` er samme hull med
+    `UnknownType` i stedet.
+
+    Derfor måles referansen mot de posisjonene vandringen over faktisk
+    besøker. Det er en STRENGERE regel enn «noden finnes», og den er den
+    riktige av to grunner: bare på en skjemaposisjon har `check_schema`
+    metavalidert det som ligger der, og bare der ville validatoren selv
+    ha lest det som et skjema. En destinasjon under et ukjent nøkkelord
+    er per definisjon umetavalidert — den kan ikke godkjennes udødelig.
     """
     feil = []
     ankre = set()
     nestet_id = False
     delskjemaer = list(_delskjemaer(skjema))
-    for i, s in enumerate(delskjemaer):
+    posisjoner = {sti for sti, _ in delskjemaer}
+    for sti, s in delskjemaer:
+        if not isinstance(s, dict):
+            continue
         for nokkel in ("$anchor", "$dynamicAnchor"):
             if isinstance(s.get(nokkel), str):
                 ankre.add(s[nokkel])
-        if i and isinstance(s.get("$id"), str):
+        if sti and isinstance(s.get("$id"), str):
             nestet_id = True
     if nestet_id:
         return ["<skjema>: `$id` under roten — lokale referanser kan ikke"
                 " kontrolleres mot en flyttet base"]
-    for s in delskjemaer:
+    for _, s in delskjemaer:
+        if not isinstance(s, dict):
+            continue
         for nokkel in ("$ref", "$dynamicRef"):
             ref = s.get(nokkel)
             if not isinstance(ref, str):
@@ -247,9 +266,9 @@ def _referansefeil(skjema) -> list[str]:
             elif ref == "#":
                 continue
             elif ref.startswith("#/"):
-                if not _peker_treffer(skjema, ref[1:]):
-                    feil.append(f"<skjema>: `{nokkel}` treffer ingenting"
-                                f" — {ref[:80]}")
+                if _pekerledd(ref[1:]) not in posisjoner:
+                    feil.append(f"<skjema>: `{nokkel}` treffer ingen"
+                                f" skjemaposisjon — {ref[:80]}")
             elif ref[1:] not in ankre:
                 feil.append(f"<skjema>: `{nokkel}` treffer ingen `$anchor`"
                             f" — {ref[:80]}")
