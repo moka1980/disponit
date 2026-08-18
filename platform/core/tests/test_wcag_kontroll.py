@@ -1155,6 +1155,14 @@ def _payload(**over):
     siden en del av bestillingen, ikke bare verten, og en testpayload som
     ba om `/` mens motoren svarte `/side` var en bestilling ingen av
     testene egentlig mente å gjøre.
+
+    «Nøyaktig» inkluderer QUERY-en (Codex P1, runde 13): den skiller
+    `/rapport?id=1` fra `/rapport?id=2` og sammenlignes derfor, selv om
+    den redigeres bort av rapporten. Fellespayloaden her ber om siden
+    UTEN query, og `_motorresultat` svarer med samme side uten query —
+    query-veien har sin egen test
+    (`test_enkeltsideporten_leser_query_som_del_av_siden`) i stedet for å
+    ligge som en stille forutsetning i hver eneste `bygg`-test.
     """
     basis = {"kravsett": "wcag21_aa", "mal_url": "https://kunde.example/side",
              "omfang": "enkeltside"}
@@ -1166,8 +1174,11 @@ def _motorresultat(**over):
     from modules.wcag_audit.motor import Motorresultat
     basis = dict(
         regelsett_versjon="axe-4.10", varighet_ms=1234,
-        sider=({"url": "https://kunde.example/side?sporing=1#topp",
-                "status": "ok"},),
+        # Fragmentet blir stående: det redigeres bort av rapporten, og
+        # det skiller ikke to sider (det sendes aldri til serveren), så
+        # fellesfiksturet kan bære det. Query-en kan det IKKE, se
+        # `_payload`.
+        sider=({"url": "https://kunde.example/side#topp", "status": "ok"},),
         funn=({"regel_id": "color-contrast", "alvorlighet": "alvorlig",
                "antall": 3, "eksempler": ["#a", "x" * 500]},),
         blokkert=({"vert": "fonts.example", "antall": 2, "art": "font"},),
@@ -1410,8 +1421,9 @@ def test_rapporten_holder_seg_innenfor_det_bestilte_omfanget():
             bygg(_motorresultat(), payload=p, kontekst=_kontekst())
 
     # Motsatsene. Den bestilte siden, i en annen skrivemåte enn motorens,
-    # er SAMME side — begge sider kanoniseres med `_ren_url`.
-    r = bygg(_motorresultat(sider=({"url": "https://kunde.example/side?x=1#y",
+    # er SAMME side — begge sider kanoniseres med `_delt_url`. Fragmentet
+    # skiller dem ikke: det sendes aldri til serveren.
+    r = bygg(_motorresultat(sider=({"url": "https://kunde.example/side#y",
                                     "status": "ok"},)),
              payload=_payload(mal_url="https://KUNDE.example./side"),
              kontekst=_kontekst())
@@ -1426,6 +1438,52 @@ def test_rapporten_holder_seg_innenfor_det_bestilte_omfanget():
     r = bygg(_motorresultat(sider=to_sider),
              payload=_payload(omfang="nettsted"), kontekst=_kontekst())
     assert len(r["sider_kontrollert"]) == 2
+
+
+def test_enkeltsideporten_leser_query_som_del_av_siden():
+    """Codex P1: query-en er BÆRENDE for sideidentiteten, ikke pynt.
+
+    `enkeltside`-porten sammenlignet den BESTILTE URL-en og motorens URL i
+    RAPPORTFORMEN — altså etter at query og fragment var redigert bort.
+    Da sammenlignet den to strenger der nettopp det som skiller sidene var
+    strøket: en bestilling av `/rapport?id=1` godtok en kontroll av
+    `/rapport?id=2` som «samme side», og evidensen om side 2 ble promotert
+    under en beslutning som autoriserte side 1. Hver applikasjon som ruter
+    på query — søk, saksvisninger, paginering — treffes av det.
+
+    Redigeringen av rapporten står uendret: query kan bære persondata, og
+    den lagrede URL-en skal fortsatt ikke ha den. Det er SAMMENLIGNINGEN
+    som må se hele URL-en.
+
+    Kontroll: la `_bestilt_url` og sideloopen bruke rapportformen igjen
+    (`_delt_url(...)[0]`), så blir avvisningen under grønn — altså rød her.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _kjor(bestilt, levert):
+        return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
+                    payload=_payload(mal_url=bestilt), kontekst=_kontekst())
+
+    # En ANNEN query er en annen side.
+    for bestilt, levert in (
+            ("https://kunde.example/rapport?id=1",
+             "https://kunde.example/rapport?id=2"),
+            # ... og en query motoren fant på selv er også en annen side:
+            # bestillingen navnga dokumentet uten den.
+            ("https://kunde.example/rapport",
+             "https://kunde.example/rapport?id=2"),
+            # ... og en bestilt query motoren droppet like så.
+            ("https://kunde.example/rapport?id=1",
+             "https://kunde.example/rapport")):
+        with pytest.raises(Motorfeil):
+            _kjor(bestilt, levert)
+
+    # SAMME query er samme side — og rapporten bærer den likevel ikke
+    # videre: den lagrede URL-en er fortsatt redigert.
+    r = _kjor("https://kunde.example/rapport?id=1&q=a",
+              "https://kunde.example/rapport?id=1&q=a#topp")
+    assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/rapport"
 
 
 def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():

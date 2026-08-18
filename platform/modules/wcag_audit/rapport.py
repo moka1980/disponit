@@ -149,6 +149,41 @@ def _ren_url(raa: str, autorisert_vert: str) -> str:
     autoriserte (`kunde.example.` og `kunde.example` er ett navn, og
     rapporten skal ikke by leseren på to skrivemåter av målet sitt).
     """
+    return _delt_url(raa, autorisert_vert)[0]
+
+
+def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
+    """-> (rapport_url, identitets_url) for samme rå URL.
+
+    Den FØRSTE er den som havner i rapporten: uten query, fragment og
+    credentials, altså den `_ren_url` alltid har gitt. Den ANDRE er den
+    samme URL-en MED query, og den brukes utelukkende til å avgjøre om to
+    URL-er navngir samme side (Codex P1).
+
+    De to må skilles fordi de svarer på hver sin ting. Rapporten er
+    PROMOTERT evidens som lagres og leses av mennesker, og en query kan
+    bære persondata (`?kunde=...`, tokens, søkeord) — den redigeres bort,
+    som før. Men query-en er samtidig en BÆRENDE del av sideidentiteten:
+    `/rapport?id=1` og `/rapport?id=2` er to forskjellige sider for hver
+    eneste applikasjon som ruter på query. Da `enkeltside`-porten
+    sammenlignet de REDIGERTE formene, sammenlignet den to strenger der
+    nettopp det som skiller sidene var strøket, og en bestilling av
+    `/rapport?id=1` godtok en kontroll av `/rapport?id=2` som «samme
+    side» — samme løgn som feil sti bærer, ett nivå ned igjen.
+
+    FRAGMENTET er bevisst IKKE med i identiteten. Det sendes aldri til
+    serveren, så to URL-er som bare skiller seg der ber om nøyaktig samme
+    dokument, og motoren er ikke forpliktet til å gjenta det den fikk.
+    Å kreve likhet der ville avvist ærlige kjøringer uten å hindre en
+    eneste forveksling av to sider serveren kan skille.
+
+    Query-en sammenlignes RÅTT, tegn for tegn, uten omskriving av
+    prosentkoding, parameterrekkefølge eller `+` mot `%20`: to
+    skrivemåter kan bety det samme for én server og noe helt annet for en
+    annen, og en normalisering som gjetter feil vei gjør to ULIKE sider
+    like. Feilretningen her skal være avvisning (Motorfeil), ikke en
+    stille sammenslåing.
+    """
     from oppdragskontrakt import normaliser_vertsnavn
     try:
         d = urlsplit(str(raa))
@@ -160,8 +195,10 @@ def _ren_url(raa: str, autorisert_vert: str) -> str:
     if normaliser_vertsnavn(raa) != autorisert_vert:
         raise Motorfeil(
             "motoren rapporterte en side utenfor det autoriserte målet")
-    return urlunsplit(("https", autorisert_vert + (f":{port}" if port else ""),
-                       d.path or "/", "", ""))
+    nettsted = autorisert_vert + (f":{port}" if port else "")
+    sti = d.path or "/"
+    return (urlunsplit(("https", nettsted, sti, "", "")),
+            urlunsplit(("https", nettsted, sti, d.query, "")))
 
 
 def _antall(raa, standard: int) -> int:
@@ -284,19 +321,24 @@ def _sidebudsjett(payload: dict) -> tuple:
 
 
 def _bestilt_url(payload: dict, autorisert_vert: str) -> str:
-    """Den BESTILTE siden, kanonisert med NØYAKTIG samme funksjon som
-    motorens sider (`_ren_url`).
+    """Den BESTILTE sidens IDENTITET, kanonisert med NØYAKTIG samme
+    funksjon som motorens sider (`_delt_url`).
 
     To normaliseringer ville vært to svar på `https://kunde.example` mot
     `https://kunde.example/`, og da hadde sammenligningen under vært pynt
     — samme grunn som `_autorisert_vert` låner plattformens `malvert` i
     stedet for å normalisere verten selv.
 
-    Feilteksten skrives om: kommer `_ren_url` til kort her, er det
+    Det er identitetsformen (MED query) som hentes, ikke rapportformen:
+    bestillingens query er det som skiller `/rapport?id=1` fra
+    `/rapport?id=2`, og en sammenligning uten den godtar den andre siden
+    som den første (Codex P1). Se `_delt_url`.
+
+    Feilteksten skrives om: kommer `_delt_url` til kort her, er det
     OPPDRAGET som ikke lar seg lese, ikke motoren.
     """
     try:
-        return _ren_url(payload.get("mal_url"), autorisert_vert)
+        return _delt_url(payload.get("mal_url"), autorisert_vert)[1]
     except Motorfeil as e:
         raise Motorfeil("oppdragets mål lar seg ikke lese") from e
 
@@ -345,11 +387,16 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     # oppdraget er autorisert for (Codex P1) — se `_ren_url`.
     autorisert_vert = _autorisert_vert(payload)
     sider = []
+    # Sidenes IDENTITET (med query) beholdes ved siden av rapportformen:
+    # rapporten skal ikke bære query-en, men `enkeltside`-porten under må
+    # sammenligne med den (Codex P1) — se `_delt_url`.
+    identiteter = []
     for s in resultat.sider:
         if not isinstance(s, dict):
             raise Motorfeil("side-post uleselig")
-        sider.append({"url": _ren_url(s.get("url"), autorisert_vert),
-                      "status": _sidestatus(s.get("status"))})
+        ren, identitet = _delt_url(s.get("url"), autorisert_vert)
+        identiteter.append(identitet)
+        sider.append({"url": ren, "status": _sidestatus(s.get("status"))})
     if not sider:
         raise Motorfeil("motoren kontrollerte ingen sider")
     # ... og OMFANGET er oppdragets (Codex P1). Vertsbindingen over sier
@@ -379,7 +426,7 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
             f" {maks_sider}")
     if omfang == "enkeltside":
         bestilt = _bestilt_url(payload, autorisert_vert)
-        if sider[0]["url"] != bestilt:
+        if identiteter[0] != bestilt:
             raise Motorfeil(
                 "motoren kontrollerte en annen side enn den bestilte")
 
