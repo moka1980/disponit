@@ -94,6 +94,41 @@ def test_robots_normaliserer_prosentkodede_oktetter():
     assert kjor._tillatt("/privat/x.pdfx", anker) is True
 
 
+def test_robots_koder_raa_utf8_for_sammenligning():
+    """Codex P1, runde 9: rå ikke-ASCII ble aldri brakt til samme form.
+
+    Normaliseringen rørte bare oktetter som ALLEREDE var prosentkodet, så
+    `Disallow: /privat/æ` sto urørt i regelen mens nettleseren leverer
+    den samme ressursen som `/privat/%C3%A6`. Regelen matchet ingenting,
+    og en eksplisitt forbudt side ble crawlet."""
+    raa = kjor._parse_robots("User-agent: *\nDisallow: /privat/æ\n")
+    assert kjor._tillatt("/privat/%C3%A6", raa) is False
+    assert kjor._tillatt("/privat/%c3%a6", raa) is False   # hekser
+    assert kjor._tillatt("/privat/æ", raa) is False        # rå mot rå
+    assert kjor._tillatt("/privat/e", raa) is True
+
+    # Symmetrisk: den kodede REGELEN må treffe den rå stien like godt.
+    kodet = kjor._parse_robots("User-agent: *\nDisallow: /privat/%C3%A6\n")
+    assert kjor._tillatt("/privat/æ", kodet) is False
+    assert kjor._tillatt("/privat/%C3%A6", kodet) is False
+
+    # Formen selv: hvert tegn over 0x7F blir sine UTF-8-oktetter, i store
+    # hekser — og ASCII røres ikke, så metategnene overlever.
+    assert kjor._robotsform("/café") == "/caf%C3%A9"
+    assert kjor._robotsform("/日本") == "/%E6%97%A5%E6%9C%AC"
+    assert kjor._robotsform("/café") == kjor._robotsform("/caf%c3%a9")
+    assert kjor._robotsform("/a*b$") == "/a*b$"
+
+    # Metategnene virker fortsatt i et mønster med rå UTF-8.
+    anker = kjor._parse_robots("User-agent: *\nDisallow: /æ/*.pdf$\n")
+    assert kjor._tillatt("/%C3%A6/rapport.pdf", anker) is False
+    assert kjor._tillatt("/%C3%A6/rapport.pdfx", anker) is True
+
+    # Og stier med query — den formen `_robotsti` bygger — går samme vei.
+    q = kjor._parse_robots("User-agent: *\nDisallow: /søk?\n")
+    assert kjor._tillatt("/s%C3%B8k?q=1", q) is False
+
+
 def test_robots_gruppe_med_flere_user_agent_linjer():
     """`*` i en gruppe gjelder gruppa — også når den ikke står sist."""
     for tekst in ("User-agent: *\nUser-agent: googlebot\nDisallow: /privat/\n",

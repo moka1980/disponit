@@ -430,6 +430,17 @@ def _robotsform(sti: str) -> str:
     `*`-metategn. Ikke-ASCII oktetter (`%C3%A9`) står også: hver av dem er
     over 0x7F og dermed utenfor det ureserverte settet.
 
+    RÅ UTF-8 KODES FØRST (Codex P1, runde 9). Normaliseringen over rørte
+    bare oktetter som ALLEREDE var prosentkodet, så et bokstavelig
+    ikke-ASCII-tegn i fila sto urørt: `Disallow: /privat/æ` forble
+    `/privat/æ`, mens nettleseren leverer den samme ressursen som
+    `/privat/%C3%A6`. Regelen matchet da ingenting, og en eksplisitt
+    forbudt side ble crawlet. Å normalisere den ene skrivemåten og ikke
+    den andre er samme feil som å normalisere bare den ene siden: hvert
+    tegn over 0x7F blir sine prosentkodede UTF-8-oktetter, slik at rå og
+    kodet form møtes. ASCII røres ikke — robots' metategn `*` og `$` er
+    ASCII, og `_regel` leser dem ETTER denne formen.
+
     Formen brukes på BEGGE sider — mønsteret i `_regel` og stien i
     `_tillatt` — for det er nettopp det som gjør den til en sammenligning."""
     def bytt(m: "re.Match") -> str:
@@ -437,6 +448,11 @@ def _robotsform(sti: str) -> str:
         if tegn.isascii() and (tegn.isalnum() or tegn in "-._~"):
             return tegn
         return "%" + m.group(1).upper()
+    if not sti.isascii():
+        sti = "".join(
+            t if t.isascii()
+            else "".join(f"%{b:02X}" for b in t.encode("utf-8", "replace"))
+            for t in sti)
     return _PROSENTOKTETT.sub(bytt, sti)
 
 
