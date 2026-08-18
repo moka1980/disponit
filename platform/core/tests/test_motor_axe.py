@@ -468,6 +468,32 @@ def test_bare_lesende_metoder_slipper_ut_av_kontrollen():
         in metodedel
 
 
+def test_websocket_kanalen_lukkes_helt():
+    """Codex P1: en websocket-ramme har ingen HTTP-metode.
+
+    Første utgave avskar websockets, men koblet gjennom hver av dem som
+    gikk til målets EGEN origin. `LESEMETODER` er kontraktens skille
+    mellom å lese og å skrive, og det skillet finnes ikke i en
+    websocket: kanalen er toveis fra første byte. En kontrollert side
+    kunne dermed sende tilstandsendrende protokollmeldinger til
+    `wss://<mål>/…` — med cookies satt under navigasjonen — og omgå
+    nøyaktig den begrensningen HTTP-vakten håndhever, i en motor hvis
+    handling er klassifisert `ekstern_lesing`.
+
+    Vakten lever inne i `main()` bak playwright, så porten måles på
+    kilden."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    ws_del = kilde.split("def vakt_ws(ws):", 1)[1].split("ctx.route(", 1)[0]
+    assert "connect_to_server" not in ws_del, \
+        "ingen websocket skal kobles gjennom, heller ikke til samme origin"
+    # Lukkingen TELLES som alt annet blokkert: den er en
+    # dekningsbegrensning rapporten skal navngi, ikke en stille avvisning.
+    assert "tell(" in ws_del and "ws.close()" in ws_del
+    # Og avskjæringen SELV er fortsatt en forutsetning, ikke en påstand.
+    assert 'hasattr(ctx, "route_web_socket")' in kilde
+    assert 'ctx.route_web_socket("**/*", vakt_ws)' in kilde
+
+
 def test_kravsett_og_alvorlighet_dekker_kontrakten():
     # Enum-ene speiler rapportskjemaet — driver de fra hverandre, produserer
     # motoren verdier skjemavalideringen avviser.

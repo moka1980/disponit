@@ -364,9 +364,10 @@ def _tillatt(sti: str, regler: list) -> bool:
 
 
 #: Standardporten per skjema — den som ER underforstått, og derfor aldri
-#: skrives i et origin. `ws`/`wss` står her fordi websocket-vakten måler
-#: samme origin som HTTP-vakten (RFC 6455 §3: en ws-URL har samme origin
-#: som http-URL-en med samme vert og port).
+#: skrives i et origin. `ws`/`wss` er med fordi kanoniseringen skal kjenne
+#: HELE settet av skjemaer en kontrollert side kan be om (RFC 6455 §3: en
+#: ws-URL har samme origin som http-URL-en med samme vert og port), ikke
+#: fordi websocket-vakten slipper noen gjennom — den lukker alle.
 STANDARDPORT = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 HTTP_SKJEMA = {"ws": "http", "wss": "https"}
 
@@ -643,19 +644,29 @@ def main() -> int:
                 return
             route.continue_()
 
-        # WEBSOCKETS AVSKJÆRES FOR SEG (Codex P1). `BrowserContext.route`
-        # ser bare HTTP-forespørsler; en `new WebSocket("wss://…")` på en
-        # kontrollert side gikk rett forbi vakten til en hvilken som helst
-        # ekstern eller intern endepunkt. Resolverregelen over stopper
+        # WEBSOCKETS LUKKES HELT (Codex P1). `BrowserContext.route` ser
+        # bare HTTP-forespørsler; en `new WebSocket("wss://…")` på en
+        # kontrollert side gikk rett forbi vakten til et hvilket som helst
+        # eksternt eller internt endepunkt. Resolverregelen over stopper
         # fremmede VERTSNAVN, men ikke en rå IP-literal — så kanalen må
         # også lukkes her, og blokkeringen TELLES som alt annet blokkert.
+        #
+        # SAMME ORIGIN VAR IKKE NOK (Codex P1, runde 4). Første utgave
+        # koblet gjennom hver websocket til målets egen origin. Men
+        # `LESEMETODER` er kontraktens skille mellom å lese og å skrive, og
+        # en websocket-ramme HAR ingen HTTP-metode: kanalen er toveis fra
+        # første byte. En kontrollert side kunne dermed sende
+        # tilstandsendrende protokollmeldinger til `wss://<mål>/…` — med
+        # cookies satt under navigasjonen — og omgå nøyaktig den
+        # begrensningen HTTP-vakten håndhever, i en motor hvis handling er
+        # klassifisert `ekstern_lesing`.
+        #
+        # Axe trenger ingen websocket: kontrollen kjører mot DOM-en slik
+        # den er lastet, som for service workers. En side som må ha én for
+        # å rendre, mister ikke rapporten — den mister sanntidsdelen, og
+        # rapporten SIER det gjennom `dekningsbegrensninger`.
         def vakt_ws(ws):
             u = urllib.parse.urlsplit(ws.url)
-            # `_origin` kjenner ws/wss og deres standardporter, så en
-            # websocket måles mot NØYAKTIG samme origin som HTTP-vakten.
-            if _origin(u) == origin:
-                ws.connect_to_server()
-                return
             tell(u.hostname or u.netloc, "annet")
             ws.close()
 
