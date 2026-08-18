@@ -9,6 +9,13 @@ Starlette TestClient), og signering av kvitteringen gjennom en injisert
 
 Feilhåndteringens utfall:
   * Ingen oppdrag (204) → stille retur.
+  * UUTFØRBART claim → kvittering `avbrutt` FØR motoren startes. Både
+    en bestilling utenfor typens verdikontrakt (`oppdrag_ugyldig`, Codex
+    P1) og en claim uten opplastingskapabilitet
+    (`ingen_opplastingskapabilitet`, Codex P2) er kjent uutførbare av
+    claimet alene. `ekstern_lesing` er observerbar trafikk mot noen
+    andres nettsted, og den forespørselen er selve skaden når rapporten
+    aldri kunne blitt gyldig eller aldri kunne blitt levert.
   * Motorfeil / skjemabrudd i egen rapport → kvittering `avbrutt` UTEN
     artefakt: et delvis artefakt finnes ikke (§10 siste rad), men
     plattformen skal få vite at oppdraget er FERDIG mislykket — taushet
@@ -244,6 +251,25 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
                       "feilkode": "oppdrag_ugyldig"})
         return _feilutfall(rk, f"oppdrag_ugyldig:{brudd}")
 
+    opplasting = claim.get("opplasting")
+    if not opplasting:
+        # Claim uten opplastingskapabilitet for denne typen er en
+        # konfigurasjonstilstand (port 15-adferden på plattformsiden):
+        # artefakttypen mangler, er tvetydig, eller er filtrert bort for
+        # denne deploymenten. Rapporten kan da ikke leveres uansett hva
+        # kontrollen finner.
+        #
+        # Sjekken står FØR motoren (Codex P2). Sto den etter, gjorde
+        # controlleren hele den eksterne kontrollen — full crawl av
+        # kundens nettsted — for så å kaste rapporten på en betingelse
+        # den kunne lest av claimet før første forespørsel. Det er samme
+        # regnestykke som `_kontraktsbrudd` over: leveringsveien er en
+        # del av bestillingens gjennomførbarhet, og en umulig levering
+        # skal ikke koste noen andre trafikk.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "ingen_opplastingskapabilitet"})
+        return _feilutfall(rk, "ingen_kapabilitet")
+
     try:
         resultat = motor.kjor(payload)
         rapport = bygg(resultat, payload=payload, kontekst=kontekst)
@@ -257,15 +283,6 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "motor_avbrutt"})
         return _feilutfall(rk, type(e).__name__)
-
-    opplasting = claim.get("opplasting")
-    if not opplasting:
-        # Claim uten opplastingskapabilitet for denne typen er en
-        # konfigurasjonstilstand (port 15-adferden på plattformsiden):
-        # rapporten kan ikke leveres, oppdraget feiler ærlig.
-        rk = kvitter({**kvittering_basis, "resultat": "feilet",
-                      "feilkode": "ingen_opplastingskapabilitet"})
-        return _feilutfall(rk, "ingen_kapabilitet")
 
     ro = klient.post("/v1/artefakt",
                      json={"kapabilitet_jti": opplasting["jti"],

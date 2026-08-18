@@ -2318,6 +2318,36 @@ def test_kvitteringen_bindes_til_verten_som_ble_kontrollert():
     assert blind.kvitteringer[0]["feilkode"] == "malbinding_mangler"
 
 
+def test_manglende_opplastingskapabilitet_stopper_for_skanningen():
+    """Codex P2: en levering vi VET er umulig skal ikke koste kundens
+    nettsted en full kontroll.
+
+    Gir claim-API-et bevisst ingen `opplasting`-kapabilitet — fordi
+    artefakttypen mangler, er tvetydig eller er filtrert bort for
+    deploymenten — kunne rapporten aldri blitt levert. Sjekken lå likevel
+    ETTER `motor.kjor()`: controlleren crawlet hele nettstedet, bygget
+    rapporten, og kastet den så på en betingelse den kunne lest av
+    claimet før første forespørsel. `ekstern_lesing` er observerbar
+    trafikk mot noen andres nettsted, og da er den unødvendige
+    forespørselen selve skaden.
+
+    Kontroll: flytt `opplasting`-blokka i `kjor_en` tilbake under
+    `try`-blokka, så kjører FakeMotor og `motor.payloads` blir ikke-tom.
+    """
+    from modules.wcag_audit import controller
+    for uten in (None, {}):
+        motor = FakeMotor(resultat=_motorresultat())
+        klient = _Stubklient(200, opplasting=uten)
+        res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                 lambda k: k)
+        assert motor.payloads == [], uten
+        assert klient.stier == ["/v1/oppdrag/claim", "/v1/oppdrag/kvittering"]
+        assert res["utfall"] == "avbrutt", res
+        assert res["grunn"] == "ingen_kapabilitet", res
+        assert klient.kvitteringer[0]["feilkode"] == (
+            "ingen_opplastingskapabilitet")
+
+
 def test_avvist_feilkvittering_er_heller_ikke_ferdig():
     """Codex P1: feilgrenene meldte `avbrutt` uansett hva plattformen
     svarte på feil-kvitteringen.
