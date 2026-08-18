@@ -1558,6 +1558,48 @@ def test_enkeltsideporten_leser_query_som_del_av_siden():
     assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/rapport"
 
 
+def test_standardporten_er_ikke_en_del_av_sideidentiteten():
+    """Codex P2: `:443` er samme ressurs som ingen port.
+
+    Bestilte noen `https://kunde.example:443/side`, beholdt
+    rekonstruksjonen porten på den bestilte formen — mens Chromium (eller
+    en redirect) serialiserer den samme siden uten den. `enkeltside`-
+    porten sammenlignet da to skrivemåter av ÉN URL, fant dem ulike, og
+    lot oppdraget feile ETTER at den eksterne kontrollen var gjort. Det er
+    den dyre retningen å ta feil i: trafikken mot kundens nettsted er
+    allerede brukt, og siden var den bestilte.
+
+    Ikke-standardporter skiller faktisk to endepunkter, og skal stå.
+
+    Kontroll: fjern `and port != 443` i `_delt_url`, så blir de fire
+    første tilfellene røde.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _kjor(bestilt, levert):
+        return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
+                    payload=_payload(mal_url=bestilt), kontekst=_kontekst())
+
+    # Samme side, uansett hvilken av de to som bærer porten.
+    for bestilt, levert in (
+            ("https://kunde.example:443/side", "https://kunde.example/side"),
+            ("https://kunde.example/side", "https://kunde.example:443/side"),
+            ("https://kunde.example:443/side",
+             "https://kunde.example:443/side"),
+            ("https://kunde.example:443/side?id=1",
+             "https://kunde.example/side?id=1")):
+        r = _kjor(bestilt, levert)
+        # ... og rapporten navngir siden på ÉN måte, uten standardporten.
+        assert r["sider_kontrollert"][0]["url"] == (
+            "https://kunde.example/side"), (bestilt, levert)
+
+    # En ikke-standard port er fortsatt en del av identiteten: den er et
+    # annet endepunkt, ikke en annen skrivemåte.
+    with pytest.raises(Motorfeil):
+        _kjor("https://kunde.example:8443/side", "https://kunde.example/side")
+
+
 def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
     """Codex P1: en `status` vi ikke kan lese ble skrevet om til `feilet`.
 

@@ -195,7 +195,18 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     if normaliser_vertsnavn(raa) != autorisert_vert:
         raise Motorfeil(
             "motoren rapporterte en side utenfor det autoriserte målet")
-    nettsted = autorisert_vert + (f":{port}" if port else "")
+    # STANDARDPORTEN ER IKKE EN DEL AV IDENTITETEN (Codex P2).
+    # `https://kunde.example:443/side` og `https://kunde.example/side` ber
+    # om nøyaktig samme ressurs, og Chromium — eller en redirect —
+    # serialiserer den uten porten. Beholdt vi `:443` bare på den ene
+    # formen, avviste `enkeltside`-porten en side som ER den bestilte,
+    # ETTER at den eksterne kontrollen var gjort: oppdraget feilet på en
+    # skrivemåte, ikke på et avvik. Ikke-standardporter bæres videre som
+    # før — de skiller faktisk to endepunkter fra hverandre.
+    #
+    # Skjemaet er alltid https her (vakten over), så 443 er den eneste
+    # standardporten som kan dukke opp.
+    nettsted = autorisert_vert + (f":{port}" if port and port != 443 else "")
     sti = d.path or "/"
     return (urlunsplit(("https", nettsted, sti, "", "")),
             urlunsplit(("https", nettsted, sti, d.query, "")))
