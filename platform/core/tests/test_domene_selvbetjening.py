@@ -144,7 +144,7 @@ def test_runtime_kan_utstede_men_aldri_bekrefte(migrator):
     rt = _rt()
     try:
         _sett_kontekst(rt, TENANT)
-        rt.execute("SELECT utsted_challenge(%s,%s,false,%s,'rt')",
+        rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
                    (TENANT, vert, h))
         rt.commit()
         _sett_kontekst(rt, TENANT)
@@ -158,6 +158,58 @@ def test_runtime_kan_utstede_men_aldri_bekrefte(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_utstedelsen_er_bundet_til_kallerens_tenantkontekst(migrator):
+    """Codex P1: 016s `utsted_challenge` er SECURITY DEFINER og STOLER på
+    `p_tenant`. Gitt rått til den delte runtime-rollen var den et kryss-tenant
+    skriveprimitiv — bytt `challenge_token_hash` på en annen tenants
+    `ventende` rad, og DNS-beviset holdes mot ditt token, FORCE RLS til tross.
+
+    Runtime får derfor bare den guardede formen, og den binder `p_tenant` til
+    konteksten kalleren faktisk står i. Fail-closed: uten kontekst er det
+    ingen tenant å være lik.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `krev_tenantkontekst`-kallet fra
+    `utsted_challenge_selvbetjent`, eller gi runtime den rå formen tilbake.
+    """
+    vert = f"kryss{secrets.token_hex(3)}.example"
+    h = hashlib.sha256(secrets.token_hex(32).encode()).hexdigest()
+    rt = _rt()
+    try:
+        # 1) Den rå formen er ikke lenger runtimes å kalle i det hele tatt.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT utsted_challenge(%s,%s,false,%s,'rt')",
+                       (TENANT, vert, h))
+        rt.rollback()
+
+        # 2) Innpakningen nekter en FREMMED tenant selv med egen kontekst satt.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                (ANNEN_TENANT, vert, h))
+        rt.rollback()
+
+        # 3) ...og uten kontekst i det hele tatt (fail-closed).
+        rt.execute("SELECT set_config('disponit.tenant','',true)")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                (TENANT, vert, h))
+        rt.rollback()
+    finally:
+        rt.close()
+
+    # Ingen rad ble skapt for noen av tenantene.
+    for t in (TENANT, ANNEN_TENANT):
+        _sett_kontekst(migrator, t)
+        assert migrator.execute(
+            "SELECT count(*) FROM domenekontroll WHERE hostname=%s",
+            (vert,)).fetchone()[0] == 0
+        migrator.rollback()
 
 
 @pg

@@ -161,16 +161,66 @@ BEGIN
 END $$;
 GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT) TO disponit;
 
--- Selvbetjeningens skriveende: kunden (via runtime-API-et, tenantbundet
--- økt + CSRF) kan be om en utfordring for sitt eget hostname. Funksjonen
--- skaper kun `ventende` + hash — autorisasjon oppstår først når beviset
--- står i kundens egen DNS-sone og arbeideren har funnet det.
-GRANT EXECUTE ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT)
-    TO disponit;
+-- ------------------------------------------------------------
+-- Selvbetjeningens skriveende — TENANTBUNDET (Codex P1).
+--
+-- Kunden (via runtime-API-et, tenantbundet økt + CSRF) kan be om en
+-- utfordring for sitt eget hostname. Funksjonen skaper kun `ventende` +
+-- hash; autorisasjon oppstår først når beviset står i kundens egen
+-- DNS-sone og arbeideren har funnet det.
+--
+-- MEN `utsted_challenge` (016/018) er SECURITY DEFINER og STOLER PÅ
+-- `p_tenant`. Gis den rått til den delte runtime-rollen, er den et
+-- KRYSS-TENANT SKRIVEPRIMITIV: en kompromittert runtime-credential — eller
+-- ett enkelt kall fra en fremtidig kodevei som glemte konteksten — kan
+-- opprette rader og BYTTE `challenge_token_hash` for en vilkårlig tenant,
+-- FORCE RLS til tross, siden definer-funksjonen omgår RLS per definisjon.
+-- Å bytte hashen på en annens `ventende` rad er nok: da er det angriperens
+-- token DNS-beviset holdes mot.
+--
+-- Derfor en GUARDET INNPAKNING, og bare den gis til runtime. Porten er
+-- `krev_tenantkontekst` (038) — den samme alle andre runtime-kallbare
+-- definer-funksjoner bruker, så regelen har ÉN definisjon: `p_tenant` må
+-- være den tenantkonteksten kalleren faktisk står i, og fail-closed uten
+-- kontekst. 016-kroppen røres ikke: ops-veien
+-- (`disponit_domains_admin`) er en kryss-tenant ADMINISTRASJONSvei og
+-- setter ingen tenantkontekst — en port der ville brutt den, ikke sikret
+-- den.
+CREATE OR REPLACE FUNCTION utsted_challenge_selvbetjent(
+    p_tenant TEXT, p_hostname TEXT, p_wildcard BOOLEAN,
+    p_token_hash TEXT, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant,
+                                       'utsted_challenge_selvbetjent');
+    PERFORM public.utsted_challenge(p_tenant, p_hostname, p_wildcard,
+                                    p_token_hash, p_aktor);
+END $$;
+
+REVOKE ALL ON FUNCTION utsted_challenge_selvbetjent(TEXT, TEXT, BOOLEAN,
+    TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION utsted_challenge_selvbetjent(TEXT, TEXT, BOOLEAN,
+    TEXT, TEXT) TO disponit;
+-- Og den rå formen gis ALDRI til runtime. Eksplisitt REVOKE, ikke bare et
+-- fjernet GRANT: en base som rakk å kjøre en tidligere utgave av denne
+-- migrasjonen skal miste rettigheten, ikke beholde den i stillhet.
+REVOKE EXECUTE ON FUNCTION utsted_challenge(TEXT, TEXT, BOOLEAN, TEXT, TEXT)
+    FROM disponit;
 -- MERK: bekreft/ventende gis ALDRI til runtime. API-et genererte tokenet
 -- og kunne dermed «bevist» det uten at noen DNS-sone noensinne bar det —
 -- bekreftelsen tilhører arbeideren, som bare kan ferge det den faktisk
 -- fant i DNS. Tester kaller funksjonene som eieren (SET LOCAL ROLE
 -- disponit_domene_eier), samme mønster som _rydd_kapabiliteter.
 
+RESET ROLE;
+
+-- Porten er REVOKEd fra PUBLIC i 038 og eies av `disponit_m37_claimer`.
+-- Innpakningen over er SECURITY DEFINER og kjører altså som
+-- `disponit_domene_eier` — uten dette grantet ville porten feilet med
+-- «permission denied» og selvbetjeningen vært nede, ikke sikret. Grantet
+-- gis av eieren selv; migrator er medlem av begge roller.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION krev_tenantkontekst(TEXT, TEXT)
+    TO disponit_domene_eier;
 RESET ROLE;

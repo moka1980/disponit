@@ -126,8 +126,14 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
         token = secrets.token_hex(_TOKENBYTES)
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         try:
+            # Den GUARDEDE formen (039), aldri 016s rå `utsted_challenge`:
+            # den stoler på `p_tenant`, og gitt til den delte runtime-rollen
+            # var den et kryss-tenant skriveprimitiv — bytt hashen på en
+            # annen tenants `ventende` rad, og DNS-beviset holdes mot ditt
+            # token. Innpakningen binder `p_tenant` til den tenantkonteksten
+            # `_browserkontekst` nettopp satte (`krev_tenantkontekst`, 038).
             conn.execute(
-                "SELECT utsted_challenge(%s,%s,false,%s,%s)",
+                "SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,%s)",
                 (tenant, hostname, token_hash, f"bruker:{bid}"))
             conn.commit()
         except psycopg.Error as e:
