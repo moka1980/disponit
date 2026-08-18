@@ -16,10 +16,41 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # aktiv moduls avhengigheter selv er aktive. wcag_audits flipp er tatt
 # tilbake, så den avhengigheten finnes ikke lenger.
 #
-# Dette er IKKE en påstand om at loggen ikke virker. Den har vært i drift
-# på staging siden m01-kjeden, og de tre bundne punktene under er ekte,
-# maskinelt verifiserte målinger. Det som mangler er bindingen for de tre
-# andre — se blokken over `staging_sjekkliste`.
+# Dette er IKKE en påstand om at loggen ikke virker: de tre bundne
+# punktene under er ekte, maskinelt verifiserte målinger, og koden
+# EKSEKVERER på staging. Det som mangler er bindingen for de tre andre —
+# se blokken over `staging_sjekkliste`.
+#
+# OG DERFOR ER `driftstilstand` UNDER IKKE EN SELVSTENDIG PÅSTAND (Codex
+# P2, runde 3, som leste den forrige formuleringen «har vært i drift på
+# staging siden m01-kjeden» rett over `ikke_i_drift` — den motsigelsen
+# var reell og er skrevet om her). To ting som lett forveksles:
+#
+#   * KODEN kjører. `kjerne` ligger i policy_validator/, altså inne i
+#     m01s tjeneste, og m01 er `aktiv` + `staging`. Hver hendelse m01
+#     avgjør skrives gjennom denne loggen — de 180 hendelsene i m01s egen
+#     evidens ER denne modulen i arbeid.
+#   * M-2 har likevel ingen EGEN utrulling å oppgi på registerets akse.
+#     `registry.valider` gjør aksen betinget: `driftstilstand` ulik
+#     `ikke_i_drift` med `status` ulik `aktiv` gir «drift krever aktiv»,
+#     og CI (ci.yml, «register ok») avviser hele registeret på det. Det
+#     er ikke en glipp — invarianten er pinnet i
+#     `test_drift_uten_aktiv_status_er_en_registerfeil`, og den finnes
+#     nettopp for tilstanden «kjører uten å ha bestått sin egen
+#     sjekkliste». Samme doktrine står i wcag_audit/manifest.yaml: de to
+#     feltene flyttes SAMMEN, når porten faktisk er bestått.
+#
+# Feltet står derfor på `ikke_i_drift`, som er den verdien m02 hadde fra
+# #15 til akseptrunden på #89 — samme kode, samme eksekvering, samme
+# ubundne punkter. Aksept-nedgraderingen tar med seg driftsfeltet fordi
+# registeret KREVER det, ikke fordi noen påstår at loggen står stille.
+#
+# TIL @moka1980, om dette skal være annerledes: da er det invarianten som
+# må flytte seg, ikke dette manifestet. Å gjøre `driftstilstand` rent
+# beskrivende — «hvor står koden», uavhengig av aksept — er en endring i
+# `registry.valider` + RUTINER.md, med den prisen at registeret slutter å
+# fange «kjører uten aksept». Det er en rutinebeslutning, ikke et
+# manifestfelt.
 driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
 kjerne: platform/core/policy_validator/audit.py
