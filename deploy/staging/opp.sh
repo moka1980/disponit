@@ -434,7 +434,7 @@ systemctl stop disponit-domenerevalidering.timer \
     disponit-domenerevalidering.service \
     disponit-artefaktrydding.service \
     disponit-evidensreaper.service \
-    disponit-wcag-audit.service 2>/dev/null || true
+    disponit-wcag-audit.service \
     disponit-domeneverifisering.timer \
     disponit-domeneverifisering.service 2>/dev/null || true
 
