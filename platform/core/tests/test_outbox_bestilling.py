@@ -880,6 +880,67 @@ def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
 
 
 @pg
+def test_gjenoppretting_taaler_ny_revalidering_i_vinduet(migrator, klient,
+                                                         monkeypatch):
+    """Codex P2, runde 2: gjenopprettingen skal ikke bygge attestasjonen om.
+
+    Forrige runde gjenopprettet POLICYEN og bygget resten av hendelsen på
+    nytt for å treffe kjernens input-hash. Men hendelsen bærer også
+    plattformens domenekontroll-attestasjon, og den er avledet av
+    `siste_vellykkede_revalidering` — MUTABEL domenetilstand. Lykkes den
+    planlagte revalideringen i nettopp krasjvinduet, får retryen nytt
+    `utstedt`/`utloper`, ny `jti`, ny signatur og dermed ny input-hash:
+    `idempotenskonflikt`, for alltid, med en committet TILLAT-beslutning
+    (kvote brent) stående uten oppdraget sitt.
+
+    Samme krasjsimulering som policytesten over: en oppdragstype uten
+    deklarert frist gir 500 etter kjernens commit.
+    """
+    import oppdragskontrakt
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example",
+                      revalidert="now() - interval '20 hours'")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    kropp = _gyldig_kropp()
+
+    # (1) Beslutningen committes; halen dør før oppdrag og bokføring.
+    with monkeypatch.context() as mp:
+        mp.setattr(oppdragskontrakt, "utforelsesfrist_s",
+                   lambda *a, **k: None)
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (500, "intern_feil"), r.text
+    _sett_kontekst(migrator, TENANT)
+    logg = migrator.execute(
+        "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
+        (TENANT, "bestilling:" + nokkel)).fetchall()
+    assert len(logg) == 1, "beslutningen skulle vært committet av kjernen"
+    migrator.rollback()
+
+    # (2) Den planlagte revalideringen lykkes — attestasjonsgrunnlaget
+    #     flytter seg. Domenet er fortsatt gyldig; det er nettopp poenget.
+    _verifiser_domene(migrator, "kunde.example", revalidert="now()")
+
+    # (3) Retryen FULLFØRER beslutningen som alt er tatt, uten å bygge
+    #     attestasjonen om — og dermed uten idempotenskonflikt.
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r2.status_code == 200, r2.text
+    svar = r2.json()
+    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s",
+        (TENANT, "bestilling:" + nokkel)).fetchone()[0] == 1, \
+        "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
+    assert migrator.execute(
+        "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
+        (TENANT, svar["oppdrag_id"])).fetchone()[0] == logg[0][0], \
+        "oppdraget ble ikke koblet til den opprinnelige beslutningen"
+    migrator.rollback()
+
+
+@pg
 def test_tillat_gir_noyaktig_ett_beslutningsoppdrag(migrator, klient):
     """Port 17: TILLAT → ett oppdrag, opprinnelse='beslutning',
     evidensfrist 30 min for enkeltside, KOBLET til beslutningsloggposten."""

@@ -353,112 +353,131 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         # GJENOPPRETTING FØLGER BESLUTNINGEN, IKKE KLOKKA (Codex P2).
         # Dør prosessen etter at `kjerne.behandle` har committet, men før
         # oppdraget og `bestilling_idempotens` er skrevet, er kjernens
-        # egen idempotensrad det eneste sporet av forsøket. Kjernens
-        # input-hash dekker policy-id-en, så en retry etter at tenanten
-        # har byttet til en ANNEN policy ville regnet ut en ny hash og
-        # fått `idempotenskonflikt` — for alltid, og med en committet
-        # TILLAT-beslutning stående uten oppdraget sitt. Har nøkkelen alt
-        # en beslutning, gjenoppretter vi derfor med DEN policyen: da
-        # treffer hashen, kjernen gjenspiller sitt eget svar, og halen
-        # under fullfører bestillingen. Loggposten er den samme raden
-        # halen leser oppdraget fra, og dens `policy_id` er en
-        # policyREFERANSE (`<id>@<versjon>/<handling>`) — ren id hentes ut
-        # med `les_policyref`, som i unntaksveien.
+        # egen idempotensrad det eneste sporet av forsøket.
+        #
+        # GRUNNLAGET GJENSKAPES IKKE — DET LESES (Codex P2, runde 2). Første
+        # utgave gjenopprettet bare POLICYEN og bygget resten av hendelsen
+        # på nytt for å treffe kjernens input-hash og utløse gjenspillet.
+        # Men hendelsen bærer også plattformens domenekontroll-attestasjon,
+        # og DEN er avledet av `siste_vellykkede_revalidering` — MUTABEL
+        # domenetilstand. Lykkes den planlagte revalideringen i nettopp det
+        # vinduet, får retryen et nytt `utstedt`/`utloper`, en ny `jti`, en
+        # ny signatur og dermed en ny input-hash: `idempotenskonflikt`, for
+        # alltid, med en committet TILLAT-beslutning stående uten oppdraget
+        # sitt. Å gjenopprette policyen men gjette på attestasjonen var å
+        # løse halve problemet.
+        #
+        # Kjernen lagrer SELV svaret sitt (`idempotens.respons`, satt i
+        # samme transaksjon som loggposten), og et gjenspill er per kontrakt
+        # nøyaktig den raden byte for byte. Er den der, er beslutningen alt
+        # tatt: da leser vi den, og bygger verken hendelse eller attestasjon
+        # på nytt. Ingen avledning av mutabel tilstand kan da komme i veien
+        # for at halen får fullført bestillingen.
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
-        policy_id = None
-        if nokkel:
-            from policy_validator.engine import les_policyref
-            forrige = conn.execute(
-                "SELECT policy_id FROM revisjonslogg WHERE tenant=%s AND"
-                " idempotency_key=%s ORDER BY id DESC LIMIT 1",
-                (tenant, kjernenokkel)).fetchone()
-            ref = les_policyref(forrige[0]) if forrige else None
-            if ref is not None:
-                policy_id = ref[0]
-        if policy_id is None:
+        gjenopprettet = conn.execute(
+            "SELECT respons FROM idempotens WHERE tenant=%s AND nokkel=%s"
+            " AND status='ferdig'", (tenant, kjernenokkel)).fetchone() \
+            if nokkel else None
+        conn.rollback()
+
+        if gjenopprettet is not None:
+            # Beslutningen ER tatt og committet: svaret er kjernens eget,
+            # lest som det står. Nøyaktig det objektet gjenspillet i
+            # `kjerne._flyt` ville returnert — uten å gå gjennom hendelsen
+            # som bygde det, og dermed uten å avlede noe av tilstand som
+            # kan ha flyttet seg siden beslutningen falt.
+            respons = dict(gjenopprettet[0] or {})
+            svar = kjerne.Svar(int(respons.get("http", 200)), respons,
+                               respons.get("unntak_id"), replay=True)
+            tjeneste.logg.hendelse("bestilling_gjenopprettet", rid, tenant,
+                                   art="drift",
+                                   beslutning=respons.get("beslutning"))
+        else:
+            sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
             prad = conn.execute(
                 "SELECT policy_id FROM policyer WHERE tenant=%s AND aktiv",
                 (tenant,)).fetchall()
+            conn.rollback()
             if len(prad) != 1:
-                conn.rollback()
                 return _feilsvar("policy_ukjent", rid)
             policy_id = prad[0][0]
-        conn.rollback()
 
-        # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at den
-        # ER det normaliserte vertsnavnet fra `mal_url` — ikke URL-en.
-        event = {"handling": bt.handling, "ressurs_id": hostname,
-                 "mal_url": norm["mal_url"], "kravsett": norm["kravsett"],
-                 "omfang": norm["omfang"],
-                 "maks_sider": norm["maks_sider"],
-                 "dataklasser": ["offentlig"],
-                 "dataklasser_kilde": "connector"}
-        # PLATTFORMEN ATTESTERER SIN EGEN DOMENEKONTROLL. Aktiveringsporten
-        # (036) KREVER at en ekstern_lesing-handling bærer et registrert
-        # målautorisasjonsvilkår (domenekontroll_verifisert) — og motoren
-        # krever så en attestasjon fra en betrodd verifikator for hvert
-        # vilkår i handlingen. Uten denne ville altså enhver bestilling
-        # under en LOVLIG AKTIVERT policy endt i unntakskøen med
-        # attestasjon_mangler: porten som verifiserte målet tre linjer
-        # over (og fastholder ferskheten, 72 t) er nettopp verifikatoren,
-        # men den sa det aldri i attestasjonsformen motoren leser.
-        #
-        # Verifikatoren er PLATTFORMENS (`v_domenekontroll`): registeret i
-        # DISPONIT_ATT_NOKLER bærer nøkkelen, og tenantens policy velger
-        # selv om den stoler på den (`verifikatorer`-blokken +
-        # `betrodd_for: [domenekontroll_verifisert]`). Mangler nøkkelen i
-        # registeret, mintes ingenting — beslutningen tar da vilkårsveien
-        # den alltid tok (unntakskø), og driftsloggen navngir hvorfor.
-        dk_nokler = (tjeneste.nokler or {}).get("v_domenekontroll") or {}
-        if dk_nokler:
-            # DETERMINISTISK, forankret i selve verifikasjonen: `utstedt`
-            # er domenekontrollens `siste_vellykkede_revalidering` og
-            # `utloper` dens 72-timers ferskhetsvindu — attestasjonen
-            # UTTALER nøyaktig det porten over målte, verken mer eller
-            # ferskere. Deterministikken er idempotensens krav: kjernens
-            # input-hash dekker hele hendelsen, så en retry av samme
-            # nøkkel må bygge BYTE-identisk attestasjon for å treffe
-            # replayet (gjenopprettingsveien) i stedet for
-            # idempotenskonflikt. Ny revalidering → ny attestasjon → ny
-            # hash, og DA er konflikten ekte: grunnlaget endret seg.
-            from policy_validator import attestering
-            nid = sorted(dk_nokler)[0]
-            # jti-en er engangs (kjernen brenner den i beslutningens
-            # transaksjon) og må derfor være unik PER BESLUTNING men
-            # stabil PER RETRY: nøkkelen inn i avledningen er kjernens
-            # idempotensnøkkel — to bestillinger samme dag deler aldri
-            # jti, en retry av samme bestilling gjenskaper sin.
-            jti_grunnlag = (f"{tenant}|{hostname}|{kjernenokkel}|"
-                            f"{verifisert_ts.isoformat()}")
-            event["attestasjoner"] = {
-                "domenekontroll_verifisert": attestering.signer({
-                    "verifikator": "v_domenekontroll",
-                    "tenant_id": tenant, "handling": bt.handling,
-                    "vilkaar": "domenekontroll_verifisert",
-                    "ressurs_id": hostname, "policy_id": policy_id,
-                    "utstedt": verifisert_ts.isoformat(),
-                    "utloper": (verifisert_ts
-                                + timedelta(hours=72)).isoformat(),
-                    "jti": "dk-" + hashlib.sha256(
-                        jti_grunnlag.encode("utf-8")).hexdigest()[:32],
-                    "resultat": True,
-                }, nid, dk_nokler[nid])}
-        else:
-            tjeneste.logg.hendelse(
-                "domenekontroll_attestasjon_utilgjengelig", rid, tenant,
-                art="drift")
-        from policy_validator.engine import EvaluationContext
-        ctx = EvaluationContext(
-            tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,
-            kilde="api_token")
-        try:
-            svar = kjerne.behandle(
-                conn, ctx, policy_id=policy_id, event=event,
-                idempotency_key=kjernenokkel, request_id=rid,
-                aktor=f"bruker:{bid}", nokler=tjeneste.nokler)
-        except kjerne.Feilsvar as f:
-            tjeneste.logg.hendelse(f.kode, rid, tenant, art="sikkerhet")
-            return _feilsvar(f.kode, rid)
+            # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at
+            # den ER det normaliserte vertsnavnet fra `mal_url`, ikke URL-en.
+            event = {"handling": bt.handling, "ressurs_id": hostname,
+                     "mal_url": norm["mal_url"], "kravsett": norm["kravsett"],
+                     "omfang": norm["omfang"],
+                     "maks_sider": norm["maks_sider"],
+                     "dataklasser": ["offentlig"],
+                     "dataklasser_kilde": "connector"}
+            # PLATTFORMEN ATTESTERER SIN EGEN DOMENEKONTROLL.
+            # Aktiveringsporten (036) KREVER at en ekstern_lesing-handling
+            # bærer et registrert målautorisasjonsvilkår
+            # (domenekontroll_verifisert) — og motoren krever så en
+            # attestasjon fra en betrodd verifikator for hvert vilkår i
+            # handlingen. Uten denne ville altså enhver bestilling under en
+            # LOVLIG AKTIVERT policy endt i unntakskøen med
+            # attestasjon_mangler: porten som verifiserte målet over (og
+            # fastholder ferskheten, 72 t) er nettopp verifikatoren, men den
+            # sa det aldri i attestasjonsformen motoren leser.
+            #
+            # Verifikatoren er PLATTFORMENS (`v_domenekontroll`): registeret
+            # i DISPONIT_ATT_NOKLER bærer nøkkelen, og tenantens policy
+            # velger selv om den stoler på den (`verifikatorer`-blokken +
+            # `betrodd_for: [domenekontroll_verifisert]`). Mangler nøkkelen i
+            # registeret, mintes ingenting — beslutningen tar da vilkårsveien
+            # den alltid tok (unntakskø), og driftsloggen navngir hvorfor.
+            dk_nokler = (tjeneste.nokler or {}).get("v_domenekontroll") or {}
+            if dk_nokler:
+                # DETERMINISTISK, forankret i selve verifikasjonen:
+                # `utstedt` er domenekontrollens
+                # `siste_vellykkede_revalidering` og `utloper` dens
+                # 72-timers ferskhetsvindu — attestasjonen UTTALER nøyaktig
+                # det porten over målte, verken mer eller ferskere.
+                #
+                # Grenen kjøres BARE når det ikke finnes en committet
+                # beslutning for nøkkelen (se over). Det er hele grunnen til
+                # at avledningen får hvile på mutabel domenetilstand: en
+                # retry etter en ny revalidering leser beslutningen sin i
+                # stedet for å bygge attestasjonen på nytt, og møter derfor
+                # ikke lenger en input-hash som har flyttet seg.
+                from policy_validator import attestering
+                nid = sorted(dk_nokler)[0]
+                # jti-en er engangs (kjernen brenner den i beslutningens
+                # transaksjon) og må derfor være unik PER BESLUTNING:
+                # nøkkelen inn i avledningen er kjernens idempotensnøkkel,
+                # så to bestillinger samme dag deler aldri jti.
+                jti_grunnlag = (f"{tenant}|{hostname}|{kjernenokkel}|"
+                                f"{verifisert_ts.isoformat()}")
+                event["attestasjoner"] = {
+                    "domenekontroll_verifisert": attestering.signer({
+                        "verifikator": "v_domenekontroll",
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": "domenekontroll_verifisert",
+                        "ressurs_id": hostname, "policy_id": policy_id,
+                        "utstedt": verifisert_ts.isoformat(),
+                        "utloper": (verifisert_ts
+                                    + timedelta(hours=72)).isoformat(),
+                        "jti": "dk-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": True,
+                    }, nid, dk_nokler[nid])}
+            else:
+                tjeneste.logg.hendelse(
+                    "domenekontroll_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
+            from policy_validator.engine import EvaluationContext
+            ctx = EvaluationContext(
+                tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,
+                kilde="api_token")
+            try:
+                svar = kjerne.behandle(
+                    conn, ctx, policy_id=policy_id, event=event,
+                    idempotency_key=kjernenokkel, request_id=rid,
+                    aktor=f"bruker:{bid}", nokler=tjeneste.nokler)
+            except kjerne.Feilsvar as f:
+                tjeneste.logg.hendelse(f.kode, rid, tenant, art="sikkerhet")
+                return _feilsvar(f.kode, rid)
 
         beslutning = str(svar.kropp.get("beslutning") or "").upper()
         utfall = {"TILLAT": "tillat", "STOPP": "stopp"}.get(
