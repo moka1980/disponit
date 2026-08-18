@@ -286,6 +286,62 @@ STANDARDPORT = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 HTTP_SKJEMA = {"ws": "http", "wss": "https"}
 
 
+#: SAMME mønster som `rapport._VERT`, som selv speiler
+#: `rapportskjema._HOSTNAME`. Gjentatt her, ikke importert: motoren kjører
+#: i browser-containeren uten plattformkoden på PYTHONPATH. En test binder
+#: de to sammen, slik `rapport._VERT` alt er bundet til skjemaet.
+VERT_MONSTER = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\Z")
+
+#: RFC 2606 §2 reserverer `.invalid` for navn som per definisjon ALDRI kan
+#: slås opp. Et blokkert mål som ikke er et prikket vertsnavn plasseres der:
+#: formen blir lesbar for rapportskjemaet, og ingen leser kan forveksle den
+#: med et navn målet faktisk kontaktet.
+UGYLDIG = "invalid"
+
+
+def _rapportvert(raa: str) -> str:
+    """Den blokkerte verten på en form rapporten kan BÆRE (Codex P2).
+
+    `rapport.bygg` krever et prikket vertsnavn av hver blokkerte post, og
+    en post som ikke matcher gir `Motorfeil` — altså `motor_avbrutt` for
+    HELE kontrollen. En korrekt blokkert forespørsel til `localhost`, til
+    en IPv6-literal eller til et navn uten punktum gjorde dermed en ellers
+    vellykket kontroll om til et feilet oppdrag: vi mistet rapporten fordi
+    egressvakten gjorde jobben sin. Den kontrollen skal ende i en
+    dekningsbegrensning, som er nettopp det feltet finnes for.
+
+    Verdien beholdes så langt den er representerbar, og plasseres ellers i
+    `.invalid`:
+
+      * IPv4-literalen er alt prikket og går urørt gjennom skjemaet.
+      * IPv6-literalen skrives UTFOLDET, med `-` for `:`, under
+        `.ipv6.invalid` — `ip.exploded`, ikke råstrengen: den komprimerte
+        formen kan begynne eller slutte med `:` (`::1`), og en etikett kan
+        ikke begynne med bindestrek. Den utfoldede formen er alltid åtte
+        firetegns-grupper (39 tegn), altså både etikettlovlig og entydig.
+        Klammene hører til URL-syntaksen, ikke til adressen.
+      * Et navn uten punktum (`localhost`, `intern`) beholdes som første
+        etikett under `.enkeltetikett.invalid`.
+      * Alt annet uleselig — tomt, ulovlige tegn, for langt — blir
+        `uleselig.blokkert.invalid`. Raden forsvinner ALDRI: at noe ble
+        blokkert er sant også når vi ikke kan navngi hva.
+    """
+    n = (raa or "").strip().strip("[]").lower()
+    try:
+        ip = ipaddress.ip_address(n)
+    except ValueError:
+        ip = None
+    if ip is not None and ip.version == 6:
+        n = f"{ip.exploded.replace(':', '-')}.ipv6.{UGYLDIG}"
+    elif ip is None and "." not in n:
+        n = f"{n}.enkeltetikett.{UGYLDIG}"
+    if not VERT_MONSTER.match(n) or len(n) > 253:
+        return f"uleselig.blokkert.{UGYLDIG}"
+    return n
+
+
 def _origin(p) -> str:
     """Origin på KANONISK form — eller "" hvis URL-en ikke har noen.
 
@@ -430,7 +486,9 @@ def main() -> int:
                                   ignore_https_errors=tls_usikker)
 
         def tell(vert: str, art: str) -> None:
-            n = (vert or "ukjent").lower()
+            # `_rapportvert` er porten mot rapportskjemaet: en blokkering
+            # skal bli en dekningsbegrensning, aldri et avbrutt oppdrag.
+            n = _rapportvert(vert)
             blokkert[(n, art)] = blokkert.get((n, art), 0) + 1
 
         def vakt(route):

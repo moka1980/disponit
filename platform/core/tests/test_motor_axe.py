@@ -170,6 +170,40 @@ def test_lenkenormalisering_er_lukket():
     assert n(o, f"{o}/index.html", "/sok?q=1#treff") == f"{o}/sok?q=1"
 
 
+def test_blokkert_vert_blir_alltid_baerbar_for_rapporten():
+    """En blokkering skal bli en DEKNINGSBEGRENSNING, aldri et avbrutt
+    oppdrag (Codex P2). `rapport.bygg` krever et prikket vertsnavn av hver
+    blokkerte post, så en korrekt blokkert forespørsel til `localhost` eller
+    en IPv6-literal gjorde hele den ellers vellykkede kontrollen om til
+    `motor_avbrutt`."""
+    rv = kjor._rapportvert
+    # Prikkede navn og IPv4 går urørt gjennom.
+    assert rv("ekstern-cdn.example") == "ekstern-cdn.example"
+    assert rv("EKSTERN-CDN.Example") == "ekstern-cdn.example"
+    assert rv("169.254.169.254") == "169.254.169.254"
+    # Enkeltetikett og IPv6 beholdes, men i RFC 2606-navnerommet.
+    assert rv("localhost") == "localhost.enkeltetikett.invalid"
+    # UTFOLDET, ikke komprimert: `::1` ville gitt etiketten `--1`, og en
+    # etikett kan ikke begynne med bindestrek.
+    assert rv("[::1]") == ("0000-" * 7 + "0001") + ".ipv6.invalid"
+    assert rv("[2001:db8::1]") == \
+        "2001-0db8-0000-0000-0000-0000-0000-0001.ipv6.invalid"
+    # Uleselig blir en rad, ikke en forsvunnet rad.
+    assert rv("") == "uleselig.blokkert.invalid"
+    assert rv("under_strek.example") == "uleselig.blokkert.invalid"
+    assert rv("a" * 300 + ".example") == "uleselig.blokkert.invalid"
+
+    # PORTEN: hver form over må passere rapportbyggerens EGET mønster.
+    # Driver de to fra hverandre, er saneringen her uten virkning.
+    sys.path.insert(0, str(ROT / "platform"))
+    from modules.wcag_audit import rapport
+    assert rapport._VERT.pattern == kjor.VERT_MONSTER.pattern
+    for raa in ("localhost", "[::1]", "[2001:db8::1]", "", "169.254.169.254",
+                "under_strek.example", "ekstern-cdn.example"):
+        v = rv(raa)
+        assert rapport._VERT.match(v) and len(v) <= 253, (raa, v)
+
+
 def test_origin_er_kanonisk_i_baade_vakten_og_lenkefilteret():
     """Rå strengsammenligning av `scheme://netloc` er ikke origin-regelen
     (Codex P2): den underforståtte porten, store/små bokstaver og
