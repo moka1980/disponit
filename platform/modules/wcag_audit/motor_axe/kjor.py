@@ -16,8 +16,11 @@ ikke motoren fra å være ærlig:
 
   * EGRESS ER LUKKET: kun målvertens origin slipper ut. Alle andre
     forespørsler blokkeres og TELLES ({vert, antall, art}) — det er
-    tallene `dekningsbegrensninger` bygges av (port 18). Ingen
-    credentials: prosessen arver bare motor-allowlistens miljø.
+    tallene `dekningsbegrensninger` bygges av (port 18). Det gjelder
+    ALLE kanalene, ikke bare de `route` ser: websockets avskjæres for
+    seg, service workers blokkeres, og fremmede vertsnavn er
+    uoppløselige i nettleseren. Ingen credentials: prosessen arver bare
+    motor-allowlistens miljø.
   * MÅLET ER OFFENTLIG OG PINNET: vertsnavnet slås opp ÉN gang, hver
     adresse må være global, og både robots-henting og nettleser låses
     til den ene IP-en. Se `_pin_mal_ip`.
@@ -349,21 +352,53 @@ def main() -> int:
         chrom_args = ["--disable-dev-shm-usage",
                       f"--host-resolver-rules={regler}, MAP * ~NOTFOUND"]
         browser = pw.chromium.launch(args=chrom_args)
+        # SERVICE WORKERS BLOKKERES (Codex P1). En registrert service
+        # worker svarer på sidens forespørsler UTENFOR sidens egen
+        # route-avskjæring, og kan selv hente hva den vil — altså en vei
+        # rundt egressvakten, i en motor hvis hele kontrakt er at egressen
+        # er lukket. Axe trenger dem ikke: kontrollen kjører mot DOM-en
+        # slik den er lastet.
         ctx = browser.new_context(viewport={"width": 1280, "height": 800},
                                   locale="nb",
+                                  service_workers="block",
                                   ignore_https_errors=tls_usikker)
+
+        def tell(vert: str, art: str) -> None:
+            n = (vert or "ukjent").lower()
+            blokkert[(n, art)] = blokkert.get((n, art), 0) + 1
 
         def vakt(route):
             u = urllib.parse.urlsplit(route.request.url)
             if f"{u.scheme}://{u.netloc}" == origin:
                 route.continue_()
                 return
-            art = ART.get(route.request.resource_type, "annet")
-            n = (u.hostname or u.netloc or "ukjent").lower()
-            blokkert[(n, art)] = blokkert.get((n, art), 0) + 1
+            tell(u.hostname or u.netloc,
+                 ART.get(route.request.resource_type, "annet"))
             route.abort("blockedbyclient")
 
+        # WEBSOCKETS AVSKJÆRES FOR SEG (Codex P1). `BrowserContext.route`
+        # ser bare HTTP-forespørsler; en `new WebSocket("wss://…")` på en
+        # kontrollert side gikk rett forbi vakten til en hvilken som helst
+        # ekstern eller intern endepunkt. Resolverregelen over stopper
+        # fremmede VERTSNAVN, men ikke en rå IP-literal — så kanalen må
+        # også lukkes her, og blokkeringen TELLES som alt annet blokkert.
+        def vakt_ws(ws):
+            u = urllib.parse.urlsplit(ws.url)
+            skjema = {"ws": "http", "wss": "https"}.get(u.scheme, u.scheme)
+            if f"{skjema}://{u.netloc}" == origin:
+                ws.connect_to_server()
+                return
+            tell(u.hostname or u.netloc, "annet")
+            ws.close()
+
         ctx.route("**/*", vakt)
+        if not hasattr(ctx, "route_web_socket"):
+            # Uten avskjæringen er «egressen er lukket» en påstand vi ikke
+            # kan holde. Da er et ærlig avbrutt oppdrag riktig utfall, ikke
+            # en rapport bygget med en åpen kanal (playwright >= 1.48).
+            raise SystemExit("playwright mangler route_web_socket —"
+                             " egressvakten kan ikke håndheves")
+        ctx.route_web_socket("**/*", vakt_ws)
         page = ctx.new_page()
         page.set_default_timeout(SIDEFRIST_MS)
 
