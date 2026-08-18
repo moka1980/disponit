@@ -221,6 +221,24 @@ def test_eksempeltaket_slaar_avkortet_paa():
                 if f["antall"] > len(f["eksempler"])), default=0) == 0
 
 
+def test_varigheten_dekker_oppslaget_og_robots():
+    """Codex P2: klokka startet etter oppslaget og robots-hentingen.
+
+    `varighet_ms` er timingevidensen i den promoterte rapporten. Bare
+    robots kan alene bruke ti sekunder (`_hent`-fristen), og DNS kommer i
+    tillegg — arbeid som er like synlig utenfra som selve sidelastingen,
+    men som ikke fantes i tallet."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert kilde.count("start = time.monotonic()") == 1
+    assert kilde.index("start = time.monotonic()") \
+        < kilde.index("mal_pin = _pin_mal_ip(") \
+        < kilde.index("_robots(origin") \
+        < kilde.index("sync_playwright() as pw")
+    # ... og `_axe_kilde()` er UTENFOR: den rører aldri målet.
+    assert kilde.index("axe_js = _axe_kilde()") \
+        < kilde.index("start = time.monotonic()")
+
+
 def test_uleselig_robots_melder_seg_som_avkorting():
     """Codex P2: en uleselig robots gjør et nettsted-oppdrag til én side.
 

@@ -477,6 +477,17 @@ def main() -> int:
     # all annen oppløsning er urørt — og settes aldri i drift.
     vertskart = dict(par.split("=", 1) for par in os.environ.get(
         "MOTOR_VERTSKART", "").split(",") if "=" in par)
+    # KLOKKA STARTER FØR DET FØRSTE ARBEIDET MOT MÅLET (Codex P2).
+    # `varighet_ms` er timingevidensen i den promoterte rapporten, og den
+    # startet etter oppslaget, adressekontrollen OG robots-hentingen. Bare
+    # robots kan alene bruke ti sekunder (`_hent`-fristen), og DNS kommer i
+    # tillegg — arbeid som er like synlig utenfra som selve sidelastingen,
+    # men som ikke fantes i tallet. Målt slik understøtter evidensen
+    # systematisk hvor lenge motoren faktisk holdt på.
+    #
+    # `_axe_kilde()` over er UTENFOR med hensikt: den leser en innbakt fil
+    # (eller en lokal cache) og rører aldri målet.
+    start = time.monotonic()
     # ÉTT oppslag, godkjent én gang, brukt overalt — se `_pin_mal_ip`.
     mal_vert = p.hostname or ""
     mal_pin = _pin_mal_ip(mal_vert, p.port or (443 if p.scheme == "https"
@@ -504,7 +515,6 @@ def main() -> int:
     #: både for lenkene vi køer og for omdirigeringene vi følger.
     krype = maks_sider > 1
 
-    start = time.monotonic()
     blokkert: dict[tuple[str, str], int] = {}
     funn: dict[str, dict] = {}
     sider: list[dict] = []
