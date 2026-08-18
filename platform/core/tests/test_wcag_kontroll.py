@@ -15,6 +15,7 @@ import secrets
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import psycopg
@@ -1641,10 +1642,14 @@ class FakeMotor:
     def __init__(self, resultat=None, feil=None):
         self.resultat, self.feil = resultat, feil
         self.payloads = []
+        #: `frist_s` controlleren ga, per kjøring — den er OPPDRAGETS
+        #: frist, ikke motorens tak (Codex P1).
+        self.frister = []
 
-    def kjor(self, payload):
+    def kjor(self, payload, *, frist_s=None):
         from modules.wcag_audit.motor import Motorfeil
         self.payloads.append(payload)
+        self.frister.append(frist_s)
         if self.feil:
             raise Motorfeil(self.feil)
         return self.resultat
@@ -1957,7 +1962,16 @@ class _Stubklient:
     stubben — controlleren leser den nettopp for å skille de to."""
 
     def __init__(self, kvitteringsstatus, opplastingsstatus=200,
-                 kvitteringskropp=None, payload=None, opplasting=...):
+                 kvitteringskropp=None, payload=None, opplasting=...,
+                 frist_om_s=30 * 60):
+        # Utførelsesfristen claimet bærer, som det EKTE endepunktet:
+        # `frist_om_s` sekunder frem i tid, eller `None` for et claim
+        # uten lesbart vindu.
+        naa = datetime.now(timezone.utc)
+        self.utforelsesfrist = (
+            None if frist_om_s is None
+            else (naa + timedelta(seconds=frist_om_s)).isoformat())
+        self.kvittering_utloper = self.utforelsesfrist
         self.kvitteringsstatus = kvitteringsstatus
         self.opplastingsstatus = opplastingsstatus
         self.kvitteringskropp = kvitteringskropp
@@ -1990,6 +2004,12 @@ class _Stubklient:
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
                 "repair_operation_id": "r", "owner_claim_id": "o",
                 "owner_generation": 0,
+                # Fristene er en del av det EKTE claim-svaret, og
+                # controlleren regner motorens vindu ut av dem (Codex
+                # P1). Uten dem her ville stubben bevist noe det ekte
+                # endepunktet ikke gjør.
+                "utforelsesfrist": self.utforelsesfrist,
+                "kvittering_utloper": self.kvittering_utloper,
                 "payload": self.payload if self.payload is not None else {
                     "mal_url": "https://kunde.example/side",
                     "kravsett": "wcag21_aa", "omfang": "enkeltside"},
@@ -2739,6 +2759,90 @@ def test_motorfristen_lar_det_bli_tid_igjen_til_opplastingen():
         "under fem minutter til opplasting og kvittering er ingen margin"
     # ... og standarden er den motoren FAKTISK får når ingen sier noe.
     assert Kommandomotor(["x"]).tidsavbrudd_s == STANDARD_TIDSAVBRUDD_S
+
+
+def test_den_annonserte_fristen_er_fristen_som_gjelder():
+    """Codex P1: 30/60-minuttersfristene var annonsert, ikke håndhevet.
+
+    To ledd sviktet hver for seg:
+
+      * `_opprett_oppdrag` skrev den GENERISKE `UTFORELSESFRIST_S`
+        (24 timer) på hver eneste oppdragsrad, uansett type. En
+        enkeltsidekontroll kunne derfor fullføre og bli kvittert som
+        utført et helt døgn etter fristen manifestet lover — og
+        eier-leasen (037), som strekkes til nettopp `utforelsesfrist`,
+        arvet det samme døgnet, så en krasjet kontroll lå ureclaimet i
+        24 timer.
+      * motoren kjørte alltid på sitt eget tak (3300 s). En
+        `enkeltside`-kontroll med 30 minutters frist fikk altså 55
+        minutter å bruke, og ble drept lenge etter at oppdraget hadde
+        oversittet fristen sin.
+
+    Fristen deklareres nå på KONTRAKTEN og leses av begge: raden får
+    typens frist, og motoren får det claimet har igjen minus
+    avslutningen.
+
+    Kontroll: sett `frist_s` i `_opprett_oppdrag` tilbake til
+    `UTFORELSESFRIST_S`, eller dropp `frist_s=` i `kjor_en`, så blir
+    denne rød på hver sin halvdel.
+    """
+    import oppdragskontrakt as ok
+    from modules.wcag_audit import controller
+    from modules.wcag_audit.motor import AVSLUTNINGSMARGIN_S
+
+    # 1) Kontrakten navngir fristen manifestet annonserer.
+    assert ok.utforelsesfrist_s("kontroll.wcag.nettsted",
+                                {"omfang": "enkeltside"}) == 30 * 60
+    assert ok.utforelsesfrist_s("kontroll.wcag.nettsted",
+                                {"omfang": "nettsted"}) == 60 * 60
+    # Uleselig omfang gir den STRENGESTE fristen, aldri den generiske:
+    # en for kort frist er et oppdrag som må gjøres om, en for lang er
+    # nettopp overskridelsen dette finnes for å hindre.
+    assert ok.utforelsesfrist_s("kontroll.wcag.nettsted", {}) == 30 * 60
+    # ... og en type uten egen frist beholder den generiske.
+    assert ok.utforelsesfrist_s("reinnsending", {}) is None
+
+    # 2) Motoren får OPPDRAGETS vindu, ikke sitt eget tak.
+    for om_s in (30 * 60, 60 * 60):
+        motor = FakeMotor(resultat=_motorresultat())
+        res = controller.kjor_en(_Stubklient(200, frist_om_s=om_s), "tk",
+                                 motor, _kontekst(), lambda k: k)
+        assert res["utfall"] == "utfort", res
+        gitt = motor.frister[0]
+        assert om_s - AVSLUTNINGSMARGIN_S - 5 <= gitt <= (
+            om_s - AVSLUTNINGSMARGIN_S), (om_s, gitt)
+
+    # 3) Et vindu som ikke rekker avslutningen — eller ikke lar seg lese
+    #    — koster ikke kundens nettsted en eneste forespørsel.
+    for om_s in (AVSLUTNINGSMARGIN_S, 10, None):
+        motor = FakeMotor(resultat=_motorresultat())
+        klient = _Stubklient(200, frist_om_s=om_s)
+        res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                 lambda k: k)
+        assert motor.payloads == [], om_s
+        assert res["utfall"] == "avbrutt", res
+        assert klient.kvitteringer[0]["feilkode"] == "frist_utilstrekkelig"
+
+    # 4) Kapabilitetene klemmer også: er opplastingen den FØRSTE grensen,
+    #    er det den som bestemmer, ikke utførelsesfristen.
+    naa = datetime.now(timezone.utc)
+    klient = _Stubklient(200, frist_om_s=60 * 60)
+    klient.opplasting = {"jti": "kap",
+                         "utloper": (naa + timedelta(seconds=900)
+                                     ).isoformat()}
+    motor = FakeMotor(resultat=_motorresultat())
+    controller.kjor_en(klient, "tk", motor, _kontekst(), lambda k: k)
+    assert 900 - AVSLUTNINGSMARGIN_S - 5 <= motor.frister[0] <= (
+        900 - AVSLUTNINGSMARGIN_S)
+
+    # 5) Motoren kan bare KLEMMES av oppdragets frist, aldri skrus opp:
+    #    taket er dens egen grense.
+    from modules.wcag_audit.motor import Kommandomotor, Motorfeil
+    m = Kommandomotor(["/bin/false"], tidsavbrudd_s=5)
+    with pytest.raises(Motorfeil):
+        m.kjor({}, frist_s=0)
+    with pytest.raises(Motorfeil):
+        m.kjor({}, frist_s="lenge")
 
 
 def test_dypt_nostet_motorutdata_er_motorfeil():

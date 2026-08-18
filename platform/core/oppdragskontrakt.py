@@ -498,6 +498,49 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
 }
 
 
+#: UTFØRELSESFRISTEN typen ber om, i sekunder, valgt av ETT felt i
+#: payloaden: {type: (felt, {feltverdi: sekunder})} (Codex P1).
+#:
+#: Fristen sto som én generisk konstant (`arbeider.UTFORELSESFRIST_S`,
+#: 24 timer) for HVER oppdragstype. For WCAG-kontrollen var det ikke en
+#: romslig frist, men en annonsert frist stacken ikke holdt: manifestet
+#: lover 30 min for `enkeltside` og 60 min for `nettsted`, og en kontroll
+#: kunne fullføre og bli kvittert et helt DØGN etter det. Skaden er ikke
+#: bare et brutt løfte:
+#:
+#:   * eier-leasen (migrasjon 037) strekkes til `utforelsesfrist`, så en
+#:     krasjet kontroll ble liggende ureclaimet i 24 timer i stedet for
+#:     i én,
+#:   * og `ekstern_lesing` mot kundens nettsted fikk et døgnlangt vindu
+#:     der bestillingen sa én time.
+#:
+#: Fristen hører til KONTRAKTEN og ikke til modulen: den skrives på
+#: oppdragsraden ved opprettelsen, og både lease, claim og
+#: kapabilitetene leses av plattformen ut fra den raden.
+UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
+    "kontroll.wcag.nettsted": ("omfang", {"enkeltside": 30 * 60,
+                                          "nettsted": 60 * 60}),
+}
+
+
+def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:
+    """Typens egen utførelsesfrist i sekunder, eller None når typen ikke
+    deklarerer noen (og den generiske fristen gjelder).
+
+    Er valgfeltet uleselig, gis den STRENGESTE fristen typen har, ikke
+    den generiske. `bryter_feltkontrakten` avviser allerede en slik
+    payload ved opprettelsen, så tilstanden skal ikke være nåbar — men
+    skulle den bli det, er en for KORT frist et oppdrag som må gjøres om
+    igjen, mens en for lang er nettopp den stille overskridelsen denne
+    tabellen finnes for å hindre.
+    """
+    valg = UTFORELSESFRIST_VALG.get(oppdragstype)
+    if valg is None:
+        return None
+    felt, frister = valg
+    return frister.get(minimert.get(felt)) or min(frister.values())
+
+
 def bryter_feltkontrakten(oppdragstype: str, minimert: dict) -> list[str]:
     """Feltene hvis VERDI ligger utenfor typens lukkede kontrakt.
 

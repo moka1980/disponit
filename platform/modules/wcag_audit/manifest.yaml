@@ -61,6 +61,17 @@ staging_sjekkliste:
     notat: >-
       Frister 30 min (enkeltside) / 60 min (nettsted);
       kontroll.ti_kjoringer_signert_innen_frist = 10/10 (§12).
+      HÅNDHEVET, IKKE BARE ANNONSERT (Codex P1): fristene sto som tall i
+      denne teksten mens oppdragsraden fikk den generiske
+      `UTFORELSESFRIST_S` (24 timer) og motoren alltid kjørte på sitt
+      eget tak (3300 s) — altså kunne en enkeltsidekontroll fullføre et
+      døgn for sent, og eier-leasen (037), som strekkes til
+      `utforelsesfrist`, arvet det samme døgnet. Fristen er nå deklarert
+      på kontrakten (`oppdragskontrakt.UTFORELSESFRIST_VALG`, valgt av
+      `omfang`), skrives på raden ved opprettelsen, og controlleren gir
+      motoren det claimet FAKTISK har igjen — den tidligste av
+      utførelsesfristen, opplastings- og kvitteringskapabiliteten, minus
+      avslutningsmarginen.
       NEDJUSTERT FRA 90 MIN (Codex P2): opplastingskapabiliteten claimen
       utsteder klemmes til maks 3600 s (migrasjon 017), og det finnes
       ingen fornyelsesvei — en kontroll som bruker 90 min ville møtt et

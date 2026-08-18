@@ -336,14 +336,47 @@ class Kommandomotor:
     rapport.
 
     Fristen er `STANDARD_TIDSAVBRUDD_S`, ikke claimets 3600 s-tak: se der
-    for hvorfor de siste fem minuttene tilhører opplastingen."""
+    for hvorfor de siste fem minuttene tilhører opplastingen — og
+    `kjor(frist_s=...)` for hvorfor det taket ikke er det samme som
+    fristen DETTE oppdraget faktisk har."""
 
     def __init__(self, kommando: list[str],
                  tidsavbrudd_s: int = STANDARD_TIDSAVBRUDD_S):
         self.kommando = list(kommando)
         self.tidsavbrudd_s = tidsavbrudd_s
 
-    def kjor(self, payload: dict) -> Motorresultat:
+    def kjor(self, payload: dict, *, frist_s: int | None = None
+             ) -> Motorresultat:
+        # OPPDRAGETS FRIST KLEMMER TAKET (Codex P1). `tidsavbrudd_s` er
+        # et TAK for den lengste kontrollen typen kan bestille (60 min
+        # minus avslutningen). Sto det alene, fikk en `enkeltside`-
+        # kontroll med 30 minutters annonsert frist likevel 55 minutter å
+        # bruke, og motoren ble drept lenge etter at oppdraget hadde
+        # oversittet fristen sin — altså en kjøring som verken kunne
+        # kvitteres som utført eller ble stoppet i tide.
+        #
+        # `frist_s` er sekundene som FAKTISK er igjen av claimet, minus
+        # avslutningen; controlleren regner den ut av claimets frister
+        # (`controller._skannefrist`). Den kan bare gjøre vinduet
+        # KORTERE: taket her er motorens egen grense, og et claim med en
+        # romsligere frist skal ikke kunne skru den opp.
+        if frist_s is not None:
+            self._sjekk_frist(frist_s)
+        tidsavbrudd = (self.tidsavbrudd_s if frist_s is None
+                       else min(self.tidsavbrudd_s, frist_s))
+        return self._kjor(payload, tidsavbrudd)
+
+    @staticmethod
+    def _sjekk_frist(frist_s) -> None:
+        """En frist vi ikke kan lese, eller som alt er ute, er ingen
+        frist å kjøre på — og en motor som startes uten et lesbart vindu
+        er nettopp den kjøringen ingen kan stoppe i tide."""
+        if isinstance(frist_s, bool) or not isinstance(frist_s, int):
+            raise Motorfeil("motorfristen er ikke et heltall")
+        if frist_s <= 0:
+            raise Motorfeil("oppdragets frist er ute før motoren startes")
+
+    def _kjor(self, payload: dict, tidsavbrudd_s: int) -> Motorresultat:
         # BUNDET fangst (Codex P1): `subprocess.run(capture_output=True)`
         # bufret stdout og stderr uten tak i opptil en time. Her leses
         # stdout mot MAKS_STDOUT, stderr dreneres mot MAKS_STDERR, og en
@@ -373,7 +406,7 @@ class Kommandomotor:
             drept.set()
             _drep_treet(p, gruppe)
 
-        vakt = threading.Timer(self.tidsavbrudd_s, _tidsavbrudd)
+        vakt = threading.Timer(tidsavbrudd_s, _tidsavbrudd)
         vakt.daemon = True
         vakt.start()
         stderr_ut: list[bytes] = []

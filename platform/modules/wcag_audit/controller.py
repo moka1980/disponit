@@ -11,11 +11,13 @@ Feilhåndteringens utfall:
   * Ingen oppdrag (204) → stille retur.
   * UUTFØRBART claim → kvittering `avbrutt` FØR motoren startes. Både
     en bestilling utenfor typens verdikontrakt (`oppdrag_ugyldig`, Codex
-    P1) og en claim uten opplastingskapabilitet
-    (`ingen_opplastingskapabilitet`, Codex P2) er kjent uutførbare av
-    claimet alene. `ekstern_lesing` er observerbar trafikk mot noen
-    andres nettsted, og den forespørselen er selve skaden når rapporten
-    aldri kunne blitt gyldig eller aldri kunne blitt levert.
+    P1), en claim uten opplastingskapabilitet
+    (`ingen_opplastingskapabilitet`, Codex P2) og et claim uten et
+    lesbart tidsvindu igjen (`frist_utilstrekkelig`, Codex P1) er kjent
+    uutførbare av claimet alene. `ekstern_lesing` er observerbar trafikk
+    mot noen andres nettsted, og den forespørselen er selve skaden når
+    rapporten aldri kunne blitt gyldig, aldri kunne blitt levert eller
+    aldri kunne blitt avsluttet i tide.
   * Motorfeil / skjemabrudd i egen rapport → kvittering `avbrutt` UTEN
     artefakt: et delvis artefakt finnes ikke (§10 siste rad), men
     plattformen skal få vite at oppdraget er FERDIG mislykket — taushet
@@ -59,10 +61,12 @@ eller ikke.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import jsonschema
 
 from . import OPPDRAGSTYPE, rapportskjema
-from .motor import Motorfeil
+from .motor import AVSLUTNINGSMARGIN_S, Motorfeil
 from .rapport import bygg
 
 
@@ -152,6 +156,58 @@ def _kontraktsbrudd(payload: dict) -> list[str]:
     from oppdragskontrakt import bryter_feltkontrakten, mangler_paakrevde
     return sorted({*mangler_paakrevde(OPPDRAGSTYPE, payload),
                    *bryter_feltkontrakten(OPPDRAGSTYPE, payload)})
+
+
+def _skannefrist(claim: dict) -> int | None:
+    """Sekundene motoren FAKTISK har på seg — eller None når claimet ikke
+    bærer et lesbart vindu (Codex P1).
+
+    Motorens `tidsavbrudd_s` er et TAK for den lengste kontrollen typen
+    kan bestille. Det er ikke det samme som fristen DETTE oppdraget har:
+    en `enkeltside`-kontroll med 30 minutters annonsert frist fikk 55
+    minutter å bruke, og motoren ble drept lenge etter at oppdraget hadde
+    oversittet fristen sin. Kjøringen kunne da hverken kvitteres som
+    utført eller stoppes i tide — den bare fortsatte å lese kundens
+    nettsted forbi vinduet noen hadde autorisert.
+
+    Vinduet er den TIDLIGSTE av grensene claimet selv navngir:
+
+      * `utforelsesfrist` — etter den kan ikke kvitteringen lenger
+        avslutte oppdraget (endepunktet svarer 202
+        `lagret_uten_statusendring`),
+      * `opplasting.utloper` — etter den kan rapporten ikke lastes opp,
+      * `kvittering_utloper` — etter den kan kvitteringen ikke sendes.
+
+    Alle tre er absolutte og uten fornyelsesvei, så den første som
+    inntreffer er den som gjelder. `AVSLUTNINGSMARGIN_S` trekkes fra:
+    kanonisering, opplasting og signert kvittering er det som gjør et
+    fullført arbeid til et AVSLUTTET oppdrag, og en motor som får bruke
+    helt frem til grensen leverer ingenting.
+
+    -> None når `utforelsesfrist` mangler eller ikke lar seg lese. Da har
+    modulen intet vindu å kjøre innenfor, og `kjor_en` avviser claimet
+    før motoren startes i stedet for å falle tilbake på taket: en frist
+    vi ikke kan lese er ikke en frist som er romslig.
+    """
+    if claim.get("utforelsesfrist") is None:
+        return None
+    grenser = []
+    for raa in (claim.get("utforelsesfrist"), claim.get("kvittering_utloper"),
+                (claim.get("opplasting") or {}).get("utloper")):
+        if raa is None:
+            continue
+        try:
+            t = datetime.fromisoformat(str(raa))
+        except ValueError:
+            return None
+        # En frist uten tidssone kan ikke sammenlignes med «nå» uten å
+        # gjette hvilken sone den var ment i, og et gjett her er timer
+        # feil vei. Plattformen sender alltid UTC-offset.
+        if t.tzinfo is None:
+            return None
+        grenser.append(t)
+    igjen = (min(grenser) - datetime.now(timezone.utc)).total_seconds()
+    return int(igjen) - AVSLUTNINGSMARGIN_S
 
 
 def _kvittert(rk) -> bool:
@@ -270,8 +326,20 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
                       "feilkode": "ingen_opplastingskapabilitet"})
         return _feilutfall(rk, "ingen_kapabilitet")
 
+    frist_s = _skannefrist(claim)
+    if frist_s is None or frist_s <= 0:
+        # FRISTEN ER EN DEL AV BESTILLINGEN (Codex P1). Er vinduet
+        # uleselig eller alt oppbrukt, kan denne kjøringen aldri bli et
+        # avsluttet oppdrag — og da skal den ikke koste kundens nettsted
+        # en eneste forespørsel, av samme grunn som `_kontraktsbrudd` og
+        # kapabilitetssjekken over. Motoren får resten som `frist_s`, så
+        # den blir stoppet av OPPDRAGETS frist og ikke av sitt eget tak.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "frist_utilstrekkelig"})
+        return _feilutfall(rk, "frist_utilstrekkelig", frist_s=frist_s)
+
     try:
-        resultat = motor.kjor(payload)
+        resultat = motor.kjor(payload, frist_s=frist_s)
         rapport = bygg(resultat, payload=payload, kontekst=kontekst)
         # Egen validering FØR innsending: serveren validerer uansett (mot
         # samme innholdsadresserte skjema), men modulen skal aldri sende
