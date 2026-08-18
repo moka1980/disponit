@@ -8,7 +8,20 @@
 # et løfte om at regelverket kan bytte seg selv. Digesten oppdateres
 # BEVISST, i egen commit, aldri av en byggejobb. (Se oppdater-kommandoen i
 # bygg.sh.)
-FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+#
+# PINNEN HAR INGEN DEFAULT (Codex P2). Kommentaren over sto her mens
+# FROM-linja brukte den MUTABLE taggen `v1.49.1-noble` — altså en påstand
+# om pinning som fila selv motsa. Da registryet retargeter taggen, gir en
+# ny bygging av samme `wcag-r1` andre browser- og systembiter, mens
+# release-registreringen er immutabel og forutsetter reproduserbar
+# artefaktidentitet: to ulike motorer under ett og samme
+# `container_image_digest`.
+#
+# ARG-en er derfor UTEN standardverdi. Uten `--build-arg` feiler bygget,
+# og det er poenget: et upinnet bygg skal ikke være mulig ved et uhell.
+# `bygg.sh` leser verdien fra `basis-digest.txt` og verifiserer formen.
+ARG PLAYWRIGHT_BASIS
+FROM ${PLAYWRIGHT_BASIS}
 
 # Axe-kilden bakes inn og sha256-verifiseres av kjor.py ved HVER kjøring
 # (AXE_SHA256-pinnen i koden) — containeren gjør ingen nettoppslag for

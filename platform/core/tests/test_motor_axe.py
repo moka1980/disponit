@@ -239,6 +239,35 @@ def test_fasiten_er_konsistent_med_seg_selv():
     assert "/kontakt.html" in s["_crawlrekkefolge"]
 
 
+def test_basisimaget_kan_ikke_bygges_upinnet():
+    """Kommentaren i Dockerfila sa «PINNET på digest» mens FROM brukte en
+    mutabel tagg (Codex P2). Pinnen skal være håndhevet, ikke påstått:
+    ARG-en har ingen standardverdi, så et bygg uten den feiler."""
+    import re
+    d = (MOTOR / "Dockerfile").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in d.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+    assert "ARG PLAYWRIGHT_BASIS" in linjer, \
+        "ARG-en må stå uten standardverdi (ingen `=`)"
+    froms = [ln for ln in linjer if ln.upper().startswith("FROM ")]
+    assert froms == ["FROM ${PLAYWRIGHT_BASIS}"], froms
+    # Ingen mutabel tagg-referanse igjen noe sted i byggetrinnene.
+    assert not any(re.search(r"mcr\.microsoft\.com/\S+:", ln)
+                   for ln in linjer), linjer
+
+    # Pinnefila finnes, og bygg.sh leser NØYAKTIG den — ellers kan de to
+    # drive fra hverandre og bygget bli pinnet til noe annet enn det
+    # repoet oppgir.
+    pinne = MOTOR / "basis-digest.txt"
+    assert pinne.exists()
+    bygg = (MOTOR / "bygg.sh").read_text(encoding="utf-8")
+    assert "basis-digest.txt" in bygg
+    assert "--build-arg PLAYWRIGHT_BASIS=" in bygg
+    verdi = "".join(ln.split("#", 1)[0].strip()
+                    for ln in pinne.read_text(encoding="utf-8").splitlines())
+    assert "@sha256:" in verdi, "pinnefila må navngi en digest, ikke en tagg"
+
+
 # ---------------------------------------------------------------------------
 # Kontraktsdokumentene (kontrakt/): proveniens som ikke får drive fra koden
 # ---------------------------------------------------------------------------

@@ -1,0 +1,17 @@
+# Basisimaget for browser-containeren, PINNET på digest.
+#
+# Én linje: <image>@sha256:<64 hex>. `bygg.sh` leser den, verifiserer
+# formen og sender den som --build-arg PLAYWRIGHT_BASIS. Dockerfilens
+# ARG har ingen standardverdi, så et bygg uten denne fila feiler — et
+# upinnet bygg skal ikke kunne skje ved et uhell.
+#
+# Verdien oppdateres BEVISST, i egen commit, aldri av en byggejobb.
+# Hent og verifiser den slik (og les taggen ETTER pull, ikke før — det er
+# nettopp taggens bevegelighet vi pinner oss bort fra):
+#
+#   docker pull mcr.microsoft.com/playwright/python:v1.49.1-noble
+#   docker inspect --format='{{index .RepoDigests 0}}' \
+#       mcr.microsoft.com/playwright/python:v1.49.1-noble
+#
+# Linjer som begynner med # er kommentarer.
+mcr.microsoft.com/playwright/python@sha256:UFYLT_DIGEST_MANGLER
