@@ -345,6 +345,7 @@ CREATE OR REPLACE FUNCTION sikre_sak_for_oppdrag(
 RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE o RECORD; v_id BIGINT; v_logg BIGINT; v_policy TEXT; v_policy_hash TEXT;
+        v_forsok INT := 0;
 BEGIN
     -- Tenantporten FØRST — før GUC-ene under settes og før noe leses.
     -- Dette er den API-kallbare formen, og uten porten var `p_tenant`
@@ -356,12 +357,11 @@ BEGIN
     -- nøyaktig hvilken kontekstvariant den satte.
     PERFORM set_config('disponit.aktor', p_aktor, true);
     PERFORM set_config('disponit.request_id', p_request_id, true);
-    SELECT u.id INTO v_id FROM public.unntak u
-     WHERE u.tenant = p_tenant AND u.oppdrag_id = p_oppdrag_id
-       AND u.arsak = p_arsak AND NOT u.terminal;
-    IF FOUND THEN
-        RETURN v_id;                              -- idempotent (port 25)
-    END IF;
+    -- OPPDRAGSRADEN LÅSES FØRST, også på gjenbruksveien. Låsrekkefølgen
+    -- er oppdrag → unntak overalt: reaperen (§5) holder alt `FOR UPDATE`
+    -- på oppdraget når den kaller hit, og kvitteringsveien likeså. Ble
+    -- unntaket låst først her, hadde to veier tatt de samme to låsene i
+    -- hver sin rekkefølge — altså vranglås.
     SELECT * INTO o FROM public.oppdrag k
      WHERE k.tenant = p_tenant AND k.id = p_oppdrag_id FOR UPDATE;
     IF NOT FOUND THEN
@@ -376,38 +376,63 @@ BEGIN
     SELECT r.policy_id, r.policy_content_hash INTO v_policy, v_policy_hash
       FROM public.revisjonslogg r
      WHERE r.tenant = p_tenant AND r.id = v_logg;
-    BEGIN
-        INSERT INTO public.unntak (tenant, loggpost_id, handling, kategori,
-            sakstype, prioritet, payload_kryptert, key_id, nonce,
-            maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,
-            oppdrag_id, arsak)
-        VALUES (p_tenant, v_logg, o.handling, 'teknisk_feil',
-                CASE p_arsak WHEN 'sikkerhet' THEN 'sikkerhet'
-                             ELSE 'normal' END,
-                CASE p_arsak WHEN 'sikkerhet' THEN 'hoy' ELSE 'normal' END,
-                o.payload_kryptert, o.key_id, o.nonce,
-                0, coalesce(v_policy, 'ukjent'),
-                coalesce(v_policy_hash, ''),
-                p_oppdrag_id, p_arsak)
-        RETURNING id INTO v_id;
-    EXCEPTION WHEN unique_violation THEN
-        -- Kappløpstaperen: vinnerens ikke-terminale sak er svaret, og den
-        -- er FERDIG — vinneren har alt skrevet koblingshendelsen sin.
-        --
-        -- Codex P2: retur HERFRA, ikke gjennom innsettingsveien under.
-        -- Sakskoblingen er én HENDELSE, ikke en tilstand: raden er
-        -- idempotent fordi indeksen gjør den det, men historikken er
-        -- append-only og teller. Falt taperen ut i den felles halen,
-        -- fikk ETT oppdrag TO `sak_for_oppdrag`-rader for den samme
-        -- koblingen — og det skjer i praksis, med samtidige sene
-        -- kvitteringer eller sikkerhetskonflikter fra hver sin
-        -- claim-generasjon. Å telle hendelser i sporet er nettopp det
-        -- sporet er til for.
+    -- «TERMINAL GJENBRUKES ALDRI» ER EN LÅS, IKKE ET BLIKK (Codex P2).
+    --
+    -- Uten `FOR UPDATE` leste gjenbruksveien saken i sitt eget snapshot:
+    -- en saksbehandler som akkurat da satte `løst`/`avvist` uten å ha
+    -- committet var usynlig, og hendelsen ble hengt på en sak som et
+    -- øyeblikk senere var endelig — stikk i strid med regelen indeksen
+    -- håndhever for INNSETTING. Med låsen venter vi på den transaksjonen,
+    -- og READ COMMITTED revaluerer `NOT terminal` mot den nye versjonen:
+    -- ble saken terminal, er raden ikke lenger et treff, og vi faller
+    -- gjennom til å opprette en ny åpen sak. Det er nettopp utfallet
+    -- regelen ber om.
+    --
+    -- Løkken er kappløpets andre halvdel: taper vi unik-bruddet, finnes
+    -- vinnerens rad, og neste runde LÅSER den og leser den (eller ser at
+    -- den alt er terminal og prøver innsettingen på nytt). Et tak på
+    -- forsøkene, så et patologisk ping-pong mellom opprettelse og løsning
+    -- blir en feil vi ser og ikke en evig løkke.
+    LOOP
+        v_forsok := v_forsok + 1;
         SELECT u.id INTO v_id FROM public.unntak u
          WHERE u.tenant = p_tenant AND u.oppdrag_id = p_oppdrag_id
-           AND u.arsak = p_arsak AND NOT u.terminal;
-        RETURN v_id;
-    END;
+           AND u.arsak = p_arsak AND NOT u.terminal
+           FOR UPDATE;
+        IF FOUND THEN
+            RETURN v_id;                          -- idempotent (port 25)
+        END IF;
+        BEGIN
+            INSERT INTO public.unntak (tenant, loggpost_id, handling, kategori,
+                sakstype, prioritet, payload_kryptert, key_id, nonce,
+                maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,
+                oppdrag_id, arsak)
+            VALUES (p_tenant, v_logg, o.handling, 'teknisk_feil',
+                    CASE p_arsak WHEN 'sikkerhet' THEN 'sikkerhet'
+                                 ELSE 'normal' END,
+                    CASE p_arsak WHEN 'sikkerhet' THEN 'hoy' ELSE 'normal' END,
+                    o.payload_kryptert, o.key_id, o.nonce,
+                    0, coalesce(v_policy, 'ukjent'),
+                    coalesce(v_policy_hash, ''),
+                    p_oppdrag_id, p_arsak)
+            RETURNING id INTO v_id;
+            EXIT;                                 -- innsettingsveien
+        EXCEPTION WHEN unique_violation THEN
+            -- Kappløpstaperen. Retur skjer i NESTE runde, gjennom
+            -- gjenbruksveien over — ikke gjennom innsettingsveiens hale.
+            -- Sakskoblingen er én HENDELSE, ikke en tilstand: raden er
+            -- idempotent fordi indeksen gjør den det, men historikken er
+            -- append-only og teller. Falt taperen ut i den felles halen,
+            -- fikk ETT oppdrag TO `sak_for_oppdrag`-rader for den samme
+            -- koblingen — og det skjer i praksis, med samtidige sene
+            -- kvitteringer eller sikkerhetskonflikter fra hver sin
+            -- claim-generasjon. Å telle hendelser i sporet er nettopp det
+            -- sporet er til for.
+            IF v_forsok >= 5 THEN
+                RAISE;
+            END IF;
+        END;
+    END LOOP;
     -- Kun på INNSETTINGSVEIEN: koblingen skjedde nettopp, her.
     INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
                                          aktor, request_id, detalj)

@@ -244,6 +244,80 @@ def test_to_samtidige_sikre_sak_gir_noyaktig_en(migrator):
 
 
 @pg
+def test_apen_sak_laases_for_den_gjenbrukes(migrator):
+    """Codex P2: port 26 gjelder også mot en løsning som pågår NÅ.
+
+    Gjenbruksveien leste saken uten lås, altså i sitt eget snapshot. En
+    saksbehandler som akkurat da satte `løst` uten å ha committet var
+    usynlig, og hendelsen ble hengt på en sak som et øyeblikk senere var
+    endelig — «terminal gjenbrukes aldri» holdt bare mot det som alt var
+    ferdig. Her løses saken i en åpen transaksjon MENS kallet står på
+    døra: kallet skal vente, se `løst`, og føde en NY åpen sak.
+
+    Kontroll: fjern `FOR UPDATE` fra gjenbrukselecten, så returnerer
+    kallet den terminale saken og testen blir rød.
+    """
+    import threading
+    import time
+    from db.pg import koble
+
+    rt0 = _rt()
+    try:
+        oid, _ = _beslutningsoppdrag(rt0, migrator)
+        _sett_kontekst(rt0, TENANT)
+        s1 = rt0.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
+                         "'reaper','r1')", (TENANT, oid)).fetchone()[0]
+        rt0.commit()
+    finally:
+        rt0.close()
+
+    # Løseren holder raden — statusmaskinens lovlige vei, ucommittet.
+    loser = koble(MIGRATOR_DSN)
+    _sett_kontekst(loser, TENANT)
+    loser.execute("UPDATE unntak SET status='under_behandling' WHERE id=%s",
+                  (s1,))
+    loser.execute("UPDATE unntak SET status='løst' WHERE id=%s", (s1,))
+
+    svar = []
+    feil = []
+
+    def gjenbruk():
+        rt = _rt()
+        try:
+            _sett_kontekst(rt, TENANT)
+            svar.append(rt.execute(
+                "SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
+                "'reaper','r2')", (TENANT, oid)).fetchone()[0])
+            rt.commit()
+        except Exception as e:                      # pragma: no cover
+            feil.append(e)
+        finally:
+            rt.close()
+
+    t = threading.Thread(target=gjenbruk)
+    t.start()
+    try:
+        # Kallet skal STÅ og vente på låsen, ikke svare fra sitt snapshot.
+        time.sleep(1.0)
+        assert not svar, ("gjenbruksveien svarte mens saken var under "
+                          "løsning — den leste uten lås")
+        loser.commit()
+    finally:
+        loser.close()
+        t.join(timeout=20)
+
+    assert not feil, feil
+    assert svar, "kallet svarte aldri"
+    assert svar[0] != s1, "en sak som ble terminal mens vi ventet, ble gjenbrukt"
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute("SELECT status FROM unntak WHERE id=%s",
+                            (svar[0],)).fetchone() == ("ny",)
+    assert migrator.execute("SELECT status FROM unntak WHERE id=%s",
+                            (s1,)).fetchone() == ("løst",)
+    migrator.rollback()
+
+
+@pg
 def test_oppdragsbindingen_er_uforanderlig(migrator):
     """Codex P2: `oppdrag_id` og `arsak` kan ikke skrives om etter
     opprettelsen.
