@@ -317,16 +317,46 @@ def fase2(m, migrator_dsn, digest):
     m.commit()
     # SLUTTILSTANDEN er kravet, ikke kallene: aktiv modul + claiming-
     # deployment i staging — nøyaktig det claim-porten (037/#84) krever.
-    rad = m.execute(
-        "SELECT h.status, EXISTS(SELECT 1 FROM moduldeployment d WHERE"
-        " d.modul_id=h.modul_id AND d.miljo='staging' AND"
-        " d.livslop='claiming') FROM modulhode h WHERE h.modul_id=%s",
-        (MODUL,)).fetchone()
+    #
+    # ... OG DEN MÅ VÆRE DENNE RELEASEN (Codex P1). Sjekken spurte bare om
+    # status var `aktiv` og om det fantes EN claiming-deployment. Feilet
+    # `bytt_release` mens modulen alt sto aktiv med en ELDRE claiming
+    # deployment, svelget den brede `psycopg.Error`-grenen over feilen som
+    # et idempotent hopp, og denne porten passerte likevel. Runden kunne
+    # dermed føre `fase2_ok` og måle hele akseptløpet mot en release den
+    # aldri aktiverte — med `artifact_digest` fra et annet motorimage enn
+    # det kvitteringene attesterer.
+    #
+    # Identiteten som kreves er hele kjeden claim-porten selv slår opp:
+    # release, kontraktversjon, kontrakt_hash — og releasens
+    # `artifact_digest`, som skal være NØYAKTIG imaget fase 1 fant.
+    #
+    # Andre claiming-deployments felles ikke: `en_claiming_per_kontrakt`
+    # tillater bare én per kontrakt_hash, og en deployment med en ANNEN
+    # hash kan uansett ikke claime denne oppdragstypen. De føres som
+    # evidens, ikke som en rød måling.
+    status = m.execute("SELECT status FROM modulhode WHERE modul_id=%s",
+                       (MODUL,)).fetchone()
+    claiming = m.execute(
+        "SELECT d.release_id, d.kontraktversjon, d.kontrakt_hash,"
+        "       r.artifact_digest"
+        "  FROM moduldeployment d"
+        "  JOIN modulrelease r ON r.modul_id = d.modul_id"
+        "   AND r.release_id = d.release_id"
+        "   AND r.kontraktversjon = d.kontraktversjon"
+        "   AND r.kontrakt_hash = d.kontrakt_hash"
+        " WHERE d.modul_id=%s AND d.miljo='staging' AND d.livslop='claiming'"
+        " ORDER BY d.release_id", (MODUL,)).fetchall()
     m.rollback()
-    if not rad or rad[0] != "aktiv" or not rad[1]:
-        raise SystemExit(f"modulkjeden er ikke claimbar: {rad}")
+    ventet = (RELEASE, 1, kh, art)
+    rader = [tuple(r) for r in claiming]
+    if status != ("aktiv",) or ventet not in rader:
+        raise SystemExit(
+            f"modulkjeden er ikke claimbar som {RELEASE}: status={status},"
+            f" claiming={rader} (ventet {ventet})")
     evidens("fase2_ok", release=RELEASE, kontrakt_hash=kh,
-            payload_hash=ph, kvittering_hash=kvh)
+            payload_hash=ph, kvittering_hash=kvh, artifact_digest=art,
+            claiming=[list(r) for r in rader])
 
 
 # ---------------------------------------------------------------------------
