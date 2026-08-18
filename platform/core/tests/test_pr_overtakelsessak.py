@@ -504,6 +504,56 @@ def test_port19_avvisning_navngir_constraint(migrator):
     migrator.rollback()
 
 
+@pg
+def test_kundeeid_overtakelsessak_avvises(migrator):
+    """Codex P2: EIERSKAPET er del av saksformen, ikke bare en konvensjon.
+
+    Runtime- og arbeiderrollene beholder direkte INSERT på `unntak`. Uten
+    `tenant='__plattform_domener'` i radkontrakten kunne en feilende eller
+    kompromittert skriver plante en KUNDE-eid `domeneovertakelse`-rad —
+    synlig for adjudikatorpolicyen (§9 gjerdet bare på sakskilden), og
+    verre: okkupant på den unike åpen-sak-indeksen, slik at den ekte,
+    atomiske overtakelsen feilet i det `sikre_overtakelsessak()` skulle
+    lage plattformsaken. En sak ingen kunne avgjøre, plantet utenfra.
+
+    Raden er ellers FULLVERDIG (ekte hendelser, speilende payload) — det
+    ENESTE avviket er tenanten, og den skal alene felle innsettingen.
+    """
+    import json
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+    _sett_kontekst(migrator, PLATT)
+    h_a, h_b = migrator.execute(
+        "SELECT hendelse_a, hendelse_b FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak)).fetchone()
+    migrator.rollback()
+
+    p = _payload(h, gen=gen, a=h_a, b=h_b)
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    lid = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,payload_type,referansepayload)"
+        " VALUES (%s,'h','p','UNNTAK','[]'::jsonb,'referanse',%s::jsonb)"
+        " RETURNING id", (ANNEN_TENANT, json.dumps(p))).fetchone()[0]
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            " sakstype,prioritet,sakskilde,hostname_ref,utfordrer_tenant,"
+            " tapt_tenant,autorisasjonsgenerasjon,saksrevisjon,hendelse_a,"
+            " hendelse_b,payload_type,referansepayload)"
+            " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+            " 'sikkerhet','hoy','domeneovertakelse',%s,%s,%s,%s,0,%s,%s,"
+            " 'referanse',%s::jsonb)",
+            (ANNEN_TENANT, lid, h, ANNEN_TENANT, TENANT, gen, h_a, h_b,
+             json.dumps(p)))
+    assert "unntak_sakskilde_komplett" in str(ei.value), str(ei.value)
+    migrator.rollback()
+
+    # Den ekte plattformsaken står urørt — og er fortsatt DEN saken §7
+    # regner som gjeldende.
+    assert _sak_for(migrator, h) == sak
+
+
 # ---------------------------------------------------------------------------
 # Lineage (21–25) og totalitet (26–28)
 # ---------------------------------------------------------------------------

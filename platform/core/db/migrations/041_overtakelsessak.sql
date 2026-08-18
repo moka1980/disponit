@@ -107,6 +107,18 @@ DO $$ BEGIN
          AND autorisasjonsgenerasjon IS NULL
          AND hendelse_a IS NULL AND hendelse_b IS NULL)
       OR (sakskilde = 'domeneovertakelse'
+         -- EIERSKAPET ER DEL AV FORMEN (Codex P2). Runtime- og
+         -- arbeiderrollene beholder direkte INSERT på `unntak`, så uten
+         -- dette leddet kunne en feilende (eller kompromittert) skriver
+         -- lage en KUNDE-eid `domeneovertakelse`-rad. Den ville vært
+         -- fullverdig: synlig for adjudikatorpolicyen (§9 gjerder på
+         -- sakskilde), og — verre — den ville OKKUPERT den unike
+         -- åpen-sak-indeksen under, slik at den ekte, atomiske
+         -- overtakelsen feilet i det `sikre_overtakelsessak()` skulle
+         -- lage den virkelige plattformsaken. En sak ingen kan avgjøre,
+         -- plantet fra utsiden. §8 reserverer navnerommet mot
+         -- KUNDEflater; dette reserverer selve saksformen for det.
+         AND tenant = '__plattform_domener'
          AND oppdrag_id IS NULL AND arsak IS NULL
          AND hostname_ref            IS NOT NULL
          AND utfordrer_tenant        IS NOT NULL
@@ -116,6 +128,9 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Indeksen trenger ikke gjenta eierskapet: CHECKen over gjør
+-- `sakskilde = 'domeneovertakelse'` til en påstand om plattformtenanten,
+-- så predikatet her dekker nøyaktig plattformens åpne saker.
 CREATE UNIQUE INDEX IF NOT EXISTS en_apen_overtakelsessak_per_hostname
   ON unntak (hostname_ref)
   WHERE sakskilde = 'domeneovertakelse' AND NOT terminal;
@@ -368,7 +383,14 @@ SET search_path = pg_catalog AS $$
 BEGIN
   IF NEW.status = 'avklaring_kreves' AND NOT EXISTS (
        SELECT 1 FROM public.unntak
-        WHERE hostname_ref = NEW.hostname
+        -- Eierskapet gjentas her, ikke bare i radkontrakten (Codex P2):
+        -- vakten skal si «det finnes en PLATTFORMSAK», ikke «det finnes
+        -- en rad som ser ut som en». De to leddene er hver sin halvdel av
+        -- samme gjerde — CHECKen hindrer at raden kan lages, denne
+        -- hindrer at en slik rad ville TELT om den likevel fantes
+        -- (eldre rad, fremtidig lempet CHECK).
+        WHERE tenant = '__plattform_domener'
+          AND hostname_ref = NEW.hostname
           AND sakskilde = 'domeneovertakelse' AND NOT terminal
           AND utfordrer_tenant = NEW.tenant
           AND autorisasjonsgenerasjon = NEW.autorisasjonsgenerasjon)
@@ -422,9 +444,14 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policy
                     WHERE polname = 'domeneovertakelse_adjudikator'
                       AND polrelid = 'unntak'::regclass) THEN
+      -- Eierskapet står i policyen OG i radkontrakten (§2, Codex P2):
+      -- adjudikatorens snitt skal være plattformens saker, ikke «alt som
+      -- bærer den sakskilden». Ett gjerde som hviler på et annet gjerde
+      -- er ett gjerde.
       CREATE POLICY domeneovertakelse_adjudikator ON unntak
         FOR SELECT USING (
-          sakskilde = 'domeneovertakelse'
+          tenant = '__plattform_domener'
+          AND sakskilde = 'domeneovertakelse'
           AND CURRENT_USER = 'disponit_domains_adjudicator');
     END IF;
     GRANT SELECT ON unntak TO disponit_domains_adjudicator;
@@ -1312,7 +1339,8 @@ BEGIN
          WHERE d.status = 'avklaring_kreves'
            AND NOT EXISTS (
                  SELECT 1 FROM public.unntak u
-                  WHERE u.hostname_ref = d.hostname
+                  WHERE u.tenant = '__plattform_domener'
+                    AND u.hostname_ref = d.hostname
                     AND u.sakskilde = 'domeneovertakelse'
                     AND NOT u.terminal
                     AND u.utfordrer_tenant = d.tenant
@@ -1377,7 +1405,8 @@ BEGIN
                     AND hh.hendelse = 'overtakelsessak_migrert')
     LOOP
         SELECT n.id INTO v_sak FROM public.unntak n
-         WHERE n.hostname_ref = g.hostname
+         WHERE n.tenant = '__plattform_domener'
+           AND n.hostname_ref = g.hostname
            AND n.sakskilde = 'domeneovertakelse' AND NOT n.terminal
            AND n.utfordrer_tenant = g.tenant;
         INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
