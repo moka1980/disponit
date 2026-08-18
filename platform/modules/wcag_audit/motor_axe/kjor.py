@@ -96,6 +96,26 @@ LESEMETODER = frozenset({"GET", "HEAD"})
 MAKS_EKSEMPLER = 10
 MAKS_SELEKTOR = 200
 
+#: AXES `target` ER EN STI, IKKE EN SELEKTORLISTE (Codex P2, runde 6).
+#: Feltet er en liste med ETT ledd per tre elementet ligger i: en side med
+#: `<iframe id="a">` gir `["#a", "button"]` — «finn `#a`, gå INN i den, og
+#: der er `button`». Et element i en shadow root gir et NØSTET ledd,
+#: `[["#vert", "button"]]`.
+#:
+#: Ledda ble skjøtet med `", "`. Resultatet var en syntaktisk gyldig
+#: CSS-selektorliste som betyr noe helt annet — «#a ELLER button», begge
+#: lest i toppdokumentet — og et nøstet ledd ble til Pythons egen
+#: listerepresentasjon (`['#vert', 'button']`), som ikke er en selektor i
+#: det hele tatt. Eksempelet i den promoterte rapporten pekte da på andre
+#: elementer enn funnet, eller på ingen.
+#:
+#: Skillene sier derfor hvilken GRENSE som krysses, og ingen av dem kan
+#: forveksles med CSS: `>>` finnes ikke i en selektor (`>` er barn, men
+#: aldri to på rad), og `>>>` er den utgåtte shadow-piercing-kombinatoren
+#: — samme betydning som her.
+RAMMESKILLE = " >> "
+SKYGGESKILLE = " >>> "
+
 #: NETTLESERKONTEKSTEN SLIK DEN ATTESTERES (Codex P2). Serverkonteksten
 #: fører hver kjøring som `locale: nb`, `viewport: 1280x800` og
 #: `timezone: Europe/Oslo`, og de to første ble satt på kontekstobjektet
@@ -644,6 +664,22 @@ def _normaliser_lenke(base_origin: str, side_url: str, href: str
             + (f"?{p.query}" if p.query else ""))
 
 
+def _selektorsti(mal, dybde: int = 0) -> str:
+    """Axes `target` som én lesbar STI — se `RAMMESKILLE`/`SKYGGESKILLE`.
+
+    Ytterste nivå krysser RAMMER, hvert nøstet nivå en shadow root. Sier
+    axe noe vi ikke kan lese (et ledd som verken er streng eller liste),
+    er et ærlig avbrutt oppdrag riktig utfall: kilden er pinnet på
+    sha256, så formen kan ikke endre seg under oss uten at pinnen endres
+    — samme grunn som for `ALVORLIGHET`."""
+    if isinstance(mal, str):
+        return mal
+    if isinstance(mal, list):
+        skille = RAMMESKILLE if dybde == 0 else SKYGGESKILLE
+        return skille.join(_selektorsti(d, dybde + 1) for d in mal)
+    raise SystemExit(f"axe ga en target vi ikke kan lese: {mal!r}")
+
+
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     mal_url = payload["mal_url"]
@@ -999,7 +1035,11 @@ def main() -> int:
                     # første `MAKS_EKSEMPLER`. Differansen mellom de to er
                     # avkortingssignalet nederst — se `avkortet`.
                     if len(f["eksempler"]) < MAKS_EKSEMPLER:
-                        sel = ", ".join(str(t) for t in node.get("target", []))
+                        # STIEN BEHOLDER SIN STRUKTUR (Codex P2, runde 6):
+                        # `", "` gjorde en traversering om til en
+                        # selektorliste, og et nøstet ledd til en
+                        # Python-repr. Se `_selektorsti`.
+                        sel = _selektorsti(node.get("target", []))
                         # Samme kutt byggeren gjør på nytt, med samme tall:
                         # selektorlengden er kontraktens grense, ikke en
                         # kapping motoren finner på bak byggerens rygg.

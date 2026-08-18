@@ -770,6 +770,37 @@ def test_sidebudsjettet_gjelder_hver_dokumentlasting():
     assert "True, maks_sider" in avk
 
 
+def test_selektorstien_beholder_axes_struktur():
+    """Codex P2, runde 6: `target` er en STI, ikke en selektorliste.
+
+    Skjøtet med `", "` ble `["#a", "button"]` til den gyldige, men helt
+    andre CSS-lista `#a, button` (begge lest i toppdokumentet, ikke inne i
+    rammen), og et shadow-ledd til Pythons listerepr. Eksempelet i den
+    promoterte rapporten pekte da et annet sted enn funnet — eller ingen
+    steder."""
+    s = kjor._selektorsti
+    assert s(["button"]) == "button"
+    # Ramme: gå INN i `#a` og finn `button` DER.
+    assert s(["#a", "button"]) == "#a >> button"
+    # Shadow root: eget skille, så de to grensene ikke blandes.
+    assert s([["#vert", "button"]]) == "#vert >>> button"
+    assert s(["#a", ["#vert", "button"]]) == "#a >> #vert >>> button"
+    # Ingen av skillene kan forveksles med CSS: `>>` finnes ikke i en
+    # selektor, og `>>>` er shadow-piercing-kombinatoren.
+    assert ", " not in s(["#a", ["#vert", "button"]])
+    assert "['" not in s([["#vert", "button"]])
+    # Utdata vi ikke kan lese er en motorfeil, ikke en gjetning.
+    try:
+        s([5])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("en target vi ikke kan lese skal stoppe motoren")
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert '", ".join(str(t) for t in node' not in kilde
+    assert "sel = _selektorsti(node.get(\"target\", []))" in kilde
+
+
 def test_bare_lesende_metoder_slipper_ut_av_kontrollen():
     """Codex P1: egressvakten målte bare origin, og origin er ikke metode.
 
