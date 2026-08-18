@@ -813,15 +813,35 @@ def fase6(m, http, mtk, motorkmd, digest):
              "omfang": "nettsted", "maks_sider": 4}
     r = _bestill(http, cookie, csrf, kropp, _idem("f6-r5xx", kropp))
     r.raise_for_status()
-    res = _kontroller_kjor(mtk, motorkmd, digest)
-    rr = _rapport(http, lese_tok, r.json()["oppdrag_id"])
+    oid = r.json()["oppdrag_id"]
+    # ET GJENSPILL ER IKKE ET NYTT OPPDRAG — SAMME PORT SOM I FASE 5
+    # (Codex P1, runde 9). Med den stabile `_idem`-nøkkelen svarer
+    # `/v1/bestilling` `idempotent-replay` når fase 6 kjøres om igjen på
+    # samme runde-ID: beslutningen er tatt og oppdraget er alt utført.
+    # Det ubetingede `_kontroller_kjor` claimet likevel GLOBALT, fant en
+    # tom kø og ga `utfall: "tomt"` — så port20_robots_5xx ble rød, og
+    # fase 9 nøddeaktiverte modulen på grunnlag av en rapport som lå
+    # ferdig og gyldig. Var det derimot et ANNET oppdrag i køen, claimet
+    # den det, og porten målte en helt annen kjøring enn sin egen.
+    #
+    # Finnes rapporten, ER kjøringen gjort: da måles DEN. Finnes den ikke
+    # (beslutningen ble tatt, men utførelsen kom aldri i mål), er
+    # oppdraget fortsatt claimbart og motoren skal kjøre som før.
+    gjenspill = r.headers.get("idempotent-replay") == "1"
+    rr = _rapport(http, lese_tok, oid) if gjenspill else None
+    alt_utfort = rr is not None and rr.status_code == 200
+    if alt_utfort:
+        res = {"utfall": "utfort"}
+    else:
+        res = _kontroller_kjor(mtk, motorkmd, digest)
+        rr = _rapport(http, lese_tok, oid)
     sider = len(rr.json().get("rapport", {}).get("sider_kontrollert", []))
     # Kravet er BEGGE deler: kjøringen må ha fullført (en avbrutt motor
     # kontrollerer trivielt «bare én side»), og rapporten må dekke
     # nøyaktig den ene bestilte siden — ikke null, og ikke de fire
     # bestillingen ba om. `sider` er 0 om rapporten uteble.
-    evidens("port20_robots_5xx", utfall=res.get("utfall"),
-            sider_kontrollert=sider, krav=1,
+    evidens("port20_robots_5xx", utfall=res.get("utfall"), oppdrag=oid,
+            sider_kontrollert=sider, krav=1, gjenspill=alt_utfort,
             ok=res.get("utfall") == "utfort" and sider == 1)
     _start_testnett(robots_5xx=False)
 
