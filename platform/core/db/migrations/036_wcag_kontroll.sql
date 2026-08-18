@@ -652,9 +652,12 @@ GRANT SELECT ON artefaktskjema TO disponit_domene_eier;
 --    positive regelen holder for ALT som står i registeret, ikke bare
 --    det som kommer etter.
 -- ------------------------------------------------------------
-INSERT INTO artefaktskjema (skjema_hash, skjema)
+--    Bytene settes inn som BYTER (`kanonisk`), ikke som jsonb: hashen
+--    over er sha256 av nøyaktig denne strengen, og `skjema` utledes av
+--    den. En `::jsonb` her ville vært den samme driften vakten stopper.
+INSERT INTO artefaktskjema (skjema_hash, kanonisk)
     VALUES ('e30ef85662f0967117cf3d0dc2e28b9efd3da50b501429be79bd8e5cea5fc40e',
-            '{"additionalProperties":false,"properties":{"kjoring_id":{"minLength":8,"type":"string"},"resultat":{"enum":["ok","feil"],"type":"string"},"tidspunkt":{"format":"date-time","type":"string"}},"required":["kjoring_id","tidspunkt","resultat"],"type":"object"}'::jsonb)
+            '{"additionalProperties":false,"properties":{"kjoring_id":{"minLength":8,"type":"string"},"resultat":{"enum":["ok","feil"],"type":"string"},"tidspunkt":{"format":"date-time","type":"string"}},"required":["kjoring_id","tidspunkt","resultat"],"type":"object"}')
     ON CONFLICT (skjema_hash) DO NOTHING;
 
 -- ------------------------------------------------------------
