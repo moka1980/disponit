@@ -224,8 +224,21 @@ def fase1(m):
                          "--format", "{{.Id}}", "disponit-wcag-motor"],
                         capture_output=True, text=True)
     if ut.returncode != 0:
-        raise SystemExit("bygg motorimaget først: bash "
-                         f"{MOTOR_AXE}/bygg.sh")
+        # BASISPINNEN FØRST (Codex P1, runde 6). `bygg.sh` avviser med
+        # rette plassholderen i `basis-digest.txt`, så på et ferskt utsjekk
+        # er «bygg imaget» to steg og ikke ett — og det første er en verdi
+        # bare en pull fra registryet kan gi. Feilmeldingen sier begge, i
+        # rekkefølge, i stedet for å sende operatøren innom en byggefeil
+        # for å finne det ut.
+        pinne = (MOTOR_AXE / "basis-digest.txt").read_text(encoding="utf-8")
+        upinnet = not re.search(r"^[^#\s]+@sha256:[0-9a-f]{64}\s*$", pinne,
+                                re.MULTILINE)
+        raise SystemExit(
+            (f"basisimaget er ikke pinnet ({MOTOR_AXE}/basis-digest.txt"
+             " står med plassholderen). Hent verdien fra registryet og"
+             f" commit den for seg:\n  bash {MOTOR_AXE}/bygg.sh pin\n"
+             if upinnet else "")
+            + f"bygg motorimaget først: bash {MOTOR_AXE}/bygg.sh")
     digest = ut.stdout.strip()
     evidens("fase1_ok", image_id=digest)
 
