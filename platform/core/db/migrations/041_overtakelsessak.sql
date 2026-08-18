@@ -1,5 +1,5 @@
 -- ============================================================
--- 040 — OVERTAKELSESSAKENS KALLER (Arbeid B, klarsignal 2026-08-18)
+-- 041 — OVERTAKELSESSAKENS KALLER (Arbeid B, klarsignal 2026-08-18)
 --
 -- `verifiser_domenekontroll()` (016) har gjort B4-overtakelsen i basen og
 -- returnert `konflikt:<tapt-tenant>` — men sak-skaperen i Python fikk
@@ -32,6 +32,15 @@
 -- ------------------------------------------------------------
 ALTER TABLE unntak ADD COLUMN IF NOT EXISTS sakskilde TEXT;
 
+-- BACKFILLEN MÅ SE RADENE (målt, era-rebuild med seeds): `unntak` har
+-- FORCE RLS, så MIGRATORS egne UPDATE-er så null rader — og
+-- fullstendighetssjekken så det samme nullet og var fornøyd, helt til
+-- SET NOT NULL (DDL, ikke RLS-filtrert) veltet på radene ingen så.
+-- Vinduet kjøres derfor som claimer (m37_dispatcher-policyen er
+-- CURRENT_USER-basert og ser alt), med radtriggerne av — kolonnen er ny,
+-- ingen vakt har noe å si om den ennå.
+ALTER TABLE unntak DISABLE TRIGGER USER;
+SET LOCAL ROLE disponit_m37_claimer;
 UPDATE unntak SET sakskilde = 'oppdrag'
  WHERE sakskilde IS NULL AND oppdrag_id IS NOT NULL;
 UPDATE unntak SET sakskilde = 'policybrudd'
@@ -43,6 +52,8 @@ DO $$ BEGIN
       (SELECT count(*) FROM unntak WHERE sakskilde IS NULL);
   END IF;
 END $$;
+RESET ROLE;
+ALTER TABLE unntak ENABLE TRIGGER USER;
 
 ALTER TABLE unntak ALTER COLUMN sakskilde SET NOT NULL;
 DO $$ BEGIN
@@ -282,6 +293,15 @@ END $$;
 -- ------------------------------------------------------------
 -- SECURITY DEFINER av samme grunn som domenekontroll_krev_sak under:
 -- vakten leser loggposten uansett hvilken rolle som skrev saken.
+--
+-- CLAIMER-EID, IKKE MIGRATOR-EID (målt): revisjonslogg har FORCE RLS,
+-- så selv tabelleierens definer-lesing filtreres av policyene. En
+-- migrator-eid vakt så loggposten KUN når transaksjonens tenant-GUC
+-- tilfeldigvis sto på plattformtenanten (skapeveien setter den; lukke-
+-- veien gjør det ikke) — og en usynlig loggpost ble dømt som avvik:
+-- `avgi`-terskelen veltet på «sakens lineage avviker» i det saken
+-- skulle lukkes. Claimeren bærer m37_dispatcher-policyen
+-- (CURRENT_USER-basert), som ser radene uavhengig av GUC.
 CREATE OR REPLACE FUNCTION unntak_lineage_matcher_loggpost()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
@@ -296,6 +316,7 @@ BEGIN
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS unntak_lineage_speiler_loggpost ON unntak;
+ALTER FUNCTION unntak_lineage_matcher_loggpost() OWNER TO disponit_m37_claimer;
 CREATE CONSTRAINT TRIGGER unntak_lineage_speiler_loggpost
   AFTER INSERT OR UPDATE ON unntak
   DEFERRABLE INITIALLY DEFERRED
@@ -335,10 +356,12 @@ CREATE TRIGGER unntak_overtakelse_revisjonsbinding
 -- ------------------------------------------------------------
 -- 7. `avklaring_kreves` uten gjeldende sak er ulovlig (invariant 10)
 -- ------------------------------------------------------------
--- SECURITY DEFINER (migrator-eid): vakten må kunne LESE saken uansett
+-- SECURITY DEFINER, CLAIMER-EID: vakten må kunne LESE saken uansett
 -- hvem som skrev domenekontroll-raden (domene_eier har ingen — og skal
 -- ikke ha noen — SELECT på unntak). En vakt som bare virker for noen
--- skrivere er ingen vakt.
+-- skrivere er ingen vakt — og `unntak` har FORCE RLS, så eierskapet må
+-- bære en CURRENT_USER-policy (m37_dispatcher), ikke tabelleierskapets
+-- RLS-fritak, som FORCE nettopp opphever. Se §5 for målingen.
 CREATE OR REPLACE FUNCTION domenekontroll_krev_sak()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
@@ -353,6 +376,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+ALTER FUNCTION domenekontroll_krev_sak() OWNER TO disponit_m37_claimer;
 DROP TRIGGER IF EXISTS domenekontroll_avklaring_krever_sak ON domenekontroll;
 CREATE CONSTRAINT TRIGGER domenekontroll_avklaring_krever_sak
   AFTER INSERT OR UPDATE OF status ON domenekontroll
@@ -508,7 +532,7 @@ RESET ROLE;
 -- ------------------------------------------------------------
 -- 11. Kolonnelåsen: den ENE lovlige loggpost-flyttingen (skiftet)
 --     — KOPI av gjeldende kropp (dumpet fra basen), diff-endret og
---     merket 040. Alt annet uendret.
+--     merket 041. Alt annet uendret.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION unntak_kolonnelaas()
  RETURNS trigger
@@ -516,7 +540,7 @@ CREATE OR REPLACE FUNCTION unntak_kolonnelaas()
 AS $function$
 BEGIN
     IF NEW.tenant IS DISTINCT FROM OLD.tenant
-       -- 040: SKIFTET på en åpen overtakelsessak flytter loggposten
+       -- 041: SKIFTET på en åpen overtakelsessak flytter loggposten
        -- (ny lineage, ny loggpost per revisjon) — den ENE lovlige
        -- endringen, og revisjonsbindings-triggeren håndhever at den
        -- bare skjer sammen med saksrevisjon+1.
@@ -723,7 +747,7 @@ CREATE OR REPLACE FUNCTION verifiser_domenekontroll(p_tenant text, p_hostname te
 AS $function$
 DECLARE v_eier TEXT; v_status_a TEXT; v_utloper_a TIMESTAMPTZ; v_status_b TEXT;
         v_motpart TEXT;
-        -- 040: sak-i-samme-transaksjon (§2/§4)
+        -- 041: sak-i-samme-transaksjon (§2/§4)
         v_gen BIGINT; v_h_a BIGINT; v_h_b BIGINT; v_rid TEXT;
 BEGIN
     v_rid := 'domene-' || replace(gen_random_uuid()::text, '-', '');
@@ -780,7 +804,7 @@ BEGIN
             VALUES (p_tenant, p_hostname, 'avklaring_kreves', 'tilbakekalt',
                     'avklaring_kreves', 'reapplication_etter_avvisning', p_aktor)
         RETURNING id INTO v_h_b;
-        -- 040 (§2): motparten fikk ingen ny hendelse i denne grenen —
+        -- 041 (§2): motparten fikk ingen ny hendelse i denne grenen —
         -- hendelse_a peker på dens SISTE, den andre halvdelen av
         -- konflikten som faktisk står i historikken.
         SELECT max(h.id) INTO v_h_a FROM public.domenekontroll_hendelse h
@@ -805,7 +829,7 @@ BEGIN
                  grunn, aktor) VALUES
                 (v_eier, p_hostname, 'overtatt', 'verifisert', 'tilbakekalt',
                  'overtatt_dns_kontroll', p_aktor)
-            RETURNING id INTO v_h_a;    -- 040: A-siden av konflikten
+            RETURNING id INTO v_h_a;    -- 041: A-siden av konflikten
             INSERT INTO public.domenekontroll (tenant, hostname, status, wildcard,
                 autorisasjonsgenerasjon, konflikt_motpart)
                 VALUES (p_tenant, p_hostname, 'avklaring_kreves', p_wildcard, 1,
@@ -825,7 +849,7 @@ BEGIN
                 (tenant, hostname, hendelse, til_status, grunn, aktor) VALUES
                 (p_tenant, p_hostname, 'avklaring_kreves', 'avklaring_kreves',
                  'overtatt_dns_kontroll', p_aktor)
-            RETURNING id INTO v_h_b;    -- 040: B-siden av konflikten
+            RETURNING id INTO v_h_b;    -- 041: B-siden av konflikten
             INSERT INTO public.hostname_binding (hostname, tenant)
                 VALUES (p_hostname, p_tenant)
             ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
@@ -858,7 +882,7 @@ BEGIN
             INSERT INTO public.hostname_binding (hostname, tenant)
                 VALUES (p_hostname, p_tenant)
             ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
-            -- 040: motpartens siste hendelse er A-siden her (ingen ny).
+            -- 041: motpartens siste hendelse er A-siden her (ingen ny).
             SELECT max(h.id) INTO v_h_a FROM public.domenekontroll_hendelse h
              WHERE h.hostname = p_hostname AND h.tenant = v_eier;
             PERFORM public.sikre_overtakelsessak(p_hostname, v_gen, v_eier,
@@ -1010,7 +1034,7 @@ BEGIN
                 sakstype, prioritet, payload_kryptert, key_id, nonce,
                 maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,
                 oppdrag_id, arsak,
-                -- 040: payload_type er NOT NULL uten default; oppdragssaker
+                -- 041: payload_type er NOT NULL uten default; oppdragssaker
                 -- arver alltid kryptert payload; sakskilde eksplisitt.
                 payload_type, sakskilde)
             VALUES (p_tenant, v_logg, o.handling, 'teknisk_feil',
@@ -1107,7 +1131,7 @@ BEGIN
     END IF;
     v_lease := least(greatest(coalesce(p_lease_s, 120), 30), 600);
 
-    -- 040 (§18): kandidaten velges i en MATERIALIZED CTE, IKKE i en
+    -- 041 (§18): kandidaten velges i en MATERIALIZED CTE, IKKE i en
     -- FROM-subspørring. MÅLT på rebuilt base: adjudikator-policyen (§9)
     -- endret planformen slik at subspørringen ble INNER side i en nested
     -- loop og RESKANNET per ytre rad — og fordi FOR UPDATE re-sjekker
@@ -1174,4 +1198,47 @@ BEGIN
               u.verification_generation;
 END $function$
 ;
+RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 19. lukk_overtakelsessak — KOPI av 019-kroppen, diff-endret:
+--     saken bor på plattformtenanten nå, ikke hos utfordreren.
+--
+--     `avgi_overtakelse_attestasjon` kaller lukk med p_tenant =
+--     UTFORDREREN (det er tenants riktige verdi for domenekontroll-
+--     gjerdene i samme funksjon) — men sakens rad har tenant
+--     `__plattform_domener` fra §10. Uendret ville lukk-UPDATE-ene
+--     matchet null rader: avgjørelsen falt, saken ble stående `ny`
+--     for alltid, og port 39 var brutt i stillhet (ROW_COUNT sjekkes
+--     bare for FØRSTE steg). Radmålet er nå sakens IDENTITET
+--     (plattformtenant + sakskilde), p_tenant beholdes i signaturen —
+--     kallerne er 019/039-funksjoner som ikke skal endres for dette.
+--
+--     039-degraderens lukk-kall finner for øvrig ingen sak lenger
+--     (den slo opp via idempotensnøkkelen, som §10 ikke skriver):
+--     A→B→C er under 041 et SKIFTE på samme sak (revisjon+1), ikke en
+--     B-sak som skal lukkes — IF FOUND-gjerdet gjør grenen til en
+--     naturlig no-op.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_domene_eier;
+CREATE OR REPLACE FUNCTION lukk_overtakelsessak(
+    p_tenant TEXT, p_sak_id BIGINT, p_sluttstatus TEXT, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_flyttet INT;
+BEGIN
+    PERFORM set_config('disponit.aktor', p_aktor, true);
+    UPDATE public.unntak SET status = 'under_behandling'
+     WHERE tenant = '__plattform_domener' AND id = p_sak_id
+       AND sakskilde = 'domeneovertakelse' AND status = 'ny';
+    GET DIAGNOSTICS v_flyttet = ROW_COUNT;
+    -- Kun DENNE overgangens egen 'under_behandling' fullføres til
+    -- sluttstatus — en sak som alt sto i 'under_behandling' av en annen vei
+    -- (utenfor denne sakstypens forventede bruk) skal ikke bli flyttet av et
+    -- kall den ikke var en del av.
+    IF v_flyttet = 1 THEN
+        UPDATE public.unntak SET status = p_sluttstatus
+     WHERE tenant = '__plattform_domener' AND id = p_sak_id
+       AND sakskilde = 'domeneovertakelse' AND status = 'under_behandling';
+    END IF;
+END $$;
 RESET ROLE;

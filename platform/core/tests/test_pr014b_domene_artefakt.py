@@ -533,10 +533,10 @@ def test_forbigatt_utfordrer_kan_ikke_godkjennes(migrator):
         assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt", \
             "den forbigåtte utfordreren ble stående i avklaring"
         # Gjenskap den forbigåtte-i-avklaring-tilstanden gjerdet finnes for.
-        # 040: `domenekontroll_avklaring_krever_sak` avviser nettopp denne
+        # 041: `domenekontroll_avklaring_krever_sak` avviser nettopp denne
         # skrivingen (avklaring uten gjeldende sak — port 2), så fixturen må
         # gjøre kirurgien med vakten av, som `_rydd` gjør for append-only-
-        # triggerne. Selve porten (direkte DML avvises) måles i 040-suiten.
+        # triggerne. Selve porten (direkte DML avvises) måles i 041-suiten.
         _sett_kontekst(migrator, ANNEN_TENANT)
         migrator.execute("ALTER TABLE domenekontroll DISABLE TRIGGER"
                          " domenekontroll_avklaring_krever_sak")
@@ -787,9 +787,9 @@ def test_rydd_venter_paa_evidensfristen(migrator):
 
 @pg
 def test_b4_overtakelsessak_idempotent_port11(migrator):
-    """Port 11 i 040-form: konflikten LAGER saken selv, i samme transaksjon.
+    """Port 11 i 041-form: konflikten LAGER saken selv, i samme transaksjon.
 
-    Før 040 målte denne at python-veien var idempotent per generasjon. Nå er
+    Før 041 målte denne at python-veien var idempotent per generasjon. Nå er
     sak-skaperen `sikre_overtakelsessak()` inne i `verifiser_domenekontroll`,
     og invarianten er strammere: ÉN åpen sak per hostname, på
     plattformtenanten, og et RETRY av samme verifisering (som returnerer
@@ -874,7 +874,7 @@ def test_append_only_tabeller_ingen_truncate(migrator):
     tømme dem tross immutabilitets-invarianten.
 
     MUTASJONEN SOM DREPER DENNE: fjern BEFORE TRUNCATE-triggerne."""
-    # 040 ga domenekontroll_hendelse en innkommende FK (unntak-lineage), så
+    # 041 ga domenekontroll_hendelse en innkommende FK (unntak-lineage), så
     # plain TRUNCATE stoppes nå av FK-en før triggeren rekker å fyre. CASCADE
     # løser FK-innvendingen — og da er statement-triggeren igjen det ENESTE
     # som stopper tømmingen, som for artefakttype_register under.
@@ -1267,8 +1267,8 @@ def test_to_tenanter_kan_ikke_dele_hostname_via_kasus(migrator):
 
 @pg
 def test_overtakelsessak_ignorerer_fremmed_idempotensnokkel(migrator):
-    """040-formen av Codex-funnet: `revisjonslogg.idempotency_key` er et DELT,
-    KALLERSTYRT navnerom. Før 040 slo python-veien opp saken via nøkkelen —
+    """041-formen av Codex-funnet: `revisjonslogg.idempotency_key` er et DELT,
+    KALLERSTYRT navnerom. Før 041 slo python-veien opp saken via nøkkelen —
     nå skriver `sikre_overtakelsessak()` sin EGEN loggpost på
     plattformtenanten (`payload_type='referanse'`) og bruker aldri nøkkelen.
     En fremmed loggpost som alt heter `domeneovertakelse:<hostname>:<gen>`

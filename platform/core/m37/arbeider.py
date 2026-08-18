@@ -287,14 +287,14 @@ def frigi_utlopte(conn: psycopg.Connection) -> int:
 
 
 def drener_domenekonflikter(conn: psycopg.Connection) -> dict:
-    """Vaktbikkja for domeneovertakelser (040): saken skal ALLEREDE finnes.
+    """Vaktbikkja for domeneovertakelser (041): saken skal ALLEREDE finnes.
 
-    Før 040 LAGDE denne veien sakene (039, Codex P1) — saken krevde
+    Før 041 LAGDE denne veien sakene (039, Codex P1) — saken krevde
     tenantens DEK og runtime-DML. Nå lages den av `sikre_overtakelsessak()`
-    i samme transaksjon som selve overtakelsen, og 040 §7 avviser enhver ny
+    i samme transaksjon som selve overtakelsen, og 041 §7 avviser enhver ny
     `avklaring_kreves` uten gjeldende sak ved commit. Det som står igjen her
     er kontrollen av at det faktisk er sant på DENNE basen: en konflikt uten
-    sak er en rad fra før 040 — den kan ikke repareres herfra (port 37:
+    sak er en rad fra før 041 — den kan ikke repareres herfra (port 37:
     python-veien er stengt), men den skal heller aldri bli usynlig. Den
     navngis i journalen HVER syklus til en operatør har ryddet den.
 

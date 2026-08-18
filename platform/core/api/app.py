@@ -874,7 +874,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return domenermodul.utsted_endepunkt(tjeneste, request)
 
     def do_saker(request: Request) -> Response:
-        # 040: adjudikatorkøen — plattformens visning, aldri en kundesesjons.
+        # 041: adjudikatorkøen — plattformens visning, aldri en kundesesjons.
         from . import domeneovertakelse
         return domeneovertakelse.saker_endepunkt(tjeneste, request)
 

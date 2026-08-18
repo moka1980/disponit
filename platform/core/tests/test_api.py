@@ -155,7 +155,7 @@ def _rydd(migrator, *tenanter: str) -> None:
     _rydd_kapabiliteter(migrator, tenanter)
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
-    # 040: overtakelsessaker bor på PLATTFORMTENANTEN og PEKER (kompositt-FK
+    # 041: overtakelsessaker bor på PLATTFORMTENANTEN og PEKER (kompositt-FK
     # med ON DELETE RESTRICT) på kundetenantenes domenekontroll_hendelse.
     # Plattformtenanten må derfor ryddes FØRST — ellers blokkerer saken
     # slettingen av hendelsene den refererer.

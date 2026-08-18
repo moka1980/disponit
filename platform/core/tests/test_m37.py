@@ -366,7 +366,7 @@ def _lag_sak(conn, tenant, *, kategori="manglende_data", handling="purring.send"
     sak = conn.execute(
         "INSERT INTO unntak (tenant, loggpost_id, handling, kategori, sakstype,"
         " payload_kryptert, key_id, nonce, maks_auto_forsok_snapshot,"
-        # 040: sakskilde er defaultløs (port 12) — fixturen er en kjernesak.
+        # 041: sakskilde er defaultløs (port 12) — fixturen er en kjernesak.
         " policy_versjon, policy_content_hash, status, sakskilde)"
         " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'policybrudd')"
         " RETURNING id",
@@ -784,7 +784,7 @@ def test_claim_prioriterer_hoy_for_normal(migrator):
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
     migrator.execute("UPDATE unntak SET prioritet='hoy' WHERE tenant=%s"
                      " AND id=%s", (TENANT, hoy))
-    # 040: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
     # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
     # samme håndgrep som _rydd bruker.
     migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
@@ -927,7 +927,7 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
                      " maks_auto_forsok_snapshot DROP NOT NULL,"
                      " ALTER COLUMN policy_versjon DROP NOT NULL,"
                      " ALTER COLUMN policy_content_hash DROP NOT NULL")
-    # 040: totalitets-CHECKen krever trioen for policybrudd — pre-006-
+    # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
     # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
     # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
     migrator.execute(
@@ -951,7 +951,7 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
         (_policyref("pbf", "2.0.0"), TENANT, TENANT, med_evidens))
     migrator.execute("ALTER TABLE revisjonslogg ENABLE TRIGGER"
                      " revisjonslogg_ingen_endring")
-    # 040: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
     # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
     # samme håndgrep som _rydd bruker.
     migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
@@ -961,8 +961,8 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
     res = m37_backfill.backfill(migrator)
     assert res.fra_evidens >= 1 and res.legacy >= 1, res
 
-    # 040 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
-    # NOT NULL tilbake ville gjeninnført pre-040-skjemaet og felt enhver
+    # 041 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
+    # NOT NULL tilbake ville gjeninnført pre-041-skjemaet og felt enhver
     # senere overtakelsestest. Beviset for at backfillen fylte radene bæres
     # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
     # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
@@ -2274,7 +2274,7 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
                      " maks_auto_forsok_snapshot DROP NOT NULL,"
                      " ALTER COLUMN policy_versjon DROP NOT NULL,"
                      " ALTER COLUMN policy_content_hash DROP NOT NULL")
-    # 040: totalitets-CHECKen krever trioen for policybrudd — pre-006-
+    # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
     # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
     # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
     migrator.execute(
@@ -2284,7 +2284,7 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
     migrator.execute(
         "UPDATE unntak SET maks_auto_forsok_snapshot=NULL, policy_versjon=NULL,"
         " policy_content_hash=NULL WHERE tenant=%s AND id=%s", (TENANT, sak))
-    # 040: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
+    # 041: unntak har utsatte constraint-triggere (lineage/loggpost) — de må
     # fyre FØR en ALTER TABLE i samme transaksjon («pending trigger events»),
     # samme håndgrep som _rydd bruker.
     migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
@@ -2292,8 +2292,8 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
     migrator.commit()
 
     res = m37_backfill.backfill(migrator)
-    # 040 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
-    # NOT NULL tilbake ville gjeninnført pre-040-skjemaet og felt enhver
+    # 041 gjorde trioen nullable (overtakelsessaker HAR NULL-trio) — å sette
+    # NOT NULL tilbake ville gjeninnført pre-041-skjemaet og felt enhver
     # senere overtakelsestest. Beviset for at backfillen fylte radene bæres
     # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
     # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.

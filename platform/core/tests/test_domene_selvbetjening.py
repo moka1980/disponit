@@ -595,9 +595,16 @@ def test_reutstedelse_avvises_nar_raden_avventer_m37(migrator, klient):
     vert = f"m37{secrets.token_hex(4)}.example"
     _utsted(migrator, vert)
     _sett_kontekst(migrator, TENANT)
+    # 041: avklaring uten sak avvises ved commit (port 2) — fixturen
+    # gjenskaper pre-041-tilstanden med vakten av, som _rydd gjør for
+    # append-only-triggerne. Selve porten måles i 041-suiten.
+    migrator.execute("ALTER TABLE domenekontroll DISABLE TRIGGER"
+                     " domenekontroll_avklaring_krever_sak")
     migrator.execute(
         "UPDATE domenekontroll SET status='avklaring_kreves'"
         " WHERE tenant=%s AND hostname=%s", (TENANT, vert))
+    migrator.execute("ALTER TABLE domenekontroll ENABLE TRIGGER"
+                     " domenekontroll_avklaring_krever_sak")
     migrator.commit()
 
     r = klient.post("/v1/domener", json={"hostname": vert},
@@ -1365,13 +1372,14 @@ def _gen(conn, tenant, hostname):
 
 @pg
 def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
-    """Codex P1: en overtakelse UTEN en sak er en dødvei — A har mistet
-    autorisasjonen og B står i `avklaring_kreves`, som bare
-    `avgjor_domeneovertakelse` kan løfte noen ut av, og den nås bare gjennom
-    en sak. Verifiseringsarbeideren kan ikke lage den (ingen DEK, ingen DML),
-    så TILSTANDEN er signalet: dreneringen finner raden og lager saken.
+    """041: en overtakelse UTEN sak kan ikke lenger OPPSTÅ — saken lages av
+    `sikre_overtakelsessak()` i samme transaksjon som konflikten, og
+    `domenekontroll_avklaring_krever_sak` avviser resten ved commit.
+    Dreneringen er blitt en VAKT: den bekrefter at invarianten holder på
+    denne basen, og navngir enhver pre-041-rad som står igjen uten sak.
 
-    Måler også idempotensen: to dreneringer gir ÉN sak for konflikten.
+    MUTASJONEN SOM DREPER DENNE: la vakten returnere tomt uten å slå opp —
+    da forsvinner både `med_sak`-bekreftelsen og `uten_sak`-alarmen.
     """
     from api import domeneovertakelse as dov
 
@@ -1387,51 +1395,52 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
     finally:
         a.close()
     assert svar == f"konflikt:{TENANT}", svar
-    gen = _gen(migrator, ANNEN_TENANT, vert)
 
-    # Ingen sak ennå: overtakelsen skjedde i basen, saken krever DEK + DML.
-    _sett_kontekst(migrator, ANNEN_TENANT)
+    # Saken finnes ALLEREDE — det er hele 041-poenget.
+    _sett_kontekst(migrator, "__plattform_domener")
     assert migrator.execute(
-        "SELECT count(*) FROM unntak u JOIN revisjonslogg r"
-        "   ON r.tenant=u.tenant AND r.id=u.loggpost_id"
-        " WHERE u.tenant=%s AND r.idempotency_key=%s",
-        (ANNEN_TENANT, dov.idempotensnokkel(vert, gen))).fetchone()[0] == 0
+        "SELECT count(*) FROM unntak WHERE hostname_ref=%s"
+        "  AND sakskilde='domeneovertakelse' AND NOT terminal",
+        (vert,)).fetchone()[0] == 1
     migrator.rollback()
 
-    # Dreneringen kjøres over ARBEIDERENS forbindelse, ikke migrator: det er
-    # nøyaktig rettighetene M-37-arbeideren har — aldri migrators, som ikke
-    # er medlem av noen av rollene.
+    # Vakten bekrefter den — over ARBEIDERENS forbindelse, som i drift.
     rt = _arbeiderkonn()
     try:
-        res = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
-        mine = [s for s in res["saker"] if s["hostname"] == vert]
-        assert res["feilet"] == [], res
-        assert len(mine) == 1, res
-        sak = mine[0]["unntak_id"]
-        assert mine[0]["tenant"] == ANNEN_TENANT
-
-        # Raden står fortsatt i `avklaring_kreves` (bare M-37 kan flytte den),
-        # så neste drenering finner den igjen — og skal GJENBRUKE saken.
-        res2 = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
-        mine2 = [s for s in res2["saker"] if s["hostname"] == vert]
-        assert [s["unntak_id"] for s in mine2] == [sak], res2
+        res = dov.vokt_ventende_overtakelseskonflikter(rt, grense=500)
+        # Scopet til VÅR konflikt: basen deles med andre suiters residualer.
+        assert [u for u in res["uten_sak"] if u["hostname"] == vert] == [], res
+        assert res["med_sak"] >= 1, res
     finally:
         rt.close()
 
-    # Saken er en ekte overtakelsessak, bundet til konfliktens generasjon.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    assert dov.slaa_opp_sak(migrator, ANNEN_TENANT, sak) == (vert, gen)
-    migrator.rollback()
-
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    antall = migrator.execute(
-        "SELECT count(*) FROM unntak u JOIN revisjonslogg r"
-        "   ON r.tenant=u.tenant AND r.id=u.loggpost_id"
-        " WHERE u.tenant=%s AND u.kategori=%s AND r.idempotency_key=%s",
-        (ANNEN_TENANT, dov.FAMILIE,
-         dov.idempotensnokkel(vert, gen))).fetchone()[0]
-    migrator.rollback()
-    assert antall == 1, "én konflikt ga mer enn én sak"
+    # ... og en pre-041-rad UTEN sak (kirurgisk gjenskapt) NAVNGIS.
+    vert2 = f"kfl{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert2))
+        a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("ALTER TABLE domenekontroll DISABLE TRIGGER"
+                     " domenekontroll_avklaring_krever_sak")
+    migrator.execute(
+        "UPDATE domenekontroll SET status='avklaring_kreves',"
+        " konflikt_motpart=%s WHERE tenant=%s AND hostname=%s",
+        (ANNEN_TENANT, TENANT, vert2))
+    migrator.execute("ALTER TABLE domenekontroll ENABLE TRIGGER"
+                     " domenekontroll_avklaring_krever_sak")
+    migrator.commit()
+    rt = _arbeiderkonn()
+    try:
+        res = dov.vokt_ventende_overtakelseskonflikter(rt, grense=500)
+    finally:
+        rt.close()
+    gen2 = _gen(migrator, TENANT, vert2)
+    assert {"tenant": TENANT, "hostname": vert2,
+            "generasjon": gen2} in res["uten_sak"], res
 
 
 class _Kapplop:
@@ -1465,22 +1474,12 @@ class _Kapplop:
 
 @pg
 def test_foreldet_konflikt_far_ingen_sak(migrator):
-    """Codex P2: konflikten må revalideres før saken lages.
-
-    Plukket COMMITTER (stempelet er det som gjør utvalget roterende) og
-    slipper dermed radlåsen før saken finnes. Tar noen hostnavnet i det
-    vinduet, degraderer `degrader_forbigatte_utfordrere` (019 §3.2) den
-    valgte utfordreren og øker generasjonen — uten å finne noen sak å lukke,
-    for saken finnes jo ikke ennå. `opprett_overtakelsessak` tar hverken
-    hostname-låsen eller ser på domeneraden, så saken ble laget fra den
-    FORELDEDE `(motpart, generasjon)`-tuppelen: `avgjor_domeneovertakelse`
-    gjerder på generasjonen, så saken kunne ingen avgjørelse lukke — den ble
-    liggende i M-37-køen som et menneskearbeid uten utgang.
-
-    Kappløpet kjøres her nøyaktig der det oppstår: mellom plukket og porten.
-
-    MUTASJONEN SOM DREPER DENNE: fjern `bekreft_overtakelseskonflikt`-kallet
-    fra dreneringsløkken — da lages saken på den foreldede generasjonen.
+    """041-formen: det gamle kappløpet (sak laget fra et FORELDET pluk) kan
+    ikke lenger oppstå — saken lages under hostname-låsen i samme
+    transaksjon som konflikten, og et SKIFTE (A→B→A) oppdaterer SAMME sak
+    til gjeldende utfordrer og generasjon. Vakten dømmer mot de FERSKE
+    verdiene plukket bærer, så en sak som fulgte skiftet bekreftes — den
+    meldes ikke som manglende.
     """
     from api import domeneovertakelse as dov
 
@@ -1490,134 +1489,84 @@ def test_foreldet_konflikt_far_ingen_sak(migrator):
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TENANT, vert))
         a.commit()
-        # ANNEN_TENANT tar over: TENANT tilbakekalles, ANNEN_TENANT står
-        # `avklaring_kreves` med motparten på seg. DET er raden dreneringen
-        # plukker.
         svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                          (ANNEN_TENANT, vert)).fetchone()[0]
         a.commit()
-    finally:
-        a.close()
-    assert svar == f"konflikt:{TENANT}", svar
-    gen = _gen(migrator, ANNEN_TENANT, vert)
-
-    def _tredjepart_tar_hostnavnet():
-        # TENANT beviser DNS-kontroll igjen mens saken ennå ikke finnes:
-        # bindingen flyttes, og triggeren degraderer ANNEN_TENANT til
-        # `tilbakekalt` med en NY generasjon.
-        b = _admin()
-        try:
-            b.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
-                      (TENANT, vert))
-            b.commit()
-        finally:
-            b.close()
-
-    rt = _arbeiderkonn()
-    try:
-        kapplop = _Kapplop(rt, "bekreft_overtakelseskonflikt",
-                           _tredjepart_tar_hostnavnet)
-        res = dov.sikre_ventende_overtakelsessaker(kapplop, grense=500)
-    finally:
-        rt.close()
-    assert kapplop.kjort, "kappløpet ble aldri kjørt — porten kalles ikke"
-    assert [s for s in res["saker"] if s["hostname"] == vert] == [], \
-        f"det ble laget en sak på den foreldede generasjonen: {res}"
-    assert [f for f in res["feilet"] if f["hostname"] == vert] == [], \
-        "en flyttet rad er ikke en FEIL — den er en annen konflikt"
-    assert {"tenant": ANNEN_TENANT, "hostname": vert,
-            "generasjon": gen} in res["foreldet"], res
-
-    # ...og ingen sak finnes på den foreldede nøkkelen. Den ville aldri kunnet
-    # avgjøres: generasjonen den navngir er ikke radens lenger.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    antall = migrator.execute(
-        "SELECT count(*) FROM unntak u JOIN revisjonslogg r"
-        "   ON r.tenant=u.tenant AND r.id=u.loggpost_id"
-        " WHERE u.tenant=%s AND r.idempotency_key=%s",
-        (ANNEN_TENANT, dov.idempotensnokkel(vert, gen))).fetchone()[0]
-    migrator.rollback()
-    assert antall == 0, "den foreldede konflikten fikk en uløselig sak"
-
-    # Porten er ikke et generelt nei: den FERSKE konflikten (TENANT, som nå
-    # står i avklaring med ANNEN_TENANT som motpart) drenereres som normalt.
-    rt = _arbeiderkonn()
-    try:
-        res2 = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
-    finally:
-        rt.close()
-    mine = [s for s in res2["saker"] if s["hostname"] == vert]
-    assert [s["tenant"] for s in mine] == [TENANT], res2
-
-
-@pg
-def test_dreneringen_skiller_radfeil_fra_utrullingsfeil(migrator, monkeypatch):
-    """Codex P2: `except psycopg.Error` gjorde HVER databasefeil til en
-    radoppføring i `feilet`. En manglende grant, en funksjon som ikke er
-    utrullet eller en skjemafeil rammer ALLE rader — men den ble skrevet inn i
-    et resultat bare `drener_domenekonflikter` printer, mens M-37-løkkens
-    heartbeat sto `ok`: hver eneste overtakelse kunne bli stående uten sak
-    mens arbeideren så helt frisk ut.
-
-    Nå fanges bare RADENS egne feil — `tenantnokkel_mangler` (KEK-en er borte
-    for én tenant) og ugyldige radverdier, der andre tenanters konflikter
-    fortsatt skal bli stelt. Uventede DB-feil kastes videre og feller
-    prosessen, samme kontrakt som resten av M-37-hovedløkken.
-
-    MUTASJONEN SOM DREPER DENNE: sett `psycopg.Error` tilbake i tuppelen som
-    telles som radfeil.
-    """
-    from api import domeneovertakelse as dov
-    from api import kjerne
-
-    vert = f"drn{secrets.token_hex(4)}.example"
-    a = _admin()
-    try:
+        assert svar == f"konflikt:{TENANT}", svar
+        # TENANT beviser DNS-kontroll igjen: skiftet flytter saken til
+        # TENANT som utfordrer, ny generasjon — samme sak-id (port 6).
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                   (TENANT, vert))
         a.commit()
-        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
-                         (ANNEN_TENANT, vert)).fetchone()[0]
-        a.commit()
     finally:
         a.close()
-    assert svar == f"konflikt:{TENANT}", svar
 
-    # (1) Radens egen feil: telles, navngis, og de andre radene fortsetter.
-    monkeypatch.setattr(dov, "opprett_overtakelsessak", lambda *a, **k: (_ for
-                        _ in ()).throw(kjerne.Feilsvar("tenantnokkel_mangler",
-                                                       "KEK borte")))
+    _sett_kontekst(migrator, "__plattform_domener")
+    rad = migrator.execute(
+        "SELECT utfordrer_tenant, saksrevisjon FROM unntak"
+        " WHERE hostname_ref=%s AND sakskilde='domeneovertakelse'"
+        "   AND NOT terminal", (vert,)).fetchone()
+    migrator.rollback()
+    assert rad == (TENANT, 1), f"skiftet fulgte ikke saken: {rad}"
+
     rt = _arbeiderkonn()
     try:
-        res = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
-        assert [f for f in res["feilet"] if f["hostname"] == vert] == [
-            {"tenant": ANNEN_TENANT, "hostname": vert,
-             "feiltype": "Feilsvar"}], res
+        res = dov.vokt_ventende_overtakelseskonflikter(rt, grense=500)
+    finally:
+        rt.close()
+    assert [u for u in res["uten_sak"] if u["hostname"] == vert] == [], \
+        f"en sak som fulgte skiftet ble meldt som manglende: {res}"
 
-        # (2) Utrullingens feil: kastes videre, ALDRI talt som en rad.
-        monkeypatch.setattr(
-            dov, "opprett_overtakelsessak",
-            lambda *a, **k: (_ for _ in ()).throw(
-                psycopg.errors.InsufficientPrivilege("grant mangler")))
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            dov.sikre_ventende_overtakelsessaker(rt, grense=500)
-        # Forbindelsen er rullet tilbake og brukbar: feilen er signalet, ikke
-        # en ødelagt tilkobling kalleren må gjette seg til.
+
+def test_dreneringen_skiller_radfeil_fra_utrullingsfeil(migrator):
+    """041-formen: vakten har ingen radfeil igjen å telle (ingen DEK, ingen
+    DML) — men utrullingens feil skal fortsatt VELTE den, aldri bli et tall
+    i et resultat ingen alarmerer på. En DB-feil fra selve plukket
+    propagerer til kalleren; M-37-innpakningen (testen under) navngir og
+    kaster videre.
+
+    MUTASJONEN SOM DREPER DENNE: pakk vaktens plukk i en bred
+    `except psycopg.Error` som teller i stedet for å kaste.
+    """
+    from api import domeneovertakelse as dov
+
+    class _Velter:
+        """Konn som feiler på selve plukket — utrullingsfeilen, in situ."""
+
+        def __init__(self, conn):
+            self._c = conn
+
+        def execute(self, sql, args=None):
+            if "ventende_overtakelseskonflikter" in sql:
+                raise psycopg.errors.UndefinedFunction("ikke utrullet")
+            return self._c.execute(sql, args)
+
+        def __getattr__(self, navn):
+            return getattr(self._c, navn)
+
+    rt = _arbeiderkonn()
+    try:
+        with pytest.raises(psycopg.errors.UndefinedFunction):
+            dov.vokt_ventende_overtakelseskonflikter(_Velter(rt), grense=10)
+        # Forbindelsen er brukbar etterpå: feilen er signalet, ikke en
+        # ødelagt tilkobling kalleren må gjette seg til.
+        rt.rollback()
         assert rt.execute("SELECT 1").fetchone()[0] == 1
     finally:
         rt.close()
 
 
 def test_dreneringen_navngir_utrullingsfeil_og_feller_arbeideren(monkeypatch):
-    """Codex P2: M-37-innpakningen skal ikke svelge det heller.
+    """M-37-innpakningen svelger ikke vaktens feil — og en konflikt uten sak
+    er ALDRI stille.
 
-    `drener_domenekonflikter` printer `feilet` og går videre — så en uventet
-    DB-feil måtte kastes HELT ut for at heartbeat `ok` ikke skulle bli et
-    friskhetstegn for en arbeider som ikke lager en eneste sak. Journalraden
-    navngir årsaken før den kastes.
+    `drener_domenekonflikter` navngir en DB-feil i journalen og kaster den
+    videre (heartbeat `ok` skal ikke være et friskhetstegn for en arbeider
+    som ikke ser noe); et `uten_sak`-funn printes HVER syklus til det er
+    borte.
 
-    MUTASJONEN SOM DREPER DENNE: bytt `raise` mot `return res` i
-    `drener_domenekonflikter`.
+    MUTASJONEN SOM DREPER DENNE: bytt `raise` mot `return`, eller fjern
+    `uten_sak`-printen.
     """
     import json as jsonmodul
 
@@ -1625,7 +1574,7 @@ def test_dreneringen_navngir_utrullingsfeil_og_feller_arbeideren(monkeypatch):
     from m37 import arbeider
 
     monkeypatch.setattr(
-        dov, "sikre_ventende_overtakelsessaker",
+        dov, "vokt_ventende_overtakelseskonflikter",
         lambda *a, **k: (_ for _ in ()).throw(
             psycopg.errors.UndefinedFunction("ikke utrullet")))
     linjer = []
@@ -1634,7 +1583,19 @@ def test_dreneringen_navngir_utrullingsfeil_og_feller_arbeideren(monkeypatch):
     with pytest.raises(psycopg.errors.UndefinedFunction):
         arbeider.drener_domenekonflikter(None)
     hendelser = [jsonmodul.loads(x)["hendelse"] for x in linjer]
-    assert hendelser == ["domenekonflikt_drenering_svikt"], linjer
+    assert hendelser == ["domenekonflikt_vakt_svikt"], linjer
+
+    # ... og uten_sak-funnet når journalen.
+    linjer.clear()
+    monkeypatch.setattr(
+        dov, "vokt_ventende_overtakelseskonflikter",
+        lambda *a, **k: {"funnet": 1, "med_sak": 0,
+                         "uten_sak": [{"tenant": "t", "hostname": "h",
+                                       "generasjon": 1}]})
+    res = arbeider.drener_domenekonflikter(None)
+    assert res["uten_sak"], res
+    hendelser = [jsonmodul.loads(x)["hendelse"] for x in linjer]
+    assert hendelser == ["domenekonflikt_uten_sak"], linjer
 
 
 @pg
@@ -1665,10 +1626,15 @@ def test_konfliktutvalget_roterer_forbi_dem_som_venter_paa_mennesker(migrator):
     for v in verter:
         _utsted(migrator, v)
         _sett_kontekst(migrator, TENANT)
+        # 041: se kommentaren i test_reutstedelse_avvises_nar_raden_avventer_m37.
+        migrator.execute("ALTER TABLE domenekontroll DISABLE TRIGGER"
+                         " domenekontroll_avklaring_krever_sak")
         migrator.execute(
             "UPDATE domenekontroll SET status='avklaring_kreves',"
             " konflikt_motpart=%s WHERE tenant=%s AND hostname=%s",
             (ANNEN_TENANT, TENANT, v))
+        migrator.execute("ALTER TABLE domenekontroll ENABLE TRIGGER"
+                         " domenekontroll_avklaring_krever_sak")
         migrator.commit()
 
     sett = []
@@ -2174,6 +2140,6 @@ def test_arbeideren_drenerer_konflikter_i_hovedlokka():
     from m37 import arbeider
 
     assert "drener_domenekonflikter" in inspect.getsource(arbeider.kjor), \
-        "hovedløkken drenerer ikke domenekonflikter"
-    assert "sikre_ventende_overtakelsessaker" in inspect.getsource(
+        "hovedløkken vokter ikke domenekonfliktene"
+    assert "vokt_ventende_overtakelseskonflikter" in inspect.getsource(
         arbeider.drener_domenekonflikter)

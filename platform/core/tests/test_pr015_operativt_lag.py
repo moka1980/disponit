@@ -652,12 +652,11 @@ def test_alarmterskelen_gir_en_feilet_kjoring(monkeypatch):
 # ===========================================================================
 
 def _konflikt(migrator, tenant_a, tenant_b, hostname):
-    """Kjør A→B-overtakelsen og opprett saken. -> (sak_id, B-generasjon).
+    """Kjør A→B-overtakelsen. -> (sak_id, B-generasjon).
 
-    Overtakelsen går gjennom FUNKSJONEN (admin-rollen); saken skrives med
-    migrator, som har bordtilgangen `opprett_overtakelsessak` trenger.
+    041: overtakelsen LAGER saken selv (`sikre_overtakelsessak()` i samme
+    transaksjon, på plattformtenanten) — fixturen slår den bare opp.
     """
-    from api import domeneovertakelse as dov
     a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -670,19 +669,23 @@ def _konflikt(migrator, tenant_a, tenant_b, hostname):
         a.close()
     assert svar.startswith("konflikt:"), svar
     gen = _dkrow(migrator, tenant_b, hostname)[1]
-    _sett_kontekst(migrator, tenant_b)
-    sak = dov.opprett_overtakelsessak(
-        migrator, tenant_ny=tenant_b, hostname=hostname,
-        tenant_tapt=svar.split(":", 1)[1], generasjon=gen, aktor="sys")
-    migrator.commit()
+    _sett_kontekst(migrator, "__plattform_domener")
+    sak = int(migrator.execute(
+        "SELECT id FROM unntak WHERE hostname_ref=%s"
+        "  AND sakskilde='domeneovertakelse' AND NOT terminal",
+        (hostname,)).fetchone()[0])
+    migrator.rollback()
     return sak, gen
 
 
 def _saksstatus(migrator, tenant, sak):
-    _sett_kontekst(migrator, tenant)
+    # 041: saken bor på plattformtenanten uansett hvilken part spørsmålet
+    # gjelder — `tenant`-parameteren beholdes i kallene som dokumentasjon
+    # av HVEM saken handlet om, men adressen er plattformens.
+    _sett_kontekst(migrator, "__plattform_domener")
     status = migrator.execute(
-        "SELECT status FROM unntak WHERE tenant=%s AND id=%s",
-        (tenant, sak)).fetchone()[0]
+        "SELECT status FROM unntak WHERE tenant='__plattform_domener'"
+        " AND id=%s", (sak,)).fetchone()[0]
     migrator.rollback()
     return status
 
@@ -997,8 +1000,17 @@ def test_port20_abc_kun_c_i_avklaring_og_a_gjenoppstar_ikke(migrator):
     assert _dkrow(migrator, TREDJE_TENANT, h)[0] == "avklaring_kreves"
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
     assert _dkrow(migrator, TENANT, h)[0] == "tilbakekalt", "A gjenoppstod"
-    assert _saksstatus(migrator, ANNEN_TENANT, b_sak) == "avvist", \
-        "den forbigåtte utfordrerens sak ble stående åpen"
+    # 041 (port 6): A→B→C er et SKIFTE på SAMME sak — ikke en B-sak som
+    # lukkes og en C-sak som åpnes. Saken står åpen med C som utfordrer og
+    # saksrevisjonen bumpet; B har ingen egen sak å bli sittende fast i.
+    _sett_kontekst(migrator, "__plattform_domener")
+    rad = migrator.execute(
+        "SELECT status, utfordrer_tenant, tapt_tenant, saksrevisjon"
+        "  FROM unntak WHERE tenant='__plattform_domener' AND id=%s",
+        (b_sak,)).fetchone()
+    migrator.rollback()
+    assert rad == ("ny", TREDJE_TENANT, ANNEN_TENANT, 1), \
+        f"skiftet fulgte ikke port 6: {rad}"
 
 
 @pg

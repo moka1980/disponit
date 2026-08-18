@@ -41,8 +41,10 @@ def _oppsett(conn):
     uid = conn.execute(
         "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
         "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,policy_versjon,"
-        "policy_content_hash,status) VALUES (%s,%s,'faktura.bokfor',"
-        "'over_grense',%s,'k1',%s,3,'0.2.0','ph','manuell') RETURNING id",
+        # 041: sakskilde er defaultløs (port 12) — fixturen er en kjernesak.
+        "policy_content_hash,status,sakskilde) VALUES (%s,%s,'faktura.bokfor',"
+        "'over_grense',%s,'k1',%s,3,'0.2.0','ph','manuell','policybrudd')"
+        " RETURNING id",
         (TEN, lid, b"\x00", b"\x00" * 12)).fetchone()[0]
     return uid, lid
 
@@ -193,8 +195,8 @@ def test_godkjenningsutfall_binding(migrator):
     uid2 = migrator.execute(
         "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
         "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,policy_versjon,"
-        "policy_content_hash,status) VALUES (%s,%s,'x','over_grense',%s,'k1',%s,"
-        "3,'0.2.0','ph','manuell') RETURNING id",
+        "policy_content_hash,status,sakskilde) VALUES (%s,%s,'x','over_grense',"
+        "%s,'k1',%s,3,'0.2.0','ph','manuell','policybrudd') RETURNING id",
         (TEN, lid2, b"\x00", b"\x00" * 12)).fetchone()[0]
     assert _raises(migrator, *utfall(uid2, riktig, hih="hih2"))
     # append-only

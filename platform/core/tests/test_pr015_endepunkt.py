@@ -45,7 +45,7 @@ def _admin():
 def _overtakelsessak(hostname, taper="taper-tenant-pr015"):
     """Kjør taper→TEN-overtakelsen. -> unntak_id.
 
-    040: saken lages av `sikre_overtakelsessak()` i SAMME transaksjon som
+    041: saken lages av `sikre_overtakelsessak()` i SAMME transaksjon som
     konflikten — fixturen skal ikke (og kan ikke, port 37) lage den selv.
     Den slås opp der den bor: på plattformtenanten, som kolonner.
     """

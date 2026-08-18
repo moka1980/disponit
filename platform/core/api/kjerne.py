@@ -275,7 +275,7 @@ def _skriv_unntak(conn: psycopg.Connection, tenant: str, loggpost_id: int,
             "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
             " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
             " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
-            # 040: sakskilde er defaultløs (port 12) — kjernens egne saker er
+            # 041: sakskilde er defaultløs (port 12) — kjernens egne saker er
             # policybrudd; payload_type eksplisitt av samme grunn som kilden.
             " payload_type, sakskilde)"
             " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'AES-256-GCM',%s,%s,%s,%s,"

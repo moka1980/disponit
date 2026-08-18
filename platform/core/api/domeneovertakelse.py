@@ -42,7 +42,7 @@ FAMILIE = "domeneovertakelse"
 #: som skiller VÅRE rader fra alt annet som deler idempotensnavnerommet.
 HANDLING = "domene.overtakelse"
 
-#: 040: sakens eier — reservert plattformtenant, aldri en kunde (port 35).
+#: 041: sakens eier — reservert plattformtenant, aldri en kunde (port 35).
 PLATTFORMTENANT = "__plattform_domener"
 
 
@@ -53,7 +53,7 @@ def idempotensnokkel(hostname: str, generasjon: int) -> str:
 def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
                             tenant_tapt: str, generasjon: int,
                             aktor: str) -> int:
-    """STENGT (040, port 37): saker opprettes av `sikre_overtakelsessak()`
+    """STENGT (041, port 37): saker opprettes av `sikre_overtakelsessak()`
     i basen, i SAMME transaksjon som overtakelsen — aldri herfra.
 
     Funksjonen står igjen som et gjerde, ikke som en vei: to sak-skapere
@@ -64,7 +64,7 @@ def opprett_overtakelsessak(conn, *, tenant_ny: str, hostname: str,
     og skal felle kalleren høyt, ikke lage en andre sak stille.
     """
     raise RuntimeError(
-        "opprett_overtakelsessak er stengt (040): saker opprettes av "
+        "opprett_overtakelsessak er stengt (041): saker opprettes av "
         "sikre_overtakelsessak() i basen, i samme transaksjon som "
         "overtakelsen — python-veien kan ikke skape en sak")
 
@@ -75,14 +75,14 @@ DRENERINGSAKTOR = "domenekonfliktdrenering"
 
 
 def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
-    """VAKTBIKKJE (040): hver konflikt skal ALLEREDE ha sin sak.
+    """VAKTBIKKJE (041): hver konflikt skal ALLEREDE ha sin sak.
 
-    Før 040 måtte saken lages i etterkant, herfra, med tenantens DEK —
+    Før 041 måtte saken lages i etterkant, herfra, med tenantens DEK —
     `sikre_overtakelsessaker`-dreneringen. Nå lages den av
     `sikre_overtakelsessak()` i SAMME transaksjon som overtakelsen, og
-    `domenekontroll_avklaring_krever_sak` (040 §7) avviser enhver ny
+    `domenekontroll_avklaring_krever_sak` (041 §7) avviser enhver ny
     `avklaring_kreves` uten gjeldende sak ved commit. En konflikt uten sak
-    kan altså bare være en rad fra FØR 040 — en utrullingsanomali, ikke en
+    kan altså bare være en rad fra FØR 041 — en utrullingsanomali, ikke en
     kø som skal dreneres.
 
     Vakten beholder plukket (`ventende_overtakelseskonflikter`, 039):
@@ -125,24 +125,26 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
 def slaa_opp_sak(conn, unntak_id: int) -> tuple[str, int, str] | None:
     """(hostname, generasjon, utfordrer_tenant) for en ÅPEN overtakelsessak.
 
-    040: saken bor på `__plattform_domener` og bærer feltene sine som
+    041: saken bor på `__plattform_domener` og bærer feltene sine som
     KOLONNER (`payload_type='referanse'`) — hostnavnet og generasjonen leses
     derfor rett av raden, ikke lenger ut av en idempotensnøkkel. Synligheten
     er adjudikatorens: lesingen skjer under `SET LOCAL ROLE
-    disponit_domains_adjudicator`, som RLS-policyen i 040 §9 avgrenser til
+    disponit_domains_adjudicator`, som RLS-policyen i 041 §9 avgrenser til
     nøyaktig `sakskilde='domeneovertakelse'`. Ingen tenantkontekst — en
     kundesesjons RLS-snitt ser aldri saken, og skal ikke det (port 33).
 
     `SET LOCAL` + `rollback` hos kalleren: rollen forlates med
     transaksjonen, så ingen senere spørring på samme forbindelse arver den.
-    Terminal sak → None: en lukket sak kan ikke attesteres (samme svar som
-    «finnes ikke» — adjudikasjonsveien skiller ikke, port 5 gjør).
+    TERMINALE saker returneres OGSÅ: adjudikatoren skal få vite at saken
+    er avgjort (`avgi` avviser den med attestasjon_avvist), ikke at den
+    «ikke finnes» — et 404 på en sak man nettopp avgjorde er stillhet
+    der svaret finnes.
     """
     conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
     rad = conn.execute(
         "SELECT hostname_ref, autorisasjonsgenerasjon, utfordrer_tenant"
         "  FROM unntak"
-        " WHERE id=%s AND sakskilde='domeneovertakelse' AND NOT terminal",
+        " WHERE id=%s AND sakskilde='domeneovertakelse'",
         (unntak_id,)).fetchone()
     conn.execute("RESET ROLE")
     if rad is None or rad[0] is None or rad[1] is None or rad[2] is None:
@@ -212,7 +214,7 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             return _feilsvar("csrf_ugyldig", rid)
         bruker_id = rad[1]
 
-        # 040: saken leses under adjudikatorrollen (den bor på
+        # 041: saken leses under adjudikatorrollen (den bor på
         # `__plattform_domener`); rollback forlater rollen med transaksjonen.
         sak = slaa_opp_sak(conn, unntak_id)
         conn.rollback()
@@ -221,7 +223,7 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
         hostname, generasjon_ved_opprettelse, utfordrer_tenant = sak
         # Attestasjonen avgis i UTFORDRERENS saksunivers: `p_tenant` er
         # utfordreren saken navngir (019-kontrakten), aldri adjudikatorens
-        # egen tenant — de to er ulike parter fra og med 040.
+        # egen tenant — de to er ulike parter fra og med 041.
         from db.pg import sett_kontekst
         sett_kontekst(conn, utfordrer_tenant, auth.token_id, rid)
 
@@ -291,7 +293,7 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
 
 
 def saker_endepunkt(tjeneste, request):
-    """GET /v1/domeneovertakelse/saker — adjudikatorkøen (040 §5).
+    """GET /v1/domeneovertakelse/saker — adjudikatorkøen (041 §5).
 
     EGEN visning, atskilt fra tenantens unntakskø: adjudikatoren skal se
     partene og revisjonen for å kunne avgjøre, og nettopp derfor kan denne

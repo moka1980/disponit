@@ -55,8 +55,7 @@ def _domeneaktorsesjon(tenant: str, sub: str,
 
 
 def _domeneovertakelsessak(migrator):
-    from api.domeneovertakelse import opprett_overtakelsessak
-    from .test_pr014b_domene_artefakt import _admin, _dkrow, _host
+    from .test_pr014b_domene_artefakt import _admin, _host
 
     h = _host()
     a = _admin()
@@ -69,12 +68,13 @@ def _domeneovertakelsessak(migrator):
         assert res == "konflikt:" + TENANT
     finally:
         a.close()
-    tapt = res.split(":", 1)[1]
-    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                  tenant_tapt=tapt, generasjon=gen, aktor="sys")
-    migrator.commit()
+    # 041: saken ble laget av overtakelsen selv — slå den opp der den bor.
+    _sett_kontekst(migrator, "__plattform_domener")
+    uid = int(migrator.execute(
+        "SELECT id FROM unntak WHERE hostname_ref=%s"
+        "  AND sakskilde='domeneovertakelse' AND NOT terminal",
+        (h,)).fetchone()[0])
+    migrator.rollback()
     return uid
 
 
