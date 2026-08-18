@@ -39,7 +39,7 @@ ALTER TABLE domenekontroll ADD COLUMN IF NOT EXISTS
     challenge_forsokt TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS domenekontroll_ventende_rotasjon
     ON domenekontroll (challenge_forsokt NULLS FIRST, challenge_utstedt)
-    WHERE status = 'ventende';
+    WHERE status IN ('ventende', 'tilbakekalt');
 
 -- SISTE DRENERING av konflikten (Codex P2), av nøyaktig samme grunn ett hakk
 -- lenger ned i kjeden: en rad i `avklaring_kreves` står der til et MENNESKE
@@ -86,7 +86,18 @@ BEGIN
        SET challenge_forsokt = now()
       FROM (SELECT k.tenant AS t, k.hostname AS h
               FROM public.domenekontroll k
-             WHERE k.status = 'ventende'
+             WHERE (k.status = 'ventende'
+                    -- REAPPLIKASJONEN (Codex P2): en kandidat M-37 AVVISTE står
+                    -- `tilbakekalt` MED motparten på seg, og 018 har en egen gren
+                    -- for nettopp den — ny generasjon, ny avklaring, nytt
+                    -- `konflikt:<motpart>`. Uten raden her hadde den grenen ingen
+                    -- produksjonskaller: arbeideren så bare `ventende`, og den
+                    -- eneste veien tilbake gikk gjennom at en operatør kalte
+                    -- administrasjonsfunksjonen manuelt. Raden flyttes IKKE til
+                    -- `ventende` for å komme hit — det er nettopp statusen
+                    -- `tilbakekalt` + motpart som ER gjerdet 018 kjenner igjen.
+                    OR (k.status = 'tilbakekalt'
+                        AND k.konflikt_motpart IS NOT NULL))
                AND k.challenge_token_hash IS NOT NULL
                AND k.challenge_utloper > now()
              ORDER BY (CASE WHEN k.challenge_forsokt >= k.challenge_utstedt
@@ -103,15 +114,28 @@ END $$;
 -- teller det som oppslagsfeil, aldri suksess); statusovergangen og ALLE
 -- portene (overtakelse, avklaring, generasjon++) eies fortsatt av
 -- `verifiser_domenekontroll` — samme eier, kalt her.
+--
+-- TO tilstander slipper inn (Codex P2):
+--   * `ventende` — den vanlige førstegangsveien.
+--   * `tilbakekalt` MED `konflikt_motpart` — kandidaten M-37 AVVISTE. Den skal
+--     IKKE settes `ventende` for å komme hit: 018s reapplikasjonsgren kjenner
+--     den igjen nettopp PÅ den statusen, og løfter den til en NY avklaring med
+--     ny generasjon og `konflikt:<motpart>` — aldri til `verifisert`. Gjerdet
+--     står altså urørt helt fram til `verifiser_domenekontroll` selv har
+--     laget den nye konflikten; det er DEN funksjonen som avgjør, ikke denne.
+--     Uten dette hadde 018-grenen ingen produksjonskaller i det hele tatt: en
+--     avvist kandidat kunne aldri skaffe seg nytt bevis, og reapplikasjonen
+--     lå på at en operatør kalte administrasjonsfunksjonen for hånd.
 CREATE OR REPLACE FUNCTION bekreft_domenechallenge(
     p_tenant TEXT, p_hostname TEXT, p_aktor TEXT, p_txt_verdier TEXT[])
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_bevis TEXT; v_utloper TIMESTAMPTZ; v_status TEXT;
-        v_wildcard BOOLEAN; v_treff BOOLEAN;
+        v_wildcard BOOLEAN; v_treff BOOLEAN; v_motpart TEXT;
 BEGIN
-    SELECT d.challenge_token_hash, d.challenge_utloper, d.status, d.wildcard
-      INTO v_bevis, v_utloper, v_status, v_wildcard
+    SELECT d.challenge_token_hash, d.challenge_utloper, d.status, d.wildcard,
+           d.konflikt_motpart
+      INTO v_bevis, v_utloper, v_status, v_wildcard, v_motpart
       FROM public.domenekontroll d
      WHERE d.tenant = p_tenant AND d.hostname = p_hostname
        FOR UPDATE;
@@ -123,9 +147,17 @@ BEGIN
     IF v_status = 'verifisert' THEN
         RETURN 'verifisert';
     END IF;
-    IF v_status <> 'ventende' THEN
-        -- avklaring_kreves/tilbakekalt: bare M-37-avgjørelsen (016) kan
-        -- flytte raden — en DNS-post skal aldri overstyre en avklaring.
+    IF v_status <> 'ventende'
+       AND NOT (v_status = 'tilbakekalt' AND v_motpart IS NOT NULL) THEN
+        -- `avklaring_kreves`: en sak er UNDER behandling, og bare
+        -- M-37-avgjørelsen (016) kan flytte raden — en DNS-post skal aldri
+        -- overstyre en avklaring. Øvrige tilstander har ingen utfordring å
+        -- bevise her.
+        --
+        -- `tilbakekalt` MED motpart slipper derimot forbi: det er den AVVISTE
+        -- kandidaten, og beviset hennes fører ikke til `verifisert`, men til
+        -- 018s reapplikasjonsgren — ny generasjon, ny avklaring, ny sak.
+        -- Avgjørelsen tas fortsatt av `verifiser_domenekontroll` under.
         RETURN v_status;
     END IF;
     IF v_bevis IS NULL OR v_utloper IS NULL OR v_utloper <= now() THEN
@@ -298,14 +330,26 @@ END $$;
 -- tilbakekallet: beviset må stå i kundens egen DNS-sone, og
 -- `verifiser_domenekontroll` holder alle portene sine.
 --
--- To tilstander flyttes IKKE, og da skal svaret være nei — ikke 201 på en
--- utfordring som blir liggende:
---   * `avklaring_kreves` — en M-37-sak er under behandling; bare
---     `avgjor_domeneovertakelse` kan flytte raden.
---   * `tilbakekalt` MED `konflikt_motpart` — en kandidat som ble AVVIST av
---     M-37. Ville vi satt den `ventende`, mistet `verifiser_domenekontroll`
---     nettopp det gjerdet (018) som tvinger en reapplikasjon gjennom en NY
---     avklaring, og avvisningen var omgått med et DNS-oppslag.
+-- ÉN tilstand avvises, og da skal svaret være nei — ikke 201 på en utfordring
+-- som blir liggende: `avklaring_kreves`. En M-37-sak er UNDER behandling, og
+-- bare `avgjor_domeneovertakelse` kan flytte raden.
+--
+-- Den AVVISTE kandidaten (`tilbakekalt` MED `konflikt_motpart`) får derimot
+-- utstede (Codex P2). Forrige runde avviste den også, og da satt hun helt
+-- fast: `avgjor_domeneovertakelse` etterlater henne med vilje `tilbakekalt` +
+-- motpart nettopp FOR at en ny, bevist reapplikasjon skal kunne åpne en ny
+-- avklaringsgenerasjon (018 har en egen gren for det), men uten en vei til
+-- nytt bevis hadde den grenen ingen produksjonskaller — reapplikasjonen lå
+-- på at en operatør kalte administrasjonsfunksjonen for hånd.
+--
+-- Gjerdet rives ikke for å slippe henne fram: raden BLIR STÅENDE
+-- `tilbakekalt`. Det er den statusen 018 kjenner igjen, og
+-- `ventende_domenechallenges`/`bekreft_domenechallenge` tar henne med
+-- nettopp SLIK — ikke som `ventende`. Beviset fører derfor til ny avklaring
+-- og ny sak, aldri til `verifisert`, og avvisningen kan ikke omgås med et
+-- DNS-oppslag. Ville vi satt raden `ventende`, ville nettopp DET skjedd:
+-- `verifiser_domenekontroll` ser da hverken `tilbakekalt` eller motparten,
+-- og upserten nederst hadde skrevet `verifisert`.
 CREATE OR REPLACE FUNCTION utsted_challenge_selvbetjent(
     p_tenant TEXT, p_hostname TEXT, p_wildcard BOOLEAN,
     p_token_hash TEXT, p_aktor TEXT)
@@ -327,8 +371,7 @@ BEGIN
       FROM public.domenekontroll d
      WHERE d.tenant = p_tenant AND d.hostname = v_host
        FOR UPDATE;
-    IF v_status = 'avklaring_kreves'
-       OR (v_status = 'tilbakekalt' AND v_motpart IS NOT NULL) THEN
+    IF v_status = 'avklaring_kreves' THEN
         RAISE EXCEPTION 'utsted_challenge_selvbetjent: %/% avventer en '
             'M-37-avgjørelse (%) — en ny utfordring kan ikke behandles',
             p_tenant, v_host, v_status
@@ -336,7 +379,12 @@ BEGIN
     END IF;
     PERFORM public.utsted_challenge(p_tenant, v_host, p_wildcard,
                                     p_token_hash, p_aktor);
-    IF v_status IN ('tilbakekalt', 'utlopt') THEN
+    -- Køes: tilbakekalt av en OPERATØR (ingen motpart) og utløpt. Den AVVISTE
+    -- kandidaten (motpart satt) blir stående `tilbakekalt` — arbeideren tar
+    -- henne likevel, og det er statusen som holder 018s gjerde oppe hele veien
+    -- til `verifiser_domenekontroll` har laget den nye konflikten.
+    IF v_status = 'utlopt'
+       OR (v_status = 'tilbakekalt' AND v_motpart IS NULL) THEN
         UPDATE public.domenekontroll SET status = 'ventende'
          WHERE tenant = p_tenant AND hostname = v_host;
         INSERT INTO public.domenekontroll_hendelse

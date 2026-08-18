@@ -405,36 +405,104 @@ def test_reutstedelse_koer_tilbakekalt_og_utlopt_domene(migrator, klient):
 @pg
 @dekker("domene_challenge_avvist")
 def test_reutstedelse_avvises_nar_raden_avventer_m37(migrator, klient):
-    """De to tilstandene som IKKE køes skal svare nei, ikke 201 på en
-    utfordring som blir liggende: en åpen avklaring, og en kandidat som ble
-    AVVIST av M-37 (`tilbakekalt` MED motpart). Ville vi satt den siste
-    `ventende`, mistet `verifiser_domenekontroll` gjerdet (018) som tvinger en
-    reapplikasjon gjennom en NY avklaring — og avvisningen var omgått med et
-    DNS-oppslag."""
+    """Tilstanden som IKKE køes skal svare nei, ikke 201 på en utfordring som
+    blir liggende: en ÅPEN avklaring. Bare `avgjor_domeneovertakelse` kan
+    flytte den raden, så en TXT-oppskrift ville vært et løfte ingen arbeider
+    kan innfri."""
     from api import sesjon as sesjonmodul
     cookie, csrf = _adminsesjon()
-    for status, motpart in (("avklaring_kreves", None),
-                            ("tilbakekalt", ANNEN_TENANT)):
-        vert = f"m37{secrets.token_hex(4)}.example"
-        _utsted(migrator, vert)
-        _sett_kontekst(migrator, TENANT)
-        migrator.execute(
-            "UPDATE domenekontroll SET status=%s, konflikt_motpart=%s"
-            " WHERE tenant=%s AND hostname=%s",
-            (status, motpart, TENANT, vert))
-        migrator.commit()
+    vert = f"m37{secrets.token_hex(4)}.example"
+    _utsted(migrator, vert)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET status='avklaring_kreves'"
+        " WHERE tenant=%s AND hostname=%s", (TENANT, vert))
+    migrator.commit()
 
-        r = klient.post("/v1/domener", json={"hostname": vert},
-                        headers={"X-Disponit-CSRF": csrf},
-                        cookies={sesjonmodul.C_SESJON: cookie})
-        assert (r.status_code, r.json()["feil"]) == (
-            409, "domene_challenge_avvist"), (status, r.text)
-        _sett_kontekst(migrator, TENANT)
-        etter = migrator.execute(
-            "SELECT status FROM domenekontroll"
-            " WHERE tenant=%s AND hostname=%s", (TENANT, vert)).fetchone()[0]
-        migrator.rollback()
-        assert etter == status, "avvist utstedelse flyttet raden likevel"
+    r = klient.post("/v1/domener", json={"hostname": vert},
+                    headers={"X-Disponit-CSRF": csrf},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert (r.status_code, r.json()["feil"]) == (
+        409, "domene_challenge_avvist"), r.text
+    _sett_kontekst(migrator, TENANT)
+    etter = migrator.execute(
+        "SELECT status FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s", (TENANT, vert)).fetchone()[0]
+    migrator.rollback()
+    assert etter == "avklaring_kreves", "avvist utstedelse flyttet raden"
+
+
+@pg
+def test_avvist_kandidat_far_ny_utfordring_uten_a_rive_gjerdet(migrator):
+    """Codex P2: `avgjor_domeneovertakelse` etterlater med VILJE den avviste
+    kandidaten `tilbakekalt` MED motparten, nettopp for at en ny, bevist
+    reapplikasjon skal kunne åpne en ny avklaringsgenerasjon — 018 har en egen
+    gren for det. Men utstedelsen avviste den tilstanden, og arbeideren plukket
+    bare `ventende`: grenen hadde ingen produksjonskaller, og kandidaten var
+    permanent avhengig av at en operatør kalte administrasjonsfunksjonen.
+
+    Nå får hun utstede, og raden BLIR STÅENDE `tilbakekalt`: det er statusen
+    018 kjenner igjen. Beviset fører derfor til en NY avklaring med ny
+    generasjon og `konflikt:<motpart>` — aldri rett til `verifisert`.
+
+    MUTASJONEN SOM DREPER DENNE: kø raden til `ventende` ved utstedelse (da
+    blir svaret 'verifisert'), eller avvis utstedelsen igjen.
+    """
+    vert = f"reapp{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))
+        a.commit()
+        # ANNEN_TENANT tar over med DNS-kontroll → avklaring, motpart TENANT.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, vert))
+        a.commit()
+        gen = _gen(migrator, ANNEN_TENANT, vert)
+        # ...og M-37 AVVISER henne: tilbakekalt, motparten beholdt.
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'m37')",
+                  (ANNEN_TENANT, vert, gen))
+        a.commit()
+    finally:
+        a.close()
+
+    rt = _rt()
+    token = secrets.token_hex(32)
+    h = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        _sett_kontekst(rt, ANNEN_TENANT)
+        rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                   (ANNEN_TENANT, vert, h))
+        rt.commit()
+    finally:
+        rt.close()
+
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    status = migrator.execute(
+        "SELECT status FROM domenekontroll WHERE tenant=%s AND hostname=%s",
+        (ANNEN_TENANT, vert)).fetchone()[0]
+    migrator.rollback()
+    assert status == "tilbakekalt", \
+        "utstedelsen rev gjerdet: raden ble flyttet ut av tilbakekalt"
+
+    # Arbeideren SER den — ellers er utfordringen en oppskrift ingen leser.
+    assert (ANNEN_TENANT, vert) in _alle_ventende(migrator), \
+        "den avviste kandidaten plukkes ikke av arbeideren"
+
+    # ...og beviset gir en NY avklaring, ikke en verifisering.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    svar = _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                     (ANNEN_TENANT, vert, [token]))[0]
+    migrator.commit()
+    assert svar == f"konflikt:{TENANT}", svar
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rad = migrator.execute(
+        "SELECT status, autorisasjonsgenerasjon FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s",
+        (ANNEN_TENANT, vert)).fetchone()
+    migrator.rollback()
+    assert rad[0] == "avklaring_kreves", rad
+    assert rad[1] > gen, "reapplikasjonen fikk ingen ny generasjon"
 
 
 def _arbeiderkonn():

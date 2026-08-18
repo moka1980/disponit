@@ -452,10 +452,15 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
                   grense: int = VERIFISERING_TAK,
                   samtidighet: int = SAMTIDIGHET,
                   frist_s: float = VERIFISERING_FRIST_S) -> dict:
-    """Ett verifiseringspass: plukk `ventende` challenges kryss-tenant
+    """Ett verifiseringspass: plukk challenges kryss-tenant
     (`ventende_domenechallenges`, 039), slå opp TXT med samme
     diversitetskrav som revalideringen (≥2 enige, uavhengige resolvere),
     og la DATABASEN holde svaret mot hashen (`bekreft_domenechallenge`).
+
+    Plukket er `ventende` OG den M-37-AVVISTE kandidaten (`tilbakekalt` med
+    motpart) — den siste beholder statusen sin hele veien, for det er nettopp
+    den 018 kjenner igjen som en reapplikasjon. Hennes bevis fører derfor til
+    en ny avklaringsgenerasjon (`konflikt:*`), aldri til `verifisert`.
 
     Arbeideren kan ikke fabrikere et bevis: funksjonen sammenligner
     sha256 av de fergede TXT-verdiene mot `challenge_token_hash` den selv
