@@ -41,6 +41,7 @@ from .mac_register import last_mac_register
 from policy_validator.engine import EvaluationContext
 
 from . import cursor as cursormodul
+from . import artefaktskjema
 from . import feil as feiltabell
 from . import kjerne
 
@@ -1510,6 +1511,16 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # (nettopp det bindingen skal hindre). Til modul-onboarding trår i
             # kraft passeres NULL: en registrert oppdragstype er da IKKE claimbar
             # herfra (fail-closed) — legacy/uregistrert arbeid er upåvirket.
+            #
+            # 300 er et GULV, ikke leasen (Codex P1 → migrasjon 037). Endepunktet
+            # vet ikke hvilket oppdrag det er i ferd med å dele ut — hvor lenge
+            # arbeidet får ta står på RADEN (`utforelsesfrist`), og bare
+            # `claim_neste_oppdrag` har den når leasen settes. Funksjonen
+            # strekker derfor leasen til minst den fristen, opp til sitt eget
+            # tak på 3600 s. Et fast tall her ville betydd at et langt oppdrag
+            # (WCAG: 30/60 min) fikk leasen sin til å utløpe MENS utføreren
+            # jobbet, og en annen utfører ville reclaimet det og bestilt det
+            # samme eksterne arbeidet en gang til.
             rad = conn.execute(
                 "SELECT id, tenant, unntak_id, oppdragstype, handling,"
                 " repair_operation_id, payload_kryptert, key_id, nonce,"
@@ -1945,6 +1956,51 @@ def _kvittering_alt_avvist(conn, tenant: str, unntak_id: int, oppdrag_id: int,
          str(artefakt_id))).fetchone() is not None
 
 
+def _idempotent_svar(conn, *, tenant: str, oppdrag_id: int, ny_hash: str,
+                     rid: str) -> Response:
+    """Svaret på en gjentakelse: sa den forrige kvitteringen NOE OM STATUS?
+
+    `status: "idempotent"` betydde begge deler på én gang (Codex P2), og
+    det er den samme sammenblandingen `lagret_uten_statusendring` ble
+    innført for å fjerne. Den FØRSTE kvitteringen tar én av to veier:
+
+      * den avsluttende: `oppdrag.status` settes til `utfort`/`feilet` og
+        `oppdrag.resultathash` til hashen — oppdraget ER ferdig;
+      * sen evidens: bare kapabiliteten brennes med hashen. Status og sak
+        røres ikke med vilje — «en sen kvittering er evidens, og skal
+        aldri avslutte noe» — og svaret sier det selv, med 202.
+
+    Begge etterlater `kapabilitet.resultathash = ny_hash`, så en
+    gjentakelse traff samme idempotensgren uansett hvilken vei den første
+    tok, og fikk det samme ordet for to helt ulike tilstander. Utfører
+    utføreren en retry — helt lovlig, kvitteringen ER idempotent — måtte
+    den enten tro at et ufullført oppdrag var ferdig, eller (som
+    `wcag_audit.controller` valgte, fail-closed) at et ferdig oppdrag var
+    ukvittert. Ingen av dem er sanne, og ingen av dem kan utledes av
+    svaret.
+
+    Autoriteten er oppdragsraden, ikke kapabiliteten: statusen må være
+    terminal OG `resultathash` må være VÅR hash. Har et ANNET resultat
+    avsluttet oppdraget, er dette ikke et idempotent gjensyn med vår egen
+    kvittering, og da svarer vi det konservative — samme retning som
+    resten av porten.
+
+    Leses FØR kallerens rollback, som `_kvittering_alt_avvist`: READ
+    COMMITTED gir setningen et ferskt snapshot, så kappløpsvinnerens
+    committede tilstand er synlig.
+    """
+    rad = conn.execute(
+        "SELECT status, resultathash FROM oppdrag WHERE tenant=%s AND id=%s",
+        (tenant, oppdrag_id)).fetchone()
+    skiftet = (rad is not None and rad[0] in ("utfort", "feilet")
+               and rad[1] == ny_hash)
+    return kanonisk_json(
+        {"status": "idempotent" if skiftet
+                   else "idempotent_uten_statusendring",
+         "oppdrag_id": oppdrag_id, "request_id": rid}, 200,
+        {"x-request-id": rid})
+
+
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
                          rid: str, artefakt_id=None) -> Response | None:
@@ -1979,14 +2035,16 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         # rekonstruksjon som den sekvensielle retryen, samme funksjon.
         avvist = _kvittering_alt_avvist(conn, tenant, unntak_id, oppdrag_id,
                                         artefakt_id)
+        # Samme lesning som den sekvensielle retryen, samme funksjon: hvilken
+        # vei vinneren tok avgjør hva taperen får vite (Codex P2).
+        svar = _idempotent_svar(conn, tenant=tenant, oppdrag_id=oppdrag_id,
+                                ny_hash=ny_hash, rid=rid)
         conn.rollback()
         if avvist:
             tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
                                    oppdrag_id=oppdrag_id, kapplop=True)
             return _feilsvar("kvittering_konflikt", rid)
-        return kanonisk_json({"status": "idempotent",
-                              "oppdrag_id": oppdrag_id, "request_id": rid},
-                             200, {"x-request-id": rid})
+        return svar
 
     if utfall == "konflikt":
         # To ULIKE resultater levert samtidig. Uten denne grenen forsvant
@@ -2189,6 +2247,51 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdrag_id=oppdrag_id, grunn="klartekst_sha256")
         return _feilsvar("request_feilformet", rid)
 
+    # Codex P1: en SUKSESS for en artefaktproduserende type må BÆRE
+    # artefaktet. `er_utforelseskvittering` krever ingen av artefaktfeltene,
+    # og hele artefaktgrenen nedenfor står under `if art_id is not None` —
+    # en vellykket kvittering uten `artefakt_id` hoppet derfor over
+    # promotering, bindingskontroll, epoch-sjekk OG skjemarevalideringen og
+    # falt rett ned i statusskiftet: `oppdrag.status = utfort`, `unntak =
+    # løst`, uten en eneste rapport å vise til. En WCAG-kontroll uten
+    # evidens er ikke en utført kontroll, og her ville ingen engang sett at
+    # den manglet.
+    #
+    # Kravet står på TYPEN (`produserer_artefakt`), ikke som en fast liste
+    # her: legacy-typer uten artefakt er helt urørt, og en FEILET kvittering
+    # har per definisjon ingen rapport og skal fortsatt kunne meldes uten.
+    # Sjekken ligger sammen med de andre strukturvaktene, altså FØR
+    # kapabiliteten forbrukes — en kvittering vi avviser skal ikke brenne
+    # den controllerens ene sjanse til å levere den samme rapporten på nytt.
+    if oppdragskontrakt.mangler_artefaktevidens(oppdragstype, kvittering):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="artefakt_paakrevd",
+                               oppdragstype=oppdragstype)
+        return _feilsvar("request_feilformet", rid)
+
+    # ... og den ANDRE halvdelen av den samme setningen (Codex P2): en
+    # FEILET kvittering har per definisjon ingen rapport. Bare den ene
+    # halvdelen var håndhevet. Artefaktgrenen nedenfor står under `if
+    # art_id is not None` og ikke under resultatet, så en autentisert
+    # modul som sendte `resultat: "feilet"` sammen med en gyldig
+    # `artefakt_id` og hash fikk rapporten PROMOTERT til attestert
+    # evidens — og deretter ble oppdraget merket feilet. Det er en
+    # selvmotsigende tilstand å lagre: en konsument som leser rapporten
+    # ser en fullført kontroll, en som leser oppdraget ser en mislykket.
+    #
+    # Står sammen med vakten over, altså før kapabiliteten forbrukes: en
+    # kvittering vi avviser skal ikke brenne utførerens ene sjanse til å
+    # sende den riktige.
+    if oppdragskontrakt.artefakt_uten_utforelse(kvittering):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="artefakt_uten_utforelse",
+                               oppdragstype=oppdragstype)
+        return _feilsvar("request_feilformet", rid)
+
     ny_hash = _resultathash(kvittering)
 
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
@@ -2205,11 +2308,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                       kvittering.get("artefakt_id")):
                 conn.rollback()
                 return _feilsvar("kvittering_konflikt", rid)
+            # ... og var den IKKE avvist: sa den forrige kvitteringen noe om
+            # status, eller ble den bare bevart som sen evidens? Se
+            # `_idempotent_svar` (Codex P2).
+            svar = _idempotent_svar(conn, tenant=tenant, oppdrag_id=oppdrag_id,
+                                    ny_hash=ny_hash, rid=rid)
             conn.rollback()
-            return kanonisk_json({"status": "idempotent",
-                                  "oppdrag_id": oppdrag_id,
-                                  "request_id": rid}, 200,
-                                 {"x-request-id": rid})
+            return svar
         _sikkerhetssak_kvittering(conn, tenant, unntak_id,
                                   "motstridende_kvittering",
                                   {"kilde": kilde, "lagret": hash_,
@@ -2358,6 +2463,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             (oppdragsmodul[0],)).fetchone()
         promotert = (art is not None and naa_epoch is not None
                      and opp_epoch == naa_epoch[0])
+        if promotert:
+            # PR-014c §8 pkt. 2: REVALIDER MOT SAMME SKJEMA i samme
+            # transaksjon som statusovergangen. Skjemaet er immutabelt, så
+            # dette er ikke forsvar mot endring — det er forsvar mot at en
+            # fremtidig opplastingsvei glemmer valideringen ved opplasting.
+            # Brudd (eller uvaliderbart innhold) → IKKE promotert → samme
+            # karantene + sikkerhetssak som binding-/epoch-avvik under:
+            # artefaktet bevares for etterforskning, aldri som evidens.
+            arad = conn.execute(
+                "SELECT artefakttype, ciphertext, nonce, dek_ref FROM"
+                " artefakt WHERE tenant=%s AND artefakt_id=%s",
+                (tenant, art_id)).fetchone()
+            promotert = arad is not None
+            if promotert:
+                skjema = artefaktskjema.hent_skjema(conn, arad[0])
+                if skjema is None:
+                    promotert = False
+                else:
+                    try:
+                        dek = kryptering.hent_dek(conn, tenant, arad[3])
+                        innhold = kryptering.dekrypter(
+                            dek, bytes(arad[1]), bytes(arad[2]), tenant,
+                            arad[3])
+                    except Exception:                         # noqa: BLE001
+                        # Udekrypterbart innhold er per definisjon
+                        # uvaliderbart — samme utfall, aldri en 500.
+                        promotert = False
+                        innhold = None
+                    if innhold is not None                             and artefaktskjema.valider(skjema, innhold):
+                        promotert = False
         if promotert:
             try:
                 # SAVEPOINT: en promoteringsfeil (epoch-drift/bindingsavvik) må
@@ -2529,6 +2664,27 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
 
         # Tenant fra kapabiliteten. Server-beregnet JCS-hash + størrelse.
         sett_kontekst(conn, tenant, auth.aktor, rid)
+
+        # PR-014c §8 pkt. 1: SKJEMAVALIDERING FØR KRYPTERING. Kapabiliteten
+        # bærer artefakttypen; typen binder en skjema_hash; hashen slår opp
+        # skjemaet. Ingen skjemarad → avvist (innhold ingen kan validere
+        # tas ikke imot); brudd → avvist, med detaljene i sikkerhetsloggen
+        # og aldri i svaret (rapportinnhold kan bære persondata).
+        skjema = artefaktskjema.hent_skjema(conn, artefakttype)
+        if skjema is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("artefaktskjema_mangler", rid, tenant,
+                                   art="drift", artefakttype=artefakttype)
+            return _feilsvar("artefaktskjema_mangler", rid)
+        skjemafeil = artefaktskjema.valider(skjema, rapport)
+        if skjemafeil:
+            conn.rollback()
+            tjeneste.logg.hendelse("artefakt_skjemabrudd", rid, tenant,
+                                   art="sikkerhet", artefakttype=artefakttype,
+                                   antall=len(skjemafeil),
+                                   forste=skjemafeil[0][:160])
+            return _feilsvar("artefakt_skjemabrudd", rid)
+
         try:
             kanon = jcs.kanoniske_bytes(rapport)
         except (jcs.Ikkekanoniserbar, UnicodeEncodeError, RecursionError):

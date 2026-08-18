@@ -332,13 +332,31 @@ def sikker_beslutning_pg(policy: dict, context, event: dict,
     handling = event.get("handling") if isinstance(event.get("handling"), str) \
         else "<mangler>"
 
-    # Porten: enten et brudd kalleren allerede har avgjort, eller
-    # signaturkontrollen. Begge ender i samme loggskriving.
+    # Porten: enten et brudd kalleren allerede har avgjort, signaturkontrollen
+    # eller målbindingen. Alle ender i samme loggskriving.
     brudd = portbrudd
     if brudd is None and nokler is not None:
         grunn = attestering.kontroller_hendelse(event, nokler)
         if grunn is not None:
             brudd = Portbrudd(grunn)
+    if brudd is None:
+        # MÅLBINDINGEN (Codex P1). Aktiveringsporten beviser at policyen
+        # BÆRER et registrert målautorisasjonsvilkår; den beviser ikke at
+        # beviset gjelder verten hendelsen faktisk ber om å lese. Uten
+        # dette kunne en ekte attestasjon gjenbrukes mot et helt annet
+        # `mal_url` — autorisert mål på papiret, uautorisert trafikk ut.
+        #
+        # Porten står HER og ikke i `api.kjerne` fordi dette er den ENE
+        # veien alle evalueringer går: kjernen, unntaksbehandlingen og alt
+        # som måtte komme. En port på forespørselsveien alene ville vært en
+        # port med en dør ved siden av. Den kjører også uten `nokler`
+        # (lokal utvikling): dette er en kontraktbinding, ikke en
+        # signaturkontroll.
+        import oppdragskontrakt
+        malbrudd = oppdragskontrakt.malbindingsbrudd(event.get("handling"),
+                                                     event)
+        if malbrudd is not None:
+            brudd = Portbrudd(Grunn(malbrudd[0], malbrudd[1]))
     if brudd is not None:
         d = Decision(STOPP, handling, brudd.policy_id, [brudd.grunn])
         try:

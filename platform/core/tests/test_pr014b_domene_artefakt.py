@@ -115,6 +115,10 @@ def test_domenekontroll_og_hostname_binding_kan_ikke_slettes(migrator):
 
 # ---------------- artefakt ----------------
 
+#: sha256 over JCS({"type": "object"}) — det permissive skjemaet fixturene
+#: binder testartefakttyper til (PR-014c).
+PERMISSIV_SKJEMA_HASH = "a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0"
+
 def _artefakttype(conn, modul, kh, at, ver=1):
     """kontrakt + artefakttype (begge direkte som migrator; immutabelt)."""
     conn.execute(
@@ -122,10 +126,22 @@ def _artefakttype(conn, modul, kh, at, ver=1):
         "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
         "reversibilitet) VALUES (%s,%s,%s,'p','k','krever_outbox','kompenserende')"
         " ON CONFLICT DO NOTHING", (modul, ver, kh))
+    # PR-014c: skjemavalidering ved opplasting/promotering krever at
+    # skjema_hash-en KAN slås opp. Testene her prøver bindinger og
+    # tilstandsmaskiner, ikke innhold — det permissive objektskjemaet
+    # ({"type": "object"}, JCS-hashet) slipper alt innhold gjennom.
+    # Bytene, ikke en jsonb-kopi av dem: raden er innholdsadressert, og
+    # CHECK-en i 036 krever at hashen stemmer med det som lagres. Merk
+    # mellomrommet som var her før — `{"type": "object"}` under hashen
+    # til `{"type":"object"}` — nettopp driften den CHECK-en fanger.
+    conn.execute(
+        "INSERT INTO artefaktskjema (skjema_hash, kanonisk)"
+        " VALUES (%s, '{\"type\":\"object\"}')"
+        " ON CONFLICT (skjema_hash) DO NOTHING", (PERMISSIV_SKJEMA_HASH,))
     conn.execute(
         "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
         " kontraktversjon, kontrakt_hash, skjema_hash) VALUES (%s,%s,%s,%s,%s)",
-        (at, modul, ver, kh, "sh-" + secrets.token_hex(4)))
+        (at, modul, ver, kh, PERMISSIV_SKJEMA_HASH))
     conn.commit()
 
 

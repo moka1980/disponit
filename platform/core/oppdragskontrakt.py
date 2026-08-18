@@ -17,6 +17,7 @@ gjort feltbredden til en funksjon av navnet på handlingen.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 
@@ -38,6 +39,29 @@ class Oppdragstype:
     felter: frozenset[str]
     paakrevde: frozenset[str]
     beskrivelse: str = ""
+    #: PR-014c: eiermodulen typen hører til, som EKTE modul-id
+    #: (`m_wcag_audit`) — aldri det syntetiske `eiermodul:<navn>`.
+    #: Autoriteten for HVA modulen får claime er fortsatt registerraden +
+    #: releasens kontrakt, og deploy-porten krysser de to kildene. Men
+    #: feltet er ikke bare informativt (Codex P1): `_eiermodul_for` binder
+    #: nye oppdrag til nettopp denne id-en, fordi claim krever
+    #: `oppdrag.eiermodul = auth.modul_id`. Er den None, er typen eierløs
+    #: (legacy) og oppdraget bindes til det syntetiske navnet som før.
+    eiermodul: str | None = None
+    #: PR-014c §5–6: `krever_malautorisasjon` uttrykker et BEHOV, ikke et
+    #: bevis — handlingen trenger et positivt autorisert mål. De to feltene
+    #: står SAMMEN fordi de må matche hver sin side av aktiveringsporten:
+    #: flagget sier at porten gjelder, domenet sier hvilke rader i
+    #: `malautorisasjonsvilkar` som kan tilfredsstille den. Implementer
+    #: aldri det ene uten det andre.
+    krever_malautorisasjon: bool = False
+    malautorisasjonsdomene: str | None = None
+    #: PR-014c §7 (Codex P1): typen leverer resultatet sitt som et
+    #: ARTEFAKT. Da er en vellykket kvittering UTEN `artefakt_id` ikke en
+    #: variant, men en selvmotsigelse: oppdraget påstår at kontrollen ble
+    #: utført samtidig som det ikke finnes noen rapport å vise til. Se
+    #: `mangler_artefaktevidens`.
+    produserer_artefakt: bool = False
 
     def valider(self) -> list[str]:
         feil = []
@@ -49,6 +73,17 @@ class Oppdragstype:
         if not self.handlingsprefikser:
             feil.append(f"{self.navn}: ingen handlingsprefikser — da kan"
                         " ingen handling matche typen")
+        if self.krever_malautorisasjon != (
+                self.malautorisasjonsdomene is not None):
+            feil.append(f"{self.navn}: krever_malautorisasjon og"
+                        " malautorisasjonsdomene må settes sammen — et krav"
+                        " uten domene kan ingen rad tilfredsstille, og et"
+                        " domene uten krav er en port ingen går gjennom")
+        if self.produserer_artefakt and self.eiermodul is None:
+            feil.append(f"{self.navn}: produserer_artefakt uten eiermodul —"
+                        " opplastingskapabiliteten til `/v1/artefakt` er"
+                        " modulbundet, så en eierløs type kan aldri levere"
+                        " artefaktet kvitteringen ville blitt krevd for")
         return feil
 
 
@@ -72,6 +107,22 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " som skal utføres på nytt etter at dataene foreligger.")),
     "verifikasjon": Oppdragstype(
         navn="verifikasjon",
+        # `kontroll.` BLIR STÅENDE (Codex P1, runde 11). PR-014c fjernet det
+        # først, med den begrunnelsen at reservasjonen var ubrukt: ingen
+        # produsent i repoet lager `kontroll.*`-handlinger for denne typen.
+        # Den begrunnelsen holder ikke, for den slutter fra KODEN til DATAEN.
+        # Handlings-ID-er kommer fra tenantpolicyer, og policyskjemaet
+        # (`policy-schema-v0.2.json`, `handlinger[].id`) tillater en fri
+        # punktnotert streng. En allerede aktiv policy med f.eks.
+        # `kontroll.fakturagrunnlag` er derfor mulig uten at noe i repoet
+        # ville vist det — og for den ville fjerningen ikke vært
+        # «fail-closed», men et stille tap: `type_for_handling` → None →
+        # `_eiermodul_for` → `eiermodul:ukjent`, og oppdraget kan hverken
+        # claimes eller minimeres.
+        #
+        # `kontroll.wcag.` er ikke i konflikt med dette: oppslaget under
+        # velger det LENGSTE prefikset som matcher, så WCAG-kontrollen
+        # eier sitt eget undernavnerom uten å ta hele `kontroll.`.
         handlingsprefikser=("verifiser.", "kontroll."),
         # Ingen beløp: et verifikasjonsoppdrag skal slå opp mot en
         # autoritativ kilde, ikke få vite hva saken gjaldt i kroner.
@@ -98,21 +149,455 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         beskrivelse=("v3-delta pkt. 5: alle oppslag mot autoritative kilder"
                      " er sideeffektfrie oppdrag utført av en modul med egne"
                      " fullmakter. M-37 rører aldri ERP/bank/CRM selv.")),
+    # PR-014c: den første handlingsmodulen. LUKKET payload — de fire
+    # feltene er ALT modulen får se: ingen tenantnavn, ingen
+    # kundeidentifikator, ingen kontaktdata. `mal_url` er normalisert av
+    # urlkontrakten før oppdraget opprettes; `kravsett` er lukket enum
+    # (en ny verdi skal være en feil, ikke stillhet) — begge håndheves
+    # ved OPPRETTELSEN (bestillingsveien), minimeringen her er siste
+    # skanse for feltBREDDEN.
+    "kontroll.wcag.nettsted": Oppdragstype(
+        navn="kontroll.wcag.nettsted",
+        handlingsprefikser=("kontroll.wcag.",),
+        felter=frozenset({"mal_url", "kravsett", "omfang", "maks_sider"}),
+        paakrevde=frozenset({"mal_url", "kravsett", "omfang"}),
+        eiermodul="m_wcag_audit",
+        krever_malautorisasjon=True,
+        malautorisasjonsdomene="web_hostname",
+        produserer_artefakt=True,
+        beskrivelse=("PR-014c: automatisk WCAG-kontroll av et positivt"
+                     " autorisert hostname. `ekstern_lesing`-klassen:"
+                     " observerbar trafikk ut, ingen ekstern mutasjon;"
+                     " målautorisasjon + frekvens håndheves av"
+                     " aktiveringsporten, egress/robots av 014b.")),
 }
 
 
 def type_for_handling(handling: str) -> Oppdragstype | None:
     """Oppdragstypen en handling hører til, eller None.
 
-    Prefiksene er disjunkte per konstruksjon — `test_prefikser_er_disjunkte`
-    beviser det. Overlappende prefikser ville gjort feltbredden avhengig av
-    hvilken rekkefølge dict-en tilfeldigvis har.
+    LENGSTE PREFIKS VINNER (Codex P1, runde 11). Prefiksene var disjunkte
+    før PR-014c, og da var «første treff» det samme som «eneste treff».
+    Med `kontroll.wcag.` under `kontroll.` er de det ikke lenger, og
+    førstetreff ville gjort typen — altså FELTBREDDEN — avhengig av
+    rekkefølgen i en dict. Det er nettopp det den gamle
+    disjunkthetsinvarianten vernet mot, og lengste treff gir samme vern
+    uten å måtte gi fra seg et helt navnerom: `kontroll.wcag.nettsted`
+    treffer WCAG-typen (13 tegn), `kontroll.fakturagrunnlag` treffer
+    `verifikasjon` (9 tegn), og ingen av dem avhenger av iterasjonen.
+
+    Det som fortsatt IKKE er tillatt, er at to ULIKE typer deklarerer
+    NØYAKTIG samme prefiks — da finnes det ikke noe lengste treff å velge,
+    og `test_oppdragstypenes_prefikser_er_entydige` avviser det.
     """
     if not isinstance(handling, str):
         return None
+    beste: Oppdragstype | None = None
+    beste_lengde = -1
     for t in OPPDRAGSTYPER.values():
-        if any(handling.startswith(p) for p in t.handlingsprefikser):
-            return t
+        for p in t.handlingsprefikser:
+            if handling.startswith(p) and len(p) > beste_lengde:
+                beste, beste_lengde = t, len(p)
+    return beste
+
+
+#: Måldomenene og hvilket hendelsesfelt de peker på. Lukket på samme måte
+#: som `OPPDRAGSTYPER`: et ukjent domene er en feil, ikke en port som er av.
+MALDOMENEFELT: dict[str, str] = {"web_hostname": "mal_url"}
+
+#: Hendelsesfeltet som BÆRER målbindingen. Det er `ressurs_id` og ikke et
+#: nytt felt fordi `ressurs_id` alt ligger i `BINDINGSFELT`, altså inne i
+#: de signerte bytene, og `attestering.kontroller_binding` alt krever at
+#: attestasjonen bærer samme verdi som hendelsen — se `malbindingsbrudd`.
+#: Navnet står som konstant fordi flere porter må vite HVILKET felt som er
+#: server-bundet: kjøretidsbindingen krever at det er det normaliserte
+#: målet, og aktiveringsporten krever at frekvenstelleren grupperer på
+#: nettopp det (ellers teller taket per forespørsel, ikke per mål).
+MALBINDINGSFELT = "ressurs_id"
+
+
+#: Vertsnavnet i den ENE formen Python og nettleseren garantert leser
+#: likt: ren ASCII, bokstaver/siffer/bindestrek, minst to etiketter, og en
+#: toppetikett som begynner med en bokstav.
+#:
+#: Alt utenfor dette er ikke «uvanlig», det er TVETYDIG — se
+#: `normaliser_vertsnavn`. Punycode (`xn--p1ai`) er med vilje innenfor:
+#: den formen er allerede nettleserens egen normalform, så de to sidene
+#: leser den likt. Toppetiketten «begynner med bokstav» er det som skiller
+#: et DNS-navn fra en IPv4-lignende verdi (`0x7f.1`, `127.0.0.1`), som
+#: nettleseren normaliserer med helt egne regler.
+_VERTSNAVN = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*"
+    r"\.[a-z]([a-z0-9-]{0,61}[a-z0-9])?\Z")
+
+
+def normaliser_vertsnavn(raa: object) -> str | None:
+    """https-URL -> vertsnavn i normalform, ellers None.
+
+    `urlsplit().hostname` gjør småbokstaver og fjerner credentials og port;
+    en avsluttende rotprikk (`example.com.`) fjernes fordi den navngir
+    NØYAKTIG samme vert og ellers ville vært et gratis omgåelsestegn.
+    `d.port` er en property som selv kaster på ulovlig port — den leses
+    inne i vakten slik at et ubetrodd felt gir None, aldri et unntak.
+
+    DEN SOM LESER URL-EN TIL SLUTT ER CHROMIUM (Codex P1). `mal_url` går
+    UENDRET videre til motoren, mens denne funksjonen avgjør hvilken vert
+    plattformen mener er autorisert — både i `malbindingsbrudd` og i
+    kvitteringens `ressurs_id`. Er Python og WHATWG-parseren uenige om
+    hvor verten slutter, navngir HELE plattformen én vert mens nettleseren
+    besøker en annen:
+
+      * `https://allowed.example\\@evil.example/` — for WHATWG er
+        omvendt skråstrek det samme som `/` i en special-scheme-URL, så
+        authority er `allowed.example` og resten er sti. `urlsplit` regner
+        `\\` som en helt vanlig tegn i netloc, tar delen etter SISTE `@`
+        som vert, og svarer `evil.example`. Attestasjonen for
+        `evil.example` — en vert angriperen faktisk kontrollerer — ville
+        altså passert bindingen, mens trafikken gikk til
+        `allowed.example`. Nøyaktig den uautoriserte utgående trafikken
+        målautorisasjonen finnes for å hindre, med et bevis som ser
+        gyldig ut hele veien.
+      * `https://evil%2eexample/`, `https://пример.example/`,
+        `https://evil.example。x/` — nettleseren prosentdekoder,
+        IDNA-mapper og deler på ideografisk punktum; `urlsplit` gjør
+        ingen av delene og gir en annen streng.
+
+    Vakten er derfor todelt, og begge deler trengs: omvendt skråstrek
+    avvises på RÅSTRENGEN (i den farlige formen over er `hostname` en
+    plettfri LDH-streng, så et mønster alene ser ingenting), og verten må
+    stå i `_VERTSNAVN` — den formen begge parsere leser likt.
+
+    Å avvise er riktig utfall og ikke et tap: kalleren behandler None som
+    `malautorisasjon_mal_ugyldig` / manglende binding, altså fail-closed.
+    En vert som er tvetydig for nettleseren er en vert plattformen ikke
+    KAN love noe om, og en bestilling ingen kan lese entydig skal stoppe
+    hos den som bestilte den.
+    """
+    from urllib.parse import urlsplit
+    if not isinstance(raa, str) or not raa:
+        return None
+    # FØR parsingen: `urlsplit` skjuler den — se `hostname` over.
+    # Nettleseren skriver om `\` til `/` overalt i en special-scheme-URL,
+    # også i stien, så URL-en motoren HENTER er ikke den som ble bestilt.
+    if "\\" in raa:
+        return None
+    try:
+        d = urlsplit(raa)
+        vert, _ = d.hostname, d.port
+    except ValueError:
+        return None
+    if d.scheme != "https" or not vert:
+        return None
+    vert = vert.rstrip(".")
+    if len(vert) > 253 or not _VERTSNAVN.match(vert):
+        return None
+    return vert
+
+
+#: Tegnene som prosentkodes I TILLEGG til C0-kontrolltegn, mellomrom, DEL
+#: og alt over ASCII (som UTF-8) — for STIEN.
+#:
+#: Settet er RFC 3986 sitt, ikke én nettlesers: det er nøyaktig de
+#: ASCII-tegnene som ikke kan stå rått i en sti (`path` tillater
+#: `unreserved`, `pct-encoded`, `sub-delims`, `:` og `@`). `?` og `#` står
+#: der også, men `urlsplit` har alt delt dem av før stien kommer hit, og
+#: `\` avvises i sin helhet av `normaliser_vertsnavn`.
+#:
+#: HVORFOR RFC-ENS SETT OG IKKE CHROMIUMS BORDOPPSLAG (Codex P2, fjerde
+#: runde på URL-identitet): de tre foregående rundene jaktet alle på
+#: «hvilke tegn koder nettleseren?», og svaret var nytt hver gang — sist
+#: `^`, som WHATWG holder utenfor sitt path-sett mens Chromium koder det.
+#: Det spørsmålet trenger vi ikke svare på. Normaliseringen kjører på
+#: BEGGE sider av sammenligningen (bestillingen og motorens utdata), og
+#: `%` kodes aldri om, så det er trygt å kode et OVERSETT av det motoren
+#: koder: koder motoren `^`, står `%5E` på begge sider allerede; koder den
+#: ikke, gjør vi begge sider til `%5E`. Symmetrien — ikke tabellen — er
+#: det som holder.
+#:
+#: Og over-kodingen kan ikke slå sammen to sider serveren skiller, nettopp
+#: fordi settet er RFC-ens: disse tegnene kan ikke stå rått i en gyldig
+#: sti, så det finnes ingen rå form å forveksle den kodede med. Tegn som
+#: ER lovlige rått (`,`, `;`, `=`, `+`, `:`, `@` ...) rører vi ikke.
+_STI_KODES = '"<>`{}^|[]'
+
+#: Samme sett for QUERY-en, som tillater alt stien gjør pluss `/` og `?`.
+#: `'` kommer i tillegg: RFC-en tillater den rått, men nettleseren koder
+#: den i query-en for special-schemes (`https`), så en rå `'` overlever
+#: aldri en ekte navigasjon — serveren ser `%27` uansett.
+#:
+#: `+` er IKKE med, og `%2B` dekodes aldri. De to betyr hver sin ting for
+#: en form-kodet server (`+` er mellomrom, `%2B` er pluss), og det er
+#: nettopp skillet mellom `+` og `%20` som ikke skal viskes ut her.
+_QUERY_KODES = _STI_KODES + "'"
+
+
+def _nettleserkodet(tekst: str, kodes: str = _STI_KODES) -> str:
+    """Delen slik NETTLESEREN SKRIVER den: prosentkodet etter `kodes`.
+
+    `urlsplit` er en parser og rører ikke tegnene. WHATWG-parseren i
+    Chromium prosentkoder mens den navigerer, så en bestilling på
+    `https://kunde.example/café?q=café` besøkes og rapporteres som
+    `https://kunde.example/caf%C3%A9?q=caf%C3%A9`.
+
+    Kodingen går BARE én vei, aldri tilbake:
+
+      * `%` kodes ALDRI. Det gjør funksjonen idempotent — `caf%C3%A9` er
+        allerede den formen nettleseren rapporterer, og skulle den blitt
+        til `caf%25C3%25A9`, hadde normaliseringen selv laget avviket den
+        er her for å fjerne. Nettleseren lar også en løs `%` stå.
+      * Vi DEKODER ikke unødvendige escapes og skriver ikke om
+        `%c3%a9` til `%C3%A9`. Nettleseren gjør ingen av delene, og en
+        normalisering som gjetter feil vei gjør to ULIKE sider like —
+        feilretningen skal være avvisning, ikke stille sammenslåing.
+
+    Rekkefølgen er urørt: dette er en passering tegn for tegn, ikke en
+    parsing. Query-parametre kommer ut i den rekkefølgen de kom inn.
+    """
+    ut: list[str] = []
+    for tegn in tekst:
+        if tegn == "%" or ("\x20" < tegn < "\x7f" and tegn not in kodes):
+            ut.append(tegn)
+        else:
+            ut.extend(f"%{b:02X}" for b in tegn.encode("utf-8"))
+    return "".join(ut)
+
+
+def _uten_punktsegmenter(sti: str) -> str:
+    """Stien slik NETTLESEREN LESER den: `.` og `..` løst opp.
+
+    `urlsplit` gir stien tegn for tegn. Nettleseren gjør noe annet:
+    WHATWG-URL-parseren løser punktsegmentene mens den leser stien, så
+    `https://kunde.example/a/../side` ER `https://kunde.example/side` for
+    Chromium, og det er den formen som besøkes og rapporteres tilbake.
+
+    Reglene er WHATWG sine, ikke RFC 3986 sine, fordi det er nettleseren
+    som avgjør hva som faktisk ble besøkt:
+
+      * `%2e` og `%2E` teller som punktum (`/a/%2e%2e/side` er `/side`).
+        Gjorde de ikke det, kunne en prosentkodet skrivemåte av nøyaktig
+        samme navigasjon skli forbi som «en annen side».
+      * `..` under roten går ikke i minus — den blir stående på roten.
+        RFC-en etterlater `/..`-rester; nettleseren gjør ikke det.
+      * ET AVSLUTTENDE punktsegment gir en avsluttende `/`: `/a/..` er
+        `/`, og `/a/.` er `/a/`. Det er ikke pynt — `/a` og `/a/` kan
+        være to forskjellige ressurser, og nettleseren ber om den siste.
+
+    Resten av stien røres IKKE HER — store bokstaver og tomme segmenter
+    står som de står, og prosentkodingen er `_nettleserkodet` sin jobb.
+    """
+    #: `%2e`/`%2E` er punktum for WHATWG-parseren, derfor `.lower()`.
+    segmenter = sti.split("/")[1:]
+    ut: list[str] = []
+    for i, segment in enumerate(segmenter):
+        lav = segment.lower()
+        siste = i == len(segmenter) - 1
+        if lav in ("..", ".%2e", "%2e.", "%2e%2e"):
+            if ut:
+                ut.pop()
+            if siste:
+                ut.append("")
+        elif lav in (".", "%2e"):
+            if siste:
+                ut.append("")
+        else:
+            ut.append(segment)
+    return "/" + "/".join(ut)
+
+
+def nettleserlest_sti(sti: str) -> str:
+    """Stien slik nettleseren både SKRIVER og LESER den — prosentkodet
+    etter WHATWG-settet, og med punktsegmentene løst opp.
+
+    Kodingen står FØRST: den rører verken `.` eller `%2e`, så de to
+    lesningene er upåvirket av hverandre, og en allerede kodet sti går
+    uendret gjennom begge.
+
+    Funksjonen bor HER og ikke i modulen (Codex P2), av samme grunn som
+    `normaliser_vertsnavn` gjør det: den er URL-semantikk, ikke
+    WCAG-semantikk, og den brukes nå av BEGGE sider — `rapport._delt_url`
+    sammenligner bestilling mot motorutdata med den, og
+    `bryter_feltkontrakten` måler rapportformens lengde med den. To
+    normaliseringer ville vært to svar.
+    """
+    return _uten_punktsegmenter(_nettleserkodet(sti))
+
+
+def nettleserlest_query(query: str) -> str:
+    """Query-en slik nettleseren SKRIVER den — prosentkodet etter
+    `_QUERY_KODES`.
+
+    Punktsegmenter finnes ikke her: `..` i en query er data, ikke
+    navigasjon, og skal stå som den står. Det er BARE kodingen som er
+    felles med stien.
+
+    Rekkefølge og form ellers er urørt (Codex P2). En query er ubetrodd
+    data for oss — vi vet ikke om serveren ruter på `a=1&b=2` og `b=2&a=1`
+    likt, og vi vet ikke om den leser `+` som mellomrom. Det eneste vi vet
+    er hva NETTLESEREN gjør før serveren ser noe: den prosentkoder tegnene
+    som ikke kan stå rått. Da er det bare den omskrivingen som skal
+    speiles, ikke en sortering eller en `+`/`%20`-tolkning.
+    """
+    return _nettleserkodet(query, _QUERY_KODES)
+
+
+def rapporturl(raa: object) -> str | None:
+    """https-URL i RAPPORTFORM — vert i normalform, ikke-standard port,
+    nettleserlest sti, uten query og fragment. -> None når URL-en ikke lar
+    seg lese entydig.
+
+    Dette er DEN avledningen: `rapport._delt_url` navngir sidene i
+    rapporten med den, og `bryter_feltkontrakten` måler lengden på den.
+    Sto lengdegrensa på råstrengen i stedet, ville den målt noe annet enn
+    skjemaet måler — prosentkodingen EKSPANDERER (`é` blir seks tegn), så
+    en råstreng under grensa kan gi en rapportform over den.
+
+    STANDARDPORTEN ER IKKE MED: `https://kunde.example:443/side` og
+    `https://kunde.example/side` ber om nøyaktig samme ressurs, og
+    Chromium serialiserer den uten porten. Ikke-standardporter bæres
+    videre — de skiller faktisk to endepunkter fra hverandre. Skjemaet er
+    alltid https her, så 443 er den eneste standardporten som kan dukke
+    opp.
+
+    EN LØS SURROGAT gir None, ikke et unntak: `json.loads` leverer
+    `"\\ud800"` som et tegn `str.encode` ikke kan skrive, og en URL ingen
+    nettleser kan be om er nettopp en URL som ikke lar seg lese entydig.
+    Sto den nakne `UnicodeEncodeError` igjen, ville den sluppet ut av
+    forhåndsporten som noe annet enn et avvist felt.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+    vert = normaliser_vertsnavn(raa)
+    if vert is None:
+        return None
+    # `normaliser_vertsnavn` har alt lest `d.port` innenfor sin egen vakt,
+    # så en ulovlig port ga None over og kan ikke kaste her.
+    d = urlsplit(str(raa))
+    nettsted = vert + (f":{d.port}" if d.port and d.port != 443 else "")
+    try:
+        sti = nettleserlest_sti(d.path or "/")
+    except UnicodeEncodeError:
+        return None
+    return urlunsplit(("https", nettsted, sti, "", ""))
+
+
+def malvert(oppdragstype: object, payload: object) -> str | None:
+    """Verten et oppdrag av denne TYPEN er autorisert for, eller None.
+
+    ÉN avledning, for alle som må navngi målet. Kjøretidsbindingen
+    (`malbindingsbrudd`), kvitteringens `ressurs_id` og rapportens
+    sidebinding svarer på nøyaktig samme spørsmål — «hvilken vert har noen
+    autorisert her?» — og gjorde de det hver for seg, ville første avvik i
+    normaliseringen betydd at plattformen navngir én vert i beviset og en
+    annen i evidensen. Da er bindingen pynt.
+
+    Oppslaget går via TYPEN og ikke via et fast feltnavn: hvilket
+    payloadfelt som bærer målet er en egenskap ved måldomenet
+    (`MALDOMENEFELT`), og en ny oppdragstype med et annet domene skal
+    kunne komme til uten at kallerne endres.
+
+    -> None når typen ikke krever målautorisasjon, når måldomenet ikke
+    peker på noe felt, eller når feltet ikke lar seg lese entydig. Alle
+    tre er fail-closed hos kalleren: ingen vert å binde til betyr at
+    oppdraget ikke skal utføres, ikke at bindingen er valgfri.
+    """
+    t = OPPDRAGSTYPER.get(oppdragstype) if isinstance(oppdragstype, str) \
+        else None
+    if t is None or t.malautorisasjonsdomene is None:
+        return None
+    felt = MALDOMENEFELT.get(t.malautorisasjonsdomene)
+    if felt is None or not isinstance(payload, dict):
+        return None
+    return normaliser_vertsnavn(payload.get(felt))
+
+
+def avtrykk(raa: object) -> str:
+    """Kort, stabilt avtrykk av en verdi — til revisjonsspor, ikke til
+    gjenoppretting.
+
+    `Grunn.params` ender i `revisjonslogg.begrunnelse`, som er en
+    KLARTEKST-kolonne: alt som legges der blir liggende permanent, utenfor
+    det krypterte sporet. Ressurs-ID-er og payload-avledede verdier
+    (vertsnavn fra `mal_url`) hører ikke hjemme der.
+
+    Avtrykket bevarer det etterforskningen faktisk trenger — er det samme
+    verdi som sist? er de to sidene like? — uten å publisere verdien. Det
+    er bevisst IKKE en hemmelighold-mekanisme: et vertsnavn har lav
+    entropi, så den som allerede har en kandidat kan bekrefte den. Skillet
+    er mellom å KUNNE bekrefte en mistanke og å FÅ utlevert kundens
+    identifikator av loggen selv.
+
+    TOTAL for enhver JSON-verdi (Codex P2). `raa` er her `ressurs_id` rett
+    fra en ubetrodd hendelse, og `json.loads` godtar et ensomt surrogat
+    (`"\\ud800"`). Med `str.encode("utf-8")` kunne avsenderen dermed velge
+    at BINDINGSKONTROLLEN kaster i stedet for å svare: `malbindingsbrudd`
+    kjører før motorens unntaksvakt, så forespørselen døde uten
+    `malautorisasjon_feil_mal` i revisjonssporet — nøyaktig posten som
+    navngir et ulovlig målbindingsforsøk. Se `tekstbytes.utf8` for hvorfor
+    kodingen forblir injektiv.
+    """
+    import hashlib
+
+    import tekstbytes
+    # Typenavnet er med i det som hashes, så `None` og strengen `"None"`
+    # ikke får samme avtrykk — ellers ville de vært umulige å skille i
+    # sporet.
+    return hashlib.sha256(
+        tekstbytes.utf8(f"{type(raa).__name__}:{raa}")).hexdigest()[:16]
+
+
+def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:
+    """None == målautorisasjonen gjelder DEN verten som faktisk kontrolleres.
+
+    Codex P1: aktiveringsporten beviste bare at handlingen bærer et vilkår
+    som er REGISTRERT for `web_hostname` — ikke at attestasjonen dekker
+    verten i `mal_url`. Kjøretidsbindingen sammenlignet `ressurs_id`, men
+    ingen av dem så på `mal_url`. En hendelse kunne derfor gjenbruke en
+    ekte, gyldig `domenekontroll_verifisert`-attestasjon med sin egen
+    `ressurs_id` og be om kontroll av et HELT ANNET vertsnavn — altså
+    trafikk ut mot et mål ingen har autorisert, med et bevis som ser
+    perfekt ut hele veien.
+
+    Bindingen legges på `ressurs_id` og ikke på et nytt felt med vilje:
+    `ressurs_id` ligger allerede i `BINDINGSFELT`, altså inne i de SIGNERTE
+    bytene, og `attestering.kontroller_binding` krever allerede at
+    attestasjonen bærer samme verdi som hendelsen. Kreves det at hendelsens
+    `ressurs_id` ER det normaliserte vertsnavnet, arver attestasjonen
+    bindingen gratis — uten en formatendring som måtte rulles ut på tvers
+    av verifikatorer før den kunne håndheves.
+
+    -> (kode, detaljer) ved brudd, slik at kalleren kan lage sin egen Grunn.
+    """
+    t = type_for_handling(handling) if isinstance(handling, str) else None
+    if t is None or t.malautorisasjonsdomene is None:
+        return None
+    felt = MALDOMENEFELT.get(t.malautorisasjonsdomene)
+    if felt is None:
+        # Et måldomene ingen vet hvilket felt peker på kan ikke bindes, og
+        # da skal handlingen ikke gå. Fail-closed er hele posituren her.
+        return ("malautorisasjon_domene_ukjent",
+                {"domene": t.malautorisasjonsdomene})
+    vert = normaliser_vertsnavn(event.get(felt))
+    if vert is None:
+        return ("malautorisasjon_mal_ugyldig", {"felt": felt})
+    if event.get(MALBINDINGSFELT) != vert:
+        # KLARTEKSTLEKKASJEN (Codex P1). Detaljene her blir til
+        # `Grunn.params`, og `sikker_beslutning_pg` serialiserer dem inn i
+        # `revisjonslogg.begrunnelse` — en klartekstkolonne. Kopierte vi
+        # `vert` og `ressurs_id` ordrett dit, la en HVILKEN SOM HELST
+        # innsender igjen en vilkårlig kundeidentifikator og et vertsnavn
+        # fra payloaden permanent i klartekst, utenfor det krypterte
+        # sporet, ved å sende en forespørsel som feiler. Resten av
+        # plattformen behandler nettopp de verdiene som kryptert data og
+        # legger bare grunnkoder i kolonnen.
+        #
+        # Igjen står feltnavnet (som er konfigurasjon, ikke data) og to
+        # avtrykk: nok til å se at de to sidene er ULIKE og til å knytte
+        # gjentatte forsøk sammen, uten å publisere verdiene.
+        return ("malautorisasjon_feil_mal",
+                {"felt": felt,
+                 "forventet_avtrykk": avtrykk(vert),
+                 "i_forespoersel_avtrykk": avtrykk(
+                     event.get(MALBINDINGSFELT))})
     return None
 
 
@@ -163,6 +648,143 @@ def mangler_paakrevde(oppdragstype: str, minimert: dict) -> list[str]:
     if t is None:
         raise Oppdragstypeukjent(oppdragstype)
     return sorted(f for f in t.paakrevde if not minimert.get(f))
+
+
+#: VERDIKONTRAKTEN: felter der TILSTEDEVÆRELSE ikke er nok, fordi bare et
+#: lukket sett av verdier gir et oppdrag som kan utføres (Codex P1).
+#:
+#: `minimer` bestemmer feltBREDDEN og `mangler_paakrevde` at de påkrevde
+#: feltene overlevde. Ingen av dem ser på VERDIEN, og for
+#: `kontroll.wcag.nettsted` var det hullet konkret: et oppdrag med
+#: `omfang: "alt"`, `maks_sider: 0` eller et ukjent `kravsett` ble
+#: opprettet, claimet og KJØRT — og først `rapport.bygg`, etter at
+#: motoren hadde vært ute på kundens nettsted, oppdaget at bestillingen
+#: aldri kunne gi en gyldig rapport. Ekstern, observerbar trafikk mot
+#: noen andres nettsted for et oppdrag som var dødfødt fra opprettelsen.
+#:
+#: Tabellen står HER og ikke i modulen fordi begge sidene må lese den
+#: samme: bestillingsveien (M-37) skal ikke opprette oppdraget, og
+#: utføreren skal avvise det uten å røre målet om det likevel finnes.
+FELTVERDIER: dict[str, dict[str, tuple]] = {
+    "kontroll.wcag.nettsted": {
+        # Samme lukkede enum som rapportskjemaets `kravsett`: et oppdrag
+        # med en annen verdi kan ikke gi en rapport som validerer.
+        "kravsett": ("wcag21_aa",),
+        # Manifestets omfang. Fristene henger på nettopp disse to.
+        "omfang": ("enkeltside", "nettsted"),
+    },
+}
+
+#: Heltallsfelter med LUKKEDE grenser (begge inklusive), per type. Øvre
+#: grense er ikke pynt: `maks_sider: 200` er et oppdrag ingen rapport kan
+#: oppfylle, siden `sider_kontrollert` har `maxItems: 50`.
+FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
+    "kontroll.wcag.nettsted": {"maks_sider": (1, 50)},
+}
+
+#: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
+#: type (Codex P2). Grensa er rapportskjemaets egen `maxLength` på
+#: `sider_kontrollert[].url`.
+#:
+#: Uten den slapp et fullt lovlig https-mål — riktig vert, riktig omfang —
+#: gjennom både forhåndsporten og `_ressursbinding` bare fordi STIEN gjorde
+#: den ferdige URL-en for lang. Bestillingen ble så skannet eksternt, og
+#: avvist først da `rapportskjema.SKJEMA` validerte siden som kom tilbake.
+#: `ekstern_lesing` er klassen der den unødvendige forespørselen ER skaden,
+#: og denne var unødvendig på nøyaktig samme måte som `maks_sider: 200`: vi
+#: kunne visst det før vi kontaktet målet.
+#:
+#: Målt på RAPPORTFORMEN, ikke på råstrengen: prosentkodingen ekspanderer
+#: (`é` blir seks tegn), så en råstreng under grensa kan gi en rapportform
+#: over den — og det er rapportformen skjemaet måler.
+FELTURLLENGDER: dict[str, dict[str, int]] = {
+    "kontroll.wcag.nettsted": {"mal_url": 2000},
+}
+
+
+#: UTFØRELSESFRISTEN typen ber om, i sekunder, valgt av ETT felt i
+#: payloaden: {type: (felt, {feltverdi: sekunder})} (Codex P1).
+#:
+#: Fristen sto som én generisk konstant (`arbeider.UTFORELSESFRIST_S`,
+#: 24 timer) for HVER oppdragstype. For WCAG-kontrollen var det ikke en
+#: romslig frist, men en annonsert frist stacken ikke holdt: manifestet
+#: lover 30 min for `enkeltside` og 60 min for `nettsted`, og en kontroll
+#: kunne fullføre og bli kvittert et helt DØGN etter det. Skaden er ikke
+#: bare et brutt løfte:
+#:
+#:   * eier-leasen (migrasjon 037) strekkes til `utforelsesfrist`, så en
+#:     krasjet kontroll ble liggende ureclaimet i 24 timer i stedet for
+#:     i én,
+#:   * og `ekstern_lesing` mot kundens nettsted fikk et døgnlangt vindu
+#:     der bestillingen sa én time.
+#:
+#: Fristen hører til KONTRAKTEN og ikke til modulen: den skrives på
+#: oppdragsraden ved opprettelsen, og både lease, claim og
+#: kapabilitetene leses av plattformen ut fra den raden.
+UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
+    "kontroll.wcag.nettsted": ("omfang", {"enkeltside": 30 * 60,
+                                          "nettsted": 60 * 60}),
+}
+
+
+def utforelsesfrist_s(oppdragstype: str, minimert: dict) -> int | None:
+    """Typens egen utførelsesfrist i sekunder, eller None når typen ikke
+    deklarerer noen (og den generiske fristen gjelder).
+
+    Er valgfeltet uleselig, gis den STRENGESTE fristen typen har, ikke
+    den generiske. `bryter_feltkontrakten` avviser allerede en slik
+    payload ved opprettelsen, så tilstanden skal ikke være nåbar — men
+    skulle den bli det, er en for KORT frist et oppdrag som må gjøres om
+    igjen, mens en for lang er nettopp den stille overskridelsen denne
+    tabellen finnes for å hindre.
+    """
+    valg = UTFORELSESFRIST_VALG.get(oppdragstype)
+    if valg is None:
+        return None
+    felt, frister = valg
+    return frister.get(minimert.get(felt)) or min(frister.values())
+
+
+def bryter_feltkontrakten(oppdragstype: str, minimert: dict) -> list[str]:
+    """Feltene hvis VERDI ligger utenfor typens lukkede kontrakt.
+
+    -> sortert liste av feltnavn; tom liste == ingen brudd. Kaster
+    `Oppdragstypeukjent` for en ukjent type, som resten av modulen.
+
+    Bare feltnavnene rapporteres, aldri verdiene: navnene er
+    konfigurasjon, verdiene er saksdata, og kallstedene her skriver
+    grunnen sin til `revisjonslogg.begrunnelse` og til feilkvitteringer —
+    samme skille som `malbindingsbrudd` gjør for avtrykkene sine.
+
+    Et felt som MANGLER er ikke et brudd her: det er `mangler_paakrevde`
+    sin jobb, og et valgfritt felt (`maks_sider`) skal kunne være borte.
+    """
+    if oppdragstype not in OPPDRAGSTYPER:
+        raise Oppdragstypeukjent(oppdragstype)
+    brudd = set()
+    for felt, lovlige in FELTVERDIER.get(oppdragstype, {}).items():
+        if felt in minimert and minimert[felt] not in lovlige:
+            brudd.add(felt)
+    for felt, (nedre, ovre) in FELTGRENSER.get(oppdragstype, {}).items():
+        if felt not in minimert:
+            continue
+        v = minimert[felt]
+        # `bool` er en `int` i Python, og `True` ville passert `1 <= v`.
+        # Et sidebudsjett på «sant» er ikke et tall noen har bestilt.
+        if isinstance(v, bool) or not isinstance(v, int) or not (
+                nedre <= v <= ovre):
+            brudd.add(felt)
+    for felt, maks in FELTURLLENGDER.get(oppdragstype, {}).items():
+        if felt not in minimert:
+            continue
+        # En ULESELIG URL er ikke et brudd HER. Den har sin egen, mer
+        # presise feilkode på begge veier (`malautorisasjon_mal_ugyldig`
+        # ved opprettelsen, `_ressursbinding` hos utføreren), og å melde
+        # den som «feltet er for langt» ville gitt bestilleren feil grunn.
+        u = rapporturl(minimert[felt])
+        if u is not None and len(u) > maks:
+            brudd.add(felt)
+    return sorted(brudd)
 
 
 # ---------------------------------------------------------------------------
@@ -397,3 +1019,65 @@ def er_utforelseskvittering(kropp: object) -> bool:
     forbudte = {"attestert_resultat", "vilkaar", "verification_generation",
                 "vilkaarsverdier", "fase1_repair_operation_id"}
     return not (set(kropp) & forbudte)
+
+
+def mangler_artefaktevidens(oppdragstype: object, kropp: object) -> bool:
+    """True == kvitteringen melder SUKSESS for en artefaktproduserende
+    type uten å bære artefaktet (Codex P1).
+
+    `er_utforelseskvittering` krever ingen av artefaktfeltene, og
+    artefaktgrenen i kvitteringsendepunktet står under `if art_id is not
+    None`. En vellykket kvittering uten `artefakt_id` hoppet derfor over
+    HELE den grenen — promotering, bindingskontroll, epoch-sjekk og
+    skjemarevalidering — og falt rett ned i statusskiftet: oppdraget ble
+    `utfort` og unntaket `løst`, uten at det fantes en eneste rapport å
+    vise til. En kontroll ingen kan lese er ikke en utført kontroll, og
+    her ville ingen engang sett at den manglet.
+
+    Regelen står på TYPEN og ikke som en fast liste i endepunktet: det er
+    typen som bestemmer om resultatet leveres som artefakt, og eldre
+    typer uten artefakt (`reinnsending`) skal være helt urørt.
+
+    Vurderes bare for suksess: en FEILET kvittering har per definisjon
+    ingen rapport, og skal fortsatt kunne meldes uten en. Den ANDRE
+    halvdelen av den setningen står i `artefakt_uten_utforelse`."""
+    t = (OPPDRAGSTYPER.get(oppdragstype)
+         if isinstance(oppdragstype, str) else None)
+    if t is None or not t.produserer_artefakt:
+        return False
+    if not isinstance(kropp, dict) or kropp.get("resultat") != "utfort":
+        return False
+    return kropp.get("artefakt_id") is None
+
+
+#: Feltene som BARE hører hjemme i en kvittering som melder `utfort`.
+_ARTEFAKTFELTER = ("artefakt_id", "klartekst_sha256")
+
+
+def artefakt_uten_utforelse(kropp: object) -> bool:
+    """True == kvitteringen bærer artefaktfelter uten å melde `utfort`
+    (Codex P2).
+
+    Speilbildet av `mangler_artefaktevidens`, og den andre halvdelen av
+    dens egen kontrakt: «en FEILET kvittering har per definisjon ingen
+    rapport». Bare den ene halvdelen var håndhevet. En autentisert modul
+    som sendte `resultat: "feilet"` sammen med en gyldig `artefakt_id` og
+    hash slapp forbi begge veier — endepunktets artefaktgren står under
+    `if art_id is not None`, ikke under resultatet — så rapporten ble
+    PROMOTERT til attestert evidens, og deretter ble oppdraget merket
+    feilet.
+
+    Det er en selvmotsigende tilstand å lagre: promotert evidens hvis
+    egen signerte kvittering sier at kjøringen ikke ble gjennomført. En
+    konsument som leser rapporten ser en fullført kontroll; en som leser
+    oppdraget ser en mislykket. Feilretningen skal være avvisning, ikke
+    et valg mellom to sannheter.
+
+    Regelen står på RESULTATET og ikke på typen, i motsetning til
+    `mangler_artefaktevidens`: typen avgjør om en SUKSESS må bære et
+    artefakt, men ingen type har en feilet kjøring med evidens. `None` er
+    ikke å bære feltet — en kvittering som eksplisitt skriver
+    `artefakt_id: null` melder nettopp at den ikke har noe."""
+    if not isinstance(kropp, dict) or kropp.get("resultat") == "utfort":
+        return False
+    return any(kropp.get(f) is not None for f in _ARTEFAKTFELTER)

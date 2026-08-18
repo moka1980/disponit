@@ -63,6 +63,13 @@ KAPABILITET_S = 60
 #: Frister på oppdrag (v4-delta pkt. 2). To frister, ikke én: den første
 #: er siste tidspunkt et resultat kan endre status AUTOMATISK, den andre er
 #: siste tidspunkt en signert kvittering mottas som EVIDENS.
+#:
+#: Utførelsesfristen her er STANDARDEN, ikke fasiten (Codex P1): en type
+#: kan deklarere sin egen i `oppdragskontrakt.UTFORELSESFRIST_VALG`, og
+#: gjør den det, er det den som skrives på raden. Sto denne konstanten
+#: alene, fikk WCAG-kontrollen et døgn på en kontroll manifestet lover
+#: 30 eller 60 minutter — og eier-leasen (migrasjon 037), som strekkes
+#: til nettopp `utforelsesfrist`, arvet det samme feilaktige døgnet.
 UTFORELSESFRIST_S = 24 * 3600
 EVIDENSFRIST_S = 30 * 24 * 3600
 
@@ -715,6 +722,14 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int, *,
     # eiermodulen plukket det, og verifikatoren fant en tom kø.
     oppdragshandling = plan.reparasjonsinput.get("handling") or plan.maalhandling
     naa = datetime.now(timezone.utc)
+    # TYPENS EGEN FRIST VINNER (Codex P1). Se `UTFORELSESFRIST_S`: den er
+    # standarden for typer som ikke sier noe selv, ikke en frist alle
+    # oppdrag skal ha. Fristen skrives på RADEN, og både eier-leasen
+    # (037), claimens kapabiliteter og reclaim-veien leser den derfra —
+    # så dette ene feltet er det som gjør en annonsert frist til en
+    # frist som faktisk gjelder.
+    frist_s = oppdragsskjema.utforelsesfrist_s(
+        plan.oppdragstype, plan.reparasjonsinput) or UTFORELSESFRIST_S
     rad = conn.execute(
         "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
@@ -723,7 +738,7 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int, *,
         " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
         (sak.tenant, sak.id, loggpost_id, rid, plan.oppdragstype,
          oppdragshandling, _eiermodul_for(oppdragshandling), ct, key_id,
-         nonce, naa + timedelta(seconds=UTFORELSESFRIST_S),
+         nonce, naa + timedelta(seconds=frist_s),
          naa + timedelta(seconds=EVIDENSFRIST_S),
          beslutning_loggpost_id, kobling)).fetchone()
     return int(rad[0])
@@ -736,9 +751,24 @@ def _eiermodul_for(handling: str) -> str:
     på `eiermodul = modul_id`, så et ubundet oppdrag ville vært synlig for
     alle moduler. Kolonnen er NOT NULL nettopp for at «ubundet» ikke skal
     finnes som tilstand.
+
+    ER EIEREN DEKLARERT, ER DET DEN SOM GJELDER (Codex P1). PR-014c ga
+    `Oppdragstype` et `eiermodul`-felt med en EKTE modul-id
+    (`m_wcag_audit`), og det er den id-en kontrakten, deploymenten og
+    tokenet er registrert på. `eiermodul:<typenavn>` ville skrevet
+    `eiermodul:kontroll.wcag.nettsted` i raden, og siden claim krever
+    `oppdrag.eiermodul = auth.modul_id`, kunne controlleren aldri claimet
+    sitt eget oppdrag — det ville ligget til fristen uten at noen så det.
+
+    De eierløse legacy-typene beholder det SYNTETISKE navnet: for dem
+    finnes det ingen modulrad å peke på, og eksisterende rader
+    (`eiermodul:reinnsending`, `eiermodul:verifikasjon`) skal fortsatt
+    kunne claimes av de samme tokenene.
     """
     t = oppdragsskjema.type_for_handling(handling)
-    return f"eiermodul:{t.navn}" if t is not None else "eiermodul:ukjent"
+    if t is None:
+        return "eiermodul:ukjent"
+    return t.eiermodul or f"eiermodul:{t.navn}"
 
 
 # ---------------------------------------------------------------------------

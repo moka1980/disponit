@@ -121,6 +121,14 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'roter_modultoken(uuid,uuid,text,integer,text,uuid)', 'disponit_modul_eier'),
     ('FUNCTION', 'tilbakekall_modultoken(uuid,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'varsle_tokenfamilie_utlop(text)',                    'disponit_modul_eier'),
+    -- 036 (PR-014c): skjemalageret og målautorisasjonsregisteret.
+    ('FUNCTION', 'registrer_artefaktskjema(text,text,text)',           'disponit_modul_eier'),
+    -- Metavakten registreringen kaller. Den er ren (IMMUTABLE, leser ingen
+    -- tabeller), men eies av samme rolle som kalleren — en SECURITY
+    -- DEFINER-funksjon skal ikke kunne omdefineres av noen andre enn den
+    -- som eier veien den står i.
+    ('FUNCTION', '_artefaktskjema_typefeil(jsonb)',                    'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_malautorisasjonsvilkar(text,text,text)',   'disponit_modul_eier'),
     ('FUNCTION', 'registrer_oppdragstype(text,text,integer,text,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'sett_modulstatus(text,text,text,text)',             'disponit_modul_eier'),
     ('FUNCTION', 'registrer_kontrakt(text,integer,text,text,text,text,text,text)', 'disponit_modul_eier'),

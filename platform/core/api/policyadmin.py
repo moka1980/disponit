@@ -1488,6 +1488,173 @@ def _versjonsavvik(conn, tenant: str, policy_id: str, innhold) -> list[str]:
                 " så den må være ny og høyere enn den aktive"]
 
 
+def _typens_sideeffektklasse(conn, oppdragstype: str) -> str | None:
+    """Sideeffektklassen til kontrakten som EIER oppdragstypen — join på
+    hele identiteten (eiermodul, kontraktversjon, kontrakt_hash), ikke bare
+    modulen. -> None når typen ikke er registrert.
+
+    Codex P2: en modulbred prøve leser feil rad. Kontraktrader er
+    immutable og blir stående for alltid, så en modul som EN GANG hadde en
+    `ekstern_lesing`-kontrakt bærer den videre — og en modulbred `LIMIT 1`
+    ville klassifisert HVER handling for den modulen som ekstern lesing,
+    også de som nå tilhører en nyere `sideeffektfri`-kontrakt. Følgen var
+    ikke bare en unødvendig port: slike moduler kunne ikke lenger aktivere
+    ellers gyldige policyer uten frekvens- og målautorisasjonsfelter som
+    ikke hører hjemme der."""
+    rad = conn.execute(
+        "SELECT k.sideeffektklasse FROM oppdragstype_register r"
+        "  JOIN modulkontrakt k ON k.modul_id = r.eiermodul"
+        "   AND k.kontraktversjon = r.kontraktversjon"
+        "   AND k.kontrakt_hash = r.kontrakt_hash"
+        " WHERE r.oppdragstype = %s", (oppdragstype,)).fetchone()
+    return rad[0] if rad else None
+
+
+def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
+    """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
+    aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
+    `_krev_innforingskrav`): en handling hvis OPPDRAGSTYPE eies av en
+    `ekstern_lesing`-kontrakt (`_typens_sideeffektklasse`) — ELLER hvis
+    kodefestede type krever målautorisasjon, uansett hva registeret sier;
+    sier registeret ingenting og koden stiller ikke kravet, faller vi
+    konservativt tilbake på den deklarerte eiermodulen — kan bare aktiveres
+    når
+
+      1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
+         et tak policyen selv bærer),
+      2. frekvensen grupperes på `ressurs_id` — altså på MÅLET, og
+      3. handlingens vilkår inneholder minst ETT som har rad i
+         `malautorisasjonsvilkar` med `maldomene` lik oppdragstypens
+         `malautorisasjonsdomene`.
+
+    Alle tre er POSITIVE krav. `krever_malautorisasjon: true` i den kodefestede
+    typen uttrykker et behov, ikke et bevis — ukjent vilkårstype, manglende
+    rad eller feil måldomene avviser aktiveringen. Fail-closed også når
+    handlingen ikke matcher noen målautorisasjonsbærende type: da finnes
+    det ikke noe vilkår som KAN telle, og en ekstern_lesing-handling uten
+    autorisasjonsbegrep skal ikke gjennom fire øyne på flaks.
+
+    HVILKE handlinger porten gjelder for leses av KODEN FØRST, ikke av
+    registeret. Bærer den kodefestede typen `krever_malautorisasjon`, kjøres
+    porten uansett hva `modulkontrakt` sier om klassen — også når registeret
+    ikke har rukket å si noe, og også når det sier `sideeffektfri`. Bare der
+    koden IKKE stiller kravet får registeret avgjøre, og da konservativt.
+    Retningen er hele poenget: en registrering kan legge krav TIL, aldri
+    fjerne et krav koden stiller.
+
+    Krav 2 er det som gjør krav 1 til et TAK (Codex P2). Motoren i
+    `policy_validator` teller per `event[grupperingsnokkel]`, og
+    grupperingsnøkkelen er et feltnavn fra tenantens eget payload-domene:
+    peker den på noe innsenderen kan variere fritt — en forespørsels-id,
+    en tidsstempelstreng — får hver eneste forespørsel sin egen bøtte, og
+    grensen «10 per time» blir «ubegrenset per time» mot ETT og samme
+    nettsted. Da er den obligatoriske frekvensporten ren seremoni i
+    nøyaktig den trafikken den ble innført for å begrense.
+
+    `ressurs_id` er det ene feltet som IKKE er fritt: for en
+    målautorisasjonsbærende type krever `malbindingsbrudd` at
+    `event["ressurs_id"]` ER det normaliserte vertsnavnet i målfeltet, og
+    attestasjonen bærer samme verdi inne i de signerte bytene. Bøtta
+    følger derfor målet, ikke innsenderens fantasi. Kravet stilles kun
+    for typer som faktisk bærer den bindingen — for andre finnes det
+    ingen server-bundet nøkkel å kreve, og da ville kravet vært pynt.
+
+    Vilkåret står i policyen fordi det gjør kravet synlig og reviewbart —
+    men plattformregelen her gjelder uansett og kan ikke fjernes med fire
+    øyne (014b §4-mønsteret: håndhevingen bor hos plattformen).
+    """
+    import oppdragskontrakt
+    for h in (ny_innhold.get("handlinger") or []):
+        if not isinstance(h, dict):
+            continue
+        modul = h.get("modul")
+        hid = h.get("id") if isinstance(h.get("id"), str) else ""
+        t = oppdragskontrakt.type_for_handling(hid)
+        klasse = (_typens_sideeffektklasse(conn, t.navn)
+                  if t is not None else None)
+        if t is not None and t.krever_malautorisasjon:
+            # Den KODEFESTEDE typen bærer målautorisasjonsbehov. Da gjelder
+            # porten, UANSETT hva registeret sier om klassen — også når
+            # registeret ikke har rukket å si noe (Codex P1) og når det sier
+            # noe ANNET (Codex P2, runde 19).
+            #
+            # Ingen registrert rad er nåbart (Codex P1):
+            # `registrer-m-wcag-audit.py` kjøres manuelt, og deploy-porten
+            # sjekker bare DB-rader som mangler i koden, ikke omvendt.
+            #
+            # FEIL registrert klasse er nåbart på samme vis (Codex P2): binder
+            # en støttet administrativ registrering `kontroll.wcag.nettsted`
+            # til en `sideeffektfri`-kontrakt, oppdager deploy-porten det
+            # først ved neste `opp.sh`. I mellomtiden står tjenestene oppe, og
+            # `elif klasse != 'ekstern_lesing'` under `continue`-et forbi BÅDE
+            # frekvenstaket og målautorisasjonen for nettopp den handlingen de
+            # er bygget for. En feilregistrering skal ikke kunne SVEKKE et krav
+            # koden stiller — den kan bare legge krav til.
+            #
+            # Den gamle veien falt her tilbake på den modulbrede prøven — og
+            # den prøven leser `handlinger[].modul`, som er POLICYENS
+            # modulidentifikator (`M-23`), et annet navnerom enn
+            # modulregisteret (`m_wcag_audit`). Oppslaget fant derfor
+            # ingenting, handlingen ble klassifisert som ikke-ekstern, og
+            # BEGGE portene ble hoppet over for nettopp den handlingstypen de
+            # er bygget for.
+            #
+            # Koden er autoriteten når registeret ikke har tatt igjen, eller
+            # sier noe annet: deklarasjonen `krever_malautorisasjon` sier at
+            # dette ER en ekstern lesing, og da gjelder porten uansett hva som
+            # står i `modul` og i `modulkontrakt`. Fail-closed, uavhengig av
+            # navnerommet — og uten en vei der en registrering utenfor koden
+            # kan slå av et krav koden stiller.
+            pass
+        elif klasse is None:
+            # Ingen registrert type OG ingen kodefestet målautorisasjon: da
+            # faller vi tilbake på den konservative modulbrede prøven. Er
+            # eiermodulen deklarert i koden, er DEN identiteten registeret
+            # kjenner — `handlinger[].modul` er policyens navnerom og kan
+            # ikke slås opp i `modulkontrakt`.
+            eier = (t.eiermodul if t is not None and t.eiermodul else modul)
+            if not isinstance(eier, str) or not conn.execute(
+                    "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
+                    " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
+                    (eier,)).fetchone():
+                continue
+        elif klasse != "ekstern_lesing":
+            # Typen handlingen faktisk er registrert som eies av en annen
+            # kontrakt, OG koden stiller ikke selv kravet (den grenen er tatt
+            # over). At modulen ET STED har en gammel ekstern_lesing-rad sier
+            # ingenting om DENNE handlingen.
+            continue
+        grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
+            else {}
+        if not isinstance(grenser.get("frekvens"), dict):
+            raise Aktiveringsfeil("ekstern_lesing_uten_frekvens",
+                                  f"handling={hid or '?'}")
+        if t is None or not t.krever_malautorisasjon \
+                or t.malautorisasjonsdomene is None:
+            raise Aktiveringsfeil(
+                "malautorisasjon_mangler",
+                f"handling={hid or '?'}: ingen målautorisasjonsbærende"
+                " oppdragstype")
+        # Frekvensen må telle PER MÅL (Codex P2). Se docstringen: en fritt
+        # valgt grupperingsnøkkel gir én bøtte per forespørsel, og da er
+        # taket over ingen grense mot det nettstedet det gjelder.
+        if grenser["frekvens"].get("grupperingsnokkel") != \
+                oppdragskontrakt.MALBINDINGSFELT:
+            raise Aktiveringsfeil(
+                "frekvens_uten_malbinding",
+                f"handling={hid or '?'}: grupperingsnokkel må være"
+                f" {oppdragskontrakt.MALBINDINGSFELT}")
+        navn = [v.get("navn") for v in (h.get("vilkaar") or [])
+                if isinstance(v, dict) and isinstance(v.get("navn"), str)]
+        navn += [v for v in (h.get("vilkaar") or []) if isinstance(v, str)]
+        if not navn or conn.execute(
+                "SELECT 1 FROM malautorisasjonsvilkar WHERE"
+                " vilkar_type = ANY(%s) AND maldomene = %s LIMIT 1",
+                (navn, t.malautorisasjonsdomene)).fetchone() is None:
+            raise Aktiveringsfeil("malautorisasjon_mangler",
+                                  f"handling={hid or '?'}")
+
+
 def _krev_innforingskrav(ny_innhold) -> None:
     """Utkastet må oppfylle de FRAMOVERRETTEDE kravene for å kunne aktiveres —
     ikke bare ha oppfylt dem den gangen det ble validert.
@@ -1620,6 +1787,7 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ... eller som ikke oppfyller de framoverrettede kravene: `validert` kan
     # stamme fra før kravet fantes, og status alene er ingen kvittering.
     _krev_innforingskrav(ny_innhold)
+    _krev_ekstern_lesing_port(conn, ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -1814,6 +1982,7 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # Og for de framoverrettede kravene: runden kan ha vært åpen da
         # utrullingen som innførte dem landet.
         _krev_innforingskrav(ny_innhold)
+        _krev_ekstern_lesing_port(conn, ny_innhold)
     except Aktiveringsfeil as e:
         # RUNDEN KANSELLERES, den kastes ikke bare ut av (Codex P2). Alle fire
         # kravene her måler det FROSNE innholdet, så et avslag er permanent:

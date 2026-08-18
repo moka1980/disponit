@@ -146,18 +146,45 @@ def test_port7_payloadfelt_utenfor_skjemaet_slipper_aldri_ut():
     assert "belop" not in oppdragskontrakt.minimer("verifikasjon", payload)
 
 
-def test_oppdragstypenes_prefikser_er_disjunkte():
-    """Overlappende prefikser ville gjort feltbredden avhengig av
-    rekkefølgen i en dict."""
+def test_oppdragstypenes_prefikser_er_entydige():
+    """Ingen handling får to typer å velge mellom.
+
+    Prefiksene var disjunkte før PR-014c. Med `kontroll.wcag.` under
+    `kontroll.` er de nested, og da er det LENGSTE treffet som avgjør —
+    entydig uansett rekkefølgen i dict-en. Det som fortsatt ville gjort
+    feltbredden til et lotteri, er to ULIKE typer med NØYAKTIG samme
+    prefiks: da finnes det ikke noe lengste treff.
+    """
     import oppdragskontrakt
-    alle = [(t.navn, p) for t in oppdragskontrakt.OPPDRAGSTYPER.values()
-            for p in t.handlingsprefikser]
-    for navn_a, pre_a in alle:
-        for navn_b, pre_b in alle:
-            if navn_a >= navn_b:
-                continue
-            assert not (pre_a.startswith(pre_b) or pre_b.startswith(pre_a)), \
-                f"prefiksene {pre_a!r} ({navn_a}) og {pre_b!r} ({navn_b}) overlapper"
+    eier: dict[str, str] = {}
+    for t in oppdragskontrakt.OPPDRAGSTYPER.values():
+        for p in t.handlingsprefikser:
+            assert p not in eier or eier[p] == t.navn, \
+                f"prefikset {p!r} deles av {eier[p]} og {t.navn}"
+            eier[p] = t.navn
+
+
+def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
+    """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
+
+    Mutasjonssjekk: med førstetreff i `type_for_handling` avhenger begge
+    disse av hvilken vei dict-en itereres.
+    """
+    import oppdragskontrakt as ok
+    assert ok.type_for_handling(
+        "kontroll.wcag.nettsted").navn == "kontroll.wcag.nettsted"
+    # Codex P1, runde 11: en persistert tenantpolicy kan bære en fri
+    # `kontroll.*`-handling. Den skal fortsatt rutes som før — ikke bli
+    # `eiermodul:ukjent` fordi WCAG-kontrollen tok navnerommet.
+    assert ok.type_for_handling(
+        "kontroll.fakturagrunnlag").navn == "verifikasjon"
+    assert ok.type_for_handling("verifiser.mva").navn == "verifikasjon"
+    assert ok.type_for_handling("kontroll") is None
+    # Feltbredden følger den typen som VANT, ikke den som delte prefiks.
+    wcag = ok.minimer("kontroll.wcag.nettsted",
+                      {"mal_url": "https://a.example/", "kravsett": "wcag22aa",
+                       "omfang": "forside", "vilkaar_sett": ["x"]})
+    assert "vilkaar_sett" not in wcag and wcag["kravsett"] == "wcag22aa"
 
 
 # ===========================================================================
@@ -1682,10 +1709,14 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
             assert r1.json()["status"] == "lagret_uten_statusendring"
 
             # --- A poster R1 igjen: IDEMPOTENT, ingen ny evidensrad -----
+            # ... og svaret må si HVILKEN idempotens (Codex P2, runde 11):
+            # R1 over ble bevart som sen evidens, oppdraget står bevisst
+            # ufullført, og et rent `idempotent` ville fortalt utføreren at
+            # den kunne slutte å følge det.
             r1b = c.post("/v1/oppdrag/kvittering",
                          json=kvittering(a, "utfort"), headers=h)
             assert r1b.status_code == 200, r1b.text
-            assert r1b.json()["status"] == "idempotent"
+            assert r1b.json()["status"] == "idempotent_uten_statusendring"
 
             # --- A poster R2 med SAMME kapabilitet: KONFLIKT ------------
             r2 = c.post("/v1/oppdrag/kvittering",
@@ -1698,6 +1729,18 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
                          json=kvittering(b, "utfort"), headers=h)
             assert rb2.status_code == 200, rb2.text
             assert rb2.json()["status"] == "utfort"
+
+            # --- B poster SIN på nytt: idempotent MED statusskifte -----
+            # Codex P2, runde 11: dette er den dokumenterte suksessveien —
+            # en utfører som mistet svaret sender den samme kvitteringen
+            # om igjen. Oppdraget ER `utfort`, og svaret må si det, ellers
+            # melder utføreren `ukvittert` for noe som er ferdig. Legg
+            # merke til at A sin re-post over — samme gren, samme kropp,
+            # samme kapabilitetstreff — får det MOTSATTE ordet.
+            rb3 = c.post("/v1/oppdrag/kvittering",
+                         json=kvittering(b, "utfort"), headers=h)
+            assert rb3.status_code == 200, rb3.text
+            assert rb3.json()["status"] == "idempotent", rb3.text
     finally:
         app.tjeneste.pool.lukk()
 
@@ -1892,7 +1935,11 @@ def test_P1_samtidig_identisk_repost_blir_idempotent_ikke_auth_feil(
 
             r = svar["r"]
             assert r.status_code == 200, r.text
-            assert r.json()["status"] == "idempotent", r.text
+            # Vinneren her er en SEN kvittering (`_vinner_holder_laasen`
+            # skriver `sen_kvittering` og rører ikke oppdragsstatusen), så
+            # taperen skal få det samme ordet en sekvensiell retry ville
+            # fått — kappløpsveien og retryveien svarer likt (Codex P2).
+            assert r.json()["status"] == "idempotent_uten_statusendring", r.text
     finally:
         app.tjeneste.pool.lukk()
 

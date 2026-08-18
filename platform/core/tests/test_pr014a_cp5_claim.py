@@ -24,7 +24,7 @@ def _tok():
 
 
 def _lag_oppdrag_type(conn, tenant, sak_id, loggpost_id, *, oppdragstype,
-                      eiermodul, handling="purring.send"):
+                      eiermodul, handling="purring.send", frist="1 hour"):
     """Som test_m37._lag_oppdrag, men med parametrisert oppdragstype/eiermodul.
 
     (Hjelperen der pinner oppdragstype='reinnsending'; CP5 trenger egne,
@@ -54,10 +54,10 @@ def _lag_oppdrag_type(conn, tenant, sak_id, loggpost_id, *, oppdragstype,
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
         " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-        " now()+interval '1 hour', now()+interval '30 days',"
+        " now()+%s::interval, now()+interval '30 days',"
         " %s,'KOBLET') RETURNING id",
         (tenant, sak_id, loggpost_id, rid, oppdragstype, handling, eiermodul,
-         ct, key_id, nonce, beslutning)).fetchone()[0]
+         ct, key_id, nonce, frist, beslutning)).fetchone()[0]
     conn.commit()
     return int(opp), rid
 
@@ -226,6 +226,69 @@ def test_port7_reclaim_bumper_generasjon_og_bevarer_binding(migrator):
     b2 = _binding(migrator, opp)
     assert (b2[0], b2[1], b2[2]) == (b1[0], b1[1], b1[2]), \
         "kontraktbindingen endret seg ved reclaim (skal være write-once)"
+
+
+@pg
+def test_leasen_dekker_oppdragets_egen_utforelsesfrist(migrator):
+    """Codex P1 (037): en fast lease på 300 s var kortere enn arbeidet.
+
+    `/v1/oppdrag/claim` ber om 300 sekunder for ALT arbeid, mens reclaim-
+    grenen gjør et `plukket` oppdrag med utløpt lease claimbart igjen. For
+    kort arbeid var de to enige. For en WCAG-kontroll (annonsert frist
+    30/60 min) var de det ikke: leasen utløp mens den første utføreren
+    fortsatt skannet, en annen utfører claimet SAMME oppdrag og startet et
+    NYTT eksternt skann av kundens nettsted, `owner_generation` flyttet
+    seg — og den første kvitteringen, for et arbeid som faktisk var gjort,
+    ble avvist på fencing.
+
+    Leasen strekkes derfor til oppdragets egen `utforelsesfrist`: det er
+    tiden plattformen selv har gitt arbeidet, og etter den er raden uansett
+    ikke claimbar (`utforelsesfrist > now()`). Kallerens tall er et GULV,
+    og funksjonens tak på 3600 s står.
+
+    Kontroll: bytt `owner_lease_utloper` i 037 tilbake til
+    `now() + (v_lease || ' seconds')::INTERVAL`, så blir denne rød —
+    leasen faller til 300 s mens fristen ligger en time frem.
+    """
+    t = _tok(); modul = "cp5mod-" + t; ot = "cp5-" + t
+
+    teller = [0]
+
+    def _lease(frist):
+        # Hvert kall lager sitt eget oppdrag; de foregående står `plukket`
+        # med en levende lease, så claimet under treffer alltid det ferske.
+        # EGEN SAK per kall: `_lag_oppdrag_type` setter inn
+        # reparasjonsoperasjonen med `ON CONFLICT DO NOTHING`, så to
+        # oppdrag under samme sak og samme målhandling ville delt rad —
+        # den andre ville stille falt tilbake på en FK som ikke finnes.
+        teller[0] += 1
+        sak, logg = _lag_sak(migrator, TENANT)
+        opp, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
+                                   oppdragstype=f"{ot}-{teller[0]}",
+                                   eiermodul=modul, frist=frist)
+        assert _claim(modul, ["purring."], secrets.token_hex(16)) is not None
+        _sett_kontekst(migrator, TENANT)
+        rad = migrator.execute(
+            "SELECT extract(epoch FROM (owner_lease_utloper - now()))::int,"
+            "       extract(epoch FROM (utforelsesfrist - now()))::int"
+            "  FROM oppdrag WHERE tenant=%s AND id=%s",
+            (TENANT, opp)).fetchone()
+        migrator.rollback()
+        return rad
+
+    # En time frem: leasen dekker hele fristen (og treffer takets 3600 s).
+    lease, frist = _lease("59 minutes")
+    assert lease >= frist - 5, \
+        f"leasen ({lease}s) er kortere enn fristen ({frist}s) — reclaim" \
+        " kan kapre oppdraget mens utføreren jobber"
+    # Taket står: en frist langt utenfor 3600 s klemmes, den sprenger ikke
+    # funksjonens egen grense.
+    lease, _ = _lease("10 hours")
+    assert 3590 <= lease <= 3600, lease
+    # ... og en KORT frist forlenges ikke: kallerens 300 s er gulvet,
+    # ikke et minimum som overkjører oppdragets egen frist nedover.
+    lease, frist = _lease("2 minutes")
+    assert frist <= 125 and 295 <= lease <= 300, (lease, frist)
 
 
 @pg

@@ -101,6 +101,9 @@ GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
     oppdragstype_register, modulregister_hendelse TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
+-- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
+-- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.
+GRANT SELECT ON artefaktskjema, malautorisasjonsvilkar TO {rolle};
 -- 017/035: artefaktkapabiliteten. Funksjonene eies av `disponit_domene_eier`
 -- (SECURITY DEFINER-veien inn i kapabilitetstabellen), så grantene MÅ gis
 -- som eieren — som migrator blir de en stille WARNING, samme felle som

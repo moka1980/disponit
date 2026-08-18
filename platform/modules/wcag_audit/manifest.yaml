@@ -1,0 +1,95 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# MAPPENAVNET er bevisst uten mNN_-prefiks: modulen har ikke fått
+# katalognummer ennå — det tildeles ved frontsidetekst-steget etter
+# aksept, og DA skal mNN_-vakten (test_ui_kontrakt) tvinge frem den
+# bevisste UI-oppdateringen. Databasens modul_id er `m_wcag_audit`
+# (vedtatt i 014c §1, etablert i 014b-materialet) og endres ikke av
+# registernavnet her.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+id: wcag_audit
+navn: Automatisk WCAG-kontroll (controller)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+# Aksept skjer FØRST når staging-sjekklisten under er grønn med målte
+# verdier (evidensgrensen `wcag-kontroll-v1`, klarsignalet §12) — status →
+# aktiv er 014c-NESTE-steget, aldri en del av kode-PR-en.
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+avhengigheter:
+  - m01_policy                 # bestilling og frekvens går gjennom policyporten
+  - m02_revisjonslogg          # én skrivevei til evidenskjeden
+kjerne: platform/modules/wcag_audit
+i18n_prefiks: wcagaudit
+
+# GRENSEN (klarsignalet §2): modulen er KUNDE av kontrollmotoren, ikke en
+# kopi. Motoren (axe-core i headless Chromium) bor i wcag_checker-repoet og
+# kjører i browser-containeren (014b §6) uten credentials; controlleren
+# claimer, styrer, pakker, laster opp og kvitterer. Alt som kommer ut av
+# motoren er ubetrodd inndata og skjemavalideres — av controlleren FØR
+# innsending, og av plattformen ved opplasting OG promotering (036).
+staging_sjekkliste:
+  # Sjekklisteformen er LUKKET (manifest-skjema.json) — punktene under er
+  # plattformens seks akseptpunkter. 014c-spesifikke bevis (syntetisk
+  # fasit, egress/robots, bestillingsveien) føres som notater under de
+  # punktene de faktisk beviser, med krav_id wcag-kontroll-v1 (§12).
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      Plattformlaget (skjemalager 036, aktiveringsport, deploy-porter,
+      claim→opplasting→kvittering med FakeMotor) er testet i CI. Staging-
+      kjøring med EKTE motor (axe i browser-container, egress-proxy,
+      robots, crawltak — portene 18–20, 24–25 og fasitmålingen
+      funn.avvik_mot_fasit=0, krav_id wcag-kontroll-v1) gjenstår og er
+      selve akseptvilkåret.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      For denne modulen er datasettet det SYNTETISKE TESTNETTSTEDET med
+      kjent fasit — identisk lokalt og på staging. Bygges i staging-
+      sjekklisterunden.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      Kvitteringen attesterer release+regelsett+sider+artefakthash
+      (PR-006-kontrakten, signert). Verifiseres i staging-kjøringen.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      Evidensfrist overskredet → ufullført → M-37-sak (port 22), og
+      motorfeil → kvittering avbrutt uten artefakt. Måles på staging.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      Frister 30 min (enkeltside) / 60 min (nettsted);
+      kontroll.ti_kjoringer_signert_innen_frist = 10/10 (§12).
+      HÅNDHEVET, IKKE BARE ANNONSERT (Codex P1): fristene sto som tall i
+      denne teksten mens oppdragsraden fikk den generiske
+      `UTFORELSESFRIST_S` (24 timer) og motoren alltid kjørte på sitt
+      eget tak (3300 s) — altså kunne en enkeltsidekontroll fullføre et
+      døgn for sent, og eier-leasen (037), som strekkes til
+      `utforelsesfrist`, arvet det samme døgnet. Fristen er nå deklarert
+      på kontrakten (`oppdragskontrakt.UTFORELSESFRIST_VALG`, valgt av
+      `omfang`), skrives på raden ved opprettelsen, og controlleren gir
+      motoren det claimet FAKTISK har igjen — den tidligste av
+      utførelsesfristen, opplastings- og kvitteringskapabiliteten, minus
+      avslutningsmarginen.
+      NEDJUSTERT FRA 90 MIN (Codex P2): opplastingskapabiliteten claimen
+      utsteder klemmes til maks 3600 s (migrasjon 017), og det finnes
+      ingen fornyelsesvei — en kontroll som bruker 90 min ville møtt et
+      utløpt opplastingstoken, altså feilet ETTER at hele jobben var
+      gjort. Motorens tidsavbrudd (Kommandomotor) ligger UNDER det taket,
+      ikke på det: 3300 s skanning + 300 s avslutning (Codex P1, runde 12)
+      — en motor som fikk bruke hele timen ble ferdig nøyaktig når
+      opplastingskapabiliteten var utløpt. Eier-leasen dekker samme frist
+      etter migrasjon 037, så ingen annen utfører reclaimer oppdraget mens
+      kontrollen pågår. En annonsert frist stacken ikke kan holde er et
+      løfte om noe annet enn det som skjer; 90 min krever
+      kapabilitetsfornyelse først, og det er en plattformendring med egen
+      spec-runde — ikke en konstant å skru opp her.
+  rollback_testet:
+    status: nei
+    notat: >-
+      Modulen er stateless utover outboxen; rollback = forrige release
+      (deploy-porten stopper før release-byttet). Kjøres i
+      staging-sjekklisterunden. §9-bestillingsveien krever i tillegg en
+      outbox-generalisering (oppdrag er M-37-forankret med NOT NULL+FK på
+      unntak/loggpost/reparasjon) — egen spec-runde.
