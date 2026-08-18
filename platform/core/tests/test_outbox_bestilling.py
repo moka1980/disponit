@@ -163,6 +163,9 @@ def test_sikre_sak_er_idempotent_og_terminal_gjenbrukes_aldri(migrator):
             "SELECT loggpost_id, sakstype, arsak FROM unntak WHERE id=%s",
             (s1,)).fetchone()
         assert rad == (logg, "normal", "evidensfrist"), rad
+        # Konteksten er LOCAL og forsvant i commiten over — og
+        # tenantporten i funksjonen krever den (Codex P1).
+        _sett_kontekst(rt, TENANT)
         s3 = rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'sikkerhet',"
                         "'kvitteringsport','r3')", (TENANT, oid)).fetchone()[0]
         rt.commit()
@@ -178,6 +181,7 @@ def test_sikre_sak_er_idempotent_og_terminal_gjenbrukes_aldri(migrator):
         migrator.execute("UPDATE unntak SET status='løst' WHERE id=%s",
                          (s1,))
         migrator.commit()
+        _sett_kontekst(rt, TENANT)
         s4 = rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
                         "'reaper','r4')", (TENANT, oid)).fetchone()[0]
         rt.commit()
@@ -228,6 +232,67 @@ def test_to_samtidige_sikre_sak_gir_noyaktig_en(migrator):
         " AND arsak='evidensfrist'", (TENANT, oid)).fetchone()[0]
     migrator.rollback()
     assert n == 1, n
+
+
+@pg
+def test_definerveiene_binder_tenant_til_kallerens_kontekst(migrator):
+    """Codex P1: `p_tenant` er IKKE kallerens frie valg.
+
+    Funksjonene er SECURITY DEFINER og kjører som `disponit_m37_claimer`,
+    hvis `m37_dispatcher`-policy er permissiv for hver eneste rad — altså
+    sa RLS ingenting om `p_tenant`. En kompromittert runtime kunne gjette
+    et oppdragsnummer hos en ANNEN tenant og få opprettet, og deretter
+    lest ut, en sak for det. Porten er `krev_tenantkontekst`.
+
+    Kontroll: fjern `PERFORM krev_tenantkontekst(...)` fra funksjonene, så
+    blir denne rød.
+    """
+    from .test_api import ANNEN_TENANT
+    rt = _rt()
+    try:
+        oid, logg = _beslutningsoppdrag(rt, migrator)
+
+        # (a) FREMMED kontekst mot et oppdrag hos TENANT.
+        _sett_kontekst(rt, ANNEN_TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'sikkerhet',"
+                       "'angriper','r-x')", (TENANT, oid))
+        rt.rollback()
+
+        # (b) INGEN kontekst i det hele tatt — fail-closed, ikke «alle».
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'sikkerhet',"
+                       "'angriper','r-y')", (TENANT, oid))
+        rt.rollback()
+
+        # (c) Samme port på opprettelsesveiene: et oppdrag kan ikke fødes
+        #     inn i en annen tenant enn den kalleren står i.
+        _sett_kontekst(rt, ANNEN_TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "SELECT opprett_beslutningsoppdrag(%s,%s,"
+                "'kontroll.wcag.nettsted','kontroll.wcag.nettsted',"
+                "'m_wcag_audit',%s,%s,%s,now()+interval '30 minutes',"
+                "now()+interval '30 minutes')",
+                (TENANT, logg, b"x", "k", b"n"))
+        rt.rollback()
+
+        # ... og ingenting ble skrevet av noen av forsøkene.
+        _sett_kontekst(migrator, TENANT)
+        n = migrator.execute(
+            "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s",
+            (TENANT, oid)).fetchone()[0]
+        migrator.rollback()
+        assert n == 0, "et kall utenfor tenantkonteksten skrev likevel"
+
+        # Den LOVLIGE veien er urørt: riktig kontekst, samme kall.
+        _sett_kontekst(rt, TENANT)
+        sak = rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'sikkerhet',"
+                         "'kvitteringsport','r-ok')", (TENANT, oid)).fetchone()[0]
+        rt.commit()
+        assert sak is not None
+    finally:
+        rt.close()
 
 
 @pg

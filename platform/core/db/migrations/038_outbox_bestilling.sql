@@ -193,6 +193,43 @@ END $$;
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_m37_claimer;
 
+-- TENANTPORTEN FOR DEFINER-VEIENE (Codex P1).
+--
+-- Funksjonene under er SECURITY DEFINER og kjører altså som
+-- `disponit_m37_claimer`. Eierens `m37_dispatcher`-policy (005/007) er
+-- PERMISSIV og slipper gjennom hver eneste rad så lenge
+-- `current_user = 'disponit_m37_claimer'` — den er nettopp DERFOR
+-- formulert slik: inne i en definer-funksjon SKAL maskineriet se på tvers
+-- av tenanter. Følgen er at RLS ikke lenger sier noe om `p_tenant`:
+-- parameteret er kallerens ord alene.
+--
+-- For funksjoner web-API-rollen kan kalle er det en tenantrømning. Med
+-- EXECUTE på `sikre_sak_for_oppdrag` kunne en kompromittert runtime gjette
+-- et oppdragsnummer hos en ANNEN tenant og få opprettet — og deretter lest
+-- ut — en sak for det, tvers gjennom isolasjonsmodellen repoet er bygget
+-- rundt (en kompromittert runtime skal se ÉN tenant om gangen).
+--
+-- Porten binder derfor `p_tenant` til den tenantkonteksten kalleren
+-- FAKTISK står i, den samme GUC-en `sett_kontekst` setter og all vanlig
+-- RLS måles mot. Fail-closed: uten kontekst (NULL/tom) er det ingen
+-- tenant å være lik, og kallet avvises. Kryss-tenant-autoritet finnes
+-- fortsatt, men bare der den er innelukket i én funksjon med sitt eget
+-- grant — reaperen under, som binder konteksten til RADENS tenant før
+-- hvert saks-kall.
+CREATE OR REPLACE FUNCTION krev_tenantkontekst(p_tenant TEXT,
+                                               p_funksjon TEXT)
+RETURNS VOID LANGUAGE plpgsql
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF p_tenant IS NULL OR p_tenant IS DISTINCT FROM
+       nullif(current_setting('disponit.tenant', true), '') THEN
+        RAISE EXCEPTION '%: p_tenant (%) er ikke kallerens tenantkontekst'
+            ' — definer-veiene binder tenanten til konteksten, aldri til'
+            ' parameteret alene', p_funksjon, coalesce(p_tenant, '<null>')
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION opprett_reparasjonsoppdrag(
     p_tenant TEXT, p_unntak_id BIGINT, p_loggpost_id BIGINT,
     p_repair_operation_id TEXT, p_oppdragstype TEXT, p_handling TEXT,
@@ -203,6 +240,7 @@ RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT;
 BEGIN
+    PERFORM krev_tenantkontekst(p_tenant, 'opprett_reparasjonsoppdrag');
     INSERT INTO public.oppdrag (tenant, unntak_id, loggpost_id,
         repair_operation_id, oppdragstype, handling, eiermodul,
         payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,
@@ -224,6 +262,7 @@ RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT;
 BEGIN
+    PERFORM krev_tenantkontekst(p_tenant, 'opprett_beslutningsoppdrag');
     -- Trioen er NULL per konstruksjon (CHECK-en i §1 håndhever det
     -- uansett) og koblingen er KOBLET fra fødselen: beslutningen ER
     -- loggposten oppdraget peker på.
@@ -251,6 +290,10 @@ RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE o RECORD; v_id BIGINT; v_logg BIGINT; v_policy TEXT; v_policy_hash TEXT;
 BEGIN
+    -- Tenantporten FØRST — før GUC-ene under settes og før noe leses.
+    -- Dette er den API-kallbare formen, og uten porten var `p_tenant`
+    -- kallerens frie valg (se `krev_tenantkontekst`).
+    PERFORM krev_tenantkontekst(p_tenant, 'sikre_sak_for_oppdrag');
     -- Historikktriggeren på unntak krever aktør + request-id i GUC-ene.
     -- Funksjonen FÅR dem eksplisitt — den setter dem selv (LOCAL), så
     -- reaper-/kvitteringsveiene ikke er avhengige av at kalleren husket
@@ -315,7 +358,7 @@ CREATE OR REPLACE FUNCTION reap_evidensfrister(p_grense INT DEFAULT 200)
 RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, unntak_id BIGINT)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE r RECORD; v_sak BIGINT; v_rid TEXT;
+DECLARE r RECORD; v_sak BIGINT; v_rid TEXT; v_kontekst TEXT;
 BEGIN
     -- Ingen advisory-lås: `FOR UPDATE SKIP LOCKED` gjør overlappende
     -- kjøringer trygge (de deler radene, ingen tas to ganger), og et tomt
@@ -323,6 +366,12 @@ BEGIN
     -- holdt låsen». En lås her hadde gjort de to utfallene umulige å
     -- skille for kalleren.
     v_rid := 'reap-' || replace(gen_random_uuid()::text, '-', '');
+    -- Reaperen ER kryss-tenant-autoriteten, og den eneste: den har ingen
+    -- `p_tenant` en kaller kan velge, og hele utvalget ligger i predikatet
+    -- under. Kallerens egen kontekst tas vare på og legges tilbake til
+    -- slutt, så en kjøring aldri etterlater seg en fremmed tenant i
+    -- transaksjonen den ble kalt fra.
+    v_kontekst := current_setting('disponit.tenant', true);
     FOR r IN
         SELECT o.tenant AS t, o.id AS oid FROM public.oppdrag o
          WHERE o.opprinnelse = 'beslutning'
@@ -332,6 +381,12 @@ BEGIN
          LIMIT p_grense
          FOR UPDATE OF o SKIP LOCKED
     LOOP
+        -- Tenantporten i `sikre_sak_for_oppdrag` gjelder også her: den
+        -- kryss-tenant-autoriteten som finnes, brukes ÉN RAD OM GANGEN,
+        -- bundet til nøyaktig den radens tenant. Da er saksveien den
+        -- samme for reaperen som for enhver annen kaller — porten er ikke
+        -- noe reaperen slipper unna, bare noe den oppfyller per kandidat.
+        PERFORM set_config('disponit.tenant', r.t, true);
         v_sak := public.sikre_sak_for_oppdrag(
             r.t, r.oid, 'evidensfrist', 'evidensreaper', v_rid);
         -- «ufullført» finnes ikke i statusmaskinen (005). `feilet` UTEN
@@ -343,12 +398,16 @@ BEGIN
         tenant := r.t; oppdrag_id := r.oid; unntak_id := v_sak;
         RETURN NEXT;
     END LOOP;
+    PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
 END $$;
 
 REVOKE ALL ON FUNCTION opprett_reparasjonsoppdrag(TEXT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ, BIGINT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION reap_evidensfrister(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sikre_sak_for_oppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
+-- Porten kalles bare INNENFRA definer-funksjonene, altså som eieren.
+-- Ingen ekstern rolle trenger den.
+REVOKE ALL ON FUNCTION krev_tenantkontekst(TEXT, TEXT) FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_arbeider') THEN
@@ -362,13 +421,25 @@ GRANT EXECUTE ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, T
 GRANT EXECUTE ON FUNCTION sikre_sak_for_oppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT) TO disponit;
 -- Reaperen kjøres av drift-timer-rollen (019-presedensen); lokalt/test
 -- som runtime, samme funksjon, samme porter.
+--
+-- KRYSS-TENANT-AUTORITETEN ER INNELUKKET (Codex P1). De tre funksjonene
+-- over binder `p_tenant` til kallerens kontekst og er derfor ufarlige å
+-- dele; reaperen gjør ikke det — den ER definisjonen av en jobb som
+-- spenner over alle tenanter. Da skal den heller ikke ligge i hendene på
+-- web-API-rollen i et oppsett som HAR en egen timerrolle: en kompromittert
+-- runtime skal ikke kunne skyve andre tenanters beslutningsoppdrag til
+-- `feilet` på kommando. Grantet til `disponit` er derfor det som gjelder
+-- NÅR timerrollen ikke finnes — altså lokalt og i test, der runtime ER
+-- hele plattformen — og faller bort i det driftsoppsettet kommer på plass.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_domener') THEN
         GRANT EXECUTE ON FUNCTION reap_evidensfrister(INT) TO disponit_domener;
+        REVOKE EXECUTE ON FUNCTION reap_evidensfrister(INT) FROM disponit;
+    ELSE
+        GRANT EXECUTE ON FUNCTION reap_evidensfrister(INT) TO disponit;
     END IF;
 END $$;
-GRANT EXECUTE ON FUNCTION reap_evidensfrister(INT) TO disponit;
 
 RESET ROLE;
 

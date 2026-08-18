@@ -67,6 +67,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_beslutningsoppdrag(text,bigint,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'sikre_sak_for_oppdrag(text,bigint,text,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reap_evidensfrister(integer)',                      'disponit_m37_claimer'),
+    -- 038 §4-porten (Codex P1): binder `p_tenant` til kallerens
+    -- tenantkontekst i definer-veiene over. Opprettes i det samme
+    -- SET ROLE-vinduet og hoerer derfor til den samme eieren.
+    ('FUNCTION', 'krev_tenantkontekst(text,text)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'forny_claim(text,bigint,text,integer,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_hengende_kapabiliteter()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_utlopte_claims()',                           'disponit_m37_claimer'),
