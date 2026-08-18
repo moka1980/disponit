@@ -65,6 +65,9 @@ const BASISRUTER = [
   // sak for fanene, og den avgjøres inne på flaten (`visWcagKontroll`), der
   // det finnes noe å skjule — en rute kan bare være der eller ikke.
   { nokkel: "wcagkontroll", scope: "decisions:read" },
+  // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
+  // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
+  { nokkel: "adjudikator", scope: "domains:adjudicate" },
 ];
 
 export function byggRuter(sesjon) {

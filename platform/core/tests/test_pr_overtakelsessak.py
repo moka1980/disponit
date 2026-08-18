@@ -1,0 +1,729 @@
+"""041 — overtakelsessaken: Codex-portene fra klarsignalet (§7).
+
+Hver test konstruerer sin egen tilstand. Portene 13–28 kjøres som
+TABELLEIER med direkte DML/funksjonskall — ikke gjennom
+`sikre_overtakelsessak()` — slik klarsignalet krever: kontrakten skal
+holde mot den sterkeste skriveren, ikke bare mot den pene veien.
+
+Portoversikt → test (numrene er klarsignalets):
+  1        test_port1_konflikt_gir_sak_ved_commit
+  2        test_port2_direkte_avklaring_uten_sak_avvises
+  3        test_port3_apen_sak_feil_utfordrer_eller_generasjon
+  5        test_port5_terminal_sak_ny_konflikt_ny_sak
+  6        (test_pr015_operativt_lag::test_port20_abc — skiftet, samme id)
+  7–9      test_port7_8_9_revisjonsbindingen
+  12       test_port12_insert_uten_sakskilde_feiler
+  13–18    test_port13_18_referansepayloadens_lukkede_kontrakt
+  17/20    test_port17_20_hostnameparitet_db_og_python
+  19       test_port19_avvisning_navngir_constraint
+  21–25    test_port21_25_lineage
+  26–28    test_port26_28_totalitet
+  29–31    test_port29_31_sak_og_logg
+  32–36    test_port32_36_roller_og_synlighet
+  37       test_port37_python_veien_er_stengt
+  38       test_port38_payloadtyper_er_gjensidig_utelukkende
+  41       test_port41_varselfeil_feller_ikke_saken
+  40       (ui/test/adjudikator.test.js — axe på begge visninger)
+"""
+import secrets
+
+import psycopg
+import pytest
+
+from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
+                       migrator, miljo)
+from .test_pr014b_domene_artefakt import _admin, _dkrow, _host
+from .test_pr010_db import _ctx as _sett_kontekst
+
+pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
+
+PLATT = "__plattform_domener"
+
+
+def _konflikt(migrator, hostname, *, a=TENANT, b=ANNEN_TENANT):
+    """A verifiserer, B tar over → konflikt. -> (sak_id, B-generasjon)."""
+    adm = _admin()
+    try:
+        adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    (a, hostname))
+        adm.commit()
+        svar = adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                           (b, hostname)).fetchone()[0]
+        adm.commit()
+    finally:
+        adm.close()
+    assert svar == f"konflikt:{a}", svar
+    gen = _dkrow(migrator, b, hostname)[1]
+    return _sak_for(migrator, hostname), gen
+
+
+def _sak_for(migrator, hostname, *, terminal=False):
+    _sett_kontekst(migrator, PLATT)
+    rad = migrator.execute(
+        "SELECT id FROM unntak WHERE hostname_ref=%s"
+        "  AND sakskilde='domeneovertakelse' AND terminal=%s"
+        " ORDER BY id DESC LIMIT 1", (hostname, terminal)).fetchone()
+    migrator.rollback()
+    return int(rad[0]) if rad else None
+
+
+def _sakrad(migrator, sak_id):
+    _sett_kontekst(migrator, PLATT)
+    rad = migrator.execute(
+        "SELECT status, utfordrer_tenant, tapt_tenant,"
+        "       autorisasjonsgenerasjon, saksrevisjon, hostname_ref,"
+        "       payload_type, loggpost_id"
+        "  FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak_id)).fetchone()
+    migrator.rollback()
+    return rad
+
+
+def _payload(h, *, gen=1, a=1, b=2, tapt=TENANT, utf=ANNEN_TENANT, **over):
+    p = {"v": "1", "familie": "domeneovertakelse", "hostname": h,
+         "autorisasjonsgenerasjon": gen, "tapt_tenant": tapt,
+         "utfordrer_tenant": utf, "hendelse_a": a, "hendelse_b": b}
+    p.update(over)
+    return p
+
+
+def _gyldig(conn, payload) -> bool:
+    import json
+    return conn.execute("SELECT er_gyldig_referansepayload(%s::jsonb)",
+                        (json.dumps(payload),)).fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
+# Sak ved konflikt (1–5)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port1_konflikt_gir_sak_ved_commit(migrator):
+    """Port 1: konflikten og saken er ÉN transaksjon — commit uten sak
+    finnes ikke. Saken bor på plattformtenanten, bærer referansepayload og
+    sin egen loggpost."""
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+    rad = _sakrad(migrator, sak)
+    assert rad[:7] == ("ny", ANNEN_TENANT, TENANT, gen, 0, h, "referanse"), rad
+    # Loggposten er plattformens egen, med SAMME payload (invariant 6).
+    _sett_kontekst(migrator, PLATT)
+    logg = migrator.execute(
+        "SELECT payload_type, referansepayload = ("
+        "   SELECT referansepayload FROM unntak WHERE tenant=%s AND id=%s)"
+        "  FROM revisjonslogg WHERE tenant=%s AND id=%s",
+        (PLATT, sak, PLATT, rad[7])).fetchone()
+    migrator.rollback()
+    assert logg == ("referanse", True), logg
+
+
+@pg
+def test_port2_direkte_avklaring_uten_sak_avvises(migrator):
+    """Port 2: direkte DML som setter `avklaring_kreves` uten gjeldende sak
+    avvises VED COMMIT — også for skjemaeieren."""
+    h = _host()
+    adm = _admin()
+    try:
+        adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                    (TENANT, h))
+        adm.commit()
+    finally:
+        adm.close()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET status='avklaring_kreves'"
+        " WHERE tenant=%s AND hostname=%s", (TENANT, h))
+    with pytest.raises(psycopg.errors.RaiseException, match="uten gjeldende sak"):
+        migrator.commit()
+    migrator.rollback()
+
+
+@pg
+def test_port3_apen_sak_feil_utfordrer_eller_generasjon(migrator):
+    """Port 3: en åpen sak teller bare hvis den navngir RADENS utfordrer og
+    generasjon — en fremmed eller foreldet sak slipper ingen gjennom."""
+    h = _host()
+    _konflikt(migrator, h)   # åpen sak: utfordrer=ANNEN_TENANT, gen=1
+    tredje = "t-api-tredje"
+    adm = _admin()
+    try:
+        adm.execute("SELECT utsted_challenge(%s,%s,false,'sys','tok')",
+                    (tredje, h))
+        adm.commit()
+    except psycopg.Error:
+        adm.rollback()
+    finally:
+        adm.close()
+    # Direkte DML: sett TREDJE tenant i avklaring — saken gjelder ANNEN_TENANT.
+    _sett_kontekst(migrator, tredje)
+    migrator.execute(
+        "INSERT INTO domenekontroll (tenant, hostname, status, wildcard,"
+        " autorisasjonsgenerasjon) VALUES (%s,%s,'avklaring_kreves',false,1)"
+        " ON CONFLICT (tenant, hostname) DO UPDATE SET status='avklaring_kreves'",
+        (tredje, h))
+    with pytest.raises(psycopg.errors.RaiseException, match="uten gjeldende sak"):
+        migrator.commit()
+    migrator.rollback()
+
+
+@pg
+def test_port5_terminal_sak_ny_konflikt_ny_sak(migrator):
+    """Port 5: en terminal sak gjenåpnes aldri — en ny konflikt får en NY
+    sak, og den terminale står urørt."""
+    from .test_pr015_operativt_lag import _adjudikator
+    h = _host()
+    sak1, gen1 = _konflikt(migrator, h)
+    bid = _adjudikator(ANNEN_TENANT, "port5-adjudikator")
+    # Avgjør: avvis (én stemme holder) → saken lukkes, B tilbakekalles.
+    adm = _admin()
+    try:
+        adm.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',"
+                    "%s,'aktor-1',%s,%s)",
+                    (ANNEN_TENANT, sak1, h, TENANT, gen1, bid))
+        adm.commit()
+        # Ny konflikt på samme hostname: B (tilbakekalt m/ motpart) søker igjen.
+        svar = adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                           (ANNEN_TENANT, h)).fetchone()[0]
+        adm.commit()
+        assert svar.startswith("konflikt:"), svar
+    finally:
+        adm.close()
+    sak2 = _sak_for(migrator, h)
+    assert sak2 is not None and sak2 != sak1, (sak1, sak2)
+    assert _sakrad(migrator, sak1)[0] == "avvist", "terminal sak ble rørt"
+
+
+# ---------------------------------------------------------------------------
+# Revisjonsbindingen (7–9)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port7_8_9_revisjonsbindingen(migrator):
+    """Port 7: skifte uten +1 avvises. Port 8: +2 avvises, og +1 uten
+    skifte avvises. Port 9: `hostname_ref` er saksidentiteten og kan aldri
+    endres. Alt som tabelleier — triggeren er vakten, ikke kalleren."""
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+
+    def _oppdater(sql_sett, args=()):
+        _sett_kontekst(migrator, PLATT)
+        migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        migrator.execute(
+            f"UPDATE unntak SET {sql_sett} WHERE tenant=%s AND id=%s",
+            (*args, PLATT, sak))
+
+    # Port 7: utfordrer skifter uten revisjonsbump.
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="uten saksrevisjon"):
+        _oppdater("utfordrer_tenant='t-api-tredje'")
+    migrator.rollback()
+    # Port 8a: skifte med +2.
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="uten saksrevisjon"):
+        _oppdater("utfordrer_tenant='t-api-tredje', saksrevisjon=saksrevisjon+2")
+    migrator.rollback()
+    # Port 8b: +1 uten skifte.
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="uten utfordrer-/generasjonsskifte"):
+        _oppdater("saksrevisjon=saksrevisjon+1")
+    migrator.rollback()
+    # Port 9: saksidentiteten.
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="saksidentitet"):
+        _oppdater("hostname_ref=%s", (_host(),))
+    migrator.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Migrering (12) og referansepayload (13–20)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port12_insert_uten_sakskilde_feiler(migrator):
+    """Port 12: ingen DEFAULT — en skriver som ikke VET hva saken er, får
+    ikke skrevet den."""
+    _sett_kontekst(migrator, TENANT)
+    lid = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse) VALUES (%s,'h','p','STOPP','[]'::jsonb) RETURNING id",
+        (TENANT,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,"
+            "policy_versjon,policy_content_hash)"
+            " VALUES (%s,%s,'x','over_grense',%s,'k1',%s,3,'1.0.0','ph')",
+            (TENANT, lid, b"\x00", b"\x00" * 12))
+    migrator.rollback()
+
+
+@pg
+def test_port13_18_referansepayloadens_lukkede_kontrakt(migrator):
+    """Port 13: ekstra nøkkel avvises — også for tabelleieren. Port 14:
+    manglende nøkkel / feil type / feil familie / manglende v. Port 15:
+    generasjonens tallform (1.5 og -1 avvist, 0 godtatt). Port 16:
+    hendelsenes tallform og ulikhet. Port 18: tapt == utfordrer avvises."""
+    h = "gyldig.example"
+    ok = _payload(h)
+    assert _gyldig(migrator, ok) is True
+
+    # Port 13 — lukket sett er LIKHET, ikke delmengde.
+    for ekstra in ({"challenge_token": "x"}, {"begrunnelse": "y"},
+                   {"fritekst": "z"}):
+        assert _gyldig(migrator, _payload(h, **ekstra)) is False, ekstra
+    # Port 14 — manglende nøkkel, feil type, feil familie, manglende v.
+    for brukket in (
+            {k: v for k, v in ok.items() if k != "hostname"},
+            _payload(h, gen="1"),                       # tall som streng
+            _payload(h, familie="noe_annet"),
+            {k: v for k, v in ok.items() if k != "v"},
+            _payload(h) | {"v": "2"}):
+        assert _gyldig(migrator, brukket) is False, brukket
+    # Port 15 — generasjonens domene.
+    assert _gyldig(migrator, _payload(h, gen=1.5)) is False
+    assert _gyldig(migrator, _payload(h, gen=-1)) is False
+    assert _gyldig(migrator, _payload(h, gen=0)) is True
+    assert _gyldig(migrator, _payload(h, gen=int("9" * 20))) is False
+    # Port 16 — hendelsene: positive heltall, aldri like.
+    assert _gyldig(migrator, _payload(h, a=0)) is False
+    assert _gyldig(migrator, _payload(h, a=-3)) is False
+    assert _gyldig(migrator, _payload(h, a=5, b=5)) is False
+    # Port 18 — to sider av en konflikt er aldri samme tenant.
+    assert _gyldig(migrator, _payload(h, tapt="x", utf="x")) is False
+    migrator.rollback()
+
+
+@pg
+def test_port17_20_hostnameparitet_db_og_python(migrator):
+    """Port 17: de ugyldige hostname-formene avvises av DB-kontrakten.
+    Port 20 (§5.2 gren 1): kontrakten er `er_kanonisk_hostname` (016),
+    GJENBRUKT — python-siden (`ssrf.normaliser_hostname`) er en
+    NORMALISATOR, ikke en validator, og pariteten som faktisk gjelder er:
+    (a) alt DB godtar er et fikspunkt for python-normalisereren, og
+    (b) det python normaliserer frem, dømmes av DB — normaliseringen kan
+    aldri produsere en form DB feller uten at DB felte originalen også.
+    """
+    from api import ssrf
+
+    ugyldige = [".example.com", "a..example.com", "-a.example.com",
+                "a-.example.com", "example.com.", "EXAMPLE.com",
+                ("a" * 64) + ".example.com"]
+    for form in ugyldige:
+        assert _gyldig(migrator, _payload(form)) is False, form
+        assert migrator.execute("SELECT er_kanonisk_hostname(%s)",
+                                (form,)).fetchone()[0] is False, form
+    migrator.rollback()
+    # (b) normaliseringens utfall dømmes av DB: formene som KAN
+    # normaliseres til kanonisk («EXAMPLE.com», «example.com.») ender som
+    # 'example.com' og godtas der; resten forblir ukanoniske og felles.
+    for form, kanonisk_etterpaa in [("EXAMPLE.com", True),
+                                    ("example.com.", True),
+                                    (".example.com", False),
+                                    ("a..example.com", False),
+                                    ("-a.example.com", False)]:
+        n = ssrf.normaliser_hostname(form)
+        dom = migrator.execute("SELECT er_kanonisk_hostname(%s)",
+                               (n,)).fetchone()[0]
+        assert dom is kanonisk_etterpaa, (form, n, dom)
+    migrator.rollback()
+    # (a) DB-kanoniske former er python-fikspunkter.
+    for form in ["example.com", "a.b.example.com", "xn--kltt-5qaa.no"]:
+        assert migrator.execute("SELECT er_kanonisk_hostname(%s)",
+                                (form,)).fetchone()[0] is True, form
+        assert ssrf.normaliser_hostname(form) == form, form
+    migrator.rollback()
+
+
+@pg
+def test_port19_avvisning_navngir_constraint(migrator):
+    """Port 19: ugyldig tallform + speilingsbrudd gir CONSTRAINT-avvisning
+    som NAVNGIR contraint-en — aldri en cast-exception fra dypet."""
+    import json
+    _sett_kontekst(migrator, PLATT)
+    lid = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse) VALUES (%s,'h','p','STOPP','[]'::jsonb) RETURNING id",
+        (PLATT,)).fetchone()[0]
+    stygg = _payload("gyldig.example", gen="ikke-et-tall")
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            " sakstype,prioritet,sakskilde,hostname_ref,utfordrer_tenant,"
+            " tapt_tenant,autorisasjonsgenerasjon,saksrevisjon,hendelse_a,"
+            " hendelse_b,payload_type,referansepayload)"
+            " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+            " 'sikkerhet','hoy','domeneovertakelse','gyldig.example',%s,%s,"
+            " 1,0,1,2,'referanse',%s::jsonb)",
+            (PLATT, lid, ANNEN_TENANT, TENANT, json.dumps(stygg)))
+    assert "unntak_referansepayload_speiler" in str(ei.value)
+    migrator.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Lineage (21–25) og totalitet (26–28)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port21_25_lineage(migrator):
+    """Port 21: FK avviser en hendelse som ikke finnes. Port 22: kompositt-
+    FK-en avviser en hendelse for et ANNET hostname. Port 23: sakskilde-
+    CHECK-en krever hendelser for overtakelse og forbyr dem for policybrudd.
+    Port 25: en referert hendelse kan ikke slettes."""
+    import json
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+
+    # Port 21 — ikke-eksisterende hendelse (direkte DML, tabelleier).
+    _sett_kontekst(migrator, PLATT)
+    lid = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,payload_type,referansepayload)"
+        " VALUES (%s,'h','p','UNNTAK','[]'::jsonb,'referanse',%s::jsonb)"
+        " RETURNING id",
+        (PLATT, json.dumps(_payload("fri.example", a=999999991,
+                                    b=999999992)))).fetchone()[0]
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            " sakstype,prioritet,sakskilde,hostname_ref,utfordrer_tenant,"
+            " tapt_tenant,autorisasjonsgenerasjon,saksrevisjon,hendelse_a,"
+            " hendelse_b,payload_type,referansepayload)"
+            " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+            " 'sikkerhet','hoy','domeneovertakelse','fri.example',%s,%s,1,0,"
+            " 999999991,999999992,'referanse',%s::jsonb)",
+            (PLATT, lid, ANNEN_TENANT, TENANT,
+             json.dumps(_payload("fri.example", a=999999991, b=999999992))))
+    migrator.rollback()
+
+    # Port 22 — hendelse for et annet hostname: kompositt-FK-en (id, hostname)
+    # matcher ikke, selv om id-en finnes. INSERT-form: payloaden speiler
+    # kolonnene (speiler-CHECK-en passerer), så det er FK-en som feller.
+    _sett_kontekst(migrator, PLATT)
+    ekte_a, ekte_b = migrator.execute(
+        "SELECT hendelse_a, hendelse_b FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak)).fetchone()
+    migrator.rollback()
+    fremmed = _payload("fri.example", a=int(ekte_a), b=int(ekte_b))
+    _sett_kontekst(migrator, PLATT)
+    lidf = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,payload_type,referansepayload)"
+        " VALUES (%s,'h','p','UNNTAK','[]'::jsonb,'referanse',%s::jsonb)"
+        " RETURNING id", (PLATT, json.dumps(fremmed))).fetchone()[0]
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            " sakstype,prioritet,sakskilde,hostname_ref,utfordrer_tenant,"
+            " tapt_tenant,autorisasjonsgenerasjon,saksrevisjon,hendelse_a,"
+            " hendelse_b,payload_type,referansepayload)"
+            " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+            " 'sikkerhet','hoy','domeneovertakelse','fri.example',%s,%s,1,0,"
+            " %s,%s,'referanse',%s::jsonb)",
+            (PLATT, lidf, ANNEN_TENANT, TENANT, ekte_a, ekte_b,
+             json.dumps(fremmed)))
+    migrator.rollback()
+
+    # Port 23 — policybrudd med hendelser avvises av sakskilde-CHECK-en.
+    _sett_kontekst(migrator, TENANT)
+    lid2 = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse) VALUES (%s,'h','p','STOPP','[]'::jsonb) RETURNING id",
+        (TENANT,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,"
+            "policy_versjon,policy_content_hash,sakskilde,hendelse_a,"
+            "hendelse_b) VALUES (%s,%s,'x','over_grense',%s,'k1',%s,3,"
+            "'1.0.0','ph','policybrudd',%s,%s)",
+            (TENANT, lid2, b"\x00", b"\x00" * 12, ekte_a, ekte_b))
+    assert "unntak_sakskilde_komplett" in str(ei.value)
+    migrator.rollback()
+
+    # Port 25 — den refererte hendelsen kan ikke slettes (append-only-
+    # triggeren er første vakt; FK-en står bak den).
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    with pytest.raises(psycopg.errors.RaiseException):
+        migrator.execute("DELETE FROM domenekontroll_hendelse WHERE id=%s",
+                         (ekte_b,))
+    migrator.rollback()
+
+
+@pg
+def test_port26_28_totalitet(migrator):
+    """Port 26: hvert av de seks speilfeltene NULL → avvist, selv med gyldig
+    payload. Port 27: `referansepayload_speiler` er total — aldri NULL, også
+    med NULL i hver posisjon. Port 28: `er_gyldig_referansepayload(NULL)`
+    er `false`, ikke NULL."""
+    import json
+    h = "gyldig.example"
+    p = json.dumps(_payload(h))
+    felter = ["p_hostname", "p_generasjon", "p_utfordrer", "p_tapt",
+              "p_a", "p_b"]
+    verdier = [h, 1, ANNEN_TENANT, TENANT, 1, 2]
+    for i in range(len(felter)):
+        args = list(verdier)
+        args[i] = None
+        rad = migrator.execute(
+            "SELECT referansepayload_speiler(%s::jsonb,%s,%s,%s,%s,%s,%s)",
+            (p, *args)).fetchone()[0]
+        assert rad is False, f"{felter[i]}=NULL ga {rad!r}, ikke false"
+    assert migrator.execute(
+        "SELECT referansepayload_speiler(NULL,%s,%s,%s,%s,%s,%s)",
+        tuple(verdier)).fetchone()[0] is False
+    assert migrator.execute(
+        "SELECT er_gyldig_referansepayload(NULL)").fetchone()[0] is False
+    migrator.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Sak ↔ logg (29–31)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port29_31_sak_og_logg(migrator):
+    """Port 29: sakens payload må speile LOGGPOSTENS ved commit. Port 30:
+    revisjonslogg har ingen lineage-kolonner (modellen glir ikke tilbake).
+    Port 31: snapshot-trioen er NULL for overtakelsessaken — `'ukjent'`
+    skrives aldri."""
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+
+    # Port 29 — endre sakens payload uten loggposten: deferred trigger ved
+    # commit. (Speiler-CHECK-en passeres ved å endre payload+kolonne i takt.)
+    _sett_kontekst(migrator, PLATT)
+    migrator.execute(
+        "UPDATE unntak SET"
+        " referansepayload = jsonb_set(referansepayload,"
+        "   '{autorisasjonsgenerasjon}', to_jsonb(autorisasjonsgenerasjon+1)),"
+        " autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1,"
+        " saksrevisjon = saksrevisjon + 1"
+        " WHERE tenant=%s AND id=%s", (PLATT, sak))
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="lineage avviker"):
+        migrator.commit()
+    migrator.rollback()
+
+    # Port 30 — skjemaporten.
+    kolonner = {r[0] for r in migrator.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_schema='public' AND table_name='revisjonslogg'")}
+    migrator.rollback()
+    assert not ({"hostname_ref", "utfordrer_tenant", "tapt_tenant",
+                 "hendelse_a", "hendelse_b", "autorisasjonsgenerasjon",
+                 "saksrevisjon"} & kolonner), kolonner
+
+    # Port 31 — trioen er NULL, aldri 'ukjent'.
+    _sett_kontekst(migrator, PLATT)
+    trio = migrator.execute(
+        "SELECT maks_auto_forsok_snapshot, policy_versjon,"
+        "       policy_content_hash FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak)).fetchone()
+    migrator.rollback()
+    assert trio == (None, None, None), trio
+
+
+# ---------------------------------------------------------------------------
+# Roller og synlighet (32–37)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port32_36_roller_og_synlighet(migrator):
+    """Port 32: `disponit_domener` har ingen skriverett på unntak/
+    revisjonslogg. Port 33: kundesesjonens RLS-snitt ser ikke saken;
+    adjudikatoren ser den; en tredje tenant ikke. Port 34: adjudikatoren
+    kan ikke skrive, og ser ingen annen tenantbunden tabell. Port 35:
+    plattformtenanten kan ikke materialiseres som kunde. Port 36:
+    `UPDATE unntak SET tenant` på saken avvises."""
+    h = _host()
+    sak, _ = _konflikt(migrator, h)
+
+    # Port 32 — verifiseringsarbeiderens rolle: ingen skriverett. Rollen er
+    # et klyngeobjekt fra oppsett (staging/prod); i en base uten den er det
+    # ingenting å måle — og ingenting som kan skrive.
+    har_domener = migrator.execute(
+        "SELECT 1 FROM pg_roles WHERE rolname='disponit_domener'"
+    ).fetchone() is not None
+    migrator.rollback()
+    for tabell in ("unntak", "revisjonslogg") if har_domener else ():
+        for verb in ("INSERT", "UPDATE", "DELETE"):
+            ok = migrator.execute(
+                "SELECT has_table_privilege('disponit_domener', %s, %s)",
+                (tabell, verb)).fetchone()[0]
+            assert ok is False, f"disponit_domener har {verb} på {tabell}"
+    migrator.rollback()
+
+    # Port 33 — kundens RLS-snitt (uten claimer-rollen) ser ikke saken.
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        for tenant in (ANNEN_TENANT, "t-api-tredje"):
+            sett_kontekst(rt, tenant, "test", "r1")
+            treff = rt.execute("SELECT count(*) FROM unntak WHERE id=%s",
+                               (sak,)).fetchone()[0]
+            rt.rollback()
+            assert treff == 0, f"{tenant} ser overtakelsessaken"
+        # ... adjudikatoren ser den — uten tenantkontekst.
+        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+        treff = rt.execute("SELECT count(*) FROM unntak WHERE id=%s",
+                           (sak,)).fetchone()[0]
+        assert treff == 1, "adjudikatoren ser ikke saken"
+        # Port 34 — og KUN se: hvert skriveverb nektes, og en annen
+        # tenantbunden tabell er utenfor synsfeltet.
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("UPDATE unntak SET status='avvist' WHERE id=%s", (sak,))
+        rt.rollback()
+        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("DELETE FROM unntak WHERE id=%s", (sak,))
+        rt.rollback()
+        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("INSERT INTO unntak (tenant) VALUES ('x')")
+        rt.rollback()
+        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT count(*) FROM oppdrag")
+        rt.rollback()
+    finally:
+        rt.close()
+
+    # Port 35 — de tre materialiseringsveiene for en kundetenant.
+    _sett_kontekst(migrator, PLATT)
+    for sql, args in (
+            ("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+             " VALUES (%s,'b-1',ARRAY['leser'])", (PLATT,)),
+            ("INSERT INTO api_tokener (token_id,tenant,rolle,scopes,"
+             " secret_mac) VALUES ('tok-plt',%s,'leser',"
+             " ARRAY['decisions:read'],'m')", (PLATT,)),
+            ("INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+             " status,innhold,aktiv) VALUES (%s,'p','1','h','utkast','{}',"
+             " false)", (PLATT,))):
+        with pytest.raises(psycopg.errors.RaiseException,
+                           match="reservert"):
+            migrator.execute(sql, args)
+        migrator.rollback()
+        _sett_kontekst(migrator, PLATT)
+
+    # Port 36 — saken flyttes aldri mellom tenants.
+    _sett_kontekst(migrator, PLATT)
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    # To vakter står i veien (kolonnelåsen alfabetisk først, deretter
+    # revisjonsbindingens «flyttes aldri») — porten måler at flyttingen
+    # avvises, uansett hvilken av dem som feller den.
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="flyttes aldri|kan endres"):
+        migrator.execute("UPDATE unntak SET tenant=%s WHERE tenant=%s"
+                         " AND id=%s", (ANNEN_TENANT, PLATT, sak))
+    migrator.rollback()
+
+
+@pg
+def test_port37_python_veien_er_stengt(migrator):
+    """Port 37: `opprett_overtakelsessak` kan ikke skape en andre sak — den
+    feller kalleren FØR noe når basen, og sakstallet står."""
+    from api.domeneovertakelse import opprett_overtakelsessak
+    h = _host()
+    _konflikt(migrator, h)
+    _sett_kontekst(migrator, PLATT)
+    foer = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE hostname_ref=%s", (h,)).fetchone()[0]
+    migrator.rollback()
+    with pytest.raises(RuntimeError, match="stengt"):
+        opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
+                                tenant_tapt=TENANT, generasjon=99, aktor="sys")
+    _sett_kontekst(migrator, PLATT)
+    etter = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE hostname_ref=%s", (h,)).fetchone()[0]
+    migrator.rollback()
+    assert etter == foer == 1
+
+
+# ---------------------------------------------------------------------------
+# Regresjon (38, 41)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port38_payloadtyper_er_gjensidig_utelukkende(migrator):
+    """Port 38: `referanse` med ciphertext avvises, og `kryptert` med
+    referansepayload avvises — på unntak OG revisjonslogg."""
+    import json
+    # INSERT-form: kolonnelåsen eier UPDATE-veien (og feller den før
+    # CHECK-en) — det som måles her er at TILSTANDEN aldri kan oppstå.
+    h = _host()
+    sak, _ = _konflikt(migrator, h)
+    _sett_kontekst(migrator, PLATT)
+    ekte_a, ekte_b = migrator.execute(
+        "SELECT hendelse_a, hendelse_b FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak)).fetchone()
+    migrator.rollback()
+    pl = _payload(h, a=int(ekte_a), b=int(ekte_b))
+    _sett_kontekst(migrator, PLATT)
+    lid = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,payload_type,referansepayload)"
+        " VALUES (%s,'h','p','UNNTAK','[]'::jsonb,'referanse',%s::jsonb)"
+        " RETURNING id", (PLATT, json.dumps(pl))).fetchone()[0]
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            " sakstype,prioritet,sakskilde,hostname_ref,utfordrer_tenant,"
+            " tapt_tenant,autorisasjonsgenerasjon,saksrevisjon,hendelse_a,"
+            " hendelse_b,payload_type,referansepayload,payload_kryptert)"
+            " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+            " 'sikkerhet','hoy','domeneovertakelse',%s,%s,%s,1,0,%s,%s,"
+            " 'referanse',%s::jsonb,%s)",
+            (PLATT, lid, h, ANNEN_TENANT, TENANT, ekte_a, ekte_b,
+             json.dumps(pl), b"\x01"))
+    assert "unntak_payload_konsistent" in str(ei.value)
+    migrator.rollback()
+
+    # ... og en kryptert kjernesak kan ikke bære en referansepayload.
+    _sett_kontekst(migrator, TENANT)
+    lid2 = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse) VALUES (%s,'h','p','STOPP','[]'::jsonb) RETURNING id",
+        (TENANT,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.CheckViolation) as ei:
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            "payload_kryptert,key_id,nonce,maks_auto_forsok_snapshot,"
+            "policy_versjon,policy_content_hash,sakskilde,referansepayload)"
+            " VALUES (%s,%s,'x','over_grense',%s,'k1',%s,3,'1.0.0','ph',"
+            "'policybrudd',%s::jsonb)",
+            (TENANT, lid2, b"\x00", b"\x00" * 12,
+             json.dumps(_payload("gyldig.example"))))
+    assert "unntak_payload_konsistent" in str(ei.value)
+    migrator.rollback()
+
+    # revisjonslogg: samme utelukkelse.
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,"
+            "beslutning,begrunnelse,payload_type,referansepayload)"
+            " VALUES (%s,'h','p','STOPP','[]'::jsonb,'kryptert',%s::jsonb)",
+            (TENANT, json.dumps(_payload("gyldig.example"))))
+    migrator.rollback()
+
+
+@pg
+def test_port41_varselfeil_feller_ikke_saken(migrator):
+    """Port 41: varselet er ikke evidens — saken er. Feiler varslingen,
+    står både overtakelsen og saken; ingenting rulles tilbake."""
+    h = _host()
+    # Fell varsle_overtakelse innenfra: ta bort dens SELECT-vei ved å gi
+    # funksjonen en umulig kanal — enklest ved å fjerne EXECUTE er ikke nok
+    # (definer). I stedet: riv tabellen den skriver til, i EGEN transaksjon
+    # rundt konflikten, og legg den tilbake. ALTER er skjemaeierens.
+    migrator.execute("ALTER TABLE varsel RENAME TO varsel_borte")
+    migrator.commit()
+    try:
+        sak, gen = _konflikt(migrator, h)
+        rad = _sakrad(migrator, sak)
+        assert rad[0] == "ny" and rad[5] == h, rad
+        assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+    finally:
+        migrator.rollback()
+        migrator.execute("ALTER TABLE varsel_borte RENAME TO varsel")
+        migrator.commit()

@@ -5,7 +5,7 @@
 // §7-semantikk som resten: ekte form, aria-invalid + fokus til feil,
 // resultat i role=alert, tabell med caption/scope, status alltid tekst.
 import { el, sett } from "../dom.js";
-import { t } from "../i18n.js";
+import { harNokkel, t } from "../i18n.js";
 import { hentDomener, leggTilDomene, ApiFeil, UautorisertFeil,
   IngenTilgangFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, Feiltilstand, meldLive } from "../komponenter.js";
@@ -65,7 +65,39 @@ export function visDomener(rot, ctx) {
     return t(`domenestatus.${d.status}`, d.status);
   }
 
+  // 041 (§6): avklaring og tilbakekalling får FORKLARINGEN i statuscellen —
+  // tekst, ikke bare et statusord — og aldri motpartens identitet. Skjerm-
+  // leseren får den samme veien: statusordet peker på forklaringen med
+  // aria-describedby. `harNokkel`-gjerdet gjør en manglende oversettelse til
+  // et rent statusord, aldri en naken nøkkel i cellen.
+  let forklaringNr = 0;
+  function statusCelle(d) {
+    const tekst = statusTekst(d);
+    const nokkel = `domenestatus.${d.status}.forklaring`;
+    if ((d.status === "avklaring_kreves" || d.status === "tilbakekalt")
+        && harNokkel(nokkel)) {
+      const fid = `dm-forklaring-${++forklaringNr}`;
+      return el("span", {},
+        el("span", { "aria-describedby": fid, text: tekst }),
+        el("p", { class: "hjelpetekst", id: fid, text: t(nokkel) }));
+    }
+    return tekst;
+  }
+
+  // 041 (§6): et statusSKIFTE annonseres i live-regionen — arbeideren kan
+  // finne beviset (eller en konflikt kan oppstå) mens brukeren står på en
+  // annen fane, og en stille omtegning er ikke et varsel. Kun endringer:
+  // hver oppfriskning av en uendret liste skal ikke fylle skjermleseren.
+  let forrigeStatus = new Map();
   function tegnListe(domener) {
+    const naa = new Map(domener.map((d) => [d.hostname, statusTekst(d)]));
+    for (const [host, st] of naa) {
+      const gammel = forrigeStatus.get(host);
+      if (gammel !== undefined && gammel !== st) {
+        meldLive(`${host}: ${st}`);
+      }
+    }
+    forrigeStatus = naa;
     liste.removeAttribute("aria-busy");
     if (!domener.length) {
       sett(liste, TomTilstand({ tittel: t("ui.domener.tom_tittel"),
@@ -79,7 +111,7 @@ export function visDomener(rot, ctx) {
     const tbody = el("tbody", {}, ...domener.map((d) =>
       el("tr", {},
         el("th", { scope: "row", text: d.hostname }),
-        el("td", {}, statusTekst(d)),
+        el("td", {}, statusCelle(d)),
         el("td", {}, d.siste_vellykkede_revalidering
           ? Tidspunkt(d.siste_vellykkede_revalidering)
           : (d.challenge_utloper
