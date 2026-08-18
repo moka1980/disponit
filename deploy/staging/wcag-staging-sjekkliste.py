@@ -625,21 +625,44 @@ def fase8():
         evidens("fase8_hoppet", grunn="ingen forrige release")
         return
     forrige = forrige[-1]
-    subprocess.run(["ln", "-sfn", str(forrige), str(aktiv)], check=True)
-    subprocess.run(["systemctl", "restart", "disponit-api.service"],
-                   check=True)
-    time.sleep(4)
-    st1 = subprocess.run(["systemctl", "is-active", "disponit-api.service"],
-                         capture_output=True, text=True).stdout.strip()
-    subprocess.run(["ln", "-sfn", str(naa), str(aktiv)], check=True)
-    subprocess.run(["systemctl", "restart", "disponit-api.service"],
-                   check=True)
-    time.sleep(4)
-    st2 = subprocess.run(["systemctl", "is-active", "disponit-api.service"],
-                         capture_output=True, text=True).stdout.strip()
-    evidens("fase8_rollback", forrige=forrige.name[:12],
-            forrige_status=st1, tilbake_status=st2,
-            ok=st1 == "active" and st2 == "active")
+
+    def _pek(mal: Path) -> None:
+        subprocess.run(["ln", "-sfn", str(mal), str(aktiv)], check=True)
+
+    def _restart_og_status() -> str:
+        """-> systemd-statusen etter restart. Restarten er MÅLINGEN, ikke
+        en forutsetning: `check=True` her ville kastet før statusen ble
+        lest, og en release som ikke starter er nettopp utfallet drillen
+        skal fange."""
+        subprocess.run(["systemctl", "restart", "disponit-api.service"],
+                       capture_output=True)
+        time.sleep(4)
+        return subprocess.run(
+            ["systemctl", "is-active", "disponit-api.service"],
+            capture_output=True, text=True).stdout.strip()
+
+    # GJENOPPRETTINGEN LIGGER I `finally` (Codex P2). Klarte ikke forrige
+    # release å starte, kastet `check=True` med én gang, og `aktiv` ble
+    # stående og peke på den ØDELAGTE releasen — altså nøyaktig den
+    # feilen drillen finnes for å måle, forvandlet til varig skade på
+    # staging. En drill som kan etterlate miljøet i tilstanden den
+    # tester, er ikke en drill.
+    #
+    # Evidenslinja skrives også fra `finally`: en drill som avbrytes uten
+    # å si hva den rakk å måle, er en måling som forsvant.
+    st1 = "ikke_maalt"
+    try:
+        _pek(forrige)
+        st1 = _restart_og_status()
+    finally:
+        st2 = "ikke_gjenopprettet"
+        try:
+            _pek(naa)
+            st2 = _restart_og_status()
+        finally:
+            evidens("fase8_rollback", forrige=forrige.name[:12],
+                    forrige_status=st1, tilbake_status=st2,
+                    ok=st1 == "active" and st2 == "active")
 
 
 def main() -> int:
