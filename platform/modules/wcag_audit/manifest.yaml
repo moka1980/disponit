@@ -33,9 +33,12 @@ status: under_utvikling        # aktiv | inaktiv | under_utvikling
 # gir `registry.valider` «drift krever aktiv». De to feltene flyttes
 # sammen, når porten faktisk er bestått.
 #
-# m02_revisjonslogg BLE aktivert i denne PR-en og forblir aktiv: den
-# beslutningen står på egne ben (delt m01-evidens, alle punkter `ja`,
-# artefaktene bundet) og er uavhengig av WCAG-modulens akseptport.
+# m02_revisjonslogg ble aktivert i samme runde, og DEN beslutningen er
+# også tatt tilbake (Codex P1, runde 2). Begrunnelsen her sa «alle punkter
+# `ja`, artefaktene bundet» — det gjaldt tre av seks. De tre første
+# punktene i m02s sjekkliste var ren fritekst, to av dem uttrykkelig lånt
+# fra m01-kjøringer, og delt evidens krever strukturert `bevismaalinger`.
+# Samme regel, samme utfall: se m02_revisjonslogg/manifest.yaml.
 driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # bestilling og frekvens går gjennom policyporten
