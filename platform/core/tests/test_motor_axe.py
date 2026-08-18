@@ -327,6 +327,23 @@ def test_robots_gjelder_ogsaa_omdirigeringsmaalet():
         "stiformen skal komme fra én funksjon, brukt begge steder"
 
 
+def test_bare_lesende_metoder_slipper_ut_av_kontrollen():
+    """Codex P1: egressvakten målte bare origin, og origin er ikke metode.
+
+    En kontrollert side som kjørte `fetch(..., {method: "POST"})` eller
+    `navigator.sendBeacon` fikk skrive mot sitt eget nettsted — med cookies
+    satt under navigasjonen — mens modulkontrakten sier `ekstern_lesing`:
+    ingen sideeffekt hos målet."""
+    assert kjor.LESEMETODER == frozenset({"GET", "HEAD"})
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "req.method.upper() not in LESEMETODER" in kilde
+    # Blokkeringen TELLES, som alt annet blokkert — den skal ikke være en
+    # stille avvisning.
+    metodedel = kilde.split("not in LESEMETODER", 1)[1].split("return", 1)[0]
+    assert "tell(" in metodedel and 'route.abort("blockedbyclient")' \
+        in metodedel
+
+
 def test_kravsett_og_alvorlighet_dekker_kontrakten():
     # Enum-ene speiler rapportskjemaet — driver de fra hverandre, produserer
     # motoren verdier skjemavalideringen avviser.

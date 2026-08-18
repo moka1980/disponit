@@ -14,7 +14,9 @@ STDIN/STDOUT-grensesnitt og ingenting annet:
 Alt herfra er UBETRODD for controlleren (den validerer selv); det fritar
 ikke motoren fra å være ærlig:
 
-  * EGRESS ER LUKKET: kun målvertens origin slipper ut. Alle andre
+  * EGRESS ER LUKKET: kun målvertens origin slipper ut, og bare med
+    LESENDE metoder (`LESEMETODER`) — kontrakten er `ekstern_lesing`, og
+    samme origin er ikke det samme som ufarlig. Alle andre
     forespørsler blokkeres og TELLES ({vert, antall, art}) — det er
     tallene `dekningsbegrensninger` bygges av (port 18). Det gjelder
     ALLE kanalene, ikke bare de `route` ser: websockets avskjæres for
@@ -71,6 +73,17 @@ ALVORLIGHET = {"critical": "kritisk", "serious": "alvorlig",
 
 ART = {"stylesheet": "stilark", "font": "font", "script": "skript",
        "image": "bilde"}
+
+#: Metodene en LESENDE kontroll trenger, og ikke én til (Codex P1).
+#: Modulkontrakten klassifiserer hele operasjonen som `ekstern_lesing`:
+#: ingen sideeffekt hos målet. Egressvakten målte bare ORIGIN, så en side
+#: som selv kjørte `fetch(..., {method: "POST"})` eller
+#: `navigator.sendBeacon` fikk skrive mot sitt eget nettsted — med
+#: cookies satt under navigasjonen — og kunne dermed sende inn skjemaer
+#: eller utløse handlinger i kundens navn mens vi «bare så på».
+#: HEAD er med fordi den er GET uten kropp; OPTIONS trengs ikke når
+#: skrivemetodene uansett er stengt.
+LESEMETODER = frozenset({"GET", "HEAD"})
 
 #: Rapportkontraktens egne tak (`rapport.MAKS_EKSEMPLER`/`MAKS_SELEKTOR`),
 #: gjentatt her fordi motoren MÅ kappe før stdout: 500 funn à ti 200-tegns
@@ -519,6 +532,13 @@ def main() -> int:
             req = route.request
             u = urllib.parse.urlsplit(req.url)
             if _origin(u) != origin:
+                tell(u.hostname or u.netloc,
+                     ART.get(req.resource_type, "annet"))
+                route.abort("blockedbyclient")
+                return
+            # KONTROLLEN LESER, DEN SKRIVER IKKE (Codex P1). Se
+            # `LESEMETODER`: samme origin er ikke det samme som ufarlig.
+            if req.method.upper() not in LESEMETODER:
                 tell(u.hostname or u.netloc,
                      ART.get(req.resource_type, "annet"))
                 route.abort("blockedbyclient")
