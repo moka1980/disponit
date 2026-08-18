@@ -516,12 +516,40 @@ def test_robots_gjelder_ogsaa_omdirigeringsmaalet():
     assert kjor._robotsti(u("https://x.example")) == "/"
 
     kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
-    assert "req.redirected_from is not None" in kilde
     assert "req.is_navigation_request()" in kilde
     assert "not _tillatt(_robotsti(u), disallow)" in kilde
     # Og stiformen er DELT: bygges den to steder, kan de gli fra hverandre.
     assert kilde.count("_robotsti(") == 3, \
         "stiformen skal komme fra én funksjon, brukt begge steder"
+
+
+def test_robots_gjelder_hver_navigasjon_ikke_bare_omdirigeringer():
+    """Codex P1: en navigasjon trenger ingen omdirigering for å oppstå.
+
+    Vakten målte bare forespørsler med `redirected_from`, men
+    `location.replace('/privat/side')`, et `window.open`, en `<iframe
+    src=…>` og en `<meta refresh>` er alle navigasjoner UTEN forgjenger.
+    Hver av dem hentet den forbudte siden, og for hovedrammens del kunne
+    axe ende opp med å kontrollere den — samme vei rundt porten som
+    omdirigeringen, åpnet med et annet verktøy.
+
+    Unntaket skal være nøyaktig ÉN URL: den bestilte `mal_url`, som er
+    kundens eget valg. Vakten lever inne i `main()` bak playwright, så
+    porten måles på kilden."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "req.redirected_from" not in kilde, \
+        "robots-vakten skal ikke lenger begrense seg til omdirigeringer"
+    vakt = kilde.split("def vakt(route):", 1)[1].split("def vakt_ws", 1)[0]
+    assert "krype and req.is_navigation_request()" in vakt
+    assert "!= mal_kanonisk" in vakt
+
+    # Unntaket er den BESTILTE siden i lenkefilterets egen form, bygget
+    # ÉTT sted — ellers kan sammenligningen gli på en standardport eller
+    # et fragment mens køfrøet står i den andre formen.
+    assert kilde.count("mal_kanonisk = ") == 1
+    assert "oppdaget = {mal_kanonisk}" in kilde
+    n, o = kjor._normaliser_lenke, "https://x.example"
+    assert n(o, f"{o}:443/side#topp", f"{o}:443/side#topp") == f"{o}/side"
 
 
 def test_bare_lesende_metoder_slipper_ut_av_kontrollen():

@@ -31,8 +31,11 @@ ikke motoren fra å være ærlig:
     presedens); robots.txt 5xx → INGEN crawl — kun den eksplisitt
     bestilte `mal_url` kontrolleres (kunden har selv pekt på den; å
     crawle videre uten en lesbar robots er å gjette på lov). Reglene
-    gjelder OGSÅ omdirigeringsmål: et 30x er ingen lenke vi filtrerte,
-    så vakten måler destinasjonen før den hentes.
+    gjelder HVER navigasjon, ikke bare lenkene vi køer: et 30x, en
+    `location.replace`, et `window.open` og en `<iframe src>` er alle
+    sider vi ville hentet uten å ha filtrert dem, så vakten måler
+    destinasjonen før den hentes. Bare den bestilte `mal_url` står
+    utenfor — den er kundens eget valg.
   * TAKENE ER SYNLIGE (port 19): crawlen stopper på `maks_sider` og
     eksempellista på `MAKS_EKSEMPLER`, og BEGGE slår `avkortet` på —
     (truffet, tak, målt verdi), aldri en stille trunkering.
@@ -596,8 +599,14 @@ def main() -> int:
             robots_stengte = True
     #: Crawler vi i det hele tatt? Robots-reglene styrer hvilke sider vi
     #: HENTER utover den bestilte, så de gjelder nøyaktig i denne modusen —
-    #: både for lenkene vi køer og for omdirigeringene vi følger.
+    #: både for lenkene vi køer, omdirigeringene vi følger og navigasjonene
+    #: målets egne skript setter i gang.
     krype = maks_sider > 1
+    #: Den BESTILTE siden, i kanonisk form. Det er den ene URL-en robots
+    #: ikke måles mot i vakten: kunden pekte selv på den. Formen er
+    #: lenkefilterets egen, så sammenligningen ikke kan gli på en
+    #: standardport eller et fragment — se `_normaliser_lenke`.
+    mal_kanonisk = _normaliser_lenke(origin, mal_url, mal_url) or mal_url
 
     blokkert: dict[tuple[str, str], int] = {}
     funn: dict[str, dict] = {}
@@ -657,20 +666,35 @@ def main() -> int:
                      ART.get(req.resource_type, "annet"))
                 route.abort("blockedbyclient")
                 return
-            # ROBOTS GJELDER OGSÅ OMDIRIGERINGSMÅLET (Codex P1). Filteret
-            # sto bare på lenkene VI la i køen, og et 30x er ikke en lenke:
-            # en tillatt `/gaa` som svarer 301 til `Disallow: /privat/side`
+            # ROBOTS GJELDER HVER NAVIGASJON (Codex P1). Filteret sto først
+            # bare på lenkene VI la i køen, og et 30x er ikke en lenke: en
+            # tillatt `/gaa` som svarer 301 til `Disallow: /privat/side`
             # fortsatte her fordi målet var samme origin, og axe kjørte mot
             # den forbudte siden. Etter at rapporten begynte å navngi den
             # landede URL-en, ble den til og med promotert evidens for en
             # side robots eksplisitt stengte — altså en rett vei rundt
             # porten, åpnet av målet selv.
             #
-            # Bare NAVIGASJONER som kom fra en omdirigering måles: den
-            # bestilte `mal_url` er kundens eget valg og gjelder som før,
-            # og subressurser (bilder, stilark) er ikke sider vi crawler.
-            if (krype and req.redirected_from is not None
-                    and req.is_navigation_request()
+            # ALLE NAVIGASJONER, IKKE BARE OMDIRIGERINGENE (Codex P1, runde
+            # 4). Neste utgave målte bare forespørsler med
+            # `redirected_from`, og en navigasjon trenger ingen
+            # omdirigering for å oppstå: `location.replace('/privat/side')`,
+            # et `window.open`, en `<iframe src=…>` eller en `<meta
+            # refresh>` er alle navigasjoner UTEN forgjenger. Hver av dem
+            # hentet den forbudte siden, og for hovedrammens del kunne axe
+            # ende opp med å kontrollere den — altså samme vei rundt porten,
+            # åpnet med et annet verktøy.
+            #
+            # UNNTAKET er nøyaktig ÉN URL: den bestilte `mal_url`. Den er
+            # kundens eget valg, ikke noe vi fant ved å følge nettstedet, og
+            # den har alltid gjeldt. Alt annet måles — lenkene vi køer er
+            # alt `_tillatt`-filtrert, så for dem er kontrollen her et
+            # gjentak, ikke en ny grense. Subressurser (bilder, stilark) er
+            # ikke sider vi crawler, og `is_navigation_request()` holder dem
+            # utenfor.
+            if (krype and req.is_navigation_request()
+                    and _normaliser_lenke(origin, req.url, req.url)
+                    != mal_kanonisk
                     and not _tillatt(_robotsti(u), disallow)):
                 # Blokkeringen er en DEKNINGSBEGRENSNING, ikke et avbrudd:
                 # siden faller ut av crawlen, og rapporten sier hvorfor.
@@ -721,7 +745,7 @@ def main() -> int:
         # holde KANONISKE URL-er: er `mal_url` skrevet med standardporten
         # eller stor forbokstav i verten, ville den ellers ligget der i to
         # former og gjort tellingen én for høy.
-        oppdaget = {_normaliser_lenke(origin, mal_url, mal_url) or mal_url}
+        oppdaget = {mal_kanonisk}
         besokt = 0
         while ko and besokt < maks_sider:
             url = ko.pop(0)
