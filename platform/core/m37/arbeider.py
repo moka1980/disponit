@@ -317,8 +317,11 @@ def drener_domenekonflikter(conn: psycopg.Connection) -> dict:
                           "feiltype": type(e).__name__}), flush=True)
         raise
     # Bare når noe faktisk skjedde: en tom drenering er normaltilstanden og
-    # skal ikke fylle journalen hvert minutt.
-    if res["saker"] or res["feilet"]:
+    # skal ikke fylle journalen hvert minutt. `foreldet` teller med — en rad
+    # som flyttet seg mellom plukket og saken er ikke en feil, men den er
+    # heller ikke ingenting: skjer det ofte for samme hostnavn, er det en
+    # overtakelseskarusell noen bør se på.
+    if res["saker"] or res["feilet"] or res.get("foreldet"):
         print(json.dumps({"hendelse": "domenekonflikt_drenert", **res}),
               flush=True)
     return res

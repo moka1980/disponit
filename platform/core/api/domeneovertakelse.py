@@ -147,6 +147,20 @@ def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
     én rad om gangen med konteksten bundet til RADENS tenant — samme form som
     `reap_evidensfrister` (038 §5).
 
+    Konflikten REVALIDERES før saken lages (Codex P2). Plukket committer — det
+    er stempelet som gjør utvalget roterende — og slipper dermed radlåsen før
+    saken finnes. Tar en tredje tenant hostnavnet i mellomtiden, degraderer
+    `degrader_forbigatte_utfordrere` (019 §3.2) den valgte utfordreren og øker
+    generasjonen, og siden `opprett_overtakelsessak` hverken tar
+    hostname-låsen eller ser på domeneraden, ville saken blitt laget fra den
+    FORELDEDE `(motpart, generasjon)`-tuppelen: en M-37-sak ingen avgjørelse
+    kan lukke, fordi `avgjor_domeneovertakelse` gjerder på generasjonen.
+    `bekreft_overtakelseskonflikt` (039) tar hostnavnets egen advisory-lås —
+    transaksjonell, altså holdt gjennom saksopprettelsen og commiten under —
+    og krever at status, motpart OG generasjon står nøyaktig slik plukket så
+    dem. Står de ikke det, er raden en ANNEN konflikt enn den vi plukket:
+    den telles som `foreldet` og hentes av neste syklus med sine ferske verdier.
+
     Idempotent i to lag: nøkkelen er (hostname, generasjon) under advisory-lås,
     så en konflikt får ÉN sak uansett hvor mange ganger vi drenerer, og en rad
     som alt har sin sak koster kun oppslaget. Utvalget ROTERER (Codex P2):
@@ -181,11 +195,30 @@ def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
     # Egen transaksjon, før radarbeidet: saksopprettelsen under committer per
     # rad med sin egen tenantkontekst.
     conn.commit()
-    res = {"funnet": len(rader), "saker": [], "feilet": []}
+    res = {"funnet": len(rader), "saker": [], "feilet": [], "foreldet": []}
     for tenant, hostname, motpart, generasjon in rader:
         rid = "drenering-" + secrets.token_hex(8)
         try:
             sett_kontekst(conn, tenant, aktor, rid)
+            # Porten OG saken i SAMME transaksjon: advisory-låsen er
+            # transaksjonell, så den holdes helt fram til commiten under. Ble
+            # den sluppet imellom, hadde revalideringen bare gjort vinduet
+            # smalere, ikke lukket det.
+            fersk = conn.execute(
+                "SELECT bekreft_overtakelseskonflikt(%s,%s,%s,%s)",
+                (tenant, hostname, motpart, int(generasjon))).fetchone()[0]
+            if not fersk:
+                # Raden har flyttet seg siden plukket — typisk en tredje
+                # tenant som tok hostnavnet og degraderte denne utfordreren.
+                # Da er `(motpart, generasjon)` vi holder en annen konflikt
+                # enn den som står der nå, og en sak bygget på den kunne
+                # ingen avgjørelse lukket. Ingen feil: neste syklus finner
+                # radens FERSKE verdier.
+                conn.rollback()
+                res["foreldet"].append({"tenant": tenant,
+                                        "hostname": hostname,
+                                        "generasjon": int(generasjon)})
+                continue
             uid = opprett_overtakelsessak(
                 conn, tenant_ny=tenant, hostname=hostname,
                 tenant_tapt=motpart, generasjon=int(generasjon), aktor=aktor)

@@ -1183,6 +1183,122 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
     assert antall == 1, "én konflikt ga mer enn én sak"
 
 
+class _Kapplop:
+    """Conn-innpakning som kjører et kappløp i ET bestemt mellomrom.
+
+    `gjor()` kalles ÉN gang, rett FØR den setningen som inneholder `naar`
+    sendes til basen — altså nøyaktig i vinduet dreneringen har mellom det
+    committede plukket og porten foran saksopprettelsen. Alt annet går rett
+    videre til den ekte forbindelsen.
+    """
+
+    def __init__(self, conn, naar, gjor):
+        self._c, self._naar, self._gjor = conn, naar, gjor
+        self.kjort = False
+
+    def execute(self, sql, args=None):
+        if not self.kjort and self._naar in sql:
+            self.kjort = True
+            self._gjor()
+        return self._c.execute(sql, args)
+
+    def commit(self):
+        self._c.commit()
+
+    def rollback(self):
+        self._c.rollback()
+
+    def __getattr__(self, navn):     # alt annet er den ekte forbindelsens
+        return getattr(self._c, navn)
+
+
+@pg
+def test_foreldet_konflikt_far_ingen_sak(migrator):
+    """Codex P2: konflikten må revalideres før saken lages.
+
+    Plukket COMMITTER (stempelet er det som gjør utvalget roterende) og
+    slipper dermed radlåsen før saken finnes. Tar noen hostnavnet i det
+    vinduet, degraderer `degrader_forbigatte_utfordrere` (019 §3.2) den
+    valgte utfordreren og øker generasjonen — uten å finne noen sak å lukke,
+    for saken finnes jo ikke ennå. `opprett_overtakelsessak` tar hverken
+    hostname-låsen eller ser på domeneraden, så saken ble laget fra den
+    FORELDEDE `(motpart, generasjon)`-tuppelen: `avgjor_domeneovertakelse`
+    gjerder på generasjonen, så saken kunne ingen avgjørelse lukke — den ble
+    liggende i M-37-køen som et menneskearbeid uten utgang.
+
+    Kappløpet kjøres her nøyaktig der det oppstår: mellom plukket og porten.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `bekreft_overtakelseskonflikt`-kallet
+    fra dreneringsløkken — da lages saken på den foreldede generasjonen.
+    """
+    from api import domeneovertakelse as dov
+
+    vert = f"foreldet{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))
+        a.commit()
+        # ANNEN_TENANT tar over: TENANT tilbakekalles, ANNEN_TENANT står
+        # `avklaring_kreves` med motparten på seg. DET er raden dreneringen
+        # plukker.
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, vert)).fetchone()[0]
+        a.commit()
+    finally:
+        a.close()
+    assert svar == f"konflikt:{TENANT}", svar
+    gen = _gen(migrator, ANNEN_TENANT, vert)
+
+    def _tredjepart_tar_hostnavnet():
+        # TENANT beviser DNS-kontroll igjen mens saken ennå ikke finnes:
+        # bindingen flyttes, og triggeren degraderer ANNEN_TENANT til
+        # `tilbakekalt` med en NY generasjon.
+        b = _admin()
+        try:
+            b.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (TENANT, vert))
+            b.commit()
+        finally:
+            b.close()
+
+    rt = _arbeiderkonn()
+    try:
+        kapplop = _Kapplop(rt, "bekreft_overtakelseskonflikt",
+                           _tredjepart_tar_hostnavnet)
+        res = dov.sikre_ventende_overtakelsessaker(kapplop, grense=500)
+    finally:
+        rt.close()
+    assert kapplop.kjort, "kappløpet ble aldri kjørt — porten kalles ikke"
+    assert [s for s in res["saker"] if s["hostname"] == vert] == [], \
+        f"det ble laget en sak på den foreldede generasjonen: {res}"
+    assert [f for f in res["feilet"] if f["hostname"] == vert] == [], \
+        "en flyttet rad er ikke en FEIL — den er en annen konflikt"
+    assert {"tenant": ANNEN_TENANT, "hostname": vert,
+            "generasjon": gen} in res["foreldet"], res
+
+    # ...og ingen sak finnes på den foreldede nøkkelen. Den ville aldri kunnet
+    # avgjøres: generasjonen den navngir er ikke radens lenger.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    antall = migrator.execute(
+        "SELECT count(*) FROM unntak u JOIN revisjonslogg r"
+        "   ON r.tenant=u.tenant AND r.id=u.loggpost_id"
+        " WHERE u.tenant=%s AND r.idempotency_key=%s",
+        (ANNEN_TENANT, dov.idempotensnokkel(vert, gen))).fetchone()[0]
+    migrator.rollback()
+    assert antall == 0, "den foreldede konflikten fikk en uløselig sak"
+
+    # Porten er ikke et generelt nei: den FERSKE konflikten (TENANT, som nå
+    # står i avklaring med ANNEN_TENANT som motpart) drenereres som normalt.
+    rt = _arbeiderkonn()
+    try:
+        res2 = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
+    finally:
+        rt.close()
+    mine = [s for s in res2["saker"] if s["hostname"] == vert]
+    assert [s["tenant"] for s in mine] == [TENANT], res2
+
+
 @pg
 def test_dreneringen_skiller_radfeil_fra_utrullingsfeil(migrator, monkeypatch):
     """Codex P2: `except psycopg.Error` gjorde HVER databasefeil til en
@@ -1721,6 +1837,7 @@ DEFAULT_DENY_039 = [
     "ventende_domenechallenges(integer)",
     "bekreft_domenechallenge(text,text,text,text[])",
     "ventende_overtakelseskonflikter(integer)",
+    "bekreft_overtakelseskonflikt(text,text,text,bigint)",
     "utsted_challenge_selvbetjent(text,text,boolean,text,text)",
 ]
 

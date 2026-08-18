@@ -482,10 +482,56 @@ BEGIN
     SELECT s.t, s.h, s.m, s.g FROM stemplet s;
 END $$;
 
+-- ------------------------------------------------------------
+-- KONFLIKTEN REVALIDERES FØR SAKEN LAGES (Codex P2).
+--
+-- Plukket over COMMITTER (stempelet er det som gjør utvalget roterende), og
+-- slipper dermed radlåsen FØR dreneringen rekker å lage saken. I mellomrommet
+-- kan en tredje tenant ta hostnavnet: `degrader_forbigatte_utfordrere` (019
+-- §3.2) setter den valgte utfordreren `tilbakekalt` og øker generasjonen —
+-- den finner ingen sak å lukke, for saken finnes jo ikke ennå.
+-- `opprett_overtakelsessak` tar hverken hostname-låsen eller ser på
+-- domeneraden, så dreneringen laget saken fra den FORELDEDE
+-- `(motpart, generasjon)`-tuppelen den fikk. Resultatet var en M-37-sak
+-- ingen avgjørelse kan lukke: `avgjor_domeneovertakelse` gjerder på
+-- generasjonen, så saken feiler når mennesket til slutt behandler den, og
+-- den ekte konflikten (om det finnes en) står med sin egen sak ved siden av.
+--
+-- Porten er derfor ikke «finnes raden», men «står konflikten fortsatt
+-- NØYAKTIG slik plukket så den»: status, motpart OG generasjon. Låsen er
+-- hostnavnets egen — den samme alle domeneoverganger tar, og transaksjonell,
+-- så den holdes gjennom saksopprettelsen og commiten hos kalleren. Da er
+-- «sjekk og opprett» atomisk mot enhver overtakelse, ikke bare et smalere
+-- vindu.
+--
+-- Rekkefølgen er den felles: kanonisér, advisory-lås, så raden. Kalleren tar
+-- deretter `opprett_overtakelsessak`s egen nøkkellås (tenant:hostname:
+-- generasjon) INNENFOR denne — ingen domenevei tar den nøkkelen, så det
+-- finnes ingen syklus.
+CREATE OR REPLACE FUNCTION bekreft_overtakelseskonflikt(
+    p_tenant TEXT, p_hostname TEXT, p_motpart TEXT, p_generasjon BIGINT)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_host TEXT; v_status TEXT; v_motpart TEXT; v_gen BIGINT;
+BEGIN
+    v_host := public.krev_kanonisk_hostname(p_hostname);
+    PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || v_host, 0));
+    SELECT d.status, d.konflikt_motpart, d.autorisasjonsgenerasjon
+      INTO v_status, v_motpart, v_gen
+      FROM public.domenekontroll d
+     WHERE d.tenant = p_tenant AND d.hostname = v_host
+       FOR UPDATE;
+    RETURN v_status = 'avklaring_kreves'
+       AND v_motpart IS NOT DISTINCT FROM p_motpart
+       AND v_gen = p_generasjon;
+END $$;
+
 REVOKE ALL ON FUNCTION ventende_domenechallenges(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION bekreft_domenechallenge(TEXT, TEXT, TEXT, TEXT[])
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION ventende_overtakelseskonflikter(INT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION bekreft_overtakelseskonflikt(TEXT, TEXT, TEXT, BIGINT)
+    FROM PUBLIC;
 
 DO $$
 BEGIN
@@ -529,9 +575,17 @@ BEGIN
             TO disponit_arbeider;
         REVOKE EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
             FROM disponit;
+        -- Porten foran saksopprettelsen følger plukket: den er verdiløs uten
+        -- den, og meningsløs for noen andre.
+        GRANT EXECUTE ON FUNCTION bekreft_overtakelseskonflikt(TEXT, TEXT,
+            TEXT, BIGINT) TO disponit_arbeider;
+        REVOKE EXECUTE ON FUNCTION bekreft_overtakelseskonflikt(TEXT, TEXT,
+            TEXT, BIGINT) FROM disponit;
     ELSE
         GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
             TO disponit;
+        GRANT EXECUTE ON FUNCTION bekreft_overtakelseskonflikt(TEXT, TEXT,
+            TEXT, BIGINT) TO disponit;
     END IF;
 END $$;
 
