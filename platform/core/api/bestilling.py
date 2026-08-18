@@ -170,18 +170,22 @@ DOMENE_GYLDIG_SQL = (
     " AND siste_vellykkede_revalidering > now() - interval '72 hours'")
 
 
-def _verifisert_hostname(conn, tenant: str, hostname: str) -> bool:
+def _verifisert_hostname(conn, tenant: str, hostname: str):
     """Positivt autorisert mål VED OPPRETTELSE (portene 9–10): en
     `verifisert`, ikke-utløpt, FERSK revalidert domenekontroll for
     nøyaktig dette hostnamet. Wildcard teller ikke her — bestillingen
     gjelder ett konkret mål.
 
-    NULL-veiene er fail-closed, som i visningen: mangler `utloper` eller
+    -> `siste_vellykkede_revalidering` (verifikasjonens tidspunkt — det
+    plattformattestasjonen under attesterer) eller None. NULL-veiene er
+    fail-closed, som i visningen: mangler `utloper` eller
     `siste_vellykkede_revalidering`, er raden ikke et bevis på noe."""
-    return conn.execute(
-        "SELECT 1 FROM domenekontroll WHERE tenant=%s AND hostname=%s"
+    rad = conn.execute(
+        "SELECT siste_vellykkede_revalidering FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s"
         " AND (" + DOMENE_GYLDIG_SQL + ")",
-        (tenant, hostname)).fetchone() is not None
+        (tenant, hostname)).fetchone()
+    return rad[0] if rad else None
 
 
 def bestill_endepunkt(tjeneste, request: Request) -> Response:
@@ -277,7 +281,8 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                 return kanonisk_json(
                     {**lagret, "request_id": rid}, 200,
                     {"x-request-id": rid, "idempotent-replay": "1"})
-        if not _verifisert_hostname(conn, tenant, hostname):
+        verifisert_ts = _verifisert_hostname(conn, tenant, hostname)
+        if verifisert_ts is None:
             conn.rollback()
             tjeneste.logg.hendelse("bestilling_hostname_uverifisert", rid,
                                    tenant, art="sikkerhet",
@@ -388,6 +393,60 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                  "maks_sider": norm["maks_sider"],
                  "dataklasser": ["offentlig"],
                  "dataklasser_kilde": "connector"}
+        # PLATTFORMEN ATTESTERER SIN EGEN DOMENEKONTROLL. Aktiveringsporten
+        # (036) KREVER at en ekstern_lesing-handling bærer et registrert
+        # målautorisasjonsvilkår (domenekontroll_verifisert) — og motoren
+        # krever så en attestasjon fra en betrodd verifikator for hvert
+        # vilkår i handlingen. Uten denne ville altså enhver bestilling
+        # under en LOVLIG AKTIVERT policy endt i unntakskøen med
+        # attestasjon_mangler: porten som verifiserte målet tre linjer
+        # over (og fastholder ferskheten, 72 t) er nettopp verifikatoren,
+        # men den sa det aldri i attestasjonsformen motoren leser.
+        #
+        # Verifikatoren er PLATTFORMENS (`v_domenekontroll`): registeret i
+        # DISPONIT_ATT_NOKLER bærer nøkkelen, og tenantens policy velger
+        # selv om den stoler på den (`verifikatorer`-blokken +
+        # `betrodd_for: [domenekontroll_verifisert]`). Mangler nøkkelen i
+        # registeret, mintes ingenting — beslutningen tar da vilkårsveien
+        # den alltid tok (unntakskø), og driftsloggen navngir hvorfor.
+        dk_nokler = (tjeneste.nokler or {}).get("v_domenekontroll") or {}
+        if dk_nokler:
+            # DETERMINISTISK, forankret i selve verifikasjonen: `utstedt`
+            # er domenekontrollens `siste_vellykkede_revalidering` og
+            # `utloper` dens 72-timers ferskhetsvindu — attestasjonen
+            # UTTALER nøyaktig det porten over målte, verken mer eller
+            # ferskere. Deterministikken er idempotensens krav: kjernens
+            # input-hash dekker hele hendelsen, så en retry av samme
+            # nøkkel må bygge BYTE-identisk attestasjon for å treffe
+            # replayet (gjenopprettingsveien) i stedet for
+            # idempotenskonflikt. Ny revalidering → ny attestasjon → ny
+            # hash, og DA er konflikten ekte: grunnlaget endret seg.
+            from policy_validator import attestering
+            nid = sorted(dk_nokler)[0]
+            # jti-en er engangs (kjernen brenner den i beslutningens
+            # transaksjon) og må derfor være unik PER BESLUTNING men
+            # stabil PER RETRY: nøkkelen inn i avledningen er kjernens
+            # idempotensnøkkel — to bestillinger samme dag deler aldri
+            # jti, en retry av samme bestilling gjenskaper sin.
+            jti_grunnlag = (f"{tenant}|{hostname}|{kjernenokkel}|"
+                            f"{verifisert_ts.isoformat()}")
+            event["attestasjoner"] = {
+                "domenekontroll_verifisert": attestering.signer({
+                    "verifikator": "v_domenekontroll",
+                    "tenant_id": tenant, "handling": bt.handling,
+                    "vilkaar": "domenekontroll_verifisert",
+                    "ressurs_id": hostname, "policy_id": policy_id,
+                    "utstedt": verifisert_ts.isoformat(),
+                    "utloper": (verifisert_ts
+                                + timedelta(hours=72)).isoformat(),
+                    "jti": "dk-" + hashlib.sha256(
+                        jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                    "resultat": True,
+                }, nid, dk_nokler[nid])}
+        else:
+            tjeneste.logg.hendelse(
+                "domenekontroll_attestasjon_utilgjengelig", rid, tenant,
+                art="drift")
         from policy_validator.engine import EvaluationContext
         ctx = EvaluationContext(
             tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,

@@ -579,7 +579,8 @@ def _sikre_typeregistrering():
 
 
 def _wcag_policy(migrator_, *, med_handling=True,
-                 ved_brudd="unntakskø", tillatt_for=("bestiller",)):
+                 ved_brudd="unntakskø", tillatt_for=("bestiller",),
+                 med_vilkaar=False, vilkar_verifikator="v_domenekontroll"):
     """Aktiv policy for TENANT — bransjemalen + wcag-handlingen (vilkaar
     tom i TESTEN: motorens attestasjonskrav for målautorisasjonsvilkåret
     er policyforfatningens sak; her prøves BESTILLINGSVEIEN)."""
@@ -603,7 +604,24 @@ def _wcag_policy(migrator_, *, med_handling=True,
             "grenser": {"frekvens": {"maks": 4, "periode_antall": 1,
                                      "periode_enhet": "dager",
                                      "grupperingsnokkel": "mal_url"}},
+            # `med_vilkaar` = AKTIVERINGSFORMEN: nøyaktig policyen
+            # aktiveringsporten krever for en ekstern_lesing-modul
+            # (målautorisasjonsvilkår + frekvens). Bestillingsveien må da
+            # selv attestere domenekontrollen — det er DEN kjeden
+            # test_vilkarspolicy_far_tillat måler.
+            **({"vilkaar": [{"navn": "domenekontroll_verifisert",
+                             "verifikator": vilkar_verifikator}]}
+               if med_vilkaar else {}),
             "reversering": {"type": "direkte"}})
+        if med_vilkaar:
+            # ID-en er BÅDE policyens tillitsvalg og nøkkeloppslaget:
+            # motoren slår opp attestasjonens verifikator i policyens
+            # `verifikatorer` — plattformattestasjonen sier
+            # `v_domenekontroll`, så en policy som stoler på noe annet
+            # (negativkontrollen) skal stoppe.
+            p["verifikatorer"][vilkar_verifikator] = {
+                "beskrivelse": "Plattformens domenekontroll",
+                "betrodd_for": ["domenekontroll_verifisert"]}
     policyregister.registrer(migrator_, TENANT, p, p["meta"]["status"])
     migrator_.commit()
     _sikre_typeregistrering()
@@ -1092,6 +1110,40 @@ def test_gjenspill_overlever_at_domenet_mister_verifiseringen(migrator,
                   "n-" + secrets.token_hex(8))
     assert (r3.status_code, r3.json()["feil"]) == (
         403, "bestilling_hostname_uverifisert"), r3.text
+
+
+@pg
+def test_vilkarspolicy_far_tillat_via_plattformattestasjonen(migrator,
+                                                             klient):
+    """AKTIVERINGSFORMEN hele veien: policyen bærer målautorisasjons-
+    vilkåret aktiveringsporten krever — og bestillingen får likevel
+    TILLAT, fordi plattformen selv attesterer domenekontrollen den
+    nettopp verifiserte. Uten mintingen i bestilling.py ender denne i
+    unntakskøen med attestasjon_mangler (kontrollen: negativtesten
+    under, der policyen stoler på en annen verifikator)."""
+    _wcag_policy(migrator, med_vilkaar=True)
+    _verifiser_domene(migrator, "vilkaar.example")
+    cookie, csrf = _adminsesjon()
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp("vilkaar.example"),
+                 "n-" + secrets.token_hex(8))
+    assert r.status_code == 200, r.text
+    assert r.json()["beslutning"] == "tillat", r.text
+    assert r.json()["oppdrag_id"]
+
+
+@pg
+def test_vilkarspolicy_med_fremmed_verifikator_stopper(migrator, klient):
+    """Negativkontrollen: policyen stoler KUN på `v_annen` — plattformens
+    attestasjon (v_domenekontroll) teller da ikke, og motoren stopper
+    med verifikator_ikke_betrodd. Beviser at TILLAT over kommer fra en
+    VERIFISERT attestasjon, ikke fra at vilkårsporten ble borte."""
+    _wcag_policy(migrator, med_vilkaar=True, vilkar_verifikator="v_annen")
+    _verifiser_domene(migrator, "vilkaar2.example")
+    cookie, csrf = _adminsesjon()
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp("vilkaar2.example"),
+                 "n-" + secrets.token_hex(8))
+    assert r.status_code == 200, r.text
+    assert r.json()["beslutning"] != "tillat", r.text
 
 
 @pg
