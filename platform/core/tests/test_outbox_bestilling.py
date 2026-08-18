@@ -1004,24 +1004,35 @@ def test_rapport_lese_api(migrator, klient):
         ma.commit()
     finally:
         ma.close()
-    at = _streng_type(migrator, modul, kh,
-                      skjema={"type": "object"})
+    import oppdragskontrakt
+    # Den EKTE typen fra kontrakten — leseveien kjenner bare igjen paret
+    # (oppdragstype, `rapport_artefakttype`), se Codex P2 lenger nede.
+    at = _streng_type(
+        migrator, modul, kh, skjema={"type": "object"},
+        navn=oppdragskontrakt.OPPDRAGSTYPER[
+            "kontroll.wcag.nettsted"].rapport_artefakttype)
+    fremmed_at = _streng_type(migrator, modul, kh, skjema={"type": "object"})
     rapport = {"kravsett": "wcag21_aa", "sammendrag": {"kritisk": 0}}
     kanon = jcs.kanoniske_bytes(rapport)
     _sett_kontekst(migrator, TENANT)
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
     ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
-    migrator.execute(
-        "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
-        " release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,"
-        " storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,"
-        " kapabilitet_jti, promotert_ts)"
-        " VALUES (%s,%s,%s,%s,'r1',1,%s,0,'promotert',%s,%s,%s,%s,%s,%s,"
-        " now())",
-        (TENANT, oid, at, modul, kh, len(kanon),
-         _hl.sha256(kanon).hexdigest(), ct, nonce, key_id,
-         "jti-" + secrets.token_hex(8)))
-    migrator.commit()
+
+    def _promoter(oppdrag, artefakttype, ts="now()"):
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
+            " release_id, kontraktversjon, kontrakt_hash, module_epoch,"
+            " tilstand, storrelse_bytes, klartekst_sha256, ciphertext, nonce,"
+            " dek_ref, kapabilitet_jti, promotert_ts)"
+            " VALUES (%s,%s,%s,%s,'r1',1,%s,0,'promotert',%s,%s,%s,%s,%s,%s,"
+            f" {ts})",
+            (TENANT, oppdrag, artefakttype, modul, kh, len(kanon),
+             _hl.sha256(kanon).hexdigest(), ct, nonce, key_id,
+             "jti-" + secrets.token_hex(8)))
+        migrator.commit()
+
+    _promoter(oid, at, ts="now()-interval '1 minute'")
 
     r = klient.get(f"/v1/rapport/{oid}",
                    headers={"authorization": f"Bearer {tok}"})
@@ -1035,3 +1046,28 @@ def test_rapport_lese_api(migrator, klient):
     r2 = klient.get(f"/v1/rapport/{oid + 999}",
                     headers={"authorization": f"Bearer {tok}"})
     assert r2.status_code == 404
+
+    # Codex P2: en type flaten IKKE kan vise skal aldri bli en 200.
+    # `rapportInnhold` dereferer `sammendrag`/`sider_kontrollert` med en
+    # gang, så et artefakt fra en annen registrert kontrakt ga et svar som
+    # kastet under rendring. To halvdeler:
+    #
+    #   (a) et NYERE fremmed artefakt skygger ikke lenger for rapporten,
+    _promoter(oid, fremmed_at)
+    r3 = klient.get(f"/v1/rapport/{oid}",
+                    headers={"authorization": f"Bearer {tok}"})
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["artefakttype"] == at, \
+        "et fremmed artefakt skygget for rapporten"
+
+    #   (b) ... og et oppdrag som BARE har et fremmed artefakt er 404,
+    #       samme dokumenterte «ikke funnet» som uten promotering.
+    rt2 = _rt()
+    try:
+        oid2, _ = _beslutningsoppdrag(rt2, migrator)
+    finally:
+        rt2.close()
+    _promoter(oid2, fremmed_at)
+    r4 = klient.get(f"/v1/rapport/{oid2}",
+                    headers={"authorization": f"Bearer {tok}"})
+    assert r4.status_code == 404, r4.text

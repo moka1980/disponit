@@ -62,6 +62,15 @@ class Oppdragstype:
     #: utført samtidig som det ikke finnes noen rapport å vise til. Se
     #: `mangler_artefaktevidens`.
     produserer_artefakt: bool = False
+    #: HVILKEN artefakttype resultatet er (Codex P2). Rapport-lese-API-et
+    #: dekrypterer og leverer dokumentet til en flate som kjenner ÉN
+    #: skjemaform; uten dette feltet hentet den bare «nyeste promoterte
+    #: artefakt på oppdraget», og et artefakt fra en hvilken som helst
+    #: annen registrert kontrakt ga 200 med et dokument flaten ikke kan
+    #: lese. Navnet står her og ikke i deploy-skriptet fordi begge sider
+    #: må mene det samme: registreringen skriver registerraden, lesingen
+    #: kjenner den igjen.
+    rapport_artefakttype: str | None = None
 
     def valider(self) -> list[str]:
         feil = []
@@ -84,6 +93,13 @@ class Oppdragstype:
                         " opplastingskapabiliteten til `/v1/artefakt` er"
                         " modulbundet, så en eierløs type kan aldri levere"
                         " artefaktet kvitteringen ville blitt krevd for")
+        if self.produserer_artefakt != (self.rapport_artefakttype is not None):
+            feil.append(f"{self.navn}: produserer_artefakt og"
+                        " rapport_artefakttype må settes sammen — et"
+                        " lovet artefakt uten navngitt type kan leseveien"
+                        " ikke kjenne igjen, og en navngitt type på en"
+                        " artefaktløs oppdragstype er en form ingen"
+                        " kvittering kan levere")
         return feil
 
 
@@ -165,6 +181,7 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         krever_malautorisasjon=True,
         malautorisasjonsdomene="web_hostname",
         produserer_artefakt=True,
+        rapport_artefakttype="kontroll.wcag.rapport",
         beskrivelse=("PR-014c: automatisk WCAG-kontroll av et positivt"
                      " autorisert hostname. `ekstern_lesing`-klassen:"
                      " observerbar trafikk ut, ingen ekstern mutasjon;"

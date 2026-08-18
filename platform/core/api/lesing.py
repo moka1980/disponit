@@ -242,14 +242,38 @@ def rapport_detalj(tjeneste, request: Request) -> Response:
     promoteringen.
     """
     def _fn(conn, auth, rid):
+        import oppdragskontrakt
         oid = request.path_params["id"]
+        # BARE RAPPORTBÆRENDE TYPER (Codex P2). Uten JOIN-en og de to
+        # typefiltrene svarte endepunktet med det NYESTE promoterte
+        # artefaktet på oppdraget, uansett artefakttype og uansett hvilken
+        # oppdragstype som fødte det. `rapportInnhold` på flaten
+        # dereferer `sammendrag` og `sider_kontrollert` med en gang, så et
+        # artefakt fra en hvilken som helst annen registrert kontrakt ga
+        # 200 og en rapportvisning som kastet under rendring. Paret
+        # (oppdragstype, artefakttype) kommer fra kontrakten — samme kilde
+        # registreringen skriver registerraden fra — så en ny
+        # rapportbærende type blir lesbar ved å DEKLARERE seg, ikke ved at
+        # noen husker å utvide en liste her.
+        par = [(navn, t.rapport_artefakttype)
+               for navn, t in oppdragskontrakt.OPPDRAGSTYPER.items()
+               if t.rapport_artefakttype is not None]
         rad = conn.execute(
-            "SELECT artefakt_id, ciphertext, nonce, dek_ref, promotert_ts,"
-            " artefakttype FROM artefakt"
-            " WHERE tenant=%s AND oppdrag_id=%s AND tilstand='promotert'"
-            " ORDER BY promotert_ts DESC LIMIT 1",
-            (auth.tenant, oid)).fetchone()
+            "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
+            " a.promotert_ts, a.artefakttype"
+            "  FROM artefakt a JOIN oppdrag o"
+            "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
+            " WHERE a.tenant=%s AND a.oppdrag_id=%s"
+            "   AND a.tilstand='promotert'"
+            "   AND (o.oppdragstype, a.artefakttype) IN"
+            "       (SELECT * FROM unnest(%s::text[], %s::text[]))"
+            " ORDER BY a.promotert_ts DESC LIMIT 1",
+            (auth.tenant, oid, [p[0] for p in par],
+             [p[1] for p in par])).fetchone()
         if rad is None:
+            # Samme 404 som «finnes ikke» og «ikke ditt»: en type flaten
+            # ikke kan vise er dokumentert som ikke-funnet, ikke som en
+            # halvveis 200.
             return _feilsvar("ikke_funnet", rid)
         art_id, ct, nonce, dek_ref, ts, artefakttype = rad
         from db import kryptering
@@ -368,19 +392,32 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                 # oppdrag_id i detaljene; en rad uten oppdrag_id på sakens
                 # historikk regnes derfor med — heller ett konfliktflagg for
                 # mye enn en konflikt som forsvinner.
+                #
+                # SAKEN SLÅS OPP VIA OPPDRAGET, IKKE OMVENDT (Codex P2).
+                # `ounntak` er `oppdrag.unntak_id`, altså «født som
+                # reparasjon av» — og den er NULL for hele
+                # beslutningsopphavet. Et `h.unntak_id = NULL`-filter
+                # matcher ingenting, så begge flaggene sto FALSE for et
+                # bestilt oppdrag selv når evidensen lå der: 038 §5 lar
+                # sen-/konfliktveiene opprette en EGEN sak, og den peker
+                # tilbake med `unntak.oppdrag_id`. Begge retningene tas
+                # med, så M-37-formen er uendret og beslutningsformen
+                # endelig finner sin egen evidens.
+                sakene = ("SELECT u.id FROM unntak u WHERE u.tenant=%s"
+                          " AND (u.id=%s OR u.oppdrag_id=%s)")
                 flagg = conn.execute(
                     "SELECT"
                     " EXISTS(SELECT 1 FROM unntak_historikk h"
-                    "         WHERE h.tenant=%s AND h.unntak_id=%s"
+                    f"         WHERE h.tenant=%s AND h.unntak_id IN ({sakene})"
                     "           AND h.hendelse='sen_kvittering'"
                     "           AND (h.detalj->>'oppdrag_id')::bigint=%s),"
                     " EXISTS(SELECT 1 FROM unntak_historikk h"
-                    "         WHERE h.tenant=%s AND h.unntak_id=%s"
+                    f"         WHERE h.tenant=%s AND h.unntak_id IN ({sakene})"
                     "           AND h.hendelse='motstridende_kvittering'"
                     "           AND (h.detalj->>'oppdrag_id' IS NULL"
                     "                OR (h.detalj->>'oppdrag_id')::bigint=%s))",
-                    (auth.tenant, ounntak, oid,
-                     auth.tenant, ounntak, oid)).fetchone()
+                    (auth.tenant, auth.tenant, ounntak, oid, oid,
+                     auth.tenant, auth.tenant, ounntak, oid, oid)).fetchone()
                 sen, konflikt = bool(flagg[0]), bool(flagg[1])
 
         # Sikkerhetsaksen (v2 pkt. 3): en sak beslutningen selv fødte
