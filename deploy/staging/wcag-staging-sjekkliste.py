@@ -80,7 +80,12 @@ import psycopg  # noqa: E402
 
 MODUL = "m_wcag_audit"
 OPPDRAGSTYPE = "kontroll.wcag.nettsted"
-RELEASE = "wcag-r1"
+# Overstyrbar fordi nødstoppens vei tilbake KREVER en ny release-id
+# (`bytt_release` nekter å reclaime en drenert deployment, og onboarding
+# krever at releasen er claiming) — uten override kunne runneren åpne
+# døren én gang, men aldri gjenåpne den etter en rød fase 9. Funnet ved
+# å kjøre: uidmap manglet, fase 9 stengte, og wcag-r1 var brent.
+RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r1"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"
