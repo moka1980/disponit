@@ -285,19 +285,47 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             return _feilsvar("bestilling_hostname_uverifisert", rid)
         conn.rollback()
 
+        kjernenokkel = ("bestilling:" + nokkel) if nokkel \
+            else "bestilling-eng:" + secrets.token_hex(16)
         # Tenantens AKTIVE policy er beslutningsgrunnlaget — bestilleren
         # velger aldri policy (eller modul, frist, epoch — feltene finnes
         # ikke i kroppen, port 16).
+        #
+        # GJENOPPRETTING FØLGER BESLUTNINGEN, IKKE KLOKKA (Codex P2).
+        # Dør prosessen etter at `kjerne.behandle` har committet, men før
+        # oppdraget og `bestilling_idempotens` er skrevet, er kjernens
+        # egen idempotensrad det eneste sporet av forsøket. Kjernens
+        # input-hash dekker policy-id-en, så en retry etter at tenanten
+        # har byttet til en ANNEN policy ville regnet ut en ny hash og
+        # fått `idempotenskonflikt` — for alltid, og med en committet
+        # TILLAT-beslutning stående uten oppdraget sitt. Har nøkkelen alt
+        # en beslutning, gjenoppretter vi derfor med DEN policyen: da
+        # treffer hashen, kjernen gjenspiller sitt eget svar, og halen
+        # under fullfører bestillingen. Loggposten er den samme raden
+        # halen leser oppdraget fra, og dens `policy_id` er en
+        # policyREFERANSE (`<id>@<versjon>/<handling>`) — ren id hentes ut
+        # med `les_policyref`, som i unntaksveien.
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
-        prad = conn.execute(
-            "SELECT policy_id FROM policyer WHERE tenant=%s AND aktiv",
-            (tenant,)).fetchall()
+        policy_id = None
+        if nokkel:
+            from policy_validator.engine import les_policyref
+            forrige = conn.execute(
+                "SELECT policy_id FROM revisjonslogg WHERE tenant=%s AND"
+                " idempotency_key=%s ORDER BY id DESC LIMIT 1",
+                (tenant, kjernenokkel)).fetchone()
+            ref = les_policyref(forrige[0]) if forrige else None
+            if ref is not None:
+                policy_id = ref[0]
+        if policy_id is None:
+            prad = conn.execute(
+                "SELECT policy_id FROM policyer WHERE tenant=%s AND aktiv",
+                (tenant,)).fetchall()
+            if len(prad) != 1:
+                conn.rollback()
+                return _feilsvar("policy_ukjent", rid)
+            policy_id = prad[0][0]
         conn.rollback()
-        if len(prad) != 1:
-            return _feilsvar("policy_ukjent", rid)
 
-        kjernenokkel = ("bestilling:" + nokkel) if nokkel \
-            else "bestilling-eng:" + secrets.token_hex(16)
         # `ressurs_id` er MALBINDINGSFELT: `malbindingsbrudd` krever at den
         # ER det normaliserte vertsnavnet fra `mal_url` — ikke URL-en.
         event = {"handling": bt.handling, "ressurs_id": hostname,
@@ -312,7 +340,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             kilde="api_token")
         try:
             svar = kjerne.behandle(
-                conn, ctx, policy_id=prad[0][0], event=event,
+                conn, ctx, policy_id=policy_id, event=event,
                 idempotency_key=kjernenokkel, request_id=rid,
                 aktor=f"bruker:{bid}", nokler=tjeneste.nokler)
         except kjerne.Feilsvar as f:

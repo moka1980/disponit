@@ -694,6 +694,81 @@ def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
 
 
 @pg
+def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
+                                                    monkeypatch):
+    """Codex P2: en halvferdig bestilling gjenopprettes med policyen
+    beslutningen ble tatt under, ikke den som er aktiv nå.
+
+    Dør prosessen etter at `kjerne.behandle` har committet, men før
+    oppdraget og `bestilling_idempotens` er skrevet, er kjernens egen
+    idempotensrad det eneste sporet. Kjernens input-hash dekker
+    policy-id-en, så en retry etter et policybytte regnet ut en NY hash
+    og fikk `idempotenskonflikt` — for alltid, med en committet
+    TILLAT-beslutning (kvote brent) stående uten oppdraget sitt.
+
+    Krasjet simuleres med den ene veien som allerede ruller tilbake ETTER
+    kjernens commit: en oppdragstype uten deklarert frist gir 500 og
+    ingen bokføring.
+
+    Kontroll: la endepunktet alltid velge den AKTIVE policyen, så blir
+    retryen her `idempotenskonflikt`.
+    """
+    import copy
+
+    import oppdragskontrakt
+    from api import policyregister
+    p = _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    kropp = _gyldig_kropp()
+
+    # (1) Beslutningen committes; halen dør før oppdrag og bokføring.
+    with monkeypatch.context() as mp:
+        mp.setattr(oppdragskontrakt, "utforelsesfrist_s",
+                   lambda *a, **k: None)
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (500, "intern_feil"), r.text
+    _sett_kontekst(migrator, TENANT)
+    logg = migrator.execute(
+        "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
+        (TENANT, "bestilling:" + nokkel)).fetchall()
+    assert len(logg) == 1, "beslutningen skulle vært committet av kjernen"
+    assert migrator.execute(
+        "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s AND"
+        " idempotensnokkel=%s", (TENANT, nokkel)).fetchone()[0] == 0
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " beslutning_loggpost_id=%s", (TENANT, logg[0][0])).fetchone()[0] == 0
+    migrator.rollback()
+
+    # (2) Tenanten bytter til en ANNEN policy — samme innhold, ny id.
+    ny = copy.deepcopy(p)
+    ny["meta"]["policy_id"] = "annen-bestillingspolicy"
+    policyregister.registrer(migrator, TENANT, ny, ny["meta"]["status"])
+    migrator.execute("UPDATE policyer SET aktiv=false WHERE tenant=%s AND"
+                     " policy_id=%s", (TENANT, p["meta"]["policy_id"]))
+    migrator.commit()
+
+    # (3) Retryen FULLFØRER den beslutningen som alt er tatt.
+    r2 = _bestill(klient, cookie, csrf, kropp, nokkel)
+    assert r2.status_code == 200, r2.text
+    svar = r2.json()
+    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s",
+        (TENANT, "bestilling:" + nokkel)).fetchone()[0] == 1, \
+        "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
+    assert migrator.execute(
+        "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
+        (TENANT, svar["oppdrag_id"])).fetchone()[0] == logg[0][0], \
+        "oppdraget ble ikke koblet til den opprinnelige beslutningen"
+    migrator.rollback()
+
+
+@pg
 def test_tillat_gir_noyaktig_ett_beslutningsoppdrag(migrator, klient):
     """Port 17: TILLAT → ett oppdrag, opprinnelse='beslutning',
     evidensfrist 30 min for enkeltside, KOBLET til beslutningsloggposten."""
