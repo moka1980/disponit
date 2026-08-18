@@ -3013,8 +3013,10 @@ def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
         with pytest.raises(Motorfeil):
             heltall(raa)
     # Hele tall SKAL fortsatt slippe gjennom, også som float: en motor som
-    # skriver `3.0` i JSON gir oss en float uten at noe er tapt.
-    assert heltall(3.0) == 3 and heltall(0.0) == 0 and heltall(-7.0) == -7
+    # skriver `3.0` i JSON gir oss en float uten at noe er tapt. `-7.0` er
+    # helt, men under gulvet porten nå håndhever — se
+    # `test_negativt_motortall_avvises_ikke_nullstilles`.
+    assert heltall(3.0) == 3 and heltall(0.0) == 0
 
     # Funnet som forsvant: 0.9 ble 0, og 0 < 1 droppes stille.
     with pytest.raises(Motorfeil):
@@ -3088,6 +3090,63 @@ def test_telling_under_en_avvises_ikke_repareres():
              payload=_payload(), kontekst=_kontekst())
     assert r["dekningsbegrensninger"] == [{"vert": "f.example", "antall": 1,
                                            "art": "font"}]
+
+
+def test_negativt_motortall_avvises_ikke_nullstilles():
+    """Codex P2: `max(0, heltall(...))` var samme stillhet én etasje opp.
+
+    `heltall` stengte brøkveien og overflytveien, men kalleren skrev
+    fortsatt `max(0, ...)` rundt den — og `max` er nøyaktig den
+    reparasjonen porten finnes for å hindre. `varighet_ms: -7` ble til
+    `0`, passerte rapportskjemaet, og ble promotert som en varighet
+    motoren aldri oppga. Det samme gjaldt `avkortet`-trippelen, der
+    `verdi: -5` ble til `0` i det ene feltet som sier hvor mye rapporten
+    utelot.
+
+    `antall: -3` fikk allerede Motorfeil. Gulvet hører derfor til i
+    porten, ikke i hvert kallested, så alle tre ubetrodde tallveier gir
+    samme svar på samme inndata.
+
+    Kontroll: sett `minst`-vakten i `motor.heltall` tilbake og skriv
+    `max(0, ...)` rundt kallene igjen, så blir motorkjøringen grønn med
+    `varighet_ms == 0` og `avkortet.verdi == 0`.
+    """
+    from modules.wcag_audit.motor import Kommandomotor, Motorfeil, heltall
+    from modules.wcag_audit.rapport import bygg
+
+    for raa in (-1, -7, -7.0, "-42"):
+        with pytest.raises(Motorfeil):
+            heltall(raa)
+    # Gulvet er et argument, ikke en fast grense: `_antall` sender 1.
+    assert heltall(0) == 0 and heltall(1, minst=1) == 1
+    with pytest.raises(Motorfeil):
+        heltall(0, minst=1)
+
+    # Motorkjøringen: `varighet_ms: -7` ga `0` før, Motorfeil nå.
+    neg = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": -7,
+                      "sider": [], "funn": [], "blokkert": [],
+                      "avkortet": [False, None, None]})
+    m = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % neg),
+                      tidsavbrudd_s=30)
+    with pytest.raises(Motorfeil):
+        m.kjor({})
+
+    # Dekningssignalet: `tak` og `verdi` gjennom samme port.
+    for trippel in ((True, -1, 3), (True, 10, -5)):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(avkortet=trippel), payload=_payload(),
+                 kontekst=_kontekst())
+
+    # Den lovlige veien står: null er en ekte varighet og et ekte tak.
+    god = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": 0,
+                      "sider": [], "funn": [], "blokkert": [],
+                      "avkortet": [False, None, None]})
+    m2 = Kommandomotor(_motorkommando("import sys;sys.stdout.write(%r)" % god),
+                       tidsavbrudd_s=30)
+    assert m2.kjor({}).varighet_ms == 0
+    r = bygg(_motorresultat(avkortet=(True, 0, 0)), payload=_payload(),
+             kontekst=_kontekst())
+    assert r["avkortet"]["truffet"] is True
 
 
 def test_eksempellisten_maa_vaere_en_liste():

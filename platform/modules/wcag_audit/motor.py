@@ -212,7 +212,7 @@ class Motorfeil(Exception):
 MAKS_HELTALL = 2 ** 53 - 1
 
 
-def heltall(raa) -> int:
+def heltall(raa, minst: int = 0) -> int:
     """Ubetrodd tall fra motoren som kanoniserbart heltall — eller
     Motorfeil, ALDRI en naken ValueError, TypeError eller OverflowError.
 
@@ -236,6 +236,17 @@ def heltall(raa) -> int:
     `varighet_ms: 12.7` ble skrevet om på samme vis. Feltene er heltall i
     kontrakten, så et ikke-helt tall er utdata vi ikke kan lese — altså
     Motorfeil, ikke en avrunding modulen finner på selv.
+
+    GULVET HØRER TIL I PORTEN (Codex P2). `minst` er den nedre grensen
+    kontrakten setter for feltet, og den er 0 som standard fordi ingen av
+    feltene her kan være negative. Grunnen til at den står HER og ikke hos
+    kalleren, er at kalleren skrev `max(0, heltall(...))` — og `max` er
+    nøyaktig den stillheten resten av denne porten finnes for å hindre:
+    `varighet_ms: -7` ble til `0`, passerte skjemaet, og ble promotert som
+    en varighet motoren aldri oppga. Et negativt tall i et felt som ikke
+    kan være negativt, er utdata vi ikke kan lese — samme svar som
+    `antall: -3` alt fikk (`_antall`), ikke en reparasjon modulen finner
+    på for motoren.
     """
     if isinstance(raa, bool) or not isinstance(raa, (int, float, str)):
         raise Motorfeil("tall fra motoren er ikke et tall")
@@ -252,6 +263,8 @@ def heltall(raa) -> int:
         raise Motorfeil(
             f"tall fra motoren er utenfor det kanoniserbare området"
             f" (|n| > {MAKS_HELTALL})")
+    if n < minst:
+        raise Motorfeil(f"tall fra motoren er under {minst}")
     return n
 
 
@@ -467,8 +480,10 @@ class Kommandomotor:
                 regelsett_versjon=regelsettversjon(d["regelsett_versjon"]),
                 # `heltall` kaster Motorfeil direkte (ikke ValueError), så
                 # `varighet_ms: 1e309` gir den dokumenterte feilkvitteringen
-                # i stedet for en OverflowError ut av kjøreløkka.
-                varighet_ms=max(0, heltall(d["varighet_ms"])),
+                # i stedet for en OverflowError ut av kjøreløkka. Gulvet
+                # ligger i porten, ikke i et `max` her (Codex P2): en
+                # negativ varighet er uleselig motorutdata, ikke null.
+                varighet_ms=heltall(d["varighet_ms"]),
                 sider=tuple(d.get("sider") or ()),
                 funn=tuple(d.get("funn") or ()),
                 blokkert=tuple(d.get("blokkert") or ()),

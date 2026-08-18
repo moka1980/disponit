@@ -235,8 +235,13 @@ def _antall(raa, standard: int) -> int:
     `standard` gjelder KUN når feltet mangler. Er standarden selv under
     1 (funn), betyr det at feltet er påkrevd — og da er en manglende
     telling like uleselig som en ugyldig.
+
+    Gulvet sendes med til porten (`minst=1`), så et oppgitt tall møter
+    grensen samme sted som resten av tallvakten. Sjekken under står
+    likevel igjen: den dekker `standard`-veien, der ingen port er
+    involvert i det hele tatt.
     """
-    n = standard if raa is None or raa == "" else heltall(raa)
+    n = standard if raa is None or raa == "" else heltall(raa, minst=1)
     if n < 1:
         raise Motorfeil("antall fra motoren er under 1")
     return n
@@ -464,9 +469,13 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
         raise Motorfeil("avkortet.truffet fra motoren er ikke boolsk")
     # `tak` og `verdi` er RÅ motortall som går rett inn i et heltallsfelt
     # uten øvre skjemagrense — samme eksponering som `antall`, og derfor
-    # gjennom samme port (Codex P1).
-    tak = None if tak is None else max(0, heltall(tak))
-    verdi = None if verdi is None else max(0, heltall(verdi))
+    # gjennom samme port (Codex P1). `max(0, ...)` er borte (Codex P2):
+    # den gjorde `verdi: -5` om til en `0` motoren aldri oppga, i det ene
+    # feltet som forteller hvor mye rapporten utelot. Porten håndhever
+    # gulvet, så et negativt dekningstall er Motorfeil som alt annet
+    # uleselig.
+    tak = None if tak is None else heltall(tak)
+    verdi = None if verdi is None else heltall(verdi)
     # ... og trippelen må være enig med seg selv (Codex P2): en telling
     # OVER sitt eget tak er per definisjon et truffet tak. `(false, 10, 25)`
     # er ikke en beskjeden rapport, det er to motstridende påstander, og
