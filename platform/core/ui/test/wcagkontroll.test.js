@@ -143,6 +143,15 @@ test("Domener: tom liste, legg til → TXT-oppskrift i alert, liste oppdateres",
   assert.ok(utfall.textContent.includes(t("ui.domener.utfall.utstedt")));
   assert.ok(utfall.textContent.includes("a".repeat(64)), "TXT-verdien vises");
   assert.ok(utfall.textContent.includes(t("ui.domener.en_gang")));
+  // Codex P2: oppføringen SER ut som et engangssteg, men revalideringen slår
+  // den opp hver dag og autorisasjonen faller bort etter 72 timer uten treff
+  // — mens fanen fortsatt viser «verifisert». Sto kravet ingen steder, ryddet
+  // en kunde som ryddet etter seg vekk sin egen tilgang uten å få vite det.
+  const behold = [...utfall.querySelectorAll("p")]
+    .find((p) => p.textContent === t("ui.domener.behold"));
+  assert.ok(behold, "oppskriften sier ikke at oppføringen må bli stående");
+  assert.ok(!behold.classList.contains("muted"),
+    "et krav skal ikke stå som dempet fotnote");
   assert.equal(KALL.find((k) => k.metode === "POST").kropp.hostname,
     "dittfirma.no", "hostname normaliseres før innsending");
   await vent(() => h.querySelector(".domeneliste table"));

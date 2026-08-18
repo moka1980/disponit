@@ -122,6 +122,13 @@ export function visDomener(rot, ctx) {
       sett(utfall,
         el("p", { text: t("ui.domener.utfall.utstedt") }),
         dl,
+        // OPPFØRINGEN ER PERMANENT (Codex P2). Den ser ut som en
+        // engangsutfordring, og en kunde som rydder etter seg fjerner den —
+        // men revalideringen slår den opp hver dag, og autorisasjonen faller
+        // bort etter 72 timer uten treff, mens fanen fortsatt viser
+        // «verifisert». Kravet står derfor som vanlig brødtekst, ikke
+        // `muted`: det er en instruksjon, ikke en fotnote.
+        el("p", { text: t("ui.domener.behold") }),
         el("p", { class: "muted", text: t("ui.domener.en_gang") }),
         el("p", { class: "muted", text: t("ui.domener.auto") }));
       inp.value = "";
