@@ -2799,6 +2799,23 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     assert not valider(anker, {"a": "x"})
     assert not skjemafeil({"$defs": {"a/b": {"type": "string"}},
                            "properties": {"x": {"$ref": "#/$defs/a~1b"}}})
+    # Codex P2, runde 4: DEN TOMME REFERANSEN ER SAMME DOKUMENT. `""` er
+    # en URI-referanse uten noe som helst og løses mot gjeldende base —
+    # altså roten, siden en `$id` under roten er avvist. Det er
+    # standardformen for et rekursivt skjema, og prefikstesten på `#`
+    # leste den som «ut av dokumentet» og gjorde den permanent
+    # uregistrerbar. Kontroll: bytt `ref in ("", "#")` tilbake til
+    # `ref == "#"`, så avvises `tom_ref` under.
+    tom_ref = {"type": "object", "properties": {"barn": {"$ref": ""}}}
+    assert not skjemafeil(tom_ref)
+    assert not valider(tom_ref, {"barn": {"barn": {}}})
+    assert valider(tom_ref, {"barn": 5})
+    # ... også med en rot-`$id`, som ikke flytter basen for noen av dem.
+    assert not skjemafeil({"$id": "https://a.example/rot", **tom_ref})
+    # ... og den er fortsatt en syklus når den står alene.
+    feil = skjemafeil({"$ref": ""})
+    assert feil and "syklus" in feil[0]
+
     # Rot-`$id` flytter ingen base og står; en `$id` UNDER roten gjør det,
     # og da sier sjekken fra i stedet for å måle noe annet enn validatoren.
     assert not skjemafeil({"$id": "https://a.example/rot",

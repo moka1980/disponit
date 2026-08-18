@@ -322,6 +322,17 @@ def _referansefeil(skjema) -> list[str]:
     Et registrert artefaktskjema er derfor SELVSTENDIG: alt det viser
     til, viser det til inni seg selv.
 
+    DEN TOMME REFERANSEN ER IKKE EN AV DEM (Codex P2). `{"$ref": ""}` er
+    en URI-referanse uten noe som helst, og den løses mot GJELDENDE BASE
+    — altså dokumentet selv. Den er standardformen for et rekursivt
+    skjema (`{"type": "object", "properties": {"barn": {"$ref": ""}}}`),
+    den slår aldri opp noe utenfor, og basen kan ikke ha flyttet seg:
+    en `$id` under roten er avvist rett under. En prefikstest på `#`
+    leste den likevel som ekstern og gjorde et vanlig, gyldig skjema
+    permanent uregistrerbart. Den behandles derfor som rotmålet, akkurat
+    som `"#"` — også i syklussjekken, der `{"$ref": ""}` fortsatt er en
+    runde uten framdrift.
+
     NESTET `$id` AVVISES av samme ærlighetsgrunn som blanktegnvakten i
     036 er dokumentert som nødvendig-men-ikke-tilstrekkelig: en `$id`
     under roten flytter basen lokale pekere løses mot, og da måler
@@ -395,11 +406,18 @@ def _referansefeil(skjema) -> list[str]:
             ref = s.get(nokkel)
             if not isinstance(ref, str):
                 continue
-            if not ref.startswith("#"):
+            if ref in ("", "#"):
+                # Den TOMME referansen er samme dokument (Codex P2), ikke
+                # en referanse ut av det: `""` løses mot gjeldende base, og
+                # basen her er alltid roten — en `$id` under roten er
+                # avvist over. `{"$ref": ""}` er altså rotmålet, akkurat som
+                # `"#"`, og den standardformen er nettopp den rekursive
+                # skjemaer skrives med. Prefikstesten leste den som ekstern
+                # og gjorde et gyldig, vanlig skjema uregistrerbart for godt.
+                refmal.setdefault(sti, []).append(())
+            elif not ref.startswith("#"):
                 feil.append(f"<skjema>: `{nokkel}` peker ut av dokumentet"
                             f" — {ref[:80]}")
-            elif ref == "#":
-                refmal.setdefault(sti, []).append(())
             elif ref.startswith("#/"):
                 mal = _pekerledd(ref[1:])
                 if mal not in posisjoner:
