@@ -675,6 +675,62 @@ def _kjernenokkel(nokkel, kropp=None):
 
 
 @pg
+def test_beslutningene_serialiseres_paa_klientens_nokkel(migrator, klient):
+    """Codex P1: kjernen serialiserer på KJERNEnøkkelen, og den bærer
+    intensjonen.
+
+    To lovlige kropper under samme `Idempotency-Key` fikk derfor hver sin
+    advisory-lås i `kjerne.behandle`, og begge kunne committe en
+    beslutning: to kvoteplasser, to oppdrag — og den siste `ON CONFLICT
+    ... DO NOTHING` etterlot det ene oppdraget uten klientnøkkelen sin.
+    Konfliktgarantien var omgått av selve nøkkelvalget, uten at noe
+    krasjet.
+
+    Samtidigheten måles her deterministisk: en ANNEN tilkobling holder
+    nøkkelens lås mens forespørselen går inn. Endepunktet skal da svare
+    409 uten å ta noen beslutning i det hele tatt.
+
+    Kontroll: fjern `pg_try_advisory_lock`-blokka i `bestill_endepunkt`,
+    så blir denne rød.
+    """
+    import api.bestilling as bm
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    kropp = _gyldig_kropp()
+
+    laas = psycopg.connect(DSN)
+    try:
+        navn = bm.laasenavn_for(TENANT, nokkel)
+        assert laas.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+            (navn,)).fetchone()[0] is True
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+        assert (r.status_code, r.json()["feil"]) == (
+            409, "idempotenskonflikt"), r.text
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+            " idempotency_key=%s",
+            (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 0, \
+            "en forespørsel som ikke fikk låsen tok likevel en beslutning"
+        migrator.rollback()
+    finally:
+        laas.execute("SELECT pg_advisory_unlock_all()")
+        laas.close()
+
+    # ... og når låsen er sluppet, går nøyaktig den samme forespørselen
+    # gjennom: låsen er en serialisering, ikke en permanent stenging. Det
+    # beviser samtidig at endepunktet SLIPPER sin egen lås — den andre
+    # kjøringen under tar den samme.
+    for _ in range(2):
+        r = _bestill(klient, cookie, csrf, kropp, nokkel)
+        assert r.status_code == 200, r.text
+        assert r.json()["beslutning"] == "tillat", r.text
+
+
+@pg
 @dekker("bestilling_hostname_uverifisert")
 def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
     """Port 9 (sikkerhetsinvariant): avvist FØR beslutningen — ingen
@@ -956,16 +1012,29 @@ def test_gjenoppretting_taaler_ny_revalidering_i_vinduet(migrator, klient,
 @pg
 def test_gjenoppretting_arver_ikke_en_annen_intensjon(migrator, klient,
                                                       monkeypatch):
-    """Codex P1, runde 3: krasjvinduet må ikke gjenbruke beslutningen blindt.
+    """Krasjvinduet må hverken arve beslutningen eller ta en ny (Codex P1).
 
     `bestilling_idempotens` er konfliktporten — men i vinduet mellom
-    kjernens commit og bokføringen finnes ikke raden ennå. Sto kjernens
-    nøkkel på klientens nøkkel alene, fant gjenopprettingen den committede
-    beslutningen på nøkkelen ALENE, og halen krypterte retryens payload
-    inn i den: et TILLAT gitt for én side ble oppdraget «crawl 50 sider».
+    kjernens commit og bokføringen finnes ikke raden ennå.
 
-    Kontroll: sett `kjernenokkel_for` tilbake til `f"bestilling:{nokkel}"`,
-    så blir denne rød.
+    Runde 3: sto kjernens nøkkel på klientens nøkkel ALENE, fant
+    gjenopprettingen den committede beslutningen uansett hva retryen ba
+    om, og halen krypterte retryens payload inn i den: et TILLAT gitt for
+    én side ble oppdraget «crawl 50 sider».
+
+    Runde 4: intensjonen inn i nøkkelen løste arven, men delte samtidig
+    nøkkelrommet. Retryen fant da ingen rad på SIN kjernenøkkel og tok sin
+    EGEN beslutning — en ny kvoteplass og et nytt oppdrag på en
+    klientnøkkel som per kontrakt bærer nøyaktig én. Endepunktets lovede
+    «samme nøkkel, ulik intensjon ⇒ konflikt» gjaldt altså overalt unntatt
+    her.
+
+    Nå er begge deler dekket: oppslaget spør på klientnøkkelens prefiks og
+    leser intensjonen ut av raden det fant.
+
+    Kontroll: sett oppslaget tilbake til hele `kjernenokkel`, så blir
+    konfliktpåstanden under rød; fjern `hash_` fra nøkkelen, så blir
+    payload-påstanden det.
     """
     import oppdragskontrakt
     from db import kryptering
@@ -989,25 +1058,45 @@ def test_gjenoppretting_arver_ikke_en_annen_intensjon(migrator, klient,
     assert len(forrige) == 1, "beslutningen skulle vært committet av kjernen"
     migrator.rollback()
 
-    # (2) Retryen bruker SAMME nøkkel, men ber om noe annet.
+    # (2) Retryen bruker SAMME nøkkel, men ber om noe annet: konflikt.
+    #     Nøkkelen bærer alt én beslutning, og den gjaldt noe annet.
     r2 = _bestill(klient, cookie, csrf, nettsted, nokkel)
-    assert r2.status_code == 200, r2.text
-    svar = r2.json()
-    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
+    assert (r2.status_code, r2.json()["feil"]) == (409, "idempotenskonflikt"), \
+        r2.text
 
-    # (3) Oppdraget hører til en beslutning som FAKTISK vurderte nettstedet
-    #     — ikke til enkeltside-beslutningen fra (1).
+    # (3) INGEN ny beslutning, intet nytt oppdrag: hverken på nettstedets
+    #     kjernenøkkel eller på enkeltsidens.
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, nettsted))).fetchone()[0] == 0, \
+        "retryen tok en NY beslutning på en nøkkel som alt hadde en"
+    assert migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " beslutning_loggpost_id=%s",
+        (TENANT, forrige[0][0])).fetchone()[0] == 0, \
+        "retryen skrev et oppdrag på beslutningen om en ANNEN intensjon"
+    migrator.rollback()
+
+    # (4) Og den OPPRINNELIGE intensjonen kan fortsatt fullføre seg selv:
+    #     beslutningen fra (1) er tatt, så retryen med samme kropp leser
+    #     den og skriver oppdraget halen aldri rakk.
+    r3 = _bestill(klient, cookie, csrf, enkeltside, nokkel)
+    assert r3.status_code == 200, r3.text
+    svar = r3.json()
+    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
     _sett_kontekst(migrator, TENANT)
     rad = migrator.execute(
         "SELECT beslutning_loggpost_id, payload_kryptert, key_id, nonce"
         " FROM oppdrag WHERE tenant=%s AND id=%s",
         (TENANT, svar["oppdrag_id"])).fetchone()
-    assert rad[0] != forrige[0][0], \
-        "oppdraget arvet beslutningen som gjaldt en ANNEN intensjon"
+    assert rad[0] == forrige[0][0], \
+        "gjenopprettingen tok en ny beslutning i stedet for å lese sin egen"
     dek = kryptering.hent_dek(migrator, TENANT, rad[2])
     payload = kryptering.dekrypter(dek, rad[1], rad[3], TENANT, rad[2])
     migrator.rollback()
-    assert payload["omfang"] == "nettsted", payload
+    assert payload["omfang"] == "enkeltside", payload
 
 
 @pg
