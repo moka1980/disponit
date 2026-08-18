@@ -1709,10 +1709,14 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
             assert r1.json()["status"] == "lagret_uten_statusendring"
 
             # --- A poster R1 igjen: IDEMPOTENT, ingen ny evidensrad -----
+            # ... og svaret må si HVILKEN idempotens (Codex P2, runde 11):
+            # R1 over ble bevart som sen evidens, oppdraget står bevisst
+            # ufullført, og et rent `idempotent` ville fortalt utføreren at
+            # den kunne slutte å følge det.
             r1b = c.post("/v1/oppdrag/kvittering",
                          json=kvittering(a, "utfort"), headers=h)
             assert r1b.status_code == 200, r1b.text
-            assert r1b.json()["status"] == "idempotent"
+            assert r1b.json()["status"] == "idempotent_uten_statusendring"
 
             # --- A poster R2 med SAMME kapabilitet: KONFLIKT ------------
             r2 = c.post("/v1/oppdrag/kvittering",
@@ -1725,6 +1729,18 @@ def test_P1_sen_kvittering_forbruker_kapabiliteten(migrator, miljo, token):
                          json=kvittering(b, "utfort"), headers=h)
             assert rb2.status_code == 200, rb2.text
             assert rb2.json()["status"] == "utfort"
+
+            # --- B poster SIN på nytt: idempotent MED statusskifte -----
+            # Codex P2, runde 11: dette er den dokumenterte suksessveien —
+            # en utfører som mistet svaret sender den samme kvitteringen
+            # om igjen. Oppdraget ER `utfort`, og svaret må si det, ellers
+            # melder utføreren `ukvittert` for noe som er ferdig. Legg
+            # merke til at A sin re-post over — samme gren, samme kropp,
+            # samme kapabilitetstreff — får det MOTSATTE ordet.
+            rb3 = c.post("/v1/oppdrag/kvittering",
+                         json=kvittering(b, "utfort"), headers=h)
+            assert rb3.status_code == 200, rb3.text
+            assert rb3.json()["status"] == "idempotent", rb3.text
     finally:
         app.tjeneste.pool.lukk()
 
@@ -1919,7 +1935,11 @@ def test_P1_samtidig_identisk_repost_blir_idempotent_ikke_auth_feil(
 
             r = svar["r"]
             assert r.status_code == 200, r.text
-            assert r.json()["status"] == "idempotent", r.text
+            # Vinneren her er en SEN kvittering (`_vinner_holder_laasen`
+            # skriver `sen_kvittering` og rører ikke oppdragsstatusen), så
+            # taperen skal få det samme ordet en sekvensiell retry ville
+            # fått — kappløpsveien og retryveien svarer likt (Codex P2).
+            assert r.json()["status"] == "idempotent_uten_statusendring", r.text
     finally:
         app.tjeneste.pool.lukk()
 

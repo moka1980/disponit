@@ -1946,6 +1946,51 @@ def _kvittering_alt_avvist(conn, tenant: str, unntak_id: int, oppdrag_id: int,
          str(artefakt_id))).fetchone() is not None
 
 
+def _idempotent_svar(conn, *, tenant: str, oppdrag_id: int, ny_hash: str,
+                     rid: str) -> Response:
+    """Svaret på en gjentakelse: sa den forrige kvitteringen NOE OM STATUS?
+
+    `status: "idempotent"` betydde begge deler på én gang (Codex P2), og
+    det er den samme sammenblandingen `lagret_uten_statusendring` ble
+    innført for å fjerne. Den FØRSTE kvitteringen tar én av to veier:
+
+      * den avsluttende: `oppdrag.status` settes til `utfort`/`feilet` og
+        `oppdrag.resultathash` til hashen — oppdraget ER ferdig;
+      * sen evidens: bare kapabiliteten brennes med hashen. Status og sak
+        røres ikke med vilje — «en sen kvittering er evidens, og skal
+        aldri avslutte noe» — og svaret sier det selv, med 202.
+
+    Begge etterlater `kapabilitet.resultathash = ny_hash`, så en
+    gjentakelse traff samme idempotensgren uansett hvilken vei den første
+    tok, og fikk det samme ordet for to helt ulike tilstander. Utfører
+    utføreren en retry — helt lovlig, kvitteringen ER idempotent — måtte
+    den enten tro at et ufullført oppdrag var ferdig, eller (som
+    `wcag_audit.controller` valgte, fail-closed) at et ferdig oppdrag var
+    ukvittert. Ingen av dem er sanne, og ingen av dem kan utledes av
+    svaret.
+
+    Autoriteten er oppdragsraden, ikke kapabiliteten: statusen må være
+    terminal OG `resultathash` må være VÅR hash. Har et ANNET resultat
+    avsluttet oppdraget, er dette ikke et idempotent gjensyn med vår egen
+    kvittering, og da svarer vi det konservative — samme retning som
+    resten av porten.
+
+    Leses FØR kallerens rollback, som `_kvittering_alt_avvist`: READ
+    COMMITTED gir setningen et ferskt snapshot, så kappløpsvinnerens
+    committede tilstand er synlig.
+    """
+    rad = conn.execute(
+        "SELECT status, resultathash FROM oppdrag WHERE tenant=%s AND id=%s",
+        (tenant, oppdrag_id)).fetchone()
+    skiftet = (rad is not None and rad[0] in ("utfort", "feilet")
+               and rad[1] == ny_hash)
+    return kanonisk_json(
+        {"status": "idempotent" if skiftet
+                   else "idempotent_uten_statusendring",
+         "oppdrag_id": oppdrag_id, "request_id": rid}, 200,
+        {"x-request-id": rid})
+
+
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
                          rid: str, artefakt_id=None) -> Response | None:
@@ -1980,14 +2025,16 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         # rekonstruksjon som den sekvensielle retryen, samme funksjon.
         avvist = _kvittering_alt_avvist(conn, tenant, unntak_id, oppdrag_id,
                                         artefakt_id)
+        # Samme lesning som den sekvensielle retryen, samme funksjon: hvilken
+        # vei vinneren tok avgjør hva taperen får vite (Codex P2).
+        svar = _idempotent_svar(conn, tenant=tenant, oppdrag_id=oppdrag_id,
+                                ny_hash=ny_hash, rid=rid)
         conn.rollback()
         if avvist:
             tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
                                    oppdrag_id=oppdrag_id, kapplop=True)
             return _feilsvar("kvittering_konflikt", rid)
-        return kanonisk_json({"status": "idempotent",
-                              "oppdrag_id": oppdrag_id, "request_id": rid},
-                             200, {"x-request-id": rid})
+        return svar
 
     if utfall == "konflikt":
         # To ULIKE resultater levert samtidig. Uten denne grenen forsvant
@@ -2230,11 +2277,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                       kvittering.get("artefakt_id")):
                 conn.rollback()
                 return _feilsvar("kvittering_konflikt", rid)
+            # ... og var den IKKE avvist: sa den forrige kvitteringen noe om
+            # status, eller ble den bare bevart som sen evidens? Se
+            # `_idempotent_svar` (Codex P2).
+            svar = _idempotent_svar(conn, tenant=tenant, oppdrag_id=oppdrag_id,
+                                    ny_hash=ny_hash, rid=rid)
             conn.rollback()
-            return kanonisk_json({"status": "idempotent",
-                                  "oppdrag_id": oppdrag_id,
-                                  "request_id": rid}, 200,
-                                 {"x-request-id": rid})
+            return svar
         _sikkerhetssak_kvittering(conn, tenant, unntak_id,
                                   "motstridende_kvittering",
                                   {"kilde": kilde, "lagret": hash_,

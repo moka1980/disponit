@@ -31,6 +31,13 @@ Feilhåndteringens utfall:
     202 med `lagret_uten_statusendring`: evidensen er bevart, men
     plattformen har BEVISST latt oppdraget være ufullført. En 2xx er
     derfor ikke i seg selv et statusskifte — se `_kvittert`.
+  * GJENTATT kvittering (Codex P2) → utfallet den forrige ga. Kvitteringen
+    er idempotent med vilje, så en utfører som mistet svaret skal kunne
+    sende NØYAKTIG den samme på nytt. Avsluttet den forrige oppdraget,
+    svarer plattformen 200 `idempotent`, og da er dette `utfort`/`avbrutt`
+    som første gang. Ble den bare bevart som sen evidens, svarer den
+    `idempotent_uten_statusendring`, og da står `ukvittert` — samme
+    tilstand, samme ord.
 
 Kvitteringen bindes til den KONTROLLERTE VERTEN (Codex P1): `ressurs_id`
 er det normaliserte vertsnavnet fra `mal_url`, samme verdi og samme
@@ -53,8 +60,22 @@ from .rapport import bygg
 
 
 #: Kroppsstatusene som betyr at plattformen FAKTISK skiftet status på
-#: oppdraget — de to `/v1/oppdrag/kvittering` gir sammen med 200.
-_STATUSSKIFTE = ("utfort", "feilet")
+#: oppdraget — de `/v1/oppdrag/kvittering` gir sammen med 200.
+#:
+#: `idempotent` er med (Codex P2): en RETRY av en kvittering som allerede
+#: avsluttet oppdraget er den dokumenterte suksessveien, ikke et avvik.
+#: Uten den meldte controlleren `ukvittert` for et oppdrag plattformen for
+#: lengst hadde gjort ferdig — og en planlegger som tror på det, følger
+#: opp noe som er avsluttet. Retryen er ikke hypotetisk: kvitteringen ER
+#: idempotent nettopp for at en utfører som mistet svaret skal kunne
+#: sende den samme kvitteringen på nytt.
+#:
+#: `idempotent_uten_statusendring` er IKKE med, og det er hele grunnen til
+#: at plattformen skiller de to: gjentar man en SEN kvittering (202
+#: `lagret_uten_statusendring`), er evidensen bevart mens oppdraget står
+#: bevisst ufullført. Ett ord for begge ville gjort denne linja til
+#: valget mellom to løgner — se `_idempotent_svar` i `api.app`.
+_STATUSSKIFTE = ("utfort", "feilet", "idempotent")
 
 def _ressursbinding(payload: dict) -> str | None:
     """Kvitteringens `ressurs_id`: den kontrollerte VERTEN (Codex P1).

@@ -1886,6 +1886,55 @@ def test_sen_evidens_202_er_ikke_utfort():
     assert ok["utfall"] == "utfort", ok
 
 
+def test_gjentatt_kvittering_leses_som_det_den_forrige_gjorde():
+    """Codex P2, runde 11: `idempotent` er en dokumentert SUKSESSVEI.
+
+    Kvitteringen er idempotent med vilje — en utfører som mistet svaret
+    skal kunne sende NØYAKTIG den samme på nytt. Gjorde den det etter at
+    den første hadde avsluttet oppdraget, svarte plattformen 200
+    `idempotent`, og controlleren meldte `ukvittert`: modulen påsto at
+    plattformen ikke hadde tatt imot kvitteringen for et oppdrag som for
+    lengst var `utfort`, og en planlegger som tror på det følger opp noe
+    som er avsluttet.
+
+    Men ordet betydde to ting (se `_idempotent_svar` i `api.app`): en
+    gjentakelse av en SEN kvittering traff samme gren, og der står
+    oppdraget bevisst ufullført. Å legge `idempotent` til uten det skillet
+    ville byttet den ene løgnen mot den andre — den farligere av de to.
+    Plattformen skiller nå, og denne testen holder BEGGE sidene fast.
+
+    Kontroll: fjern `idempotent` fra `_STATUSSKIFTE` igjen, så blir
+    suksessdelen rød; legg `idempotent_uten_statusendring` til, så blir
+    sen-delen rød.
+    """
+    from modules.wcag_audit import controller
+    motor = FakeMotor(resultat=_motorresultat())
+
+    gjentatt = _Stubklient(200, kvitteringskropp={
+        "status": "idempotent", "oppdrag_id": 1})
+    res = controller.kjor_en(gjentatt, "tk", motor, _kontekst(), lambda k: k)
+    assert res["utfall"] == "utfort", res
+
+    sen_gjentatt = _Stubklient(200, kvitteringskropp={
+        "status": "idempotent_uten_statusendring", "oppdrag_id": 1})
+    res = controller.kjor_en(sen_gjentatt, "tk", motor, _kontekst(),
+                             lambda k: k)
+    assert res["utfall"] == "ukvittert", res
+
+    # Feilveien leser den SAMME regelen (`_feilutfall`): en gjentatt
+    # feilkvittering som avsluttet oppdraget er `avbrutt`, en gjentatt sen
+    # er det ikke.
+    knekt = FakeMotor(feil="motoren feilet")
+    res = controller.kjor_en(_Stubklient(200, kvitteringskropp={
+        "status": "idempotent", "oppdrag_id": 1}), "tk", knekt,
+        _kontekst(), lambda k: k)
+    assert res["utfall"] == "avbrutt", res
+    res = controller.kjor_en(_Stubklient(200, kvitteringskropp={
+        "status": "idempotent_uten_statusendring", "oppdrag_id": 1}), "tk",
+        knekt, _kontekst(), lambda k: k)
+    assert res["utfall"] == "ukvittert", res
+
+
 def test_avvist_opplasting_gir_feilkvittering():
     """Codex P1: `ro.raise_for_status()` kastet ut av kjøreløkka når
     plattformen avviste artefaktet (413/400 på 1 MiB-taket, 409 på
