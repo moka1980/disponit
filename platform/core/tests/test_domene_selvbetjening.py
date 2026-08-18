@@ -604,6 +604,41 @@ def test_avvist_kandidat_far_ny_utfordring_uten_a_rive_gjerdet(migrator):
 
 
 @pg
+def test_alle_domeneoverganger_deler_laaserekkefolge(migrator):
+    """Codex P2: to låser tatt i to rekkefølger er en vranglås som venter.
+
+    `bekreft_domenechallenge` tok RADlåsen først og gikk deretter inn i
+    `verifiser_domenekontroll`, som tar hostname-advisory-låsen.
+    `tilbakekall_domenekontroll` og `avgjor_domeneovertakelse` tar dem
+    motsatt: advisory-låsen først, så raden. En bekreftelse som kappløp med
+    en operatørhandling på samme tenant/hostname kunne derfor vente på låsen
+    den andre holdt — i begge retninger — til PostgreSQL avbrøt den ene.
+    Passet teller det som `kapplop`: tapt arbeid uten annet spor enn en
+    teller.
+
+    Målt på den UTRULLEDE kroppen (`pg_get_functiondef`), ikke på filen: det
+    er den formen som faktisk tar låsene. Kravet er ett og felles — advisory
+    før rad — så en ny vei inn måles på samme regel.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `pg_advisory_xact_lock` i
+    `bekreft_domenechallenge` ned under `FOR UPDATE` igjen.
+    """
+    for sign in ("bekreft_domenechallenge(text,text,text,text[])",
+                 "verifiser_domenekontroll(text,text,boolean,text)",
+                 "tilbakekall_domenekontroll(text,text,text,text)",
+                 "avgjor_domeneovertakelse(text,text,bigint,boolean,text)"):
+        kropp = migrator.execute(
+            "SELECT pg_get_functiondef(%s::regprocedure)", (sign,)).fetchone()[0]
+        migrator.rollback()
+        laas = kropp.find("pg_advisory_xact_lock")
+        rad = kropp.find("FOR UPDATE")
+        assert laas >= 0, f"{sign} tar ingen hostname-advisory-lås"
+        assert rad >= 0, f"{sign} tar ingen radlås"
+        assert laas < rad, \
+            f"{sign} tar radlåsen før advisory-låsen — motsatt av de andre"
+
+
+@pg
 def test_en_avvisning_blir_staaende_til_det_finnes_nytt_bevis(migrator):
     """Codex P1: en avvisning må kunne bli STÅENDE avvist.
 

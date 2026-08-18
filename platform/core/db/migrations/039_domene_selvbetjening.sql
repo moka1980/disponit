@@ -140,6 +140,27 @@ SET search_path = pg_catalog AS $$
 DECLARE v_bevis TEXT; v_utloper TIMESTAMPTZ; v_status TEXT;
         v_wildcard BOOLEAN; v_treff BOOLEAN; v_motpart TEXT;
 BEGIN
+    -- LÅSEREKKEFØLGEN ER FELLES (Codex P2). Denne funksjonen tok RADlåsen
+    -- først og gikk deretter inn i `verifiser_domenekontroll`, som tar
+    -- hostname-advisory-låsen. `tilbakekall_domenekontroll` og
+    -- `avgjor_domeneovertakelse` (018) tar dem i motsatt rekkefølge:
+    -- advisory-låsen først, så raden. En bekreftelse som kappløp med en
+    -- operatørhandling på samme tenant/hostname kunne derfor vente på låsen
+    -- den andre holdt, i begge retninger, til PostgreSQL avbrøt den ene som
+    -- vranglås — telt som `kapplop` i passet, altså tapt arbeid uten annet
+    -- spor enn en teller.
+    --
+    -- Alle domeneoverganger deler nå ÉN rekkefølge: kanonisér, ta
+    -- advisory-låsen på hostnavnet, ta så raden. Nøkkelen må regnes av det
+    -- KANONISKE navnet for å bli den samme som 018-veiene regner — arbeideren
+    -- leser hostnavnet rett fra tabellen, så gjerdet er en ren bekreftelse
+    -- her, ikke en ny port.
+    --
+    -- Låsen er transaksjonell og slippes ved commit/rollback; det nestede
+    -- kallet tar den samme nøkkelen om igjen, og advisory-låser er
+    -- reentrante for samme transaksjon.
+    p_hostname := public.krev_kanonisk_hostname(p_hostname);
+    PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
     SELECT d.challenge_token_hash, d.challenge_utloper, d.status, d.wildcard,
            d.konflikt_motpart
       INTO v_bevis, v_utloper, v_status, v_wildcard, v_motpart
