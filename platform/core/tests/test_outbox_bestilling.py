@@ -748,6 +748,11 @@ def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
     policyregister.registrer(migrator, TENANT, ny, ny["meta"]["status"])
     migrator.execute("UPDATE policyer SET aktiv=false WHERE tenant=%s AND"
                      " policy_id=%s", (TENANT, p["meta"]["policy_id"]))
+    # Pekeren i `policy_hode` er aktiv-autoriteten (012 §1): flyttes ikke
+    # den med, avviser `policyer_peker_konsistent` hele transaksjonen.
+    migrator.execute("UPDATE policy_hode SET aktiv_versjon=NULL WHERE"
+                     " tenant=%s AND policy_id=%s",
+                     (TENANT, p["meta"]["policy_id"]))
     migrator.commit()
 
     # (3) Retryen FULLFØRER den beslutningen som alt er tatt.
