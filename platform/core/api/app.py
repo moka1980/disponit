@@ -860,6 +860,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_attester(request: Request) -> Response:
         return policyadmin_http.attester_endepunkt(tjeneste, request)
 
+    # 038: bestillingsveien — kundeflatens produsent inn i beslutningsveien.
+    from . import bestilling as bestillingsmodul
+
+    def bs_bestill(request: Request) -> Response:
+        return bestillingsmodul.bestill_endepunkt(tjeneste, request)
+
     # 035: modul-onboarding — hemmelighet, innløsning, rotasjon,
     # tilbakekalling. Maskin-/ops-endepunkter (Bearer), aldri browserøkt.
     from . import modulonboarding
@@ -886,6 +892,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
         # 035: onboarding-rutene er statiske stier, registrert her sammen
         # med de andre maskinrutene.
+        Route("/v1/bestilling", bs_bestill, methods=["POST"]),
         Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
         Route("/v1/modul/token/roter", mo_roter, methods=["POST"]),
@@ -1006,7 +1013,11 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # for å slippe forbi den generelle porten
                                      # — ikke for å gi det til noen: det deles
                                      # aldri ut sammen med exceptions:handle.
-                                     "domains:adjudicate"})
+                                     "domains:adjudicate",
+                                     # 038 §6: bestillingen skjer i flaten
+                                     # (OIDC + CSRF); autoriteten ligger i
+                                     # domenekontroll + beslutningsveien.
+                                     "bestilling:opprett"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -1318,6 +1329,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # inne i endepunktene (Bearer/modultoken, aldri browserøkt) — samme
     # deklarasjonsform som /v1/oppdrag/*. Innløsningen autentiseres av
     # selve engangshemmeligheten, rotasjonen av modultokenet.
+    ("POST", "/v1/bestilling"):              "bestilling:opprett",
     ("POST", "/v1/modul/onboarding"):        "modules:onboard",
     ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
     ("POST", "/v1/modul/token/roter"):       "modultoken",

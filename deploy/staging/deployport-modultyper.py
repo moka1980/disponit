@@ -80,6 +80,30 @@ import psycopg  # noqa: E402
 import oppdragskontrakt  # noqa: E402
 
 
+def kontroller_bestillingstyper(conn) -> list[str]:
+    """Port 14 (038 §6): hver kodefestet bestillingstype må peke på en
+    registrert oppdragstype — ellers gir TILLAT et oppdrag ingen modul
+    noensinne kan claime, og bestillingen ser vellykket ut mens arbeidet
+    dør stille i køen."""
+    from api.bestilling import BESTILLINGSTYPER
+    feil = []
+    for navn, bt in sorted(BESTILLINGSTYPER.items()):
+        rad = conn.execute(
+            "SELECT eiermodul FROM oppdragstype_register WHERE"
+            " oppdragstype=%s", (bt.oppdragstype,)).fetchone()
+        if rad is None:
+            feil.append(
+                f"bestillingstype '{navn}' peker på oppdragstypen"
+                f" '{bt.oppdragstype}' som IKKE er registrert i"
+                " oppdragstype_register — TILLAT ville gitt et"
+                " uclaimbart oppdrag")
+        elif rad[0] != bt.eiermodul:
+            feil.append(
+                f"bestillingstype '{navn}': eiermodul-avvik"
+                f" ({bt.eiermodul} i koden, {rad[0]} i registeret)")
+    return feil
+
+
 def kontroller(conn) -> list[str]:
     """-> feilliste (tom = grønn). Ren lesing, egen funksjon så testene kan
     kjøre porten mot konstruert tilstand."""
@@ -161,7 +185,7 @@ def main() -> int:
         print("deployport-modultyper: DATABASE_URL mangler", file=sys.stderr)
         return 1
     with psycopg.connect(dsn) as conn:
-        feil = kontroller(conn)
+        feil = kontroller(conn) + kontroller_bestillingstyper(conn)
         conn.rollback()
     if feil:
         for f in feil:
