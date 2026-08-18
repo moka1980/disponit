@@ -217,6 +217,15 @@ tildel_subid() {                        # $1=fil  $2=usermod-flagg
 }
 tildel_subid /etc/subuid --add-subuids
 tildel_subid /etc/subgid --add-subgids
+# ... og et HJEM, fordi rootless podman legger BILDELAGERET der
+# ($HOME/.local/share/containers/storage). Brukeren ble opprettet med
+# `--no-create-home` som de andre tjenestene, og uten en skrivbar
+# hjemmekatalog kan podman verken laste inn motorimaget eller finne det
+# igjen etterpå. systemd setter $HOME fra kontodatabasen for `User=`, så
+# uniten trenger ingen egen Environment-linje.
+WCAG_HJEM=/var/lib/disponit-wcag
+install -d -m 700 -o disponit-wcag -g disponit-wcag "$WCAG_HJEM"
+usermod -d "$WCAG_HJEM" disponit-wcag
 for f in /etc/subuid /etc/subgid; do
   grep -q '^disponit-wcag:' "$f" || {
     echo "AVBRUTT: fikk ikke tildelt subordinate ID-er i $f for" \

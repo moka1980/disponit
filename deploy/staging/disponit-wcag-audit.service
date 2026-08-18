@@ -31,6 +31,15 @@
 # brukeren (`/etc/subuid`, `/etc/subgid`) og XDG_RUNTIME_DIR under —
 # begge er allerede i Kommandomotors miljø-allowlist.
 #
+# BILDELAGERET ER BRUKERENS EGET (Codex P1). Rootless podman leser og
+# skriver images under `$HOME/.local/share/containers/storage`, ikke i
+# dockerdaemonens lager — de to har ingenting med hverandre å gjøre. Et
+# image bygget med `docker build` finnes derfor IKKE her før det er
+# importert. `opp.sh` gir brukeren et hjem (/var/lib/disponit-wcag), og
+# fase 9 i staging-sjekklisten importerer imaget og verifiserer at det
+# faktisk er der før uniten enables. systemd setter $HOME fra
+# kontodatabasen for `User=`, så det trengs ingen Environment-linje.
+#
 # NoNewPrivileges settes BEVISST ikke: rootless podman trenger setuid-
 # hjelperne `newuidmap`/`newgidmap` for å sette opp namespacet, og
 # flagget ville brutt oppstarten. Privilegiegrensen bæres av at brukeren

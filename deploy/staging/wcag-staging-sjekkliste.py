@@ -893,6 +893,56 @@ def fase8():
 # Fase 9 — arbeideren i drift
 # ---------------------------------------------------------------------------
 
+def _arbeiderpodman(*argv) -> list[str]:
+    """`podman ...` kjørt SOM arbeideren, med unitens egne stier.
+
+    Rootless podman leser bildelageret under brukerens `$HOME` og
+    kjøretidsting under `XDG_RUNTIME_DIR` — systemd setter begge for
+    `User=`-uniten, så importen må bruke NØYAKTIG de samme verdiene.
+    Gjør den ikke det, havner imaget i et annet lager enn det arbeideren
+    slår opp i."""
+    import pwd
+    hjem = pwd.getpwnam(ARBEIDER_BRUKER).pw_dir
+    return ["runuser", "-u", ARBEIDER_BRUKER, "--", "env", f"HOME={hjem}",
+            f"XDG_RUNTIME_DIR=/run/{ARBEIDER_BRUKER}", "podman", *argv]
+
+
+def _importer_motorimage(digest: str) -> tuple[bool, str]:
+    """Motorimaget inn i ARBEIDERENS podman-lager (Codex P1).
+
+    Fase 1 henter image-ID-en fra den ROOTFULLE dockerdaemonen, og fase 9
+    ga den samme ID-en til rootless podman som `disponit-wcag`. De to har
+    hvert sitt lager og ingen felles referanse — ingen `docker save`,
+    ingen registry-push, ingen rootless bygging fantes noe sted. Den
+    enablede arbeideren kunne derfor ikke starte motoren i det hele tatt,
+    og ville feilet hvert eneste claimet oppdrag.
+
+    Image-ID-en er konfigblobbens digest og overlever `docker save` |
+    `podman load`, så `container_image_digest` er den samme verdien
+    releaseraden og kvitteringene bærer.
+    """
+    kort = digest.split(":")[-1]
+    subprocess.run(["install", "-d", "-m", "700", "-o", ARBEIDER_BRUKER,
+                    "-g", ARBEIDER_BRUKER, f"/run/{ARBEIDER_BRUKER}"],
+                   check=True)
+    if subprocess.run(_arbeiderpodman("image", "exists", kort),
+                      capture_output=True).returncode == 0:
+        return True, "alt i lageret"
+    ror = subprocess.run(
+        ["bash", "-o", "pipefail", "-c",
+         f"docker save {shlex.quote(kort)} | "
+         + shlex.join(_arbeiderpodman("load"))],
+        capture_output=True, text=True)
+    if ror.returncode != 0:
+        return False, f"import feilet: {(ror.stderr or ror.stdout)[-300:]}"
+    etter = subprocess.run(_arbeiderpodman("image", "exists", kort),
+                           capture_output=True, text=True)
+    if etter.returncode != 0:
+        return False, ("imaget er ikke i lageret etter import:"
+                       f" {etter.stderr[-200:]}")
+    return True, "importert"
+
+
 def fase9(mtk, digest, *, maalt_runde: bool):
     """Setter arbeideren I DRIFT — ellers claimer ingen noe (Codex P1).
 
@@ -971,6 +1021,19 @@ def fase9(mtk, digest, *, maalt_runde: bool):
                       " (subuid/subgid) og installer pakken uidmap",
                 merknad="uniten enables ikke: en arbeider som ikke kan"
                         " starte motoren er verre enn ingen arbeider")
+        return
+
+    # ... og IMAGET må ligge i arbeiderens EGET lager — se
+    # `_importer_motorimage`. Docker og rootless podman deler ingenting.
+    importert, hvordan = _importer_motorimage(digest)
+    evidens("fase9_motorimage", image_id=digest.split(":")[-1],
+            lager=f"rootless podman ({ARBEIDER_BRUKER})", utfall=hvordan,
+            ok=importert)
+    if not importert:
+        evidens("fase9_hoppet",
+                grunn="motorimaget er ikke tilgjengelig for arbeideren",
+                merknad="uniten enables ikke: den ville feilet hvert"
+                        " eneste claimet oppdrag")
         return
 
     subprocess.run(["install", "-d", "-m", "750", "-o", "root",
