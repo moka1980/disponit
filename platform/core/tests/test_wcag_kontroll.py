@@ -120,18 +120,62 @@ def test_skjemalageret_er_immutabelt_for_alltid(migrator):
         migrator.rollback()
 
 
-def _migrasjonsporten_036() -> str:
-    """Selve DO-blokka fra 036, hentet ut av migrasjonsfilen.
+_MERKE_PORT = "artefaktskjema mangler for registrerte"
+_MERKE_FUNKSJON = "CREATE OR REPLACE FUNCTION registrer_artefaktskjema("
+
+
+def _migrasjonsfil(merke: str) -> tuple[int, str]:
+    """(versjon, tekst) for den ENE migrasjonsfilen som inneholder `merke`.
+
+    Testene under spør om rekkefølgen mellom to migrasjoner, så filen må
+    finnes ved søk, ikke ved navn: hardkodet filnavn ville gjort testen
+    grønn og påstanden usann den dagen blokka flyttet."""
+    from pathlib import Path
+    mappe = Path(__file__).resolve().parents[1] / "db/migrations"
+    treff = [f for f in sorted(mappe.glob("[0-9][0-9][0-9]_*.sql"))
+             if merke in f.read_text(encoding="utf-8")]
+    assert len(treff) == 1, f"fant {len(treff)} migrasjoner med {merke!r}"
+    return int(treff[0].name[:3]), treff[0].read_text(encoding="utf-8")
+
+
+def _migrasjonsporten() -> str:
+    """Selve DO-blokka fra migrasjonsporten, hentet ut av migrasjonsfilen.
 
     Testen kjører migrasjonens EGEN tekst, ikke en avskrift: en avskrift
     ville blitt stående grønn den dagen noen svekket blokka i filen."""
-    from pathlib import Path
-    sql = (Path(__file__).resolve().parents[1]
-           / "db/migrations/036_wcag_kontroll.sql").read_text(encoding="utf-8")
-    merke = "artefaktskjema mangler for registrerte"
-    blokker = [b for b in sql.split("DO $$") if merke in b]
-    assert len(blokker) == 1, "fant ikke migrasjonsporten i 036"
+    _, sql = _migrasjonsfil(_MERKE_PORT)
+    blokker = [b for b in sql.split("DO $$") if _MERKE_PORT in b]
+    assert len(blokker) == 1, "fant ikke migrasjonsporten"
     return "DO $$" + blokker[0].split("END $$;")[0] + "END $$;"
+
+
+def test_migrasjonsporten_staar_etter_skjemalageret_er_commitet():
+    """Codex P1, runde 2: en port som stopper må være mulig å komme forbi.
+
+    Porten navngir de manglende hashene og ber operatøren registrere
+    skjemaene med `registrer_artefaktskjema`. Sto den i den SAMME filen som
+    oppretter funksjonen og `artefaktskjema`, rullet unntaket tilbake
+    nettopp det verktøyet oppskriften krever — og hvert nye forsøk feilet
+    identisk. Kjøreren (`db/kjorer.py`) commiter per fil, så porten må stå
+    i en SENERE fil enn den som lager funksjonen; da står lageret igjen når
+    porten stopper, og deployen er gjenopprettelig.
+
+    Kontroll: flytt DO-blokka tilbake til 036, så blir denne rød.
+    """
+    v_port, _ = _migrasjonsfil(_MERKE_PORT)
+    v_funksjon, _ = _migrasjonsfil(_MERKE_FUNKSJON)
+    assert v_port > v_funksjon, (
+        f"porten (migrasjon {v_port:03d}) kan ikke stå i eller før den"
+        f" migrasjonen som oppretter registrer_artefaktskjema"
+        f" ({v_funksjon:03d}) — da ruller den tilbake sin egen reparasjon")
+
+    # Og filen som bærer porten må ikke ta med seg noe annet: hadde den
+    # opprettet objekter selv, ville avvisningen rullet DEM tilbake, og
+    # neste forsøk ville ikke vært det samme ett-stegs forsøket.
+    _, tekst = _migrasjonsfil(_MERKE_PORT)
+    for ddl in ("CREATE TABLE", "CREATE OR REPLACE FUNCTION",
+                "ALTER TABLE", "CREATE TRIGGER", "INSERT INTO"):
+        assert ddl not in tekst, f"portmigrasjonen gjør mer enn å porte: {ddl}"
 
 
 @pg
@@ -153,9 +197,9 @@ def test_migrasjonsporten_krever_skjema_for_alle_gamle_typer(migrator):
     hos den som kan registrere skjemaene, ikke hos en modul midt i et
     oppdrag.
 
-    Kontroll: fjern DO-blokka i punkt 7 av 036, så blir denne rød.
+    Kontroll: fjern DO-blokka i 037, så blir denne rød.
     """
-    port = _migrasjonsporten_036()
+    port = _migrasjonsporten()
     modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _plukket_oppdrag_med_binding(migrator, modul, kh)   # lager kontrakten

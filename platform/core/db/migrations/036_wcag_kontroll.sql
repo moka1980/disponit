@@ -586,44 +586,19 @@ INSERT INTO artefaktskjema (skjema_hash, skjema)
     ON CONFLICT (skjema_hash) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 7. MIGRASJONSPORTEN: hver registrert artefakttype må ha et oppslagbart
---    skjema FØR valideringen slås på (Codex P1).
+-- 7. MIGRASJONSPORTEN bor IKKE her — den står i 037 (Codex P1, runde 2).
 --
--- Seeden over dekker den ene typen 035 la inn. Men `registrer_artefakttype`
--- har vært kallbar siden 016/035, og enhver type som ble registrert PÅ EN
--- OPPGRADERT BASE før denne migrasjonen bærer en `skjema_hash` uten rad i
--- `artefaktskjema` — bindingen er en hash, ikke en fremmednøkkel, så
--- ingenting stoppet det. Fra og med 036 slår `/v1/artefakt` opp skjemaet
--- ubetinget og avviser med `artefaktskjema_mangler` når det ikke finnes.
--- En artefakttype som tok imot opplastninger i går ville altså blitt
--- fullstendig ubrukelig i det denne migrasjonen kjørte — og ikke
--- reparerbar bakover, siden både skjemarader og typebindinger er
--- immutable: det eneste som kunne fikset den er å registrere NØYAKTIG det
--- skjemaet hashen peker på.
+-- Porten krever at hver registrert artefakttype har et oppslagbart skjema
+-- før valideringen slås på, og navngir dem som mangler. Sto den i denne
+-- filen, ville unntaket rullet tilbake DEN SAMME transaksjonen som
+-- oppretter `artefaktskjema` og `registrer_artefaktskjema` — og den
+-- eneste kjente reparasjonen (registrer skjemaet hashen peker på) ville
+-- vært umulig å utføre, fordi verktøyet den ber om ikke fantes etterpå.
+-- Hvert nye forsøk ville feilet identisk.
 --
--- Innholdet kan ikke bakfylles herfra: basen har hashen, ikke skjemaet.
--- Derfor stopper migrasjonen i stedet for å gå igjennom og la
--- opplastningene begynne å feile. Det er den ærlige rekkefølgen — først
--- `registrer_artefaktskjema(...)` (eller `api.artefaktskjema.registrer`)
--- for hver hash under, så 036 — og feilen kommer ved deploy, hos den som
--- kan gjøre noe med den, ikke hos en modul midt i et oppdrag.
---
--- På en fersk base er dette en no-op: den eneste raden er seeden over.
+-- Kjøreren commiter per fil (`db/kjorer.py`), så 036 står igjen når 037
+-- stopper: lageret og registreringsfunksjonen er på plass, operatøren kan
+-- registrere de navngitte skjemaene, og kjøre migrasjonen om igjen.
+-- Deployen stopper fortsatt — `migrer()` reiser videre — men den er nå
+-- gjenopprettelig i stedet for å være en blindvei.
 -- ------------------------------------------------------------
-DO $$
-DECLARE v_mangler TEXT;
-BEGIN
-    SELECT string_agg(format('%s (%s)', r.artefakttype, r.skjema_hash),
-                      ', ' ORDER BY r.artefakttype)
-      INTO v_mangler
-      FROM public.artefakttype_register r
-     WHERE NOT EXISTS (SELECT 1 FROM public.artefaktskjema s
-                        WHERE s.skjema_hash = r.skjema_hash);
-    IF v_mangler IS NOT NULL THEN
-        RAISE EXCEPTION 'artefaktskjema mangler for registrerte'
-            ' artefakttyper: % — registrer skjemaene (registrer_artefaktskjema)'
-            ' FØR 036, ellers avvises alle opplastninger for disse typene',
-            v_mangler
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-END $$;
