@@ -436,6 +436,15 @@ VERIFISERING_FRIST_S = 180
 #: dør etter 240: en kohort med trege navn foran i `challenge_utstedt`-
 #: rekkefølgen spiste hele vinduet, neste kjøring plukket de SAMME radene, og
 #: kundene bak dem ble sultet til utfordringen deres utløp.
+#:
+#: Taket ALENE er likevel bare et nytt gjerde (Codex P1): står det flere gyldige
+#: utfordringer enn taket og de eldste kundene aldri publiserer TXT-posten sin,
+#: er «de eldste først» de SAMME radene hver kjøring — en manglende post flytter
+#: jo ingenting. Derfor roterer plukket: `ventende_domenechallenges` stempler
+#: radene den returnerer (`challenge_forsokt`, 039) og tar de minst nylig
+#: forsøkte først, så hele populasjonen kommer gjennom taket. Taket bestemmer
+#: hvor mye ETT pass rekker; stempelet bestemmer at det blir en ANNEN kohort
+#: neste gang.
 VERIFISERING_TAK = 100
 
 
@@ -485,7 +494,14 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
         rader = conn.execute(
             "SELECT tenant, hostname FROM ventende_domenechallenges(%s)",
             (grense,)).fetchall()
-        conn.rollback()
+        # COMMIT, ikke rollback (Codex P1). Plukket STEMPLER radene
+        # (`challenge_forsokt`, 039) — det er stempelet som gjør utvalget til
+        # en roterende kø i stedet for de samme eldste radene hvert femte
+        # minutt. Rulles det tilbake, er taket igjen et gjerde kundene bak
+        # aldri kommer forbi. Egen transaksjon, før oppslagene: bekreftelsene
+        # under committer én rad om gangen og skal ikke kunne dra plukket med
+        # seg i en rollback.
+        conn.commit()
         res["plukket"] = len(rader)
         _verifiser_rader(conn, rader, resolvere, aktor, res, samtidighet,
                          frist_s)

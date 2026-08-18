@@ -125,6 +125,48 @@ def test_ventende_plukket_er_ferskt_og_lukket(migrator):
     assert v2 not in rader, "utløpt challenge skal aldri plukkes"
 
 
+@pg
+def test_plukket_roterer_forbi_ubesvarte_utfordringer(migrator):
+    """Codex P1: utvalget var en stabil `ORDER BY challenge_utstedt LIMIT k`.
+    Står det flere gyldige utfordringer enn taket og de eldste kundene aldri
+    publiserer TXT-posten sin, returnerer den de SAMME radene hvert femte
+    minutt — en manglende post flytter jo ingenting, så raden blir stående
+    `ventende` i opptil syv døgn. Kundene bak taket ble aldri sett på.
+
+    Nå stempler plukket radene det tar (`challenge_forsokt`) og tar de minst
+    nylig forsøkte først: kohorten roterer, og alle kommer gjennom taket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern stempelet (gjør utvalget til et rent
+    SELECT igjen), eller sorter på `challenge_utstedt` alene.
+    """
+    verter = [f"rot{i}{secrets.token_hex(3)}.example" for i in range(3)]
+    for v in verter:
+        _utsted(migrator, v)
+    # Ingen av dem publiserer noe: hver runde plukker ÉN, og over tre runder
+    # skal alle tre ha vært innom.
+    sett = []
+    for _ in range(3):
+        migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+        rad = migrator.execute(
+            "SELECT tenant, hostname FROM ventende_domenechallenges(1)"
+        ).fetchone()
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+        sett.append(rad[1])
+    assert set(verter) <= set(sett), \
+        f"plukket roterer ikke — så bare {sett} av {verter}"
+
+    # ...og en NY utfordring på et alt forsøkt navn går først igjen: «sist
+    # forsøkt» er forsøket på DENNE utfordringen, ikke på navnet.
+    _utsted(migrator, verter[0])
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+    forst = migrator.execute(
+        "SELECT hostname FROM ventende_domenechallenges(1)").fetchone()[0]
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    assert forst == verter[0], forst
+
+
 def _alle_ventende(migrator_):
     migrator_.execute("SET LOCAL ROLE disponit_domene_eier")
     rader = migrator_.execute(
@@ -547,6 +589,45 @@ def test_uventet_dbfeil_feller_verifiseringspasset(monkeypatch):
     race = _Falskkonn(psycopg.errors.UniqueViolation("en_verifisert"))
     res = dr.kjor_ventende(race, resolvere=[])
     assert (res["kapplop"], res["ikke_bevist"]) == (1, 0), res
+
+
+class _Plukkonn:
+    """Minimal conn som noterer REKKEFØLGEN av plukk og transaksjonsslutt."""
+
+    def __init__(self):
+        self.spor = []
+
+    def execute(self, sql, args=None):
+        if "pg_try_advisory_lock" in sql:
+            return _Svar([(True,)])
+        if "ventende_domenechallenges" in sql:
+            self.spor.append("plukk")
+            return _Svar([])
+        return _Svar([(True,)])
+
+    def commit(self):
+        self.spor.append("commit")
+
+    def rollback(self):
+        self.spor.append("rollback")
+
+
+def test_plukket_committes_saa_stempelet_overlever():
+    """Codex P1: rotasjonen ligger i at plukket STEMPLER radene det tar
+    (`challenge_forsokt`). Rulles plukk-transaksjonen tilbake, forsvinner
+    stempelet, og utvalget er igjen de samme eldste radene hver kjøring — med
+    kundene bak taket like usett som før.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `conn.commit()` etter plukket tilbake
+    til `conn.rollback()`.
+    """
+    from drift import domenerevalidering as dr
+
+    konn = _Plukkonn()
+    dr.kjor_ventende(konn, resolvere=[])
+    assert konn.spor[0] == "plukk", konn.spor
+    assert konn.spor[1] == "commit", \
+        f"plukket ble ikke committet — stempelet gikk tapt: {konn.spor}"
 
 
 class _Tellekonn:

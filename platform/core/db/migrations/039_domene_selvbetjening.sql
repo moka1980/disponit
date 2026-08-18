@@ -26,23 +26,66 @@
 -- blir mulig.
 -- ============================================================
 
+-- SISTE VERIFISERINGSFORSØK (Codex P1). Uten den var utvalget under en ren
+-- `ORDER BY challenge_utstedt LIMIT k`: står det flere gyldige utfordringer
+-- enn taket, og de eldste kundene ALDRI publiserer TXT-posten sin, returnerer
+-- utvalget nøyaktig de samme radene hvert femte minutt. En manglende post
+-- flytter ingenting — raden blir stående `ventende` til den utløper opptil
+-- syv døgn senere — så kundene bak taket ble aldri sett på i det hele tatt.
+-- Kolonnen er kohortens markør: den stemples når raden PLUKKES, og utvalget
+-- tar de minst nylig forsøkte først. Da roterer populasjonen gjennom taket i
+-- stedet for å stå fast i den eldste kohorten.
+ALTER TABLE domenekontroll ADD COLUMN IF NOT EXISTS
+    challenge_forsokt TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS domenekontroll_ventende_rotasjon
+    ON domenekontroll (challenge_forsokt NULLS FIRST, challenge_utstedt)
+    WHERE status = 'ventende';
+
 SET LOCAL ROLE disponit_domene_eier;
 
 -- Kryss-tenant-plukket for arbeideren: rader som VENTER med et friskt,
 -- ubrukt challenge-vindu. Speiler `revalideringskandidater` (019) — den
 -- ene, revidérbare kryss-tenant-lesingen, i stedet for et tabellgrant
 -- arbeideren kunne brukt til hva som helst.
+--
+-- Plukket STEMPLER (Codex P1): et rent utvalg med stabil `ORDER BY` + `LIMIT`
+-- er ikke en kø, det er de samme radene om igjen. Rekkefølgen er derfor
+-- `revalideringskandidater`-formen — `sist NULLS FIRST` — der «sist» er
+-- forsøket PÅ DENNE utfordringen: er `challenge_forsokt` eldre enn
+-- `challenge_utstedt`, er utfordringen ny og raden er aldri forsøkt. Det
+-- gjelder uansett hvilken vei utstedelsen kom (selvbetjening ELLER ops), så
+-- regelen bor ett sted og ingen utstedelsesvei må huske å nulle noe.
+--
+-- Stempelet settes ved PLUKK, ikke ved svar: arbeiderrollen har EXECUTE på
+-- nøyaktig to funksjoner og ingen DML på tabellen, og et stempel skrevet i
+-- `bekreft_domenechallenge` ville uansett rullet tilbake sammen med det
+-- vanligste utfallet (`RAISE` når beviset mangler). En rad passet ikke rakk
+-- før fristen er da stemplet uten å ha blitt slått opp — og det er nettopp
+-- rotasjonen: den står bakerst nå, og kundene bak den kommer til.
+--
+-- `FOR UPDATE SKIP LOCKED` for ordens skyld — advisory-låsen
+-- (`VERIFISERINGSNOKKEL`) holder allerede ett pass om gangen, men et plukk
+-- skal ikke kunne blokkere bak en samtidig selvbetjent re-utstedelse.
 CREATE OR REPLACE FUNCTION ventende_domenechallenges(p_grense INT DEFAULT 200)
 RETURNS TABLE (tenant TEXT, hostname TEXT)
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT d.tenant, d.hostname
-      FROM public.domenekontroll d
-     WHERE d.status = 'ventende'
-       AND d.challenge_token_hash IS NOT NULL
-       AND d.challenge_utloper > now()
-     ORDER BY d.challenge_utstedt
-     LIMIT p_grense
-$$;
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE public.domenekontroll d
+       SET challenge_forsokt = now()
+      FROM (SELECT k.tenant AS t, k.hostname AS h
+              FROM public.domenekontroll k
+             WHERE k.status = 'ventende'
+               AND k.challenge_token_hash IS NOT NULL
+               AND k.challenge_utloper > now()
+             ORDER BY (CASE WHEN k.challenge_forsokt >= k.challenge_utstedt
+                            THEN k.challenge_forsokt END) NULLS FIRST,
+                      k.challenge_utstedt
+             LIMIT p_grense
+               FOR UPDATE SKIP LOCKED) v
+     WHERE d.tenant = v.t AND d.hostname = v.h
+    RETURNING d.tenant, d.hostname;
+END $$;
 
 -- Førstegangsbekreftelsen — 019 §3.35-formen: TXT-verdiene sendes MED,
 -- basen holder dem mot hashen. `RAISE` ved manglende bevis (arbeideren
