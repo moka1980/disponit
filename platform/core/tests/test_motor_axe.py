@@ -771,11 +771,11 @@ def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
     sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
         encoding="utf-8")
     kropp = sjekk.split("def fase9(", 1)[1]
-    # ALLE grenene: røde målinger, manglende modultoken, manglende
-    # rootless-forutsetninger, manglende motorimage, en effektiv motor som
-    # ikke er imaget runden målte, og en unit som ikke kom opp etter
-    # `enable --now`.
-    assert kropp.count("_steng_doeren(m, ") == 6, \
+    # ALLE grenene: røde målinger, manglende modultoken, et modultoken som
+    # ikke er autorisert, manglende rootless-forutsetninger, manglende
+    # motorimage, en effektiv motor som ikke er imaget runden målte, og en
+    # unit som ikke kom opp etter `enable --now`.
+    assert kropp.count("_steng_doeren(m, ") == 7, \
         "hver gren uten arbeider i drift må rulle tilbake fase 2"
     assert "fase9(m, mtk, digest, maalt_runde=" in sjekk
 
@@ -787,6 +787,237 @@ def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
     blokk = sjekk.split('evidens("fase9_modul_deaktivert"', 1)[1]
     assert 'ok=status == ("nodeaktivert",) and claiming == 0' in blokk
     assert 'evidens("fase9_doeren_star_apen"' in sjekk
+
+
+def test_modultokenet_er_bundet_til_sin_release():
+    """Codex P1, runde 12: et token uten sin release blir gjenbrukt.
+
+    Nødstoppets vei tilbake KREVER en ny release-id (`bytt_release` nekter
+    å reclaime en drenert deployment), og `noddeaktiver_modul` har i samme
+    transaksjon bumpet modulens epoch og tilbakekalt HELE tokenfamilien.
+    Lagret runden tokenet i en uversjonert fil, leste gjenopprettingen —
+    fasene 4–7 eller `--fase 9` alene — det gamle tokenet, og hvert eneste
+    claim fra den nye releasen fikk 401.
+
+    At det gikk ubemerket, er den andre halvdelen: arbeideren skriver
+    `wcag_arbeider_oppe` FØR sitt første autentiserte claim, så fase 9
+    målte en «grønn» idriftsettelse av en arbeider som ikke kunne utføre
+    ett eneste oppdrag."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Tokenet lagres MED releasen, og leses bare tilbake for den samme.
+    assert '"release": RELEASE, "token": mtk' in sjekk
+    lest = sjekk.split("def _lagret_modultoken(", 1)[1].split("\ndef ", 1)[0]
+    assert "if rel != RELEASE:" in lest
+    assert 'evidens("modultoken_forkastet"' in lest
+    # Den uversjonerte fila leses ikke lenger noe annet sted enn i
+    # migreringen, og fase 4 skriver den aldri igjen.
+    assert sjekk.count('RUNDE / "modultoken"\n') == 1
+    assert 'LEGACY_TOKEN_FIL = RUNDE / "modultoken"\n' in sjekk
+    for kall in ("lagret = _lagret_modultoken()",
+                 "mtk = _lagret_modultoken()"):
+        assert kall in sjekk, kall
+
+    # ... og fase 9 stoler ikke på fila alene: dommen felles av
+    # plattformens EGNE porter, de samme claim-veien bruker, FØR uniten
+    # enables. Modulen kan ha vært nødstoppet uten at release-id-en endret
+    # seg — da er tokenet tilbakekalt og fila fortsatt «riktig».
+    kropp = sjekk.split("def fase9(", 1)[1]
+    assert "autorisert, detalj = _tokenet_er_autorisert(m, mtk)" in kropp
+    assert "if not autorisert:" in kropp
+    assert "ok=autorisert)" in kropp
+    dom = sjekk.split("def _tokenet_er_autorisert(", 1)[1].split(
+        "\ndef ", 1)[0]
+    assert "FROM verifiser_modultoken(%s)" in dom
+    assert "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)" in dom
+    assert '(MODUL, "staging", RELEASE)' in dom
+    # En umålt port er ikke en bestått port: feiler oppslaget, er svaret
+    # NEI — ikke «vi vet ikke, kjør på».
+    assert 'return False, {"grunn": "tokenoppslaget feilet"' in dom
+
+
+def test_et_gyldig_legacy_token_migreres_bare_for_sin_egen_release():
+    """Codex P1, runde 14: release-bindingen drenerte en akseptert release.
+
+    Runde 12 flyttet tokenet til `TOKEN_FIL`. En vert som alt HADDE kjørt
+    en grønn runde bar bare den uversjonerte `RUNDE/modultoken` — og den
+    nye koden leste den som fraværende. Den dokumenterte `--fase 9` etter
+    den grønne runden fikk da `mtk = None`, og fase 9 svarer på det med
+    `_steng_doeren`: releasen ble drenert av et formatbytte, ikke av en
+    måling.
+
+    Migreringen gjelder NØYAKTIG den ene releasen det gamle skriptet
+    hardkodet — en fil fra det formatet kan ikke bære et token for noen
+    annen. Er `WCAG_RELEASE` overstyrt, er vi i gjenopprettingen etter et
+    nødstopp, og da er nettopp dette tokenet tilbakekalt."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert 'LEGACY_RELEASE = "wcag-r1"' in sjekk
+    # Den gamle fila leses når den nye ikke finnes — ellers stenger fase 9
+    # døren på en runde som var grønn.
+    lest = sjekk.split("def _lagret_modultoken(", 1)[1].split("\ndef ", 1)[0]
+    assert "return _migrert_modultoken()" in lest
+    kropp = sjekk.split("def _migrert_modultoken(", 1)[1].split(
+        "\ndef ", 1)[0]
+    assert "if RELEASE != LEGACY_RELEASE:" in kropp
+    assert 'evidens("modultoken_legacy_ignorert"' in kropp
+    # ... og migreringen gjør tokenet release-bundet, så neste kjøring ser
+    # hvilken release det hører til uten å gjette.
+    assert "_lagre_modultoken(tok)" in kropp
+    assert 'evidens("modultoken_migrert"' in kropp
+    # Migrert er ikke gyldig: dommen felles fortsatt av plattformens porter
+    # i fase 9, som for et token fase 4 nettopp utstedte.
+    assert "autorisert, detalj = _tokenet_er_autorisert(m, mtk)" in \
+        sjekk.split("def fase9(", 1)[1]
+
+
+def test_rundeidentiteten_er_bundet_til_sin_release():
+    """Codex P1, runde 13: en gjenbrukt runde-id replayer forrige release.
+
+    Gjenopprettingen etter en rød fase 9 setter en NY `WCAG_RELEASE` —
+    `bytt_release` nekter å reclaime en drenert deployment — men beholder
+    rundekatalogen. Lå identiteten i en uversjonert fil, ble hver
+    idempotensnøkkel i fasene 5–7 den forrige releasens: `/v1/bestilling`
+    svarer `idempotent-replay`, så fase 5–6 «målte» rapportene til
+    releasen som nettopp ble nødstoppet, og fase 7 gjenbrukte sin alt
+    feilede injiseringsjobb. Verre enn en rød måling, for den ser grønn
+    ut — og runden brant enda en release uten å gjenåpne noe."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Identiteten lagres MED releasen, og leses bare tilbake for den samme.
+    assert '{"release": RELEASE, "runde_id": rid}' in sjekk
+    lest = sjekk.split("def _lagret_rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "if rel != RELEASE:" in lest
+    assert 'evidens("rundeid_forkastet"' in lest
+    # Den uversjonerte fila leses ikke lenger noe annet sted enn i
+    # migreringen, og `_rundeid` skriver den aldri igjen.
+    assert sjekk.count('RUNDE / "runde-id"\n') == 1
+    assert 'LEGACY_RUNDEID_FIL = RUNDE / "runde-id"\n' in sjekk
+
+    # ... og WCAG_RUNDE_ID går FØR fila. Overstyringen finnes nettopp for å
+    # skille denne kjøringen fra den forrige; ble fila lest først, ville den
+    # blitt ignorert stille i akkurat det tilfellet den er til for.
+    kropp = sjekk.split("def _rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert 'onsket = os.environ.get("WCAG_RUNDE_ID", "").strip()' in kropp
+    assert "lagret = None if onsket else _lagret_rundeid()" in kropp
+    assert 'rid = onsket or lagret or ("r" + secrets.token_hex(6))' in kropp
+    # Identiteten står i evidensen med sin kilde — ellers kan ingen se i
+    # ettertid HVILKEN runde nøklene tilhørte.
+    assert 'evidens("rundeid", runde_id=rid, release=RELEASE' in kropp
+
+    # Nøklene henger fortsatt på identiteten, så bindingen gjelder hver fase.
+    idem = sjekk.split("def _idem(", 1)[1].split("\ndef ", 1)[0]
+    assert 'return f"{_rundeid()}-{merkelapp}-{h[:12]}"' in idem
+
+
+def test_en_paabegynt_runde_beholder_identiteten_over_formatbyttet():
+    """Codex P2, runde 14: en ny id i en gammel runde bruker nye slots.
+
+    Runde 13 flyttet identiteten til `RUNDEID_FIL`. En runde som ALT var i
+    gang bar bare den uversjonerte `RUNDE/runde-id` — og leste den nye
+    koden den som fraværende, fikk en gjenkjøring av fasene 5–7 en ny id.
+    Nøklene i `_idem` avledes av identiteten, så gjenkjøringen tok NYE
+    forretningsbeslutninger i stedet for å replaye sine egne: fase 5 har
+    alt brukt 10 av tenantens 12 daglige slots på `/index.html`, så
+    utfallet er noen dubletter og så `frekvensgrense_naadd` på resten.
+
+    Migreringen gjelder bare releasen det gamle skriptet hardkodet. Er
+    `WCAG_RELEASE` overstyrt, er identiteten forrige runde sin, og da er
+    det å forkaste den hele poenget."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    lest = sjekk.split("def _lagret_rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "return _migrert_rundeid()" in lest
+    kropp = sjekk.split("def _migrert_rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "if RELEASE != LEGACY_RELEASE:" in kropp
+    assert 'evidens("rundeid_legacy_ignorert"' in kropp
+    assert 'evidens("rundeid_migrert"' in kropp
+    # WCAG_RUNDE_ID går fortsatt FØRST: den som navngir runden selv, skal
+    # ikke bli overkjørt av en fil fra forrige format.
+    rundeid = sjekk.split("def _rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "lagret = None if onsket else _lagret_rundeid()" in rundeid
+    # ... og den migrerte identiteten skrives videre i release-bundet form
+    # av `_rundeid` selv, så neste kjøring slipper å migrere igjen.
+    assert '{"release": RELEASE, "runde_id": rid}' in rundeid
+
+
+def test_gjenapningen_reaktiverer_modulen_for_releasebyttet():
+    """Codex P1, runde 15: den nye release-id-en var bare halve veien ut.
+
+    `WCAG_RELEASE`-overstyringen finnes for gjenopprettingen etter en rød
+    fase 9 — men `_steng_doeren` har da latt modulen stå `nodeaktivert`, og
+    BEGGE kallene fase 2 bruker for å åpne døren avviser eksplisitt den
+    tilstanden: `sett_modulstatus` («reaktiveres kun via reaktiver_modul»)
+    og `bytt_release` («modul % er nodeaktivert»). Begge feilene falt i den
+    brede `psycopg.Error`-grenen som fører dem som idempotente hopp, så
+    runden gikk videre og døde først på sluttilstandssjekken. Overstyringen
+    kunne dermed aldri gjenåpne noe uten en udokumentert manuell
+    reaktivering først — akkurat det arbeidet den skulle fjerne.
+
+    Veien tilbake er plattformens egen, symmetrisk med stengingen:
+    `reaktiver_modul` er epoch-gjerdet og lander på `staging_verifisert`,
+    der releasebyttet starter."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Reaktiveringen skjer FØR overgangskjeden, ikke inni den.
+    fase2 = sjekk.split("def fase2(", 1)[1].split("\ndef ", 1)[0]
+    assert "_gjenapne_modulen(m)" in fase2
+    assert fase2.index("_gjenapne_modulen(m)") < fase2.index(
+        '("bytt_release(%s,\'staging\',%s,1,%s,\'wcag-runde\')"')
+    kropp = sjekk.split("def _gjenapne_modulen(", 1)[1].split("\ndef ", 1)[0]
+    # Den rører bare den ene tilstanden nødstoppet etterlater.
+    assert 'if rad is None or rad[0] != "nodeaktivert":' in kropp
+    assert "        return" in kropp
+    # ... og går plattformens gjerdede vei, med den NÅVÆRENDE epochen.
+    assert "SELECT reaktiver_modul(%s,%s,'wcag-runde')" in kropp
+    assert "(MODUL, epoch)" in kropp
+    # En feilet reaktivering er IKKE et idempotent hopp: da står modulen
+    # fortsatt nødstoppet, og alt fase 2 gjør etterpå måler en dør som ikke
+    # kan åpnes. Den felles her, med sin egen feil.
+    assert 'evidens("fase2_reaktivering_feilet"' in kropp
+    assert "raise SystemExit(" in kropp
+    # Reaktiveringen er selv en måling: `staging_verifisert` og epoch++.
+    assert 'evidens("fase2_modul_reaktivert"' in kropp
+    assert 'ok=etter == ("staging_verifisert", epoch + 1)' in kropp
+
+
+def test_beredskapsporten_krever_en_claiming_deployment():
+    """Codex P1, runde 15: en drenert release passerte tokenporten.
+
+    Runde 12 la dommen der claimen henter den, men tok bare de to
+    funksjonene — og de er ikke HELE claim-porten.
+    `modultoken_fortsatt_autorisert` leser med VILJE ikke deploymentens
+    livsløp: en `draining` deployment SKAL få levere resultatet av arbeid
+    den alt har claimet, så den svarer `ok` for den. Claim-veien legger
+    derfor på én sjekk til før den tildeler NYTT arbeid — raden for
+    (modul, miljø, release) må være `claiming`, ellers 403
+    `modul_ikke_claimbar`.
+
+    Kjøres en beholdt runde om igjen med sin ORIGINALE `WCAG_RELEASE`
+    etter at `bytt_release` har drenert den, stemmer både release og
+    token, og tokenet er hverken tilbakekalt eller utløpt. Fase 9 enablet
+    da uniten og meldte grønt, mens hvert eneste claim fikk 403: samme
+    feil som runde 12 fant, én dør lenger inn."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    dom = sjekk.split("def _tokenet_er_autorisert(", 1)[1].split(
+        "\ndef ", 1)[0]
+    # Livsløpet slås opp for NØYAKTIG den deploymenten claim-porten slår
+    # opp: (modul, miljø, release).
+    assert "SELECT livslop FROM moduldeployment" in dom
+    assert '(MODUL, "staging", RELEASE)' in dom
+    assert 'livslop != "claiming"' in dom
+    assert '"livslop": livslop' in dom
+    # En borte rad er ikke en bestått port — den er `modul_ikke_claimbar`
+    # på claim-veien også.
+    assert 'livslop = drad[0] if drad is not None else "borte"' in dom
+    # ... og en umålt port er fortsatt ikke en bestått port.
+    assert '"grunn": "deploymentoppslaget feilet"' in dom
+    # Sjekken ligger FORAN det eneste stedet dommen brukes: fase 9 enabler
+    # ikke uniten på en drenert deployment.
+    kropp = sjekk.split("def fase9(", 1)[1]
+    assert "autorisert, detalj = _tokenet_er_autorisert(m, mtk)" in kropp
+    assert "if not autorisert:" in kropp
 
 
 def test_konteksten_avledes_av_den_effektive_motoren():
