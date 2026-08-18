@@ -603,6 +603,104 @@ def test_avvist_kandidat_far_ny_utfordring_uten_a_rive_gjerdet(migrator):
     assert rad[1] > gen, "reapplikasjonen fikk ingen ny generasjon"
 
 
+@pg
+def test_en_avvisning_blir_staaende_til_det_finnes_nytt_bevis(migrator):
+    """Codex P1: en avvisning må kunne bli STÅENDE avvist.
+
+    `avgjor_domeneovertakelse` endret før bare status og generasjon.
+    `challenge_token_hash` og utløpet sto igjen — og kundens TXT-post ligger
+    jo fortsatt i sonen. Reapplikasjonsgrenen (som med vilje tar `tilbakekalt`
+    MED motpart) plukket derfor raden med det samme, arbeideren godtok
+    NØYAKTIG det samme beviset, det ble en ny konfliktgenerasjon, dreneringen
+    laget en ny M-37-sak — og menneskene fikk samme sak i fanget hvert femte
+    minutt til utfordringen utløp av seg selv, uten at kunden hadde løftet en
+    finger.
+
+    Avvisningen forbruker nå utfordringen. Veien tilbake er den 039 alt åpnet,
+    og den krever en HANDLING: kunden utsteder på nytt, får et NYTT token, og
+    DA — og bare da — fører beviset til en ny avklaring.
+
+    MUTASJONEN SOM DREPER DENNE: la avvisningen la `challenge_token_hash` stå.
+    """
+    vert = f"avvist{secrets.token_hex(4)}.example"
+    token = secrets.token_hex(32)
+    h = hashlib.sha256(token.encode()).hexdigest()
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))
+        a.commit()
+    finally:
+        a.close()
+
+    # ANNEN_TENANT utsteder selv, publiserer TXT-en, og beviset gir konflikt.
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, ANNEN_TENANT)
+        rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                   (ANNEN_TENANT, vert, h))
+        rt.commit()
+    finally:
+        rt.close()
+    svar = _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                     (ANNEN_TENANT, vert, [token]))[0]
+    migrator.commit()
+    assert svar == f"konflikt:{TENANT}", svar
+
+    # M-37 AVVISER — mens utfordringen ennå har seks døgn igjen og posten
+    # fortsatt står i sonen.
+    gen = _gen(migrator, ANNEN_TENANT, vert)
+    a = _admin()
+    try:
+        a.execute("SELECT avgjor_domeneovertakelse(%s,%s,%s,false,'m37')",
+                  (ANNEN_TENANT, vert, gen))
+        a.commit()
+    finally:
+        a.close()
+
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rad = migrator.execute(
+        "SELECT status, konflikt_motpart, challenge_token_hash,"
+        " challenge_utloper FROM domenekontroll WHERE tenant=%s"
+        " AND hostname=%s", (ANNEN_TENANT, vert)).fetchone()
+    migrator.rollback()
+    assert rad[0] == "tilbakekalt", rad
+    assert rad[1] == TENANT, "motparten skal beholdes — den er merket 018 " \
+        "kjenner reapplikasjonen igjen på"
+    assert rad[2] is None and rad[3] is None, \
+        "utfordringen overlevde avvisningen — den gamle TXT-posten kan " \
+        "bevises på nytt uten at kunden har gjort noe"
+
+    # 1) Arbeideren plukker henne ikke lenger...
+    assert (ANNEN_TENANT, vert) not in _alle_ventende(migrator), \
+        "den avviste raden køes umiddelbart på nytt"
+    # 2) ...og den GAMLE TXT-verdien beviser ingenting.
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                  (ANNEN_TENANT, vert, [token]))
+    migrator.rollback()
+
+    # 3) Reapplikasjonen står fortsatt åpen: nytt token → ny avklaring.
+    nytt = secrets.token_hex(32)
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, ANNEN_TENANT)
+        rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                   (ANNEN_TENANT, vert,
+                    hashlib.sha256(nytt.encode()).hexdigest()))
+        rt.commit()
+    finally:
+        rt.close()
+    assert (ANNEN_TENANT, vert) in _alle_ventende(migrator), \
+        "en ny utfordring åpner ikke reapplikasjonen"
+    svar = _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                     (ANNEN_TENANT, vert, [nytt]))[0]
+    migrator.commit()
+    assert svar == f"konflikt:{TENANT}", svar
+    assert _gen(migrator, ANNEN_TENANT, vert) > gen, \
+        "reapplikasjonen fikk ingen ny generasjon"
+
+
 def _arbeiderkonn():
     """M-37-arbeiderens forbindelse (Codex P1).
 

@@ -188,6 +188,117 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
+-- EN AVVISNING FORBRUKER UTFORDRINGEN (Codex P1).
+--
+-- Avviser M-37 en overtakelse, endret 018-formen bare status og generasjon:
+-- `challenge_token_hash` og `challenge_utloper` sto igjen, og kundens TXT-post
+-- ligger jo fortsatt i sonen. Reapplikasjonsgrenen over — som med vilje tar
+-- `tilbakekalt` MED motpart — plukket derfor raden med det samme, arbeideren
+-- godtok NØYAKTIG det samme beviset, `verifiser_domenekontroll` laget en ny
+-- konfliktgenerasjon, dreneringen laget en ny M-37-sak, og menneskene fikk
+-- samme sak i fanget hvert femte minutt til utfordringen utløp av seg selv.
+-- En avvisning kunne altså ikke bli STÅENDE avvist.
+--
+-- Reapplikasjon skal kreve en HANDLING fra kunden, ikke bare at hun lar en
+-- gammel post ligge. Avvisningen nuller derfor utfordringen: raden faller ut
+-- av plukket (det krever `challenge_token_hash IS NOT NULL`), og veien tilbake
+-- er den ene 039 alt åpnet — kunden utsteder på nytt fra flaten, får et NYTT
+-- token, publiserer det, og DA fører beviset til en ny avklaringsgenerasjon.
+-- Den gamle TXT-verdien hasher ikke til den nye utfordringen, så en post som
+-- ble liggende beviser ingenting.
+--
+-- `konflikt_motpart` beholdes urørt: den er fortsatt det som skiller «avvist
+-- av M-37» fra en ordinær tilbakekalling, og det er den reapplikasjonsgrenen
+-- kjenner raden igjen på. Det er UTFORDRINGEN som forbrukes, ikke merket.
+--
+-- Resten av kroppen er 018s, uendret — gjerdene (generasjon under radlåsen,
+-- bindingshaveren ved godkjenning, §0-kanoniseringen) hører til der og skal
+-- ikke omskrives her.
+CREATE OR REPLACE FUNCTION avgjor_domeneovertakelse(
+    p_tenant TEXT, p_hostname TEXT, p_forventet_generasjon BIGINT,
+    p_godkjent BOOLEAN, p_aktor TEXT)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_status TEXT; v_gen BIGINT; v_binding TEXT;
+BEGIN
+    p_hostname := public.krev_kanonisk_hostname(p_hostname);   -- §0-gjerdet
+    PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
+    SELECT status, autorisasjonsgenerasjon INTO v_status, v_gen
+      FROM public.domenekontroll
+     WHERE tenant = p_tenant AND hostname = p_hostname FOR UPDATE;
+    IF v_status IS DISTINCT FROM 'avklaring_kreves' THEN
+        RAISE EXCEPTION 'avgjor_domeneovertakelse: %/% er % (krever avklaring_kreves)',
+            p_tenant, p_hostname, v_status USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Saken er nøklet på overtakelsesgenerasjonen; den leses under RADLÅSEN og
+    -- må stemme nøyaktig, ellers autoriserer en foreldet sak en ny generasjon.
+    IF v_gen IS DISTINCT FROM p_forventet_generasjon THEN
+        RAISE EXCEPTION 'avgjor_domeneovertakelse: foreldet sak for %/% '
+            '(generasjon % <> %)', p_tenant, p_hostname, p_forventet_generasjon,
+            v_gen USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Generasjonsgjerdet er TENANT-LOKALT og hostnavnet globalt: godkjenning
+    -- gjerdes derfor OGSÅ mot den GJELDENDE bindingshaveren, slik at bare
+    -- dagens utfordrer kan autoriseres. Avvisning står fortsatt åpen — en
+    -- forbigått utfordrer må kunne ryddes ut av `avklaring_kreves` uten å få
+    -- autorisasjon.
+    IF p_godkjent THEN
+        SELECT tenant INTO v_binding FROM public.hostname_binding
+         WHERE hostname = p_hostname;
+        IF v_binding IS DISTINCT FROM p_tenant THEN
+            RAISE EXCEPTION 'avgjor_domeneovertakelse: %/% er forbigått '
+                '(hostname_binding står på %)', p_tenant, p_hostname,
+                coalesce(v_binding, '(ingen)')
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        UPDATE public.domenekontroll
+           SET status = 'verifisert',
+               autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1,
+               konflikt_motpart = NULL,
+               verifisert_ts = now(), siste_vellykkede_revalidering = now(),
+               utloper = now() + interval '90 days'
+         WHERE tenant = p_tenant AND hostname = p_hostname;
+        INSERT INTO public.hostname_binding (hostname, tenant)
+            VALUES (p_hostname, p_tenant)
+        ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, aktor) VALUES
+            (p_tenant, p_hostname, 'avklaring_godkjent', 'avklaring_kreves',
+             'verifisert', p_aktor);
+    ELSE
+        UPDATE public.domenekontroll
+           SET status = 'tilbakekalt',
+               autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1,
+               -- UTFORDRINGEN FORBRUKES (Codex P1). Uten dette plukket
+               -- reapplikasjonsgrenen raden umiddelbart på nytt, med kundens
+               -- gamle TXT-post som «bevis», og avvisningen kunne aldri bli
+               -- stående. `challenge_forsokt` nulles med: stempelet gjelder
+               -- forsøket på DEN utfordringen, og skal ikke henge igjen som
+               -- køposisjon for en utfordring som ikke finnes lenger.
+               challenge_token_hash = NULL,
+               challenge_utstedt = NULL,
+               challenge_utloper = NULL,
+               challenge_forsokt = NULL
+         WHERE tenant = p_tenant AND hostname = p_hostname;
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, aktor) VALUES
+            (p_tenant, p_hostname, 'avklaring_avvist', 'avklaring_kreves',
+             'tilbakekalt', p_aktor);
+    END IF;
+END $$;
+
+-- Radene som ALT er avvist, ryddet ÉN gang. Uten dette ville hver avvisning
+-- gjort før denne migrasjonen fått nøyaktig den løkka regelen over stenger,
+-- i det øyeblikket verifiseringspasset settes i drift. Rader som er avvist og
+-- SIDEN har fått en ny utfordring finnes ikke: den veien (`utsted_challenge_
+-- selvbetjent` på en `tilbakekalt`-rad med motpart) åpnes av denne
+-- migrasjonen, og kjøreren kjører hver versjon nøyaktig én gang.
+UPDATE public.domenekontroll
+   SET challenge_token_hash = NULL, challenge_utstedt = NULL,
+       challenge_utloper = NULL, challenge_forsokt = NULL
+ WHERE status = 'tilbakekalt' AND konflikt_motpart IS NOT NULL
+   AND challenge_token_hash IS NOT NULL;
+
+-- ------------------------------------------------------------
 -- Konflikter som venter på sin M-37-sak (Codex P1).
 --
 -- `verifiser_domenekontroll` gjør overtakelsen OG adjudikasjonskravet i én
