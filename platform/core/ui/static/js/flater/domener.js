@@ -133,4 +133,14 @@ export function visDomener(rot, ctx) {
     el("p", { class: "sub", text: t("ui.domener.under") }),
     form, utfall, liste);
   last();
+  // Oppfriskningskroken (Codex P2). Flaten LOVER at statusen oppdateres når
+  // fanen åpnes igjen, og verifiseringen skjer i bakgrunnen (arbeideren, ~5
+  // min). Uten den hang samleflaten bare den cachede DOM-en tilbake: en
+  // challenge som var blitt `verifisert` mens brukeren var på en annen fane
+  // sto fortsatt `ventende` til hele siden ble lastet på nytt.
+  //
+  // Kroken laster BARE listen. Skjemaet og TXT-oppskriften røres ikke — den
+  // verdien vises én gang og finnes ikke igjen, så en ombygging her ville
+  // slettet det eneste stedet kunden kan lese den fra.
+  return last;
 }

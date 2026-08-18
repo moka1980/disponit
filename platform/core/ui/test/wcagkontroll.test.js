@@ -142,3 +142,83 @@ test("Domener: ugyldig vertsnavn → aria-invalid + fokus, intet kall", async ()
   assert.equal(document.activeElement, inp);
   assert.equal(KALL.filter((k) => k.metode === "POST").length, antallFoer);
 });
+
+// Codex P2: flaten LOVER at statusen oppdateres når fanen åpnes igjen, og
+// verifiseringen skjer i bakgrunnen (arbeideren, ~5 min). Med bare
+// `tegnet`-vakten i `del()` ble den cachede DOM-en hengt tilbake uendret: en
+// challenge som ble `verifisert` mens brukeren var på en annen fane sto
+// fortsatt `ventende` til hele siden ble lastet på nytt.
+test("Domener: fanen henter status på nytt ved hver aktivering", async () => {
+  KALL = [];
+  let status = "ventende";
+  SVAR = (sti, opts) => {
+    if (sti === "/v1/domener" && (opts.method || "GET") === "GET") {
+      return { domener: [{ hostname: "dittfirma.no", status,
+        wildcard: false, verifisert_ts: null, utloper: null,
+        siste_vellykkede_revalidering: null,
+        challenge_utstedt: "2026-08-18T10:00:00+00:00",
+        challenge_utloper: "2026-08-25T10:00:00+00:00" }] };
+    }
+    return undefined;
+  };
+  const h = nyHoved();
+  visWcagKontroll(h, ctx());
+  fane(h, "domener");
+  await vent(() => h.querySelector(".domeneliste table"));
+  const foer = KALL.filter((k) => k.sti === "/v1/domener").length;
+  assert.equal(foer, 1, "første aktivering henter listen");
+  assert.ok(h.querySelector(".domeneliste table").textContent
+    .includes(t("domenestatus.ventende")));
+
+  // Arbeideren finner beviset mens brukeren er på en annen fane.
+  status = "verifisert";
+  fane(h, "bestill");
+  fane(h, "domener");
+  await vent(() => KALL.filter((k) => k.sti === "/v1/domener").length > foer);
+  assert.equal(KALL.filter((k) => k.sti === "/v1/domener").length, foer + 1,
+    "gjenåpning av fanen hentet ikke status på nytt");
+  await vent(() => h.querySelector(".domeneliste table").textContent
+    .includes(t("domenestatus.verifisert")));
+  assert.ok(h.querySelector(".domeneliste table").textContent
+    .includes(t("domenestatus.verifisert")), "ny status vises");
+});
+
+test("Domener: oppfriskningen river ikke skjemaet eller TXT-oppskriften", async () => {
+  KALL = [];
+  let lagt = false;
+  SVAR = (sti, opts) => {
+    if (sti === "/v1/domener" && (opts.method || "GET") === "GET") {
+      return { domener: lagt
+        ? [{ hostname: "dittfirma.no", status: "ventende", wildcard: false,
+            verifisert_ts: null, utloper: null,
+            siste_vellykkede_revalidering: null,
+            challenge_utstedt: "2026-08-18T10:00:00+00:00",
+            challenge_utloper: "2026-08-25T10:00:00+00:00" }]
+        : [] };
+    }
+    if (sti === "/v1/domener" && opts.method === "POST") {
+      lagt = true;
+      return { hostname: "dittfirma.no", txt_navn: "dittfirma.no",
+        txt_verdi: "b".repeat(64), gyldig_dager: 7 };
+    }
+    return undefined;
+  };
+  const h = nyHoved();
+  visWcagKontroll(h, ctx());
+  fane(h, "domener");
+  await vent(() => h.querySelector(".tilstand.tom"));
+  const inp = h.querySelector("#dm-host");
+  inp.value = "dittfirma.no"; inp.dispatchEvent(new window.Event("input"));
+  inp.form.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  await vent(() => h.querySelector(".domeneutfall").textContent);
+
+  // TXT-verdien vises ÉN gang og finnes ikke igjen — en oppfriskning som
+  // bygget delen om, ville slettet det eneste stedet kunden kan lese den.
+  fane(h, "rapporter");
+  fane(h, "domener");
+  await vent(() => KALL.filter((k) => k.sti === "/v1/domener"
+    && k.metode === "GET").length >= 3);
+  assert.ok(h.querySelector(".domeneutfall").textContent
+    .includes("b".repeat(64)), "TXT-oppskriften overlevde fanebyttet");
+  assert.ok(h.querySelector("#dm-host"), "skjemaet står");
+});
