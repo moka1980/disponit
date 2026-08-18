@@ -93,9 +93,14 @@ def liste_endepunkt(tjeneste, request: Request) -> Response:
 def utsted_endepunkt(tjeneste, request: Request) -> Response:
     """POST /v1/domener {hostname} → challenge. TXT-verdien vises ÉN gang.
 
-    Reutstedelse er gratis og idempotent på radnivå (016: hash/vindu
-    oppdateres, status røres aldri) — men gir selvsagt en NY verdi, og
-    da er det den nye som gjelder.
+    Reutstedelse er gratis og idempotent på radnivå (hash/vindu oppdateres)
+    — men gir selvsagt en NY verdi, og da er det den nye som gjelder.
+
+    En rad som står `tilbakekalt`/`utlopt` KØES samtidig tilbake til
+    `ventende` (039), slik at arbeideren faktisk ser utfordringen. Står raden
+    i en M-37-avklaring, svarer basen nei og klienten får 409
+    `domene_challenge_avvist` — aldri 201 med en TXT-oppskrift ingen
+    arbeider kommer til å lese.
     """
     from .app import _feilsvar, _rid, kanonisk_json
     from .policyadmin_http import _Avbrudd, _browserkontekst

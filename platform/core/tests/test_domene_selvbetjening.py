@@ -311,6 +311,79 @@ def test_verifiseringspasset_ende_til_ende(migrator, klient):
     assert status == "verifisert"
 
 
+@pg
+def test_reutstedelse_koer_tilbakekalt_og_utlopt_domene(migrator, klient):
+    """Codex P2: 016 lar `status` stå ved reutstedelse, og
+    `ventende_domenechallenges` plukker bare `ventende`. En kunde som la til
+    et hostname som sto `tilbakekalt`/`utlopt` fikk derfor 201 med en brukbar
+    TXT-oppskrift INGEN arbeider ville sett på.
+
+    Selvbetjeningens egen inngang køer raden tilbake: handlingen «kunden ba om
+    en ny utfordring» ER det som gjør den ventende igjen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern UPDATE-en i
+    `utsted_challenge_selvbetjent`.
+    """
+    from api import sesjon as sesjonmodul
+    cookie, csrf = _adminsesjon()
+    for start in ("tilbakekalt", "utlopt"):
+        vert = f"koe{secrets.token_hex(4)}.example"
+        _utsted(migrator, vert)
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("UPDATE domenekontroll SET status=%s"
+                         " WHERE tenant=%s AND hostname=%s",
+                         (start, TENANT, vert))
+        migrator.commit()
+
+        r = klient.post("/v1/domener", json={"hostname": vert},
+                        headers={"X-Disponit-CSRF": csrf},
+                        cookies={sesjonmodul.C_SESJON: cookie})
+        assert r.status_code == 201, r.text
+        _sett_kontekst(migrator, TENANT)
+        status = migrator.execute(
+            "SELECT status FROM domenekontroll"
+            " WHERE tenant=%s AND hostname=%s", (TENANT, vert)).fetchone()[0]
+        migrator.rollback()
+        assert status == "ventende", f"{start} ble ikke køet på nytt"
+        # ...og arbeideren ser den nå.
+        assert vert in [h for _, h in _alle_ventende(migrator)]
+
+
+@pg
+@dekker("domene_challenge_avvist")
+def test_reutstedelse_avvises_nar_raden_avventer_m37(migrator, klient):
+    """De to tilstandene som IKKE køes skal svare nei, ikke 201 på en
+    utfordring som blir liggende: en åpen avklaring, og en kandidat som ble
+    AVVIST av M-37 (`tilbakekalt` MED motpart). Ville vi satt den siste
+    `ventende`, mistet `verifiser_domenekontroll` gjerdet (018) som tvinger en
+    reapplikasjon gjennom en NY avklaring — og avvisningen var omgått med et
+    DNS-oppslag."""
+    from api import sesjon as sesjonmodul
+    cookie, csrf = _adminsesjon()
+    for status, motpart in (("avklaring_kreves", None),
+                            ("tilbakekalt", ANNEN_TENANT)):
+        vert = f"m37{secrets.token_hex(4)}.example"
+        _utsted(migrator, vert)
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE domenekontroll SET status=%s, konflikt_motpart=%s"
+            " WHERE tenant=%s AND hostname=%s",
+            (status, motpart, TENANT, vert))
+        migrator.commit()
+
+        r = klient.post("/v1/domener", json={"hostname": vert},
+                        headers={"X-Disponit-CSRF": csrf},
+                        cookies={sesjonmodul.C_SESJON: cookie})
+        assert (r.status_code, r.json()["feil"]) == (
+            409, "domene_challenge_avvist"), (status, r.text)
+        _sett_kontekst(migrator, TENANT)
+        etter = migrator.execute(
+            "SELECT status FROM domenekontroll"
+            " WHERE tenant=%s AND hostname=%s", (TENANT, vert)).fetchone()[0]
+        migrator.rollback()
+        assert etter == status, "avvist utstedelse flyttet raden likevel"
+
+
 def _admin():
     """migrator SET ROLE domains_admin (committed → overlever rollback)."""
     from db.pg import koble

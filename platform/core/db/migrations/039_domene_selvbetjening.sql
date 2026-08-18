@@ -186,16 +186,68 @@ GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT) TO disponit;
 -- (`disponit_domains_admin`) er en kryss-tenant ADMINISTRASJONSvei og
 -- setter ingen tenantkontekst — en port der ville brutt den, ikke sikret
 -- den.
+-- Innpakningen KØER OGSÅ utstedelsen (Codex P2). 016s `utsted_challenge`
+-- bytter hash og vindu men lar `status` stå — med vilje, for at en
+-- re-utstedelse ikke skal kunne flytte en rad. `ventende_domenechallenges`
+-- plukker bare `ventende`. Legger kunden til et hostname som står
+-- `tilbakekalt` eller `utlopt`, fikk hun altså 201 med en brukbar TXT-
+-- oppskrift som INGEN arbeider noensinne ville sett på — en selvbetjening
+-- som svarte «gjort» og aldri ble ferdig.
+--
+-- Her, i selvbetjeningens egen inngang, er det trygt å flytte den:
+-- HANDLINGEN «kunden ba om en ny utfordring for dette navnet» er nettopp
+-- det som gjør raden ventende igjen. 016-kroppen og ops-veien beholder sin
+-- «status uendret»-semantikk. Og at en tilbakekalt eier kan bevise kontroll
+-- på nytt er den DOKUMENTERTE veien (016 §3 B4 rad 2), ikke en omvei rundt
+-- tilbakekallet: beviset må stå i kundens egen DNS-sone, og
+-- `verifiser_domenekontroll` holder alle portene sine.
+--
+-- To tilstander flyttes IKKE, og da skal svaret være nei — ikke 201 på en
+-- utfordring som blir liggende:
+--   * `avklaring_kreves` — en M-37-sak er under behandling; bare
+--     `avgjor_domeneovertakelse` kan flytte raden.
+--   * `tilbakekalt` MED `konflikt_motpart` — en kandidat som ble AVVIST av
+--     M-37. Ville vi satt den `ventende`, mistet `verifiser_domenekontroll`
+--     nettopp det gjerdet (018) som tvinger en reapplikasjon gjennom en NY
+--     avklaring, og avvisningen var omgått med et DNS-oppslag.
 CREATE OR REPLACE FUNCTION utsted_challenge_selvbetjent(
     p_tenant TEXT, p_hostname TEXT, p_wildcard BOOLEAN,
     p_token_hash TEXT, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
+DECLARE v_host TEXT; v_status TEXT; v_motpart TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'utsted_challenge_selvbetjent');
-    PERFORM public.utsted_challenge(p_tenant, p_hostname, p_wildcard,
+    -- §0-gjerdet FØR raden slås opp: `utsted_challenge` normaliserer aldri,
+    -- den avviser, og to tekstlige former av samme navn skal ikke kunne bli
+    -- to ulike oppslag her heller.
+    v_host := public.krev_kanonisk_hostname(p_hostname);
+    -- FOR UPDATE: statusen vi beslutter på skal ikke kunne endres av et
+    -- samtidig `bekreft_domenechallenge`/`verifiser_domenekontroll` mellom
+    -- lesningen og køingen under. Bare RADlåsen tas, aldri hostname-
+    -- advisory-låsen: da finnes det ingen lås å ta i motsatt rekkefølge.
+    SELECT d.status, d.konflikt_motpart INTO v_status, v_motpart
+      FROM public.domenekontroll d
+     WHERE d.tenant = p_tenant AND d.hostname = v_host
+       FOR UPDATE;
+    IF v_status = 'avklaring_kreves'
+       OR (v_status = 'tilbakekalt' AND v_motpart IS NOT NULL) THEN
+        RAISE EXCEPTION 'utsted_challenge_selvbetjent: %/% avventer en '
+            'M-37-avgjørelse (%) — en ny utfordring kan ikke behandles',
+            p_tenant, v_host, v_status
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM public.utsted_challenge(p_tenant, v_host, p_wildcard,
                                     p_token_hash, p_aktor);
+    IF v_status IN ('tilbakekalt', 'utlopt') THEN
+        UPDATE public.domenekontroll SET status = 'ventende'
+         WHERE tenant = p_tenant AND hostname = v_host;
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
+            VALUES (p_tenant, v_host, 'ventende', v_status, 'ventende',
+                    'challenge_reutstedt_selvbetjening', p_aktor);
+    END IF;
 END $$;
 
 REVOKE ALL ON FUNCTION utsted_challenge_selvbetjent(TEXT, TEXT, BOOLEAN,
