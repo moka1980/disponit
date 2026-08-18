@@ -1039,7 +1039,8 @@ def mangler_artefaktevidens(oppdragstype: object, kropp: object) -> bool:
     typer uten artefakt (`reinnsending`) skal være helt urørt.
 
     Vurderes bare for suksess: en FEILET kvittering har per definisjon
-    ingen rapport, og skal fortsatt kunne meldes uten en."""
+    ingen rapport, og skal fortsatt kunne meldes uten en. Den ANDRE
+    halvdelen av den setningen står i `artefakt_uten_utforelse`."""
     t = (OPPDRAGSTYPER.get(oppdragstype)
          if isinstance(oppdragstype, str) else None)
     if t is None or not t.produserer_artefakt:
@@ -1047,3 +1048,36 @@ def mangler_artefaktevidens(oppdragstype: object, kropp: object) -> bool:
     if not isinstance(kropp, dict) or kropp.get("resultat") != "utfort":
         return False
     return kropp.get("artefakt_id") is None
+
+
+#: Feltene som BARE hører hjemme i en kvittering som melder `utfort`.
+_ARTEFAKTFELTER = ("artefakt_id", "klartekst_sha256")
+
+
+def artefakt_uten_utforelse(kropp: object) -> bool:
+    """True == kvitteringen bærer artefaktfelter uten å melde `utfort`
+    (Codex P2).
+
+    Speilbildet av `mangler_artefaktevidens`, og den andre halvdelen av
+    dens egen kontrakt: «en FEILET kvittering har per definisjon ingen
+    rapport». Bare den ene halvdelen var håndhevet. En autentisert modul
+    som sendte `resultat: "feilet"` sammen med en gyldig `artefakt_id` og
+    hash slapp forbi begge veier — endepunktets artefaktgren står under
+    `if art_id is not None`, ikke under resultatet — så rapporten ble
+    PROMOTERT til attestert evidens, og deretter ble oppdraget merket
+    feilet.
+
+    Det er en selvmotsigende tilstand å lagre: promotert evidens hvis
+    egen signerte kvittering sier at kjøringen ikke ble gjennomført. En
+    konsument som leser rapporten ser en fullført kontroll; en som leser
+    oppdraget ser en mislykket. Feilretningen skal være avvisning, ikke
+    et valg mellom to sannheter.
+
+    Regelen står på RESULTATET og ikke på typen, i motsetning til
+    `mangler_artefaktevidens`: typen avgjør om en SUKSESS må bære et
+    artefakt, men ingen type har en feilet kjøring med evidens. `None` er
+    ikke å bære feltet — en kvittering som eksplisitt skriver
+    `artefakt_id: null` melder nettopp at den ikke har noe."""
+    if not isinstance(kropp, dict) or kropp.get("resultat") == "utfort":
+        return False
+    return any(kropp.get(f) is not None for f in _ARTEFAKTFELTER)

@@ -15,6 +15,7 @@ import secrets
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -2256,6 +2257,54 @@ def test_suksess_uten_artefakt_er_ufullstendig_for_typen():
     assert any("produserer_artefakt" in f for f in eierlos.valider())
 
 
+def test_feilet_kvittering_kan_ikke_baere_evidens():
+    """Codex P2: den ANDRE halvdelen av «en feilet kjøring har ingen
+    rapport».
+
+    Bare den ene halvdelen var håndhevet. `mangler_artefaktevidens`
+    krever artefaktet av en SUKSESS, men ingenting nektet en kvittering
+    som meldte `feilet` å bære et. Endepunktets artefaktgren står under
+    `if art_id is not None`, ikke under resultatet, så den rapporten ble
+    PROMOTERT til attestert evidens — og deretter ble oppdraget merket
+    feilet. En konsument som leser rapporten ser en fullført kontroll; en
+    som leser oppdraget ser en mislykket.
+
+    Kontroll: la `artefakt_uten_utforelse` returnere False alltid, så
+    blir hver gren under rød.
+    """
+    import oppdragskontrakt as ok
+
+    hash_ = "a" * 64
+    # Evidens på en kvittering som IKKE melder `utfort` — uansett hvilket
+    # av feltene som bærer den, og uansett hvilket annet resultat.
+    for resultat in ("feilet", "avbrutt", None):
+        for ekstra in ({"artefakt_id": "a-1"},
+                       {"klartekst_sha256": hash_},
+                       {"artefakt_id": "a-1", "klartekst_sha256": hash_}):
+            assert ok.artefakt_uten_utforelse(
+                {"resultat": resultat, **ekstra}), (resultat, ekstra)
+
+    # En SUKSESS med evidens er hele poenget, og en feilet uten evidens
+    # skal fortsatt kunne meldes — det er den veien controlleren bruker
+    # på alle feilgrenene sine.
+    assert not ok.artefakt_uten_utforelse(
+        {"resultat": "utfort", "artefakt_id": "a-1",
+         "klartekst_sha256": hash_})
+    assert not ok.artefakt_uten_utforelse(
+        {"resultat": "feilet", "feilkode": "motor_avbrutt"})
+    # En eksplisitt `null` er ikke å BÆRE feltet: kvitteringen melder
+    # nettopp at den ikke har noe.
+    assert not ok.artefakt_uten_utforelse(
+        {"resultat": "feilet", "artefakt_id": None,
+         "klartekst_sha256": None})
+    assert not ok.artefakt_uten_utforelse("ikke dict")
+
+    # Regelen står på RESULTATET, ikke på typen: ingen type har en feilet
+    # kjøring med evidens, så den trenger ikke `oppdragstype` i det hele
+    # tatt — i motsetning til `mangler_artefaktevidens`.
+    assert "oppdragstype" not in ok.artefakt_uten_utforelse.__code__.co_varnames
+
+
 @pg
 def test_suksesskvittering_uten_artefakt_avslutter_ingenting(migrator, miljo,
                                                              monkeypatch):
@@ -2317,6 +2366,74 @@ def test_suksesskvittering_uten_artefakt_avslutter_ingenting(migrator, miljo,
             # krever artefakt — en suksess ville trengt en full
             # opplasting, og det er `test_controlleren_hele_veien` sitt
             # ærend.)
+            rk2 = c.post("/v1/oppdrag/kvittering",
+                         json=_signer_kvittering(
+                             {**basis, "resultat": "feilet",
+                              "feilkode": "motor_avbrutt"}),
+                         headers=hode)
+            assert rk2.status_code == 200, rk2.text
+            assert rk2.json()["status"] == "feilet", rk2.text
+    finally:
+        a.tjeneste.pool.lukk()
+
+
+@pg
+def test_feilkvittering_med_artefakt_promoterer_ingenting(migrator, miljo,
+                                                          monkeypatch):
+    """Codex P2, plattformsiden: evidens skal ikke kunne promoteres under
+    en kvittering som selv sier at kjøringen feilet.
+
+    Kvitteringen her er ekte signert, fersk og innenfor fristen. Den
+    melder `feilet` — og bærer samtidig et strukturelt gyldig
+    `artefakt_id` med hash. Før fiksen leste endepunktet artefaktfeltene
+    uavhengig av resultatet (`if art_id is not None`), gikk gjennom hele
+    promoteringsgrenen, og merket oppdraget feilet etterpå.
+
+    Vakten står blant strukturkontrollene, altså FØR kapabiliteten
+    forbrukes: en avvist kvittering skal ikke brenne controllerens ene
+    sjanse til å sende den riktige. Testen krever begge deler.
+
+    Kontroll: fjern `artefakt_uten_utforelse`-blokken i kvittering-
+    ingesten, så slipper kvitteringen forbi med noe annet enn 400.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_m37 import _signer_kvittering
+    from .test_modul_onboarding_http import _onboard_token
+
+    modul, rel, opp = _wcag_kjede(migrator, monkeypatch)
+    a = lag_app(DSN)
+    try:
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, modul, rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            claim = c.post("/v1/oppdrag/claim", json={}, headers=hode).json()
+            basis = {"oppdrag_id": claim["oppdrag_id"],
+                     "tenant": claim["tenant"],
+                     "kvittering_jti": claim["kvittering_jti"],
+                     "repair_operation_id": claim["repair_operation_id"],
+                     "owner_claim_id": claim["owner_claim_id"],
+                     "owner_generation": claim["owner_generation"],
+                     "ressurs_id": "kunde.example"}
+            rk = c.post("/v1/oppdrag/kvittering",
+                        json=_signer_kvittering(
+                            {**basis, "resultat": "feilet",
+                             "feilkode": "motor_avbrutt",
+                             "artefakt_id": str(uuid.uuid4()),
+                             "klartekst_sha256": "b" * 64}),
+                        headers=hode)
+            assert rk.status_code == 400, rk.text
+            assert rk.json()["feil"] == "request_feilformet", rk.text
+
+            _sett_kontekst(migrator, TENANT)
+            st, unntak_id = migrator.execute(
+                "SELECT status, unntak_id FROM oppdrag WHERE tenant=%s AND"
+                " id=%s", (TENANT, opp)).fetchone()
+            migrator.rollback()
+            assert st == "plukket", st
+
+            # Kapabiliteten overlevde: den ærlige feilkvitteringen — den
+            # UTEN evidens — går fortsatt igjennom på samme jti.
             rk2 = c.post("/v1/oppdrag/kvittering",
                          json=_signer_kvittering(
                              {**basis, "resultat": "feilet",

@@ -2271,6 +2271,27 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdragstype=oppdragstype)
         return _feilsvar("request_feilformet", rid)
 
+    # ... og den ANDRE halvdelen av den samme setningen (Codex P2): en
+    # FEILET kvittering har per definisjon ingen rapport. Bare den ene
+    # halvdelen var håndhevet. Artefaktgrenen nedenfor står under `if
+    # art_id is not None` og ikke under resultatet, så en autentisert
+    # modul som sendte `resultat: "feilet"` sammen med en gyldig
+    # `artefakt_id` og hash fikk rapporten PROMOTERT til attestert
+    # evidens — og deretter ble oppdraget merket feilet. Det er en
+    # selvmotsigende tilstand å lagre: en konsument som leser rapporten
+    # ser en fullført kontroll, en som leser oppdraget ser en mislykket.
+    #
+    # Står sammen med vakten over, altså før kapabiliteten forbrukes: en
+    # kvittering vi avviser skal ikke brenne utførerens ene sjanse til å
+    # sende den riktige.
+    if oppdragskontrakt.artefakt_uten_utforelse(kvittering):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="artefakt_uten_utforelse",
+                               oppdragstype=oppdragstype)
+        return _feilsvar("request_feilformet", rid)
+
     ny_hash = _resultathash(kvittering)
 
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
