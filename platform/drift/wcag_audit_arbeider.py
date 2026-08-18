@@ -44,10 +44,24 @@ class _Svar:
 
 class KlientHTTP:
     """Nøyaktig grensesnittet `kjor_en` bruker: `.post(sti, json=, headers=)`
-    -> objekt med status_code/json()/raise_for_status()."""
+    -> objekt med status_code/json()/raise_for_status().
 
-    def __init__(self, base: str):
+    FRISTEN ER AVLEDET, IKKE VALGT (Codex P2, runde 5). Den sto som en fast
+    `timeout=120` ved siden av controllerens retry: `lever` prøver fire
+    ganger, for opplastingen og igjen for kvitteringen, så en plattform som
+    tar imot forbindelsen og så tier kunne bruke over 480 sekunder på
+    opplastingen ALENE — mot de 300 `_skannefrist` reserverer til HELE
+    avslutningen. En skanning som ble ferdig nær fristen sin lot da
+    kvitteringskapabiliteten løpe ut mens arbeideren fortsatt ventet, og
+    oppdraget sto ufullført med kontrollen gjort og betalt.
+
+    `controller.http_frist_s()` er det samme budsjettet delt på kallene som
+    faktisk gjøres. Kalleren sender den inn — modulen eier regnestykket,
+    drift eier transporten."""
+
+    def __init__(self, base: str, frist_s: float):
         self.base = base.rstrip("/")
+        self.frist_s = frist_s
 
     def post(self, sti: str, json_kropp=None, headers=None, **kw):
         json_kropp = kw.pop("json", json_kropp)
@@ -57,7 +71,7 @@ class KlientHTTP:
             headers={"content-type": "application/json",
                      **(headers or {})})
         try:
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with urllib.request.urlopen(req, timeout=self.frist_s) as r:
                 return _Svar(r.status, r.read())
         except urllib.error.HTTPError as e:
             return _Svar(e.code, e.read())
@@ -95,7 +109,7 @@ def main() -> int:
                                   nk["nokkel_id"], nk["hemmelighet"])
 
     motor = Kommandomotor(shlex.split(motorkmd))
-    klient = KlientHTTP(api)
+    klient = KlientHTTP(api, controller.http_frist_s())
     rt = os.environ.get("RUNTIME_DIRECTORY", "").split(":")[0]
     hb = os.path.join(rt, "heartbeat") if rt else None
     poll_s = float(os.environ.get("DISPONIT_WCAG_POLL_S", "10"))

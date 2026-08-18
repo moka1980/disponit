@@ -4370,6 +4370,47 @@ def test_falsy_samling_fra_motoren_er_ikke_en_tom_liste():
             m.kjor({})
 
 
+def test_leveringens_verstefall_holder_seg_i_lukkevinduet():
+    """Codex P2, runde 5: retryen hadde ingen forbindelse til marginen.
+
+    `_skannefrist` reserverer `AVSLUTNINGSMARGIN_S` til alt som skjer etter
+    skanningen. Men arbeiderens HTTP-klient sto med en fast
+    `timeout=120` ved siden av: `lever` prøver `LEVERINGSFORSOK` ganger,
+    for opplastingen og igjen for kvitteringen, så en plattform som tar
+    imot forbindelsen og så tier kunne bruke over 480 sekunder på
+    opplastingen ALENE — mot de 300 marginen ga hele avslutningen. En
+    skanning som ble ferdig nær fristen sin lot da
+    kvitteringskapabiliteten løpe ut mens arbeideren fortsatt ventet.
+
+    Testen regner VERSTEFALLET av de samme konstantene koden bruker, og
+    binder det til marginen. Skrus `LEVERINGSFORSOK` opp eller marginen
+    ned uten at fristen følger med, blir denne rød."""
+    from modules.wcag_audit import controller
+    from modules.wcag_audit.motor import AVSLUTNINGSMARGIN_S
+
+    frist = controller.http_frist_s()
+    kall = controller.LEVERINGSFORSOK * controller.LEVERINGSRUNDER
+    pauser = controller.LEVERINGSRUNDER * sum(
+        controller.LEVERINGSPAUSE_S * f
+        for f in range(controller.LEVERINGSFORSOK))
+    verstefall = kall * frist + pauser + controller.AVSLUTNINGSARBEID_S
+    assert verstefall <= AVSLUTNINGSMARGIN_S, (verstefall, frist)
+    # ... og fristen skal være det marginen faktisk gir, ikke et vilkårlig
+    # mindre tall: hele budsjettet er til for å BRUKES når plattformen er
+    # treg, bare ikke til å overskrides.
+    assert verstefall == pytest.approx(AVSLUTNINGSMARGIN_S)
+    # Gulvet: en absurd liten margin gir en kort frist, ikke en negativ.
+    assert controller.http_frist_s(margin_s=1) == 1.0
+
+    # Og arbeideren BRUKER den — den faste 120-eren er borte.
+    from pathlib import Path
+    kilde = (Path(__file__).resolve().parents[2]
+             / "drift/wcag_audit_arbeider.py").read_text(encoding="utf-8")
+    assert "timeout=120" not in kilde
+    assert "timeout=self.frist_s" in kilde
+    assert "KlientHTTP(api, controller.http_frist_s())" in kilde
+
+
 def test_motorfristen_lar_det_bli_tid_igjen_til_opplastingen():
     """Codex P1: motorens standardfrist var 3600 s — HELE claimets tak.
 

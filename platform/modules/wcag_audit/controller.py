@@ -123,6 +123,42 @@ _STATUSSKIFTE = ("utfort", "feilet", "idempotent")
 LEVERINGSFORSOK = 4
 LEVERINGSPAUSE_S = 2.0
 
+#: `lever` kjøres TO ganger i en avslutning: opplastingen og kvitteringen.
+LEVERINGSRUNDER = 2
+#: Arbeidet MELLOM kallene — kanonisering av rapporten, skjemavalidering
+#: og signering av kvitteringen. Grovt, og med vilje romslig: det som
+#: trekkes fra her blir ikke brukt på en HTTP-frist.
+AVSLUTNINGSARBEID_S = 20.0
+
+
+def http_frist_s(margin_s: float = AVSLUTNINGSMARGIN_S) -> float:
+    """Den lengste ETT HTTP-kall kan få og likevel holde hele avslutningens
+    VERSTEFALL innenfor lukkevinduet (Codex P2, runde 5).
+
+    `_skannefrist` reserverer `AVSLUTNINGSMARGIN_S` til alt som skjer etter
+    skanningen, og motoren får resten. Men retryen over har ingen
+    tidsbudsjett-forbindelse til den marginen: en plattform som tar imot
+    forbindelsen og så tier, bruker HELE per-kall-fristen, og `lever`
+    prøver fire ganger — for opplastingen, og igjen for kvitteringen. Med
+    en 120-sekunders klientfrist er verstefallet da over 480 sekunder på
+    opplastingen ALENE, mot de 300 marginen ga hele avslutningen. En
+    skanning som ble ferdig nær fristen sin kunne dermed la
+    kvitteringskapabiliteten løpe ut mens den fortsatt ventet, og
+    oppdraget sto ufullført.
+
+    Fristen AVLEDES derfor av marginen i stedet for å stå ved siden av
+    den: åtte kall, pausene mellom dem, og arbeidet i mellom skal til
+    sammen få plass. Skrus `LEVERINGSFORSOK` opp, krymper hvert kall —
+    budsjettet er det samme.
+
+    Gulvet på ett sekund finnes for at en absurd liten margin skal gi en
+    kort frist og ikke en negativ: et kall som ikke kan tas er ikke en
+    innstramming."""
+    pauser = LEVERINGSRUNDER * sum(LEVERINGSPAUSE_S * f
+                                   for f in range(LEVERINGSFORSOK))
+    kall = LEVERINGSFORSOK * LEVERINGSRUNDER
+    return max(1.0, (margin_s - AVSLUTNINGSARBEID_S - pauser) / kall)
+
 
 def _sov(sekunder: float) -> None:
     """Pausen mellom kvitteringsforsøkene.
