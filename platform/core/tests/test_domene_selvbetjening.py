@@ -723,6 +723,93 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
 
 
 @pg
+def test_dreneringen_skiller_radfeil_fra_utrullingsfeil(migrator, monkeypatch):
+    """Codex P2: `except psycopg.Error` gjorde HVER databasefeil til en
+    radoppføring i `feilet`. En manglende grant, en funksjon som ikke er
+    utrullet eller en skjemafeil rammer ALLE rader — men den ble skrevet inn i
+    et resultat bare `drener_domenekonflikter` printer, mens M-37-løkkens
+    heartbeat sto `ok`: hver eneste overtakelse kunne bli stående uten sak
+    mens arbeideren så helt frisk ut.
+
+    Nå fanges bare RADENS egne feil — `tenantnokkel_mangler` (KEK-en er borte
+    for én tenant) og ugyldige radverdier, der andre tenanters konflikter
+    fortsatt skal bli stelt. Uventede DB-feil kastes videre og feller
+    prosessen, samme kontrakt som resten av M-37-hovedløkken.
+
+    MUTASJONEN SOM DREPER DENNE: sett `psycopg.Error` tilbake i tuppelen som
+    telles som radfeil.
+    """
+    from api import domeneovertakelse as dov
+    from api import kjerne
+
+    vert = f"drn{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))
+        a.commit()
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, vert)).fetchone()[0]
+        a.commit()
+    finally:
+        a.close()
+    assert svar == f"konflikt:{TENANT}", svar
+
+    # (1) Radens egen feil: telles, navngis, og de andre radene fortsetter.
+    monkeypatch.setattr(dov, "opprett_overtakelsessak", lambda *a, **k: (_ for
+                        _ in ()).throw(kjerne.Feilsvar("tenantnokkel_mangler",
+                                                       "KEK borte")))
+    rt = _arbeiderkonn()
+    try:
+        res = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
+        assert [f for f in res["feilet"] if f["hostname"] == vert] == [
+            {"tenant": ANNEN_TENANT, "hostname": vert,
+             "feiltype": "Feilsvar"}], res
+
+        # (2) Utrullingens feil: kastes videre, ALDRI talt som en rad.
+        monkeypatch.setattr(
+            dov, "opprett_overtakelsessak",
+            lambda *a, **k: (_ for _ in ()).throw(
+                psycopg.errors.InsufficientPrivilege("grant mangler")))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            dov.sikre_ventende_overtakelsessaker(rt, grense=500)
+        # Forbindelsen er rullet tilbake og brukbar: feilen er signalet, ikke
+        # en ødelagt tilkobling kalleren må gjette seg til.
+        assert rt.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        rt.close()
+
+
+def test_dreneringen_navngir_utrullingsfeil_og_feller_arbeideren(monkeypatch):
+    """Codex P2: M-37-innpakningen skal ikke svelge det heller.
+
+    `drener_domenekonflikter` printer `feilet` og går videre — så en uventet
+    DB-feil måtte kastes HELT ut for at heartbeat `ok` ikke skulle bli et
+    friskhetstegn for en arbeider som ikke lager en eneste sak. Journalraden
+    navngir årsaken før den kastes.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `raise` mot `return res` i
+    `drener_domenekonflikter`.
+    """
+    import json as jsonmodul
+
+    from api import domeneovertakelse as dov
+    from m37 import arbeider
+
+    monkeypatch.setattr(
+        dov, "sikre_ventende_overtakelsessaker",
+        lambda *a, **k: (_ for _ in ()).throw(
+            psycopg.errors.UndefinedFunction("ikke utrullet")))
+    linjer = []
+    monkeypatch.setattr("builtins.print",
+                        lambda s, **k: linjer.append(s))
+    with pytest.raises(psycopg.errors.UndefinedFunction):
+        arbeider.drener_domenekonflikter(None)
+    hendelser = [jsonmodul.loads(x)["hendelse"] for x in linjer]
+    assert hendelser == ["domenekonflikt_drenering_svikt"], linjer
+
+
+@pg
 def test_konfliktutvalget_roterer_forbi_dem_som_venter_paa_mennesker(migrator):
     """Codex P2: en konflikt står `avklaring_kreves` til et MENNESKE har
     avgjort saken — dager, ikke minutter — og dreneringen flytter den ikke.

@@ -300,9 +300,22 @@ def drener_domenekonflikter(conn: psycopg.Connection) -> dict:
     skal behandles av M-37 hører hjemme der M-37 alt har både nøkkelen og
     køen. `sikre_ventende_overtakelsessaker` er idempotent per (hostname,
     generasjon), så et kall som finner alt gjort koster ett oppslag.
+
+    En UVENTET databasefeil (manglende grant, funksjon som ikke er utrullet,
+    skjemafeil) fanges ikke opp her (Codex P2): den navngis i journalen og
+    kastes videre. Ellers ville en feil som rammer HVER rad blitt liggende som
+    en `feilet`-oppføring i en utskrift ingen alarmerer på, mens løkken skrev
+    heartbeat `ok` og hver eneste overtakelse ble stående uten sak.
     """
     from api.domeneovertakelse import sikre_ventende_overtakelsessaker
-    res = sikre_ventende_overtakelsessaker(conn)
+    try:
+        res = sikre_ventende_overtakelsessaker(conn)
+    except psycopg.OperationalError:
+        raise             # tapt forbindelse: hovedløkkens egen, kjente vei
+    except psycopg.Error as e:
+        print(json.dumps({"hendelse": "domenekonflikt_drenering_svikt",
+                          "feiltype": type(e).__name__}), flush=True)
+        raise
     # Bare når noe faktisk skjedde: en tom drenering er normaltilstanden og
     # skal ikke fylle journalen hvert minutt.
     if res["saker"] or res["feilet"]:

@@ -158,9 +158,16 @@ def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
     reparere, og derfor ingen kø som kan bli inkonsistent med tilstanden.
 
     Én rads feil stopper ikke de andre: mangler ÉN tenant sin KEK, skal ikke
-    alle andres konflikter bli ustelt. Feilen telles og navngis. Men en tapt
-    FORBINDELSE er ikke en radfeil — den kastes videre, slik at arbeiderens
-    hovedløkke kobler opp på nytt i stedet for å rapportere «100 rader feilet».
+    alle andres konflikter bli ustelt. Feilen telles og navngis. Men bare
+    RADENS egne feil (Codex P2) — de som er en egenskap ved denne tenanten og
+    ikke ved utrullingen: `tenantnokkel_mangler` (KEK-en er borte for én
+    tenant) og ugyldige radverdier. `psycopg.Error` i vid forstand fanget også
+    `InsufficientPrivilege`, `UndefinedTable` og skjemafeil — som rammer HVER
+    rad — og skrev dem inn i et resultat bare `drener_domenekonflikter`
+    printer, mens M-37-løkkens heartbeat sto `ok`: hver eneste overtakelse
+    kunne bli stående uten sak mens arbeideren så frisk ut. Uventede DB-feil
+    kastes derfor videre, som ellers i denne løkken, og feller prosessen slik
+    at systemd — ikke en stille journalrad — bærer signalet.
     """
     from db.pg import sett_kontekst
     rader = conn.execute(
@@ -183,13 +190,27 @@ def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
                 conn, tenant_ny=tenant, hostname=hostname,
                 tenant_tapt=motpart, generasjon=int(generasjon), aktor=aktor)
             conn.commit()
-        except psycopg.OperationalError:
-            raise
-        except (kjerne.Feilsvar, psycopg.Error, ValueError) as e:
+        except (kjerne.Feilsvar, ValueError) as e:
+            # RADENS egen feil: KEK-en mangler for NETTOPP denne tenanten
+            # (`tenantnokkel_mangler`), eller radens verdier er ubrukelige.
+            # Andre tenanters konflikter skal ikke bli ustelt av det.
             conn.rollback()
             res["feilet"].append({"tenant": tenant, "hostname": hostname,
                                   "feiltype": type(e).__name__})
             continue
+        except psycopg.Error:
+            # ALT ANNET fra basen er utrullingen, ikke raden (Codex P2):
+            # manglende grant, funksjon/tabell som ikke er utrullet, en tapt
+            # forbindelse. Talt som «rad nummer n feilet» ville det stått i et
+            # resultat ingen alarmerer på, mens M-37-løkkens heartbeat sto
+            # `ok` og HVER overtakelse ble stående uten sak. Kastet videre
+            # feller det arbeiderprosessen — samme kontrakt som resten av
+            # hovedløkken, der bare `OperationalError` gir en ny oppkobling.
+            try:
+                conn.rollback()
+            except psycopg.Error:
+                pass          # forbindelsen er borte; feilen bærer signalet
+            raise
         res["saker"].append({"tenant": tenant, "hostname": hostname,
                              "unntak_id": uid})
     return res
