@@ -261,6 +261,91 @@ table.chg caption{text-align:left}
   </div>
 </section>
 
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Design og tilgjengelighet</p>
+    <h2>WCAG 2.1 AA — plattformkrav, ikke etterarbeid</h2>
+    <p class="intro">Gjeninnført fra v5 (falt ut i v6). Universell utforming er både konkurransefortrinn og lovkrav: European Accessibility Act gjelder digitale tjenester i EU fra juni 2025, og norsk likestillings- og diskrimineringslov stiller krav til IKT rettet mot allmennheten. Hvert modulgrensesnitt må bestå disse kravene som del av akseptansekriteriene — automatisk testet i CI før merge.</p>
+    <table class="chg">
+      <thead><tr><th scope="col">Kriterium</th><th scope="col">Krav</th><th scope="col">Implementering i plattformen</th></tr></thead>
+      <tbody>
+        <tr><td>1.1.1</td><td>Alt-tekst på bilder</td><td>Alt-attributter obligatorisk; dekorative elementer alt="". M-4 genererer alt-tekst automatisk.</td></tr>
+        <tr><td>1.3.1</td><td>Korrekt semantikk</td><td>h1–h6 i rekkefølge, ekte lister, th med scope, landemerker.</td></tr>
+        <tr><td>1.4.1</td><td>Farge ikke eneste informasjonsbærer</td><td>Status vises alltid som farge + ikon/tekst (som fase-chipene i dette dokumentet).</td></tr>
+        <tr><td>1.4.3</td><td>Kontrast minst 4,5:1</td><td>Fargetokens valideres automatisk i CI; ingen tekst under grensen slipper gjennom.</td></tr>
+        <tr><td>1.4.4</td><td>200 % zoom uten tap</td><td>Alle størrelser i rem/em; responsivt ned til mobil.</td></tr>
+        <tr><td>2.1.1</td><td>Full tastaturnavigasjon</td><td>Logisk tab-rekkefølge, skip-lenke, ingen tastaturfeller.</td></tr>
+        <tr><td>2.4.7</td><td>Synlig fokus</td><td>3px solid fokusring med offset på alle interaktive elementer.</td></tr>
+        <tr><td>3.3.1</td><td>Feilidentifisering</td><td>Feilmeldinger sier hva som gikk galt og hvordan det rettes — samme prinsipp som unntakskøen.</td></tr>
+        <tr><td>3.3.2</td><td>Ledetekst på alle felt</td><td>label med for-attributt; aldri placeholder som eneste ledetekst.</td></tr>
+        <tr><td>4.1.2</td><td>Navn, rolle, verdi</td><td>ARIA der semantisk HTML ikke rekker; aria-live for statusoppdateringer.</td></tr>
+      </tbody>
+    </table>
+    <div class="plat" style="margin-top:.9rem">
+      <div><b>Minimalistisk</b><p>Kun nødvendig innhold. Maks 3 handlingsvalg per skjermbilde. Ingen popups uten kritisk behov, ingen autospillende media.</p></div>
+      <div><b>To klikk</b><p>All hovedfunksjonalitet innen to klikk. Konsistent navigasjon, tekstbaserte knapper, forutsigbar plassering.</p></div>
+      <div><b>Testet, ikke lovet</b><p>Automatisk tilgjengelighetstest (axe-core) kjøres i CI på hver PR — WCAG-brudd blokkerer merge, som enhver annen feilende test.</p></div>
+      <div><b>Reduced motion</b><p>All animasjon respekterer prefers-reduced-motion. Bevegelse er aldri eneste signal.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Kunde null</p>
+    <h2>Plattformen driver sin egen bedrift</h2>
+    <p class="intro">Modulene automatiserer ikke bare kundenes bedrifter — de driver selskapet bak plattformen som «kunde null» på nøyaktig samme motor og samme policyer. Normaldriften av egen bedrift krever null manuelt arbeid. Formulert presist, med samme standard som kundeløftet: <b>helautomatisk normaldrift — teamet er bedriftens unntakshåndtering.</b></p>
+    <table class="chg">
+      <thead><tr><th scope="col">Funksjon</th><th scope="col">Automatiseres av</th><th scope="col">Normaldrift</th></tr></thead>
+      <tbody>
+        <tr><td>Onboarding</td><td>M-18 (kunde-onboarding) + M-41 (abonnement/betaling via Stripe) + M-12 (tilgang)</td><td>0 min per ny kunde — registrering, betaling, workspace og oppsett skjer maskinelt.</td></tr>
+        <tr><td>Support</td><td>M-17 (kundeservice) + M-9 (kunnskapsbase) + M-11 (selvtest oppdager feil før kunden gjør det)</td><td>Repeterende henvendelser løses automatisk; resten klassifiseres i unntakskø.</td></tr>
+        <tr><td>Drift</td><td>M-10 (backup/restore) + M-11 (integrasjoner) + M-38 (kapasitet/skalering) + M-29 (sikkerhet) + M-35 (kontinuitet)</td><td>Selvhelbredende innen kjente feilmønstre; kontrollert degradering ved overlast.</td></tr>
+        <tr><td>Fakturering og økonomi</td><td>M-41 (fornyelse/purring) + M-13 (avstemming) + M-23 (fordring) + M-42 (svindelvakt)</td><td>Hver krone sporbar fra betalingshendelse til hovedbok, uten manuelle steg.</td></tr>
+        <tr><td>Markedsføring</td><td>M-20 (nettside/innhold) + M-44 (kampanje, A/B, konkurrentmonitor)</td><td>Innhold, utsendelse og optimalisering kjører etter egen policy og samtykkeregler.</td></tr>
+        <tr><td>Kvalitet og overvåking</td><td>M-16 (KPI-dashboards) + M-31 (agentevaluering) + M-2 (revisjonslogg)</td><td>Teamets innsyn skjer via automatiske dashboards — punkt 3 i driftsmodellen.</td></tr>
+        <tr><td>Unntak</td><td>M-37 samler alt som stoppes av policy — fra kundene og fra egen drift</td><td>Dette er teamets ene løpende oppgave. KPI: unntak per 100 kunder per uke skal synke for hver modulversjon.</td></tr>
+      </tbody>
+    </table>
+    <div class="notice" style="border-left-color:var(--guard);margin-top:.9rem">
+      <b style="color:var(--guard)">Det som aldri blir null:</b> unntakskøen, policyendringer i tillitsankeret (M-1, M-2, M-37), produktutvikling — og det juridiske ansvaret et selskap må bære (daglig leder og styre, regnskaps- og skatteansvar, databehandleravtaler, bank/KYC). Systemet er selve bedriften i normaldrift; mennesker bærer ansvaret og håndterer det policyen stopper. Det er samme ærlige formulering som kundeløftet — og den gjør påstanden troverdig overfor seriøse kjøpere og investorer.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Omfang</p>
+    <h2>Katalogen fryses på 55</h2>
+    <div class="notice">
+      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 55 fordi idelisten ble gjennomgått under samme krav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Utrulling</p>
+    <h2>Ingen endring går rett i produksjon — noensinne</h2>
+    <p class="intro">Plattformen oppdaterer aldri seg selv direkte. Hver endring — kode, policy-skjema, bransjemal eller modellversjon — går gjennom samme obligatoriske løype. Løypen er selv automatisert (ingen manuell deploy), men hvert steg er en port som må være grønn før neste starter. Produksjon og testmiljø er fysisk adskilt: testmiljøet har aldri tilgang til kundedata, og produksjon tar aldri imot uverifiserte artefakter.</p>
+    <table class="chg">
+      <thead><tr><th scope="col">Steg</th><th scope="col">Port</th><th scope="col">Blokkerer hvis</th></tr></thead>
+      <tbody>
+        <tr><td>1 · PR</td><td>Én modul per pull request. Draft (Claude) → spesifikasjonsreview (ChatGPT) → implementering (Claude Code) → kodereview (Codex).</td><td>PR blander moduler, mangler tester eller mangler review-dokumentasjon.</td></tr>
+        <tr><td>2 · CI</td><td>Enhetstester, én test per akseptansekriterium, negative policytester (bevis på at handling utenfor policy stoppes), WCAG-test (axe-core), sikkerhets- og secrets-skanning.</td><td>Én eneste test feiler — inkludert tilgjengelighet og negative tester.</td></tr>
+        <tr><td>3 · Testmiljø</td><td>Full plattform kjøres i isolert miljø med syntetiske data. Databasemigrasjoner testes med rollback-prøve. Integrasjoner testes mot sandkasser (Stripe test-mode, bank-sandbox), aldri mot ekte kundesystemer.</td><td>Migrasjon kan ikke rulles tilbake, eller ende-til-ende-flyt feiler.</td></tr>
+        <tr><td>4 · Modell- og agentevaluering (M-31)</td><td>Nye modellversjoner og prompts kjøres mot fasit- og regresjonssett. Kvalitet må være lik eller bedre enn versjonen i produksjon.</td><td>Kvalitetsscore synker, eller nye sikkerhetsregler brytes i evalueringen.</td></tr>
+        <tr><td>5 · Kanarikjøring</td><td>Ny versjon rulles ut til en liten andel tenants først (f.eks. 5 %, med kunde null alltid først). M-16 og M-37 overvåker feilrate, unntaksvolum og responstid mot baseline.</td><td>Avvik over terskel → automatisk stopp av utrulling.</td></tr>
+        <tr><td>6 · Full utrulling</td><td>Gradvis til 100 % med blå/grønn-bytte: forrige versjon står klar hele tiden.</td><td>—</td></tr>
+        <tr><td>7 · Automatisk rollback</td><td>Ved avvik etter utrulling byttes trafikken tilbake til forrige versjon maskinelt, uten menneskelig inngripen. Hendelsen logges i M-2 og klassifiseres i M-37.</td><td>Rollback er ikke mulig → endringen skulle aldri passert steg 3.</td></tr>
+      </tbody>
+    </table>
+    <div class="notice" style="margin-top:.9rem">
+      <b>Samme regel for policy og maler som for kode:</b> en endring i policy-skjemaet eller en bransjemal er også en «deploy» — den valideres mot skjemaet, kjøres mot syntetiske hendelser i testmiljø og versjoneres med rollback, før den aktiveres for kunder. Akseptansekravet i M-1 («versjonerer regler og ruller automatisk tilbake ugyldige endringer») håndheves dermed av samme løype.
+    </div>
+  </div>
+</section>
+
 <div class="filterbar">
   <div class="wrap row">
     <label class="fl" for="q">Søk</label><input id="q" type="search" placeholder="navn, område eller innhold">

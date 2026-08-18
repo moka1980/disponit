@@ -81,7 +81,7 @@ Oppgraderingsutløser: **første modul som trenger 7B-modell i staging-test
 | **Staging** | one.com Cloud Server S (Ubuntu) — oppgraderes S → L → XL etter behov | «Ekte test på server»: hver modul må bestå sjekklisten sin her 100 % før neste modul startes | Syntetisk + sandkasser (Stripe test-mode, bank-sandbox). ALDRI kundedata |
 | **Produksjon** | Egen VPS (settes opp når fase 1 nærmer seg pilot — kan også være one.com, men alltid separat maskin) | Kunder + kunde null | Ekte, kryptert, tenant-isolert |
 
-Produksjon oppdateres kun via utrullingsløypen i v7.2 (CI → staging →
+Produksjon oppdateres kun via utrullingsløypen i v8 (CI → staging →
 evaluering → kanari → gradvis → automatisk rollback). Ingen SSH-endringer
 rett i produksjon — aldri.
 

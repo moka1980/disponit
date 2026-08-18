@@ -1,6 +1,6 @@
 """M-2 Revisjonslogg og evidens — loggformat v0.1.
 
-Krav fra M-1-aksept i prototype v7.2:
+Krav fra M-1-aksept i prototypen (ordlyden er uendret fra v7.2 til v8):
   «100 % av skrivehandlinger har policy-ID, aktør, input-hash og
    begrunnelse; blokkerte handlinger utføres aldri.»
 
