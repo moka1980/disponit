@@ -4,6 +4,7 @@ playwright-import; browserkjøringen selv måles i staging-runden, ikke her).
 import importlib.util
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 
 ROT = Path(__file__).resolve().parents[3]
@@ -167,6 +168,43 @@ def test_lenkenormalisering_er_lukket():
     assert n(o, f"{o}/index.html", "/sok?q=1") == f"{o}/sok?q=1"
     assert n(o, f"{o}/p", "/p?id=1") != n(o, f"{o}/p", "/p?id=2")
     assert n(o, f"{o}/index.html", "/sok?q=1#treff") == f"{o}/sok?q=1"
+
+
+def test_origin_er_kanonisk_i_baade_vakten_og_lenkefilteret():
+    """Rå strengsammenligning av `scheme://netloc` er ikke origin-regelen
+    (Codex P2): den underforståtte porten, store/små bokstaver og
+    brukerinfo hører ikke med, og forskjellen slo BEGGE veier — legitime
+    sider falt ut av crawlen, og legitime forespørsler ble blokkert og talt
+    som dekningsbegrensning."""
+    o, u = kjor._origin, urllib.parse.urlsplit
+    assert o(u("https://example.com/x")) == "https://example.com"
+    assert o(u("https://example.com:443/x")) == "https://example.com"
+    assert o(u("https://EXAMPLE.com/x")) == "https://example.com"
+    assert o(u("https://bruker:pw@example.com/x")) == "https://example.com"
+    assert o(u("http://example.com:80/x")) == "http://example.com"
+    # Ikke-standard port BLIR stående — den er en del av origin.
+    assert o(u("https://example.com:8443/x")) == "https://example.com:8443"
+    assert o(u("http://127.0.0.1:8093/x")) == "http://127.0.0.1:8093"
+    # ws/wss måles som http/https, med samme standardporter (RFC 6455 §3).
+    assert o(u("wss://example.com/s")) == "https://example.com"
+    assert o(u("wss://example.com:443/s")) == "https://example.com"
+    assert o(u("ws://example.com:80/s")) == "http://example.com"
+    assert o(u("wss://example.com:9001/s")) == "https://example.com:9001"
+    # IPv6-literalen beholder klammene, ellers er den ikke en origin.
+    assert o(u("https://[2001:db8::1]:8443/x")) == "https://[2001:db8::1]:8443"
+    # Uleselig: "" matcher aldri målets origin, som alltid har en vert.
+    assert o(u("https://example.com:99999/x")) == ""
+    assert o(u("mailto:x@y")) == ""
+
+    # Og porten der funnet ble målt: lenkefilteret.
+    n = kjor._normaliser_lenke
+    assert n("https://example.com", "https://example.com/",
+             "https://example.com:443/produkt") == \
+        "https://example.com/produkt"
+    assert n("https://example.com", "https://example.com/",
+             "https://EXAMPLE.com/produkt") == "https://example.com/produkt"
+    assert n("https://example.com", "https://example.com/",
+             "https://example.com:8443/produkt") is None
 
 
 def test_crawlen_rapporterer_og_loeser_mot_den_landede_url_en():

@@ -278,6 +278,51 @@ def _tillatt(sti: str, regler: list) -> bool:
     return beste_tillat
 
 
+#: Standardporten per skjema — den som ER underforstått, og derfor aldri
+#: skrives i et origin. `ws`/`wss` står her fordi websocket-vakten måler
+#: samme origin som HTTP-vakten (RFC 6455 §3: en ws-URL har samme origin
+#: som http-URL-en med samme vert og port).
+STANDARDPORT = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+HTTP_SKJEMA = {"ws": "http", "wss": "https"}
+
+
+def _origin(p) -> str:
+    """Origin på KANONISK form — eller "" hvis URL-en ikke har noen.
+
+    Egressvakten og lenkefilteret sammenlignet `f"{scheme}://{netloc}"` som
+    RÅ STRENG, og netloc bærer tre ting som ikke skal telle med i et origin
+    (Codex P2):
+
+      * DEN UNDERFORSTÅTTE PORTEN. For målet `https://example.com` er
+        lenken `https://example.com:443/produkt` samme origin etter
+        nettleserens egne regler, men strengene er ulike. Lenken ble derfor
+        forkastet FØR den nådde `oppdaget` — altså falt sider ut av
+        crawlen samtidig som rapporten sa at ingenting var avkortet.
+        Motsatt vei, i `vakt`, ble en helt legitim forespørsel til målets
+        egen origin BLOKKERT og talt som en dekningsbegrensning.
+      * STORE/SMÅ BOKSTAVER. Vertsnavn er case-insensitive.
+      * BRUKERINFO (`user:pass@`), som ikke er en del av origin i det hele
+        tatt.
+
+    Et ugyldig portnummer gir "" — og "" matcher aldri målets origin, som
+    alltid har en vert. En URL vi ikke kan lese er ikke en URL vi slipper
+    gjennom."""
+    skjema = (p.scheme or "").lower()
+    skjema = HTTP_SKJEMA.get(skjema, skjema)
+    vert = (p.hostname or "").lower()
+    if not vert:
+        return ""
+    try:
+        port = p.port
+    except ValueError:
+        return ""
+    if ":" in vert:             # IPv6-literal — klammene hører til origin
+        vert = f"[{vert}]"
+    if port is None or port == STANDARDPORT.get(skjema):
+        return f"{skjema}://{vert}"
+    return f"{skjema}://{vert}:{port}"
+
+
 def _normaliser_lenke(base_origin: str, side_url: str, href: str
                       ) -> str | None:
     """Absolutt URL på målets origin, uten fragment — ellers None.
@@ -303,7 +348,7 @@ def _normaliser_lenke(base_origin: str, side_url: str, href: str
         p = urllib.parse.urlsplit(u)
     except ValueError:
         return None
-    if f"{p.scheme}://{p.netloc}" != base_origin:
+    if _origin(p) != base_origin:
         return None
     return (f"{base_origin}{p.path or '/'}"
             + (f"?{p.query}" if p.query else ""))
@@ -317,7 +362,12 @@ def main() -> int:
         payload.get("omfang") == "nettsted") else 1
 
     p = urllib.parse.urlsplit(mal_url)
-    origin = f"{p.scheme}://{p.netloc}"
+    # ÉN kanonisk origin, brukt av lenkefilteret OG av begge egressvaktene —
+    # se `_origin`. Bygges den to steder, kan de to drive fra hverandre, og
+    # da er «samme origin» to forskjellige spørsmål.
+    origin = _origin(p)
+    if not origin:
+        raise SystemExit(f"mal_url har ingen lesbar origin: {mal_url!r}")
     axe_js = _axe_kilde()
     # MOTOR_TLS_USIKKER er STAGING-FIXTURENS bryter, aldri driftens: det
     # syntetiske testnettstedet kjører på loopback med selvsignert
@@ -385,7 +435,7 @@ def main() -> int:
 
         def vakt(route):
             u = urllib.parse.urlsplit(route.request.url)
-            if f"{u.scheme}://{u.netloc}" == origin:
+            if _origin(u) == origin:
                 route.continue_()
                 return
             tell(u.hostname or u.netloc,
@@ -400,8 +450,9 @@ def main() -> int:
         # også lukkes her, og blokkeringen TELLES som alt annet blokkert.
         def vakt_ws(ws):
             u = urllib.parse.urlsplit(ws.url)
-            skjema = {"ws": "http", "wss": "https"}.get(u.scheme, u.scheme)
-            if f"{skjema}://{u.netloc}" == origin:
+            # `_origin` kjenner ws/wss og deres standardporter, så en
+            # websocket måles mot NØYAKTIG samme origin som HTTP-vakten.
+            if _origin(u) == origin:
                 ws.connect_to_server()
                 return
             tell(u.hostname or u.netloc, "annet")
