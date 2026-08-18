@@ -152,6 +152,65 @@ def _ren_url(raa: str, autorisert_vert: str) -> str:
     return _delt_url(raa, autorisert_vert)[0]
 
 
+def _uten_punktsegmenter(sti: str) -> str:
+    """Stien slik NETTLESEREN leser den: `.` og `..` løst opp (Codex P2).
+
+    `urlsplit` er en ren PARSER — den deler strengen og gir stien tilbake
+    tegn for tegn. Nettleseren gjør noe annet: WHATWG-URL-parseren løser
+    punktsegmentene mens den leser stien, så `https://kunde.example/a/../
+    side` ER `https://kunde.example/side` for Chromium, og det er den
+    formen motoren rapporterer tilbake.
+
+    Kopierte vi `d.path` rått, sammenlignet `enkeltside`-porten
+    bestillingens `/a/../side` med motorens `/side`, fant dem ulike, og
+    lot oppdraget feile ETTER at den eksterne kontrollen var gjort — samme
+    dyre feilretning som `:443` bar: trafikken mot kundens nettsted er
+    allerede brukt, og siden var den bestilte. To skrivemåter av én sti er
+    ikke to sider.
+
+    Reglene er WHATWG sine, ikke RFC 3986 sine, fordi det er nettleseren
+    som avgjør hva som faktisk ble besøkt:
+
+      * `%2e` og `%2E` teller som punktum (`/a/%2e%2e/side` er `/side`).
+        Gjorde de ikke det, kunne en prosentkodet skrivemåte av nøyaktig
+        samme navigasjon skli forbi som «en annen side».
+      * `..` under roten går ikke i minus — den blir stående på roten.
+        RFC-en etterlater `/..`-rester; nettleseren gjør ikke det, og
+        rapporten skal navngi siden slik den ble besøkt.
+      * ET AVSLUTTENDE punktsegment gir en avsluttende `/`: `/a/..` er
+        `/`, og `/a/.` er `/a/`. Det er ikke pynt — `/a` og `/a/` kan
+        være to forskjellige ressurser, og nettleseren ber om den siste.
+
+    Normaliseringen står i `_delt_url`, altså på BEGGE sider av
+    sammenligningen (bestilling og motorutdata), av samme grunn som
+    `_bestilt_url` låner nettopp denne funksjonen: to normaliseringer
+    ville vært to svar.
+
+    Resten av stien røres IKKE — prosentkoding utenfor punktsegmentene,
+    store bokstaver og tomme segmenter står som de står. En normalisering
+    som gjetter feil vei gjør to ULIKE sider like, og feilretningen her
+    skal være avvisning, ikke stille sammenslåing (se `_delt_url` om
+    query-en).
+    """
+    #: `%2e`/`%2E` er punktum for WHATWG-parseren, derfor `.lower()`.
+    segmenter = sti.split("/")[1:]
+    ut: list[str] = []
+    for i, segment in enumerate(segmenter):
+        lav = segment.lower()
+        siste = i == len(segmenter) - 1
+        if lav in ("..", ".%2e", "%2e.", "%2e%2e"):
+            if ut:
+                ut.pop()
+            if siste:
+                ut.append("")
+        elif lav in (".", "%2e"):
+            if siste:
+                ut.append("")
+        else:
+            ut.append(segment)
+    return "/" + "/".join(ut)
+
+
 def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     """-> (rapport_url, identitets_url) for samme rå URL.
 
@@ -207,7 +266,10 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     # Skjemaet er alltid https her (vakten over), så 443 er den eneste
     # standardporten som kan dukke opp.
     nettsted = autorisert_vert + (f":{port}" if port and port != 443 else "")
-    sti = d.path or "/"
+    # PUNKTSEGMENTER ER IKKE EN DEL AV IDENTITETEN (Codex P2). `d.path`
+    # er råstrengens sti; nettleseren løser `.`/`..` mens den navigerer og
+    # rapporterer den løste formen tilbake — se `_uten_punktsegmenter`.
+    sti = _uten_punktsegmenter(d.path or "/")
     return (urlunsplit(("https", nettsted, sti, "", "")),
             urlunsplit(("https", nettsted, sti, d.query, "")))
 

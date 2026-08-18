@@ -1600,6 +1600,65 @@ def test_standardporten_er_ikke_en_del_av_sideidentiteten():
         _kjor("https://kunde.example:8443/side", "https://kunde.example/side")
 
 
+def test_punktsegmenter_er_ikke_en_annen_side():
+    """Codex P2: `/a/../side` og `/side` er ÉN side for nettleseren.
+
+    `urlsplit` er en parser og gir stien tegn for tegn; WHATWG-parseren i
+    Chromium løser punktsegmentene mens den navigerer og rapporterer den
+    løste formen. Bestilte noen `/a/../side`, sammenlignet
+    `enkeltside`-porten derfor bestillingens uløste sti med motorens
+    løste, fant dem ulike, og lot oppdraget feile ETTER at den eksterne
+    kontrollen var gjort — samme dyre retning som `:443` bar.
+
+    Kontroll: la `_delt_url` kopiere `d.path` rått igjen, så blir alle
+    tilfellene under røde.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+
+    def _kjor(bestilt, levert):
+        return bygg(_motorresultat(sider=({"url": levert, "status": "ok"},)),
+                    payload=_payload(mal_url=bestilt), kontekst=_kontekst())
+
+    # Samme side, uansett hvilken av de to som bærer punktsegmentene —
+    # også prosentkodet (`%2e`/`%2E` er punktum for nettleseren), og også
+    # når `..` peker over roten.
+    for bestilt, levert in (
+            ("https://kunde.example/a/../side", "https://kunde.example/side"),
+            ("https://kunde.example/side", "https://kunde.example/a/../side"),
+            ("https://kunde.example/./side", "https://kunde.example/side"),
+            ("https://kunde.example/a/%2e%2e/side",
+             "https://kunde.example/side"),
+            ("https://kunde.example/a/%2E%2E/side",
+             "https://kunde.example/side"),
+            ("https://kunde.example/../side", "https://kunde.example/side"),
+            ("https://kunde.example/a/b/../../side",
+             "https://kunde.example/side"),
+            ("https://kunde.example/a/../side?id=1",
+             "https://kunde.example/side?id=1")):
+        r = _kjor(bestilt, levert)
+        # ... og rapporten navngir siden på ÉN måte, den nettleseren
+        # faktisk besøkte.
+        assert r["sider_kontrollert"][0]["url"] == (
+            "https://kunde.example/side"), (bestilt, levert)
+
+    # ET AVSLUTTENDE punktsegment gir en avsluttende `/`: nettleseren ber
+    # om katalogen, og `/a` og `/a/` kan være to forskjellige ressurser.
+    for bestilt, ventet in (("https://kunde.example/a/b/..",
+                             "https://kunde.example/a/"),
+                            ("https://kunde.example/a/.",
+                             "https://kunde.example/a/"),
+                            ("https://kunde.example/..",
+                             "https://kunde.example/")):
+        r = _kjor(bestilt, ventet)
+        assert r["sider_kontrollert"][0]["url"] == ventet, bestilt
+
+    # ... og en ekte annen sti er fortsatt en annen side. Oppløsningen
+    # slår ikke sammen det serveren skiller.
+    with pytest.raises(Motorfeil):
+        _kjor("https://kunde.example/a/../side", "https://kunde.example/a/side")
+
+
 def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
     """Codex P1: en `status` vi ikke kan lese ble skrevet om til `feilet`.
 
