@@ -94,6 +94,41 @@ def test_robots_normaliserer_prosentkodede_oktetter():
     assert kjor._tillatt("/privat/x.pdfx", anker) is True
 
 
+def test_robots_koder_raa_utf8_for_sammenligning():
+    """Codex P1, runde 9: rå ikke-ASCII ble aldri brakt til samme form.
+
+    Normaliseringen rørte bare oktetter som ALLEREDE var prosentkodet, så
+    `Disallow: /privat/æ` sto urørt i regelen mens nettleseren leverer
+    den samme ressursen som `/privat/%C3%A6`. Regelen matchet ingenting,
+    og en eksplisitt forbudt side ble crawlet."""
+    raa = kjor._parse_robots("User-agent: *\nDisallow: /privat/æ\n")
+    assert kjor._tillatt("/privat/%C3%A6", raa) is False
+    assert kjor._tillatt("/privat/%c3%a6", raa) is False   # hekser
+    assert kjor._tillatt("/privat/æ", raa) is False        # rå mot rå
+    assert kjor._tillatt("/privat/e", raa) is True
+
+    # Symmetrisk: den kodede REGELEN må treffe den rå stien like godt.
+    kodet = kjor._parse_robots("User-agent: *\nDisallow: /privat/%C3%A6\n")
+    assert kjor._tillatt("/privat/æ", kodet) is False
+    assert kjor._tillatt("/privat/%C3%A6", kodet) is False
+
+    # Formen selv: hvert tegn over 0x7F blir sine UTF-8-oktetter, i store
+    # hekser — og ASCII røres ikke, så metategnene overlever.
+    assert kjor._robotsform("/café") == "/caf%C3%A9"
+    assert kjor._robotsform("/日本") == "/%E6%97%A5%E6%9C%AC"
+    assert kjor._robotsform("/café") == kjor._robotsform("/caf%c3%a9")
+    assert kjor._robotsform("/a*b$") == "/a*b$"
+
+    # Metategnene virker fortsatt i et mønster med rå UTF-8.
+    anker = kjor._parse_robots("User-agent: *\nDisallow: /æ/*.pdf$\n")
+    assert kjor._tillatt("/%C3%A6/rapport.pdf", anker) is False
+    assert kjor._tillatt("/%C3%A6/rapport.pdfx", anker) is True
+
+    # Og stier med query — den formen `_robotsti` bygger — går samme vei.
+    q = kjor._parse_robots("User-agent: *\nDisallow: /søk?\n")
+    assert kjor._tillatt("/s%C3%B8k?q=1", q) is False
+
+
 def test_robots_gruppe_med_flere_user_agent_linjer():
     """`*` i en gruppe gjelder gruppa — også når den ikke står sist."""
     for tekst in ("User-agent: *\nUser-agent: googlebot\nDisallow: /privat/\n",
@@ -207,10 +242,10 @@ def test_pinnen_velger_en_adresse_verten_kan_naa(monkeypatch):
 def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     kall = {}
 
-    def hent(status, tekst=""):
+    def hent(status, tekst="", plassering=""):
         def _h(url, pin_ip, tls_kontekst=None):
             kall["pin"] = pin_ip
-            return status, tekst
+            return status, tekst, plassering
         return _h
 
     monkeypatch.setattr(kjor, "_hent", hent(200, "User-agent: *\n"
@@ -221,6 +256,7 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
     monkeypatch.setattr(kjor, "_hent", hent(404))
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
+    # 5xx, og en omdirigering UTEN `Location`, er fortsatt ulest robots.
     for status in (301, 302, 503, 500):
         monkeypatch.setattr(kjor, "_hent", hent(status))
         assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), \
@@ -230,6 +266,86 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
         raise OSError("nede")
     monkeypatch.setattr(kjor, "_hent", sprekk)
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+
+def test_robots_folger_begrenset_omdirigering_paa_egen_origin(monkeypatch):
+    """Codex P2, runde 9: en kanonisert robots-sti er ikke en ulest robots.
+
+    Et helt vanlig 301 til målets egen `/robots.txt`-kanonisering ble
+    lest som «ikke lest», og hele nettstedsoppdraget falt til én side selv
+    om policyen lå ett hopp unna. RFC 9309 §2.3.1.2 ber oss følge minst
+    fem påfølgende hopp. Fail-closed står igjen der kjeden er utrygg:
+    ut av origin, uten `Location`, eller lengre enn taket."""
+    POLICY = "User-agent: *\nDisallow: /privat/\n"
+
+    def kjede(kart):
+        besokt = []
+
+        def _h(url, pin_ip, tls_kontekst=None):
+            besokt.append((url, pin_ip))
+            return kart[url]
+        _h.besokt = besokt
+        return _h
+
+    # Ett hopp til målets egen kanoniske sti.
+    h = kjede({"https://m.example/robots.txt": (301, "", "/policy/robots.txt"),
+               "https://m.example/policy/robots.txt": (200, POLICY, "")})
+    monkeypatch.setattr(kjor, "_hent", h)
+    regler, lov = kjor._robots("https://m.example", "93.184.216.34")
+    assert lov is True and [m for _, m, _ in regler] == ["/privat/"]
+    # Pinnen bæres gjennom HELE kjeden — hvert hopp er samme godkjente
+    # adresse, ellers var omdirigeringen en vei rundt adressekontrollen.
+    assert {pin for _, pin in h.besokt} == {"93.184.216.34"}
+
+    # Absolutt Location på samme origin, og den underforståtte porten,
+    # er samme origin — `_origin` kanoniserer begge sider.
+    for mal in ("https://m.example/b.txt", "https://m.example:443/b.txt"):
+        h = kjede({"https://m.example/robots.txt": (302, "", mal),
+                   mal: (200, POLICY, "")})
+        monkeypatch.setattr(kjor, "_hent", h)
+        assert kjor._robots("https://m.example", "1.2.3.4")[1] is True, mal
+
+    # Nøyaktig på taket: fem påfølgende hopp følges.
+    kart, forrige = {}, "https://m.example/robots.txt"
+    for i in range(kjor.ROBOTS_HOPP):
+        neste = f"https://m.example/h{i}.txt"
+        kart[forrige] = (301, "", neste)
+        forrige = neste
+    kart[forrige] = (200, POLICY, "")
+    monkeypatch.setattr(kjor, "_hent", kjede(kart))
+    assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
+
+    # Ett hopp for mye: ingen crawl, ingen uendelig henting.
+    kart = dict(kart)
+    kart[forrige] = (301, "", "https://m.example/enda-en.txt")
+    kart["https://m.example/enda-en.txt"] = (200, POLICY, "")
+    monkeypatch.setattr(kjor, "_hent", kjede(kart))
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+    # En løkke er også bare en for lang kjede — den skal ikke henge.
+    h = kjede({"https://m.example/robots.txt": (301, "", "/a.txt"),
+               "https://m.example/a.txt": (302, "", "/robots.txt")})
+    monkeypatch.setattr(kjor, "_hent", h)
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+    assert len(h.besokt) == kjor.ROBOTS_HOPP + 1
+
+    # UT AV ORIGIN følges aldri: den verten er verken autorisert for
+    # oppdraget eller dekket av pinnen. Fail-closed, ikke ny egressvei.
+    for ut in ("https://annen.example/robots.txt",
+               "http://m.example/robots.txt",        # annet skjema
+               "https://m.example:8443/robots.txt"):  # annen port
+        h = kjede({"https://m.example/robots.txt": (301, "", ut),
+                   ut: (200, POLICY, "")})
+        monkeypatch.setattr(kjor, "_hent", h)
+        assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), ut
+        assert len(h.besokt) == 1, ut     # den ble ikke engang hentet
+
+    # Og et 4xx underveis i kjeden er fortsatt «ingen uttalte
+    # begrensninger», ikke en ulest robots.
+    monkeypatch.setattr(kjor, "_hent", kjede(
+        {"https://m.example/robots.txt": (301, "", "/policy.txt"),
+         "https://m.example/policy.txt": (404, "", "")}))
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
 
 
 def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
@@ -248,6 +364,9 @@ def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
 
         def read(self, n):
             return self.data[:n]
+
+        def getheader(self, navn, standard=None):
+            return standard
 
     class Conn:
         n = 0
@@ -422,6 +541,44 @@ def test_begge_robots_portene_kan_bli_roede():
     # NØYAKTIG dette signalet.
     assert 'if felt.get("ok") is False:' in sjekk
     assert "_ROEDE.append(hendelse)" in sjekk
+
+
+def test_hver_maalefase_gjenbruker_rapporten_ved_gjenspill():
+    """Codex P1, runde 9: et gjenspill måler køen, ikke resultatet.
+
+    Med de stabile `_idem`-nøklene svarer `/v1/bestilling`
+    `idempotent-replay` når en fase kjøres om igjen på samme runde-ID:
+    beslutningen er tatt og oppdraget er alt utført. Et ubetinget
+    `_kontroller_kjor` claimer likevel GLOBALT — det finner en tom kø og
+    gir `utfall: "tomt"`, altså en rød port på en rapport som ligger
+    ferdig og gyldig, eller det claimer et ANNET oppdrag og måler en helt
+    annen kjøring enn sin egen.
+
+    Fase 5 fikk gjenspillsveien i runde 3; fase 6 sto igjen med den
+    ubetingede varianten. Testen binder BEGGE, slik at de ikke kan drive
+    fra hverandre: hvert `_kontroller_kjor` i en målefase skal ligge bak
+    den samme gjenspillskontrollen."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    for fase, kjoringer in (("def fase5(", 1), ("def fase6(", 2)):
+        kropp = sjekk.split(fase, 1)[1].split("\ndef ", 1)[0]
+        assert 'r.headers.get("idempotent-replay") == "1"' in kropp, fase
+        assert "alt_utfort = rr is not None and rr.status_code == 200" \
+            in kropp, fase
+        # Motoren kjøres bare i ELSE-grenen — altså når rapporten IKKE
+        # alt finnes. Et ubetinget `_kontroller_kjor` er nettopp det
+        # globale claimet porten ikke tåler.
+        gren = kropp.split("if alt_utfort:", 1)[1].split("\n\n", 1)[0]
+        assert "_kontroller_kjor(" in gren.split("else:", 1)[1], fase
+        # ... og ANTALLET er pinnet, så en ny måling ikke kan snike inn
+        # et uvoktet kall. Fase 6 har ett til, og det er ikke en måling:
+        # dreneringen som tømmer køen før feilinjiseringen i fase 7.
+        assert kropp.count("_kontroller_kjor(") == kjoringer, fase
+        if kjoringer == 2:
+            assert "drenert.append(res.get(\"utfall\"))" in kropp, fase
+        # Til slutt skal gjenspillet STÅ i evidensen, ikke skjules: en
+        # måling som ikke ble gjort på nytt skal ikke se ut som en ny.
+        assert "gjenspill=alt_utfort" in kropp, fase
 
 
 def test_roed_klarhetsmaaling_ruller_tilbake_aktiveringen():
@@ -1027,6 +1184,57 @@ def test_fasitkontroll_finner_hver_avviksklasse():
     b = json.loads(json.dumps(motor))
     b["sider"][0]["status"] = "feilet"
     assert any(a.startswith("sider:") for a in fasitkontroll.avvik(s, b))
+
+
+def test_fasitkontroll_godtar_ikke_duplikatrader():
+    """Codex P2 (runde 9): duplikater ble slukt av dict-oppslaget.
+
+    En regrimert motor som sendte samme regel to ganger — først med feil
+    antall, så med det ventede — fikk null avvik, fordi den siste raden
+    overskrev den første. `rapport.bygg` beholder derimot BEGGE radene og
+    legger begge antallene i den promoterte summen, så fasitkontrollen
+    godkjente en rapport som ikke er fasiten. Samme hull lå i blokkert-
+    kartleggingen. Fasiten er selv nøklet og kan ikke ha duplikater, så
+    en gjentatt rad kan bare bety avvik."""
+    fasit = json.loads(
+        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        .read_text(encoding="utf-8"))
+    s = fasit["scenarier"]["enkeltside"]
+    motor = {
+        "funn": [{"regel_id": rid, "alvorlighet": v["alvorlighet"],
+                  "antall": v["antall"], "eksempler": []}
+                 for rid, v in s["funn"].items()],
+        "blokkert": [{"vert": vert, "art": art, "antall": n}
+                     for vert, arter in s["blokkert"].items()
+                     for art, n in arter.items()],
+        "avkortet": list(s["avkortet"]),
+        "sider": [{"url": "http://t/index.html", "status": "ok"}]
+                 * s["sider_ok"],
+    }
+    assert fasitkontroll.avvik(s, motor) == []
+
+    # Den skadelige formen: en feil rad FØRST, den ventede sist. Uten
+    # duplikatvakten er resultatet identisk med fasiten.
+    b = json.loads(json.dumps(motor))
+    feil = json.loads(json.dumps(b["funn"][0]))
+    feil["antall"] += 3
+    b["funn"].insert(0, feil)
+    funn = fasitkontroll.avvik(s, b)
+    assert any("står flere ganger" in a for a in funn), funn
+    assert any(a.startswith("funn:") for a in funn), funn
+
+    # Og samme rad gjentatt uendret er like mye et avvik: summen i
+    # rapporten blir dobbel selv om hver rad ser riktig ut.
+    b = json.loads(json.dumps(motor))
+    b["funn"].append(json.loads(json.dumps(b["funn"][0])))
+    assert any("står flere ganger" in a for a in fasitkontroll.avvik(s, b))
+
+    if motor["blokkert"]:
+        b = json.loads(json.dumps(motor))
+        b["blokkert"].insert(0, {**b["blokkert"][0], "antall": 99})
+        blok = fasitkontroll.avvik(s, b)
+        assert any(a.startswith("blokkert:") and "står flere ganger" in a
+                   for a in blok), blok
 
 
 def test_fasiten_er_konsistent_med_seg_selv():

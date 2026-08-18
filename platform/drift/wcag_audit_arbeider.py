@@ -77,6 +77,36 @@ class KlientHTTP:
             return _Svar(e.code, e.read())
 
 
+def nokkelfeil(nk) -> list[str]:
+    """Navnene på feltene i kvitteringsnøkkelen som ikke er brukbare.
+
+    NØKKELEN KONTROLLERES FØR FØRSTE CLAIM (Codex P1, runde 9). Gyldig
+    JSON er ikke en brukbar nøkkel: mangler `hemmelighet`, eller er den
+    noe annet enn en streng, kaster `signer` først INNE i runden — etter
+    at oppdraget er leaset. Da slipper KeyError/AttributeError ut forbi
+    controllerens kvitteringshåndtering, løkka nedenfor logger bare
+    `runde_feilet`, og oppdraget blir liggende ubesvart til fristen løper
+    ut. En arbeider som ikke kan kvittere skal aldri claime, så feilen
+    hører hjemme på oppstart der drift ser den.
+
+    EN FOR KORT HEMMELIGHET ER OGSÅ UBRUKELIG (Codex P1, runde 10). En
+    ikke-tom hemmelighet signerer noe, men API-siden laster nøkkelregisteret
+    gjennom `attestering._valider_register`, som avviser hemmeligheter
+    kortere enn `MIN_HEMMELIGHET_TEGN`. Da eksisterer nøkkelen i praksis
+    ikke for verifikatoren: arbeideren leaser oppdrag og leverer
+    kvitteringer ingen kan godta — nøyaktig utfallet denne kontrollen
+    finnes for å hindre. Kravet leses fra API-ets egen modul, ikke skrives
+    om her, så et framtidig strengere krav ikke bare gjelder halve veien."""
+    from policy_validator.attestering import MIN_HEMMELIGHET_TEGN
+    felt = nk if isinstance(nk, dict) else {}
+    feil = [f for f in ("verifikator", "nokkel_id", "hemmelighet")
+            if not isinstance(felt.get(f), str) or not felt[f].strip()]
+    if "hemmelighet" not in feil and (
+            len(felt["hemmelighet"]) < MIN_HEMMELIGHET_TEGN):
+        feil.append("hemmelighet")
+    return feil
+
+
 def main() -> int:
     from db.hemmeligheter import last_credentials
     last_credentials()
@@ -103,6 +133,11 @@ def main() -> int:
 
     kontekst = json.loads(open(kontekst_sti, encoding="utf-8").read())
     nk = json.loads(open(nokkel_sti, encoding="utf-8").read())
+    nokkelmangler = nokkelfeil(nk)
+    if nokkelmangler:
+        print(json.dumps({"hendelse": "oppstart_nektet",
+                          "nokkelfelt": nokkelmangler}), file=sys.stderr)
+        return 2
 
     def signer(kropp):
         return attestering.signer({**kropp, "verifikator": nk["verifikator"]},
