@@ -136,6 +136,11 @@ def test_pinnen_velger_en_adresse_verten_kan_naa(monkeypatch):
     selv om samme navn hadde en offentlig IPv4 rett ved siden av.
     Godkjenningen er urørt: valget står bare mellom de GODKJENTE."""
     import socket as _s
+    # Selve prøven rører ikke målet — en UDP-`connect` sender ingenting.
+    # Måles FØR `_naabar` byttes ut under, ellers måler vi stubben.
+    assert kjor._naabar("127.0.0.1", 9) is True
+    assert kjor._naabar("ikke-en-adresse", 443) is False
+
     v6 = "2606:2800:220:1:248:1893:25c8:1946"
     monkeypatch.setattr(
         kjor.socket, "getaddrinfo",
@@ -152,10 +157,6 @@ def test_pinnen_velger_en_adresse_verten_kan_naa(monkeypatch):
     # Er INGEN nåbar, gjettes det ikke: feilen hører hjemme i tilkoblingen.
     monkeypatch.setattr(kjor, "_naabar", lambda adresse, port: False)
     assert kjor._pin_mal_ip("mal.example", 443, {}) == v6
-
-    # Og selve prøven rører ikke målet — en UDP-`connect` sender ingenting.
-    assert kjor._naabar("127.0.0.1", 9) is True
-    assert kjor._naabar("ikke-en-adresse", 443) is False
 
 
 def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
