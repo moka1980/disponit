@@ -981,6 +981,45 @@ def test_gjenapningen_reaktiverer_modulen_for_releasebyttet():
     assert 'ok=etter == ("staging_verifisert", epoch + 1)' in kropp
 
 
+def test_beredskapsporten_krever_en_claiming_deployment():
+    """Codex P1, runde 15: en drenert release passerte tokenporten.
+
+    Runde 12 la dommen der claimen henter den, men tok bare de to
+    funksjonene — og de er ikke HELE claim-porten.
+    `modultoken_fortsatt_autorisert` leser med VILJE ikke deploymentens
+    livsløp: en `draining` deployment SKAL få levere resultatet av arbeid
+    den alt har claimet, så den svarer `ok` for den. Claim-veien legger
+    derfor på én sjekk til før den tildeler NYTT arbeid — raden for
+    (modul, miljø, release) må være `claiming`, ellers 403
+    `modul_ikke_claimbar`.
+
+    Kjøres en beholdt runde om igjen med sin ORIGINALE `WCAG_RELEASE`
+    etter at `bytt_release` har drenert den, stemmer både release og
+    token, og tokenet er hverken tilbakekalt eller utløpt. Fase 9 enablet
+    da uniten og meldte grønt, mens hvert eneste claim fikk 403: samme
+    feil som runde 12 fant, én dør lenger inn."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    dom = sjekk.split("def _tokenet_er_autorisert(", 1)[1].split(
+        "\ndef ", 1)[0]
+    # Livsløpet slås opp for NØYAKTIG den deploymenten claim-porten slår
+    # opp: (modul, miljø, release).
+    assert "SELECT livslop FROM moduldeployment" in dom
+    assert '(MODUL, "staging", RELEASE)' in dom
+    assert 'livslop != "claiming"' in dom
+    assert '"livslop": livslop' in dom
+    # En borte rad er ikke en bestått port — den er `modul_ikke_claimbar`
+    # på claim-veien også.
+    assert 'livslop = drad[0] if drad is not None else "borte"' in dom
+    # ... og en umålt port er fortsatt ikke en bestått port.
+    assert '"grunn": "deploymentoppslaget feilet"' in dom
+    # Sjekken ligger FORAN det eneste stedet dommen brukes: fase 9 enabler
+    # ikke uniten på en drenert deployment.
+    kropp = sjekk.split("def fase9(", 1)[1]
+    assert "autorisert, detalj = _tokenet_er_autorisert(m, mtk)" in kropp
+    assert "if not autorisert:" in kropp
+
+
 def test_konteksten_avledes_av_den_effektive_motoren():
     """Codex P2, runde 6: `WCAG_DRIFT_MOTOR` overstyrer HELE kommandoen.
 

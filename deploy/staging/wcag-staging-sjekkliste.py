@@ -1474,6 +1474,15 @@ def _tokenet_er_autorisert(m, mtk: str) -> tuple[bool, dict]:
     (er modulen aktiv, stemmer epochen, er identiteten fortsatt denne
     deploymenten). En egen kopi av regelen her ville drevet fra claimens.
 
+    ... OG DEPLOYMENTENS LIVSLØP (Codex P1, runde 15). De to funksjonene er
+    ikke HELE claim-porten. `modultoken_fortsatt_autorisert` ser med vilje
+    ikke livsløpet — en `draining` deployment skal få levere arbeid den alt
+    har claimet — så claim-veien sjekker i tillegg at raden er `claiming`
+    før den tildeler NYTT arbeid. Uten den siste sjekken her passerte en
+    beholdt runde som ble kjørt om igjen med sin originale release etter at
+    `bytt_release` hadde drenert den: release og token stemte, dommen var
+    `ok`, og hvert eneste claim fikk `modul_ikke_claimbar` (403).
+
     Kan dommen ikke felles — oppslaget feiler, tokenet har ikke
     wire-formen — er svaret NEI. En umålt port er ikke en bestått port,
     og prisen for et falskt nei er en runde til, mens prisen for et falskt
@@ -1522,6 +1531,34 @@ def _tokenet_er_autorisert(m, mtk: str) -> tuple[bool, dict]:
     if dom != "ok":
         return False, {**identitet,
                        "grunn": f"plattformens egen port sier {dom!r}"}
+    # ... OG DEPLOYMENTEN MÅ VÆRE `claiming` (Codex P1, runde 15).
+    # `modultoken_fortsatt_autorisert` leser med VILJE ikke livsløpet: en
+    # `draining` deployment SKAL få levere resultatet av arbeid den alt har
+    # claimet, så den svarer `ok` for den. Claim-veien legger derfor på én
+    # sjekk til (`_modulporten` i app-laget): raden for (modul, miljø,
+    # release) må være `claiming`, ellers 403 `modul_ikke_claimbar`.
+    # Kjøres en beholdt runde om igjen med sin ORIGINALE release etter at
+    # `bytt_release` har drenert den, er både release og token de riktige —
+    # og porten her sa `ok` mens hvert NYTT claim fikk 403. Det er den
+    # samme feilen runde 12 fant, én dør lenger inn: en arbeider som melder
+    # seg oppe og aldri får ett eneste oppdrag.
+    try:
+        drad = m.execute(
+            "SELECT livslop FROM moduldeployment"
+            " WHERE modul_id=%s AND miljo=%s AND release_id=%s",
+            (MODUL, "staging", RELEASE)).fetchone()
+    except psycopg.Error as e:
+        m.rollback()
+        return False, {**identitet, "grunn": "deploymentoppslaget feilet",
+                       "feiltype": type(e).__name__, "feil": str(e)[:200]}
+    m.rollback()
+    livslop = drad[0] if drad is not None else "borte"
+    identitet = {**identitet, "livslop": livslop}
+    if livslop != "claiming":
+        return False, {**identitet,
+                       "grunn": f"deploymentens livsløp er {livslop!r}, ikke"
+                                " 'claiming' — claim svarer"
+                                " modul_ikke_claimbar (403)"}
     return True, identitet
 
 
