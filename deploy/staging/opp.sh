@@ -184,7 +184,12 @@ getent group disponit-proxy >/dev/null || groupadd --system disponit-proxy
 # PR-015: driftstimerne (revalidering + rydding) får sin EGEN Unix-bruker,
 # samme skille som API/M-37/helse — et kompromittert timerkjøring skal ikke
 # arve noen annen tjenestes fullmakter, og omvendt.
-for b in disponit-api disponit-m37 disponit-helse disponit-domener; do
+# PR-014c (Codex P1): disponit-wcag hører HIT, ikke i sjekklisterunden.
+# `disponit-wcag-audit.service` har `User=disponit-wcag`, og uten brukeren
+# feiler uniten på oppstart uansett hvor riktig konfigurasjonen er skrevet
+# — identiteten er utrullingens ansvar, som for alle de andre tjenestene.
+for b in disponit-api disponit-m37 disponit-helse disponit-domener \
+         disponit-wcag; do
   getent passwd "$b" >/dev/null || \
     useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
 done

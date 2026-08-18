@@ -39,10 +39,19 @@ Faser (idempotente; --fase kjører én, default alle i rekkefølge):
   7 feilinjisering   motorfeil → avbrutt uten artefakt; evidensfrist →
                      reaper → M-37-sak (port 22/23)
   8 rollback         forrige release opp og tilbake (uten migrasjonsdelta)
+  9 idriftsettelse   arbeideren (disponit-wcag-audit.service) provisjoneres
+                     og enables — KUN når ingen måling ble rød
 
 VIKTIG OG SYNLIG: fase 2 registrerer modulen og setter den AKTIV på
 denne basen — det åpner /v1/bestilling for typen her. Det er hele
 poenget med runden, og basen er staging.
+
+DØREN OG ARBEIDEREN HENGER SAMMEN (Codex P1). Fra fase 2 kan ekte
+oppdrag legges i køen, men fasene 5–7 claimer synkront med rundens EGEN
+prosess. Uten fase 9 stod køen derfor uten arbeider når runden var ute,
+og ekte oppdrag ville ligget `opprettet` til utførelsesfristen løp ut.
+Fase 1 stopper arbeideren fra en tidligere runde av samme grunn, motsatt
+vei: en pollende unit stjeler oppdragene målingene skal måle.
 """
 from __future__ import annotations
 
@@ -84,10 +93,24 @@ RUNDE = Path(os.environ.get("WCAG_RUNDE_DIR", "/root/wcag-runde"))
 ATT_FIL = Path("/etc/disponit/api/DISPONIT_ATT_NOKLER")
 API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 
+#: Arbeideren som skal claime EKTE oppdrag etter runden — uniten, brukeren
+#: og credential-katalogen den leser fra. Stiene er unitens, ikke rundens:
+#: `RUNDE` er /root og utilgjengelig for `disponit-wcag`.
+ARBEIDER = "disponit-wcag-audit.service"
+ARBEIDER_BRUKER = "disponit-wcag"
+DRIFT_KONF = Path(os.environ.get("WCAG_DRIFT_KONF", "/etc/disponit/wcag"))
+
 _EVIDENS: Path | None = None
+#: Målingene som IKKE ble grønne i denne prosessen. Fase 9 setter arbeideren
+#: i drift, og den porten skal bare åpnes for en modul som faktisk er
+#: akseptert — så gaten leser det runden selv har målt, ikke et menneskes
+#: minne om det.
+_ROEDE: list[str] = []
 
 
 def evidens(hendelse: str, **felt) -> None:
+    if felt.get("ok") is False:
+        _ROEDE.append(hendelse)
     linje = json.dumps({"ts": datetime.now(timezone.utc).isoformat(),
                         "hendelse": hendelse, **felt}, ensure_ascii=False)
     print(linje, flush=True)
@@ -171,6 +194,12 @@ class _Svar:
 # ---------------------------------------------------------------------------
 
 def fase1(m):
+    # ARBEIDEREN STOPPES FØRST. Var den satt i drift av en tidligere runde
+    # (fase 9), poller den samme kø som fasene 5–7 claimer fra, og
+    # `claim_neste_oppdrag` gir hvert oppdrag til ÉN av dem. Målingene
+    # under ville da mistet oppdrag til en prosess som ikke rapporterer inn
+    # i evidensfila. Fase 9 setter den opp igjen når målingene er ferdige.
+    subprocess.run(["systemctl", "stop", ARBEIDER], capture_output=True)
     reg = json.loads(ATT_FIL.read_text())
     mangler = [v for v in ("v_domenekontroll", "v_wcag_audit")
                if v not in reg]
@@ -759,6 +788,116 @@ def fase8():
                     ok=st1 == "active" and st2 == "active")
 
 
+# ---------------------------------------------------------------------------
+# Fase 9 — arbeideren i drift
+# ---------------------------------------------------------------------------
+
+def fase9(mtk, digest, *, maalt_runde: bool):
+    """Setter arbeideren I DRIFT — ellers claimer ingen noe (Codex P1).
+
+    Fase 2 setter modulen `aktiv` og deploymentet `claiming`. FRA DA er
+    `/v1/bestilling` åpen for `kontroll.wcag.nettsted` på denne basen, og
+    ekte oppdrag kan legges i køen. Men runden claimet dem SELV, synkront,
+    med `_kontroller_kjor` — og `disponit-wcag-audit.service` ble aldri
+    provisjonert eller enablet noe sted: `opp.sh` starter den bare hvis den
+    ALT var enablet, fase 4 skriver modultokenet under `RUNDE` (/root, som
+    `disponit-wcag` ikke kan lese) i stedet for unitens credential-sti, og
+    verken kvitteringsnøkkelen eller serverkonteksten hadde en varig plass.
+    Når de synkrone fasene var ute, stod køen altså tom for arbeidere: ekte
+    oppdrag ville ligget `opprettet` til utførelsesfristen løp ut. En modul
+    som er `aktiv` uten en arbeider er en åpen dør uten noen bak den.
+
+    Materialiseringen er unitens kontrakt, ikke rundens: tokenet som
+    `LoadCredential`, resten som filer `disponit-wcag` faktisk kan lese, og
+    motorkommandoen som den ROOTLESSE podman-kommandoen bygg.sh og
+    unit-hodet dokumenterer — aldri rundens docker-kommando, som bærer
+    fixture-bryterne `MOTOR_TLS_USIKKER`/`MOTOR_VERTSKART`.
+
+    GATEN: en full runde åpner døren bare når INGEN måling ble rød —
+    `_ROEDE` er det runden selv har målt, ikke et menneskes minne om det.
+    Er noe rødt, provisjoneres ingenting og uniten enables ikke; «ingen
+    arbeider» er da det riktige utfallet, ikke et uhell. `--fase 9` alene
+    måler ingenting og er operatørens BEVISSTE idriftsettelse etter at
+    evidensfila er lest — den føres som det i evidensen.
+    """
+    if _ROEDE:
+        evidens("fase9_hoppet", grunn="røde målinger i runden",
+                roede=sorted(set(_ROEDE)),
+                merknad="modulen er aktiv, men arbeideren settes ikke i"
+                        " drift på en runde som ikke er grønn")
+        return
+    if not mtk:
+        evidens("fase9_hoppet", grunn="ingen modultoken i denne kjøringen")
+        return
+    if not maalt_runde:
+        evidens("fase9_operatoerbeslutning",
+                merknad="--fase 9 målte ingenting selv; idriftsettelsen"
+                        " hviler på evidensfila fra den grønne runden")
+
+    reg = json.loads(ATT_FIL.read_text())
+    nid = sorted(reg["v_wcag_audit"])[0]
+    motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
+        "podman", "run", "--rm", "-i", "--network", "host",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        # Image-ID-en, ikke taggen: taggen er mutabel, og kvitteringen
+        # attesterer nøyaktig denne digesten som container_image_digest.
+        digest.split(":")[-1]])
+    kontekst = {"axe_versjon": "4.10.3", "chromium_versjon": "chromium",
+                "container_image_digest": "sha256:" + digest.split(":")[-1],
+                "viewport": "1280x800", "locale": "nb",
+                "timezone": "Europe/Oslo"}
+
+    subprocess.run(["install", "-d", "-m", "750", "-o", "root",
+                    "-g", ARBEIDER_BRUKER, str(DRIFT_KONF)], check=True)
+
+    def _skriv(navn: str, innhold: str, *, lesbar_for_arbeideren: bool):
+        """Filen skrives, så rettes rettighetene — i den rekkefølgen, slik
+        at innholdet aldri ligger et øyeblikk med for åpne rettigheter."""
+        sti = DRIFT_KONF / navn
+        sti.write_text(innhold, encoding="utf-8")
+        # `LoadCredential`/`EnvironmentFile` leses av systemd som root; det
+        # arbeideren åpner SELV må gruppa nå.
+        os.chmod(sti, 0o640 if lesbar_for_arbeideren else 0o600)
+        if lesbar_for_arbeideren:
+            subprocess.run(["chgrp", ARBEIDER_BRUKER, str(sti)], check=True)
+        return sti
+
+    # `LoadCredential=DISPONIT_MODULTOKEN:` peker på nøyaktig dette navnet.
+    _skriv("DISPONIT_MODULTOKEN", mtk, lesbar_for_arbeideren=False)
+    kontekst_sti = _skriv("kontekst.json",
+                          json.dumps(kontekst, indent=1) + "\n",
+                          lesbar_for_arbeideren=True)
+    nokkel_sti = _skriv("kvitteringsnokkel.json", json.dumps(
+        {"verifikator": "v_wcag_audit", "nokkel_id": nid,
+         "hemmelighet": reg["v_wcag_audit"][nid]}, indent=1) + "\n",
+        lesbar_for_arbeideren=True)
+    _skriv("konfig", "".join(f"{k}={v}\n" for k, v in (
+        ("DISPONIT_API_URL", API),
+        ("DISPONIT_WCAG_MOTOR", motor),
+        ("DISPONIT_WCAG_KONTEKST", str(kontekst_sti)),
+        ("DISPONIT_KVITTERINGSNOKKEL", str(nokkel_sti)))),
+        lesbar_for_arbeideren=False)
+
+    subprocess.run(["systemctl", "enable", "--now", ARBEIDER],
+                   capture_output=True)
+    # OPPSTARTEN ER EN MÅLING, ikke en forutsetning: `check=True` her ville
+    # kastet før vi fikk lest hva som skjedde, og en arbeider som nekter
+    # oppstart (`oppstart_nektet` på manglende konfig) er nettopp utfallet
+    # denne fasen finnes for å fange.
+    time.sleep(6)
+    aktiv = subprocess.run(["systemctl", "is-active", ARBEIDER],
+                           capture_output=True, text=True).stdout.strip()
+    logg = subprocess.run(["journalctl", "-u", ARBEIDER, "-n", "20",
+                           "--no-pager", "-o", "cat"],
+                          capture_output=True, text=True).stdout
+    evidens("fase9_arbeider_i_drift", unit=ARBEIDER, status=aktiv,
+            motor=motor, konfig=str(DRIFT_KONF),
+            oppe="wcag_arbeider_oppe" in logg,
+            nektet=[l for l in logg.splitlines()
+                    if "oppstart_nektet" in l][:2],
+            ok=aktiv == "active" and "wcag_arbeider_oppe" in logg)
+
+
 def main() -> int:
     global _EVIDENS
     ap = argparse.ArgumentParser()
@@ -795,6 +934,12 @@ def main() -> int:
         fase7(m, http, mtk, digest)
     if args.fase in (None, 8):
         fase8()
+    if args.fase in (None, 9):
+        # `--fase 9` er operatørens bevisste idriftsettelse etter en grønn
+        # runde; en full kjøring gjør det selv, til slutt.
+        if args.fase == 9 and mtk is None:
+            mtk = (RUNDE / "modultoken").read_text().strip()
+        fase9(mtk, digest, maalt_runde=args.fase is None)
     evidens("runde_ferdig")
     return 0
 
