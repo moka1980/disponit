@@ -761,6 +761,7 @@
   "ui.bestilling.utfall.stopp": "Bestillingen ble stoppet av policyen.",
   "ui.bestilling.utfall.unntak": "Bestillingen er lagt i unntakskøen og venter på behandling.",
   "ui.bestilling.oppdrag_id": "Oppdragsnummer",
+  "ui.bestilling.mal": "Mål",
   "ui.bestilling.unntak_id": "Saksnummer",
   "ui.bestilling.se_rapport": "Rapporten finner du under «Rapporter» når kontrollen er ferdig.",
   "ui.bestilling.feil.hostname": "Oppgi et gyldig vertsnavn med små bokstaver, for eksempel kunde.example.",

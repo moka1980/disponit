@@ -128,6 +128,10 @@ export function visBestilling(hoved, ctx) {
         text: `${t("ui.bestilling.felt.kravsett")}: ${t("kravsett.wcag21_aa")}` })),
     sendKnapp, ventetekst);
 
+  function frys(paa) {
+    for (const inp of [hostnameInp, stiInp, maksInp]) inp.readOnly = paa;
+  }
+
   function valider() {
     const feil = [];
     const host = hostnameInp.value.trim().toLowerCase();
@@ -149,8 +153,26 @@ export function visBestilling(hoved, ctx) {
     return feil.length === 0;
   }
 
-  function visUtfall(svar) {
-    const barn = [];
+  // UTFALLET BÆRER SITT EGET MÅL (Codex P2). Bare knappen var låst mens
+  // svaret var underveis; hostname, sti, omfang og sidetall kunne endres
+  // fritt, og svaret ble så vist under de NYE verdiene — et
+  // oppdragsnummer for nettsted A under nettsted B, uten at noe i
+  // meldingen sa hvilket. Nå står målet i selve utfallet, hentet fra den
+  // kroppen som faktisk ble sendt. Da kan meldingen ikke tilskrives feil
+  // nettsted uansett hva skjemaet viser i mellomtiden — og et ekte,
+  // committet oppdrag blir ikke kastet bort for å skjule tvetydigheten.
+  function maalLinje(sendt) {
+    const deler = [`https://${sendt.hostname}${sendt.sti || "/"}`,
+      t(`ui.bestilling.omfang.${sendt.omfang}`)];
+    if (sendt.omfang === "nettsted") {
+      deler.push(`${t("ui.bestilling.felt.maks_sider")}: ${sendt.maks_sider}`);
+    }
+    return el("p", { class: "muted",
+      text: `${t("ui.bestilling.mal")}: ${deler.join(" · ")}` });
+  }
+
+  function visUtfall(svar, sendt) {
+    const barn = [maalLinje(sendt)];
     if (svar.beslutning === "tillat") {
       barn.push(el("p", { text: t("ui.bestilling.utfall.tillat") }),
         el("p", { text: `${t("ui.bestilling.oppdrag_id")}: ${svar.oppdrag_id}` }),
@@ -187,19 +209,27 @@ export function visBestilling(hoved, ctx) {
     const sti = stiInp.value.trim();
     if (sti) kropp.sti = sti;
     // Ventetilstand: aria-busy + TEKST — aldri kun en spinner (§7).
+    // Målfeltene fryses med `readOnly` og ikke `disabled`: et låst felt
+    // beholder fokus og lesbarhet, mens et deaktivert felt under fingeren
+    // flytter fokus og forsvinner for skjermleseren. Radioknappene lar vi
+    // stå — de KAN ikke låses uten `disabled` — og derfor bærer utfallet
+    // alltid sitt eget mål, omfanget inkludert.
+    frys(true);
     form.setAttribute("aria-busy", "true");
     sendKnapp.disabled = true;
     ventetekst.textContent = t("ui.bestilling.venter");
     try {
       const svar = await bestill(kropp, idem);
-      visUtfall(svar);
+      visUtfall(svar, kropp);
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (e instanceof IngenTilgangFeil) {
-        // 403 her er nesten alltid uverifisert hostname — navngi det.
-        sett(utfall, el("p", { text: e.kode === "bestilling_hostname_uverifisert"
-          ? t("ui.bestilling.feil.uverifisert")
-          : t("ui.bestilling.feil.ingen_tilgang") }));
+        // 403 her er nesten alltid uverifisert hostname — navngi det, og
+        // navngi hvilket mål det gjaldt.
+        sett(utfall, maalLinje(kropp),
+          el("p", { text: e.kode === "bestilling_hostname_uverifisert"
+            ? t("ui.bestilling.feil.uverifisert")
+            : t("ui.bestilling.feil.ingen_tilgang") }));
       } else if (e instanceof ApiFeil && e.kode === "idempotenskonflikt") {
         // Skal ikke kunne skje (nøkkelen nullstilles ved endring) — men
         // svaret må likevel være sant og på skjermen, ikke i konsollen.
@@ -210,6 +240,7 @@ export function visBestilling(hoved, ctx) {
         sett(utfall, el("p", { text: t("ui.feil_tittel") }));
       }
     } finally {
+      frys(false);
       form.removeAttribute("aria-busy");
       sendKnapp.disabled = false;
       ventetekst.textContent = "";

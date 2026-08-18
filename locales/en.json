@@ -761,6 +761,7 @@
   "ui.bestilling.utfall.stopp": "The order was stopped by your policy.",
   "ui.bestilling.utfall.unntak": "The order was placed in the exception queue and awaits review.",
   "ui.bestilling.oppdrag_id": "Order number",
+  "ui.bestilling.mal": "Target",
   "ui.bestilling.unntak_id": "Case number",
   "ui.bestilling.se_rapport": "You will find the report under “Reports” once the audit completes.",
   "ui.bestilling.feil.hostname": "Enter a valid lowercase hostname, e.g. customer.example.",

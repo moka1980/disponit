@@ -168,6 +168,39 @@ test("Bestilling: uverifisert hostname → navngitt feil i alert", async () => {
     .includes(t("ui.bestilling.feil.uverifisert")));
 });
 
+test("Bestilling: utfallet bærer sitt eget mål, også når feltene endres", async () => {
+  // Codex P2: bare knappen var låst mens svaret var underveis. Endret
+  // brukeren målet i mellomtiden, ble oppdragsnummeret for nettsted A vist
+  // under nettsted B — uten at noe i meldingen sa hvilket den gjaldt.
+  KALL = [];
+  let slipp;
+  SVAR = () => new Promise((r) => {
+    slipp = () => r({ beslutning: "tillat", oppdrag_id: 99, request_id: "r" });
+  });
+  const h = nyHoved();
+  visBestilling(h, ctx());
+  fyll(h, { hostname: "a.example", sti: "/en" });
+  send(h);
+  await vent(() => KALL.length === 1);
+  const hn = h.querySelector("#bf-hostname");
+  assert.equal(hn.readOnly, true, "målfeltene fryses mens svaret er underveis");
+  assert.equal(h.querySelector("#bf-sti").readOnly, true);
+  // Radioknappene kan ikke låses uten `disabled` — derfor må utfallet
+  // uansett navngi målet sitt. Her simuleres endringen direkte.
+  hn.readOnly = false;
+  hn.value = "b.example"; hn.dispatchEvent(new window.Event("input"));
+  slipp();
+  await vent(() => h.querySelector('[role="alert"]').textContent);
+  const tekst = h.querySelector('[role="alert"]').textContent;
+  assert.ok(tekst.includes("https://a.example/en"), tekst);
+  assert.ok(!tekst.includes("b.example"), `målet ble tilskrevet feil: ${tekst}`);
+  assert.ok(tekst.includes("99"), tekst);
+  assert.ok(tekst.includes(t("ui.bestilling.omfang.enkeltside")), tekst);
+  assert.equal(h.querySelector("#bf-sti").readOnly, false, "frysen slippes");
+  const brudd = await alvorligeBrudd(h, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("Bestilling: «hele nettstedet» sender nettstedets sidetall, ikke 1", async () => {
   // Codex P2: feltet sto på 1 og ble ALLTID sendt, mens serverens
   // 50-default bare gjelder når `maks_sider` utelates. Et omfang som
