@@ -3,8 +3,13 @@
 # attesterer som `miljo.container_image_digest`. Wrapper-kommandoen for
 # DISPONIT_WCAG_MOTOR blir da:
 #
-#   docker run --rm -i --network host --cap-drop ALL \
+#   podman run --rm -i --network host --cap-drop ALL \
 #       --security-opt no-new-privileges disponit-wcag-motor@<digest>
+#
+# ROOTLESS podman, ikke docker (Codex P1): arbeideren som starter denne
+# kommandoen er nettvendt, og `docker`-gruppemedlemskapet den ellers
+# trengte er root på verten. Se disponit-wcag-audit.service. Bygget her
+# kjøres av ops, ikke av arbeideren, og bruker docker som før.
 #
 # (`--network host` fordi testnettstedet på staging er loopback-bundet;
 # motoren har uansett ingen credentials å misbruke — egressvakten ligger

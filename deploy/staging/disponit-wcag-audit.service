@@ -7,6 +7,34 @@
 # har heller ikke prosessens miljø (Kommandomotors allowlist). Enables
 # FØRST når modulen er akseptert (status aktiv) — før det svarer claim
 # 403 modul_ikke_claimbar, og uniten ville bare pollet seg varm.
+#
+# INGEN DOCKER-GRUPPE (Codex P1). `SupplementaryGroups=docker` sto her
+# for at arbeideren skulle få startet motorcontaineren. Men medlemskap i
+# `docker` ER root på verten: den som når daemon-socketen kan be om en
+# privilegert container eller montere `/` inn i en, og daemonen kjører
+# som root. En kompromittert, NETTVENDT arbeider kunne dermed lese DB,
+# KEK og tenant-nøkler — nøyaktig det tillitssnittet over sier den ikke
+# har — uansett hvor stramt selve motorcontaineren er satt opp. Å låse
+# motoren og gi nøkkelen til hele verten ved siden av er ikke en
+# innskjerping; det er en omvei rundt den.
+#
+# DISPONIT_WCAG_MOTOR skal derfor være en ROOTLESS launcher som kjører
+# som `disponit-wcag` selv, uten daemon i mellom:
+#
+#   DISPONIT_WCAG_MOTOR="podman run --rm -i --network host \
+#       --cap-drop ALL --security-opt no-new-privileges \
+#       disponit-wcag-motor@sha256:<digest>"
+#
+# Rootless podman har ingen socket å eskalere gjennom: containeren
+# kjører i brukerens eget user-namespace, og «root» i den er
+# `disponit-wcag` på verten. Forutsetningen er subuid/subgid for
+# brukeren (`/etc/subuid`, `/etc/subgid`) og XDG_RUNTIME_DIR under —
+# begge er allerede i Kommandomotors miljø-allowlist.
+#
+# NoNewPrivileges settes BEVISST ikke: rootless podman trenger setuid-
+# hjelperne `newuidmap`/`newgidmap` for å sette opp namespacet, og
+# flagget ville brutt oppstarten. Privilegiegrensen bæres av at brukeren
+# ikke er i noen priviligert gruppe, ikke av dette flagget.
 
 [Unit]
 Description=Disponit WCAG-kontrollarbeider (m_wcag_audit)
@@ -16,12 +44,21 @@ Wants=network-online.target
 [Service]
 User=disponit-wcag
 Group=disponit-wcag
-SupplementaryGroups=docker
 WorkingDirectory=/opt/disponit/aktiv/platform
 Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
 EnvironmentFile=-/etc/disponit/wcag/konfig
 LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/wcag/DISPONIT_MODULTOKEN
 RuntimeDirectory=disponit-wcag
+# Rootless podmans kjøretidskatalog — samme sti som RuntimeDirectory over.
+Environment=XDG_RUNTIME_DIR=/run/disponit-wcag
+# Podman trenger sin egen cgroup-undergren for containeren.
+Delegate=yes
+# Det som kan strammes UTEN å ta fra podman namespace-oppsettet.
+# (ProtectControlGroups/NoNewPrivileges/RestrictSUIDSGID står bevisst
+# ikke her — se hodet: de bryter rootless-oppstarten.)
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictRealtime=yes
 ExecStart=/opt/disponit/.venv/bin/python -m drift.wcag_audit_arbeider
 Restart=on-failure
 RestartSec=10
