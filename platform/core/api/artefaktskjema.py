@@ -45,7 +45,7 @@ import psycopg
 # `\Z`, ikke `$`: Pythons `$` matcher OGSÅ rett før en avsluttende
 # linjeskift (samme lekkasje som policyskjemaets ECMA-ankre dokumenterer),
 # og «gyldig tidsstempel med hale» er ikke et gyldig tidsstempel.
-_RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}"
+_RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:(?P<sek>\d{2})"
                       r"(\.\d+)?([Zz]|[+-]\d{2}:\d{2})\Z")
 
 FORMATSJEKKER = copy.deepcopy(jsonschema.Draft202012Validator.FORMAT_CHECKER)
@@ -85,14 +85,41 @@ _OPPSLAGSFEIL = _oppslagsfeilklasser()
 
 @FORMATSJEKKER.checks("date-time")
 def _er_rfc3339(verdi) -> bool:
-    """Typen er skjemaets jobb — formatet uttaler seg kun om strenger."""
+    """Typen er skjemaets jobb — formatet uttaler seg kun om strenger.
+
+    SKUDDSEKUNDET ER RFC 3339, IKKE ET BRUDD (Codex P2). Grammatikken i
+    §5.6 sier `time-second = "00"-"60"`, og `60` er nettopp det leddet som
+    finnes for skuddsekunder: `2016-12-31T23:59:60Z` er et ekte,
+    protokollovlig tidsstempel. `datetime` kjenner ikke sekund 60 og
+    kastet `ValueError` på det, så sjekken avviste en verdi RFC-en
+    tillater — og siden `format` her er en HARD avvisning av innhold, var
+    det en artefakt kunden ikke fikk levert for et sekund kalenderen
+    faktisk hadde.
+
+    Derfor: sekundleddet måles av grammatikken, og `datetime` får se
+    resten. `60` byttes til `59` KUN for den kontrollen, altså for det
+    grammatikken ikke fanger (31. februar, time 25), og bare på det
+    nøyaktige spennet regexen fant — aldri med en tekstlig `replace` som
+    like gjerne kunne truffet sonen (`+06:00`).
+
+    Vi går IKKE videre og krever at sekund 60 bare står der IERS faktisk
+    la inn et skuddsekund. Den kontrollen krever en tabell som må
+    vedlikeholdes, og en utdatert tabell ville avvist et ekte tidsstempel
+    — en falsk avvisning av innhold, som er den ene feilen denne
+    checkeren ikke skal gjøre. Grammatikken er kravet vi kan svare på.
+    """
     if not isinstance(verdi, str):
         return True
-    if not _RFC3339.match(verdi):
+    m = _RFC3339.match(verdi)
+    if not m:
         return False
+    tekst = verdi
+    if m.group("sek") == "60":
+        i, j = m.span("sek")
+        tekst = verdi[:i] + "59" + verdi[j:]
     try:
         # RFC 3339 tillater små `t`/`z`; `fromisoformat` gjør det ikke.
-        datetime.fromisoformat(verdi.replace("t", "T").replace("z", "Z"))
+        datetime.fromisoformat(tekst.replace("t", "T").replace("z", "Z"))
     except ValueError:
         return False
     return True

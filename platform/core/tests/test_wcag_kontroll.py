@@ -2713,6 +2713,23 @@ def test_formatsjekk_avviser_ugyldig_kjort_ts():
         feil = valider(rapportskjema.SKJEMA, {**rapport,
                                               "kjort_ts": ugyldig})
         assert any("kjort_ts" in f for f in feil), (ugyldig, feil)
+    # Codex P2: SKUDDSEKUNDET ER LOVLIG. Grammatikken i §5.6 er
+    # `time-second = "00"-"60"`, og `60` finnes nettopp for skuddsekunder.
+    # `datetime` kjenner dem ikke og kastet ValueError, så checkeren
+    # avviste et ekte tidsstempel — og `format` er en HARD avvisning av
+    # innhold her, altså et artefakt kunden ikke fikk levert. Kontroll:
+    # fjern `60 -> 59`-spleisen i `_er_rfc3339`, så avvises de to under.
+    for skudd in ("2016-12-31T23:59:60Z", "1990-12-31T15:59:60-08:00"):
+        assert not valider(rapportskjema.SKJEMA,
+                           {**rapport, "kjort_ts": skudd}), skudd
+    # ... men bare sekundleddet får være 60, og resten måles fortsatt:
+    # spleisen er bundet til regexens eget spenn, ikke en tekstlig
+    # `replace` som like gjerne kunne truffet sonen.
+    for ugyldig in ("2026-02-31T23:59:60Z", "2026-08-17T25:59:60Z",
+                    "2026-08-17T21:03:61Z", "2026-08-17T21:60:00Z"):
+        feil = valider(rapportskjema.SKJEMA, {**rapport,
+                                              "kjort_ts": ugyldig})
+        assert any("kjort_ts" in f for f in feil), (ugyldig, feil)
     # Den DELTE, globale checkeren skal ikke være endret av importen — vi
     # eier vår egen kopi.
     import jsonschema
