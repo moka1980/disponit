@@ -30,6 +30,11 @@ _VERT = re.compile(
     r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\Z")
 
 _ALVOR = ("kritisk", "alvorlig", "moderat", "lav")
+#: Oppdragets `omfang` — manifestets lukkede enum (frister 30 min for
+#: `enkeltside`, 60 min for `nettsted`). Den står her og ikke i en gjetning
+#: per kallsted: en verdi utenfor settet er en feil, ikke stillhet, på
+#: samme måte som `kravsett` er en lukket enum ved OPPRETTELSEN.
+_OMFANG = ("enkeltside", "nettsted")
 MAKS_FUNN = 500
 MAKS_EKSEMPLER = 10
 MAKS_SELEKTOR = 200
@@ -253,6 +258,49 @@ def _eksempelliste(raa) -> list:
     return list(raa)
 
 
+def _sidebudsjett(payload: dict) -> tuple:
+    """-> (omfang, maks_sider): sidebudsjettet oppdraget FAKTISK ba om.
+
+    Payloaden er plattformens, ikke motorens, men den er like påkrevd å
+    kunne lese: er `omfang` borte eller ukjent, vet modulen ikke hva den
+    ble bedt om, og da kan den heller ikke se at motoren gikk utenfor.
+    Fail-closed er samme positur som `_autorisert_vert` har for målet —
+    en `bygg` uten bestilt omfang har ingenting å måle omfanget MOT.
+
+    `enkeltside` er ett sidebudsjett på 1, uansett hva `maks_sider` sier:
+    står de to mot hverandre, er det den strengeste som er bestillingen
+    (`maks_sider: 50` gjør ikke en enkeltsidekontroll til en crawl).
+    """
+    omfang = payload.get("omfang")
+    if omfang not in _OMFANG:
+        raise Motorfeil("oppdragets omfang lar seg ikke lese")
+    maks = payload.get("maks_sider")
+    if maks is not None and (isinstance(maks, bool)
+                             or not isinstance(maks, int) or maks < 1):
+        raise Motorfeil("oppdragets maks_sider lar seg ikke lese")
+    if omfang == "enkeltside":
+        maks = 1 if maks is None else min(maks, 1)
+    return omfang, maks
+
+
+def _bestilt_url(payload: dict, autorisert_vert: str) -> str:
+    """Den BESTILTE siden, kanonisert med NØYAKTIG samme funksjon som
+    motorens sider (`_ren_url`).
+
+    To normaliseringer ville vært to svar på `https://kunde.example` mot
+    `https://kunde.example/`, og da hadde sammenligningen under vært pynt
+    — samme grunn som `_autorisert_vert` låner plattformens `malvert` i
+    stedet for å normalisere verten selv.
+
+    Feilteksten skrives om: kommer `_ren_url` til kort her, er det
+    OPPDRAGET som ikke lar seg lese, ikke motoren.
+    """
+    try:
+        return _ren_url(payload.get("mal_url"), autorisert_vert)
+    except Motorfeil as e:
+        raise Motorfeil("oppdragets mål lar seg ikke lese") from e
+
+
 def _sidestatus(raa) -> str:
     """Motorens sidestatus som EKTE enumverdi — eller Motorfeil (Codex P1).
 
@@ -304,6 +352,36 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
                       "status": _sidestatus(s.get("status"))})
     if not sider:
         raise Motorfeil("motoren kontrollerte ingen sider")
+    # ... og OMFANGET er oppdragets (Codex P1). Vertsbindingen over sier
+    # bare at sidene ligger på riktig nettsted; den sier ingenting om HVOR
+    # MANGE av dem noen har bedt om. En motor kunne derfor levere femti
+    # sider på den autoriserte verten under et oppdrag som ba om
+    # `enkeltside` / `maks_sider: 1`, og både skjemaet (maxItems: 50) og
+    # vertsbindingen slapp den gjennom til PROMOTERT evidens.
+    #
+    # To skader, ikke én:
+    #   * evidensen motsier bestillingen — et artefakt om et helt nettsted
+    #     under en beslutning som autoriserte én side, og leseren har
+    #     ingenting i rapporten som sier at det skjedde.
+    #   * crawlbudsjettet er en EKSTERN grense: `ekstern_lesing` er
+    #     observerbar trafikk mot noen andres nettsted, og modulen var den
+    #     eneste som kunne se at motoren gikk over det oppdraget tillot.
+    #     Uten porten var overskridelsen usynlig for hele plattformen.
+    #
+    # For `enkeltside` holder det ikke å telle til én: den ene siden må
+    # VÆRE den bestilte. En rapport om `/annet` på riktig vert er evidens
+    # om noe ingen har bestilt — samme løgn som feil vert bærer, bare ett
+    # nivå ned i URL-en.
+    omfang, maks_sider = _sidebudsjett(payload)
+    if maks_sider is not None and len(sider) > maks_sider:
+        raise Motorfeil(
+            f"motoren kontrollerte {len(sider)} sider, oppdraget ba om"
+            f" {maks_sider}")
+    if omfang == "enkeltside":
+        bestilt = _bestilt_url(payload, autorisert_vert)
+        if sider[0]["url"] != bestilt:
+            raise Motorfeil(
+                "motoren kontrollerte en annen side enn den bestilte")
 
     sammendrag = {k: 0 for k in _ALVOR}
     funn = []

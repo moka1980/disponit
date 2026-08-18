@@ -1149,8 +1149,14 @@ def _payload(**over):
     Den hører med i hver eneste `bygg`-test etter Codex P1: rapporten
     bindes til den autoriserte verten, så en payload uten lesbart mål er
     ikke lenger «en payload vi ikke bryr oss om» — den er fail-closed.
+
+    `mal_url` peker på NØYAKTIG den siden `_motorresultat` rapporterer
+    (Codex P1, runde 12): under `omfang: "enkeltside"` er den bestilte
+    siden en del av bestillingen, ikke bare verten, og en testpayload som
+    ba om `/` mens motoren svarte `/side` var en bestilling ingen av
+    testene egentlig mente å gjøre.
     """
-    basis = {"kravsett": "wcag21_aa", "mal_url": "https://kunde.example/",
+    basis = {"kravsett": "wcag21_aa", "mal_url": "https://kunde.example/side",
              "omfang": "enkeltside"}
     basis.update(over)
     return basis
@@ -1342,7 +1348,7 @@ def test_rapporterte_sider_bindes_til_det_autoriserte_maalet():
     # egen funksjon, ikke med en strengsammenligning.
     r = bygg(_motorresultat(sider=({"url": "https://KUNDE.example./dyp/sti",
                                     "status": "ok"},)),
-             payload=_payload(mal_url="https://kunde.example/start"),
+             payload=_payload(mal_url="https://KUNDE.example/dyp/sti"),
              kontekst=_kontekst())
     assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/dyp/sti"
     # Fail-closed når oppdraget ikke HAR et lesbart mål: da finnes det
@@ -1351,6 +1357,75 @@ def test_rapporterte_sider_bindes_til_det_autoriserte_maalet():
     with pytest.raises(Motorfeil):
         bygg(_motorresultat(), payload=_payload(mal_url="http://kunde.example/"),
              kontekst=_kontekst())
+
+
+def test_rapporten_holder_seg_innenfor_det_bestilte_omfanget():
+    """Codex P1: vertsbindingen sier hvor sidene ligger, ikke HVOR MANGE
+    noen ba om.
+
+    En motor kunne levere femti sider på den autoriserte verten under et
+    oppdrag som ba om `enkeltside` / `maks_sider: 1`: skjemaet tillater 50
+    sider, vertsbindingen tar bare verten, og ingen andre i kjeden ser
+    motorens sideliste. Resultatet var PROMOTERT evidens om et helt
+    nettsted under en beslutning som autoriserte én side — og en
+    overskridelse av det EKSTERNE crawlbudsjettet (`ekstern_lesing` er
+    observerbar trafikk mot noen andres nettsted) som ingen kunne oppdage.
+
+    Og for `enkeltside` holder det ikke å telle til én: den ene siden må
+    være DEN BESTILTE. `/annet` på riktig vert er evidens om noe ingen har
+    bestilt — samme løgn som feil vert, ett nivå ned i URL-en.
+
+    Kontroll: fjern `_sidebudsjett`-blokka i `bygg`, så blir denne rød på
+    hver eneste av påstandene under.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+    to_sider = ({"url": "https://kunde.example/side", "status": "ok"},
+                {"url": "https://kunde.example/annet", "status": "ok"})
+
+    # `enkeltside`: budsjettet er én side, uansett hva `maks_sider` sier.
+    for p in (_payload(), _payload(maks_sider=1), _payload(maks_sider=50)):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(sider=to_sider), payload=p,
+                 kontekst=_kontekst())
+    # `nettsted` med et tak: taket er bestillingen.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=to_sider),
+             payload=_payload(omfang="nettsted", maks_sider=1),
+             kontekst=_kontekst())
+    # Rett antall, men FEIL side: en enkeltsidekontroll av `/annet` er
+    # ikke kontrollen av `/side`.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "https://kunde.example/annet",
+                                    "status": "ok"},)),
+             payload=_payload(), kontekst=_kontekst())
+    # Uleselig bestilling er fail-closed: uten omfang vet modulen ikke hva
+    # den skal måle motoren mot.
+    for p in ({"kravsett": "wcag21_aa", "mal_url": "https://kunde.example/side"},
+              _payload(omfang="alt"), _payload(omfang=None),
+              _payload(maks_sider=0), _payload(maks_sider="1"),
+              _payload(maks_sider=True), _payload(omfang="nettsted",
+                                                  maks_sider=-3)):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(), payload=p, kontekst=_kontekst())
+
+    # Motsatsene. Den bestilte siden, i en annen skrivemåte enn motorens,
+    # er SAMME side — begge sider kanoniseres med `_ren_url`.
+    r = bygg(_motorresultat(sider=({"url": "https://kunde.example/side?x=1#y",
+                                    "status": "ok"},)),
+             payload=_payload(mal_url="https://KUNDE.example./side"),
+             kontekst=_kontekst())
+    assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/side"
+    # ... og et `nettsted`-oppdrag med romslig tak får sine to sider.
+    r = bygg(_motorresultat(sider=to_sider),
+             payload=_payload(omfang="nettsted", maks_sider=10),
+             kontekst=_kontekst())
+    assert len(r["sider_kontrollert"]) == 2
+    # `nettsted` UTEN tak har bare skjemaets 50 å gå på — modulen finner
+    # ikke på et tak oppdraget ikke satte.
+    r = bygg(_motorresultat(sider=to_sider),
+             payload=_payload(omfang="nettsted"), kontekst=_kontekst())
+    assert len(r["sider_kontrollert"]) == 2
 
 
 def test_ulovlig_sidestatus_avvises_i_stedet_for_aa_skrives_om():
@@ -1487,10 +1562,13 @@ def test_motorutdata_er_ubetrodd():
                  payload=_payload(), kontekst=_kontekst())
     # ... men en LOVLIG eksplisitt port skal fortsatt bæres videre.
     # `web_hostname` autoriserer en VERT, ikke et portnummer, så
-    # målbindingen skal ikke ta denne.
+    # målbindingen skal ikke ta denne. `omfang: "nettsted"` her med vilje:
+    # denne testen handler om PORTEN, og enkeltsidebudsjettet er en egen
+    # port med sin egen test.
     r = bygg(_motorresultat(sider=({"url": "https://example.com:8443/a?q=1#f",
                                     "status": "ok"},)),
-             payload=_payload(mal_url="https://example.com/"),
+             payload=_payload(mal_url="https://example.com/",
+                              omfang="nettsted"),
              kontekst=_kontekst())
     assert r["sider_kontrollert"][0]["url"] == "https://example.com:8443/a"
 
@@ -1585,7 +1663,8 @@ def _wcag_kjede(migrator_, monkeypatch):
         " VALUES (%s,'test','arbeidskapabilitet','ih2','p@1.0.0/x.y',"
         " 'TILLAT','[]',%s) RETURNING id", (TENANT, rid)).fetchone()[0]
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator_, TENANT)
-    payload = {"mal_url": "https://kunde.example/", "kravsett": "wcag21_aa",
+    payload = {"mal_url": "https://kunde.example/side",
+               "kravsett": "wcag21_aa",
                "omfang": "enkeltside", "maks_sider": 1,
                "ressurs_id": "hemmelig-ref"}
     ct, nonce = kryptering.krypter(dek, payload, TENANT, key_id)
@@ -1843,7 +1922,7 @@ class _Stubklient:
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
                 "repair_operation_id": "r", "owner_claim_id": "o",
                 "owner_generation": 0,
-                "payload": {"mal_url": "https://kunde.example/",
+                "payload": {"mal_url": "https://kunde.example/side",
                             "kravsett": "wcag21_aa", "omfang": "enkeltside"},
                 "opplasting": {"jti": "kap"}})
         if sti == "/v1/artefakt":
