@@ -21,8 +21,9 @@ ikke motoren fra å være ærlig:
   * MÅLET ER OFFENTLIG OG PINNET: vertsnavnet slås opp ÉN gang, hver
     adresse må være global, og både robots-henting og nettleser låses
     til den ene IP-en. Se `_pin_mal_ip`.
-  * ROBOTS RESPEKTERES (port 20): `Disallow` for `User-agent: *` følges
-    ved crawl; robots.txt 5xx → INGEN crawl — kun den eksplisitt
+  * ROBOTS RESPEKTERES (port 20): gruppene for `User-agent: *` følges
+    ved crawl, med RFC 9309-matching (`*`, `$`, Allow/Disallow-
+    presedens); robots.txt 5xx → INGEN crawl — kun den eksplisitt
     bestilte `mal_url` kontrolleres (kunden har selv pekt på den; å
     crawle videre uten en lesbar robots er å gjette på lov).
   * TAKET ER SYNLIG (port 19): crawlen stopper på `maks_sider`, og
@@ -40,6 +41,7 @@ import http.client
 import ipaddress
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -203,12 +205,43 @@ def _robots(base: str, pin_ip: str, tls_kontekst=None
     return _parse_robots(tekst), True
 
 
-def _parse_robots(tekst: str) -> list[str]:
-    """Disallow-prefiksene for `User-agent: *` — enkel, prefiksbasert
-    robots-lesing (RFC 9309-kjernen; wildcards i stier støttes ikke og
-    behandles da som bokstavelige prefikser, som er den STRENGE lesningen
-    for oss: vi crawler mindre, aldri mer)."""
-    disallow, gjelder = [], False
+def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
+    """Én robots-regel som (tillat, monster, kompilert matcher).
+
+    RFC 9309 §2.2.2 gir stimønsteret to metategn, og BEGGE endrer hva
+    regelen dekker: `*` matcher en vilkårlig sekvens, og `$` forankrer
+    til slutten av stien. Leser man dem bokstavelig, som et prefiks, blir
+    `Disallow: /privat/*.pdf$` en regel som ikke matcher NOE — og en
+    eksplisitt forbudt sti ble crawlet (Codex P1). Resten av mønsteret er
+    et rent prefiks, som før."""
+    anker = monster.endswith("$")
+    kropp = monster[:-1] if anker else monster
+    rx = re.compile(".*".join(re.escape(d) for d in kropp.split("*"))
+                    + ("$" if anker else ""))
+    return tillat, monster, rx
+
+
+def _parse_robots(tekst: str) -> list[tuple[bool, str, "re.Pattern"]]:
+    """Reglene som gjelder `User-agent: *` — RFC 9309-gruppert.
+
+    GRUPPER, IKKE LINJER (Codex P1). En robots-gruppe er én eller flere
+    SAMMENHENGENDE `User-agent`-linjer etterfulgt av reglene sine, og
+    gruppa gjelder oss om NOEN av dem er `*`:
+
+        User-agent: googlebot
+        User-agent: *
+        Disallow: /privat/
+
+    Den forrige lesingen satte `gjelder = (verdi == "*")` per linje, så
+    her vant den SISTE agentlinja — hadde `*` stått først, ble hele
+    gruppa forkastet og /privat/ crawlet. Flere grupper for `*` slås
+    sammen (§2.2.1).
+
+    `Allow` leses nå også: uten den er `Disallow: /` + `Allow: /aapen/`
+    et totalforbud vi ikke ble bedt om å følge. Presedensen er
+    standardens, ikke vår egen — se `_tillatt`."""
+    grupper: list[tuple[set[str], list]] = []
+    forrige_var_agent = False
     for linje in tekst.splitlines():
         linje = linje.split("#", 1)[0].strip()
         if not linje or ":" not in linje:
@@ -216,14 +249,30 @@ def _parse_robots(tekst: str) -> list[str]:
         felt, verdi = (d.strip() for d in linje.split(":", 1))
         felt = felt.lower()
         if felt == "user-agent":
-            gjelder = verdi == "*"
-        elif felt == "disallow" and gjelder and verdi:
-            disallow.append(verdi)
-    return disallow
+            if not forrige_var_agent or not grupper:
+                grupper.append((set(), []))
+            grupper[-1][0].add(verdi.lower())
+            forrige_var_agent = True
+            continue
+        forrige_var_agent = False
+        # En tom `Disallow:` er ingen begrensning, og en tom `Allow:` er
+        # ingen tillatelse — begge er ingenting, og hører ikke hjemme som
+        # et mønster som matcher alt.
+        if felt in ("disallow", "allow") and verdi and grupper:
+            grupper[-1][1].append(_regel(felt == "allow", verdi))
+    return [r for agenter, regler in grupper if "*" in agenter
+            for r in regler]
 
 
-def _tillatt(sti: str, disallow: list[str]) -> bool:
-    return not any(sti.startswith(d) for d in disallow)
+def _tillatt(sti: str, regler: list) -> bool:
+    """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — lengste mønster,
+    og `Allow` foran `Disallow` ved likt. Ingen treff = tillatt."""
+    beste_lengde, beste_tillat = -1, True
+    for tillat, monster, rx in regler:
+        if rx.match(sti) and (len(monster) > beste_lengde
+                              or (len(monster) == beste_lengde and tillat)):
+            beste_lengde, beste_tillat = len(monster), tillat
+    return beste_tillat
 
 
 def _normaliser_lenke(base_origin: str, side_url: str, href: str

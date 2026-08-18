@@ -25,12 +25,58 @@ fasitkontroll = _last("fasitkontroll")
 def test_robots_parsing_og_tillatt():
     tekst = "# k\nUser-agent: googlebot\nDisallow: /alt/\n" \
             "User-agent: *\nDisallow: /privat/\nDisallow: /tmp\n"
-    disallow = kjor._parse_robots(tekst)
-    assert disallow == ["/privat/", "/tmp"]
-    assert kjor._tillatt("/privat/hemmelig.html", disallow) is False
-    assert kjor._tillatt("/tmpfil", disallow) is False   # prefiks, som robots
-    assert kjor._tillatt("/index.html", disallow) is True
-    assert kjor._tillatt("/alt/x", disallow) is True     # gjaldt googlebot
+    regler = kjor._parse_robots(tekst)
+    assert [(t, m) for t, m, _ in regler] == [(False, "/privat/"),
+                                              (False, "/tmp")]
+    assert kjor._tillatt("/privat/hemmelig.html", regler) is False
+    assert kjor._tillatt("/tmpfil", regler) is False     # prefiks, som robots
+    assert kjor._tillatt("/index.html", regler) is True
+    assert kjor._tillatt("/alt/x", regler) is True       # gjaldt googlebot
+
+
+def test_robots_wildcard_og_sluttanker():
+    """`*` og `$` er metategn, ikke bokstaver — leses de bokstavelig,
+    matcher `Disallow: /privat/*.pdf$` ingenting (Codex P1)."""
+    regler = kjor._parse_robots(
+        "User-agent: *\nDisallow: /privat/*.pdf$\nDisallow: /*/intern\n")
+    assert kjor._tillatt("/privat/rapport.pdf", regler) is False
+    assert kjor._tillatt("/privat/dyp/sti/rapport.pdf", regler) is False
+    assert kjor._tillatt("/privat/rapport.pdf.html", regler) is True  # $
+    assert kjor._tillatt("/privat/rapport.html", regler) is True
+    assert kjor._tillatt("/a/intern/x", regler) is False
+    assert kjor._tillatt("/a/internt", regler) is False   # prefiks etter *
+    assert kjor._tillatt("/intern", regler) is True       # * krever et ledd
+
+
+def test_robots_gruppe_med_flere_user_agent_linjer():
+    """`*` i en gruppe gjelder gruppa — også når den ikke står sist."""
+    for tekst in ("User-agent: *\nUser-agent: googlebot\nDisallow: /privat/\n",
+                  "User-agent: googlebot\nUser-agent: *\nDisallow: /privat/\n"):
+        regler = kjor._parse_robots(tekst)
+        assert kjor._tillatt("/privat/x", regler) is False, tekst
+    # To atskilte grupper for `*` slås sammen (RFC 9309 §2.2.1); en ny
+    # agentlinje ETTER en regel starter en ny gruppe.
+    regler = kjor._parse_robots(
+        "User-agent: *\nDisallow: /a/\n\nUser-agent: *\nDisallow: /b/\n"
+        "\nUser-agent: bing\nDisallow: /c/\n")
+    assert kjor._tillatt("/a/x", regler) is False
+    assert kjor._tillatt("/b/x", regler) is False
+    assert kjor._tillatt("/c/x", regler) is True
+
+
+def test_robots_allow_vinner_paa_lengste_mønster():
+    regler = kjor._parse_robots(
+        "User-agent: *\nDisallow: /\nAllow: /aapen/\n")
+    assert kjor._tillatt("/aapen/side.html", regler) is True
+    assert kjor._tillatt("/lukket/side.html", regler) is False
+    # Likt mønster, motstridende regler: Allow vinner (§2.2.2).
+    likt = kjor._parse_robots("User-agent: *\nDisallow: /x\nAllow: /x\n")
+    assert kjor._tillatt("/x/y", likt) is True
+    # Tomme verdier er ingenting, ikke «matcher alt».
+    tom = kjor._parse_robots("User-agent: *\nDisallow:\nAllow:\n")
+    assert tom == [] and kjor._tillatt("/hva som helst", tom) is True
+    # Regler før noen User-agent-linje tilhører ingen gruppe.
+    assert kjor._parse_robots("Disallow: /privat/\n") == []
 
 
 def test_bare_offentlige_maladresser_slipper_gjennom():
@@ -91,8 +137,8 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
 
     monkeypatch.setattr(kjor, "_hent", hent(200, "User-agent: *\n"
                                                  "Disallow: /privat/\n"))
-    assert kjor._robots("https://m.example", "93.184.216.34") == (
-        ["/privat/"], True)
+    regler, lov = kjor._robots("https://m.example", "93.184.216.34")
+    assert lov is True and [m for _, m, _ in regler] == ["/privat/"]
     assert kall["pin"] == "93.184.216.34"      # hentingen bruker pinnen
     assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
     monkeypatch.setattr(kjor, "_hent", hent(404))
