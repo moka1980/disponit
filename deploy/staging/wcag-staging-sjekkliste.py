@@ -914,11 +914,26 @@ def fase7(m, http, mtk, digest):
 def fase8():
     aktiv = Path("/opt/disponit/aktiv")
     naa = aktiv.resolve()
-    releaser = sorted(Path("/opt/disponit/releases").iterdir(),
-                      key=lambda p: p.stat().st_mtime)
+    katalog = Path("/opt/disponit/releases")
+    releaser = sorted(katalog.iterdir(),
+                      key=lambda p: p.stat().st_mtime) if katalog.is_dir() \
+        else []
     forrige = [p for p in releaser if p != naa]
     if not forrige:
-        evidens("fase8_hoppet", grunn="ingen forrige release")
+        # EN DRILL SOM IKKE KAN KJØRES ER EN RØD MÅLING (Codex P1, runde 6).
+        # Grenen førte `fase8_hoppet` UTEN `ok`, så `_ROEDE` forble tom og
+        # fase 9 satte arbeideren i drift på en runde der akseptpunktet
+        # «forrige release opp og tilbake» aldri ble målt. Er
+        # release-katalogen tom eller ryddet, vet runden nettopp ikke det
+        # den skal vite — og «ikke målt» skal aldri se ut som «målt grønt».
+        # Fyll katalogen (deploy én release til) og kjør `--fase 8` om
+        # igjen; det er en forutsetning for drillen, ikke et unntak fra den.
+        evidens("fase8_hoppet",
+                grunn="ingen forrige release å rulle tilbake til",
+                katalog=str(katalog), releaser=[p.name[:12] for p in releaser],
+                merknad="rollback-drillen er et akseptpunkt: uten en"
+                        " forrige release er den UMÅLT, ikke bestått",
+                ok=False)
         return
     forrige = forrige[-1]
 
