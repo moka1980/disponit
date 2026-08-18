@@ -29,9 +29,9 @@ ikke motoren fra å være ærlig:
     presedens); robots.txt 5xx → INGEN crawl — kun den eksplisitt
     bestilte `mal_url` kontrolleres (kunden har selv pekt på den; å
     crawle videre uten en lesbar robots er å gjette på lov).
-  * TAKET ER SYNLIG (port 19): crawlen stopper på `maks_sider`, og
-    `avkortet` bærer (truffet, tak, oppdagede-URL-er) — aldri en stille
-    trunkering.
+  * TAKENE ER SYNLIGE (port 19): crawlen stopper på `maks_sider` og
+    eksempellista på `MAKS_EKSEMPLER`, og BEGGE slår `avkortet` på —
+    (truffet, tak, målt verdi), aldri en stille trunkering.
 
 Axe-kilden er sha256-PINNET: en byttet CDN-fil gir exit != 0, aldri en
 rapport bygget på ukjent regelverk. I containeren ligger fila bakt inn
@@ -69,6 +69,14 @@ ALVORLIGHET = {"critical": "kritisk", "serious": "alvorlig",
 
 ART = {"stylesheet": "stilark", "font": "font", "script": "skript",
        "image": "bilde"}
+
+#: Rapportkontraktens egne tak (`rapport.MAKS_EKSEMPLER`/`MAKS_SELEKTOR`),
+#: gjentatt her fordi motoren MÅ kappe før stdout: 500 funn à ti 200-tegns
+#: eksempler er alene over artefaktets harde 1 MiB. Verdiene er IDENTISKE
+#: med byggerens, og en test binder dem sammen — kappet motoren hardere enn
+#: kontrakten, ville byggeren aldri fått se at noe ble kappet.
+MAKS_EKSEMPLER = 10
+MAKS_SELEKTOR = 200
 
 #: Navigasjonsfrist per side — romslig for et lokalt testnettsted, liten
 #: mot claim-fristen. Motoren som helhet drepes uansett av Kommandomotors
@@ -528,7 +536,11 @@ def main() -> int:
         page.set_default_timeout(SIDEFRIST_MS)
 
         ko: list[str] = [mal_url]
-        oppdaget = {mal_url}
+        # `oppdaget` er tellingen `avkortet.verdi` rapporterer, så den skal
+        # holde KANONISKE URL-er: er `mal_url` skrevet med standardporten
+        # eller stor forbokstav i verten, ville den ellers ligget der i to
+        # former og gjort tellingen én for høy.
+        oppdaget = {_normaliser_lenke(origin, mal_url, mal_url) or mal_url}
         besokt = 0
         while ko and besokt < maks_sider:
             url = ko.pop(0)
@@ -586,9 +598,15 @@ def main() -> int:
                     "antall": 0, "eksempler": []})
                 for node in v.get("nodes", []):
                     f["antall"] += 1
-                    if len(f["eksempler"]) < 10:
+                    # `antall` teller ALLE nodene, `eksempler` bærer de
+                    # første `MAKS_EKSEMPLER`. Differansen mellom de to er
+                    # avkortingssignalet nederst — se `avkortet`.
+                    if len(f["eksempler"]) < MAKS_EKSEMPLER:
                         sel = ", ".join(str(t) for t in node.get("target", []))
-                        f["eksempler"].append(sel[:200])
+                        # Samme kutt byggeren gjør på nytt, med samme tall:
+                        # selektorlengden er kontraktens grense, ikke en
+                        # kapping motoren finner på bak byggerens rygg.
+                        f["eksempler"].append(sel[:MAKS_SELEKTOR])
             if maks_sider > 1:
                 for href in page.eval_on_selector_all(
                         "a[href]", "els => els.map(e =>"
@@ -607,7 +625,29 @@ def main() -> int:
                         ko.append(lenke)
         browser.close()
 
-    truffet = bool(ko)
+    # AVKORTINGEN DEKKER BEGGE TAKENE (Codex P2). `truffet` var `bool(ko)`
+    # alene, altså kun crawltaket — men eksempeltaket kapper OGSÅ evidens,
+    # og det gjorde det stille: for en regel med mer enn `MAKS_EKSEMPLER`
+    # feilende noder forkastet motoren eksempler den ALT hadde observert,
+    # mens rapporten meldte `avkortet.truffet: false`. Byggerens egen
+    # eksempeltelling kunne ikke fange det: den ser bare den kappede lista,
+    # så tallet er per definisjon på taket, aldri over.
+    #
+    # Crawltaket har forsett når begge er truffet: det sier at hele SIDER
+    # mangler, mens eksempeltaket sier at én regel har flere forekomster
+    # enn de viste. `truffet` er sann uansett hvilket av dem det var.
+    sider_avkortet = bool(ko)
+    # Det største nodeantallet ETT funn hadde utover eksempeltaket — det er
+    # tellingen taket faktisk ble målt mot, slik `rapport.bygg` gjør det.
+    eksempler_avkortet = max(
+        (f["antall"] for f in funn.values()
+         if f["antall"] > len(f["eksempler"])), default=0)
+    if sider_avkortet:
+        avkortet = [True, maks_sider, len(oppdaget)]
+    elif eksempler_avkortet:
+        avkortet = [True, MAKS_EKSEMPLER, eksempler_avkortet]
+    else:
+        avkortet = [False, None, None]
     resultat = {
         "regelsett_versjon": f"axe-core-{AXE_VERSJON}",
         "varighet_ms": int((time.monotonic() - start) * 1000),
@@ -615,8 +655,7 @@ def main() -> int:
         "funn": sorted(funn.values(), key=lambda f: f["regel_id"]),
         "blokkert": [{"vert": v, "antall": n, "art": a}
                      for (v, a), n in sorted(blokkert.items())],
-        "avkortet": ([True, maks_sider, len(oppdaget)] if truffet
-                     else [False, None, None]),
+        "avkortet": avkortet,
     }
     json.dump(resultat, sys.stdout)
     return 0

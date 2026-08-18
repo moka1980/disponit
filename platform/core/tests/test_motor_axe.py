@@ -170,6 +170,38 @@ def test_lenkenormalisering_er_lukket():
     assert n(o, f"{o}/index.html", "/sok?q=1#treff") == f"{o}/sok?q=1"
 
 
+def test_eksempeltaket_slaar_avkortet_paa():
+    """Eksempeltaket kapper evidens motoren ALT har observert, og det gjorde
+    det stille (Codex P2): en regel med mer enn `MAKS_EKSEMPLER` feilende
+    noder ga `avkortet.truffet: false`. Byggerens egen eksempeltelling kan
+    ikke fange det — den ser bare den kappede lista, så tallet ligger per
+    definisjon PÅ taket, aldri over.
+
+    Takene må dessuten være IDENTISKE med byggerens: kappet motoren
+    hardere, ville byggeren aldri fått se at noe ble kappet."""
+    sys.path.insert(0, str(ROT / "platform"))
+    from modules.wcag_audit import rapport
+    assert kjor.MAKS_EKSEMPLER == rapport.MAKS_EKSEMPLER
+    assert kjor.MAKS_SELEKTOR == rapport.MAKS_SELEKTOR
+
+    # Signalet slik motoren regner det ut, på kilden: begge takene, med
+    # crawltaket først når begge er truffet.
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "sider_avkortet = bool(ko)" in kilde
+    assert "eksempler_avkortet = max(" in kilde
+    assert "[True, MAKS_EKSEMPLER, eksempler_avkortet]" in kilde
+    assert "truffet = bool(ko)" not in kilde
+
+    # Og at et kappet funn faktisk er kjennbart: `antall` teller alle
+    # nodene, `eksempler` bærer maks ti — differansen ER signalet.
+    funn = {"r": {"antall": 25, "eksempler": ["x"] * kjor.MAKS_EKSEMPLER},
+            "s": {"antall": 3, "eksempler": ["y"] * 3}}
+    assert max((f["antall"] for f in funn.values()
+                if f["antall"] > len(f["eksempler"])), default=0) == 25
+    assert max((f["antall"] for f in [funn["s"]]
+                if f["antall"] > len(f["eksempler"])), default=0) == 0
+
+
 def test_blokkert_vert_blir_alltid_baerbar_for_rapporten():
     """En blokkering skal bli en DEKNINGSBEGRENSNING, aldri et avbrutt
     oppdrag (Codex P2). `rapport.bygg` krever et prikket vertsnavn av hver
