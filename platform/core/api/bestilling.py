@@ -156,14 +156,31 @@ def intensjonshash(normalisert: dict) -> str:
     return hashlib.sha256(jcs.kanoniske_bytes(intensjon)).hexdigest()
 
 
+#: Gyldighetspredikatet, ORDRETT fra `v_domeneautorisasjon.gyldig`
+#: (016 §6). Egress-autoriteten slipper bare gjennom et domene som ER
+#: dette, og bestillingsporten må stille samme spørsmål: en bestilling
+#: mot et mål egress vil avvise, brenner kvote og legger seg i køen for
+#: å dø der ute. Den utelatte biten var ferskheten — et domene kan stå
+#: `verifisert` med uutløpt `utloper` i månedsvis etter at den daglige
+#: revalideringen sluttet å lykkes, og nettopp det er tilfellet porten
+#: finnes for. `test_domenepredikatet_speiler_visningen` krysser de to
+#: tekstene mekanisk, så de ikke kan gli fra hverandre i stillhet.
+DOMENE_GYLDIG_SQL = (
+    "status = 'verifisert' AND now() < utloper"
+    " AND siste_vellykkede_revalidering > now() - interval '72 hours'")
+
+
 def _verifisert_hostname(conn, tenant: str, hostname: str) -> bool:
     """Positivt autorisert mål VED OPPRETTELSE (portene 9–10): en
-    `verifisert`, ikke-utløpt domenekontroll for nøyaktig dette hostnamet.
-    Wildcard teller ikke her — bestillingen gjelder ett konkret mål."""
+    `verifisert`, ikke-utløpt, FERSK revalidert domenekontroll for
+    nøyaktig dette hostnamet. Wildcard teller ikke her — bestillingen
+    gjelder ett konkret mål.
+
+    NULL-veiene er fail-closed, som i visningen: mangler `utloper` eller
+    `siste_vellykkede_revalidering`, er raden ikke et bevis på noe."""
     return conn.execute(
         "SELECT 1 FROM domenekontroll WHERE tenant=%s AND hostname=%s"
-        " AND status='verifisert'"
-        " AND (utloper IS NULL OR utloper > now())",
+        " AND (" + DOMENE_GYLDIG_SQL + ")",
         (tenant, hostname)).fetchone() is not None
 
 

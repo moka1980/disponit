@@ -522,13 +522,20 @@ def _wcag_policy(migrator_, *, med_handling=True,
     return p
 
 
-def _verifiser_domene(migrator_, hostname):
+def _verifiser_domene(migrator_, hostname, revalidert="now()"):
+    """Samme radform som `verifiser_domenekontroll` (016 §2) skriver:
+    verifisert_ts, siste_vellykkede_revalidering og utloper settes alle —
+    det er DEN raden som er gyldig, ikke bare `status='verifisert'`."""
     _sett_kontekst(migrator_, TENANT)
     migrator_.execute(
         "INSERT INTO domenekontroll (tenant, hostname, status,"
-        " autorisasjonsgenerasjon, verifisert_ts)"
-        " VALUES (%s,%s,'verifisert',1,now())"
-        " ON CONFLICT (tenant, hostname) DO UPDATE SET status='verifisert'",
+        " autorisasjonsgenerasjon, verifisert_ts,"
+        " siste_vellykkede_revalidering, utloper)"
+        f" VALUES (%s,%s,'verifisert',1,now(),{revalidert},"
+        " now()+interval '90 days')"
+        " ON CONFLICT (tenant, hostname) DO UPDATE SET status='verifisert',"
+        f" siste_vellykkede_revalidering={revalidert},"
+        " utloper=now()+interval '90 days'",
         (TENANT, hostname))
     migrator_.commit()
 
@@ -568,6 +575,62 @@ def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
         " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for et uautorisert mål"
+
+
+@pg
+@dekker("bestilling_hostname_uverifisert")
+def test_foreldet_revalidering_er_ikke_et_autorisert_maal(migrator, klient):
+    """Codex P2: porten må stille egress-autoritetens HELE spørsmål.
+
+    Et domene kan stå `verifisert` med uutløpt `utloper` lenge etter at
+    den daglige revalideringen sluttet å lykkes — `v_domeneautorisasjon.
+    gyldig` krever derfor også en revalidering nyere enn 72 timer. Porten
+    så bare på status og `utloper`, så bestillingen brant kvote og la seg
+    i køen for å bli avvist av egress senere.
+
+    Kontroll: fjern ferskhetsleddet fra `DOMENE_GYLDIG_SQL`, så blir
+    denne rød.
+    """
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example",
+                      revalidert="now()-interval '73 hours'")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp(), nokkel)
+    assert (r.status_code, r.json()["feil"]) == (
+        403, "bestilling_hostname_uverifisert"), r.text
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0, "beslutningen ble tatt for et foreldet domene"
+
+    # ... og en fersk revalidering på det SAMME domenet slipper gjennom:
+    # porten avviser foreldelsen, ikke domenet.
+    _verifiser_domene(migrator, "kunde.example")
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp(),
+                 "n-" + secrets.token_hex(8))
+    assert r.status_code == 200, r.text
+
+
+def test_domenepredikatet_speiler_visningen():
+    """Statisk port: bestillingens gyldighetspredikat ER `v_domene-
+    autorisasjon.gyldig` (016 §6), ordrett. To definisjoner av «gyldig
+    domene» er én definisjon for mye — glir de fra hverandre, autoriserer
+    bestillingsveien mål egress vil avvise."""
+    import re
+    from pathlib import Path
+
+    from api.bestilling import DOMENE_GYLDIG_SQL
+    kilde = (Path(__file__).resolve().parents[1] / "db" / "migrations"
+             / "016_domene_egress_artefakt.sql").read_text(encoding="utf-8")
+    m = re.search(r"\((status = 'verifisert'.*?)\)\s*\n\s*AS gyldig",
+                  kilde, re.S)
+    assert m, "fant ikke `gyldig`-uttrykket i 016 — er visningen omskrevet?"
+    normaliser_ = lambda s: " ".join(s.split())            # noqa: E731
+    assert normaliser_(DOMENE_GYLDIG_SQL) == normaliser_(m.group(1)), \
+        "bestillingens domenepredikat har glidd fra visningens"
 
 
 @pg
