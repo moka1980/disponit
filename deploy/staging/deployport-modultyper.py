@@ -35,6 +35,37 @@ typeregistreringen (`platform/core/oppdragskontrakt.OPPDRAGSTYPER`):
      eier (`eiermodul` er None for de eierløse legacy-typene) — et krav
      kan ikke håndheves mot en kilde som ikke uttaler seg.
 
+  4. (Codex P1) En rad i `artefakttype_register` hvis `skjema_hash` ikke
+     finnes i `artefaktskjema`. 036 slår på et UBETINGET skjemaoppslag i
+     `/v1/artefakt`, og bindingen er en HASH, ikke en fremmednøkkel: en
+     type som ble registrert på en oppgradert base før 036 kan bære en
+     hash uten skjemarad, og ville blitt fullstendig ubrukelig i det den
+     nye releasen ble aktivert. Innholdet kan ikke bakfylles fra basen
+     (den har hashen, ikke skjemaet), så porten stopper deployen og
+     NAVNGIR type + hash.
+
+     Porten står her og ikke som en migrasjonsport (Codex P1, runde 3).
+     `opp.sh` kjører migrasjonene mot BEGGE basene, og testbasen bærer
+     syntetiske typerader per konstruksjon — pre-036-tester committet
+     `artefakttype_register`-rader med tilfeldige hasher det aldri har
+     eksistert et skjema for. En migrasjonsport traff dermed den
+     persistente testbasen med en oppskrift som ikke KAN følges: ingen
+     kan produsere et skjema som hasher til `_hex64()`. Nøyaktig det
+     skillet er grunnen til at steg 6b finnes fra før, og hvorfor det
+     kjører mot runtime-DSN-en alene.
+
+     Rekkefølgen gjør porten gjenopprettelig: den kjører ETTER
+     migrasjonene (så `artefaktskjema` og `registrer_artefaktskjema`
+     finnes) og FØR release-byttet (så det er den GAMLE koden som står
+     igjen — og den slår ikke opp skjemaet, altså tar den fortsatt imot
+     opplastninger). Deployen stopper, men basen er brukbar, og steg 2 i
+     feilmeldingen lar seg faktisk utføre:
+
+       1. kjør `opp.sh`; porten stopper og navngir type + hash
+       2. `SELECT registrer_artefaktskjema(<kanonisk skjema>, <hash>,
+          <aktør>)` (eller `api.artefaktskjema.registrer`) for hver
+       3. kjør `opp.sh` på nytt
+
 Kjøres med RUNTIME-DSN (kun SELECT). Exit 0 = grønn, 1 = stopp.
 """
 import os
@@ -96,7 +127,31 @@ def kontroller(conn) -> list[str]:
                 f" ({eiermodul}) — aktiveringsporten hopper da over både"
                 " frekvens og målautorisasjon, og handlingen kan aktiveres"
                 " uten noen av dem")
+    feil += _skjemaporten(conn)
     return feil
+
+
+def _skjemaporten(conn) -> list[str]:
+    """Port 4: hver registrerte artefakttype må ha et OPPSLAGBART skjema.
+
+    Se modul-docstringen for hvorfor kontrollen bor i deploy-porten og
+    ikke i en migrasjon. Meldingen navngir både typen og hashen: den som
+    kjører deployen trenger begge for å registrere riktig skjema.
+    """
+    mangler = conn.execute(
+        "SELECT r.artefakttype, r.skjema_hash"
+        "  FROM artefakttype_register r"
+        " WHERE NOT EXISTS (SELECT 1 FROM artefaktskjema s"
+        "                    WHERE s.skjema_hash = r.skjema_hash)"
+        " ORDER BY r.artefakttype").fetchall()
+    return [
+        f"artefakttypen '{at}' er registrert med skjema_hash {h}, men den"
+        " finnes ikke i artefaktskjema — /v1/artefakt slår opp skjemaet"
+        " ubetinget fra 036, så hver opplastning for typen ville blitt"
+        " avvist med artefaktskjema_mangler. Registrer skjemaet med"
+        " registrer_artefaktskjema(<kanonisk skjema>, <hash>, <aktør>) og"
+        " kjør opp.sh på nytt"
+        for at, h in mangler]
 
 
 def main() -> int:

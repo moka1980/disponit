@@ -120,113 +120,110 @@ def test_skjemalageret_er_immutabelt_for_alltid(migrator):
         migrator.rollback()
 
 
-_MERKE_PORT = "artefaktskjema mangler for registrerte"
-_MERKE_FUNKSJON = "CREATE OR REPLACE FUNCTION registrer_artefaktskjema("
+def _deployport():
+    """Deploy-porten (`deploy/staging/deployport-modultyper.py`) lastet som
+    modul.
+
+    Den er et skript uten pakke, så den lastes fra filsti — og fra filstien
+    `opp.sh` faktisk kjører, ikke fra en kopi: en avskrift ville stått grønn
+    den dagen noen svekket porten i skriptet.
+    """
+    import importlib.util
+    from pathlib import Path
+    fil = (Path(__file__).resolve().parents[3]
+           / "deploy/staging/deployport-modultyper.py")
+    spec = importlib.util.spec_from_file_location("_deployport_modultyper",
+                                                  fil)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def _migrasjonsfil(merke: str) -> tuple[int, str]:
-    """(versjon, tekst) for den ENE migrasjonsfilen som inneholder `merke`.
+def test_skjemaporten_er_ingen_migrasjon():
+    """Codex P1, runde 3: kravet om oppslagbart skjema kan ikke stå i en
+    migrasjon — uansett hvilken fil.
 
-    Testene under spør om rekkefølgen mellom to migrasjoner, så filen må
-    finnes ved søk, ikke ved navn: hardkodet filnavn ville gjort testen
-    grønn og påstanden usann den dagen blokka flyttet."""
+    `opp.sh` migrerer BEGGE basene. Testbasen bærer syntetiske typerader
+    per konstruksjon: pre-036-tester committet `artefakttype_register`-rader
+    med tilfeldige hasher (`_hex64()`, `'sh'`) det aldri har eksistert et
+    skjema for. En migrasjonsport traff dermed den persistente testbasen
+    med en oppskrift ingen KAN følge — `registrer_artefaktskjema` regner
+    ut SHA-256 selv, så det finnes ikke noe skjema å registrere for en
+    tilfeldig hash — og hvert nye forsøk feilet identisk.
+
+    Porten bor derfor i deploy-porten, som kjører mot runtime-DSN-en alene.
+    Det er nøyaktig det skillet steg 6b i `opp.sh` alt gjør, og av samme
+    grunn.
+
+    Kontroll: legg kravet tilbake i en `.sql` under `db/migrations`, så
+    blir denne rød.
+    """
     from pathlib import Path
     mappe = Path(__file__).resolve().parents[1] / "db/migrations"
-    treff = [f for f in sorted(mappe.glob("[0-9][0-9][0-9]_*.sql"))
-             if merke in f.read_text(encoding="utf-8")]
-    assert len(treff) == 1, f"fant {len(treff)} migrasjoner med {merke!r}"
-    return int(treff[0].name[:3]), treff[0].read_text(encoding="utf-8")
-
-
-def _migrasjonsporten() -> str:
-    """Selve DO-blokka fra migrasjonsporten, hentet ut av migrasjonsfilen.
-
-    Testen kjører migrasjonens EGEN tekst, ikke en avskrift: en avskrift
-    ville blitt stående grønn den dagen noen svekket blokka i filen."""
-    _, sql = _migrasjonsfil(_MERKE_PORT)
-    blokker = [b for b in sql.split("DO $$") if _MERKE_PORT in b]
-    assert len(blokker) == 1, "fant ikke migrasjonsporten"
-    return "DO $$" + blokker[0].split("END $$;")[0] + "END $$;"
-
-
-def test_migrasjonsporten_staar_etter_skjemalageret_er_commitet():
-    """Codex P1, runde 2: en port som stopper må være mulig å komme forbi.
-
-    Porten navngir de manglende hashene og ber operatøren registrere
-    skjemaene med `registrer_artefaktskjema`. Sto den i den SAMME filen som
-    oppretter funksjonen og `artefaktskjema`, rullet unntaket tilbake
-    nettopp det verktøyet oppskriften krever — og hvert nye forsøk feilet
-    identisk. Kjøreren (`db/kjorer.py`) commiter per fil, så porten må stå
-    i en SENERE fil enn den som lager funksjonen; da står lageret igjen når
-    porten stopper, og deployen er gjenopprettelig.
-
-    Kontroll: flytt DO-blokka tilbake til 036, så blir denne rød.
-    """
-    v_port, _ = _migrasjonsfil(_MERKE_PORT)
-    v_funksjon, _ = _migrasjonsfil(_MERKE_FUNKSJON)
-    assert v_port > v_funksjon, (
-        f"porten (migrasjon {v_port:03d}) kan ikke stå i eller før den"
-        f" migrasjonen som oppretter registrer_artefaktskjema"
-        f" ({v_funksjon:03d}) — da ruller den tilbake sin egen reparasjon")
-
-    # Og filen som bærer porten må ikke ta med seg noe annet: hadde den
-    # opprettet objekter selv, ville avvisningen rullet DEM tilbake, og
-    # neste forsøk ville ikke vært det samme ett-stegs forsøket.
-    _, tekst = _migrasjonsfil(_MERKE_PORT)
-    for ddl in ("CREATE TABLE", "CREATE OR REPLACE FUNCTION",
-                "ALTER TABLE", "CREATE TRIGGER", "INSERT INTO"):
-        assert ddl not in tekst, f"portmigrasjonen gjør mer enn å porte: {ddl}"
+    for f in sorted(mappe.glob("[0-9][0-9][0-9]_*.sql")):
+        tekst = f.read_text(encoding="utf-8")
+        # Selve mønsteret porten MÅ ha for å kunne stoppe: en
+        # eksistenssjekk fra typeregisteret mot skjemalageret som reiser.
+        blokker = [b for b in tekst.split("DO $$")[1:]
+                   if "artefakttype_register" in b
+                   and "artefaktskjema" in b and "RAISE EXCEPTION" in b]
+        assert not blokker, (
+            f"{f.name} porter på manglende artefaktskjema — det låser den"
+            " persistente testbasen, som bærer syntetiske hasher")
+    # ... og porten finnes, i den fila som faktisk kjøres.
+    assert hasattr(_deployport(), "_skjemaporten")
 
 
 @pg
-def test_migrasjonsporten_krever_skjema_for_alle_gamle_typer(migrator):
+def test_deployporten_krever_skjema_for_alle_gamle_typer(migrator):
     """Codex P1: 036 slår på et UBETINGET skjemaoppslag i `/v1/artefakt`.
 
-    Seeden i punkt 6 dekker den ene typen 035 la inn, men
     `registrer_artefakttype` har vært kallbar siden 016/035, og enhver type
     som ble registrert på en OPPGRADERT base før 036 bærer en `skjema_hash`
     uten rad i `artefaktskjema` — bindingen er en hash, ikke en
     fremmednøkkel, så ingenting stoppet det. En artefakttype som tok imot
-    opplastninger i går ville blitt fullstendig ubrukelig i det
-    migrasjonen kjørte, og ikke reparerbar bakover: både skjemaraden og
+    opplastninger i går ville blitt fullstendig ubrukelig i det den nye
+    releasen ble aktivert, og ikke reparerbar bakover: både skjemaraden og
     typebindingen er immutable, så bare NØYAKTIG det skjemaet hashen peker
     på kan fikse den.
 
     Innholdet kan ikke bakfylles fra basen (den har hashen, ikke skjemaet),
-    så porten stopper migrasjonen i stedet. Feilen kommer da ved deploy,
-    hos den som kan registrere skjemaene, ikke hos en modul midt i et
-    oppdrag.
+    så porten stopper DEPLOYEN. Den kjører etter migrasjonene og før
+    release-byttet: lageret og `registrer_artefaktskjema` finnes, den gamle
+    koden står fortsatt og slår ikke opp skjemaet, og oppskriften i
+    feilmeldingen lar seg utføre.
 
-    Kontroll: fjern DO-blokka i 037, så blir denne rød.
+    Kontroll: fjern `_skjemaporten`-kallet i `kontroller`, så blir denne
+    rød.
     """
-    port = _migrasjonsporten()
+    port = _deployport()
     modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _plukket_oppdrag_med_binding(migrator, modul, kh)   # lager kontrakten
 
-    # En type med et registrert skjema slipper porten forbi. (Den delte
-    # testbasen kan bære grandfathered bindinger fra andre tester, så det
-    # som sjekkes er at porten ikke navngir VÅR type — ikke at hele basen
-    # er ren.)
+    # En type med et registrert skjema navngis ikke. (Den delte testbasen
+    # kan bære grandfathered bindinger fra andre tester, så det som
+    # sjekkes er at porten ikke navngir VÅR type — ikke at hele basen er
+    # ren. Det er nettopp den urenheten som gjør at porten ikke kan være
+    # en migrasjon.)
     at_ok = _streng_type(migrator, modul, kh)
-    try:
-        migrator.execute(port)
-    except psycopg.errors.InvalidParameterValue as e:
-        assert at_ok not in str(e), "porten stoppet en type med skjema"
-    migrator.rollback()
+    assert not [f for f in port._skjemaporten(migrator) if at_ok in f], \
+        "porten navngav en type som HAR skjema"
 
     # ... og en «grandfathered» binding — hash uten skjemarad, slik bare et
-    # direkte INSERT fra før 036 kunne lagd den — stopper migrasjonen.
+    # direkte INSERT fra før 036 kunne lagd den — stopper deployen.
     at = f"kontroll.b{secrets.token_hex(3)}.rapport"
     migrator.execute(
         "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
         " kontraktversjon, kontrakt_hash, skjema_hash)"
         " VALUES (%s,%s,1,%s,%s)", (at, modul, kh, "c" * 64))
-    with pytest.raises(psycopg.errors.InvalidParameterValue) as ei:
-        migrator.execute(port)
+    treff = [f for f in port._skjemaporten(migrator) if at in f]
     # Meldingen navngir typen OG hashen: den som kjører deployen trenger
-    # begge for å registrere riktig skjema før migrasjonen prøves igjen.
-    assert at in str(ei.value) and "c" * 64 in str(ei.value)
+    # begge for å registrere riktig skjema før deployen prøves igjen.
+    assert len(treff) == 1 and "c" * 64 in treff[0], treff
+    # Og den er med i det `kontroller` faktisk rapporterer — en port som
+    # ikke kalles er ingen port.
+    assert [f for f in port.kontroller(migrator) if at in f]
     migrator.rollback()
 
 

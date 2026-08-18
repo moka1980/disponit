@@ -334,11 +334,14 @@ done
 
 # --- 6b. Deploy-portene fra PR-014c §5 — register vs kodefestet type -------
 # ETTER migrasjonene (skjemaet er ferskt), FØR release-byttet: en
-# registerrad uten kodefestet OPPDRAGSTYPER-type, eller en ekstern_lesing-
-# kontrakt uten målautorisasjonsflagg på typen, stopper deployen mens
-# forrige release fortsatt er intakt. Runtime-basen er sannheten som
-# betjener kunder; testbasen bærer syntetiske typerader per konstruksjon
-# og måles ikke her.
+# registerrad uten kodefestet OPPDRAGSTYPER-type, en ekstern_lesing-
+# kontrakt uten målautorisasjonsflagg på typen, eller en artefakttype hvis
+# skjema_hash ikke finnes i `artefaktskjema` (014c port 4), stopper
+# deployen mens forrige release fortsatt er intakt. Runtime-basen er
+# sannheten som betjener kunder; testbasen bærer syntetiske typerader per
+# konstruksjon og måles ikke her — og det er nettopp derfor skjemaporten
+# bor HER og ikke som en migrasjon: en migrasjon treffer begge basene, og
+# de syntetiske hashene i testbasen har ingen skjemaer å registrere.
 (cd "$KILDE" && DATABASE_URL="$DATABASE_URL" DISPONIT_REPO="$KILDE" \
    "$ROT/.venv/bin/python" deploy/staging/deployport-modultyper.py) || {
   echo "AVBRUTT: deploy-port (014c §5) rød — tjenestene er STOPPET og"

@@ -586,19 +586,33 @@ INSERT INTO artefaktskjema (skjema_hash, skjema)
     ON CONFLICT (skjema_hash) DO NOTHING;
 
 -- ------------------------------------------------------------
--- 7. MIGRASJONSPORTEN bor IKKE her — den står i 037 (Codex P1, runde 2).
+-- 7. PORTEN som krever at hver registrert artefakttype har et oppslagbart
+--    skjema er INGEN MIGRASJON. Den står i `deploy/staging/
+--    deployport-modultyper.py`, som steg 6b i opp.sh (Codex P1, rd. 1-3).
 --
--- Porten krever at hver registrert artefakttype har et oppslagbart skjema
--- før valideringen slås på, og navngir dem som mangler. Sto den i denne
--- filen, ville unntaket rullet tilbake DEN SAMME transaksjonen som
--- oppretter `artefaktskjema` og `registrer_artefaktskjema` — og den
--- eneste kjente reparasjonen (registrer skjemaet hashen peker på) ville
--- vært umulig å utføre, fordi verktøyet den ber om ikke fantes etterpå.
--- Hvert nye forsøk ville feilet identisk.
+-- Kravet er ekte: fra og med denne filen slår `/v1/artefakt` opp skjemaet
+-- ubetinget, og en type registrert på en oppgradert base før 036 kan bære
+-- en `skjema_hash` uten rad i `artefaktskjema` — bindingen er en HASH,
+-- ikke en fremmednøkkel. Innholdet kan ikke bakfylles fra basen (den har
+-- hashen, ikke skjemaet), så noe MÅ stoppe før den nye koden aktiveres.
 --
--- Kjøreren commiter per fil (`db/kjorer.py`), så 036 står igjen når 037
--- stopper: lageret og registreringsfunksjonen er på plass, operatøren kan
--- registrere de navngitte skjemaene, og kjøre migrasjonen om igjen.
--- Deployen stopper fortsatt — `migrer()` reiser videre — men den er nå
--- gjenopprettelig i stedet for å være en blindvei.
+-- Men det kan ikke være en migrasjon, av to grunner som begge er lært:
+--
+--   * Sto blokka i DENNE filen, rullet unntaket tilbake den samme
+--     transaksjonen som oppretter `artefaktskjema` og
+--     `registrer_artefaktskjema`. Reparasjonen porten ber om krever
+--     nettopp det verktøyet, så hvert nye forsøk feilet identisk.
+--   * Sto den i en EGEN migrasjonsfil (037), var den gjenopprettelig i
+--     runtime-basen — men `opp.sh` migrerer BEGGE basene, og testbasen
+--     bærer syntetiske typerader per konstruksjon: pre-036-tester
+--     committet rader med tilfeldige hasher det aldri har eksistert et
+--     skjema for. Ingen kan produsere et skjema som hasher til `_hex64()`,
+--     så porten låste den persistente testbasen for godt.
+--
+-- Deploy-porten kjører mot RUNTIME-DSN-en alene — nøyaktig det skillet
+-- steg 6b finnes for — etter migrasjonene og før release-byttet. Da er
+-- lageret og funksjonen på plass, den GAMLE koden står fortsatt og tar
+-- imot opplastninger, og operatøren kan registrere de navngitte skjemaene
+-- og kjøre opp.sh på nytt. Deployen stopper fortsatt; den er bare ikke
+-- lenger en blindvei — for noen av basene.
 -- ------------------------------------------------------------
