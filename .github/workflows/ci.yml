@@ -40,7 +40,15 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: Installer avhengigheter
-        run: pip install pytest pyyaml jsonschema "psycopg[binary]" cryptography starlette uvicorn httpx "authlib>=1.6,<2" joserfc
+        run: |
+          pip install pytest pyyaml jsonschema "psycopg[binary]" cryptography starlette uvicorn httpx "authlib>=1.6,<2" joserfc
+          # Norskporten er fail-closed: uten wordfreq er den PERMANENT rød,
+          # og en port som alltid feiler blir en port noen slår av.
+          pip install -r requirements-dev.txt
+      - name: "Port: norsk uten ASCII-normalisering i sannhetskilden"
+        run: |
+          python prototype/sjekk_norsk.py --selftest
+          python prototype/sjekk_norsk.py docs/spesifikasjon/disponit-prototype-v8.html
       - name: "Databaseroller (speiler deploy/staging/oppsett-postgresql.sh)"
         env: {PGPASSWORD: postgres}
         run: |
