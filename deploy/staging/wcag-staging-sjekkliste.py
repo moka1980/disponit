@@ -1436,7 +1436,7 @@ def _arbeiderpodman(*argv) -> list[str]:
 def _motorforspann(motor_argv) -> list[str] | None:
     """Kommandokonteksten en motorkommandos image må slås opp MED.
 
-    -> forspannet fram til og med kjøretiden, ellers None.
+    -> alt FORAN `run`-underkommandoen, ellers None.
 
     Kjøretiden og forspannet ER en del av oppslaget (Codex P2): `docker`,
     rootless `podman` og `nerdctl` har hvert sitt lager, og
@@ -1444,11 +1444,24 @@ def _motorforspann(motor_argv) -> list[str] | None:
     som peker podman mot et annet lager. Slår vi opp imaget med en annen
     kjøretid enn kommandoen selv bruker, ser vi i et lager kommandoen
     aldri rører: da finnes imaget «ikke», og fase 9 stenger døren på en
-    helt gyldig motor."""
+    helt gyldig motor.
+
+    DE GLOBALE OPSJONENE HØRER MED (Codex P2, runde 3): lageret velges
+    ikke bare av kjøretidens navn, men av opsjonene MELLOM kjøretiden og
+    underkommandoen — `podman --root /annet-lager run … <image>` slår opp
+    i `/annet-lager`, `docker --context …` og `nerdctl --namespace …`
+    tilsvarende. Kuttet vi ved selve kjøretidsleddet, ble
+    `--root /annet-lager` kastet og begge oppslagene spurte
+    standardlageret om et image som bare finnes i det andre: samme feil
+    ett hakk finere, altså at en gyldig release stenges ute.
+
+    Snittet går derfor ved `run` — `_kjoretidsledd` har allerede
+    fastslått at leddet finnes etter kjøretiden — og alt foran følger
+    med, uansett hva overstyringen fant på å sette der."""
     i = _kjoretidsledd(motor_argv)
     if i is None:
         return None
-    return _som_arbeideren(motor_argv[:i + 1])
+    return _som_arbeideren(motor_argv[:motor_argv.index("run", i + 1)])
 
 
 def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
@@ -1997,6 +2010,10 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     # en id som inspiserte helt fint — og døren stenges på feil grunnlag.
     motor_argv = shlex.split(motor)
     forspann = _motorforspann(motor_argv)
+    # Forspannet ender på de globale opsjonene, ikke på kjøretiden, så
+    # kjøretidsnavnet til evidensen LETES opp — ellers hadde
+    # `podman --root /annet-lager` blitt ført som lest med «annet-lager».
+    kjt = _kjoretidsledd(motor_argv)
     drift_id, hvorfra = _effektiv_motorimage(motor_argv)
     ventet = _docker_identitet(digest)
     effektiv = (_image_identitet(forspann, drift_id)
@@ -2005,7 +2022,7 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     evidens("fase9_effektiv_motor", motor=motor, image_id=drift_id,
             artifact_digest=digest.split(":")[-1],
             identisk_lag_og_konfig=identisk, utfall=hvorfra,
-            lest_med=Path(forspann[-1]).name if forspann else "",
+            lest_med=Path(motor_argv[kjt]).name if kjt is not None else "",
             overstyrt=bool(os.environ.get("WCAG_DRIFT_MOTOR")),
             ok=identisk)
     if not identisk:

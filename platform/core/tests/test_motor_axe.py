@@ -1120,6 +1120,43 @@ def test_konteksten_avledes_av_den_effektive_motoren():
     assert "subprocess.run([*forspann, \"image\", \"inspect\"" in eff
 
 
+def test_forspannet_beholder_de_globale_kjoretidsopsjonene():
+    """Codex P2, runde 3: lageret velges av opsjonene, ikke bare navnet.
+
+    Forspannet ble kuttet ved selve kjøretidsleddet, så
+    `podman --root /annet-lager run … <image>` mistet
+    `--root /annet-lager`: begge oppslagene spurte standardlageret om et
+    image som bare finnes i det andre, og fase 9 stengte døren på en helt
+    gyldig release. Samme feil som runde 6 fant på kjøretidsnavnet, ett
+    hakk finere — `--context` hos docker og `--namespace` hos nerdctl
+    peker like effektivt et annet sted."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    rom = {"Path": Path, "KJORETIDER": ("docker", "podman", "nerdctl"),
+           # Arbeiderforspannet er ikke det som prøves her.
+           "_som_arbeideren": list}
+    for navn in ("_kjoretidsledd", "_motorforspann"):
+        kropp = sjekk.split(f"def {navn}(", 1)[1].split("\ndef ", 1)[0]
+        exec(f"def {navn}({kropp}", rom)
+    forspann = rom["_motorforspann"]
+
+    # Opsjonene MELLOM kjøretiden og `run` følger med oppslaget.
+    assert forspann(["podman", "--root", "/annet-lager", "run", "--rm",
+                     "bilde:1"]) == ["podman", "--root", "/annet-lager"]
+    assert forspann(["docker", "--context", "fjern", "run", "bilde:1"]) \
+        == ["docker", "--context", "fjern"]
+    # Forspannet FORAN kjøretiden følger fortsatt med (runde 6), og
+    # `run`-leddet selv og alt etter det gjør det ikke.
+    assert forspann(["env", "X=1", "nerdctl", "--namespace", "k8s.io",
+                     "run", "--rm", "bilde:1"]) \
+        == ["env", "X=1", "nerdctl", "--namespace", "k8s.io"]
+    assert forspann(["podman", "run", "--rm", "bilde:1"]) == ["podman"]
+    # Ingen containerkjøring er ingen kontekst — ikke et tomt forspann
+    # som ville blitt kjørt som `image inspect` på verten.
+    assert forspann(["/usr/bin/annet", "--flagg"]) is None
+    assert forspann([]) is None
+
+
 def test_motorcontaineren_har_ressursgrenser():
     """Codex P1, runde 6: nettleseren kjører en KUNDEKONTROLLERT side.
 
