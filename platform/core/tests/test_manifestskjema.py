@@ -902,12 +902,12 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     """
     from registry import les_manifester, valider
     st = valider(les_manifester(MODULROT))
-    # m02 er aktiv på egne ben (delt m01-evidens, alle punkter ja).
-    # wcag_audit står IKKE her: akseptporten er ikke bestått ennå
-    # (`rollback_testet` er nei, og målingene er ikke bundet gjennom
-    # evidensporten) — se manifestet.
-    assert st.aktive == ["m01_policy", "m02_revisjonslogg"], st
-    assert st.i_drift == ["m01_policy", "m02_revisjonslogg"], (
+    # Verken wcag_audit eller m02 står her: begge har sjekklistepunkter som
+    # er MÅLT, men ikke bundet gjennom evidensporten — og et ubundet punkt
+    # er `nei`. m02 sto kort som aktiv i akseptrunden på #89; begrunnelsen
+    # var «alle punkter ja», og det gjaldt tre av seks (Codex P1, runde 2).
+    assert st.aktive == ["m01_policy"], st
+    assert st.i_drift == ["m01_policy"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

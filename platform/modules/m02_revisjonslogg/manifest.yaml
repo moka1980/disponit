@@ -3,12 +3,55 @@
 id: m02_revisjonslogg
 navn: Revisjonslogg (M-2)
 versjon: 0.1.0
-status: aktiv                  # aktiv | inaktiv | under_utvikling
-# Aktivert sammen med wcag_audit-aksepten: registeret krever at en aktiv
-# moduls avhengigheter selv er aktive, og m02 er wcag_audits skrivevei til
-# evidenskjeden. Evidensen sto alt ferdig (delt m01-evidens, alle punkter
-# ja); loggen har vært i drift på staging siden m01-kjeden. Speiler m01.
-driftstilstand: staging        # ikke_i_drift | staging | produksjon
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+# FLIPPET ER TATT TILBAKE (Codex P1 på #89, runde 2). M-2 ble satt `aktiv`
+# i akseptrunden med begrunnelsen «alle punkter ja, artefaktene bundet».
+# Det gjaldt tre av seks punkter. De tre første under står `nei` nå, og da
+# er sjekklisten ikke 100 % grønn — RUTINER.md pkt. 6 er kategorisk: «en
+# modul settes ikke til `aktiv` i registeret før alle sjekklistepunkter er
+# ja.»
+#
+# Grunnen flippet ble satt i det hele tatt, forsvant samtidig: m02 ble
+# aktivert fordi wcag_audit skulle bli `aktiv` og registeret krever at en
+# aktiv moduls avhengigheter selv er aktive. wcag_audits flipp er tatt
+# tilbake, så den avhengigheten finnes ikke lenger.
+#
+# Dette er IKKE en påstand om at loggen ikke virker: de tre bundne
+# punktene under er ekte, maskinelt verifiserte målinger, og koden
+# EKSEKVERER på staging. Det som mangler er bindingen for de tre andre —
+# se blokken over `staging_sjekkliste`.
+#
+# OG DERFOR ER `driftstilstand` UNDER IKKE EN SELVSTENDIG PÅSTAND (Codex
+# P2, runde 3, som leste den forrige formuleringen «har vært i drift på
+# staging siden m01-kjeden» rett over `ikke_i_drift` — den motsigelsen
+# var reell og er skrevet om her). To ting som lett forveksles:
+#
+#   * KODEN kjører. `kjerne` ligger i policy_validator/, altså inne i
+#     m01s tjeneste, og m01 er `aktiv` + `staging`. Hver hendelse m01
+#     avgjør skrives gjennom denne loggen — de 180 hendelsene i m01s egen
+#     evidens ER denne modulen i arbeid.
+#   * M-2 har likevel ingen EGEN utrulling å oppgi på registerets akse.
+#     `registry.valider` gjør aksen betinget: `driftstilstand` ulik
+#     `ikke_i_drift` med `status` ulik `aktiv` gir «drift krever aktiv»,
+#     og CI (ci.yml, «register ok») avviser hele registeret på det. Det
+#     er ikke en glipp — invarianten er pinnet i
+#     `test_drift_uten_aktiv_status_er_en_registerfeil`, og den finnes
+#     nettopp for tilstanden «kjører uten å ha bestått sin egen
+#     sjekkliste». Samme doktrine står i wcag_audit/manifest.yaml: de to
+#     feltene flyttes SAMMEN, når porten faktisk er bestått.
+#
+# Feltet står derfor på `ikke_i_drift`, som er den verdien m02 hadde fra
+# #15 til akseptrunden på #89 — samme kode, samme eksekvering, samme
+# ubundne punkter. Aksept-nedgraderingen tar med seg driftsfeltet fordi
+# registeret KREVER det, ikke fordi noen påstår at loggen står stille.
+#
+# TIL @moka1980, om dette skal være annerledes: da er det invarianten som
+# må flytte seg, ikke dette manifestet. Å gjøre `driftstilstand` rent
+# beskrivende — «hvor står koden», uavhengig av aksept — er en endring i
+# `registry.valider` + RUTINER.md, med den prisen at registeret slutter å
+# fange «kjører uten aksept». Det er en rutinebeslutning, ikke et
+# manifestfelt.
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
 kjerne: platform/core/policy_validator/audit.py
 i18n_prefiks: m02
@@ -22,29 +65,79 @@ i18n_prefiks: m02
 #
 # Uten den presiseringen ville deling vært et smutthull: «samme artefakt»
 # uten «samme måling» er å låne en konklusjon.
+#
+# ... OG NØYAKTIG DET GJALDT DE TRE FØRSTE PUNKTENE (Codex P1, runde 2).
+# Blokken over beskriver bindingen som om den var gjennomført for alle
+# seks. Den var gjennomført for tre: `feilinjisering_til_unntakskø`,
+# `ytelse_bestatt` og `rollback_testet` har krav_id + artefakt +
+# artefakt_sha256 + bevismaalinger. De tre første hadde ren fritekst.
+#
+# To av dem sa i sitt eget notat at de var m01-kjøringer — «Samme suite som
+# m01», «Den samme kjøringen på 180 hendelser». Det er delt evidens, og
+# delingen har én betingelse i RUTINER.md: «punktet må navngi hvilken
+# MÅLING i det delte artefaktet som beviser det for nettopp den modulen —
+# strukturert, i feltet `bevismaalinger`». Fritekst oppfyller den ikke:
+# `notat: "banan_maaling = true"` er både unikt og ikke-tomt.
+#
+# KONSEKVENSEN ER MÅLT, IKKE PÅSTÅTT: `valider_artefakter` hopper
+# eksplisitt over hvert `ja` som mangler `krav_id`. Sto punktene `ja`,
+# verifiserte CI null av de tre — porten var åpen, ikke bestått. Og
+# RUTINER.md er kategorisk om formen: «Et sjekklistepunkt uten definert,
+# målbar grense regnes som `nei` — en port man ikke kan måle, er ingen
+# port.»
+#
+# MÅLINGENE ER BEVART. Notatene under er ikke slettet — de sier hva
+# kjøringene faktisk viste, slik at den som binder evidensen slipper å måle
+# på nytt. Veien til `ja` er den samme for alle tre: pek på et artefakt i
+# deploy/staging/artefakter/ med et krav_id som har grenser i KRAVGRENSER,
+# og navngi målingen som beviser punktet FOR M-2. Ingen av de fem
+# artefaktene som ligger der i dag dekker «suiten er grønn» eller
+# «fordelingen er lik» — de målingene finnes bare i kjøringslogger utenfor
+# repoet, og et artefakt dikter jeg ikke opp.
+#
+# ÅPENT SPØRSMÅL TIL EIER: m01 har de samme tre punktene `ja` med ren
+# fritekst, og m01 er `aktiv`. Forskjellen jeg har lagt til grunn er at m01
+# EIER de målingene mens m02 låner dem, og at delingsbetingelsen derfor
+# bare biter her. For `revisjonslogg_korrekt` holder ikke den forskjellen —
+# det er M-2s eget punkt — og der er det formregelen over som gjelder,
+# altså den samme som m01 slipper unna. Jeg har ikke rørt m01: det er en
+# egen avgjørelse, ikke et funn i denne runden.
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: ja
+    status: nei
     notat: >-
+      MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Samme suite som m01, kjørt på staging etter hver merge. Revisjons-
       loggens egne porter ligger i test_api.py (evidensfelter, aktør fra
       serverkontekst, idempotent replay uten ny loggpost) og i
-      test_kjorer_og_kryptering.py (append-only-triggerne).
+      test_kjorer_og_kryptering.py (append-only-triggerne). Punktet lukkes
+      når m01-suitekjøringen finnes som artefakt i repoet og M-2s andel av
+      den er navngitt som måling.
   syntetisk_datasett_likt_lokalt:
-    status: ja
+    status: nei
     notat: >-
+      MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Den samme kjøringen på 180 hendelser ga identisk fordeling lokalt og
       på staging — og fordelingen ER loggen: 84 TILLAT / 3 STOPP / 93 UNNTAK
-      er 180 loggposter med samme beslutningsfelt.
+      er 180 loggposter med samme beslutningsfelt. Tallene står her; det som
+      mangler er et hash-verifisert artefakt de kan regnes ut av på nytt.
   revisjonslogg_korrekt:
-    # M-2s kjernepunkt. Her er M-2 ikke en delt måling, men hovedsaken.
-    status: ja
+    # M-2s kjernepunkt. Her er M-2 ikke en delt måling, men hovedsaken —
+    # og nettopp derfor er det verst å la det stå ubundet: punktet modulen
+    # finnes for, er det ingen port måler.
+    status: nei
     notat: >-
+      MÅLT, IKKE BUNDET (ingen `krav_id`, altså ingen målbar grense).
       Ekte beslutning gjennom sikker_beslutning_pg lagret med tenant, aktør
       og kilde fra konteksten — aldri fra payloaden. UPDATE og DELETE
       avvises av databasetriggeren, ikke av applikasjonskode. Evidensfeltene
       (handling, request_id, idempotency_key, policy_content_hash,
-      attestation_set_hash) kom i PR-005b.
+      attestation_set_hash) kom i PR-005b. Det nærmeste bundne tallet i dag
+      er `etterkontroll.historikk_komplett` i feilinjisering-m01-v1 — men
+      det måler at historikken er KOMPLETT, ikke at aktøren kom fra
+      konteksten eller at append-only håndheves i basen. Å binde punktet dit
+      ville vært å låne en konklusjon, og det er nøyaktig det
+      delingsregelen finnes for å hindre.
   feilinjisering_til_unntakskø:
     status: ja
     krav_id: feilinjisering-m01-v1
