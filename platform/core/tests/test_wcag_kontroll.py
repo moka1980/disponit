@@ -3263,6 +3263,19 @@ def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
                         {"enum": "abc"},
                         {"dependentRequired": {"a": "b"}},
                         {"$vocabulary": {"u": "ja"}},
+                        # Runde 4: `dependencies` — arven fra Draft 7, og
+                        # den eneste posisjonen der verdien kan være ENTEN
+                        # et subskjema ELLER en strengliste. Metaskjemaet
+                        # `check_schema()` kjører beholder nøkkelordet, så
+                        # begge formene metavalideres — SQL-veien så ingen
+                        # av dem.
+                        {"dependencies": "x"},
+                        {"dependencies": {"a": {"type": "strng"}}},
+                        {"dependencies": {"a": {"allOf": "q"}}},
+                        {"dependencies": {"a": "b"}},
+                        {"dependencies": {"a": 7}},
+                        {"dependencies": {"a": ["b", 1]}},
+                        {"dependencies": {"a": ["b", "b"]}},
                         # ... og bæreren av subskjemaer med feil form:
                         # vakten hoppet STILLE over disse.
                         {"properties": "x"},
@@ -3296,6 +3309,13 @@ def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
                       "pattern": "^a$", "title": "t", "enum": [1, "a"],
                       "dependentRequired": {"a": ["b"]},
                       "ukjentNokkelord": {"hva": "som helst"}},
+                     # ... og BEGGE de lovlige `dependencies`-formene, i
+                     # samme objekt: en tom liste og `true`/`false` er også
+                     # lovlige, og en vakt som la nøkkelordet i `k_kart`
+                     # ville avvist strenglistene som «subskjema er array».
+                     {"dependencies": {"a": ["b", "c"], "b": [],
+                                       "c": {"type": "string"}, "d": True,
+                                       "e": False}},
                      {"properties": {"a": {"required": ["b"]}}},
                      dict(_rapportskjema_kopi(), x=secrets.token_hex(3))):
             assert not skjemafeil(godt), godt

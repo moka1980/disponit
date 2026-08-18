@@ -191,6 +191,13 @@ SET LOCAL ROLE disponit_modul_eier;
 --     avvisning her ville gjort SQL-veien STRENGERE enn Python-veien og
 --     dermed blitt et nytt, motsatt avvik mellom de to.
 --
+-- Runde 4 (Codex P2): `dependencies` manglet. Nøkkelordet står ikke i
+-- 2020-12-vokabularet, men metaskjemaet `check_schema()` faktisk kjører
+-- BEHOLDER det og metavaliderer de objektverdiene som ikke er
+-- strenglister — så Python-veien avviste `{"dependencies": {"x":
+-- {"type": "strng"}}}` mens SQL-veien slapp den gjennom. Det er samme
+-- avvik som runde 2 og 3, én posisjon lenger inn.
+--
 -- Rekursjonen følger de stedene Draft 2020-12 FAKTISK plasserer
 -- subskjemaer. Det er hele grunnen til at den kan gjøres uten falske
 -- treff: en naiv `$.**.type` ville også truffet et felt som tilfeldigvis
@@ -358,6 +365,51 @@ BEGIN
                                   ' er %s', jsonb_typeof(v_e));
                 END IF;
             END LOOP;
+        END LOOP;
+    END IF;
+    -- `dependencies`: ARVEN fra Draft 7, og den ENESTE posisjonen der
+    -- verdien kan være ENTEN et subskjema ELLER en strengliste (Codex P2).
+    -- Nøkkelordet står ikke i 2020-12-vokabularet, men metaskjemaet
+    -- `check_schema()` faktisk kjører BEHOLDER det, så
+    -- `{"dependencies": {"x": {"type": "strng"}}}` avvises av Python-veien
+    -- mens SQL-veien slapp den rett gjennom: en direkte SQL-kaller kunne
+    -- gjøre skjemaet udødelig, binde en artefakttype til det, og få hver
+    -- eneste opplastning til å dø uten mulighet for reparasjon.
+    --
+    -- Derfor kan den ikke ligge i `k_kart`: der er HVER verdi et
+    -- subskjema, og en helt lovlig `dependentRequired`-liste ville blitt
+    -- avvist som «subskjema er array». Skillet går på formen til VERDIEN,
+    -- nøyaktig som `_SKJEMA_KART_ALT` gjør det i Python-veien.
+    IF p_skjema ? 'dependencies' THEN
+        IF jsonb_typeof(p_skjema -> 'dependencies') <> 'object' THEN
+            RETURN format('dependencies må være objekt, er %s',
+                          jsonb_typeof(p_skjema -> 'dependencies'));
+        END IF;
+        FOR v_t IN SELECT value FROM jsonb_each(p_skjema -> 'dependencies')
+        LOOP
+            IF jsonb_typeof(v_t) = 'array' THEN
+                -- `dependentRequired`-formen: unike strenger (tom er lovlig).
+                FOR v_e IN SELECT * FROM jsonb_array_elements(v_t) LOOP
+                    IF jsonb_typeof(v_e) <> 'string' THEN
+                        RETURN format('dependencies-element må være streng,'
+                                      ' er %s', jsonb_typeof(v_e));
+                    END IF;
+                END LOOP;
+                IF (SELECT count(*) FROM jsonb_array_elements(v_t))
+                   <> (SELECT count(DISTINCT e.value) FROM
+                         jsonb_array_elements(v_t) AS e) THEN
+                    RETURN 'dependencies-liste har duplikater';
+                END IF;
+            ELSE
+                -- Alt annet er en SKJEMAPOSISJON — også `true`/`false`,
+                -- som rekursjonen selv godtar. En streng eller et tall
+                -- faller derfor ut som «subskjema er string», altså med
+                -- samme melding metaskjemaet gir.
+                v_feil := public._artefaktskjema_typefeil(v_t);
+                IF v_feil IS NOT NULL THEN
+                    RETURN 'dependencies/' || v_feil;
+                END IF;
+            END IF;
         END LOOP;
     END IF;
     -- `$vocabulary`: objekt av boolske verdier.
