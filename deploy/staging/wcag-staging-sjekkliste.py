@@ -12,17 +12,21 @@ verdier føres inn for hånd i egen commit, med denne fila som kilde.
         --evidens /root/wcag-runde/evidens.jsonl [--fase N] [--motor CMD]
 
 IDEMPOTENSEN ER EKTE, IKKE EN PÅSTAND (Codex P2): hver bestilling får en
-nøkkel avledet av rundens id (`RUNDE/runde-id`, eller WCAG_RUNDE_ID) og
-bestillingskroppen — se `_idem`. En gjenkjøring av samme fase i samme
+nøkkel avledet av rundens id (WCAG_RUNDE_ID, ellers `RUNDE/runde-id.json`)
+og bestillingskroppen — se `_idem`. En gjenkjøring av samme fase i samme
 runde REPLAYER derfor beslutningene i stedet for å ta nye. Det er ikke
 kosmetikk: frekvensgrensen er 12/dag per `mal_url`, og en full runde
 bruker nøyaktig 12 på `/index.html` (10 i fase 5, 1 i fase 6, 1 i fase
 7). Med nøkler som endret seg per forsøk ga en gjenkjøring
 `frekvensgrense_naadd` der fasiten krever 10/10 grønne.
 
-En NY runde krever en ny id (tøm rundekatalogen eller sett
-WCAG_RUNDE_ID) — og treffer taket uansett om den kjøres samme døgn som
-den forrige. Da er det grensen som virker, ikke en feil.
+En NY runde krever en ny id: sett WCAG_RUNDE_ID, tøm rundekatalogen,
+eller kjør med en ny `WCAG_RELEASE` — identiteten er bundet til releasen
+(Codex P1), for en ny release er en ny runde og skal måles, ikke
+replayes. Motsatt vei ville replay vært verre enn en rød måling: den ser
+grønn ut. En ny runde treffer taket uansett om den kjøres innen ett døgn
+etter den forrige. Da er det grensen som virker, ikke en feil, og
+gjenopprettingen må vente til det rullende vinduet har flyttet seg.
 
 Faser (idempotente; --fase kjører én, default alle i rekkefølge):
   1 forutsetninger   nøkkelregister, docker-image, testnettsted m/ TLS
@@ -104,6 +108,14 @@ RUNDE = Path(os.environ.get("WCAG_RUNDE_DIR", "/root/wcag-runde"))
 #: ville blitt gjenbrukt av gjenopprettingsrunden, og hvert eneste claim
 #: fra den nye releasen ville fått 401. Se `_lagret_modultoken`.
 TOKEN_FIL = RUNDE / "modultoken.json"
+#: Rundens identitet MED RELEASEN den gjelder for (Codex P1, runde 13).
+#: Idempotensnøklene avledes av den (`_idem`), og en ny release er per
+#: definisjon en ny runde: gjenopprettingen etter en rød fase 9 setter en
+#: ny `WCAG_RELEASE`, men beholder rundekatalogen. Lå identiteten i en
+#: uversjonert fil, replayet fase 5–6 forrige releases rapporter og fase 7
+#: sin alt feilede injiseringsjobb — den nye releasen ble aldri målt.
+#: Se `_rundeid`.
+RUNDEID_FIL = RUNDE / "runde-id.json"
 ATT_FIL = Path("/etc/disponit/api/DISPONIT_ATT_NOKLER")
 API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 
@@ -586,28 +598,81 @@ def fase4(m, http, pepper):
 # Fase 5 — fasitmålingen (10 kjøringer innen frist)
 # ---------------------------------------------------------------------------
 
+_RUNDEID: str | None = None
+
+
+def _lagret_rundeid() -> str | None:
+    """Rundeid-en fra rundekatalogen — BARE for DENNE releasen (Codex P1).
+
+    Fila skal overleve `--fase N` innenfor én runde, og gjør det. Men den
+    er ikke gyldig på tvers av releaser: gjenopprettingen etter en rød
+    fase 9 KREVER en ny `WCAG_RELEASE` (`bytt_release` nekter å reclaime
+    en drenert deployment) mens `RUNDE` står som den står. Overlevde
+    identiteten den overgangen, ble hver idempotensnøkkel i fasene 5–7
+    den forrige releasens nøkkel: `/v1/bestilling` svarer
+    `idempotent-replay`, og runden «måler» rapportene til releasen som
+    nettopp ble nødstoppet. Fase 7 gjenbruker i tillegg sin alt feilede
+    injiseringsjobb og blir normalt rød på en tom kø. Utfallet var at
+    gjenopprettingsrunden brant enda en release uten å gjenåpne noe."""
+    if not RUNDEID_FIL.exists():
+        return None
+    try:
+        lagret = json.loads(RUNDEID_FIL.read_text(encoding="utf-8"))
+    except ValueError:
+        lagret = {}
+    if not isinstance(lagret, dict):
+        lagret = {}
+    rid = str(lagret.get("runde_id") or "").strip()
+    rel = str(lagret.get("release") or "").strip()
+    if not rid:
+        evidens("rundeid_ubrukelig", fil=str(RUNDEID_FIL),
+                grunn="ingen runde-id i fila — runden får en ny")
+        return None
+    if rel != RELEASE:
+        evidens("rundeid_forkastet", lagret_release=rel, release=RELEASE,
+                lagret_runde_id=rid,
+                grunn="identiteten hører til en ANNEN release — nøklene"
+                      " ville replayet den forrige releasens bestillinger"
+                      " i stedet for å måle denne")
+        return None
+    return rid
+
+
 def _rundeid() -> str:
-    """Rundens IDENTITET — stabil på tvers av gjenkjøringer (Codex P2).
+    """Rundens IDENTITET — stabil i runden, NY med releasen (Codex P1, r13).
 
-    Idempotensnøklene under avledes av denne. Den skrives én gang til
-    `RUNDE/runde-id` og gjenbrukes så lenge rundekatalogen står — samme
-    mekanikk som `TOKEN_FIL` alt bruker for å overleve `--fase N`.
-    `WCAG_RUNDE_ID` overstyrer for den som vil navngi runden selv.
+    Idempotensnøklene under avledes av denne (`_idem`). Den skrives til
+    `RUNDEID_FIL` sammen med releasen den gjelder for, og gjenbrukes så
+    lenge rundekatalogen OG releasen står — samme mekanikk som
+    `TOKEN_FIL`, av samme grunn: en identitet uten sin release er bare
+    «en id», og en senere kjøring kan ikke se at den holder feil én.
 
-    En NY runde krever en ny id (tøm rundekatalogen eller sett
-    WCAG_RUNDE_ID). Merk at frekvensgrensen er 12/dag per `mal_url` og at
-    en full runde bruker nøyaktig 12 på `/index.html`: en ny runde samme
-    døgn treffer taket uansett nøkler, og det er grensen som virker, ikke
-    en feil."""
-    fil = RUNDE / "runde-id"
-    if fil.exists():
-        rid = fil.read_text().strip()
-        if rid:
-            return rid
+    Rekkefølgen er bevisst: `WCAG_RUNDE_ID` går FØR fila. Den som navngir
+    runden selv, gjør det nettopp for å skille denne kjøringen fra den
+    forrige — leste vi fila først, ville overstyringen blitt ignorert
+    stille i akkurat det tilfellet den er til for.
+
+    En NY runde krever altså en ny id: sett `WCAG_RUNDE_ID`, tøm
+    rundekatalogen, eller kjør med en ny `WCAG_RELEASE`. Merk at
+    frekvensgrensen er 12 per rullende døgn per `mal_url` og at en full
+    runde bruker nøyaktig 12 på `/index.html`: en ny runde innen ett døgn
+    treffer taket uansett nøkler, og det er grensen som virker, ikke en
+    feil. En gjenoppretting må derfor vente til vinduet har rullet — det
+    er en reell venting, ikke noe nøklene kan trylle bort."""
+    global _RUNDEID
+    if _RUNDEID is not None:
+        return _RUNDEID
+    onsket = os.environ.get("WCAG_RUNDE_ID", "").strip()
+    lagret = None if onsket else _lagret_rundeid()
+    rid = onsket or lagret or ("r" + secrets.token_hex(6))
+    evidens("rundeid", runde_id=rid, release=RELEASE,
+            kilde=("WCAG_RUNDE_ID" if onsket
+                   else "rundekatalogen" if lagret else "ny"))
     RUNDE.mkdir(parents=True, exist_ok=True)
-    rid = os.environ.get("WCAG_RUNDE_ID", "").strip() or (
-        "r" + secrets.token_hex(6))
-    fil.write_text(rid)
+    RUNDEID_FIL.write_text(
+        json.dumps({"release": RELEASE, "runde_id": rid}, ensure_ascii=False)
+        + "\n", encoding="utf-8")
+    _RUNDEID = rid
     return rid
 
 

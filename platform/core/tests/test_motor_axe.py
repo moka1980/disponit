@@ -834,6 +834,43 @@ def test_modultokenet_er_bundet_til_sin_release():
     assert 'return False, {"grunn": "tokenoppslaget feilet"' in dom
 
 
+def test_rundeidentiteten_er_bundet_til_sin_release():
+    """Codex P1, runde 13: en gjenbrukt runde-id replayer forrige release.
+
+    Gjenopprettingen etter en rød fase 9 setter en NY `WCAG_RELEASE` —
+    `bytt_release` nekter å reclaime en drenert deployment — men beholder
+    rundekatalogen. Lå identiteten i en uversjonert fil, ble hver
+    idempotensnøkkel i fasene 5–7 den forrige releasens: `/v1/bestilling`
+    svarer `idempotent-replay`, så fase 5–6 «målte» rapportene til
+    releasen som nettopp ble nødstoppet, og fase 7 gjenbrukte sin alt
+    feilede injiseringsjobb. Verre enn en rød måling, for den ser grønn
+    ut — og runden brant enda en release uten å gjenåpne noe."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Identiteten lagres MED releasen, og leses bare tilbake for den samme.
+    assert '{"release": RELEASE, "runde_id": rid}' in sjekk
+    lest = sjekk.split("def _lagret_rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "if rel != RELEASE:" in lest
+    assert 'evidens("rundeid_forkastet"' in lest
+    # Ingen vei utenom: den uversjonerte fila finnes ikke lenger noe sted.
+    assert 'RUNDE / "runde-id"' not in sjekk
+
+    # ... og WCAG_RUNDE_ID går FØR fila. Overstyringen finnes nettopp for å
+    # skille denne kjøringen fra den forrige; ble fila lest først, ville den
+    # blitt ignorert stille i akkurat det tilfellet den er til for.
+    kropp = sjekk.split("def _rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert 'onsket = os.environ.get("WCAG_RUNDE_ID", "").strip()' in kropp
+    assert "lagret = None if onsket else _lagret_rundeid()" in kropp
+    assert 'rid = onsket or lagret or ("r" + secrets.token_hex(6))' in kropp
+    # Identiteten står i evidensen med sin kilde — ellers kan ingen se i
+    # ettertid HVILKEN runde nøklene tilhørte.
+    assert 'evidens("rundeid", runde_id=rid, release=RELEASE' in kropp
+
+    # Nøklene henger fortsatt på identiteten, så bindingen gjelder hver fase.
+    idem = sjekk.split("def _idem(", 1)[1].split("\ndef ", 1)[0]
+    assert 'return f"{_rundeid()}-{merkelapp}-{h[:12]}"' in idem
+
+
 def test_konteksten_avledes_av_den_effektive_motoren():
     """Codex P2, runde 6: `WCAG_DRIFT_MOTOR` overstyrer HELE kommandoen.
 
