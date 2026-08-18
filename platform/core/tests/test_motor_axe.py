@@ -1035,15 +1035,133 @@ def test_konteksten_avledes_av_den_effektive_motoren():
     assert "_serverkontekst(drift_id, _som_arbeideren(motor_argv))" in kropp
     assert "_serverkontekst(digest, motorkmd)" not in kropp
     # ... og imaget må være NØYAKTIG det releaseraden og målingene bærer:
-    # et annet image betyr at akseptmålingen gjaldt noe annet.
-    assert "ok=drift_id == ventet" in kropp
-    assert "if drift_id != ventet:" in kropp
+    # et annet image betyr at akseptmålingen gjaldt noe annet. Dommen
+    # felles på INNHOLDET, ikke på id-strengen: dockers id overlever ikke
+    # docker 29-transporten inn i arbeiderens lager, så et id-oppgjør
+    # dømte et innholdsidentisk image «ikke i lageret» og brente en
+    # release per runde.
+    assert "ventet = _docker_identitet(digest)" in kropp
+    assert "identisk = bool(drift_id) and ventet is not None" \
+        " and effektiv == ventet" in kropp
+    assert "ok=identisk" in kropp
+    assert "if not identisk:" in kropp
+    assert "_steng_doeren(m, \"WCAG_DRIFT_MOTOR peker på et annet image\")" \
+        in kropp
+
+    # LAGENE ALENE ER IKKE IMAGET (Codex P1): et image bygget `FROM`
+    # releasen som bare overstyrer entrypoint, bruker eller miljø har
+    # nøyaktig samme diff_ids. Identiteten bærer derfor konfigen som
+    # bestemmer hva som faktisk starter — ellers kan gaten godkjenne en
+    # motor som kjører noe annet enn runden målte.
+    #
+    # ... og konfigen sammenlignes i sin HELHET (Codex P1, runde 2). En
+    # håndplukket liste over «atferdsfelt» glemte `Healthcheck` og
+    # `Volumes`: et image som bare legger til en helsesjekk eller et
+    # volum passerte som identisk, men kjører en ekstra periodisk
+    # kommando og monterer et automatisk volum. Det som navngis er
+    # derfor feltene som IKKE er atferd — ukjente felt teller MED.
+    assert "IKKE_ATFERD = frozenset(" in sjekk
+    ident = sjekk.split("def _image_identitet(", 1)[1].split("\ndef ", 1)[0]
+    assert 'lag = (d.get("RootFS") or {}).get("Layers") or []' in ident
+    assert "for felt in sorted(kfg):" in ident
+    assert "if felt in IKKE_ATFERD:\n            continue" in ident
+    assert 'return {"lag": lag, "konfig": konfig, "plattform": plattform}' \
+        in ident
+    # PLATTFORMEN STÅR UTENFOR `Config` (Codex P1, runde 3): `Os`,
+    # `Architecture` og `Variant` er toppnivåfelt, så et image bygget for
+    # en annen arkitektur hadde samme lag og samme konfig og passerte som
+    # identisk — kjøretiden ville enten emulert det (en annen kjøring enn
+    # runden målte) eller feilet på hver motorstart, etter at arbeideren
+    # meldte seg klar.
+    assert 'for felt in ("Os", "Architecture", "Variant"):' in ident
+    assert "plattform[felt] = n" in ident
+    # Helsesjekken står i `Config` hos docker og på toppnivå hos podman:
+    # leses den bare ett sted, er releasen ULIK seg selv i de to
+    # motorene og gaten stenger døren på riktig image.
+    assert 'for navn in ("Healthcheck", "HealthCheck"):' in ident
+    assert 'kfg["Healthcheck"] = d[navn]' in ident
+    # Tomhet skrives ulikt av de to motorene (null / [] / false / 0 /
+    # utelatt felt). Uten sammenslåingen blir hvert slikt felt et falskt
+    # avvik — og et falskt avvik stenger døren på et identisk image.
+    norm = sjekk.split("def _normalisert(", 1)[1].split("\ndef ", 1)[0]
+    assert "return verdi if verdi else None" in norm
+    assert "_normalisert(kfg[felt])" in ident
+    # ... men en TOM BEHOLDER er ikke tomhet: `Volumes` og
+    # `ExposedPorts` er mengder der meningen ligger i nøkkelen og
+    # verdien alltid er `{}`. Faller nøkkelen ut, er «volum erklært» og
+    # «ingen volumer» samme identitet igjen — nøyaktig hullet runden
+    # skulle lukke.
+    assert "if n is not None or isinstance(v, (dict, list, tuple)):" in norm
+    # ... og listene sammenlignes i REKKEFØLGE (Codex P2, runde 3):
+    # miljøtabellen kan ha samme nøkkel to ganger, og prosessen ser den
+    # slik den står. Ble den sortert, var `['MODE=safe', 'MODE=unsafe']`
+    # og den omvendte rekkefølgen samme identitet — to ulike kjøringer
+    # godkjent som én.
+    assert 'sorted(kfg[felt] or []) if felt == "Env"' not in ident
+    assert "[_normalisert(x) for x in verdi] or None" in norm
+    # Ingen dom på tomt grunnlag: et image uten lesbar lagkjede er `None`,
+    # og `None == ventet` er usant — gaten stenger, den godkjenner ikke.
+    assert "if not lag:\n        return None" in ident
+    # Begge veiene inn i drift måler den SAMME identiteten: importens
+    # oppslag i arbeiderens lager og effektiv-motor-gaten.
+    imp = sjekk.split("def _importer_motorimage(", 1)[1].split("\ndef ", 1)[0]
+    assert "if _arbeider_identitet(iid) == ventet:" in imp
 
     # Kjøretiden LETES opp: driftskommandoen har et forspann (`runuser …
     # env … podman run …`), så posisjon 0 er ikke gitt.
     assert "def _kjoretidsledd(" in sjekk
     assert "runtime = Path(motorkmd[i]).name if i is not None else \"\"" \
         in sjekk
+
+    # ... og identiteten slås opp MED den kjøretiden (Codex P2): `docker`,
+    # `podman` og `nerdctl` har hvert sitt lager. Leses lagene alltid i
+    # arbeiderens podman-lager, gir en overstyring på en annen kjøretid
+    # ingen treff på en id som inspiserte helt fint, og fase 9 stenger
+    # døren på en gyldig motor.
+    assert "def _motorforspann(" in sjekk
+    assert "forspann = _motorforspann(motor_argv)" in kropp
+    assert "effektiv = (_image_identitet(forspann, drift_id)" in kropp
+    assert "_arbeider_identitet(drift_id)" not in kropp
+    eff = sjekk.split("def _effektiv_motorimage(", 1)[1].split("\ndef ", 1)[0]
+    assert "forspann = _motorforspann(motor_argv)" in eff
+    assert "subprocess.run([*forspann, \"image\", \"inspect\"" in eff
+
+
+def test_forspannet_beholder_de_globale_kjoretidsopsjonene():
+    """Codex P2, runde 3: lageret velges av opsjonene, ikke bare navnet.
+
+    Forspannet ble kuttet ved selve kjøretidsleddet, så
+    `podman --root /annet-lager run … <image>` mistet
+    `--root /annet-lager`: begge oppslagene spurte standardlageret om et
+    image som bare finnes i det andre, og fase 9 stengte døren på en helt
+    gyldig release. Samme feil som runde 6 fant på kjøretidsnavnet, ett
+    hakk finere — `--context` hos docker og `--namespace` hos nerdctl
+    peker like effektivt et annet sted."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    rom = {"Path": Path, "KJORETIDER": ("docker", "podman", "nerdctl"),
+           # Arbeiderforspannet er ikke det som prøves her.
+           "_som_arbeideren": list}
+    for navn in ("_kjoretidsledd", "_motorforspann"):
+        kropp = sjekk.split(f"def {navn}(", 1)[1].split("\ndef ", 1)[0]
+        exec(f"def {navn}({kropp}", rom)
+    forspann = rom["_motorforspann"]
+
+    # Opsjonene MELLOM kjøretiden og `run` følger med oppslaget.
+    assert forspann(["podman", "--root", "/annet-lager", "run", "--rm",
+                     "bilde:1"]) == ["podman", "--root", "/annet-lager"]
+    assert forspann(["docker", "--context", "fjern", "run", "bilde:1"]) \
+        == ["docker", "--context", "fjern"]
+    # Forspannet FORAN kjøretiden følger fortsatt med (runde 6), og
+    # `run`-leddet selv og alt etter det gjør det ikke.
+    assert forspann(["env", "X=1", "nerdctl", "--namespace", "k8s.io",
+                     "run", "--rm", "bilde:1"]) \
+        == ["env", "X=1", "nerdctl", "--namespace", "k8s.io"]
+    assert forspann(["podman", "run", "--rm", "bilde:1"]) == ["podman"]
+    # Ingen containerkjøring er ingen kontekst — ikke et tomt forspann
+    # som ville blitt kjørt som `image inspect` på verten.
+    assert forspann(["/usr/bin/annet", "--flagg"]) is None
+    assert forspann([]) is None
 
 
 def test_motorcontaineren_har_ressursgrenser():

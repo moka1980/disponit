@@ -1433,6 +1433,37 @@ def _arbeiderpodman(*argv) -> list[str]:
     return _som_arbeideren(["podman", *argv])
 
 
+def _motorforspann(motor_argv) -> list[str] | None:
+    """Kommandokonteksten en motorkommandos image må slås opp MED.
+
+    -> alt FORAN `run`-underkommandoen, ellers None.
+
+    Kjøretiden og forspannet ER en del av oppslaget (Codex P2): `docker`,
+    rootless `podman` og `nerdctl` har hvert sitt lager, og
+    `WCAG_DRIFT_MOTOR` kan bære et hvilket som helst forspann — også et
+    som peker podman mot et annet lager. Slår vi opp imaget med en annen
+    kjøretid enn kommandoen selv bruker, ser vi i et lager kommandoen
+    aldri rører: da finnes imaget «ikke», og fase 9 stenger døren på en
+    helt gyldig motor.
+
+    DE GLOBALE OPSJONENE HØRER MED (Codex P2, runde 3): lageret velges
+    ikke bare av kjøretidens navn, men av opsjonene MELLOM kjøretiden og
+    underkommandoen — `podman --root /annet-lager run … <image>` slår opp
+    i `/annet-lager`, `docker --context …` og `nerdctl --namespace …`
+    tilsvarende. Kuttet vi ved selve kjøretidsleddet, ble
+    `--root /annet-lager` kastet og begge oppslagene spurte
+    standardlageret om et image som bare finnes i det andre: samme feil
+    ett hakk finere, altså at en gyldig release stenges ute.
+
+    Snittet går derfor ved `run` — `_kjoretidsledd` har allerede
+    fastslått at leddet finnes etter kjøretiden — og alt foran følger
+    med, uansett hva overstyringen fant på å sette der."""
+    i = _kjoretidsledd(motor_argv)
+    if i is None:
+        return None
+    return _som_arbeideren(motor_argv[:motor_argv.index("run", i + 1)])
+
+
 def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
     """Image-ID-en den EFFEKTIVE motorkommandoen kjører (Codex P2, runde 6).
 
@@ -1448,40 +1479,202 @@ def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
     lager, altså der uniten selv ville funnet imaget."""
     if not motor_argv:
         return "", "tom motorkommando"
-    i = _kjoretidsledd(motor_argv)
-    if i is None:
+    forspann = _motorforspann(motor_argv)
+    if forspann is None:
         return "", "motorkommandoen er ingen containerkjøring"
-    kmd = _som_arbeideren(motor_argv[:i + 1]
-                          + ["image", "inspect", "--format", "{{.Id}}",
-                             motor_argv[-1]])
-    ut = subprocess.run(kmd, capture_output=True, text=True)
+    ut = subprocess.run([*forspann, "image", "inspect", "--format",
+                         "{{.Id}}", motor_argv[-1]],
+                        capture_output=True, text=True)
     if ut.returncode != 0:
         return "", ("image inspect feilet:"
                     f" {(ut.stderr or ut.stdout).strip()[-200:]}")
     return ut.stdout.strip().split(":")[-1], "lest i arbeiderens eget lager"
 
 
-def _importer_motorimage(digest: str) -> tuple[bool, str]:
-    """Motorimaget inn i ARBEIDERENS podman-lager (Codex P1).
+#: Konfigfeltene som IKKE er atferd, men avtrykk av BYGGECONTAINEREN:
+#: docker fører dem med fra det gamle containerformatet (`Image` er
+#: forelderens ref, `Hostname`/`Domainname`/`MacAddress` er defaults for
+#: en container som aldri kjørte), podman skriver dem ikke i det hele
+#: tatt. Ingen av dem endrer hva imaget kjører, og å sammenligne dem
+#: ville stengt døren på et helt identisk image.
+#:
+#: Alt ANNET i konfigen sammenlignes — dette er en nektliste, ikke en
+#: tillatelsesliste (Codex P1, runde 2). En tillatelsesliste er et hull
+#: som vokser av seg selv: hvert felt noen glemmer — `Healthcheck`,
+#: `Volumes`, `ExposedPorts`, `StopSignal`, eller et felt en fremtidig
+#: motorversjon finner på — blir usynlig for gaten, og et image bygget
+#: `FROM` releasen som bare legger til en helsesjekk eller et volum
+#: passerer som «identisk». Ukjente felt teller derfor MED: de gjør et
+#: ulikt image ulikt, ikke usynlig.
+IKKE_ATFERD = frozenset({"Image", "Hostname", "Domainname", "MacAddress"})
 
-    Fase 1 henter image-ID-en fra den ROOTFULLE dockerdaemonen, og fase 9
-    ga den samme ID-en til rootless podman som `disponit-wcag`. De to har
-    hvert sitt lager og ingen felles referanse — ingen `docker save`,
-    ingen registry-push, ingen rootless bygging fantes noe sted. Den
-    enablede arbeideren kunne derfor ikke starte motoren i det hele tatt,
-    og ville feilet hvert eneste claimet oppdrag.
 
-    Image-ID-en er konfigblobbens digest og overlever `docker save` |
-    `podman load`, så `container_image_digest` er den samme verdien
-    releaseraden og kvitteringene bærer.
+def _normalisert(verdi):
+    """Konfigverdien uten skrivemåteforskjeller mellom motorene.
+
+    TOMT ER ÉN VERDI: «ingen entrypoint» skrives som `null`, `[]` eller
+    et utelatt felt om hverandre, `Tty`/`ArgsEscaped` som `false` i
+    docker og ingenting i podman, `StopTimeout` som `0` eller `null`.
+    Uten denne sammenslåingen ville nektlista over måttet vokse med hvert
+    slikt felt — og et FALSKT avvik her stenger døren på et image som er
+    helt likt. Dicter sorteres (nøkkelrekkefølge er ikke atferd) og tomme
+    SKALARER faller ut, så «feltet mangler» og «feltet er tomt» blir
+    samme identitet.
+
+    En tom BEHOLDER er derimot ikke tomhet: `Volumes` og `ExposedPorts`
+    er mengder der meningen ligger i NØKKELEN og verdien alltid er `{}`.
+    Faller de nøklene ut, er `{"/data": {}}` og «ingen volumer» samme
+    identitet — og et image bygget `FROM` releasen som bare erklærer et
+    volum passerer igjen som likeverdig. Nøkkelen beholdes derfor."""
+    if isinstance(verdi, dict):
+        d = {}
+        for k in sorted(verdi):
+            v = verdi[k]
+            n = _normalisert(v)
+            if n is not None or isinstance(v, (dict, list, tuple)):
+                d[k] = n
+        return d or None
+    if isinstance(verdi, (list, tuple)):
+        return [_normalisert(x) for x in verdi] or None
+    return verdi if verdi else None
+
+
+def _image_identitet(forspann, ref: str) -> dict | None:
+    """Imagets identitet, lest med EN gitt kjøretidskontekst.
+
+    -> `{"lag": diff_ids, "konfig": …, "plattform": …}`, ellers None.
+
+    LAGKJEDEN ALENE ER IKKE IDENTITET (Codex P1): et image bygget `FROM`
+    releasen som bare overstyrer `ENTRYPOINT`, `USER` eller `ENV` har
+    NØYAKTIG samme diff_ids — lagene er de samme, det er konfigblobben
+    over dem som er ny. En ren lagsammenligning godkjenner et slikt image
+    som «innholdsidentisk», og da kan både importoppslaget og en
+    `WCAG_DRIFT_MOTOR`-overstyring sette i drift en motor som kjører noe
+    annet enn runden målte, med releasens digest på kvitteringen.
+
+    Identiteten er derfor lagkjeden PLUSS HELE konfigen — alt unntatt
+    `IKKE_ATFERD` (Codex P1, runde 2). En håndplukket liste over
+    «atferdsfelt» glemte `Healthcheck` og `Volumes`: et image bygget
+    `FROM` releasen som bare legger til en helsesjekk eller en
+    volumdeklarasjon har samme lag og samme håndplukkede felt, men
+    kjører en ekstra periodisk kommando og monterer et automatisk
+    volum — og fase 9 satte det i drift som «likeverdig». Det er
+    feltene som IKKE er atferd som må navngis, ikke de som er det.
+
+    PLATTFORMEN LIGGER UTENFOR KONFIGEN (Codex P1, runde 3): `Os`,
+    `Architecture` og `Variant` står på toppnivå i inspect-utdataen, ikke
+    i `Config`, så et image med samme lag og samme konfig men bygget for
+    en annen arkitektur var identisk for gaten. Kjøretiden bruker
+    nettopp de feltene til å velge kompatibilitet og emulering: et
+    arm64-image i et amd64-lager blir enten emulert — altså en annen
+    kjøring enn runden målte — eller feiler på hver eneste motorstart,
+    mens arbeideren melder seg klar og claimer arbeid først. Plattformen
+    er derfor en del av identiteten.
+
+    Verdiene normaliseres (`_normalisert`) fordi de to motorene skriver
+    tomhet ulikt, og en falsk ulikhet her stenger døren på et image som
+    er helt likt."""
+    ut = subprocess.run([*forspann, "image", "inspect", "--format",
+                         "{{json .}}", ref], capture_output=True, text=True)
+    if ut.returncode != 0:
+        return None
+    try:
+        d = json.loads(ut.stdout or "null")
+    except ValueError:
+        return None
+    if isinstance(d, list):
+        d = d[0] if d else None
+    if not isinstance(d, dict):
+        return None
+    lag = (d.get("RootFS") or {}).get("Layers") or []
+    if not lag:
+        return None
+    kfg = dict(d.get("Config") or {})
+    # HELSESJEKKEN STÅR TO STEDER: docker legger den i `Config`, podman
+    # løfter den til toppnivå i inspect-utdataen. Samme atferd — en
+    # periodisk kommando i containeren — men leses den bare ett sted, ser
+    # et image med helsesjekk ULIKT ut i de to motorene, og gaten stenger
+    # døren på releasen selv.
+    for navn in ("Healthcheck", "HealthCheck"):
+        if not kfg.get("Healthcheck") and d.get(navn):
+            kfg["Healthcheck"] = d[navn]
+    konfig = {}
+    for felt in sorted(kfg):
+        if felt in IKKE_ATFERD:
+            continue
+        # LISTENE SAMMENLIGNES I REKKEFØLGE, også `Env` (Codex P2, runde
+        # 3): OCI krever ikke unike navn i miljøtabellen, og prosessen
+        # ser den slik den står — `getenv` treffer den første oppføringen
+        # og `environ` kan leses i sin helhet. Sortert ble
+        # `['MODE=safe', 'MODE=unsafe']` og den omvendte rekkefølgen
+        # samme identitet, altså to ULIKE kjøringer godkjent som én.
+        # Rekkefølgen kommer fra konfigblobben og er den samme i begge
+        # motorene, så den koster ingen falsk ulikhet.
+        n = _normalisert(kfg[felt])
+        if n is not None:
+            konfig[felt] = n
+    # PLATTFORMEN STÅR PÅ TOPPNIVÅ, ikke i konfigen — se docstringen.
+    plattform = {}
+    for felt in ("Os", "Architecture", "Variant"):
+        n = _normalisert(d.get(felt))
+        if n is not None:
+            plattform[felt] = n
+    return {"lag": lag, "konfig": konfig, "plattform": plattform}
+
+
+def _docker_identitet(digest: str) -> dict | None:
+    """Releasens identitet, lest i den rootfulle daemonen."""
+    return _image_identitet(["docker"], digest)
+
+
+def _arbeider_identitet(ref: str) -> dict | None:
+    """Samme identitet, lest i ARBEIDERENS lager."""
+    return _image_identitet(_som_arbeideren(["podman"]), ref)
+
+
+def _importer_motorimage(digest: str) -> tuple[str, str]:
+    """Motorimaget inn i ARBEIDERENS podman-lager. -> (arbeider-id, notat).
+
+    Tom id = imaget er ikke tilgjengelig for arbeideren.
+
+    IDENTITETEN OVERLEVER IKKE TRANSPORTEN (målt på disponit-srv, docker
+    29/containerd-lager): `docker save | podman load` ga et image med
+    IDENTISK innhold — samme Created på nanosekundet, samme ni lag — men en
+    ANNEN image-ID, fordi containerd-snapshotteren skriver konfigen om ved
+    eksport og podman regner ID av det den får. Forrige utgave sammenlignet
+    ID-er og konkluderte «imaget er ikke i lageret» om et innholdsidentisk
+    image som sto der — og hver slik runde brente en release.
+
+    Identiteten som faktisk overlever er LAGKJEDEN (RootFS diff_ids:
+    innholdsdigester av de ukomprimerte lagene, samme verdi i begge
+    motorer) SAMMEN MED atferdskonfigen — se `_image_identitet`: lagene
+    alene skiller ikke releasen fra et image bygget `FROM` den som bare
+    overstyrer entrypoint, bruker eller miljø. Oppslag og verifikasjon
+    går derfor på begge deler, og funksjonen
+    returnerer ARBEIDERENS egen ID — det er den motorkommandoen og
+    kvitteringenes `container_image_digest` må bære, for det er den som
+    faktisk kjører. Releasens `artifact_digest` (dockers ID) består som
+    byggeidentitet; fase 9-evidensen fører BEGGE og lagkjede-beviset som
+    binder dem.
     """
-    kort = digest.split(":")[-1]
     subprocess.run(["install", "-d", "-m", "700", "-o", ARBEIDER_BRUKER,
                     "-g", ARBEIDER_BRUKER, f"/run/{ARBEIDER_BRUKER}"],
                    check=True)
-    if subprocess.run(_arbeiderpodman("image", "exists", kort),
-                      capture_output=True).returncode == 0:
-        return True, "alt i lageret"
+    ventet = _docker_identitet(digest)
+    if not ventet:
+        return "", "docker image inspect ga ingen identitet for releasen"
+
+    def _finn() -> str:
+        ls = subprocess.run(_arbeiderpodman("image", "ls", "-q", "--no-trunc"),
+                            capture_output=True, text=True)
+        for iid in dict.fromkeys(filter(None, ls.stdout.split())):
+            if _arbeider_identitet(iid) == ventet:
+                return iid.split(":")[-1]
+        return ""
+
+    fantes = _finn()
+    if fantes:
+        return fantes, "alt i lageret (identisk lagkjede og konfig)"
     ror = subprocess.run(
         ["bash", "-o", "pipefail", "-c",
          # `sha256:`-prefikset er IKKE pynt: `docker save` (i motsetning til
@@ -1489,17 +1682,16 @@ def _importer_motorimage(digest: str) -> tuple[bool, str]:
          # «cannot specify 64-byte hexadecimal strings» — så importen feilet
          # på HVER kjøring og fase 9 brente en release per forsøk. Funnet ved
          # å kjøre `docker save` for hånd da røret ga tom stdin til podman.
-         f"docker save sha256:{shlex.quote(kort)} | "
+         f"docker save sha256:{shlex.quote(digest.split(':')[-1])} | "
          + shlex.join(_arbeiderpodman("load"))],
         capture_output=True, text=True)
     if ror.returncode != 0:
-        return False, f"import feilet: {(ror.stderr or ror.stdout)[-300:]}"
-    etter = subprocess.run(_arbeiderpodman("image", "exists", kort),
-                           capture_output=True, text=True)
-    if etter.returncode != 0:
-        return False, ("imaget er ikke i lageret etter import:"
-                       f" {etter.stderr[-200:]}")
-    return True, "importert"
+        return "", f"import feilet: {(ror.stderr or ror.stdout)[-300:]}"
+    etter = _finn()
+    if not etter:
+        return "", ("lastet uten feil, men intet image i lageret etterpå har"
+                    " releasens lagkjede OG konfig")
+    return etter, "importert"
 
 
 def _tokenet_er_autorisert(m, mtk: str) -> tuple[bool, dict]:
@@ -1741,16 +1933,6 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
 
     reg = json.loads(ATT_FIL.read_text())
     nid = sorted(reg["v_wcag_audit"])[0]
-    motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
-        "podman", "run", "--rm", "-i", "--network", "host",
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-        # Nettleseren kjører kundens side: `MOTORGRENSER` er minnet og
-        # prosesstabellen den kan bruke, unitens `CPUQuota=`/`MemoryMax=`
-        # er backstoppet rundt hele arbeideren.
-        *MOTORGRENSER,
-        # Image-ID-en, ikke taggen: taggen er mutabel, og kvitteringen
-        # attesterer nøyaktig denne digesten som container_image_digest.
-        digest.split(":")[-1]])
 
     # ROOTLESS-FORUTSETNINGENE MÅLES FØR UNITEN ENABLES (Codex P1).
     # `opp.sh` deler ut subuid/subgid til `disponit-wcag` og advarer om
@@ -1779,18 +1961,35 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
         return
 
     # ... og IMAGET må ligge i arbeiderens EGET lager — se
-    # `_importer_motorimage`. Docker og rootless podman deler ingenting.
-    importert, hvordan = _importer_motorimage(digest)
-    evidens("fase9_motorimage", image_id=digest.split(":")[-1],
+    # `_importer_motorimage`. Docker og rootless podman deler ingenting, og
+    # ID-en overlever ikke transporten (docker 29): importen skjer FØR
+    # motorkommandoen bygges, for kommandoen skal bære ARBEIDERENS id.
+    arbeider_id, hvordan = _importer_motorimage(digest)
+    evidens("fase9_motorimage", artifact_digest=digest.split(":")[-1],
+            arbeider_image_id=arbeider_id or None,
             lager=f"rootless podman ({ARBEIDER_BRUKER})", utfall=hvordan,
-            ok=importert)
-    if not importert:
+            ok=bool(arbeider_id))
+    if not arbeider_id:
         evidens("fase9_hoppet",
                 grunn="motorimaget er ikke tilgjengelig for arbeideren",
                 merknad="uniten enables ikke: den ville feilet hvert"
                         " eneste claimet oppdrag")
         _steng_doeren(m, "motorimaget mangler i arbeiderens lager")
         return
+
+    motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
+        "podman", "run", "--rm", "-i", "--network", "host",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        # Nettleseren kjører kundens side: `MOTORGRENSER` er minnet og
+        # prosesstabellen den kan bruke, unitens `CPUQuota=`/`MemoryMax=`
+        # er backstoppet rundt hele arbeideren.
+        *MOTORGRENSER,
+        # ARBEIDERENS image-id, ikke taggen og ikke dockers: taggen er
+        # mutabel, og dockers id finnes ikke i arbeiderens lager (docker
+        # 29-transporten skriver konfigen om). Kvitteringene attesterer
+        # nøyaktig denne id-en som container_image_digest — motoren som
+        # faktisk kjører.
+        arbeider_id])
 
     # KONTEKSTEN AVLEDES AV DEN MOTOREN SOM FAKTISK KJØRER (Codex P2,
     # runde 6). `miljo`-blokka ble bygget av stagingkommandoen og dens
@@ -1803,14 +2002,37 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     # `artifact_digest` og målingene attesterte. Et annet image er ikke et
     # konteksproblem å skrive seg ut av: da er akseptmålingen gjort på noe
     # annet enn det som skal i drift, og døren stenges.
+    # IDENTITETEN SOM SAMMENLIGNES ER IKKE ID-STRENGEN: dockers id
+    # (releasens artifact_digest) og arbeiderens id er to navn på samme
+    # image etter docker 29-transporten. Gaten binder den effektive motoren
+    # til releasens INNHOLD (diff_ids — innholdsdigester som ikke kan
+    # navngis om) OG til atferdskonfigen, for lagene alene skiller ikke
+    # releasen fra et image bygget `FROM` den som overstyrer entrypoint,
+    # bruker eller miljø — se `_image_identitet`.
+    # Og identiteten leses med KOMMANDOENS EGEN kjøretid (Codex P2): id-en
+    # over kom fra den effektive kommandoens `image inspect`, så gjør
+    # oppslaget av lag og konfig det også. Leser vi i stedet alltid i
+    # arbeiderens podman-lager, gir en `WCAG_DRIFT_MOTOR` på `docker`,
+    # `nerdctl` eller et podman-forspann mot et annet lager ingen treff på
+    # en id som inspiserte helt fint — og døren stenges på feil grunnlag.
     motor_argv = shlex.split(motor)
+    forspann = _motorforspann(motor_argv)
+    # Forspannet ender på de globale opsjonene, ikke på kjøretiden, så
+    # kjøretidsnavnet til evidensen LETES opp — ellers hadde
+    # `podman --root /annet-lager` blitt ført som lest med «annet-lager».
+    kjt = _kjoretidsledd(motor_argv)
     drift_id, hvorfra = _effektiv_motorimage(motor_argv)
-    ventet = digest.split(":")[-1]
+    ventet = _docker_identitet(digest)
+    effektiv = (_image_identitet(forspann, drift_id)
+                if drift_id and forspann else None)
+    identisk = bool(drift_id) and ventet is not None and effektiv == ventet
     evidens("fase9_effektiv_motor", motor=motor, image_id=drift_id,
-            ventet=ventet, utfall=hvorfra,
+            artifact_digest=digest.split(":")[-1],
+            identisk_lag_og_konfig=identisk, utfall=hvorfra,
+            lest_med=Path(motor_argv[kjt]).name if kjt is not None else "",
             overstyrt=bool(os.environ.get("WCAG_DRIFT_MOTOR")),
-            ok=drift_id == ventet)
-    if drift_id != ventet:
+            ok=identisk)
+    if not identisk:
         evidens("fase9_hoppet",
                 grunn="den effektive motoren er ikke imaget runden målte",
                 merknad="uniten enables ikke: kvitteringene ville attestert"
