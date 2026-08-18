@@ -317,3 +317,62 @@ test("Domener: en foreldet FEIL river ikke den nyere tabellen", async () => {
     globalThis.fetch = ekte;
   }
 });
+
+// Codex P2: disposisjonen måles i RAMMEN, ikke i delen. Hver del for seg
+// hadde riktige nivåer; det var først da rapportinnholdet ble tegnet inne i
+// en fane at bolkene («Sammendrag», «Dekning», «Sider», «Funn») sto som
+// SØSKEN av fanens egen overskrift. En skjermleser som navigerer på nivå
+// leste dem da som fire nye deler av flaten, ikke som rapportens innmat.
+const RAPPORT_SVAR = {
+  oppdrag_id: 42, artefakt_id: "a-1", artefakttype: "rapport.wcag.v1",
+  promotert_ts: "2026-08-18T10:00:00+00:00",
+  rapport: {
+    kravsett: "wcag21_aa", regelsett_versjon: "axe-4.10",
+    kjort_ts: "2026-08-18T09:59:00+00:00", varighet_ms: 12000,
+    sider_kontrollert: [{ url: "https://kunde.example/", status: "ok" }],
+    funn: [{ regel_id: "color-contrast", alvorlighet: "alvorlig",
+      antall: 3, eksempler: ["main > p"] }],
+    sammendrag: { kritisk: 0, alvorlig: 3, moderat: 0, lav: 0 },
+    avkortet: { truffet: false, tak: 500, verdi: 12 },
+    dekningsbegrensninger: [],
+    manuelle_kriterier_vurdert: false,
+  },
+  request_id: "r",
+};
+
+// Nivåene i dokumentrekkefølge — det er DEN rekkefølgen en skjermleser
+// bygger disposisjonen sin av.
+function nivaer(rot) {
+  return [...rot.querySelectorAll("h1,h2,h3,h4,h5,h6")]
+    .map((n) => ({ niva: Number(n.tagName[1]), tekst: n.textContent }));
+}
+
+test("WCAG kontroll: rapportens bolker ligger UNDER fanens overskrift", async () => {
+  // MUTASJONEN SOM DREPER DENNE: sett bolkene i rapport.js tilbake til h2
+  // (eller flytt delens egen overskrift til h3 uten å flytte bolkene).
+  KALL = []; SVAR = { ...TOMME_DOMENER, "/v1/rapport/42": RAPPORT_SVAR };
+  const h = nyHoved();
+  visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] });
+  const inp = h.querySelector("#rp-oppdrag");
+  inp.value = "42"; inp.dispatchEvent(new window.Event("input"));
+  inp.form.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  await vent(() => h.querySelector(".rapport table"));
+
+  const disp = nivaer(h);
+  assert.equal(disp[0].niva, 1, "flaten eier h1");
+  assert.equal(disp[1].niva, 2, "fanens del er h2");
+  // Ingen hopp nedover: hvert nivå er høyst ETT dypere enn det forrige.
+  for (let i = 1; i < disp.length; i++) {
+    assert.ok(disp[i].niva <= disp[i - 1].niva + 1,
+      `hoppet fra h${disp[i - 1].niva} til h${disp[i].niva} ved `
+      + `«${disp[i].tekst}»`);
+  }
+  // ... og bolkene er faktisk BARN av delen, ikke søsken av den.
+  for (const kode of ["sammendrag", "dekning", "sider", "funn"]) {
+    const b = disp.find((x) => x.tekst === t(`ui.rapport.${kode}`));
+    assert.ok(b, `bolken ${kode} mangler`);
+    assert.equal(b.niva, 3, `bolken ${kode} står på h${b.niva}, ikke under delen`);
+  }
+  const brudd = await alvorligeBrudd(h, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
