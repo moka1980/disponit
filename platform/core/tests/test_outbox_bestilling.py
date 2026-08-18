@@ -491,6 +491,93 @@ def _adminsesjon(tenant=TENANT, sub=None, roller="admin"):
     return cookie, csrf
 
 
+def _sikre_typeregistrering():
+    """Idempotent oppsett av en CLAIMBAR `kontroll.wcag.nettsted`.
+
+    Runtime-vakta i /v1/bestilling nekter en type som ikke kan claimes med
+    503, så E2E-testene må konstruere tilstanden selv (ingen delt
+    fixture-antakelse; en fersk CI-base har den ikke). Vilkårene er
+    `claim_neste_oppdrag` (037) sine, og de er FIRE — ikke bare
+    registerraden (Codex P1): kontrakt + registrert oppdragstype med rett
+    eier, `modulhode.status='aktiv'`, og en `moduldeployment` som er
+    `claiming` i DETTE miljøet. Testhashene er faste, så gjentatte kall er
+    no-op på identisk innhold.
+
+    Herav følger at hver grønn E2E-bestilling i denne fila også er den
+    positive motsatsen til de tre negative testene under: står ett av
+    vilkårene ikke, svarer /v1/bestilling 503 før beslutningen.
+    """
+    from db.pg import koble
+    from miljo import gjeldende_miljo
+    from .test_wcag_kontroll import _mk_admin
+    miljo = gjeldende_miljo()
+    # Sjekk-først, ikke blind re-registrering: `registrer_oppdragstype`
+    # avviser ENHVER overlappende type (prefiks-entydigheten er hele
+    # poenget dens), så «idempotent» må her bety «står den der med rett
+    # eier, er jobben alt gjort». Lesingen skjer som migrator —
+    # modules_admin har med vilje ingen bordtilgang, bare funksjonene.
+    m = koble(MIGRATOR_DSN)
+    try:
+        rad = m.execute(
+            "SELECT eiermodul FROM oppdragstype_register WHERE"
+            " oppdragstype='kontroll.wcag.nettsted'").fetchone()
+        har_kontrakt = m.execute(
+            "SELECT kontrakt_hash FROM modulkontrakt WHERE"
+            " modul_id='m_wcag_audit' AND kontraktversjon=1").fetchone()
+        hode = m.execute(
+            "SELECT status, module_epoch FROM modulhode WHERE"
+            " modul_id='m_wcag_audit'").fetchone()
+        claiming = m.execute(
+            "SELECT count(*) FROM moduldeployment WHERE"
+            " modul_id='m_wcag_audit' AND miljo=%s AND livslop='claiming'",
+            (miljo,)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    if rad is not None:
+        assert rad[0] == "m_wcag_audit", rad
+    if rad is not None and hode and hode[0] == "aktiv" and claiming:
+        return
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        kh = har_kontrakt[0] if har_kontrakt else "ab" * 32
+        # Ny release-id når det trengs en frisk claiming: livsløpet er
+        # fremover-only (claiming→draining→retired), så en release som
+        # ALT er drenet — f.eks. av et nødstopp — kan aldri claimes igjen.
+        rid = "r-testreg-" + secrets.token_hex(4)
+        ma.execute("SELECT installer_modul('m_wcag_audit','testreg')")
+        if har_kontrakt is None:
+            ma.execute("SELECT registrer_kontrakt('m_wcag_audit',1,%s,%s,%s,"
+                       "'ekstern_lesing','direkte','testreg')",
+                       (kh, "cd" * 32, "ef" * 32))
+        if rad is None:
+            ma.execute("SELECT registrer_oppdragstype("
+                       "'kontroll.wcag.nettsted','m_wcag_audit',1,%s,"
+                       "'testreg')", (kh,))
+        # `nodeaktivert` er nødstoppens egen tilstand: ut av den går bare
+        # `reaktiver_modul`, epoch-gjerdet, og den lander på
+        # `staging_verifisert` — aldri direkte `aktiv`.
+        if hode is not None and hode[0] == "nodeaktivert":
+            ma.execute("SELECT reaktiver_modul('m_wcag_audit',%s,'testreg')",
+                       (hode[1],))
+        if not claiming:
+            ma.execute("SELECT registrer_release('m_wcag_audit',%s,1,%s,%s,"
+                       "%s,'testreg')", (rid, kh, "11" * 32, "22" * 32))
+            ma.execute("SELECT bytt_release('m_wcag_audit',%s,%s,1,%s,"
+                       "'testreg')", (miljo, rid, kh))
+        if hode is None or hode[0] != "aktiv":
+            # Veien er installert → staging_verifisert → aktiv, og `aktiv`
+            # krever den claiming-deploymenten som nå står der (port 13).
+            if hode is None or hode[0] == "installert":
+                ma.execute("SELECT sett_modulstatus('m_wcag_audit',"
+                           "'staging_verifisert',%s,'testreg')", (rid,))
+            ma.execute("SELECT sett_modulstatus('m_wcag_audit','aktiv',%s,"
+                       "'testreg')", (rid,))
+        ma.commit()
+    finally:
+        ma.close()
+
+
 def _wcag_policy(migrator_, *, med_handling=True,
                  ved_brudd="unntakskø", tillatt_for=("bestiller",)):
     """Aktiv policy for TENANT — bransjemalen + wcag-handlingen (vilkaar
@@ -519,6 +606,7 @@ def _wcag_policy(migrator_, *, med_handling=True,
             "reversering": {"type": "direkte"}})
     policyregister.registrer(migrator_, TENANT, p, p["meta"]["status"])
     migrator_.commit()
+    _sikre_typeregistrering()
     return p
 
 
@@ -1337,6 +1425,157 @@ def test_lese_api_viser_opphav_og_null_unntak(migrator, klient):
 
 
 @pg
+@dekker("bestillingstype_utilgjengelig")
+def test_uregistrert_type_nektes_for_beslutningen(migrator, klient,
+                                                  monkeypatch):
+    """Runtime-vakta (avløseren for den rødstoppende deploy-porten, 18/8):
+    en kodefestet bestillingstype hvis oppdragstype IKKE er registrert →
+    503 `bestillingstype_utilgjengelig` FØR beslutningen — ingen loggpost,
+    intet oppdrag, ingen kvote brent."""
+    import api.bestilling as bm
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    monkeypatch.setitem(
+        bm.BESTILLINGSTYPER, "kontroll.wcag.nettsted",
+        bm.Bestillingstype(
+            handling="kontroll.wcag.nettsted",
+            oppdragstype="kontroll.uregistrert." + secrets.token_hex(4),
+            eiermodul="m_wcag_audit",
+            kravsett=("wcag21_aa",), omfang=("enkeltside", "nettsted")))
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp(), nokkel)
+    assert (r.status_code, r.json()["feil"]) == (
+        503, "bestillingstype_utilgjengelig"), r.text
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0, "beslutningen ble tatt for en type uten utfører"
+
+
+def _syntetisk_modul(status, *, deployment_miljo=None):
+    """-> (modul_id, oppdragstype) for en modul i en gitt tilstand.
+
+    Egen modul med eget prefiksnavnerom, bygget gjennom de HERDEDE
+    overgangsfunksjonene — ikke rå INSERT-er: da er tilstanden en
+    virkelig modulregisteret kan komme i, og statemaskinen sier fra hvis
+    testen ber om noe ulovlig. `m_wcag_audit` røres aldri; den delte
+    testbasen skal ikke bære spor av disse testene.
+    """
+    from miljo import gjeldende_miljo
+    from .test_wcag_kontroll import _mk_admin
+    modul = "m-" + secrets.token_hex(4)
+    ot = f"kontroll.syntetisk{secrets.token_hex(4)}.nettsted"
+    kh, rid = secrets.token_hex(32), "r-" + secrets.token_hex(4)
+    miljo = deployment_miljo or gjeldende_miljo()
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        ma.execute("SELECT installer_modul(%s,'testreg')", (modul,))
+        ma.execute("SELECT registrer_kontrakt(%s,1,%s,%s,%s,'ekstern_lesing',"
+                   "'direkte','testreg')",
+                   (modul, kh, secrets.token_hex(32), secrets.token_hex(32)))
+        ma.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'testreg')",
+                   (ot, modul, kh))
+        ma.execute("SELECT registrer_release(%s,%s,1,%s,%s,%s,'testreg')",
+                   (modul, rid, kh, secrets.token_hex(32),
+                    secrets.token_hex(32)))
+        ma.execute("SELECT bytt_release(%s,%s,%s,1,%s,'testreg')",
+                   (modul, miljo, rid, kh))
+        if status != "installert":
+            ma.execute("SELECT sett_modulstatus(%s,'staging_verifisert',%s,"
+                       "'testreg')", (modul, rid))
+        if status in ("aktiv", "nodeaktivert"):
+            ma.execute("SELECT sett_modulstatus(%s,'aktiv',%s,'testreg')",
+                       (modul, rid))
+        if status == "nodeaktivert":
+            ma.execute("SELECT noddeaktiver_modul(%s,'testnødstopp',"
+                       "'testreg')", (modul,))
+        ma.commit()
+    finally:
+        ma.close()
+    return modul, ot
+
+
+def _bestill_mot(migrator_, klient_, monkeypatch, modul, oppdragstype):
+    """Bestill `kontroll.wcag.nettsted`, men bundet til en annen
+    oppdragstype/eiermodul. Handling, kravsett og omfang er uendret, så
+    policyveien er nøyaktig den samme som i den grønne bestillingen — det
+    eneste som varierer er om utføreren kan claime."""
+    import api.bestilling as bm
+    monkeypatch.setitem(
+        bm.BESTILLINGSTYPER, "kontroll.wcag.nettsted",
+        bm.Bestillingstype(
+            handling="kontroll.wcag.nettsted", oppdragstype=oppdragstype,
+            eiermodul=modul, kravsett=("wcag21_aa",),
+            omfang=("enkeltside", "nettsted")))
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    r = _bestill(klient_, cookie, csrf, _gyldig_kropp(), nokkel)
+    _sett_kontekst(migrator_, TENANT)
+    n = migrator_.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+    migrator_.rollback()
+    return r, n
+
+
+@pg
+@pytest.mark.parametrize("status,grunn", [
+    ("installert", "delvis onboardet — evidensen er ikke verifisert ennå"),
+    ("nodeaktivert", "nødstoppet"),
+])
+def test_uclaimbar_modulstatus_nektes_for_beslutningen(
+        migrator, klient, monkeypatch, status, grunn):
+    """Codex P1: registerraden er IKKE nok.
+
+    `oppdragstype_register` er immutabelt — raden står med rett eiermodul
+    både mens onboardingen bare er PÅBEGYNT (`installert`/
+    `staging_verifisert`) og etter et NØDSTOPP (`nodeaktivert`).
+    `claim_neste_oppdrag` (037) krever i tillegg `modulhode.status =
+    'aktiv'`, så et TILLAT i disse tilstandene ville gitt et oppdrag ingen
+    arbeider kan plukke: det står i køen til `utforelsesfrist` passerer og
+    dør der, med kvoten brent og kunden uten svar.
+
+    Kontroll: fjern `registrert[1] != 'aktiv'` fra vakta, så blir denne
+    rød.
+    """
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    modul, ot = _syntetisk_modul(status)
+    r, n = _bestill_mot(migrator, klient, monkeypatch, modul, ot)
+    assert (r.status_code, r.json()["feil"]) == (
+        503, "bestillingstype_utilgjengelig"), (grunn, r.text)
+    assert n == 0, f"beslutningen ble tatt for en modul som er {status}"
+
+
+@pg
+def test_claiming_i_annet_miljo_nektes_for_beslutningen(migrator, klient,
+                                                        monkeypatch):
+    """Codex P1, deployment-halvdelen: modulen er `aktiv`, men den eneste
+    `claiming`-deploymenten står i et ANNET miljø.
+
+    `claim_neste_oppdrag` matcher deploymenten på KALLERENS miljø, så en
+    staging-arbeider gjør ikke et produksjonsoppdrag claimbart (og
+    omvendt). Tilstanden er ikke konstruert: `aktiv` krever bare ÉN
+    claiming-deployment et sted, så en modul som er rullet ut i staging og
+    ikke i produksjon står nøyaktig slik.
+
+    Kontroll: fjern `d.miljo = %s` fra vakta, så blir denne rød.
+    """
+    from miljo import PRODUKSJON, STAGING, gjeldende_miljo
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    annet = PRODUKSJON if gjeldende_miljo() == STAGING else STAGING
+    modul, ot = _syntetisk_modul("aktiv", deployment_miljo=annet)
+    r, n = _bestill_mot(migrator, klient, monkeypatch, modul, ot)
+    assert (r.status_code, r.json()["feil"]) == (
+        503, "bestillingstype_utilgjengelig"), r.text
+    assert n == 0, "beslutningen ble tatt for en type uten utfører i miljøet"
+
+
+@pg
 def test_rapport_lese_api(migrator, klient):
     """038 §7: GET /v1/rapport/{oppdrag_id} — den promoterte rapporten
     dekryptert server-side; ingen ciphertext/nøkkelreferanser i svaret.
@@ -1371,10 +1610,20 @@ def test_rapport_lese_api(migrator, klient):
     import oppdragskontrakt
     # Den EKTE typen fra kontrakten — leseveien kjenner bare igjen paret
     # (oppdragstype, `rapport_artefakttype`), se Codex P2 lenger nede.
-    at = _streng_type(
-        migrator, modul, kh, skjema={"type": "object"},
-        navn=oppdragskontrakt.OPPDRAGSTYPER[
-            "kontroll.wcag.nettsted"].rapport_artefakttype)
+    # SJEKK-FØRST: navnet er FAST og registerraden immutabel, så på en
+    # gjenbrukt base (lokal kjøring nr. 2) står den der alt — da er den
+    # tilstanden testen trenger, ikke en kollisjon. Registrer bare når den
+    # mangler; `artefakt.artefakttype` er en navne-FK, så raden virker
+    # uansett hvilken kontrakt som registrerte den.
+    at = oppdragskontrakt.OPPDRAGSTYPER[
+        "kontroll.wcag.nettsted"].rapport_artefakttype
+    if migrator.execute("SELECT 1 FROM artefakttype_register WHERE"
+                        " artefakttype=%s", (at,)).fetchone() is None:
+        migrator.rollback()
+        _streng_type(migrator, modul, kh, skjema={"type": "object"},
+                     navn=at)
+    else:
+        migrator.rollback()
     fremmed_at = _streng_type(migrator, modul, kh, skjema={"type": "object"})
     rapport = {"kravsett": "wcag21_aa", "sammendrag": {"kritisk": 0}}
     kanon = jcs.kanoniske_bytes(rapport)

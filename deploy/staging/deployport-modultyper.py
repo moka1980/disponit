@@ -66,6 +66,15 @@ typeregistreringen (`platform/core/oppdragskontrakt.OPPDRAGSTYPER`):
           <aktør>)` (eller `api.artefaktskjema.registrer`) for hver
        3. kjør `opp.sh` på nytt
 
+`--preflight` kjører de SAMME portene før tjenestene stoppes og før
+migrasjonene. Der kan en port referere skjema kandidatens migrasjon først
+oppretter; DEN porten merkes da utsatt og håndheves i hovedkjøringen etter
+migrasjonene. Toleransen er per port (Codex P1): de øvrige portene kjøres
+ferdig og kan fortsatt gjøre preflighten rød — ellers ville ett framtidig
+skjemaavvik slått av hele portpakken og latt en reell motstrid stå urørt
+til etter en forward-only migrasjon, som er nøyaktig det preflighten
+finnes for å hindre. Se `kjor_porter`.
+
 Kjøres med RUNTIME-DSN (kun SELECT). Exit 0 = grønn, 1 = stopp.
 """
 import os
@@ -81,10 +90,22 @@ import oppdragskontrakt  # noqa: E402
 
 
 def kontroller_bestillingstyper(conn) -> list[str]:
-    """Port 14 (038 §6): hver kodefestet bestillingstype må peke på en
-    registrert oppdragstype — ellers gir TILLAT et oppdrag ingen modul
-    noensinne kan claime, og bestillingen ser vellykket ut mens arbeidet
-    dør stille i køen."""
+    """Port 14 (038 §6): kodefestet bestillingstype vs `oppdragstype_register`.
+
+    RØD kun ved MOTSTRID: en registrert rad hvis eiermodul avviker fra den
+    kodefestede — da ville claim-veien gitt payloads til feil modul.
+
+    En MANGLENDE registrering er derimot ikke deploy-stopp (lærdommen fra
+    18/8: den første utgaven rødstoppet prod-deployen og tok tjenesten NED,
+    fordi modulregistreringen med vilje hører til onboarding-arcen — et
+    deploy-steg kan ikke kreve en tilstand bare et SENERE arbeidsløp kan
+    skape). Faren manglende registrering utgjør — TILLAT gir et oppdrag
+    ingen modul kan claime — vaktes i stedet DER den oppstår:
+    `/v1/bestilling` nekter typen før beslutningen
+    (`bestillingstype_utilgjengelig`), og prøver da CLAIM-VEIENS egne
+    vilkår, ikke bare registerraden: modulen må være `aktiv` og ha en
+    `claiming`-deployment i miljøet. Her varsles den bare, synlig i
+    deploy-loggen."""
     from api.bestilling import BESTILLINGSTYPER
     feil = []
     for navn, bt in sorted(BESTILLINGSTYPER.items()):
@@ -92,11 +113,9 @@ def kontroller_bestillingstyper(conn) -> list[str]:
             "SELECT eiermodul FROM oppdragstype_register WHERE"
             " oppdragstype=%s", (bt.oppdragstype,)).fetchone()
         if rad is None:
-            feil.append(
-                f"bestillingstype '{navn}' peker på oppdragstypen"
-                f" '{bt.oppdragstype}' som IKKE er registrert i"
-                " oppdragstype_register — TILLAT ville gitt et"
-                " uclaimbart oppdrag")
+            print(f"deployport-modultyper: MERK — bestillingstypen '{navn}'"
+                  f" er ikke registrert i oppdragstype_register ennå;"
+                  " /v1/bestilling nekter den inntil modulen er onboardet")
         elif rad[0] != bt.eiermodul:
             feil.append(
                 f"bestillingstype '{navn}': eiermodul-avvik"
@@ -105,8 +124,18 @@ def kontroller_bestillingstyper(conn) -> list[str]:
 
 
 def kontroller(conn) -> list[str]:
-    """-> feilliste (tom = grønn). Ren lesing, egen funksjon så testene kan
-    kjøre porten mot konstruert tilstand."""
+    """Portene 1–4 samlet -> feilliste (tom = grønn).
+
+    Ren lesing, egen funksjon så testene kan kjøre porten mot konstruert
+    tilstand. `main()` kjører portene ÉN OG ÉN via `PORTER` (se
+    `kjor_porter`) — denne komposisjonen finnes for kallere som vil ha alt
+    i én liste og ikke trenger å skille utsatte porter fra røde.
+    """
+    return _registerporten(conn) + _skjemaporten(conn)
+
+
+def _registerporten(conn) -> list[str]:
+    """Portene 1–3: `oppdragstype_register` mot den kodefestede typen."""
     feil = []
     rader = conn.execute(
         "SELECT r.oppdragstype, r.eiermodul, k.sideeffektklasse"
@@ -151,7 +180,6 @@ def kontroller(conn) -> list[str]:
                 f" ({eiermodul}) — aktiveringsporten hopper da over både"
                 " frekvens og målautorisasjon, og handlingen kan aktiveres"
                 " uten noen av dem")
-    feil += _skjemaporten(conn)
     return feil
 
 
@@ -178,21 +206,83 @@ def _skjemaporten(conn) -> list[str]:
         for at, h in mangler]
 
 
+#: Portene som kjøres, HVER FOR SEG. Granulariteten er poenget (Codex P1):
+#: skjema-toleransen i preflight gjelder én port om gangen, så en port som
+#: ikke kan kjøres ennå ikke kan dra med seg de andre. Navnet vises i
+#: deploy-loggen når en port utsettes.
+PORTER = (
+    ("registerporten (1–3)", _registerporten),
+    ("skjemaporten (4)", _skjemaporten),
+    ("bestillingstypeporten (14)", kontroller_bestillingstyper),
+)
+
+
+def kjor_porter(conn, preflight: bool) -> tuple[list[str], list[str]]:
+    """Kjør hver port ISOLERT -> (feil, utsatte porter).
+
+    (Codex P1) Skjema-toleransen i preflight er PER PORT, ikke for pakken.
+    Sto `try/except (UndefinedTable, UndefinedColumn)` rundt alle portene,
+    holdt det at ÉN port refererte noe kandidatens migrasjon først
+    oppretter: da returnerte `--preflight` 0 med det samme, og alle de
+    andre portene ble hoppet over — også porter som kunne kjøres mot
+    dagens skjema og allerede ville funnet en reell motstrid. Motstriden
+    dukket da opp først i hovedkjøringen etter migrasjonene, altså
+    nøyaktig den «først rød etter forward-only migrasjon»-klassen denne
+    preflighten finnes for å fjerne.
+
+    Derfor: en port som ikke KAN kjøres mot dagens skjema merkes utsatt
+    (og håndheves i hovedkjøringen etter migrasjonene), mens de øvrige
+    portene kjøres ferdig og fortsatt kan gjøre preflighten rød.
+
+    `conn.rollback()` etter hver port gjør to ting: holder kjøringen ren
+    lesing, og frigjør transaksjonen en port som reiste alt har avbrutt,
+    slik at neste port kan spørre.
+    """
+    feil: list[str] = []
+    utsatt: list[str] = []
+    for navn, port in PORTER:
+        try:
+            feil += port(conn)
+        except (psycopg.errors.UndefinedTable,
+                psycopg.errors.UndefinedColumn) as e:
+            if not preflight:
+                # Etter migrasjonene finnes ingen unnskyldning: mangler
+                # skjemaet DA, er det en ekte feil og deployen skal stoppe.
+                raise
+            utsatt.append(f"{navn}: {type(e).__name__}")
+        finally:
+            conn.rollback()
+    return feil, utsatt
+
+
 def main() -> int:
     dsn = os.environ.get("DATABASE_URL") or os.environ.get(
         "DISPONIT_DATABASE_URL")
     if not dsn:
         print("deployport-modultyper: DATABASE_URL mangler", file=sys.stderr)
         return 1
+    # `--preflight`: samme porter, men kjørt FØR tjenestene stoppes og FØR
+    # migrasjonene (18/8: den post-migrasjonelle kjøringen alene oppdaget
+    # rødt ETTER at gamle release var gjort ubootbar — forward-only
+    # migrasjoner har ingen vei tilbake, så tjenesten sto nede). Mot en
+    # base som ennå ikke bærer denne utgavens skjema kan en port referere
+    # noe som ikke finnes ennå — DA er DEN PORTEN taus (migrasjonen kommer,
+    # og hovedkjøringen etter migrasjonene håndhever fortsatt alt). De
+    # øvrige portene kjøres uansett, og kan fortsatt stoppe deployen.
+    preflight = "--preflight" in sys.argv[1:]
     with psycopg.connect(dsn) as conn:
-        feil = kontroller(conn) + kontroller_bestillingstyper(conn)
-        conn.rollback()
+        feil, utsatt = kjor_porter(conn, preflight)
+    for u in utsatt:
+        print(f"deployport-modultyper (preflight): {u} — porten kunne ikke"
+              " kjøres mot dagens skjema; den håndheves i hovedkjøringen"
+              " etter migrasjonene")
     if feil:
         for f in feil:
             print(f"DEPLOY-PORT RØD: {f}", file=sys.stderr)
         return 1
     print("deployport-modultyper: grønn "
-          f"({len(oppdragskontrakt.OPPDRAGSTYPER)} kodefestede typer)")
+          f"({len(oppdragskontrakt.OPPDRAGSTYPER)} kodefestede typer,"
+          f" {len(PORTER) - len(utsatt)}/{len(PORTER)} porter kjørt)")
     return 0
 
 

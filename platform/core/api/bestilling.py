@@ -283,6 +283,60 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                                    tenant, art="sikkerhet",
                                    hostname=hostname)
             return _feilsvar("bestilling_hostname_uverifisert", rid)
+        # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
+        # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
+        # stille i køen — det utløper på `utforelsesfrist` uten at noen
+        # noen gang så det. Vakta bor HER og ikke i deploy-porten (18/8):
+        # registreringen eies av modul-onboardingen og finnes lovlig ikke
+        # ennå på en fersk base, og en deploy som krever den tar tjenesten
+        # ned i stedet for å verne kunden. Ingen loggpost, intet
+        # kvoteforbruk — som hostname-porten.
+        #
+        # VILKÅRENE ER CLAIM-VEIENS EGNE (Codex P1). Første utgave leste
+        # bare registerraden, men den er IMMUTABEL: den overlever både
+        # delvis onboarding og nøddeaktivering, så en type kunne stå
+        # registrert med riktig eier mens `claim_neste_oppdrag` (037)
+        # likevel ikke ville gi den til noen. Funksjonen krever i tillegg
+        # `modulhode.status = 'aktiv'` og en `moduldeployment` med
+        # registerradens kontrakt, `livslop = 'claiming'` og KALLERENS
+        # miljø. Står modulen `installert`/`staging_verifisert` (onboarding
+        # påbegynt, ikke fullført) eller `nodeaktivert` (nødstopp), eller
+        # er hver deployment `draining`/`retired` (releasebytte), er
+        # oppdraget uclaimbart fra det blir opprettet. Vakta speiler derfor
+        # de samme vilkårene, og 503-en ber klienten prøve igjen når
+        # modulen er tilbake.
+        #
+        # Kallerens release og module_epoch er IKKE med: en bestilling
+        # peker ikke ut hvilken arbeider som skal ta den, og hvilken
+        # release som er `claiming` kan lovlig skifte mellom opprettelse og
+        # claim. Miljøet er prosessens eget (`gjeldende_miljo`) — en
+        # staging-deployment gjør ikke et produksjonsoppdrag claimbart.
+        from miljo import gjeldende_miljo
+        registrert = conn.execute(
+            "SELECT r.eiermodul, h.status,"
+            "       EXISTS (SELECT 1 FROM moduldeployment d"
+            "                WHERE d.modul_id = r.eiermodul"
+            "                  AND d.kontraktversjon = r.kontraktversjon"
+            "                  AND d.kontrakt_hash = r.kontrakt_hash"
+            "                  AND d.miljo = %s AND d.livslop = 'claiming')"
+            "  FROM oppdragstype_register r"
+            "  LEFT JOIN modulhode h ON h.modul_id = r.eiermodul"
+            " WHERE r.oppdragstype = %s",
+            (gjeldende_miljo(), bt.oppdragstype)).fetchone()
+        if (registrert is None or registrert[0] != bt.eiermodul
+                or registrert[1] != "aktiv" or not registrert[2]):
+            conn.rollback()
+            tjeneste.logg.hendelse(
+                "bestillingstype_utilgjengelig", rid, tenant, art="drift",
+                bestillingstype=norm["bestillingstype"],
+                # Hvorfor typen ikke er claimbar hører til DRIFTSLOGGEN, ikke
+                # svaret: klienten skal ikke kunne kartlegge hvilke moduler
+                # som er nede. Den som feilsøker onboardingen trenger det.
+                grunn=("uregistrert" if registrert is None
+                       else "eiermodul_avvik" if registrert[0] != bt.eiermodul
+                       else f"modulstatus:{registrert[1]}"
+                       if registrert[1] != "aktiv" else "ingen_claiming"))
+            return _feilsvar("bestillingstype_utilgjengelig", rid)
         conn.rollback()
 
         kjernenokkel = ("bestilling:" + nokkel) if nokkel \

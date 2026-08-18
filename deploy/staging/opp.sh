@@ -56,6 +56,21 @@ disponit-domenerevalidering.service disponit-domenerevalidering.timer
 disponit-artefaktrydding.service disponit-artefaktrydding.timer
 disponit-evidensreaper.service disponit-evidensreaper.timer
 disponit-varselsender.service disponit-varselsender.timer"
+# Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
+# porten som bare kjørte etter migrasjonene fant rødt da gamle release
+# alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
+# avbrutt med alt urørt. Skjema porten ikke kjenner ennå (ny migrasjon)
+# er stille i preflight og håndheves i hovedkjøringen i steg 6b.
+# Miljøfila leses i SUBSHELL, som miljøgaten i steg 4: den skal ikke
+# lekke inn i resten av preflighten.
+if ! (set -a; . "$MILJOFIL"; set +a; cd "$KILDE" && \
+   DATABASE_URL="$DATABASE_URL" DISPONIT_REPO="$KILDE" \
+   "$ROT/.venv/bin/python" deploy/staging/deployport-modultyper.py --preflight); then
+  echo "AVBRUTT: deploy-port rød i preflight — systemet er urørt; forrige"
+  echo "release kjører som før. Rett registeret/typen først."
+  exit 1
+fi
+
 if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
   echo "kjører som før."

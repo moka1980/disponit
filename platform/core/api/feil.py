@@ -150,6 +150,19 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "positivt autorisert mål er ikke policyens ansvar, det er "
         "opprettelsens. Sikkerhetslogg: noen ba plattformen lese et mål "
         "de ikke eier.")),
+    Feilvei("bestillingstype_utilgjengelig", 503, ("drift",), None, notat=(
+        "Bestillingstypen er kodefestet, men oppdragstypen dens kan ikke "
+        "CLAIMES nå: raden mangler i oppdragstype_register, har feil "
+        "eiermodul, modulen står ikke 'aktiv', eller ingen deployment i "
+        "dette miljøet er 'claiming'. Samme vilkår som "
+        "claim_neste_oppdrag (037) — står ett av dem ikke, finnes det "
+        "ingen arbeider som kan plukke oppdraget før utforelsesfristen. "
+        "Nektes FØR beslutningen: et TILLAT her ville gitt et oppdrag "
+        "ingen modul kan claime. 503, ikke 400: kroppen er velformet, det "
+        "er PLATTFORMEN som mangler utføreren, og klienten skal prøve "
+        "igjen når modulen er aktiv. Hvilket vilkår som sviktet står i "
+        "driftsloggen (`grunn`), aldri i svaret — ellers er 503-en et "
+        "kart over hvilke moduler som er nede.")),
     # --- PR-008: lese-API ----------------------------------------------
     Feilvei("ikke_funnet", 404, ("avvis",), None, notat=(
         "Detalj-ID som ikke finnes OG detalj-ID hos en annen tenant gir"

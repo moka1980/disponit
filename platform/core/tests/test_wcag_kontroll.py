@@ -305,6 +305,95 @@ def test_deployporten_krever_skjema_for_alle_gamle_typer(migrator):
     migrator.rollback()
 
 
+class _TomForbindelse:
+    """Nok forbindelse til å kjøre `main()`s portsløyfe: portene i denne
+    testen spør ikke, de er selv fasitene. `rollback()` telles, fordi
+    sløyfa MÅ frigjøre en transaksjon en reisende port alt har avbrutt —
+    ellers ville neste port dødd på `InFailedSqlTransaction`."""
+
+    def __init__(self):
+        self.rollbacks = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+def _port_uten_base(monkeypatch, porter):
+    """Deploy-porten med `porter` som portpakke og uten ekte base."""
+    import types
+    port = _deployport()
+    forbindelse = _TomForbindelse()
+    monkeypatch.setattr(port, "PORTER", tuple(porter))
+    monkeypatch.setattr(port, "psycopg", types.SimpleNamespace(
+        connect=lambda dsn: forbindelse, errors=psycopg.errors))
+    monkeypatch.setenv("DATABASE_URL", "postgresql:///finnes-ikke")
+    return port, forbindelse
+
+
+def test_preflight_isolerer_skjemamangel_per_port(monkeypatch, capsys):
+    """Codex P1: ETT framtidig skjemaavvik skal ikke slå av portpakken.
+
+    Sto `try/except (UndefinedTable, UndefinedColumn)` rundt alle portene
+    samlet, holdt det at én port refererte en tabell/kolonne kandidatens
+    migrasjon først oppretter: `--preflight` returnerte 0 med det samme,
+    og enhver ANNEN port — også en som kunne kjøres mot dagens skjema og
+    allerede hadde funnet en reell motstrid — ble hoppet over. Motstriden
+    dukket da opp først i hovedkjøringen ETTER migrasjonene, altså
+    nøyaktig den «først rød etter forward-only migrasjon»-klassen
+    preflighten finnes for å fjerne.
+
+    Kontroll: flytt `try/except` i `kjor_porter` ut rundt hele sløyfa, så
+    blir denne rød.
+    """
+    def utsatt(conn):
+        raise psycopg.errors.UndefinedTable("artefaktskjema finnes ikke")
+
+    def motstrid(conn):
+        return ["eiermodul-avvik i oppdragstype_register"]
+
+    # BEGGE rekkefølger: motstriden må overleve enten den ble funnet før
+    # eller etter porten som reiser.
+    for porter in (
+            (("skjemaporten", utsatt), ("registerporten", motstrid)),
+            (("registerporten", motstrid), ("skjemaporten", utsatt))):
+        port, forbindelse = _port_uten_base(monkeypatch, porter)
+        monkeypatch.setattr(port.sys, "argv", ["deployport", "--preflight"])
+        assert port.main() == 1, porter
+        ut = capsys.readouterr()
+        # Den utsatte porten NAVNGIS (deploy-loggen skal vise hva som
+        # ikke ble kjørt), og motstriden stopper deployen.
+        assert "skjemaporten" in ut.out and "UndefinedTable" in ut.out
+        assert "eiermodul-avvik" in ut.err
+        # Én rollback per port: den avbrutte transaksjonen frigjøres før
+        # neste port spør.
+        assert forbindelse.rollbacks == len(porter)
+
+
+def test_preflight_er_stille_naar_bare_skjemaporten_mangler(monkeypatch,
+                                                            capsys):
+    """Motsatsen: er den ENESTE observasjonen at skjemaet ikke finnes
+    ennå, skal preflighten fortsatt slippe deployen fram — det er hele
+    grunnen til at toleransen finnes. Etter migrasjonene (uten
+    `--preflight`) er det derimot en ekte feil, og porten reiser."""
+    def utsatt(conn):
+        raise psycopg.errors.UndefinedColumn("kolonnen finnes ikke ennå")
+
+    port, _ = _port_uten_base(monkeypatch, [("skjemaporten", utsatt)])
+    monkeypatch.setattr(port.sys, "argv", ["deployport", "--preflight"])
+    assert port.main() == 0
+    assert "0/1 porter kjørt" in capsys.readouterr().out
+
+    monkeypatch.setattr(port.sys, "argv", ["deployport"])
+    with pytest.raises(psycopg.errors.UndefinedColumn):
+        port.main()
+
+
 @pg
 def test_registrene_taaler_ikke_truncate(migrator):
     """Codex P2: TRUNCATE fyrer INGEN rad-trigger, så
