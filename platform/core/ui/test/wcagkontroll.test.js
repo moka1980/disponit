@@ -126,7 +126,7 @@ test("Domener: tom liste, legg til → TXT-oppskrift i alert, liste oppdateres",
     }
     if (sti === "/v1/domener" && opts.method === "POST") {
       lagt = true;
-      return { hostname: "dittfirma.no", txt_navn: "dittfirma.no",
+      return { hostname: "dittfirma.no", txt_navn: "_disponit-challenge.dittfirma.no",
         txt_verdi: "a".repeat(64), gyldig_dager: 7 };
     }
     return undefined;
@@ -225,7 +225,7 @@ test("Domener: oppfriskningen river ikke skjemaet eller TXT-oppskriften", async 
     }
     if (sti === "/v1/domener" && opts.method === "POST") {
       lagt = true;
-      return { hostname: "dittfirma.no", txt_navn: "dittfirma.no",
+      return { hostname: "dittfirma.no", txt_navn: "_disponit-challenge.dittfirma.no",
         txt_verdi: "b".repeat(64), gyldig_dager: 7 };
     }
     return undefined;
