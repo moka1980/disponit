@@ -278,9 +278,27 @@ def _referansefeil(skjema) -> list[str]:
     metavalidert det som ligger der, og bare der ville validatoren selv
     ha lest det som et skjema. En destinasjon under et ukjent nøkkelord
     er per definisjon umetavalidert — den kan ikke godkjennes udødelig.
+
+    ET ANKERNAVN MÅ PEKE ÉN VEI (Codex P2). `check_schema` håndhever ikke
+    at `$anchor`/`$dynamicAnchor` er unike innenfor ressursen — metaskjemaet
+    ser bare på ETT delskjema om gangen og kan ikke uttale seg om navn i et
+    annet. To delskjemaer med samme anker passerte derfor metasjekken, og
+    `referencing` velger da den vandringen treffer FØRST. Det er
+    nøkkelrekkefølgen i JSON-objektet som avgjør, og den er ikke semantisk:
+    JCS-kanoniseringen sorterer nøklene, JSONB lagrer dem i sin egen
+    rekkefølge, og en oppgradering av `referencing` kan endre vandringen.
+    Samme innholdsadresse kunne dermed håndheve to forskjellige grener uten
+    at ett byte i raden endret seg — nøyaktig det innholdsadresseringen
+    finnes for å umuliggjøre.
+
+    Derfor holdes ankernavn som navn -> POSISJONER, og et navn med mer enn
+    én posisjon er en avvisning. Grensa går ved posisjonen, ikke ved
+    nøkkelordet: `{"$anchor": "X", "$dynamicAnchor": "X"}` i SAMME
+    delskjema er ikke tvetydig — begge peker dit de står — og en falsk
+    avvisning der ville vært like udødelig som en falsk godkjenning.
     """
     feil = []
-    ankre = set()
+    ankre: dict[str, set[tuple]] = {}
     nestet_id = False
     delskjemaer = list(_delskjemaer(skjema))
     posisjoner = {sti for sti, _ in delskjemaer}
@@ -289,12 +307,18 @@ def _referansefeil(skjema) -> list[str]:
             continue
         for nokkel in ("$anchor", "$dynamicAnchor"):
             if isinstance(s.get(nokkel), str):
-                ankre.add(s[nokkel])
+                ankre.setdefault(s[nokkel], set()).add(sti)
         if sti and isinstance(s.get("$id"), str):
             nestet_id = True
     if nestet_id:
         return ["<skjema>: `$id` under roten — lokale referanser kan ikke"
                 " kontrolleres mot en flyttet base"]
+    for navn in sorted(n for n, stier in ankre.items() if len(stier) > 1):
+        feil.append(f"<skjema>: ankeret `{navn[:80]}` er erklært på flere"
+                    f" steder — hvilket som gjelder avgjøres av"
+                    f" nøkkelrekkefølgen")
+    if feil:
+        return feil
     for _, s in delskjemaer:
         if not isinstance(s, dict):
             continue

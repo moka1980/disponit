@@ -2922,6 +2922,56 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     assert not skjemafeil({"$defs": {"a~0b": {"type": "string"}},
                            "properties": {"p": {"$ref": "#/$defs/a%7E00b"}}})
 
+    # Codex P2, runde 3: ET ANKERNAVN MÅ PEKE ÉN VEI. `check_schema` ser
+    # ett delskjema om gangen og kan ikke håndheve at ankernavn er unike i
+    # ressursen, så to like `$anchor` passerte metasjekken — og da avgjør
+    # NØKKELREKKEFØLGEN hvilken gren som håndheves. Rekkefølgen er ikke
+    # semantisk: JCS sorterer nøklene, JSONB lagrer dem i sin egen
+    # rekkefølge, og en `referencing`-oppgradering kan endre vandringen.
+    # Samme udødelige innholdsadresse ville da kunne håndheve to
+    # forskjellige ting. Kontroll: fjern duplikatavvisningen i
+    # `_referansefeil`, så slutter de to `skjemafeil`-kallene under å
+    # klage — og de to `valider`-kallene rett etter viser hvorfor det
+    # betyr noe: samme anker, motsatt rekkefølge, motsatt svar.
+    for dup in ({"$defs": {"a": {"$anchor": "X", "type": "string"},
+                           "b": {"$anchor": "X", "type": "integer"}},
+                 "properties": {"p": {"$ref": "#X"}}},
+                {"$defs": {"a": {"$dynamicAnchor": "Y", "type": "string"},
+                           "b": {"$anchor": "Y", "type": "integer"}}}):
+        feil = skjemafeil(dup)
+        assert feil and "anker" in feil[0], dup
+    import jsonschema as _js
+
+    def _raatt(skjema, innhold):
+        """Validatoren UTEN vår port — det er den som blir tvetydig."""
+        return [e.message for e in
+                _js.Draft202012Validator(skjema).iter_errors(innhold)]
+
+    _gren = {"a": {"$anchor": "X", "type": "string"},
+             "b": {"$anchor": "X", "type": "integer"}}
+    a_forst = {"$defs": dict(_gren), "properties": {"p": {"$ref": "#X"}}}
+    b_forst = {"$defs": {"b": _gren["b"], "a": _gren["a"]},
+               "properties": {"p": {"$ref": "#X"}}}
+    assert _raatt(a_forst, {"p": 1}) and not _raatt(a_forst, {"p": "x"})
+    assert _raatt(b_forst, {"p": "x"}) and not _raatt(b_forst, {"p": 1})
+
+    # Grensa går ved POSISJONEN, ikke ved nøkkelordet: begge ankrene i
+    # samme delskjema peker dit de står, og er ikke tvetydige. En falsk
+    # avvisning der ville vært like udødelig som en falsk godkjenning.
+    samme = {"$defs": {"t": {"$anchor": "Z", "$dynamicAnchor": "Z",
+                             "type": "string"}},
+             "properties": {"p": {"$ref": "#Z"}}}
+    assert not skjemafeil(samme)
+    assert not valider(samme, {"p": "x"})
+    assert valider(samme, {"p": 1})
+    # ... og to FORSKJELLIGE navn er fortsatt to navn.
+    to_navn = {"$defs": {"a": {"$anchor": "X", "type": "string"},
+                         "b": {"$anchor": "Y", "type": "integer"}},
+               "properties": {"p": {"$ref": "#X"}, "q": {"$ref": "#Y"}}}
+    assert not skjemafeil(to_navn)
+    assert not valider(to_navn, {"p": "x", "q": 1})
+    assert valider(to_navn, {"p": 1, "q": "x"})
+
     # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
     # JSON ville avvist disse to — og den falske avvisningen er like
     # endelig som en falsk godkjenning, siden raden er udødelig.
