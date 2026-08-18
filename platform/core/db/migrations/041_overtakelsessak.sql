@@ -661,30 +661,39 @@ END $function$
 ;
 
 -- ------------------------------------------------------------
--- 12. unntak_historikk-hendelsen 'overtakelsesskifte' — CHECK-en
---     utvides DYNAMISK fra katalogdefinisjonen (038-formen; aldri en
---     hardkodet liste som mister 016/017-tillegg).
+-- 12. unntak_historikk-hendelsene 'overtakelsesskifte' (§10) og
+--     'overtakelsessak_migrert' (§20) — CHECK-en utvides DYNAMISK fra
+--     katalogdefinisjonen (038-formen; aldri en hardkodet liste som
+--     mister 016/017-tillegg).
 -- ------------------------------------------------------------
 DO $$
-DECLARE c TEXT; def TEXT;
+DECLARE c TEXT; def TEXT; v TEXT; endret BOOLEAN := false;
 BEGIN
     SELECT conname, pg_get_constraintdef(oid) INTO c, def
       FROM pg_constraint
      WHERE conrelid = 'unntak_historikk'::regclass
        AND pg_get_constraintdef(oid) LIKE '%claim_fornyet%';
-    IF c IS NOT NULL AND def NOT LIKE '%overtakelsesskifte%' THEN
-        EXECUTE format('ALTER TABLE unntak_historikk DROP CONSTRAINT %I', c);
+    IF c IS NULL THEN
+        RETURN;
+    END IF;
+    FOREACH v IN ARRAY ARRAY['overtakelsesskifte','overtakelsessak_migrert']
+    LOOP
+        CONTINUE WHEN def LIKE '%' || v || '%';
         IF def LIKE '%ARRAY[%' THEN
             def := regexp_replace(def, '\]\)\)\)$',
-                                  ', ''overtakelsesskifte''::text])))');
+                                  ', ''' || v || '''::text])))');
         ELSE
-            def := regexp_replace(def, '\)\)$',
-                                  ', ''overtakelsesskifte''))');
+            def := regexp_replace(def, '\)\)$', ', ''' || v || '''))');
         END IF;
-        IF def NOT LIKE '%overtakelsesskifte%' THEN
+        IF def NOT LIKE '%' || v || '%' THEN
             RAISE EXCEPTION 'unntak_historikk: kunne ikke utvide'
-                ' hendelses-CHECKen — uventet definisjonsform: %', def;
+                ' hendelses-CHECKen med % — uventet definisjonsform: %',
+                v, def;
         END IF;
+        endret := true;
+    END LOOP;
+    IF endret THEN
+        EXECUTE format('ALTER TABLE unntak_historikk DROP CONSTRAINT %I', c);
         EXECUTE 'ALTER TABLE unntak_historikk ADD CONSTRAINT '
              || quote_ident(c) || ' ' || def;
     END IF;
@@ -1239,6 +1248,172 @@ BEGIN
         UPDATE public.unntak SET status = p_sluttstatus
      WHERE tenant = '__plattform_domener' AND id = p_sak_id
        AND sakskilde = 'domeneovertakelse' AND status = 'under_behandling';
+    END IF;
+END $$;
+RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 20. PRE-041-KONFLIKTENE: saken skapes HER, ellers aldri (Codex P1)
+--
+-- §2s regel — «en tilstand som krever menneskelig avgjørelse skapes
+-- sammen med saken som gjør avgjørelsen mulig» — håndheves fremover av
+-- constraint-triggeren i §7. Men triggeren er AFTER INSERT OR UPDATE OF
+-- status: den fyrer ALDRI retroaktivt på en `avklaring_kreves`-rad som
+-- alt sto der da migrasjonen kjørte. Og saken den raden eventuelt hadde,
+-- var en PYTHON-skapt sak hos utfordreren med `oppdrag_id IS NULL` —
+-- altså nøyaktig det §1s siste UPDATE feide inn i `policybrudd`.
+--
+-- Utfallet uten dette steget var det verst mulige, og STILLE: den gamle
+-- saken ble usynlig for både adjudikatorpolicyen (§9) og oppslaget
+-- (`sakskilde='domeneovertakelse'`), ingen ny sak kunne lages (port 37
+-- stengte python-veien), og vaktbikkja i `domeneovertakelse.py` kunne
+-- bare TELLE den blokkerte konflikten, syklus etter syklus. A hadde
+-- mistet autorisasjonen, B sto i `avklaring_kreves`, og bare
+-- `avgjor_domeneovertakelse` — som nås gjennom en sak — kunne løfte
+-- noen ut. Konflikten var permanent.
+--
+-- Autoriteten er TILSTANDEN, ikke den gamle saken: en `domenekontroll`-
+-- rad i `avklaring_kreves` med `konflikt_motpart` ER konflikten (039s
+-- observasjon). Steget dekker derfor BEGGE utrullingene — de som hadde
+-- en python-sak og de der dreneringen aldri rakk å lage en.
+--
+-- Hendelseslineagen følger filhodets regel: hendelse_b = utfordrerens
+-- siste hendelse for hostnavnet, hendelse_a = motpartens siste. De to
+-- radene som FAKTISK utgjør konflikten, aldri fabrikkerte.
+--
+-- INGEN VARSLING herfra (§13 kalles ikke): partene ble varslet da
+-- konflikten oppsto. En oppgradering skal ikke sende en ny bølge
+-- e-poster om en tvist som har stått i ukevis.
+--
+-- domene_eier eier funksjonen: BYPASSRLS er PÅKREVD (kryss-tenant-
+-- skannet over `domenekontroll`, som har FORCE RLS med en ren
+-- GUC-policy), og rollen har fra 019 §-grantene nøyaktig det den
+-- trenger ellers — SELECT på `unntak`/`revisjonslogg`, INSERT på
+-- `unntak_historikk`, EXECUTE på `sikre_overtakelsessak` (§10).
+-- Funksjonen er IDEMPOTENT (den hopper over konflikter som alt har
+-- gjeldende sak) og står igjen som operatørens reparasjonsvei.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_domene_eier;
+
+CREATE OR REPLACE FUNCTION migrer_pre041_overtakelseskonflikter(
+    p_aktor TEXT DEFAULT 'migrasjon041')
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE k RECORD; g RECORD; v_a BIGINT; v_b BIGINT; v_sak BIGINT;
+        v_laget INT := 0; v_merket INT := 0; v_uten JSONB := '[]'::jsonb;
+        v_rid TEXT;
+BEGIN
+    v_rid := 'mig041-' || replace(gen_random_uuid()::text, '-', '');
+    FOR k IN
+        SELECT d.tenant, d.hostname, d.konflikt_motpart AS motpart,
+               d.autorisasjonsgenerasjon AS gen
+          FROM public.domenekontroll d
+          LEFT JOIN public.hostname_binding b ON b.hostname = d.hostname
+         WHERE d.status = 'avklaring_kreves'
+           AND NOT EXISTS (
+                 SELECT 1 FROM public.unntak u
+                  WHERE u.hostname_ref = d.hostname
+                    AND u.sakskilde = 'domeneovertakelse'
+                    AND NOT u.terminal
+                    AND u.utfordrer_tenant = d.tenant
+                    AND u.autorisasjonsgenerasjon = d.autorisasjonsgenerasjon)
+         -- Bindingseieren er den GJELDENDE utfordreren og behandles SIST:
+         -- står flere tenanter i avklaring for samme hostnavn (i praksis
+         -- stengt av `degrader_forbigatte_utfordrere`, 019 §3.2, men
+         -- gamle data er gamle data), gjør §10 de foregående til et
+         -- SKIFTE på den ene saken, og den ene saken ender med å navngi
+         -- den utfordreren bindingen faktisk peker på.
+         ORDER BY d.hostname,
+                  (b.tenant IS NOT DISTINCT FROM d.tenant), d.tenant
+    LOOP
+        -- Samme lås som den levende veien tar rundt `sikre_overtakelsessak`
+        -- — funksjonen her er også en operatørvei, ikke bare et
+        -- migrasjonssteg, og skal ikke kunne kappløpe med en verifisering.
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended('domene:' || k.hostname, 0));
+        SELECT max(h.id) INTO v_b FROM public.domenekontroll_hendelse h
+         WHERE h.hostname = k.hostname AND h.tenant = k.tenant;
+        SELECT max(h.id) INTO v_a FROM public.domenekontroll_hendelse h
+         WHERE h.hostname = k.hostname AND h.tenant = k.motpart;
+        IF k.motpart IS NULL OR v_a IS NULL OR v_b IS NULL OR v_a = v_b THEN
+            -- Ingen lovlig sak KAN bygges: §2s CHECK krever motpart og to
+            -- ulike hendelser. Raden navngis i returverdien i stedet for å
+            -- bli stille utelatt — kalleren i migrasjonen feller på den.
+            v_uten := v_uten || jsonb_build_object(
+                'tenant', k.tenant, 'hostname', k.hostname,
+                'generasjon', k.gen,
+                'grunn', CASE WHEN k.motpart IS NULL THEN 'ingen_motpart'
+                              ELSE 'ingen_hendelseslineage' END);
+            CONTINUE;
+        END IF;
+        PERFORM public.sikre_overtakelsessak(k.hostname, k.gen, k.motpart,
+            k.tenant, v_a, v_b, p_aktor, v_rid);
+        v_laget := v_laget + 1;
+    END LOOP;
+
+    -- Den gamle python-saken kan IKKE bli en `domeneovertakelse`-sak: den
+    -- bor hos kunden (§6/port 36 flytter aldri en sak mellom tenants),
+    -- payloaden er kryptert med kundens DEK, og §2s CHECK krever
+    -- plattformformen. Den blir stående som `policybrudd` — men ikke som
+    -- en ANONYM `policybrudd`: historikken navngir plattformsaken som
+    -- overtok, så den ene raden en operatør møter i unntakskøen forteller
+    -- selv hvorfor den ikke lenger kan avgjøres her. Gjenkjennelsen er
+    -- radens egen kategori/handling + loggpostens kilde, altså nøyaktig
+    -- det den gamle `opprett_overtakelsessak` skrev.
+    FOR g IN
+        SELECT u.tenant, u.id,
+               split_part(r.idempotency_key, ':', 2) AS hostname
+          FROM public.unntak u
+          JOIN public.revisjonslogg r
+            ON r.tenant = u.tenant AND r.id = u.loggpost_id
+         WHERE u.sakskilde = 'policybrudd' AND NOT u.terminal
+           AND u.kategori = 'domeneovertakelse'
+           AND u.handling = 'domene.overtakelse'
+           AND r.kilde = 'domeneovertakelse'
+           AND r.idempotency_key LIKE 'domeneovertakelse:%'
+           AND NOT EXISTS (
+                 SELECT 1 FROM public.unntak_historikk hh
+                  WHERE hh.tenant = u.tenant AND hh.unntak_id = u.id
+                    AND hh.hendelse = 'overtakelsessak_migrert')
+    LOOP
+        SELECT n.id INTO v_sak FROM public.unntak n
+         WHERE n.hostname_ref = g.hostname
+           AND n.sakskilde = 'domeneovertakelse' AND NOT n.terminal
+           AND n.utfordrer_tenant = g.tenant;
+        INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
+            aktor, request_id, detalj)
+        VALUES (g.tenant, g.id, 'overtakelsessak_migrert', p_aktor, v_rid,
+                jsonb_build_object('familie', 'domeneovertakelse',
+                                   'hostname', g.hostname,
+                                   'plattformsak', v_sak));
+        v_merket := v_merket + 1;
+    END LOOP;
+
+    RETURN jsonb_build_object('saker_opprettet', v_laget,
+                              'arkivmerket', v_merket, 'uten_sak', v_uten);
+END $$;
+REVOKE ALL ON FUNCTION migrer_pre041_overtakelseskonflikter(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION migrer_pre041_overtakelseskonflikter(TEXT)
+    TO disponit_domains_admin;
+
+-- Kjøringen skjer som funksjonens EIER (domene_eier): migrator er medlem
+-- WITH INHERIT FALSE og har derfor ingen arvet EXECUTE.
+DO $$
+DECLARE r JSONB;
+BEGIN
+    r := public.migrer_pre041_overtakelseskonflikter('migrasjon041');
+    IF jsonb_array_length(r -> 'uten_sak') > 0 THEN
+        -- FAIL-CLOSED, som §1s fullstendighetssjekk: å installere
+        -- invariant 10 og samtidig la kjente brudd bli stående er akkurat
+        -- den stillheten dette steget finnes for å fjerne. Radene navngis;
+        -- en operatør må rydde dem før 041 kan rulles.
+        RAISE EXCEPTION '041: % pre-041-konflikt(er) kan ikke få sak: %',
+            jsonb_array_length(r -> 'uten_sak'), r -> 'uten_sak';
+    END IF;
+    IF (r ->> 'saker_opprettet')::INT > 0 OR (r ->> 'arkivmerket')::INT > 0 THEN
+        RAISE NOTICE '041: % sak(er) opprettet for pre-041-konflikter, '
+            '% gammel sak arkivmerket', r ->> 'saker_opprettet',
+            r ->> 'arkivmerket';
     END IF;
 END $$;
 RESET ROLE;

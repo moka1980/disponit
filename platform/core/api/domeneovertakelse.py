@@ -85,6 +85,13 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
     kan altså bare være en rad fra FØR 041 — en utrullingsanomali, ikke en
     kø som skal dreneres.
 
+    Og de radene har migrasjonen selv ryddet: 041 §20 lager saken for hver
+    pre-041-konflikt og FELLER migrasjonen på enhver rad som ikke kan få
+    en. Et funn her betyr derfor at noe har oppstått ETTER den ryddingen —
+    en tilstand systemet mener er umulig. Reparasjonsveien er den samme
+    funksjonen, `migrer_pre041_overtakelseskonflikter()` (EXECUTE for
+    `disponit_domains_admin`), som er idempotent og trygg å kjøre på nytt.
+
     Vakten beholder plukket (`ventende_overtakelseskonflikter`, 039):
     stempelet gjør utvalget roterende, så hver konflikt blir sett. For hver
     plukket rad verifiseres at saken finnes på `__plattform_domener` med

@@ -10,6 +10,8 @@ Portoversikt → test (numrene er klarsignalets):
   2        test_port2_direkte_avklaring_uten_sak_avvises
   3        test_port3_apen_sak_feil_utfordrer_eller_generasjon
   5        test_port5_terminal_sak_ny_konflikt_ny_sak
+  §20      test_pre041_konflikt_uten_sak_far_sak,
+           test_pre041_python_sak_arkivmerkes_med_plattformsaken (Codex P1)
   6        (test_pr015_operativt_lag::test_port20_abc — skiftet, samme id)
   7–9      test_port7_8_9_revisjonsbindingen
   12       test_port12_insert_uten_sakskilde_feiler
@@ -191,6 +193,149 @@ def test_port5_terminal_sak_ny_konflikt_ny_sak(migrator):
     sak2 = _sak_for(migrator, h)
     assert sak2 is not None and sak2 != sak1, (sak1, sak2)
     assert _sakrad(migrator, sak1)[0] == "avvist", "terminal sak ble rørt"
+
+
+def _fjern_gjeldende_sak(migrator, sak):
+    """Gjør saken terminal UTEN å røre domenekontroll-raden.
+
+    Det er nøyaktig utrullingstilstanden §20 finnes for: konflikten står i
+    `avklaring_kreves`, og det finnes ingen GJELDENDE sak. (Før 041 lå
+    saken hos utfordreren og ble merket `policybrudd` av §1s backfill —
+    sett fra §7-oppslaget og §9-policyen er de to tilstandene den samme:
+    ingen rad med `sakskilde='domeneovertakelse' AND NOT terminal`.)
+    To steg fordi statusmaskinen i 007 ikke har noen `ny`→`avvist`-kant.
+    """
+    _sett_kontekst(migrator, PLATT)
+    for status in ("under_behandling", "avvist"):
+        migrator.execute("UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s",
+                         (status, PLATT, sak))
+    migrator.commit()
+
+
+@pg
+def test_pre041_konflikt_uten_sak_far_sak(migrator):
+    """Codex P1: en pre-041-konflikt får sin sak i migrasjonen — ellers står
+    den for alltid.
+
+    §7s constraint-trigger fyrer bare på INSERT/UPDATE av `status`, altså
+    ALDRI retroaktivt på en `avklaring_kreves`-rad som alt sto der. Den
+    python-skapte saken raden eventuelt hadde, ble feid inn i `policybrudd`
+    av §1s backfill (`oppdrag_id IS NULL`) og er dermed usynlig for både
+    oppslaget og adjudikatorpolicyen. Uten §20 kunne ingen lage en ny (port
+    37), og vaktbikkja kunne bare telle den blokkerte konflikten.
+    """
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+    _fjern_gjeldende_sak(migrator, sak)
+    assert _sak_for(migrator, h) is None, "saken skulle være ute av bildet"
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+
+    adm = _admin()
+    try:
+        r = adm.execute(
+            "SELECT migrer_pre041_overtakelseskonflikter('test041')"
+        ).fetchone()[0]
+        adm.commit()
+    finally:
+        adm.close()
+    assert not [u for u in r["uten_sak"] if u["hostname"] == h], r
+    ny = _sak_for(migrator, h)
+    assert ny is not None and ny != sak, (sak, ny)
+    # Saken er den samme formen den levende veien lager: plattformeid,
+    # referansepayload, RADENS utfordrer og generasjon.
+    rad = _sakrad(migrator, ny)
+    assert rad[:7] == ("ny", ANNEN_TENANT, TENANT, gen, 0, h, "referanse"), rad
+    # Lineagen peker på de to hendelsene som FAKTISK utgjør konflikten.
+    _sett_kontekst(migrator, PLATT)
+    hend = migrator.execute(
+        "SELECT (SELECT tenant FROM domenekontroll_hendelse WHERE id=u.hendelse_a),"
+        "       (SELECT tenant FROM domenekontroll_hendelse WHERE id=u.hendelse_b)"
+        "  FROM unntak u WHERE u.tenant=%s AND u.id=%s",
+        (PLATT, ny)).fetchone()
+    migrator.rollback()
+    assert hend == (TENANT, ANNEN_TENANT), hend
+
+    # IDEMPOTENT: en ny kjøring rører ikke den saken den nettopp lagde.
+    adm = _admin()
+    try:
+        r2 = adm.execute(
+            "SELECT migrer_pre041_overtakelseskonflikter('test041')"
+        ).fetchone()[0]
+        adm.commit()
+    finally:
+        adm.close()
+    assert not [u for u in r2["uten_sak"] if u["hostname"] == h], r2
+    assert _sak_for(migrator, h) == ny
+    assert _sakrad(migrator, ny)[4] == 0, "saksrevisjonen ble bumpet av en no-op"
+
+
+@pg
+def test_pre041_python_sak_arkivmerkes_med_plattformsaken(migrator):
+    """Den gamle python-saken kan ikke flyttes (port 36) — men den skal
+    ikke bli en anonym `policybrudd` heller.
+
+    Gjenkjennelsen er radens EGEN kategori/handling + loggpostens kilde,
+    altså nøyaktig det `opprett_overtakelsessak` skrev før 041. Historikken
+    navngir plattformsaken som overtok, så den ene raden en operatør møter
+    i unntakskøen forteller selv hvorfor den ikke kan avgjøres der.
+    """
+    import json
+    h = _host()
+    sak, _ = _konflikt(migrator, h)
+
+    # Bygg en pre-041-formet sak hos UTFORDREREN, slik python-veien gjorde.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    nokkel = f"domeneovertakelse:{h}:1"
+    logg = int(migrator.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'sys','domeneovertakelse','h','domeneovertakelse',"
+        "         'UNNTAK','[]',%s) RETURNING id",
+        (ANNEN_TENANT, nokkel)).fetchone()[0])
+    gammel = int(migrator.execute(
+        "INSERT INTO unntak (tenant, loggpost_id, handling, kategori,"
+        " sakstype, prioritet, payload_kryptert, key_id, alg, nonce,"
+        " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
+        " payload_type, sakskilde)"
+        " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse','sikkerhet',"
+        "         'hoy','\\x00'::bytea,'k','AES-256-GCM','\\x00'::bytea,"
+        "         0,'<ukjent>','<ukjent>','kryptert','policybrudd')"
+        " RETURNING id",
+        (ANNEN_TENANT, logg)).fetchone()[0])
+    migrator.commit()
+
+    adm = _admin()
+    try:
+        adm.execute("SELECT migrer_pre041_overtakelseskonflikter('test041')")
+        adm.commit()
+    finally:
+        adm.close()
+
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='overtakelsessak_migrert'",
+        (ANNEN_TENANT, gammel)).fetchall()
+    migrator.rollback()
+    assert len(detalj) == 1, detalj
+    d = detalj[0][0]
+    d = json.loads(d) if isinstance(d, str) else d
+    assert d["hostname"] == h and d["plattformsak"] == sak, d
+
+    # ... og ÉN gang: en ny kjøring skriver ikke historikken på nytt.
+    adm = _admin()
+    try:
+        adm.execute("SELECT migrer_pre041_overtakelseskonflikter('test041')")
+        adm.commit()
+    finally:
+        adm.close()
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    antall = migrator.execute(
+        "SELECT count(*) FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='overtakelsessak_migrert'",
+        (ANNEN_TENANT, gammel)).fetchone()[0]
+    migrator.rollback()
+    assert antall == 1, antall
 
 
 # ---------------------------------------------------------------------------
