@@ -491,6 +491,47 @@ def _adminsesjon(tenant=TENANT, sub=None, roller="admin"):
     return cookie, csrf
 
 
+def _sikre_typeregistrering():
+    """Idempotent registrering av kontrakt + oppdragstype for
+    `kontroll.wcag.nettsted` — runtime-vakta i /v1/bestilling nekter en
+    UREGISTRERT type med 503, så E2E-testene må konstruere tilstanden
+    selv (ingen delt fixture-antakelse; en fersk CI-base har den ikke).
+    Testhashene er faste, så gjentatte kall er no-op på identisk innhold."""
+    from db.pg import koble
+    from .test_wcag_kontroll import _mk_admin
+    # Sjekk-først, ikke blind re-registrering: `registrer_oppdragstype`
+    # avviser ENHVER overlappende type (prefiks-entydigheten er hele
+    # poenget dens), så «idempotent» må her bety «står den der med rett
+    # eier, er jobben alt gjort». Lesingen skjer som migrator —
+    # modules_admin har med vilje ingen bordtilgang, bare funksjonene.
+    m = koble(MIGRATOR_DSN)
+    try:
+        rad = m.execute(
+            "SELECT eiermodul FROM oppdragstype_register WHERE"
+            " oppdragstype='kontroll.wcag.nettsted'").fetchone()
+        har_kontrakt = m.execute(
+            "SELECT kontrakt_hash FROM modulkontrakt WHERE"
+            " modul_id='m_wcag_audit' AND kontraktversjon=1").fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    if rad is not None:
+        assert rad[0] == "m_wcag_audit", rad
+        return
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        kh = har_kontrakt[0] if har_kontrakt else "ab" * 32
+        if har_kontrakt is None:
+            ma.execute("SELECT registrer_kontrakt('m_wcag_audit',1,%s,%s,%s,"
+                       "'ekstern_lesing','direkte','testreg')",
+                       (kh, "cd" * 32, "ef" * 32))
+        ma.execute("SELECT registrer_oppdragstype('kontroll.wcag.nettsted',"
+                   "'m_wcag_audit',1,%s,'testreg')", (kh,))
+        ma.commit()
+    finally:
+        ma.close()
+
+
 def _wcag_policy(migrator_, *, med_handling=True,
                  ved_brudd="unntakskø", tillatt_for=("bestiller",)):
     """Aktiv policy for TENANT — bransjemalen + wcag-handlingen (vilkaar
@@ -519,6 +560,7 @@ def _wcag_policy(migrator_, *, med_handling=True,
             "reversering": {"type": "direkte"}})
     policyregister.registrer(migrator_, TENANT, p, p["meta"]["status"])
     migrator_.commit()
+    _sikre_typeregistrering()
     return p
 
 
@@ -1337,6 +1379,37 @@ def test_lese_api_viser_opphav_og_null_unntak(migrator, klient):
 
 
 @pg
+@dekker("bestillingstype_utilgjengelig")
+def test_uregistrert_type_nektes_for_beslutningen(migrator, klient,
+                                                  monkeypatch):
+    """Runtime-vakta (avløseren for den rødstoppende deploy-porten, 18/8):
+    en kodefestet bestillingstype hvis oppdragstype IKKE er registrert →
+    503 `bestillingstype_utilgjengelig` FØR beslutningen — ingen loggpost,
+    intet oppdrag, ingen kvote brent."""
+    import api.bestilling as bm
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    monkeypatch.setitem(
+        bm.BESTILLINGSTYPER, "kontroll.wcag.nettsted",
+        bm.Bestillingstype(
+            handling="kontroll.wcag.nettsted",
+            oppdragstype="kontroll.uregistrert." + secrets.token_hex(4),
+            eiermodul="m_wcag_audit",
+            kravsett=("wcag21_aa",), omfang=("enkeltside", "nettsted")))
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp(), nokkel)
+    assert (r.status_code, r.json()["feil"]) == (
+        503, "bestillingstype_utilgjengelig"), r.text
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
+        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+    migrator.rollback()
+    assert n == 0, "beslutningen ble tatt for en type uten utfører"
+
+
+@pg
 def test_rapport_lese_api(migrator, klient):
     """038 §7: GET /v1/rapport/{oppdrag_id} — den promoterte rapporten
     dekryptert server-side; ingen ciphertext/nøkkelreferanser i svaret.
@@ -1371,10 +1444,20 @@ def test_rapport_lese_api(migrator, klient):
     import oppdragskontrakt
     # Den EKTE typen fra kontrakten — leseveien kjenner bare igjen paret
     # (oppdragstype, `rapport_artefakttype`), se Codex P2 lenger nede.
-    at = _streng_type(
-        migrator, modul, kh, skjema={"type": "object"},
-        navn=oppdragskontrakt.OPPDRAGSTYPER[
-            "kontroll.wcag.nettsted"].rapport_artefakttype)
+    # SJEKK-FØRST: navnet er FAST og registerraden immutabel, så på en
+    # gjenbrukt base (lokal kjøring nr. 2) står den der alt — da er den
+    # tilstanden testen trenger, ikke en kollisjon. Registrer bare når den
+    # mangler; `artefakt.artefakttype` er en navne-FK, så raden virker
+    # uansett hvilken kontrakt som registrerte den.
+    at = oppdragskontrakt.OPPDRAGSTYPER[
+        "kontroll.wcag.nettsted"].rapport_artefakttype
+    if migrator.execute("SELECT 1 FROM artefakttype_register WHERE"
+                        " artefakttype=%s", (at,)).fetchone() is None:
+        migrator.rollback()
+        _streng_type(migrator, modul, kh, skjema={"type": "object"},
+                     navn=at)
+    else:
+        migrator.rollback()
     fremmed_at = _streng_type(migrator, modul, kh, skjema={"type": "object"})
     rapport = {"kravsett": "wcag21_aa", "sammendrag": {"kritisk": 0}}
     kanon = jcs.kanoniske_bytes(rapport)

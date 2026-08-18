@@ -283,6 +283,22 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                                    tenant, art="sikkerhet",
                                    hostname=hostname)
             return _feilsvar("bestilling_hostname_uverifisert", rid)
+        # Typen må være REGISTRERT før noen beslutning tas: et TILLAT for en
+        # uregistrert oppdragstype gir et oppdrag ingen modul kan claime —
+        # bestillingen ser vellykket ut mens arbeidet dør stille i køen.
+        # Vakta bor HER og ikke i deploy-porten (18/8): registreringen eies
+        # av modul-onboardingen og finnes lovlig ikke ennå på en fersk base,
+        # og en deploy som krever den tar tjenesten ned i stedet for å verne
+        # kunden. Ingen loggpost, intet kvoteforbruk — som hostname-porten.
+        registrert = conn.execute(
+            "SELECT eiermodul FROM oppdragstype_register WHERE"
+            " oppdragstype=%s", (bt.oppdragstype,)).fetchone()
+        if registrert is None or registrert[0] != bt.eiermodul:
+            conn.rollback()
+            tjeneste.logg.hendelse("bestillingstype_utilgjengelig", rid,
+                                   tenant, art="drift",
+                                   bestillingstype=norm["bestillingstype"])
+            return _feilsvar("bestillingstype_utilgjengelig", rid)
         conn.rollback()
 
         kjernenokkel = ("bestilling:" + nokkel) if nokkel \

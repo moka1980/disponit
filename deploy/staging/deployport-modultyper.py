@@ -81,10 +81,20 @@ import oppdragskontrakt  # noqa: E402
 
 
 def kontroller_bestillingstyper(conn) -> list[str]:
-    """Port 14 (038 §6): hver kodefestet bestillingstype må peke på en
-    registrert oppdragstype — ellers gir TILLAT et oppdrag ingen modul
-    noensinne kan claime, og bestillingen ser vellykket ut mens arbeidet
-    dør stille i køen."""
+    """Port 14 (038 §6): kodefestet bestillingstype vs `oppdragstype_register`.
+
+    RØD kun ved MOTSTRID: en registrert rad hvis eiermodul avviker fra den
+    kodefestede — da ville claim-veien gitt payloads til feil modul.
+
+    En MANGLENDE registrering er derimot ikke deploy-stopp (lærdommen fra
+    18/8: den første utgaven rødstoppet prod-deployen og tok tjenesten NED,
+    fordi modulregistreringen med vilje hører til onboarding-arcen — et
+    deploy-steg kan ikke kreve en tilstand bare et SENERE arbeidsløp kan
+    skape). Faren manglende registrering utgjør — TILLAT gir et oppdrag
+    ingen modul kan claime — vaktes i stedet DER den oppstår:
+    `/v1/bestilling` nekter typen før beslutningen
+    (`bestillingstype_utilgjengelig`). Her varsles den bare, synlig i
+    deploy-loggen."""
     from api.bestilling import BESTILLINGSTYPER
     feil = []
     for navn, bt in sorted(BESTILLINGSTYPER.items()):
@@ -92,11 +102,9 @@ def kontroller_bestillingstyper(conn) -> list[str]:
             "SELECT eiermodul FROM oppdragstype_register WHERE"
             " oppdragstype=%s", (bt.oppdragstype,)).fetchone()
         if rad is None:
-            feil.append(
-                f"bestillingstype '{navn}' peker på oppdragstypen"
-                f" '{bt.oppdragstype}' som IKKE er registrert i"
-                " oppdragstype_register — TILLAT ville gitt et"
-                " uclaimbart oppdrag")
+            print(f"deployport-modultyper: MERK — bestillingstypen '{navn}'"
+                  f" er ikke registrert i oppdragstype_register ennå;"
+                  " /v1/bestilling nekter den inntil modulen er onboardet")
         elif rad[0] != bt.eiermodul:
             feil.append(
                 f"bestillingstype '{navn}': eiermodul-avvik"
@@ -184,9 +192,25 @@ def main() -> int:
     if not dsn:
         print("deployport-modultyper: DATABASE_URL mangler", file=sys.stderr)
         return 1
-    with psycopg.connect(dsn) as conn:
-        feil = kontroller(conn) + kontroller_bestillingstyper(conn)
-        conn.rollback()
+    # `--preflight`: samme porter, men kjørt FØR tjenestene stoppes og FØR
+    # migrasjonene (18/8: den post-migrasjonelle kjøringen alene oppdaget
+    # rødt ETTER at gamle release var gjort ubootbar — forward-only
+    # migrasjoner har ingen vei tilbake, så tjenesten sto nede). Mot en
+    # base som ennå ikke bærer denne utgavens skjema kan en port referere
+    # noe som ikke finnes ennå — DA er preflighten taus (migrasjonen kommer,
+    # og hovedkjøringen etter migrasjonene håndhever fortsatt alt).
+    preflight = "--preflight" in sys.argv[1:]
+    try:
+        with psycopg.connect(dsn) as conn:
+            feil = kontroller(conn) + kontroller_bestillingstyper(conn)
+            conn.rollback()
+    except (psycopg.errors.UndefinedTable,
+            psycopg.errors.UndefinedColumn) as e:
+        if preflight:
+            print("deployport-modultyper (preflight): skjemaet mangler"
+                  f" ({type(e).__name__}) — håndheves etter migrasjonene")
+            return 0
+        raise
     if feil:
         for f in feil:
             print(f"DEPLOY-PORT RØD: {f}", file=sys.stderr)
