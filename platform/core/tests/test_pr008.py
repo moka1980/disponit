@@ -692,7 +692,10 @@ def test_detalj_outbox_artene_utledes_av_fk_bundet_oppdrag(klient, migrator,
     migrator.commit()
 
     k = _hent(klient, f"/v1/beslutninger/{fk}", tok).json()
-    assert k["resultat"] == {"art": "outbox_opprettet", "oppdrag_id": opp}
+    # 038 (port 28): resultatet bærer nå også opphav og (nullable) sak-FK.
+    assert k["resultat"] == {"art": "outbox_opprettet", "oppdrag_id": opp,
+                             "unntak_id": sak,
+                             "opprinnelse": "m37_reparasjon"}
     assert k["evidensstatus"] == "MANGLER"
 
     # plukket -> MANGLER

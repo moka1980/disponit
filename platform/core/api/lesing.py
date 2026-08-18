@@ -270,7 +270,7 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
         else:  # TILLAT
             o = conn.execute(
                 "SELECT id, status, kvittering IS NOT NULL, unntak_id,"
-                " repair_operation_id FROM oppdrag"
+                " repair_operation_id, opprinnelse FROM oppdrag"
                 " WHERE tenant=%s AND beslutning_loggpost_id=%s",
                 (auth.tenant, bid)).fetchone()
             if o is None:
@@ -284,9 +284,13 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                 else:
                     resultat = {"art": "sideeffektfri_tillatt"}
             else:
-                oid, ostatus, har_kvittering, ounntak, rep_id = o
+                oid, ostatus, har_kvittering, ounntak, rep_id, oppr = o
+                # 038 §5 (port 28): `unntak_id` er null for
+                # beslutningsoppdrag — klienter må tåle det, og opphavet
+                # sier hvilken vei oppdraget ble født.
                 resultat = {"art": _ART_FOR_STATUS[ostatus],
-                            "oppdrag_id": oid}
+                            "oppdrag_id": oid, "unntak_id": ounntak,
+                            "opprinnelse": oppr}
                 if ostatus == "kansellert":
                     sup = conn.execute(
                         "SELECT status='superseded'"

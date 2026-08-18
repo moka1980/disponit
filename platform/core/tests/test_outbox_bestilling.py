@@ -546,3 +546,155 @@ def test_feltparitet_mellom_skjema_og_intensjonshash():
                          "kravsett": "wcag21_aa", "omfang": "enkeltside",
                          "maks_sider": 1})
     assert intensjonshash(a) == intensjonshash(b)
+
+
+# ==========================================================================
+# Konsumentveiene (§5, portene 23–29)
+# ==========================================================================
+
+from .test_pr008 import _lesetoken
+
+
+def _utlopt_beslutningsoppdrag(rt, migrator_):
+    """Beslutningsoppdrag født med evidensfristen alt passert."""
+    logg, ct, key_id, nonce = _beslutningsgrunnlag(migrator_)
+    _sett_kontekst(rt, TENANT)
+    oid = rt.execute(
+        "SELECT opprett_beslutningsoppdrag(%s,%s,'kontroll.wcag.nettsted',"
+        "'kontroll.wcag.nettsted','m_wcag_audit',%s,%s,%s,"
+        "now()-interval '2 minutes',now()-interval '1 minute')",
+        (TENANT, logg, ct, key_id, nonce)).fetchone()[0]
+    rt.commit()
+    return int(oid), logg
+
+
+@pg
+def test_reaper_lukker_utlopte_beslutningsoppdrag(migrator):
+    """Portene 23, 25, 27 + M-37-regresjonen: utløpt beslutningsoppdrag →
+    evidensfrist-sak + `feilet` uten kvittering (= lese-API-ets timeout);
+    gjentatt kjøring er no-op; `unntak_id` forblir NULL; et utløpt
+    M-37-oppdrag røres ALDRI av reaperen."""
+    rt = _rt()
+    try:
+        oid, logg = _utlopt_beslutningsoppdrag(rt, migrator)
+        # M-37-kontrollen: et reparasjonsoppdrag med utløpt frist —
+        # produksjonsformen fra test_m37, bare med fristene i fortid.
+        from .test_m37 import _lag_oppdrag
+        sak_id, m37_logg = _lag_sak(migrator, TENANT)
+        m37_oid, _ = _lag_oppdrag(migrator, TENANT, sak_id, m37_logg,
+                                  utforelsesfrist="-2 minutes",
+                                  evidensfrist="-1 minutes")
+
+        rader = rt.execute("SELECT tenant, oppdrag_id, unntak_id"
+                           " FROM reap_evidensfrister(50)").fetchall()
+        rt.commit()
+        mine = [r for r in rader if r[0] == TENANT and r[1] == oid]
+        assert len(mine) == 1, rader
+        sak_id = mine[0][2]
+        assert all(r[1] != m37_oid for r in rader), \
+            "reaperen rørte et M-37-oppdrag"
+
+        _sett_kontekst(migrator, TENANT)
+        o = migrator.execute(
+            "SELECT status, kvittering IS NULL, unntak_id FROM oppdrag"
+            " WHERE tenant=%s AND id=%s", (TENANT, oid)).fetchone()
+        m37 = migrator.execute(
+            "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s",
+            (TENANT, m37_oid)).fetchone()
+        sak = migrator.execute(
+            "SELECT arsak, oppdrag_id, terminal, loggpost_id FROM unntak"
+            " WHERE tenant=%s AND id=%s", (TENANT, sak_id)).fetchone()
+        migrator.rollback()
+        assert o == ("feilet", True, None), o          # 23 + 27
+        assert m37 == ("opprettet",)                    # regresjonsporten
+        assert sak == ("evidensfrist", oid, False, logg)
+
+        # 25: gjentatt kjøring — oppdraget er terminalt, ingen ny sak.
+        rader2 = rt.execute("SELECT oppdrag_id"
+                            " FROM reap_evidensfrister(50)").fetchall()
+        rt.commit()
+        assert all(r[0] != oid for r in rader2)
+        _sett_kontekst(migrator, TENANT)
+        n = migrator.execute(
+            "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s",
+            (TENANT, oid)).fetchone()[0]
+        migrator.rollback()
+        assert n == 1
+    finally:
+        rt.close()
+
+
+@pg
+def test_kvitteringskonflikt_foder_sikkerhetssak(migrator):
+    """Port 24: kvitteringsavvik på et beslutningsoppdrag (unntak_id NULL)
+    føres på en idempotent sikkerhetssak via `sikre_sak_for_oppdrag` —
+    og avvisnings-oppslaget finner raden igjen UTEN sak-id i hånda."""
+    from api.app import _kvittering_alt_avvist, _sikkerhetssak_kvittering
+    rt = _rt()
+    try:
+        oid, _ = _beslutningsoppdrag(rt, migrator)
+        _sett_kontekst(rt, TENANT)
+        art = "00000000-0000-4000-8000-00000000abcd"
+        _sikkerhetssak_kvittering(
+            rt, TENANT, None, "artefakt_ikke_verifisert",
+            {"oppdrag_id": oid, "artefakt_id": art}, "r-test",
+            oppdrag_id=oid)
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        # 25 i sikkerhetsfamilien: samme oppdrag, ny konflikt → samme sak.
+        _sikkerhetssak_kvittering(
+            rt, TENANT, None, "motstridende_kvittering",
+            {"kilde": "oppdrag", "lagret": "a"*64, "ny": "b"*64,
+             "oppdrag_id": oid}, "r-test2", oppdrag_id=oid)
+        rt.commit()
+
+        _sett_kontekst(migrator, TENANT)
+        saker = migrator.execute(
+            "SELECT id, sakstype, prioritet, arsak FROM unntak"
+            " WHERE tenant=%s AND oppdrag_id=%s", (TENANT, oid)).fetchall()
+        assert len(saker) == 1, saker
+        assert saker[0][1:] == ("sikkerhet", "hoy", "sikkerhet")
+        hendelser = migrator.execute(
+            "SELECT hendelse FROM unntak_historikk WHERE tenant=%s"
+            " AND unntak_id=%s ORDER BY id", (TENANT, saker[0][0])).fetchall()
+        migrator.rollback()
+        # 'opprettet' skrives av historikk-triggeren ved INSERT i unntak.
+        assert [h[0] for h in hendelser] == [
+            "opprettet", "sak_for_oppdrag", "artefakt_ikke_verifisert",
+            "motstridende_kvittering"]
+
+        _sett_kontekst(rt, TENANT)
+        assert _kvittering_alt_avvist(rt, TENANT, None, oid, art) is True
+        assert _kvittering_alt_avvist(rt, TENANT, None, oid,
+                                      art.replace("abcd", "eeee")) is False
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_lese_api_viser_opphav_og_null_unntak(migrator, klient):
+    """Portene 28–29: lese-API-et svarer `unntak_id: null` + `opprinnelse`
+    for et beslutningsoppdrag — og den eksisterende M-37-formen er urørt."""
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "lese.example")
+    cookie, csrf = _adminsesjon()
+    r = _bestill(klient, cookie, csrf, _gyldig_kropp("lese.example"))
+    assert r.json()["beslutning"] == "tillat", r.text
+    oid = r.json()["oppdrag_id"]
+    _sett_kontekst(migrator, TENANT)
+    bid = migrator.execute(
+        "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, oid)).fetchone()[0]
+    migrator.rollback()
+    tok, _ = _lesetoken(migrator, scopes=("decisions:read",))
+    # TestClient husker cookien fra bestillingen; cookie + Bearer i samme
+    # forespørsel er dobbel principal og avvises — med rette.
+    klient.cookies.clear()
+    k = klient.get(f"/v1/beslutninger/{bid}",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert k.status_code == 200, k.text
+    res = k.json()["resultat"]
+    assert res["oppdrag_id"] == oid
+    assert res["unntak_id"] is None                      # 28
+    assert res["opprinnelse"] == "beslutning"

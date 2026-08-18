@@ -305,7 +305,48 @@ BEGIN
     RETURN v_id;
 END $$;
 
+-- Reaperen (038 §5, port 23): evidensfrist løpt ut på et BESLUTNINGS-
+-- oppdrag → idempotent evidensfrist-sak + oppdraget lukkes. M-37-veien
+-- røres IKKE (regresjonsport 8): dens oppdrag hører til en sak som alt
+-- finnes, med sin egen fase-2-oppfølging. Hele autoriteten ligger her i
+-- basen — timeren utenfor har bare EXECUTE på nøyaktig denne funksjonen,
+-- samme snitt som `revalideringskandidater` (019).
+CREATE OR REPLACE FUNCTION reap_evidensfrister(p_grense INT DEFAULT 200)
+RETURNS TABLE (tenant TEXT, oppdrag_id BIGINT, unntak_id BIGINT)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE r RECORD; v_sak BIGINT; v_rid TEXT;
+BEGIN
+    -- Ingen advisory-lås: `FOR UPDATE SKIP LOCKED` gjør overlappende
+    -- kjøringer trygge (de deler radene, ingen tas to ganger), og et tomt
+    -- svar betyr dermed alltid «ingen kandidater» — aldri «noen andre
+    -- holdt låsen». En lås her hadde gjort de to utfallene umulige å
+    -- skille for kalleren.
+    v_rid := 'reap-' || replace(gen_random_uuid()::text, '-', '');
+    FOR r IN
+        SELECT o.tenant AS t, o.id AS oid FROM public.oppdrag o
+         WHERE o.opprinnelse = 'beslutning'
+           AND o.status IN ('opprettet', 'plukket')
+           AND now() > o.evidensfrist
+         ORDER BY o.evidensfrist
+         LIMIT p_grense
+         FOR UPDATE OF o SKIP LOCKED
+    LOOP
+        v_sak := public.sikre_sak_for_oppdrag(
+            r.t, r.oid, 'evidensfrist', 'evidensreaper', v_rid);
+        -- «ufullført» finnes ikke i statusmaskinen (005). `feilet` UTEN
+        -- kvittering ER plattformens ufullført: lese-API-et viser
+        -- nøyaktig den kombinasjonen som `feil_aarsak: timeout`.
+        UPDATE public.oppdrag o SET status = 'feilet'
+         WHERE o.tenant = r.t AND o.id = r.oid
+           AND o.status IN ('opprettet', 'plukket');
+        tenant := r.t; oppdrag_id := r.oid; unntak_id := v_sak;
+        RETURN NEXT;
+    END LOOP;
+END $$;
+
 REVOKE ALL ON FUNCTION opprett_reparasjonsoppdrag(TEXT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ, BIGINT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION reap_evidensfrister(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sikre_sak_for_oppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
 DO $$
@@ -319,6 +360,15 @@ END $$;
 GRANT EXECUTE ON FUNCTION opprett_reparasjonsoppdrag(TEXT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ, BIGINT, TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO disponit;
 GRANT EXECUTE ON FUNCTION sikre_sak_for_oppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT) TO disponit;
+-- Reaperen kjøres av drift-timer-rollen (019-presedensen); lokalt/test
+-- som runtime, samme funksjon, samme porter.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_domener') THEN
+        GRANT EXECUTE ON FUNCTION reap_evidensfrister(INT) TO disponit_domener;
+    END IF;
+END $$;
+GRANT EXECUTE ON FUNCTION reap_evidensfrister(INT) TO disponit;
 
 RESET ROLE;
 

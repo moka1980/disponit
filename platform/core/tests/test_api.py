@@ -105,11 +105,16 @@ APPEND_ONLY_TRIGGERE = (
 RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
                  "verifikasjonskonflikt", "verifikasjonsgenerasjon",
                  "verifikasjonsbevis",
-                 # 038: oppdragssaker (unntak.oppdrag_id) og bestillings-
-                 # idempotensen har FK → oppdrag; unntak_historikk har FK →
-                 # unntak. Historikk og saker må derfor ut FØR oppdragene.
-                 "bestilling_idempotens", "unntak_historikk", "unntak",
-                 "oppdrag", "reparasjonsoperasjoner",
+                 # 038: FK-ene danner en SIRKEL — unntak.oppdrag_id →
+                 # oppdrag, oppdrag.unntak_id → unntak, oppdrag.repair_
+                 # operation_id → reparasjonsoperasjoner → unntak. Én flat
+                 # rekkefølge finnes likevel, fordi de to unntak-familiene
+                 # aldri blandes (port 27: en oppdragssak står ALDRI i
+                 # oppdrag.unntak_id, og reparasjonsoperasjoner peker aldri
+                 # på en oppdragssak): oppdragssakene slettes i forsteget i
+                 # `_rydd` FØR oppdragene, resten av unntakene til slutt.
+                 "bestilling_idempotens", "unntak_historikk",
+                 "oppdrag", "reparasjonsoperasjoner", "unntak",
                  "revisjonslogg", "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.
                  "policy_hode", "policyer", "tenant_nokler",
@@ -152,6 +157,11 @@ def _rydd(migrator, *tenanter: str) -> None:
             "SELECT set_config('disponit.tenant',%s,true),"
             "       set_config('disponit.aktor','test',true)", (tenant,))
         for tabell in RYDDETABELLER:
+            if tabell == "oppdrag":
+                # Forsteget fra kommentaren over RYDDETABELLER: sakene som
+                # PEKER på oppdrag må ut før oppdragene de peker på.
+                migrator.execute("DELETE FROM unntak WHERE tenant=%s"
+                                 " AND oppdrag_id IS NOT NULL", (tenant,))
             migrator.execute(f"DELETE FROM {tabell} WHERE tenant=%s", (tenant,))
     migrator.execute("DELETE FROM api_tokener WHERE tenant = ANY(%s)",
                      (list(tenanter),))
