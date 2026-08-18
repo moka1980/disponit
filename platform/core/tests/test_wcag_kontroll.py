@@ -5143,9 +5143,11 @@ def test_kvitteringsnokkelen_kontrolleres_for_forste_claim():
     kvitteringshåndtering, løkka logget bare `runde_feilet`, og oppdraget
     lå ubesvart til fristen. Arbeideren skal nekte å starte i stedet."""
     from drift.wcag_audit_arbeider import nokkelfeil
+    from policy_validator import attestering
+    from policy_validator.attestering import MIN_HEMMELIGHET_TEGN
 
     gyldig = {"verifikator": "m_wcag_audit", "nokkel_id": "k1",
-              "hemmelighet": "s3kr3t"}
+              "hemmelighet": "h" * MIN_HEMMELIGHET_TEGN}
     assert nokkelfeil(gyldig) == []
     # Ekstra felter er ikke arbeiderens sak.
     assert nokkelfeil({**gyldig, "utstedt": "2026-08-18"}) == []
@@ -5159,6 +5161,17 @@ def test_kvitteringsnokkelen_kontrolleres_for_forste_claim():
         assert nokkelfeil({**gyldig, felt: None}) == [felt]
         # Tom/blank verdi signerer ikke noe som helst.
         assert nokkelfeil({**gyldig, felt: "   "}) == [felt]
+
+    # Codex P1 (runde 10): en kort hemmelighet er ikke-tom, men API-et kan
+    # ikke laste nøkkelen — `_valider_register` avviser den. Arbeideren ville
+    # da leaset oppdrag og levert kvitteringer ingen kan verifisere.
+    kort = "h" * (MIN_HEMMELIGHET_TEGN - 1)
+    assert nokkelfeil({**gyldig, "hemmelighet": kort}) == ["hemmelighet"]
+    with pytest.raises(ValueError):
+        attestering._valider_register({"m_wcag_audit": {"k1": kort}})
+    # Og nøyaktig grensen holder begge veier — ett tall, ikke to.
+    attestering._valider_register(
+        {"m_wcag_audit": {"k1": gyldig["hemmelighet"]}})
 
     # Filen kan inneholde gyldig JSON som ikke er et objekt i det hele tatt.
     assert len(nokkelfeil([])) == 3

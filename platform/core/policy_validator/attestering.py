@@ -37,6 +37,14 @@ _ALG = "HMAC-SHA256"
 #: sjanser til å slippe gjennom.
 KANONISERINGSFELT = "kanonisering"
 
+#: Korteste hemmelighet `_valider_register` godtar. Offentlig fordi den er
+#: en OPPSTARTSKONTRAKT, ikke en intern detalj: en utsteder som signerer med
+#: en kortere hemmelighet lager kvitteringer API-et aldri kan verifisere,
+#: fordi registeret her nekter å laste nøkkelen. Utstedersiden (arbeiderne)
+#: må kunne kontrollere det samme kravet FØR de begynner å produsere —
+#: derfor ett tall her, ikke ett tall per kaller.
+MIN_HEMMELIGHET_TEGN = 32
+
 
 def kanonisk_bytes(att: dict) -> bytes:
     """RFC 8785-kanoniske bytes av attestasjonen UTEN signaturfeltet.
@@ -155,9 +163,11 @@ def _valider_register(reg: object) -> dict:
         if not isinstance(nokler, dict) or not nokler:
             raise ValueError(f"verifikator '{vid}' mangler nøkler")
         for nid, hemmelighet in nokler.items():
-            if not isinstance(hemmelighet, str) or len(hemmelighet) < 32:
+            if (not isinstance(hemmelighet, str)
+                    or len(hemmelighet) < MIN_HEMMELIGHET_TEGN):
                 raise ValueError(
-                    f"nøkkel '{vid}/{nid}' må være streng på minst 32 tegn")
+                    f"nøkkel '{vid}/{nid}' må være streng på minst "
+                    f"{MIN_HEMMELIGHET_TEGN} tegn")
     return reg
 
 
