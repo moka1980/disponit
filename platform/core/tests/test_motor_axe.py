@@ -452,6 +452,34 @@ def test_roed_klarhetsmaaling_ruller_tilbake_aktiveringen():
     assert 'ok=etterpaa in ("disabled", "static", "masked")' in rulling
 
 
+def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
+    """Codex P1, runde 6: å la være å enable er ikke å la være å åpne.
+
+    Fase 2 gjør modulen claimbar, og fra da tar `/v1/bestilling` imot ekte
+    oppdrag. Hver gren i fase 9 som returnerer UTEN en arbeider i drift lot
+    den døren stå åpen: oppdragene ble liggende `opprettet` til
+    utførelsesfristen løp ut, altså et kvittert JA på noe ingen kunne
+    utføre."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    kropp = sjekk.split("def fase9(", 1)[1]
+    # ALLE grenene: røde målinger, manglende modultoken, manglende
+    # rootless-forutsetninger, manglende motorimage, og en unit som ikke
+    # kom opp etter `enable --now`.
+    assert kropp.count("_steng_doeren(m, ") == 5, \
+        "hver gren uten arbeider i drift må rulle tilbake fase 2"
+    assert "fase9(m, mtk, digest, motorkmd" in sjekk
+
+    # Stengingen går plattformens EGEN gjerdede vei: status `nodeaktivert`
+    # OG hver claiming-deployment drenert — nøyaktig de to vilkårene både
+    # bestillingsvakta og `claim_neste_oppdrag` krever.
+    assert "noddeaktiver_modul(%s,%s,'wcag-runde')" in sjekk
+    # ... og den er SELV en måling som kan bli rød, i begge utfall.
+    blokk = sjekk.split('evidens("fase9_modul_deaktivert"', 1)[1]
+    assert 'ok=status == ("nodeaktivert",) and claiming == 0' in blokk
+    assert 'evidens("fase9_doeren_star_apen"' in sjekk
+
+
 def test_motorcontaineren_har_ressursgrenser():
     """Codex P1, runde 6: nettleseren kjører en KUNDEKONTROLLERT side.
 

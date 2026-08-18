@@ -1050,7 +1050,62 @@ def _importer_motorimage(digest: str) -> tuple[bool, str]:
     return True, "importert"
 
 
-def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
+def _steng_doeren(m, grunn: str) -> None:
+    """Modulen ut av CLAIMBAR tilstand igjen (Codex P1, runde 6).
+
+    Fase 2 setter modulen `aktiv` med en `claiming`-deployment, og fra da
+    tar `/v1/bestilling` imot ekte `kontroll.wcag.nettsted`-oppdrag på
+    denne basen. Fase 9 kunne så returnere uten å sette arbeideren i drift
+    — rød måling, manglende rootless-forutsetninger, manglende motorimage
+    — og lot døren stå åpen bak seg. Oppdrag som kommer inn da, blir
+    liggende `opprettet` til utførelsesfristen løper ut: kunden får et
+    kvittert JA på noe ingen kan utføre. En åpen dør uten noen bak den er
+    verre enn en lukket.
+
+    Stengingen er plattformens EGEN gjerdede vei, ikke en UPDATE herfra:
+    `noddeaktiver_modul` setter status `nodeaktivert`, bumper
+    `module_epoch` og drenerer HVER claiming-deployment i én
+    transaksjon — nøyaktig de to vilkårene både bestillingsvakta og
+    `claim_neste_oppdrag` krever. Den er idempotent og krever en
+    begrunnelse, som føres i modulregisterets hendelsesstrøm.
+
+    VEIEN TILBAKE er dermed også plattformens: `reaktiver_modul` (epoch-
+    gjerdet) og en NY release-id, siden en drenert deployment ikke kan
+    reclaimes. Det er riktig pris: en runde som gikk rødt skal ikke kunne
+    åpne den samme døren igjen ved et uhell.
+    """
+    try:
+        with m.cursor() as c:
+            c.execute("SET ROLE disponit_modules_admin")
+            c.execute("SELECT noddeaktiver_modul(%s,%s,'wcag-runde')",
+                      (MODUL, f"staging-sjekkliste: {grunn}"))
+            c.execute("RESET ROLE")
+        m.commit()
+    except psycopg.Error as e:
+        m.rollback()
+        # Klarte vi ikke å stenge, er nettopp DET den røde målingen: døren
+        # står åpen og evidensfila må si det, ikke tie om det.
+        evidens("fase9_doeren_star_apen", grunn=grunn,
+                feiltype=type(e).__name__, feil=str(e)[:200],
+                merknad="modulen er fortsatt claimbar — steng den for hånd:"
+                        " SELECT noddeaktiver_modul(...)",
+                ok=False)
+        return
+    status = m.execute("SELECT status FROM modulhode WHERE modul_id=%s",
+                       (MODUL,)).fetchone()
+    claiming = m.execute("SELECT count(*) FROM moduldeployment"
+                         " WHERE modul_id=%s AND livslop='claiming'",
+                         (MODUL,)).fetchone()[0]
+    m.rollback()
+    # Stengingen er SELV en måling: står modulen igjen som claimbar, er det
+    # utfallet denne funksjonen finnes for å hindre.
+    evidens("fase9_modul_deaktivert", grunn=grunn,
+            status=status[0] if status else None, claiming=claiming,
+            vei_tilbake="reaktiver_modul(modul, epoch, aktor) + ny release-id",
+            ok=status == ("nodeaktivert",) and claiming == 0)
+
+
+def fase9(m, mtk, digest, motorkmd, *, maalt_runde: bool):
     """Setter arbeideren I DRIFT — ellers claimer ingen noe (Codex P1).
 
     Fase 2 setter modulen `aktiv` og deploymentet `claiming`. FRA DA er
@@ -1077,15 +1132,24 @@ def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
     arbeider» er da det riktige utfallet, ikke et uhell. `--fase 9` alene
     måler ingenting og er operatørens BEVISSTE idriftsettelse etter at
     evidensfila er lest — den føres som det i evidensen.
+
+    ... OG DA STENGES DØREN (Codex P1, runde 6). Å la være å enable
+    arbeideren er ikke det samme som å la være å åpne: fase 2 har alt
+    gjort modulen claimbar, og et hopp her etterlot en base som tar imot
+    ekte oppdrag ingen kan utføre. Hver gren som returnerer uten en
+    arbeider i drift ruller derfor tilbake det fase 2 åpnet — se
+    `_steng_doeren`.
     """
     if _ROEDE:
         evidens("fase9_hoppet", grunn="røde målinger i runden",
                 roede=sorted(set(_ROEDE)),
-                merknad="modulen er aktiv, men arbeideren settes ikke i"
-                        " drift på en runde som ikke er grønn")
+                merknad="arbeideren settes ikke i drift på en runde som"
+                        " ikke er grønn, og modulen stenges igjen")
+        _steng_doeren(m, "røde målinger i runden")
         return
     if not mtk:
         evidens("fase9_hoppet", grunn="ingen modultoken i denne kjøringen")
+        _steng_doeren(m, "ingen modultoken — ingen arbeider kan settes opp")
         return
     if not maalt_runde:
         evidens("fase9_operatoerbeslutning",
@@ -1133,6 +1197,7 @@ def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
                       " (subuid/subgid) og installer pakken uidmap",
                 merknad="uniten enables ikke: en arbeider som ikke kan"
                         " starte motoren er verre enn ingen arbeider")
+        _steng_doeren(m, "rootless-forutsetningene mangler")
         return
 
     # ... og IMAGET må ligge i arbeiderens EGET lager — se
@@ -1146,6 +1211,7 @@ def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
                 grunn="motorimaget er ikke tilgjengelig for arbeideren",
                 merknad="uniten enables ikke: den ville feilet hvert"
                         " eneste claimet oppdrag")
+        _steng_doeren(m, "motorimaget mangler i arbeiderens lager")
         return
 
     subprocess.run(["install", "-d", "-m", "750", "-o", "root",
@@ -1219,6 +1285,10 @@ def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
                 # stående enablet etter dette, er nettopp det utfallet
                 # denne grenen finnes for å hindre.
                 ok=etterpaa in ("disabled", "static", "masked"))
+        # ... og døren stenges med den: en base som tar imot oppdrag uten
+        # en arbeider bak, er den samme åpne døren uansett hvorfor
+        # arbeideren mangler (Codex P1, runde 6).
+        _steng_doeren(m, "arbeideren kom ikke opp etter enable")
     evidens("fase9_arbeider_i_drift", unit=ARBEIDER, status=aktiv,
             motor=motor, konfig=str(DRIFT_KONF),
             oppe="wcag_arbeider_oppe" in logg,
@@ -1268,7 +1338,7 @@ def main() -> int:
         # runde; en full kjøring gjør det selv, til slutt.
         if args.fase == 9 and mtk is None:
             mtk = (RUNDE / "modultoken").read_text().strip()
-        fase9(mtk, digest, motorkmd, maalt_runde=args.fase is None)
+        fase9(m, mtk, digest, motorkmd, maalt_runde=args.fase is None)
     evidens("runde_ferdig")
     return 0
 
