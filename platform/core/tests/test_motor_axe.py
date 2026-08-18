@@ -1029,6 +1029,57 @@ def test_fasitkontroll_finner_hver_avviksklasse():
     assert any(a.startswith("sider:") for a in fasitkontroll.avvik(s, b))
 
 
+def test_fasitkontroll_godtar_ikke_duplikatrader():
+    """Codex P2 (runde 9): duplikater ble slukt av dict-oppslaget.
+
+    En regrimert motor som sendte samme regel to ganger — først med feil
+    antall, så med det ventede — fikk null avvik, fordi den siste raden
+    overskrev den første. `rapport.bygg` beholder derimot BEGGE radene og
+    legger begge antallene i den promoterte summen, så fasitkontrollen
+    godkjente en rapport som ikke er fasiten. Samme hull lå i blokkert-
+    kartleggingen. Fasiten er selv nøklet og kan ikke ha duplikater, så
+    en gjentatt rad kan bare bety avvik."""
+    fasit = json.loads(
+        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        .read_text(encoding="utf-8"))
+    s = fasit["scenarier"]["enkeltside"]
+    motor = {
+        "funn": [{"regel_id": rid, "alvorlighet": v["alvorlighet"],
+                  "antall": v["antall"], "eksempler": []}
+                 for rid, v in s["funn"].items()],
+        "blokkert": [{"vert": vert, "art": art, "antall": n}
+                     for vert, arter in s["blokkert"].items()
+                     for art, n in arter.items()],
+        "avkortet": list(s["avkortet"]),
+        "sider": [{"url": "http://t/index.html", "status": "ok"}]
+                 * s["sider_ok"],
+    }
+    assert fasitkontroll.avvik(s, motor) == []
+
+    # Den skadelige formen: en feil rad FØRST, den ventede sist. Uten
+    # duplikatvakten er resultatet identisk med fasiten.
+    b = json.loads(json.dumps(motor))
+    feil = json.loads(json.dumps(b["funn"][0]))
+    feil["antall"] += 3
+    b["funn"].insert(0, feil)
+    funn = fasitkontroll.avvik(s, b)
+    assert any("står flere ganger" in a for a in funn), funn
+    assert any(a.startswith("funn:") for a in funn), funn
+
+    # Og samme rad gjentatt uendret er like mye et avvik: summen i
+    # rapporten blir dobbel selv om hver rad ser riktig ut.
+    b = json.loads(json.dumps(motor))
+    b["funn"].append(json.loads(json.dumps(b["funn"][0])))
+    assert any("står flere ganger" in a for a in fasitkontroll.avvik(s, b))
+
+    if motor["blokkert"]:
+        b = json.loads(json.dumps(motor))
+        b["blokkert"].insert(0, {**b["blokkert"][0], "antall": 99})
+        blok = fasitkontroll.avvik(s, b)
+        assert any(a.startswith("blokkert:") and "står flere ganger" in a
+                   for a in blok), blok
+
+
 def test_fasiten_er_konsistent_med_seg_selv():
     """Avkortingsregnskapet i fasiten: 14 = 4 besøkte + 9 i kø + 1
     query-lenke, og robots-siden er aldri en del av regnskapet."""

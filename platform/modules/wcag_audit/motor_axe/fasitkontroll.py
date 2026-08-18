@@ -16,12 +16,35 @@ import sys
 import urllib.parse
 
 
+def _entydig(rader, nokkel, verdi, navn: str, ut: list[str]) -> dict:
+    """Radene indeksert på `nokkel` — og duplikater ER et avvik.
+
+    DUPLIKATER SLUKTES STILLE (Codex P2, runde 9). Både funn og blokkerte
+    ressurser ble lagt i en dict på vei inn, så to rader for samme
+    regel_id (eller samme vert/art) endte som ÉN: den siste vant. En
+    regrimert motor som sendte `image-alt` to ganger — først med feil
+    antall, så med det ventede — ga da null avvik mot fasiten, mens
+    `rapport.bygg` beholder begge radene og legger begge antallene inn i
+    den promoterte summen. Fasiten har aldri duplikater (den er selv
+    nøklet), så en gjentatt rad kan bare bety at motoren avviker; da skal
+    den navngis, ikke overskrives."""
+    sett = {}
+    for r in rader:
+        k = nokkel(r)
+        if k in sett:
+            ut.append(f"{navn}: {k} står flere ganger i motorutdata")
+        sett[k] = verdi(r)
+    return sett
+
+
 def avvik(fasit_scenario: dict, motor: dict) -> list[str]:
     ut = []
     s = fasit_scenario
 
-    fakta = {f["regel_id"]: (f["alvorlighet"], f["antall"])
-             for f in motor.get("funn", ())}
+    fakta = _entydig(motor.get("funn", ()),
+                     lambda f: f["regel_id"],
+                     lambda f: (f["alvorlighet"], f["antall"]),
+                     "funn", ut)
     ventet = {rid: (v["alvorlighet"], v["antall"])
               for rid, v in s["funn"].items()}
     for rid in sorted(set(fakta) | set(ventet)):
@@ -33,8 +56,11 @@ def avvik(fasit_scenario: dict, motor: dict) -> list[str]:
             ut.append(f"funn: {rid} er {fakta[rid]}, ventet {ventet[rid]}")
 
     bl = {}
-    for b in motor.get("blokkert", ()):
-        bl.setdefault(b["vert"], {})[b["art"]] = b["antall"]
+    for (vert, art), n in _entydig(motor.get("blokkert", ()),
+                                   lambda b: (b["vert"], b["art"]),
+                                   lambda b: b["antall"],
+                                   "blokkert", ut).items():
+        bl.setdefault(vert, {})[art] = n
     if bl != s["blokkert"]:
         ut.append(f"blokkert: {bl}, ventet {s['blokkert']}")
 
