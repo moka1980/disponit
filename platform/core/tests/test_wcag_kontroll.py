@@ -712,6 +712,63 @@ def test_malautorisasjonen_bindes_til_verten_som_kontrolleres():
         ("sikkerhet", "hoy")
 
 
+def test_avtrykk_er_totalt_for_alt_json_slipper_inn():
+    """Codex P2: et ensomt surrogat i `ressurs_id` gjorde bindingen til et
+    UNNTAK i stedet for et svar.
+
+    `json.loads('"\\\\ud800"')` er gyldig JSON for Python og gir en helt
+    alminnelig `str` — men den strengen har ingen UTF-8-form, så
+    `str.encode("utf-8")` kaster. Hendelsen er ubetrodd, og verdien ligger
+    i minnet før noen validering rekker å se den.
+
+    Det gjorde avtrykket til en bryter avsenderen eide: `malbindingsbrudd`
+    kjører FØR motorens unntaksvakt (`db/pg.py`), så en hendelse som
+    navnga feil vert kunne bytte ut STOPP-med-`malautorisasjon_feil_mal`
+    med en død forespørsel uten revisjonspost. Den som ville unngå å bli
+    logget for et målbindingsbrudd trengte altså bare å skrive
+    identifikatoren sin med et surrogat.
+
+    Alle avtrykkene på den samme ubetrodde veien deler regelen
+    (`tekstbytes.utf8`), for det hjelper ikke at bindingen svarer hvis
+    loggskrivingen kaster på de samme bytene rett etterpå.
+
+    Kontroll: sett `errors=` tilbake til standard i `tekstbytes.utf8`, så
+    blir alle tre grenene røde med `UnicodeEncodeError`.
+    """
+    import json as _json
+
+    import oppdragskontrakt as ok
+    from policy_validator import audit
+
+    # Slik verdien faktisk kommer inn: gjennom JSON-parseren, ikke som en
+    # literal i testen.
+    ev = _json.loads(
+        '{"handling": "kontroll.wcag.nettsted",'
+        ' "mal_url": "https://kunde.example/a",'
+        ' "ressurs_id": "\\ud800"}')
+
+    # 1. Bindingen SVARER, og svaret er brudd — surrogatet er ikke
+    #    vertsnavnet `kunde.example`.
+    kode, detaljer = ok.malbindingsbrudd(ev["handling"], ev)
+    assert kode == "malautorisasjon_feil_mal"
+    assert detaljer["felt"] == "mal_url"
+    # Fortsatt avtrykk, aldri verdien selv: klartekstkolonnen skal ikke
+    # bære en identifikator bare fordi den var uvanlig formet.
+    assert "\ud800" not in _json.dumps(detaljer)
+    assert detaljer["forventet_avtrykk"] == ok.avtrykk("kunde.example")
+    assert detaljer["i_forespoersel_avtrykk"] != detaljer["forventet_avtrykk"]
+
+    # 2. Loggposten lar seg lage av den samme hendelsen — ellers ble
+    #    beslutningen til `logging_feilet` og posten uteble likevel.
+    assert len(audit.input_hash(ev)) == 64
+
+    # 3. Kodingen er INJEKTIV der `str.encode` kastet. `backslashreplace`
+    #    ville gitt surrogatet samme bytes som teksten `\\ud800`, og da er
+    #    to ulike identifikatorer umulige å skille i sporet.
+    assert ok.avtrykk("\ud800") != ok.avtrykk("\\ud800")
+    assert audit.input_hash({"a": "\ud800"}) != audit.input_hash({"a": "\\ud800"})
+
+
 def test_maalet_leses_som_nettleseren_leser_det():
     """Codex P1: `mal_url` går UENDRET til motoren, så det er Chromium som
     leser den til slutt — og WHATWG-parseren er uenig med `urlsplit`.

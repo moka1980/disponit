@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 
 import psycopg
 
+import tekstbytes
 from db import kryptering
 from db.pg import Evidens, Portbrudd, sett_kontekst, sikker_beslutning_pg
 from policy_validator import attestering
@@ -127,11 +128,16 @@ def input_hash(policy_id: str, event: dict) -> str:
     Idempotenskontrakten er «samme nøkkel + samme input => samme svar».
     Hva som er «samme input» må derfor være entydig — derav sorterte
     nøkler og ingen mellomrom, samme regler som `audit.input_hash`.
+
+    Og samme koding: `tekstbytes.utf8` (Codex P2). Denne er den FØRSTE som
+    rører hendelsen på HTTP-veien — den kjører før idempotensclaimet, før
+    målbindingen og før alt annet. Kastet den på et ensomt surrogat, døde
+    forespørselen der, uten loggpost og uten at noen port fikk uttale seg.
     """
-    return hashlib.sha256(json.dumps(
+    return hashlib.sha256(tekstbytes.utf8(json.dumps(
         {"policy_id": policy_id, "event": event},
         sort_keys=True, ensure_ascii=False,
-        separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+        separators=(",", ":"), default=str))).hexdigest()
 
 
 def attestation_set_hash(event: dict) -> str | None:
@@ -140,6 +146,10 @@ def attestation_set_hash(event: dict) -> str | None:
     Kobler loggposten til nøyaktig hvilke bevis som forelå. Uten den kan
     man i ettertid se at en beslutning var TILLAT, men ikke hvilke
     attestasjoner som bar den.
+
+    Signaturverdiene kommer rått fra hendelsen og er ikke formkontrollert
+    her, så kodingen må være total på samme måte som `input_hash` — se
+    `tekstbytes.utf8`.
     """
     attester = event.get("attestasjoner")
     if not isinstance(attester, dict) or not attester:
@@ -147,7 +157,7 @@ def attestation_set_hash(event: dict) -> str | None:
     verdier = sorted(
         str((a.get("signatur") or {}).get("verdi"))
         for a in attester.values() if isinstance(a, dict))
-    return hashlib.sha256("\x1f".join(verdier).encode("utf-8")).hexdigest()
+    return hashlib.sha256(tekstbytes.utf8("\x1f".join(verdier))).hexdigest()
 
 
 def _handling_i_policy(policy: dict, handling_id: str) -> dict | None:

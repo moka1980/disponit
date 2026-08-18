@@ -321,13 +321,24 @@ def avtrykk(raa: object) -> str:
     entropi, så den som allerede har en kandidat kan bekrefte den. Skillet
     er mellom å KUNNE bekrefte en mistanke og å FÅ utlevert kundens
     identifikator av loggen selv.
+
+    TOTAL for enhver JSON-verdi (Codex P2). `raa` er her `ressurs_id` rett
+    fra en ubetrodd hendelse, og `json.loads` godtar et ensomt surrogat
+    (`"\\ud800"`). Med `str.encode("utf-8")` kunne avsenderen dermed velge
+    at BINDINGSKONTROLLEN kaster i stedet for å svare: `malbindingsbrudd`
+    kjører før motorens unntaksvakt, så forespørselen døde uten
+    `malautorisasjon_feil_mal` i revisjonssporet — nøyaktig posten som
+    navngir et ulovlig målbindingsforsøk. Se `tekstbytes.utf8` for hvorfor
+    kodingen forblir injektiv.
     """
     import hashlib
+
+    import tekstbytes
     # Typenavnet er med i det som hashes, så `None` og strengen `"None"`
     # ikke får samme avtrykk — ellers ville de vært umulige å skille i
     # sporet.
     return hashlib.sha256(
-        f"{type(raa).__name__}:{raa}".encode("utf-8")).hexdigest()[:16]
+        tekstbytes.utf8(f"{type(raa).__name__}:{raa}")).hexdigest()[:16]
 
 
 def malbindingsbrudd(handling: object, event: dict) -> tuple[str, dict] | None:

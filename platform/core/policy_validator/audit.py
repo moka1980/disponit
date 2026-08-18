@@ -23,13 +23,25 @@ try:                        # POSIX: gir oss lås også mellom prosesser
 except ImportError:         # Windows: kun prosesslokal lås (se skriv())
     fcntl = None            # type: ignore[assignment]
 
+import tekstbytes
+
 from .engine import Decision
 
 
 def input_hash(event: dict) -> str:
+    """Kanonisk hash over hendelsen, til loggposten.
+
+    `tekstbytes.utf8` og ikke `str.encode` (Codex P2): hendelsen er
+    ubetrodd, og et ensomt surrogat i et hvilket som helst felt gjorde
+    denne linjen til et unntak. Den kjører inne i loggskrivingens vakt, så
+    utfallet var at beslutningen ble til `logging_feilet` — og da er det
+    ikke bare hashen som mangler, hele revisjonsposten uteble. En avsender
+    som ville unngå å bli logget for et brudd trengte altså bare å legge
+    `"\\ud800"` i et felt.
+    """
     kanonisk = json.dumps(event, sort_keys=True, ensure_ascii=False,
                           separators=(",", ":"), default=str)
-    return hashlib.sha256(kanonisk.encode("utf-8")).hexdigest()
+    return hashlib.sha256(tekstbytes.utf8(kanonisk)).hexdigest()
 
 
 def lag_loggpost(decision: Decision, event: dict, policy: dict,
