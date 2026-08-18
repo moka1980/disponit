@@ -106,3 +106,44 @@ def test_fasiten_er_konsistent_med_seg_selv():
     sider = ROT / "platform/modules/wcag_audit/testnettsted/sider"
     assert (sider / "privat/hemmelig.html").exists()
     assert "Disallow: /privat/" in (sider / "robots.txt").read_text()
+
+
+# ---------------------------------------------------------------------------
+# Kontraktsdokumentene (kontrakt/): proveniens som ikke får drive fra koden
+# ---------------------------------------------------------------------------
+
+def test_kontraktsdokumentets_hasher_matcher_skjemafilene():
+    """KONTRAKT.md navngir payload-/kvitteringsskjemaets sha256 — driver
+    dokument og fil fra hverandre, registreres feil proveniens immutabelt."""
+    import hashlib
+    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    md = (kdir / "KONTRAKT.md").read_text(encoding="utf-8")
+    for fil, felt in (("payload-skjema.json", "payload_schema_hash"),
+                      ("kvittering-skjema.json", "kvittering_schema_hash")):
+        h = hashlib.sha256((kdir / fil).read_bytes()).hexdigest()
+        assert f"**{felt}**: `{h}`" in md, \
+            f"{felt} i KONTRAKT.md matcher ikke {fil}"
+
+
+def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
+    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    skjema = json.loads((kdir / "kvittering-skjema.json")
+                        .read_text(encoding="utf-8"))
+    i_skjema = set(skjema["properties"]["feilkode"]["enum"])
+    import re
+    kode = (ROT / "platform/modules/wcag_audit/controller.py") \
+        .read_text(encoding="utf-8")
+    i_koden = set(re.findall(r'"feilkode": "([a-z_]+)"', kode))
+    assert i_skjema == i_koden, (i_skjema ^ i_koden)
+
+
+def test_payloadskjemaet_speiler_oppdragskontrakten():
+    import oppdragskontrakt
+    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    skjema = json.loads((kdir / "payload-skjema.json")
+                        .read_text(encoding="utf-8"))
+    t = oppdragskontrakt.OPPDRAGSTYPER["kontroll.wcag.nettsted"]
+    assert set(skjema["properties"]) == set(t.felter)
+    assert set(skjema["required"]) == set(t.felter), \
+        "normaliseringen fyller alltid alle fire feltene"
+    assert skjema["additionalProperties"] is False

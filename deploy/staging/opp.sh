@@ -55,6 +55,7 @@ disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
 disponit-artefaktrydding.service disponit-artefaktrydding.timer
 disponit-evidensreaper.service disponit-evidensreaper.timer
+disponit-wcag-audit.service
 disponit-varselsender.service disponit-varselsender.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -330,7 +331,8 @@ systemctl stop disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer disponit-evidensreaper.timer \
     disponit-domenerevalidering.service \
     disponit-artefaktrydding.service \
-    disponit-evidensreaper.service 2>/dev/null || true
+    disponit-evidensreaper.service \
+    disponit-wcag-audit.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
@@ -401,6 +403,12 @@ systemctl enable --now disponit-domenerevalidering.timer \
 # 038 §5: evidensfrist-reaperen — samme form (oneshot bak timer, kjøres
 # som disponit-domener; hele regelen ligger i reap_evidensfrister i basen).
 systemctl enable --now disponit-evidensreaper.timer
+# m_wcag_audit-arbeideren INSTALLERES men enables IKKE her: den skal
+# først i drift når modulen er AKSEPTERT (manifest-sjekklisten grønn,
+# status aktiv). Var den alt enablet av aksept-runden, startes den igjen.
+if systemctl is-enabled disponit-wcag-audit.service >/dev/null 2>&1; then
+  systemctl start disponit-wcag-audit.service
+fi
 # Varselsenderen: samme form, og den MÅ startes igjen her. Steg 5 stopper
 # timeren i vedlikeholdsvinduet — uten denne linjen var utrullingen det som
 # slo senderen av, permanent, og køen ville bare vokst. Timeren, ikke

@@ -1,0 +1,30 @@
+# m_wcag_audit-arbeideren (PR-014c): claimer WCAG-kontrolloppdrag over
+# API-et med modultokenet fra onboarding (035), kjører motoren i
+# browser-containeren, laster opp rapporten og kvitterer signert.
+#
+# TILLITSSNITTET: prosessen har modultoken + kvitteringsnøkkel — men
+# INGEN DB-tilgang, ingen KEK, ingen tenant-nøkler. Motoren under den
+# har heller ikke prosessens miljø (Kommandomotors allowlist). Enables
+# FØRST når modulen er akseptert (status aktiv) — før det svarer claim
+# 403 modul_ikke_claimbar, og uniten ville bare pollet seg varm.
+
+[Unit]
+Description=Disponit WCAG-kontrollarbeider (m_wcag_audit)
+After=network-online.target disponit-api.service
+Wants=network-online.target
+
+[Service]
+User=disponit-wcag
+Group=disponit-wcag
+SupplementaryGroups=docker
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
+EnvironmentFile=-/etc/disponit/wcag/konfig
+LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/wcag/DISPONIT_MODULTOKEN
+RuntimeDirectory=disponit-wcag
+ExecStart=/opt/disponit/.venv/bin/python -m drift.wcag_audit_arbeider
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

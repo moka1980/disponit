@@ -1,0 +1,17 @@
+{
+  "$comment": "Payload-skjemaet for oppdragstypen kontroll.wcag.nettsted (PR-014c). Dette er DOKUMENTET bak modulkontraktens payload_schema_hash: sha256 over filens bytes registreres immutabelt av registrer_kontrakt ved deploy. Formen speiler oppdragskontrakt.OPPDRAGSTYPER-felterdefinisjonen og minimeringen (port 5): modulen ser NØYAKTIG disse fire feltene, aldri flere. mal_url er den SERVERKOMPONERTE https-URL-en (klienten sender aldri URL; 038 §6) og maks_sider er alltid utfylt av normaliseringen.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mal_url", "kravsett", "omfang", "maks_sider"],
+  "properties": {
+    "mal_url": {
+      "type": "string",
+      "maxLength": 2000,
+      "pattern": "^https://[^?#]+$"
+    },
+    "kravsett": {"enum": ["wcag21_aa"]},
+    "omfang": {"enum": ["enkeltside", "nettsted"]},
+    "maks_sider": {"type": "integer", "minimum": 1, "maximum": 50}
+  }
+}
