@@ -266,6 +266,36 @@ def normaliser_vertsnavn(raa: object) -> str | None:
     return vert
 
 
+def malvert(oppdragstype: object, payload: object) -> str | None:
+    """Verten et oppdrag av denne TYPEN er autorisert for, eller None.
+
+    ÉN avledning, for alle som må navngi målet. Kjøretidsbindingen
+    (`malbindingsbrudd`), kvitteringens `ressurs_id` og rapportens
+    sidebinding svarer på nøyaktig samme spørsmål — «hvilken vert har noen
+    autorisert her?» — og gjorde de det hver for seg, ville første avvik i
+    normaliseringen betydd at plattformen navngir én vert i beviset og en
+    annen i evidensen. Da er bindingen pynt.
+
+    Oppslaget går via TYPEN og ikke via et fast feltnavn: hvilket
+    payloadfelt som bærer målet er en egenskap ved måldomenet
+    (`MALDOMENEFELT`), og en ny oppdragstype med et annet domene skal
+    kunne komme til uten at kallerne endres.
+
+    -> None når typen ikke krever målautorisasjon, når måldomenet ikke
+    peker på noe felt, eller når feltet ikke lar seg lese entydig. Alle
+    tre er fail-closed hos kalleren: ingen vert å binde til betyr at
+    oppdraget ikke skal utføres, ikke at bindingen er valgfri.
+    """
+    t = OPPDRAGSTYPER.get(oppdragstype) if isinstance(oppdragstype, str) \
+        else None
+    if t is None or t.malautorisasjonsdomene is None:
+        return None
+    felt = MALDOMENEFELT.get(t.malautorisasjonsdomene)
+    if felt is None or not isinstance(payload, dict):
+        return None
+    return normaliser_vertsnavn(payload.get(felt))
+
+
 def avtrykk(raa: object) -> str:
     """Kort, stabilt avtrykk av en verdi — til revisjonsspor, ikke til
     gjenoppretting.

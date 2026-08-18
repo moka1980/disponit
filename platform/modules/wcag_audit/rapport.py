@@ -6,6 +6,11 @@ selektorer kappes til 200 tegn, maks 10 eksempler per regel, maks 500
 funn og maks 200 dekningsbegrensninger — og kappes EN AV LISTENE, sier
 `avkortet` det (den lyver aldri om at alt kom med). Miljøblokka er
 SERVERKONTEKSTENS, aldri motorens.
+
+Og sidene er MÅLETS: `sider_kontrollert` bindes til den verten oppdraget
+er autorisert for (Codex P1), med samme avledning som kvitteringens
+`ressurs_id`. En rapport om et annet nettsted er ikke en avkortet rapport,
+det er evidens om noe ingen har bedt om.
 """
 from __future__ import annotations
 
@@ -81,8 +86,31 @@ def _kanoniske_bytes(rapport: dict) -> bytes:
         raise Motorfeil(f"rapporten kan ikke kanoniseres: {e}") from e
 
 
-def _ren_url(raa: str) -> str:
-    """https-URL uten query, fragment og credentials — eller Motorfeil.
+def _autorisert_vert(payload: dict) -> str:
+    """Verten oppdraget faktisk er autorisert for — eller Motorfeil.
+
+    Avledningen er plattformens (`oppdragskontrakt.malvert`), den samme
+    som gir kvitteringens `ressurs_id` i `controller._ressursbinding`. En
+    egen normalisering her ville vært en annen streng ved første rotprikk
+    eller store bokstaver, og da hadde bindingen under vært pynt.
+
+    -> Motorfeil når målet ikke lar seg lese. Controlleren har alt avvist
+    det claimet før motoren startes, så tilstanden er ikke nåbar i drift;
+    den står likevel fordi et `bygg` uten autorisert vert ikke har noe å
+    binde sidene TIL, og fail-open er den ene tilstanden denne fiksen
+    finnes for å hindre.
+    """
+    from oppdragskontrakt import malvert
+    from . import OPPDRAGSTYPE
+    vert = malvert(OPPDRAGSTYPE, payload)
+    if vert is None:
+        raise Motorfeil("oppdragets mål lar seg ikke lese")
+    return vert
+
+
+def _ren_url(raa: str, autorisert_vert: str) -> str:
+    """https-URL uten query, fragment og credentials, PÅ DET AUTORISERTE
+    MÅLET — eller Motorfeil.
 
     HELE parsingen står innenfor vakten (Codex P1), også `d.port`: den er
     en property som SELV kaster ValueError på `https://x.example:not-a-
@@ -90,7 +118,33 @@ def _ren_url(raa: str) -> str:
     naken ValueError sluppet forbi `controller.kjor_en` (som kun fanger
     Motorfeil og ValidationError) og latt det claimede oppdraget stå
     ufullført til fristen — samme taushet §10 forbyr for `_antall`.
+
+    VERTEN BINDES (Codex P1). Sidelista kom rått fra motoren, og kravet
+    var kun https: en motor som fulgte en redirect — eller løy — kunne
+    levere en skjemagyldig rapport der `sider_kontrollert` navngir
+    `evil.example`, mens den signerte kvitteringen og hele
+    autorisasjonskjeden navngir den bestilte verten. Konsumenten fikk da
+    evidens om ET ANNET mål under en autorisasjonskjede som ser gyldig ut
+    hele veien — nøyaktig den løgnen promotert evidens ikke skal kunne
+    bære. Målautorisasjonen er per VERT (`web_hostname`), så en side
+    utenfor den verten er utenfor det noen har autorisert, uansett hvor
+    kontrollen kom fra.
+
+    Sammenligningen bruker `normaliser_vertsnavn` på RÅSTRENGEN, ikke
+    `d.hostname`: det er den funksjonen som avviser formene Python og
+    nettleseren leser ulikt (`\\`, prosentkoding, IDNA), og en side
+    ingen kan lese entydig er like ubrukelig som en side på feil vert.
+    Porten bæres videre som før — `web_hostname` autoriserer en vert, ikke
+    et portnummer.
+
+    Bindingen ligger SIST, etter skjema- og portkontrollen, slik at en
+    uleselig URL fortsatt melder sin egen feil. Og når den holder, skrives
+    verten som `autorisert_vert`, ikke som `d.hostname`: de to navngir
+    samme vert, men bare den første er den formen plattformen faktisk
+    autoriserte (`kunde.example.` og `kunde.example` er ett navn, og
+    rapporten skal ikke by leseren på to skrivemåter av målet sitt).
     """
+    from oppdragskontrakt import normaliser_vertsnavn
     try:
         d = urlsplit(str(raa))
         vert, port = d.hostname, d.port
@@ -98,7 +152,10 @@ def _ren_url(raa: str) -> str:
         raise Motorfeil("uleselig url fra motoren") from e
     if d.scheme != "https" or not vert:
         raise Motorfeil("motoren rapporterte en ikke-https-url")
-    return urlunsplit(("https", vert + (f":{port}" if port else ""),
+    if normaliser_vertsnavn(raa) != autorisert_vert:
+        raise Motorfeil(
+            "motoren rapporterte en side utenfor det autoriserte målet")
+    return urlunsplit(("https", autorisert_vert + (f":{port}" if port else ""),
                        d.path or "/", "", ""))
 
 
@@ -183,11 +240,14 @@ def bygg(resultat: Motorresultat, *, payload: dict, kontekst: dict) -> dict:
     {axe_versjon, chromium_versjon, container_image_digest, viewport,
      locale, timezone} — fra config/digest, aldri fra motoren.
     """
+    # Målet FØRST: hver side som kommer med må ligge på den verten
+    # oppdraget er autorisert for (Codex P1) — se `_ren_url`.
+    autorisert_vert = _autorisert_vert(payload)
     sider = []
     for s in resultat.sider:
         if not isinstance(s, dict):
             raise Motorfeil("side-post uleselig")
-        sider.append({"url": _ren_url(s.get("url")),
+        sider.append({"url": _ren_url(s.get("url"), autorisert_vert),
                       "status": s.get("status")
                       if s.get("status") in ("ok", "feilet") else "feilet"})
     if not sider:

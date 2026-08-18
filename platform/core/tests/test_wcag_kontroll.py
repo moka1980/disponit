@@ -1075,6 +1075,20 @@ def _kontekst():
             "timezone": "Europe/Oslo"}
 
 
+def _payload(**over):
+    """Oppdragets payload — med `mal_url` på SAMME vert som sidene
+    `_motorresultat` rapporterer.
+
+    Den hører med i hver eneste `bygg`-test etter Codex P1: rapporten
+    bindes til den autoriserte verten, så en payload uten lesbart mål er
+    ikke lenger «en payload vi ikke bryr oss om» — den er fail-closed.
+    """
+    basis = {"kravsett": "wcag21_aa", "mal_url": "https://kunde.example/",
+             "omfang": "enkeltside"}
+    basis.update(over)
+    return basis
+
+
 def _motorresultat(**over):
     from modules.wcag_audit.motor import Motorresultat
     basis = dict(
@@ -1097,8 +1111,7 @@ def test_rapporten_saneres_og_validerer():
     from modules.wcag_audit import rapportskjema
     from modules.wcag_audit.rapport import bygg
     r = bygg(_motorresultat(),
-             payload={"kravsett": "wcag21_aa", "mal_url": "https://k.no/",
-                      "omfang": "enkeltside"},
+             payload=_payload(),
              kontekst=_kontekst())
     jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r)
     assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/side"
@@ -1117,7 +1130,7 @@ def test_rapporten_kutter_aerlig_over_500_funn():
     mange = tuple({"regel_id": f"r{i}", "alvorlighet": "lav", "antall": 1,
                    "eksempler": []} for i in range(600))
     r = bygg(_motorresultat(funn=mange),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
     assert len(r["funn"]) == 500
     assert r["avkortet"]["truffet"] is True and r["avkortet"]["verdi"] == 600
     # ... men SAMMENDRAGET teller alt motoren fant — kappingen gjelder
@@ -1138,7 +1151,7 @@ def test_kappet_eksempelliste_sier_fra_i_avkortet():
     ett = ({"regel_id": "r1", "alvorlighet": "alvorlig", "antall": 25,
             "eksempler": [f"#node-{i}" for i in range(25)]},)
     r = bygg(_motorresultat(funn=ett),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
     jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r)
     assert len(r["funn"][0]["eksempler"]) == MAKS_EKSEMPLER
     assert r["avkortet"]["truffet"] is True
@@ -1148,7 +1161,7 @@ def test_kappet_eksempelliste_sier_fra_i_avkortet():
     paa_taket = ({"regel_id": "r1", "alvorlighet": "lav", "antall": 1,
                   "eksempler": [f"#n{i}" for i in range(MAKS_EKSEMPLER)]},)
     r2 = bygg(_motorresultat(funn=paa_taket),
-              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+              payload=_payload(), kontekst=_kontekst())
     assert r2["avkortet"]["truffet"] is False
 
 
@@ -1166,7 +1179,7 @@ def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
     r = bygg(_motorresultat(blokkert=(
         {"vert": "fonts.example", "antall": 2, "art": "font"},
         {"vert": "fonts.example/x?q=1", "antall": 3, "art": "font"})),
-        payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+        payload=_payload(), kontekst=_kontekst())
     assert r["dekningsbegrensninger"] == [{"vert": "fonts.example",
                                            "antall": 5, "art": "font"}]
     assert r["avkortet"]["truffet"] is False
@@ -1175,7 +1188,7 @@ def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
     mange = tuple({"vert": f"v{i}.example", "antall": 1, "art": "font"}
                   for i in range(MAKS_BEGRENSNINGER + 25))
     r2 = bygg(_motorresultat(blokkert=mange),
-              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+              payload=_payload(), kontekst=_kontekst())
     jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r2)
     assert len(r2["dekningsbegrensninger"]) == MAKS_BEGRENSNINGER
     assert r2["avkortet"]["truffet"] is True
@@ -1184,7 +1197,7 @@ def test_dekningsbegrensninger_slaas_sammen_og_kappet_sier_fra():
     # Størst først: treffer taket, er det de STØRSTE som kommer med.
     tunge = ({"vert": "tung.example", "antall": 99, "art": "skript"},) + mange
     r3 = bygg(_motorresultat(blokkert=tunge),
-              payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+              payload=_payload(), kontekst=_kontekst())
     assert r3["dekningsbegrensninger"][0]["vert"] == "tung.example"
 
 
@@ -1214,13 +1227,82 @@ def test_uleselig_dekningsbegrensning_feiler_i_stedet_for_aa_forsvinne():
                     {"vert": "x" * 300 + ".example", "antall": 1}):
         with pytest.raises(Motorfeil):
             bygg(_motorresultat(blokkert=(daarlig,)),
-                 payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+                 payload=_payload(), kontekst=_kontekst())
 
     # Motsatsen: en ekte tom liste betyr fortsatt «ingen kjente
     # begrensninger», og den påstanden skal fortsatt kunne uttrykkes.
     r = bygg(_motorresultat(blokkert=()),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
     assert r["dekningsbegrensninger"] == []
+
+
+def test_rapporterte_sider_bindes_til_det_autoriserte_maalet():
+    """Codex P1: `sider_kontrollert` navngir det MÅLET som ble autorisert.
+
+    Sidelista kom rått fra motoren og krevde bare https. En motor som
+    fulgte en redirect — eller løy — kunne levere en skjemagyldig rapport
+    om `evil.example` samtidig som den signerte kvitteringen, attestasjonen
+    og hele autorisasjonskjeden navngav `kunde.example`. Konsumenten satt
+    da igjen med promotert evidens om ET ANNET nettsted, under en kjede
+    som ser gyldig ut hele veien.
+
+    Kontroll: fjern `normaliser_vertsnavn`-sammenligningen i `_ren_url`,
+    så blir denne rød — `evil.example` går rett inn i rapporten.
+    """
+    from modules.wcag_audit.motor import Motorfeil
+    from modules.wcag_audit.rapport import bygg
+    # Feil vert, subdomene av målet, og målet som subdomene hos angriperen:
+    # ingen av dem er verten `web_hostname` autoriserte.
+    for url in ("https://evil.example/x",
+                "https://sub.kunde.example/x",
+                "https://kunde.example.evil.example/x",
+                # Tvetydig for nettleseren = ingen entydig vert å binde til.
+                "https://kunde.example\\@evil.example/",
+                "https://kunde%2eexample/"):
+        with pytest.raises(Motorfeil):
+            bygg(_motorresultat(sider=({"url": url, "status": "ok"},)),
+                 payload=_payload(), kontekst=_kontekst())
+    # ... og én side utenfor målet forgifter HELE rapporten: den skal
+    # feile, ikke stille forsvinne fra en ellers gyldig sidelise.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(sider=({"url": "https://kunde.example/a",
+                                    "status": "ok"},
+                                   {"url": "https://evil.example/b",
+                                    "status": "ok"})),
+             payload=_payload(), kontekst=_kontekst())
+    # Motsatsen: målet selv, i en annen skrivemåte enn payloadens, er
+    # SAMME vert — bindingen normaliserer begge sider med plattformens
+    # egen funksjon, ikke med en strengsammenligning.
+    r = bygg(_motorresultat(sider=({"url": "https://KUNDE.example./dyp/sti",
+                                    "status": "ok"},)),
+             payload=_payload(mal_url="https://kunde.example/start"),
+             kontekst=_kontekst())
+    assert r["sider_kontrollert"][0]["url"] == "https://kunde.example/dyp/sti"
+    # Fail-closed når oppdraget ikke HAR et lesbart mål: da finnes det
+    # ingen vert å binde til, og en rapport uten binding er verre enn
+    # ingen rapport.
+    with pytest.raises(Motorfeil):
+        bygg(_motorresultat(), payload=_payload(mal_url="http://kunde.example/"),
+             kontekst=_kontekst())
+
+
+def test_kvittering_og_rapport_binder_til_samme_vert():
+    """Codex P1: kvitteringens `ressurs_id` og rapportens sidebinding er
+    ÉN avledning (`oppdragskontrakt.malvert`), ikke to.
+
+    Var de to, holdt det at den ene la på en rotprikk eller store
+    bokstaver før plattformen navngav én vert i beviset og en annen i
+    evidensen — og da er bindingen pynt.
+    """
+    from oppdragskontrakt import malvert
+    from modules.wcag_audit import OPPDRAGSTYPE
+    from modules.wcag_audit.controller import _ressursbinding
+    from modules.wcag_audit.rapport import _autorisert_vert
+    p = _payload(mal_url="https://KUNDE.example.:443/x?y=1")
+    assert _ressursbinding(p) == _autorisert_vert(p) == "kunde.example"
+    assert malvert(OPPDRAGSTYPE, p) == "kunde.example"
+    # ... og typen er den ENE modulen deklarerer, ikke en gjetning.
+    assert malvert("noe.helt.annet", p) is None
 
 
 def test_vertsmoensteret_slipper_aldri_forbi_skjemaet():
@@ -1268,14 +1350,14 @@ def test_motorutdata_er_ubetrodd():
     with pytest.raises(Motorfeil):
         bygg(_motorresultat(sider=({"url": "http://klartekst.example/",
                                     "status": "ok"},)),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
     with pytest.raises(Motorfeil):
-        bygg(_motorresultat(sider=()), payload={"kravsett": "wcag21_aa"},
+        bygg(_motorresultat(sider=()), payload=_payload(),
              kontekst=_kontekst())
     with pytest.raises(KeyError):
         # En kontekst uten digest er en konfigurasjonsfeil hos OSS —
         # den skal smelle, ikke fylles fra motorens påstander.
-        bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
+        bygg(_motorresultat(), payload=_payload(),
              kontekst={k: v for k, v in _kontekst().items()
                        if k != "container_image_digest"})
     # Codex P1: et uleselig ANTALL er også ubetrodd inndata. Konverteringen
@@ -1287,7 +1369,7 @@ def test_motorutdata_er_ubetrodd():
                  {"blokkert": ({"vert": "f.example", "antall": {"a": 1},
                                 "art": "font"},)}):
         with pytest.raises(Motorfeil):
-            bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
+            bygg(_motorresultat(**over), payload=_payload(),
                  kontekst=_kontekst())
     # Codex P1: og en uleselig PORT i URL-en. `urlsplit` godtar strengen —
     # det er `d.port` som kaster, og stod det uttrykket utenfor vakten,
@@ -1298,11 +1380,14 @@ def test_motorutdata_er_ubetrodd():
                 "https://example.com:-1/"):
         with pytest.raises(Motorfeil):
             bygg(_motorresultat(sider=({"url": url, "status": "ok"},)),
-                 payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+                 payload=_payload(), kontekst=_kontekst())
     # ... men en LOVLIG eksplisitt port skal fortsatt bæres videre.
+    # `web_hostname` autoriserer en VERT, ikke et portnummer, så
+    # målbindingen skal ikke ta denne.
     r = bygg(_motorresultat(sider=({"url": "https://example.com:8443/a?q=1#f",
                                     "status": "ok"},)),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(mal_url="https://example.com/"),
+             kontekst=_kontekst())
     assert r["sider_kontrollert"][0]["url"] == "https://example.com:8443/a"
 
 
@@ -1897,7 +1982,7 @@ def test_rapporten_holdes_under_1_mib():
                   "alvorlighet": "alvorlig", "antall": 3,
                   "eksempler": [f"#n{i}-{j}" + "s" * 190 for j in range(10)]}
                  for i in range(500))
-    r = bygg(_motorresultat(funn=stor), payload={"kravsett": "wcag21_aa"},
+    r = bygg(_motorresultat(funn=stor), payload=_payload(),
              kontekst=_kontekst())
     jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(r)
     assert len(_kanoniske_bytes(r)) <= MAKS_BYTES
@@ -1909,7 +1994,7 @@ def test_rapporten_holdes_under_1_mib():
     liten = bygg(_motorresultat(funn=(
         {"regel_id": "r1", "alvorlighet": "lav", "antall": 1,
          "eksempler": ["#a"]},)),
-        payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+        payload=_payload(), kontekst=_kontekst())
     assert liten["funn"][0]["eksempler"] == ["#a"]
     assert liten["avkortet"]["truffet"] is False
 
@@ -1928,7 +2013,7 @@ def test_formatsjekk_avviser_ugyldig_kjort_ts():
     from api.artefaktskjema import valider
     from modules.wcag_audit import rapportskjema
     from modules.wcag_audit.rapport import bygg
-    rapport = bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
+    rapport = bygg(_motorresultat(), payload=_payload(),
                    kontekst=_kontekst())
     assert not valider(rapportskjema.SKJEMA, rapport)
     # Små t/z er RFC 3339 (§5.6) og skal fortsatt passere.
@@ -2317,7 +2402,7 @@ def test_numerisk_overflyt_fra_motoren_er_motorfeil():
                                 "art": "font"},)},
                  {"avkortet": (True, 10 ** 20, 10 ** 20)}):
         with pytest.raises(Motorfeil):
-            bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
+            bygg(_motorresultat(**over), payload=_payload(),
                  kontekst=_kontekst())
 
     # Summen: hvert ledd er lovlig, `sammendrag` blir det ikke.
@@ -2326,7 +2411,7 @@ def test_numerisk_overflyt_fra_motoren_er_motorfeil():
         bygg(_motorresultat(funn=tuple(
                 {"regel_id": f"r{i}", "alvorlighet": "lav", "antall": ledd,
                  "eksempler": []} for i in range(4))),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
 
 
 def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
@@ -2360,13 +2445,13 @@ def test_brokdel_fra_motoren_er_motorfeil_ikke_trunkering():
         bygg(_motorresultat(funn=({"regel_id": "color-contrast",
                                    "alvorlighet": "alvorlig",
                                    "antall": 0.9, "eksempler": []},)),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
     # Samme port, samme svar, for de andre ubetrodde tallveiene.
     for over in ({"blokkert": ({"vert": "f.example", "antall": 2.5,
                                 "art": "font"},)},
                  {"avkortet": (True, 10.5, 3.5)}):
         with pytest.raises(Motorfeil):
-            bygg(_motorresultat(**over), payload={"kravsett": "wcag21_aa"},
+            bygg(_motorresultat(**over), payload=_payload(),
                  kontekst=_kontekst())
 
     # `varighet_ms` fra en ekte motorkjøring: trunkert før, Motorfeil nå.
@@ -2407,13 +2492,13 @@ def test_eksempellisten_maa_vaere_en_liste():
 
     for raa in ("button.x", 5, 5.0, {"a": "#b"}, True, b"#a"):
         with pytest.raises(Motorfeil):
-            bygg(_med(raa), payload={"kravsett": "wcag21_aa"},
+            bygg(_med(raa), payload=_payload(),
                  kontekst=_kontekst())
 
     # Det lovlige skal fortsatt være lovlig: liste, tuppel og «ingenting».
     for raa, ventet in ((["#a", "#b"], ["#a", "#b"]), (("#a",), ["#a"]),
                         ([], []), (None, [])):
-        r = bygg(_med(raa), payload={"kravsett": "wcag21_aa"},
+        r = bygg(_med(raa), payload=_payload(),
                  kontekst=_kontekst())
         assert r["funn"][0]["eksempler"] == ventet
 
@@ -2441,7 +2526,7 @@ def test_tekstfeltene_fra_motoren_ma_vaere_ekte_strenger():
              "antall": 3, "eksempler": ["#a"]}
         f.update(over)
         return bygg(_motorresultat(funn=(f,)),
-                    payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+                    payload=_payload(), kontekst=_kontekst())
 
     for raa in (None, {"id": 1}, 5, 5.0, True, b"color-contrast", ""):
         with pytest.raises(Motorfeil):
@@ -2498,7 +2583,7 @@ def test_ensom_surrogat_fra_motoren_er_motorfeil():
              "antall": 3, "eksempler": ["#a"]}
         f.update(over)
         return bygg(_motorresultat(funn=(f,)),
-                    payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+                    payload=_payload(), kontekst=_kontekst())
 
     # Hvert strengfelt i rapporten, ikke bare de som går gjennom `_tekst`:
     # fangsten står i `_kanoniske_bytes`, som HELE `bygg` ender i.
@@ -2508,7 +2593,7 @@ def test_ensom_surrogat_fra_motoren_er_motorfeil():
         _bygg(eksempler=["#a", ensom])
     with pytest.raises(Motorfeil, match="kanoniseres"):
         bygg(_motorresultat(regelsett_versjon="axe-4.10" + ensom),
-             payload={"kravsett": "wcag21_aa"}, kontekst=_kontekst())
+             payload=_payload(), kontekst=_kontekst())
 
     # Halvparten av et EKTE surrogatpar er ikke en ensom surrogate: et
     # tegn utenfor BMP skal fortsatt gå rett igjennom.
@@ -2631,7 +2716,7 @@ def test_skjemafeil_lekker_aldri_artefaktverdien():
     # Samme port på det EKTE rapportskjemaet, på veien som faktisk logges.
     from modules.wcag_audit import rapportskjema
     from modules.wcag_audit.rapport import bygg
-    rapport = bygg(_motorresultat(), payload={"kravsett": "wcag21_aa"},
+    rapport = bygg(_motorresultat(), payload=_payload(),
                    kontekst=_kontekst())
     feil = valider(rapportskjema.SKJEMA, {**rapport, "kjort_ts": hemmelig})
     assert feil and all(hemmelig not in f for f in feil), feil

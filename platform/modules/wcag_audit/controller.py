@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import jsonschema
 
-from . import rapportskjema
+from . import OPPDRAGSTYPE, rapportskjema
 from .motor import Motorfeil
 from .rapport import bygg
 
@@ -55,28 +55,6 @@ from .rapport import bygg
 #: Kroppsstatusene som betyr at plattformen FAKTISK skiftet status på
 #: oppdraget — de to `/v1/oppdrag/kvittering` gir sammen med 200.
 _STATUSSKIFTE = ("utfort", "feilet")
-
-#: Modulens egen oppdragstype. Den står her, ikke som en gjetning på hva
-#: claimet inneholdt: controlleren betjener nøyaktig én type, og det er
-#: den typen som deklarerer hvilket måldomene kvitteringen skal bindes til.
-OPPDRAGSTYPE = "kontroll.wcag.nettsted"
-
-
-def _malfelt() -> str | None:
-    """Payloadfeltet som bærer målet for VÅR oppdragstype — lest ut av
-    plattformens egen typedeklarasjon, ikke gjentatt her.
-
-    `oppdragskontrakt` er allerede en kjøretidsavhengighet for modulen
-    (`rapport` kanoniserer med `policy_validator`), men importen står ved
-    kallstedet av samme grunn som der: modulens IMPORTTID skal ikke være
-    bundet til plattformkjernen.
-    """
-    from oppdragskontrakt import MALDOMENEFELT, OPPDRAGSTYPER
-    t = OPPDRAGSTYPER.get(OPPDRAGSTYPE)
-    if t is None or t.malautorisasjonsdomene is None:
-        return None
-    return MALDOMENEFELT.get(t.malautorisasjonsdomene)
-
 
 def _ressursbinding(payload: dict) -> str | None:
     """Kvitteringens `ressurs_id`: den kontrollerte VERTEN (Codex P1).
@@ -99,12 +77,22 @@ def _ressursbinding(payload: dict) -> str | None:
     Verten er heller ikke ny eksponering: den er en del av `mal_url`, som
     alt står i det tenantskopede oppdraget kvitteringen hører til.
 
+    Selve avledningen er plattformens (`oppdragskontrakt.malvert`), ikke
+    modulens: den slår opp måldomenet på TYPEN og normaliserer med samme
+    funksjon som `malbindingsbrudd`. `rapport.bygg` binder sidene i
+    rapporten med nøyaktig det samme kallet, så kvittering og evidens kan
+    ikke navngi hver sin vert.
+
+    `oppdragskontrakt` er allerede en kjøretidsavhengighet for modulen
+    (`rapport` kanoniserer med `policy_validator`), men importen står ved
+    kallstedet av samme grunn som der: modulens IMPORTTID skal ikke være
+    bundet til plattformkjernen.
+
     -> None når målet ikke lar seg lese. Da har modulen ingenting å binde
     kvitteringen til, og fail-closed er posituren: se `kjor_en`.
     """
-    from oppdragskontrakt import normaliser_vertsnavn
-    felt = _malfelt()
-    return None if felt is None else normaliser_vertsnavn(payload.get(felt))
+    from oppdragskontrakt import malvert
+    return malvert(OPPDRAGSTYPE, payload)
 
 
 def _kvittert(rk) -> bool:
