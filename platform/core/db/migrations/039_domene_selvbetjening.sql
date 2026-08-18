@@ -307,12 +307,103 @@ BEGIN
     END IF;
 END $$;
 
--- Radene som ALT er avvist, ryddet ÉN gang. Uten dette ville hver avvisning
--- gjort før denne migrasjonen fått nøyaktig den løkka regelen over stenger,
--- i det øyeblikket verifiseringspasset settes i drift. Rader som er avvist og
--- SIDEN har fått en ny utfordring finnes ikke: den veien (`utsted_challenge_
--- selvbetjent` på en `tilbakekalt`-rad med motpart) åpnes av denne
--- migrasjonen, og kjøreren kjører hver versjon nøyaktig én gang.
+-- ------------------------------------------------------------
+-- DEN ANDRE VEIEN UT AV AVKLARINGEN FORBRUKER DEN OGSÅ (Codex P1).
+--
+-- Regelen over gjelder utgangen et MENNESKE tar (M-37 avviser). Men en
+-- utfordrer forlater `avklaring_kreves` ad to veier, og den andre er
+-- automatisk: `degrader_forbigatte_utfordrere` (019 §3.2, hengt på
+-- `hostname_binding`-triggeren) setter en forbigått B til `tilbakekalt` og
+-- bumper generasjonen når en tredje C overtar plassen i den åpne saken.
+--
+-- 019-formen lot utfordringen stå. B ble dermed liggende igjen med NØYAKTIG
+-- den signaturen reapplikasjonsgrenen over er bygget for å plukke —
+-- `tilbakekalt` + `konflikt_motpart` + en levende `challenge_token_hash` —
+-- og B-s egen TXT-post ligger jo fortsatt i sonen, uendret, fordi ingen har
+-- bedt henne fjerne den. Neste pass tok derfor B med det samme, godtok det
+-- gamle beviset, flyttet bindingen tilbake til B, og triggeren degraderte C.
+-- Står begge TXT-postene igjen — det vanlige, siden ingen av dem har fått
+-- beskjed om noe annet — veksler B og C for hvert pass, hver runde med en ny
+-- konfliktgenerasjon og en ny M-37-sak til menneskene. Én avvisning som ble
+-- stående var altså ikke nok: den automatiske utgangen kunne fortsatt løkke.
+--
+-- Degraderingen forbruker derfor utfordringen på nøyaktig samme form som
+-- avvisningen: `challenge_forsokt` med, siden stempelet gjelder forsøket på
+-- DEN utfordringen og ellers ville hengt igjen som køposisjon for noe som
+-- ikke finnes. Veien tilbake for B er den samme som for en avvist kandidat —
+-- utsted på nytt fra flaten, publiser det NYE tokenet — altså en handling,
+-- ikke en post som ble liggende.
+--
+-- `konflikt_motpart` beholdes urørt, som i avvisningen: det er merket
+-- reapplikasjonsgrenen kjenner raden igjen på. Det er utfordringen som
+-- forbrukes, ikke merket.
+--
+-- Resten av kroppen er 019s, uendret — bindingsautoriteten, idempotensen,
+-- hendelsen og saklukkingen hører til der og skal ikke omskrives her.
+CREATE OR REPLACE FUNCTION degrader_forbigatte_utfordrere(
+    p_hostname TEXT, p_aktor TEXT)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_binding TEXT; v_rad RECORD; v_antall INT := 0; v_sak BIGINT;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
+    SELECT tenant INTO v_binding FROM public.hostname_binding
+     WHERE hostname = p_hostname;
+    IF v_binding IS NULL THEN
+        RETURN 0;   -- ingen binding ennå: ingen er forbigått
+    END IF;
+    FOR v_rad IN
+        SELECT tenant, autorisasjonsgenerasjon AS generasjon
+          FROM public.domenekontroll
+         WHERE hostname = p_hostname AND status = 'avklaring_kreves'
+           AND tenant IS DISTINCT FROM v_binding
+         FOR UPDATE
+    LOOP
+        UPDATE public.domenekontroll
+           SET status = 'tilbakekalt',
+               autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1,
+               -- UTFORDRINGEN FORBRUKES (Codex P1): uten dette plukket
+               -- reapplikasjonsgrenen den forbigåtte raden umiddelbart på
+               -- nytt, med den gamle TXT-posten som «bevis», og B/C kunne
+               -- veksle i det uendelige.
+               challenge_token_hash = NULL,
+               challenge_utstedt = NULL,
+               challenge_utloper = NULL,
+               challenge_forsokt = NULL
+         WHERE tenant = v_rad.tenant AND hostname = p_hostname;
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
+            VALUES (v_rad.tenant, p_hostname, 'forbigatt', 'avklaring_kreves',
+                    'tilbakekalt', 'forbigatt_av_senere_overtakelse', p_aktor);
+        SELECT u.id INTO v_sak
+          FROM public.unntak u
+          JOIN public.revisjonslogg r
+            ON r.tenant = u.tenant AND r.id = u.loggpost_id
+         WHERE u.tenant = v_rad.tenant AND u.status = 'ny'
+           AND u.kategori = 'domeneovertakelse'
+           AND u.handling = 'domene.overtakelse'
+           AND r.kilde = 'domeneovertakelse'
+           AND r.idempotency_key = 'domeneovertakelse:' || p_hostname || ':'
+                                   || v_rad.generasjon::TEXT
+         ORDER BY u.id
+         LIMIT 1;
+        IF FOUND THEN
+            PERFORM public.lukk_overtakelsessak(
+                v_rad.tenant, v_sak, 'avvist', p_aktor);
+        END IF;
+        v_antall := v_antall + 1;
+    END LOOP;
+    RETURN v_antall;
+END $$;
+
+-- Radene som ALT har forlatt avklaringen, ryddet ÉN gang. Uten dette ville
+-- hver avvisning OG hver degradering gjort før denne migrasjonen fått
+-- nøyaktig den løkka de to reglene over stenger, i det øyeblikket
+-- verifiseringspasset settes i drift. Predikatet er signaturen selve
+-- plukket ser etter, så begge utgangene ryddes av samme setning. Rader som
+-- har forlatt avklaringen og SIDEN har fått en ny utfordring finnes ikke:
+-- den veien (`utsted_challenge_selvbetjent` på en `tilbakekalt`-rad med
+-- motpart) åpnes av denne migrasjonen, og kjøreren kjører hver versjon
+-- nøyaktig én gang.
 UPDATE public.domenekontroll
    SET challenge_token_hash = NULL, challenge_utstedt = NULL,
        challenge_utloper = NULL, challenge_forsokt = NULL

@@ -626,7 +626,8 @@ def test_alle_domeneoverganger_deler_laaserekkefolge(migrator):
     for sign in ("bekreft_domenechallenge(text,text,text,text[])",
                  "verifiser_domenekontroll(text,text,boolean,text)",
                  "tilbakekall_domenekontroll(text,text,text,text)",
-                 "avgjor_domeneovertakelse(text,text,bigint,boolean,text)"):
+                 "avgjor_domeneovertakelse(text,text,bigint,boolean,text)",
+                 "degrader_forbigatte_utfordrere(text,text)"):
         kropp = migrator.execute(
             "SELECT pg_get_functiondef(%s::regprocedure)", (sign,)).fetchone()[0]
         migrator.rollback()
@@ -734,6 +735,97 @@ def test_en_avvisning_blir_staaende_til_det_finnes_nytt_bevis(migrator):
     assert svar == f"konflikt:{TENANT}", svar
     assert _gen(migrator, ANNEN_TENANT, vert) > gen, \
         "reapplikasjonen fikk ingen ny generasjon"
+
+
+@pg
+def test_en_forbigatt_utfordrer_forbruker_ogsaa_utfordringen(migrator):
+    """Codex P1: den AUTOMATISKE utgangen av avklaringen kunne fortsatt løkke.
+
+    En utfordrer forlater `avklaring_kreves` ad to veier. Avvisningen
+    (testen over) er den et menneske tar. Den andre er
+    `degrader_forbigatte_utfordrere` (019 §3.2), hengt på
+    `hostname_binding`-triggeren: tar en tredje C plassen i den åpne saken,
+    settes B `tilbakekalt` med ny generasjon.
+
+    019-formen lot utfordringen stå. B ble dermed liggende med NØYAKTIG den
+    signaturen reapplikasjonsplukket er bygget for — `tilbakekalt` +
+    `konflikt_motpart` + levende hash — og B-s TXT-post ligger fortsatt i
+    sonen, for ingen har bedt henne fjerne den. Neste pass tok derfor B med
+    det samme, godtok det gamle beviset, flyttet bindingen tilbake til B, og
+    triggeren degraderte C. Står begge postene igjen, veksler B og C for hvert
+    pass — hver runde med en ny konfliktgenerasjon og en ny M-37-sak.
+
+    MUTASJONEN SOM DREPER DENNE: la degraderingen la `challenge_token_hash`
+    stå (altså 019-kroppen uendret).
+    """
+    from .test_pr015_operativt_lag import TREDJE_TENANT
+
+    vert = f"forbigatt{secrets.token_hex(4)}.example"
+    token_b = secrets.token_hex(32)
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))       # A eier navnet
+        a.commit()
+    finally:
+        a.close()
+
+    # B utsteder selv, publiserer TXT-en, og beviset gir konflikten.
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, ANNEN_TENANT)
+        rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                   (ANNEN_TENANT, vert,
+                    hashlib.sha256(token_b.encode()).hexdigest()))
+        rt.commit()
+    finally:
+        rt.close()
+    svar = _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                     (ANNEN_TENANT, vert, [token_b]))[0]
+    migrator.commit()
+    assert svar == f"konflikt:{TENANT}", svar
+    gen_b = _gen(migrator, ANNEN_TENANT, vert)
+
+    # C tar plassen. Ingen manuell opprydding: triggeren på bindingen skal
+    # gjøre degraderingen i samme transaksjon som overtakelsen.
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TREDJE_TENANT, vert))
+        a.commit()
+    finally:
+        a.close()
+
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rad = migrator.execute(
+        "SELECT status, konflikt_motpart, challenge_token_hash,"
+        " challenge_utloper, challenge_forsokt FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s", (ANNEN_TENANT, vert)).fetchone()
+    migrator.rollback()
+    assert rad[0] == "tilbakekalt", rad
+    assert _gen(migrator, ANNEN_TENANT, vert) > gen_b, \
+        "degraderingen økte ikke generasjonen"
+    assert rad[1] == TENANT, "motparten skal beholdes — det er merket " \
+        "reapplikasjonsgrenen kjenner raden igjen på"
+    assert rad[2] is None and rad[3] is None and rad[4] is None, \
+        "utfordringen overlevde degraderingen — B-s gamle TXT-post kan " \
+        "bevises på nytt og tar bindingen tilbake fra C"
+
+    # 1) Passet plukker ikke B lenger — det er selve løkka.
+    assert (ANNEN_TENANT, vert) not in _alle_ventende(migrator), \
+        "den forbigåtte raden køes umiddelbart på nytt"
+    # 2) ...og den gamle TXT-verdien beviser ingenting om den plukkes likevel.
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                  (ANNEN_TENANT, vert, [token_b]))
+    migrator.rollback()
+    # 3) C står urørt i avklaring: degraderingen rører aldri bindingshaveren.
+    _sett_kontekst(migrator, TREDJE_TENANT)
+    c_status = migrator.execute(
+        "SELECT status FROM domenekontroll WHERE tenant=%s AND hostname=%s",
+        (TREDJE_TENANT, vert)).fetchone()[0]
+    migrator.rollback()
+    assert c_status == "avklaring_kreves", c_status
 
 
 def _arbeiderkonn():
