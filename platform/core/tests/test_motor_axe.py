@@ -242,10 +242,10 @@ def test_pinnen_velger_en_adresse_verten_kan_naa(monkeypatch):
 def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     kall = {}
 
-    def hent(status, tekst=""):
+    def hent(status, tekst="", plassering=""):
         def _h(url, pin_ip, tls_kontekst=None):
             kall["pin"] = pin_ip
-            return status, tekst
+            return status, tekst, plassering
         return _h
 
     monkeypatch.setattr(kjor, "_hent", hent(200, "User-agent: *\n"
@@ -256,6 +256,7 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
     monkeypatch.setattr(kjor, "_hent", hent(404))
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
+    # 5xx, og en omdirigering UTEN `Location`, er fortsatt ulest robots.
     for status in (301, 302, 503, 500):
         monkeypatch.setattr(kjor, "_hent", hent(status))
         assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), \
@@ -265,6 +266,86 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
         raise OSError("nede")
     monkeypatch.setattr(kjor, "_hent", sprekk)
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+
+def test_robots_folger_begrenset_omdirigering_paa_egen_origin(monkeypatch):
+    """Codex P2, runde 9: en kanonisert robots-sti er ikke en ulest robots.
+
+    Et helt vanlig 301 til målets egen `/robots.txt`-kanonisering ble
+    lest som «ikke lest», og hele nettstedsoppdraget falt til én side selv
+    om policyen lå ett hopp unna. RFC 9309 §2.3.1.2 ber oss følge minst
+    fem påfølgende hopp. Fail-closed står igjen der kjeden er utrygg:
+    ut av origin, uten `Location`, eller lengre enn taket."""
+    POLICY = "User-agent: *\nDisallow: /privat/\n"
+
+    def kjede(kart):
+        besokt = []
+
+        def _h(url, pin_ip, tls_kontekst=None):
+            besokt.append((url, pin_ip))
+            return kart[url]
+        _h.besokt = besokt
+        return _h
+
+    # Ett hopp til målets egen kanoniske sti.
+    h = kjede({"https://m.example/robots.txt": (301, "", "/policy/robots.txt"),
+               "https://m.example/policy/robots.txt": (200, POLICY, "")})
+    monkeypatch.setattr(kjor, "_hent", h)
+    regler, lov = kjor._robots("https://m.example", "93.184.216.34")
+    assert lov is True and [m for _, m, _ in regler] == ["/privat/"]
+    # Pinnen bæres gjennom HELE kjeden — hvert hopp er samme godkjente
+    # adresse, ellers var omdirigeringen en vei rundt adressekontrollen.
+    assert {pin for _, pin in h.besokt} == {"93.184.216.34"}
+
+    # Absolutt Location på samme origin, og den underforståtte porten,
+    # er samme origin — `_origin` kanoniserer begge sider.
+    for mal in ("https://m.example/b.txt", "https://m.example:443/b.txt"):
+        h = kjede({"https://m.example/robots.txt": (302, "", mal),
+                   mal: (200, POLICY, "")})
+        monkeypatch.setattr(kjor, "_hent", h)
+        assert kjor._robots("https://m.example", "1.2.3.4")[1] is True, mal
+
+    # Nøyaktig på taket: fem påfølgende hopp følges.
+    kart, forrige = {}, "https://m.example/robots.txt"
+    for i in range(kjor.ROBOTS_HOPP):
+        neste = f"https://m.example/h{i}.txt"
+        kart[forrige] = (301, "", neste)
+        forrige = neste
+    kart[forrige] = (200, POLICY, "")
+    monkeypatch.setattr(kjor, "_hent", kjede(kart))
+    assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
+
+    # Ett hopp for mye: ingen crawl, ingen uendelig henting.
+    kart = dict(kart)
+    kart[forrige] = (301, "", "https://m.example/enda-en.txt")
+    kart["https://m.example/enda-en.txt"] = (200, POLICY, "")
+    monkeypatch.setattr(kjor, "_hent", kjede(kart))
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+    # En løkke er også bare en for lang kjede — den skal ikke henge.
+    h = kjede({"https://m.example/robots.txt": (301, "", "/a.txt"),
+               "https://m.example/a.txt": (302, "", "/robots.txt")})
+    monkeypatch.setattr(kjor, "_hent", h)
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+    assert len(h.besokt) == kjor.ROBOTS_HOPP + 1
+
+    # UT AV ORIGIN følges aldri: den verten er verken autorisert for
+    # oppdraget eller dekket av pinnen. Fail-closed, ikke ny egressvei.
+    for ut in ("https://annen.example/robots.txt",
+               "http://m.example/robots.txt",        # annet skjema
+               "https://m.example:8443/robots.txt"):  # annen port
+        h = kjede({"https://m.example/robots.txt": (301, "", ut),
+                   ut: (200, POLICY, "")})
+        monkeypatch.setattr(kjor, "_hent", h)
+        assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), ut
+        assert len(h.besokt) == 1, ut     # den ble ikke engang hentet
+
+    # Og et 4xx underveis i kjeden er fortsatt «ingen uttalte
+    # begrensninger», ikke en ulest robots.
+    monkeypatch.setattr(kjor, "_hent", kjede(
+        {"https://m.example/robots.txt": (301, "", "/policy.txt"),
+         "https://m.example/policy.txt": (404, "", "")}))
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
 
 
 def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
@@ -283,6 +364,9 @@ def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
 
         def read(self, n):
             return self.data[:n]
+
+        def getheader(self, navn, standard=None):
+            return standard
 
     class Conn:
         n = 0

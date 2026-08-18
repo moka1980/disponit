@@ -344,8 +344,20 @@ class _Avkortet(Exception):
     """Svaret var større enn `LESETAK` — vi har ikke lest hele det."""
 
 
-def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str]:
+#: Hvor mange omdirigeringer robots-hentingen følger. RFC 9309 §2.3.1.2
+#: ber crawlere følge MINST fem påfølgende hopp; en kjede lengre enn det
+#: er ingen kanonisering, og behandles som en robots vi ikke fikk lest.
+#: Taket lukker samtidig omdirigeringsløkker (A -> B -> A).
+ROBOTS_HOPP = 5
+
+
+def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str, str]:
     """GET mot `url`, men ALLTID mot den pinnede adressen.
+
+    -> (status, kropp, `Location`). Plasseringen returneres fordi
+    `_robots` følger en BEGRENSET omdirigeringskjede — hentingen selv
+    følger ingenting, for hvert hopp må gjennom den samme
+    origin-kontrollen som det første.
 
     Vertsnavnet beholdes til Host-header og SNI/sertifikatkontroll —
     bare selve TCP-tilkoblingen tvinges til `pin_ip`, slik at hentingen
@@ -371,12 +383,13 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str]:
         lambda adr, tidsavbrudd, kilde: socket.create_connection(
             (pin_ip, adr[1]), tidsavbrudd, kilde))
     try:
-        conn.request("GET", u.path or "/")
+        conn.request("GET", _robotsti(u))
         svar = conn.getresponse()
         raa = svar.read(LESETAK + 1)
         if len(raa) > LESETAK:
             raise _Avkortet(url)
-        return svar.status, raa.decode("utf-8", "replace")
+        plassering = (svar.getheader("location") or "").strip()
+        return svar.status, raa.decode("utf-8", "replace"), plassering
     finally:
         conn.close()
 
@@ -397,16 +410,43 @@ def _robots(base: str, pin_ip: str, tls_kontekst=None
     som noe annet enn de andre. Alternativet — å tolke prefikset — er
     fail-open i forkledning: reglene ligger i vilkårlig rekkefølge i
     fila, så det er tilfeldig hvilke forbud som havnet innenfor grensen,
-    og en `Disallow` vi ikke leste blir til en sti vi crawlet."""
-    try:
-        status, tekst = _hent(base + "/robots.txt", pin_ip, tls_kontekst)
-    except Exception:
-        # `_Avkortet` er med her: en robots vi bare fikk BEGYNNELSEN av
-        # er en robots vi ikke fikk lest.
-        return [], False
-    if not 200 <= status < 300:
-        return [], 400 <= status < 500
-    return _parse_robots(tekst), True
+    og en `Disallow` vi ikke leste blir til en sti vi crawlet.
+
+    OMDIRIGERINGER FØLGES, BEGRENSET (Codex P2, runde 9). En vanlig
+    301/302 til målets egen kanoniske robots-sti ble lest som «ikke
+    lest», og et helt nettstedsoppdrag falt til én side selv om
+    policyen lå rett rundt hjørnet. RFC 9309 §2.3.1.2 ber oss følge
+    minst fem påfølgende hopp; vi følger `ROBOTS_HOPP` og faller
+    fail-closed når kjeden er lengre.
+
+    Hvert hopp må ligge på MÅLETS EGEN origin, og gjenbruker derfor
+    pinnen fra `_pin_mal_ip`. Det er ikke en unødig innstramming: en
+    annen origin er en annen vert, som verken er autorisert for dette
+    oppdraget eller dekket av den adressekontrollen pinnen bærer — og
+    en robots-henting er ikke stedet å åpne en ny egressvei. En
+    omdirigering ut av origin, uten `Location`, eller til noe vi ikke
+    kan lese, er derfor en robots vi ikke fikk lest."""
+    url = base + "/robots.txt"
+    mal_origin = _origin(urllib.parse.urlsplit(base))
+    for _ in range(ROBOTS_HOPP + 1):
+        try:
+            status, tekst, plassering = _hent(url, pin_ip, tls_kontekst)
+        except Exception:
+            # `_Avkortet` er med her: en robots vi bare fikk BEGYNNELSEN av
+            # er en robots vi ikke fikk lest.
+            return [], False
+        if 200 <= status < 300:
+            return _parse_robots(tekst), True
+        if 400 <= status < 500:
+            return [], True
+        if not (300 <= status < 400 and plassering):
+            return [], False
+        neste = urllib.parse.urljoin(url, plassering)
+        neste_origin = _origin(urllib.parse.urlsplit(neste))
+        if not mal_origin or neste_origin != mal_origin:
+            return [], False
+        url = neste
+    return [], False
 
 
 _PROSENTOKTETT = re.compile(r"%([0-9A-Fa-f]{2})")
