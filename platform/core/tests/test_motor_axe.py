@@ -252,6 +252,38 @@ def test_eksempeltaket_slaar_avkortet_paa():
                 if f["antall"] > len(f["eksempler"])), default=0) == 0
 
 
+def test_nettleserkonteksten_er_den_som_attesteres():
+    """Codex P2: serverkonteksten attesterte en tidssone ingen satte.
+
+    Hver kjøring føres som `timezone: Europe/Oslo`, men kontekstobjektet
+    fikk bare `viewport` og `locale` — Chromium brukte containerens egen
+    tidssone. En side som rendrer innhold eller tilgjengelighetstilstand ut
+    fra `Date`/`Intl`/lokal tid kunne dermed bli undersøkt i et annet miljø
+    enn den promoterte rapporten oppgir.
+
+    Verdiene bindes her, samme grep som `MAKS_EKSEMPLER` og
+    `VERT_MONSTER`: to skrivemåter av samme påstand er ingen påstand."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "timezone_id=TIDSSONE" in kilde
+    assert "locale=LOCALE" in kilde
+    assert "viewport=dict(VIEWPORT)" in kilde
+
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    vp = f'{kjor.VIEWPORT["width"]}x{kjor.VIEWPORT["height"]}'
+    for felt, verdi in (("timezone", kjor.TIDSSONE), ("locale", kjor.LOCALE),
+                        ("viewport", vp)):
+        n = sjekk.count(f'"{felt}": "{verdi}"')
+        assert n == 2, \
+            f"serverkonteksten oppgir ikke {felt}={verdi} (fant {n})"
+    # ... og ingen ANNEN verdi står igjen for de samme feltene.
+    import re
+    for felt, verdi in (("timezone", kjor.TIDSSONE), ("locale", kjor.LOCALE),
+                        ("viewport", vp)):
+        funnet = set(re.findall(rf'"{felt}": "([^"]*)"', sjekk))
+        assert funnet == {verdi}, (felt, funnet)
+
+
 def test_varigheten_dekker_oppslaget_og_robots():
     """Codex P2: klokka startet etter oppslaget og robots-hentingen.
 

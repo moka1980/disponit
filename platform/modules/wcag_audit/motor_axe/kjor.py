@@ -93,6 +93,19 @@ LESEMETODER = frozenset({"GET", "HEAD"})
 MAKS_EKSEMPLER = 10
 MAKS_SELEKTOR = 200
 
+#: NETTLESERKONTEKSTEN SLIK DEN ATTESTERES (Codex P2). Serverkonteksten
+#: fører hver kjøring som `locale: nb`, `viewport: 1280x800` og
+#: `timezone: Europe/Oslo`, og de to første ble satt på kontekstobjektet
+#: — den siste ikke. Chromium brukte da containerens egen tidssone, så en
+#: side som rendrer innhold eller tilgjengelighetstilstand ut fra `Date`,
+#: `Intl` eller lokal tid kunne bli undersøkt i et annet miljø enn det den
+#: promoterte rapporten oppgir. Verdiene står her og bindes til
+#: serverkonteksten av en test, samme grep som `MAKS_EKSEMPLER` og
+#: `VERT_MONSTER`: to skrivemåter av samme påstand er ingen påstand.
+LOCALE = "nb"
+TIDSSONE = "Europe/Oslo"
+VIEWPORT = {"width": 1280, "height": 800}
+
 #: Navigasjonsfrist per side — romslig for et lokalt testnettsted, liten
 #: mot claim-fristen. Motoren som helhet drepes uansett av Kommandomotors
 #: vakthund; denne finnes for at ÉN hengende side skal gi `feilet` på den
@@ -581,8 +594,9 @@ def main() -> int:
         # rundt egressvakten, i en motor hvis hele kontrakt er at egressen
         # er lukket. Axe trenger dem ikke: kontrollen kjører mot DOM-en
         # slik den er lastet.
-        ctx = browser.new_context(viewport={"width": 1280, "height": 800},
-                                  locale="nb",
+        ctx = browser.new_context(viewport=dict(VIEWPORT),
+                                  locale=LOCALE,
+                                  timezone_id=TIDSSONE,
                                   service_workers="block",
                                   ignore_https_errors=tls_usikker)
 
