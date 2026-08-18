@@ -2741,6 +2741,88 @@ def test_odelagt_skjema_avvises_i_stedet_for_aa_kaste():
     assert feil and "JSON Schema" in feil[0]
 
 
+def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
+    """Codex P2: `check_schema` sier ingenting om at en `$ref` treffer noe.
+
+    `{"$ref": "#/$defs/missing"}` er et metagyldig skjema. Først når
+    validatoren FØLGER referansen — midt i en opplasting — slår oppslaget
+    feil, og da med et unntak, ikke en valideringsfeil: det gikk rett forbi
+    `valider` og ble en 500-er. Både skjemaraden og typebindingen er
+    immutable, så én slik registrering gjorde artefakttypen til en
+    permanent 500-er.
+
+    En referanse UT av dokumentet avvises også, og av strengere grunner enn
+    at oppslaget kan ryke: skjemaet er innholdsadressert, så samme udødelige
+    hash kunne validert to forskjellige ting i dag og i morgen — og
+    oppslaget er en nettverksforespørsel fra serveren, utløst av innsendt
+    innhold.
+
+    Kontroll: fjern `_referansefeil`-kallet i `skjemafeil` og
+    `_OPPSLAGSFEIL`-fangsten i `valider`, så kaster de to
+    `valider`-kallene under i stedet for å avvise.
+    """
+    from api.artefaktskjema import skjemafeil, valider
+
+    for skjema in ({"type": "object",
+                    "properties": {"a": {"$ref": "#/$defs/missing"}}},
+                   {"$ref": "#/$defs/borte"},
+                   {"$ref": "#finnes-ikke"},
+                   {"$defs": {"t": {"type": "string"}},
+                    "properties": {"a": {"$ref": "#/$defs/t/gikk-for-langt"}}},
+                   {"$ref": "https://et-sted.example/s.json"},
+                   {"properties": {"a": {"$ref": "annen-fil.json"}}}):
+        assert skjemafeil(skjema), skjema
+        # ... og kom raden likevel inn (eldre enn sjekken, eller satt inn
+        # med direkte SQL), er svaret fortsatt en feilliste.
+        feil = valider(skjema, {"a": 1})
+        assert feil and "skjema" in feil[0], skjema
+
+    # EKTE referanser står. Sjekken skal ikke gjøre et brukbart skjema
+    # uregistrerbart — den avvisningen er like udødelig som godkjenningen.
+    gyldig = {"$defs": {"t": {"type": "string"}}, "type": "object",
+              "properties": {"a": {"$ref": "#/$defs/t"}}}
+    assert not skjemafeil(gyldig)
+    assert not valider(gyldig, {"a": "x"})
+    assert valider(gyldig, {"a": 1})
+
+    # Rekursjon (`$ref` tilbake til roten), `$anchor` og `~1`-escapede
+    # pekere er alle lovlige oppslag inni dokumentet.
+    rekursiv = {"$defs": {"n": {"type": "object",
+                                "properties": {"barn": {"$ref": "#/$defs/n"}}}},
+                "$ref": "#/$defs/n"}
+    assert not skjemafeil(rekursiv)
+    assert not valider(rekursiv, {"barn": {"barn": {}}})
+    assert valider(rekursiv, {"barn": 3})
+    anker = {"$defs": {"t": {"$anchor": "T", "type": "string"}},
+             "properties": {"a": {"$ref": "#T"}}}
+    assert not skjemafeil(anker)
+    assert not valider(anker, {"a": "x"})
+    assert not skjemafeil({"$defs": {"a/b": {"type": "string"}},
+                           "properties": {"x": {"$ref": "#/$defs/a~1b"}}})
+    # Rot-`$id` flytter ingen base og står; en `$id` UNDER roten gjør det,
+    # og da sier sjekken fra i stedet for å måle noe annet enn validatoren.
+    assert not skjemafeil({"$id": "https://a.example/rot",
+                           "$defs": {"t": {"type": "string"}},
+                           "properties": {"a": {"$ref": "#/$defs/t"}}})
+    assert skjemafeil({"$id": "https://a.example/rot",
+                       "$defs": {"t": {"$id": "under"}}})
+
+    # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
+    # JSON ville avvist disse to — og den falske avvisningen er like
+    # endelig som en falsk godkjenning, siden raden er udødelig.
+    konst = {"properties": {"a": {"const": {"$ref": "https://x.example/y"}}}}
+    assert not skjemafeil(konst)
+    assert not valider(konst, {"a": {"$ref": "https://x.example/y"}})
+    feltnavn = {"properties": {"$ref": {"type": "string"}}}
+    assert not skjemafeil(feltnavn)
+    assert not valider(feltnavn, {"$ref": "x"})
+
+    # Registreringsveien kjører nøyaktig denne sjekken, så det plattformen
+    # allerede har gjort udødelig må fortsatt passere.
+    from modules.wcag_audit import rapportskjema
+    assert not skjemafeil(rapportskjema.SKJEMA)
+
+
 @pg
 def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
     """Codex P2, runde 2: metasjekken lå bare i WCAG-deploy-skriptet, altså

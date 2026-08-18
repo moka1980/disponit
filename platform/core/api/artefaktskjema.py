@@ -51,6 +51,38 @@ _RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}"
 FORMATSJEKKER = copy.deepcopy(jsonschema.Draft202012Validator.FORMAT_CHECKER)
 
 
+def _oppslagsfeilklasser() -> tuple:
+    """Unntakene `iter_errors` kaster når en `$ref` ikke lar seg slå opp.
+
+    Klassen flyttet i jsonschema 4.18: `RefResolutionError` ble til
+    `referencing.exceptions.Unresolvable`, pakket som
+    `jsonschema.exceptions._WrappedReferencingError`. Vi slår opp begge
+    ved NAVN i stedet for å importere én av dem, fordi en `ImportError`
+    her ville tatt hele modulen ned ved oppstart — og et pinnet
+    versjonsvalg i en `except`-linje er nettopp den slags stille
+    avhengighet som ryker ved neste `pip install`.
+
+    Blir tuppelen tom, faller `valider` tilbake til dagens oppførsel
+    (unntaket slipper ut). Det er det ærlige utfallet: en fangst av
+    `Exception` ville skjult ekte feil i validatoren som avviste
+    artefakter.
+    """
+    klasser = [k for k in
+               (getattr(jsonschema.exceptions, navn, None) for navn in
+                ("RefResolutionError", "_WrappedReferencingError"))
+               if isinstance(k, type) and issubclass(k, Exception)]
+    try:
+        from referencing.exceptions import Unresolvable
+    except ImportError:
+        pass
+    else:
+        klasser.append(Unresolvable)
+    return tuple(klasser)
+
+
+_OPPSLAGSFEIL = _oppslagsfeilklasser()
+
+
 @FORMATSJEKKER.checks("date-time")
 def _er_rfc3339(verdi) -> bool:
     """Typen er skjemaets jobb — formatet uttaler seg kun om strenger."""
@@ -78,6 +110,152 @@ def hent_skjema(conn: psycopg.Connection, artefakttype: str) -> dict | None:
     return rad[0] if rad else None
 
 
+#: Nøkkelord hvis verdi ER et delskjema (lista `items` fra eldre drafter
+#: håndteres av samme gren — den er ufarlig å tåle).
+_SKJEMA_NOKKEL = frozenset({
+    "additionalProperties", "additionalItems", "items", "contains", "not",
+    "if", "then", "else", "propertyNames", "unevaluatedItems",
+    "unevaluatedProperties", "contentSchema"})
+#: Nøkkelord hvis verdi er en LISTE av delskjemaer.
+_SKJEMA_LISTE = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
+#: Nøkkelord hvis verdi er et KART fra navn til delskjema. Navnene er
+#: nettopp navn — de gås aldri inn i.
+_SKJEMA_KART = frozenset({
+    "properties", "patternProperties", "$defs", "definitions",
+    "dependentSchemas"})
+
+
+def _delskjemaer(skjema):
+    """Hver SKJEMAPOSISJON i dokumentet, dokumentet selv inkludert.
+
+    Vandringen er nøkkelordstyrt, ikke en blind rekursjon over all JSON, og
+    forskjellen er ikke akademisk. `{"const": {"$ref": "..."}}` er DATA:
+    `$ref`-en der er en verdi innholdet skal være lik, ikke en referanse
+    validatoren noen gang slår opp. En blind vandring ville avvist det
+    skjemaet ved registrering — og siden både skjemaraden og typebindingen
+    er udødelige, er en falsk avvisning her like endelig som en falsk
+    godkjenning.
+
+    Ukjente nøkkelord gås heller ikke inn i: for Draft 2020-12 er de
+    ANNOTASJONER, og en `$ref` inne i en annotasjon evalueres aldri.
+    """
+    ko = [skjema]
+    while ko:
+        s = ko.pop()
+        # `true`/`false` er også skjemaer — de bare inneholder ingenting.
+        if not isinstance(s, dict):
+            continue
+        yield s
+        for nokkel, verdi in s.items():
+            if nokkel in _SKJEMA_NOKKEL:
+                ko.extend(verdi if isinstance(verdi, list) else [verdi])
+            elif nokkel in _SKJEMA_LISTE and isinstance(verdi, list):
+                ko.extend(verdi)
+            elif nokkel in _SKJEMA_KART and isinstance(verdi, dict):
+                ko.extend(verdi.values())
+
+
+def _peker_treffer(dokument, fragment: str) -> bool:
+    """Løser en JSON-peker (RFC 6901) mot dokumentet. -> traff den noe?
+
+    Fragmentet prosentdekodes FØR `~1`/`~0`, i den rekkefølgen RFC 6901 §6
+    krever: `~` er `%7E` på veien inn, og gjøres de motsatt vei blir et
+    ærlig `~0` lest som et bokstavelig `~`.
+    """
+    from urllib.parse import unquote
+    node = dokument
+    for raa in fragment.split("/")[1:]:
+        ledd = unquote(raa).replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict):
+            if ledd not in node:
+                return False
+            node = node[ledd]
+        elif isinstance(node, list):
+            # Peker inn i en liste må være et kanonisk indekstall.
+            if not ledd.isdigit() or (len(ledd) > 1 and ledd[0] == "0"):
+                return False
+            i = int(ledd)
+            if i >= len(node):
+                return False
+            node = node[i]
+        else:
+            return False
+    return True
+
+
+def _referansefeil(skjema) -> list[str]:
+    """-> feilliste for `$ref`/`$dynamicRef` som ikke lar seg slå opp.
+
+    Codex P2: METASJEKKEN SIER INGENTING OM REFERANSER. Metaskjemaet
+    krever bare at `$ref` er en URI-referanse-STRENG, så
+    `{"$ref": "#/$defs/missing"}` passerer `check_schema` glatt. Først
+    `iter_errors` — altså midt i en opplasting — slår oppslaget feil, og
+    da med et unntak, ikke en valideringsfeil: det går rett forbi
+    `valider`, ut av `_artefakt_upload` og blir en 500-er. Fordi både
+    skjemaraden og typebindingen er immutable, ville HVER opplasting av
+    den artefakttypen vært en 500-er for alltid.
+
+    Det er nøyaktig samme hull som `{"type": "strng"}` — et skjema som
+    metavalideres, men ikke lar seg BRUKE — og svaret er det samme:
+    fang det på den delte registreringsveien, før den udødelige raden
+    finnes, og gjenta det i `valider` for rader som kom inn utenom.
+
+    EN REFERANSE UT AV DOKUMENTET AVVISES (ikke bare de som ryker).
+    `{"$ref": "https://et-sted.example/s.json"}` er ikke bare et
+    oppslag som kan feile; den er to ting til, og begge er verre:
+
+      * Skjemaet er INNHOLDSADRESSERT. Hashen dekker bytene i raden, og
+        de bytene sier ingenting om hva som ligger på den andre enden.
+        Samme udødelige hash kunne da validert to forskjellige ting i
+        dag og i morgen, og hele poenget med å adressere skjemaet på
+        innholdet er at det ikke skal kunne skje.
+      * Oppslaget er en NETTVERKSFORESPØRSEL fra serveren, utløst av
+        innsendt innhold, mot en URL en administrator skrev en gang.
+        Validering av et artefakt skal ikke nå ut av maskinen.
+
+    Et registrert artefaktskjema er derfor SELVSTENDIG: alt det viser
+    til, viser det til inni seg selv.
+
+    NESTET `$id` AVVISES av samme ærlighetsgrunn som blanktegnvakten i
+    036 er dokumentert som nødvendig-men-ikke-tilstrekkelig: en `$id`
+    under roten flytter basen lokale pekere løses mot, og da måler
+    sjekken under noe annet enn validatoren gjør. En sjekk som ikke kan
+    følge omadresseringen skal si fra, ikke gjette. Rot-`$id` flytter
+    ingenting og står.
+    """
+    feil = []
+    ankre = set()
+    nestet_id = False
+    delskjemaer = list(_delskjemaer(skjema))
+    for i, s in enumerate(delskjemaer):
+        for nokkel in ("$anchor", "$dynamicAnchor"):
+            if isinstance(s.get(nokkel), str):
+                ankre.add(s[nokkel])
+        if i and isinstance(s.get("$id"), str):
+            nestet_id = True
+    if nestet_id:
+        return ["<skjema>: `$id` under roten — lokale referanser kan ikke"
+                " kontrolleres mot en flyttet base"]
+    for s in delskjemaer:
+        for nokkel in ("$ref", "$dynamicRef"):
+            ref = s.get(nokkel)
+            if not isinstance(ref, str):
+                continue
+            if not ref.startswith("#"):
+                feil.append(f"<skjema>: `{nokkel}` peker ut av dokumentet"
+                            f" — {ref[:80]}")
+            elif ref == "#":
+                continue
+            elif ref.startswith("#/"):
+                if not _peker_treffer(skjema, ref[1:]):
+                    feil.append(f"<skjema>: `{nokkel}` treffer ingenting"
+                                f" — {ref[:80]}")
+            elif ref[1:] not in ankre:
+                feil.append(f"<skjema>: `{nokkel}` treffer ingen `$anchor`"
+                            f" — {ref[:80]}")
+    return feil
+
+
 def skjemafeil(skjema) -> list[str]:
     """-> feilliste (tom = gyldig Draft 2020-12-skjema). META-sjekken.
 
@@ -94,12 +272,18 @@ def skjemafeil(skjema) -> list[str]:
     `valider` under kjører den før innhold måles, slik at et skjema som
     likevel skulle ha kommet inn gir en ærlig avvisning i stedet for en
     500-er.
+
+    REFERANSENE ER DEL AV DEN SAMME SJEKKEN (Codex P2). `check_schema`
+    ser bare at `$ref` er en streng; om den treffer noe, vises først når
+    validatoren følger den midt i en opplasting. Se `_referansefeil` —
+    den står her, i den delte sjekken, og ikke hos én kaller, av samme
+    grunn som metasjekken selv gjør det.
     """
     try:
         jsonschema.Draft202012Validator.check_schema(skjema)
     except jsonschema.exceptions.SchemaError as e:
         return [f"<skjema>: ugyldig JSON Schema — {e.message[:160]}"]
-    return []
+    return _referansefeil(skjema)
 
 
 class Skjemaugyldig(ValueError):
@@ -200,14 +384,28 @@ def valider(skjema: dict, innhold: dict) -> list[str]:
     `_bruddkode`."""
     # Et ødelagt skjema måler ingenting: uten denne linjen kaster
     # `iter_errors` under (UnknownType) og opplastningen blir en 500-er i
-    # stedet for en avvisning.
+    # stedet for en avvisning. Den fanger nå også referanser som ikke lar
+    # seg slå opp (Codex P2) — se `_referansefeil`.
     feil = skjemafeil(skjema)
     if feil:
         return feil
     validator = jsonschema.Draft202012Validator(
         skjema, format_checker=FORMATSJEKKER)
-    for e in sorted(validator.iter_errors(innhold),
-                    key=lambda e: list(e.absolute_path)):
+    # OPPSLAGSFEIL ER EN AVVISNING, IKKE EN 500-ER (Codex P2). `skjemafeil`
+    # over skal ha tatt dem alle, og i drift gjør den det. Fangsten står
+    # likevel, av samme grunn som SQL-siden har sin egen vakt: raden kan
+    # være eldre enn sjekken, eller satt inn med direkte SQL av en rolle
+    # som fortsatt har EXECUTE — og fordi raden er udødelig, ville ETT
+    # slikt skjema gjort artefakttypen til en permanent 500-er.
+    # `iter_errors` er lat, så oppslaget skjer først når innholdet når
+    # frem til grenen; en tom feilliste er derfor ikke noe bevis på at
+    # referansen finnes.
+    try:
+        avvik = sorted(validator.iter_errors(innhold),
+                       key=lambda e: list(e.absolute_path))
+    except _OPPSLAGSFEIL as e:
+        return [f"<skjema>: referanse lar seg ikke slå opp — {str(e)[:160]}"]
+    for e in avvik:
         feil.append(f"{_sti(e)}: {_bruddkode(e)}")
         if len(feil) >= 20:
             feil.append("… (avkortet)")
