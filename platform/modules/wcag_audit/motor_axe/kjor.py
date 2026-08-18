@@ -371,7 +371,21 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str, str]:
     etter grensen forsvant i stillhet, og crawleren hentet stier målet
     eksplisitt hadde forbudt — nettopp det taket ikke kan avgjøre noe
     om. Vi leser derfor ÉN byte forbi grensen, og finnes den, kaster vi
-    `_Avkortet` i stedet for å tolke prefikset."""
+    `_Avkortet` i stedet for å tolke prefikset.
+
+    TAKET GJELDER BARE KROPPEN VI FAKTISK TOLKER (Codex P2, runde 10).
+    Lesingen skjedde FØR `Location` ble hentet, så en helt vanlig 301 med
+    en stor kropp — eller en som strømmer uten å ta slutt — ga `_Avkortet`
+    eller tidsavbrudd på et svar vi bare skulle ha lest ÉN header av.
+    `_robots` leste det som «robots ikke lest», og et nettstedsoppdrag
+    falt til én side på grunn av en kropp som per definisjon ikke bærer
+    policyen. Statuslinjen og `Location` leses derfor først, og kroppen
+    bare når status er 2xx.
+
+    At 3xx/4xx/5xx-kroppen står ulest svekker ingenting: `_robots` bruker
+    den ikke. Et 4xx ER svaret «ingen uttalte begrensninger» (RFC 9309
+    §2.3.1.3), og det svaret ligger i statuslinjen — en feilside på hundre
+    kilobyte gjør det verken mer eller mindre definitivt."""
     u = urllib.parse.urlsplit(url)
     port = u.port or (443 if u.scheme == "https" else 80)
     if u.scheme == "https":
@@ -393,10 +407,13 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str, str]:
         conn.request("GET", (u.path or "/") + (f"?{u.query}" if u.query
                                                else ""))
         svar = conn.getresponse()
+        plassering = (svar.getheader("location") or "").strip()
+        if not 200 <= svar.status < 300:
+            # Kroppen er ikke policyen, og leses ikke — se docstringen.
+            return svar.status, "", plassering
         raa = svar.read(LESETAK + 1)
         if len(raa) > LESETAK:
             raise _Avkortet(url)
-        plassering = (svar.getheader("location") or "").strip()
         return svar.status, raa.decode("utf-8", "replace"), plassering
     finally:
         conn.close()

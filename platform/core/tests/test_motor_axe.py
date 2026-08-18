@@ -438,6 +438,75 @@ def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
 
 
+def test_robots_leser_location_for_lesetaket_brukes(monkeypatch):
+    """Codex P2, runde 10: taket ble brukt på en kropp vi ikke skal tolke.
+
+    `_hent` leste kroppen FØR den hentet `Location`, så en helt vanlig 301
+    med stor kropp ga `_Avkortet` — og `_robots` leste det som «robots
+    ikke lest», altså ingen crawl. Et nettstedsoppdrag falt til én side på
+    grunn av en feilside som per definisjon ikke bærer policyen."""
+    POLICY = "User-agent: *\nDisallow: /privat/\n"
+
+    class Svar:
+        def __init__(self, status, kropp, plassering):
+            self.status = status
+            self.data = kropp
+            self._plassering = plassering
+            self.lest = False
+
+        def read(self, n):
+            self.lest = True
+            return self.data[:n]
+
+        def getheader(self, navn, standard=None):
+            if navn.lower() == "location":
+                return self._plassering
+            return standard
+
+    svar = []
+
+    class Conn:
+        neste = []
+
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            s = Svar(*Conn.neste.pop(0))
+            svar.append(s)
+            return s
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(kjor.http.client, "HTTPSConnection", Conn)
+
+    # 301 med en kropp langt over taket, så policyen ett hopp unna.
+    Conn.neste = [(301, b"x" * (kjor.LESETAK * 4), "/policy.txt"),
+                  (200, POLICY.encode(), None)]
+    regler, lov = kjor._robots("https://m.example", "1.2.3.4")
+    assert lov is True and [n for _, n, _ in regler] == [8]
+    # Kroppen på omdirigeringen ble aldri lest — det er nettopp det som
+    # gjør at en kropp uten ende heller ikke kan henge hentingen.
+    assert svar[0].lest is False and svar[1].lest is True
+
+    # Taket gjelder fortsatt der det betyr noe: det ENDELIGE 2xx-svaret.
+    svar.clear()
+    Conn.neste = [(301, b"", "/policy.txt"),
+                  (200, b"x" * (kjor.LESETAK + 1), None)]
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+    # Et 4xx er svaret «ingen uttalte begrensninger» (RFC 9309 §2.3.1.3),
+    # og det svaret ligger i statuslinjen — ikke i feilsidens størrelse.
+    svar.clear()
+    Conn.neste = [(404, b"x" * (kjor.LESETAK * 4), None)]
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
+    assert svar[0].lest is False
+
+
 def test_enkeltside_henter_ikke_robots():
     """Codex P2: en `enkeltside`-kontroll skal ikke røre `/robots.txt`.
 
