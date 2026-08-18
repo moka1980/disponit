@@ -481,9 +481,19 @@ def main() -> int:
     mal_vert = p.hostname or ""
     mal_pin = _pin_mal_ip(mal_vert, p.port or (443 if p.scheme == "https"
                                                else 80), vertskart)
-    disallow, krype_lov = _robots(origin, mal_pin, tls_kontekst)
-    if maks_sider > 1 and not krype_lov:
-        maks_sider = 1          # robots 5xx: kun den bestilte siden
+    # ROBOTS HENTES BARE NÅR VI SKAL CRAWLE (Codex P2). Kallet var
+    # ubetinget, så HVER `enkeltside`-kontroll sendte en ekstra GET mot
+    # `/robots.txt` — en forespørsel som per definisjon ikke kunne endre
+    # noe (`maks_sider == 1`, ingen lenker følges). En bestilling
+    # autorisert og bokført som ÉN sides inspeksjon ble dermed to
+    # utenfra synlige treff på kundens nettsted, mot en sti kunden aldri
+    # pekte på.
+    disallow: list = []
+    krype_lov = True
+    if maks_sider > 1:
+        disallow, krype_lov = _robots(origin, mal_pin, tls_kontekst)
+        if not krype_lov:
+            maks_sider = 1      # robots 5xx: kun den bestilte siden
     #: Crawler vi i det hele tatt? Robots-reglene styrer hvilke sider vi
     #: HENTER utover den bestilte, så de gjelder nøyaktig i denne modusen —
     #: både for lenkene vi køer og for omdirigeringene vi følger.

@@ -155,6 +155,25 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
 
 
+def test_enkeltside_henter_ikke_robots():
+    """Codex P2: en `enkeltside`-kontroll skal ikke røre `/robots.txt`.
+
+    Kallet var ubetinget, så hver enkeltside-bestilling sendte en ekstra
+    GET mot en sti kunden aldri pekte på — en forespørsel som per
+    definisjon ikke kunne endre noe, siden `maks_sider == 1` og ingen
+    lenker følges. Bestillingen var autorisert og bokført som ÉN sides
+    inspeksjon, men ble to utenfra synlige treff.
+
+    Hentingen lever inne i `main()` bak playwright, så porten måles på
+    kilden: `_robots` skal stå under `if maks_sider > 1`."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert kilde.count("_robots(origin") == 1
+    hode = kilde.split("_robots(origin", 1)[0]
+    assert hode.rstrip().endswith("disallow, krype_lov ="), hode[-120:]
+    assert hode.rstrip().rsplit("\n", 2)[1].strip() == "if maks_sider > 1:", \
+        "robots-hentingen står ikke bak crawl-betingelsen"
+
+
 def test_lenkenormalisering_er_lukket():
     n = kjor._normaliser_lenke
     o = "http://127.0.0.1:8093"
