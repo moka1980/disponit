@@ -3,10 +3,12 @@
 id: m02_revisjonslogg
 navn: Revisjonslogg (M-2)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-# Aksepten (RUTINER.md pkt. 6) er claude.ai sitt steg. Denne PR-en oppretter
-# manifestet og fester evidensen; aktiveringen er en egen beslutning.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+# Aktivert sammen med wcag_audit-aksepten: registeret krever at en aktiv
+# moduls avhengigheter selv er aktive, og m02 er wcag_audits skrivevei til
+# evidenskjeden. Evidensen sto alt ferdig (delt m01-evidens, alle punkter
+# ja); loggen har vært i drift på staging siden m01-kjeden. Speiler m01.
+driftstilstand: staging        # ikke_i_drift | staging | produksjon
 avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
 kjerne: platform/core/policy_validator/audit.py
 i18n_prefiks: m02

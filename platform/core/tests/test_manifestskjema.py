@@ -902,8 +902,9 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     """
     from registry import les_manifester, valider
     st = valider(les_manifester(MODULROT))
-    assert st.aktive == ["m01_policy"], st
-    assert st.i_drift == ["m01_policy"], (
+    # wcag_audit-aksepten aktiverte m02 (avhengighet) og wcag_audit selv.
+    assert st.aktive == ["m01_policy", "m02_revisjonslogg", "wcag_audit"], st
+    assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
