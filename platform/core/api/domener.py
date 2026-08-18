@@ -31,6 +31,16 @@ from .bestilling import _HOSTNAME
 #: sonefil, umulig å gjette, og trimmes robust av bekreftelsens btrim.
 _TOKENBYTES = 32
 
+#: Underetiketten utfordrings-TXT-en skal ligge på (Codex P1). DUPLISERT, ikke
+#: importert: `drift` ligger ved SIDEN av `platform/core` og er ikke på
+#: API-ens sti — samme grense som holder m37/ ute av api/. Invarianten holdes
+#: derfor av en PORT i stedet for av et import: `test_domene_selvbetjening`
+#: krever at `txt_navn` i dette svaret er nøyaktig
+#: `domenerevalidering.utfordringsnavn(hostname)`. Endres den ene uten den
+#: andre, faller porten — og det er hele poenget, for i drift ville uenigheten
+#: bare vist seg som domener som aldri ble verifisert.
+_UTFORDRINGSPREFIKS = "_disponit-challenge"
+
 
 def _rader(conn, tenant: str) -> list[dict]:
     rader = conn.execute(
@@ -180,7 +190,21 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
                                hostname=hostname)
         return kanonisk_json({
             "hostname": hostname,
-            "txt_navn": hostname,
+            # OPPSKRIFTEN MÅ KUNNE FØLGES (Codex P1). Navnet lå før på selve
+            # vertsnavnet, og for et typisk `www.dittfirma.no` er det et navn
+            # kunden ikke KAN legge en TXT-post på: eieren av et CNAME kan
+            # ikke ha andre poster ved siden av seg, og oppslaget følger
+            # aliaset til leverandørens sone. Selvbetjeningen ber alltid om
+            # nøyaktig vertsnavnet (`wildcard=false`), så apex var ingen vei
+            # rundt — slike nettsteder sto permanent uverifisert med en
+            # oppskrift som så riktig ut.
+            #
+            # Underetiketten ligger i kundens EGEN sone også når vertsnavnet
+            # er et alias. Navnet bygges av `UTFORDRINGSPREFIKS`-formen, som
+            # arbeideren eier og en port her holder dette svaret mot: leter
+            # arbeideren ett sted og kunden publiserer et annet, står domenet
+            # uverifisert uten at noe sier hvorfor.
+            "txt_navn": f"{_UTFORDRINGSPREFIKS}.{hostname}",
             "txt_verdi": token,
             "gyldig_dager": 7,
             "request_id": rid,

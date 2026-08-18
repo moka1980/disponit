@@ -222,6 +222,69 @@ def enig_svar(resolvere: Sequence[Resolver],
     return frozenset(svar[0])
 
 
+#: EIERNAVNET UTFORDRINGEN LIGGER PÅ (Codex P1).
+#:
+#: Beviset lå før på selve vertsnavnet. For et typisk `www.dittfirma.no` er
+#: det et navn kunden IKKE kan legge en TXT-post på: eieren av et CNAME kan
+#: per RFC 1034 §3.6.2 ikke ha andre poster ved siden av seg, og et rekursivt
+#: TXT-oppslag følger aliaset til målsonen — en leverandørs sone, ikke
+#: kundens. Selvbetjeningen ber alltid om NØYAKTIG vertsnavnet
+#: (`wildcard=false`), så å bevise apex i stedet er ingen vei rundt: slike
+#: nettsteder kunne aldri blitt verifisert.
+#:
+#: Et eget underetikett-navn kan alltid bære posten, og ligger i kundens egen
+#: sone selv når vertsnavnet er et alias. Understreken er med vilje: `_`-navn
+#: er reservert for tjenestebruk (RFC 8552) og kolliderer ikke med et
+#: vertsnavn noen har.
+UTFORDRINGSPREFIKS = "_disponit-challenge"
+
+
+def utfordringsnavn(hostname: str) -> str:
+    """Eiernavnet utfordrings-TXT-en skal publiseres på for `hostname`.
+
+    ÉN kilde til denne sannheten, brukt av alle tre som må være enige om den:
+    utstedelsen (`POST /v1/domener` svarer med navnet), førstegangs-
+    verifiseringen og revalideringen. Blir de uenige, publiserer kunden på ett
+    navn og arbeideren leter på et annet — og domenet står «ikke verifisert»
+    uten at noe sier hvorfor. Porten som holder API-svaret mot denne
+    funksjonen ligger i `test_domene_selvbetjening`.
+    """
+    return f"{UTFORDRINGSPREFIKS}.{hostname}"
+
+
+def utfordringssvar(resolvere: Sequence[Resolver], hostname: str, *,
+                    ogsa_vertsnavnet: bool) -> frozenset[str] | None:
+    """`enig_svar` for utfordringsnavnet — og for ARVEN, når den gjelder.
+
+    `ogsa_vertsnavnet` skiller de to veiene inn:
+
+    * FØRSTEGANGSVERIFISERINGEN (039) er ny med denne endringen. Kontrakten
+      er `txt_navn` i utstedelsessvaret, og det navnet er utfordringsnavnet —
+      det finnes ingen kunde som har publisert noe annet sted. Ett oppslag per
+      rad, så tidsbudsjettet bak `VERIFISERING_TAK` står urørt.
+    * REVALIDERINGEN møter rader som ble verifisert FØR dette navnet fantes,
+      med beviset på det bare vertsnavnet. Leter den bare på det nye navnet,
+      ville hver eneste av dem mistet autorisasjonen ved neste kjøring. Derfor
+      slås begge opp og mengdene slås sammen. Det svekker ingenting: beviset
+      er en sha256 databasen holder mot `challenge_token_hash`, så et ekstra
+      navn i søket kan ikke fabrikere et treff — det kan bare finne det der
+      det faktisk ble lagt.
+
+    Er ETT av oppslagene uenig/nede mens det andre svarer, brukes svaret som
+    kom. «Vi fikk ikke kontakt med det ene navnet» skal ikke kunne rive et
+    bevis vi faktisk fant på det andre. Er BEGGE None, er svaret None —
+    uenighet, ikke «ingen post».
+    """
+    navn = [utfordringsnavn(hostname)]
+    if ogsa_vertsnavnet:
+        navn.append(hostname)
+    funnet = [s for s in (enig_svar(resolvere, n) for n in navn)
+              if s is not None]
+    if not funnet:
+        return None
+    return frozenset().union(*funnet)
+
+
 def enige(resolvere: Sequence[Resolver], hostname: str) -> bool:
     """Er resolverne enige? Ren enighetsprøve — sier INGENTING om kontroll.
 
@@ -338,7 +401,10 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
         aktive += 1
         topp = max(topp, aktive)
         try:
-            return rad, enig_svar(resolvere, rad[1])
+            # ARVEN TAS MED (Codex P1): rader som ble verifisert før
+            # utfordringsnavnet fantes, har beviset på det bare vertsnavnet.
+            return rad, utfordringssvar(resolvere, rad[1],
+                                        ogsa_vertsnavnet=True)
         finally:
             aktive -= 1
 
@@ -574,9 +640,17 @@ def _verifiser_rader(conn, rader, resolvere, aktor, res: dict,
     frist = time.monotonic() + frist_s
     pool = ThreadPoolExecutor(max_workers=samtidighet)
     try:
-        # `enig_svar` leses opp ved submit, ikke ved import: testene bytter den
-        # ut på modulen, og en tidlig binding ville gjort dem tannløse.
-        oppslag = {pool.submit(enig_svar, resolvere, h): (t, h)
+        # `utfordringssvar` slår opp UTFORDRINGSNAVNET (Codex P1), ikke
+        # vertsnavnet: det er navnet utstedelsen ga kunden, og det eneste hun
+        # kan legge en TXT-post på når vertsnavnet er et CNAME. Ett oppslag per
+        # rad — arven under `ogsa_vertsnavnet` hører til revalideringen, der
+        # det finnes rader eldre enn navnet; her finnes det ingen.
+        #
+        # `enig_svar` leses opp inne i `utfordringssvar`, altså ved kall og
+        # ikke ved import: testene bytter den ut på modulen, og en tidlig
+        # binding ville gjort dem tannløse.
+        oppslag = {pool.submit(utfordringssvar, resolvere, h,
+                               ogsa_vertsnavnet=False): (t, h)
                    for t, h in rader}
         behandlet = 0
         for ferdig in as_completed(oppslag):

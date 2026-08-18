@@ -270,6 +270,7 @@ def test_http_utsted_og_liste(migrator, klient):
     """POST /v1/domener → 201 med TXT-verdien (vist ÉN gang; kun hashen i
     basen); GET /v1/domener viser raden; lukket kropp og scope."""
     from api import sesjon as sesjonmodul
+    from drift import domenerevalidering as dr
     cookie, csrf = _adminsesjon()
     vert = f"selv{secrets.token_hex(3)}.example"
     r = klient.post("/v1/domener", json={"hostname": vert.upper()},
@@ -277,7 +278,17 @@ def test_http_utsted_og_liste(migrator, klient):
                     cookies={sesjonmodul.C_SESJON: cookie})
     assert r.status_code == 201, r.text
     svar = r.json()
-    assert svar["txt_navn"] == vert and len(svar["txt_verdi"]) == 64
+    assert len(svar["txt_verdi"]) == 64
+    # PORTEN MELLOM UTSTEDELSEN OG ARBEIDEREN (Codex P1). Oppskriften kunden
+    # får, og navnet arbeideren slår opp, er to konstanter på hver sin side av
+    # api/-grensen — `drift` ligger ved siden av `platform/core` og kan ikke
+    # importeres derfra. Uenighet mellom dem viser seg ikke som en feil noe
+    # sted: kunden publiserer, arbeideren finner ingenting, og domenet står
+    # «ikke verifisert» i det uendelige. Derfor måles de mot hverandre her.
+    assert svar["txt_navn"] == dr.utfordringsnavn(vert)
+    assert svar["txt_navn"] != vert, (
+        "utfordringen ligger på vertsnavnet igjen — et CNAME-vertsnavn kan "
+        "ikke bære en TXT-post ved siden av aliaset")
     _sett_kontekst(migrator, TENANT)
     h = migrator.execute(
         "SELECT challenge_token_hash, status FROM domenekontroll"
@@ -372,7 +383,12 @@ def test_verifiseringspasset_ende_til_ende(migrator, klient):
     token = r.json()["txt_verdi"]
 
     def fake_enig(resolvere, hostname):
-        return frozenset({token, "v=spf1 -all"}) if hostname == vert else None
+        # Sonen svarer BARE på utfordringsnavnet (Codex P1) — nøyaktig som en
+        # kunde med et CNAME-vertsnavn, der selve vertsnavnet ikke kan bære
+        # posten. Slår passet opp vertsnavnet, får det None og verifiserer
+        # ingenting; det er mutasjonen denne testen dreper.
+        return (frozenset({token, "v=spf1 -all"})
+                if hostname == dr.utfordringsnavn(vert) else None)
 
     ekte = dr.enig_svar
     dr.enig_svar = fake_enig
@@ -1039,6 +1055,81 @@ class _Tellekonn:
         pass
 
 
+def test_utfordringen_slaas_opp_paa_et_navn_kunden_kan_eie(monkeypatch):
+    """Codex P1: en CNAME-eier kan ikke bære en TXT-post.
+
+    `www.dittfirma.no` peker typisk på en leverandør. Eieren av et CNAME kan
+    per RFC 1034 §3.6.2 ikke ha andre poster ved siden av seg, og et rekursivt
+    TXT-oppslag på navnet følger aliaset inn i leverandørens sone. Kunden har
+    da ingen måte å legge ut beviset på — og selvbetjeningen ber alltid om
+    NØYAKTIG vertsnavnet (`wildcard=false`), så apex er ingen vei rundt.
+    Slike nettsteder sto permanent uverifisert med en oppskrift som så riktig
+    ut.
+
+    De to veiene inn har hvert sitt krav, og testen måler begge:
+
+    * FØRSTEGANGSVERIFISERINGEN slår opp utfordringsnavnet, og BARE det. Ett
+      oppslag per rad — tidsbudsjettet bak `VERIFISERING_TAK` er utledet av
+      nettopp det tallet.
+    * REVALIDERINGEN må i tillegg tåle ARVEN: rader som ble verifisert før
+      navnet fantes, har beviset på det bare vertsnavnet, og ville mistet
+      autorisasjonen ved neste kjøring om bare det nye navnet ble slått opp.
+
+    MUTASJONEN SOM DREPER DENNE: slå opp `hostname` i passet igjen, eller
+    dropp `ogsa_vertsnavnet` i revalideringen.
+    """
+    from drift import domenerevalidering as dr
+
+    assert dr.utfordringsnavn("www.dittfirma.no") == \
+        "_disponit-challenge.www.dittfirma.no"
+
+    # 1) Passet: bare utfordringsnavnet slås opp.
+    spurt: list[str] = []
+
+    def registrer(resolvere, hostname):
+        spurt.append(hostname)
+        return frozenset({"bevis"})
+
+    monkeypatch.setattr(dr, "enig_svar", registrer)
+    dr.kjor_ventende(_Tellekonn([("t", "www.dittfirma.no")]), resolvere=[])
+    assert spurt == ["_disponit-challenge.www.dittfirma.no"], spurt
+
+    # 2) Sonen svarer BARE på utfordringsnavnet — kundens virkelighet med et
+    #    CNAME-vertsnavn. Passet skal likevel finne beviset.
+    monkeypatch.setattr(
+        dr, "enig_svar",
+        lambda resolvere, h: (frozenset({"bevis"})
+                              if h.startswith(dr.UTFORDRINGSPREFIKS) else None))
+    konn = _Tellekonn([("t", "www.dittfirma.no")])
+    res = dr.kjor_ventende(konn, resolvere=[])
+    assert res["verifisert"] == 1, res
+    assert konn.skrevet == ["www.dittfirma.no"], \
+        "raden skrives på VERTSNAVNET; utfordringsnavnet er bare oppslaget"
+
+    # 3) Arven: beviset ligger bare på det bare vertsnavnet (rad verifisert
+    #    før navnet fantes). Revalideringen tar det med, passet gjør det ikke.
+    monkeypatch.setattr(
+        dr, "enig_svar",
+        lambda resolvere, h: (frozenset({"arv"})
+                              if h == "gammel.example" else frozenset()))
+    assert dr.utfordringssvar([], "gammel.example",
+                              ogsa_vertsnavnet=True) == frozenset({"arv"})
+    assert dr.utfordringssvar([], "gammel.example",
+                              ogsa_vertsnavnet=False) == frozenset()
+
+    # 4) Ett navn nede river ikke et bevis vi FANT på det andre — men er
+    #    begge uten svar, er svaret uenighet, ikke «ingen post».
+    monkeypatch.setattr(
+        dr, "enig_svar",
+        lambda resolvere, h: (None if h.startswith(dr.UTFORDRINGSPREFIKS)
+                              else frozenset({"arv"})))
+    assert dr.utfordringssvar([], "gammel.example",
+                              ogsa_vertsnavnet=True) == frozenset({"arv"})
+    monkeypatch.setattr(dr, "enig_svar", lambda resolvere, h: None)
+    assert dr.utfordringssvar([], "gammel.example",
+                              ogsa_vertsnavnet=True) is None
+
+
 def test_trege_hostnames_sulter_ikke_de_friske(monkeypatch):
     """Codex P2: passet var SERIELT — opptil 200 navn etter hverandre, hvert
     med resolverkall som har fem sekunders levetid, mot en unit som dør etter
@@ -1061,7 +1152,7 @@ def test_trege_hostnames_sulter_ikke_de_friske(monkeypatch):
     rader = [("t", treg)] + [("t", h) for h in friske]
 
     def sakte(resolvere, hostname):
-        if hostname == treg:
+        if hostname == dr.utfordringsnavn(treg):
             time.sleep(0.5)
         return frozenset({"bevis"})
 
