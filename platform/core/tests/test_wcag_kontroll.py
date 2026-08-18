@@ -1021,6 +1021,83 @@ def test_uregistrert_kodefestet_type_feiler_lukket(migrator):
 
 
 @pg
+def test_feilregistrert_klasse_kan_ikke_slaa_av_kodens_krav(migrator,
+                                                            monkeypatch):
+    """Codex P2: registreringen sa `sideeffektfri`, koden sa målautorisasjon.
+
+    Binder en støttet administrativ registrering `kontroll.wcag.nettsted`
+    til en `sideeffektfri`-kontrakt, ga `_typens_sideeffektklasse` den
+    klassen, og `elif klasse != 'ekstern_lesing'` gjorde `continue` — forbi
+    BÅDE frekvenstaket og målautorisasjonen, for nøyaktig den handlingen de
+    er bygget for.
+
+    Tilstanden er nåbar og varer: deploy-porten oppdager mismatchen først
+    ved neste `opp.sh`, og i mellomtiden står tjenestene oppe. En policy
+    kunne dermed aktiveres uten et eneste målautoriserende vilkår og uten
+    per-mål-tak, fordi en rad UTENFOR koden sa noe annet enn koden.
+
+    Retningen er poenget: en registrering kan legge krav TIL, aldri fjerne
+    et krav koden stiller.
+
+    Kontroll: sett betingelsen tilbake til `klasse is None and ...
+    krever_malautorisasjon`, så blir denne rød — begge portene hoppes over.
+    """
+    import oppdragskontrakt as ok
+    from api import policyadmin
+    from db.pg import koble
+
+    # Modulen får en `sideeffektfri` kontrakt, og en type som i KODEN
+    # krever målautorisasjon registreres — feilaktig — under nettopp den.
+    # Typenavnet er unikt i stedet for `kontroll.wcag.nettsted`: raden
+    # committes, og en fast id ville lekket inn i de andre testene som
+    # nettopp forutsetter at den ekte typen er uregistrert her.
+    modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    u = secrets.token_hex(4)
+    typenavn = f"kontroll.w{u}.nettsted"
+    migrator.execute("INSERT INTO modulhode (modul_id) VALUES (%s)", (modul,))
+    migrator.execute(
+        "INSERT INTO modulkontrakt (modul_id,kontraktversjon,kontrakt_hash,"
+        "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
+        "reversibilitet) VALUES (%s,1,%s,'p','k','sideeffektfri','direkte')",
+        (modul, kh))
+    migrator.execute(
+        "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
+        "kontraktversjon,kontrakt_hash) VALUES (%s,%s,1,%s)",
+        (typenavn, modul, kh))
+    migrator.commit()
+    monkeypatch.setitem(ok.OPPDRAGSTYPER, typenavn, ok.Oppdragstype(
+        navn=typenavn, handlingsprefikser=(f"kontroll.w{u}.",),
+        felter=frozenset({"ressurs_id", "mal_url"}), paakrevde=frozenset(),
+        eiermodul=modul, krever_malautorisasjon=True,
+        malautorisasjonsdomene="web_hostname"))
+
+    rt = koble(DSN)
+    try:
+        # Registeret sier altså «sideeffektfri» ...
+        assert policyadmin._typens_sideeffektklasse(
+            rt, typenavn) == "sideeffektfri"
+        # ... og porten gjelder likevel, fordi koden sier det den sier.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+                _handling(modul, frekvens=False, vilkaar=(), hid=typenavn)]})
+        assert e.value.kode == "ekstern_lesing_uten_frekvens", e.value.kode
+        # Med frekvens, men uten målautoriserende vilkår: andre porten.
+        with pytest.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+                _handling(modul, vilkaar=("forfall_passert_dager",),
+                          hid=typenavn)]})
+        assert e.value.kode == "malautorisasjon_mangler", e.value.kode
+        # Med begge deler på plass slipper den gjennom — porten er en port,
+        # ikke en blokkering av typen.
+        policyadmin._krev_ekstern_lesing_port(rt, {"handlinger": [
+            _handling(modul, hid=typenavn)]})
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_aktiveringsporten_haandheves_ved_rundeaapning(migrator):
     """Integrasjonen: kallstedet i `opprett_aktiveringsrunde` (samme mønster
     som `_krev_innforingskrav`). Kontroll: fjern

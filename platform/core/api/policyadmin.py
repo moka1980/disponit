@@ -1514,10 +1514,11 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
     aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
     `_krev_innforingskrav`): en handling hvis OPPDRAGSTYPE eies av en
-    `ekstern_lesing`-kontrakt (`_typens_sideeffektklasse`; er typen ikke
-    registrert, gjelder porten likevel når den KODEFESTEDE typen krever
-    målautorisasjon, ellers faller vi konservativt tilbake på den
-    deklarerte eiermodulen) kan bare aktiveres når
+    `ekstern_lesing`-kontrakt (`_typens_sideeffektklasse`) — ELLER hvis
+    kodefestede type krever målautorisasjon, uansett hva registeret sier;
+    sier registeret ingenting og koden stiller ikke kravet, faller vi
+    konservativt tilbake på den deklarerte eiermodulen — kan bare aktiveres
+    når
 
       1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
          et tak policyen selv bærer),
@@ -1532,6 +1533,14 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     handlingen ikke matcher noen målautorisasjonsbærende type: da finnes
     det ikke noe vilkår som KAN telle, og en ekstern_lesing-handling uten
     autorisasjonsbegrep skal ikke gjennom fire øyne på flaks.
+
+    HVILKE handlinger porten gjelder for leses av KODEN FØRST, ikke av
+    registeret. Bærer den kodefestede typen `krever_malautorisasjon`, kjøres
+    porten uansett hva `modulkontrakt` sier om klassen — også når registeret
+    ikke har rukket å si noe, og også når det sier `sideeffektfri`. Bare der
+    koden IKKE stiller kravet får registeret avgjøre, og da konservativt.
+    Retningen er hele poenget: en registrering kan legge krav TIL, aldri
+    fjerne et krav koden stiller.
 
     Krav 2 er det som gjør krav 1 til et TAK (Codex P2). Motoren i
     `policy_validator` teller per `event[grupperingsnokkel]`, og
@@ -1563,11 +1572,24 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
         t = oppdragskontrakt.type_for_handling(hid)
         klasse = (_typens_sideeffektklasse(conn, t.navn)
                   if t is not None else None)
-        if klasse is None and t is not None and t.krever_malautorisasjon:
-            # Den KODEFESTEDE typen bærer målautorisasjonsbehov, men har ingen
-            # registrert rad ennå. Tilstanden er nåbar (Codex P1):
+        if t is not None and t.krever_malautorisasjon:
+            # Den KODEFESTEDE typen bærer målautorisasjonsbehov. Da gjelder
+            # porten, UANSETT hva registeret sier om klassen — også når
+            # registeret ikke har rukket å si noe (Codex P1) og når det sier
+            # noe ANNET (Codex P2, runde 19).
+            #
+            # Ingen registrert rad er nåbart (Codex P1):
             # `registrer-m-wcag-audit.py` kjøres manuelt, og deploy-porten
             # sjekker bare DB-rader som mangler i koden, ikke omvendt.
+            #
+            # FEIL registrert klasse er nåbart på samme vis (Codex P2): binder
+            # en støttet administrativ registrering `kontroll.wcag.nettsted`
+            # til en `sideeffektfri`-kontrakt, oppdager deploy-porten det
+            # først ved neste `opp.sh`. I mellomtiden står tjenestene oppe, og
+            # `elif klasse != 'ekstern_lesing'` under `continue`-et forbi BÅDE
+            # frekvenstaket og målautorisasjonen for nettopp den handlingen de
+            # er bygget for. En feilregistrering skal ikke kunne SVEKKE et krav
+            # koden stiller — den kan bare legge krav til.
             #
             # Den gamle veien falt her tilbake på den modulbrede prøven — og
             # den prøven leser `handlinger[].modul`, som er POLICYENS
@@ -1577,10 +1599,12 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
             # BEGGE portene ble hoppet over for nettopp den handlingstypen de
             # er bygget for.
             #
-            # Koden er autoriteten når registeret ikke har tatt igjen:
-            # deklarasjonen `krever_malautorisasjon` sier at dette er en
-            # ekstern lesing, og da gjelder porten uansett hva som står i
-            # `modul`. Fail-closed, og uavhengig av navnerommet.
+            # Koden er autoriteten når registeret ikke har tatt igjen, eller
+            # sier noe annet: deklarasjonen `krever_malautorisasjon` sier at
+            # dette ER en ekstern lesing, og da gjelder porten uansett hva som
+            # står i `modul` og i `modulkontrakt`. Fail-closed, uavhengig av
+            # navnerommet — og uten en vei der en registrering utenfor koden
+            # kan slå av et krav koden stiller.
             pass
         elif klasse is None:
             # Ingen registrert type OG ingen kodefestet målautorisasjon: da
@@ -1596,8 +1620,9 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
                 continue
         elif klasse != "ekstern_lesing":
             # Typen handlingen faktisk er registrert som eies av en annen
-            # kontrakt. At modulen ET STED har en gammel ekstern_lesing-rad
-            # sier ingenting om DENNE handlingen.
+            # kontrakt, OG koden stiller ikke selv kravet (den grenen er tatt
+            # over). At modulen ET STED har en gammel ekstern_lesing-rad sier
+            # ingenting om DENNE handlingen.
             continue
         grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
             else {}
