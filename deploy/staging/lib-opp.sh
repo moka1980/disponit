@@ -86,6 +86,26 @@ preflight_units() {  # <kilde-katalog> <venv-sti> <unit...>
   return $rc
 }
 
+# 039 (Codex P2): M-37s rolleskille avgjøres to steder, og de MÅ bygge på
+# samme fakta. Migrasjonen nøkler EXECUTE på `ventende_overtakelseskonflikter`
+# til om rollen `disponit_arbeider` FINNES i basen (finnes den, er den eneste
+# mottaker og runtime er REVOKET); `opp.sh` valgte m37-unittens legitimasjon
+# på noe annet — om DISPONIT_ARBEIDER_URL er SATT i miljøfilen. Er rollen der
+# uten variabelen (en halvferdig rolleutrulling), kobler arbeideren seg opp
+# som `disponit` mot nettopp funksjonen runtime mistet, og HVER overtakelse
+# blir stående uten sak. Motsatt vei — variabelen satt, rollen borte — kan
+# arbeideren ikke autentisere i det hele tatt.
+#
+# Verdikten er derfor ENIGHET, ikke en av de to påstandene alene, og den er
+# en ren funksjon så matrisen kan måles uten en base. Ukjente verdier er et
+# avvik: porten er fail-closed.
+vurder_arbeiderskille() {  # <dsn_satt ja|nei> <rolle_finnes ja|nei>
+  case "$1:$2" in
+    ja:ja|nei:nei) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # PR-009b review-runde 1: den eksterne helseproben må kreve EKSAKT forventet
 # status (normalt 200). Første utgave avviste bare `000` (ingen tilkobling),
 # så 421/500/502/503 — nettopp de transport- og upstream-feilene proben

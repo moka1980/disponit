@@ -214,7 +214,20 @@ INSERT INTO _design VALUES
     -- Bevisporten foran 016s revalidering. Må ha SAMME eier som
     -- `revalider_domenekontroll(text,text,text)`: den delegerer til den
     -- nestet, og eierskapet er det eneste som gir den EXECUTE der.
-    ('FUNCTION', 'revalider_domenekontroll(text,text,text,text[])',   'disponit_domene_eier');
+    ('FUNCTION', 'revalider_domenekontroll(text,text,text,text[])',   'disponit_domene_eier'),
+    -- 039: selvbetjent domeneverifisering — plukk + DB-holdt bevis
+    ('FUNCTION', 'ventende_domenechallenges(integer)',                 'disponit_domene_eier'),
+    ('FUNCTION', 'bekreft_domenechallenge(text,text,text,text[])',     'disponit_domene_eier'),
+    ('FUNCTION', 'bekreft_overtakelseskonflikt(text,text,text,bigint)',     'disponit_domene_eier'),
+    -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
+    -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
+    ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),
+    -- 039 (Codex P1): den ENESTE utstedelsesformen runtime far. Binder
+    -- p_tenant til kallerens tenantkontekst (krev_tenantkontekst, 038) —
+    -- 016s raa utsted_challenge er REVOKEd fra runtime. INGEN semikolon i
+    -- denne kommentaren: bade reparasjonen og pariteten deler filen paa
+    -- setningsskilletegnet, og ett semikolon her kutter VALUES-listen.
+    ('FUNCTION', 'utsted_challenge_selvbetjent(text,text,boolean,text,text)', 'disponit_domene_eier');
 
 DO $$
 DECLARE

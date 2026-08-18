@@ -258,7 +258,10 @@ export function visBestilling(hoved, ctx) {
     }
   });
 
+  // Inne i WCAG-kontroll-fanene: samleflaten eier h1, delene er h2
+  // (overskriftsnivåer i rekkefølge, §7).
   sett(hoved,
-    ...flateHode(t("ui.bestilling.tittel"), t("ui.bestilling.under")),
+    el("h2", { text: t("ui.bestilling.tittel") }),
+    el("p", { class: "sub", text: t("ui.bestilling.under") }),
     form, utfall);
 }
