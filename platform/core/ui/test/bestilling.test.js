@@ -60,6 +60,14 @@ function send(h) {
     new window.Event("submit", { cancelable: true }));
 }
 
+function velgOmfang(h, o) {
+  const valgt = h.querySelector(`#bf-omfang-${o}`);
+  for (const r of h.querySelectorAll('input[name="bf-omfang"]')) {
+    r.checked = r === valgt;
+  }
+  valgt.dispatchEvent(new window.Event("change"));
+}
+
 test("Bestilling: ekte skjema-semantikk og axe rent", async () => {
   KALL = []; SVAR = {};
   const h = nyHoved();
@@ -158,4 +166,29 @@ test("Bestilling: uverifisert hostname → navngitt feil i alert", async () => {
   await vent(() => h.querySelector('[role="alert"]').textContent);
   assert.ok(h.querySelector('[role="alert"]').textContent
     .includes(t("ui.bestilling.feil.uverifisert")));
+});
+
+test("Bestilling: «hele nettstedet» sender nettstedets sidetall, ikke 1", async () => {
+  // Codex P2: feltet sto på 1 og ble ALLTID sendt, mens serverens
+  // 50-default bare gjelder når `maks_sider` utelates. Et omfang som
+  // presenterer seg som hele nettstedet kontrollerte da forsiden alene.
+  KALL = []; SVAR = { beslutning: "tillat", oppdrag_id: 7, request_id: "r" };
+  const h = nyHoved();
+  visBestilling(h, ctx());
+  fyll(h);
+  velgOmfang(h, "nettsted");
+  const mk = h.querySelector("#bf-maks_sider");
+  assert.equal(mk.value, "50", "tallet skal følge omfanget, og SYNLIG");
+  send(h);
+  await vent(() => KALL.length === 1);
+  assert.equal(KALL[0].kropp.omfang, "nettsted");
+  assert.equal(KALL[0].kropp.maks_sider, 50);
+
+  // Brukerens eget tall er brukerens: et omfangsbytte overskriver det ikke.
+  mk.value = "7"; mk.dispatchEvent(new window.Event("input"));
+  velgOmfang(h, "enkeltside");
+  assert.equal(mk.value, "7");
+  send(h);
+  await vent(() => KALL.length === 2);
+  assert.equal(KALL[1].kropp.maks_sider, 7);
 });

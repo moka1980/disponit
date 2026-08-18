@@ -20,6 +20,11 @@ import { flateHode } from "./felles.js";
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const STI = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@/]*$/;
 
+// Serverens omfangsdefault for `maks_sider` (api/bestilling.py: feltet
+// UTELATT gir 1 for enkeltside og 50 for nettsted). Her er det aldri
+// utelatt — flaten viser tallet — så defaulten må speiles.
+const MAKS_STANDARD = { enkeltside: 1, nettsted: 50 };
+
 function stiGyldig(v) {
   if (v === "") return true;
   if (!STI.test(v)) return false;
@@ -68,7 +73,21 @@ export function visBestilling(hoved, ctx) {
   const stiInp = el("input", { type: "text", name: "sti",
     autocomplete: "off", spellcheck: "false" });
   const maksInp = el("input", { type: "number", name: "maks_sider",
-    min: "1", max: "50", value: "1", inputmode: "numeric" });
+    min: "1", max: "50", value: String(MAKS_STANDARD.enkeltside),
+    inputmode: "numeric" });
+
+  // SIDETALLET FØLGER OMFANGET (Codex P2). Feltet sto på 1 og ble ALLTID
+  // sendt, mens serverens 50-default bare gjelder når `maks_sider`
+  // utelates. «Hele nettstedet» ga derfor én side — en kontroll som
+  // presenterer seg som hele nettstedet og leverer forsiden, uten at noe
+  // på skjermen sa fra. Bytter omfanget, følger tallet med, med mindre
+  // brukeren selv har satt et annet: da er det brukerens valg, og det
+  // står også synlig i feltet.
+  let maksAuto = MAKS_STANDARD.enkeltside;
+  let maksValgtAvBruker = false;
+  maksInp.addEventListener("input", () => {
+    maksValgtAvBruker = maksInp.value.trim() !== String(maksAuto);
+  });
 
   // Omfanget er en ekte radiogruppe i eget fieldset — ikke en div-meny.
   const omfangValg = [];
@@ -77,7 +96,13 @@ export function visBestilling(hoved, ctx) {
   for (const o of ["enkeltside", "nettsted"]) {
     const r = el("input", { type: "radio", name: "bf-omfang",
       id: `bf-omfang-${o}`, value: o, checked: o === "enkeltside" });
-    r.addEventListener("change", () => { idem = null; });
+    r.addEventListener("change", () => {
+      idem = null;
+      if (!r.checked || maksValgtAvBruker) return;
+      maksAuto = MAKS_STANDARD[o];
+      maksInp.value = String(maksAuto);
+      nullstillFeil("maks_sider");
+    });
     omfangValg.push(r);
     omfangFs.append(el("div", { class: "radiorad" }, r,
       el("label", { for: r.id, text: t(`ui.bestilling.omfang.${o}`) })));
