@@ -736,8 +736,13 @@ SET LOCAL ROLE disponit_domene_eier;
 GRANT SELECT ON brukermedlemskap, varselvalg TO disponit_domene_eier;
 GRANT INSERT ON varsel TO disponit_domene_eier;
 
+-- Signaturen fikk `p_konflikthendelse` (Codex P2) — den gamle 3-arg-formen
+-- ville ellers blitt stående som en overload som fortsatt slukte varsler.
+DROP FUNCTION IF EXISTS varsle_overtakelse(TEXT, TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION varsle_overtakelse(
-    p_hostname TEXT, p_tapt TEXT, p_utfordrer TEXT)
+    p_hostname TEXT, p_tapt TEXT, p_utfordrer TEXT,
+    p_konflikthendelse BIGINT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE b RECORD; v_kanal TEXT;
@@ -756,8 +761,27 @@ BEGIN
         INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
                                    ressurs_id, hendelse, tekstnokkel,
                                    parametre, epost_status)
+        -- `hendelse` er FOREKOMSTEN, ikke arten (026s egen begrunnelse for
+        -- kolonnen). Med tekstnøkkelen som hendelse var nøkkelen
+        -- (tenant, bruker, 'domeneovertakelse', 'domene', hostname,
+        -- 'varsel.domene_avklaring') KONSTANT per vertsnavn, og
+        -- `varsel_en_per_hendelse` gjorde da `ON CONFLICT DO NOTHING` til
+        -- en STILLE sluk: den andre overtakelsen av samme vertsnavn —
+        -- avvist kandidat som verifiserer på nytt, eller en helt ny tvist
+        -- måneder senere — nådde aldri mottakeren, og verst av alt for
+        -- den som hadde lest det gamle varselet og altså ikke så noe nytt.
+        --
+        -- Forekomsten er KONFLIKTHENDELSEN (utfordrerens
+        -- `domenekontroll_hendelse`-id), ikke generasjonen: generasjonen
+        -- er monoton per (tenant, hostname), så den taperen som mister
+        -- samme vertsnavn to ganger — til B på Bs generasjon 1, senere
+        -- til C på Cs generasjon 1 — ville fått samme nøkkel begge
+        -- ganger. Hendelses-id-en er global og monoton, og den ER
+        -- konflikten: det er samme rad saken bærer som `hendelse_b`.
+        -- Et ekte retry av SAMME konflikt deduplikeres fortsatt, for da
+        -- er transaksjonen rullet tilbake og hendelsen den samme.
         VALUES (b.tenant, b.bruker_id, 'domeneovertakelse', 'domene',
-                p_hostname, b.nokkel, b.nokkel,
+                p_hostname, b.nokkel || ':' || p_konflikthendelse, b.nokkel,
                 jsonb_build_object('hostname', p_hostname),
                 CASE WHEN COALESCE(v_kanal, 'epost_og_portal')
                           = 'kun_portal'
@@ -768,7 +792,8 @@ EXCEPTION WHEN OTHERS THEN
     -- Port 41: varselet er ikke evidens. Saken og overgangen står.
     RAISE WARNING 'varsle_overtakelse feilet for %: %', p_hostname, SQLERRM;
 END $$;
-REVOKE ALL ON FUNCTION varsle_overtakelse(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION varsle_overtakelse(TEXT, TEXT, TEXT, BIGINT)
+    FROM PUBLIC;
 
 -- ------------------------------------------------------------
 -- 14. verifiser_domenekontroll — KOPI av gjeldende kropp (dumpet fra
@@ -847,7 +872,8 @@ BEGIN
          WHERE h.hostname = p_hostname AND h.tenant = v_motpart;
         PERFORM public.sikre_overtakelsessak(p_hostname, v_gen, v_motpart,
             p_tenant, v_h_a, v_h_b, p_aktor, v_rid);
-        PERFORM public.varsle_overtakelse(p_hostname, v_motpart, p_tenant);
+        PERFORM public.varsle_overtakelse(p_hostname, v_motpart, p_tenant,
+            v_h_b);
         RETURN 'konflikt:' || v_motpart;
     END IF;
     IF v_eier IS NOT NULL AND v_eier IS DISTINCT FROM p_tenant THEN
@@ -891,7 +917,8 @@ BEGIN
             ON CONFLICT (hostname) DO UPDATE SET tenant = p_tenant, bundet_ts = now();
             PERFORM public.sikre_overtakelsessak(p_hostname, v_gen, v_eier,
                 p_tenant, v_h_a, v_h_b, p_aktor, v_rid);
-            PERFORM public.varsle_overtakelse(p_hostname, v_eier, p_tenant);
+            PERFORM public.varsle_overtakelse(p_hostname, v_eier, p_tenant,
+                v_h_b);
             RETURN 'konflikt:' || v_eier;
         ELSIF v_status_a = 'avklaring_kreves' THEN
             -- Codex: hostnavnet er under AKTIV M-37-avklaring (bindingseieren
@@ -923,7 +950,8 @@ BEGIN
              WHERE h.hostname = p_hostname AND h.tenant = v_eier;
             PERFORM public.sikre_overtakelsessak(p_hostname, v_gen, v_eier,
                 p_tenant, v_h_a, v_h_b, p_aktor, v_rid);
-            PERFORM public.varsle_overtakelse(p_hostname, v_eier, p_tenant);
+            PERFORM public.varsle_overtakelse(p_hostname, v_eier, p_tenant,
+                v_h_b);
             RETURN 'konflikt:' || v_eier;
         ELSIF v_status_a = 'verifisert' THEN
             -- Codex: A er verifisert men UTLØPT. Delindeksen en_verifisert_per_

@@ -228,7 +228,12 @@ INSERT INTO _design VALUES
     -- vaktene bærer m37_dispatcher-policyen via claimer-eierskap.
     ('FUNCTION', 'unntak_lineage_matcher_loggpost()',              'disponit_m37_claimer'),
     ('FUNCTION', 'domenekontroll_krev_sak()',                      'disponit_m37_claimer'),
-    ('FUNCTION', 'varsle_overtakelse(text,text,text)',                 'disponit_domene_eier'),
+    ('FUNCTION', 'varsle_overtakelse(text,text,text,bigint)',          'disponit_domene_eier'),
+    -- 041 (Codex P1): pre-041-konfliktene faar sin sak. BYPASSRLS-eid
+    -- fordi skannet over domenekontroll er kryss-tenant. Kalles av
+    -- migrasjonen og staar igjen som operatoerens reparasjonsvei.
+    -- INGEN semikolon i denne kommentaren heller (se raden over)
+    ('FUNCTION', 'migrer_pre041_overtakelseskonflikter(text)',         'disponit_domene_eier'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),

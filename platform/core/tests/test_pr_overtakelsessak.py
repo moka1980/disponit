@@ -12,6 +12,8 @@ Portoversikt → test (numrene er klarsignalets):
   5        test_port5_terminal_sak_ny_konflikt_ny_sak
   §20      test_pre041_konflikt_uten_sak_far_sak,
            test_pre041_python_sak_arkivmerkes_med_plattformsaken (Codex P1)
+  §13      test_andre_overtakelse_varsler_pa_nytt (Codex P2)
+  §2       test_kundeeid_overtakelsessak_avvises (Codex P2)
   6        (test_pr015_operativt_lag::test_port20_abc — skiftet, samme id)
   7–9      test_port7_8_9_revisjonsbindingen
   12       test_port12_insert_uten_sakskilde_feiler
@@ -193,6 +195,64 @@ def test_port5_terminal_sak_ny_konflikt_ny_sak(migrator):
     sak2 = _sak_for(migrator, h)
     assert sak2 is not None and sak2 != sak1, (sak1, sak2)
     assert _sakrad(migrator, sak1)[0] == "avvist", "terminal sak ble rørt"
+
+
+@pg
+def test_andre_overtakelse_varsler_pa_nytt(migrator):
+    """Codex P2: `hendelse` er FOREKOMSTEN på ressursen, ikke arten.
+
+    Med tekstnøkkelen som `hendelse` var nøkkelen i
+    `varsel_en_per_hendelse` konstant per (bruker, vertsnavn), og
+    `ON CONFLICT DO NOTHING` gjorde den ANDRE overtakelsen av samme
+    vertsnavn til en stille no-op: avvist kandidat verifiserer på nytt,
+    en helt ny konflikt oppstår — og ingen får beskjed. Verst for den som
+    hadde lest det gamle varselet og altså ikke ser noe nytt.
+    """
+    from .test_pr015_operativt_lag import _adjudikator
+    h = _host()
+    # Medlemskapet MÅ finnes før konflikten: varselet skrives i samme
+    # transaksjon som overtakelsen, til de brukerne som står der da.
+    bid = _adjudikator(ANNEN_TENANT, "varselport-adj")
+    sak1, gen1 = _konflikt(migrator, h)
+    assert _varsler(migrator, ANNEN_TENANT, bid, h) == 1
+
+    adm = _admin()
+    try:
+        # Avvis (én stemme holder) → B tilbakekalt, saken lukket.
+        adm.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',"
+                    "%s,'aktor-varselport',%s,%s)",
+                    (ANNEN_TENANT, sak1, h, TENANT, gen1, bid))
+        adm.commit()
+        # ... og B søker på nytt: en NY konflikt, ny generasjon, ny sak.
+        svar = adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                           (ANNEN_TENANT, h)).fetchone()[0]
+        adm.commit()
+        assert svar.startswith("konflikt:"), svar
+    finally:
+        adm.close()
+
+    assert _varsler(migrator, ANNEN_TENANT, bid, h) == 2, \
+        "andre overtakelse ble slukt av varsel_en_per_hendelse"
+    # De to radene skiller seg på FOREKOMSTEN, ikke på teksten: mottakeren
+    # ser samme tekstnøkkel begge ganger, som hen skal.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rader = migrator.execute(
+        "SELECT hendelse, tekstnokkel FROM varsel WHERE tenant=%s"
+        "   AND bruker_id=%s AND ressurs_id=%s ORDER BY hendelse",
+        (ANNEN_TENANT, bid, h)).fetchall()
+    migrator.rollback()
+    assert len({r[0] for r in rader}) == 2, rader
+    assert {r[1] for r in rader} == {"varsel.domene_avklaring"}, rader
+
+
+def _varsler(migrator, tenant, bruker_id, hostname):
+    _sett_kontekst(migrator, tenant)
+    n = migrator.execute(
+        "SELECT count(*) FROM varsel WHERE tenant=%s AND bruker_id=%s"
+        "   AND art='domeneovertakelse' AND ressurs_type='domene'"
+        "   AND ressurs_id=%s", (tenant, bruker_id, hostname)).fetchone()[0]
+    migrator.rollback()
+    return n
 
 
 def _fjern_gjeldende_sak(migrator, sak):
