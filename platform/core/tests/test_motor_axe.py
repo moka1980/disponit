@@ -622,11 +622,16 @@ def test_robots_gjelder_hver_navigasjon_ikke_bare_omdirigeringer():
     kundens eget valg. Vakten lever inne i `main()` bak playwright, så
     porten måles på kilden."""
     kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
-    assert "req.redirected_from" not in kilde, \
-        "robots-vakten skal ikke lenger begrense seg til omdirigeringer"
     vakt = kilde.split("def vakt(route):", 1)[1].split("def vakt_ws", 1)[0]
     assert "krype and req.is_navigation_request()" in vakt
     assert "!= mal_kanonisk" in vakt
+    # PORTEN SELV skal ikke se på `redirected_from` — det var nettopp
+    # begrensningen. (Dokumentbudsjettet under gjør det, og skal: der er et
+    # 30x den SAMME navigasjonen, ikke et dokument til. To ulike spørsmål
+    # om det samme feltet.)
+    robotsport = vakt.split("if (krype and", 1)[1].split("return", 1)[0]
+    assert "redirected_from" not in robotsport, \
+        "robots-vakten skal ikke lenger begrense seg til omdirigeringer"
 
     # Unntaket er den BESTILTE siden i lenkefilterets egen form, bygget
     # ÉTT sted — ellers kan sammenligningen gli på en standardport eller
@@ -635,6 +640,48 @@ def test_robots_gjelder_hver_navigasjon_ikke_bare_omdirigeringer():
     assert "oppdaget = {mal_kanonisk}" in kilde
     n, o = kjor._normaliser_lenke, "https://x.example"
     assert n(o, f"{o}:443/side#topp", f"{o}:443/side#topp") == f"{o}/side"
+
+
+def test_sidebudsjettet_gjelder_hvert_dokument():
+    """Codex P1, runde 5: `maks_sider` var et tak på KØEN, ikke på trafikk.
+
+    En side trenger ingen kø for å hente dokumenter: hver `<iframe src=…>`
+    og hvert `window.open` er en navigasjon til, og axe kontrollerer
+    rammene med. En `enkeltside`-kontroll av en side med hundre
+    samme-origin-iframes hentet dermed hundreogén dokumenter fra kundens
+    nettsted — uten at ett av dem sto i `sider`, og med
+    `avkortet.truffet: false` på toppen.
+
+    Vakten lever inne i `main()` bak playwright, så porten måles på
+    kilden."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    vakt = kilde.split("def vakt(route):", 1)[1].split("def vakt_ws", 1)[0]
+    budsjett = vakt.split("if req.is_navigation_request()", 1)[1]
+
+    # ETT budsjett: køens sider går gjennom den samme vakten og fyller de
+    # samme plassene. `maks_sider` er det bestillingen ga, ikke et gulv.
+    assert "len(dokumenter) >= maks_sider" in budsjett
+    # Regnskapet er per KANONISK URL, samme form som `oppdaget`: en ramme
+    # som navigerer til noe vi alt har hentet koster ikke en plass til.
+    assert "_normaliser_lenke(origin, req.url, req.url)" in budsjett
+    assert "dokumenter.add(dok)" in budsjett
+    # Et 30x er ikke et dokument til — det er samme navigasjon som
+    # fortsetter. Ellers spiste `/side` → `/side/` to plasser av én.
+    assert "req.redirected_from is None" in budsjett
+    # Blokkeringen TELLES, som alt annet blokkert.
+    assert "tell(" in budsjett and 'route.abort("blockedbyclient")' in budsjett
+
+    # ROBOTS FØRST: en navigasjon robots alt har stengt ble aldri hentet og
+    # skal ikke koste en plass.
+    assert vakt.index("not _tillatt(_robotsti(u), disallow)") \
+        < vakt.index("if req.is_navigation_request()")
+
+    # ... og grensen SIER fra. En stengt ramme uten avkortingssignal er
+    # nøyaktig den stille utelatelsen funnet handler om.
+    assert "elif dokument_nektet:" in kilde
+    avk = kilde.split("elif dokument_nektet:", 1)[1].split("elif", 1)[0]
+    assert "len(dokumenter) + dokument_nektet" in avk
+    assert "True, maks_sider" in avk
 
 
 def test_bare_lesende_metoder_slipper_ut_av_kontrollen():

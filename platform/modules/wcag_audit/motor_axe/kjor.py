@@ -708,6 +708,25 @@ def main() -> int:
     #: Se kappingen nede i funnløkka — det tredje taket, og det eneste
     #: eksempelregnskapet ikke kan se.
     selektor_avkortet = 0
+    #: SIDEBUDSJETTET GJELDER HVERT DOKUMENT (Codex P1, runde 5). `besokt`
+    #: og `maks_sider` talte bare URL-er vi selv tok ut av KØEN, og en side
+    #: trenger ingen kø for å hente dokumenter: hver `<iframe src=…>`, hvert
+    #: `window.open` er en navigasjon til, og axe kontrollerer rammene med.
+    #: En `enkeltside`-kontroll av en side med hundre samme-origin-iframes
+    #: hentet dermed hundreogén dokumenter fra kundens nettsted — uten at
+    #: ett av dem sto i `sider`, og med `avkortet.truffet: false` på toppen.
+    #: Både trafikkbudsjettet bestillingen autoriserte og dekningen
+    #: rapporten erklærer var da påstander uten en grense bak seg.
+    #:
+    #: Regnskapet er per KANONISK dokument-URL, samme form som `oppdaget`:
+    #: en ramme som navigerer til noe vi alt har hentet, koster ikke en
+    #: plass til. Køens egne sider går gjennom den samme vakten og fyller
+    #: derfor de samme plassene — budsjettet er ETT, slik bestillingen ba
+    #: om `maks_sider` og ikke «maks_sider pluss det målet finner på».
+    dokumenter: set[str] = set()
+    #: Antall dokumentnavigasjoner budsjettet stengte. Bærer avkortingen
+    #: nederst: en grense som ikke sier fra er en stille utelatelse.
+    dokument_nektet = 0
 
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
@@ -753,6 +772,7 @@ def main() -> int:
             blokkert[(n, art)] = blokkert.get((n, art), 0) + 1
 
         def vakt(route):
+            nonlocal dokument_nektet
             req = route.request
             u = urllib.parse.urlsplit(req.url)
             if _origin(u) != origin:
@@ -802,6 +822,28 @@ def main() -> int:
                 tell(u.hostname or u.netloc, "annet")
                 route.abort("blockedbyclient")
                 return
+            # BUDSJETTET TELLES ETTER ROBOTS (Codex P1, runde 5). En
+            # navigasjon robots alt har stengt skal ikke koste en plass —
+            # den ble aldri hentet. Se `dokumenter` for hvorfor grensen
+            # gjelder hvert dokument og ikke bare køen.
+            #
+            # `redirected_from` holdes UTENFOR: et 30x er ikke et dokument
+            # til, det er den samme navigasjonen som fortsetter. Talte vi
+            # dem, ville en `/side` → `/side/` spist to plasser av et
+            # budsjett bestillingen ga for én side.
+            #
+            # Subressurser (bilder, stilark, skript) er ikke dokumenter og
+            # har aldri vært i denne grensen — `is_navigation_request()`
+            # holder dem utenfor, som i robots-porten over.
+            if req.is_navigation_request() and req.redirected_from is None:
+                dok = _normaliser_lenke(origin, req.url, req.url) or req.url
+                if dok not in dokumenter:
+                    if len(dokumenter) >= maks_sider:
+                        dokument_nektet += 1
+                        tell(u.hostname or u.netloc, "annet")
+                        route.abort("blockedbyclient")
+                        return
+                    dokumenter.add(dok)
             route.continue_()
 
         # WEBSOCKETS LUKKES HELT (Codex P1). `BrowserContext.route` ser
@@ -974,6 +1016,16 @@ def main() -> int:
          if f["antall"] > len(f["eksempler"])), default=0)
     if sider_avkortet:
         avkortet = [True, maks_sider, len(oppdaget)]
+    elif dokument_nektet:
+        # DOKUMENTBUDSJETTET SIER FRA (Codex P1, runde 5). Køen kan være
+        # tom — en `enkeltside`-kontroll har aldri noe i den — mens
+        # budsjettet likevel stengte rammer siden ville ha hentet. Uten
+        # denne grenen ble den stengningen usynlig, og rapporten sa «alt
+        # kom med» om en kontroll der målet selv pekte på mer.
+        #
+        # Verdien er det målet ba om, taket det vi ga: `dokumenter` er
+        # plassene vi brukte, `dokument_nektet` de vi nektet.
+        avkortet = [True, maks_sider, len(dokumenter) + dokument_nektet]
     elif robots_stengte:
         # EN ULESELIG ROBOTS ER OGSÅ EN AVKORTING (Codex P2). Da robots
         # svarte 5xx eller ikke lot seg hente, ble et bestilt
