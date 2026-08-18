@@ -438,6 +438,49 @@ def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
 
 
+def test_robots_avviser_ikke_hentbare_skjemaer(monkeypatch):
+    """Codex P2, runde 10: `wss://` passerte origin-vakten.
+
+    `_origin` folder `ws`/`wss` til `http`/`https` fordi de deler origin
+    (RFC 6455 §3) — riktig for sammenligningen, men det gjorde
+    `wss://m.example/robots.txt` til «målets egen origin». `_hent` kjenner
+    bare det bokstavelige `https`, så hoppet ble hentet som klartekst-HTTP
+    mot port 80: en annen, usikret tjeneste, lest som målets robots."""
+    POLICY = "User-agent: *\nDisallow: /privat/\n"
+
+    def kjede(kart):
+        besokt = []
+
+        def _h(url, pin_ip, tls_kontekst=None):
+            besokt.append(url)
+            return kart[url]
+        _h.besokt = besokt
+        return _h
+
+    # Origin-vakten sa ja til dette før — nå stanser skjemakontrollen det
+    # FØR sammenligningen, og hoppet hentes ikke i det hele tatt.
+    for ut in ("wss://m.example/robots.txt",     # samme origin som målet
+               "ws://m.example/robots.txt",
+               "wss://m.example:443/robots.txt"):
+        h = kjede({"https://m.example/robots.txt": (301, "", ut),
+                   ut: (200, POLICY, "")})
+        monkeypatch.setattr(kjor, "_hent", h)
+        assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), ut
+        assert h.besokt == ["https://m.example/robots.txt"], ut
+
+    # Settet er smalere enn `_origin`s, og det er poenget: origin-likhet
+    # svarer på «samme vert?», ikke på «kan vi hente dette?».
+    assert kjor.HENTBARE_SKJEMA == {"http", "https"}
+    assert set(kjor.HTTP_SKJEMA) & kjor.HENTBARE_SKJEMA == set()
+
+    # HTTP(S) på egen origin følges som før — kontrollen strammer bare
+    # inn på skjemaer hentingen ikke kan lese.
+    h = kjede({"https://m.example/robots.txt": (301, "", "/policy.txt"),
+               "https://m.example/policy.txt": (200, POLICY, "")})
+    monkeypatch.setattr(kjor, "_hent", h)
+    assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
+
+
 def test_robots_leser_location_for_lesetaket_brukes(monkeypatch):
     """Codex P2, runde 10: taket ble brukt på en kropp vi ikke skal tolke.
 

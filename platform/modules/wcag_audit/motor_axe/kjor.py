@@ -467,7 +467,19 @@ def _robots(base: str, pin_ip: str, tls_kontekst=None
         if not (300 <= status < 400 and plassering):
             return [], False
         neste = urllib.parse.urljoin(url, plassering)
-        neste_origin = _origin(urllib.parse.urlsplit(neste))
+        neste_del = urllib.parse.urlsplit(neste)
+        # SKJEMAET FØRST, SÅ ORIGIN (Codex P2, runde 10). `_origin` folder
+        # `ws`/`wss` ned til `http`/`https` — helt riktig for et ORIGIN
+        # (RFC 6455 §3), men det gjør `wss://m.example/robots.txt` til
+        # samme origin som målet, og vakten slapp den gjennom. `_hent`
+        # kjenner bare det bokstavelige `https`, så hoppet ble hentet som
+        # KLARTEKST-HTTP mot port 80: en annen og usikret tjeneste på
+        # verten, lest som om den var målets robots. Origin-likhet er
+        # svaret på «samme vert?», ikke på «kan vi hente dette?» — og
+        # bare HTTP(S) er noe denne hentingen kan lese.
+        if neste_del.scheme.lower() not in HENTBARE_SKJEMA:
+            return [], False
+        neste_origin = _origin(neste_del)
         if not mal_origin or neste_origin != mal_origin:
             return [], False
         url = neste
@@ -642,6 +654,15 @@ def _tillatt(sti: str, regler: list) -> bool:
 #: fordi websocket-vakten slipper noen gjennom — den lukker alle.
 STANDARDPORT = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 HTTP_SKJEMA = {"ws": "http", "wss": "https"}
+
+#: Skjemaene `_hent` FAKTISK kan hente. Settet er smalere enn `_origin`s,
+#: og det er hele poenget: `_origin` folder `wss` til `https` fordi de
+#: deler origin, mens `_hent` kjenner bare det bokstavelige `https` og
+#: faller til klartekst-HTTP på port 80 for alt annet. Et skjema som er
+#: samme ORIGIN er derfor ikke nødvendigvis et skjema vi kan LESE, og de
+#: to spørsmålene må stilles hver for seg — se omdirigeringsvakten i
+#: `_robots`.
+HENTBARE_SKJEMA = {"http", "https"}
 
 
 #: SAMME mønster som `rapport._VERT`, som selv speiler
