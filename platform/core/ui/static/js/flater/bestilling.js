@@ -17,8 +17,16 @@ import { flateHode } from "./felles.js";
 
 // Speiler serverens `_HOSTNAME`/`_STI` (api/bestilling.py) — små A-labels
 // med minst to etiketter; absolutt sti uten `..`, prosent, query, fragment.
+//
+// TEGNSETTET ER SERVERENS (Codex P3). Den gamle klientformen slapp
+// gjennom hele URI-ens `pchar`-sett — `:`, `!`, `$`, `@` og resten —
+// mens `_STI` bare godtar bokstaver, tall, `.`, `_`, `~`, `-` og `/`.
+// `/foo:bar` gikk derfor ut på nettet og kom tilbake som en generisk
+// serverfeil i stedet for den inline stifeilen ved siden av feltet, som
+// er hele poenget med at klienten validerer i det hele tatt.
+// `test_sti_monsteret_speiler_serveren` krysser de to mønstrene mekanisk.
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
-const STI = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@/]*$/;
+export const STI = /^\/(?:[A-Za-z0-9._~-]+\/?)*$/;
 
 // Serverens omfangsdefault for `maks_sider` (api/bestilling.py: feltet
 // UTELATT gir 1 for enkeltside og 50 for nettsted). Her er det aldri
@@ -28,7 +36,10 @@ const MAKS_STANDARD = { enkeltside: 1, nettsted: 50 };
 function stiGyldig(v) {
   if (v === "") return true;
   if (!STI.test(v)) return false;
-  return !v.includes("..") && !v.includes("//") && !v.includes("%");
+  // `..` er det ene mønsteret ikke kan si nei til alene (punktum er et
+  // lovlig tegn) — nøyaktig samme arbeidsdeling som på serveren. `//` og
+  // prosent kan ikke matche mønsteret i det hele tatt.
+  return !v.includes("..");
 }
 
 export function visBestilling(hoved, ctx) {

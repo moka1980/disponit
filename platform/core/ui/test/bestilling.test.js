@@ -6,8 +6,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { settI18nForTest, t } from "../static/js/i18n.js";
-import { visBestilling } from "../static/js/flater/bestilling.js";
+import { visBestilling, STI } from "../static/js/flater/bestilling.js";
+
+const HER = dirname(fileURLToPath(import.meta.url));
 
 settI18nForTest(NB, "nb");
 
@@ -166,6 +171,26 @@ test("Bestilling: uverifisert hostname → navngitt feil i alert", async () => {
   await vent(() => h.querySelector('[role="alert"]').textContent);
   assert.ok(h.querySelector('[role="alert"]').textContent
     .includes(t("ui.bestilling.feil.uverifisert")));
+});
+
+test("Bestilling: stimønsteret speiler serverens `_STI`", () => {
+  // Codex P3: klienten godtok hele URI-ens pchar-sett (`:`, `!`, `$`, `@`
+  // …), serveren bare bokstaver, tall, `.`, `_`, `~`, `-` og `/`. En sti
+  // som `/foo:bar` passerte skjemaet og kom tilbake som en generisk
+  // serverfeil i stedet for stifeilen ved siden av feltet. To mønstre for
+  // det samme er ett for mye — her krysses de mekanisk.
+  const py = readFileSync(
+    join(HER, "..", "..", "api", "bestilling.py"), "utf8");
+  const m = py.match(/_STI = re\.compile\(r"([^"]+)"\)/);
+  assert.ok(m, "fant ikke `_STI` i api/bestilling.py");
+  assert.equal(STI.source.replace(/\\\//g, "/"), m[1],
+    "klientens stimønster har glidd fra serverens");
+  for (const sti of ["/foo:bar", "/x!y", "/a$b", "/e@f", "/a//b", "/s%20i"]) {
+    assert.equal(STI.test(sti), false, `${sti} skulle vært avvist`);
+  }
+  for (const sti of ["/", "/a/b/", "/en-side_2.0~x"]) {
+    assert.equal(STI.test(sti), true, `${sti} skulle vært godtatt`);
+  }
 });
 
 test("Bestilling: utfallet bærer sitt eget mål, også når feltene endres", async () => {
