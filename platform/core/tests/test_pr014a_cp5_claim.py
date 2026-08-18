@@ -251,14 +251,18 @@ def test_leasen_dekker_oppdragets_egen_utforelsesfrist(migrator):
     leasen faller til 300 s mens fristen ligger en time frem.
     """
     t = _tok(); modul = "cp5mod-" + t; ot = "cp5-" + t
-    sak, logg = _lag_sak(migrator, TENANT)
 
     teller = [0]
 
     def _lease(frist):
         # Hvert kall lager sitt eget oppdrag; de foregående står `plukket`
         # med en levende lease, så claimet under treffer alltid det ferske.
+        # EGEN SAK per kall: `_lag_oppdrag_type` setter inn
+        # reparasjonsoperasjonen med `ON CONFLICT DO NOTHING`, så to
+        # oppdrag under samme sak og samme målhandling ville delt rad —
+        # den andre ville stille falt tilbake på en FK som ikke finnes.
         teller[0] += 1
+        sak, logg = _lag_sak(migrator, TENANT)
         opp, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
                                    oppdragstype=f"{ot}-{teller[0]}",
                                    eiermodul=modul, frist=frist)
