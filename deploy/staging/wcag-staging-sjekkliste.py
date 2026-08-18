@@ -1461,27 +1461,65 @@ def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
     return ut.stdout.strip().split(":")[-1], "lest i arbeiderens eget lager"
 
 
-def _docker_diff_ids(digest: str) -> list | None:
-    """Lagkjeden (RootFS.Layers = diff_ids) fra den rootfulle daemonen."""
-    ut = subprocess.run(["docker", "image", "inspect", "--format",
-                         "{{json .RootFS.Layers}}", digest],
-                        capture_output=True, text=True)
-    if ut.returncode != 0:
-        return None
-    return json.loads(ut.stdout)
+#: Konfigfeltene som bestemmer hva imaget FAKTISK kjører. Lagkjeden er
+#: filsystemet; disse er kommandoen, brukeren og miljøet den starter i.
+ATFERDSFELT = ("Entrypoint", "Cmd", "Env", "User", "WorkingDir")
 
 
-def _arbeider_diff_ids(ref: str) -> list | None:
-    """Samme lagkjede, lest i ARBEIDERENS lager."""
-    ut = subprocess.run(_arbeiderpodman("image", "inspect", "--format",
-                                        "{{json .RootFS.Layers}}", ref),
-                        capture_output=True, text=True)
+def _image_identitet(forspann, ref: str) -> dict | None:
+    """Imagets identitet, lest med EN gitt kjøretidskontekst.
+
+    -> `{"lag": diff_ids, "konfig": atferdsfeltene}`, ellers None.
+
+    LAGKJEDEN ALENE ER IKKE IDENTITET (Codex P1): et image bygget `FROM`
+    releasen som bare overstyrer `ENTRYPOINT`, `USER` eller `ENV` har
+    NØYAKTIG samme diff_ids — lagene er de samme, det er konfigblobben
+    over dem som er ny. En ren lagsammenligning godkjenner et slikt image
+    som «innholdsidentisk», og da kan både importoppslaget og en
+    `WCAG_DRIFT_MOTOR`-overstyring sette i drift en motor som kjører noe
+    annet enn runden målte, med releasens digest på kvitteringen.
+
+    Identiteten er derfor lagkjeden PLUSS `ATFERDSFELT`. Feltene
+    normaliseres (manglende og tom liste er samme sak; `Env` sorteres —
+    rekkefølgen er ikke atferd) fordi de to motorene skriver dem litt
+    ulikt, og en falsk ulikhet her stenger døren på et image som er helt
+    likt."""
+    ut = subprocess.run([*forspann, "image", "inspect", "--format",
+                         "{{json .}}", ref], capture_output=True, text=True)
     if ut.returncode != 0:
         return None
     try:
-        return json.loads(ut.stdout)
+        d = json.loads(ut.stdout or "null")
     except ValueError:
         return None
+    if isinstance(d, list):
+        d = d[0] if d else None
+    if not isinstance(d, dict):
+        return None
+    lag = (d.get("RootFS") or {}).get("Layers") or []
+    if not lag:
+        return None
+    kfg = d.get("Config") or {}
+    konfig = {}
+    for felt in ATFERDSFELT:
+        verdi = kfg.get(felt)
+        if felt == "Env":
+            konfig[felt] = sorted(verdi or [])
+        elif felt in ("Entrypoint", "Cmd"):
+            konfig[felt] = list(verdi or [])
+        else:
+            konfig[felt] = verdi or ""
+    return {"lag": lag, "konfig": konfig}
+
+
+def _docker_identitet(digest: str) -> dict | None:
+    """Releasens identitet, lest i den rootfulle daemonen."""
+    return _image_identitet(["docker"], digest)
+
+
+def _arbeider_identitet(ref: str) -> dict | None:
+    """Samme identitet, lest i ARBEIDERENS lager."""
+    return _image_identitet(_som_arbeideren(["podman"]), ref)
 
 
 def _importer_motorimage(digest: str) -> tuple[str, str]:
@@ -1499,7 +1537,10 @@ def _importer_motorimage(digest: str) -> tuple[str, str]:
 
     Identiteten som faktisk overlever er LAGKJEDEN (RootFS diff_ids:
     innholdsdigester av de ukomprimerte lagene, samme verdi i begge
-    motorer). Oppslag og verifikasjon går derfor på den, og funksjonen
+    motorer) SAMMEN MED atferdskonfigen — se `_image_identitet`: lagene
+    alene skiller ikke releasen fra et image bygget `FROM` den som bare
+    overstyrer entrypoint, bruker eller miljø. Oppslag og verifikasjon
+    går derfor på begge deler, og funksjonen
     returnerer ARBEIDERENS egen ID — det er den motorkommandoen og
     kvitteringenes `container_image_digest` må bære, for det er den som
     faktisk kjører. Releasens `artifact_digest` (dockers ID) består som
@@ -1509,21 +1550,21 @@ def _importer_motorimage(digest: str) -> tuple[str, str]:
     subprocess.run(["install", "-d", "-m", "700", "-o", ARBEIDER_BRUKER,
                     "-g", ARBEIDER_BRUKER, f"/run/{ARBEIDER_BRUKER}"],
                    check=True)
-    lagene = _docker_diff_ids(digest)
-    if not lagene:
-        return "", "docker image inspect ga ingen lagkjede for releasen"
+    ventet = _docker_identitet(digest)
+    if not ventet:
+        return "", "docker image inspect ga ingen identitet for releasen"
 
     def _finn() -> str:
         ls = subprocess.run(_arbeiderpodman("image", "ls", "-q", "--no-trunc"),
                             capture_output=True, text=True)
         for iid in dict.fromkeys(filter(None, ls.stdout.split())):
-            if _arbeider_diff_ids(iid) == lagene:
+            if _arbeider_identitet(iid) == ventet:
                 return iid.split(":")[-1]
         return ""
 
     fantes = _finn()
     if fantes:
-        return fantes, "alt i lageret (innholdsidentisk lagkjede)"
+        return fantes, "alt i lageret (identisk lagkjede og konfig)"
     ror = subprocess.run(
         ["bash", "-o", "pipefail", "-c",
          # `sha256:`-prefikset er IKKE pynt: `docker save` (i motsetning til
@@ -1538,8 +1579,8 @@ def _importer_motorimage(digest: str) -> tuple[str, str]:
         return "", f"import feilet: {(ror.stderr or ror.stdout)[-300:]}"
     etter = _finn()
     if not etter:
-        return "", ("lastet uten feil, men intet innholdsidentisk image i"
-                    " lageret etterpå — lagkjeden matcher ikke releasens")
+        return "", ("lastet uten feil, men intet image i lageret etterpå har"
+                    " releasens lagkjede OG konfig")
     return etter, "importert"
 
 
@@ -1851,20 +1892,21 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     # `artifact_digest` og målingene attesterte. Et annet image er ikke et
     # konteksproblem å skrive seg ut av: da er akseptmålingen gjort på noe
     # annet enn det som skal i drift, og døren stenges.
-    # IDENTITETEN SOM SAMMENLIGNES ER LAGKJEDEN, ikke id-strengen: dockers
-    # id (releasens artifact_digest) og arbeiderens id er to navn på samme
-    # innhold etter docker 29-transporten. Gaten binder den effektive
-    # motoren til releasens INNHOLD — diff_ids er innholdsdigester og kan
-    # ikke navngis om.
+    # IDENTITETEN SOM SAMMENLIGNES ER IKKE ID-STRENGEN: dockers id
+    # (releasens artifact_digest) og arbeiderens id er to navn på samme
+    # image etter docker 29-transporten. Gaten binder den effektive motoren
+    # til releasens INNHOLD (diff_ids — innholdsdigester som ikke kan
+    # navngis om) OG til atferdskonfigen, for lagene alene skiller ikke
+    # releasen fra et image bygget `FROM` den som overstyrer entrypoint,
+    # bruker eller miljø — se `_image_identitet`.
     motor_argv = shlex.split(motor)
     drift_id, hvorfra = _effektiv_motorimage(motor_argv)
-    ventet_lag = _docker_diff_ids(digest)
-    effektiv_lag = _arbeider_diff_ids(drift_id) if drift_id else None
-    identisk = bool(drift_id) and ventet_lag is not None \
-        and effektiv_lag == ventet_lag
+    ventet = _docker_identitet(digest)
+    effektiv = _arbeider_identitet(drift_id) if drift_id else None
+    identisk = bool(drift_id) and ventet is not None and effektiv == ventet
     evidens("fase9_effektiv_motor", motor=motor, image_id=drift_id,
             artifact_digest=digest.split(":")[-1],
-            lagkjede_identisk=identisk, utfall=hvorfra,
+            identisk_lag_og_konfig=identisk, utfall=hvorfra,
             overstyrt=bool(os.environ.get("WCAG_DRIFT_MOTOR")),
             ok=identisk)
     if not identisk:
