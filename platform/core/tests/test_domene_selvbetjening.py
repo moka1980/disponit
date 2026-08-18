@@ -139,6 +139,16 @@ def test_plukket_roterer_forbi_ubesvarte_utfordringer(migrator):
     MUTASJONEN SOM DREPER DENNE: fjern stempelet (gjør utvalget til et rent
     SELECT igjen), eller sorter på `challenge_utstedt` alene.
     """
+    # Utvalget er kryss-tenant og basen deles med resten av suiten: sett alle
+    # ANDRE ventende rader «nettopp forsøkt» (fram i tid), så rotasjonen som
+    # måles er vår egen. Mine rader lages ETTER og står dermed uforsøkte.
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+    migrator.execute("UPDATE domenekontroll"
+                     " SET challenge_forsokt = now() + interval '1 hour'"
+                     " WHERE status = 'ventende'")
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+
     verter = [f"rot{i}{secrets.token_hex(3)}.example" for i in range(3)]
     for v in verter:
         _utsted(migrator, v)
@@ -560,6 +570,53 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
          dov.idempotensnokkel(vert, gen))).fetchone()[0]
     migrator.rollback()
     assert antall == 1, "én konflikt ga mer enn én sak"
+
+
+@pg
+def test_konfliktutvalget_roterer_forbi_dem_som_venter_paa_mennesker(migrator):
+    """Codex P2: en konflikt står `avklaring_kreves` til et MENNESKE har
+    avgjort saken — dager, ikke minutter — og dreneringen flytter den ikke.
+    Med en stabil `ORDER BY hostname, tenant` + `LIMIT` okkuperte de første
+    `grense` konfliktene hele utvalget ved HVER drenering: konflikt nummer
+    `grense`+1 ble aldri valgt, fikk aldri sin sak, og var like uløselig som
+    før dreneringen fantes.
+
+    Nå stempler plukket radene det tar (`konflikt_drenert`) og tar de minst
+    nylig drenerte først: hele populasjonen vandrer gjennom taket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern stempelet, eller sorter på
+    `hostname, tenant` alene.
+    """
+    # Basen deles med resten av suiten: sett alle ANDRE konflikter «nettopp
+    # drenert» (fram i tid), så rotasjonen som måles er vår egen.
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+    migrator.execute("UPDATE domenekontroll"
+                     " SET konflikt_drenert = now() + interval '1 hour'"
+                     " WHERE status = 'avklaring_kreves'")
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+
+    verter = [f"kro{i}{secrets.token_hex(3)}.example" for i in range(2)]
+    for v in verter:
+        _utsted(migrator, v)
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE domenekontroll SET status='avklaring_kreves',"
+            " konflikt_motpart=%s WHERE tenant=%s AND hostname=%s",
+            (ANNEN_TENANT, TENANT, v))
+        migrator.commit()
+
+    sett = []
+    for _ in range(2):
+        migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+        rad = migrator.execute(
+            "SELECT hostname FROM ventende_overtakelseskonflikter(1)"
+        ).fetchone()
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+        sett.append(rad[0])
+    assert set(sett) == set(verter), \
+        f"utvalget roterer ikke — så bare {sett} av {verter}"
 
 
 class _Svar:

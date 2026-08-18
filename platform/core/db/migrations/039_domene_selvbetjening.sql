@@ -41,6 +41,17 @@ CREATE INDEX IF NOT EXISTS domenekontroll_ventende_rotasjon
     ON domenekontroll (challenge_forsokt NULLS FIRST, challenge_utstedt)
     WHERE status = 'ventende';
 
+-- SISTE DRENERING av konflikten (Codex P2), av nøyaktig samme grunn ett hakk
+-- lenger ned i kjeden: en rad i `avklaring_kreves` står der til et MENNESKE
+-- har avgjort saken, og dreneringen flytter den ikke. Uten en markør okkuperte
+-- de første 100 konfliktene hele utvalget ved hver drenering, og konflikt
+-- nummer 101 fikk aldri sin sak.
+ALTER TABLE domenekontroll ADD COLUMN IF NOT EXISTS
+    konflikt_drenert TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS domenekontroll_konflikt_rotasjon
+    ON domenekontroll (konflikt_drenert NULLS FIRST, hostname, tenant)
+    WHERE status = 'avklaring_kreves';
+
 SET LOCAL ROLE disponit_domene_eier;
 
 -- Kryss-tenant-plukket for arbeideren: rader som VENTER med et friskt,
@@ -168,18 +179,39 @@ END $$;
 -- hører hjemme, i `opprett_overtakelsessak` (nøkkel = hostname+generasjon,
 -- under advisory-lås), og en konflikt som venter på et menneske koster da
 -- ett oppslag per dreneringssyklus.
+--
+-- MEN DA MÅ UTVALGET ROTERE (Codex P2). En konflikt blir liggende
+-- `avklaring_kreves` til et MENNESKE har avgjort saken — dager, ikke minutter
+-- — og dreneringen flytter den ikke. Med en stabil `ORDER BY hostname, tenant`
+-- + `LIMIT` okkuperte de første 100 konfliktene hele resultatsettet ved HVER
+-- drenering: konflikt nummer 101 ble aldri valgt, altså aldri fikk sin sak, og
+-- var like uløselig som før dreneringen fantes. Taket var ment å begrense
+-- arbeidet per syklus, ikke å bestemme hvem som får hjelp.
+--
+-- Derfor samme form som verifiseringsplukket over: plukket stempler radene det
+-- tar (`konflikt_drenert`) og tar de MINST NYLIG drenerte først. Da vandrer
+-- hele populasjonen gjennom taket, og en rad som får ny konflikt i en senere
+-- generasjon bærer et gammelt stempel og sorterer tidlig — den venter ikke bak
+-- alle som nettopp ble sett på.
 CREATE OR REPLACE FUNCTION ventende_overtakelseskonflikter(
     p_grense INT DEFAULT 100)
 RETURNS TABLE (tenant TEXT, hostname TEXT, motpart TEXT, generasjon BIGINT)
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT d.tenant, d.hostname, d.konflikt_motpart,
-           d.autorisasjonsgenerasjon
-      FROM public.domenekontroll d
-     WHERE d.status = 'avklaring_kreves'
-       AND d.konflikt_motpart IS NOT NULL
-     ORDER BY d.hostname, d.tenant
-     LIMIT p_grense
-$$;
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE public.domenekontroll d
+       SET konflikt_drenert = now()
+      FROM (SELECT k.tenant AS t, k.hostname AS h
+              FROM public.domenekontroll k
+             WHERE k.status = 'avklaring_kreves'
+               AND k.konflikt_motpart IS NOT NULL
+             ORDER BY k.konflikt_drenert NULLS FIRST, k.hostname, k.tenant
+             LIMIT p_grense
+               FOR UPDATE SKIP LOCKED) v
+     WHERE d.tenant = v.t AND d.hostname = v.h
+    RETURNING d.tenant, d.hostname, d.konflikt_motpart,
+              d.autorisasjonsgenerasjon;
+END $$;
 
 REVOKE ALL ON FUNCTION ventende_domenechallenges(INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION bekreft_domenechallenge(TEXT, TEXT, TEXT, TEXT[])

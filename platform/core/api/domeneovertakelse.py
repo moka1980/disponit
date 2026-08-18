@@ -149,7 +149,11 @@ def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
 
     Idempotent i to lag: nøkkelen er (hostname, generasjon) under advisory-lås,
     så en konflikt får ÉN sak uansett hvor mange ganger vi drenerer, og en rad
-    som alt har sin sak koster kun oppslaget. Faller prosessen ut midt i, står
+    som alt har sin sak koster kun oppslaget. Utvalget ROTERER (Codex P2):
+    plukket stempler radene det tar og tar de minst nylig drenerte først, ellers
+    ville de første `grense` konfliktene — som blir stående til et menneske har
+    avgjort dem — okkupert hvert eneste utvalg, og konflikt nummer `grense`+1
+    aldri fått sin sak. Faller prosessen ut midt i, står
     radene igjen og neste syklus finner dem på nytt — det finnes ingen kø å
     reparere, og derfor ingen kø som kan bli inkonsistent med tilstanden.
 
@@ -162,7 +166,14 @@ def sikre_ventende_overtakelsessaker(conn, *, aktor: str = DRENERINGSAKTOR,
     rader = conn.execute(
         "SELECT tenant, hostname, motpart, generasjon"
         " FROM ventende_overtakelseskonflikter(%s)", (grense,)).fetchall()
-    conn.rollback()
+    # COMMIT, ikke rollback (Codex P2). Plukket STEMPLER radene
+    # (`konflikt_drenert`, 039), og det er stempelet som gjør utvalget
+    # roterende: en konflikt står `avklaring_kreves` til et menneske har
+    # avgjort saken, så uten rotasjon ville de første `grense` radene okkupert
+    # hvert eneste utvalg og konflikt nummer `grense`+1 aldri fått sin sak.
+    # Egen transaksjon, før radarbeidet: saksopprettelsen under committer per
+    # rad med sin egen tenantkontekst.
+    conn.commit()
     res = {"funnet": len(rader), "saker": [], "feilet": []}
     for tenant, hostname, motpart, generasjon in rader:
         rid = "drenering-" + secrets.token_hex(8)
