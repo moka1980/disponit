@@ -2874,6 +2874,128 @@ def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
     assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
 
 
+def test_opplastingsretryen_stanser_ikke_ved_nominelt_utlop(monkeypatch):
+    """Codex P2: retryen ga opp på nøyaktig det kappløpet plattformen har
+    en gjenspillingsvei for.
+
+    Mister utføreren svaret på en opplasting som ALLEREDE er committet,
+    og skjer det rett før `opplasting.utloper`, så controlleren i forrige
+    runde det passerte utløpet, brøt løkka og kvitterte
+    `opplasting_avvist` — «rapporten kom ikke frem» for et artefakt som
+    lå staget på plattformen. Databasen sier det motsatte:
+    `innlos_artefaktkapabilitet` (035) tar `k.status = 'brukt' OR
+    k.utloper > now()`, og `lagre_artefakt_staged` (017) returnerer det
+    opprinnelige `artefakt_id` for samme hash — begge deler skrevet
+    nettopp for at et tapt svar skal kunne hentes inn igjen.
+
+    Asymmetrien er ekte og går bare den ene veien:
+    `innlos_kvitteringskapabilitet` (035) krever `k.utloper > now()` uten
+    unntak, så KVITTERINGEN skal fortsatt stanse ved utløpet.
+
+    Utløpet må passere UNDERVEIS for at scenariet skal være ekte: et
+    claim hvis kapabilitet alt er utløpt når det leses, stoppes av
+    `_skannefrist` før motoren i det hele tatt startes. Klokka flyttes
+    derfor i det svaret tapes — det er nettopp da tiden går.
+
+    Kontroll: fjern `gjenlosbar_etter_utlop=True` fra `lever`-kallet på
+    `/v1/artefakt`, så blir gren 1 rød; fjern `gjenlosbar_etter_utlop`
+    fra guarden i `lever`, så blir gren 3 rød.
+    """
+    from modules.wcag_audit import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    motor = FakeMotor(resultat=_motorresultat())
+
+    class _Klokke(datetime):
+        """Controllerens «nå», flyttbar. Arver `fromisoformat` uendret."""
+
+        forskyv = timedelta(0)
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + cls.forskyv
+
+    monkeypatch.setattr(controller, "datetime", _Klokke)
+
+    #: Kapabiliteten er GYLDIG når claimet leses — ellers stopper
+    #: `_skannefrist` kjøringen før motoren startes, og da finnes ikke
+    #: kappløpet denne testen handler om.
+    def _kap():
+        return {"jti": "kap", "utloper": (datetime.now(timezone.utc)
+                                          + timedelta(seconds=1800)).isoformat()}
+
+    def _tidshopp():
+        """Svaret ble borte, og imens passerte kapabilitetens utløp."""
+        _Klokke.forskyv = timedelta(seconds=2 * 3600)
+
+    class _MisterForstOpplasting(_Stubklient):
+        """Første opplasting committer hos plattformen, men svaret tapes."""
+
+        def __init__(self, **kw):
+            super().__init__(200, **kw)
+            self.opplastinger = []
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger.append(json)
+                if len(self.opplastinger) == 1:
+                    _tidshopp()
+                    raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    # 1) Utløpet passerte mens svaret var borte: retryen fortsetter
+    # likevel, plattformen gjenspiller det staged artefaktet, og
+    # oppdraget er UTFØRT — ikke `opplasting_avvist`.
+    _Klokke.forskyv = timedelta(0)
+    k = _MisterForstOpplasting(opplasting=_kap())
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "utfort", res
+    assert res["artefakt_id"] == "a-1", res
+    assert len(k.opplastinger) == 2, k.opplastinger
+    # Kroppen er identisk — det er hele grunnen til at gjenspillingen gir
+    # SAMME artefakt framfor et nytt.
+    assert k.opplastinger[0] == k.opplastinger[1]
+
+    # 2) Var kapabiliteten IKKE forbrukt, finner innløsningen ingen rad og
+    # endepunktet svarer `kapabilitet_ugyldig` (401). Det er en 4xx, så
+    # løkka bryter på første forsøk: prisen for å prøve forbi utløpet er
+    # én forespørsel mot vår egen plattform.
+    class _Avvist(_Stubklient):
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                _tidshopp()
+            return super().post(sti, json=json, headers=headers)
+
+    _Klokke.forskyv = timedelta(0)
+    k = _Avvist(200, opplastingsstatus=401, opplasting=_kap())
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "avbrutt", res
+    assert res["opplasting_status"] == 401, res
+    assert len([s for s in k.stier if s == "/v1/artefakt"]) == 1, k.stier
+    assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+
+    # 3) KVITTERINGEN har ingen slik gjenspillingsvei —
+    # `innlos_kvitteringskapabilitet` krever `utloper > now()` uten
+    # unntak — og stanser fortsatt ved sitt eget utløp. Flagget gjelder
+    # kun opplastingen.
+    class _MisterKvittering(_Stubklient):
+        def __init__(self, **kw):
+            super().__init__(200, **kw)
+            self.forsok = 0
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/oppdrag/kvittering":
+                self.forsok += 1
+                _tidshopp()
+                raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    _Klokke.forskyv = timedelta(0)
+    k = _MisterKvittering(opplasting=_kap())
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "ukvittert", res
+    assert k.forsok == 1, k.forsok
+
+
 def test_hele_bestillingen_leses_for_motoren_startes():
     """Codex P1: bare `mal_url` ble lest før den eksterne skanningen.
 

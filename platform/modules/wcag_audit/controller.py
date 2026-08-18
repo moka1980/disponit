@@ -158,8 +158,12 @@ class _Uteblitt:
 def _vindu_apent(raa: object) -> bool:
     """Er kapabiliteten som bærer denne leveringen fortsatt gyldig?
 
-    Retryen har ingen verdi etter utløpet — da avviser plattformen
-    forespørselen uansett hvor mange ganger den sendes.
+    Gjelder KUN kapabiliteter uten gjenspillingsvei — i praksis
+    kvitteringen, der `innlos_kvitteringskapabilitet` krever `utloper >
+    now()` uten unntak og retryen derfor ikke har noen verdi etter
+    utløpet. Opplastingen er den motsatte: en FORBRUKT kapabilitet er
+    innløsbar uansett utløp, og den leveringen sender
+    `gjenlosbar_etter_utlop=True` i stedet for å spørre her.
 
     Mangler feltet, eller lar det seg ikke lese, retryer vi likevel.
     Fail-closed-posituren ellers i fila verner om ÉN ting: en unødvendig
@@ -432,7 +436,7 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         "ressurs_id": vert or "",
     }
 
-    def lever(sti, kropp, utloper):
+    def lever(sti, kropp, utloper, *, gjenlosbar_etter_utlop=False):
         """Send den SAMME kroppen til plattformen, og send den på nytt ved
         forbigående feil (Codex P2).
 
@@ -463,6 +467,34 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
           * 2xx er ferdig, uansett hva kroppen meldte. Det er et svar vi
             FIKK.
 
+        `gjenlosbar_etter_utlop` sier om DENNE kapabiliteten kan innløses
+        etter utløpet når den ALT er forbrukt (Codex P2). De to
+        leveringsstegene er ikke like her, og forskjellen står i SQL-en:
+
+          * `innlos_artefaktkapabilitet` (035) tar `k.status = 'brukt' OR
+            k.utloper > now()`, og `lagre_artefakt_staged` (017) returnerer
+            det opprinnelige `artefakt_id` for samme hash. Det er en
+            UTTALT gjenspillingsvei, skrevet nettopp for at en utfører som
+            mistet svaret skal få det igjen.
+          * `innlos_kvitteringskapabilitet` (035) krever `k.utloper >
+            now()` uten unntak. Der er utløpet endelig, og et forsøk etter
+            det er bare støy.
+
+        Uten flagget stanset `_vindu_apent` retryen for BEGGE. For
+        opplastingen betød det at et tapt svar rett før nominelt utløp —
+        altså nøyaktig kappløpet gjenspillingsveien finnes for — ble til
+        `opplasting_avvist` og en feilkvittering, mens artefaktet i
+        virkeligheten lå staget på plattformen. Kontrollen av kundens
+        nettsted var gjort, resultatet var lagret, og modulen meldte at
+        oppdraget mislyktes.
+
+        Å slippe retryen forbi utløpet er billig når den ikke hjelper:
+        er kapabiliteten utløpt UTEN å være forbrukt, finner innløsningen
+        ingen rad og endepunktet svarer `kapabilitet_ugyldig` (401). Det
+        er en 4xx, så løkka bryter på FØRSTE forsøk. Prisen for å ta feil
+        er én forespørsel mot vår egen plattform; prisen for å la være er
+        en tapt crawl av kundens nettsted.
+
         Gir alle forsøkene tapt svar, returneres `_Uteblitt` i stedet for
         å la unntaket rive med seg `kjor_en`: da blir utfallet `ukvittert`
         eller en ærlig feilkvittering med status `0`, og plattformen har i
@@ -471,7 +503,7 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         rk = _Uteblitt()
         for forsok in range(LEVERINGSFORSOK):
             if forsok:
-                if not _vindu_apent(utloper):
+                if not gjenlosbar_etter_utlop and not _vindu_apent(utloper):
                     break
                 _sov(LEVERINGSPAUSE_S * forsok)
             try:
@@ -580,9 +612,14 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     # en ferdig crawl av kundens nettsted på en feil endepunktet er
     # idempotent nettopp for at man SKAL kunne spørre om igjen: samme
     # `kapabilitet_jti` og samme kanoniske rapport gir samme artefakt.
+    #
+    # Og retryen stanser IKKE ved nominelt utløp (Codex P2): er
+    # kapabiliteten alt forbrukt, er den innløsbar uansett utløp, og
+    # `lagre_artefakt_staged` gir det opprinnelige artefaktet tilbake for
+    # samme hash. Se `lever`.
     ro = lever("/v1/artefakt",
                {"kapabilitet_jti": opplasting["jti"], "rapport": rapport},
-               opplasting.get("utloper"))
+               opplasting.get("utloper"), gjenlosbar_etter_utlop=True)
     if not 200 <= ro.status_code < 300:
         # AVVIST OPPLASTING (Codex P1): `ro.raise_for_status()` kastet ut
         # av kjøreløkka uten kvittering, og oppdraget ble stående claimet
