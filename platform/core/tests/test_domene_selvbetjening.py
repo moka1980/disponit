@@ -427,6 +427,52 @@ def test_reutstedelse_avvises_nar_raden_avventer_m37(migrator, klient):
         assert etter == status, "avvist utstedelse flyttet raden likevel"
 
 
+def _arbeiderkonn():
+    """M-37-arbeiderens forbindelse (Codex P1).
+
+    Den DEDIKERTE rollen når den finnes — `oppsett-postgresql.sh` lager
+    `disponit_arbeider` og skriver DISPONIT_TEST_ARBEIDER_DSN sammen med
+    DISPONIT_ARBEIDER_URL, så «rollen finnes» og «unitten bruker den» er
+    samme tilstand. Ellers runtime-DSN-en: det er `opp.sh`-fallbacken der
+    m37-unitten faktisk KJØRER som runtime, og da er det den veien som skal
+    måles. Grantet i 039 følger nøyaktig det samme skillet.
+    """
+    import os
+
+    from db.pg import koble
+    return koble(os.environ.get("DISPONIT_TEST_ARBEIDER_DSN") or DSN)
+
+
+@pg
+def test_konfliktoppramsingen_er_arbeiderens_alene(migrator):
+    """Codex P1: `ventende_overtakelseskonflikter` er en kryss-tenant lesing
+    UTEN kallerpredikat — hver tenant, hvert hostname, hver motpart og hver
+    generasjon som står i en domenetvist. Ubetinget gitt til den delte
+    runtime-rollen var den en oppramsingsvei web-API-et aldri kaller, på den
+    credentialen som er mest eksponert.
+
+    Grantet følger derfor rolleskillet: finnes den dedikerte arbeiderrollen,
+    er den ENESTE mottaker, og runtime er eksplisitt revoket. Finnes den
+    ikke, kjører m37-unitten på runtime-DSN-en (`opp.sh`-fallbacken) og
+    runtime ER arbeideren.
+
+    MUTASJONEN SOM DREPER DENNE: legg det ubetingede `GRANT ... TO disponit`
+    tilbake.
+    """
+    from .test_pr015_operativt_lag import _execute_mottakere
+
+    mottakere = _execute_mottakere(
+        migrator, "ventende_overtakelseskonflikter(integer)")
+    finnes = migrator.execute(
+        "SELECT 1 FROM pg_roles WHERE rolname='disponit_arbeider'").fetchone()
+    migrator.rollback()
+    assert "-" not in mottakere, "PUBLIC når konfliktoppramsingen"
+    if finnes:
+        assert mottakere == {"disponit_arbeider"}, mottakere
+    else:
+        assert mottakere == {"disponit"}, mottakere
+
+
 def _admin():
     """migrator SET ROLE domains_admin (committed → overlever rollback)."""
     from db.pg import koble
@@ -480,11 +526,10 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
         (ANNEN_TENANT, dov.idempotensnokkel(vert, gen))).fetchone()[0] == 0
     migrator.rollback()
 
-    # Dreneringen kjøres over en RUNTIME-forbindelse, ikke migrator: det er
-    # nøyaktig rettighetene M-37-arbeideren har (`disponit_arbeider` får
-    # runtime-grantsettet), og `ventende_overtakelseskonflikter` er gitt til
-    # den rollen — aldri til migrator, som ikke er medlem av den.
-    rt = _rt()
+    # Dreneringen kjøres over ARBEIDERENS forbindelse, ikke migrator: det er
+    # nøyaktig rettighetene M-37-arbeideren har — aldri migrators, som ikke
+    # er medlem av noen av rollene.
+    rt = _arbeiderkonn()
     try:
         res = dov.sikre_ventende_overtakelsessaker(rt, grense=500)
         mine = [s for s in res["saker"] if s["hostname"] == vert]

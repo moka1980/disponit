@@ -195,14 +195,34 @@ BEGIN
             TEXT[]) TO disponit_domener;
     END IF;
     -- Dreneringen kjøres av M-37-arbeideren, som har DEK/KEK og runtime-DML.
-    -- Den rollen er `disponit_arbeider` i drift; lokalt/test kjører samme vei
-    -- som runtime (038-presedensen), derfor begge.
+    --
+    -- ENTEN-ELLER, ikke begge (Codex P1). Funksjonen er en KRYSS-TENANT
+    -- LESING uten kallerpredikat: hver tenant, hvert hostname, hver motpart
+    -- og hver generasjon som står i en domenetvist, RLS til tross. Gitt
+    -- ubetinget til den delte runtime-rollen var det en oppramsingsvei
+    -- web-API-et aldri kaller — altså ren blast radius på den credentialen
+    -- som er mest eksponert.
+    --
+    -- Finnes den dedikerte arbeiderrollen, er det DEN som drenerer
+    -- (`oppsett-postgresql.sh` lager rollen og skriver
+    -- DISPONIT_ARBEIDER_URL, som `opp.sh` gir m37-unitten), og runtime skal
+    -- ikke ha rettigheten. REVOKE, ikke bare et utelatt GRANT: en base som
+    -- rakk å kjøre en tidligere utgave av denne migrasjonen skal MISTE den.
+    --
+    -- Finnes den ikke, kjører m37-unitten på runtime-DSN-en — den
+    -- dokumenterte fallbacken i `opp.sh` — og da ER runtime arbeideren.
+    -- Å revoke der ville ikke sikret noe, bare tatt dreneringen ned og
+    -- etterlatt hver konflikt uten sak.
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_arbeider') THEN
         GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
             TO disponit_arbeider;
+        REVOKE EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
+            FROM disponit;
+    ELSE
+        GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT)
+            TO disponit;
     END IF;
 END $$;
-GRANT EXECUTE ON FUNCTION ventende_overtakelseskonflikter(INT) TO disponit;
 
 -- ------------------------------------------------------------
 -- Selvbetjeningens skriveende — TENANTBUNDET (Codex P1).
