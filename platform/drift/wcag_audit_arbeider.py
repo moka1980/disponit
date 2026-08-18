@@ -77,6 +77,22 @@ class KlientHTTP:
             return _Svar(e.code, e.read())
 
 
+def nokkelfeil(nk) -> list[str]:
+    """Navnene på feltene i kvitteringsnøkkelen som ikke er brukbare.
+
+    NØKKELEN KONTROLLERES FØR FØRSTE CLAIM (Codex P1, runde 9). Gyldig
+    JSON er ikke en brukbar nøkkel: mangler `hemmelighet`, eller er den
+    noe annet enn en streng, kaster `signer` først INNE i runden — etter
+    at oppdraget er leaset. Da slipper KeyError/AttributeError ut forbi
+    controllerens kvitteringshåndtering, løkka nedenfor logger bare
+    `runde_feilet`, og oppdraget blir liggende ubesvart til fristen løper
+    ut. En arbeider som ikke kan kvittere skal aldri claime, så feilen
+    hører hjemme på oppstart der drift ser den."""
+    felt = nk if isinstance(nk, dict) else {}
+    return [f for f in ("verifikator", "nokkel_id", "hemmelighet")
+            if not isinstance(felt.get(f), str) or not felt[f].strip()]
+
+
 def main() -> int:
     from db.hemmeligheter import last_credentials
     last_credentials()
@@ -103,6 +119,11 @@ def main() -> int:
 
     kontekst = json.loads(open(kontekst_sti, encoding="utf-8").read())
     nk = json.loads(open(nokkel_sti, encoding="utf-8").read())
+    nokkelmangler = nokkelfeil(nk)
+    if nokkelmangler:
+        print(json.dumps({"hendelse": "oppstart_nektet",
+                          "nokkelfelt": nokkelmangler}), file=sys.stderr)
+        return 2
 
     def signer(kropp):
         return attestering.signer({**kropp, "verifikator": nk["verifikator"]},

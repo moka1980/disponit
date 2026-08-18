@@ -5132,3 +5132,42 @@ def test_skjemafeil_lekker_aldri_artefaktverdien():
     feil = valider(rapportskjema.SKJEMA, {**rapport, "kjort_ts": hemmelig})
     assert feil and all(hemmelig not in f for f in feil), feil
     assert any("kjort_ts" in f for f in feil), feil
+
+
+def test_kvitteringsnokkelen_kontrolleres_for_forste_claim():
+    """Codex P1 (runde 9): gyldig JSON er ikke en brukbar nøkkel.
+
+    Manglet `hemmelighet` — eller var den et tall i stedet for en streng —
+    kom feilen først når `signer` ble kalt INNE i runden, altså etter at
+    oppdraget var leaset. Da slapp den ut forbi controllerens
+    kvitteringshåndtering, løkka logget bare `runde_feilet`, og oppdraget
+    lå ubesvart til fristen. Arbeideren skal nekte å starte i stedet."""
+    from drift.wcag_audit_arbeider import nokkelfeil
+
+    gyldig = {"verifikator": "m_wcag_audit", "nokkel_id": "k1",
+              "hemmelighet": "s3kr3t"}
+    assert nokkelfeil(gyldig) == []
+    # Ekstra felter er ikke arbeiderens sak.
+    assert nokkelfeil({**gyldig, "utstedt": "2026-08-18"}) == []
+
+    for felt in ("verifikator", "nokkel_id", "hemmelighet"):
+        assert nokkelfeil({k: v for k, v in gyldig.items()
+                           if k != felt}) == [felt]
+        # Ikke-streng er like ubrukelig som fravær: `hemmelighet.encode`
+        # og nokkel_id i signaturhodet krever begge en streng.
+        assert nokkelfeil({**gyldig, felt: 17}) == [felt]
+        assert nokkelfeil({**gyldig, felt: None}) == [felt]
+        # Tom/blank verdi signerer ikke noe som helst.
+        assert nokkelfeil({**gyldig, felt: "   "}) == [felt]
+
+    # Filen kan inneholde gyldig JSON som ikke er et objekt i det hele tatt.
+    assert len(nokkelfeil([])) == 3
+    assert len(nokkelfeil("hemmelighet")) == 3
+    assert len(nokkelfeil({})) == 3
+
+    # Og oppstarten BRUKER den — før claim-løkka, med exit-kode.
+    from pathlib import Path
+    kilde = (Path(__file__).resolve().parents[2]
+             / "drift/wcag_audit_arbeider.py").read_text(encoding="utf-8")
+    assert kilde.index("nokkelfeil(nk)") < kilde.index("while True:")
+    assert "oppstart_nektet" in kilde
