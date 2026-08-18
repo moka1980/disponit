@@ -50,6 +50,14 @@ FELTDEKNING = {"bestillingstype": ("bestillingstype",),
                "kravsett": ("kravsett",), "omfang": ("omfang",),
                "maks_sider": ("maks_sider",), "tenant": ()}
 
+#: Lengdegrensene for idempotensnøkkelen. Speiler CHECKen på
+#: `bestilling_idempotens.idempotensnokkel` (038 §3), og de to holdes
+#: sammen av `test_idempotensnokkelens_grenser_speiler_lagringen`: går de
+#: fra hverandre, er det igjen mulig å ta en beslutning som ikke kan
+#: bokføres.
+IDEMPOTENSNOKKEL_MIN = 8
+IDEMPOTENSNOKKEL_MAKS = 200
+
 
 @dataclass(frozen=True)
 class Bestillingstype:
@@ -188,23 +196,43 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         bt = BESTILLINGSTYPER[norm["bestillingstype"]]
         hostname = norm["mal_url"].split("://", 1)[1].split("/", 1)[0]
 
-        from db.pg import sett_kontekst
-        sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
-        if not _verifisert_hostname(conn, tenant, hostname):
-            conn.rollback()
-            tjeneste.logg.hendelse("bestilling_hostname_uverifisert", rid,
-                                   tenant, art="sikkerhet",
-                                   hostname=hostname)
-            return _feilsvar("bestilling_hostname_uverifisert", rid)
-
         hash_ = intensjonshash(norm)
         raa_nokkel = request.headers.get("idempotency-key")
         nokkel = raa_nokkel.strip() if raa_nokkel and raa_nokkel.strip() \
             else None
+        # LENGDEN VALIDERES FØR BESLUTNINGEN (Codex P2). Lagringen krever
+        # 8–200 tegn, men enhver ikke-blank verdi slapp gjennom hit. Med en
+        # for kort eller for lang nøkkel COMMITTET `kjerne.behandle`
+        # beslutningen først, og CHECKen slo til på innsettingen etterpå:
+        # outbox-transaksjonen rullet tilbake, klienten fikk en 500, og
+        # HVER retry gjentok nøyaktig det samme — en committet beslutning
+        # (frekvenskvote brent) uten en bestilling som noen gang kan
+        # fullføres. En nøkkel vi ikke kan lagre må avvises før den kan
+        # utløse noe.
+        if nokkel is not None and not (
+                IDEMPOTENSNOKKEL_MIN <= len(nokkel) <= IDEMPOTENSNOKKEL_MAKS):
+            tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                                   art="sikkerhet", flate="bestilling",
+                                   grunn="idempotensnokkel_lengde")
+            return _feilsvar("request_feilformet", rid)
+
+        from db.pg import sett_kontekst
+        sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        # GJENSPILL FØR HOSTNAME-PORTEN (Codex P2). Porten er en
+        # OPPRETTELSES-regel: målet må være positivt autorisert i det
+        # bestillingen tas imot. Et gjenspill oppretter ingenting — det
+        # leverer et resultat som alt er committet. Sto porten først,
+        # ville en bestilling som ble utført, men mistet svaret sitt, fått
+        # `bestilling_hostname_uverifisert` på retryen om
+        # domeneverifikasjonen i mellomtiden utløp eller ble trukket —
+        # samme nøkkel og samme intensjon, nytt svar. Modulens egen
+        # kontrakt sier at samme nøkkel + samme hash gir samme resultat,
+        # og en verifisering som utløper etterpå gjør ikke det som skjedde
+        # ugjort.
         if nokkel:
             rad = conn.execute(
-                "SELECT intensjonshash, oppdrag_id, beslutning FROM"
-                " bestilling_idempotens WHERE tenant=%s AND"
+                "SELECT intensjonshash, svarkropp, beslutning, oppdrag_id"
+                " FROM bestilling_idempotens WHERE tenant=%s AND"
                 " idempotensnokkel=%s", (tenant, nokkel)).fetchone()
             if rad is not None:
                 conn.rollback()
@@ -212,10 +240,23 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                     # 21b/c: ULIK intensjon gjenbruker ALDRI et resultat —
                     # og tar ingen ny beslutning. Kvoten er urørt.
                     return _feilsvar("idempotenskonflikt", rid)
+                # HELE det opprinnelige svaret, ikke en redusert form:
+                # `begrunnelse` for STOPP/BRUDD og `unntak_id` for BRUDD
+                # er nettopp det klienten mistet da svaret forsvant.
+                # Tom kropp finnes bare på rader skrevet FØR kolonnen
+                # (en base midt i 038); de får den gamle formen, som er
+                # alt som noen gang ble lagret om dem.
+                lagret = rad[1] or {"beslutning": rad[2],
+                                    "oppdrag_id": rad[3]}
                 return kanonisk_json(
-                    {"beslutning": rad[2], "oppdrag_id": rad[1],
-                     "request_id": rid}, 200,
+                    {**lagret, "request_id": rid}, 200,
                     {"x-request-id": rid, "idempotent-replay": "1"})
+        if not _verifisert_hostname(conn, tenant, hostname):
+            conn.rollback()
+            tjeneste.logg.hendelse("bestilling_hostname_uverifisert", rid,
+                                   tenant, art="sikkerhet",
+                                   hostname=hostname)
+            return _feilsvar("bestilling_hostname_uverifisert", rid)
         conn.rollback()
 
         # Tenantens AKTIVE policy er beslutningsgrunnlaget — bestilleren
@@ -310,6 +351,15 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
                     "SELECT id FROM oppdrag WHERE tenant=%s AND"
                     " beslutning_loggpost_id=%s", (tenant,
                                                    logg[0])).fetchone()[0])
+        # Svaret bygges FØR bokføringen, så det som lagres er nøyaktig det
+        # som sendes — ikke en andre konstruksjon av den samme formen.
+        # `request_id` er UTENFOR kroppen: det er forespørselens, ikke
+        # bestillingens, og legges på begge veier ut (her og i gjenspillet).
+        kropp = {"beslutning": utfall, "oppdrag_id": oppdrag_id}
+        if utfall != "tillat":
+            kropp["begrunnelse"] = svar.kropp.get("begrunnelse") or []
+        if svar.unntak_id is not None:
+            kropp["unntak_id"] = svar.unntak_id
         if nokkel:
             # Raden skrives i transaksjonen som FULLFØRER bestillingen, og
             # dekker ALLE utfall (også stopp/brudd — gjenspill etter
@@ -318,18 +368,13 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             # deterministisk avledet av bestillingsnøkkelen).
             conn.execute(
                 "INSERT INTO bestilling_idempotens (tenant,"
-                " idempotensnokkel, intensjonshash, oppdrag_id, beslutning)"
-                " VALUES (%s,%s,%s,%s,%s)"
+                " idempotensnokkel, intensjonshash, oppdrag_id, beslutning,"
+                " svarkropp) VALUES (%s,%s,%s,%s,%s,%s)"
                 " ON CONFLICT (tenant, idempotensnokkel) DO NOTHING",
-                (tenant, nokkel, hash_, oppdrag_id, utfall))
+                (tenant, nokkel, hash_, oppdrag_id, utfall,
+                 json.dumps(kropp, ensure_ascii=False)))
         conn.commit()
-
-        kropp = {"beslutning": utfall, "oppdrag_id": oppdrag_id,
-                 "request_id": rid}
-        if utfall != "tillat":
-            kropp["begrunnelse"] = svar.kropp.get("begrunnelse") or []
-        if svar.unntak_id is not None:
-            kropp["unntak_id"] = svar.unntak_id
-        return kanonisk_json(kropp, 200, {"x-request-id": rid})
+        return kanonisk_json({**kropp, "request_id": rid}, 200,
+                             {"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)

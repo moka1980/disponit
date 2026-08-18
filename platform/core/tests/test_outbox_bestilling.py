@@ -576,6 +576,12 @@ def test_stopp_gir_kode_og_intet_oppdrag(migrator, klient):
     r2 = _bestill(klient, cookie, csrf, _gyldig_kropp(), nokkel)
     assert r2.json()["beslutning"] == "stopp"
     assert r2.headers.get("idempotent-replay") == "1"
+    # Codex P2: HELE svaret, ikke en redusert form. Gjenspillets
+    # primærscenario ER at førstesvaret gikk tapt — da er `begrunnelse`
+    # nøyaktig det flaten trenger for å annonsere STOPP-grunnen, og den
+    # falt bort.
+    assert {k: v for k, v in r2.json().items() if k != "request_id"} == \
+        {k: v for k, v in svar.items() if k != "request_id"}, r2.text
 
 
 @pg
@@ -640,6 +646,112 @@ def test_idempotens_binder_hele_intensjonen(migrator, klient):
     migrator.rollback()
     assert n == 1, "idempotensen lot to oppdrag oppstå"
     assert frek == 1, f"gjenspill brant kvote ({frek} reservasjoner)"
+
+
+@pg
+def test_idempotensnokkelens_lengde_avvises_for_beslutningen(migrator, klient):
+    """Codex P2: en nøkkel lagringen ikke kan ta imot, avvises FØR motoren.
+
+    Lagringen krever 8–200 tegn; endepunktet godtok enhver ikke-blank
+    verdi. Med en for kort eller for lang nøkkel committet
+    `kjerne.behandle` beslutningen, og CHECKen slo til på innsettingen
+    etterpå: outbox-transaksjonen rullet tilbake, klienten fikk 500, og
+    HVER retry gjentok det samme — en committet beslutning med brent
+    frekvenskvote og en bestilling som aldri kunne fullføres.
+
+    Kontroll: fjern lengdesjekken i endepunktet, så blir denne rød.
+    """
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "lengde.example")
+    cookie, csrf = _adminsesjon()
+    for nokkel in ("kort", "x" * 201):
+        r = _bestill(klient, cookie, csrf, _gyldig_kropp("lengde.example"),
+                     nokkel)
+        assert (r.status_code, r.json()["feil"]) == (
+            400, "request_feilformet"), (nokkel, r.text)
+    # ... og INGEN beslutning ble tatt: verken loggpost, oppdrag eller
+    # frekvensreservasjon. Det er hele poenget — en 500 her ville vært en
+    # brent kvote uten en bestilling å vise til.
+    _sett_kontekst(migrator, TENANT)
+    n = migrator.execute(
+        "SELECT count(*) FROM oppdrag WHERE tenant=%s AND"
+        " opprinnelse='beslutning'", (TENANT,)).fetchone()[0]
+    frek = migrator.execute(
+        "SELECT count(*) FROM frekvens_hendelser WHERE tenant=%s",
+        (TENANT,)).fetchone()[0]
+    migrator.rollback()
+    assert (n, frek) == (0, 0), (n, frek)
+
+    # Grensene selv er lovlige — sjekken avviser lengder, ikke nøkler.
+    r_ok = _bestill(klient, cookie, csrf, _gyldig_kropp("lengde.example"),
+                    "a" * 8)
+    assert r_ok.status_code == 200, r_ok.text
+
+
+@pg
+def test_idempotensnokkelens_grenser_speiler_lagringen(migrator):
+    """Den statiske halvdelen: Python-grensene ER lagringens.
+
+    Går de fra hverandre, er det igjen mulig å ta en beslutning som ikke
+    kan bokføres — nøyaktig funnet over, bare gjeninnført ovenfra.
+    """
+    from api.bestilling import IDEMPOTENSNOKKEL_MAKS, IDEMPOTENSNOKKEL_MIN
+    definisjon = migrator.execute(
+        "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c"
+        " WHERE c.conrelid = 'bestilling_idempotens'::regclass"
+        "   AND pg_get_constraintdef(c.oid) LIKE '%%idempotensnokkel%%'"
+        "   AND c.contype = 'c'").fetchone()
+    migrator.rollback()
+    assert definisjon is not None, "lengde-CHECKen finnes ikke lenger"
+    assert f"{IDEMPOTENSNOKKEL_MIN}" in definisjon[0] \
+        and f"{IDEMPOTENSNOKKEL_MAKS}" in definisjon[0], \
+        (f"api.bestilling sier {IDEMPOTENSNOKKEL_MIN}–"
+         f"{IDEMPOTENSNOKKEL_MAKS}, lagringen sier {definisjon[0]}")
+
+
+@pg
+def test_gjenspill_overlever_at_domenet_mister_verifiseringen(migrator,
+                                                              klient):
+    """Codex P2: hostname-porten er en OPPRETTELSES-regel.
+
+    Et gjenspill oppretter ingenting — det leverer et resultat som alt er
+    committet. Sto porten først, fikk en bestilling som ble utført, men
+    mistet svaret sitt, `bestilling_hostname_uverifisert` på retryen om
+    verifiseringen i mellomtiden utløp eller ble trukket: samme nøkkel,
+    samme intensjon, nytt svar. En verifisering som utløper etterpå gjør
+    ikke det som skjedde ugjort.
+
+    Kontroll: flytt `_verifisert_hostname` foran idempotens-oppslaget
+    igjen, så blir denne rød.
+    """
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "utlopt.example")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    r1 = _bestill(klient, cookie, csrf, _gyldig_kropp("utlopt.example"),
+                  nokkel)
+    assert r1.json()["beslutning"] == "tillat", r1.text
+
+    # Verifiseringen UTLØPER etter at bestillingen er fullført — nøyaktig
+    # den ene halvdelen `_verifisert_hostname` måler ved siden av status.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET utloper = now() - interval '1 minute'"
+        " WHERE tenant=%s AND hostname=%s", (TENANT, "utlopt.example"))
+    migrator.commit()
+
+    r2 = _bestill(klient, cookie, csrf, _gyldig_kropp("utlopt.example"),
+                  nokkel)
+    assert r2.status_code == 200, r2.text
+    assert r2.headers.get("idempotent-replay") == "1"
+    assert r2.json()["oppdrag_id"] == r1.json()["oppdrag_id"]
+
+    # ... mens en NY bestilling mot det samme målet fortsatt stoppes:
+    # porten er flyttet, ikke fjernet.
+    r3 = _bestill(klient, cookie, csrf, _gyldig_kropp("utlopt.example"),
+                  "n-" + secrets.token_hex(8))
+    assert (r3.status_code, r3.json()["feil"]) == (
+        403, "bestilling_hostname_uverifisert"), r3.text
 
 
 @pg

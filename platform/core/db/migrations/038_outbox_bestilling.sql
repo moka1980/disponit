@@ -187,10 +187,42 @@ CREATE TABLE IF NOT EXISTS bestilling_idempotens (
     oppdrag_id       BIGINT,          -- NULL når beslutningen ikke ga oppdrag
     beslutning       TEXT NOT NULL CHECK (beslutning IN
                                           ('tillat', 'stopp', 'brudd')),
+    -- HELE det opprinnelige svaret, uten `request_id` (Codex P2).
+    --
+    -- Første utgave gjenskapte bare `beslutning` + `oppdrag_id` ved
+    -- gjenspill, mens førstesvaret også bærer `begrunnelse` for
+    -- STOPP/BRUDD og `unntak_id` for BRUDD. Nettopp i gjenspillets
+    -- primærscenario — svaret gikk tapt, klienten prøver igjen — kunne
+    -- flaten dermed hverken annonsere STOPP-grunnen eller si hvilken
+    -- unntakssak som ble opprettet. Et gjenspill som svarer noe ANNET
+    -- enn originalen er ikke idempotent, det er bare stille.
+    --
+    -- Lagret og ikke rekonstruert, samme mønster som kjernens egen
+    -- `idempotens.respons` (som replayer byte-identisk): en
+    -- rekonstruksjon ville vært en ANDRE implementasjon av svarformen,
+    -- fri til å gli fra den første.
+    svarkropp        JSONB NOT NULL DEFAULT '{}'::jsonb
+                     CHECK (jsonb_typeof(svarkropp) = 'object'),
     opprettet        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, idempotensnokkel),
     FOREIGN KEY (tenant, oppdrag_id) REFERENCES oppdrag (tenant, id)
 );
+-- For en base som alt har kjørt en tidligere 038: kolonnen legges til.
+-- DEFAULT-en er kun for den overgangen — nye rader skal BÆRE svaret, og
+-- raden er uansett immutabel, så en tom kropp kan ikke fylles i ettertid.
+ALTER TABLE bestilling_idempotens
+    ADD COLUMN IF NOT EXISTS svarkropp JSONB NOT NULL DEFAULT '{}'::jsonb;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'bestilling_idempotens'::regclass
+                      AND conname = 'bestilling_idempotens_svarkropp_objekt')
+    THEN
+        ALTER TABLE bestilling_idempotens
+            ADD CONSTRAINT bestilling_idempotens_svarkropp_objekt
+            CHECK (jsonb_typeof(svarkropp) = 'object');
+    END IF;
+END $$;
 
 DROP TRIGGER IF EXISTS bestilling_idempotens_immutable
     ON bestilling_idempotens;
