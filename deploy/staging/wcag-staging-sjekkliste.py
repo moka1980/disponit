@@ -558,6 +558,23 @@ _CHROMIUM_SKRIPT = (
 
 _chromium_cache: dict = {}
 
+#: Containerkjøretidene en motorkommando kan være bygget på.
+KJORETIDER = ("docker", "podman", "nerdctl")
+
+
+def _kjoretidsledd(motorkmd) -> int | None:
+    """Indeksen til containerkjøretiden i en motorkommando, ellers None.
+
+    Kjøretiden står ikke nødvendigvis først: driftens kommando kjøres SOM
+    `disponit-wcag` (`runuser -u … -- env … podman run …`), og
+    `WCAG_DRIFT_MOTOR` kan bære et hvilket som helst forspann. Det er
+    kjøretiden vi trenger for å vite om kommandoen kan inspiseres — og
+    imaget er alltid det siste leddet."""
+    for i, ledd in enumerate(motorkmd):
+        if Path(ledd).name in KJORETIDER and "run" in motorkmd[i + 1:]:
+            return i
+    return None
+
 
 def _chromium_versjon(motorkmd) -> str:
     """Nettleserversjonen imaget FAKTISK bærer (Codex P2).
@@ -577,8 +594,11 @@ def _chromium_versjon(motorkmd) -> str:
     if nokkel in _chromium_cache:
         return _chromium_cache[nokkel]
     versjon = "ukjent"
-    runtime = Path(motorkmd[0]).name if motorkmd else ""
-    if runtime in ("docker", "podman", "nerdctl") and "run" in motorkmd:
+    # Kjøretiden LETES opp (Codex P2, runde 6): driftens kommando har et
+    # forspann (`runuser … env … podman run …`), så posisjon 0 er ikke gitt.
+    i = _kjoretidsledd(motorkmd)
+    runtime = Path(motorkmd[i]).name if i is not None else ""
+    if runtime:
         ut = subprocess.run(
             motorkmd[:-1] + ["--entrypoint", "python3", motorkmd[-1],
                              "-c", _CHROMIUM_SKRIPT],
@@ -1000,18 +1020,51 @@ def fase8():
 # Fase 9 — arbeideren i drift
 # ---------------------------------------------------------------------------
 
-def _arbeiderpodman(*argv) -> list[str]:
-    """`podman ...` kjørt SOM arbeideren, med unitens egne stier.
+def _som_arbeideren(argv) -> list[str]:
+    """`argv` kjørt SOM arbeideren, med unitens egne stier.
 
     Rootless podman leser bildelageret under brukerens `$HOME` og
     kjøretidsting under `XDG_RUNTIME_DIR` — systemd setter begge for
-    `User=`-uniten, så importen må bruke NØYAKTIG de samme verdiene.
-    Gjør den ikke det, havner imaget i et annet lager enn det arbeideren
-    slår opp i."""
+    `User=`-uniten, så både importen og enhver kontroll av den effektive
+    motoren må bruke NØYAKTIG de samme verdiene. Gjør de det ikke, ser vi
+    i et annet lager enn det arbeideren selv slår opp i."""
     import pwd
     hjem = pwd.getpwnam(ARBEIDER_BRUKER).pw_dir
     return ["runuser", "-u", ARBEIDER_BRUKER, "--", "env", f"HOME={hjem}",
-            f"XDG_RUNTIME_DIR=/run/{ARBEIDER_BRUKER}", "podman", *argv]
+            f"XDG_RUNTIME_DIR=/run/{ARBEIDER_BRUKER}", *argv]
+
+
+def _arbeiderpodman(*argv) -> list[str]:
+    """`podman ...` kjørt SOM arbeideren — se `_som_arbeideren`."""
+    return _som_arbeideren(["podman", *argv])
+
+
+def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
+    """Image-ID-en den EFFEKTIVE motorkommandoen kjører (Codex P2, runde 6).
+
+    -> (image-id uten `sha256:`, forklaring). Tom id = kunne ikke leses.
+
+    `WCAG_DRIFT_MOTOR` overstyrer hele kommandoen, men serverkonteksten
+    ble likevel avledet av stagingkommandoen og dens digest. Pekte
+    overstyringen på et annet image eller en annen nettleser, attesterte
+    HVER produksjonsrapport stagingimaget i stedet for motoren som
+    faktisk kjørte — proveniens som ser presis ut og er feil.
+
+    Oppslaget gjøres med kommandoens EGEN kjøretid og i arbeiderens eget
+    lager, altså der uniten selv ville funnet imaget."""
+    if not motor_argv:
+        return "", "tom motorkommando"
+    i = _kjoretidsledd(motor_argv)
+    if i is None:
+        return "", "motorkommandoen er ingen containerkjøring"
+    kmd = _som_arbeideren(motor_argv[:i + 1]
+                          + ["image", "inspect", "--format", "{{.Id}}",
+                             motor_argv[-1]])
+    ut = subprocess.run(kmd, capture_output=True, text=True)
+    if ut.returncode != 0:
+        return "", ("image inspect feilet:"
+                    f" {(ut.stderr or ut.stdout).strip()[-200:]}")
+    return ut.stdout.strip().split(":")[-1], "lest i arbeiderens eget lager"
 
 
 def _importer_motorimage(digest: str) -> tuple[bool, str]:
@@ -1105,7 +1158,7 @@ def _steng_doeren(m, grunn: str) -> None:
             ok=status == ("nodeaktivert",) and claiming == 0)
 
 
-def fase9(m, mtk, digest, motorkmd, *, maalt_runde: bool):
+def fase9(m, mtk, digest, *, maalt_runde: bool):
     """Setter arbeideren I DRIFT — ellers claimer ingen noe (Codex P1).
 
     Fase 2 setter modulen `aktiv` og deploymentet `claiming`. FRA DA er
@@ -1168,11 +1221,6 @@ def fase9(m, mtk, digest, motorkmd, *, maalt_runde: bool):
         # Image-ID-en, ikke taggen: taggen er mutabel, og kvitteringen
         # attesterer nøyaktig denne digesten som container_image_digest.
         digest.split(":")[-1]])
-    # SAMME `miljo`-blokk som målingene attesterte — ett sted, én verdi.
-    # Nettleserversjonen leses ut av imaget (`_chromium_versjon`), som er
-    # den samme uansett hvilken runtime som slår den opp: image-ID-en er
-    # konfigblobbens digest, og den er lik i begge lagrene.
-    kontekst = _serverkontekst(digest, motorkmd)
 
     # ROOTLESS-FORUTSETNINGENE MÅLES FØR UNITEN ENABLES (Codex P1).
     # `opp.sh` deler ut subuid/subgid til `disponit-wcag` og advarer om
@@ -1213,6 +1261,35 @@ def fase9(m, mtk, digest, motorkmd, *, maalt_runde: bool):
                         " eneste claimet oppdrag")
         _steng_doeren(m, "motorimaget mangler i arbeiderens lager")
         return
+
+    # KONTEKSTEN AVLEDES AV DEN MOTOREN SOM FAKTISK KJØRER (Codex P2,
+    # runde 6). `miljo`-blokka ble bygget av stagingkommandoen og dens
+    # digest, også når `WCAG_DRIFT_MOTOR` overstyrte hele kommandoen: pekte
+    # overstyringen på et annet image eller en annen nettleser, attesterte
+    # HVER produksjonsrapport stagingimaget i stedet for motoren som kjørte.
+    #
+    # Oppslaget skjer i arbeiderens eget lager, med kommandoens egen
+    # kjøretid — og imaget må være NØYAKTIG det releaseraden bærer som
+    # `artifact_digest` og målingene attesterte. Et annet image er ikke et
+    # konteksproblem å skrive seg ut av: da er akseptmålingen gjort på noe
+    # annet enn det som skal i drift, og døren stenges.
+    motor_argv = shlex.split(motor)
+    drift_id, hvorfra = _effektiv_motorimage(motor_argv)
+    ventet = digest.split(":")[-1]
+    evidens("fase9_effektiv_motor", motor=motor, image_id=drift_id,
+            ventet=ventet, utfall=hvorfra,
+            overstyrt=bool(os.environ.get("WCAG_DRIFT_MOTOR")),
+            ok=drift_id == ventet)
+    if drift_id != ventet:
+        evidens("fase9_hoppet",
+                grunn="den effektive motoren er ikke imaget runden målte",
+                merknad="uniten enables ikke: kvitteringene ville attestert"
+                        " et image som aldri kjørte")
+        _steng_doeren(m, "WCAG_DRIFT_MOTOR peker på et annet image")
+        return
+    # SAMME `miljo`-blokk som målingene attesterte — ett sted, én verdi —
+    # men lest ut av den effektive kommandoen, ikke stagingens.
+    kontekst = _serverkontekst(drift_id, _som_arbeideren(motor_argv))
 
     subprocess.run(["install", "-d", "-m", "750", "-o", "root",
                     "-g", ARBEIDER_BRUKER, str(DRIFT_KONF)], check=True)
@@ -1338,7 +1415,9 @@ def main() -> int:
         # runde; en full kjøring gjør det selv, til slutt.
         if args.fase == 9 and mtk is None:
             mtk = (RUNDE / "modultoken").read_text().strip()
-        fase9(m, mtk, digest, motorkmd, maalt_runde=args.fase is None)
+        # Ingen `motorkmd`: fase 9 avleder konteksten av den EFFEKTIVE
+        # driftskommandoen, ikke av målerundens (Codex P2, runde 6).
+        fase9(m, mtk, digest, maalt_runde=args.fase is None)
     evidens("runde_ferdig")
     return 0
 

@@ -464,11 +464,12 @@ def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
         encoding="utf-8")
     kropp = sjekk.split("def fase9(", 1)[1]
     # ALLE grenene: røde målinger, manglende modultoken, manglende
-    # rootless-forutsetninger, manglende motorimage, og en unit som ikke
-    # kom opp etter `enable --now`.
-    assert kropp.count("_steng_doeren(m, ") == 5, \
+    # rootless-forutsetninger, manglende motorimage, en effektiv motor som
+    # ikke er imaget runden målte, og en unit som ikke kom opp etter
+    # `enable --now`.
+    assert kropp.count("_steng_doeren(m, ") == 6, \
         "hver gren uten arbeider i drift må rulle tilbake fase 2"
-    assert "fase9(m, mtk, digest, motorkmd" in sjekk
+    assert "fase9(m, mtk, digest, maalt_runde=" in sjekk
 
     # Stengingen går plattformens EGEN gjerdede vei: status `nodeaktivert`
     # OG hver claiming-deployment drenert — nøyaktig de to vilkårene både
@@ -478,6 +479,32 @@ def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
     blokk = sjekk.split('evidens("fase9_modul_deaktivert"', 1)[1]
     assert 'ok=status == ("nodeaktivert",) and claiming == 0' in blokk
     assert 'evidens("fase9_doeren_star_apen"' in sjekk
+
+
+def test_konteksten_avledes_av_den_effektive_motoren():
+    """Codex P2, runde 6: `WCAG_DRIFT_MOTOR` overstyrer HELE kommandoen.
+
+    Serverkonteksten ble likevel bygget av stagingkommandoen og dens
+    digest. Pekte overstyringen på et annet image eller en annen
+    nettleser, attesterte hver produksjonsrapport stagingimaget i stedet
+    for motoren som faktisk kjørte — proveniens som ser presis ut og er
+    feil."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    kropp = sjekk.split("def fase9(", 1)[1]
+    # Konteksten leses av den EFFEKTIVE kommandoen, i arbeiderens lager.
+    assert "_serverkontekst(drift_id, _som_arbeideren(motor_argv))" in kropp
+    assert "_serverkontekst(digest, motorkmd)" not in kropp
+    # ... og imaget må være NØYAKTIG det releaseraden og målingene bærer:
+    # et annet image betyr at akseptmålingen gjaldt noe annet.
+    assert "ok=drift_id == ventet" in kropp
+    assert "if drift_id != ventet:" in kropp
+
+    # Kjøretiden LETES opp: driftskommandoen har et forspann (`runuser …
+    # env … podman run …`), så posisjon 0 er ikke gitt.
+    assert "def _kjoretidsledd(" in sjekk
+    assert "runtime = Path(motorkmd[i]).name if i is not None else \"\"" \
+        in sjekk
 
 
 def test_motorcontaineren_har_ressursgrenser():
