@@ -597,8 +597,14 @@ def fase5(m, http, mtk, motorkmd, digest):
                  "omfang": sp["omfang"], "maks_sider": sp["maks_sider"]}
         r = _bestill(http, cookie, csrf, kropp, _idem(f"f5-{i:02d}", kropp))
         if r.status_code != 200 or r.json().get("beslutning") != "tillat":
+            # EN AVVIST BESTILLING ER EN RØD MÅLING (Codex P1). Linja bar
+            # ingen `ok`, så `_ROEDE` fikk aldri vite at fasitmålingen
+            # endte 9/10 — og fase 9 gater aktiveringen av arbeideren
+            # utelukkende på `_ROEDE`. En runde med en forbigående avvisning
+            # kunne dermed sette produksjonsarbeideren i drift på et
+            # akseptløp som ikke bestod.
             evidens("kjoring_avvist", i=i, status=r.status_code,
-                    svar=r.json())
+                    svar=r.json(), ok=False)
             continue
         oid = r.json()["oppdrag_id"]
         # ET GJENSPILL ER IKKE ET NYTT OPPDRAG (Codex P1). Med de stabile
@@ -636,9 +642,14 @@ def fase5(m, http, mtk, motorkmd, digest):
                 varighet_s=None if varighet is None else round(varighet, 1),
                 frist_s=frist, avvik_mot_fasit=len(avvik),
                 avvik=avvik[:5], ok=ok)
+    # ... og SUMMEN bærer den samme påstanden (Codex P1). Fasitkravet er
+    # 10/10; alt annet er en rød måling, uansett hvilken av de ti som
+    # sviktet og på hvilken måte. Uten `ok` her kunne aggregatet stå
+    # `9/10` i evidensfila mens `_ROEDE` var tom.
     evidens("fase5_resultat",
             ti_kjoringer_signert_innen_frist=f"{gronne}/10",
-            funn_avvik_mot_fasit=0 if gronne == 10 else "SE kjoring-linjene")
+            funn_avvik_mot_fasit=0 if gronne == 10 else "SE kjoring-linjene",
+            ok=gronne == 10)
     return gronne
 
 
