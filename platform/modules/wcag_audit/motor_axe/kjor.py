@@ -984,9 +984,28 @@ def main() -> int:
                                                     len(sel))
                         f["eksempler"].append(sel[:MAKS_SELEKTOR])
             if maks_sider > 1:
+                # LENKEN LØSES SLIK NETTLESEREN LØSER DEN (Codex P2, runde
+                # 5). `getAttribute('href')` gir attributtet RÅTT, og et
+                # dokument med `<base href="/docs/">` løser sine relative
+                # lenker mot BASEN — ikke mot dokumentets egen adresse. En
+                # `guide.html` som brukeren besøker på `/docs/guide.html`
+                # ble derfor køet som `/guide.html`: crawlen kontrollerte
+                # en side ingen lenket til, utelot den som FANTES, og
+                # rapporten kunne samtidig si at ingenting var avkortet.
+                #
+                # `document.baseURI` er nøyaktig det svaret — den er
+                # dokumentets adresse når ingen `<base>` finnes, så
+                # `faktisk`-oppløsningen fra runde 2 er bevart, og basen
+                # når den gjør det. `new URL(...)` og ikke `e.href`:
+                # `a[href]` treffer også SVG-ankere, og der er `href` en
+                # `SVGAnimatedString`, ikke en streng. En href som ikke lar
+                # seg løse (`javascript:` med rusk, tomt attributt) blir
+                # tom streng og faller ut i `_normaliser_lenke`.
                 for href in page.eval_on_selector_all(
-                        "a[href]", "els => els.map(e =>"
-                        " e.getAttribute('href'))"):
+                        "a[href]", "els => els.map(e => { try {"
+                        " return new URL(e.getAttribute('href'),"
+                        " document.baseURI).href } catch (x)"
+                        " { return '' } })"):
                     lenke = _normaliser_lenke(origin, faktisk, href or "")
                     if not lenke or lenke in oppdaget:
                         continue

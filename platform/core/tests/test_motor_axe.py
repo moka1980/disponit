@@ -588,6 +588,35 @@ def test_crawlen_rapporterer_og_loeser_mot_den_landede_url_en():
     assert n(o, f"{o}/ny/", "a.html") == f"{o}/ny/a.html"
     assert n(o, f"{o}/gammel", "a.html") == f"{o}/a.html"
 
+
+def test_lenker_loeses_mot_dokumentets_base():
+    """Codex P2, runde 5: `<base href>` er dokumentets svar, ikke vårt.
+
+    `getAttribute('href')` gir attributtet RÅTT, og et dokument med
+    `<base href="/docs/">` løser sine relative lenker mot BASEN — ikke mot
+    dokumentets egen adresse. En `guide.html` brukeren besøker på
+    `/docs/guide.html` ble derfor køet som `/guide.html`: crawlen
+    kontrollerte en side ingen lenket til, utelot den som FANTES, og
+    rapporten kunne samtidig si at ingenting var avkortet.
+
+    Uttrekket lever inne i `main()` bak playwright, så porten måles på
+    kilden."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    uttrekk = kilde.split('"a[href]"', 1)[1].split("]:", 1)[0]
+    assert "document.baseURI" in uttrekk, \
+        "lenken skal løses slik nettleseren løser den"
+    # `new URL(...)` og ikke `e.href`: `a[href]` treffer også SVG-ankere,
+    # og der er `href` en `SVGAnimatedString`, ikke en streng.
+    assert "new URL(" in uttrekk
+    assert "e.href" not in uttrekk
+    # En href som ikke lar seg løse skal bli tom, ikke kaste og ta med seg
+    # hele lenkeuttrekket for siden.
+    assert "catch" in uttrekk and "return ''" in uttrekk
+    # `faktisk` står igjen som base: `document.baseURI` ER dokumentets
+    # adresse når ingen `<base>` finnes, så oppløsningen mot den landede
+    # URL-en (runde 2) er bevart — basen overstyrer bare når den finnes.
+    assert "_normaliser_lenke(origin, faktisk, href" in kilde
+
     # ... og motoren SIER hvor den ble sendt fra (Codex P1, runde 4).
     # Uten det avviste `rapport.bygg`s `enkeltside`-port hver eneste
     # kontroll av en URL som omdirigerer — `/side` → `/side/` er normalen,
