@@ -2395,6 +2395,109 @@ def test_sen_evidens_202_er_ikke_utfort():
     assert ok["utfall"] == "utfort", ok
 
 
+def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
+    """Codex P2: idempotensen var bygget for retry, men bare LEST.
+
+    Controlleren sendte kvitteringen én gang. Et forbigående 5xx — eller
+    et svar som ble borte etter at opplastingen alt hadde lykkes — ga
+    `ukvittert`, eller et transportunntak rett ut av `kjor_en`. Ingen
+    kaller retryer `kjor_en`, den returnerte verdien bærer hverken
+    `kvittering_jti`, eiergenerasjonen, den signerte kroppen eller
+    artefakthashen som skal til for å bygge forespørselen på nytt, og
+    leasen sperrer et ferskt claim frem til utførelsesfristen — etter den
+    er raden ikke claimbar. Ett tapt svar kostet altså hele oppdraget,
+    inkludert den eksterne kontrollen av kundens nettsted som alt var
+    gjort.
+
+    Kontroll: send kvitteringen én gang igjen i `kvitter`, så blir hver
+    gren under rød.
+    """
+    from modules.wcag_audit import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    motor = FakeMotor(resultat=_motorresultat())
+
+    # 1) Forbigående 5xx: gjentas, og lykkes den, er oppdraget utført.
+    class _FeilerForst(_Stubklient):
+        def __init__(self, feil_antall, **kw):
+            super().__init__(200, **kw)
+            self.feil_igjen = feil_antall
+
+        def _kvitteringssvar(self, sendt):
+            if self.feil_igjen:
+                self.feil_igjen -= 1
+                return _Svar(503, {})
+            return super()._kvitteringssvar(sendt)
+
+    k = _FeilerForst(2)
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "utfort", res
+    assert len(k.kvitteringer) == 3, k.kvitteringer
+    # KROPPEN ER IDENTISK hver gang. Det er hele grunnen til at retryen
+    # er trygg: samme `kvittering_jti`, samme signerte bytes, så
+    # plattformen ser én gjentatt kvittering og ikke tre forskjellige.
+    assert k.kvitteringer[0] == k.kvitteringer[1] == k.kvitteringer[2]
+
+    # 2) Et TAPT SVAR (transportunntak) er også forbigående — og river
+    # ikke lenger med seg `kjor_en`.
+    class _Mister(_Stubklient):
+        def __init__(self, mist_antall, **kw):
+            super().__init__(200, **kw)
+            self.mist_igjen = mist_antall
+            self.forsok = 0
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/oppdrag/kvittering":
+                self.forsok += 1
+                if self.mist_igjen:
+                    self.mist_igjen -= 1
+                    raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    m = _Mister(1)
+    res = controller.kjor_en(m, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "utfort", res
+    assert m.forsok == 2, m.forsok
+
+    # ... og gir ALLE forsøkene tapt svar, er utfallet `ukvittert` med en
+    # ærlig `kvittering_status: 0` — ikke et unntak ut av kjøreløkka som
+    # etterlater oppdraget claimet uten et ord til plattformen.
+    m = _Mister(controller.KVITTERINGSFORSOK)
+    res = controller.kjor_en(m, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "ukvittert", res
+    assert res["kvittering_status"] == 0, res
+    assert m.forsok == controller.KVITTERINGSFORSOK, m.forsok
+
+    # 3) 4xx retryes ALDRI. 409 er plattformens overlagte avvisning
+    # (fencing, hashavvik, avvist promotering), ikke en forbigående feil,
+    # og å gjenta den er å mase om et svar som ikke endrer seg.
+    for status in (400, 409, 422):
+        k = _Stubklient(status)
+        res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+        assert res["utfall"] == "ukvittert", (status, res)
+        assert len(k.kvitteringer) == 1, (status, k.kvitteringer)
+
+    # 4) ... og retryen slutter når kvitteringskapabiliteten er utløpt:
+    # etter `kvittering_utloper` avviser plattformen kvitteringen uansett
+    # hvor mange ganger den sendes. Vinduet leses per forsøk, fordi det
+    # er UNDERVEIS i en lang kjøring det lukker seg — et claim som alt er
+    # utløpt her stoppes av `_skannefrist` lenge før motoren startes, så
+    # predikatet prøves direkte.
+    naa = datetime.now(timezone.utc)
+    assert controller._kvitteringsvindu_apent(
+        {"kvittering_utloper": (naa + timedelta(seconds=60)).isoformat()})
+    assert not controller._kvitteringsvindu_apent(
+        {"kvittering_utloper": (naa - timedelta(seconds=1)).isoformat()})
+    # Mangler feltet, eller lar det seg ikke lese, retryer vi likevel:
+    # `KVITTERINGSFORSOK` er allerede taket, og forespørselen går til vår
+    # egen plattform — ikke til kundens nettsted. Å slå av retryen på et
+    # felt vi ikke kan lese ville ofret et fullført oppdrag for å spare
+    # forespørsler ingen andre merker.
+    for claim in ({}, {"kvittering_utloper": None},
+                  {"kvittering_utloper": "i morgen"},
+                  {"kvittering_utloper": "2030-01-01T00:00:00"}):
+        assert controller._kvitteringsvindu_apent(claim), claim
+
+
 def test_gjentatt_kvittering_leses_som_det_den_forrige_gjorde():
     """Codex P2, runde 11: `idempotent` er en dokumentert SUKSESSVEI.
 
@@ -2763,7 +2866,7 @@ def test_ugyldig_serverkontekst_stopper_for_skanningen():
                               _kontekst(), lambda k: k)["utfall"] == "utfort"
 
 
-def test_avvist_feilkvittering_er_heller_ikke_ferdig():
+def test_avvist_feilkvittering_er_heller_ikke_ferdig(monkeypatch):
     """Codex P1: feilgrenene meldte `avbrutt` uansett hva plattformen
     svarte på feil-kvitteringen.
 
@@ -2779,6 +2882,9 @@ def test_avvist_feilkvittering_er_heller_ikke_ferdig():
     blir denne rød — `ukvittert` blir `avbrutt` igjen på alle tre veier.
     """
     from modules.wcag_audit import controller
+    # 5xx retryes nå (Codex P2). Testen skal bevise UTFALLET, ikke vente
+    # på pausene mellom forsøkene.
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
     ok_motor = FakeMotor(resultat=_motorresultat())
 
     class _UtenKapabilitet(_Stubklient):
@@ -2806,7 +2912,11 @@ def test_avvist_feilkvittering_er_heller_ikke_ferdig():
             # Grunnen står uansett: hvorfor kjøringen feilet er like sant
             # om kvitteringen kom frem eller ikke.
             assert res["grunn"] == grunn, res
-            assert len(klient.kvitteringer) == 1, grunn
+            # 409 er plattformens OVERLAGTE avvisning og sendes én gang;
+            # 5xx er forbigående og gjentas med samme signerte kropp
+            # (Codex P2) — se retry-testen over.
+            assert len(klient.kvitteringer) == (
+                1 if status == 409 else controller.KVITTERINGSFORSOK), grunn
 
         # Sen evidens (202) er samme sak: evidensen er bevart, men
         # plattformen har bevisst latt oppdraget være ufullført.

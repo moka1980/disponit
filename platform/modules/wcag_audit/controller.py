@@ -50,6 +50,16 @@ Feilhåndteringens utfall:
     som første gang. Ble den bare bevart som sen evidens, svarer den
     `idempotent_uten_statusendring`, og da står `ukvittert` — samme
     tilstand, samme ord.
+  * ... og controlleren GJENTAR DEN SELV (Codex P2) ved forbigående feil:
+    5xx eller et tapt svar sendes på nytt, med nøyaktig de samme signerte
+    bytene, så lenge kvitteringskapabiliteten er gyldig. Idempotensen var
+    bygget for dette, men bare den andre veien ble brukt. Ingen kaller
+    retryer `kjor_en`, den returnerte verdien bærer ikke det som skal til
+    for å bygge forespørselen på nytt, og leasen sperrer et ferskt claim
+    frem til utførelsesfristen — etter den er raden ikke claimbar. Ett
+    tapt svar kostet altså hele oppdraget, inkludert den eksterne
+    kontrollen som alt var gjort. 4xx retryes aldri: 409 er plattformens
+    overlagte avvisning, ikke en forbigående feil. Se `kvitter`.
 
 Kvitteringen bindes til den KONTROLLERTE VERTEN (Codex P1): `ressurs_id`
 er det normaliserte vertsnavnet fra `mal_url`, samme verdi og samme
@@ -90,6 +100,80 @@ from .rapport import bygg
 #: bevisst ufullført. Ett ord for begge ville gjort denne linja til
 #: valget mellom to løgner — se `_idempotent_svar` i `api.app`.
 _STATUSSKIFTE = ("utfort", "feilet", "idempotent")
+
+#: Antall ganger den SAMME signerte kvitteringen sendes før controlleren
+#: gir opp, og pausen mellom forsøkene (Codex P2).
+#:
+#: Kvitteringen er idempotent med vilje — se `_STATUSSKIFTE` — men
+#: controlleren utnyttet det aldri selv: den sendte én gang, og et
+#: forbigående 5xx eller et tapt svar ga `ukvittert` eller et unntak ut av
+#: kjøreløkka. Ingen kaller retryer `kjor_en`, den returnerte verdien
+#: bærer ikke det som skal til for å bygge forespørselen på nytt, og
+#: leasen sperrer et ferskt claim frem til utførelsesfristen — etter den
+#: er raden ikke claimbar. Ett tapt svar kostet altså hele oppdraget,
+#: inkludert den eksterne kontrollen som alt var gjort.
+#:
+#: Retryen er billig og trygg nettopp fordi kroppen er IDENTISK: samme
+#: `kvittering_jti`, samme signatur, samme bytes. Plattformen kjenner den
+#: igjen og svarer `idempotent`.
+KVITTERINGSFORSOK = 4
+KVITTERINGSPAUSE_S = 2.0
+
+
+def _sov(sekunder: float) -> None:
+    """Pausen mellom kvitteringsforsøkene.
+
+    Egen funksjon slik at testene kan bytte den ut: de skal bevise
+    RETRY-adferden, ikke vente i sanntid på den."""
+    import time
+    time.sleep(sekunder)
+
+
+class _Uteblitt:
+    """Stedfortrederen for et svar som aldri kom (Codex P2).
+
+    Alle kallstedene til `kvitter` leser `rk.status_code` og `_kvittert(rk)`
+    videre. Et transportunntak som slapp ut derfra tok med seg hele
+    `kjor_en` — også på feilveiene, der oppdraget da stod claimet uten et
+    ord til plattformen, nøyaktig den taushetslinjen §10 forbyr.
+
+    `status_code = 0` er ingen HTTP-status og kan ikke forveksles med en:
+    `_kvittert` leser den som «ikke 2xx», altså uferdig, og
+    `kvittering_status: 0` i utfallet sier ærlig at det aldri kom noe
+    svar å lese."""
+
+    status_code = 0
+
+    def __init__(self, grunn: str = "intet svar"):
+        self.grunn = grunn
+
+    def json(self):
+        raise ValueError(self.grunn)
+
+
+def _kvitteringsvindu_apent(claim: dict) -> bool:
+    """Er kvitteringskapabiliteten fortsatt gyldig?
+
+    Retryen har ingen verdi etter `kvittering_utloper` — da avviser
+    plattformen kvitteringen uansett hvor mange ganger den sendes.
+
+    Mangler feltet, eller lar det seg ikke lese, retryer vi likevel.
+    Fail-closed-posituren ellers i fila verner om ÉN ting: en unødvendig
+    forespørsel mot kundens nettsted. Denne går til vår egen plattform,
+    og `KVITTERINGSFORSOK` er allerede taket. Å slå av retryen på et felt
+    vi ikke kan lese ville ofret et fullført oppdrag for å spare
+    forespørsler ingen andre merker."""
+    raa = claim.get("kvittering_utloper")
+    if raa is None:
+        return True
+    try:
+        t = datetime.fromisoformat(str(raa))
+    except ValueError:
+        return True
+    if t.tzinfo is None:
+        return True
+    return t > datetime.now(timezone.utc)
+
 
 def _ressursbinding(payload: dict) -> str | None:
     """Kvitteringens `ressurs_id`: den kontrollerte VERTEN (Codex P1).
@@ -341,8 +425,49 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
     }
 
     def kvitter(kropp):
-        rk = klient.post("/v1/oppdrag/kvittering", json=signer(kropp),
-                         headers=hode)
+        """Send kvitteringen, og send den SAMME på nytt ved forbigående
+        feil (Codex P2).
+
+        Signeringen skjer ÉN gang, utenfor løkka: retryen er bare trygg
+        fordi bytene er identiske. Ny signering kunne gitt en ny `jti`
+        eller et nytt tidsstempel, og da hadde plattformen sett to
+        forskjellige kvitteringer i stedet for én gjentatt.
+
+        Hva som retryes, og hva som ikke gjør det:
+
+          * 5xx og et TAPT SVAR (transportunntak) er forbigående. Det er
+            nettopp her idempotensen finnes: utføreren vet ikke om
+            plattformen rakk å ta imot, og skal kunne spørre igjen.
+          * 4xx retryes ALDRI — heller ikke 409. Fencing, hashavvik og
+            avvist promotering er plattformens overlagte avvisninger, og
+            å gjenta dem er å mase om et svar som ikke kommer til å endre
+            seg.
+          * 2xx er ferdig, uansett om kroppen meldte statusskifte eller
+            sen evidens. Begge deler er et svar vi FIKK.
+
+        Gir alle forsøkene tapt svar, returneres `_Uteblitt` i stedet for
+        å la unntaket rive med seg `kjor_en`: da blir utfallet `ukvittert`
+        med `kvittering_status: 0`, og plattformen har i det minste et
+        ærlig ord fra modulen om at kjøringen ikke ble avsluttet.
+        """
+        signert = signer(kropp)
+        rk = _Uteblitt()
+        for forsok in range(KVITTERINGSFORSOK):
+            if forsok:
+                if not _kvitteringsvindu_apent(claim):
+                    break
+                _sov(KVITTERINGSPAUSE_S * forsok)
+            try:
+                rk = klient.post("/v1/oppdrag/kvittering", json=signert,
+                                 headers=hode)
+            except Exception as e:                      # noqa: BLE001
+                # Transportfeilene kommer fra en INJISERT klient, så
+                # klassene deres er ikke våre å navngi. Det som er vårt,
+                # er at ingen av dem skal kunne rive med seg kjøreløkka.
+                rk = _Uteblitt(f"{type(e).__name__}: intet svar")
+                continue
+            if rk.status_code < 500:
+                break
         return rk
 
     if vert is None:
