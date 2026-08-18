@@ -163,6 +163,10 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "igjen når modulen er aktiv. Hvilket vilkår som sviktet står i "
         "driftsloggen (`grunn`), aldri i svaret — ellers er 503-en et "
         "kart over hvilke moduler som er nede.")),
+    Feilvei("domene_challenge_avvist", 409, ("sikkerhet",), None, notat=(
+        "utsted_challenge nektet (016): raden står i avklaring/overtakelse "
+        "eller bryter en vakt der. 409, ikke 400: kroppen er velformet — "
+        "det er domenets TILSTAND som ikke tillater ny utfordring nå.")),
     # --- PR-008: lese-API ----------------------------------------------
     Feilvei("ikke_funnet", 404, ("avvis",), None, notat=(
         "Detalj-ID som ikke finnes OG detalj-ID hos en annen tenant gir"

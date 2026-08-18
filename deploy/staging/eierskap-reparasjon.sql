@@ -214,7 +214,10 @@ INSERT INTO _design VALUES
     -- Bevisporten foran 016s revalidering. Må ha SAMME eier som
     -- `revalider_domenekontroll(text,text,text)`: den delegerer til den
     -- nestet, og eierskapet er det eneste som gir den EXECUTE der.
-    ('FUNCTION', 'revalider_domenekontroll(text,text,text,text[])',   'disponit_domene_eier');
+    ('FUNCTION', 'revalider_domenekontroll(text,text,text,text[])',   'disponit_domene_eier'),
+    -- 039: selvbetjent domeneverifisering — plukk + DB-holdt bevis
+    ('FUNCTION', 'ventende_domenechallenges(integer)',                 'disponit_domene_eier'),
+    ('FUNCTION', 'bekreft_domenechallenge(text,text,text,text[])',     'disponit_domene_eier');
 
 DO $$
 DECLARE

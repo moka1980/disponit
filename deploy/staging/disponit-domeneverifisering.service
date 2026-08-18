@@ -1,0 +1,27 @@
+# 039: førstegangsverifisering av selvbetjente domenechallenges.
+#
+# Kunden utstedte challengen fra flaten og la TXT-verdien i sonen sin;
+# dette passet finner beviset (≥2 enige, uavhengige resolvere — samme
+# diversitetskrav som revalideringen) og lar DATABASEN holde det mot
+# hashen (`bekreft_domenechallenge`). Rollen er `disponit_domener` —
+# EXECUTE på nøyaktig plukk- og bekreftelsesfunksjonen, ingen
+# bordtilgang, aldri `verifiser_domenekontroll` direkte.
+
+[Unit]
+Description=Disponit domeneverifisering (selvbetjente challenges)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+LoadCredential=DISPONIT_DOMAINS_URL:/etc/disponit/domener/DISPONIT_DOMAINS_URL
+LoadCredential=DISPONIT_RESOLVERE:/etc/disponit/domener/DISPONIT_RESOLVERE
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_domeneverifisering
+TimeoutStartSec=4min
+
+[Install]
+WantedBy=multi-user.target

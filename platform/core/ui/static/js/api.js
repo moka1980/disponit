@@ -208,6 +208,11 @@ export const bestill = (kropp, idempotensnokkel) =>
   _muter("/v1/bestilling", "POST", kropp, idempotensnokkel);
 // 038 §7: den promoterte rapporten bak et beslutningsoppdrag (lesende).
 export const hentRapport = (oppdragId) => hentJson(`/v1/rapport/${oppdragId}`);
+// 039: selvbetjent domeneverifisering. Utstedelsen er muterende (CSRF);
+// nøkkelen er engangs — TXT-verdien i svaret finnes aldri igjen.
+export const hentDomener = () => hentJson("/v1/domener");
+export const leggTilDomene = (hostname) =>
+  _muter("/v1/domener", "POST", { hostname });
 
 // PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
 // (dobbel-innsending). Klienten sender handlingen, `saksversjon` (den den

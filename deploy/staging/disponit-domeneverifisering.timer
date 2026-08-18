@@ -1,0 +1,15 @@
+# 039: hvert 5. minutt — selvbetjeningens ventetid fra «TXT lagt inn» til
+# «verifisert» skal være minutter, ikke revalideringens timeplan.
+# Passet er lite (kun `ventende` med gyldig challenge, tak 200) og
+# advisory-låst mot seg selv.
+
+[Unit]
+Description=Disponit domeneverifiseringstimer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -51,6 +51,7 @@ scheduleren. Hvor jevnt radene faktisk fordeler seg er en MÅLT driftsegenskap �
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -379,3 +380,74 @@ def _skriv_resultat(conn, tenant, hostname, txt, aktor,
         # uenighet — resolverne var jo enige.
         conn.rollback()
         res.oppslagsfeil += 1
+
+# ---------------------------------------------------------------------------
+# 039 — førstegangsverifisering av selvbetjente challenges
+# ---------------------------------------------------------------------------
+
+#: Egen arbeidernøkkel: verifiseringspasset er lite og hyppig (5 min) og
+#: skal ikke vente på — eller blokkere — den timeplanlagte revalideringen.
+VERIFISERINGSNOKKEL = 915_774_203
+
+
+def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
+                  grense: int = 200) -> dict:
+    """Ett verifiseringspass: plukk `ventende` challenges kryss-tenant
+    (`ventende_domenechallenges`, 039), slå opp TXT med samme
+    diversitetskrav som revalideringen (≥2 enige, uavhengige resolvere),
+    og la DATABASEN holde svaret mot hashen (`bekreft_domenechallenge`).
+
+    Arbeideren kan ikke fabrikere et bevis: funksjonen sammenligner
+    sha256 av de fergede TXT-verdiene mot `challenge_token_hash` den selv
+    lagrer, og statusovergangen eies av `verifiser_domenekontroll` med
+    alle avklarings-/overtakelsesportene urørt.
+
+    `konflikt:*`-svar TELLES OG NAVNGIS, men saken opprettes ikke herfra:
+    `opprett_overtakelsessak` krever runtime-skriverettigheter denne
+    rollen med vilje ikke har (og har per 039 ingen utrullet kaller —
+    se kommentaren i api/domeneovertakelse.py). Raden står da trygt i
+    `avklaring_kreves`, synlig i driftsloggen.
+    """
+    res = {"plukket": 0, "verifisert": 0, "konflikt": 0, "uenige": 0,
+           "ikke_bevist": 0, "annet": 0}
+    fikk = conn.execute("SELECT pg_try_advisory_lock(%s)",
+                        (VERIFISERINGSNOKKEL,)).fetchone()[0]
+    if not fikk:
+        res["hoppet_over"] = True
+        return res
+    try:
+        rader = conn.execute(
+            "SELECT tenant, hostname FROM ventende_domenechallenges(%s)",
+            (grense,)).fetchall()
+        conn.rollback()
+        res["plukket"] = len(rader)
+        for tenant, hostname in rader:
+            txt = enig_svar(resolvere, hostname)
+            if txt is None:
+                res["uenige"] += 1
+                continue
+            try:
+                svar = conn.execute(
+                    "SELECT bekreft_domenechallenge(%s,%s,%s,%s)",
+                    (tenant, hostname, aktor, sorted(txt))).fetchone()[0]
+                conn.commit()
+            except Exception:
+                # Bevis ikke funnet i TXT (eller raden flyttet seg under
+                # oss): ingen påstand om suksess, prøv igjen neste pass.
+                conn.rollback()
+                res["ikke_bevist"] += 1
+                continue
+            if svar == "verifisert":
+                res["verifisert"] += 1
+            elif isinstance(svar, str) and svar.startswith("konflikt:"):
+                res["konflikt"] += 1
+                print(json.dumps({"hendelse": "domene_overtakelseskonflikt",
+                                  "hostname": hostname,
+                                  "motpart": svar.split(":", 1)[1]}),
+                      flush=True)
+            else:
+                res["annet"] += 1
+        return res
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(%s)", (VERIFISERINGSNOKKEL,))
+        conn.commit()

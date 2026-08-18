@@ -161,7 +161,10 @@ export function visRapport(hoved, ctx) {
     }
   });
 
+  // Inne i WCAG-kontroll-fanene: samleflaten eier h1, delene er h2
+  // (overskriftsnivåer i rekkefølge, §7).
   sett(hoved,
-    ...flateHode(t("ui.rapport.tittel"), t("ui.rapport.under")),
+    el("h2", { text: t("ui.rapport.tittel") }),
+    el("p", { class: "sub", text: t("ui.rapport.under") }),
     form, resultat);
 }

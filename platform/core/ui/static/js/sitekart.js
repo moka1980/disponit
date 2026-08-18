@@ -49,11 +49,11 @@ const BASISRUTER = [
   // stille på `oversikt`, og knappen «Åpne kundeflate» åpnet noe annet enn den
   // lovte. Det er bare policyADMINISTRASJONEN som krever forvaltningsscope.
   { nokkel: "kundeadmin", scope: null },
-  // 038 §6/§7: bestillingen krever sitt eget mutasjonsscope (admin-rollen);
-  // rapporten er lesing av evidensen bak tenantens egen beslutning og følger
-  // samme scope som resten av beslutningslesingen.
-  { nokkel: "bestilling", scope: "bestilling:opprett" },
-  { nokkel: "rapport", scope: "decisions:read" },
+  // 038/039 (eiers UX-krav 18/8): ÉN oppføring — «WCAG kontroll» — med
+  // bestilling, rapporter og domeneverifisering som faner. Scopet er
+  // flatens mest krevende del (bestilling/domener); rapportfanen leser
+  // under samme scope siden hele flaten er admin-arbeidsflyten.
+  { nokkel: "wcagkontroll", scope: "bestilling:opprett" },
 ];
 
 export function byggRuter(sesjon) {

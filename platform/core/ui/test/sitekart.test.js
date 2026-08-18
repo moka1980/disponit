@@ -24,13 +24,15 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
     ["kundeadmin"]);
   const alle = byggRuter({ scopes: ["decisions:read", "exceptions:read",
     "policy:read"] }).map((r) => r.nokkel);
-  // 038: `rapport` følger decisions:read; `bestilling` krever sitt eget
-  // mutasjonsscope og er derfor IKKE med her.
+  // 038/039: WCAG-kontroll er ÉN rute bak bestilling:opprett — rene
+  // leseøkter ser den ikke.
   assert.deepEqual(alle,
-    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin", "rapport"]);
+    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
-  assert.ok(medBestilling.includes("bestilling"));
+  assert.ok(medBestilling.includes("wcagkontroll"));
+  assert.ok(!medBestilling.includes("bestilling") &&
+    !medBestilling.includes("rapport"), "de gamle enkeltrutene er borte");
 });
 
 test("byggRuter: godkjenner får ikke policyruten den ikke kan lese", () => {
