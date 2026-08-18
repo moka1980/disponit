@@ -187,6 +187,54 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
 
 
+def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
+    """Codex P1: en robots vi bare fikk BEGYNNELSEN av har ikke sagt ja.
+
+    `_hent` leste `LESETAK` bytes og returnerte prefikset som om det var
+    hele dokumentet. Reglene ligger i vilkårlig rekkefølge i fila, så det
+    var tilfeldig hvilke forbud som havnet innenfor grensen — og hver
+    `Disallow` etter den ble stille borte, altså en sti målet eksplisitt
+    forbød, hentet."""
+    class Svar:
+        status = 200
+
+        def __init__(self, n):
+            self.data = b"x" * n
+
+        def read(self, n):
+            return self.data[:n]
+
+    class Conn:
+        n = 0
+
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            return Svar(Conn.n)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(kjor.http.client, "HTTPSConnection", Conn)
+    # Nøyaktig på taket er fortsatt et helt svar.
+    Conn.n = kjor.LESETAK
+    assert kjor._hent("https://m.example/robots.txt", "1.2.3.4")[0] == 200
+    # Én byte over: ingen tolkning av prefikset.
+    Conn.n = kjor.LESETAK + 1
+    try:
+        kjor._hent("https://m.example/robots.txt", "1.2.3.4")
+        raise AssertionError("et avkortet svar ble lest som et helt svar")
+    except kjor._Avkortet:
+        pass
+    # Og `_robots` behandler den som alle andre uleste robotser: ingen
+    # crawl — som så slår `avkortet` på, se testen over.
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+
 def test_enkeltside_henter_ikke_robots():
     """Codex P2: en `enkeltside`-kontroll skal ikke røre `/robots.txt`.
 

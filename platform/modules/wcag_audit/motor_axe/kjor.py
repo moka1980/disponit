@@ -238,6 +238,17 @@ def _pin_mal_ip(vert: str, port: int, vertskart: dict[str, str]) -> str:
     return adresser[0]
 
 
+#: Så mye av et svar `_hent` leser. Robots.txt er en tekstfil på noen
+#: kilobyte; taket finnes for at et uendelig svar ikke skal spise
+#: kontrollvinduet. Google leser 500 KiB (RFC 9309 §2.5 tillater et tak),
+#: men taket er bare forsvarlig når det SIER FRA — se `_Avkortet`.
+LESETAK = 65_536
+
+
+class _Avkortet(Exception):
+    """Svaret var større enn `LESETAK` — vi har ikke lest hele det."""
+
+
 def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str]:
     """GET mot `url`, men ALLTID mot den pinnede adressen.
 
@@ -245,7 +256,15 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str]:
     bare selve TCP-tilkoblingen tvinges til `pin_ip`, slik at hentingen
     ikke gjør sitt EGET DNS-oppslag etter at `_pin_mal_ip` har godkjent
     et annet svar. `_create_connection` er `http.client`-instansens egen
-    krok for nettopp dette."""
+    krok for nettopp dette.
+
+    ET AVKORTET SVAR ER IKKE ET SVAR (Codex P1). Lesingen stoppet på
+    `LESETAK` bytes og returnerte prefikset som om det var hele
+    dokumentet. For robots.txt er det direkte farlig: hver `Disallow`
+    etter grensen forsvant i stillhet, og crawleren hentet stier målet
+    eksplisitt hadde forbudt — nettopp det taket ikke kan avgjøre noe
+    om. Vi leser derfor ÉN byte forbi grensen, og finnes den, kaster vi
+    `_Avkortet` i stedet for å tolke prefikset."""
     u = urllib.parse.urlsplit(url)
     port = u.port or (443 if u.scheme == "https" else 80)
     if u.scheme == "https":
@@ -259,7 +278,10 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str]:
     try:
         conn.request("GET", u.path or "/")
         svar = conn.getresponse()
-        return svar.status, svar.read(65536).decode("utf-8", "replace")
+        raa = svar.read(LESETAK + 1)
+        if len(raa) > LESETAK:
+            raise _Avkortet(url)
+        return svar.status, raa.decode("utf-8", "replace")
     finally:
         conn.close()
 
@@ -273,10 +295,19 @@ def _robots(base: str, pin_ip: str, tls_kontekst=None
     robots som har sagt ja — fail-open her ville betydd at målets verste
     driftsøyeblikk er øyeblikket vi crawler mest. Kun et tydelig 4xx
     (robots finnes ikke) leses som «ingen uttalte begrensninger»
-    (RFC 9309 §2.3.1.3)."""
+    (RFC 9309 §2.3.1.3).
+
+    En robots STØRRE enn `LESETAK` går samme vei (Codex P1): `_Avkortet`
+    er en av grunnene til å ikke ha lest robotsen, og den regnes ikke
+    som noe annet enn de andre. Alternativet — å tolke prefikset — er
+    fail-open i forkledning: reglene ligger i vilkårlig rekkefølge i
+    fila, så det er tilfeldig hvilke forbud som havnet innenfor grensen,
+    og en `Disallow` vi ikke leste blir til en sti vi crawlet."""
     try:
         status, tekst = _hent(base + "/robots.txt", pin_ip, tls_kontekst)
     except Exception:
+        # `_Avkortet` er med her: en robots vi bare fikk BEGYNNELSEN av
+        # er en robots vi ikke fikk lest.
         return [], False
     if not 200 <= status < 300:
         return [], 400 <= status < 500
