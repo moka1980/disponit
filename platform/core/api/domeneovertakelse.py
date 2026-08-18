@@ -122,7 +122,8 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
     return res
 
 
-def slaa_opp_sak(conn, unntak_id: int) -> tuple[str, int, str] | None:
+def slaa_opp_sak(conn, unntak_id: int,
+                 utfordrer_tenant: str) -> tuple[str, int, str] | None:
     """(hostname, generasjon, utfordrer_tenant) for en ÅPEN overtakelsessak.
 
     041: saken bor på `__plattform_domener` og bærer feltene sine som
@@ -139,13 +140,23 @@ def slaa_opp_sak(conn, unntak_id: int) -> tuple[str, int, str] | None:
     er avgjort (`avgi` avviser den med attestasjon_avvist), ikke at den
     «ikke finnes» — et 404 på en sak man nettopp avgjorde er stillhet
     der svaret finnes.
+
+    `utfordrer_tenant` er den AUTENTISERTE tenanten, og den er et FILTER,
+    ikke et etterpå-sjekket felt (Codex P1). Adjudikatorrollen ser hver
+    eneste overtakelsessak i klyngen, mens `avgi_overtakelse_attestasjon`
+    kun autoriserer et medlem av UTFORDRERENS tenant — et oppslag uten
+    filteret gjorde derfor sak-id-rommet til et orakel: en adjudikator hos
+    A kunne skille «finnes ikke» fra «finnes, men er ikke din» på Bs og Cs
+    saker, og lese ut vertsnavn og parter for tvister hen aldri kunne
+    røre. Filteret i WHERE gir samme svar for begge: `None`.
     """
     conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
     rad = conn.execute(
         "SELECT hostname_ref, autorisasjonsgenerasjon, utfordrer_tenant"
         "  FROM unntak"
-        " WHERE id=%s AND sakskilde='domeneovertakelse'",
-        (unntak_id,)).fetchone()
+        " WHERE id=%s AND sakskilde='domeneovertakelse'"
+        "   AND utfordrer_tenant=%s",
+        (unntak_id, utfordrer_tenant)).fetchone()
     conn.execute("RESET ROLE")
     if rad is None or rad[0] is None or rad[1] is None or rad[2] is None:
         return None
@@ -216,14 +227,16 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
 
         # 041: saken leses under adjudikatorrollen (den bor på
         # `__plattform_domener`); rollback forlater rollen med transaksjonen.
-        sak = slaa_opp_sak(conn, unntak_id)
+        sak = slaa_opp_sak(conn, unntak_id, auth.tenant)
         conn.rollback()
         if sak is None:
             return _feilsvar("ikke_funnet", rid)
         hostname, generasjon_ved_opprettelse, utfordrer_tenant = sak
         # Attestasjonen avgis i UTFORDRERENS saksunivers: `p_tenant` er
-        # utfordreren saken navngir (019-kontrakten), aldri adjudikatorens
-        # egen tenant — de to er ulike parter fra og med 041.
+        # utfordreren saken navngir (019-kontrakten). Den leses fra RADEN og
+        # ikke fra sesjonen, selv om oppslaget over alt har gjerdet dem
+        # sammen — 019 gjerder på sakens egen utfordrer, og API-et skal sende
+        # nøyaktig det feltet motoren gjerder på.
         from db.pg import sett_kontekst
         sett_kontekst(conn, utfordrer_tenant, auth.token_id, rid)
 
@@ -301,6 +314,20 @@ def saker_endepunkt(tjeneste, request):
     (`domains:adjudicate`), lesingen under `SET LOCAL ROLE` — samme to-lags
     gjerde som attestasjonsendepunktet. Lesende GET uten CSRF (pr008-
     invarianten: en GET bærer aldri et mutasjonsscope).
+
+    KØEN ER UTFORDRERENS, IKKE KLYNGENS (Codex P1). `domeneadjudikator` er
+    en KUNDE-lokal rolle: enhver tenant kan gi den til sin egen bruker
+    (autorisasjon.py), og `__plattform_domener` kan per §8 aldri bære et
+    medlemskap — det finnes altså ingen plattformglobal prinsipal å måle
+    «global kø» mot. Uten filteret her ga rollen sitt eget omfang:
+    `SET LOCAL ROLE` løfter lesingen ut av tenant-GUC-en, og As adjudikator
+    leste vertsnavn OG begge partsidentiteter for tvister mellom B og C —
+    saker hen dessuten aldri kunne røre, siden
+    `avgi_overtakelse_attestasjon` (019) krever aktivt medlemskap i
+    UTFORDRERENS tenant. Køen speiler derfor nøyaktig den autoriteten:
+    sakene der sesjonens tenant ER utfordreren. Kryssidentiteten flaten
+    viser (`tapt_tenant`) er da motparten i din EGEN tvist — den samme
+    §5-visningen som før, men uten andres.
     """
     import psycopg
 
@@ -318,14 +345,17 @@ def saker_endepunkt(tjeneste, request):
                                ADJUDIKASJONSSCOPE)
         except kjerne.Feilsvar as f:
             return _feilsvar(f.kode, rid)
-        del auth   # køen er plattformens, ikke tenantens — ingen kontekst
+        # Rollen gir SYNLIGHETEN (saken bor på plattformtenanten); filteret
+        # gir OMFANGET. Begge trengs: uten rollen ser en kundesesjon ingen
+        # sak i det hele tatt, uten filteret ser den alles.
         conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
         rader = conn.execute(
             "SELECT id, hostname_ref, saksrevisjon, autorisasjonsgenerasjon,"
             "       utfordrer_tenant, tapt_tenant, status, ts"
             "  FROM unntak"
             " WHERE sakskilde='domeneovertakelse' AND NOT terminal"
-            " ORDER BY ts, id").fetchall()
+            "   AND utfordrer_tenant=%s"
+            " ORDER BY ts, id", (auth.tenant,)).fetchall()
         conn.execute("RESET ROLE")
         conn.rollback()
         saker = [{"unntak_id": int(r[0]), "hostname": r[1],

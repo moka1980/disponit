@@ -195,6 +195,104 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
 
 
 # ===========================================================================
+# Adjudikatorkøen (041 §5) — omfanget, ikke bare synligheten (Codex P1).
+# ===========================================================================
+
+#: En FREMMED kundetenant med sin egen adjudikator. Poenget er nettopp at den
+#: er en helt vanlig kunde: `domeneadjudikator` er en kunde-lokal rolle enhver
+#: tenant kan gi sin egen bruker, så «har rollen» kan aldri bety «ser alt».
+FREMMED = "t-adj-fremmed"
+
+
+def _adjudikator_i(tenant, sub):
+    """Aktiv `domeneadjudikator` i `tenant`. -> (sesjonscookie, csrf).
+
+    Egen helper fordi `_medlem`/`_browsersesjon` er bundet til TEN — og det
+    er nettopp en ANNEN tenant enn utfordreren som måles her.
+    """
+    import secrets as _s
+    from db.pg import koble, sett_kontekst
+    from api import sesjon as sesjonmodul
+    from .test_pr010_db import _identitet
+    cookie, csrf = _s.token_urlsafe(24), _s.token_urlsafe(24)
+    m = _mig()
+    try:
+        sett_kontekst(m, tenant, "sys", "r0")
+        bid = _identitet(m, sub=f"{tenant}-{sub}")
+        ver = m.execute(
+            "INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
+            " VALUES (%s,%s,ARRAY['domeneadjudikator'])"
+            " ON CONFLICT (tenant,bruker_id) DO UPDATE SET"
+            " roller=EXCLUDED.roller, aktiv=true"
+            " RETURNING authz_version", (tenant, bid)).fetchone()[0]
+        m.execute(
+            "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+            " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
+            " tilbakekalt) VALUES (%s,%s,%s,%s,%s, now(), now(),"
+            " now()+interval '12 hour', false)",
+            (sesjonmodul._hash(cookie), tenant, bid, ver,
+             sesjonmodul._hash(csrf)))
+        m.commit()
+        return cookie, csrf
+    finally:
+        m.close()
+
+
+@pg
+def test_adjudikatorkoen_er_utfordrerens_ikke_klyngens(klient):
+    """Codex P1: rollen gir synligheten, tenanten gir omfanget.
+
+    Saken er TENs (TEN er utfordreren). En adjudikator hos en HELT ANNEN
+    kunde har det samme scopet og den samme databaserollen — og skal likevel
+    ikke se saken, for `avgi_overtakelse_attestasjon` (019) autoriserer bare
+    medlemmer av utfordrerens tenant. Uten filteret var køen klyngens: den
+    ga fremmede både vertsnavnet og BEGGE partsidentitetene for tvister de
+    aldri kunne røre.
+    """
+    h = _host()
+    sak = _overtakelsessak(h)
+
+    from api import sesjon as sesjonmodul
+    fremmed, _ = _adjudikator_i(FREMMED, "utenfor")
+    r = klient.get("/v1/domeneovertakelse/saker",
+                   cookies={sesjonmodul.C_SESJON: fremmed})
+    assert r.status_code == 200, r.text
+    verter = [s["hostname"] for s in r.json()["saker"]]
+    assert h not in verter, "fremmed adjudikator ser en annen tenants sak"
+
+    # ... og utfordrerens egen adjudikator ser den, med begge parter: køen
+    # er avgrenset, ikke avskrudd.
+    egen, _ = _adjudikator_i(TEN, "egen")
+    r = klient.get("/v1/domeneovertakelse/saker",
+                   cookies={sesjonmodul.C_SESJON: egen})
+    assert r.status_code == 200, r.text
+    mine = [s for s in r.json()["saker"] if s["hostname"] == h]
+    assert len(mine) == 1, r.text
+    assert mine[0]["unntak_id"] == sak
+    assert mine[0]["utfordrer_tenant"] == TEN
+    assert mine[0]["tapt_tenant"] == "taper-tenant-pr015"
+
+
+@pg
+def test_attestasjon_pa_fremmed_sak_er_ikke_funnet(klient):
+    """Samme rot i attestasjonsveien: sak-id-rommet er ikke et orakel.
+
+    En fremmed adjudikator kunne før skille «finnes ikke» fra «finnes, men
+    er ikke din» — og oppslaget ga hen vertsnavn og utfordrer for saken.
+    Nå er begge `ikke_funnet`.
+    """
+    h = _host()
+    sak = _overtakelsessak(h)
+    cookie, csrf = _adjudikator_i(FREMMED, "orakel")
+    r = _post(klient, sak, cookie, csrf)
+    assert r.status_code == 404, r.text
+    assert r.json()["feil"] == "ikke_funnet"
+    # Nøyaktig samme svar for en sak som ikke finnes i det hele tatt.
+    r2 = _post(klient, sak + 10_000_000, cookie, csrf)
+    assert r2.status_code == 404 and r2.json()["feil"] == "ikke_funnet"
+
+
+# ===========================================================================
 # Opplastingskapabilitet ved claim (§5) — port 21, 22.
 # ===========================================================================
 

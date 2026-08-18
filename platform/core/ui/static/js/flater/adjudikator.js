@@ -2,10 +2,11 @@
 //
 // EGEN visning, atskilt fra tenantens unntakskø — adjudikatoren skal se
 // PARTENE (utfordrer og forrige innehaver) for å kunne avgjøre, og nettopp
-// derfor kan denne listen aldri vises i en kundeflate: kryssidentitetene
+// derfor kan denne listen aldri vises i en kundeflate: motpartens identitet
 // hører hjemme her og bare her. Ruten er scope-gatet (`domains:adjudicate`)
 // i sitekartet, og API-et bak (`GET /v1/domeneovertakelse/saker`) leser
-// under adjudikatorrollen — flaten er visning, aldri autoritet.
+// under adjudikatorrollen, avgrenset til sakene der DIN tenant er
+// utfordreren — flaten er visning, aldri autoritet.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, UautorisertFeil } from "../api.js";
