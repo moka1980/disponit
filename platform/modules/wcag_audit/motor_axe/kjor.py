@@ -371,7 +371,21 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str, str]:
     etter grensen forsvant i stillhet, og crawleren hentet stier målet
     eksplisitt hadde forbudt — nettopp det taket ikke kan avgjøre noe
     om. Vi leser derfor ÉN byte forbi grensen, og finnes den, kaster vi
-    `_Avkortet` i stedet for å tolke prefikset."""
+    `_Avkortet` i stedet for å tolke prefikset.
+
+    TAKET GJELDER BARE KROPPEN VI FAKTISK TOLKER (Codex P2, runde 10).
+    Lesingen skjedde FØR `Location` ble hentet, så en helt vanlig 301 med
+    en stor kropp — eller en som strømmer uten å ta slutt — ga `_Avkortet`
+    eller tidsavbrudd på et svar vi bare skulle ha lest ÉN header av.
+    `_robots` leste det som «robots ikke lest», og et nettstedsoppdrag
+    falt til én side på grunn av en kropp som per definisjon ikke bærer
+    policyen. Statuslinjen og `Location` leses derfor først, og kroppen
+    bare når status er 2xx.
+
+    At 3xx/4xx/5xx-kroppen står ulest svekker ingenting: `_robots` bruker
+    den ikke. Et 4xx ER svaret «ingen uttalte begrensninger» (RFC 9309
+    §2.3.1.3), og det svaret ligger i statuslinjen — en feilside på hundre
+    kilobyte gjør det verken mer eller mindre definitivt."""
     u = urllib.parse.urlsplit(url)
     port = u.port or (443 if u.scheme == "https" else 80)
     if u.scheme == "https":
@@ -393,10 +407,13 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str, str]:
         conn.request("GET", (u.path or "/") + (f"?{u.query}" if u.query
                                                else ""))
         svar = conn.getresponse()
+        plassering = (svar.getheader("location") or "").strip()
+        if not 200 <= svar.status < 300:
+            # Kroppen er ikke policyen, og leses ikke — se docstringen.
+            return svar.status, "", plassering
         raa = svar.read(LESETAK + 1)
         if len(raa) > LESETAK:
             raise _Avkortet(url)
-        plassering = (svar.getheader("location") or "").strip()
         return svar.status, raa.decode("utf-8", "replace"), plassering
     finally:
         conn.close()
@@ -450,7 +467,19 @@ def _robots(base: str, pin_ip: str, tls_kontekst=None
         if not (300 <= status < 400 and plassering):
             return [], False
         neste = urllib.parse.urljoin(url, plassering)
-        neste_origin = _origin(urllib.parse.urlsplit(neste))
+        neste_del = urllib.parse.urlsplit(neste)
+        # SKJEMAET FØRST, SÅ ORIGIN (Codex P2, runde 10). `_origin` folder
+        # `ws`/`wss` ned til `http`/`https` — helt riktig for et ORIGIN
+        # (RFC 6455 §3), men det gjør `wss://m.example/robots.txt` til
+        # samme origin som målet, og vakten slapp den gjennom. `_hent`
+        # kjenner bare det bokstavelige `https`, så hoppet ble hentet som
+        # KLARTEKST-HTTP mot port 80: en annen og usikret tjeneste på
+        # verten, lest som om den var målets robots. Origin-likhet er
+        # svaret på «samme vert?», ikke på «kan vi hente dette?» — og
+        # bare HTTP(S) er noe denne hentingen kan lese.
+        if neste_del.scheme.lower() not in HENTBARE_SKJEMA:
+            return [], False
+        neste_origin = _origin(neste_del)
         if not mal_origin or neste_origin != mal_origin:
             return [], False
         url = neste
@@ -504,8 +533,22 @@ def _robotsform(sti: str) -> str:
     return _PROSENTOKTETT.sub(bytt, sti)
 
 
-def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
-    """Én robots-regel som (tillat, monster, kompilert matcher).
+def _oktetter(monster: str) -> int:
+    """Hvor mange OKTETTER mønsteret er — presedensmålet i RFC 9309 §2.2.2.
+
+    Standarden måler spesifisitet i oktetter av stien, ikke i tegn av den
+    skrivemåten vi tilfeldigvis bærer mønsteret på. Etter `_robotsform` er
+    hver oktett enten seg selv (ASCII) eller en `%XX`-trippel, og en
+    trippel er ÉN oktett — ikke tre. Vi teller derfor `%XX` som ett tegn
+    og lar resten stå.
+
+    Et `%` som ikke innleder en gyldig trippel er ikke en koding, og
+    telles som seg selv — det er nettopp den oktetten det er."""
+    return len(_PROSENTOKTETT.sub(".", monster))
+
+
+def _regel(tillat: bool, monster: str) -> tuple[bool, int, "re.Pattern"]:
+    """Én robots-regel som (tillat, oktettlengde, kompilert matcher).
 
     RFC 9309 §2.2.2 gir stimønsteret to metategn, og BEGGE endrer hva
     regelen dekker: `*` matcher en vilkårlig sekvens, og `$` forankrer
@@ -514,15 +557,21 @@ def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
     eksplisitt forbudt sti ble crawlet (Codex P1). Resten av mønsteret er
     et rent prefiks, som før.
 
-    Mønsteret normaliseres av `_robotsform` først — se den. Lengden som
-    bærer presedensen i `_tillatt` er da den NORMALISERTE, altså den
-    formen begge sider faktisk måles på."""
+    Mønsteret normaliseres av `_robotsform` først — se den. Den formen er
+    riktig å MATCHE på, men feil å MÅLE på (Codex P2, runde 10): `%C3%A6`
+    er én bokstav på to oktetter skrevet som åtte tegn, så et mønster med
+    rå UTF-8 vokste seg forbi lengre ASCII-regler i det normaliseringen
+    kodet det. `Allow: /*æ` (fire oktetter) slo dermed `Disallow: /fooo`
+    (fem) for `/fooo%C3%A6`, og en eksplisitt forbudt side ble crawlet —
+    fail-open innført av selve sammenligningsformen. Presedensen bæres
+    derfor av `_oktetter`, som er målet standarden faktisk oppgir, mens
+    strengen fortsatt er den vi matcher med."""
     monster = _robotsform(monster)
     anker = monster.endswith("$")
     kropp = monster[:-1] if anker else monster
     rx = re.compile(".*".join(re.escape(d) for d in kropp.split("*"))
                     + ("$" if anker else ""))
-    return tillat, monster, rx
+    return tillat, _oktetter(monster), rx
 
 
 def _parse_robots(tekst: str) -> list[tuple[bool, str, "re.Pattern"]]:
@@ -579,19 +628,22 @@ def _robotsti(p) -> str:
 
 
 def _tillatt(sti: str, regler: list) -> bool:
-    """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — lengste mønster,
-    og `Allow` foran `Disallow` ved likt. Ingen treff = tillatt.
+    """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — flest OKTETTER, og
+    `Allow` foran `Disallow` ved likt. Ingen treff = tillatt.
 
     Normaliseringen ligger HER og ikke hos kallerne: dette er det ene
     stedet en sti møter en regel, og en sammenligning der bare den ene
     siden er normalisert er ingen sammenligning (Codex P1). Mønstrene er
-    normalisert i `_regel` med nøyaktig samme funksjon."""
+    normalisert i `_regel` med nøyaktig samme funksjon.
+
+    Presedensen måles på oktetter, ikke på tegn i den normaliserte
+    strengen — se `_oktetter` for hvorfor de to ikke er samme tall."""
     sti = _robotsform(sti)
     beste_lengde, beste_tillat = -1, True
-    for tillat, monster, rx in regler:
-        if rx.match(sti) and (len(monster) > beste_lengde
-                              or (len(monster) == beste_lengde and tillat)):
-            beste_lengde, beste_tillat = len(monster), tillat
+    for tillat, oktetter, rx in regler:
+        if rx.match(sti) and (oktetter > beste_lengde
+                              or (oktetter == beste_lengde and tillat)):
+            beste_lengde, beste_tillat = oktetter, tillat
     return beste_tillat
 
 
@@ -602,6 +654,15 @@ def _tillatt(sti: str, regler: list) -> bool:
 #: fordi websocket-vakten slipper noen gjennom — den lukker alle.
 STANDARDPORT = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 HTTP_SKJEMA = {"ws": "http", "wss": "https"}
+
+#: Skjemaene `_hent` FAKTISK kan hente. Settet er smalere enn `_origin`s,
+#: og det er hele poenget: `_origin` folder `wss` til `https` fordi de
+#: deler origin, mens `_hent` kjenner bare det bokstavelige `https` og
+#: faller til klartekst-HTTP på port 80 for alt annet. Et skjema som er
+#: samme ORIGIN er derfor ikke nødvendigvis et skjema vi kan LESE, og de
+#: to spørsmålene må stilles hver for seg — se omdirigeringsvakten i
+#: `_robots`.
+HENTBARE_SKJEMA = {"http", "https"}
 
 
 #: SAMME mønster som `rapport._VERT`, som selv speiler

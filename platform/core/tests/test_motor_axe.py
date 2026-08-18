@@ -27,8 +27,9 @@ def test_robots_parsing_og_tillatt():
     tekst = "# k\nUser-agent: googlebot\nDisallow: /alt/\n" \
             "User-agent: *\nDisallow: /privat/\nDisallow: /tmp\n"
     regler = kjor._parse_robots(tekst)
-    assert [(t, m) for t, m, _ in regler] == [(False, "/privat/"),
-                                              (False, "/tmp")]
+    # Midtfeltet er presedensen i OKTETTER, ikke mønsterstrengen — se
+    # `_oktetter`. For ren ASCII er de to like store.
+    assert [(t, n) for t, n, _ in regler] == [(False, 8), (False, 4)]
     assert kjor._tillatt("/privat/hemmelig.html", regler) is False
     assert kjor._tillatt("/tmpfil", regler) is False     # prefiks, som robots
     assert kjor._tillatt("/index.html", regler) is True
@@ -127,6 +128,44 @@ def test_robots_koder_raa_utf8_for_sammenligning():
     # Og stier med query — den formen `_robotsti` bygger — går samme vei.
     q = kjor._parse_robots("User-agent: *\nDisallow: /søk?\n")
     assert kjor._tillatt("/s%C3%B8k?q=1", q) is False
+
+
+def test_robots_presedens_maales_i_oktetter():
+    """Codex P2, runde 10: presedensen ble målt på den kodede skrivemåten.
+
+    RFC 9309 §2.2.2 måler spesifisitet i OKTETTER av stien. Da rå UTF-8
+    ble prosentkodet for matchingen, vokste mønsteret fra to oktetter til
+    seks tegn per tegn over 0x7F — og en kort `Allow` med rå UTF-8 slo en
+    lengre `Disallow` i ASCII. En eksplisitt forbudt side ble crawlet,
+    denne gangen på grunn av selve sammenligningsformen."""
+    # `/*æ` er fire oktetter, `/fooo` er fem. Disallow skal vinne — men
+    # `/*%C3%A6` er åtte TEGN, og vant før.
+    regler = kjor._parse_robots(
+        "User-agent: *\nAllow: /*æ\nDisallow: /fooo\n")
+    assert kjor._tillatt("/fooo%C3%A6", regler) is False
+    assert kjor._tillatt("/foooæ", regler) is False
+
+    # Er den rå regelen faktisk lengst i oktetter, vinner den — kravet er
+    # riktig måling, ikke at ikke-ASCII alltid taper.
+    lengre = kjor._parse_robots(
+        "User-agent: *\nAllow: /fooo/ææ\nDisallow: /fooo\n")
+    assert kjor._tillatt("/fooo/%C3%A6%C3%A6", lengre) is True
+
+    # Målet selv: `%XX` er én oktett, ASCII er seg selv, og et `%` som
+    # ikke innleder en trippel er bare et tegn.
+    assert kjor._oktetter("/*%C3%A6") == 4
+    assert kjor._oktetter("/fooo") == 5
+    assert kjor._oktetter("/100%rabatt") == 11
+
+    # Ren ASCII er uendret av grepet: lengste mønster vinner, og `Allow`
+    # går foran `Disallow` ved likt.
+    ascii_regler = kjor._parse_robots(
+        "User-agent: *\nDisallow: /a/\nAllow: /a/b/\n")
+    assert kjor._tillatt("/a/b/side", ascii_regler) is True
+    assert kjor._tillatt("/a/c/side", ascii_regler) is False
+    likt = kjor._parse_robots(
+        "User-agent: *\nDisallow: /a/b\nAllow: /a/b\n")
+    assert kjor._tillatt("/a/b", likt) is True
 
 
 def test_robots_gruppe_med_flere_user_agent_linjer():
@@ -251,7 +290,7 @@ def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     monkeypatch.setattr(kjor, "_hent", hent(200, "User-agent: *\n"
                                                  "Disallow: /privat/\n"))
     regler, lov = kjor._robots("https://m.example", "93.184.216.34")
-    assert lov is True and [m for _, m, _ in regler] == ["/privat/"]
+    assert lov is True and [n for _, n, _ in regler] == [8]   # oktetter
     assert kall["pin"] == "93.184.216.34"      # hentingen bruker pinnen
     assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
     monkeypatch.setattr(kjor, "_hent", hent(404))
@@ -292,7 +331,7 @@ def test_robots_folger_begrenset_omdirigering_paa_egen_origin(monkeypatch):
                "https://m.example/policy/robots.txt": (200, POLICY, "")})
     monkeypatch.setattr(kjor, "_hent", h)
     regler, lov = kjor._robots("https://m.example", "93.184.216.34")
-    assert lov is True and [m for _, m, _ in regler] == ["/privat/"]
+    assert lov is True and [n for _, n, _ in regler] == [8]   # oktetter
     # Pinnen bæres gjennom HELE kjeden — hvert hopp er samme godkjente
     # adresse, ellers var omdirigeringen en vei rundt adressekontrollen.
     assert {pin for _, pin in h.besokt} == {"93.184.216.34"}
@@ -397,6 +436,118 @@ def test_robots_over_lesetaket_stenger_crawlen(monkeypatch):
     # Og `_robots` behandler den som alle andre uleste robotser: ingen
     # crawl — som så slår `avkortet` på, se testen over.
     assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+
+def test_robots_avviser_ikke_hentbare_skjemaer(monkeypatch):
+    """Codex P2, runde 10: `wss://` passerte origin-vakten.
+
+    `_origin` folder `ws`/`wss` til `http`/`https` fordi de deler origin
+    (RFC 6455 §3) — riktig for sammenligningen, men det gjorde
+    `wss://m.example/robots.txt` til «målets egen origin». `_hent` kjenner
+    bare det bokstavelige `https`, så hoppet ble hentet som klartekst-HTTP
+    mot port 80: en annen, usikret tjeneste, lest som målets robots."""
+    POLICY = "User-agent: *\nDisallow: /privat/\n"
+
+    def kjede(kart):
+        besokt = []
+
+        def _h(url, pin_ip, tls_kontekst=None):
+            besokt.append(url)
+            return kart[url]
+        _h.besokt = besokt
+        return _h
+
+    # Origin-vakten sa ja til dette før — nå stanser skjemakontrollen det
+    # FØR sammenligningen, og hoppet hentes ikke i det hele tatt.
+    for ut in ("wss://m.example/robots.txt",     # samme origin som målet
+               "ws://m.example/robots.txt",
+               "wss://m.example:443/robots.txt"):
+        h = kjede({"https://m.example/robots.txt": (301, "", ut),
+                   ut: (200, POLICY, "")})
+        monkeypatch.setattr(kjor, "_hent", h)
+        assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), ut
+        assert h.besokt == ["https://m.example/robots.txt"], ut
+
+    # Settet er smalere enn `_origin`s, og det er poenget: origin-likhet
+    # svarer på «samme vert?», ikke på «kan vi hente dette?».
+    assert kjor.HENTBARE_SKJEMA == {"http", "https"}
+    assert set(kjor.HTTP_SKJEMA) & kjor.HENTBARE_SKJEMA == set()
+
+    # HTTP(S) på egen origin følges som før — kontrollen strammer bare
+    # inn på skjemaer hentingen ikke kan lese.
+    h = kjede({"https://m.example/robots.txt": (301, "", "/policy.txt"),
+               "https://m.example/policy.txt": (200, POLICY, "")})
+    monkeypatch.setattr(kjor, "_hent", h)
+    assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
+
+
+def test_robots_leser_location_for_lesetaket_brukes(monkeypatch):
+    """Codex P2, runde 10: taket ble brukt på en kropp vi ikke skal tolke.
+
+    `_hent` leste kroppen FØR den hentet `Location`, så en helt vanlig 301
+    med stor kropp ga `_Avkortet` — og `_robots` leste det som «robots
+    ikke lest», altså ingen crawl. Et nettstedsoppdrag falt til én side på
+    grunn av en feilside som per definisjon ikke bærer policyen."""
+    POLICY = "User-agent: *\nDisallow: /privat/\n"
+
+    class Svar:
+        def __init__(self, status, kropp, plassering):
+            self.status = status
+            self.data = kropp
+            self._plassering = plassering
+            self.lest = False
+
+        def read(self, n):
+            self.lest = True
+            return self.data[:n]
+
+        def getheader(self, navn, standard=None):
+            if navn.lower() == "location":
+                return self._plassering
+            return standard
+
+    svar = []
+
+    class Conn:
+        neste = []
+
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            s = Svar(*Conn.neste.pop(0))
+            svar.append(s)
+            return s
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(kjor.http.client, "HTTPSConnection", Conn)
+
+    # 301 med en kropp langt over taket, så policyen ett hopp unna.
+    Conn.neste = [(301, b"x" * (kjor.LESETAK * 4), "/policy.txt"),
+                  (200, POLICY.encode(), None)]
+    regler, lov = kjor._robots("https://m.example", "1.2.3.4")
+    assert lov is True and [n for _, n, _ in regler] == [8]
+    # Kroppen på omdirigeringen ble aldri lest — det er nettopp det som
+    # gjør at en kropp uten ende heller ikke kan henge hentingen.
+    assert svar[0].lest is False and svar[1].lest is True
+
+    # Taket gjelder fortsatt der det betyr noe: det ENDELIGE 2xx-svaret.
+    svar.clear()
+    Conn.neste = [(301, b"", "/policy.txt"),
+                  (200, b"x" * (kjor.LESETAK + 1), None)]
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+    # Et 4xx er svaret «ingen uttalte begrensninger» (RFC 9309 §2.3.1.3),
+    # og det svaret ligger i statuslinjen — ikke i feilsidens størrelse.
+    svar.clear()
+    Conn.neste = [(404, b"x" * (kjor.LESETAK * 4), None)]
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
+    assert svar[0].lest is False
 
 
 def test_enkeltside_henter_ikke_robots():
