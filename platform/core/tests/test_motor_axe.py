@@ -105,7 +105,8 @@ def test_fasiten_er_konsistent_med_seg_selv():
     assert "/privat/hemmelig.html" not in s["_crawlrekkefolge"]
     sider = ROT / "platform/modules/wcag_audit/testnettsted/sider"
     assert (sider / "privat/hemmelig.html").exists()
-    assert "Disallow: /privat/" in (sider / "robots.txt").read_text()
+    assert "Disallow: /privat/" in (sider / "robots.txt").read_text(
+        encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
