@@ -235,6 +235,55 @@ def test_to_samtidige_sikre_sak_gir_noyaktig_en(migrator):
 
 
 @pg
+def test_oppdragsbindingen_er_uforanderlig(migrator):
+    """Codex P2: `oppdrag_id` og `arsak` kan ikke skrives om etter
+    opprettelsen.
+
+    Runtime har direkte UPDATE på `unntak` (statusmaskinen går den veien),
+    og begge kolonnene sto utenfor enhver lås. CHECKen og FK-en godtar et
+    HVILKET SOM HELST gyldig par, så en sak kunne bindes om til et annet
+    oppdrag — og hele dens append-only-historikk ville da tilhøre noe
+    annet enn det den ble født av.
+
+    Kontroll: fjern `unntak_oppdragsbinding_immutable`, så blir denne rød.
+    """
+    rt = _rt()
+    try:
+        oid, _ = _beslutningsoppdrag(rt, migrator)
+        oid2, _ = _beslutningsoppdrag(rt, migrator)
+        _sett_kontekst(rt, TENANT)
+        sak = rt.execute("SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',"
+                         "'reaper','r1')", (TENANT, oid)).fetchone()[0]
+        rt.commit()
+    finally:
+        rt.close()
+
+    # Begge feltene, hver for seg — og som MIGRATOR, altså tabelleieren:
+    # står låsen i lagringen, finnes det ingen rolle som kommer utenom.
+    for sql, params in (
+            ("UPDATE unntak SET oppdrag_id=%s WHERE id=%s", (oid2, sak)),
+            ("UPDATE unntak SET arsak='sikkerhet' WHERE id=%s", (sak,)),
+            ("UPDATE unntak SET oppdrag_id=NULL, arsak=NULL WHERE id=%s",
+             (sak,))):
+        _sett_kontekst(migrator, TENANT)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            migrator.execute(sql, params)
+        migrator.rollback()
+
+    # ... mens statusmaskinen, som DELER tabellen, er helt urørt.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE unntak SET status='under_behandling'"
+                     " WHERE id=%s", (sak,))
+    migrator.commit()
+    _sett_kontekst(migrator, TENANT)
+    rad = migrator.execute(
+        "SELECT status, oppdrag_id, arsak FROM unntak WHERE id=%s",
+        (sak,)).fetchone()
+    migrator.rollback()
+    assert rad == ("under_behandling", oid, "evidensfrist"), rad
+
+
+@pg
 def test_definerveiene_binder_tenant_til_kallerens_kontekst(migrator):
     """Codex P1: `p_tenant` er IKKE kallerens frie valg.
 

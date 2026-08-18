@@ -114,6 +114,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS en_apen_sak_per_oppdrag_arsak
     ON unntak (tenant, oppdrag_id, arsak)
     WHERE NOT terminal AND oppdrag_id IS NOT NULL;
 
+-- BINDINGEN ER UFORANDERLIG (Codex P2).
+--
+-- Runtime har fortsatt direkte UPDATE på `unntak` (statusmaskinen og
+-- claim-feltene går den veien), og de to nye kolonnene sto utenfor
+-- ENHVER lås. Både den parvise CHECKen og FK-en er tilfredsstilt av et
+-- HVILKET SOM HELST gyldig par, så en eksisterende sak kunne få
+-- oppdraget og årsaken sin skrevet om i ettertid — og all
+-- append-only-historikken saken bærer ville da tilhøre et annet oppdrag
+-- enn det den ble født av. Det er ikke et tapt felt, det er et
+-- revisjonsspor som peker feil.
+--
+-- Egen trigger, ikke en utvidelse av `unntak_kolonnelaas`: den er
+-- omdefinert i 003/005/007/011, og å gjenskrive den gjeldende kroppen her
+-- er nøyaktig den «skriv lista på nytt fra hukommelsen»-feilen §2 over
+-- unngår for hendelses-CHECKen. Samme form som
+-- `oppdrag_opprinnelse_immutable` i §1 og som 035-familien.
+DROP TRIGGER IF EXISTS unntak_oppdragsbinding_immutable ON unntak;
+CREATE TRIGGER unntak_oppdragsbinding_immutable
+    BEFORE UPDATE ON unntak
+    FOR EACH ROW WHEN (
+           NEW.oppdrag_id IS DISTINCT FROM OLD.oppdrag_id
+        OR NEW.arsak      IS DISTINCT FROM OLD.arsak)
+    EXECUTE FUNCTION avvis_endring();
+
 -- Historikk-enumet utvides additivt med sakskoblingens hendelse. Listen
 -- HARDKODES IKKE (den har vokst i 011/016/017 og vokser videre): den
 -- GJELDENDE definisjonen leses fra katalogen og 'sak_for_oppdrag' skjøtes
