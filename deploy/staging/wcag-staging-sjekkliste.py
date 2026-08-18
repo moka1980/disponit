@@ -83,6 +83,7 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 RELEASE = "wcag-r1"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
+VERT_FREKVENS = "fasit-frekvens.test"
 VERT = "fasit.test"
 PORT = 8443
 KONTRAKT = REPO / "platform/modules/wcag_audit/kontrakt"
@@ -125,7 +126,7 @@ def _miljo() -> dict:
         linje = linje.strip()
         if linje and not linje.startswith("#") and "=" in linje:
             k, v = linje.split("=", 1)
-            ut[k] = v.strip().strip('"')
+            ut[k] = v.strip().strip('\'"')
     return ut
 
 
@@ -424,16 +425,16 @@ def _policy(frekvens_maks: int):
         "vilkaar": [{"navn": "domenekontroll_verifisert",
                      "verifikator": "v_domenekontroll"}],
         "reversering": {"type": "direkte"}})
-    p["meta"]["status"] = "aktiv"
+    p["meta"]["status"] = "produksjon"
     return p
 
 
-def _seed_tenant(m, tenant, frekvens_maks):
+def _seed_tenant(m, tenant, frekvens_maks, vert=VERT):
     from api import policyregister
     _kontekst(m, tenant)
     # Tenanten ER radene sine — det finnes ingen tenanttabell å opprette.
     try:
-        policyregister.registrer(m, tenant, _policy(frekvens_maks), "aktiv")
+        policyregister.registrer(m, tenant, _policy(frekvens_maks), 'produksjon')
     except Exception as e:
         if "finnes" not in str(e):
             raise
@@ -445,7 +446,7 @@ def _seed_tenant(m, tenant, frekvens_maks):
         "now()+interval '90 days')"
         " ON CONFLICT (tenant, hostname) DO UPDATE SET status='verifisert',"
         " siste_vellykkede_revalidering=now(),"
-        " utloper=now()+interval '90 days'", (tenant, VERT))
+        " utloper=now()+interval '90 days'", (tenant, vert))
     m.commit()
 
 
@@ -453,10 +454,13 @@ def _adminokt(m, tenant):
     from api import sesjon as sesjonmodul
     cookie, csrf = secrets.token_hex(24), secrets.token_hex(24)
     _kontekst(m, tenant)
-    bid = "bid_" + secrets.token_hex(12)
-    m.execute("INSERT INTO brukeridentitet (bruker_id, idp, subjekt)"
-              " VALUES (%s,'wcag-runde',%s) ON CONFLICT DO NOTHING",
-              (bid, "runde-" + secrets.token_hex(4)))
+    # Speiler testenes _identitet: (issuer, sub), bruker_id genereres av basen.
+    bid = m.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+        " ON CONFLICT (issuer,sub) DO UPDATE SET sub=EXCLUDED.sub"
+        " RETURNING bruker_id",
+        ("https://wcag-runde.local", "runde-" + secrets.token_hex(6))
+    ).fetchone()[0]
     m.execute("INSERT INTO brukermedlemskap (tenant,bruker_id,roller)"
               " VALUES (%s,%s,%s) ON CONFLICT (tenant,bruker_id)"
               " DO UPDATE SET roller=EXCLUDED.roller",
@@ -476,7 +480,7 @@ def _adminokt(m, tenant):
 
 def fase3(m):
     _seed_tenant(m, TENANT, 12)
-    _seed_tenant(m, TENANT_FREKVENS, 4)
+    _seed_tenant(m, TENANT_FREKVENS, 4, vert=VERT_FREKVENS)
     evidens("fase3_ok", tenants=[TENANT, TENANT_FREKVENS])
 
 
@@ -845,7 +849,7 @@ def fase6(m, http, mtk, motorkmd, digest):
     ck2, cs2 = _adminokt(m, TENANT_FREKVENS)
     utfall = []
     for i in range(5):
-        kropp = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
+        kropp = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT_FREKVENS,
                  "sti": "/index.html", "kravsett": "wcag21_aa",
                  "omfang": "enkeltside"}
         r = _bestill(http, ck2, cs2, kropp, _idem(f"f6-frekv-{i}", kropp))
@@ -965,8 +969,12 @@ def fase7(m, http, mtk, digest):
               " WHERE tenant=%s AND id=%s", (TENANT, oid2))
     m.execute("ALTER TABLE oppdrag ENABLE TRIGGER oppdrag_laas")
     m.commit()
+    # Migrator har ikke EXECUTE på reaperen — kall den som eieren
+    # (claimer), samme SET ROLE-mønster som testene bruker.
+    m.execute("SET LOCAL ROLE disponit_m37_claimer")
     reapet = m.execute("SELECT tenant, oppdrag_id, unntak_id FROM"
                        " reap_evidensfrister(50)").fetchall()
+    m.execute("RESET ROLE")
     m.commit()
     _kontekst(m, TENANT)
     sak = m.execute("SELECT u.arsak, u.sakstype, o.status FROM unntak u"

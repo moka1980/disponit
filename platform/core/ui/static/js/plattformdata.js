@@ -25,7 +25,7 @@ import { t } from "./i18n.js";
 // `i_drift`-liste — ikke i det kunden leser.
 export const MODULSTATUS = {
   1: "klargjort",   // m01_policy: status aktiv, driftstilstand staging
-  2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
+  2: "klargjort",   // m02_revisjonslogg: status aktiv, driftstilstand staging
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
 };

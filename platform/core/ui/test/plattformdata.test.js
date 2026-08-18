@@ -17,12 +17,17 @@ const LOKALER = ["nb", "en"].map((sprak) =>
   [sprak, JSON.parse(readFileSync(join(ROT, "locales", `${sprak}.json`), "utf-8"))]);
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
-  // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
-  // godkjent og kjører — men på STAGING, så flaten sier `klargjort`. `i_drift`
-  // krever `driftstilstand: produksjon`, altså en utrulling hos kunder, og den
-  // finnes ikke ennå. M-2/M-37 er under utvikling, M-38 har intet manifest.
+  // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 og
+  // M-2 er godkjent og kjører — men på STAGING, så flaten sier `klargjort`.
+  // `i_drift` krever `driftstilstand: produksjon`, altså en utrulling hos
+  // kunder, og den finnes ikke ennå. M-37 er under utvikling, M-38 har intet
+  // manifest.
+  //
+  // M-2 sto `bygges` fram til manifestet ble aktivert (aktiv/staging). Denne
+  // testen og `MODULSTATUS` er to sider av samme påstand og må flytte seg
+  // sammen — ellers er den ene bare en kopi av den andre uten portverdi.
   assert.equal(modulStatus(1), "klargjort");
-  assert.equal(modulStatus(2), "bygges");
+  assert.equal(modulStatus(2), "klargjort");
   assert.equal(modulStatus(38), "planlagt");
   assert.equal(modulStatus(45), "planlagt");
 });
