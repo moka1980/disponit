@@ -125,6 +125,10 @@ RUNDEID_FIL = RUNDE / "runde-id.json"
 #: tilbakekalt. Se `_migrert_modultoken`.
 LEGACY_RELEASE = "wcag-r1"
 LEGACY_TOKEN_FIL = RUNDE / "modultoken"
+#: ... og av samme grunn for rundens identitet (Codex P2, runde 14): en
+#: `runde-id` fra det gamle formatet tilhører `LEGACY_RELEASE`, og for
+#: DEN runden er den identiteten hele idempotensen. Se `_migrert_rundeid`.
+LEGACY_RUNDEID_FIL = RUNDE / "runde-id"
 ATT_FIL = Path("/etc/disponit/api/DISPONIT_ATT_NOKLER")
 API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 
@@ -665,6 +669,49 @@ def fase4(m, http, pepper):
 _RUNDEID: str | None = None
 
 
+def _migrert_rundeid() -> str | None:
+    """Identiteten fra formatet FØR release-bindingen (Codex P2, runde 14).
+
+    Runde 13 flyttet rundeid-en fra den uversjonerte `RUNDE/runde-id` til
+    `RUNDEID_FIL`. En runde som ALT var i gang da denne versjonen ble
+    deployet, bærer bare den gamle fila — og leste vi den som fraværende,
+    fikk en gjenkjøring av fasene 5–7 en NY identitet. Det er nøyaktig det
+    idempotensen finnes for å hindre: nøklene i `_idem` avledes av
+    identiteten, så gjenkjøringen ville tatt nye forretningsbeslutninger i
+    stedet for å replaye sine egne. Fase 5 har alt brukt 10 av tenantens
+    12 daglige slots på `/index.html`, så resultatet er et par dubletter
+    og så `frekvensgrense_naadd` på resten — rødt der fasiten krever 10/10.
+
+    Som for tokenet gjelder migreringen NØYAKTIG den ene releasen det
+    gamle skriptet hardkodet. Er `WCAG_RELEASE` overstyrt, er identiteten
+    forrige runde sin, og da er det å forkaste den hele poenget: den nye
+    releasen skal måles, ikke replayes."""
+    if not LEGACY_RUNDEID_FIL.exists():
+        return None
+    if RELEASE != LEGACY_RELEASE:
+        evidens("rundeid_legacy_ignorert", fil=str(LEGACY_RUNDEID_FIL),
+                release=RELEASE, legacy_release=LEGACY_RELEASE,
+                grunn="den uversjonerte identiteten kan bare ha tilhørt"
+                      f" {LEGACY_RELEASE} — denne releasen skal måles,"
+                      " ikke replaye den forrige")
+        return None
+    try:
+        rid = LEGACY_RUNDEID_FIL.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        evidens("rundeid_legacy_uleselig", fil=str(LEGACY_RUNDEID_FIL),
+                feiltype=type(e).__name__, feil=str(e)[:200])
+        return None
+    if not rid:
+        return None
+    evidens("rundeid_migrert", fra=str(LEGACY_RUNDEID_FIL),
+            til=str(RUNDEID_FIL), release=RELEASE, runde_id=rid,
+            merknad="identiteten er fra formatet før release-bindingen og"
+                    f" kan bare ha tilhørt {LEGACY_RELEASE}; nøklene i"
+                    " fasene 5–7 replayer derfor den påbegynte runden i"
+                    " stedet for å bruke nye slots")
+    return rid
+
+
 def _lagret_rundeid() -> str | None:
     """Rundeid-en fra rundekatalogen — BARE for DENNE releasen (Codex P1).
 
@@ -677,9 +724,13 @@ def _lagret_rundeid() -> str | None:
     `idempotent-replay`, og runden «måler» rapportene til releasen som
     nettopp ble nødstoppet. Fase 7 gjenbruker i tillegg sin alt feilede
     injiseringsjobb og blir normalt rød på en tom kø. Utfallet var at
-    gjenopprettingsrunden brant enda en release uten å gjenåpne noe."""
+    gjenopprettingsrunden brant enda en release uten å gjenåpne noe.
+
+    Finnes fila ikke, kan rundekatalogen likevel bære identiteten i
+    formatet fra før bindingen. Se `_migrert_rundeid`: den leses BARE for
+    releasen det gamle skriptet hardkodet."""
     if not RUNDEID_FIL.exists():
-        return None
+        return _migrert_rundeid()
     try:
         lagret = json.loads(RUNDEID_FIL.read_text(encoding="utf-8"))
     except ValueError:

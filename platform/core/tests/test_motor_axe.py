@@ -889,8 +889,10 @@ def test_rundeidentiteten_er_bundet_til_sin_release():
     lest = sjekk.split("def _lagret_rundeid(", 1)[1].split("\ndef ", 1)[0]
     assert "if rel != RELEASE:" in lest
     assert 'evidens("rundeid_forkastet"' in lest
-    # Ingen vei utenom: den uversjonerte fila finnes ikke lenger noe sted.
-    assert 'RUNDE / "runde-id"' not in sjekk
+    # Den uversjonerte fila leses ikke lenger noe annet sted enn i
+    # migreringen, og `_rundeid` skriver den aldri igjen.
+    assert sjekk.count('RUNDE / "runde-id"\n') == 1
+    assert 'LEGACY_RUNDEID_FIL = RUNDE / "runde-id"\n' in sjekk
 
     # ... og WCAG_RUNDE_ID går FØR fila. Overstyringen finnes nettopp for å
     # skille denne kjøringen fra den forrige; ble fila lest først, ville den
@@ -906,6 +908,37 @@ def test_rundeidentiteten_er_bundet_til_sin_release():
     # Nøklene henger fortsatt på identiteten, så bindingen gjelder hver fase.
     idem = sjekk.split("def _idem(", 1)[1].split("\ndef ", 1)[0]
     assert 'return f"{_rundeid()}-{merkelapp}-{h[:12]}"' in idem
+
+
+def test_en_paabegynt_runde_beholder_identiteten_over_formatbyttet():
+    """Codex P2, runde 14: en ny id i en gammel runde bruker nye slots.
+
+    Runde 13 flyttet identiteten til `RUNDEID_FIL`. En runde som ALT var i
+    gang bar bare den uversjonerte `RUNDE/runde-id` — og leste den nye
+    koden den som fraværende, fikk en gjenkjøring av fasene 5–7 en ny id.
+    Nøklene i `_idem` avledes av identiteten, så gjenkjøringen tok NYE
+    forretningsbeslutninger i stedet for å replaye sine egne: fase 5 har
+    alt brukt 10 av tenantens 12 daglige slots på `/index.html`, så
+    utfallet er noen dubletter og så `frekvensgrense_naadd` på resten.
+
+    Migreringen gjelder bare releasen det gamle skriptet hardkodet. Er
+    `WCAG_RELEASE` overstyrt, er identiteten forrige runde sin, og da er
+    det å forkaste den hele poenget."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    lest = sjekk.split("def _lagret_rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "return _migrert_rundeid()" in lest
+    kropp = sjekk.split("def _migrert_rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "if RELEASE != LEGACY_RELEASE:" in kropp
+    assert 'evidens("rundeid_legacy_ignorert"' in kropp
+    assert 'evidens("rundeid_migrert"' in kropp
+    # WCAG_RUNDE_ID går fortsatt FØRST: den som navngir runden selv, skal
+    # ikke bli overkjørt av en fil fra forrige format.
+    rundeid = sjekk.split("def _rundeid(", 1)[1].split("\ndef ", 1)[0]
+    assert "lagret = None if onsket else _lagret_rundeid()" in rundeid
+    # ... og den migrerte identiteten skrives videre i release-bundet form
+    # av `_rundeid` selv, så neste kjøring slipper å migrere igjen.
+    assert '{"release": RELEASE, "runde_id": rid}' in rundeid
 
 
 def test_konteksten_avledes_av_den_effektive_motoren():
