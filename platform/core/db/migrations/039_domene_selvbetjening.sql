@@ -81,32 +81,39 @@ CREATE OR REPLACE FUNCTION ventende_domenechallenges(p_grense INT DEFAULT 200)
 RETURNS TABLE (tenant TEXT, hostname TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
+    -- Stemplingen ligger i en CTE og resultatet leses ut med en SELECT:
+    -- `RETURN QUERY` tar en QUERY, ikke en DML-setning med RETURNING.
     RETURN QUERY
-    UPDATE public.domenekontroll d
-       SET challenge_forsokt = now()
-      FROM (SELECT k.tenant AS t, k.hostname AS h
-              FROM public.domenekontroll k
-             WHERE (k.status = 'ventende'
-                    -- REAPPLIKASJONEN (Codex P2): en kandidat M-37 AVVISTE står
-                    -- `tilbakekalt` MED motparten på seg, og 018 har en egen gren
-                    -- for nettopp den — ny generasjon, ny avklaring, nytt
-                    -- `konflikt:<motpart>`. Uten raden her hadde den grenen ingen
-                    -- produksjonskaller: arbeideren så bare `ventende`, og den
-                    -- eneste veien tilbake gikk gjennom at en operatør kalte
-                    -- administrasjonsfunksjonen manuelt. Raden flyttes IKKE til
-                    -- `ventende` for å komme hit — det er nettopp statusen
-                    -- `tilbakekalt` + motpart som ER gjerdet 018 kjenner igjen.
-                    OR (k.status = 'tilbakekalt'
-                        AND k.konflikt_motpart IS NOT NULL))
-               AND k.challenge_token_hash IS NOT NULL
-               AND k.challenge_utloper > now()
-             ORDER BY (CASE WHEN k.challenge_forsokt >= k.challenge_utstedt
-                            THEN k.challenge_forsokt END) NULLS FIRST,
-                      k.challenge_utstedt
-             LIMIT p_grense
-               FOR UPDATE SKIP LOCKED) v
-     WHERE d.tenant = v.t AND d.hostname = v.h
-    RETURNING d.tenant, d.hostname;
+    WITH plukk AS (
+        SELECT k.tenant AS t, k.hostname AS h
+          FROM public.domenekontroll k
+         WHERE (k.status = 'ventende'
+                -- REAPPLIKASJONEN (Codex P2): en kandidat M-37 AVVISTE står
+                -- `tilbakekalt` MED motparten på seg, og 018 har en egen gren
+                -- for nettopp den — ny generasjon, ny avklaring, nytt
+                -- `konflikt:<motpart>`. Uten raden her hadde den grenen ingen
+                -- produksjonskaller: arbeideren så bare `ventende`, og den
+                -- eneste veien tilbake gikk gjennom at en operatør kalte
+                -- administrasjonsfunksjonen manuelt. Raden flyttes IKKE til
+                -- `ventende` for å komme hit — det er nettopp statusen
+                -- `tilbakekalt` + motpart som ER gjerdet 018 kjenner igjen.
+                OR (k.status = 'tilbakekalt'
+                    AND k.konflikt_motpart IS NOT NULL))
+           AND k.challenge_token_hash IS NOT NULL
+           AND k.challenge_utloper > now()
+         ORDER BY (CASE WHEN k.challenge_forsokt >= k.challenge_utstedt
+                        THEN k.challenge_forsokt END) NULLS FIRST,
+                  k.challenge_utstedt
+         LIMIT p_grense
+           FOR UPDATE SKIP LOCKED
+    ), stemplet AS (
+        UPDATE public.domenekontroll d
+           SET challenge_forsokt = now()
+          FROM plukk p
+         WHERE d.tenant = p.t AND d.hostname = p.h
+        RETURNING d.tenant AS t, d.hostname AS h
+    )
+    SELECT s.t, s.h FROM stemplet s;
 END $$;
 
 -- Førstegangsbekreftelsen — 019 §3.35-formen: TXT-verdiene sendes MED,
@@ -230,19 +237,26 @@ CREATE OR REPLACE FUNCTION ventende_overtakelseskonflikter(
 RETURNS TABLE (tenant TEXT, hostname TEXT, motpart TEXT, generasjon BIGINT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
+    -- Som plukket over: stemplingen i en CTE, uttrekket som en SELECT —
+    -- `RETURN QUERY` tar en QUERY, ikke en DML-setning med RETURNING.
     RETURN QUERY
-    UPDATE public.domenekontroll d
-       SET konflikt_drenert = now()
-      FROM (SELECT k.tenant AS t, k.hostname AS h
-              FROM public.domenekontroll k
-             WHERE k.status = 'avklaring_kreves'
-               AND k.konflikt_motpart IS NOT NULL
-             ORDER BY k.konflikt_drenert NULLS FIRST, k.hostname, k.tenant
-             LIMIT p_grense
-               FOR UPDATE SKIP LOCKED) v
-     WHERE d.tenant = v.t AND d.hostname = v.h
-    RETURNING d.tenant, d.hostname, d.konflikt_motpart,
-              d.autorisasjonsgenerasjon;
+    WITH plukk AS (
+        SELECT k.tenant AS t, k.hostname AS h
+          FROM public.domenekontroll k
+         WHERE k.status = 'avklaring_kreves'
+           AND k.konflikt_motpart IS NOT NULL
+         ORDER BY k.konflikt_drenert NULLS FIRST, k.hostname, k.tenant
+         LIMIT p_grense
+           FOR UPDATE SKIP LOCKED
+    ), stemplet AS (
+        UPDATE public.domenekontroll d
+           SET konflikt_drenert = now()
+          FROM plukk p
+         WHERE d.tenant = p.t AND d.hostname = p.h
+        RETURNING d.tenant AS t, d.hostname AS h,
+                  d.konflikt_motpart AS m, d.autorisasjonsgenerasjon AS g
+    )
+    SELECT s.t, s.h, s.m, s.g FROM stemplet s;
 END $$;
 
 REVOKE ALL ON FUNCTION ventende_domenechallenges(INT) FROM PUBLIC;
