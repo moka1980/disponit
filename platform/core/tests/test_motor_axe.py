@@ -543,6 +543,44 @@ def test_begge_robots_portene_kan_bli_roede():
     assert "_ROEDE.append(hendelse)" in sjekk
 
 
+def test_hver_maalefase_gjenbruker_rapporten_ved_gjenspill():
+    """Codex P1, runde 9: et gjenspill måler køen, ikke resultatet.
+
+    Med de stabile `_idem`-nøklene svarer `/v1/bestilling`
+    `idempotent-replay` når en fase kjøres om igjen på samme runde-ID:
+    beslutningen er tatt og oppdraget er alt utført. Et ubetinget
+    `_kontroller_kjor` claimer likevel GLOBALT — det finner en tom kø og
+    gir `utfall: "tomt"`, altså en rød port på en rapport som ligger
+    ferdig og gyldig, eller det claimer et ANNET oppdrag og måler en helt
+    annen kjøring enn sin egen.
+
+    Fase 5 fikk gjenspillsveien i runde 3; fase 6 sto igjen med den
+    ubetingede varianten. Testen binder BEGGE, slik at de ikke kan drive
+    fra hverandre: hvert `_kontroller_kjor` i en målefase skal ligge bak
+    den samme gjenspillskontrollen."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    for fase, kjoringer in (("def fase5(", 1), ("def fase6(", 2)):
+        kropp = sjekk.split(fase, 1)[1].split("\ndef ", 1)[0]
+        assert 'r.headers.get("idempotent-replay") == "1"' in kropp, fase
+        assert "alt_utfort = rr is not None and rr.status_code == 200" \
+            in kropp, fase
+        # Motoren kjøres bare i ELSE-grenen — altså når rapporten IKKE
+        # alt finnes. Et ubetinget `_kontroller_kjor` er nettopp det
+        # globale claimet porten ikke tåler.
+        gren = kropp.split("if alt_utfort:", 1)[1].split("\n\n", 1)[0]
+        assert "_kontroller_kjor(" in gren.split("else:", 1)[1], fase
+        # ... og ANTALLET er pinnet, så en ny måling ikke kan snike inn
+        # et uvoktet kall. Fase 6 har ett til, og det er ikke en måling:
+        # dreneringen som tømmer køen før feilinjiseringen i fase 7.
+        assert kropp.count("_kontroller_kjor(") == kjoringer, fase
+        if kjoringer == 2:
+            assert "drenert.append(res.get(\"utfall\"))" in kropp, fase
+        # Til slutt skal gjenspillet STÅ i evidensen, ikke skjules: en
+        # måling som ikke ble gjort på nytt skal ikke se ut som en ny.
+        assert "gjenspill=alt_utfort" in kropp, fase
+
+
 def test_roed_klarhetsmaaling_ruller_tilbake_aktiveringen():
     """Codex P1, runde 5: `enable --now` er persistent, målingen kom etter.
 
