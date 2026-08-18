@@ -202,6 +202,13 @@ export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
   _muter(`/v1/policyutkast/${uid}/attester`, "POST", { diff_hash: diffHash },
          idempotensnokkel);
 
+// 038 §6: bestillingsveien. Nøkkelen holdes av FLATEN og er stabil så lenge
+// skjemainnholdet står urørt — en retry replayer, en endring bestiller nytt.
+export const bestill = (kropp, idempotensnokkel) =>
+  _muter("/v1/bestilling", "POST", kropp, idempotensnokkel);
+// 038 §7: den promoterte rapporten bak et beslutningsoppdrag (lesende).
+export const hentRapport = (oppdragId) => hentJson(`/v1/rapport/${oppdragId}`);
+
 // PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
 // (dobbel-innsending). Klienten sender handlingen, `saksversjon` (den den
 // VISTE, for den optimistiske låsen) og en `Idempotency-Key`. Nøkkelen

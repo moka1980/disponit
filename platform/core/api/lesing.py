@@ -227,6 +227,54 @@ def _kombinasjon_lovlig(art: str, ev: str, sen: bool, konflikt: bool) -> bool:
     return False
 
 
+def rapport_detalj(tjeneste, request: Request) -> Response:
+    """GET /v1/rapport/{oppdrag_id} — den promoterte WCAG-rapporten (038 §7).
+
+    Scope `decisions:read`: rapporten er evidensen bak en beslutning
+    tenanten selv bestilte, og lese-API-et viser alt annet om den
+    beslutningen under samme scope. Identisk 404 for «finnes ikke»,
+    «ikke ditt» og «ikke promotert» — tilstanden til et annet oppdrag er
+    ikke informasjon dette scopet skal bekrefte.
+
+    Dekrypteringen skjer her og bare her på leseveien: artefaktlageret er
+    kryptert i ro, og klienten får aldri ciphertext/nøkkelreferanser —
+    kun rapportdokumentet som ble validert mot det lukkede skjemaet ved
+    promoteringen.
+    """
+    def _fn(conn, auth, rid):
+        oid = request.path_params["id"]
+        rad = conn.execute(
+            "SELECT artefakt_id, ciphertext, nonce, dek_ref, promotert_ts,"
+            " artefakttype FROM artefakt"
+            " WHERE tenant=%s AND oppdrag_id=%s AND tilstand='promotert'"
+            " ORDER BY promotert_ts DESC LIMIT 1",
+            (auth.tenant, oid)).fetchone()
+        if rad is None:
+            return _feilsvar("ikke_funnet", rid)
+        art_id, ct, nonce, dek_ref, ts, artefakttype = rad
+        from db import kryptering
+        try:
+            dek = kryptering.hent_dek(conn, auth.tenant, dek_ref)
+            rapport = kryptering.dekrypter(dek, ct, nonce, auth.tenant,
+                                           dek_ref)
+        except Exception:
+            # En promotert rad som ikke lar seg dekryptere er en
+            # servertilstand (nøkkel destruert, korrupsjon) — aldri noe
+            # klienten skal tolke som «rapporten finnes ikke».
+            tjeneste.logg.hendelse("intern_feil", rid, auth.tenant,
+                                   art="drift", artefakt=str(art_id))
+            return _feilsvar("intern_feil", rid)
+        return kanonisk_json({
+            "oppdrag_id": oid,
+            "artefakt_id": str(art_id),
+            "artefakttype": artefakttype,
+            "promotert_ts": ts.isoformat() if ts else None,
+            "rapport": rapport,
+            "request_id": rid,
+        }, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
 def beslutning_detalj(tjeneste, request: Request) -> Response:
     def _fn(conn, auth, rid):
         try:

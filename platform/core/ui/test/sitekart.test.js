@@ -24,8 +24,13 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
     ["kundeadmin"]);
   const alle = byggRuter({ scopes: ["decisions:read", "exceptions:read",
     "policy:read"] }).map((r) => r.nokkel);
+  // 038: `rapport` følger decisions:read; `bestilling` krever sitt eget
+  // mutasjonsscope og er derfor IKKE med her.
   assert.deepEqual(alle,
-    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
+    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin", "rapport"]);
+  const medBestilling = byggRuter({ scopes: ["decisions:read",
+    "bestilling:opprett"] }).map((r) => r.nokkel);
+  assert.ok(medBestilling.includes("bestilling"));
 });
 
 test("byggRuter: godkjenner får ikke policyruten den ikke kan lese", () => {

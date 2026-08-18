@@ -767,6 +767,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def beslutning_detalj(request: Request) -> Response:
         return lesing.beslutning_detalj(tjeneste, request)
 
+    def rapport_detalj(request: Request) -> Response:
+        return lesing.rapport_detalj(tjeneste, request)
+
     def unntak_detalj(request: Request) -> Response:
         return lesing.unntak_detalj(tjeneste, request)
 
@@ -907,6 +910,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/oversikt", oversikt, methods=["GET"]),
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
+        Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
@@ -1310,6 +1314,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/oversikt"):                "decisions:read",
     ("GET",  "/v1/beslutninger"):            "decisions:read",
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
+    # 038 §7: rapporten er evidensen bak tenantens egen beslutning.
+    ("GET",  "/v1/rapport/{id:int}"):        "decisions:read",
     ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
     ("POST", "/v1/unntak/{id:int}/handling"): "exceptions:approve",

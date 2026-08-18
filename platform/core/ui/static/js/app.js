@@ -16,6 +16,8 @@ import { visPolicyadmin } from "./flater/policyadmin.js";
 import { visKundeadmin } from "./flater/kundeadmin.js";
 import { visVarsler } from "./flater/varsler.js";
 import { visAdmin } from "./flater/admin.js";
+import { visBestilling } from "./flater/bestilling.js";
+import { visRapport } from "./flater/rapport.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -24,6 +26,7 @@ const FLATER = {
   policyadmin: visPolicyadmin, kundeadmin: visKundeadmin,
   varsler: visVarsler,
   admin: visAdmin,
+  bestilling: visBestilling, rapport: visRapport,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

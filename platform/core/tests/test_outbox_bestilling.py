@@ -698,3 +698,68 @@ def test_lese_api_viser_opphav_og_null_unntak(migrator, klient):
     assert res["oppdrag_id"] == oid
     assert res["unntak_id"] is None                      # 28
     assert res["opprinnelse"] == "beslutning"
+
+
+@pg
+def test_rapport_lese_api(migrator, klient):
+    """038 §7: GET /v1/rapport/{oppdrag_id} — den promoterte rapporten
+    dekryptert server-side; ingen ciphertext/nøkkelreferanser i svaret.
+    Uten promotert artefakt (eller for et fremmed nummer): identisk 404."""
+    import hashlib as _hl
+
+    from db import kryptering
+    from policy_validator import jcs
+    from .test_wcag_kontroll import _registrer_skjema, _streng_type, _mk_admin
+
+    rt = _rt()
+    try:
+        oid, _ = _beslutningsoppdrag(rt, migrator)
+    finally:
+        rt.close()
+    # 404 FØR promotering — «ikke ferdig» og «finnes ikke» er samme svar.
+    tok, _ = _lesetoken(migrator, scopes=("decisions:read",))
+    klient.cookies.clear()
+    r0 = klient.get(f"/v1/rapport/{oid}",
+                    headers={"authorization": f"Bearer {tok}"})
+    assert r0.status_code == 404, r0.text
+
+    modul = "m-" + secrets.token_hex(4)
+    kh = secrets.token_hex(32)
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        ma.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
+                   "'kompenserende','sys')", (modul, kh))
+        ma.commit()
+    finally:
+        ma.close()
+    at = _streng_type(migrator, modul, kh,
+                      skjema={"type": "object"})
+    rapport = {"kravsett": "wcag21_aa", "sammendrag": {"kritisk": 0}}
+    kanon = jcs.kanoniske_bytes(rapport)
+    _sett_kontekst(migrator, TENANT)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
+    ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
+    migrator.execute(
+        "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
+        " release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,"
+        " storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,"
+        " kapabilitet_jti, promotert_ts)"
+        " VALUES (%s,%s,%s,%s,'r1',1,%s,0,'promotert',%s,%s,%s,%s,%s,%s,"
+        " now())",
+        (TENANT, oid, at, modul, kh, len(kanon),
+         _hl.sha256(kanon).hexdigest(), ct, nonce, key_id,
+         "jti-" + secrets.token_hex(8)))
+    migrator.commit()
+
+    r = klient.get(f"/v1/rapport/{oid}",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    k = r.json()
+    assert k["rapport"] == rapport
+    assert k["oppdrag_id"] == oid and k["artefakttype"] == at
+    for hemmelig in ("ciphertext", "nonce", "dek_ref"):
+        assert hemmelig not in k, f"{hemmelig} lekket til klienten"
+    # Fremmed oppdragsnummer → samme 404 som «finnes ikke».
+    r2 = klient.get(f"/v1/rapport/{oid + 999}",
+                    headers={"authorization": f"Bearer {tok}"})
+    assert r2.status_code == 404
