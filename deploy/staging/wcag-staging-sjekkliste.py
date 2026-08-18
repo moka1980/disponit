@@ -1484,7 +1484,12 @@ def _importer_motorimage(digest: str) -> tuple[bool, str]:
         return True, "alt i lageret"
     ror = subprocess.run(
         ["bash", "-o", "pipefail", "-c",
-         f"docker save {shlex.quote(kort)} | "
+         # `sha256:`-prefikset er IKKE pynt: `docker save` (i motsetning til
+         # `docker image inspect`) avviser en naken 64-hex-ID eksplisitt —
+         # «cannot specify 64-byte hexadecimal strings» — så importen feilet
+         # på HVER kjøring og fase 9 brente en release per forsøk. Funnet ved
+         # å kjøre `docker save` for hånd da røret ga tom stdin til podman.
+         f"docker save sha256:{shlex.quote(kort)} | "
          + shlex.join(_arbeiderpodman("load"))],
         capture_output=True, text=True)
     if ror.returncode != 0:
