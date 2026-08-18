@@ -190,7 +190,8 @@ test("Domener: fanen henter status på nytt ved hver aktivering", async () => {
   SVAR = (sti, opts) => {
     if (sti === "/v1/domener" && (opts.method || "GET") === "GET") {
       return { domener: [{ hostname: "dittfirma.no", status,
-        wildcard: false, verifisert_ts: null, utloper: null,
+        wildcard: false, gyldig: status === "verifisert",
+        verifisert_ts: null, utloper: null,
         siste_vellykkede_revalidering: null,
         challenge_utstedt: "2026-08-18T10:00:00+00:00",
         challenge_utloper: "2026-08-25T10:00:00+00:00" }] };
@@ -263,12 +264,56 @@ test("Domener: oppfriskningen river ikke skjemaet eller TXT-oppskriften", async 
 // ennå ute når en vellykket utstedelse (eller en ny faneaktivering) ber om
 // en oppfriskning. Uten et generasjonsnummer avgjorde ANKOMSTREKKEFØLGEN hva
 // som ble stående på skjermen.
-function _rad(hostname, status) {
-  return { hostname, status, wildcard: false, verifisert_ts: null,
+function _rad(hostname, status, gyldig = status === "verifisert") {
+  return { hostname, status, wildcard: false, gyldig, verifisert_ts: null,
     utloper: null, siste_vellykkede_revalidering: null,
     challenge_utstedt: "2026-08-18T10:00:00+00:00",
     challenge_utloper: "2026-08-25T10:00:00+00:00" };
 }
+
+// Codex P2: basen lar en rad stå `verifisert` etter at 90-dagersvinduet har
+// passert ELLER den daglige revalideringen har vært borte i mer enn 72 timer.
+// `v_domeneautorisasjon.gyldig` er falsk da, og både egress og
+// bestillingsporten avviser domenet — men fanen viste «Verifisert», så kunden
+// fulgte flaten hit, så at alt var i orden, og fikk
+// `bestilling_hostname_uverifisert` uten noe sted å lese hvorfor.
+test("Domener: en verifisert rad UTEN gyldig autorisasjon vises ikke som verifisert", async () => {
+  const ekte = globalThis.fetch;
+  const koe = [];
+  globalThis.fetch = _styrtFetch(koe);
+  try {
+    const h = nyHoved();
+    visDomener(h, ctx());
+    koe[0]({ ok: true, status: 200, json: async () => ({ domener: [
+      // Lagret status `verifisert`, men autorisasjonen er borte.
+      _rad("foreldet.example", "verifisert", false),
+      // ...og naboen, som ER gyldig, skal fortsatt lese «Verifisert».
+      _rad("frisk.example", "verifisert", true),
+    ] }) });
+    await vent(() => h.querySelector(".domeneliste table"));
+    const rader = [...h.querySelectorAll(".domeneliste tbody tr")];
+    const celle = (vert) => rader
+      .find((r) => r.querySelector("th").textContent === vert)
+      .querySelectorAll("td")[0].textContent;
+    assert.equal(celle("foreldet.example"), t("domenestatus.ikke_aktiv"),
+      "flaten påstår autorisasjon domenet ikke har");
+    assert.equal(celle("frisk.example"), t("domenestatus.verifisert"));
+
+    // Fail-closed: et svar UTEN feltet er ikke et ja.
+    const uten = _rad("uten.example", "verifisert");
+    delete uten.gyldig;
+    const h2 = nyHoved();
+    visDomener(h2, ctx());
+    koe[1]({ ok: true, status: 200,
+      json: async () => ({ domener: [uten] }) });
+    await vent(() => h2.querySelector(".domeneliste table"));
+    assert.ok(h2.querySelector(".domeneliste table").textContent
+      .includes(t("domenestatus.ikke_aktiv")),
+    "et manglende gyldig-felt ble lest som en verifisering");
+  } finally {
+    globalThis.fetch = ekte;
+  }
+});
 
 async function _tomKo() {          // la de utestående mikrotaskene løpe ut
   for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));

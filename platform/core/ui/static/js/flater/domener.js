@@ -41,7 +41,27 @@ export function visDomener(rot, ctx) {
         inp, feilEl)),
     knapp, ventetekst);
 
+  // STATUSEN SOM VISES ER AUTORISASJONEN, IKKE DEN LAGREDE (Codex P2).
+  // Basen lar en rad stå `verifisert` etter at 90-dagersvinduet (`utloper`)
+  // har passert ELLER den daglige revalideringen har vært borte i mer enn 72
+  // timer — det er `v_domeneautorisasjon.gyldig` som avgjør, og både egress og
+  // bestillingsporten avviser domenet da. Fanen viste likevel «Verifisert», så
+  // kunden fulgte flaten hit, så at alt var i orden, og fikk
+  // `bestilling_hostname_uverifisert` på neste bestilling — uten noe sted å
+  // lese hvorfor.
+  //
+  // `gyldig` kommer FERDIG REGNET fra endepunktet (samme predikat som porten);
+  // klienten gjentar ikke regelen. Handlingen er den samme i begge tilfellene
+  // — tokenet vises bare én gang, så veien tilbake er å legge domenet til på
+  // nytt — og etiketten sier nettopp det.
+  //
+  // FAIL-CLOSED: `!== true`, ikke `=== false`. Mangler feltet, er det ikke et
+  // ja — og en flate som påstår autorisasjon den ikke har fått bekreftet er
+  // nettopp feilen dette retter.
   function statusTekst(d) {
+    if (d.status === "verifisert" && d.gyldig !== true) {
+      return t("domenestatus.ikke_aktiv");
+    }
     return t(`domenestatus.${d.status}`, d.status);
   }
 

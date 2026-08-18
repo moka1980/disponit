@@ -851,5 +851,6 @@
   "domenestatus.verifisert": "Verifisert",
   "domenestatus.tilbakekalt": "Tilbakekalt",
   "domenestatus.avklaring_kreves": "Under avklaring",
-  "domenestatus.utlopt": "Utløpt"
+  "domenestatus.utlopt": "Utløpt",
+  "domenestatus.ikke_aktiv": "Ikke aktiv — legg til domenet på nytt"
 }

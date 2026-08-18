@@ -851,5 +851,6 @@
   "domenestatus.verifisert": "Verified",
   "domenestatus.tilbakekalt": "Revoked",
   "domenestatus.avklaring_kreves": "Under adjudication",
-  "domenestatus.utlopt": "Expired"
+  "domenestatus.utlopt": "Expired",
+  "domenestatus.ikke_aktiv": "Not active — add the domain again"
 }

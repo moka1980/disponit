@@ -323,6 +323,62 @@ def test_http_utsted_og_liste(migrator, klient):
     assert sr.status_code == 403
 
 
+@pg
+def test_listen_svarer_den_EFFEKTIVE_autorisasjonen(migrator, klient):
+    """Codex P2: `status` alene LYVER, med vilje.
+
+    Basen lar en rad stå `verifisert` etter at 90-dagersvinduet (`utloper`)
+    har passert ELLER den daglige revalideringen har vært borte i mer enn 72
+    timer — det er `v_domeneautorisasjon.gyldig` som avgjør, og både egress og
+    bestillingsporten avviser domenet da. Svarte listen bare `status`, fulgte
+    kunden flaten hit, så «Verifisert», og fikk
+    `bestilling_hostname_uverifisert` på neste bestilling.
+
+    Regelen regnes av BASEN, med `DOMENE_GYLDIG_SQL` — samme tekst porten
+    stiller sitt spørsmål med, og allerede mekanisk krysset mot visningen. En
+    tredje kopi i klienten ville kunnet gli fra begge.
+
+    MUTASJONEN SOM DREPER DENNE: la `_rader` svare `status` alene igjen.
+    """
+    from api import sesjon as sesjonmodul
+
+    cookie, _ = _adminsesjon()
+    ferskt = f"fersk{secrets.token_hex(3)}.example"
+    foreldet = f"gml{secrets.token_hex(3)}.example"
+    utlopt = f"utl{secrets.token_hex(3)}.example"
+    a = _admin()
+    try:
+        for v in (ferskt, foreldet, utlopt):
+            a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (TENANT, v))
+        a.commit()
+    finally:
+        a.close()
+    _sett_kontekst(migrator, TENANT)
+    # Foreldet revalidering (>72 t) og passert 90-dagersvindu — begge lar
+    # raden stå `verifisert`, og begge gjør autorisasjonen ubrukelig.
+    migrator.execute(
+        "UPDATE domenekontroll SET siste_vellykkede_revalidering="
+        "now()-interval '73 hours' WHERE tenant=%s AND hostname=%s",
+        (TENANT, foreldet))
+    migrator.execute(
+        "UPDATE domenekontroll SET utloper=now()-interval '1 day'"
+        " WHERE tenant=%s AND hostname=%s", (TENANT, utlopt))
+    migrator.commit()
+
+    r = klient.get("/v1/domener", cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 200, r.text
+    kart = {d["hostname"]: d for d in r.json()["domener"]}
+    for v in (ferskt, foreldet, utlopt):
+        assert kart[v]["status"] == "verifisert", \
+            f"forutsetningen holder ikke — {v} står ikke `verifisert`"
+    assert kart[ferskt]["gyldig"] is True, kart[ferskt]
+    assert kart[foreldet]["gyldig"] is False, \
+        "en foreldet revalidering ble meldt som gyldig autorisasjon"
+    assert kart[utlopt]["gyldig"] is False, \
+        "et passert 90-dagersvindu ble meldt som gyldig autorisasjon"
+
+
 def _vert_av_lengde(n: int) -> str:
     """Et lovlig, UNIKT vertsnavn på nøyaktig `n` tegn.
 

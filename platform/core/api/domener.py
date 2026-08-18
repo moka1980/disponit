@@ -25,7 +25,7 @@ import psycopg
 from starlette.requests import Request
 from starlette.responses import Response
 
-from .bestilling import _HOSTNAME
+from .bestilling import DOMENE_GYLDIG_SQL, _HOSTNAME
 
 #: Challenge-tokenets form: 32 byte entropi, hex — enkel å lime inn i en
 #: sonefil, umulig å gjette, og trimmes robust av bekreftelsens btrim.
@@ -57,15 +57,31 @@ _MAKS_UTFORDRET_VERTSNAVN = 253 - len(_UTFORDRINGSPREFIKS) - 1
 
 
 def _rader(conn, tenant: str) -> list[dict]:
+    # `gyldig` regnes av BASEN, med `DOMENE_GYLDIG_SQL` (Codex P2) — samme
+    # tekst bestillingsporten stiller sitt spørsmål med, og den er mekanisk
+    # krysset mot `v_domeneautorisasjon.gyldig` av
+    # `test_domenepredikatet_speiler_visningen`. Uten den svarte listen bare
+    # `status`, og `status` LYVER med vilje: basen lar en rad stå `verifisert`
+    # når `utloper` har passert eller den daglige revalideringen har vært
+    # borte i mer enn 72 timer — det er `v_domeneautorisasjon` som avgjør, og
+    # egress og bestillingsveien avviser da domenet. Kunden så «Verifisert» og
+    # fikk `bestilling_hostname_uverifisert`.
+    #
+    # Regelen dupliseres IKKE i klienten: en tredje kopi ville kunnet gli fra
+    # de to andre, og en flate som lyver om autorisasjon er nettopp det denne
+    # runden retter. `coalesce(..., false)` fordi predikatet er NULL for en
+    # `verifisert` rad uten vindu — fail-closed, som i porten.
     rader = conn.execute(
         "SELECT hostname, status, wildcard, verifisert_ts, utloper,"
         " siste_vellykkede_revalidering, challenge_utstedt,"
-        " challenge_utloper FROM domenekontroll WHERE tenant=%s"
+        " challenge_utloper, coalesce(" + DOMENE_GYLDIG_SQL + ", false)"
+        " FROM domenekontroll WHERE tenant=%s"
         " ORDER BY hostname", (tenant,)).fetchall()
     ut = []
-    for (host, status, wildcard, vts, utl, srv, cu, cul) in rader:
+    for (host, status, wildcard, vts, utl, srv, cu, cul, gyldig) in rader:
         ut.append({
             "hostname": host, "status": status, "wildcard": wildcard,
+            "gyldig": bool(gyldig),
             "verifisert_ts": vts.isoformat() if vts else None,
             "utloper": utl.isoformat() if utl else None,
             "siste_vellykkede_revalidering":
