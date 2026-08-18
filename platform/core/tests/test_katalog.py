@@ -1,6 +1,6 @@
 """Modulkatalogen på forsiden: fersk, komplett og formriktig.
 
-Katalogen er generert fra `docs/spesifikasjon/disponit-prototype-v7.html` av
+Katalogen er generert fra `docs/spesifikasjon/disponit-prototype-v8.html` av
 `tools/gen_katalog.py`. En generator uten en port i CI er bare en vennlig
 anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
@@ -11,7 +11,7 @@ Testene her er derfor fem porter (Codex P2 på PR #43):
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
                  vurdert på nytt, så nb og en ikke kan drive fra hverandre.
-  4. FORM      — 45 moduler, elleve områder, faser 1–4, alle representert.
+  4. FORM      — 55 moduler, elleve områder, faser 1–4, alle representert.
   5. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
 """
 import json
@@ -30,12 +30,12 @@ KATALOG_JS = ROT / "platform" / "core" / "ui" / "static" / "js" / "katalog.js"
 # som en LITERAL her, ikke importert fra generatoren: en port som henter
 # kildestien fra det den skal vokte, godkjenner enhver sti generatoren måtte
 # bytte til.
-KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v7.html")
+KILDE_REL = ("docs", "spesifikasjon", "disponit-prototype-v8.html")
 KILDE = ROT.joinpath(*KILDE_REL)
 ARKIV = ROT / "prototype"
 LOCALER = {s: ROT / "locales" / f"{s}.json" for s in ("nb", "en")}
 
-MODULER = 45
+MODULER = 55
 OMRADER = 11
 FASER = {1, 2, 3, 4}
 
@@ -65,10 +65,10 @@ def test_generatoren_leser_sannhetskilden():
     """Kilden skal være spesifikasjonen, ikke arkivet (Codex P2 på PR #43).
 
     Generatoren leste `prototype/AI-bedriftsagent-prototype-v7.html` — v7.0 —
-    mens `README.md` peker på `docs/spesifikasjon/disponit-prototype-v7.html`
-    (v7.2) som sannhetskilden og `docs/STRUKTUR.md` kaller `prototype/` et
-    historisk arkiv som aldri endres. De to filene gir identisk katalog i dag,
-    så ferskhetsporten under ville stått grønn uansett: den måler at
+    mens `README.md` peker på spesifikasjonen i `docs/spesifikasjon/` som
+    sannhetskilden og `docs/STRUKTUR.md` kaller `prototype/` et historisk arkiv
+    som aldri endres. De to filene ga identisk katalog den gangen, så
+    ferskhetsporten under ville stått grønn uansett: den måler at
     `katalog.js` stemmer med det generatoren leser, ikke at generatoren leser
     riktig fil. Derfor denne, som er den eneste som fanger at kilden peker feil.
     """
@@ -170,7 +170,7 @@ def test_katalogen_har_forventet_form():
     katalog, omrader = _katalog_js()
     assert len(katalog) == MODULER, f"forventet {MODULER} moduler"
     assert {m["n"] for m in katalog} == set(range(1, MODULER + 1)), (
-        "modulnumrene er ikke 1..45 — duplikat eller hull")
+        f"modulnumrene er ikke 1..{MODULER} — duplikat eller hull")
     assert len(omrader) == OMRADER, f"forventet {OMRADER} områder"
     assert {m["fase"] for m in katalog} == FASER, (
         "katalogen dekker ikke fase 1–4")

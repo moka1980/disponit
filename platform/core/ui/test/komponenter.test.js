@@ -306,7 +306,10 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   // Modulmenyen er gruppert etter fagområde, ikke én lang liste.
   assert.ok(rot.querySelectorAll(".skall-modulgruppe").length >= 5,
     "modulmenyen er ikke gruppert etter område");
-  assert.equal(rot.querySelectorAll(".skall-modul").length, 45,
+  // Nevneren er katalogen, ikke et innbakt tall: et literalt 45 her ville
+  // blitt en løgn i det katalogen vokste, og testen ville feilet på selve
+  // utvidelsen i stedet for på en menyfeil (Codex P1 på PR #99).
+  assert.equal(rot.querySelectorAll(".skall-modul").length, ALLE_MODULER.length,
     "modulmenyen viser ikke hele tildelingen");
 
   // 🔴 Statuslinja skal si det REGISTERET bærer. Spesifikasjonens «45 moduler
@@ -464,7 +467,8 @@ test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () 
   felt.value = "bank";
   felt.dispatchEvent(new window.Event("input"));
   const treff = [...rot.querySelectorAll(".skall-modul")].map((b) => b.textContent);
-  assert.ok(treff.length > 0 && treff.length < 45, `fikk ${treff.length} treff`);
+  assert.ok(treff.length > 0 && treff.length < ALLE_MODULER.length,
+    `fikk ${treff.length} treff`);
   assert.ok(treff.every((n) => n.toLowerCase().includes("bank")));
 
   felt.value = "finnesikkexyz";

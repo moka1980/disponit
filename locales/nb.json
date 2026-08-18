@@ -852,5 +852,15 @@
   "domenestatus.tilbakekalt": "Tilbakekalt",
   "domenestatus.avklaring_kreves": "Under avklaring",
   "domenestatus.utlopt": "Utløpt",
-  "domenestatus.ikke_aktiv": "Ikke aktiv — legg til domenet på nytt"
+  "domenestatus.ikke_aktiv": "Ikke aktiv — legg til domenet på nytt",
+  "site.katalog.m46.navn": "Anbuds- og konkurransevakt",
+  "site.katalog.m47.navn": "Myndighetsrapporteringsagent",
+  "site.katalog.m48.navn": "Foretaks- og kredittvakt (KYB)",
+  "site.katalog.m49.navn": "Sanksjons- og hvitvaskingsvakt",
+  "site.katalog.m50.navn": "Postjournal- og innsynsvakt",
+  "site.katalog.m51.navn": "Tilskudds- og støtteagent",
+  "site.katalog.m52.navn": "Toll- og HS-kodeagent",
+  "site.katalog.m53.navn": "HMS- og avviksmottak",
+  "site.katalog.m54.navn": "EHF- og Peppol-avviksretter",
+  "site.katalog.m55.navn": "Merkevare- og IP-overvåker"
 }

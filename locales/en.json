@@ -852,5 +852,15 @@
   "domenestatus.tilbakekalt": "Revoked",
   "domenestatus.avklaring_kreves": "Under adjudication",
   "domenestatus.utlopt": "Expired",
-  "domenestatus.ikke_aktiv": "Not active — add the domain again"
+  "domenestatus.ikke_aktiv": "Not active — add the domain again",
+  "site.katalog.m46.navn": "Tender and bid watch",
+  "site.katalog.m47.navn": "Regulatory reporting agent",
+  "site.katalog.m48.navn": "Business and credit watch (KYB)",
+  "site.katalog.m49.navn": "Sanctions and anti-money-laundering watch",
+  "site.katalog.m50.navn": "Public records and disclosure watch",
+  "site.katalog.m51.navn": "Grants and subsidies agent",
+  "site.katalog.m52.navn": "Customs and HS code agent",
+  "site.katalog.m53.navn": "HSE and incident intake",
+  "site.katalog.m54.navn": "EHF and Peppol rejection handler",
+  "site.katalog.m55.navn": "Brand and IP monitor"
 }

@@ -2,6 +2,7 @@
 // administrasjonsvisningene. Én statuskilde gjør at modulstatus kan oppdateres
 // ett sted når en modul faktisk er ferdig.
 import { t } from "./i18n.js";
+import { KATALOG_ANTALL } from "./katalog.js";
 
 // Kanonisk statuskilde. Alt annet — kort, merker og KPI-er — utleder herfra,
 // så en modul som skifter tilstand oppdateres ETT sted.
@@ -265,7 +266,13 @@ export function tenantTelling(moduler) {
 
 //: Modulkatalogen slik produktplanen beskriver den. Bare de fire i `MODULER`
 //: har en tilstand ennå; resten er `planlagt`.
-const KATALOG_TOTALT = 45;
+//
+// Tallet er AVLEDET av den genererte katalogen, ikke skrevet av (Codex P1 på
+// PR #99). Da v8 utvidet omfanget fra 45 til 55 moduler ble denne konstanten
+// stående på 45, og statuslinja ville sagt «i drift av 45» mens katalogen den
+// teller mot hadde 55 — en nevner ingen hadde bestemt, i en flate som skal
+// være den ene sanne statuskilden.
+const KATALOG_TOTALT = KATALOG_ANTALL;
 
 export function plattformTelling() {
   const tell = (s) => Object.values(MODULSTATUS).filter((v) => v === s).length;
