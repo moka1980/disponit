@@ -51,6 +51,7 @@ import hashlib
 import hmac as hmaclib
 import json
 import os
+import re
 import secrets
 import shlex
 import subprocess
@@ -241,13 +242,24 @@ def fase2(m, migrator_dsn, digest):
     kvh = hashlib.sha256((KONTRAKT / "kvittering-skjema.json")
                          .read_bytes()).hexdigest()
     kh = hashlib.sha256((KONTRAKT / "KONTRAKT.md").read_bytes()).hexdigest()
-    art = ("sha256:" + digest.split(":", 1)[1] if digest.startswith("sha256:")
-           else digest)
+    # DEN EKTE DIGESTEN, IKKE EN HASH AV DEN (Codex P1). `digest` er
+    # allerede image-ID-en `sha256:<64 hex>` fra `docker image inspect`;
+    # den ble hashet EN GANG TIL før den ble skrevet som release-radens
+    # `artifact_digest`. Resultatet identifiserte verken image-konfigen
+    # eller et registry-manifest — det var bare et tall — og raden er
+    # IMMUTABEL: registeret ville for alltid båret falsk proveniens, og
+    # den kunne aldri korreleres med `miljo.container_image_digest`
+    # kvitteringene attesterer (samme verdi, se `_kontroller_kjor`).
+    art = digest.split(":")[-1]
+    if not re.fullmatch(r"[0-9a-f]{64}", art):
+        raise SystemExit(
+            f"motorimagets digest er ikke sha256:<64 hex>: {digest!r} —"
+            " uten den kan ikke releaseraden skrives, den er immutabel")
     env = {**os.environ, "DISPONIT_MIGRATOR_URL": migrator_dsn,
            "DISPONIT_REPO": str(REPO)}
     ut = subprocess.run(
         [sys.executable, str(REPO / "deploy/staging/registrer-m-wcag-audit.py"),
-         RELEASE, kh, hashlib.sha256(art.encode()).hexdigest(), ph, kvh],
+         RELEASE, kh, art, ph, kvh],
         env=env, capture_output=True, text=True)
     if ut.returncode != 0:
         raise SystemExit(f"registrering feilet:\n{ut.stdout}\n{ut.stderr}")
