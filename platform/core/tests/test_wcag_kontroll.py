@@ -103,6 +103,73 @@ def test_skjemaregistrering_rekalkulerer_hashen(migrator):
 
 
 @pg
+def test_skjemaadressen_er_bytene_som_lagres(migrator):
+    """Codex P2: hashen var over bytene, raden bar en jsonb-KOPI av dem.
+
+    `::jsonb` er en normalisert representasjon, ikke de bytene: den
+    kaster uvesentlig blanktegn og normaliserer nøkler og tall. Adressen
+    kunne derfor ikke regnes ut på nytt fra innholdet den adresserer, og
+    to semantisk like skjemaer kunne få hver sin adresse. Raden bærer nå
+    `kanonisk`, `skjema` utledes av den, og databasen sjekker adressen
+    selv.
+
+    Kontroll: fjern `kanonisk` og sett inn `p_kanonisk::jsonb` i `skjema`
+    igjen, så blir første blokk rød (adressen lar seg ikke gjenskape fra
+    raden), og fjern blanktegnvakten i `registrer_artefaktskjema`, så blir
+    siste blokk rød (pretty-printet JSON slipper inn).
+    """
+    kanon, h = _jcs_hash({"type": "object", "z": secrets.token_hex(3)})
+    _registrer_skjema(json.loads(kanon))
+
+    # Adressen er etterprøvbar FRA RADEN: sha256 over de lagrede bytene.
+    rad = migrator.execute(
+        "SELECT kanonisk, skjema,"
+        "       encode(sha256(convert_to(kanonisk,'UTF8')),'hex')"
+        "  FROM artefaktskjema WHERE skjema_hash=%s", (h,)).fetchone()
+    assert rad[0] == kanon and rad[2] == h
+    # ... og den utledede kolonnen er fortsatt den samme verdien.
+    assert rad[1] == json.loads(kanon)
+
+    # Et oppgitt `skjema` som er uenig med bytene avvises — det blir ikke
+    # stille skrevet om, og de to kan derfor ikke gli fra hverandre.
+    tom = "{}"
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        migrator.execute(
+            "INSERT INTO artefaktskjema (skjema_hash, kanonisk, skjema)"
+            " VALUES (%s,%s,'{\"type\":\"object\"}'::jsonb)",
+            (hashlib.sha256(tom.encode()).hexdigest(), tom))
+    migrator.rollback()
+
+    # En rad der hashen ikke er over de lagrede bytene finnes ikke, selv
+    # om tabelleieren går utenom funksjonen.
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        migrator.execute(
+            "INSERT INTO artefaktskjema (skjema_hash, kanonisk)"
+            " VALUES (%s,%s)", ("b" * 64, '{"type":"object"}'))
+    migrator.rollback()
+
+    # Den grovt ukanoniske inngangen avvises av funksjonen: JCS-utdata
+    # har ikke blanktegn utenfor strenger. Blanktegn INNE i en streng er
+    # innhold og skal fortsatt slippe gjennom.
+    pen = '{"type": "object"}'
+    ph = hashlib.sha256(pen.encode()).hexdigest()
+    c = _mk_admin("disponit_modules_admin")
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            c.execute("SELECT registrer_artefaktskjema(%s,%s,'test')",
+                      (pen, ph))
+        c.rollback()
+        med_rom = json.dumps({"type": "object",
+                              "title": "to ord " + secrets.token_hex(3)},
+                             separators=(",", ":"), sort_keys=True)
+        c.execute("SELECT registrer_artefaktskjema(%s,%s,'test')",
+                  (med_rom, hashlib.sha256(med_rom.encode()).hexdigest()))
+        c.commit()
+    finally:
+        c.close()
+
+
+@pg
 def test_skjemalageret_er_immutabelt_for_alltid(migrator):
     """Portene 17, 26–28: UPDATE og DELETE avvises ALLTID — også for en rad
     ingen artefakttype refererer, og også for migrator (tabelleieren).
@@ -110,8 +177,11 @@ def test_skjemalageret_er_immutabelt_for_alltid(migrator):
     denne rød."""
     kanon, h = _jcs_hash({"type": "object", "u": secrets.token_hex(3)})
     _registrer_skjema(json.loads(kanon))
+    # `skjema` utledes av `kanonisk` ved innsetting
+    # (`test_skjemaadressen_er_bytene_som_lagres` fester det), så
+    # innholdsveien inn hit er `kanonisk` — og den skal triggeren ta.
     for sql in [
-        "UPDATE artefaktskjema SET skjema='{}'::jsonb WHERE skjema_hash=%s",
+        "UPDATE artefaktskjema SET kanonisk='{}' WHERE skjema_hash=%s",
         "UPDATE artefaktskjema SET skjema_hash=%s WHERE skjema_hash=%s",
         "DELETE FROM artefaktskjema WHERE skjema_hash=%s",
     ]:

@@ -57,9 +57,12 @@ def _kjede(conn, *, status="aktiv", livslop="claiming", miljo_="staging",
     if artefakttype:
         # PR-014c: opplastingen skjemavalideres — testtypene bindes til det
         # permissive objektskjemaet ({"type": "object"}, JCS-hashet).
+        # Bytene, ikke en jsonb-kopi: hashen under er over
+        # `{"type":"object"}` UTEN mellomrom, og CHECK-en i 036 krever nå
+        # at raden bærer nettopp de bytene.
         conn.execute(
-            "INSERT INTO artefaktskjema (skjema_hash, skjema)"
-            " VALUES (%s, '{\"type\": \"object\"}'::jsonb)"
+            "INSERT INTO artefaktskjema (skjema_hash, kanonisk)"
+            " VALUES (%s, '{\"type\":\"object\"}')"
             " ON CONFLICT (skjema_hash) DO NOTHING",
             ("a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0",))
         conn.execute(

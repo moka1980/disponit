@@ -35,11 +35,57 @@
 -- ------------------------------------------------------------
 -- 1. Innholdsadressert skjemalager
 -- ------------------------------------------------------------
+-- DE HASHEDE BYTENE ER RADEN (Codex P2). Hashen er over `kanonisk` —
+-- JCS-bytene kalleren sendte — mens `skjema` var en `::jsonb`-kastet
+-- KOPI av dem. jsonb er en normalisert representasjon, ikke de bytene:
+-- den kaster uvesentlig blanktegn, sorterer nøkler på sin egen måte og
+-- normaliserer tall. Adressen kunne derfor ikke regnes ut på nytt fra
+-- innholdet den adresserer — nøyaktig det et innholdsadressert lager
+-- lover. Fikseren i testfixturene var symptomet i klartekst: de satte
+-- inn `{"type": "object"}` under hashen til `{"type":"object"}`.
+--
+-- Nå LAGRES bytene, og `skjema` UTLEDES av dem ved innsetting — den er en
+-- oppslagsform, ikke en andre sannhet. Vakten under gjør adressen
+-- etterprøvbar av databasen selv: sha256 over de lagrede bytene ER
+-- primærnøkkelen, uansett hvilken rolle som setter inn raden.
 CREATE TABLE IF NOT EXISTS artefaktskjema (
     skjema_hash TEXT PRIMARY KEY CHECK (skjema_hash ~ '^[0-9a-f]{64}$'),
+    kanonisk    TEXT NOT NULL,
     skjema      JSONB NOT NULL CHECK (jsonb_typeof(skjema) = 'object'),
     registrert  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Vakten er en TRIGGER, ikke en CHECK/generert kolonne: begge de to
+-- krever et immutabelt uttrykk, og `text::jsonb` er en I/O-konvertering
+-- som Postgres kan avvise i den rollen. En BEFORE INSERT-trigger har
+-- ingen slik begrensning, og den er dessuten mønsteret denne filen
+-- allerede bruker på resten av portene sine.
+CREATE OR REPLACE FUNCTION artefaktskjema_adresse() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF encode(sha256(convert_to(NEW.kanonisk, 'UTF8')), 'hex')
+       IS DISTINCT FROM NEW.skjema_hash THEN
+        RAISE EXCEPTION 'artefaktskjema: skjema_hash % er ikke sha256 av'
+            ' de lagrede bytene', NEW.skjema_hash
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Oppgitt `skjema` AVVISES når den er uenig med bytene — den blir
+    -- ikke stille skrevet om. En kaller som mener noe annet enn det den
+    -- selv hashet, har en feil vi ikke kan gjette oss ut av.
+    IF NEW.skjema IS NOT NULL
+       AND NEW.skjema IS DISTINCT FROM NEW.kanonisk::jsonb THEN
+        RAISE EXCEPTION 'artefaktskjema: oppgitt skjema er ikke de'
+            ' kanoniske bytene'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    NEW.skjema := NEW.kanonisk::jsonb;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS artefaktskjema_adressert ON artefaktskjema;
+CREATE TRIGGER artefaktskjema_adressert
+    BEFORE INSERT ON artefaktskjema
+    FOR EACH ROW EXECUTE FUNCTION artefaktskjema_adresse();
 
 -- `avvis_endring()` finnes fra 035 og bærer tabellnavn + operasjon i
 -- feilmeldingen. UPDATE og DELETE avvises ALLTID — også for en rad ingen
@@ -376,11 +422,27 @@ BEGIN
 END $$;
 
 -- Skjemaregistrering: hashen REKALKULERES fra innholdet (port 16) —
--- sha256 over de kanoniske bytene kalleren sender. Kanonisiteten (JCS)
--- er KALLERENS kontrakt: alle veier inn går via
--- `policy_validator.jcs.kanoniske_bytes` (deploy-skriptet og testene) —
--- funksjonen binder hashen til NØYAKTIG de bytene den fikk, så en
--- ukanonisk kaller skader bare sin egen oppslagbarhet, aldri integriteten.
+-- sha256 over de kanoniske bytene kalleren sender. Alle veier inn fra
+-- Python går via `policy_validator.jcs.kanoniske_bytes`, men begge
+-- admin-rollene har EXECUTE her, så en direkte SQL-kaller kan sende hva
+-- som helst som er gyldig JSON.
+--
+-- BYTENE LAGRES (Codex P2). Før sto hashen over `p_kanonisk` mens raden
+-- bar `p_kanonisk::jsonb`, og de to er ikke samme representasjon: en
+-- kaller som sendte JSON med uvesentlig blanktegn fikk en adresse ingen
+-- kunne regne ut på nytt fra det som faktisk ble lagret, og to
+-- semantisk like skjemaer kunne få hver sin adresse. Nå settes
+-- `kanonisk` inn, `skjema` utledes av den, og `artefaktskjema_adressert`
+-- binder adressen til bytene — også for en INSERT utenom denne
+-- funksjonen.
+--
+-- Og den grovt ukanoniske inngangen AVVISES: JCS-utdata har ikke
+-- blanktegn utenfor strenger. Sjekken er en nødvendig, ikke
+-- tilstrekkelig, betingelse — plpgsql kan ikke serialisere JCS selv, og
+-- skal ikke late som — men den fanger den vanlige veien inn (pretty-
+-- printet JSON fra et adminverktøy) i stedet for å la den bli en
+-- udødelig rad. Kanoniseringen for øvrig er fortsatt kallerens kontrakt.
+--
 -- Idempotent for identisk innhold; samme hash med ANNET innhold er
 -- umulig (sha256-kollisjon) og PK-en stopper uansett.
 CREATE OR REPLACE FUNCTION registrer_artefaktskjema(
@@ -393,6 +455,14 @@ BEGIN
     IF v_hash IS DISTINCT FROM p_oppgitt_hash THEN
         RAISE EXCEPTION 'artefaktskjema: oppgitt hash % matcher ikke'
             ' innholdet (rekalkulert %)', p_oppgitt_hash, v_hash
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Strengliteralene fjernes først (blanktegn INNE i en streng er
+    -- innhold, ikke formatering); står det blanktegn igjen, er teksten
+    -- ikke JCS-utdata.
+    IF regexp_replace(p_kanonisk, '"([^"\\]|\\.)*"', '', 'g') ~ '\s' THEN
+        RAISE EXCEPTION 'artefaktskjema: innholdet er ikke kanonisk'
+            ' (blanktegn utenfor strenger)'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     v_skjema := p_kanonisk::jsonb;
@@ -423,8 +493,10 @@ BEGIN
         RAISE EXCEPTION 'artefaktskjema: ugyldig skjema — %', v_typefeil
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    INSERT INTO public.artefaktskjema (skjema_hash, skjema)
-        VALUES (v_hash, v_skjema)
+    -- `skjema` settes IKKE her: triggeren utleder den av `kanonisk`, så
+    -- raden bærer de bytene hashen faktisk er over.
+    INSERT INTO public.artefaktskjema (skjema_hash, kanonisk)
+        VALUES (v_hash, p_kanonisk)
         ON CONFLICT (skjema_hash) DO NOTHING;
     RETURN v_hash;
 END $$;

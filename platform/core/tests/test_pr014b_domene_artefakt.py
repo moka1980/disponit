@@ -130,9 +130,13 @@ def _artefakttype(conn, modul, kh, at, ver=1):
     # skjema_hash-en KAN slås opp. Testene her prøver bindinger og
     # tilstandsmaskiner, ikke innhold — det permissive objektskjemaet
     # ({"type": "object"}, JCS-hashet) slipper alt innhold gjennom.
+    # Bytene, ikke en jsonb-kopi av dem: raden er innholdsadressert, og
+    # CHECK-en i 036 krever at hashen stemmer med det som lagres. Merk
+    # mellomrommet som var her før — `{"type": "object"}` under hashen
+    # til `{"type":"object"}` — nettopp driften den CHECK-en fanger.
     conn.execute(
-        "INSERT INTO artefaktskjema (skjema_hash, skjema)"
-        " VALUES (%s, '{\"type\": \"object\"}'::jsonb)"
+        "INSERT INTO artefaktskjema (skjema_hash, kanonisk)"
+        " VALUES (%s, '{\"type\":\"object\"}')"
         " ON CONFLICT (skjema_hash) DO NOTHING", (PERMISSIV_SKJEMA_HASH,))
     conn.execute(
         "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
