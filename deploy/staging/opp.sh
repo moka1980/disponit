@@ -193,6 +193,47 @@ for b in disponit-api disponit-m37 disponit-helse disponit-domener \
   getent passwd "$b" >/dev/null || \
     useradd --system --no-create-home --shell /usr/sbin/nologin "$b"
 done
+
+# SUBORDINATE ID-ER FOR DEN ROOTLESSE ARBEIDEREN (PR-014c, Codex P1).
+# `disponit-wcag-audit.service` kjører motoren med rootless podman, og et
+# rootless user-namespace bygges av områdene i /etc/subuid og /etc/subgid.
+# `useradd --system` deler ikke ut slike områder — systembrukere får dem
+# ikke automatisk — og uten dem feiler `podman run` med «cannot find
+# UID/GID in /etc/subuid» på HVER eneste kontroll, uansett hvor riktig
+# uniten og konfigurasjonen er skrevet. Identiteten er utrullingens
+# ansvar, og det er også dette den består av.
+SUBID_ANTALL=65536
+tildel_subid() {                        # $1=fil  $2=usermod-flagg
+  local fil="$1" flagg="$2" start=524288
+  [ -f "$fil" ] || : > "$fil"
+  if grep -q '^disponit-wcag:' "$fil"; then return 0; fi
+  # Første område fra 524288 som ikke overlapper noe som alt står der.
+  while awk -F: -v s="$start" -v n="$SUBID_ANTALL" \
+        '$2+0 < s+n && $2+0 + $3+0 > s { treff=1 } END { exit !treff }' \
+        "$fil"; do
+    start=$((start + SUBID_ANTALL))
+  done
+  usermod "$flagg" "$start-$((start + SUBID_ANTALL - 1))" disponit-wcag
+}
+tildel_subid /etc/subuid --add-subuids
+tildel_subid /etc/subgid --add-subgids
+for f in /etc/subuid /etc/subgid; do
+  grep -q '^disponit-wcag:' "$f" || {
+    echo "AVBRUTT: fikk ikke tildelt subordinate ID-er i $f for" \
+         "disponit-wcag — rootless podman kan ikke bygge namespacet." >&2
+    exit 1
+  }
+done
+# Hjelperne selv er shadow-utils' setuid-binærer (pakken `uidmap` på
+# Debian/Ubuntu). Mangler de, er områdene over riktige men ubrukelige.
+# Dette stopper IKKE utrullingen — resten av plattformen er uavhengig av
+# wcag-motoren — men det skal være synlig i loggen, og fase 9 i
+# staging-sjekklisten måler det samme før den enabler uniten.
+for h in newuidmap newgidmap; do
+  command -v "$h" >/dev/null || \
+    echo "MERK: $h mangler (pakken uidmap) — rootless podman, og dermed" \
+         "wcag-motoren, vil ikke starte." >&2
+done
 # nginx-brukeren meldes inn i disponit-proxy av PR-009b — ALDRI her, og
 # aldri M-37: gruppen ER tillitsgrensen. Helsesjekkeren er medlem som
 # TILSYNSKLIENT (/live over socketen) — en bevisst, synlig utvidelse,

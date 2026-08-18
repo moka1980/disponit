@@ -948,6 +948,31 @@ def fase9(mtk, digest, *, maalt_runde: bool):
                 "viewport": "1280x800", "locale": "nb",
                 "timezone": "Europe/Oslo"}
 
+    # ROOTLESS-FORUTSETNINGENE MÅLES FØR UNITEN ENABLES (Codex P1).
+    # `opp.sh` deler ut subuid/subgid til `disponit-wcag` og advarer om
+    # manglende `newuidmap`/`newgidmap`. Står en av delene igjen, bygger
+    # ikke podman namespacet, og arbeideren feiler på HVER kontroll — en
+    # unit som er enablet og oppe, men som ikke kan gjøre jobben sin.
+    # Målingen hører derfor til her, som alt annet fase 9 påstår.
+    subid = {f: any(l.startswith(ARBEIDER_BRUKER + ":")
+                    for l in Path(f).read_text().splitlines())
+             if Path(f).exists() else False
+             for f in ("/etc/subuid", "/etc/subgid")}
+    hjelpere = {h: subprocess.run(["sh", "-c", f"command -v {h}"],
+                                  capture_output=True).returncode == 0
+                for h in ("newuidmap", "newgidmap")}
+    klar = all(subid.values()) and all(hjelpere.values())
+    evidens("fase9_rootless_forutsetninger", subid=subid, hjelpere=hjelpere,
+            krav="subuid/subgid for " + ARBEIDER_BRUKER + " + uidmap-pakken",
+            ok=klar)
+    if not klar:
+        evidens("fase9_hoppet",
+                grunn="rootless-forutsetningene mangler — kjør opp.sh"
+                      " (subuid/subgid) og installer pakken uidmap",
+                merknad="uniten enables ikke: en arbeider som ikke kan"
+                        " starte motoren er verre enn ingen arbeider")
+        return
+
     subprocess.run(["install", "-d", "-m", "750", "-o", "root",
                     "-g", ARBEIDER_BRUKER, str(DRIFT_KONF)], check=True)
 
