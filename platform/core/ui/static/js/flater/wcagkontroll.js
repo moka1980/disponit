@@ -60,17 +60,20 @@ export function visWcagKontroll(hoved, ctx) {
   // seg et verifisert domene, og en leseliste over andres domenestatuser er
   // ikke den flaten. Rapportfanen står igjen alene, og `Faner` faller
   // tilbake til første trinn når `start` ikke finnes i settet.
+  // REKKEFØLGEN ER FLYTEN (eier 18/8): et domene må verifiseres FØR en
+  // bestilling kan gå gjennom, så Domener står først og er startfanen —
+  // rekkefølgen i tablisten skal fortelle brukeren hvilken vei jobben går.
   const trinn = [
+    { nokkel: "domener", tittel: t("ui.wcag.fane.domener"),
+      scope: "bestilling:opprett", bygg: del(visDomener) },
     { nokkel: "bestill", tittel: t("ui.wcag.fane.bestill"),
       scope: "bestilling:opprett", bygg: del(visBestilling) },
     { nokkel: "rapporter", tittel: t("ui.wcag.fane.rapporter"),
       scope: null, bygg: del(visRapport) },
-    { nokkel: "domener", tittel: t("ui.wcag.fane.domener"),
-      scope: "bestilling:opprett", bygg: del(visDomener) },
   ].filter((s) => !s.scope || harScope(ctx, s.scope));
 
   // Faner returnerer { rot, gaaTil, aktiv } — det er ROTEN som monteres.
-  const faner = Faner({ trinn, start: "bestill" });
+  const faner = Faner({ trinn, start: "domener" });
   sett(hoved,
     ...flateHode(t("ui.wcag.tittel"), t("ui.wcag.under")),
     faner.rot);
