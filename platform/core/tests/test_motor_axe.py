@@ -169,6 +169,30 @@ def test_lenkenormalisering_er_lukket():
     assert n(o, f"{o}/index.html", "/sok?q=1#treff") == f"{o}/sok?q=1"
 
 
+def test_crawlen_rapporterer_og_loeser_mot_den_landede_url_en():
+    """Rapporten skal navngi siden vi FAKTISK kontrollerte (Codex P1).
+
+    `page.goto` følger omdirigeringer og axe kjører mot det endelige
+    dokumentet, men både `sider[].url` og lenkeoppløsningen brukte den
+    BESTILTE URL-en: `/gammel` → `/ny/` ga evidens for `/gammel`, og
+    `a.html` i det landede dokumentet ble crawlet som `/a.html`.
+
+    Crawlen lever inne i `main()` bak playwright, så porten måles på
+    kilden: `page.url` skal være det som bæres videre, ikke `url`."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "landet = _normaliser_lenke(origin, url, page.url)" in kilde
+    assert '"url": faktisk' in kilde
+    assert "_normaliser_lenke(origin, faktisk, href" in kilde
+    assert '"url": url,' not in kilde, \
+        "den bestilte URL-en skal ikke lenger rapporteres som siden"
+
+    # Og oppløsningen den porten hviler på: en relativ href måles mot det
+    # landede dokumentet, ikke mot adressen vi spurte om.
+    n, o = kjor._normaliser_lenke, "https://x.example"
+    assert n(o, f"{o}/ny/", "a.html") == f"{o}/ny/a.html"
+    assert n(o, f"{o}/gammel", "a.html") == f"{o}/a.html"
+
+
 def test_kravsett_og_alvorlighet_dekker_kontrakten():
     # Enum-ene speiler rapportskjemaet — driver de fra hverandre, produserer
     # motoren verdier skjemavalideringen avviser.

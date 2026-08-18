@@ -429,9 +429,28 @@ def main() -> int:
                 ok = svar is not None and svar.status == 200
             except Exception:
                 ok = False
-            sider.append({"url": url, "status": "ok" if ok else "feilet"})
+            # SIDEN ER DEN VI FAKTISK LANDET PÅ (Codex P1). `page.goto`
+            # følger omdirigeringer, og axe kjører mot det ENDELIGE
+            # dokumentet — men rapporten fikk den BESTILTE URL-en. En
+            # `enkeltside`-kontroll av `/gammel` som svarer 301 til `/ny`
+            # ble dermed promotert som evidens for at `/gammel` var
+            # undersøkt, og bindingen mot bestillingen holdt: URL-en var
+            # jo den bestilte. Det er nettopp da en påstand er farlig.
+            #
+            # Samme URL bærer lenkeoppløsningen lenger nede: relative
+            # href-er i det endelige dokumentet er relative til DET, ikke
+            # til adressen vi spurte om, så `/gammel` → `/ny/` + `a.html`
+            # ellers ble crawlet som `/a.html` — en annen side enn den
+            # dokumentet faktisk lenker til.
+            landet = _normaliser_lenke(origin, url, page.url) if ok else None
+            faktisk = landet or url
+            sider.append({"url": faktisk, "status": "ok" if ok else "feilet"})
             if not ok:
                 continue
+            # Omdirigeringsmålet er en side vi HAR sett; uten dette kunne
+            # den dukke opp som «ny» lenger ute i crawlen og bli kontrollert
+            # en gang til på taket sin bekostning.
+            oppdaget.add(faktisk)
             page.evaluate(axe_js)
             res = page.evaluate(
                 "tags => axe.run(document, {runOnly:"
@@ -465,7 +484,7 @@ def main() -> int:
                 for href in page.eval_on_selector_all(
                         "a[href]", "els => els.map(e =>"
                         " e.getAttribute('href'))"):
-                    lenke = _normaliser_lenke(origin, url, href or "")
+                    lenke = _normaliser_lenke(origin, faktisk, href or "")
                     if not lenke or lenke in oppdaget:
                         continue
                     # Robots matcher mot STI OG QUERY (RFC 9309 §2.2.2) —
