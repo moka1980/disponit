@@ -221,6 +221,30 @@ def test_eksempeltaket_slaar_avkortet_paa():
                 if f["antall"] > len(f["eksempler"])), default=0) == 0
 
 
+def test_uleselig_robots_melder_seg_som_avkorting():
+    """Codex P2: en uleselig robots gjør et nettsted-oppdrag til én side.
+
+    Lenkeuttrekket slås av, køen blir tom, og `sider_avkortet` er derfor
+    usann — rapporten meldte «alt kom med» for en kontroll som dekket én
+    av inntil femti sider, og den bærer ikke det bestilte `omfang` noe
+    annet sted. Et forbigående driftsminutt hos kunden ga altså promotert
+    evidens som ser komplett ut.
+
+    Trippelen skal si «kappet ved 1 av det bestilte»."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "robots_stengte = True" in kilde
+    assert "elif robots_stengte:" in kilde
+    assert "avkortet = [True, maks_sider, bestilt_maks]" in kilde
+    # Det bestilte taket tas vare på FØR robots får senke det.
+    assert kilde.index("bestilt_maks = maks_sider") \
+        < kilde.index("maks_sider = 1      # robots")
+    # Crawltaket har forsett foran robots-grenen: er BEGGE sanne, er det
+    # sidene som mangler leseren trenger å vite om først.
+    assert kilde.index("if sider_avkortet:") \
+        < kilde.index("elif robots_stengte:") \
+        < kilde.index("elif eksempler_avkortet:")
+
+
 def test_blokkert_vert_blir_alltid_baerbar_for_rapporten():
     """En blokkering skal bli en DEKNINGSBEGRENSNING, aldri et avbrutt
     oppdrag (Codex P2). `rapport.bygg` krever et prikket vertsnavn av hver

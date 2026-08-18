@@ -490,10 +490,15 @@ def main() -> int:
     # pekte på.
     disallow: list = []
     krype_lov = True
+    #: Det BESTILTE taket, tatt vare på før robots får lov å senke det —
+    #: se `robots_stengte` nedenfor.
+    bestilt_maks = maks_sider
+    robots_stengte = False
     if maks_sider > 1:
         disallow, krype_lov = _robots(origin, mal_pin, tls_kontekst)
         if not krype_lov:
             maks_sider = 1      # robots 5xx: kun den bestilte siden
+            robots_stengte = True
     #: Crawler vi i det hele tatt? Robots-reglene styrer hvilke sider vi
     #: HENTER utover den bestilte, så de gjelder nøyaktig i denne modusen —
     #: både for lenkene vi køer og for omdirigeringene vi følger.
@@ -707,6 +712,20 @@ def main() -> int:
          if f["antall"] > len(f["eksempler"])), default=0)
     if sider_avkortet:
         avkortet = [True, maks_sider, len(oppdaget)]
+    elif robots_stengte:
+        # EN ULESELIG ROBOTS ER OGSÅ EN AVKORTING (Codex P2). Da robots
+        # svarte 5xx eller ikke lot seg hente, ble et bestilt
+        # NETTSTED-oppdrag stille til en enkeltsidekontroll: lenkeuttrekket
+        # er av, køen blir tom, og `sider_avkortet` er derfor usann. Uten
+        # dette meldte rapporten `avkortet.truffet: false` — «alt kom med»
+        # — for en kontroll som dekket én av inntil femti sider, og
+        # rapporten bærer ikke det bestilte `omfang` noe annet sted. Et
+        # forbigående driftsminutt hos kunden kunne dermed gi PROMOTERT
+        # evidens som ser komplett ut.
+        #
+        # Taket er det vi faktisk kunne besøke (1), verdien er det som ble
+        # bestilt: trippelen sier «kappet ved 1 av `bestilt_maks`».
+        avkortet = [True, maks_sider, bestilt_maks]
     elif eksempler_avkortet:
         avkortet = [True, MAKS_EKSEMPLER, eksempler_avkortet]
     else:
