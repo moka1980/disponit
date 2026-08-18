@@ -273,9 +273,8 @@ def test_nettleserkonteksten_er_den_som_attesteres():
     vp = f'{kjor.VIEWPORT["width"]}x{kjor.VIEWPORT["height"]}'
     for felt, verdi in (("timezone", kjor.TIDSSONE), ("locale", kjor.LOCALE),
                         ("viewport", vp)):
-        n = sjekk.count(f'"{felt}": "{verdi}"')
-        assert n == 2, \
-            f"serverkonteksten oppgir ikke {felt}={verdi} (fant {n})"
+        assert f'"{felt}": "{verdi}"' in sjekk, \
+            f"serverkonteksten oppgir ikke {felt}={verdi}"
     # ... og ingen ANNEN verdi står igjen for de samme feltene.
     import re
     for felt, verdi in (("timezone", kjor.TIDSSONE), ("locale", kjor.LOCALE),

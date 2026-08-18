@@ -526,6 +526,66 @@ def _idem(merkelapp: str, kropp: dict) -> str:
     return f"{_rundeid()}-{merkelapp}-{h[:12]}"
 
 
+#: Skriptet som spør IMAGET selv hva slags Chromium det bærer. Kjøres med
+#: `--entrypoint python3`, så det er nøyaktig den nettleseren motoren ville
+#: startet — ikke en versjon vi tror står der.
+_CHROMIUM_SKRIPT = (
+    "import subprocess;"
+    "from playwright.sync_api import sync_playwright;"
+    "p=sync_playwright().start();"
+    "print(subprocess.run([p.chromium.executable_path,'--version'],"
+    "capture_output=True,text=True).stdout.strip())")
+
+_chromium_cache: dict = {}
+
+
+def _chromium_versjon(motorkmd) -> str:
+    """Nettleserversjonen imaget FAKTISK bærer (Codex P2).
+
+    `chromium_versjon` sto som den bokstavelige strengen «chromium» i hver
+    eneste staging- og produksjonskontekst. Verdien er skjemagyldig og
+    inneholder ingenting: feltet finnes for å identifisere nettleseren
+    kontrollen ble kjørt med, og proveniensen i den promoterte rapporten
+    ble villedende i det nettleseratferden endrer seg mellom to
+    image-utgivelser — som er nøyaktig når feltet trengs.
+
+    Verdien hentes derfor ut av imaget selv, én gang per motorkommando.
+    Kan den ikke hentes (motorkommandoen er ingen containerkjøring, eller
+    kjøringen feilet), sies det: `ukjent` er en ærlig verdi, «chromium» var
+    en tom påstand som så ut som en opplysning."""
+    nokkel = tuple(motorkmd)
+    if nokkel in _chromium_cache:
+        return _chromium_cache[nokkel]
+    versjon = "ukjent"
+    runtime = Path(motorkmd[0]).name if motorkmd else ""
+    if runtime in ("docker", "podman", "nerdctl") and "run" in motorkmd:
+        ut = subprocess.run(
+            motorkmd[:-1] + ["--entrypoint", "python3", motorkmd[-1],
+                             "-c", _CHROMIUM_SKRIPT],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        linje = ut.stdout.strip().splitlines()[-1:] or [""]
+        if ut.returncode == 0 and linje[0]:
+            versjon = linje[0][:64]
+    evidens("motor_chromium_versjon", versjon=versjon, runtime=runtime)
+    _chromium_cache[nokkel] = versjon
+    return versjon
+
+
+def _serverkontekst(digest: str, motorkmd) -> dict:
+    """`miljo`-blokka rapporten attesterer — ETT sted (Codex P2).
+
+    Blokka sto skrevet ordrett to steder (fase 5–7 og fase 9), og de to
+    kan gli fra hverandre: da attesterer staging og drift hvert sitt
+    miljø for det samme imaget. Verdiene for nettleserkonteksten er
+    motorens egne (`kjor.LOCALE`/`TIDSSONE`/`VIEWPORT`) — se
+    `test_nettleserkonteksten_er_den_som_attesteres`."""
+    return {"axe_versjon": "4.10.3",
+            "chromium_versjon": _chromium_versjon(motorkmd),
+            "container_image_digest": "sha256:" + digest.split(":")[-1],
+            "viewport": "1280x800", "locale": "nb",
+            "timezone": "Europe/Oslo"}
+
+
 def _bestill(http, cookie, csrf, kropp, nokkel=None):
     from api import sesjon as sesjonmodul
     hoder = {"X-Disponit-CSRF": csrf}
@@ -547,12 +607,8 @@ def _kontroller_kjor(mtk, motorkmd, digest):
             {**kropp, "verifikator": "v_wcag_audit"},
             nid, reg["v_wcag_audit"][nid])
 
-    kontekst = {"axe_versjon": "4.10.3", "chromium_versjon": "chromium",
-                "container_image_digest": "sha256:" + digest.split(":")[-1],
-                "viewport": "1280x800", "locale": "nb",
-                "timezone": "Europe/Oslo"}
     return controller.kjor_en(Http(API), mtk, Kommandomotor(motorkmd),
-                              kontekst, signer)
+                              _serverkontekst(digest, motorkmd), signer)
 
 
 def _fasitkontroll(scenario: str, rapport: dict) -> list[str]:
@@ -943,7 +999,7 @@ def _importer_motorimage(digest: str) -> tuple[bool, str]:
     return True, "importert"
 
 
-def fase9(mtk, digest, *, maalt_runde: bool):
+def fase9(mtk, digest, motorkmd, *, maalt_runde: bool):
     """Setter arbeideren I DRIFT — ellers claimer ingen noe (Codex P1).
 
     Fase 2 setter modulen `aktiv` og deploymentet `claiming`. FRA DA er
@@ -993,10 +1049,11 @@ def fase9(mtk, digest, *, maalt_runde: bool):
         # Image-ID-en, ikke taggen: taggen er mutabel, og kvitteringen
         # attesterer nøyaktig denne digesten som container_image_digest.
         digest.split(":")[-1]])
-    kontekst = {"axe_versjon": "4.10.3", "chromium_versjon": "chromium",
-                "container_image_digest": "sha256:" + digest.split(":")[-1],
-                "viewport": "1280x800", "locale": "nb",
-                "timezone": "Europe/Oslo"}
+    # SAMME `miljo`-blokk som målingene attesterte — ett sted, én verdi.
+    # Nettleserversjonen leses ut av imaget (`_chromium_versjon`), som er
+    # den samme uansett hvilken runtime som slår den opp: image-ID-en er
+    # konfigblobbens digest, og den er lik i begge lagrene.
+    kontekst = _serverkontekst(digest, motorkmd)
 
     # ROOTLESS-FORUTSETNINGENE MÅLES FØR UNITEN ENABLES (Codex P1).
     # `opp.sh` deler ut subuid/subgid til `disponit-wcag` og advarer om
@@ -1128,7 +1185,7 @@ def main() -> int:
         # runde; en full kjøring gjør det selv, til slutt.
         if args.fase == 9 and mtk is None:
             mtk = (RUNDE / "modultoken").read_text().strip()
-        fase9(mtk, digest, maalt_runde=args.fase is None)
+        fase9(mtk, digest, motorkmd, maalt_runde=args.fase is None)
     evidens("runde_ferdig")
     return 0
 
