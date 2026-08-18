@@ -46,9 +46,22 @@ RUN test -n "${PLAYWRIGHT_PAKKE}" \
 # Axe-kilden bakes inn og sha256-verifiseres av kjor.py ved HVER kjøring
 # (AXE_SHA256-pinnen i koden) — containeren gjør ingen nettoppslag for
 # verktøyet sitt, bare mot målet.
+#
+# FILA MÅ VÆRE LESBAR FOR `pwuser` (Codex P1). En `ADD` fra en URL lager
+# fila root-eid med modus 0600 (Dockerfile-referansen sier det rett ut), og
+# imaget bytter til `pwuser` under. `_axe_kilde()` kunne dermed ikke lese
+# `AXE_STI`, og motoren døde før Playwright i det hele tatt ble startet —
+# hver eneste kjøring, straks imaget lot seg bygge.
+#
+# Modusen settes eksplisitt for BEGGE filene, ikke bare den nedlastede:
+# `COPY` arver modusen fra byggekonteksten, så en `kjor.py` som en dag
+# committes uten leserett for alle ville gitt nøyaktig samme feil. Lesbart
+# og ikke skrivbart (0444) — motoren skal ikke kunne endre sitt eget
+# regelverk.
 WORKDIR /motor
 COPY kjor.py /motor/kjor.py
 ADD https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.3/axe.min.js /motor/axe.min.js
+RUN chmod 0444 /motor/axe.min.js && chmod 0444 /motor/kjor.py
 ENV AXE_STI=/motor/axe.min.js
 
 # Kjøres som playwrights ubetrodde bruker, aldri root.

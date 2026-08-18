@@ -482,6 +482,17 @@ def test_motorimaget_har_playwright_pakken():
     assert "from playwright.sync_api import sync_playwright" in kilde
 
 
+def test_motorfilene_er_lesbare_for_den_ubetrodde_brukeren():
+    """Codex P1: `ADD` fra en URL gir root-eid 0600, og imaget kjører som
+    `pwuser`. `_axe_kilde()` kunne da ikke lese `AXE_STI`, og motoren døde
+    før Playwright ble startet — hver eneste kjøring."""
+    d = (MOTOR / "Dockerfile").read_text(encoding="utf-8")
+    assert "chmod 0444 /motor/axe.min.js" in d
+    assert "chmod 0444 /motor/kjor.py" in d
+    # Modusen må settes FØR privilegiene slippes, ellers hjelper den ikke.
+    assert d.index("chmod 0444") < d.index("USER pwuser")
+
+
 # ---------------------------------------------------------------------------
 # Kontraktsdokumentene (kontrakt/): proveniens som ikke får drive fra koden
 # ---------------------------------------------------------------------------
