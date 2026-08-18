@@ -33,6 +33,81 @@ def test_robots_parsing_og_tillatt():
     assert kjor._tillatt("/alt/x", disallow) is True     # gjaldt googlebot
 
 
+def test_bare_offentlige_maladresser_slipper_gjennom():
+    """Et verifisert domene sier hvem som EIER navnet, ikke hvor det
+    peker — så adressen må kontrolleres for seg (Codex P1)."""
+    import ipaddress
+    forbudt = ["127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1",
+               "169.254.169.254",          # skymetadata
+               "100.64.0.1", "0.0.0.0", "224.0.0.1",
+               "::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1"]
+    for a in forbudt:
+        assert kjor._offentlig(ipaddress.ip_address(a)) is False, a
+    for a in ["93.184.216.34", "8.8.8.8", "2606:2800:220:1:248:1893:25c8:1946"]:
+        assert kjor._offentlig(ipaddress.ip_address(a)) is True, a
+
+
+def test_pin_avviser_hele_forespoerselen_ved_forbudt_oppslag(monkeypatch):
+    import socket as _s
+
+    def svar(*adresser):
+        return lambda *a, **k: [(_s.AF_INET, _s.SOCK_STREAM, 6, "", (ip, 443))
+                                for ip in adresser]
+
+    # Én forbudt adresse blant flere skal felle HELE oppslaget — ellers
+    # er angrepet bare et spørsmål om å prøve igjen.
+    monkeypatch.setattr(kjor.socket, "getaddrinfo",
+                        svar("93.184.216.34", "127.0.0.1"))
+    try:
+        kjor._pin_mal_ip("mal.example", 443, {})
+        assert False, "forbudt adresse slapp gjennom"
+    except SystemExit as e:
+        assert "ikke-offentlig" in str(e)
+
+    # Rent offentlig oppslag pinnes til én adresse.
+    monkeypatch.setattr(kjor.socket, "getaddrinfo", svar("93.184.216.34"))
+    assert kjor._pin_mal_ip("mal.example", 443, {}) == "93.184.216.34"
+
+    # Fixturens vertskart er det ENE unntaket, og bare for navnene det
+    # selv nevner.
+    monkeypatch.setattr(kjor.socket, "getaddrinfo", svar("127.0.0.1"))
+    assert kjor._pin_mal_ip("fasit.example", 8443,
+                            {"fasit.example": "127.0.0.1"}) == "127.0.0.1"
+    try:
+        kjor._pin_mal_ip("annen.example", 8443, {"fasit.example": "127.0.0.1"})
+        assert False, "vertskartet gjaldt et navn det ikke nevner"
+    except SystemExit:
+        pass
+
+
+def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
+    kall = {}
+
+    def hent(status, tekst=""):
+        def _h(url, pin_ip, tls_kontekst=None):
+            kall["pin"] = pin_ip
+            return status, tekst
+        return _h
+
+    monkeypatch.setattr(kjor, "_hent", hent(200, "User-agent: *\n"
+                                                 "Disallow: /privat/\n"))
+    assert kjor._robots("https://m.example", "93.184.216.34") == (
+        ["/privat/"], True)
+    assert kall["pin"] == "93.184.216.34"      # hentingen bruker pinnen
+    assert kjor._robots("https://m.example", "1.2.3.4")[1] is True
+    monkeypatch.setattr(kjor, "_hent", hent(404))
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], True)
+    for status in (301, 302, 503, 500):
+        monkeypatch.setattr(kjor, "_hent", hent(status))
+        assert kjor._robots("https://m.example", "1.2.3.4") == ([], False), \
+            status
+
+    def sprekk(*a, **k):
+        raise OSError("nede")
+    monkeypatch.setattr(kjor, "_hent", sprekk)
+    assert kjor._robots("https://m.example", "1.2.3.4") == ([], False)
+
+
 def test_lenkenormalisering_er_lukket():
     n = kjor._normaliser_lenke
     o = "http://127.0.0.1:8093"

@@ -18,6 +18,9 @@ ikke motoren fra å være ærlig:
     forespørsler blokkeres og TELLES ({vert, antall, art}) — det er
     tallene `dekningsbegrensninger` bygges av (port 18). Ingen
     credentials: prosessen arver bare motor-allowlistens miljø.
+  * MÅLET ER OFFENTLIG OG PINNET: vertsnavnet slås opp ÉN gang, hver
+    adresse må være global, og både robots-henting og nettleser låses
+    til den ene IP-en. Se `_pin_mal_ip`.
   * ROBOTS RESPEKTERES (port 20): `Disallow` for `User-agent: *` følges
     ved crawl; robots.txt 5xx → INGEN crawl — kun den eksplisitt
     bestilte `mal_url` kontrolleres (kunden har selv pekt på den; å
@@ -33,8 +36,11 @@ rapport bygget på ukjent regelverk. I containeren ligger fila bakt inn
 from __future__ import annotations
 
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 import urllib.parse
@@ -86,24 +92,114 @@ def _axe_kilde() -> str:
     return data.decode("utf-8")
 
 
-def _robots(base: str, tls_kontekst=None) -> tuple[list[str], bool]:
-    """-> (disallow-prefikser for `*`, krype_lov).
+def _offentlig(ip) -> bool:
+    """Er adressen en adresse på det OFFENTLIGE internettet?
 
-    5xx OG nettverksfeil → (.., False): ingen crawl. En robots vi ikke
-    fikk LEST er ikke en robots som har sagt ja — fail-open her ville
-    betydd at målets verste driftsøyeblikk er øyeblikket vi crawler mest.
-    Kun et tydelig 4xx (robots finnes ikke) leses som «ingen uttalte
-    begrensninger» (RFC 9309 §2.3.1.3)."""
+    Alt annet — loopback, RFC1918, CGNAT, link-local (og dermed
+    169.254.169.254, sky-metadataen), unique-local, multicast, reservert
+    og «uspesifisert» — er en adresse motoren aldri har lov å nå. Et
+    IPv4-mappet IPv6-svar (`::ffff:127.0.0.1`) pakkes ut først; ellers
+    ville `is_loopback` sett på innpakningen i stedet for adressen."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+def _pin_mal_ip(vert: str, port: int, vertskart: dict[str, str]) -> str:
+    """Den ENE adressen målet får nås på — eller SystemExit (Codex P1).
+
+    Egressvakten sammenlignet bare URL-ens ORIGIN, og et origin sier
+    ingenting om hvor navnet peker. En tenant som kontrollerer DNS for
+    sitt eget verifiserte domene kunne derfor la det peke på 127.0.0.1
+    eller 169.254.169.254 og få motoren — som kjører med `--network
+    host` — til å hente vertens egne tjenester og skymetadata inn i en
+    rapport tenanten selv laster ned. Verifiseringen av domenet hjelper
+    ikke: den sier hvem som eier navnet, ikke hva navnet peker på nå.
+
+    To ting må derfor stemme, og de er to forskjellige ting:
+
+      * HVER adresse navnet løser til må være offentlig. Er ÉN forbudt,
+        avvises HELE forespørselen — å bare hoppe over den forbudte og
+        bruke resten ville gjort et angrep til et retry-spørsmål.
+      * Oppslaget PINNES til én adresse, som bæres videre til både
+        robots-hentingen (`_hent`) og nettleseren
+        (`--host-resolver-rules`). Uten pinnen står DNS-rebinding igjen:
+        navnet er offentlig i det vi kontrollerer det, og loopback i det
+        Chromium slår det opp på nytt et halvsekund senere.
+
+    MOTOR_VERTSKART er fixture-unntaket, og det er BEVISST eksplisitt:
+    det syntetiske testnettstedet ER loopback. Kartet nevner nøyaktig de
+    navnene staging-sjekklisten setter opp selv, settes aldri av
+    driftens unit-filer, og når det ikke gjelder, gjelder regelen over.
+    """
+    if vert in vertskart:
+        return vertskart[vert]
     try:
-        with urllib.request.urlopen(base + "/robots.txt", timeout=10,
-                                    context=tls_kontekst) as r:
-            status, tekst = r.status, r.read(65536).decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return [], 400 <= e.code < 500
+        oppslag = socket.getaddrinfo(vert, port, type=socket.SOCK_STREAM)
+    except OSError as e:
+        raise SystemExit(f"målet lot seg ikke slå opp: {vert}: {e}")
+    adresser = []
+    for post in oppslag:
+        adresse = post[4][0].split("%", 1)[0]
+        try:
+            ip = ipaddress.ip_address(adresse)
+        except ValueError:
+            raise SystemExit(f"målet {vert} løste til noe som ikke er en"
+                             f" IP-adresse: {adresse!r}")
+        if not _offentlig(ip):
+            raise SystemExit(
+                f"målet {vert} peker på en ikke-offentlig adresse ({ip})"
+                " — hele forespørselen avvises")
+        adresser.append(adresse)
+    if not adresser:
+        raise SystemExit(f"målet lot seg ikke slå opp: {vert}")
+    return adresser[0]
+
+
+def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str]:
+    """GET mot `url`, men ALLTID mot den pinnede adressen.
+
+    Vertsnavnet beholdes til Host-header og SNI/sertifikatkontroll —
+    bare selve TCP-tilkoblingen tvinges til `pin_ip`, slik at hentingen
+    ikke gjør sitt EGET DNS-oppslag etter at `_pin_mal_ip` har godkjent
+    et annet svar. `_create_connection` er `http.client`-instansens egen
+    krok for nettopp dette."""
+    u = urllib.parse.urlsplit(url)
+    port = u.port or (443 if u.scheme == "https" else 80)
+    if u.scheme == "https":
+        conn = http.client.HTTPSConnection(u.hostname, port, timeout=10,
+                                           context=tls_kontekst)
+    else:
+        conn = http.client.HTTPConnection(u.hostname, port, timeout=10)
+    conn._create_connection = (
+        lambda adr, tidsavbrudd, kilde: socket.create_connection(
+            (pin_ip, adr[1]), tidsavbrudd, kilde))
+    try:
+        conn.request("GET", u.path or "/")
+        svar = conn.getresponse()
+        return svar.status, svar.read(65536).decode("utf-8", "replace")
+    finally:
+        conn.close()
+
+
+def _robots(base: str, pin_ip: str, tls_kontekst=None
+            ) -> tuple[list[str], bool]:
+    """-> (disallow-regler for `*`, krype_lov).
+
+    Alt annet enn 2xx og 4xx — 5xx, omdirigeringer og nettverksfeil —
+    gir (.., False): ingen crawl. En robots vi ikke fikk LEST er ikke en
+    robots som har sagt ja — fail-open her ville betydd at målets verste
+    driftsøyeblikk er øyeblikket vi crawler mest. Kun et tydelig 4xx
+    (robots finnes ikke) leses som «ingen uttalte begrensninger»
+    (RFC 9309 §2.3.1.3)."""
+    try:
+        status, tekst = _hent(base + "/robots.txt", pin_ip, tls_kontekst)
     except Exception:
         return [], False
-    if status >= 500:
-        return [], False
+    if not 200 <= status < 300:
+        return [], 400 <= status < 500
     return _parse_robots(tekst), True
 
 
@@ -174,12 +270,11 @@ def main() -> int:
     # all annen oppløsning er urørt — og settes aldri i drift.
     vertskart = dict(par.split("=", 1) for par in os.environ.get(
         "MOTOR_VERTSKART", "").split(",") if "=" in par)
-    robots_origin = origin
-    if (p.hostname or "") in vertskart:
-        ip = vertskart[p.hostname]
-        port = f":{p.port}" if p.port else ""
-        robots_origin = f"{p.scheme}://{ip}{port}"
-    disallow, krype_lov = _robots(robots_origin, tls_kontekst)
+    # ÉTT oppslag, godkjent én gang, brukt overalt — se `_pin_mal_ip`.
+    mal_vert = p.hostname or ""
+    mal_pin = _pin_mal_ip(mal_vert, p.port or (443 if p.scheme == "https"
+                                               else 80), vertskart)
+    disallow, krype_lov = _robots(origin, mal_pin, tls_kontekst)
     if maks_sider > 1 and not krype_lov:
         maks_sider = 1          # robots 5xx: kun den bestilte siden
 
@@ -190,11 +285,20 @@ def main() -> int:
 
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
-        chrom_args = ["--disable-dev-shm-usage"]
-        if vertskart:
-            regler = ", ".join(f"MAP {v} {ip}"
-                               for v, ip in sorted(vertskart.items()))
-            chrom_args.append(f"--host-resolver-rules={regler}")
+        # NETTLESEREN FÅR ÉN ADRESSE OG INGEN ANDRE (Codex P1). Målnavnet
+        # låses til adressen `_pin_mal_ip` alt har godkjent, så Chromium
+        # ikke kan slå det opp på nytt og få loopback tilbake
+        # (DNS-rebinding). `MAP * ~NOTFOUND` står sist og gjør ethvert
+        # ANNET vertsnavn uoppløselig: egressvakten under er en
+        # route-avskjæring, og den ser ikke alt nettleseren kan finne på å
+        # åpne. Rekkefølgen bærer regelen — Chromium bruker første treff,
+        # så de eksplisitte MAP-ene vinner over catch-all-en.
+        resolverkart = dict(vertskart)
+        resolverkart.setdefault(mal_vert, mal_pin)
+        regler = ", ".join(f"MAP {v} {ip}"
+                           for v, ip in sorted(resolverkart.items()))
+        chrom_args = ["--disable-dev-shm-usage",
+                      f"--host-resolver-rules={regler}, MAP * ~NOTFOUND"]
         browser = pw.chromium.launch(args=chrom_args)
         ctx = browser.new_context(viewport={"width": 1280, "height": 800},
                                   locale="nb",

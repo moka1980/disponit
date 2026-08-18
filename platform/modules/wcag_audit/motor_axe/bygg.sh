@@ -8,7 +8,10 @@
 #
 # (`--network host` fordi testnettstedet på staging er loopback-bundet;
 # motoren har uansett ingen credentials å misbruke — egressvakten ligger
-# i kjor.py, og produksjonsmål er offentlige nettsteder.)
+# i kjor.py, som SELV slår opp målet og avviser hele forespørselen om
+# navnet peker på en ikke-offentlig adresse. Uten den kontrollen ville
+# `--network host` gjort tenantens egen DNS til en vei inn til vertens
+# loopback-tjenester og skymetadata.)
 #
 # STAGING-FIXTUREN reiser i KOMMANDOEN, aldri i miljøet: Kommandomotor
 # allowlister motormiljøet, så `MOTOR_TLS_USIKKER`/`MOTOR_VERTSKART`
