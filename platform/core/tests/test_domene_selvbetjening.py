@@ -1107,6 +1107,38 @@ def test_raa_utsted_challenge_er_ikke_runtimes(migrator):
         migrator, "utsted_challenge_selvbetjent(text,text,boolean,text,text)")
 
 
+@pg
+def test_hver_domenestatus_har_en_etikett_i_begge_sprak(migrator):
+    """Codex P3: `utlopt` er en gyldig databasetilstand, men manglet etikett i
+    begge locale-filene — så flaten falt tilbake på råverdien, og den engelske
+    brukeren fikk et norsk implementasjonsord som «status».
+
+    Fasiten hentes fra CHECK-en i basen, ikke fra en liste her: en femte status
+    som legges til i en fremtidig migrasjon skal FEILE her, ikke lekke som
+    råtekst i UI-et.
+    """
+    import json as _json
+    import pathlib
+    import re
+
+    defs = migrator.execute(
+        "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c"
+        " WHERE c.conrelid = 'domenekontroll'::regclass AND c.contype = 'c'"
+    ).fetchall()
+    migrator.rollback()
+    sjekk = [d[0] for d in defs if "'ventende'" in d[0]]
+    assert sjekk, "fant ikke status-CHECK-en på domenekontroll"
+    statuser = set(re.findall(r"'([a-z_]+)'::text", sjekk[0]))
+    assert "utlopt" in statuser, statuser
+
+    rot = pathlib.Path(__file__).resolve().parents[3]
+    for fil in ("nb.json", "en.json"):
+        kart = _json.loads((rot / "locales" / fil).read_text("utf-8"))
+        mangler = sorted(s for s in statuser
+                         if not kart.get(f"domenestatus.{s}"))
+        assert not mangler, f"{fil} mangler etikett for: {', '.join(mangler)}"
+
+
 def test_arbeideren_drenerer_konflikter_i_hovedlokka():
     """Dreneringen er UTRULLET, ikke bare tilgjengelig: M-37-arbeiderens
     hovedløkke kaller den. Uten kallet ville funksjonen over hatt nøyaktig

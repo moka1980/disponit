@@ -849,5 +849,6 @@
   "domenestatus.ventende": "Venter på DNS-oppføring",
   "domenestatus.verifisert": "Verifisert",
   "domenestatus.tilbakekalt": "Tilbakekalt",
-  "domenestatus.avklaring_kreves": "Under avklaring"
+  "domenestatus.avklaring_kreves": "Under avklaring",
+  "domenestatus.utlopt": "Utløpt"
 }
