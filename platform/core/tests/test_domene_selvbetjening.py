@@ -322,6 +322,39 @@ def test_http_ukanonisk_hostname_avvises_av_basen(migrator, klient):
 
 
 @pg
+def test_dypt_nostet_kropp_er_request_feil(migrator, klient):
+    """Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig, dypt nøstet
+    dokument på noen få kilobyte ligger godt under kroppsgrensen og treffer
+    likevel rekursjonsgrensen. RecursionError er en RuntimeError, ikke en
+    ValueError, så `except ValueError` alene slapp klientinput ut som generisk
+    500 i stedet for det dokumenterte `request_feilformet`.
+
+    Kroppen bygges som TEKST: `json.dumps` av en så dyp struktur ville tatt
+    livet av testen selv, ikke serveren. Dybden krysses mot parseren HER, så
+    testen aldri stille blir grønn av at kroppen ble for grunn til å nå
+    grensen (C-parserens tak flytter seg mellom Python-versjoner).
+
+    MUTASJONEN SOM DREPER DENNE: fjern RecursionError fra except-en rundt
+    `json.loads` i `utsted_endepunkt`.
+    """
+    import json as jsonmodul
+
+    from api import sesjon as sesjonmodul
+    cookie, csrf = _adminsesjon()
+    dybde = 15000
+    kropp = '{"a":' * dybde + "1" + "}" * dybde
+    assert len(kropp) < 200_000, "testkroppen skal ligge under kroppsgrensen"
+    with pytest.raises(RecursionError):
+        jsonmodul.loads(kropp)
+    r = klient.post("/v1/domener", content=kropp,
+                    headers={"X-Disponit-CSRF": csrf,
+                             "content-type": "application/json"},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert (r.status_code, r.json()["feil"]) == (
+        400, "request_feilformet"), r.text
+
+
+@pg
 def test_verifiseringspasset_ende_til_ende(migrator, klient):
     """Arbeiderpasset med en fake-resolver: challenge utstedt over HTTP,
     TXT «i sonen», pass → verifisert — og bestillingsveiens

@@ -122,7 +122,16 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
         raa = request.scope.get("state", {}).get("kropp", b"")
         try:
             data = json.loads(raa.decode("utf-8"))
-        except ValueError:
+        except (ValueError, RecursionError):
+            # `json.loads` er REKURSIV (Codex P2). Et syntaktisk gyldig, dypt
+            # nøstet dokument på noen få kilobyte ligger godt under
+            # kroppsgrensen og treffer likevel rekursjonsgrensen —
+            # RecursionError er en RuntimeError, ikke en ValueError, så
+            # `except ValueError` alene slapp klientinput ut som generisk 500
+            # i stedet for det dokumenterte `request_feilformet`. DYBDE er
+            # klientinput på lik linje med syntaks; naboendepunktet
+            # (`bestilling`) fanger begge av nøyaktig samme grunn, og denne
+            # parseren skal ikke være unntaket.
             return _feilsvar("request_feilformet", rid)
         if not isinstance(data, dict) or set(data) - {"hostname"}:
             return _feilsvar("request_feilformet", rid)
