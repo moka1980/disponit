@@ -662,6 +662,18 @@ def _gyldig_kropp(host="kunde.example", **over):
     return k
 
 
+def _kjernenokkel(nokkel, kropp=None):
+    """Kjernens idempotensnøkkel for en bestilling.
+
+    Nøkkelen bærer BÅDE klientens nøkkel og intensjonshashen (Codex P1),
+    og formen eies av `bestilling.kjernenokkel_for`. Testene avleder den
+    derfra i stedet for å skrive den av: skrevet av, ville de fortsatt
+    vært grønne den dagen produksjonskoden byttet form."""
+    import api.bestilling as bm
+    n = bm.normaliser(TENANT, kropp if kropp is not None else _gyldig_kropp())
+    return bm.kjernenokkel_for(nokkel, bm.intensjonshash(n))
+
+
 @pg
 @dekker("bestilling_hostname_uverifisert")
 def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
@@ -671,14 +683,15 @@ def test_uverifisert_hostname_avvises_for_beslutningen(migrator, klient):
     _wcag_policy(migrator)
     cookie, csrf = _adminsesjon()
     nokkel = "n-" + secrets.token_hex(8)
-    r = _bestill(klient, cookie, csrf, _gyldig_kropp("fremmed.example"),
-                 nokkel)
+    kropp = _gyldig_kropp("fremmed.example")
+    r = _bestill(klient, cookie, csrf, kropp, nokkel)
     assert (r.status_code, r.json()["feil"]) == (
         403, "bestilling_hostname_uverifisert"), r.text
     _sett_kontekst(migrator, TENANT)
     n = migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for et uautorisert mål"
 
@@ -708,7 +721,7 @@ def test_foreldet_revalidering_er_ikke_et_autorisert_maal(migrator, klient):
     _sett_kontekst(migrator, TENANT)
     n = migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s", (TENANT, _kjernenokkel(nokkel))).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for et foreldet domene"
 
@@ -838,7 +851,7 @@ def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
     _sett_kontekst(migrator, TENANT)
     logg = migrator.execute(
         "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
-        (TENANT, "bestilling:" + nokkel)).fetchall()
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchall()
     assert len(logg) == 1, "beslutningen skulle vært committet av kjernen"
     assert migrator.execute(
         "SELECT count(*) FROM bestilling_idempotens WHERE tenant=%s AND"
@@ -870,7 +883,7 @@ def test_gjenoppretting_bruker_beslutningens_policy(migrator, klient,
     assert migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
         " idempotency_key=%s",
-        (TENANT, "bestilling:" + nokkel)).fetchone()[0] == 1, \
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 1, \
         "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
     assert migrator.execute(
         "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
@@ -913,7 +926,7 @@ def test_gjenoppretting_taaler_ny_revalidering_i_vinduet(migrator, klient,
     _sett_kontekst(migrator, TENANT)
     logg = migrator.execute(
         "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
-        (TENANT, "bestilling:" + nokkel)).fetchall()
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchall()
     assert len(logg) == 1, "beslutningen skulle vært committet av kjernen"
     migrator.rollback()
 
@@ -931,13 +944,70 @@ def test_gjenoppretting_taaler_ny_revalidering_i_vinduet(migrator, klient,
     assert migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
         " idempotency_key=%s",
-        (TENANT, "bestilling:" + nokkel)).fetchone()[0] == 1, \
+        (TENANT, _kjernenokkel(nokkel, kropp))).fetchone()[0] == 1, \
         "retryen tok en NY beslutning i stedet for å gjenspille den gamle"
     assert migrator.execute(
         "SELECT beslutning_loggpost_id FROM oppdrag WHERE tenant=%s AND id=%s",
         (TENANT, svar["oppdrag_id"])).fetchone()[0] == logg[0][0], \
         "oppdraget ble ikke koblet til den opprinnelige beslutningen"
     migrator.rollback()
+
+
+@pg
+def test_gjenoppretting_arver_ikke_en_annen_intensjon(migrator, klient,
+                                                      monkeypatch):
+    """Codex P1, runde 3: krasjvinduet må ikke gjenbruke beslutningen blindt.
+
+    `bestilling_idempotens` er konfliktporten — men i vinduet mellom
+    kjernens commit og bokføringen finnes ikke raden ennå. Sto kjernens
+    nøkkel på klientens nøkkel alene, fant gjenopprettingen den committede
+    beslutningen på nøkkelen ALENE, og halen krypterte retryens payload
+    inn i den: et TILLAT gitt for én side ble oppdraget «crawl 50 sider».
+
+    Kontroll: sett `kjernenokkel_for` tilbake til `f"bestilling:{nokkel}"`,
+    så blir denne rød.
+    """
+    import oppdragskontrakt
+    from db import kryptering
+    _wcag_policy(migrator)
+    _verifiser_domene(migrator, "kunde.example")
+    cookie, csrf = _adminsesjon()
+    nokkel = "n-" + secrets.token_hex(8)
+    enkeltside = _gyldig_kropp()
+    nettsted = _gyldig_kropp(omfang="nettsted", maks_sider=50)
+
+    # (1) Beslutningen for ENKELTSIDE committes; halen dør før bokføringen.
+    with monkeypatch.context() as mp:
+        mp.setattr(oppdragskontrakt, "utforelsesfrist_s",
+                   lambda *a, **k: None)
+        r = _bestill(klient, cookie, csrf, enkeltside, nokkel)
+    assert (r.status_code, r.json()["feil"]) == (500, "intern_feil"), r.text
+    _sett_kontekst(migrator, TENANT)
+    forrige = migrator.execute(
+        "SELECT id FROM revisjonslogg WHERE tenant=%s AND idempotency_key=%s",
+        (TENANT, _kjernenokkel(nokkel, enkeltside))).fetchall()
+    assert len(forrige) == 1, "beslutningen skulle vært committet av kjernen"
+    migrator.rollback()
+
+    # (2) Retryen bruker SAMME nøkkel, men ber om noe annet.
+    r2 = _bestill(klient, cookie, csrf, nettsted, nokkel)
+    assert r2.status_code == 200, r2.text
+    svar = r2.json()
+    assert svar["beslutning"] == "tillat" and svar["oppdrag_id"], svar
+
+    # (3) Oppdraget hører til en beslutning som FAKTISK vurderte nettstedet
+    #     — ikke til enkeltside-beslutningen fra (1).
+    _sett_kontekst(migrator, TENANT)
+    rad = migrator.execute(
+        "SELECT beslutning_loggpost_id, payload_kryptert, key_id, nonce"
+        " FROM oppdrag WHERE tenant=%s AND id=%s",
+        (TENANT, svar["oppdrag_id"])).fetchone()
+    assert rad[0] != forrige[0][0], \
+        "oppdraget arvet beslutningen som gjaldt en ANNEN intensjon"
+    dek = kryptering.hent_dek(migrator, TENANT, rad[2])
+    payload = kryptering.dekrypter(dek, rad[1], rad[3], TENANT, rad[2])
+    migrator.rollback()
+    assert payload["omfang"] == "nettsted", payload
 
 
 @pg
@@ -983,7 +1053,7 @@ def test_stopp_gir_kode_og_intet_oppdrag(migrator, klient):
     rad = migrator.execute(
         "SELECT beslutning FROM revisjonslogg WHERE tenant=%s AND"
         " idempotency_key=%s", (TENANT,
-                                "bestilling:" + nokkel)).fetchone()
+                                _kjernenokkel(nokkel))).fetchone()
     n = migrator.execute("SELECT count(*) FROM oppdrag WHERE tenant=%s"
                          " AND opprinnelse='beslutning'",
                          (TENANT,)).fetchone()[0]
@@ -1563,7 +1633,7 @@ def test_uregistrert_type_nektes_for_beslutningen(migrator, klient,
     _sett_kontekst(migrator, TENANT)
     n = migrator.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s", (TENANT, _kjernenokkel(nokkel))).fetchone()[0]
     migrator.rollback()
     assert n == 0, "beslutningen ble tatt for en type uten utfører"
 
@@ -1629,7 +1699,7 @@ def _bestill_mot(migrator_, klient_, monkeypatch, modul, oppdragstype):
     _sett_kontekst(migrator_, TENANT)
     n = migrator_.execute(
         "SELECT count(*) FROM revisjonslogg WHERE tenant=%s AND"
-        " idempotency_key=%s", (TENANT, "bestilling:" + nokkel)).fetchone()[0]
+        " idempotency_key=%s", (TENANT, _kjernenokkel(nokkel))).fetchone()[0]
     migrator_.rollback()
     return r, n
 

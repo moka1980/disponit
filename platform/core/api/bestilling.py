@@ -156,6 +156,34 @@ def intensjonshash(normalisert: dict) -> str:
     return hashlib.sha256(jcs.kanoniske_bytes(intensjon)).hexdigest()
 
 
+def kjernenokkel_for(nokkel: str, hash_: str) -> str:
+    """Kjernens idempotensnøkkel — BÆRER INTENSJONEN (Codex P1).
+
+    Nøkkelen var `bestilling:<klientens nøkkel>` alene, og den formen har
+    et hull i nøyaktig det vinduet gjenopprettingen finnes for: dør
+    prosessen etter at `kjerne.behandle` har committet, men før
+    `bestilling_idempotens` er skrevet, finnes det ikke lenger noe
+    varig spor av HVA klienten ba om. Konfliktporten
+    (`intensjonshash`-sammenligningen over `bestilling_idempotens`) har
+    ingen rad å sammenligne mot, så en retry med samme nøkkel og en ANNEN
+    lovlig kropp fant den gamle beslutningen på nøkkelen alene — og halen
+    krypterte så retryens `norm` som oppdragets payload. Et TILLAT gitt
+    for én side ble dermed oppdraget «crawl 50 sider av nettstedet»,
+    lenket til en beslutning som aldri vurderte det.
+
+    Intensjonshashen er derfor en DEL av nøkkelen. Da er selve oppslaget
+    sammenligningen: finnes raden, gjaldt beslutningen nøyaktig denne
+    intensjonen, og ingen egen sjekk kan gli fra den.
+
+    En retry med en annen kropp i det samme vinduet treffer da ingen rad
+    og tar sin egen beslutning under sin egen nøkkel — den ARVER aldri
+    den forrige. (Utenfor vinduet, som er normaltilfellet, står
+    `bestilling_idempotens`-raden og gir `idempotenskonflikt` som før:
+    ingen ny beslutning, ingen kvote brent.)
+    """
+    return f"bestilling:{nokkel}:{hash_}"
+
+
 #: Gyldighetspredikatet, ORDRETT fra `v_domeneautorisasjon.gyldig`
 #: (016 §6). Egress-autoriteten slipper bare gjennom et domene som ER
 #: dette, og bestillingsporten må stille samme spørsmål: en bestilling
@@ -344,7 +372,7 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
             return _feilsvar("bestillingstype_utilgjengelig", rid)
         conn.rollback()
 
-        kjernenokkel = ("bestilling:" + nokkel) if nokkel \
+        kjernenokkel = kjernenokkel_for(nokkel, hash_) if nokkel \
             else "bestilling-eng:" + secrets.token_hex(16)
         # Tenantens AKTIVE policy er beslutningsgrunnlaget — bestilleren
         # velger aldri policy (eller modul, frist, epoch — feltene finnes
@@ -373,6 +401,14 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         # tatt: da leser vi den, og bygger verken hendelse eller attestasjon
         # på nytt. Ingen avledning av mutabel tilstand kan da komme i veien
         # for at halen får fullført bestillingen.
+        #
+        # OPPSLAGET ER SELV INTENSJONSSJEKKEN (Codex P1, runde 3). Nøkkelen
+        # bærer `hash_` — se `kjernenokkel_for`. Uten det gjenbrukte denne
+        # lesingen en committet beslutning på KLIENTENS nøkkel alene, i det
+        # ene vinduet der `bestilling_idempotens` ennå ikke finnes og
+        # konfliktporten over derfor ikke har noe å sammenligne. Da kunne en
+        # retry med en annen lovlig kropp arve beslutningen og få halen til
+        # å kryptere SIN payload inn i den.
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
         gjenopprettet = conn.execute(
             "SELECT respons FROM idempotens WHERE tenant=%s AND nokkel=%s"
