@@ -42,12 +42,18 @@ sys.path.insert(0, str(REPO / "platform"))
 
 import psycopg  # noqa: E402
 
+import oppdragskontrakt  # noqa: E402
 from api.artefaktskjema import Skjemaugyldig, registrer  # noqa: E402
 from modules.wcag_audit import rapportskjema  # noqa: E402
 
 MODUL = "m_wcag_audit"
 OPPDRAGSTYPE = "kontroll.wcag.nettsted"
-ARTEFAKTTYPE = "kontroll.wcag.rapport"
+# Artefakttypen leses fra KONTRAKTEN, ikke som en streng her (Codex P2):
+# rapport-lese-API-et kjenner igjen paret (oppdragstype, artefakttype)
+# derfra, og to skrivemåter av det samme navnet ville betydd at det
+# registrerte artefaktet var uleselig for flaten det er til for.
+ARTEFAKTTYPE = oppdragskontrakt.OPPDRAGSTYPER[
+    OPPDRAGSTYPE].rapport_artefakttype
 MANIFEST = Path("platform/modules/wcag_audit/manifest.yaml")
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")

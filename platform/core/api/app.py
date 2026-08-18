@@ -767,6 +767,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def beslutning_detalj(request: Request) -> Response:
         return lesing.beslutning_detalj(tjeneste, request)
 
+    def rapport_detalj(request: Request) -> Response:
+        return lesing.rapport_detalj(tjeneste, request)
+
     def unntak_detalj(request: Request) -> Response:
         return lesing.unntak_detalj(tjeneste, request)
 
@@ -860,6 +863,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_attester(request: Request) -> Response:
         return policyadmin_http.attester_endepunkt(tjeneste, request)
 
+    # 038: bestillingsveien — kundeflatens produsent inn i beslutningsveien.
+    from . import bestilling as bestillingsmodul
+
+    def bs_bestill(request: Request) -> Response:
+        return bestillingsmodul.bestill_endepunkt(tjeneste, request)
+
     # 035: modul-onboarding — hemmelighet, innløsning, rotasjon,
     # tilbakekalling. Maskin-/ops-endepunkter (Bearer), aldri browserøkt.
     from . import modulonboarding
@@ -886,6 +895,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
         # 035: onboarding-rutene er statiske stier, registrert her sammen
         # med de andre maskinrutene.
+        Route("/v1/bestilling", bs_bestill, methods=["POST"]),
         Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
         Route("/v1/modul/token/roter", mo_roter, methods=["POST"]),
@@ -900,6 +910,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/oversikt", oversikt, methods=["GET"]),
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
+        Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
@@ -1006,7 +1017,11 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # for å slippe forbi den generelle porten
                                      # — ikke for å gi det til noen: det deles
                                      # aldri ut sammen med exceptions:handle.
-                                     "domains:adjudicate"})
+                                     "domains:adjudicate",
+                                     # 038 §6: bestillingen skjer i flaten
+                                     # (OIDC + CSRF); autoriteten ligger i
+                                     # domenekontroll + beslutningsveien.
+                                     "bestilling:opprett"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -1299,6 +1314,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/oversikt"):                "decisions:read",
     ("GET",  "/v1/beslutninger"):            "decisions:read",
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
+    # 038 §7: rapporten er evidensen bak tenantens egen beslutning.
+    ("GET",  "/v1/rapport/{id:int}"):        "decisions:read",
     ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
     ("POST", "/v1/unntak/{id:int}/handling"): "exceptions:approve",
@@ -1318,6 +1335,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # inne i endepunktene (Bearer/modultoken, aldri browserøkt) — samme
     # deklarasjonsform som /v1/oppdrag/*. Innløsningen autentiseres av
     # selve engangshemmeligheten, rotasjonen av modultokenet.
+    ("POST", "/v1/bestilling"):              "bestilling:opprett",
     ("POST", "/v1/modul/onboarding"):        "modules:onboard",
     ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
     ("POST", "/v1/modul/token/roter"):       "modultoken",
@@ -1560,6 +1578,12 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # oppdragskøen er på tvers av tenanter (modulen betjener mange),
             # og tenanten er ukjent til claimen har skjedd.
             sett_kontekst(conn, tenant, auth.aktor, rid)
+            # 038 §5: opphavet er metadata i svaret, ikke autorisasjon —
+            # modulen gjør det samme arbeidet uansett. Leses etter claimen
+            # (claim_neste_oppdrag-signaturen er 008s og røres ikke).
+            opprinnelse = conn.execute(
+                "SELECT opprinnelse FROM oppdrag WHERE tenant=%s AND id=%s",
+                (tenant, opp_id)).fetchone()[0]
             nokkelrad = conn.execute(
                 "SELECT wrapped_dek FROM tenant_nokler"
                 " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
@@ -1794,6 +1818,9 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         # feiler hvis den dukker opp i logg eller på disk.
         return kanonisk_json({
             "oppdrag_id": opp_id, "tenant": tenant, "unntak_id": unntak_id,
+            # 038 §5: `unntak_id` er null for beslutningsoppdrag — saken
+            # peker på oppdraget, aldri omvendt (port 27/28).
+            "opprinnelse": opprinnelse,
             "oppdragstype": oppdragstype, "handling": handling,
             "repair_operation_id": repair_id, "owner_claim_id": claim_id,
             "owner_generation": owner_gen,
@@ -1948,6 +1975,18 @@ def _kvittering_alt_avvist(conn, tenant: str, unntak_id: int, oppdrag_id: int,
     """
     if artefakt_id is None:
         return False
+    if unntak_id is None:
+        # 038 §5: beslutningsoppdrag — avvisningen ble ført på saken
+        # `sikre_sak_for_oppdrag` fant/fødte, og DEN id-en har ikke denne
+        # veien. Detaljene bærer oppdrag+artefakt og er nøkkelen som
+        # faktisk identifiserer kvitteringen; et `unntak_id = NULL`-filter
+        # hadde stille gjort enhver gjentatt avvist kvittering til 200.
+        return conn.execute(
+            "SELECT 1 FROM unntak_historikk WHERE tenant=%s"
+            " AND hendelse='artefakt_ikke_verifisert'"
+            " AND detalj->>'oppdrag_id' = %s AND detalj->>'artefakt_id' = %s",
+            (tenant, str(oppdrag_id),
+             str(artefakt_id))).fetchone() is not None
     return conn.execute(
         "SELECT 1 FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
         " AND hendelse='artefakt_ikke_verifisert'"
@@ -2053,7 +2092,8 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         _sikkerhetssak_kvittering(conn, tenant, unntak_id,
                                   "motstridende_kvittering",
                                   {"kilde": "kapplop", "ny": ny_hash,
-                                   "oppdrag_id": oppdrag_id}, rid)
+                                   "oppdrag_id": oppdrag_id}, rid,
+                                  oppdrag_id=oppdrag_id)
         # Codex P2: også kappløps-TAPEREN navngir et artefakt, og det er nettopp
         # evidensen sikkerhetssaken trenger. Hash-konfliktveien bevarer det alt;
         # denne atomiske DB-konfliktgrenen returnerte før den nådde bevaringen, så
@@ -2318,7 +2358,8 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         _sikkerhetssak_kvittering(conn, tenant, unntak_id,
                                   "motstridende_kvittering",
                                   {"kilde": kilde, "lagret": hash_,
-                                   "ny": ny_hash}, rid)
+                                   "ny": ny_hash, "oppdrag_id": oppdrag_id},
+                                  rid, oppdrag_id=oppdrag_id)
         # Samme bevaringsregel som den sene veien: sikkerhetssaken er skrevet,
         # og artefaktet det motstridende resultatet påberoper seg er nettopp
         # det etterforskningen trenger. Karantene = retained (ryddes aldri).
@@ -2393,11 +2434,18 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                 _sikkerhetssak_kvittering(
                     conn, tenant, unntak_id, "artefakt_ikke_verifisert",
                     {"oppdrag_id": oppdrag_id, "artefakt_id": str(sen_artefakt)},
-                    rid)
+                    rid, oppdrag_id=oppdrag_id)
                 conn.commit()
                 tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
                                        oppdrag_id=oppdrag_id, art="sikkerhet")
                 return _feilsvar("kvittering_konflikt", rid)
+        if unntak_id is None:
+            # 038 §5: sen evidens på et beslutningsoppdrag hører til
+            # evidensfrist-familien — samme sak reaperen fant/fødte da
+            # fristen løp ut, idempotent også om kvitteringen kommer først.
+            unntak_id = conn.execute(
+                "SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',%s,%s)",
+                (tenant, oppdrag_id, auth.aktor, rid)).fetchone()[0]
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
@@ -2523,7 +2571,8 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                          (art_id, tenant, oppdrag_id))
             _sikkerhetssak_kvittering(
                 conn, tenant, unntak_id, "artefakt_ikke_verifisert",
-                {"oppdrag_id": oppdrag_id, "artefakt_id": str(art_id)}, rid)
+                {"oppdrag_id": oppdrag_id, "artefakt_id": str(art_id)}, rid,
+                oppdrag_id=oppdrag_id)
             conn.commit()
             tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
                                    oppdrag_id=oppdrag_id, art="sikkerhet")
@@ -2536,32 +2585,58 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
-    conn.execute(
-        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
-        " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
-        (tenant, unntak_id, auth.aktor, rid,
-         json.dumps({"oppdrag_id": oppdrag_id,
-                     "resultat": kvittering.get("resultat"),
-                     "ressurs_id": kvittering.get("ressurs_id")},
-                    ensure_ascii=False)))
-    conn.execute(
-        "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
-        "   AND status='venter_utførelse'",
-        ("løst" if vellykket else "manuell", tenant, unntak_id))
+    # 038 §5 (Codex P1): et BESLUTNINGSOPPDRAG har ingen sak — det er hele
+    # poenget med opprinnelsen. Den avsluttende bokføringen under er
+    # M-37-veiens saksbokføring, og `unntak_historikk.unntak_id` er NOT NULL:
+    # kjørt ubetinget døde HVER normal kvittering på et bestilt oppdrag i
+    # basen, og rullet med seg statusskiftet og artefaktpromoteringen — altså
+    # kunne et bestilt oppdrag aldri fullføres.
+    #
+    # Vi FØDER heller ingen sak her, i motsetning til de sene/motstridende
+    # veiene: en kvittering i tide, innenfor fencing og frist, ER
+    # normalveien. Evidensen ligger på oppdragsraden (kvittering, signatur,
+    # resultathash, status) — som for enhver annen kvittering. En sak
+    # opprettes når noe FAKTISK er et unntak, aldri som journalføring.
+    if unntak_id is not None:
+        conn.execute(
+            "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+            " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
+            (tenant, unntak_id, auth.aktor, rid,
+             json.dumps({"oppdrag_id": oppdrag_id,
+                         "resultat": kvittering.get("resultat"),
+                         "ressurs_id": kvittering.get("ressurs_id")},
+                        ensure_ascii=False)))
+        conn.execute(
+            "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
+            "   AND status='venter_utførelse'",
+            ("løst" if vellykket else "manuell", tenant, unntak_id))
     conn.commit()
     return kanonisk_json({"status": "utfort" if vellykket else "feilet",
                           "oppdrag_id": oppdrag_id, "unntak_id": unntak_id,
                           "request_id": rid}, 200, {"x-request-id": rid})
 
 
-def _sikkerhetssak_kvittering(conn, tenant: str, unntak_id: int,
-                              hendelse: str, detalj: dict, rid: str) -> None:
+def _sikkerhetssak_kvittering(conn, tenant: str, unntak_id: int | None,
+                              hendelse: str, detalj: dict, rid: str,
+                              oppdrag_id: int | None = None) -> None:
     """Historikkrad for kvitteringsavvik. INGEN statusendring.
 
     v3-delta pkt. 3 er tydelig: et motstridende resultat skal ikke avgjøre
     noe. Det skal SES. En automatisk statusendring her ville betydd at den
     som klarer å sende to ulike kvitteringer bestemmer utfallet.
+
+    038 §5 (port 24): et beslutningsoppdrag har ingen `unntak_id` — saken
+    peker på oppdraget, ikke omvendt. Da hentes (eller fødes) den
+    ikke-terminale sikkerhetssaken for oppdraget idempotent via
+    `sikre_sak_for_oppdrag`, og avviket føres på DEN. Uten dette døde
+    hele kvitteringskonflikt-transaksjonen på NOT NULL i historikken —
+    altså nøyaktig hendelsen sikkerhetssporet finnes for.
     """
+    if unntak_id is None:
+        unntak_id = conn.execute(
+            "SELECT sikre_sak_for_oppdrag(%s,%s,'sikkerhet',"
+            "'kvitteringsport',%s)",
+            (tenant, oppdrag_id, rid)).fetchone()[0]
     conn.execute(
         "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
         " request_id, detalj) VALUES (%s,%s,%s,'kvitteringsport',%s,%s)",

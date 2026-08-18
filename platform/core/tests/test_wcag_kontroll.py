@@ -65,11 +65,16 @@ def _registrer_skjema(skjema: dict) -> str:
     return h
 
 
-def _streng_type(migrator_, modul, kh, *, skjema=None) -> str:
+def _streng_type(migrator_, modul, kh, *, skjema=None, navn=None) -> str:
     """Registrer en artefakttype bundet til det strenge skjemaet, under en
-    kontrakt som alt finnes (fixturen fra 014b lager kontrakten)."""
+    kontrakt som alt finnes (fixturen fra 014b lager kontrakten).
+
+    `navn` er for de testene som må bruke den EKTE kontrakttypen (rapport-
+    lese-API-et kjenner bare igjen `rapport_artefakttype` fra
+    `oppdragskontrakt`); ellers er navnet tilfeldig, så en registrering
+    ikke smitter over på en annen test."""
     h = _registrer_skjema(skjema or STRENGT)
-    at = f"kontroll.t{secrets.token_hex(4)}.rapport"
+    at = navn or f"kontroll.t{secrets.token_hex(4)}.rapport"
     da = _mk_admin("disponit_domains_admin")
     try:
         da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,%s,'test')",
@@ -2064,7 +2069,8 @@ def _wcag_kjede(migrator_, monkeypatch):
         # Aliaset skal speile den EKTE typen felt for felt — leses flagget
         # fra `ekte`, kan det aldri gli fra hverandre uten at kjeden her
         # slutter å bevise det den påstår å bevise.
-        produserer_artefakt=ekte.produserer_artefakt))
+        produserer_artefakt=ekte.produserer_artefakt,
+        rapport_artefakttype=at))
 
     modul, rel = f"m-{u}", f"r-{u}"
     kh = "k-" + secrets.token_hex(8)
@@ -2125,11 +2131,11 @@ def _wcag_kjede(migrator_, monkeypatch):
                "ressurs_id": "hemmelig-ref"}
     ct, nonce = kryptering.krypter(dek, payload, TENANT, key_id)
     opp = migrator_.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
         " now()+interval '30 minutes', now()+interval '30 minutes',"
         " %s,'KOBLET') RETURNING id",
         (TENANT, sak, logg, rid, typenavn, handling, modul, ct, key_id,

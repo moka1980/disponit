@@ -54,6 +54,7 @@ disponit-rydd-pending.service disponit-rydd-pending.timer
 disponit-backup.service disponit-backup.timer
 disponit-domenerevalidering.service disponit-domenerevalidering.timer
 disponit-artefaktrydding.service disponit-artefaktrydding.timer
+disponit-evidensreaper.service disponit-evidensreaper.timer
 disponit-varselsender.service disponit-varselsender.timer"
 if ! preflight_units "$KILDE" "$ROT/.venv" $UNITS; then
   echo "AVBRUTT: preflight feilet — systemet er urørt; forrige release"
@@ -311,9 +312,10 @@ systemctl stop disponit-helse.timer disponit-m37.service \
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
-    disponit-artefaktrydding.timer \
+    disponit-artefaktrydding.timer disponit-evidensreaper.timer \
     disponit-domenerevalidering.service \
-    disponit-artefaktrydding.service 2>/dev/null || true
+    disponit-artefaktrydding.service \
+    disponit-evidensreaper.service 2>/dev/null || true
 
 # --- 6. Migrasjoner (begge baser) — FØR ny release aktiveres ---------------
 # P1 runde 1: hver base melder sitt til rapporten. Første utgave lot siste
@@ -381,6 +383,9 @@ systemctl enable --now disponit-helse.timer disponit-rydd-pending.timer \
 # er Type=oneshot bak en .timer — enable --now på TIMEREN, ikke tjenesten.
 systemctl enable --now disponit-domenerevalidering.timer \
     disponit-artefaktrydding.timer
+# 038 §5: evidensfrist-reaperen — samme form (oneshot bak timer, kjøres
+# som disponit-domener; hele regelen ligger i reap_evidensfrister i basen).
+systemctl enable --now disponit-evidensreaper.timer
 # Varselsenderen: samme form, og den MÅ startes igjen her. Steg 5 stopper
 # timeren i vedlikeholdsvinduet — uten denne linjen var utrullingen det som
 # slo senderen av, permanent, og køen ville bare vokst. Timeren, ikke

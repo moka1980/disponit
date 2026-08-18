@@ -49,6 +49,11 @@ const BASISRUTER = [
   // stille på `oversikt`, og knappen «Åpne kundeflate» åpnet noe annet enn den
   // lovte. Det er bare policyADMINISTRASJONEN som krever forvaltningsscope.
   { nokkel: "kundeadmin", scope: null },
+  // 038 §6/§7: bestillingen krever sitt eget mutasjonsscope (admin-rollen);
+  // rapporten er lesing av evidensen bak tenantens egen beslutning og følger
+  // samme scope som resten av beslutningslesingen.
+  { nokkel: "bestilling", scope: "bestilling:opprett" },
+  { nokkel: "rapport", scope: "decisions:read" },
 ];
 
 export function byggRuter(sesjon) {

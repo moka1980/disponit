@@ -104,6 +104,10 @@ GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
 -- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.
 GRANT SELECT ON artefaktskjema, malautorisasjonsvilkar TO {rolle};
+-- 038 §6.1: idempotensregisteret for bestillinger. Kun SELECT+INSERT
+-- — radene er immutable (trigger avviser UPDATE og DELETE), og et
+-- grant her ville bare skjult at triggeren er porten.
+GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
 -- 017/035: artefaktkapabiliteten. Funksjonene eies av `disponit_domene_eier`
 -- (SECURITY DEFINER-veien inn i kapabilitetstabellen), så grantene MÅ gis
 -- som eieren — som migrator blir de en stille WARNING, samme felle som
@@ -140,7 +144,11 @@ RESET ROLE;
 -- Et bordgrant der ville gjort hele kapabilitetsmodellen til pynt —
 -- runtime kunne satt `status='brukt'` selv, eller utstedt seg en
 -- kapabilitet til en handling saken aldri ble klassifisert for.
-GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+-- 038 (port 7): INSERT på oppdrag er trukket — begge opphavsveiene
+-- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
+-- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
+GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
@@ -230,7 +238,11 @@ GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+-- 038 (port 7): INSERT på oppdrag er trukket — begge opphavsveiene
+-- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
+-- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
+GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};

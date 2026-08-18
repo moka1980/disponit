@@ -49,11 +49,11 @@ def _lag_oppdrag_type(conn, tenant, sak_id, loggpost_id, *, oppdragstype,
     ct, nonce = kryptering.krypter(
         dek, {"handling": handling, "ressurs_id": "fak-1"}, tenant, key_id)
     opp = conn.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
         " now()+%s::interval, now()+interval '30 days',"
         " %s,'KOBLET') RETURNING id",
         (tenant, sak_id, loggpost_id, rid, oppdragstype, handling, eiermodul,
@@ -395,9 +395,9 @@ def test_oppdrag_binding_kan_ikke_settes_ved_insert(migrator):
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(psycopg.errors.RaiseException):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant,unntak_id,loggpost_id,repair_operation_id,"
             "oppdragstype,handling,eiermodul,payload_kryptert,key_id,nonce,"
-            "utforelsesfrist,evidensfrist,modul_id) VALUES (%s,1,1,'x',"
+            "utforelsesfrist,evidensfrist,modul_id) VALUES ('m37_reparasjon',%s,1,1,'x',"
             "'reinnsending','purring.send','em','\\x00','k','\\x00',now(),"
             "now()+interval '1 day','forfalsk')", (TENANT,))
     migrator.rollback()

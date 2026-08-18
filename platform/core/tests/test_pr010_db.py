@@ -273,8 +273,11 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     for scopes in ROLLE_TIL_SCOPES.values():
         assert scopes <= kjente, f"ukjent scope: {scopes - kjente}"
     # Kun leseroller er rene lese-roller; godkjenner er den muterende.
-    for rolle in ("leser", "sikkerhet", "admin"):
+    for rolle in ("leser", "sikkerhet"):
         assert ROLLE_TIL_SCOPES[rolle] <= LESESCOPES
+    # 038 §6: admin BESTILLER kontroller på tenantens egne, verifiserte
+    # nettsteder — nøyaktig ett muterende scope, og bare det.
+    assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {"bestilling:opprett"}
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read"}
     assert "security:read" not in scopes_for_roller(["leser"])

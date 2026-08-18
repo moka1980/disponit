@@ -22,8 +22,11 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     "sikkerhet": frozenset({"decisions:read", "exceptions:read",
                             "policy:read", "security:read"}),
     # Administrator: alt lesende (v1 er rent lese-API; mutasjon er senere).
+    # 038: administratoren bestiller kontroller på tenantens egne,
+    # verifiserte mål. Scopet gir retten til å FORSØKE — målautorisasjon,
+    # policy og frekvens avgjør (bestilleren velger aldri modul/frist/epoch).
     "admin": frozenset({"decisions:read", "exceptions:read", "policy:read",
-                        "security:read"}),
+                        "security:read", "bestilling:opprett"}),
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).

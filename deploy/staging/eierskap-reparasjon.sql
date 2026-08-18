@@ -61,6 +61,16 @@ INSERT INTO _design VALUES
     -- objekt hoppes stille over (oppslaget er to_regprocedure → NULL).
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_sak(text,integer)',                    'disponit_m37_claimer'),
+    -- 038: outbox-skriveveiene + saks- og reaperfunksjonene eies av claimer
+    -- (samme rolle som skriver oppdrag/unntak i claim-veien fra foer)
+    ('FUNCTION', 'opprett_reparasjonsoppdrag(text,bigint,bigint,text,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone,bigint,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'opprett_beslutningsoppdrag(text,bigint,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'sikre_sak_for_oppdrag(text,bigint,text,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'reap_evidensfrister(integer)',                      'disponit_m37_claimer'),
+    -- 038 §4-porten (Codex P1): binder `p_tenant` til kallerens
+    -- tenantkontekst i definer-veiene over. Opprettes i det samme
+    -- SET ROLE-vinduet og hoerer derfor til den samme eieren.
+    ('FUNCTION', 'krev_tenantkontekst(text,text)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'forny_claim(text,bigint,text,integer,integer)',    'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_hengende_kapabiliteter()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_utlopte_claims()',                           'disponit_m37_claimer'),

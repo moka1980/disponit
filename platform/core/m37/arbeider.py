@@ -730,12 +730,13 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int, *,
     # frist som faktisk gjelder.
     frist_s = oppdragsskjema.utforelsesfrist_s(
         plan.oppdragstype, plan.reparasjonsinput) or UTFORELSESFRIST_S
+    # 038 (port 7): direkte INSERT på oppdrag finnes ikke lenger — den
+    # herdede funksjonen er reparasjonsveiens ENESTE inngang, og det er
+    # DEN som setter `opprinnelse='m37_reparasjon'`. Verdien kommer aldri
+    # herfra.
     rad = conn.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
-        " repair_operation_id, oppdragstype, handling, eiermodul,"
-        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
-        " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        "SELECT opprett_reparasjonsoppdrag("
+        "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (sak.tenant, sak.id, loggpost_id, rid, plan.oppdragstype,
          oppdragshandling, _eiermodul_for(oppdragshandling), ct, key_id,
          nonce, naa + timedelta(seconds=frist_s),

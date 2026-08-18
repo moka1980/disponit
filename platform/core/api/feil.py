@@ -142,6 +142,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " konfigurasjonsfeil (typen ble registrert før 036s positive"
         " regel). Innhold ingen kan validere tas ikke imot; raden må"
         " registreres via registrer_artefaktskjema().")),
+    # --- PR-014c v4: bestillingsveien -------------------------------------
+    Feilvei("bestilling_hostname_uverifisert", 403, ("sikkerhet",), None,
+            notat=(
+        "Bestilling mot et hostname tenanten ikke har VERIFISERT "
+        "domenekontroll for — avvist FØR beslutningen tas (038, port 9): "
+        "positivt autorisert mål er ikke policyens ansvar, det er "
+        "opprettelsens. Sikkerhetslogg: noen ba plattformen lese et mål "
+        "de ikke eier.")),
     # --- PR-008: lese-API ----------------------------------------------
     Feilvei("ikke_funnet", 404, ("avvis",), None, notat=(
         "Detalj-ID som ikke finnes OG detalj-ID hos en annen tenant gir"
