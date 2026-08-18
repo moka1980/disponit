@@ -256,11 +256,11 @@ def test_port4_runtime_kan_verken_skape_legacy_eller_endre_koblingen(
 
     with pytest.raises(Exception, match="LEGACY_UKJENT"):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
             " beslutning_loggpost_id, koblingsstatus)"
-            " SELECT tenant, unntak_id, loggpost_id, %s, oppdragstype,"
+            " SELECT 'm37_reparasjon', tenant, unntak_id, loggpost_id, %s, oppdragstype,"
             " handling, eiermodul, payload_kryptert, key_id, nonce,"
             " utforelsesfrist, evidensfrist, NULL, 'LEGACY_UKJENT'"
             "  FROM oppdrag WHERE tenant=%s AND id=%s",
@@ -289,11 +289,11 @@ def test_ny_rad_uten_beslutningsfk_avvises_i_databasen(migrator, policy):
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(Exception, match="oppdrag_kobling_konsistent"):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist,"
             " evidensfrist)"
-            " SELECT %s, %s, %s, %s, 'reinnsending', 'purring.send',"
+            " SELECT 'm37_reparasjon', %s, %s, %s, %s, 'reinnsending', 'purring.send',"
             " 'eiermodul:reinnsending', payload_kryptert, key_id, nonce,"
             " now()+interval '1 hour', now()+interval '30 days'"
             "  FROM unntak WHERE tenant=%s AND id=%s",
@@ -309,11 +309,11 @@ def test_koblingsstatus_er_toveis_bundet_til_oppdragstypen(migrator, policy):
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(Exception, match="oppdrag_kobling_konsistent"):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
             " koblingsstatus)"
-            " SELECT %s, %s, %s, %s, 'reinnsending', 'purring.send',"
+            " SELECT 'm37_reparasjon', %s, %s, %s, %s, 'reinnsending', 'purring.send',"
             " 'eiermodul:reinnsending', payload_kryptert, key_id, nonce,"
             " now()+interval '1 hour', now()+interval '30 days',"
             " 'VERIFIKASJON' FROM unntak WHERE tenant=%s AND id=%s",
@@ -329,11 +329,11 @@ def test_koblingsstatus_er_toveis_bundet_til_oppdragstypen(migrator, policy):
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(Exception, match="oppdrag_kobling_konsistent"):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
             " beslutning_loggpost_id, koblingsstatus)"
-            " SELECT %s, %s, %s, %s, 'verifikasjon', 'verifiser.x',"
+            " SELECT 'm37_reparasjon', %s, %s, %s, %s, 'verifikasjon', 'verifiser.x',"
             " 'eiermodul:verifisering', payload_kryptert, key_id, nonce,"
             " now()+interval '1 hour', now()+interval '30 days',"
             " %s, 'KOBLET' FROM unntak WHERE tenant=%s AND id=%s",
@@ -364,11 +364,11 @@ def test_port5_to_oppdrag_for_samme_beslutning_avvises(migrator, policy):
         _sett_kontekst(migrator, TENANT)
         with pytest.raises(Exception, match="oppdrag_en_per_beslutning"):
             migrator.execute(
-                "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+                "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
                 " repair_operation_id, oppdragstype, handling, eiermodul,"
                 " payload_kryptert, key_id, nonce, utforelsesfrist,"
                 " evidensfrist, beslutning_loggpost_id, koblingsstatus)"
-                " SELECT tenant, unntak_id, loggpost_id, %s, oppdragstype,"
+                " SELECT 'm37_reparasjon', tenant, unntak_id, loggpost_id, %s, oppdragstype,"
                 " handling, eiermodul, payload_kryptert, key_id, nonce,"
                 " utforelsesfrist, evidensfrist, %s, 'KOBLET'"
                 "  FROM oppdrag WHERE tenant=%s AND id=%s",
@@ -399,11 +399,11 @@ def test_P1_koblingen_er_semantisk_ikke_bare_en_fk(migrator, policy):
             " (%s,%s,%s,0,'r1','1','purring.send',%s,'manglende_data')",
             (TENANT, sak, rid, secrets.token_hex(32)))
         return migrator.execute(
-            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
             " beslutning_loggpost_id, koblingsstatus)"
-            " SELECT %s, %s, %s, %s, 'reinnsending', 'purring.send',"
+            " SELECT 'm37_reparasjon', %s, %s, %s, %s, 'reinnsending', 'purring.send',"
             " 'eiermodul:reinnsending', payload_kryptert, key_id, nonce,"
             " now()+interval '1 hour', now()+interval '30 days', %s, 'KOBLET'"
             "  FROM unntak WHERE tenant=%s AND id=%s RETURNING id",
@@ -462,11 +462,11 @@ def test_P1_koblingen_er_semantisk_ikke_bare_en_fk(migrator, policy):
     migrator.commit()   # kontekst borte ved commit — neste INSERT er naken
     with pytest.raises(Exception):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
             " repair_operation_id, oppdragstype, handling, eiermodul,"
             " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
             " beslutning_loggpost_id, koblingsstatus)"
-            " VALUES (%s,%s,%s,%s,'reinnsending','purring.send',"
+            " VALUES ('m37_reparasjon', %s,%s,%s,%s,'reinnsending','purring.send',"
             " 'eiermodul:reinnsending',%s,%s,%s, now()+interval '1 hour',"
             " now()+interval '30 days', %s, 'KOBLET')",
             (TENANT, sak, sakslogg, rid, ct_rad[0], ct_rad[1], ct_rad[2],
@@ -479,9 +479,13 @@ def test_P1_koblingen_er_semantisk_ikke_bare_en_fk(migrator, policy):
 # ===========================================================================
 
 def test_port3_eneste_insertsted_er_opprett_oppdrag():
-    """Statisk: `INSERT INTO oppdrag` finnes i NØYAKTIG én produksjonsfil,
-    `m37/arbeider.py` — kodeveiene som skal levere FK-en er dermed telbare,
-    og en ny skrivevei kan ikke oppstå uten at denne testen ser den."""
+    """Statisk: `INSERT INTO oppdrag` finnes i INGEN produksjons-pythonfil
+    lenger — 038 flyttet begge skriveveiene inn i hver sin herdede
+    SQL-funksjon (`opprett_reparasjonsoppdrag`/`opprett_beslutningsoppdrag`),
+    som setter `opprinnelse` selv. Invarianten dette portet voktet ble
+    dermed STERKERE: kodeveiene er fortsatt telbare (nå = funksjonene i
+    038-migrasjonen), og en ny python-skrivevei kan ikke oppstå uten at
+    denne testen ser den."""
     from .conftest import CORE
     treff = []
     for fil in CORE.rglob("*.py"):
@@ -489,7 +493,15 @@ def test_port3_eneste_insertsted_er_opprett_oppdrag():
             continue
         if "INSERT INTO oppdrag" in fil.read_text(encoding="utf-8"):
             treff.append(fil.name)
-    assert treff == ["arbeider.py"], f"uventede skriveveier: {treff}"
+    assert treff == [], f"uventede skriveveier: {treff}"
+    # ... og SQL-hjemmene er nøyaktig de tre velsignede migrasjonene.
+    fra_sql = sorted({f.name for f in
+                      (CORE / "db" / "migrations").glob("*.sql")
+                      if "INSERT INTO public.oppdrag (" in
+                      f.read_text(encoding="utf-8")
+                      or "INSERT INTO oppdrag (" in
+                      f.read_text(encoding="utf-8")})
+    assert fra_sql == ["038_outbox_bestilling.sql"], fra_sql
 
 
 def test_port3_forretningsoppdrag_uten_fk_er_programmeringsfeil():

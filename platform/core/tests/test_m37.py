@@ -1367,11 +1367,11 @@ def _lag_oppdrag(conn, tenant, sak_id, loggpost_id, *, rid=None,
     ct, nonce = kryptering.krypter(
         dek, {"handling": handling, "ressurs_id": "fak-1"}, tenant, key_id)
     opp = conn.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,'reinnsending',%s,%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,'reinnsending',%s,%s,%s,%s,%s,"
         f" now()+interval '{utforelsesfrist}', now()+interval '{evidensfrist}',"
         " %s,'KOBLET') RETURNING id",
         (tenant, sak_id, loggpost_id, rid, handling, eiermodul, ct, key_id,

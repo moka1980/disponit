@@ -40,10 +40,10 @@ def _oppdrag(uid, status="opprettet", gen=0, rep_status="aktiv"):
         "'[]'::jsonb,%s,'arbeidskapabilitet') RETURNING id",
         (TEN, rop)).fetchone()[0]
     m.execute(
-        "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant,unntak_id,loggpost_id,repair_operation_id,"
         "oppdragstype,handling,eiermodul,status,payload_kryptert,key_id,nonce,"
         "utforelsesfrist,evidensfrist,koblingsstatus,beslutning_loggpost_id)"
-        " VALUES (%s,%s,%s,%s,'reparasjon','faktura.bokfor','eier',%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,'reparasjon','faktura.bokfor','eier',%s,%s,%s,%s,"
         "now()+interval '1 hour',now()+interval '2 hour','KOBLET',%s)",
         (TEN, uid, lid, rop, status, b"\x00", key_id, b"\x00" * 12, blid))
     m.commit()
@@ -96,7 +96,11 @@ def test_port8_ingen_oppdrag_kapabilitet_insert_uten_sakslas():
                 f"oppdrag/kapabilitet-INSERT utenfor saks-låst vei: {py}"
     # SQL: kun de gjennomgåtte migrasjonsfunksjonene (utsted_arbeidskapabilitet),
     # som kalles etter en claim som holder saks­låsen.
-    sql_tillatt = {"005_m37_behandling.sql", "007_r1_tofase.sql"}
+    # 038: outbox-generaliseringen flyttet oppdrag-INSERT-ene inn i de to
+    # herdede opphavsfunksjonene — migrasjonen er det nye, velsignede
+    # SQL-hjemmet (og python-veiene er nå NULL, se pr008-port 3).
+    sql_tillatt = {"005_m37_behandling.sql", "007_r1_tofase.sql",
+                   "038_outbox_bestilling.sql"}
     for sql in (rot / "db" / "migrations").glob("*.sql"):
         if mons.search(sql.read_text(encoding="utf-8")):
             assert sql.name in sql_tillatt, \
@@ -308,10 +312,10 @@ def _claimet_oppdrag_med_kvittering(uid):
         "'[]'::jsonb,%s,'arbeidskapabilitet') RETURNING id",
         (TEN, rop)).fetchone()[0]
     opp = m.execute(
-        "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant,unntak_id,loggpost_id,repair_operation_id,"
         "oppdragstype,handling,eiermodul,status,payload_kryptert,key_id,nonce,"
         "utforelsesfrist,evidensfrist,koblingsstatus,beslutning_loggpost_id,"
-        "owner_claim_id,owner_generation,owner_lease_utloper) VALUES (%s,%s,%s,"
+        "owner_claim_id,owner_generation,owner_lease_utloper) VALUES ('m37_reparasjon',%s,%s,%s,"
         "%s,'reparasjon','faktura.bokfor','eier:reinns','plukket',%s,%s,%s,"
         "now()+interval '1 hour',now()+interval '2 hour','KOBLET',%s,%s,0,"
         "now()+interval '1 hour') RETURNING id",

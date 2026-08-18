@@ -62,6 +62,9 @@ APPEND_ONLY_TRIGGERE = (
     # Uten dette feiler oppryddingen på FK-en fra `policy_hode` til `policyer`.
     ("policy_hode", "hode_ingen_sletting"),
     ("unntak_historikk", "historikk_ingen_endring"),
+    # 038: idempotenslageret er immutabelt også mot DELETE — i drift er det
+    # poenget; i testryddingen må trigger av for at tenant-radene skal ut.
+    ("bestilling_idempotens", "bestilling_idempotens_immutable"),
     ("unntak", "unntak_ingen_delete"),
     ("unntak", "unntak_historikkforing"),
     ("revisjonslogg", "revisjonslogg_ingen_endring"),
@@ -102,8 +105,12 @@ APPEND_ONLY_TRIGGERE = (
 RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
                  "verifikasjonskonflikt", "verifikasjonsgenerasjon",
                  "verifikasjonsbevis",
-                 "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
-                 "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
+                 # 038: oppdragssaker (unntak.oppdrag_id) og bestillings-
+                 # idempotensen har FK → oppdrag; unntak_historikk har FK →
+                 # unntak. Historikk og saker må derfor ut FØR oppdragene.
+                 "bestilling_idempotens", "unntak_historikk", "unntak",
+                 "oppdrag", "reparasjonsoperasjoner",
+                 "revisjonslogg", "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.
                  "policy_hode", "policyer", "tenant_nokler",
                  "frekvens_hendelser",

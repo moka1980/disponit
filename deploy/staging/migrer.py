@@ -140,7 +140,11 @@ RESET ROLE;
 -- Et bordgrant der ville gjort hele kapabilitetsmodellen til pynt —
 -- runtime kunne satt `status='brukt'` selv, eller utstedt seg en
 -- kapabilitet til en handling saken aldri ble klassifisert for.
-GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+-- 038 (port 7): INSERT på oppdrag er trukket — begge opphavsveiene
+-- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
+-- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
+GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
@@ -230,7 +234,11 @@ GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON oppdrag, reparasjonsoperasjoner TO {rolle};
+-- 038 (port 7): INSERT på oppdrag er trukket — begge opphavsveiene
+-- går gjennom hver sin herdede funksjon (opprett_reparasjonsoppdrag /
+-- opprett_beslutningsoppdrag), som setter `opprinnelse` selv.
+GRANT SELECT, UPDATE ON oppdrag TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};

@@ -2125,11 +2125,11 @@ def _wcag_kjede(migrator_, monkeypatch):
                "ressurs_id": "hemmelig-ref"}
     ct, nonce = kryptering.krypter(dek, payload, TENANT, key_id)
     opp = migrator_.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
         " now()+interval '30 minutes', now()+interval '30 minutes',"
         " %s,'KOBLET') RETURNING id",
         (TENANT, sak, logg, rid, typenavn, handling, modul, ct, key_id,
