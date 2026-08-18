@@ -23,6 +23,26 @@
 ARG PLAYWRIGHT_BASIS
 FROM ${PLAYWRIGHT_BASIS}
 
+# PLAYWRIGHTS PYTHON-PAKKE INSTALLERES HER (Codex P1). Basisimaget bærer
+# nettleserne og systemavhengighetene deres — ikke nødvendigvis
+# `playwright`-pakken selv, og `kjor.py` gjør `from playwright.sync_api
+# import sync_playwright` som aller første ting i browserdelen. Manglet
+# pakken, feilet HVER kjøring av motoren, og feilen ville dukket opp første
+# gang en kunde bestilte en kontroll — ikke i bygget.
+#
+# Versjonen er BROWSER-IMAGETS EGEN: `bygg.sh` avleder den fra `BASISTAGG`
+# (`…:v1.49.1-noble` → `1.49.1`) og sender den inn, så pakken og
+# nettleserne ikke kan skille lag. Står den skrevet her også, er det to
+# steder som må endres i takt — og det ene blir glemt.
+#
+# Importen kjøres i samme lag: er pakken likevel ikke brukbar, skal BYGGET
+# feile, ikke den første kontrollen.
+ARG PLAYWRIGHT_PAKKE
+RUN test -n "${PLAYWRIGHT_PAKKE}" \
+    && python3 -m pip install --no-cache-dir --break-system-packages \
+        "playwright==${PLAYWRIGHT_PAKKE}" \
+    && python3 -c "from playwright.sync_api import sync_playwright"
+
 # Axe-kilden bakes inn og sha256-verifiseres av kjor.py ved HVER kjøring
 # (AXE_SHA256-pinnen i koden) — containeren gjør ingen nettoppslag for
 # verktøyet sitt, bare mot målet.

@@ -100,8 +100,19 @@ immutabel og forutsetter at samme wcag-rN gir samme browserbiter.
 FEIL
   exit 1
 fi
-echo "basis: $basis"
+# Playwrights PYTHON-PAKKE skal ha samme versjon som nettleserne i
+# basisimaget, og versjonen finnes allerede i BASISTAGG. Den avledes derfor
+# derfra (`…:v1.49.1-noble` → `1.49.1`) i stedet for å skrives et sted til:
+# to versjonsnumre som må endres i takt, er ett som blir glemt.
+pakkeversjon="${BASISTAGG##*:v}"
+pakkeversjon="${pakkeversjon%%-*}"
+if ! printf '%s' "$pakkeversjon" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  echo "klarte ikke lese playwright-versjonen ut av $BASISTAGG" >&2
+  exit 1
+fi
+echo "basis: $basis (playwright $pakkeversjon)"
 docker build --build-arg PLAYWRIGHT_BASIS="$basis" \
+  --build-arg PLAYWRIGHT_PAKKE="$pakkeversjon" \
   -t disponit-wcag-motor "$her"
 docker inspect --format='{{index .RepoDigests 0}}' disponit-wcag-motor \
   2>/dev/null || docker images --digests disponit-wcag-motor | tail -1

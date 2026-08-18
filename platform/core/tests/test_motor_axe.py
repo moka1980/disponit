@@ -441,6 +441,30 @@ def test_basisimaget_kan_ikke_bygges_upinnet():
     assert "docker build" not in pin_del and "git " not in pin_del
 
 
+def test_motorimaget_har_playwright_pakken():
+    """Codex P1: basisimaget bærer nettleserne, ikke nødvendigvis pakken.
+
+    `kjor.py` gjør `from playwright.sync_api import sync_playwright` — uten
+    pakken feiler HVER kjøring, og feilen ville dukket opp første gang en
+    kunde bestilte en kontroll, ikke i bygget. Versjonen skal dessuten være
+    browser-imagets egen, avledet av `BASISTAGG`: to versjonsnumre som må
+    endres i takt, er ett som blir glemt."""
+    import re
+    d = (MOTOR / "Dockerfile").read_text(encoding="utf-8")
+    bygg = (MOTOR / "bygg.sh").read_text(encoding="utf-8")
+    assert "ARG PLAYWRIGHT_PAKKE" in d
+    assert 'playwright==${PLAYWRIGHT_PAKKE}' in d
+    # Importen kjøres i BYGGET: er pakken ikke brukbar, skal bygget feile.
+    assert "from playwright.sync_api import sync_playwright" in d
+    # Ingen versjon skrevet inn for hånd i Dockerfila.
+    assert not re.search(r"playwright==\d", d), d
+    assert "--build-arg PLAYWRIGHT_PAKKE=" in bygg
+    assert 'pakkeversjon="${BASISTAGG##*:v}"' in bygg
+    # ... og motoren importerer faktisk det pakken gir.
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "from playwright.sync_api import sync_playwright" in kilde
+
+
 # ---------------------------------------------------------------------------
 # Kontraktsdokumentene (kontrakt/): proveniens som ikke får drive fra koden
 # ---------------------------------------------------------------------------
