@@ -2548,11 +2548,11 @@ def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
     # ... og gir ALLE forsøkene tapt svar, er utfallet `ukvittert` med en
     # ærlig `kvittering_status: 0` — ikke et unntak ut av kjøreløkka som
     # etterlater oppdraget claimet uten et ord til plattformen.
-    m = _Mister(controller.KVITTERINGSFORSOK)
+    m = _Mister(controller.LEVERINGSFORSOK)
     res = controller.kjor_en(m, "tk", motor, _kontekst(), lambda k_: k_)
     assert res["utfall"] == "ukvittert", res
     assert res["kvittering_status"] == 0, res
-    assert m.forsok == controller.KVITTERINGSFORSOK, m.forsok
+    assert m.forsok == controller.LEVERINGSFORSOK, m.forsok
 
     # 3) 4xx retryes ALDRI. 409 er plattformens overlagte avvisning
     # (fencing, hashavvik, avvist promotering), ikke en forbigående feil,
@@ -2575,7 +2575,7 @@ def test_kvitteringen_gjentas_ved_forbigaaende_feil(monkeypatch):
     assert not controller._kvitteringsvindu_apent(
         {"kvittering_utloper": (naa - timedelta(seconds=1)).isoformat()})
     # Mangler feltet, eller lar det seg ikke lese, retryer vi likevel:
-    # `KVITTERINGSFORSOK` er allerede taket, og forespørselen går til vår
+    # `LEVERINGSFORSOK` er allerede taket, og forespørselen går til vår
     # egen plattform — ikke til kundens nettsted. Å slå av retryen på et
     # felt vi ikke kan lese ville ofret et fullført oppdrag for å spare
     # forespørsler ingen andre merker.
@@ -2634,13 +2634,15 @@ def test_gjentatt_kvittering_leses_som_det_den_forrige_gjorde():
     assert res["utfall"] == "ukvittert", res
 
 
-def test_avvist_opplasting_gir_feilkvittering():
+def test_avvist_opplasting_gir_feilkvittering(monkeypatch):
     """Codex P1: `ro.raise_for_status()` kastet ut av kjøreløkka når
     plattformen avviste artefaktet (413/400 på 1 MiB-taket, 409 på
     fencing, 5xx). Da fikk plattformen ALDRI vite noe, og oppdraget stod
     claimet til fristen. Kontroll: bytt statussjekken i controlleren
     tilbake til `raise_for_status()`, så blir denne rød."""
     from modules.wcag_audit import controller
+    # 5xx på opplastingen retryes nå (Codex P2), som på kvitteringen.
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
     motor = FakeMotor(resultat=_motorresultat())
     for status in (400, 409, 413, 500):
         klient = _Stubklient(200, opplastingsstatus=status)
@@ -2655,6 +2657,104 @@ def test_avvist_opplasting_gir_feilkvittering():
         assert klient.kvitteringer[0]["feilkode"] == "opplasting_avvist"
         # Aldri et artefakt-id: det finnes ikke noe artefakt å vise til.
         assert "artefakt_id" not in res
+        # 4xx er plattformens OVERLAGTE avvisning og sendes én gang; 5xx
+        # er forbigående og gjentas med samme kropp.
+        forsok = len([s for s in klient.stier if s == "/v1/artefakt"])
+        assert forsok == (controller.LEVERINGSFORSOK
+                          if status == 500 else 1), (status, forsok)
+
+
+def test_opplastingen_gjentas_som_kvitteringen(monkeypatch):
+    """Codex P2: en ferdig skanning ble kastet på et tapt svar ETT steg
+    før kvitteringen.
+
+    Retryen fantes bare for kvitteringen. Opplastingen gikk én gang, og
+    stod i nøyaktig samme situasjon: et transportunntak der slapp rett ut
+    av `kjor_en` — oppdraget claimet og tyst til fristen — og et
+    forbigående 5xx ble kvittert `feilet`, altså «rapporten kom ikke
+    frem», for en rapport som var bygget og en crawl av kundens nettsted
+    som var betalt.
+
+    Endepunktet er idempotent på `kapabilitet_jti` og den kanoniske
+    rapporten nettopp for at en utfører som mistet svaret skal kunne
+    spørre igjen. Kroppen er derfor IDENTISK hvert forsøk.
+
+    Kontroll: bytt `lever("/v1/artefakt", ...)` tilbake til et enkelt
+    `klient.post(...)`, så blir hver gren under rød.
+    """
+    from modules.wcag_audit import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    motor = FakeMotor(resultat=_motorresultat())
+
+    class _MisterOpplasting(_Stubklient):
+        def __init__(self, mist_antall, **kw):
+            super().__init__(200, **kw)
+            self.mist_igjen = mist_antall
+            self.opplastinger = []
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger.append(json)
+                if self.mist_igjen:
+                    self.mist_igjen -= 1
+                    raise ConnectionError("svaret kom aldri")
+            return super().post(sti, json=json, headers=headers)
+
+    # 1) Et tapt svar gjentas, og lykkes det, er oppdraget utført — ikke
+    # et unntak ut av kjøreløkka.
+    k = _MisterOpplasting(2)
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "utfort", res
+    assert len(k.opplastinger) == 3, k.opplastinger
+    # KROPPEN ER IDENTISK: samme kapabilitet, samme rapport. Det er hele
+    # grunnen til at plattformen kjenner den igjen framfor å lage et nytt
+    # artefakt.
+    assert k.opplastinger[0] == k.opplastinger[1] == k.opplastinger[2]
+
+    # 2) Gir alle forsøkene tapt svar, blir det en ÆRLIG feilkvittering
+    # med status 0 — plattformen får vite at kjøringen ikke ble avsluttet.
+    k = _MisterOpplasting(controller.LEVERINGSFORSOK)
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "avbrutt", res
+    assert res["opplasting_status"] == 0, res
+    assert len(k.opplastinger) == controller.LEVERINGSFORSOK
+    assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
+
+    # 3) Et forbigående 5xx gjentas også, og lykkes det, er rapporten
+    # levert — ikke kastet.
+    class _FeilerForstOpplasting(_Stubklient):
+        def __init__(self, feil_antall, **kw):
+            super().__init__(200, **kw)
+            self.feil_igjen = feil_antall
+            self.opplastinger = 0
+
+        def post(self, sti, json=None, headers=None):
+            if sti == "/v1/artefakt":
+                self.opplastinger += 1
+                if self.feil_igjen:
+                    self.feil_igjen -= 1
+                    return _Svar(503, {})
+            return super().post(sti, json=json, headers=headers)
+
+    k = _FeilerForstOpplasting(2)
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "utfort", res
+    assert k.opplastinger == 3, k.opplastinger
+
+    # 4) 2xx med en kropp vi ikke kan lese er ingen kvitteringsgrunn: uten
+    # `artefakt_id` og hashen finnes det ingen `utfort` å signere, og den
+    # nakne feilen skal ikke gå samme vei som transportunntaket over.
+    class _Uleselig(_Stubklient):
+        def post(self, sti, json=None, headers=None):
+            r = super().post(sti, json=json, headers=headers)
+            return _Svar(200, {"artefakt_id": 1}) if sti == "/v1/artefakt" \
+                else r
+
+    k = _Uleselig(200)
+    res = controller.kjor_en(k, "tk", motor, _kontekst(), lambda k_: k_)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"].startswith("opplasting_uleselig:"), res
+    assert k.kvitteringer[0]["feilkode"] == "opplasting_avvist"
 
 
 def test_hele_bestillingen_leses_for_motoren_startes():
@@ -3003,7 +3103,7 @@ def test_avvist_feilkvittering_er_heller_ikke_ferdig(monkeypatch):
             # 5xx er forbigående og gjentas med samme signerte kropp
             # (Codex P2) — se retry-testen over.
             assert len(klient.kvitteringer) == (
-                1 if status == 409 else controller.KVITTERINGSFORSOK), grunn
+                1 if status == 409 else controller.LEVERINGSFORSOK), grunn
 
         # Sen evidens (202) er samme sak: evidensen er bevart, men
         # plattformen har bevisst latt oppdraget være ufullført.

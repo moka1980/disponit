@@ -101,23 +101,27 @@ from .rapport import bygg
 #: valget mellom to løgner — se `_idempotent_svar` i `api.app`.
 _STATUSSKIFTE = ("utfort", "feilet", "idempotent")
 
-#: Antall ganger den SAMME signerte kvitteringen sendes før controlleren
+#: Antall ganger den SAMME kroppen sendes til plattformen før controlleren
 #: gir opp, og pausen mellom forsøkene (Codex P2).
 #:
-#: Kvitteringen er idempotent med vilje — se `_STATUSSKIFTE` — men
-#: controlleren utnyttet det aldri selv: den sendte én gang, og et
-#: forbigående 5xx eller et tapt svar ga `ukvittert` eller et unntak ut av
-#: kjøreløkka. Ingen kaller retryer `kjor_en`, den returnerte verdien
-#: bærer ikke det som skal til for å bygge forespørselen på nytt, og
-#: leasen sperrer et ferskt claim frem til utførelsesfristen — etter den
-#: er raden ikke claimbar. Ett tapt svar kostet altså hele oppdraget,
+#: Gjelder BEGGE leveringsstegene etter kontrollen — opplastingen av
+#: artefaktet og kvitteringen. De er begge idempotente med vilje, nettopp
+#: fordi en utfører som mistet svaret ikke vet om plattformen rakk å ta
+#: imot, men controlleren utnyttet det aldri selv: den sendte én gang, og
+#: et forbigående 5xx eller et tapt svar ga `ukvittert`, `feilet` eller et
+#: unntak ut av kjøreløkka. Ingen kaller retryer `kjor_en`, den returnerte
+#: verdien bærer ikke det som skal til for å bygge forespørselen på nytt,
+#: og leasen sperrer et ferskt claim frem til utførelsesfristen — etter
+#: den er raden ikke claimbar. Ett tapt svar kostet altså hele oppdraget,
 #: inkludert den eksterne kontrollen som alt var gjort.
 #:
 #: Retryen er billig og trygg nettopp fordi kroppen er IDENTISK: samme
-#: `kvittering_jti`, samme signatur, samme bytes. Plattformen kjenner den
-#: igjen og svarer `idempotent`.
-KVITTERINGSFORSOK = 4
-KVITTERINGSPAUSE_S = 2.0
+#: `kapabilitet_jti` og samme kanoniske rapport på opplastingen, samme
+#: `kvittering_jti` og samme signerte bytes på kvitteringen. Plattformen
+#: kjenner dem igjen framfor å lage et nytt artefakt eller en ny
+#: statusendring.
+LEVERINGSFORSOK = 4
+LEVERINGSPAUSE_S = 2.0
 
 
 def _sov(sekunder: float) -> None:
@@ -151,19 +155,18 @@ class _Uteblitt:
         raise ValueError(self.grunn)
 
 
-def _kvitteringsvindu_apent(claim: dict) -> bool:
-    """Er kvitteringskapabiliteten fortsatt gyldig?
+def _vindu_apent(raa: object) -> bool:
+    """Er kapabiliteten som bærer denne leveringen fortsatt gyldig?
 
-    Retryen har ingen verdi etter `kvittering_utloper` — da avviser
-    plattformen kvitteringen uansett hvor mange ganger den sendes.
+    Retryen har ingen verdi etter utløpet — da avviser plattformen
+    forespørselen uansett hvor mange ganger den sendes.
 
     Mangler feltet, eller lar det seg ikke lese, retryer vi likevel.
     Fail-closed-posituren ellers i fila verner om ÉN ting: en unødvendig
     forespørsel mot kundens nettsted. Denne går til vår egen plattform,
-    og `KVITTERINGSFORSOK` er allerede taket. Å slå av retryen på et felt
+    og `LEVERINGSFORSOK` er allerede taket. Å slå av retryen på et felt
     vi ikke kan lese ville ofret et fullført oppdrag for å spare
     forespørsler ingen andre merker."""
-    raa = claim.get("kvittering_utloper")
     if raa is None:
         return True
     try:
@@ -173,6 +176,11 @@ def _kvitteringsvindu_apent(claim: dict) -> bool:
     if t.tzinfo is None:
         return True
     return t > datetime.now(timezone.utc)
+
+
+def _kvitteringsvindu_apent(claim: dict) -> bool:
+    """`_vindu_apent` for kvitteringskapabiliteten."""
+    return _vindu_apent(claim.get("kvittering_utloper"))
 
 
 def _ressursbinding(payload: dict) -> str | None:
@@ -424,14 +432,24 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         "ressurs_id": vert or "",
     }
 
-    def kvitter(kropp):
-        """Send kvitteringen, og send den SAMME på nytt ved forbigående
-        feil (Codex P2).
+    def lever(sti, kropp, utloper):
+        """Send den SAMME kroppen til plattformen, og send den på nytt ved
+        forbigående feil (Codex P2).
 
-        Signeringen skjer ÉN gang, utenfor løkka: retryen er bare trygg
-        fordi bytene er identiske. Ny signering kunne gitt en ny `jti`
+        ÉN løkke for begge leveringsstegene etter kontrollen. Retryen
+        fantes bare for kvitteringen, og da var opplastingen ETT steg
+        tidligere i nøyaktig samme situasjon: et tapt svar der rev med seg
+        `kjor_en`, og et forbigående 5xx ble lest som en avvist rapport.
+        Begge kastet en ferdig, dyr kontroll av kundens nettsted på en
+        feil plattformen selv sier man skal spørre om igjen.
+
+        Kroppen bygges av kalleren og er IDENTISK for hvert forsøk — det
+        er hele grunnen til at retryen er trygg. Kvitteringen signeres
+        derfor før løkka, ikke i den: ny signering kunne gitt en ny `jti`
         eller et nytt tidsstempel, og da hadde plattformen sett to
-        forskjellige kvitteringer i stedet for én gjentatt.
+        forskjellige kvitteringer i stedet for én gjentatt. Opplastingen
+        er idempotent på samme måte, på `kapabilitet_jti` og den kanoniske
+        rapporten.
 
         Hva som retryes, og hva som ikke gjør det:
 
@@ -442,24 +460,22 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
             avvist promotering er plattformens overlagte avvisninger, og
             å gjenta dem er å mase om et svar som ikke kommer til å endre
             seg.
-          * 2xx er ferdig, uansett om kroppen meldte statusskifte eller
-            sen evidens. Begge deler er et svar vi FIKK.
+          * 2xx er ferdig, uansett hva kroppen meldte. Det er et svar vi
+            FIKK.
 
         Gir alle forsøkene tapt svar, returneres `_Uteblitt` i stedet for
         å la unntaket rive med seg `kjor_en`: da blir utfallet `ukvittert`
-        med `kvittering_status: 0`, og plattformen har i det minste et
-        ærlig ord fra modulen om at kjøringen ikke ble avsluttet.
+        eller en ærlig feilkvittering med status `0`, og plattformen har i
+        det minste et ord fra modulen om at kjøringen ikke ble avsluttet.
         """
-        signert = signer(kropp)
         rk = _Uteblitt()
-        for forsok in range(KVITTERINGSFORSOK):
+        for forsok in range(LEVERINGSFORSOK):
             if forsok:
-                if not _kvitteringsvindu_apent(claim):
+                if not _vindu_apent(utloper):
                     break
-                _sov(KVITTERINGSPAUSE_S * forsok)
+                _sov(LEVERINGSPAUSE_S * forsok)
             try:
-                rk = klient.post("/v1/oppdrag/kvittering", json=signert,
-                                 headers=hode)
+                rk = klient.post(sti, json=kropp, headers=hode)
             except Exception as e:                      # noqa: BLE001
                 # Transportfeilene kommer fra en INJISERT klient, så
                 # klassene deres er ikke våre å navngi. Det som er vårt,
@@ -469,6 +485,11 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
             if rk.status_code < 500:
                 break
         return rk
+
+    def kvitter(kropp):
+        """Kvitteringen gjennom `lever` — signert ÉN gang, utenfor løkka."""
+        return lever("/v1/oppdrag/kvittering", signer(kropp),
+                     claim.get("kvittering_utloper"))
 
     if vert is None:
         # Lar målet seg ikke lese, har modulen ingenting å binde
@@ -552,26 +573,47 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
                       "feilkode": "motor_avbrutt"})
         return _feilutfall(rk, type(e).__name__)
 
-    ro = klient.post("/v1/artefakt",
-                     json={"kapabilitet_jti": opplasting["jti"],
-                           "rapport": rapport}, headers=hode)
+    # OPPLASTINGEN GJENTAS SOM KVITTERINGEN (Codex P2). Den gikk én gang:
+    # et transportunntak her slapp rett ut av `kjor_en` — ingen kvittering,
+    # oppdraget claimet og tyst til fristen — og et forbigående 5xx ble
+    # lest som «rapporten kom ikke frem» og kvittert `feilet`. Begge kastet
+    # en ferdig crawl av kundens nettsted på en feil endepunktet er
+    # idempotent nettopp for at man SKAL kunne spørre om igjen: samme
+    # `kapabilitet_jti` og samme kanoniske rapport gir samme artefakt.
+    ro = lever("/v1/artefakt",
+               {"kapabilitet_jti": opplasting["jti"], "rapport": rapport},
+               opplasting.get("utloper"))
     if not 200 <= ro.status_code < 300:
         # AVVIST OPPLASTING (Codex P1): `ro.raise_for_status()` kastet ut
         # av kjøreløkka uten kvittering, og oppdraget ble stående claimet
         # til fristen — akkurat den taushetslinjen §10 forbyr, og det
         # motsatte av det denne fila selv sier («en avvist opplasting her
         # er en MOTORFEIL sett fra oppdraget»). Rapporten er bygget, men
-        # den kom ikke frem: da er oppdraget ærlig mislykket.
+        # den kom ikke frem: da er oppdraget ærlig mislykket. Etter retryen
+        # over dekker denne grenen de OVERLAGTE avvisningene (4xx) og de
+        # forbigående som ikke ga seg — inkludert `_Uteblitt` med status 0.
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "opplasting_avvist"})
         return _feilutfall(rk, "opplasting_avvist",
                            opplasting_status=ro.status_code)
-    artefakt = ro.json()
+    try:
+        artefakt = ro.json()
+        artefakt_id = artefakt["artefakt_id"]
+        klartekst_sha256 = artefakt["klartekst_sha256"]
+    except (ValueError, TypeError, KeyError) as e:
+        # 2xx med en kropp vi ikke kan lese er ingen kvitteringsgrunn: uten
+        # `artefakt_id` og hashen finnes det ikke en `utfort`-kvittering å
+        # signere. Den nakne feilen ville ellers gått samme vei som
+        # transportunntaket over — ut av kjøreløkka, uten et ord.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "opplasting_avvist"})
+        return _feilutfall(rk, f"opplasting_uleselig:{type(e).__name__}",
+                           opplasting_status=ro.status_code)
 
     rk = kvitter({**kvittering_basis, "resultat": "utfort",
-                  "artefakt_id": artefakt["artefakt_id"],
-                  "klartekst_sha256": artefakt["klartekst_sha256"]})
-    svar = {"artefakt_id": artefakt["artefakt_id"],
+                  "artefakt_id": artefakt_id,
+                  "klartekst_sha256": klartekst_sha256})
+    svar = {"artefakt_id": artefakt_id,
             "kvittering_status": rk.status_code,
             "sider": len(rapport["sider_kontrollert"])}
     if not _kvittert(rk):
