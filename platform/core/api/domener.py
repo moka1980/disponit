@@ -145,12 +145,28 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
                 "SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,%s)",
                 (tenant, hostname, token_hash, f"bruker:{bid}"))
             conn.commit()
-        except psycopg.Error as e:
+        except psycopg.errors.InvalidParameterValue as e:
+            # DEN FORVENTEDE NEIEN, og bare den (Codex P2). Funksjonens egne
+            # porter — åpen M-37-avklaring, ukanonisk hostname — reiser
+            # `invalid_parameter_value`. Det er en TILSTAND hos kunden, og 409
+            # er riktig svar.
             conn.rollback()
             tjeneste.logg.hendelse("domene_challenge_avvist", rid, tenant,
                                    art="sikkerhet",
                                    feiltype=type(e).__name__)
             return _feilsvar("domene_challenge_avvist", rid)
+        except psycopg.Error as e:
+            # ALT ANNET er drift, ikke kundens tilstand: funksjonen er ikke
+            # utrullet (UndefinedFunction), grantet mangler
+            # (InsufficientPrivilege), basen er nede. Fanget som 409 fortalte
+            # vi kunden at DOMENET hennes forbød en utfordring — mens en
+            # utrullingsfeil som rammer ALLE lå i loggen som en
+            # sikkerhetsavvisning, altså det ene stedet ingen leter etter en
+            # nedetid.
+            conn.rollback()
+            tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                                   feiltype=type(e).__name__)
+            return _feilsvar("db_utilgjengelig", rid)
         tjeneste.logg.hendelse("domene_challenge_utstedt", rid, tenant,
                                hostname=hostname)
         return kanonisk_json({

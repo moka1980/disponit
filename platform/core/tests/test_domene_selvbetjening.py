@@ -433,6 +433,55 @@ def test_reutstedelse_avvises_nar_raden_avventer_m37(migrator, klient):
 
 
 @pg
+@dekker("db_utilgjengelig")
+def test_utstedelse_skiller_dbsvikt_fra_tilstandsnekt(migrator, klient, app,
+                                                     monkeypatch):
+    """Codex P2: `except psycopg.Error` gjorde ALT til 409
+    `domene_challenge_avvist`. En funksjon som ikke er utrullet
+    (UndefinedFunction) eller et manglende grant (InsufficientPrivilege) er
+    også `psycopg.Error` — så en utrullingsfeil som rammer HVER kunde ble
+    fortalt kunden som «domenet ditt forbyr en utfordring», og lagt i loggen
+    som en SIKKERHETSavvisning: det ene stedet ingen leter etter nedetid.
+
+    Nå fanges bare funksjonens egen `invalid_parameter_value`; alt annet er
+    drift, 503 `db_utilgjengelig`.
+
+    MUTASJONEN SOM DREPER DENNE: bytt tilbake til `except psycopg.Error` i
+    utstedelsesgrenen.
+    """
+    from api import sesjon as sesjonmodul
+
+    class _Vrang:
+        """Ekte forbindelse, men utstedelseskallet er «ikke utrullet»."""
+
+        def __init__(self, ekte):
+            self.ekte = ekte
+
+        def __getattr__(self, navn):
+            return getattr(self.ekte, navn)
+
+        def execute(self, sql, args=None):
+            if "utsted_challenge_selvbetjent" in sql:
+                raise psycopg.errors.UndefinedFunction("ikke utrullet")
+            return self.ekte.execute(sql, args)
+
+    cookie, csrf = _adminsesjon()
+    hent, gi = app.tjeneste.pool.hent, app.tjeneste.pool.gi_tilbake
+    monkeypatch.setattr(app.tjeneste.pool, "hent",
+                        lambda *a, **k: _Vrang(hent()))
+    # Innpakningen skal ALDRI havne i poolen: neste forespørsel ville arvet den.
+    monkeypatch.setattr(app.tjeneste.pool, "gi_tilbake",
+                        lambda c: gi(c.ekte if isinstance(c, _Vrang) else c))
+
+    r = klient.post("/v1/domener",
+                    json={"hostname": f"drift{secrets.token_hex(3)}.example"},
+                    headers={"X-Disponit-CSRF": csrf},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert (r.status_code, r.json()["feil"]) == (503, "db_utilgjengelig"), \
+        r.text
+
+
+@pg
 def test_avvist_kandidat_far_ny_utfordring_uten_a_rive_gjerdet(migrator):
     """Codex P2: `avgjor_domeneovertakelse` etterlater med VILJE den avviste
     kandidaten `tilbakekalt` MED motparten, nettopp for at en ny, bevist
