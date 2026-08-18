@@ -2495,6 +2495,17 @@ def test_hele_bestillingen_leses_for_motoren_startes():
                      "maks_sider": True},
                     {"mal_url": "https://kunde.example/side",
                      "kravsett": "wcag22_aaa", "omfang": "enkeltside"},
+                    # ... et mål hvis RAPPORTFORM ikke får plass i
+                    # `sider_kontrollert[].url` (Codex P2): fullt lovlig
+                    # https, riktig vert, men stien gjør den ferdige
+                    # URL-en lengre enn skjemaets `maxLength: 2000`.
+                    {"mal_url": "https://kunde.example/" + "a" * 2000,
+                     "kravsett": "wcag21_aa", "omfang": "enkeltside"},
+                    # ... også når det er PROSENTKODINGEN som sprenger
+                    # grensa. Råstrengen er godt under 2000; rapportformen
+                    # er det ikke, og det er den skjemaet måler.
+                    {"mal_url": "https://kunde.example/" + "é" * 900,
+                     "kravsett": "wcag21_aa", "omfang": "enkeltside"},
                     # ... og et påkrevd felt som mangler helt.
                     {"mal_url": "https://kunde.example/side",
                      "omfang": "enkeltside"}):
@@ -2551,6 +2562,34 @@ def test_bestillingsveien_oppretter_ikke_et_ugyldig_oppdrag():
     # Et felt som MANGLER er ikke et verdibrudd — det er `mangler_paakrevde`
     # sin jobb, og `maks_sider` er lovlig fraværende.
     assert ok.bryter_feltkontrakten("kontroll.wcag.nettsted", {}) == []
+
+    # RAPPORTFORMENS LENGDE er også en del av den delte kontrakten
+    # (Codex P2): et mål hvis ferdige URL ikke får plass i
+    # `sider_kontrollert[].url` er dødfødt, og skal stoppe her — ikke
+    # etter at kundens nettsted er kontrollert.
+    grunn = len("https://kunde.example/")
+    assert ok.bryter_feltkontrakten(
+        "kontroll.wcag.nettsted",
+        {"mal_url": "https://kunde.example/" + "a" * (2000 - grunn)}) == []
+    assert ok.bryter_feltkontrakten(
+        "kontroll.wcag.nettsted",
+        {"mal_url": "https://kunde.example/" + "a" * (2001 - grunn)}) == [
+            "mal_url"]
+    # Grensa måles på RAPPORTFORMEN, ikke på råstrengen: prosentkodingen
+    # ekspanderer (`é` blir seks tegn), så en råstreng godt under grensa
+    # kan gi en rapportform godt over den — og det er rapportformen
+    # skjemaet måler. En råstrenggrense ville sluppet denne gjennom.
+    langt = "https://kunde.example/" + "é" * 900
+    assert len(langt) < 2000
+    assert len(ok.rapporturl(langt)) > 2000
+    assert ok.bryter_feltkontrakten(
+        "kontroll.wcag.nettsted", {"mal_url": langt}) == ["mal_url"]
+    # ... og et ULESELIG mål er ikke et lengdebrudd. Det har sin egen,
+    # mer presise feilkode på begge veier, og «feltet er for langt» ville
+    # gitt bestilleren feil grunn.
+    for daarlig in ("ikke-url", "http://kunde.example/", 7, None):
+        assert ok.bryter_feltkontrakten(
+            "kontroll.wcag.nettsted", {"mal_url": daarlig}) == [], daarlig
     with pytest.raises(ok.Oppdragstypeukjent):
         ok.bryter_feltkontrakten("finnes.ikke", {})
 

@@ -152,9 +152,21 @@ def _kontraktsbrudd(payload: dict) -> list[str]:
     ikke bare der: raden kan være skrevet av en eldre release, og en
     utfører som stoler på at noen andre alt har sjekket, sjekker ikke.
 
-    `mal_url` er ikke med: den leses av `_ressursbinding` rett over, med
-    den samme funksjonen målbindingen bruker, og et uleselig mål har sin
-    egen feilkode.
+    `mal_url` er med for ÉN ting: at rapportformen av den får plass i
+    `sider_kontrollert[].url` (Codex P2). Et fullt lovlig https-mål —
+    riktig vert, riktig omfang — kunne ha en sti som gjorde den ferdige
+    URL-en lengre enn skjemaets `maxLength: 2000`. Både denne porten og
+    `_ressursbinding` slapp den gjennom, målet ble kontrollert eksternt,
+    og bestillingen ble avvist først da `rapportskjema.SKJEMA` validerte
+    siden som kom tilbake — nøyaktig den unødvendige forespørselen
+    `ekstern_lesing` handler om. Grensa står i den delte kontrakten
+    (`FELTURLLENGDER`) og måles på rapportformen (`rapporturl`), ikke på
+    råstrengen: prosentkodingen ekspanderer, og det er rapportformen
+    skjemaet måler.
+
+    Ellers leses `mal_url` av `_ressursbinding` rett over, med den samme
+    funksjonen målbindingen bruker, og et ULESELIG mål har sin egen
+    feilkode — det er derfor ikke et brudd her.
     """
     from oppdragskontrakt import bryter_feltkontrakten, mangler_paakrevde
     return sorted({*mangler_paakrevde(OPPDRAGSTYPE, payload),

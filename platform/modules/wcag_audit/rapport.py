@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from .motor import Motorfeil, Motorresultat, heltall
 
@@ -152,108 +152,6 @@ def _ren_url(raa: str, autorisert_vert: str) -> str:
     return _delt_url(raa, autorisert_vert)[0]
 
 
-#: WHATWG sitt «path percent-encode set»: C0-kontrolltegn og mellomrom,
-#: `"`, `<`, `>`, backtick, `{`, `}`, DEL — og alt over ASCII, som UTF-8.
-#: `?` og `#` står i settet, men `urlsplit` har alt delt dem av før stien
-#: kommer hit, så de kan ikke nå denne funksjonen som rå tegn.
-_STI_KODES = '"<>`{}'
-
-
-def _nettleserkodet(sti: str) -> str:
-    """Stien slik NETTLEREN skriver den: prosentkodet etter WHATWG-settet
-    (Codex P2).
-
-    `urlsplit` er en parser og rører ikke tegnene. WHATWG-parseren i
-    Chromium prosentkoder stien mens den navigerer, så en bestilling på
-    `https://kunde.example/café` rapporteres tilbake som
-    `https://kunde.example/caf%C3%A9`. Sammenlignet `enkeltside`-porten
-    den rå Unicode-formen med motorens kodede, fant den dem ulike og lot
-    oppdraget feile ETTER at den eksterne kontrollen var gjort — tredje
-    utgave av samme dyre feilretning som `:443` og punktsegmentene bar.
-    To skrivemåter av én sti er ikke to sider.
-
-    Kodingen går BARE én vei, aldri tilbake:
-
-      * `%` kodes ALDRI. Det gjør funksjonen idempotent — `caf%C3%A9` er
-        allerede den formen nettleseren rapporterer, og skulle den blitt
-        til `caf%25C3%25A9`, hadde normaliseringen selv laget avviket den
-        er her for å fjerne. Nettleseren lar også en løs `%` stå.
-      * Vi DEKODER ikke unødvendige escapes og skriver ikke om
-        `%c3%a9` til `%C3%A9`. Nettleseren gjør ingen av delene, og en
-        normalisering som gjetter feil vei gjør to ULIKE sider like —
-        feilretningen her skal være avvisning (se `_delt_url` om query-en).
-
-    Som `_uten_punktsegmenter` står den i `_delt_url`, altså på BEGGE
-    sider av sammenligningen: to normaliseringer ville vært to svar.
-    """
-    ut: list[str] = []
-    for tegn in sti:
-        if tegn == "%" or ("\x20" < tegn < "\x7f" and tegn not in _STI_KODES):
-            ut.append(tegn)
-        else:
-            ut.extend(f"%{b:02X}" for b in tegn.encode("utf-8"))
-    return "".join(ut)
-
-
-def _uten_punktsegmenter(sti: str) -> str:
-    """Stien slik NETTLESEREN leser den: `.` og `..` løst opp (Codex P2).
-
-    `urlsplit` er en ren PARSER — den deler strengen og gir stien tilbake
-    tegn for tegn. Nettleseren gjør noe annet: WHATWG-URL-parseren løser
-    punktsegmentene mens den leser stien, så `https://kunde.example/a/../
-    side` ER `https://kunde.example/side` for Chromium, og det er den
-    formen motoren rapporterer tilbake.
-
-    Kopierte vi `d.path` rått, sammenlignet `enkeltside`-porten
-    bestillingens `/a/../side` med motorens `/side`, fant dem ulike, og
-    lot oppdraget feile ETTER at den eksterne kontrollen var gjort — samme
-    dyre feilretning som `:443` bar: trafikken mot kundens nettsted er
-    allerede brukt, og siden var den bestilte. To skrivemåter av én sti er
-    ikke to sider.
-
-    Reglene er WHATWG sine, ikke RFC 3986 sine, fordi det er nettleseren
-    som avgjør hva som faktisk ble besøkt:
-
-      * `%2e` og `%2E` teller som punktum (`/a/%2e%2e/side` er `/side`).
-        Gjorde de ikke det, kunne en prosentkodet skrivemåte av nøyaktig
-        samme navigasjon skli forbi som «en annen side».
-      * `..` under roten går ikke i minus — den blir stående på roten.
-        RFC-en etterlater `/..`-rester; nettleseren gjør ikke det, og
-        rapporten skal navngi siden slik den ble besøkt.
-      * ET AVSLUTTENDE punktsegment gir en avsluttende `/`: `/a/..` er
-        `/`, og `/a/.` er `/a/`. Det er ikke pynt — `/a` og `/a/` kan
-        være to forskjellige ressurser, og nettleseren ber om den siste.
-
-    Normaliseringen står i `_delt_url`, altså på BEGGE sider av
-    sammenligningen (bestilling og motorutdata), av samme grunn som
-    `_bestilt_url` låner nettopp denne funksjonen: to normaliseringer
-    ville vært to svar.
-
-    Resten av stien røres IKKE HER — store bokstaver og tomme segmenter
-    står som de står, og prosentkodingen er `_nettleserkodet` sin jobb,
-    ikke denne. En normalisering som gjetter feil vei gjør to ULIKE sider
-    like, og feilretningen her skal være avvisning, ikke stille
-    sammenslåing (se `_delt_url` om query-en).
-    """
-    #: `%2e`/`%2E` er punktum for WHATWG-parseren, derfor `.lower()`.
-    segmenter = sti.split("/")[1:]
-    ut: list[str] = []
-    for i, segment in enumerate(segmenter):
-        lav = segment.lower()
-        siste = i == len(segmenter) - 1
-        if lav in ("..", ".%2e", "%2e.", "%2e%2e"):
-            if ut:
-                ut.pop()
-            if siste:
-                ut.append("")
-        elif lav in (".", "%2e"):
-            if siste:
-                ut.append("")
-        else:
-            ut.append(segment)
-    return "/" + "/".join(ut)
-
-
 def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     """-> (rapport_url, identitets_url) for samme rå URL.
 
@@ -286,10 +184,10 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     like. Feilretningen her skal være avvisning (Motorfeil), ikke en
     stille sammenslåing.
     """
-    from oppdragskontrakt import normaliser_vertsnavn
+    from oppdragskontrakt import normaliser_vertsnavn, rapporturl
     try:
         d = urlsplit(str(raa))
-        vert, port = d.hostname, d.port
+        vert = d.hostname
     except ValueError as e:
         raise Motorfeil("uleselig url fra motoren") from e
     if d.scheme != "https" or not vert:
@@ -297,29 +195,21 @@ def _delt_url(raa: str, autorisert_vert: str) -> tuple[str, str]:
     if normaliser_vertsnavn(raa) != autorisert_vert:
         raise Motorfeil(
             "motoren rapporterte en side utenfor det autoriserte målet")
-    # STANDARDPORTEN ER IKKE EN DEL AV IDENTITETEN (Codex P2).
-    # `https://kunde.example:443/side` og `https://kunde.example/side` ber
-    # om nøyaktig samme ressurs, og Chromium — eller en redirect —
-    # serialiserer den uten porten. Beholdt vi `:443` bare på den ene
-    # formen, avviste `enkeltside`-porten en side som ER den bestilte,
-    # ETTER at den eksterne kontrollen var gjort: oppdraget feilet på en
-    # skrivemåte, ikke på et avvik. Ikke-standardporter bæres videre som
-    # før — de skiller faktisk to endepunkter fra hverandre.
+    # SELVE AVLEDNINGEN ER PLATTFORMENS (Codex P2), som `malvert` er det:
+    # `oppdragskontrakt.rapporturl` skriver verten i normalform, dropper
+    # standardporten (`:443` og ingenting er samme ressurs) og gir stien
+    # slik nettleseren både koder og leser den — prosentkoding og
+    # punktsegmenter. Den samme funksjonen måler lengdegrensa i
+    # `bryter_feltkontrakten`, så forhåndsporten og rapporten kan ikke bli
+    # uenige om hvilken URL bestillingen faktisk navngir.
     #
-    # Skjemaet er alltid https her (vakten over), så 443 er den eneste
-    # standardporten som kan dukke opp.
-    nettsted = autorisert_vert + (f":{port}" if port and port != 443 else "")
-    # PUNKTSEGMENTER ER IKKE EN DEL AV IDENTITETEN (Codex P2). `d.path`
-    # er råstrengens sti; nettleseren løser `.`/`..` mens den navigerer og
-    # rapporterer den løste formen tilbake — se `_uten_punktsegmenter`.
-    # PROSENTKODINGEN ER HELLER IKKE EN DEL AV IDENTITETEN (Codex P2):
-    # nettleseren koder stien mens den navigerer, så `/café` kommer
-    # tilbake som `/caf%C3%A9` — se `_nettleserkodet`. Kodingen står
-    # FØRST: den rører verken `.` eller `%2e`, så punktsegmentene leses
-    # likt uansett, og en allerede kodet sti går uendret gjennom begge.
-    sti = _uten_punktsegmenter(_nettleserkodet(d.path or "/"))
-    return (urlunsplit(("https", nettsted, sti, "", "")),
-            urlunsplit(("https", nettsted, sti, d.query, "")))
+    # Vaktene over står igjen her fordi de bærer hver sin MOTORFEIL: en
+    # side utenfor målet er noe annet enn en uleselig URL, og `rapporturl`
+    # svarer bare None.
+    ren = rapporturl(raa)
+    if ren is None:
+        raise Motorfeil("uleselig url fra motoren")
+    return (ren, ren + (f"?{d.query}" if d.query else ""))
 
 
 def _antall(raa, standard: int) -> int:

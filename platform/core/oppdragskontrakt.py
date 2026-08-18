@@ -295,6 +295,131 @@ def normaliser_vertsnavn(raa: object) -> str | None:
     return vert
 
 
+#: WHATWG sitt «path percent-encode set»: C0-kontrolltegn og mellomrom,
+#: `"`, `<`, `>`, backtick, `{`, `}`, DEL — og alt over ASCII, som UTF-8.
+#: `?` og `#` står i settet, men `urlsplit` har alt delt dem av før stien
+#: kommer hit, så de kan ikke nå denne funksjonen som rå tegn.
+_STI_KODES = '"<>`{}'
+
+
+def _nettleserkodet(sti: str) -> str:
+    """Stien slik NETTLESEREN SKRIVER den: prosentkodet etter WHATWG-settet.
+
+    `urlsplit` er en parser og rører ikke tegnene. WHATWG-parseren i
+    Chromium prosentkoder stien mens den navigerer, så en bestilling på
+    `https://kunde.example/café` besøkes og rapporteres som
+    `https://kunde.example/caf%C3%A9`.
+
+    Kodingen går BARE én vei, aldri tilbake:
+
+      * `%` kodes ALDRI. Det gjør funksjonen idempotent — `caf%C3%A9` er
+        allerede den formen nettleseren rapporterer, og skulle den blitt
+        til `caf%25C3%25A9`, hadde normaliseringen selv laget avviket den
+        er her for å fjerne. Nettleseren lar også en løs `%` stå.
+      * Vi DEKODER ikke unødvendige escapes og skriver ikke om
+        `%c3%a9` til `%C3%A9`. Nettleseren gjør ingen av delene, og en
+        normalisering som gjetter feil vei gjør to ULIKE sider like —
+        feilretningen skal være avvisning, ikke stille sammenslåing.
+    """
+    ut: list[str] = []
+    for tegn in sti:
+        if tegn == "%" or ("\x20" < tegn < "\x7f" and tegn not in _STI_KODES):
+            ut.append(tegn)
+        else:
+            ut.extend(f"%{b:02X}" for b in tegn.encode("utf-8"))
+    return "".join(ut)
+
+
+def _uten_punktsegmenter(sti: str) -> str:
+    """Stien slik NETTLESEREN LESER den: `.` og `..` løst opp.
+
+    `urlsplit` gir stien tegn for tegn. Nettleseren gjør noe annet:
+    WHATWG-URL-parseren løser punktsegmentene mens den leser stien, så
+    `https://kunde.example/a/../side` ER `https://kunde.example/side` for
+    Chromium, og det er den formen som besøkes og rapporteres tilbake.
+
+    Reglene er WHATWG sine, ikke RFC 3986 sine, fordi det er nettleseren
+    som avgjør hva som faktisk ble besøkt:
+
+      * `%2e` og `%2E` teller som punktum (`/a/%2e%2e/side` er `/side`).
+        Gjorde de ikke det, kunne en prosentkodet skrivemåte av nøyaktig
+        samme navigasjon skli forbi som «en annen side».
+      * `..` under roten går ikke i minus — den blir stående på roten.
+        RFC-en etterlater `/..`-rester; nettleseren gjør ikke det.
+      * ET AVSLUTTENDE punktsegment gir en avsluttende `/`: `/a/..` er
+        `/`, og `/a/.` er `/a/`. Det er ikke pynt — `/a` og `/a/` kan
+        være to forskjellige ressurser, og nettleseren ber om den siste.
+
+    Resten av stien røres IKKE HER — store bokstaver og tomme segmenter
+    står som de står, og prosentkodingen er `_nettleserkodet` sin jobb.
+    """
+    #: `%2e`/`%2E` er punktum for WHATWG-parseren, derfor `.lower()`.
+    segmenter = sti.split("/")[1:]
+    ut: list[str] = []
+    for i, segment in enumerate(segmenter):
+        lav = segment.lower()
+        siste = i == len(segmenter) - 1
+        if lav in ("..", ".%2e", "%2e.", "%2e%2e"):
+            if ut:
+                ut.pop()
+            if siste:
+                ut.append("")
+        elif lav in (".", "%2e"):
+            if siste:
+                ut.append("")
+        else:
+            ut.append(segment)
+    return "/" + "/".join(ut)
+
+
+def nettleserlest_sti(sti: str) -> str:
+    """Stien slik nettleseren både SKRIVER og LESER den — prosentkodet
+    etter WHATWG-settet, og med punktsegmentene løst opp.
+
+    Kodingen står FØRST: den rører verken `.` eller `%2e`, så de to
+    lesningene er upåvirket av hverandre, og en allerede kodet sti går
+    uendret gjennom begge.
+
+    Funksjonen bor HER og ikke i modulen (Codex P2), av samme grunn som
+    `normaliser_vertsnavn` gjør det: den er URL-semantikk, ikke
+    WCAG-semantikk, og den brukes nå av BEGGE sider — `rapport._delt_url`
+    sammenligner bestilling mot motorutdata med den, og
+    `bryter_feltkontrakten` måler rapportformens lengde med den. To
+    normaliseringer ville vært to svar.
+    """
+    return _uten_punktsegmenter(_nettleserkodet(sti))
+
+
+def rapporturl(raa: object) -> str | None:
+    """https-URL i RAPPORTFORM — vert i normalform, ikke-standard port,
+    nettleserlest sti, uten query og fragment. -> None når URL-en ikke lar
+    seg lese entydig.
+
+    Dette er DEN avledningen: `rapport._delt_url` navngir sidene i
+    rapporten med den, og `bryter_feltkontrakten` måler lengden på den.
+    Sto lengdegrensa på råstrengen i stedet, ville den målt noe annet enn
+    skjemaet måler — prosentkodingen EKSPANDERER (`é` blir seks tegn), så
+    en råstreng under grensa kan gi en rapportform over den.
+
+    STANDARDPORTEN ER IKKE MED: `https://kunde.example:443/side` og
+    `https://kunde.example/side` ber om nøyaktig samme ressurs, og
+    Chromium serialiserer den uten porten. Ikke-standardporter bæres
+    videre — de skiller faktisk to endepunkter fra hverandre. Skjemaet er
+    alltid https her, så 443 er den eneste standardporten som kan dukke
+    opp.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+    vert = normaliser_vertsnavn(raa)
+    if vert is None:
+        return None
+    # `normaliser_vertsnavn` har alt lest `d.port` innenfor sin egen vakt,
+    # så en ulovlig port ga None over og kan ikke kaste her.
+    d = urlsplit(str(raa))
+    nettsted = vert + (f":{d.port}" if d.port and d.port != 443 else "")
+    return urlunsplit(
+        ("https", nettsted, nettleserlest_sti(d.path or "/"), "", ""))
+
+
 def malvert(oppdragstype: object, payload: object) -> str | None:
     """Verten et oppdrag av denne TYPEN er autorisert for, eller None.
 
@@ -497,6 +622,25 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     "kontroll.wcag.nettsted": {"maks_sider": (1, 50)},
 }
 
+#: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
+#: type (Codex P2). Grensa er rapportskjemaets egen `maxLength` på
+#: `sider_kontrollert[].url`.
+#:
+#: Uten den slapp et fullt lovlig https-mål — riktig vert, riktig omfang —
+#: gjennom både forhåndsporten og `_ressursbinding` bare fordi STIEN gjorde
+#: den ferdige URL-en for lang. Bestillingen ble så skannet eksternt, og
+#: avvist først da `rapportskjema.SKJEMA` validerte siden som kom tilbake.
+#: `ekstern_lesing` er klassen der den unødvendige forespørselen ER skaden,
+#: og denne var unødvendig på nøyaktig samme måte som `maks_sider: 200`: vi
+#: kunne visst det før vi kontaktet målet.
+#:
+#: Målt på RAPPORTFORMEN, ikke på råstrengen: prosentkodingen ekspanderer
+#: (`é` blir seks tegn), så en råstreng under grensa kan gi en rapportform
+#: over den — og det er rapportformen skjemaet måler.
+FELTURLLENGDER: dict[str, dict[str, int]] = {
+    "kontroll.wcag.nettsted": {"mal_url": 2000},
+}
+
 
 #: UTFØRELSESFRISTEN typen ber om, i sekunder, valgt av ETT felt i
 #: payloaden: {type: (felt, {feltverdi: sekunder})} (Codex P1).
@@ -569,6 +713,16 @@ def bryter_feltkontrakten(oppdragstype: str, minimert: dict) -> list[str]:
         # Et sidebudsjett på «sant» er ikke et tall noen har bestilt.
         if isinstance(v, bool) or not isinstance(v, int) or not (
                 nedre <= v <= ovre):
+            brudd.add(felt)
+    for felt, maks in FELTURLLENGDER.get(oppdragstype, {}).items():
+        if felt not in minimert:
+            continue
+        # En ULESELIG URL er ikke et brudd HER. Den har sin egen, mer
+        # presise feilkode på begge veier (`malautorisasjon_mal_ugyldig`
+        # ved opprettelsen, `_ressursbinding` hos utføreren), og å melde
+        # den som «feltet er for langt» ville gitt bestilleren feil grunn.
+        u = rapporturl(minimert[felt])
+        if u is not None and len(u) > maks:
             brudd.add(felt)
     return sorted(brudd)
 
