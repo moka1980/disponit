@@ -602,6 +602,10 @@ def main() -> int:
     blokkert: dict[tuple[str, str], int] = {}
     funn: dict[str, dict] = {}
     sider: list[dict] = []
+    #: Den LENGSTE selektoren som ble kappet av `MAKS_SELEKTOR`, eller 0.
+    #: Se kappingen nede i funnløkka — det tredje taket, og det eneste
+    #: eksempelregnskapet ikke kan se.
+    selektor_avkortet = 0
 
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
@@ -783,6 +787,19 @@ def main() -> int:
                         # Samme kutt byggeren gjør på nytt, med samme tall:
                         # selektorlengden er kontraktens grense, ikke en
                         # kapping motoren finner på bak byggerens rygg.
+                        #
+                        # OG DET SIER FRA (Codex P2). Kuttet er det TREDJE
+                        # taket i motoren, og det eneste som ikke ble målt:
+                        # for et funn med én dyp node var både `antall` og
+                        # `len(eksempler)` 1, så eksempelregnskapet under
+                        # så ingenting — mens eksempelet i den promoterte
+                        # rapporten var en avhogd, ofte syntaktisk ødelagt
+                        # selektor under påstanden `avkortet: false`. En
+                        # leser som skal finne igjen elementet har da fått
+                        # en peker som ikke peker.
+                        if len(sel) > MAKS_SELEKTOR:
+                            selektor_avkortet = max(selektor_avkortet,
+                                                    len(sel))
                         f["eksempler"].append(sel[:MAKS_SELEKTOR])
             if maks_sider > 1:
                 for href in page.eval_on_selector_all(
@@ -798,7 +815,7 @@ def main() -> int:
                         ko.append(lenke)
         browser.close()
 
-    # AVKORTINGEN DEKKER BEGGE TAKENE (Codex P2). `truffet` var `bool(ko)`
+    # AVKORTINGEN DEKKER ALLE TAKENE (Codex P2). `truffet` var `bool(ko)`
     # alene, altså kun crawltaket — men eksempeltaket kapper OGSÅ evidens,
     # og det gjorde det stille: for en regel med mer enn `MAKS_EKSEMPLER`
     # feilende noder forkastet motoren eksempler den ALT hadde observert,
@@ -833,6 +850,13 @@ def main() -> int:
         avkortet = [True, maks_sider, bestilt_maks]
     elif eksempler_avkortet:
         avkortet = [True, MAKS_EKSEMPLER, eksempler_avkortet]
+    elif selektor_avkortet:
+        # SELEKTORKUTTET ER OGSÅ EN AVKORTING (Codex P2). Rekkefølgen er
+        # skadens: mangler hele SIDER er det mer enn at ett funn viser
+        # færre forekomster, og begge deler er mer enn at ett eksempel
+        # peker upresist. Sist betyr ikke uviktig — uten grenen her var
+        # dette taket det ene som kunne slå til uten at noe felt sa fra.
+        avkortet = [True, MAKS_SELEKTOR, selektor_avkortet]
     else:
         avkortet = [False, None, None]
     resultat = {

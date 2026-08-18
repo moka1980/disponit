@@ -301,6 +301,31 @@ def test_eksempeltaket_slaar_avkortet_paa():
                 if f["antall"] > len(f["eksempler"])), default=0) == 0
 
 
+def test_selektorkuttet_slaar_avkortet_paa():
+    """Codex P2: det tredje taket var det eneste som ikke sa fra.
+
+    For et funn med ÉN node hvis selektor er over `MAKS_SELEKTOR` tegn er
+    både `antall` og `len(eksempler)` 1, så eksempelregnskapet ser
+    ingenting — mens eksempelet i den promoterte rapporten er en avhogd,
+    ofte syntaktisk ødelagt selektor under påstanden `avkortet: false`.
+    Byggeren kan ikke fange det heller: den kapper på NØYAKTIG samme tall,
+    så lista den ser ligger alltid på grensen, aldri over.
+
+    Kappingen lever inne i `main()` bak playwright, så porten måles på
+    kilden — og på at rekkefølgen mellom takene er skadens."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "if len(sel) > MAKS_SELEKTOR:" in kilde
+    assert "[True, MAKS_SELEKTOR, selektor_avkortet]" in kilde
+    # Rekkefølgen: sider → robots → eksempler → selektor. Hele SIDER som
+    # mangler er mer enn et funn med flere forekomster enn de viste, og
+    # begge er mer enn ett eksempel som peker upresist.
+    kjede = kilde.split("sider_avkortet = bool(ko)", 1)[1]
+    rekkefolge = [kjede.index(nokkel) for nokkel in (
+        "if sider_avkortet:", "elif robots_stengte:",
+        "elif eksempler_avkortet:", "elif selektor_avkortet:")]
+    assert rekkefolge == sorted(rekkefolge), kjede[:400]
+
+
 def test_nettleserkonteksten_er_den_som_attesteres():
     """Codex P2: serverkonteksten attesterte en tidssone ingen satte.
 
