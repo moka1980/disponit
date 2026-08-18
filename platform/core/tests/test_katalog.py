@@ -6,13 +6,14 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor fem porter (Codex P2 på PR #43):
+Testene her er derfor seks porter (Codex P2 på PR #43, P2 på PR #99):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
                  vurdert på nytt, så nb og en ikke kan drive fra hverandre.
   4. FORM      — 55 moduler, elleve områder, faser 1–4, alle representert.
   5. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
+  6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
 """
 import json
 import re
@@ -183,6 +184,35 @@ def test_katalogen_har_forventet_form():
         fra_omrader += o["moduler"]
     assert sorted(fra_omrader) == sorted(m["n"] for m in katalog), (
         "områdene dekker ikke katalogen nøyaktig én gang")
+
+
+def test_spesifikasjonen_baerer_produktnavnet():
+    """Sannhetskilden skal hete det produktet heter (Codex P2 på PR #99).
+
+    Rebrandet til Disponit gikk gjennom README, STRUKTUR, begge locale-sett og
+    applikasjonsskallet — men v8-spesifikasjonen kom tilbake med det gamle
+    navnet i tittel, overskrift og bunntekst. Det er ikke en skrivefeil: det er
+    sannhetskilden som spesifiserer et ANNET produkt enn det som bygges, og
+    ingen av portene over kunne se det, fordi de bare måler modulkatalogen.
+
+    Navnet leses ut av `nb.json`, ikke skrevet inn her: en literal ville vært
+    enda en kopi å holde i takt, og porten skal måle mot det produktet FAKTISK
+    heter i dag.
+    """
+    navn = json.loads(LOCALER["nb"].read_text(encoding="utf-8"))["app.navn"]
+    tekst = KILDE.read_text(encoding="utf-8")
+
+    tittel = re.search(r"<title>(.*?)</title>", tekst, re.S)
+    assert tittel and navn in tittel.group(1), (
+        f"<title> sier «{tittel.group(1) if tittel else '(mangler)'}», "
+        f"produktet heter «{navn}»")
+    h1 = re.search(r"<h1[^>]*>(.*?)</h1>", tekst, re.S)
+    assert h1 and h1.group(1).strip() == navn, (
+        f"<h1> sier «{h1.group(1).strip() if h1 else '(mangler)'}», "
+        f"produktet heter «{navn}»")
+    bunn = re.search(r'<p class="fin">(.*?)</p>', tekst, re.S)
+    assert bunn and navn in bunn.group(1), (
+        f"bunnteksten navngir ikke «{navn}»")
 
 
 @pytest.mark.parametrize("sprak", sorted(LOCALER))
