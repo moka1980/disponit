@@ -644,6 +644,55 @@ def test_taket_holder_seg_innenfor_unitens_timeout():
     assert dr.VERIFISERING_FRIST_S < 4 * 60
 
 
+#: 039s funksjoner, med signatur skrevet ut. Ikke hentet fra katalogen: en
+#: test som spør basen hvilke funksjoner 039 laget, ville godtatt at en av dem
+#: forsvant.
+DEFAULT_DENY_039 = [
+    "ventende_domenechallenges(integer)",
+    "bekreft_domenechallenge(text,text,text,text[])",
+    "ventende_overtakelseskonflikter(integer)",
+    "utsted_challenge_selvbetjent(text,text,boolean,text,text)",
+]
+
+
+@pg
+def test_039_default_deny_gjelder_faktisk(migrator):
+    """PUBLIC skal ikke nå NOEN av 039s funksjoner — målt på ACL-en.
+
+    Porten finnes fordi en `REVOKE ... FROM PUBLIC` kan MISLYKKES stille:
+    kjøres den av en rolle som ikke eier funksjonen, advarer PostgreSQL og går
+    videre, men materialiserer samtidig standard-ACL-en, som for en funksjon er
+    EXECUTE for PUBLIC. Da er resultatet det motsatte av det migrasjonen sier,
+    og ingen funksjonell test ser det: et privilegium PUBLIC allerede har
+    feiler aldri. Samme port som 019 (`test_019_default_deny_gjelder_faktisk`).
+
+    Særlig for `utsted_challenge_selvbetjent`: hele tenantporten er verdiløs
+    hvis EN VILKÅRLIG rolle i klyngen kan kalle innpakningen.
+    """
+    from .test_pr015_operativt_lag import _execute_mottakere
+
+    apne = [sig for sig in DEFAULT_DENY_039
+            if "-" in _execute_mottakere(migrator, sig)]
+    assert not apne, f"PUBLIC har EXECUTE på: {', '.join(apne)}"
+
+
+@pg
+def test_raa_utsted_challenge_er_ikke_runtimes(migrator):
+    """ACL-porten under den funksjonelle: runtime skal ikke stå i ACL-en til
+    016s bevisløse `utsted_challenge` i det hele tatt. Et `GRANT ... TO
+    disponit` som sniker seg inn igjen i en senere migrasjon skal SES her, ikke
+    først når noen finner kryss-tenant-veien."""
+    from .test_pr015_operativt_lag import _execute_mottakere
+
+    mottakere = _execute_mottakere(
+        migrator, "utsted_challenge(text,text,boolean,text,text)")
+    assert "disponit" not in mottakere, mottakere
+    assert "-" not in mottakere, "PUBLIC når utsted_challenge"
+    # ...og innpakningen er runtimes ENESTE vei inn.
+    assert "disponit" in _execute_mottakere(
+        migrator, "utsted_challenge_selvbetjent(text,text,boolean,text,text)")
+
+
 def test_arbeideren_drenerer_konflikter_i_hovedlokka():
     """Dreneringen er UTRULLET, ikke bare tilgjengelig: M-37-arbeiderens
     hovedløkke kaller den. Uten kallet ville funksjonen over hatt nøyaktig
