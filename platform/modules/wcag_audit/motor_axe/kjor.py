@@ -6,7 +6,7 @@ STDIN/STDOUT-grensesnitt og ingenting annet:
 
   stdin : {"mal_url", "kravsett", "omfang", "maks_sider"}   (payloaden)
   stdout: {"regelsett_versjon", "varighet_ms",
-           "sider": [{"url","status"}],
+           "sider": [{"url","status"[,"bestilt_url"]}],
            "funn": [{"regel_id","alvorlighet","antall","eksempler"}],
            "blokkert": [{"vert","antall","art"}],
            "avkortet": [truffet, tak, verdi]}
@@ -770,7 +770,22 @@ def main() -> int:
             # dokumentet faktisk lenker til.
             landet = _normaliser_lenke(origin, url, page.url) if ok else None
             faktisk = landet or url
-            sider.append({"url": faktisk, "status": "ok" if ok else "feilet"})
+            post = {"url": faktisk, "status": "ok" if ok else "feilet"}
+            # OMDIRIGERINGEN ATTESTERES (Codex P1). Å navngi den landede
+            # siden var riktig, men det etterlot bindingen i `rapport.bygg`:
+            # for `enkeltside` KREVER den at første sides identitet er den
+            # bestilte, så hver eneste kontroll av en URL som omdirigerer —
+            # `/side` → `/side/` er ikke et sjeldent tilfelle, det er
+            # normalen på halve nettet — ble `motor_avbrutt` uten at noen
+            # rapport ble promotert.
+            #
+            # Motoren SIER derfor hvor den ble sendt fra, og bindingen
+            # leser det. Feltet reiser bare fra motoren til byggeren: den
+            # promoterte rapporten navngir fortsatt siden vi faktisk
+            # kontrollerte, og rapportskjemaet er urørt.
+            if faktisk != url:
+                post["bestilt_url"] = url
+            sider.append(post)
             if not ok:
                 continue
             # Omdirigeringsmålet er en side vi HAR sett; uten dette kunne

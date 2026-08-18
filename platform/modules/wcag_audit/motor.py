@@ -188,7 +188,9 @@ def _motormiljo() -> dict:
 class Motorresultat:
     regelsett_versjon: str
     varighet_ms: int
-    #: [{url, status}]
+    #: [{url, status}] — pluss valgfri `bestilt_url` når motoren ble
+    #: omdirigert dit; se `rapport.bygg`s `enkeltside`-port. Feltet reiser
+    #: aldri inn i rapporten.
     sider: tuple = ()
     #: [{regel_id, alvorlighet, antall, eksempler[]}] — RÅTT, usanert.
     funn: tuple = ()

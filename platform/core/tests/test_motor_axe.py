@@ -515,6 +515,24 @@ def test_crawlen_rapporterer_og_loeser_mot_den_landede_url_en():
     assert n(o, f"{o}/ny/", "a.html") == f"{o}/ny/a.html"
     assert n(o, f"{o}/gammel", "a.html") == f"{o}/a.html"
 
+    # ... og motoren SIER hvor den ble sendt fra (Codex P1, runde 4).
+    # Uten det avviste `rapport.bygg`s `enkeltside`-port hver eneste
+    # kontroll av en URL som omdirigerer — `/side` → `/side/` er normalen,
+    # ikke unntaket — som `motor_avbrutt` uten promotert rapport.
+    assert 'post["bestilt_url"] = url' in kilde
+    assert "if faktisk != url:" in kilde
+    modul = ROT / "platform/modules/wcag_audit"
+    rapportkilde = (modul / "rapport.py").read_text(encoding="utf-8")
+    assert 's.get("bestilt_url")' in rapportkilde
+    assert "bestilt not in (identiteter[0], fra_url[0])" in rapportkilde
+    # Feltet reiser bare motor → bygger. Rapportskjemaet er URØRT: sidene
+    # byggeren skriver bærer nøyaktig `url` og `status`, så den
+    # innholdsadresserte skjemahashen står som før.
+    assert "bestilt_url" not in (modul / "rapportskjema.py").read_text(
+        encoding="utf-8")
+    assert '{"url": ren, "status": _sidestatus(s.get("status"))}' \
+        in rapportkilde
+
 
 def test_robots_gjelder_ogsaa_omdirigeringsmaalet():
     """Codex P1: et 30x er ingen lenke, og filteret sto bare på lenkene.
