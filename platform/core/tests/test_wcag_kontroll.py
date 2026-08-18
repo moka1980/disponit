@@ -2438,6 +2438,58 @@ def test_manglende_opplastingskapabilitet_stopper_for_skanningen():
             "ingen_opplastingskapabilitet")
 
 
+def test_ugyldig_serverkontekst_stopper_for_skanningen():
+    """Codex P2: `bygg` leser `kontekst[k]` — controlleren leste den aldri.
+
+    De seks `miljo`-feltene er controllerens EGEN konfigurasjon, og en
+    feilkonfigurert deployment ga to utfall, begge etter at motoren hadde
+    vært ute på kundens nettsted:
+
+      * manglende `container_image_digest` → naken `KeyError` fra `bygg`.
+        `kjor_en` fanger kun Motorfeil og ValidationError, så oppdraget
+        ble stående claimet og ufullført til fristen, uten et ord.
+      * ugyldig digest → oppdaget først av skjemavalideringen, altså
+        etter en full, observerbar kontroll som aldri kunne bli levert.
+
+    Kontroll: fjern `_kontekstbrudd`-blokka i `kjor_en`, så blir første
+    tilfelle en KeyError ut av `kjor_en` og andre tilfelle grønt med
+    `motor.payloads != []`.
+    """
+    from modules.wcag_audit import controller
+
+    uten_digest = {k: v for k, v in _kontekst().items()
+                   if k != "container_image_digest"}
+    for kontekst, brudd in (
+            (uten_digest, "mangler container_image_digest"),
+            ({**_kontekst(), "container_image_digest": "sha256:kort"},
+             "container_image_digest:pattern"),
+            ({**_kontekst(), "axe_versjon": ""}, "axe_versjon:minLength"),
+            ({**_kontekst(), "viewport": 1280}, "viewport:type"),
+            ("ikke et objekt", "kontekst er ikke et objekt")):
+        motor = FakeMotor(resultat=_motorresultat())
+        klient = _Stubklient(200)
+        res = controller.kjor_en(klient, "tk", motor, kontekst, lambda k: k)
+        assert motor.payloads == [], brudd
+        assert klient.stier == ["/v1/oppdrag/claim", "/v1/oppdrag/kvittering"]
+        assert res["utfall"] == "avbrutt", res
+        assert res["grunn"] == f"kontekst_ugyldig:{brudd}", res
+        assert klient.kvitteringer[0]["feilkode"] == "kontekst_ugyldig"
+
+    # Grunnen bærer feltet og nøkkelordet, ALDRI verdien: den havner i
+    # driftsloggen, og en digest hører ikke hjemme der.
+    hemmelig = "sha256:" + "b" * 63
+    res = controller.kjor_en(
+        _Stubklient(200), "tk", FakeMotor(resultat=_motorresultat()),
+        {**_kontekst(), "container_image_digest": hemmelig}, lambda k: k)
+    assert hemmelig not in res["grunn"]
+
+    # Den lovlige konteksten står: porten er ikke et nytt hinder for en
+    # riktig konfigurert utfører.
+    ok = _Stubklient(200)
+    assert controller.kjor_en(ok, "tk", FakeMotor(resultat=_motorresultat()),
+                              _kontekst(), lambda k: k)["utfall"] == "utfort"
+
+
 def test_avvist_feilkvittering_er_heller_ikke_ferdig():
     """Codex P1: feilgrenene meldte `avbrutt` uansett hva plattformen
     svarte på feil-kvitteringen.

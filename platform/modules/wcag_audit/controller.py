@@ -14,7 +14,10 @@ Feilhåndteringens utfall:
     P1), en claim uten opplastingskapabilitet
     (`ingen_opplastingskapabilitet`, Codex P2) og et claim uten et
     lesbart tidsvindu igjen (`frist_utilstrekkelig`, Codex P1) er kjent
-    uutførbare av claimet alene. `ekstern_lesing` er observerbar trafikk
+    uutførbare av claimet alene. Det samme gjelder en serverkontekst som
+    ikke kan gi et gyldig `miljo`-felt (`kontekst_ugyldig`, Codex P2) —
+    der er det utføreren som ikke kan levere, men forespørselen ut er
+    like unødvendig. `ekstern_lesing` er observerbar trafikk
     mot noen andres nettsted, og den forespørselen er selve skaden når
     rapporten aldri kunne blitt gyldig, aldri kunne blitt levert eller
     aldri kunne blitt avsluttet i tide.
@@ -156,6 +159,51 @@ def _kontraktsbrudd(payload: dict) -> list[str]:
     from oppdragskontrakt import bryter_feltkontrakten, mangler_paakrevde
     return sorted({*mangler_paakrevde(OPPDRAGSTYPE, payload),
                    *bryter_feltkontrakten(OPPDRAGSTYPE, payload)})
+
+
+def _kontekstbrudd(kontekst) -> str | None:
+    """Grunnen til at serverkonteksten ikke kan gi en gyldig rapport —
+    eller None (Codex P2).
+
+    `bygg` leser `kontekst[k]` for de seks `miljo`-feltene, og de seks er
+    controllerens EGEN konfigurasjon (digest, versjoner, viewport), ikke
+    noe motoren eller oppdraget bestemmer. Uten denne porten var det to
+    utfall, begge gale, og begge ETTER at motoren hadde vært ute:
+
+      * mangler en nøkkel (typisk `container_image_digest` i en
+        feilkonfigurert deployment) → naken `KeyError` fra `bygg`.
+        `kjor_en` fanger kun Motorfeil og ValidationError, så unntaket
+        gikk ut av kjøreløkka og lot det claimede oppdraget stå
+        ufullført til fristen — taushetslinjen §10 forbyr.
+      * ugyldig verdi (en digest uten `sha256:`-form) → oppdaget først av
+        skjemavalideringen, altså etter en full, observerbar kontroll av
+        kundens nettsted. `ekstern_lesing` er klassen der den unødvendige
+        forespørselen ER skaden, og denne er unødvendig på nøyaktig
+        samme måte som en ugyldig bestilling: vi kunne visst det før.
+
+    Kravet leses fra SKJEMAET (`miljo`-delskjemaet), ikke fra en
+    håndskrevet liste her: da kan ikke porten og rapportformen gli fra
+    hverandre når skjemaet får et felt til.
+
+    Teksten som returneres, beskriver SKJEMAET (felt + nøkkelord), aldri
+    verdien — samme disiplin som `api.artefaktskjema._bruddkode`. Her er
+    verdiene riktignok driftskonfigurasjon og ikke kundedata, men grunnen
+    havner i driftsloggen, og en digest er ikke noe loggen trenger.
+    """
+    miljo = rapportskjema.SKJEMA["properties"]["miljo"]
+    if not isinstance(kontekst, dict):
+        return "kontekst er ikke et objekt"
+    mangler = [k for k in miljo["required"] if k not in kontekst]
+    if mangler:
+        return "mangler " + ",".join(sorted(mangler))
+    v = jsonschema.Draft202012Validator(miljo)
+    feil = sorted(v.iter_errors({k: kontekst[k] for k in miljo["required"]}),
+                  key=lambda e: list(e.absolute_path))
+    if feil:
+        e = feil[0]
+        felt = ".".join(str(p) for p in e.absolute_path) or "<miljo>"
+        return f"{felt}:{e.validator}"
+    return None
 
 
 def _skannefrist(claim: dict) -> int | None:
@@ -325,6 +373,21 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "ingen_opplastingskapabilitet"})
         return _feilutfall(rk, "ingen_kapabilitet")
+
+    kbrudd = _kontekstbrudd(kontekst)
+    if kbrudd:
+        # SERVERKONTEKSTEN ER OGSÅ EN FORUTSETNING (Codex P2). De tre
+        # portene over leser bestillingen; denne leser vår egen
+        # konfigurasjon. Utfallet er det samme: kan ingen gyldig rapport
+        # bli til, skal kundens nettsted ikke kontaktes — og den
+        # manglende nøkkelen skal bli en ærlig feilkvittering her, ikke
+        # en `KeyError` ut av kjøreløkka fra `bygg` senere.
+        #
+        # Feilkoden er modulens egen, ikke oppdragets: bestillingen er
+        # feilfri, det er DENNE utføreren som ikke kan levere.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "kontekst_ugyldig"})
+        return _feilutfall(rk, f"kontekst_ugyldig:{kbrudd}")
 
     frist_s = _skannefrist(claim)
     if frist_s is None or frist_s <= 0:
