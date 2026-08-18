@@ -245,6 +245,15 @@ def test_andre_overtakelse_varsler_pa_nytt(migrator):
     assert {r[1] for r in rader} == {"varsel.domene_avklaring"}, rader
 
 
+def _hendelser(migrator, sak_id):
+    _sett_kontekst(migrator, PLATT)
+    r = migrator.execute(
+        "SELECT hendelse_a, hendelse_b FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak_id)).fetchone()
+    migrator.rollback()
+    return r
+
+
 def _varsler(migrator, tenant, bruker_id, hostname):
     _sett_kontekst(migrator, tenant)
     n = migrator.execute(
@@ -305,15 +314,13 @@ def test_pre041_konflikt_uten_sak_far_sak(migrator):
     # referansepayload, RADENS utfordrer og generasjon.
     rad = _sakrad(migrator, ny)
     assert rad[:7] == ("ny", ANNEN_TENANT, TENANT, gen, 0, h, "referanse"), rad
-    # Lineagen peker på de to hendelsene som FAKTISK utgjør konflikten.
-    _sett_kontekst(migrator, PLATT)
-    hend = migrator.execute(
-        "SELECT (SELECT tenant FROM domenekontroll_hendelse WHERE id=u.hendelse_a),"
-        "       (SELECT tenant FROM domenekontroll_hendelse WHERE id=u.hendelse_b)"
-        "  FROM unntak u WHERE u.tenant=%s AND u.id=%s",
-        (PLATT, ny)).fetchone()
-    migrator.rollback()
-    assert hend == (TENANT, ANNEN_TENANT), hend
+    # Lineagen peker på de SAMME to hendelsene den levende veien fant —
+    # ikke på fabrikkerte. (Tenanten deres kan ikke leses herfra:
+    # `domenekontroll_hendelse` har FORCE RLS og migrator står i
+    # plattformtenantens kontekst. Identiteten er nok: de to id-ene ER
+    # konflikten.)
+    assert _hendelser(migrator, ny) == _hendelser(migrator, sak)
+    assert None not in _hendelser(migrator, ny)
 
     # IDEMPOTENT: en ny kjøring rører ikke den saken den nettopp lagde.
     adm = _admin()
@@ -345,6 +352,13 @@ def test_pre041_python_sak_arkivmerkes_med_plattformsaken(migrator):
 
     # Bygg en pre-041-formet sak hos UTFORDREREN, slik python-veien gjorde.
     _sett_kontekst(migrator, ANNEN_TENANT)
+    # Ciphertext-raden bærer en ekte `key_id` (FK til tenant_nokler).
+    # `aktiv=false` for å ikke kollidere med `en_aktiv_dek_per_tenant` —
+    # fixturen skal etterlate tenantens levende nøkkel som den var.
+    migrator.execute(
+        "INSERT INTO tenant_nokler (tenant, key_id, wrapped_dek, aktiv)"
+        " VALUES (%s,'k-pre041-fixtur','\\x00'::bytea,false)"
+        " ON CONFLICT DO NOTHING", (ANNEN_TENANT,))
     nokkel = f"domeneovertakelse:{h}:1"
     logg = int(migrator.execute(
         "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
@@ -358,8 +372,9 @@ def test_pre041_python_sak_arkivmerkes_med_plattformsaken(migrator):
         " maks_auto_forsok_snapshot, policy_versjon, policy_content_hash,"
         " payload_type, sakskilde)"
         " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse','sikkerhet',"
-        "         'hoy','\\x00'::bytea,'k','AES-256-GCM','\\x00'::bytea,"
-        "         0,'<ukjent>','<ukjent>','kryptert','policybrudd')"
+        "         'hoy','\\x00'::bytea,'k-pre041-fixtur','AES-256-GCM',"
+        "         '\\x00'::bytea,0,'<ukjent>','<ukjent>','kryptert',"
+        "         'policybrudd')"
         " RETURNING id",
         (ANNEN_TENANT, logg)).fetchone()[0])
     migrator.commit()

@@ -731,10 +731,20 @@ END $$;
 --     varselet er ikke evidens — feiler det, står saken (EXCEPTION-
 --     grense rundt hele funksjonen, port 41).
 -- ------------------------------------------------------------
-SET LOCAL ROLE disponit_domene_eier;
-
+-- GRANTENE GIS AV TABELLEIEREN (migrator), UTENFOR SET ROLE-blokken —
+-- samme regel som §10s `GRANT INSERT ON revisjonslogg`. MÅLT, ikke
+-- resonnert frem: sto de innenfor, kjørte de som `domene_eier`, som
+-- verken eier tabellene eller har grant option. PostgreSQL feiler ikke
+-- på det — den gir «no privileges were granted» som en WARNING og går
+-- videre. Varslingen var derfor DØD fra første dag: hvert eneste kall
+-- traff `permission denied for table varsel`, ble svelget av port 41s
+-- EXCEPTION-grense (varselet er ikke evidens), og ingen part fikk noen
+-- gang beskjed om at et domene var overtatt. Ingen test målte at
+-- varselet FANTES, bare at en feil ikke felte saken.
 GRANT SELECT ON brukermedlemskap, varselvalg TO disponit_domene_eier;
 GRANT INSERT ON varsel TO disponit_domene_eier;
+
+SET LOCAL ROLE disponit_domene_eier;
 
 -- Signaturen fikk `p_konflikthendelse` (Codex P2) — den gamle 3-arg-formen
 -- ville ellers blitt stående som en overload som fortsatt slukte varsler.
