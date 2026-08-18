@@ -21,4 +21,4 @@
 # vært verre: den ser pinnet ut og bygger ikke.
 #
 # Linjer som begynner med # er kommentarer.
-mcr.microsoft.com/playwright/python@sha256:UFYLT_DIGEST_MANGLER
+mcr.microsoft.com/playwright/python@sha256:42e251ec3238672c931be6c3565ff279690ae072c3e22058128d0412494f6866
