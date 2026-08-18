@@ -1133,7 +1133,8 @@ def test_hver_domenestatus_har_en_etikett_i_begge_sprak(migrator):
 
     rot = pathlib.Path(__file__).resolve().parents[3]
     for fil in ("nb.json", "en.json"):
-        kart = _json.loads((rot / "locales" / fil).read_text("utf-8"))
+        kart = _json.loads(
+            (rot / "locales" / fil).read_text(encoding="utf-8"))
         mangler = sorted(s for s in statuser
                          if not kart.get(f"domenestatus.{s}"))
         assert not mangler, f"{fil} mangler etikett for: {', '.join(mangler)}"
