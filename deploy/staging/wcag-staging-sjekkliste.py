@@ -606,6 +606,29 @@ def fase6(m, http, mtk, motorkmd, digest):
             krav="4 tillat + 1 ikke-tillat",
             ok=utfall[:4] == ["tillat"] * 4 and utfall[4] != "tillat")
 
+    # KØEN TØMMES FØR FASE 7 (Codex P1). Porten over måler BESLUTNINGEN,
+    # ikke utførelsen — men de fire tillatte bestillingene er fire EKTE
+    # WCAG-oppdrag, og ingen av dem ble claimet. `claim_neste_oppdrag`
+    # velger eldste claimbare oppdrag GLOBALT (`ORDER BY opprettet, id`,
+    # ingen tenantfilter — funksjonen er SECURITY DEFINER), så fase 7 sin
+    # `false`-motor traff ETT AV DISSE i stedet for sitt eget oppdrag.
+    #
+    # Og fase 7 ble GRØNN av det: den leste `avbrutt` fra en helt annen
+    # kjøring, og «ingen promoterte artefakter» fra et oppdrag ingen hadde
+    # rørt. En feilinjeksjon som beviser seg på et urørt oppdrag beviser
+    # ingenting. Oppdragene kjøres derfor ferdig her, på den ekte veien.
+    drenert = []
+    for _ in range(len(utfall) + 4):    # tak, aldri en evig løkke
+        res = _kontroller_kjor(mtk, motorkmd, digest)
+        if res.get("utfall") == "tomt":
+            break
+        drenert.append(res.get("utfall"))
+    else:
+        raise SystemExit(f"køen tømmes ikke: {drenert} — fase 7 ville"
+                         " feilinjisert mot et annet oppdrag enn sitt eget")
+    evidens("fase6_ko_drenert", utfall=drenert,
+            krav="tom kø før feilinjiseringen i fase 7")
+
     # 24: motoren kjører uten credentials — mål containerens faktiske miljø.
     kanari = "KANARI_" + secrets.token_hex(8)
     ut = subprocess.run(
@@ -641,10 +664,17 @@ def fase7(m, http, mtk, digest):
                     " oppdrag_id=%s AND tilstand='promotert'",
                     (TENANT, oid)).fetchone()[0]
     m.rollback()
+    # PORTEN MÅ TREFFE VÅRT EGET OPPDRAG (Codex P1). `utfall == "avbrutt"
+    # and art == 0` var sant også når claimen hadde tatt et ANNET oppdrag:
+    # «ingen promoterte artefakter» er trivielt sant for et oppdrag ingen
+    # rørte, og `avbrutt` kom fra den andre kjøringen. Kravet er derfor at
+    # NETTOPP `oid` endte `feilet` med kvittering — da kan ikke en lekket
+    # kø gi et grønt kryss, den gir et rødt.
     evidens("feilinjisering_motorfeil", utfall=res.get("utfall"),
-            oppdragstatus=rad[0], har_kvittering=rad[1],
+            oppdrag=oid, oppdragstatus=rad[0], har_kvittering=rad[1],
             promoterte_artefakter=art,
-            ok=res.get("utfall") == "avbrutt" and art == 0)
+            ok=res.get("utfall") == "avbrutt" and art == 0
+            and rad[0] == "feilet" and bool(rad[1]))
 
     # Evidensfrist → reaper → M-37-sak, oppdrag feilet (port 22/23).
     kropp2 = {"bestillingstype": OPPDRAGSTYPE, "hostname": VERT,
