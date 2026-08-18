@@ -2945,6 +2945,84 @@ def test_metasjekken_staar_paa_den_delte_registreringsveien(migrator):
         r.close()
 
 
+@pg
+def test_skjemaregistreringen_bevarer_hvem_som_publiserte(migrator):
+    """Codex P2: `registrer_artefaktskjema` TOK `p_aktor` og kastet den.
+
+    Raden bar skjemaet og et tidsstempel, ingenting om hvem. Skjemaraden
+    er udødelig og kan senere bli den permanente valideringskontrakten for
+    en artefakttype — bindingen ingen kan angre — og da er «hvilken
+    administrator publiserte dette» spørsmålet en driftsperson faktisk
+    sitter med når en type oppfører seg uventet.
+
+    Sporet er `modulregister_hendelse` (append-only i 014), skrevet i
+    SAMME transaksjon som innsettingen: en registrering uten spor, eller
+    et spor uten registrering, ville begge vært en løgn om hva som
+    skjedde.
+
+    Kontroll: fjern hendelses-INSERT-en i `registrer_artefaktskjema`, så
+    finner ikke denne aktøren igjen.
+    """
+    from api.artefaktskjema import registrer
+    from db.pg import koble
+
+    def _hendelser(h):
+        r = koble(MIGRATOR_DSN)
+        try:
+            return r.execute(
+                "SELECT aktor FROM modulregister_hendelse"
+                "  WHERE hendelse = 'artefaktskjema_registrert'"
+                "    AND detalj->>'skjema_hash' = %s ORDER BY id",
+                (h,)).fetchall()
+        finally:
+            r.close()
+
+    unikt = {"type": "object", "x": secrets.token_hex(4)}
+    kanon, h = _jcs_hash(unikt)
+    c = _mk_admin("disponit_modules_admin")
+    try:
+        # INGEN hendelse før registreringen — den kommer FRA den.
+        assert _hendelser(h) == []
+        assert c.execute("SELECT registrer_artefaktskjema(%s,%s,%s)",
+                         (kanon, h, "ada@example")).fetchone()[0] == h
+        # Hendelsen er ikke synlig for andre før innsettingen er det: én
+        # transaksjon, ett utfall.
+        assert _hendelser(h) == []
+        c.commit()
+        assert _hendelser(h) == [("ada@example",)]
+
+        # Den IDEMPOTENTE gjentakelsen publiserer ingenting nytt, og skal
+        # ikke flytte svaret på hvem som publiserte skjemaet til den siste
+        # som kjørte deployet på nytt.
+        c.execute("SELECT registrer_artefaktskjema(%s,%s,%s)",
+                  (kanon, h, "bo@example"))
+        c.commit()
+        assert _hendelser(h) == [("ada@example",)]
+
+        # Den delte Python-veien er den samme funksjonen, og bærer aktøren
+        # like langt.
+        annet = {"type": "object", "x": secrets.token_hex(4)}
+        h2 = registrer(c, annet, "cara@example")
+        c.commit()
+        assert _hendelser(h2) == [("cara@example",)]
+    finally:
+        c.close()
+
+    # Et AVVIST skjema etterlater heller ingen hendelse: sporet beskriver
+    # rader som finnes, ikke forsøk som ble stoppet.
+    daarlig = {"type": "strng", "x": secrets.token_hex(4)}
+    kanon_d, h_d = _jcs_hash(daarlig)
+    d = _mk_admin("disponit_modules_admin")
+    try:
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            d.execute("SELECT registrer_artefaktskjema(%s,%s,%s)",
+                      (kanon_d, h_d, "dan@example"))
+        d.rollback()
+    finally:
+        d.close()
+    assert _hendelser(h_d) == []
+
+
 def _rapportskjema_kopi() -> dict:
     """Det EKTE rapportskjemaet — den strengeste prøven på at vakten ikke
     gir falske treff: går den rød her, ville PR-014c ikke kunnet deployes."""

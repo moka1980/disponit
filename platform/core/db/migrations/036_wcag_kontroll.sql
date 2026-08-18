@@ -445,11 +445,37 @@ END $$;
 --
 -- Idempotent for identisk innhold; samme hash med ANNET innhold er
 -- umulig (sha256-kollisjon) og PK-en stopper uansett.
+--
+-- AKTØREN SKRIVES (Codex P2). Funksjonen TOK `p_aktor` og kastet den:
+-- raden bar skjemaet og et tidsstempel, ingenting om hvem. Skjemaraden
+-- er udødelig og kan senere bli den permanente valideringskontrakten for
+-- en artefakttype — nettopp den bindingen ingen kan angre — og da er
+-- «hvilken administrator publiserte dette» spørsmålet en driftsperson
+-- faktisk sitter med når en type oppfører seg uventet. Uten svaret var
+-- den eneste sporbarheten et tidsstempel å korrelere mot loggene, hvis
+-- de fortsatt fantes.
+--
+-- Hendelsen skrives i SAMME transaksjon som innsettingen: en registrering
+-- uten spor, eller et spor uten registrering, ville begge vært en løgn om
+-- hva som skjedde. `modulregister_hendelse` er append-only (014, egne
+-- triggere mot UPDATE/DELETE/TRUNCATE), altså like uangripelig som raden
+-- den beskriver — samme spor som `registrer_malautorisasjonsvilkar`
+-- under bruker, og av samme grunn: dette er et PLATTFORMREGISTER.
+--
+-- Bare den EKTE innsettingen logges. Den idempotente gjentakelsen
+-- publiserer ingenting nytt, og en hendelse for den ville flyttet svaret
+-- på «hvem publiserte skjemaet» til den siste som kjørte deployet på
+-- nytt.
+--
+-- `aktor` er NOT NULL i hendelsestabellen, så en registrering uten
+-- oppgitt aktør feiler nå i stedet for å bli en udødelig rad ingen kan
+-- knyttes til. Det er samme fail-closed-linje som resten av funksjonen,
+-- og samme kontrakt `registrer_malautorisasjonsvilkar` alt har.
 CREATE OR REPLACE FUNCTION registrer_artefaktskjema(
     p_kanonisk TEXT, p_oppgitt_hash TEXT, p_aktor TEXT)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_hash TEXT; v_skjema JSONB; v_typefeil TEXT;
+DECLARE v_hash TEXT; v_skjema JSONB; v_typefeil TEXT; v_ny INT;
 BEGIN
     v_hash := encode(sha256(convert_to(p_kanonisk, 'UTF8')), 'hex');
     IF v_hash IS DISTINCT FROM p_oppgitt_hash THEN
@@ -484,6 +510,14 @@ BEGIN
     -- `valider()` kjører metasjekken en tredje gang, før innhold måles,
     -- slik at et skjema som likevel skulle ha kommet inn gir en ærlig
     -- avvisning i stedet for en 500-er.
+    --
+    -- REFERANSEOPPSLAG er en uttalt grense her, ikke en glemsel (Codex
+    -- P2): å avgjøre om en `$ref` treffer noe krever at JSON-pekere løses
+    -- mot dokumentet, og den vandringen bor i Python
+    -- (`api.artefaktskjema._referansefeil`, kjørt på den delte
+    -- registreringsveien FØR innsetting). Kommer en direkte SQL-kaller
+    -- likevel forbi, er skaden ikke lenger en permanent 500-er: `valider`
+    -- fanger oppslagsfeilen og svarer med en avvisning.
     IF jsonb_typeof(v_skjema) <> 'object' THEN
         RAISE EXCEPTION 'artefaktskjema: skjemaet må være et objekt'
             USING ERRCODE = 'invalid_parameter_value';
@@ -498,6 +532,13 @@ BEGIN
     INSERT INTO public.artefaktskjema (skjema_hash, kanonisk)
         VALUES (v_hash, p_kanonisk)
         ON CONFLICT (skjema_hash) DO NOTHING;
+    GET DIAGNOSTICS v_ny = ROW_COUNT;
+    IF v_ny > 0 THEN
+        INSERT INTO public.modulregister_hendelse (modul_id, hendelse, aktor,
+                                                   detalj)
+            VALUES ('plattform', 'artefaktskjema_registrert', p_aktor,
+                    jsonb_build_object('skjema_hash', v_hash));
+    END IF;
     RETURN v_hash;
 END $$;
 
