@@ -65,9 +65,13 @@ staging_sjekkliste:
       utsteder klemmes til maks 3600 s (migrasjon 017), og det finnes
       ingen fornyelsesvei — en kontroll som bruker 90 min ville møtt et
       utløpt opplastingstoken, altså feilet ETTER at hele jobben var
-      gjort. Motorens tidsavbrudd (Kommandomotor, 3600 s som standard)
-      peker på det samme taket. En annonsert frist stacken ikke kan holde
-      er et løfte om noe annet enn det som skjer; 90 min krever
+      gjort. Motorens tidsavbrudd (Kommandomotor) ligger UNDER det taket,
+      ikke på det: 3300 s skanning + 300 s avslutning (Codex P1, runde 12)
+      — en motor som fikk bruke hele timen ble ferdig nøyaktig når
+      opplastingskapabiliteten var utløpt. Eier-leasen dekker samme frist
+      etter migrasjon 037, så ingen annen utfører reclaimer oppdraget mens
+      kontrollen pågår. En annonsert frist stacken ikke kan holde er et
+      løfte om noe annet enn det som skjer; 90 min krever
       kapabilitetsfornyelse først, og det er en plattformendring med egen
       spec-runde — ikke en konstant å skru opp her.
   rollback_testet:

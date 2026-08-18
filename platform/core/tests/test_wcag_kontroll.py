@@ -2501,6 +2501,34 @@ def test_regelsettversjon_fra_motoren_ma_vaere_en_streng():
     assert regelsettversjon("v" * 100) == "v" * 64
 
 
+def test_motorfristen_lar_det_bli_tid_igjen_til_opplastingen():
+    """Codex P1: motorens standardfrist var 3600 s — HELE claimets tak.
+
+    Opplastingskapabiliteten claimet utsteder klemmes til 3600 s
+    (migrasjon 017) og eier-leasen til det samme (migrasjon 037), og
+    ingen av dem har en fornyelsesvei. En motor som fikk bruke hele taket,
+    ble derfor ferdig nøyaktig når kapabiliteten den skulle laste opp med
+    var utløpt: alt arbeidet gjort, ingen evidens levert, og oppdraget
+    står ufullført til fristen.
+
+    Fristen dekker SKANNINGEN; avslutningen (kanonisering, opplasting,
+    signert kvittering) har sin egen margin. Testen binder de tre tallene
+    sammen i stedet for å gjenta dem, så ingen av dem kan skrus opp alene.
+
+    Kontroll: sett `STANDARD_TIDSAVBRUDD_S` tilbake til 3600, så blir
+    denne rød — marginen forsvinner.
+    """
+    from modules.wcag_audit.motor import (AVSLUTNINGSMARGIN_S, Kommandomotor,
+                                          STANDARD_TIDSAVBRUDD_S)
+    #: Claimets tak: migrasjon 017 (kapabilitet) og 037 (lease).
+    tak = 3600
+    assert STANDARD_TIDSAVBRUDD_S + AVSLUTNINGSMARGIN_S == tak
+    assert AVSLUTNINGSMARGIN_S >= 300, \
+        "under fem minutter til opplasting og kvittering er ingen margin"
+    # ... og standarden er den motoren FAKTISK får når ingen sier noe.
+    assert Kommandomotor(["x"]).tidsavbrudd_s == STANDARD_TIDSAVBRUDD_S
+
+
 def test_dypt_nostet_motorutdata_er_motorfeil():
     """Codex P1: `json.loads` rekurserer, og fangsten manglet RecursionError.
 

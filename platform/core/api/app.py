@@ -1511,6 +1511,16 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # (nettopp det bindingen skal hindre). Til modul-onboarding trår i
             # kraft passeres NULL: en registrert oppdragstype er da IKKE claimbar
             # herfra (fail-closed) — legacy/uregistrert arbeid er upåvirket.
+            #
+            # 300 er et GULV, ikke leasen (Codex P1 → migrasjon 037). Endepunktet
+            # vet ikke hvilket oppdrag det er i ferd med å dele ut — hvor lenge
+            # arbeidet får ta står på RADEN (`utforelsesfrist`), og bare
+            # `claim_neste_oppdrag` har den når leasen settes. Funksjonen
+            # strekker derfor leasen til minst den fristen, opp til sitt eget
+            # tak på 3600 s. Et fast tall her ville betydd at et langt oppdrag
+            # (WCAG: 30/60 min) fikk leasen sin til å utløpe MENS utføreren
+            # jobbet, og en annen utfører ville reclaimet det og bestilt det
+            # samme eksterne arbeidet en gang til.
             rad = conn.execute(
                 "SELECT id, tenant, unntak_id, oppdragstype, handling,"
                 " repair_operation_id, payload_kryptert, key_id, nonce,"

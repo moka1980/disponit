@@ -308,14 +308,38 @@ def avkortet(raa) -> tuple:
     return tuple(raa)
 
 
+#: Motorens standardfrist. IKKE 3600 (Codex P1, runde 12).
+#:
+#: 3600 s er TAKET for hele claimet, ikke for skanningen: både
+#: opplastingskapabiliteten claimet utsteder (migrasjon 017) og eier-leasen
+#: (migrasjon 037) klemmes til 3600 s, og ingen av dem har en
+#: fornyelsesvei. En motor som fikk bruke hele taket, ble derfor ferdig
+#: nøyaktig når kapabiliteten den skal laste opp med var utløpt — hele
+#: jobben gjort, ingen evidens levert.
+#:
+#: Fristen her dekker SKANNINGEN. De siste fem minuttene er kanonisering,
+#: opplasting og signert kvittering, altså det som gjør et fullført arbeid
+#: til et avsluttet oppdrag. Manifestets annonserte 30/60 min er fristen
+#: for OPPDRAGET; motoren får det som er igjen når avslutningen er trukket
+#: fra.
+STANDARD_TIDSAVBRUDD_S = 3300
+#: Avslutningen (kanonisering + opplasting + kvittering) — differansen
+#: mellom motorfristen og 3600 s-taket, uttalt så den ikke kan bli borte.
+AVSLUTNINGSMARGIN_S = 300
+
+
 class Kommandomotor:
     """Kjør den konfigurerte motorkommandoen (containeren) og les JSON på
     stdout. Kommandoen kommer fra drift-config (DISPONIT_WCAG_MOTOR), aldri
     fra oppdraget. Utdata er ubetrodd: alt går videre til `rapport.bygg` +
     skjemavalidering; en motor som skriver søppel gir Motorfeil, ikke en
-    rapport."""
+    rapport.
 
-    def __init__(self, kommando: list[str], tidsavbrudd_s: int = 3600):
+    Fristen er `STANDARD_TIDSAVBRUDD_S`, ikke claimets 3600 s-tak: se der
+    for hvorfor de siste fem minuttene tilhører opplastingen."""
+
+    def __init__(self, kommando: list[str],
+                 tidsavbrudd_s: int = STANDARD_TIDSAVBRUDD_S):
         self.kommando = list(kommando)
         self.tidsavbrudd_s = tidsavbrudd_s
 
