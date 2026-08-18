@@ -126,6 +126,11 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
     raden blir stående `tilbakekalt` med motparten: arbeideren tar den likevel,
     og beviset fører til en NY avklaringsgenerasjon, aldri til `verifisert`.
 
+    En `verifisert` rad som har passert `utloper` (90 døgn) skrives ned til
+    `utlopt` av samme funksjon og køes derfra: det er FORNYELSEN, og uten den
+    var 90-dagersvinduet en blindvei — statusen sto `verifisert`, autorisasjonen
+    var ugyldig, og en ny utstedelse ble aldri sett på av arbeideren.
+
     Står raden i en pågående M-37-avklaring, svarer basen nei og klienten får
     409 `domene_challenge_avvist` — aldri 201 med en TXT-oppskrift ingen
     arbeider kommer til å lese.

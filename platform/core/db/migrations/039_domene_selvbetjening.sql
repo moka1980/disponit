@@ -597,12 +597,46 @@ END $$;
 -- DNS-oppslag. Ville vi satt raden `ventende`, ville nettopp DET skjedd:
 -- `verifiser_domenekontroll` ser da hverken `tilbakekalt` eller motparten,
 -- og upserten nederst hadde skrevet `verifisert`.
+--
+-- DET NATURLIGE UTLØPET SKRIVES NED (Codex P1). `utloper` er
+-- `verifisert_ts + 90 døgn`, og INGEN jobb flytter statusen når den passerer:
+-- revalideringen friskmelder bare `siste_vellykkede_revalidering`, aldri
+-- vinduet. Raden blir altså stående `verifisert` mens
+-- `v_domeneautorisasjon.gyldig` (016 §6) er falsk, og bestillingsveien
+-- avviser den. Legger kunden domenet til på nytt — den ene selvbetjente
+-- handlingen som finnes — byttet `utsted_challenge` hashen, men statusen
+-- `verifisert` er hverken `ventende` eller `tilbakekalt`+motpart, så
+-- `ventende_domenechallenges` så aldri raden: 201 med fersk TXT-oppskrift,
+-- og et bevis ingen kom til å lese. Hvert domene ble dermed permanent
+-- ubrukelig etter 90 døgn, uten noen selvbetjent vei tilbake.
+--
+-- Å la revalideringen forlenge `utloper` ville vært å avskaffe vinduet: 90
+-- døgn er nettopp kravet om en NY utstedelse, ikke om fortsatt daglig
+-- nærvær. Så raden skrives i stedet ned til den tilstanden den ALT er i —
+-- `utlopt` — og faller derfra inn i køingen under. Overgangen er den samme
+-- 018 selv gjør ved overføring («utlopt_ved_overforing», B4 rad 2), inkludert
+-- generasjonsøkningen: en verifisering som opphører er en ny
+-- autorisasjonsgenerasjon for egress. `verifisert → ventende` finnes ikke i
+-- statemaskinen (016 §7b), og skal ikke finnes — nedskrivningen ER det
+-- mellomsteget.
+--
+-- Ingenting tas fra kunden her: autorisasjonen var alt ugyldig, og 018 lot
+-- allerede en FREMMED tenant overta et naturlig utløpt hostnavn direkte.
+-- Utløpet før dette punktet var bare usynlig i statusen.
+--
+-- Og med en STATUSOVERGANG i kroppen slutter denne veien seg til den felles
+-- låserekkefølgen: kanonisér, ta hostname-advisory-låsen, ta så raden. Før
+-- tok den bare radlåsen, og det var trygt nettopp fordi den ikke flyttet
+-- noe; nå kappløper den med `verifiser_domenekontroll` om en rad begge kan
+-- skrive ned, og uten låsen kunne en fremmed overtakelse skrevet vår
+-- ferske `ventende` tilbake til `utlopt` — kundens nye utfordring stille
+-- borte, uten spor.
 CREATE OR REPLACE FUNCTION utsted_challenge_selvbetjent(
     p_tenant TEXT, p_hostname TEXT, p_wildcard BOOLEAN,
     p_token_hash TEXT, p_aktor TEXT)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_host TEXT; v_status TEXT; v_motpart TEXT;
+DECLARE v_host TEXT; v_status TEXT; v_motpart TEXT; v_utloper TIMESTAMPTZ;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant,
                                        'utsted_challenge_selvbetjent');
@@ -610,11 +644,15 @@ BEGIN
     -- den avviser, og to tekstlige former av samme navn skal ikke kunne bli
     -- to ulike oppslag her heller.
     v_host := public.krev_kanonisk_hostname(p_hostname);
+    -- Advisory-låsen FØR radlåsen — samme rekkefølge som alle de andre
+    -- domeneovergangene, og av samme grunn: nøkkelen regnes av det KANONISKE
+    -- navnet, ellers er det ikke den samme låsen.
+    PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || v_host, 0));
     -- FOR UPDATE: statusen vi beslutter på skal ikke kunne endres av et
     -- samtidig `bekreft_domenechallenge`/`verifiser_domenekontroll` mellom
-    -- lesningen og køingen under. Bare RADlåsen tas, aldri hostname-
-    -- advisory-låsen: da finnes det ingen lås å ta i motsatt rekkefølge.
-    SELECT d.status, d.konflikt_motpart INTO v_status, v_motpart
+    -- lesningen og køingen under.
+    SELECT d.status, d.konflikt_motpart, d.utloper
+      INTO v_status, v_motpart, v_utloper
       FROM public.domenekontroll d
      WHERE d.tenant = p_tenant AND d.hostname = v_host
        FOR UPDATE;
@@ -624,9 +662,26 @@ BEGIN
             p_tenant, v_host, v_status
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- Nedskrivningen skjer FØR utstedelsen, så `utsted_challenge` og køingen
+    -- under ser én og samme tilstand. NULL teller som utløpt: en `verifisert`
+    -- rad uten vindu er ikke gyldig i `v_domeneautorisasjon` heller (`now() <
+    -- NULL` er NULL), og skal ikke være den ene tilstanden ingen kommer ut av.
+    IF v_status = 'verifisert'
+       AND (v_utloper IS NULL OR v_utloper <= now()) THEN
+        UPDATE public.domenekontroll
+           SET status = 'utlopt',
+               autorisasjonsgenerasjon = autorisasjonsgenerasjon + 1
+         WHERE tenant = p_tenant AND hostname = v_host;
+        INSERT INTO public.domenekontroll_hendelse
+            (tenant, hostname, hendelse, fra_status, til_status, grunn, aktor)
+            VALUES (p_tenant, v_host, 'utlopt', 'verifisert', 'utlopt',
+                    'naturlig_utlopt', p_aktor);
+        v_status := 'utlopt';
+    END IF;
     PERFORM public.utsted_challenge(p_tenant, v_host, p_wildcard,
                                     p_token_hash, p_aktor);
-    -- Køes: tilbakekalt av en OPERATØR (ingen motpart) og utløpt. Den AVVISTE
+    -- Køes: tilbakekalt av en OPERATØR (ingen motpart) og utløpt — herunder
+    -- den nettopp nedskrevne, naturlig utløpte verifiseringen. Den AVVISTE
     -- kandidaten (motpart satt) blir stående `tilbakekalt` — arbeideren tar
     -- henne likevel, og det er statusen som holder 018s gjerde oppe hele veien
     -- til `verifiser_domenekontroll` har laget den nye konflikten.

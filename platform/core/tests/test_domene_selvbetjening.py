@@ -703,7 +703,11 @@ def test_alle_domeneoverganger_deler_laaserekkefolge(migrator):
                  "verifiser_domenekontroll(text,text,boolean,text)",
                  "tilbakekall_domenekontroll(text,text,text,text)",
                  "avgjor_domeneovertakelse(text,text,bigint,boolean,text)",
-                 "degrader_forbigatte_utfordrere(text,text)"):
+                 "degrader_forbigatte_utfordrere(text,text)",
+                 # Selvbetjeningens inngang skriver NED en naturlig utløpt
+                 # verifisering (Codex P1) og er dermed en statusovergang som
+                 # alle andre — den måles på samme regel.
+                 "utsted_challenge_selvbetjent(text,text,boolean,text,text)"):
         kropp = migrator.execute(
             "SELECT pg_get_functiondef(%s::regprocedure)", (sign,)).fetchone()[0]
         migrator.rollback()
@@ -713,6 +717,100 @@ def test_alle_domeneoverganger_deler_laaserekkefolge(migrator):
         assert rad >= 0, f"{sign} tar ingen radlås"
         assert laas < rad, \
             f"{sign} tar radlåsen før advisory-låsen — motsatt av de andre"
+
+
+@pg
+def test_naturlig_utlopt_verifisering_fornyes_selvbetjent(migrator):
+    """Codex P1: 90-dagersvinduet må ha en vei UT, ikke bare inn.
+
+    `utloper` er `verifisert_ts + 90 døgn`, og ingen jobb flytter statusen
+    når den passerer — revalideringen friskmelder bare
+    `siste_vellykkede_revalidering`. Raden ble derfor stående `verifisert`
+    med en autorisasjon `v_domeneautorisasjon.gyldig` (og dermed
+    bestillingsveien) forkastet, og den ENE selvbetjente handlingen som
+    finnes — legg domenet til på nytt — byttet hashen uten å flytte
+    statusen. `ventende_domenechallenges` plukker ikke `verifisert`, så
+    beviset ble aldri lest: 201 med fersk oppskrift, og domenet permanent
+    ubrukelig etter 90 døgn.
+
+    Målt her hele veien: utstedelsen skriver raden ned til `utlopt` (samme
+    overgang 018 gjør ved overføring, med ny generasjon), køingen tar den
+    derfra, arbeideren SER den, og beviset gir et NYTT vindu.
+
+    MUTASJONEN SOM DREPER DENNE: fjern nedskrivningen i
+    `utsted_challenge_selvbetjent` — raden blir da stående `verifisert`, og
+    plukket er tomt.
+    """
+    vert = f"fornyelse{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))
+        a.commit()
+    finally:
+        a.close()
+    # 90 døgn er gått. Ingenting annet endres: det er nettopp poenget at
+    # raden fortsatt PÅSTÅR `verifisert`.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET verifisert_ts=now()-interval '91 days',"
+        " utloper=now()-interval '1 day' WHERE tenant=%s AND hostname=%s",
+        (TENANT, vert))
+    migrator.commit()
+    _sett_kontekst(migrator, TENANT)
+    for_ = migrator.execute(
+        "SELECT d.status, v.gyldig FROM domenekontroll d"
+        " JOIN v_domeneautorisasjon v USING (tenant, hostname)"
+        " WHERE d.tenant=%s AND d.hostname=%s", (TENANT, vert)).fetchone()
+    migrator.rollback()
+    assert for_ == ("verifisert", False), \
+        f"forutsetningen holder ikke — blindveien finnes ikke: {for_}"
+    gen0 = _gen(migrator, TENANT, vert)
+
+    token = secrets.token_hex(32)
+    h = hashlib.sha256(token.encode()).hexdigest()
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT utsted_challenge_selvbetjent(%s,%s,false,%s,'rt')",
+                   (TENANT, vert, h))
+        rt.commit()
+    finally:
+        rt.close()
+
+    _sett_kontekst(migrator, TENANT)
+    etter = migrator.execute(
+        "SELECT status, autorisasjonsgenerasjon FROM domenekontroll"
+        " WHERE tenant=%s AND hostname=%s", (TENANT, vert)).fetchone()
+    # Nedskrivningen skal stå i den append-only historikken, ikke bare i
+    # statusen: en autorisasjon som opphører er en hendelse, ikke en detalj.
+    utlopshendelse = migrator.execute(
+        "SELECT count(*) FROM domenekontroll_hendelse WHERE tenant=%s"
+        " AND hostname=%s AND grunn='naturlig_utlopt'",
+        (TENANT, vert)).fetchone()[0]
+    migrator.rollback()
+    assert etter[0] == "ventende", \
+        f"den utløpte verifiseringen ble ikke køet på nytt: {etter}"
+    assert etter[1] > gen0, "nedskrivningen ga ingen ny autorisasjonsgenerasjon"
+    assert utlopshendelse == 1, "utløpet ble skrevet ned uten revisjonsspor"
+
+    # Arbeideren ser den — ellers er oppskriften fortsatt uten leser.
+    assert (TENANT, vert) in _alle_ventende(migrator), \
+        "det fornyede domenet plukkes ikke av arbeideren"
+
+    _sett_kontekst(migrator, TENANT)
+    svar = _som_eier(migrator, "SELECT bekreft_domenechallenge(%s,%s,'w',%s)",
+                     (TENANT, vert, [token]))[0]
+    migrator.commit()
+    assert svar == "verifisert", svar
+    _sett_kontekst(migrator, TENANT)
+    fornyet = migrator.execute(
+        "SELECT d.status, d.utloper > now(), v.gyldig FROM domenekontroll d"
+        " JOIN v_domeneautorisasjon v USING (tenant, hostname)"
+        " WHERE d.tenant=%s AND d.hostname=%s", (TENANT, vert)).fetchone()
+    migrator.rollback()
+    assert fornyet == ("verifisert", True, True), \
+        f"fornyelsen ga ikke et nytt gyldig vindu: {fornyet}"
 
 
 @pg
