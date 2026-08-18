@@ -771,11 +771,11 @@ def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
     sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
         encoding="utf-8")
     kropp = sjekk.split("def fase9(", 1)[1]
-    # ALLE grenene: røde målinger, manglende modultoken, manglende
-    # rootless-forutsetninger, manglende motorimage, en effektiv motor som
-    # ikke er imaget runden målte, og en unit som ikke kom opp etter
-    # `enable --now`.
-    assert kropp.count("_steng_doeren(m, ") == 6, \
+    # ALLE grenene: røde målinger, manglende modultoken, et modultoken som
+    # ikke er autorisert, manglende rootless-forutsetninger, manglende
+    # motorimage, en effektiv motor som ikke er imaget runden målte, og en
+    # unit som ikke kom opp etter `enable --now`.
+    assert kropp.count("_steng_doeren(m, ") == 7, \
         "hver gren uten arbeider i drift må rulle tilbake fase 2"
     assert "fase9(m, mtk, digest, maalt_runde=" in sjekk
 
@@ -787,6 +787,51 @@ def test_doeren_stenges_naar_arbeideren_ikke_settes_i_drift():
     blokk = sjekk.split('evidens("fase9_modul_deaktivert"', 1)[1]
     assert 'ok=status == ("nodeaktivert",) and claiming == 0' in blokk
     assert 'evidens("fase9_doeren_star_apen"' in sjekk
+
+
+def test_modultokenet_er_bundet_til_sin_release():
+    """Codex P1, runde 12: et token uten sin release blir gjenbrukt.
+
+    Nødstoppets vei tilbake KREVER en ny release-id (`bytt_release` nekter
+    å reclaime en drenert deployment), og `noddeaktiver_modul` har i samme
+    transaksjon bumpet modulens epoch og tilbakekalt HELE tokenfamilien.
+    Lagret runden tokenet i en uversjonert fil, leste gjenopprettingen —
+    fasene 4–7 eller `--fase 9` alene — det gamle tokenet, og hvert eneste
+    claim fra den nye releasen fikk 401.
+
+    At det gikk ubemerket, er den andre halvdelen: arbeideren skriver
+    `wcag_arbeider_oppe` FØR sitt første autentiserte claim, så fase 9
+    målte en «grønn» idriftsettelse av en arbeider som ikke kunne utføre
+    ett eneste oppdrag."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    # Tokenet lagres MED releasen, og leses bare tilbake for den samme.
+    assert '"release": RELEASE, "token": mtk' in sjekk
+    lest = sjekk.split("def _lagret_modultoken(", 1)[1].split("\ndef ", 1)[0]
+    assert "if rel != RELEASE:" in lest
+    assert 'evidens("modultoken_forkastet"' in lest
+    # Ingen vei utenom: den uversjonerte fila finnes ikke lenger noe sted.
+    assert 'RUNDE / "modultoken"' not in sjekk
+    for kall in ("lagret = _lagret_modultoken()",
+                 "mtk = _lagret_modultoken()"):
+        assert kall in sjekk, kall
+
+    # ... og fase 9 stoler ikke på fila alene: dommen felles av
+    # plattformens EGNE porter, de samme claim-veien bruker, FØR uniten
+    # enables. Modulen kan ha vært nødstoppet uten at release-id-en endret
+    # seg — da er tokenet tilbakekalt og fila fortsatt «riktig».
+    kropp = sjekk.split("def fase9(", 1)[1]
+    assert "autorisert, detalj = _tokenet_er_autorisert(m, mtk)" in kropp
+    assert "if not autorisert:" in kropp
+    assert "ok=autorisert)" in kropp
+    dom = sjekk.split("def _tokenet_er_autorisert(", 1)[1].split(
+        "\ndef ", 1)[0]
+    assert "FROM verifiser_modultoken(%s)" in dom
+    assert "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)" in dom
+    assert '(MODUL, "staging", RELEASE)' in dom
+    # En umålt port er ikke en bestått port: feiler oppslaget, er svaret
+    # NEI — ikke «vi vet ikke, kjør på».
+    assert 'return False, {"grunn": "tokenoppslaget feilet"' in dom
 
 
 def test_konteksten_avledes_av_den_effektive_motoren():

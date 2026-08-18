@@ -96,6 +96,14 @@ TESTNETT = REPO / "platform/modules/wcag_audit/testnettsted"
 MOTOR_AXE = REPO / "platform/modules/wcag_audit/motor_axe"
 
 RUNDE = Path(os.environ.get("WCAG_RUNDE_DIR", "/root/wcag-runde"))
+#: Modultokenet MED RELEASEN det ble utstedt for (Codex P1, runde 12).
+#: Et modultoken er bundet til (modul, miljø, release) OG til modulens
+#: epoch, og `noddeaktiver_modul` tilbakekaller hele familien i samme
+#: transaksjon som den bumper epochen. Nødstoppets vei tilbake krever en
+#: NY release-id (`WCAG_RELEASE`) — så et token lagret uten sin release
+#: ville blitt gjenbrukt av gjenopprettingsrunden, og hvert eneste claim
+#: fra den nye releasen ville fått 401. Se `_lagret_modultoken`.
+TOKEN_FIL = RUNDE / "modultoken.json"
 ATT_FIL = Path("/etc/disponit/api/DISPONIT_ATT_NOKLER")
 API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 
@@ -493,6 +501,62 @@ def fase3(m):
 # Fase 4 — onboarding → modultoken (HTTP, den ekte veien)
 # ---------------------------------------------------------------------------
 
+def _lagre_modultoken(mtk: str) -> None:
+    """Tokenet lagres SAMMEN MED releasen det gjelder for (Codex P1).
+
+    Det er ikke metadata: tokenet er utstedt for nøyaktig én
+    (modul, miljø, release) og for modulens epoch i utstedelsesøyeblikket.
+    Uten releasen ved siden av seg er fila bare «et token», og en senere
+    kjøring kan ikke se at den holder feil ett."""
+    TOKEN_FIL.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_FIL.write_text(
+        json.dumps({"release": RELEASE, "token": mtk}, ensure_ascii=False)
+        + "\n", encoding="utf-8")
+    os.chmod(TOKEN_FIL, 0o600)
+
+
+def _lagret_modultoken() -> str | None:
+    """Tokenet fra rundekatalogen — men BARE for DENNE releasen (Codex P1).
+
+    Fila overlever `--fase N` med vilje, og det er riktig så lenge runden
+    gjelder samme release. Men gjenopprettingen etter en rød fase 9 går
+    nettopp gjennom en NY `WCAG_RELEASE`: `noddeaktiver_modul` har da
+    tilbakekalt hele tokenfamilien og bumpet modulens epoch, og
+    `bytt_release` nekter å reclaime den drenerte deploymenten. Leste
+    fasene 4–7 eller fase 9 likevel det gamle, uversjonerte tokenet, ville
+    HVERT claim svart 401 — og fase 9 rapporterer arbeideren som oppe på
+    `wcag_arbeider_oppe`, som skrives FØR det første autentiserte claimet.
+    Utfallet var en «grønn» idriftsettelse av en arbeider som ikke kan
+    utføre ett eneste oppdrag.
+
+    Passer ikke releasen, finnes det altså ikke noe brukbart token: fasene
+    4–7 gjør en ny onboarding (fase 4), og `--fase 9` alene har ingenting
+    å sette i drift og stenger døren i stedet. Det er ikke en rød måling i
+    seg selv — en ny release SKAL kreve ny onboarding — men det står i
+    evidensen, for det forklarer hvorfor fase 4 kjørte om igjen."""
+    if not TOKEN_FIL.exists():
+        return None
+    try:
+        lagret = json.loads(TOKEN_FIL.read_text(encoding="utf-8"))
+    except ValueError:
+        lagret = {}
+    if not isinstance(lagret, dict):
+        lagret = {}
+    tok = str(lagret.get("token") or "").strip()
+    rel = str(lagret.get("release") or "").strip()
+    if not tok:
+        evidens("modultoken_ubrukelig", fil=str(TOKEN_FIL),
+                grunn="ingen token i fila — ny onboarding kreves")
+        return None
+    if rel != RELEASE:
+        evidens("modultoken_forkastet", lagret_release=rel, release=RELEASE,
+                grunn="tokenet er utstedt for en ANNEN release og er"
+                      " tilbakekalt av nødstoppet som krevde den nye —"
+                      " onboardingen (fase 4) må gjøres om")
+        return None
+    return tok
+
+
 def fase4(m, http, pepper):
     token_id = "tk_" + secrets.token_hex(8)
     hemmelig = secrets.token_urlsafe(32)
@@ -513,9 +577,8 @@ def fase4(m, http, pepper):
                    json={"hemmelighet": r.json()["hemmelighet"]})
     r2.raise_for_status()
     mtk = r2.json()["token"]
-    (RUNDE / "modultoken").write_text(mtk)
-    os.chmod(RUNDE / "modultoken", 0o600)
-    evidens("fase4_ok", token_prefiks=mtk[:8])
+    _lagre_modultoken(mtk)
+    evidens("fase4_ok", release=RELEASE, token_prefiks=mtk[:8])
     return mtk
 
 
@@ -528,7 +591,7 @@ def _rundeid() -> str:
 
     Idempotensnøklene under avledes av denne. Den skrives én gang til
     `RUNDE/runde-id` og gjenbrukes så lenge rundekatalogen står — samme
-    mekanikk som `RUNDE/modultoken` alt bruker for å overleve `--fase N`.
+    mekanikk som `TOKEN_FIL` alt bruker for å overleve `--fase N`.
     `WCAG_RUNDE_ID` overstyrer for den som vil navngi runden selv.
 
     En NY runde krever en ny id (tøm rundekatalogen eller sett
@@ -1149,6 +1212,77 @@ def _importer_motorimage(digest: str) -> tuple[bool, str]:
     return True, "importert"
 
 
+def _tokenet_er_autorisert(m, mtk: str) -> tuple[bool, dict]:
+    """Er tokenet arbeideren skal få FAKTISK autorisert? (Codex P1, runde 12)
+
+    -> (dom, detaljer til evidensfila).
+
+    Fase 9 måler at uniten kom opp ved å lete etter `wcag_arbeider_oppe` i
+    journalen — men arbeideren skriver den linja FØR sitt første
+    autentiserte claim. Et tilbakekalt eller feil-release-token gir derfor
+    en grønn `fase9_arbeider_i_drift` og en arbeider som svarer 401 på
+    hvert eneste claim resten av sin levetid. `TOKEN_FIL` binder nå tokenet
+    til sin release, men fila er ikke autoriteten: modulen kan ha vært
+    nødstoppet etterpå (epoch bumpet, hele tokenfamilien tilbakekalt) uten
+    at release-id-en endret seg.
+
+    Dommen felles derfor av plattformens EGNE porter, de samme to som
+    claim-veien bruker: `verifiser_modultoken` (finnes tokenet, er det
+    ikke tilbakekalt eller utløpt) og `modultoken_fortsatt_autorisert`
+    (er modulen aktiv, stemmer epochen, er identiteten fortsatt denne
+    deploymenten). En egen kopi av regelen her ville drevet fra claimens.
+
+    Kan dommen ikke felles — oppslaget feiler, tokenet har ikke
+    wire-formen — er svaret NEI. En umålt port er ikke en bestått port,
+    og prisen for et falskt nei er en runde til, mens prisen for et falskt
+    ja er en arbeider i drift som ikke kan utføre noe.
+    """
+    if not mtk.startswith("mtk_"):
+        return False, {"grunn": "ikke et modultoken (mangler mtk_-prefikset)"}
+    tid, _, hemmelig = mtk[4:].partition(".")
+    if not tid or not hemmelig:
+        return False, {"grunn": "modultokenet har ikke formen"
+                                " mtk_<token_id>.<hemmelighet>"}
+    pepper = _miljo().get("DISPONIT_TOKEN_PEPPER") or os.environ.get(
+        "DISPONIT_TOKEN_PEPPER", "")
+    mac = hmaclib.new(pepper.encode(), hemmelig.encode(),
+                      hashlib.sha256).hexdigest()
+    try:
+        # Funksjonene eies av `disponit_modul_eier`; migrator har hverken
+        # SELECT på tabellene eller EXECUTE utenom eierrollen.
+        m.execute("SET LOCAL ROLE disponit_modul_eier")
+        rad = m.execute(
+            "SELECT token_id, modul_id, miljo, release_id, utstedt_epoch"
+            "  FROM verifiser_modultoken(%s)", (mac,)).fetchone()
+        dom = m.execute(
+            "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)",
+            (rad[0], rad[1], rad[2], rad[3], rad[4])).fetchone()[0] \
+            if rad is not None else None
+    except psycopg.Error as e:
+        m.rollback()
+        return False, {"grunn": "tokenoppslaget feilet",
+                       "feiltype": type(e).__name__, "feil": str(e)[:200]}
+    m.rollback()
+    if rad is None:
+        return False, {"grunn": "tokenet er ukjent, tilbakekalt eller"
+                                " utløpt — gjør onboardingen (fase 4) om"}
+    # Wire-formatets id må matche radens, samme krav som `preauth`: en
+    # gjettet id skal ikke kunne pares med en MAC fra et annet token.
+    identitet = {"token_id": str(rad[0]), "modul": rad[1], "miljo": rad[2],
+                 "token_release": rad[3], "utstedt_epoch": rad[4], "dom": dom}
+    if str(rad[0]) != tid:
+        return False, {**identitet,
+                       "grunn": "token-id-en i tokenet matcher ikke radens"}
+    if (rad[1], rad[2], rad[3]) != (MODUL, "staging", RELEASE):
+        return False, {**identitet,
+                       "grunn": "tokenet tilhører en annen deployment enn"
+                                f" ({MODUL}, staging, {RELEASE})"}
+    if dom != "ok":
+        return False, {**identitet,
+                       "grunn": f"plattformens egen port sier {dom!r}"}
+    return True, identitet
+
+
 def _steng_doeren(m, grunn: str) -> None:
     """Modulen ut av CLAIMBAR tilstand igjen (Codex P1, runde 6).
 
@@ -1238,6 +1372,13 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     ekte oppdrag ingen kan utføre. Hver gren som returnerer uten en
     arbeider i drift ruller derfor tilbake det fase 2 åpnet — se
     `_steng_doeren`.
+
+    OG TOKENET MÅ VÆRE AUTORISERT (Codex P1, runde 12). Klarhetsmålingen
+    til slutt leser `wcag_arbeider_oppe`, som arbeideren skriver FØR sitt
+    første autentiserte claim: et tilbakekalt token — eller et fra en
+    tidligere release, som gjenopprettingen etter et nødstopp nødvendigvis
+    etterlater — ga en grønn idriftsettelse av en arbeider som svarer 401
+    på hvert oppdrag. Se `_tokenet_er_autorisert`.
     """
     if _ROEDE:
         evidens("fase9_hoppet", grunn="røde målinger i runden",
@@ -1254,6 +1395,22 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
         evidens("fase9_operatoerbeslutning",
                 merknad="--fase 9 målte ingenting selv; idriftsettelsen"
                         " hviler på evidensfila fra den grønne runden")
+
+    # TOKENET MÅ VÆRE AUTORISERT, IKKE BARE FINNES (Codex P1, runde 12).
+    # `wcag_arbeider_oppe` skrives før arbeiderens FØRSTE autentiserte
+    # claim, så klarhetsmålingen nedenfor kan ikke skille en arbeider som
+    # gjør jobben fra en som får 401 på hvert oppdrag. Dommen hentes
+    # derfor der claimen selv henter den, før uniten enables.
+    autorisert, detalj = _tokenet_er_autorisert(m, mtk)
+    evidens("fase9_modultoken_autorisert", release=RELEASE, **detalj,
+            ok=autorisert)
+    if not autorisert:
+        evidens("fase9_hoppet",
+                grunn="modultokenet er ikke autorisert for denne releasen",
+                merknad="uniten enables ikke: arbeideren ville meldt seg"
+                        " oppe og så fått 401 på hvert eneste claim")
+        _steng_doeren(m, "modultokenet er ikke autorisert for denne releasen")
+        return
 
     reg = json.loads(ATT_FIL.read_text())
     nid = sorted(reg["v_wcag_audit"])[0]
@@ -1443,11 +1600,14 @@ def main() -> int:
         fase3(m)
     mtk = None
     if args.fase in (None, 4, 5, 6, 7):
-        tok_fil = RUNDE / "modultoken"
-        if args.fase in (None, 4) or not tok_fil.exists():
+        # ... og et lagret token gjelder BARE sin egen release (Codex P1):
+        # er `WCAG_RELEASE` en annen enn den fila bærer, er tokenet
+        # tilbakekalt og onboardingen må gjøres om.
+        lagret = _lagret_modultoken()
+        if args.fase in (None, 4) or not lagret:
             mtk = fase4(m, http, env["DISPONIT_TOKEN_PEPPER"])
         else:
-            mtk = tok_fil.read_text().strip()
+            mtk = lagret
     if args.fase in (None, 5):
         fase5(m, http, mtk, motorkmd, digest)
     if args.fase in (None, 6):
@@ -1459,8 +1619,12 @@ def main() -> int:
     if args.fase in (None, 9):
         # `--fase 9` er operatørens bevisste idriftsettelse etter en grønn
         # runde; en full kjøring gjør det selv, til slutt.
+        # Tokenet leses for DENNE releasen. Bærer rundekatalogen bare et
+        # token fra en tidligere release, er `mtk` None — og fase 9 stenger
+        # døren i stedet for å sette opp en arbeider som får 401 på hvert
+        # claim (Codex P1).
         if args.fase == 9 and mtk is None:
-            mtk = (RUNDE / "modultoken").read_text().strip()
+            mtk = _lagret_modultoken()
         # Ingen `motorkmd`: fase 9 avleder konteksten av den EFFEKTIVE
         # driftskommandoen, ikke av målerundens (Codex P2, runde 6).
         fase9(m, mtk, digest, maalt_runde=args.fase is None)
