@@ -928,6 +928,120 @@ def test_passet_stanser_seg_selv_paa_egen_frist(monkeypatch):
     assert konn.skrevet == []
 
 
+def test_bred_resolverfeil_feller_verifiseringsunitten(monkeypatch):
+    """Codex P2: `uenige` var en teller uten konsument. Var BEGGE resolverne
+    nede, sto hver eneste selvbetjening stille — men passet returnerte 0, så
+    `systemctl status` viste en vellykket aktivering hvert femte minutt.
+    Revalideringen har hatt alarmkontrakten hele tiden; verifiseringen hadde
+    den ikke.
+
+    Terskelen er den samme (`ALARM_ANDEL`), og nevneren er radene som faktisk
+    ble slått opp — rader vi ikke rakk før fristen sier ingenting om
+    resolverne.
+
+    MUTASJONEN SOM DREPER DENNE: la `main()` returnere 0 uansett, eller fjern
+    `alarm_utlost` fra passet.
+    """
+    from drift import domenerevalidering as dr
+    from drift import kjor_domeneverifisering as kv
+
+    rader = [("t", f"h{i}.example") for i in range(5)]
+
+    # 1) Alle oppslag feiler: terskelen slår inn.
+    monkeypatch.setattr(dr, "enig_svar", lambda resolvere, hostname: None)
+    res = dr.kjor_ventende(_Tellekonn(rader), resolvere=[])
+    assert (res["uenige"], res["vurdert"]) == (5, 5), res
+    assert res["alarm_utlost"] is True, res
+
+    # 2) Kunder som ikke har lagt ut posten ennå er IKKE en resolverfeil:
+    #    et autoritativt «ingen TXT» er et tomt SVAR, basen avviser beviset,
+    #    og raden telles `ikke_bevist` — ingen alarm.
+    monkeypatch.setattr(dr, "enig_svar",
+                        lambda resolvere, hostname: frozenset())
+    res = dr.kjor_ventende(
+        _Falskkonn(psycopg.errors.InvalidParameterValue("ingen bevis")),
+        resolvere=[])
+    assert (res["ikke_bevist"], res["uenige"]) == (1, 0), res
+    assert res["alarm_utlost"] is False, res
+
+    # 3) ...og kontrakten er EXIT-KODEN, ikke et JSON-felt.
+    class Tilkobling:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(kv, "resolvere", lambda: [])
+    monkeypatch.setattr(kv, "_koble", lambda dsn: Tilkobling())
+    monkeypatch.setenv("DISPONIT_DOMAINS_URL", "postgresql:///finnes-ikke")
+    monkeypatch.setattr("db.hemmeligheter.last_credentials", lambda *a: None)
+    monkeypatch.setattr(dr, "kjor_ventende",
+                        lambda *a, **k: {"plukket": 5, "uenige": 5,
+                                         "vurdert": 5, "alarm_utlost": True})
+    assert kv.main() == 1, "bred resolverfeil ga fortsatt et vellykket pass"
+    monkeypatch.setattr(dr, "kjor_ventende",
+                        lambda *a, **k: {"plukket": 5, "verifisert": 5,
+                                         "uenige": 0, "vurdert": 5,
+                                         "alarm_utlost": False})
+    assert kv.main() == 0, "et rolig pass ble rapportert som feilet"
+
+
+def test_autoritativt_ingen_txt_er_et_svar_ikke_en_resolverfeil(monkeypatch):
+    """Codex P2, motstykket til alarmen: NXDOMAIN/NoAnswer er et SVAR — vi vet
+    at posten ikke står der. Kastet transporten på dem, havnet de i samme bøtte
+    som en resolver som er nede, og alarmen over hadde stått rødt støtt: en
+    fersk utfordring har jo ingen TXT-post ennå.
+
+    Timeout og SERVFAIL slipper fortsatt ut som feil — det er nettopp dem
+    alarmen skal se.
+
+    MUTASJONEN SOM DREPER DENNE: fjern except-grenen i `_txt_oppslag`, eller
+    la den fange alle DNS-unntak.
+    """
+    import sys
+    import types
+
+    from drift import kjor_revalidering as kr
+
+    # dnspython er en DRIFTSavhengighet og skal ikke kreves for å måle dette
+    # (samme grunn som den late importen i `_txt_oppslag`). Modulen stubbes med
+    # unntaksklassene grenen faktisk navngir.
+    class NXDOMAIN(Exception):
+        pass
+
+    class NoAnswer(Exception):
+        pass
+
+    class NoNameservers(Exception):
+        pass
+
+    class _FalskResolver:
+        def __init__(self, feil):
+            self.feil = feil
+            self.nameservers: list = []
+            self.lifetime = 0.0
+
+        def resolve(self, hostname, rdtype):
+            raise self.feil
+
+    dns_pakke = types.ModuleType("dns")
+    res_mod = types.ModuleType("dns.resolver")
+    res_mod.NXDOMAIN, res_mod.NoAnswer = NXDOMAIN, NoAnswer
+    res_mod.NoNameservers = NoNameservers
+    dns_pakke.resolver = res_mod
+    monkeypatch.setitem(sys.modules, "dns", dns_pakke)
+    monkeypatch.setitem(sys.modules, "dns.resolver", res_mod)
+
+    def _med(feil):
+        res_mod.Resolver = lambda configure=False: _FalskResolver(feil)
+        return kr._txt_oppslag("192.0.2.1")
+
+    assert _med(NXDOMAIN())("x.example") == frozenset(), \
+        "NXDOMAIN ble ikke båret som et tomt svar"
+    assert _med(NoAnswer())("x.example") == frozenset(), \
+        "NoAnswer ble ikke båret som et tomt svar"
+    with pytest.raises(NoNameservers):
+        _med(NoNameservers())("x.example")
+
+
 def test_taket_holder_seg_innenfor_unitens_timeout():
     """Taket er UTLEDET, ikke valgt: med samtidighet 8 og ~10 s verste
     tilfelle per hostname må et fullt tak rekke innenfor passets egen frist,

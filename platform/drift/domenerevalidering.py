@@ -510,6 +510,21 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
         res["plukket"] = len(rader)
         _verifiser_rader(conn, rader, resolvere, aktor, res, samtidighet,
                          frist_s)
+        # BRED RESOLVERFEIL ER EN ALARM, ikke en teller (Codex P2). Samme
+        # terskel og samme kontrakt som revalideringens §2.4-alarm: uten en
+        # konsument var `uenige` et felt ingen leser, og et pass der BEGGE
+        # resolverne var nede så nøyaktig ut som et pass der ingen kunde ennå
+        # hadde lagt ut TXT-posten sin — begge «vellykket», mens hver eneste
+        # selvbetjening sto stille.
+        #
+        # Nevneren er radene som faktisk BLE slått opp: rader vi ikke rakk før
+        # fristen sier ingenting om resolverne. Og `uenige` betyr her nettopp
+        # transportsvikt eller uenighet — et autoritativt «ingen TXT-post»
+        # bæres som et TOMT svar (`_txt_oppslag`) og teller som `ikke_bevist`,
+        # som er kundens normaltilstand rett etter utstedelsen.
+        res["vurdert"] = res["plukket"] - res["ubehandlet"]
+        res["alarm_utlost"] = bool(
+            res["vurdert"] and res["uenige"] / res["vurdert"] > ALARM_ANDEL)
         return res
     finally:
         # ROLLBACK FØRST (Codex P2). Slipper en uventet feil ut av løkka, står

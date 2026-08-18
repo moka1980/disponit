@@ -2,7 +2,10 @@
 
 Førstegangsverifiseringen av selvbetjente domenechallenges — lite og
 hyppig (5 min), adskilt fra den timeplanlagte revalideringen. Samme
-resolver-diversitetskrav, samme oppstartsnekt uten det.
+resolver-diversitetskrav, samme oppstartsnekt uten det — og samme
+ALARMKONTRAKT: slår terskelen for bred resolverfeil inn, avsluttes
+prosessen med feilkode, slik at systemd setter unitten i `failed`. Et
+JSON-felt alene er en alarm ingenting lytter på.
 """
 from __future__ import annotations
 
@@ -43,6 +46,25 @@ def main() -> int:
     finally:
         conn.close()
     print(json.dumps({"hendelse": "verifiseringspass", **r}))
+    if r.get("alarm_utlost"):
+        # TERSKELEN SKAL FØRE ET STED (Codex P2). Er begge resolverne nede,
+        # telles hver rad som `uenige` og hver eneste selvbetjening står
+        # stille — men passet returnerte 0, så `systemctl status` viste en
+        # vellykket aktivering hvert femte minutt mens ingen kunde ble
+        # verifisert. Ingen journalkonsument leser et JSON-felt; en feilkode
+        # setter unitten i `failed`, synlig for `systemctl --failed` og for
+        # enhver OnFailure drift senere henger på. Samme kontrakt som
+        # revalideringens §2.4-alarm.
+        #
+        # Radene som FAKTISK ble bekreftet er alt committet (én commit per
+        # rad), så feilkoden kaster ikke arbeid: den sier at passet ikke kan
+        # stås inne for, ikke at det ikke skjedde.
+        print(json.dumps({"hendelse": "verifiseringsalarm",
+                          "grunn": "bred_resolverfeil",
+                          "andel_terskel": dr.ALARM_ANDEL,
+                          "uenige": r["uenige"], "vurdert": r["vurdert"]}),
+              file=sys.stderr)
+        return 1
     return 0
 
 
