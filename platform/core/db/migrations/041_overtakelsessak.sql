@@ -1573,3 +1573,197 @@ BEGIN
     END IF;
 END $$;
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 21. STEMMENES NAVNEROM FØLGER SAKEN, IKKE DOMENERADEN (Codex P1)
+--
+-- 019 navnerommet stemmene på `(sak_id, saksrevisjon)` der
+-- `saksrevisjon` var `domenekontroll.autorisasjonsgenerasjon` for
+-- utfordrerens rad. Det holdt så lenge HVER utfordrer hadde sin egen sak
+-- (python-veiens idempotensnøkkel var hostname+generasjon). 041 endret
+-- nettopp det: A→B→C er nå et SKIFTE på SAMME `unntak.id` (§10,
+-- revisjon+1), mens en fersk C-rad i `domenekontroll` settes inn med
+-- `autorisasjonsgenerasjon = 1` — akkurat som B-raden hadde.
+--
+-- Nøkkelen kolliderte dermed på tvers av to helt ulike konflikter:
+--
+--   * `v_avvik` teller rader på (sak_id, revisjon) med et ANNET
+--     `vinnende_tenant`. Bs bevarte stemme (vinnende_tenant = B) er per
+--     definisjon uenig med enhver C-stemme (vinnende_tenant = C), så
+--     terskelen returnerte `venter` — for alltid. C kunne ALDRI avgjøres,
+--     uansett hvor mange autoriserte adjudikatorer som stemte.
+--   * Primærnøkkelen `(sak_id, saksrevisjon, aktor)`: en aktør som
+--     stemte i Bs konflikt og siden i Cs traff `dobbel_attestasjon` på
+--     en stemme hen aldri hadde avgitt.
+--
+-- Roten er at navnerommet var domeneradens, ikke sakens. Sakens EGEN
+-- `saksrevisjon` er nøyaktig «hvilken konflikt denne saken bærer nå» —
+-- monoton, +1 ved hvert skifte, håndhevet av triggeren i §6. Den brukes
+-- derfor som navnerom. Generasjonen beholder sin egen, adskilte jobb:
+-- foreldelsesgjerdet (`p_forventet_generasjon` mot domeneraden under
+-- låsen) og argumentet til `avgjor_domeneovertakelse`.
+--
+-- Gamle rader kan ikke kollidere med nye: pre-041-stemmer hører til
+-- python-skapte saker med egne `sak_id`-er, og §20 lager aldri en sak med
+-- en id som alt finnes.
+--
+-- KOPI av 019 §3.1s kropp, diff-endret på de fem stedene navnerommet
+-- brukes. Alt annet — låsen, foreldelsen, reautoriseringen, tersklene —
+-- er uendret.
+-- ------------------------------------------------------------
+SET LOCAL ROLE disponit_domene_eier;
+
+CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
+    p_tenant               TEXT,     -- utfordreren (B) — saken navngir hen
+    p_sak_id               BIGINT,
+    p_hostname             TEXT,
+    p_utfall               TEXT,
+    p_vinnende_tenant      TEXT,
+    p_aktor                TEXT,
+    p_forventet_generasjon BIGINT,   -- domeneradens generasjon saken gjelder
+    p_bruker_id            TEXT)     -- prinsipalen bak `p_aktor`
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE v_gen BIGINT; v_status TEXT; v_antall INT; v_avvik INT; v_authz INT;
+        v_roller TEXT[]; v_bruker TEXT; v_rev BIGINT;
+BEGIN
+    PERFORM public.krev_kanonisk_hostname(p_hostname);
+    PERFORM pg_advisory_xact_lock(hashtextextended('domene:' || p_hostname, 0));
+
+    SELECT autorisasjonsgenerasjon, status INTO v_gen, v_status
+      FROM public.domenekontroll
+     WHERE tenant = p_tenant AND hostname = p_hostname FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: ukjent domenekontroll %/%',
+            p_tenant, p_hostname USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_status IS DISTINCT FROM 'avklaring_kreves' THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: %/% er % '
+            '(krever avklaring_kreves)', p_tenant, p_hostname, v_status
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_gen IS DISTINCT FROM p_forventet_generasjon THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: %/% er på revisjon %, '
+            'saken gjelder %', p_tenant, p_hostname, v_gen,
+            p_forventet_generasjon USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- 041: sakens EGEN revisjon er stemmenes navnerom. Oppslaget er
+    -- samtidig et gjerde: saken må NÅ navngi p_tenant som utfordrer på
+    -- nøyaktig denne generasjonen. Har den skiftet til C i mellomtiden,
+    -- finnes ingen rad, og Bs stemme avvises som foreldet i stedet for å
+    -- lande i Cs navnerom.
+    SELECT u.saksrevisjon INTO v_rev FROM public.unntak u
+     WHERE u.tenant = '__plattform_domener' AND u.id = p_sak_id
+       AND u.sakskilde = 'domeneovertakelse'
+       AND u.utfordrer_tenant = p_tenant
+       AND u.autorisasjonsgenerasjon = p_forventet_generasjon;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: sak % gjelder ikke '
+            '%/% på generasjon %', p_sak_id, p_tenant, p_hostname,
+            p_forventet_generasjon USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    IF p_utfall = 'godkjenn' AND p_vinnende_tenant IS DISTINCT FROM p_tenant THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: vinnende_tenant % '
+            'stemmer ikke med saken (utfordrer %)', p_vinnende_tenant, p_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    IF p_bruker_id IS NULL OR length(btrim(p_bruker_id)) = 0 THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: bruker_id mangler'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM set_config('disponit.tenant', p_tenant, true);
+    SELECT g.roller, g.authz_version INTO v_roller, v_authz
+      FROM public.laas_godkjenner(p_tenant, p_bruker_id) g;
+    IF NOT FOUND OR v_roller IS NULL
+       OR NOT ('domeneadjudikator' = ANY (v_roller)) THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: % er ikke aktiv '
+            'domeneadjudikator for %', p_bruker_id, p_tenant
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- Dobbeltstemme avvises av primærnøkkelen. INGEN ON CONFLICT.
+    INSERT INTO public.overtakelse_attestasjon
+        (tenant, sak_id, saksrevisjon, aktor, bruker_id, authz_versjon,
+         utfall, vinnende_tenant, hostname)
+        VALUES (p_tenant, p_sak_id, v_rev, p_aktor, p_bruker_id, v_authz,
+                p_utfall, p_vinnende_tenant, p_hostname);
+
+    -- §4: de to radene må ha IDENTISK (revisjon, utfall, vinnende_tenant,
+    -- hostname). Avvik → ingen avgjørelse, ALDRI en sammenslåing.
+    -- Reautoriseringen (019, Codex P1) står: stemmene telles bare så lenge
+    -- prinsipalen bak dem fortsatt er aktiv adjudikator på samme
+    -- authz-versjon.
+    FOR v_bruker IN
+        SELECT DISTINCT a.bruker_id
+          FROM public.overtakelse_attestasjon a
+         WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_rev
+           AND a.tenant = p_tenant AND a.bruker_id IS NOT NULL
+    LOOP
+        PERFORM 1 FROM public.laas_godkjenner(p_tenant, v_bruker);
+    END LOOP;
+    SELECT count(*) INTO v_antall
+      FROM public.overtakelse_attestasjon a
+     WHERE a.sak_id = p_sak_id AND a.saksrevisjon = v_rev
+       AND a.utfall = p_utfall AND a.vinnende_tenant = p_vinnende_tenant
+       AND a.hostname = p_hostname
+       AND a.bruker_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM public.brukermedlemskap m
+                    WHERE m.tenant = a.tenant AND m.bruker_id = a.bruker_id
+                      AND m.aktiv
+                      AND 'domeneadjudikator' = ANY (m.roller)
+                      AND m.authz_version = a.authz_versjon);
+    SELECT count(*) INTO v_avvik
+      FROM public.overtakelse_attestasjon
+     WHERE sak_id = p_sak_id AND saksrevisjon = v_rev
+       AND (utfall IS DISTINCT FROM p_utfall
+            OR vinnende_tenant IS DISTINCT FROM p_vinnende_tenant);
+    IF v_avvik > 0 THEN
+        RETURN 'venter';   -- uenighet: ingen avgjørelse, begge rader bevart
+    END IF;
+
+    IF p_utfall = 'avvis' THEN
+        -- Fail-closed: én stemme holder, ingen får autorisasjon.
+        -- `v_gen` (domeneradens generasjon) er fortsatt DEN vedtaket
+        -- gjerdes på — navnerommet byttet, gjerdet gjorde det ikke.
+        PERFORM public.avgjor_domeneovertakelse(
+            p_tenant, p_hostname, v_gen, false, p_aktor);
+        PERFORM public.lukk_overtakelsessak(p_tenant, p_sak_id, 'avvist', p_aktor);
+        RETURN 'avgjort';
+    END IF;
+
+    IF v_antall >= 2 THEN
+        PERFORM public.avgjor_domeneovertakelse(
+            p_tenant, p_hostname, v_gen, true, p_aktor);
+        PERFORM public.lukk_overtakelsessak(p_tenant, p_sak_id, 'løst', p_aktor);
+        RETURN 'avgjort';
+    END IF;
+    RETURN 'venter';
+END $$;
+
+-- Tellingen bak `409 krever_to_attestasjoner` må dele navnerom med
+-- terskelen, ellers rapporterer svaret fremgang mot en annen konflikt enn
+-- den stemmen ble avgitt i. Parameternavnet står urørt (CREATE OR REPLACE
+-- kan ikke døpe om det) — kalleren har alltid sendt domeneradens
+-- generasjon, og den oversettes nå til sakens revisjon her inne.
+CREATE OR REPLACE FUNCTION antall_avgitte_attestasjoner(
+    p_sak_id BIGINT, p_saksrevisjon BIGINT)
+RETURNS INT LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+    SELECT count(DISTINCT a.aktor)::INT
+      FROM public.overtakelse_attestasjon a
+     WHERE a.sak_id = p_sak_id
+       AND a.saksrevisjon = (SELECT u.saksrevisjon FROM public.unntak u
+                              WHERE u.tenant = '__plattform_domener'
+                                AND u.id = p_sak_id
+                                AND u.sakskilde = 'domeneovertakelse'
+                                AND u.autorisasjonsgenerasjon = p_saksrevisjon)
+       AND a.bruker_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM public.brukermedlemskap m
+                    WHERE m.tenant = a.tenant AND m.bruker_id = a.bruker_id
+                      AND m.aktiv AND 'domeneadjudikator' = ANY (m.roller)
+                      AND m.authz_version = a.authz_versjon);
+$$;
+
+RESET ROLE;
