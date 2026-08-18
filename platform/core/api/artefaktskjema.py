@@ -144,12 +144,24 @@ _SKJEMA_LISTE = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
 _SKJEMA_KART = frozenset({
     "properties", "patternProperties", "$defs", "definitions",
     "dependentSchemas"})
+#: Nøkkelord hvis verdi er et kart der HVER VERDI er ENTEN et delskjema
+#: ELLER noe annet (Codex P2). `dependencies` er delt i to i 2020-12, men
+#: BEHOLDT som deprecated MED metavalidering: metaskjemaets
+#: `additionalProperties` er `anyOf: [<skjema>, <strengliste>]`. Er verdien
+#: en LISTE, er den `dependentRequired`-formen — en strengliste, ikke et
+#: skjema, og `jsonschema` kaster `AttributeError` på en `$ref` dit. Er den
+#: noe annet (objekt eller boolsk), er den et delskjema `check_schema`
+#: allerede har metavalidert, og da er den en gyldig referansedestinasjon.
+#: Skillet går derfor på formen til VERDIEN, ikke på nøkkelordet.
+_SKJEMA_KART_ALT = frozenset({"dependencies"})
 
 #: Nøkkelord validatoren ALDRI evaluerer av seg selv. `$defs`/`definitions`
-#: er rene oppbevaringssteder, og `contentSchema` er en annotasjon i
-#: 2020-12 — ingen av dem står i `Draft202012Validator.VALIDATORS`. Det
-#: som ligger under dem nås bare gjennom en `$ref`.
-_IKKE_EVALUERT = frozenset({"$defs", "definitions", "contentSchema"})
+#: er rene oppbevaringssteder, `contentSchema` er en annotasjon i 2020-12,
+#: og `dependencies` er erstattet av `dependentSchemas`/`dependentRequired`
+#: — ingen av dem står i `Draft202012Validator.VALIDATORS`. Det som ligger
+#: under dem nås bare gjennom en `$ref`.
+_IKKE_EVALUERT = frozenset({"$defs", "definitions", "contentSchema",
+                            "dependencies"})
 #: Nøkkelord hvis delskjema evalueres PÅ STEDET og UBETINGET — altså mot
 #: nøyaktig samme instans, uten at noe av den blir forbrukt, og uten at et
 #: annet nøkkelord først må slå til. `then`/`else` hører ikke hjemme her
@@ -183,6 +195,10 @@ def _evalueringsbarn(sti, s):
         elif nokkel in _SKJEMA_KART and isinstance(verdi, dict):
             for navn in verdi:
                 yield sti + (nokkel, navn)
+        elif nokkel in _SKJEMA_KART_ALT and isinstance(verdi, dict):
+            for navn, v in verdi.items():
+                if not isinstance(v, list):
+                    yield sti + (nokkel, navn)
 
 
 def _pekertekst(sti) -> str:
@@ -235,6 +251,11 @@ def _delskjemaer(skjema):
             elif nokkel in _SKJEMA_KART and isinstance(verdi, dict):
                 ko.extend((sti + (nokkel, navn), v)
                           for navn, v in verdi.items())
+            elif nokkel in _SKJEMA_KART_ALT and isinstance(verdi, dict):
+                # Bare de verdiene som ER delskjemaer — se `_SKJEMA_KART_ALT`.
+                ko.extend((sti + (nokkel, navn), v)
+                          for navn, v in verdi.items()
+                          if not isinstance(v, list))
 
 
 def _pekerledd(fragment: str) -> tuple[str, ...]:

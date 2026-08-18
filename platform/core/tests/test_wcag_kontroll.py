@@ -2887,8 +2887,35 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
         _metanokler |= set(
             jsonschema_specifications.REGISTRY[_uri].contents.get(
                 "properties", {}))
-    _vandret = _a._SKJEMA_NOKKEL | _a._SKJEMA_LISTE | _a._SKJEMA_KART
+    _vandret = (_a._SKJEMA_NOKKEL | _a._SKJEMA_LISTE | _a._SKJEMA_KART
+                | _a._SKJEMA_KART_ALT)
     assert _vandret <= _metanokler, sorted(_vandret - _metanokler)
+
+    # Codex P2, runde 4: `dependencies` ER en metavalidert skjemaposisjon
+    # når verdien er et skjema. Nøkkelordet er delt i to i 2020-12, men
+    # BEHOLDT som deprecated med metavalidering — `additionalProperties`
+    # er `anyOf: [<skjema>, <strengliste>]` — så
+    # `{"dependencies": {"x": {...}}, "$ref": "#/dependencies/x"}`
+    # håndheves av validatoren. Vandringen kjente det ikke, og avviste
+    # altså et gyldig skjema for godt. Kontroll: fjern `dependencies` fra
+    # `_SKJEMA_KART_ALT`, så avvises `legacy_dep` under.
+    legacy_dep = {"dependencies": {"t": {"type": "string"}},
+                  "properties": {"p": {"$ref": "#/dependencies/t"}}}
+    assert not skjemafeil(legacy_dep)
+    assert not valider(legacy_dep, {"p": "x"})
+    assert valider(legacy_dep, {"p": 1})
+    assert not skjemafeil({"dependencies": {"t": True},
+                           "properties": {"p": {"$ref": "#/dependencies/t"}}})
+    # ... men LISTEFORMEN er `dependentRequired`, altså en strengliste og
+    # ikke et skjema. En `$ref` dit gir `AttributeError` fra validatoren —
+    # ikke i `_OPPSLAGSFEIL` — så den permanente 500-eren ville vært
+    # tilbake. Den skal fortsatt avvises ved registrering.
+    assert skjemafeil({"dependencies": {"t": ["x"]},
+                       "properties": {"p": {"$ref": "#/dependencies/t"}}})
+    # Listeformen er fortsatt et lovlig skjema i seg selv, og et ødelagt
+    # delskjema under `dependencies` avvises fortsatt av metasjekken.
+    assert not skjemafeil({"dependencies": {"t": ["x"]}})
+    assert skjemafeil({"dependencies": {"t": {"type": "strng"}}})
 
     # Codex P2, runde 3: PEKEREN DEKODES FØR DEN SPLITTES. Resolveren gjør
     # `unquote(peker).split("/")` — dekodingen først, splittingen etterpå —
