@@ -422,9 +422,23 @@ def main() -> int:
                 " {type: 'tag', values: tags}})", tags)
             for v in res.get("violations", []):
                 rid = v["id"]
+                # UKJENT ALVORLIGHET ER IKKE «lav» (Codex P2). Fallbacken
+                # gjorde manglende data (`impact: null`) og en verdi vi
+                # ikke kjenner om til en KONKRET påstand nederst på
+                # skalaen — skjemagyldig, promoterbar, og en understøtting
+                # av funnet i den ferdige rapporten. Kilden er pinnet på
+                # sha256, så settet av lovlige impact-verdier er kjent og
+                # kan ikke endre seg under oss uten at pinnen endres; et
+                # svar utenfor settet er derfor utdata vi ikke kan lese,
+                # og da er et ærlig feilet oppdrag riktig utfall.
+                impact = v.get("impact")
+                if impact not in ALVORLIGHET:
+                    raise SystemExit(
+                        f"axe ga en alvorlighet vi ikke kjenner for {rid}:"
+                        f" {impact!r}")
                 f = funn.setdefault(rid, {
                     "regel_id": rid,
-                    "alvorlighet": ALVORLIGHET.get(v.get("impact"), "lav"),
+                    "alvorlighet": ALVORLIGHET[impact],
                     "antall": 0, "eksempler": []})
                 for node in v.get("nodes", []):
                     f["antall"] += 1
