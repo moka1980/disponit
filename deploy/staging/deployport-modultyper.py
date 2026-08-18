@@ -102,7 +102,9 @@ def kontroller_bestillingstyper(conn) -> list[str]:
     skape). Faren manglende registrering utgjør — TILLAT gir et oppdrag
     ingen modul kan claime — vaktes i stedet DER den oppstår:
     `/v1/bestilling` nekter typen før beslutningen
-    (`bestillingstype_utilgjengelig`). Her varsles den bare, synlig i
+    (`bestillingstype_utilgjengelig`), og prøver da CLAIM-VEIENS egne
+    vilkår, ikke bare registerraden: modulen må være `aktiv` og ha en
+    `claiming`-deployment i miljøet. Her varsles den bare, synlig i
     deploy-loggen."""
     from api.bestilling import BESTILLINGSTYPER
     feil = []
