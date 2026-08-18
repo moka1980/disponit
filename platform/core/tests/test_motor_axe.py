@@ -49,6 +49,51 @@ def test_robots_wildcard_og_sluttanker():
     assert kjor._tillatt("/intern", regler) is True       # * krever et ledd
 
 
+def test_robots_normaliserer_prosentkodede_oktetter():
+    """Codex P1, runde 5: en skrivemåte er ikke en annen ressurs.
+
+    `Disallow: /privat/` var en regel målet kunne omgå ved å lenke til seg
+    selv kodet: `/%70rivat/side` er samme ressurs for enhver server som
+    avkoder ureserverte oktetter, men den rå strengsammenligningen så to
+    ulike stier — og crawleren hentet den forbudte siden.
+
+    RFC 9309 §2.2.2 (via RFC 3986 §6.2.2): begge sider bringes til samme
+    form først. Ureserverte oktetter avkodes, alt annet står — kodet, med
+    store heksbokstaver."""
+    regler = kjor._parse_robots("User-agent: *\nDisallow: /privat/\n")
+    assert kjor._tillatt("/privat/side", regler) is False
+    assert kjor._tillatt("/%70rivat/side", regler) is False   # p
+    assert kjor._tillatt("/pri%76at/side", regler) is False   # v
+    assert kjor._tillatt("/%70%72%69%76%61%74/side", regler) is False
+
+    # ... og regelen kan selv være kodet: normaliseringen er symmetrisk.
+    kodet = kjor._parse_robots("User-agent: *\nDisallow: /%70rivat/\n")
+    assert kjor._tillatt("/privat/side", kodet) is False
+    assert kjor._tillatt("/%70rivat/side", kodet) is False
+
+    # RESERVERTE oktetter avkodes ALDRI. `%2F` er ingen skillestrek, så
+    # `/privat%2Fside` er én sti — ikke `/privat/side`.
+    assert kjor._tillatt("/privat%2Fside", regler) is True
+    # ... og `%2A` er ikke robots' `*`-metategn: det er en stjerne i stien.
+    stjerne = kjor._parse_robots("User-agent: *\nDisallow: /a%2Ab\n")
+    assert kjor._tillatt("/a%2ab", stjerne) is False   # samme oktett
+    assert kjor._tillatt("/axxb", stjerne) is True     # ikke et metategn
+    # Store/små bokstaver i STIEN er fortsatt betydningsbærende — det er
+    # bare heksene som normaliseres.
+    assert kjor._tillatt("/%50RIVAT/side", regler) is True
+
+    # Ikke-ASCII står kodet (hver oktett er over 0x7F), i store hekser.
+    assert kjor._robotsform("/caf%c3%a9") == "/caf%C3%A9"
+    assert kjor._robotsform("/%7Euser") == "/~user"
+    # En `%` som ikke innleder en oktett er bare et tegn.
+    assert kjor._robotsform("/100%rabatt") == "/100%rabatt"
+
+    # Anker og wildcard overlever normaliseringen av mønsteret.
+    anker = kjor._parse_robots("User-agent: *\nDisallow: /pri%76at/*.pdf$\n")
+    assert kjor._tillatt("/privat/x.pdf", anker) is False
+    assert kjor._tillatt("/privat/x.pdfx", anker) is True
+
+
 def test_robots_gruppe_med_flere_user_agent_linjer():
     """`*` i en gruppe gjelder gruppa — også når den ikke står sist."""
     for tekst in ("User-agent: *\nUser-agent: googlebot\nDisallow: /privat/\n",

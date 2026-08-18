@@ -368,6 +368,37 @@ def _robots(base: str, pin_ip: str, tls_kontekst=None
     return _parse_robots(tekst), True
 
 
+_PROSENTOKTETT = re.compile(r"%([0-9A-Fa-f]{2})")
+
+
+def _robotsform(sti: str) -> str:
+    """Stien på den formen robots-regler SAMMENLIGNES på (RFC 9309 §2.2.2).
+
+    PROSENTKODINGEN NORMALISERES (Codex P1, runde 5). Standarden krever at
+    begge sider bringes til samme form før de måles mot hverandre, og uten
+    det er `Disallow: /privat/` en regel målet kan omgå ved å lenke til seg
+    selv med en annen SKRIVEMÅTE: `/%70rivat/side` er samme ressurs for
+    enhver server som avkoder ureserverte oktetter, men en rå
+    strengsammenligning ser to ulike stier — og crawleren hentet den
+    forbudte siden.
+
+    Regelen er RFC 3986 §2.3/§6.2.2: en prosentkodet URESERVERT oktett
+    (ALPHA / DIGIT / `-` `.` `_` `~`) BETYR tegnet selv og avkodes; alt
+    annet forblir kodet, med heksene i store bokstaver. Reserverte tegn
+    avkodes ALDRI — `%2F` er ikke en skillestrek, og `%2A` er ikke robots'
+    `*`-metategn. Ikke-ASCII oktetter (`%C3%A9`) står også: hver av dem er
+    over 0x7F og dermed utenfor det ureserverte settet.
+
+    Formen brukes på BEGGE sider — mønsteret i `_regel` og stien i
+    `_tillatt` — for det er nettopp det som gjør den til en sammenligning."""
+    def bytt(m: "re.Match") -> str:
+        tegn = chr(int(m.group(1), 16))
+        if tegn.isascii() and (tegn.isalnum() or tegn in "-._~"):
+            return tegn
+        return "%" + m.group(1).upper()
+    return _PROSENTOKTETT.sub(bytt, sti)
+
+
 def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
     """Én robots-regel som (tillat, monster, kompilert matcher).
 
@@ -376,7 +407,12 @@ def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
     til slutten av stien. Leser man dem bokstavelig, som et prefiks, blir
     `Disallow: /privat/*.pdf$` en regel som ikke matcher NOE — og en
     eksplisitt forbudt sti ble crawlet (Codex P1). Resten av mønsteret er
-    et rent prefiks, som før."""
+    et rent prefiks, som før.
+
+    Mønsteret normaliseres av `_robotsform` først — se den. Lengden som
+    bærer presedensen i `_tillatt` er da den NORMALISERTE, altså den
+    formen begge sider faktisk måles på."""
+    monster = _robotsform(monster)
     anker = monster.endswith("$")
     kropp = monster[:-1] if anker else monster
     rx = re.compile(".*".join(re.escape(d) for d in kropp.split("*"))
@@ -439,7 +475,13 @@ def _robotsti(p) -> str:
 
 def _tillatt(sti: str, regler: list) -> bool:
     """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — lengste mønster,
-    og `Allow` foran `Disallow` ved likt. Ingen treff = tillatt."""
+    og `Allow` foran `Disallow` ved likt. Ingen treff = tillatt.
+
+    Normaliseringen ligger HER og ikke hos kallerne: dette er det ene
+    stedet en sti møter en regel, og en sammenligning der bare den ene
+    siden er normalisert er ingen sammenligning (Codex P1). Mønstrene er
+    normalisert i `_regel` med nøyaktig samme funksjon."""
+    sti = _robotsform(sti)
     beste_lengde, beste_tillat = -1, True
     for tillat, monster, rx in regler:
         if rx.match(sti) and (len(monster) > beste_lengde
