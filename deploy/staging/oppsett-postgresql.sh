@@ -94,6 +94,16 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB}_test'"
 # og manuell staging-prøve er ingen port.
 # ------------------------------------------------------------
 mkdir -p /etc/disponit && chmod 700 /etc/disponit
+# m_wcag_audit-arbeideren leser /etc/disponit/wcag/ SELV (kontekst +
+# kvitteringsnøkkel er gruppelesbare der) — men uten x på FORELDEREN når
+# den aldri frem: 700 her ga PermissionError på en fil den hadde rett til.
+# Traverse-only for arbeiderens gruppe (710, ingen r: katalogen kan ikke
+# listes, og hver hemmelighet under beholder sin egen stramme modus).
+# Betinget: brukeren opprettes av opp.sh, som kjører ETTER dette skriptet
+# ved førstegangsoppsett — da tar neste kjøring (hver deploy) den igjen.
+if id disponit-wcag >/dev/null 2>&1; then
+  chgrp disponit-wcag /etc/disponit && chmod 710 /etc/disponit
+fi
 touch "$MILJOFIL" && chmod 600 "$MILJOFIL"
 
 . "$(dirname "$0")/lib-miljofil.sh"
