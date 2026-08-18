@@ -127,6 +127,37 @@ def test_pin_avviser_hele_forespoerselen_ved_forbudt_oppslag(monkeypatch):
         pass
 
 
+def test_pinnen_velger_en_adresse_verten_kan_naa(monkeypatch):
+    """Codex P2: `[0]` blindt er ikke et valg, det er en tilfeldighet.
+
+    Har et offentlig navn både AAAA og A, og resolveren setter IPv6 først
+    på en IPv4-only vert, ble BÅDE robots-hentingen og Chromium låst til
+    en adresse verten ikke har rute til — en fullt gyldig kontroll feilet
+    selv om samme navn hadde en offentlig IPv4 rett ved siden av.
+    Godkjenningen er urørt: valget står bare mellom de GODKJENTE."""
+    import socket as _s
+    v6 = "2606:2800:220:1:248:1893:25c8:1946"
+    monkeypatch.setattr(
+        kjor.socket, "getaddrinfo",
+        lambda *a, **k: [(_s.AF_INET6, _s.SOCK_STREAM, 6, "", (v6, 443, 0, 0)),
+                         (_s.AF_INET, _s.SOCK_STREAM, 6, "",
+                          ("93.184.216.34", 443))])
+    # IPv4-only vert: den første godkjente adressen er ikke nåbar.
+    monkeypatch.setattr(kjor, "_naabar",
+                        lambda adresse, port: ":" not in adresse)
+    assert kjor._pin_mal_ip("mal.example", 443, {}) == "93.184.216.34"
+    # Er BEGGE nåbare, står resolverens egen rekkefølge (RFC 6724).
+    monkeypatch.setattr(kjor, "_naabar", lambda adresse, port: True)
+    assert kjor._pin_mal_ip("mal.example", 443, {}) == v6
+    # Er INGEN nåbar, gjettes det ikke: feilen hører hjemme i tilkoblingen.
+    monkeypatch.setattr(kjor, "_naabar", lambda adresse, port: False)
+    assert kjor._pin_mal_ip("mal.example", 443, {}) == v6
+
+    # Og selve prøven rører ikke målet — en UDP-`connect` sender ingenting.
+    assert kjor._naabar("127.0.0.1", 9) is True
+    assert kjor._naabar("ikke-en-adresse", 443) is False
+
+
 def test_robots_uten_lesbart_svar_gir_ingen_crawl(monkeypatch):
     kall = {}
 

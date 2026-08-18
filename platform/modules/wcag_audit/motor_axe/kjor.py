@@ -135,6 +135,31 @@ def _offentlig(ip) -> bool:
         or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
 
 
+def _naabar(adresse: str, port: int) -> bool:
+    """Har DENNE verten en rute til adressen? Ingen pakker sendes.
+
+    `connect` på en UDP-socket sender ingenting — den ber bare kjernen
+    velge kildeadresse og rute, og feiler umiddelbart (ENETUNREACH,
+    EAFNOSUPPORT) når ingen finnes. Det er nøyaktig spørsmålet vi stiller,
+    og det stilles uten å røre målet."""
+    try:
+        ip = ipaddress.ip_address(adresse)
+    except ValueError:
+        return False
+    familie = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+    try:
+        s = socket.socket(familie, socket.SOCK_DGRAM)
+    except OSError:
+        return False
+    try:
+        s.connect((adresse, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
 def _pin_mal_ip(vert: str, port: int, vertskart: dict[str, str]) -> str:
     """Den ENE adressen målet får nås på — eller SystemExit (Codex P1).
 
@@ -183,6 +208,20 @@ def _pin_mal_ip(vert: str, port: int, vertskart: dict[str, str]) -> str:
         adresser.append(adresse)
     if not adresser:
         raise SystemExit(f"målet lot seg ikke slå opp: {vert}")
+    # ... OG DEN ENE MÅ VÆRE EN VI KAN NÅ (Codex P2). Pinnen tok `[0]`
+    # blindt. Har et offentlig vertsnavn både AAAA og A, og resolveren
+    # setter IPv6 først på en IPv4-only vert, ble BÅDE robots-hentingen og
+    # Chromium låst til en adresse verten ikke har en rute til — en fullt
+    # gyldig kontroll feilet, selv om det samme navnet hadde en offentlig
+    # IPv4 rett ved siden av. Godkjenningen over står urørt: hver adresse
+    # er alt kontrollert, så valget her er bare hvilken av de GODKJENTE vi
+    # bruker.
+    for adresse in adresser:
+        if _naabar(adresse, port):
+            return adresse
+    # Ingen av dem lot seg rute. Da er `[0]` like godt som noe annet, og
+    # feilen hører hjemme der den faktisk oppstår — i tilkoblingen, med
+    # kjernens egen beskjed — ikke i en gjetning her.
     return adresser[0]
 
 
