@@ -274,6 +274,56 @@ def test_adjudikatorkoen_er_utfordrerens_ikke_klyngens(klient):
 
 
 @pg
+def test_adjudikatorkoen_er_paginert_og_cursoren_er_tenantbundet(klient):
+    """Codex P2: køen er UBUNDET i tid — saker står åpne til et menneske
+    avgjør dem — så siden må være bundet.
+
+    Samme kontrakt som `/v1/unntak`: `limit` ≤ 100, signert v2-cursor
+    bundet til tenant/endepunkt/retning/filtre, ærlig keyset. Retningen er
+    `asc`: en adjudikatorkø tømmes fra bunnen.
+    """
+    from api import sesjon as sesjonmodul
+    h1, h2 = _host(), _host()
+    _overtakelsessak(h1)
+    _overtakelsessak(h2)
+    egen, _ = _adjudikator_i(TEN, "paginering")
+    kake = {sesjonmodul.C_SESJON: egen}
+
+    def side(cursor=None):
+        q = "?limit=1" + (f"&cursor={cursor}" if cursor else "")
+        r = klient.get("/v1/domeneovertakelse/saker" + q, cookies=kake)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    sett, cursor, runder = [], None, 0
+    while True:
+        d = side(cursor)
+        assert len(d["saker"]) <= 1, d
+        sett += [s["hostname"] for s in d["saker"]]
+        cursor = d["neste_cursor"]
+        runder += 1
+        if cursor is None or runder > 50:
+            break
+    assert cursor is None, "køen tok aldri slutt — keysettet står stille"
+    assert h1 in sett and h2 in sett, sett
+    assert len(sett) == len(set(sett)), f"duplikat over sidene: {sett}"
+
+    # Cursoren er TENANTBUNDET: en fremmed sesjon kan ikke bruke den.
+    d = side()
+    if d["neste_cursor"]:
+        fremmed, _ = _adjudikator_i(FREMMED, "laant-cursor")
+        r = klient.get(
+            f"/v1/domeneovertakelse/saker?limit=1&cursor={d['neste_cursor']}",
+            cookies={sesjonmodul.C_SESJON: fremmed})
+        assert r.status_code == 400, r.text
+        assert r.json()["feil"] == "cursor_ugyldig"
+
+    # ... og taket er ekte: en `limit` utenfor kontrakten er en formfeil.
+    r = klient.get("/v1/domeneovertakelse/saker?limit=101", cookies=kake)
+    assert r.status_code == 400 and r.json()["feil"] == "request_feilformet"
+
+
+@pg
 def test_attestasjon_pa_fremmed_sak_er_ikke_funnet(klient):
     """Samme rot i attestasjonsveien: sak-id-rommet er ikke et orakel.
 

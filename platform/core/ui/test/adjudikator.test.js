@@ -15,7 +15,9 @@ let KALL;
 let SVAR;
 globalThis.fetch = async (url, opts = {}) => {
   const sti = url.split("?")[0];
-  KALL.push({ sti, metode: opts.method || "GET" });
+  // `url` (med spørrestreng) føres med: pagineringsporten måler at
+  // cursoren faktisk sendes videre, ikke bare at et kall skjedde.
+  KALL.push({ sti, url, metode: opts.method || "GET" });
   const svar = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
   if (svar === undefined) {
     return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
@@ -66,6 +68,40 @@ test("adjudikatorkøen: tom kø er en tilstand, ikke en tom tabell", async () =>
   visAdjudikator(h, { paaUautorisert: () => {} });
   await vent(() => h.textContent.includes(t("ui.adjudikator.tom_tittel")));
   assert.ok(!h.querySelector(".adjudikatorliste table"));
+});
+
+test("adjudikatorkøen: «vis mer» bærer cursoren og legger til, ikke bytter",
+     async () => {
+  // Køen er ubundet i tid (saker står åpne til et menneske avgjør dem), så
+  // siden er keyset-paginert. Flaten skal da BLA, ikke skjule resten.
+  const SAK2 = { ...SAK, unntak_id: 8, hostname: "annen.example",
+    ts: "2026-08-19T01:00:00+00:00" };
+  KALL = [];
+  SVAR = (sti) => {
+    if (sti !== "/v1/domeneovertakelse/saker") return undefined;
+    const forrige = KALL[KALL.length - 1] || {};
+    return forrige.url && forrige.url.includes("cursor=c1")
+      ? { saker: [SAK2], neste_cursor: null }
+      : { saker: [SAK], neste_cursor: "c1" };
+  };
+  const h = nyHoved();
+  visAdjudikator(h, { paaUautorisert: () => {} });
+  await vent(() => h.querySelector(".adjudikatorliste table"));
+  assert.equal(h.querySelectorAll(".adjudikatorliste tbody tr").length, 1);
+
+  const mer = [...h.querySelectorAll(".cursornav button")]
+    .find((b) => b.textContent === t("ui.vis_mer"));
+  assert.ok(mer, "«vis mer» mangler selv om serveren ga en neste_cursor");
+  mer.click();
+  await vent(() => h.querySelectorAll(".adjudikatorliste tbody tr").length === 2);
+  const tekst = h.querySelector(".adjudikatorliste table").textContent;
+  assert.ok(tekst.includes("kunde.example") && tekst.includes("annen.example"),
+    "andre side erstattet den første i stedet for å legge til");
+  assert.ok(KALL.some((k) => k.url.includes("cursor=c1")),
+    "cursoren ble ikke sendt med");
+  // Siste side: ingen `neste_cursor` → ingen «vis mer» igjen.
+  assert.ok(![...h.querySelectorAll(".cursornav button")]
+    .some((b) => b.textContent === t("ui.vis_mer")));
 });
 
 test("sitekartet: adjudikator-ruten finnes KUN for adjudikasjonsscopet", () => {

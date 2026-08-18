@@ -7,14 +7,23 @@
 // i sitekartet, og API-et bak (`GET /v1/domeneovertakelse/saker`) leser
 // under adjudikatorrollen, avgrenset til sakene der DIN tenant er
 // utfordreren — flaten er visning, aldri autoritet.
+//
+// Køen er PAGINERT (keyset, eldste først): en overtakelsessak står åpen til
+// et menneske avgjør den, så beholdningen har ingen naturlig øvre grense.
+// Uten en bundet side ville hver henting materialisert hele etterslepet.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, UautorisertFeil } from "../api.js";
-import { Tidspunkt, TomTilstand, Feiltilstand } from "../komponenter.js";
+import {
+  Tidspunkt, TomTilstand, Feiltilstand, CursorNavigasjon, meldLive,
+} from "../komponenter.js";
 import { flateHode } from "./felles.js";
+
+const SIDESTORRELSE = 50;
 
 export function visAdjudikator(hoved, ctx) {
   const liste = el("div", { class: "adjudikatorliste", "aria-busy": "true" });
+  const st = { rader: [], neste: null };
 
   function statusTekst(status) {
     return t(`ui.adjudikator.status.${status}`, status);
@@ -48,26 +57,61 @@ export function visAdjudikator(hoved, ctx) {
         el("caption", { text: t("ui.adjudikator.caption") }), thead, tbody)));
   }
 
+  // Navigasjonen ligger UTENFOR listen (egen søskennode): en tom kø skal
+  // fortsatt kunne oppdateres, og «vis mer» finnes bare når serveren sa at
+  // det er mer — knappen er dermed selv svaret på «er det flere?».
+  let navnode = el("div");
+
+  function tegn() {
+    tegnListe(st.rader);
+    const ny = CursorNavigasjon({ neste: st.neste, paaMer: lastMer,
+      paaOppdater: lastForste });
+    navnode.replaceWith(ny);
+    navnode = ny;
+  }
+
   // Samme generasjonsvern som domenelisten: et foreldet svar får ikke
   // overskrive et nyere, hverken med data eller med en feiltilstand.
   let generasjon = 0;
 
-  function last() {
+  function hent(cursor) {
+    return hentJson("/v1/domeneovertakelse/saker",
+                    { limit: SIDESTORRELSE, cursor });
+  }
+
+  function lastForste() {
     const min = ++generasjon;
     liste.setAttribute("aria-busy", "true");
-    hentJson("/v1/domeneovertakelse/saker").then((d) => {
+    hent(null).then((d) => {
       if (min !== generasjon) return;
-      tegnListe(d.saker || []);
+      st.rader = d.saker || [];
+      st.neste = d.neste_cursor || null;
+      tegn();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (min !== generasjon) return;
       liste.removeAttribute("aria-busy");
-      sett(liste, Feiltilstand({ paaProvIgjen: last }));
+      sett(liste, Feiltilstand({ paaProvIgjen: lastForste }));
+    });
+  }
+
+  function lastMer() {
+    const min = ++generasjon;
+    hent(st.neste).then((d) => {
+      if (min !== generasjon) return;
+      st.rader = st.rader.concat(d.saker || []);
+      st.neste = d.neste_cursor || null;
+      tegn();
+      meldLive(`${st.rader.length}`);
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== generasjon) return;
+      meldLive(t("ui.feil_tittel"));
     });
   }
 
   sett(hoved,
     ...flateHode(t("ui.adjudikator.tittel"), t("ui.adjudikator.under")),
-    liste);
-  last();
+    liste, navnode);
+  lastForste();
 }

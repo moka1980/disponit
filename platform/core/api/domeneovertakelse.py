@@ -335,10 +335,22 @@ def saker_endepunkt(tjeneste, request):
     sakene der sesjonens tenant ER utfordreren. Kryssidentiteten flaten
     viser (`tapt_tenant`) er da motparten i din EGEN tvist — den samme
     §5-visningen som før, men uten andres.
+
+    BUNDET SIDE (Codex P2). Overtakelsessaker står ÅPNE til et menneske
+    avgjør dem, så køen har ingen naturlig øvre grense: en etterslepende
+    tenant, eller en som produserer mange legitime DNS-konflikter, ville
+    latt hver eneste henting materialisere hele beholdningen med
+    `fetchall()` — base, svar og nettleser vokser i takt uten tak. Siden
+    er derfor keyset-paginert med NØYAKTIG samme kontrakt som `/v1/unntak`
+    (`limit` ≤ 100, standard 50, signert v2-cursor bundet til tenant,
+    endepunkt, retning og filtre). Retningen er `asc`: eldste sak først —
+    en adjudikatorkø skal tømmes fra bunnen, ikke vise det ferskeste.
     """
     import psycopg
 
+    from . import cursor as cursormodul
     from . import kjerne
+    from . import lesing
     from .app import _autentiser, _feilsvar, _rid, kanonisk_json
 
     rid = _rid(request)
@@ -352,17 +364,43 @@ def saker_endepunkt(tjeneste, request):
                                ADJUDIKASJONSSCOPE)
         except kjerne.Feilsvar as f:
             return _feilsvar(f.kode, rid)
+        # Samme grensekontrakt som lesekøene — én implementasjon, så
+        # taket ikke kan drive fra hverandre endepunktene imellom.
+        grense = lesing._grense(request)
+        if grense is None:
+            return _feilsvar("request_feilformet", rid)
+        etter = None
+        raa = request.query_params.get("cursor")
+        if raa:
+            try:
+                etter = cursormodul.les_v2(
+                    raa, tjeneste.cursorpepper, tenant=auth.tenant,
+                    endepunkt="domeneovertakelse_saker", retning="asc",
+                    filtre={})
+            except cursormodul.CursorUgyldig:
+                tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
+                return _feilsvar("cursor_ugyldig", rid)
+
         # Rollen gir SYNLIGHETEN (saken bor på plattformtenanten); filteret
         # gir OMFANGET. Begge trengs: uten rollen ser en kundesesjon ingen
         # sak i det hele tatt, uten filteret ser den alles.
         conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        rader = conn.execute(
-            "SELECT id, hostname_ref, saksrevisjon, autorisasjonsgenerasjon,"
-            "       utfordrer_tenant, tapt_tenant, status, ts"
-            "  FROM unntak"
-            " WHERE sakskilde='domeneovertakelse' AND NOT terminal"
-            "   AND utfordrer_tenant=%s"
-            " ORDER BY ts, id", (auth.tenant,)).fetchall()
+        sql = ("SELECT id, hostname_ref, saksrevisjon,"
+               "       autorisasjonsgenerasjon, utfordrer_tenant,"
+               "       tapt_tenant, status, ts"
+               "  FROM unntak"
+               " WHERE sakskilde='domeneovertakelse' AND NOT terminal"
+               "   AND utfordrer_tenant=%s")
+        args: list = [auth.tenant]
+        if etter is not None:
+            # Ærlig keyset (v4 pkt. 3): ingen duplikater for uendrede rader.
+            # En sak som blir avgjort mens noen blar, forsvinner ut av
+            # `NOT terminal` — det er køens poeng, ikke et brudd.
+            sql += " AND (ts, id) > (%s, %s)"
+            args += [etter[0], etter[1]]
+        sql += " ORDER BY ts, id LIMIT %s"
+        args.append(grense)
+        rader = conn.execute(sql, tuple(args)).fetchall()
         conn.execute("RESET ROLE")
         conn.rollback()
         saker = [{"unntak_id": int(r[0]), "hostname": r[1],
@@ -370,8 +408,14 @@ def saker_endepunkt(tjeneste, request):
                   "autorisasjonsgenerasjon": int(r[3]),
                   "utfordrer_tenant": r[4], "tapt_tenant": r[5],
                   "status": r[6], "ts": r[7].isoformat()} for r in rader]
-        return kanonisk_json({"saker": saker, "request_id": rid}, 200,
-                             {"x-request-id": rid})
+        neste = None
+        if len(rader) == grense:
+            neste = cursormodul.lag_v2(
+                tjeneste.cursorpepper, tenant=auth.tenant,
+                endepunkt="domeneovertakelse_saker", retning="asc",
+                filtre={}, ts=rader[-1][7], rad_id=rader[-1][0])
+        return kanonisk_json({"saker": saker, "neste_cursor": neste,
+                              "request_id": rid}, 200, {"x-request-id": rid})
     except psycopg.Error as e:
         conn.rollback()
         tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
