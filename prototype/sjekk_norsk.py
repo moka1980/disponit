@@ -25,9 +25,15 @@ To lag, med ulik rolle:
      ettbokstavsord ellers ville meldt hver CSS-verdi og hver
      JS-variabel. «Å» er den eneste norske ettbokstavsformen som
      realistisk blir ASCII-normalisert, og den håndheves derfor
-     deterministisk: frittstående «A»/«a» mellom mellomrom er alltid
-     feil i norsk prosa. Unntak for «A/B», «A-label» og lignende følger
-     av at de ikke er frittstående.
+     deterministisk: en frittstående «A»/«a» som følges av tomrom og et
+     ord på minst to bokstaver er alltid feil i norsk prosa. Tomrommet
+     kan være mellomrom, linjeskift eller den lange rekken mellomrom
+     `_prosa` legger igjen etter en tagg. Unntak for «A/B», «A-label»,
+     «type a)» og oppstillinger som «kolonne A B C» følger av at de
+     enten ikke er frittstående eller ikke følges av et ord.
+
+Selvtesten dekker alle tre lagene POSITIVT. Et lag ingen test kan se, er
+et lag som kan forsvinne mens porten fortsatt melder grønt.
 
 Tre tekstkanaler dekkes: HTML-prosa og sitatmerkede attributtverdier,
 vanlige strenglitteraler, og backtick-maler (template literals) som
@@ -101,7 +107,20 @@ def _varianter(w):
 
 # Frittstående ettbokstavsord som alltid er feil i norsk prosa.
 # «A/B», «A-label», «type a)» treffes ikke: de er ikke frittstående.
-KORTFORM = re.compile(r"(?<![\w/§.\-])([Aa])(?=[ \u00a0](?:[a-zæøå]))")
+#
+# Skillet mellom ordene er `[\s\u00a0]+`, ikke ETT mellomrom (Codex P2 på
+# PR #99). `_prosa` erstatter hver tagg med like mange mellomrom som taggen
+# er lang, så «<p>A <b>gjøre</b> dette</p>» gir «A» etterfulgt av fire.
+# Kravet om nøyaktig ett mellomrom slapp derfor gjennom enhver normalisert
+# «Å» som sto rett foran markup — og det er nettopp der teksten i denne
+# prototypen bor. Linjeskift og dobbelt mellomrom skjulte den like godt.
+#
+# Ordet etter må ha minst TO bokstaver. Det skiller prosa fra oppstilling:
+# «Å gi» og «Å gjøre» treffes — det finnes ikke et norsk infinitivsuttrykk
+# med ettbokstavsverb — mens «kolonne A B C» og en tabellrad med «A» og «B»
+# i hver sin celle ikke gjør det. Store bokstaver godtas nå: markup mellom
+# ordene skjuler «A Gjøre» like effektivt som små bokstaver gjorde.
+KORTFORM = re.compile(r"(?<![\w/§.\-])([Aa])(?=[\s\u00a0]+[A-Za-zÆØÅæøå]{2})")
 
 def _analyser(tekst, zipf):
     bekreftet, gjennomsyn = {}, {}
@@ -194,6 +213,20 @@ def selftest(zipf):
     else:
         print("SELVTEST FEILET: 'A gi' ble ikke fanget"); feil = 1
 
+    # Kortformen må overleve det som står MELLOM ordene (Codex P2 på PR #99).
+    # Selvtest 3 over dekker bare ett enkelt mellomrom, og med den formen sto
+    # porten grønn mens hver normalisert «Å» rett foran en tagg gikk gjennom.
+    # Hver variant her er en måte teksten faktisk ser ut i prototypen.
+    for merke, prove in (("markup", "<p>A <b>gjøre</b> dette</p>"),
+                         ("linjeskift", "Vi ber deg\nA gjøre dette."),
+                         ("dobbelt mellomrom", "Det er lett A  gjøre."),
+                         ("stor forbokstav", "Det er lett A Gjøre.")):
+        b, _ = _analyser(_prosa(prove), zipf)
+        if b:
+            print(f"selvtest 6 ok ({merke}): frittstående A fanget")
+        else:
+            print(f"SELVTEST FEILET: 'A' over {merke} ble ikke fanget"); feil = 1
+
     mal = _prosa("<script>const x=`<h5>Dette utfores automatisk</h5>"
                  "<p>${esc(m.goal)}</p>`;</script>")
     _, g4 = _analyser(mal, zipf)
@@ -205,6 +238,24 @@ def selftest(zipf):
         print("SELVTEST FEILET: ${...} ble ikke blanket ut"); feil = 1
     else:
         print("selvtest 5 ok: interpolasjon blanket ut")
+
+    # Lag 1 må testes POSITIVT (Codex P2 på PR #99). Uten dette dekket
+    # selvtesten bare heuristikken, kortformen og malutdragingen — så
+    # `BEKREFTET`-oppslaget kunne fjernes eller forbigås mens alle fem
+    # kontrollene meldte grønt. «bor» er valgt nettopp fordi heuristikken
+    # IKKE kan redde den: originalen er selv et vanlig norsk ord, og
+    # frekvensporten under `GRENSE_FALSK` hopper derfor over ordet. Er den
+    # forutsetningen borte, er testen verdiløs, og da sier den fra.
+    assert BEKREFTET.get("bor") == "bør", "selvtesten forutsetter at «bor» er listet"
+    if zipf("bor", "nb") < GRENSE_FALSK:
+        print("SELVTEST FEILET: «bor» er ikke lenger tvetydig — velg et annet "
+              "ord, ellers måler selvtest 7 heuristikken og ikke ordlisten")
+        feil = 1
+    b7, _ = _analyser("Dette bor gjøres i dag.", zipf)
+    if ("bor", "bør") in b7:
+        print("selvtest 7 ok: bekreftet ordliste slo til — ('bor', 'bør')")
+    else:
+        print("SELVTEST FEILET: 'bor' ble ikke slått opp i BEKREFTET"); feil = 1
 
     b2, g2 = _analyser("Vi trenger en høyere terskel, og løsningen bør være enkel. "
                        "Vi tester A/B og en A-label, som skal stå urørt.", zipf)
