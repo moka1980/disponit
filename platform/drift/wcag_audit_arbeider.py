@@ -46,10 +46,10 @@ class KlientHTTP:
     """Nøyaktig grensesnittet `kjor_en` bruker: `.post(sti, json=, headers=)`
     -> objekt med status_code/json()/raise_for_status().
 
-    FRISTEN ER AVLEDET, IKKE VALGT (Codex P2, runde 5). Den sto som en fast
-    `timeout=120` ved siden av controllerens retry: `lever` prøver fire
-    ganger, for opplastingen og igjen for kvitteringen, så en plattform som
-    tar imot forbindelsen og så tier kunne bruke over 480 sekunder på
+    FRISTEN ER AVLEDET, IKKE VALGT (Codex P2, runde 5). Den sto som et fast,
+    håndskrevet sekundtall ved siden av controllerens retry: `lever` prøver
+    fire ganger, for opplastingen og igjen for kvitteringen, så en plattform
+    som tar imot forbindelsen og så tier kunne bruke over 480 sekunder på
     opplastingen ALENE — mot de 300 `_skannefrist` reserverer til HELE
     avslutningen. En skanning som ble ferdig nær fristen sin lot da
     kvitteringskapabiliteten løpe ut mens arbeideren fortsatt ventet, og
