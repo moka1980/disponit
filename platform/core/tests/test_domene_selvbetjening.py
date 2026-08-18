@@ -464,6 +464,80 @@ def test_konflikt_far_sin_m37_sak_av_dreneringen(migrator):
     assert antall == 1, "én konflikt ga mer enn én sak"
 
 
+class _Svar:
+    def __init__(self, rader):
+        self._rader = rader
+
+    def fetchone(self):
+        return self._rader[0] if self._rader else None
+
+    def fetchall(self):
+        return self._rader
+
+
+class _Falskkonn:
+    """Minimal conn: låsen gis, ÉN rad plukkes, bekreftelsen reiser `feil`."""
+
+    def __init__(self, feil):
+        self.feil = feil
+        self.rullet = 0
+        self.laast_opp = False
+
+    def execute(self, sql, args=None):
+        if "pg_try_advisory_lock" in sql:
+            return _Svar([(True,)])
+        if "ventende_domenechallenges" in sql:
+            return _Svar([("t", "en.example")])
+        if "bekreft_domenechallenge" in sql:
+            raise self.feil
+        if "pg_advisory_unlock" in sql:
+            self.laast_opp = True
+            return _Svar([(True,)])
+        return _Svar([])
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        self.rullet += 1
+
+
+def test_uventet_dbfeil_feller_verifiseringspasset(monkeypatch):
+    """Codex P2: `except Exception` gjorde ALT til «ikke bevist» — en funksjon
+    som ikke er utrullet, et feil grant, en SQL-feil. Hver rad ble rullet
+    tilbake, telleren gikk opp, og passet returnerte 0: systemd noterte et
+    vellykket pass mens HVER challenge sto ubehandlet, i det uendelige, uten
+    en rød unit.
+
+    Nå fanges bare de forventede utfallene, og de tre klassene holdes fra
+    hverandre: manglende bevis, kappløp, og alt annet.
+
+    MUTASJONEN SOM DREPER DENNE: bytt `except MANGLENDE_BEVIS` tilbake til
+    `except Exception`.
+    """
+    from drift import domenerevalidering as dr
+
+    monkeypatch.setattr(dr, "enig_svar",
+                        lambda resolvere, hostname: frozenset({"t"}))
+
+    # 1) Uventet: slipper ut, og låsen slippes likevel (ingen maskering av
+    #    årsaken med InFailedSqlTransaction fra opplåsingen).
+    uventet = _Falskkonn(psycopg.errors.UndefinedFunction("finnes ikke"))
+    with pytest.raises(psycopg.errors.UndefinedFunction):
+        dr.kjor_ventende(uventet, resolvere=[])
+    assert uventet.laast_opp, "advisory-låsen ble ikke sluppet"
+
+    # 2) Forventet nei: telles, passet fortsetter.
+    nei = _Falskkonn(psycopg.errors.InvalidParameterValue("ingen bevis"))
+    res = dr.kjor_ventende(nei, resolvere=[])
+    assert (res["ikke_bevist"], res["kapplop"]) == (1, 0), res
+
+    # 3) Kappløp: egen teller — det er ikke det samme som «beviset manglet».
+    race = _Falskkonn(psycopg.errors.UniqueViolation("en_verifisert"))
+    res = dr.kjor_ventende(race, resolvere=[])
+    assert (res["kapplop"], res["ikke_bevist"]) == (1, 0), res
+
+
 def test_arbeideren_drenerer_konflikter_i_hovedlokka():
     """Dreneringen er UTRULLET, ikke bare tilgjengelig: M-37-arbeiderens
     hovedløkke kaller den. Uten kallet ville funksjonen over hatt nøyaktig

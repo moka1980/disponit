@@ -31,6 +31,13 @@ def main() -> int:
               file=sys.stderr)
         return 2
     conn = _koble(dsn)
+    # INGEN except her, med vilje (Codex P2). Slipper en uventet databasefeil
+    # ut av passet — funksjonen er ikke utrullet, grantet eller eierskapet er
+    # feil, SQL-en har en programmeringsfeil — skal unitten bli RØD. En
+    # oneshot som svarer 0 mens hver challenge sto ubehandlet ser ut som et
+    # vellykket pass i `systemctl status`, og selvbetjeningen kunne stått
+    # stille i dager uten at noe pekte på den. Sporet (traceback) hører til i
+    # journalen, ikke i en sanitert JSON-linje.
     try:
         r = dr.kjor_ventende(conn, res_konf)
     finally:

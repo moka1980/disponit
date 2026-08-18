@@ -57,6 +57,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
+import psycopg
+
 #: Andel av populasjonen som kan revalideres per kjøring (kø 2 + kø 3).
 TAK_ANDEL = 0.10
 #: Sikkerhetsnettet: ingen verifisert rad skal gå lenger enn dette uten svar.
@@ -389,6 +391,31 @@ def _skriv_resultat(conn, tenant, hostname, txt, aktor,
 #: skal ikke vente på — eller blokkere — den timeplanlagte revalideringen.
 VERIFISERINGSNOKKEL = 915_774_203
 
+#: DE FORVENTEDE UTFALLENE, navngitt (Codex P2).
+#:
+#: Et `except Exception` rundt bekreftelseskallet gjorde ALT til «ikke bevist»:
+#: en funksjon som ikke er utrullet, et grant eller et eierskap som er feil, en
+#: programmeringsfeil i SQL-en. Hver rad ble rullet tilbake, telleren gikk opp,
+#: og `main()` returnerte 0 — så systemd noterte et vellykket pass mens
+#: HVER ENESTE challenge sto ubehandlet, i det uendelige, uten en rød unit.
+#:
+#: `bekreft_domenechallenge` reiser `invalid_parameter_value` for de tre
+#: ordinære neiene (raden finnes ikke, utfordringen er utløpt/aldri utstedt,
+#: beviset står ikke i TXT-svaret); `no_data_found` er formen 016-veiene
+#: bruker for «raden er borte». Alt annet er ikke et svar om DNS-bevis, og
+#: skal felle oneshot-unitten.
+MANGLENDE_BEVIS = (psycopg.errors.InvalidParameterValue,
+                   psycopg.errors.NoDataFound)
+
+#: Kappløpene: en annen tenant verifiserte samme hostname i det vi skrev
+#: (delindeksen `en_verifisert_per_hostname`), eller låsingen kolliderte.
+#: Forventet under samtidighet, og riktig svar er «prøv igjen neste pass» —
+#: men det er ikke det samme som at beviset manglet, og skal ikke telles der.
+KAPPLOP = (psycopg.errors.UniqueViolation,
+           psycopg.errors.SerializationFailure,
+           psycopg.errors.DeadlockDetected,
+           psycopg.errors.LockNotAvailable)
+
 
 def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
                   grense: int = 200) -> dict:
@@ -414,9 +441,14 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
     (`sikre_ventende_overtakelsessaker`, migrasjon 039). Loggposten her er
     derfor et driftsspor, ikke den eneste sporen av konflikten: dør denne
     prosessen rett etter commiten, finner dreneringen raden uansett.
+
+    Bare de FORVENTEDE utfallene fanges per rad (`MANGLENDE_BEVIS`,
+    `KAPPLOP`). En manglende funksjon, et feil grant eller en SQL-feil er
+    ikke «ikke bevist» — den slipper ut og feller unitten, for et pass som
+    rapporterer 0 mens ingenting ble behandlet er verre enn et rødt pass.
     """
     res = {"plukket": 0, "verifisert": 0, "konflikt": 0, "uenige": 0,
-           "ikke_bevist": 0, "annet": 0}
+           "ikke_bevist": 0, "kapplop": 0, "annet": 0}
     fikk = conn.execute("SELECT pg_try_advisory_lock(%s)",
                         (VERIFISERINGSNOKKEL,)).fetchone()[0]
     if not fikk:
@@ -438,11 +470,20 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
                     "SELECT bekreft_domenechallenge(%s,%s,%s,%s)",
                     (tenant, hostname, aktor, sorted(txt))).fetchone()[0]
                 conn.commit()
-            except Exception:
-                # Bevis ikke funnet i TXT (eller raden flyttet seg under
-                # oss): ingen påstand om suksess, prøv igjen neste pass.
+            except MANGLENDE_BEVIS:
+                # Bevis ikke funnet i TXT, utfordringen utløpt, eller raden
+                # finnes ikke lenger. Alt dette er ORDINÆRE utfall: ingen
+                # påstand om suksess, prøv igjen neste pass.
                 conn.rollback()
                 res["ikke_bevist"] += 1
+                continue
+            except KAPPLOP:
+                # Raden flyttet seg under oss (annen tenant verifiserte samme
+                # hostname, vranglås, låsen var tatt). Telles for seg: et
+                # kappløp er ikke det samme som «beviset sto ikke i DNS», og
+                # de to skal ikke kunne skjule hverandre i én teller.
+                conn.rollback()
+                res["kapplop"] += 1
                 continue
             if svar == "verifisert":
                 res["verifisert"] += 1
@@ -456,5 +497,17 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
                 res["annet"] += 1
         return res
     finally:
-        conn.execute("SELECT pg_advisory_unlock(%s)", (VERIFISERINGSNOKKEL,))
-        conn.commit()
+        # ROLLBACK FØRST (Codex P2). Slipper en uventet feil ut av løkka, står
+        # transaksjonen abortert, og et `SELECT` her ville feilet med
+        # InFailedSqlTransaction og MASKERT den egentlige årsaken — nøyaktig
+        # den feilen unitten skal melde. Låsen er sesjonsscopet og overlever
+        # rollbacken, så den skal fortsatt slippes; er forbindelsen borte, dør
+        # den med sesjonen uansett, og da er det ikke opplåsingen som er
+        # nyheten.
+        try:
+            conn.rollback()
+            conn.execute("SELECT pg_advisory_unlock(%s)",
+                         (VERIFISERINGSNOKKEL,))
+            conn.commit()
+        except psycopg.Error:
+            pass
