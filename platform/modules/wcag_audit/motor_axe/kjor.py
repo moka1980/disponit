@@ -28,7 +28,9 @@ ikke motoren fra å være ærlig:
     ved crawl, med RFC 9309-matching (`*`, `$`, Allow/Disallow-
     presedens); robots.txt 5xx → INGEN crawl — kun den eksplisitt
     bestilte `mal_url` kontrolleres (kunden har selv pekt på den; å
-    crawle videre uten en lesbar robots er å gjette på lov).
+    crawle videre uten en lesbar robots er å gjette på lov). Reglene
+    gjelder OGSÅ omdirigeringsmål: et 30x er ingen lenke vi filtrerte,
+    så vakten måler destinasjonen før den hentes.
   * TAKENE ER SYNLIGE (port 19): crawlen stopper på `maks_sider` og
     eksempellista på `MAKS_EKSEMPLER`, og BEGGE slår `avkortet` på —
     (truffet, tak, målt verdi), aldri en stille trunkering.
@@ -275,6 +277,16 @@ def _parse_robots(tekst: str) -> list[tuple[bool, str, "re.Pattern"]]:
             for r in regler]
 
 
+def _robotsti(p) -> str:
+    """Stien en robots-regel måles mot: STI OG QUERY (RFC 9309 §2.2.2).
+
+    `Disallow: /*?` er nettopp regelen som stenger de query-bærende sidene,
+    og den kan ikke virke om vi måler den mot en sti uten query. Formen er
+    ÉN funksjon fordi den brukes to steder — lenkefilteret i crawlen og
+    omdirigeringsvakten — og to skrivemåter er to regler."""
+    return (p.path or "/") + (f"?{p.query}" if p.query else "")
+
+
 def _tillatt(sti: str, regler: list) -> bool:
     """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — lengste mønster,
     og `Allow` foran `Disallow` ved likt. Ingen treff = tillatt."""
@@ -459,6 +471,10 @@ def main() -> int:
     disallow, krype_lov = _robots(origin, mal_pin, tls_kontekst)
     if maks_sider > 1 and not krype_lov:
         maks_sider = 1          # robots 5xx: kun den bestilte siden
+    #: Crawler vi i det hele tatt? Robots-reglene styrer hvilke sider vi
+    #: HENTER utover den bestilte, så de gjelder nøyaktig i denne modusen —
+    #: både for lenkene vi køer og for omdirigeringene vi følger.
+    krype = maks_sider > 1
 
     start = time.monotonic()
     blokkert: dict[tuple[str, str], int] = {}
@@ -500,13 +516,34 @@ def main() -> int:
             blokkert[(n, art)] = blokkert.get((n, art), 0) + 1
 
         def vakt(route):
-            u = urllib.parse.urlsplit(route.request.url)
-            if _origin(u) == origin:
-                route.continue_()
+            req = route.request
+            u = urllib.parse.urlsplit(req.url)
+            if _origin(u) != origin:
+                tell(u.hostname or u.netloc,
+                     ART.get(req.resource_type, "annet"))
+                route.abort("blockedbyclient")
                 return
-            tell(u.hostname or u.netloc,
-                 ART.get(route.request.resource_type, "annet"))
-            route.abort("blockedbyclient")
+            # ROBOTS GJELDER OGSÅ OMDIRIGERINGSMÅLET (Codex P1). Filteret
+            # sto bare på lenkene VI la i køen, og et 30x er ikke en lenke:
+            # en tillatt `/gaa` som svarer 301 til `Disallow: /privat/side`
+            # fortsatte her fordi målet var samme origin, og axe kjørte mot
+            # den forbudte siden. Etter at rapporten begynte å navngi den
+            # landede URL-en, ble den til og med promotert evidens for en
+            # side robots eksplisitt stengte — altså en rett vei rundt
+            # porten, åpnet av målet selv.
+            #
+            # Bare NAVIGASJONER som kom fra en omdirigering måles: den
+            # bestilte `mal_url` er kundens eget valg og gjelder som før,
+            # og subressurser (bilder, stilark) er ikke sider vi crawler.
+            if (krype and req.redirected_from is not None
+                    and req.is_navigation_request()
+                    and not _tillatt(_robotsti(u), disallow)):
+                # Blokkeringen er en DEKNINGSBEGRENSNING, ikke et avbrudd:
+                # siden faller ut av crawlen, og rapporten sier hvorfor.
+                tell(u.hostname or u.netloc, "annet")
+                route.abort("blockedbyclient")
+                return
+            route.continue_()
 
         # WEBSOCKETS AVSKJÆRES FOR SEG (Codex P1). `BrowserContext.route`
         # ser bare HTTP-forespørsler; en `new WebSocket("wss://…")` på en
@@ -614,13 +651,9 @@ def main() -> int:
                     lenke = _normaliser_lenke(origin, faktisk, href or "")
                     if not lenke or lenke in oppdaget:
                         continue
-                    # Robots matcher mot STI OG QUERY (RFC 9309 §2.2.2) —
-                    # `Disallow: /*?` er nettopp regelen som stenger de
-                    # query-bærende sidene, og den kan ikke virke om vi
-                    # måler den mot en sti uten query.
+                    # Robots matcher mot STI OG QUERY — se `_robotsti`.
                     d = urllib.parse.urlsplit(lenke)
-                    sti = d.path + (f"?{d.query}" if d.query else "")
-                    if _tillatt(sti, disallow):
+                    if _tillatt(_robotsti(d), disallow):
                         oppdaget.add(lenke)
                         ko.append(lenke)
         browser.close()

@@ -297,6 +297,36 @@ def test_crawlen_rapporterer_og_loeser_mot_den_landede_url_en():
     assert n(o, f"{o}/gammel", "a.html") == f"{o}/a.html"
 
 
+def test_robots_gjelder_ogsaa_omdirigeringsmaalet():
+    """Codex P1: et 30x er ingen lenke, og filteret sto bare på lenkene.
+
+    En tillatt `/gaa` som svarer 301 til en `Disallow`-sti fortsatte i
+    vakten fordi målet var samme origin — og axe kjørte mot den forbudte
+    siden, som etter landings-fiksen til og med ble navngitt i rapporten.
+    Vakten lever inne i `main()` bak playwright, så porten måles på kilden
+    pluss den delte stiformen begge sidene av regelen bruker."""
+    regler = kjor._parse_robots("User-agent: *\nDisallow: /privat/\n"
+                                "Disallow: /*?hemmelig\n")
+    u = urllib.parse.urlsplit
+    assert not kjor._tillatt(
+        kjor._robotsti(u("https://x.example/privat/side")), regler)
+    assert kjor._tillatt(
+        kjor._robotsti(u("https://x.example/gaa")), regler)
+    # Query-en er med — ellers er `Disallow: /*?…` en regel uten virkning.
+    assert not kjor._tillatt(
+        kjor._robotsti(u("https://x.example/s?hemmelig=1")), regler)
+    # Tom sti er `/`, ikke "".
+    assert kjor._robotsti(u("https://x.example")) == "/"
+
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+    assert "req.redirected_from is not None" in kilde
+    assert "req.is_navigation_request()" in kilde
+    assert "not _tillatt(_robotsti(u), disallow)" in kilde
+    # Og stiformen er DELT: bygges den to steder, kan de gli fra hverandre.
+    assert kilde.count("_robotsti(") == 3, \
+        "stiformen skal komme fra én funksjon, brukt begge steder"
+
+
 def test_kravsett_og_alvorlighet_dekker_kontrakten():
     # Enum-ene speiler rapportskjemaet — driver de fra hverandre, produserer
     # motoren verdier skjemavalideringen avviser.
