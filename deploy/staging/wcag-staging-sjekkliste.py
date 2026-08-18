@@ -1461,27 +1461,69 @@ def _effektiv_motorimage(motor_argv) -> tuple[str, str]:
     return ut.stdout.strip().split(":")[-1], "lest i arbeiderens eget lager"
 
 
-def _importer_motorimage(digest: str) -> tuple[bool, str]:
-    """Motorimaget inn i ARBEIDERENS podman-lager (Codex P1).
+def _docker_diff_ids(digest: str) -> list | None:
+    """Lagkjeden (RootFS.Layers = diff_ids) fra den rootfulle daemonen."""
+    ut = subprocess.run(["docker", "image", "inspect", "--format",
+                         "{{json .RootFS.Layers}}", digest],
+                        capture_output=True, text=True)
+    if ut.returncode != 0:
+        return None
+    return json.loads(ut.stdout)
 
-    Fase 1 henter image-ID-en fra den ROOTFULLE dockerdaemonen, og fase 9
-    ga den samme ID-en til rootless podman som `disponit-wcag`. De to har
-    hvert sitt lager og ingen felles referanse — ingen `docker save`,
-    ingen registry-push, ingen rootless bygging fantes noe sted. Den
-    enablede arbeideren kunne derfor ikke starte motoren i det hele tatt,
-    og ville feilet hvert eneste claimet oppdrag.
 
-    Image-ID-en er konfigblobbens digest og overlever `docker save` |
-    `podman load`, så `container_image_digest` er den samme verdien
-    releaseraden og kvitteringene bærer.
+def _arbeider_diff_ids(ref: str) -> list | None:
+    """Samme lagkjede, lest i ARBEIDERENS lager."""
+    ut = subprocess.run(_arbeiderpodman("image", "inspect", "--format",
+                                        "{{json .RootFS.Layers}}", ref),
+                        capture_output=True, text=True)
+    if ut.returncode != 0:
+        return None
+    try:
+        return json.loads(ut.stdout)
+    except ValueError:
+        return None
+
+
+def _importer_motorimage(digest: str) -> tuple[str, str]:
+    """Motorimaget inn i ARBEIDERENS podman-lager. -> (arbeider-id, notat).
+
+    Tom id = imaget er ikke tilgjengelig for arbeideren.
+
+    IDENTITETEN OVERLEVER IKKE TRANSPORTEN (målt på disponit-srv, docker
+    29/containerd-lager): `docker save | podman load` ga et image med
+    IDENTISK innhold — samme Created på nanosekundet, samme ni lag — men en
+    ANNEN image-ID, fordi containerd-snapshotteren skriver konfigen om ved
+    eksport og podman regner ID av det den får. Forrige utgave sammenlignet
+    ID-er og konkluderte «imaget er ikke i lageret» om et innholdsidentisk
+    image som sto der — og hver slik runde brente en release.
+
+    Identiteten som faktisk overlever er LAGKJEDEN (RootFS diff_ids:
+    innholdsdigester av de ukomprimerte lagene, samme verdi i begge
+    motorer). Oppslag og verifikasjon går derfor på den, og funksjonen
+    returnerer ARBEIDERENS egen ID — det er den motorkommandoen og
+    kvitteringenes `container_image_digest` må bære, for det er den som
+    faktisk kjører. Releasens `artifact_digest` (dockers ID) består som
+    byggeidentitet; fase 9-evidensen fører BEGGE og lagkjede-beviset som
+    binder dem.
     """
-    kort = digest.split(":")[-1]
     subprocess.run(["install", "-d", "-m", "700", "-o", ARBEIDER_BRUKER,
                     "-g", ARBEIDER_BRUKER, f"/run/{ARBEIDER_BRUKER}"],
                    check=True)
-    if subprocess.run(_arbeiderpodman("image", "exists", kort),
-                      capture_output=True).returncode == 0:
-        return True, "alt i lageret"
+    lagene = _docker_diff_ids(digest)
+    if not lagene:
+        return "", "docker image inspect ga ingen lagkjede for releasen"
+
+    def _finn() -> str:
+        ls = subprocess.run(_arbeiderpodman("image", "ls", "-q", "--no-trunc"),
+                            capture_output=True, text=True)
+        for iid in dict.fromkeys(filter(None, ls.stdout.split())):
+            if _arbeider_diff_ids(iid) == lagene:
+                return iid.split(":")[-1]
+        return ""
+
+    fantes = _finn()
+    if fantes:
+        return fantes, "alt i lageret (innholdsidentisk lagkjede)"
     ror = subprocess.run(
         ["bash", "-o", "pipefail", "-c",
          # `sha256:`-prefikset er IKKE pynt: `docker save` (i motsetning til
@@ -1489,17 +1531,16 @@ def _importer_motorimage(digest: str) -> tuple[bool, str]:
          # «cannot specify 64-byte hexadecimal strings» — så importen feilet
          # på HVER kjøring og fase 9 brente en release per forsøk. Funnet ved
          # å kjøre `docker save` for hånd da røret ga tom stdin til podman.
-         f"docker save sha256:{shlex.quote(kort)} | "
+         f"docker save sha256:{shlex.quote(digest.split(':')[-1])} | "
          + shlex.join(_arbeiderpodman("load"))],
         capture_output=True, text=True)
     if ror.returncode != 0:
-        return False, f"import feilet: {(ror.stderr or ror.stdout)[-300:]}"
-    etter = subprocess.run(_arbeiderpodman("image", "exists", kort),
-                           capture_output=True, text=True)
-    if etter.returncode != 0:
-        return False, ("imaget er ikke i lageret etter import:"
-                       f" {etter.stderr[-200:]}")
-    return True, "importert"
+        return "", f"import feilet: {(ror.stderr or ror.stdout)[-300:]}"
+    etter = _finn()
+    if not etter:
+        return "", ("lastet uten feil, men intet innholdsidentisk image i"
+                    " lageret etterpå — lagkjeden matcher ikke releasens")
+    return etter, "importert"
 
 
 def _tokenet_er_autorisert(m, mtk: str) -> tuple[bool, dict]:
@@ -1741,16 +1782,6 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
 
     reg = json.loads(ATT_FIL.read_text())
     nid = sorted(reg["v_wcag_audit"])[0]
-    motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
-        "podman", "run", "--rm", "-i", "--network", "host",
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-        # Nettleseren kjører kundens side: `MOTORGRENSER` er minnet og
-        # prosesstabellen den kan bruke, unitens `CPUQuota=`/`MemoryMax=`
-        # er backstoppet rundt hele arbeideren.
-        *MOTORGRENSER,
-        # Image-ID-en, ikke taggen: taggen er mutabel, og kvitteringen
-        # attesterer nøyaktig denne digesten som container_image_digest.
-        digest.split(":")[-1]])
 
     # ROOTLESS-FORUTSETNINGENE MÅLES FØR UNITEN ENABLES (Codex P1).
     # `opp.sh` deler ut subuid/subgid til `disponit-wcag` og advarer om
@@ -1779,18 +1810,35 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
         return
 
     # ... og IMAGET må ligge i arbeiderens EGET lager — se
-    # `_importer_motorimage`. Docker og rootless podman deler ingenting.
-    importert, hvordan = _importer_motorimage(digest)
-    evidens("fase9_motorimage", image_id=digest.split(":")[-1],
+    # `_importer_motorimage`. Docker og rootless podman deler ingenting, og
+    # ID-en overlever ikke transporten (docker 29): importen skjer FØR
+    # motorkommandoen bygges, for kommandoen skal bære ARBEIDERENS id.
+    arbeider_id, hvordan = _importer_motorimage(digest)
+    evidens("fase9_motorimage", artifact_digest=digest.split(":")[-1],
+            arbeider_image_id=arbeider_id or None,
             lager=f"rootless podman ({ARBEIDER_BRUKER})", utfall=hvordan,
-            ok=importert)
-    if not importert:
+            ok=bool(arbeider_id))
+    if not arbeider_id:
         evidens("fase9_hoppet",
                 grunn="motorimaget er ikke tilgjengelig for arbeideren",
                 merknad="uniten enables ikke: den ville feilet hvert"
                         " eneste claimet oppdrag")
         _steng_doeren(m, "motorimaget mangler i arbeiderens lager")
         return
+
+    motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
+        "podman", "run", "--rm", "-i", "--network", "host",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        # Nettleseren kjører kundens side: `MOTORGRENSER` er minnet og
+        # prosesstabellen den kan bruke, unitens `CPUQuota=`/`MemoryMax=`
+        # er backstoppet rundt hele arbeideren.
+        *MOTORGRENSER,
+        # ARBEIDERENS image-id, ikke taggen og ikke dockers: taggen er
+        # mutabel, og dockers id finnes ikke i arbeiderens lager (docker
+        # 29-transporten skriver konfigen om). Kvitteringene attesterer
+        # nøyaktig denne id-en som container_image_digest — motoren som
+        # faktisk kjører.
+        arbeider_id])
 
     # KONTEKSTEN AVLEDES AV DEN MOTOREN SOM FAKTISK KJØRER (Codex P2,
     # runde 6). `miljo`-blokka ble bygget av stagingkommandoen og dens
@@ -1803,14 +1851,23 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     # `artifact_digest` og målingene attesterte. Et annet image er ikke et
     # konteksproblem å skrive seg ut av: da er akseptmålingen gjort på noe
     # annet enn det som skal i drift, og døren stenges.
+    # IDENTITETEN SOM SAMMENLIGNES ER LAGKJEDEN, ikke id-strengen: dockers
+    # id (releasens artifact_digest) og arbeiderens id er to navn på samme
+    # innhold etter docker 29-transporten. Gaten binder den effektive
+    # motoren til releasens INNHOLD — diff_ids er innholdsdigester og kan
+    # ikke navngis om.
     motor_argv = shlex.split(motor)
     drift_id, hvorfra = _effektiv_motorimage(motor_argv)
-    ventet = digest.split(":")[-1]
+    ventet_lag = _docker_diff_ids(digest)
+    effektiv_lag = _arbeider_diff_ids(drift_id) if drift_id else None
+    identisk = bool(drift_id) and ventet_lag is not None \
+        and effektiv_lag == ventet_lag
     evidens("fase9_effektiv_motor", motor=motor, image_id=drift_id,
-            ventet=ventet, utfall=hvorfra,
+            artifact_digest=digest.split(":")[-1],
+            lagkjede_identisk=identisk, utfall=hvorfra,
             overstyrt=bool(os.environ.get("WCAG_DRIFT_MOTOR")),
-            ok=drift_id == ventet)
-    if drift_id != ventet:
+            ok=identisk)
+    if not identisk:
         evidens("fase9_hoppet",
                 grunn="den effektive motoren er ikke imaget runden målte",
                 merknad="uniten enables ikke: kvitteringene ville attestert"
