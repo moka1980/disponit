@@ -2972,6 +2972,67 @@ def test_uloselig_referanse_er_en_avvisning_ikke_en_500():
     assert not valider(to_navn, {"p": "x", "q": 1})
     assert valider(to_navn, {"p": 1, "q": "x"})
 
+    # Codex P2, runde 3: EN REFERANSE SOM ALDRI KOMMER TILBAKE.
+    # `{"$ref": "#"}` metavalideres OG treffer en skjemaposisjon, så den
+    # passerte alt sjekkene over spør om — men `iter_errors` følger
+    # selvreferansen til `RecursionError`, for hver eneste instans, og
+    # `_OPPSLAGSFEIL` fanger den ikke. Permanent 500-er i en udødelig rad.
+    # Kontroll: fjern `_syklusfeil`-kallet i `_referansefeil`, så kaster
+    # `valider`-kallene under (og `RecursionError`-fangsten i `valider`
+    # gjør dem til en avvisning i stedet — fjern den også, så er 500-eren
+    # tilbake).
+    #
+    # Kanten teller bare når delskjemaet evalueres PÅ STEDET og UBETINGET:
+    # samme instans videre, ingenting forbrukt, ingen annen betingelse
+    # først. `allOf`-varianten er derfor like uendelig som `{"$ref": "#"}`
+    # uten at to `$ref` står på rad.
+    for syklus in ({"$ref": "#"},
+                   {"$defs": {"a": {"$ref": "#/$defs/b"},
+                              "b": {"$ref": "#/$defs/a"}},
+                    "$ref": "#/$defs/a"},
+                   {"$ref": "#/$defs/a",
+                    "$defs": {"a": {"allOf": [{"$ref": "#"}]}}},
+                   {"not": {"$ref": "#"}},
+                   {"if": {"$ref": "#"}},
+                   {"$anchor": "R", "anyOf": [{"$dynamicRef": "#R"}]}):
+        feil = skjemafeil(syklus)
+        assert feil and "syklus" in feil[0], syklus
+        assert valider(syklus, {"p": 1}), syklus
+
+    # NÅBARHET TELLER. En syklus inne i `$defs` som ingen refererer,
+    # evalueres aldri — skjemaet validerer uten å blunke, og en avvisning
+    # ville vært falsk og udødelig.
+    unaadd = {"type": "object",
+              "$defs": {"a": {"$ref": "#/$defs/b"},
+                        "b": {"$ref": "#/$defs/a"}}}
+    assert not skjemafeil(unaadd)
+    assert not valider(unaadd, {"p": 1})
+
+    # Rekursjon som GÅR NED I INSTANSEN terminerer, og er hele grunnen
+    # til at `$ref` finnes. Den står (dekket over av `rekursiv`), og det
+    # samme gjør `allOf` uten syklus.
+    allof_ok = {"allOf": [{"$ref": "#/$defs/t"}],
+                "$defs": {"t": {"type": "string"}}}
+    assert not skjemafeil(allof_ok)
+    assert not valider(allof_ok, "x")
+    assert valider(allof_ok, 1)
+
+    # BETINGEDE sykluser avvises IKKE ved registrering: `then` henger på
+    # `if`, og `dependentSchemas` på at instansen har nøkkelen. Begge
+    # validerer fint på det innholdet som ikke utløser dem, så en statisk
+    # avvisning ville vært falsk. Nettet er `RecursionError`-fangsten i
+    # `valider` — en avvisning av innholdet, ikke en 500-er.
+    betinget_if = {"if": {"type": "object"}, "then": {"$ref": "#"}}
+    assert not skjemafeil(betinget_if)
+    assert not valider(betinget_if, 5)
+    feil = valider(betinget_if, {})
+    assert feil and "kommer ikke tilbake" in feil[0]
+    betinget_dep = {"dependentSchemas": {"x": {"$ref": "#"}}}
+    assert not skjemafeil(betinget_dep)
+    assert not valider(betinget_dep, {"y": 1})
+    feil = valider(betinget_dep, {"x": 1})
+    assert feil and "kommer ikke tilbake" in feil[0]
+
     # `$ref` som DATA er ikke en referanse. En blind rekursjon over all
     # JSON ville avvist disse to — og den falske avvisningen er like
     # endelig som en falsk godkjenning, siden raden er udødelig.

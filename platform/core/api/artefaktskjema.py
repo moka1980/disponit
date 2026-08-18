@@ -145,6 +145,43 @@ _SKJEMA_KART = frozenset({
     "properties", "patternProperties", "$defs", "definitions",
     "dependentSchemas"})
 
+#: Nøkkelord validatoren ALDRI evaluerer av seg selv. `$defs`/`definitions`
+#: er rene oppbevaringssteder, og `contentSchema` er en annotasjon i
+#: 2020-12 — ingen av dem står i `Draft202012Validator.VALIDATORS`. Det
+#: som ligger under dem nås bare gjennom en `$ref`.
+_IKKE_EVALUERT = frozenset({"$defs", "definitions", "contentSchema"})
+#: Nøkkelord hvis delskjema evalueres PÅ STEDET og UBETINGET — altså mot
+#: nøyaktig samme instans, uten at noe av den blir forbrukt, og uten at et
+#: annet nøkkelord først må slå til. `then`/`else` hører ikke hjemme her
+#: (de henger på `if`), og heller ikke `dependentSchemas` (den henger på at
+#: instansen har nøkkelen). Se `_syklusfeil`.
+_PA_STEDET_NOKKEL = frozenset({"not", "if"})
+_PA_STEDET_LISTE = frozenset({"allOf", "anyOf", "oneOf"})
+
+
+def _evalueringsbarn(sti, s):
+    """Delskjemaposisjonene validatoren kan nå DIREKTE fra `s` (uten en
+    `$ref`). Samme grenstruktur som `_delskjemaer`, minus `_IKKE_EVALUERT`."""
+    for nokkel, verdi in s.items():
+        if nokkel in _IKKE_EVALUERT:
+            continue
+        if nokkel in _SKJEMA_NOKKEL:
+            yield sti + (nokkel,)
+        elif nokkel in _SKJEMA_LISTE and isinstance(verdi, list):
+            for i in range(len(verdi)):
+                yield sti + (nokkel, str(i))
+        elif nokkel in _SKJEMA_KART and isinstance(verdi, dict):
+            for navn in verdi:
+                yield sti + (nokkel, navn)
+
+
+def _pekertekst(sti) -> str:
+    """Posisjonen som JSON-peker, til bruk i feilmeldinger."""
+    if not sti:
+        return "#"
+    return "#/" + "/".join(
+        ledd.replace("~", "~0").replace("/", "~1") for ledd in sti)
+
 
 def _delskjemaer(skjema):
     """Hver SKJEMAPOSISJON i dokumentet, dokumentet selv inkludert, som
@@ -319,7 +356,8 @@ def _referansefeil(skjema) -> list[str]:
                     f" nøkkelrekkefølgen")
     if feil:
         return feil
-    for _, s in delskjemaer:
+    refmal: dict[tuple, list[tuple]] = {}
+    for sti, s in delskjemaer:
         if not isinstance(s, dict):
             continue
         for nokkel in ("$ref", "$dynamicRef"):
@@ -330,15 +368,111 @@ def _referansefeil(skjema) -> list[str]:
                 feil.append(f"<skjema>: `{nokkel}` peker ut av dokumentet"
                             f" — {ref[:80]}")
             elif ref == "#":
-                continue
+                refmal.setdefault(sti, []).append(())
             elif ref.startswith("#/"):
-                if _pekerledd(ref[1:]) not in posisjoner:
+                mal = _pekerledd(ref[1:])
+                if mal not in posisjoner:
                     feil.append(f"<skjema>: `{nokkel}` treffer ingen"
                                 f" skjemaposisjon — {ref[:80]}")
+                else:
+                    refmal.setdefault(sti, []).append(mal)
             elif ref[1:] not in ankre:
                 feil.append(f"<skjema>: `{nokkel}` treffer ingen `$anchor`"
                             f" — {ref[:80]}")
-    return feil
+            else:
+                # Ankernavnet er entydig — duplikater er avvist over.
+                refmal.setdefault(sti, []).append(next(iter(ankre[ref[1:]])))
+    if feil:
+        return feil
+    return _syklusfeil(dict(delskjemaer), refmal)
+
+
+def _syklusfeil(noder: dict, refmal: dict) -> list[str]:
+    """-> feilliste for referansesykluser som ikke forbruker instans.
+
+    Codex P2: `{"$ref": "#"}` METAVALIDERES OG TREFFER EN SKJEMAPOSISJON.
+    Den passerer altså alt sjekken over spør om, men `iter_errors` følger
+    selvreferansen til `RecursionError` — for HVER instans. `valider` fanget
+    bare `_OPPSLAGSFEIL`, så det ble en 500-er etter at både skjemaraden og
+    typebindingen var udødelige: artefakttypen kunne aldri brukes og aldri
+    repareres.
+
+    Betingelsen er ikke «en syklus», og forskjellen er hele poenget:
+
+      * En kant teller bare når delskjemaet evalueres PÅ STEDET og
+        UBETINGET — `$ref`, `$dynamicRef`, `allOf`/`anyOf`/`oneOf`, `not`
+        og `if`. Alle sender NØYAKTIG samme instans videre uten at noe blir
+        forbrukt, så en runde i den grafen er en runde uten framdrift.
+        `{"$ref": "#/$defs/a", "$defs": {"a": {"allOf": [{"$ref": "#"}]}}}`
+        er derfor like uendelig som `{"$ref": "#"}`, selv om ingen av
+        kantene er to `$ref` på rad.
+      * `properties`, `items` og resten går NED i instansen. Ekte rekursive
+        skjemaer lever der, og de terminerer fordi instansen er endelig.
+        De er lovlige og skal forbli det.
+      * `then`/`else` og `dependentSchemas` er PÅ STEDET, men BETINGET: de
+        evalueres bare når `if` slår til, eller når instansen har nøkkelen.
+        `{"if": {"type": "object"}, "then": {"$ref": "#"}}` ryker på et
+        objekt og validerer fint på tallet `5`. En statisk avvisning ville
+        vært en falsk avvisning, og den er like udødelig som en falsk
+        godkjenning. Nettet for dem er `RecursionError`-fangsten i
+        `valider`, ikke denne sjekken.
+
+    NÅBARHET TELLER OGSÅ. En syklus inne i `$defs` som ingen refererer,
+    evalueres aldri: `{"type": "object", "$defs": {"a": {"$ref":
+    "#/$defs/b"}, "b": {"$ref": "#/$defs/a"}}}` validerer uten å blunke.
+    Grafen bygges derfor bare over posisjoner som faktisk NÅS fra roten —
+    gjennom evaluerte nøkkelord og gjennom referanser — og `$defs`,
+    `definitions` og `contentSchema` nås ikke av seg selv.
+    """
+    naadd = set()
+    ko = [()]
+    while ko:
+        sti = ko.pop()
+        if sti in naadd:
+            continue
+        naadd.add(sti)
+        s = noder.get(sti)
+        ko.extend(refmal.get(sti, ()))
+        if isinstance(s, dict):
+            ko.extend(_evalueringsbarn(sti, s))
+
+    kanter: dict[tuple, list[tuple]] = {}
+    for sti in naadd:
+        s = noder.get(sti)
+        ut = [m for m in refmal.get(sti, ()) if m in naadd]
+        if isinstance(s, dict):
+            for nokkel, verdi in s.items():
+                if nokkel in _PA_STEDET_NOKKEL:
+                    ut.append(sti + (nokkel,))
+                elif nokkel in _PA_STEDET_LISTE and isinstance(verdi, list):
+                    ut.extend(sti + (nokkel, str(i))
+                              for i in range(len(verdi)))
+        kanter[sti] = [m for m in ut if m in naadd]
+
+    GRA, SVART = 1, 2
+    farge: dict[tuple, int] = {}
+    for start in kanter:
+        if farge.get(start):
+            continue
+        farge[start] = GRA
+        stabel = [(start, iter(kanter[start]))]
+        while stabel:
+            node, resten = stabel[-1]
+            for neste in resten:
+                if farge.get(neste) == GRA:
+                    runde = [n for n, _ in stabel]
+                    runde = runde[runde.index(neste):] + [neste]
+                    spor = " -> ".join(_pekertekst(n) for n in runde)
+                    return ["<skjema>: referansesyklus uten framdrift — "
+                            + spor[:160]]
+                if not farge.get(neste):
+                    farge[neste] = GRA
+                    stabel.append((neste, iter(kanter.get(neste, ()))))
+                    break
+            else:
+                farge[node] = SVART
+                stabel.pop()
+    return []
 
 
 def skjemafeil(skjema) -> list[str]:
@@ -485,11 +619,25 @@ def valider(skjema: dict, innhold: dict) -> list[str]:
     # `iter_errors` er lat, så oppslaget skjer først når innholdet når
     # frem til grenen; en tom feilliste er derfor ikke noe bevis på at
     # referansen finnes.
+    #
+    # OG EN REFERANSE SOM ALDRI KOMMER TILBAKE ER DET SAMME (Codex P2).
+    # `_syklusfeil` avviser de syklusene som ryker for HVER instans, men
+    # den kan ikke avvise de BETINGEDE — `{"if": {"type": "object"},
+    # "then": {"$ref": "#"}}` ryker på et objekt og validerer fint på
+    # tallet `5`, og `dependentSchemas` henger på samme måte i instansen.
+    # Å avvise dem ved registrering ville vært en falsk avvisning, og den
+    # er like udødelig som en falsk godkjenning. Derfor står de her, som
+    # en avvisning av INNHOLDET, der betingelsen faktisk er kjent:
+    # `RecursionError` er ikke et brudd innsenderen kan rette, men den er
+    # heller ikke en 500-er å slippe ut av opplastingsveien.
     try:
         avvik = sorted(validator.iter_errors(innhold),
                        key=lambda e: list(e.absolute_path))
     except _OPPSLAGSFEIL as e:
         return [f"<skjema>: referanse lar seg ikke slå opp — {str(e)[:160]}"]
+    except RecursionError:
+        return ["<skjema>: referansen kommer ikke tilbake — validatoren"
+                " gikk tom for stakk på dette innholdet"]
     for e in avvik:
         feil.append(f"{_sti(e)}: {_bruddkode(e)}")
         if len(feil) >= 20:
