@@ -146,18 +146,45 @@ def test_port7_payloadfelt_utenfor_skjemaet_slipper_aldri_ut():
     assert "belop" not in oppdragskontrakt.minimer("verifikasjon", payload)
 
 
-def test_oppdragstypenes_prefikser_er_disjunkte():
-    """Overlappende prefikser ville gjort feltbredden avhengig av
-    rekkefølgen i en dict."""
+def test_oppdragstypenes_prefikser_er_entydige():
+    """Ingen handling får to typer å velge mellom.
+
+    Prefiksene var disjunkte før PR-014c. Med `kontroll.wcag.` under
+    `kontroll.` er de nested, og da er det LENGSTE treffet som avgjør —
+    entydig uansett rekkefølgen i dict-en. Det som fortsatt ville gjort
+    feltbredden til et lotteri, er to ULIKE typer med NØYAKTIG samme
+    prefiks: da finnes det ikke noe lengste treff.
+    """
     import oppdragskontrakt
-    alle = [(t.navn, p) for t in oppdragskontrakt.OPPDRAGSTYPER.values()
-            for p in t.handlingsprefikser]
-    for navn_a, pre_a in alle:
-        for navn_b, pre_b in alle:
-            if navn_a >= navn_b:
-                continue
-            assert not (pre_a.startswith(pre_b) or pre_b.startswith(pre_a)), \
-                f"prefiksene {pre_a!r} ({navn_a}) og {pre_b!r} ({navn_b}) overlapper"
+    eier: dict[str, str] = {}
+    for t in oppdragskontrakt.OPPDRAGSTYPER.values():
+        for p in t.handlingsprefikser:
+            assert p not in eier or eier[p] == t.navn, \
+                f"prefikset {p!r} deles av {eier[p]} og {t.navn}"
+            eier[p] = t.navn
+
+
+def test_lengste_prefiks_vinner_over_dict_rekkefolgen():
+    """WCAG-kontrollen eier `kontroll.wcag.`, `verifikasjon` resten.
+
+    Mutasjonssjekk: med førstetreff i `type_for_handling` avhenger begge
+    disse av hvilken vei dict-en itereres.
+    """
+    import oppdragskontrakt as ok
+    assert ok.type_for_handling(
+        "kontroll.wcag.nettsted").navn == "kontroll.wcag.nettsted"
+    # Codex P1, runde 11: en persistert tenantpolicy kan bære en fri
+    # `kontroll.*`-handling. Den skal fortsatt rutes som før — ikke bli
+    # `eiermodul:ukjent` fordi WCAG-kontrollen tok navnerommet.
+    assert ok.type_for_handling(
+        "kontroll.fakturagrunnlag").navn == "verifikasjon"
+    assert ok.type_for_handling("verifiser.mva").navn == "verifikasjon"
+    assert ok.type_for_handling("kontroll") is None
+    # Feltbredden følger den typen som VANT, ikke den som delte prefiks.
+    wcag = ok.minimer("kontroll.wcag.nettsted",
+                      {"mal_url": "https://a.example/", "kravsett": "wcag22aa",
+                       "omfang": "forside", "vilkaar_sett": ["x"]})
+    assert "vilkaar_sett" not in wcag and wcag["kravsett"] == "wcag22aa"
 
 
 # ===========================================================================

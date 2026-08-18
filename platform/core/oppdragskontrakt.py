@@ -107,17 +107,23 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " som skal utføres på nytt etter at dataene foreligger.")),
     "verifikasjon": Oppdragstype(
         navn="verifikasjon",
-        # PR-014c: `kontroll.`-prefikset er AVGITT til WCAG-kontrollen.
-        # Det var en ubrukt reservasjon — hver produsent bygger
-        # verifikasjonshandlinger som `verifiser.<vilkår>` (reparasjoner.py),
-        # og ingen kodevei eller test har noensinne laget en
-        # `kontroll.*`-handling for denne typen. Å beholde det ville brutt
-        # disjunkthetsinvarianten under (`kontroll.wcag.` ⊂ `kontroll.`) og
-        # gitt feil type ved oppslag. Konsekvensen er fail-closed: en
-        # fremtidig `kontroll.*`-handling som IKKE er WCAG-kontrollens
-        # matcher ingen type og avvises ved minimering — støyende, aldri
-        # feilrutet.
-        handlingsprefikser=("verifiser.",),
+        # `kontroll.` BLIR STÅENDE (Codex P1, runde 11). PR-014c fjernet det
+        # først, med den begrunnelsen at reservasjonen var ubrukt: ingen
+        # produsent i repoet lager `kontroll.*`-handlinger for denne typen.
+        # Den begrunnelsen holder ikke, for den slutter fra KODEN til DATAEN.
+        # Handlings-ID-er kommer fra tenantpolicyer, og policyskjemaet
+        # (`policy-schema-v0.2.json`, `handlinger[].id`) tillater en fri
+        # punktnotert streng. En allerede aktiv policy med f.eks.
+        # `kontroll.fakturagrunnlag` er derfor mulig uten at noe i repoet
+        # ville vist det — og for den ville fjerningen ikke vært
+        # «fail-closed», men et stille tap: `type_for_handling` → None →
+        # `_eiermodul_for` → `eiermodul:ukjent`, og oppdraget kan hverken
+        # claimes eller minimeres.
+        #
+        # `kontroll.wcag.` er ikke i konflikt med dette: oppslaget under
+        # velger det LENGSTE prefikset som matcher, så WCAG-kontrollen
+        # eier sitt eget undernavnerom uten å ta hele `kontroll.`.
+        handlingsprefikser=("verifiser.", "kontroll."),
         # Ingen beløp: et verifikasjonsoppdrag skal slå opp mot en
         # autoritativ kilde, ikke få vite hva saken gjaldt i kroner.
         #
@@ -170,16 +176,29 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
 def type_for_handling(handling: str) -> Oppdragstype | None:
     """Oppdragstypen en handling hører til, eller None.
 
-    Prefiksene er disjunkte per konstruksjon — `test_prefikser_er_disjunkte`
-    beviser det. Overlappende prefikser ville gjort feltbredden avhengig av
-    hvilken rekkefølge dict-en tilfeldigvis har.
+    LENGSTE PREFIKS VINNER (Codex P1, runde 11). Prefiksene var disjunkte
+    før PR-014c, og da var «første treff» det samme som «eneste treff».
+    Med `kontroll.wcag.` under `kontroll.` er de det ikke lenger, og
+    førstetreff ville gjort typen — altså FELTBREDDEN — avhengig av
+    rekkefølgen i en dict. Det er nettopp det den gamle
+    disjunkthetsinvarianten vernet mot, og lengste treff gir samme vern
+    uten å måtte gi fra seg et helt navnerom: `kontroll.wcag.nettsted`
+    treffer WCAG-typen (13 tegn), `kontroll.fakturagrunnlag` treffer
+    `verifikasjon` (9 tegn), og ingen av dem avhenger av iterasjonen.
+
+    Det som fortsatt IKKE er tillatt, er at to ULIKE typer deklarerer
+    NØYAKTIG samme prefiks — da finnes det ikke noe lengste treff å velge,
+    og `test_oppdragstypenes_prefikser_er_entydige` avviser det.
     """
     if not isinstance(handling, str):
         return None
+    beste: Oppdragstype | None = None
+    beste_lengde = -1
     for t in OPPDRAGSTYPER.values():
-        if any(handling.startswith(p) for p in t.handlingsprefikser):
-            return t
-    return None
+        for p in t.handlingsprefikser:
+            if handling.startswith(p) and len(p) > beste_lengde:
+                beste, beste_lengde = t, len(p)
+    return beste
 
 
 #: Måldomenene og hvilket hendelsesfelt de peker på. Lukket på samme måte
