@@ -3343,6 +3343,48 @@ def test_regelsettversjon_fra_motoren_ma_vaere_en_streng():
     assert regelsettversjon("v" * 100) == "v" * 64
 
 
+def test_falsy_samling_fra_motoren_er_ikke_en_tom_liste():
+    """Codex P1: `or ()` leste `{}` og `0` som «motoren fant ingenting».
+
+    `sider`, `funn` og `blokkert` ble lest som `tuple(d.get(navn) or ())`,
+    og `or` skiller ikke mellom «tom liste» og «falsy verdi av feil type».
+    `"funn": {}` og `"blokkert": 0` ble derfor stille til en TOM liste:
+    rapporten passerte skjemaet med null funn og ingen
+    dekningsbegrensning, og kunne promoteres som om motoren eksplisitt
+    hadde sagt at den ikke fant noe — mens den i virkeligheten sa noe vi
+    ikke kunne lese. Det er samme løgn som et understøttet funntall, bare
+    innført ett nivå lenger opp, og den peker samme vei: mot en rapport
+    som ser renere ut enn kontrollen var.
+
+    Den truthy siden var ødelagt på den andre måten: `"sider": "abc"` ble
+    tre ledd `('a','b','c')` — sider konverteringen fant på selv.
+
+    Kontroll: bytt `samling(...)` tilbake til `tuple(d.get(navn) or ())` i
+    `motor._kjor`, så blir `{}` til en tom rapport i stedet for Motorfeil.
+    """
+    from modules.wcag_audit.motor import Kommandomotor, Motorfeil, samling
+
+    for daarlig in ({}, 0, "", False, {"a": 1}, "abc", 5, ("#a",)):
+        with pytest.raises(Motorfeil, match="funn"):
+            samling(daarlig, "funn")
+    # Den LOVLIGE tomheten betyr fortsatt det den sier: nøkkelen kan
+    # mangle (None), og en tom liste er en tom liste.
+    assert samling(None, "sider") == ()
+    assert samling([], "sider") == ()
+    assert samling([{"url": "https://a.example/"}], "sider") == \
+        ({"url": "https://a.example/"},)
+
+    # Hele veien gjennom motoren: et falsy `funn` skal bli Motorfeil, ikke
+    # en promoterbar rapport uten funn.
+    for daarlig in ({}, 0):
+        ut = json.dumps({"regelsett_versjon": "axe-4.10", "varighet_ms": 5,
+                         "sider": [], "funn": daarlig})
+        m = Kommandomotor(
+            _motorkommando("import sys;sys.stdout.write(%r)" % ut))
+        with pytest.raises(Motorfeil, match="funn"):
+            m.kjor({})
+
+
 def test_motorfristen_lar_det_bli_tid_igjen_til_opplastingen():
     """Codex P1: motorens standardfrist var 3600 s — HELE claimets tak.
 

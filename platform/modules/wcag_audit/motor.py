@@ -291,6 +291,36 @@ def regelsettversjon(raa) -> str:
     return v[:64]
 
 
+def samling(raa, navn: str) -> tuple:
+    """En av motorens LISTER (`sider`/`funn`/`blokkert`) — eller Motorfeil.
+
+    `tuple(d.get(navn) or ())` var stille på nøyaktig den måten `avkortet`
+    under dokumenterer, bare med et falsy fortegn (Codex P1):
+
+      * `"funn": {}` og `"blokkert": 0` er FALSY, så `or ()` gjorde dem til
+        en tom liste. Rapporten passerte skjemaet med null funn og ingen
+        dekningsbegrensning, og kunne promoteres som om motoren hadde sagt
+        «jeg fant ingenting» — mens den i virkeligheten sa noe vi ikke
+        kunne lese. Det er samme skade som et understøttet funntall, bare
+        innført ett nivå lenger opp.
+      * `"sider": "abc"` er truthy og iterabel, så `tuple(...)` ga tre
+        ledd `('a','b','c')` — utdata oppfunnet av konverteringen.
+
+    Den LOVLIGE tomheten er fortsatt lovlig: nøkkelen kan mangle, og
+    `null`/`[]` betyr det de sier. Det er formen som må stemme først —
+    ellers vet vi ikke hva motoren mente, og da er et ærlig feilet oppdrag
+    riktig utfall (§10), ikke en rapport med gjettet innhold.
+
+    JSON kjenner bare `list`; en `tuple` her ville aldri kommet fra
+    `json.loads`, og porten er skrevet for det den faktisk vokter.
+    """
+    if raa is None:
+        return ()
+    if not isinstance(raa, list):
+        raise Motorfeil(f"{navn} fra motoren er ikke en liste")
+    return tuple(raa)
+
+
 def avkortet(raa) -> tuple:
     """Proxyens taktelling som EKTE triplett — eller Motorfeil (Codex P2).
 
@@ -484,9 +514,12 @@ class Kommandomotor:
                 # ligger i porten, ikke i et `max` her (Codex P2): en
                 # negativ varighet er uleselig motorutdata, ikke null.
                 varighet_ms=heltall(d["varighet_ms"]),
-                sider=tuple(d.get("sider") or ()),
-                funn=tuple(d.get("funn") or ()),
-                blokkert=tuple(d.get("blokkert") or ()),
+                # `samling` kaster Motorfeil på feil FORM (Codex P1):
+                # `or ()` leste `{}` og `0` som «tom liste» og lot en
+                # uleselig utdata bli promotert evidens uten funn.
+                sider=samling(d.get("sider"), "sider"),
+                funn=samling(d.get("funn"), "funn"),
+                blokkert=samling(d.get("blokkert"), "blokkert"),
                 avkortet=avkortet(d.get("avkortet")))
         except (ValueError, KeyError, TypeError, RecursionError) as e:
             # `RecursionError` står her som ANDRE skanse (Codex P1):
