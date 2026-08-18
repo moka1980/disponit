@@ -41,6 +41,20 @@ _TOKENBYTES = 32
 #: bare vist seg som domener som aldri ble verifisert.
 _UTFORDRINGSPREFIKS = "_disponit-challenge"
 
+#: Lengste vertsnavnet en utfordring kan utstedes for (Codex P2). DNS-navn er
+#: ≤ 253 tegn, og grensen gjelder navnet som faktisk slås opp — altså
+#: utfordringsnavnet, som er `len(prefiks) + 1` tegn lengre enn vertsnavnet.
+#: Et vertsnavn på 234–253 tegn er selv fullt lovlig og lagres av basen (018
+#: gjerder på 253), men oppskriften for det navnet er umulig å følge: kunden
+#: kan ikke publisere navnet, og arbeiderens oppslag kan bare feile. Uten
+#: dette svarte utstedelsen 201 med en TXT-instruks som så riktig ut, og
+#: domenet sto uverifisert til utfordringen utløp — hver gang på nytt.
+#:
+#: Regnet av prefikset, ikke skrevet som 233: byttes prefikset, flytter
+#: grensen seg med det. Speiler `domenerevalidering.MAKS_UTFORDRET_VERTSNAVN`,
+#: og porten som holder de to formene like er den samme som holder prefikset.
+_MAKS_UTFORDRET_VERTSNAVN = 253 - len(_UTFORDRINGSPREFIKS) - 1
+
 
 def _rader(conn, tenant: str) -> list[dict]:
     rader = conn.execute(
@@ -146,10 +160,17 @@ def utsted_endepunkt(tjeneste, request: Request) -> Response:
         if not isinstance(data, dict) or set(data) - {"hostname"}:
             return _feilsvar("request_feilformet", rid)
         hostname = data.get("hostname")
-        if (not isinstance(hostname, str)
-                or not _HOSTNAME.match(hostname.strip().lower())):
+        if not isinstance(hostname, str):
             return _feilsvar("request_feilformet", rid)
         hostname = hostname.strip().lower()
+        # Lengden måles på UTFORDRINGSNAVNET, ikke på vertsnavnet (Codex P2):
+        # et vertsnavn over `_MAKS_UTFORDRET_VERTSNAVN` er selv lovlig, men
+        # utfordringen for det får ikke plass innenfor DNS-navnegrensen. Den
+        # avvises her, FØR utstedelsen, som feilformet input — å svare 201 med
+        # en oppskrift ingen kan følge er verre enn å si nei med det samme.
+        if (not _HOSTNAME.match(hostname)
+                or len(hostname) > _MAKS_UTFORDRET_VERTSNAVN):
+            return _feilsvar("request_feilformet", rid)
 
         token = secrets.token_hex(_TOKENBYTES)
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()

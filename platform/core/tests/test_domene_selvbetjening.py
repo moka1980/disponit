@@ -289,6 +289,12 @@ def test_http_utsted_og_liste(migrator, klient):
     assert svar["txt_navn"] != vert, (
         "utfordringen ligger på vertsnavnet igjen — et CNAME-vertsnavn kan "
         "ikke bære en TXT-post ved siden av aliaset")
+    # Samme port, andre halvdel (Codex P2): lengdegrensen er REGNET av
+    # prefikset på begge sider, så den kan ikke drifte fra navneformen.
+    from api import domener as apidom
+    assert apidom._MAKS_UTFORDRET_VERTSNAVN == dr.MAKS_UTFORDRET_VERTSNAVN
+    assert len(dr.utfordringsnavn("x" * dr.MAKS_UTFORDRET_VERTSNAVN)) \
+        == dr.MAKS_DNS_NAVN, "grensen slipper igjennom et for langt DNS-navn"
     _sett_kontekst(migrator, TENANT)
     h = migrator.execute(
         "SELECT challenge_token_hash, status FROM domenekontroll"
@@ -315,6 +321,76 @@ def test_http_utsted_og_liste(migrator, klient):
                      headers={"X-Disponit-CSRF": cs2},
                      cookies={sesjonmodul.C_SESJON: ck2})
     assert sr.status_code == 403
+
+
+def _vert_av_lengde(n: int) -> str:
+    """Et lovlig, UNIKT vertsnavn på nøyaktig `n` tegn.
+
+    Hver label ≤ 63 tegn og starter på en bokstav (så ingen label blir
+    all-numerisk, som 018 avviser), og det er alltid minst to labels.
+    """
+    assert n > 64, "for kort til å bli mer enn én label"
+
+    def label(lengde: int) -> str:
+        return ("a" + secrets.token_hex(32))[:lengde]
+
+    biter, igjen = [], n
+    while igjen > 63:
+        ta = min(63, igjen - 2)          # la alltid ≥ 1 tegn stå til slutt
+        biter.append(label(ta))
+        igjen -= ta + 1                  # labelen + punktumet
+    biter.append(label(igjen))
+    vert = ".".join(biter)
+    assert len(vert) == n, (len(vert), n)
+    return vert
+
+
+@pg
+def test_vertsnavn_uten_plass_til_utfordringen_avvises(migrator, klient):
+    """Codex P2: en oppskrift som ikke KAN følges skal ikke svares med 201.
+
+    Et vertsnavn på 234–253 tegn er selv fullt lovlig — API-regexen tar det,
+    og `er_kanonisk_hostname` (018) gjerder på 253 — men
+    `_disponit-challenge.` foran gir et navn over DNS-navnegrensen. Kunden
+    kan ikke publisere det, og arbeiderens oppslag kan bare feile. Svaret var
+    likevel 201 med en TXT-instruks som så helt riktig ut, og domenet ble
+    stående uverifisert til utfordringen utløp — hver runde på nytt, uten at
+    noe sted sa hvorfor.
+
+    Grensen er REGNET av prefikset på begge sider av api/-grensen, så den
+    følger navneformen i stedet for å være et tall som må huskes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern lengdeleddet i valideringen, eller
+    sett `_MAKS_UTFORDRET_VERTSNAVN` til 253.
+    """
+    from api import sesjon as sesjonmodul
+    from api.domener import _MAKS_UTFORDRET_VERTSNAVN as MAKS
+    from drift import domenerevalidering as dr
+
+    cookie, csrf = _adminsesjon()
+    # Ett tegn for langt: navnet er lovlig, utfordringen for det er det ikke.
+    for_langt = _vert_av_lengde(MAKS + 1)
+    r = klient.post("/v1/domener", json={"hostname": for_langt},
+                    headers={"X-Disponit-CSRF": csrf},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert (r.status_code, r.json()["feil"]) == (400, "request_feilformet"), \
+        r.text
+    assert len(dr.utfordringsnavn(for_langt)) > dr.MAKS_DNS_NAVN
+    # Ingen rad ble skrevet: avvisningen skjer FØR utstedelsen.
+    _sett_kontekst(migrator, TENANT)
+    n = int(migrator.execute(
+        "SELECT count(*) FROM domenekontroll WHERE tenant=%s AND hostname=%s",
+        (TENANT, for_langt)).fetchone()[0])
+    migrator.rollback()
+    assert n == 0, "utfordringen ble utstedt for et navn den ikke får plass i"
+
+    # Nøyaktig på grensen slipper igjennom — gjerdet skal ikke være for stramt.
+    akkurat = _vert_av_lengde(MAKS)
+    r = klient.post("/v1/domener", json={"hostname": akkurat},
+                    headers={"X-Disponit-CSRF": csrf},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 201, r.text
+    assert len(r.json()["txt_navn"]) == dr.MAKS_DNS_NAVN
 
 
 @pg

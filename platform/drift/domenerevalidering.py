@@ -238,6 +238,24 @@ def enig_svar(resolvere: Sequence[Resolver],
 #: vertsnavn noen har.
 UTFORDRINGSPREFIKS = "_disponit-challenge"
 
+#: DNS-navnegrensen: 253 tegn i presentasjonsform, uten avsluttende punktum.
+#: Samme tall som `er_kanonisk_hostname` (018) gjerder vertsnavnet med.
+MAKS_DNS_NAVN = 253
+
+#: Lengste VERTSNAVN som kan bære en utfordring (Codex P2).
+#:
+#: Utfordringsnavnet er lengre enn vertsnavnet, og grensen gjelder navnet som
+#: faktisk slås opp. Et vertsnavn på 234–253 tegn er selv fullt lovlig — 018
+#: tar det, basen lagrer det — men `_disponit-challenge.` foran gir et navn
+#: over 253, altså et navn kunden ikke KAN publisere og arbeideren aldri kan
+#: finne. Utstedelsen svarte likevel 201 med en oppskrift som så riktig ut,
+#: og domenet ble stående uverifisert for alltid uten at noe sa hvorfor.
+#:
+#: Prefiksplassen reserveres derfor i valideringen, og den regnes HER, av
+#: prefikset selv: byttes prefikset, flytter grensen seg med det. Porten i
+#: `test_domene_selvbetjening` holder API-ets kopi mot denne.
+MAKS_UTFORDRET_VERTSNAVN = MAKS_DNS_NAVN - len(UTFORDRINGSPREFIKS) - 1
+
 
 def utfordringsnavn(hostname: str) -> str:
     """Eiernavnet utfordrings-TXT-en skal publiseres på for `hostname`.
