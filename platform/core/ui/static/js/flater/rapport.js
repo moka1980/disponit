@@ -105,6 +105,19 @@ export function visRapport(hoved, ctx) {
     feilEl.textContent = "";
   });
 
+  // Hver forespørsel får sitt eget nummer, og bare den SISTE får skrive
+  // (Codex P2). Skjemaet lar deg sende på nytt mens et svar er
+  // underveis: ber du om oppdrag A og så B, og A svarer sist, erstattet
+  // A-svaret B-rapporten — mens feltet viste B. En rapport tilskrevet
+  // feil oppdrag er verre enn ingen rapport, og ingenting på skjermen
+  // ville avslørt byttet.
+  //
+  // Nummer og ikke `disabled` på knappen: en knapp som forsvinner under
+  // fingeren flytter fokus og gjør ventetilstanden til en felle for
+  // tastatur- og skjermleserbrukere. `aria-busy` sier alt at noe pågår;
+  // her legger vi bare til at et foreldet svar ties i hjel.
+  let generasjon = 0;
+
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     sett(resultat);
@@ -116,14 +129,19 @@ export function visRapport(hoved, ctx) {
       inp.focus();                       // §7: fokus til første feil
       return;
     }
+    const min = ++generasjon;
     form.setAttribute("aria-busy", "true");
     ventetekst.textContent = t("ui.rapport.venter");
     try {
       const d = await hentRapport(n);
+      if (min !== generasjon) return;
       sett(resultat, rapportInnhold(d));
       meldLive(t("ui.rapport.klar"));
     } catch (e) {
+      // 401 gjelder ØKTEN, ikke forespørselen: den skal virke også om
+      // svaret er foreldet — sesjonen er ugyldig uansett hvem som spurte.
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== generasjon) return;
       if (e instanceof IkkeFunnetFeil) {
         sett(resultat, TomTilstand({ tittel: t("ui.rapport.mangler_tittel"),
           tekst: t("ui.rapport.mangler_tekst") }));
@@ -134,8 +152,12 @@ export function visRapport(hoved, ctx) {
       }
       meldLive(t("ui.feil_tittel"));
     } finally {
-      form.removeAttribute("aria-busy");
-      ventetekst.textContent = "";
+      // ... og et foreldet svar rydder heller ikke bort ventetilstanden
+      // til den forespørselen som FAKTISK pågår.
+      if (min === generasjon) {
+        form.removeAttribute("aria-busy");
+        ventetekst.textContent = "";
+      }
     }
   });
 

@@ -101,6 +101,43 @@ test("Rapport: 404 → tom-tilstand med forklaring, ikke feil", async () => {
   assert.ok(h.textContent.includes(t("ui.rapport.mangler_tekst")));
 });
 
+test("Rapport: et FORELDET svar erstatter ikke en nyere rapport", async () => {
+  // Codex P2: skjemaet lar deg sende på nytt mens et svar er underveis.
+  // Ber du om A og så B, og A svarer SIST, erstattet A-svaret B-rapporten
+  // — mens feltet viste B. Kontroll: fjern generasjonssjekken i
+  // rapport.js, så blir denne rød.
+  const gammelFetch = globalThis.fetch;
+  const slipp = [];                       // én «slipp løs»-funksjon per kall
+  globalThis.fetch = (u) =>
+    new Promise((res) => slipp.push(() => res({
+      ok: true, status: 200,
+      json: async () => ({
+        ...RAPPORT,
+        oppdrag_id: Number(String(u).split("/").pop()),
+        rapport: { ...RAPPORT.rapport,
+          regelsett_versjon: `axe-for-${String(u).split("/").pop()}` } }),
+    })));
+  try {
+    const h = nyHoved();
+    visRapport(h, ctx());
+    hentRapport(h, "41");                 // A
+    hentRapport(h, "42");                 // B
+    await vent(() => slipp.length === 2);
+    slipp[1]();                           // B svarer først ...
+    await vent(() => h.textContent.includes("axe-for-42"));
+    slipp[0]();                           // ... A svarer SIST
+    // Gi det foreldede svaret rikelig anledning til å skrive.
+    await vent(() => false, 20);
+    assert.ok(h.textContent.includes("axe-for-42"),
+      "det foreldede A-svaret erstattet B-rapporten");
+    assert.ok(!h.textContent.includes("axe-for-41"));
+    // ... og B sin ventetilstand ble ryddet av B, ikke stående igjen.
+    assert.equal(h.querySelector("form").getAttribute("aria-busy"), null);
+  } finally {
+    globalThis.fetch = gammelFetch;
+  }
+});
+
 test("Rapport: ugyldig oppdragsnummer → aria-invalid + fokus, intet kall", async () => {
   let kalt = false;
   SVAR = RAPPORT;
