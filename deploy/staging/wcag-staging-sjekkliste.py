@@ -116,6 +116,15 @@ TOKEN_FIL = RUNDE / "modultoken.json"
 #: sin alt feilede injiseringsjobb — den nye releasen ble aldri målt.
 #: Se `_rundeid`.
 RUNDEID_FIL = RUNDE / "runde-id.json"
+#: Rundekatalogen slik den så ut FØR release-bindingen (Codex P1/P2,
+#: runde 14). Tokenet lå i en uversjonert flatfil, og skriptet hardkodet
+#: releasen — så en fil fra det formatet KAN ikke ha tilhørt noen annen
+#: enn `LEGACY_RELEASE`. Nettopp derfor er migreringen trygg for den ene
+#: releasen og forbudt for en overstyrt: er `WCAG_RELEASE` satt, er vi i
+#: gjenopprettingen etter et nødstopp, og da er det gamle tokenet
+#: tilbakekalt. Se `_migrert_modultoken`.
+LEGACY_RELEASE = "wcag-r1"
+LEGACY_TOKEN_FIL = RUNDE / "modultoken"
 ATT_FIL = Path("/etc/disponit/api/DISPONIT_ATT_NOKLER")
 API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 
@@ -527,6 +536,57 @@ def _lagre_modultoken(mtk: str) -> None:
     os.chmod(TOKEN_FIL, 0o600)
 
 
+def _migrert_modultoken() -> str | None:
+    """Tokenet fra formatet FØR release-bindingen (Codex P1, runde 14).
+
+    Runde 12 flyttet tokenet fra den uversjonerte `RUNDE/modultoken` til
+    `TOKEN_FIL`, men en vert som ALT har kjørt en grønn runde bærer bare
+    den gamle fila. Ble den lest som «ingen token», ga den dokumenterte
+    `--fase 9` etter den grønne runden `mtk = None` — og fase 9 svarer på
+    det med `_steng_doeren`. En akseptert release ville blitt drenert av
+    et formatbytte, ikke av en måling.
+
+    Migreringen er trygg for NØYAKTIG én release: det gamle skriptet
+    hardkodet `wcag-r1`, så en fil fra det formatet kan ikke bære et token
+    for noe annet. Er `WCAG_RELEASE` overstyrt, er vi derimot i
+    gjenopprettingen etter et nødstopp — da er nettopp dette tokenet
+    tilbakekalt sammen med resten av familien, og fila skal ignoreres, med
+    en evidenslinje som sier hvorfor.
+
+    Migrert er ikke det samme som gyldig: tokenet får ingen forrang av å
+    ha blitt flyttet. Fase 9 feller dommen med `_tokenet_er_autorisert`
+    (plattformens egne porter) før uniten enables, akkurat som for et
+    token fase 4 nettopp utstedte."""
+    if not LEGACY_TOKEN_FIL.exists():
+        return None
+    if RELEASE != LEGACY_RELEASE:
+        evidens("modultoken_legacy_ignorert", fil=str(LEGACY_TOKEN_FIL),
+                release=RELEASE, legacy_release=LEGACY_RELEASE,
+                grunn="det uversjonerte tokenet kan bare ha tilhørt"
+                      f" {LEGACY_RELEASE}, og denne kjøringen er en annen"
+                      " release — onboardingen (fase 4) må gjøres om")
+        return None
+    try:
+        tok = LEGACY_TOKEN_FIL.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        evidens("modultoken_legacy_uleselig", fil=str(LEGACY_TOKEN_FIL),
+                feiltype=type(e).__name__, feil=str(e)[:200])
+        return None
+    if not tok:
+        evidens("modultoken_ubrukelig", fil=str(LEGACY_TOKEN_FIL),
+                grunn="tom fil fra det gamle formatet — ny onboarding"
+                      " kreves")
+        return None
+    _lagre_modultoken(tok)
+    evidens("modultoken_migrert", fra=str(LEGACY_TOKEN_FIL),
+            til=str(TOKEN_FIL), release=RELEASE, token_prefiks=tok[:8],
+            merknad="tokenet er fra formatet før release-bindingen og kan"
+                    f" bare ha vært utstedt for {LEGACY_RELEASE}; fase 9"
+                    " måler likevel at det er autorisert før arbeideren"
+                    " settes i drift")
+    return tok
+
+
 def _lagret_modultoken() -> str | None:
     """Tokenet fra rundekatalogen — men BARE for DENNE releasen (Codex P1).
 
@@ -545,9 +605,13 @@ def _lagret_modultoken() -> str | None:
     4–7 gjør en ny onboarding (fase 4), og `--fase 9` alene har ingenting
     å sette i drift og stenger døren i stedet. Det er ikke en rød måling i
     seg selv — en ny release SKAL kreve ny onboarding — men det står i
-    evidensen, for det forklarer hvorfor fase 4 kjørte om igjen."""
+    evidensen, for det forklarer hvorfor fase 4 kjørte om igjen.
+
+    Finnes fila ikke, kan verten likevel bære et gyldig token i formatet
+    fra før bindingen. Se `_migrert_modultoken`: det leses BARE for
+    releasen det gamle skriptet hardkodet."""
     if not TOKEN_FIL.exists():
-        return None
+        return _migrert_modultoken()
     try:
         lagret = json.loads(TOKEN_FIL.read_text(encoding="utf-8"))
     except ValueError:

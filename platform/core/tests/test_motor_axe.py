@@ -810,8 +810,10 @@ def test_modultokenet_er_bundet_til_sin_release():
     lest = sjekk.split("def _lagret_modultoken(", 1)[1].split("\ndef ", 1)[0]
     assert "if rel != RELEASE:" in lest
     assert 'evidens("modultoken_forkastet"' in lest
-    # Ingen vei utenom: den uversjonerte fila finnes ikke lenger noe sted.
-    assert 'RUNDE / "modultoken"' not in sjekk
+    # Den uversjonerte fila leses ikke lenger noe annet sted enn i
+    # migreringen, og fase 4 skriver den aldri igjen.
+    assert sjekk.count('RUNDE / "modultoken"\n') == 1
+    assert 'LEGACY_TOKEN_FIL = RUNDE / "modultoken"\n' in sjekk
     for kall in ("lagret = _lagret_modultoken()",
                  "mtk = _lagret_modultoken()"):
         assert kall in sjekk, kall
@@ -832,6 +834,41 @@ def test_modultokenet_er_bundet_til_sin_release():
     # En umålt port er ikke en bestått port: feiler oppslaget, er svaret
     # NEI — ikke «vi vet ikke, kjør på».
     assert 'return False, {"grunn": "tokenoppslaget feilet"' in dom
+
+
+def test_et_gyldig_legacy_token_migreres_bare_for_sin_egen_release():
+    """Codex P1, runde 14: release-bindingen drenerte en akseptert release.
+
+    Runde 12 flyttet tokenet til `TOKEN_FIL`. En vert som alt HADDE kjørt
+    en grønn runde bar bare den uversjonerte `RUNDE/modultoken` — og den
+    nye koden leste den som fraværende. Den dokumenterte `--fase 9` etter
+    den grønne runden fikk da `mtk = None`, og fase 9 svarer på det med
+    `_steng_doeren`: releasen ble drenert av et formatbytte, ikke av en
+    måling.
+
+    Migreringen gjelder NØYAKTIG den ene releasen det gamle skriptet
+    hardkodet — en fil fra det formatet kan ikke bære et token for noen
+    annen. Er `WCAG_RELEASE` overstyrt, er vi i gjenopprettingen etter et
+    nødstopp, og da er nettopp dette tokenet tilbakekalt."""
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert 'LEGACY_RELEASE = "wcag-r1"' in sjekk
+    # Den gamle fila leses når den nye ikke finnes — ellers stenger fase 9
+    # døren på en runde som var grønn.
+    lest = sjekk.split("def _lagret_modultoken(", 1)[1].split("\ndef ", 1)[0]
+    assert "return _migrert_modultoken()" in lest
+    kropp = sjekk.split("def _migrert_modultoken(", 1)[1].split(
+        "\ndef ", 1)[0]
+    assert "if RELEASE != LEGACY_RELEASE:" in kropp
+    assert 'evidens("modultoken_legacy_ignorert"' in kropp
+    # ... og migreringen gjør tokenet release-bundet, så neste kjøring ser
+    # hvilken release det hører til uten å gjette.
+    assert "_lagre_modultoken(tok)" in kropp
+    assert 'evidens("modultoken_migrert"' in kropp
+    # Migrert er ikke gyldig: dommen felles fortsatt av plattformens porter
+    # i fase 9, som for et token fase 4 nettopp utstedte.
+    assert "autorisert, detalj = _tokenet_er_autorisert(m, mtk)" in \
+        sjekk.split("def fase9(", 1)[1]
 
 
 def test_rundeidentiteten_er_bundet_til_sin_release():
