@@ -504,8 +504,22 @@ def _robotsform(sti: str) -> str:
     return _PROSENTOKTETT.sub(bytt, sti)
 
 
-def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
-    """Én robots-regel som (tillat, monster, kompilert matcher).
+def _oktetter(monster: str) -> int:
+    """Hvor mange OKTETTER mønsteret er — presedensmålet i RFC 9309 §2.2.2.
+
+    Standarden måler spesifisitet i oktetter av stien, ikke i tegn av den
+    skrivemåten vi tilfeldigvis bærer mønsteret på. Etter `_robotsform` er
+    hver oktett enten seg selv (ASCII) eller en `%XX`-trippel, og en
+    trippel er ÉN oktett — ikke tre. Vi teller derfor `%XX` som ett tegn
+    og lar resten stå.
+
+    Et `%` som ikke innleder en gyldig trippel er ikke en koding, og
+    telles som seg selv — det er nettopp den oktetten det er."""
+    return len(_PROSENTOKTETT.sub(".", monster))
+
+
+def _regel(tillat: bool, monster: str) -> tuple[bool, int, "re.Pattern"]:
+    """Én robots-regel som (tillat, oktettlengde, kompilert matcher).
 
     RFC 9309 §2.2.2 gir stimønsteret to metategn, og BEGGE endrer hva
     regelen dekker: `*` matcher en vilkårlig sekvens, og `$` forankrer
@@ -514,15 +528,21 @@ def _regel(tillat: bool, monster: str) -> tuple[bool, str, "re.Pattern"]:
     eksplisitt forbudt sti ble crawlet (Codex P1). Resten av mønsteret er
     et rent prefiks, som før.
 
-    Mønsteret normaliseres av `_robotsform` først — se den. Lengden som
-    bærer presedensen i `_tillatt` er da den NORMALISERTE, altså den
-    formen begge sider faktisk måles på."""
+    Mønsteret normaliseres av `_robotsform` først — se den. Den formen er
+    riktig å MATCHE på, men feil å MÅLE på (Codex P2, runde 10): `%C3%A6`
+    er én bokstav på to oktetter skrevet som åtte tegn, så et mønster med
+    rå UTF-8 vokste seg forbi lengre ASCII-regler i det normaliseringen
+    kodet det. `Allow: /*æ` (fire oktetter) slo dermed `Disallow: /fooo`
+    (fem) for `/fooo%C3%A6`, og en eksplisitt forbudt side ble crawlet —
+    fail-open innført av selve sammenligningsformen. Presedensen bæres
+    derfor av `_oktetter`, som er målet standarden faktisk oppgir, mens
+    strengen fortsatt er den vi matcher med."""
     monster = _robotsform(monster)
     anker = monster.endswith("$")
     kropp = monster[:-1] if anker else monster
     rx = re.compile(".*".join(re.escape(d) for d in kropp.split("*"))
                     + ("$" if anker else ""))
-    return tillat, monster, rx
+    return tillat, _oktetter(monster), rx
 
 
 def _parse_robots(tekst: str) -> list[tuple[bool, str, "re.Pattern"]]:
@@ -579,19 +599,22 @@ def _robotsti(p) -> str:
 
 
 def _tillatt(sti: str, regler: list) -> bool:
-    """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — lengste mønster,
-    og `Allow` foran `Disallow` ved likt. Ingen treff = tillatt.
+    """RFC 9309 §2.2.2: MEST SPESIFIKKE regel vinner — flest OKTETTER, og
+    `Allow` foran `Disallow` ved likt. Ingen treff = tillatt.
 
     Normaliseringen ligger HER og ikke hos kallerne: dette er det ene
     stedet en sti møter en regel, og en sammenligning der bare den ene
     siden er normalisert er ingen sammenligning (Codex P1). Mønstrene er
-    normalisert i `_regel` med nøyaktig samme funksjon."""
+    normalisert i `_regel` med nøyaktig samme funksjon.
+
+    Presedensen måles på oktetter, ikke på tegn i den normaliserte
+    strengen — se `_oktetter` for hvorfor de to ikke er samme tall."""
     sti = _robotsform(sti)
     beste_lengde, beste_tillat = -1, True
-    for tillat, monster, rx in regler:
-        if rx.match(sti) and (len(monster) > beste_lengde
-                              or (len(monster) == beste_lengde and tillat)):
-            beste_lengde, beste_tillat = len(monster), tillat
+    for tillat, oktetter, rx in regler:
+        if rx.match(sti) and (oktetter > beste_lengde
+                              or (oktetter == beste_lengde and tillat)):
+            beste_lengde, beste_tillat = oktetter, tillat
     return beste_tillat
 
 
