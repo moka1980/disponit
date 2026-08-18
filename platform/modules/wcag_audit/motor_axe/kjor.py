@@ -383,7 +383,15 @@ def _hent(url: str, pin_ip: str, tls_kontekst=None) -> tuple[int, str, str]:
         lambda adr, tidsavbrudd, kilde: socket.create_connection(
             (pin_ip, adr[1]), tidsavbrudd, kilde))
     try:
-        conn.request("GET", _robotsti(u))
+        # Forespørselsmålet på origin-form (RFC 9112 §3.2.1). Query-en er
+        # med fordi en omdirigering kan kanonisere til en sti som bærer
+        # en — men den bygges HER og ikke med `_robotsti`: den formen er
+        # RFC 9309s SAMMENLIGNINGSform for regler, og at de to i dag
+        # skrives likt gjør dem ikke til samme ting. Delte vi funksjonen,
+        # ville en endring gjort for robots-matchingen stille endret hva
+        # vi ber serveren om.
+        conn.request("GET", (u.path or "/") + (f"?{u.query}" if u.query
+                                               else ""))
         svar = conn.getresponse()
         raa = svar.read(LESETAK + 1)
         if len(raa) > LESETAK:
