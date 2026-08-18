@@ -71,11 +71,28 @@ export function visDomener(rot, ctx) {
         el("caption", { text: t("ui.domener.caption") }), thead, tbody));
   }
 
+  // Generasjonen (Codex P2, samme form som rapportflaten): to `last()`-kall
+  // KAN overlappe — den første innlastingen står ennå ute når en vellykket
+  // utstedelse ber om en oppfriskning, og oppfriskningskroken under kan fyre
+  // igjen mens en treg henting pågår. Uten et nummer avgjorde ANKOMSTREKKE-
+  // FØLGEN hva som ble stående: et gammelt svar kunne overskrive den nyere
+  // listen med et foreldet øyeblikksbilde — nettopp den raden kunden nettopp
+  // la til, forsvunnet — og en gammel FEIL kunne bytte ut en nyere, riktig
+  // tabell med en feiltilstand.
+  let generasjon = 0;
+
   function last() {
+    const min = ++generasjon;
     liste.setAttribute("aria-busy", "true");
-    hentDomener().then((d) => tegnListe(d.domener)).catch((e) => {
-      liste.removeAttribute("aria-busy");
+    hentDomener().then((d) => {
+      if (min !== generasjon) return;   // et nyere kall eier listen
+      tegnListe(d.domener);
+    }).catch((e) => {
+      // 401 gjelder ØKTEN, ikke forespørselen: den skal virke også om svaret
+      // er foreldet — sesjonen er ugyldig uansett hvem som spurte.
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (min !== generasjon) return;
+      liste.removeAttribute("aria-busy");
       sett(liste, Feiltilstand({ paaProvIgjen: last }));
     });
   }

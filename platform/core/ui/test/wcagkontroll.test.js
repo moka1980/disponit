@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visWcagKontroll } from "../static/js/flater/wcagkontroll.js";
+import { visDomener } from "../static/js/flater/domener.js";
 
 settI18nForTest(NB, "nb");
 
@@ -221,4 +222,72 @@ test("Domener: oppfriskningen river ikke skjemaet eller TXT-oppskriften", async 
   assert.ok(h.querySelector(".domeneutfall").textContent
     .includes("b".repeat(64)), "TXT-oppskriften overlevde fanebyttet");
   assert.ok(h.querySelector("#dm-host"), "skjemaet står");
+});
+
+// Codex P2: to `last()`-kall kan overlappe — den første innlastingen står
+// ennå ute når en vellykket utstedelse (eller en ny faneaktivering) ber om
+// en oppfriskning. Uten et generasjonsnummer avgjorde ANKOMSTREKKEFØLGEN hva
+// som ble stående på skjermen.
+function _rad(hostname, status) {
+  return { hostname, status, wildcard: false, verifisert_ts: null,
+    utloper: null, siste_vellykkede_revalidering: null,
+    challenge_utstedt: "2026-08-18T10:00:00+00:00",
+    challenge_utloper: "2026-08-25T10:00:00+00:00" };
+}
+
+async function _tomKo() {          // la de utestående mikrotaskene løpe ut
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+function _styrtFetch(koe) {
+  return () => new Promise((resolve) => koe.push(resolve));
+}
+
+test("Domener: et foreldet listesvar overskriver ikke det nyere", async () => {
+  const ekte = globalThis.fetch;
+  const koe = [];
+  globalThis.fetch = _styrtFetch(koe);
+  try {
+    const h = nyHoved();
+    const oppfrisk = visDomener(h, ctx());   // A: første innlasting
+    oppfrisk();                              // B: oppfriskningen, mens A står ute
+    assert.equal(koe.length, 2, "to overlappende hentinger");
+
+    const ok = (domener) => ({ ok: true, status: 200,
+      json: async () => ({ domener }) });
+    koe[1](ok([_rad("ny.example", "verifisert")]));      // B kommer først
+    await vent(() => h.querySelector(".domeneliste table"));
+    koe[0](ok([_rad("gammel.example", "ventende")]));    // A kommer ETTERPÅ
+    await _tomKo();
+
+    const tabell = h.querySelector(".domeneliste table").textContent;
+    assert.ok(tabell.includes("ny.example"), tabell);
+    assert.ok(!tabell.includes("gammel.example"),
+      "det foreldede svaret overskrev den nyere listen");
+  } finally {
+    globalThis.fetch = ekte;
+  }
+});
+
+test("Domener: en foreldet FEIL river ikke den nyere tabellen", async () => {
+  const ekte = globalThis.fetch;
+  const koe = [];
+  globalThis.fetch = _styrtFetch(koe);
+  try {
+    const h = nyHoved();
+    const oppfrisk = visDomener(h, ctx());
+    oppfrisk();
+    koe[1]({ ok: true, status: 200,
+      json: async () => ({ domener: [_rad("ny.example", "verifisert")] }) });
+    await vent(() => h.querySelector(".domeneliste table"));
+    koe[0]({ ok: false, status: 500, json: async () => ({ feil: "x" }) });
+    await _tomKo();
+
+    assert.ok(h.querySelector(".domeneliste table"),
+      "en gammel feil byttet ut en nyere, riktig tabell med en feiltilstand");
+    assert.equal(h.querySelector(".domeneliste").getAttribute("aria-busy"),
+      null, "ventetilstanden ble hengende etter det gjeldende svaret");
+  } finally {
+    globalThis.fetch = ekte;
+  }
 });
