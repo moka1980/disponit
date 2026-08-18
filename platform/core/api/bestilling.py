@@ -202,7 +202,16 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         raa = request.scope.get("state", {}).get("kropp", b"")
         try:
             data = json.loads(raa.decode("utf-8"))
-        except ValueError:
+        except (ValueError, RecursionError):
+            # `json.loads` er REKURSIV (Codex P2). Et syntaktisk gyldig,
+            # dypt nøstet dokument på noen få kilobyte ligger godt under
+            # kroppsgrensen og treffer likevel rekursjonsgrensen —
+            # RecursionError er en RuntimeError, ikke en ValueError, så
+            # `except ValueError` alene slapp klientinput ut som generisk
+            # 500 i stedet for det dokumenterte `request_feilformet`.
+            # Dybde ER klientinput; de andre JSON-endepunktene (035,
+            # onboarding, artefakt) fanger den allerede, og denne
+            # parseren skal ikke være unntaket.
             return _feilsvar("request_feilformet", rid)
         try:
             norm = normaliser(tenant, data)
