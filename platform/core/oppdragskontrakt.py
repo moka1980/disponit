@@ -465,6 +465,71 @@ def mangler_paakrevde(oppdragstype: str, minimert: dict) -> list[str]:
     return sorted(f for f in t.paakrevde if not minimert.get(f))
 
 
+#: VERDIKONTRAKTEN: felter der TILSTEDEVÆRELSE ikke er nok, fordi bare et
+#: lukket sett av verdier gir et oppdrag som kan utføres (Codex P1).
+#:
+#: `minimer` bestemmer feltBREDDEN og `mangler_paakrevde` at de påkrevde
+#: feltene overlevde. Ingen av dem ser på VERDIEN, og for
+#: `kontroll.wcag.nettsted` var det hullet konkret: et oppdrag med
+#: `omfang: "alt"`, `maks_sider: 0` eller et ukjent `kravsett` ble
+#: opprettet, claimet og KJØRT — og først `rapport.bygg`, etter at
+#: motoren hadde vært ute på kundens nettsted, oppdaget at bestillingen
+#: aldri kunne gi en gyldig rapport. Ekstern, observerbar trafikk mot
+#: noen andres nettsted for et oppdrag som var dødfødt fra opprettelsen.
+#:
+#: Tabellen står HER og ikke i modulen fordi begge sidene må lese den
+#: samme: bestillingsveien (M-37) skal ikke opprette oppdraget, og
+#: utføreren skal avvise det uten å røre målet om det likevel finnes.
+FELTVERDIER: dict[str, dict[str, tuple]] = {
+    "kontroll.wcag.nettsted": {
+        # Samme lukkede enum som rapportskjemaets `kravsett`: et oppdrag
+        # med en annen verdi kan ikke gi en rapport som validerer.
+        "kravsett": ("wcag21_aa",),
+        # Manifestets omfang. Fristene henger på nettopp disse to.
+        "omfang": ("enkeltside", "nettsted"),
+    },
+}
+
+#: Heltallsfelter med LUKKEDE grenser (begge inklusive), per type. Øvre
+#: grense er ikke pynt: `maks_sider: 200` er et oppdrag ingen rapport kan
+#: oppfylle, siden `sider_kontrollert` har `maxItems: 50`.
+FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
+    "kontroll.wcag.nettsted": {"maks_sider": (1, 50)},
+}
+
+
+def bryter_feltkontrakten(oppdragstype: str, minimert: dict) -> list[str]:
+    """Feltene hvis VERDI ligger utenfor typens lukkede kontrakt.
+
+    -> sortert liste av feltnavn; tom liste == ingen brudd. Kaster
+    `Oppdragstypeukjent` for en ukjent type, som resten av modulen.
+
+    Bare feltnavnene rapporteres, aldri verdiene: navnene er
+    konfigurasjon, verdiene er saksdata, og kallstedene her skriver
+    grunnen sin til `revisjonslogg.begrunnelse` og til feilkvitteringer —
+    samme skille som `malbindingsbrudd` gjør for avtrykkene sine.
+
+    Et felt som MANGLER er ikke et brudd her: det er `mangler_paakrevde`
+    sin jobb, og et valgfritt felt (`maks_sider`) skal kunne være borte.
+    """
+    if oppdragstype not in OPPDRAGSTYPER:
+        raise Oppdragstypeukjent(oppdragstype)
+    brudd = set()
+    for felt, lovlige in FELTVERDIER.get(oppdragstype, {}).items():
+        if felt in minimert and minimert[felt] not in lovlige:
+            brudd.add(felt)
+    for felt, (nedre, ovre) in FELTGRENSER.get(oppdragstype, {}).items():
+        if felt not in minimert:
+            continue
+        v = minimert[felt]
+        # `bool` er en `int` i Python, og `True` ville passert `1 <= v`.
+        # Et sidebudsjett på «sant» er ikke et tall noen har bestilt.
+        if isinstance(v, bool) or not isinstance(v, int) or not (
+                nedre <= v <= ovre):
+            brudd.add(felt)
+    return sorted(brudd)
+
+
 # ---------------------------------------------------------------------------
 # Verifikasjonskvitteringen — den ENESTE bæreren av en attestasjon
 # ---------------------------------------------------------------------------

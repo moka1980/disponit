@@ -15,6 +15,7 @@ import secrets
 import sys
 import threading
 import time
+from unittest import mock
 
 import psycopg
 import pytest
@@ -1956,11 +1957,19 @@ class _Stubklient:
     stubben — controlleren leser den nettopp for å skille de to."""
 
     def __init__(self, kvitteringsstatus, opplastingsstatus=200,
-                 kvitteringskropp=None):
+                 kvitteringskropp=None, payload=None, opplasting=...):
         self.kvitteringsstatus = kvitteringsstatus
         self.opplastingsstatus = opplastingsstatus
         self.kvitteringskropp = kvitteringskropp
+        self.payload = payload
+        # `...` betyr «som vanlig»; `None` betyr at claimen bevisst kom
+        # UTEN opplastingskapabilitet.
+        self.opplasting = ({"jti": "kap"} if opplasting is ...
+                           else opplasting)
         self.kvitteringer = []
+        #: Stiene controlleren FAKTISK kalte, i rekkefølge. Testene under
+        #: leser den for å bevise hva som IKKE skjedde.
+        self.stier = []
 
     def _kvitteringssvar(self, sendt):
         if self.kvitteringskropp is not None:
@@ -1971,6 +1980,7 @@ class _Stubklient:
         return _Svar(self.kvitteringsstatus, {})
 
     def post(self, sti, json=None, headers=None):
+        self.stier.append(sti)
         if sti == "/v1/artefakt" and self.opplastingsstatus != 200:
             return _Svar(self.opplastingsstatus, {})
         if sti == "/v1/oppdrag/kvittering":
@@ -1980,9 +1990,10 @@ class _Stubklient:
                 "oppdrag_id": 1, "tenant": TENANT, "kvittering_jti": "j",
                 "repair_operation_id": "r", "owner_claim_id": "o",
                 "owner_generation": 0,
-                "payload": {"mal_url": "https://kunde.example/side",
-                            "kravsett": "wcag21_aa", "omfang": "enkeltside"},
-                "opplasting": {"jti": "kap"}})
+                "payload": self.payload if self.payload is not None else {
+                    "mal_url": "https://kunde.example/side",
+                    "kravsett": "wcag21_aa", "omfang": "enkeltside"},
+                "opplasting": self.opplasting})
         if sti == "/v1/artefakt":
             return _Svar(200, {"artefakt_id": "a-1",
                                "klartekst_sha256": "b" * 64})
@@ -2130,6 +2141,119 @@ def test_avvist_opplasting_gir_feilkvittering():
         assert klient.kvitteringer[0]["feilkode"] == "opplasting_avvist"
         # Aldri et artefakt-id: det finnes ikke noe artefakt å vise til.
         assert "artefakt_id" not in res
+
+
+def test_hele_bestillingen_leses_for_motoren_startes():
+    """Codex P1: bare `mal_url` ble lest før den eksterne skanningen.
+
+    `omfang`, `maks_sider` og `kravsett` ble først sett av `rapport.bygg`
+    — altså ETTER at motoren hadde vært ute på kundens nettsted. Et claim
+    med `omfang: "alt"`, `maks_sider: 0` eller et ukjent `kravsett` kunne
+    aldri gi en rapport som validerer, men det ga observerbar, ekstern
+    trafikk mot et nettsted som ikke er vårt, hver eneste gang. For
+    `ekstern_lesing` ER den unødvendige forespørselen skaden.
+
+    Kontroll: fjern `_kontraktsbrudd`-blokka i `kjor_en`, så kjører
+    FakeMotor på hver av payloadene under, og `motor.payloads` blir
+    ikke-tom — altså rød.
+    """
+    from modules.wcag_audit import controller
+    for payload in ({"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "alt"},
+                    {"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "enkeltside",
+                     "maks_sider": 0},
+                    {"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "nettsted",
+                     "maks_sider": 200},
+                    {"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "enkeltside",
+                     "maks_sider": True},
+                    {"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag22_aaa", "omfang": "enkeltside"},
+                    # ... og et påkrevd felt som mangler helt.
+                    {"mal_url": "https://kunde.example/side",
+                     "omfang": "enkeltside"}):
+        motor = FakeMotor(resultat=_motorresultat())
+        klient = _Stubklient(200, payload=payload)
+        res = controller.kjor_en(klient, "tk", motor, _kontekst(),
+                                 lambda k: k)
+        # MOTOREN ER ALDRI KJØRT — det er hele poenget.
+        assert motor.payloads == [], payload
+        assert "/v1/artefakt" not in klient.stier, payload
+        # ... og plattformen får en ærlig, FERDIG feilkvittering i stedet
+        # for taushet frem til fristen.
+        assert res["utfall"] == "avbrutt", res
+        assert klient.kvitteringer[0]["resultat"] == "feilet"
+        assert klient.kvitteringer[0]["feilkode"] == "oppdrag_ugyldig"
+
+    # Motsatsene: et lovlig oppdrag går som før, også med `maks_sider`
+    # både satt og utelatt.
+    for payload in ({"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "enkeltside"},
+                    {"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "enkeltside",
+                     "maks_sider": 1},
+                    {"mal_url": "https://kunde.example/side",
+                     "kravsett": "wcag21_aa", "omfang": "nettsted",
+                     "maks_sider": 50}):
+        motor = FakeMotor(resultat=_motorresultat())
+        res = controller.kjor_en(_Stubklient(200, payload=payload), "tk",
+                                 motor, _kontekst(), lambda k: k)
+        assert res["utfall"] == "utfort", res
+        assert motor.payloads == [payload]
+
+
+def test_bestillingsveien_oppretter_ikke_et_ugyldig_oppdrag():
+    """Samme kontrakt, andre enden (Codex P1): verdiene skal stoppe
+    oppdraget ved OPPRETTELSEN, ikke bare hos utføreren.
+
+    `minimer` bestemmer feltbredden og `mangler_paakrevde` at de påkrevde
+    feltene overlevde — ingen av dem ser på verdien. Et oppdrag med
+    `omfang: "alt"` ble derfor opprettet, lagt ut og claimet før noen
+    oppdaget at det var dødfødt. Kontrakten er plattformens, og begge
+    sider leser den SAMME tabellen: ett sett regler kan ikke gli fra
+    hverandre, to sett kan.
+    """
+    import oppdragskontrakt as ok
+    assert ok.bryter_feltkontrakten(
+        "kontroll.wcag.nettsted",
+        {"mal_url": "https://kunde.example/", "kravsett": "wcag21_aa",
+         "omfang": "enkeltside"}) == []
+    assert ok.bryter_feltkontrakten(
+        "kontroll.wcag.nettsted",
+        {"omfang": "alt", "kravsett": "x", "maks_sider": 0}) == [
+            "kravsett", "maks_sider", "omfang"]
+    # Et felt som MANGLER er ikke et verdibrudd — det er `mangler_paakrevde`
+    # sin jobb, og `maks_sider` er lovlig fraværende.
+    assert ok.bryter_feltkontrakten("kontroll.wcag.nettsted", {}) == []
+    with pytest.raises(ok.Oppdragstypeukjent):
+        ok.bryter_feltkontrakten("finnes.ikke", {})
+
+    # Modulens egen `_OMFANG` er SAMME lukkede sett som plattformens.
+    # Divergerer de, er den ene porten en annen port enn den andre.
+    from modules.wcag_audit import rapport
+    assert set(rapport._OMFANG) == set(
+        ok.FELTVERDIER["kontroll.wcag.nettsted"]["omfang"])
+
+    # ... og planleggeren LESER tabellen i stedet for bare å telle felter.
+    # WCAG-oppdrag går ennå ikke gjennom R1 (`tillatte_malhandlinger`
+    # dekker `purring.`/`faktura.`/`melding.`, og §9-bestillingsveien er
+    # en egen spec-runde), så vernet vises på den veien som FINNES: en
+    # verdiregel for `reinnsending` skal stoppe oppdraget ved
+    # opprettelsen, akkurat som WCAG-reglene vil gjøre når den veien
+    # åpnes.
+    from m37 import reparasjoner
+    payload = {"handling": "purring.send", "ressurs_id": "r-1",
+               "kategori": "ukjent_kategori"}
+    plan = reparasjoner._r1_reinnsending(payload, None)
+    assert plan.utfall == "oppdrag", plan
+    with mock.patch.dict(ok.FELTVERDIER,
+                         {"reinnsending": {"kategori": ("purring",)}},
+                         clear=False):
+        plan = reparasjoner._r1_reinnsending(payload, None)
+    assert plan.utfall == "manuell", plan
+    assert plan.grunn == "oppdrag_ugyldig:['kategori']", plan
 
 
 def test_kvitteringen_bindes_til_verten_som_ble_kontrollert():

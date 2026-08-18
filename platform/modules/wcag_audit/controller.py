@@ -116,6 +116,37 @@ def _ressursbinding(payload: dict) -> str | None:
     return malvert(OPPDRAGSTYPE, payload)
 
 
+def _kontraktsbrudd(payload: dict) -> list[str]:
+    """Feltene i claimet som gjør oppdraget uutførbart — FØR motoren
+    startes (Codex P1).
+
+    Bare `mal_url` ble lest før den eksterne skanningen; `omfang`,
+    `maks_sider` og `kravsett` ble først sett av `rapport.bygg`, altså
+    ETTER at motoren hadde vært ute på kundens nettsted. Et claim med
+    `omfang: "alt"`, `maks_sider: 0` eller et ukjent `kravsett` kunne
+    derfor aldri gi en gyldig rapport — men det ga observerbar,
+    ekstern trafikk mot et nettsted som ikke er vårt, hver eneste gang.
+    `ekstern_lesing` er nettopp klassen der en unødvendig forespørsel er
+    selve skaden; da skal den ikke sendes for en bestilling vi allerede
+    kan se at ingen rapport kan oppfylle.
+
+    Kontrakten er PLATTFORMENS, ikke modulens (`oppdragskontrakt`): den
+    samme tabellen stopper oppdraget ved OPPRETTELSEN. To sett regler
+    ville betydd at bestillingsveien og utføreren kunne være uenige om
+    hva som er et lovlig oppdrag, og da hadde denne porten vært en annen
+    port enn den som slapp oppdraget gjennom. Den står likevel her og
+    ikke bare der: raden kan være skrevet av en eldre release, og en
+    utfører som stoler på at noen andre alt har sjekket, sjekker ikke.
+
+    `mal_url` er ikke med: den leses av `_ressursbinding` rett over, med
+    den samme funksjonen målbindingen bruker, og et uleselig mål har sin
+    egen feilkode.
+    """
+    from oppdragskontrakt import bryter_feltkontrakten, mangler_paakrevde
+    return sorted({*mangler_paakrevde(OPPDRAGSTYPE, payload),
+                   *bryter_feltkontrakten(OPPDRAGSTYPE, payload)})
+
+
 def _kvittert(rk) -> bool:
     """Skiftet plattformen status på oppdraget?
 
@@ -202,6 +233,16 @@ def kjor_en(klient, token: str, motor, kontekst: dict, signer) -> dict:
         rk = kvitter({**kvittering_basis, "resultat": "feilet",
                       "feilkode": "malbinding_mangler"})
         return _feilutfall(rk, "malbinding_mangler")
+
+    brudd = _kontraktsbrudd(payload)
+    if brudd:
+        # HELE bestillingen leses før motoren startes, ikke bare målet
+        # (Codex P1): et claim som ikke kan gi en gyldig rapport skal
+        # ikke koste kundens nettsted en eneste forespørsel. Feilen er
+        # oppdragets, ikke motorens, og feilkoden sier det.
+        rk = kvitter({**kvittering_basis, "resultat": "feilet",
+                      "feilkode": "oppdrag_ugyldig"})
+        return _feilutfall(rk, f"oppdrag_ugyldig:{brudd}")
 
     try:
         resultat = motor.kjor(payload)
