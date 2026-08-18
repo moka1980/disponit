@@ -50,10 +50,21 @@ const BASISRUTER = [
   // lovte. Det er bare policyADMINISTRASJONEN som krever forvaltningsscope.
   { nokkel: "kundeadmin", scope: null },
   // 038/039 (eiers UX-krav 18/8): ÉN oppføring — «WCAG kontroll» — med
-  // bestilling, rapporter og domeneverifisering som faner. Scopet er
-  // flatens mest krevende del (bestilling/domener); rapportfanen leser
-  // under samme scope siden hele flaten er admin-arbeidsflyten.
-  { nokkel: "wcagkontroll", scope: "bestilling:opprett" },
+  // bestilling, rapporter og domeneverifisering som faner.
+  //
+  // Scopet er flatens SVAKESTE del, ikke den sterkeste (Codex P2). Ruten er
+  // en sammenslåing av det som før var `bestilling` (`bestilling:opprett`) og
+  // `rapport` (`decisions:read`), og med mutasjonsscopet på hele oppføringen
+  // mistet hver eneste ikke-admin kunderolle — `leser`, `sikkerhet`,
+  // `godkjenner`, `policyforvalter` — sin ENESTE vei til rapportene, mens
+  // `GET /v1/rapport/{id}` fortsatt med vilje krever bare `decisions:read`.
+  // En sammenslåing av menyoppføringer skal ikke inndra tilgang.
+  //
+  // Regelen for ruten er derfor den vanlige: scopet API-et bak den minst
+  // krevende delen krever. At bestillings- og domenefanene MUTERER er en
+  // sak for fanene, og den avgjøres inne på flaten (`visWcagKontroll`), der
+  // det finnes noe å skjule — en rute kan bare være der eller ikke.
+  { nokkel: "wcagkontroll", scope: "decisions:read" },
 ];
 
 export function byggRuter(sesjon) {

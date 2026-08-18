@@ -72,6 +72,32 @@ test("WCAG kontroll: én flate, tre faner, riktig ARIA-mønster, axe rent", asyn
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("WCAG kontroll: leseøkt beholder rapportene, mister mutasjonsfanene", async () => {
+  // Codex P2: sammenslåingen til ÉN nav-oppføring la hele flaten bak
+  // `bestilling:opprett`, og da mistet hver ikke-admin kunderolle — `leser`,
+  // `sikkerhet`, `godkjenner`, `policyforvalter` — sin ENESTE vei til
+  // rapportene. `GET /v1/rapport/{id}` krever fortsatt bare `decisions:read`.
+  // Ruten står nå bak det svakeste scopet, og MUTASJONENE skjules her.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern scope-filteret på `trinn`, eller sett
+  // ruten tilbake bak `bestilling:opprett`.
+  KALL = []; SVAR = TOMME_DOMENER;
+  const h = nyHoved();
+  visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] });
+  const faner = [...h.querySelectorAll('[role="tab"]')]
+    .map((k) => k.textContent);
+  assert.deepEqual(faner, [t("ui.wcag.fane.rapporter")],
+    "leseøkten skal se rapportfanen, og bare den");
+  assert.ok(h.querySelector("#rp-oppdrag"), "rapportfanen er aktiv");
+  assert.equal(h.querySelector("#bf-hostname"), null,
+    "bestillingsskjemaet tegnes for en økt som bare kan få 403");
+  assert.equal(h.querySelectorAll("h1").length, 1, "nøyaktig én h1");
+  // Ingen av fanene henter domenelisten: den fanen finnes ikke for denne økten.
+  assert.ok(!KALL.some((k) => k.sti === "/v1/domener"), KALL);
+  const brudd = await alvorligeBrudd(h, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
 test("WCAG kontroll: fanebytte bevarer utfylt skjema", async () => {
   KALL = []; SVAR = TOMME_DOMENER;
   const h = nyHoved();

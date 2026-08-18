@@ -9,6 +9,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { Faner } from "../komponenter.js";
+import { harScope } from "../sitekart.js";
 import { flateHode } from "./felles.js";
 import { visBestilling } from "./bestilling.js";
 import { visRapport } from "./rapport.js";
@@ -46,14 +47,27 @@ export function visWcagKontroll(hoved, ctx) {
     };
   }
 
+  // FANENE BÆRER HVER SITT SCOPE (Codex P2). Ruten hit krever bare
+  // `decisions:read` — den svakeste delen — nettopp for at rapportene ikke
+  // skal forsvinne for `leser`, `sikkerhet`, `godkjenner` og
+  // `policyforvalter` bare fordi tre menyoppføringer ble til én. Da må
+  // MUTASJONENE skjules her i stedet: både bestillingen (`POST
+  // /v1/bestilling`) og domeneutstedelsen (`POST /v1/domener`) krever
+  // `bestilling:opprett`, og en fane som bare kan svare 403 er et løfte
+  // flaten ikke kan holde.
+  //
+  // Domenefanen skjules HEL, ikke bare skjemaet: den finnes for å skaffe
+  // seg et verifisert domene, og en leseliste over andres domenestatuser er
+  // ikke den flaten. Rapportfanen står igjen alene, og `Faner` faller
+  // tilbake til første trinn når `start` ikke finnes i settet.
   const trinn = [
     { nokkel: "bestill", tittel: t("ui.wcag.fane.bestill"),
-      bygg: del(visBestilling) },
+      scope: "bestilling:opprett", bygg: del(visBestilling) },
     { nokkel: "rapporter", tittel: t("ui.wcag.fane.rapporter"),
-      bygg: del(visRapport) },
+      scope: null, bygg: del(visRapport) },
     { nokkel: "domener", tittel: t("ui.wcag.fane.domener"),
-      bygg: del(visDomener) },
-  ];
+      scope: "bestilling:opprett", bygg: del(visDomener) },
+  ].filter((s) => !s.scope || harScope(ctx, s.scope));
 
   // Faner returnerer { rot, gaaTil, aktiv } — det er ROTEN som monteres.
   const faner = Faner({ trinn, start: "bestill" });

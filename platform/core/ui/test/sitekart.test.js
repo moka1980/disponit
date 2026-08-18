@@ -24,15 +24,23 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
     ["kundeadmin"]);
   const alle = byggRuter({ scopes: ["decisions:read", "exceptions:read",
     "policy:read"] }).map((r) => r.nokkel);
-  // 038/039: WCAG-kontroll er ÉN rute bak bestilling:opprett — rene
-  // leseøkter ser den ikke.
+  // 038/039: WCAG-kontroll er ÉN rute, og den står bak flatens SVAKESTE del
+  // (Codex P2). `leser` her har `decisions:read` og skal fortsatt nå
+  // rapportene sine — `GET /v1/rapport/{id}` krever bare det. Med
+  // mutasjonsscopet på hele oppføringen inndro sammenslåingen tilgang de
+  // hadde før den.
   assert.deepEqual(alle,
-    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
+    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin",
+      "wcagkontroll"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));
   assert.ok(!medBestilling.includes("bestilling") &&
     !medBestilling.includes("rapport"), "de gamle enkeltrutene er borte");
+  // ...og uten `decisions:read` finnes ruten ikke: da er det ingen fane
+  // igjen på flaten.
+  assert.ok(!byggRuter({ scopes: ["policy:read"] })
+    .map((r) => r.nokkel).includes("wcagkontroll"));
 });
 
 test("byggRuter: godkjenner får ikke policyruten den ikke kan lese", () => {
