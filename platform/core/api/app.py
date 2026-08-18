@@ -2585,18 +2585,31 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
-    conn.execute(
-        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
-        " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
-        (tenant, unntak_id, auth.aktor, rid,
-         json.dumps({"oppdrag_id": oppdrag_id,
-                     "resultat": kvittering.get("resultat"),
-                     "ressurs_id": kvittering.get("ressurs_id")},
-                    ensure_ascii=False)))
-    conn.execute(
-        "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
-        "   AND status='venter_utførelse'",
-        ("løst" if vellykket else "manuell", tenant, unntak_id))
+    # 038 §5 (Codex P1): et BESLUTNINGSOPPDRAG har ingen sak — det er hele
+    # poenget med opprinnelsen. Den avsluttende bokføringen under er
+    # M-37-veiens saksbokføring, og `unntak_historikk.unntak_id` er NOT NULL:
+    # kjørt ubetinget døde HVER normal kvittering på et bestilt oppdrag i
+    # basen, og rullet med seg statusskiftet og artefaktpromoteringen — altså
+    # kunne et bestilt oppdrag aldri fullføres.
+    #
+    # Vi FØDER heller ingen sak her, i motsetning til de sene/motstridende
+    # veiene: en kvittering i tide, innenfor fencing og frist, ER
+    # normalveien. Evidensen ligger på oppdragsraden (kvittering, signatur,
+    # resultathash, status) — som for enhver annen kvittering. En sak
+    # opprettes når noe FAKTISK er et unntak, aldri som journalføring.
+    if unntak_id is not None:
+        conn.execute(
+            "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+            " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
+            (tenant, unntak_id, auth.aktor, rid,
+             json.dumps({"oppdrag_id": oppdrag_id,
+                         "resultat": kvittering.get("resultat"),
+                         "ressurs_id": kvittering.get("ressurs_id")},
+                        ensure_ascii=False)))
+        conn.execute(
+            "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
+            "   AND status='venter_utførelse'",
+            ("løst" if vellykket else "manuell", tenant, unntak_id))
     conn.commit()
     return kanonisk_json({"status": "utfort" if vellykket else "feilet",
                           "oppdrag_id": oppdrag_id, "unntak_id": unntak_id,

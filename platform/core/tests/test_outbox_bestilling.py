@@ -259,7 +259,7 @@ def test_bestillingsidempotens_er_immutabel_ogsaa_mot_delete(migrator):
 import json as _json
 import yaml as _yaml
 
-from .test_api import POLICIES, app, dekker, klient  # noqa: F401
+from .test_api import POLICIES, app, dekker, klient, token  # noqa: F401
 
 
 def _adminsesjon(tenant=TENANT, sub=None, roller="admin"):
@@ -670,6 +670,121 @@ def test_kvitteringskonflikt_foder_sikkerhetssak(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+def _plukket_beslutningsoppdrag(migrator_, modul, kh):
+    """Et CLAIMET beslutningsoppdrag av en ikke-artefaktproduserende type.
+
+    Samme moduloppsett som `_plukket_oppdrag_med_binding` (014b), bare født
+    av `opprett_beslutningsoppdrag`: ingen sak, ingen loggpost, ingen
+    reparasjonsidentitet — nøyaktig formen kvitteringsveien får fra
+    bestillingsflaten.
+    """
+    from db import kryptering
+    from .test_wcag_kontroll import _mk_admin
+
+    ma = _mk_admin("disponit_modules_admin")
+    try:
+        ma.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
+                   "'kompenserende','sys')", (modul, kh))
+        ma.execute("SELECT registrer_release(%s,'r1',1,%s,'mh','ad','sys')",
+                   (modul, kh))
+        ma.execute("SELECT installer_modul(%s,'sys')", (modul,))
+        ma.execute("SELECT sett_modulstatus(%s,'staging_verifisert',NULL,"
+                   "'sys')", (modul,))
+        ma.execute("SELECT bytt_release(%s,'staging','r1',1,%s,'sys')",
+                   (modul, kh))
+        ma.execute("SELECT sett_modulstatus(%s,'aktiv','r1','sys')", (modul,))
+        ot = "bo-" + secrets.token_hex(4)
+        ma.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                   (ot, modul, kh))
+        ma.commit()
+    finally:
+        ma.close()
+
+    _sett_kontekst(migrator_, TENANT)
+    logg = migrator_.execute(
+        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+        " policy_id, beslutning, begrunnelse, idempotency_key)"
+        " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT','[]',%s)"
+        " RETURNING id", (TENANT, secrets.token_hex(8))).fetchone()[0]
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator_, TENANT)
+    ct, nonce = kryptering.krypter(
+        dek, {"handling": "purring.send", "ressurs_id": "fak-1"},
+        TENANT, key_id)
+    migrator_.commit()
+
+    rt = _rt()
+    try:
+        _sett_kontekst(rt, TENANT)
+        opp = int(rt.execute(
+            "SELECT opprett_beslutningsoppdrag(%s,%s,%s,'purring.send',%s,"
+            "%s,%s,%s,now()+interval '1 hour',now()+interval '30 days')",
+            (TENANT, logg, ot, modul, ct, key_id, nonce)).fetchone()[0])
+        rt.commit()
+        rt.execute("SELECT set_config('disponit.aktor','m37',true),"
+                   "       set_config('disponit.request_id','r',true)")
+        rad = rt.execute(
+            "SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300,'r1',"
+            "'staging',0)",
+            (modul, ["purring."], secrets.token_hex(16))).fetchone()
+        rt.commit()
+    finally:
+        rt.close()
+    assert rad is not None and rad[0] == opp, \
+        "beslutningsoppdraget ble ikke claimet"
+    return opp
+
+
+@pg
+def test_normal_kvittering_paa_beslutningsoppdrag_fullfores(migrator, klient,
+                                                            token):
+    """Codex P1: en kvittering I TIDE på et SAKSFRITT beslutningsoppdrag.
+
+    Den avsluttende bokføringen i `_ingest_kvittering` var M-37-veiens og
+    kjørte ubetinget: `unntak_historikk.unntak_id` er NOT NULL, og et
+    beslutningsoppdrag har per konstruksjon ingen sak. Hver normal
+    kvittering på et BESTILT oppdrag døde derfor i basen og rullet med seg
+    statusskiftet og artefaktpromoteringen — oppdraget kunne aldri
+    fullføres, altså var hele bestillingsveien uten en utgang.
+
+    Kontroll: fjern `if unntak_id is not None`-grenen rundt
+    saksbokføringen, så blir denne rød.
+    """
+    from .test_m37 import _signer_kvittering
+    from .test_pr014b_artefakt_api import _kvitteringskap, _oppdrag_owner
+
+    modul = "m-" + secrets.token_hex(4)
+    kh = "k-" + secrets.token_hex(8)
+    opp = _plukket_beslutningsoppdrag(migrator, modul, kh)
+    oc, rep, gen = _oppdrag_owner(migrator, opp)
+    assert rep is None, "et beslutningsoppdrag har ingen reparasjonsidentitet"
+
+    kjti = _kvitteringskap(opp, oc, gen)
+    kv = _signer_kvittering({"oppdrag_id": opp, "tenant": TENANT,
+                             "kvittering_jti": kjti, "owner_claim_id": oc,
+                             "owner_generation": gen, "resultat": "utfort",
+                             "ressurs_id": "fak-1"})
+    tok, _ = token(rolle=modul, scopes=("orders:execute:purring.",))
+    klient.cookies.clear()
+    r = klient.post("/v1/oppdrag/kvittering", json=kv,
+                    headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "utfort", r.text
+    assert r.json()["unntak_id"] is None
+
+    _sett_kontekst(migrator, TENANT)
+    o = migrator.execute(
+        "SELECT status, kvittering IS NOT NULL, unntak_id FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
+    saker = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s",
+        (TENANT, opp)).fetchone()[0]
+    migrator.rollback()
+    assert o == ("utfort", True, None), o
+    # Normalveien JOURNALFØRER ikke: en sak opprettes når noe faktisk ER et
+    # unntak (evidensfrist/sikkerhet), aldri fordi et oppdrag gikk bra.
+    assert saker == 0, "normalveien fødte en sak"
 
 
 @pg
