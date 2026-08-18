@@ -296,7 +296,7 @@ RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT;
 BEGIN
-    PERFORM krev_tenantkontekst(p_tenant, 'opprett_reparasjonsoppdrag');
+    PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_reparasjonsoppdrag');
     INSERT INTO public.oppdrag (tenant, unntak_id, loggpost_id,
         repair_operation_id, oppdragstype, handling, eiermodul,
         payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,
@@ -318,7 +318,7 @@ RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id BIGINT;
 BEGIN
-    PERFORM krev_tenantkontekst(p_tenant, 'opprett_beslutningsoppdrag');
+    PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_beslutningsoppdrag');
     -- Trioen er NULL per konstruksjon (CHECK-en i §1 håndhever det
     -- uansett) og koblingen er KOBLET fra fødselen: beslutningen ER
     -- loggposten oppdraget peker på.
@@ -349,7 +349,7 @@ BEGIN
     -- Tenantporten FØRST — før GUC-ene under settes og før noe leses.
     -- Dette er den API-kallbare formen, og uten porten var `p_tenant`
     -- kallerens frie valg (se `krev_tenantkontekst`).
-    PERFORM krev_tenantkontekst(p_tenant, 'sikre_sak_for_oppdrag');
+    PERFORM public.krev_tenantkontekst(p_tenant, 'sikre_sak_for_oppdrag');
     -- Historikktriggeren på unntak krever aktør + request-id i GUC-ene.
     -- Funksjonen FÅR dem eksplisitt — den setter dem selv (LOCAL), så
     -- reaper-/kvitteringsveiene ikke er avhengige av at kalleren husket
