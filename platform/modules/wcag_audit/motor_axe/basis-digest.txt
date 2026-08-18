@@ -15,10 +15,10 @@
 # Kommandoen bygger og committer ingenting; den bytter bare linja under.
 # Commit den for seg etterpå.
 #
-# LINJA UNDER ER EN PLASSHOLDER, og `bygg.sh` avviser den med vilje: et
-# bygg med en uverifisert pinne skal ikke skje. Fram til den er fylt kan
-# motorimaget ikke bygges — se merknaden i PR-en. En oppdiktet digest ville
-# vært verre: den ser pinnet ut og bygger ikke.
+# LINJA UNDER ER PINNEN. Står den som en plassholder, avviser `bygg.sh`
+# den med vilje: et bygg med en uverifisert pinne skal ikke skje, og fram
+# til verdien er fylt kan motorimaget ikke bygges. En oppdiktet digest
+# ville vært verre: den ser pinnet ut og bygger ikke.
 #
 # Linjer som begynner med # er kommentarer.
 mcr.microsoft.com/playwright/python@sha256:42e251ec3238672c931be6c3565ff279690ae072c3e22058128d0412494f6866
