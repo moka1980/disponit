@@ -1035,15 +1035,56 @@ def test_konteksten_avledes_av_den_effektive_motoren():
     assert "_serverkontekst(drift_id, _som_arbeideren(motor_argv))" in kropp
     assert "_serverkontekst(digest, motorkmd)" not in kropp
     # ... og imaget må være NØYAKTIG det releaseraden og målingene bærer:
-    # et annet image betyr at akseptmålingen gjaldt noe annet.
-    assert "ok=drift_id == ventet" in kropp
-    assert "if drift_id != ventet:" in kropp
+    # et annet image betyr at akseptmålingen gjaldt noe annet. Dommen
+    # felles på INNHOLDET, ikke på id-strengen: dockers id overlever ikke
+    # docker 29-transporten inn i arbeiderens lager, så et id-oppgjør
+    # dømte et innholdsidentisk image «ikke i lageret» og brente en
+    # release per runde.
+    assert "ventet = _docker_identitet(digest)" in kropp
+    assert "identisk = bool(drift_id) and ventet is not None" \
+        " and effektiv == ventet" in kropp
+    assert "ok=identisk" in kropp
+    assert "if not identisk:" in kropp
+    assert "_steng_doeren(m, \"WCAG_DRIFT_MOTOR peker på et annet image\")" \
+        in kropp
+
+    # LAGENE ALENE ER IKKE IMAGET (Codex P1): et image bygget `FROM`
+    # releasen som bare overstyrer entrypoint, bruker eller miljø har
+    # nøyaktig samme diff_ids. Identiteten bærer derfor konfigen som
+    # bestemmer hva som faktisk starter — ellers kan gaten godkjenne en
+    # motor som kjører noe annet enn runden målte.
+    assert 'ATFERDSFELT = ("Entrypoint", "Cmd", "Env", "User",' \
+        ' "WorkingDir")' in sjekk
+    ident = sjekk.split("def _image_identitet(", 1)[1].split("\ndef ", 1)[0]
+    assert 'lag = (d.get("RootFS") or {}).get("Layers") or []' in ident
+    assert "for felt in ATFERDSFELT:" in ident
+    assert 'return {"lag": lag, "konfig": konfig}' in ident
+    # Ingen dom på tomt grunnlag: et image uten lesbar lagkjede er `None`,
+    # og `None == ventet` er usant — gaten stenger, den godkjenner ikke.
+    assert "if not lag:\n        return None" in ident
+    # Begge veiene inn i drift måler den SAMME identiteten: importens
+    # oppslag i arbeiderens lager og effektiv-motor-gaten.
+    imp = sjekk.split("def _importer_motorimage(", 1)[1].split("\ndef ", 1)[0]
+    assert "if _arbeider_identitet(iid) == ventet:" in imp
 
     # Kjøretiden LETES opp: driftskommandoen har et forspann (`runuser …
     # env … podman run …`), så posisjon 0 er ikke gitt.
     assert "def _kjoretidsledd(" in sjekk
     assert "runtime = Path(motorkmd[i]).name if i is not None else \"\"" \
         in sjekk
+
+    # ... og identiteten slås opp MED den kjøretiden (Codex P2): `docker`,
+    # `podman` og `nerdctl` har hvert sitt lager. Leses lagene alltid i
+    # arbeiderens podman-lager, gir en overstyring på en annen kjøretid
+    # ingen treff på en id som inspiserte helt fint, og fase 9 stenger
+    # døren på en gyldig motor.
+    assert "def _motorforspann(" in sjekk
+    assert "forspann = _motorforspann(motor_argv)" in kropp
+    assert "effektiv = (_image_identitet(forspann, drift_id)" in kropp
+    assert "_arbeider_identitet(drift_id)" not in kropp
+    eff = sjekk.split("def _effektiv_motorimage(", 1)[1].split("\ndef ", 1)[0]
+    assert "forspann = _motorforspann(motor_argv)" in eff
+    assert "subprocess.run([*forspann, \"image\", \"inspect\"" in eff
 
 
 def test_motorcontaineren_har_ressursgrenser():
