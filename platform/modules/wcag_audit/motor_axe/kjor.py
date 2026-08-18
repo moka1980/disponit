@@ -739,12 +739,20 @@ def main() -> int:
     #: Både trafikkbudsjettet bestillingen autoriserte og dekningen
     #: rapporten erklærer var da påstander uten en grense bak seg.
     #:
-    #: Regnskapet er per KANONISK dokument-URL, samme form som `oppdaget`:
-    #: en ramme som navigerer til noe vi alt har hentet, koster ikke en
-    #: plass til. Køens egne sider går gjennom den samme vakten og fyller
-    #: derfor de samme plassene — budsjettet er ETT, slik bestillingen ba
-    #: om `maks_sider` og ikke «maks_sider pluss det målet finner på».
-    dokumenter: set[str] = set()
+    #: BUDSJETTET TELLER LASTINGER, IKKE URL-ER (Codex P1, runde 6). Første
+    #: utgave førte regnskapet som et SETT av kanoniske dokument-URL-er, og
+    #: lot en navigasjon til noe vi alt hadde hentet gå gratis. Men det er
+    #: hentingen som koster — målets båndbredde, vår tid, kundens
+    #: autoriserte trafikk — og en side kan navigere til sin EGEN URL så
+    #: mange ganger den vil: hundre `<iframe src="./">`, et `window.open`
+    #: i løkke. Settet gjorde da nøyaktig det taket skulle hindre til noe
+    #: gratis, og `dokument_nektet` forble null mens rapporten sa at
+    #: ingenting var avkortet.
+    #:
+    #: Køens egne sider går gjennom den samme vakten og fyller de samme
+    #: plassene — budsjettet er ETT, slik bestillingen ba om `maks_sider`
+    #: og ikke «maks_sider pluss det målet finner på».
+    dokument_lastinger = 0
     #: Antall dokumentnavigasjoner budsjettet stengte. Bærer avkortingen
     #: nederst: en grense som ikke sier fra er en stille utelatelse.
     dokument_nektet = 0
@@ -793,7 +801,7 @@ def main() -> int:
             blokkert[(n, art)] = blokkert.get((n, art), 0) + 1
 
         def vakt(route):
-            nonlocal dokument_nektet
+            nonlocal dokument_nektet, dokument_lastinger
             req = route.request
             u = urllib.parse.urlsplit(req.url)
             if _origin(u) != origin:
@@ -845,8 +853,8 @@ def main() -> int:
                 return
             # BUDSJETTET TELLES ETTER ROBOTS (Codex P1, runde 5). En
             # navigasjon robots alt har stengt skal ikke koste en plass —
-            # den ble aldri hentet. Se `dokumenter` for hvorfor grensen
-            # gjelder hvert dokument og ikke bare køen.
+            # den ble aldri hentet. Se `dokument_lastinger` for hvorfor
+            # grensen gjelder hver LASTING og ikke bare køen.
             #
             # `redirected_from` holdes UTENFOR: et 30x er ikke et dokument
             # til, det er den samme navigasjonen som fortsetter. Talte vi
@@ -856,15 +864,20 @@ def main() -> int:
             # Subressurser (bilder, stilark, skript) er ikke dokumenter og
             # har aldri vært i denne grensen — `is_navigation_request()`
             # holder dem utenfor, som i robots-porten over.
+            #
+            # HVER LASTING TELLER, OGSÅ AV EN URL VI HAR SETT (Codex P1,
+            # runde 6). Dedupliseringen mot et sett av kanoniske URL-er ga
+            # målet en gratis vei rundt hele grensen: en side som åpner
+            # rammer mot sin egen adresse hentet ubegrenset mange
+            # dokumenter, med `dokument_nektet == 0` og `avkortet: false`
+            # øverst. Det er lastingen budsjettet finnes for å begrense.
             if req.is_navigation_request() and req.redirected_from is None:
-                dok = _normaliser_lenke(origin, req.url, req.url) or req.url
-                if dok not in dokumenter:
-                    if len(dokumenter) >= maks_sider:
-                        dokument_nektet += 1
-                        tell(u.hostname or u.netloc, "annet")
-                        route.abort("blockedbyclient")
-                        return
-                    dokumenter.add(dok)
+                if dokument_lastinger >= maks_sider:
+                    dokument_nektet += 1
+                    tell(u.hostname or u.netloc, "annet")
+                    route.abort("blockedbyclient")
+                    return
+                dokument_lastinger += 1
             route.continue_()
 
         # WEBSOCKETS LUKKES HELT (Codex P1). `BrowserContext.route` ser
@@ -1063,9 +1076,9 @@ def main() -> int:
         # denne grenen ble den stengningen usynlig, og rapporten sa «alt
         # kom med» om en kontroll der målet selv pekte på mer.
         #
-        # Verdien er det målet ba om, taket det vi ga: `dokumenter` er
-        # plassene vi brukte, `dokument_nektet` de vi nektet.
-        avkortet = [True, maks_sider, len(dokumenter) + dokument_nektet]
+        # Verdien er det målet ba om, taket det vi ga: `dokument_lastinger`
+        # er plassene vi brukte, `dokument_nektet` de vi nektet.
+        avkortet = [True, maks_sider, dokument_lastinger + dokument_nektet]
     elif robots_stengte:
         # EN ULESELIG ROBOTS ER OGSÅ EN AVKORTING (Codex P2). Da robots
         # svarte 5xx eller ikke lot seg hente, ble et bestilt

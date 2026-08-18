@@ -721,8 +721,8 @@ def test_robots_gjelder_hver_navigasjon_ikke_bare_omdirigeringer():
     assert n(o, f"{o}:443/side#topp", f"{o}:443/side#topp") == f"{o}/side"
 
 
-def test_sidebudsjettet_gjelder_hvert_dokument():
-    """Codex P1, runde 5: `maks_sider` var et tak på KØEN, ikke på trafikk.
+def test_sidebudsjettet_gjelder_hver_dokumentlasting():
+    """Codex P1, runde 5+6: `maks_sider` var et tak på KØEN, ikke på trafikk.
 
     En side trenger ingen kø for å hente dokumenter: hver `<iframe src=…>`
     og hvert `window.open` er en navigasjon til, og axe kontrollerer
@@ -730,6 +730,10 @@ def test_sidebudsjettet_gjelder_hvert_dokument():
     samme-origin-iframes hentet dermed hundreogén dokumenter fra kundens
     nettsted — uten at ett av dem sto i `sider`, og med
     `avkortet.truffet: false` på toppen.
+
+    Runde 6: og regnskapet må være LASTINGER. Med et sett av kanoniske
+    URL-er kostet bare den FØRSTE hentingen av en adresse en plass, så
+    hundre rammer mot sidens EGEN URL gikk gratis gjennom det samme taket.
 
     Vakten lever inne i `main()` bak playwright, så porten måles på
     kilden."""
@@ -739,11 +743,14 @@ def test_sidebudsjettet_gjelder_hvert_dokument():
 
     # ETT budsjett: køens sider går gjennom den samme vakten og fyller de
     # samme plassene. `maks_sider` er det bestillingen ga, ikke et gulv.
-    assert "len(dokumenter) >= maks_sider" in budsjett
-    # Regnskapet er per KANONISK URL, samme form som `oppdaget`: en ramme
-    # som navigerer til noe vi alt har hentet koster ikke en plass til.
-    assert "_normaliser_lenke(origin, req.url, req.url)" in budsjett
-    assert "dokumenter.add(dok)" in budsjett
+    assert "dokument_lastinger >= maks_sider" in budsjett
+    # REGNSKAPET ER LASTINGER, IKKE URL-ER (Codex P1, runde 6). Et sett av
+    # kanoniske URL-er lot en side navigere til sin EGEN adresse gratis, så
+    # mange ganger den ville — nøyaktig den ubegrensede hentingen taket
+    # finnes for å hindre, og med `dokument_nektet == 0` på veien ut.
+    assert "dokument_lastinger += 1" in budsjett
+    assert "dokumenter.add" not in kilde and "len(dokumenter)" not in kilde, \
+        "budsjettet skal ikke deduplisere på URL igjen"
     # Et 30x er ikke et dokument til — det er samme navigasjon som
     # fortsetter. Ellers spiste `/side` → `/side/` to plasser av én.
     assert "req.redirected_from is None" in budsjett
@@ -759,7 +766,7 @@ def test_sidebudsjettet_gjelder_hvert_dokument():
     # nøyaktig den stille utelatelsen funnet handler om.
     assert "elif dokument_nektet:" in kilde
     avk = kilde.split("elif dokument_nektet:", 1)[1].split("elif", 1)[0]
-    assert "len(dokumenter) + dokument_nektet" in avk
+    assert "dokument_lastinger + dokument_nektet" in avk
     assert "True, maks_sider" in avk
 
 
