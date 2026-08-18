@@ -395,6 +395,21 @@ def test_basisimaget_kan_ikke_bygges_upinnet():
                     for ln in pinne.read_text(encoding="utf-8").splitlines())
     assert "@sha256:" in verdi, "pinnefila må navngi en digest, ikke en tagg"
 
+    # ... og pinnen skal kunne FYLLES, ikke bare avvises (Codex P1): en
+    # håndhevet pinne uten verdi er en stengt dør, og en fersk utrulling
+    # kunne ikke bygge motoren i det hele tatt. `bygg.sh pin` henter
+    # digesten for TAGGEN REPOET SELV navngir — ett sted, så
+    # pinnekommandoen ikke kan pinne noe annet enn det fila dokumenterer.
+    assert 'if [ "${1:-}" = "pin" ]' in bygg
+    assert "BASISTAGG=" in bygg
+    tagger = set(re.findall(r"mcr\.microsoft\.com/playwright/python:[\w.-]+",
+                            bygg))
+    assert len(tagger) == 1, tagger
+    assert 'docker pull "$BASISTAGG"' in bygg
+    # `pin` skriver bare fila — den bygger ikke, og committer ikke.
+    pin_del = bygg.split('= "pin" ]', 1)[1].split("exit 0", 1)[0]
+    assert "docker build" not in pin_del and "git " not in pin_del
+
 
 # ---------------------------------------------------------------------------
 # Kontraktsdokumentene (kontrakt/): proveniens som ikke får drive fra koden

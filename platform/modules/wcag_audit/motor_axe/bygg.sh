@@ -26,22 +26,74 @@
 set -euo pipefail
 her="$(cd "$(dirname "$0")" && pwd)"
 
+# TAGGEN STÅR ÉTT STED. Den er ikke pinnen — den er navnet vi HENTER pinnen
+# fra, én gang, bevisst. Sto den i tre kommentarer og i feilmeldingen, kunne
+# `pin`-kommandoen under hentet digesten for en annen tagg enn den repoet
+# tror den pinner.
+BASISTAGG="mcr.microsoft.com/playwright/python:v1.49.1-noble"
+PINNEFIL="$her/basis-digest.txt"
+
+les_pinne() { sed 's/#.*//' "$PINNEFIL" | tr -d '[:space:]'; }
+er_pinne() {
+  printf '%s' "$1" | grep -Eq '^[^@[:space:]]+@sha256:[0-9a-f]{64}$'
+}
+
+# `bygg.sh pin` FYLLER PLASSHOLDEREN (Codex P1). Den forrige runden gjorde
+# pinnen til en HÅNDHEVET betingelse, men lot verdien stå som en
+# plassholder — og siden `bygg.sh` med rette avviser den, kunne en FERSK
+# utrulling ikke bygge motoren i det hele tatt (fase 1 i sjekklisten). En
+# håndhevet pinne uten verdi er en stengt dør, ikke en låst dør.
+#
+# Verdien kan bare hentes med nett og en registry-klient, så den kan ikke
+# ligge i repoet fra vår side. Det den KAN være, er én verifiserbar
+# kommando i stedet for en manuell klipp-og-lim fra et dokumentasjonsavsnitt:
+#
+#   bash bygg.sh pin      # pull + les RepoDigest + skriv PINNEFIL
+#   git add -p && git commit   # verdien inn i EGEN commit, som før
+#
+# Kommandoen bygger INGENTING og committer ingenting: den skriver bare
+# fila, og formkontrollen under er den samme porten et bygg møter. At
+# verdien blir stående i historikken er fortsatt et menneskes handling.
+if [ "${1:-}" = "pin" ]; then
+  docker pull "$BASISTAGG"
+  ny="$(docker inspect --format='{{index .RepoDigests 0}}' "$BASISTAGG")"
+  if ! er_pinne "$ny"; then
+    echo "docker ga ingen RepoDigest for $BASISTAGG (fikk: '$ny')." >&2
+    echo "Imaget må være HENTET fra registryet — et lokalt bygget image" >&2
+    echo "har ingen registry-digest å pinne mot." >&2
+    exit 1
+  fi
+  # Kommentarhodet beholdes; bare verdilinja byttes.
+  tmp="$(mktemp)"
+  sed '/^[^#]/d' "$PINNEFIL" > "$tmp"
+  printf '%s\n' "$ny" >> "$tmp"
+  mv "$tmp" "$PINNEFIL"
+  echo "pinnet: $ny"
+  echo "Verdien er skrevet til basis-digest.txt. Commit den for seg."
+  exit 0
+fi
+
 # BASISPINNEN LESES OG VERIFISERES FØR BYGGET (Codex P2). Dockerfilens
 # ARG har ingen standardverdi, så et bygg uten denne verdien feiler
 # uansett — sjekken her finnes for å feile med et svar i stedet for en
 # docker-feilmelding, og for å avvise en halvferdig fil (plassholderen)
 # før den blir til et image noen tror er pinnet.
-basis="$(sed 's/#.*//' "$her/basis-digest.txt" | tr -d '[:space:]')"
-if ! printf '%s' "$basis" | grep -Eq '^[^@[:space:]]+@sha256:[0-9a-f]{64}$'
+basis="$(les_pinne)"
+if ! er_pinne "$basis"
 then
   cat >&2 <<FEIL
 basis-digest.txt har ingen gyldig pinne (leste: '${basis}').
 
-Hent og verifiser digesten, og skriv den inn i egen commit:
+Hent og skriv den med:
 
-  docker pull mcr.microsoft.com/playwright/python:v1.49.1-noble
-  docker inspect --format='{{index .RepoDigests 0}}' \\
-      mcr.microsoft.com/playwright/python:v1.49.1-noble
+  bash $0 pin
+
+Den henter $BASISTAGG, leser registry-digesten og skriver den inn.
+Verdien skal så committes FOR SEG — den er et bevisst valg, ikke et
+byggeartefakt. Vil du gjøre det for hånd, er det de samme to stegene:
+
+  docker pull $BASISTAGG
+  docker inspect --format='{{index .RepoDigests 0}}' $BASISTAGG
 
 Et upinnet bygg er IKKE et alternativ: release-registreringen er
 immutabel og forutsetter at samme wcag-rN gir samme browserbiter.
