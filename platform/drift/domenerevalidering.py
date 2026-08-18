@@ -53,6 +53,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
@@ -416,9 +417,32 @@ KAPPLOP = (psycopg.errors.UniqueViolation,
            psycopg.errors.DeadlockDetected,
            psycopg.errors.LockNotAvailable)
 
+#: FRISTEN ER PASSETS, IKKE SYSTEMDS (Codex P2).
+#:
+#: `disponit-domeneverifisering.service` gir kjøringen 4 minutter
+#: (TimeoutStartSec). Passet stanser derfor seg selv godt innenfor, og det gjør
+#: det MELLOM to ferdige oppslag — det ene punktet der ingenting er halvveis
+#: skrevet. Resten av køen står `ventende` og tas av neste timerkjøring om fem
+#: minutter; køen ER tilstanden, og en oneshot som stanser er ikke en jobb som
+#: mislyktes. TimeoutStartSec blir da et sikkerhetsnett som ikke skal utløses.
+#: Tallene hører sammen og skal endres sammen.
+VERIFISERING_FRIST_S = 180
+
+#: Batchtaket per pass. UTLEDET, ikke valgt: med C = `SAMTIDIGHET` oppslag i
+#: parallell og et verste tilfelle på ~10 s per hostname (to resolvere à 5 s
+#: levetid, serielt i `enig_svar`) bruker et fullt tak
+#: ceil(100/8) · 10 s = 130 s — innenfor fristen, med margin for DB-skrivingene.
+#: Taket lå før på 200 SERIELLE oppslag, altså opptil 2000 s mot en unit som
+#: dør etter 240: en kohort med trege navn foran i `challenge_utstedt`-
+#: rekkefølgen spiste hele vinduet, neste kjøring plukket de SAMME radene, og
+#: kundene bak dem ble sultet til utfordringen deres utløp.
+VERIFISERING_TAK = 100
+
 
 def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
-                  grense: int = 200) -> dict:
+                  grense: int = VERIFISERING_TAK,
+                  samtidighet: int = SAMTIDIGHET,
+                  frist_s: float = VERIFISERING_FRIST_S) -> dict:
     """Ett verifiseringspass: plukk `ventende` challenges kryss-tenant
     (`ventende_domenechallenges`, 039), slå opp TXT med samme
     diversitetskrav som revalideringen (≥2 enige, uavhengige resolvere),
@@ -446,9 +470,12 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
     `KAPPLOP`). En manglende funksjon, et feil grant eller en SQL-feil er
     ikke «ikke bevist» — den slipper ut og feller unitten, for et pass som
     rapporterer 0 mens ingenting ble behandlet er verre enn et rødt pass.
+
+    Oppslagene kjøres med fast samtidighetsgrense og passet har sin EGEN
+    frist — se `_verifiser_rader`.
     """
     res = {"plukket": 0, "verifisert": 0, "konflikt": 0, "uenige": 0,
-           "ikke_bevist": 0, "kapplop": 0, "annet": 0}
+           "ikke_bevist": 0, "kapplop": 0, "annet": 0, "ubehandlet": 0}
     fikk = conn.execute("SELECT pg_try_advisory_lock(%s)",
                         (VERIFISERINGSNOKKEL,)).fetchone()[0]
     if not fikk:
@@ -460,41 +487,8 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
             (grense,)).fetchall()
         conn.rollback()
         res["plukket"] = len(rader)
-        for tenant, hostname in rader:
-            txt = enig_svar(resolvere, hostname)
-            if txt is None:
-                res["uenige"] += 1
-                continue
-            try:
-                svar = conn.execute(
-                    "SELECT bekreft_domenechallenge(%s,%s,%s,%s)",
-                    (tenant, hostname, aktor, sorted(txt))).fetchone()[0]
-                conn.commit()
-            except MANGLENDE_BEVIS:
-                # Bevis ikke funnet i TXT, utfordringen utløpt, eller raden
-                # finnes ikke lenger. Alt dette er ORDINÆRE utfall: ingen
-                # påstand om suksess, prøv igjen neste pass.
-                conn.rollback()
-                res["ikke_bevist"] += 1
-                continue
-            except KAPPLOP:
-                # Raden flyttet seg under oss (annen tenant verifiserte samme
-                # hostname, vranglås, låsen var tatt). Telles for seg: et
-                # kappløp er ikke det samme som «beviset sto ikke i DNS», og
-                # de to skal ikke kunne skjule hverandre i én teller.
-                conn.rollback()
-                res["kapplop"] += 1
-                continue
-            if svar == "verifisert":
-                res["verifisert"] += 1
-            elif isinstance(svar, str) and svar.startswith("konflikt:"):
-                res["konflikt"] += 1
-                print(json.dumps({"hendelse": "domene_overtakelseskonflikt",
-                                  "hostname": hostname,
-                                  "motpart": svar.split(":", 1)[1]}),
-                      flush=True)
-            else:
-                res["annet"] += 1
+        _verifiser_rader(conn, rader, resolvere, aktor, res, samtidighet,
+                         frist_s)
         return res
     finally:
         # ROLLBACK FØRST (Codex P2). Slipper en uventet feil ut av løkka, står
@@ -511,3 +505,93 @@ def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
             conn.commit()
         except psycopg.Error:
             pass
+
+
+def _verifiser_rader(conn, rader, resolvere, aktor, res: dict,
+                     samtidighet: int, frist_s: float) -> None:
+    """Oppslagene med fast samtidighetsgrense; DB-kallene serielt (Codex P2).
+
+    Passet var SERIELT: opptil 200 hostnames etter hverandre, hvert med
+    resolverkall som hver har fem sekunders levetid, mot en unit som dør etter
+    fire minutter. En kohort med trege eller tidsavbrutte navn foran i
+    `challenge_utstedt`-rekkefølgen spiste hele vinduet før de friske bak dem
+    ble nådd — og fordi utvalget alltid tar de ELDSTE først, plukket neste
+    kjøring nøyaktig de samme radene. Kundene bak dem ble sultet helt til
+    utfordringen deres utløp.
+
+    Tre ting løser det, og de virker sammen:
+
+    1. `SAMTIDIGHET` parallelle oppslag, samme grense og samme grunn som
+       `_utfor`: oppslagene er I/O, DB-en har fortsatt nøyaktig én skriver.
+    2. `as_completed`, ikke innsendingsrekkefølge. De FRISKE navnene fullfører
+       først og skrives først; et navn som står og venter på timeout blokkerer
+       ikke lenger noen bak seg. Det er dette som fjerner selve sultingen —
+       fristen under er bare et nett.
+    3. Passets EGEN frist, sjekket MELLOM to ferdige oppslag: det ene punktet
+       der ingenting er halvveis skrevet. Radene vi ikke rakk telles som
+       `ubehandlet` og står `ventende` til neste kjøring om fem minutter.
+       Traff systemd-timeouten i stedet, ville et SIGTERM landet hvor som
+       helst — også mellom bekreftelsen og commiten.
+    """
+    if not rader:
+        return
+    frist = time.monotonic() + frist_s
+    pool = ThreadPoolExecutor(max_workers=samtidighet)
+    try:
+        # `enig_svar` leses opp ved submit, ikke ved import: testene bytter den
+        # ut på modulen, og en tidlig binding ville gjort dem tannløse.
+        oppslag = {pool.submit(enig_svar, resolvere, h): (t, h)
+                   for t, h in rader}
+        behandlet = 0
+        for ferdig in as_completed(oppslag):
+            if time.monotonic() >= frist:
+                res["frist_naadd"] = True
+                break
+            tenant, hostname = oppslag[ferdig]
+            behandlet += 1
+            _skriv_bekreftelse(conn, tenant, hostname, ferdig.result(), aktor,
+                               res)
+        res["ubehandlet"] = len(rader) - behandlet
+    finally:
+        # Ikke `with`: de oppslagene som fortsatt er i luften når fristen slår
+        # inn skal ikke ventes ut. `cancel_futures` tar det som ikke har
+        # startet; de som kjører dør med prosessen, og har ingen tilstand å
+        # etterlate — de har ikke rørt basen.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _skriv_bekreftelse(conn, tenant, hostname, txt, aktor,
+                       res: dict) -> None:
+    """Ett ferdig oppslag: commit eller rollback, og telleren som følger med."""
+    if txt is None:
+        res["uenige"] += 1
+        return
+    try:
+        svar = conn.execute(
+            "SELECT bekreft_domenechallenge(%s,%s,%s,%s)",
+            (tenant, hostname, aktor, sorted(txt))).fetchone()[0]
+        conn.commit()
+    except MANGLENDE_BEVIS:
+        # Bevis ikke funnet i TXT, utfordringen utløpt, eller raden finnes
+        # ikke lenger. Alt dette er ORDINÆRE utfall: ingen påstand om
+        # suksess, prøv igjen neste pass.
+        conn.rollback()
+        res["ikke_bevist"] += 1
+        return
+    except KAPPLOP:
+        # Raden flyttet seg under oss (annen tenant verifiserte samme
+        # hostname, vranglås, låsen var tatt). Telles for seg: et kappløp er
+        # ikke det samme som «beviset sto ikke i DNS», og de to skal ikke
+        # kunne skjule hverandre i én teller.
+        conn.rollback()
+        res["kapplop"] += 1
+        return
+    if svar == "verifisert":
+        res["verifisert"] += 1
+    elif isinstance(svar, str) and svar.startswith("konflikt:"):
+        res["konflikt"] += 1
+        print(json.dumps({"hendelse": "domene_overtakelseskonflikt",
+                          "hostname": hostname,
+                          "motpart": svar.split(":", 1)[1]}), flush=True)
+    else:
+        res["annet"] += 1

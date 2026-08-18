@@ -7,6 +7,7 @@ Alle tester konstruerer egen tilstand.
 """
 import hashlib
 import secrets
+import time
 
 import psycopg
 import pytest
@@ -536,6 +537,101 @@ def test_uventet_dbfeil_feller_verifiseringspasset(monkeypatch):
     race = _Falskkonn(psycopg.errors.UniqueViolation("en_verifisert"))
     res = dr.kjor_ventende(race, resolvere=[])
     assert (res["kapplop"], res["ikke_bevist"]) == (1, 0), res
+
+
+class _Tellekonn:
+    """Minimal conn: alle bekreftelser lykkes, og de TELLES i rekkefølge."""
+
+    def __init__(self, rader):
+        self.rader = rader
+        self.skrevet = []
+
+    def execute(self, sql, args=None):
+        if "pg_try_advisory_lock" in sql:
+            return _Svar([(True,)])
+        if "ventende_domenechallenges" in sql:
+            return _Svar(self.rader)
+        if "bekreft_domenechallenge" in sql:
+            self.skrevet.append(args[1])
+            return _Svar([("verifisert",)])
+        return _Svar([(True,)])
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_trege_hostnames_sulter_ikke_de_friske(monkeypatch):
+    """Codex P2: passet var SERIELT — opptil 200 navn etter hverandre, hvert
+    med resolverkall som har fem sekunders levetid, mot en unit som dør etter
+    fire minutter. En kohort med trege navn FORAN i `challenge_utstedt`-
+    rekkefølgen spiste hele vinduet, og siden utvalget alltid tar de eldste
+    først, plukket neste kjøring de samme radene: kundene bak ble sultet til
+    utfordringen deres utløp.
+
+    Nå slås navnene opp med `SAMTIDIGHET` i parallell og konsumeres i
+    FULLFØRINGSrekkefølge. Målingen: de friske navnene skrives FØR det trege,
+    selv om det trege ligger først i plukket.
+
+    MUTASJONEN SOM DREPER DENNE: gå tilbake til en seriell løkke, eller
+    konsumér i innsendingsrekkefølge.
+    """
+    from drift import domenerevalidering as dr
+
+    treg = "treg.example"
+    friske = [f"frisk{i}.example" for i in range(4)]
+    rader = [("t", treg)] + [("t", h) for h in friske]
+
+    def sakte(resolvere, hostname):
+        if hostname == treg:
+            time.sleep(0.5)
+        return frozenset({"bevis"})
+
+    monkeypatch.setattr(dr, "enig_svar", sakte)
+    konn = _Tellekonn(rader)
+    res = dr.kjor_ventende(konn, resolvere=[], samtidighet=8)
+
+    assert res["verifisert"] == 5, res
+    assert res["ubehandlet"] == 0, res
+    assert konn.skrevet[-1] == treg, \
+        f"det trege navnet blokkerte de friske: {konn.skrevet}"
+
+
+def test_passet_stanser_seg_selv_paa_egen_frist(monkeypatch):
+    """Fristen er PASSETS, ikke systemds: rekker vi ikke køen, stanser vi
+    MELLOM to ferdige oppslag — det ene punktet der ingenting er halvveis
+    skrevet — og de uberørte radene står `ventende` til neste kjøring. Traff
+    systemd-timeouten i stedet, kunne SIGTERM landet mellom bekreftelsen og
+    commiten."""
+    from drift import domenerevalidering as dr
+
+    rader = [("t", f"h{i}.example") for i in range(6)]
+    monkeypatch.setattr(dr, "enig_svar",
+                        lambda resolvere, hostname: frozenset({"bevis"}))
+    konn = _Tellekonn(rader)
+    # Fristen er alt utløpt: ingen rad skal skrives, alle telles ubehandlet.
+    res = dr.kjor_ventende(konn, resolvere=[], frist_s=-1)
+    assert res.get("frist_naadd") is True, res
+    assert (res["verifisert"], res["ubehandlet"]) == (0, 6), res
+    assert konn.skrevet == []
+
+
+def test_taket_holder_seg_innenfor_unitens_timeout():
+    """Taket er UTLEDET, ikke valgt: med samtidighet 8 og ~10 s verste
+    tilfelle per hostname må et fullt tak rekke innenfor passets egen frist,
+    som igjen ligger under unitens TimeoutStartSec. Går ett av tallene opp
+    uten at de andre følger, er sultingen tilbake."""
+    import math as _math
+
+    from drift import domenerevalidering as dr
+
+    verste_per_hostname_s = 10
+    runder = _math.ceil(dr.VERIFISERING_TAK / dr.SAMTIDIGHET)
+    assert runder * verste_per_hostname_s < dr.VERIFISERING_FRIST_S
+    # Unitens TimeoutStartSec=4min er sikkerhetsnettet over fristen.
+    assert dr.VERIFISERING_FRIST_S < 4 * 60
 
 
 def test_arbeideren_drenerer_konflikter_i_hovedlokka():
