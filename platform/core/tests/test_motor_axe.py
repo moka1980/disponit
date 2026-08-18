@@ -635,6 +635,47 @@ def test_websocket_kanalen_lukkes_helt():
     assert 'ctx.route_web_socket("**/*", vakt_ws)' in kilde
 
 
+def test_webrtc_er_stengt_i_begge_lag():
+    """Codex P1, runde 5: WebRTC går utenom HELE egressvakten.
+
+    `BrowserContext.route` ser HTTP og `route_web_socket` ser websockets.
+    En `RTCPeerConnection` er ingen av delene: peker en kontrollert side
+    ICE/STUN/TURN på en RÅ IP, sendes UDP rett ut. Resolverreglene treffer
+    bare vertsNAVN, og en IP-literal trenger ingen DNS — så med
+    `--network host` i den prosjekterte launcheren lå loopback, RFC1918 og
+    skymetadata innenfor rekkevidde av en side vi selv åpnet.
+
+    Begge lagene måles: konstruktørene fjernes i hvert dokument, og
+    Chromium får forbudet mot ikke-proxyet UDP. Kilden er porten — vakten
+    lever inne i `main()` bak playwright."""
+    kilde = (MOTOR / "kjor.py").read_text(encoding="utf-8")
+
+    # Lag 1: API-ene finnes ikke i noen realm siden får se.
+    assert "RTCPeerConnection" in kjor.WEBRTC_API
+    assert "webkitRTCPeerConnection" in kjor.WEBRTC_API, \
+        "prefiksformen er fortsatt en levende konstruktør i Chromium"
+    assert "RTCDataChannel" in kjor.WEBRTC_API
+    for navn in kjor.WEBRTC_API:
+        assert f'"{navn}"' in kjor.WEBRTC_AV, navn
+    # IKKE-konfigurerbar: en side skal ikke kunne definere dem tilbake.
+    assert "configurable: false" in kjor.WEBRTC_AV
+    assert "writable: false" in kjor.WEBRTC_AV
+    # ... og `undefined`, ikke en kastende getter: funksjonstesting skal se
+    # en nettleser uten WebRTC, ikke få skriptet sitt brutt. En brukket
+    # side er en DOM axe kontrollerer feil.
+    assert "value: undefined" in kjor.WEBRTC_AV
+    assert "throw" not in kjor.WEBRTC_AV
+    assert "ctx.add_init_script(WEBRTC_AV)" in kilde
+
+    # Lag 2: Chromium-bryteren, og den er et FORBUD — ingen proxy er
+    # konfigurert, så `disable_non_proxied_udp` slipper ingenting ut.
+    assert kjor.WEBRTC_BRYTER == (
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+    args_del = kilde.split("chrom_args = [", 1)[1].split("]", 1)[0]
+    assert "WEBRTC_BRYTER" in args_del
+    assert "browser = pw.chromium.launch(args=chrom_args)" in kilde
+
+
 def test_kravsett_og_alvorlighet_dekker_kontrakten():
     # Enum-ene speiler rapportskjemaet — driver de fra hverandre, produserer
     # motoren verdier skjemavalideringen avviser.

@@ -109,6 +109,57 @@ LOCALE = "nb"
 TIDSSONE = "Europe/Oslo"
 VIEWPORT = {"width": 1280, "height": 800}
 
+#: WEBRTC ER EN EGRESSKANAL UTENFOR HELE VAKTEN (Codex P1, runde 5).
+#: `BrowserContext.route` ser HTTP, `route_web_socket` ser websockets — og
+#: `RTCPeerConnection` er ingen av delene. En kontrollert side som peker
+#: ICE/STUN/TURN på en RÅ IP sender UDP rett ut: resolverreglene
+#: (`--host-resolver-rules`) treffer bare VERTSNAVN, og en IP-literal
+#: trenger ikke DNS. Med `--network host` i den prosjekterte launcheren er
+#: `127.0.0.1`, RFC1918 og skymetadata da innenfor rekkevidde — nøyaktig
+#: det den lukkede egressen påstår at de ikke er.
+#:
+#: Kanalen stenges der den ÅPNES, i renderen, og på to lag:
+#:
+#:   1. Konstruktørene fjernes i HVERT dokument før sidens egne skript
+#:      kjører (`add_init_script` gjelder alle rammer, også `about:blank`
+#:      og iframes siden opprettes senere). Egenskapene settes
+#:      IKKE-konfigurerbare, så en side kan ikke definere dem tilbake.
+#:   2. Chromium-bryteren under, som forbud mot ikke-proxyet UDP. Ingen
+#:      proxy er konfigurert, så det er et forbud, ikke en omdirigering.
+#:      Laget finnes for det lag 1 ikke kan love alene: en realm som
+#:      skulle rekke å bli lest før injeksjonen.
+#:
+#: Axe trenger ingen av API-ene — kontrollen kjører mot DOM-en slik den er
+#: lastet, som for service workers og websockets. En side som må ha
+#: sanntidskanalen for å rendre mister ikke rapporten; den mister
+#: sanntidsdelen, og `dekningsbegrensninger` sier det.
+#:
+#: Det ENDELIGE laget hører hjemme på nettverksgrensen, og det står ikke
+#: her med vilje: staging-fixturen er loopback-bundet, så launcheren må ha
+#: `--network host` for i det hele tatt å nå fasit-nettstedet (se
+#: `bygg.sh`). Så lenge den forutsetningen står, er renderen stedet.
+WEBRTC_API = ("RTCPeerConnection", "webkitRTCPeerConnection",
+              "RTCDataChannel", "RTCIceTransport", "RTCDtlsTransport",
+              "RTCSctpTransport", "RTCCertificate")
+WEBRTC_AV = (
+    "for (const n of " + json.dumps(list(WEBRTC_API)) + ") {"
+    "  try {"
+    # `undefined`, ikke en getter som kaster: en side som gjør
+    # funksjonstesting (`if (window.RTCPeerConnection)`) skal se en
+    # nettleser UTEN WebRTC og degradere pent. En exception der ville
+    # brutt sidens skript — og dermed DOM-en axe skal kontrollere.
+    "    Object.defineProperty(window, n, {"
+    "      value: undefined, configurable: false,"
+    "      writable: false, enumerable: false});"
+    "  } catch (e) { /* allerede ikke-konfigurerbar: like stengt */ }"
+    "}"
+)
+
+#: Chromium-bryteren i lag 2. `--force-` overstyrer enhver policy i
+#: imaget, og `disable_non_proxied_udp` uten proxy er et forbud: WebRTC får
+#: da verken sende eller motta UDP.
+WEBRTC_BRYTER = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
+
 #: Navigasjonsfrist per side — romslig for et lokalt testnettsted, liten
 #: mot claim-fristen. Motoren som helhet drepes uansett av Kommandomotors
 #: vakthund; denne finnes for at ÉN hengende side skal gi `feilet` på den
@@ -631,7 +682,11 @@ def main() -> int:
         regler = ", ".join(f"MAP {v} {ip}"
                            for v, ip in sorted(resolverkart.items()))
         chrom_args = ["--disable-dev-shm-usage",
-                      f"--host-resolver-rules={regler}, MAP * ~NOTFOUND"]
+                      f"--host-resolver-rules={regler}, MAP * ~NOTFOUND",
+                      # Lag 2 mot WebRTC — se `WEBRTC_BRYTER`. Resolver-
+                      # reglene over stopper fremmede VERTSNAVN; en rå
+                      # IP-literal i en ICE-kandidat trenger ikke DNS.
+                      WEBRTC_BRYTER]
         browser = pw.chromium.launch(args=chrom_args)
         # SERVICE WORKERS BLOKKERES (Codex P1). En registrert service
         # worker svarer på sidens forespørsler UTENFOR sidens egen
@@ -644,6 +699,10 @@ def main() -> int:
                                   timezone_id=TIDSSONE,
                                   service_workers="block",
                                   ignore_https_errors=tls_usikker)
+        # Lag 1 mot WebRTC — se `WEBRTC_AV`. Skriptet kjøres i HVERT nytt
+        # dokument i konteksten, hovedramme som iframe, før sidens egne
+        # skript får se en realm.
+        ctx.add_init_script(WEBRTC_AV)
 
         def tell(vert: str, art: str) -> None:
             # `_rapportvert` er porten mot rapportskjemaet: en blokkering
