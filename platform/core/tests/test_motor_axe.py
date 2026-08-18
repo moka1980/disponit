@@ -161,8 +161,12 @@ def test_lenkenormalisering_er_lukket():
     assert n(o, f"{o}/index.html", "om.html") == f"{o}/om.html"
     assert n(o, f"{o}/index.html", "/om.html#seksjon") == f"{o}/om.html"
     assert n(o, f"{o}/index.html", "https://annen.example/") is None
-    assert n(o, f"{o}/index.html", "/sok?q=1") is None
     assert n(o, f"{o}/index.html", "mailto:x@y") is None
+    # Query BEHOLDES: den er sideidentitet (Codex P2). Rapportformen uten
+    # query lages ett nivå opp, av `rapport._delt_url`.
+    assert n(o, f"{o}/index.html", "/sok?q=1") == f"{o}/sok?q=1"
+    assert n(o, f"{o}/p", "/p?id=1") != n(o, f"{o}/p", "/p?id=2")
+    assert n(o, f"{o}/index.html", "/sok?q=1#treff") == f"{o}/sok?q=1"
 
 
 def test_kravsett_og_alvorlighet_dekker_kontrakten():
@@ -214,20 +218,25 @@ def test_fasitkontroll_finner_hver_avviksklasse():
 
 
 def test_fasiten_er_konsistent_med_seg_selv():
-    """Avkortingsregnskapet i fasiten: 13 = 4 besøkte + 9 i kø, og
-    robots-siden er aldri en del av regnskapet."""
+    """Avkortingsregnskapet i fasiten: 14 = 4 besøkte + 9 i kø + 1
+    query-lenke, og robots-siden er aldri en del av regnskapet."""
     fasit = json.loads(
         (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["nettsted_maks4"]
     truffet, tak, verdi = s["avkortet"]
     assert truffet is True and tak == s["payload"]["maks_sider"]
-    assert verdi == 13
+    assert verdi == 14
     assert "/privat/hemmelig.html" not in s["_crawlrekkefolge"]
     sider = ROT / "platform/modules/wcag_audit/testnettsted/sider"
     assert (sider / "privat/hemmelig.html").exists()
     assert "Disallow: /privat/" in (sider / "robots.txt").read_text(
         encoding="utf-8")
+    # Query-lenken fasiten teller MÅ finnes i fixturen, på en side som
+    # faktisk besøkes — ellers måler ikke runden det den sier den måler.
+    kontakt = (sider / "kontakt.html").read_text(encoding="utf-8")
+    assert 'href="/sok?q=' in kontakt
+    assert "/kontakt.html" in s["_crawlrekkefolge"]
 
 
 # ---------------------------------------------------------------------------

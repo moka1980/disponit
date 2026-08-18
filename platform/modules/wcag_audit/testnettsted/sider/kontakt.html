@@ -16,6 +16,17 @@
   <button type="submit">Send</button>
 </form>
 
+<!-- QUERY-LENKE: ingen brudd, men den skal OPPDAGES av crawlen. En
+     crawler som kaster lenker med query utelater dynamiske sider i
+     stillhet, og melder samtidig et for lavt avkortingstall. Målet
+     hentes aldri i denne runden (taket er 4 sider, og den havner sist
+     i køen), så fasiten måler nettopp oppdagelsen. -->
+<nav aria-label="Snarveier">
+<ul>
+<li><a href="/sok?q=tilgjengelighet">Søk etter tilgjengelighet</a></li>
+</ul>
+</nav>
+
 </main>
 </body>
 </html>

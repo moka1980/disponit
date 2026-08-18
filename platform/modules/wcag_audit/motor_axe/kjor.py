@@ -280,7 +280,24 @@ def _tillatt(sti: str, regler: list) -> bool:
 
 def _normaliser_lenke(base_origin: str, side_url: str, href: str
                       ) -> str | None:
-    """Absolutt URL på målets origin, uten fragment/query — ellers None."""
+    """Absolutt URL på målets origin, uten fragment — ellers None.
+
+    QUERY-EN BLIR MED (Codex P2). Den ble strøket ved å returnere None,
+    altså ved å KASTE lenken, og det er to feil i ett: hver side et
+    dynamisk nettsted ruter på query (`/produkt?id=42`) falt ut av
+    crawlen, og siden URL-en aldri nådde `oppdaget`, sa rapporten
+    samtidig at ingenting var avkortet. Et nettsted kunne dermed være så
+    godt som ukontrollert i en rapport som ser komplett og ærlig ut.
+
+    Query-en er BÆRENDE for sideidentitet — `/produkt?id=1` og
+    `/produkt?id=2` er to sider — og skal likevel ikke lagres: den kan
+    inneholde persondata. Det skillet finnes allerede ett nivå opp,
+    `rapport._delt_url` bygger rapportformen uten query og
+    identitetsformen med, så motoren kan crawle disse sidene uten at
+    query-en havner i evidensen.
+
+    FRAGMENTET faller fortsatt bort: det sendes aldri til serveren, så
+    to URL-er som bare skiller seg der ber om samme dokument."""
     try:
         u = urllib.parse.urljoin(side_url, href)
         p = urllib.parse.urlsplit(u)
@@ -288,9 +305,8 @@ def _normaliser_lenke(base_origin: str, side_url: str, href: str
         return None
     if f"{p.scheme}://{p.netloc}" != base_origin:
         return None
-    if p.query:
-        return None
-    return f"{base_origin}{p.path or '/'}"
+    return (f"{base_origin}{p.path or '/'}"
+            + (f"?{p.query}" if p.query else ""))
 
 
 def main() -> int:
@@ -450,9 +466,15 @@ def main() -> int:
                         "a[href]", "els => els.map(e =>"
                         " e.getAttribute('href'))"):
                     lenke = _normaliser_lenke(origin, url, href or "")
-                    if (lenke and lenke not in oppdaget
-                            and _tillatt(
-                                urllib.parse.urlsplit(lenke).path, disallow)):
+                    if not lenke or lenke in oppdaget:
+                        continue
+                    # Robots matcher mot STI OG QUERY (RFC 9309 §2.2.2) —
+                    # `Disallow: /*?` er nettopp regelen som stenger de
+                    # query-bærende sidene, og den kan ikke virke om vi
+                    # måler den mot en sti uten query.
+                    d = urllib.parse.urlsplit(lenke)
+                    sti = d.path + (f"?{d.query}" if d.query else "")
+                    if _tillatt(sti, disallow):
                         oppdaget.add(lenke)
                         ko.append(lenke)
         browser.close()

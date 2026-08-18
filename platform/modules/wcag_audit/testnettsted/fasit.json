@@ -104,10 +104,15 @@
       "avkortet": [
         true,
         4,
-        13
+        14
       ],
       "_avkortet_forklart": [
-        "13 = 4 besokte + 9 oppdagede-i-ko (side-4..side-12 fra side-3).",
+        "14 = 4 besokte + 9 oppdagede-i-ko (side-4..side-12 fra side-3)",
+        "+ 1 query-lenke (/sok?q=... fra kontakt.html). Query-lenken er",
+        "med med vilje: en crawler som kaster lenker med query utelater",
+        "dynamiske sider i stillhet OG melder et for lavt avkortingstall,",
+        "saa fasiten ville sett komplett ut. Den hentes aldri (taket er 4",
+        "og den staar sist i koen), saa sider_ok er urort.",
         "/privat/hemmelig.html teller ALDRI: robots.txt disallow — den",
         "siden baerer med vilje mange brudd, saa en crawler som ignorerer",
         "robots sprenger funn-fasiten i stedet for aa bestaa stille."
