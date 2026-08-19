@@ -708,6 +708,18 @@ $$;
 -- Materialiserer-plukkets tilstandslesing for pausereglene: aktive
 -- planers siste oppdrag (via tick) som er kansellert av menneske, og
 -- tellinger innenfor gjeldende åpne periode.
+-- Dempingen er hendelsessporet, ikke tiden (Codex P1): predikatet så
+-- ETHVERT historisk `tillat`-tick med et menneskelig kansellert oppdrag,
+-- for alltid. Etter at en slik avvisning hadde pauset planen, kunne en
+-- administrator gjenoppta — og neste sveip fant det samme immutable
+-- oppdraget og pauset umiddelbart igjen. `gjenoppta_plan` var da
+-- virkningsløs nettopp for den grunnen den oftest brukes mot.
+--
+-- Hver avvisning skal pause ÉN gang: kandidaten faller bort idet en
+-- `pauset`-hendelse med grunn `menneskelig_avvis` bærer nettopp dette
+-- oppdraget. Samme idempotensgrep som `planer_med_gjentatt_brudd`, og
+-- ikke en periodegrense: en kansellering som kommer ETTER et gjenopptak
+-- gjelder fortsatt det oppdraget planen bestilte, og skal fortsatt tas.
 CREATE OR REPLACE FUNCTION planer_med_menneskelig_avvis()
 RETURNS TABLE(plan_id UUID, tenant TEXT, oppdrag_id BIGINT)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -720,6 +732,12 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
      WHERE t.utfall = 'tillat'
        AND o.status = 'kansellert'
        AND o.kansellert_aarsak = 'menneskelig_avvis'
+       AND NOT EXISTS (
+           SELECT 1 FROM public.bestillingsplan_hendelse h
+            WHERE h.plan_id = t.plan_id
+              AND h.hendelse = 'pauset'
+              AND h.detalj->>'aarsak' = 'menneskelig_avvis'
+              AND h.detalj->>'oppdrag_id' = t.oppdrag_id::text)
 $$;
 
 

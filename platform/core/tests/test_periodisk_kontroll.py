@@ -1177,6 +1177,59 @@ def test_gjenopptak_krever_scope_og_nullstiller(migrator, klient):
 
 
 @pg
+def test_gjenopptak_etter_menneskelig_avvis_virker(migrator, klient):
+    """Codex P1: et gjenopptak etter `menneskelig_avvis` må FESTE.
+
+    Det kansellerte oppdraget er immutabelt og blir liggende for alltid.
+    Fant sveipen det på nytt, pauset den planen igjen i samme sekund, og
+    gjenopptaket var virkningsløst nettopp for den grunnen det oftest
+    brukes mot. Hver avvisning skal pause ÉN gang — dempet av
+    `pauset`-hendelsen som bærer oppdraget."""
+    from plan.materialiser import pausesveip
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p-avvis-gjenoppta.example")
+        oid, _ = _beslutningsoppdrag(rt, migrator)
+        vs = _syntetisk_vindu(migrator, pid, start_h=-30, slutt_h=-26)
+        _syntetisk_tick(migrator, pid, vs, "tillat", oppdrag_id=oid)
+        m = _mig()
+        _sett_kontekst(m, TENANT)
+        m.execute("SET ROLE disponit_m37_claimer")
+        m.execute("UPDATE oppdrag SET status='kansellert',"
+                  " kansellert_aarsak='menneskelig_avvis'"
+                  " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        m.commit()
+        m.close()
+        assert (str(pid), "menneskelig_avvis") in pausesveip(rt)
+        cookie, csrf = _adminsesjon(sub="p-avvis-admin")
+        r = _post_plan(klient, cookie, csrf, f"/v1/plan/{pid}/gjenoppta", {})
+        assert r.status_code == 200, r.text
+        # Det samme nei-et er alt håndtert: planen står.
+        assert pausesveip(rt) == []
+        _sett_kontekst(migrator, TENANT)
+        status = migrator.execute(
+            "SELECT status, pause_aarsak FROM bestillingsplan"
+            " WHERE plan_id=%s", (pid,)).fetchone()
+        migrator.rollback()
+        assert status == ("aktiv", None), status
+        # ... men et NYTT nei pauser igjen: dempingen er per oppdrag.
+        oid2, _ = _beslutningsoppdrag(rt, migrator)
+        vs2 = _syntetisk_vindu(migrator, pid, start_h=-78, slutt_h=-74)
+        _syntetisk_tick(migrator, pid, vs2, "tillat", oppdrag_id=oid2)
+        m = _mig()
+        _sett_kontekst(m, TENANT)
+        m.execute("SET ROLE disponit_m37_claimer")
+        m.execute("UPDATE oppdrag SET status='kansellert',"
+                  " kansellert_aarsak='menneskelig_avvis'"
+                  " WHERE tenant=%s AND id=%s", (TENANT, oid2))
+        m.commit()
+        m.close()
+        assert (str(pid), "menneskelig_avvis") in pausesveip(rt)
+    finally:
+        rt.close()
+
+
+@pg
 def test_kvoten_deles_med_manuelle_bestillinger(migrator, app, klient):
     """Port 25: plan og menneske deler motorens teller — fire manuelle
     TILLAT, planens femte får `brudd` (og pauser ikke)."""
