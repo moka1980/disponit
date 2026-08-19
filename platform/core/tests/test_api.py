@@ -88,6 +88,11 @@ APPEND_ONLY_TRIGGERE = (
     ("domenekontroll_hendelse", "hendelse_append_only"),
     ("artefaktkapabilitet", "artefaktkapabilitet_ingen_delete"),
     ("artefakt", "artefakt_ingen_delete"),
+    # 043 §7: oppløsningsveien krever nå en attestert avvisning, så
+    # M-37-suitens nei-porter legger igjen en `menneskelig_attestasjon`-rad
+    # med FK til `unntak`. Tabellen er append-only — som den skal være — så
+    # ryddingen må skru vakten av, akkurat som for de andre.
+    ("menneskelig_attestasjon", "attestasjon_ingen_endring"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -116,6 +121,11 @@ RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag 
                  # oppdrag.unntak_id, og reparasjonsoperasjoner peker aldri
                  # på en oppdragssak): oppdragssakene slettes i forsteget i
                  # `_rydd` FØR oppdragene, resten av unntakene til slutt.
+                 # 043 §7: attestasjonen peker på `unntak` og må ut FØR
+                 # forsteget i `_rydd` (som sletter oppdragssakene før
+                 # oppdragene) — ellers blokkerer et attestert nei
+                 # slettingen av saken det ble gitt på.
+                 "menneskelig_attestasjon",
                  "bestilling_idempotens", "unntak_historikk",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
                  "revisjonslogg", "attestasjon_jti", "idempotens",
