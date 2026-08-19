@@ -85,6 +85,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'gjenoppta_plan(text,uuid,text,text)',               'disponit_m37_claimer'),
     ('FUNCTION', 'stans_plan(text,uuid,text,text)',                   'disponit_m37_claimer'),
     ('FUNCTION', 'plan_forfallsminutt(uuid)',                         'disponit_m37_claimer'),
+    ('FUNCTION', 'plan_vindu_idempotensnokkel(uuid,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'tick_i_apen_periode(uuid,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'forfalte_planvinduer(integer)',                     'disponit_m37_claimer'),
     ('FUNCTION', 'utlopte_planvinduer(integer,integer)',              'disponit_m37_claimer'),
