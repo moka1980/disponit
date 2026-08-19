@@ -847,12 +847,6 @@
   "ui.domener.feil.hostname": "Enter a valid lowercase hostname, e.g. yourcompany.com.",
   "ui.domener.feil.avvist": "The domain cannot receive a new challenge right now — it is under adjudication or has a form the registry rejects.",
   "ui.domener.feil.ingen_tilgang": "Your account is not allowed to manage domains.",
-  "domenestatus.ventende": "Waiting for DNS record",
-  "domenestatus.verifisert": "Verified",
-  "domenestatus.tilbakekalt": "Revoked",
-  "domenestatus.avklaring_kreves": "Under adjudication",
-  "domenestatus.utlopt": "Expired",
-  "domenestatus.ikke_aktiv": "Not active — add the domain again",
   "ui.nav.adjudikator": "Domain cases",
   "ui.adjudikator.tittel": "Domain cases",
   "ui.adjudikator.under": "Takeover cases awaiting a decision. A positive grant requires two distinct adjudicators; a rejection requires one.",
@@ -882,5 +876,11 @@
   "ui.adjudikator.feil.dobbel_attestasjon": "You have already attested this case. An actor can only vote once.",
   "ui.adjudikator.feil.attestasjon_avvist": "The case cannot be decided now — it has already been decided or superseded by a newer conflict.",
   "domenestatus.avklaring_kreves.forklaring": "Another account has also proven DNS control of this hostname. The case is being handled by Disponit — no action is needed from you right now.",
-  "domenestatus.tilbakekalt.forklaring": "DNS control of this hostname has been proven by another account. Verify again if you still control the zone."
+  "domenestatus.tilbakekalt.forklaring": "DNS control of this hostname has been proven by another account. Verify again if you still control the zone.",
+  "domenestatus.ventende": "Waiting for DNS record",
+  "domenestatus.verifisert": "Verified",
+  "domenestatus.tilbakekalt": "Revoked",
+  "domenestatus.avklaring_kreves": "Under adjudication",
+  "domenestatus.utlopt": "Expired",
+  "domenestatus.ikke_aktiv": "Not active — add the domain again"
 }

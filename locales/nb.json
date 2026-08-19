@@ -847,12 +847,6 @@
   "ui.domener.feil.hostname": "Oppgi et gyldig vertsnavn med små bokstaver, for eksempel dittfirma.no.",
   "ui.domener.feil.avvist": "Domenet kan ikke få ny utfordring nå — det står i en avklaring eller har en form registeret ikke godtar.",
   "ui.domener.feil.ingen_tilgang": "Kontoen din har ikke tilgang til å forvalte domener.",
-  "domenestatus.ventende": "Venter på DNS-oppføring",
-  "domenestatus.verifisert": "Verifisert",
-  "domenestatus.tilbakekalt": "Tilbakekalt",
-  "domenestatus.avklaring_kreves": "Under avklaring",
-  "domenestatus.utlopt": "Utløpt",
-  "domenestatus.ikke_aktiv": "Ikke aktiv — legg til domenet på nytt",
   "ui.nav.adjudikator": "Domenesaker",
   "ui.adjudikator.tittel": "Domenesaker",
   "ui.adjudikator.under": "Overtakelsessaker som venter på avgjørelse. En positiv tildeling krever to distinkte adjudikatorer; en avvisning krever én.",
@@ -882,5 +876,11 @@
   "ui.adjudikator.feil.dobbel_attestasjon": "Du har allerede attestert denne saken. En aktør kan bare stemme én gang.",
   "ui.adjudikator.feil.attestasjon_avvist": "Saken kan ikke avgjøres nå — den er allerede avgjort eller avløst av en nyere konflikt.",
   "domenestatus.avklaring_kreves.forklaring": "En annen konto har også bevist DNS-kontroll for dette vertsnavnet. Saken behandles av Disponit — du trenger ikke foreta deg noe nå.",
-  "domenestatus.tilbakekalt.forklaring": "DNS-kontroll for vertsnavnet er bevist av en annen konto. Verifiser på nytt hvis du fortsatt kontrollerer sonen."
+  "domenestatus.tilbakekalt.forklaring": "DNS-kontroll for vertsnavnet er bevist av en annen konto. Verifiser på nytt hvis du fortsatt kontrollerer sonen.",
+  "domenestatus.ventende": "Venter på DNS-oppføring",
+  "domenestatus.verifisert": "Verifisert",
+  "domenestatus.tilbakekalt": "Tilbakekalt",
+  "domenestatus.avklaring_kreves": "Under avklaring",
+  "domenestatus.utlopt": "Utløpt",
+  "domenestatus.ikke_aktiv": "Ikke aktiv — legg til domenet på nytt"
 }
