@@ -2152,7 +2152,12 @@ def test_et_brudd_bryter_stripen_uten_resultat(migrator):
             _sett_kontekst(migrator, TENANT)
             hvem = migrator.execute(
                 "SELECT parametre->>'hostname', status, ("
-                "  SELECT string_agg(t.utfall, ',' ORDER BY t.vindu_start DESC)"
+                "  SELECT string_agg(t.utfall || ':' || coalesce("
+                "         t.oppdrag_id::text,'-') || ':' || coalesce((SELECT"
+                "         string_agg(a.tenant || '/' || a.tilstand, '+')"
+                "           FROM artefakt a"
+                "          WHERE a.oppdrag_id = t.oppdrag_id),'ingen'),"
+                "         ',' ORDER BY t.vindu_start DESC)"
                 "    FROM bestillingsplan_tick t"
                 "   WHERE t.plan_id = b.plan_id)"
                 " FROM bestillingsplan b WHERE b.plan_id::text = ANY(%s)",
