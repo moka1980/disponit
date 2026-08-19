@@ -364,6 +364,22 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     # upserten (og målversjonen ble holdt utenfor deaktiveringen over,
     # nettopp så den prøven er sann), altså: bare en rad som IKKE var aktiv
     # blir «nå aktivert».
+    #
+    # OPPHAVET FØLGER SAMME PRØVE (Codex P2). Merket og tidspunktet er to
+    # halvdeler av én påstand om aktiveringen, og de må derfor avgjøres av
+    # den SAMME prøven. Skrev vi `'bootstrap'` ubetinget, sto en aktiv rad
+    # backfillen ikke klarte å binde — merket `'historisk'`, altså «vi vet
+    # ikke hvordan denne ble aktivert» — igjen med to uforenlige svar etter
+    # en oppsettskjøring: kilden sa at raden kom inn gjennom oppsettet,
+    # mens tidspunktet ble bevart som NULL, siden ingen overgang skjedde,
+    # og historikken derfor fortsatte å falle tilbake på `opprettet`. Det
+    # ukjente opphavet var da borte for godt, byttet mot en påstand ingen
+    # hadde grunnlag for.
+    #
+    # En rad som ALT var aktiv beholder derfor kilden sin: aktiveringen
+    # dens skjedde før dette kallet, og det er den upserten ikke rører.
+    # En INAKTIV rad som aktiveres — eller en helt ny rad — er derimot
+    # aktivert nettopp her, og merkes `'bootstrap'` som før.
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
         " status, innhold, aktiv, aktiveringskilde, bootstrap_aktivert_ts)"
@@ -372,7 +388,9 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         " ON CONFLICT (tenant, policy_id, versjon) DO UPDATE"
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
         "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv,"
-        "     aktiveringskilde=EXCLUDED.aktiveringskilde,"
+        "     aktiveringskilde=CASE"
+        "         WHEN policyer.aktiv THEN policyer.aktiveringskilde"
+        "         ELSE EXCLUDED.aktiveringskilde END,"
         "     bootstrap_aktivert_ts=CASE"
         "         WHEN EXCLUDED.aktiv AND NOT policyer.aktiv THEN now()"
         "         ELSE policyer.bootstrap_aktivert_ts END",

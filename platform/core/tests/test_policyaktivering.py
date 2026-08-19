@@ -596,6 +596,83 @@ def test_reregistrering_av_aktiv_bootstrap_beholder_tidspunktet():
 
 
 @pg
+def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
+    """Codex P2: merket og tidspunktet er én påstand, og må ha én prøve.
+
+    Backfillen i 047 klarte ikke å binde alle aktive rader fra før
+    migrasjonen; de som ble stående merkes `'historisk'` — «vi vet ikke
+    hvordan denne ble aktivert». En oppsettskjøring over nettopp den
+    raden passerer lineage-porten (den har ingen hendelse), og skrev vi
+    `'bootstrap'` ubetinget, satt historikken igjen med to uforenlige
+    svar: kilden sa at raden kom inn gjennom oppsettet, mens tidspunktet
+    ble bevart som NULL — ingen overgang skjedde — så visningen fortsatte
+    å falle tilbake på `opprettet`. Det ukjente opphavet var da byttet
+    bort mot en påstand ingen hadde grunnlag for, og det er ikke til å
+    hente inn igjen.
+
+    Testen måler begge halvdelene: en ALT aktiv rad beholder kilden sin,
+    og en INAKTIV rad som faktisk aktiveres merkes fortsatt 'bootstrap'.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-hist-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    def _kilde(c, versjon):
+        return c.execute(
+            "SELECT aktiveringskilde, bootstrap_aktivert_ts FROM policyer"
+            " WHERE tenant=%s AND policy_id=%s AND versjon=%s",
+            (TEN, pid, versjon)).fetchone()
+
+    m = _c()
+    try:
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        # Gjør raden om til den førmigrasjonsraden backfillen ikke klarte
+        # å binde: aktiv, merket 'historisk', uten tidspunkt. Vakten
+        # forbyr bare INSERT av merket — dette er en UPDATE, samme vei
+        # migrasjonens egen backfill går.
+        m.execute("UPDATE policyer SET aktiveringskilde='historisk',"
+                  " bootstrap_aktivert_ts=NULL WHERE tenant=%s"
+                  " AND policy_id=%s AND versjon='1.0.0'", (TEN, pid))
+        m.commit()
+        assert _kilde(m, "1.0.0") == ("historisk", None)
+        m.commit()
+
+        # Oppsettskjøringen på nytt — samme aktive versjon, ingen overgang.
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        assert _kilde(m, "1.0.0") == ("historisk", None), \
+            "en oppsettskjøring overskrev et ukjent opphav med 'bootstrap'"
+        m.commit()
+
+        # Den andre halvdelen: en INAKTIV rad som faktisk aktiveres er
+        # aktivert nettopp her, og skal merkes deretter.
+        mal["meta"]["versjon"] = "2.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+        m.execute("UPDATE policyer SET aktiveringskilde='historisk'"
+                  " WHERE tenant=%s AND policy_id=%s AND versjon='2.0.0'",
+                  (TEN, pid))
+        m.commit()
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        kilde, ts = _kilde(m, "2.0.0")
+        assert kilde == "bootstrap" and ts is not None, (kilde, ts)
+        # Den forrige aktive raden er deaktivert, men opphavet dens er
+        # historikk og står urørt.
+        assert _kilde(m, "1.0.0") == ("historisk", None)
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_bootstrap_serialiseres_mot_styrt_aktivering():
     """Codex P1: prøven i `registrer` er verdiløs uten LÅSEN under seg.
 
