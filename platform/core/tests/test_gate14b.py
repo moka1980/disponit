@@ -20,6 +20,7 @@ Portkart (klarsignalets §9):
   12  test_port12_lese_api_kansellert_aarsak
   13  test_port13_terminalt_oppdrag_ordinart_avvis_med_status
   15  test_port15_ingen_annen_vei_avviser_med_levende_oppdrag
+      test_port15b_levende_kapabilitet_blokkerer_selv_med_kansellerbart_oppdrag
   14  (ui/test/unntak14b.test.js — alertdialog + alert + axe)
   16  test_port16_definer_veiene_binder_tenanten_til_konteksten
   17  test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas
@@ -557,6 +558,41 @@ def test_port15_ingen_annen_vei_avviser_med_levende_oppdrag(conn):
     res = _kall(conn, uid, "avvis", bid, _macreg())
     assert res["utfall"] == "utestaaende_oppdrag"
     assert _status(conn, uid) != "avvist"
+
+
+@pg
+def test_port15b_levende_kapabilitet_blokkerer_selv_med_kansellerbart_oppdrag(
+        conn):
+    """Codex P2: vakten står på KAPABILITETEN alene.
+
+    Betinget på `not levende_opp` hoppet avvis-veien forbi
+    `_flagg_avklaring` så snart det ALTSÅ fantes et kansellerbart oppdrag:
+    oppdragene ble kansellert, saken merket `avvist` — og den frittstående
+    arbeidskapabiliteten sto igjen BRUKBAR. Da kunne den autoriserte
+    handlingen fortsatt utføres etter det menneskelige nei-et, som er
+    nøyaktig det 14a finnes for å hindre."""
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op15b")
+    _kapabilitet(uid, "utstedt")
+    rop = _oppdrag(uid, "plukket")
+    oid = _oppdrag_id(uid, rop)
+    _kvittkap(oid)
+
+    res = _kall(conn, uid, "avvis", bid, _macreg())
+    assert res["utfall"] == "utestaaende_oppdrag", res
+    assert _status(conn, uid) != "avvist"
+    # INGEN delvis oppløsning: oppdraget er urørt.
+    status, aarsak, _, _ = _oppdragsrad(oid)
+    assert (status, aarsak) == ("plukket", None)
+    assert not _hist(uid, "oppdrag_kansellert")
+    assert not _hist(uid, "oppdrag_fencet")
+    # ... og arbeidskapabiliteten lever fortsatt — den er grunnen til 409-en.
+    m = _mig()
+    m.execute("SET ROLE disponit_m37_claimer")
+    assert m.execute("SELECT status FROM arbeidskapabiliteter WHERE tenant=%s"
+                     " AND unntak_id=%s", (TEN, uid)).fetchall() \
+        == [("utstedt",)]
+    m.rollback(); m.close()
 
 
 # ---------------------------------------------------------------------------

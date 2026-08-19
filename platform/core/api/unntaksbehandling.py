@@ -301,9 +301,9 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
         # 043 (Gate 14b): et levende OPPDRAG er ikke lenger en blindvei —
         # nei-et løses opp i samme transaksjon: kapabiliteten brennes
         # `avvist`, claimet fences, oppdraget kanselleres. 14a-svaret (409)
-        # står igjen KUN for levende arbeidskapabiliteter uten oppdrag —
-        # de har ingen oppløsningsvei ennå, og en vakt uten utvei er bedre
-        # enn en stille avvisning av evidens.
+        # står igjen for LEVENDE ARBEIDSKAPABILITETER — de har ingen
+        # oppløsningsvei ennå, og en vakt uten utvei er bedre enn en stille
+        # avvisning av evidens.
         rader = conn.execute(
             "SELECT kilde, ref, status FROM sak_utestaaende(%s,%s)",
             (tenant, unntak_id)).fetchall()
@@ -315,7 +315,18 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
         terminale = {int(ref): st for kilde, ref, st in rader
                      if kilde == "oppdrag"
                      and st not in ("opprettet", "plukket")}
-        if levende_kap and not levende_opp:
+        # ... og vakten står på KAPABILITETEN alene (Codex P2). Første
+        # utgave betinget den på `not levende_opp`: fantes det både en
+        # levende arbeidskapabilitet OG et kansellerbart oppdrag, hoppet
+        # avvis-veien forbi `_flagg_avklaring`, kansellerte oppdragene og
+        # merket saken `avvist` mens kapabiliteten sto igjen BRUKBAR. Da
+        # kunne den autoriserte handlingen fortsatt utføres etter det
+        # menneskelige nei-et — nøyaktig det 14a finnes for å hindre. En
+        # levende kapabilitet uten implementert oppløsningsvei blokkerer
+        # avvis, også når det finnes oppdrag ved siden av; oppdragene er
+        # da urørt, og det er riktig: en delvis oppløsning er ikke det
+        # mennesket sa nei til.
+        if levende_kap:
             utestaaende = _sjekk_utestaaende(conn, tenant, unntak_id)
             return _flagg_avklaring(conn, tenant, unntak_id, utestaaende,
                                     aktor, request_id, idempotency_key)
