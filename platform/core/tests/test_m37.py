@@ -2189,6 +2189,127 @@ def test_P1_samtidig_motstridende_repost_blir_sikkerhetssak(migrator, miljo,
 
 
 @pg
+def test_P1_kvitteringsveien_laser_saken_for_kapabiliteten(migrator, miljo,
+                                                           token):
+    """043 (Gate 14b), Codex P1 runde 3: den YTRE låsen i kappløpet.
+
+    Avvis-veien tar tre rader i rekkefølgen sak → kapabilitet → oppdrag:
+    `behandle_unntakshandling` låser `unntak` med `FOR UPDATE` og holder den
+    gjennom hele operatørhandlingen, og inne i den låsen pre-låser
+    `avvis_med_opplosning` kapabilitetene før oppdragene (043 §7).
+
+    Kvitteringsveien tok de samme radene fra motsatt ende: kapabiliteten
+    brant i `_forbruk_kapabilitet`, saken ble først rørt til slutt
+    (historikkraden + `UPDATE unntak`). Da kan avvis-veien holde saken og
+    vente på kapabiliteten mens kvitteringen holder kapabiliteten og venter
+    på saken — PostgreSQL avbryter én med 40P01. Forrige rundes pre-pass
+    rettet bare den INDRE halvparten; den ytre sakslåsen sto igjen, og
+    port 17 bommet på den fordi den kaller `avvis_med_opplosning` direkte,
+    altså uten sakslåsen kalleren i praksis alltid holder.
+
+    Målingen er deterministisk, ikke et kappløp: avvis-veiens FØRSTE lås
+    (saken) holdes av en egen transaksjon, kvitteringen postes, og så
+    spørres kapabilitetsraden med `FOR UPDATE NOWAIT`. Er den låst, står
+    kvitteringsveien og venter på saken MENS den holder kapabiliteten —
+    nøyaktig den halvparten av vranglåsen som ikke kan sameksistere med
+    avvis-veiens andre halvpart.
+
+    MUTASJONEN SOM DREPER DENNE: fjern sakslåsen (`SELECT ... FROM unntak
+    ... FOR UPDATE`) i kvitteringsingesten. Da låses kapabiliteten først
+    igjen, og NOWAIT-proben feiler.
+    """
+    import threading
+
+    import psycopg
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from db.pg import koble
+
+    app = lag_app(DSN)
+    holder = None
+    try:
+        with TestClient(app) as c:
+            modul = _unik_eiermodul()
+            tok, _ = token(rolle=modul,
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            sak, logg = _lag_sak(migrator, TENANT)
+            opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg,
+                                  eiermodul=modul)
+            cid = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT, "m37-arbeider", cid)
+            migrator.execute(
+                "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+                " claim_generation=1, claim_utloper=now()+interval '600 s'"
+                " WHERE tenant=%s AND id=%s", (cid, TENANT, sak))
+            migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                             " WHERE tenant=%s AND id=%s", (TENANT, sak))
+            migrator.commit()
+
+            ra = c.post("/v1/oppdrag/claim", json={}, headers=h)
+            assert ra.status_code == 200, ra.text
+            a = ra.json()
+            assert a["oppdrag_id"] == opp, "claimet traff et annet oppdrag"
+
+            # (1) Avvis-veiens første lås: SAKEN. Holdes ucommittet.
+            holder = koble(MIGRATOR_DSN)
+            holder.execute("SELECT set_config('disponit.tenant',%s,true)",
+                           (TENANT,))
+            holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                           "   FOR UPDATE", (TENANT, sak))
+
+            # (2) Kvitteringen postes og skal blokkere PÅ SAKEN.
+            svar = {}
+
+            def kvitter():
+                svar["r"] = c.post("/v1/oppdrag/kvittering",
+                                   json=_kvitteringskropp(a, opp, "utfort"),
+                                   headers=h)
+
+            t = threading.Thread(target=kvitter)
+            t.start()
+            time.sleep(1.0)      # kvitteringen rekker fram til låsen
+            assert "r" not in svar, "kvitteringen gikk forbi sakslåsen"
+
+            # (3) MÅLINGEN: kapabiliteten skal være urørt mens saken holdes.
+            probe = koble(MIGRATOR_DSN)
+            probe.execute("SELECT set_config('disponit.tenant',%s,true)",
+                          (TENANT,))
+            probe.execute("SET LOCAL ROLE disponit_m37_claimer")
+            try:
+                probe.execute("SELECT 1 FROM kvitteringskapabiliteter"
+                              " WHERE jti=%s FOR UPDATE NOWAIT",
+                              (a["kvittering_jti"],))
+            except psycopg.errors.LockNotAvailable:
+                pytest.fail(
+                    "kvitteringsveien holder kapabilitetslåsen mens den"
+                    " venter på saken — motsatt rekkefølge av avvis-veien,"
+                    " altså den ene halvparten av en 40P01")
+            finally:
+                probe.rollback(); probe.close()
+
+            # (4) Slippes saken fri, går kvitteringen gjennom som normalt.
+            holder.commit(); holder.close(); holder = None
+            t.join(timeout=30)
+            assert not t.is_alive(), "kvitteringen ble aldri sluppet fri"
+            r = svar["r"]
+            assert r.status_code == 200, r.text
+            assert r.json()["status"] == "utfort", r.text
+    finally:
+        if holder is not None:
+            holder.rollback(); holder.close()
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    status = migrator.execute(
+        "SELECT o.status, u.status FROM oppdrag o JOIN unntak u"
+        "   ON u.tenant=o.tenant AND u.id=o.unntak_id"
+        " WHERE o.tenant=%s AND o.id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+    assert status == ("utfort", "løst"), status
+
+
+@pg
 def test_P1_forbrukets_fire_utfall_er_uttommende(migrator, miljo, token):
     """`brukt | idempotent | konflikt | ugyldig` — alle fire nås.
 

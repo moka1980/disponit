@@ -2388,6 +2388,41 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
 
     ny_hash = _resultathash(kvittering)
 
+    # 3c. LÅSEORDEN: SAKEN FØRST (043, Codex P1 runde 3).
+    #
+    # Avvis-veien tar tre rader, i denne rekkefølgen:
+    #   sak (`unntak`)  →  kvitteringskapabilitet  →  oppdrag
+    # `behandle_unntakshandling` låser saken med `FOR UPDATE`
+    # (`unntaksbehandling.py`, steg 2) og HOLDER den gjennom hele
+    # operatørhandlingen; inne i den låsen pre-låser `avvis_med_opplosning`
+    # kapabilitetene og deretter oppdragene (043 §7).
+    #
+    # Kvitteringsveien tok de SAMME tre radene i motsatt ende: den brant
+    # kapabiliteten i `_forbruk_kapabilitet` og rørte saken først til slutt
+    # (historikkraden + `UPDATE unntak`). Da kan avvis-veien holde saken og
+    # vente på kapabiliteten mens kvitteringsveien holder kapabiliteten og
+    # venter på saken — PostgreSQL avbryter én med 40P01. Kappløpet skal
+    # avgjøres av hvem som brenner kapabiliteten først, og ende i et
+    # AVGJORT utfall (`oppdrag_utfort` eller gjennomført kansellering);
+    # en vranglåsfeil er ingen av delene. Pre-passet i 043 §7 rettet bare
+    # den indre halvparten (kapabilitet før oppdrag) — den ytre sakslåsen
+    # sto igjen, og det er nettopp den Codex fant.
+    #
+    # Saken låses derfor HER, før første kapabilitets- eller oppdragslås, og
+    # holdes til commit: begge veier tar radene i samme rekkefølge, og den
+    # ene venter på den andre i stedet for at begge dør. Punktet er valgt
+    # etter alle struktur-/signaturvaktene — en kvittering vi uansett
+    # avviser skal ikke stå i kø bak en operatørhandling.
+    #
+    # Saksløse oppdrag (beslutningsoppdrag, `unntak_id IS NULL`) har ingen
+    # felles rad å ordne: avvis-veien ser dem aldri (`sak_utestaaende`
+    # finner oppdrag GJENNOM saken), og en sak som fødes lenger nede av
+    # `sikre_sak_for_oppdrag` er per definisjon ny — ingen annen transaksjon
+    # holder den.
+    if unntak_id is not None:
+        conn.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
+                     " FOR UPDATE", (tenant, unntak_id))
+
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
     #    husker hva DEN ble brukt til; oppdraget husker hva som avsluttet
     #    det. En re-post treffer den første, en annen utfører den andre.

@@ -382,11 +382,24 @@ RESET ROLE;
 -- 7. `avvis_med_opplosning` — nei-et og beviset i ÉN transaksjon
 -- ------------------------------------------------------------
 -- Claimer-eid: én skrivevei til oppdrag/kapabiliteter, som resten av
--- M-37-flaten. Kalleren (avvis-veien i unntaksbehandlingen) holder alt
--- saks-låsen; her tas først KAPABILITETSLÅSEN, så oppdragslåsen — samme
--- rekkefølge som kvitteringsveien tar dem (den brenner kapabiliteten før
--- den skifter oppdragets status), så kappløpet ender i et avgjort utfall
--- og aldri i en vranglås. Se pre-passet i kroppen.
+-- M-37-flaten.
+--
+-- LÅSEORDEN I HELE KAPPLØPET — tre rader, ÉN rekkefølge:
+--     sak (`unntak`)  →  kvitteringskapabilitet  →  oppdrag
+-- Kalleren (avvis-veien i unntaksbehandlingen) holder alt SAKS-låsen når
+-- den kommer hit; her tas først KAPABILITETSLÅSEN (pre-passet i kroppen),
+-- så oppdragslåsen. Motparten — kvitteringsingesten — tar nå de samme tre
+-- radene i samme rekkefølge: den låser saken FØR `_forbruk_kapabilitet`
+-- (`app.py`, steg 3c), brenner så kapabiliteten og skifter oppdragets
+-- status til slutt.
+--
+-- Begge halvdelene er nødvendige, og hver av dem var et eget Codex-funn:
+-- retter man bare den indre (kapabilitet før oppdrag), står den ytre
+-- sakslåsen igjen som en fullgod vranglås — avvis-veien holder saken og
+-- venter på kapabiliteten mens kvitteringen holder kapabiliteten og venter
+-- på saken. Utfallet skal avgjøres av hvem som brenner kapabiliteten
+-- først (`oppdrag_utfort` eller gjennomført kansellering), aldri av
+-- deadlock-detektoren.
 --
 -- KONTRAKT: `p_forventet` er oppdragene kalleren så som levende under
 -- sakslåsen. Funksjonen re-evaluerer under oppdragslåsen:
