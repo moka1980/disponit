@@ -305,13 +305,16 @@ BEGIN
         USING ERRCODE = 'check_violation',
               CONSTRAINT = 'policyer_kilde_ikke_historisk';
   END IF;
-  -- `coalesce` med vilje: en rad UTEN merke og UTEN operasjon er de DB-nære
-  -- fixturenes form og skal fortsatt gå gjennom — vakten her måler at de to
-  -- feltene ikke motsier hverandre, ikke at merket finnes. Skriverne som
-  -- faktisk aktiverer (`aktiver_policy`, `policyregister.registrer`) setter
-  -- det begge.
-  IF (coalesce(NEW.aktiveringskilde, '') = 'styrt')
-     IS DISTINCT FROM (NEW.aktivert_av_operasjon IS NOT NULL) THEN
+  -- Vakten måler at MERKET ikke lyver, ikke at det finnes. En rad uten
+  -- merke sier ingenting, og da er det FK-en mot hendelsen som avgjør om
+  -- operasjonen er ekte — nettopp den porten `test_versjonsrad_kan_ikke_
+  -- laane_en_annens_hendelse` måler, og som en tidligere, strengere utgave
+  -- av denne vakten stjal ved å kaste først. De DB-nære fixturene skriver
+  -- også umerkede rader. Skriverne som faktisk aktiverer
+  -- (`aktiver_policy`, `policyregister.registrer`) setter merket begge.
+  IF NEW.aktiveringskilde IS NOT NULL
+     AND (NEW.aktiveringskilde = 'styrt')
+         IS DISTINCT FROM (NEW.aktivert_av_operasjon IS NOT NULL) THEN
     RAISE EXCEPTION 'policyer: aktiveringskilde=% og aktivert_av_operasjon=% '
         'må følges ad (%/%)', coalesce(NEW.aktiveringskilde, '<null>'),
         coalesce(NEW.aktivert_av_operasjon, '<null>'),

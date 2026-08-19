@@ -325,14 +325,23 @@ def test_slettet_versjon_kan_aktiveres_paa_nytt():
             "SELECT count(*) FROM policyaktivering WHERE tenant=%s"
             "  AND policy_id=%s AND versjon=%s",
             (TEN, pid, v)).fetchone()[0] == 2
-        rader = m.execute(
-            "SELECT versjon, attestant_a FROM"
-            " policyversjoner_for_tenant(%s,%s)", (TEN, pid)).fetchall()
-        assert rader == [(v, "uavh-ny")], \
-            f"historikken viser den slettede generasjonen: {rader}"
         m.rollback()
     finally:
         m.close()
+
+    # Historikk-defineren er grantet til RUNTIME-rollen, ikke til migrator
+    # (SP-7): den leses derfor herfra, slik flaten gjør det.
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        rader = r.execute(
+            "SELECT versjon, attestant_a FROM"
+            " policyversjoner_for_tenant(%s,%s)", (TEN, pid)).fetchall()
+        r.rollback()
+        assert rader == [(v, "uavh-ny")], \
+            f"historikken viser den slettede generasjonen: {rader}"
+    finally:
+        r.close()
 
 
 @pg
