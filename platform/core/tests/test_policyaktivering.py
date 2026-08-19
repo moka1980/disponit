@@ -958,6 +958,16 @@ def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
                {"policy_id": pid, "rollback_av_versjon": v,
                 "innhold": {"noe": "annet"}})
     assert r3.status_code == 400, r3.text
+    # 22c (Codex R4): løgnen må heller ikke slippe inn gjennom REPLAYEN.
+    # Samme nøkkel som det vellykkede forsøket over, samme kildeversjon, men
+    # nå med en påstand om innholdet — replayen ligger foran kildeoppslaget,
+    # så uten at påstanden binder nøkkelen ville dette gitt 201 og et svar
+    # som stilltiende bekreftet et innhold ingen hadde målt.
+    r5 = _post(klient, cookie, csrf, "/v1/policyutkast",
+               {"policy_id": pid, "rollback_av_versjon": v,
+                "innhold": {"noe": "annet"}}, nokkel)
+    assert r5.status_code == 409, r5.text
+    assert r5.json()["feil"] == "idempotenskonflikt", r5.text
     # Ukjent versjon → ikke_funnet, aldri et tomt utkast.
     r4 = _post(klient, cookie, csrf, "/v1/policyutkast",
                {"policy_id": pid, "rollback_av_versjon": "999"})

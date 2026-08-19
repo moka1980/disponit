@@ -132,20 +132,28 @@ def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem) -> st
     er direkte testbar. `rollback_av` JSON-kodes så `null` og `""` gir ULIKE
     representasjoner (Codex R4: `str(None)`/`str("")` kolliderte ikke lenger).
 
-    For en RULLBAKK inngår IKKE innholdet (047, Codex P2). Det er ikke et
-    tap av presisjon: innholdet er ikke klientens, det er en KOPI serveren
-    henter fra versjonen selv, og en versjons innhold er immutabelt.
-    Operasjonens identitet er derfor uttømt av `(policy_id,
-    rollback_av_versjon)`. Klientens eventuelle `innhold` er en påstand
-    serveren kontrollerer, ikke en del av bestillingen.
+    For en RULLBAKK er `innhold` ikke bestillingen, men klientens PÅSTAND om
+    hva kildeversjonen inneholder (047, Codex P2). Det utkastet faktisk får,
+    er serverens egen kopi av versjonen — den hentes etterpå og inngår derfor
+    ikke her. Poenget er at hashen da kan REGNES UT FØR kildeversjonen slås
+    opp, og at en retry dermed kan replaye et alt opprettet utkast selv om
+    kilden er arkivert i mellomtiden. Med det HENTEDE innholdet i hashen var
+    den rekkefølgen umulig: nøkkelen krevde innholdet, innholdet krevde
+    kilden, og en arkivert kilde ga 404 på en operasjon som for lengst hadde
+    lyktes.
 
-    Poenget er at hashen da kan REGNES UT FØR kildeversjonen slås opp — og
-    dermed kan en retry replaye et alt opprettet utkast selv om kilden er
-    arkivert i mellomtiden. Med innholdet i hashen var den rekkefølgen
-    umulig: nøkkelen krevde innholdet, innholdet krevde kilden, og en
-    arkivert kilde ga 404 på en operasjon som for lengst hadde lyktes."""
+    Men påstanden selv BINDES (Codex R4). «Rull tilbake til N» og «rull
+    tilbake til N, og jeg påstår at N inneholder X» er ulike bestillinger:
+    den andre ber i tillegg om en kontroll. Uten bindingen kunne en retry med
+    samme nøkkel og en LØGN om innholdet replaye det gamle 201-svaret uten at
+    påstanden noen gang ble målt mot kilden — samme nøkkel, annen kropp, og
+    verken 400 eller konflikt. Nå gir en endret påstand ulik hash, altså
+    `idempotenskonflikt`, og en uendret påstand replayer som før. At påstanden
+    er klientens rå felt (ikke det hentede innholdet) er nettopp det som lar
+    hashen fortsatt regnes ut før oppslaget."""
     return _input_hash(tenant, bid, "opprett", policy_id,
-                       "rullbakk" if rollback_av is not None
+                       ("rullbakk:" + json.dumps(innhold, sort_keys=True))
+                       if rollback_av is not None
                        else json.dumps(innhold, sort_keys=True),
                        json.dumps(rollback_av), idem)
 
@@ -269,6 +277,7 @@ def opprett_utkast_endepunkt(tjeneste, request):
         # et klientinnhold som avviker avvises: `rollback_av_versjon = N`
         # med annet innhold enn N ville vært en løgn i lineagen. Uten
         # feltet er kontrakten som før (innhold påkrevd fra klienten).
+        ih = None
         if rollback_av is not None:
             if not isinstance(policy_id, str) or not policy_id.strip() \
                     or not isinstance(rollback_av, str):
@@ -277,17 +286,23 @@ def opprett_utkast_endepunkt(tjeneste, request):
             # forsøket og svaret gikk tapt på veien, finnes utkastet — og
             # da skal retryen få id-en tilbake, ikke en 404 fordi den
             # inaktive kildeversjonen er arkivert i mellomtiden. Hashen kan
-            # regnes ut her nettopp fordi den ikke inneholder innholdet;
-            # se `opprett_input_hash`.
+            # regnes ut her nettopp fordi den ikke inneholder det HENTEDE
+            # innholdet; se `opprett_input_hash`.
+            #
+            # Hashen bindes ÉN gang og gjenbrukes til opprettelsen under
+            # (Codex R4). Prøven og raden som lagres må være samme hash —
+            # ellers kan en retry med en annen påstand om kildeinnholdet
+            # replaye et 201 uten at påstanden noen gang måles mot kilden.
+            # Klientens `innhold` inngår derfor her, rått, slik det kom.
             #
             # Ingen `rollback()` når vi faller gjennom: `sett_kontekst` er
             # `SET LOCAL`, og `policyversjon_innhold` under er en definer
             # som KREVER `disponit.tenant`. Å rulle tilbake her ville tatt
             # konteksten med seg og gjort oppslaget til en 403.
+            ih = opprett_input_hash(tenant, bid, policy_id, innhold,
+                                    rollback_av, idem)
             tilstand, lagret = policyadmin.idempotent_svar(
-                conn, tenant,
-                idem, opprett_input_hash(tenant, bid, policy_id, None,
-                                         rollback_av, idem))
+                conn, tenant, idem, ih)
             if tilstand == "replay":
                 conn.rollback()
                 return _ok(lagret, rid, 201)
@@ -311,8 +326,9 @@ def opprett_utkast_endepunkt(tjeneste, request):
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
-        ih = opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av,
-                                idem)
+        if ih is None:
+            ih = opprett_input_hash(tenant, bid, policy_id, innhold,
+                                    rollback_av, idem)
         res = policyadmin.opprett_utkast(
             conn, tenant=tenant, aktor=bid, request_id=rid,
             policy_id=policy_id, innhold=innhold,

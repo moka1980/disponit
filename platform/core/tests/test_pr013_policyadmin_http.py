@@ -217,6 +217,20 @@ def test_opprett_input_hash_binder_rollback_av_versjon():
     assert h_uten != h_tom, "null og tom streng gir samme idempotenshash"
     # Deterministisk: samme input → samme hash.
     assert h_v3 == opprett_input_hash(rollback_av="3", **felles)
+    # Codex R4: klientens PÅSTAND om kildeinnholdet binder også. Ellers kunne
+    # en retry med samme nøkkel og en LØGN om innholdet replaye det gamle
+    # 201-svaret uten at påstanden noen gang ble målt mot kilden.
+    uten_paastand = dict(felles, innhold=None)
+    h_paastandslos = opprett_input_hash(rollback_av="3", **uten_paastand)
+    assert h_paastandslos != h_v3, "påstanden om kildeinnholdet binder ikke"
+    h_annen = opprett_input_hash(rollback_av="3",
+                                 **dict(felles, innhold={"a": 2}))
+    assert h_annen != h_v3, "to ULIKE påstander gir samme idempotenshash"
+    # ... men en rullbakk UTEN påstand er fortsatt uavhengig av det serveren
+    # henter: hashen må kunne regnes ut FØR kildeoppslaget, ellers er
+    # replay-før-oppslag umulig igjen.
+    assert h_paastandslos == opprett_input_hash(rollback_av="3",
+                                                **uten_paastand)
 
 
 @pg
