@@ -30,6 +30,13 @@ globalThis.fetch = async (url, opts) => {
       json: async () => ({ utkast_id: "u-ny", status: "utkast",
         utkastversjon: 1 }) }; }
   const sti = url.split("?")[0];
+  if (sti === "/v1/policyadmin/editorgrunnlag") {
+    return { ok: true, status: 200, json: async () => ({
+      plattformvilkar: [{ vilkar_type: "domenekontroll_verifisert",
+                          maldomene: "web_hostname" }],
+      godkjennbare_grunnkoder: ["belop_over_grense",
+        "valuta_ikke_tillatt", "frekvensgrense_naadd"] }) };
+  }
   if (sti === "/v1/policymaler") {
     return { ok: true, status: 200, json: async () => ({ maler: [
       { mal_id: "netthandel", bransjemal: "netthandel-no", innhold: MAL }] }) };
@@ -91,7 +98,8 @@ test("Ny: malvelger → skjema → lagre POSTer med CSRF + Idempotency-Key", asy
   await vent(() => h.querySelector(".editor-seksjon"));
   const fanetitler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
   assert.deepEqual(fanetitler, [t("ui.editor.fane.grunn"),
-    t("ui.editor.fane.roller"), t("ui.editor.fane.handlinger")]);
+    t("ui.editor.fane.roller"), t("ui.editor.fane.handlinger"),
+    t("ui.editor.fane.overstyring")]);
   gaaTilFane(h, t("ui.editor.fane.roller"));
   assert.ok(h.textContent.includes(t("ui.editor.roller")));
   gaaTilFane(h, t("ui.editor.fane.handlinger"));
@@ -1300,3 +1308,109 @@ test("Handlinger: velgeren viser modusen som faktisk vil bli lagret",
     assert.ok(h.querySelector(".editor-kort").textContent
       .includes("ordre.bekreft"));
   });
+
+
+// --- 047: menneskelig overstyring og vilkår (portene 27–33, 41) ------------
+
+test("Overstyring: fravær er en TILSTAND, par legges til fra nedtrekk",
+  async () => {
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), {
+      startPolicy: JSON.parse(JSON.stringify(MAL)) });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.overstyring"));
+    await vent(() => h.textContent.includes(t("ui.editor.overstyring")));
+    // Port 27: fraværet vises som tilstand — «ingen (standard)» —
+    // aldri som tomhet.
+    assert.ok(h.textContent.includes(t("ui.editor.overstyring_ingen")));
+    // Grunnkodene og handlingene er NEDTREKK (port 29/30): bare motorens
+    // godkjennbare koder og policyens egne handlinger kan velges.
+    await vent(() => h.querySelector("#mo-grunnkode"));
+    const gk = h.querySelector("#mo-grunnkode");
+    const koder = [...gk.querySelectorAll("option")].map((o) => o.value);
+    assert.deepEqual(koder, ["belop_over_grense", "valuta_ikke_tillatt",
+      "frekvensgrense_naadd"]);
+    assert.ok(!koder.includes("teknisk_feil"),
+      "en ikke-godkjennbar grunnkode er ikke velgbar");
+    const hv = h.querySelector("#mo-handling");
+    assert.deepEqual([...hv.querySelectorAll("option")].map((o) => o.value),
+      ["ordre.bekreft"]);
+    // Legg til ett par → feltet finnes med raden og rollen.
+    finnKnapp(h, t("ui.editor.overstyring_legg_til"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".overstyring-liste li"));
+    assert.ok(h.textContent.includes(t("ui.editor.overstyring_par")
+      .replace("{grunnkode}", "belop_over_grense")
+      .replace("{handling}", "ordre.bekreft")));
+    assert.ok(!h.textContent.includes(t("ui.editor.overstyring_ingen")));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+test("Vilkår: plattformvilkåret er LÅST med aria-disabled og forklaring",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v_domenekontroll: {
+      beskrivelse: "Plattformens domenekontroll",
+      betrodd_for: ["domenekontroll_verifisert", "eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll" },
+      { navn: "eget_vilkar", verifikator: "v_domenekontroll" },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    // Grunnlaget hentes asynkront; det som skal måles er tilstanden ETTER
+    // at det er inne (uten det er alt låst — egen test under).
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 2);
+    // Port 41: låst rad har aria-disabled OG aria-describedby → forklaring.
+    const laast = rader[0].querySelector('[aria-disabled="true"]');
+    assert.ok(laast, "plattformvilkåret er låst");
+    const beskrivelse = document.getElementById(
+      laast.getAttribute("aria-describedby"));
+    assert.ok(beskrivelse.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    assert.ok(!rader[0].querySelector("button"),
+      "ingen fjern-knapp på plattformvilkåret (port 31)");
+    // Policyens EGET vilkår kan fjernes; nytt velges fra verifikatorens
+    // betrodd_for (port 33).
+    assert.ok(rader[1].querySelector("button"));
+    const navnValg = h.querySelector('[id^="vk-navn-"]');
+    assert.deepEqual(
+      [...navnValg.querySelectorAll("option")].map((o) => o.value),
+      ["domenekontroll_verifisert", "eget_vilkar"]);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
+  const gammelFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const sti = url.split("?")[0];
+    if (sti === "/v1/policyadmin/editorgrunnlag") {
+      return { ok: false, status: 500, json: async () => ({ feil: "x" }) };
+    }
+    return gammelFetch(url, opts);
+  };
+  try {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [{ navn: "eget_vilkar",
+      verifikator: "v" }];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".vilkaar-liste"));
+    // Port 31 er en LUKKING: kan ikke flaten vite hva som er plattformens,
+    // kan den ikke tilby fjerning av noe som helst.
+    assert.ok(h.textContent.includes(
+      t("ui.editor.vilkaar_grunnlag_mangler")));
+    assert.ok(!h.querySelector(".vilkaar-rad button"),
+      "ingen fjern-knapp uten grunnlag");
+  } finally {
+    globalThis.fetch = gammelFetch;
+  }
+});

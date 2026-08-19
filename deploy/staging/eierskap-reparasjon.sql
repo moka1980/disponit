@@ -141,6 +141,9 @@ INSERT INTO _design VALUES
     -- (den optimistiske låsen). Toargumentsformen finnes ikke lenger — den
     -- slettet uten å binde seg til en versjon, og migrasjonen dropper den.
     ('FUNCTION', 'slett_ubrukt_policy(text,text,text,text)', 'disponit_policy_eier'),
+    -- 047: historikk-leseveiene (flaten leser aldri policyer direkte).
+    ('FUNCTION', 'policyversjoner_for_tenant(text,text)',   'disponit_policy_eier'),
+    ('FUNCTION', 'policyversjon_innhold(text,text,text)',   'disponit_policy_eier'),
     -- 014 (PR-014a): modulregisterets herdede overgangsfunksjoner. Eid av
     -- disponit_modul_eier fordi registertabellene er off-limits for runtime
     -- (runtime får KUN SELECT). Paritetstesten dekker dem.

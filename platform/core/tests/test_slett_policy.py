@@ -482,10 +482,12 @@ def test_versjonen_en_runde_ble_attestert_mot_blir_staaende():
         "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
         "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
         "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
-        "pakrevd_antall_godkjennere,utloper)"
+        "pakrevd_antall_godkjennere,utloper,decision_operation_id)"
         " VALUES (%s,%s,1,'brukt','d','i',%s,'UTVIDER','k','1','0.2','1',"
-        "'dh','1',2,now()+interval '1 hour')",
-        (TEN, uid, _hash(pid, "1.0.0")))
+        # 047: en brukt runde bærer alltid operasjons-id (CHECK-en
+        # runde_versjon_krever_brukt) — dublettene her er testens egne.
+        "'dh','1',2,now()+interval '1 hour','bf-'||%s||'-1')",
+        (TEN, uid, _hash(pid, "1.0.0"), uid))
     m.commit()
     sett_kontekst(m, TEN, "test", "r0")
     _aktiver_ny_versjon(m, pid, "1.1.0")                 # runden aktiverte 1.1.0
@@ -533,10 +535,11 @@ def test_bootstrap_policy_slettes_i_sin_helhet():
         "diff_hash,utkast_innholds_hash,base_policy_hash,risikoklasse,"
         "klassifisering_hash,klassifikatorversjon,policyskjema_versjon,"
         "motor_semantikkversjon,deny_all_hash,deny_all_versjon,"
-        "pakrevd_antall_godkjennere,utloper)"
+        "pakrevd_antall_godkjennere,utloper,decision_operation_id)"
         " VALUES (%s,%s,1,'brukt','d','i',%s,'UTVIDER','k','1','0.2','1',"
-        "'dh','1',2,now()+interval '1 hour')",
-        (TEN, uid, DENY_ALL_HASH))
+        # 047: brukt bærer alltid operasjons-id (runde_versjon_krever_brukt).
+        "'dh','1',2,now()+interval '1 hour','bf-'||%s||'-1')",
+        (TEN, uid, DENY_ALL_HASH, uid))
     m.commit()
     rt = _rt()
     try:

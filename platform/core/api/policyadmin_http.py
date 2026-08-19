@@ -243,10 +243,33 @@ def opprett_utkast_endepunkt(tjeneste, request):
         body = _kropp(request)
         policy_id = body.get("policy_id")
         innhold = body.get("innhold")
+        rollback_av = body.get("rollback_av_versjon")
+        # 047 (§3, port 22): en rullbakk er en KOPI av versjonen den peker
+        # på — serveren henter innholdet selv gjennom eier-defineren, og
+        # et klientinnhold som avviker avvises: `rollback_av_versjon = N`
+        # med annet innhold enn N ville vært en løgn i lineagen. Uten
+        # feltet er kontrakten som før (innhold påkrevd fra klienten).
+        if rollback_av is not None:
+            if not isinstance(policy_id, str) or not policy_id.strip() \
+                    or not isinstance(rollback_av, str):
+                return _feil("request_feilformet", rid)
+            try:
+                hentet = conn.execute(
+                    "SELECT policyversjon_innhold(%s, %s, %s)",
+                    (tenant, policy_id, rollback_av)).fetchone()[0]
+            except psycopg.errors.NoDataFound:
+                conn.rollback()
+                return _feil("ikke_funnet", rid, 404)
+            except psycopg.errors.InsufficientPrivilege:
+                conn.rollback()
+                return _feil("ingen_tilgang", rid)
+            conn.rollback()
+            if innhold is not None and innhold != hentet:
+                return _feil("request_feilformet", rid)
+            innhold = hentet
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
-        rollback_av = body.get("rollback_av_versjon")
         ih = opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av,
                                 idem)
         res = policyadmin.opprett_utkast(

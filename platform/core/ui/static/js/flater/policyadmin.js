@@ -7,12 +7,13 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
   hentJson, validerUtkast, forkastUtkast, gjenapneUtkast, apneRunde,
-  attesterAktivering,
+  attesterAktivering, opprettUtkast,
   UgyldigFeil,
   nyIdempotensnokkel, ApiFeil, UautorisertFeil, IngenTilgangFeil,
 } from "../api.js";
 import {
   Tidspunkt, TomTilstand, Feiltilstand, TilgangsVakt, Faner, meldLive,
+  meldAlert,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -20,6 +21,7 @@ import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 import { aktivePolicyerSeksjon } from "./policy.js";
+import { harScope } from "../sitekart.js";
 
 function risikoBadge(klasse) {
   return el("span", {
@@ -1549,7 +1551,8 @@ export function visPolicyadmin(hoved, ctx, mal) {
       // ikke på den lesende policy-flaten. Seksjonen eier sitt eget
       // liv (henter /v1/policy/aktive selv); `last` frisker opp utkastlista
       // etter en sletting, siden aktiverte utkast peker på policyen.
-      aktivePolicyerSeksjon(ctx, () => last({ fokus: true })),
+      aktivePolicyerSeksjon(ctx, () => last({ fokus: true }),
+                            aapneHistorikk),
       verktoylinje(),
       melding
         ? el("p", { role: "alert",
@@ -1605,6 +1608,171 @@ export function visPolicyadmin(hoved, ctx, mal) {
   }
 
   function tilbakeTilListe() { ryddDyplenke(); last({ fokus: true }); }
+
+  // --- Versjonshistorikk (047, klarsignal §6/§7) ---------------------------
+  // Egen visning i flaten: versjonslisten fra HENDELSEN (aktivert_ts og
+  // attestanter kommer derfra — en ubundet historisk versjon sier
+  // «attestanter ikke bundet», aldri feil attestanter), diff mellom
+  // vilkårlige versjoner som TEKSTLISTE med retningen i ord først, og
+  // rullbakk som alertdialog → nytt utkast gjennom hele den vanlige løypa.
+  function aapneHistorikk(policyId) {
+    const min = nyVisning();
+    const kanSkrive = harScope(ctx, "policy:write");
+    medStatus(hoved, ctx,
+      () => hentJson(`/v1/policy/${policyId}/versjoner`), (d) => {
+        tegnHistorikk(policyId, (d && d.versjoner) || [], kanSkrive, min);
+      }, () => eierSkjermen(min), true);
+  }
+
+  function attestantTekst(v) {
+    if (!v.aktivert_av_operasjon) {
+      return t("ui.historikk.attestanter_ubundet");
+    }
+    return (v.attestanter || []).join(", ")
+      || t("ui.historikk.attestanter_ubundet");
+  }
+
+  function tegnHistorikk(policyId, versjoner, kanSkrive, min) {
+    const tilbake = el("button", { class: "knapp", type: "button",
+      text: t("ui.historikk.tilbake") });
+    tilbake.addEventListener("click", tilbakeTilListe);
+
+    const rader = versjoner.map((v) => {
+      const handlinger = el("td", { class: "behandling-knapper" });
+      if (kanSkrive) {
+        const rb = el("button", { class: "knapp liten", type: "button",
+          text: t("ui.historikk.rullbakk") });
+        rb.addEventListener("click", () => bekreftRullbakk(policyId, v, min));
+        handlinger.append(rb);
+      }
+      return el("tr", {},
+        el("th", { scope: "row", text: v.versjon }),
+        // Aktiv versjon markeres med TEKST (port 40), aldri kun stil.
+        el("td", { text: v.aktiv ? t("ui.historikk.aktiv_na") : "" }),
+        el("td", {}, v.aktivert_ts ? Tidspunkt(v.aktivert_ts)
+                                   : Tidspunkt(v.opprettet)),
+        el("td", { text: attestantTekst(v) }),
+        el("td", { text: v.rollback_av_versjon
+          ? t("ui.historikk.rullbakk_fra").replace("{n}",
+                                                   v.rollback_av_versjon)
+          : "" }),
+        handlinger);
+    });
+
+    const tabell = versjoner.length
+      ? el("div", { class: "tabellrull" }, el("table", { class: "datatabell" },
+          el("caption", { text: t("ui.historikk.caption")
+            .replace("{policy}", policyId) }),
+          el("thead", {}, el("tr", {},
+            el("th", { scope: "col", text: t("ui.historikk.kol.versjon") }),
+            el("th", { scope: "col", text: t("ui.historikk.kol.status") }),
+            el("th", { scope: "col", text: t("ui.historikk.kol.tid") }),
+            el("th", { scope: "col",
+              text: t("ui.historikk.kol.attestanter") }),
+            el("th", { scope: "col",
+              text: t("ui.historikk.kol.opphav") }),
+            el("th", { scope: "col",
+              text: t("ui.historikk.kol.handlinger") }))),
+          el("tbody", {}, ...rader)))
+      : TomTilstand({ tittel: t("ui.historikk.tom_tittel"),
+                      tekst: t("ui.historikk.tom_tekst") });
+
+    // Diff mellom to VILKÅRLIGE versjoner — velgere er <select> med
+    // <label> (port §7), resultatet en liste med tekst, aldri to <pre>.
+    const diffUt = el("div", { class: "historikk-diff" });
+    let diffSeksjon = null;
+    if (versjoner.length >= 2) {
+      const valg = versjoner.map((v) =>
+        el("option", { value: v.versjon, text: v.versjon }));
+      const valg2 = versjoner.map((v) =>
+        el("option", { value: v.versjon, text: v.versjon }));
+      const fra = el("select", { id: "hist-fra" }, ...valg);
+      const til = el("select", { id: "hist-til" }, ...valg2);
+      fra.value = versjoner[1].versjon;
+      til.value = versjoner[0].versjon;
+      const knapp = el("button", { class: "knapp", type: "button",
+        text: t("ui.historikk.vis_diff") });
+      knapp.addEventListener("click", () => {
+        sett(diffUt, el("p", { class: "muted", text: t("ui.laster") }));
+        hentJson(`/v1/policy/${policyId}/diff?fra=${
+          encodeURIComponent(fra.value)}&til=${
+          encodeURIComponent(til.value)}`).then((d) => {
+          if (!eierSkjermen(min)) return;
+          tegnDiff(diffUt, d);
+        }).catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          if (!eierSkjermen(min)) return;
+          sett(diffUt, Feiltilstand({}));
+        });
+      });
+      diffSeksjon = el("section", { class: "historikk-diffvelger",
+        "aria-label": t("ui.historikk.diff_tittel") },
+        el("h3", { text: t("ui.historikk.diff_tittel") }),
+        el("div", { class: "skjemarad" },
+          el("label", { for: "hist-fra", text: t("ui.historikk.fra") }), fra),
+        el("div", { class: "skjemarad" },
+          el("label", { for: "hist-til", text: t("ui.historikk.til") }), til),
+        knapp, diffUt);
+    }
+
+    sett(hoved,
+      ...flateHode(t("ui.historikk.tittel").replace("{policy}", policyId),
+                   t("ui.historikk.under")),
+      tilbake, tabell, diffSeksjon);
+    fokuserOverskrift(hoved);
+  }
+
+  function tegnDiff(rot, d) {
+    const endringer = (d.diff && d.diff.endringer) || [];
+    // Retningen I ORD FØRST (port 40): risikoklassen er overskriften.
+    const retning = t(`ui.historikk.retning.${d.risikoklasse}`,
+                      d.risikoklasse);
+    sett(rot,
+      el("h4", { text: t("ui.historikk.diff_resultat")
+        .replace("{retning}", retning)
+        .replace("{fra}", d.fra).replace("{til}", d.til) }),
+      endringer.length
+        ? el("ul", { class: "diffliste" }, ...endringer.map((e2) =>
+            el("li", { text: `${t(`ui.historikk.endring.${e2.type}`,
+                                  e2.type)} ${e2.sti}` +
+              (e2.type === "endret"
+                ? `: ${JSON.stringify(e2.fra)} \u2192 ${
+                    JSON.stringify(e2.til)}`
+                : e2.type === "fjernet"
+                  ? `: ${JSON.stringify(e2.fra)}`
+                  : `: ${JSON.stringify(e2.til)}`) })))
+        : el("p", { class: "muted", text: t("ui.historikk.diff_tom") }));
+  }
+
+  function bekreftRullbakk(policyId, v, min) {
+    // STABIL nøkkel per dialog (SP-2/port 23): et tapt svar + nytt forsøk
+    // skal REPLAYe utkastet, ikke lage to.
+    const nokkel = nyIdempotensnokkel();
+    Bekreftelsesdialog({
+      tittel: t("ui.historikk.rullbakk_tittel").replace("{n}", v.versjon),
+      // Alertdialog (§7): konsekvensen leses opp FØR handlingen —
+      // dette lager et UTKAST som må gjennom hele fire-øyne-løypa.
+      tekst: t("ui.historikk.rullbakk_tekst").replace("{n}", v.versjon),
+      primarTekst: t("ui.historikk.rullbakk"),
+      rolle: "alertdialog",
+      paaPrimar: () => {
+        opprettUtkast(policyId, undefined, nokkel, v.versjon).then((res) => {
+          meldAlert(t("ui.historikk.rullbakk_opprettet")
+            .replace("{n}", v.versjon));
+          if (!eierSkjermen(min)) return;
+          // Fokus til det nye utkastet (§7): detaljsiden flytter fokus
+          // til sin egen overskrift, og valideringen der leser feilene
+          // opp for et ugyldig utkast.
+          aapneDetalj(res.utkast_id);
+        }).catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          meldAlert(t(`ui.historikk.feil.${e.kode}`,
+                      t("ui.historikk.rullbakk_feilet")));
+        });
+      },
+    });
+  }
+
 
   // `mal` er utkastet ruteren ble bedt om å åpne (`#/policyadmin/<utkast_id>`).
   // Det er veien fra et varsel til HANDLINGEN: uten den kom godkjenneren til

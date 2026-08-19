@@ -302,6 +302,46 @@ def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"})
 
 
+def _krev_malautorisasjonsvilkar(conn: psycopg.Connection,
+                                 innhold) -> list[str]:
+    """Feilliste: `ekstern_lesing`-handlinger uten plattformvilkår (047).
+
+    Klassen leses fra REGISTERET (oppdragstype → kontraktens
+    sideeffektklasse), og vilkårskravet fra `malautorisasjonsvilkar` —
+    ingen hardkodet liste (port 32). En handling hvis id ikke er en
+    registrert oppdragstype er ikke denne portens sak: den er enten en
+    intern handling (motoren) eller fanges av bestillingsveien."""
+    if not isinstance(innhold, dict):
+        return []
+    handlinger = innhold.get("handlinger")
+    if not isinstance(handlinger, list):
+        return []
+    ider = [h.get("id") for h in handlinger
+            if isinstance(h, dict) and isinstance(h.get("id"), str)]
+    if not ider:
+        return []
+    plattform = {r[0] for r in conn.execute(
+        "SELECT vilkar_type FROM malautorisasjonsvilkar").fetchall()}
+    eksterne = {r[0] for r in conn.execute(
+        "SELECT r.oppdragstype FROM oppdragstype_register r"
+        "  JOIN modulkontrakt k ON k.modul_id = r.eiermodul"
+        "   AND k.kontraktversjon = r.kontraktversjon"
+        " WHERE r.oppdragstype = ANY(%s)"
+        "   AND k.sideeffektklasse = 'ekstern_lesing'",
+        (ider,)).fetchall()}
+    feil = []
+    for h in handlinger:
+        if not isinstance(h, dict) or h.get("id") not in eksterne:
+            continue
+        navn = {v.get("navn") for v in (h.get("vilkaar") or [])
+                if isinstance(v, dict)}
+        if not (navn & plattform):
+            feil.append(
+                f"handling '{h['id']}': ekstern_lesing krever et "
+                f"målautorisasjonsvilkår ({', '.join(sorted(plattform))})")
+    return feil
+
+
 def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, utkast_id: str, forventet_utkastversjon,
                    idempotency_key: str, input_hash: str) -> dict:
@@ -357,6 +397,12 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # aktivere eller redigere. Avvikene legges i feillisten sammen med
     # skjemafeilene, så eier ser NØYAKTIG hva som må rettes i editoren.
     feil = list(feil) + _dokumentavvik(policy_id, innhold, tenant)
+    # 047 (klarsignal §5/port 34): en handling hvis oppdragstype er
+    # `ekstern_lesing` MÅ bære et plattform-målautorisasjonsvilkår —
+    # målt her, FØR runden, ikke først i modulaktiveringsporten (036).
+    # Dette er samtidig fjerningsvernet (port 31): å redigere bort
+    # vilkåret gjør utkastet ugyldig, uansett hvilken flate som prøvde.
+    feil += _krev_malautorisasjonsvilkar(conn, innhold)
     # Versjonen måles mot REGISTERET her — ikke først ved rundeåpning. Eiers
     # utkast 17/8 bar den aktive policyens egen versjon (0.3.0), gikk
     # gjennom valideringen med glans, og døde så med `versjon_i_bruk` i et

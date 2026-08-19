@@ -169,8 +169,17 @@ export async function hentAktivPolicyId() {
     return { kjent: false, id: null };
   }
 }
-export const opprettUtkast = (policyId, innhold, idem = nyIdempotensnokkel()) =>
-  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold }, idem);
+// 047: `rollbackAvVersjon` gjør utkastet til en RULLBAKK — serveren
+// henter da selve innholdet fra versjonen (kopien er serverens sannhet,
+// port 22), så `innhold` utelates. Uten feltet er kontrakten som før.
+export const opprettUtkast = (policyId, innhold,
+                              idem = nyIdempotensnokkel(),
+                              rollbackAvVersjon = null) =>
+  _muter("/v1/policyutkast", "POST",
+         { policy_id: policyId,
+           ...(innhold === undefined ? {} : { innhold }),
+           ...(rollbackAvVersjon == null ? {}
+               : { rollback_av_versjon: rollbackAvVersjon }) }, idem);
 export const redigerUtkast = (uid, utkastversjon, innhold,
                               idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold }, idem);

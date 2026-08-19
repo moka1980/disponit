@@ -873,6 +873,19 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def dm_utsted(request: Request) -> Response:
         return domenermodul.utsted_endepunkt(tjeneste, request)
 
+    # 047: versjonshistorikk og diff — lesing gjennom policy-eierens
+    # definere, aldri direkte fra policyer (port 38).
+    from . import policy_historikk as ph
+
+    def ph_versjoner(request):
+        return ph.versjoner_endepunkt(tjeneste, request)
+
+    def ph_diff(request):
+        return ph.diff_endepunkt(tjeneste, request)
+
+    def ph_grunnlag(request):
+        return ph.editorgrunnlag_endepunkt(tjeneste, request)
+
     # 044: planflaten — CRUD over de herdede funksjonene.
     from . import plan as planmodul
 
@@ -970,6 +983,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/domeneattestasjon",
               unntak_domeneattestasjon, methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        Route("/v1/policy/{policy_id:str}/versjoner", ph_versjoner,
+              methods=["GET"]),
+        Route("/v1/policy/{policy_id:str}/diff", ph_diff, methods=["GET"]),
+        Route("/v1/policyadmin/editorgrunnlag", ph_grunnlag,
+              methods=["GET"]),
         # Lista over aktive policyer. Egen statisk sti, registrert
         # sammen med `aktiv` og FØR mønsterrutene: den er utveien når
         # `aktiv` (med rette) nekter å velge mellom flere.
@@ -1398,6 +1416,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-015 §3: cross-tenant domeneautoritet er sitt EGET scope.
     ("POST", "/v1/unntak/{id:int}/domeneattestasjon"): "domains:adjudicate",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    # 047 (§6): historikken er NY rute bak EKSISTERENDE scope.
+    ("GET",  "/v1/policy/{policy_id:str}/versjoner"): "policy:read",
+    ("GET",  "/v1/policy/{policy_id:str}/diff"):      "policy:read",
+    ("GET",  "/v1/policyadmin/editorgrunnlag"):       "policy:read",
     ("GET",  "/v1/policy/aktive"):           "policy:read",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg

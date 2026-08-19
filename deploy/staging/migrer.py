@@ -67,7 +67,13 @@ GRANT SELECT ON policyer TO {rolle};
 -- eller `policy_hode`-pekeren — aktivering går kun via den herdede
 -- `aktiver_policy` (EXECUTE gitt i migrasjon 013).
 GRANT SELECT ON policy_hode TO {rolle};
-GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsrunde, aktiveringsattestasjon TO {rolle};
+GRANT SELECT, INSERT, UPDATE ON policyutkast, aktiveringsattestasjon TO {rolle};
+-- 047: runtime oppdaterer KUN rundens status (utlopt/kansellert i
+-- policyadmin.py) — versjonsbindingen `aktivert_som_versjon` er
+-- hendelsens og settes bare av aktiver_policy (eier-definer). Et
+-- tabellnivå-UPDATE her ville lagt kolonnen åpen igjen ved hvert deploy.
+GRANT SELECT, INSERT ON aktiveringsrunde TO {rolle};
+GRANT UPDATE (status) ON aktiveringsrunde TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.

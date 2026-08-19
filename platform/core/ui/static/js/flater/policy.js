@@ -190,7 +190,7 @@ export function visPolicy(hoved, ctx) {
 // «Nytt utkast» bor — ikke på den lesende policy-flaten. Seksjonen henter
 // selv de aktive policyene og rendrer én angre-blokk per policy; `paaEndret`
 // lar verten friske opp sitt eget innhold etter en sletting.
-export function aktivePolicyerSeksjon(ctx, paaEndret) {
+export function aktivePolicyerSeksjon(ctx, paaEndret, paaHistorikk) {
   if (!harScope(ctx, "policy:write")) return el("div", {});
   const rot = el("section", { class: "aktive-policyer",
     "aria-label": t("ui.policy.aktive_tittel") });
@@ -203,10 +203,21 @@ export function aktivePolicyerSeksjon(ctx, paaEndret) {
       sett(rot, el("h2", { text: t("ui.policy.aktive_tittel") }),
         el("p", { class: "muted", text: t("ui.policy.aktive_forklaring") }),
         ...(policyer.length
-          ? policyer.map((pd) => angreSeksjon(pd, ctx, () => {
-              last();
-              if (paaEndret) paaEndret();
-            }, policyer.length > 1))
+          ? policyer.map((pd) => el("div", { class: "aktiv-policy-rad" },
+              // 047: versjonshistorikken (med diff og rullbakk) bor i
+              // policyadmin-flaten; knappen er veien dit per policy.
+              (paaHistorikk ? (() => {
+                const hk = el("button", { class: "knapp liten",
+                  type: "button",
+                  text: t("ui.historikk.knapp") });
+                hk.addEventListener("click",
+                  () => paaHistorikk(pd.policy_id));
+                return hk;
+              })() : null),
+              angreSeksjon(pd, ctx, () => {
+                last();
+                if (paaEndret) paaEndret();
+              }, policyer.length > 1)))
           : [el("p", { class: "muted",
               text: t("ui.policy.aktive_ingen") })]));
     }).catch((e) => {

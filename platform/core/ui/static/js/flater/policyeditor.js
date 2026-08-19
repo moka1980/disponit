@@ -494,7 +494,7 @@ function valutaVelger(g, tegnPaaNytt) {
     legg);
 }
 
-function handlingKort(h, tegnPaaNytt) {
+function handlingKort(h, tegnPaaNytt, policy, grunnlag) {
   h.grenser = (h.grenser && typeof h.grenser === "object") ? h.grenser : {};
   const g = h.grenser;
   return el("div", { class: "editor-kort" },
@@ -514,7 +514,186 @@ function handlingKort(h, tegnPaaNytt) {
         if (!v) delete g.belop_maks; else g.belop_maks = v;
       }, { inputmode: "decimal" }, t("ui.editor.belop_hint")),
     valutaVelger(g, tegnPaaNytt),
-    tidsvinduVelger(g, tegnPaaNytt));
+    tidsvinduVelger(g, tegnPaaNytt),
+    vilkaarFelt(h, policy, tegnPaaNytt, grunnlag));
+}
+
+// --- Vilkår per handling (047, klarsignal §5) ------------------------------
+// To nivåer: policyens EGNE vilkår (redigerbare, nedtrekk fra policyens
+// deklarerte verifikatorer og deres betrodd_for) og PLATTFORMVILKÅRENE
+// (malautorisasjonsregisteret) — låst rad med aria-disabled OG
+// aria-describedby til forklaringen; de kan ikke fjernes herfra, og
+// valideringen avviser fjerning uansett vei (port 31/34). Registeret leses
+// fra serveren — ingen hardkodet liste (port 32); mangler grunnlaget
+// (nettfeil), er ALT låst: fail-closed, aldri en flate som lover en
+// fjerning serveren nekter.
+function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
+  const vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
+  const plattform = new Set(
+    ((grunnlag && grunnlag.plattformvilkar) || [])
+      .map((v) => v.vilkar_type));
+  const laastAlt = !grunnlag;
+  const forklaringId = `vilkaar-laast-${h.id || "x"}`;
+
+  const rader = vilkaar.map((v, i) => {
+    const erPlattform = laastAlt || plattform.has(v.navn);
+    const rad = el("li", { class: "vilkaar-rad" },
+      el("span", {}, el("code", { text: v.navn || "?" }),
+        ` \u2014 ${v.verifikator || "?"}`),
+      erPlattform
+        ? el("span", { class: "site-badge info", "aria-disabled": "true",
+            "aria-describedby": forklaringId,
+            text: t("ui.editor.vilkaar_laast") })
+        : (() => {
+            const fjern = el("button", { class: "knapp liten",
+              type: "button", text: t("ui.editor.vilkaar_fjern") });
+            fjern.addEventListener("click", () => {
+              h.vilkaar.splice(i, 1);
+              if (!h.vilkaar.length) delete h.vilkaar;
+              tegnPaaNytt();
+            });
+            return fjern;
+          })());
+    return rad;
+  });
+
+  // Legg til: verifikator-nedtrekk fra policyens EGNE deklarasjoner,
+  // vilkårsnavn fra den valgte verifikatorens betrodd_for (§5) — ukjente
+  // kombinasjoner kan ikke velges, og serveren avviser dem uansett.
+  const verifikatorer = (policy && typeof policy.verifikatorer === "object"
+    && policy.verifikatorer) || {};
+  const vids = Object.keys(verifikatorer).sort();
+  let leggTil = null;
+  if (!laastAlt && vids.length) {
+    const vidValg = el("select", { id: `vk-vid-${h.id || "x"}` },
+      ...vids.map((v) => el("option", { value: v, text: v })));
+    const navnValg = el("select", { id: `vk-navn-${h.id || "x"}` });
+    const fyllNavn = () => {
+      const betrodd = (verifikatorer[vidValg.value]
+        && verifikatorer[vidValg.value].betrodd_for) || [];
+      sett(navnValg, ...betrodd.map((n) =>
+        el("option", { value: n, text: n })));
+    };
+    fyllNavn();
+    vidValg.addEventListener("change", fyllNavn);
+    const knapp = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.vilkaar_legg_til") });
+    knapp.addEventListener("click", () => {
+      if (!navnValg.value) return;
+      h.vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
+      if (h.vilkaar.some((v) => v.navn === navnValg.value
+          && v.verifikator === vidValg.value)) return;
+      h.vilkaar.push({ navn: navnValg.value, verifikator: vidValg.value });
+      tegnPaaNytt();
+    });
+    leggTil = el("div", { class: "vilkaar-legg-til" },
+      el("label", { for: `vk-vid-${h.id || "x"}`,
+        text: t("ui.editor.vilkaar_verifikator") }), vidValg,
+      el("label", { for: `vk-navn-${h.id || "x"}`,
+        text: t("ui.editor.vilkaar_navn") }), navnValg,
+      knapp);
+  }
+
+  return el("div", { class: "vilkaar-felt" },
+    el("h5", { text: t("ui.editor.vilkaar") }),
+    el("p", { class: "felt-hint", id: forklaringId,
+      text: laastAlt ? t("ui.editor.vilkaar_grunnlag_mangler")
+                     : t("ui.editor.vilkaar_plattform_forklaring") }),
+    rader.length ? el("ul", { class: "vilkaar-liste" }, ...rader)
+                 : el("p", { class: "muted",
+                     text: t("ui.editor.vilkaar_ingen") }),
+    leggTil);
+}
+
+// --- Menneskelig overstyring (047, klarsignal §4) --------------------------
+// ETT felt per policy; fravær er deny og vises som TILSTAND («ingen
+// (standard)»), aldri som tomhet. Hvert (grunnkode × handling)-par er én
+// rad; nedtrekkene er policyens egne handlinger/roller og motorens
+// godkjennbare grunnkoder (fra editorgrunnlaget — port 29/30: ukjent
+// handling/rolle og ikke-godkjennbar grunnkode kan ikke velges, og
+// schema.py avviser dem uansett om noe sendes utenom).
+function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
+  const mo = (policy.menneskelig_overstyring
+    && typeof policy.menneskelig_overstyring === "object")
+    ? policy.menneskelig_overstyring : null;
+  const roller = (policy.roller || []).map((r) => r.id).filter(Boolean);
+  const handlinger = (policy.handlinger || []).map((h) => h.id)
+    .filter(Boolean);
+  const grunnkoder = (grunnlag && grunnlag.godkjennbare_grunnkoder) || [];
+
+  const deler = [el("h3", { text: t("ui.editor.overstyring") })];
+  if (!mo) {
+    // Fraværet ER en tilstand: deny-by-default, sagt med ord.
+    deler.push(el("p", { class: "felt-hint",
+      text: t("ui.editor.overstyring_ingen") }));
+  } else {
+    deler.push(velg(t("ui.editor.overstyring_rolle"),
+      mo.krever_rolle || "", roller, "",
+      (v) => { mo.krever_rolle = v; }));
+    const par = Array.isArray(mo.godkjennbare) ? mo.godkjennbare : [];
+    deler.push(el("ul", { class: "overstyring-liste" },
+      ...par.map((e2, i) => {
+        const fjern = el("button", { class: "knapp liten", type: "button",
+          text: t("ui.editor.overstyring_fjern") });
+        fjern.addEventListener("click", () => {
+          par.splice(i, 1);
+          if (!par.length) delete policy.menneskelig_overstyring;
+          tegnPaaNytt();
+        });
+        return el("li", {},
+          el("span", { text: t("ui.editor.overstyring_par")
+            .replace("{grunnkode}", e2.grunnkode || "?")
+            .replace("{handling}", e2.handling || "?") }),
+          e2.belop_maks
+            ? el("span", { class: "sub",
+                text: ` (${e2.belop_maks} ${e2.valuta || ""})` }) : null,
+          fjern);
+      })));
+    const slettAlt = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.overstyring_slett") });
+    slettAlt.addEventListener("click", () => {
+      delete policy.menneskelig_overstyring;
+      tegnPaaNytt();
+    });
+    deler.push(slettAlt);
+  }
+
+  // Legg til par — aktiverer feltet når det ikke finnes. Fail-closed på
+  // grunnlaget: uten listen over godkjennbare grunnkoder kan ingenting
+  // legges til (port 30 er en LUKKING, ikke en anbefaling).
+  if (grunnkoder.length && handlinger.length && roller.length) {
+    const gkValg = el("select", { id: "mo-grunnkode" },
+      ...grunnkoder.map((g) => el("option", { value: g,
+        text: t(`grunnkode.${g}`, g) })));
+    const hValg = el("select", { id: "mo-handling" },
+      ...handlinger.map((h) => el("option", { value: h, text: h })));
+    const leggTil = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.editor.overstyring_legg_til") });
+    leggTil.addEventListener("click", () => {
+      const m = policy.menneskelig_overstyring
+        = (policy.menneskelig_overstyring
+           && typeof policy.menneskelig_overstyring === "object")
+          ? policy.menneskelig_overstyring
+          : { godkjennbare: [], krever_rolle: roller[0] };
+      m.godkjennbare = Array.isArray(m.godkjennbare) ? m.godkjennbare : [];
+      if (m.godkjennbare.some((e2) => e2.grunnkode === gkValg.value
+          && e2.handling === hValg.value)) return;   // duplikatpar (schema)
+      m.godkjennbare.push({ grunnkode: gkValg.value,
+                            handling: hValg.value });
+      tegnPaaNytt();
+    });
+    deler.push(el("div", { class: "overstyring-legg-til" },
+      el("label", { for: "mo-grunnkode",
+        text: t("ui.editor.overstyring_grunnkode") }), gkValg,
+      el("label", { for: "mo-handling",
+        text: t("ui.editor.overstyring_handling") }), hValg,
+      leggTil));
+  } else if (!grunnkoder.length) {
+    deler.push(el("p", { class: "muted",
+      text: t("ui.editor.vilkaar_grunnlag_mangler") }));
+  }
+  return el("section", { class: "editor-seksjon",
+    "aria-label": t("ui.editor.overstyring") }, ...deler);
 }
 
 function handlingerSeksjon(policy, tegnPaaNytt, st) {
@@ -584,7 +763,7 @@ function handlingerSeksjon(policy, tegnPaaNytt, st) {
     el("p", { class: "sub", text: t("ui.editor.handling_posisjon")
       .replace("{n}", String(i + 1))
       .replace("{av}", String(handlinger.length)) }),
-    handlingKort(valgt, tegnPaaNytt),
+    handlingKort(valgt, tegnPaaNytt, policy, st.grunnlag),
     el("div", { class: "editor-knapper" }, forrige, neste));
 }
 
@@ -740,7 +919,17 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
                aktiv: { kjent: false, id: null },
                // Ble dokumentets id rettet mot radens ved innlasting? Da bærer
                // hjelpeteksten den gamle verdien (`policyIdLaastHint`).
-               rettetFra: null };
+               rettetFra: null,
+               // Editorgrunnlaget (047): plattformvilkår + godkjennbare
+               // grunnkoder, fra serveren. null = utilgjengelig, og da er
+               // vilkårsredigeringen LÅST og overstyringspar kan ikke
+               // legges til (fail-closed, port 30/31).
+               grunnlag: null };
+
+  hentJson("/v1/policyadmin/editorgrunnlag").then((d) => {
+    st.grunnlag = d;
+    if (!st.laster && st.policy && eier()) tegn();
+  }).catch(() => { /* fail-closed: grunnlag forblir null */ });
 
   function lagre() {
     const pid = (st.policy.meta && st.policy.meta.policy_id || "").trim();
@@ -838,6 +1027,8 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
           bygg: () => rollerSeksjon(st.policy, tegn) },
         { nokkel: "handlinger", tittel: t("ui.editor.fane.handlinger"),
           bygg: () => handlingerSeksjon(st.policy, tegn, st) },
+        { nokkel: "overstyring", tittel: t("ui.editor.fane.overstyring"),
+          bygg: () => overstyringSeksjon(st.policy, tegn, st.grunnlag) },
       ],
     });
     const barn = [
