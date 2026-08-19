@@ -881,7 +881,8 @@ CREATE OR REPLACE FUNCTION varsle_plan_brudd(
     p_tenant TEXT, p_plan UUID, p_aktor TEXT, p_request_id TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_aktivert_av TEXT; v_bruker TEXT;
+DECLARE v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
+        v_varslet BOOLEAN := false;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.planer_med_gjentatt_brudd() k
                     WHERE k.plan_id = p_plan AND k.tenant = p_tenant) THEN
@@ -892,21 +893,45 @@ BEGIN
     -- Aktørstreng → bruker-id, som i pause_plan (FK mot brukeridentitet).
     v_bruker := CASE WHEN v_aktivert_av LIKE 'bruker:%'
                      THEN substring(v_aktivert_av FROM 8) END;
-    IF v_bruker IS NOT NULL THEN
-        INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
-            ressurs_id, hendelse, tekstnokkel, parametre)
-        VALUES (p_tenant, v_bruker, 'plan_gjentatt_brudd', 'plan',
-                p_plan::text, 'varslet', 'varsel.plan_gjentatt_brudd',
-                jsonb_build_object('antall', 3));
-    END IF;
-    -- Dempings-hendelsen skrives UANSETT: uten den ville en plan uten
-    -- varslingsmottaker blitt kandidat i hvert sveip for alltid.
+    -- Dempings-hendelsen skrives UANSETT, og FØRST: uten den ville en
+    -- plan uten varslingsmottaker blitt kandidat i hvert sveip for
+    -- alltid — og skrev vi den etter varselet, ville en feilet
+    -- varselinnsetting rullet den bort igjen. Id-en er dessuten
+    -- FOREKOMSTEN varselnøkkelen trenger under.
     INSERT INTO public.bestillingsplan_hendelse
         (plan_id, tenant, hendelse, aktor, request_id, detalj)
     VALUES (p_plan, p_tenant, 'varslet', p_aktor, p_request_id,
             jsonb_build_object('grunn', 'gjentatt_brudd',
-                               'bruker', v_bruker));
-    RETURN v_bruker IS NOT NULL;
+                               'bruker', v_bruker))
+    RETURNING id INTO v_hendelse;
+    IF v_bruker IS NOT NULL THEN
+        BEGIN
+            -- `hendelse` er FOREKOMSTEN, ikke arten (026s egen begrunnelse
+            -- for kolonnen, og 041 §15-lærdommen). Med den konstante
+            -- literalen 'varslet' var nøkkelen (tenant, bruker,
+            -- 'plan_gjentatt_brudd', 'plan', plan_id, 'varslet') den
+            -- SAMME for hver eneste bruddstripe på planen: stripe nummer
+            -- to — korrekt gjenåpnet av et mellomliggende utfall — traff
+            -- `varsel_en_per_hendelse`, og siden dette ikke var fanget,
+            -- aborterte HELE sveiptransaksjonen. Dempings-hendelsen ble
+            -- rullet bort med den, så neste sveip feilet likt, for alltid.
+            -- Hendelses-id-en er global og monoton, og den ER stripen.
+            INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
+                ressurs_id, hendelse, tekstnokkel, parametre)
+            VALUES (p_tenant, v_bruker, 'plan_gjentatt_brudd', 'plan',
+                    p_plan::text, 'gjentatt_brudd:' || v_hendelse,
+                    'varsel.plan_gjentatt_brudd',
+                    jsonb_build_object('antall', 3));
+            v_varslet := true;
+        EXCEPTION WHEN OTHERS THEN
+            -- Varselet er ikke evidens; dempingen står (samme kontrakt som
+            -- pause_plan og 041 port 41). WARNING, ikke stillhet: en
+            -- varselvei som ryker skal SES i driftsloggen.
+            RAISE WARNING 'varsle_plan_brudd: varsel feilet for %: %',
+                p_plan, SQLERRM;
+        END;
+    END IF;
+    RETURN v_varslet;
 END $$;
 
 -- Klassifisererens leseveier (port 7 gjelder også den: runtime har

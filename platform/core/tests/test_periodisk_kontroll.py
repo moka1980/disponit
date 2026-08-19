@@ -1131,6 +1131,54 @@ def test_tre_brudd_varsles_men_pauser_aldri(migrator):
 
 
 @pg
+def test_andre_bruddstripe_varsles_uten_a_velte_sveipen(migrator):
+    """Codex P1: stripe nummer to har sin EGEN forekomst.
+
+    Med `hendelse = 'varslet'` som konstant literal var varselnøkkelen
+    (tenant, bruker, art, 'plan', plan_id, 'varslet') den samme for hver
+    stripe. En andre stripe — korrekt gjenåpnet av et mellomliggende
+    utfall — traff `varsel_en_per_hendelse`, og siden det ikke var fanget
+    aborterte HELE sveiptransaksjonen: dempings-hendelsen ble rullet bort
+    med den, og hvert påfølgende sveip feilet likt."""
+    from plan.materialiser import pausesveip
+    bid = _ekte_bruker("p21b-eier")
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p21b.example", aktor=f"bruker:{bid}")
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
+                                  slutt_h=-26 - 24 * i)
+            _syntetisk_tick(migrator, pid, vs, "brudd")
+        pausesveip(rt)
+        # Stripen brytes av et annet utfall ...
+        vs = _syntetisk_vindu(migrator, pid, start_h=-24, slutt_h=-20)
+        _syntetisk_tick(migrator, pid, vs, "tillat", oppdrag_id=None)
+        # ... og en HELT NY stripe bygges over den.
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-18 + 4 * i,
+                                  slutt_h=-16 + 4 * i)
+            _syntetisk_tick(migrator, pid, vs, "brudd")
+        # Sveipen står — og det andre varselet nådde fram.
+        assert pausesveip(rt) == []
+        # Sveipen etterpå er fortsatt frisk (transaksjonen aborterte ikke).
+        assert pausesveip(rt) == []
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    varsler = migrator.execute(
+        "SELECT count(*) FROM varsel WHERE tenant=%s AND"
+        " art='plan_gjentatt_brudd' AND ressurs_id=%s",
+        (TENANT, str(pid))).fetchone()[0]
+    dempinger = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+        " AND hendelse='varslet' AND detalj->>'grunn'='gjentatt_brudd'",
+        (pid,)).fetchone()[0]
+    migrator.rollback()
+    assert varsler == 2, "stripe nummer to nådde ikke mottakeren"
+    assert dempinger == 2, "dempings-hendelsen overlevde ikke"
+
+
+@pg
 def test_gjenopptak_krever_scope_og_nullstiller(migrator, klient):
     """Port 23: gjenopptak uten scope → nektet; med scope → ny periode og
     tellerne nullstilt (gamle tick teller ikke i den nye perioden)."""
