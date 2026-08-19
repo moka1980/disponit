@@ -10,6 +10,7 @@ import { VarselBanner, TomTilstand, Feiltilstand, meldLive } from "../komponente
 import { Bekreftelsesdialog } from "../dialog.js";
 import { harScope } from "../sitekart.js";
 import { medStatus, flateHode } from "./felles.js";
+import { tegnHistorikkflate } from "./policyhistorikk.js";
 
 function grenserNode(g) {
   if (!g) return el("span", { class: "muted", text: t("ui.policy.ingen_grenser") });
@@ -72,10 +73,38 @@ function merke(p) {
 // fra, ikke nok til å be en forvalter rydde. Det er nettopp opplysningen
 // `policy:read` GIR rett til — det er bare mutasjonen som ikke skal stå for
 // dem, og den er portet der den hører hjemme, på knappen.
-function identiteter(aktive) {
+function identiteter(aktive, paaHistorikk) {
   return seksjon(t("ui.policy.aktive"),
     [el("ul", { class: "liste" },
-      aktive.map((p) => el("li", { text: merke(p) })))]);
+      aktive.map((p) => el("li", {}, el("span", { text: merke(p) }),
+        historikkKnapp(p.policy_id, paaHistorikk))))]);
+}
+
+// Versjonshistorikken hører til `policy:read` (047, Codex P2). Rutene bak
+// (`/v1/policy/{id}/versjoner` og `.../diff`) krever nettopp det scopet, men
+// den ENESTE veien inn lå i policyadmin-flaten — bak `kanForvaltePolicy` i
+// sitekartet, og inne i `aktivePolicyerSeksjon`, som returnerer tomt uten
+// `policy:write`. `leser`, `admin` og `sikkerhet` hadde altså rett til
+// historikken og ingen vei dit. Knappen står derfor også HER, på leseflaten,
+// og åpner den samme visningen uten rullbakk-kolonnen.
+function historikkKnapp(policyId, paaHistorikk) {
+  if (!paaHistorikk) return null;
+  const k = el("button", { class: "knapp liten", type: "button",
+    text: t("ui.historikk.knapp") });
+  k.addEventListener("click", () => paaHistorikk(policyId));
+  return k;
+}
+
+// Leseflatens historikkvisning: samme tabell og diff som policyadmin, uten
+// rullbakken (den er `policy:write` og bor der). Tilbakeveien er flaten selv.
+function visHistorikk(hoved, ctx, policyId) {
+  medStatus(hoved, ctx,
+    () => hentJson(`/v1/policy/${policyId}/versjoner`), (d) => {
+      tegnHistorikkflate(hoved, ctx, {
+        policyId, versjoner: (d && d.versjoner) || [],
+        tilbake: () => visPolicy(hoved, ctx),
+      });
+    });
 }
 
 // `/v1/policy/aktiv` lover ÉN aktiv policy og svarer 500 (`intern_feil`) når
@@ -129,6 +158,7 @@ async function hentAktiv() {
 export function visPolicy(hoved, ctx) {
   medStatus(hoved, ctx, hentAktiv, ({ aktive, dto }) => {
     const paaNytt = () => visPolicy(hoved, ctx);
+    const paaHistorikk = (pid) => visHistorikk(hoved, ctx, pid);
     if (!aktive.length) {
       sett(hoved, ...flateHode(t("ui.policy.tittel")), TomTilstand({}));
       return;
@@ -150,7 +180,7 @@ export function visPolicy(hoved, ctx) {
         ...flateHode(t("ui.policy.tittel")),
         VarselBanner({ art: "fare",
           tekst: t(flere ? "ui.policy.flere_aktive" : "ui.policy.korrupt_aktiv") }),
-        identiteter(aktive),
+        identiteter(aktive, paaHistorikk),
         ...aktive.map((p) => angreSeksjon(p, ctx, paaNytt, flere)));
       return;
     }
@@ -164,6 +194,11 @@ export function visPolicy(hoved, ctx) {
       seksjon(t("ui.policy.handlinger"), dto.handlinger.map(handlingNode)),
       seksjon(t("ui.policy.verifikatorer"),
         dto.verifikatorer.map(verifikatorNode)),
+      // Historikken er en LESEHANDLING og står derfor uavhengig av
+      // skrivetilgang (Codex P2) — se `historikkKnapp`.
+      seksjon(t("ui.historikk.tittel").replace("{policy}", dto.policy_id),
+        [el("p", { class: "muted", text: t("ui.historikk.under") }),
+         historikkKnapp(dto.policy_id, paaHistorikk)]),
       angreSeksjon(dto, ctx, paaNytt));
   });
 }

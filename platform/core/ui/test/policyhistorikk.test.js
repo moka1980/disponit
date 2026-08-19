@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
+import { visPolicy } from "../static/js/flater/policy.js";
 
 settI18nForTest(NB, "nb");
 
@@ -173,4 +174,64 @@ test("historikk: rullbakk er en alertdialog og POSTer uten innhold",
     assert.ok(!("innhold" in POSTET[0].kropp));
     assert.ok(POSTET[0].headers["Idempotency-Key"]
               || POSTET[0].headers["idempotency-key"]);
+  });
+
+// 047, Codex P2: rutene bak historikken krever `policy:read`, ikke
+// `policy:write`. Inngangen lå likevel bare i policyadmin — bak
+// `kanForvaltePolicy` i sitekartet OG inne i `aktivePolicyerSeksjon`, som
+// returnerer tomt uten skrivetilgang. En `leser` kunne altså kalle
+// endepunktene og hadde ingen vei dit. Nå står knappen på leseflaten, og
+// visningen er den samme — uten rullbakk, som er `policy:write`.
+const DTO = { skjemaversjon: 1, policy_id: "faktura-no", versjon: "3",
+  innholds_hash: "h3", roller: [{ id: "admin" }], handlinger: [],
+  verifikatorer: [] };
+
+test("historikk: leseokten naar historikken fra policy-flaten, uten rullbakk",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policy/aktiv": DTO,
+      "/v1/policy/faktura-no/versjoner": VERSJONER };
+    const h = nyHoved();
+    const leser = { sprak: "nb", scopes: ["policy:read"], tenant: "acme",
+      paaUautorisert: () => {} };
+    visPolicy(h, leser);
+    await vent(() => finn(h, t("ui.historikk.knapp")));
+    finn(h, t("ui.historikk.knapp")).dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".datatabell caption"));
+    const tabell = h.querySelector(".datatabell");
+    assert.ok(tabell.querySelector("caption").textContent
+      .includes("faktura-no"));
+    assert.ok(tabell.textContent.includes("ida, jon"));
+    // Rullbakken er `policy:write` — knappen LAGES ikke, den skjules ikke.
+    assert.equal([...h.querySelectorAll("button")]
+      .filter((k) => k.textContent === t("ui.historikk.rullbakk")).length, 0);
+    assert.equal([...tabell.querySelectorAll("thead th")]
+      .map((th) => th.textContent)
+      .includes(t("ui.historikk.kol.handlinger")), false);
+    // Tilbakeveien fører til leseflaten, ikke til policyadmin.
+    finn(h, t("ui.historikk.tilbake")).dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".policy-sec"));
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+// Bootstrap-raden sier hva den ER (047, Codex P2): «lagt inn ved oppsett»,
+// ikke «attestanter ikke bundet» — den siste beskriver en rad fra før
+// lineagen fantes, og en oppsettsregistrering fra i går er ikke det.
+test("historikk: bootstrap-raden skiller seg fra en ubundet historisk rad",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": AKTIVE,
+      "/v1/policy/faktura-no/versjoner": { policy_id: "faktura-no",
+        versjoner: [{ versjon: "1", innholds_hash: "h1", aktiv: true,
+          opprettet: "2026-08-17T10:00:00+00:00", aktivert_ts: null,
+          attestanter: null, aktivert_av_operasjon: null,
+          rollback_av_versjon: null, aktiveringskilde: "bootstrap" }] } };
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const tabell = h.querySelector(".datatabell");
+    assert.ok(tabell.textContent.includes(t("ui.historikk.kilde_bootstrap")));
+    assert.ok(!tabell.textContent.includes(
+      t("ui.historikk.attestanter_ubundet")));
   });

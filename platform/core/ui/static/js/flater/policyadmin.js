@@ -21,6 +21,7 @@ import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 import { aktivePolicyerSeksjon } from "./policy.js";
+import { tegnHistorikkflate } from "./policyhistorikk.js";
 import { harScope } from "../sitekart.js";
 
 function risikoBadge(klasse) {
@@ -1624,131 +1625,18 @@ export function visPolicyadmin(hoved, ctx, mal) {
       }, () => eierSkjermen(min), true);
   }
 
-  function attestantTekst(v) {
-    if (!v.aktivert_av_operasjon) {
-      // «Ingen attestanter» har mer enn én grunn, og de betyr ulike ting
-      // (047, Codex P2). En `bootstrap`-rad er lagt inn av oppsettsveien
-      // — den HAR ingen runde, og skal ikke se ut som en versjon vi bare
-      // mistet sporet av. `historisk` er raden som lå der da lineagen kom.
-      if (v.aktiveringskilde === "bootstrap") {
-        return t("ui.historikk.kilde_bootstrap");
-      }
-      return t("ui.historikk.attestanter_ubundet");
-    }
-    return (v.attestanter || []).join(", ")
-      || t("ui.historikk.attestanter_ubundet");
-  }
-
+  // Selve visningen bor i `policyhistorikk.js` — den deles med den
+  // LESENDE policy-flaten, der `policy:read` alene holder (Codex P2).
+  // Herfra kommer bare det som er policyadmin sitt: skjermeierskapet og
+  // rullbakken, som krever `policy:write`.
   function tegnHistorikk(policyId, versjoner, kanSkrive, min) {
-    const tilbake = el("button", { class: "knapp", type: "button",
-      text: t("ui.historikk.tilbake") });
-    tilbake.addEventListener("click", tilbakeTilListe);
-
-    const rader = versjoner.map((v) => {
-      const handlinger = el("td", { class: "behandling-knapper" });
-      if (kanSkrive) {
-        const rb = el("button", { class: "knapp liten", type: "button",
-          text: t("ui.historikk.rullbakk") });
-        rb.addEventListener("click", () => bekreftRullbakk(policyId, v, min));
-        handlinger.append(rb);
-      }
-      return el("tr", {},
-        el("th", { scope: "row", text: v.versjon }),
-        // Aktiv versjon markeres med TEKST (port 40), aldri kun stil.
-        el("td", { text: v.aktiv ? t("ui.historikk.aktiv_na") : "" }),
-        el("td", {}, v.aktivert_ts ? Tidspunkt(v.aktivert_ts)
-                                   : Tidspunkt(v.opprettet)),
-        el("td", { text: attestantTekst(v) }),
-        el("td", { text: v.rollback_av_versjon
-          ? t("ui.historikk.rullbakk_fra").replace("{n}",
-                                                   v.rollback_av_versjon)
-          : "" }),
-        handlinger);
+    tegnHistorikkflate(hoved, ctx, {
+      policyId, versjoner,
+      tilbake: tilbakeTilListe,
+      paaRullbakk: kanSkrive
+        ? (v) => bekreftRullbakk(policyId, v, min) : null,
+      erGyldig: () => eierSkjermen(min),
     });
-
-    const tabell = versjoner.length
-      ? el("div", { class: "tabellrull" }, el("table", { class: "datatabell" },
-          el("caption", { text: t("ui.historikk.caption")
-            .replace("{policy}", policyId) }),
-          el("thead", {}, el("tr", {},
-            el("th", { scope: "col", text: t("ui.historikk.kol.versjon") }),
-            el("th", { scope: "col", text: t("ui.historikk.kol.status") }),
-            el("th", { scope: "col", text: t("ui.historikk.kol.tid") }),
-            el("th", { scope: "col",
-              text: t("ui.historikk.kol.attestanter") }),
-            el("th", { scope: "col",
-              text: t("ui.historikk.kol.opphav") }),
-            el("th", { scope: "col",
-              text: t("ui.historikk.kol.handlinger") }))),
-          el("tbody", {}, ...rader)))
-      : TomTilstand({ tittel: t("ui.historikk.tom_tittel"),
-                      tekst: t("ui.historikk.tom_tekst") });
-
-    // Diff mellom to VILKÅRLIGE versjoner — velgere er <select> med
-    // <label> (port §7), resultatet en liste med tekst, aldri to <pre>.
-    const diffUt = el("div", { class: "historikk-diff" });
-    let diffSeksjon = null;
-    if (versjoner.length >= 2) {
-      const valg = versjoner.map((v) =>
-        el("option", { value: v.versjon, text: v.versjon }));
-      const valg2 = versjoner.map((v) =>
-        el("option", { value: v.versjon, text: v.versjon }));
-      const fra = el("select", { id: "hist-fra" }, ...valg);
-      const til = el("select", { id: "hist-til" }, ...valg2);
-      fra.value = versjoner[1].versjon;
-      til.value = versjoner[0].versjon;
-      const knapp = el("button", { class: "knapp", type: "button",
-        text: t("ui.historikk.vis_diff") });
-      knapp.addEventListener("click", () => {
-        sett(diffUt, el("p", { class: "muted", text: t("ui.laster") }));
-        hentJson(`/v1/policy/${policyId}/diff?fra=${
-          encodeURIComponent(fra.value)}&til=${
-          encodeURIComponent(til.value)}`).then((d) => {
-          if (!eierSkjermen(min)) return;
-          tegnDiff(diffUt, d);
-        }).catch((e) => {
-          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-          if (!eierSkjermen(min)) return;
-          sett(diffUt, Feiltilstand({}));
-        });
-      });
-      diffSeksjon = el("section", { class: "historikk-diffvelger",
-        "aria-label": t("ui.historikk.diff_tittel") },
-        el("h3", { text: t("ui.historikk.diff_tittel") }),
-        el("div", { class: "skjemarad" },
-          el("label", { for: "hist-fra", text: t("ui.historikk.fra") }), fra),
-        el("div", { class: "skjemarad" },
-          el("label", { for: "hist-til", text: t("ui.historikk.til") }), til),
-        knapp, diffUt);
-    }
-
-    sett(hoved,
-      ...flateHode(t("ui.historikk.tittel").replace("{policy}", policyId),
-                   t("ui.historikk.under")),
-      tilbake, tabell, diffSeksjon);
-    fokuserOverskrift(hoved);
-  }
-
-  function tegnDiff(rot, d) {
-    const endringer = (d.diff && d.diff.endringer) || [];
-    // Retningen I ORD FØRST (port 40): risikoklassen er overskriften.
-    const retning = t(`ui.historikk.retning.${d.risikoklasse}`,
-                      d.risikoklasse);
-    sett(rot,
-      el("h4", { text: t("ui.historikk.diff_resultat")
-        .replace("{retning}", retning)
-        .replace("{fra}", d.fra).replace("{til}", d.til) }),
-      endringer.length
-        ? el("ul", { class: "diffliste" }, ...endringer.map((e2) =>
-            el("li", { text: `${t(`ui.historikk.endring.${e2.type}`,
-                                  e2.type)} ${e2.sti}` +
-              (e2.type === "endret"
-                ? `: ${JSON.stringify(e2.fra)} \u2192 ${
-                    JSON.stringify(e2.til)}`
-                : e2.type === "fjernet"
-                  ? `: ${JSON.stringify(e2.fra)}`
-                  : `: ${JSON.stringify(e2.til)}`) })))
-        : el("p", { class: "muted", text: t("ui.historikk.diff_tom") }));
   }
 
   function bekreftRullbakk(policyId, v, min) {
