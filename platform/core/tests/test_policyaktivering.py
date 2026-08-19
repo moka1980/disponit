@@ -1427,7 +1427,7 @@ def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
         m.close()
 
 
-def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_hash):
+def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_gen):
     """Et validert utkast som BÆRER et rullbakkeopphav. `_validert_utkast`
     kjenner ikke kolonnene; her settes de ved INNSETTINGEN, som i porten —
     de er frosset etterpå."""
@@ -1436,10 +1436,10 @@ def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_hash):
     c.execute(
         "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
         "status,innholds_hash,opprettet_av,rollback_av_versjon,"
-        "rollback_av_hash) VALUES"
+        "rollback_av_generasjon) VALUES"
         " (%s,%s,%s,%s::jsonb,'validert',%s,'forf',%s,%s)",
         (TEN, uid, pid, innhold, "ih-" + secrets.token_hex(8),
-         kilde_versjon, kilde_hash))
+         kilde_versjon, kilde_gen))
 
 
 @pg
@@ -1448,11 +1448,17 @@ def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     ikke bare på versjonsNUMMERET.
 
     `slett_ubrukt_policy` frigjør uttrykkelig `(policy_id, versjon)`, og
-    nummeret kan gjenskapes med et ANNET innhold. Bar utkastet bare tallet,
-    ville historikken påstått «rullbakk fra versjon 1» ved siden av en
-    generasjon 1 kopien aldri kom fra — en fabrikkert linje ingen skrev.
+    nummeret kan gjenskapes. Bar utkastet bare tallet, ville historikken
+    påstått «rullbakk fra versjon 1» ved siden av en generasjon 1 kopien
+    aldri kom fra — en fabrikkert linje ingen skrev.
 
-    Målt i to lag: opprettelsen lagrer kildens egen `innholds_hash`, og
+    INNHOLDSHASHEN ER HELLER IKKE NOK (Codex P2): det samme dokumentet kan
+    settes inn igjen under samme nummer (`test_identisk_gjenskapt_policy_
+    gjenoppliver_ikke_slettet_generasjon`), og en hash-sammenligning ville
+    da sagt «bundet» om en rad kopien aldri kom fra. Opphavet bærer derfor
+    `policyer.generasjon` — et sekvenstall ingen får igjen.
+
+    Målt i to lag: opprettelsen lagrer kilderadens generasjon, og
     definerens `rollback_kilde` skiller `bundet` fra `borte` og `ubundet`.
     """
     uid, pid, v = _full_aktivering(pakrevd=1)
@@ -1465,29 +1471,36 @@ def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     try:
         m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
         lagret = m.execute(
-            "SELECT rollback_av_versjon, rollback_av_hash FROM policyutkast"
-            " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid)).fetchone()
-        kilde_hash = m.execute(
-            "SELECT innholds_hash FROM policyer WHERE tenant=%s AND"
+            "SELECT rollback_av_versjon, rollback_av_generasjon"
+            "  FROM policyutkast WHERE tenant=%s AND utkast_id=%s",
+            (TEN, rb_uid)).fetchone()
+        kilde_gen = m.execute(
+            "SELECT generasjon FROM policyer WHERE tenant=%s AND"
             " policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
-        # Hashen er kildeGENERASJONENS egen, ikke kopiens: opprettelsen
-        # normaliserer `meta.versjon`, så utkastets eget innhold har en
-        # annen hash enn den det er en rullbakk AV.
-        assert lagret == (v, kilde_hash), "port 27: opphavet er ubundet"
+        assert lagret == (v, kilde_gen), "port 27: opphavet er ubundet"
         # Frosset på samme måte som nummeret — ellers kunne kjøretiden
         # skrevet seg til en «bundet» kilde i ettertid.
         with pytest.raises(psycopg.errors.CheckViolation):
-            m.execute("UPDATE policyutkast SET rollback_av_hash='ih-annen'"
-                      " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid))
+            m.execute("UPDATE policyutkast SET rollback_av_generasjon=%s"
+                      " WHERE tenant=%s AND utkast_id=%s",
+                      (kilde_gen + 1, TEN, rb_uid))
         m.rollback()
-        # En hash uten et nummer er meningsløs og avvises statisk.
+        # En generasjon uten et nummer er meningsløs og avvises statisk.
         m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
         with pytest.raises(psycopg.errors.CheckViolation):
             m.execute(
                 "INSERT INTO policyutkast (tenant,utkast_id,policy_id,"
-                "innhold,status,opprettet_av,rollback_av_hash) VALUES"
-                " (%s,%s,%s,'{}'::jsonb,'utkast','forf','ih-x')",
+                "innhold,status,opprettet_av,rollback_av_generasjon) VALUES"
+                " (%s,%s,%s,'{}'::jsonb,'utkast','forf',1)",
                 (TEN, "u-" + secrets.token_hex(4), pid))
+        m.rollback()
+        # Generasjonen på policy-raden er selv frosset: kunne den skrives
+        # om, kunne en slettet kilde «gjenoppstå» som bundet.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute("UPDATE policyer SET generasjon=%s WHERE tenant=%s"
+                      " AND policy_id=%s AND versjon=%s",
+                      (kilde_gen + 1000, TEN, pid, v))
         m.rollback()
     finally:
         m.close()
@@ -1508,19 +1521,21 @@ def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
         try:
             m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
             kilde1 = m.execute(
-                "SELECT innholds_hash FROM policyer WHERE tenant=%s AND"
+                "SELECT generasjon FROM policyer WHERE tenant=%s AND"
                 " policy_id=%s AND versjon=%s", (TEN, pid2, v1)).fetchone()[0]
             m.rollback()
         finally:
             m.close()
         forrige = v1
-        for versjon, hash_, ventet in (
+        for versjon, gen, ventet in (
                 ("1.2.0", kilde1, "bundet"),
-                ("1.3.0", "ih-en-annen-generasjon", "borte"),
+                # En ANNEN generasjon under samme nummer — det gjenskapte
+                # tilfellet, uansett om innholdet er byte-likt.
+                ("1.3.0", kilde1 + 100000, "borte"),
                 ("1.4.0", None, "ubundet")):
             uid_n = "u-" + secrets.token_hex(4)
             c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
-            _rullbakkutkast(c, uid_n, pid2, versjon, v1, hash_)
+            _rullbakkutkast(c, uid_n, pid2, versjon, v1, gen)
             _runde(c, uid_n, pakrevd_antall_godkjennere=1,
                    risikoklasse="INNSNEVRER")
             _attest(c, uid_n, "uavh", False)
@@ -1544,6 +1559,35 @@ def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     finally:
         rt.close()
         c.close()
+
+    # Tredje lag: DET ER NETTOPP GJENSKAPINGEN som må skille seg. Samme
+    # nummer og BYTE-LIKT innhold — altså identisk `innholds_hash` — er en
+    # ny rad, og generasjonen sier det. Hadde opphavet vært hashen, ville
+    # den gjenskapte raden svart «bundet» på en kopi den aldri ga.
+    m = _c()
+    try:
+        _, pid3 = _ny()
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+
+        def _sett_inn_og_les():
+            m.execute(
+                "INSERT INTO policyer (tenant, policy_id, versjon,"
+                " innholds_hash, status, innhold, aktiv) VALUES"
+                " (%s,%s,'1','ih-likt','produksjon','{}'::jsonb,false)",
+                (TEN, pid3))
+            return m.execute(
+                "SELECT generasjon FROM policyer WHERE tenant=%s AND"
+                " policy_id=%s AND versjon='1'", (TEN, pid3)).fetchone()[0]
+
+        gen1 = _sett_inn_og_les()
+        m.execute("DELETE FROM policyer WHERE tenant=%s AND policy_id=%s"
+                  " AND versjon='1'", (TEN, pid3))
+        gen2 = _sett_inn_og_les()
+        assert gen2 != gen1, \
+            f"port 27: den gjenskapte raden arvet generasjonen {gen1}"
+        m.rollback()
+    finally:
+        m.close()
 
 
 @pg

@@ -324,6 +324,42 @@ ALTER TABLE policyer ADD COLUMN aktiveringskilde TEXT
 -- `opprettet` blir stående som den ærligste tilnærmingen vi har.
 ALTER TABLE policyer ADD COLUMN bootstrap_aktivert_ts TIMESTAMPTZ;
 
+-- GENERASJONEN: radens ugjenbrukelige identitet (Codex P2).
+--
+-- `(policy_id, versjon)` er IKKE en identitet over tid: `slett_ubrukt_policy`
+-- frigjør uttrykkelig nummeret, og det kan gjenskapes. Innholdshashen er
+-- heller ikke nok — `test_identisk_gjenskapt_policy_gjenoppliver_ikke_slettet_
+-- generasjon` viser nettopp at samme dokument kan settes inn igjen under
+-- samme nummer, altså med IDENTISK hash og som en ANNEN generasjon. Alt som
+-- utledes av radens innhold kan gjenskapes; det eneste som ikke kan det, er
+-- et tall ingen får igjen.
+--
+-- Sekvensen gir det. Kolonnen skrives ved INSERT og aldri etterpå: en
+-- upsert (`registrer`) rører den ikke, så en re-registrering beholder
+-- generasjonen sin, mens en sletting + gjenskaping får en ny. Rullbakkens
+-- opphav peker hit, og «bundet» blir da en påstand som ikke kan
+-- fabrikkeres i ettertid.
+--
+-- Radene som alt finnes får hver sin verdi når kolonnen legges til:
+-- `nextval` er volatil, så Postgres skriver tabellen om og evaluerer
+-- defaulten PER RAD.
+CREATE SEQUENCE policyer_generasjon_seq;
+ALTER TABLE policyer ADD COLUMN generasjon BIGINT NOT NULL
+  DEFAULT nextval('policyer_generasjon_seq');
+ALTER TABLE policyer ADD CONSTRAINT policyer_generasjon_unik
+  UNIQUE (generasjon);
+
+-- Generasjonen er identiteten, og en identitet som kan skrives om er ingen.
+-- Samme form som `policyer_operasjon_immutabel`.
+CREATE TRIGGER policyer_generasjon_immutabel
+  BEFORE UPDATE ON policyer
+  FOR EACH ROW WHEN (NEW.generasjon IS DISTINCT FROM OLD.generasjon)
+  EXECUTE FUNCTION avvis_endring();
+
+-- `aktiver_policy` er SECURITY DEFINER og setter inn som policy-eieren;
+-- uten USAGE på sekvensen kan den ikke skrive raden i det hele tatt.
+GRANT USAGE ON SEQUENCE policyer_generasjon_seq TO disponit_policy_eier;
+
 -- Alt som fantes da migrasjonen landet ER historikk, per definisjon.
 -- Backfillen nederst løfter de radene den klarer å binde til 'styrt'.
 --
@@ -825,28 +861,31 @@ RESET ROLE;
 -- aldri kom fra. Påstanden er da fabrikkert på nøyaktig samme måte som en
 -- flyttet `rollback_av_versjon` ville vært — bare uten at noen skrev noe.
 --
--- Kilden bindes derfor med generasjonens EGEN identitet: innholdshashen,
--- slik den var i det kopien ble tatt. Hashen er valgt framfor
--- `aktivert_av_operasjon` fordi den finnes for HVER rad — også de
--- migrerte, ubundne og bootstrappede, som ingen hendelse har — og fordi
--- det er nettopp innholdet en rullbakk kopierer.
+-- Kilden bindes derfor med radens GENERASJON (se `policyer.generasjon`) —
+-- et sekvenstall ingen får igjen. Innholdshashen er ikke nok: samme
+-- dokument kan settes inn på nytt under samme nummer etter en sletting,
+-- og hashen ville da sagt «bundet» om en generasjon kopien aldri kom fra.
+-- Generasjonen er valgt framfor `aktivert_av_operasjon` fordi den finnes
+-- for HVER rad — også de migrerte, ubundne og bootstrappede, som ingen
+-- hendelse har.
 --
 -- NULL betyr «kilden er ikke bundet»: rullbakkutkast fra før 047 har
--- ingen hash, og historikken sier det i stedet for å påstå noe den ikke
--- kan vite. En hash uten et versjonsnummer er derimot meningsløs.
-ALTER TABLE policyutkast ADD COLUMN rollback_av_hash TEXT;
-ALTER TABLE policyutkast ADD CONSTRAINT utkast_rullbakkehash_krever_versjon
-  CHECK (rollback_av_hash IS NULL OR rollback_av_versjon IS NOT NULL);
+-- ingen generasjon, og historikken sier det i stedet for å påstå noe den
+-- ikke kan vite. En generasjon uten et versjonsnummer er derimot
+-- meningsløs.
+ALTER TABLE policyutkast ADD COLUMN rollback_av_generasjon BIGINT;
+ALTER TABLE policyutkast ADD CONSTRAINT utkast_rullbakkekilde_krever_versjon
+  CHECK (rollback_av_generasjon IS NULL OR rollback_av_versjon IS NOT NULL);
 
--- Begge halvdelene av opphavet fryses av SAMME vakt: en hash som kunne
--- flyttes alene ville gjort «bundet» til en påstand kjøretidsrollen kan
--- skrive seg til, og et nummer som kunne flyttes alene er funnet over.
+-- Begge halvdelene av opphavet fryses av SAMME vakt: en generasjon som
+-- kunne flyttes alene ville gjort «bundet» til en påstand kjøretidsrollen
+-- kan skrive seg til, og et nummer som kunne flyttes alene er funnet over.
 CREATE TRIGGER policyutkast_rullbakkeopphav_immutabel
   BEFORE UPDATE ON policyutkast
   FOR EACH ROW WHEN (NEW.rollback_av_versjon
                      IS DISTINCT FROM OLD.rollback_av_versjon
-                     OR NEW.rollback_av_hash
-                     IS DISTINCT FROM OLD.rollback_av_hash)
+                     OR NEW.rollback_av_generasjon
+                     IS DISTINCT FROM OLD.rollback_av_generasjon)
   EXECUTE FUNCTION avvis_endring();
 
 CREATE OR REPLACE FUNCTION policyversjoner_for_tenant(
@@ -880,16 +919,19 @@ BEGIN
            p.aktivert_av_operasjon, u.rollback_av_versjon,
            -- TILSTANDEN til opphavet, ikke bare nummeret (Codex P2):
            --   bundet  — generasjonen kopien ble tatt fra ER den som
-           --             bærer nummeret nå (hashene er like)
+           --             bærer nummeret nå (samme `policyer.generasjon`)
            --   borte   — nummeret finnes ikke lenger, eller bærer en ANNEN
-           --             generasjon: kilden er slettet/gjenskapt
-           --   ubundet — rullbakk fra før hashen fantes; kilden kan ikke
-           --             avgjøres, og flaten sier det i stedet for å gjette
+           --             generasjon: kilden er slettet/gjenskapt. Også når
+           --             det gjenskapte innholdet er BYTE-LIKT — det er en
+           --             ny rad, og opphavspåstanden gjelder den gamle.
+           --   ubundet — rullbakk fra før generasjonen fantes; kilden kan
+           --             ikke avgjøres, og flaten sier det i stedet for å
+           --             gjette
            -- NULL når versjonen ikke er en rullbakk i det hele tatt.
            CASE WHEN u.rollback_av_versjon IS NULL THEN NULL
-                WHEN u.rollback_av_hash IS NULL THEN 'ubundet'
-                WHEN rb.innholds_hash IS NOT DISTINCT FROM u.rollback_av_hash
-                     THEN 'bundet'
+                WHEN u.rollback_av_generasjon IS NULL THEN 'ubundet'
+                WHEN rb.generasjon IS NOT DISTINCT FROM
+                     u.rollback_av_generasjon THEN 'bundet'
                 ELSE 'borte' END::TEXT,
            -- Veien raden kom inn. Rader fra før 047 bærer 'historisk';
            -- NULL kan bare forekomme på direkte innsatte fixture-rader.
@@ -971,21 +1013,15 @@ BEGIN
     RETURN v;
 END $$;
 
--- Kilden for en RULLBAKK: innholdet OG generasjonens egen identitet, lest
--- i SAMME snapshot (Codex P2). Rullbakken lagrer `rollback_av_hash`, og
--- den må være radens egen `innholds_hash` — ikke en hash regnet på nytt
--- over innholdet. To grunner:
---   * ETT oppslag, ingen glippe: hentes innholdet nå og identiteten
---     senere, kan `(policy_id, versjon)` ha blitt slettet og gjenskapt i
---     mellomtiden, og kopien ville blitt bundet til en generasjon den
---     aldri kom fra — nøyaktig løgnen kolonnen finnes for å hindre.
---   * SAMME MÅLESTOKK: historikken sammenligner mot `policyer.innholds_hash`.
---     En hash regnet ut på nytt er bare lik den så lenge hver eneste rad ble
---     hashet med dagens kanoniske regler; en eldre rad ville da sett
---     «borte» ut selv med kilden i behold.
+-- Kilden for en RULLBAKK: innholdet OG radens generasjon, lest i SAMME
+-- snapshot (Codex P2). Rullbakken lagrer `rollback_av_generasjon`, og de
+-- to må komme fra ETT oppslag: hentes innholdet nå og identiteten senere,
+-- kan `(policy_id, versjon)` ha blitt slettet og gjenskapt i mellomtiden,
+-- og kopien ville blitt bundet til en generasjon den aldri kom fra —
+-- nøyaktig løgnen kolonnen finnes for å hindre.
 CREATE OR REPLACE FUNCTION policyversjon_kilde(
     p_tenant TEXT, p_policy_id TEXT, p_versjon TEXT)
-RETURNS TABLE (innhold JSONB, innholds_hash TEXT)
+RETURNS TABLE (innhold JSONB, generasjon BIGINT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -996,7 +1032,7 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege';
     END IF;
     RETURN QUERY
-    SELECT p.innhold, p.innholds_hash FROM public.policyer p
+    SELECT p.innhold, p.generasjon FROM public.policyer p
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
        AND p.versjon = p_versjon;
     IF NOT FOUND THEN

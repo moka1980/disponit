@@ -273,9 +273,10 @@ def opprett_utkast_endepunkt(tjeneste, request):
         policy_id = body.get("policy_id")
         innhold = body.get("innhold")
         rollback_av = body.get("rollback_av_versjon")
-        # Kildegenerasjonens egen `innholds_hash`, hentet sammen med
-        # innholdet under. Den er opphavet utkastet lagrer (047, Codex P2).
-        kilde_hash = None
+        # Kilderadens GENERASJON, hentet sammen med innholdet under. Den
+        # er opphavet utkastet lagrer (047, Codex P2) — et sekvenstall
+        # ingen får igjen, i motsetning til nummeret og innholdet.
+        kilde_gen = None
         # 047 (§3, port 22): en rullbakk er en KOPI av versjonen den peker
         # på — serveren henter innholdet selv gjennom eier-defineren, og
         # et klientinnhold som avviker avvises: `rollback_av_versjon = N`
@@ -314,12 +315,12 @@ def opprett_utkast_endepunkt(tjeneste, request):
                 conn.rollback()
                 return _feil("idempotenskonflikt", rid)
             try:
-                # Innholdet OG generasjonens identitet i ETT oppslag: de
-                # to må komme fra samme rad i samme snapshot, ellers kan
-                # opphavet peke på en annen generasjon enn kopien (047,
-                # Codex P2). Se `policyversjon_kilde`.
-                hentet, kilde_hash = conn.execute(
-                    "SELECT innhold, innholds_hash FROM"
+                # Innholdet OG generasjonen i ETT oppslag: de to må komme
+                # fra samme rad i samme snapshot, ellers kan opphavet peke
+                # på en annen generasjon enn kopien (047, Codex P2). Se
+                # `policyversjon_kilde`.
+                hentet, kilde_gen = conn.execute(
+                    "SELECT innhold, generasjon FROM"
                     " policyversjon_kilde(%s, %s, %s)",
                     (tenant, policy_id, rollback_av)).fetchone()
             except psycopg.errors.NoDataFound:
@@ -343,7 +344,7 @@ def opprett_utkast_endepunkt(tjeneste, request):
             policy_id=policy_id, innhold=innhold,
             idempotency_key=idem, input_hash=ih,
             rollback_av_versjon=rollback_av,
-            rollback_av_hash=kilde_hash)
+            rollback_av_generasjon=kilde_gen)
         return _ok(res, rid, 201)
 
     return _med_conn(tjeneste, rid, kjor)
