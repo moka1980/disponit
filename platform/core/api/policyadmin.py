@@ -306,39 +306,72 @@ def _krev_malautorisasjonsvilkar(conn: psycopg.Connection,
                                  innhold) -> list[str]:
     """Feilliste: `ekstern_lesing`-handlinger uten plattformvilkår (047).
 
-    Klassen leses fra REGISTERET (oppdragstype → kontraktens
-    sideeffektklasse), og vilkårskravet fra `malautorisasjonsvilkar` —
-    ingen hardkodet liste (port 32). En handling hvis id ikke er en
-    registrert oppdragstype er ikke denne portens sak: den er enten en
-    intern handling (motoren) eller fanges av bestillingsveien."""
+    HVILKE handlinger porten gjelder for avgjøres av `_er_ekstern_lesing` —
+    den SAMME klassifiseringen aktiveringsporten bruker (Codex P2): koden
+    først, registeret bare der koden ikke selv stiller kravet. Et rent
+    registeroppslag her var ikke bare en annen mening om samme handling,
+    det var en STILLERE mening. For en kodefestet type som
+    `kontroll.wcag.nettsted` med manglende eller feil registerrad
+    (`sideeffektfri`) krevde `_krev_ekstern_lesing_port` fortsatt et
+    målautorisasjonsvilkår, mens valideringen her fant ingen ekstern
+    handling i det hele tatt og FRØS utkastet som gyldig. Eier møtte da
+    kravet først ved rundeåpning eller attestering — etter frysingen, der
+    innholdet ikke lenger kan rettes, bare erstattes. Hele poenget med å
+    måle kravet i valideringen er at det skal komme mens utkastet ennå er
+    redigerbart, og da må de to veiene klassifisere likt.
+
+    Vilkårskravet leses fra `malautorisasjonsvilkar` — ingen hardkodet
+    liste (port 32) — og måles mot typens `malautorisasjonsdomene`, samme
+    domenebinding som aktiveringsporten krever. En handling som er
+    ekstern lesing UTEN en målautorisasjonsbærende oppdragstype kan ikke
+    aktiveres i det hele tatt (porten avviser den med
+    `malautorisasjon_mangler`); den får derfor sin egen linje her i
+    stedet for å bli stående som tilsynelatende gyldig.
+
+    En handling hvis id verken er en kodefestet type eller en registrert
+    oppdragstype er ikke denne portens sak: den er enten en intern
+    handling (motoren) eller fanges av bestillingsveien."""
     if not isinstance(innhold, dict):
         return []
     handlinger = innhold.get("handlinger")
     if not isinstance(handlinger, list):
         return []
-    ider = [h.get("id") for h in handlinger
-            if isinstance(h, dict) and isinstance(h.get("id"), str)]
-    if not ider:
-        return []
-    plattform = {r[0] for r in conn.execute(
-        "SELECT vilkar_type FROM malautorisasjonsvilkar").fetchall()}
-    eksterne = {r[0] for r in conn.execute(
-        "SELECT r.oppdragstype FROM oppdragstype_register r"
-        "  JOIN modulkontrakt k ON k.modul_id = r.eiermodul"
-        "   AND k.kontraktversjon = r.kontraktversjon"
-        " WHERE r.oppdragstype = ANY(%s)"
-        "   AND k.sideeffektklasse = 'ekstern_lesing'",
-        (ider,)).fetchall()}
     feil = []
     for h in handlinger:
-        if not isinstance(h, dict) or h.get("id") not in eksterne:
+        if not isinstance(h, dict):
             continue
-        navn = {v.get("navn") for v in (h.get("vilkaar") or [])
-                if isinstance(v, dict)}
-        if not (navn & plattform):
+        ekstern, t = _er_ekstern_lesing(conn, h)
+        if not ekstern:
+            continue
+        hid = h.get("id") if isinstance(h.get("id"), str) else "?"
+        if t is None or not t.krever_malautorisasjon \
+                or t.malautorisasjonsdomene is None:
             feil.append(
-                f"handling '{h['id']}': ekstern_lesing krever et "
-                f"målautorisasjonsvilkår ({', '.join(sorted(plattform))})")
+                f"handling '{hid}': ekstern_lesing uten"
+                " målautorisasjonsbærende oppdragstype — det finnes ikke"
+                " noe målautorisasjonsvilkår som kan telle, og handlingen"
+                " kan ikke aktiveres")
+            continue
+        # Ustrukturert `vilkaar` er en skjemasak og er alt rapportert av
+        # `valider_ny_policy`; her leses bare det som ER lesbart, slik at
+        # feillisten ikke drukner i en TypeError fra et halvferdig utkast.
+        vilkaar = h.get("vilkaar") if isinstance(h.get("vilkaar"), list) \
+            else []
+        navn = [v.get("navn") for v in vilkaar
+                if isinstance(v, dict) and isinstance(v.get("navn"), str)]
+        navn += [v for v in vilkaar if isinstance(v, str)]
+        if not navn or conn.execute(
+                "SELECT 1 FROM malautorisasjonsvilkar WHERE"
+                " vilkar_type = ANY(%s) AND maldomene = %s LIMIT 1",
+                (navn, t.malautorisasjonsdomene)).fetchone() is None:
+            lovlige = [r[0] for r in conn.execute(
+                "SELECT vilkar_type FROM malautorisasjonsvilkar"
+                " WHERE maldomene = %s ORDER BY vilkar_type",
+                (t.malautorisasjonsdomene,)).fetchall()]
+            feil.append(
+                f"handling '{hid}': ekstern_lesing krever et "
+                f"målautorisasjonsvilkår for {t.malautorisasjonsdomene} "
+                f"({', '.join(lovlige) or 'ingen registrert ennå'})")
     return feil
 
 
@@ -1556,6 +1589,46 @@ def _typens_sideeffektklasse(conn, oppdragstype: str) -> str | None:
     return rad[0] if rad else None
 
 
+def _er_ekstern_lesing(conn, h) -> tuple[bool, object | None]:
+    """Er DENNE handlingen ekstern lesing? -> (ja/nei, kodefestet type).
+
+    Den ENE autoritative klassifiseringen, delt av aktiveringsporten
+    (`_krev_ekstern_lesing_port`) og valideringen
+    (`_krev_malautorisasjonsvilkar`) (Codex P2). To kopier av regelen var
+    to steder å bli uenige, og uenigheten hadde en retning: valideringen
+    var den mildeste, så et utkast kunne fryses som gyldig og først dø i
+    porten — etter at innholdet ikke lenger kunne rettes.
+
+    Rekkefølgen er KODEN FØRST. Bærer den kodefestede typen
+    `krever_malautorisasjon`, ER dette ekstern lesing uansett hva
+    `modulkontrakt` sier — også når registeret ikke har rukket å si noe
+    (Codex P1) og også når det sier `sideeffektfri` (Codex P2, runde 19).
+    En registrering kan legge krav TIL, aldri fjerne et krav koden
+    stiller.
+
+    Sier koden ingenting, avgjør registeret: typens EGEN kontrakt
+    (`_typens_sideeffektklasse`, join på hele identiteten) når typen er
+    registrert, ellers den konservative modulbrede prøven på den
+    DEKLARERTE eiermodulen. `handlinger[].modul` er policyens navnerom
+    (`M-23`) og kan bare brukes når koden ikke kjenner typen i det hele
+    tatt."""
+    import oppdragskontrakt
+    hid = h.get("id") if isinstance(h.get("id"), str) else ""
+    t = oppdragskontrakt.type_for_handling(hid)
+    klasse = _typens_sideeffektklasse(conn, t.navn) if t is not None else None
+    if t is not None and t.krever_malautorisasjon:
+        return True, t
+    if klasse is None:
+        eier = t.eiermodul if t is not None and t.eiermodul else h.get("modul")
+        if not isinstance(eier, str) or not conn.execute(
+                "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
+                " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
+                (eier,)).fetchone():
+            return False, t
+        return True, t
+    return klasse == "ekstern_lesing", t
+
+
 def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
     aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
@@ -1613,62 +1686,18 @@ def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
     for h in (ny_innhold.get("handlinger") or []):
         if not isinstance(h, dict):
             continue
-        modul = h.get("modul")
         hid = h.get("id") if isinstance(h.get("id"), str) else ""
-        t = oppdragskontrakt.type_for_handling(hid)
-        klasse = (_typens_sideeffektklasse(conn, t.navn)
-                  if t is not None else None)
-        if t is not None and t.krever_malautorisasjon:
-            # Den KODEFESTEDE typen bærer målautorisasjonsbehov. Da gjelder
-            # porten, UANSETT hva registeret sier om klassen — også når
-            # registeret ikke har rukket å si noe (Codex P1) og når det sier
-            # noe ANNET (Codex P2, runde 19).
-            #
-            # Ingen registrert rad er nåbart (Codex P1):
-            # `registrer-m-wcag-audit.py` kjøres manuelt, og deploy-porten
-            # sjekker bare DB-rader som mangler i koden, ikke omvendt.
-            #
-            # FEIL registrert klasse er nåbart på samme vis (Codex P2): binder
-            # en støttet administrativ registrering `kontroll.wcag.nettsted`
-            # til en `sideeffektfri`-kontrakt, oppdager deploy-porten det
-            # først ved neste `opp.sh`. I mellomtiden står tjenestene oppe, og
-            # `elif klasse != 'ekstern_lesing'` under `continue`-et forbi BÅDE
-            # frekvenstaket og målautorisasjonen for nettopp den handlingen de
-            # er bygget for. En feilregistrering skal ikke kunne SVEKKE et krav
-            # koden stiller — den kan bare legge krav til.
-            #
-            # Den gamle veien falt her tilbake på den modulbrede prøven — og
-            # den prøven leser `handlinger[].modul`, som er POLICYENS
-            # modulidentifikator (`M-23`), et annet navnerom enn
-            # modulregisteret (`m_wcag_audit`). Oppslaget fant derfor
-            # ingenting, handlingen ble klassifisert som ikke-ekstern, og
-            # BEGGE portene ble hoppet over for nettopp den handlingstypen de
-            # er bygget for.
-            #
-            # Koden er autoriteten når registeret ikke har tatt igjen, eller
-            # sier noe annet: deklarasjonen `krever_malautorisasjon` sier at
-            # dette ER en ekstern lesing, og da gjelder porten uansett hva som
-            # står i `modul` og i `modulkontrakt`. Fail-closed, uavhengig av
-            # navnerommet — og uten en vei der en registrering utenfor koden
-            # kan slå av et krav koden stiller.
-            pass
-        elif klasse is None:
-            # Ingen registrert type OG ingen kodefestet målautorisasjon: da
-            # faller vi tilbake på den konservative modulbrede prøven. Er
-            # eiermodulen deklarert i koden, er DEN identiteten registeret
-            # kjenner — `handlinger[].modul` er policyens navnerom og kan
-            # ikke slås opp i `modulkontrakt`.
-            eier = (t.eiermodul if t is not None and t.eiermodul else modul)
-            if not isinstance(eier, str) or not conn.execute(
-                    "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
-                    " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
-                    (eier,)).fetchone():
-                continue
-        elif klasse != "ekstern_lesing":
-            # Typen handlingen faktisk er registrert som eies av en annen
-            # kontrakt, OG koden stiller ikke selv kravet (den grenen er tatt
-            # over). At modulen ET STED har en gammel ekstern_lesing-rad sier
-            # ingenting om DENNE handlingen.
+        # Klassifiseringen bor i `_er_ekstern_lesing` — KODEN FØRST, med
+        # registeret som konservativ reserve. Den er delt med valideringen
+        # (`_krev_malautorisasjonsvilkar`) nettopp fordi to kopier av regelen
+        # var to steder å bli uenige, og valideringen var den mildeste av dem
+        # (Codex P2): et utkast med en kodefestet `krever_malautorisasjon`-type
+        # og en manglende eller feilregistrert kontraktrad ble frosset som
+        # gyldig og døde først her, etter at innholdet ikke lenger kunne
+        # rettes. Se docstringen der for hvorfor retningen — registeret kan
+        # legge krav TIL, aldri fjerne et krav koden stiller — er hele poenget.
+        ekstern, t = _er_ekstern_lesing(conn, h)
+        if not ekstern:
             continue
         grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
             else {}
