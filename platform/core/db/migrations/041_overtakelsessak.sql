@@ -454,23 +454,25 @@ BEGIN
         RAISE EXCEPTION 'utfordrer/generasjon endret uten saksrevisjon+1 (% -> %)',
           OLD.saksrevisjon, NEW.saksrevisjon;
       END IF;
-      -- ... OG PAGINERINGSNØKKELEN FØLGER MED (Codex P2). Skiftet gir
-      -- saken en ny utfordrer, altså ferskt arbeid i en ny kø. Ble
-      -- `saksrevisjon_ts` stående, ville saken lagt seg bak en cursor
-      -- den nye utfordreren alt hadde fått utstedt — og aldri blitt
-      -- vist. Nøkkelen er bare til å stole på hvis den ikke KAN stå
-      -- stille over et skifte.
-      IF NEW.saksrevisjon_ts <= OLD.saksrevisjon_ts THEN
-        RAISE EXCEPTION 'skifte uten at saksrevisjon_ts går fram (% -> %)',
-          OLD.saksrevisjon_ts, NEW.saksrevisjon_ts;
-      END IF;
+      -- ... OG PAGINERINGSNØKKELEN SETTES HER (Codex P2). Skiftet gir
+      -- saken en ny utfordrer, altså ferskt arbeid i en NY kø. Ble
+      -- `saksrevisjon_ts` stående, ville saken lagt seg bak en cursor den
+      -- nye utfordreren alt hadde fått utstedt — og aldri blitt vist.
+      --
+      -- Triggeren SETTER den, og krever den ikke av skriveren. Et krav
+      -- ville bare bundet `sikre_overtakelsessak`; her er hver eneste
+      -- skriver bundet, også direkte DML fra tabelleieren — samme
+      -- disiplin som resten av 041s vakter måles etter. `GREATEST(...)`
+      -- gjør framgangen uunngåelig også når to skifter deler mikrosekund.
+      NEW.saksrevisjon_ts := GREATEST(
+          clock_timestamp(), OLD.saksrevisjon_ts + interval '1 microsecond');
     ELSIF NEW.saksrevisjon IS DISTINCT FROM OLD.saksrevisjon THEN
       RAISE EXCEPTION 'saksrevisjon endret uten utfordrer-/generasjonsskifte';
-    ELSIF NEW.saksrevisjon_ts IS DISTINCT FROM OLD.saksrevisjon_ts THEN
-      -- Motsatt vei: nøkkelen flytter seg KUN med skiftet. Ellers ville
-      -- en statusoppdatering kunne skyve saken framover i køen — eller,
-      -- verre, bakover, forbi en utstedt cursor.
-      RAISE EXCEPTION 'saksrevisjon_ts endret uten utfordrer-/generasjonsskifte';
+    ELSE
+      -- Motsatt vei: nøkkelen flytter seg KUN med skiftet. Ellers kunne en
+      -- statusoppdatering skjøvet saken framover i køen — eller, verre,
+      -- bakover, forbi en utstedt cursor.
+      NEW.saksrevisjon_ts := OLD.saksrevisjon_ts;
     END IF;
     IF NEW.hostname_ref IS DISTINCT FROM OLD.hostname_ref THEN
       RAISE EXCEPTION 'saksidentitet kan ikke endres';
@@ -918,16 +920,10 @@ BEGIN
                autorisasjonsgenerasjon = p_generasjon,
                hendelse_a = p_hendelse_a, hendelse_b = p_hendelse_b,
                saksrevisjon = saksrevisjon + 1,
-               -- Pagineringsnøkkelen følger revisjonen (Codex P2): for
-               -- den NYE utfordreren er dette ferskt arbeid, og en rad
-               -- som beholdt sitt gamle `ts` ville dukket opp bak en
-               -- cursor hen alt hadde fått. `GREATEST(...)` og ikke bare
-               -- `clock_timestamp()`: §6 krever at nøkkelen går FRAM, og
-               -- to skifter i samme mikrosekund skal ikke kunne felle en
-               -- ekte overtakelse.
-               saksrevisjon_ts = GREATEST(
-                   clock_timestamp(),
-                   saksrevisjon_ts + interval '1 microsecond'),
+               -- `saksrevisjon_ts` settes IKKE her (Codex P2): §6s
+               -- revisjonsbinding flytter den fram på ethvert skifte, og
+               -- da gjelder invarianten for hver skriver — ikke bare for
+               -- denne funksjonen. Én kolonne, én eier.
                loggpost_id = v_logg,
                referansepayload = v_payload
          WHERE id = v_sak;
