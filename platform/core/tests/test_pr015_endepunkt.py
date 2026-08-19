@@ -74,8 +74,14 @@ def _overtakelsessak(hostname, taper="taper-tenant-pr015"):
 
 
 def _post(klient, sak, cookie, csrf, **over):
+    """`saksrevisjon` er 0 fordi `_overtakelsessak` lager en FERSK sak.
+
+    En sak fødes på revisjon 0 og flyttes kun av et utfordrer-/generasjons-
+    skifte (041 §6); ingen av testene her skifter utfordrer. Overstyres med
+    `_post(..., saksrevisjon=...)` av den som måler gjerdet.
+    """
     from api import sesjon as sesjonmodul
-    body = {"utfall": "godkjenn", "vinnende_tenant": TEN}
+    body = {"utfall": "godkjenn", "vinnende_tenant": TEN, "saksrevisjon": 0}
     body.update(over)
     return klient.post(f"/v1/unntak/{sak}/domeneattestasjon", json=body,
                        headers={"X-Disponit-CSRF": csrf},
@@ -85,7 +91,8 @@ def _post(klient, sak, cookie, csrf, **over):
 @pg
 def test_uautentisert_attestasjon_avvises(klient):
     r = klient.post("/v1/unntak/1/domeneattestasjon",
-                    json={"utfall": "godkjenn", "vinnende_tenant": "t"})
+                    json={"utfall": "godkjenn", "vinnende_tenant": "t",
+                          "saksrevisjon": 0})
     assert r.status_code == 401
     assert r.json()["feil"] == "token_ugyldig"
 
@@ -181,8 +188,9 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
     a = _admin()
     try:
         a.execute(
-            "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',%s,%s,%s,%s)",
-            (TEN, sak, h, TEN, "aktor-avvis", gen, avviser))
+            "SELECT avgi_overtakelse_attestasjon"
+            "(%s,%s,%s,'avvis',%s,%s,%s,%s,%s)",
+            (TEN, sak, h, TEN, "aktor-avvis", gen, avviser, 0))
         a.commit()
     finally:
         a.close()
@@ -192,6 +200,67 @@ def test_attestasjon_pa_avgjort_sak_avvises(klient):
     r = _post(klient, sak, cookie, csrf)
     assert r.status_code == 409, r.text
     assert r.json()["feil"] == "attestasjon_avvist"
+
+
+@pg
+def test_attestasjon_uten_saksrevisjon_er_feilformet(klient):
+    """Codex P1: revisjonen er ikke valgfri.
+
+    Var feltet valgfritt, kunne enhver klient velge bort gjerdet ved å la
+    være å sende det — og en gammel fane er nettopp en klient som ikke vet
+    hvilken revisjon saken står på. Fail-closed, og FØR autentisering:
+    formen er formen.
+    """
+    for kropp in ({"utfall": "godkjenn", "vinnende_tenant": "t"},
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": None},
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": "0"},
+                  # `True` er en `int` i Python — men ikke en revisjon.
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": True},
+                  {"utfall": "godkjenn", "vinnende_tenant": "t",
+                   "saksrevisjon": -1}):
+        r = klient.post("/v1/unntak/1/domeneattestasjon", json=kropp)
+        assert r.status_code == 400, (kropp, r.text)
+        assert r.json()["feil"] == "request_feilformet", kropp
+
+
+@pg
+def test_foreldet_saksrevisjon_avvises(klient):
+    """Codex P1: stemmen telles i konflikten attestanten SÅ.
+
+    Saken her står på revisjon 0. En fane som ble tegnet på en eldre
+    revisjon sender det tallet den viste — og skal avvises, selv om alt
+    annet ved raden (sakskilde, utfordrer, generasjon) stemmer. Det er
+    hele poenget: `unntak_id` overlever A→B→C→B, så id-en alene sier
+    ingenting om HVILKEN tvist stemmen gjelder.
+
+    Svaret er `attestasjon_avvist` — saken er avløst av en nyere
+    konflikt, som er nøyaktig det den feilveien beskriver. Køen lastes på
+    nytt av flaten, så neste stemme avgis på den gjeldende revisjonen.
+    """
+    h = _host()
+    sak = _overtakelsessak(h)
+    bid = _medlem(None, "pr015-foreldet", roller="ARRAY['domeneadjudikator']")
+    cookie, csrf = _browsersesjon(bid)
+    r = _post(klient, sak, cookie, csrf, saksrevisjon=99)
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "attestasjon_avvist"
+    # INGEN stemme ble avgitt: gjerdet står FØR motoren, ikke etter.
+    m = _mig()
+    try:
+        _sett_kontekst(m, TEN)
+        n = int(m.execute(
+            "SELECT count(*) FROM overtakelse_attestasjon WHERE sak_id=%s",
+            (sak,)).fetchone()[0])
+    finally:
+        m.close()
+    assert n == 0, "den foreldede stemmen ble avgitt likevel"
+    # ... og den ferske revisjonen slipper til på samme sak.
+    r2 = _post(klient, sak, cookie, csrf)
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["feil"] == "krever_to_attestasjoner"
 
 
 # ===========================================================================

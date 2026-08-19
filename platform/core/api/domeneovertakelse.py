@@ -187,8 +187,8 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
 
 
 def slaa_opp_sak(conn, unntak_id: int,
-                 utfordrer_tenant: str) -> tuple[str, int, str] | None:
-    """(hostname, generasjon, utfordrer_tenant) for en ÅPEN overtakelsessak.
+                 utfordrer_tenant: str) -> tuple[str, int, str, int] | None:
+    """(hostname, generasjon, utfordrer_tenant, saksrevisjon) for en sak.
 
     041: saken bor på `__plattform_domener` og bærer feltene sine som
     KOLONNER (`payload_type='referanse'`) — hostnavnet og generasjonen leses
@@ -213,18 +213,23 @@ def slaa_opp_sak(conn, unntak_id: int,
     A kunne skille «finnes ikke» fra «finnes, men er ikke din» på Bs og Cs
     saker, og lese ut vertsnavn og parter for tvister hen aldri kunne
     røre. Filteret i WHERE gir samme svar for begge: `None`.
+
+    `saksrevisjon` leses MED (Codex P1): den er «hvilken konflikt saken
+    bærer nå», og kalleren skal kunne holde den mot revisjonen klienten
+    faktisk fikk vist før stemmen sendes videre.
     """
     conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
     rad = conn.execute(
-        "SELECT hostname_ref, autorisasjonsgenerasjon, utfordrer_tenant"
+        "SELECT hostname_ref, autorisasjonsgenerasjon, utfordrer_tenant,"
+        "       saksrevisjon"
         "  FROM unntak"
         " WHERE id=%s AND sakskilde='domeneovertakelse'"
         "   AND utfordrer_tenant=%s",
         (unntak_id, utfordrer_tenant)).fetchone()
     conn.execute("RESET ROLE")
-    if rad is None or rad[0] is None or rad[1] is None or rad[2] is None:
+    if rad is None or any(v is None for v in rad):
         return None
-    return rad[0], int(rad[1]), rad[2]
+    return rad[0], int(rad[1]), rad[2], int(rad[3])
 
 
 def attester_endepunkt(tjeneste, request, unntak_id: int):
@@ -259,6 +264,15 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
     vinnende = body.get("vinnende_tenant")
     if utfall not in ("godkjenn", "avvis") or not isinstance(vinnende, str) \
             or not vinnende.strip():
+        return _feilsvar("request_feilformet", rid)
+    # REVISJONEN ER OBLIGATORISK (Codex P1). Stemmen skal telles i den
+    # konflikten attestanten LESTE, ikke i den saken tilfeldigvis bærer når
+    # kroppen ankommer — og et felt som var valgfritt ville gjort gjerdet
+    # til noe en klient kunne velge bort ved å utelate det. `bool` er en
+    # `int` i Python og lukkes ute eksplisitt: `True` er ikke en revisjon.
+    saksrevisjon = body.get("saksrevisjon")
+    if isinstance(saksrevisjon, bool) or not isinstance(saksrevisjon, int) \
+            or saksrevisjon < 0:
         return _feilsvar("request_feilformet", rid)
 
     try:
@@ -295,7 +309,25 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
         conn.rollback()
         if sak is None:
             return _feilsvar("ikke_funnet", rid)
-        hostname, generasjon_ved_opprettelse, utfordrer_tenant = sak
+        hostname, generasjon_ved_opprettelse, utfordrer_tenant, rev = sak
+        # SAKEN MÅ STÅ DER FLATEN SÅ DEN (Codex P1). `unntak_id` er stabil
+        # gjennom A→B→C→B: en adjudikatorfane som har stått åpen peker på
+        # samme sak, men på en helt annen tvist — annen motpart, annen
+        # generasjon. Uten dette leddet leste endepunktet BEGGE feltene
+        # ferskt av raden og avga stemmen i den nye konflikten, så to gamle
+        # faner kunne fullføre en positiv tildeling ingen av dem hadde
+        # sett. Nettopp det fire øyne finnes for.
+        #
+        # Svaret er `attestasjon_avvist`: saken er avløst av en nyere
+        # konflikt, som er akkurat det den feilveien beskriver — og flaten
+        # laster køen på nytt uansett utfall, så neste forsøk står på den
+        # gjeldende revisjonen. Det ENDELIGE gjerdet er ikke her, men i
+        # `avgi_overtakelse_attestasjon` under hostname-låsen: et skifte som
+        # commiter etter dette oppslaget kan ikke smyge seg inn foran
+        # stemmen. Dette leddet gir den billige, legible avvisningen før
+        # noen kontekst settes.
+        if rev != saksrevisjon:
+            return _feilsvar("attestasjon_avvist", rid)
         # Attestasjonen avgis i UTFORDRERENS saksunivers: `p_tenant` er
         # utfordreren saken navngir (019-kontrakten). Den leses fra RADEN og
         # ikke fra sesjonen, selv om oppslaget over alt har gjerdet dem
@@ -313,11 +345,15 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             # hostname-låsen i funksjonen (Codex): uten den ville en sak som
             # overlevde en reapplikasjon fått stemmer telt mot den GJELDENDE
             # generasjonen — en konflikt ingen attestant faktisk har sett.
+            # `saksrevisjon` er KLIENTENS tall, ikke radens: gjerdet skal måle
+            # det flaten viste mot det saken står på, og et tall lest herfra
+            # ville bare målt raden mot seg selv.
             svar = conn.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT avgi_overtakelse_attestasjon"
+                "(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (utfordrer_tenant, unntak_id, hostname, utfall,
                  vinnende.strip(), aktor, generasjon_ved_opprettelse,
-                 bruker_id)).fetchone()[0]
+                 bruker_id, saksrevisjon)).fetchone()[0]
             # Codex (P2): tallet leses i SAMME transaksjon som stemmen, mens
             # domeneraden fortsatt er låst av funksjonen — ikke etter commit.
             # Etter commit kunne en samtidig andre godkjenning ha fullført

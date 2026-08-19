@@ -78,12 +78,20 @@ def _domeneovertakelsessak(migrator):
     return uid
 
 
-def _post_domeneattestasjon(klient, uid, cookie, csrf, utfall, vinnende):
+def _post_domeneattestasjon(klient, uid, cookie, csrf, utfall, vinnende,
+                            rev=0):
+    """`rev` er revisjonen stemmen avgis PÅ (041 §21, Codex P1).
+
+    Standarden er 0 fordi `_domeneovertakelsessak` lager en FERSK sak, og en
+    sak fødes på revisjon 0 — den flyttes kun av et utfordrer-/generasjons-
+    skifte (§6). Ingen av testene her skifter utfordrer.
+    """
     from api import sesjon as sesjonmodul
 
     return klient.post(
         f"/v1/unntak/{uid}/domeneattestasjon",
-        json={"utfall": utfall, "vinnende_tenant": vinnende},
+        json={"utfall": utfall, "vinnende_tenant": vinnende,
+              "saksrevisjon": rev},
         headers={"X-Disponit-CSRF": csrf},
         cookies={sesjonmodul.C_SESJON: cookie})
 

@@ -365,7 +365,11 @@ def test_arbeiderrollen_har_ikke_bevislos_revalidering(migrator):
 # stedet for å hentes fra katalogen: en test som spør basen hvilke funksjoner
 # 019 laget, ville godtatt at en av dem forsvant.
 DEFAULT_DENY = [
-    "avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text)",
+    # 041 §21: signaturen bærer nå revisjonen attestanten SÅ (Codex P1).
+    # 019s åtte-arg utgave er DROPPET, ikke overlastet — står den igjen,
+    # finnes det en ugjerdet vei til den samme stemmen.
+    "avgi_overtakelse_attestasjon"
+    "(text,bigint,text,text,text,text,bigint,text,bigint)",
     "degrader_forbigatte_utfordrere(text,text)",
     "antall_avgitte_attestasjoner(bigint,bigint)",
     "lukk_overtakelsessak(text,bigint,text,text)",
@@ -743,20 +747,49 @@ def _sett_medlemskap(tenant, bid, **felt):
         m.close()
 
 
+def _saksrevisjon(sak):
+    """Sakens GJELDENDE revisjon.
+
+    Egen migrator-forbindelse: saken bor på `__plattform_domener`, og 041
+    §9.1s RESTRICTIVE `reservert_navnerom` slipper bare claimeren,
+    adjudikatoren og TABELLEIEREN inn i det navnerommet —
+    `disponit_domains_admin` (som `_attester` kaller funksjoner med) ser
+    ingen rad der.
+    """
+    from db.pg import koble
+    c = koble(MIGRATOR_DSN)
+    try:
+        _sett_kontekst(c, "__plattform_domener")
+        rad = c.execute(
+            "SELECT saksrevisjon FROM unntak WHERE tenant=%s AND id=%s"
+            "  AND sakskilde='domeneovertakelse'",
+            ("__plattform_domener", sak)).fetchone()
+        c.rollback()
+    finally:
+        c.close()
+    return int(rad[0]) if rad else None
+
+
 def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen,
-              bruker_id=None):
+              bruker_id=None, rev=None):
     """Avgi én attestasjon. `aktor` er evidensstrengen, `bruker_id` prinsipalen.
 
     Uten et eksplisitt `bruker_id` opprettes en adjudikator for `aktor` —
     testene som bare trenger «to distinkte, autoriserte aktører» slipper å
     gjenta oppsettet, mens de som måler reautoriseringen styrer det selv.
+
+    `rev` er revisjonen stemmen avgis PÅ (Codex P1). Uten et eksplisitt tall
+    leses sakens gjeldende — det er «en attestant som nettopp lastet køen»,
+    altså normaltilfellet. Testen som måler gjerdet sender sitt eget.
     """
     if bruker_id is None:
         bruker_id = _adjudikator(tenant, aktor)
+    if rev is None:
+        rev = _saksrevisjon(sak)
     r = a.execute(
-        "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+        "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (tenant, sak, hostname, utfall, vinner, aktor, gen,
-         bruker_id)).fetchone()[0]
+         bruker_id, rev)).fetchone()[0]
     a.commit()
     return r
 
@@ -875,9 +908,10 @@ def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
                   gen, bid)
         with pytest.raises(psycopg.errors.UniqueViolation):
             a.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT avgi_overtakelse_attestasjon"
+                "(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen,
-                 bid))
+                 bid, _saksrevisjon(sak)))
         a.rollback()
     finally:
         a.close()
@@ -971,9 +1005,11 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
     try:
         with pytest.raises(psycopg.Error):
             a.execute(
-                "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s)",
+                "SELECT avgi_overtakelse_attestasjon"
+                "(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2",
-                 gen_b, _adjudikator(ANNEN_TENANT, "aktor-2")))
+                 gen_b, _adjudikator(ANNEN_TENANT, "aktor-2"),
+                 _saksrevisjon(sak)))
         a.rollback()
     finally:
         a.close()
@@ -1089,6 +1125,67 @@ def test_skifte_navnerommer_stemmene_pa_saksrevisjonen(migrator):
         return r
     assert _rev(ANNEN_TENANT) == [(0, 1)], _rev(ANNEN_TENANT)
     assert _rev(TREDJE_TENANT) == [(1, 2)], _rev(TREDJE_TENANT)
+
+
+@pg
+def test_stemmen_teller_i_konflikten_attestanten_sa(migrator):
+    """Codex P1 (041 §21): en gammel fane avgjør ikke en ny tvist.
+
+    A→B→C→B er det ekte vinduet. `unntak.id` er STABIL gjennom hele
+    syklusen — saken skifter utfordrer, den lukkes ikke — så en
+    adjudikatorflate som har stått åpen hos B peker fortsatt på samme sak,
+    og B er igjen utfordreren. Alt endepunktet leste ferskt av raden
+    stemte derfor: sakskilden, utfordreren, generasjonen. Bare ÉN ting
+    stemte ikke — hvilken konflikt attestanten faktisk hadde lest og
+    bekreftet: «B utfordrer A», mens raden nå sa «B utfordrer C».
+
+    Uten et gjerde landet stemmen i den nye konflikten, og to gamle faner
+    kunne fullført en positiv tildeling ingen av dem hadde sett. Nettopp
+    den avgjørelsen fire øyne finnes for.
+
+    PORTEN MÅLER REVISJONEN, IKKE GENERASJONEN. Den foreldede stemmen
+    sendes med den GJELDENDE generasjonen: da er foreldelsesgjerdet fra
+    019 tilfreds, og det som feller stemmen kan bare være revisjonen.
+    Motsatt vei måles i samme åndedrag — den ferske fanen slipper til, så
+    porten ikke er oppfylt av at alt blir avvist.
+    """
+    h = _host()
+    sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
+    rev_gammel = _saksrevisjon(sak)
+    a = _admin()
+    try:
+        # C tar hostnavnet fra B → samme sak, revisjon+1, utfordrer C.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TREDJE_TENANT, h))
+        a.commit()
+        # ... og B tar det TILBAKE: ny generasjon på Bs rad, revisjon+1
+        # igjen. Saken navngir nå B som utfordrer og C som tapende part —
+        # samme id, samme utfordrer, en helt annen tvist.
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert svar == f"konflikt:{TREDJE_TENANT}", svar
+        gen_ny = _dkrow(migrator, ANNEN_TENANT, h)[1]
+        rev_ny = _saksrevisjon(sak)
+        assert rev_ny > rev_gammel, (rev_gammel, rev_ny)
+
+        # DEN GAMLE FANEN: gjeldende generasjon, foreldet revisjon.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                      "gammel-fane", gen_ny, rev=rev_gammel)
+        a.rollback()
+        # ... og den som faktisk leste den gjeldende konflikten slipper til.
+        assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                         "fersk-fane", gen_ny, rev=rev_ny) == "venter"
+    finally:
+        a.close()
+    # Ingen stemme fra den gamle fanen ble stående i det nye navnerommet.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    rader = migrator.execute(
+        "SELECT saksrevisjon, count(*) FROM overtakelse_attestasjon"
+        " WHERE sak_id=%s GROUP BY 1 ORDER BY 1", (sak,)).fetchall()
+    migrator.rollback()
+    assert rader == [(rev_ny, 1)], rader
 
 
 @pg

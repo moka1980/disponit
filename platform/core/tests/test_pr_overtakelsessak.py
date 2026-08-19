@@ -299,11 +299,12 @@ def test_port5_terminal_sak_ny_konflikt_ny_sak(migrator):
     sak1, gen1 = _konflikt(migrator, h)
     bid = _adjudikator(ANNEN_TENANT, "port5-adjudikator")
     # Avgjør: avvis (én stemme holder) → saken lukkes, B tilbakekalles.
+    rev1 = int(_sakrad(migrator, sak1)[4])
     adm = _admin()
     try:
         adm.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',"
-                    "%s,'aktor-1',%s,%s)",
-                    (ANNEN_TENANT, sak1, h, TENANT, gen1, bid))
+                    "%s,'aktor-1',%s,%s,%s)",
+                    (ANNEN_TENANT, sak1, h, TENANT, gen1, bid, rev1))
         adm.commit()
         # Ny konflikt på samme hostname: B (tilbakekalt m/ motpart) søker igjen.
         svar = adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -336,12 +337,13 @@ def test_andre_overtakelse_varsler_pa_nytt(migrator):
     sak1, gen1 = _konflikt(migrator, h)
     assert _varsler(migrator, ANNEN_TENANT, bid, h) == 1
 
+    rev1 = int(_sakrad(migrator, sak1)[4])
     adm = _admin()
     try:
         # Avvis (én stemme holder) → B tilbakekalt, saken lukket.
         adm.execute("SELECT avgi_overtakelse_attestasjon(%s,%s,%s,'avvis',"
-                    "%s,'aktor-varselport',%s,%s)",
-                    (ANNEN_TENANT, sak1, h, TENANT, gen1, bid))
+                    "%s,'aktor-varselport',%s,%s,%s)",
+                    (ANNEN_TENANT, sak1, h, TENANT, gen1, bid, rev1))
         adm.commit()
         # ... og B søker på nytt: en NY konflikt, ny generasjon, ny sak.
         svar = adm.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
@@ -1345,6 +1347,107 @@ def test_adjudikatorrollen_er_en_forutsetning_ikke_en_mulighet():
     assert (opp.index("pg_auth_members")
             < opp.index("HERFRA MUTERES SYSTEMET")), \
         "medlemskapsporten står etter første mutasjon"
+
+
+def test_stemmen_bindes_til_revisjonen_flaten_viste():
+    """Codex P1: attestasjonen skal telles i konflikten attestanten SÅ.
+
+    Kjeden går fra tabellcellen til hostname-låsen, og hvert ledd kan
+    brytes for seg: viser flaten revisjonen uten å sende den, sender
+    klienten den uten at API-et bryr seg, eller sender API-et radens eget
+    tall i stedet for klientens — da måler gjerdet raden mot seg selv og
+    er ikke noe gjerde. Porten måler HELE kjeden, statisk.
+
+    MUTASJONEN SOM DREPER DENNE: la 019s åtte-arg utgave stå igjen som
+    overlast, la API-et lese revisjonen av raden i stedet for av kroppen,
+    eller la flaten slutte å sende `s.saksrevisjon`.
+    """
+    import re
+    from pathlib import Path
+
+    rot = Path(__file__).resolve().parents[3]
+    les = lambda p: (rot / p).read_text(encoding="utf-8")   # noqa: E731
+    flat = lambda s: re.sub(r"\s+", " ", s)                 # noqa: E731
+
+    sql = les("platform/core/db/migrations/041_overtakelsessak.sql")
+    fsql = flat(sql)
+    ny = ("avgi_overtakelse_attestasjon( TEXT, BIGINT, TEXT, TEXT, TEXT, "
+          "TEXT, BIGINT, TEXT, BIGINT)")
+    gammel = ("avgi_overtakelse_attestasjon( TEXT, BIGINT, TEXT, TEXT, "
+              "TEXT, TEXT, BIGINT, TEXT)")
+    # 019s ugjerdede utgave er DROPPET, ikke overlastet: står begge igjen,
+    # finnes det fortsatt en vei til stemmen uten revisjonen.
+    assert f"DROP FUNCTION IF EXISTS {gammel}" in fsql, \
+        "den åtte-arg utgaven droppes ikke — overlasten står igjen"
+    assert fsql.count(gammel) == 1, \
+        "den åtte-arg signaturen brukes til mer enn DROP-en"
+    # ... og default-deny gjenopprettes på den NYE (DROP tok ACL-en med seg).
+    assert f"REVOKE ALL ON FUNCTION {ny} FROM PUBLIC" in fsql, \
+        "den nye signaturen fødes med EXECUTE for PUBLIC"
+    for rolle in ("disponit", "disponit_domains_admin"):
+        assert f"GRANT EXECUTE ON FUNCTION {ny} TO {rolle}" in fsql, rolle
+
+    # Gjerdet står INNE i funksjonen, altså under hostname-låsen — ikke i
+    # et lag som kan omgås, og ikke i et vindu et skifte kan smyge seg
+    # gjennom.
+    kropp = sql[sql.index("p_forventet_saksrevisjon BIGINT)"):]
+    kropp = kropp[:kropp.index("\nEND $$;")]
+    assert "pg_advisory_xact_lock" in kropp, "gjerdet står utenfor låsen"
+    assert "v_rev IS DISTINCT FROM p_forventet_saksrevisjon" in kropp, \
+        "revisjonen sammenlignes ikke med sakens"
+    assert "p_forventet_saksrevisjon IS NULL" in kropp, \
+        "en kaller uten revisjon slipper gjennom"
+
+    # API-et sender KLIENTENS tall. Leses det av raden, måler gjerdet
+    # raden mot seg selv.
+    api = les("platform/core/api/domeneovertakelse.py")
+    assert flat('body.get("saksrevisjon")') in flat(api), \
+        "endepunktet leser ikke revisjonen fra kroppen"
+    kall = api[api.index("SELECT avgi_overtakelse_attestasjon"):]
+    kall = kall[:kall.index("fetchone()")]
+    assert kall.count("%s") == 9, "kallet bærer ikke revisjonen"
+    assert flat(kall).rstrip().endswith("bruker_id, saksrevisjon)).")
+
+    # ... og flaten sender tallet den VISTE, ikke et den slår opp.
+    js = flat(les("platform/core/ui/static/js/flater/adjudikator.js"))
+    assert "avgiDomeneattestasjon(s.unntak_id, utfall, s.utfordrer_tenant, " \
+           "s.saksrevisjon)" in js, "knappen sender ikke radens revisjon"
+    assert flat(les("platform/core/ui/static/js/api.js")).count(
+        "vinnende_tenant: vinnendeTenant, saksrevisjon }") == 1, \
+        "klienten legger ikke revisjonen i kroppen"
+
+
+@pg
+def test_bare_den_gjerdede_attestasjonsveien_finnes(migrator):
+    """Den levende siden: ÉN funksjon i basen, og den krever revisjonen.
+
+    Filen kan droppe overlasten aldri så pent — det som avgjør er hva som
+    står i katalogen etter at 041 har kjørt.
+    """
+    rader = migrator.execute(
+        "SELECT pg_get_function_identity_arguments(p.oid)"
+        "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+        " WHERE p.proname = 'avgi_overtakelse_attestasjon'"
+        "   AND n.nspname = 'public'").fetchall()
+    migrator.rollback()
+    assert [r[0] for r in rader] == [
+        "text, bigint, text, text, text, text, bigint, text, bigint"], rader
+    q = lambda sql: migrator.execute(sql).fetchone()[0]     # noqa: E731
+    sig = ("avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,"
+           "bigint,text,bigint)")
+    assert q(f"SELECT has_function_privilege('disponit','{sig}','EXECUTE')"), \
+        "runtime mistet EXECUTE i DROP-en — hver attestasjon ville feilet"
+    # En NULL `proacl` er ikke «ingen rettigheter» — det er standard-ACL-en,
+    # og for en funksjon er den EXECUTE for PUBLIC (019s egen felle). Porten
+    # krever derfor at ACL-en er MATERIALISERT og at PUBLIC ikke står i den.
+    assert q(f"SELECT proacl IS NOT NULL FROM pg_proc"
+             f" WHERE oid='{sig}'::regprocedure"), \
+        "ACL-en er ikke materialisert — standarden er EXECUTE for PUBLIC"
+    assert not q("SELECT EXISTS (SELECT 1 FROM pg_proc p, "
+                 f"aclexplode(p.proacl) a WHERE p.oid='{sig}'::regprocedure"
+                 "   AND a.grantee = 0 AND a.privilege_type='EXECUTE')"), \
+        "den nyskapte funksjonen står med EXECUTE for PUBLIC"
+    migrator.rollback()
 
 
 @pg

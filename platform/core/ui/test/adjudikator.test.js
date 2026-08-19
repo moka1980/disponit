@@ -163,8 +163,14 @@ test("adjudikatorkøen: avgjørelsen kan tas i produktet, ikke bare i API-et",
   await vent(() => KALL.some((k) => k.metode === "POST"));
   const post = KALL.find((k) => k.metode === "POST");
   assert.equal(post.sti, ATTEST);
+  // REVISJONEN ER MED (Codex P1). `unntak_id` overlever A→B→C→B, så en
+  // fane som har stått åpen peker på samme sak men på en annen tvist.
+  // Sendes ikke tallet flaten VISTE, avgir knappen stemme i den konflikten
+  // som står der nå — og to gamle faner kunne fullført en positiv
+  // tildeling ingen av dem hadde sett.
   assert.deepEqual(JSON.parse(post.kropp),
-    { utfall: "avvis", vinnende_tenant: SAK.utfordrer_tenant });
+    { utfall: "avvis", vinnende_tenant: SAK.utfordrer_tenant,
+      saksrevisjon: SAK.saksrevisjon });
   assert.equal(post.headers["X-Disponit-CSRF"], "csrf-token");
   // ... og køen lastes på nytt, så saken ikke blir stående som åpen.
   await vent(() => KALL.filter((k) => k.sti === SAKER).length >= 2);

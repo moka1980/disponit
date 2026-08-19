@@ -2140,8 +2140,33 @@ RESET ROLE;
 -- KOPI av 019 §3.1s kropp, diff-endret på de fem stedene navnerommet
 -- brukes. Alt annet — låsen, foreldelsen, reautoriseringen, tersklene —
 -- er uendret.
+--
+-- STEMMEN BINDES TIL REVISJONEN ATTESTANTEN SÅ (Codex P1). Navnerommet
+-- over gjorde stemmene entydige, men det var funksjonen SELV som leste
+-- hvilken revisjon saken sto på — og API-et som leste hvilken generasjon
+-- den gjaldt. Begge leste NÅ. En adjudikatorflate som sto åpen mens saken
+-- syklet A→B→C→B beholdt dermed en knapp som pekte på samme `unntak.id`,
+-- men på en helt annen konflikt: hen leste og bekreftet «B utfordrer A»,
+-- og stemmen ble talt i «B utfordrer C». To gamle faner kunne på den
+-- måten fullføre en positiv tildeling ingen av dem hadde sett — nøyaktig
+-- den avgjørelsen fire-øyne-kravet finnes for.
+--
+-- `p_forventet_saksrevisjon` er derfor det flaten VISTE, sendt med av
+-- klienten og håndhevet HER, under hostname-låsen, ved siden av
+-- generasjonsgjerdet. Låsen er det som gjør det til et gjerde og ikke en
+-- sjekk: et skifte som commiter mellom API-ets oppslag og stemmen kan
+-- ikke smyge seg imellom. Sakens revisjon (og ikke generasjonen alene) er
+-- målestokken, fordi det er DEN §6 gjør strengt monoton per sak — en
+-- generasjon er domeneradens, og to ulike konflikter kan bære samme tall
+-- på hver sin rad.
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_domene_eier;
+
+-- Arity endres, så CREATE OR REPLACE kan ikke bære den: 019s åtte-arg
+-- utgave må DROPPES, ellers ville begge stått igjen som overlaster og en
+-- kaller som glemte revisjonen stille truffet den gamle, ugjerdede veien.
+DROP FUNCTION IF EXISTS avgi_overtakelse_attestasjon(
+    TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT);
 
 CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
     p_tenant               TEXT,     -- utfordreren (B) — saken navngir hen
@@ -2151,7 +2176,8 @@ CREATE OR REPLACE FUNCTION avgi_overtakelse_attestasjon(
     p_vinnende_tenant      TEXT,
     p_aktor                TEXT,
     p_forventet_generasjon BIGINT,   -- domeneradens generasjon saken gjelder
-    p_bruker_id            TEXT)     -- prinsipalen bak `p_aktor`
+    p_bruker_id            TEXT,     -- prinsipalen bak `p_aktor`
+    p_forventet_saksrevisjon BIGINT) -- revisjonen attestanten faktisk SÅ
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v_gen BIGINT; v_status TEXT; v_antall INT; v_avvik INT; v_authz INT;
         v_roller TEXT[]; v_bruker TEXT; v_rev BIGINT;
@@ -2191,6 +2217,21 @@ BEGIN
         RAISE EXCEPTION 'avgi_overtakelse_attestasjon: sak % gjelder ikke '
             '%/% på generasjon %', p_sak_id, p_tenant, p_hostname,
             p_forventet_generasjon USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- ...OG DEN MÅ STÅ PÅ REVISJONEN ATTESTANTEN SÅ (Codex P1). Uten dette
+    -- leddet er `v_rev` bare «hva saken er nå», og stemmen lander i den
+    -- konflikten som tilfeldigvis står der i det øyeblikket — ikke i den
+    -- attestanten leste, bekreftet og mente å avgjøre. Fail-closed på NULL:
+    -- en kaller som ikke navngir revisjonen har ikke sett noen.
+    IF p_forventet_saksrevisjon IS NULL THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: forventet saksrevisjon '
+            'mangler' USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_rev IS DISTINCT FROM p_forventet_saksrevisjon THEN
+        RAISE EXCEPTION 'avgi_overtakelse_attestasjon: sak % står på revisjon '
+            '%, attestasjonen gjelder %', p_sak_id, v_rev,
+            p_forventet_saksrevisjon USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
     IF p_utfall = 'godkjenn' AND p_vinnende_tenant IS DISTINCT FROM p_tenant THEN
@@ -2271,6 +2312,20 @@ BEGIN
     END IF;
     RETURN 'venter';
 END $$;
+
+-- DROP tok ACL-en med seg, og en nyskapt funksjon fødes med EXECUTE for
+-- PUBLIC (019 §-slutten er skrevet på nettopp den fellen). Default-deny
+-- gjenopprettes derfor her, på den NYE signaturen — ellers hadde 041
+-- åpnet igjen det 019 lukket, uten å nevne det.
+REVOKE ALL ON FUNCTION avgi_overtakelse_attestasjon(
+    TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, BIGINT) FROM PUBLIC;
+-- Staging kjører API-et som `disponit` (019, Codex P1): uten den direkte
+-- granten feiler ENHVER attestasjon med InsufficientPrivilege.
+GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(
+    TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, BIGINT) TO disponit;
+GRANT EXECUTE ON FUNCTION avgi_overtakelse_attestasjon(
+    TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT, BIGINT)
+    TO disponit_domains_admin;
 
 -- Tellingen bak `409 krever_to_attestasjoner` må dele navnerom med
 -- terskelen, ellers rapporterer svaret fremgang mot en annen konflikt enn

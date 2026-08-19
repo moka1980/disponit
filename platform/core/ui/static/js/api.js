@@ -224,7 +224,16 @@ export const leggTilDomene = (hostname) =>
 // legibelt — «1 av 2 avgitt», «du har alt stemt», «saken er avgjort eller
 // foreldet» — og en flate som gjorde det om til «noe gikk galt» ville
 // gjenskapt nøyaktig den stillheten PR-015 §4 finnes for å fjerne.
-export async function avgiDomeneattestasjon(unntakId, utfall, vinnendeTenant) {
+//
+// `saksrevisjon` ER EN DEL AV STEMMEN (Codex P1). Sak-id-en er stabil
+// gjennom A→B→C→B, så en fane som har stått åpen peker på samme sak, men
+// på en helt annen tvist — annen motpart, annen generasjon. Sendes ikke
+// revisjonen flaten VISTE, avgir knappen stemme i den konflikten som
+// tilfeldigvis står der nå, og to gamle faner kunne fullført en positiv
+// tildeling ingen av dem hadde sett. Basen håndhever den under
+// hostname-låsen; klienten er den eneste som kan si hva som ble lest.
+export async function avgiDomeneattestasjon(unntakId, utfall, vinnendeTenant,
+                                            saksrevisjon) {
   const csrf = lesCookie("__Host-disponit_csrf");
   let r;
   try {
@@ -236,7 +245,8 @@ export async function avgiDomeneattestasjon(unntakId, utfall, vinnendeTenant) {
         accept: "application/json",
         ...(csrf ? { "X-Disponit-CSRF": csrf } : {}),
       },
-      body: JSON.stringify({ utfall, vinnende_tenant: vinnendeTenant }),
+      body: JSON.stringify({ utfall, vinnende_tenant: vinnendeTenant,
+                             saksrevisjon }),
       redirect: "error",
     });
   } catch (e) {

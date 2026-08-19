@@ -73,8 +73,21 @@ export function visAdjudikator(hoved, ctx) {
     });
   }
 
+  // STEMMEN BÆRER REVISJONEN RADEN VISTE (Codex P1). `s` er raden
+  // adjudikatoren leste og bekreftet i dialogen, og `s.saksrevisjon` er
+  // nøyaktig det tallet tabellen viste i «Saksrevisjon»-kolonnen. Sak-id-en
+  // alene er ikke nok: den overlever A→B→C→B, så en fane som har stått
+  // åpen peker på samme sak men på en annen motpart og en annen
+  // generasjon. Uten revisjonen avga knappen stemme i den konflikten som
+  // sto der NÅ, og to gamle faner kunne fullført en positiv tildeling
+  // ingen av dem hadde sett — det fire øyne finnes for.
+  //
+  // Basen avgjør, ikke flaten: en foreldet revisjon svarer
+  // `attestasjon_avvist`, og `lastForste()` under henter køen slik den
+  // faktisk står, så neste stemme avgis på det som nå er saken.
   function avgi(s, utfall) {
-    return avgiDomeneattestasjon(s.unntak_id, utfall, s.utfordrer_tenant)
+    return avgiDomeneattestasjon(s.unntak_id, utfall, s.utfordrer_tenant,
+                                 s.saksrevisjon)
       .then((d) => {
         if (d && d.status === "avgjort") {
           meldLive(t(`ui.adjudikator.avgjort.${utfall}`)
