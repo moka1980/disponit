@@ -360,6 +360,36 @@ BEGIN
     IF NEW.tenant IS DISTINCT FROM OLD.tenant THEN
       RAISE EXCEPTION 'saken flyttes aldri mellom tenants';
     END IF;
+  ELSIF OLD.sakskilde = 'domeneovertakelse' THEN
+    -- SAKEN ER AVGJORT — LINEAGEN ER FROSSET (Codex P2). Gjerdet over
+    -- slipper taket når saken blir terminal, og det er riktig for
+    -- STATUSEN: en avgjort sak skal ikke kunne skifte utfordrer. Men
+    -- kolonnene selv sto igjen ubeskyttet, og de er 041s egne — den
+    -- kopierte kolonnelåsen (§11) kjenner dem ikke. En skriver med
+    -- claimer- eller domenelagsrettigheter kunne derfor skrive om hva
+    -- den avgjorte saken PÅSTO å ha handlet om: hvem som utfordret, hvem
+    -- som tapte, på hvilken generasjon, med hvilke hendelser. Beviset
+    -- for en fire-øyne-avgjørelse er verdiløst hvis det kan omskrives
+    -- etter at avgjørelsen er tatt.
+    --
+    -- `status`/`status_ts` og claim-feltene er IKKE med: de er ikke
+    -- lineage, og §11 og statusmaskinen i 007 er vaktene deres.
+    -- `loggpost_id` er med her OG i §11 — de to leddene er hver sin
+    -- halvdel av samme gjerde.
+    IF (NEW.loggpost_id            IS DISTINCT FROM OLD.loggpost_id)
+    OR (NEW.sakskilde              IS DISTINCT FROM OLD.sakskilde)
+    OR (NEW.hostname_ref           IS DISTINCT FROM OLD.hostname_ref)
+    OR (NEW.utfordrer_tenant       IS DISTINCT FROM OLD.utfordrer_tenant)
+    OR (NEW.tapt_tenant            IS DISTINCT FROM OLD.tapt_tenant)
+    OR (NEW.autorisasjonsgenerasjon IS DISTINCT FROM OLD.autorisasjonsgenerasjon)
+    OR (NEW.saksrevisjon           IS DISTINCT FROM OLD.saksrevisjon)
+    OR (NEW.hendelse_a             IS DISTINCT FROM OLD.hendelse_a)
+    OR (NEW.hendelse_b             IS DISTINCT FROM OLD.hendelse_b)
+    OR (NEW.referansepayload       IS DISTINCT FROM OLD.referansepayload)
+    THEN
+      RAISE EXCEPTION 'overtakelsessak % er avgjort — lineagen er frosset',
+        OLD.id;
+    END IF;
   END IF;
   RETURN NEW;
 END $$;
@@ -678,8 +708,19 @@ BEGIN
        -- (ny lineage, ny loggpost per revisjon) — den ENE lovlige
        -- endringen, og revisjonsbindings-triggeren håndhever at den
        -- bare skjer sammen med saksrevisjon+1.
+       --
+       -- KUN MENS SAKEN ER ÅPEN (Codex P2). Unntaket var skrevet på
+       -- sakskilden alene, altså også for en TERMINAL sak — og der
+       -- slipper revisjonsbindingen taket (§6 gjerder på `NOT
+       -- OLD.terminal`). En avgjort sak kunne dermed få loggposten sin
+       -- byttet ut, og siden lineagespeilet (§5) bare krever at saken og
+       -- loggposten er ENIGE, kunne utfordrer, motpart, generasjon,
+       -- hendelser og referansepayload skrives om i takt — uten at
+       -- statusen flyttet seg. Append-only-garantien var da en avtale,
+       -- ikke et gjerde.
        OR (NEW.loggpost_id IS DISTINCT FROM OLD.loggpost_id
-           AND OLD.sakskilde <> 'domeneovertakelse')
+           AND (OLD.sakskilde IS DISTINCT FROM 'domeneovertakelse'
+                OR OLD.terminal))
        OR NEW.handling IS DISTINCT FROM OLD.handling
        OR NEW.kategori IS DISTINCT FROM OLD.kategori
        OR NEW.sakstype IS DISTINCT FROM OLD.sakstype

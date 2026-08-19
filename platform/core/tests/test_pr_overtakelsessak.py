@@ -17,6 +17,7 @@ Portoversikt → test (numrene er klarsignalets):
   §2       test_kundeeid_overtakelsessak_avvises (Codex P2)
   6        (test_pr015_operativt_lag::test_port20_abc — skiftet, samme id)
   7–9      test_port7_8_9_revisjonsbindingen
+  §6/§11   test_avgjort_sak_har_frosset_lineage (Codex P2)
   12       test_port12_insert_uten_sakskilde_feiler
   13–18    test_port13_18_referansepayloadens_lukkede_kontrakt
   17/20    test_port17_20_hostnameparitet_db_og_python
@@ -605,6 +606,57 @@ def test_port7_8_9_revisjonsbindingen(migrator):
                        match="saksidentitet"):
         _oppdater("hostname_ref=%s", (_host(),))
     migrator.rollback()
+
+
+@pg
+def test_avgjort_sak_har_frosset_lineage(migrator):
+    """Codex P2: revisjonsbindingen slipper taket når saken blir terminal.
+
+    Det er riktig for STATUSEN — en avgjort sak skifter ikke utfordrer —
+    men kolonnene sto igjen ubeskyttet: de er 041s egne, og den kopierte
+    kolonnelåsen (§11) kjenner dem ikke. Siden lineagespeilet (§5) bare
+    krever at saken og loggposten er ENIGE, kunne en skriver bytte
+    loggpost og skrive om hvem som utfordret, hvem som tapte, på hvilken
+    generasjon og med hvilke hendelser — i takt, og uten at statusen
+    flyttet seg. Beviset for en fire-øyne-avgjørelse må ikke kunne
+    omskrives etter at avgjørelsen er tatt.
+
+    Som tabelleier med constraintene IMMEDIATE: gjerdet skal holde mot den
+    sterkeste skriveren, ikke bare mot den pene veien.
+    """
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+    _fjern_gjeldende_sak(migrator, sak)          # -> avvist, altså terminal
+
+    def _oppdater(sql_sett, args=()):
+        _sett_kontekst(migrator, PLATT)
+        migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        migrator.execute(
+            f"UPDATE unntak SET {sql_sett} WHERE tenant=%s AND id=%s",
+            (*args, PLATT, sak))
+
+    for sett, args in (("utfordrer_tenant='t-api-tredje'", ()),
+                       ("tapt_tenant='t-api-tredje'", ()),
+                       ("autorisasjonsgenerasjon=autorisasjonsgenerasjon+1", ()),
+                       ("saksrevisjon=saksrevisjon+1", ()),
+                       ("hendelse_a=hendelse_b", ()),
+                       ("referansepayload=NULL", ()),
+                       ("hostname_ref=%s", (_host(),))):
+        with pytest.raises(psycopg.errors.RaiseException,
+                           match="lineagen er frosset"):
+            _oppdater(sett, args)
+        migrator.rollback()
+
+    # `loggpost_id` tas av kolonnelåsen (§11) — den fyrer først. Unntaket
+    # den hadde for `domeneovertakelse` gjelder nå bare mens saken er ÅPEN.
+    with pytest.raises(psycopg.errors.RaiseException,
+                       match="kun status/status_ts"):
+        _oppdater("loggpost_id=loggpost_id+1")
+    migrator.rollback()
+
+    # ... og saken står urørt: ingen av forsøkene tok.
+    assert _sakrad(migrator, sak)[:7] == (
+        "avvist", ANNEN_TENANT, TENANT, gen, 0, h, "referanse")
 
 
 # ---------------------------------------------------------------------------
