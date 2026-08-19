@@ -38,6 +38,7 @@ Portkart (klarsignalets §9):
   21  test_port21_opplosningen_binder_malene_til_saken
   22  test_port22_kansellert_aarsak_kan_ikke_etterstemples
   23  test_port23_verifikasjonsoppdrag_blokkerer_avvis
+  24  test_port24_opplosningen_krever_attestert_avvisning
 """
 import json
 import secrets
@@ -101,6 +102,25 @@ def _hist(uid, hendelse):
         " AND hendelse=%s ORDER BY id", (TEN, uid, hendelse)).fetchall()
     m.rollback(); m.close()
     return rader
+
+
+def _attester_avvis(c, uid, aktor, *, runde=1):
+    """Det attesterte nei-et §7 nå krever (Codex P1, runde 8).
+
+    `behandle_unntakshandling` skriver denne raden (`_skriv_attestasjon`)
+    rett FØR den kaller oppløsningen, i samme transaksjon. Portene som
+    kaller `avvis_med_opplosning` direkte — for å måle låseorden,
+    saksbinding eller kappløp — må derfor gjøre det samme, ellers måler de
+    en vei som ikke lenger finnes. Kalles FØR `SET ROLE`: claimeren har kun
+    SELECT på tabellen, og skal aldri kunne skrive sitt eget mandat."""
+    c.execute(
+        "INSERT INTO menneskelig_attestasjon (tenant, unntak_id, runde,"
+        " operatorhandling, bruker_id, rolle, authz_version,"
+        " konvoluttversjon, konvolutt_hash, mac, mac_key_id, jti, utloper,"
+        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'operator',1,2,%s,%s,"
+        "'k-test',%s,now()+interval '1 hour',0)",
+        (TEN, uid, runde, aktor, secrets.token_hex(32),
+         secrets.token_hex(32), secrets.token_hex(16)))
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +269,10 @@ def test_port4_kvittering_vinner_409_oppdrag_utfort(conn):
     m.commit()
     # Oppløsningen møter den utførte raden — kansellerer INGENTING og
     # returnerer referansen mennesket beslutter på nytt med.
-    m.execute("SET ROLE disponit_m37_claimer")
     from db.pg import sett_kontekst
     sett_kontekst(m, TEN, "op4", "r-op4")
+    _attester_avvis(m, uid, "op4")
+    m.execute("SET ROLE disponit_m37_claimer")
     rad = m.execute(
         "SELECT utfall, oppdrag_id, kvitteringsref FROM"
         " avvis_med_opplosning(%s,%s,%s,'op4','r-op4')",
@@ -766,6 +787,7 @@ def test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas(conn):
         a = koble(MIGRATOR_DSN)
         try:
             sett_kontekst(a, TEN, "op17", "r-op17")
+            _attester_avvis(a, uid, "op17")
             a.execute("SET ROLE disponit_m37_claimer")
             resultat["rader"] = a.execute(
                 "SELECT utfall, kvitteringsref FROM"
@@ -940,6 +962,7 @@ def test_port21_opplosningen_binder_malene_til_saken(conn):
         #     skal heve, som runtime ville sett det.
         for mal in ([oid_b], [oid_a, oid_b]):
             sett_kontekst(m, TEN, "op21", "r-op21")
+            _attester_avvis(m, uid_a, "op21")
             m.execute("SET ROLE disponit_m37_claimer")
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
@@ -948,6 +971,7 @@ def test_port21_opplosningen_binder_malene_til_saken(conn):
 
         # (3) ... og den LOVLIGE mengden går fortsatt gjennom.
         sett_kontekst(m, TEN, "op21", "r-op21")
+        _attester_avvis(m, uid_a, "op21")
         m.execute("SET ROLE disponit_m37_claimer")
         res = m.execute(
             "SELECT utfall, oppdrag_id FROM avvis_med_opplosning(%s,%s,%s,"
@@ -992,6 +1016,7 @@ def test_port21_opplosningen_binder_malene_til_saken(conn):
     m.commit()
     try:
         sett_kontekst(m, TEN, "op21", "r-op21")
+        _attester_avvis(m, uid_c, "op21")
         m.execute("SET ROLE disponit_m37_claimer")
         res = m.execute(
             "SELECT utfall, oppdrag_id FROM avvis_med_opplosning(%s,%s,%s,"
@@ -1152,6 +1177,7 @@ def test_port23_verifikasjonsoppdrag_blokkerer_avvis(conn):
     m = koble(MIGRATOR_DSN)
     try:
         sett_kontekst(m, TEN, "op23", "r-op23")
+        _attester_avvis(m, uid, "op23")
         m.execute("SET ROLE disponit_m37_claimer")
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
@@ -1166,3 +1192,96 @@ def test_port23_verifikasjonsoppdrag_blokkerer_avvis(conn):
                      " WHERE tenant=%s AND oppdrag_id=%s",
                      (TEN, oid)).fetchall() == [("utstedt",)]
     m.rollback(); m.close()
+
+
+# ---------------------------------------------------------------------------
+# Port 24: EXECUTE er ikke kanselleringsautoritet — nei-et må være attestert
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port24_opplosningen_krever_attestert_avvisning(conn):
+    """Codex P1 (runde 8): granten ga autoritet uten et nei bak seg.
+
+    Tenantporten (16) binder HVEM kalleren er, saksbindingen (21) binder
+    HVA den peker på. Ingen av dem binder AUTORITETEN.
+    `avvis_med_opplosning` er grantet DIREKTE til runtime, så en feilende
+    eller kompromittert runtime-spørring kunne kalle den for et hvilket som
+    helst kjent sak/oppdrag-par i EGEN tenant og få claimer-eierens
+    rettigheter til å brenne kapabiliteten, fence claimet og kansellere
+    oppdraget med `menneskelig_avvis` — uten reautorisering, saksversjon,
+    runde, fire øyne eller MAC-signert konvolutt. Alle de stegene bor i
+    app-laget; en kaller som hopper over app-laget hopper over dem alle.
+
+    Beviset som SKAL kreves finnes allerede som en rad:
+    `menneskelig_attestasjon`, append-only, skrevet av
+    `behandle_unntakshandling` rett før kallet i SAMME transaksjon.
+
+    Tre målinger:
+      (a) uten attestasjon           → `insufficient_privilege`, ingenting rørt
+      (b) med et ekte, men ELDRE nei → samme, for beviset er ikke gjenbrukbart
+      (c) med attestasjonen i samme transaksjon → oppløsningen går
+
+    MUTASJONEN SOM DREPER DENNE: fjern `v_attest`-porten i §7 — eller bare
+    samtransaksjonskravet, som (b) fanger alene.
+    """
+    from db.pg import koble, sett_kontekst
+
+    uid = _oppsett(conn)
+    _medlem(conn, "op24")
+    oid = _oppdrag_id(uid, _oppdrag(uid, "plukket"))
+    jti = _kvittkap(oid)
+    foer = _oppdragsrad(oid)
+
+    m = koble(MIGRATOR_DSN)
+    try:
+        # (a) Runtime kaller rett på funksjonen. Ingen attestasjon.
+        sett_kontekst(m, TEN, "op24", "r-op24")
+        m.execute("SET ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                      "'op24','r-op24')", (TEN, uid, [oid]))
+        m.rollback()
+
+        # (b) Et EKTE nei, men fra en transaksjon som alt er committet:
+        #     angriperen finner en gammel attestasjon på saken og prøver å
+        #     ri på den. Samtransaksjonskravet stenger den.
+        sett_kontekst(m, TEN, "op24", "r-op24")
+        _attester_avvis(m, uid, "op24", runde=7)
+        m.commit()
+        sett_kontekst(m, TEN, "op24", "r-op24")
+        m.execute("SET ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                      "'op24','r-op24')", (TEN, uid, [oid]))
+        m.rollback()
+    finally:
+        m.close()
+
+    # Ingenting ble rørt: oppdraget står som før, kapabiliteten lever, og
+    # revisjonen har ingen hendelser fra et nei ingen har sagt.
+    assert _oppdragsrad(oid) == foer, (
+        f"kallet uten attestert nei rørte oppdraget: {foer} →"
+        f" {_oppdragsrad(oid)}")
+    mk = _mig()
+    mk.execute("SET ROLE disponit_m37_claimer")
+    assert mk.execute("SELECT status FROM kvitteringskapabiliteter"
+                      " WHERE jti=%s", (jti,)).fetchone()[0] == "utstedt"
+    mk.rollback(); mk.close()
+    assert _hist(uid, "oppdrag_kansellert") == []
+    assert _hist(uid, "oppdrag_fencet") == []
+
+    # (c) ... og den LOVLIGE formen — attestasjonen i samme transaksjon,
+    #     nøyaktig slik `behandle_unntakshandling` skriver den — går.
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, TEN, "op24", "r-op24")
+        _attester_avvis(m, uid, "op24", runde=8)
+        m.execute("SET ROLE disponit_m37_claimer")
+        res = m.execute(
+            "SELECT utfall, oppdrag_id FROM avvis_med_opplosning(%s,%s,%s,"
+            "'op24','r-op24')", (TEN, uid, [oid])).fetchall()
+        m.commit()
+    finally:
+        m.close()
+    assert res == [("kansellert", oid)], res
+    assert _oppdragsrad(oid)[:2] == ("kansellert", "menneskelig_avvis")

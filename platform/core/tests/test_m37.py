@@ -315,6 +315,26 @@ def _sett_kontekst(conn, tenant, aktor="test", rid="r"):
                  (tenant, aktor, rid))
 
 
+def _attester_avvis(conn, tenant, sak, aktor, *, runde=1):
+    """Det attesterte nei-et 043 §7 krever (Codex P1, runde 8).
+
+    `behandle_unntakshandling` skriver denne append-only raden
+    (`_skriv_attestasjon`) rett FØR den kaller `avvis_med_opplosning`, i
+    SAMME transaksjon, og funksjonen krever den nå: EXECUTE alene er ikke
+    kanselleringsautoritet. Testene som konstruerer nei-et direkte — for å
+    eie kappløpets timing — må derfor legge igjen det samme beviset.
+    Kalles FØR `SET ROLE disponit_m37_claimer`: claimeren har kun SELECT på
+    tabellen og skal aldri kunne skrive sitt eget mandat."""
+    conn.execute(
+        "INSERT INTO menneskelig_attestasjon (tenant, unntak_id, runde,"
+        " operatorhandling, bruker_id, rolle, authz_version,"
+        " konvoluttversjon, konvolutt_hash, mac, mac_key_id, jti, utloper,"
+        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'operator',1,2,%s,%s,"
+        "'k-test',%s,now()+interval '1 hour',0)",
+        (tenant, sak, runde, aktor, secrets.token_hex(32),
+         secrets.token_hex(32), secrets.token_hex(16)))
+
+
 #: Policy-id-en fixturene later som saken ble besluttet under.
 FIXTURE_POLICY_ID = "tjenestebedrift-no"
 
@@ -1853,6 +1873,7 @@ def test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen(
             # Mennesket sier nei — den EKTE oppløsningsveien: kapabiliteten
             # brennes `avvist`, claimet fences, oppdraget kanselleres.
             _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            _attester_avvis(migrator, TENANT, sak, "menneske")
             migrator.execute("SET ROLE disponit_m37_claimer")
             res = migrator.execute(
                 "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
@@ -1990,6 +2011,7 @@ def test_P1_sen_feilet_kvittering_foder_ingen_reversibilitetssak(
 
             # Mennesket sier nei — den EKTE oppløsningsveien.
             _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            _attester_avvis(migrator, TENANT, sak, "menneske")
             migrator.execute("SET ROLE disponit_m37_claimer")
             res = migrator.execute(
                 "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
@@ -2533,6 +2555,7 @@ def test_P1_kvitteringen_leser_tilstanden_paa_nytt_etter_sakslasen(
             # (3) Nei-et kjører den EKTE oppløsningsveien INNE i den samme
             #     transaksjonen: kapabiliteten brennes `avvist`, claimet
             #     fences, oppdraget kanselleres. Så committer det.
+            _attester_avvis(holder, TENANT, sak, "menneske")
             holder.execute("SET ROLE disponit_m37_claimer")
             res = holder.execute(
                 "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
@@ -2706,6 +2729,7 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
                 " (`unntak.oppdrag_id`) er ikke dekket")
 
             # (3) Nei-et kjører den EKTE oppløsningsveien og committer.
+            _attester_avvis(holder, TENANT, sak_b, "menneske")
             holder.execute("SET ROLE disponit_m37_claimer")
             res = holder.execute(
                 "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
@@ -2829,6 +2853,7 @@ def test_P1_nei_et_foder_ingen_falsk_evidensfristsak(migrator, miljo, token):
                 "UPDATE unntak SET status='under_behandling', claim_id=%s,"
                 " claim_generation=1, claim_utloper=now()+interval '600 s'"
                 " WHERE tenant=%s AND id=%s", (cid, TENANT, sak_b))
+            _attester_avvis(migrator, TENANT, sak_b, "menneske")
             migrator.execute("SET ROLE disponit_m37_claimer")
             res = migrator.execute(
                 "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"

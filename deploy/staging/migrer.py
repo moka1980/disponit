@@ -249,6 +249,15 @@ GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) TO {rolle};
 -- Selve oppløsningen: kalles av avvis-veien i unntaksbehandlingen, som er
 -- scope-gatet (`exceptions:handle`) i app-laget og tenantbundet i
 -- funksjonen selv.
+--
+-- EXECUTE er ikke kanselleringsautoritet (Codex P1, runde 8). Scopeporten
+-- og saksversjonen bor i app-laget; en runtime-spørring som omgår dem har
+-- fortsatt denne granten. Derfor krever funksjonen SELV en attestert
+-- avvisning: en `avvis`-rad i `menneskelig_attestasjon` på saken, av
+-- kalleren, skrevet i SAMME transaksjon (043 §7). Beviset er den samme
+-- append-only raden `behandle_unntakshandling` skriver rett før kallet, så
+-- den lovlige veien merker ingenting — og en direkte kaller får
+-- `insufficient_privilege` i stedet for et fencet og kansellert oppdrag.
 GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT) TO {rolle};
 """
 

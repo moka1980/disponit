@@ -446,6 +446,10 @@ END $$;
 -- Kontrakttabellen er migrator-eid (014 registrerer i eierens vindu kun
 -- funksjonene): lesegranten gis rett frem, av migrator selv.
 GRANT SELECT ON modulkontrakt TO disponit_m37_claimer;
+-- Og attestasjonstabellen (011, migrator-eid, ingen RLS) — §7 leser den for
+-- å se at et menneske faktisk sa nei. Kun SELECT: oppløsningsveien skal
+-- kunne LESE beviset, aldri skrive det.
+GRANT SELECT ON menneskelig_attestasjon TO disponit_m37_claimer;
 SET LOCAL ROLE disponit_m37_claimer;
 CREATE OR REPLACE FUNCTION reversibilitet_for_oppdrag(
     p_tenant TEXT, p_oppdrag_id BIGINT)
@@ -523,7 +527,7 @@ RETURNS TABLE(utfall TEXT, oppdrag_id BIGINT,
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
     r RECORD; v_jti TEXT; v_brenning TEXT; v_status TEXT; v_hash TEXT;
-    v_fremmede BIGINT[]; v_verifikasjon BIGINT[];
+    v_fremmede BIGINT[]; v_verifikasjon BIGINT[]; v_attest BIGINT;
 BEGIN
     -- TENANTPORTEN FØRST (Codex P1). Funksjonen er SECURITY DEFINER, eid av
     -- claimer-rollen, og gitt DIREKTE til runtime — akkurat som 038-veiene.
@@ -534,6 +538,55 @@ BEGIN
     -- runtime-kallbare definer-funksjoner bruker, og den står FØR enhver
     -- lesning eller lås: en avvist kaller skal ikke engang ha rørt en rad.
     PERFORM public.krev_tenantkontekst(p_tenant, 'avvis_med_opplosning');
+    -- ... OG NEI-ET MÅ VÆRE ATTESTERT (Codex P1, runde 8).
+    --
+    -- Tenantporten binder HVEM kalleren er; sakstilknytningen under binder
+    -- HVA den peker på. Ingen av dem binder AUTORITETEN: at et menneske
+    -- faktisk sa nei. Uten denne porten kunne en feilende eller
+    -- kompromittert runtime-spørring kalle funksjonen direkte for et
+    -- hvilket som helst kjent sak/oppdrag-par i EGEN tenant og få
+    -- claimer-eierens rettigheter til å brenne kvitteringskapabiliteten,
+    -- fence claimet, kansellere oppdraget og skrive `menneskelig_avvis` —
+    -- uten å ha passert ett eneste av stegene som GJØR et nei til et nei:
+    -- reautorisering av medlemskap/scope etter sakslåsen, den optimistiske
+    -- saksversjonen, runde-tilstanden, fire-øyne-unikheten og den
+    -- MAC-signerte konvolutten (`unntaksbehandling.py`, steg 1–8).
+    --
+    -- Beviset finnes allerede, og det er en RAD: `_skriv_attestasjon`
+    -- legger den append-only attestasjonen inn RETT FØR dette kallet, i
+    -- SAMME transaksjon. Porten krever derfor nøyaktig den raden — en
+    -- `avvis`-attestasjon på DENNE saken, av DENNE aktøren, skrevet av
+    -- DENNE transaksjonen. Samtransaksjonskravet er det som gjør beviset
+    -- ikke-gjenbrukbart: en angriper kan ikke ri på et ekte nei som ble
+    -- gitt tidligere (tabellen er append-only, så radene blir liggende),
+    -- og et nei som ruller tilbake tar attestasjonen med seg.
+    --
+    -- ÆRLIG OM RESTEN: MAC-nøkkelen bor i appens state, ikke i basen, så
+    -- databasen kan ikke VERIFISERE konvolutten — runtime har INSERT på
+    -- `menneskelig_attestasjon` og kan i prinsippet skrive en attestasjon
+    -- den selv har funnet på. Porten fjerner derfor ikke angrepet, den
+    -- flytter det: en omgåelse må nå etterlate en permanent, uforanderlig
+    -- rad som navngir aktør, rolle, runde, saksversjon og en MAC som ikke
+    -- verifiserer — altså evidens revisjonen kan finne, i stedet for en
+    -- kansellering uten spor av hvem som bestemte den. Skal den siste
+    -- resten lukkes, må MAC-verifiseringen selv flyttes inn i basen; det
+    -- er en egen endring med egen nøkkelhåndtering.
+    SELECT a.id INTO v_attest
+      FROM public.menneskelig_attestasjon a
+     WHERE a.tenant = p_tenant AND a.unntak_id = p_unntak_id
+       AND a.operatorhandling = 'avvis'
+       AND a.bruker_id = p_aktor
+       -- Rader skrevet av DENNE transaksjonen. `xmin` er 32-bits xid,
+       -- `pg_current_xact_id()` er 64-bits xid8 = epoke*2^32 + xid; modulo
+       -- gir tilbake xid-en uten å hvile på en cast mellom typene.
+       AND a.xmin::text::bigint
+           = pg_current_xact_id()::text::bigint % 4294967296
+     LIMIT 1;
+    IF v_attest IS NULL THEN
+        RAISE EXCEPTION 'avvis_med_opplosning: sak % mangler attestert'
+            ' avvisning fra % i denne transaksjonen', p_unntak_id, p_aktor
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
     IF p_forventet IS NULL OR array_length(p_forventet, 1) IS NULL THEN
         RAISE EXCEPTION 'avvis_med_opplosning: ingen oppdrag å løse opp'
             USING ERRCODE = 'invalid_parameter_value';
@@ -720,6 +773,11 @@ REVOKE ALL ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT,
     TEXT) FROM PUBLIC;
 -- Kalles av avvis-veien i unntaksbehandlingen (runtime, scope-gatet
 -- `exceptions:handle` i app-laget — samme scopeport som resten av veien).
+-- Granten hviler IKKE på app-lagets scopeport alene (Codex P1, runde 8):
+-- funksjonen krever selv en `avvis`-attestasjon på saken, av kalleren, i
+-- samme transaksjon. Uten den er kallet `insufficient_privilege` — en
+-- runtime som har mistet hodet får ingen kanselleringsautoritet av å ha
+-- EXECUTE.
 -- Betinget som de to over: `M37_RETTIGHETER_API` i kjøreren er den
 -- autoritative granten for den KONFIGURERTE runtime-rollen. Arbeideren står
 -- bevisst utenfor begge — et menneskelig nei er ikke arbeiderens vei.
