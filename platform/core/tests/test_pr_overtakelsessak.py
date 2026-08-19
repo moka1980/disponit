@@ -171,6 +171,33 @@ def test_port3_apen_sak_feil_utfordrer_eller_generasjon(migrator):
 
 
 @pg
+def test_apen_sak_med_feil_motpart_teller_ikke(migrator):
+    """Codex P2: MOTPARTEN er del av konfliktens identitet.
+
+    Vakten sammenlignet hostname, utfordrer og generasjon — men ikke hvem
+    tvisten står MOT. En rad som navngir A i `konflikt_motpart` kunne
+    dermed passere på en åpen sak som navngir B som tapende part: køen
+    ville vist B som forrige innehaver mens domenevedtaket gjaldt tvisten
+    mot A, og evidensen og overgangen ville beskrevet hver sin tvist.
+
+    Raden her er RADENS egen — samme utfordrer, samme generasjon — og det
+    ENESTE avviket er motparten.
+    """
+    h = _host()
+    _konflikt(migrator, h)   # åpen sak: utfordrer=ANNEN_TENANT, tapt=TENANT
+    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    migrator.execute(
+        "UPDATE domenekontroll SET konflikt_motpart='t-api-tredje',"
+        " status='avklaring_kreves'"
+        " WHERE tenant=%s AND hostname=%s AND autorisasjonsgenerasjon=%s",
+        (ANNEN_TENANT, h, gen))
+    with pytest.raises(psycopg.errors.RaiseException, match="uten gjeldende sak"):
+        migrator.commit()
+    migrator.rollback()
+
+
+@pg
 def test_port5_terminal_sak_ny_konflikt_ny_sak(migrator):
     """Port 5: en terminal sak gjenåpnes aldri — en ny konflikt får en NY
     sak, og den terminale står urørt."""

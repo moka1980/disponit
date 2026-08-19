@@ -114,12 +114,20 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
         # Saken bor på plattformtenanten — lesingen skjer i DENS
         # RLS-kontekst, aldri kundens.
         sett_kontekst(conn, PLATTFORMTENANT, "konfliktvakt", rid)
+        # Samme fire ledd som §7-vakten, og MOTPARTEN er ett av dem
+        # (Codex P2): en sak som navngir en annen tapende part enn raden
+        # står i konflikt med, er ikke RADENS sak — og en vakt som godtok
+        # den ville meldt «alt i orden» om nøyaktig den forvekslingen den
+        # finnes for å oppdage.
         sak = conn.execute(
             "SELECT 1 FROM unntak"
-            " WHERE hostname_ref=%s AND sakskilde='domeneovertakelse'"
+            " WHERE tenant=%s AND hostname_ref=%s"
+            "   AND sakskilde='domeneovertakelse'"
             "   AND NOT terminal AND utfordrer_tenant=%s"
+            "   AND tapt_tenant=%s"
             "   AND autorisasjonsgenerasjon=%s",
-            (hostname, tenant, int(generasjon))).fetchone()
+            (PLATTFORMTENANT, hostname, tenant, motpart,
+             int(generasjon))).fetchone()
         conn.rollback()
         if sak is None:
             res["uten_sak"].append({"tenant": tenant, "hostname": hostname,

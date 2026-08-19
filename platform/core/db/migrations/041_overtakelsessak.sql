@@ -393,6 +393,13 @@ BEGIN
           AND hostname_ref = NEW.hostname
           AND sakskilde = 'domeneovertakelse' AND NOT terminal
           AND utfordrer_tenant = NEW.tenant
+          -- MOTPARTEN ER DEL AV KONFLIKTENS IDENTITET (Codex P2). Uten
+          -- dette leddet godtok vakten en sak som navngir en HELT ANNEN
+          -- tapende part enn raden selv står i konflikt med: køen ville
+          -- vist B som forrige innehaver mens domenevedtaket gjaldt
+          -- tvisten mot A. Evidensen og overgangen ville beskrevet hver
+          -- sin tvist — og fire øyne på feil sak er ikke fire øyne.
+          AND tapt_tenant = NEW.konflikt_motpart
           AND autorisasjonsgenerasjon = NEW.autorisasjonsgenerasjon)
   THEN RAISE EXCEPTION 'avklaring_kreves uten gjeldende sak';
   END IF;
