@@ -869,6 +869,18 @@
   "ui.adjudikator.status.avvist": "Rejected",
   "ui.adjudikator.tom_tittel": "No cases",
   "ui.adjudikator.tom_tekst": "There are no takeover cases in the queue.",
+  "ui.adjudikator.kol.handling": "Decision",
+  "ui.adjudikator.handling.godkjenn": "Approve",
+  "ui.adjudikator.handling.avvis": "Reject",
+  "ui.adjudikator.bekreft.godkjenn_tittel": "Approve the takeover?",
+  "ui.adjudikator.bekreft.godkjenn_tekst": "{utfordrer} receives authorisation for {hostname}, and {tapt} does not keep it. A positive grant requires two distinct adjudicators — your vote alone does not decide the case.",
+  "ui.adjudikator.bekreft.avvis_tittel": "Reject the takeover?",
+  "ui.adjudikator.bekreft.avvis_tekst": "Nobody receives authorisation for {hostname}. One rejection decides the case, and it cannot be undone.",
+  "ui.adjudikator.avgjort.godkjenn": "The takeover of {hostname} was approved.",
+  "ui.adjudikator.avgjort.avvis": "The takeover of {hostname} was rejected.",
+  "ui.adjudikator.krever_to": "{avgitt} of {krever} attestations cast. A positive grant requires two distinct adjudicators.",
+  "ui.adjudikator.feil.dobbel_attestasjon": "You have already attested this case. An actor can only vote once.",
+  "ui.adjudikator.feil.attestasjon_avvist": "The case cannot be decided now — it has already been decided or superseded by a newer conflict.",
   "domenestatus.avklaring_kreves.forklaring": "Another account has also proven DNS control of this hostname. The case is being handled by Disponit — no action is needed from you right now.",
   "domenestatus.tilbakekalt.forklaring": "DNS control of this hostname has been proven by another account. Verify again if you still control the zone."
 }

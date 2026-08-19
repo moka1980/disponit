@@ -15,14 +15,20 @@ let KALL;
 let SVAR;
 globalThis.fetch = async (url, opts = {}) => {
   const sti = url.split("?")[0];
-  // `url` (med spørrestreng) føres med: pagineringsporten måler at
-  // cursoren faktisk sendes videre, ikke bare at et kall skjedde.
-  KALL.push({ sti, url, metode: opts.method || "GET" });
+  // `url` (med spørrestreng), kropp og headere føres med: pagineringsporten
+  // måler at cursoren sendes videre, og adjudikasjonsporten at utfallet,
+  // vinnende tenant og CSRF-tokenet faktisk går på tråden.
+  KALL.push({ sti, url, metode: opts.method || "GET",
+              kropp: opts.body, headers: opts.headers || {} });
   const svar = (typeof SVAR === "function") ? SVAR(sti, opts) : SVAR[sti];
   if (svar === undefined) {
     return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
   }
-  return { ok: true, status: 200, json: async () => svar };
+  // `__status` lar en test svare med serverens LEGIBLE 409-er (409 er ikke
+  // en transportfeil her — den bærer «1 av 2 avgitt»).
+  const status = svar.__status || 200;
+  const kropp = svar.__kropp !== undefined ? svar.__kropp : svar;
+  return { ok: status < 400, status, json: async () => kropp };
 };
 
 function nyHoved() {
@@ -102,6 +108,89 @@ test("adjudikatorkøen: «vis mer» bærer cursoren og legger til, ikke bytter",
   // Siste side: ingen `neste_cursor` → ingen «vis mer» igjen.
   assert.ok(![...h.querySelectorAll(".cursornav button")]
     .some((b) => b.textContent === t("ui.vis_mer")));
+});
+
+const SAKER = "/v1/domeneovertakelse/saker";
+const ATTEST = "/v1/unntak/7/domeneattestasjon";
+
+function knapp(h, navn) {
+  return [...h.querySelectorAll("button")]
+    .find((b) => (b.getAttribute("aria-label") || b.textContent) === navn);
+}
+
+async function aapneKoen() {
+  const h = nyHoved();
+  visAdjudikator(h, { paaUautorisert: () => {} });
+  await vent(() => h.querySelector(".adjudikatorliste table"));
+  return h;
+}
+
+test("adjudikatorkøen: avgjørelsen kan tas i produktet, ikke bare i API-et",
+     async () => {
+  // Fra 041 bor saken på plattformtenanten og er UTE av den ordinære
+  // unntakskøen. Uten knapper her finnes ingen vei i produktet til
+  // attestasjonen, og utfordreren blir stående i `avklaring_kreves`.
+  // `__Host-`-prefikset krever Secure + Path=/ (og ingen Domain) — uten dem
+  // avviser cookiejaren den, og CSRF-headeren ville blitt utelatt uten at
+  // testen sa fra hvorfor.
+  document.cookie = "__Host-disponit_csrf=csrf-token; Path=/; Secure";
+  KALL = [];
+  SVAR = (sti) => (sti === SAKER
+    ? { saker: [SAK], neste_cursor: null }
+    : { status: "avgjort", utfall: "avvis", hostname: SAK.hostname });
+  const h = await aapneKoen();
+
+  const avvis = knapp(h, `${t("ui.adjudikator.handling.avvis")}: ${SAK.hostname}`);
+  assert.ok(avvis, "køen har ingen avvis-knapp");
+  assert.ok(knapp(h, `${t("ui.adjudikator.handling.godkjenn")}: ${SAK.hostname}`),
+    "køen har ingen godkjenn-knapp");
+  // Navnet bærer vertsnavnet: seks like «Avvis» ville vært uleselige for
+  // en skjermleserbruker.
+  assert.ok(avvis.getAttribute("aria-label").includes(SAK.hostname));
+
+  avvis.click();
+  // KONSEKVENSEN BEKREFTES FØRST — en avvisning avgjør saken med én stemme.
+  await vent(() => document.body.textContent.includes(
+    t("ui.adjudikator.bekreft.avvis_tittel")));
+  assert.equal(KALL.filter((k) => k.metode === "POST").length, 0,
+    "attestasjonen ble sendt uten bekreftelse");
+  const brudd = await alvorligeBrudd(document.querySelector(".overlegg"),
+                                     { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+
+  [...document.querySelectorAll(".overlegg button")]
+    .find((b) => b.textContent === t("ui.adjudikator.handling.avvis")).click();
+  await vent(() => KALL.some((k) => k.metode === "POST"));
+  const post = KALL.find((k) => k.metode === "POST");
+  assert.equal(post.sti, ATTEST);
+  assert.deepEqual(JSON.parse(post.kropp),
+    { utfall: "avvis", vinnende_tenant: SAK.utfordrer_tenant });
+  assert.equal(post.headers["X-Disponit-CSRF"], "csrf-token");
+  // ... og køen lastes på nytt, så saken ikke blir stående som åpen.
+  await vent(() => KALL.filter((k) => k.sti === SAKER).length >= 2);
+});
+
+test("adjudikatorkøen: 409 `krever_to_attestasjoner` er legibelt, ikke en feil",
+     async () => {
+  // §4 siste kule: fail-closed skal SIES. Tallet er forskjellen på «systemet
+  // er i stykker» og «dere mangler en andre autorisert aktør».
+  KALL = [];
+  SVAR = (sti) => (sti === SAKER
+    ? { saker: [SAK], neste_cursor: null }
+    : { __status: 409, __kropp: { feil: "krever_to_attestasjoner",
+                                  avgitt: 1, krever: 2 } });
+  const h = await aapneKoen();
+  knapp(h, `${t("ui.adjudikator.handling.godkjenn")}: ${SAK.hostname}`).click();
+  await vent(() => document.body.textContent.includes(
+    t("ui.adjudikator.bekreft.godkjenn_tittel")));
+  [...document.querySelectorAll(".overlegg button")]
+    .find((b) => b.textContent === t("ui.adjudikator.handling.godkjenn")).click();
+  const ventet = t("ui.adjudikator.krever_to")
+    .replace("{avgitt}", "1").replace("{krever}", "2");
+  assert.ok(await vent(() => document.body.textContent.includes(ventet)),
+    `live-regionen sa ikke «${ventet}»`);
+  assert.ok(!document.body.textContent.includes(t("ui.feil_tittel")),
+    "en legibel terskel ble vist som «noe gikk galt»");
 });
 
 test("sitekartet: adjudikator-ruten finnes KUN for adjudikasjonsscopet", () => {

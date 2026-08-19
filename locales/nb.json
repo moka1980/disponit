@@ -869,6 +869,18 @@
   "ui.adjudikator.status.avvist": "Avvist",
   "ui.adjudikator.tom_tittel": "Ingen saker",
   "ui.adjudikator.tom_tekst": "Det er ingen overtakelsessaker i køen.",
+  "ui.adjudikator.kol.handling": "Avgjørelse",
+  "ui.adjudikator.handling.godkjenn": "Godkjenn",
+  "ui.adjudikator.handling.avvis": "Avvis",
+  "ui.adjudikator.bekreft.godkjenn_tittel": "Godkjenn overtakelsen?",
+  "ui.adjudikator.bekreft.godkjenn_tekst": "{utfordrer} får autorisasjonen for {hostname}, og {tapt} beholder den ikke. En positiv tildeling krever to distinkte adjudikatorer — din stemme alene avgjør ikke saken.",
+  "ui.adjudikator.bekreft.avvis_tittel": "Avvis overtakelsen?",
+  "ui.adjudikator.bekreft.avvis_tekst": "Ingen får autorisasjonen for {hostname}. Én avvisning avgjør saken, og den kan ikke gjøres om.",
+  "ui.adjudikator.avgjort.godkjenn": "Overtakelsen av {hostname} er godkjent.",
+  "ui.adjudikator.avgjort.avvis": "Overtakelsen av {hostname} er avvist.",
+  "ui.adjudikator.krever_to": "{avgitt} av {krever} attestasjoner avgitt. En positiv tildeling krever to distinkte adjudikatorer.",
+  "ui.adjudikator.feil.dobbel_attestasjon": "Du har allerede attestert denne saken. En aktør kan bare stemme én gang.",
+  "ui.adjudikator.feil.attestasjon_avvist": "Saken kan ikke avgjøres nå — den er allerede avgjort eller avløst av en nyere konflikt.",
   "domenestatus.avklaring_kreves.forklaring": "En annen konto har også bevist DNS-kontroll for dette vertsnavnet. Saken behandles av Disponit — du trenger ikke foreta deg noe nå.",
   "domenestatus.tilbakekalt.forklaring": "DNS-kontroll for vertsnavnet er bevist av en annen konto. Verifiser på nytt hvis du fortsatt kontrollerer sonen."
 }
