@@ -19,6 +19,7 @@ Portkart (klarsignalets §9):
   13  test_port13_terminalt_oppdrag_ordinart_avvis_med_status
   15  test_port15_ingen_annen_vei_avviser_med_levende_oppdrag
   14  (ui/test/unntak14b.test.js — alertdialog + alert + axe)
+  16  test_port16_definer_veiene_binder_tenanten_til_konteksten
 """
 import json
 import secrets
@@ -413,12 +414,17 @@ def test_port10_sen_utfort_reversibilitet(conn, klient):
     """§5-utledningen, målt på DB-nivået python-kroken bruker: reversibilitet
     fra kontrakten, sak gjennom `sikre_sak_for_oppdrag` — idempotent, ingen
     parallell kilde. `direkte` → ingen sak."""
+    from db.pg import sett_kontekst
     m = _mig()
     m.execute("SET ROLE disponit_m37_claimer")
     for rev, ventet_arsak in (("kompenserende", "kompensasjon_kreves"),
                               ("irreversibel", "irreversibel_utfort"),
                               ("direkte", None)):
         uid, oid = _sen_utfort_sak(conn, rev)
+        # Tenantkonteksten settes PER runde: rollbacken under tar den
+        # (SET LOCAL), og `reversibilitet_for_oppdrag` binder nå `p_tenant`
+        # til den — som alle andre runtime-kallbare definer-veier.
+        sett_kontekst(m, TEN, "sen", "r0")
         m.execute("SET ROLE disponit_m37_claimer")
         fra_db = m.execute("SELECT reversibilitet_for_oppdrag(%s,%s)",
                            (TEN, oid)).fetchone()[0]
@@ -426,7 +432,6 @@ def test_port10_sen_utfort_reversibilitet(conn, klient):
         assert fra_db == rev
         if ventet_arsak is None:
             continue
-        from db.pg import sett_kontekst
         sett_kontekst(m, TEN, "sen", "r1")
         m.execute("SET ROLE disponit_m37_claimer")
         sak1 = m.execute("SELECT sikre_sak_for_oppdrag(%s,%s,%s,'sen','r1')",
@@ -526,3 +531,43 @@ def test_port15_ingen_annen_vei_avviser_med_levende_oppdrag(conn):
     res = _kall(conn, uid, "avvis", bid, _macreg())
     assert res["utfall"] == "utestaaende_oppdrag"
     assert _status(conn, uid) != "avvist"
+
+
+# ---------------------------------------------------------------------------
+# Port 16: tenantporten på de nye definer-veiene (Codex P1)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port16_definer_veiene_binder_tenanten_til_konteksten(conn):
+    """`avvis_med_opplosning` og `reversibilitet_for_oppdrag` er SECURITY
+    DEFINER og gitt direkte til runtime. `p_tenant` skal derfor bindes til
+    kallerens tenantkontekst — ikke godtas som parameter. Uten porten kunne
+    en kompromittert runtime kansellere en ANNEN tenants levende oppdrag."""
+    uid = _oppsett(conn)
+    _medlem(conn, "op16")
+    rop = _oppdrag(uid, "plukket")
+    oid = _oppdrag_id(uid, rop)
+    _kvittkap(oid)
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    # Kontekst på EN ANNEN tenant enn parameteret: fail-closed.
+    sett_kontekst(m, "annen-tenant", "op16", "r-op16")
+    m.execute("SET ROLE disponit_m37_claimer")
+    for sql, args in (
+            ("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,'op16','r16')",
+             (TEN, uid, [oid])),
+            ("SELECT reversibilitet_for_oppdrag(%s,%s)", (TEN, oid))):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            m.execute(sql, args)
+        m.rollback()
+        sett_kontekst(m, "annen-tenant", "op16", "r-op16")
+        m.execute("SET ROLE disponit_m37_claimer")
+    # Uten kontekst i det hele tatt: også fail-closed.
+    m.rollback()
+    m.execute("SET ROLE disponit_m37_claimer")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,'op16',"
+                  "'r16')", (TEN, uid, [oid]))
+    m.rollback(); m.close()
+    # ... og oppdraget står urørt.
+    assert _oppdragsrad(oid)[0] == "plukket"

@@ -291,16 +291,24 @@ GRANT SELECT ON modulkontrakt TO disponit_m37_claimer;
 SET LOCAL ROLE disponit_m37_claimer;
 CREATE OR REPLACE FUNCTION reversibilitet_for_oppdrag(
     p_tenant TEXT, p_oppdrag_id BIGINT)
-RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER
+RETURNS TEXT LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-    SELECT k.reversibilitet
+DECLARE v_rev TEXT;
+BEGIN
+    -- 038-porten, også her: funksjonen er SECURITY DEFINER og gitt DIREKTE
+    -- til runtime, så `p_tenant` er kallerens frie valg. Uten bindingen
+    -- kunne en kompromittert runtime lese ut hvilken reversibilitetsklasse
+    -- en ANNEN tenants oppdrag kjørte under, bare ved å gjette id-er.
+    PERFORM public.krev_tenantkontekst(p_tenant, 'reversibilitet_for_oppdrag');
+    SELECT k.reversibilitet INTO v_rev
       FROM public.oppdrag o
       JOIN public.modulkontrakt k
         ON k.modul_id = o.modul_id
        AND k.kontraktversjon = o.kontraktversjon
        AND k.kontrakt_hash = o.kontrakt_hash
-     WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id
-$$;
+     WHERE o.tenant = p_tenant AND o.id = p_oppdrag_id;
+    RETURN v_rev;
+END $$;
 REVOKE ALL ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT)
   TO disponit;
@@ -337,6 +345,15 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
     r RECORD; v_jti TEXT; v_brenning TEXT; v_status TEXT; v_hash TEXT;
 BEGIN
+    -- TENANTPORTEN FØRST (Codex P1). Funksjonen er SECURITY DEFINER, eid av
+    -- claimer-rollen, og gitt DIREKTE til runtime — akkurat som 038-veiene.
+    -- Da er `p_tenant` kallerens frie valg med mindre den bindes: en
+    -- kompromittert runtime kunne ellers oppgi en annen tenant sammen med
+    -- gjettede oppdrag-id-er og kansellere DEN tenantens levende oppdrag
+    -- med eierrollens rettigheter. Porten er den samme alle andre
+    -- runtime-kallbare definer-funksjoner bruker, og den står FØR enhver
+    -- lesning eller lås: en avvist kaller skal ikke engang ha rørt en rad.
+    PERFORM public.krev_tenantkontekst(p_tenant, 'avvis_med_opplosning');
     IF p_forventet IS NULL OR array_length(p_forventet, 1) IS NULL THEN
         RAISE EXCEPTION 'avvis_med_opplosning: ingen oppdrag å løse opp'
             USING ERRCODE = 'invalid_parameter_value';
