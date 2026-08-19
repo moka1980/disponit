@@ -1855,6 +1855,44 @@ def test_kontraktsdokumentets_hasher_matcher_skjemafilene():
             f"{felt} i KONTRAKT.md matcher ikke {fil}"
 
 
+#: sha256 over `KONTRAKT.md` slik dokumentet ble REGISTRERT for
+#: kontraktversjon 1 i staging-runden. Verdien er ikke en smaksdom om
+#: innholdet — den er nøkkelen registeret allerede bærer.
+KONTRAKT_HASH_V1 = \
+    "33e47d195b68cfa2cb6034c169d89fa3fe718de9364799baf544739f208aa58e"
+
+
+def test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen():
+    """Codex P1 på #109: mappeomdøpingen til `m56_wcag_audit` rettet også
+    stien INNI KONTRAKT.md, og endret dermed dokumentets bytes mens både
+    dokumentet og `registrer-m-wcag-audit.py` fortsatt sa kontraktversjon 1.
+
+    `fase2` hasher filens bytes og kaller `registrer_kontrakt(..., 1, ...)`,
+    som avviser en ANNEN hash for en eksisterende `(m_wcag_audit, 1)`-rad —
+    neste staging-registrering ville dødd på «kontrakt er immutable», og
+    fase 2 feller runden på det.
+
+    Å bumpe versjonen løser det ikke på den basen runden faktisk kjører mot:
+    `oppdragstype_register` (040) og `artefakttype_register` (036) binder
+    HVER SIN rad til `(kontraktversjon, kontrakt_hash)` og er like
+    immutable, så en v2 ville bare flyttet konflikten ett register bort.
+    Bytene er derfor frosset til den dagen registeret bygges på nytt eller
+    en kontraktversjon 2 rulles ut GJENNOM alle tre registrene.
+
+    Stien i §Identitet er av samme grunn den gamle: dokumentet beskriver
+    kontrakten som ble registrert, ikke dagens mappenavn. Trenger den
+    oppdatering, er det en kontraktversjonsbump — ikke en tekstretting.
+    """
+    import hashlib
+    md = ROT / "platform/modules/m56_wcag_audit/kontrakt/KONTRAKT.md"
+    assert hashlib.sha256(md.read_bytes()).hexdigest() == KONTRAKT_HASH_V1, (
+        "KONTRAKT.md er endret uten en koordinert kontraktversjonsbump —"
+        " neste staging-registrering vil feile med «kontrakt er immutable»")
+    # ... og dokumentet må fortsatt SI 1, ellers er de to påstandene om
+    # samme kontrakt uenige.
+    assert "kontraktversjon 1" in md.read_text(encoding="utf-8")
+
+
 def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
     kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     skjema = json.loads((kdir / "kvittering-skjema.json")

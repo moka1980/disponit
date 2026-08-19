@@ -9,6 +9,10 @@
 # som før. Forsiden har derfor INGEN «I drift»-etikett for M-56: et eget
 # statusfelt i katalogen sto kort i #109 og er tatt ut igjen (Codex P1).
 # Flaten har én statusakse, og den er avledet av dette manifestet.
+# OMDØPINGEN STOPPER VED kontrakt/KONTRAKT.md: den fila er hash-bundet
+# (`modulkontrakt.kontrakt_hash`, kontraktversjon 1, alt registrert), så
+# stien den nevner er den gamle med vilje. Codex P1 på #109; porten står i
+# test_motor_axe.py::test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen.
 # Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)

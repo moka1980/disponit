@@ -6,7 +6,7 @@ filens bytes registreres immutabelt av `registrer_kontrakt()` ved deploy
 
 ## Identitet
 - **modul_id**: `m_wcag_audit` (katalognummer tildeles ved aksept;
-  mappen i repoet er `platform/modules/m56_wcag_audit/`)
+  mappen i repoet er `platform/modules/wcag_audit/`)
 - **oppdragstype**: `kontroll.wcag.nettsted` (registrert type, eier
   `kontroll.wcag.`-prefikset i claim-veien)
 - **artefakttype**: `kontroll.wcag.rapport` (rapportskjemaet er
