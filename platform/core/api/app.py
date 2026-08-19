@@ -2422,14 +2422,38 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     # etter alle struktur-/signaturvaktene — en kvittering vi uansett
     # avviser skal ikke stå i kø bak en operatørhandling.
     #
-    # Saksløse oppdrag (beslutningsoppdrag, `unntak_id IS NULL`) har ingen
-    # felles rad å ordne: avvis-veien ser dem aldri (`sak_utestaaende`
-    # finner oppdrag GJENNOM saken), og en sak som fødes lenger nede av
-    # `sikre_sak_for_oppdrag` er per definisjon ny — ingen annen transaksjon
-    # holder den.
-    if unntak_id is not None:
-        conn.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
-                     " FOR UPDATE", (tenant, unntak_id))
+    # ... OG SAKEN HAR TO RELASJONSRETNINGER (Codex P1, runde 5).
+    #
+    # `o.unntak_id` er OPPHAV, ikke generell sakstilknytning (038): et
+    # BESLUTNINGSoppdrag har den NULL, og saken peker den andre veien
+    # (`unntak.oppdrag_id`). Denne låsen sto bak `unntak_id is not None` og
+    # så derfor bare reparasjonsopphavet — mens §4 i 043 gjorde nettopp den
+    # andre koblingen avvisbar: `sak_utestaaende` finner beslutningsoppdrag
+    # GJENNOM `unntak.oppdrag_id`, og `avvis_med_opplosning` godtar dem som
+    # oppløsningsmål (§7). For akkurat de oppdragene hoppet kvitteringsveien
+    # over både låsen og oppfriskningen under den, og tapet fra runde 4 var
+    # tilbake i sin helhet: nei-et rekker å committe kansellering og
+    # `avvist`, kvitteringen regner videre på `plukket`/`utstedt`, `bruk_
+    # kvitteringskapabilitet` (toargs) svarer `ugyldig`, og den signerte
+    # sene evidensen — med kompensasjons-/irreversibilitetssaken §5 skal
+    # føde — går tapt i stillhet.
+    #
+    # Saken finnes derfor gjennom BEGGE retningene, i ÉN setning og i
+    # stigende id: mengden er den samme autoriteten §7 krever av
+    # oppløsningsmålene, og en deterministisk rekkefølge holder to
+    # kvitteringsveier fra å ta flere saker i motsatt orden. `unntak_id`
+    # selv røres ikke — den betyr fortsatt OPPHAV nedenfor.
+    #
+    # Er det ingen sak i noen av retningene, er det ingen felles rad å
+    # ordne: avvis-veien kan ikke nå oppdraget (den finner oppdrag gjennom
+    # saken), og en sak som fødes lenger nede av `sikre_sak_for_oppdrag` er
+    # per definisjon ny — ingen annen transaksjon holder den.
+    laaste_saker = conn.execute(
+        "SELECT u.id FROM unntak u"
+        " WHERE u.tenant=%s AND (u.id=%s OR u.oppdrag_id=%s)"
+        " ORDER BY u.id FOR UPDATE",
+        (tenant, unntak_id, oppdrag_id)).fetchall()
+    if laaste_saker:
 
         # ... OG DA MÅ TILSTANDEN LESES PÅ NYTT (Codex P1, runde 4).
         #
