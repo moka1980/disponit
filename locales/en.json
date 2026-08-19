@@ -1036,6 +1036,7 @@
   "ui.editor.overstyring_slett": "Remove the whole field (back to default)",
   "ui.editor.vilkaar": "Conditions",
   "ui.editor.vilkaar_ingen": "No conditions on this action.",
+  "ui.editor.vilkaar_ulesbart": "invalid entry — remove it",
   "ui.editor.vilkaar_laast": "Locked platform condition",
   "ui.editor.vilkaar_plattform_forklaring": "Platform conditions are enforced by the platform regardless and cannot be removed or edited here.",
   "ui.editor.vilkaar_grunnlag_mangler": "The server baseline is unavailable — conditions and approval pairs cannot be edited right now.",

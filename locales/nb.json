@@ -1036,6 +1036,7 @@
   "ui.editor.overstyring_slett": "Fjern hele feltet (tilbake til standard)",
   "ui.editor.vilkaar": "Vilkår",
   "ui.editor.vilkaar_ingen": "Ingen vilkår på denne handlingen.",
+  "ui.editor.vilkaar_ulesbart": "ugyldig oppføring — fjern den",
   "ui.editor.vilkaar_laast": "Låst plattformvilkår",
   "ui.editor.vilkaar_plattform_forklaring": "Plattformvilkår håndheves av plattformen uansett og kan ikke fjernes eller redigeres her.",
   "ui.editor.vilkaar_grunnlag_mangler": "Grunnlaget fra serveren er utilgjengelig — vilkår og godkjenningspar kan ikke redigeres nå.",

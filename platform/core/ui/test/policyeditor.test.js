@@ -1385,6 +1385,42 @@ test("Vilkår: plattformvilkåret er LÅST med aria-disabled og forklaring",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// Codex P2: skriveveien tar med vilje imot ustrukturerte utkast — porten
+// står i `valider_utkast`, ikke i lagringen. Et lagret utkast kan derfor
+// bære `vilkaar: [null]` eller en naken streng. Leste editoren `v.navn`
+// rått, kastet den TypeError på nettopp det utkastet eier måtte åpne for å
+// RETTE feilen, og flaten låste seg på det eneste stedet den kunne fjernes.
+test("Vilkår: en ulesbar oppføring kan åpnes og fjernes, ikke krasje",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [
+      null,
+      "eget_vilkar",                                   // naken streng
+      { navn: "eget_vilkar", verifikator: "v" },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 3, "alle tre oppføringene tegnes");
+    // Den ulesbare sier hva den er, i stedet for å bli et «?».
+    assert.ok(rader[0].textContent.includes(
+      t("ui.editor.vilkaar_ulesbart")), rader[0].textContent);
+    // …og den kan fjernes, ellers er utkastet en blindgate.
+    const fjern = rader[0].querySelector("button");
+    assert.ok(fjern, "den ulesbare oppføringen må kunne fjernes");
+    fjern.dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelectorAll(".vilkaar-rad").length === 2);
+    assert.equal(h.querySelectorAll(".vilkaar-rad").length, 2,
+      "den ulesbare oppføringen ble ikke fjernet");
+    assert.ok(!h.textContent.includes(t("ui.editor.vilkaar_ulesbart")));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
 test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
   const gammelFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {

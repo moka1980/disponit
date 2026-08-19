@@ -527,6 +527,25 @@ function handlingKort(h, tegnPaaNytt, policy, grunnlag) {
 // fra serveren — ingen hardkodet liste (port 32); mangler grunnlaget
 // (nettfeil), er ALT låst: fail-closed, aldri en flate som lover en
 // fjerning serveren nekter.
+// Et UTKAST er med vilje ustrukturert til det valideres: skriveveien tar
+// imot vilkårlige dicter, og skjemaporten står i `valider_utkast`, ikke i
+// lagringen. Et lagret utkast kan derfor bære `vilkaar: [null]` eller en
+// naken streng (aktiveringsporten leser begge former). Leste editoren
+// `v.navn` rått, kastet den TypeError på nettopp de utkastene eier trengte
+// å åpne for å RETTE dem — flaten låste seg på det eneste stedet feilen
+// kunne fjernes (Codex P2). Uleselige oppføringer vises derfor som det de
+// er, og kan fjernes som alle andre.
+function vilkaarNavn(v) {
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object" && typeof v.navn === "string") return v.navn;
+  return null;
+}
+
+function vilkaarVerifikator(v) {
+  return (v && typeof v === "object" && typeof v.verifikator === "string")
+    ? v.verifikator : null;
+}
+
 function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
   const vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
   const plattform = new Set(
@@ -536,10 +555,15 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
   const forklaringId = `vilkaar-laast-${h.id || "x"}`;
 
   const rader = vilkaar.map((v, i) => {
-    const erPlattform = laastAlt || plattform.has(v.navn);
+    const navn = vilkaarNavn(v);
+    // `laastAlt` beholder fail-closed-regelen uendret: uten grunnlaget vet
+    // vi ikke hva som ER et plattformvilk\u00e5r, og da l\u00e5ses alt. En uleselig
+    // oppf\u00f8ring kan uansett aldri matche registeret, som sl\u00e5r opp p\u00e5 navn.
+    const erPlattform = laastAlt || (navn !== null && plattform.has(navn));
     const rad = el("li", { class: "vilkaar-rad" },
-      el("span", {}, el("code", { text: v.navn || "?" }),
-        ` \u2014 ${v.verifikator || "?"}`),
+      el("span", {},
+        el("code", { text: navn || t("ui.editor.vilkaar_ulesbart") }),
+        ` \u2014 ${vilkaarVerifikator(v) || "?"}`),
       erPlattform
         ? el("span", { class: "site-badge info", "aria-disabled": "true",
             "aria-describedby": forklaringId,
@@ -581,8 +605,8 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
     knapp.addEventListener("click", () => {
       if (!navnValg.value) return;
       h.vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
-      if (h.vilkaar.some((v) => v.navn === navnValg.value
-          && v.verifikator === vidValg.value)) return;
+      if (h.vilkaar.some((v) => vilkaarNavn(v) === navnValg.value
+          && vilkaarVerifikator(v) === vidValg.value)) return;
       h.vilkaar.push({ navn: navnValg.value, verifikator: vidValg.value });
       tegnPaaNytt();
     });
