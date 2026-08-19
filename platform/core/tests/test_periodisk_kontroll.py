@@ -1170,6 +1170,100 @@ def test_fullfort_forsok_gjenopprettes_etter_utlopt_claim(migrator):
 
 
 @pg
+def test_ledig_vindu_kan_ikke_terminaliseres_uten_claim_eller_fasit(migrator):
+    """Codex P1 (#105, etter merge): eierskap er ikke autoritet.
+
+    Claim-sjekken sto som `ELSIF v.tilstand = 'aktivt' AND ...`. For et
+    `ledig` vindu var betingelsen usann, ingen gren kjørte, og et hvilket
+    som helst ikke-`hoppet_over`-utfall gikk rett gjennom til UPDATE +
+    INSERT — uten verken claim eller idempotensrad.
+
+    Angrepet står i sin EGEN, lovlige tenantkontekst og på sitt EGET
+    vindu, så begge de tidligere gjerdene slipper det glatt gjennom:
+    `krev_tenantkontekst` beviser hvem kalleren er, tenantleddet at raden
+    hører til den. Ingen av dem måler at forsøket har RETT til å felle
+    vinduet. Resultatet var et `tillat`-tick som aldri passerte policy,
+    kvote eller bestillingsvei — vinduet konsumert, og evidensen påstår
+    at kontrollen ble kjørt.
+
+    Tre halvdeler måles: forfalskningen avvises, det legitime claimet
+    slipper gjennom, og fasitveien for et `ledig` vindu står (en
+    `frigi_planvindu` etter et driftsuhell KAN etterlate et ledig vindu
+    med idempotensrad — der er fasiten like bindende)."""
+    from plan.klassifiser import _nokkel
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p105-p1.example")
+        # Et ÅPENT, ledig vindu — nøyaktig det plukket ville delt ut.
+        vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
+                              tilstand="ledig")
+        _sett_kontekst(rt, TENANT)
+        for utfall in ("tillat", "brudd", "stopp"):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                rt.execute(
+                    "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,%s,"
+                    "NULL,NULL)", (TENANT, pid, vs, _nokkel(pid, vs), utfall))
+            rt.rollback()
+        # Et oppdiktet claim hjelper heller ikke: vinduet er ikke claimet.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,"
+                       "gen_random_uuid(),%s,'tillat',NULL,NULL)",
+                       (TENANT, pid, vs, _nokkel(pid, vs)))
+        rt.rollback()
+
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s",
+            (pid,)).fetchone()[0] == 0, "forfalsket tick kom inn"
+        assert migrator.execute(
+            "SELECT tilstand FROM bestillingsplan_vindu WHERE plan_id=%s"
+            " AND vindu_start=%s", (pid, vs)).fetchone()[0] == "ledig"
+        migrator.rollback()
+
+        # Den LEGITIME veien er urørt: claim → terminalisering.
+        _sett_kontekst(rt, TENANT)
+        claim = rt.execute(
+            "SELECT claim_id FROM claim_planvindu(%s,%s,%s,120)",
+            (TENANT, pid, vs)).fetchone()[0]
+        assert claim is not None
+        assert rt.execute(
+            "SELECT terminaliser_planvindu(%s,%s,%s,%s,%s,'tillat',NULL,NULL)",
+            (TENANT, pid, vs, claim, _nokkel(pid, vs))).fetchone()[0] \
+            == "terminalisert"
+        rt.commit()
+
+        # Fasitveien for et LEDIG vindu: frigitt etter et driftsuhell, men
+        # bestillingen hadde alt committet. Verifisert utfall slipper inn.
+        pid2 = _plan_forfalt(rt, migrator, host="p105-p1b.example")
+        vs2 = _syntetisk_vindu(migrator, pid2, start_h=-1, slutt_h=1,
+                               tilstand="ledig")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,NULL,'brudd','{}')",
+            (TENANT, _nokkel(pid2, vs2), "3" * 64))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        # Et utfall som IKKE er fasitens avvises fortsatt.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'tillat',NULL,NULL)",
+                       (TENANT, pid2, vs2, _nokkel(pid2, vs2)))
+        rt.rollback()
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,'brudd',"
+            "NULL,NULL)",
+            (TENANT, pid2, vs2, _nokkel(pid2, vs2))).fetchone()[0] \
+            == "terminalisert"
+        rt.commit()
+    finally:
+        rt.close()
+
+
+@pg
 def test_nedetid_over_30_dogn_aggregeres(migrator):
     """Port 35: vinduer eldre enn tilbakeblikket får ALDRI enkeltrader —
     én aggregert hendelse per plan, og radene som alt finnes
