@@ -820,8 +820,10 @@ def test_sikkerhetssaker_krever_eget_scope(klient, policy, token, migrator):
     sak = r2.json()["saker"][0]
     assert sak["sakstype"] == "sikkerhet"
     # Metadata KUN — payloadfeltene finnes ikke i svaret i det hele tatt.
+    # `arsak` (043) er metadata av samme slag som `kategori`: en lukket
+    # kodeverdi som sier HVORFOR saken finnes, aldri noe fra payloaden.
     assert set(sak) == {"id", "ts", "handling", "kategori", "prioritet",
-                        "status", "sakstype"}
+                        "status", "sakstype", "arsak"}
 
 
 @pg
