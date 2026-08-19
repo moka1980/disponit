@@ -2164,6 +2164,26 @@ RESET ROLE;
 -- 041 og er forklart ved grenen selv: en uenighet er en egen tilstand, og
 -- den løses av avvisningen, som nå avgjør før avvik-sjekken.
 -- ------------------------------------------------------------
+-- EIERSKAPSDRIFT MELLOM MILJØENE (målt på disponit-srv): designeieren er
+-- disponit_domene_eier, men stagingbasen bar 019-funksjonen MIGRATOR-eid
+-- — eierskapsreparasjonen kjører ETTER migrasjonene i oppsett, så en
+-- eldre base kan stå med før-reparasjons-eierskap idet 041 kjører, og
+-- DROP-en under feiler med «must be owner». Normaliser eierskapet FØRST,
+-- guardet på nåværende eier (kun eieren kan ALTER, og migrator er medlem
+-- av designeieren): så virker rollevinduet i BEGGE eierskapsverdener.
+DO $$ BEGIN
+  IF to_regprocedure('public.avgi_overtakelse_attestasjon('
+       || 'text,bigint,text,text,text,text,bigint,text)') IS NOT NULL
+     AND (SELECT pg_get_userbyid(proowner) FROM pg_proc
+           WHERE oid = to_regprocedure(
+             'public.avgi_overtakelse_attestasjon('
+             || 'text,bigint,text,text,text,text,bigint,text)'))
+         = current_user THEN
+    ALTER FUNCTION public.avgi_overtakelse_attestasjon(
+        TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT)
+      OWNER TO disponit_domene_eier;
+  END IF;
+END $$;
 SET LOCAL ROLE disponit_domene_eier;
 
 -- Arity endres, så CREATE OR REPLACE kan ikke bære den: 019s åtte-arg
