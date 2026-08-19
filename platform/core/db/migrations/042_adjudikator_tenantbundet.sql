@@ -150,20 +150,28 @@ $$;
 REVOKE ALL ON FUNCTION overtakelsessak_for_utfordrer(BIGINT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION overtakelsessaker_for_utfordrer(
     TIMESTAMPTZ, BIGINT, INT) FROM PUBLIC;
--- Staging kjører API-et som `disponit` (019, Codex P1); `disponit_domains_admin`
--- er den andre veien inn i attestasjonen (041 §-slutt) og får samme snitt.
+-- Staging kjører API-et som `disponit` (019, Codex P1), og API-et er den
+-- ENESTE kalleren. Ingen annen rolle får EXECUTE.
+--
+-- `disponit_domains_admin` fikk det i første utkast — «den er den andre
+-- veien inn i attestasjonen (041 §-slutt), så den får samme snitt». Det er
+-- akkurat resonnementet 041 §9 ble rettet for: grantet på
+-- `domenekontroll_hendelse` ble gitt «i tilfelle køen trenger hendelsene»,
+-- og prisen for det ubrukte grantet var reell. Ingen admin-vei leser
+-- saksflaten — de kaller `avgi_overtakelse_attestasjon`. Kommer det en
+-- lesning som trenger den, hører den sammen med sitt eget kall, ikke med et
+-- grant på forskudd.
+--
+-- OG GRANTET SKAL IKKE STÅ BAK EN `pg_roles`-VAKT. Utkastet guardet det, og
+-- den vakten var ikke gratis: `_valgfrie_roller` utleder VALGFRIE roller av
+-- HELE migrasjonskorpuset, så én vakt her ville gjort
+-- `disponit_domains_admin` valgfri for alle migrasjoner — og 035s
+-- ubetingede `GRANT EXECUTE ... TO disponit_domains_admin` ville blitt et
+-- brudd den dagen 042 landet. Rollen er ikke valgfri: 041 granter til den
+-- ubetinget, og `oppsett-postgresql.sh` oppretter den alltid.
 GRANT EXECUTE ON FUNCTION overtakelsessak_for_utfordrer(BIGINT) TO disponit;
 GRANT EXECUTE ON FUNCTION overtakelsessaker_for_utfordrer(
     TIMESTAMPTZ, BIGINT, INT) TO disponit;
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles
-              WHERE rolname = 'disponit_domains_admin') THEN
-    GRANT EXECUTE ON FUNCTION overtakelsessak_for_utfordrer(BIGINT)
-        TO disponit_domains_admin;
-    GRANT EXECUTE ON FUNCTION overtakelsessaker_for_utfordrer(
-        TIMESTAMPTZ, BIGINT, INT) TO disponit_domains_admin;
-  END IF;
-END $$;
 
 RESET ROLE;
 
