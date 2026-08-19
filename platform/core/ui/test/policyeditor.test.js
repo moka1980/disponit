@@ -34,8 +34,13 @@ globalThis.fetch = async (url, opts) => {
     return { ok: true, status: 200, json: async () => ({
       plattformvilkar: [{ vilkar_type: "domenekontroll_verifisert",
                           maldomene: "web_hostname" }],
+      // `frekvensgrense_naadd` står med vilje i navnelista uten et krav:
+      // motoren kan ikke løfte den, og flaten skal da ikke tilby den.
       godkjennbare_grunnkoder: ["belop_over_grense",
-        "valuta_ikke_tillatt", "frekvensgrense_naadd"] }) };
+        "valuta_ikke_tillatt", "frekvensgrense_naadd"],
+      godkjennbare_krav: [
+        { grunnkode: "belop_over_grense", krever: "belop_maks" },
+        { grunnkode: "valuta_ikke_tillatt", krever: "valuta" }] }) };
   }
   if (sti === "/v1/policymaler") {
     return { ok: true, status: 200, json: async () => ({ maler: [
@@ -1328,20 +1333,38 @@ test("Overstyring: fravær er en TILSTAND, par legges til fra nedtrekk",
     await vent(() => h.querySelector("#mo-grunnkode"));
     const gk = h.querySelector("#mo-grunnkode");
     const koder = [...gk.querySelectorAll("option")].map((o) => o.value);
-    assert.deepEqual(koder, ["belop_over_grense", "valuta_ikke_tillatt",
-      "frekvensgrense_naadd"]);
+    // `frekvensgrense_naadd` står i serverens navneliste, men uten et krav —
+    // motoren kan ikke løfte den. Da tilbys den ikke: en oppføring for den
+    // ville endt i STOPP ved HVER godkjenning.
+    assert.deepEqual(koder, ["belop_over_grense", "valuta_ikke_tillatt"]);
     assert.ok(!koder.includes("teknisk_feil"),
       "en ikke-godkjennbar grunnkode er ikke velgbar");
     const hv = h.querySelector("#mo-handling");
     assert.deepEqual([...hv.querySelectorAll("option")].map((o) => o.value),
       ["ordre.bekreft"]);
-    // Legg til ett par → feltet finnes med raden og rollen.
+    // Paret alene er ikke en overstyring: uten verdien motoren skal løfte
+    // TIL avvises det her og nå, og ingenting legges til.
+    finnKnapp(h, t("ui.editor.overstyring_legg_til"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.overstyring_valuta_feil")));
+    assert.equal(h.querySelector(".overstyring-liste li"), null,
+      "en oppføring motoren ikke kan anvende skal ikke kunne legges til");
+    // Med beløpstak og valuta går den gjennom — og verdien vises i raden.
+    const belop = h.querySelector("#mo-belop");
+    const valuta = h.querySelector("#mo-valuta");
+    valuta.value = "nok";
+    valuta.dispatchEvent(new window.Event("input"));
+    belop.value = "50000.00";
+    belop.dispatchEvent(new window.Event("input"));
     finnKnapp(h, t("ui.editor.overstyring_legg_til"))
       .dispatchEvent(new window.Event("click"));
     await vent(() => h.querySelector(".overstyring-liste li"));
     assert.ok(h.textContent.includes(t("ui.editor.overstyring_par")
       .replace("{grunnkode}", "belop_over_grense")
       .replace("{handling}", "ordre.bekreft")));
+    assert.ok(h.textContent.includes("50000.00 NOK"),
+      "verdien motoren løfter til vises i raden");
     assert.ok(!h.textContent.includes(t("ui.editor.overstyring_ingen")));
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });

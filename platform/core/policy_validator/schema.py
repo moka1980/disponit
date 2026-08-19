@@ -302,7 +302,50 @@ def _valider_innforing(policy: dict) -> list[str]:
                 feil.append(
                     f"{felt}: verifikator-id '{vid}' inneholder skilletegn fra"
                     " diffstien (. eller [) og gjør stien flertydig")
+    feil += _overstyring_kan_anvendes(policy)
     return sorted(feil)
+
+
+def _overstyring_kan_anvendes(policy: dict) -> list[str]:
+    """En `godkjennbare`-oppføring motoren ikke KAN anvende (Codex P1).
+
+    `IKKE_MENNESKELIG_GODKJENNBARE` er deny-siden: grunnkoder et menneske
+    aldri SKAL få godkjenne. Dette er den andre siden — grunnkoder motoren
+    ikke KAN løfte. `_loft_policy` uttrykker bare `belop_maks` og `valuta`
+    (`engine.LOFTBARE_GRUNNKODER`); alt annet gir None, og da ender HVER
+    godkjenning i STOPP. En slik oppføring passerte lastekontrakten fint,
+    så eier kunne aktivere det som så ut som en konfigurert menneskelig
+    overstyring — og aldri se den virke, uten at noe sa fra. Feltet
+    grunnkoden krever måles samme sted og av samme grunn: et løft uten
+    verdien å løfte TIL er like virkningsløst som en ikke-løftbar kode.
+
+    Kravet bor i INNFØRINGSkontrakten, ikke i lastekontrakten: en policy
+    som allerede er aktiv med en slik oppføring virker som før (den ene
+    overstyringen har aldri gjort noe), og skal ikke bli `PolicyKorrupt`
+    ved lasting i det utrullingen lander. Neste versjon må rette den.
+    """
+    from .engine import LOFTBARE_GRUNNKODER
+    mo = policy.get("menneskelig_overstyring")
+    if not isinstance(mo, dict):
+        return []
+    feil: list[str] = []
+    lovlige = ", ".join(sorted(LOFTBARE_GRUNNKODER))
+    for i, e in enumerate(mo.get("godkjennbare") or []):
+        if not isinstance(e, dict) or not isinstance(e.get("grunnkode"), str):
+            continue                     # lastekontrakten har alt sagt fra
+        gk = e["grunnkode"]
+        krav = LOFTBARE_GRUNNKODER.get(gk)
+        if krav is None:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: grunnkode '{gk}' kan ikke"
+                " løftes av motoren — en godkjenning ville alltid endt i"
+                f" STOPP. Løftbare grunnkoder: {lovlige}")
+        elif e.get(krav) is None:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: grunnkode '{gk}' krever"
+                f" '{krav}' i oppføringen — uten en verdi å løfte til kan"
+                " motoren ikke bygge løftet, og godkjenningen ender i STOPP")
+    return feil
 
 
 def _valider(policy: object) -> list[str]:

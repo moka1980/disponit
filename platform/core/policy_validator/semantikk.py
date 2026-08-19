@@ -113,7 +113,15 @@ def kildechecksum() -> str:
 #: passerte før og avvises nå — jti-replay-vernet henger på attestasjonen
 #: vilkåret framtvinger, så uten vilkår fantes vernet spesifikasjonen lover
 #: bare på papiret.)
-MOTOR_SEMANTIKKVERSJON = "a2446c512c2ca87288301c248664ceba5eaf31c7cfcf594adbe6ea35a078ce80"
+#: (Codex P1 på #111: `engine.LOFTBARE_GRUNNKODER` er nå den ENE kilden til
+#: hva `_loft_policy` kan uttrykke, og innføringskontrakten avviser en
+#: `menneskelig_overstyring.godkjennbare`-oppføring motoren aldri kan anvende
+#: — ikke-løftbar grunnkode, eller løftbar uten verdien å løfte til. Ingen
+#: BESLUTNING skifter av dette: motoren ga alt None og dermed STOPP for begge
+#: former. Det som endrer seg er at policyen ikke lenger kan aktiveres med et
+#: løfte den ikke kan holde. Kravet står i INNFØRINGSkontrakten, så en alt
+#: aktiv policy med en slik oppføring virker som før.)
+MOTOR_SEMANTIKKVERSJON = "0c0be9aa583f47721a6b2e850c069eae34abc4940e478ab5ab62258f2fbe733f"
 
 
 # ---------------------------------------------------------------------------

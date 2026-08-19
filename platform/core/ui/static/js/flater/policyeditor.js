@@ -643,7 +643,24 @@ function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
   const roller = (policy.roller || []).map((r) => r.id).filter(Boolean);
   const handlinger = (policy.handlinger || []).map((h) => h.id)
     .filter(Boolean);
-  const grunnkoder = (grunnlag && grunnlag.godkjennbare_grunnkoder) || [];
+  // Hvilket FELT hver grunnkode krever, fra serverens `godkjennbare_krav`
+  // — som leser motorens egen `LOFTBARE_GRUNNKODER` (Codex P1). Et par
+  // alene er ikke en overstyring: `_loft_policy` bygger løftet av
+  // `belop_maks` eller `valuta`, og uten verdien gir den None, altså STOPP
+  // ved HVER godkjenning.
+  //
+  // FAIL-CLOSED, som resten av grunnlaget (port 30 er en LUKKING): en
+  // grunnkode vi ikke vet kravet til kan ikke tilbys, for da kan flaten
+  // ikke bygge en oppføring som virker. Er kravlista borte, er lista over
+  // valgbare koder tom, og seksjonen sier «grunnlaget mangler» som ellers.
+  const overstyringKrav = {};
+  for (const k of (grunnlag && grunnlag.godkjennbare_krav) || []) {
+    if (k && typeof k.grunnkode === "string" && typeof k.krever === "string") {
+      overstyringKrav[k.grunnkode] = k.krever;
+    }
+  }
+  const grunnkoder = ((grunnlag && grunnlag.godkjennbare_grunnkoder) || [])
+    .filter((g) => overstyringKrav[g]);
 
   const deler = [el("h3", { text: t("ui.editor.overstyring") })];
   if (!mo) {
@@ -664,13 +681,17 @@ function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
           if (!par.length) delete policy.menneskelig_overstyring;
           tegnPaaNytt();
         });
+        const o = (e2 && typeof e2 === "object") ? e2 : {};
+        // Verdien motoren løfter TIL vises alltid når den finnes — det er
+        // den som avgjør om overstyringen kan virke i det hele tatt.
+        const verdi = o.belop_maks
+          ? ` (${o.belop_maks} ${o.valuta || ""})`
+          : (o.valuta ? ` (${o.valuta})` : null);
         return el("li", {},
           el("span", { text: t("ui.editor.overstyring_par")
-            .replace("{grunnkode}", e2.grunnkode || "?")
-            .replace("{handling}", e2.handling || "?") }),
-          e2.belop_maks
-            ? el("span", { class: "sub",
-                text: ` (${e2.belop_maks} ${e2.valuta || ""})` }) : null,
+            .replace("{grunnkode}", o.grunnkode || "?")
+            .replace("{handling}", o.handling || "?") }),
+          verdi ? el("span", { class: "sub", text: verdi }) : null,
           fjern);
       })));
     const slettAlt = el("button", { class: "knapp liten", type: "button",
@@ -691,19 +712,76 @@ function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
         text: t(`grunnkode.${g}`, g) })));
     const hValg = el("select", { id: "mo-handling" },
       ...handlinger.map((h) => el("option", { value: h, text: h })));
+    const krav = overstyringKrav;
+    const belop = el("input", { type: "text", id: "mo-belop",
+      class: "felt-inp", inputmode: "decimal" });
+    const valuta = el("input", { type: "text", id: "mo-valuta",
+      class: "felt-inp", maxlength: "3" });
+    const belopRad = el("div", { class: "skjemarad" },
+      el("label", { for: "mo-belop",
+        text: t("ui.editor.overstyring_belop_maks") }), belop);
+    const valutaRad = el("div", { class: "skjemarad" },
+      el("label", { for: "mo-valuta",
+        text: t("ui.editor.overstyring_valuta") }), valuta);
+    const feilUt = el("p", { class: "skjemafeil", id: "mo-feil" });
+    const nullstillFeil = () => {
+      feilUt.textContent = "";
+      for (const inp of [belop, valuta]) {
+        inp.removeAttribute("aria-invalid");
+        inp.removeAttribute("aria-errormessage");
+      }
+    };
+    const settFeil = (inp, tekst) => {
+      feilUt.textContent = tekst;
+      inp.setAttribute("aria-invalid", "true");
+      inp.setAttribute("aria-errormessage", "mo-feil");
+      inp.focus();
+    };
+    belop.addEventListener("input", nullstillFeil);
+    valuta.addEventListener("input", nullstillFeil);
+    // `belop_maks` drar `valuta` med seg (skjemaets `dependentRequired`):
+    // et beløpstak uten valuta er ikke et beløp.
+    const synkFelter = () => {
+      const k = krav[gkValg.value];
+      belopRad.hidden = k !== "belop_maks";
+      valutaRad.hidden = k !== "belop_maks" && k !== "valuta";
+    };
+    gkValg.addEventListener("change", synkFelter);
+    synkFelter();
     const leggTil = el("button", { class: "knapp liten", type: "button",
       text: t("ui.editor.overstyring_legg_til") });
     leggTil.addEventListener("click", () => {
+      nullstillFeil();
+      const k = krav[gkValg.value];
+      const oppf = { grunnkode: gkValg.value, handling: hValg.value };
+      // Fail-closed på FORMEN også: serveren avviser uansett (mønstrene er
+      // skjemaets), men eier skal få vite det her og nå — ikke etter en
+      // runde med validering på et frosset utkast.
+      if (k === "belop_maks" || k === "valuta") {
+        const v = valuta.value.trim().toUpperCase();
+        if (!/^[A-Z]{3}$/.test(v)) {
+          settFeil(valuta, t("ui.editor.overstyring_valuta_feil"));
+          return;
+        }
+        oppf.valuta = v;
+      }
+      if (k === "belop_maks") {
+        const b = belop.value.trim();
+        if (!/^\d+(\.\d{1,2})?$/.test(b)) {
+          settFeil(belop, t("ui.editor.overstyring_belop_feil"));
+          return;
+        }
+        oppf.belop_maks = b;
+      }
       const m = policy.menneskelig_overstyring
         = (policy.menneskelig_overstyring
            && typeof policy.menneskelig_overstyring === "object")
           ? policy.menneskelig_overstyring
           : { godkjennbare: [], krever_rolle: roller[0] };
       m.godkjennbare = Array.isArray(m.godkjennbare) ? m.godkjennbare : [];
-      if (m.godkjennbare.some((e2) => e2.grunnkode === gkValg.value
+      if (m.godkjennbare.some((e2) => e2 && e2.grunnkode === gkValg.value
           && e2.handling === hValg.value)) return;   // duplikatpar (schema)
-      m.godkjennbare.push({ grunnkode: gkValg.value,
-                            handling: hValg.value });
+      m.godkjennbare.push(oppf);
       tegnPaaNytt();
     });
     deler.push(el("div", { class: "overstyring-legg-til" },
@@ -711,6 +789,7 @@ function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
         text: t("ui.editor.overstyring_grunnkode") }), gkValg,
       el("label", { for: "mo-handling",
         text: t("ui.editor.overstyring_handling") }), hValg,
+      belopRad, valutaRad, feilUt,
       leggTil));
   } else if (!grunnkoder.length) {
     deler.push(el("p", { class: "muted",

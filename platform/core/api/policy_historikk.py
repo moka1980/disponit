@@ -22,21 +22,23 @@ from starlette.responses import Response
 
 from .policyadmin_http import _Avbrudd, _feil, _leseauth, _med_conn
 
-#: Grunnkodene editoren TILBYR for `menneskelig_overstyring` (port 30):
-#: de blokkerende politikk-utfallene motoren faktisk feller — aldri de
-#: tekniske (deny-settet i policy_validator.schema). Konstanten bor HER,
-#: ikke i schema.py: skjemaets validering er motorsemantikk (checksummet i
-#: MOTOR_SEMANTIKKVERSJON), mens dette er flatens KURATERING av hva som er
-#: meningsfullt å velge — å endre listen endrer ingen beslutning.
-#: Kildene i engine.py: belop_over_grense (grense 4), valuta_ikke_tillatt
-#: (5), frekvensgrense_naadd (7), utenfor_tidsvindu (6),
-#: rolle_ikke_tillatt (3), dataklasse_ikke_tillatt (8),
-#: modus_alltid_stopp (1).
-MENNESKELIG_GODKJENNBARE_GRUNNKODER = (
-    "belop_over_grense", "valuta_ikke_tillatt", "frekvensgrense_naadd",
-    "utenfor_tidsvindu", "rolle_ikke_tillatt", "dataklasse_ikke_tillatt",
-    "modus_alltid_stopp",
-)
+#: Grunnkodene editoren TILBYR for `menneskelig_overstyring` (port 30) —
+#: og feltet hver av dem krever i oppføringen.
+#:
+#: Listen var HÅNDKURATERT her, ut fra hvilke blokkerende politikk-utfall
+#: motoren feller, med den begrunnelsen at «å endre listen endrer ingen
+#: beslutning». Det stemte ikke (Codex P1): fem av de sju kodene kan
+#: `_loft_policy` ikke uttrykke i det hele tatt, så en overstyring valgt
+#: fra dem endte i STOPP ved HVER godkjenning. Eier konfigurerte noe som
+#: så komplett ut og aldri kunne virke.
+#:
+#: Kurateringen er derfor ikke lenger vår: den ER motorens uttrykkskraft,
+#: lest direkte fra `engine.LOFTBARE_GRUNNKODER`. Samme kilde som
+#: innføringskontrakten avviser mot, så flaten aldri kan tilby noe
+#: valideringen nekter — eller omvendt.
+def _loftbare() -> dict[str, str]:
+    from policy_validator.engine import LOFTBARE_GRUNNKODER
+    return LOFTBARE_GRUNNKODER
 
 
 def versjoner_endepunkt(tjeneste, request: Request) -> Response:
@@ -128,10 +130,18 @@ def editorgrunnlag_endepunkt(tjeneste, request: Request) -> Response:
             "SELECT vilkar_type, maldomene FROM malautorisasjonsvilkar"
             " ORDER BY vilkar_type").fetchall()
         conn.rollback()
+        loftbare = _loftbare()
         return _ok({
             "plattformvilkar": [{"vilkar_type": r[0], "maldomene": r[1]}
                                 for r in rader],
-            "godkjennbare_grunnkoder":
-                list(MENNESKELIG_GODKJENNBARE_GRUNNKODER)}, rid)
+            # Navnene alene holdt ikke (Codex P1): flaten må vite hvilket
+            # FELT hver grunnkode krever, ellers lager den oppføringer
+            # motoren ikke kan anvende. `krever` er feltnavnet;
+            # `belop_maks` drar dessuten `valuta` med seg (skjemaets
+            # `dependentRequired`).
+            "godkjennbare_grunnkoder": sorted(loftbare),
+            "godkjennbare_krav": [
+                {"grunnkode": gk, "krever": felt}
+                for gk, felt in sorted(loftbare.items())]}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
