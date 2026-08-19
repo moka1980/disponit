@@ -2060,11 +2060,13 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
                                   slutt_h=-26 - 24 * i)
             _syntetisk_tick(migrator, pid, vs, "tillat", oppdrag_id=oid)
         # Uten promoteringen ER planen en kandidat — ellers måler testen
-        # ingenting.
-        assert migrator.execute(
+        # ingenting. Utvalget leses med RUNTIME-rollen: definerne er
+        # REVOKEd fra PUBLIC og granted til `disponit` alene (port 7).
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
             "SELECT count(*) FROM planer_gjentatt_uten_resultat()"
             " WHERE plan_id=%s", (pid,)).fetchone()[0] == 1
-        migrator.rollback()
+        rt.commit()
 
         _promoter_artefakt(blokk, key_id, oids[0])   # åpen: ingen commit
 
