@@ -2727,3 +2727,60 @@ def test_hver_unit_med_loadcredential_hydrerer_dem():
             "aldri — den avbryter på en miljøvariabel den HAR fått")
         maalt += 1
     assert maalt >= 3, f"porten målte bare {maalt} units — regexen råtnet"
+
+
+@pg
+def test_klaimet_tar_aldri_flere_enn_grensen_i_ett_kall():
+    """046 (issue #100, samme klasse som 041 §18): kandidatvalget er en
+    MATERIALIZED CTE — nøyaktig ÉN evaluering. Radtallet per kall MÅLES:
+    med åtte køede rader og grense tre skal kallet klaime nøyaktig tre,
+    og de fem andre skal stå urørt i `koet`.
+
+    Kaskadevilkåret som gjorde claim_neste_sak-varianten til «én claim
+    tømte hele køen» er til stede også her: klaimet endrer
+    `epost_status`, så en rescan av subspørringen ser klaimede rader
+    falle ut av filteret og fortsette forbi LIMIT-intensjonen. En
+    planformflip kan ikke fremprovoseres herfra — derfor er garantien
+    flyttet inn i SQL-en (MATERIALIZED), og denne testen er
+    regresjonsvernet på intensjonen: grensen ER radtallet.
+
+    I tillegg: hvert klaim har sin EGEN identitet (tokenet er ferskt per
+    rad), og et kall til tar de neste i FIFO-orden uten å røre de alt
+    klaimede."""
+    c = _conn()
+    try:
+        # Køen er global (definer, på tvers av tenanter) og kan bære rester
+        # fra andre tester: tøm den gjennom KLAIMVEIEN selv, så målingen
+        # under starter fra kjent tilstand uten å røre tabellen direkte.
+        while c.execute("SELECT count(*) FROM varsel_klaim_epost(500)"
+                        ).fetchone()[0]:
+            c.commit()
+        c.commit()
+        _kontekst(c)
+        bid = _bruker(c, "grense", "grense@example.com")
+        for i in range(8):
+            _ko(c, bid, f"grense-{i}")
+        c.commit()
+        _kontekst(c)
+        rader = c.execute("SELECT id, klaim FROM varsel_klaim_epost(3)"
+                          ).fetchall()
+        c.commit()
+        _kontekst(c)
+        assert len(rader) == 3, \
+            f"grense 3 klaimet {len(rader)} rader (041 §18-klassen)"
+        assert len({k for _, k in rader}) == 3, "klaimtokener delt mellom rader"
+        status = dict(c.execute(
+            "SELECT epost_status, count(*) FROM varsel WHERE tenant=%s"
+            " AND ressurs_id LIKE 'grense-%%' GROUP BY epost_status",
+            (TEN,)).fetchall())
+        c.rollback()
+        assert status == {"under_sending": 3, "koet": 5}, status
+        # Neste kall: de tre neste, aldri de alt klaimede.
+        _kontekst(c)
+        rader2 = c.execute("SELECT id FROM varsel_klaim_epost(3)").fetchall()
+        c.commit()
+        assert len(rader2) == 3
+        assert not ({r[0] for r in rader2} & {r[0] for r in rader}), \
+            "et kall til klaimet en alt klaimet rad"
+    finally:
+        c.close()
