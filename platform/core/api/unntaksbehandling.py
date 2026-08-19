@@ -333,9 +333,16 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
         # Selve oppløsningen skjer i TERMINALGRENEN under (etter runde-
         # og attestasjonsstegene): en avvis som uansett felles av
         # Godkjenningsfeil skal aldri ha rørt et oppdrag først.
-        if terminale and not levende_opp:
+        if terminale:
             # Utenfor kappløpet (port 13): terminalt oppdrag er ordinært
             # avvis — men hendelsen skal bære hva mennesket visste.
+            # BETINGELSEN `not levende_opp` er borte (Codex P2, runde 2):
+            # hadde saken både et levende og et alt terminalt oppdrag, ble
+            # de terminale radene lest her og så kastet, og revisjonen
+            # fortalte bare om det som ble kansellert. Statusen mennesket
+            # faktisk handlet på er evidens uansett hva som står ved siden
+            # av; oppløsningsgrenen under FYLLER PÅ denne, den erstatter
+            # den ikke.
             opplosning_detalj = {
                 "oppdrag_status_ved_avvis": [
                     {"oppdrag_id": oid, "status": st}
@@ -430,10 +437,23 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
                         "unntak_id": unntak_id,
                         "oppdrag_id": int(vunnet[0][1]),
                         "kvitteringsref": vunnet[0][3]}
+            # `alt_terminal` er det ANDRE tapte sporet (Codex P2, runde 2):
+            # et oppdrag som var levende under prescreeningen, men rakk å
+            # bli `feilet`/`kansellert` før oppdragslåsen, kommer tilbake
+            # herfra — ikke som `kansellert`. Filtreres det bort, forsvinner
+            # raden helt ut av revisjonen. Den hører hjemme i samme
+            # statuslista som de prescreenede terminale: ingenting ble løst
+            # opp, men mennesket handlet på en sak som hadde den raden.
+            terminale.update({int(r[1]): r[2] for r in res
+                              if r[0] == "alt_terminal"})
             opplosning_detalj = {
                 "opplost": [{"oppdrag_id": int(r[1]),
                              "oppdrag_status_ved_avvis": r[2]}
                             for r in res if r[0] == "kansellert"]}
+            if terminale:
+                opplosning_detalj["oppdrag_status_ved_avvis"] = [
+                    {"oppdrag_id": oid, "status": st}
+                    for oid, st in sorted(terminale.items())]
         conn.execute("UPDATE godkjenningsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND unntak_id=%s AND runde=%s",
                      (tenant, unntak_id, r_nr))

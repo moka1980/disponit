@@ -224,6 +224,50 @@ def test_port5_baade_kansellert_og_levende_gir_opplosning(conn):
 
 
 @pg
+def test_port19_terminal_status_overlever_oppløsningen_i_revisjonen(conn):
+    """Codex P2 (runde 2): har saken BÅDE et levende og et alt terminalt
+    oppdrag, ble de terminale radene lest i prescreeningen og så kastet —
+    `avvist_handling` fortalte bare om det som ble kansellert, og statusen
+    mennesket faktisk handlet på forsvant ut av revisjonen.
+
+    MUTASJONEN SOM DREPER DENNE: sett `if terminale and not levende_opp`
+    tilbake, eller la oppløsningsgrenen ERSTATTE `opplosning_detalj` i
+    stedet for å fylle på — begge tar `oppdrag_status_ved_avvis` bort
+    herfra."""
+    uid = _oppsett(conn)
+    bid = _medlem(conn, "op1")
+    # Én AKTIV reparasjon per sak (005): den utførte generasjonen er
+    # `superseded`, den levende er den aktive.
+    _oppdrag(uid, "utfort", gen=0, rep_status="superseded")
+    rop = _oppdrag(uid, "plukket", gen=1)      # levende → løses opp
+    res = _kall(conn, uid, "avvis", bid, _macreg())
+    assert res["utfall"] == "avvist", res
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    sett_kontekst(m, TEN, "sys", "r0")
+    lev_id, ut_id = m.execute(
+        "SELECT max(id) FILTER (WHERE repair_operation_id=%s),"
+        " max(id) FILTER (WHERE repair_operation_id<>%s)"
+        "  FROM oppdrag WHERE tenant=%s AND unntak_id=%s",
+        (rop, rop, TEN, uid)).fetchone()
+    detalj = m.execute("SELECT detalj FROM unntak_historikk WHERE tenant=%s"
+                       " AND unntak_id=%s AND hendelse='avvist_handling'"
+                       " ORDER BY id DESC LIMIT 1", (TEN, uid)).fetchone()[0]
+    statuser = m.execute("SELECT id, status, kansellert_aarsak FROM oppdrag"
+                         " WHERE tenant=%s AND unntak_id=%s ORDER BY id",
+                         (TEN, uid)).fetchall()
+    m.rollback(); m.close()
+    # Oppløsningen står: bare det levende ble kansellert med menneskets årsak.
+    assert (ut_id, "utfort", None) in statuser, statuser
+    assert (lev_id, "kansellert", "menneskelig_avvis") in statuser, statuser
+    # ... og revisjonen bærer BEGGE sporene, ikke bare det kansellerte.
+    assert detalj["opplost"] == [{"oppdrag_id": lev_id,
+                                  "oppdrag_status_ved_avvis": "plukket"}], detalj
+    assert detalj["oppdrag_status_ved_avvis"] == [
+        {"oppdrag_id": ut_id, "status": "utfort"}], detalj
+
+
+@pg
 def test_port9_gjentatt_ulik_noekkel_samme_409_ingen_ny_versjon_eller_historikk(conn):
     """P3-invarianten (043-formen): 409-veien som står igjen er den levende
     kapabiliteten uten oppdrag — samme utestående tilstand, samme 409,
