@@ -635,6 +635,50 @@ def test_port16_definer_veiene_binder_tenanten_til_konteksten(conn):
     assert _oppdragsrad(oid)[0] == "plukket"
 
 
+@pg
+def test_port16b_artefaktveiene_binder_tenanten_til_konteksten(conn):
+    """Samme port på artefakthalvdelen (Codex P2, runde 3).
+
+    `verifiser_artefaktbinding` (043 §8) og tvillingen `bevar_artefakt` —
+    de to grenene av det SAMME valget på det samme kallstedet — er SECURITY
+    DEFINER eid av `disponit_domene_eier` og gitt direkte til runtime.
+    Eierrollen omgår artefakttabellens tenant-isolasjon, så uten porten er
+    `p_tenant` kallerens frie valg: en kompromittert runtime-spørring kunne
+    oppgi en ANNEN tenants uuid/oppdrag/hash og lese svaret som et orakel
+    («finnes artefaktet, og er det staged/bevart?») — og `FOR UPDATE` ga i
+    tillegg en kryss-tenant radlås som holdes til kallerens commit.
+
+    Målingen bruker et artefakt som IKKE finnes: porten står FØR
+    oppslaget, så kallet skal HEVE, ikke svare `ugyldig`. Uten porten er
+    svaret `ugyldig` og testen dør — som den skal.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `krev_tenantkontekst` fra én av de
+    to funksjonene."""
+    from db.pg import koble
+    ukjent = "00000000-0000-0000-0000-0000000016b0"
+    kall = (("SELECT verifiser_artefaktbinding(%s::uuid,%s,%s,%s)",
+             (ukjent, TEN, 1, "a" * 64)),
+            ("SELECT bevar_artefakt(%s::uuid,%s,%s,%s)",
+             (ukjent, TEN, 1, "a" * 64)))
+    for sql, args in kall:
+        # (1) Kontekst på EN ANNEN tenant enn parameteret.
+        r = koble(DSN)
+        try:
+            r.execute("SELECT set_config('disponit.tenant','annen-tenant',"
+                      "true)")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r.execute(sql, args)
+        finally:
+            r.rollback(); r.close()
+        # (2) Uten kontekst i det hele tatt: også fail-closed.
+        r = koble(DSN)
+        try:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r.execute(sql, args)
+        finally:
+            r.rollback(); r.close()
+
+
 # ---------------------------------------------------------------------------
 # Port 17: låseorden mot kvitteringsveien — to tabeller, én rekkefølge
 # ---------------------------------------------------------------------------

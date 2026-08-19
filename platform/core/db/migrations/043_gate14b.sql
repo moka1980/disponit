@@ -586,6 +586,19 @@ CREATE OR REPLACE FUNCTION verifiser_artefaktbinding(
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE r RECORD;
 BEGIN
+    -- TENANTPORTEN FØRST (Codex P2, runde 3) — se §7 for den samme
+    -- begrunnelsen på avvis-veien. Eierrollen omgår artefakttabellens
+    -- tenant-isolasjon, og funksjonen er gitt DIREKTE til runtime; uten
+    -- porten er `p_tenant` kallerens frie valg. En kompromittert
+    -- runtime-spørring kunne da oppgi en ANNEN tenants uuid, oppdrag-id og
+    -- hash og lese svaret som et orakel: 'gyldig' betyr at artefaktet
+    -- finnes og er staged/bevart hos den tenanten. `FOR UPDATE` gjør det
+    -- verre enn en lekkasje — den tar en kryss-tenant radlås som holdes til
+    -- kallerens commit.
+    --
+    -- Porten står FØR spørringen, ikke etter: en avvist kaller skal ikke ha
+    -- rørt raden, og slett ikke ha låst den.
+    PERFORM public.krev_tenantkontekst(p_tenant, 'verifiser_artefaktbinding');
     SELECT klartekst_sha256, tilstand INTO r FROM public.artefakt
      WHERE artefakt_id = p_artefakt_id AND tenant = p_tenant
        AND oppdrag_id = p_oppdrag_id FOR UPDATE;
@@ -607,5 +620,39 @@ DO $$ BEGIN
     GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT,
         TEXT) TO disponit;
   END IF;
+END $$;
+
+-- ... og TVILLINGEN må ha den samme porten, ellers er den bare flyttet.
+-- `bevar_artefakt` (016) er den ANDRE halvdelen av det samme valget på det
+-- samme kallstedet (`app.py`: `bevar` → bevar, ellers verifiser), med
+-- identisk signatur, identisk eier og identisk `FOR UPDATE`. Gav vi porten
+-- til den ene og ikke den andre, ville kryss-tenant-orakelet og
+-- kryss-tenant-låsen Codex fant fortsatt ligge åpne — og til og med på den
+-- MEST brukte grenen. Da er det ikke roten som er rettet, bare den ene
+-- veien dit.
+--
+-- Kroppen er ellers uendret fra 016 (validering, lås, `bevart`/`idempotent`/
+-- `ugyldig`); CREATE OR REPLACE beholder eier og eksisterende grants.
+-- Runtime setter alltid tenantkonteksten før kvitteringsingesten kaller
+-- denne, så porten er ingen ny betingelse for den legitime veien.
+CREATE OR REPLACE FUNCTION bevar_artefakt(
+    p_artefakt_id UUID, p_tenant TEXT, p_oppdrag_id BIGINT,
+    p_klartekst_sha256 TEXT)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE r RECORD;
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'bevar_artefakt');
+    SELECT klartekst_sha256, tilstand INTO r FROM public.artefakt
+     WHERE artefakt_id = p_artefakt_id AND tenant = p_tenant
+       AND oppdrag_id = p_oppdrag_id FOR UPDATE;
+    IF NOT FOUND THEN RETURN 'ugyldig'; END IF;
+    IF r.klartekst_sha256 IS DISTINCT FROM p_klartekst_sha256 THEN
+        RETURN 'ugyldig';
+    END IF;
+    IF r.tilstand = 'bevart' THEN RETURN 'idempotent'; END IF;
+    IF r.tilstand <> 'staged' THEN RETURN 'ugyldig'; END IF;   -- forkastet/…
+    UPDATE public.artefakt SET tilstand = 'bevart'
+     WHERE artefakt_id = p_artefakt_id;
+    RETURN 'bevart';
 END $$;
 RESET ROLE;
