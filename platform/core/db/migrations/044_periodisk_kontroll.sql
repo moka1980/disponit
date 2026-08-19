@@ -768,8 +768,33 @@ BEGIN
         END IF;
     ELSIF v.tilstand = 'aktivt' AND v.claim_id IS DISTINCT FROM p_claim THEN
         -- Materialiserings-utfall krever claimet — fencing på forsøket.
-        RAISE EXCEPTION 'terminaliser_planvindu: claimet er ikke ditt'
-            USING ERRCODE = 'invalid_parameter_value';
+        --
+        -- MED ÉN VEI TILBAKE (Codex P1): committer arbeideren bestillingen
+        -- og dør før terminaliseringen, står vinduet `aktivt` med et claim
+        -- ingen lenger holder. Vinduet er da alt utløpt når leasen dør, så
+        -- plukket tar det aldri igjen (`now() < vindu_slutt`), og
+        -- klassifisereren — som per §5 IKKE eier noe claim — ble avvist av
+        -- nettopp dette leddet. Resultatet var en evig `ventet`: et vindu
+        -- som ER bestilt, men som aldri fikk sitt tick, i hvert sveip for
+        -- alltid.
+        --
+        -- Gjenopprettingen er smal med vilje, og hviler på den ENE fasiten
+        -- §5 alt utpeker: `bestilling_idempotens`. Tre ledd må holde —
+        -- kalleren har INTET claim (en arbeider med feil claim er fortsatt
+        -- fenced), leasen er DØD (et levende forsøk eier vinduet, port
+        -- 44/51), og det påstådte utfallet er VERIFISERT mot den immutable
+        -- raden på vinduets nøkkel. Klassifisereren kan altså ikke gjette
+        -- et utfall — den kan bare skrive ned det bestillingsveien alt har
+        -- besluttet.
+        IF p_claim IS NOT NULL
+           OR v.lease_utloper > now()
+           OR NOT EXISTS (SELECT 1 FROM public.bestilling_idempotens bi
+                           WHERE bi.tenant = p_tenant
+                             AND bi.idempotensnokkel = p_nokkel
+                             AND bi.beslutning = p_utfall) THEN
+            RAISE EXCEPTION 'terminaliser_planvindu: claimet er ikke ditt'
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
     END IF;
     UPDATE public.bestillingsplan_vindu w
        SET tilstand = 'terminal', terminalisert_ts = now()

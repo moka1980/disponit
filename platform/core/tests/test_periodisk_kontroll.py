@@ -982,6 +982,70 @@ def test_klassifisereren_venter_paa_levende_forsok(migrator):
 
 
 @pg
+def test_fullfort_forsok_gjenopprettes_etter_utlopt_claim(migrator):
+    """Codex P1: et vindu som ER bestilt skal få sitt tick, også når
+    arbeideren døde mellom commit og terminalisering.
+
+    Da står vinduet `aktivt` med et claim ingen lenger holder. Plukket tar
+    det aldri igjen (`now() < vindu_slutt` holder ikke lenger), og
+    klassifisereren eier per §5 intet claim — så fencingen avviste den, og
+    sveipen meldte `ventet` om igjen og om igjen, for alltid.
+
+    Gjenopprettingen er smal: intet claim fra kalleren, DØD lease, og
+    utfallet verifisert mot den immutable `bestilling_idempotens`-raden.
+    Klassifisereren gjetter aldri — den skriver ned det bestillingsveien
+    alt har besluttet."""
+    from plan.klassifiser import _nokkel, klassifiser_vinduer
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p-gjenoppr.example")
+        # Arbeideren claimet, bestilte og døde: vinduet står `aktivt` med
+        # en lease som siden løp ut, og klokken er forbi vindu_slutt.
+        vs = _syntetisk_vindu(migrator, pid, start_h=-8, slutt_h=-4,
+                              tilstand="aktivt", lease_h=-2)
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,515151,'tillat','{}')",
+            (TENANT, _nokkel(pid, vs), "2" * 64))
+        migrator.commit()
+
+        # Fencingen står fortsatt for et FEIL claim og for et utfall som
+        # ikke er fasitens.
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,"
+                       "gen_random_uuid(),%s,'tillat',NULL,NULL)",
+                       (TENANT, pid, vs, _nokkel(pid, vs)))
+        rt.rollback()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'brudd',NULL,NULL)",
+                       (TENANT, pid, vs, _nokkel(pid, vs)))
+        rt.rollback()
+
+        res = klassifiser_vinduer(rt)
+        assert not any(v["plan"] == str(pid) for v in res.get("ventet", [])), \
+            res
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    tick = migrator.execute(
+        "SELECT utfall, oppdrag_id, detalj FROM bestillingsplan_tick"
+        " WHERE plan_id=%s AND vindu_start=%s", (pid, vs)).fetchone()
+    tilstand = migrator.execute(
+        "SELECT tilstand FROM bestillingsplan_vindu WHERE plan_id=%s"
+        " AND vindu_start=%s", (pid, vs)).fetchone()[0]
+    migrator.rollback()
+    assert tick is not None, "det bestilte vinduet fikk aldri sitt tick"
+    assert (tick[0], tick[1]) == ("tillat", 515151), tick
+    assert tick[2]["kilde"] == "bestilling_idempotens"
+    assert tilstand == "terminal"
+
+
+@pg
 def test_nedetid_over_30_dogn_aggregeres(migrator):
     """Port 35: vinduer eldre enn tilbakeblikket får ALDRI enkeltrader —
     én aggregert hendelse per plan, og radene som alt finnes
