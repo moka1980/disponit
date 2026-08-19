@@ -2255,10 +2255,15 @@ def test_http_flaten_ende_til_ende(migrator, klient):
     # minuttet, avledet av en sha256 av plan-id-en — flaten kan ikke regne
     # det ut selv, og viste derfor «neste kjøring» på hel time. Verdien er
     # basens egen avledning, ikke en andrehånds implementasjon.
-    _sett_kontekst(migrator, TENANT)
-    fasit = migrator.execute("SELECT plan_forfallsminutt(%s)",
-                             (pid,)).fetchone()[0]
-    migrator.rollback()
+    # Leses med RUNTIME-rollen: `plan_forfallsminutt` er REVOKEd fra
+    # PUBLIC og granted til `disponit` alene — migratorrollen har den ikke.
+    rt = _rt()
+    try:
+        fasit = rt.execute("SELECT plan_forfallsminutt(%s)",
+                           (pid,)).fetchone()[0]
+        rt.rollback()
+    finally:
+        rt.close()
     assert mine[0]["forfallsminutt"] == fasit, mine[0]
     r = klient.get(f"/v1/plan/{pid}/historikk",
                    cookies={sesjonmodul.C_SESJON: cookie_l})
