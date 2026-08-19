@@ -94,7 +94,13 @@ def diff_endepunkt(tjeneste, request: Request) -> Response:
                     (tenant, policy_id, versjon)).fetchone()[0]
         except psycopg.errors.NoDataFound:
             conn.rollback()
-            return _feil("ikke_funnet", rid)
+            # 404 eksplisitt, som rullbakkruta gjør for det SAMME
+            # `policyversjon_innhold`-avslaget (Codex P2). `ikke_funnet`
+            # står ikke i `_FEIL_HTTP`, så uten koden her falt en foreldet,
+            # arkivert eller ukjent `fra`/`til` gjennom til standardsvaret
+            # 409 — en konflikt, på en tilstand det ikke finnes noen
+            # konflikt i: ressursen er bare borte.
+            return _feil("ikke_funnet", rid, 404)
         conn.rollback()
         kl = klassifikator.klassifiser(innhold["fra"], innhold["til"])
         return _ok({

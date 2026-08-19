@@ -31,6 +31,12 @@ _FEIL_HTTP = {
     "versjon_i_bruk": 409, "versjon_mangler": 409,
     "policy_id_avvik": 409, "status_ikke_produksjon": 409,
     "policy_i_bruk": 409, "policy_ukjent": 404,
+    # Ressursen er BORTE, ikke i konflikt. Koden brukes av begge veiene
+    # som slår opp en versjon gjennom `policyversjon_innhold` (rullbakk og
+    # diff); manglet den her, falt den ene av dem gjennom til
+    # standardsvaret 409 (Codex P2). Standarden skal aldri kunne gjøre et
+    # fravær om til en konflikt.
+    "ikke_funnet": 404,
     # Den aktive policyen er ikke lenger den klienten så da den ba om
     # slettingen (optimistisk lås, som `utkastversjon_utdatert`): 409, og
     # flaten laster på nytt.
