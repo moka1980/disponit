@@ -1528,16 +1528,24 @@ CREATE OR REPLACE FUNCTION migrer_pre041_overtakelseskonflikter(
     p_aktor TEXT DEFAULT 'migrasjon041')
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE k RECORD; v_a BIGINT; v_b BIGINT;
-        v_laget INT := 0; v_merket INT := 0; v_uten JSONB := '[]'::jsonb;
-        v_rid TEXT;
+DECLARE k RECORD; v_vert TEXT; v_a BIGINT; v_b BIGINT; v_igjen INT;
+        v_laget INT := 0; v_merket INT := 0; v_degradert INT := 0;
+        v_uten JSONB := '[]'::jsonb; v_rid TEXT;
 BEGIN
     v_rid := 'mig041-' || replace(gen_random_uuid()::text, '-', '');
-    FOR k IN
-        SELECT d.tenant, d.hostname, d.konflikt_motpart AS motpart,
-               d.autorisasjonsgenerasjon AS gen
+    -- ETT VERTSNAVN AV GANGEN (Codex P1). Forrige form gikk rad for rad og
+    -- sorterte bindingseieren sist, i håp om at skiftet i §10 skulle la
+    -- den ene saken ende hos rett utfordrer. Det ga riktig SAK og feil
+    -- VERDEN: de forbigåtte radene ble stående i `avklaring_kreves` uten
+    -- noen sak, den nye vakten fyrer ikke retroaktivt, og
+    -- `verifiser_domenekontroll` returnerer umiddelbart for den statusen —
+    -- så de tenantene var permanent låst, mens vaktbikkja rapporterte dem
+    -- syklus etter syklus. Saken ble dessuten syklet gjennom hver av dem
+    -- på veien, med en revisjonsbump per rad, og endte med en historikk
+    -- over utfordrere som aldri var dagens.
+    FOR v_vert IN
+        SELECT DISTINCT d.hostname
           FROM public.domenekontroll d
-          LEFT JOIN public.hostname_binding b ON b.hostname = d.hostname
          WHERE d.status = 'avklaring_kreves'
            AND NOT EXISTS (
                  SELECT 1 FROM public.unntak u
@@ -1546,39 +1554,81 @@ BEGIN
                     AND u.sakskilde = 'domeneovertakelse'
                     AND NOT u.terminal
                     AND u.utfordrer_tenant = d.tenant
+                    AND u.tapt_tenant = d.konflikt_motpart
                     AND u.autorisasjonsgenerasjon = d.autorisasjonsgenerasjon)
-         -- Bindingseieren er den GJELDENDE utfordreren og behandles SIST:
-         -- står flere tenanter i avklaring for samme hostnavn (i praksis
-         -- stengt av `degrader_forbigatte_utfordrere`, 019 §3.2, men
-         -- gamle data er gamle data), gjør §10 de foregående til et
-         -- SKIFTE på den ene saken, og den ene saken ender med å navngi
-         -- den utfordreren bindingen faktisk peker på.
-         ORDER BY d.hostname,
-                  (b.tenant IS NOT DISTINCT FROM d.tenant), d.tenant
+         ORDER BY 1
     LOOP
         -- Samme lås som den levende veien tar rundt `sikre_overtakelsessak`
         -- — funksjonen her er også en operatørvei, ikke bare et
         -- migrasjonssteg, og skal ikke kunne kappløpe med en verifisering.
         PERFORM pg_advisory_xact_lock(
-            hashtextextended('domene:' || k.hostname, 0));
-        SELECT max(h.id) INTO v_b FROM public.domenekontroll_hendelse h
-         WHERE h.hostname = k.hostname AND h.tenant = k.tenant;
-        SELECT max(h.id) INTO v_a FROM public.domenekontroll_hendelse h
-         WHERE h.hostname = k.hostname AND h.tenant = k.motpart;
-        IF k.motpart IS NULL OR v_a IS NULL OR v_b IS NULL OR v_a = v_b THEN
-            -- Ingen lovlig sak KAN bygges: §2s CHECK krever motpart og to
-            -- ulike hendelser. Raden navngis i returverdien i stedet for å
-            -- bli stille utelatt — kalleren i migrasjonen feller på den.
-            v_uten := v_uten || jsonb_build_object(
-                'tenant', k.tenant, 'hostname', k.hostname,
-                'generasjon', k.gen,
-                'grunn', CASE WHEN k.motpart IS NULL THEN 'ingen_motpart'
-                              ELSE 'ingen_hendelseslineage' END);
+            hashtextextended('domene:' || v_vert, 0));
+
+        -- De forbigåtte degraderes av den ETABLERTE veien (019 §3.2), ikke
+        -- av en håndrullet UPDATE her: den skriver 'forbigatt'-hendelsen,
+        -- øker generasjonen og lukker en eventuell pre-041 python-sak
+        -- gjennom idempotensnøkkelen — nøyaktig den nøkkelen legacy-radene
+        -- har. Autoriteten på hvem som ER dagens utfordrer er
+        -- `hostname_binding`, den samme §3 B2 bruker.
+        v_degradert := v_degradert
+            + public.degrader_forbigatte_utfordrere(v_vert, p_aktor);
+
+        SELECT count(*) INTO v_igjen FROM public.domenekontroll d
+         WHERE d.hostname = v_vert AND d.status = 'avklaring_kreves';
+        IF v_igjen > 1 THEN
+            -- Degraderingen ga opp (ingen binding), og da finnes det ingen
+            -- autoritet som kan si hvem som er dagens utfordrer. Å velge
+            -- én ville vært å gjette på hvem som eier et domene.
+            v_uten := v_uten || (
+                SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                           'tenant', d.tenant, 'hostname', d.hostname,
+                           'generasjon', d.autorisasjonsgenerasjon,
+                           'grunn', 'flere_utfordrere_uten_binding')),
+                       '[]'::jsonb)
+                  FROM public.domenekontroll d
+                 WHERE d.hostname = v_vert AND d.status = 'avklaring_kreves');
             CONTINUE;
         END IF;
-        PERFORM public.sikre_overtakelsessak(k.hostname, k.gen, k.motpart,
-            k.tenant, v_a, v_b, p_aktor, v_rid);
-        v_laget := v_laget + 1;
+
+        FOR k IN
+            SELECT d.tenant, d.konflikt_motpart AS motpart,
+                   d.autorisasjonsgenerasjon AS gen
+              FROM public.domenekontroll d
+             WHERE d.hostname = v_vert AND d.status = 'avklaring_kreves'
+        LOOP
+            -- LINEAGEN ER KONFLIKTOVERGANGEN, IKKE SISTE HENDELSE (Codex
+            -- P2). En pre-041-utfordrer som forsøkte å verifisere på nytt
+            -- mens den alt sto i avklaring, fikk en `verifisering_blokkert`-
+            -- rad for hvert forsøk; `max(id)` pekte da saken mot en retry i
+            -- stedet for mot overgangen som SKAPTE konflikten, og både
+            -- lineagen og den speilede referansepayloaden påsto et
+            -- revisjonsspor som ikke var det virkelige.
+            SELECT max(h.id) INTO v_b FROM public.domenekontroll_hendelse h
+             WHERE h.hostname = v_vert AND h.tenant = k.tenant
+               AND h.hendelse = 'avklaring_kreves'
+               AND h.til_status = 'avklaring_kreves';
+            -- Motpartens side er dens siste EKTE overgang før utfordreren
+            -- gikk i avklaring — den tilstanden konflikten faktisk sto i.
+            -- Retry-markørene er ikke overganger og hører ikke hjemme her.
+            SELECT max(h.id) INTO v_a FROM public.domenekontroll_hendelse h
+             WHERE h.hostname = v_vert AND h.tenant = k.motpart
+               AND h.id < v_b
+               AND h.hendelse <> 'verifisering_blokkert';
+            IF k.motpart IS NULL OR v_a IS NULL OR v_b IS NULL THEN
+                -- Ingen lovlig sak KAN bygges: §2s CHECK krever motpart og
+                -- to ulike hendelser. Raden navngis i returverdien i stedet
+                -- for å bli stille utelatt — migrasjonen feller på den.
+                v_uten := v_uten || jsonb_build_object(
+                    'tenant', k.tenant, 'hostname', v_vert,
+                    'generasjon', k.gen,
+                    'grunn', CASE WHEN k.motpart IS NULL THEN 'ingen_motpart'
+                                  ELSE 'ingen_konfliktovergang' END);
+                CONTINUE;
+            END IF;
+            PERFORM public.sikre_overtakelsessak(v_vert, k.gen, k.motpart,
+                k.tenant, v_a, v_b, p_aktor, v_rid);
+            v_laget := v_laget + 1;
+        END LOOP;
     END LOOP;
 
     -- Arkivmerkingen av de gamle python-sakene er claimerens (se hodet):
@@ -1588,6 +1638,7 @@ BEGIN
     v_merket := public.arkivmerk_pre041_overtakelsessaker(p_aktor, v_rid);
 
     RETURN jsonb_build_object('saker_opprettet', v_laget,
+                              'forbigatte_degradert', v_degradert,
                               'arkivmerket', v_merket, 'uten_sak', v_uten);
 END $$;
 REVOKE ALL ON FUNCTION migrer_pre041_overtakelseskonflikter(TEXT) FROM PUBLIC;
@@ -1608,9 +1659,11 @@ BEGIN
         RAISE EXCEPTION '041: % pre-041-konflikt(er) kan ikke få sak: %',
             jsonb_array_length(r -> 'uten_sak'), r -> 'uten_sak';
     END IF;
-    IF (r ->> 'saker_opprettet')::INT > 0 OR (r ->> 'arkivmerket')::INT > 0 THEN
+    IF (r ->> 'saker_opprettet')::INT > 0 OR (r ->> 'arkivmerket')::INT > 0
+       OR (r ->> 'forbigatte_degradert')::INT > 0 THEN
         RAISE NOTICE '041: % sak(er) opprettet for pre-041-konflikter, '
-            '% gammel sak arkivmerket', r ->> 'saker_opprettet',
+            '% forbigått utfordrer degradert, % gammel sak arkivmerket',
+            r ->> 'saker_opprettet', r ->> 'forbigatte_degradert',
             r ->> 'arkivmerket';
     END IF;
 END $$;
