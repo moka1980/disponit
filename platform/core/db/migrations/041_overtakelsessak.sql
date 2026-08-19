@@ -1706,7 +1706,9 @@ RESET ROLE;
 -- og skriver `unntak_historikk`, og domene_eier har fra 019 kun INSERT
 -- der (bevisst: domenelaget skal kunne notere, ikke bla i kundens
 -- sakshistorikk). Merkingen ligger derfor hos `m37_claimer`, som eier
--- den skriveveien fra før og ser radene via m37_dispatcher-policyen.
+-- den skriveveien fra før og ser radene via m37_dispatcher-policyen —
+-- og som har SELECT+UPDATE på `unntak` fra 005, altså også retten til å
+-- LUKKE den gamle saken, ikke bare notere ved siden av den.
 -- Alternativet — et nytt SELECT-grant til domene_eier — ville utvidet
 -- domenelagets leseflate for å slippe å dele en funksjon i to.
 -- Begge er IDEMPOTENTE og står igjen som operatørens reparasjonsvei.
@@ -1717,7 +1719,7 @@ CREATE OR REPLACE FUNCTION arkivmerk_pre041_overtakelsessaker(
     p_aktor TEXT, p_request_id TEXT)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE g RECORD; v_sak BIGINT; v_merket INT := 0;
+DECLARE g RECORD; v_sak BIGINT; v_merket INT := 0; v_lukket INT;
 BEGIN
     -- Den gamle python-saken kan IKKE bli en `domeneovertakelse`-sak: den
     -- bor hos kunden (§6/port 36 flytter aldri en sak mellom tenants),
@@ -1728,9 +1730,45 @@ BEGIN
     -- selv hvorfor den ikke lenger kan avgjøres der. Gjenkjennelsen er
     -- radens egen kategori/handling + loggpostens kilde, altså nøyaktig
     -- det den gamle `opprett_overtakelsessak` skrev.
+    --
+    -- ...OG DEN LUKKES (Codex P2). Et merke i historikken tar ingen rad ut
+    -- av en kø. Raden er `sakstype='sikkerhet'`, `status='ny'`, altså midt
+    -- i kundens åpne sikkerhetskø — og etter 041 kan INGEN behandle den:
+    -- avgjørelsen krever `domeneovertakelse`-sakskilden (adjudikatorveien),
+    -- python-veien er stengt (port 37), og `avgjor_domeneovertakelse` nås
+    -- bare gjennom plattformsaken. Uten dette steget etterlot altså
+    -- oppgraderingen et permanent, uhåndterbart køelement hos kunden — en
+    -- «gjør noe»-rad ingen kan gjøre noe med. En oppgradering skal ikke
+    -- kunne skape den tilstanden.
+    --
+    -- SLUTTSTATUSEN ER DEN ETABLERTE. 019 §3.2 lukket nøyaktig denne
+    -- radtypen med `lukk_overtakelsessak(..., 'avvist', ...)` når en
+    -- utfordrer ble forbigått — den veien fant bare saken via
+    -- idempotensnøkkelen, og §19 pekte lukkingen om til plattformtenanten,
+    -- så den er en no-op for legacy-radene i dag. `avvist` er dermed ikke
+    -- et nytt valg her: det er den verdien systemet fra før bruker om en
+    -- overtakelsessak som ikke skal avgjøres der den står. `løst` ville
+    -- påstått at tvisten var avgjort i denne køen; det var den ikke.
+    --
+    -- Statusmaskinen (003) krever `ny → under_behandling → avvist`, og
+    -- historikken skrives av `unntak_skriv_historikk` — som KREVER
+    -- `disponit.aktor`. Den settes her, ikke antas: funksjonen er også
+    -- operatørens reparasjonsvei og kalles ikke bare fra migrasjonen.
+    PERFORM set_config('disponit.aktor', p_aktor, true);
+    PERFORM set_config('disponit.request_id', p_request_id, true);
+    -- MERKET STYRER IKKE UTVALGET LENGER, TILSTANDEN GJØR (idempotens).
+    -- Med `NOT EXISTS (... overtakelsessak_migrert)` i WHERE ville en rad
+    -- som ble merket men ikke lukket — en tidligere utgave av dette steget,
+    -- en avbrutt reparasjon — bli hoppet over for alltid og bli stående
+    -- åpen. Utvalget er derfor `NOT terminal`; merket avgjør bare om
+    -- historikkraden skal skrives på nytt.
     FOR g IN
-        SELECT u.tenant, u.id,
-               split_part(r.idempotency_key, ':', 2) AS hostname
+        SELECT u.tenant, u.id, u.status,
+               split_part(r.idempotency_key, ':', 2) AS hostname,
+               EXISTS (SELECT 1 FROM public.unntak_historikk hh
+                        WHERE hh.tenant = u.tenant AND hh.unntak_id = u.id
+                          AND hh.hendelse = 'overtakelsessak_migrert')
+                   AS merket
           FROM public.unntak u
           JOIN public.revisjonslogg r
             ON r.tenant = u.tenant AND r.id = u.loggpost_id
@@ -1739,23 +1777,48 @@ BEGIN
            AND u.handling = 'domene.overtakelse'
            AND r.kilde = 'domeneovertakelse'
            AND r.idempotency_key LIKE 'domeneovertakelse:%'
-           AND NOT EXISTS (
-                 SELECT 1 FROM public.unntak_historikk hh
-                  WHERE hh.tenant = u.tenant AND hh.unntak_id = u.id
-                    AND hh.hendelse = 'overtakelsessak_migrert')
     LOOP
         SELECT n.id INTO v_sak FROM public.unntak n
          WHERE n.tenant = '__plattform_domener'
            AND n.hostname_ref = g.hostname
            AND n.sakskilde = 'domeneovertakelse' AND NOT n.terminal
            AND n.utfordrer_tenant = g.tenant;
-        INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
-            aktor, request_id, detalj)
-        VALUES (g.tenant, g.id, 'overtakelsessak_migrert', p_aktor,
-                p_request_id,
-                jsonb_build_object('familie', 'domeneovertakelse',
-                                   'hostname', g.hostname,
-                                   'plattformsak', v_sak));
+        IF NOT g.merket THEN
+            INSERT INTO public.unntak_historikk (tenant, unntak_id, hendelse,
+                aktor, request_id, detalj)
+            VALUES (g.tenant, g.id, 'overtakelsessak_migrert', p_aktor,
+                    p_request_id,
+                    jsonb_build_object('familie', 'domeneovertakelse',
+                                       'hostname', g.hostname,
+                                       'plattformsak', v_sak));
+        END IF;
+        -- `v_sak IS NULL` lukker også: da står det ingen åpen plattformsak
+        -- for denne utfordreren, altså er konflikten over — og en rad som
+        -- verken kan avgjøres her eller andre steder hører ikke hjemme i en
+        -- åpen kø. Merket bærer `plattformsak: null`, så historikken sier
+        -- hvilket av de to tilfellene det var.
+        IF g.status = 'ny' THEN
+            UPDATE public.unntak SET status = 'under_behandling'
+             WHERE tenant = g.tenant AND id = g.id AND status = 'ny';
+        END IF;
+        UPDATE public.unntak SET status = 'avvist'
+         WHERE tenant = g.tenant AND id = g.id
+           AND status = 'under_behandling';
+        GET DIAGNOSTICS v_lukket = ROW_COUNT;
+        -- INGEN STILLE FORBIGÅELSE. `ny` og `under_behandling` er de eneste
+        -- tilstandene disse radene kan stå i: `sakstype='sikkerhet'` holder
+        -- dem utenfor M-37s claim (§18 plukker kun `sakstype='normal'`), så
+        -- ingen av PR-012-parkeringene er nåbare for dem. Skulle en likevel
+        -- stå et sted statusmaskinen ikke slipper den ut av, skal den
+        -- NAVNGIS — en teller som sa «lukket» om en rad som ble stående
+        -- åpen ville vært den samme stillheten dette steget retter, bare
+        -- ett hakk lenger inn.
+        IF v_lukket <> 1 THEN
+            RAISE EXCEPTION '041 §20: pre-041-overtakelsessak %/% står i '
+                '«%» og kan ikke lukkes av statusmaskinen — rydd saken '
+                'før 041 rulles', g.tenant, g.id, g.status
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
         v_merket := v_merket + 1;
     END LOOP;
     RETURN v_merket;
@@ -1906,7 +1969,8 @@ BEGIN
     IF (r ->> 'saker_opprettet')::INT > 0 OR (r ->> 'arkivmerket')::INT > 0
        OR (r ->> 'forbigatte_degradert')::INT > 0 THEN
         RAISE NOTICE '041: % sak(er) opprettet for pre-041-konflikter, '
-            '% forbigått utfordrer degradert, % gammel sak arkivmerket',
+            '% forbigått utfordrer degradert, '
+            '% gammel sak arkivmerket og lukket',
             r ->> 'saker_opprettet', r ->> 'forbigatte_degradert',
             r ->> 'arkivmerket';
     END IF;

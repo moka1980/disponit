@@ -513,6 +513,30 @@ def test_pre041_python_sak_arkivmerkes_med_plattformsaken(migrator):
     d = json.loads(d) if isinstance(d, str) else d
     assert d["hostname"] == h and d["plattformsak"] == sak, d
 
+    # ... OG DEN ER UTE AV KØEN (Codex P2). Et merke i historikken tar
+    # ingen rad ut av en kø: raden er `sakstype='sikkerhet'`, `status='ny'`,
+    # altså midt i kundens åpne sikkerhetskø — og etter 041 kan ingen
+    # behandle den (adjudikasjonen krever `domeneovertakelse`-sakskilden,
+    # python-veien er stengt av port 37). Uten lukkingen etterlot
+    # oppgraderingen et permanent, uhåndterbart køelement hos kunden.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    st, terminal = migrator.execute(
+        "SELECT status, terminal FROM unntak WHERE tenant=%s AND id=%s",
+        (ANNEN_TENANT, gammel)).fetchone()
+    migrator.rollback()
+    assert (st, terminal) == ("avvist", True), \
+        f"den gamle python-saken står fortsatt i kundens åpne kø: {st}"
+
+    # Lukkingen er en STATUSOVERGANG, ikke en snarvei rundt statusmaskinen:
+    # historikken bærer begge trinnene 003 krever.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    spor = [r[0] for r in migrator.execute(
+        "SELECT til_status FROM unntak_historikk WHERE tenant=%s"
+        "   AND unntak_id=%s AND hendelse IN ('claim','statusendring')"
+        " ORDER BY id", (ANNEN_TENANT, gammel)).fetchall()]
+    migrator.rollback()
+    assert spor == ["under_behandling", "avvist"], spor
+
     # ... og ÉN gang: en ny kjøring skriver ikke historikken på nytt.
     adm = _admin()
     try:
@@ -527,6 +551,13 @@ def test_pre041_python_sak_arkivmerkes_med_plattformsaken(migrator):
         (ANNEN_TENANT, gammel)).fetchone()[0]
     migrator.rollback()
     assert antall == 1, antall
+    # ...og lukkingen står: en terminal rad plukkes ikke opp på nytt, så
+    # statusmaskinen får aldri et andre `avvist`-forsøk å felle på.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    assert migrator.execute(
+        "SELECT status FROM unntak WHERE tenant=%s AND id=%s",
+        (ANNEN_TENANT, gammel)).fetchone()[0] == "avvist"
+    migrator.rollback()
 
 
 @pg
