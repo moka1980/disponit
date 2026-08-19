@@ -151,14 +151,15 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, policy_id: str, innhold: dict,
                    idempotency_key: str, input_hash: str,
                    rollback_av_versjon: str | None = None,
-                   rollback_av_innhold: dict | None = None) -> dict:
+                   rollback_av_hash: str | None = None) -> dict:
     """Opprett et nytt utkast (status `utkast`). Fanger gjeldende aktive versjon
     + hash som `basert_pa_*` for konfliktdeteksjon (§4). Idempotent (P1 R3):
     en replay returnerer NØYAKTIG samme utkast_id. Kalleren eier tx.
 
-    En RULLBAKK må levere kildens innhold slik det ble hentet
-    (`rollback_av_innhold`): opphavet lagres som generasjonens innholdshash,
-    ikke bare som versjonsnummeret. Se `rollback_av_hash` i migrasjon 047."""
+    En RULLBAKK må levere kildens egen `innholds_hash` (`rollback_av_hash`),
+    hentet SAMMEN med innholdet den kopierer: opphavet lagres som
+    generasjonens identitet, ikke bare som versjonsnummeret — nummeret
+    frigjøres av sletting og kan gjenskapes. Se migrasjon 047."""
     sett_kontekst(conn, tenant, aktor, request_id)
     if not isinstance(innhold, dict):
         conn.rollback()
@@ -237,16 +238,16 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                 innhold = {**innhold,
                            "meta": {**innhold["meta"], "versjon": forslag}}
     utkast_id = "u-" + secrets.token_hex(8)
-    # Opphavet bindes til GENERASJONEN, ikke til nummeret (Codex P2):
-    # hashen regnes over innholdet kalleren FAKTISK kopierte, ikke over en
-    # rad vi leser om igjen her. Slettes og gjenskapes `(policy_id, N)`
-    # mellom oppslaget og denne innsettingen, ville et nytt oppslag bundet
-    # kopien til en generasjon den aldri kom fra — akkurat den løgnen
-    # kolonnen finnes for å hindre. En rullbakk uten kildeinnhold får NULL:
-    # historikken sier da «kilden er ikke bundet» i stedet for å påstå noe.
-    rb_hash = (_pr.innholds_hash(rollback_av_innhold)
-               if rollback_av_versjon is not None
-               and isinstance(rollback_av_innhold, dict) else None)
+    # Opphavet bindes til GENERASJONEN, ikke til nummeret (Codex P2).
+    # Hashen er kilderadens EGEN `innholds_hash`, lest sammen med innholdet
+    # kopien er tatt fra — ikke en hash regnet ut på nytt her, og ikke et
+    # oppslag til: slettes og gjenskapes `(policy_id, N)` i mellomtiden,
+    # ville et nytt oppslag bundet kopien til en generasjon den aldri kom
+    # fra, og en omregnet hash måler dessuten ikke det historikken
+    # sammenligner mot. En rullbakk uten kildehash får NULL: historikken
+    # sier da «kilden er ikke bundet» i stedet for å påstå noe.
+    rb_hash = (rollback_av_hash if rollback_av_versjon is not None
+               and isinstance(rollback_av_hash, str) else None)
     conn.execute(
         "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
         " basert_pa_versjon, basert_pa_hash, rollback_av_versjon,"

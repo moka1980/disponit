@@ -32,8 +32,9 @@ _FEIL_HTTP = {
     "policy_id_avvik": 409, "status_ikke_produksjon": 409,
     "policy_i_bruk": 409, "policy_ukjent": 404,
     # Ressursen er BORTE, ikke i konflikt. Koden brukes av begge veiene
-    # som slår opp en versjon gjennom `policyversjon_innhold` (rullbakk og
-    # diff); manglet den her, falt den ene av dem gjennom til
+    # som slår opp en versjon gjennom eier-definerne (rullbakk gjennom
+    # `policyversjon_kilde`, diff gjennom `policyversjon_innhold`);
+    # manglet den her, falt den ene av dem gjennom til
     # standardsvaret 409 (Codex P2). Standarden skal aldri kunne gjøre et
     # fravær om til en konflikt.
     "ikke_funnet": 404,
@@ -272,7 +273,9 @@ def opprett_utkast_endepunkt(tjeneste, request):
         policy_id = body.get("policy_id")
         innhold = body.get("innhold")
         rollback_av = body.get("rollback_av_versjon")
-        kilde_innhold = None
+        # Kildegenerasjonens egen `innholds_hash`, hentet sammen med
+        # innholdet under. Den er opphavet utkastet lagrer (047, Codex P2).
+        kilde_hash = None
         # 047 (§3, port 22): en rullbakk er en KOPI av versjonen den peker
         # på — serveren henter innholdet selv gjennom eier-defineren, og
         # et klientinnhold som avviker avvises: `rollback_av_versjon = N`
@@ -297,7 +300,7 @@ def opprett_utkast_endepunkt(tjeneste, request):
             # Klientens `innhold` inngår derfor her, rått, slik det kom.
             #
             # Ingen `rollback()` når vi faller gjennom: `sett_kontekst` er
-            # `SET LOCAL`, og `policyversjon_innhold` under er en definer
+            # `SET LOCAL`, og `policyversjon_kilde` under er en definer
             # som KREVER `disponit.tenant`. Å rulle tilbake her ville tatt
             # konteksten med seg og gjort oppslaget til en 403.
             ih = opprett_input_hash(tenant, bid, policy_id, innhold,
@@ -311,9 +314,14 @@ def opprett_utkast_endepunkt(tjeneste, request):
                 conn.rollback()
                 return _feil("idempotenskonflikt", rid)
             try:
-                hentet = conn.execute(
-                    "SELECT policyversjon_innhold(%s, %s, %s)",
-                    (tenant, policy_id, rollback_av)).fetchone()[0]
+                # Innholdet OG generasjonens identitet i ETT oppslag: de
+                # to må komme fra samme rad i samme snapshot, ellers kan
+                # opphavet peke på en annen generasjon enn kopien (047,
+                # Codex P2). Se `policyversjon_kilde`.
+                hentet, kilde_hash = conn.execute(
+                    "SELECT innhold, innholds_hash FROM"
+                    " policyversjon_kilde(%s, %s, %s)",
+                    (tenant, policy_id, rollback_av)).fetchone()
             except psycopg.errors.NoDataFound:
                 conn.rollback()
                 return _feil("ikke_funnet", rid, 404)
@@ -324,13 +332,6 @@ def opprett_utkast_endepunkt(tjeneste, request):
             if innhold is not None and innhold != hentet:
                 return _feil("request_feilformet", rid)
             innhold = hentet
-            # Kildens EGET innhold følger med til porten (047, Codex P2).
-            # Opphavet lagres som generasjonens innholdshash, og hashen skal
-            # regnes over nøyaktig det vi kopierte — ikke over en rad slått
-            # opp på nytt senere, som kan være en gjenskapt generasjon med
-            # samme nummer. `innhold` normaliseres av porten (meta.status,
-            # meta.versjon), så kopien og kilden er ikke samme dokument.
-            kilde_innhold = hentet
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
@@ -342,7 +343,7 @@ def opprett_utkast_endepunkt(tjeneste, request):
             policy_id=policy_id, innhold=innhold,
             idempotency_key=idem, input_hash=ih,
             rollback_av_versjon=rollback_av,
-            rollback_av_innhold=kilde_innhold)
+            rollback_av_hash=kilde_hash)
         return _ok(res, rid, 201)
 
     return _med_conn(tjeneste, rid, kjor)

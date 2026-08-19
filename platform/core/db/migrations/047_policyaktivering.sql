@@ -971,16 +971,55 @@ BEGIN
     RETURN v;
 END $$;
 
+-- Kilden for en RULLBAKK: innholdet OG generasjonens egen identitet, lest
+-- i SAMME snapshot (Codex P2). Rullbakken lagrer `rollback_av_hash`, og
+-- den må være radens egen `innholds_hash` — ikke en hash regnet på nytt
+-- over innholdet. To grunner:
+--   * ETT oppslag, ingen glippe: hentes innholdet nå og identiteten
+--     senere, kan `(policy_id, versjon)` ha blitt slettet og gjenskapt i
+--     mellomtiden, og kopien ville blitt bundet til en generasjon den
+--     aldri kom fra — nøyaktig løgnen kolonnen finnes for å hindre.
+--   * SAMME MÅLESTOKK: historikken sammenligner mot `policyer.innholds_hash`.
+--     En hash regnet ut på nytt er bare lik den så lenge hver eneste rad ble
+--     hashet med dagens kanoniske regler; en eldre rad ville da sett
+--     «borte» ut selv med kilden i behold.
+CREATE OR REPLACE FUNCTION policyversjon_kilde(
+    p_tenant TEXT, p_policy_id TEXT, p_versjon TEXT)
+RETURNS TABLE (innhold JSONB, innholds_hash TEXT)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF current_setting('disponit.tenant', true) IS DISTINCT FROM p_tenant
+    THEN
+        RAISE EXCEPTION 'policyversjon_kilde: tenantkontekst % dekker '
+            'ikke %', current_setting('disponit.tenant', true), p_tenant
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN QUERY
+    SELECT p.innhold, p.innholds_hash FROM public.policyer p
+     WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
+       AND p.versjon = p_versjon;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'policyversjon_kilde: ukjent versjon %',
+            p_versjon USING ERRCODE = 'no_data_found';
+    END IF;
+END $$;
+
 ALTER FUNCTION policyversjoner_for_tenant(TEXT, TEXT)
     OWNER TO disponit_policy_eier;
 ALTER FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT)
     OWNER TO disponit_policy_eier;
+ALTER FUNCTION policyversjon_kilde(TEXT, TEXT, TEXT)
+    OWNER TO disponit_policy_eier;
 SET LOCAL ROLE disponit_policy_eier;
 REVOKE ALL ON FUNCTION policyversjoner_for_tenant(TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION policyversjon_kilde(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION policyversjoner_for_tenant(TEXT, TEXT)
     TO disponit;
 GRANT EXECUTE ON FUNCTION policyversjon_innhold(TEXT, TEXT, TEXT)
+    TO disponit;
+GRANT EXECUTE ON FUNCTION policyversjon_kilde(TEXT, TEXT, TEXT)
     TO disponit;
 RESET ROLE;
 -- Eieren trenger lesing på utkastet for rollback-joinen (policyer og
