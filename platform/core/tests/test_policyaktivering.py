@@ -943,6 +943,95 @@ def test_ekstern_lesing_krever_plattformvilkar_ved_validering():
         r.close()
 
 
+@pg
+def test_vilkarsdommen_caches_ikke_registeret_kan_repareres():
+    """Codex P2: `_krev_malautorisasjonsvilkar` er en dom om REGISTERET.
+
+    Den ser på utkastet, men felles av `modulkontrakt`,
+    `oppdragstype_register` og den append-only `malautorisasjonsvilkar` —
+    alle tre flytter seg, og at kravet IKKE er hardkodet er hele poenget
+    med port 32. Lå dommen i den permanent cachede dokumentfeil-grenen,
+    ville en validering kjørt før drift rakk å registrere vilkåret blitt
+    replayet av `_idempotent_start` etterpå: flaten gjenbruker med rette
+    sin stabile `valNokkel`, og det uendrede utkastet var da umulig å
+    validere derfra til eier tilfeldigvis tvang fram en ny render.
+
+    Kontroll: legg `_krev_malautorisasjonsvilkar` tilbake i `feil` i
+    stedet for i `reg_feil`, så blir siste assert rød.
+    """
+    from .test_outbox_bestilling import _sikre_typeregistrering
+    from .test_wcag_kontroll import _mk_admin
+    _sikre_typeregistrering()          # kontroll.wcag.nettsted = ekstern_lesing
+    import yaml as _yaml
+    from api import policyadmin as pa
+    # Et vilkår som ENNÅ ikke er registrert for domenet — nøyaktig den
+    # tilstanden «drift har ikke rukket det» har.
+    vt = "vilkar_" + secrets.token_hex(4)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    pid = "pol-reg-" + secrets.token_hex(3)
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+    mal["roller"].append({"id": "bestiller", "beskrivelse": "b"})
+    mal["verifikatorer"]["v_nytt_vilkar"] = {
+        "beskrivelse": "Plattformens nye kontroll", "betrodd_for": [vt]}
+    mal["handlinger"].append({
+        "id": "kontroll.wcag.nettsted", "modul": "M-56", "modus": "auto",
+        "ved_brudd": "unntakskø", "tillatt_for": ["bestiller"],
+        "dataklasser_tillatt": ["offentlig"],
+        "grenser": {"frekvens": {"maks": 4, "periode_antall": 1,
+                                 "periode_enhet": "dager",
+                                 "grupperingsnokkel": "mal_url"}},
+        "vilkaar": [{"navn": vt, "verifikator": "v_nytt_vilkar"}],
+        "reversering": {"type": "direkte"}})
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        k = secrets.token_hex(8)
+        res = pa.opprett_utkast(r, tenant=TEN, aktor="forf", request_id="r",
+                                policy_id=pid, innhold=mal,
+                                idempotency_key=k, input_hash=k)
+        uid = res["utkast_id"]
+        valnokkel = secrets.token_hex(8)
+
+        def valider():
+            return pa.valider_utkast(
+                r, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+                forventet_utkastversjon=1, idempotency_key=valnokkel,
+                input_hash="ih-" + valnokkel)
+
+        v1 = valider()
+        assert v1["utfall"] == "ugyldig", v1
+        assert any("målautorisasjonsvilkår" in f for f in v1["feil"]), v1
+    finally:
+        r.close()
+
+    # Drift registrerer vilkåret. Registeret er append-only: dette er den
+    # ENE retningen det kan flytte seg i, og nettopp den som reparerer.
+    a = _mk_admin("disponit_modules_admin")
+    try:
+        a.execute("SELECT registrer_malautorisasjonsvilkar(%s,"
+                  "'web_hostname','test')", (vt,))
+        a.commit()
+    finally:
+        a.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        v2 = pa.valider_utkast(
+            r, tenant=TEN, aktor="forf", request_id="r", utkast_id=uid,
+            forventet_utkastversjon=1, idempotency_key=valnokkel,
+            input_hash="ih-" + valnokkel)
+        assert v2["utfall"] == "validert", (
+            "et replay pinnet registertilstanden fra før vilkåret ble"
+            " registrert", v2)
+    finally:
+        r.close()
+
+
 import copy  # noqa: E402
 
 

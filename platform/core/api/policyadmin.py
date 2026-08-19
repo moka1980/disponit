@@ -435,7 +435,19 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # målt her, FØR runden, ikke først i modulaktiveringsporten (036).
     # Dette er samtidig fjerningsvernet (port 31): å redigere bort
     # vilkåret gjør utkastet ugyldig, uansett hvilken flate som prøvde.
-    feil += _krev_malautorisasjonsvilkar(conn, innhold)
+    #
+    # REGISTERAVVIK, ikke dokumentfeil (Codex P2). Dommen ser på utkastet,
+    # men den FELLES av registeret: `_er_ekstern_lesing` leser
+    # `modulkontrakt` og `oppdragstype_register`, og vilkårslista leses fra
+    # den append-only `malautorisasjonsvilkar`. Alle tre flytter seg — det
+    # er nettopp derfor kravet ikke er hardkodet (port 32). Kjørte
+    # valideringen før drift hadde registrert vilkåret eller kontrakten, og
+    # eier prøvde igjen med flatens stabile `valNokkel` etter at det var på
+    # plass, ville `_idempotent_start` replayet den gamle dommen uten å
+    # spørre det reparerte registeret — og det uendrede utkastet var umulig
+    # å validere fra den visningen til eier tilfeldigvis tvang fram en ny
+    # render. Samme resonnement som `_versjonsavvik` under, samme bøtte.
+    reg_feil = _krev_malautorisasjonsvilkar(conn, innhold)
     # Versjonen måles mot REGISTERET her — ikke først ved rundeåpning. Eiers
     # utkast 17/8 bar den aktive policyens egen versjon (0.3.0), gikk
     # gjennom valideringen med glans, og døde så med `versjon_i_bruk` i et
@@ -445,7 +457,7 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # Porten `_krev_ny_versjon` består uendret ved rundeåpning og attestering;
     # her brukes den som PRØVE, så de to aldri kan mene noe ulikt om samme
     # versjon.
-    reg_feil = _versjonsavvik(conn, tenant, policy_id, innhold)
+    reg_feil += _versjonsavvik(conn, tenant, policy_id, innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
@@ -458,10 +470,11 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         # dokumentfeilene over er egenskaper ved det uforanderlige utkastet og
         # tåler et replay, men registeret flytter seg — slettes policyen som
         # holder versjonen (slettingen frigjør uttrykkelig versjonsnumrene),
-        # er det samme utkastet gyldig. Et cachet «ugyldig» ville da replayet
-        # en foreldet dom uten å spørre registeret, og flaten gjenbruker med
-        # rette nøkkelen sin per render. Rollback tar claimet med seg — en
-        # validering som ikke frøs noe skal ikke brenne nøkkelen.
+        # eller registreres vilkåret/kontrakten en `ekstern_lesing`-handling
+        # manglet, er det samme utkastet gyldig. Et cachet «ugyldig» ville da
+        # replayet en foreldet dom uten å spørre registeret, og flaten
+        # gjenbruker med rette nøkkelen sin per render. Rollback tar claimet
+        # med seg — en validering som ikke frøs noe skal ikke brenne nøkkelen.
         conn.rollback()
         return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": reg_feil}
     h = _pr.innholds_hash(innhold)
