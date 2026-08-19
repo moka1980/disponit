@@ -1063,7 +1063,8 @@ RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
                attestant_a TEXT, attestant_b TEXT,
                aktivert_av_operasjon TEXT, rollback_av_versjon TEXT,
                rollback_kilde TEXT, aktiveringskilde TEXT,
-               aktivert BOOLEAN, innhold_finnes BOOLEAN)
+               aktivert BOOLEAN, innhold_finnes BOOLEAN,
+               generasjon BIGINT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -1094,7 +1095,7 @@ BEGIN
     WITH linjer (versjon, innholds_hash, aktiv, opprettet, aktivert_ts,
                  attestant_a, attestant_b, aktivert_av_operasjon,
                  rollback_av_versjon, rollback_kilde, aktiveringskilde,
-                 aktivert, innhold_finnes) AS (
+                 aktivert, innhold_finnes, generasjon) AS (
     SELECT p.versjon, p.innholds_hash, p.aktiv, p.opprettet,
            -- Aktiveringstidspunktet fra HENDELSEN (runden har ingen
            -- brukt_ts — lesesvar runde 2), og fra `bootstrap_aktivert_ts`
@@ -1135,7 +1136,14 @@ BEGIN
            public.policyversjon_i_kraft(p.aktiv, p.bootstrap_aktivert_ts,
                                         p.aktiveringskilde, a.aktivert_ts),
            -- Raden lever: innholdet kan leses, diffes og rulles tilbake.
-           true
+           true,
+           -- GENERASJONEN LINJEN VISER (Codex P2). Et versjonsnummer
+           -- frigjøres av sletting og kan gjenskapes; generasjonen kan
+           -- ikke. Flaten sender den tilbake når eier bekrefter en
+           -- rullbakk, slik `slett_policy` sender identiteten den viste,
+           -- så kopien blir tatt av den raden eier faktisk så — ikke av
+           -- en erstatning som kom til mellom visning og klikk.
+           p.generasjon
       FROM public.policyer p
       -- Koblingen går via OPERASJONEN, ikke via (policy_id, versjon)
       -- (Codex P2). `aktivert_av_operasjon` ER FK-en til hendelsen, og
@@ -1182,7 +1190,10 @@ BEGIN
            -- Innholdet fulgte raden. Uten dette merket ville flaten bedt
            -- `policyversjon_innhold` om et nummer som enten er borte
            -- (404) eller bærer en HELT ANNEN generasjons dokument.
-           false
+           false,
+           -- Generasjonen fulgte raden den også; hendelsen kjenner bare
+           -- innholdets hash, og en hash er ikke en identitet.
+           NULL::BIGINT
       FROM public.policyaktivering a
       LEFT JOIN public.policyutkast u
         ON u.tenant = a.tenant AND u.utkast_id = a.utkast_id
@@ -1214,7 +1225,7 @@ BEGIN
     SELECT l.versjon, l.innholds_hash, l.aktiv, l.opprettet, l.aktivert_ts,
            l.attestant_a, l.attestant_b, l.aktivert_av_operasjon,
            l.rollback_av_versjon, l.rollback_kilde, l.aktiveringskilde,
-           l.aktivert, l.innhold_finnes
+           l.aktivert, l.innhold_finnes, l.generasjon
       FROM linjer l
      ORDER BY CASE WHEN l.aktivert THEN 0 ELSE 1 END,
               coalesce(l.aktivert_ts, l.opprettet) DESC,

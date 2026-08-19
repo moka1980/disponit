@@ -1021,6 +1021,7 @@
   "ui.historikk.rullbakk_uaktivert": "cannot be rolled back to — this version was never in force",
   "ui.historikk.innhold_borte": "content deleted — the activation remains in the log, but this version cannot be read, compared or rolled back",
   "ui.historikk.feil.rullbakk_kilde_uaktivert": "This version has never been in force, so it cannot be rolled back to. Reload the history.",
+  "ui.historikk.feil.rullbakk_kilde_endret": "The version you selected is no longer the same one — it was deleted and re-created with different content. Reload the history and choose again.",
   "ui.historikk.tom_tittel": "No versions",
   "ui.historikk.tom_tekst": "This policy has no registered versions yet.",
   "ui.historikk.diff_tittel": "Compare versions",

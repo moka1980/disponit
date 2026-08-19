@@ -1021,6 +1021,7 @@
   "ui.historikk.rullbakk_uaktivert": "kan ikke rulles tilbake til — versjonen har aldri vært i kraft",
   "ui.historikk.innhold_borte": "innholdet er slettet — aktiveringen står i loggen, men versjonen kan ikke leses, diffes eller rulles tilbake",
   "ui.historikk.feil.rullbakk_kilde_uaktivert": "Versjonen har aldri vært i kraft, og kan derfor ikke rulles tilbake til. Last historikken på nytt.",
+  "ui.historikk.feil.rullbakk_kilde_endret": "Versjonen du valgte er ikke den samme lenger — den er slettet og lagt inn på nytt med et annet innhold. Last historikken på nytt og velg om igjen.",
   "ui.historikk.tom_tittel": "Ingen versjoner",
   "ui.historikk.tom_tekst": "Policyen har ingen registrerte versjoner ennå.",
   "ui.historikk.diff_tittel": "Sammenlign versjoner",

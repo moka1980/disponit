@@ -80,7 +80,7 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
             "SELECT versjon, innholds_hash, aktiv, opprettet, aktivert_ts,"
             "       attestant_a, attestant_b, aktivert_av_operasjon,"
             "       rollback_av_versjon, rollback_kilde, aktiveringskilde,"
-            "       aktivert, innhold_finnes"
+            "       aktivert, innhold_finnes, generasjon"
             "  FROM policyversjoner_for_tenant(%s, %s)",
             (tenant, policy_id)).fetchall()
         conn.rollback()
@@ -124,7 +124,16 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
              # kan verken diffes eller rulles tilbake: `policyer` er
              # innholdets eneste hjem, og var nummeret gjenskapt, ville et
              # oppslag gitt den NYE generasjonens dokument.
-             "innhold_finnes": r[12]} for r in rader]
+             "innhold_finnes": r[12],
+             # GENERASJONEN LINJEN VISER (047, Codex P2). Rullbakken
+             # navnga bare versjonsNUMMERET, og et nummer frigjøres av
+             # `slett_ubrukt_policy` og kan gjenskapes: slettes raden
+             # mellom visningen og bekreftelsen, kopierte serveren
+             # erstatningen. Opphavet ble da internt konsistent og likevel
+             # feil — det var ikke generasjonen eier så. Flaten sender
+             # tallet tilbake, som `slett_policy` sender identiteten den
+             # viste, og porten avviser en kilde som har skiftet.
+             "generasjon": r[13]} for r in rader]
         return _ok({"policy_id": policy_id, "versjoner": versjoner,
                     "nytt_utkast_avvist": avvik[0] if avvik else None}, rid)
 

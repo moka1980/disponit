@@ -44,6 +44,11 @@ _FEIL_HTTP = {
     # ikke 400, som ville sagt at forespørselen er feilformet. Den er
     # velformet; det er tilstanden til raden den peker på som er svaret.
     "rullbakk_kilde_uaktivert": 409,
+    # Kilderaden er ikke den klienten så: `(policy_id, versjon)` er
+    # slettet og gjenskapt siden historikken ble lest, så generasjonen er
+    # en annen. Optimistisk lås, som `policy_endret` — 409, og flaten
+    # laster historikken på nytt.
+    "rullbakk_kilde_endret": 409,
     # Den aktive policyen er ikke lenger den klienten så da den ba om
     # slettingen (optimistisk lås, som `utkastversjon_utdatert`): 409, og
     # flaten laster på nytt.
@@ -132,7 +137,8 @@ def _input_hash(*deler) -> str:
                           .encode("utf-8")).hexdigest()
 
 
-def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem) -> str:
+def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem,
+                       rollback_gen=None) -> str:
     """Idempotens-inputhash for utkastopprettelse. `rollback_av_versjon` INNGÅR
     (Codex R2/R3): en rullbakk og en ordinær opprettelse med samme nøkkel er
     ULIKE operasjoner og MÅ gi konflikt, ikke replay. Egen funksjon så bindingen
@@ -157,12 +163,22 @@ def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem) -> st
     verken 400 eller konflikt. Nå gir en endret påstand ulik hash, altså
     `idempotenskonflikt`, og en uendret påstand replayer som før. At påstanden
     er klientens rå felt (ikke det hentede innholdet) er nettopp det som lar
-    hashen fortsatt regnes ut før oppslaget."""
+    hashen fortsatt regnes ut før oppslaget.
+
+    KILDEGENERASJONEN INNGÅR av samme grunn (047, Codex P2). «Rull tilbake
+    til N slik N var da jeg så den» og «rull tilbake til N slik N er nå» er
+    ulike bestillinger, og generasjonen er det eneste som skiller dem —
+    nummeret gjenbrukes. Uten den i hashen kunne en retry mot en gjenskapt
+    kilde replayet det gamle 201-svaret uten at den nye påstanden noen gang
+    ble målt: samme nøkkel, annen kilde, verken 409 eller konflikt. Den er
+    klientens rå felt, som `innhold`, så hashen fortsatt kan regnes ut før
+    oppslaget."""
     return _input_hash(tenant, bid, "opprett", policy_id,
                        ("rullbakk:" + json.dumps(innhold, sort_keys=True))
                        if rollback_av is not None
                        else json.dumps(innhold, sort_keys=True),
-                       json.dumps(rollback_av), idem)
+                       json.dumps(rollback_av), json.dumps(rollback_gen),
+                       idem)
 
 
 def _kropp(request) -> dict:
@@ -279,6 +295,10 @@ def opprett_utkast_endepunkt(tjeneste, request):
         policy_id = body.get("policy_id")
         innhold = body.get("innhold")
         rollback_av = body.get("rollback_av_versjon")
+        # Generasjonen klienten SÅ (047, Codex P2) — den optimistiske
+        # låsen for en rullbakk, søsteren til `slett_policy`s
+        # `versjon`/`innholds_hash`.
+        rollback_gen = body.get("rollback_av_generasjon")
         # Kilderadens GENERASJON, hentet sammen med innholdet under. Den
         # er opphavet utkastet lagrer (047, Codex P2) — et sekvenstall
         # ingen får igjen, i motsetning til nummeret og innholdet.
@@ -292,6 +312,18 @@ def opprett_utkast_endepunkt(tjeneste, request):
         if rollback_av is not None:
             if not isinstance(policy_id, str) or not policy_id.strip() \
                     or not isinstance(rollback_av, str):
+                return _feil("request_feilformet", rid)
+            # GENERASJONEN ER PÅKREVD, IKKE VALGFRI (047, Codex P2). Uten
+            # den navnga forespørselen bare NUMMERET, og et nummer er
+            # gjenbrukbart: `slett_ubrukt_policy` frigjør det uttrykkelig.
+            # Slettes og gjenskapes raden mellom visningen og
+            # bekreftelsen, kopierte serveren erstatningen — og lagret et
+            # opphav som er internt konsistent, men peker på en generasjon
+            # eier aldri så. Er feltet valgfritt, er hullet der fortsatt
+            # for enhver kaller som utelater det, så det kreves. `bool` er
+            # en `int` i Python og må stenges ute eksplisitt.
+            if isinstance(rollback_gen, bool) \
+                    or not isinstance(rollback_gen, int):
                 return _feil("request_feilformet", rid)
             # REPLAY FØR KILDEOPPSLAG (047, Codex P2). Lyktes det første
             # forsøket og svaret gikk tapt på veien, finnes utkastet — og
@@ -311,7 +343,7 @@ def opprett_utkast_endepunkt(tjeneste, request):
             # som KREVER `disponit.tenant`. Å rulle tilbake her ville tatt
             # konteksten med seg og gjort oppslaget til en 403.
             ih = opprett_input_hash(tenant, bid, policy_id, innhold,
-                                    rollback_av, idem)
+                                    rollback_av, idem, rollback_gen)
             tilstand, lagret = policyadmin.idempotent_svar(
                 conn, tenant, idem, ih)
             if tilstand == "replay":
@@ -344,6 +376,18 @@ def opprett_utkast_endepunkt(tjeneste, request):
                 conn.rollback()
                 return _feil("ingen_tilgang", rid)
             conn.rollback()
+            # KILDEN MÅ VÆRE DEN KLIENTEN SÅ (047, Codex P2). Nummeret
+            # pekte, generasjonen IDENTIFISERER: er raden slettet og
+            # gjenskapt siden historikken ble lest, er dette en annen rad
+            # med samme navn, og en kopi av den er ikke bestillingen som
+            # ble sendt. Avslaget er 409 og eier laster på nytt — samme
+            # svar som `policy_endret` gir slettingen, av samme grunn.
+            #
+            # Prøven står FORAN innholdssammenligningen: `hentet` fra en
+            # gjenskapt rad kan tilfeldigvis være byte-likt, og da hadde
+            # den kontrollen sluppet nettopp forvekslingen gjennom.
+            if kilde_gen != rollback_gen:
+                return _feil("rullbakk_kilde_endret", rid)
             if innhold is not None and innhold != hentet:
                 return _feil("request_feilformet", rid)
             innhold = hentet

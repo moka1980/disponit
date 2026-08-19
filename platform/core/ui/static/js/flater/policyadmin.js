@@ -1676,7 +1676,13 @@ export function visPolicyadmin(hoved, ctx, mal) {
       primarTekst: t("ui.historikk.rullbakk"),
       rolle: "alertdialog",
       paaPrimar: () => {
-        opprettUtkast(policyId, undefined, nokkel, v.versjon).then((res) => {
+        // Generasjonen LINJEN VISTE følger med (Codex P2): nummeret
+        // peker, generasjonen identifiserer. Er raden slettet og
+        // gjenskapt siden historikken ble hentet, avviser serveren med
+        // `rullbakk_kilde_endret` i stedet for å kopiere en erstatning
+        // eier aldri så.
+        opprettUtkast(policyId, undefined, nokkel, v.versjon,
+                      v.generasjon).then((res) => {
           meldAlert(t("ui.historikk.rullbakk_opprettet")
             .replace("{n}", v.versjon));
           if (!eierSkjermen(min)) return;

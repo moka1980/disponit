@@ -257,6 +257,17 @@ def test_opprett_input_hash_binder_rollback_av_versjon():
     # replay-før-oppslag umulig igjen.
     assert h_paastandslos == opprett_input_hash(rollback_av="3",
                                                 **uten_paastand)
+    # Codex P2: KILDEGENERASJONEN binder også. Versjonsnummeret gjenbrukes
+    # — `slett_ubrukt_policy` frigjør det uttrykkelig — så «rull tilbake
+    # til 3» sier ikke hvilken RAD det gjelder. Uten generasjonen i hashen
+    # kunne en retry mot en gjenskapt kilde replayet det gamle 201-svaret
+    # uten at den nye kilden noen gang ble målt: samme nøkkel, annen rad.
+    h_g7 = opprett_input_hash(rollback_av="3", rollback_gen=7, **felles)
+    h_g8 = opprett_input_hash(rollback_av="3", rollback_gen=8, **felles)
+    assert h_g7 != h_g8, "to ULIKE kildegenerasjoner gir samme idempotenshash"
+    assert h_g7 != h_v3, "generasjonen binder ikke hashen"
+    assert h_g7 == opprett_input_hash(rollback_av="3", rollback_gen=7,
+                                      **felles)
 
 
 @pg

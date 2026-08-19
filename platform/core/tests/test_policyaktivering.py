@@ -1535,6 +1535,22 @@ def _post(klient_, cookie, csrf, sti, kropp, nokkel=None):
                         cookies={sesjonmodul.C_SESJON: cookie})
 
 
+def _gen(pid, versjon):
+    """Kilderadens generasjon — det flaten leser ut av historikken og
+    sender tilbake som optimistisk lås på en rullbakk (Codex P2)."""
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        rad = m.execute(
+            "SELECT generasjon FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s",
+            (TEN, pid, versjon)).fetchone()
+        m.rollback()
+        return rad[0] if rad else None
+    finally:
+        m.close()
+
+
 @pg
 def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
     """Portene 22, 23 og 26: utkastet bærer NØYAKTIG `policyer.innhold`
@@ -1543,9 +1559,11 @@ def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
     lovlig som N−1."""
     uid, pid, v = _full_aktivering(pakrevd=1)
     cookie, csrf = _forvaltersesjon()
+    gen = _gen(pid, v)
     nokkel = "rb-" + secrets.token_hex(8)
     r = _post(klient, cookie, csrf, "/v1/policyutkast",
-              {"policy_id": pid, "rollback_av_versjon": v}, nokkel)
+              {"policy_id": pid, "rollback_av_versjon": v,
+               "rollback_av_generasjon": gen}, nokkel)
     assert r.status_code == 201, r.text
     ny_uid = r.json()["utkast_id"]
     m = _c()
@@ -1571,13 +1589,15 @@ def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
     assert rb == v
     # 23: replay — nøyaktig samme utkast, ikke et nytt.
     r2 = _post(klient, cookie, csrf, "/v1/policyutkast",
-               {"policy_id": pid, "rollback_av_versjon": v}, nokkel)
+               {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": gen}, nokkel)
     assert r2.status_code in (200, 201), r2.text
     assert r2.json()["utkast_id"] == ny_uid
     # 22b: et klientinnhold som AVVIKER fra versjonens avvises — en
     # rullbakk som lyver om innholdet sitt er en løgn i lineagen.
     r3 = _post(klient, cookie, csrf, "/v1/policyutkast",
                {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": gen,
                 "innhold": {"noe": "annet"}})
     assert r3.status_code == 400, r3.text
     # 22c (Codex R4): løgnen må heller ikke slippe inn gjennom REPLAYEN.
@@ -1587,12 +1607,22 @@ def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
     # som stilltiende bekreftet et innhold ingen hadde målt.
     r5 = _post(klient, cookie, csrf, "/v1/policyutkast",
                {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": gen,
                 "innhold": {"noe": "annet"}}, nokkel)
     assert r5.status_code == 409, r5.text
     assert r5.json()["feil"] == "idempotenskonflikt", r5.text
+    # 22d (Codex P2): en ANNEN kildegenerasjon under samme nøkkel er
+    # heller ikke det samme kallet. Nummeret gjenbrukes, generasjonen
+    # ikke — så replayen kan ikke svare for en kilde ingen har målt.
+    r6 = _post(klient, cookie, csrf, "/v1/policyutkast",
+               {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": gen + 1}, nokkel)
+    assert r6.status_code == 409, r6.text
+    assert r6.json()["feil"] == "idempotenskonflikt", r6.text
     # Ukjent versjon → ikke_funnet, aldri et tomt utkast.
     r4 = _post(klient, cookie, csrf, "/v1/policyutkast",
-               {"policy_id": pid, "rollback_av_versjon": "999"})
+               {"policy_id": pid, "rollback_av_versjon": "999",
+                "rollback_av_generasjon": gen})
     assert r4.status_code == 404, r4.text
 
 
@@ -1615,7 +1645,8 @@ def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
     uid, pid, v = _full_aktivering(pakrevd=1)
     cookie, csrf = _forvaltersesjon()
     r = _post(klient, cookie, csrf, "/v1/policyutkast",
-              {"policy_id": pid, "rollback_av_versjon": v})
+              {"policy_id": pid, "rollback_av_versjon": v,
+               "rollback_av_generasjon": _gen(pid, v)})
     assert r.status_code == 201, r.text
     rb_uid = r.json()["utkast_id"]
     m = _c()
@@ -1767,6 +1798,86 @@ def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_gen):
 
 
 @pg
+def test_rullbakk_avvises_naar_kilden_er_en_annen_generasjon(klient):
+    """Codex P2: forespørselen navnga bare NUMMERET, og et nummer er
+    gjenbrukbart.
+
+    `slett_ubrukt_policy` frigjør uttrykkelig `(policy_id, versjon)`.
+    Slettes raden og gjenskapes nummeret mellom visningen eier leste og
+    klikket hun gjorde, kopierte serveren ERSTATNINGEN: det lagrede
+    opphavet ble internt konsistent — kopien og generasjonen hørte sammen
+    — og likevel feil, for det var ikke generasjonen eier så. Ingen
+    senere skriving kan avsløre det; forvekslingen skjedde i selve
+    opprettelsen.
+
+    Generasjonen er derfor den optimistiske låsen på kilden, søsteren til
+    `slett_policy`s `versjon`/`innholds_hash`: flaten sender tallet den
+    viste, og porten avviser med 409 når kilden har skiftet.
+
+    Kontroll: fjern sammenligningen i endepunktet, så lager kallet under
+    et utkast fra den nye generasjonen og testen blir rød.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    cookie, csrf = _forvaltersesjon()
+    gammel_gen = _gen(pid, v)
+
+    # Generasjonen eier SÅ finnes ikke lenger: raden slettes og nummeret
+    # gjenskapes gjennom den styrte veien.
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        ih = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                         (TEN, pid, v, ih)).fetchone()[0] == 1
+        r.commit()
+    finally:
+        r.close()
+    c = _c()
+    uid2 = "u-" + secrets.token_hex(4)
+    _validert_utkast(c, uid2, pid, av="forf", versjon=v)
+    _runde(c, uid2, pakrevd_antall_godkjennere=1, risikoklasse="INNSNEVRER")
+    _attest(c, uid2, "uavh-ny", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        assert _aktiver(r, uid2) == v
+    finally:
+        r.close()
+    ny_gen = _gen(pid, v)
+    assert ny_gen != gammel_gen, "forutsetningen holder ikke"
+
+    # Klikket bærer generasjonen HISTORIKKEN VISTE. Den finnes ikke mer.
+    r1 = _post(klient, cookie, csrf, "/v1/policyutkast",
+               {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": gammel_gen})
+    assert r1.status_code == 409, r1.text
+    assert r1.json()["feil"] == "rullbakk_kilde_endret", r1.text
+    # Etter en ny lasting går den samme handlingen gjennom — sperren er
+    # på FORVEKSLINGEN, ikke på rullbakk fra en gjenskapt versjon.
+    r2 = _post(klient, cookie, csrf, "/v1/policyutkast",
+               {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": ny_gen})
+    assert r2.status_code == 201, r2.text
+    # Og generasjonen er PÅKREVD: uten den navngir forespørselen bare
+    # nummeret igjen, og hullet står åpent for enhver kaller.
+    r3 = _post(klient, cookie, csrf, "/v1/policyutkast",
+               {"policy_id": pid, "rollback_av_versjon": v})
+    assert r3.status_code == 400, r3.text
+    r4 = _post(klient, cookie, csrf, "/v1/policyutkast",
+               {"policy_id": pid, "rollback_av_versjon": v,
+                "rollback_av_generasjon": str(ny_gen)})
+    assert r4.status_code == 400, r4.text
+
+
+@pg
 def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     """Port 27 (Codex P2): opphavet peker på GENERASJONEN kopien kom fra,
     ikke bare på versjonsNUMMERET.
@@ -1788,7 +1899,8 @@ def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
     uid, pid, v = _full_aktivering(pakrevd=1)
     cookie, csrf = _forvaltersesjon()
     r = _post(klient, cookie, csrf, "/v1/policyutkast",
-              {"policy_id": pid, "rollback_av_versjon": v})
+              {"policy_id": pid, "rollback_av_versjon": v,
+               "rollback_av_generasjon": _gen(pid, v)})
     assert r.status_code == 201, r.text
     rb_uid = r.json()["utkast_id"]
     m = _c()

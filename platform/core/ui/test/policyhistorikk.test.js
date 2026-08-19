@@ -19,16 +19,16 @@ const VERSJONER = { policy_id: "faktura-no", versjoner: [
     opprettet: "2026-08-19T10:00:00+00:00",
     aktivert_ts: "2026-08-19T10:00:00+00:00",
     attestanter: ["ida", "jon"], aktivert_av_operasjon: "aktiver-u3-r1",
-    rollback_av_versjon: "1", rollback_kilde: "bundet" },
+    rollback_av_versjon: "1", rollback_kilde: "bundet", generasjon: 30 },
   { versjon: "2", innholds_hash: "h2", aktiv: false,
     opprettet: "2026-08-18T10:00:00+00:00",
     aktivert_ts: null, attestanter: null, aktivert_av_operasjon: null,
-    rollback_av_versjon: null },
+    rollback_av_versjon: null, generasjon: 20 },
   { versjon: "1", innholds_hash: "h1", aktiv: false,
     opprettet: "2026-08-17T10:00:00+00:00",
     aktivert_ts: "2026-08-17T10:00:00+00:00",
     attestanter: ["ida"], aktivert_av_operasjon: "aktiver-u1-r1",
-    rollback_av_versjon: null },
+    rollback_av_versjon: null, generasjon: 10 },
 ] };
 
 const DIFF = { policy_id: "faktura-no", fra: "1", til: "3",
@@ -195,6 +195,10 @@ test("historikk: rullbakk er en alertdialog og POSTer uten innhold",
     await vent(() => POSTET.length);
     assert.equal(POSTET[0].sti, "/v1/policyutkast");
     assert.equal(POSTET[0].kropp.rollback_av_versjon, "1");
+    // …og GENERASJONEN linjen viste (Codex P2): nummeret peker,
+    // generasjonen identifiserer. Uten den kunne serveren kopiert en
+    // erstatning som kom til mellom visningen og klikket.
+    assert.equal(POSTET[0].kropp.rollback_av_generasjon, 10);
     assert.ok(!("innhold" in POSTET[0].kropp));
     assert.ok(POSTET[0].headers["Idempotency-Key"]
               || POSTET[0].headers["idempotency-key"]);
