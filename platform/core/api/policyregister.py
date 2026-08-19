@@ -417,6 +417,23 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     # dens skjedde før dette kallet, og det er den upserten ikke rører.
     # En INAKTIV rad som aktiveres — eller en helt ny rad — er derimot
     # aktivert nettopp her, og merkes `'bootstrap'` som før.
+    #
+    # SAMME PRØVE BETYR SAMME UTTRYKK (Codex P2). Avsnittet over sier at
+    # merket og tidspunktet må avgjøres av den samme prøven, men de to
+    # CASE-ene sto ikke og målte det samme: tidspunktet spurte om en
+    # OVERGANG (`EXCLUDED.aktiv AND NOT policyer.aktiv`), merket bare om
+    # raden var aktiv fra før. En INAKTIV rad som ble re-registrert med
+    # `aktiver=False` — en ren, identisk oppsettskjøring, der ingen
+    # aktivering skjer — falt derfor i ELSE-grenen og fikk `'bootstrap'`
+    # skrevet over seg. For en avløst `historisk` rad var det nettopp tapet
+    # avsnittet over beskriver, bare gjennom den andre døra: merket var det
+    # ENESTE sporet av at raden en gang var i kraft (tidspunktet er NULL for
+    # alle migrerte rader), så `policyversjon_i_kraft` gikk fra sann til
+    # usann og historikken begynte å påstå at versjonen aldri ble aktivert.
+    # Verre: den samme prøven vokter innholdet lenger oppe, så NESTE
+    # oppsettskjøring kunne skrive om et dokument som HAR vært i kraft.
+    #
+    # Begge halvdelene måler nå overgangen, og bare den.
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
         " status, innhold, aktiv, aktiveringskilde, bootstrap_aktivert_ts)"
@@ -426,8 +443,9 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
         "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv,"
         "     aktiveringskilde=CASE"
-        "         WHEN policyer.aktiv THEN policyer.aktiveringskilde"
-        "         ELSE EXCLUDED.aktiveringskilde END,"
+        "         WHEN EXCLUDED.aktiv AND NOT policyer.aktiv"
+        "             THEN EXCLUDED.aktiveringskilde"
+        "         ELSE policyer.aktiveringskilde END,"
         "     bootstrap_aktivert_ts=CASE"
         "         WHEN EXCLUDED.aktiv AND NOT policyer.aktiv THEN now()"
         "         ELSE policyer.bootstrap_aktivert_ts END",

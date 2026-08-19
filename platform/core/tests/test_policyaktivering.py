@@ -905,6 +905,82 @@ def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
 
 
 @pg
+def test_reregistrering_av_avlost_rad_beholder_opphavet():
+    """Codex P2: «samme prøve» må også være det SAMME UTTRYKKET.
+
+    Forrige runde bandt merket og tidspunktet til samme påstand, men de to
+    CASE-ene målte ulike ting: tidspunktet spurte om en OVERGANG, merket
+    bare om raden var aktiv fra før. En AVLØST rad — inaktiv, merket
+    `'historisk'` fordi backfillen ikke klarte å binde den — falt derfor i
+    ELSE-grenen ved en helt ordinær, identisk oppsettskjøring med
+    `aktiver=False`, og fikk `'bootstrap'` skrevet over seg uten at noen
+    aktivering hadde skjedd.
+
+    Merket er det ENESTE sporet av at en migrert rad har vært i kraft:
+    tidspunktet er NULL for dem alle. `policyversjon_i_kraft` gikk derfor
+    fra sann til usann, og testen måler begge følgene av det — historikken
+    påstår at versjonen aldri ble aktivert, og vakten som skal hindre at
+    et innhold som har vært i kraft byttes ut, slipper taket.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-avlost-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    m = _c()
+    try:
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        mal["meta"]["versjon"] = "2.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        # 1.0.0 er nå avløst. Gjør den til førmigrasjonsraden backfillen
+        # ikke klarte å binde: inaktiv, merket 'historisk', uten tidspunkt.
+        m.execute("UPDATE policyer SET aktiveringskilde='historisk',"
+                  " bootstrap_aktivert_ts=NULL WHERE tenant=%s"
+                  " AND policy_id=%s AND versjon='1.0.0'", (TEN, pid))
+        m.commit()
+
+        def _i_kraft():
+            return m.execute(
+                "SELECT policyversjon_i_kraft(aktiv, bootstrap_aktivert_ts,"
+                "     aktiveringskilde)"
+                " FROM policyer WHERE tenant=%s AND policy_id=%s"
+                " AND versjon='1.0.0'", (TEN, pid)).fetchone()[0]
+
+        assert _i_kraft() is True
+        m.commit()
+
+        # Den identiske oppsettskjøringen: samme innhold, ingen overgang.
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+        kilde = m.execute(
+            "SELECT aktiveringskilde, bootstrap_aktivert_ts FROM policyer"
+            " WHERE tenant=%s AND policy_id=%s AND versjon='1.0.0'",
+            (TEN, pid)).fetchone()
+        assert kilde == ("historisk", None), \
+            "en re-registrering uten aktivering skrev om opphavet: " \
+            f"{kilde}"
+        assert _i_kraft() is True, \
+            "raden har vært i kraft, men rapporteres nå som aldri aktivert"
+        m.commit()
+
+        # Følgefeilen: mister raden merket, slipper også innholdsvakten.
+        mal["handlinger"][0]["grenser"]["belop_maks"] = "1.00"
+        with pytest.raises(pr.PolicyKorrupt) as ei:
+            pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        assert "har vært i kraft" in str(ei.value)
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_bootstrap_serialiseres_mot_styrt_aktivering():
     """Codex P1: prøven i `registrer` er verdiløs uten LÅSEN under seg.
 
