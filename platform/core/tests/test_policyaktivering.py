@@ -1427,6 +1427,106 @@ def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
         m.close()
 
 
+def _overstyringsutkast(pid, overstyring, versjon="1.1.0"):
+    """Dokument med en `godkjennbare`-oppføring og handlingen den peker på."""
+    return json.dumps({
+        "meta": {"policy_id": pid, "versjon": versjon,
+                 "status": "produksjon"},
+        "handlinger": [{"id": "ordre.bekreft", "modus": "grense",
+                        "grenser": {"belop_maks": 1000, "valuta": ["NOK"]}}],
+        "menneskelig_overstyring": {"godkjennbare": [overstyring]}})
+
+
+@pg
+def test_aktiver_policy_avviser_uanvendelig_overstyring():
+    """Port 29 (Codex P2): anvendbarhetskravet står også i SQL-gaten.
+
+    Runtime-rollen har EXECUTE på `aktiver_policy`, og en runde validert og
+    attestert FØR utrullingen bærer statusen sin forbi Python-porten. Uten
+    gaten her kunne en virkningsløs overstyring aktiveres — og utfallet er
+    stille: policyen SER konfigurert ut, mens hver matchende godkjenning
+    ender i STOPP.
+
+    Fire avvisninger og én positiv kontroll, så testen ikke er grønn av at
+    ingenting slipper gjennom.
+    """
+    uanvendelige = [
+        # Ikke-løftbar grunnkode.
+        {"grunnkode": "dataklasse_forbudt", "handling": "ordre.bekreft"},
+        # Løftbar kode uten verdien den krever.
+        {"grunnkode": "belop_over_grense", "handling": "ordre.bekreft"},
+        # Tak som ikke er høyere enn handlingens egen grense.
+        {"grunnkode": "belop_over_grense", "handling": "ordre.bekreft",
+         "belop_maks": 1000, "valuta": "NOK"},
+        # Valuta handlingen ALT tillater.
+        {"grunnkode": "valuta_ikke_tillatt", "handling": "ordre.bekreft",
+         "valuta": "NOK"},
+    ]
+    for i, oppf in enumerate(uanvendelige):
+        c = _c()
+        uid, pid = _ny()
+        _validert_utkast(c, uid, pid, av="forf",
+                         innhold=_overstyringsutkast(pid, oppf))
+        _runde(c, uid, pakrevd_antall_godkjennere=1,
+               risikoklasse="INNSNEVRER")
+        _attest(c, uid, "uavh", False)
+        c.commit(); c.close()
+        r = _rt()
+        try:
+            with pytest.raises(psycopg.errors.CheckViolation) as ei:
+                _aktiver(r, uid)
+            assert "overstyring" in str(ei.value), (i, str(ei.value))
+            r.rollback()
+        finally:
+            r.close()
+    # Positiv kontroll: en oppføring som FAKTISK kan anvendes aktiverer.
+    c = _c()
+    uid, pid = _ny()
+    _validert_utkast(c, uid, pid, av="forf", innhold=_overstyringsutkast(
+        pid, {"grunnkode": "belop_over_grense", "handling": "ordre.bekreft",
+              "belop_maks": 5000, "valuta": "NOK"}))
+    _runde(c, uid, pakrevd_antall_godkjennere=1, risikoklasse="INNSNEVRER")
+    _attest(c, uid, "uavh", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        assert _aktiver(r, uid) == "1.1.0"
+    finally:
+        r.close()
+
+
+def test_sql_gaten_kjenner_de_samme_loftbare_kodene():
+    """Port 28 (statisk, Codex P2): ÉN kilde, to språk.
+
+    `aktiver_policy` måler anvendbarheten selv — runtime-rollen har EXECUTE
+    på funksjonen, og en runde validert FØR utrullingen bærer statusen sin
+    forbi Python-porten. Da finnes regelen to steder, og det er akkurat
+    slik en fail-open oppstår: en ny løftbar grunnkode lagt til i motoren
+    uten en gren i SQL-en ville sluppet nøyaktig de virkningsløse formene
+    gjennom, bare for den nye koden.
+
+    Testen krever ikke at SQL-en er en oversettelse av Python-koden — den
+    krever at ENUMERASJONENE og modusnavnet er de samme. Utvides motoren,
+    blir denne rød til SQL-porten har fått grenen sin.
+    """
+    from policy_validator.engine import (LOFTBARE_GRUNNKODER,
+                                         MODUS_UTEN_LOFTBARE_UTFALL)
+    kilde = MIGRASJON.read_text(encoding="utf-8")
+    gate = kilde[kilde.index("-- 4e. OVERSTYRINGEN"):
+                 kilde.index("CONSTRAINT = 'overstyring_anvendbar'")]
+    # Enumerasjonen i `NOT IN (...)` er porten mot ikke-løftbare koder.
+    m = re.search(r"NOT IN \(([^)]*)\)", gate)
+    assert m, "4e har ingen enumerasjon av løftbare grunnkoder"
+    i_sql = {b.strip().strip("'") for b in m.group(1).split(",")}
+    assert i_sql == set(LOFTBARE_GRUNNKODER), \
+        f"SQL-porten kjenner {i_sql}, motoren {set(LOFTBARE_GRUNNKODER)}"
+    # Feltet hver kode krever, og modusen som feller før grensene.
+    for kode, felt in LOFTBARE_GRUNNKODER.items():
+        assert f"'{felt}'" in gate, f"4e måler ikke '{felt}' for {kode}"
+    assert f"'{MODUS_UTEN_LOFTBARE_UTFALL}'" in gate, \
+        "4e kjenner ikke modusen som feller før grensene vurderes"
+
+
 def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_gen):
     """Et validert utkast som BÆRER et rullbakkeopphav. `_validert_utkast`
     kjenner ikke kolonnene; her settes de ved INNSETTINGEN, som i porten —

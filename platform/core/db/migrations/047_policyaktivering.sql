@@ -466,6 +466,7 @@ DECLARE
     v_dok           JSONB;
     v_ugyldig_id    TEXT;
     v_ulesbar_ref   TEXT;
+    v_uanvendelig   TEXT;
     v_dok_pid       TEXT;
     v_dok_status    TEXT;
     v_att_a         TEXT;
@@ -763,6 +764,114 @@ BEGIN
             'policyreferansen ulesbar (%)', p_utkast_id, v_ulesbar_ref
             USING ERRCODE = 'check_violation',
                   CONSTRAINT = 'policyref_lesbar';
+    END IF;
+
+    -- 4e. OVERSTYRINGEN MÅ KUNNE ANVENDES (Codex P2 på denne PR-en).
+    --     `schema._overstyring_kan_anvendes` avviser en `godkjennbare`-
+    --     oppføring motoren aldri kan løfte: ikke-løftbar grunnkode, manglende
+    --     verdi, eller en verdi som ikke flytter noe blokkert utfall. Den
+    --     porten står i Python, og har de samme to hullene som 4c og 4d: en
+    --     runde validert og attestert FØR utrullingen bærer statusen sin
+    --     videre hit, og runtime-rollen har EXECUTE på denne funksjonen.
+    --     Uten gaten kan altså en virkningsløs overstyring aktiveres — og
+    --     utfallet er stille: policyen SER konfigurert ut, mens hver
+    --     matchende godkjenning ender i STOPP.
+    --
+    --     OMFANGET er det SQL kan måle EKSAKT, som i 4d. Enumerasjonen av
+    --     løftbare koder, det påkrevde feltet, modusen som feller før
+    --     grensene i det hele tatt vurderes, en grense som ikke finnes, og
+    --     valutamedlemskap er alle eksakte prøver. Beløpssammenligningen
+    --     gjøres kun når BEGGE verdiene er lesbare tall — er de ikke det, er
+    --     dommen `belop_ugyldig` og tilhører lastekontrakten, nøyaktig som i
+    --     `_loftet_flytter_noe`. Ukjent handling måles ikke her heller.
+    --
+    --     ÉN KILDE, TO SPRÅK: `test_sql_gaten_kjenner_de_samme_loftbare_kodene`
+    --     måler enumerasjonen og modusnavnet her mot `engine`, så en ny
+    --     løftbar kode ikke kan legges til i Python alene.
+    WITH oppf AS (
+        SELECT (e.ord - 1)         AS i,
+               e.el                AS post,
+               e.el ->> 'grunnkode' AS gk,
+               h.el                AS handling
+          FROM jsonb_array_elements(
+                   CASE WHEN jsonb_typeof(
+                            v_dok -> 'menneskelig_overstyring'
+                                  -> 'godkjennbare') = 'array'
+                        THEN v_dok -> 'menneskelig_overstyring'
+                                   -> 'godkjennbare'
+                        ELSE '[]'::jsonb END) WITH ORDINALITY AS e(el, ord)
+          LEFT JOIN LATERAL (
+              SELECT hh.el FROM jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(v_dok -> 'handlinger') = 'array'
+                            THEN v_dok -> 'handlinger'
+                            ELSE '[]'::jsonb END) AS hh(el)
+               WHERE hh.el ->> 'id' = e.el ->> 'handling'
+               LIMIT 1) AS h ON true
+         WHERE jsonb_typeof(e.el) = 'object'
+           AND jsonb_typeof(e.el -> 'grunnkode') = 'string'
+    ), dom AS (
+        SELECT o.i, o.gk,
+               CASE
+                 -- Ikke-løftbar kode: `_loft_policy` uttrykker bare disse to.
+                 WHEN o.gk NOT IN ('belop_over_grense', 'valuta_ikke_tillatt')
+                   THEN 'grunnkoden kan ikke løftes av motoren'
+                 -- Verdien grunnkoden krever mangler.
+                 WHEN o.gk = 'belop_over_grense'
+                      AND o.post -> 'belop_maks' IS NULL
+                   THEN 'mangler ''belop_maks'''
+                 WHEN o.gk = 'valuta_ikke_tillatt'
+                      AND o.post -> 'valuta' IS NULL
+                   THEN 'mangler ''valuta'''
+                 -- Ukjent handling er lastekontraktens dom, ikke vår.
+                 WHEN o.handling IS NULL THEN NULL
+                 -- Modusen feller i steg 2, før grensene vurderes.
+                 WHEN coalesce(o.handling ->> 'modus', 'alltid_stopp')
+                      = 'alltid_stopp'
+                   THEN 'handlingen har modus ''alltid_stopp'''
+                 WHEN o.gk = 'belop_over_grense'
+                      AND o.handling -> 'grenser' -> 'belop_maks' IS NULL
+                   THEN 'handlingen har ingen ''grenser.belop_maks'''
+                 WHEN o.gk = 'valuta_ikke_tillatt'
+                      AND jsonb_typeof(o.handling -> 'grenser' -> 'valuta')
+                          IS DISTINCT FROM 'array'
+                   THEN 'handlingen har ingen ''grenser.valuta'''
+                 -- Taket må ligge OVER handlingens egen grense; ellers er
+                 -- hvert blokkert beløp også over taket.
+                 WHEN o.gk = 'belop_over_grense'
+                      AND (o.post ->> 'belop_maks') ~ '^-?[0-9]+(\.[0-9]+)?$'
+                      AND (o.handling -> 'grenser' ->> 'belop_maks')
+                          ~ '^-?[0-9]+(\.[0-9]+)?$'
+                      AND (o.post ->> 'belop_maks')::NUMERIC
+                          <= (o.handling -> 'grenser' ->> 'belop_maks')::NUMERIC
+                   THEN 'taket er ikke høyere enn handlingens egen grense'
+                 -- Løftet hever beløpet, ikke valutaen.
+                 WHEN o.gk = 'belop_over_grense'
+                      AND jsonb_typeof(o.handling -> 'grenser' -> 'valuta')
+                          = 'array'
+                      AND jsonb_array_length(
+                              o.handling -> 'grenser' -> 'valuta') > 0
+                      AND o.post -> 'valuta' IS NOT NULL
+                      AND NOT (o.handling -> 'grenser' -> 'valuta'
+                               @> jsonb_build_array(o.post -> 'valuta'))
+                   THEN 'valutaen er ikke tillatt for handlingen'
+                 -- En valuta handlingen ALT tillater kan aldri blokkeres.
+                 WHEN o.gk = 'valuta_ikke_tillatt'
+                      AND o.handling -> 'grenser' -> 'valuta'
+                          @> jsonb_build_array(o.post -> 'valuta')
+                   THEN 'valutaen er allerede tillatt for handlingen'
+                 ELSE NULL END AS grunn
+          FROM oppf o
+    )
+    SELECT string_agg(format('menneskelig_overstyring[%s] (%s): %s',
+                             d.i, d.gk, d.grunn), ', ' ORDER BY d.i)
+      INTO v_uanvendelig
+      FROM dom d WHERE d.grunn IS NOT NULL;
+    IF v_uanvendelig IS NOT NULL THEN
+        RAISE EXCEPTION 'aktiver_policy: utkast % har menneskelig '
+            'overstyring motoren aldri kan anvende (%)',
+            p_utkast_id, v_uanvendelig
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'overstyring_anvendbar';
     END IF;
 
     -- 5. HENDELSEN FØRST (047, klarsignal §2.4): raden som binder
