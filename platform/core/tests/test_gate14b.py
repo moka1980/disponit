@@ -993,49 +993,60 @@ def test_port22_kansellert_aarsak_kan_ikke_etterstemples(conn):
     uid = _oppsett(conn)
     _medlem(conn, "op22")
     oid = _oppdrag_id(uid, _oppdrag(uid, "opprettet"))
+    # Egen generasjon på det andre oppdraget: `reparasjon_generasjon_unik`
+    # er (tenant, unntak_id, repair_generation).
+    oid2 = _oppdrag_id(uid, _oppdrag(uid, "opprettet", gen=1))
     m = _mig()
-    # (a) en ordinær kansellering UTEN årsak — slik en tidsavbrutt jobb
-    #     ender. Lovlig overgang, ingen påstand om et menneskelig nei.
-    m.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
-              " AND id=%s", (TEN, oid))
-    m.commit()
+    # try/finally: en migrator-tilkobling som lekker med åpen transaksjon
+    # holder låser resten av suiten aldri kommer forbi.
+    try:
+        # (a) en ordinær kansellering UTEN årsak — slik en tidsavbrutt jobb
+        #     ender. Lovlig overgang, ingen påstand om et menneskelig nei.
+        m.execute("UPDATE oppdrag SET status='kansellert' WHERE tenant=%s"
+                  " AND id=%s", (TEN, oid))
+        m.commit()
 
-    # (b) ETTERSTEMPLINGEN: statusen røres ikke, bare årsaken settes.
-    sett_kontekst(m, TEN, "sys", "r0")
-    with pytest.raises(psycopg.errors.CheckViolation):
-        m.execute("UPDATE oppdrag SET kansellert_aarsak='menneskelig_avvis'"
-                  " WHERE tenant=%s AND id=%s", (TEN, oid))
-    m.rollback()
-    sett_kontekst(m, TEN, "sys", "r0")
-    assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s"
-                     " AND id=%s", (TEN, oid)).fetchone()[0] is None, \
-        "årsaken ble etterstemplet på en alt terminal kansellering"
-    m.rollback()
+        # (b) ETTERSTEMPLINGEN: statusen røres ikke, bare årsaken settes.
+        sett_kontekst(m, TEN, "sys", "r0")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute("UPDATE oppdrag SET kansellert_aarsak="
+                      "'menneskelig_avvis' WHERE tenant=%s AND id=%s",
+                      (TEN, oid))
+        m.rollback()
+        sett_kontekst(m, TEN, "sys", "r0")
+        assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE"
+                         " tenant=%s AND id=%s",
+                         (TEN, oid)).fetchone()[0] is None, \
+            "årsaken ble etterstemplet på en alt terminal kansellering"
+        m.rollback()
 
-    # (c) ... og den kan heller ikke FØDES ferdig ved INSERT — et oppdrag
-    #     opprettes aldri allerede kansellert.
-    sett_kontekst(m, TEN, "sys", "r0")
-    lid, key_id = m.execute("SELECT loggpost_id, key_id FROM unntak WHERE"
-                            " tenant=%s AND id=%s", (TEN, uid)).fetchone()
-    with pytest.raises(psycopg.errors.CheckViolation):
-        m.execute(
-            "INSERT INTO oppdrag (opprinnelse,tenant,unntak_id,loggpost_id,"
-            "oppdragstype,handling,eiermodul,status,kansellert_aarsak,"
-            "payload_kryptert,key_id,nonce,utforelsesfrist,evidensfrist)"
-            " VALUES ('m37_reparasjon',%s,%s,%s,'reparasjon','faktura.bokfor',"
-            "'eier','kansellert','menneskelig_avvis',%s,%s,%s,"
-            "now()+interval '1 hour',now()+interval '2 hour')",
-            (TEN, uid, lid, b"\x00", key_id, b"\x00" * 12))
-    m.rollback()
+        # (c) ... og den kan heller ikke FØDES ferdig ved INSERT — et
+        #     oppdrag opprettes aldri allerede kansellert.
+        sett_kontekst(m, TEN, "sys", "r0")
+        lid, key_id = m.execute("SELECT loggpost_id, key_id FROM unntak"
+                                " WHERE tenant=%s AND id=%s",
+                                (TEN, uid)).fetchone()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO oppdrag (opprinnelse,tenant,unntak_id,"
+                "loggpost_id,oppdragstype,handling,eiermodul,status,"
+                "kansellert_aarsak,payload_kryptert,key_id,nonce,"
+                "utforelsesfrist,evidensfrist)"
+                " VALUES ('m37_reparasjon',%s,%s,%s,'reparasjon',"
+                "'faktura.bokfor','eier','kansellert','menneskelig_avvis',"
+                "%s,%s,%s,now()+interval '1 hour',now()+interval '2 hour')",
+                (TEN, uid, lid, b"\x00", key_id, b"\x00" * 12))
+        m.rollback()
 
-    # (d) DEN LOVLIGE VEIEN STÅR: årsaken settes i samme setning som
-    #     overgangen — nøyaktig slik §7 gjør det.
-    oid2 = _oppdrag_id(uid, _oppdrag(uid, "opprettet"))
-    sett_kontekst(m, TEN, "sys", "r0")
-    m.execute("UPDATE oppdrag SET status='kansellert',"
-              " kansellert_aarsak='menneskelig_avvis'"
-              " WHERE tenant=%s AND id=%s", (TEN, oid2))
-    assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s"
-                     " AND id=%s", (TEN, oid2)).fetchone()[0] \
-        == "menneskelig_avvis", "vakten stengte den lovlige overgangen"
-    m.rollback(); m.close()
+        # (d) DEN LOVLIGE VEIEN STÅR: årsaken settes i samme setning som
+        #     overgangen — nøyaktig slik §7 gjør det.
+        sett_kontekst(m, TEN, "sys", "r0")
+        m.execute("UPDATE oppdrag SET status='kansellert',"
+                  " kansellert_aarsak='menneskelig_avvis'"
+                  " WHERE tenant=%s AND id=%s", (TEN, oid2))
+        assert m.execute("SELECT kansellert_aarsak FROM oppdrag WHERE"
+                         " tenant=%s AND id=%s", (TEN, oid2)).fetchone()[0] \
+            == "menneskelig_avvis", "vakten stengte den lovlige overgangen"
+        m.rollback()
+    finally:
+        m.rollback(); m.close()
