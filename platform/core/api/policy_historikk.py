@@ -79,7 +79,8 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
         rader = conn.execute(
             "SELECT versjon, innholds_hash, aktiv, opprettet, aktivert_ts,"
             "       attestant_a, attestant_b, aktivert_av_operasjon,"
-            "       rollback_av_versjon, rollback_kilde, aktiveringskilde"
+            "       rollback_av_versjon, rollback_kilde, aktiveringskilde,"
+            "       aktivert"
             "  FROM policyversjoner_for_tenant(%s, %s)",
             (tenant, policy_id)).fetchall()
         conn.rollback()
@@ -103,7 +104,11 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
              # (oppsettsregistreringen) eller `historisk` (lå der da 047
              # landet). Uten den kunne flaten ikke skille en bootstrap
              # skrevet i går fra en rad som ligger foran hele lineagen.
-             "aktiveringskilde": r[10]} for r in rader]}, rid)
+             "aktiveringskilde": r[10],
+             # HAR versjonen vært i kraft? En `registrer(..., aktiver=False)`
+             # er registrert, ikke aktivert — uten dette viste flaten
+             # registreringstidspunktet under «Aktivert» (047, Codex P2).
+             "aktivert": r[11]} for r in rader]}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

@@ -855,7 +855,8 @@ RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
                opprettet TIMESTAMPTZ, aktivert_ts TIMESTAMPTZ,
                attestant_a TEXT, attestant_b TEXT,
                aktivert_av_operasjon TEXT, rollback_av_versjon TEXT,
-               rollback_kilde TEXT, aktiveringskilde TEXT)
+               rollback_kilde TEXT, aktiveringskilde TEXT,
+               aktivert BOOLEAN)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -892,7 +893,19 @@ BEGIN
                 ELSE 'borte' END::TEXT,
            -- Veien raden kom inn. Rader fra før 047 bærer 'historisk';
            -- NULL kan bare forekomme på direkte innsatte fixture-rader.
-           coalesce(p.aktiveringskilde, 'historisk')
+           coalesce(p.aktiveringskilde, 'historisk'),
+           -- HAR denne versjonen noen gang vært i kraft (Codex P2)?
+           -- `registrer(..., aktiver=False)` legger inn en versjon UTEN å
+           -- aktivere den: ingen hendelse, ingen `bootstrap_aktivert_ts`.
+           -- Uten dette skillet lånte historikken `opprettet` og viste
+           -- REGISTRERINGStidspunktet under «Aktivert» — en aktivering som
+           -- aldri skjedde. Rader fra før 047 ('historisk') og aktive rader
+           -- regnes som aktivert: for dem er det TIDSPUNKTET som mangler,
+           -- ikke aktiveringen.
+           (a.aktivert_ts IS NOT NULL
+            OR p.bootstrap_aktivert_ts IS NOT NULL
+            OR p.aktiv
+            OR coalesce(p.aktiveringskilde, 'historisk') <> 'bootstrap')
       FROM public.policyer p
       -- Koblingen går via OPERASJONEN, ikke via (policy_id, versjon)
       -- (Codex P2). `aktivert_av_operasjon` ER FK-en til hendelsen, og
@@ -916,10 +929,22 @@ BEGIN
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
      -- Kronologien er AKTIVERINGENS, ikke registreringens (Codex P2):
      -- `opprettet` er når raden ble skrevet, og en rad kan skrives lenge
-     -- før den aktiveres. `opprettet` er siste utvei — for de migrerte
-     -- radene og for versjoner som aldri er aktivert er det det eneste
-     -- tidspunktet som finnes.
-     ORDER BY coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts,
+     -- før den aktiveres. `opprettet` er siste utvei — for de MIGRERTE
+     -- radene, der aktiveringen skjedde, men tidspunktet ikke finnes noe
+     -- sted.
+     --
+     -- En ALDRI AKTIVERT rad står utenfor denne kronologien (Codex P2).
+     -- Sorterte den på `opprettet` sammen med aktiveringene, la en
+     -- fersk `registrer(..., aktiver=False)` seg øverst som om den var
+     -- nyest aktivert — og dro med seg diffens default-retning, som
+     -- leser nettopp de to øverste. Den sorteres derfor etter alle
+     -- aktiveringene, med samme test som `aktivert`-kolonnen over.
+     ORDER BY CASE WHEN a.aktivert_ts IS NOT NULL
+                     OR p.bootstrap_aktivert_ts IS NOT NULL
+                     OR p.aktiv
+                     OR coalesce(p.aktiveringskilde, 'historisk')
+                        <> 'bootstrap' THEN 0 ELSE 1 END,
+              coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts,
                        p.opprettet) DESC, p.versjon DESC;
 END $$;
 

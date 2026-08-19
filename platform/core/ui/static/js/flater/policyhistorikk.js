@@ -98,8 +98,15 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
       el("th", { scope: "row", text: v.versjon }),
       // Aktiv versjon markeres med TEKST (port 40), aldri kun stil.
       el("td", { text: v.aktiv ? t("ui.historikk.aktiv_na") : "" }),
+      // «Aktivert» er en påstand om at versjonen HAR vært i kraft. En
+      // rad som bare er registrert (`aktiver=False`) har aldri vært det,
+      // og skal ikke låne registreringstidspunktet sitt til kolonnen
+      // (Codex P2). En migrert rad ble aktivert, men tidspunktet finnes
+      // ikke — den viser `opprettet` som før, den ærligste vi har.
       el("td", {}, v.aktivert_ts ? Tidspunkt(v.aktivert_ts)
-                                 : Tidspunkt(v.opprettet)),
+        : v.aktivert === false
+          ? el("span", { class: "muted", text: t("ui.historikk.uaktivert") })
+          : Tidspunkt(v.opprettet)),
       el("td", { text: attestantTekst(v) }),
       el("td", { text: opphavTekst(v) }),
     ];

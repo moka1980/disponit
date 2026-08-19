@@ -1003,6 +1003,7 @@
   "ui.historikk.kol.handlinger": "Handlinger",
   "ui.historikk.aktiv_na": "Aktiv nå",
   "ui.historikk.attestanter_ubundet": "attestanter ikke bundet",
+  "ui.historikk.uaktivert": "ikke aktivert",
   "ui.historikk.kilde_bootstrap": "lagt inn ved oppsett",
   "ui.historikk.rullbakk_fra": "utkast fra versjon {n}",
   "ui.historikk.rullbakk_fra_borte": "utkast fra versjon {n}, som er slettet siden",

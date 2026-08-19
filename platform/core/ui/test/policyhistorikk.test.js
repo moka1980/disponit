@@ -303,6 +303,40 @@ test("historikk: bootstrap-raden skiller seg fra en ubundet historisk rad",
       t("ui.historikk.attestanter_ubundet")));
   });
 
+// En REGISTRERT versjon er ikke en aktivert versjon (Codex P2):
+// `registrer(..., aktiver=False)` gir en rad uten hendelse og uten
+// aktiveringstidspunkt, og «Aktivert»-kolonnen skal da ikke låne
+// registreringstidspunktet — den skal si at versjonen ikke er aktivert.
+test("historikk: en aldri aktivert versjon viser ikke et aktiveringstidspunkt",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": AKTIVE,
+      "/v1/policy/faktura-no/versjoner": { policy_id: "faktura-no",
+        versjoner: [
+          { versjon: "1", innholds_hash: "h1", aktiv: true,
+            opprettet: "2026-08-17T10:00:00+00:00",
+            aktivert_ts: "2026-08-17T10:00:00+00:00", attestanter: ["ida"],
+            aktivert_av_operasjon: "aktiver-u1-r1", rollback_av_versjon: null,
+            aktiveringskilde: "bootstrap", aktivert: true },
+          { versjon: "9", innholds_hash: "h9", aktiv: false,
+            opprettet: "2026-08-19T10:00:00+00:00", aktivert_ts: null,
+            attestanter: null, aktivert_av_operasjon: null,
+            rollback_av_versjon: null, aktiveringskilde: "bootstrap",
+            aktivert: false }] } };
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const rader = h.querySelectorAll(".datatabell tbody tr");
+    assert.equal(rader.length, 2);
+    assert.ok(rader[1].textContent.includes(t("ui.historikk.uaktivert")));
+    // Registreringstidspunktet skal ikke stå der som en aktivering: 19.
+    // august finnes ikke i raden, verken som dato eller klokkeslett.
+    assert.ok(!rader[1].textContent.includes("19"),
+              rader[1].textContent);
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
 // `policy_id` er ikke et snilt tegnsett bare fordi skjemaet er strengt i
 // dag (Codex P2). Lastekontrakten slipper med vilje gjennom alt aktive
 // policyer fra før innstrammingen bærer, og den gamle Python-`$`-en matchet

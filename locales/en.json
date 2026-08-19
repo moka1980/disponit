@@ -1003,6 +1003,7 @@
   "ui.historikk.kol.handlinger": "Actions",
   "ui.historikk.aktiv_na": "Active now",
   "ui.historikk.attestanter_ubundet": "attestants not bound",
+  "ui.historikk.uaktivert": "not activated",
   "ui.historikk.kilde_bootstrap": "added during setup",
   "ui.historikk.rullbakk_fra": "draft from version {n}",
   "ui.historikk.rullbakk_fra_borte": "draft from version {n}, which has since been deleted",

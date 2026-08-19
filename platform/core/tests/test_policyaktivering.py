@@ -638,6 +638,59 @@ def test_reregistrering_av_aktiv_bootstrap_beholder_tidspunktet():
 
 
 @pg
+def test_aldri_aktivert_versjon_star_utenfor_aktiveringskronologien():
+    """Codex P2: en REGISTRERT versjon er ikke en aktivert versjon.
+
+    `registrer(..., aktiver=False)` legger inn raden uten å aktivere den:
+    ingen hendelse, ingen `bootstrap_aktivert_ts`. Falt historikken da
+    tilbake på `opprettet`, la den ferskeste registreringen seg ØVERST —
+    som om den var den nyest aktiverte — og flaten viste
+    registreringstidspunktet under «Aktivert». Diffens default-retning
+    leser nettopp de to øverste, så feilen forplantet seg dit.
+
+    Kontroll: fjern `aktivert`-testen fra sorteringen igjen, så kommer
+    9.0.0 først og testen blir rød.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-uakt-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    m = _c()
+    try:
+        # Den aktiverte versjonen først — og den REGISTRERTE etterpå, så
+        # `opprettet` peker feil vei for enhver sortering som bruker den.
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        mal["meta"]["versjon"] = "9.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+    finally:
+        m.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        rader = r.execute(
+            "SELECT versjon, aktivert, aktivert_ts FROM"
+            " policyversjoner_for_tenant(%s,%s)", (TEN, pid)).fetchall()
+        r.rollback()
+    finally:
+        r.close()
+    assert [x[0] for x in rader] == ["1.0.0", "9.0.0"], \
+        f"en aldri aktivert versjon står i aktiveringskronologien: {rader}"
+    # Den aktiverte bærer BÅDE flagget og tidspunktet; den registrerte
+    # bærer ingen av delene — den har ikke noe aktiveringstidspunkt å vise.
+    assert rader[0][1] is True and rader[0][2] is not None, rader
+    assert rader[1][1] is False and rader[1][2] is None, rader
+
+
+@pg
 def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
     """Codex P2: merket og tidspunktet er én påstand, og må ha én prøve.
 
