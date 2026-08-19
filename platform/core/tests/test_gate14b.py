@@ -39,6 +39,7 @@ Portkart (klarsignalets §9):
   22  test_port22_kansellert_aarsak_kan_ikke_etterstemples
   23  test_port23_verifikasjonsoppdrag_blokkerer_avvis
   24  test_port24_opplosningen_krever_attestert_avvisning
+  25  test_port25_saksforklaringen_paastar_ingen_rekkefolge
 """
 import json
 import secrets
@@ -860,6 +861,49 @@ def test_port18_rettighetene_er_parameterisert_pa_rollenavnet():
         foran = sql[max(0, treff.start() - 600):treff.start()]
         assert "rolname = 'disponit'" in foran, \
             "ubetinget grant til lokalnavnet " + repr(foran[-120:])
+
+
+# ---------------------------------------------------------------------------
+# Port 25: forklaringen påstår bare det systemet har MÅLT (Codex P2, runde 8)
+# ---------------------------------------------------------------------------
+
+def test_port25_saksforklaringen_paastar_ingen_rekkefolge():
+    """Teksten sa: «Oppdraget ble utført ETTER at du avviste saken.»
+
+    Det er ikke målt noe sted. Det eneste systemet observerer er at
+    KVITTERINGEN ankom etter kanselleringen — utførelsen kan ha vært i gang
+    lenge før operatøren klikket, og §5-kommentaren i `app.py` sier nettopp
+    det (fencingen hindrer FULLFØRING, ikke det som allerede skjedde). En
+    uprøvd tidsrekkefølge presentert som faktum sender operatøren ut på en
+    gransking — eller en kompensasjon — med feil utgangspunkt.
+
+    Statisk og negativ, som port 8: forklaringen skal navngi ANKOMSTEN, og
+    aldri påstå rekkefølgen mellom klikket og utførelsen.
+
+    MUTASJONEN SOM DREPER DENNE: skriv «utført etter at du avviste» tilbake
+    inn i en av de fire tekstene.
+    """
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    nb = json.loads((rot / "locales" / "nb.json").read_text(encoding="utf-8"))
+    en = json.loads((rot / "locales" / "en.json").read_text(encoding="utf-8"))
+    # Påstander om rekkefølgen mellom nei-et og utførelsen.
+    forbudt = {
+        "nb": ("utført etter at du avviste", "utført etter avvisningen"),
+        "en": ("performed after you rejected", "performed after the rejection"),
+    }
+    # ... og det som FAKTISK er observert: kvitteringens ankomst.
+    kreves = {"nb": "kvitteringen kom inn etter", "en": "receipt arrived after"}
+    for sprak, kat in (("nb", nb), ("en", en)):
+        for arsak in ("kompensasjon_kreves", "irreversibel_utfort"):
+            tekst = kat[f"ui.unntak.saksarsak.{arsak}"].lower()
+            for frase in forbudt[sprak]:
+                assert frase not in tekst, (
+                    f"{sprak}/{arsak} påstår en rekkefølge systemet ikke har"
+                    f" målt: {frase!r}")
+            assert kreves[sprak] in tekst, (
+                f"{sprak}/{arsak} sier ikke hva som FAKTISK er observert"
+                " (kvitteringens ankomst)")
 
 
 # ---------------------------------------------------------------------------

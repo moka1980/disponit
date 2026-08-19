@@ -158,9 +158,15 @@ function detaljInnhold(detalj, historikk, id, ctx, paaFerdig) {
   // 043 (Gate 14b, Codex P2): saker FØDT av et oppdrag bærer grunnen sin i
   // `arsak`, og fra 043 er to av verdiene `kompensasjon_kreves` og
   // `irreversibel_utfort` — «noen må kompensere manuelt» og «en
-  // irreversibel handling ble rapportert utført etter nei-et». Uten denne
-  // raden var de ikke til å skille fra en hvilken som helst arvet sak, og
-  // da er saken født uten å si det den ble født for å si.
+  // irreversibel handling ble rapportert utført». Uten denne raden var de
+  // ikke til å skille fra en hvilken som helst arvet sak, og da er saken
+  // født uten å si det den ble født for å si.
+  //
+  // Forklaringene sier hva systemet KAN vite (Codex P2, runde 8): at
+  // kvitteringen ANKOM etter nei-et. Rekkefølgen mellom operatørens klikk
+  // og selve utførelsen er ikke målt noe sted — modulen kan ha vært i gang
+  // lenge før — og en tekst som påstår den, sender operatøren ut på en
+  // gransking med feil utgangspunkt.
   if (detalj.arsak) {
     kvRad(dl, t("ui.kol.saksarsak"),
       t(`saksarsak.${detalj.arsak}`, detalj.arsak));

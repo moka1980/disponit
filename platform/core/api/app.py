@@ -2704,8 +2704,10 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                          "resultathash": ny_hash}, ensure_ascii=False)))
         # 043 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
         # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
-        # kansellerte betyr at modulen rakk å utføre før nei-et nådde den —
-        # hva det krever av oss utledes av MODULKONTRAKTENS reversibilitet,
+        # kansellerte betyr at modulen UTFØRTE — når, i forhold til
+        # operatørens klikk, vet vi ikke og påstår vi ikke (Codex P2, runde
+        # 8): det eneste målte er at kvitteringen ANKOM etter kanselleringen.
+        # Hva det krever av oss utledes av MODULKONTRAKTENS reversibilitet,
         # aldri av gjetning: `direkte` → ingenting (resultatet forkastes,
         # artefaktet forblir staged og ryddes av 038-reaperen);
         # `kompenserende`/`irreversibel` → sak, gjennom samme
@@ -2716,8 +2718,8 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # bevares; her brukes svaret bare til sakskoblingen.
         #
         # ... men FØRST må kvitteringen faktisk PÅSTÅ at handlingen skjedde
-        # (Codex P1). Hele §5-slutningen hviler på premisset «modulen rakk å
-        # utføre før nei-et nådde den». En sen kvittering med
+        # (Codex P1). Hele §5-slutningen hviler på premisset «modulen
+        # utførte». En sen kvittering med
         # `resultat: "feilet"` sier det motsatte: ingen sideeffekt inntraff.
         # Den gikk likevel inn her og fødte `kompensasjon_kreves` eller
         # `irreversibel_utfort` — altså en sak som ber et menneske

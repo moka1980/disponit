@@ -908,6 +908,6 @@
   "saksarsak.sikkerhet": "Sikkerhetsavvik",
   "saksarsak.kompensasjon_kreves": "Kompensasjon kreves",
   "saksarsak.irreversibel_utfort": "Irreversibel handling utført",
-  "ui.unntak.saksarsak.kompensasjon_kreves": "Oppdraget ble utført etter at du avviste saken, og modulkontrakten sier at virkningen kan kompenseres. Noen må gjøre det manuelt.",
-  "ui.unntak.saksarsak.irreversibel_utfort": "Oppdraget ble utført etter at du avviste saken, og modulkontrakten sier at virkningen IKKE kan reverseres."
+  "ui.unntak.saksarsak.kompensasjon_kreves": "Oppdraget ble utført. Kvitteringen kom inn etter at du avviste saken — når selve utførelsen skjedde, vet systemet ikke; den kan ha vært i gang før nei-et nådde modulen. Modulkontrakten sier at virkningen kan kompenseres. Noen må gjøre det manuelt.",
+  "ui.unntak.saksarsak.irreversibel_utfort": "Oppdraget ble utført. Kvitteringen kom inn etter at du avviste saken — når selve utførelsen skjedde, vet systemet ikke; den kan ha vært i gang før nei-et nådde modulen. Modulkontrakten sier at virkningen IKKE kan reverseres."
 }
