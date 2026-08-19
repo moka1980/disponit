@@ -1919,6 +1919,15 @@ def test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen(
     oppdragsrad = migrator.execute(
         "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
         " AND id=%s", (TENANT, opp)).fetchone()
+    # Codex P2 (runde 8): selve den SIGNERTE kvitteringen — grunnlaget
+    # §5-saken hviler på — må være bevart, ikke bare oppsummert.
+    bevart = migrator.execute(
+        "SELECT kvittering->>'resultat', kvittering->>'kvittering_jti',"
+        " kvittering_signatur IS NOT NULL, resultathash IS NOT NULL"
+        " FROM oppdrag WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
+    sen_detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='sen_kvittering'", (TENANT, sak)).fetchone()[0]
     migrator.execute("SET ROLE disponit_m37_claimer")
     kap = migrator.execute(
         "SELECT status, resultathash IS NOT NULL FROM"
@@ -1940,6 +1949,21 @@ def test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen(
         f"kapabiliteten skulle stått avvist MED sen hash: {kap}")
     # ... og §5-saken finnes: kontrakten sa `kompenserende`.
     assert kompensasjon == 1, "kompensasjonssaken ble aldri født"
+    # ... OG BEVISET SAKEN HVILER PÅ ER BEVART (Codex P2, runde 8).
+    #
+    # Saken påstår at handlingen skjedde. Uten den signerte kvitteringen
+    # kunne ingen etterpå kontrollere påstanden: evidensraden bar bare
+    # resultat + hash, kapabiliteten bare hashen, og selve kvitteringen
+    # fantes ingen steder. Et kansellert oppdrag er terminalt, så
+    # lagringen blokkerer ingen ny eier — den gir bare saken sitt
+    # grunnlag, uforanderlig.
+    #
+    # MUTASJONEN SOM DREPER DENNE: fjern `oppdrag`-UPDATE-en i sen-grenen.
+    assert bevart == ("utfort", a["kvittering_jti"], True, True), (
+        "den signerte kvitteringen §5-saken hviler på ble kastet:"
+        f" {bevart}")
+    assert sen_detalj.get("kvittering_lagret") is True, (
+        f"evidensraden sier ikke hvor beviset ligger: {sen_detalj}")
 
 
 @pg

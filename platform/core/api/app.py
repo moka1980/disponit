@@ -2199,6 +2199,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     `oppdrag.kvittering`, ville kolonnelåsen (kvitteringen er uforanderlig)
     gjort det umulig for den NYE eieren å levere sin — altså ville en
     utdatert kvittering blokkert den gjeldende.
+
+    Med ÉN presis unntagelse (043 §5, Codex P2 runde 8): et oppdrag et
+    menneske har kansellert er TERMINALT. Det kan aldri claimes igjen, så
+    det finnes ingen ny eier å blokkere — og der er uforanderligheten
+    nettopp det evidensen skal ha. Den sene kvitteringen som utløser
+    kompensasjons-/irreversibilitetssaken lagres derfor signert på raden,
+    så saken kan legge fram grunnlaget sitt og ikke bare påstå det.
     """
     from policy_validator import attestering
 
@@ -2694,6 +2701,40 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             unntak_id = conn.execute(
                 "SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',%s,%s)",
                 (tenant, oppdrag_id, auth.aktor, rid)).fetchone()[0]
+        # DEN SIGNERTE KVITTERINGEN SKAL OVERLEVE (Codex P2, runde 8).
+        #
+        # Under fødte §5-saken en påstand om at handlingen SKJEDDE — og
+        # kastet så beviset: evidensraden bærer bare en oppsummering
+        # (resultat + hash), kapabiliteten bare hashen, og selve den
+        # signerte kvitteringen fantes ingen steder etter dette kallet. Da
+        # ber saken et menneske kompensere for, eller granske, noe systemet
+        # ikke lenger kan legge fram grunnlaget for. En remedieringssak uten
+        # sin egen evidens er en påstand, ikke et spor.
+        #
+        # Raden HAR plassen for det (`kvittering`, `kvittering_signatur`,
+        # `resultathash`), og grunnen til at den sene veien lot den stå tom
+        # gjelder ikke her: den er at en utdatert kvittering ellers ville
+        # låst raden (kolonnelåsen: uforanderlig når satt) og hindret den
+        # NYE eieren i å levere sin. Det forutsetter at det KAN komme en ny
+        # eier. Etter et menneskelig nei er oppdraget terminalt
+        # `kansellert` — ingen kan claime det, og ingen kvittering kan
+        # avslutte det noen gang. Da blokkerer lagringen ingenting, og
+        # uforanderligheten er nettopp det evidensen skal ha.
+        #
+        # Derfor: bare på nei-grenen, og bare i det tomme feltet. Er det alt
+        # fylt (en tidligere sen kvittering på samme kansellerte oppdrag),
+        # rører vi det ikke — den første er den lagrede, og denne står
+        # fortsatt i historikken med sin egen hash. Statusen endres ikke;
+        # dette er lagring av evidens, ikke en fullføring.
+        kvittering_lagret = False
+        if menneskelig_nei:
+            kvittering_lagret = conn.execute(
+                "UPDATE oppdrag SET kvittering=%s, kvittering_signatur=%s,"
+                " resultathash=%s WHERE tenant=%s AND id=%s"
+                "   AND kvittering IS NULL RETURNING id",
+                (json.dumps(kvittering, ensure_ascii=False),
+                 (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
+                 tenant, oppdrag_id)).fetchone() is not None
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
@@ -2702,6 +2743,12 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                          "gjeldende_fencing": gjeldende,
                          "etter_utforelsesfrist": naa > uf,
                          "resultat": kvittering.get("resultat"),
+                         # Sier HVOR beviset ligger: True = denne
+                         # kvitteringen står signert på oppdragsraden,
+                         # False = en tidligere sen kvittering har plassen
+                         # (eller oppdraget ble ikke kansellert av et
+                         # menneske, og da fødes ingen §5-sak heller).
+                         "kvittering_lagret": kvittering_lagret,
                          "resultathash": ny_hash}, ensure_ascii=False)))
         # 043 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
         # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
