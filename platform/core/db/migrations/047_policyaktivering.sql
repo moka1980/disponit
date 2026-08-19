@@ -813,10 +813,40 @@ RESET ROLE;
 -- oppdateres, så den fryses helt — ikke bare «når den er satt». NULL → N
 -- er nettopp fabrikasjonen: en ordinær versjon som i ettertid får et
 -- opphav. Samme form som `policyer_operasjon_immutabel` over.
+
+-- OPPHAVET MÅ PEKE PÅ EN GENERASJON, IKKE PÅ ET NUMMER (Codex P2).
+-- `rollback_av_versjon` bærer bare tallet, og et versjonsnummer er ikke en
+-- varig identitet: `slett_ubrukt_policy` frigjør uttrykkelig
+-- `(policy_id, versjon)`, og nummeret kan gjenskapes med ET ANNET innhold
+-- (`test_identisk_gjenskapt_policy_gjenoppliver_ikke_slettet_generasjon`).
+-- Lages en rullbakk av versjon 1, slettes serien, og gjenskapes 1 gjennom
+-- en styrt aktivering før rullbakkutkastet aktiveres, står historikken og
+-- påstår «rullbakk fra versjon 1» ved siden av en generasjon 1 kopien
+-- aldri kom fra. Påstanden er da fabrikkert på nøyaktig samme måte som en
+-- flyttet `rollback_av_versjon` ville vært — bare uten at noen skrev noe.
+--
+-- Kilden bindes derfor med generasjonens EGEN identitet: innholdshashen,
+-- slik den var i det kopien ble tatt. Hashen er valgt framfor
+-- `aktivert_av_operasjon` fordi den finnes for HVER rad — også de
+-- migrerte, ubundne og bootstrappede, som ingen hendelse har — og fordi
+-- det er nettopp innholdet en rullbakk kopierer.
+--
+-- NULL betyr «kilden er ikke bundet»: rullbakkutkast fra før 047 har
+-- ingen hash, og historikken sier det i stedet for å påstå noe den ikke
+-- kan vite. En hash uten et versjonsnummer er derimot meningsløs.
+ALTER TABLE policyutkast ADD COLUMN rollback_av_hash TEXT;
+ALTER TABLE policyutkast ADD CONSTRAINT utkast_rullbakkehash_krever_versjon
+  CHECK (rollback_av_hash IS NULL OR rollback_av_versjon IS NOT NULL);
+
+-- Begge halvdelene av opphavet fryses av SAMME vakt: en hash som kunne
+-- flyttes alene ville gjort «bundet» til en påstand kjøretidsrollen kan
+-- skrive seg til, og et nummer som kunne flyttes alene er funnet over.
 CREATE TRIGGER policyutkast_rullbakkeopphav_immutabel
   BEFORE UPDATE ON policyutkast
   FOR EACH ROW WHEN (NEW.rollback_av_versjon
-                     IS DISTINCT FROM OLD.rollback_av_versjon)
+                     IS DISTINCT FROM OLD.rollback_av_versjon
+                     OR NEW.rollback_av_hash
+                     IS DISTINCT FROM OLD.rollback_av_hash)
   EXECUTE FUNCTION avvis_endring();
 
 CREATE OR REPLACE FUNCTION policyversjoner_for_tenant(
@@ -825,7 +855,7 @@ RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
                opprettet TIMESTAMPTZ, aktivert_ts TIMESTAMPTZ,
                attestant_a TEXT, attestant_b TEXT,
                aktivert_av_operasjon TEXT, rollback_av_versjon TEXT,
-               aktiveringskilde TEXT)
+               rollback_kilde TEXT, aktiveringskilde TEXT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -847,6 +877,19 @@ BEGIN
            coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts),
            a.attestant_a, a.attestant_b,
            p.aktivert_av_operasjon, u.rollback_av_versjon,
+           -- TILSTANDEN til opphavet, ikke bare nummeret (Codex P2):
+           --   bundet  — generasjonen kopien ble tatt fra ER den som
+           --             bærer nummeret nå (hashene er like)
+           --   borte   — nummeret finnes ikke lenger, eller bærer en ANNEN
+           --             generasjon: kilden er slettet/gjenskapt
+           --   ubundet — rullbakk fra før hashen fantes; kilden kan ikke
+           --             avgjøres, og flaten sier det i stedet for å gjette
+           -- NULL når versjonen ikke er en rullbakk i det hele tatt.
+           CASE WHEN u.rollback_av_versjon IS NULL THEN NULL
+                WHEN u.rollback_av_hash IS NULL THEN 'ubundet'
+                WHEN rb.innholds_hash IS NOT DISTINCT FROM u.rollback_av_hash
+                     THEN 'bundet'
+                ELSE 'borte' END::TEXT,
            -- Veien raden kom inn. Rader fra før 047 bærer 'historisk';
            -- NULL kan bare forekomme på direkte innsatte fixture-rader.
            coalesce(p.aktiveringskilde, 'historisk')
@@ -864,6 +907,12 @@ BEGIN
        AND a.decision_operation_id = p.aktivert_av_operasjon
       LEFT JOIN public.policyutkast u
         ON u.tenant = a.tenant AND u.utkast_id = a.utkast_id
+      -- Generasjonen som bærer kildenummeret NÅ. Den kan være en annen
+      -- enn den kopien ble tatt fra (sletting frigjør nummeret), og den
+      -- kan mangle helt — begge deler gir 'borte' over.
+      LEFT JOIN public.policyer rb
+        ON rb.tenant = u.tenant AND rb.policy_id = u.policy_id
+       AND rb.versjon = u.rollback_av_versjon
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
      -- Kronologien er AKTIVERINGENS, ikke registreringens (Codex P2):
      -- `opprettet` er når raden ble skrevet, og en rad kan skrives lenge

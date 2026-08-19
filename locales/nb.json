@@ -1005,6 +1005,8 @@
   "ui.historikk.attestanter_ubundet": "attestanter ikke bundet",
   "ui.historikk.kilde_bootstrap": "lagt inn ved oppsett",
   "ui.historikk.rullbakk_fra": "utkast fra versjon {n}",
+  "ui.historikk.rullbakk_fra_borte": "utkast fra versjon {n}, som er slettet siden",
+  "ui.historikk.rullbakk_fra_ubundet": "utkast fra versjon {n} (kilden er ikke bundet)",
   "ui.historikk.rullbakk": "Rull tilbake",
   "ui.historikk.rullbakk_tittel": "Rull tilbake til versjon {n}?",
   "ui.historikk.rullbakk_tekst": "Dette lager et utkast fra versjon {n}. Det må valideres og godkjennes før det trer i kraft: av to personer hvis endringen utvider fullmakten, ellers av én som ikke har skrevet utkastet. Ingenting endres nå.",

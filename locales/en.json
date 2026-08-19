@@ -1005,6 +1005,8 @@
   "ui.historikk.attestanter_ubundet": "attestants not bound",
   "ui.historikk.kilde_bootstrap": "added during setup",
   "ui.historikk.rullbakk_fra": "draft from version {n}",
+  "ui.historikk.rullbakk_fra_borte": "draft from version {n}, which has since been deleted",
+  "ui.historikk.rullbakk_fra_ubundet": "draft from version {n} (source not bound)",
   "ui.historikk.rullbakk": "Roll back",
   "ui.historikk.rullbakk_tittel": "Roll back to version {n}?",
   "ui.historikk.rullbakk_tekst": "This creates a draft from version {n}. It must be validated and approved before it takes effect: by two people if the change expands authority, otherwise by one person who did not write the draft. Nothing changes now.",

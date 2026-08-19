@@ -10,6 +10,7 @@ import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visPolicyadmin } from "../static/js/flater/policyadmin.js";
 import { visPolicy } from "../static/js/flater/policy.js";
+import { opphavTekst } from "../static/js/flater/policyhistorikk.js";
 
 settI18nForTest(NB, "nb");
 
@@ -18,7 +19,7 @@ const VERSJONER = { policy_id: "faktura-no", versjoner: [
     opprettet: "2026-08-19T10:00:00+00:00",
     aktivert_ts: "2026-08-19T10:00:00+00:00",
     attestanter: ["ida", "jon"], aktivert_av_operasjon: "aktiver-u3-r1",
-    rollback_av_versjon: "1" },
+    rollback_av_versjon: "1", rollback_kilde: "bundet" },
   { versjon: "2", innholds_hash: "h2", aktiv: false,
     opprettet: "2026-08-18T10:00:00+00:00",
     aktivert_ts: null, attestanter: null, aktivert_av_operasjon: null,
@@ -82,6 +83,29 @@ async function aapneHistorikk(h) {
   finn(h, t("ui.historikk.knapp")).dispatchEvent(new window.Event("click"));
   await vent(() => h.querySelector(".datatabell caption"));
 }
+
+// Opphavet er en påstand om en GENERASJON, ikke om et nummer (Codex P2).
+// Nummeret frigjøres av sletting og kan gjenskapes med annet innhold, så
+// «rullbakk fra 1» må ikke stå der når kilden er borte eller ubundet.
+test("historikk: opphavskolonnen skiller bundet, borte og ubundet kilde",
+  () => {
+    assert.equal(opphavTekst({ rollback_av_versjon: null }), "");
+    assert.equal(
+      opphavTekst({ rollback_av_versjon: "1", rollback_kilde: "bundet" }),
+      t("ui.historikk.rullbakk_fra").replace("{n}", "1"));
+    const borte = opphavTekst(
+      { rollback_av_versjon: "1", rollback_kilde: "borte" });
+    assert.equal(borte,
+      t("ui.historikk.rullbakk_fra_borte").replace("{n}", "1"));
+    assert.notEqual(borte, t("ui.historikk.rullbakk_fra").replace("{n}", "1"));
+    // Ingen `rollback_kilde` (eller `ubundet`) er IKKE det samme som
+    // bundet: et rullbakkutkast fra før hashen fantes kan ikke måles.
+    assert.equal(opphavTekst({ rollback_av_versjon: "1" }),
+                 t("ui.historikk.rullbakk_fra_ubundet").replace("{n}", "1"));
+    assert.equal(
+      opphavTekst({ rollback_av_versjon: "1", rollback_kilde: "ubundet" }),
+      t("ui.historikk.rullbakk_fra_ubundet").replace("{n}", "1"));
+  });
 
 test("historikk: tabell med caption, aktiv som TEKST, ubundet som tekst,"
      + " axe rent", async () => {

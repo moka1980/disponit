@@ -272,6 +272,7 @@ def opprett_utkast_endepunkt(tjeneste, request):
         policy_id = body.get("policy_id")
         innhold = body.get("innhold")
         rollback_av = body.get("rollback_av_versjon")
+        kilde_innhold = None
         # 047 (§3, port 22): en rullbakk er en KOPI av versjonen den peker
         # på — serveren henter innholdet selv gjennom eier-defineren, og
         # et klientinnhold som avviker avvises: `rollback_av_versjon = N`
@@ -323,6 +324,13 @@ def opprett_utkast_endepunkt(tjeneste, request):
             if innhold is not None and innhold != hentet:
                 return _feil("request_feilformet", rid)
             innhold = hentet
+            # Kildens EGET innhold følger med til porten (047, Codex P2).
+            # Opphavet lagres som generasjonens innholdshash, og hashen skal
+            # regnes over nøyaktig det vi kopierte — ikke over en rad slått
+            # opp på nytt senere, som kan være en gjenskapt generasjon med
+            # samme nummer. `innhold` normaliseres av porten (meta.status,
+            # meta.versjon), så kopien og kilden er ikke samme dokument.
+            kilde_innhold = hentet
         if not isinstance(policy_id, str) or not policy_id.strip() \
                 or not isinstance(innhold, dict):
             return _feil("request_feilformet", rid)
@@ -333,7 +341,8 @@ def opprett_utkast_endepunkt(tjeneste, request):
             conn, tenant=tenant, aktor=bid, request_id=rid,
             policy_id=policy_id, innhold=innhold,
             idempotency_key=idem, input_hash=ih,
-            rollback_av_versjon=rollback_av)
+            rollback_av_versjon=rollback_av,
+            rollback_av_innhold=kilde_innhold)
         return _ok(res, rid, 201)
 
     return _med_conn(tjeneste, rid, kjor)

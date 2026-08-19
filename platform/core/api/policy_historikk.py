@@ -79,7 +79,7 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
         rader = conn.execute(
             "SELECT versjon, innholds_hash, aktiv, opprettet, aktivert_ts,"
             "       attestant_a, attestant_b, aktivert_av_operasjon,"
-            "       rollback_av_versjon, aktiveringskilde"
+            "       rollback_av_versjon, rollback_kilde, aktiveringskilde"
             "  FROM policyversjoner_for_tenant(%s, %s)",
             (tenant, policy_id)).fetchall()
         conn.rollback()
@@ -93,11 +93,17 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
                              if r[7] else None),
              "aktivert_av_operasjon": r[7],
              "rollback_av_versjon": r[8],
+             # Om kildeGENERASJONEN fortsatt er den som bærer nummeret:
+             # `bundet`, `borte` (slettet eller gjenskapt med annet
+             # innhold) eller `ubundet` (rullbakk fra før hashen fantes).
+             # Uten den kunne flaten bare gjenta nummeret, og et nummer er
+             # ikke en varig identitet (047, Codex P2).
+             "rollback_kilde": r[9],
              # VEIEN inn (047): `styrt` (fire-øyne + hendelse), `bootstrap`
              # (oppsettsregistreringen) eller `historisk` (lå der da 047
              # landet). Uten den kunne flaten ikke skille en bootstrap
              # skrevet i går fra en rad som ligger foran hele lineagen.
-             "aktiveringskilde": r[9]} for r in rader]}, rid)
+             "aktiveringskilde": r[10]} for r in rader]}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

@@ -54,6 +54,20 @@ export function attestantTekst(v) {
     || t("ui.historikk.attestanter_ubundet");
 }
 
+// Opphavskolonnen sier hva vi VET om kilden, ikke bare hvilket nummer den
+// hadde (047, Codex P2). Et versjonsnummer frigjøres av sletting og kan
+// gjenskapes med annet innhold, så «rullbakk fra 1» er bare sant så lenge
+// generasjonen kopien ble tatt fra fortsatt bærer nummeret. `bundet` er
+// den påstanden; `borte` og `ubundet` sier at den ikke kan gjøres.
+export function opphavTekst(v) {
+  if (!v.rollback_av_versjon) return "";
+  const n = v.rollback_av_versjon;
+  const nokkel = v.rollback_kilde === "bundet" ? "rullbakk_fra"
+    : v.rollback_kilde === "borte" ? "rullbakk_fra_borte"
+      : "rullbakk_fra_ubundet";
+  return t(`ui.historikk.${nokkel}`).replace("{n}", n);
+}
+
 export function tegnDiff(rot, d) {
   const endringer = (d.diff && d.diff.endringer) || [];
   // Retningen I ORD FØRST (port 40): risikoklassen er overskriften.
@@ -87,9 +101,7 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
       el("td", {}, v.aktivert_ts ? Tidspunkt(v.aktivert_ts)
                                  : Tidspunkt(v.opprettet)),
       el("td", { text: attestantTekst(v) }),
-      el("td", { text: v.rollback_av_versjon
-        ? t("ui.historikk.rullbakk_fra").replace("{n}", v.rollback_av_versjon)
-        : "" }),
+      el("td", { text: opphavTekst(v) }),
     ];
     if (paaRullbakk) {
       const handlinger = el("td", { class: "behandling-knapper" });

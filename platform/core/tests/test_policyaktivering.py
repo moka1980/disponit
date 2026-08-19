@@ -1304,6 +1304,125 @@ def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
         m.close()
 
 
+def _rullbakkutkast(c, uid, pid, versjon, kilde_versjon, kilde_hash):
+    """Et validert utkast som BÆRER et rullbakkeopphav. `_validert_utkast`
+    kjenner ikke kolonnene; her settes de ved INNSETTINGEN, som i porten —
+    de er frosset etterpå."""
+    innhold = ('{"meta":{"policy_id":"' + pid + '","versjon":"' + versjon
+               + '","status":"produksjon"},"a":1}')
+    c.execute(
+        "INSERT INTO policyutkast (tenant,utkast_id,policy_id,innhold,"
+        "status,innholds_hash,opprettet_av,rollback_av_versjon,"
+        "rollback_av_hash) VALUES"
+        " (%s,%s,%s,%s::jsonb,'validert',%s,'forf',%s,%s)",
+        (TEN, uid, pid, innhold, "ih-" + secrets.token_hex(8),
+         kilde_versjon, kilde_hash))
+
+
+@pg
+def test_rullbakkeopphavet_binder_generasjonen_ikke_nummeret(klient):
+    """Port 27 (Codex P2): opphavet peker på GENERASJONEN kopien kom fra,
+    ikke bare på versjonsNUMMERET.
+
+    `slett_ubrukt_policy` frigjør uttrykkelig `(policy_id, versjon)`, og
+    nummeret kan gjenskapes med et ANNET innhold. Bar utkastet bare tallet,
+    ville historikken påstått «rullbakk fra versjon 1» ved siden av en
+    generasjon 1 kopien aldri kom fra — en fabrikkert linje ingen skrev.
+
+    Målt i to lag: opprettelsen lagrer kildens egen `innholds_hash`, og
+    definerens `rollback_kilde` skiller `bundet` fra `borte` og `ubundet`.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    cookie, csrf = _forvaltersesjon()
+    r = _post(klient, cookie, csrf, "/v1/policyutkast",
+              {"policy_id": pid, "rollback_av_versjon": v})
+    assert r.status_code == 201, r.text
+    rb_uid = r.json()["utkast_id"]
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        lagret = m.execute(
+            "SELECT rollback_av_versjon, rollback_av_hash FROM policyutkast"
+            " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid)).fetchone()
+        kilde_hash = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s AND"
+            " policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        # Hashen er kildeGENERASJONENS egen, ikke kopiens: opprettelsen
+        # normaliserer `meta.versjon`, så utkastets eget innhold har en
+        # annen hash enn den det er en rullbakk AV.
+        assert lagret == (v, kilde_hash), "port 27: opphavet er ubundet"
+        # Frosset på samme måte som nummeret — ellers kunne kjøretiden
+        # skrevet seg til en «bundet» kilde i ettertid.
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute("UPDATE policyutkast SET rollback_av_hash='ih-annen'"
+                      " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid))
+        m.rollback()
+        # En hash uten et nummer er meningsløs og avvises statisk.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute(
+                "INSERT INTO policyutkast (tenant,utkast_id,policy_id,"
+                "innhold,status,opprettet_av,rollback_av_hash) VALUES"
+                " (%s,%s,%s,'{}'::jsonb,'utkast','forf','ih-x')",
+                (TEN, "u-" + secrets.token_hex(4), pid))
+        m.rollback()
+    finally:
+        m.close()
+
+    # Andre lag: hva HISTORIKKEN sier om de tre tilstandene. Serien bygges
+    # med opphavet satt ved innsettingen, siden kolonnene er frosset.
+    c = _c()
+    uid1, pid2 = _ny()
+    _validert_utkast(c, uid1, pid2, av="forf", versjon="1.1.0")
+    _runde(c, uid1, pakrevd_antall_godkjennere=1, risikoklasse="INNSNEVRER")
+    _attest(c, uid1, "uavh", False)
+    c.commit()
+    rt = _rt()
+    try:
+        v1 = _aktiver(rt, uid1)
+        kilde1 = None
+        m = _c()
+        try:
+            m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+            kilde1 = m.execute(
+                "SELECT innholds_hash FROM policyer WHERE tenant=%s AND"
+                " policy_id=%s AND versjon=%s", (TEN, pid2, v1)).fetchone()[0]
+            m.rollback()
+        finally:
+            m.close()
+        forrige = v1
+        for versjon, hash_, ventet in (
+                ("1.2.0", kilde1, "bundet"),
+                ("1.3.0", "ih-en-annen-generasjon", "borte"),
+                ("1.4.0", None, "ubundet")):
+            uid_n = "u-" + secrets.token_hex(4)
+            c.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+            _rullbakkutkast(c, uid_n, pid2, versjon, v1, hash_)
+            _runde(c, uid_n, pakrevd_antall_godkjennere=1,
+                   risikoklasse="INNSNEVRER")
+            _attest(c, uid_n, "uavh", False)
+            c.commit()
+            forrige = _aktiver(rt, uid_n, base=forrige)
+            rt.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+            rad = rt.execute(
+                "SELECT rollback_av_versjon, rollback_kilde"
+                "  FROM policyversjoner_for_tenant(%s,%s)"
+                " WHERE versjon=%s", (TEN, pid2, forrige)).fetchone()
+            rt.rollback()
+            assert rad == (v1, ventet), f"port 27: {versjon} ga {rad}"
+        # Versjonen som IKKE er en rullbakk sier ingenting om et opphav.
+        rt.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        rad0 = rt.execute(
+            "SELECT rollback_av_versjon, rollback_kilde"
+            "  FROM policyversjoner_for_tenant(%s,%s)"
+            " WHERE versjon=%s", (TEN, pid2, v1)).fetchone()
+        rt.rollback()
+        assert rad0 == (None, None), "port 27: ordinær versjon fikk opphav"
+    finally:
+        rt.close()
+        c.close()
+
+
 @pg
 def test_ekstern_lesing_krever_plattformvilkar_ved_validering():
     """Portene 31 og 34: en `ekstern_lesing`-handling uten
