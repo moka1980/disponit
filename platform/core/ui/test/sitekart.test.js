@@ -31,7 +31,7 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // hadde før den.
   assert.deepEqual(alle,
     ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin",
-      "wcagkontroll", "plan"]);
+      "wcagkontroll"]);
   const medBestilling = byggRuter({ scopes: ["decisions:read",
     "bestilling:opprett"] }).map((r) => r.nokkel);
   assert.ok(medBestilling.includes("wcagkontroll"));
@@ -133,7 +133,10 @@ test("byggRuter: mottakeren av et planvarsel når innboksen sin", () => {
   // og portalspor.
   const admin = byggRuter({ scopes: ADMINSCOPES }).map((r) => r.nokkel);
   assert.ok(admin.includes("varsler"), admin);
-  assert.ok(admin.includes("plan"), "veien varselet peker på må finnes");
+  // Planen er en fane under wcagkontroll (eier 19/8) — veien varselet
+  // peker på er samleflatens rute.
+  assert.ok(admin.includes("wcagkontroll"),
+    "veien planvarselet peker på må finnes");
   // Policyforvalteren står uendret.
   assert.ok(byggRuter({ scopes: ["policy:read", "policy:write"] })
     .map((r) => r.nokkel).includes("varsler"));

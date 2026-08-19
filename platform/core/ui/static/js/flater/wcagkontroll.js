@@ -1,5 +1,5 @@
 // WCAG kontroll — samleflaten (eiers UX-krav 18/8: ÉN oppføring i menyen,
-// faner i stedet for flere knapper). Fanene er de tre delene av samme
+// faner i stedet for flere knapper). Fanene er delene av samme
 // arbeidsflyt: verifiser domenet → bestill kontrollen → les rapporten.
 // Hver del bor fortsatt i sin egen modul; denne fila er bare rammen.
 //
@@ -14,8 +14,9 @@ import { flateHode } from "./felles.js";
 import { visBestilling } from "./bestilling.js";
 import { visRapport } from "./rapport.js";
 import { visDomener } from "./domener.js";
+import { visPlan } from "./plan.js";
 
-export function visWcagKontroll(hoved, ctx) {
+export function visWcagKontroll(hoved, ctx, mal) {
   function del(bygger) {
     // Hver fane får sitt eget vedvarende rotelement: Faner gjenbruker
     // panelet, og delens tilstand (utfylt skjema, lastet rapport) skal
@@ -70,10 +71,23 @@ export function visWcagKontroll(hoved, ctx) {
       scope: "bestilling:opprett", bygg: del(visBestilling) },
     { nokkel: "rapporter", tittel: t("ui.wcag.fane.rapporter"),
       scope: null, bygg: del(visRapport) },
+    // Periodisk kontroll hører til SAMME arbeidsflyt (eier 19/8: én
+    // oppføring i menyen, planen under WCAG kontroll). Fanen er synlig
+    // for alle som når flaten — som rapportene — fordi lesingen av egne
+    // planer bare krever `decisions:read`; mutasjonene (opprett/aktiver/
+    // gjenoppta/stans) gates INNE i flaten på planscopene, som før.
+    { nokkel: "plan", tittel: t("ui.wcag.fane.plan"),
+      scope: null, bygg: del(visPlan) },
   ].filter((s) => !s.scope || harScope(ctx, s.scope));
 
   // Faner returnerer { rot, gaaTil, aktiv } — det er ROTEN som monteres.
-  const faner = Faner({ trinn, start: "domener" });
+  // Målet fra hashen (`#/wcagkontroll/<mål>`) kan være en fanenøkkel —
+  // eller en ressurs-id fra et PLANVARSEL (varsler bærer `ressurs_id`
+  // som mål, og planens varsler er de eneste som peker hit med id).
+  // Begge skal lande der handlingen bor; alt annet starter på flyten.
+  const kjent = trinn.some((s) => s.nokkel === mal);
+  const start = kjent ? mal : (mal ? "plan" : "domener");
+  const faner = Faner({ trinn, start });
   sett(hoved,
     ...flateHode(t("ui.wcag.tittel"), t("ui.wcag.under")),
     faner.rot);

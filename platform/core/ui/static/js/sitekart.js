@@ -91,10 +91,10 @@ const BASISRUTER = [
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
-  // 044: planflaten. LESING bak decisions:read (alle kunderoller ser sine
-  // planer); mutasjonene gates inne på flaten (plan:opprett osv.) — en
-  // rute kan bare være der eller ikke, som wcagkontroll over.
-  { nokkel: "plan", scope: "decisions:read" },
+  // 044-planflaten har INGEN egen rute lenger: periodisk kontroll er en
+  // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
+  // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger
+  // (decisions:read).
 ];
 
 export function byggRuter(sesjon) {

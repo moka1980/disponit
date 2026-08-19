@@ -58,24 +58,45 @@ function fane(h, nokkel) {
 
 const TOMME_DOMENER = { "/v1/domener": { domener: [] } };
 
-test("WCAG kontroll: én flate, tre faner, riktig ARIA-mønster, axe rent", async () => {
+test("WCAG kontroll: én flate, fire faner, riktig ARIA-mønster, axe rent", async () => {
   KALL = []; SVAR = TOMME_DOMENER;
   const h = nyHoved();
   visWcagKontroll(h, ctx());
   assert.equal(h.querySelectorAll("h1").length, 1, "nøyaktig én h1");
   const faner = h.querySelectorAll('[role="tab"]');
-  assert.equal(faner.length, 3);
+  assert.equal(faner.length, 4);
   assert.ok(h.querySelector('[role="tablist"]'));
   // Domener-fanen er først OG startfane (flytens rekkefølge: verifiser
   // domenet før bestillingen) — den bærer domeneskjemaet.
   assert.ok(h.querySelector("#dm-host"));
   const titler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
   assert.deepEqual(titler, [t("ui.wcag.fane.domener"), t("ui.wcag.fane.bestill"),
-                            t("ui.wcag.fane.rapporter")],
-    "rekkefølgen er flyten: Domener → Bestill → Rapporter");
+                            t("ui.wcag.fane.rapporter"), t("ui.wcag.fane.plan")],
+    "rekkefølgen er flyten: Domener → Bestill → Rapporter → Periodisk");
   const brudd = await alvorligeBrudd(h, { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+test("WCAG kontroll: planfanen bor her, og planvarselets mål åpner den",
+  async () => {
+    // Eier 19/8: periodisk kontroll under WCAG kontroll — samme
+    // arbeidsflyt, én menyoppføring. Varsler bærer plan_id som mål
+    // (#/wcagkontroll/<uuid>): et mål som ikke er en fanenøkkel skal
+    // lande på planfanen, der handlingen bor.
+    KALL = []; SVAR = (sti) => sti === "/v1/plan" ? { planer: [] }
+      : TOMME_DOMENER[sti];
+    const h = nyHoved();
+    visWcagKontroll(h, ctx(), "11111111-2222-4333-8444-555555555555");
+    await vent(() => h.textContent.includes(t("ui.plan.tom_tittel")));
+    const aktiv = h.querySelector('[role="tab"][aria-selected="true"]');
+    assert.equal(aktiv.textContent, t("ui.wcag.fane.plan"));
+    // ... og en eksplisitt fanenøkkel virker også.
+    const h2 = nyHoved();
+    SVAR = (sti) => sti === "/v1/plan" ? { planer: [] } : TOMME_DOMENER[sti];
+    visWcagKontroll(h2, ctx(), "plan");
+    const aktiv2 = h2.querySelector('[role="tab"][aria-selected="true"]');
+    assert.equal(aktiv2.textContent, t("ui.wcag.fane.plan"));
+  });
 
 test("WCAG kontroll: leseøkt beholder rapportene, mister mutasjonsfanene", async () => {
   // Codex P2: sammenslåingen til ÉN nav-oppføring la hele flaten bak
@@ -91,8 +112,10 @@ test("WCAG kontroll: leseøkt beholder rapportene, mister mutasjonsfanene", asyn
   visWcagKontroll(h, { ...ctx(), scopes: ["decisions:read"] });
   const faner = [...h.querySelectorAll('[role="tab"]')]
     .map((k) => k.textContent);
-  assert.deepEqual(faner, [t("ui.wcag.fane.rapporter")],
-    "leseøkten skal se rapportfanen, og bare den");
+  // Planfanen følger rapportene: lesing av egne planer krever bare
+  // `decisions:read`, mutasjonene gates inne i selve flaten.
+  assert.deepEqual(faner, [t("ui.wcag.fane.rapporter"), t("ui.wcag.fane.plan")],
+    "leseøkten skal se rapport- og planfanen, og bare dem");
   assert.ok(h.querySelector("#rp-oppdrag"), "rapportfanen er aktiv");
   assert.equal(h.querySelector("#bf-hostname"), null,
     "bestillingsskjemaet tegnes for en økt som bare kan få 403");
