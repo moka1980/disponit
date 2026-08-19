@@ -166,8 +166,12 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
     # uten pause. Planen sto altså aktiv etter en policy- eller moduldom
     # og bestilte videre i hvert eneste vindu — stikk i strid med §7.
     # Ticket og overgangen er nå ÉN transaksjon: enten begge, eller ingen
-    # av dem. Låserekkefølgen holder — terminaliseringen tar vindusraden,
-    # pausen planraden, aldri motsatt vei.
+    # av dem. Låserekkefølgen holder — terminaliseringen tar vindusraden
+    # og DERETTER planraden (045: tick-skriveren deler planlåsen med
+    # pausebeslutningen), pausen tar den samme planraden vi alt holder.
+    # Aldri motsatt vei, og aldri en oppgradering fra delt til eksklusiv:
+    # terminaliseringen tar planraden FOR UPDATE med én gang, nettopp
+    # fordi denne veien fortsetter inn i `pause_plan`.
     #
     # `sett_kontekst` er SET LOCAL og gjelder derfor fortsatt her; det var
     # nettopp commiten som tok den med seg før.
