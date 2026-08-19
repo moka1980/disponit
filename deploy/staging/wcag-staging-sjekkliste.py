@@ -2005,6 +2005,15 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
 
     motor = os.environ.get("WCAG_DRIFT_MOTOR") or shlex.join([
         "podman", "run", "--rm", "-i", "--network", "host",
+        # MÅLT i drift: rootless podman i en systemtjeneste har ingen
+        # dbus-økt, faller til cgroupfs-manageren og prøver å lage
+        # containerens cgroup rett under system.slice — «permission
+        # denied», og HVERT claimet oppdrag endte `avbrutt: Motorfeil`.
+        # `--cgroups split` bruker unitens EGET delegerte subtre
+        # (Delegate=yes + User= gjør at systemd chowner det til
+        # arbeideren), så MOTORGRENSENE får virke. Verifisert med
+        # systemd-run + Delegate=yes: grensene satt, container kjørte.
+        "--cgroups", "split",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         # Nettleseren kjører kundens side: `MOTORGRENSER` er minnet og
         # prosesstabellen den kan bruke, unitens `CPUQuota=`/`MemoryMax=`
