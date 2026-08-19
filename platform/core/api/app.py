@@ -2477,14 +2477,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # oppryddingen: har rydd nettopp nullet raden i race-en rundt evidensfristen,
         # ser vi den ikke som gjenopprettbar og klassifiserer konflikt i stedet for
         # falsk aksept. `bevart` er retained/terminalt; idempotent hvis alt bevart.
+        #
+        # REVERSIBILITETEN AVGJØRES FØR BEVARINGEN (043, Codex P2 runde 2).
+        # `bevar_artefakt` setter artefaktet `bevart` = RETAINED og terminalt,
+        # og oppryddingen rører det aldri igjen. For et `direkte` oppdrag som
+        # mennesket kansellerte sier kontrakten — og avsnittet under — at
+        # resultatet FORKASTES og artefaktet skal ryddes; bevares det først,
+        # blir «ryddes» til «beholdes for alltid». Oppslaget er derfor flyttet
+        # hit opp: det avgjør OM artefaktet skal bevares, og gjenbrukes så av
+        # §5-saken lenger nede.
+        kans = conn.execute(
+            "SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s AND id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        menneskelig_nei = kans is not None and kans[0] == "menneskelig_avvis"
+        reversibilitet = conn.execute(
+            "SELECT reversibilitet_for_oppdrag(%s,%s)",
+            (tenant, oppdrag_id)).fetchone()[0] if menneskelig_nei else None
+        bevar = not (menneskelig_nei and reversibilitet == "direkte")
         sen_artefakt = kvittering.get("artefakt_id")
         if sen_artefakt is not None:
             # bevar_artefakt validerer (tenant/oppdrag/signert hash), låser raden
             # (serialiserer mot oppryddingen) og bevarer den atomisk. 'ugyldig' =
             # fremmed/ikke-eksisterende/feil-hash/alt-nullet → sikkerhetskonflikt,
             # ikke falsk aksept. Runtime kan ikke låse artefakt selv (kun SELECT).
+            # Skal artefaktet IKKE bevares, gjøres NØYAKTIG samme validering og
+            # låsing av `verifiser_artefaktbinding` — bare uten skrivingen: en
+            # kvittering som navngir feil artefakt skal falle like hardt på
+            # `direkte`-veien, det er artefaktet som skal ryddes, ikke porten.
             utfall = conn.execute(
-                "SELECT bevar_artefakt(%s,%s,%s,%s)",
+                "SELECT bevar_artefakt(%s,%s,%s,%s)" if bevar else
+                "SELECT verifiser_artefaktbinding(%s,%s,%s,%s)",
                 (sen_artefakt, tenant, oppdrag_id,
                  kvittering.get("klartekst_sha256"))).fetchone()[0]
             if utfall == "ugyldig":
@@ -2522,16 +2544,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # `kompenserende`/`irreversibel` → sak, gjennom samme
         # `sikre_sak_for_oppdrag` som all annen sakskobling — ingen
         # parallell sakskilde, idempotent per (oppdrag, arsak), terminal
-        # sak gjenbrukes aldri.
-        kans = conn.execute(
-            "SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s AND id=%s",
-            (tenant, oppdrag_id)).fetchone()
-        if kans is not None and kans[0] == "menneskelig_avvis":
-            rev = conn.execute(
-                "SELECT reversibilitet_for_oppdrag(%s,%s)",
-                (tenant, oppdrag_id)).fetchone()[0]
+        # sak gjenbrukes aldri. Oppslaget selv er gjort FØR bevaringen (se
+        # over) — nettopp fordi `direkte` også avgjør at artefaktet ikke skal
+        # bevares; her brukes svaret bare til sakskoblingen.
+        if menneskelig_nei:
             ny_arsak = {"kompenserende": "kompensasjon_kreves",
-                        "irreversibel": "irreversibel_utfort"}.get(rev)
+                        "irreversibel": "irreversibel_utfort"}.get(
+                            reversibilitet)
             if ny_arsak is not None:
                 conn.execute(
                     "SELECT sikre_sak_for_oppdrag(%s,%s,%s,%s,%s)",

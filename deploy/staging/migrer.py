@@ -116,6 +116,11 @@ GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
 SET LOCAL ROLE disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION utsted_artefaktkapabilitet(TEXT, BIGINT, TEXT, TEXT, INT, TEXT, BIGINT, TEXT, TEXT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION innlos_artefaktkapabilitet(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+-- 043: valideringen UTEN bevaring — den sene kvitteringsveien må kunne
+-- avvise et fremmed/feil-hashet artefakt også når artefaktet IKKE skal
+-- bevares (`direkte`-reversibilitet: resultatet forkastes, artefaktet
+-- ryddes). Samme eier som resten av artefaktveien, derfor samme blokk.
+GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT, TEXT) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er
 -- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har

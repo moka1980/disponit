@@ -732,6 +732,12 @@ def test_port18_rettighetene_er_parameterisert_pa_rollenavnet():
     delt = kjorer.split('M37_RETTIGHETER = """', 1)[1].split('"""', 1)[0]
     for sign in nye:
         assert sign not in delt, f"{sign} lekker til arbeiderrollen"
+    # `verifiser_artefaktbinding` (043 §8) eies av `disponit_domene_eier`, ikke
+    # claimeren, så den autoritative granten hører hjemme i den generelle
+    # runtime-blokken sammen med resten av artefaktveien — men den skal være
+    # parameterisert på nøyaktig samme måte.
+    assert ("GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT,"
+            " BIGINT, TEXT) TO {rolle}") in kjorer
 
     sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
            / "043_gate14b.sql").read_text(encoding="utf-8")

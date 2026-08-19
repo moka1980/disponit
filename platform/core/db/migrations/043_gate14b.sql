@@ -545,3 +545,54 @@ DO $$ BEGIN
   END IF;
 END $$;
 RESET ROLE;
+
+-- ------------------------------------------------------------
+-- 8. `verifiser_artefaktbinding` — validering UTEN bevaring
+-- ------------------------------------------------------------
+-- Codex P2 (runde 2): den sene kvitteringsveien kalte `bevar_artefakt` FØR
+-- den slo opp reversibiliteten. For et `direkte` oppdrag sier kontrakten —
+-- og veiens egen kommentar — at resultatet forkastes og at artefaktet skal
+-- forbli `staged` og ryddes av 038-reaperen; men `bevart` er RETAINED og
+-- terminalt, så oppryddingen rører det aldri igjen. Artefaktet ble altså
+-- liggende for alltid, nøyaktig motsatt av det veien lovte.
+--
+-- Bevaringen må derfor kunne UTELATES uten at valideringen faller bort:
+-- kvitteringen skal fortsatt avvises som sikkerhetskonflikt om den navngir
+-- et fremmed/ikke-eksisterende artefakt eller påstår feil hash. Denne
+-- funksjonen er `bevar_artefakt` MINUS UPDATE-en — samme eier, samme
+-- akseptmengde (raden finnes for (artefakt, tenant, oppdrag), signert hash
+-- stemmer, tilstanden er `staged` eller alt `bevart`), samme `FOR UPDATE`
+-- så avgjørelsen serialiseres mot `rydd_staged_artefakter` i vinduet rundt
+-- evidensfristen. Runtime har kun SELECT på `artefakt` og kan ikke låse
+-- raden selv; derfor bor porten her, som resten av artefaktveien.
+-- Returnerer 'gyldig' | 'ugyldig'.
+SET LOCAL ROLE disponit_domene_eier;
+CREATE OR REPLACE FUNCTION verifiser_artefaktbinding(
+    p_artefakt_id UUID, p_tenant TEXT, p_oppdrag_id BIGINT,
+    p_klartekst_sha256 TEXT)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE r RECORD;
+BEGIN
+    SELECT klartekst_sha256, tilstand INTO r FROM public.artefakt
+     WHERE artefakt_id = p_artefakt_id AND tenant = p_tenant
+       AND oppdrag_id = p_oppdrag_id FOR UPDATE;
+    IF NOT FOUND THEN RETURN 'ugyldig'; END IF;
+    IF r.klartekst_sha256 IS DISTINCT FROM p_klartekst_sha256 THEN
+        RETURN 'ugyldig';
+    END IF;
+    IF r.tilstand NOT IN ('staged', 'bevart') THEN RETURN 'ugyldig'; END IF;
+    RETURN 'gyldig';
+END $$;
+REVOKE ALL ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT, TEXT)
+    FROM PUBLIC;
+-- Samme form som de tre over: den KONFIGURERTE runtime-rollen får denne av
+-- kjøreren (`RETTIGHETER`, i domene_eier-blokken sammen med de andre
+-- artefaktfunksjonene den hører hjemme ved), `disponit` er lokal-/testnavnet
+-- og betinget av at rollen finnes.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT EXECUTE ON FUNCTION verifiser_artefaktbinding(UUID, TEXT, BIGINT,
+        TEXT) TO disponit;
+  END IF;
+END $$;
+RESET ROLE;
