@@ -20,10 +20,12 @@ Portkart (klarsignalets §9):
   15  test_port15_ingen_annen_vei_avviser_med_levende_oppdrag
   14  (ui/test/unntak14b.test.js — alertdialog + alert + axe)
   16  test_port16_definer_veiene_binder_tenanten_til_konteksten
+  17  test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas
 """
 import json
 import secrets
 import threading
+import time
 
 import psycopg
 import pytest
@@ -571,3 +573,75 @@ def test_port16_definer_veiene_binder_tenanten_til_konteksten(conn):
     m.rollback(); m.close()
     # ... og oppdraget står urørt.
     assert _oppdragsrad(oid)[0] == "plukket"
+
+
+# ---------------------------------------------------------------------------
+# Port 17: låseorden mot kvitteringsveien — to tabeller, én rekkefølge
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas(conn):
+    """DETERMINISTISK vranglåsmåling (Codex P1): kvitteringsveien tar
+    kapabiliteten FØR oppdraget. Tok oppløsningen dem motsatt, kunne de to
+    holde hver sin rad og vente på den andre — PostgreSQL avbryter da én med
+    40P01, altså en vranglås i stedet for det avgjorte utfallet.
+
+    Kappløpet konstrueres her, ikke tilfeldiggjøres: kvitteringsveien brenner
+    kapabiliteten og HOLDER låsen, oppløsningen startes og skal da blokkere
+    på kapabiliteten (ikke ha tatt oppdraget først), kvitteringsveien
+    fullfører oppdraget og committer. Med gammel rekkefølge ville
+    `UPDATE oppdrag` under ventet på oppløsningens oppdragslås = vranglås."""
+    from db.pg import koble, sett_kontekst
+    uid = _oppsett(conn)
+    _medlem(conn, "op17")
+    rop = _oppdrag(uid, "plukket")
+    oid = _oppdrag_id(uid, rop)
+    jti = _kvittkap(oid)
+
+    # (1) Kvitteringsveiens rekkefølge: kapabiliteten brennes først, låsen
+    #     holdes (ingen commit ennå).
+    b = koble(MIGRATOR_DSN)
+    sett_kontekst(b, TEN, "kvitt17", "r-kvitt17")
+    b.execute("SET ROLE disponit_m37_claimer")
+    assert b.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                     (jti, "d" * 64)).fetchone()[0] == "brukt"
+
+    # (2) Oppløsningen startes og skal BLOKKERE på kapabiliteten.
+    resultat = {}
+
+    def los_opp():
+        a = koble(MIGRATOR_DSN)
+        try:
+            sett_kontekst(a, TEN, "op17", "r-op17")
+            a.execute("SET ROLE disponit_m37_claimer")
+            resultat["rader"] = a.execute(
+                "SELECT utfall, kvitteringsref FROM"
+                " avvis_med_opplosning(%s,%s,%s,'op17','r-op17')",
+                (TEN, uid, [oid])).fetchall()
+            a.commit()
+        except Exception as e:      # noqa: BLE001 — evidens ved feil
+            resultat["feil"] = e
+        finally:
+            a.close()
+
+    t = threading.Thread(target=los_opp)
+    t.start()
+    time.sleep(1.0)     # oppløsningen rekker å nå (og vente på) låsen
+    assert "rader" not in resultat and "feil" not in resultat, \
+        "oppløsningen gikk forbi kapabilitetslåsen"
+
+    # (3) Kvitteringsveien fullfører oppdraget. Tok oppløsningen oppdraget
+    #     FØRST, ville denne setningen vært den andre halvdelen av en
+    #     vranglås.
+    b.execute("RESET ROLE")
+    b.execute("UPDATE oppdrag SET status='utfort' WHERE tenant=%s AND id=%s",
+              (TEN, oid))
+    b.commit(); b.close()
+
+    t.join(30)
+    assert not t.is_alive(), "oppløsningen ble aldri sluppet fri"
+    assert "feil" not in resultat, resultat.get("feil")
+    assert resultat["rader"] == [("oppdrag_utfort", "d" * 64)], resultat
+    # Oppdraget er utført, ikke kansellert: kvitteringen vant kappløpet.
+    status, aarsak, _, _ = _oppdragsrad(oid)
+    assert (status, aarsak) == ("utfort", None)

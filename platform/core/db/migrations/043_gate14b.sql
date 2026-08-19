@@ -319,8 +319,10 @@ RESET ROLE;
 -- ------------------------------------------------------------
 -- Claimer-eid: én skrivevei til oppdrag/kapabiliteter, som resten av
 -- M-37-flaten. Kalleren (avvis-veien i unntaksbehandlingen) holder alt
--- saks-låsen; her tas OPPDRAGSLÅSEN — samme låseorden som claim-veiene
--- (sak → oppdrag → kapabilitet), så ingen ny vranglåsflate.
+-- saks-låsen; her tas først KAPABILITETSLÅSEN, så oppdragslåsen — samme
+-- rekkefølge som kvitteringsveien tar dem (den brenner kapabiliteten før
+-- den skifter oppdragets status), så kappløpet ender i et avgjort utfall
+-- og aldri i en vranglås. Se pre-passet i kroppen.
 --
 -- KONTRAKT: `p_forventet` er oppdragene kalleren så som levende under
 -- sakslåsen. Funksjonen re-evaluerer under oppdragslåsen:
@@ -358,6 +360,31 @@ BEGIN
         RAISE EXCEPTION 'avvis_med_opplosning: ingen oppdrag å løse opp'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- LÅSEORDEN: KAPABILITET FØR OPPDRAG (Codex P1).
+    --
+    -- Første utgave låste oppdraget først og kapabiliteten inne i sløyfa.
+    -- Motparten i det kappløpet — kvitteringsveien — gjør det MOTSATT:
+    -- `_forbruk_kapabilitet` brenner kapabiliteten (`app.py`), og oppdragets
+    -- statusskifte skjer først etterpå, i samme transaksjon. To
+    -- transaksjoner som tar de samme to radene i motsatt rekkefølge kan
+    -- holde hver sin og vente på den andre: PostgreSQL avbryter én med en
+    -- vranglås — altså en 40P01 i stedet for det avgjorte utfallet
+    -- (`oppdrag_utfort` eller en gjennomført kansellering). Kappløpet SKAL
+    -- avgjøres av hvem som brenner kapabiliteten først; da må kapabiliteten
+    -- også være raden begge sider tar først.
+    --
+    -- Pre-passet låser derfor ALLE levende kvitteringskapabiliteter for de
+    -- forventede oppdragene, i stigende (oppdrag, jti) — deterministisk
+    -- også mot en annen samtidig oppløsning. Det er en overmengde av det
+    -- sløyfa trenger (den plukker den nyeste per oppdrag), og med vilje:
+    -- en lås som avhenger av statusen vi ennå ikke har lest, er ingen
+    -- låseorden. Er det ingen kapabilitet, låses ingenting og oppdraget tas
+    -- som før.
+    PERFORM 1 FROM public.kvitteringskapabiliteter k
+      WHERE k.tenant = p_tenant AND k.oppdrag_id = ANY(p_forventet)
+        AND k.status = 'utstedt'
+      ORDER BY k.oppdrag_id, k.jti
+        FOR UPDATE;
     FOR r IN
         SELECT o.id, o.status FROM public.oppdrag o
          WHERE o.tenant = p_tenant AND o.id = ANY(p_forventet)
