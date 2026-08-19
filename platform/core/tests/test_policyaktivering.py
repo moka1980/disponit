@@ -1004,6 +1004,41 @@ def test_backfillen_har_ingen_tiebreaker():
     assert backfill.count("DROP POLICY backfill_047") == 4
 
 
+def test_backfillen_teller_begge_sider_av_matchen():
+    """Port 20b (statisk, Codex P1): en match har TO sider, og begge må
+    være entydige.
+
+    Rundetellingen alene svarer bare på «hvor mange runder passer denne
+    versjonen?». To versjonsrader med samme `innholds_hash` og ÉN brukt
+    runde gir 1 for begge — og da avgjorde `ORDER BY ... opprettet` i
+    ytterløkka hvem som arvet attestasjonene, altså en gjetning på
+    opprettelsesrekkefølge, festet i en udødelig hendelse.
+
+    Statisk fordi backfillen ALT har kjørt når testsuiten møter basen (som
+    port 20): det finnes ingen ubundne rader igjen å måle den på. Testen
+    måler derfor formen — at begge tellingene står som vokter FØR
+    INSERTen, og at begge grenene teller flertydig og CONTINUEr."""
+    tekst = MIGRASJON.read_text(encoding="utf-8")
+    blokk = tekst.split("7. Backfill", 1)[1].split("DO $$", 1)[1] \
+        .split("END $$;", 1)[0]
+    vokter = [b for b in blokk.split("SELECT count(*) INTO ")[1:]]
+    assert len(vokter) == 2, "begge sider av matchen skal telles"
+    # Side 1: rundene som passer versjonen. Side 2: versjonene som
+    # konkurrerer om runden.
+    assert "public.aktiveringsrunde" in vokter[0]
+    kandidatvakt = vokter[1].split("END IF;", 1)[0]
+    assert "public.policyer" in kandidatvakt
+    assert "innholds_hash = r.innholds_hash" in kandidatvakt
+    assert "aktivert_av_operasjon IS NULL" in kandidatvakt
+    assert "v_flertydige := v_flertydige + 1" in kandidatvakt
+    assert "CONTINUE;" in kandidatvakt
+    # Begge voktene ligger FØR den udødelige raden skrives — ellers er
+    # gjetningen alt festet når de måler.
+    innsett = blokk.index("INSERT INTO public.policyaktivering")
+    assert blokk.index("SELECT count(*) INTO v_kandidater") < innsett
+    assert blokk.index("SELECT count(*) INTO v_antall") < innsett
+
+
 @pg
 def test_historikken_viser_aldri_feil_attestanter(migrator=None):
     """Port 21: en versjon uten hendelse gir attestanter NULL fra

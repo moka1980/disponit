@@ -908,7 +908,9 @@ GRANT SELECT ON policyer TO disponit_policy_eier;
 --    reverserende bro: scoped backfill-policyer som opprettes og DROPPES
 --    i samme transaksjon (samme doktrine som nødbroene i deploy: broer
 --    skal være selv-reverserende). Ingen tie-breaker på tidspunkt:
---    flertydig match → begge bindingskolonner blir stående NULL.
+--    flertydig match → begge bindingskolonner blir stående NULL. En match
+--    har TO sider, og «flertydig» gjelder begge: flere runder som passer
+--    versjonen, ELLER flere versjoner som konkurrerer om runden.
 -- ------------------------------------------------------------
 CREATE POLICY backfill_047 ON policyer FOR SELECT
     TO disponit_migrator USING (true);
@@ -924,6 +926,7 @@ DECLARE
     r RECORD;
     v_runde RECORD;
     v_antall INT;
+    v_kandidater INT;
     v_att_a TEXT;
     v_att_b TEXT;
     v_bundet INT := 0;
@@ -956,6 +959,33 @@ BEGIN
             IF v_antall > 1 THEN
                 v_flertydige := v_flertydige + 1;
             END IF;
+            CONTINUE;
+        END IF;
+
+        -- Den ANDRE siden av samme match (Codex P1). Tellingen over måler
+        -- bare hvor mange runder som passer versjonen; to versjonsrader med
+        -- SAMME `innholds_hash` og ÉN brukt runde gir v_antall = 1 for
+        -- BEGGE. Uten denne tellingen arver den raden som tilfeldigvis ble
+        -- opprettet først attestasjonene — `ORDER BY ... opprettet` i
+        -- ytterløkka er en lesrekkefølge, ikke et bevis — og den andre
+        -- slipper unna bare fordi runden nå er tatt. Duplikat innhold er
+        -- uttrykkelig mulig for historiske versjoner (samme policy
+        -- gjenaktivert), og valget kan lande på en INAKTIV versjon.
+        -- Hendelsen er udødelig, så en gjetning her kan aldri rettes:
+        -- flertydig → begge står åpne, som ellers.
+        --
+        -- Raden vi står i teller alltid seg selv (den er per definisjon
+        -- 'produksjon' og ubundet her), så < 1 er umulig; og ingen
+        -- flertydig rad bindes, så tellingen er uavhengig av rekkefølgen.
+        SELECT count(*) INTO v_kandidater
+          FROM public.policyer p2
+         WHERE p2.tenant = r.tenant AND p2.policy_id = r.policy_id
+           AND p2.status = 'produksjon'
+           AND p2.aktivert_av_operasjon IS NULL
+           AND p2.innholds_hash = r.innholds_hash;
+        IF v_kandidater > 1 THEN
+            v_aapne := v_aapne + 1;
+            v_flertydige := v_flertydige + 1;
             CONTINUE;
         END IF;
 
