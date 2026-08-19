@@ -30,7 +30,8 @@ Portoversikt → test (numrene er klarsignalets):
   29–31    test_port29_31_sak_og_logg
   32–36    test_port32_36_roller_og_synlighet
   §0       test_adjudikatorrollen_er_en_forutsetning_ikke_en_mulighet,
-           test_adjudikatoren_har_lesretten_migrasjonen_lovet (Codex P1)
+           test_adjudikatorrollen_har_ingen_leseflate_igjen (042, Codex P1),
+           test_adjudikasjonens_omfang_bor_i_databasen (042, Codex P1)
   §9.1     test_reservert_navnerom_er_stengt_for_runtime (Codex P2)
   37       test_port37_python_veien_er_stengt
   38       test_port38_payloadtyper_er_gjensidig_utelukkende
@@ -1180,9 +1181,11 @@ def test_port29_31_sak_og_logg(migrator):
 @pg
 def test_port32_36_roller_og_synlighet(migrator):
     """Port 32: `disponit_domener` har ingen skriverett på unntak/
-    revisjonslogg. Port 33: kundesesjonens RLS-snitt ser ikke saken;
-    adjudikatoren ser den; en tredje tenant ikke. Port 34: adjudikatoren
-    kan ikke skrive, og ser ingen annen tenantbunden tabell. Port 35:
+    revisjonslogg. Port 33: kundesesjonens RLS-snitt ser ikke saken.
+    Port 34 (042): adjudikatorrollen ser den ikke lenger HELLER — den kan
+    verken lese eller skrive, og ser ingen annen tenantbunden tabell.
+    Port 34b/34c (042): den tenantbundne veien gir saken til UTFORDREREN og
+    tomt til alle andre, og svarer tomt uten tenantkontekst. Port 35:
     plattformtenanten kan ikke materialiseres som kunde. Port 36:
     `UPDATE unntak SET tenant` på saken avvises."""
     h = _host()
@@ -1213,36 +1216,84 @@ def test_port32_36_roller_og_synlighet(migrator):
                                (sak,)).fetchone()[0]
             rt.rollback()
             assert treff == 0, f"{tenant} ser overtakelsessaken"
-        # ... adjudikatoren ser den — uten tenantkontekst.
+        # Port 34 — 042 (Codex P1): ADJUDIKATORROLLEN SER INGENTING LENGER.
+        #
+        # Før 042 så den saken her, uten tenantkontekst, og det var hele
+        # funnet: runtime har SET til rollen, så en injeksjon kunne skifte
+        # rolle og lese HVER kundes sak i ett svar — `utfordrer_tenant`-
+        # filteret lå i applikasjonens SQL, ikke i grensen. 042 dropper
+        # policyen og trekker SELECT-en, og da er rolleskiftet verdiløst:
+        # rollen kan antas, men den kan ikke lese.
         rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        treff = rt.execute("SELECT count(*) FROM unntak WHERE id=%s",
-                           (sak,)).fetchone()[0]
-        assert treff == 1, "adjudikatoren ser ikke saken"
-        # Port 34 — og KUN se: hvert skriveverb nektes, og en annen
-        # tenantbunden tabell er utenfor synsfeltet.
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("UPDATE unntak SET status='avvist' WHERE id=%s", (sak,))
+            rt.execute("SELECT count(*) FROM unntak WHERE id=%s", (sak,))
         rt.rollback()
-        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("DELETE FROM unntak WHERE id=%s", (sak,))
+        # ... og fortsatt ingen skriverett, og ingen annen tenantbunden
+        # tabell — målt på nytt, fordi en REVOKE som traff feil verb ville
+        # sett lik ut på lesesiden.
+        for setning, args in (
+                ("UPDATE unntak SET status='avvist' WHERE id=%s", (sak,)),
+                ("DELETE FROM unntak WHERE id=%s", (sak,)),
+                ("INSERT INTO unntak (tenant) VALUES ('x')", ()),
+                ("SELECT count(*) FROM oppdrag", ()),
+                # Codex P2: heller ikke domenehistorikken. Tabellen har ÉN
+                # policy (GUC-sammenligningen fra 016) — et grant her ville
+                # latt en kompromittert runtime lese hvilken som helst kundes
+                # aktører, grunner og overganger ved å sette `disponit.tenant`.
+                ("SELECT count(*) FROM domenekontroll_hendelse", ())):
+            rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(setning, args)
+            rt.rollback()
+
+        # Port 34b (042) — VEIEN INN ER NÅ TENANTBUNDET, og bindingen sitter
+        # i databasen. Runtime-rollen selv, uten noe rolleskifte: saken er
+        # synlig for UTFORDREREN og for ingen andre, og funksjonen tar ingen
+        # tenant som argument — omfanget leses av `disponit.tenant`.
+        sett_kontekst(rt, ANNEN_TENANT, "test", "r1")
+        rad = rt.execute(
+            "SELECT hostname_ref, utfordrer_tenant"
+            "  FROM overtakelsessak_for_utfordrer(%s)", (sak,)).fetchone()
         rt.rollback()
-        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("INSERT INTO unntak (tenant) VALUES ('x')")
+        assert rad is not None and rad[1] == ANNEN_TENANT, \
+            "utfordreren ser ikke sin egen sak gjennom den tenantbundne veien"
+        assert rad[0] == h
+
+        # ... og køen samme sted: utfordreren får raden, alle andre får tomt.
+        sett_kontekst(rt, ANNEN_TENANT, "test", "r1")
+        ko = rt.execute("SELECT id FROM overtakelsessaker_for_utfordrer"
+                        "(NULL,NULL,%s)", (10,)).fetchall()
         rt.rollback()
-        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("SELECT count(*) FROM oppdrag")
+        assert sak in [r[0] for r in ko], "utfordrerens kø mangler saken"
+
+        for fremmed in (TENANT, "t-api-tredje"):
+            sett_kontekst(rt, fremmed, "test", "r1")
+            assert rt.execute("SELECT count(*) FROM"
+                              " overtakelsessak_for_utfordrer(%s)",
+                              (sak,)).fetchone()[0] == 0, \
+                f"{fremmed} ser en sak den ikke er utfordrer i"
+            rt.rollback()
+            sett_kontekst(rt, fremmed, "test", "r1")
+            assert sak not in [r[0] for r in rt.execute(
+                "SELECT id FROM overtakelsessaker_for_utfordrer"
+                "(NULL,NULL,%s)", (10,)).fetchall()], \
+                f"{fremmed} får en fremmed sak i køen sin"
+            rt.rollback()
+
+        # Port 34c (042) — FAIL-CLOSED: uten tenantkontekst svarer BEGGE
+        # veiene tomt, ikke alt. `NULLIF(...)` gir NULL, og `= NULL` er aldri
+        # sant — en glemt `sett_tenant` gir null rader, ikke hele klyngen.
+        # Dette er den egenskapen som gjør at funksjonene KAN erstatte rollen:
+        # uten den ville et glemt kall vært det gamle hullet på nytt.
         rt.rollback()
-        # Codex P2: heller ikke domenehistorikken. Tabellen har ÉN policy
-        # (GUC-sammenligningen fra 016), og runtime har SET til denne
-        # rollen — et grant her ville latt en kompromittert runtime lese
-        # hvilken som helst kundes aktører, grunner og overganger ved å
-        # sette `disponit.tenant`. Køen spør bare `unntak`.
-        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("SELECT count(*) FROM domenekontroll_hendelse")
+        assert rt.execute("SELECT count(*) FROM overtakelsessak_for_utfordrer"
+                          "(%s)", (sak,)).fetchone()[0] == 0, \
+            "oppslaget svarer uten tenantkontekst — det er ikke fail-closed"
+        rt.rollback()
+        assert rt.execute("SELECT count(*) FROM"
+                          " overtakelsessaker_for_utfordrer(NULL,NULL,%s)",
+                          (10,)).fetchone()[0] == 0, \
+            "køen svarer uten tenantkontekst — det er ikke fail-closed"
         rt.rollback()
     finally:
         rt.close()
@@ -1456,31 +1507,144 @@ def test_bare_den_gjerdede_attestasjonsveien_finnes(migrator):
 
 
 @pg
-def test_adjudikatoren_har_lesretten_migrasjonen_lovet(migrator):
-    """Codex P1, den levende siden: policyen OG grantet skal faktisk stå i
-    basen etter 041 — ikke bare være uhoppbare i filen."""
+def test_adjudikatorrollen_har_ingen_leseflate_igjen(migrator):
+    """042 (Codex P1): den levende siden av at rollen er avviklet som leser.
+
+    Denne porten MÅLTE TIDLIGERE DET MOTSATTE — at policyen og grantet sto i
+    basen etter 041 — og det var riktig så lenge tenant-avgrensningen lå i
+    applikasjonens SQL. Nettopp derfor snus den her og slettes ikke: en
+    slettet port etterlater ingen som oppdager at flaten kommer tilbake.
+
+    Funnet: policyen hadde ingen tenant-ledd, runtime har `SET` til rollen,
+    og §9.1s restriktive policy hadde rollen på INNSIDEN av allowlisten sin.
+    Én injeksjon kunne derfor gjøre `SET ROLE`, utelate
+    `utfordrer_tenant`-filteret og lese hele klyngens saksflate.
+
+    MUTASJONEN SOM DREPER DENNE: gi policyen eller SELECT-en tilbake.
+    """
     finnes = migrator.execute(
         "SELECT 1 FROM pg_policy WHERE polname='domeneovertakelse_adjudikator'"
         "   AND polrelid='unntak'::regclass").fetchone()
     migrator.rollback()
-    assert finnes, "adjudikatorpolicyen mangler på unntak"
+    assert finnes is None, \
+        "adjudikatorpolicyen står fortsatt på unntak — rollen ser hele klyngen"
     lese = migrator.execute(
         "SELECT has_table_privilege('disponit_domains_adjudicator',"
         "                           'unntak','SELECT')").fetchone()[0]
     migrator.rollback()
-    assert lese is True, "adjudikatoren har ikke SELECT på unntak"
-    # ... og runtime kan faktisk BLI adjudikatoren: begge API-veiene gjør
-    # `SET LOCAL ROLE`, og uten medlemskap MED SET feiler de begge mens
-    # policyen og grantet står der og ser komplette ut (Codex P1).
-    sett = migrator.execute(
-        "SELECT m.set_option FROM pg_auth_members m"
-        "  JOIN pg_roles r ON r.oid = m.roleid"
-        "  JOIN pg_roles b ON b.oid = m.member"
-        " WHERE r.rolname='disponit_domains_adjudicator'"
-        "   AND b.rolname='disponit'").fetchone()
-    migrator.rollback()
-    assert sett is not None and sett[0] is True, \
-        "runtime kan ikke SET ROLE til adjudikatoren — køen er uavgjørbar"
+    assert lese is False, "adjudikatoren har fortsatt SELECT på unntak"
+
+    # ... og rollen står ikke lenger i den RESTRIKTIVE policyens allowlist.
+    # Det er gjerdet bak gjerdet: uten dette ville ett gjenopprettet
+    # `GRANT SELECT ON unntak TO disponit_domains_adjudicator` — fra et
+    # gjenkjørt oppsett, eller en operatør som «reparerer» det 041 beskriver
+    # — gitt hele saksflaten tilbake i ett steg.
+    for tabell in ("unntak", "unntak_historikk", "revisjonslogg"):
+        uttrykk = migrator.execute(
+            "SELECT pg_get_expr(polqual, polrelid) FROM pg_policy"
+            " WHERE polname='reservert_navnerom'"
+            "   AND polrelid=%s::regclass", (f"public.{tabell}",)).fetchone()
+        migrator.rollback()
+        assert uttrykk is not None, \
+            f"reservert_navnerom mangler på {tabell}"
+        assert "disponit_domains_adjudicator" not in uttrykk[0], \
+            (f"{tabell}: adjudikatoren står fortsatt i allowlisten — et "
+             "gjenopprettet GRANT ville åpnet flaten igjen")
+
+    # MEDLEMSKAPET MÅLES IKKE, og det er et valg: det er PRIVILEGIET som var
+    # funnet. Etter linjene over kan rollen antas og ikke brukes til noe.
+    # 041 §17.1 raiser fortsatt uten medlemskapet og kjører FØR 042 på enhver
+    # ny base — å trekke det ville felt ferske installasjoner i steg 6, etter
+    # at tjenestene er stoppet, for å fjerne noe inert.
+
+
+def test_adjudikasjonens_omfang_bor_i_databasen():
+    """042 (Codex P1): tenant-avgrensningen skal ikke kunne flyttes tilbake.
+
+    Den levende porten over måler basen. Denne måler KILDEN, og de to måler
+    ulike ting: basen kan være riktig i dag mens API-et er skrevet slik at
+    neste `SET LOCAL ROLE` er ett tastetrykk unna. Funnet var aldri en
+    feilstavet WHERE — det var at avgrensningen bodde i applikasjonen, der
+    den som kan skrive SQL kan la være å skrive den.
+
+    MUTASJONEN SOM DREPER DENNE: legg `SET LOCAL ROLE
+    disponit_domains_adjudicator` tilbake i api/domeneovertakelse.py, eller
+    gi funksjonene i 042 en tenant-PARAMETER (da er omfanget kallerens igjen,
+    bare med flere ledd).
+    """
+    from pathlib import Path
+    import ast
+    import re
+
+    rot = Path(__file__).resolve().parents[3]
+    api = (rot / "platform/core/api/domeneovertakelse.py").read_text(
+        encoding="utf-8")
+
+    # SQL-en plukkes ut av SYNTAKSTREET, ikke av teksten: docstringene i
+    # denne modulen SKAL fortsatt beskrive rolleveien 042 avskaffet — det er
+    # slik neste leser skjønner hvorfor formen er som den er. En port som
+    # grep-et etter strengen ville tvunget fram sletting av nettopp den
+    # forklaringen, og målt dokumentasjon i stedet for oppførsel.
+    utfort = [a.value for n in ast.walk(ast.parse(api))
+              if isinstance(n, ast.Call)
+              and isinstance(n.func, ast.Attribute) and n.func.attr == "execute"
+              for a in n.args if isinstance(a, ast.Constant)
+              and isinstance(a.value, str)]
+
+    # 1. API-et antar ikke lenger rollen — målt på det som faktisk KJØRES.
+    assert not [s for s in utfort if "SET LOCAL ROLE" in s], \
+        "API-et skifter fortsatt rolle for å se saken — omfanget er kallerens"
+
+    # 2. Begge veiene går gjennom de tenantbundne funksjonene, og de gjør det
+    #    i SQL-en som kjøres — ikke i en kommentar som sier at de gjør det.
+    for fn in ("overtakelsessak_for_utfordrer",
+               "overtakelsessaker_for_utfordrer"):
+        assert [s for s in utfort if fn in s], \
+            f"{fn} kalles ikke fra API-et"
+
+    # 3. ... og ingen gjenstående spørring leser `unntak` direkte i
+    #    adjudikasjonsveien: da ville filteret vært tilbake i applikasjonen.
+    assert not [s for s in utfort
+                if re.search(r"\bFROM\s+unntak\b", s, re.I)], \
+        "API-et leser fortsatt unntak direkte — avgrensningen er kallerens"
+
+    # 4. Og de tenantbundne funksjonene tar INGEN tenant som argument: et
+    #    argument er like fritt som predikatet det skulle erstatte.
+    sql = (rot / "platform/core/db/migrations/"
+           "042_adjudikator_tenantbundet.sql").read_text(encoding="utf-8")
+    flat = re.sub(r"\s+", " ", "\n".join(
+        l for l in sql.splitlines() if not l.lstrip().startswith("--")))
+    for fn in ("overtakelsessak_for_utfordrer",
+               "overtakelsessaker_for_utfordrer"):
+        m = re.search(
+            r"CREATE OR REPLACE FUNCTION " + fn + r"\s*\((.*?)\)\s*RETURNS",
+            flat)
+        assert m, f"{fn} er ikke definert i 042"
+        assert "tenant" not in m.group(1).lower(), \
+            f"{fn} tar tenant som argument — da er omfanget kallerens igjen"
+        # ... og omfanget leses av sesjonen, fail-closed gjennom NULLIF.
+        kropp = flat[m.end():m.end() + 1200]
+        assert "current_setting('disponit.tenant', true)" in kropp, \
+            f"{fn} leser ikke omfanget sitt av sesjonen"
+        assert "NULLIF" in kropp, \
+            f"{fn} er ikke fail-closed på tom tenant"
+        assert "SECURITY DEFINER" in kropp, \
+            f"{fn} er ikke SECURITY DEFINER — den ser da ikke plattformraden"
+
+    # 5. 042 fjerner faktisk flaten den erstatter. Uten dette ville de nye
+    #    funksjonene bare vært en pen dør ved siden av den åpne.
+    assert "DROP POLICY IF EXISTS domeneovertakelse_adjudikator ON unntak" \
+        in flat, "042 dropper ikke adjudikatorpolicyen"
+    assert "REVOKE SELECT ON unntak FROM disponit_domains_adjudicator" \
+        in flat, "042 trekker ikke adjudikatorens SELECT"
+
+    # 6. ... og de nye funksjonene står ikke åpne for PUBLIC. En SECURITY
+    #    DEFINER-funksjon med standard-ACL er verre enn rollen den avløser.
+    for fn in ("overtakelsessak_for_utfordrer",
+               "overtakelsessaker_for_utfordrer"):
+        assert re.search(
+            r"REVOKE ALL ON FUNCTION " + fn + r"\s*\([^)]*\)\s*FROM PUBLIC",
+            flat), f"{fn} beholder standard-ACL-en (EXECUTE for PUBLIC)"
 
 
 @pg
