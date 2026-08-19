@@ -264,6 +264,77 @@ def test_lineage_fk_ene_avviser_konstruerte_hendelser():
     c.close()
 
 
+@pg
+def test_slettet_versjon_kan_aktiveres_paa_nytt():
+    """Codex P2: hendelsestabellen er evig, versjonsNUMRE er det ikke.
+
+    `slett_ubrukt_policy` (032) sletter ubrukte versjoner nettopp for at
+    de skal kunne gjenskapes. Sto invarianten som UNIQUE (tenant,
+    policy_id, versjon) på `policyaktivering`, reserverte den FØRSTE
+    aktiveringen nummeret for alltid: `policyer` meldte versjonen fri,
+    editoren slapp utkastet gjennom, og aktiveringen døde på en hendelse
+    for en generasjon som ikke lenger fantes.
+
+    Her måles hele veien: aktiver 1.1.0, slett den, gjenskap SAMME
+    nummer og aktiver igjen. Historikken skal vise ÉN linje for den
+    levende versjonen — den nye generasjonens attestanter — ikke to.
+
+    Kontroll: sett `hendelse_en_per_levende_versjon` tilbake til en ren
+    UNIQUE på (tenant, policy_id, versjon), så blir denne rød.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        ih = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                         (TEN, pid, v, ih)).fetchone()[0] == 1
+        r.commit()
+    finally:
+        r.close()
+
+    # Gjenskapt: samme policy-id, samme versjonsnummer, nytt utkast.
+    c = _c()
+    uid2 = "u-" + secrets.token_hex(4)
+    _validert_utkast(c, uid2, pid, av="forf", versjon=v)
+    _runde(c, uid2, pakrevd_antall_godkjennere=1, risikoklasse="INNSNEVRER")
+    _attest(c, uid2, "uavh-ny", False)
+    c.commit(); c.close()
+    r = _rt()
+    try:
+        assert _aktiver(r, uid2) == v, \
+            "det gjenskapte nummeret ble ikke aktiverbart"
+    finally:
+        r.close()
+
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        # Begge hendelsene står — tabellen er immutabel — men bare den ene
+        # er bundet til en levende rad.
+        assert m.execute(
+            "SELECT count(*) FROM policyaktivering WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s",
+            (TEN, pid, v)).fetchone()[0] == 2
+        rader = m.execute(
+            "SELECT versjon, attestant_a FROM"
+            " policyversjoner_for_tenant(%s,%s)", (TEN, pid)).fetchall()
+        assert rader == [(v, "uavh-ny")], \
+            f"historikken viser den slettede generasjonen: {rader}"
+        m.rollback()
+    finally:
+        m.close()
+
+
 # ---------------------------------------------------------------------------
 # Lineage — runde og versjon (portene 10–17)
 # ---------------------------------------------------------------------------

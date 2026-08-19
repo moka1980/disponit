@@ -72,7 +72,17 @@ CREATE TABLE policyaktivering (
   PRIMARY KEY (tenant, decision_operation_id),
   CONSTRAINT hendelse_to_distinkte
     CHECK (attestant_b IS NULL OR attestant_a <> attestant_b),
-  CONSTRAINT hendelse_en_per_versjon UNIQUE (tenant, policy_id, versjon),
+  -- «Én hendelse per versjon» står IKKE som UNIQUE (tenant, policy_id,
+  -- versjon) (Codex P2). Tabellen er immutabel og evig, mens versjonsnumre
+  -- IKKE er det: `slett_ubrukt_policy` (032) sletter ubrukte versjoner
+  -- nettopp for at de skal kunne gjenskapes — en uttrykkelig støttet flyt
+  -- (`test_identisk_gjenskapt_policy_gjenoppliver_ikke_slettet_generasjon`).
+  -- En UNIQUE her ville reservert `(tenant, policy_id, versjon)` for alltid
+  -- ved første aktivering, og den neste aktiveringen av et GJENSKAPT
+  -- policy-id/versjon-par ville dødd på en hendelse for en generasjon som
+  -- ikke lenger finnes — selv om `policyer` med rette meldte versjonen fri.
+  -- Invarianten er derfor flyttet til `hendelse_en_per_levende_versjon`
+  -- under, som måler mot de LEVENDE radene, der sletting faktisk virker.
   CONSTRAINT hendelse_en_per_runde   UNIQUE (tenant, utkast_id, runde),
   -- E1d: eksplisitte referansenøkler for FK-ene som peker HIT
   CONSTRAINT hendelse_runde_nokkel
@@ -118,6 +128,62 @@ CREATE POLICY policyaktivering_eier ON policyaktivering
 CREATE TRIGGER policyaktivering_immutabel
   BEFORE UPDATE OR DELETE ON policyaktivering
   FOR EACH ROW EXECUTE FUNCTION avvis_endring();
+
+-- Indeksen den frafalte `hendelse_en_per_versjon` ga oss gratis. Både
+-- vakten under og historikkens versjonsoppslag går denne veien.
+CREATE INDEX policyaktivering_versjon_idx
+  ON policyaktivering (tenant, policy_id, versjon);
+
+-- «Én hendelse per LEVENDE versjon» (Codex P2) — invarianten den frafalte
+-- UNIQUE-en skulle bære, målt der sletting faktisk virker.
+--
+-- Regelen: to hendelser kan gjerne bære samme (policy_id, versjon), men
+-- høyst ÉN av dem kan være den en levende `policyer`-rad peker på. En
+-- hendelse hvis versjonsrad er slettet er historikk uten krav på nummeret;
+-- den skal ikke kunne blokkere at nummeret tas i bruk på nytt.
+--
+-- DEFERRABLE INITIALLY DEFERRED er ikke pynt: `aktiver_policy` skriver
+-- hendelsen (steg 5) FØR `policyer`-raden (steg 5b), så en umiddelbar
+-- prøve ville lest et halvferdig bilde. Ved commit er begge på plass, og
+-- `policyer.aktivert_av_operasjon` sier entydig hvilken hendelse som eier
+-- den levende raden.
+-- SECURITY DEFINER er nødvendig, ikke pyntelig: en DEFERRED trigger fyrer
+-- ved COMMIT, utenfor `aktiver_policy` sin definer-kontekst, altså som
+-- runtime-rollen. Den har verken SELECT på `policyaktivering` (grantet går
+-- kun til eieren, over) eller eierens RLS-policy, så en vanlig
+-- INVOKER-funksjon ville falt på «permission denied» i selve commit-en.
+-- Tenant-GUC-en er `SET LOCAL` og står fortsatt ved commit, så
+-- tenantporten i RLS gjelder som ellers.
+CREATE OR REPLACE FUNCTION hendelse_en_per_levende_versjon()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+DECLARE v_annen TEXT;
+BEGIN
+    SELECT a.decision_operation_id INTO v_annen
+      FROM public.policyaktivering a
+      JOIN public.policyer p
+        ON p.tenant = a.tenant
+       AND p.aktivert_av_operasjon = a.decision_operation_id
+     WHERE a.tenant = NEW.tenant AND a.policy_id = NEW.policy_id
+       AND a.versjon = NEW.versjon
+       AND a.decision_operation_id <> NEW.decision_operation_id
+     LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'policyaktivering: versjon %/% er allerede aktivert '
+            'av operasjon %', NEW.policy_id, NEW.versjon, v_annen
+            USING ERRCODE = 'unique_violation',
+                  CONSTRAINT = 'hendelse_en_per_levende_versjon';
+    END IF;
+    RETURN NULL;
+END $$;
+
+ALTER FUNCTION hendelse_en_per_levende_versjon()
+    OWNER TO disponit_policy_eier;
+
+CREATE CONSTRAINT TRIGGER hendelse_en_per_levende_versjon
+  AFTER INSERT ON policyaktivering
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION hendelse_en_per_levende_versjon();
 
 -- INSERT kun til funksjonseieren. Runtime får SELECT (lesing skjer likevel
 -- gjennom definer — SP-7 — men RLS-tenantpolicyen står som andre vern).
@@ -631,9 +697,17 @@ BEGIN
            a.aktivert_ts, a.attestant_a, a.attestant_b,
            p.aktivert_av_operasjon, u.rollback_av_versjon
       FROM public.policyer p
+      -- Koblingen går via OPERASJONEN, ikke via (policy_id, versjon)
+      -- (Codex P2). `aktivert_av_operasjon` ER FK-en til hendelsen, og
+      -- den er entydig; versjonsnummeret er det ikke over tid. Er en
+      -- versjon slettet og gjenskapt, står den gamle generasjonens
+      -- hendelse igjen med samme nummer — en nummerkobling ville da gitt
+      -- den levende raden TO historikklinjer, med den slettede
+      -- generasjonens attestanter på den ene. Ubundet historisk rad
+      -- (`aktivert_av_operasjon IS NULL`) gir NULL som før.
       LEFT JOIN public.policyaktivering a
-        ON a.tenant = p.tenant AND a.policy_id = p.policy_id
-       AND a.versjon = p.versjon
+        ON a.tenant = p.tenant
+       AND a.decision_operation_id = p.aktivert_av_operasjon
       LEFT JOIN public.policyutkast u
         ON u.tenant = a.tenant AND u.utkast_id = a.utkast_id
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
