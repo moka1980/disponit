@@ -55,7 +55,8 @@ function offentligTopp(side) {
     el("input", { type: "hidden", name: "sprak", value: sprak() }),
     el("label", { class: "sr-only", for: "site-sokefelt", text: t("site.sok.label") }),
     el("input", { id: "site-sokefelt", name: "q", type: "search",
-      placeholder: t("site.sok.placeholder"), value: side === "tjenester"
+      placeholder: t("site.sok.placeholder").replace("{antall}", KATALOG_ANTALL),
+      value: side === "tjenester"
         ? new URLSearchParams(window.location.search).get("q") || "" : "" }),
     el("button", { type: "submit", text: t("site.sok.knapp") }));
   return el("header", { class: "site-topp" },
@@ -278,10 +279,15 @@ function produktSide() {
   ];
 }
 
-function sideIntroduksjon(kicker, tittel, tekst) {
+// `erstatninger` fyller inn plassholdere i tittelen, slik at sidetitler som
+// teller katalogen henter tallet fra katalogen selv og ikke fra en tekst som
+// må vedlikeholdes for hånd (Codex P2).
+function sideIntroduksjon(kicker, tittel, tekst, erstatninger) {
+  const tittelTekst = Object.entries(erstatninger || {}).reduce(
+    (tekst, [plassholder, verdi]) => tekst.replace(plassholder, verdi), t(tittel));
   return el("header", { class: "site-sideintro" },
     el("p", { class: "site-eyebrow", text: t(kicker) }),
-    el("h1", { text: t(tittel) }),
+    el("h1", { text: tittelTekst }),
     el("p", { class: "site-hero-text", text: t(tekst) }));
 }
 
@@ -308,7 +314,8 @@ function sikkerhetSide() {
 
 function tjenesterSide() {
   return [
-    sideIntroduksjon("site.katalog", "site.tjenester.tittel", "site.tjenester.tekst"),
+    sideIntroduksjon("site.katalog", "site.tjenester.tittel", "site.tjenester.tekst",
+      { "{antall}": KATALOG_ANTALL }),
     katalogseksjon(),
   ];
 }

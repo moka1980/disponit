@@ -21,11 +21,11 @@ Malene er **utkast fra åpne kilder** (lovverk, bransjepraksis, vilkårssider). 
 
 Foreslått pipeline, med kvalitetsporter som gjør den trygg:
 
-**Steg 1 — Draft (Claude):** Claude skriver spesifikasjon/kode for én modul om gangen, alltid mot akseptansekriteriene i prototype v7. Én modul = én branch = én pull request. Aldri flere moduler i samme PR.
+**Steg 1 — Draft (Claude):** Claude skriver spesifikasjon/kode for én modul om gangen, alltid mot akseptansekriteriene i prototype v8. Én modul = én branch = én pull request. Aldri flere moduler i samme PR.
 
 **Steg 2 — Spesifikasjonsreview (ChatGPT):** ChatGPT reviewer drafts mot tre faste spørsmål: (a) Bryter noe med policy-skjemaet? (b) Er alle handlinger reversible eller eksplisitt merket irreversible med harde vilkår? (c) Mangler unntakshåndtering for noen feilvei? Review-svaret limes inn i PR-beskrivelsen.
 
-**Steg 3 — Implementering (Claude Code):** Implementerer mot spesifikasjonen. Hver PR må inneholde: enhetstester, minst én test per akseptansekriterium fra v7-modulen, og en negativ test som beviser at handling utenfor policy faktisk stoppes.
+**Steg 3 — Implementering (Claude Code):** Implementerer mot spesifikasjonen. Hver PR må inneholde: enhetstester, minst én test per akseptansekriterium fra v8-modulen, og en negativ test som beviser at handling utenfor policy faktisk stoppes.
 
 **Steg 4 — Kodereview + merge (Codex):** Codex reviewer koden. Merge tillates kun når alle porter er grønne:
 
@@ -40,7 +40,7 @@ Foreslått pipeline, med kvalitetsporter som gjør den trygg:
 
 ## Utrullingsløype — ingenting rett i produksjon
 
-Merge til main er ikke deploy. Etter merge går hver endring gjennom en automatisert løype der hvert steg blokkerer neste: (1) CI med enhetstester, negative policytester og WCAG-test, (2) isolert testmiljø med syntetiske data og sandkasse-integrasjoner (aldri kundedata, aldri ekte systemer), (3) modell-/agentevaluering (M-31) mot regresjonssett, (4) kanarikjøring der kunde null alltid får versjonen først, deretter en liten andel tenants, (5) gradvis blå/grønn-utrulling til 100 %, og (6) automatisk rollback ved avvik, logget i M-2 og klassifisert i M-37. Endringer i policy-skjema og bransjemaler følger nøyaktig samme løype som kode: valideres, testes mot syntetiske hendelser, versjoneres med rollback — først da aktiveres de for kunder. Full spesifikasjon står i prototype v7.2, seksjonen «Utrulling».
+Merge til main er ikke deploy. Etter merge går hver endring gjennom en automatisert løype der hvert steg blokkerer neste: (1) CI med enhetstester, negative policytester og WCAG-test, (2) isolert testmiljø med syntetiske data og sandkasse-integrasjoner (aldri kundedata, aldri ekte systemer), (3) modell-/agentevaluering (M-31) mot regresjonssett, (4) kanarikjøring der kunde null alltid får versjonen først, deretter en liten andel tenants, (5) gradvis blå/grønn-utrulling til 100 %, og (6) automatisk rollback ved avvik, logget i M-2 og klassifisert i M-37. Endringer i policy-skjema og bransjemaler følger nøyaktig samme løype som kode: valideres, testes mot syntetiske hendelser, versjoneres med rollback — først da aktiveres de for kunder. Full spesifikasjon står i prototype v8, seksjonen «Utrulling».
 
 ## Status og neste steg
 

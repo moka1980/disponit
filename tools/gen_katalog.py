@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generer modulkatalogen for forsiden fra spesifikasjonen — én kilde, ikke avskrift.
 
-Katalogen (45 moduler, 11 områder, 4 faser) lever i
-`docs/spesifikasjon/disponit-prototype-v7.html`. Å taste den inn på nytt ville
+Katalogen (55 moduler, 11 områder, 4 faser) lever i
+`docs/spesifikasjon/disponit-prototype-v8.html`. Å taste den inn på nytt ville
 gitt to sannheter som driver fra hverandre; dette skriptet leser spesifikasjonen
 og skriver ut både datafila og locale-nøklene, så en endring i katalogen bare
 krever en ny kjøring.
@@ -29,15 +29,25 @@ ROT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 \
 
 # SANNHETSKILDEN, ikke arkivet (Codex P2). Generatoren leste tidligere
 # `prototype/AI-bedriftsagent-prototype-v7.html` — v7.0. `README.md` peker på
-# `docs/spesifikasjon/disponit-prototype-v7.html` (v7.2) som sannhetskilden, og
+# spesifikasjonen i `docs/spesifikasjon/` som sannhetskilden, og
 # `docs/STRUKTUR.md` kaller `prototype/` et historisk arkiv som ALDRI endres.
-# De to filene gir identisk katalog i dag, så feilen ga ingen synlig forskjell —
-# den var stille: neste kanoniske modul-, område- eller faseendring ville ikke
-# nådd generatoren, og en ny kjøring ville reprodusert gammelt offentlig innhold
-# uten at noe klaget. Et arkiv som aldri endres kan per definisjon ikke være
-# inndata til noe som skal følge produktet.
-KILDE = ROT / "docs" / "spesifikasjon" / "disponit-prototype-v7.html"
-KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v7.html"
+# De to filene ga identisk katalog den gangen, så feilen ga ingen synlig
+# forskjell — den var stille: neste kanoniske modul-, område- eller faseendring
+# ville ikke nådd generatoren, og en ny kjøring ville reprodusert gammelt
+# offentlig innhold uten at noe klaget. Et arkiv som aldri endres kan per
+# definisjon ikke være inndata til noe som skal følge produktet.
+#
+# v8 erstattet v7 og slettet den gamle fila (Codex P1 på PR #99). En generator
+# som peker på en slettet fil er ikke stille — den stopper på `SystemExit` — men
+# den ville uansett vært feil: uten dette bytte ville den offentlige katalogen
+# blitt stående på 45 moduler mens produktomfanget er 55.
+KILDE = ROT / "docs" / "spesifikasjon" / "disponit-prototype-v8.html"
+KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v8.html"
+
+# Produktomfanget slik det står i spesifikasjonen. Tallet står ett sted og
+# brukes både til nummerporten under og til overskriften i den genererte fila,
+# så en utvidelse ikke kan gi en katalog som teller seg selv feil.
+ANTALL_MODULER = 55
 
 # Områdenavn på engelsk.
 OMRADE_EN = {
@@ -157,7 +167,48 @@ MODUL_EN = {
         "Campaign and market insight agent"),
     45: ("Bærekrafts- og ESG-agent",
         "Sustainability and ESG agent"),
+    46: ("Anbuds- og konkurransevakt",
+        "Tender and bid watch"),
+    47: ("Myndighetsrapporteringsagent",
+        "Regulatory reporting agent"),
+    48: ("Foretaks- og kredittvakt (KYB)",
+        "Business and credit watch (KYB)"),
+    49: ("Sanksjons- og hvitvaskingsvakt",
+        "Sanctions and anti-money-laundering watch"),
+    50: ("Postjournal- og innsynsvakt",
+        "Public records and disclosure watch"),
+    51: ("Tilskudds- og støtteagent",
+        "Grants and subsidies agent"),
+    52: ("Toll- og HS-kodeagent",
+        "Customs and HS code agent"),
+    53: ("HMS- og avviksmottak",
+        "HSE and incident intake"),
+    54: ("EHF- og Peppol-avviksretter",
+        "EHF and Peppol rejection handler"),
+    55: ("Merkevare- og IP-overvåker",
+        "Brand and IP monitor"),
 }
+
+
+# Modulpostene i `M` står i TO former, og begge må leses (Codex P1 på PR #99).
+# v7-postene er kompakte JS-literaler — `{n:1,name:'…',area:'…',p:1,…}` — mens
+# de ti nye v8-postene er JSON-aktige: `{"n": 46, "name": "…", …}`. En parser
+# bundet til den ene formen feiler ikke; den finner bare FÆRRE moduler, og det
+# er den verste utgaven: `katalog.js` ville blitt regenerert til 45 moduler,
+# ferskhetsporten ville vært grønn mot sitt eget utdata, og forsiden hadde vist
+# et produktomfang ingen har bestemt. Nummerporten under er derfor det som
+# fanger et parserbrudd, og den krever HELE 1..ANTALL_MODULER.
+#
+# Mellomrommene mellom feltene er `[^{}]*?`, ikke `.*?`: en post uten `area`
+# ville med `.*?` latt treffet renne videre inn i NESTE post og gitt et
+# nummerpar som aldri sto sammen i kilden. Ingen `{`/`}` finnes inne i
+# feltverdiene, så klammeforbudet er en trygg postgrense.
+POST_RE = re.compile(
+    r"""\{\s*["']?n["']?\s*:\s*(\d+)\s*,"""
+    r"""\s*["']?name["']?\s*:\s*(['"])(.*?)\2"""
+    r"""[^{}]*?,\s*["']?area["']?\s*:\s*(['"])(.*?)\4"""
+    r"""\s*,\s*["']?p["']?\s*:\s*(\d+)""",
+    re.S)
 
 
 def slug(navn: str) -> str:
@@ -173,27 +224,27 @@ def les_katalog() -> list[dict]:
                                   KILDE.read_text(encoding="utf-8",
                                                   errors="replace"), re.S))
     poster = [
-        {"n": int(m.group(1)), "navn": m.group(2), "omrade": m.group(4),
-         "fase": int(m.group(5))}
-        for m in re.finditer(
-            r"\{n:(\d+),name:'([^']*)'(.*?),area:'([^']*)',p:(\d+)", skript)
+        {"n": int(m.group(1)), "navn": m.group(3), "omrade": m.group(5),
+         "fase": int(m.group(6))}
+        for m in POST_RE.finditer(skript)
     ]
     # Antallet alene er ikke en kontroll (Codex P2): en duplisert `n` sammen
-    # med en manglende modul gir også 45 poster, og da hadde katalogen sett
-    # komplett ut mens én modul var borte og en annen sto to ganger. Kravet er
-    # derfor at nummerSETTET er nøyaktig 1..45.
+    # med en manglende modul gir også riktig antall poster, og da hadde
+    # katalogen sett komplett ut mens én modul var borte og en annen sto to
+    # ganger. Kravet er derfor at nummerSETTET er nøyaktig 1..ANTALL_MODULER.
     numre = [p["n"] for p in poster]
     duplikater = sorted({n for n in numre if numre.count(n) > 1})
     if duplikater:
         raise SystemExit(
             f"duplisert modulnummer i {KILDE_NAVN}: {duplikater}")
-    forventet = set(range(1, 46))
+    forventet = set(range(1, ANTALL_MODULER + 1))
     if set(numre) != forventet:
         mangler = sorted(forventet - set(numre))
         ukjente = sorted(set(numre) - forventet)
         raise SystemExit(
-            f"katalogen er ikke 1..45 — mangler: {mangler}, ukjente: {ukjente}"
-            f" ({KILDE_NAVN} har endret form, sjekk parseren)")
+            f"katalogen er ikke 1..{ANTALL_MODULER} — mangler: {mangler}, "
+            f"ukjente: {ukjente} ({KILDE_NAVN} har endret form, sjekk "
+            f"parseren)")
     return sorted(poster, key=lambda p: p["n"])
 
 
@@ -231,7 +282,8 @@ def main() -> None:
         "// GENERERT av tools/gen_katalog.py fra",
         f"// {KILDE_NAVN} — IKKE rediger for hånd.",
         "//",
-        "// Modulkatalogen er produktomfanget: 45 moduler i 11 områder over fire",
+        f"// Modulkatalogen er produktomfanget: {len(katalog)} moduler i "
+        f"{len(omrader)} områder over fire",
         "// faser. Den er OFFENTLIG informasjon (hva vi tilbyr), i motsetning til",
         "// tenantdata, som aldri skal ligge i en anonymt nedlastbar fil.",
         "//",

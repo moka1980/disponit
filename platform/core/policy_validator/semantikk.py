@@ -108,7 +108,12 @@ def kildechecksum() -> str:
 #: (Codex P2 på #64: `valider_innforingskrav_strengt` skiller INTERN svikt i
 #: validatoren fra et innholdsbrudd. Ingen policy skifter dom av dette — kravene
 #: er de samme — men `schema.py` er en manifestfil, så pinnen følger med.)
-MOTOR_SEMANTIKKVERSJON = "b55527ab582b451a7b2a1aaaa4b97c3586522ff3bb0a25ecfac61821f030bc4e"
+#: (Codex P2 på #99: en irreversibel handling som kan kjøre automatisk krever
+#: minst ett vilkår. Dette ER en dom-endring: en policy med `grenser` alene
+#: passerte før og avvises nå — jti-replay-vernet henger på attestasjonen
+#: vilkåret framtvinger, så uten vilkår fantes vernet spesifikasjonen lover
+#: bare på papiret.)
+MOTOR_SEMANTIKKVERSJON = "a2446c512c2ca87288301c248664ceba5eaf31c7cfcf594adbe6ea35a078ce80"
 
 
 # ---------------------------------------------------------------------------
