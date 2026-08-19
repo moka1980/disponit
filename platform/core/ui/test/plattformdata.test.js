@@ -121,9 +121,14 @@ test("site.hero.tilbud: tilbudsteksten overlever hver utrullingstilstand", () =>
   // flyttet beskrivelsen tilbake dit den forsvinner igjen.
   const utrullingsavhengige = ["site.hero.tekst", "site.hero.tekst_bygges",
                                "site.hero.tekst_delvis"];
+  // Sentinelene er per språk: tilbudsteksten (claude.ai, INNHOLD 19/8) er
+  // norsk prosa uten anglisismene «compliance»/«HR», så vaktene er to
+  // områdeord som BARE tilbudsbeskrivelsen nevner.
+  const sentineler = { nb: ["fakturering", "avstemming"],
+                       en: ["invoicing", "reconciliation"] };
   for (const [sprak, sett] of LOKALER) {
     const tilbud = sett["site.hero.tilbud"];
-    for (const omrade of ["compliance", "HR"]) {
+    for (const omrade of sentineler[sprak]) {
       assert.ok(tilbud.includes(omrade),
         `site.hero.tilbud nevner ikke ${omrade} i locales/${sprak}.json`);
       for (const nokkel of utrullingsavhengige) {

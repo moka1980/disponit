@@ -136,8 +136,8 @@ table.chg caption{text-align:left}
     <h1>Disponit</h1>
     <p class="lead">En modulær operasjonsplattform som utfører bedriftens rutineprosesser automatisk innenfor dokumenterte fullmakter — med sporbarhet, sikker rollback og maskinell avvikshåndtering. Vi bygger få, lette moduler helt ferdig først, og ekspanderer når kvalitet og verdi er bevist i produksjon.</p>
     <div class="stats" role="list">
-      <div role="listitem"><b>55</b><span>konsoliderte moduler</span></div>
-      <div role="listitem" class="n"><b>10</b><span>nye i v8</span></div>
+      <div role="listitem"><b>56</b><span>konsoliderte moduler</span></div>
+      <div role="listitem" class="n"><b>11</b><span>nye i v8</span></div>
       <div role="listitem"><b>14</b><span>MVP-moduler i fase 1</span></div>
       <div role="listitem"><b>11</b><span>forretningsområder</span></div>
       <div role="listitem"><b>100&nbsp;%</b><span>automatisk normalflyt</span></div>
@@ -190,9 +190,9 @@ table.chg caption{text-align:left}
   <div class="wrap">
     <p class="eyebrow">Endringslogg</p>
     <h2 id="h-v8">Hva er nytt fra v7 til v8</h2>
-    <p class="intro">v8 tar inn idelisten og deler den i fire: ti forslag ble nye moduler, åtte ble utvidelser av moduler som allerede fantes, seks er parkert med begrunnelse, og ni gjelder styring og hører hjemme i plattformen framfor i katalogen. Antallet moduler går derfor fra 45 til 55, ikke til 71.</p>
+    <p class="intro">v8 tar inn idelisten og deler den i fire: ti forslag ble nye moduler, åtte ble utvidelser av moduler som allerede fantes, seks er parkert med begrunnelse, og ni gjelder styring og hører hjemme i plattformen framfor i katalogen. I tillegg kom M-56 Automatisk WCAG-kontroll til utenom idelisten, på lovkrav om universell utforming — elleve nye moduler i alt. Antallet moduler går derfor fra 45 til 56, ikke til 71.</p>
 
-    <h3 class="subh" id="h-v8-nye">Ti nye moduler</h3>
+    <h3 class="subh" id="h-v8-nye">Elleve nye moduler</h3>
     <table class="chg">
       <caption class="vh">Nye moduler i v8 med fase og begrunnelse</caption>
       <thead><tr><th scope="col">Modul</th><th scope="col">Navn</th><th scope="col">Fase</th><th scope="col">Hvorfor egen modul</th></tr></thead>
@@ -207,6 +207,7 @@ table.chg caption{text-align:left}
         <tr><td>M-53</td><td>HMS- og avviksmottak</td><td>2</td><td>Lovpålagt i flere bransjer og helt fraværende i v7.</td></tr>
         <tr><td>M-54</td><td>EHF- og Peppol-avviksretter</td><td>2</td><td>Egen teknisk kontrakt (XML-validering mot standard), ikke det samme som fakturabehandling. Retting klargjøres maskinelt, utsending signeres av menneske.</td></tr>
         <tr><td>M-55</td><td>Merkevare- og IP-overvåker</td><td>4</td><td>Overvåkning uten utgående krav. Lav frekvens, derfor fase 4.</td></tr>
+        <tr><td>M-56</td><td>Automatisk WCAG-kontroll</td><td>3</td><td>Universell utforming er lovpålagt, og kontrollen bærer egen motor, eget rapportskjema og egen domeneverifisering — ingen eksisterende modul dekker den. Automatisk kontroll av nettsteder kunden har bevist DNS-kontroll over, med rapport som evidens. Modulen står foran akseptporten og settes i drift når den er bestått.</td></tr>
       </tbody>
     </table>
 
@@ -240,7 +241,7 @@ table.chg caption{text-align:left}
   <div class="wrap">
     <p class="eyebrow">Arkitektur</p>
     <h2>Felles plattform — bygges én gang</h2>
-    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 55 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
+    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 56 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
     <div class="plat">
       <div><b>1 · Tilkoblinger</b><p>OAuth, webhooks, filimport, e-post, kalender, CRM, ERP, bank og telefoni. Selvtest og token-fornyelse via M-11.</p></div>
       <div><b>2 · Dataplan</b><p>Tenant-isolasjon, kryptering, normalisering, søk og datakvalitet (M-3). Objektlagring og retention-policy.</p></div>
@@ -258,7 +259,7 @@ table.chg caption{text-align:left}
     <div class="phases">
       <div class="ph" data-f="1"><span class="cnt">14</span><b>Fase 1 · Fundament</b><p>Plattform, sikkerhet, fil, e-post, dokument, møte, kalender, kunnskap, backup, integrasjoner og identitet.</p></div>
       <div class="ph" data-f="2"><span class="cnt">16</span><b>Fase 2 · Operasjoner</b><p>Økonomi, lønn, HR, kunde, innhold, avtaler, lisenser og rapportering.</p></div>
-      <div class="ph" data-f="3"><span class="cnt">18</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
+      <div class="ph" data-f="3"><span class="cnt">19</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
       <div class="ph" data-f="4"><span class="cnt">7</span><b>Fase 4 · Global skala</b><p>Lokalisering og skatt, prediksjon, compliance, kontinuitet, ESG og porteføljeoptimalisering.</p></div>
     </div>
   </div>
@@ -319,9 +320,9 @@ table.chg caption{text-align:left}
 <section>
   <div class="wrap">
     <p class="eyebrow">Omfang</p>
-    <h2>Katalogen fryses på 55</h2>
+    <h2>Katalogen fryses på 56</h2>
     <div class="notice">
-      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 55 fordi idelisten ble gjennomgått under samme krav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
+      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
     </div>
   </div>
 </section>
@@ -356,7 +357,7 @@ table.chg caption{text-align:left}
     <label class="fl" for="fPhase">Fase</label><select id="fPhase">
       <option value="">Alle faser</option><option value="1">Fase 1</option><option value="2">Fase 2</option><option value="3">Fase 3</option><option value="4">Fase 4</option>
     </select>
-    <label class="chk"><input type="checkbox" id="fNew"> Vis kun de ti nye i v8</label>
+    <label class="chk"><input type="checkbox" id="fNew"> Vis kun de elleve nye i v8</label>
     <span id="count" role="status" aria-live="polite"></span>
   </div>
 </div>
@@ -364,7 +365,7 @@ table.chg caption{text-align:left}
 <section>
   <div class="wrap">
     <p class="eyebrow">Katalog</p>
-    <h2>Modulkatalog — 55 moduler</h2>
+    <h2>Modulkatalog — 56 moduler</h2>
     <p class="intro">Hver modul er spesifisert med normalflyt, input/output, integrasjoner, sikkerhetsgrenser, KPI-er, akseptansekriterier og avhengigheter. En modul regnes som ferdig først når akseptansekriteriene består i produksjon.</p>
     <div id="catalog"></div>
   </div>
@@ -441,6 +442,8 @@ const M=[
 {"n": 53, "name": "HMS- og avviksmottak", "area": "Samarbeid og HR", "p": 2, "level": "Lett", "v8": "ny", "kl": "krever_outbox", "rev": "irreversibel", "goal": "Senker terskelen for å melde avvik, og sikrer at meldingen faktisk havner i protokollen.", "flow": ["Tar imot avvik via e-post, skjema og SMS — og via talemelding når taleagenten er i drift", "Strukturerer melding til dato, sted, type og involverte roller", "Klassifiserer alvorlighet etter bedriftens egen HMS-matrise", "Oppretter sak i HMS-protokollen og varsler verneombud", "Følger opp tiltak til lukking og produserer årsrapport"], "input": "Innmeldte avvik i fritekst eller tale, HMS-matrise og rolleoversikt.", "output": "Strukturert avvikssak, varsel, tiltaksliste og rapportgrunnlag.", "int": "E-post, SMS, HMS-system, oppgaveverktøy. Talekanalen kommer fra M-43 og er en utvidelse: mottaket er komplett uten den.", "guard": "Nedgraderer aldri alvorlighet automatisk. Personskade varsles alltid til menneske umiddelbart, uansett klassifisering. Både saksopprettelsen i HMS-systemet og varselet til verneombud er eksterne skrivinger og går gjennom outbox; et sendt varsel kan ikke kalles tilbake, så det sendes nøyaktig én gang.", "kpi": "Meldte avvik per måned; tid til varsling; andel lukkede tiltak; feilklassifisering.", "accept": "Ingen melding går tapt eller lukkes automatisk; personskade varsles innen avtalt tid; klassifisering kan overstyres av menneske; hver sak og hvert varsel har outbox-kvittering, og en omkjøring gir aldri dobbeltvarsel.", "dep": "M-1, M-2, M-37."},
 {"n": 54, "name": "EHF- og Peppol-avviksretter", "area": "Økonomi", "p": 2, "level": "Middels", "v8": "ny", "kl": "krever_outbox", "rev": "kompenserende", "goal": "Finner årsaken når en faktura avvises i det elektroniske fakturanettverket, og klargjør rettingen for signatur.", "flow": ["Fanger opp avvisningsmeldinger fra Peppol-aksesspunktet", "Tolker feilkoden deterministisk mot EHF-standarden", "Slår opp korrekt organisasjonsnummer og mva-status i offentlige registre", "Retter det avviste feltet og validerer XML mot skjema på nytt", "Legger rettet faktura til signatur, sender etter godkjenning og følger til levering"], "input": "Avviste EHF-fakturaer, feilmeldinger, foretaksregister og kundedata.", "output": "Rettet og validert faktura, leveringsbekreftelse og feilstatistikk.", "int": "Peppol-aksesspunkt, regnskapssystem, Brreg, VIES.", "guard": "Retter kun felt som kan verifiseres mot et autoritativt register. Beløp, varelinjer og mva-sats endres aldri. Ingen ny utsending uten menneskelig signatur — resend er den eksterne handlingen klassen krever_outbox finnes for å kontrollere.", "kpi": "Andel avvisninger løst uten manuell utredning; tid fra avvisning til levering; gjentatte avvisninger.", "accept": "Ingen utsending uten signatur; ingen beløpsendring i det hele tatt; hver retting logger felt, gammel verdi, ny verdi og kilde; ingen dobbeltsending.", "dep": "M-1, M-2, M-14, M-37."},
 {"n": 55, "name": "Merkevare- og IP-overvåker", "area": "Juridisk og compliance", "p": 4, "level": "Middels", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Oppdager uautorisert bruk av bedriftens navn, logo og innhold.", "flow": ["Overvåker søk, annonser, domenenavn og markedsplasser", "Sammenligner funn mot registrerte varemerker og eget innhold", "Vurderer sannsynlighet for forveksling deterministisk", "Dokumenterer funnet med tidsstempel, skjermbilde og URL", "Legger saken til menneskelig vurdering"], "input": "Varemerkeregister, egen mediebank, søkemotorer og annonseplattformer.", "output": "Dokumentert funnliste med bevisbyrde og prioritering.", "int": "Søk-API-er, annonseplattformer, domeneregistre, varemerkeregister.", "guard": "Sender aldri juridiske krav eller klager. Modulen dokumenterer og rapporterer; enhver reaksjon besluttes av menneske.", "kpi": "Reelle funn; falske funn; tid fra publisering til oppdagelse.", "accept": "Ingen utgående henvendelse til tredjepart; hvert funn har URL, tidsstempel og bevaringskopi.", "dep": "M-1, M-2, M-20, M-37."}
+,
+{"n":56,"name":"Automatisk WCAG-kontroll","area":"Juridisk og compliance","p":3,"level":"Middels","v8":"ny","kl":"ekstern_lesing","rev":"direkte","goal":"Kjører automatisk WCAG 2.1-kontroll av et nettsted kunden har bevist DNS-kontroll over, og lagrer en rapport som evidens.","flow":["Mottar bestilling gjennom beslutningsveien","Kontrollerer at hostnamet er verifisert for tenanten, og på nytt før hver forespørsel","Kjører axe-core i isolert browser-container der egressen er stengt inne i nettleseren: hver forespørsel og websocket avskjæres, vertsnavn pinnes til den verifiserte adressen, og alt annet blokkeres og telles","Pakker funn til lukket rapportskjema med versjoner og dekningsbegrensninger","Laster opp rapporten og kvitterer signert"],"input":"Hostname og sti kunden har verifisert, kravsett, omfang og maks antall sider.","output":"Rapport med funn per regel, sammendrag, hvilke sider som faktisk ble kontrollert, og hva som ikke ble vurdert.","int":"axe-core, Chromium i container med egressvakt i nettleseren, artefaktlager.","guard":"Kontrollerer aldri et hostname uten bevist DNS-kontroll. Respekterer robots.txt og hastighetsgrense. Rapporten sier aldri at nettstedet oppfyller WCAG — kun hva den automatiske kontrollen fant, og at manuelle kriterier ikke er vurdert.","kpi":"Kontroller fullført innen frist; funn som matcher fasit på testnettsted; andel kjøringer med dekningsbegrensninger.","accept":"Ingen trafikk mot uverifisert domene; rapport uten versjonsdigester avvises; avkorting og blokkerte eksterne ressurser står som tekst i rapporten.","dep":"M-1, M-2, M-37, modulregister, domenekontroll."}
 ];
 const areaOrder=[...new Set(M.map(m=>m.area))].sort((a,b)=>a.localeCompare(b,'nb'));
 const sel=document.getElementById('fArea');
@@ -496,7 +499,7 @@ function render(){
     html+=`<div class="phasehead"><h3>${phaseNames[p]}</h3><span class="eyebrow">${list.length} moduler</span></div>`;
     html+=list.map(card).join('');
   }
-  cat.innerHTML=html||'<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle 55.</p>';
+  cat.innerHTML=html||'<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle 56.</p>';
   document.getElementById('count').textContent=shown+' / '+M.length+' moduler';
 }
 ['q','fArea','fPhase','fNew'].forEach(id=>document.getElementById(id).addEventListener(id==='q'?'input':'change',render));

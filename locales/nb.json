@@ -112,9 +112,9 @@
   "site.fase": "Fase",
   "site.hero.kicker": "AI-bedriftsagent",
   "site.hero.tittel": "Disponit gjør jobben i bedriften din — innenfor fullmakter du selv setter.",
-  "site.hero.tilbud": "Tilbudet er én AI-bedriftsagent for hele virksomheten — fra økonomi, salg og kundeoppfølging til innkjøp, HR, dokumentarbeid, IT-drift, compliance, analyse og ledelse. Oppdraget er det samme på hvert område: utføre oppgaver, følge opp avvik, koordinere arbeid mellom systemer og gi deg oversikt over hva som er gjort og hva som krever oppmerksomhet. Alt styres av policyene og fullmaktene du setter: er en handling innenfor, utføres den; er den utenfor, stoppes den og sendes til riktig person.",
+  "site.hero.tilbud": "Disponit bygges for å håndtere rutinearbeidet i bedriften: utbetalinger med godkjenningsgrenser, fakturering og purringer, avstemming og oppgjør, frister og fornyelser, oppfølging mot kunder og leverandører, faste rapporter, automatiske kontroller mot regelverk, og nøkkeltall regnet fra faktiske beslutninger. Prinsippet ligger fast: hver handling måles mot policyen din før den skjer — er den innenfor, utføres den; er den ikke det, stoppes den og legges til deg.",
   "site.hero.tekst": "Alle områdene under er i drift hos kunder i dag.",
-  "site.hero.tekst_bygges": "Ingen av områdene under er i drift hos kunder ennå — de står merket «Kommer» til de er det.",
+  "site.hero.tekst_bygges": "Kontrollaget kjører i dag — policymotor, revisjonslogg, unntakskø og policyadministrasjon med fire øyne. Den første modulen som gjør faktisk arbeid — automatisk WCAG-kontroll av nettsteder du har bekreftet at du kontrollerer — står foran akseptporten og settes i drift når den er bestått. De øvrige områdene er spesifisert og under bygging.",
   "site.hero.tekst_delvis": "Områdene under som er merket «Tilgjengelig», er i drift hos kunder i dag; resten bygges.",
   "site.argument.presisjon": "Kontroll",
   "site.argument.presisjon_tittel": "Du bestemmer hva agenten får lov til",
@@ -986,5 +986,8 @@
   "ui.plan.utfall.hoppet_over": "Hoppet over",
   "ui.plan.utfall.avvist_av_menneske": "Avvist manuelt",
   "varsel.plan_pauset": "Planen din for periodisk kontroll er satt på pause ({aarsak}). Gjenoppta den i portalen når årsaken er håndtert — missede vinduer tas ikke igjen.",
-  "varsel.plan_gjentatt_brudd": "Planen din for periodisk kontroll har fått {antall} kvoteavslag på rad — kontrollene bestilles, men frekvensgrensen i policyen stopper dem. Vurder rytmen eller kvoten. Planen kjører videre."
+  "varsel.plan_gjentatt_brudd": "Planen din for periodisk kontroll har fått {antall} kvoteavslag på rad — kontrollene bestilles, men frekvensgrensen i policyen stopper dem. Vurder rytmen eller kvoten. Planen kjører videre.",
+  "site.katalog.m56.navn": "Automatisk WCAG-kontroll",
+  "site.modul.m56.navn": "Automatisk WCAG-kontroll",
+  "site.modul.m56.tekst": "Kontrollerer nettsteder du har bekreftet at du kontrollerer, og lagrer rapporten som evidens."
 }

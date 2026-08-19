@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generer modulkatalogen for forsiden fra spesifikasjonen — én kilde, ikke avskrift.
 
-Katalogen (55 moduler, 11 områder, 4 faser) lever i
+Katalogen (56 moduler, 11 områder, 4 faser) lever i
 `docs/spesifikasjon/disponit-prototype-v8.html`. Å taste den inn på nytt ville
 gitt to sannheter som driver fra hverandre; dette skriptet leser spesifikasjonen
 og skriver ut både datafila og locale-nøklene, så en endring i katalogen bare
@@ -47,7 +47,7 @@ KILDE_NAVN = "docs/spesifikasjon/disponit-prototype-v8.html"
 # Produktomfanget slik det står i spesifikasjonen. Tallet står ett sted og
 # brukes både til nummerporten under og til overskriften i den genererte fila,
 # så en utvidelse ikke kan gi en katalog som teller seg selv feil.
-ANTALL_MODULER = 55
+ANTALL_MODULER = 56
 
 # Områdenavn på engelsk.
 OMRADE_EN = {
@@ -187,6 +187,8 @@ MODUL_EN = {
         "EHF and Peppol rejection handler"),
     55: ("Merkevare- og IP-overvåker",
         "Brand and IP monitor"),
+    56: ("Automatisk WCAG-kontroll",
+        "Automatic WCAG check"),
 }
 
 
@@ -209,6 +211,13 @@ POST_RE = re.compile(
     r"""[^{}]*?,\s*["']?area["']?\s*:\s*(['"])(.*?)\4"""
     r"""\s*,\s*["']?p["']?\s*:\s*(\d+)""",
     re.S)
+
+# Katalogen bærer STRUKTUR (nummer, navn, område, fase) — ikke tilstand.
+# Et eget statusfelt her sto kort i #109 og er tatt ut igjen (Codex P1): to
+# statuskilder for samme modul kan bare drive fra hverandre, og den ene som
+# ikke er forankret i et manifest kan love drift ingen port har bestått.
+# Hva en modul FAKTISK er, står ett sted: `MODULSTATUS` i plattformdata.js,
+# avledet av manifestene og pinnet av test_ui_kontrakt.py.
 
 
 def slug(navn: str) -> str:

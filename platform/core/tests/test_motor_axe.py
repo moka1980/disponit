@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 
 ROT = Path(__file__).resolve().parents[3]
-MOTOR = ROT / "platform/modules/wcag_audit/motor_axe"
+MOTOR = ROT / "platform/modules/m56_wcag_audit/motor_axe"
 
 
 def _last(navn: str):
@@ -594,7 +594,7 @@ def test_eksempeltaket_slaar_avkortet_paa():
     Takene må dessuten være IDENTISKE med byggerens: kappet motoren
     hardere, ville byggeren aldri fått se at noe ble kappet."""
     sys.path.insert(0, str(ROT / "platform"))
-    from modules.wcag_audit import rapport
+    from modules.m56_wcag_audit import rapport
     assert kjor.MAKS_EKSEMPLER == rapport.MAKS_EKSEMPLER
     assert kjor.MAKS_SELEKTOR == rapport.MAKS_SELEKTOR
 
@@ -1273,7 +1273,7 @@ def test_blokkert_vert_blir_alltid_baerbar_for_rapporten():
     # PORTEN: hver form over må passere rapportbyggerens EGET mønster.
     # Driver de to fra hverandre, er saneringen her uten virkning.
     sys.path.insert(0, str(ROT / "platform"))
-    from modules.wcag_audit import rapport
+    from modules.m56_wcag_audit import rapport
     assert rapport._VERT.pattern == kjor.VERT_MONSTER.pattern
     for raa in ("localhost", "[::1]", "[2001:db8::1]", "", "169.254.169.254",
                 "under_strek.example", "ekstern-cdn.example"):
@@ -1398,7 +1398,7 @@ def test_lenker_loeses_mot_dokumentets_base():
     # ikke unntaket — som `motor_avbrutt` uten promotert rapport.
     assert 'post["bestilt_url"] = url' in kilde
     assert "if faktisk != url:" in kilde
-    modul = ROT / "platform/modules/wcag_audit"
+    modul = ROT / "platform/modules/m56_wcag_audit"
     rapportkilde = (modul / "rapport.py").read_text(encoding="utf-8")
     assert 's.get("bestilt_url")' in rapportkilde
     assert "bestilt not in (identiteter[0], fra_url[0])" in rapportkilde
@@ -1655,7 +1655,7 @@ def test_axe_pinnen_er_ekte_hex():
 
 def test_fasitkontroll_finner_hver_avviksklasse():
     fasit = json.loads(
-        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        (ROT / "platform/modules/m56_wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["enkeltside"]
     # Perfekt motorutdata konstruert FRA fasiten → null avvik.
@@ -1697,7 +1697,7 @@ def test_fasitkontroll_godtar_ikke_duplikatrader():
     kartleggingen. Fasiten er selv nøklet og kan ikke ha duplikater, så
     en gjentatt rad kan bare bety avvik."""
     fasit = json.loads(
-        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        (ROT / "platform/modules/m56_wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["enkeltside"]
     motor = {
@@ -1741,14 +1741,14 @@ def test_fasiten_er_konsistent_med_seg_selv():
     """Avkortingsregnskapet i fasiten: 14 = 4 besøkte + 9 i kø + 1
     query-lenke, og robots-siden er aldri en del av regnskapet."""
     fasit = json.loads(
-        (ROT / "platform/modules/wcag_audit/testnettsted/fasit.json")
+        (ROT / "platform/modules/m56_wcag_audit/testnettsted/fasit.json")
         .read_text(encoding="utf-8"))
     s = fasit["scenarier"]["nettsted_maks4"]
     truffet, tak, verdi = s["avkortet"]
     assert truffet is True and tak == s["payload"]["maks_sider"]
     assert verdi == 14
     assert "/privat/hemmelig.html" not in s["_crawlrekkefolge"]
-    sider = ROT / "platform/modules/wcag_audit/testnettsted/sider"
+    sider = ROT / "platform/modules/m56_wcag_audit/testnettsted/sider"
     assert (sider / "privat/hemmelig.html").exists()
     assert "Disallow: /privat/" in (sider / "robots.txt").read_text(
         encoding="utf-8")
@@ -1846,7 +1846,7 @@ def test_kontraktsdokumentets_hasher_matcher_skjemafilene():
     """KONTRAKT.md navngir payload-/kvitteringsskjemaets sha256 — driver
     dokument og fil fra hverandre, registreres feil proveniens immutabelt."""
     import hashlib
-    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     md = (kdir / "KONTRAKT.md").read_text(encoding="utf-8")
     for fil, felt in (("payload-skjema.json", "payload_schema_hash"),
                       ("kvittering-skjema.json", "kvittering_schema_hash")):
@@ -1855,13 +1855,98 @@ def test_kontraktsdokumentets_hasher_matcher_skjemafilene():
             f"{felt} i KONTRAKT.md matcher ikke {fil}"
 
 
+#: sha256 over `KONTRAKT.md` slik dokumentet ble REGISTRERT for
+#: kontraktversjon 1 i staging-runden. Verdien er ikke en smaksdom om
+#: innholdet — den er nøkkelen registeret allerede bærer.
+KONTRAKT_HASH_V1 = \
+    "33e47d195b68cfa2cb6034c169d89fa3fe718de9364799baf544739f208aa58e"
+
+
+def test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen():
+    """Codex P1 på #109: mappeomdøpingen til `m56_wcag_audit` rettet også
+    stien INNI KONTRAKT.md, og endret dermed dokumentets bytes mens både
+    dokumentet og `registrer-m-wcag-audit.py` fortsatt sa kontraktversjon 1.
+
+    `fase2` hasher filens bytes og kaller `registrer_kontrakt(..., 1, ...)`,
+    som avviser en ANNEN hash for en eksisterende `(m_wcag_audit, 1)`-rad —
+    neste staging-registrering ville dødd på «kontrakt er immutable», og
+    fase 2 feller runden på det.
+
+    Å bumpe versjonen løser det ikke på den basen runden faktisk kjører mot:
+    `oppdragstype_register` (040) og `artefakttype_register` (036) binder
+    HVER SIN rad til `(kontraktversjon, kontrakt_hash)` og er like
+    immutable, så en v2 ville bare flyttet konflikten ett register bort.
+    Bytene er derfor frosset til den dagen registeret bygges på nytt eller
+    en kontraktversjon 2 rulles ut GJENNOM alle tre registrene.
+
+    Stien i §Identitet er av samme grunn den gamle: dokumentet beskriver
+    kontrakten som ble registrert, ikke dagens mappenavn. Trenger den
+    oppdatering, er det en kontraktversjonsbump — ikke en tekstretting.
+    """
+    import hashlib
+    md = ROT / "platform/modules/m56_wcag_audit/kontrakt/KONTRAKT.md"
+    assert hashlib.sha256(md.read_bytes()).hexdigest() == KONTRAKT_HASH_V1, (
+        "KONTRAKT.md er endret uten en koordinert kontraktversjonsbump —"
+        " neste staging-registrering vil feile med «kontrakt er immutable»")
+    # ... og dokumentet må fortsatt SI 1, ellers er de to påstandene om
+    # samme kontrakt uenige.
+    assert "kontraktversjon 1" in md.read_text(encoding="utf-8")
+
+
+#: Release-id-en staging-runden registrerer, og sha256 over manifestet slik
+#: det står FOR den id-en. Paret hører sammen: `manifest_hash` er et felt på
+#: release-raden, og raden er immutabel.
+RELEASE_ID = "wcag-r2"
+MANIFEST_HASH_FOR_RELEASE = \
+    "d4881ffd371587c27140837ea2bbb02d2b4e021035b36a3d07f12f146ca58bc5"
+
+
+def test_release_id_folger_manifestets_bytes():
+    """Codex P1 på #109: manifestet ble både flyttet og endret, mens
+    `fase2` fortsatt registrerte `wcag-r1`.
+
+    `registrer-m-wcag-audit.py::manifest_hash()` hasher `manifest.yaml` på
+    disk, og `registrer_release` avviser en ANNEN `manifest_hash` for en
+    eksisterende `(m_wcag_audit, release_id)`-rad. `wcag-r1` ble registrert
+    med manifestet slik det så ut under målerunden 2026-08-18, så en runde
+    med den id-en ville dødd i fase 2 på «release er immutable» — før et
+    eneste akseptpunkt ble målt. Å fryse manifestet slik KONTRAKT.md er
+    frosset går ikke: hele #109 flytter modulen til `m56_wcag_audit/`, og
+    `kjerne`-feltet MÅ følge med.
+
+    Motsatt av kontrakten er dette heller ikke en konflikt i tre registre:
+    `manifest_hash` er et felt på release-raden, ikke nøkkelen andre
+    registre binder seg til, så en ny release-id er en ny rad og saken er
+    ute av verden. Derfor fryses kontrakten og nummereres releasen.
+
+    Porten finnes for at NESTE manifestendring skal stoppe her, i CI, og
+    ikke i en staging-runde ingen ser før den feiler. Rettelsen er alltid
+    den samme to-linjers: ny `RELEASE`-default i sjekklisten og ny hash
+    her, i samme commit. Statusflippet til `aktiv` etter bestått aksept er
+    en slik endring — den gir også en ny release."""
+    import hashlib
+    manifest = ROT / "platform/modules/m56_wcag_audit/manifest.yaml"
+    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == \
+        MANIFEST_HASH_FOR_RELEASE, (
+            f"manifest.yaml er endret uten at release-id-en er flyttet fra"
+            f" {RELEASE_ID} — neste staging-registrering vil feile med"
+            " «release er immutable»")
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert f'or "{RELEASE_ID}"' in sjekk, (
+        "sjekklistens default-release er ikke den hashen over gjelder for")
+    # `LEGACY_RELEASE` er IKKE med i bumpen: den navngir releasen de gamle
+    # rundefilene tilhørte, og den sannheten endrer seg aldri.
+    assert 'LEGACY_RELEASE = "wcag-r1"' in sjekk
+
+
 def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
-    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     skjema = json.loads((kdir / "kvittering-skjema.json")
                         .read_text(encoding="utf-8"))
     i_skjema = set(skjema["properties"]["feilkode"]["enum"])
     import re
-    kode = (ROT / "platform/modules/wcag_audit/controller.py") \
+    kode = (ROT / "platform/modules/m56_wcag_audit/controller.py") \
         .read_text(encoding="utf-8")
     i_koden = set(re.findall(r'"feilkode": "([a-z_]+)"', kode))
     assert i_skjema == i_koden, (i_skjema ^ i_koden)
@@ -1869,7 +1954,7 @@ def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
 
 def test_payloadskjemaet_speiler_oppdragskontrakten():
     import oppdragskontrakt
-    kdir = ROT / "platform/modules/wcag_audit/kontrakt"
+    kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     skjema = json.loads((kdir / "payload-skjema.json")
                         .read_text(encoding="utf-8"))
     t = oppdragskontrakt.OPPDRAGSTYPER["kontroll.wcag.nettsted"]

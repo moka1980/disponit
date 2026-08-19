@@ -1,7 +1,7 @@
 """Arbeideren for m_wcag_audit: claim → motor → rapport → kvittering.
 
 Systemd-inngangen for `disponit-wcag-audit.service`. All faglig logikk bor
-i `modules.wcag_audit.controller.kjor_en` — dette er bare drift: token og
+i `modules.m56_wcag_audit.controller.kjor_en` — dette er bare drift: token og
 nøkler fra LoadCredential, motorkommandoen fra config, en tynn HTTP-klient
 mot API-et, og en høflig løkke (poll ved tom kø, én JSON-linje per
 utfall).
@@ -112,8 +112,8 @@ def main() -> int:
     last_credentials()
     sys.path.insert(0, os.path.join(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))))
-    from modules.wcag_audit import controller
-    from modules.wcag_audit.motor import Kommandomotor
+    from modules.m56_wcag_audit import controller
+    from modules.m56_wcag_audit.motor import Kommandomotor
     from policy_validator import attestering
 
     api = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
