@@ -286,9 +286,15 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
                  f" ({pid}@{styrt[0]}, operasjon {styrt[1]}). En ny versjon"
                  " må aktiveres samme vei (policyadmin), ikke gjennom"
                  " oppsettsregistreringen"], policy)
+        # MÅLVERSJONEN HOLDES UTENFOR (Codex P2). «Deaktiver den forrige»
+        # gjelder de ANDRE versjonene; å slå av flagget på den raden vi er i
+        # ferd med å slå det på igjen er ingen overgang. Det var heller ikke
+        # gratis: upserten under avgjør aktiveringstidspunktet ved å se på
+        # om raden ALT var aktiv, og en re-registrering av den aktive
+        # versjonen hadde da alltid nullstilt den prøven selv.
         conn.execute("UPDATE policyer SET aktiv=false"
-                     " WHERE tenant=%s AND policy_id=%s AND aktiv",
-                     (tenant, pid))
+                     " WHERE tenant=%s AND policy_id=%s AND aktiv"
+                     " AND versjon<>%s", (tenant, pid, versjon))
     else:
         # `aktiver=False` på DEN VERSJONEN SOM ER AKTIV er ikke en
         # registrering — det er en avvikling, og den skal ikke skje som
@@ -345,6 +351,19 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     # `aktiver=False` LAR merket stå: en avaktivering fjerner ikke at raden
     # en gang ble aktivert, og denne veien kan uansett ikke avvikle den
     # gjeldende aktive versjonen (porten over).
+    #
+    # MERKET SETTES BARE VED EN FAKTISK OVERGANG (Codex P2). Funksjonen er
+    # med vilje en upsert: en administrativ re-kjøring av samme
+    # registrering skal være ufarlig. Skrev vi `now()` på hver
+    # `aktiver=True`, var den ikke det — en re-registrering av den ALT
+    # aktive versjonen ga den et ferskt aktiveringstidspunkt, uten at noen
+    # versjonsovergang hadde skjedd. Historikken sorterer på nettopp dette
+    # merket, så raden hoppet til topps og snudde diffens default-retning,
+    # og «sist aktivert» sa når noen sist kjørte oppsettet i stedet for når
+    # policyen faktisk ble tatt i bruk. `policyer.aktiv` er tilstanden FØR
+    # upserten (og målversjonen ble holdt utenfor deaktiveringen over,
+    # nettopp så den prøven er sann), altså: bare en rad som IKKE var aktiv
+    # blir «nå aktivert».
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
         " status, innhold, aktiv, aktiveringskilde, bootstrap_aktivert_ts)"
@@ -354,7 +373,8 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
         "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv,"
         "     aktiveringskilde=EXCLUDED.aktiveringskilde,"
-        "     bootstrap_aktivert_ts=CASE WHEN EXCLUDED.aktiv THEN now()"
+        "     bootstrap_aktivert_ts=CASE"
+        "         WHEN EXCLUDED.aktiv AND NOT policyer.aktiv THEN now()"
         "         ELSE policyer.bootstrap_aktivert_ts END",
         (tenant, pid, versjon, h, status, json.dumps(policy), aktiver,
          aktiver))

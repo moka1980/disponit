@@ -518,6 +518,84 @@ def test_historikken_sorterer_paa_aktivering_ikke_registrering():
 
 
 @pg
+def test_reregistrering_av_aktiv_bootstrap_beholder_tidspunktet():
+    """Codex P2: en upsert av den ALT aktive versjonen er ingen overgang.
+
+    `registrer` er med vilje en upsert — en administrativ re-kjøring av
+    samme oppsettsregistrering skal være ufarlig. Skrev den
+    `bootstrap_aktivert_ts=now()` på hver `aktiver=True`, var den ikke
+    det: den aktive versjonen fikk et ferskt aktiveringstidspunkt uten at
+    noen versjonsovergang hadde skjedd, historikken (som sorterer på
+    nettopp det merket) flyttet den til topps, og diffens default-retning
+    snudde.
+
+    Testen måler begge halvdelene: merket står stille når raden alt var
+    aktiv, og settes fortsatt når en INAKTIV rad faktisk aktiveres.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-upsert-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    def _ts(c, versjon):
+        return c.execute(
+            "SELECT bootstrap_aktivert_ts FROM policyer WHERE tenant=%s"
+            " AND policy_id=%s AND versjon=%s",
+            (TEN, pid, versjon)).fetchone()[0]
+
+    m = _c()
+    try:
+        # Egen transaksjon per steg: `now()` er TRANSAKSJONENS tid, så to
+        # kall i samme transaksjon ville fått identiske merker og testen
+        # målt ingenting.
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        forste = _ts(m, "1.0.0")
+        m.commit()
+        assert forste is not None, "bootstrapen fikk ikke noe tidspunkt"
+
+        # Samme registrering en gang til — ingen overgang.
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        assert _ts(m, "1.0.0") == forste, \
+            "re-registrering av den aktive versjonen flyttet tidspunktet"
+        # ... og raden er fortsatt aktiv, med ankerraden på samme versjon.
+        assert m.execute(
+            "SELECT p.aktiv, hd.aktiv_versjon FROM policyer p"
+            " JOIN policy_hode hd ON hd.tenant=p.tenant"
+            "  AND hd.policy_id=p.policy_id"
+            " WHERE p.tenant=%s AND p.policy_id=%s AND p.versjon='1.0.0'",
+            (TEN, pid)).fetchone() == (True, "1.0.0")
+        m.commit()
+
+        # En INAKTIV rad som faktisk aktiveres skal fortsatt få merket —
+        # og 1.0.0 skal miste flagget, som før.
+        mal["meta"]["versjon"] = "2.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+        assert _ts(m, "2.0.0") is None, "en inaktiv rad ble merket aktivert"
+        m.commit()
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        andre = _ts(m, "2.0.0")
+        assert andre is not None and andre > forste, (andre, forste)
+        assert m.execute(
+            "SELECT aktiv FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND versjon='1.0.0'", (TEN, pid)).fetchone()[0] is False, \
+            "forrige versjon ble ikke deaktivert"
+        # Den forrige aktives merke er historikk og skal ikke røres.
+        assert _ts(m, "1.0.0") == forste
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_bootstrap_serialiseres_mot_styrt_aktivering():
     """Codex P1: prøven i `registrer` er verdiløs uten LÅSEN under seg.
 
