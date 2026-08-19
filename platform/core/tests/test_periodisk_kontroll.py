@@ -1256,6 +1256,64 @@ def test_gammelt_bestilt_vindu_velter_ikke_aggregatet(migrator):
 
 
 @pg
+def test_bestilte_vinduer_telles_ikke_som_nedetid(migrator):
+    """Codex P2 (runde 4): aggregatet ble SKREVET før fasiten ble lest.
+
+    `plan_nedetid_kandidater` teller hver gammel ikke-terminal rad som
+    savnet — også en `aktivt`-rad der arbeideren committet bestillingen og
+    døde. Hendelsen meldte den som savnet, og løkken rett etterpå skrev et
+    `tillat`-tick for nøyaktig det samme vinduet: to sanne kilder som sier
+    motsatt ting om det samme vinduet, og hendelsen er den bare et
+    menneske leser.
+
+    Målt som en DIFFERANSE, ikke som et absolutt tall: to identiske planer
+    leses i SAMME kandidatspørring (ett `now()`), og bare den ene har
+    idempotensraden. Da er antallet forekomster likt per konstruksjon, og
+    forskjellen er nøyaktig det ene bestilte vinduet.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `plan_nedetid_aggregert` tilbake
+    foran løkken og send `antall` uendret.
+    """
+    from plan.klassifiser import _nokkel, klassifiser_vinduer
+    rt = _rt()
+    vs = {}
+    try:
+        pid_a = _plan(rt, host="p35e-a.example", aktiver=False)
+        pid_b = _plan(rt, host="p35e-b.example", aktiver=False)
+        for pid in (pid_a, pid_b):
+            _aktiver_i_fortid(migrator, pid, dager=40)
+            vs[pid] = _syntetisk_vindu(migrator, pid, start_h=-24 * 35,
+                                       slutt_h=-24 * 35 + 4,
+                                       tilstand="aktivt", lease_h=-24 * 34)
+        # KUN plan A har fasiten: bestillingen ER committet.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,NULL,'tillat','{\"oppdrag_id\": 909191}')",
+            (TENANT, _nokkel(pid_a, vs[pid_a]), "4" * 64))
+        migrator.commit()
+        klassifiser_vinduer(rt)
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    tall = dict(migrator.execute(
+        "SELECT plan_id, (detalj->>'vinduer')::int"
+        "  FROM bestillingsplan_hendelse WHERE plan_id = ANY(%s)"
+        "   AND hendelse='nedetid_aggregert'",
+        ([pid_a, pid_b],)).fetchall())
+    tick = migrator.execute(
+        "SELECT utfall FROM bestillingsplan_tick"
+        " WHERE plan_id=%s AND vindu_start=%s",
+        (pid_a, vs[pid_a])).fetchone()
+    migrator.rollback()
+    assert tick == ("tillat",), tick
+    assert len(tall) == 2, tall
+    assert tall[pid_b] - tall[pid_a] == 1, \
+        f"det bestilte vinduet ble talt som nedetid: {tall}"
+
+
+@pg
 def test_langt_avbrudd_telles_fra_rytmen(migrator):
     """Codex P2: aggregatet må telle FOREKOMSTER, ikke bare rader.
 

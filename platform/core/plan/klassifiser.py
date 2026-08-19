@@ -125,25 +125,34 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
     for plan_id, tenant, fra, til, antall, vinduer, avkortet in gamle:
         rid = f"planklass-{str(plan_id)[:8]}"
         sett_kontekst(conn, tenant, "planklassifisering", rid)
-        conn.execute("SELECT plan_nedetid_aggregert(%s,%s,%s,%s,%s,"
-                     "'planklassifisering',%s,%s)",
-                     (tenant, plan_id, fra, til, antall, rid, avkortet))
+        # FASITEN FØR TELLINGEN (Codex P2). Aggregatet ble skrevet FØR
+        # løkken under løste vinduene sine, og `plan_nedetid_kandidater`
+        # teller hver gammel ikke-terminal rad som savnet — også en
+        # `aktivt`-rad der arbeideren committet bestillingen og døde. Den
+        # raden er dekket av den immutable idempotensraden, og løkken
+        # under skriver da et `tillat`-tick for nøyaktig det vinduet
+        # hendelsen nettopp meldte som savnet. To sanne kilder som sier
+        # motsatt ting om det samme vinduet — og hendelsen er den bare et
+        # menneske leser.
+        #
         # Vinduene terminaliseres uten enkelthendelser — aggregatet er
         # sporet. Men utfallet HENTES, det tvinges ikke (Codex P1):
-        # løkken skrev `hoppet_over` på hver eneste rad, og et vindu der
-        # arbeideren committet bestillingen og døde før terminaliseringen
-        # bærer en idempotensrad. Terminaliseringen NEKTER da `hoppet_over`
-        # — med rette — og exception-en rullet tilbake hele aggregatet og
-        # veltet hver eneste senere timerkjøring på samme rad. Fasiten
-        # leses her med nøyaktig samme kall som løkken over.
+        # terminaliseringen NEKTER `hoppet_over` for et vindu med
+        # idempotensrad — med rette — og exception-en rullet tidligere
+        # tilbake hele aggregatet og veltet hver senere timerkjøring på
+        # samme rad. Fasiten leses her med nøyaktig samme kall som løkken
+        # over.
         #
         # Hvert vindu står dessuten på sitt eget savepoint: et levende
         # forsøk eller et avvik på ÉN rad skal ikke koste planen den
-        # nedetidshendelsen den nettopp fikk. Radene som ikke ble felt,
-        # står `aktivt`/`ledig` og tas av neste sveip.
+        # nedetidshendelsen den skal ha. Radene som ikke ble felt, står
+        # `aktivt`/`ledig` og tas av neste sveip.
+        bestilt = 0
         for vs in (vinduer or ()):
             nk = _nokkel(plan_id, vs)
             v_utfall, v_oppdrag, v_kilde = _fasit(conn, tenant, plan_id, vs, nk)
+            if v_kilde is not None:
+                bestilt += 1          # BLE bestilt: ikke et savnet vindu
             conn.execute("SAVEPOINT vindu")
             try:
                 conn.execute(
@@ -156,10 +165,20 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
                     {"plan": str(plan_id), "vindu": str(vs),
                      "grunn": type(e).__name__})
             conn.execute("RELEASE SAVEPOINT vindu")
+        savnet = max(int(antall) - bestilt, 0)
+        # Ingen savnede forekomster er INGEN nedetid: da skrives ingen
+        # hendelse. Dempingen (`dekket_til`) trenger den ikke — radene er
+        # terminale nå, og en forekomst med rad kommer aldri tilbake i
+        # `manglende` (anti-joinen der ser raden, ikke tilstanden).
+        if savnet:
+            conn.execute("SELECT plan_nedetid_aggregert(%s,%s,%s,%s,%s,"
+                         "'planklassifisering',%s,%s)",
+                         (tenant, plan_id, fra, til, savnet, rid, avkortet))
         conn.commit()
-        res.setdefault("aggregert", []).append(
-            {"plan": str(plan_id), "vinduer": antall,
-             "avkortet": bool(avkortet)})
+        if savnet:
+            res.setdefault("aggregert", []).append(
+                {"plan": str(plan_id), "vinduer": savnet,
+                 "avkortet": bool(avkortet)})
 
     if any(res.get(k) for k in ("hoppet_over", "fra_idempotens", "avvik",
                                 "aggregert")):
