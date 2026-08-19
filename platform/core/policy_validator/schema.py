@@ -346,9 +346,24 @@ def _valider(policy: object) -> list[str]:
             elif vk["navn"] not in verifikatorer[vid]["betrodd_for"]:
                 feil.append(f"handling '{hid}': verifikator '{vid}' er ikke "
                             f"betrodd for vilkår '{vk['navn']}'")
-        if h["reversering"]["type"] == "irreversibel" \
-                and not (h.get("grenser") or h.get("vilkaar")):
-            feil.append(f"handling '{hid}': irreversibel uten grenser/vilkår")
+        if h["reversering"]["type"] == "irreversibel":
+            if not (h.get("grenser") or h.get("vilkaar")):
+                feil.append(f"handling '{hid}': irreversibel uten grenser/vilkår")
+            # En irreversibel handling som KAN utføres automatisk må ha minst
+            # ett vilkår. Grunnen er replay-vernet: jti-ene API-veien
+            # konsumerer kommer fra attestasjonene, og en attestasjon finnes
+            # bare fordi et vilkår krever den (`engine.py` → attestasjon_mangler).
+            # Uten vilkår er `jti_liste` tom (`kjerne.py`), ingen jti
+            # konsumeres, og den irreversible handlingen kan spilles av på
+            # nytt — mens grensene alene bare begrenser hvor stor hver enkelt
+            # avspilling er. `alltid_stopp` trenger ikke vilkåret: den
+            # utføres aldri automatisk, så det finnes ingen avspilling å verne.
+            elif h["modus"] in ("auto", "auto_med_vilkaar") \
+                    and not (h.get("vilkaar") or []):
+                feil.append(f"handling '{hid}': irreversibel handling med modus "
+                            f"'{h['modus']}' krever minst ett vilkår — uten "
+                            "attestasjon konsumeres ingen jti og replay-vernet "
+                            "finnes ikke")
         # `auto_med_vilkaar` UTEN vilkår degenererer til ren `auto` — fullmakt
         # uten port. Håndheves her i den KANONISKE validatoren (PR-014 R2), ikke
         # i en parallell validator. Typene er garantert (skjemaet passerte over).
