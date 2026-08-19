@@ -182,6 +182,9 @@ def opprett_endepunkt(tjeneste, request: Request) -> Response:
 
 
 def _overgang(tjeneste, request, plan_id, scope, funksjon, ekstra=()):
+    """`plan_id` kommer fra `{id:uuid}`-konverteren og er en `uuid.UUID` —
+    en ugyldig sti nås aldri hit (404 fra routeren, Codex P2). Svaret
+    stringifiserer den: en UUID er ikke JSON-serialiserbar."""
     def _fn(conn, tenant, bid, rid, _feilsvar, kanonisk_json):
         from db.pg import sett_kontekst
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
@@ -196,8 +199,8 @@ def _overgang(tjeneste, request, plan_id, scope, funksjon, ekstra=()):
             conn.rollback()
             return _feilsvar("plan_ulovlig_tilstand", rid)
         conn.commit()
-        return kanonisk_json({"plan_id": plan_id, "request_id": rid}, 200,
-                             {"x-request-id": rid})
+        return kanonisk_json({"plan_id": str(plan_id), "request_id": rid},
+                             200, {"x-request-id": rid})
     return _med_browserkontekst(tjeneste, request, scope, _fn)
 
 

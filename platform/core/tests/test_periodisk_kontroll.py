@@ -1475,6 +1475,30 @@ def test_http_flaten_ende_til_ende(migrator, klient):
 
 
 @pg
+def test_ugyldig_plan_id_er_404_ikke_driftsalarm(migrator, klient, capsys):
+    """Codex P2: en ugyldig plan-ID er klientinput, ikke en driftshendelse.
+
+    Rutene sto som `{id:str}`, mens funksjonene tar UUID:
+    `/v1/plan/not-a-uuid/aktiver` reiste `InvalidTextRepresentation`, ble
+    fanget som en generisk databasefeil og svarte 503 `db_utilgjengelig`
+    — med drifthendelse. `{id:uuid}` gjør stien til 404 fra ROUTEREN, før
+    noen kodevei og uten falsk alarm."""
+    cookie, csrf = _adminsesjon(sub="uuid-rute")
+    capsys.readouterr()
+    for sti in ("/v1/plan/not-a-uuid/aktiver", "/v1/plan/12345/gjenoppta",
+                "/v1/plan/x/stans"):
+        r = _post_plan(klient, cookie, csrf, sti, {})
+        assert r.status_code == 404, (sti, r.status_code, r.text)
+        assert "db_utilgjengelig" not in r.text, sti
+    from api import sesjon as sesjonmodul
+    r = klient.get("/v1/plan/not-a-uuid/historikk",
+                   cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 404, r.text
+    assert "db_utilgjengelig" not in capsys.readouterr().out, \
+        "ordinær klientinput utløste en driftshendelse"
+
+
+@pg
 @dekker("idempotensnokkel_mangler")
 def test_opprettelsen_er_replay_sikker(migrator, klient):
     """Codex P1: et tapt svar skal GJENSPILLE planen, ikke lage nummer to.

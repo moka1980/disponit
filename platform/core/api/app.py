@@ -933,11 +933,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/domeneovertakelse/saker", do_saker, methods=["GET"]),
         Route("/v1/plan", pl_liste, methods=["GET"]),
         Route("/v1/plan", pl_opprett, methods=["POST"]),
-        Route("/v1/plan/{id:str}/aktiver", pl_aktiver, methods=["POST"]),
-        Route("/v1/plan/{id:str}/gjenoppta", pl_gjenoppta,
+        # {id:uuid} og ikke {id:str} (Codex P2), av samme grunn som
+        # {id:int} på detaljrutene under: planfunksjonene tar UUID, så
+        # `/v1/plan/not-a-uuid/aktiver` reiste `InvalidTextRepresentation`,
+        # ble fanget som en generisk databasefeil og svarte 503
+        # `db_utilgjengelig` — med en drifthendelse — på helt ordinær
+        # klientinput. En ugyldig sti skal være 404 fra ROUTEREN, ikke en
+        # kodevei og aller minst en falsk alarm.
+        Route("/v1/plan/{id:uuid}/aktiver", pl_aktiver, methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/gjenoppta", pl_gjenoppta,
               methods=["POST"]),
-        Route("/v1/plan/{id:str}/stans", pl_stans, methods=["POST"]),
-        Route("/v1/plan/{id:str}/historikk", pl_historikk,
+        Route("/v1/plan/{id:uuid}/stans", pl_stans, methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/historikk", pl_historikk,
               methods=["GET"]),
         Route("/v1/domener", dm_utsted, methods=["POST"]),
         Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
@@ -1414,10 +1421,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/domeneovertakelse/saker"): "domains:adjudicate",
     ("GET",  "/v1/plan"):                    "decisions:read",
     ("POST", "/v1/plan"):                    "plan:opprett",
-    ("POST", "/v1/plan/{id:str}/aktiver"):   "plan:aktiver",
-    ("POST", "/v1/plan/{id:str}/gjenoppta"): "plan:gjenoppta",
-    ("POST", "/v1/plan/{id:str}/stans"):     "plan:opprett",
-    ("GET",  "/v1/plan/{id:str}/historikk"): "decisions:read",
+    ("POST", "/v1/plan/{id:uuid}/aktiver"):   "plan:aktiver",
+    ("POST", "/v1/plan/{id:uuid}/gjenoppta"): "plan:gjenoppta",
+    ("POST", "/v1/plan/{id:uuid}/stans"):     "plan:opprett",
+    ("GET",  "/v1/plan/{id:uuid}/historikk"): "decisions:read",
     ("POST", "/v1/domener"):                 "bestilling:opprett",
     ("POST", "/v1/modul/onboarding"):        "modules:onboard",
     ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
