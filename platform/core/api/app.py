@@ -2569,6 +2569,7 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
              json.dumps({"oppdrag_id": oppdrag_id,
                          "gjeldende_fencing": gjeldende,
                          "etter_utforelsesfrist": naa > uf,
+                         "resultat": kvittering.get("resultat"),
                          "resultathash": ny_hash}, ensure_ascii=False)))
         # 043 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
         # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
@@ -2582,7 +2583,20 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # sak gjenbrukes aldri. Oppslaget selv er gjort FØR bevaringen (se
         # over) — nettopp fordi `direkte` også avgjør at artefaktet ikke skal
         # bevares; her brukes svaret bare til sakskoblingen.
-        if menneskelig_nei:
+        #
+        # ... men FØRST må kvitteringen faktisk PÅSTÅ at handlingen skjedde
+        # (Codex P1). Hele §5-slutningen hviler på premisset «modulen rakk å
+        # utføre før nei-et nådde den». En sen kvittering med
+        # `resultat: "feilet"` sier det motsatte: ingen sideeffekt inntraff.
+        # Den gikk likevel inn her og fødte `kompensasjon_kreves` eller
+        # `irreversibel_utfort` — altså en sak som ber et menneske
+        # kompensere for noe som aldri ble gjort, eller som fører i
+        # revisjonssporet at en irreversibel handling er utført når
+        # utføreren selv rapporterte at den ikke ble det. Evidensraden over
+        # skrives fortsatt (den sene kvitteringen ER evidens, uansett
+        # utfall, og bærer nå resultatet), men SLUTNINGEN krever premisset.
+        sen_utfort = kvittering.get("resultat") == "utfort"
+        if menneskelig_nei and sen_utfort:
             ny_arsak = {"kompenserende": "kompensasjon_kreves",
                         "irreversibel": "irreversibel_utfort"}.get(
                             reversibilitet)

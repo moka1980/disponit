@@ -1922,6 +1922,121 @@ def test_P1_sen_kvittering_etter_menneskelig_avvis_naar_evidensgrenen(
 
 
 @pg
+@pytest.mark.parametrize("rev,ventet_arsak", [
+    ("kompenserende", "kompensasjon_kreves"),
+    ("irreversibel", "irreversibel_utfort"),
+])
+def test_P1_sen_feilet_kvittering_foder_ingen_reversibilitetssak(
+        migrator, miljo, token, rev, ventet_arsak):
+    """043 §5 (Codex P1 runde 3): slutningen krever premisset.
+
+    §5 utleder saken av modulkontraktens reversibilitet ut fra ÉN antakelse:
+    at modulen rakk å utføre før nei-et nådde den. En sen kvittering med
+    `resultat: "feilet"` sier tvert imot at utførelsen mislyktes — ingen
+    sideeffekt inntraff. Grenen så bare på `kansellert_aarsak` og
+    kontrakten, aldri på resultatet, og fødte derfor `kompensasjon_kreves`
+    (be et menneske kompensere for noe som aldri ble gjort) eller
+    `irreversibel_utfort` (før i revisjonssporet at en irreversibel handling
+    ER utført, stikk i strid med utførerens egen rapport).
+
+    Evidensen skal fortsatt lagres — en sen kvittering ER evidens uansett
+    utfall, og bærer nå resultatet i detaljen. Det er SLUTNINGEN som faller
+    bort.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `and sen_utfort` fra §5-grenen.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing',%s)",
+                (modul, kh, rev))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s WHERE tenant=%s AND id=%s",
+                (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # Mennesket sier nei — den EKTE oppløsningsveien.
+            _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert res == [("kansellert",)], res
+
+            # Den sene kvitteringen sier at utførelsen MISLYKTES.
+            r = c.post("/v1/oppdrag/kvittering",
+                       json=_signer_kvittering({
+                           "oppdrag_id": opp, "tenant": TENANT,
+                           "kvittering_jti": a["kvittering_jti"],
+                           "repair_operation_id": a["repair_operation_id"],
+                           "owner_claim_id": a["owner_claim_id"],
+                           "owner_generation": a["owner_generation"],
+                           "resultat": "feilet", "ressurs_id": "fak-1"}),
+                       headers=h)
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "lagret_uten_statusendring"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='sen_kvittering'", (TENANT, sak)).fetchall()
+    saker = migrator.execute(
+        "SELECT count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        "   AND arsak=%s", (TENANT, opp, ventet_arsak)).fetchone()[0]
+    oppdragsrad = migrator.execute(
+        "SELECT status, kansellert_aarsak FROM oppdrag WHERE tenant=%s"
+        " AND id=%s", (TENANT, opp)).fetchone()
+    migrator.rollback()
+
+    # Evidensen står — og sier hva utføreren faktisk rapporterte.
+    assert len(detalj) == 1, detalj
+    assert detalj[0][0].get("resultat") == "feilet", detalj
+    # ... men slutningen er ikke trukket.
+    assert saker == 0, (
+        f"en feilet sen kvittering fødte {ventet_arsak} — §5-slutningen ble"
+        " trukket uten premisset om at handlingen faktisk skjedde")
+    # Fencingen står uansett: nei-et er fortsatt nei-et.
+    assert oppdragsrad == ("kansellert", "menneskelig_avvis"), oppdragsrad
+
+
+@pg
 def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
                                                                    miljo, token):
     """En forbrukt kapabilitet er forbrukt — også for et annet oppdrag.
