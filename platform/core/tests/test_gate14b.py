@@ -612,10 +612,12 @@ def test_port15b_levende_kapabilitet_blokkerer_selv_med_kansellerbart_oppdrag(
 
 @pg
 def test_port16_definer_veiene_binder_tenanten_til_konteksten(conn):
-    """`avvis_med_opplosning` og `reversibilitet_for_oppdrag` er SECURITY
-    DEFINER og gitt direkte til runtime. `p_tenant` skal derfor bindes til
-    kallerens tenantkontekst — ikke godtas som parameter. Uten porten kunne
-    en kompromittert runtime kansellere en ANNEN tenants levende oppdrag."""
+    """`avvis_med_opplosning`, `reversibilitet_for_oppdrag` og
+    `sak_utestaaende` er SECURITY DEFINER og gitt direkte til runtime.
+    `p_tenant` skal derfor bindes til kallerens tenantkontekst — ikke godtas
+    som parameter. Uten porten kunne en kompromittert runtime kansellere en
+    ANNEN tenants levende oppdrag — eller, gjennom oppslaget, lese ut OM den
+    tenantens sak har et levende oppdrag og hvilket (Codex P2, runde 7)."""
     uid = _oppsett(conn)
     _medlem(conn, "op16")
     rop = _oppdrag(uid, "plukket")
@@ -629,7 +631,11 @@ def test_port16_definer_veiene_binder_tenanten_til_konteksten(conn):
     for sql, args in (
             ("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,'op16','r16')",
              (TEN, uid, [oid])),
-            ("SELECT reversibilitet_for_oppdrag(%s,%s)", (TEN, oid))):
+            ("SELECT reversibilitet_for_oppdrag(%s,%s)", (TEN, oid)),
+            # Oppslaget selv: 043 §4 gjorde det bredere (beslutningsopphavet),
+            # og et orakel som svarer «ja, den saken har oppdrag N i status
+            # plukket» er nettopp det tenantporten stenger.
+            ("SELECT 1 FROM sak_utestaaende(%s,%s)", (TEN, uid))):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             m.execute(sql, args)
         m.rollback()

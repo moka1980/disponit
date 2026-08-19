@@ -331,7 +331,25 @@ END $$;
 SET LOCAL ROLE disponit_m37_claimer;
 CREATE OR REPLACE FUNCTION sak_utestaaende(p_tenant TEXT, p_unntak_id BIGINT)
 RETURNS TABLE(kilde TEXT, ref TEXT, status TEXT)
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    -- TENANTPORTEN, OGSÅ HER (Codex P2, runde 7).
+    --
+    -- Funksjonen er SECURITY DEFINER eid av claimer-rollen og gitt DIREKTE
+    -- til runtime (011), men bandt aldri `p_tenant` til konteksten. Den var
+    -- allerede et smalt orakel; den nye reverse-grenen under gjorde den
+    -- bredere: med en annen tenant og en gjettet saks-id kunne en
+    -- kompromittert runtime-spørring lese ut OM den tenantens beslutningssak
+    -- har et oppdrag — inkludert oppdrags-id og status — med eierrollens
+    -- RLS-forbigåelse. Porten er den samme de andre 043-definer-veiene
+    -- bruker, og den står FØR enhver lesning. Funksjonen er derfor
+    -- plpgsql nå: en `LANGUAGE sql`-kropp har ingen plass å sette den.
+    --
+    -- Alle tre kallstedene (`unntaksbehandling` §14a-vakten og
+    -- oppløsningsveien, `lesing` sin avvis-knapp) står bak `sett_kontekst`
+    -- med nøyaktig den tenanten de sender inn.
+    PERFORM public.krev_tenantkontekst(p_tenant, 'sak_utestaaende');
+    RETURN QUERY
     SELECT DISTINCT * FROM (
         SELECT 'oppdrag'::text, o.id::text, o.status
           FROM public.oppdrag o
@@ -351,7 +369,7 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
            AND k.status NOT IN ('brukt', 'feilet')
     ) s
     ORDER BY 1, 2;
-$$;
+END $$;
 RESET ROLE;
 
 -- ------------------------------------------------------------
