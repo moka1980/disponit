@@ -146,6 +146,7 @@ CREATE OR REPLACE FUNCTION terminaliser_planvindu(
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v RECORD; v_eksisterende RECORD; v_nokkel TEXT;
+        v_fasit RECORD; v_oppdrag BIGINT := p_oppdrag;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'terminaliser_planvindu');
     -- VINDUET BINDES TIL p_tenant (Codex P1, 044 runde 3). Leddet står i
@@ -245,16 +246,41 @@ BEGIN
         -- den gamle formen ville latt hele OR-kjeden bli NULL og dermed
         -- gjort porten avhengig av trekantlogikk. Ingen port skal hvile
         -- på at en ukjent verdi tilfeldigvis ikke er sann.
+        SELECT bi.oppdrag_id, bi.svarkropp INTO v_fasit
+          FROM public.bestilling_idempotens bi
+         WHERE bi.tenant = p_tenant
+           AND bi.idempotensnokkel = v_nokkel
+           AND bi.beslutning = p_utfall;
         IF p_claim IS NOT NULL
            OR (v.tilstand = 'aktivt' AND v.lease_utloper > now())
-           OR NOT EXISTS (SELECT 1 FROM public.bestilling_idempotens bi
-                           WHERE bi.tenant = p_tenant
-                             AND bi.idempotensnokkel = v_nokkel
-                             AND bi.beslutning = p_utfall) THEN
+           OR NOT FOUND THEN
             RAISE EXCEPTION 'terminaliser_planvindu: utfallet krever et '
                 'levende claim eller en verifisert idempotensrad'
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
+        -- OPPDRAGET HENTES FRA FASITEN, DET PÅSTÅS IKKE (Codex P2 på
+        -- #106). Porten over verifiserte `beslutning` mot den immutable
+        -- raden — og skrev deretter kallerens `p_oppdrag` inn i ticket.
+        -- Halve raden var altså bevist og halve trodd, på nøyaktig den
+        -- veien som per §5 IKKE eier noe claim og derfor ikke kan vite
+        -- noe. Et tick med feil eller oppdiktet `oppdrag_id` er ikke
+        -- bare unøyaktig evidens: `planer_gjentatt_uten_resultat` leser
+        -- feltet for å finne resultatet, og et `tillat` som peker på et
+        -- oppdrag uten resultat teller som «uten resultat» — tre av dem
+        -- og planen pauses, en pause bare et menneske kan oppheve.
+        --
+        -- Avledningen er den samme som klassifisererens `_fasit`:
+        -- kolonnen først, og `svarkropp->>'oppdrag_id'` som fallback for
+        -- rader skrevet før kolonnen ble fylt. Fallbacken er vaktet mot
+        -- ikke-numerisk innhold — `svarkropp` er fritt JSONB, og en
+        -- castfeil her ville veltet gjenopprettingen i stedet for å
+        -- utføre den. `p_oppdrag` ignoreres på denne veien med vilje:
+        -- raden ER fasiten, og et argument som spriker fra den er per
+        -- definisjon det som ikke skal vinne.
+        v_oppdrag := coalesce(
+            v_fasit.oppdrag_id,
+            CASE WHEN v_fasit.svarkropp->>'oppdrag_id' ~ '^[0-9]+$'
+                 THEN (v_fasit.svarkropp->>'oppdrag_id')::BIGINT END);
     END IF;
     -- TICK-INNSETTINGEN DELER PLANLÅSEN MED PAUSEBESLUTNINGEN
     -- (Codex P2 på #105). Sveipene bygde hele sin serialisering på
@@ -296,7 +322,7 @@ BEGIN
     INSERT INTO public.bestillingsplan_tick
         (plan_id, tenant, vindu_start, idempotensnokkel, utfall,
          oppdrag_id, detalj)
-    VALUES (p_plan, p_tenant, p_vindu, v_nokkel, p_utfall, p_oppdrag,
+    VALUES (p_plan, p_tenant, p_vindu, v_nokkel, p_utfall, v_oppdrag,
             p_detalj);
     RETURN 'terminalisert';
 END $$;

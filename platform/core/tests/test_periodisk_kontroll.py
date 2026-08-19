@@ -1030,6 +1030,72 @@ def test_fremmed_idempotensnokkel_terminaliserer_ikke(migrator):
 
 
 @pg
+def test_gjenoppretting_henter_oppdraget_fra_fasiten(migrator):
+    """Codex P2 på #106: halve raden var bevist og halve trodd.
+
+    Fasitporten verifiserer `beslutning` mot den immutable
+    idempotensraden — og skrev deretter kallerens `p_oppdrag` inn i
+    ticket. Nettopp denne veien eier per §5 INTET claim og kan derfor
+    ikke vite noe: den kunne feste et vilkårlig eller oppdiktet
+    `oppdrag_id` på en ekte beslutning.
+
+    Følgen er ikke bare unøyaktig evidens. `planer_gjentatt_uten_resultat`
+    leser feltet for å finne resultatet; et `tillat` som peker på et
+    oppdrag uten resultat teller som «uten resultat», og tre av dem pauser
+    planen — en pause bare et menneske kan oppheve.
+
+    Begge kildene måles: kolonnen, og `svarkropp`-fallbacken for rader der
+    kolonnen er tom.
+    """
+    from plan.klassifiser import _nokkel
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p106-p2.example")
+        # Kolonnen bærer oppdraget; kalleren påstår et helt annet.
+        vs = _syntetisk_vindu(migrator, pid, start_h=-8, slutt_h=-4,
+                              tilstand="ledig")
+        # Fallbacken: kolonnen er tom, svarkroppen bærer det.
+        vs2 = _syntetisk_vindu(migrator, pid, start_h=-14, slutt_h=-10,
+                               tilstand="ledig")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,606060,'tillat','{}')",
+            (TENANT, _nokkel(pid, vs), "7" * 64))
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,NULL,'tillat','{\"oppdrag_id\": 707070}')",
+            (TENANT, _nokkel(pid, vs2), "8" * 64))
+        migrator.commit()
+
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,'tillat',"
+            "999999,NULL)",
+            (TENANT, pid, vs, _nokkel(pid, vs))).fetchone()[0] \
+            == "terminalisert"
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,'tillat',"
+            "999999,NULL)",
+            (TENANT, pid, vs2, _nokkel(pid, vs2))).fetchone()[0] \
+            == "terminalisert"
+        rt.commit()
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    tick = dict(migrator.execute(
+        "SELECT vindu_start, oppdrag_id FROM bestillingsplan_tick"
+        " WHERE plan_id=%s", (pid,)).fetchall())
+    migrator.rollback()
+    assert tick[vs] == 606060, tick
+    assert tick[vs2] == 707070, tick
+
+
+@pg
 def test_spredning_og_tak(migrator):
     """Portene 13 og 36: forfallsminuttet sprer jevnt (maks-andel ≤ 0,10,
     jf. evidensgrensen), og taket FORSINKER overskuddet — det
