@@ -1799,6 +1799,109 @@ def test_uten_resultat_revalideres_under_planlaasen(migrator):
     migrator.rollback()
 
 
+def _promoter_artefakt(conn, key_id, oppdrag_id):
+    """Et promotert artefakt for oppdraget — UTEN commit.
+
+    Nyttelasten er syntetisk (predikatet leser bare tilstanden), men
+    lengdene følger `artefakt_payload_struktur`. Poenget er overgangen
+    til `promotert`: den er det `artefakt_resultatlas` henger på.
+    """
+    _sett_kontekst(conn, TENANT)
+    kh = conn.execute(
+        "SELECT kontrakt_hash FROM artefakttype_register"
+        " WHERE artefakttype='test.onboarding.kvittering'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype, modul_id,"
+        " release_id, kontraktversjon, kontrakt_hash, module_epoch, tilstand,"
+        " storrelse_bytes, klartekst_sha256, ciphertext, nonce, dek_ref,"
+        " kapabilitet_jti, promotert_ts)"
+        " VALUES (%s,%s,'test.onboarding.kvittering','m_test_onboarding',"
+        " 'r1',1,%s,0,'promotert',2,%s,%s,%s,%s,%s,now())",
+        (TENANT, oppdrag_id, kh, "0" * 64, b"c" * 32, b"n" * 12, key_id,
+         "jti-" + secrets.token_hex(8)))
+
+
+@pg
+def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
+    """Codex P2 (runde 4): planlåsen alene serialiserer bare SVEIPENE.
+
+    Revalideringen under planlåsen flyttet kappløpet, den fjernet det
+    ikke: promoteringen tar ingen planlås — den låser artefaktraden og
+    ingenting annet — så en promotering som committer ETTER predikatet,
+    men FØR pausen, ga fortsatt en plan pauset som
+    `gjentatt_uten_resultat` med et promotert tredje resultat. En pause
+    bare et menneske kan oppheve.
+
+    Låsen ligger nå på FAKTUMET: `artefakt_resultatlas` tar
+    `oppdragsresultat:<oppdrag_id>` i selve overgangen til `promotert`,
+    og `pause_gjentatt_uten_resultat` tar de samme nøklene før predikatet
+    leses. Målt deterministisk: promoteringen står ÅPEN (triggeren har
+    tatt nøkkelen, raden er usynlig for alle andre), og sveipen må vente
+    på den — for så å se resultatet og la planen stå.
+
+    MUTASJONEN SOM DREPER DENNE: fjern triggeren, eller
+    `pg_advisory_xact_lock`-leddet i `pause_gjentatt_uten_resultat`. Da
+    løper sveipen forbi den åpne promoteringen og pauser planen.
+    """
+    import threading
+    import time
+    from db import kryptering
+    rt = _rt()
+    blokk = _mig()
+    svar = {}
+    try:
+        _sett_kontekst(migrator, TENANT)
+        key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(
+            migrator, TENANT)
+        migrator.commit()
+        pid = _plan(rt, host="p22d.example")
+        oids = []
+        for i in range(3):
+            oid, _logg = _beslutningsoppdrag(rt, migrator)
+            oids.append(oid)
+            vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
+                                  slutt_h=-26 - 24 * i)
+            _syntetisk_tick(migrator, pid, vs, "tillat", oppdrag_id=oid)
+        # Uten promoteringen ER planen en kandidat — ellers måler testen
+        # ingenting.
+        assert migrator.execute(
+            "SELECT count(*) FROM planer_gjentatt_uten_resultat()"
+            " WHERE plan_id=%s", (pid,)).fetchone()[0] == 1
+        migrator.rollback()
+
+        _promoter_artefakt(blokk, key_id, oids[0])   # åpen: ingen commit
+
+        def sveip():
+            c = _rt()
+            try:
+                _sett_kontekst(c, TENANT)
+                svar["pauset"] = c.execute(
+                    "SELECT pause_gjentatt_uten_resultat(%s,%s,'plansveip',"
+                    "'r-sveip')", (TENANT, pid)).fetchone()[0]
+                c.commit()
+            finally:
+                c.close()
+
+        t = threading.Thread(target=sveip)
+        t.start()
+        time.sleep(1.5)
+        assert "pauset" not in svar, \
+            "sveipen løp forbi en åpen promotering — låsen deles ikke"
+        blokk.commit()
+        t.join(timeout=20)
+        assert not t.is_alive(), "sveipen kom aldri forbi låsen"
+    finally:
+        blokk.close()
+        rt.close()
+    assert svar.get("pauset") is False, svar
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT status FROM bestillingsplan WHERE plan_id=%s",
+        (pid,)).fetchone()[0] == "aktiv", \
+        "planen ble pauset enda det tredje resultatet ble promotert"
+    migrator.rollback()
+
+
 @pg
 def test_et_brudd_bryter_stripen_uten_resultat(migrator):
     """Codex P2: strekken måles på de tre SISTE tickene, ikke de tre siste

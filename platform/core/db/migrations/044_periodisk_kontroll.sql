@@ -1100,6 +1100,24 @@ GRANT EXECUTE ON FUNCTION planer_gjentatt_uten_resultat() TO disponit;
 -- tatt først leser revalideringen et ferskt øyeblikksbilde (READ
 -- COMMITTED), og en promotering som committer mens vi venter på låsen er
 -- synlig når vi endelig spør.
+--
+-- PLANLÅSEN ALENE ER IKKE NOK (Codex P2, andre runde). Den serialiserer
+-- plansveipene mot hverandre, men promoteringen tar den ikke — den låser
+-- bare artefaktraden (016) — så kappløpet flyttet seg bare: en
+-- promotering som committer ETTER revalideringen, men FØR pausen, gir
+-- fortsatt en plan pauset som `gjentatt_uten_resultat` med et promotert
+-- tredje resultat. Predikatet og promoteringen må dele en lås.
+--
+-- Låsen ligger på FAKTUMET, ikke på kodeveien: `artefakt_resultatlas`
+-- (nederst i denne migrasjonen) tar `oppdragsresultat:<oppdrag_id>` i
+-- selve overgangen til `promotert`, uansett hvilken funksjon eller
+-- fremtidig vei som skriver den. Her tas nøkkelen for de tre siste
+-- tickenes oppdrag FØR predikatet leses, og holdes til commit: en
+-- promotering underveis venter til pausen er avgjort, og en promotering
+-- som var i gang venter vi selv på og ser resultatet av.
+--
+-- Låserekkefølgen er plan → oppdragsresultat → (pausens varsellås).
+-- Promoteringsveien tar aldri planraden, så syklusen finnes ikke.
 CREATE OR REPLACE FUNCTION pause_gjentatt_uten_resultat(
     p_tenant TEXT, p_plan UUID, p_aktor TEXT, p_request_id TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
@@ -1112,6 +1130,16 @@ BEGIN
     IF NOT FOUND THEN
         RETURN false;
     END IF;
+    -- Stigende nøkkelrekkefølge: to sveip kan ikke ta de samme to
+    -- nøklene i motsatt orden (oppdrag hører uansett til ÉN plan).
+    PERFORM pg_advisory_xact_lock(l.n) FROM (
+        SELECT DISTINCT hashtextextended(
+                   'oppdragsresultat:' || t.oppdrag_id::text, 0) AS n
+          FROM (SELECT tk.oppdrag_id FROM public.bestillingsplan_tick tk
+                 WHERE tk.plan_id = p_plan AND tk.tenant = p_tenant
+                   AND tk.oppdrag_id IS NOT NULL
+                 ORDER BY tk.vindu_start DESC LIMIT 3) t
+         ORDER BY 1) l;
     IF NOT EXISTS (SELECT 1 FROM public.planer_gjentatt_uten_resultat() k
                     WHERE k.plan_id = p_plan AND k.tenant = p_tenant) THEN
         RETURN false;      -- et resultat kom mens vi ventet på låsen
@@ -1572,3 +1600,42 @@ GRANT SELECT ON bestilling_idempotens TO disponit_m37_claimer;
 -- migrator-eid (016), så granten gis direkte — et SET ROLE-vindu her
 -- ville vært en no-op-grant fra en ikke-eier.
 GRANT SELECT ON artefakt TO disponit_m37_claimer;
+
+-- ------------------------------------------------------------
+-- 12. Den delte låsen mellom promotering og pausepredikatet (Codex P2)
+-- ------------------------------------------------------------
+-- `pause_gjentatt_uten_resultat` spør om det finnes et promotert
+-- artefakt for de tre siste tickene. Promoteringen skjer på en HELT
+-- uavhengig vei (kvitteringsendepunktet → `promoter_artefakt`), som
+-- låser artefaktraden og ingenting annet. Uten en felles lås kan
+-- promoteringen committe i mellomrommet mellom predikatet og pausen, og
+-- planen pauses som «tre ganger uten resultat» enda det tredje
+-- resultatet forelå — en pause bare et menneske kan oppheve.
+--
+-- Låsen tas i OVERGANGEN, ikke i en funksjon: en trigger på `artefakt`
+-- fanger hver vei inn til `tilstand = 'promotert'` (INSERT så vel som
+-- UPDATE), også en fremtidig kodevei som ikke går via
+-- `promoter_artefakt`. Alternativet — å legge `pg_advisory_xact_lock`
+-- inn i `promoter_artefakt` — ville krevd en kopi av en
+-- sikkerhetskritisk 016-funksjon her, og kopien ville vunnet over
+-- originalen ved en senere retting der.
+--
+-- Nøkkelen er per OPPDRAG, ikke per plan: promoteringen kjenner
+-- oppdraget, ikke planen, og pausesiden slår opp nøyaktig de tre
+-- oppdragene predikatet hviler på. Låsen er en xact-lås, så den slippes
+-- først i commit/rollback — nøyaktig levetiden vinduet krever.
+--
+-- Rekkefølgen: promoteringen tar artefaktraden og så nøkkelen; pausen
+-- tar planraden og så nøkkelen. Ingen av dem tar den andres radlås, så
+-- rekkefølgen kan ikke lukke seg til en syklus.
+CREATE OR REPLACE FUNCTION artefakt_resultatlas()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('oppdragsresultat:' || NEW.oppdrag_id::text, 0));
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS artefakt_resultatlas ON artefakt;
+CREATE TRIGGER artefakt_resultatlas BEFORE INSERT OR UPDATE ON artefakt
+    FOR EACH ROW WHEN (NEW.tilstand = 'promotert')
+    EXECUTE FUNCTION artefakt_resultatlas();
