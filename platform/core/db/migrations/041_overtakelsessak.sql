@@ -1580,6 +1580,37 @@ DO $$ BEGIN
   END;
 END $$;
 
+-- 17.1 …OG MEDLEMSKAPET MÅLES ETTERPÅ (Codex P1).
+--
+-- Fallbacken over svelger `insufficient_privilege` med vilje, og det er
+-- riktig — men den gjør samtidig nøyaktig det §0 avskaffet: uten en måling
+-- ETTERPÅ kan 041 bli registrert på en base der `disponit` IKKE er medlem
+-- med SET. Da er policyen og grantet fra §9 på plass, alt ser komplett ut,
+-- og likevel feiler BEGGE API-veiene på `SET LOCAL ROLE
+-- disponit_domains_adjudicator` — køen og attestasjonsveien. Hver
+-- overtakelsessak uavgjørbar, uten en eneste rød indikator. Tilstanden er
+-- ikke hypotetisk: `oppsett-postgresql.sh` oppretter rollen og gir
+-- medlemskapet i to separate psql-kall, så et avbrudd mellom dem etterlater
+-- nettopp den.
+--
+-- Målingen står HER og ikke i §0, fordi §17 selv kan ha reparert
+-- tilstanden: en migrator med admin på rollen setter medlemskapet i linjen
+-- over. Det er SLUTTILSTANDEN som er kontrakten, ikke utgangspunktet.
+DO $$
+DECLARE v_set BOOLEAN;
+BEGIN
+    SELECT m.set_option INTO v_set
+      FROM pg_auth_members m
+      JOIN pg_roles r ON r.oid = m.roleid
+      JOIN pg_roles b ON b.oid = m.member
+     WHERE r.rolname = 'disponit_domains_adjudicator'
+       AND b.rolname = 'disponit';
+    IF v_set IS NOT TRUE THEN
+        RAISE EXCEPTION
+            'runtime-rollen disponit er ikke medlem av disponit_domains_adjudicator med SET — kjør deploy/staging/oppsett-postgresql.sh (idempotent). Uten medlemskapet ville 041 blitt registrert som kjørt mens BEGGE adjudikasjonsveiene feilet på SET LOCAL ROLE, og hver overtakelsessak stått uavgjørbar.';
+    END IF;
+END $$;
+
 -- ------------------------------------------------------------
 -- 18. claim_neste_sak — KOPI av gjeldende kropp (dumpet fra basen),
 --     diff-endret: kandidatvalget inn i en MATERIALIZED CTE.

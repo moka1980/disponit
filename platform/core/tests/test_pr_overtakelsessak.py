@@ -1316,13 +1316,26 @@ def test_adjudikatorrollen_er_en_forutsetning_ikke_en_mulighet():
     assert sql.count("CREATE POLICY domeneovertakelse_adjudikator") == 1
     assert "GRANT SELECT ON unntak TO disponit_domains_adjudicator" in sql
 
-    # ... og utrullingen stopper før den rører noe.
+    # ... og MEDLEMSKAPET måles etter §17s fallback (Codex P1, runde 7):
+    # at rollen finnes er ikke det samme som at den kan brukes.
+    medlem = sql.index("pg_auth_members")
+    assert medlem > sql.index("GRANT disponit_domains_adjudicator TO disponit"), \
+        "medlemskapet måles før §17 kan ha reparert det"
+    assert "RAISE EXCEPTION" in sql[medlem:medlem + 900], \
+        "et manglende medlemskap feller ikke migrasjonen"
+
+    # ... og utrullingen stopper før den rører noe — på BEGGE fakta.
     opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
     assert "disponit_domains_adjudicator" in opp, \
         "opp.sh har ingen port på rollen — migrasjonen ville veltet i steg 6"
+    assert "pg_auth_members" in opp, \
+        "opp.sh måler bare at rollen finnes, ikke at runtime kan SET ROLE"
     assert (opp.index("disponit_domains_adjudicator")
             < opp.index("HERFRA MUTERES SYSTEMET")), \
         "porten står etter første mutasjon — da er den ingen preflight"
+    assert (opp.index("pg_auth_members")
+            < opp.index("HERFRA MUTERES SYSTEMET")), \
+        "medlemskapsporten står etter første mutasjon"
 
 
 @pg
@@ -1339,6 +1352,18 @@ def test_adjudikatoren_har_lesretten_migrasjonen_lovet(migrator):
         "                           'unntak','SELECT')").fetchone()[0]
     migrator.rollback()
     assert lese is True, "adjudikatoren har ikke SELECT på unntak"
+    # ... og runtime kan faktisk BLI adjudikatoren: begge API-veiene gjør
+    # `SET LOCAL ROLE`, og uten medlemskap MED SET feiler de begge mens
+    # policyen og grantet står der og ser komplette ut (Codex P1).
+    sett = migrator.execute(
+        "SELECT m.set_option FROM pg_auth_members m"
+        "  JOIN pg_roles r ON r.oid = m.roleid"
+        "  JOIN pg_roles b ON b.oid = m.member"
+        " WHERE r.rolname='disponit_domains_adjudicator'"
+        "   AND b.rolname='disponit'").fetchone()
+    migrator.rollback()
+    assert sett is not None and sett[0] is True, \
+        "runtime kan ikke SET ROLE til adjudikatoren — køen er uavgjørbar"
 
 
 @pg
