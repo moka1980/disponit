@@ -34,6 +34,11 @@ globalThis.fetch = async (url, opts) => {
     return { ok: true, status: 200, json: async () => ({
       plattformvilkar: [{ vilkar_type: "domenekontroll_verifisert",
                           maldomene: "web_hostname" },
+                        // To registrerte navn for SAMME domene: serverens
+                        // prøve er eksistensiell, så hvert av dem dekker
+                        // kravet alene.
+                        { vilkar_type: "domene_eier_bekreftet",
+                          maldomene: "web_hostname" },
                         // Et registrert plattformvilkår for et ANNET domene:
                         // det er aldri denne handlingens krav, og skal aldri
                         // låses her.
@@ -1453,6 +1458,65 @@ test("Vilkår: plattformvilkåret er LÅST med aria-disabled og forklaring",
       [...navnValg.querySelectorAll("option")].map((o) => o.value),
       ["domenekontroll_verifisert", "eget_vilkar"]);
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Codex P2: låsen verner KRAVET, ikke raden. `_krev_malautorisasjonsvilkar`
+// er et `SELECT 1`: den spør om handlingen HAR et målautorisasjonsvilkår for
+// domenet sitt. Bærer den to, godtar serveren gjerne at det ene fjernes —
+// men låste flaten begge, kunne en dublett eller et foreldet navn aldri
+// ryddes, og eier møtte et nei porten aldri sa.
+test("Vilkår: overflødige plattformvilkår kan fjernes, det siste ikke",
+  async () => {
+    // To ULIKE registrerte navn for samme domene, og en dublett i tillegg:
+    // tre rader som hver for seg dekker kravet.
+    for (const [andre, merkelapp] of [
+      [{ navn: "domene_eier_bekreftet", verifikator: "v_domenekontroll" },
+       "to ulike navn"],
+      [{ navn: "domenekontroll_verifisert", verifikator: "v_annen" },
+       "dublett"],
+    ]) {
+      const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+      start.verifikatorer = {
+        v_domenekontroll: { beskrivelse: "Plattformens domenekontroll",
+          betrodd_for: ["domenekontroll_verifisert",
+            "domene_eier_bekreftet"] },
+        v_annen: { beskrivelse: "En annen",
+          betrodd_for: ["domenekontroll_verifisert"] },
+      };
+      start.handlinger[0].vilkaar = [
+        { navn: "domenekontroll_verifisert",
+          verifikator: "v_domenekontroll" },
+        andre,
+      ];
+      const h = nyHoved();
+      visPolicyeditor(h, ctx(), { startPolicy: start });
+      await vent(() => h.querySelector(".editor-seksjon"));
+      gaaTilFane(h, t("ui.editor.fane.handlinger"));
+      await vent(() => h.textContent.includes(
+        t("ui.editor.vilkaar_plattform_forklaring")));
+      let rader = [...h.querySelectorAll(".vilkaar-rad")];
+      assert.equal(rader.length, 2, merkelapp);
+      // INGEN av dem er låst: kravet står igjen uansett hvilken som går.
+      // Og de er fjern-knapper, ikke reparasjonsnedtrekk — radene feiler
+      // ingenting, de er bare overflødige.
+      for (const rad of rader) {
+        assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+          `${merkelapp}: en overflødig rad var låst`);
+        assert.ok(!rad.querySelector("select"),
+          `${merkelapp}: en velformet rad ble tilbudt reparasjon`);
+        assert.equal(rad.querySelector("button").textContent,
+          t("ui.editor.vilkaar_fjern"), merkelapp);
+      }
+      // Fjern den ene — den som blir igjen bærer kravet alene, og låses.
+      rader[1].querySelector("button").click();
+      await vent(() => h.querySelectorAll(".vilkaar-rad").length === 1);
+      rader = [...h.querySelectorAll(".vilkaar-rad")];
+      assert.ok(rader[0].querySelector('[aria-disabled="true"]'),
+        `${merkelapp}: den siste raden mistet låsen`);
+      assert.ok(!rader[0].querySelector("button"),
+        `${merkelapp}: den siste raden kunne fjernes`);
+      assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    }
   });
 
 // Codex P2: låsen gjelder IDENTITETEN (navnet + verifikatoren), ikke

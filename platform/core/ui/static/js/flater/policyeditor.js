@@ -645,6 +645,28 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
   const verifikatorer = (policy && typeof policy.verifikatorer === "object"
     && policy.verifikatorer) || {};
   const vids = Object.keys(verifikatorer).sort();
+  // LÅSEN VERNER KRAVET, IKKE RADEN (Codex P2). Serverens prøve er
+  // EKSISTENSIELL — `SELECT 1 ... vilkar_type = ANY(navn)`: den spør om
+  // handlingen HAR et målautorisasjonsvilkår for domenet sitt, ikke hvilke.
+  // Bærer handlingen to slike — dubletter, eller to registrerte navn for
+  // samme domene — godtar serveren gjerne at det ene fjernes. Låste vi
+  // begge, kunne en overflødig eller foreldet rad aldri ryddes, og flaten
+  // nektet en endring porten ville tatt imot.
+  //
+  // TELLES BLANT DE VELFORMEDE. Porten teller riktignok på navnet alene,
+  // men en rad skjemaporten avviser gjør ikke utkastet gyldig, og kan
+  // derfor ikke være det som gjør en ANNEN rad overflødig: fjernet eier
+  // den velformede og satt igjen med den ødelagte, hadde hun byttet en
+  // gyldig policy mot en hun uansett må reparere. Den ødelagte har sin
+  // egen vei ut (reparasjon eller fjerning), så ingen blindgate oppstår
+  // av at den ikke teller — repareres den, blir begge fjernbare.
+  const dekkerKravet = (x) => {
+    const n = vilkaarNavn(x);
+    return n !== null && krevdDomene !== null
+      && plattform.get(n) === krevdDomene
+      && vilkaarErVelformet(x, verifikatorer);
+  };
+  const antallKrevde = vilkaar.filter(dekkerKravet).length;
 
   const rader = vilkaar.map((v, i) => {
     const navn = vilkaarNavn(v);
@@ -687,10 +709,14 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
     // (Codex P2): en rad med ugyldig `min` eller et ukjent felt avvises av
     // serveren p\u00e5 strukturlaget, og en l\u00e5s p\u00e5 den gjorde utkastet like
     // ureparerbart som navnel\u00e5sen gjorde. Se `vilkaarErVelformet`.
-    const kandidater = (plattformNavn && !laastAlt)
+    const velformet = vilkaarErVelformet(v, verifikatorer);
+    const kandidater = (plattformNavn && !velformet && !laastAlt)
       ? betroddeFor(navn, verifikatorer) : [];
+    // `antallKrevde < 2`: er raden den ENESTE som bærer kravet, felles den
+    // og kravet sammen — og da låses den. Finnes det en til, står kravet
+    // igjen etter fjerningen, og raden er en helt vanlig redigerbar rad.
     const erPlattform = laastAlt
-      || (plattformNavn && vilkaarErVelformet(v, verifikatorer));
+      || (plattformNavn && velformet && antallKrevde < 2);
     const rad = el("li", { class: "vilkaar-rad" },
       el("span", {},
         el("code", { text: navn || t("ui.editor.vilkaar_ulesbart") }),
