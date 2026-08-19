@@ -192,6 +192,16 @@ GRANT EXECUTE ON FUNCTION plan_vindu_idempotensnokkel(UUID, TIMESTAMPTZ)
 -- alt holder rader på logg/oppdrag/kvote) uten å kjøpe noe: skulle en ny
 -- arbeider rekke å overta vinduet mens bestillingen pågår, er det gamle
 -- forsøket utgjerdet, og at fasiten da avvises er nøyaktig riktig.
+--
+-- DET UTGJERDEDE FORSØKET ER INGEN NY FEILVEI. En arbeider som bruker
+-- lengre tid enn planleasen mister vinduet til en ny arbeider, og det
+-- gamle forsøket ble ALT avvist med unntak — av fencingen i
+-- `terminaliser_planvindu`, som er kallet rett etter dette. Porten her
+-- flytter bare avvisningen noen linjer fram, og gjør den billigere: den
+-- kommer FØR commiten, så det utgjerdede forsøkets oppdrag rulles tilbake
+-- i stedet for å bli stående uten sitt tick. Evidensen går ikke tapt —
+-- den nye arbeideren gjenspiller samme kjernenøkkel (ingen ny kvote) og
+-- skriver fasiten under SITT claim.
 CREATE OR REPLACE FUNCTION registrer_bestilling_idempotens(
     p_tenant TEXT, p_nokkel TEXT, p_intensjonshash TEXT, p_oppdrag BIGINT,
     p_beslutning TEXT, p_svarkropp JSONB,
