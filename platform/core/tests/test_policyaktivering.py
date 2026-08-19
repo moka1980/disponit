@@ -383,6 +383,71 @@ def test_styrt_aktivering_kan_ikke_omgaas_av_oppsettsveien():
 
 
 @pg
+def test_bootstrap_stengt_ogsaa_naar_styrt_versjon_er_slettet():
+    """Codex P1: vakten må måle HENDELSEN, ikke den aktive raden.
+
+    `slett_ubrukt_policy` sletter en ubrukt versjon — også en styrt
+    aktivert en — mens `policyaktivering` er immutabel og blir stående.
+    Spurte vakten `policyer` om den nåværende aktive raden bar
+    `aktivert_av_operasjon`, fant den ingenting etter en slik sletting, og
+    oppsettsveien åpnet seg igjen for en serie som for lengst er inne i
+    lineagen: en oppsettskjøring kunne gjenskape samme policy som
+    bootstrap, og den forrige hendelsen ville ligget frakoblet ved siden av.
+
+    Kontroll: sett prøven tilbake til `policyer ... aktiv AND
+    aktivert_av_operasjon IS NOT NULL`, så går registreringen gjennom og
+    testen blir rød.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    uid, pid, v = _full_aktivering(pakrevd=1)
+
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        ih = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+
+    # Versjonen slettes — den er ubrukt — og etter dette finnes det INGEN
+    # levende rad for serien i det hele tatt.
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                         (TEN, pid, v, ih)).fetchone()[0] == 1
+        r.commit()
+    finally:
+        r.close()
+
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert m.execute(
+            "SELECT count(*) FROM policyer WHERE tenant=%s AND policy_id=%s",
+            (TEN, pid)).fetchone()[0] == 0, "forutsetningen holder ikke"
+        # Både et NYTT versjonsnummer og det GJENSKAPTE er stengt: det er
+        # serien som har gått inn i lineagen, ikke det enkelte nummeret.
+        for nr in ("9.9.9", v):
+            mal["meta"]["versjon"] = nr
+            with pytest.raises(pr.PolicyKorrupt) as ei:
+                pr.registrer(m, TEN, mal, "produksjon")
+            assert "fire-øyne" in str(ei.value), str(ei.value)
+            m.rollback()
+            m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+    finally:
+        m.close()
+
+
+@pg
 def test_bootstrap_serialiseres_mot_styrt_aktivering():
     """Codex P1: prøven i `registrer` er verdiløs uten LÅSEN under seg.
 

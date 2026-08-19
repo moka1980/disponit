@@ -226,12 +226,24 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         #    kunne ikke se forskjell. `aktiveringskilde='bootstrap'` sier
         #    det raden faktisk er.
         #
-        # 2. Aldri gå FORBI en styrt aktivering. Fantes det alt en aktiv
-        #    versjon med `aktivert_av_operasjon`, er policyen i kraft
-        #    gjennom fire-øyne-veien, og en oppsettskjøring som bytter den
-        #    ut ville tatt den ut av lineagen uten at noe sa fra — nøyaktig
-        #    den omgåingen 047 er til for å hindre. Da er svaret at
-        #    aktivering er en styrt handling, ikke en registrering.
+        # 2. Aldri gå FORBI en styrt aktivering. Har policyen ENGANG vært
+        #    aktivert gjennom fire-øyne-veien, er serien inne i lineagen,
+        #    og en oppsettskjøring som setter inn sin egen hendelsesløse
+        #    rad ville tatt den ut igjen uten at noe sa fra — nøyaktig den
+        #    omgåingen 047 er til for å hindre. Da er svaret at aktivering
+        #    er en styrt handling, ikke en registrering.
+        #
+        # PRØVEN MÅLER HENDELSEN, IKKE DEN AKTIVE RADEN (Codex P1). En
+        # tidligere utgave spurte `policyer` om den NÅVÆRENDE aktive raden
+        # bar `aktivert_av_operasjon`. Det er en tilstand som kan forsvinne:
+        # `slett_ubrukt_policy` (032) sletter en ubrukt versjon — også en
+        # styrt aktivert en — mens `policyaktivering` er immutabel og blir
+        # stående. Etter en slik sletting fant prøven ingen aktiv styrt rad,
+        # og oppsettsveien åpnet seg igjen for en serie som for lengst har
+        # gått inn i lineagen: en oppsettskjøring kunne gjenskape samme
+        # policy/versjon som bootstrap, historikken ville vist den som
+        # bootstrap, og den forrige aktiveringshendelsen ville ligget
+        # frakoblet ved siden av. Døren stenges av det som ikke kan slettes.
         #
         # ANKERRADEN LÅSES FØRST (Codex P1). Den delte advisory-låsen over
         # serialiserer denne veien mot SLETTINGEN, som tar den eksklusive
@@ -258,17 +270,22 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
             " AND policy_id=%s FOR UPDATE", (tenant, pid))
         # Egen setning ETTER låsen: under READ COMMITTED tar den et ferskt
         # snapshot, så en aktivering som committet mens vi ventet på låsen
-        # ER synlig her.
+        # ER synlig her. `policyaktivering` leses direkte: `registrer` er
+        # oppsettsveien og kjører på migratorforbindelsen (se docstringen),
+        # og tenantporten står — `sett_tenant` øverst satte GUC-en RLS-
+        # policyen på tabellen måler mot.
         styrt = conn.execute(
-            "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s"
-            " AND aktiv AND aktivert_av_operasjon IS NOT NULL",
+            "SELECT versjon, decision_operation_id FROM policyaktivering"
+            " WHERE tenant=%s AND policy_id=%s"
+            " ORDER BY aktivert_ts DESC, decision_operation_id DESC LIMIT 1",
             (tenant, pid)).fetchone()
         if styrt is not None:
             raise PolicyKorrupt(
                 [f"kan ikke registrere versjon {versjon} som aktiv:"
-                 f" {pid}@{styrt[0]} er aktivert gjennom fire-øyne-veien."
-                 " En ny versjon må aktiveres samme vei (policyadmin),"
-                 " ikke gjennom oppsettsregistreringen"], policy)
+                 f" {pid} er aktivert gjennom fire-øyne-veien"
+                 f" ({pid}@{styrt[0]}, operasjon {styrt[1]}). En ny versjon"
+                 " må aktiveres samme vei (policyadmin), ikke gjennom"
+                 " oppsettsregistreringen"], policy)
         conn.execute("UPDATE policyer SET aktiv=false"
                      " WHERE tenant=%s AND policy_id=%s AND aktiv",
                      (tenant, pid))

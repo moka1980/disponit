@@ -185,8 +185,11 @@ CREATE CONSTRAINT TRIGGER hendelse_en_per_levende_versjon
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION hendelse_en_per_levende_versjon();
 
--- INSERT kun til funksjonseieren. Runtime får SELECT (lesing skjer likevel
--- gjennom definer — SP-7 — men RLS-tenantpolicyen står som andre vern).
+-- SELECT og INSERT kun til funksjonseieren. Runtime-rollen får INGEN av
+-- delene: flaten leser historikken gjennom definer-funksjonene i del 6
+-- (SP-7). Oppsettsveien (`policyregister.registrer`) leser tabellen
+-- direkte for bootstrap-vakten, men den kjører på migratorforbindelsen,
+-- som eier tabellen — og RLS-tenantpolicyen står også for den.
 GRANT SELECT ON policyaktivering TO disponit_policy_eier;
 GRANT INSERT ON policyaktivering TO disponit_policy_eier;
 
