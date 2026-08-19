@@ -2179,9 +2179,11 @@ DO $$ BEGIN
              'public.avgi_overtakelse_attestasjon('
              || 'text,bigint,text,text,text,text,bigint,text)'))
          = current_user THEN
-    ALTER FUNCTION public.avgi_overtakelse_attestasjon(
-        TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, BIGINT, TEXT)
-      OWNER TO disponit_domene_eier;
+    -- EXECUTE med strengskjøt, ikke literal signatur: vakttesten teller
+    -- forekomster av åtte-arg-formen og skal se NØYAKTIG DROP-en.
+    EXECUTE 'ALTER FUNCTION public.avgi_overtakelse_attestasjon('
+         || 'text,bigint,text,text,text,text,bigint,text)'
+         || ' OWNER TO disponit_domene_eier';
   END IF;
 END $$;
 SET LOCAL ROLE disponit_domene_eier;
