@@ -1433,9 +1433,18 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
+    # INNBOKSEN ER MOTTAKERENS, IKKE POLICYFORVALTNINGENS (Codex P2). Begge
+    # POST-ene rører KUN kallerens egne rader — bruker-id-en kommer fra
+    # økten, aldri fra kroppen — så `policy:write` var en fullmakt de ikke
+    # trenger. Kravet lot seg heller ikke forsvare etter 044: pause- og
+    # bruddvarslene går til administratoren som aktiverte planen, og den
+    # rollen har verken `policy:write` eller `policy:activate`. Hun kunne
+    # altså MOTTA et varsel hun ikke kunne kvittere ut — og hadde hun valgt
+    # `kun_portal`, kunne hun ikke engang endre valget tilbake.
+    # Å handle på et varsel skal aldri kreve mer enn å se det.
     ("GET",  "/v1/varsel"):                  "policy:read",
-    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:write",
-    ("POST", "/v1/varselvalg"):              "policy:write",
+    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:read",
+    ("POST", "/v1/varselvalg"):              "policy:read",
     ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/gjenapne"): "policy:write",

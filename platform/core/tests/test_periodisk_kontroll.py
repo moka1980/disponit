@@ -2447,6 +2447,54 @@ def test_http_flaten_ende_til_ende(migrator, klient):
 
 
 @pg
+def test_planvarselet_naar_mottakeren_sin_innboks(migrator, klient):
+    """Codex P2: varselet ble skrevet, men ingen kunne se det.
+
+    Pause- og bruddvarslene går til administratoren som aktiverte planen,
+    og `admin` har verken `policy:write` eller `policy:activate`. Skallet
+    ga henne derfor aldri varselruten (og pollet aldri `/v1/varsel`), og
+    de to POST-ene sto bak `policy:write` — enda begge kun rører HENNES
+    EGNE rader, med bruker-id fra økten. Hun kunne altså motta et varsel
+    hun verken kunne se, kvittere ut eller endre kanalvalget for. Hadde
+    hun valgt `kun_portal`, satt hun igjen uten både e-post og portalspor.
+
+    MUTASJONEN SOM DREPER DENNE: sett `policy:write` tilbake på
+    `/v1/varsel/{id}/lest` eller `/v1/varselvalg`.
+    """
+    from api import sesjon as sesjonmodul
+    bid = _ekte_bruker("varselvei")
+    cookie, csrf = _adminsesjon(sub="varselvei")
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="varselvei.example", aktor=f"bruker:{bid}")
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT pause_plan(%s,%s,'policy_stopper','test','r-vv',NULL)",
+            (TENANT, pid)).fetchone()[0]
+        rt.commit()
+    finally:
+        rt.close()
+    ck = {sesjonmodul.C_SESJON: cookie}
+    r = klient.get("/v1/varsel", cookies=ck)
+    assert r.status_code == 200, r.text
+    mine = [v for v in r.json()["varsler"] if v["ressurs_id"] == str(pid)]
+    assert len(mine) == 1, r.json()
+    assert mine[0]["art"] == "plan_pauset", mine
+    # ... og hun kan kvittere det ut og styre kanalen sin.
+    hode = {"X-Disponit-CSRF": csrf,
+            "Idempotency-Key": "idem-" + secrets.token_hex(8)}
+    r2 = klient.post(f"/v1/varsel/{mine[0]['id']}/lest", headers=hode,
+                     cookies=ck)
+    assert r2.status_code == 200, r2.text
+    r3 = klient.post("/v1/varselvalg", json={"kanal": "kun_portal"},
+                     headers={"X-Disponit-CSRF": csrf,
+                              "Idempotency-Key": "idem-"
+                              + secrets.token_hex(8)},
+                     cookies=ck)
+    assert r3.status_code == 200, r3.text
+
+
+@pg
 def test_historikken_viser_manuell_avvisning(migrator, klient):
     """Codex P2: en senere kansellering skal SES, uten at evidensen røres.
 

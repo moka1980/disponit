@@ -21,6 +21,11 @@ const RUTE_FOR_ART = {
   attestering_venter: "policyadmin",
   validering_venter: "policyadmin",
   runde_apnet: "policyadmin",
+  // 044 (Codex P2): pausen og bruddstripen er PLANFLATENS saker. Uten
+  // oppføringen her fikk mottakeren en tekst uten vei til handlingen —
+  // og pausen kan bare oppheves ett sted: på planen.
+  plan_pauset: "plan",
+  plan_gjentatt_brudd: "plan",
 };
 
 function varseltekst(v) {
