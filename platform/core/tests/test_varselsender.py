@@ -2742,7 +2742,13 @@ def test_klaimet_tar_aldri_flere_enn_grensen_i_ett_kall():
     falle ut av filteret og fortsette forbi LIMIT-intensjonen. En
     planformflip kan ikke fremprovoseres herfra — derfor er garantien
     flyttet inn i SQL-en (MATERIALIZED), og denne testen er
-    regresjonsvernet på intensjonen: grensen ER radtallet.
+    regresjonsvernet på INTENSJONEN: grensen ER radtallet.
+
+    Merk hva den derfor IKKE er (Codex P2 på #107): radtallet alene
+    skiller ikke fiksen fra feilen — 031-formen returnerer også tre
+    under denne testens normale plan. Garantien selv måles i
+    `test_kandidatgrensen_er_materialisert_i_den_utrullede_funksjonen`
+    under.
 
     I tillegg: hvert klaim har sin EGEN identitet (tokenet er ferskt per
     rad), og et kall til tar de neste i FIFO-orden uten å røre de alt
@@ -2797,3 +2803,71 @@ def test_klaimet_tar_aldri_flere_enn_grensen_i_ett_kall():
             c.commit()
         finally:
             c.close()
+
+
+@pg
+def test_kandidatgrensen_er_materialisert_i_den_utrullede_funksjonen():
+    """046: garantien, ikke bare intensjonen (Codex P2 på #107).
+
+    Rescan-feilen er LATENT. Den krever en planform ingen kan
+    fremprovosere fra en test, og 031-kroppen — `v.id IN (SELECT …
+    LIMIT … FOR UPDATE SKIP LOCKED)` — returnerer derfor nøyaktig tre
+    rader under testen over også. Et radtall er altså ikke et
+    regresjonsvern: fjern `MATERIALIZED`, og målingen blir stående grønn.
+
+    Det som faktisk endret seg er hvor grensen BOR. En LIMIT i en
+    subspørring begrenser per EVALUERING; flyttet inn i en CTE merket
+    MATERIALIZED er antall evalueringer nøyaktig én, uansett hvilken
+    planform policyflatene senere fremtvinger. Da er det den formen som
+    må måles: LIMIT-en og radlåsen INNE i det materialiserte
+    kandidatvalget, og UPDATE-en som joiner kandidatene inn — ikke en
+    subspørring planleggeren står fritt til å reskanne.
+
+    Måles på den UTRULLEDE kroppen (`pg_get_functiondef`), ikke på
+    migrasjonsfilen: filen kan ligge der uavspilt, og det er formen
+    basen kjører som holder køen.
+
+    MUTASJONEN SOM DREPER DENNE: stryk `MATERIALIZED` i 046, eller rull
+    kandidatvalget tilbake til 031-formen.
+    """
+    import re
+    c = _conn()
+    try:
+        kropp = c.execute(
+            "SELECT pg_get_functiondef('varsel_klaim_epost(int,int)'"
+            "::regprocedure)").fetchone()[0]
+        c.rollback()
+    finally:
+        c.close()
+
+    sql = " ".join(kropp.split()).lower()
+    start = re.search(r"with\s+kandidat\s+as\s+materialized\s*\(", sql)
+    assert start, ("kandidatvalget er ikke en MATERIALIZED CTE i den "
+                   f"utrullede funksjonen:\n{kropp}")
+
+    # Balansert telling, ikke «neste `)`»: CTE-kroppen bærer selv
+    # parenteser (`NOT EXISTS (…)`, `greatest(…)`, `least(…)`), og ingen
+    # strengliteral i kroppen inneholder en parentes.
+    aapen = start.end() - 1
+    dybde = 0
+    slutt = None
+    for j in range(aapen, len(sql)):
+        if sql[j] == "(":
+            dybde += 1
+        elif sql[j] == ")":
+            dybde -= 1
+            if dybde == 0:
+                slutt = j
+                break
+    assert slutt is not None, f"ubalanserte parenteser i kroppen:\n{kropp}"
+    cte, resten = sql[aapen + 1:slutt], sql[slutt + 1:]
+
+    assert "limit" in cte, \
+        "grensen ligger UTENFOR det materialiserte kandidatvalget"
+    assert re.search(r"for\s+update\s+of\s+k\s+skip\s+locked", cte), \
+        "radlåsen ligger UTENFOR det materialiserte kandidatvalget"
+    assert re.search(r"v\.id\s*=\s*kd\.id", resten), \
+        "UPDATE-en henter ikke kandidatene fra CTE-en"
+    assert not re.search(r"\bin\s*\(\s*select\b", resten), \
+        ("UPDATE-en velger fortsatt kandidater med en subspørring — "
+         "031-formen er tilbake")
