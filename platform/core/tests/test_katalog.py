@@ -6,7 +6,7 @@ anbefaling: den dagen noen redigerer `katalog.js` for hånd, eller endrer
 spesifikasjonen uten å kjøre generatoren, driver de to kildene fra hverandre —
 og forsiden viser da et produktomfang ingen har bestemt.
 
-Testene her er derfor seks porter (Codex P2 på PR #43, P2 på PR #99):
+Testene her er derfor sju porter (Codex P2 på PR #43, P2 på PR #99):
   1. KILDE     — generatoren leser sannhetskilden, ikke arkivet i `prototype/`.
   2. FERSKHET  — regenerering i en temp-rot gir NØYAKTIG det som ligger i repoet.
   3. OMDØPING  — nytt navn i kilden stopper genereringen til oversettelsen er
@@ -14,6 +14,8 @@ Testene her er derfor seks porter (Codex P2 på PR #43, P2 på PR #99):
   4. FORM      — 55 moduler, elleve områder, faser 1–4, alle representert.
   5. TEKST     — hvert modul- og områdenavn har nøkkel i BEGGE locale-sett.
   6. MERKEVARE — sannhetskilden bærer produktnavnet resten av repoet bruker.
+  7. FASEORDEN — ingen modul avhenger av en modul i en senere fase, så den
+                 erklærte utrullingsrekkefølgen faktisk kan følges.
 """
 import json
 import re
@@ -213,6 +215,69 @@ def test_spesifikasjonen_baerer_produktnavnet():
     bunn = re.search(r'<p class="fin">(.*?)</p>', tekst, re.S)
     assert bunn and navn in bunn.group(1), (
         f"bunnteksten navngir ikke «{navn}»")
+
+
+def _moduler_fra_kilden() -> dict[int, dict[str, str]]:
+    """{modulnummer: {fase, dep}} lest ut av spesifikasjonen.
+
+    Kilden bærer to skrivemåter side om side: v7-arven er JS-literaler
+    (`n:38,…,p:1,…,dep:'…'`), v8-modulene er JSON (`"n": 53, …`). Porten leser
+    BEGGE — leste den bare den ene, ville halve katalogen vært uvoktet uten at
+    noe sa fra.
+    """
+    tekst = KILDE.read_text(encoding="utf-8")
+    starter = [(m.start(), int(m.group(1)))
+               for m in re.finditer(r'[{,]\s*(?:n:|"n":)\s*(\d+)', tekst)]
+    ut: dict[int, dict[str, str]] = {}
+    for i, (pos, n) in enumerate(starter):
+        slutt = starter[i + 1][0] if i + 1 < len(starter) else len(tekst)
+        seg = tekst[pos:slutt]
+        fase = re.search(r'(?:\bp:|"p":)\s*(\d+)', seg)
+        dep = re.search(r"(?:\bdep:'([^']*)'|\"dep\":\s*\"([^\"]*)\")", seg)
+        if fase and dep:
+            ut[n] = {"fase": int(fase.group(1)),
+                     "dep": dep.group(1) or dep.group(2)}
+    return ut
+
+
+def _modulreferanser(dep: str, kjente: set[int]) -> set[int]:
+    """Modulnumrene en dep-streng peker på — `M-14`, `modul 24` og intervaller
+    som `1–2` eller `13–14`. Alt som ikke er et kjent modulnummer (connectorer,
+    infrastruktur, «landpakke») faller utenfor: de har ingen fase å bryte."""
+    ut: set[int] = set()
+    for a, b in re.findall(r"(\d+)\s*[–-]\s*(\d+)", dep):
+        ut.update(range(int(a), int(b) + 1))
+    resten = re.sub(r"\d+\s*[–-]\s*\d+", " ", dep)
+    ut.update(int(x) for x in re.findall(r"(?:M-|[Mm]odul\s+)?(\d+)", resten))
+    return ut & kjente
+
+
+def test_ingen_modul_avhenger_av_en_senere_fase():
+    """Faseporten må være oppfyllelig (Codex P2 på PR #99).
+
+    Spesifikasjonen sier at hver modul i en fase må være komplett før neste
+    fase starter. En modul som avhenger av en modul i en SENERE fase gjør den
+    regelen umulig å følge: ingen av de to kan bygges først. Det er ikke en
+    smakssak i teksten — det er en utrullingsrekkefølge som ikke finnes.
+
+    Codex fant M-53 → M-43. To til lå i samme fil (M-48 → M-23, M-38 → M-31),
+    usett, fordi ingen port leste dep-feltene. Denne gjør det.
+
+    MUTASJONEN SOM DREPER DENNE: sett `>` til `>=`. Da ville en avhengighet
+    innenfor samme fase blitt et brudd — og det er den ikke: fasen er
+    rekkefølgens grovkorn, modulene i den bygges i en rekkefølge fasen ikke
+    bestemmer.
+    """
+    moduler = _moduler_fra_kilden()
+    assert len(moduler) == MODULER, (
+        f"leste {len(moduler)} moduler med fase og dep, forventet {MODULER}")
+    kjente = set(moduler)
+    brudd = [f"M-{n} (fase {d['fase']}) avhenger av "
+             f"M-{r} (fase {moduler[r]['fase']})"
+             for n, d in sorted(moduler.items())
+             for r in sorted(_modulreferanser(d["dep"], kjente))
+             if moduler[r]["fase"] > d["fase"]]
+    assert not brudd, "uoppfyllelig utrullingsrekkefølge: " + "; ".join(brudd)
 
 
 @pytest.mark.parametrize("sprak", sorted(LOCALER))
