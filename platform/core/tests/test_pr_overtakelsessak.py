@@ -1425,13 +1425,18 @@ def test_bare_den_gjerdede_attestasjonsveien_finnes(migrator):
     står i katalogen etter at 041 har kjørt.
     """
     rader = migrator.execute(
-        "SELECT pg_get_function_identity_arguments(p.oid)"
+        # Typene, ikke `pg_get_function_identity_arguments`: den tar med
+        # parameternavnene, og porten måler SIGNATUREN — at den ene veien
+        # inn krever revisjonen — ikke hva argumentene heter.
+        "SELECT array(SELECT format_type(t, NULL)"
+        "               FROM unnest(p.proargtypes::oid[]) t)"
         "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
         " WHERE p.proname = 'avgi_overtakelse_attestasjon'"
         "   AND n.nspname = 'public'").fetchall()
     migrator.rollback()
     assert [r[0] for r in rader] == [
-        "text, bigint, text, text, text, text, bigint, text, bigint"], rader
+        ["text", "bigint", "text", "text", "text", "text", "bigint", "text",
+         "bigint"]], rader
     q = lambda sql: migrator.execute(sql).fetchone()[0]     # noqa: E731
     sig = ("avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,"
            "bigint,text,bigint)")

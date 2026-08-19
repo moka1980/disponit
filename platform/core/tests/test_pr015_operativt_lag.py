@@ -747,27 +747,20 @@ def _sett_medlemskap(tenant, bid, **felt):
         m.close()
 
 
-def _saksrevisjon(sak):
-    """Sakens GJELDENDE revisjon.
+def _gjeldende_saksrevisjon(sak):
+    """`_saksrevisjon` for den som ikke HAR en migrator-forbindelse.
 
-    Egen migrator-forbindelse: saken bor på `__plattform_domener`, og 041
-    §9.1s RESTRICTIVE `reservert_navnerom` slipper bare claimeren,
-    adjudikatoren og TABELLEIEREN inn i det navnerommet —
-    `disponit_domains_admin` (som `_attester` kaller funksjoner med) ser
-    ingen rad der.
+    Egen forbindelse, ikke admin-forbindelsen `_attester` bruker: saken bor
+    på `__plattform_domener`, og 041 §9.1s RESTRICTIVE `reservert_navnerom`
+    slipper bare claimeren, adjudikatoren og TABELLEIEREN inn i det
+    navnerommet — `disponit_domains_admin` ser ingen rad der.
     """
     from db.pg import koble
     c = koble(MIGRATOR_DSN)
     try:
-        _sett_kontekst(c, "__plattform_domener")
-        rad = c.execute(
-            "SELECT saksrevisjon FROM unntak WHERE tenant=%s AND id=%s"
-            "  AND sakskilde='domeneovertakelse'",
-            ("__plattform_domener", sak)).fetchone()
-        c.rollback()
+        return _saksrevisjon(c, sak)
     finally:
         c.close()
-    return int(rad[0]) if rad else None
 
 
 def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen,
@@ -785,7 +778,7 @@ def _attester(a, tenant, sak, hostname, utfall, vinner, aktor, gen,
     if bruker_id is None:
         bruker_id = _adjudikator(tenant, aktor)
     if rev is None:
-        rev = _saksrevisjon(sak)
+        rev = _gjeldende_saksrevisjon(sak)
     r = a.execute(
         "SELECT avgi_overtakelse_attestasjon(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (tenant, sak, hostname, utfall, vinner, aktor, gen,
@@ -911,7 +904,7 @@ def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
                 "SELECT avgi_overtakelse_attestasjon"
                 "(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "samme", gen,
-                 bid, _saksrevisjon(sak)))
+                 bid, _gjeldende_saksrevisjon(sak)))
         a.rollback()
     finally:
         a.close()
@@ -1009,7 +1002,7 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
                 "(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-2",
                  gen_b, _adjudikator(ANNEN_TENANT, "aktor-2"),
-                 _saksrevisjon(sak)))
+                 _gjeldende_saksrevisjon(sak)))
         a.rollback()
     finally:
         a.close()
@@ -1151,7 +1144,7 @@ def test_stemmen_teller_i_konflikten_attestanten_sa(migrator):
     """
     h = _host()
     sak, _ = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
-    rev_gammel = _saksrevisjon(sak)
+    rev_gammel = _gjeldende_saksrevisjon(sak)
     a = _admin()
     try:
         # C tar hostnavnet fra B → samme sak, revisjon+1, utfordrer C.
@@ -1166,7 +1159,7 @@ def test_stemmen_teller_i_konflikten_attestanten_sa(migrator):
         a.commit()
         assert svar == f"konflikt:{TREDJE_TENANT}", svar
         gen_ny = _dkrow(migrator, ANNEN_TENANT, h)[1]
-        rev_ny = _saksrevisjon(sak)
+        rev_ny = _gjeldende_saksrevisjon(sak)
         assert rev_ny > rev_gammel, (rev_gammel, rev_ny)
 
         # DEN GAMLE FANEN: gjeldende generasjon, foreldet revisjon.

@@ -182,10 +182,17 @@ INSERT INTO _design VALUES
     -- `rydd_staged_artefakter(integer)` er 016-regelen med en bunn, ikke en ny
     -- regel, så den hører hjemme hos samme rolle som 0-argumentsformen.
     -- 8. argument (`p_bruker_id`) kom med reautoriseringen av tellende
-    -- stemmer: signaturen her MÅ følge migrasjon 019, ellers finner
-    -- reparasjonsløkka ingen funksjon å eie og den reelle funksjonen blir
-    -- behandlet som en vanlig, eierløs funksjon ved neste kjøring.
-    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text)', 'disponit_domene_eier'),
+    -- stemmer, og 9. (`p_forventet_saksrevisjon`) med bindingen til
+    -- revisjonen attestanten SÅ (041 §21). INGEN semikolon i denne
+    -- kommentaren: både reparasjonen og porten deler filen på
+    -- setningsskilletegnet, så ett her ville kuttet VALUES-listen midt av.
+    -- Signaturen her MÅ følge den GJELDENDE
+    -- migrasjonen, ellers finner reparasjonsløkka ingen funksjon å eie og
+    -- den reelle funksjonen blir behandlet som en vanlig, eierløs funksjon
+    -- ved neste kjøring. 041 DROPPER åtte-arg utgaven, så den skal heller
+    -- ikke stå igjen her: en rad for en funksjon som ikke finnes, er en
+    -- rad reparasjonen aldri kan oppfylle.
+    ('FUNCTION', 'avgi_overtakelse_attestasjon(text,bigint,text,text,text,text,bigint,text,bigint)', 'disponit_domene_eier'),
     -- `lukk_overtakelsessak` kalles NESTET fra avgi_overtakelse_attestasjon og
     -- må derfor ha samme eier: utelatt herfra ville reparasjonssløyfa nedenfor
     -- behandlet den som en vanlig funksjon og flyttet den til
