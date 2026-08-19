@@ -29,6 +29,8 @@ Portoversikt → test (numrene er klarsignalets):
   26–28    test_port26_28_totalitet
   29–31    test_port29_31_sak_og_logg
   32–36    test_port32_36_roller_og_synlighet
+  §0       test_adjudikatorrollen_er_en_forutsetning_ikke_en_mulighet,
+           test_adjudikatoren_har_lesretten_migrasjonen_lovet (Codex P1)
   §9.1     test_reservert_navnerom_er_stengt_for_runtime (Codex P2)
   37       test_port37_python_veien_er_stengt
   38       test_port38_payloadtyper_er_gjensidig_utelukkende
@@ -1269,6 +1271,72 @@ def test_port32_36_roller_og_synlighet(migrator):
         migrator.execute("UPDATE unntak SET tenant=%s WHERE tenant=%s"
                          " AND id=%s", (ANNEN_TENANT, PLATT, sak))
     migrator.rollback()
+
+
+def test_adjudikatorrollen_er_en_forutsetning_ikke_en_mulighet():
+    """Codex P1: §9 ga policyen og grantet bak `IF EXISTS (rolname=...)`.
+
+    Guarden så høflig ut, men den gjorde noe annet: på en base uten
+    klyngerollen HOPPET 041 stille over adjudikatorens RLS-policy og SELECT
+    på `unntak` — og ble likevel registrert som kjørt. `opp.sh` kjører
+    `migrer.py` uten `oppsett-postgresql.sh`, så en eksisterende
+    installasjon treffer nøyaktig det: rollen kommer ved neste
+    oppsettkjøring, migrasjonen kjører aldri om igjen, og køens `SET
+    ROLE`-lesninger står permanent uten leserett. Hver overtakelsessak blir
+    uavgjørbar, og ingenting ser rødt ut.
+
+    Porten måler derfor at rollen er en FORUTSETNING (§0 feiler hardt) og at
+    §9 ikke lenger har noen vei rundt seg — pluss at `opp.sh` fanger det
+    samme FØR første mutasjon, så migrasjonen ikke velter i steg 6 med
+    tjenestene alt stoppet.
+
+    MUTASJONEN SOM DREPER DENNE: legg `IF EXISTS`-guarden tilbake rundt
+    policyen eller grantet, eller fjern §0.
+    """
+    from pathlib import Path
+
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform/core/db/migrations/041_overtakelsessak.sql"
+           ).read_text(encoding="utf-8")
+
+    # §0 står FØR første mutasjon, og feiler hardt.
+    vakt = sql.index("rolname = 'disponit_domains_adjudicator'")
+    assert vakt < sql.index("ALTER TABLE"), \
+        "forutsetningen står etter første mutasjon — da er den ingen port"
+    blokk = sql[vakt:vakt + 900]
+    assert "RAISE EXCEPTION" in blokk, "forutsetningen feiler ikke migrasjonen"
+    assert "oppsett-postgresql.sh" in blokk, "meldingen peker ikke på veien ut"
+
+    # ... og det er den ENESTE steden rollens eksistens spørres om: en
+    # gjenstående `IF EXISTS` ville vært den stille hoppingen på nytt.
+    assert sql.count("rolname = 'disponit_domains_adjudicator'") == 1, \
+        "041 spør fortsatt om rollen finnes — da kan §9 hoppes over stille"
+    assert sql.count("CREATE POLICY domeneovertakelse_adjudikator") == 1
+    assert "GRANT SELECT ON unntak TO disponit_domains_adjudicator" in sql
+
+    # ... og utrullingen stopper før den rører noe.
+    opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    assert "disponit_domains_adjudicator" in opp, \
+        "opp.sh har ingen port på rollen — migrasjonen ville veltet i steg 6"
+    assert (opp.index("disponit_domains_adjudicator")
+            < opp.index("HERFRA MUTERES SYSTEMET")), \
+        "porten står etter første mutasjon — da er den ingen preflight"
+
+
+@pg
+def test_adjudikatoren_har_lesretten_migrasjonen_lovet(migrator):
+    """Codex P1, den levende siden: policyen OG grantet skal faktisk stå i
+    basen etter 041 — ikke bare være uhoppbare i filen."""
+    finnes = migrator.execute(
+        "SELECT 1 FROM pg_policy WHERE polname='domeneovertakelse_adjudikator'"
+        "   AND polrelid='unntak'::regclass").fetchone()
+    migrator.rollback()
+    assert finnes, "adjudikatorpolicyen mangler på unntak"
+    lese = migrator.execute(
+        "SELECT has_table_privilege('disponit_domains_adjudicator',"
+        "                           'unntak','SELECT')").fetchone()[0]
+    migrator.rollback()
+    assert lese is True, "adjudikatoren har ikke SELECT på unntak"
 
 
 @pg

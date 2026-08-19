@@ -28,6 +28,36 @@
 -- ============================================================
 
 -- ------------------------------------------------------------
+-- 0. FORUTSETNING: adjudikatorrollen MÅ finnes (Codex P1)
+--
+-- §9 ga policyen og grantet bak `IF EXISTS (rolname = ...)`. Guarden var
+-- ment som høflighet mot baser uten rollen — men den gjorde noe annet:
+-- migrasjonen HOPPET STILLE over adjudikatorens RLS-policy og SELECT på
+-- `unntak`, og ble likevel registrert som kjørt. `opp.sh` kjører
+-- `migrer.py` uten å kjøre `oppsett-postgresql.sh`, så en eksisterende
+-- installasjon som ikke har fått rollen ennå treffer nøyaktig dette:
+-- 041 er «applied», rollen opprettes ved neste oppsettkjøring — og
+-- migrasjonen kjører aldri om igjen. Køens `SET ROLE`-lesninger står da
+-- permanent uten leserett på `unntak`, og HVER overtakelsessak er
+-- uavgjørbar. Et halvt utrullet sikkerhetsgjerde som ser grønt ut.
+--
+-- Roller er KLYNGEobjekter og opprettes i oppsettskriptet, aldri her
+-- (migrator har verken eller skal ha CREATEROLE). Det migrasjonen kan
+-- gjøre, er å nekte å bli registrert på en base der forutsetningen ikke
+-- holder — samme form som 003/005 bruker for authenticator og claimer.
+-- Blokken står FØRST, før første mutasjon, så meldingen er årsaken og
+-- ikke en følgefeil lenger nede i filen.
+-- ------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles
+                    WHERE rolname = 'disponit_domains_adjudicator') THEN
+        RAISE EXCEPTION
+            'rollen disponit_domains_adjudicator mangler — kjør deploy/staging/oppsett-postgresql.sh først (roller opprettes der, ikke i migrasjoner). Uten den ville 041 blitt registrert som kjørt UTEN adjudikatorens RLS-policy og SELECT på unntak, og hver overtakelsessak stått uavgjørbar.';
+    END IF;
+END $$;
+
+-- ------------------------------------------------------------
 -- 1. `sakskilde` med eksplisitt backfill — ingen DEFAULT noe sted
 -- ------------------------------------------------------------
 ALTER TABLE unntak ADD COLUMN IF NOT EXISTS sakskilde TEXT;
@@ -614,10 +644,13 @@ END $$;
 
 -- ------------------------------------------------------------
 -- 9. Adjudikator-synligheten (RLS + minst mulig grant)
+--
+-- UBETINGET (Codex P1): rollen er en FORUTSETNING for 041 (§0), ikke en
+-- mulighet migrasjonen tilpasser seg. Var dette fortsatt betinget, ville
+-- en base uten rollen fått 041 registrert uten policyen og uten grantet
+-- — og aldri fått dem, siden migrasjonen ikke kjører om igjen.
 -- ------------------------------------------------------------
 DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles
-              WHERE rolname = 'disponit_domains_adjudicator') THEN
     IF NOT EXISTS (SELECT 1 FROM pg_policy
                     WHERE polname = 'domeneovertakelse_adjudikator'
                       AND polrelid = 'unntak'::regclass) THEN
@@ -646,7 +679,6 @@ DO $$ BEGIN
     -- avgrensede policy — ikke med et grant på forskudd.
     REVOKE SELECT ON domenekontroll_hendelse
       FROM disponit_domains_adjudicator;
-  END IF;
 END $$;
 
 -- 9.1 EN PERMISSIV POLICY LEGGER TIL — DEN TREKKER IKKE FRA (Codex P2).
@@ -1511,16 +1543,16 @@ RESET ROLE;
 -- baser der migrator HAR admin (lokal utvikling); en migrator uten
 -- privilegiet skal ikke velte migrasjonen (rebuild-testene kjører som
 -- migrator), for medlemskapet overlever uansett rebuilds i klyngen.
+-- At ROLLEN finnes spørres ikke om her: §0 har alt gjort den til en
+-- forutsetning for hele migrasjonen. Det eneste som er valgfritt her, er
+-- om DENNE migratoren har admin på rollen.
 DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles
-              WHERE rolname = 'disponit_domains_adjudicator') THEN
-    BEGIN
-      GRANT disponit_domains_adjudicator TO disponit
-          WITH INHERIT FALSE, SET TRUE;
-    EXCEPTION WHEN insufficient_privilege THEN
-      RAISE NOTICE 'adjudikator-medlemskap settes av oppsett (klyngeobjekt)';
-    END;
-  END IF;
+  BEGIN
+    GRANT disponit_domains_adjudicator TO disponit
+        WITH INHERIT FALSE, SET TRUE;
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'adjudikator-medlemskap settes av oppsett (klyngeobjekt)';
+  END;
 END $$;
 
 -- ------------------------------------------------------------

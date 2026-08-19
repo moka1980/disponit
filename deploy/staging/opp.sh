@@ -174,6 +174,40 @@ if ! vurder_arbeiderskille "$ARBEIDER_DSN_SATT" "$ARBEIDERROLLE"; then
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
+# 041 (Codex P1): ADJUDIKATORPORTEN. Migrasjon 041 KREVER klyngerollen
+# `disponit_domains_adjudicator` (§0) — den bærer RLS-policyen og SELECT-en
+# adjudikatorkøen leser `unntak` gjennom. Rollen opprettes i
+# `oppsett-postgresql.sh`, og denne løypa kjører IKKE det skriptet: en
+# eksisterende installasjon som ikke har fått oppsettet på nytt, har ikke
+# rollen. Migrasjonen stopper da av seg selv — men den kjører i steg 6, ETTER
+# at tjenestene er stoppet, og etterlater et vedlikeholdsvindu som må ryddes
+# for hånd. Porten hører derfor hjemme her, lesende (`pg_roles`), i subshell,
+# FØR første mutasjon — samme form og samme grunn som arbeiderporten over.
+if ! ADJUDIKATORROLLE=$( set -a; . "$MILJOFIL"; set +a
+      "$ROT/.venv/bin/python" -c '
+import os, psycopg
+with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+    print("ja" if c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s",
+                            ("disponit_domains_adjudicator",)).fetchone()
+          else "nei")
+' 2>&1 ); then
+  echo "AVBRUTT: kunne ikke lese rollekatalogen (pg_roles) i runtime-basen."
+  echo "$ADJUDIKATORROLLE" | tail -3
+  echo "Porten avgjør om migrasjon 041 i det hele tatt kan kjøre, og den"
+  echo "gjetter ikke."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+if [ "$ADJUDIKATORROLLE" != ja ]; then
+  echo "AVBRUTT: klyngerollen disponit_domains_adjudicator mangler."
+  echo "Migrasjon 041 gir DEN rollen RLS-policyen og SELECT på unntak som"
+  echo "adjudikatorkøen leser gjennom. Roller er klyngeobjekter og opprettes"
+  echo "i deploy/staging/oppsett-postgresql.sh (idempotent), aldri i en"
+  echo "migrasjon — migratorrollen har verken eller skal ha CREATEROLE."
+  echo "Kjør oppsett-postgresql.sh først, og kjør så opp.sh igjen."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
 # PR-015 (Codex P1): RESOLVERPORTEN kjøres FØR første mutasjon, ikke først ved
 # timeraktivering. `skriv_cred domener DISPONIT_RESOLVERE` skrev tidligere
 # hva som helst — også tom streng — og utrullingen rapporterte suksess fordi
