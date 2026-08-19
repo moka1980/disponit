@@ -411,4 +411,18 @@ export function visPlan(hoved, ctx) {
     el("h3", { text: t("ui.plan.dine") }),
     liste, historikk);
   last();
+  // Oppfriskningskroken (Codex P2), samme kontrakt som domenefanen: `del()`
+  // gjenbruker den cachede DOM-en ved et fanebytte frem og tilbake, og uten
+  // en krok å kalle sto listen med tallene fra første gang fanen ble åpnet.
+  // Planene er nettopp det som endrer seg UTEN at brukeren rører dem: en
+  // aktiv plan blir `pauset` av pausesveipen (manglende betaling, avvist
+  // oppdrag), «Neste kjøring» går ut på dato, og en kollega kan stanse en
+  // plan i en annen økt. Bare en full sidelasting fikset det før.
+  //
+  // Kroken laster BARE listen — som hos Domener. Skjemaet beholder utfylt
+  // rytme og hostname, og en åpnet historikk blir stående: begge deler er
+  // noe brukeren har gjort selv, og fanene finnes for å bevare det.
+  // `last()` teller generasjoner, så en krok som fyrer mens den første
+  // hentingen ennå står ute, ikke får et gammelt svar over det nye.
+  return last;
 }

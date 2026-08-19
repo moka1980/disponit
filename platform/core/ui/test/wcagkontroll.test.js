@@ -111,6 +111,57 @@ test("WCAG kontroll: planfanen bor her, og planvarselets mål åpner den",
     assert.equal(aktiv2.textContent, t("ui.wcag.fane.plan"));
   });
 
+test("WCAG kontroll: planfanen friskes opp når den åpnes igjen", async () => {
+  // Codex P2: `del()` gjenbruker den cachede DOM-en, og friskerer bare opp
+  // fanen som RETURNERER en krok fra byggingen. `visPlan` returnerte
+  // ingenting, så statusene sto med tallene fra første gang fanen ble åpnet
+  // — og planene er nettopp det som endrer seg uten at brukeren rører dem:
+  // pausesveipen stanser en aktiv plan når et oppdrag avvises, og en
+  // kollega kan stanse en plan i en annen økt. Bare en full sidelasting
+  // fikset det før.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `return last` fra `visPlan`.
+  KALL = [];
+  let status = "aktiv";
+  SVAR = (sti) => sti === "/v1/plan"
+    ? { planer: [{ plan_id: "p1", status,
+      pause_aarsak: status === "pauset" ? "menneskelig_avvis" : null,
+      rytme: "daglig", time_lokal: 8, tidssone: "Europe/Oslo",
+      parametre: { hostname: "dittfirma.no", sti: "/" } }] }
+    : TOMME_DOMENER[sti];
+  const h = nyHoved();
+  // `plan:opprett` gir skjemaet: oppfriskningen skal la det stå.
+  visWcagKontroll(h, { ...ctx(),
+    scopes: ["bestilling:opprett", "plan:opprett"] });
+  fane(h, "plan");
+  await vent(() => h.querySelector(".planliste table"));
+  const foer = KALL.filter((k) => k.sti === "/v1/plan").length;
+  assert.equal(foer, 1, "første aktivering henter planene");
+  assert.ok(h.querySelector(".planliste table").textContent
+    .includes(t("ui.plan.status.aktiv")));
+
+  // Skjemaet skal overleve oppfriskningen: den henter LISTEN, ikke delen.
+  const host = h.querySelector("#plan-hostname");
+  host.value = "underarbeid.no";
+  host.dispatchEvent(new window.Event("input"));
+
+  // Pausesveipen stanser planen mens brukeren er på en annen fane.
+  status = "pauset";
+  fane(h, "rapporter");
+  fane(h, "plan");
+  await vent(() => KALL.filter((k) => k.sti === "/v1/plan").length > foer);
+  assert.equal(KALL.filter((k) => k.sti === "/v1/plan").length, foer + 1,
+    "gjenåpning av fanen hentet ikke planene på nytt");
+  await vent(() => h.querySelector(".planliste table").textContent
+    .includes(t("ui.plan.status.pauset")));
+  const tekst = h.querySelector(".planliste table").textContent;
+  assert.ok(tekst.includes(t("ui.plan.status.pauset")), "ny status vises");
+  assert.ok(tekst.includes(t("ui.plan.pause.menneskelig_avvis")),
+    "pausegrunnen følger med den ferske statusen");
+  assert.equal(h.querySelector("#plan-hostname").value, "underarbeid.no",
+    "oppfriskningen river ikke det utfylte skjemaet");
+});
+
 test("WCAG kontroll: leseøkt beholder rapportene, mister mutasjonsfanene", async () => {
   // Codex P2: sammenslåingen til ÉN nav-oppføring la hele flaten bak
   // `bestilling:opprett`, og da mistet hver ikke-admin kunderolle — `leser`,
