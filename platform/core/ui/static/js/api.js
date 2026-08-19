@@ -215,7 +215,12 @@ export const leggTilDomene = (hostname) =>
   _muter("/v1/domener", "POST", { hostname });
 
 // 044: planflaten — CSRF-vernede mutasjoner over de herdede funksjonene.
-export const opprettPlan = (kropp) => _muter("/v1/plan", "POST", kropp);
+// Opprettelsen KREVER `Idempotency-Key`: et tapt svar + nytt klikk skal
+// gjenspille planen, ikke lage plan nummer to med samme parametre og egen
+// kvotebruk. Kalleren holder nøkkelen (stabil så lenge kroppen er uendret).
+// Overgangene trenger den ikke — de er naturlig idempotente på plan-id-en.
+export const opprettPlan = (kropp, idem) =>
+  _muter("/v1/plan", "POST", kropp, idem);
 export const planHandling = (planId, hva) =>
   _muter(`/v1/plan/${planId}/${hva}`, "POST", {});
 

@@ -161,9 +161,14 @@ def _syntetisk_tick(m, pid, vindu_start, utfall, *, oppdrag_id=None):
     m.commit()
 
 
-def _post_plan(klient_, cookie, csrf, sti, kropp):
+def _post_plan(klient_, cookie, csrf, sti, kropp, idem=None):
     from api import sesjon as sesjonmodul
-    return klient_.post(sti, json=kropp, headers={"X-Disponit-CSRF": csrf},
+    # Opprettelsen krever `Idempotency-Key`; overgangene ignorerer den.
+    # Uten en eksplisitt nøkkel er hvert kall sin egen operasjon.
+    return klient_.post(sti, json=kropp,
+                        headers={"X-Disponit-CSRF": csrf,
+                                 "Idempotency-Key":
+                                     idem or "idem-" + secrets.token_hex(8)},
                         cookies={sesjonmodul.C_SESJON: cookie})
 
 
@@ -1394,3 +1399,53 @@ def test_http_flaten_ende_til_ende(migrator, klient):
                    "/v1/plan/00000000-0000-4000-8000-000000000000/aktiver",
                    {})
     assert r.status_code == 404, r.text
+
+
+@pg
+@dekker("idempotensnokkel_mangler")
+def test_opprettelsen_er_replay_sikker(migrator, klient):
+    """Codex P1: et tapt svar skal GJENSPILLE planen, ikke lage nummer to.
+
+    Uten operasjonsnøkkel var opprettelsen den ene skriveruten her uten
+    gjenspill: committet serveren kallet og mistet svaret, laget andre
+    klikk en NY plan med identiske parametre. Aktivert konsumerte de hver
+    sin kvoteplass og bestilte samme kontroll i all fremtid."""
+    cookie, csrf = _adminsesjon(sub="replay-admin")
+    kropp = _plan_kropp("replay.example")
+    # Nøkkelen er PÅKREVD.
+    from api import sesjon as sesjonmodul
+    r = klient.post("/v1/plan", json=kropp,
+                    headers={"X-Disponit-CSRF": csrf},
+                    cookies={sesjonmodul.C_SESJON: cookie})
+    assert (r.status_code, r.json()["feil"]) == (
+        400, "idempotensnokkel_mangler"), r.text
+    # Første kall lager planen ...
+    idem = "plan-replay-" + secrets.token_hex(8)
+    r1 = _post_plan(klient, cookie, csrf, "/v1/plan", kropp, idem=idem)
+    assert r1.status_code == 201, r1.text
+    pid = r1.json()["plan_id"]
+    # ... og gjenspillet gir NØYAKTIG samme plan-id, ikke en ny plan.
+    r2 = _post_plan(klient, cookie, csrf, "/v1/plan", kropp, idem=idem)
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["plan_id"] == pid, "gjenspillet ga en annen plan"
+    _sett_kontekst(migrator, TENANT)
+    antall = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan WHERE tenant=%s AND"
+        " parametre->>'hostname'=%s", (TENANT, "replay.example")).fetchone()[0]
+    migrator.rollback()
+    assert antall == 1, "gjenspillet opprettet en dublettplan"
+    # Samme nøkkel, ANNEN plan er en annen operasjon → konflikt, aldri et
+    # gjenspill av feil plan-id.
+    r3 = _post_plan(klient, cookie, csrf, "/v1/plan",
+                    _plan_kropp("replay-annen.example"), idem=idem)
+    assert (r3.status_code, r3.json()["feil"]) == (
+        409, "idempotenskonflikt"), r3.text
+    # En AVVIST kropp brenner ingen nøkkel: claimet rulles med avvisningen.
+    idem2 = "plan-replay-" + secrets.token_hex(8)
+    r4 = _post_plan(klient, cookie, csrf, "/v1/plan",
+                    _plan_kropp("replay2.example", rytme="manedlig",
+                                manedsdag=31), idem=idem2)
+    assert r4.status_code == 400, r4.text
+    r5 = _post_plan(klient, cookie, csrf, "/v1/plan",
+                    _plan_kropp("replay2.example"), idem=idem2)
+    assert r5.status_code == 201, r5.text

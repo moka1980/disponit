@@ -111,8 +111,30 @@ def _med_browserkontekst(tjeneste, request, scope, fn, *, lesing=False):
 
 
 def opprett_endepunkt(tjeneste, request: Request) -> Response:
+    """Opprettelsen er REPLAY-SIKKER (Codex P1).
+
+    Uten en operasjonsnøkkel var dette den ene skriveruten her uten noe
+    gjenspill: committet serveren kallet og MISTET svaret, slo UI-et på
+    submit-knappen igjen, og andre klikk laget en NY plan med nøyaktig
+    samme parametre. Aktiverte kunden begge, konsumerte de hver sin
+    kvoteplass og bestilte den samme kontrollen i all fremtid — og
+    ingenting i skjemaet sier at de er dubletter. Overgangsrutene har
+    ikke problemet: de er naturlig idempotente på plan-id-en.
+
+    Nøkkelen går gjennom plattformens EGEN idempotenstabell (003 §5) og
+    `_idempotent_start`/`_fullfor` — samme mekanisme som policyadmin, med
+    samme tre utfall: ny · replay av det lagrede svaret · konflikt når
+    samme nøkkel bærer et ANNET input. Inputhashen binder hele den
+    normaliserte planen, så «samme nøkkel, annen plan» aldri kan bli et
+    gjenspill av feil plan-id.
+    """
     def _fn(conn, tenant, bid, rid, _feilsvar, kanonisk_json):
         from db.pg import sett_kontekst
+        from .policyadmin import _fullfor, _idempotent_start
+        from .policyadmin_http import _input_hash
+        idem = (request.headers.get("idempotency-key") or "").strip()
+        if not idem:
+            return _feilsvar("idempotensnokkel_mangler", rid)
         raa = request.scope.get("state", {}).get("kropp", b"")
         try:
             data = json.loads(raa.decode("utf-8"))
@@ -123,6 +145,22 @@ def opprett_endepunkt(tjeneste, request: Request) -> Response:
         except Bestillingsfeil as f:
             return _feilsvar(f.kode, rid)
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        # Hele den normaliserte planen inngår: to ULIKE planer under samme
+        # nøkkel er to operasjoner og skal gi konflikt, aldri et gjenspill
+        # av den førstes id. En avvist forespørsel ruller dessuten claimet
+        # tilbake med seg — en kropp som aldri ble en plan brenner ingen
+        # nøkkel (samme presisering som opprett_utkast).
+        ih = _input_hash(tenant, bid, "plan_opprett",
+                         json.dumps(plan, sort_keys=True, ensure_ascii=False),
+                         idem)
+        tilstand, lagret = _idempotent_start(conn, tenant, idem, ih, rid)
+        if tilstand == "konflikt":
+            conn.rollback()
+            return _feilsvar("idempotenskonflikt", rid)
+        if tilstand == "replay":
+            conn.rollback()
+            return kanonisk_json({**lagret, "request_id": rid}, 201,
+                                 {"x-request-id": rid})
         try:
             plan_id = conn.execute(
                 "SELECT opprett_plan(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -134,9 +172,11 @@ def opprett_endepunkt(tjeneste, request: Request) -> Response:
         except psycopg.errors.InvalidParameterValue:
             conn.rollback()
             return _feilsvar("request_feilformet", rid)
-        conn.commit()
-        return kanonisk_json({"plan_id": str(plan_id), "status": "utkast",
-                              "request_id": rid}, 201,
+        # `_fullfor` lagrer svaret OG committer — gjenspillet får nøyaktig
+        # denne kroppen, aldri en ny plan.
+        res = _fullfor(conn, tenant, idem,
+                       {"plan_id": str(plan_id), "status": "utkast"})
+        return kanonisk_json({**res, "request_id": rid}, 201,
                              {"x-request-id": rid})
     return _med_browserkontekst(tjeneste, request, "plan:opprett", _fn)
 

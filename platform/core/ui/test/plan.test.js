@@ -148,10 +148,55 @@ test("planskjema: gyldig ukentlig plan POSTes med ukedag og full kropp",
     omfang: "enkeltside", maks_sider: 1,
     rytme: "ukentlig", time_lokal: 8, tidssone: "Europe/Oslo", ukedag: 3,
   });
+  // Idempotency-Key er med: uten den er opprettelsen den ene skriveruten
+  // uten gjenspill, og et tapt svar gir plan nummer to.
+  assert.ok(post.headers["Idempotency-Key"]);
   // Utfallet annonsert (role=alert-regionen får teksten).
   await vent(() => document.querySelector('[role="alert"]'));
   assert.equal(document.querySelector('[role="alert"]').textContent,
     t("ui.plan.opprettet_alert"));
+});
+
+test("planskjema: operasjonsnøkkelen er stabil over en retry, fersk ved endring",
+     async () => {
+  // Codex P1: mister vi svaret på en opprettelse serveren ALT har
+  // committet, må neste klikk bære SAMME nøkkel — da gjenspiller
+  // serveren planen i stedet for å lage nummer to. Endrer brukeren
+  // skjemaet, er det en annen plan og skal ha en fersk nøkkel.
+  KALL = [];
+  let feilNeste = true;
+  SVAR = (sti, opts) => {
+    if (sti === "/v1/plan" && (opts.method || "GET") === "POST") {
+      if (feilNeste) return { __status: 503, __kropp: { feil: "db_utilgjengelig" } };
+      return { plan_id: PLAN.plan_id, status: "utkast" };
+    }
+    return { planer: [] };
+  };
+  const h = nyHoved();
+  visPlan(h, ctx());
+  await vent(() => h.querySelector("form"));
+  const form = h.querySelector("form");
+  form.querySelector("#plan-hostname").value = "retry.example";
+  form.querySelector("#plan-sti").value = "/";
+  const send = () => form.dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }));
+  send();
+  await vent(() => KALL.filter((k) => k.metode === "POST").length === 1);
+  feilNeste = false;
+  send();
+  await vent(() => KALL.filter((k) => k.metode === "POST").length === 2);
+  const poster = KALL.filter((k) => k.metode === "POST");
+  assert.equal(poster[0].headers["Idempotency-Key"],
+    poster[1].headers["Idempotency-Key"],
+    "retry av SAMME plan byttet nøkkel — serveren ville laget en dublett");
+  // En ny plan (annen kropp) får en fersk nøkkel.
+  form.querySelector("#plan-hostname").value = "annen.example";
+  form.querySelector("#plan-sti").value = "/";
+  send();
+  await vent(() => KALL.filter((k) => k.metode === "POST").length === 3);
+  const tredje = KALL.filter((k) => k.metode === "POST")[2];
+  assert.notEqual(tredje.headers["Idempotency-Key"],
+    poster[1].headers["Idempotency-Key"]);
 });
 
 test("planliste: caption/scope, pausegrunnen SYNLIG, handling annonsert i alert",

@@ -10,7 +10,7 @@
 // absolutt tidspunkt MED tidssone.
 import { el, sett } from "../dom.js";
 import { harNokkel, t } from "../i18n.js";
-import { hentJson, opprettPlan, planHandling, ApiFeil,
+import { hentJson, nyIdempotensnokkel, opprettPlan, planHandling, ApiFeil,
          UautorisertFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, Feiltilstand, meldAlert,
          meldLive } from "../komponenter.js";
@@ -72,6 +72,10 @@ function nesteKjoringTekst(p) {
 }
 
 function planSkjema(ctx, paaOpprettet) {
+  // Operasjonsnøkkelen for opprettelsen, holdt av skjemaet: den overlever
+  // et tapt svar (og dermed et nytt klikk), og byttes først når kroppen
+  // endrer seg eller planen faktisk ble opprettet. Se submit-handleren.
+  let idem = { signatur: null, nokkel: null };
   const feil = (navn) => el("p", { class: "skjemafeil",
     id: `${feltId(navn)}-feil` });
   const host = el("input", { type: "text", id: feltId("hostname"),
@@ -178,11 +182,22 @@ function planSkjema(ctx, paaOpprettet) {
     };
     if (rytme === "ukentlig") kropp.ukedag = parseInt(ukedag.value, 10);
     if (rytme === "manedlig") kropp.manedsdag = parseInt(manedsdag.value, 10);
+    // Operasjonsnøkkelen er STABIL så lenge kroppen er uendret (samme
+    // konvensjon som policyeditoren): mister vi svaret på en opprettelse
+    // serveren ALT har committet, skal neste klikk REPLAYE den planen —
+    // ikke lage plan nummer to med identiske parametre og egen kvotebruk.
+    // Retter brukeren skjemaet i mellomtiden, er det en ANNEN plan, og
+    // den får en fersk nøkkel i stedet for en konflikt.
+    const signatur = JSON.stringify(kropp);
+    if (idem.signatur !== signatur) {
+      idem = { signatur, nokkel: nyIdempotensnokkel() };
+    }
     form.setAttribute("aria-busy", "true");
     knapp.disabled = true;
     status.textContent = t("ui.plan.oppretter");
     try {
-      await opprettPlan(kropp);
+      await opprettPlan(kropp, idem.nokkel);
+      idem = { signatur: null, nokkel: null };   // neste plan er en ny sak
       meldAlert(t("ui.plan.opprettet_alert"));
       status.textContent = "";
       form.reset();
