@@ -1026,12 +1026,24 @@ $$;
 -- grenseraden. Løftet i §5 er ÉN hendelse som forteller SANT om
 -- avbruddet; da må den telle forekomstene planen skulle hatt.
 --
--- Søket starter ved `dekket_til` — det seneste av (a) siste vindusrad før
--- tilbakeblikket, (b) `til` fra forrige aggregerte nedetidshendelse og
--- (c) takets grense. (b) er dempingen: uten den ville en plan uten rader
--- fått en ny hendelse i HVERT sveip, altså nettopp tusen hendelser i
--- stedet for én. En frisk plan har en rad rett før tilbakeblikket, så
--- søket blir tomt og koster ingenting.
+-- Søket går over HELE planens levetid innenfor taket, ikke fra siste
+-- vindusrad: klassifisereren materialiserer selv tilbakeblikkets 30 døgn
+-- rett før dette kallet, så «nyeste rad før tilbakeblikket» ligger alltid
+-- like ved grensen og ville skjult hullet bak seg (målt i CI: et
+-- 90-døgns avbrudd ble til ÉN savnet forekomst). Anti-joinen mot
+-- vindusradene er det som avgjør hva som mangler — en frisk plan har en
+-- rad for hver forekomst og faller ut med tomt resultat.
+--
+-- Nedre grense er det seneste av planens tidligste `fra_ts`, `til` fra
+-- forrige aggregerte nedetidshendelse, og takets grense. Leddet om
+-- forrige hendelse er DEMPINGEN: uten den ville en plan uten rader fått
+-- en ny hendelse i HVERT sveip — nettopp tusen hendelser i stedet for én.
+-- Etter første aggregering er søkeintervallet derfor kort igjen.
+--
+-- Kostnaden er bevisst: inntil `p_maks_dogn` genererte rader per plan,
+-- hver med ett primærnøkkeloppslag. Det er en batchjobb hvert femte
+-- minutt over PLANER (kunderader), ikke over hendelser, og taket er
+-- parameteren en operatør kan senke.
 --
 -- `vinduer` er fortsatt BARE radene som finnes: kun de kan termineres
 -- (FK-en krever en vindusrad). `fra`, `til` og `antall` dekker hele
@@ -1060,13 +1072,9 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
         SELECT p.plan_id, p.tenant, p.rytme, p.ukedag, p.manedsdag,
                p.time_lokal, p.tidssone, g.eldre_enn, g.tak,
                greatest(
-                   coalesce((SELECT max(bv.vindu_start)
-                               FROM public.bestillingsplan_vindu bv
-                              WHERE bv.plan_id = p.plan_id
-                                AND bv.vindu_start < g.eldre_enn),
-                            (SELECT min(ap.fra_ts)
-                               FROM public.bestillingsplan_aktiv_periode ap
-                              WHERE ap.plan_id = p.plan_id)),
+                   (SELECT min(ap.fra_ts)
+                      FROM public.bestillingsplan_aktiv_periode ap
+                     WHERE ap.plan_id = p.plan_id),
                    coalesce((SELECT max((h.detalj->>'til')::timestamptz)
                                FROM public.bestillingsplan_hendelse h
                               WHERE h.plan_id = p.plan_id
