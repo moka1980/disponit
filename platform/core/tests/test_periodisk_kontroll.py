@@ -1203,6 +1203,59 @@ def test_nedetid_over_30_dogn_aggregeres(migrator):
 
 
 @pg
+def test_gammelt_bestilt_vindu_velter_ikke_aggregatet(migrator):
+    """Codex P1: aggregatløkken TVANG `hoppet_over` på hver eneste rad.
+
+    Committet arbeideren bestillingen og døde før terminaliseringen, og
+    vinduet siden ble eldre enn tilbakeblikket, havnet det her — med en
+    idempotensrad. `terminaliser_planvindu` nekter da `hoppet_over` (med
+    rette: det BLE bestilt), og exception-en rullet tilbake hele
+    aggregatet og veltet hver eneste senere timerkjøring på samme rad:
+    planen fikk aldri sin nedetidshendelse, og vinduet aldri sitt tick.
+
+    Fasiten leses nå her også, og hvert vindu står på sitt eget
+    savepoint.
+    """
+    from plan.klassifiser import _nokkel, klassifiser_vinduer
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p35c.example", aktiver=False)
+        _aktiver_i_fortid(migrator, pid, dager=40)
+        # Vinduet arbeideren døde midt i: `aktivt`, men med DØD lease.
+        vs = _syntetisk_vindu(migrator, pid, start_h=-24 * 35,
+                              slutt_h=-24 * 35 + 4, tilstand="aktivt",
+                              lease_h=-24 * 34)
+        # ... og et vanlig missed vindu ved siden av, som skal bli
+        # `hoppet_over` i samme runde.
+        vs_tomt = _syntetisk_vindu(migrator, pid, start_h=-24 * 34,
+                                   slutt_h=-24 * 34 + 4, tilstand="ledig")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,NULL,'tillat','{\"oppdrag_id\": 909090}')",
+            (TENANT, _nokkel(pid, vs), "3" * 64))
+        migrator.commit()
+
+        res = klassifiser_vinduer(rt)          # skal IKKE kaste
+        assert not any(v["plan"] == str(pid) for v in res.get("ventet", [])), \
+            res
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    tick = dict(migrator.execute(
+        "SELECT vindu_start, utfall FROM bestillingsplan_tick"
+        " WHERE plan_id=%s", (pid,)).fetchall())
+    agg = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+        " AND hendelse='nedetid_aggregert'", (pid,)).fetchone()[0]
+    migrator.rollback()
+    assert agg == 1, "aggregatet overlevde ikke det bestilte vinduet"
+    assert tick.get(vs) == "tillat", tick
+    assert tick.get(vs_tomt) == "hoppet_over", tick
+
+
+@pg
 def test_langt_avbrudd_telles_fra_rytmen(migrator):
     """Codex P2: aggregatet må telle FOREKOMSTER, ikke bare rader.
 

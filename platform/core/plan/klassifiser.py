@@ -41,6 +41,24 @@ def _nokkel(plan_id, vindu_start) -> str:
     return f"plan:{plan_id}:{vindu_start.astimezone(timezone.utc).isoformat()}"
 
 
+def _fasit(conn, tenant, plan_id, vindu_start, nokkel):
+    """Ble vinduet bestilt? -> (utfall, oppdrag_id, detalj).
+
+    Den ENE fasiten §5 utpeker, lest på nøyaktig samme måte uansett hvem
+    som spør: `bestilling_idempotens` er immutabel inkludert DELETE, og
+    finnes raden, BLE det bestilt. Klassifisereren gjetter aldri et
+    utfall — den skriver ned det bestillingsveien alt har besluttet.
+    """
+    rad = conn.execute(
+        "SELECT beslutning, oppdrag_id, svarkropp FROM bestilling_idempotens"
+        " WHERE tenant=%s AND idempotensnokkel=%s",
+        (tenant, nokkel)).fetchone()
+    if rad is None:
+        return "hoppet_over", None, None
+    oppdrag = rad[1] if rad[1] is not None else (rad[2] or {}).get("oppdrag_id")
+    return rad[0], oppdrag, "bestilling_idempotens"
+
+
 def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
     """Utløpte, uterminaliserte vinduer → terminal + tick. -> journalfakta."""
     from db.pg import sett_kontekst
@@ -66,19 +84,10 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
         sett_kontekst(conn, tenant, "planklassifisering", rid)
         nokkel = _nokkel(plan_id, vindu_start)
         # Fasiten først: ble det bestilt?
-        fasit = conn.execute(
-            "SELECT beslutning, oppdrag_id, svarkropp"
-            "  FROM bestilling_idempotens"
-            " WHERE tenant=%s AND idempotensnokkel=%s",
-            (tenant, nokkel)).fetchone()
-        if fasit is not None:
-            utfall = fasit[0]
-            oppdrag = fasit[1] if fasit[1] is not None else (
-                (fasit[2] or {}).get("oppdrag_id"))
-            detalj = {"kilde": "bestilling_idempotens"}
-        else:
-            utfall, oppdrag = "hoppet_over", None
-            detalj = {"kilde": "utlopt_vindu"}
+        utfall, oppdrag, kilde = _fasit(conn, tenant, plan_id, vindu_start,
+                                        nokkel)
+        fasit = kilde is not None
+        detalj = {"kilde": kilde or "utlopt_vindu"}
         try:
             dom = conn.execute(
                 "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,%s,%s,%s)",
@@ -97,7 +106,7 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
             res["avvik"].append({"plan": str(plan_id),
                                  "vindu": str(vindu_start),
                                  "ventet": utfall, "fant": dom[6:]})
-        elif fasit is not None:
+        elif fasit:
             res["fra_idempotens"] += 1
         else:
             res["hoppet_over"] += 1
@@ -119,14 +128,34 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
         conn.execute("SELECT plan_nedetid_aggregert(%s,%s,%s,%s,%s,"
                      "'planklassifisering',%s,%s)",
                      (tenant, plan_id, fra, til, antall, rid, avkortet))
-        # Vinduene terminaliseres som hoppet_over uten enkelthendelser —
-        # aggregatet er sporet.
+        # Vinduene terminaliseres uten enkelthendelser — aggregatet er
+        # sporet. Men utfallet HENTES, det tvinges ikke (Codex P1):
+        # løkken skrev `hoppet_over` på hver eneste rad, og et vindu der
+        # arbeideren committet bestillingen og døde før terminaliseringen
+        # bærer en idempotensrad. Terminaliseringen NEKTER da `hoppet_over`
+        # — med rette — og exception-en rullet tilbake hele aggregatet og
+        # veltet hver eneste senere timerkjøring på samme rad. Fasiten
+        # leses her med nøyaktig samme kall som løkken over.
+        #
+        # Hvert vindu står dessuten på sitt eget savepoint: et levende
+        # forsøk eller et avvik på ÉN rad skal ikke koste planen den
+        # nedetidshendelsen den nettopp fikk. Radene som ikke ble felt,
+        # står `aktivt`/`ledig` og tas av neste sveip.
         for vs in (vinduer or ()):
-            conn.execute(
-                "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
-                "'hoppet_over',NULL,%s)",
-                (tenant, plan_id, vs, _nokkel(plan_id, vs),
-                 json.dumps({"kilde": "nedetid_aggregert"})))
+            nk = _nokkel(plan_id, vs)
+            v_utfall, v_oppdrag, v_kilde = _fasit(conn, tenant, plan_id, vs, nk)
+            conn.execute("SAVEPOINT vindu")
+            try:
+                conn.execute(
+                    "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,%s,%s,%s)",
+                    (tenant, plan_id, vs, nk, v_utfall, v_oppdrag,
+                     json.dumps({"kilde": v_kilde or "nedetid_aggregert"})))
+            except Exception as e:
+                conn.execute("ROLLBACK TO SAVEPOINT vindu")
+                res.setdefault("ventet", []).append(
+                    {"plan": str(plan_id), "vindu": str(vs),
+                     "grunn": type(e).__name__})
+            conn.execute("RELEASE SAVEPOINT vindu")
         conn.commit()
         res.setdefault("aggregert", []).append(
             {"plan": str(plan_id), "vinduer": antall,
