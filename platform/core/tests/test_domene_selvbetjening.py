@@ -379,6 +379,81 @@ def test_listen_svarer_den_EFFEKTIVE_autorisasjonen(migrator, klient):
         "et passert 90-dagersvindu ble meldt som gyldig autorisasjon"
 
 
+@pg
+def test_listen_svarer_arsaken_bak_tilbakekallingen(migrator, klient):
+    """Codex P2: `tilbakekalt` har TO opphav, og flaten forklarte begge som ett.
+
+    Overtakelsen — en annen konto beviste DNS-kontroll — og den ORDINÆRE
+    tilbakekallingen (`tilbakekall_domenekontroll`, 018: operatørens vei,
+    som ikke rører `konflikt_motpart`) ender i samme statusord. Domenefanen
+    valgte forklaring på det ordet alene og ga derfor kunden en falsk
+    overtakelsesadvarsel — «DNS-kontroll er bevist av en annen konto» — for
+    en administrativ eller driftsmessig tilbakekalling ingen har utfordret.
+
+    Skillet finnes i basen fra før: `konflikt_motpart` settes av konflikten,
+    beholdes gjennom avvisning og degradering, og NULLES av
+    `verifiser_domenekontroll`. Svaret bærer det som en BOOLEAN — klienten
+    skal vite AT det står en motpart bak, aldri HVEM.
+
+    MUTASJONEN SOM DREPER DENNE: la `_rader` utelate `konflikt` igjen, eller
+    utled den av `status`.
+    """
+    from api import sesjon as sesjonmodul
+
+    from .test_pr015_operativt_lag import TREDJE_TENANT
+
+    cookie, _ = _adminsesjon()
+    ordinaer = f"ord{secrets.token_hex(3)}.example"
+    avklaring = f"avk{secrets.token_hex(3)}.example"
+    forbigatt = f"fbg{secrets.token_hex(3)}.example"
+    a = _admin()
+    try:
+        # 1) Ordinær tilbakekalling: TENANT eier navnet, operatøren trekker
+        #    autorisasjonen. Ingen motpart, ingen konflikt.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, ordinaer))
+        a.execute("SELECT tilbakekall_domenekontroll(%s,%s,'opprydding','sys')",
+                  (TENANT, ordinaer))
+        # 2) Åpen konflikt: ANNEN_TENANT eier, TENANT utfordrer.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, avklaring))
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, avklaring))
+        # 3) Forbigått utfordrer: TENANT utfordrer, en TREDJE tar navnet, og
+        #    degraderingen (019 §3.2) setter TENANT `tilbakekalt` — MED
+        #    motparten i behold. Dette er den tilbakekallingen som FAKTISK
+        #    er en overtakelse, og som skal beholde overtakelsesteksten.
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (ANNEN_TENANT, forbigatt))
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, forbigatt))
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TREDJE_TENANT, forbigatt))
+        a.commit()
+    finally:
+        a.close()
+
+    r = klient.get("/v1/domener", cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 200, r.text
+    kart = {d["hostname"]: d for d in r.json()["domener"]}
+
+    assert kart[ordinaer]["status"] == "tilbakekalt", kart[ordinaer]
+    assert kart[forbigatt]["status"] == "tilbakekalt", kart[forbigatt]
+    assert kart[avklaring]["status"] == "avklaring_kreves", kart[avklaring]
+
+    assert kart[ordinaer]["konflikt"] is False, \
+        "en ordinær tilbakekalling ble meldt som en overtakelse"
+    assert kart[forbigatt]["konflikt"] is True, \
+        "en forbigått utfordrer mistet overtakelsens årsak"
+    assert kart[avklaring]["konflikt"] is True, kart[avklaring]
+
+    # Årsaken, ALDRI motparten: ingen tenant-identitet i svaret (§6).
+    kropp = r.text
+    for fremmed in (ANNEN_TENANT, TREDJE_TENANT):
+        assert fremmed not in kropp, \
+            f"motpartens identitet lekket i domenelisten: {fremmed}"
+
+
 def _vert_av_lengde(n: int) -> str:
     """Et lovlig, UNIKT vertsnavn på nøyaktig `n` tegn.
 

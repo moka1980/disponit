@@ -877,6 +877,7 @@
   "ui.adjudikator.feil.attestasjon_avvist": "The case cannot be decided now — it has already been decided or superseded by a newer conflict.",
   "domenestatus.avklaring_kreves.forklaring": "Another account has also proven DNS control of this hostname. The case is being handled by Disponit — no action is needed from you right now.",
   "domenestatus.tilbakekalt.forklaring": "DNS control of this hostname has been proven by another account. Verify again if you still control the zone.",
+  "domenestatus.tilbakekalt.forklaring_ordinaer": "Authorisation for this hostname has been revoked. Verify again if you still control the zone.",
   "domenestatus.ventende": "Waiting for DNS record",
   "domenestatus.verifisert": "Verified",
   "domenestatus.tilbakekalt": "Revoked",

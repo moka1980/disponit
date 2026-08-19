@@ -211,6 +211,7 @@ test("domenefanen: avklaring og tilbakekalling forklares uten motpartens" +
       siste_vellykkede_revalidering: null,
       challenge_utstedt: null, challenge_utloper: null },
     { hostname: "b.example", status: "tilbakekalt", wildcard: false,
+      konflikt: true,
       verifisert_ts: null, utloper: null,
       siste_vellykkede_revalidering: null,
       challenge_utstedt: null, challenge_utloper: null },
@@ -232,4 +233,58 @@ test("domenefanen: avklaring og tilbakekalling forklares uten motpartens" +
   assert.ok(!tekst.match(/utfordrer-as|taper-as/));
   const brudd = await alvorligeBrudd(h, { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("domenefanen: en ORDINÆR tilbakekalling forklares ikke som en" +
+     " overtakelse", async () => {
+  // Codex P2: grenen var ubetinget på statusordet, og `tilbakekalt` har to
+  // opphav. `tilbakekall_domenekontroll` (018) — operatørens vei — setter
+  // ingen motpart, men fikk likevel teksten «DNS-kontroll er bevist av en
+  // annen konto»: en falsk overtakelsesadvarsel til en kunde ingen har
+  // utfordret. Forklaringen velges nå på ÅRSAKEN endepunktet svarer med.
+  KALL = [];
+  SVAR = { "/v1/domener": { domener: [
+    { hostname: "d.example", status: "tilbakekalt", wildcard: false,
+      konflikt: false,
+      verifisert_ts: null, utloper: null,
+      siste_vellykkede_revalidering: null,
+      challenge_utstedt: null, challenge_utloper: null },
+  ] } };
+  const h = nyHoved();
+  visDomener(h, { paaUautorisert: () => {} });
+  await vent(() => h.querySelector(".domeneliste table"));
+  const tekst = h.querySelector(".domeneliste table").textContent;
+  assert.ok(tekst.includes(t("domenestatus.tilbakekalt.forklaring_ordinaer")),
+    "den ordinære tilbakekallingen mangler sin forklaring");
+  assert.ok(!tekst.includes(t("domenestatus.tilbakekalt.forklaring")),
+    "en ordinær tilbakekalling ble forklart som en overtakelse");
+  // Statusordet står fortsatt, og skjermleserveien er den samme.
+  assert.ok(tekst.includes(t("domenestatus.tilbakekalt")));
+  assert.ok(h.querySelector('[aria-describedby^="dm-forklaring-"]'),
+    "statusordet mangler aria-describedby");
+  const brudd = await alvorligeBrudd(h, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("domenefanen: uten årsaksfeltet gjettes det IKKE på en overtakelse",
+     async () => {
+  // FAIL-CLOSED, som `gyldig`: mangler feltet — en eldre server, et delvis
+  // rullet ut endepunkt — er den GENERISKE forklaringen den trygge.
+  // Overtakelsesteksten er en PÅSTAND om en annen konto, og en flate som
+  // gjetter den er nøyaktig feilen denne runden retter.
+  KALL = [];
+  SVAR = { "/v1/domener": { domener: [
+    { hostname: "e.example", status: "tilbakekalt", wildcard: false,
+      verifisert_ts: null, utloper: null,
+      siste_vellykkede_revalidering: null,
+      challenge_utstedt: null, challenge_utloper: null },
+  ] } };
+  const h = nyHoved();
+  visDomener(h, { paaUautorisert: () => {} });
+  await vent(() => h.querySelector(".domeneliste table"));
+  const tekst = h.querySelector(".domeneliste table").textContent;
+  assert.ok(tekst.includes(t("domenestatus.tilbakekalt.forklaring_ordinaer")),
+    "et manglende felt ga ingen forklaring i det hele tatt");
+  assert.ok(!tekst.includes(t("domenestatus.tilbakekalt.forklaring")),
+    "et manglende felt ble gjettet til en overtakelse");
 });

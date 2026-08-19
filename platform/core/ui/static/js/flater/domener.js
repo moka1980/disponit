@@ -70,12 +70,36 @@ export function visDomener(rot, ctx) {
   // leseren får den samme veien: statusordet peker på forklaringen med
   // aria-describedby. `harNokkel`-gjerdet gjør en manglende oversettelse til
   // et rent statusord, aldri en naken nøkkel i cellen.
+
+  // FORKLARINGEN VELGES PÅ ÅRSAKEN, IKKE PÅ STATUSORDET (Codex P2).
+  // `tilbakekalt` har to opphav: overtakelsen — en annen konto beviste
+  // DNS-kontroll — og den ORDINÆRE tilbakekallingen, som operatøren kjører
+  // (`tilbakekall_domenekontroll`, 018) og som ikke setter noen motpart.
+  // Grenen var ubetinget, så en driftsmessig eller administrativ
+  // tilbakekalling ble forklart som «DNS-kontroll er bevist av en annen
+  // konto»: en falsk overtakelsesadvarsel, med en oppfordring om å verifisere
+  // på nytt mot en konkurrent som ikke finnes.
+  //
+  // `konflikt` kommer ferdig regnet fra endepunktet — en boolean, aldri
+  // motpartens navn — og klienten gjentar ikke regelen, som for `gyldig`.
+  // FAIL-CLOSED den samme veien: `=== true`, ikke `!== false`. Mangler
+  // feltet, er den GENERISKE forklaringen den trygge — den er sann uansett
+  // opphav, mens overtakelsesteksten er en påstand om en annen konto.
+  function forklaringsnokkel(d) {
+    if (d.status === "avklaring_kreves") {
+      return "domenestatus.avklaring_kreves.forklaring";
+    }
+    if (d.status !== "tilbakekalt") return null;
+    return d.konflikt === true
+      ? "domenestatus.tilbakekalt.forklaring"
+      : "domenestatus.tilbakekalt.forklaring_ordinaer";
+  }
+
   let forklaringNr = 0;
   function statusCelle(d) {
     const tekst = statusTekst(d);
-    const nokkel = `domenestatus.${d.status}.forklaring`;
-    if ((d.status === "avklaring_kreves" || d.status === "tilbakekalt")
-        && harNokkel(nokkel)) {
+    const nokkel = forklaringsnokkel(d);
+    if (nokkel && harNokkel(nokkel)) {
       const fid = `dm-forklaring-${++forklaringNr}`;
       return el("span", {},
         el("span", { "aria-describedby": fid, text: tekst }),

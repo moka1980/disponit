@@ -877,6 +877,7 @@
   "ui.adjudikator.feil.attestasjon_avvist": "Saken kan ikke avgjøres nå — den er allerede avgjort eller avløst av en nyere konflikt.",
   "domenestatus.avklaring_kreves.forklaring": "En annen konto har også bevist DNS-kontroll for dette vertsnavnet. Saken behandles av Disponit — du trenger ikke foreta deg noe nå.",
   "domenestatus.tilbakekalt.forklaring": "DNS-kontroll for vertsnavnet er bevist av en annen konto. Verifiser på nytt hvis du fortsatt kontrollerer sonen.",
+  "domenestatus.tilbakekalt.forklaring_ordinaer": "Autorisasjonen for vertsnavnet er trukket tilbake. Verifiser på nytt hvis du fortsatt kontrollerer sonen.",
   "domenestatus.ventende": "Venter på DNS-oppføring",
   "domenestatus.verifisert": "Verifisert",
   "domenestatus.tilbakekalt": "Tilbakekalt",
