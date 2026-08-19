@@ -984,7 +984,7 @@ def test_fremmed_idempotensnokkel_terminaliserer_ikke(migrator):
         migrator.execute(
             "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
             " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
-            " (%s,%s,%s,4242,'tillat','{}')",
+            " (%s,%s,%s,NULL,'tillat','{}')",
             (TENANT, fremmed, "5" * 64))
         migrator.commit()
 
@@ -1045,11 +1045,14 @@ def test_gjenoppretting_henter_oppdraget_fra_fasiten(migrator):
     planen — en pause bare et menneske kan oppheve.
 
     Begge kildene måles: kolonnen, og `svarkropp`-fallbacken for rader der
-    kolonnen er tom.
+    kolonnen er tom. Kolonnen bærer en FK mot `oppdrag`, så det EKTE
+    oppdraget må finnes — nettopp derfor er et påstått nummer så billig
+    for kalleren og så dyrt for evidensen.
     """
     from plan.klassifiser import _nokkel
     rt = _rt()
     try:
+        ekte, _logg = _beslutningsoppdrag(rt, migrator)
         pid = _plan_forfalt(rt, migrator, host="p106-p2.example")
         # Kolonnen bærer oppdraget; kalleren påstår et helt annet.
         vs = _syntetisk_vindu(migrator, pid, start_h=-8, slutt_h=-4,
@@ -1061,15 +1064,17 @@ def test_gjenoppretting_henter_oppdraget_fra_fasiten(migrator):
         migrator.execute(
             "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
             " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
-            " (%s,%s,%s,606060,'tillat','{}')",
-            (TENANT, _nokkel(pid, vs), "7" * 64))
+            " (%s,%s,%s,%s,'tillat','{}')",
+            (TENANT, _nokkel(pid, vs), "7" * 64, ekte))
         migrator.execute(
             "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
             " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
-            " (%s,%s,%s,NULL,'tillat','{\"oppdrag_id\": 707070}')",
-            (TENANT, _nokkel(pid, vs2), "8" * 64))
+            " (%s,%s,%s,NULL,'tillat',%s)",
+            (TENANT, _nokkel(pid, vs2), "8" * 64,
+             json.dumps({"oppdrag_id": ekte})))
         migrator.commit()
 
+        # `p_oppdrag` er et oppdrag som ikke finnes i det hele tatt.
         _sett_kontekst(rt, TENANT)
         assert rt.execute(
             "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,'tillat',"
@@ -1091,8 +1096,8 @@ def test_gjenoppretting_henter_oppdraget_fra_fasiten(migrator):
         "SELECT vindu_start, oppdrag_id FROM bestillingsplan_tick"
         " WHERE plan_id=%s", (pid,)).fetchall())
     migrator.rollback()
-    assert tick[vs] == 606060, tick
-    assert tick[vs2] == 707070, tick
+    assert tick[vs] == ekte, tick
+    assert tick[vs2] == ekte, tick
 
 
 @pg
