@@ -21,6 +21,24 @@ import { hentJson, UautorisertFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, Feiltilstand } from "../komponenter.js";
 import { flateHode, fokuserOverskrift } from "./felles.js";
 
+// URL-ene bygges HER, av begge inngangene (Codex P2). `policy_id` er ikke
+// et snilt tegnsett bare fordi skjemaet er strengt i dag: lastekontrakten
+// slipper med vilje gjennom alt aktive policyer fra før innstrammingen
+// bærer, og den gamle Python-`$`-en matchet også en avsluttende linjeskift
+// — `/v1/policy/aktiv` kan altså svare med en id som `acme\n`. Interpolert
+// rått forsvant linjeskiftet i URL-parseren, og flaten ba om historikken
+// til `acme`: leseren fikk en tom eller FEIL historikk, uten at noe sa fra.
+// Prosentkoding bevarer identiteten slik den står i basen. Versjonene har
+// vært kodet hele tiden; id-en er samme sak.
+export function versjonerUrl(policyId) {
+  return `/v1/policy/${encodeURIComponent(policyId)}/versjoner`;
+}
+
+export function diffUrl(policyId, fra, til) {
+  return `/v1/policy/${encodeURIComponent(policyId)}/diff`
+    + `?fra=${encodeURIComponent(fra)}&til=${encodeURIComponent(til)}`;
+}
+
 // «Ingen attestanter» har mer enn én grunn, og de betyr ulike ting (047,
 // Codex P2). En `bootstrap`-rad er lagt inn av oppsettsveien — den HAR
 // ingen runde, og skal ikke se ut som en versjon vi bare mistet sporet av.
@@ -119,9 +137,7 @@ function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
     text: t("ui.historikk.vis_diff") });
   knapp.addEventListener("click", () => {
     sett(diffUt, el("p", { class: "muted", text: t("ui.laster") }));
-    hentJson(`/v1/policy/${policyId}/diff?fra=${
-      encodeURIComponent(fra.value)}&til=${
-      encodeURIComponent(til.value)}`).then((d) => {
+    hentJson(diffUrl(policyId, fra.value, til.value)).then((d) => {
       if (!erGyldig()) return;
       tegnDiff(diffUt, d);
     }).catch((e) => {

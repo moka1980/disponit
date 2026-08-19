@@ -21,7 +21,7 @@ import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode, kvRad, fokuserOverskrift } from "./felles.js";
 import { visPolicyeditor } from "./policyeditor.js";
 import { aktivePolicyerSeksjon } from "./policy.js";
-import { tegnHistorikkflate } from "./policyhistorikk.js";
+import { tegnHistorikkflate, versjonerUrl } from "./policyhistorikk.js";
 import { harScope } from "../sitekart.js";
 
 function risikoBadge(klasse) {
@@ -1623,7 +1623,7 @@ export function visPolicyadmin(hoved, ctx, mal) {
     // (Codex P2). Se `bekreftRullbakk`.
     const rullbakkNokler = new Map();
     medStatus(hoved, ctx,
-      () => hentJson(`/v1/policy/${policyId}/versjoner`), (d) => {
+      () => hentJson(versjonerUrl(policyId)), (d) => {
         tegnHistorikk(policyId, (d && d.versjoner) || [], kanSkrive, min,
                       rullbakkNokler);
       }, () => eierSkjermen(min), true);

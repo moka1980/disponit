@@ -10,7 +10,7 @@ import { VarselBanner, TomTilstand, Feiltilstand, meldLive } from "../komponente
 import { Bekreftelsesdialog } from "../dialog.js";
 import { harScope } from "../sitekart.js";
 import { medStatus, flateHode } from "./felles.js";
-import { tegnHistorikkflate } from "./policyhistorikk.js";
+import { tegnHistorikkflate, versjonerUrl } from "./policyhistorikk.js";
 
 function grenserNode(g) {
   if (!g) return el("span", { class: "muted", text: t("ui.policy.ingen_grenser") });
@@ -99,7 +99,7 @@ function historikkKnapp(policyId, paaHistorikk) {
 // rullbakken (den er `policy:write` og bor der). Tilbakeveien er flaten selv.
 function visHistorikk(hoved, ctx, policyId) {
   medStatus(hoved, ctx,
-    () => hentJson(`/v1/policy/${policyId}/versjoner`), (d) => {
+    () => hentJson(versjonerUrl(policyId)), (d) => {
       tegnHistorikkflate(hoved, ctx, {
         policyId, versjoner: (d && d.versjoner) || [],
         tilbake: () => visPolicy(hoved, ctx),

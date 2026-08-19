@@ -278,3 +278,48 @@ test("historikk: bootstrap-raden skiller seg fra en ubundet historisk rad",
     assert.ok(!tabell.textContent.includes(
       t("ui.historikk.attestanter_ubundet")));
   });
+
+// `policy_id` er ikke et snilt tegnsett bare fordi skjemaet er strengt i
+// dag (Codex P2). Lastekontrakten slipper med vilje gjennom alt aktive
+// policyer fra før innstrammingen bærer, og den gamle Python-`$`-en matchet
+// også en avsluttende linjeskift — `/v1/policy/aktiv` kan altså svare med
+// `acme\n`. Interpolert rått forsvant linjeskiftet i URL-parseren, og flaten
+// ba om historikken til `acme`: tom eller FEIL historikk, uten at noe sa fra.
+const RAR = "acme\n";
+const RAR_VERSJONER = { policy_id: RAR, versjoner: [
+  { versjon: "2", innholds_hash: "h2", aktiv: true,
+    opprettet: "2026-08-19T10:00:00+00:00",
+    aktivert_ts: "2026-08-19T10:00:00+00:00",
+    attestanter: ["ida"], aktivert_av_operasjon: "aktiver-u2-r1",
+    rollback_av_versjon: null },
+  { versjon: "1", innholds_hash: "h1", aktiv: false,
+    opprettet: "2026-08-17T10:00:00+00:00",
+    aktivert_ts: "2026-08-17T10:00:00+00:00",
+    attestanter: ["jon"], aktivert_av_operasjon: "aktiver-u1-r1",
+    rollback_av_versjon: null },
+] };
+
+test("historikk: policy-id-en prosentkodes i bade versjons- og diff-URL-en",
+  async () => {
+    POSTET = [];
+    // NØKLENE ER KODET. Interpolerte flaten id-en rått, ville stien blitt
+    // en annen, mocken svart 404, og tabellen aldri kommet.
+    const kodet = encodeURIComponent(RAR);
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": { policyer: [
+        { policy_id: RAR, versjon: "2", innholds_hash: "h2" }] } };
+    SVAR["/v1/policy/" + kodet + "/versjoner"] = RAR_VERSJONER;
+    SVAR["/v1/policy/" + kodet + "/diff"] = Object.assign(
+      {}, DIFF, { policy_id: RAR, fra: "1", til: "2" });
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const tabell = h.querySelector(".datatabell");
+    assert.ok(tabell, "historikken kom aldri — URL-en traff ikke");
+    assert.ok(tabell.textContent.includes("ida"));
+    // Diffen bygger sin egen URL og har samme sak.
+    finn(h, t("ui.historikk.vis_diff"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector(".diffliste"));
+    assert.ok(h.querySelector(".diffliste"),
+      "diffen kom aldri — URL-en traff ikke");
+  });
