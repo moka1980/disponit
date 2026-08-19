@@ -1018,6 +1018,8 @@
   "ui.historikk.rullbakk_tekst": "Dette lager et utkast fra versjon {n}. Det må valideres og godkjennes før det trer i kraft: av to personer hvis endringen utvider fullmakten, ellers av én som ikke har skrevet utkastet. Ingenting endres nå.",
   "ui.historikk.rullbakk_opprettet": "Utkast fra versjon {n} er opprettet. Det må gjennom validering og godkjenning før det trer i kraft — antallet godkjennere avgjøres av risikoklassen når runden åpnes.",
   "ui.historikk.rullbakk_feilet": "Rullbakken kunne ikke opprettes. Prøv igjen.",
+  "ui.historikk.rullbakk_uaktivert": "kan ikke rulles tilbake til — versjonen har aldri vært i kraft",
+  "ui.historikk.feil.rullbakk_kilde_uaktivert": "Versjonen har aldri vært i kraft, og kan derfor ikke rulles tilbake til. Last historikken på nytt.",
   "ui.historikk.tom_tittel": "Ingen versjoner",
   "ui.historikk.tom_tekst": "Policyen har ingen registrerte versjoner ennå.",
   "ui.historikk.diff_tittel": "Sammenlign versjoner",

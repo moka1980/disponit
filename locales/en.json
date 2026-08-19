@@ -1018,6 +1018,8 @@
   "ui.historikk.rullbakk_tekst": "This creates a draft from version {n}. It must be validated and approved before it takes effect: by two people if the change expands authority, otherwise by one person who did not write the draft. Nothing changes now.",
   "ui.historikk.rullbakk_opprettet": "A draft from version {n} has been created. It must pass validation and approval before taking effect — the number of approvers is decided by the risk class when the round opens.",
   "ui.historikk.rullbakk_feilet": "The rollback draft could not be created. Please try again.",
+  "ui.historikk.rullbakk_uaktivert": "cannot be rolled back to — this version was never in force",
+  "ui.historikk.feil.rullbakk_kilde_uaktivert": "This version has never been in force, so it cannot be rolled back to. Reload the history.",
   "ui.historikk.tom_tittel": "No versions",
   "ui.historikk.tom_tekst": "This policy has no registered versions yet.",
   "ui.historikk.diff_tittel": "Compare versions",

@@ -38,6 +38,12 @@ _FEIL_HTTP = {
     # standardsvaret 409 (Codex P2). Standarden skal aldri kunne gjøre et
     # fravær om til en konflikt.
     "ikke_funnet": 404,
+    # Kildeversjonen FINNES, men har aldri vært i kraft: den kan leses og
+    # diffes, den er bare ingen rullbakk-kilde (`policyversjon_kilde`).
+    # Egen kode, og 409 — ikke 404, som ville sagt at versjonen er borte, og
+    # ikke 400, som ville sagt at forespørselen er feilformet. Den er
+    # velformet; det er tilstanden til raden den peker på som er svaret.
+    "rullbakk_kilde_uaktivert": 409,
     # Den aktive policyen er ikke lenger den klienten så da den ba om
     # slettingen (optimistisk lås, som `utkastversjon_utdatert`): 409, og
     # flaten laster på nytt.
@@ -326,6 +332,14 @@ def opprett_utkast_endepunkt(tjeneste, request):
             except psycopg.errors.NoDataFound:
                 conn.rollback()
                 return _feil("ikke_funnet", rid, 404)
+            except psycopg.errors.InvalidParameterValue:
+                # Versjonen finnes, men har aldri vært i kraft, og en
+                # rullbakk til noe som aldri virket er ingen rullbakk
+                # (Codex P2). Flaten tilbyr ikke knappen for slike rader —
+                # dette er porten bak den, for kallere som ikke går via
+                # flaten og for en visning som har blitt foreldet.
+                conn.rollback()
+                return _feil("rullbakk_kilde_uaktivert", rid)
             except psycopg.errors.InsufficientPrivilege:
                 conn.rollback()
                 return _feil("ingen_tilgang", rid)

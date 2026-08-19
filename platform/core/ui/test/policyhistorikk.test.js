@@ -346,6 +346,50 @@ test("historikk: en aldri aktivert versjon viser ikke et aktiveringstidspunkt",
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   });
 
+// En rullbakk er en påstand om at vi går TILBAKE til noe (Codex P2). Den
+// aldri aktiverte raden over er et arbeidsstykke, ikke en fortid: en kopi
+// av den er en helt ordinær ny versjon, og `policyversjon_kilde` avviser
+// derfor kallet. Knappen ville endt i 409 hver gang — den skal ikke stå
+// der, og grunnen skal stå i stedet.
+test("historikk: ingen rullbakk til en versjon som aldri har vært i kraft",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": AKTIVE,
+      "/v1/policy/faktura-no/versjoner": { policy_id: "faktura-no",
+        versjoner: [
+          { versjon: "1", innholds_hash: "h1", aktiv: true,
+            opprettet: "2026-08-17T10:00:00+00:00",
+            aktivert_ts: "2026-08-17T10:00:00+00:00", attestanter: ["ida"],
+            aktivert_av_operasjon: "aktiver-u1-r1", rollback_av_versjon: null,
+            aktiveringskilde: "bootstrap", aktivert: true },
+          { versjon: "9", innholds_hash: "h9", aktiv: false,
+            opprettet: "2026-08-19T10:00:00+00:00", aktivert_ts: null,
+            attestanter: null, aktivert_av_operasjon: null,
+            rollback_av_versjon: null, aktiveringskilde: "bootstrap",
+            aktivert: false }] } };
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const rader = h.querySelectorAll(".datatabell tbody tr");
+    assert.equal(rader.length, 2);
+    // Den aktiverte raden beholder handlingen — sperren er per VERSJON, og
+    // må ikke bli et stille tap av rullbakk for hele serien.
+    const knapper = Array.from(h.querySelectorAll("button"))
+      .filter((k) => k.textContent === t("ui.historikk.rullbakk"));
+    assert.equal(knapper.length, 1,
+      "rullbakk skal tilbys for den aktiverte raden, og bare den");
+    assert.ok(rader[0].querySelector("button"),
+      "den aktiverte raden mistet rullbakken");
+    assert.equal(rader[1].querySelector("button"), null,
+      "rullbakk tilbys til en versjon som aldri har vært i kraft");
+    // Grunnen står der; en tom celle ville bare sett ut som en glipp.
+    assert.ok(rader[1].textContent.includes(
+      t("ui.historikk.rullbakk_uaktivert")),
+      rader[1].textContent);
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
 // `policy_id` er ikke et snilt tegnsett bare fordi skjemaet er strengt i
 // dag (Codex P2). Lastekontrakten slipper med vilje gjennom alt aktive
 // policyer fra før innstrammingen bærer, og den gamle Python-`$`-en matchet

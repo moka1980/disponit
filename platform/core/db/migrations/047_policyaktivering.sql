@@ -1014,6 +1014,48 @@ CREATE TRIGGER policyutkast_rullbakkeopphav_immutabel
                      IS DISTINCT FROM OLD.rollback_av_generasjon)
   EXECUTE FUNCTION avvis_endring();
 
+-- «HAR denne versjonen vært i kraft?» — ÉN definisjon (Codex P2).
+--
+-- Spørsmålet stilles fire steder: historikkens `aktivert`-kolonne, dens
+-- sortering, rullbakkens kildeport under, og `policyregister.registrer`s
+-- vakt mot å bytte ut innhold som har vært i bruk. Sto prøven skrevet ut
+-- på hvert sted, kunne stedene svare ULIKT om samme rad — og da er det
+-- ikke én kontrakt lenger, men fire som tilfeldigvis ligner. Nettopp den
+-- differansen er feilen under: flaten visste at raden aldri hadde vært
+-- aktivert, mens porten som lager rullbakken ikke spurte.
+--
+-- Prøven: raden er i kraft NÅ, den ble aktivert av oppsettsveien (som
+-- setter tidspunktet), den bærer en aktiveringshendelse, eller den kom
+-- ikke inn gjennom oppsettsveien i det hele tatt — `styrt` har en hendelse
+-- bak seg, `historisk` lå der da 047 landet, og en umerket fixture-rad
+-- sier ingenting vi kan bruke mot den. Bare
+-- `registrer(..., aktiver=False)` faller utenfor: merket `bootstrap`, uten
+-- tidspunkt, aldri aktiv.
+--
+-- `p_aktivert_ts` er hendelsens tidspunkt og har DEFAULT NULL fordi ikke
+-- alle kallerne har joinen: `policyer_kilde_vakt` binder `styrt` og
+-- `aktivert_av_operasjon` til hverandre i begge retninger, så en
+-- bootstrap-merket rad KAN ikke bære en hendelse — den som utelater
+-- argumentet får derfor samme svar som den som slår opp NULL.
+--
+-- Ren funksjon av fire skalarer: ingen tabellesing, ingenting å skjerme.
+-- EXECUTE står derfor til PUBLIC som normalt; en REVOKE her hadde bare
+-- vært en grant å miste for `registrer`, som kjører som migrator.
+CREATE OR REPLACE FUNCTION public.policyversjon_i_kraft(
+    p_aktiv BOOLEAN, p_bootstrap_aktivert_ts TIMESTAMPTZ,
+    p_aktiveringskilde TEXT, p_aktivert_ts TIMESTAMPTZ DEFAULT NULL)
+RETURNS BOOLEAN
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog AS $$
+    SELECT p_aktivert_ts IS NOT NULL
+        OR p_bootstrap_aktivert_ts IS NOT NULL
+        OR coalesce(p_aktiv, false)
+        OR coalesce(p_aktiveringskilde, 'historisk') <> 'bootstrap';
+$$;
+
+ALTER FUNCTION public.policyversjon_i_kraft(
+    BOOLEAN, TIMESTAMPTZ, TEXT, TIMESTAMPTZ) OWNER TO disponit_policy_eier;
+
 CREATE OR REPLACE FUNCTION policyversjoner_for_tenant(
     p_tenant TEXT, p_policy_id TEXT)
 RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
@@ -1069,11 +1111,10 @@ BEGIN
            -- REGISTRERINGStidspunktet under «Aktivert» — en aktivering som
            -- aldri skjedde. Rader fra før 047 ('historisk') og aktive rader
            -- regnes som aktivert: for dem er det TIDSPUNKTET som mangler,
-           -- ikke aktiveringen.
-           (a.aktivert_ts IS NOT NULL
-            OR p.bootstrap_aktivert_ts IS NOT NULL
-            OR p.aktiv
-            OR coalesce(p.aktiveringskilde, 'historisk') <> 'bootstrap')
+           -- ikke aktiveringen. Prøven bor i `policyversjon_i_kraft`, delt
+           -- med sorteringen under og med rullbakkens kildeport.
+           public.policyversjon_i_kraft(p.aktiv, p.bootstrap_aktivert_ts,
+                                        p.aktiveringskilde, a.aktivert_ts)
       FROM public.policyer p
       -- Koblingen går via OPERASJONEN, ikke via (policy_id, versjon)
       -- (Codex P2). `aktivert_av_operasjon` ER FK-en til hendelsen, og
@@ -1107,11 +1148,10 @@ BEGIN
      -- nyest aktivert — og dro med seg diffens default-retning, som
      -- leser nettopp de to øverste. Den sorteres derfor etter alle
      -- aktiveringene, med samme test som `aktivert`-kolonnen over.
-     ORDER BY CASE WHEN a.aktivert_ts IS NOT NULL
-                     OR p.bootstrap_aktivert_ts IS NOT NULL
-                     OR p.aktiv
-                     OR coalesce(p.aktiveringskilde, 'historisk')
-                        <> 'bootstrap' THEN 0 ELSE 1 END,
+     ORDER BY CASE WHEN public.policyversjon_i_kraft(
+                          p.aktiv, p.bootstrap_aktivert_ts,
+                          p.aktiveringskilde, a.aktivert_ts)
+                     THEN 0 ELSE 1 END,
               coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts,
                        p.opprettet) DESC, p.versjon DESC;
 END $$;
@@ -1145,11 +1185,29 @@ END $$;
 -- kan `(policy_id, versjon)` ha blitt slettet og gjenskapt i mellomtiden,
 -- og kopien ville blitt bundet til en generasjon den aldri kom fra —
 -- nøyaktig løgnen kolonnen finnes for å hindre.
+--
+-- KILDEN MÅ HA VÆRT I KRAFT (Codex P2). En rullbakk er en påstand om at vi
+-- går TILBAKE til noe: lineagen skriver `rollback_av_versjon`, og
+-- historikken leser den som «utkast fra versjon N». `registrer(...,
+-- aktiver=False)` legger med vilje inn versjoner som ALDRI har vært i
+-- kraft — arbeidsstykker, lagt inn før de tas i bruk — og en kopi av et
+-- slikt arbeidsstykke er en helt vanlig ny versjon, ikke en tilbakerulling.
+-- Uten porten her kunne flaten (eller enhver annen kaller) be om nettopp
+-- den kopien, og historikken ville i ettertid fortalt at et utkast som
+-- aldri hadde virket en gang var det vi vendte tilbake til.
+--
+-- Avslaget er BEVISST ikke `no_data_found`: raden finnes, den er lesbar,
+-- og den kan diffes. Det er rollen som kilde den ikke har, og
+-- `invalid_parameter_value` sier det — HTTP-laget svarer 409, ikke 404.
 CREATE OR REPLACE FUNCTION policyversjon_kilde(
     p_tenant TEXT, p_policy_id TEXT, p_versjon TEXT)
 RETURNS TABLE (innhold JSONB, generasjon BIGINT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
+DECLARE
+    v_innhold    JSONB;
+    v_generasjon BIGINT;
+    v_i_kraft    BOOLEAN;
 BEGIN
     IF current_setting('disponit.tenant', true) IS DISTINCT FROM p_tenant
     THEN
@@ -1157,14 +1215,26 @@ BEGIN
             'ikke %', current_setting('disponit.tenant', true), p_tenant
             USING ERRCODE = 'insufficient_privilege';
     END IF;
-    RETURN QUERY
-    SELECT p.innhold, p.generasjon FROM public.policyer p
+    -- Innholdet, generasjonen OG kildedugeligheten i ETT oppslag, av samme
+    -- grunn som de to første: måles dugeligheten i et eget kall, kan raden
+    -- ha blitt slettet og gjenskapt mellom prøven og kopien.
+    SELECT p.innhold, p.generasjon,
+           public.policyversjon_i_kraft(p.aktiv, p.bootstrap_aktivert_ts,
+                                        p.aktiveringskilde)
+      INTO v_innhold, v_generasjon, v_i_kraft
+      FROM public.policyer p
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
        AND p.versjon = p_versjon;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'policyversjon_kilde: ukjent versjon %',
             p_versjon USING ERRCODE = 'no_data_found';
     END IF;
+    IF NOT v_i_kraft THEN
+        RAISE EXCEPTION 'policyversjon_kilde: versjon % har aldri vært '
+            'aktivert og er ingen rullbakk-kilde', p_versjon
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN QUERY SELECT v_innhold, v_generasjon;
 END $$;
 
 ALTER FUNCTION policyversjoner_for_tenant(TEXT, TEXT)

@@ -113,10 +113,24 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
     ];
     if (paaRullbakk) {
       const handlinger = el("td", { class: "behandling-knapper" });
-      const rb = el("button", { class: "knapp liten", type: "button",
-        text: t("ui.historikk.rullbakk") });
-      rb.addEventListener("click", () => paaRullbakk(v));
-      handlinger.append(rb);
+      // RULLBAKK KREVER AT DET FINNES NOE Å RULLE TILBAKE TIL (Codex P2).
+      // Historikken tar med vilje med versjoner som bare er REGISTRERT
+      // (`registrer(..., aktiver=False)`) — arbeidsstykker lagt inn før de
+      // tas i bruk. En kopi av et slikt arbeidsstykke er en helt ordinær ny
+      // versjon; kalte vi den en rullbakk, ville lineagen i ettertid
+      // fortalt at noe som aldri hadde virket var det vi vendte tilbake
+      // til. `policyversjon_kilde` avviser derfor kallet, og knappen ville
+      // deterministisk endt i 409 — samme grunn som at en sperret
+      // policy-id ikke får knappen. Grunnen STÅR der, den mangler ikke.
+      if (v.aktivert === false) {
+        handlinger.append(el("span", { class: "muted",
+          text: t("ui.historikk.rullbakk_uaktivert") }));
+      } else {
+        const rb = el("button", { class: "knapp liten", type: "button",
+          text: t("ui.historikk.rullbakk") });
+        rb.addEventListener("click", () => paaRullbakk(v));
+        handlinger.append(rb);
+      }
       celler.push(handlinger);
     }
     return el("tr", {}, ...celler);

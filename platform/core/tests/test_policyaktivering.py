@@ -761,6 +761,73 @@ def test_aldri_aktivert_versjon_star_utenfor_aktiveringskronologien():
 
 
 @pg
+def test_rullbakk_kilde_krever_at_versjonen_har_vart_i_kraft():
+    """Codex P2: en rullbakk til noe som aldri virket er ingen rullbakk.
+
+    `registrer(..., aktiver=False)` legger med vilje inn versjoner som
+    aldri har vært i kraft — arbeidsstykker, lagt inn før de tas i bruk.
+    Historikken tar dem med, og flaten tilbød derfor en rullbakk-knapp for
+    dem. Serveren tok imot: lineagen fikk `rollback_av_versjon = 9.0.0`,
+    og historikken fortalte i ettertid at et utkast som aldri hadde vært
+    aktivt var det vi vendte tilbake til. Kopien selv er helt ordinær —
+    det er PÅSTANDEN om at den er en tilbakerulling som er oppdiktet.
+
+    Porten er `policyversjon_kilde`, ikke flaten: den er stedet enhver
+    kaller må gjennom. Avslaget skiller seg fra «ukjent versjon» —
+    versjonen finnes, den kan leses og diffes, den duger bare ikke som
+    kilde — og HTTP-laget svarer 409, ikke 404.
+
+    Kontroll: fjern `policyversjon_i_kraft`-porten fra funksjonen igjen,
+    så leveres innholdet og testen blir rød.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-rbkilde-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    m = _c()
+    try:
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        mal["meta"]["versjon"] = "9.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+    finally:
+        m.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        # Den AKTIVERTE versjonen er fortsatt en gyldig kilde — porten må
+        # ikke bli et stille tap av rullbakk for hele serien.
+        innhold, gen = r.execute(
+            "SELECT innhold, generasjon FROM policyversjon_kilde(%s,%s,%s)",
+            (TEN, pid, "1.0.0")).fetchone()
+        assert innhold and gen is not None, (innhold, gen)
+        r.rollback()
+
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            r.execute("SELECT * FROM policyversjon_kilde(%s,%s,%s)",
+                      (TEN, pid, "9.0.0")).fetchone()
+        r.rollback()
+
+        # Avslaget er ikke «borte»: den samme raden leses fortsatt av
+        # diff-veien, som er hele grunnen til at den står i historikken.
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute("SELECT policyversjon_innhold(%s,%s,%s)",
+                         (TEN, pid, "9.0.0")).fetchone()[0]
+        r.rollback()
+    finally:
+        r.close()
+
+
+@pg
 def test_reregistrering_av_aktiv_historisk_rad_beholder_opphavet():
     """Codex P2: merket og tidspunktet er én påstand, og må ha én prøve.
 

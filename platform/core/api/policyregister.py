@@ -355,10 +355,16 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     #
     # IDENTISK re-kjøring er urørt: prøven er innholdet, ikke kallet.
     # `init-tenant.sh` skal kunne kjøres om igjen.
+    #
+    # «Har vært i kraft» er ETT spørsmål med ETT svar (047, Codex P2):
+    # prøven bor i `policyversjon_i_kraft`, delt med historikkens
+    # `aktivert`-kolonne, dens sortering og rullbakkens kildeport. Skrevet
+    # ut her igjen kunne den drive fra dem — og da ville denne vakten og
+    # flaten kunne mene ulike ting om samme rad.
     var_i_kraft = conn.execute(
         "SELECT innholds_hash FROM policyer WHERE tenant=%s AND policy_id=%s"
-        " AND versjon=%s AND (aktiv OR bootstrap_aktivert_ts IS NOT NULL"
-        "  OR coalesce(aktiveringskilde,'historisk') <> 'bootstrap')",
+        " AND versjon=%s AND policyversjon_i_kraft(aktiv,"
+        "     bootstrap_aktivert_ts, aktiveringskilde)",
         (tenant, pid, versjon)).fetchone()
     if var_i_kraft is not None and var_i_kraft[0] != h:
         raise PolicyKorrupt(
