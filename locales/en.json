@@ -908,6 +908,8 @@
   "saksarsak.sikkerhet": "Security anomaly",
   "saksarsak.kompensasjon_kreves": "Compensation required",
   "saksarsak.irreversibel_utfort": "Irreversible action performed",
+  "saksarsak.reversibilitet_ukjent": "Reversibility of the effect unknown",
   "ui.unntak.saksarsak.kompensasjon_kreves": "The task was performed. The receipt arrived after you rejected the case — when the execution itself happened is not known to the system; it may already have been under way before the rejection reached the module. The module contract says the effect can be compensated. Someone has to do that manually.",
-  "ui.unntak.saksarsak.irreversibel_utfort": "The task was performed. The receipt arrived after you rejected the case — when the execution itself happened is not known to the system; it may already have been under way before the rejection reached the module. The module contract says the effect CANNOT be reversed."
+  "ui.unntak.saksarsak.irreversibel_utfort": "The task was performed. The receipt arrived after you rejected the case — when the execution itself happened is not known to the system; it may already have been under way before the rejection reached the module. The module contract says the effect CANNOT be reversed.",
+  "ui.unntak.saksarsak.reversibilitet_ukjent": "The task was performed. The receipt arrived after you rejected the case — when the execution itself happened is not known to the system; it may already have been under way before the rejection reached the module. The task ran without a registered module contract, so the system has no basis for saying whether the effect can be reversed. Someone has to find out what actually happened."
 }

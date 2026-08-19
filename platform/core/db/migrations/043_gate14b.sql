@@ -129,19 +129,26 @@ CREATE TRIGGER oppdrag_kansellert_aarsak_insert
   EXECUTE FUNCTION oppdrag_kansellert_aarsak_ved_insert();
 
 -- ------------------------------------------------------------
--- 2. `unntak.arsak` utvides: kompensasjon og irreversibel utført
---    (038s partial UNIQUE (tenant, oppdrag_id, arsak) WHERE NOT terminal
---    dekker de nye verdiene uten endring.)
+-- 2. `unntak.arsak` utvides: kompensasjon, irreversibel utført — og
+--    UKJENT reversibilitet (038s partial UNIQUE (tenant, oppdrag_id,
+--    arsak) WHERE NOT terminal dekker de nye verdiene uten endring.)
 -- ------------------------------------------------------------
+-- `reversibilitet_ukjent` er tredje utfall av §5-oppslaget (Codex P1,
+-- runde 8). Claim-veien tillater bevisst oppgavetyper uten registrert
+-- modulkontrakt (037), og de kjører med modul-/kontraktbindingen NULL. En
+-- slik oppgave kan utføre og sende en gyldig, signert `utfort`-kvittering
+-- etter et menneskelig nei — og da svarer `reversibilitet_for_oppdrag`
+-- NULL. Ukjent er ikke det samme som trygt: systemet har da INGEN
+-- kontraktevidens for at virkningen kan reverseres, og saken må derfor
+-- fødes og gis til et menneske, ikke forsvinne.
 ALTER TABLE unntak DROP CONSTRAINT IF EXISTS unntak_arsak_check;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = 'unntak_arsak_gyldig') THEN
-    ALTER TABLE unntak ADD CONSTRAINT unntak_arsak_gyldig
-      CHECK (arsak IN ('evidensfrist', 'sikkerhet',
-                       'kompensasjon_kreves', 'irreversibel_utfort'));
-  END IF;
-END $$;
+-- Reasserteres, ikke bare opprettes: mengden er utvidet etter at 043
+-- første gang kjørte på testbasene, og en `IF NOT EXISTS` ville latt dem
+-- stå igjen med den gamle, snevrere CHECKen.
+ALTER TABLE unntak DROP CONSTRAINT IF EXISTS unntak_arsak_gyldig;
+ALTER TABLE unntak ADD CONSTRAINT unntak_arsak_gyldig
+  CHECK (arsak IN ('evidensfrist', 'sikkerhet', 'kompensasjon_kreves',
+                   'irreversibel_utfort', 'reversibilitet_ukjent'));
 
 -- ------------------------------------------------------------
 -- 3. Kvitteringskapabiliteten får utfallet `avvist`

@@ -2059,6 +2059,118 @@ def test_P1_sen_feilet_kvittering_foder_ingen_reversibilitetssak(
 
 
 @pg
+def test_P1_ukjent_reversibilitet_eskalerer_den_sene_utforelsen(
+        migrator, miljo, token):
+    """043 §5 (Codex P1, runde 8): UKJENT reversibilitet er ikke TRYGG.
+
+    Mappingen var et oppslag med stille frafall: alt som ikke var
+    `kompenserende` eller `irreversibel` ga ingen sak. For `direkte` er det
+    riktig — kontrakten sier at virkningen reverserer seg selv. Men
+    claim-veien tillater BEVISST oppgavetyper uten registrert
+    modulkontrakt (037: uregistrert oppdragstype → ingen binding), og de
+    kjører med `modul_id`/`kontraktversjon`/`kontrakt_hash` NULL. En slik
+    oppgave kan utføre og sende en gyldig, signert `utfort`-kvittering
+    etter et menneskelig nei — og da svarer `reversibilitet_for_oppdrag`
+    NULL, ikke `direkte`.
+
+    Hendelsen falt rett gjennom: ingen kompensasjonssak, ingen
+    irreversibilitetsvurdering, ingen som fikk vite det — enda systemet
+    ikke har ETT kontraktbevis for at virkningen er trygg. Fraværet av
+    bevis ble behandlet som bevis på fravær, i nøyaktig den grenen §5 ble
+    bygget for å hindre stillhet i.
+
+    MUTASJONEN SOM DREPER DENNE: la mappingen falle tilbake til None
+    (`.get(reversibilitet)`) i stedet for `reversibilitet_ukjent`.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    cid_sak = secrets.token_hex(16)
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now()+interval '600 s'"
+        " WHERE tenant=%s AND id=%s", (cid_sak, TENANT, sak))
+    migrator.execute("UPDATE unntak SET status='venter_utførelse'"
+                     " WHERE tenant=%s AND id=%s", (TENANT, sak))
+    migrator.commit()
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            # LEGACY-TILSTANDEN, eksplisitt: ingen modulkontrakt er
+            # registrert, og bindingen står NULL — nøyaktig det 037 lar en
+            # uregistrert oppdragstype gjøre.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=NULL, kontraktversjon=NULL,"
+                " kontrakt_hash=NULL WHERE tenant=%s AND id=%s",
+                (TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.commit()
+            # Premisset måles, ikke antas: oppslaget svarer NULL.
+            _sett_kontekst(migrator, TENANT, "sen", "r-rev")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            rev = migrator.execute("SELECT reversibilitet_for_oppdrag(%s,%s)",
+                                   (TENANT, opp)).fetchone()[0]
+            migrator.execute("RESET ROLE")
+            migrator.rollback()
+            assert rev is None, f"premisset holder ikke: {rev!r}"
+
+            # Mennesket sier nei — den EKTE oppløsningsveien.
+            _sett_kontekst(migrator, TENANT, "menneske", "r-avvis")
+            _attester_avvis(migrator, TENANT, sak, "menneske")
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-avvis')", (TENANT, sak, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            assert res == [("kansellert",)], res
+
+            # ... og SÅ kommer den sene kvitteringen: utførelsen SKJEDDE.
+            r = c.post("/v1/oppdrag/kvittering",
+                       json=_signer_kvittering({
+                           "oppdrag_id": opp, "tenant": TENANT,
+                           "kvittering_jti": a["kvittering_jti"],
+                           "repair_operation_id": a["repair_operation_id"],
+                           "owner_claim_id": a["owner_claim_id"],
+                           "owner_generation": a["owner_generation"],
+                           "resultat": "utfort", "ressurs_id": "fak-1"}),
+                       headers=h)
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "lagret_uten_statusendring"
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    saker = dict(migrator.execute(
+        "SELECT arsak, count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " GROUP BY arsak", (TENANT, opp)).fetchall())
+    detalj = migrator.execute(
+        "SELECT detalj FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
+        "   AND hendelse='sen_kvittering'", (TENANT, sak)).fetchall()
+    migrator.rollback()
+
+    assert len(detalj) == 1, detalj
+    assert saker.get("reversibilitet_ukjent") == 1, (
+        "en sen UTFØRT kvittering uten modulkontrakt ga ingen sak et"
+        f" menneske kan se: {saker}")
+    # ... og den er ikke feilklassifisert som en av de to vi HAR dekning for.
+    assert "kompensasjon_kreves" not in saker, saker
+    assert "irreversibel_utfort" not in saker, saker
+
+
+@pg
 def test_P1_brukt_kapabilitet_kan_ikke_gjenbrukes_paa_nytt_oppdrag(migrator,
                                                                    miljo, token):
     """En forbrukt kapabilitet er forbrukt — også for et annet oppdrag.

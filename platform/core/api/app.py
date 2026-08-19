@@ -1254,10 +1254,11 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
 
             # `arsak` er MED (043, Codex P2): en sak født av
             # `sikre_sak_for_oppdrag` bærer hele sin grunn der — og fra 043
-            # er to av verdiene `kompensasjon_kreves` og
-            # `irreversibel_utfort`, altså «et menneske må rydde opp etter
-            # en handling som rakk å skje» og «en irreversibel handling ble
-            # rapportert utført etter nei-et». Uten kolonnen så listen
+            # er tre av verdiene `kompensasjon_kreves`,
+            # `irreversibel_utfort` og `reversibilitet_ukjent`, altså «et
+            # menneske må rydde opp etter en handling som rakk å skje», «en
+            # irreversibel handling ble rapportert utført» og «vi vet ikke
+            # om virkningen kan reverseres». Uten kolonnen så listen
             # nøyaktig ut som en hvilken som helst arvet sak, og den
             # forskjellen er hele poenget med å føde saken.
             sql = ("SELECT id, ts, handling, kategori, prioritet, status,"
@@ -2728,11 +2729,31 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # utføreren selv rapporterte at den ikke ble det. Evidensraden over
         # skrives fortsatt (den sene kvitteringen ER evidens, uansett
         # utfall, og bærer nå resultatet), men SLUTNINGEN krever premisset.
+        #
+        # ... og UKJENT REVERSIBILITET ER IKKE TRYGG (Codex P1, runde 8).
+        # Mappingen var et oppslag med stille frafall: alt som ikke var
+        # `kompenserende` eller `irreversibel` ga ingen sak. For `direkte`
+        # er det RIKTIG — kontrakten sier at virkningen reverserer seg
+        # selv. Men `reversibilitet_for_oppdrag` svarer også NULL, og det
+        # betyr noe helt annet: oppdraget ble aldri modulbundet. Claim-
+        # veien tillater bevisst uregistrerte oppgavetyper (037) og lar
+        # modul-/kontraktbindingen stå NULL, så en slik oppgave kan utføre
+        # og sende en gyldig signert `utfort`-kvittering etter nei-et —
+        # og falle rett gjennom. Da er utfallet det motsatte av det §5 ble
+        # bygget for: systemet har INGEN kontraktevidens for at virkningen
+        # er trygg eller reverserer seg selv, og lot likevel være å
+        # spørre et menneske. Fraværet av bevis er ikke bevis på fravær.
+        # Mengden er derfor LUKKET med et eksplisitt fall-through: `direkte`
+        # er den ene verdien som betyr «ingen oppfølging», alt annet vi ikke
+        # kjenner — NULL i dag, en fremtidig klasse i morgen — blir
+        # `reversibilitet_ukjent` og går til et menneske.
         sen_utfort = kvittering.get("resultat") == "utfort"
         if menneskelig_nei and sen_utfort:
-            ny_arsak = {"kompenserende": "kompensasjon_kreves",
-                        "irreversibel": "irreversibel_utfort"}.get(
-                            reversibilitet)
+            kjent = {"kompenserende": "kompensasjon_kreves",
+                     "irreversibel": "irreversibel_utfort",
+                     "direkte": None}
+            ny_arsak = (kjent[reversibilitet] if reversibilitet in kjent
+                        else "reversibilitet_ukjent")
             if ny_arsak is not None:
                 conn.execute(
                     "SELECT sikre_sak_for_oppdrag(%s,%s,%s,%s,%s)",

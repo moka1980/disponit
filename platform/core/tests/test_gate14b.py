@@ -547,6 +547,12 @@ def test_port10_sen_utfort_reversibilitet(conn, klient):
     src = (Path(__file__).resolve().parents[1] / "api" / "app.py").read_text(encoding="utf-8")
     assert "reversibilitet_for_oppdrag" in src
     assert "kompensasjon_kreves" in src and "irreversibel_utfort" in src
+    # ... og det TREDJE utfallet (Codex P1, runde 8): et oppdrag uten
+    # modulkontrakt svarer NULL, ikke `direkte`. Mengden er lukket med et
+    # eksplisitt fall-through, så ukjent reversibilitet går til et menneske
+    # i stedet for å falle stille gjennom. Ende-til-ende måles den i
+    # test_m37.test_P1_ukjent_reversibilitet_eskalerer_den_sene_utforelsen.
+    assert "reversibilitet_ukjent" in src
 
 
 @pg

@@ -32,8 +32,9 @@ KONTRAKT = {
                               "policy_versjon", "sikkerhet", "sak_finnes",
                               "feil_aarsak"],
     # `arsak` (043): saker FØDT av et oppdrag bærer grunnen sin der —
-    # `kompensasjon_kreves` og `irreversibel_utfort` betyr at et menneske
-    # må rydde opp utenfor systemet. Flaten viser den i både listen
+    # `kompensasjon_kreves`, `irreversibel_utfort` og
+    # `reversibilitet_ukjent` betyr at et menneske må rydde opp (eller
+    # undersøke) utenfor systemet. Flaten viser den i både listen
     # (kolonne) og detaljen (rad + forklaring); faller feltet ut av
     # backend, er de sakene igjen ikke til å skille fra en arvet sak.
     "/v1/unntak": ["saker", "kategori", "prioritet", "status", "sakstype",

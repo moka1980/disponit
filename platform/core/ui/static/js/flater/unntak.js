@@ -138,7 +138,8 @@ function behandlingsHandlinger(detalj, id, ctx, paaFerdig) {
 //: Saksgrunner som krever at operatøren gjør noe UTENFOR systemet, og som
 //  derfor får en forklarende note i tillegg til etiketten. Lukket mengde:
 //  en ukjent årsak vises som etikett alene, aldri med feil forklaring.
-const FORKLARTE_SAKSARSAKER = ["kompensasjon_kreves", "irreversibel_utfort"];
+const FORKLARTE_SAKSARSAKER = ["kompensasjon_kreves", "irreversibel_utfort",
+  "reversibilitet_ukjent"];
 
 function saksarsakForklaring(arsak) {
   if (!FORKLARTE_SAKSARSAKER.includes(arsak)) return null;
@@ -156,11 +157,12 @@ function detaljInnhold(detalj, historikk, id, ctx, paaFerdig) {
   kvRad(dl, t("ui.unntak.sakstype"), t(`sakstype.${detalj.sakstype}`,
     detalj.sakstype));
   // 043 (Gate 14b, Codex P2): saker FØDT av et oppdrag bærer grunnen sin i
-  // `arsak`, og fra 043 er to av verdiene `kompensasjon_kreves` og
-  // `irreversibel_utfort` — «noen må kompensere manuelt» og «en
-  // irreversibel handling ble rapportert utført». Uten denne raden var de
-  // ikke til å skille fra en hvilken som helst arvet sak, og da er saken
-  // født uten å si det den ble født for å si.
+  // `arsak`, og fra 043 er tre av verdiene `kompensasjon_kreves`,
+  // `irreversibel_utfort` og `reversibilitet_ukjent` — «noen må kompensere
+  // manuelt», «en irreversibel handling ble rapportert utført» og «vi vet
+  // ikke om virkningen kan reverseres». Uten denne raden var de ikke til å
+  // skille fra en hvilken som helst arvet sak, og da er saken født uten å
+  // si det den ble født for å si.
   //
   // Forklaringene sier hva systemet KAN vite (Codex P2, runde 8): at
   // kvitteringen ANKOM etter nei-et. Rekkefølgen mellom operatørens klikk

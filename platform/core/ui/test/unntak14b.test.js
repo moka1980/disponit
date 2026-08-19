@@ -264,3 +264,31 @@ test("043: irreversibel_utfort får sin EGEN tekst, og en arvet sak ingen",
     "en sak uten grunn fikk en tom årsaksrad");
   assert.ok(!panel.querySelector('[role="note"]'));
 });
+
+test("043: reversibilitet_ukjent har sin EGEN tekst — ukjent er ikke trygt",
+     async () => {
+  // Codex P1 (runde 8): en oppgave uten registrert modulkontrakt (037) kan
+  // utføre og kvittere etter nei-et, og da har systemet INGEN dekning for å
+  // si om virkningen kan reverseres. Saken fødes nå — og må da også være
+  // synlig og forklart, ellers er den bare en arvet sak til.
+  document.querySelector(".overlegg")?.remove();
+  const h = await aapneSakMedArsak("reversibilitet_ukjent");
+  const kropp = h.querySelector("tbody").textContent;
+  assert.ok(kropp.includes(t("saksarsak.reversibilitet_ukjent")),
+    "listen viser ikke den nye saksgrunnen");
+  assert.ok(!kropp.includes("reversibilitet_ukjent"),
+    "råkoden vises i stedet for teksten");
+  h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector(".kv"));
+  const panel = document.querySelector(".kv").parentElement;
+  assert.ok(panel.textContent.includes(
+    t("ui.unntak.saksarsak.reversibilitet_ukjent")),
+    "forklaringen av hva som må undersøkes mangler");
+  // ... og ikke de to vi HAR kontraktdekning for: de sier noe helt annet.
+  assert.ok(!panel.textContent.includes(
+    t("ui.unntak.saksarsak.kompensasjon_kreves")));
+  assert.ok(!panel.textContent.includes(
+    t("ui.unntak.saksarsak.irreversibel_utfort")));
+  const brudd = await alvorligeBrudd(panel, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
