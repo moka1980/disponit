@@ -993,9 +993,11 @@ def test_port22_kansellert_aarsak_kan_ikke_etterstemples(conn):
     uid = _oppsett(conn)
     _medlem(conn, "op22")
     oid = _oppdrag_id(uid, _oppdrag(uid, "opprettet"))
-    # Egen generasjon på det andre oppdraget: `reparasjon_generasjon_unik`
-    # er (tenant, unntak_id, repair_generation).
-    oid2 = _oppdrag_id(uid, _oppdrag(uid, "opprettet", gen=1))
+    # (d)-oppdraget får sin EGEN sak: `en_aktiv_reparasjon_per_sak` (og
+    # `reparasjon_generasjon_unik`) tillater ikke to aktive reparasjoner
+    # under samme unntak.
+    uid2 = _oppsett(conn)
+    oid2 = _oppdrag_id(uid2, _oppdrag(uid2, "opprettet"))
     m = _mig()
     # try/finally: en migrator-tilkobling som lekker med åpen transaksjon
     # holder låser resten av suiten aldri kommer forbi.
