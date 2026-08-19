@@ -2482,6 +2482,22 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # `naa` er BEVISST ikke oppfrisket: den er kvitteringens ANKOMSTTID,
         # målt før enhver låskø. Et oppdrag skal ikke miste fristen sin
         # fordi vår transaksjon sto bak en operatørhandling.
+        #
+        # ... og DET SAMME GJELDER KAPABILITETENS UTLØP (Codex P2, runde 5).
+        # Innvendingen var at `innlos_kvitteringskapabilitet` filtrerer på
+        # `k.utloper > now()`, så en kvittering som ankom i tide, men sto i
+        # sakslåskø forbi utløpet, skulle miste kapabiliteten her. Den
+        # egenskapen HAR koden allerede, og den er ikke en tilfeldighet:
+        # `now()` er transaksjonstidsstempelet (`transaction_timestamp()`),
+        # ikke veggklokka, og hele ingesten kjører i ÉN transaksjon —
+        # `preauth` lukker sin egen, og forretningstransaksjonen begynner
+        # ved den første lesningen over. Låskøen kan derfor ikke flytte
+        # utløpsgrensen: begge innløsningene måler mot nøyaktig samme
+        # tidspunkt, og det ligger før ankomsten (`naa`). Ville vi i stedet
+        # ha friskepunktets veggklokke, måtte vi bedt om
+        # `statement_timestamp()` — og det er nettopp det vi IKKE gjør.
+        # Egenskapen er målt, ikke bare beskrevet: se
+        # `test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist` (test_m37).
         kap = conn.execute(
             "SELECT owner_claim_id, owner_generation, status, resultathash"
             "  FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
