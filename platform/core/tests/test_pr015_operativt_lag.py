@@ -690,6 +690,21 @@ def _saksstatus(migrator, tenant, sak):
     return status
 
 
+def _saksrevisjon(migrator, sak):
+    """Sakens EGEN revisjon — stemmenes navnerom fra 041 §21.
+
+    Før 041 var navnerommet domeneradens `autorisasjonsgenerasjon`, som
+    holdt så lenge hver utfordrer hadde sin egen sak. Skiftet (A→B→C på
+    SAMME sak) gjorde den nøkkelen tvetydig; sakens revisjon er entydig.
+    """
+    _sett_kontekst(migrator, "__plattform_domener")
+    r = migrator.execute(
+        "SELECT saksrevisjon FROM unntak WHERE tenant='__plattform_domener'"
+        " AND id=%s", (sak,)).fetchone()[0]
+    migrator.rollback()
+    return int(r)
+
+
 def _adjudikator(tenant, sub, *, roller="ARRAY['domeneadjudikator']"):
     """Aktiv domeneadjudikator i `tenant`. Returnerer bruker_id.
 
@@ -812,10 +827,13 @@ def test_tilbakekalt_adjudikator_teller_ikke_mot_terskelen(migrator):
     assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
 
     # Evidensen står: raden er ikke ryddet bort, den teller bare ikke.
+    # 041 §21: navnerommet er sakens egen revisjon, ikke domeneradens
+    # generasjon — saken har ikke skiftet her, så den står på 0.
+    rev = _saksrevisjon(migrator, sak)      # egen transaksjon: rulles tilbake
     _sett_kontekst(migrator, ANNEN_TENANT)
     n = int(migrator.execute(
         "SELECT count(*) FROM overtakelse_attestasjon"
-        " WHERE sak_id=%s AND saksrevisjon=%s", (sak, gen)).fetchone()[0])
+        " WHERE sak_id=%s AND saksrevisjon=%s", (sak, rev)).fetchone()[0])
     migrator.rollback()
     assert n == 2, "attestasjonene ble ryddet bort i stedet for å stå som evidens"
 
@@ -932,11 +950,15 @@ def test_port17_ny_konflikt_foreldet_ventende_attestasjon(migrator):
     finally:
         a.close()
 
-    # B-attestasjonen er BEVART på sin gamle revisjon...
+    # B-attestasjonen er BEVART på sin gamle revisjon — 041 §21: saken er
+    # skiftet til C og står nå på revisjon 1, mens Bs stemme ble avgitt på
+    # 0 og blir liggende der. Nettopp DET er poenget med navnerommet: Bs
+    # bevarte stemme kan ikke lenger blande seg inn i Cs opptelling.
+    assert _saksrevisjon(migrator, sak) == 1, "skiftet bumpet ikke revisjonen"
     _sett_kontekst(migrator, ANNEN_TENANT)
     n = int(migrator.execute(
         "SELECT count(*) FROM overtakelse_attestasjon"
-        " WHERE sak_id=%s AND saksrevisjon=%s", (sak, gen_b)).fetchone()[0])
+        " WHERE sak_id=%s AND saksrevisjon=0", (sak,)).fetchone()[0])
     migrator.rollback()
     assert n == 1, "den foreldede attestasjonen ble borte"
 
