@@ -44,6 +44,20 @@ _PAUSE_FOR_FEIL = {
     "bestillingstype_utilgjengelig": "modul_utilgjengelig",
 }
 
+#: FORBIGÅENDE UTOVER FEILVEITABELLEN (Codex P2). Tabellen ruter etter
+#: hva klienten skal se; disse kodene er avvist-rutet der (409/423 på
+#: nøkkelen — helt riktig for en browser), men de sier «prøv igjen», ikke
+#: «denne planen er ferdig».
+_FORBIGAENDE = frozenset({
+    # Nøkkelen er OPPTATT akkurat nå: en annen forespørsel holder
+    # sesjonslåsen. Bruker et forsøk lengre tid enn planleasen (120 s),
+    # tar en ny arbeider vinduet mens det FØRSTE fortsatt arbeider — og
+    # den nye møter da denne låsen. Terminaliserte vi den som `stopp`,
+    # konsumerte det andre forsøket vinduet OG pauset planen permanent,
+    # enda det første forsøket kunne lykkes sekundet etter.
+    "idempotens_opptatt",
+})
+
 
 def idempotensnokkel(plan_id, vindu_start: datetime) -> str:
     return f"plan:{plan_id}:{vindu_start.astimezone(timezone.utc).isoformat()}"
@@ -63,9 +77,15 @@ def er_forbigaende(kode) -> bool:
     `_PAUSE_FOR_FEIL` går foran tabellen: `bestillingstype_utilgjengelig`
     er drift-rutet for HTTP-klienten, men for planen er den nettopp en dom
     (modulen finnes ikke lenger) med sin egen pausegrunn i §7.
+
+    `_FORBIGAENDE` går ved siden av tabellen: den ruter etter hva KLIENTEN
+    skal se, og en 409 på en opptatt nøkkel er riktig der — men det er
+    ikke en dom over planen.
     """
     if kode in _PAUSE_FOR_FEIL:
         return False
+    if kode in _FORBIGAENDE:
+        return True
     from api.feil import FEIL
     vei = FEIL.get(kode or "")
     return vei is not None and "drift" in vei.routing

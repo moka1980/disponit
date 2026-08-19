@@ -58,6 +58,19 @@ FELTDEKNING = {"bestillingstype": ("bestillingstype",),
 IDEMPOTENSNOKKEL_MIN = 8
 IDEMPOTENSNOKKEL_MAKS = 200
 
+#: LOKAL kode for «nøkkelen er OPPTATT akkurat nå» (Codex P2). Mot
+#: klienten er den `idempotenskonflikt` som før — 409 på nøkkelen, ingen
+#: beslutning, ingen kvote — og `bestill_endepunkt` oversetter den
+#: tilbake. Skillet finnes for kallere som gjør en feilkode om til
+#: TILSTAND: planveien pauser på en terminal kode, og en pause kan bare et
+#: menneske oppheve. «En annen forespørsel holder nøkkelen nå» er
+#: forbigående; «det står en rad med en annen intensjon» er det ikke.
+#: Koden når aldri ut av prosessen og hører derfor ikke hjemme i
+#: feilveitabellen — den ER `idempotenskonflikt` utad.
+OPPTATT = "idempotens_opptatt"
+#: Kodene endepunktet oversetter tilbake til klientens kontrakt.
+KLIENTKODE = {OPPTATT: "idempotenskonflikt"}
+
 
 @dataclass(frozen=True)
 class Bestillingstype:
@@ -326,6 +339,18 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
         # nøkkelen (409). Ingen beslutning tas, ingen kvote brennes, og
         # klientens neste forsøk møter enten gjenspillet eller konflikten
         # — men aldri en pool-tilkobling som står og venter.
+        #
+        # ... MEN «OPPTATT NÅ» OG «ANNEN INTENSJON» ER IKKE DET SAMME FOR EN
+        # KALLER SOM GJØR KODEN TIL TILSTAND (Codex P2). Mot klienten er
+        # begge 409 på nøkkelen, og det er riktig: ingen beslutning, ingen
+        # kvote, prøv igjen eller bruk en annen nøkkel. Men planveien
+        # oversetter en terminal feilkode til en PAUSE bare et menneske kan
+        # oppheve, og «en annen forespørsel holder nøkkelen akkurat nå» er
+        # et forbigående sammenstøt: en arbeider som bruker lengre tid enn
+        # planleasen (120 s) mister vinduet til en ny arbeider, som da
+        # møter nettopp denne låsen mens det FØRSTE forsøket kan lykkes
+        # like etter. Den lokale koden er derfor sin egen; endepunktet
+        # oversetter den tilbake til klientens kontrakt.
         if nokkel:
             navn = laasenavn_for(tenant, nokkel)
             fikk = conn.execute(
@@ -333,7 +358,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 (navn,)).fetchone()[0]
             conn.rollback()
             if not fikk:
-                return ("feil", "idempotenskonflikt")
+                return ("feil", OPPTATT)
             laasenavn = navn
 
         from db.pg import sett_kontekst
@@ -751,7 +776,10 @@ def bestill_endepunkt(tjeneste, request: Request) -> Response:
         res = utfor_bestilling(tjeneste, conn, tenant, f"bruker:{bid}",
                                data, nokkel, rid)
         if res[0] == "feil":
-            return _feilsvar(res[1], rid)
+            # Den lokale «opptatt»-koden er `idempotenskonflikt` utad:
+            # klientens kontrakt på nøkkelen er uendret (409, ingen
+            # beslutning, ingen kvote). Skillet er planveiens.
+            return _feilsvar(KLIENTKODE.get(res[1], res[1]), rid)
         _, kropp, replay = res
         hoder = {"x-request-id": rid}
         if replay:

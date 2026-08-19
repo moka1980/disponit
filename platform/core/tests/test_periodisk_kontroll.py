@@ -1725,6 +1725,79 @@ def test_driftsfeil_er_forbigaende_ikke_dom():
         assert _tick_utfall(("feil", kode))[0] == "stopp", kode
 
 
+def test_opptatt_nokkel_er_forbigaende_ikke_dom():
+    """Codex P2: `idempotenskonflikt` bar TO betydninger.
+
+    Den ene er terminal — det står en rad på nøkkelen med en ANNEN
+    intensjon. Den andre er et sammenstøt i tid: sesjonslåsen på nøkkelen
+    er opptatt fordi en forespørsel fortsatt arbeider med den. Bruker et
+    forsøk lengre tid enn planleasen (120 s), tar en ny arbeider vinduet
+    lovlig, møter låsen — og med begge betydningene i én kode ble det
+    andre forsøket en terminal `stopp`: vinduet konsumert og planen
+    pauset permanent, enda det FØRSTE forsøket kunne lykkes rett etter.
+
+    Utad er de fortsatt den samme 409-en; skillet er planveiens, som er
+    den eneste som gjør en feilkode om til varig tilstand.
+
+    MUTASJONEN SOM DREPER DENNE: la låsegrenen returnere
+    `idempotenskonflikt` igjen, eller fjern koden fra `_FORBIGAENDE`.
+    """
+    from api.bestilling import KLIENTKODE, OPPTATT
+    from plan.materialiser import _FORBIGAENDE, _tick_utfall, er_forbigaende
+    # De to endene er bundet: koden bestillingsveien sender er koden
+    # planen kjenner igjen.
+    assert OPPTATT in _FORBIGAENDE
+    assert er_forbigaende(OPPTATT)
+    assert _tick_utfall(("feil", OPPTATT))[0] is None
+    # ... og klientens kontrakt på nøkkelen er uendret.
+    assert KLIENTKODE[OPPTATT] == "idempotenskonflikt"
+    assert not er_forbigaende("idempotenskonflikt")
+
+
+@pg
+def test_opptatt_nokkel_frigir_vinduet(migrator, app):
+    """Codex P2, ende til ende: en opptatt nøkkel gir vinduet TILBAKE.
+
+    Låsen holdes av en tredje forbindelse — nøyaktig formen et forsøk
+    som fortsatt arbeider har — og `utfor_bestilling` er den EKTE
+    funksjonen her, ikke en attrapp: det er dens egen `pg_try_advisory_lock`
+    som avgjør. Vinduet skal stå `ledig` igjen, uten tick og uten pause.
+    """
+    from db.pg import koble
+    from plan import materialiser
+    from api import bestilling as bm
+    rt = _rt()
+    laas = koble(DSN)
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p-opptatt.example")
+        rad = _mine_forfalte(rt, pid)[0]
+        navn = bm.laasenavn_for(TENANT, materialiser.idempotensnokkel(
+            pid, rad[2]))
+        assert laas.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+            (navn,)).fetchone()[0] is True
+        res = materialiser.materialiser_en(app.tjeneste, rt, rad)
+        assert res["forbigaende"] == bm.OPPTATT, res
+        assert res["frigitt"] == "frigitt", res
+    finally:
+        laas.close()
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    vindu = migrator.execute(
+        "SELECT tilstand FROM bestillingsplan_vindu WHERE plan_id=%s",
+        (pid,)).fetchall()
+    tick = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s",
+        (pid,)).fetchone()[0]
+    plan = migrator.execute(
+        "SELECT status, pause_aarsak FROM bestillingsplan WHERE plan_id=%s",
+        (pid,)).fetchone()
+    migrator.rollback()
+    assert vindu == [("ledig",)], vindu
+    assert tick == 0, "en opptatt nøkkel skrev evidens"
+    assert plan == ("aktiv", None), "en opptatt nøkkel pauset planen"
+
+
 @pg
 def test_forbigaende_feil_frigir_vinduet(migrator, app, monkeypatch):
     """Codex P1, ende til ende: en drift-feil fra bestillingsveien gir
