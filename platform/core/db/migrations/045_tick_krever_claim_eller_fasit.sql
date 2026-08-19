@@ -101,12 +101,51 @@
 -- i 044 for å vite hvem funksjonen kjører som.
 SET LOCAL ROLE disponit_m37_claimer;
 
+-- ------------------------------------------------------------
+-- NØKKELEN ER EN FUNKSJON AV VINDUET, IKKE ET ARGUMENT
+-- (Codex P1 på #106)
+--
+-- Fasitporten over spør «finnes det en idempotensrad på nøkkelen med
+-- dette utfallet?» — og `p_nokkel` var til nå et fritt kallerargument.
+-- Beviset var dermed bundet til en STRENG kalleren valgte, ikke til
+-- vinduet som skulle felles: enhver eksisterende `bestilling_idempotens`
+-- -rad i kallerens egen tenant, med `beslutning` lik det påståtte
+-- utfallet, kunne pekes på for å terminalisere et helt annet åpent
+-- vindu. Det er nøyaktig det forfalskede ticket 045 er skrevet for å
+-- stenge, bare med ett hopp til.
+--
+-- `hoppet_over` bar speilbildet: der er porten at det IKKE finnes en rad
+-- på nøkkelen, og en oppdiktet nøkkel treffer garantert ingenting. Et
+-- vindu som VAR bestilt kunne dermed felles som `hoppet_over` likevel.
+--
+-- Roten er at nøkkelen ble BÅRET inn i stedet for UTLEDET. Den er en ren
+-- funksjon av (plan, vindu) — det er nettopp derfor både materialisereren
+-- og klassifisereren kan regne den ut hver for seg — så den utledes her,
+-- i den ene grensen som ikke kan lyve om den. Formen er den samme som
+-- `plan.materialiser.idempotensnokkel`: `plan:<plan_id>:<vindu_start i
+-- UTC, ISO 8601>`, der `to_char(...,'US')` gjengir Pythons `isoformat()`
+-- som utelater brøkdelen når den er null.
+CREATE OR REPLACE FUNCTION plan_vindu_idempotensnokkel(
+    p_plan UUID, p_vindu TIMESTAMPTZ)
+RETURNS TEXT LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
+    SELECT 'plan:' || p_plan::text || ':'
+        || to_char(p_vindu AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS')
+        || CASE WHEN to_char(p_vindu AT TIME ZONE 'UTC', 'US') = '000000'
+                THEN '' ELSE '.' || to_char(p_vindu AT TIME ZONE 'UTC', 'US')
+           END
+        || '+00:00'
+$$;
+REVOKE ALL ON FUNCTION plan_vindu_idempotensnokkel(UUID, TIMESTAMPTZ)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION plan_vindu_idempotensnokkel(UUID, TIMESTAMPTZ)
+    TO disponit;
+
 CREATE OR REPLACE FUNCTION terminaliser_planvindu(
     p_tenant TEXT, p_plan UUID, p_vindu TIMESTAMPTZ, p_claim UUID,
     p_nokkel TEXT, p_utfall TEXT, p_oppdrag BIGINT, p_detalj JSONB)
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v RECORD; v_eksisterende RECORD;
+DECLARE v RECORD; v_eksisterende RECORD; v_nokkel TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'terminaliser_planvindu');
     -- VINDUET BINDES TIL p_tenant (Codex P1, 044 runde 3). Leddet står i
@@ -119,6 +158,17 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'terminaliser_planvindu: ukjent vindu'
             USING ERRCODE = 'no_data_found';
+    END IF;
+    -- NØKKELEN BINDES TIL VINDUET (Codex P1 på #106). Kontrollen står
+    -- ETTER eierskapsoppslaget med vilje: et kall på en annen tenants
+    -- vindu skal fortsatt svare `ukjent vindu` og ikke røpe at nøkkelen
+    -- var riktig avledet. Under dette punktet er `v_nokkel` bevist lik
+    -- det kalleren oppga, og hver eneste port nedenfor — fasiten,
+    -- `hoppet_over`-nekten og ticket selv — leser den utledede verdien.
+    v_nokkel := public.plan_vindu_idempotensnokkel(p_plan, p_vindu);
+    IF p_nokkel IS DISTINCT FROM v_nokkel THEN
+        RAISE EXCEPTION 'terminaliser_planvindu: idempotensnøkkelen hører '
+            'ikke til vinduet' USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF v.tilstand = 'terminal' THEN
         -- Konflikt på tick er ikke suksess: eksisterende rad MÅ bære
@@ -158,7 +208,7 @@ BEGIN
         END IF;
         IF EXISTS (SELECT 1 FROM public.bestilling_idempotens bi
                     WHERE bi.tenant = p_tenant
-                      AND bi.idempotensnokkel = p_nokkel) THEN
+                      AND bi.idempotensnokkel = v_nokkel) THEN
             RAISE EXCEPTION 'terminaliser_planvindu: det finnes en '
                 'bestilling på vinduets nøkkel — utfallet skal hentes '
                 'derfra, aldri hoppet_over'
@@ -199,7 +249,7 @@ BEGIN
            OR (v.tilstand = 'aktivt' AND v.lease_utloper > now())
            OR NOT EXISTS (SELECT 1 FROM public.bestilling_idempotens bi
                            WHERE bi.tenant = p_tenant
-                             AND bi.idempotensnokkel = p_nokkel
+                             AND bi.idempotensnokkel = v_nokkel
                              AND bi.beslutning = p_utfall) THEN
             RAISE EXCEPTION 'terminaliser_planvindu: utfallet krever et '
                 'levende claim eller en verifisert idempotensrad'
@@ -246,7 +296,7 @@ BEGIN
     INSERT INTO public.bestillingsplan_tick
         (plan_id, tenant, vindu_start, idempotensnokkel, utfall,
          oppdrag_id, detalj)
-    VALUES (p_plan, p_tenant, p_vindu, p_nokkel, p_utfall, p_oppdrag,
+    VALUES (p_plan, p_tenant, p_vindu, v_nokkel, p_utfall, p_oppdrag,
             p_detalj);
     RETURN 'terminalisert';
 END $$;

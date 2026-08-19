@@ -673,6 +673,7 @@ def test_terminalisering_vinner_gir_null_http(migrator, app, monkeypatch):
 def test_hoppet_over_portene(migrator):
     """Portene 37, 51 og §5-nekten: `hoppet_over` krever utløpt vindu,
     intet levende forsøk og INTET idempotenstreff."""
+    from plan.klassifiser import _nokkel
     rt = _rt()
     try:
         pid = _plan(rt, host="p37.example")
@@ -681,23 +682,23 @@ def test_hoppet_over_portene(migrator):
                                      tilstand="ledig")
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,"
-                       "'n-37xxxxx','hoppet_over',NULL,NULL)",
-                       (TENANT, pid, vs_aapent))
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'hoppet_over',NULL,NULL)",
+                       (TENANT, pid, vs_aapent, _nokkel(pid, vs_aapent)))
         rt.rollback()
         # 51: levende lease eier vinduet.
         vs_lease = _syntetisk_vindu(migrator, pid, start_h=-8, slutt_h=-4,
                                     tilstand="aktivt", lease_h=1)
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
-            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,"
-                       "'n-51xxxxx','hoppet_over',NULL,NULL)",
-                       (TENANT, pid, vs_lease))
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'hoppet_over',NULL,NULL)",
+                       (TENANT, pid, vs_lease, _nokkel(pid, vs_lease)))
         rt.rollback()
         # §5: finnes en bestilling på nøkkelen, BLE det bestilt.
         vs_bestilt = _syntetisk_vindu(migrator, pid, start_h=-14,
                                       slutt_h=-10, tilstand="ledig")
-        nokkel = "n-bestilt-" + secrets.token_hex(4)
+        nokkel = _nokkel(pid, vs_bestilt)
         _sett_kontekst(migrator, TENANT)
         migrator.execute(
             "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
@@ -720,6 +721,7 @@ def test_avvik_er_sikkerhetssak(migrator):
     """Port 49: terminal gjenbesøkt med ANNET utfall → `avvik:<x>` og en
     sikkerhetshendelse skrevet ATOMISK av funksjonen selv; samme utfall
     → `idempotent`, ingen hendelse."""
+    from plan.klassifiser import _nokkel
     rt = _rt()
     try:
         pid = _plan(rt, host="p49.example")
@@ -727,21 +729,23 @@ def test_avvik_er_sikkerhetssak(migrator):
                               tilstand="ledig")
         _sett_kontekst(rt, TENANT)
         assert rt.execute(
-            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,'n-49xxxxx',"
+            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
             "'hoppet_over',NULL,NULL)",
-            (TENANT, pid, vs)).fetchone()[0] == "terminalisert"
+            (TENANT, pid, vs, _nokkel(pid, vs))).fetchone()[0] \
+            == "terminalisert"
         rt.commit()
         _sett_kontekst(rt, TENANT)
         assert rt.execute(
-            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,'n-49xxxxx',"
+            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
             "'hoppet_over',NULL,NULL)",
-            (TENANT, pid, vs)).fetchone()[0] == "idempotent"
+            (TENANT, pid, vs, _nokkel(pid, vs))).fetchone()[0] == "idempotent"
         rt.commit()
         _sett_kontekst(rt, TENANT)
         assert rt.execute(
-            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,'n-49xxxxx',"
+            "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
             "'tillat',NULL,NULL)",
-            (TENANT, pid, vs)).fetchone()[0] == "avvik:hoppet_over"
+            (TENANT, pid, vs, _nokkel(pid, vs))).fetchone()[0] \
+            == "avvik:hoppet_over"
         rt.commit()
     finally:
         rt.close()
@@ -923,6 +927,109 @@ def test_nokkelen_er_deterministisk():
 
 
 @pg
+def test_databasen_avleder_samme_nokkel_som_python(migrator):
+    """Codex P1 på #106: `terminaliser_planvindu` stoler ikke lenger på
+    `p_nokkel`, den UTLEDER nøkkelen — så SQL-formen må være bit for bit
+    lik Pythons, ellers avvises hvert eneste lovlige kall.
+
+    Brøkdelen er det ene stedet formene kan gli fra hverandre: Pythons
+    `isoformat()` utelater den når den er null og skriver nøyaktig seks
+    siffer ellers. Begge tilfellene måles.
+    """
+    import uuid
+    from datetime import datetime, timezone
+    from plan.materialiser import idempotensnokkel
+    pid = uuid.UUID("11111111-2222-4333-8444-555555555555")
+    rt = _rt()
+    try:
+        for ts in (datetime(2026, 8, 18, 6, 0, tzinfo=timezone.utc),
+                   datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=timezone.utc),
+                   datetime(2026, 12, 31, 23, 59, 59, 1,
+                            tzinfo=timezone.utc)):
+            assert rt.execute(
+                "SELECT plan_vindu_idempotensnokkel(%s,%s)",
+                (pid, ts)).fetchone()[0] == idempotensnokkel(pid, ts), ts
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_fremmed_idempotensnokkel_terminaliserer_ikke(migrator):
+    """Codex P1 på #106: beviset må være bundet til VINDUET, ikke til en
+    streng kalleren fant på.
+
+    Fasitporten fra 045 spør «finnes det en idempotensrad på nøkkelen med
+    dette utfallet?». Var nøkkelen et fritt argument, holdt det å peke på
+    en hvilken som helst annen rad i kallerens EGEN tenant — en tidligere,
+    fullt lovlig bestilling med `beslutning='tillat'` — for å felle et
+    fremmed, åpent vindu. Da var det forfalskede ticket tilbake, bare med
+    ett hopp til.
+
+    Speilbildet måles også: `hoppet_over` krever at det IKKE finnes en rad
+    på nøkkelen, og en oppdiktet nøkkel treffer garantert ingenting. Et
+    vindu som VAR bestilt kunne dermed felles som `hoppet_over` likevel.
+    """
+    from plan.klassifiser import _nokkel
+    rt = _rt()
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p106-p1.example")
+        vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
+                              tilstand="ledig")
+        # En LOVLIG idempotensrad i kallerens egen tenant, men på en helt
+        # annen nøkkel enn vinduets.
+        fremmed = ("plan:99999999-8888-4777-8666-555555555555"
+                   ":2026-01-01T00:00:00+00:00")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,4242,'tillat','{}')",
+            (TENANT, fremmed, "5" * 64))
+        migrator.commit()
+
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'tillat',NULL,NULL)", (TENANT, pid, vs, fremmed))
+        rt.rollback()
+
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s",
+            (pid,)).fetchone()[0] == 0, "fremmed nøkkel ga et tick"
+        assert migrator.execute(
+            "SELECT tilstand FROM bestillingsplan_vindu WHERE plan_id=%s"
+            " AND vindu_start=%s", (pid, vs)).fetchone()[0] == "ledig"
+        migrator.rollback()
+
+        # Speilbildet: et UTLØPT vindu som BLE bestilt kan ikke felles som
+        # `hoppet_over` ved å oppgi en nøkkel §5-porten ikke finner.
+        vs2 = _syntetisk_vindu(migrator, pid, start_h=-14, slutt_h=-10,
+                               tilstand="ledig")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
+            " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
+            " (%s,%s,%s,NULL,'stopp','{}')",
+            (TENANT, _nokkel(pid, vs2), "6" * 64))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute("SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
+                       "'hoppet_over',NULL,NULL)", (TENANT, pid, vs2,
+                                                    fremmed))
+        rt.rollback()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_tick WHERE plan_id=%s"
+            " AND vindu_start=%s", (pid, vs2)).fetchone()[0] == 0
+        migrator.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_spredning_og_tak(migrator):
     """Portene 13 og 36: forfallsminuttet sprer jevnt (maks-andel ≤ 0,10,
     jf. evidensgrensen), og taket FORSINKER overskuddet — det
@@ -1076,7 +1183,7 @@ def test_klassifisereren_leser_fasiten_fra_idempotens(migrator):
 def test_klassifisereren_venter_paa_levende_forsok(migrator):
     """Port 44: klokken passerte vindu_slutt mens et forsøk lever —
     klassifisereren skriver INGENTING; vinduet ender med faktisk utfall."""
-    from plan.klassifiser import klassifiser_vinduer
+    from plan.klassifiser import _nokkel, klassifiser_vinduer
     rt = _rt()
     try:
         pid = _plan(rt, host="p44.example")
@@ -1097,9 +1204,10 @@ def test_klassifisereren_venter_paa_levende_forsok(migrator):
         migrator.rollback()
         _sett_kontekst(rt, TENANT)
         assert rt.execute(
-            "SELECT terminaliser_planvindu(%s,%s,%s,%s,'n-44xxxxx',"
+            "SELECT terminaliser_planvindu(%s,%s,%s,%s,%s,"
             "'tillat',777,NULL)",
-            (TENANT, pid, vs, claim)).fetchone()[0] == "terminalisert"
+            (TENANT, pid, vs, claim,
+             _nokkel(pid, vs))).fetchone()[0] == "terminalisert"
         rt.commit()
     finally:
         rt.close()
