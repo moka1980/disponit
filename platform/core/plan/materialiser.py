@@ -141,6 +141,11 @@ def materialiser_en(tjeneste, conn, rad, *, naa=None) -> dict:
     # pauser ALDRI — kvoten er ikke brukt, vinduet åpner igjen.
     if utfall == "stopp":
         grunn = _PAUSE_FOR_FEIL.get(detalj.get("feil"), "policy_stopper")
+        # Konteksten settes PÅ NYTT: `sett_kontekst` er SET LOCAL, og
+        # commiten over tok den med seg. `pause_plan` binder `p_tenant` til
+        # nettopp denne GUC-en (Codex P1), så uten dette ville pausen blitt
+        # avvist fail-closed — planen ville stått aktiv etter en policy-dom.
+        sett_kontekst(conn, tenant, f"plan:{plan_id}", rid)
         pauset = conn.execute(
             "SELECT pause_plan(%s,%s,%s,%s,%s,%s)",
             (tenant, plan_id, grunn, f"plan:{plan_id}", rid,

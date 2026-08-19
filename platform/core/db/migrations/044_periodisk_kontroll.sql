@@ -253,6 +253,28 @@ GRANT USAGE, SELECT ON SEQUENCE bestillingsplan_hendelse_id_seq
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_m37_claimer;
 
+-- PORTEN FØRST (Codex P1): hver tenant-skopet definer under binder
+-- `p_tenant` til kallerens FAKTISKE tenantkontekst med `krev_tenantkontekst`
+-- (038 §4) — den samme GUC-en `sett_kontekst` setter og all vanlig RLS
+-- måles mot.
+--
+-- Uten porten var `p_tenant` kallerens frie ord. En kompromittert
+-- `disponit`-credential — eller én SQL-injeksjon i en fremtidig kodevei —
+-- kunne kalle `hent_planer('offer')` og få HELE en annen tenants planflate
+-- ut, fordi definer-funksjonen kjører som claimeren og FORCE RLS måles mot
+-- eierens dispatcher-policy, ikke mot innloggingens tenant. Mutasjonene var
+-- verre: `opprett_plan`/`aktiver_plan` kunne LAGE og starte en stående
+-- bestilling hos en annen tenant, på hennes kvote.
+--
+-- Fail-closed: uten kontekst (NULL/tom) finnes ingen tenant å være lik, og
+-- kallet avvises. Kryss-tenant-autoriteten finnes fortsatt — men bare
+-- innelukket i sveipefunksjonene som IKKE tar `p_tenant` i det hele tatt
+-- (`forfalte_planvinduer`, `utlopte_planvinduer`, kandidatfunksjonene):
+-- de plukker per definisjon på tvers, og har sitt eget grant.
+--
+-- Porten eies av claimeren selv (038, gjenopprettet av eierskapsmodellen),
+-- og definerne her kjører som nettopp den rollen — intet ekstra grant.
+
 CREATE OR REPLACE FUNCTION opprett_plan(
     p_tenant TEXT, p_bestillingstype TEXT, p_parametre JSONB,
     p_rytme TEXT, p_ukedag SMALLINT, p_manedsdag SMALLINT,
@@ -262,6 +284,7 @@ RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id UUID;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'opprett_plan');
     -- Tidssonen valideres mot serverens egen katalog — en plan med en
     -- sone PostgreSQL ikke kjenner ville feilet først ved materialisering.
     IF NOT EXISTS (SELECT 1 FROM pg_timezone_names
@@ -288,6 +311,7 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'aktiver_plan');
     SELECT status INTO v_status FROM public.bestillingsplan
      WHERE tenant = p_tenant AND plan_id = p_plan FOR UPDATE;
     IF NOT FOUND THEN
@@ -319,6 +343,7 @@ RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT; v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'pause_plan');
     SELECT status, aktivert_av INTO v_status, v_aktivert_av
       FROM public.bestillingsplan
      WHERE tenant = p_tenant AND plan_id = p_plan FOR UPDATE;
@@ -385,6 +410,7 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'gjenoppta_plan');
     SELECT status INTO v_status FROM public.bestillingsplan
      WHERE tenant = p_tenant AND plan_id = p_plan FOR UPDATE;
     IF NOT FOUND THEN
@@ -414,6 +440,7 @@ RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'stans_plan');
     SELECT status INTO v_status FROM public.bestillingsplan
      WHERE tenant = p_tenant AND plan_id = p_plan FOR UPDATE;
     IF NOT FOUND THEN
@@ -557,6 +584,7 @@ RETURNS TABLE(utfall TEXT, claim_id UUID)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v RECORD; v_claim UUID;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'claim_planvindu');
     SELECT * INTO v FROM public.bestillingsplan_vindu w
      WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
     IF NOT FOUND THEN
@@ -602,6 +630,7 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v RECORD;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'frigi_planvindu');
     SELECT * INTO v FROM public.bestillingsplan_vindu w
      WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
     IF NOT FOUND THEN
@@ -631,6 +660,7 @@ RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v RECORD; v_eksisterende RECORD;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'terminaliser_planvindu');
     SELECT * INTO v FROM public.bestillingsplan_vindu w
      WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
     IF NOT FOUND THEN
@@ -705,6 +735,7 @@ CREATE OR REPLACE FUNCTION plan_nedetid_aggregert(
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'plan_nedetid_aggregert');
     INSERT INTO public.bestillingsplan_hendelse
         (plan_id, tenant, hendelse, aktor, request_id, detalj)
     VALUES (p_plan, p_tenant, 'nedetid_aggregert', p_aktor, p_request_id,
@@ -714,12 +745,21 @@ BEGIN
 END $$;
 
 -- Lesefunksjoner for API-et (runtime har ingen bordtilgang).
+--
+-- plpgsql, ikke sql: porten skal AVVISE, ikke returnere tomt. Et ekstra
+-- WHERE-ledd mot GUC-en ville gjort et kryss-tenant-forsøk til en tom
+-- liste — som ser ut som «ingen planer», ikke som et avvist kall — og
+-- lesingene her er nettopp de som lekker mest hvis porten mangler.
 CREATE OR REPLACE FUNCTION hent_planer(p_tenant TEXT)
 RETURNS SETOF public.bestillingsplan
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT * FROM public.bestillingsplan
-     WHERE tenant = p_tenant ORDER BY opprettet DESC
-$$;
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'hent_planer');
+    RETURN QUERY
+    SELECT * FROM public.bestillingsplan p
+     WHERE p.tenant = p_tenant ORDER BY p.opprettet DESC;
+END $$;
 
 -- Historikken viser den SENERE kanselleringen uten å røre evidensen
 -- (Codex P2). Ticket er immutabelt og forblir `tillat` — det ER hva
@@ -733,7 +773,12 @@ CREATE OR REPLACE FUNCTION hent_plan_tick(
 RETURNS TABLE(plan_id UUID, tenant TEXT, vindu_start TIMESTAMPTZ,
               idempotensnokkel TEXT, utfall TEXT, oppdrag_id BIGINT,
               detalj JSONB, registrert TIMESTAMPTZ, vist_utfall TEXT)
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+#variable_conflict use_column
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'hent_plan_tick');
+    RETURN QUERY
     SELECT t.plan_id, t.tenant, t.vindu_start, t.idempotensnokkel,
            t.utfall, t.oppdrag_id, t.detalj, t.registrert,
            CASE WHEN t.utfall = 'tillat' AND o.status = 'kansellert'
@@ -744,18 +789,22 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
         ON o.tenant = t.tenant AND o.id = t.oppdrag_id
      WHERE t.tenant = p_tenant AND t.plan_id = p_plan
      ORDER BY t.vindu_start DESC
-     LIMIT greatest(least(coalesce(p_grense, 50), 200), 1)
-$$;
+     LIMIT greatest(least(coalesce(p_grense, 50), 200), 1);
+END $$;
 
 CREATE OR REPLACE FUNCTION hent_plan_hendelser(
     p_tenant TEXT, p_plan UUID, p_grense INT)
 RETURNS SETOF public.bestillingsplan_hendelse
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'hent_plan_hendelser');
+    RETURN QUERY
     SELECT h.* FROM public.bestillingsplan_hendelse h
      WHERE h.tenant = p_tenant AND h.plan_id = p_plan
      ORDER BY h.id DESC
-     LIMIT greatest(least(coalesce(p_grense, 50), 200), 1)
-$$;
+     LIMIT greatest(least(coalesce(p_grense, 50), 200), 1);
+END $$;
 
 -- Materialiserer-plukkets tilstandslesing for pausereglene: aktive
 -- planers siste oppdrag (via tick) som er kansellert av menneske, og
@@ -950,6 +999,7 @@ SET search_path = pg_catalog AS $$
 DECLARE v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
         v_varslet BOOLEAN := false;
 BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'varsle_plan_brudd');
     IF NOT EXISTS (SELECT 1 FROM public.planer_med_gjentatt_brudd() k
                     WHERE k.plan_id = p_plan AND k.tenant = p_tenant) THEN
         RETURN false;

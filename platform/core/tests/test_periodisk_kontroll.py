@@ -299,6 +299,57 @@ def test_runtime_har_ingen_tabelltilgang(migrator):
 
 
 @pg
+def test_definerne_binder_tenanten_til_konteksten(migrator):
+    """Codex P1: `p_tenant` er kallerens ord, tenantkonteksten er ikke.
+
+    Definer-funksjonene kjører som claimeren og ser dermed forbi FORCE
+    RLS. Uten porten kunne en kompromittert runtime-credential lese en
+    ANNEN tenants planflate — eller opprette og aktivere en plan der — ved
+    å sende tenantnavnet som parameter. Porten binder parameteret til
+    GUC-en `sett_kontekst` setter, og er fail-closed uten kontekst.
+    """
+    pid = None
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="port-tenantbinding.example", aktiver=False)
+        annen = f"{TENANT}-fremmed"
+        # 1. Feil tenant i parameteret, riktig kontekst → avvist.
+        for sql, arg in (
+                ("SELECT count(*) FROM hent_planer(%s)", (annen,)),
+                ("SELECT count(*) FROM hent_plan_tick(%s,%s,50)",
+                 (annen, pid)),
+                ("SELECT count(*) FROM hent_plan_hendelser(%s,%s,50)",
+                 (annen, pid)),
+                ("SELECT opprett_plan(%s,'kontroll.wcag.nettsted',%s,"
+                 "'daglig',NULL,NULL,9,'Europe/Oslo','test:x','r-x')",
+                 (annen, json.dumps(_param("fremmed.example")))),
+                ("SELECT aktiver_plan(%s,%s,'test:x','r-x')", (annen, pid)),
+                ("SELECT stans_plan(%s,%s,'test:x','r-x')", (annen, pid)),
+                ("SELECT claim_planvindu(%s,%s,now(),120)", (annen, pid)),
+        ):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(sql, arg)
+            rt.rollback()
+
+        # 2. INGEN kontekst i det hele tatt → avvist (fail-closed), selv
+        #    med planens EGEN tenant i parameteret.
+        rt.execute("SELECT set_config('disponit.tenant','',true)")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT count(*) FROM hent_planer(%s)", (TENANT,))
+        rt.rollback()
+
+        # 3. Riktig kontekst → uendret vei inn. Porten stenger ikke døra
+        #    for den som faktisk står i tenanten.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT count(*) FROM hent_planer(%s)",
+                          (TENANT,)).fetchone()[0] >= 1
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
 def test_evidensen_er_append_only(migrator):
     """Portene 8, 50, 52, 53: tick/hendelse tåler ingen UPDATE/DELETE,
     terminal er endelig for HELE raden, tick krever terminalt vindu, og
