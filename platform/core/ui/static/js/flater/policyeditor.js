@@ -549,14 +549,37 @@ function vilkaarVerifikator(v) {
     ? v.verifikator : null;
 }
 
-// VELFORMET = det `schema.py` §5 faktisk godtar: navnet er en streng,
-// verifikatoren peker på en DEKLARERT verifikator, og den er betrodd for
-// navnet. Samme tre krav som «legg til»-nedtrekkene under bygger av, så
-// flaten har én definisjon av en gyldig vilkårsrad, ikke to.
+// VELFORMET = det serveren faktisk godtar, i BEGGE lag (Codex P2). Målte
+// denne prøven bare §5-semantikken — deklarert og betrodd verifikator —
+// var en rad som `{navn, verifikator, min: "ugyldig"}` «velformet» her og
+// ble låst, mens `policy-schema-v0.2.json` avviste den på STRUKTUR-laget.
+// Låsen tok da igjen fra eier både rettingen og fjerningen, og utkastet
+// kunne bare forkastes. Låsen er en påstand om at raden ER et håndhevet
+// plattformvilkår; da må den måle hele formen den påstanden hviler på:
+//
+//   lag 1 (skjemaet): et objekt med `navn` og `verifikator`, ingen andre
+//     felter enn `min`, navnet på registerformen, `min` numerisk;
+//   lag 2 (`schema.py` §5): verifikatoren er DEKLARERT og betrodd for
+//     navnet — de samme kravene «legg til»-nedtrekkene bygger av.
+//
+// Én definisjon av en gyldig vilkårsrad på flaten, ikke to.
+const VILKAAR_TILLATTE_FELT = new Set(["navn", "verifikator", "min"]);
+const VILKAAR_NAVNFORM = /^[a-z0-9_]+$/;
+
+// `min` er valgfri, men numerisk når den finnes (skjemaet: `type: number`).
+function vilkaarMin(v) {
+  return (v && typeof v === "object" && typeof v.min === "number"
+    && Number.isFinite(v.min)) ? v.min : null;
+}
+
 function vilkaarErVelformet(v, verifikatorer) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  if (Object.keys(v).some((k) => !VILKAAR_TILLATTE_FELT.has(k))) return false;
   const navn = vilkaarNavn(v);
   const vid = vilkaarVerifikator(v);
   if (navn === null || vid === null) return false;
+  if (!VILKAAR_NAVNFORM.test(navn)) return false;
+  if ("min" in v && vilkaarMin(v) === null) return false;
   const dekl = verifikatorer[vid];
   return !!dekl && Array.isArray(dekl.betrodd_for)
     && dekl.betrodd_for.includes(navn);
@@ -611,6 +634,11 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
     // verifikatoren som mangler. Har policyen ingen verifikator betrodd for
     // navnet, kan raden ikke gj\u00f8res gyldig i det hele tatt, og da er
     // fjerning den eneste veien ut.
+    //
+    // VELFORMET m\u00e5les mot HELE skjemaformen, ikke bare verifikatortilliten
+    // (Codex P2): en rad med ugyldig `min` eller et ukjent felt avvises av
+    // serveren p\u00e5 strukturlaget, og en l\u00e5s p\u00e5 den gjorde utkastet like
+    // ureparerbart som navnel\u00e5sen gjorde. Se `vilkaarErVelformet`.
     const kandidater = (plattformNavn && !laastAlt)
       ? betroddeFor(navn, verifikatorer) : [];
     const erPlattform = laastAlt
@@ -633,8 +661,14 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
                   type: "button", text: t("ui.editor.vilkaar_reparer") });
                 knapp.addEventListener("click", () => {
                   // Navnet er registerets krav og skal overleve
-                  // reparasjonen; bare verifikatoren settes.
-                  h.vilkaar[i] = { navn, verifikator: velg.value };
+                  // reparasjonen; bare verifikatoren settes. En GYLDIG
+                  // `min` er eierens egen terskel og følger med — alt
+                  // annet (ugyldig `min`, ukjente felter) er nettopp det
+                  // skjemaet avviste, og skal ikke overleve reparasjonen.
+                  const rettet = { navn, verifikator: velg.value };
+                  const min = vilkaarMin(v);
+                  if (min !== null) rettet.min = min;
+                  h.vilkaar[i] = rettet;
                   tegnPaaNytt();
                 });
                 return el("span", { class: "vilkaar-reparer" },

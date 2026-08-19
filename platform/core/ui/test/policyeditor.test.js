@@ -1513,6 +1513,99 @@ test("Vilkår: et plattformnavn ingen verifikator kan bære, kan fjernes",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// Codex P2: låsen målte navn + verifikatortillit (§5), men skjemaet krever
+// også at `min` er numerisk og avviser ekstra felter. En rad med
+// `min: "ugyldig"` var derfor «velformet» for låsen og ble låst, mens
+// serveren avviste den — samme blindgate som navnelåsen ga, én etasje ned.
+test("Vilkår: en rad skjemaet avviser på strukturen låses ikke", async () => {
+  const start = JSON.parse(JSON.stringify(MAL));
+  start.verifikatorer = { v_domenekontroll: {
+    beskrivelse: "Plattformens domenekontroll",
+    betrodd_for: ["domenekontroll_verifisert"] } };
+  start.handlinger[0].vilkaar = [
+    // Betrodd verifikator, men `min` er ikke et tall (skjemaet: number).
+    { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+      min: "ugyldig" },
+    // Betrodd verifikator, men et felt skjemaet ikke kjenner
+    // (additionalProperties: false).
+    { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+      tull: 1 },
+  ];
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: start });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.textContent.includes(
+    t("ui.editor.vilkaar_plattform_forklaring")));
+  const rader = [...h.querySelectorAll(".vilkaar-rad")];
+  assert.equal(rader.length, 2);
+  for (const rad of rader) {
+    assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+      "en rad skjemaet avviser er ikke et håndhevet plattformvilkår");
+    assert.ok(rad.querySelector("select"), "raden må kunne repareres");
+  }
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  // Reparasjonen rydder bort nettopp det skjemaet avviste, og raden blir
+  // det låste plattformvilkåret den skulle vært. Låsen ER påstanden om at
+  // raden nå er velformet i BEGGE lag — den kan ikke bli sann med
+  // `min: "ugyldig"` i behold.
+  rader[0].querySelector("button").dispatchEvent(new window.Event("click"));
+  await vent(() => h.querySelector('.vilkaar-rad [aria-disabled="true"]'));
+  const reparert = h.querySelectorAll(".vilkaar-rad")[0];
+  assert.ok(reparert.querySelector('[aria-disabled="true"]'));
+  assert.ok(!reparert.querySelector("button"));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// En GYLDIG `min` er eierens egen terskel, ikke feilen som ble reparert —
+// den skal ikke forsvinne fordi verifikatorpekeren måtte rettes.
+test("Vilkår: en velformet rad med numerisk min er låst, og min overlever"
+  + " en reparasjon", async () => {
+    const cookieDesc = Object.getOwnPropertyDescriptor(
+      window.Document.prototype, "cookie");
+    Object.defineProperty(document, "cookie", { configurable: true,
+      get: () => "__Host-disponit_csrf=tok123" });
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v_domenekontroll: {
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      // Velformet: `min` er et tall → låst som ethvert plattformvilkår.
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+        min: 2 },
+      // Ubetrodd verifikator, men gyldig `min` — reparasjonen retter
+      // pekeren og BEHOLDER terskelen.
+      { navn: "domenekontroll_verifisert", verifikator: "v_ukjent", min: 3 },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 2);
+    assert.ok(rader[0].querySelector('[aria-disabled="true"]'),
+      "numerisk min er velformet og skal fortsatt låses");
+    assert.ok(!rader[0].querySelector("button"));
+    rader[1].querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => !h.querySelectorAll(".vilkaar-rad")[1]
+      .querySelector("select"));
+    // Editoren dyp-kopierer `startPolicy`, så terskelen leses av det som
+    // faktisk sendes til serveren — ikke av originalobjektet.
+    POST = undefined;
+    finnKnapp(h, t("ui.editor.lagre")).dispatchEvent(new window.Event("click"));
+    await vent(() => POST);
+    assert.deepEqual(
+      JSON.parse(POST.opts.body).innhold.handlinger[0].vilkaar,
+      [{ navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+         min: 2 },
+       { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+         min: 3 }],
+      "reparasjonen kastet eierens egen terskel");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
+  });
+
 test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
   const gammelFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
