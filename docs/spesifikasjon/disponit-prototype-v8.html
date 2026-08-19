@@ -190,7 +190,7 @@ table.chg caption{text-align:left}
   <div class="wrap">
     <p class="eyebrow">Endringslogg</p>
     <h2 id="h-v8">Hva er nytt fra v7 til v8</h2>
-    <p class="intro">v8 tar inn idelisten og deler den i fire: ti forslag ble nye moduler, åtte ble utvidelser av moduler som allerede fantes, seks er parkert med begrunnelse, og ni gjelder styring og hører hjemme i plattformen framfor i katalogen. Antallet moduler går derfor fra 45 til 55, ikke til 71.</p>
+    <p class="intro">v8 tar inn idelisten og deler den i fire: ti forslag ble nye moduler, åtte ble utvidelser av moduler som allerede fantes, seks er parkert med begrunnelse, og ni gjelder styring og hører hjemme i plattformen framfor i katalogen. I tillegg kom M-56 Automatisk WCAG-kontroll til utenom idelisten, på lovkrav om universell utforming — elleve nye moduler i alt. Antallet moduler går derfor fra 45 til 56, ikke til 71.</p>
 
     <h3 class="subh" id="h-v8-nye">Elleve nye moduler</h3>
     <table class="chg">
@@ -241,7 +241,7 @@ table.chg caption{text-align:left}
   <div class="wrap">
     <p class="eyebrow">Arkitektur</p>
     <h2>Felles plattform — bygges én gang</h2>
-    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 55 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
+    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 56 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
     <div class="plat">
       <div><b>1 · Tilkoblinger</b><p>OAuth, webhooks, filimport, e-post, kalender, CRM, ERP, bank og telefoni. Selvtest og token-fornyelse via M-11.</p></div>
       <div><b>2 · Dataplan</b><p>Tenant-isolasjon, kryptering, normalisering, søk og datakvalitet (M-3). Objektlagring og retention-policy.</p></div>
@@ -320,9 +320,9 @@ table.chg caption{text-align:left}
 <section>
   <div class="wrap">
     <p class="eyebrow">Omfang</p>
-    <h2>Katalogen fryses på 55</h2>
+    <h2>Katalogen fryses på 56</h2>
     <div class="notice">
-      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 55 fordi idelisten ble gjennomgått under samme krav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
+      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7 og heves i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
     </div>
   </div>
 </section>
@@ -499,7 +499,7 @@ function render(){
     html+=`<div class="phasehead"><h3>${phaseNames[p]}</h3><span class="eyebrow">${list.length} moduler</span></div>`;
     html+=list.map(card).join('');
   }
-  cat.innerHTML=html||'<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle 55.</p>';
+  cat.innerHTML=html||'<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle 56.</p>';
   document.getElementById('count').textContent=shown+' / '+M.length+' moduler';
 }
 ['q','fArea','fPhase','fNew'].forEach(id=>document.getElementById(id).addEventListener(id==='q'?'input':'change',render));
