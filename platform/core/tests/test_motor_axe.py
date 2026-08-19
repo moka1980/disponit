@@ -1893,6 +1893,53 @@ def test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen():
     assert "kontraktversjon 1" in md.read_text(encoding="utf-8")
 
 
+#: Release-id-en staging-runden registrerer, og sha256 over manifestet slik
+#: det står FOR den id-en. Paret hører sammen: `manifest_hash` er et felt på
+#: release-raden, og raden er immutabel.
+RELEASE_ID = "wcag-r2"
+MANIFEST_HASH_FOR_RELEASE = \
+    "d4881ffd371587c27140837ea2bbb02d2b4e021035b36a3d07f12f146ca58bc5"
+
+
+def test_release_id_folger_manifestets_bytes():
+    """Codex P1 på #109: manifestet ble både flyttet og endret, mens
+    `fase2` fortsatt registrerte `wcag-r1`.
+
+    `registrer-m-wcag-audit.py::manifest_hash()` hasher `manifest.yaml` på
+    disk, og `registrer_release` avviser en ANNEN `manifest_hash` for en
+    eksisterende `(m_wcag_audit, release_id)`-rad. `wcag-r1` ble registrert
+    med manifestet slik det så ut under målerunden 2026-08-18, så en runde
+    med den id-en ville dødd i fase 2 på «release er immutable» — før et
+    eneste akseptpunkt ble målt. Å fryse manifestet slik KONTRAKT.md er
+    frosset går ikke: hele #109 flytter modulen til `m56_wcag_audit/`, og
+    `kjerne`-feltet MÅ følge med.
+
+    Motsatt av kontrakten er dette heller ikke en konflikt i tre registre:
+    `manifest_hash` er et felt på release-raden, ikke nøkkelen andre
+    registre binder seg til, så en ny release-id er en ny rad og saken er
+    ute av verden. Derfor fryses kontrakten og nummereres releasen.
+
+    Porten finnes for at NESTE manifestendring skal stoppe her, i CI, og
+    ikke i en staging-runde ingen ser før den feiler. Rettelsen er alltid
+    den samme to-linjers: ny `RELEASE`-default i sjekklisten og ny hash
+    her, i samme commit. Statusflippet til `aktiv` etter bestått aksept er
+    en slik endring — den gir også en ny release."""
+    import hashlib
+    manifest = ROT / "platform/modules/m56_wcag_audit/manifest.yaml"
+    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == \
+        MANIFEST_HASH_FOR_RELEASE, (
+            f"manifest.yaml er endret uten at release-id-en er flyttet fra"
+            f" {RELEASE_ID} — neste staging-registrering vil feile med"
+            " «release er immutable»")
+    sjekk = (ROT / "deploy/staging/wcag-staging-sjekkliste.py").read_text(
+        encoding="utf-8")
+    assert f'or "{RELEASE_ID}"' in sjekk, (
+        "sjekklistens default-release er ikke den hashen over gjelder for")
+    # `LEGACY_RELEASE` er IKKE med i bumpen: den navngir releasen de gamle
+    # rundefilene tilhørte, og den sannheten endrer seg aldri.
+    assert 'LEGACY_RELEASE = "wcag-r1"' in sjekk
+
+
 def test_kvitteringsskjemaet_speiler_controllerens_feilkoder():
     kdir = ROT / "platform/modules/m56_wcag_audit/kontrakt"
     skjema = json.loads((kdir / "kvittering-skjema.json")

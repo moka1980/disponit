@@ -92,7 +92,29 @@ OPPDRAGSTYPE = "kontroll.wcag.nettsted"
 # Den nye id-en er BARE halve veien tilbake (Codex P1, runde 15): modulen
 # står `nodeaktivert`, og den tilstanden slipper hverken `sett_modulstatus`
 # eller `bytt_release` inn. Fase 2 kaller derfor `_gjenapne_modulen` først.
-RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r1"
+#
+# DEFAULTEN ER `wcag-r2` FORDI MANIFESTET ER ENDRET (Codex P1 på #109).
+# Releaseraden bærer `manifest_hash` — sha256 over `manifest.yaml` på disk,
+# regnet ut av `registrer-m-wcag-audit.py` — og `registrer_release` avviser
+# en ANNEN hash for en eksisterende `(m_wcag_audit, release_id)`-rad. #109
+# både flyttet manifestet til `m56_wcag_audit/` og skrev om hodet, så
+# bytene er ikke lenger de som ble registrert for `wcag-r1` under
+# målerunden 2026-08-18. En runde med den gamle id-en ville dødd i fase 2
+# på «release er immutable», før et eneste akseptpunkt ble målt.
+#
+# KONTRAKTEN GÅR MOTSATT VEI, OG DET ER MED VILJE: `KONTRAKT.md` er frosset
+# på sine registrerte bytes (porten i test_motor_axe.py), fordi
+# kontrakt_hash ER nøkkelen tre registre binder radene sine til — der er en
+# ny verdi ikke en ny rad, men en konflikt i tre ledd. Manifestet er
+# derimot bare et FELT på release-raden, og en ny release-id er en ny rad:
+# derfor fryses kontrakten og nummereres releasen.
+#
+# Regelen står som port i CI (`test_release_id_folger_manifestets_bytes`):
+# endres manifestet igjen, må denne defaulten og den pinnede hashen flyttes
+# sammen — ellers oppdages det først i en staging-runde ingen ser før den
+# feiler. `LEGACY_RELEASE` under er uberørt: den navngir releasen de gamle
+# rundefilene tilhørte, ikke den vi kjører nå.
+RELEASE = os.environ.get("WCAG_RELEASE", "").strip() or "wcag-r2"
 TENANT = "t-wcagfasit"
 TENANT_FREKVENS = "t-wcagfrekvens"
 VERT_FREKVENS = "fasit-frekvens.test"
@@ -123,9 +145,16 @@ RUNDEID_FIL = RUNDE / "runde-id.json"
 #: runde 14). Tokenet lå i en uversjonert flatfil, og skriptet hardkodet
 #: releasen — så en fil fra det formatet KAN ikke ha tilhørt noen annen
 #: enn `LEGACY_RELEASE`. Nettopp derfor er migreringen trygg for den ene
-#: releasen og forbudt for en overstyrt: er `WCAG_RELEASE` satt, er vi i
-#: gjenopprettingen etter et nødstopp, og da er det gamle tokenet
-#: tilbakekalt. Se `_migrert_modultoken`.
+#: releasen og forbudt for enhver annen: kjører vi en annen release, er vi
+#: forbi den runden, og det gamle tokenet er utstedt for — og bundet til —
+#: en release vi ikke lenger claimer på. Se `_migrert_modultoken`.
+#:
+#: Porten er `RELEASE != LEGACY_RELEASE`, ikke «er `WCAG_RELEASE` satt», og
+#: den forskjellen er hele poenget etter #109: defaulten er nå `wcag-r2`, så
+#: migreringen er stengt for den vanlige kjøringen også — helt riktig, for
+#: `wcag-r1` er en avsluttet runde med sin egen registrerte manifest-hash.
+#: Konstanten blir stående som det den er: navnet på releasen filene i det
+#: gamle formatet tilhørte.
 LEGACY_RELEASE = "wcag-r1"
 LEGACY_TOKEN_FIL = RUNDE / "modultoken"
 #: ... og av samme grunn for rundens identitet (Codex P2, runde 14): en
@@ -624,10 +653,11 @@ def _migrert_modultoken() -> str | None:
 
     Migreringen er trygg for NØYAKTIG én release: det gamle skriptet
     hardkodet `wcag-r1`, så en fil fra det formatet kan ikke bære et token
-    for noe annet. Er `WCAG_RELEASE` overstyrt, er vi derimot i
-    gjenopprettingen etter et nødstopp — da er nettopp dette tokenet
-    tilbakekalt sammen med resten av familien, og fila skal ignoreres, med
-    en evidenslinje som sier hvorfor.
+    for noe annet. Kjører vi en ANNEN release — gjenopprettingen etter et
+    nødstopp, eller `wcag-r2` som er defaulten etter #109 — er dette
+    tokenet enten tilbakekalt sammen med resten av familien eller utstedt
+    for en release vi ikke claimer på. Da skal fila ignoreres, med en
+    evidenslinje som sier hvorfor.
 
     Migrert er ikke det samme som gyldig: tokenet får ingen forrang av å
     ha blitt flyttet. Fase 9 feller dommen med `_tokenet_er_autorisert`
@@ -755,7 +785,8 @@ def _migrert_rundeid() -> str | None:
     og så `frekvensgrense_naadd` på resten — rødt der fasiten krever 10/10.
 
     Som for tokenet gjelder migreringen NØYAKTIG den ene releasen det
-    gamle skriptet hardkodet. Er `WCAG_RELEASE` overstyrt, er identiteten
+    gamle skriptet hardkodet. Kjører vi en annen release — en overstyrt
+    `WCAG_RELEASE` eller defaulten `wcag-r2` etter #109 — er identiteten
     forrige runde sin, og da er det å forkaste den hele poenget: den nye
     releasen skal måles, ikke replayes."""
     if not LEGACY_RUNDEID_FIL.exists():

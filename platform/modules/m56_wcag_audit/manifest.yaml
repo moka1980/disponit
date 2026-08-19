@@ -13,6 +13,13 @@
 # (`modulkontrakt.kontrakt_hash`, kontraktversjon 1, alt registrert), så
 # stien den nevner er den gamle med vilje. Codex P1 på #109; porten står i
 # test_motor_axe.py::test_kontraktsdokumentet_er_frosset_pa_den_registrerte_hashen.
+# DENNE fila går motsatt vei: bytene hennes er `manifest_hash` på
+# release-raden, og en endring her er derfor en NY RELEASE, ikke en frossen
+# tekst. Omdøpingen ga `wcag-r2` som default i staging-sjekklisten (Codex P1
+# på #109); neste endring — statusflippet under er en av dem — krever samme
+# to-linjers bump, og porten
+# test_motor_axe.py::test_release_id_folger_manifestets_bytes stopper
+# glemselen i CI i stedet for i en staging-runde.
 # Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)
