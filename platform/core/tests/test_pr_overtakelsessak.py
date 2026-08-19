@@ -1309,10 +1309,19 @@ def test_adjudikatorrollen_er_en_forutsetning_ikke_en_mulighet():
     assert "RAISE EXCEPTION" in blokk, "forutsetningen feiler ikke migrasjonen"
     assert "oppsett-postgresql.sh" in blokk, "meldingen peker ikke på veien ut"
 
-    # ... og det er den ENESTE steden rollens eksistens spørres om: en
+    # ... og rollens eksistens er ikke lenger en BETINGELSE noe sted: en
     # gjenstående `IF EXISTS` ville vært den stille hoppingen på nytt.
-    assert sql.count("rolname = 'disponit_domains_adjudicator'") == 1, \
-        "041 spør fortsatt om rollen finnes — da kan §9 hoppes over stille"
+    # Målt på formen, ikke på antall treff — §17.1 slår OGSÅ opp rollen,
+    # men for å måle medlemskapet, ikke for å hoppe over arbeid.
+    import re
+    flat = re.sub(r"\s+", " ", sql)
+    assert ("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = "
+            "'disponit_domains_adjudicator')") not in flat, \
+        "041 hopper fortsatt over arbeid når rollen mangler"
+    assert flat.count(
+        "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = "
+        "'disponit_domains_adjudicator')") == 1, \
+        "forutsetningen i §0 finnes ikke i den formen porten kan måle"
     assert sql.count("CREATE POLICY domeneovertakelse_adjudikator") == 1
     assert "GRANT SELECT ON unntak TO disponit_domains_adjudicator" in sql
 
