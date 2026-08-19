@@ -23,8 +23,15 @@ Portkart (klarsignalets §9):
       test_port15b_levende_kapabilitet_blokkerer_selv_med_kansellerbart_oppdrag
   14  (ui/test/unntak14b.test.js — alertdialog + alert + axe)
   16  test_port16_definer_veiene_binder_tenanten_til_konteksten
+      test_port16b_artefaktveiene_binder_tenanten_til_konteksten
   17  test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas
+      (+ den YTRE sakslåsen og den nye lesningen bak den, på INGEST-veien:
+       test_m37.test_P1_kvitteringsveien_laser_saken_for_kapabiliteten og
+       test_m37.test_P1_kvitteringen_leser_tilstanden_paa_nytt_etter_sakslasen)
   18  test_port18_rettighetene_er_parameterisert_pa_rollenavnet
+  19  (unntaksbehandling: terminale statuser i avvis-revisjonen)
+  20  test_port20_saksarsaken_naar_operatoren_over_http
+  21  test_port21_opplosningen_binder_malene_til_saken
 """
 import json
 import secrets
@@ -844,3 +851,112 @@ def test_port20_saksarsaken_naar_operatoren_over_http(conn, klient,
     per_id = {s["id"]: s for s in liste.json()["saker"]}
     assert per_id[sak]["arsak"] == "kompensasjon_kreves", per_id[sak]
     assert per_id[uid]["arsak"] is None, per_id[uid]
+
+
+# ---------------------------------------------------------------------------
+# Port 21: målene må høre til SAKEN, ikke bare til tenanten (Codex P1)
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port21_opplosningen_binder_malene_til_saken(conn):
+    """`p_forventet` var bare filtrert på tenant (Codex P1, runde 4).
+
+    Tenantporten (port 16) binder HVEM kalleren er, ikke HVA den peker på.
+    `avvis_med_opplosning` er SECURITY DEFINER eid av claimeren og gitt
+    direkte til runtime, så en kompromittert runtime-spørring kunne oppgi en
+    hvilken som helst av sine EGNE saker sammen med id-ene til helt
+    urelaterte oppdrag i samme tenant — og få dem fencet og kansellert med
+    eierrollens rettigheter, mens `oppdrag_fencet`/`oppdrag_kansellert` ble
+    ført på saken angriperen valgte. Skaden er dobbel: levende arbeid dør
+    uten et menneskelig nei bak seg, og sporet forteller at en annen sak
+    avgjorde det.
+
+    Autoriteten ligger i sakstilknytningen, og den har de samme TO formene
+    `sak_utestaaende` bruker for å finne oppdragene: reparasjonsopphavet
+    (`oppdrag.unntak_id`) og beslutningsopphavet (`unntak.oppdrag_id`).
+    Begge måles her — porten skal stenge fremmede oppdrag ute UTEN å stenge
+    den ene lovlige veien som peker motsatt.
+
+    En blandet mengde er ALT-ELLER-INGENTING: et delvis nei er ikke det
+    mennesket sa nei til, så hele kallet skal heve og ingen av radene røres.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `v_fremmede`-porten i §7.
+    """
+    from db.pg import koble, sett_kontekst
+
+    uid_a = _oppsett(conn)
+    uid_b = _oppsett(conn)
+    oid_a = _oppdrag_id(uid_a, _oppdrag(uid_a, "plukket"))
+    oid_b = _oppdrag_id(uid_b, _oppdrag(uid_b, "plukket"))
+    _kvittkap(oid_a)
+    jti_b = _kvittkap(oid_b)
+    foer_b = _oppdragsrad(oid_b)
+
+    m = koble(MIGRATOR_DSN)
+    try:
+        # (1) Et FREMMED oppdrag alene, og (2) blandet med et lovlig: begge
+        #     skal heve, som runtime ville sett det.
+        for mal in ([oid_b], [oid_a, oid_b]):
+            sett_kontekst(m, TEN, "op21", "r-op21")
+            m.execute("SET ROLE disponit_m37_claimer")
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                          "'op21','r-op21')", (TEN, uid_a, mal))
+            m.rollback()
+
+        # (3) ... og den LOVLIGE mengden går fortsatt gjennom.
+        sett_kontekst(m, TEN, "op21", "r-op21")
+        m.execute("SET ROLE disponit_m37_claimer")
+        res = m.execute(
+            "SELECT utfall, oppdrag_id FROM avvis_med_opplosning(%s,%s,%s,"
+            "'op21','r-op21')", (TEN, uid_a, [oid_a])).fetchall()
+        m.commit()
+        assert res == [("kansellert", oid_a)], res
+    finally:
+        m.close()
+
+    # Det fremmede oppdraget er urørt — verken fencet eller kansellert, og
+    # kapabiliteten er ikke brent.
+    assert _oppdragsrad(oid_b) == foer_b, (
+        f"et fremmed oppdrag ble rørt: {foer_b} → {_oppdragsrad(oid_b)}")
+    assert _oppdragsrad(oid_a)[0] == "kansellert"
+    mk = _mig()
+    mk.execute("SET ROLE disponit_m37_claimer")
+    kap_b = mk.execute("SELECT status FROM kvitteringskapabiliteter"
+                       " WHERE jti=%s", (jti_b,)).fetchone()[0]
+    mk.rollback(); mk.close()
+    assert kap_b == "utstedt", f"fremmed kapabilitet ble brent: {kap_b}"
+    # ... og sak B har ingen hendelser fra sak A-s oppløsning.
+    assert _hist(uid_b, "oppdrag_kansellert") == []
+    assert _hist(uid_b, "oppdrag_fencet") == []
+
+    # (4) BESLUTNINGSOPPHAVET: saken peker på oppdraget (`unntak.oppdrag_id`,
+    #     038). Det er en gyldig tilknytning, og porten skal slippe den
+    #     gjennom — ellers ville den stengt nøyaktig den veien port 2 måler.
+    uid_c = _oppsett(conn)
+    oid_c = _oppdrag_id(uid_c, _oppdrag(uid_c, "plukket"))
+    m = _mig()
+    m.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+    m.execute("UPDATE oppdrag SET unntak_id=NULL, opprinnelse='beslutning',"
+              " repair_operation_id=NULL, loggpost_id=NULL"
+              " WHERE tenant=%s AND id=%s", (TEN, oid_c))
+    m.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+    m.execute("ALTER TABLE unntak DISABLE TRIGGER USER")
+    m.execute("UPDATE unntak SET oppdrag_id=%s, arsak='evidensfrist',"
+              " sakskilde='oppdrag' WHERE tenant=%s AND id=%s",
+              (oid_c, TEN, uid_c))
+    m.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    m.execute("ALTER TABLE unntak ENABLE TRIGGER USER")
+    m.commit()
+    try:
+        sett_kontekst(m, TEN, "op21", "r-op21")
+        m.execute("SET ROLE disponit_m37_claimer")
+        res = m.execute(
+            "SELECT utfall, oppdrag_id FROM avvis_med_opplosning(%s,%s,%s,"
+            "'op21','r-op21')", (TEN, uid_c, [oid_c])).fetchall()
+        m.commit()
+    finally:
+        m.close()
+    assert res == [("kansellert", oid_c)], (
+        "porten stengte beslutningsopphavet — den andre lovlige"
+        f" tilknytningen: {res}")

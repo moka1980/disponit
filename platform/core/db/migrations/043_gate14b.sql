@@ -423,6 +423,7 @@ RETURNS TABLE(utfall TEXT, oppdrag_id BIGINT,
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
     r RECORD; v_jti TEXT; v_brenning TEXT; v_status TEXT; v_hash TEXT;
+    v_fremmede BIGINT[];
 BEGIN
     -- TENANTPORTEN FØRST (Codex P1). Funksjonen er SECURITY DEFINER, eid av
     -- claimer-rollen, og gitt DIREKTE til runtime — akkurat som 038-veiene.
@@ -435,6 +436,46 @@ BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'avvis_med_opplosning');
     IF p_forventet IS NULL OR array_length(p_forventet, 1) IS NULL THEN
         RAISE EXCEPTION 'avvis_med_opplosning: ingen oppdrag å løse opp'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- ... OG MÅLENE MÅ HØRE TIL SAKEN (Codex P1, runde 4).
+    --
+    -- Tenantporten over binder HVEM kalleren er, ikke HVA den peker på.
+    -- `p_forventet` var bare filtrert på tenant: en kompromittert
+    -- runtime-spørring kunne oppgi en hvilken som helst av sine egne saker
+    -- sammen med id-ene til helt urelaterte oppdrag i samme tenant, og få
+    -- DEM fencet og kansellert med claimer-eierens rettigheter — mens
+    -- `oppdrag_fencet`/`oppdrag_kansellert` ble ført på saken angriperen
+    -- valgte. Skaden er dobbel: levende arbeid dør uten et menneskelig nei
+    -- bak seg, og revisjonssporet forteller at en annen sak avgjorde det.
+    --
+    -- Autoriteten ligger i SAKSTILKNYTNINGEN, og den har to former — de
+    -- samme to `sak_utestaaende` (§4) bruker for å FINNE oppdragene:
+    -- reparasjonsopphavet (`oppdrag.unntak_id`) og beslutningsopphavet
+    -- (`unntak.oppdrag_id`, som peker den andre veien). Den lovlige
+    -- kalleren henter `p_forventet` derfra og kan derfor aldri utløse
+    -- dette; en kaller som kan, sier per definisjon noe den ikke har
+    -- dekning for.
+    --
+    -- Porten står FØR pre-låsingen og løkka: et fremmed oppdrag skal ikke
+    -- engang bli låst. Utfallet er en HARD feil, ikke stille frafall —
+    -- kalleren har oppgitt en oppløsningsmengde den ikke eier, og et
+    -- delvis nei er ikke det mennesket sa nei til. Tilknytningen er
+    -- uforanderlig, så det trengs ingen lås for å lese den.
+    SELECT array_agg(f.id ORDER BY f.id) INTO v_fremmede
+      FROM unnest(p_forventet) AS f(id)
+     WHERE NOT EXISTS (
+        SELECT 1 FROM public.oppdrag o
+         WHERE o.tenant = p_tenant AND o.id = f.id
+           AND (o.unntak_id = p_unntak_id
+                OR EXISTS (SELECT 1 FROM public.unntak u
+                            WHERE u.tenant = p_tenant
+                              AND u.id = p_unntak_id
+                              AND u.oppdrag_id = o.id)));
+    IF v_fremmede IS NOT NULL THEN
+        RAISE EXCEPTION
+            'avvis_med_opplosning: oppdrag % hører ikke til sak %',
+            v_fremmede, p_unntak_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     -- LÅSEORDEN: KAPABILITET FØR OPPDRAG (Codex P1).
