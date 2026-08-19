@@ -2773,10 +2773,10 @@ def test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist(migrator, miljo, token):
     splitter ingesten i to transaksjoner, er tapet nøyaktig det Codex
     beskriver, og helt stille.
 
-    Målingen er derfor deterministisk: kapabiliteten utløper 3 sekunder
-    etter oppsettet, sakslåsen holdes i 5 — altså er utløpet passert på
-    VEGGKLOKKA når kvitteringen slippes fri. Den skal likevel avslutte
-    oppdraget.
+    Målingen er derfor deterministisk: oppdragets evidensfrist — som ER
+    kapabilitetens `utloper` (035) — er 8 sekunder, og sakslåsen holdes i 9.
+    Utløpet er altså passert på VEGGKLOKKA når kvitteringen slippes fri,
+    mens den ankom godt innenfor. Den skal likevel avslutte oppdraget.
 
     MUTASJONEN SOM DREPER DENNE: bytt `k.utloper > pg_catalog.now()` i
     `innlos_kvitteringskapabilitet` (035) mot `statement_timestamp()`.
@@ -2787,8 +2787,14 @@ def test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist(migrator, miljo, token):
     from api.app import lag_app
     from db.pg import koble
 
+    # KORTE FRISTER FRA FØDSELEN AV, ikke etterpå: kapabilitetens `utloper`
+    # ER oppdragets evidensfrist (`utsted_kvitteringskapabilitet`, 035), og
+    # bindingsfeltene på kapabiliteten er uforanderlige — som de skal være.
+    # Fristene settes derfor der de hører hjemme, på oppdraget.
     sak, logg = _lag_sak(migrator, TENANT)
-    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg,
+                          utforelsesfrist="4 seconds",
+                          evidensfrist="8 seconds")
     cid_sak = secrets.token_hex(16)
     _sett_kontekst(migrator, TENANT, "m37-arbeider", cid_sak)
     migrator.execute(
@@ -2816,17 +2822,7 @@ def test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist(migrator, miljo, token):
             holder.execute("SELECT 1 FROM unntak WHERE tenant=%s AND id=%s"
                            "   FOR UPDATE", (TENANT, sak))
 
-            # (2) Kapabiliteten får en KORT frist. Utførelsesfristen står —
-            #     det er kapabilitetens utløp som måles her, ikke oppdragets.
-            _sett_kontekst(migrator, TENANT)
-            migrator.execute("SET ROLE disponit_m37_claimer")
-            migrator.execute(
-                "UPDATE kvitteringskapabiliteter SET"
-                " utloper = now() + interval '3 seconds' WHERE jti=%s",
-                (a["kvittering_jti"],))
-            migrator.execute("RESET ROLE")
-            migrator.commit()
-
+            # (2) Kvitteringen ankommer godt innenfor BEGGE fristene.
             kropp = _signer_kvittering({
                 "oppdrag_id": opp, "tenant": TENANT,
                 "kvittering_jti": a["kvittering_jti"],
@@ -2846,7 +2842,7 @@ def test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist(migrator, miljo, token):
             assert "r" not in svar, "kvitteringen gikk forbi sakslåsen"
 
             # (3) Køen holdes forbi kapabilitetens utløp — på veggklokka.
-            time.sleep(4.0)
+            time.sleep(8.0)
             holder.rollback(); holder.close(); holder = None
 
             # (4) MÅLINGEN: kvitteringen ankom i tide, og køen er ikke dens
