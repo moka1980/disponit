@@ -2487,7 +2487,7 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                          "gjeldende_fencing": gjeldende,
                          "etter_utforelsesfrist": naa > uf,
                          "resultathash": ny_hash}, ensure_ascii=False)))
-        # 042 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
+        # 043 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
         # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
         # kansellerte betyr at modulen rakk å utføre før nei-et nådde den —
         # hva det krever av oss utledes av MODULKONTRAKTENS reversibilitet,

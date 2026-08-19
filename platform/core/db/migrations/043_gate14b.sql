@@ -1,5 +1,5 @@
 -- ============================================================
--- 042 — GATE 14b: kansellering med fencing (klarsignal 2026-08-18)
+-- 043 — GATE 14b: kansellering med fencing (klarsignal 2026-08-18)
 --
 -- Klarsignalet sier «migrasjon 041»; det nummeret var foreldet i det
 -- arbeidet startet (overtakelsessaken tok det) — samme lærdom som sist:
@@ -113,7 +113,7 @@ BEGIN
     IF OLD.status = 'feilet' AND NEW.status <> 'feilet' THEN
         RAISE EXCEPTION 'kvitteringskapabiliteter: feilet er terminal';
     END IF;
-    -- 042: menneskets nei er like terminalt som modulens feil. En brent
+    -- 043: menneskets nei er like terminalt som modulens feil. En brent
     -- `avvist` som kunne flippes tilbake ville gjenåpnet nøyaktig den
     -- fullføringsveien fencingen finnes for å bevise død.
     IF OLD.status = 'avvist' AND NEW.status <> 'avvist' THEN

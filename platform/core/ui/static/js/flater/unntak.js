@@ -29,7 +29,7 @@ function utfoer(id, oh, saksversjon, ctx, paaFerdig, busyEl) {
   };
   const forsok = (attempt) =>
     postHandling(id, oh, saksversjon, nokkel).then((kropp) => {
-      // 042 (§7): en KANSELLERING annonseres assertivt, med årsaken opplest
+      // 043 (§7): en KANSELLERING annonseres assertivt, med årsaken opplest
       // — det er en irreversibel konsekvens, ikke en statuslinje.
       if (kropp && Array.isArray(kropp.opplosning) && kropp.opplosning.length) {
         meldAlert(t("ui.unntak.kansellert_alert") + " " +
@@ -56,7 +56,7 @@ function utfoer(id, oh, saksversjon, ctx, paaFerdig, busyEl) {
         ferdig();
         return;
       }
-      // 042: kvitteringen vant kappløpet — ingenting er kansellert, og det
+      // 043: kvitteringen vant kappløpet — ingenting er kansellert, og det
       // skal sies HØYT, med referansen mennesket beslutter på nytt med.
       if (e instanceof ApiFeil && e.kode === "oppdrag_utfort") {
         const [oid, ref] = e.detaljer || [];
@@ -96,7 +96,7 @@ function behandlingsHandlinger(detalj, id, ctx, paaFerdig) {
     const knapp = el("button", { class: "knapp", type: "button",
       text: t(`ui.unntak.handling.${oh}`) });
     knapp.addEventListener("click", () => {
-      // 042 (Gate 14b §7): avvis på sak med LEVENDE oppdrag varsler
+      // 043 (Gate 14b §7): avvis på sak med LEVENDE oppdrag varsler
       // konsekvensen FØR handlingen — alertdialog med oppdraget og
       // modulen navngitt, fokus inn, Escape lukker uten handling, fokus
       // tilbake til utløseren (alt båret av dialogmekanikken).

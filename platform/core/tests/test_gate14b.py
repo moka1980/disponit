@@ -1,4 +1,4 @@
-"""Gate 14b (migrasjon 042): kansellering med fencing — Codex-portene.
+"""Gate 14b (migrasjon 043): kansellering med fencing — Codex-portene.
 
 Hver test konstruerer sin egen tilstand (fixturene fra 14a-suiten
 gjenbrukes som byggeklosser, aldri som delt tilstand).
@@ -125,7 +125,7 @@ def test_port1_avvis_pa_levende_m37_oppdrag_kansellerer_i_en_tx(conn):
 @pg
 def test_port2_beslutningsopphavet_dekkes(conn):
     """`unntak.oppdrag_id` er den andre veien inn (038): saken peker på
-    oppdraget. 14a så den aldri — 042 løser den opp på samme vilkår."""
+    oppdraget. 14a så den aldri — 043 løser den opp på samme vilkår."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op2")
     # Et beslutningsoppdrag (uten unntak_id) som SAKEN peker på.
@@ -319,7 +319,7 @@ def test_port8_ingen_vei_via_feilet(conn):
     `feilet`, og python-avvisveien gjør det heller ikke."""
     from pathlib import Path
     rot = Path(__file__).resolve().parents[1]
-    sql = (rot / "db" / "migrations" / "042_gate14b.sql").read_text(encoding="utf-8")
+    sql = (rot / "db" / "migrations" / "043_gate14b.sql").read_text(encoding="utf-8")
     import re
     kropp = sql.split("avvis_med_opplosning", 1)[1]
     assert not re.search(r"SET\s+status\s*=\s*'feilet'", kropp), \

@@ -288,7 +288,7 @@ export async function postHandling(uid, operatorhandling, saksversjon,
   let kropp = null;
   try { kropp = await r.json(); } catch { kropp = null; }
   if (!r.ok) {
-    // 042: `oppdrag_utfort` bærer referansen mennesket skal beslutte på
+    // 043: `oppdrag_utfort` bærer referansen mennesket skal beslutte på
     // nytt med — den rir i `detaljer`, den lukkede feilens eneste bagasje.
     _kast(r.status, kropp && kropp.feil,
           kropp && kropp.feil === "oppdrag_utfort"

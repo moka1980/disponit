@@ -298,7 +298,7 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
     # (P3).
     opplosning_detalj = None
     if operatorhandling == "avvis":
-        # 042 (Gate 14b): et levende OPPDRAG er ikke lenger en blindvei —
+        # 043 (Gate 14b): et levende OPPDRAG er ikke lenger en blindvei —
         # nei-et løses opp i samme transaksjon: kapabiliteten brennes
         # `avvist`, claimet fences, oppdraget kanselleres. 14a-svaret (409)
         # står igjen KUN for levende arbeidskapabiliteter uten oppdrag —
@@ -399,7 +399,7 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
 
     if operatorhandling == "avvis":
         if levende_opp:
-            # 042: nei-et og beviset i ÉN transaksjon — kapabiliteten
+            # 043: nei-et og beviset i ÉN transaksjon — kapabiliteten
             # brennes `avvist`, claimet fences, oppdraget kanselleres.
             res = conn.execute(
                 "SELECT utfall, oppdrag_id, oppdrag_status_ved_avvis,"
@@ -759,7 +759,7 @@ def handling_endepunkt(tjeneste, request, unntak_id: int):
         # og UI-et viser avklaringsteksten i stedet for en generisk 409.
         if res.get("utfall") == "utestaaende_oppdrag":
             return _feilsvar_kode("utestaaende_oppdrag", rid)
-        # 042: kvitteringen vant kappløpet. Kan systemet bevise at
+        # 043: kvitteringen vant kappløpet. Kan systemet bevise at
         # handlingen ble utført, skal det ikke skrive «avvist» som om
         # nei-et rakk fram — mennesket beslutter på nytt, med referansen.
         if res.get("utfall") == "oppdrag_utfort":

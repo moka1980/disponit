@@ -66,7 +66,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_reparasjonsoppdrag(text,bigint,bigint,text,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone,bigint,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'opprett_beslutningsoppdrag(text,bigint,text,text,text,bytea,text,bytea,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'sikre_sak_for_oppdrag(text,bigint,text,text,text)', 'disponit_m37_claimer'),
-    -- 042 (Gate 14b): oppløsningsveien — kansellering med fencing.
+    -- 043 (Gate 14b): oppløsningsveien — kansellering med fencing.
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text,text)',        'disponit_m37_claimer'),
     ('FUNCTION', 'avvis_med_opplosning(text,bigint,bigint[],text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reversibilitet_for_oppdrag(text,bigint)',            'disponit_m37_claimer'),

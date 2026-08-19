@@ -92,7 +92,7 @@ export function Bekreftelsesdialog({ tittel, tekst, detaljer, primarTekst,
   const primar = el("button", {
     class: `knapp ${farlig ? "fare" : "primar"}`, type: "button",
     text: primarTekst || t("ui.logg_ut_bekreft_primar") });
-  // 042: en alertdialog SKAL peke på budskapet sitt (aria-describedby) —
+  // 043: en alertdialog SKAL peke på budskapet sitt (aria-describedby) —
   // det er advarselen, ikke tittelen, skjermleseren skal åpne med.
   const beskrivelseId = `dlg-beskrivelse-${Date.now()}-${Math.floor(
     Math.random() * 1e6)}`;

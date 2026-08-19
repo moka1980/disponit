@@ -370,7 +370,7 @@ def beslutning_detalj(tjeneste, request: Request) -> Response:
                         " WHERE tenant=%s AND repair_operation_id=%s",
                         (auth.tenant, rep_id)).fetchone()
                     resultat["superseded"] = bool(sup and sup[0])
-                    # 042 (port 12): årsaken er NULLABLE — klienter som
+                    # 043 (port 12): årsaken er NULLABLE — klienter som
                     # antar at `kansellert` er uten årsak må tåle verdien
                     # (samme kontraktstil som 038 port 28). `feil_aarsak`
                     # er uendret.
@@ -565,7 +565,7 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
         # Gate 14a: er et oppdrag/kapabilitet utestående, er `avvis` utilgjengelig
         # (POST-vakten svarer 409 `utestaaende_oppdrag`) — skjul den her med den
         # lukkede årsaken, så UI-et forklarer det FØR brukeren prøver.
-        # 042 (Gate 14b): et levende OPPDRAG stenger ikke lenger avvis —
+        # 043 (Gate 14b): et levende OPPDRAG stenger ikke lenger avvis —
         # veien løser opp (kansellering med fencing), og flaten skal
         # varsle det FØR klikket (alertdialogen). Bare levende
         # arbeidskapabiliteter uten oppdrag beholder 14a-svaret.

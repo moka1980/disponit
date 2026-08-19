@@ -149,7 +149,7 @@ export function sikreLiveRegion() {
 }
 export function meldLive(tekst) { sikreLiveRegion().textContent = tekst; }
 
-// 042 (Gate 14b §7): utfallet av en kansellering skal AVBRYTE, ikke vente
+// 043 (Gate 14b §7): utfallet av en kansellering skal AVBRYTE, ikke vente
 // på en pause — egen assertiv region ved siden av den høflige. Årsaken
 // leses opp, ikke bare vises.
 let _alert = null;

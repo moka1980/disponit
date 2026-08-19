@@ -1,6 +1,6 @@
-"""PR-012 gate 14a → 042 (Gate 14b): avvis på sak med utestående rader.
+"""PR-012 gate 14a → 043 (Gate 14b): avvis på sak med utestående rader.
 
-042 endret kontrakten: et levende OPPDRAG løses nå OPP (kansellering med
+043 endret kontrakten: et levende OPPDRAG løses nå OPP (kansellering med
 fencing) i stedet for 409 — 14a-svaret (`avklaring_kreves` + 409) står
 igjen KUN for levende arbeidskapabiliteter uten oppdrag, og et TERMINALT
 oppdrag er ordinært avvis der hendelsen bærer status ved avvis. Denne
@@ -128,7 +128,7 @@ def test_port2_kansellert_oppdrag_avvis_virker(conn):
 
 @pg
 def test_port3_levende_oppdrag_gir_opplosning(conn):
-    """042: det levende oppdraget kanselleres i samme transaksjon som
+    """043: det levende oppdraget kanselleres i samme transaksjon som
     avvisningen — ingen 409, ingen avklaring."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
@@ -180,7 +180,7 @@ def test_port6_utestaaende_kapabilitet_uten_oppdrag_gir_409(conn):
 
 @pg
 def test_port4_utfort_oppdrag_ordinart_avvis_med_status(conn):
-    """042 (klarsignal §4, «utenfor kappløpet»): et TERMINALT oppdrag —
+    """043 (klarsignal §4, «utenfor kappløpet»): et TERMINALT oppdrag —
     også `utfort` — er ordinært avvis; hendelsen bærer status ved avvis,
     så evidensen viser hva mennesket visste. Oppdraget røres aldri."""
     uid = _oppsett(conn)
@@ -203,7 +203,7 @@ def test_port4_utfort_oppdrag_ordinart_avvis_med_status(conn):
 
 @pg
 def test_port5_baade_kansellert_og_levende_gir_opplosning(conn):
-    """042: den levende blant de kansellerte løses opp — de kansellerte
+    """043: den levende blant de kansellerte løses opp — de kansellerte
     står urørt uten årsak (de var ikke menneskets nei)."""
     uid = _oppsett(conn)
     bid = _medlem(conn, "op1")
@@ -225,7 +225,7 @@ def test_port5_baade_kansellert_og_levende_gir_opplosning(conn):
 
 @pg
 def test_port9_gjentatt_ulik_noekkel_samme_409_ingen_ny_versjon_eller_historikk(conn):
-    """P3-invarianten (042-formen): 409-veien som står igjen er den levende
+    """P3-invarianten (043-formen): 409-veien som står igjen er den levende
     kapabiliteten uten oppdrag — samme utestående tilstand, samme 409,
     ingen ny versjonsøkning, ingen ny historikkrad."""
     uid = _oppsett(conn)
@@ -462,10 +462,10 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
     assert _status(conn, uid) == "løst"                  # ALDRI avvist
     assert "avklaring_kreves" not in _hist_hendelser(conn, uid)
 
-    # --- Rekkefølge B (042): avvis FØRST → OPPLØSNING (kansellert+avvist);
+    # --- Rekkefølge B (043): avvis FØRST → OPPLØSNING (kansellert+avvist);
     # den fulle kvitteringen etterpå møter en brent kapabilitet og kan
     # ALDRI fullføre — det er selve fencing-beviset.
-    # (042: menneskebehandlingen finnes i `manuell` — venter_utførelse er
+    # (043: menneskebehandlingen finnes i `manuell` — venter_utførelse er
     # M-37s egen kjørefase, der avvis felles av rundevakten som før.)
     uid2 = _oppsett(conn)
     opp2, jti2, cid2, rop2 = _claimet_oppdrag_med_kvittering(uid2)
@@ -523,7 +523,7 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
             s = _full_kvittering(app, _signert_kvittering(opp3, jti3, cid3,
                                                           rop3))
         except Exception as e:  # noqa: BLE001 — utfallet ER målingen
-            # 042: taper kvitteringen mot en alt-kansellert/brent vei, kan
+            # 043: taper kvitteringen mot en alt-kansellert/brent vei, kan
             # sak-lukkingen felles av vaktene — det er et gyldig tap, ikke
             # en testfeil.
             s = f"unntak:{type(e).__name__}"
@@ -541,7 +541,7 @@ def test_port_full_kvittering_vs_avvis(conn, app, miljo):
     for t in tr:
         t.join(timeout=30)
     assert not any(t.is_alive() for t in tr), "en tråd henger — kan ikke bevise"
-    # 042: NØYAKTIG én vinner, aldri både utført og kansellert (port 6).
+    # 043: NØYAKTIG én vinner, aldri både utført og kansellert (port 6).
     # Kapabiliteten er den atomiske dommeren; den serialiserte seksjonen
     # avgjør hvem som brenner først.
     slutt = _status(conn, uid3)
@@ -592,7 +592,7 @@ def test_port_leseapi_skjuler_avvis_ved_utestaaende(klient, miljo, monkeypatch):
     assert "avvis" in r0.json()["tillatte_handlinger"]
     assert "avvis_utilgjengelig" not in r0.json()
 
-    # 042: med et LEVENDE oppdrag tilbys avvis fortsatt — men DTO-en bærer
+    # 043: med et LEVENDE oppdrag tilbys avvis fortsatt — men DTO-en bærer
     # `avvis_kansellerer`, så flaten kan varsle konsekvensen (alertdialogen)
     # FØR klikket. Modul og status er navngitt.
     _oppdrag(uid, "opprettet")
