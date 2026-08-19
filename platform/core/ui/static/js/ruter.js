@@ -19,6 +19,30 @@ export function erGjeldendeVisning(node, token) {
   return visningsToken(node) === token;
 }
 
+// Hash-en er `#/<rute>` eller `#/<rute>/<mål>`, og målet er det flaten skal
+// åpne PÅ SEG SELV — et utkast, en sak, en fane. Målet er ETT ledd og
+// prosent-dekodes, slik at en id med skråstrek eller mellomrom overlever turen
+// gjennom adressefeltet. En ødelagt escape-sekvens skal ikke rive ned
+// navigasjonen — da bæres det rå leddet videre, og flaten svarer det den ville
+// svart på en ukjent id.
+//
+// Kontrakten bor HER, ikke inne i ruteren (Codex P2 til PR #110): en flate som
+// selv skriver målet sitt tilbake til adressen — samleflaten under
+// `wcagkontroll` gjør det for fanevalget — må lese hashen med nøyaktig samme
+// regler som ruteren leser den med. To parsere driver fra hverandre, og
+// avviket viser seg som en adresse som peker på noe annet enn skjermen viser.
+export function hashDeler(hash) {
+  const h = (hash || "").replace(/^#\/?/, "");
+  const skille = h.indexOf("/");
+  const rute = skille === -1 ? h : h.slice(0, skille);
+  const raa = skille === -1 ? "" : h.slice(skille + 1);
+  let mal = null;
+  if (raa) {
+    try { mal = decodeURIComponent(raa); } catch { mal = raa; }
+  }
+  return { rute, mal };
+}
+
 export function lagRuter(hoved, ctx, flater, settAktiv) {
   // Reserveruten er den FØRSTE flaten økten faktisk har, ikke hardkodet
   // `oversikt`. `flater` er allerede scope-filtrert av `tillatteFlater`, så en
@@ -29,27 +53,15 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
   // sin, så en vanlig kundeøkt får fortsatt `oversikt`.
   const reserve = Object.keys(flater)[0] || null;
 
-  // Hash-en er `#/<rute>` eller `#/<rute>/<mål>`, og målet er det flaten skal
-  // åpne PÅ SEG SELV — et utkast, en sak. Uten det leddet hadde ruteren ingen
-  // måte å bære en henvisning på, og en flate som ville sende eier til et
-  // bestemt objekt måtte lene seg på en callback ruteren aldri gir den: i
-  // produksjon kalles hver flate med `(hoved, ctx)`, så «Gå til» fra
-  // varselinnboksen kastet `ressurs_id` og landet på lista (Codex P2).
-  //
-  // Målet er ETT ledd og prosent-dekodes, slik at en id med skråstrek eller
-  // mellomrom overlever turen gjennom adressefeltet. En ødelagt escape-sekvens
-  // skal ikke rive ned navigasjonen — da bæres det rå leddet videre, og flaten
-  // svarer det den ville svart på en ukjent id.
+  // Målet (`#/<rute>/<mål>`) er det flaten skal åpne PÅ SEG SELV — et utkast,
+  // en sak. Uten det leddet hadde ruteren ingen måte å bære en henvisning på,
+  // og en flate som ville sende eier til et bestemt objekt måtte lene seg på
+  // en callback ruteren aldri gir den: i produksjon kalles hver flate med
+  // `(hoved, ctx)`, så «Gå til» fra varselinnboksen kastet `ressurs_id` og
+  // landet på lista (Codex P2). Selve oppdelingen er `hashDeler` over.
   function deler() {
-    const h = (window.location.hash || "").replace(/^#\/?/, "");
-    const skille = h.indexOf("/");
-    const rute = skille === -1 ? h : h.slice(0, skille);
-    const raa = skille === -1 ? "" : h.slice(skille + 1);
+    const { rute, mal } = hashDeler(window.location.hash);
     if (!flater[rute]) return { rute: reserve, mal: null };
-    let mal = null;
-    if (raa) {
-      try { mal = decodeURIComponent(raa); } catch { mal = raa; }
-    }
     return { rute, mal };
   }
 

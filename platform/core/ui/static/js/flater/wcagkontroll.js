@@ -10,6 +10,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { Faner } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
+import { hashDeler } from "../ruter.js";
 import { flateHode } from "./felles.js";
 import { visBestilling } from "./bestilling.js";
 import { visRapport } from "./rapport.js";
@@ -85,9 +86,43 @@ export function visWcagKontroll(hoved, ctx, mal) {
   // eller en ressurs-id fra et PLANVARSEL (varsler bærer `ressurs_id`
   // som mål, og planens varsler er de eneste som peker hit med id).
   // Begge skal lande der handlingen bor; alt annet starter på flyten.
-  const kjent = trinn.some((s) => s.nokkel === mal);
-  const start = kjent ? mal : (mal ? "plan" : "domener");
-  const faner = Faner({ trinn, start });
+  const faneFor = (m) =>
+    trinn.some((s) => s.nokkel === m) ? m : (m ? "plan" : "domener");
+  const start = faneFor(mal);
+
+  // FANEVALGET HØRER TIL ADRESSEN (Codex P2). `Faner` byttet bare sin egen
+  // tilstand, så adressen ble stående på `#/wcagkontroll` uansett hvilken
+  // fane brukeren sto i: en oppfriskning eller en delt lenke åpnet startfanen
+  // — Domener, eller Rapporter for en leseøkt — og ikke den periodiske
+  // kontrollen hun faktisk så på. Den frittstående `#/plan`-ruten bevarte
+  // visningen over en reload; sammenslåingen tok det bort.
+  //
+  // `replaceState`, ikke `location.hash = …`: en hash-tilordning fyrer
+  // `hashchange`, og ruteren svarer med å kalle flaten på nytt — nye
+  // `del()`-lukninger, altså tapt skjematekst og lastet rapport, akkurat det
+  // fanene finnes for å bevare (samme fella som `hashForDypLenke` unngår).
+  // Og `replaceState` fremfor `pushState`: ruteren lytter bare på
+  // `hashchange`, som `pushState`s Tilbake-knapp ikke fyrer — historikken
+  // ville pekt på en annen fane enn skjermen viste.
+  //
+  // Skrives BARE når adressen peker et annet sted enn fanen som nå er valgt.
+  // Det holder to ting i orden: `#/wcagkontroll` uten mål blir ikke skrevet om
+  // ved ren visning, og et planvarsels `#/wcagkontroll/<ressurs_id>` beholder
+  // id-en sin — den løser alt opp i planfanen, så det er ingenting å rette.
+  // Vakten på ruten er for den sene hendelsen: en fane som byttes på et
+  // løsrevet tre etter at brukeren har navigert videre, skal ikke skrive over
+  // adressen til ruten hun står i nå.
+  function synkroniserHash(nokkel) {
+    const { rute, mal: naa } = hashDeler(window.location.hash);
+    if (rute !== "wcagkontroll" || faneFor(naa) === nokkel) return;
+    // Adressefeltet er ikke vår å stole på: `replaceState` kaster i sandkasser
+    // og over `file://`, og fanebyttet har alt skjedd når vi kommer hit.
+    try {
+      window.history.replaceState(null, "", `#/wcagkontroll/${nokkel}`);
+    } catch { /* fanen står, adressen henger etter */ }
+  }
+
+  const faner = Faner({ trinn, start, paaBytte: synkroniserHash });
   sett(hoved,
     ...flateHode(t("ui.wcag.tittel"), t("ui.wcag.under")),
     faner.rot);
