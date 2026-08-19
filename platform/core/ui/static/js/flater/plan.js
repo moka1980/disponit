@@ -50,24 +50,36 @@ function _nullstillFeil(form) {
 // klokka 08:05 sto en plan som skulle kjøre 08:40 i dag oppført som «i
 // morgen». Faller minuttet bort (eldre svar), er 0 den trygge
 // tilnærmingen — samme dag, tidligst mulig.
-function nesteKjoringTekst(p) {
+//
+// KANDIDATENE ER KALENDERDAGER, IKKE DØGN À 86 400 000 MS (Codex P2).
+// Å legge et fast døgn til et tidspunkt skritter UTC, ikke planens
+// lokale kalender: 28. mars kl. 23:30 i Europe/Oslo pluss 24 timer
+// formaterer som 30. mars, fordi sommertidsovergangen spiser en time.
+// Da hoppet søket over 29. mars helt, og en daglig plan — eller en
+// ukentlig søndagsplan — sto oppført et døgn (eller en uke) for sent,
+// enda basen planlegger 29. mars med lokal kalenderaritmetikk.
+// Kandidatene enumereres derfor som DATOER: dagens dato i planens sone
+// leses én gang, og `Date.UTC(år, måned, dag + d)` skritter kalenderen
+// uten å røre en tidssone i det hele tatt.
+export function nesteKjoringTekst(p, naa = new Date()) {
   const minutt = Number.isInteger(p.forfallsminutt)
     ? Math.min(Math.max(p.forfallsminutt, 0), 59) : 0;
   try {
-    const naa = new Date();
+    const iDag = new Intl.DateTimeFormat("en-CA", {
+      timeZone: p.tidssone, year: "numeric", month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(naa);
+    const tall = (v) => parseInt(iDag.find((x) => x.type === v).value, 10);
+    const [aar0, mnd0, dag0] = [tall("year"), tall("month"), tall("day")];
     for (let d = 0; d < 62; d++) {
-      const kand = new Date(naa.getTime() + d * 86400000);
-      const deler = new Intl.DateTimeFormat("en-CA", {
-        timeZone: p.tidssone, weekday: "short", day: "numeric",
-        year: "numeric", month: "2-digit",
-      }).formatToParts(kand);
-      const ukedag = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
-                       Sun: 7 }[deler.find((x) => x.type === "weekday").value];
-      const dag = parseInt(deler.find((x) => x.type === "day").value, 10);
+      const kand = new Date(Date.UTC(aar0, mnd0 - 1, dag0 + d));
+      // Ren kalenderdato: UTC-feltene ER datoen, ingen soneomregning.
+      const ukedag = kand.getUTCDay() === 0 ? 7 : kand.getUTCDay();
+      const dag = kand.getUTCDate();
       if (p.rytme === "ukentlig" && ukedag !== p.ukedag) continue;
       if (p.rytme === "manedlig" && dag !== p.manedsdag) continue;
-      const dato = `${deler.find((x) => x.type === "year").value}-${
-        deler.find((x) => x.type === "month").value}-${
+      const dato = `${kand.getUTCFullYear()}-${
+        String(kand.getUTCMonth() + 1).padStart(2, "0")}-${
         String(dag).padStart(2, "0")}`;
       const tid = `${String(p.time_lokal).padStart(2, "0")}:${
         String(minutt).padStart(2, "0")}`;

@@ -9,7 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
-import { visPlan } from "../static/js/flater/plan.js";
+import { nesteKjoringTekst, visPlan } from "../static/js/flater/plan.js";
 
 settI18nForTest(NB, "nb");
 
@@ -262,6 +262,32 @@ test("planliste: «neste kjøring» bærer forfallsminuttet, ikke hel time",
   assert.ok(rad.includes(tid), `«${tid}» manglet i «${rad}»`);
   assert.ok(!rad.includes(`${String(plan.time_lokal).padStart(2, "0")}:00`),
     `hel time vist i stedet for forfallet: «${rad}»`);
+});
+
+test("neste kjøring: kandidatene er kalenderdager, ikke døgn à 86 400 000 ms",
+     () => {
+  // Codex P2: `naa.getTime() + d * 86400000` skritter UTC, ikke planens
+  // lokale kalender. Ved sommertidsovergangen 29. mars 2026 mister Oslo
+  // en time, så 28. mars kl. 23:30 pluss 24 timer formaterer som 30.
+  // mars — og 29. mars ble hoppet over helt. Basen planlegger 29. mars
+  // med lokal kalenderaritmetikk, så flaten viste et døgn (daglig) eller
+  // en uke (ukentlig søndag) for sent.
+  //
+  // 2026-03-28T22:30Z er 23:30 i Oslo (UTC+1, ennå vintertid).
+  const naa = new Date("2026-03-28T22:30:00Z");
+  const daglig = { rytme: "daglig", time_lokal: 8, forfallsminutt: 0,
+    tidssone: "Europe/Oslo" };
+  assert.equal(nesteKjoringTekst(daglig, naa),
+    "2026-03-29 08:00 (Europe/Oslo)");
+  // Søndag 29. mars: ukedag 7 — samme dag, ikke uken etter.
+  const ukentlig = { ...daglig, rytme: "ukentlig", ukedag: 7,
+    forfallsminutt: 40 };
+  assert.equal(nesteKjoringTekst(ukentlig, naa),
+    "2026-03-29 08:40 (Europe/Oslo)");
+  // Månedsdagen skrittes i samme kalender: 29. i måneden.
+  const manedlig = { ...daglig, rytme: "manedlig", manedsdag: 29 };
+  assert.equal(nesteKjoringTekst(manedlig, naa),
+    "2026-03-29 08:00 (Europe/Oslo)");
 });
 
 test("planliste: uten plan:opprett finnes verken skjema eller mutasjonsknapper",
