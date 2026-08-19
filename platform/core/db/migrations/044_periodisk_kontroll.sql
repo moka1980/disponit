@@ -312,7 +312,7 @@ CREATE OR REPLACE FUNCTION pause_plan(
     p_request_id TEXT, p_detalj JSONB DEFAULT NULL)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_status TEXT; v_aktivert_av TEXT; v_bruker TEXT;
+DECLARE v_status TEXT; v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
 BEGIN
     SELECT status, aktivert_av INTO v_status, v_aktivert_av
       FROM public.bestillingsplan
@@ -334,7 +334,8 @@ BEGIN
         (plan_id, tenant, hendelse, aktor, request_id, detalj)
     VALUES (p_plan, p_tenant, 'pauset', p_aktor, p_request_id,
             jsonb_build_object('aarsak', p_aarsak) || coalesce(p_detalj,
-                                                              '{}'::jsonb));
+                                                              '{}'::jsonb))
+    RETURNING id INTO v_hendelse;
     -- Varsle den som aktiverte planen (in-app; e-postkøen tar resten).
     -- `aktivert_av` er en AKTØRSTRENG ('bruker:<bid>'); varselets
     -- bruker_id er FK mot brukeridentitet, så id-en løses opp — en rå
@@ -344,10 +345,21 @@ BEGIN
         v_bruker := CASE WHEN v_aktivert_av LIKE 'bruker:%'
                          THEN substring(v_aktivert_av FROM 8) END;
         IF v_bruker IS NOT NULL THEN
+            -- `hendelse` er FOREKOMSTEN, ikke arten (Codex P2; samme
+            -- sluk som 041 §15 og som bruddvarselet under). Med literalen
+            -- 'pauset' var nøkkelen (tenant, bruker, 'plan_pauset',
+            -- 'plan', plan_id, 'pauset') KONSTANT per plan: pause nummer
+            -- to — etter et gjenopptak, og kanskje med en helt annen
+            -- grunn — traff `varsel_en_per_hendelse` og ble slukt av
+            -- vernet under. Overgangen sto, men eieren fikk verken
+            -- varselet eller `varslet`-sporet, og verst for den som hadde
+            -- lest det gamle varselet og altså ikke så noe nytt.
+            -- Pause-hendelsens id er global og monoton, og den ER pausen.
             INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
                 ressurs_id, hendelse, tekstnokkel, parametre)
             VALUES (p_tenant, v_bruker, 'plan_pauset', 'plan',
-                    p_plan::text, 'pauset', 'varsel.plan_pauset',
+                    p_plan::text, 'pauset:' || v_hendelse,
+                    'varsel.plan_pauset',
                     jsonb_build_object('aarsak', p_aarsak));
             INSERT INTO public.bestillingsplan_hendelse
                 (plan_id, tenant, hendelse, aktor, request_id, detalj)
@@ -355,7 +367,9 @@ BEGIN
                     jsonb_build_object('bruker', v_bruker));
         END IF;
     EXCEPTION WHEN OTHERS THEN
-        NULL;   -- varselet er ikke evidens; pausen står
+        -- Varselet er ikke evidens; pausen står (port 41). WARNING, ikke
+        -- stillhet: en varselvei som ryker skal SES i driftsloggen.
+        RAISE WARNING 'pause_plan: varsel feilet for %: %', p_plan, SQLERRM;
     END;
     RETURN true;
 END $$;

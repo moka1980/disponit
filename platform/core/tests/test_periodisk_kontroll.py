@@ -1046,6 +1046,48 @@ def test_stopp_pauser_med_policy_stopper(migrator, app):
     assert frek_etter == frek_foer, "et stoppet tick reserverte kvote"
 
 
+@pg
+def test_pause_nummer_to_varsles_ogsaa(migrator, klient):
+    """Codex P2: hver pause har sin EGEN varselforekomst.
+
+    Med `hendelse = 'pauset'` som konstant literal var varselnøkkelen
+    (tenant, bruker, 'plan_pauset', 'plan', plan_id, 'pauset') den samme
+    for hver pause på planen. Pause nummer to — etter et gjenopptak, og
+    her med en helt annen grunn — traff `varsel_en_per_hendelse` og ble
+    slukt av `WHEN OTHERS`: overgangen sto, men eieren fikk verken
+    varselet eller `varslet`-sporet."""
+    bid = _ekte_bruker("p-pause2-eier")
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p-pause2.example", aktor=f"bruker:{bid}")
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT pause_plan(%s,%s,'policy_stopper','test','rid1',NULL)",
+            (TENANT, pid)).fetchone()[0]
+        rt.commit()
+        cookie, csrf = _adminsesjon(sub="p-pause2-admin")
+        r = _post_plan(klient, cookie, csrf, f"/v1/plan/{pid}/gjenoppta", {})
+        assert r.status_code == 200, r.text
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT pause_plan(%s,%s,'modul_utilgjengelig','test','rid2',"
+            "NULL)", (TENANT, pid)).fetchone()[0]
+        rt.commit()
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    varsler = migrator.execute(
+        "SELECT parametre->>'aarsak' FROM varsel WHERE tenant=%s AND"
+        " art='plan_pauset' AND ressurs_id=%s ORDER BY opprettet",
+        (TENANT, str(pid))).fetchall()
+    varslet = migrator.execute(
+        "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+        " AND hendelse='varslet'", (pid,)).fetchone()[0]
+    migrator.rollback()
+    assert varsler == [("policy_stopper",), ("modul_utilgjengelig",)], varsler
+    assert varslet == 2, "pause nummer to etterlot intet varslet-spor"
+
+
 def test_modul_utilgjengelig_har_sin_pausegrunn():
     """§7-raden om utilgjengelig modul: bestillingsveiens
     `bestillingstype_utilgjengelig` (typen kan ikke claimes — modul nede,
