@@ -1379,6 +1379,33 @@ test("Overstyring: fravær er en TILSTAND, par legges til fra nedtrekk",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// Codex P2: skriveveien tar med vilje imot ustrukturerte utkast — porten står
+// i `valider_utkast`, ikke i lagringen. Et lagret utkast kan derfor bære
+// `roller: {}` eller `handlinger: {}`. Leste overstyringsfanen dem rått med
+// `.map`, kastet den TypeError på nettopp den fanen eier måtte åpne for å se
+// hva som var galt, og skjemafeilen kunne bare forkastes.
+test("Overstyring: en ustrukturert roller/handlinger-samling krasjer ikke",
+  async () => {
+    for (const vrang of [{}, "roller", 7, [null, { id: 5 }, { id: "ok" }]]) {
+      const start = JSON.parse(JSON.stringify(MAL));
+      start.roller = vrang;
+      start.handlinger = vrang;
+      start.menneskelig_overstyring = { krever_rolle: "agent",
+        godkjennbare: [] };
+      const h = nyHoved();
+      visPolicyeditor(h, ctx(), { startPolicy: start });
+      await vent(() => h.querySelector(".editor-seksjon"));
+      gaaTilFane(h, t("ui.editor.fane.overstyring"));
+      await vent(() => h.textContent.includes(t("ui.editor.overstyring")));
+      // Fanen tegner seg, og nedtrekkene bærer bare de LESBARE id-ene.
+      await vent(() => h.querySelector("#mo-handling"));
+      const valg = [...h.querySelectorAll("#mo-handling option")]
+        .map((o) => o.value);
+      assert.deepEqual(valg, Array.isArray(vrang) ? ["ok"] : [],
+        JSON.stringify(vrang));
+    }
+  });
+
 // `_krev_malautorisasjonsvilkar` stiller kravet KUN for en handling hvis
 // kodefestede type krever målautorisasjon, og bare for typens eget domene.
 // Låsen er en påstand om at serveren nekter fjerningen, så testene under

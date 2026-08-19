@@ -784,9 +784,20 @@ function overstyringSeksjon(policy, tegnPaaNytt, grunnlag) {
   const mo = (policy.menneskelig_overstyring
     && typeof policy.menneskelig_overstyring === "object")
     ? policy.menneskelig_overstyring : null;
-  const roller = (policy.roller || []).map((r) => r.id).filter(Boolean);
-  const handlinger = (policy.handlinger || []).map((h) => h.id)
-    .filter(Boolean);
+  // Et lagret utkast er med vilje ustrukturert til det valideres (samme
+  // grunn som `vilkaar: [null]` over): skriveveien tar imot vilkårlige
+  // dicter, og skjemaporten står i `valider_utkast`. `roller` kan derfor
+  // være `{}`, en streng eller en liste med `null` i. `truthy || []` slapp
+  // alt annet enn null/undefined videre til `.map`, og fanen eier åpnet
+  // NETTOPP for å rette formen kastet TypeError i stedet for å tegne seg
+  // (Codex P2). Nedtrekkene leser bare id-ene, så de normaliserer som de
+  // dedikerte rolle- og handlingsseksjonene gjør — uten å skrive tilbake:
+  // reparasjonen hører hjemme i den seksjonen som eier feltet.
+  const idListe = (v) => (Array.isArray(v) ? v : [])
+    .map((x) => (x && typeof x === "object") ? x.id : null)
+    .filter((id) => typeof id === "string" && id);
+  const roller = idListe(policy.roller);
+  const handlinger = idListe(policy.handlinger);
   // Hvilket FELT hver grunnkode krever, fra serverens `godkjennbare_krav`
   // — som leser motorens egen `LOFTBARE_GRUNNKODER` (Codex P1). Et par
   // alene er ikke en overstyring: `_loft_policy` bygger løftet av
