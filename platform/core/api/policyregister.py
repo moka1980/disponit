@@ -232,6 +232,33 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
         #    ut ville tatt den ut av lineagen uten at noe sa fra — nøyaktig
         #    den omgåingen 047 er til for å hindre. Da er svaret at
         #    aktivering er en styrt handling, ikke en registrering.
+        #
+        # ANKERRADEN LÅSES FØRST (Codex P1). Den delte advisory-låsen over
+        # serialiserer denne veien mot SLETTINGEN, som tar den eksklusive
+        # varianten — men ikke mot `aktiver_policy`, som ikke tar den i det
+        # hele tatt. Autoriteten den styrte veien serialiserer på er
+        # `policy_hode`-raden (steg 4 i 022/047: `SELECT aktiv_versjon ...
+        # FOR UPDATE`), og uten den her kunne en aktivering committe mellom
+        # prøven under og `UPDATE policyer SET aktiv=false` rett etter.
+        # Bootstrapen ville da deaktivert en nettopp styrt aktivert versjon
+        # og satt inn sin egen hendelsesløse rad — nøyaktig omgåingen
+        # prøven finnes for, bare gjennom et vindu i stedet for en dør.
+        #
+        # Radlåsen er tilgjengelig HER, i motsetning til i
+        # forespørselsveien `laas_policy_delt` er skrevet for: `registrer`
+        # er en administrativ operasjon som uansett skriver `policy_hode`
+        # lenger nede, altså har UPDATE på tabellen. Ankerraden opprettes
+        # om den mangler, med samme `ON CONFLICT DO NOTHING` som
+        # aktiveringen bruker — låsen skal tas på en rad som finnes.
+        conn.execute(
+            "INSERT INTO policy_hode (tenant, policy_id) VALUES (%s,%s)"
+            " ON CONFLICT (tenant, policy_id) DO NOTHING", (tenant, pid))
+        conn.execute(
+            "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+            " AND policy_id=%s FOR UPDATE", (tenant, pid))
+        # Egen setning ETTER låsen: under READ COMMITTED tar den et ferskt
+        # snapshot, så en aktivering som committet mens vi ventet på låsen
+        # ER synlig her.
         styrt = conn.execute(
             "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s"
             " AND aktiv AND aktivert_av_operasjon IS NOT NULL",

@@ -382,6 +382,68 @@ def test_styrt_aktivering_kan_ikke_omgaas_av_oppsettsveien():
         m.close()
 
 
+@pg
+def test_bootstrap_serialiseres_mot_styrt_aktivering():
+    """Codex P1: prøven i `registrer` er verdiløs uten LÅSEN under seg.
+
+    Den delte advisory-låsen serialiserer bootstrapen mot SLETTINGEN, som
+    tar den eksklusive varianten — men ikke mot `aktiver_policy`, som ikke
+    tar den i det hele tatt. Autoriteten den styrte veien serialiserer på
+    er `policy_hode`-raden. Uten den kunne en aktivering committe mellom
+    prøven og `UPDATE policyer SET aktiv=false`, og bootstrapen ville
+    deaktivert en nettopp styrt aktivert versjon og satt inn sin egen
+    hendelsesløse rad.
+
+    Målt der det er målbart: `registrer` må BLOKKERE når en annen
+    transaksjon holder ankerraden. Holder den ikke låsen, går kallet rett
+    gjennom og testen er rød.
+    """
+    import threading
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-laas-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["versjon"] = "1.0.0"
+    mal["meta"]["status"] = "produksjon"
+
+    holder = _c()
+    holder.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+    holder.execute(
+        "INSERT INTO policy_hode (tenant, policy_id) VALUES (%s,%s)"
+        " ON CONFLICT (tenant, policy_id) DO NOTHING", (TEN, pid))
+    holder.commit()
+    holder.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+    holder.execute("SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+                   " AND policy_id=%s FOR UPDATE", (TEN, pid))
+
+    ferdig = threading.Event()
+
+    def bootstrap():
+        c = _c()
+        try:
+            pr.registrer(c, TEN, mal, "produksjon")
+            c.commit()
+        except Exception:                                     # noqa: BLE001
+            c.rollback()
+        finally:
+            c.close()
+            ferdig.set()
+
+    t = threading.Thread(target=bootstrap, daemon=True)
+    t.start()
+    try:
+        assert not ferdig.wait(1.5), \
+            "registrer gikk gjennom mens ankerraden var låst — prøven er" \
+            " ikke serialisert mot styrt aktivering"
+    finally:
+        holder.rollback()
+        holder.close()
+    ferdig.wait(10)
+
+
 # ---------------------------------------------------------------------------
 # Lineage — runde og versjon (portene 10–17)
 # ---------------------------------------------------------------------------
