@@ -875,6 +875,7 @@
   "ui.adjudikator.krever_to": "{avgitt} of {krever} attestations cast. A positive grant requires two distinct adjudicators.",
   "ui.adjudikator.feil.dobbel_attestasjon": "You have already attested this case. An actor can only vote once.",
   "ui.adjudikator.feil.attestasjon_avvist": "The case cannot be decided now — it has already been decided or superseded by a newer conflict.",
+  "ui.adjudikator.feil.attestasjoner_uenige": "The adjudicators disagree about this case, so a positive grant is impossible. Reject the case if you believe the takeover should not happen — one rejection decides it.",
   "domenestatus.avklaring_kreves.forklaring": "Another account has also proven DNS control of this hostname. The case is being handled by Disponit — no action is needed from you right now.",
   "domenestatus.tilbakekalt.forklaring": "DNS control of this hostname has been proven by another account. Verify again if you still control the zone.",
   "domenestatus.tilbakekalt.forklaring_ordinaer": "Authorisation for this hostname has been revoked. Verify again if you still control the zone.",

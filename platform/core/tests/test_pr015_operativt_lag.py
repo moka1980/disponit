@@ -913,11 +913,20 @@ def test_port15_samme_aktor_to_ganger_avvises_av_primarnokkelen(migrator):
 
 
 @pg
-def test_port16_ulikt_utfall_gir_ingen_avgjorelse(migrator):
-    """Port 16: to attestasjoner som ikke er identiske → INGEN avgjørelse.
+def test_port16_ulikt_utfall_gir_aldri_positiv_tildeling(migrator):
+    """Port 16: to attestasjoner som ikke er identiske → ALDRI en sammenslåing.
 
-    Aldri en sammenslåing. Begge radene bevares — de er evidens for at to
-    autoriserte aktører mente forskjellige ting.
+    Uenigheten slås aldri sammen til en POSITIV tildeling, og begge radene
+    bevares — de er evidens for at to autoriserte aktører mente
+    forskjellige ting.
+
+    Men uenigheten LÅSES IKKE INNE (Codex P1). Avvisningen er den
+    fail-closed utgangen der ingen får autorisasjon, og den krever ÉN
+    attestasjon (019 §3.1). Den avgjør derfor saken også når en godkjenning
+    alt er avgitt. Tidligere sto avvik-sjekken foran den grenen: stemmen ga
+    `venter`, den uenige raden ble liggende (append-only), og HVER senere
+    stemme traff samme avvik — domenet sto i `avklaring_kreves` for alltid
+    mens flaten meldte «2 av 2 attestasjoner avgitt».
     """
     h = _host()
     sak, gen = _konflikt(migrator, TENANT, ANNEN_TENANT, h)
@@ -925,10 +934,14 @@ def test_port16_ulikt_utfall_gir_ingen_avgjorelse(migrator):
     try:
         _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT, "aktor-1", gen)
         assert _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
-                         "aktor-2", gen) == "venter"
+                         "aktor-2", gen) == "avgjort"
     finally:
         a.close()
-    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "avklaring_kreves"
+    # Fail-closed: tilbakekalt, ALDRI verifisert. Uenigheten ble ikke slått
+    # sammen til en tildeling — den ble løst i den retningen som ikke gir
+    # noen autorisasjon.
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt"
+    assert _saksstatus(migrator, ANNEN_TENANT, sak) == "avvist"
     _sett_kontekst(migrator, ANNEN_TENANT)
     n = int(migrator.execute(
         "SELECT count(*) FROM overtakelse_attestasjon WHERE sak_id=%s",

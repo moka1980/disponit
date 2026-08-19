@@ -2159,6 +2159,10 @@ RESET ROLE;
 -- målestokken, fordi det er DEN §6 gjør strengt monoton per sak — en
 -- generasjon er domeneradens, og to ulike konflikter kan bære samme tall
 -- på hver sin rad.
+--
+-- Returverdiene er `'avgjort' | 'venter' | 'uenighet'` — den siste er ny i
+-- 041 og er forklart ved grenen selv: en uenighet er en egen tilstand, og
+-- den løses av avvisningen, som nå avgjør før avvik-sjekken.
 -- ------------------------------------------------------------
 SET LOCAL ROLE disponit_domene_eier;
 
@@ -2290,10 +2294,31 @@ BEGIN
      WHERE sak_id = p_sak_id AND saksrevisjon = v_rev
        AND (utfall IS DISTINCT FROM p_utfall
             OR vinnende_tenant IS DISTINCT FROM p_vinnende_tenant);
-    IF v_avvik > 0 THEN
-        RETURN 'venter';   -- uenighet: ingen avgjørelse, begge rader bevart
-    END IF;
 
+    -- UENIGHET LØSES FAIL-CLOSED, DEN LÅSES IKKE INNE (Codex P1). Denne
+    -- grenen sto FØR avvik-sjekken i 019, og rekkefølgen var hele feilen:
+    -- godkjente A først og avviste B etterpå, fant B en uenig rad, fikk
+    -- `venter`, og saken ble stående. Tabellen er append-only, så den
+    -- uenige raden blir liggende for alltid: HVER senere stemme — også en
+    -- ny avvisning — traff samme avvik og fikk samme `venter`. Domenet ble
+    -- stående i `avklaring_kreves` uten noen vei ut, mens flaten meldte
+    -- «2 av 2 attestasjoner avgitt» fordi tellingen ikke skiller enige fra
+    -- uenige. Det var ikke en terskel som manglet en stemme; det var en
+    -- sak ingen stemme kunne avgjøre.
+    --
+    -- Terskelen 019 §3.1 faktisk skriver — og som flaten lover i
+    -- bekreftelsesdialogen — er «avvis → ÉN attestasjon». Avvisningen er
+    -- ikke en av to likestilte meninger som må matche en annen: den er den
+    -- fail-closed utgangen der INGEN får autorisasjon. En autorisert
+    -- adjudikator som sier nei skal derfor avgjøre saken uansett hva som
+    -- alt er avgitt, og nettopp det er også resolusjonsveien ut av en
+    -- uenighet: den som er uenig i en godkjenning avviser, og saken lukkes.
+    -- Utfordreren mister ingen rettighet permanent — en ny konflikt gir en
+    -- ny generasjon og en ny sak.
+    --
+    -- Begge radene BEVARES fortsatt (append-only, port 16): evidensen for
+    -- at to autoriserte aktører mente forskjellige ting står, og en
+    -- uenighet blir aldri slått sammen til en POSITIV tildeling.
     IF p_utfall = 'avvis' THEN
         -- Fail-closed: én stemme holder, ingen får autorisasjon.
         -- `v_gen` (domeneradens generasjon) er fortsatt DEN vedtaket
@@ -2302,6 +2327,19 @@ BEGIN
             p_tenant, p_hostname, v_gen, false, p_aktor);
         PERFORM public.lukk_overtakelsessak(p_tenant, p_sak_id, 'avvist', p_aktor);
         RETURN 'avgjort';
+    END IF;
+
+    -- Gjenstående uenighet er EN EGEN TILSTAND, ikke en manglende stemme.
+    -- Etter grenen over kan den bare oppstå ved en `godkjenn` som møter en
+    -- eldre uenig rad — og en avvisning har alltid tatt domeneraden ut av
+    -- `avklaring_kreves`, så oppslaget over ville alt ha avvist kallet.
+    -- Leddet blir derfor stående som et fail-closed vern, men det svarer nå
+    -- med sitt eget navn: `uenighet`. `venter` her ville fortsatt betydd
+    -- «mangler en attestasjon», og API-et ville fortsatt tellet stemmene
+    -- opp mot 2 — det er nøyaktig den villedende meldingen som skjulte
+    -- feilen over.
+    IF v_avvik > 0 THEN
+        RETURN 'uenighet';   -- ingen avgjørelse, begge rader bevart
     END IF;
 
     IF v_antall >= 2 THEN

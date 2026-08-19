@@ -1773,3 +1773,94 @@ def test_port41_varselfeil_feller_ikke_saken(migrator):
         migrator.rollback()
         migrator.execute("ALTER TABLE varsel_borte RENAME TO varsel")
         migrator.commit()
+
+
+@pg
+def test_uenighet_laases_ikke_inne(migrator):
+    """Codex P1: en uenig sak må ha en vei ut — den hadde ingen.
+
+    Avvik-sjekken sto FORAN avvisningsgrenen. Godkjente aktør 1 og avviste
+    aktør 2, fant avvisningen en uenig rad og returnerte `venter` i stedet
+    for å avgjøre. Attestasjonstabellen er append-only, så den uenige raden
+    ble liggende: aktør 3 traff nøyaktig samme avvik og fikk samme svar.
+    Ingen stemme kunne noensinne avgjøre saken, domenet sto i
+    `avklaring_kreves` for alltid — og API-et meldte «2 av 2 attestasjoner
+    avgitt», fordi tellingen ikke skiller enige stemmer fra uenige.
+
+    Terskelen 019 §3.1 skriver er «avvis → ÉN attestasjon». Avvisningen er
+    ikke en mening som må matche en annen, den er den fail-closed utgangen
+    der ingen får autorisasjon — og derfor også resolusjonen på en
+    uenighet. Porten måler at den avgjør, og at saken faktisk er LUKKET
+    etterpå: en tredje stemme har ingenting å stemme på.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `IF v_avvik > 0` tilbake foran
+    `IF p_utfall = 'avvis'`.
+    """
+    from .test_pr015_operativt_lag import _attester
+
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+    a = _admin()
+    try:
+        assert _attester(a, ANNEN_TENANT, sak, h, "godkjenn", ANNEN_TENANT,
+                         "uenig-1", gen) == "venter"
+        # Den uenige stemmen AVGJØR. Før: `venter`, for alltid.
+        assert _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
+                         "uenig-2", gen) == "avgjort"
+        # ... og saken er lukket, så det finnes ingen tredje stemme å avgi:
+        # motoren avviser den på status, ikke på et avvik som aldri tar slutt.
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _attester(a, ANNEN_TENANT, sak, h, "avvis", ANNEN_TENANT,
+                      "uenig-3", gen)
+        a.rollback()
+    finally:
+        a.close()
+    assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt", \
+        "uenigheten ga en positiv tildeling, eller den står fortsatt åpen"
+    assert _sakrad(migrator, sak)[0] == "avvist"
+
+
+def test_uenighet_er_en_egen_tilstand_hele_veien():
+    """Codex P1: «2 av 2 avgitt» var en umulig setning, ikke en terskel.
+
+    Uenigheten skal hete sitt eget navn i hvert ledd — ellers ber flaten om
+    en stemme som ikke finnes. Kjeden er motorens returverdi, API-ets
+    feilkode og teksten flaten viser, og hvert ledd kan brytes for seg.
+
+    MUTASJONEN SOM DREPER DENNE: la avvik-grenen returnere `venter` igjen,
+    la endepunktet svare `krever_to_attestasjoner` på `uenighet`, eller
+    fjern teksten fra ett av språkene.
+    """
+    import json as _json
+    import re
+    from pathlib import Path
+
+    rot = Path(__file__).resolve().parents[3]
+    les = lambda p: (rot / p).read_text(encoding="utf-8")   # noqa: E731
+
+    sql = les("platform/core/db/migrations/041_overtakelsessak.sql")
+    kropp = sql[sql.index("p_forventet_saksrevisjon BIGINT)"):]
+    kropp = kropp[:kropp.index("\nEND $$;")]
+    # Avvisningen avgjør FØR avvik-sjekken. Rekkefølgen ER porten: står den
+    # motsatt vei, er saken uavgjørbar igjen.
+    assert kropp.index("IF p_utfall = 'avvis' THEN") \
+        < kropp.index("IF v_avvik > 0 THEN"), \
+        "avvik-sjekken står foran avvisningen — uenigheten er låst inne igjen"
+    assert re.search(r"IF v_avvik > 0 THEN\s*\n\s*RETURN 'uenighet';", kropp), \
+        "uenigheten svarer fortsatt `venter` — den ser ut som en manglende stemme"
+
+    api = les("platform/core/api/domeneovertakelse.py")
+    assert 'if svar == "uenighet":' in api, \
+        "endepunktet skiller ikke uenighet fra en manglende attestasjon"
+    gren = api[api.index('if svar == "uenighet":'):]
+    gren = gren[:gren.index("# Ikke avgjort.")]
+    assert '"feil": "attestasjoner_uenige"' in gren and "409" in gren, \
+        "uenigheten svarer ikke med sin egen kode"
+    assert '"resolusjon": "avvis"' in gren, "svaret sier ikke veien ut"
+    # ... og tallet telles bare når det ER en terskel å telle mot.
+    assert 'if svar == "venter" else 0' in api, \
+        "uenige stemmer telles fortsatt opp mot terskelen"
+
+    for spraak in ("nb", "en"):
+        tekster = _json.loads(les(f"locales/{spraak}.json"))
+        assert "ui.adjudikator.feil.attestasjoner_uenige" in tekster, spraak

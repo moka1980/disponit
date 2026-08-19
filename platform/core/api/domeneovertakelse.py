@@ -245,6 +245,14 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
     Blir det ikke avgjort, er svaret `krever_to_attestasjoner` MED antall
     avgitte — «én autorisert aktør → positiv tildeling er umulig» er riktig
     fail-closed, men det skal sies, ikke oppleves som stillhet (§4).
+
+    UENIGHET ER IKKE EN MANGLENDE STEMME (Codex P1). Peker de avgitte
+    stemmene hver sin vei, svarer motoren `uenighet`, og endepunktet gir
+    `attestasjoner_uenige` — ikke `krever_to_attestasjoner`. Terskelsvaret
+    ba om en stemme som ikke fantes: tellingen inkluderte den uenige raden,
+    så flaten meldte «2 av 2» på en sak ingen ny stemme kunne avgjøre.
+    Resolusjonen står i svaret (`resolusjon: avvis`) og håndheves av
+    motoren: en avvisning avgjør saken fail-closed.
     """
     import psycopg
     from starlette.responses import JSONResponse   # noqa: F401  (kanonisk_json under)
@@ -362,9 +370,13 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             # og svarte `409 krever_to_attestasjoner` på en sak som nettopp var
             # avgjort. Revisjonen er den funksjonen selv håndhevet under låsen,
             # så tallet hører til nøyaktig den konflikten stemmen ble avgitt i.
-            antall = 0 if svar == "avgjort" else int(conn.execute(
+            # `uenighet` telles ikke (Codex P1): tallet er «hvor mange
+            # stemmer finnes», ikke «hvor langt er vi mot terskelen», og en
+            # uenig sak er ikke på vei mot noen terskel i det hele tatt.
+            antall = int(conn.execute(
                 "SELECT antall_avgitte_attestasjoner(%s,%s)",
-                (unntak_id, generasjon_ved_opprettelse)).fetchone()[0])
+                (unntak_id, generasjon_ved_opprettelse)).fetchone()[0]) \
+                if svar == "venter" else 0
             conn.commit()
         except psycopg.errors.UniqueViolation:
             # Samme aktør, samme revisjon, andre gang. Avvist av PRIMÆRNØKKELEN
@@ -392,6 +404,19 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             return kanonisk_json({"status": "avgjort", "utfall": utfall,
                                   "hostname": hostname, "request_id": rid},
                                  200, {"x-request-id": rid})
+
+        # UENIGHET HAR SITT EGET SVAR (Codex P1). Motoren skiller nå «saken
+        # mangler en andre stemme» fra «de avgitte stemmene peker hver sin
+        # vei», og flaten må skille dem også: `krever_to_attestasjoner` med
+        # `avgitt = 2, krever = 2` er en umulig setning som ba adjudikatoren
+        # om en stemme hen ikke kunne avgi. Resolusjonsveien er den samme
+        # som motoren nå håndhever — en avvisning avgjør saken — og den
+        # SIES her, i stedet for å ligge implisitt i en teller.
+        if svar == "uenighet":
+            return kanonisk_json(
+                {"feil": "attestasjoner_uenige", "hostname": hostname,
+                 "resolusjon": "avvis", "request_id": rid},
+                409, {"x-request-id": rid})
 
         # Ikke avgjort. Tallet gjør feilen legibel: står det 1 av 2, vet
         # tenanten at den mangler en andre autorisert aktør — ikke at systemet
