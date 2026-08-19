@@ -50,14 +50,10 @@ def _katalog_js() -> tuple[list[dict], list[dict]]:
     JS-motor, slik at porten ikke trenger node for å kjøre.
     """
     tekst = KATALOG_JS.read_text(encoding="utf-8")
-    # `status` er valgfritt (katalogens eget felt, generatoren bærer det
-    # fra spesifikasjonen — i dag kun M-56 «i drift»).
     katalog = [
-        {"n": int(n), "omrade": o, "fase": int(f),
-         **({"status": st} if st else {})}
-        for n, o, f, st in re.findall(
-            r"\{\s*n:\s*(\d+),\s*omrade:\s*\"([^\"]+)\",\s*fase:\s*(\d+)"
-            r"(?:,\s*status:\s*\"([^\"]+)\")?\s*\}",
+        {"n": int(n), "omrade": o, "fase": int(f)}
+        for n, o, f in re.findall(
+            r"\{\s*n:\s*(\d+),\s*omrade:\s*\"([^\"]+)\",\s*fase:\s*(\d+)\s*\}",
             tekst)
     ]
     omrader = [

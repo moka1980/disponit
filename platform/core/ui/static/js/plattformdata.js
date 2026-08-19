@@ -31,10 +31,10 @@ export const MODULSTATUS = {
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
   // m56_wcag_audit: manifestaksene sier under_utvikling/ikke_i_drift til
   // akseptporten (rollback-punktet) er bestått — «bygges» ER manifestets
-  // sannhet her. Forsidekatalogens «I drift»-etikett for M-56 kommer fra
-  // KATALOGENS eget statusfelt i spesifikasjonen (hva produktet tilbyr i
-  // dag: manuell bestilling kjører), ikke fra denne tabellen. To akser,
-  // to kilder — se manifesthodet.
+  // sannhet her, og DEN gjelder hele flaten. Katalogen på forsiden bar en
+  // stund et eget «i drift»-felt for M-56; det er tatt ut igjen (Codex P1
+  // på #109), for en akse ved siden av manifestet kan bare love mer enn
+  // porten bærer.
   56: "bygges",
 };
 

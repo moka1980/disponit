@@ -7,22 +7,24 @@ import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, hentI18n } from "./i18n.js";
 import { hentJson } from "./api.js";
 import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
-import { siteStatusMerke } from "./sitekomponenter.js";
 import { TILBUD, erTilgjengelig, settProduksjonsmiljo, heroTekstNokkel } from "./plattformdata.js";
-import { KATALOG, OMRADER, KATALOG_ANTALL } from "./katalog.js";
+import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 
 // Hele produktomfanget, gruppert slik en kjøper leser det: elleve områder, 45
 // moduler, fire faser. Uten dette svarte forsiden bare på de fire punktene i
 // «Hva du får» — og en besøkende kunne tro at det var alt vi tilbyr.
 //
-// Ingen «Kommer»-brikke per modul her. Katalogen er OMFANGET (hva
-// plattformen dekker), ikke en leveranseplan, og 55 «Kommer»-merker ville
-// gjort seksjonen til nettopp det byggeregnskapet forsiden ble ryddet for.
-// Unntaket går MOTSATT vei og er katalogens eget: en modul spesifikasjonen
-// har gitt statusfeltet «i drift» (i dag kun M-56) bærer etiketten på
-// kortet — det er den enkleste sanne påstanden katalogen kan gjøre, og den
-// forsvinner av seg selv den dagen feltet gjør det. Utrullingsbrikkene i
-// «Hva du får» er fortsatt tilbudspunktenes ene sted.
+// Ingen statusbrikke per modul her. Katalogen er OMFANGET (hva plattformen
+// dekker), ikke en leveranseplan, og 56 «Kommer»-merker ville gjort
+// seksjonen til nettopp det byggeregnskapet forsiden ble ryddet for. Hva som
+// kjører i dag står ett sted: brikkene i «Hva du får».
+//
+// En «I drift»-etikett for M-56, båret av et eget statusfelt i katalogen,
+// sto kort her og er tatt ut igjen (Codex P1 på #109): `siteStatusMerke`
+// betyr per definisjon «kjører hos kunder», mens manifestet sier
+// `under_utvikling`/`ikke_i_drift` og `MODULSTATUS[56]` derfor `bygges`.
+// Skal katalogen en dag vise tilstand, må den utledes av `MODULSTATUS` —
+// den manifestforankrede aksen — ikke av en ny akse ved siden av.
 function lesSide() {
   const side = new URLSearchParams(window.location.search).get("side") || "hjem";
   return ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"].includes(side)
@@ -98,19 +100,9 @@ function katalogseksjon() {
         el("article", { class: "site-mini-card" },
           el("strong", { text: t(`site.omrade.${omrade.id}`) }),
           el("ul", { class: "site-list site-list-tett" },
-            omrade.moduler.map((n) => {
-              // Katalogens eget statusfelt (fra spesifikasjonen, båret av
-              // generatoren): «I drift» er en etikett på KORTET, aldri
-              // bare en farge — merket bærer teksten selv.
-              const status = KATALOGSTATUS.get(n);
-              return el("li", {}, t(`site.katalog.m${n}.navn`),
-                ...(status ? [" ", siteStatusMerke(status)] : []));
-            }))))));
+            omrade.moduler.map((n) =>
+              el("li", { text: t(`site.katalog.m${n}.navn`) })))))));
 }
-
-// Oppslag n → katalogstatus, utledet av KATALOG (én kilde).
-const KATALOGSTATUS = new Map(
-  KATALOG.filter((k) => k.status).map((k) => [k.n, k.status]));
 import { siteTilbudMerke } from "./sitekomponenter.js";
 
 // Spørsmålene en kjøper stiller i et møte, i den rekkefølgen de kommer.

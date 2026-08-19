@@ -6,10 +6,9 @@
 # fortsatt `m_wcag_audit` (vedtatt i 014c §1) og endres ikke av
 # registernavnet. Statusflippet (status/driftstilstand) er IKKE en del av
 # nummer-tildelingen — det står bak akseptporten under (rollback-punktet),
-# som før. Forsidekortets «I drift»-etikett kommer fra KATALOGENS eget
-# statusfelt i spesifikasjonen, ikke herfra: katalogen sier hva produktet
-# tilbyr i dag (manuell bestilling kjører), manifestaksene sier hvor
-# koden står i akseptløpet. To akser, to kilder — med vilje.
+# som før. Forsiden har derfor INGEN «I drift»-etikett for M-56: et eget
+# statusfelt i katalogen sto kort i #109 og er tatt ut igjen (Codex P1).
+# Flaten har én statusakse, og den er avledet av dette manifestet.
 # Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
 id: wcag_audit
 navn: Automatisk WCAG-kontroll (controller)

@@ -114,7 +114,7 @@
   "site.hero.tittel": "Disponit does the work in your business — within authority you set yourself.",
   "site.hero.tilbud": "Disponit is being built to handle the routine work of your business: payments within approval limits, invoicing and reminders, reconciliation and settlement, deadlines and renewals, follow-up with customers and suppliers, recurring reports, automatic checks against regulations, and key figures computed from actual decisions. The principle is fixed: every action is measured against your policy before it happens — if it is within bounds it is carried out; if not, it is stopped and placed with you.",
   "site.hero.tekst": "Every area below is live with customers today.",
-  "site.hero.tekst_bygges": "The control layer runs today — policy engine, audit log, exception queue and policy administration with four eyes. The first module doing real work is also live: automatic WCAG checks of websites you have confirmed that you control. The remaining areas are specified and under construction.",
+  "site.hero.tekst_bygges": "The control layer runs today — policy engine, audit log, exception queue and policy administration with four eyes. The first module doing real work — automatic WCAG checks of websites you have confirmed that you control — is at the acceptance gate and goes live once it passes. The remaining areas are specified and under construction.",
   "site.hero.tekst_delvis": "The areas below marked “Available” are live with customers today; the rest are being built.",
   "site.argument.presisjon": "Control",
   "site.argument.presisjon_tittel": "You decide what the agent may do",

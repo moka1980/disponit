@@ -64,7 +64,7 @@ export const KATALOG = [
   { n: 53, omrade: "samarbeid_og_hr", fase: 2 },
   { n: 54, omrade: "okonomi", fase: 2 },
   { n: 55, omrade: "juridisk_og_compliance", fase: 4 },
-  { n: 56, omrade: "juridisk_og_compliance", fase: 3, status: "i_drift" },
+  { n: 56, omrade: "juridisk_og_compliance", fase: 3 },
 ];
 
 // Områdene i fast rekkefølge, med modulene sine.
