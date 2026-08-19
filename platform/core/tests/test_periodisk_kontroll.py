@@ -1197,8 +1197,10 @@ def test_ledig_vindu_kan_ikke_terminaliseres_uten_claim_eller_fasit(migrator):
         # Et ÅPENT, ledig vindu — nøyaktig det plukket ville delt ut.
         vs = _syntetisk_vindu(migrator, pid, start_h=-1, slutt_h=1,
                               tilstand="ledig")
-        _sett_kontekst(rt, TENANT)
         for utfall in ("tillat", "brudd", "stopp"):
+            # Konteksten settes PER forsøk: `sett_kontekst` er SET LOCAL,
+            # og rollbacken under tar den med seg.
+            _sett_kontekst(rt, TENANT)
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 rt.execute(
                     "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,%s,"
