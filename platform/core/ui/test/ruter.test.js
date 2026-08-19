@@ -131,3 +131,70 @@ test("lagRuter: en økt uten én eneste rute kaster ikke", () => {
   assert.doesNotThrow(() => ruter.naviger());
   assert.deepEqual(aktive, []);
 });
+
+// Codex P2: `#/plan` var en ekte rute til planflaten helt til periodisk
+// kontroll ble en FANE under WCAG kontroll (eier 19/8). Bokmerket og den
+// delte lenken forsvinner ikke med ruten, og en ukjent rute tegner reserven —
+// som regel Oversikt. Den som hadde bokmerket den periodiske kontrollen
+// landet altså på en annen flate, og fant ingen «Plan» i menyen å ta seg
+// videre med heller: den oppføringen er nettopp den som ble borte.
+test("lagRuter: den arvede planadressen lander på planfanen, og rettes", () => {
+  window.location.hash = "#/plan";
+  const sett = [];
+  const { ruter } = rigg({
+    oversikt: (h, c, mal) => sett.push(["oversikt", mal]),
+    wcagkontroll: (h, c, mal) => sett.push(["wcagkontroll", mal]),
+  });
+  ruter.naviger();
+  // Målet er FANEN, ikke bare flaten: uten det hadde lenken landet på
+  // startfanen (Domener, eller Rapporter for en leseøkt).
+  assert.deepEqual(sett, [["wcagkontroll", "plan"]]);
+  // Én tegning, ikke to: omskrivingen er `replaceState`, som ikke fyrer
+  // `hashchange`. Og adressen er den kanoniske etterpå, så et fanebytte
+  // videre blir skrevet av samleflaten — den rører bare sin egen rute.
+  assert.equal(window.location.hash, "#/wcagkontroll/plan");
+  assert.equal(ruter.gjeldende(), "wcagkontroll");
+  ruter.stopp();
+});
+
+test("lagRuter: den arvede adressen bærer målet sitt videre", () => {
+  // Planvarslene pekte på `#/plan/<plan_id>` før flyttingen. Målet vinner
+  // over aliasets fanenøkkel: samleflaten leser en nøkkel den ikke kjenner
+  // som en plan-id, og åpner planfanen på den.
+  const id = "3f7e-1";
+  window.location.hash = "#/plan/" + id;
+  const sett = [];
+  const { ruter } = rigg({
+    oversikt: (h, c, mal) => sett.push(["oversikt", mal]),
+    wcagkontroll: (h, c, mal) => sett.push(["wcagkontroll", mal]),
+  });
+  ruter.naviger();
+  assert.deepEqual(sett, [["wcagkontroll", id]]);
+  assert.equal(window.location.hash, "#/wcagkontroll/" + id);
+  ruter.stopp();
+});
+
+test("lagRuter: en arvet adresse er ingen vei rundt scope-filteret", () => {
+  // `flater` er allerede scope-filtrert. Har økten ikke `wcagkontroll`, skal
+  // aliaset falle til reserven som enhver annen ukjent rute — og adressen
+  // ikke skrives om til en flate økten ikke har.
+  window.location.hash = "#/plan";
+  const sett = [];
+  const { ruter } = rigg({
+    kundeadmin: (h, c, mal) => sett.push(["kundeadmin", mal]),
+  });
+  ruter.naviger();
+  assert.deepEqual(sett, [["kundeadmin", null]]);
+  assert.equal(window.location.hash, "#/plan");
+  ruter.stopp();
+});
+
+test("lagRuter: en gyldig adresse skrives ikke om", () => {
+  // Omskrivingen gjelder KUN de arvede rutene. En vanlig rute med mål skal
+  // stå som den er — ellers ville hver navigasjon rørt historikken.
+  window.location.hash = "#/policyadmin/u-1";
+  const { ruter } = rigg({ oversikt: () => {}, policyadmin: () => {} });
+  ruter.naviger();
+  assert.equal(window.location.hash, "#/policyadmin/u-1");
+  ruter.stopp();
+});

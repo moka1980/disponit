@@ -1,6 +1,8 @@
 // Klient-ruting via hash (#/oversikt …). Én skall-rute holder; ingen server-
 // side rutekonfig per flate. Ved navigasjon flyttes fokus til main-
 // landemerket (WCAG: SPA-navigasjon skal annonseres/flytte fokus).
+import { arvetMaal } from "./sitekart.js";
+
 // --- Eierskap til `hoved` (Codex P2) --------------------------------------
 // Alle flater rendrer inn i ETT `hoved`-element, og en flate som venter på et
 // svar har ingen måte å vite at brukeren har navigert videre i mellomtiden. Et
@@ -61,20 +63,49 @@ export function lagRuter(hoved, ctx, flater, settAktiv) {
   // landet på lista (Codex P2). Selve oppdelingen er `hashDeler` over.
   function deler() {
     const { rute, mal } = hashDeler(window.location.hash);
-    if (!flater[rute]) return { rute: reserve, mal: null };
-    return { rute, mal };
+    if (flater[rute]) return { rute, mal };
+    // Ukjent rute er ikke nødvendigvis en ugyldig adresse: den kan være en
+    // ARVET en, fra et bokmerke eller en delt lenke som ble skrevet mens ruten
+    // fantes (`#/plan` → `#/wcagkontroll/plan`). Kartet over dem bor i
+    // `sitekart.js`, sammen med rutene selv — det er der en rute fjernes, og
+    // det er der aliaset må settes i samme håndgrep.
+    //
+    // Aliaset går bare gjennom hvis økten HAR flaten det peker på: en arvet
+    // adresse skal ikke være en vei rundt scope-filteret i `tillatteFlater`.
+    const arvet = arvetMaal(rute, mal);
+    if (arvet && flater[arvet.rute]) return { ...arvet, arvet: true };
+    return { rute: reserve, mal: null };
+  }
+
+  // Den arvede adressen skrives om til den kanoniske, én gang, i det den
+  // brukes. Ellers blir `#/plan` stående i adressefeltet over en flate som
+  // heter noe annet: samleflatens `synkroniserHash` rører bare sin egen rute,
+  // så et fanebytte etterpå ble ikke skrevet — og en oppfriskning sendte
+  // brukeren tilbake til planfanen uansett hvor hun hadde gått.
+  //
+  // `replaceState`, ikke `location.hash = …`: en hash-tilordning fyrer
+  // `hashchange`, og vi står MIDT i den hendelsen — flaten ville blitt tegnet
+  // (og API-et kalt) to ganger. Og `replaceState` fremfor `pushState` fordi
+  // den gamle adressen ikke er et sted brukeren skal kunne gå tilbake til;
+  // den er en omdirigering. Skrivemåten er `hashDeler`s omvendte.
+  function kanoniser(rute, mal) {
+    const h = mal ? `#/${rute}/${encodeURIComponent(mal)}` : `#/${rute}`;
+    // Adressefeltet er ikke vår å stole på: `replaceState` kaster i sandkasser
+    // og over `file://`. Da står den gamle adressen — flaten er like riktig.
+    try { window.history.replaceState(null, "", h); } catch { /* som før */ }
   }
 
   function gjeldende() { return deler().rute; }
 
   let forste = true;
   function naviger() {
-    const { rute: r, mal } = deler();
+    const { rute: r, mal, arvet } = deler();
     // Ingen rute i det hele tatt: en økt hvis roller ikke ga ETT kjent scope
     // (`scopes_for_roller` er default-deny og gir tom mengde for ukjente
     // roller). Da finnes det ingen flate å vise, og alternativet til å la være
     // er å kaste. Skallet står igjen med sin egen tomtilstand.
     if (!r) return;
+    if (arvet) kanoniser(r, mal);
     settAktiv(r);
     // Eierskapet skifter FØR den nye flaten får tegne: alt den forrige har
     // ute på nettet er fra nå av foreldet.

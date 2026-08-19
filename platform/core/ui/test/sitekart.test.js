@@ -169,6 +169,26 @@ test("hashForDypLenke: hash settes én gang, ellers navigerer ruteren selv", () 
     null);
 });
 
+// Codex P2: dyplenken er den andre veien inn i en fjernet rute. `?visning=plan`
+// sto i lagrede lenker fra da planen var sin egen flate, og `visningFraSok`
+// svarer bare på ruter økten HAR — en fjernet rute har ingen, så lenken falt
+// tvers gjennom til ruterens reserve (Oversikt).
+test("hashForDypLenke: den arvede planvisningen peker på fanen", () => {
+  const kunde = byggRuter({ scopes: ["decisions:read"] });
+  assert.equal(hashForDypLenke("?visning=plan", "", kunde),
+    "#/wcagkontroll/plan");
+  // Hash-en er fortsatt sannheten når den finnes: ÉN av delene skal skje.
+  assert.equal(hashForDypLenke("?visning=plan", "#/unntak", kunde), null);
+  // Aliaset er ingen vei rundt scopet: uten `decisions:read` finnes ikke
+  // flaten det peker på, og da settes ingen hash.
+  assert.equal(hashForDypLenke("?visning=plan", "", byggRuter({ scopes: [] })),
+    null);
+  // Og det er BARE de arvede nøklene: et arvet oppslag skal ikke svare på det
+  // et objektoppslag ville arvet fra prototypen.
+  assert.equal(hashForDypLenke("?visning=constructor", "", kunde), null);
+  assert.equal(hashForDypLenke("?visning=__proto__", "", kunde), null);
+});
+
 // En rute uten etikett er ikke en kosmetisk mangel: `AppShell` slår opp
 // `ui.nav.<nokkel>`, og i18n-fallbacket returnerer NØKKELEN når oppslaget
 // bommer. Hovedmenyen viste derfor «ui.nav.varsler» til hver eneste
