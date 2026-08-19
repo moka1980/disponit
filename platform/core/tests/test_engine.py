@@ -203,6 +203,39 @@ def test_irreversibel_uten_rammer_avvises(tjeneste):
     assert any("irreversibel" in f for f in valider_policy(p))
 
 
+def test_irreversibel_auto_med_bare_grenser_avvises(tjeneste):
+    """Grenser alene er ikke nok for en irreversibel handling som kan kjøre
+    automatisk. Replay-vernet henger på attestasjonens jti, og attestasjonen
+    finnes bare fordi et vilkår krever den — uten vilkår er jti-listen tom og
+    handlingen kan spilles av på nytt. Grensene begrenser hver avspilling,
+    ikke antallet.
+
+    MUTASJONEN SOM DREPER DENNE: la regelen godta `grenser or vilkaar`, slik
+    den gjorde før. Da passerer en irreversibel auto-handling uten et eneste
+    vilkår, og ferdigdefinisjonen lover et vern kontrollplanet ikke har.
+    """
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    h = p["handlinger"][0]
+    del h["vilkaar"]
+    h["modus"] = "auto"
+    h["reversering"] = {"type": "irreversibel"}
+    assert h.get("grenser")            # grensene står igjen — og er ikke nok
+    assert any("irreversibel" in f and "vilkår" in f for f in valider_policy(p))
+
+
+def test_irreversibel_alltid_stopp_uten_vilkaar_godtas(tjeneste):
+    """…men `alltid_stopp` trenger ikke vilkåret: handlingen utføres aldri
+    automatisk, så det finnes ingen avspilling å verne mot. Ellers ville
+    regelen tvunget fram et meningsløst vilkår på handlinger som per
+    definisjon alltid går til menneske."""
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    h = p["handlinger"][0]
+    del h["vilkaar"]
+    h["modus"] = "alltid_stopp"
+    h["reversering"] = {"type": "irreversibel"}
+    assert not [f for f in valider_policy(p) if "irreversibel" in f]
+
+
 # ---------- Autentisert kontekst (funn: uautentisert rolle) ---------------
 
 def test_uten_kontekst_stopp(tjeneste):
