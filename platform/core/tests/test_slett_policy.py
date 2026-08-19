@@ -78,6 +78,15 @@ def _brukt_runde(c, uid, pid, aktivert_versjon, base_hash, *, runde=1,
     terminal passerte begge (Codex P1). Nå kan ikke fiksturen bygge en
     form systemet forbyr — og det er nettopp poenget: den bygger den
     ekte i stedet.
+
+    KVORUMET MÅ OGSÅ VÆRE OPPFYLT (Codex P2). Runden erklærte UTVIDER med
+    `pakrevd_antall_godkjennere = 2` og bar ÉN attestasjon; `aktiver_policy`
+    avviser nøyaktig den tilstanden (steg 3 teller attestasjonene mot
+    kvorumet). Fiksturen bygde altså fortsatt en terminal historikk
+    produksjonsveien ikke kan lage — bare et hakk mer troverdig enn før,
+    og en test som hviler på en umulig fortid måler ikke det den sier.
+    To uavhengige attestanter, og hendelsen bærer BEGGE: erklæringen,
+    attestasjonene og hendelsen sier nå det samme.
     """
     opid = f"bf-{uid}-{runde}"
     c.execute(
@@ -91,17 +100,19 @@ def _brukt_runde(c, uid, pid, aktivert_versjon, base_hash, *, runde=1,
         "'dh','1',2,now()+interval '1 hour',%s,%s)",
         (TEN, uid, runde, diff_hash, utkast_hash, base_hash, opid,
          aktivert_versjon))
-    c.execute(
-        "INSERT INTO aktiveringsattestasjon (tenant,utkast_id,runde,bruker_id,"
-        "rolle,authz_version,er_forfatter,diff_hash,klassifisering_hash,"
-        "risikoklasse,konvoluttversjon,konvolutt_hash,mac,mac_key_id,jti,"
-        "utloper) VALUES (%s,%s,%s,'uavh','okonomi',1,false,%s,'k','UTVIDER',"
-        "1,'h','m','mk1',%s,now()+interval '1 hour')",
-        (TEN, uid, runde, diff_hash, secrets.token_hex(16)))
+    for bruker in ("uavh", "uavh2"):
+        c.execute(
+            "INSERT INTO aktiveringsattestasjon (tenant,utkast_id,runde,"
+            "bruker_id,rolle,authz_version,er_forfatter,diff_hash,"
+            "klassifisering_hash,risikoklasse,konvoluttversjon,"
+            "konvolutt_hash,mac,mac_key_id,jti,utloper)"
+            " VALUES (%s,%s,%s,%s,'okonomi',1,false,%s,'k','UTVIDER',"
+            "1,'h','m','mk1',%s,now()+interval '1 hour')",
+            (TEN, uid, runde, bruker, diff_hash, secrets.token_hex(16)))
     c.execute(
         "INSERT INTO policyaktivering (tenant,policy_id,utkast_id,runde,"
-        "decision_operation_id,versjon,innholds_hash,diff_hash,attestant_a)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'uavh')",
+        "decision_operation_id,versjon,innholds_hash,diff_hash,attestant_a,"
+        "attestant_b) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'uavh','uavh2')",
         (TEN, pid, uid, runde, opid, aktivert_versjon, utkast_hash, diff_hash))
     return opid
 
