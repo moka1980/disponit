@@ -18,7 +18,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, UautorisertFeil } from "../api.js";
-import { Tidspunkt, TomTilstand, Feiltilstand } from "../komponenter.js";
+import { Tidspunkt, TomTilstand, Feiltilstand,
+         VarselBanner } from "../komponenter.js";
 import { flateHode, fokuserOverskrift } from "./felles.js";
 
 // URL-ene bygges HER, av begge inngangene (Codex P2). `policy_id` er ikke
@@ -177,18 +178,34 @@ function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
 
 // Tegn hele historikkskjermen i `hoved`. `paaRullbakk` er null for en ren
 // leseøkt; da finnes handlingskolonnen ikke.
+//
+// `rullbakkSperret` er PORTENS grunn til at serien ikke kan få et nytt
+// utkast (`nytt_utkast_avvist`), ikke flatens egen gjetning: en arvet
+// policy-id som `acme\n` kan leses, men `opprett_utkast` avviser den, og
+// en rullbakk-knapp ville deterministisk endt i 400 (Codex P2). Da skal
+// handlingen ikke tilbys — og grunnen skal STÅ DER, ikke bare mangle.
 export function tegnHistorikkflate(hoved, ctx, {
   policyId, versjoner, tilbake, paaRullbakk = null,
-  erGyldig = () => true,
+  rullbakkSperret = null, erGyldig = () => true,
 }) {
   const tilbakeKnapp = el("button", { class: "knapp", type: "button",
     text: t("ui.historikk.tilbake") });
   tilbakeKnapp.addEventListener("click", tilbake);
+  // Sperren gjelder bare den som ELLERS ville fått knappen: en ren leseøkt
+  // har ingen rullbakk å savne, og skal ikke få en forklaring på noe den
+  // ikke ble tilbudt.
+  const sperret = paaRullbakk && rullbakkSperret ? rullbakkSperret : null;
   sett(hoved,
     ...flateHode(t("ui.historikk.tittel").replace("{policy}", policyId),
                  t("ui.historikk.under")),
     tilbakeKnapp,
-    historikkTabell(policyId, versjoner, paaRullbakk),
+    sperret
+      ? VarselBanner({ art: "info",
+          tekst: t(`ui.historikk.rullbakk_sperret.${sperret}`,
+                   t("ui.historikk.rullbakk_sperret.ukjent"))
+            .replace("{policy}", policyId) })
+      : null,
+    historikkTabell(policyId, versjoner, sperret ? null : paaRullbakk),
     diffSeksjonFor(policyId, versjoner, ctx, erGyldig));
   fokuserOverskrift(hoved);
 }

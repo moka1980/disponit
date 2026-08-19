@@ -201,6 +201,32 @@ def test_opprett_idempotent_replay_samme_utkast_id():
         rt.close()
 
 
+def test_nytt_utkast_avvik_er_portens_egen_prove():
+    """Codex P2: flaten må kunne SPØRRE om en identitet kan bære et utkast.
+
+    Historikken tilbyr rullbakk, og rullbakk er en utkastopprettelse. En
+    arvet policy-id som `acme\\n` kan leses (lastekontrakten slipper den
+    gjennom med vilje), men `opprett_utkast` avviser den — knappen endte
+    derfor deterministisk i 400. Prøven bor ETT sted, så flatens dom og
+    portens dom ikke kan gå fra hverandre; her måles nettopp den
+    likheten, ikke en kopi av regelen.
+    """
+    from api.policyadmin import (_MAKS_NOKKELBYTES, _VERSJONSRESERVE,
+                                 nytt_utkast_avvik)
+    assert nytt_utkast_avvik("t", "faktura-no") is None
+    # Formen: den arvede id-en, og et par nabotilfeller.
+    for rar in ("acme\n", "ACME", "ab", "acme_no", ""):
+        avvik = nytt_utkast_avvik("t", rar)
+        assert avvik and avvik[0] == "policy_id_ugyldig", (rar, avvik)
+    assert nytt_utkast_avvik("t", None) is not None
+    # Plassen: formen er grei, men nøkkelen levner ikke rom til en versjon.
+    lang = "a" * (_MAKS_NOKKELBYTES - _VERSJONSRESERVE)
+    avvik = nytt_utkast_avvik("t", lang)
+    assert avvik and avvik[0] == "policy_id_for_stor", avvik
+    # FORMEN måles først: `"ACME"` er feil form, ikke for stor.
+    assert nytt_utkast_avvik("t", ("A" * len(lang)))[0] == "policy_id_ugyldig"
+
+
 def test_opprett_input_hash_binder_rollback_av_versjon():
     # Codex R3: bevis at ENDEPUNKTETS hash-konstruksjon binder
     # `rollback_av_versjon` (ikke bare at funksjonen skiller ulike input_hash).

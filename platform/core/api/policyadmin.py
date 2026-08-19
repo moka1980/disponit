@@ -185,30 +185,12 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # under ruller posten tilbake sammen med resten av transaksjonen: en
     # forespørsel som aldri kunne blitt et utkast brenner ikke nøkkelen.
     #
-    # FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
-    # dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
-    # ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
-    # beskjeden.
-    if not _POLICY_ID.fullmatch(policy_id or ""):
+    # Selve prøven bor i `nytt_utkast_avvik` — flatene spør den FØR de tilbyr
+    # en handling som ellers alltid ender i 400 (Codex P2).
+    avvik = nytt_utkast_avvik(tenant, policy_id)
+    if avvik:
         conn.rollback()
-        raise Aktiveringsfeil("policy_id_ugyldig", f"policy_id={policy_id!r}")
-    # Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
-    # primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
-    # plass. Da er det opprettelsen som skal si nei, ikke en validering hun
-    # aldri kan tilfredsstille.
-    #
-    # EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
-    # koden videre — detaljen under når aldri skjermen — og editoren oversetter
-    # `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
-    # altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
-    # eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
-    # ikke feil form: `_POLICY_ID` over har alt sagt ja til den.
-    if _nokkelbytes(tenant, policy_id) > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
-        conn.rollback()
-        raise Aktiveringsfeil(
-            "policy_id_for_stor",
-            f"policy_id levner ikke plass til en versjon i registernøkkelen"
-            f" ({_nokkelbytes(tenant, policy_id)} byte)")
+        raise Aktiveringsfeil(*avvik)
     # Identiteten er godkjent. Så INNHOLDET, og her retter vi i stedet for å
     # avvise — statusen er ikke eiers valg (se under).
     #
@@ -1466,6 +1448,45 @@ _VERSJONSRESERVE = 64
 def _nokkelbytes(*deler: str) -> int:
     """Nøkkelens størrelse slik Postgres måler den (`octet_length`, UTF-8)."""
     return sum(len(d.encode("utf-8")) for d in deler if isinstance(d, str))
+
+
+def nytt_utkast_avvik(tenant: str, policy_id: str) -> tuple[str, str] | None:
+    """`(kode, detalj)` for grunnen til at et NYTT utkast på denne identiteten
+    ville blitt avvist ved opprettelsen — eller `None` om den kan bære et.
+
+    ÉN definisjon, to lesere (Codex P2). `opprett_utkast` bruker den som port,
+    og HISTORIKKEN bruker den til å avgjøre om rullbakk i det hele tatt er en
+    mulig handling for serien. Lastekontrakten slipper med vilje gjennom
+    aktive policyer fra før innstrammingen — en arvet id som `acme\\n` finnes
+    og skal fortsatt kunne LESES — men en slik serie kan ikke få et nytt
+    utkast. Tilbød flaten rullbakk likevel, endte hver eneste knapp i et 400
+    ingen kunne gjøre noe med. Med to kopier av prøven ville flaten før eller
+    siden tilbudt en knapp porten avviser, eller skjult en den godtar.
+
+    FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
+    dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
+    ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
+    beskjeden.
+
+    Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
+    primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
+    plass. Da er det opprettelsen som skal si nei, ikke en validering hun
+    aldri kan tilfredsstille.
+
+    EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
+    koden videre — detaljen når aldri skjermen — og editoren oversetter
+    `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
+    altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
+    eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
+    ikke feil form: `_POLICY_ID` har alt sagt ja til den."""
+    if not _POLICY_ID.fullmatch(policy_id or ""):
+        return ("policy_id_ugyldig", f"policy_id={policy_id!r}")
+    stor = _nokkelbytes(tenant, policy_id)
+    if stor > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
+        return ("policy_id_for_stor",
+                "policy_id levner ikke plass til en versjon i"
+                f" registernøkkelen ({stor} byte)")
+    return None
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
 #: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
 _TALLVERSJON = re.compile(r"^[0-9]+(\.[0-9]+)*$")

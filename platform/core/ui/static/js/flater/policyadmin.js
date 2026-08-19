@@ -1625,7 +1625,7 @@ export function visPolicyadmin(hoved, ctx, mal) {
     medStatus(hoved, ctx,
       () => hentJson(versjonerUrl(policyId)), (d) => {
         tegnHistorikk(policyId, (d && d.versjoner) || [], kanSkrive, min,
-                      rullbakkNokler);
+                      rullbakkNokler, (d && d.nytt_utkast_avvist) || null);
       }, () => eierSkjermen(min), true);
   }
 
@@ -1633,12 +1633,18 @@ export function visPolicyadmin(hoved, ctx, mal) {
   // LESENDE policy-flaten, der `policy:read` alene holder (Codex P2).
   // Herfra kommer bare det som er policyadmin sitt: skjermeierskapet og
   // rullbakken, som krever `policy:write`.
-  function tegnHistorikk(policyId, versjoner, kanSkrive, min, nokler) {
+  function tegnHistorikk(policyId, versjoner, kanSkrive, min, nokler,
+                         sperret) {
     tegnHistorikkflate(hoved, ctx, {
       policyId, versjoner,
       tilbake: tilbakeTilListe,
       paaRullbakk: kanSkrive
         ? (v) => bekreftRullbakk(policyId, v, min, nokler) : null,
+      // PORTENS dom over identiteten (Codex P2): en arvet policy-id som
+      // `opprett_utkast` avviser kan leses, men ikke rulles tilbake —
+      // knappen ville endt i 400 hver eneste gang. Visningen sier hvorfor
+      // i stedet for å tilby den.
+      rullbakkSperret: sperret,
       erGyldig: () => eierSkjermen(min),
     });
   }

@@ -1708,3 +1708,49 @@ def test_historikkrutene_bak_policy_read(klient):
     assert r.status_code == 200, r.text
     assert r.json()["diff"] == policydiff.strukturert_diff(i1, i1)
     assert r.json()["diff"]["endringer"] == []
+
+
+@pg
+def test_historikken_sier_om_serien_kan_faa_et_nytt_utkast(klient):
+    """Codex P2: rullbakk-knappens forutsetning står i SVARET.
+
+    Lastekontrakten slipper med vilje gjennom aktive policyer fra før
+    id-innstrammingen — `/v1/policy/aktiv` kan svare med en id som
+    `acme\\n` — og historikken deres skal fortsatt kunne leses.
+    `opprett_utkast` avviser derimot identiteten, og en rullbakk ER en
+    utkastopprettelse: hver eneste knapp for en slik serie endte i et 400
+    ingen kunne gjøre noe med. Endepunktet bærer nå portens egen dom, så
+    flaten kan la være å tilby handlingen — og si hvorfor.
+    """
+    from urllib.parse import quote
+    from api import sesjon as sesjonmodul
+    from .test_outbox_bestilling import _adminsesjon
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    rar = pid + "\n"
+    m = _c()
+    try:
+        # Den arvede raden lages som migrator: dagens porter ville aldri
+        # sluppet id-en inn, og det er nettopp poenget — den ligger der
+        # fra før dem.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        m.execute(
+            "INSERT INTO policyer (tenant, policy_id, versjon,"
+            " innholds_hash, status, innhold, aktiv) VALUES"
+            " (%s,%s,'1','ih-arvet','produksjon','{}'::jsonb,false)",
+            (TEN, rar))
+        m.commit()
+    finally:
+        m.close()
+    cookie, _csrf = _adminsesjon(tenant=TEN, roller="leser")
+    r = klient.get(f"/v1/policy/{quote(pid, safe='')}/versjoner",
+                   cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 200, r.text
+    assert r.json()["nytt_utkast_avvist"] is None, \
+        "en helt vanlig policy-id ble sperret for nye utkast"
+    r = klient.get(f"/v1/policy/{quote(rar, safe='')}/versjoner",
+                   cookies={sesjonmodul.C_SESJON: cookie})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    # Historikken LESES — det er bare opprettelsen som er stengt.
+    assert [x["versjon"] for x in d["versjoner"]] == ["1"], d
+    assert d["nytt_utkast_avvist"] == "policy_id_ugyldig", d

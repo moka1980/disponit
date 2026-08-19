@@ -84,7 +84,15 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
             "  FROM policyversjoner_for_tenant(%s, %s)",
             (tenant, policy_id)).fetchall()
         conn.rollback()
-        return _ok({"policy_id": policy_id, "versjoner": [
+        # KAN denne serien i det hele tatt få et nytt utkast (Codex P2)?
+        # Lastekontrakten slipper med vilje gjennom arvede policy-id-er som
+        # `acme\n`, og historikken deres skal fortsatt kunne leses — men
+        # `opprett_utkast` avviser identiteten, så en rullbakk-knapp for
+        # serien ville deterministisk endt i 400. Flaten spør PORTEN, den
+        # gjetter ikke på kontrakten selv.
+        from . import policyadmin as _pa
+        avvik = _pa.nytt_utkast_avvik(tenant, policy_id)
+        versjoner = [
             {"versjon": r[0], "innholds_hash": r[1], "aktiv": r[2],
              "opprettet": r[3].isoformat(),
              "aktivert_ts": r[4].isoformat() if r[4] else None,
@@ -108,7 +116,9 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
              # HAR versjonen vært i kraft? En `registrer(..., aktiver=False)`
              # er registrert, ikke aktivert — uten dette viste flaten
              # registreringstidspunktet under «Aktivert» (047, Codex P2).
-             "aktivert": r[11]} for r in rader]}, rid)
+             "aktivert": r[11]} for r in rader]
+        return _ok({"policy_id": policy_id, "versjoner": versjoner,
+                    "nytt_utkast_avvist": avvik[0] if avvik else None}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

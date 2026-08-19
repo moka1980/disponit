@@ -355,7 +355,7 @@ const RAR_VERSJONER = { policy_id: RAR, versjoner: [
     aktivert_ts: "2026-08-17T10:00:00+00:00",
     attestanter: ["jon"], aktivert_av_operasjon: "aktiver-u1-r1",
     rollback_av_versjon: null },
-] };
+], nytt_utkast_avvist: "policy_id_ugyldig" };
 
 test("historikk: policy-id-en prosentkodes i bade versjons- og diff-URL-en",
   async () => {
@@ -380,4 +380,46 @@ test("historikk: policy-id-en prosentkodes i bade versjons- og diff-URL-en",
     await vent(() => h.querySelector(".diffliste"));
     assert.ok(h.querySelector(".diffliste"),
       "diffen kom aldri — URL-en traff ikke");
+  });
+
+// Den samme arvede id-en kan LESES, men den kan ikke bære et nytt utkast:
+// `opprett_utkast` avviser identiteten, så en rullbakk-knapp ville
+// deterministisk endt i 400 (Codex P2). Porten sier det i svaret; flaten
+// tilbyr da ikke handlingen — og sier hvorfor.
+test("historikk: ingen rullbakk for en id porten ikke gir nye utkast",
+  async () => {
+    POSTET = [];
+    const kodet = encodeURIComponent(RAR);
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": { policyer: [
+        { policy_id: RAR, versjon: "2", innholds_hash: "h2" }] } };
+    SVAR["/v1/policy/" + kodet + "/versjoner"] = RAR_VERSJONER;
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const tabell = h.querySelector(".datatabell");
+    assert.ok(tabell, "historikken kom aldri");
+    // Historikken står — det er bare HANDLINGEN som ikke tilbys.
+    assert.ok(tabell.textContent.includes("ida"));
+    assert.ok(!finn(h, t("ui.historikk.rullbakk")),
+      "rullbakk tilbys for en id porten avviser");
+    assert.ok(h.textContent.includes(
+      t("ui.historikk.rullbakk_sperret.policy_id_ugyldig")
+        .replace("{policy}", RAR)),
+      "sperren mangler forklaringen");
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+// Motprøven: uten en dom fra porten er rullbakk fortsatt handlingen den
+// var. Sperren må ikke bli et stille tap av funksjonalitet.
+test("historikk: rullbakk tilbys som før uten en sperre fra porten",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": AKTIVE,
+      "/v1/policy/faktura-no/versjoner": VERSJONER };
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    assert.ok(finn(h, t("ui.historikk.rullbakk")),
+      "rullbakk forsvant for en helt vanlig policy-id");
   });
