@@ -121,6 +121,12 @@ function planSkjema(ctx, paaOpprettet) {
     ...Array.from({ length: 24 }, (_, i) =>
       el("option", { value: String(i),
         text: `${String(i).padStart(2, "0")}:00` })));
+  // DEFAULTEN, ikke bare verdien (Codex P3). `form.reset()` setter hver
+  // kontroll tilbake til sin DEFAULT — `defaultSelected`/`defaultChecked`
+  // — og en ren `time.value = "8"` rørte ikke den. Etter en vellykket
+  // opprettelse falt klokkeslettet derfor til 00:00, mens skjemaet så ut
+  // som et nytt, tomt skjema med de vanlige valgene i.
+  time.options[8].defaultSelected = true;
   time.value = "8";
   const tidssone = el("input", { type: "text", id: feltId("tidssone"),
     value: "Europe/Oslo", autocomplete: "off" });
@@ -144,14 +150,32 @@ function planSkjema(ctx, paaOpprettet) {
   ukedagRad.hidden = true;
   manedsdagRad.hidden = true;
 
+  // Synligheten er AVLEDET av den valgte rytmen, ikke en tilstand noen må
+  // huske å skru tilbake (Codex P3). `form.reset()` nullstiller
+  // KONTROLLVERDIER, aldri `hidden` — så etter en vellykket ukentlig eller
+  // månedlig plan sto ukedag-/månedsdagsvelgeren igjen synlig ved siden av
+  // en rytme som nå var «daglig», og skjemaet viste en tilstand det ikke
+  // ville sendt. Samme funksjon kalles fra endringen og fra
+  // nullstillingen, så de to kan ikke gli fra hverandre.
+  const radioInputs = [];
+  function synkRytme() {
+    const valgt = radioInputs.find((i) => i.checked);
+    const r = valgt ? valgt.value : "daglig";
+    ukedagRad.hidden = r !== "ukentlig";
+    manedsdagRad.hidden = r !== "manedlig";
+  }
   const radioer = RYTMER.map((r) => {
     const inp = el("input", { type: "radio", name: "plan-rytme",
       id: feltId(`rytme-${r}`), value: r });
-    if (r === "daglig") inp.checked = true;
-    inp.addEventListener("change", () => {
-      ukedagRad.hidden = r !== "ukentlig";
-      manedsdagRad.hidden = r !== "manedlig";
-    });
+    if (r === "daglig") {
+      // `defaultChecked` er det `reset()` leser. Med bare `checked` satt
+      // sto skjemaet igjen UTEN valgt rytme etter nullstillingen, og
+      // neste innsending leste `null.value`.
+      inp.defaultChecked = true;
+      inp.checked = true;
+    }
+    radioInputs.push(inp);
+    inp.addEventListener("change", synkRytme);
     return el("div", { class: "radiorad" }, inp,
       el("label", { for: feltId(`rytme-${r}`),
         text: t(`ui.plan.rytme.${r}`) }));
@@ -232,6 +256,7 @@ function planSkjema(ctx, paaOpprettet) {
       meldAlert(t("ui.plan.opprettet_alert"));
       status.textContent = "";
       form.reset();
+      synkRytme();     // avledet tilstand følger ikke med i reset()
       if (paaOpprettet) paaOpprettet();
     } catch (e) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }

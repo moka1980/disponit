@@ -264,6 +264,44 @@ test("planliste: «neste kjøring» bærer forfallsminuttet, ikke hel time",
     `hel time vist i stedet for forfallet: «${rad}»`);
 });
 
+test("planskjema: etter opprettelsen viser skjemaet det det ville sendt",
+     async () => {
+  // Codex P3: `form.reset()` nullstiller KONTROLLVERDIER, aldri `hidden`
+  // — og den leser DEFAULTEN, ikke verdien vi satte i JS. Etter en
+  // vellykket ukentlig plan sto ukedagsvelgeren igjen synlig ved siden av
+  // en rytme som var tilbake på daglig, klokkeslettet falt til 00:00, og
+  // uten `defaultChecked` var ingen rytme valgt i det hele tatt — neste
+  // innsending ville lest `null.value`.
+  KALL = [];
+  SVAR = (sti, opts) => {
+    if (sti === "/v1/plan" && (opts.method || "GET") === "POST") {
+      return { plan_id: PLAN.plan_id, status: "utkast" };
+    }
+    return { planer: [] };
+  };
+  const h = nyHoved();
+  visPlan(h, ctx());
+  await vent(() => h.querySelector("form"));
+  const form = h.querySelector("form");
+  const ukedagRad = form.querySelector("#plan-ukedag").closest("div");
+  const time = form.querySelector("#plan-time");
+  form.querySelector("#plan-hostname").value = "kunde.example";
+  const ukentlig = form.querySelector('input[value="ukentlig"]');
+  ukentlig.checked = true;
+  ukentlig.dispatchEvent(new Event("change", { bubbles: true }));
+  assert.equal(ukedagRad.hidden, false);
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await vent(() => KALL.some((k) => k.metode === "POST"));
+  await vent(() => ukedagRad.hidden === true);
+  // Skjemaet står igjen som et FERSKT skjema: daglig, 08:00, ukedag borte.
+  assert.equal(ukedagRad.hidden, true, "ukedagsvelgeren ble stående igjen");
+  assert.equal(form.querySelector("#plan-manedsdag").closest("div").hidden,
+    true);
+  assert.equal(form.querySelector('input[name="plan-rytme"]:checked').value,
+    "daglig", "ingen rytme var valgt etter nullstillingen");
+  assert.equal(time.value, "8", "klokkeslettet falt til første alternativ");
+});
+
 test("neste kjøring: kandidatene er kalenderdager, ikke døgn à 86 400 000 ms",
      () => {
   // Codex P2: `naa.getTime() + d * 86400000` skritter UTC, ikke planens
