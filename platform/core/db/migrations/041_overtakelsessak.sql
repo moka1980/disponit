@@ -520,8 +520,20 @@ DO $$ BEGIN
           AND CURRENT_USER = 'disponit_domains_adjudicator');
     END IF;
     GRANT SELECT ON unntak TO disponit_domains_adjudicator;
-    -- Køen trenger hendelsene sakene peker på (lesing, samme snitt).
-    GRANT SELECT ON domenekontroll_hendelse TO disponit_domains_adjudicator;
+    -- INGEN grant på `domenekontroll_hendelse` (Codex P2). Den ble gitt
+    -- «i tilfelle køen trenger hendelsene», men verken køen eller
+    -- attestasjonsveien leser tabellen — de spør bare `unntak`. Prisen for
+    -- det ubrukte grantet var derimot reell: `domenekontroll_hendelse` har
+    -- ÉN policy, GUC-sammenligningen fra 016, og runtime-rollen har SET
+    -- (ikke arv) til adjudikatoren fra oppsettet. En kompromittert runtime
+    -- — eller én SQL-injeksjon — kunne dermed bytte til adjudikatorrollen,
+    -- sette `disponit.tenant` til hvilken som helst kunde og lese hele
+    -- domenehistorikken deres: aktører, grunner, detaljer, hver overgang.
+    -- Rollen er kryss-tenant nettopp fordi den er SMAL. Kommer det en
+    -- lesning som trenger hendelsene, hører den sammen med sin egen,
+    -- avgrensede policy — ikke med et grant på forskudd.
+    REVOKE SELECT ON domenekontroll_hendelse
+      FROM disponit_domains_adjudicator;
   END IF;
 END $$;
 

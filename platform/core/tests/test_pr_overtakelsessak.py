@@ -855,6 +855,15 @@ def test_port32_36_roller_og_synlighet(migrator):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             rt.execute("SELECT count(*) FROM oppdrag")
         rt.rollback()
+        # Codex P2: heller ikke domenehistorikken. Tabellen har ÉN policy
+        # (GUC-sammenligningen fra 016), og runtime har SET til denne
+        # rollen — et grant her ville latt en kompromittert runtime lese
+        # hvilken som helst kundes aktører, grunner og overganger ved å
+        # sette `disponit.tenant`. Køen spør bare `unntak`.
+        rt.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT count(*) FROM domenekontroll_hendelse")
+        rt.rollback()
     finally:
         rt.close()
 
