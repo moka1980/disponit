@@ -809,18 +809,42 @@ BEGIN
                LIMIT 1) AS h ON true
          WHERE jsonb_typeof(e.el) = 'object'
            AND jsonb_typeof(e.el -> 'grunnkode') = 'string'
+    ),
+    -- MÅLT FØRST, DØMT ETTERPÅ. Et cast eller en `jsonb_array_length` som
+    -- står som et AND-ledd ved siden av vakten sin, er ikke vernet: SQL
+    -- lover ingen venstre-mot-høyre-evaluering av AND, så en ulesbar verdi
+    -- kunne veltet aktiveringen med «invalid input syntax for numeric» i
+    -- stedet for å bli hoppet over. `CASE` lover derimot at THEN-armen
+    -- bare evalueres når WHEN holder, og `MATERIALIZED` hindrer at CTE-en
+    -- flates inn i dommen under og mister nettopp den rekkefølgen.
+    maalt AS MATERIALIZED (
+        SELECT o.i, o.gk, o.post, o.handling,
+               CASE WHEN (o.post ->> 'belop_maks')
+                         ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    THEN (o.post ->> 'belop_maks')::NUMERIC END AS e_maks,
+               CASE WHEN (o.handling -> 'grenser' ->> 'belop_maks')
+                         ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    THEN (o.handling -> 'grenser' ->> 'belop_maks')::NUMERIC
+                    END AS h_maks,
+               CASE WHEN jsonb_typeof(o.handling -> 'grenser' -> 'valuta')
+                         = 'array'
+                    THEN o.handling -> 'grenser' -> 'valuta' END AS h_valuta
+          FROM oppf o
     ), dom AS (
         SELECT o.i, o.gk,
                CASE
                  -- Ikke-løftbar kode: `_loft_policy` uttrykker bare disse to.
                  WHEN o.gk NOT IN ('belop_over_grense', 'valuta_ikke_tillatt')
                    THEN 'grunnkoden kan ikke løftes av motoren'
-                 -- Verdien grunnkoden krever mangler.
+                 -- Verdien grunnkoden krever mangler. JSON-`null` teller
+                 -- som fravær, som `e.get(felt) is None` i Python.
                  WHEN o.gk = 'belop_over_grense'
-                      AND o.post -> 'belop_maks' IS NULL
+                      AND coalesce(jsonb_typeof(o.post -> 'belop_maks'),
+                                   'null') = 'null'
                    THEN 'mangler ''belop_maks'''
                  WHEN o.gk = 'valuta_ikke_tillatt'
-                      AND o.post -> 'valuta' IS NULL
+                      AND coalesce(jsonb_typeof(o.post -> 'valuta'),
+                                   'null') = 'null'
                    THEN 'mangler ''valuta'''
                  -- Ukjent handling er lastekontraktens dom, ikke vår.
                  WHEN o.handling IS NULL THEN NULL
@@ -831,36 +855,29 @@ BEGIN
                  WHEN o.gk = 'belop_over_grense'
                       AND o.handling -> 'grenser' -> 'belop_maks' IS NULL
                    THEN 'handlingen har ingen ''grenser.belop_maks'''
-                 WHEN o.gk = 'valuta_ikke_tillatt'
-                      AND jsonb_typeof(o.handling -> 'grenser' -> 'valuta')
-                          IS DISTINCT FROM 'array'
+                 WHEN o.gk = 'valuta_ikke_tillatt' AND o.h_valuta IS NULL
                    THEN 'handlingen har ingen ''grenser.valuta'''
                  -- Taket må ligge OVER handlingens egen grense; ellers er
-                 -- hvert blokkert beløp også over taket.
+                 -- hvert blokkert beløp også over taket. Er en av verdiene
+                 -- ULESBAR, er dommen `belop_ugyldig` og tilhører
+                 -- lastekontrakten — da måler vi ingenting, som i Python.
                  WHEN o.gk = 'belop_over_grense'
-                      AND (o.post ->> 'belop_maks') ~ '^-?[0-9]+(\.[0-9]+)?$'
-                      AND (o.handling -> 'grenser' ->> 'belop_maks')
-                          ~ '^-?[0-9]+(\.[0-9]+)?$'
-                      AND (o.post ->> 'belop_maks')::NUMERIC
-                          <= (o.handling -> 'grenser' ->> 'belop_maks')::NUMERIC
+                      AND o.e_maks IS NOT NULL AND o.h_maks IS NOT NULL
+                      AND o.e_maks <= o.h_maks
                    THEN 'taket er ikke høyere enn handlingens egen grense'
                  -- Løftet hever beløpet, ikke valutaen.
                  WHEN o.gk = 'belop_over_grense'
-                      AND jsonb_typeof(o.handling -> 'grenser' -> 'valuta')
-                          = 'array'
-                      AND jsonb_array_length(
-                              o.handling -> 'grenser' -> 'valuta') > 0
+                      AND jsonb_array_length(o.h_valuta) > 0
                       AND o.post -> 'valuta' IS NOT NULL
-                      AND NOT (o.handling -> 'grenser' -> 'valuta'
+                      AND NOT (o.h_valuta
                                @> jsonb_build_array(o.post -> 'valuta'))
                    THEN 'valutaen er ikke tillatt for handlingen'
                  -- En valuta handlingen ALT tillater kan aldri blokkeres.
                  WHEN o.gk = 'valuta_ikke_tillatt'
-                      AND o.handling -> 'grenser' -> 'valuta'
-                          @> jsonb_build_array(o.post -> 'valuta')
+                      AND o.h_valuta @> jsonb_build_array(o.post -> 'valuta')
                    THEN 'valutaen er allerede tillatt for handlingen'
                  ELSE NULL END AS grunn
-          FROM oppf o
+          FROM maalt o
     )
     SELECT string_agg(format('menneskelig_overstyring[%s] (%s): %s',
                              d.i, d.gk, d.grunn), ', ' ORDER BY d.i)
