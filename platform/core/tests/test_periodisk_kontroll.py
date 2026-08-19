@@ -2099,22 +2099,23 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
         (pid,)).fetchone()[0] == "aktiv", \
         "planen ble pauset enda det tredje resultatet ble promotert"
     migrator.rollback()
-    # ... og den er ikke lenger en KANDIDAT heller: et promotert resultat
-    # tar planen ut av utvalget, ikke bare ut av dommen. Ellers ville hver
-    # senere sveip måtte felle den samme avgjørelsen på nytt.
-    kand = _rt()
+    # ... og HELE sveipen lar den stå. Den direkte veien over måler
+    # låsen; dette måler veien planen faktisk går. `pausesveip` leser
+    # utvalget i sin EGEN transaksjon, og et promotert resultat skal
+    # holde planen ute av begge.
+    from plan.materialiser import pausesveip
+    sveipet = _rt()
     try:
-        _sett_kontekst(kand, TENANT)
-        igjen = [r[0] for r in kand.execute(
-            "SELECT plan_id FROM planer_gjentatt_uten_resultat()").fetchall()]
+        rest = pausesveip(sveipet)
+        _sett_kontekst(sveipet, TENANT)
+        kandidater = sveipet.execute(
+            "SELECT count(*) FROM planer_gjentatt_uten_resultat()"
+            " WHERE plan_id=%s", (pid,)).fetchone()[0]
     finally:
-        kand.close()
-    _sett_kontekst(migrator, TENANT)
-    navn = migrator.execute(
-        "SELECT plan_id, parametre->>'hostname' FROM bestillingsplan"
-        " WHERE plan_id = ANY(%s)", (igjen,)).fetchall() if igjen else []
-    migrator.rollback()
-    assert igjen == [], f"kandidater igjen etter testen: {navn}"
+        sveipet.close()
+    assert kandidater == 0, "planen står igjen som kandidat med et resultat"
+    assert not any(p == str(pid) for p, _ in rest), \
+        f"sveipen pauset planen enda resultatet er promotert: {rest}"
 
 
 @pg
