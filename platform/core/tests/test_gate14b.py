@@ -40,6 +40,8 @@ Portkart (klarsignalets §9):
   23  test_port23_verifikasjonsoppdrag_blokkerer_avvis
   24  test_port24_opplosningen_krever_attestert_avvisning
   25  test_port25_saksforklaringen_paastar_ingen_rekkefolge
+  26  test_port26_rolle_scope_speiler_app_laget
+      test_port26b_uautorisert_attestasjon_gir_ingen_opplosning
 """
 import json
 import secrets
@@ -105,22 +107,47 @@ def _hist(uid, hendelse):
     return rader
 
 
+def _avvisningsberettiget(c, aktor):
+    """Aktivt medlemskap med `exceptions:reject` — det §7 nå krever bak et
+    nei (Codex P1, runde 9). Idempotent, og returnerer medlemskapets
+    GJELDENDE `authz_version`: attestasjonen må bære nøyaktig den, ellers
+    er fullmakten trukket siden nei-et ble sagt."""
+    # Egen `sub` — `_medlem` bruker `{TEN}-{aktor}` og har alt tatt den for
+    # en GENERERT bruker_id; her er bruker_id selve aktørstrengen kallet
+    # sender inn. `ON CONFLICT DO NOTHING` uten mål dekker begge unikhetene.
+    c.execute("INSERT INTO brukeridentitet (bruker_id, issuer, sub)"
+              " VALUES (%s,'https://idp.example',%s)"
+              " ON CONFLICT DO NOTHING", (aktor, f"{TEN}-attest-{aktor}"))
+    c.execute("INSERT INTO brukermedlemskap (tenant, bruker_id, roller)"
+              " VALUES (%s,%s,ARRAY['godkjenner'])"
+              " ON CONFLICT (tenant, bruker_id) DO NOTHING", (TEN, aktor))
+    return c.execute("SELECT authz_version FROM brukermedlemskap WHERE"
+                     " tenant=%s AND bruker_id=%s", (TEN, aktor)).fetchone()[0]
+
+
 def _attester_avvis(c, uid, aktor, *, runde=1):
-    """Det attesterte nei-et §7 nå krever (Codex P1, runde 8).
+    """Det attesterte nei-et §7 nå krever (Codex P1, runde 8 og 9).
 
     `behandle_unntakshandling` skriver denne raden (`_skriv_attestasjon`)
     rett FØR den kaller oppløsningen, i samme transaksjon. Portene som
     kaller `avvis_med_opplosning` direkte — for å måle låseorden,
     saksbinding eller kappløp — må derfor gjøre det samme, ellers måler de
     en vei som ikke lenger finnes. Kalles FØR `SET ROLE`: claimeren har kun
-    SELECT på tabellen, og skal aldri kunne skrive sitt eget mandat."""
+    SELECT på tabellen, og skal aldri kunne skrive sitt eget mandat.
+
+    Runde 9: raden må også være AUTORISERT — aktiv rolle med
+    `exceptions:reject` og medlemskapets gjeldende `authz_version`. Derfor
+    sørger helperen for medlemskapet også: den lovlige veien HAR det (den
+    leste det under sakslåsen), så en test uten det ville målt en kaller
+    som ikke finnes."""
+    authz = _avvisningsberettiget(c, aktor)
     c.execute(
         "INSERT INTO menneskelig_attestasjon (tenant, unntak_id, runde,"
         " operatorhandling, bruker_id, rolle, authz_version,"
         " konvoluttversjon, konvolutt_hash, mac, mac_key_id, jti, utloper,"
-        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'operator',1,2,%s,%s,"
+        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'godkjenner',%s,2,%s,%s,"
         "'k-test',%s,now()+interval '1 hour',0)",
-        (TEN, uid, runde, aktor, secrets.token_hex(32),
+        (TEN, uid, runde, aktor, authz, secrets.token_hex(32),
          secrets.token_hex(32), secrets.token_hex(16)))
 
 
@@ -1335,3 +1362,146 @@ def test_port24_opplosningen_krever_attestert_avvisning(conn):
         m.close()
     assert res == [("kansellert", oid)], res
     assert _oppdragsrad(oid)[:2] == ("kansellert", "menneskelig_avvis")
+
+
+# ---------------------------------------------------------------------------
+# Port 26: attestasjonen må være AUTORISERT, ikke bare tilstede
+# ---------------------------------------------------------------------------
+
+@pg
+def test_port26_rolle_scope_speiler_app_laget():
+    """§6b er en KOPI av rollemønsteret — og en kopi som driver er verre
+    enn ingen kopi.
+
+    Basen må kunne se forskjell på `godkjenner` og `leser` for å vite om et
+    attestert nei kunne vært sagt (§7). Scopene utledes i app-laget
+    (`ROLLE_TIL_SCOPES`, lukket mønster, default-deny), så 043 speiler
+    mønsteret — og denne testen binder de to EKSAKT sammen. Et scope lagt
+    til i app-laget uten migrasjon (eller motsatt) er en rød test, ikke et
+    stille sprik som først merkes når et lovlig nei avvises.
+
+    MUTASJONEN SOM DREPER DENNE: legg til en rolle i `ROLLE_TIL_SCOPES`
+    uten å seede den i 043 §6b.
+    """
+    from api.autorisasjon import ROLLE_TIL_SCOPES
+    m = _mig()
+    rader = m.execute("SELECT rolle, scope FROM rolle_scope").fetchall()
+    m.rollback(); m.close()
+    fra_db: dict[str, set[str]] = {}
+    for rolle, scope in rader:
+        fra_db.setdefault(rolle, set()).add(scope)
+    fra_app = {r: set(s) for r, s in ROLLE_TIL_SCOPES.items()}
+    kun_db = {r: sorted(s - fra_app.get(r, set())) for r, s in fra_db.items()}
+    kun_app = {r: sorted(s - fra_db.get(r, set())) for r, s in fra_app.items()}
+    assert fra_db == fra_app, (
+        "rolle_scope (043 §6b) og ROLLE_TIL_SCOPES har sprik — kun i DB: "
+        + repr({r: v for r, v in kun_db.items() if v})
+        + ", kun i app: " + repr({r: v for r, v in kun_app.items() if v}))
+
+
+@pg
+def test_port26b_uautorisert_attestasjon_gir_ingen_opplosning(conn):
+    """Codex P1 (runde 9): porten kalleren selv kunne fylle.
+
+    Runde 8 krevde en `avvis`-attestasjon på saken, av kalleren, i SAMME
+    transaksjon. Men runtime har INSERT på `menneskelig_attestasjon` — en
+    kompromittert spørring kunne skrive sin egen rad med en aktør den fant
+    på, og i neste setning bestå porten den nettopp forfalsket beviset for.
+    Provenienskravet sier HVOR raden kom fra, ikke om den er SANN.
+
+    §7 krever derfor at raden navngir en bruker med AKTIVT medlemskap i
+    tenanten, medlemskapets GJELDENDE `authz_version`, en rolle brukeren
+    faktisk har, og et rollesett som bærer `exceptions:reject` (§6b).
+    `brukermedlemskap` er OIDC-forvaltet og runtime har kun SELECT på den —
+    det er den ene autorisasjonsinngangen en kompromittert runtime ikke kan
+    skrive.
+
+    Fire målinger, alle med attestasjonen i samme transaksjon:
+      (a) aktør uten medlemskap i det hele tatt      → insufficient_privilege
+      (b) aktivt medlemskap UTEN exceptions:reject   → samme
+      (c) en rolle brukeren ikke har                 → samme
+      (d) fullmakt endret etter nei-et (stale authz_version) → samme
+    ... og oppdraget står urørt etter alle fire.
+
+    MUTASJONEN SOM DREPER DENNE: fjern medlemskaps-joinen, scope-kravet
+    eller `authz_version`-likheten fra `v_attest`-oppslaget i §7.
+    """
+    from db.pg import koble, sett_kontekst
+
+    uid = _oppsett(conn)
+    oid = _oppdrag_id(uid, _oppdrag(uid, "plukket"))
+    jti = _kvittkap(oid)
+    foer = _oppdragsrad(oid)
+
+    def _forsok(aktor, roller, rolle, runde, *, authz=1):
+        """Skriver attestasjonen slik `_skriv_attestasjon` ville gjort, med
+        det medlemskapet `roller` beskriver (None = ingen rad), og kaller
+        rett på §7. Alt i ÉN transaksjon, så samtransaksjonskravet fra
+        runde 8 er oppfylt: det som måles her er AUTORISASJONEN."""
+        m = koble(MIGRATOR_DSN)
+        try:
+            sett_kontekst(m, TEN, aktor, f"r-{aktor}")
+            if roller is not None:
+                m.execute("INSERT INTO brukeridentitet (bruker_id, issuer,"
+                          " sub) VALUES (%s,'https://idp.example',%s)"
+                          " ON CONFLICT DO NOTHING",
+                          (aktor, f"{TEN}-p26-{aktor}"))
+                m.execute("INSERT INTO brukermedlemskap (tenant, bruker_id,"
+                          " roller) VALUES (%s,%s,%s)"
+                          " ON CONFLICT (tenant, bruker_id) DO UPDATE SET"
+                          " roller=EXCLUDED.roller", (TEN, aktor, roller))
+            m.execute(
+                "INSERT INTO menneskelig_attestasjon (tenant, unntak_id,"
+                " runde, operatorhandling, bruker_id, rolle, authz_version,"
+                " konvoluttversjon, konvolutt_hash, mac, mac_key_id, jti,"
+                " utloper, saksversjon) VALUES (%s,%s,%s,'avvis',%s,%s,%s,2,"
+                "%s,%s,'k-test',%s,now()+interval '1 hour',0)",
+                (TEN, uid, runde, aktor, rolle, authz, secrets.token_hex(32),
+                 secrets.token_hex(32), secrets.token_hex(16)))
+            m.execute("SET ROLE disponit_m37_claimer")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                m.execute("SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                          "%s,%s)", (TEN, uid, [oid], aktor, f"r-{aktor}"))
+            m.rollback()
+        finally:
+            m.close()
+
+    # (a) Ingen medlemskapsrad: aktøren finnes ikke som menneske i tenanten.
+    _forsok("p26a", None, "godkjenner", 1)
+    # (b) Ekte, aktivt medlemskap — men rollen bærer ikke exceptions:reject.
+    _forsok("p26b", ["leser"], "leser", 2)
+    # (c) Rollesettet KAN avvise, men konvolutten navngir en rolle brukeren
+    #     ikke har: attestasjonens `rolle` er revisjonens svar på HVEM som
+    #     handlet, og den må være sann.
+    _forsok("p26c", ["godkjenner"], "okonomi", 3)
+    # (d) Fullmakten ENDRET etter at nei-et ble sagt: attestasjonen bærer
+    #     authz_version 1, medlemskapet står på 2 (010-triggeren bumper ved
+    #     enhver rolleendring). Reautoriseringen etter låsen — i basen.
+    m = _mig()
+    m.execute("INSERT INTO brukeridentitet (bruker_id, issuer, sub)"
+              " VALUES ('p26d','https://idp.example',%s)"
+              " ON CONFLICT DO NOTHING", (f"{TEN}-p26-p26d",))
+    m.execute("INSERT INTO brukermedlemskap (tenant, bruker_id, roller)"
+              " VALUES (%s,'p26d',ARRAY['godkjenner'])"
+              " ON CONFLICT (tenant, bruker_id) DO UPDATE SET"
+              " roller=ARRAY['godkjenner']", (TEN,))
+    m.execute("UPDATE brukermedlemskap SET roller=ARRAY['godkjenner',"
+              "'okonomi'] WHERE tenant=%s AND bruker_id='p26d'", (TEN,))
+    ny_authz = m.execute("SELECT authz_version FROM brukermedlemskap WHERE"
+                         " tenant=%s AND bruker_id='p26d'",
+                         (TEN,)).fetchone()[0]
+    m.commit(); m.close()
+    assert ny_authz > 1, "010-triggeren bumpet ikke authz_version"
+    _forsok("p26d", None, "godkjenner", 4, authz=1)
+
+    # Ingen av de fire rørte noe: oppdraget står, kapabiliteten lever, og
+    # revisjonen har ingen hendelser fra et nei ingen berettiget sa.
+    assert _oppdragsrad(oid) == foer, (
+        f"et uautorisert nei rørte oppdraget: {foer} → {_oppdragsrad(oid)}")
+    mk = _mig()
+    mk.execute("SET ROLE disponit_m37_claimer")
+    assert mk.execute("SELECT status FROM kvitteringskapabiliteter"
+                      " WHERE jti=%s", (jti,)).fetchone()[0] == "utstedt"
+    mk.rollback(); mk.close()
+    assert _hist(uid, "oppdrag_kansellert") == []
+    assert _hist(uid, "oppdrag_fencet") == []

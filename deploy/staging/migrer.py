@@ -258,6 +258,17 @@ GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) TO {rolle};
 -- append-only raden `behandle_unntakshandling` skriver rett før kallet, så
 -- den lovlige veien merker ingenting — og en direkte kaller får
 -- `insufficient_privilege` i stedet for et fencet og kansellert oppdrag.
+--
+-- ... og raden må være AUTORISERT, ikke bare tilstede (Codex P1, runde 9).
+-- Runtime har INSERT på attestasjonstabellen — en port kalleren selv kan
+-- fylle er ingen port. Funksjonen krever derfor at attestasjonen navngir et
+-- AKTIVT medlemskap i tenanten, med medlemskapets gjeldende
+-- `authz_version`, en rolle brukeren faktisk har, og et rollesett som bærer
+-- `exceptions:reject` (043 §6b). `brukermedlemskap` er den ene
+-- autorisasjonsinngangen runtime IKKE kan skrive (010: OIDC-forvaltet, kun
+-- SELECT herfra), så granten under gir ikke lenger rett til å kansellere på
+-- vegne av hvem som helst — bare til å utføre et nei et navngitt,
+-- avvisningsberettiget menneske har sagt.
 GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT) TO {rolle};
 """
 

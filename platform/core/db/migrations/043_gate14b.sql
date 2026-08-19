@@ -490,6 +490,70 @@ END $$;
 RESET ROLE;
 
 -- ------------------------------------------------------------
+-- 6b. `rolle_scope` — rollemønsteret basen kan LESE (Codex P1, runde 9)
+-- ------------------------------------------------------------
+-- §7-porten under krever at nei-et er attestert AV NOEN SOM KUNNE SI DET.
+-- «Kunne si det» er scopet `exceptions:reject`, og scopet utledes av
+-- ROLLENE — `autorisasjon.ROLLE_TIL_SCOPES`, et lukket mønster der en
+-- ukjent rolle gir ingenting (default-deny). Utledningen bor i app-laget
+-- fordi scopes aldri skal lagres per bruker (rollene er eneste autoritet);
+-- men da kan basen ikke se forskjell på `godkjenner` og `leser`, og en
+-- port som bare krever «et aktivt medlemskap» ville godtatt et nei fra en
+-- ren leser.
+--
+-- Tabellen speiler derfor SELVE MØNSTERET (rolle → scope), ikke brukernes
+-- scopes: ingen rad her binder en person til noe. Rollene forblir eneste
+-- autoritet, og `test_port26_rolle_scope_speiler_app_laget` binder tabellen
+-- EKSAKT mot `ROLLE_TIL_SCOPES`, så et mønster som endres ett sted og ikke
+-- det andre er en rød test, ikke et stille sprik.
+--
+-- Ingen tenantkolonne og ingen RLS: mønsteret er plattformens, likt for
+-- alle tenanter. Migrator-eid, og runtime får ingenting — bare
+-- claimer-rollen leser den, fra §7.
+CREATE TABLE IF NOT EXISTS rolle_scope (
+    rolle TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    PRIMARY KEY (rolle, scope)
+);
+-- Full re-seeding: tabellen SKAL være mønsteret, ikke summen av alle
+-- mønstre som noen gang har vært. En rolle eller et scope som fjernes i
+-- app-laget skal forsvinne her også.
+DELETE FROM rolle_scope;
+INSERT INTO rolle_scope (rolle, scope) VALUES
+    ('leser',             'decisions:read'),
+    ('leser',             'exceptions:read'),
+    ('leser',             'policy:read'),
+    ('sikkerhet',         'decisions:read'),
+    ('sikkerhet',         'exceptions:read'),
+    ('sikkerhet',         'policy:read'),
+    ('sikkerhet',         'security:read'),
+    ('admin',             'decisions:read'),
+    ('admin',             'exceptions:read'),
+    ('admin',             'policy:read'),
+    ('admin',             'security:read'),
+    ('admin',             'bestilling:opprett'),
+    ('godkjenner',        'decisions:read'),
+    ('godkjenner',        'exceptions:read'),
+    ('godkjenner',        'exceptions:approve'),
+    ('godkjenner',        'exceptions:reject'),
+    ('godkjenner',        'exceptions:escalate'),
+    ('policyforvalter',   'decisions:read'),
+    ('policyforvalter',   'policy:read'),
+    ('policyforvalter',   'policy:write'),
+    ('policyforvalter',   'policy:activate'),
+    ('domeneadjudikator', 'decisions:read'),
+    ('domeneadjudikator', 'exceptions:read'),
+    ('domeneadjudikator', 'domains:adjudicate');
+REVOKE ALL ON rolle_scope FROM PUBLIC;
+GRANT SELECT ON rolle_scope TO disponit_m37_claimer;
+-- Medlemskapet er den ENE autorisasjonsinngangen runtime ikke kan skrive
+-- (010: OIDC-forvaltet, runtime har kun SELECT). §7 leser den derfor
+-- direkte. FORCE RLS med `tenant = current_setting('disponit.tenant')`
+-- står på tabellen og gjelder også eieren; §7 har alt krevd at GUC-en ER
+-- `p_tenant`, så policyen slipper gjennom nøyaktig riktig tenant.
+GRANT SELECT ON brukermedlemskap TO disponit_m37_claimer;
+
+-- ------------------------------------------------------------
 -- 7. `avvis_med_opplosning` — nei-et og beviset i ÉN transaksjon
 -- ------------------------------------------------------------
 -- Claimer-eid: én skrivevei til oppdrag/kapabiliteter, som resten av
@@ -568,18 +632,53 @@ BEGIN
     -- gitt tidligere (tabellen er append-only, så radene blir liggende),
     -- og et nei som ruller tilbake tar attestasjonen med seg.
     --
-    -- ÆRLIG OM RESTEN: MAC-nøkkelen bor i appens state, ikke i basen, så
-    -- databasen kan ikke VERIFISERE konvolutten — runtime har INSERT på
-    -- `menneskelig_attestasjon` og kan i prinsippet skrive en attestasjon
-    -- den selv har funnet på. Porten fjerner derfor ikke angrepet, den
-    -- flytter det: en omgåelse må nå etterlate en permanent, uforanderlig
-    -- rad som navngir aktør, rolle, runde, saksversjon og en MAC som ikke
-    -- verifiserer — altså evidens revisjonen kan finne, i stedet for en
-    -- kansellering uten spor av hvem som bestemte den. Skal den siste
-    -- resten lukkes, må MAC-verifiseringen selv flyttes inn i basen; det
-    -- er en egen endring med egen nøkkelhåndtering.
+    -- ... OG RADEN ALENE ER IKKE NOK (Codex P1, runde 9).
+    --
+    -- Provenienskravet over sier bare HVOR raden kom fra, ikke om den er
+    -- sann — og runtime har INSERT på `menneskelig_attestasjon`. En
+    -- kompromittert spørring kunne derfor skrive sin egen `avvis`-rad med
+    -- en aktør den fant på, og i neste setning bestå porten den nettopp
+    -- forfalsket beviset for. En port kalleren selv kan fylle er ingen
+    -- port.
+    --
+    -- Basen kan ikke verifisere MAC-en (nøkkelen bor i app-state, aldri i
+    -- DB — `mac_register`). Men den kan verifisere det attestasjonen
+    -- PÅSTÅR, og påstanden hviler på ÉN autorisasjonsinngang runtime IKKE
+    -- kan skrive: medlemskapet. `brukermedlemskap` er OIDC-forvaltet, og
+    -- runtime har kun SELECT på den (010). Derfor kreves nå at raden
+    -- navngir
+    --   * en bruker med AKTIVT medlemskap i denne tenanten,
+    --   * `authz_version` lik medlemskapets NÅVÆRENDE — en fullmakt som
+    --     ble trukket etter at attestasjonen ble skrevet, faller her
+    --     (triggeren i 010 bumper versjonen ved enhver endring av
+    --     roller/aktiv), altså den samme reautoriseringen-etter-låsen
+    --     app-laget gjør,
+    --   * en `rolle` brukeren FAKTISK har, og
+    --   * et rollesett som bærer `exceptions:reject` (§6b).
+    -- Da er «hvem som helst i tenanten» ikke lenger et gyldig nei: en
+    -- forfalskning må navngi en ekte, i dette øyeblikk avvisningsberettiget
+    -- operatør.
+    --
+    -- ÆRLIG OM RESTEN, PRESIST: en runtime som er kompromittert kan lese
+    -- medlemskapstabellen og dermed skrive en rad som består porten ved å
+    -- UTGI SEG FOR en slik operatør. Den resten er ikke lukkbar herfra:
+    -- den forutsetter at basen selv kan verifisere konvolutten, altså
+    -- MAC-nøkler i DB — en egen endring med egen nøkkelhåndtering, og et
+    -- brudd på et uttalt prinsipp. Det porten gjør, er å fjerne alt annet:
+    -- ingen kansellering uten et navngitt, aktivt, avvisningsberettiget
+    -- menneske bak seg, og en permanent, uforanderlig rad som sier hvem.
+    --
+    -- Saksversjonen og runden er MED VILJE ikke portert her: begge er
+    -- tabeller runtime selv skriver (`unntak`, `godkjenningsrunde`), så en
+    -- kaller som kan forfalske attestasjonen kan like gjerne stille dem
+    -- riktig. Basen binder det basen eier; å late som mer ville vært en
+    -- port i navnet alene. (Saksversjonen er dessuten operatørens
+    -- optimistiske lås mot en foreldet dialog — den hører hjemme i
+    -- app-laget, der klientens forventning finnes.)
     SELECT a.id INTO v_attest
       FROM public.menneskelig_attestasjon a
+      JOIN public.brukermedlemskap m
+        ON m.tenant = a.tenant AND m.bruker_id = a.bruker_id AND m.aktiv
      WHERE a.tenant = p_tenant AND a.unntak_id = p_unntak_id
        AND a.operatorhandling = 'avvis'
        AND a.bruker_id = p_aktor
@@ -588,10 +687,18 @@ BEGIN
        -- gir tilbake xid-en uten å hvile på en cast mellom typene.
        AND a.xmin::text::bigint
            = pg_current_xact_id()::text::bigint % 4294967296
+       AND a.authz_version = m.authz_version
+       AND a.rolle = ANY(m.roller)
+       AND EXISTS (SELECT 1 FROM public.rolle_scope rs
+                    WHERE rs.rolle = ANY(m.roller)
+                      AND rs.scope = 'exceptions:reject')
      LIMIT 1;
     IF v_attest IS NULL THEN
-        RAISE EXCEPTION 'avvis_med_opplosning: sak % mangler attestert'
-            ' avvisning fra % i denne transaksjonen', p_unntak_id, p_aktor
+        RAISE EXCEPTION 'avvis_med_opplosning: sak % mangler en AUTORISERT'
+            ' attestert avvisning fra % i denne transaksjonen —'
+            ' attestasjonen må navngi et aktivt medlemskap med gjeldende'
+            ' authz_version, egen rolle og scopet exceptions:reject',
+            p_unntak_id, p_aktor
             USING ERRCODE = 'insufficient_privilege';
     END IF;
     IF p_forventet IS NULL OR array_length(p_forventet, 1) IS NULL THEN

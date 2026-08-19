@@ -316,7 +316,7 @@ def _sett_kontekst(conn, tenant, aktor="test", rid="r"):
 
 
 def _attester_avvis(conn, tenant, sak, aktor, *, runde=1):
-    """Det attesterte nei-et 043 §7 krever (Codex P1, runde 8).
+    """Det attesterte nei-et 043 §7 krever (Codex P1, runde 8 og 9).
 
     `behandle_unntakshandling` skriver denne append-only raden
     (`_skriv_attestasjon`) rett FØR den kaller `avvis_med_opplosning`, i
@@ -324,14 +324,30 @@ def _attester_avvis(conn, tenant, sak, aktor, *, runde=1):
     kanselleringsautoritet. Testene som konstruerer nei-et direkte — for å
     eie kappløpets timing — må derfor legge igjen det samme beviset.
     Kalles FØR `SET ROLE disponit_m37_claimer`: claimeren har kun SELECT på
-    tabellen og skal aldri kunne skrive sitt eget mandat."""
+    tabellen og skal aldri kunne skrive sitt eget mandat.
+
+    Runde 9: raden må også være AUTORISERT — et aktivt medlemskap med
+    rollen i behold og `exceptions:reject` i rollesettet. Den lovlige veien
+    har alt lest medlemskapet under sakslåsen, så helperen sørger for det
+    samme her; uten det ville testene målt en kaller som ikke finnes."""
+    conn.execute("INSERT INTO brukeridentitet (bruker_id, issuer, sub)"
+                 " VALUES (%s,'https://idp.example',%s)"
+                 " ON CONFLICT DO NOTHING",
+                 (aktor, f"{tenant}-attest-{aktor}"))
+    conn.execute("INSERT INTO brukermedlemskap (tenant, bruker_id, roller)"
+                 " VALUES (%s,%s,ARRAY['godkjenner'])"
+                 " ON CONFLICT (tenant, bruker_id) DO NOTHING",
+                 (tenant, aktor))
+    authz = conn.execute("SELECT authz_version FROM brukermedlemskap WHERE"
+                         " tenant=%s AND bruker_id=%s",
+                         (tenant, aktor)).fetchone()[0]
     conn.execute(
         "INSERT INTO menneskelig_attestasjon (tenant, unntak_id, runde,"
         " operatorhandling, bruker_id, rolle, authz_version,"
         " konvoluttversjon, konvolutt_hash, mac, mac_key_id, jti, utloper,"
-        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'operator',1,2,%s,%s,"
+        " saksversjon) VALUES (%s,%s,%s,'avvis',%s,'godkjenner',%s,2,%s,%s,"
         "'k-test',%s,now()+interval '1 hour',0)",
-        (tenant, sak, runde, aktor, secrets.token_hex(32),
+        (tenant, sak, runde, aktor, authz, secrets.token_hex(32),
          secrets.token_hex(32), secrets.token_hex(16)))
 
 
