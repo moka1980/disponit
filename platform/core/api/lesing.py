@@ -567,8 +567,9 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
         # lukkede årsaken, så UI-et forklarer det FØR brukeren prøver.
         # 043 (Gate 14b): et levende OPPDRAG stenger ikke lenger avvis —
         # veien løser opp (kansellering med fencing), og flaten skal
-        # varsle det FØR klikket (alertdialogen). Bare levende
-        # arbeidskapabiliteter uten oppdrag beholder 14a-svaret.
+        # varsle det FØR klikket (alertdialogen). En levende
+        # ARBEIDSKAPABILITET beholder 14a-svaret — med eller uten oppdrag
+        # ved siden av, for det er den POST-vakten står på.
         avvis_aarsak = None
         avvis_kansellerer = None
         if "avvis" in handlinger:
@@ -580,7 +581,17 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
                        and st in ("opprettet", "plukket")]
             lev_kap = [ref for kilde, ref, st in rader
                        if kilde == "kapabilitet"]
-            if lev_opp:
+            # Rekkefølgen er BAKVENDT av den naive (Codex P2, runde 2):
+            # POST-vakten blokkerer på `levende_kap` ALENE — også når det
+            # finnes kansellerbare oppdrag ved siden av. Prøvde lesingen
+            # oppdragene først, tilbød flaten en `avvis` med
+            # `avvis_kansellerer`-varsel som ALLTID endte i 409 og
+            # kansellerte ingenting: et løfte serverkontrakten ikke holder.
+            # Kapabiliteten avgjør derfor her også — nøyaktig som i vakten.
+            if lev_kap:
+                handlinger = [h for h in handlinger if h != "avvis"]
+                avvis_aarsak = "utestaaende_oppdrag"
+            elif lev_opp:
                 info = conn.execute(
                     "SELECT id, status, COALESCE(modul_id, eiermodul)"
                     "  FROM oppdrag"
@@ -589,9 +600,6 @@ def unntak_detalj(tjeneste, request: Request) -> Response:
                 avvis_kansellerer = [
                     {"oppdrag_id": int(r[0]), "status": r[1],
                      "modul_id": r[2]} for r in info]
-            elif lev_kap:
-                handlinger = [h for h in handlinger if h != "avvis"]
-                avvis_aarsak = "utestaaende_oppdrag"
         kropp = {"id": rad[0], "ts": rad[1].isoformat(), "handling": rad[2],
                  "kategori": rad[3], "sakstype": rad[4], "status": rad[5],
                  "prioritet": rad[6], "begrunnelse": _koder(rad[7]),

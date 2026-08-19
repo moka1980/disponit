@@ -617,3 +617,15 @@ def test_port_leseapi_skjuler_avvis_ved_utestaaende(klient, miljo, monkeypatch):
     body2 = r2.json()
     assert "avvis" not in body2["tillatte_handlinger"]
     assert body2["avvis_utilgjengelig"] == "utestaaende_oppdrag"
+
+    # ... og BEGGE deler samtidig følger POST-vakten, ikke oppdraget: den
+    # blokkerer på kapabiliteten alene, så lesingen må skjule `avvis` her
+    # også. Mutasjonen som prøver oppdragene først (og tilbyr en `avvis`
+    # som alltid gir 409 og kansellerer ingenting) dør på denne.
+    _kapabilitet(uid, "utstedt")          # saken fra r1 har alt et LEVENDE oppdrag
+    r3 = klient.get(f"/v1/unntak/{uid}", cookies={sesjonmodul.C_SESJON: cookie})
+    assert r3.status_code == 200, r3.text
+    body3 = r3.json()
+    assert "avvis" not in body3["tillatte_handlinger"], body3
+    assert body3["avvis_utilgjengelig"] == "utestaaende_oppdrag"
+    assert "avvis_kansellerer" not in body3, body3
