@@ -136,28 +136,57 @@ CREATE UNIQUE INDEX IF NOT EXISTS en_apen_overtakelsessak_per_hostname
   WHERE sakskilde = 'domeneovertakelse' AND NOT terminal;
 
 -- ------------------------------------------------------------
--- 3. Lineage bundet til riktig hendelse OG riktig hostname
---    (kolonnenavnene `id`/`hostname` verifisert mot levende base)
+-- 3. Lineage bundet til riktig hendelse, riktig hostname OG riktig PART
+--    (kolonnenavnene `id`/`tenant`/`hostname` verifisert mot levende base)
 -- ------------------------------------------------------------
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = 'domenekontroll_hendelse_identitet') THEN
-    ALTER TABLE domenekontroll_hendelse
-      ADD CONSTRAINT domenekontroll_hendelse_identitet UNIQUE (id, hostname);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = 'unntak_hendelse_a_hostname') THEN
-    ALTER TABLE unntak
-      ADD CONSTRAINT unntak_hendelse_a_hostname
-        FOREIGN KEY (hendelse_a, hostname_ref)
-        REFERENCES domenekontroll_hendelse (id, hostname),
-      ADD CONSTRAINT unntak_hendelse_b_hostname
-        FOREIGN KEY (hendelse_b, hostname_ref)
-        REFERENCES domenekontroll_hendelse (id, hostname),
-      ADD CONSTRAINT unntak_hendelser_ulike
-        CHECK (hendelse_a IS NULL OR hendelse_a <> hendelse_b);
-  END IF;
-END $$;
+-- HENDELSEN MÅ TILHØRE DEN SAKEN NAVNGIR (Codex P2). Den første formen
+-- bandt bare (id, hostname): den sa at begge hendelsene gjaldt SAMME
+-- VERTSNAVN, ikke at `hendelse_a` tilhører `tapt_tenant` og `hendelse_b`
+-- tilhører `utfordrer_tenant`. Et vertsnavn som har vært omstridt før har
+-- historikk for flere tenanter, og `sikre_overtakelsessak` tar
+-- hendelses-ID-ene som ARGUMENTER — en reparasjon eller en feilende
+-- kaller kunne derfor hekte på to fullt gyldige hendelser fra parter saken
+-- ikke handler om. Alt annet ville sett riktig ut: speilingen (§4) tar
+-- ID-ene fra saken, loggpostbindingen (§5) krever bare at de to er ENIGE,
+-- og hver constraint ville passert. Evidenskjeden ville vært intakt og
+-- usann — den verste formen, siden hele sakens grunnlag ER evidensen.
+--
+-- Formen holder i alle tre konfliktgrenene i §14 og i §20s migrering:
+-- B-siden skrives alltid med utfordrerens tenant, A-siden er alltid
+-- motpartens (ny hendelse i overtakelsesgrenen, motpartens siste ekte
+-- overgang i de andre). Nøkkelen navngir nå den invarianten.
+--
+-- MATCH SIMPLE holder her, selv om NULL i én kolonne ellers ville
+-- slukket hele nøkkelen: §2s radkontrakt er alt-eller-intet per
+-- sakskilde — for `domeneovertakelse` er alle seks NOT NULL, for de to
+-- andre er alle NULL. En delvis utfylt rad finnes ikke å slippe unna med.
+-- Drop-så-add, ikke IF NOT EXISTS: den gamle formen skal BORT også der
+-- 041 alt har rullet (era-rebuildene kjører migrasjonen på nytt), og
+-- ADDen er samtidig valideringen — finnes det en rad med en lineage som
+-- ikke tilhører partene, feller migrasjonen på den i stedet for å la den
+-- stå. Nye navn er derfor også med i droppen, ellers er ikke steget
+-- idempotent.
+ALTER TABLE unntak
+  DROP CONSTRAINT IF EXISTS unntak_hendelse_a_hostname,
+  DROP CONSTRAINT IF EXISTS unntak_hendelse_b_hostname,
+  DROP CONSTRAINT IF EXISTS unntak_hendelse_a_part,
+  DROP CONSTRAINT IF EXISTS unntak_hendelse_b_part,
+  DROP CONSTRAINT IF EXISTS unntak_hendelser_ulike;
+ALTER TABLE domenekontroll_hendelse
+  DROP CONSTRAINT IF EXISTS domenekontroll_hendelse_identitet;
+
+ALTER TABLE domenekontroll_hendelse
+  ADD CONSTRAINT domenekontroll_hendelse_identitet
+    UNIQUE (id, tenant, hostname);
+ALTER TABLE unntak
+  ADD CONSTRAINT unntak_hendelse_a_part
+    FOREIGN KEY (hendelse_a, tapt_tenant, hostname_ref)
+    REFERENCES domenekontroll_hendelse (id, tenant, hostname),
+  ADD CONSTRAINT unntak_hendelse_b_part
+    FOREIGN KEY (hendelse_b, utfordrer_tenant, hostname_ref)
+    REFERENCES domenekontroll_hendelse (id, tenant, hostname),
+  ADD CONSTRAINT unntak_hendelser_ulike
+    CHECK (hendelse_a IS NULL OR hendelse_a <> hendelse_b);
 
 -- ------------------------------------------------------------
 -- 4. Referansepayload — lukket, versjonert, semantisk validert

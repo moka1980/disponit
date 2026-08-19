@@ -24,7 +24,8 @@ Portoversikt → test (numrene er klarsignalets):
   13–18    test_port13_18_referansepayloadens_lukkede_kontrakt
   17/20    test_port17_20_hostnameparitet_db_og_python
   19       test_port19_avvisning_navngir_constraint
-  21–25    test_port21_25_lineage
+  21–25    test_port21_25_lineage,
+           test_lineagen_tilhorer_partene_saken_navngir (Codex P2)
   26–28    test_port26_28_totalitet
   29–31    test_port29_31_sak_og_logg
   32–36    test_port32_36_roller_og_synlighet
@@ -985,6 +986,78 @@ def test_port21_25_lineage(migrator):
     with pytest.raises(psycopg.errors.RaiseException):
         migrator.execute("DELETE FROM domenekontroll_hendelse WHERE id=%s",
                          (ekte_b,))
+    migrator.rollback()
+
+
+@pg
+def test_lineagen_tilhorer_partene_saken_navngir(migrator):
+    """Codex P2: kompositt-FK-en bandt (id, hostname) — altså SAMME
+    VERTSNAVN, ikke samme PART.
+
+    Et vertsnavn som har vært omstridt har historikk for flere tenanter, og
+    `sikre_overtakelsessak` tar hendelses-ID-ene som argumenter. En
+    reparasjon eller en feilende kaller kunne dermed hekte to fullt gyldige
+    hendelser fra parter saken ikke handler om — og alt annet ville sett
+    riktig ut: speilingen tar ID-ene fra saken, loggpostbindingen krever
+    bare at de to er enige. Evidenskjeden ville vært intakt og usann.
+
+    Raden her er sakens egen konflikt med sidene BYTTET: hendelsene er ekte
+    og gjelder vertsnavnet, men A-siden tilhører utfordreren og B-siden
+    motparten. Statusen er terminal, så den unike åpen-sak-indeksen ikke
+    feller raden før FK-en rekker det.
+    """
+    import json
+    h = _host()
+    sak, _ = _konflikt(migrator, h)          # tapt=TENANT, utfordrer=ANNEN
+    _sett_kontekst(migrator, PLATT)
+    ekte_a, ekte_b, gen = migrator.execute(
+        "SELECT hendelse_a, hendelse_b, autorisasjonsgenerasjon"
+        "  FROM unntak WHERE tenant=%s AND id=%s", (PLATT, sak)).fetchone()
+    migrator.rollback()
+
+    # Sidene byttet: payloaden speiler kolonnene (speiler-CHECKen passerer),
+    # hendelsene finnes og gjelder h — det ENESTE avviket er hvem de tilhører.
+    byttet = _payload(h, gen=int(gen), tapt=ANNEN_TENANT, utf=TENANT,
+                      a=int(ekte_a), b=int(ekte_b))
+    _sett_kontekst(migrator, PLATT)
+    lid = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,payload_type,referansepayload)"
+        " VALUES (%s,'h','p','UNNTAK','[]'::jsonb,'referanse',%s::jsonb)"
+        " RETURNING id", (PLATT, json.dumps(byttet))).fetchone()[0]
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        migrator.execute(
+            "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+            " sakstype,prioritet,sakskilde,status,hostname_ref,"
+            " utfordrer_tenant,tapt_tenant,autorisasjonsgenerasjon,"
+            " saksrevisjon,hendelse_a,hendelse_b,payload_type,"
+            " referansepayload)"
+            " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+            " 'sikkerhet','hoy','domeneovertakelse','avvist',%s,%s,%s,%s,0,"
+            " %s,%s,'referanse',%s::jsonb)",
+            (PLATT, lid, h, TENANT, ANNEN_TENANT, gen, ekte_a, ekte_b,
+             json.dumps(byttet)))
+    migrator.rollback()
+
+    # ...og den riktige veien rundt står: samme hendelser, riktige parter.
+    riktig = _payload(h, gen=int(gen), tapt=TENANT, utf=ANNEN_TENANT,
+                      a=int(ekte_a), b=int(ekte_b))
+    _sett_kontekst(migrator, PLATT)
+    lid2 = migrator.execute(
+        "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,beslutning,"
+        "begrunnelse,payload_type,referansepayload)"
+        " VALUES (%s,'h','p','UNNTAK','[]'::jsonb,'referanse',%s::jsonb)"
+        " RETURNING id", (PLATT, json.dumps(riktig))).fetchone()[0]
+    migrator.execute(
+        "INSERT INTO unntak (tenant,loggpost_id,handling,kategori,"
+        " sakstype,prioritet,sakskilde,status,hostname_ref,"
+        " utfordrer_tenant,tapt_tenant,autorisasjonsgenerasjon,"
+        " saksrevisjon,hendelse_a,hendelse_b,payload_type,referansepayload)"
+        " VALUES (%s,%s,'domene.overtakelse','domeneovertakelse',"
+        " 'sikkerhet','hoy','domeneovertakelse','avvist',%s,%s,%s,%s,0,"
+        " %s,%s,'referanse',%s::jsonb)",
+        (PLATT, lid2, h, ANNEN_TENANT, TENANT, gen, ekte_a, ekte_b,
+         json.dumps(riktig)))
     migrator.rollback()
 
 
