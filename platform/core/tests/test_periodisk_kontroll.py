@@ -2136,7 +2136,21 @@ def test_et_brudd_bryter_stripen_uten_resultat(migrator):
             _syntetisk_tick(migrator, pid, vs, utfall,
                             oppdrag_id=920000 + i if utfall == "tillat"
                             else None)
-        assert pausesveip(rt) == [], "et brudd i stripen pauset likevel"
+        sveip = pausesveip(rt)
+        if sveip:
+            _sett_kontekst(migrator, TENANT)
+            hvem = migrator.execute(
+                "SELECT parametre->>'hostname', status, ("
+                "  SELECT string_agg(t.utfall, ',' ORDER BY t.vindu_start DESC)"
+                "    FROM bestillingsplan_tick t"
+                "   WHERE t.plan_id = b.plan_id)"
+                " FROM bestillingsplan b WHERE b.plan_id::text = ANY(%s)",
+                ([p for p, _ in sveip],)).fetchall()
+            migrator.rollback()
+        else:
+            hvem = []
+        assert sveip == [], \
+            f"et brudd i stripen pauset likevel: {hvem} (denne: {pid})"
         # To `tillat` til gjør de TRE SISTE sammenhengende — da pauser den.
         for i, start_h in enumerate((-14, -10)):
             vs = _syntetisk_vindu(migrator, pid, start_h=start_h,
