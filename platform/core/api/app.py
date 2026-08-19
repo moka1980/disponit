@@ -2487,6 +2487,29 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                          "gjeldende_fencing": gjeldende,
                          "etter_utforelsesfrist": naa > uf,
                          "resultathash": ny_hash}, ensure_ascii=False)))
+        # 042 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
+        # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
+        # kansellerte betyr at modulen rakk å utføre før nei-et nådde den —
+        # hva det krever av oss utledes av MODULKONTRAKTENS reversibilitet,
+        # aldri av gjetning: `direkte` → ingenting (resultatet forkastes,
+        # artefaktet forblir staged og ryddes av 038-reaperen);
+        # `kompenserende`/`irreversibel` → sak, gjennom samme
+        # `sikre_sak_for_oppdrag` som all annen sakskobling — ingen
+        # parallell sakskilde, idempotent per (oppdrag, arsak), terminal
+        # sak gjenbrukes aldri.
+        kans = conn.execute(
+            "SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s AND id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        if kans is not None and kans[0] == "menneskelig_avvis":
+            rev = conn.execute(
+                "SELECT reversibilitet_for_oppdrag(%s,%s)",
+                (tenant, oppdrag_id)).fetchone()[0]
+            ny_arsak = {"kompenserende": "kompensasjon_kreves",
+                        "irreversibel": "irreversibel_utfort"}.get(rev)
+            if ny_arsak is not None:
+                conn.execute(
+                    "SELECT sikre_sak_for_oppdrag(%s,%s,%s,%s,%s)",
+                    (tenant, oppdrag_id, ny_arsak, auth.aktor, rid))
         conn.commit()
         return kanonisk_json({"status": "lagret_uten_statusendring",
                               "oppdrag_id": oppdrag_id, "request_id": rid},

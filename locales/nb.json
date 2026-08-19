@@ -894,5 +894,12 @@
   "site.katalog.m52.navn": "Toll- og HS-kodeagent",
   "site.katalog.m53.navn": "HMS- og avviksmottak",
   "site.katalog.m54.navn": "EHF- og Peppol-avviksretter",
-  "site.katalog.m55.navn": "Merkevare- og IP-overvåker"
+  "site.katalog.m55.navn": "Merkevare- og IP-overvåker",
+  "ui.unntak.avvis_kansellerer_1": "Avvis vil kansellere oppdrag",
+  "ui.unntak.avvis_kansellerer_2": "som modul",
+  "ui.unntak.avvis_kansellerer_3": "arbeider med nå.",
+  "ui.unntak.kan_ikke_angres": "Handlingen kan ikke angres.",
+  "ui.unntak.kansellert_alert": "Avvist. Tilhørende oppdrag er kansellert (menneskelig avvis):",
+  "ui.unntak.oppdrag_utfort_alert": "Oppdraget ble utført før avvisningen nådde fram. Ingenting er kansellert — vurder saken på nytt med kvitteringen. Oppdrag",
+  "ui.unntak.kvitteringsref": "kvitteringsreferanse"
 }

@@ -10,7 +10,7 @@ import {
 } from "../api.js";
 import {
   KategoriTag, BegrunnelseKjede, StatusTidslinje, Tidspunkt, TomTilstand,
-  Feiltilstand, TilgangsVakt, CursorNavigasjon, meldLive,
+  Feiltilstand, TilgangsVakt, CursorNavigasjon, meldAlert, meldLive,
 } from "../komponenter.js";
 import { DataTabell } from "../tabell.js";
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
@@ -18,14 +18,27 @@ import { medStatus, flateHode, kvRad } from "./felles.js";
 
 const STATUSFILTRE = [null, "ny", "under_behandling", "løst", "avvist"];
 
-function utfoer(id, oh, saksversjon, ctx, paaFerdig) {
+function utfoer(id, oh, saksversjon, ctx, paaFerdig, busyEl) {
   // ÉN idempotensnøkkel per operasjon — gjenbrukes ved en nettverksretry, så
   // serveren ser samme nøkkel og ikke utfører handlingen to ganger.
   const nokkel = nyIdempotensnokkel();
+  if (busyEl) busyEl.setAttribute("aria-busy", "true");
+  const ferdig = () => {
+    if (busyEl) busyEl.removeAttribute("aria-busy");
+    if (paaFerdig) paaFerdig();
+  };
   const forsok = (attempt) =>
-    postHandling(id, oh, saksversjon, nokkel).then(() => {
-      meldLive(t(`ui.unntak.handling.${oh}`) + ": " + t("ui.unntak.behandlet"));
-      if (paaFerdig) paaFerdig();
+    postHandling(id, oh, saksversjon, nokkel).then((kropp) => {
+      // 042 (§7): en KANSELLERING annonseres assertivt, med årsaken opplest
+      // — det er en irreversibel konsekvens, ikke en statuslinje.
+      if (kropp && Array.isArray(kropp.opplosning) && kropp.opplosning.length) {
+        meldAlert(t("ui.unntak.kansellert_alert") + " " +
+          kropp.opplosning.map((o) => `#${o.oppdrag_id}`).join(", "));
+      } else {
+        meldLive(t(`ui.unntak.handling.${oh}`) + ": " +
+          t("ui.unntak.behandlet"));
+      }
+      ferdig();
     }).catch((e) => {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       // Kun nettverksfeil (status 0) retries — ÉN gang, med SAMME nøkkel. En
@@ -40,11 +53,21 @@ function utfoer(id, oh, saksversjon, ctx, paaFerdig) {
       // den generiske feilen), og last saken på nytt uten blind retry.
       if (e instanceof ApiFeil && e.kode === "utestaaende_oppdrag") {
         meldLive(t("ui.unntak.utestaaende_oppdrag"));
-        if (paaFerdig) paaFerdig();
+        ferdig();
+        return;
+      }
+      // 042: kvitteringen vant kappløpet — ingenting er kansellert, og det
+      // skal sies HØYT, med referansen mennesket beslutter på nytt med.
+      if (e instanceof ApiFeil && e.kode === "oppdrag_utfort") {
+        const [oid, ref] = e.detaljer || [];
+        meldAlert(t("ui.unntak.oppdrag_utfort_alert") +
+          (oid ? ` #${oid}` : "") +
+          (ref ? ` — ${t("ui.unntak.kvitteringsref")}: ${ref}` : ""));
+        ferdig();
         return;
       }
       meldLive(t("ui.unntak.behandling_feilet"));
-      if (paaFerdig) paaFerdig();
+      ferdig();
     });
   return forsok(0);
 }
@@ -73,15 +96,31 @@ function behandlingsHandlinger(detalj, id, ctx, paaFerdig) {
     const knapp = el("button", { class: "knapp", type: "button",
       text: t(`ui.unntak.handling.${oh}`) });
     knapp.addEventListener("click", () => {
-      const tekst = oh === "godkjenn" && grunnkode
+      // 042 (Gate 14b §7): avvis på sak med LEVENDE oppdrag varsler
+      // konsekvensen FØR handlingen — alertdialog med oppdraget og
+      // modulen navngitt, fokus inn, Escape lukker uten handling, fokus
+      // tilbake til utløseren (alt båret av dialogmekanikken).
+      const kansellerer = oh === "avvis"
+        && Array.isArray(detalj.avvis_kansellerer)
+        && detalj.avvis_kansellerer.length
+        ? detalj.avvis_kansellerer : null;
+      const tekst = kansellerer
+        ? kansellerer.map((o) =>
+            `${t("ui.unntak.avvis_kansellerer_1")} #${o.oppdrag_id} ` +
+            `${t("ui.unntak.avvis_kansellerer_2")} ${o.modul_id} ` +
+            t("ui.unntak.avvis_kansellerer_3")).join(" ") + " " +
+          t("ui.unntak.kan_ikke_angres")
+        : oh === "godkjenn" && grunnkode
         ? `${t("ui.unntak.du_godkjenner")}: ${t(`grunn.${grunnkode}`, grunnkode)}`
         : t(`ui.unntak.bekreft.${oh}`, t("ui.unntak.bekreft_generisk"));
       Bekreftelsesdialog({
         tittel: t(`ui.unntak.handling.${oh}`),
         tekst,
+        rolle: kansellerer ? "alertdialog" : "dialog",
         primarTekst: t(`ui.unntak.handling.${oh}`),
         farlig: oh !== "godkjenn",
-        paaPrimar: () => utfoer(id, oh, detalj.saksversjon, ctx, paaFerdig),
+        paaPrimar: () => utfoer(id, oh, detalj.saksversjon, ctx, paaFerdig,
+                                boks),
       });
     });
     knapper.append(knapp);

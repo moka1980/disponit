@@ -894,5 +894,12 @@
   "site.katalog.m52.navn": "Customs and HS code agent",
   "site.katalog.m53.navn": "HSE and incident intake",
   "site.katalog.m54.navn": "EHF and Peppol rejection handler",
-  "site.katalog.m55.navn": "Brand and IP monitor"
+  "site.katalog.m55.navn": "Brand and IP monitor",
+  "ui.unntak.avvis_kansellerer_1": "Rejecting will cancel task",
+  "ui.unntak.avvis_kansellerer_2": "which module",
+  "ui.unntak.avvis_kansellerer_3": "is working on right now.",
+  "ui.unntak.kan_ikke_angres": "This action cannot be undone.",
+  "ui.unntak.kansellert_alert": "Rejected. The related task has been cancelled (human rejection):",
+  "ui.unntak.oppdrag_utfort_alert": "The task completed before the rejection arrived. Nothing was cancelled — reassess the case with the receipt. Task",
+  "ui.unntak.kvitteringsref": "receipt reference"
 }

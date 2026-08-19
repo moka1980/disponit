@@ -149,6 +149,19 @@ export function sikreLiveRegion() {
 }
 export function meldLive(tekst) { sikreLiveRegion().textContent = tekst; }
 
+// 042 (Gate 14b §7): utfallet av en kansellering skal AVBRYTE, ikke vente
+// på en pause — egen assertiv region ved siden av den høflige. Årsaken
+// leses opp, ikke bare vises.
+let _alert = null;
+export function sikreAlertRegion() {
+  if (_alert && _alert.isConnected) return _alert;
+  _alert = el("div", { class: "sr-only", role: "alert",
+    "aria-live": "assertive", "aria-atomic": "true" });
+  document.body.append(_alert);
+  return _alert;
+}
+export function meldAlert(tekst) { sikreAlertRegion().textContent = tekst; }
+
 // --- CursorNavigasjon (ærlig keyset: «Vis mer» + «Oppdater») ---------------
 export function CursorNavigasjon({ neste, paaMer, paaOppdater } = {}) {
   const n = el("div", { class: "cursornav" });

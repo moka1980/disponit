@@ -296,11 +296,39 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
     # runde-åpning + attestasjon: en blokkert avvis skal ikke åpne en runde,
     # etterlate en attestasjon, eller skrive ny historikk ved gjentatt forsøk
     # (P3).
+    opplosning_detalj = None
     if operatorhandling == "avvis":
-        utestaaende = _sjekk_utestaaende(conn, tenant, unntak_id)
-        if utestaaende is not None:
+        # 042 (Gate 14b): et levende OPPDRAG er ikke lenger en blindvei —
+        # nei-et løses opp i samme transaksjon: kapabiliteten brennes
+        # `avvist`, claimet fences, oppdraget kanselleres. 14a-svaret (409)
+        # står igjen KUN for levende arbeidskapabiliteter uten oppdrag —
+        # de har ingen oppløsningsvei ennå, og en vakt uten utvei er bedre
+        # enn en stille avvisning av evidens.
+        rader = conn.execute(
+            "SELECT kilde, ref, status FROM sak_utestaaende(%s,%s)",
+            (tenant, unntak_id)).fetchall()
+        levende_opp = [int(ref) for kilde, ref, st in rader
+                       if kilde == "oppdrag" and st in ("opprettet",
+                                                        "plukket")]
+        levende_kap = [ref for kilde, ref, st in rader
+                       if kilde == "kapabilitet"]
+        terminale = {int(ref): st for kilde, ref, st in rader
+                     if kilde == "oppdrag"
+                     and st not in ("opprettet", "plukket")}
+        if levende_kap and not levende_opp:
+            utestaaende = _sjekk_utestaaende(conn, tenant, unntak_id)
             return _flagg_avklaring(conn, tenant, unntak_id, utestaaende,
                                     aktor, request_id, idempotency_key)
+        # Selve oppløsningen skjer i TERMINALGRENEN under (etter runde-
+        # og attestasjonsstegene): en avvis som uansett felles av
+        # Godkjenningsfeil skal aldri ha rørt et oppdrag først.
+        if terminale and not levende_opp:
+            # Utenfor kappløpet (port 13): terminalt oppdrag er ordinært
+            # avvis — men hendelsen skal bære hva mennesket visste.
+            opplosning_detalj = {
+                "oppdrag_status_ved_avvis": [
+                    {"oppdrag_id": oid, "status": st}
+                    for oid, st in sorted(terminale.items())]}
 
     # --- 7. Aktiv runde (åpne under låsen ved behov) ----------------------
     runde = conn.execute(
@@ -370,14 +398,54 @@ def behandle_unntakshandling(conn: psycopg.Connection, pool, mac_register, *,
                        saksversjon)
 
     if operatorhandling == "avvis":
+        if levende_opp:
+            # 042: nei-et og beviset i ÉN transaksjon — kapabiliteten
+            # brennes `avvist`, claimet fences, oppdraget kanselleres.
+            res = conn.execute(
+                "SELECT utfall, oppdrag_id, oppdrag_status_ved_avvis,"
+                " kvitteringsref FROM avvis_med_opplosning(%s,%s,%s,%s,%s)",
+                (tenant, unntak_id, levende_opp, aktor,
+                 request_id)).fetchall()
+            vunnet = [r for r in res if r[0] == "oppdrag_utfort"]
+            if vunnet:
+                # Kvitteringen vant kappløpet: kansellér INGENTING —
+                # rollbacken tar attestasjonen, runden og eventuelle andre
+                # oppdrags oppløsning i samme kall, for et delvis nei er
+                # ikke det mennesket sa nei til. Idempotensraden rulles
+                # også tilbake: en retry skal møte den NYE tilstanden
+                # (terminalt oppdrag → ordinært avvis).
+                conn.rollback()
+                return {"utfall": "oppdrag_utfort",
+                        "unntak_id": unntak_id,
+                        "oppdrag_id": int(vunnet[0][1]),
+                        "kvitteringsref": vunnet[0][3]}
+            opplosning_detalj = {
+                "opplost": [{"oppdrag_id": int(r[1]),
+                             "oppdrag_status_ved_avvis": r[2]}
+                            for r in res if r[0] == "kansellert"]}
         conn.execute("UPDATE godkjenningsrunde SET status='kansellert'"
                      " WHERE tenant=%s AND unntak_id=%s AND runde=%s",
                      (tenant, unntak_id, r_nr))
         conn.execute("UPDATE unntak SET status='avvist' WHERE tenant=%s AND id=%s",
                      (tenant, unntak_id))
-        _historikk(conn, tenant, unntak_id, "avvist_handling", aktor, request_id)
+        if opplosning_detalj is not None:
+            # Port 7/13: hendelsen bærer oppløsningen — begge hoppene står
+            # alt i historikken (oppdrag_fencet + oppdrag_kansellert,
+            # skrevet av avvis_med_opplosning i SAMME transaksjon).
+            conn.execute(
+                "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse,"
+                " aktor, request_id, detalj) VALUES"
+                " (%s,%s,'avvist_handling',%s,%s,%s)",
+                (tenant, unntak_id, aktor, request_id,
+                 json.dumps(opplosning_detalj, ensure_ascii=False)))
+        else:
+            _historikk(conn, tenant, unntak_id, "avvist_handling", aktor,
+                       request_id)
         return _fullfor(conn, tenant, idempotency_key,
-                        {"utfall": "avvist", "unntak_id": unntak_id})
+                        {"utfall": "avvist", "unntak_id": unntak_id,
+                         **({"opplosning": opplosning_detalj["opplost"]}
+                            if opplosning_detalj
+                            and "opplost" in opplosning_detalj else {})})
 
     if operatorhandling == "eskaler":
         conn.execute("UPDATE godkjenningsrunde SET status='kansellert'"
@@ -691,6 +759,16 @@ def handling_endepunkt(tjeneste, request, unntak_id: int):
         # og UI-et viser avklaringsteksten i stedet for en generisk 409.
         if res.get("utfall") == "utestaaende_oppdrag":
             return _feilsvar_kode("utestaaende_oppdrag", rid)
+        # 042: kvitteringen vant kappløpet. Kan systemet bevise at
+        # handlingen ble utført, skal det ikke skrive «avvist» som om
+        # nei-et rakk fram — mennesket beslutter på nytt, med referansen.
+        if res.get("utfall") == "oppdrag_utfort":
+            return JSONResponse(
+                {"feil": "oppdrag_utfort",
+                 "oppdrag_id": res.get("oppdrag_id"),
+                 "kvitteringsref": res.get("kvitteringsref"),
+                 "request_id": rid},
+                status_code=409, headers={"x-request-id": rid})
         return JSONResponse(res, status_code=200,
                             headers={"x-request-id": rid})
     finally:
