@@ -2236,6 +2236,103 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
 
 
 @pg
+def test_tickskriveren_deler_planlaasen_med_pausen(migrator):
+    """Codex P2 (#105): låsen beskyttet BESLUTNINGEN, ikke EVIDENSEN.
+
+    `pause_gjentatt_uten_resultat` låser planraden FOR UPDATE, leser
+    DERETTER «de tre siste tickene», låser deres oppdragsnøkler og
+    avgjør. Men `terminaliser_planvindu` — den eneste som kan endre
+    hvilke tick det ER — tok aldri den låsen. Et fjerde, ferskere
+    `brudd`-tick som committet mellom utvalget og pausen brøt altså
+    stripen uten at sveipen så det, og planen ble pauset som
+    `gjentatt_uten_resultat` på en strek som ikke lenger fantes — en
+    pause bare et menneske kan oppheve.
+
+    Målt deterministisk, som runde 4s promoteringslås: terminaliseringen
+    står ÅPEN (planlåsen tatt, ticket usynlig for alle andre), og
+    sveipen må VENTE på den — for så å se `brudd`-et og la planen stå.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `PERFORM 1 FROM bestillingsplan
+    ... FOR UPDATE` i `terminaliser_planvindu`. Da løper sveipen forbi
+    den åpne terminaliseringen, ser tre `tillat` uten resultat, og
+    pauser planen.
+    """
+    import threading
+    import time
+    from plan.klassifiser import _nokkel
+    rt = _rt()
+    blokk = _rt()
+    svar = {}
+    try:
+        pid = _plan_forfalt(rt, migrator, host="p105-p2.example",
+                            aktiver_dager=5)
+        # Tre `tillat` uten resultat: planen ER kandidat akkurat nå.
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
+                                  slutt_h=-26 - 24 * i)
+            _syntetisk_tick(migrator, pid, vs, "tillat")
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT count(*) FROM planer_gjentatt_uten_resultat()"
+            " WHERE plan_id=%s", (pid,)).fetchone()[0] == 1, \
+            "planen er ikke kandidat — testen ville målt ingenting"
+        rt.commit()
+
+        # Det fjerde, FERSKESTE vinduet: et levende claim, som etter #105
+        # er kravet for et hvilket som helst ikke-`hoppet_over`-utfall.
+        v4 = _syntetisk_vindu(migrator, pid, start_h=-6, slutt_h=-2,
+                              tilstand="aktivt", lease_h=1)
+        _sett_kontekst(migrator, TENANT)
+        claim = migrator.execute(
+            "SELECT claim_id FROM bestillingsplan_vindu WHERE plan_id=%s"
+            " AND vindu_start=%s", (pid, v4)).fetchone()[0]
+        migrator.rollback()
+
+        # ÅPEN terminalisering: planlåsen er tatt, ticket er ikke committet.
+        _sett_kontekst(blokk, TENANT)
+        assert blokk.execute(
+            "SELECT terminaliser_planvindu(%s,%s,%s,%s,%s,'brudd',NULL,NULL)",
+            (TENANT, pid, v4, claim, _nokkel(pid, v4))).fetchone()[0] \
+            == "terminalisert"
+
+        def sveip():
+            c = _rt()
+            try:
+                _sett_kontekst(c, TENANT)
+                svar["pauset"] = c.execute(
+                    "SELECT pause_gjentatt_uten_resultat(%s,%s,'plansveip',"
+                    "'r-sveip')", (TENANT, pid)).fetchone()[0]
+                c.commit()
+            finally:
+                c.close()
+
+        t = threading.Thread(target=sveip)
+        t.start()
+        time.sleep(1.5)
+        assert "pauset" not in svar, \
+            "sveipen løp forbi en åpen terminalisering — låsen deles ikke"
+        blokk.commit()
+        t.join(timeout=20)
+        assert not t.is_alive(), "sveipen kom aldri forbi låsen"
+    finally:
+        blokk.close()
+        rt.close()
+    assert svar.get("pauset") is False, svar
+    _sett_kontekst(migrator, TENANT)
+    status = migrator.execute(
+        "SELECT status FROM bestillingsplan WHERE plan_id=%s",
+        (pid,)).fetchone()[0]
+    ticks = migrator.execute(
+        "SELECT utfall FROM bestillingsplan_tick WHERE plan_id=%s"
+        " ORDER BY vindu_start DESC", (pid,)).fetchall()
+    migrator.rollback()
+    assert status == "aktiv", \
+        f"planen ble pauset enda et `brudd` brøt stripen: tick={ticks}"
+    assert [u for (u,) in ticks] == ["brudd", "tillat", "tillat", "tillat"], \
+        ticks
+
+
+@pg
 def test_et_brudd_bryter_stripen_uten_resultat(migrator):
     """Codex P2: strekken måles på de tre SISTE tickene, ikke de tre siste
     VELLYKKEDE.

@@ -1,6 +1,14 @@
 -- ============================================================
--- 045 — et tick krever et LEVENDE claim eller en VERIFISERT fasit
---       (Codex P1 på #105, levert tre minutter etter mergen)
+-- 045 — et tick krever BEVIS, og tick-skriveren deler planlåsen
+--       (Codex P1 + P2 på #105, levert tre minutter etter mergen)
+--
+-- Begge funnene bor i `terminaliser_planvindu`, og begge har samme form:
+-- funksjonen er den eneste tick-SKRIVEREN, men den deltok verken i
+-- autoritetskravet den håndhever for andre veier eller i låsen resten av
+-- planfamilien bygger sine beslutninger på.
+--
+-- ------------------------------------------------------------
+-- FUNN 1 (P1) — et tick krever et LEVENDE claim eller en VERIFISERT fasit
 --
 -- FUNNET. `terminaliser_planvindu` er den eneste tick-skriveren, og
 -- fencingen der sto som en ELSIF-gren:
@@ -61,6 +69,29 @@
 -- `hoppet_over` beholder sine egne porter uendret: den skal jo nettopp
 -- felles uten claim, og har utløpt vindu + INTET idempotenstreff som
 -- sine krav.
+--
+-- ------------------------------------------------------------
+-- FUNN 2 (P2) — tick-innsettingen deler planlåsen med pausebeslutningen
+--
+-- Runde 4 flyttet kappløpet mellom artefaktpromotering og pausen inn
+-- under en lås på FAKTUMET. Det gjenstående kappløpet er et annet:
+-- `pause_gjentatt_uten_resultat` og `varsle_plan_brudd` låser planraden
+-- FOR UPDATE, leser DERETTER «de tre siste tickene», låser deres
+-- oppdragsnøkler og avgjør — men denne funksjonen, som er den ENESTE
+-- som kan endre hvilke tick det er, tok aldri den låsen.
+--
+-- Et fjerde, ferskere `brudd`-tick som committer etter utvalget, men før
+-- pausen, bryter altså stripen uten at sveipen ser det: planen pauses
+-- som `gjentatt_uten_resultat` på en strek som ikke lenger finnes, og
+-- den pausen kan bare et menneske oppheve. Speilvendt var et nytt
+-- `tillat`-ticks oppdrag ikke med i låsesettet, så artefaktlåsen fra
+-- runde 4 dekket det ikke.
+--
+-- Roten er at låsen beskyttet BESLUTNINGEN, men ikke EVIDENSEN
+-- beslutningen leser. Rettingen er å la skriveren delta i den samme
+-- låsen; predikatene er uendret. Begrunnelsen for FOR UPDATE framfor
+-- FOR SHARE, og for at låserekkefølgen vindu → plan står urørt, ligger
+-- ved selve låsen i funksjonen under.
 -- ============================================================
 
 -- Eierskapet er 044s: planfunksjonene er CLAIMER-eide, og CREATE OR
@@ -175,6 +206,39 @@ BEGIN
                 USING ERRCODE = 'invalid_parameter_value';
         END IF;
     END IF;
+    -- TICK-INNSETTINGEN DELER PLANLÅSEN MED PAUSEBESLUTNINGEN
+    -- (Codex P2 på #105). Sveipene bygde hele sin serialisering på
+    -- planraden: `pause_gjentatt_uten_resultat` og `varsle_plan_brudd`
+    -- tar den FOR UPDATE, leser så de tre siste tickene, låser deres
+    -- oppdragsnøkler og avgjør. Men SKRIVEREN av tick — denne
+    -- funksjonen — tok den aldri. Låsen serialiserte altså sveipene mot
+    -- hverandre og mot promoteringen, og ikke mot det ene som avgjør
+    -- hva «de tre siste» ER.
+    --
+    -- Følgen: et fjerde, ferskere `brudd`-tick som committer etter at
+    -- sveipen leste utvalget, men før pausen, BRYTER stripen uten at
+    -- sveipen ser det — planen pauses som `gjentatt_uten_resultat` på
+    -- en strek som ikke lenger finnes, og bare et menneske kan oppheve
+    -- den pausen. Speilvendt: et nytt `tillat`-ticks oppdrag var ikke
+    -- med i låsesettet, så artefaktlåsen fra runde 4 dekket det ikke,
+    -- og promoteringen av nettopp DET resultatet var fri igjen.
+    --
+    -- Låsen tas her, ETTER vindusraden, så den globale rekkefølgen
+    -- vindu → plan → oppdragsresultat → varsellås står uendret; ingen
+    -- vei går motsatt vei (`pause_plan`, `stans_plan`, `gjenoppta_plan`
+    -- og sveipene rører aldri en vindusrad under planlåsen).
+    --
+    -- FOR UPDATE, ikke FOR SHARE, selv om eksklusjon mot sveipen er alt
+    -- som trengs: materialisereren terminaliserer og pauser i SAMME
+    -- transaksjon (runde 3), og med FOR SHARE her ville den oppgradert
+    -- til FOR UPDATE på samme rad. To arbeidere som terminaliserer hvert
+    -- sitt vindu på samme plan ville da holdt hver sin delte lås og
+    -- ventet på hverandres oppgradering — en vranglås som først dukker
+    -- opp den dagen en plan har to vinduer i kø. Å ta den eksklusivt med
+    -- én gang koster serialisering av terminaliseringer på samme plan,
+    -- som skjer én gang per vindu.
+    PERFORM 1 FROM public.bestillingsplan b
+     WHERE b.plan_id = p_plan AND b.tenant = p_tenant FOR UPDATE;
     UPDATE public.bestillingsplan_vindu w
        SET tilstand = 'terminal', terminalisert_ts = now()
      WHERE w.plan_id = p_plan AND w.tenant = p_tenant
