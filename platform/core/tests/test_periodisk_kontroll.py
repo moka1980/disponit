@@ -603,6 +603,49 @@ def test_to_materialiserere_en_claim(migrator):
         rt.close()
 
 
+@pg
+def test_claimet_nekter_et_utlopt_vindu(migrator, app, monkeypatch):
+    """Codex P1: utløpet må sjekkes ATOMISK med claimet, ikke bare i
+    plukket.
+
+    Plukket gir en BATCH som arbeides ned sekvensielt, og hver bestilling
+    er et HTTP-kall. En rad som lå innenfor vinduet da batchen ble valgt,
+    kan være minutter utenfor når turen kommer til den — og uten
+    kontrollen her ble et misset vindu til en INNHENTING, stikk i strid
+    med §5s aldri-ta-igjen."""
+    from plan import materialiser
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p-utlopt.example")
+        # Vinduet er lukket: batchen var fersk, turen kom for sent.
+        vs = _syntetisk_vindu(migrator, pid, start_h=-8, slutt_h=-4,
+                              tilstand="ledig")
+        _sett_kontekst(rt, TENANT)
+        u = rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
+                       (TENANT, pid, vs)).fetchone()[0]
+        rt.commit()
+        assert u == "utlopt"
+
+        def aldri(*a, **k):
+            raise AssertionError("et utløpt vindu nådde bestillingsveien")
+        import api.bestilling
+        monkeypatch.setattr(api.bestilling, "utfor_bestilling", aldri)
+        rad = (pid, TENANT, vs, None, None, "kontroll.wcag.nettsted",
+               _param("p-utlopt.example"))
+        res = materialiser.materialiser_en(app.tjeneste, rt, rad)
+        assert res.get("hoppet") == "utlopt", res
+        # Vinduet er urørt og står til klassifisereren: ingen innhenting,
+        # men heller ingen tapt evidens.
+        _sett_kontekst(migrator, TENANT)
+        vindu = migrator.execute(
+            "SELECT tilstand, claim_id FROM bestillingsplan_vindu"
+            " WHERE plan_id=%s AND vindu_start=%s", (pid, vs)).fetchone()
+        migrator.rollback()
+        assert vindu == ("ledig", None), vindu
+    finally:
+        rt.close()
+
+
 def test_nokkelen_er_deterministisk():
     """Port 12: nøkkelen er en ren funksjon av plan + vindu, innenfor
     8–200 tegn — og klassifisereren avleder NØYAKTIG samme form uten å

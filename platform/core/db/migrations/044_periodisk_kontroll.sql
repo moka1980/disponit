@@ -547,6 +547,17 @@ BEGIN
         -- AVBRYT — ingen POST. Terminal er absorberende.
         RETURN QUERY SELECT 'terminal'::text, NULL::uuid; RETURN;
     END IF;
+    -- UTLØPET SJEKKES HER, IKKE BARE I PLUKKET (Codex P1). Plukket
+    -- returnerer en BATCH som arbeides ned sekvensielt, og hver
+    -- bestilling er et HTTP-kall: en rad som var innenfor vinduet da
+    -- batchen ble valgt, kan være minutter utenfor når turen kommer til
+    -- den. Uten dette leddet ble et misset vindu til en INNHENTING —
+    -- stikk i strid med §5s aldri-ta-igjen. Kontrollen må skje atomisk
+    -- med selve claimet: alt annet er et tidsvindu mellom sjekk og bruk.
+    -- Vinduet står `ledig` og klassifisereren feller `hoppet_over`.
+    IF now() >= v.vindu_slutt THEN
+        RETURN QUERY SELECT 'utlopt'::text, NULL::uuid; RETURN;
+    END IF;
     IF v.tilstand = 'aktivt' AND v.lease_utloper > now() THEN
         RETURN QUERY SELECT 'aktivt'::text, NULL::uuid; RETURN;
     END IF;
