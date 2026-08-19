@@ -649,6 +649,134 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- 9.1 EN PERMISSIV POLICY LEGGER TIL — DEN TREKKER IKKE FRA (Codex P2).
+--
+-- PostgreSQL OR-er permissive policyer. Policyen over gir altså
+-- adjudikatoren et snitt; den fjerner ingenting fra det `tenant_isolasjon`
+-- (003 §9) allerede slipper gjennom, og den sier bare
+-- `tenant = current_setting('disponit.tenant', true)`. `disponit.tenant`
+-- er en fritt skrivbar GUC, og runtime-rollen har SELECT på `unntak` fra
+-- før. Én SQL-injeksjon — eller én kompromittert runtime-forbindelse —
+-- kunne dermed sette GUC-en til `__plattform_domener` og lese hele
+-- saksflaten: hvert omstridt vertsnavn, utfordreren og motparten ved navn,
+-- generasjonen og lineagen. Uten å anta adjudikatorrollen, uten scope, og
+-- uten å passere utfordrerfilteret i køen. Gjerdet i §9 var reelt for den
+-- som gikk gjennom døra; det sto bare ingenting rundt bygget.
+--
+-- En RESTRICTIVE policy er den eneste formen som TREKKER FRA: den AND-es
+-- inn i alt annet, så ingen permissiv policy kan OR-e seg forbi den.
+--
+-- HVEM SLIPPER GJENNOM, OG HVORFOR NØYAKTIG DE TRE:
+--   * `disponit_m37_claimer` — skriveren av saken (§10) og av arkiv-
+--     merkingen (§20). Ser radene via m37_dispatcher (CURRENT_USER).
+--   * `disponit_domains_adjudicator` — køen og attestasjonsveien, avgrenset
+--     av policyen over.
+--   * TABELLEIEREN — og det er en GRENSE, ikke en glipp: eieren er den
+--     ENESTE rollen med DELETE på disse tabellene, altså den eneste som kan
+--     rydde eller reparere en plattformrad, og den kan uansett slå av RLS
+--     eller droppe denne policyen. En RLS-policy har aldri vært en skranke
+--     mot DDL-rollen. Oppslaget er en uavhengig delspørring (InitPlan,
+--     evalueres én gang per spørring, ikke per rad) og leses fra katalogen
+--     i stedet for å bli spikret som et rollenavn — ellers ville
+--     eierskapsreparasjonen (FIX-009) kunne flytte eierskapet fra under
+--     policyen uten at noen merket det.
+-- `disponit_domene_eier` står ikke i listen: den har BYPASSRLS (PR-014b) og
+-- ser radene uansett policy.
+--
+-- WITH CHECK følger USING: en injeksjon skal heller ikke kunne SKRIVE en
+-- rad inn i plattformens navnerom gjennom kundeflaten.
+--
+-- TRE TABELLER, IKKE ÉN. Saken bor i `unntak`, men `unntak_historikk` er
+-- speilet av nøyaktig de samme radene (`unntak_historikkforing` kopierer
+-- `NEW.tenant`, 003 §4), og `revisjonslogg` bærer loggposten med
+-- `referansepayload` — som inneholder vertsnavnet og BEGGE tenant-ID-ene i
+-- klartekst. En isolasjon som bare gjelder saken lekker den samme
+-- konflikten gjennom evidensen.
+--
+-- Leddet er prefiksbredt, ikke navnebredt: §8 reserverer HELE
+-- `__`-navnerommet, og da skal ikke neste plattformtenant måtte huske å
+-- utvide en liste.
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['unntak', 'unntak_historikk', 'revisjonslogg']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS reservert_navnerom ON %I', t);
+    EXECUTE format($p$
+      CREATE POLICY reservert_navnerom ON %I AS RESTRICTIVE
+        USING      (tenant NOT LIKE E'\\_\\_%%'
+                    OR CURRENT_USER IN ('disponit_m37_claimer',
+                                        'disponit_domains_adjudicator')
+                    OR CURRENT_USER = (SELECT pg_catalog.pg_get_userbyid(
+                                                c.relowner)
+                                         FROM pg_catalog.pg_class c
+                                        WHERE c.oid = %L::pg_catalog.regclass))
+        WITH CHECK (tenant NOT LIKE E'\\_\\_%%'
+                    OR CURRENT_USER IN ('disponit_m37_claimer',
+                                        'disponit_domains_adjudicator')
+                    OR CURRENT_USER = (SELECT pg_catalog.pg_get_userbyid(
+                                                c.relowner)
+                                         FROM pg_catalog.pg_class c
+                                        WHERE c.oid = %L::pg_catalog.regclass))
+    $p$, t, 'public.' || t, 'public.' || t);
+  END LOOP;
+END $$;
+
+-- 9.2 VAKTBIKKJAS EGET SPØRSMÅL — den gikk gjennom hullet §9.1 lukket.
+--
+-- `vokt_ventende_overtakelseskonflikter` (api/domeneovertakelse.py) leste
+-- saken ved å sette `disponit.tenant = '__plattform_domener'` på
+-- arbeiderens forbindelse. Det er NØYAKTIG veien §9.1 stenger — at vår
+-- egen vakt gikk den, er ikke et argument for å la den stå åpen; det er
+-- funnet, sett fra innsiden.
+--
+-- Vakten skal heller ikke ha adjudikatorrollen. Den trenger ett svar, ikke
+-- et snitt: «har DENNE raden sin sak?». En rolle som ser hver
+-- overtakelsessak i klyngen, gitt til en bakgrunnsløkke for å svare ja
+-- eller nei, er å betale i leseflate for en boolean.
+--
+-- Funksjonen er derfor claimer-eid og SECURITY DEFINER: inne i den er
+-- CURRENT_USER claimeren, som ser radene via m37_dispatcher (005) og står
+-- i §9.1s liste. Den tar konfliktens fire ledd — de samme fire som
+-- §7-vakten — og returnerer én boolean. Ingen rad, ingen kolonne, ingen
+-- annen tenants vertsnavn krysser grensen.
+SET LOCAL ROLE disponit_m37_claimer;
+CREATE OR REPLACE FUNCTION overtakelsessak_finnes(
+    p_hostname TEXT, p_utfordrer TEXT, p_motpart TEXT, p_generasjon BIGINT)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.unntak
+     WHERE tenant = '__plattform_domener'
+       AND hostname_ref = p_hostname
+       AND sakskilde = 'domeneovertakelse'
+       AND NOT terminal
+       AND utfordrer_tenant = p_utfordrer
+       AND tapt_tenant = p_motpart
+       AND autorisasjonsgenerasjon = p_generasjon)
+$$;
+
+-- Rettighetene gis av FUNKSJONENS eier, altså her inne — samme regel som
+-- §10s `GRANT EXECUTE ... TO disponit_domene_eier`. Rolleskillet er
+-- plukkets eget (039 §3): funksjonen er verdiløs uten
+-- `ventende_overtakelseskonflikter` og meningsløs for noen andre, så den
+-- skal ligge hos NØYAKTIG den rollen som har plukket.
+REVOKE ALL ON FUNCTION overtakelsessak_finnes(TEXT, TEXT, TEXT, BIGINT)
+    FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit_arbeider') THEN
+    GRANT EXECUTE ON FUNCTION overtakelsessak_finnes(TEXT, TEXT, TEXT, BIGINT)
+        TO disponit_arbeider;
+    REVOKE EXECUTE ON FUNCTION overtakelsessak_finnes(TEXT, TEXT, TEXT, BIGINT)
+        FROM disponit;
+  ELSE
+    GRANT EXECUTE ON FUNCTION overtakelsessak_finnes(TEXT, TEXT, TEXT, BIGINT)
+        TO disponit;
+  END IF;
+END $$;
+
+RESET ROLE;
+
 -- ------------------------------------------------------------
 -- 10. sikre_overtakelsessak() — claimer-eid, alt i én transaksjon
 -- ------------------------------------------------------------

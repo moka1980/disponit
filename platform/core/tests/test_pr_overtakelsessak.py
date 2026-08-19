@@ -29,6 +29,7 @@ Portoversikt → test (numrene er klarsignalets):
   26–28    test_port26_28_totalitet
   29–31    test_port29_31_sak_og_logg
   32–36    test_port32_36_roller_og_synlighet
+  §9.1     test_reservert_navnerom_er_stengt_for_runtime (Codex P2)
   37       test_port37_python_veien_er_stengt
   38       test_port38_payloadtyper_er_gjensidig_utelukkende
   41       test_port41_varselfeil_feller_ikke_saken
@@ -1236,6 +1237,68 @@ def test_port32_36_roller_og_synlighet(migrator):
                        match="flyttes aldri|kan endres"):
         migrator.execute("UPDATE unntak SET tenant=%s WHERE tenant=%s"
                          " AND id=%s", (ANNEN_TENANT, PLATT, sak))
+    migrator.rollback()
+
+
+@pg
+def test_reservert_navnerom_er_stengt_for_runtime(migrator):
+    """Codex P2: en PERMISSIV policy legger til — den trekker ikke fra.
+
+    Adjudikatorpolicyen (§9) ga et snitt, men fjernet ingenting fra det
+    `tenant_isolasjon` alt slapp gjennom, og den sier bare
+    `tenant = current_setting('disponit.tenant', true)`. GUC-en er fritt
+    skrivbar og runtime har SELECT på `unntak`: én injeksjon kunne sette den
+    til plattformtenanten og lese hvert omstridt vertsnavn, begge partene,
+    generasjonen og lineagen — uten å anta adjudikatorrollen og uten å
+    passere utfordrerfilteret i køen.
+
+    Tre tabeller, fordi konflikten står tre steder: saken i `unntak`,
+    speilet i `unntak_historikk`, og loggposten i `revisjonslogg` — den
+    siste med vertsnavnet og BEGGE tenant-ID-ene i klartekst i
+    `referansepayload`.
+
+    Eieren står med vilje IKKE i porten: den er den eneste rollen med DELETE
+    på disse tabellene (rydding og reparasjon er eierarbeid) og kan uansett
+    slå av RLS. Andre halvdel her måler nettopp at den veien er intakt.
+    """
+    from db.pg import koble, sett_kontekst
+    h = _host()
+    sak, _ = _konflikt(migrator, h)
+
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, PLATT, "test", "r1")
+        for sql, args in (
+                ("SELECT count(*) FROM unntak WHERE id=%s", (sak,)),
+                ("SELECT count(*) FROM unntak_historikk WHERE unntak_id=%s",
+                 (sak,)),
+                ("SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+                 (PLATT,))):
+            assert rt.execute(sql, args).fetchone()[0] == 0, sql
+        rt.rollback()
+        # ...og skriveveien er stengt likedan: WITH CHECK følger USING, så
+        # en injeksjon kan heller ikke PLANTE en rad i navnerommet.
+        sett_kontekst(rt, PLATT, "test", "r1")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,"
+                "beslutning,begrunnelse) VALUES (%s,'h-res','p','TILLAT','[]')",
+                (PLATT,))
+        rt.rollback()
+        # Kundetenanten er urørt — gjerdet gjelder navnerommet, ikke alt.
+        sett_kontekst(rt, TENANT, "test", "r1")
+        rt.execute(
+            "INSERT INTO revisjonslogg (tenant,input_hash,policy_id,"
+            "beslutning,begrunnelse) VALUES (%s,'h-res','p','TILLAT','[]')",
+            (TENANT,))
+        rt.rollback()
+    finally:
+        rt.close()
+
+    # Eierveien står: uten den kan ingen rydde eller reparere en plattformrad.
+    _sett_kontekst(migrator, PLATT)
+    assert migrator.execute("SELECT count(*) FROM unntak WHERE id=%s",
+                            (sak,)).fetchone()[0] == 1
     migrator.rollback()
 
 

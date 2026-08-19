@@ -23,7 +23,6 @@ er per definisjon en menneskelig/sikkerhetsavgjørelse.
 """
 import hashlib
 import json
-import secrets
 
 import psycopg
 
@@ -43,6 +42,9 @@ FAMILIE = "domeneovertakelse"
 HANDLING = "domene.overtakelse"
 
 #: 041: sakens eier — reservert plattformtenant, aldri en kunde (port 35).
+#: Python SETTER den ikke lenger som RLS-kontekst noe sted (§9.1 stengte den
+#: veien); navnet står her fordi det er sakens adresse, og fordi en leser som
+#: møter `__plattform_domener` i en SQL-streng skal finne det navngitt ett sted.
 PLATTFORMTENANT = "__plattform_domener"
 
 
@@ -100,7 +102,6 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
     teller ville vært å flagge et hull uten å lukke det: raden krever en
     operatør, og journalen skal si det hver syklus til den er borte.
     """
-    from db.pg import sett_kontekst
     rader = conn.execute(
         "SELECT tenant, hostname, motpart, generasjon"
         " FROM ventende_overtakelseskonflikter(%s)", (grense,)).fetchall()
@@ -110,26 +111,31 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
     conn.commit()
     res = {"funnet": len(rader), "med_sak": 0, "uten_sak": []}
     for tenant, hostname, motpart, generasjon in rader:
-        rid = "konfliktvakt-" + secrets.token_hex(8)
-        # Saken bor på plattformtenanten — lesingen skjer i DENS
-        # RLS-kontekst, aldri kundens.
-        sett_kontekst(conn, PLATTFORMTENANT, "konfliktvakt", rid)
-        # Samme fire ledd som §7-vakten, og MOTPARTEN er ett av dem
-        # (Codex P2): en sak som navngir en annen tapende part enn raden
-        # står i konflikt med, er ikke RADENS sak — og en vakt som godtok
-        # den ville meldt «alt i orden» om nøyaktig den forvekslingen den
-        # finnes for å oppdage.
-        sak = conn.execute(
-            "SELECT 1 FROM unntak"
-            " WHERE tenant=%s AND hostname_ref=%s"
-            "   AND sakskilde='domeneovertakelse'"
-            "   AND NOT terminal AND utfordrer_tenant=%s"
-            "   AND tapt_tenant=%s"
-            "   AND autorisasjonsgenerasjon=%s",
-            (PLATTFORMTENANT, hostname, tenant, motpart,
-             int(generasjon))).fetchone()
+        # `overtakelsessak_finnes` (041 §9.2), ikke et direkte oppslag mot
+        # `unntak` (Codex P2). Vakten leste tidligere saken ved å sette
+        # `disponit.tenant = '__plattform_domener'` — altså gjennom
+        # `tenant_isolasjon` og den fritt skrivbare GUC-en. 041 §9.1 stenger
+        # den veien for runtime- og arbeiderrollen, og at det var VÅR EGEN
+        # vakt som gikk den, er ikke et argument for å la den stå åpen: det
+        # er funnet, sett fra innsiden.
+        #
+        # Adjudikatorrollen ville også vært feil pris. Vakten trenger ett
+        # svar, ikke et snitt — en rolle som ser hver overtakelsessak i
+        # klyngen, gitt til en bakgrunnsløkke for å svare ja eller nei, er å
+        # betale i leseflate for en boolean. Funksjonen er claimer-eid og
+        # SECURITY DEFINER, tar konfliktens fire ledd og gir tilbake nøyaktig
+        # den ene booleanen.
+        #
+        # De fire leddene er §7-vaktens egne, og MOTPARTEN er ett av dem
+        # (Codex P2): en sak som navngir en annen tapende part enn raden står
+        # i konflikt med, er ikke RADENS sak — og en vakt som godtok den
+        # ville meldt «alt i orden» om nøyaktig den forvekslingen den finnes
+        # for å oppdage.
+        har_sak = conn.execute(
+            "SELECT overtakelsessak_finnes(%s,%s,%s,%s)",
+            (hostname, tenant, motpart, int(generasjon))).fetchone()[0]
         conn.rollback()
-        if sak is None:
+        if not har_sak:
             res["uten_sak"].append({"tenant": tenant, "hostname": hostname,
                                     "generasjon": int(generasjon)})
         else:
