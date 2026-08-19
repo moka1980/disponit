@@ -2113,9 +2113,19 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
             " WHERE plan_id=%s", (pid,)).fetchone()[0]
     finally:
         sveipet.close()
-    assert kandidater == 0, "planen står igjen som kandidat med et resultat"
+    _sett_kontekst(migrator, TENANT)
+    fakta = migrator.execute(
+        "SELECT tenant, oppdrag_id, tilstand FROM artefakt"
+        " WHERE oppdrag_id = ANY(%s)", (oids,)).fetchall()
+    ticks = migrator.execute(
+        "SELECT vindu_start, utfall, oppdrag_id FROM bestillingsplan_tick"
+        " WHERE plan_id=%s ORDER BY vindu_start DESC", (pid,)).fetchall()
+    migrator.rollback()
+    assert kandidater == 0, \
+        f"planen står igjen som kandidat: artefakt={fakta} tick={ticks}"
     assert not any(p == str(pid) for p, _ in rest), \
-        f"sveipen pauset planen enda resultatet er promotert: {rest}"
+        f"sveipen pauset planen enda resultatet er promotert: {rest}" \
+        f" artefakt={fakta} tick={ticks}"
 
 
 @pg
