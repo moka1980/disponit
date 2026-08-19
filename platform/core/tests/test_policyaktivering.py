@@ -1353,6 +1353,43 @@ def test_ekstern_lesing_krever_plattformvilkar_ved_validering():
         r.close()
 
 
+def test_editorgrunnlagets_kravliste_er_kodens_egen():
+    """Port 32 (Codex P2): flatens lås er en påstand om at SERVEREN nekter
+    fjerningen — og kravet gjelder ikke overalt.
+
+    `_krev_malautorisasjonsvilkar` stiller det bare for en handling hvis
+    KODEFESTEDE type bærer `krever_malautorisasjon` med et domene: bærer
+    typen flagget, er `_er_ekstern_lesing` sann uten å spørre registeret
+    (koden først), og mangler flagget eller domenet, blir dommen en egen
+    feillinje i stedet for et vilkårskrav. Differansen er derfor ren kode,
+    og editoren skal lese nøyaktig den — ikke en liste ruta eller flaten
+    vedlikeholder ved siden av.
+
+    Uten domenebindingen låste editoren ethvert velformet plattformnavn,
+    også på en handling kravet ikke gjelder for: en rad serveren gjerne
+    ville sluppet, men som eier verken kunne redigere eller fjerne.
+    """
+    import oppdragskontrakt
+
+    from api.policy_historikk import _malautorisasjonskrav
+    krav = _malautorisasjonskrav()
+    assert krav, "ingen kravbærende type — da måler testen ingenting"
+    # Hver linje SVARER til den typen `type_for_handling` faktisk velger for
+    # en handling under prefikset. Det er den ene oppslagsveien
+    # `_krev_malautorisasjonsvilkar` går.
+    for k in krav:
+        t = oppdragskontrakt.type_for_handling(k["prefiks"] + "noe")
+        assert t is not None and t.krever_malautorisasjon, k
+        assert t.malautorisasjonsdomene == k["maldomene"], k
+    # …og ingen kravbærende type mangler i lista: en ny type ville ellers
+    # blitt et krav serveren stiller og flaten ikke kjenner.
+    forventet = {(p, t.malautorisasjonsdomene)
+                 for t in oppdragskontrakt.OPPDRAGSTYPER.values()
+                 if t.krever_malautorisasjon and t.malautorisasjonsdomene
+                 for p in t.handlingsprefikser}
+    assert {(k["prefiks"], k["maldomene"]) for k in krav} == forventet
+
+
 @pg
 def test_vilkarsdommen_caches_ikke_registeret_kan_repareres():
     """Codex P2: `_krev_malautorisasjonsvilkar` er en dom om REGISTERET.

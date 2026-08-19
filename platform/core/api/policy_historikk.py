@@ -41,6 +41,33 @@ def _loftbare() -> dict[str, str]:
     return LOFTBARE_GRUNNKODER
 
 
+#: Hvilke handlinger som i det hele tatt KREVER et målautorisasjonsvilkår,
+#: og for hvilket domene — som (prefiks, maldomene)-par fra `oppdragskontrakt`.
+#:
+#: Kravet i `_krev_malautorisasjonsvilkar` gjelder en handling nøyaktig når
+#: dens kodefestede type bærer `krever_malautorisasjon` OG et
+#: `malautorisasjonsdomene`: bærer typen flagget, er `_er_ekstern_lesing`
+#: sann uten å spørre registeret (koden først), og mangler flagget eller
+#: domenet, blir dommen en EGEN feillinje («ekstern_lesing uten
+#: målautorisasjonsbærende oppdragstype»), ikke et vilkårskrav. Denne
+#: differansen er derfor ren KODE — ingen `modulkontrakt`, ingen
+#: registerrad — og kan trygt leses av flaten.
+#:
+#: Flaten trenger den fordi låsen på en vilkårsrad er en påstand om at
+#: SERVEREN nekter fjerningen (port 31/34). Uten domenebindingen låste
+#: editoren ethvert velformet plattformnavn, også på en handling kravet
+#: ikke gjelder for — en rad serveren gjerne ville sluppet, men som eier
+#: verken kunne redigere eller fjerne (Codex P2).
+def _malautorisasjonskrav() -> list[dict]:
+    import oppdragskontrakt
+    return sorted(
+        ({"prefiks": p, "maldomene": t.malautorisasjonsdomene}
+         for t in oppdragskontrakt.OPPDRAGSTYPER.values()
+         if t.krever_malautorisasjon and t.malautorisasjonsdomene
+         for p in t.handlingsprefikser),
+        key=lambda k: (k["prefiks"], k["maldomene"]))
+
+
 def versjoner_endepunkt(tjeneste, request: Request) -> Response:
     from .app import _rid
     from .policyadmin_http import _ok
@@ -134,6 +161,11 @@ def editorgrunnlag_endepunkt(tjeneste, request: Request) -> Response:
         return _ok({
             "plattformvilkar": [{"vilkar_type": r[0], "maldomene": r[1]}
                                 for r in rader],
+            # Navnene alene holdt ikke her heller: uten å vite hvilket
+            # DOMENE den enkelte handlingen krever, låste flaten et
+            # velformet plattformnavn hvor som helst det sto (Codex P2).
+            # Se `_malautorisasjonskrav`.
+            "malautorisasjonskrav": _malautorisasjonskrav(),
             # Navnene alene holdt ikke (Codex P1): flaten må vite hvilket
             # FELT hver grunnkode krever, ellers lager den oppføringer
             # motoren ikke kan anvende. `krever` er feltnavnet;

@@ -33,7 +33,17 @@ globalThis.fetch = async (url, opts) => {
   if (sti === "/v1/policyadmin/editorgrunnlag") {
     return { ok: true, status: 200, json: async () => ({
       plattformvilkar: [{ vilkar_type: "domenekontroll_verifisert",
-                          maldomene: "web_hostname" }],
+                          maldomene: "web_hostname" },
+                        // Et registrert plattformvilkår for et ANNET domene:
+                        // det er aldri denne handlingens krav, og skal aldri
+                        // låses her.
+                        { vilkar_type: "annet_domenevilkar",
+                          maldomene: "annet_domene" }],
+      // Hvilke handlinger kravet i det hele tatt GJELDER for, og for
+      // hvilket domene (`oppdragskontrakt`). Registeret er plattform-
+      // globalt, kravet er ikke.
+      malautorisasjonskrav: [{ prefiks: "kontroll.wcag.",
+                               maldomene: "web_hostname" }],
       // `frekvensgrense_naadd` står med vilje i navnelista uten et krav:
       // motoren kan ikke løfte den, og flaten skal da ikke tilby den.
       godkjennbare_grunnkoder: ["belop_over_grense",
@@ -1369,9 +1379,19 @@ test("Overstyring: fravær er en TILSTAND, par legges til fra nedtrekk",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// `_krev_malautorisasjonsvilkar` stiller kravet KUN for en handling hvis
+// kodefestede type krever målautorisasjon, og bare for typens eget domene.
+// Låsen er en påstand om at serveren nekter fjerningen, så testene under
+// måler den der kravet faktisk finnes — `kontroll.wcag.`-prefikset. Motprøven
+// («…på en handling kravet ikke gjelder…») bruker malens egen `ordre.bekreft`.
+function medKravhandling(start) {
+  start.handlinger[0].id = "kontroll.wcag.nettsted";
+  return start;
+}
+
 test("Vilkår: plattformvilkåret er LÅST med aria-disabled og forklaring",
   async () => {
-    const start = JSON.parse(JSON.stringify(MAL));
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
     start.verifikatorer = { v_domenekontroll: {
       beskrivelse: "Plattformens domenekontroll",
       betrodd_for: ["domenekontroll_verifisert", "eget_vilkar"] } };
@@ -1450,7 +1470,7 @@ test("Vilkår: en ulesbar oppføring kan åpnes og fjernes, ikke krasje",
 // rettes eller fjernes, og utkastet kunne bare forkastes.
 test("Vilkår: et plattformvilkår uten betrodd verifikator kan repareres",
   async () => {
-    const start = JSON.parse(JSON.stringify(MAL));
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
     start.verifikatorer = { v_domenekontroll: {
       beskrivelse: "Plattformens domenekontroll",
       betrodd_for: ["domenekontroll_verifisert"] } };
@@ -1495,7 +1515,7 @@ test("Vilkår: et plattformvilkår uten betrodd verifikator kan repareres",
 // og en lås ville gjort utkastet til en blindgate.
 test("Vilkår: et plattformnavn ingen verifikator kan bære, kan fjernes",
   async () => {
-    const start = JSON.parse(JSON.stringify(MAL));
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
     start.verifikatorer = { v_annet: { betrodd_for: ["eget_vilkar"] } };
     start.handlinger[0].vilkaar = [{ navn: "domenekontroll_verifisert" }];
     const h = nyHoved();
@@ -1518,7 +1538,7 @@ test("Vilkår: et plattformnavn ingen verifikator kan bære, kan fjernes",
 // `min: "ugyldig"` var derfor «velformet» for låsen og ble låst, mens
 // serveren avviste den — samme blindgate som navnelåsen ga, én etasje ned.
 test("Vilkår: en rad skjemaet avviser på strukturen låses ikke", async () => {
-  const start = JSON.parse(JSON.stringify(MAL));
+  const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
   start.verifikatorer = { v_domenekontroll: {
     beskrivelse: "Plattformens domenekontroll",
     betrodd_for: ["domenekontroll_verifisert"] } };
@@ -1565,7 +1585,7 @@ test("Vilkår: en velformet rad med numerisk min er låst, og min overlever"
       window.Document.prototype, "cookie");
     Object.defineProperty(document, "cookie", { configurable: true,
       get: () => "__Host-disponit_csrf=tok123" });
-    const start = JSON.parse(JSON.stringify(MAL));
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
     start.verifikatorer = { v_domenekontroll: {
       betrodd_for: ["domenekontroll_verifisert"] } };
     start.handlinger[0].vilkaar = [
@@ -1605,6 +1625,94 @@ test("Vilkår: en velformet rad med numerisk min er låst, og min overlever"
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
     if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
   });
+
+// Codex P2: låsen målte et GLOBALT sett av vilkårsnavn. Registeret er
+// plattform-globalt, men kravet er ikke: `_krev_malautorisasjonsvilkar`
+// stiller det bare for handlinger hvis kodefestede type krever
+// målautorisasjon, og bare for typens eget domene. Et velformet
+// `domenekontroll_verifisert` som havnet på en vanlig `ordre.bekreft` ble
+// derfor umulig å fjerne — enda serveren gjerne ville sluppet fjerningen.
+test("Vilkår: et plattformvilkår på en handling uten kravet kan fjernes",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));   // `ordre.bekreft`
+    start.verifikatorer = { v_domenekontroll: {
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll" },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rad = h.querySelector(".vilkaar-rad");
+    assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+      "kravet gjelder ikke denne handlingen, så raden er ikke låst");
+    rad.querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => !h.querySelector(".vilkaar-rad"));
+    assert.equal(h.querySelectorAll(".vilkaar-rad").length, 0);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// …og motsatt vei: på en handling kravet GJELDER for, låses bare vilkåret
+// for handlingens EGET domene. Et registrert plattformvilkår for et annet
+// domene kan aldri tilfredsstille kravet, og skal derfor kunne fjernes.
+test("Vilkår: bare vilkåret for handlingens eget domene låses", async () => {
+  const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+  start.verifikatorer = { v_dk: {
+    betrodd_for: ["domenekontroll_verifisert", "annet_domenevilkar"] } };
+  start.handlinger[0].vilkaar = [
+    { navn: "domenekontroll_verifisert", verifikator: "v_dk" },
+    { navn: "annet_domenevilkar", verifikator: "v_dk" },
+  ];
+  const h = nyHoved();
+  visPolicyeditor(h, ctx(), { startPolicy: start });
+  await vent(() => h.querySelector(".editor-seksjon"));
+  gaaTilFane(h, t("ui.editor.fane.handlinger"));
+  await vent(() => h.textContent.includes(
+    t("ui.editor.vilkaar_plattform_forklaring")));
+  const rader = [...h.querySelectorAll(".vilkaar-rad")];
+  assert.equal(rader.length, 2);
+  assert.ok(rader[0].querySelector('[aria-disabled="true"]'),
+    "handlingens eget domene er kravet, og låses");
+  assert.ok(!rader[1].querySelector('[aria-disabled="true"]'),
+    "et annet domene kan aldri telle for denne handlingen");
+  assert.ok(rader[1].querySelector("button"), "…og må kunne fjernes");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// Fail-closed gjelder også en HALV grunnlagsrespons: uten kravlisten vet
+// flaten ikke hvilke handlinger kravet gjelder for, og kan ikke tilby en
+// fjerning serveren kanskje nekter.
+test("Vilkår: uten kravlisten i grunnlaget er ALT låst", async () => {
+  const gammelFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const sti = url.split("?")[0];
+    if (sti === "/v1/policyadmin/editorgrunnlag") {
+      const svar = await gammelFetch(url, opts);
+      const d = await svar.json();
+      delete d.malautorisasjonskrav;
+      return { ok: true, status: 200, json: async () => d };
+    }
+    return gammelFetch(url, opts);
+  };
+  try {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [{ navn: "eget_vilkar", verifikator: "v" }];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.querySelector(".vilkaar-liste"));
+    assert.ok(h.textContent.includes(t("ui.editor.vilkaar_grunnlag_mangler")));
+    assert.ok(!h.querySelector(".vilkaar-rad button"),
+      "ingen fjern-knapp uten kravlisten");
+  } finally {
+    globalThis.fetch = gammelFetch;
+  }
+});
 
 test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
   const gammelFetch = globalThis.fetch;

@@ -594,12 +594,51 @@ function betroddeFor(navn, verifikatorer) {
   });
 }
 
+// HVILKET måldomene DENNE handlingen krever et vilkår for — eller null når
+// kravet ikke gjelder den i det hele tatt.
+//
+// Kravlisten er serverens (`malautorisasjonskrav` i editorgrunnlaget), ikke
+// flatens: hvilke oppdragstyper som bærer `krever_malautorisasjon` og
+// hvilket domene de peker på er kodefestet, og skal leses fra kilden som
+// alt annet i grunnlaget (port 30/32).
+//
+// LENGSTE PREFIKS VINNER, samme regel som `oppdragskontrakt.
+// type_for_handling`: prefiksene er ikke disjunkte (`kontroll.wcag.` ligger
+// under `kontroll.`), så «første treff» ville gjort domenet — og dermed
+// låsen — avhengig av rekkefølgen i svaret.
+function krevdMaldomene(handlingId, grunnlag) {
+  if (typeof handlingId !== "string") return null;
+  const krav = (grunnlag && grunnlag.malautorisasjonskrav) || [];
+  let beste = null;
+  let bestLengde = -1;
+  for (const k of krav) {
+    if (!k || typeof k.prefiks !== "string"
+      || typeof k.maldomene !== "string") continue;
+    if (handlingId.startsWith(k.prefiks) && k.prefiks.length > bestLengde) {
+      beste = k.maldomene;
+      bestLengde = k.prefiks.length;
+    }
+  }
+  return beste;
+}
+
 function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
   const vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
-  const plattform = new Set(
+  // Navn → domenet vilkåret hører til. Navnet alene sier bare at raden er
+  // ET plattformvilkår, ikke at den er DENNE handlingens (Codex P2).
+  const plattform = new Map(
     ((grunnlag && grunnlag.plattformvilkar) || [])
-      .map((v) => v.vilkar_type));
-  const laastAlt = !grunnlag;
+      .filter((v) => v && typeof v.vilkar_type === "string")
+      .map((v) => [v.vilkar_type, v.maldomene]));
+  // Fail-closed som resten av grunnlaget: uten kravlisten vet flaten ikke
+  // hvilke handlinger kravet gjelder for, og da låses alt — aldri en flate
+  // som lover en fjerning serveren nekter.
+  const laastAlt = !grunnlag
+    || !Array.isArray(grunnlag.malautorisasjonskrav);
+  // Domenet SERVEREN krever et vilkår for på nettopp denne handlingen.
+  // null = ingen `_krev_malautorisasjonsvilkar`-sak, og da nekter serveren
+  // ingen fjerning — altså ingen lås.
+  const krevdDomene = krevdMaldomene(h.id, grunnlag);
   const forklaringId = `vilkaar-laast-${h.id || "x"}`;
   // Policyens EGNE deklarasjoner. Låsen, reparasjonen og «legg til» måler
   // alle tre mot disse — derfor leses de ett sted, før radene tegnes.
@@ -622,7 +661,16 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
     // `laastAlt` beholder fail-closed-regelen uendret: uten grunnlaget vet
     // vi ikke hva som ER et plattformvilk\u00e5r, og da l\u00e5ses alt. En uleselig
     // oppf\u00f8ring kan uansett aldri matche registeret, som sl\u00e5r opp p\u00e5 navn.
-    const plattformNavn = navn !== null && plattform.has(navn);
+    //
+    // OG DEN MÅ VÆRE DENNE HANDLINGENS (Codex P2). Registeret er
+    // plattform-globalt, men kravet er ikke: `_krev_malautorisasjonsvilkar`
+    // stiller det bare for en handling hvis kodefestede type krever
+    // målautorisasjon, og bare for TYPENS eget domæne. Et gyldig
+    // `domenekontroll_verifisert` som havnet på en vanlig, ikke-ekstern
+    // handling er derfor en rad serveren gjerne slipper — og den må kunne
+    // fjernes. Målt på navnet alene ble den låst for alltid.
+    const plattformNavn = navn !== null && krevdDomene !== null
+      && plattform.get(navn) === krevdDomene;
     // L\u00c5SEN GJELDER DEN VELFORMEDE RADEN (Codex P2). En rad som bare B\u00c6RER
     // et registrert plattformnavn er ikke et h\u00e5ndhevet plattformvilk\u00e5r \u2014
     // den er et utkast p\u00e5 vei dit. L\u00e5ste vi p\u00e5 navnet alene, ble en
