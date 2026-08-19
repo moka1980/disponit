@@ -344,8 +344,13 @@ def test_definerne_binder_tenanten_til_konteksten(migrator):
                  (annen, pid)),
                 ("SELECT count(*) FROM hent_plan_hendelser(%s,%s,50)",
                  (annen, pid)),
+                # `9::smallint`, ikke `9`: literalen er `integer`, og
+                # integer→smallint er ingen implisitt cast i
+                # funksjonsoppslaget (psycopg binder derimot små int-er
+                # som int2, derfor virker `_plan` uten cast).
                 ("SELECT opprett_plan(%s,'kontroll.wcag.nettsted',%s,"
-                 "'daglig',NULL,NULL,9,'Europe/Oslo','test:x','r-x')",
+                 "'daglig',NULL,NULL,9::smallint,'Europe/Oslo','test:x',"
+                 "'r-x')",
                  (annen, json.dumps(_param("fremmed.example")))),
                 ("SELECT aktiver_plan(%s,%s,'test:x','r-x')", (annen, pid)),
                 ("SELECT stans_plan(%s,%s,'test:x','r-x')", (annen, pid)),
@@ -777,11 +782,15 @@ def test_claimet_nekter_en_stanset_plan(migrator, app, monkeypatch):
 
 @pg
 def test_claimet_nekter_en_pauset_plan(migrator):
-    """Samme port, den andre veien inn: en PAUSE lukker den åpne perioden
-    ved `now()`, og forfallet — som per definisjon ligger bak oss når
-    vinduet er plukket — er da ikke lenger dekket. Et gjenopptak åpner en
-    NY periode som heller ikke dekker det: planen kjører igjen, men tar
-    ikke igjen det den var pauset gjennom (§5)."""
+    """Samme port, den andre veien inn: en PAUSE mellom plukket og turen
+    stopper bestillingen.
+
+    Andre halvdel er like viktig: claimet skal aldri være STRENGERE enn
+    plukket. Gjenopptas planen mens vinduet fortsatt er åpent, hører
+    forfallet fortsatt til den perioden planen var aktiv i, og plukket
+    ville delt raden ut på nytt — da skal claimet også gi den. Ellers
+    ville et pause/gjenoppta-par inne i et åpent vindu stille konsumert
+    det, uten tick og uten at noen ba om det."""
     rt = _rt()
     try:
         pid = _plan_forfalt(rt, migrator, host="p-pauset-claim.example")
@@ -794,14 +803,18 @@ def test_claimet_nekter_en_pauset_plan(migrator):
         assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
                           (TENANT, pid, vs)).fetchone()[0] == "ikke_aktiv"
         rt.commit()
-        # Gjenopptatt: status er `aktiv`, men den nye perioden begynner NÅ.
+        # Gjenopptatt, og vinduet står fortsatt åpent: forfallet ligger i
+        # perioden planen VAR aktiv i (lukket ved pausen, altså etter
+        # forfallet), så plukket ville delt raden ut igjen — og claimet
+        # måler nøyaktig samme regel.
         _sett_kontekst(rt, TENANT)
         rt.execute("SELECT gjenoppta_plan(%s,%s,'test:admin','r-gjen')",
                    (TENANT, pid))
         rt.commit()
+        assert len(_mine_forfalte(rt, pid)) == 1, "plukket ga ingen rad"
         _sett_kontekst(rt, TENANT)
         assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
-                          (TENANT, pid, vs)).fetchone()[0] == "ikke_aktiv"
+                          (TENANT, pid, vs)).fetchone()[0] == "claimet"
         rt.commit()
     finally:
         rt.close()
@@ -1031,7 +1044,7 @@ def test_fullfort_forsok_gjenopprettes_etter_utlopt_claim(migrator):
         migrator.execute(
             "INSERT INTO bestilling_idempotens (tenant, idempotensnokkel,"
             " intensjonshash, oppdrag_id, beslutning, svarkropp) VALUES"
-            " (%s,%s,%s,515151,'tillat','{}')",
+            " (%s,%s,%s,NULL,'tillat','{\"oppdrag_id\": 515151}')",
             (TENANT, _nokkel(pid, vs), "2" * 64))
         migrator.commit()
 
@@ -1721,7 +1734,7 @@ def test_dempingen_leses_under_planlaasen(migrator):
             "INSERT INTO bestillingsplan_hendelse (plan_id, tenant,"
             " hendelse, aktor, request_id, detalj) VALUES"
             " (%s,%s,'varslet','plansveip','r-vinner',"
-            " jsonb_build_object('grunn','gjentatt_brudd','bruker',%s))",
+            " jsonb_build_object('grunn','gjentatt_brudd','bruker',%s::text))",
             (pid, TENANT, bid))
         blokk.commit()
         t.join(timeout=20)

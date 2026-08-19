@@ -649,10 +649,16 @@ BEGIN
     -- UPDATE-en under sluppet forbi. Låserekkefølgen er vindu → plan
     -- overalt her; ingen vei går motsatt vei.
     --
-    -- Regelen er plukkets egen, ikke en ny: FORFALLET skal ligge i en
-    -- aktiv periode. Et gjenopptak ETTER forfallet åpner en ny periode som
-    -- ikke dekker dette vinduet — planen kjører igjen, men tar ikke igjen
-    -- det den var pauset gjennom (§5).
+    -- Regelen er PLUKKETS EGEN, ikke en ny — og det er poenget: claimet
+    -- skal aldri være strengere enn utvalget som ga det raden. Status
+    -- `aktiv` fanger pausen og stansen; periodeleddet fanger et vindu
+    -- planen aldri var aktiv for (aktivert etter forfall, port 32).
+    -- Gjenopptas planen mens vinduet fortsatt er åpent, hører forfallet
+    -- fortsatt til den perioden planen VAR aktiv i — lukket ved pausen,
+    -- altså etter forfallet — og både plukket og claimet gir raden ut
+    -- igjen. Det er riktig: vinduet er ikke utløpt, og gjenopptaket er
+    -- nettopp en ordre om å kjøre igjen. Aldri-ta-igjen (§5) håndheves av
+    -- `vindu_slutt` over, ikke her.
     SELECT b.status INTO v_status FROM public.bestillingsplan b
      WHERE b.plan_id = p_plan AND b.tenant = p_tenant FOR SHARE;
     v_forfall := p_vindu + public.plan_forfallsminutt(p_plan)
