@@ -238,6 +238,12 @@ INSERT INTO _design VALUES
     -- den leser og skriver unntak_historikk, der domenelaget kun har
     -- INSERT. Maalt i CI, ikke resonnert frem.
     ('FUNCTION', 'arkivmerk_pre041_overtakelsessaker(text,text)',      'disponit_m37_claimer'),
+    -- 041 §9.2 (Codex P2): vaktbikkjas ene spoersmaal. Claimer-eid av samme
+    -- grunn som de to vaktene over — 9.1s RESTRICTIVE policy lukker den
+    -- reserverte tenanten for alle andre enn claimer, adjudikator og eier,
+    -- og en SECURITY DEFINER-funksjon ser radene som SIN EIER. Arbeideren
+    -- faar EXECUTE, ikke leseflate
+    ('FUNCTION', 'overtakelsessak_finnes(text,text,text,bigint)',      'disponit_m37_claimer'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),
