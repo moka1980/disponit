@@ -696,9 +696,31 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
         el("code", { text: navn || t("ui.editor.vilkaar_ulesbart") }),
         ` \u2014 ${vilkaarVerifikator(v) || "?"}`),
       erPlattform
-        ? el("span", { class: "site-badge info", "aria-disabled": "true",
-            "aria-describedby": forklaringId,
-            text: t("ui.editor.vilkaar_laast") })
+        // LÅSEN GJELDER IDENTITETEN, IKKE TERSKELEN (Codex P2). Det
+        // serveren krever er at vilkåret FINNES for handlingen — navnet og
+        // verifikatoren. `min` er eierens egen terskel, og den avgjør om
+        // en attestasjon godtas i det hele tatt; en foreldet terskel er
+        // altså en levende feil hun må kunne rette. Var hele raden et
+        // dødt merke, fantes ingen vei: verdien ble ikke engang vist,
+        // raden kunne ikke fjernes og legges inn på nytt, og serveren
+        // ville gladelig tatt imot endringen hun ikke fikk gjøre.
+        ? el("span", { class: "vilkaar-laast" },
+            el("span", { class: "site-badge info", "aria-disabled": "true",
+              "aria-describedby": forklaringId,
+              text: t("ui.editor.vilkaar_laast") }),
+            tekstfelt(t("ui.editor.vilkaar_min"),
+              vilkaarMin(v) === null ? "" : vilkaarMin(v),
+              (nyverdi) => {
+                const s = nyverdi.trim();
+                if (!s) { delete v.min; return; }
+                const n = Number(s);
+                // Et tall lagres som TALL (skjemaet: `type: number`). Noe
+                // annet lagres som det er skrevet — utkastet får bære
+                // mellomtilstanden, raden blir ikke lenger velformet, og
+                // dermed heller ikke låst: eier kan rette eller fjerne
+                // den. Ingen blindgate i noen av retningene.
+                v.min = Number.isFinite(n) && s !== "" ? n : s;
+              }, { inputmode: "decimal" }, t("ui.editor.vilkaar_min_hint")))
         : (plattformNavn && kandidater.length
             ? (() => {
                 const repId = `vk-rep-${h.id || "x"}-${i}`;

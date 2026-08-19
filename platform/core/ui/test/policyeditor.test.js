@@ -1455,6 +1455,56 @@ test("Vilkår: plattformvilkåret er LÅST med aria-disabled og forklaring",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// Codex P2: låsen gjelder IDENTITETEN (navnet + verifikatoren), ikke
+// terskelen. `min` er eierens egen, og den avgjør om en attestasjon godtas
+// — en foreldet terskel er derfor en levende feil hun må kunne rette.
+// Uten dette viste den låste raden verken verdien eller en vei til å endre
+// den, og raden kunne ikke fjernes og legges inn på nytt: eneste utvei var
+// å forkaste utkastet, for en endring serveren gjerne ville tatt imot.
+test("Vilkår: terskelen på et låst plattformvilkår kan rettes",
+  async () => {
+    const start = medKravhandling(JSON.parse(JSON.stringify(MAL)));
+    start.verifikatorer = { v_domenekontroll: {
+      beskrivelse: "Plattformens domenekontroll",
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert", verifikator: "v_domenekontroll",
+        min: 2 },
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rad = h.querySelector(".vilkaar-rad");
+    assert.ok(rad.querySelector('[aria-disabled="true"]'),
+      "identiteten er fortsatt låst");
+    const felt = rad.querySelector("input");
+    assert.ok(felt, "terskelen har ikke noe felt");
+    // Verdien VISES — den var usynlig før.
+    assert.equal(felt.value, "2");
+    // …og endringen lever i editorens egen tilstand: målt ved å tegne
+    // fanen på nytt, ikke ved å lese objektet vi sendte inn.
+    const lesTerskel = () => {
+      gaaTilFane(h, t("ui.editor.fane.roller"));
+      gaaTilFane(h, t("ui.editor.fane.handlinger"));
+      return h.querySelector(".vilkaar-rad input");
+    };
+    felt.value = "5";
+    felt.dispatchEvent(new window.Event("input"));
+    assert.equal(lesTerskel().value, "5");
+    // Tom = ingen terskel, ikke en ugyldig verdi — og raden er FORTSATT
+    // låst, altså fortsatt velformet.
+    const felt2 = h.querySelector(".vilkaar-rad input");
+    felt2.value = "";
+    felt2.dispatchEvent(new window.Event("input"));
+    assert.equal(lesTerskel().value, "");
+    assert.ok(h.querySelector('.vilkaar-rad [aria-disabled="true"]'),
+      "raden mistet låsen da terskelen ble fjernet");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
 // Codex P2: skriveveien tar med vilje imot ustrukturerte utkast — porten
 // står i `valider_utkast`, ikke i lagringen. Et lagret utkast kan derfor
 // bære `vilkaar: [null]` eller en naken streng. Leste editoren `v.navn`
