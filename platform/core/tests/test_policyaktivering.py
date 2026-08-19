@@ -448,6 +448,76 @@ def test_bootstrap_stengt_ogsaa_naar_styrt_versjon_er_slettet():
 
 
 @pg
+def test_historikken_sorterer_paa_aktivering_ikke_registrering():
+    """Codex P2: bootstraprader lånte `policyer.opprettet` som kronologi.
+
+    `registrer(..., aktiver=False)` legger inn en versjon uten å aktivere
+    den, og en senere `registrer(..., aktiver=True)` aktiverer NØYAKTIG DEN
+    RADEN gjennom upserten. `opprettet` står da urørt, så historikken
+    sorterte den nyaktiverte versjonen på registreringstidspunktet sitt —
+    ble en annen versjon laget i mellomtiden, var lista ikke lenger
+    nyest-først, og diffens default-retning bygger på den rekkefølgen.
+
+    Kontroll: sorter på `p.opprettet` igjen, så kommer 2.0.0 først og
+    testen blir rød.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-kron-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    m = _c()
+    try:
+        # Egen transaksjon per steg: både `opprettet` og `now()` er
+        # TRANSAKSJONENS tid, så tre kall i én transaksjon ville fått
+        # identiske merker og testen målt ingenting.
+        #
+        # 1.0.0 registreres FØRST, men uten å aktiveres.
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+        # 2.0.0 lages etterpå og aktiveres.
+        mal["meta"]["versjon"] = "2.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        # Og så aktiveres den gamle raden — en rullbakk gjennom
+        # oppsettsveien. `opprettet` på 1.0.0 er fortsatt den eldste.
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        assert m.execute(
+            "SELECT opprettet < (SELECT opprettet FROM policyer WHERE"
+            "   tenant=%s AND policy_id=%s AND versjon='2.0.0')"
+            "  FROM policyer WHERE tenant=%s AND policy_id=%s"
+            "   AND versjon='1.0.0'",
+            (TEN, pid, TEN, pid)).fetchone()[0], "forutsetningen holder ikke"
+        m.rollback()
+    finally:
+        m.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        rader = r.execute(
+            "SELECT versjon, aktiv, aktivert_ts FROM"
+            " policyversjoner_for_tenant(%s,%s)", (TEN, pid)).fetchall()
+        r.rollback()
+    finally:
+        r.close()
+    assert [x[0] for x in rader] == ["1.0.0", "2.0.0"], \
+        f"historikken er ikke nyest-aktivert-først: {rader}"
+    assert rader[0][1] is True and rader[1][1] is False, rader
+    # Begge bootstraprader bærer sitt eget aktiveringstidspunkt, og den
+    # gjenaktiverte har det ferskeste.
+    assert rader[0][2] is not None and rader[1][2] is not None, rader
+    assert rader[0][2] > rader[1][2], rader
+
+
+@pg
 def test_bootstrap_serialiseres_mot_styrt_aktivering():
     """Codex P1: prøven i `registrer` er verdiløs uten LÅSEN under seg.
 

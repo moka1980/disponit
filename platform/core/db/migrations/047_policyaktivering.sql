@@ -282,6 +282,20 @@ ALTER TABLE policyer ADD COLUMN aktiveringskilde TEXT
   CONSTRAINT policyer_aktiveringskilde_kjent
   CHECK (aktiveringskilde IN ('styrt', 'bootstrap', 'historisk'));
 
+-- NÅR bootstrapraden ble aktivert (Codex P2). Den styrte veien har
+-- `policyaktivering.aktivert_ts`; bootstrapen har ingen hendelse, og
+-- historikken lånte derfor `policyer.opprettet` — REGISTRERINGS-
+-- tidspunktet. De to er ikke det samme: `registrer(..., aktiver=False)`
+-- legger inn en versjon uten å aktivere den, og en senere
+-- `registrer(..., aktiver=True)` aktiverer NØYAKTIG DEN RADEN gjennom
+-- upserten. `opprettet` står da urørt, så historikken sorterte den
+-- nyaktiverte versjonen på et gammelt tidspunkt — ble en annen versjon
+-- laget i mellomtiden, var lista ikke lenger nyest-først, og diffens
+-- default-retning bygger på den rekkefølgen. Kolonnen er tom for de
+-- migrerte radene: for dem finnes tidspunktet ikke noe sted, og
+-- `opprettet` blir stående som den ærligste tilnærmingen vi har.
+ALTER TABLE policyer ADD COLUMN bootstrap_aktivert_ts TIMESTAMPTZ;
+
 -- Alt som fantes da migrasjonen landet ER historikk, per definisjon.
 -- Backfillen nederst løfter de radene den klarer å binde til 'styrt'.
 --
@@ -775,8 +789,12 @@ BEGIN
     RETURN QUERY
     SELECT p.versjon, p.innholds_hash, p.aktiv, p.opprettet,
            -- Aktiveringstidspunktet fra HENDELSEN (runden har ingen
-           -- brukt_ts — lesesvar runde 2); ubundet historisk rad → NULL.
-           a.aktivert_ts, a.attestant_a, a.attestant_b,
+           -- brukt_ts — lesesvar runde 2), og fra `bootstrap_aktivert_ts`
+           -- for oppsettsveien, som ingen hendelse har (Codex P2). Bare
+           -- den migrerte, ubundne raden står igjen med NULL — for den
+           -- finnes tidspunktet ikke noe sted.
+           coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts),
+           a.attestant_a, a.attestant_b,
            p.aktivert_av_operasjon, u.rollback_av_versjon,
            -- Veien raden kom inn. Rader fra før 047 bærer 'historisk';
            -- NULL kan bare forekomme på direkte innsatte fixture-rader.
@@ -796,7 +814,13 @@ BEGIN
       LEFT JOIN public.policyutkast u
         ON u.tenant = a.tenant AND u.utkast_id = a.utkast_id
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
-     ORDER BY p.opprettet DESC, p.versjon DESC;
+     -- Kronologien er AKTIVERINGENS, ikke registreringens (Codex P2):
+     -- `opprettet` er når raden ble skrevet, og en rad kan skrives lenge
+     -- før den aktiveres. `opprettet` er siste utvei — for de migrerte
+     -- radene og for versjoner som aldri er aktivert er det det eneste
+     -- tidspunktet som finnes.
+     ORDER BY coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts,
+                       p.opprettet) DESC, p.versjon DESC;
 END $$;
 
 CREATE OR REPLACE FUNCTION policyversjon_innhold(

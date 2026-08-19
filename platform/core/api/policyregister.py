@@ -333,15 +333,31 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     # aktiveringen: raden kom gjennom oppsettsregistreringen, med eller uten
     # flagget. Uten merket var den ikke til å skille fra en rad som lå der
     # da 047 landet (047, Codex P2).
+    #
+    # AKTIVERINGSTIDSPUNKTET skrives her (047, Codex P2). Bootstrapen har
+    # ingen hendelse å hente det fra, og `opprettet` er ikke svaret: den
+    # står for REGISTRERINGEN, og upserten under aktiverer i mange tilfeller
+    # en rad som ble lagt inn med `aktiver=False` for lenge siden. Uten et
+    # eget tidspunkt sorterte historikken den nyaktiverte versjonen på et
+    # gammelt merke. `now()` er transaksjonens starttid, samme klokke som
+    # `policyaktivering.aktivert_ts` bruker.
+    #
+    # `aktiver=False` LAR merket stå: en avaktivering fjerner ikke at raden
+    # en gang ble aktivert, og denne veien kan uansett ikke avvikle den
+    # gjeldende aktive versjonen (porten over).
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
-        " status, innhold, aktiv, aktiveringskilde)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,'bootstrap')"
+        " status, innhold, aktiv, aktiveringskilde, bootstrap_aktivert_ts)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,'bootstrap',"
+        "         CASE WHEN %s THEN now() END)"
         " ON CONFLICT (tenant, policy_id, versjon) DO UPDATE"
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
         "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv,"
-        "     aktiveringskilde=EXCLUDED.aktiveringskilde",
-        (tenant, pid, versjon, h, status, json.dumps(policy), aktiver))
+        "     aktiveringskilde=EXCLUDED.aktiveringskilde,"
+        "     bootstrap_aktivert_ts=CASE WHEN EXCLUDED.aktiv THEN now()"
+        "         ELSE policyer.bootstrap_aktivert_ts END",
+        (tenant, pid, versjon, h, status, json.dumps(policy), aktiver,
+         aktiver))
     if aktiver:
         # Ankerraden MÅ følge med. Den styrte aktiveringen
         # (`aktiver_policy`) leser `policy_hode.aktiv_versjon`, IKKE
