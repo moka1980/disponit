@@ -236,6 +236,34 @@ test("planliste: caption/scope, pausegrunnen SYNLIG, handling annonsert i alert"
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
+test("planliste: «neste kjøring» bærer forfallsminuttet, ikke hel time",
+     async () => {
+  // Codex P2: forfallet er `time_lokal + plan_forfallsminutt(plan_id)`,
+  // opptil 59 minutter etter vindu_start (spredningen, 019 §3.3). Flaten
+  // viste hel time og bommet dermed på to måter: feil klokkeslett (08:00
+  // for et forfall 08:40), og feil DAG — timesammenligningen hoppet over
+  // i dag så snart timen var nådd, så 08:05 sto en plan som skulle kjøre
+  // 08:40 i dag oppført som i morgen.
+  //
+  // Rytmen er daglig og timen settes ETTER klokka i Oslo NÅ, så
+  // kandidaten er i dag uansett når testen kjører; det som måles er
+  // minuttet i teksten.
+  const timeNaa = parseInt(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Oslo", hour: "2-digit", hour12: false,
+  }).format(new Date()), 10);
+  const plan = { ...PLAN, rytme: "daglig", ukedag: null,
+    time_lokal: (timeNaa + 2) % 24, forfallsminutt: 40 };
+  KALL = []; SVAR = { "/v1/plan": { planer: [plan] } };
+  const h = nyHoved();
+  visPlan(h, ctx());
+  await vent(() => h.querySelector(".planliste table"));
+  const rad = h.querySelector(".planliste tbody tr").textContent;
+  const tid = `${String(plan.time_lokal).padStart(2, "0")}:40`;
+  assert.ok(rad.includes(tid), `«${tid}» manglet i «${rad}»`);
+  assert.ok(!rad.includes(`${String(plan.time_lokal).padStart(2, "0")}:00`),
+    `hel time vist i stedet for forfallet: «${rad}»`);
+});
+
 test("planliste: uten plan:opprett finnes verken skjema eller mutasjonsknapper",
      async () => {
   KALL = []; SVAR = { "/v1/plan": { planer: [{ ...PLAN, status: "utkast" }] } };

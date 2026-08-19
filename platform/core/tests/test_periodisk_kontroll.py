@@ -2175,6 +2175,15 @@ def test_http_flaten_ende_til_ende(migrator, klient):
     mine = [p for p in r.json()["planer"] if p["plan_id"] == pid]
     assert mine and mine[0]["status"] == "aktiv" \
         and mine[0]["rytme"] == "ukentlig" and mine[0]["ukedag"] == 2
+    # Spredningen SENDES (Codex P2): forfallet er time_lokal pluss dette
+    # minuttet, avledet av en sha256 av plan-id-en — flaten kan ikke regne
+    # det ut selv, og viste derfor «neste kjøring» på hel time. Verdien er
+    # basens egen avledning, ikke en andrehånds implementasjon.
+    _sett_kontekst(migrator, TENANT)
+    fasit = migrator.execute("SELECT plan_forfallsminutt(%s)",
+                             (pid,)).fetchone()[0]
+    migrator.rollback()
+    assert mine[0]["forfallsminutt"] == fasit, mine[0]
     r = klient.get(f"/v1/plan/{pid}/historikk",
                    cookies={sesjonmodul.C_SESJON: cookie_l})
     assert r.status_code == 200 and r.json()["hendelser"], r.text

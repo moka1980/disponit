@@ -40,7 +40,19 @@ function _nullstillFeil(form) {
 
 // Neste kjøring: absolutt tidspunkt i planens egen tidssone (§9) —
 // avledet klientside KUN for visning; forfallet eies av basen.
+//
+// FORFALLET ER `time_lokal:forfallsminutt`, ikke hel time (Codex P2).
+// Spredningen (019 §3.3) legger 0–59 minutter etter vindu_start, avledet
+// av en sha256 av plan-id-en — noe flaten ikke kan regne ut selv, og
+// derfor får servert av `plan_forfallsminutt`. Uten minuttet viste
+// flaten både feil KLOKKESLETT (08:00 for et forfall 08:40) og feil DAG:
+// timesammenligningen hoppet over i dag så snart timen var nådd, så
+// klokka 08:05 sto en plan som skulle kjøre 08:40 i dag oppført som «i
+// morgen». Faller minuttet bort (eldre svar), er 0 den trygge
+// tilnærmingen — samme dag, tidligst mulig.
 function nesteKjoringTekst(p) {
+  const minutt = Number.isInteger(p.forfallsminutt)
+    ? Math.min(Math.max(p.forfallsminutt, 0), 59) : 0;
   try {
     const naa = new Date();
     for (let d = 0; d < 62; d++) {
@@ -57,18 +69,25 @@ function nesteKjoringTekst(p) {
       const dato = `${deler.find((x) => x.type === "year").value}-${
         deler.find((x) => x.type === "month").value}-${
         String(dag).padStart(2, "0")}`;
-      const tid = `${String(p.time_lokal).padStart(2, "0")}:00`;
+      const tid = `${String(p.time_lokal).padStart(2, "0")}:${
+        String(minutt).padStart(2, "0")}`;
       if (d === 0) {
-        const timeNaa = parseInt(new Intl.DateTimeFormat("en-GB", {
-          timeZone: p.tidssone, hour: "2-digit", hour12: false,
-        }).format(naa), 10);
-        if (timeNaa >= p.time_lokal) continue;
+        // Sammenlign MINUTTER, ikke timer: en plan med forfall 08:40 er
+        // fortsatt i dag klokka 08:05.
+        const nu = new Intl.DateTimeFormat("en-GB", {
+          timeZone: p.tidssone, hour: "2-digit", minute: "2-digit",
+          hour12: false,
+        }).formatToParts(naa);
+        const min = (v) => parseInt(nu.find((x) => x.type === v).value, 10);
+        if (min("hour") * 60 + min("minute") >= p.time_lokal * 60 + minutt) {
+          continue;
+        }
       }
       return `${dato} ${tid} (${p.tidssone})`;
     }
   } catch { /* ukjent sone i nettleseren: vis rytmen i stedet */ }
   return `${t(`ui.plan.rytme.${p.rytme}`)} ${String(p.time_lokal)
-    .padStart(2, "0")}:00 (${p.tidssone})`;
+    .padStart(2, "0")}:${String(minutt).padStart(2, "0")} (${p.tidssone})`;
 }
 
 function planSkjema(ctx, paaOpprettet) {

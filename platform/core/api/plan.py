@@ -230,16 +230,25 @@ def liste_endepunkt(tjeneste, request: Request) -> Response:
     def _fn(conn, tenant, bid, rid, _feilsvar, kanonisk_json):
         from db.pg import sett_kontekst
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        # `forfallsminutt` er SPREDNINGEN (§3.3-grepet fra 019): forfallet
+        # er `vindu_start + plan_forfallsminutt(plan_id)` minutter, opptil
+        # 59. Flaten viste «neste kjøring» på hel time og bommet dermed med
+        # inntil en time (Codex P2) — den kunne ikke regne den ut selv, for
+        # minuttet er avledet av en sha256 av plan-id-en. Den SENDES derfor,
+        # fra den ene funksjonen som eier avledningen; ingen andrehånds
+        # implementasjon å holde i takt.
         rader = conn.execute(
             "SELECT plan_id, bestillingstype, parametre, rytme, ukedag,"
             " manedsdag, time_lokal, tidssone, status, pause_aarsak,"
-            " opprettet FROM hent_planer(%s)", (tenant,)).fetchall()
+            " opprettet, plan_forfallsminutt(plan_id)"
+            " FROM hent_planer(%s)", (tenant,)).fetchall()
         conn.rollback()
         planer = [{"plan_id": str(r[0]), "bestillingstype": r[1],
                    "parametre": r[2], "rytme": r[3], "ukedag": r[4],
                    "manedsdag": r[5], "time_lokal": r[6], "tidssone": r[7],
                    "status": r[8], "pause_aarsak": r[9],
-                   "opprettet": r[10].isoformat()} for r in rader]
+                   "opprettet": r[10].isoformat(),
+                   "forfallsminutt": r[11]} for r in rader]
         return kanonisk_json({"planer": planer, "request_id": rid}, 200,
                              {"x-request-id": rid})
     return _med_browserkontekst(tjeneste, request, "decisions:read", _fn,
