@@ -140,7 +140,8 @@ API = os.environ.get("DISPONIT_API_URL", "http://127.0.0.1:8099")
 #: `RUNDE` er /root og utilgjengelig for `disponit-wcag`.
 ARBEIDER = "disponit-wcag-audit.service"
 ARBEIDER_BRUKER = "disponit-wcag"
-DRIFT_KONF = Path(os.environ.get("WCAG_DRIFT_KONF", "/etc/disponit/wcag"))
+DRIFT_KONF_STANDARD = Path("/etc/disponit/wcag")
+DRIFT_KONF = Path(os.environ.get("WCAG_DRIFT_KONF", str(DRIFT_KONF_STANDARD)))
 
 _EVIDENS: Path | None = None
 #: Målingene som IKKE ble grønne i denne prosessen. Fase 9 setter arbeideren
@@ -1857,6 +1858,31 @@ def _steng_doeren(m, grunn: str) -> None:
             ok=status == ("nodeaktivert",) and claiming == 0)
 
 
+def _aapne_traversering(forelder: Path) -> bool:
+    """Gir arbeidergruppen x (ikke r) på katalogen `DRIFT_KONF` ligger i.
+
+    KUN på en forelder denne runden eier: standarden `/etc/disponit`, eller
+    en overstyrt forelder som ikke fantes fra før og som vi derfor oppretter
+    selv. `WCAG_DRIFT_KONF` er en prøvekjøringsbryter, og en bryter skal
+    ikke kunne skrive om rettighetene på en katalog som alt er i bruk
+    (Codex P1): `/tmp/wcag` ville tatt `/tmp` fra 1777 til 0710 og stengt
+    verten ute av sin egen temp-katalog, `/wcag` ville gjort det med `/`.
+    Overstyrer man inn i en katalog som fins, eier man traverseringen selv.
+    """
+    if forelder != DRIFT_KONF_STANDARD.parent and forelder.exists():
+        evidens("fase9_forelder_urort", forelder=str(forelder),
+                grunn="overstyrt sti som fantes fra før — rettighetene der"
+                      " tilhører ikke denne runden",
+                merknad="arbeideren når bare frem hvis den som satte"
+                        " WCAG_DRIFT_KONF selv har gitt gruppa x her")
+        return False
+    # `install -d` retter modus og gruppe også på en katalog som fins —
+    # samme grep som oppsett-postgresql.sh gjør per deploy, i én kommando.
+    subprocess.run(["install", "-d", "-m", "710", "-o", "root",
+                    "-g", ARBEIDER_BRUKER, str(forelder)], check=True)
+    return True
+
+
 def fase9(m, mtk, digest, *, maalt_runde: bool):
     """Setter arbeideren I DRIFT — ellers claimer ingen noe (Codex P1).
 
@@ -2043,6 +2069,12 @@ def fase9(m, mtk, digest, *, maalt_runde: bool):
     # men lest ut av den effektive kommandoen, ikke stagingens.
     kontekst = _serverkontekst(drift_id, _som_arbeideren(motor_argv))
 
+    # FORELDEREN FØRST, og den må kunne traverseres (målt: 700 på
+    # /etc/disponit ga PermissionError på kontekst.json — en fil arbeideren
+    # hadde lesrett til, bak en katalog den ikke kunne gå gjennom). Samme
+    # grep som oppsett-postgresql.sh gjør per deploy; her i tillegg fordi
+    # fase 9 er idriftsettelsen og ikke skal avhenge av NESTE deploy.
+    _aapne_traversering(DRIFT_KONF.parent)
     subprocess.run(["install", "-d", "-m", "750", "-o", "root",
                     "-g", ARBEIDER_BRUKER, str(DRIFT_KONF)], check=True)
 
