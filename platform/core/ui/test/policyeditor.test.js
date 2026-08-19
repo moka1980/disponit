@@ -1444,6 +1444,75 @@ test("Vilkår: en ulesbar oppføring kan åpnes og fjernes, ikke krasje",
     assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
   });
 
+// Codex P2: låsen målte NAVNET alene. Et utkast med et registrert
+// plattformnavn, men uten en betrodd verifikator, ble derfor låst — mens
+// valideringen avviste nettopp den verifikatorpekeren. Raden kunne verken
+// rettes eller fjernes, og utkastet kunne bare forkastes.
+test("Vilkår: et plattformvilkår uten betrodd verifikator kan repareres",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v_domenekontroll: {
+      beskrivelse: "Plattformens domenekontroll",
+      betrodd_for: ["domenekontroll_verifisert"] } };
+    start.handlinger[0].vilkaar = [
+      { navn: "domenekontroll_verifisert" },            // verifikator mangler
+      { navn: "domenekontroll_verifisert", verifikator: 7 },  // ikke en streng
+    ];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rader = [...h.querySelectorAll(".vilkaar-rad")];
+    assert.equal(rader.length, 2);
+    for (const rad of rader) {
+      assert.ok(!rad.querySelector('[aria-disabled="true"]'),
+        "en ufullstendig oppføring er ikke et håndhevet plattformvilkår");
+    }
+    // Reparasjonen tilbyr KUN verifikatorer som er betrodd for navnet.
+    const velg = rader[0].querySelector("select");
+    assert.ok(velg, "raden må kunne repareres");
+    assert.deepEqual([...velg.querySelectorAll("option")].map((o) => o.value),
+      ["v_domenekontroll"]);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    rader[0].querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => h.querySelector('.vilkaar-rad [aria-disabled="true"]'));
+    // Navnet registeret krever overlevde reparasjonen — raden bærer nå
+    // navnet OG verifikatoren, og er det låste plattformvilkåret den skal
+    // være.
+    const reparert = h.querySelectorAll(".vilkaar-rad")[0];
+    assert.ok(reparert.textContent.includes(
+      "domenekontroll_verifisert — v_domenekontroll"), reparert.textContent);
+    assert.ok(reparert.querySelector('[aria-disabled="true"]'));
+    // Den andre raden er urørt og fortsatt reparerbar.
+    assert.ok(h.querySelectorAll(".vilkaar-rad")[1].querySelector("select"));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// Er ingen av policyens verifikatorer betrodd for navnet, finnes det ingen
+// gyldig form av raden i det hele tatt — da er fjerning den eneste veien ut,
+// og en lås ville gjort utkastet til en blindgate.
+test("Vilkår: et plattformnavn ingen verifikator kan bære, kan fjernes",
+  async () => {
+    const start = JSON.parse(JSON.stringify(MAL));
+    start.verifikatorer = { v_annet: { betrodd_for: ["eget_vilkar"] } };
+    start.handlinger[0].vilkaar = [{ navn: "domenekontroll_verifisert" }];
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { startPolicy: start });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.handlinger"));
+    await vent(() => h.textContent.includes(
+      t("ui.editor.vilkaar_plattform_forklaring")));
+    const rad = h.querySelector(".vilkaar-rad");
+    assert.ok(!rad.querySelector('[aria-disabled="true"]'));
+    assert.ok(!rad.querySelector("select"), "ingen betrodd verifikator å velge");
+    rad.querySelector("button").dispatchEvent(new window.Event("click"));
+    await vent(() => !h.querySelector(".vilkaar-rad"));
+    assert.equal(h.querySelectorAll(".vilkaar-rad").length, 0);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
 test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
   const gammelFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {

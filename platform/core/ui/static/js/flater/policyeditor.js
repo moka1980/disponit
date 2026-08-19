@@ -523,7 +523,10 @@ function handlingKort(h, tegnPaaNytt, policy, grunnlag) {
 // deklarerte verifikatorer og deres betrodd_for) og PLATTFORMVILKÅRENE
 // (malautorisasjonsregisteret) — låst rad med aria-disabled OG
 // aria-describedby til forklaringen; de kan ikke fjernes herfra, og
-// valideringen avviser fjerning uansett vei (port 31/34). Registeret leses
+// valideringen avviser fjerning uansett vei (port 31/34). Låsen gjelder den
+// VELFORMEDE raden: en oppføring som bare bærer plattformnavnet, uten en
+// betrodd verifikator, er ikke et håndhevet vilkår ennå og får en
+// reparasjonsvei som beholder navnet (se `vilkaarErVelformet`). Registeret leses
 // fra serveren — ingen hardkodet liste (port 32); mangler grunnlaget
 // (nettfeil), er ALT låst: fail-closed, aldri en flate som lover en
 // fjerning serveren nekter.
@@ -546,6 +549,28 @@ function vilkaarVerifikator(v) {
     ? v.verifikator : null;
 }
 
+// VELFORMET = det `schema.py` §5 faktisk godtar: navnet er en streng,
+// verifikatoren peker på en DEKLARERT verifikator, og den er betrodd for
+// navnet. Samme tre krav som «legg til»-nedtrekkene under bygger av, så
+// flaten har én definisjon av en gyldig vilkårsrad, ikke to.
+function vilkaarErVelformet(v, verifikatorer) {
+  const navn = vilkaarNavn(v);
+  const vid = vilkaarVerifikator(v);
+  if (navn === null || vid === null) return false;
+  const dekl = verifikatorer[vid];
+  return !!dekl && Array.isArray(dekl.betrodd_for)
+    && dekl.betrodd_for.includes(navn);
+}
+
+// Hvilke av policyens egne verifikatorer som KAN bære et gitt vilkårsnavn.
+function betroddeFor(navn, verifikatorer) {
+  return Object.keys(verifikatorer).sort().filter((vid) => {
+    const dekl = verifikatorer[vid];
+    return dekl && Array.isArray(dekl.betrodd_for)
+      && dekl.betrodd_for.includes(navn);
+  });
+}
+
 function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
   const vilkaar = Array.isArray(h.vilkaar) ? h.vilkaar : [];
   const plattform = new Set(
@@ -553,13 +578,43 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
       .map((v) => v.vilkar_type));
   const laastAlt = !grunnlag;
   const forklaringId = `vilkaar-laast-${h.id || "x"}`;
+  // Policyens EGNE deklarasjoner. Låsen, reparasjonen og «legg til» måler
+  // alle tre mot disse — derfor leses de ett sted, før radene tegnes.
+  const verifikatorer = (policy && typeof policy.verifikatorer === "object"
+    && policy.verifikatorer) || {};
+  const vids = Object.keys(verifikatorer).sort();
 
   const rader = vilkaar.map((v, i) => {
     const navn = vilkaarNavn(v);
+    const fjernKnapp = () => {
+      const fjern = el("button", { class: "knapp liten",
+        type: "button", text: t("ui.editor.vilkaar_fjern") });
+      fjern.addEventListener("click", () => {
+        h.vilkaar.splice(i, 1);
+        if (!h.vilkaar.length) delete h.vilkaar;
+        tegnPaaNytt();
+      });
+      return fjern;
+    };
     // `laastAlt` beholder fail-closed-regelen uendret: uten grunnlaget vet
     // vi ikke hva som ER et plattformvilk\u00e5r, og da l\u00e5ses alt. En uleselig
     // oppf\u00f8ring kan uansett aldri matche registeret, som sl\u00e5r opp p\u00e5 navn.
-    const erPlattform = laastAlt || (navn !== null && plattform.has(navn));
+    const plattformNavn = navn !== null && plattform.has(navn);
+    // L\u00c5SEN GJELDER DEN VELFORMEDE RADEN (Codex P2). En rad som bare B\u00c6RER
+    // et registrert plattformnavn er ikke et h\u00e5ndhevet plattformvilk\u00e5r \u2014
+    // den er et utkast p\u00e5 vei dit. L\u00e5ste vi p\u00e5 navnet alene, ble en
+    // oppf\u00f8ring med manglende eller ubetrodd `verifikator` verken
+    // redigerbar eller fjernbar, mens valideringen avviste nettopp den
+    // verifikatorpekeren: utkastet kunne bare forkastes, enda et utkast med
+    // vilje f\u00e5r b\u00e6re ugyldige mellomtilstander. Navnet er likevel det
+    // registeret krever, s\u00e5 reparasjonen BEHOLDER det og ber bare om
+    // verifikatoren som mangler. Har policyen ingen verifikator betrodd for
+    // navnet, kan raden ikke gj\u00f8res gyldig i det hele tatt, og da er
+    // fjerning den eneste veien ut.
+    const kandidater = (plattformNavn && !laastAlt)
+      ? betroddeFor(navn, verifikatorer) : [];
+    const erPlattform = laastAlt
+      || (plattformNavn && vilkaarErVelformet(v, verifikatorer));
     const rad = el("li", { class: "vilkaar-rad" },
       el("span", {},
         el("code", { text: navn || t("ui.editor.vilkaar_ulesbart") }),
@@ -568,25 +623,32 @@ function vilkaarFelt(h, policy, tegnPaaNytt, grunnlag) {
         ? el("span", { class: "site-badge info", "aria-disabled": "true",
             "aria-describedby": forklaringId,
             text: t("ui.editor.vilkaar_laast") })
-        : (() => {
-            const fjern = el("button", { class: "knapp liten",
-              type: "button", text: t("ui.editor.vilkaar_fjern") });
-            fjern.addEventListener("click", () => {
-              h.vilkaar.splice(i, 1);
-              if (!h.vilkaar.length) delete h.vilkaar;
-              tegnPaaNytt();
-            });
-            return fjern;
-          })());
+        : (plattformNavn && kandidater.length
+            ? (() => {
+                const repId = `vk-rep-${h.id || "x"}-${i}`;
+                const velg = el("select", { id: repId },
+                  ...kandidater.map((vid) =>
+                    el("option", { value: vid, text: vid })));
+                const knapp = el("button", { class: "knapp liten",
+                  type: "button", text: t("ui.editor.vilkaar_reparer") });
+                knapp.addEventListener("click", () => {
+                  // Navnet er registerets krav og skal overleve
+                  // reparasjonen; bare verifikatoren settes.
+                  h.vilkaar[i] = { navn, verifikator: velg.value };
+                  tegnPaaNytt();
+                });
+                return el("span", { class: "vilkaar-reparer" },
+                  el("label", { for: repId,
+                    text: t("ui.editor.vilkaar_reparer_hint") }),
+                  velg, knapp);
+              })()
+            : fjernKnapp()));
     return rad;
   });
 
   // Legg til: verifikator-nedtrekk fra policyens EGNE deklarasjoner,
   // vilkårsnavn fra den valgte verifikatorens betrodd_for (§5) — ukjente
   // kombinasjoner kan ikke velges, og serveren avviser dem uansett.
-  const verifikatorer = (policy && typeof policy.verifikatorer === "object"
-    && policy.verifikatorer) || {};
-  const vids = Object.keys(verifikatorer).sort();
   let leggTil = null;
   if (!laastAlt && vids.length) {
     const vidValg = el("select", { id: `vk-vid-${h.id || "x"}` },

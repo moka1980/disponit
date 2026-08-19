@@ -1045,6 +1045,8 @@
   "ui.editor.vilkaar_plattform_forklaring": "Plattformvilkår håndheves av plattformen uansett og kan ikke fjernes eller redigeres her.",
   "ui.editor.vilkaar_grunnlag_mangler": "Grunnlaget fra serveren er utilgjengelig — vilkår og godkjenningspar kan ikke redigeres nå.",
   "ui.editor.vilkaar_fjern": "Fjern",
+  "ui.editor.vilkaar_reparer": "Sett verifikator",
+  "ui.editor.vilkaar_reparer_hint": "Plattformvilkåret mangler en betrodd verifikator — velg en:",
   "ui.editor.vilkaar_legg_til": "Legg til vilkår",
   "ui.editor.vilkaar_verifikator": "Verifikator",
   "ui.editor.vilkaar_navn": "Vilkår",

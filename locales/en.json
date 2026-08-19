@@ -1045,6 +1045,8 @@
   "ui.editor.vilkaar_plattform_forklaring": "Platform conditions are enforced by the platform regardless and cannot be removed or edited here.",
   "ui.editor.vilkaar_grunnlag_mangler": "The server baseline is unavailable — conditions and approval pairs cannot be edited right now.",
   "ui.editor.vilkaar_fjern": "Remove",
+  "ui.editor.vilkaar_reparer": "Set verifier",
+  "ui.editor.vilkaar_reparer_hint": "This platform condition has no trusted verifier — pick one:",
   "ui.editor.vilkaar_legg_til": "Add condition",
   "ui.editor.vilkaar_verifikator": "Verifier",
   "ui.editor.vilkaar_navn": "Condition",
