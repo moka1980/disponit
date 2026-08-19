@@ -1088,6 +1088,42 @@ $$;
 REVOKE ALL ON FUNCTION planer_gjentatt_uten_resultat() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION planer_gjentatt_uten_resultat() TO disponit;
 
+-- PREDIKATET UNDER LÅSEN (Codex P2) — samme rekkefølgeinvariant som
+-- `varsle_plan_brudd`. Sveipen leste kandidatene i én transaksjon og
+-- pauset i en annen; imellom kunne det tredje oppdragets artefakt bli
+-- PROMOTERT av arbeiderveien, som er helt uavhengig av plansveipen.
+-- Kappløpet krever altså ikke to samtidige sveip: planen ble pauset som
+-- `gjentatt_uten_resultat` enda et resultat forelå idet overgangen
+-- committet, og bare et menneske kan oppheve den pausen.
+--
+-- Predikatet er uendret; det er STEDET som er invarianten. Med planlåsen
+-- tatt først leser revalideringen et ferskt øyeblikksbilde (READ
+-- COMMITTED), og en promotering som committer mens vi venter på låsen er
+-- synlig når vi endelig spør.
+CREATE OR REPLACE FUNCTION pause_gjentatt_uten_resultat(
+    p_tenant TEXT, p_plan UUID, p_aktor TEXT, p_request_id TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant,
+                                       'pause_gjentatt_uten_resultat');
+    PERFORM 1 FROM public.bestillingsplan b
+     WHERE b.plan_id = p_plan AND b.tenant = p_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.planer_gjentatt_uten_resultat() k
+                    WHERE k.plan_id = p_plan AND k.tenant = p_tenant) THEN
+        RETURN false;      -- et resultat kom mens vi ventet på låsen
+    END IF;
+    RETURN public.pause_plan(p_tenant, p_plan, 'gjentatt_uten_resultat',
+                             p_aktor, p_request_id, NULL);
+END $$;
+REVOKE ALL ON FUNCTION pause_gjentatt_uten_resultat(TEXT, UUID, TEXT, TEXT)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pause_gjentatt_uten_resultat(TEXT, UUID, TEXT, TEXT)
+    TO disponit;
+
 -- GJENOPPRETTINGEN FOR EN STOPP UTEN PAUSE (Codex P1). §7 sier at et
 -- `stopp`-tick MÅ pause planen; materialisereren skriver nå begge i ÉN
 -- transaksjon, så den veien kan ikke gli fra hverandre. Men ticket kan

@@ -229,6 +229,13 @@ def pausesveip(conn, *, naa=None) -> list:
 
     # Tre tillat-tick på rad uten promotert artefakt, innenfor åpen
     # periode (gjenopptak nullstiller ved at perioden er ny).
+    #
+    # Utvalget her er BARE et utvalg (Codex P2): dommen felles av
+    # `pause_gjentatt_uten_resultat`, som tar planlåsen og revaliderer
+    # predikatet under den. Blir det tredje oppdragets artefakt promotert
+    # av arbeiderveien mellom lesningen og overgangen — to helt uavhengige
+    # transaksjoner — ville planen ellers blitt pauset enda et resultat
+    # forelå idet pausen committet, og bare et menneske kan oppheve den.
     rader = conn.execute(
         "SELECT plan_id, tenant FROM planer_gjentatt_uten_resultat()"
     ).fetchall()
@@ -236,8 +243,8 @@ def pausesveip(conn, *, naa=None) -> list:
     for plan_id, tenant in rader:
         rid = f"plansveip-{str(plan_id)[:8]}"
         sett_kontekst(conn, tenant, "plansveip", rid)
-        if conn.execute("SELECT pause_plan(%s,%s,'gjentatt_uten_resultat',"
-                        "'plansveip',%s,NULL)",
+        if conn.execute("SELECT pause_gjentatt_uten_resultat(%s,%s,"
+                        "'plansveip',%s)",
                         (tenant, plan_id, rid)).fetchone()[0]:
             pausete.append((str(plan_id), "gjentatt_uten_resultat"))
         conn.commit()

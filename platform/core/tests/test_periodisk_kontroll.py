@@ -1724,6 +1724,82 @@ def test_gjentatt_uten_resultat(migrator):
 
 
 @pg
+def test_uten_resultat_revalideres_under_planlaasen(migrator):
+    """Codex P2: kandidatlesningen og pausen var to øyeblikk.
+
+    Sveipen leste kandidatene i én transaksjon og pauset i en annen.
+    Endret verden seg imellom — det tredje oppdragets artefakt ble
+    PROMOTERT av arbeiderveien, som er helt uavhengig av plansveipen —
+    pauset den likevel planen som `gjentatt_uten_resultat` enda et
+    resultat forelå idet overgangen committet. Bare et menneske kan
+    oppheve den pausen. Kappløpet krever altså ikke to samtidige sveip.
+
+    Rekkefølgen måles deterministisk: en tredje forbindelse holder
+    planlåsen, sveipen settes i vente på den, og predikatet gjøres FALSKT
+    og committes mens den står der. Her brytes stripen av et fjerde tick
+    — samme predikat, samme lås, og en skriver like uavhengig av sveipen
+    som artefaktpromoteringen er.
+
+    MUTASJONEN SOM DREPER DENNE: la sveipen kalle `pause_plan` direkte
+    igjen, uten revalideringen i `pause_gjentatt_uten_resultat`.
+    """
+    import threading
+    import time
+    from db.pg import koble
+    rt = _rt()
+    blokk = koble(MIGRATOR_DSN)
+    svar = {}
+    try:
+        pid = _plan(rt, host="p22c.example")
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
+                                  slutt_h=-26 - 24 * i)
+            _syntetisk_tick(migrator, pid, vs, "tillat",
+                            oppdrag_id=940000 + i)
+        # Vindusraden for det fjerde ticket lages nå; PREDIKATET rører
+        # ikke vindusrader, så kandidaten står uendret.
+        vs_nytt = _syntetisk_vindu(migrator, pid, start_h=-6, slutt_h=-2)
+
+        _sett_kontekst(blokk, TENANT)
+        blokk.execute("SELECT status FROM bestillingsplan WHERE plan_id=%s"
+                      " FOR UPDATE", (pid,))
+
+        def sveip():
+            c = _rt()
+            try:
+                _sett_kontekst(c, TENANT)
+                svar["pauset"] = c.execute(
+                    "SELECT pause_gjentatt_uten_resultat(%s,%s,'plansveip',"
+                    "'r-sveip')", (TENANT, pid)).fetchone()[0]
+                c.commit()
+            finally:
+                c.close()
+
+        t = threading.Thread(target=sveip)
+        t.start()
+        time.sleep(1.5)
+        assert "pauset" not in svar, "sveipen tok aldri planlåsen"
+        # Verden endrer seg mens sveipen står i lås-køen.
+        blokk.execute(
+            "INSERT INTO bestillingsplan_tick (plan_id, tenant, vindu_start,"
+            " idempotensnokkel, utfall) VALUES (%s,%s,%s,%s,'brudd')",
+            (pid, TENANT, vs_nytt, "t-" + secrets.token_hex(8)))
+        blokk.commit()
+        t.join(timeout=20)
+        assert not t.is_alive(), "sveipen kom aldri forbi låsen"
+    finally:
+        blokk.close()
+        rt.close()
+    assert svar.get("pauset") is False, svar
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT status FROM bestillingsplan WHERE plan_id=%s",
+        (pid,)).fetchone()[0] == "aktiv", "planen ble pauset på et utdatert" \
+        " øyeblikksbilde"
+    migrator.rollback()
+
+
+@pg
 def test_et_brudd_bryter_stripen_uten_resultat(migrator):
     """Codex P2: strekken måles på de tre SISTE tickene, ikke de tre siste
     VELLYKKEDE.

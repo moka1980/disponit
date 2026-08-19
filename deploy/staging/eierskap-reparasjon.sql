@@ -97,6 +97,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'planer_med_menneskelig_avvis()',                    'disponit_m37_claimer'),
     ('FUNCTION', 'planer_gjentatt_uten_resultat()',                   'disponit_m37_claimer'),
     ('FUNCTION', 'planer_med_ubehandlet_stopp()',                     'disponit_m37_claimer'),
+    ('FUNCTION', 'pause_gjentatt_uten_resultat(text,uuid,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'planer_med_gjentatt_brudd()',                       'disponit_m37_claimer'),
     ('FUNCTION', 'plan_bestillingstyper()',                           'disponit_m37_claimer'),
     ('FUNCTION', 'planvinduer_til_klassifisering(integer,integer)',   'disponit_m37_claimer'),
