@@ -2099,6 +2099,22 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
         (pid,)).fetchone()[0] == "aktiv", \
         "planen ble pauset enda det tredje resultatet ble promotert"
     migrator.rollback()
+    # ... og den er ikke lenger en KANDIDAT heller: et promotert resultat
+    # tar planen ut av utvalget, ikke bare ut av dommen. Ellers ville hver
+    # senere sveip måtte felle den samme avgjørelsen på nytt.
+    kand = _rt()
+    try:
+        _sett_kontekst(kand, TENANT)
+        igjen = [r[0] for r in kand.execute(
+            "SELECT plan_id FROM planer_gjentatt_uten_resultat()").fetchall()]
+    finally:
+        kand.close()
+    _sett_kontekst(migrator, TENANT)
+    navn = migrator.execute(
+        "SELECT plan_id, parametre->>'hostname' FROM bestillingsplan"
+        " WHERE plan_id = ANY(%s)", (igjen,)).fetchall() if igjen else []
+    migrator.rollback()
+    assert igjen == [], f"kandidater igjen etter testen: {navn}"
 
 
 @pg
