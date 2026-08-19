@@ -198,6 +198,48 @@ def test_apen_sak_med_feil_motpart_teller_ikke(migrator):
 
 
 @pg
+def test_sikre_overtakelsessak_er_idempotent_for_identisk_konflikt(migrator):
+    """Codex P2: funksjonen heter `sikre`, ikke `skap`.
+
+    En IDENTISK konflikt — samme vertsnavn, utfordrer, motpart og
+    generasjon — skal gi SAMME sak, urørt. Uten det leddet falt kallet ned
+    i skifte-grenen, som alltid gjør saksrevisjon+1; triggeren i §6 forbyr
+    et hopp uten skifte, og reparasjonsveien felte seg selv. Verre:
+    loggposten var da alt skrevet, så en avbrutt reparasjon etterlot en
+    foreldreløs revisjonsloggrad.
+
+    To operatørreparasjoner som plukker samme rad er nettopp det scenariet
+    — og det er §20s egen vei.
+    """
+    h = _host()
+    sak, gen = _konflikt(migrator, h)
+    for_rad = _sakrad(migrator, sak)
+    _sett_kontekst(migrator, PLATT)
+    h_a, h_b = migrator.execute(
+        "SELECT hendelse_a, hendelse_b FROM unntak WHERE tenant=%s AND id=%s",
+        (PLATT, sak)).fetchone()
+    logger_for = int(migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+        (PLATT,)).fetchone()[0])
+    migrator.rollback()
+
+    migrator.execute("SET LOCAL ROLE disponit_domene_eier")
+    igjen = int(migrator.execute(
+        "SELECT sikre_overtakelsessak(%s,%s,%s,%s,%s,%s,'test-idem','rid-idem')",
+        (h, gen, TENANT, ANNEN_TENANT, h_a, h_b)).fetchone()[0])
+    migrator.commit()
+
+    assert igjen == sak, (sak, igjen)
+    assert _sakrad(migrator, sak) == for_rad, "en no-op endret saken"
+    _sett_kontekst(migrator, PLATT)
+    logger_etter = int(migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+        (PLATT,)).fetchone()[0])
+    migrator.rollback()
+    assert logger_etter == logger_for, "en no-op skrev en foreldreløs loggpost"
+
+
+@pg
 def test_port5_terminal_sak_ny_konflikt_ny_sak(migrator):
     """Port 5: en terminal sak gjenåpnes aldri — en ny konflikt får en NY
     sak, og den terminale står urørt."""

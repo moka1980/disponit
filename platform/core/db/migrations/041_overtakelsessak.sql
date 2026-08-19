@@ -564,6 +564,28 @@ BEGIN
     PERFORM set_config('disponit.aktor', p_aktor, true);
     PERFORM set_config('disponit.request_id', p_request_id, true);
 
+    -- SIKRE, IKKE SKAP (Codex P2). Navnet lover ensure/repair, og en
+    -- IDENTISK konflikt — samme hostname, utfordrer, motpart og
+    -- generasjon — skal derfor gi SAMME sak, urørt. Uten dette leddet
+    -- falt kallet ned i skifte-grenen, som alltid gjør saksrevisjon+1;
+    -- triggeren i §6 forbyr et hopp uten skifte, og reparasjonen felte
+    -- seg selv. Verre: loggposten under var da alt skrevet, så en
+    -- avbrutt reparasjon etterlot en foreldreløs revisjonsloggrad.
+    -- Sjekken ligger derfor FØR loggposten, ikke etter.
+    --
+    -- `FOR UPDATE`: to operatørreparasjoner som plukker samme rad
+    -- samtidig serialiseres her, og den andre ser den første sak.
+    SELECT id INTO v_sak FROM public.unntak
+     WHERE tenant = c_tenant AND hostname_ref = p_hostname
+       AND sakskilde = 'domeneovertakelse' AND NOT terminal
+       AND utfordrer_tenant = p_utfordrer
+       AND tapt_tenant = p_tapt
+       AND autorisasjonsgenerasjon = p_generasjon
+       FOR UPDATE;
+    IF FOUND THEN
+        RETURN v_sak;
+    END IF;
+
     v_payload := jsonb_build_object(
         'v', '1', 'familie', 'domeneovertakelse',
         'hostname', p_hostname,
@@ -585,11 +607,12 @@ BEGIN
     RETURNING id INTO v_logg;
 
     SELECT id INTO v_sak FROM public.unntak
-     WHERE hostname_ref = p_hostname
+     WHERE tenant = c_tenant AND hostname_ref = p_hostname
        AND sakskilde = 'domeneovertakelse' AND NOT terminal
        FOR UPDATE;
     IF FOUND THEN
-        -- Åpen sak: A→B→C eller ny generasjon — samme sak, revisjon+1,
+        -- Åpen sak med en ANNEN konflikt (den identiske er alt returnert
+        -- over): A→B→C eller ny generasjon — samme sak, revisjon+1,
         -- ny loggpost/lineage. Triggeren i §6 håndhever +1-regelen.
         UPDATE public.unntak
            SET utfordrer_tenant = p_utfordrer,
