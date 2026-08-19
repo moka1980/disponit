@@ -318,8 +318,15 @@ def test_slettet_versjon_kan_aktiveres_paa_nytt():
     for en generasjon som ikke lenger fantes.
 
     Her måles hele veien: aktiver 1.1.0, slett den, gjenskap SAMME
-    nummer og aktiver igjen. Historikken skal vise ÉN linje for den
-    levende versjonen — den nye generasjonens attestanter — ikke to.
+    nummer og aktiver igjen. Den LEVENDE raden skal ha ÉN linje, med sin
+    EGEN generasjons attestanter — aldri to, og aldri den slettede
+    generasjonens navn.
+
+    Den slettede generasjonen har sin egen linje (Codex P2): hendelsen
+    står, og en aktivering som faktisk skjedde hører hjemme i
+    revisjonssporet. Den skilles ved at innholdet er borte — koblingen
+    går via OPERASJONEN, så de to kan ikke smelte sammen selv om de deler
+    nummer.
 
     Kontroll: sett `hendelse_en_per_levende_versjon` tilbake til en ren
     UNIQUE på (tenant, policy_id, versjon), så blir denne rød.
@@ -377,11 +384,85 @@ def test_slettet_versjon_kan_aktiveres_paa_nytt():
     try:
         r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
         rader = r.execute(
-            "SELECT versjon, attestant_a FROM"
+            "SELECT versjon, attestant_a, innhold_finnes, aktivert FROM"
             " policyversjoner_for_tenant(%s,%s)", (TEN, pid)).fetchall()
         r.rollback()
-        assert rader == [(v, "uavh-ny")], \
-            f"historikken viser den slettede generasjonen: {rader}"
+        # Den levende raden først (nyest aktivert), med SINE attestanter;
+        # den slettede generasjonen som en egen, innholdsløs linje.
+        assert rader == [(v, "uavh-ny", True, True),
+                         (v, "uavh", False, True)], \
+            f"historikken bommer på generasjonene: {rader}"
+    finally:
+        r.close()
+
+
+@pg
+def test_historikken_beholder_aktiveringen_naar_versjonen_er_slettet():
+    """Codex P2: historikken var forankret i de OVERLEVENDE radene.
+
+    `slett_ubrukt_policy` sletter uttrykkelig en aktivert, ubrukt versjon
+    mens `policyaktivering` blir stående — tabellen er immutabel og evig,
+    og det er hele grunnen til at den finnes. Var spørringen forankret i
+    `policyer`, forsvant aktiveringen fra revisjonssporet sammen med
+    raden: en fire-øyne-runde som faktisk skjedde, med navngitte
+    attestanter, var ikke lenger å se noe sted gjennom flaten.
+
+    Linjen bærer alt hendelsen vet, men `innhold_finnes` er falsk —
+    dokumentet fulgte raden. Testen måler begge deler, for det er
+    nettopp derfor merket må stå: `policyversjon_innhold` har ingenting
+    å svare, og uten merket ville flaten tilbudt en diff som endte i 404
+    (eller, var nummeret gjenskapt, i en HELT ANNEN generasjons
+    dokument).
+
+    Kontroll: forankre spørringen i `policyer` igjen, så blir linjen
+    borte og testen rød.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        ih = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s", (TEN, pid, v)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute("SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+                         (TEN, pid, v, ih)).fetchone()[0] == 1
+        r.commit()
+    finally:
+        r.close()
+
+    r = _rt()
+    try:
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert r.execute(
+            "SELECT count(*) FROM policyer WHERE tenant=%s AND policy_id=%s",
+            (TEN, pid)).fetchone()[0] == 0, "forutsetningen holder ikke"
+        rader = r.execute(
+            "SELECT versjon, attestant_a, aktivert_av_operasjon,"
+            "       aktiveringskilde, aktivert, innhold_finnes, aktiv,"
+            "       aktivert_ts IS NOT NULL, opprettet IS NOT NULL"
+            "  FROM policyversjoner_for_tenant(%s,%s)",
+            (TEN, pid)).fetchall()
+        assert len(rader) == 1, f"aktiveringen forsvant med raden: {rader}"
+        (versjon, att, op, kilde, aktivert, innhold, aktiv,
+         har_ts, har_opprettet) = rader[0]
+        assert (versjon, att, kilde) == (v, "uavh", "styrt"), rader[0]
+        assert op is not None and har_ts and har_opprettet, rader[0]
+        assert aktivert is True and innhold is False and aktiv is False, \
+            rader[0]
+        r.rollback()
+        # …og merket lyver ikke: innholdet er faktisk borte.
+        r.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.NoDataFound):
+            r.execute("SELECT policyversjon_innhold(%s,%s,%s)",
+                      (TEN, pid, v)).fetchone()
+        r.rollback()
     finally:
         r.close()
 

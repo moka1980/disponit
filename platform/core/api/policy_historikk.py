@@ -80,7 +80,7 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
             "SELECT versjon, innholds_hash, aktiv, opprettet, aktivert_ts,"
             "       attestant_a, attestant_b, aktivert_av_operasjon,"
             "       rollback_av_versjon, rollback_kilde, aktiveringskilde,"
-            "       aktivert"
+            "       aktivert, innhold_finnes"
             "  FROM policyversjoner_for_tenant(%s, %s)",
             (tenant, policy_id)).fetchall()
         conn.rollback()
@@ -116,7 +116,15 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
              # HAR versjonen vært i kraft? En `registrer(..., aktiver=False)`
              # er registrert, ikke aktivert — uten dette viste flaten
              # registreringstidspunktet under «Aktivert» (047, Codex P2).
-             "aktivert": r[11]} for r in rader]
+             "aktivert": r[11],
+             # FINNES INNHOLDET ENNÅ (047, Codex P2)? `slett_ubrukt_policy`
+             # sletter en aktivert, ubrukt versjon mens HENDELSEN står
+             # igjen — den er uforanderlig, og aktiveringen hører hjemme i
+             # revisjonssporet selv om dokumentet er borte. En slik linje
+             # kan verken diffes eller rulles tilbake: `policyer` er
+             # innholdets eneste hjem, og var nummeret gjenskapt, ville et
+             # oppslag gitt den NYE generasjonens dokument.
+             "innhold_finnes": r[12]} for r in rader]
         return _ok({"policy_id": policy_id, "versjoner": versjoner,
                     "nytt_utkast_avvist": avvik[0] if avvik else None}, rid)
 

@@ -390,6 +390,52 @@ test("historikk: ingen rullbakk til en versjon som aldri har vært i kraft",
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   });
 
+// En slettet generasjons AKTIVERING står i loggen selv om dokumentet er
+// borte (Codex P2): `slett_ubrukt_policy` fjerner raden, `policyaktivering`
+// er evig. Linjen hører hjemme i revisjonssporet — men den kan verken
+// diffes eller rulles tilbake, og var nummeret gjenskapt etterpå, ville et
+// oppslag servert den NYE generasjonens dokument under den gamles linje.
+test("historikk: en slettet generasjon staar i loggen, uten diff og rullbakk",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/policyutkast": { utkast: [] },
+      "/v1/policy/aktive": AKTIVE,
+      "/v1/policy/faktura-no/versjoner": { policy_id: "faktura-no",
+        versjoner: [
+          // Den gjenskapte, levende generasjonen av SAMME nummer.
+          { versjon: "1", innholds_hash: "h1ny", aktiv: true,
+            opprettet: "2026-08-19T10:00:00+00:00",
+            aktivert_ts: "2026-08-19T10:00:00+00:00", attestanter: ["ida"],
+            aktivert_av_operasjon: "aktiver-u9-r1", rollback_av_versjon: null,
+            aktiveringskilde: "styrt", aktivert: true, innhold_finnes: true },
+          // Den slettede: hendelsen står, dokumentet er borte.
+          { versjon: "1", innholds_hash: "h1", aktiv: false,
+            opprettet: "2026-08-17T10:00:00+00:00",
+            aktivert_ts: "2026-08-17T10:00:00+00:00", attestanter: ["jon"],
+            aktivert_av_operasjon: "aktiver-u1-r1", rollback_av_versjon: null,
+            aktiveringskilde: "styrt", aktivert: true,
+            innhold_finnes: false }] } };
+    const h = nyHoved();
+    await aapneHistorikk(h);
+    const rader = h.querySelectorAll(".datatabell tbody tr");
+    // Begge linjene står — aktiveringen forsvant ikke med raden.
+    assert.equal(rader.length, 2);
+    assert.ok(rader[1].textContent.includes("jon"),
+      `den slettede generasjonens attestant mangler: ${rader[1].textContent}`);
+    // Grunnen står der, for leseren OG for eier: ingen tom celle.
+    assert.ok(rader[1].textContent.includes(t("ui.historikk.innhold_borte")),
+      rader[1].textContent);
+    assert.equal(rader[1].querySelector("button"), null,
+      "rullbakk tilbys til en generasjon som ikke finnes lenger");
+    assert.ok(rader[0].querySelector("button"),
+      "den levende generasjonen mistet rullbakken");
+    // Diffvelgerne finnes ikke: bare ÉN diffbar versjon igjen — og et
+    // duplisert nummer i nedtrekket hadde uansett vært et tvetydig valg.
+    assert.equal(h.querySelector("#hist-fra"), null);
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
 // `policy_id` er ikke et snilt tegnsett bare fordi skjemaet er strengt i
 // dag (Codex P2). Lastekontrakten slipper med vilje gjennom alt aktive
 // policyer fra før innstrammingen bærer, og den gamle Python-`$`-en matchet

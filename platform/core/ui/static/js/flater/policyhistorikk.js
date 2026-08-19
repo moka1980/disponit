@@ -69,6 +69,17 @@ export function opphavTekst(v) {
   return t(`ui.historikk.${nokkel}`).replace("{n}", n);
 }
 
+// FINNES DOKUMENTET ENNÅ (047, Codex P2)? `slett_ubrukt_policy` sletter en
+// aktivert, ubrukt versjon mens HENDELSEN står igjen — aktiveringen hører
+// hjemme i revisjonssporet, men innholdet er borte. En slik linje kan
+// verken diffes eller rulles tilbake, og var nummeret gjenskapt etterpå,
+// ville et oppslag servert den NYE generasjonens dokument under den gamle
+// aktiveringens linje. Eldre svar uten feltet leses som «finnes» —
+// flaten skal ikke skjule rader fordi serveren er et hakk bak.
+function harInnhold(v) {
+  return v.innhold_finnes !== false;
+}
+
 export function tegnDiff(rot, d) {
   const endringer = (d.diff && d.diff.endringer) || [];
   // Retningen I ORD FØRST (port 40): risikoklassen er overskriften.
@@ -97,8 +108,12 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
   const rader = versjoner.map((v) => {
     const celler = [
       el("th", { scope: "row", text: v.versjon }),
-      // Aktiv versjon markeres med TEKST (port 40), aldri kun stil.
-      el("td", { text: v.aktiv ? t("ui.historikk.aktiv_na") : "" }),
+      // Aktiv versjon markeres med TEKST (port 40), aldri kun stil. Det
+      // samme gjelder en linje hvis dokument er slettet: leseren har
+      // ingen handlingskolonne, og skal likevel se hvorfor versjonen ikke
+      // kan diffes.
+      el("td", { text: v.aktiv ? t("ui.historikk.aktiv_na")
+        : !harInnhold(v) ? t("ui.historikk.innhold_borte") : "" }),
       // «Aktivert» er en påstand om at versjonen HAR vært i kraft. En
       // rad som bare er registrert (`aktiver=False`) har aldri vært det,
       // og skal ikke låne registreringstidspunktet sitt til kolonnen
@@ -122,7 +137,12 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
       // til. `policyversjon_kilde` avviser derfor kallet, og knappen ville
       // deterministisk endt i 409 — samme grunn som at en sperret
       // policy-id ikke får knappen. Grunnen STÅR der, den mangler ikke.
-      if (v.aktivert === false) {
+      if (!harInnhold(v)) {
+        // Aktiveringen står, dokumentet gjør det ikke. Grunnen sies, som
+        // for de andre radene uten knapp.
+        handlinger.append(el("span", { class: "muted",
+          text: t("ui.historikk.innhold_borte") }));
+      } else if (v.aktivert === false) {
         handlinger.append(el("span", { class: "muted",
           text: t("ui.historikk.rullbakk_uaktivert") }));
       } else {
@@ -157,7 +177,13 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
 // Diff mellom to VILKÅRLIGE versjoner — velgere er <select> med <label>
 // (port §7), resultatet en liste med tekst, aldri to <pre>.
 function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
-  if (versjoner.length < 2) return null;
+  // Bare versjoner det FINNES et dokument for kan diffes (Codex P2). En
+  // slettet generasjons hendelse står i tabellen som revisjonsspor, men
+  // `policyversjon_innhold` har ingenting å hente for den — og er nummeret
+  // gjenskapt, ville valget dessuten vært tvetydig: to linjer, samme
+  // verdi, ulikt dokument.
+  const diffbare = versjoner.filter(harInnhold);
+  if (diffbare.length < 2) return null;
   const diffUt = el("div", { class: "historikk-diff" });
   // DEFAULT-RETNINGEN LESES AV AKTIVERINGENE (Codex P2). Lista er sortert
   // nyest aktivert først, med de aldri aktiverte bakerst — men å ta indeks
@@ -166,16 +192,16 @@ function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
   // aktiv» som om det var kronologien og risikoretningen. Finnes det ikke
   // to aktiverte versjoner, finnes det ingen sann default, og da skal eier
   // velge selv i stedet for å bli servert en påstand.
-  const aktiverte = versjoner.filter((v) => v.aktivert !== false);
+  const aktiverte = diffbare.filter((v) => v.aktivert !== false);
   const harDefault = aktiverte.length >= 2;
   const tomValg = () => (harDefault ? [] : [el("option", {
     value: "", text: t("ui.historikk.velg_versjon") })]);
   const fra = el("select", { id: "hist-fra" }, ...tomValg(),
-    ...versjoner.map((v) => el("option", { value: v.versjon,
-                                           text: v.versjon })));
+    ...diffbare.map((v) => el("option", { value: v.versjon,
+                                          text: v.versjon })));
   const til = el("select", { id: "hist-til" }, ...tomValg(),
-    ...versjoner.map((v) => el("option", { value: v.versjon,
-                                           text: v.versjon })));
+    ...diffbare.map((v) => el("option", { value: v.versjon,
+                                          text: v.versjon })));
   if (harDefault) {
     fra.value = aktiverte[1].versjon;
     til.value = aktiverte[0].versjon;

@@ -1063,7 +1063,7 @@ RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
                attestant_a TEXT, attestant_b TEXT,
                aktivert_av_operasjon TEXT, rollback_av_versjon TEXT,
                rollback_kilde TEXT, aktiveringskilde TEXT,
-               aktivert BOOLEAN)
+               aktivert BOOLEAN, innhold_finnes BOOLEAN)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -1075,7 +1075,26 @@ BEGIN
             'dekker ikke %', current_setting('disponit.tenant', true),
             p_tenant USING ERRCODE = 'insufficient_privilege';
     END IF;
+    -- HISTORIKKEN ER HENDELSENES, IKKE BARE DE OVERLEVENDE RADENES
+    -- (Codex P2). Spørringen var forankret i `policyer`, men
+    -- `slett_ubrukt_policy` sletter uttrykkelig en aktivert, ubrukt
+    -- versjon MENS hendelsen står igjen — den er uforanderlig og evig,
+    -- det er hele grunnen til at den finnes. Aktiveringen forsvant da fra
+    -- historikken sammen med raden, og var nummeret gjenskapt etterpå,
+    -- viste flaten bare den nye generasjonen: revisjonssporet fortalte at
+    -- serien hadde ÉN aktivering der loggen holdt to.
+    --
+    -- Den hendelsesbårne linjen bærer alt hendelsen selv vet —
+    -- tidspunkt, attestanter, operasjon, rullbakk-opphav — men INNHOLDET
+    -- er borte, og `innhold_finnes` sier det. Flaten tilbyr da verken
+    -- diff eller rullbakk for den: `policyer` er innholdets eneste hjem,
+    -- og et nummer som er gjenskapt ville ellers servert den NYE
+    -- generasjonens dokument under den gamle aktiveringens linje.
     RETURN QUERY
+    WITH linjer (versjon, innholds_hash, aktiv, opprettet, aktivert_ts,
+                 attestant_a, attestant_b, aktivert_av_operasjon,
+                 rollback_av_versjon, rollback_kilde, aktiveringskilde,
+                 aktivert, innhold_finnes) AS (
     SELECT p.versjon, p.innholds_hash, p.aktiv, p.opprettet,
            -- Aktiveringstidspunktet fra HENDELSEN (runden har ingen
            -- brukt_ts — lesesvar runde 2), og fra `bootstrap_aktivert_ts`
@@ -1114,7 +1133,9 @@ BEGIN
            -- ikke aktiveringen. Prøven bor i `policyversjon_i_kraft`, delt
            -- med sorteringen under og med rullbakkens kildeport.
            public.policyversjon_i_kraft(p.aktiv, p.bootstrap_aktivert_ts,
-                                        p.aktiveringskilde, a.aktivert_ts)
+                                        p.aktiveringskilde, a.aktivert_ts),
+           -- Raden lever: innholdet kan leses, diffes og rulles tilbake.
+           true
       FROM public.policyer p
       -- Koblingen går via OPERASJONEN, ikke via (policy_id, versjon)
       -- (Codex P2). `aktivert_av_operasjon` ER FK-en til hendelsen, og
@@ -1136,24 +1157,68 @@ BEGIN
         ON rb.tenant = u.tenant AND rb.policy_id = u.policy_id
        AND rb.versjon = u.rollback_av_versjon
      WHERE p.tenant = p_tenant AND p.policy_id = p_policy_id
-     -- Kronologien er AKTIVERINGENS, ikke registreringens (Codex P2):
-     -- `opprettet` er når raden ble skrevet, og en rad kan skrives lenge
-     -- før den aktiveres. `opprettet` er siste utvei — for de MIGRERTE
-     -- radene, der aktiveringen skjedde, men tidspunktet ikke finnes noe
-     -- sted.
-     --
-     -- En ALDRI AKTIVERT rad står utenfor denne kronologien (Codex P2).
-     -- Sorterte den på `opprettet` sammen med aktiveringene, la en
-     -- fersk `registrer(..., aktiver=False)` seg øverst som om den var
-     -- nyest aktivert — og dro med seg diffens default-retning, som
-     -- leser nettopp de to øverste. Den sorteres derfor etter alle
-     -- aktiveringene, med samme test som `aktivert`-kolonnen over.
-     ORDER BY CASE WHEN public.policyversjon_i_kraft(
-                          p.aktiv, p.bootstrap_aktivert_ts,
-                          p.aktiveringskilde, a.aktivert_ts)
-                     THEN 0 ELSE 1 END,
-              coalesce(a.aktivert_ts, p.bootstrap_aktivert_ts,
-                       p.opprettet) DESC, p.versjon DESC;
+    UNION ALL
+    -- Aktiveringer uten en overlevende rad. `NOT EXISTS` mot OPERASJONEN,
+    -- samme entydige nøkkel joinen over bruker: er nummeret gjenskapt,
+    -- bærer den nye raden en ANNEN operasjon (eller ingen), og den gamle
+    -- hendelsen står fortsatt uten rad — den skal ha sin egen linje, ikke
+    -- smelte sammen med gjenskapingen.
+    SELECT a.versjon, a.innholds_hash, false,
+           -- «Opprettet» finnes ikke lenger; aktiveringen er det eneste
+           -- tidspunktet hendelsen selv kjenner, og det er det ærligste
+           -- svaret her. Kolonnen er NOT NULL i returtypen, og flaten
+           -- viser uansett `aktivert_ts` for en aktivert linje.
+           a.aktivert_ts, a.aktivert_ts,
+           a.attestant_a, a.attestant_b,
+           a.decision_operation_id, u.rollback_av_versjon,
+           CASE WHEN u.rollback_av_versjon IS NULL THEN NULL
+                WHEN u.rollback_av_generasjon IS NULL THEN 'ubundet'
+                WHEN rb.generasjon IS NOT DISTINCT FROM
+                     u.rollback_av_generasjon THEN 'bundet'
+                ELSE 'borte' END::TEXT,
+           -- En hendelse finnes bare for den styrte veien; det er
+           -- invarianten `policyer_kilde_speiler_operasjon` holder.
+           'styrt', true,
+           -- Innholdet fulgte raden. Uten dette merket ville flaten bedt
+           -- `policyversjon_innhold` om et nummer som enten er borte
+           -- (404) eller bærer en HELT ANNEN generasjons dokument.
+           false
+      FROM public.policyaktivering a
+      LEFT JOIN public.policyutkast u
+        ON u.tenant = a.tenant AND u.utkast_id = a.utkast_id
+      LEFT JOIN public.policyer rb
+        ON rb.tenant = u.tenant AND rb.policy_id = u.policy_id
+       AND rb.versjon = u.rollback_av_versjon
+     WHERE a.tenant = p_tenant AND a.policy_id = p_policy_id
+       AND NOT EXISTS (SELECT 1 FROM public.policyer p2
+                        WHERE p2.tenant = a.tenant
+                          AND p2.aktivert_av_operasjon
+                              = a.decision_operation_id)
+    )
+    -- Kronologien er AKTIVERINGENS, ikke registreringens (Codex P2):
+    -- `opprettet` er når raden ble skrevet, og en rad kan skrives lenge
+    -- før den aktiveres. `opprettet` er siste utvei — for de MIGRERTE
+    -- radene, der aktiveringen skjedde, men tidspunktet ikke finnes noe
+    -- sted.
+    --
+    -- En ALDRI AKTIVERT rad står utenfor denne kronologien (Codex P2).
+    -- Sorterte den på `opprettet` sammen med aktiveringene, la en fersk
+    -- `registrer(..., aktiver=False)` seg øverst som om den var nyest
+    -- aktivert — og dro med seg diffens default-retning, som leser
+    -- nettopp de to øverste. Den sorteres derfor etter alle
+    -- aktiveringene, med samme test som `aktivert`-kolonnen over.
+    --
+    -- `aktivert` er nå BEREGNET i grenene, så sorteringen leser den
+    -- kolonnen i stedet for å regne prøven ut på nytt: to utskrifter av
+    -- samme spørsmål er to spørsmål, og de kan gå fra hverandre.
+    SELECT l.versjon, l.innholds_hash, l.aktiv, l.opprettet, l.aktivert_ts,
+           l.attestant_a, l.attestant_b, l.aktivert_av_operasjon,
+           l.rollback_av_versjon, l.rollback_kilde, l.aktiveringskilde,
+           l.aktivert, l.innhold_finnes
+      FROM linjer l
+     ORDER BY CASE WHEN l.aktivert THEN 0 ELSE 1 END,
+              coalesce(l.aktivert_ts, l.opprettet) DESC,
+              l.versjon DESC, l.innhold_finnes DESC;
 END $$;
 
 CREATE OR REPLACE FUNCTION policyversjon_innhold(

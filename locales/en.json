@@ -1019,6 +1019,7 @@
   "ui.historikk.rullbakk_opprettet": "A draft from version {n} has been created. It must pass validation and approval before taking effect — the number of approvers is decided by the risk class when the round opens.",
   "ui.historikk.rullbakk_feilet": "The rollback draft could not be created. Please try again.",
   "ui.historikk.rullbakk_uaktivert": "cannot be rolled back to — this version was never in force",
+  "ui.historikk.innhold_borte": "content deleted — the activation remains in the log, but this version cannot be read, compared or rolled back",
   "ui.historikk.feil.rullbakk_kilde_uaktivert": "This version has never been in force, so it cannot be rolled back to. Reload the history.",
   "ui.historikk.tom_tittel": "No versions",
   "ui.historikk.tom_tekst": "This policy has no registered versions yet.",
