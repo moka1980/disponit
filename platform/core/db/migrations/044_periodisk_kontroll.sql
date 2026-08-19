@@ -832,23 +832,37 @@ GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO disponit;
 -- periode uten promotert artefakt. Definer-funksjon fordi kalleren
 -- (runtime) ikke har bordtilgang, og fordi artefakt-lesingen hører til
 -- claimeren her — samme snitt som resten av M-37-flaten.
+-- «Tre på rad» må måles på de tre SISTE tickene, ikke på de tre siste
+-- VELLYKKEDE (Codex P2). Filteret `utfall = 'tillat'` sto FØR `LIMIT 3`,
+-- så rekkefølgen `tillat, brudd, tillat, tillat` ble lest som tre
+-- sammenhengende `tillat` og pauset planen — enda `brudd`-et imellom
+-- nettopp BRYTER stripen. Samme vindusform som
+-- `planer_med_gjentatt_brudd`: ta de tre siste, og krev at alle tre
+-- holder. Uten resultat = ingen promotert artefakt på tickets oppdrag.
 CREATE OR REPLACE FUNCTION planer_gjentatt_uten_resultat()
 RETURNS TABLE(plan_id UUID, tenant TEXT)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT p.plan_id, p.tenant FROM public.bestillingsplan p
-     WHERE p.status = 'aktiv'
-       AND (SELECT count(*) FROM (
-              SELECT t.oppdrag_id FROM public.bestillingsplan_tick t
-               WHERE t.plan_id = p.plan_id AND t.utfall = 'tillat'
-                 AND t.registrert >= (SELECT max(ap.fra_ts)
-                        FROM public.bestillingsplan_aktiv_periode ap
-                       WHERE ap.plan_id = p.plan_id)
-               ORDER BY t.vindu_start DESC LIMIT 3) siste
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM public.artefakt a
-                  WHERE a.tenant = p.tenant
-                    AND a.oppdrag_id = siste.oppdrag_id
-                    AND a.tilstand = 'promotert')) >= 3
+    WITH siste AS (
+        SELECT t.plan_id, t.tenant, t.utfall,
+               EXISTS (SELECT 1 FROM public.artefakt a
+                        WHERE a.tenant = t.tenant
+                          AND a.oppdrag_id = t.oppdrag_id
+                          AND a.tilstand = 'promotert') AS har_resultat,
+               row_number() OVER (PARTITION BY t.plan_id
+                                  ORDER BY t.vindu_start DESC) AS rn
+          FROM public.bestillingsplan_tick t
+          JOIN public.bestillingsplan p
+            ON p.plan_id = t.plan_id AND p.status = 'aktiv'
+         WHERE t.registrert >= (SELECT max(ap.fra_ts)
+                  FROM public.bestillingsplan_aktiv_periode ap
+                 WHERE ap.plan_id = t.plan_id)
+    )
+    SELECT s.plan_id, s.tenant FROM siste s
+     WHERE s.rn <= 3
+     GROUP BY s.plan_id, s.tenant
+    HAVING count(*) = 3
+       AND bool_and(s.utfall = 'tillat')
+       AND bool_and(NOT s.har_resultat)
 $$;
 REVOKE ALL ON FUNCTION planer_gjentatt_uten_resultat() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION planer_gjentatt_uten_resultat() TO disponit;

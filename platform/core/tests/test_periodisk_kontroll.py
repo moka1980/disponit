@@ -1138,6 +1138,37 @@ def test_gjentatt_uten_resultat(migrator):
 
 
 @pg
+def test_et_brudd_bryter_stripen_uten_resultat(migrator):
+    """Codex P2: strekken måles på de tre SISTE tickene, ikke de tre siste
+    VELLYKKEDE.
+
+    Med `utfall = 'tillat'` filtrert FØR `LIMIT 3` ble `tillat, brudd,
+    tillat, tillat` lest som tre sammenhengende `tillat` og pauset planen
+    — enda `brudd`-et imellom nettopp bryter stripen."""
+    from plan.materialiser import pausesveip
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p22b.example")
+        # Eldst → nyest: tillat, tillat, brudd, tillat.
+        for i, utfall in enumerate(("tillat", "tillat", "brudd", "tillat")):
+            vs = _syntetisk_vindu(migrator, pid, start_h=-30 + 4 * i,
+                                  slutt_h=-28 + 4 * i)
+            _syntetisk_tick(migrator, pid, vs, utfall,
+                            oppdrag_id=920000 + i if utfall == "tillat"
+                            else None)
+        assert pausesveip(rt) == [], "et brudd i stripen pauset likevel"
+        # To `tillat` til gjør de TRE SISTE sammenhengende — da pauser den.
+        for i, start_h in enumerate((-14, -10)):
+            vs = _syntetisk_vindu(migrator, pid, start_h=start_h,
+                                  slutt_h=start_h + 2)
+            _syntetisk_tick(migrator, pid, vs, "tillat",
+                            oppdrag_id=920090 + i)
+        assert (str(pid), "gjentatt_uten_resultat") in pausesveip(rt)
+    finally:
+        rt.close()
+
+
+@pg
 def test_tre_brudd_varsles_men_pauser_aldri(migrator):
     """Port 21: `brudd` pauser ALDRI — men tre på rad gir ETT varsel,
     dempet til stripen brytes."""
