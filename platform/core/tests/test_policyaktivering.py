@@ -638,6 +638,76 @@ def test_reregistrering_av_aktiv_bootstrap_beholder_tidspunktet():
 
 
 @pg
+def test_innhold_som_har_vaert_i_kraft_kan_ikke_skrives_om():
+    """Codex P2: oppsettsveien kan ikke bytte ut en fortid.
+
+    Upserten skriver `innholds_hash` og `innhold` ubetinget. En
+    oppsettskjøring med REDIGERT innhold på en versjon som alt har vært
+    aktiv skrev derfor om dokumentet der det står, mens raden beholdt
+    aktiveringstidspunktet og opphavet sitt: historikken fortsatte å
+    påstå at nettopp DETTE innholdet var i kraft fra den gang, uten at
+    noen aktivering hadde skjedd — og det som faktisk var i kraft fantes
+    ikke lenger noe sted.
+
+    Tre tilfeller: identisk re-kjøring (skal virke), redigert innhold på
+    en versjon som har vært i kraft (skal avvises, også når den er avløst)
+    og redigert innhold på en versjon som ALDRI har vært det (skal virke —
+    det er arbeidsstykket).
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    pid = "pol-fortid-" + secrets.token_hex(3)
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["status"] = "produksjon"
+
+    def _endret(versjon):
+        m2 = _yaml.safe_load(_yaml.safe_dump(mal))
+        m2["meta"]["versjon"] = versjon
+        # `bedrift` er et fritt felt i skjemaet — endringen er ekte for
+        # innholdshashen og likegyldig for alt annet.
+        m2["meta"]["bedrift"] = "endret " + secrets.token_hex(4)
+        return m2
+
+    m = _c()
+    try:
+        mal["meta"]["versjon"] = "1.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        # Identisk re-kjøring: `init-tenant.sh` skal kunne kjøres om igjen.
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        # Redigert innhold på den AKTIVE versjonen.
+        with pytest.raises(pr.PolicyKorrupt):
+            pr.registrer(m, TEN, _endret("1.0.0"), "produksjon")
+        m.rollback()
+        # Avløst — men fortiden er ikke friere av den grunn.
+        mal["meta"]["versjon"] = "2.0.0"
+        pr.registrer(m, TEN, mal, "produksjon")
+        m.commit()
+        with pytest.raises(pr.PolicyKorrupt):
+            pr.registrer(m, TEN, _endret("1.0.0"), "produksjon",
+                         aktiver=False)
+        m.rollback()
+        # En versjon som ALDRI har vært i kraft er fortsatt redigerbar.
+        mal["meta"]["versjon"] = "9.0.0"
+        pr.registrer(m, TEN, mal, "produksjon", aktiver=False)
+        m.commit()
+        ny_9 = _endret("9.0.0")
+        pr.registrer(m, TEN, ny_9, "produksjon", aktiver=False)
+        m.commit()
+        lagret = m.execute(
+            "SELECT innholds_hash FROM policyer WHERE tenant=%s AND"
+            " policy_id=%s AND versjon='9.0.0'", (TEN, pid)).fetchone()[0]
+        assert lagret == pr.innholds_hash(ny_9), lagret
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_aldri_aktivert_versjon_star_utenfor_aktiveringskronologien():
     """Codex P2: en REGISTRERT versjon er ikke en aktivert versjon.
 

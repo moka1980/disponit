@@ -335,6 +335,37 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
             [f"kan ikke registrere versjon {versjon} på nytt: den ble"
              f" aktivert gjennom fire-øyne-veien (operasjon {bundet[0]}),"
              " og innholdet er bundet til attestasjonene"], policy)
+    # ET INNHOLD SOM HAR VÆRT I KRAFT KAN IKKE BYTTES UT (Codex P2).
+    #
+    # Upserten under skriver `innholds_hash` og `innhold` ubetinget. En
+    # oppsettskjøring med REDIGERT innhold på en versjon som alt har vært
+    # aktiv skrev derfor om selve dokumentet der det står, mens raden
+    # beholdt aktiveringstidspunktet og opphavet sitt: historikken
+    # fortsatte å påstå at DETTE innholdet var i kraft fra den gang, uten
+    # at noen aktivering hadde skjedd. Det som faktisk var i kraft, fantes
+    # da ikke lenger noe sted — versjonsnummeret er `policyer`s eneste
+    # nøkkel til fortiden, og en rullbakk-binding til generasjonen ble
+    # ugyldig i samme slengen.
+    #
+    # Gjelder også en versjon som IKKE er aktiv lenger: at den er avløst
+    # gjør ikke fortiden hennes friere. En rad som aldri har vært i kraft
+    # (`registrer(..., aktiver=False)`, merket bootstrap uten tidspunkt) er
+    # derimot fortsatt et arbeidsstykke og kan redigeres — det er nettopp
+    # den veien som finnes for å legge inn en versjon før den tas i bruk.
+    #
+    # IDENTISK re-kjøring er urørt: prøven er innholdet, ikke kallet.
+    # `init-tenant.sh` skal kunne kjøres om igjen.
+    var_i_kraft = conn.execute(
+        "SELECT innholds_hash FROM policyer WHERE tenant=%s AND policy_id=%s"
+        " AND versjon=%s AND (aktiv OR bootstrap_aktivert_ts IS NOT NULL"
+        "  OR coalesce(aktiveringskilde,'historisk') <> 'bootstrap')",
+        (tenant, pid, versjon)).fetchone()
+    if var_i_kraft is not None and var_i_kraft[0] != h:
+        raise PolicyKorrupt(
+            [f"kan ikke registrere versjon {versjon} med nytt innhold: den"
+             " har vært i kraft, og innholdet som var det kan ikke byttes"
+             f" ut i ettertid (lagret {var_i_kraft[0][:12]}…, nytt"
+             f" {h[:12]}…). Registrer en ny versjon i stedet"], policy)
     # `aktiveringskilde='bootstrap'` merker VEIEN INN, ikke bare
     # aktiveringen: raden kom gjennom oppsettsregistreringen, med eller uten
     # flagget. Uten merket var den ikke til å skille fra en rad som lå der
