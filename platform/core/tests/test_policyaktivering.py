@@ -1172,6 +1172,61 @@ def test_rullbakk_er_serverens_kopi_og_replaysikker(klient):
 
 
 @pg
+def test_rullbakkeopphavet_er_frosset_naar_historikken_leser_det(klient):
+    """Codex P2: historikken rapporterer `rollback_av_versjon` som LINJE.
+
+    `policyversjoner_for_tenant` leser kolonnen og sier «denne versjonen
+    er en rullbakk av N». Den var ikke frosset av noe:
+    `policyutkast_kolonnelaas` nevner den ikke, terminalvernet der måler
+    bare status-OVERGANGER (et `aktivert` utkast kan altså oppdateres så
+    lenge statusen står stille), og kjøretidsrollen beholder UPDATE på
+    tabellen. En ordinær, alt aktivert versjon kunne dermed i ettertid få
+    et opphav — eller få det flyttet — uten at den immutable hendelsen
+    eller attestasjonene ble rørt.
+
+    Målt der det er sterkest: som TABELLEIER (migrator), altså forbi
+    grant-porten, og på BEGGE fabrikasjonene — NULL → N og N → M.
+    """
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    cookie, csrf = _forvaltersesjon()
+    r = _post(klient, cookie, csrf, "/v1/policyutkast",
+              {"policy_id": pid, "rollback_av_versjon": v})
+    assert r.status_code == 201, r.text
+    rb_uid = r.json()["utkast_id"]
+    m = _c()
+    try:
+        # NULL → N: det ordinære utkastet som gjøres om til en rullbakk.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute("UPDATE policyutkast SET rollback_av_versjon=%s"
+                      " WHERE tenant=%s AND utkast_id=%s", (v, TEN, uid))
+        m.rollback()
+        # N → M: opphavet flyttes til en annen versjon.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute("UPDATE policyutkast SET rollback_av_versjon='9.9.9'"
+                      " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid))
+        m.rollback()
+        # N → NULL: en rullbakk kan heller ikke vaskes til å se ordinær ut.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            m.execute("UPDATE policyutkast SET rollback_av_versjon=NULL"
+                      " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid))
+        m.rollback()
+        # Låsen gjelder KOLONNEN, ikke raden: utkastet er fortsatt
+        # redigerbart på alle de vanlige måtene.
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        m.execute("UPDATE policyutkast SET utkastversjon=utkastversjon+1"
+                  " WHERE tenant=%s AND utkast_id=%s", (TEN, rb_uid))
+        assert m.execute(
+            "SELECT rollback_av_versjon FROM policyutkast WHERE tenant=%s"
+            " AND utkast_id=%s", (TEN, rb_uid)).fetchone()[0] == v
+        m.rollback()
+    finally:
+        m.close()
+
+
+@pg
 def test_ekstern_lesing_krever_plattformvilkar_ved_validering():
     """Portene 31 og 34: en `ekstern_lesing`-handling uten
     målautorisasjonsvilkår gjør utkastet UGYLDIG ved validering — det er

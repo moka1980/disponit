@@ -783,6 +783,29 @@ RESET ROLE;
 --    policyer direkte — definere eid av policy-eieren, med eksplisitt
 --    tenantport OG kallerens GUC-RLS som dobbelt lag.
 -- ------------------------------------------------------------
+
+-- OPPHAVET MÅ FRYSES FØR DET BLIR HISTORIKK (Codex P2).
+-- `policyversjoner_for_tenant` under leser `policyutkast.rollback_av_versjon`
+-- og rapporterer den som LINJE: «denne versjonen er en rullbakk av N». Den
+-- kolonnen var ikke frosset av noe. `policyutkast_kolonnelaas` nevner den
+-- ikke, terminalvernet der måler bare status-OVERGANGER — et `aktivert`
+-- utkast kan altså oppdateres så lenge statusen står stille — og
+-- kjøretidsrollen beholder UPDATE på tabellen. En direkte skriving eller en
+-- fremtidig skriver kunne dermed gjøre en helt ordinær, alt aktivert
+-- versjon om til «rullbakk av N», eller flytte N, uten å røre den
+-- immutable hendelsen eller attestasjonene. Historikken ville da fortalt et
+-- opphav ingen har attestert, og ingenting i lenken sa fra.
+--
+-- Kolonnen skrives KUN ved opprettelsen (`opprett_utkast`) og aldri
+-- oppdateres, så den fryses helt — ikke bare «når den er satt». NULL → N
+-- er nettopp fabrikasjonen: en ordinær versjon som i ettertid får et
+-- opphav. Samme form som `policyer_operasjon_immutabel` over.
+CREATE TRIGGER policyutkast_rullbakkeopphav_immutabel
+  BEFORE UPDATE ON policyutkast
+  FOR EACH ROW WHEN (NEW.rollback_av_versjon
+                     IS DISTINCT FROM OLD.rollback_av_versjon)
+  EXECUTE FUNCTION avvis_endring();
+
 CREATE OR REPLACE FUNCTION policyversjoner_for_tenant(
     p_tenant TEXT, p_policy_id TEXT)
 RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
