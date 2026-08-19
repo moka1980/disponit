@@ -220,6 +220,33 @@ GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT) TO {rolle};
 -- administrativ operasjon, ikke noe forespørselsveien skal kunne utløse.
 """
 
+# 043 (Gate 14b): oppløsningsveien. EGEN blokk fordi den KUN gjelder
+# runtime-rollen — M37_RETTIGHETER over kjøres også for `disponit_arbeider`,
+# og arbeideren har ingenting med et menneskelig nei å gjøre. Samme
+# selektivitet som 038 gjorde for `opprett_beslutningsoppdrag`: autoriteten
+# gis der veien faktisk går, ikke der blokken tilfeldigvis bor.
+#
+# Migrasjon 043 grantet disse til rollenavnet `disponit` direkte. Det
+# fungerer lokalt og i test (der runtime HETER disponit), men denne kjøreren
+# tar runtime-rollens navn som argument — og på en installasjon med et annet
+# navn ville migrasjonens grant enten truffet feil rolle eller feilet på en
+# rolle som ikke finnes. Den parameteriserte blokken er den autoritative;
+# migrasjonens egen grant er betinget av at rollen finnes.
+M37_RETTIGHETER_API = """
+SET LOCAL ROLE disponit_m37_claimer;
+-- Treargsformen: samme atomiske kappløpsport som kvitteringsveien, med
+-- utfallet `avvist` (oppløsningen) og `sen_evidens` (sen kvittering på et
+-- kansellert oppdrag).
+GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT) TO {rolle};
+-- Reversibiliteten fra modulkontrakten — lesejobben sen-kvitteringsveien
+-- utleder kompensasjons-/irreversibilitetssaken av.
+GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) TO {rolle};
+-- Selve oppløsningen: kalles av avvis-veien i unntaksbehandlingen, som er
+-- scope-gatet (`exceptions:handle`) i app-laget og tenantbundet i
+-- funksjonen selv.
+GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT) TO {rolle};
+"""
+
 # Token-administrasjonen er en EGEN rolle som eier ingenting (korreksjon 2).
 # Kolonnenivå med vilje: `secret_mac` er ikke med i SELECT-listen, så en
 # kompromittert token-admin kan opprette og deaktivere tokens, men ikke lese
@@ -362,6 +389,9 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         conn.execute(M37_RETTIGHETER.format(rolle=rolle))
         conn.commit()      # avslutter SET LOCAL ROLE
+        # 043: oppløsningsveien — runtime ALENE (se blokken).
+        conn.execute(M37_RETTIGHETER_API.format(rolle=rolle))
+        conn.commit()
         # PR-013: policy_eier sitt skrivegrant på `policyer`/`policy_hode` bor
         # i migrasjon 013 sammen med funksjonen — der overlever det enhver
         # skjemagjenoppbygging (også testenes _nullstill + re-migrer), ikke

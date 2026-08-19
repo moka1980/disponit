@@ -207,8 +207,21 @@ END $$;
 REVOKE ALL ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT)
   FROM PUBLIC;
 -- Granten gis AV EIEREN, i vinduet — migrator har ingen grant-option her.
-GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT)
-  TO disponit;
+--
+-- ... men rollenavnet `disponit` er LOKALT/TEST-navnet (Codex P1).
+-- `deploy/staging/migrer.py` tar runtime-rollens navn som argument, og på en
+-- installasjon med et annet navn er en literal grant her i beste fall
+-- virkningsløs og i verste fall en hard feil på en rolle som ikke finnes.
+-- Den AUTORITATIVE granten for den konfigurerte rollen er derfor den
+-- parameteriserte `M37_RETTIGHETER_API`-blokken i kjøreren; denne står
+-- betinget, av samme grunn og med samme form som 038 brukte for
+-- arbeider-/timerrollene.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT EXECUTE ON FUNCTION bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT)
+      TO disponit;
+  END IF;
+END $$;
 RESET ROLE;
 
 -- ------------------------------------------------------------
@@ -310,8 +323,14 @@ BEGIN
     RETURN v_rev;
 END $$;
 REVOKE ALL ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT)
-  TO disponit;
+-- Betinget som over: den konfigurerte runtime-rollen får denne av
+-- `M37_RETTIGHETER_API` i kjøreren, `disponit` er lokal-/testnavnet.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT EXECUTE ON FUNCTION reversibilitet_for_oppdrag(TEXT, BIGINT)
+      TO disponit;
+  END IF;
+END $$;
 RESET ROLE;
 
 -- ------------------------------------------------------------
@@ -471,6 +490,13 @@ REVOKE ALL ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT,
     TEXT) FROM PUBLIC;
 -- Kalles av avvis-veien i unntaksbehandlingen (runtime, scope-gatet
 -- `exceptions:handle` i app-laget — samme scopeport som resten av veien).
-GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[],
-    TEXT, TEXT) TO disponit;
+-- Betinget som de to over: `M37_RETTIGHETER_API` i kjøreren er den
+-- autoritative granten for den KONFIGURERTE runtime-rollen. Arbeideren står
+-- bevisst utenfor begge — et menneskelig nei er ikke arbeiderens vei.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
+    GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[],
+        TEXT, TEXT) TO disponit;
+  END IF;
+END $$;
 RESET ROLE;

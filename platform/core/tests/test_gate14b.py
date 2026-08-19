@@ -21,6 +21,7 @@ Portkart (klarsignalets §9):
   14  (ui/test/unntak14b.test.js — alertdialog + alert + axe)
   16  test_port16_definer_veiene_binder_tenanten_til_konteksten
   17  test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas
+  18  test_port18_rettighetene_er_parameterisert_pa_rollenavnet
 """
 import json
 import secrets
@@ -645,3 +646,37 @@ def test_port17_lasorden_gir_avgjort_utfall_ikke_vranglas(conn):
     # Oppdraget er utført, ikke kansellert: kvitteringen vant kappløpet.
     status, aarsak, _, _ = _oppdragsrad(oid)
     assert (status, aarsak) == ("utfort", None)
+
+
+# ---------------------------------------------------------------------------
+# Port 18: rettighetene følger den KONFIGURERTE rollen (Codex P1)
+# ---------------------------------------------------------------------------
+
+def test_port18_rettighetene_er_parameterisert_pa_rollenavnet():
+    """`disponit` er lokal-/testnavnet på runtime-rollen; kjøreren tar navnet
+    som argument. En literal grant i migrasjonen treffer derfor feil rolle
+    (eller feiler hardt) på en installasjon med et annet navn. Statisk, som
+    port 8/12: den autoritative granten skal stå i den PARAMETERISERTE
+    blokken, og migrasjonens egen skal være betinget av at rollen finnes."""
+    import re
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    kjorer = (rot / "deploy" / "staging" / "migrer.py").read_text(encoding="utf-8")
+    nye = ("bruk_kvitteringskapabilitet(TEXT, TEXT, TEXT)",
+           "reversibilitet_for_oppdrag(TEXT, BIGINT)",
+           "avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEXT)")
+    for sign in nye:
+        assert f"GRANT EXECUTE ON FUNCTION {sign} TO {{rolle}}" in kjorer, sign
+    # ... og de står i API-blokken, ikke i den DELTE M37-blokken: den kjøres
+    # også for `disponit_arbeider`, og et menneskelig nei er ikke
+    # arbeiderens vei.
+    delt = kjorer.split('M37_RETTIGHETER = """', 1)[1].split('"""', 1)[0]
+    for sign in nye:
+        assert sign not in delt, f"{sign} lekker til arbeiderrollen"
+
+    sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
+           / "043_gate14b.sql").read_text(encoding="utf-8")
+    for treff in re.finditer(r"TO disponit\b\s*;", sql):
+        foran = sql[max(0, treff.start() - 600):treff.start()]
+        assert "rolname = 'disponit'" in foran, \
+            "ubetinget grant til lokalnavnet " + repr(foran[-120:])

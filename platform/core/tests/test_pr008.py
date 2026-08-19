@@ -76,6 +76,8 @@ def _gjenopprett_rettigheter(migrator):
     # nøyaktig slik varselsendertestene røk i full suite men besto alene.
     for sql, rolle in ((modul.RETTIGHETER, "disponit"),
                        (modul.M37_RETTIGHETER, "disponit"),
+                       # 043: oppløsningsveien — runtime alene, egen blokk.
+                       (modul.M37_RETTIGHETER_API, "disponit"),
                        (modul.VARSLER_RETTIGHETER, "disponit_varselsender"),
                        (modul.TOKEN_ADMIN_RETTIGHETER,
                         "disponit_token_admin")):
