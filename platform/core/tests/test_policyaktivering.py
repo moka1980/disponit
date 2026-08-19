@@ -335,6 +335,44 @@ def test_slettet_versjon_kan_aktiveres_paa_nytt():
         m.close()
 
 
+@pg
+def test_styrt_aktivering_kan_ikke_omgaas_av_oppsettsveien():
+    """Codex P2: `policyregister.registrer(..., aktiver=True)` er
+    bootstrapveien, og etter 047 må den si det — og holde seg unna.
+
+    Kolonnen `aktivert_av_operasjon` MÅ være nullbar for radene som lå
+    der da 047 landet, men nullbarheten gjaldt dermed også framover: en
+    rad skrevet av oppsettsveien i dag var ikke til å skille fra en rad
+    som ligger foran hele lineagen. Nå bærer den `aktiveringskilde`, og
+    veien nekter dessuten å gå FORBI en versjon som er styrt aktivert —
+    det ville tatt policyen ut av lineagen uten at noe sa fra.
+    """
+    import yaml as _yaml
+    from api import policyregister as pr
+    uid, pid, v = _full_aktivering(pakrevd=1)
+    # Et GYLDIG dokument — ellers ville skjemavalideringen øverst i
+    # `registrer` avvist det først, og testen målt feil port.
+    mal = _yaml.safe_load(
+        (ROT / "policies" / "bransjemal-tjenestebedrift.yaml")
+        .read_text(encoding="utf-8"))
+    mal["meta"]["policy_id"] = pid
+    mal["meta"]["versjon"] = "9.9.9"
+    mal["meta"]["status"] = "produksjon"
+    m = _c()
+    try:
+        m.execute("SELECT set_config('disponit.tenant',%s,true)", (TEN,))
+        assert m.execute(
+            "SELECT aktiveringskilde FROM policyer WHERE tenant=%s"
+            "  AND policy_id=%s AND versjon=%s",
+            (TEN, pid, v)).fetchone()[0] == "styrt"
+        with pytest.raises(pr.PolicyKorrupt) as ei:
+            pr.registrer(m, TEN, mal, "produksjon")
+        assert "fire-øyne" in str(ei.value), str(ei.value)
+        m.rollback()
+    finally:
+        m.close()
+
+
 # ---------------------------------------------------------------------------
 # Lineage — runde og versjon (portene 10–17)
 # ---------------------------------------------------------------------------

@@ -1626,6 +1626,13 @@ export function visPolicyadmin(hoved, ctx, mal) {
 
   function attestantTekst(v) {
     if (!v.aktivert_av_operasjon) {
+      // «Ingen attestanter» har mer enn én grunn, og de betyr ulike ting
+      // (047, Codex P2). En `bootstrap`-rad er lagt inn av oppsettsveien
+      // — den HAR ingen runde, og skal ikke se ut som en versjon vi bare
+      // mistet sporet av. `historisk` er raden som lå der da lineagen kom.
+      if (v.aktiveringskilde === "bootstrap") {
+        return t("ui.historikk.kilde_bootstrap");
+      }
       return t("ui.historikk.attestanter_ubundet");
     }
     return (v.attestanter || []).join(", ")

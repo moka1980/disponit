@@ -50,7 +50,7 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
         rader = conn.execute(
             "SELECT versjon, innholds_hash, aktiv, opprettet, aktivert_ts,"
             "       attestant_a, attestant_b, aktivert_av_operasjon,"
-            "       rollback_av_versjon"
+            "       rollback_av_versjon, aktiveringskilde"
             "  FROM policyversjoner_for_tenant(%s, %s)",
             (tenant, policy_id)).fetchall()
         conn.rollback()
@@ -63,7 +63,12 @@ def versjoner_endepunkt(tjeneste, request: Request) -> Response:
              "attestanter": ([a for a in (r[5], r[6]) if a]
                              if r[7] else None),
              "aktivert_av_operasjon": r[7],
-             "rollback_av_versjon": r[8]} for r in rader]}, rid)
+             "rollback_av_versjon": r[8],
+             # VEIEN inn (047): `styrt` (fire-øyne + hendelse), `bootstrap`
+             # (oppsettsregistreringen) eller `historisk` (lå der da 047
+             # landet). Uten den kunne flaten ikke skille en bootstrap
+             # skrevet i går fra en rad som ligger foran hele lineagen.
+             "aktiveringskilde": r[9]} for r in rader]}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

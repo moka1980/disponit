@@ -1003,6 +1003,7 @@
   "ui.historikk.kol.handlinger": "Handlinger",
   "ui.historikk.aktiv_na": "Aktiv nå",
   "ui.historikk.attestanter_ubundet": "attestanter ikke bundet",
+  "ui.historikk.kilde_bootstrap": "lagt inn ved oppsett",
   "ui.historikk.rullbakk_fra": "utkast fra versjon {n}",
   "ui.historikk.rullbakk": "Rull tilbake",
   "ui.historikk.rullbakk_tittel": "Rull tilbake til versjon {n}?",

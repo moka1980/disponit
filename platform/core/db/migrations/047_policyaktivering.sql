@@ -254,6 +254,74 @@ GRANT UPDATE (status) ON aktiveringsrunde TO disponit;
 -- ------------------------------------------------------------
 ALTER TABLE policyer ADD COLUMN aktivert_av_operasjon TEXT;  -- NULL: ubundet historisk
 
+-- VEIEN raden kom inn (Codex P2). `aktivert_av_operasjon IS NULL` alene
+-- kan ikke bære det: kolonnen må være nullbar for de MIGRERTE radene —
+-- versjoner aktivert før hendelsen fantes, som backfillen nederst ikke
+-- kunne binde entydig — men nullbarheten gjaldt dermed også FRAMOVER.
+-- `policyregister.registrer(..., aktiver=True)` er fortsatt oppsetts- og
+-- bootstrapveien (`init-tenant.sh`), og den skriver en aktiv `policyer`-rad
+-- uten operasjon. Uten et eget merke ble hver eneste slike rad — skrevet
+-- ETTER 047 — rapportert som «ubundet historisk versjon», altså som noe
+-- som ligger foran migrasjonen i tid. Da kan ingen lese historikken og se
+-- forskjell på «dette er fra før lineagen fantes» og «dette gikk utenom
+-- lineagen i går».
+--
+--   styrt      — `aktiver_policy`: fire-øyne-runde + hendelse. Krever
+--                `aktivert_av_operasjon`.
+--   bootstrap  — inn via `policyregister.registrer`, oppsettsveien. Typisk
+--                første policy for en tenant (`init-tenant.sh`), før det
+--                finnes noe å ha fire øyne på. Har ingen runde å vise til
+--                og skal ikke late som. `registrer` nekter nå å gå forbi en
+--                versjon som ER styrt aktivert — bootstrap er en start, ikke
+--                en omvei rundt fire-øyne-veien.
+--   historisk  — fantes da 047 landet. Kan ikke skrives etterpå.
+ALTER TABLE policyer ADD COLUMN aktiveringskilde TEXT
+  CONSTRAINT policyer_aktiveringskilde_kjent
+  CHECK (aktiveringskilde IN ('styrt', 'bootstrap', 'historisk'));
+
+-- Alt som fantes da migrasjonen landet ER historikk, per definisjon.
+-- Backfillen nederst løfter de radene den klarer å binde til 'styrt'.
+--
+-- FORCE RLS binder også migratoren, og uten tenantkontekst ser den NULL
+-- rader — en naken UPDATE her ville truffet ingenting og gjort det stille
+-- (0 rader er ikke en feil). Derfor samme migrasjonslokale, selv-
+-- reverserende bro som backfillen i del 7 bruker, bare med skriveretten
+-- den trenger.
+CREATE POLICY kildebackfill_047 ON policyer FOR ALL
+    TO disponit_migrator USING (true) WITH CHECK (true);
+UPDATE policyer SET aktiveringskilde = 'historisk';
+DROP POLICY kildebackfill_047 ON policyer;
+
+-- 'historisk' er en TILSTAND, ikke et valg: den beskriver rader som lå der
+-- da 047 landet, og kan derfor ikke skrives av noen etterpå. Og 'styrt'
+-- betyr nøyaktig én ting — det finnes en hendelse — så merket og
+-- operasjonen må følges ad i begge retninger.
+CREATE OR REPLACE FUNCTION policyer_kilde_vakt() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.aktiveringskilde = 'historisk' THEN
+    RAISE EXCEPTION 'policyer: aktiveringskilde=historisk er forbeholdt rader '
+        'som fantes da 047 landet (%/%)', NEW.policy_id, NEW.versjon
+        USING ERRCODE = 'check_violation',
+              CONSTRAINT = 'policyer_kilde_ikke_historisk';
+  END IF;
+  -- `coalesce` med vilje: en rad UTEN merke og UTEN operasjon er de DB-nære
+  -- fixturenes form og skal fortsatt gå gjennom — vakten her måler at de to
+  -- feltene ikke motsier hverandre, ikke at merket finnes. Skriverne som
+  -- faktisk aktiverer (`aktiver_policy`, `policyregister.registrer`) setter
+  -- det begge.
+  IF (coalesce(NEW.aktiveringskilde, '') = 'styrt')
+     IS DISTINCT FROM (NEW.aktivert_av_operasjon IS NOT NULL) THEN
+    RAISE EXCEPTION 'policyer: aktiveringskilde=% og aktivert_av_operasjon=% '
+        'må følges ad (%/%)', coalesce(NEW.aktiveringskilde, '<null>'),
+        coalesce(NEW.aktivert_av_operasjon, '<null>'),
+        NEW.policy_id, NEW.versjon
+        USING ERRCODE = 'check_violation',
+              CONSTRAINT = 'policyer_kilde_speiler_operasjon';
+  END IF;
+  RETURN NEW;
+END $$;
+
 ALTER TABLE policyer ADD CONSTRAINT policyer_aktivert_av_hendelse_fk
   FOREIGN KEY (tenant, policy_id, versjon, innholds_hash,
                aktivert_av_operasjon)
@@ -267,6 +335,13 @@ CREATE TRIGGER policyer_operasjon_immutabel
                      AND NEW.aktivert_av_operasjon
                          IS DISTINCT FROM OLD.aktivert_av_operasjon)
   EXECUTE FUNCTION avvis_endring();
+
+-- Vakten settes opp ETTER `UPDATE ... SET aktiveringskilde = 'historisk'`
+-- over: den setningen er den ENE som har lov til å skrive merket, og den
+-- er ferdig når vakten begynner å gjelde.
+CREATE TRIGGER policyer_kilde_vakt_trg
+  BEFORE INSERT OR UPDATE ON policyer
+  FOR EACH ROW EXECUTE FUNCTION policyer_kilde_vakt();
 
 
 -- ------------------------------------------------------------
@@ -627,9 +702,9 @@ BEGIN
     END IF;
     INSERT INTO public.policyer
         (tenant, policy_id, versjon, innholds_hash, status, innhold, aktiv,
-         aktivert_av_operasjon)
+         aktivert_av_operasjon, aktiveringskilde)
       VALUES (p_tenant, v_policy_id, v_ny, v_innholds_hash, 'produksjon',
-              v_innhold, true, v_opid);
+              v_innhold, true, v_opid, 'styrt');
     UPDATE public.policy_hode
        SET aktiv_versjon = v_ny,
            revisjon       = revisjon + 1
@@ -678,7 +753,8 @@ CREATE OR REPLACE FUNCTION policyversjoner_for_tenant(
 RETURNS TABLE (versjon TEXT, innholds_hash TEXT, aktiv BOOLEAN,
                opprettet TIMESTAMPTZ, aktivert_ts TIMESTAMPTZ,
                attestant_a TEXT, attestant_b TEXT,
-               aktivert_av_operasjon TEXT, rollback_av_versjon TEXT)
+               aktivert_av_operasjon TEXT, rollback_av_versjon TEXT,
+               aktiveringskilde TEXT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -695,7 +771,10 @@ BEGIN
            -- Aktiveringstidspunktet fra HENDELSEN (runden har ingen
            -- brukt_ts — lesesvar runde 2); ubundet historisk rad → NULL.
            a.aktivert_ts, a.attestant_a, a.attestant_b,
-           p.aktivert_av_operasjon, u.rollback_av_versjon
+           p.aktivert_av_operasjon, u.rollback_av_versjon,
+           -- Veien raden kom inn. Rader fra før 047 bærer 'historisk';
+           -- NULL kan bare forekomme på direkte innsatte fixture-rader.
+           coalesce(p.aktiveringskilde, 'historisk')
       FROM public.policyer p
       -- Koblingen går via OPERASJONEN, ikke via (policy_id, versjon)
       -- (Codex P2). `aktivert_av_operasjon` ER FK-en til hendelsen, og
@@ -856,7 +935,8 @@ BEGIN
                   r.innholds_hash, v_runde.diff_hash, v_att_a, v_att_b,
                   r.opprettet);
         UPDATE public.policyer
-           SET aktivert_av_operasjon = v_runde.decision_operation_id
+           SET aktivert_av_operasjon = v_runde.decision_operation_id,
+               aktiveringskilde      = 'styrt'
          WHERE tenant = r.tenant AND policy_id = r.policy_id
            AND versjon = r.versjon;
         UPDATE public.aktiveringsrunde

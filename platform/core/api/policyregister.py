@@ -213,6 +213,35 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
     from db.pg import laas_policy_delt
     laas_policy_delt(conn, tenant, pid)
     if aktiver:
+        # BOOTSTRAP, ikke aktivering (047, Codex P2). Denne veien har ingen
+        # runde, ingen attestasjoner og ingen hendelse — den er til for den
+        # FØRSTE policyen en tenant får (`init-tenant.sh`), før det finnes
+        # noe å ha fire øyne på. Etter 047 er det derfor to ting den må
+        # gjøre eksplisitt:
+        #
+        # 1. Si hva den er. `aktivert_av_operasjon` må være NULL — det
+        #    finnes ingen hendelse å peke på — men NULL alene betydde
+        #    «ubundet historisk versjon», altså en rad fra før lineagen
+        #    fantes. En bootstrap skrevet i dag er ikke det, og historikken
+        #    kunne ikke se forskjell. `aktiveringskilde='bootstrap'` sier
+        #    det raden faktisk er.
+        #
+        # 2. Aldri gå FORBI en styrt aktivering. Fantes det alt en aktiv
+        #    versjon med `aktivert_av_operasjon`, er policyen i kraft
+        #    gjennom fire-øyne-veien, og en oppsettskjøring som bytter den
+        #    ut ville tatt den ut av lineagen uten at noe sa fra — nøyaktig
+        #    den omgåingen 047 er til for å hindre. Da er svaret at
+        #    aktivering er en styrt handling, ikke en registrering.
+        styrt = conn.execute(
+            "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND aktiv AND aktivert_av_operasjon IS NOT NULL",
+            (tenant, pid)).fetchone()
+        if styrt is not None:
+            raise PolicyKorrupt(
+                [f"kan ikke registrere versjon {versjon} som aktiv:"
+                 f" {pid}@{styrt[0]} er aktivert gjennom fire-øyne-veien."
+                 " En ny versjon må aktiveres samme vei (policyadmin),"
+                 " ikke gjennom oppsettsregistreringen"], policy)
         conn.execute("UPDATE policyer SET aktiv=false"
                      " WHERE tenant=%s AND policy_id=%s AND aktiv",
                      (tenant, pid))
@@ -242,12 +271,32 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
                 [f"kan ikke registrere versjon {versjon} med aktiver=False:"
                  " den er den gjeldende aktive versjonen — avvikling er en"
                  " egen, styrt handling"], policy)
+    # En versjon som ER en styrt aktivering kan ikke skrives om herfra —
+    # heller ikke som inaktiv historikk. `innholds_hash` inngår i FK-en mot
+    # hendelsen, og attestantene signerte NØYAKTIG det innholdet; en upsert
+    # som byttet det ville enten brutt FK-en ved commit (med en feilmelding
+    # ingen kan lese) eller flyttet attestasjonen over på et annet dokument.
+    bundet = conn.execute(
+        "SELECT aktivert_av_operasjon FROM policyer WHERE tenant=%s"
+        " AND policy_id=%s AND versjon=%s AND aktivert_av_operasjon IS NOT"
+        " NULL", (tenant, pid, versjon)).fetchone()
+    if bundet is not None:
+        raise PolicyKorrupt(
+            [f"kan ikke registrere versjon {versjon} på nytt: den ble"
+             f" aktivert gjennom fire-øyne-veien (operasjon {bundet[0]}),"
+             " og innholdet er bundet til attestasjonene"], policy)
+    # `aktiveringskilde='bootstrap'` merker VEIEN INN, ikke bare
+    # aktiveringen: raden kom gjennom oppsettsregistreringen, med eller uten
+    # flagget. Uten merket var den ikke til å skille fra en rad som lå der
+    # da 047 landet (047, Codex P2).
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
-        " status, innhold, aktiv) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+        " status, innhold, aktiv, aktiveringskilde)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,'bootstrap')"
         " ON CONFLICT (tenant, policy_id, versjon) DO UPDATE"
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
-        "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv",
+        "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv,"
+        "     aktiveringskilde=EXCLUDED.aktiveringskilde",
         (tenant, pid, versjon, h, status, json.dumps(policy), aktiver))
     if aktiver:
         # Ankerraden MÅ følge med. Den styrte aktiveringen
