@@ -90,6 +90,19 @@ test("WCAG kontroll: planfanen bor her, og planvarselets mål åpner den",
     await vent(() => h.textContent.includes(t("ui.plan.tom_tittel")));
     const aktiv = h.querySelector('[role="tab"][aria-selected="true"]');
     assert.equal(aktiv.textContent, t("ui.wcag.fane.plan"));
+    // Codex P2: planfanen hadde med seg sin egen h1 fra tiden med egen
+    // rute, så dyplenken hit ga TO sidetitler på samme skjerm — og et
+    // hopp fra h1 rett til plan-h3-ene. Samleflaten eier h1; delene er
+    // h2, som Domener og Bestill.
+    //
+    // MUTASJONEN SOM DREPER DENNE: sett `flateHode` tilbake i `visPlan`.
+    assert.equal(h.querySelectorAll("h1").length, 1,
+      "nøyaktig én h1 også når planfanen er valgt");
+    assert.ok([...h.querySelectorAll("h2")]
+      .some((e) => e.textContent === t("ui.plan.tittel")),
+    "plantittelen er en h2 inne i samleflaten");
+    const bruddPlan = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(bruddPlan.length, 0, beskrivBrudd(bruddPlan));
     // ... og en eksplisitt fanenøkkel virker også.
     const h2 = nyHoved();
     SVAR = (sti) => sti === "/v1/plan" ? { planer: [] } : TOMME_DOMENER[sti];

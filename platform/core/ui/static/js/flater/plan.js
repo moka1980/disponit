@@ -14,7 +14,6 @@ import { hentJson, nyIdempotensnokkel, opprettPlan, planHandling, ApiFeil,
          UautorisertFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, Feiltilstand, meldAlert,
          meldLive } from "../komponenter.js";
-import { flateHode } from "./felles.js";
 import { harScope } from "../sitekart.js";
 
 const RYTMER = ["daglig", "ukentlig", "manedlig"];
@@ -398,8 +397,15 @@ export function visPlan(hoved, ctx) {
     });
   }
 
+  // Inne i WCAG-kontroll-fanene: samleflaten eier h1, delene er h2
+  // (overskriftsnivåer i rekkefølge, §7). Planen hadde beholdt sin egen
+  // h1 fra tiden med egen rute (Codex P2): da fanen ble valgt — også via
+  // dyplenken fra et planvarsel — sto det TO sidetitler på samme skjerm,
+  // og h3-ene under hoppet over nivået søskenfanene bruker. Ruten `plan`
+  // finnes ikke lenger, så det er ingen frittstående bruk å bevare h1 for.
   sett(hoved,
-    ...flateHode(t("ui.plan.tittel"), t("ui.plan.under")),
+    el("h2", { text: t("ui.plan.tittel") }),
+    el("p", { class: "sub", text: t("ui.plan.under") }),
     ...(kanSkrive ? [el("h3", { text: t("ui.plan.ny") }),
                      planSkjema(ctx, last)] : []),
     el("h3", { text: t("ui.plan.dine") }),
