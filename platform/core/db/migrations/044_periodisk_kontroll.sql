@@ -58,18 +58,27 @@ CREATE TABLE bestillingsplan (
   -- en løgn skjemaet selv nekter å bære — og omvendt: en pause uten
   -- grunn er en pause ingen kan gjenoppta informert.
   CONSTRAINT plan_pause_aarsak_krever_status CHECK (
-    (pause_aarsak IS NULL) = (status <> 'pauset')));
+    (pause_aarsak IS NULL) = (status <> 'pauset')),
+  -- Referansemålet for de sammensatte FK-ene under (Codex P1): hver
+  -- barnetabell bærer sin egen `tenant`-kolonne, og uten denne nøkkelen
+  -- var den kolonnen FRI — en rad kunne merkes med en annen tenant enn
+  -- planen sin, og et tenant-ledd i en spørring ville da vernet om en
+  -- løgn. Nøkkelen gjør eierskapet til noe LAGRINGEN holder, ikke noe
+  -- hver enkelt funksjon må huske å skrive riktig.
+  CONSTRAINT plan_id_tenant_unik UNIQUE (plan_id, tenant));
 
 -- Autoritativt aktiveringsintervall: en plan kan pauses og gjenopptas,
 -- så aktivering er ikke ett tidspunkt. Kvalifiseringen i §4 leser
 -- PERIODENE, aldri planstatusen alene.
 CREATE TABLE bestillingsplan_aktiv_periode (
-  plan_id UUID NOT NULL REFERENCES bestillingsplan (plan_id),
+  plan_id UUID NOT NULL,
   tenant TEXT NOT NULL,
   fra_ts TIMESTAMPTZ NOT NULL,
   til_ts TIMESTAMPTZ,
   aarsak_slutt TEXT,
   PRIMARY KEY (plan_id, fra_ts),
+  FOREIGN KEY (plan_id, tenant)
+    REFERENCES bestillingsplan (plan_id, tenant),
   CONSTRAINT periode_gyldig CHECK (til_ts IS NULL OR til_ts > fra_ts));
 CREATE UNIQUE INDEX en_apen_periode_per_plan
   ON bestillingsplan_aktiv_periode (plan_id) WHERE til_ts IS NULL;
@@ -77,7 +86,7 @@ CREATE UNIQUE INDEX en_apen_periode_per_plan
 -- MUTEX: eneste autoritet for retten til å FORSØKE (materialisering) og
 -- til å TERMINALISERE. Overlapp er umulig per PK.
 CREATE TABLE bestillingsplan_vindu (
-  plan_id UUID NOT NULL REFERENCES bestillingsplan (plan_id),
+  plan_id UUID NOT NULL,
   tenant TEXT NOT NULL,
   vindu_start TIMESTAMPTZ NOT NULL,
   vindu_slutt TIMESTAMPTZ NOT NULL,
@@ -87,7 +96,12 @@ CREATE TABLE bestillingsplan_vindu (
   lease_utloper TIMESTAMPTZ,
   terminalisert_ts TIMESTAMPTZ,
   PRIMARY KEY (plan_id, vindu_start),
-  CONSTRAINT vindu_gyldig CHECK (vindu_slutt > vindu_start),
+  FOREIGN KEY (plan_id, tenant)
+    REFERENCES bestillingsplan (plan_id, tenant),
+  -- Referansemål for tickets sammensatte FK: (plan_id, vindu_start) er
+  -- alt PK, men tenanten må VÆRE med i nøkkelen for at ticket skal kunne
+  -- arve vinduets eier i stedet for å oppgi sin egen.
+  CONSTRAINT vindu_plan_tenant_unik UNIQUE (plan_id, tenant, vindu_start),
   CONSTRAINT vindu_tilstand_komplett CHECK (
        (tilstand = 'ledig'    AND claim_id IS NULL
                               AND lease_utloper IS NULL
@@ -118,14 +132,18 @@ CREATE TABLE bestillingsplan_tick (
   detalj JSONB,
   registrert TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (plan_id, vindu_start),
-  FOREIGN KEY (plan_id, vindu_start)
-    REFERENCES bestillingsplan_vindu (plan_id, vindu_start));
+  -- Tenanten er MED i FK-en (Codex P1): ticket skal ikke kunne bære en
+  -- annen eier enn vinduet det lukker. Uten tenanten i nøkkelen kunne en
+  -- terminalisering skrive et tick merket kallerens tenant på et vindu
+  -- som tilhørte en annen.
+  FOREIGN KEY (plan_id, tenant, vindu_start)
+    REFERENCES bestillingsplan_vindu (plan_id, tenant, vindu_start));
 
 -- Append-only overgangsspor for planen selv (opprettet, aktivert,
 -- pauset m/ grunn, gjenopptatt, stanset, varslet, aggregert nedetid).
 CREATE TABLE bestillingsplan_hendelse (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  plan_id UUID NOT NULL REFERENCES bestillingsplan (plan_id),
+  plan_id UUID NOT NULL,
   tenant TEXT NOT NULL,
   hendelse TEXT NOT NULL CHECK (hendelse IN
     ('opprettet','aktivert','pauset','gjenopptatt','stanset',
@@ -133,7 +151,9 @@ CREATE TABLE bestillingsplan_hendelse (
   aktor TEXT NOT NULL,
   request_id TEXT,
   detalj JSONB,
-  ts TIMESTAMPTZ NOT NULL DEFAULT now());
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (plan_id, tenant)
+    REFERENCES bestillingsplan (plan_id, tenant));
 
 -- ------------------------------------------------------------
 -- 2. RLS + FORCE på alt; policyer: tenant-GUC ELLER claimeren selv
@@ -610,8 +630,13 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE v RECORD; v_claim UUID; v_status TEXT; v_forfall TIMESTAMPTZ;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'claim_planvindu');
+    -- `w.tenant = p_tenant` er ikke pynt (Codex P1): kontekstsjekken over
+    -- beviser bare hvem KALLEREN er, ikke at raden hører til den. Uten
+    -- leddet kunne en kaller med gyldig egen kontekst oppgi en annen
+    -- tenants plan-id og få raden. Se terminaliser_planvindu.
     SELECT * INTO v FROM public.bestillingsplan_vindu w
-     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
+     WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+       AND w.vindu_start = p_vindu FOR UPDATE;
     IF NOT FOUND THEN
         RETURN QUERY SELECT 'ukjent'::text, NULL::uuid; RETURN;
     END IF;
@@ -678,7 +703,8 @@ BEGIN
        SET tilstand = 'aktivt', claim_id = v_claim,
            lease_utloper = now() + make_interval(secs =>
                least(greatest(p_lease_s, 30), 600))
-     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu;
+     WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+       AND w.vindu_start = p_vindu;
     RETURN QUERY SELECT 'claimet'::text, v_claim;
 END $$;
 
@@ -697,7 +723,8 @@ DECLARE v RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'frigi_planvindu');
     SELECT * INTO v FROM public.bestillingsplan_vindu w
-     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
+     WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+       AND w.vindu_start = p_vindu FOR UPDATE;
     IF NOT FOUND THEN
         RETURN 'ukjent';
     END IF;
@@ -709,7 +736,8 @@ BEGIN
     END IF;
     UPDATE public.bestillingsplan_vindu w
        SET tilstand = 'ledig', claim_id = NULL, lease_utloper = NULL
-     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu;
+     WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+       AND w.vindu_start = p_vindu;
     RETURN 'frigitt';
 END $$;
 
@@ -726,8 +754,19 @@ SET search_path = pg_catalog AS $$
 DECLARE v RECORD; v_eksisterende RECORD;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'terminaliser_planvindu');
+    -- VINDUET BINDES TIL p_tenant (Codex P1). `krev_tenantkontekst` over
+    -- beviser at kalleren er den den utgir seg for — den sier INGENTING
+    -- om at raden hører til den tenanten. Oppslaget sto på (plan_id,
+    -- vindu_start) alene, og et `ledig` vindu krever ikke noe claim: en
+    -- kaller med lovlig egen kontekst kunne hente en annen tenants vindu
+    -- fra det kryss-tenant-plukket den er innvilget, kalle hit med
+    -- p_utfall='tillat', og terminalisere offerets vindu med et tick
+    -- merket sin EGEN tenant. Leddet står i hvert eneste oppslag og
+    -- hver eneste UPDATE her; den sammensatte FK-en fra ticket til
+    -- vinduet gjør avviket umulig å lagre selv om leddet skulle falle ut.
     SELECT * INTO v FROM public.bestillingsplan_vindu w
-     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu FOR UPDATE;
+     WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+       AND w.vindu_start = p_vindu FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'terminaliser_planvindu: ukjent vindu'
             USING ERRCODE = 'no_data_found';
@@ -739,7 +778,8 @@ BEGIN
         -- fordi den beviser det.
         SELECT t.utfall INTO v_eksisterende
           FROM public.bestillingsplan_tick t
-         WHERE t.plan_id = p_plan AND t.vindu_start = p_vindu;
+         WHERE t.plan_id = p_plan AND t.tenant = p_tenant
+           AND t.vindu_start = p_vindu;
         IF v_eksisterende.utfall IS DISTINCT FROM p_utfall THEN
             -- Avviket fører SIN EGEN sikkerhetshendelse her, atomisk med
             -- oppdagelsen: kalleren har ingen tabellrettigheter (port 7),
@@ -804,7 +844,8 @@ BEGIN
     END IF;
     UPDATE public.bestillingsplan_vindu w
        SET tilstand = 'terminal', terminalisert_ts = now()
-     WHERE w.plan_id = p_plan AND w.vindu_start = p_vindu;
+     WHERE w.plan_id = p_plan AND w.tenant = p_tenant
+       AND w.vindu_start = p_vindu;
     INSERT INTO public.bestillingsplan_tick
         (plan_id, tenant, vindu_start, idempotensnokkel, utfall,
          oppdrag_id, detalj)

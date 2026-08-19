@@ -379,6 +379,84 @@ def test_definerne_binder_tenanten_til_konteksten(migrator):
 
 
 @pg
+def test_vindusfunksjonene_binder_raden_til_tenanten(migrator):
+    """Codex P1: kontekstporten beviser hvem kalleren ER, ikke at raden
+    hører til den.
+
+    Angrepet forrige runde IKKE stengte: kalleren setter sin EGEN,
+    lovlige kontekst og sender sin EGEN tenant som `p_tenant` — porten
+    slipper den glatt gjennom — men oppgir en ANNEN tenants plan-id.
+    Oppslaget i vindusfunksjonene sto på (plan_id, vindu_start) alene, og
+    et `ledig` vindu krever ikke noe claim: `terminaliser_planvindu` ville
+    lukket offerets vindu og skrevet et tick merket ANGRIPERENS tenant.
+
+    To uavhengige mekanismer måles: tenantleddet i hvert oppslag, og den
+    sammensatte FK-en som gjør et feilmerket tick ulagrbart uansett.
+    """
+    offer = f"{TENANT}-offer"
+    m = _mig()
+    rt = _rt()
+    try:
+        # Offerets plan og et ÅPENT vindu (ledig, forfalt, ikke utløpt).
+        _sett_kontekst(m, offer)
+        opid = m.execute(
+            "INSERT INTO bestillingsplan (tenant, bestillingstype,"
+            " parametre, rytme, time_lokal, tidssone, opprettet_av, status)"
+            " VALUES (%s,'kontroll.wcag.nettsted',%s,'daglig',8,"
+            " 'Europe/Oslo','test:offer','aktiv') RETURNING plan_id",
+            (offer, json.dumps(_param("offer.example")))).fetchone()[0]
+        vs = m.execute(
+            "INSERT INTO bestillingsplan_vindu (plan_id, tenant,"
+            " vindu_start, vindu_slutt) VALUES (%s,%s,"
+            " now()-make_interval(hours=>1), now()+make_interval(hours=>1))"
+            " RETURNING vindu_start", (opid, offer)).fetchone()[0]
+        m.commit()
+
+        # Angriperen står lovlig i SIN egen tenant hele veien.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute("SELECT utfall FROM claim_planvindu(%s,%s,%s,120)",
+                          (TENANT, opid, vs)).fetchone()[0] == "ukjent"
+        assert rt.execute("SELECT frigi_planvindu(%s,%s,%s,NULL)",
+                          (TENANT, opid, vs)).fetchone()[0] == "ukjent"
+        with pytest.raises(psycopg.errors.NoDataFound):
+            rt.execute(
+                "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,'tillat',"
+                "NULL,NULL)", (TENANT, opid, vs, "n-" + secrets.token_hex(8)))
+        rt.rollback()
+
+        # Offerets vindu står urørt, og har fortsatt ikke noe tick.
+        _sett_kontekst(m, offer)
+        assert m.execute("SELECT tilstand FROM bestillingsplan_vindu"
+                         " WHERE plan_id=%s", (opid,)).fetchone()[0] == "ledig"
+        assert m.execute("SELECT count(*) FROM bestillingsplan_tick"
+                         " WHERE plan_id=%s", (opid,)).fetchone()[0] == 0
+        m.rollback()
+
+        # Den sammensatte FK-en: et tick kan ikke bære en annen eier enn
+        # vinduet det lukker — heller ikke skrevet direkte, forbi enhver
+        # funksjon. Samme vern for vindusraden mot planen.
+        _sett_kontekst(m, TENANT)
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            m.execute(
+                "INSERT INTO bestillingsplan_tick (plan_id, tenant,"
+                " vindu_start, idempotensnokkel, utfall)"
+                " VALUES (%s,%s,%s,%s,'tillat')",
+                (opid, TENANT, vs, "n-" + secrets.token_hex(8)))
+        m.rollback()
+        _sett_kontekst(m, TENANT)
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            m.execute(
+                "INSERT INTO bestillingsplan_vindu (plan_id, tenant,"
+                " vindu_start, vindu_slutt) VALUES (%s,%s,"
+                " now()+make_interval(hours=>5),"
+                " now()+make_interval(hours=>7))", (opid, TENANT))
+        m.rollback()
+    finally:
+        m.close()
+        rt.close()
+
+
+@pg
 def test_evidensen_er_append_only(migrator):
     """Portene 8, 50, 52, 53: tick/hendelse tåler ingen UPDATE/DELETE,
     terminal er endelig for HELE raden, tick krever terminalt vindu, og
