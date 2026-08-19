@@ -2783,4 +2783,17 @@ def test_klaimet_tar_aldri_flere_enn_grensen_i_ett_kall():
         assert not ({r[0] for r in rader2} & {r[0] for r in rader}), \
             "et kall til klaimet en alt klaimet rad"
     finally:
-        c.close()
+        # Testen la åtte rader i en GLOBAL kø og klaimet seks: to blir igjen
+        # i `koet`, synlige for enhver annen test på tvers av tenanter. CI
+        # kjører suiten to ganger mot SAMME base (`ci.yml`), så restene ville
+        # dukket opp inne i andre runde og brutt eksakte sendt-tellinger der.
+        # Ryddingen går gjennom klaimveien, som prologen — og i `finally`,
+        # slik at en feilet assertion ikke etterlater søppelet heller.
+        try:
+            c.rollback()
+            while c.execute("SELECT count(*) FROM varsel_klaim_epost(500)"
+                            ).fetchone()[0]:
+                c.commit()
+            c.commit()
+        finally:
+            c.close()
