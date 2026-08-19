@@ -342,6 +342,7 @@ CREATE OR REPLACE FUNCTION pause_plan(
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_status TEXT; v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
+        v_kanal TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'pause_plan');
     SELECT status, aktivert_av INTO v_status, v_aktivert_av
@@ -385,12 +386,36 @@ BEGIN
             -- varselet eller `varslet`-sporet, og verst for den som hadde
             -- lest det gamle varselet og altså ikke så noe nytt.
             -- Pause-hendelsens id er global og monoton, og den ER pausen.
+            --
+            -- KANALVALG-LÅSEN FØR LESNINGEN (Codex P1, 041 §15-mønsteret).
+            -- Planvarslene var de eneste produsentene som verken leste
+            -- `varselvalg` eller tok låsen: raden ble født `koet`, altså
+            -- E-POST, uansett hva mottakeren hadde valgt — `kun_portal`
+            -- var uten virkning her. Og uten låsen er lesningen og
+            -- innsettingen to uavhengige øyeblikk: en samtidig
+            -- `varsel.sett_kanal('kun_portal')` merker ALT den ser i køen
+            -- `ikke_aktuelt` og committer, hvorpå vi setter inn en fersk
+            -- `koet`-rad på det valget som nettopp ble forlatt. Ingen
+            -- rydder den — avmeldingen har alt kjørt.
+            --
+            -- Samme nøkkel som `varsel.KANALVALGNOKKEL` og som 035/041:
+            -- en annen nøkkel ville ikke serialisert mot avmeldingsveien
+            -- i det hele tatt. At låsen tas inne i en blokk med
+            -- EXCEPTION-håndterer er trygt: en subtransaksjon som rulles
+            -- tilbake slipper den ikke.
+            PERFORM pg_advisory_xact_lock(
+                615774026, hashtext(p_tenant || E'\x1f' || v_bruker));
+            SELECT vv.kanal INTO v_kanal FROM public.varselvalg vv
+             WHERE vv.tenant = p_tenant AND vv.bruker_id = v_bruker;
             INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
-                ressurs_id, hendelse, tekstnokkel, parametre)
+                ressurs_id, hendelse, tekstnokkel, parametre, epost_status)
             VALUES (p_tenant, v_bruker, 'plan_pauset', 'plan',
                     p_plan::text, 'pauset:' || v_hendelse,
                     'varsel.plan_pauset',
-                    jsonb_build_object('aarsak', p_aarsak));
+                    jsonb_build_object('aarsak', p_aarsak),
+                    CASE WHEN coalesce(v_kanal, 'epost_og_portal')
+                              = 'kun_portal'
+                         THEN 'ikke_aktuelt' ELSE 'koet' END);
             INSERT INTO public.bestillingsplan_hendelse
                 (plan_id, tenant, hendelse, aktor, request_id, detalj)
             VALUES (p_plan, p_tenant, 'varslet', p_aktor, p_request_id,
@@ -1031,7 +1056,7 @@ CREATE OR REPLACE FUNCTION varsle_plan_brudd(
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_aktivert_av TEXT; v_bruker TEXT; v_hendelse BIGINT;
-        v_varslet BOOLEAN := false;
+        v_varslet BOOLEAN := false; v_kanal TEXT;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'varsle_plan_brudd');
     IF NOT EXISTS (SELECT 1 FROM public.planer_med_gjentatt_brudd() k
@@ -1066,12 +1091,24 @@ BEGIN
             -- aborterte HELE sveiptransaksjonen. Dempings-hendelsen ble
             -- rullet bort med den, så neste sveip feilet likt, for alltid.
             -- Hendelses-id-en er global og monoton, og den ER stripen.
+            --
+            -- Kanalvalg-låsen FØR lesningen, som i `pause_plan` og 041
+            -- §15 (Codex P1): `kun_portal` skal gi `ikke_aktuelt`, og
+            -- låsen er det som serialiserer mot avmeldingsveiens egen
+            -- opprydding i køen.
+            PERFORM pg_advisory_xact_lock(
+                615774026, hashtext(p_tenant || E'\x1f' || v_bruker));
+            SELECT vv.kanal INTO v_kanal FROM public.varselvalg vv
+             WHERE vv.tenant = p_tenant AND vv.bruker_id = v_bruker;
             INSERT INTO public.varsel (tenant, bruker_id, art, ressurs_type,
-                ressurs_id, hendelse, tekstnokkel, parametre)
+                ressurs_id, hendelse, tekstnokkel, parametre, epost_status)
             VALUES (p_tenant, v_bruker, 'plan_gjentatt_brudd', 'plan',
                     p_plan::text, 'gjentatt_brudd:' || v_hendelse,
                     'varsel.plan_gjentatt_brudd',
-                    jsonb_build_object('antall', 3));
+                    jsonb_build_object('antall', 3),
+                    CASE WHEN coalesce(v_kanal, 'epost_og_portal')
+                              = 'kun_portal'
+                         THEN 'ikke_aktuelt' ELSE 'koet' END);
             v_varslet := true;
         EXCEPTION WHEN OTHERS THEN
             -- Varselet er ikke evidens; dempingen står (samme kontrakt som
@@ -1340,6 +1377,10 @@ ON CONFLICT DO NOTHING;
 -- Claimeren trenger INSERT på varsel for pausevarselet (varsle_overtakelse-
 -- presedensen ga domene_eier det samme i 041 §13).
 GRANT INSERT ON varsel TO disponit_m37_claimer;
+-- Kanalvalget leses av begge planvarslene (Codex P1): `kun_portal` skal gi
+-- `epost_status = 'ikke_aktuelt'`, ikke en `koet` e-post mottakeren har
+-- sagt nei til. Samme grant 041 §13 ga domene_eier for varsle_overtakelse.
+GRANT SELECT ON varselvalg TO disponit_m37_claimer;
 GRANT SELECT ON oppdrag TO disponit_m37_claimer;
 -- «hoppet_over krever intet idempotenstreff» (§5) leses av
 -- terminaliser_planvindu — fasittabellen er immutabel inkludert DELETE,

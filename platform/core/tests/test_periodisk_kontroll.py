@@ -1379,6 +1379,103 @@ def test_et_brudd_bryter_stripen_uten_resultat(migrator):
         rt.close()
 
 
+def _velg_kanal(m, bid, kanal):
+    _sett_kontekst(m, TENANT)
+    m.execute("INSERT INTO varselvalg (tenant, bruker_id, kanal)"
+              " VALUES (%s,%s,%s) ON CONFLICT (tenant, bruker_id)"
+              " DO UPDATE SET kanal = EXCLUDED.kanal", (TENANT, bid, kanal))
+    m.commit()
+
+
+@pg
+def test_planvarslene_respekterer_kun_portal(migrator):
+    """Codex P1: planvarslene var de eneste produsentene som verken leste
+    `varselvalg` eller tok kanalvalg-låsen.
+
+    Raden ble født `koet` — altså E-POST — uansett hva mottakeren hadde
+    valgt, så `kun_portal` var uten virkning her. Og uten låsen er
+    lesningen og innsettingen to uavhengige øyeblikk: en samtidig
+    `sett_kanal('kun_portal')` merker alt den ser i køen `ikke_aktuelt` og
+    committer, hvorpå varselet setter inn en fersk `koet`-rad på det
+    valget som nettopp ble forlatt — og ingen rydder den.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `pg_advisory_xact_lock` fra
+    `pause_plan`/`varsle_plan_brudd`, eller nøkle den med noe annet enn
+    615774026 + hashen av tenant + bruker.
+    """
+    from db.pg import koble
+    from api.varsel import KANALVALGNOKKEL
+    from plan.materialiser import pausesveip
+    # Nøkkelen står som literal i migrasjonen (SQL kan ikke importere
+    # Python); denne asserten binder de to veiene til samme nøkkel.
+    assert KANALVALGNOKKEL == 615774026
+
+    bid = _ekte_bruker("p-kanal-eier")
+    _velg_kanal(migrator, bid, "kun_portal")
+    rt = _rt()
+    try:
+        # 1. Pausevarselet: `kun_portal` → `ikke_aktuelt`, ikke `koet`.
+        pid = _plan(rt, host="p-kanal.example", aktor=f"bruker:{bid}")
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT pause_plan(%s,%s,'policy_stopper','test','r-k1',NULL)",
+            (TENANT, pid)).fetchone()[0]
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        status = migrator.execute(
+            "SELECT epost_status FROM varsel WHERE tenant=%s AND"
+            " art='plan_pauset' AND ressurs_id=%s", (TENANT, str(pid))
+        ).fetchall()
+        migrator.rollback()
+        assert status == [("ikke_aktuelt",)], status
+
+        # 2. Bruddvarselet, samme vei.
+        pid2 = _plan(rt, host="p-kanal2.example", aktor=f"bruker:{bid}")
+        for i in range(3):
+            vs = _syntetisk_vindu(migrator, pid2, start_h=-30 - 24 * i,
+                                  slutt_h=-26 - 24 * i)
+            _syntetisk_tick(migrator, pid2, vs, "brudd")
+        pausesveip(rt)
+        _sett_kontekst(migrator, TENANT)
+        status2 = migrator.execute(
+            "SELECT epost_status FROM varsel WHERE tenant=%s AND"
+            " art='plan_gjentatt_brudd' AND ressurs_id=%s",
+            (TENANT, str(pid2))).fetchall()
+        migrator.rollback()
+        assert status2 == [("ikke_aktuelt",)], status2
+
+        # 3. LÅSEN: holder avmeldingsveien den, kommer varselet ikke forbi
+        #    — og port 41 gjør resten: pausen står, varselet uteblir.
+        holder = koble(MIGRATOR_DSN)
+        try:
+            holder.execute(
+                "SELECT pg_advisory_xact_lock(615774026, hashtext(%s))",
+                (f"{TENANT}\x1f{bid}",))
+            rt.execute("SET lock_timeout = '750ms'")
+            rt.commit()
+            pid3 = _plan(rt, host="p-kanal3.example", aktor=f"bruker:{bid}")
+            _sett_kontekst(rt, TENANT)
+            assert rt.execute(
+                "SELECT pause_plan(%s,%s,'policy_stopper','test','r-k3',"
+                "NULL)", (TENANT, pid3)).fetchone()[0]
+            rt.commit()
+        finally:
+            holder.rollback()
+            holder.close()
+            rt.execute("SET lock_timeout = 0")
+            rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        laast = migrator.execute(
+            "SELECT status, (SELECT count(*) FROM varsel v WHERE"
+            " v.tenant=%s AND v.art='plan_pauset' AND v.ressurs_id=%s)"
+            "  FROM bestillingsplan WHERE plan_id=%s",
+            (TENANT, str(pid3), pid3)).fetchone()
+        migrator.rollback()
+        assert laast == ("pauset", 0), laast
+    finally:
+        rt.close()
+
+
 @pg
 def test_tre_brudd_varsles_men_pauser_aldri(migrator):
     """Port 21: `brudd` pauser ALDRI — men tre på rad gir ETT varsel,
