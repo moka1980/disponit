@@ -29,7 +29,8 @@ Portkart (klarsignalets §9):
        test_m37.test_P1_kvitteringsveien_laser_saken_for_kapabiliteten og
        test_m37.test_P1_kvitteringen_leser_tilstanden_paa_nytt_etter_sakslasen
        test_m37.test_P1_sakslasen_dekker_beslutningsopphavet
-       test_m37.test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist)
+       test_m37.test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist
+       test_m37.test_P1_nei_et_foder_ingen_falsk_evidensfristsak)
   18  test_port18_rettighetene_er_parameterisert_pa_rollenavnet
   19  (unntaksbehandling: terminale statuser i avvis-revisjonen)
   20  test_port20_saksarsaken_naar_operatoren_over_http

@@ -2651,6 +2651,41 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                 tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
                                        oppdrag_id=oppdrag_id, art="sikkerhet")
                 return _feilsvar("kvittering_konflikt", rid)
+        if unntak_id is None and menneskelig_nei:
+            # SAKEN SOM SA NEI EIER DEN SENE EVIDENSEN (Codex P1, runde 7).
+            #
+            # For et BESLUTNINGSoppdrag er `unntak_id` NULL med vilje —
+            # saken peker tilbake gjennom `unntak.oppdrag_id`, og det er
+            # nettopp den koblingen §4 gjorde avvisbar. Falt vi rett ned i
+            # `sikre_sak_for_oppdrag(... 'evidensfrist' ...)` under, fikk vi
+            # ikke saken tilbake: mennesket har akkurat satt den `avvist`,
+            # altså TERMINAL, og gjenbruksveien (038) tar aldri en terminal
+            # sak. Resultatet var en helt ny, ÅPEN evidensfrist-sak — en
+            # påstand om at fristen løp ut, for en kvittering som kom i
+            # TIDE — og for `kompenserende`/`irreversibel` deretter enda en
+            # sak ved siden av. For `direkte`, der kontrakten sier at ingen
+            # oppfølging trengs, ble den falske saken den eneste.
+            #
+            # Den sene evidensen hører til saken mennesket faktisk avgjorde.
+            # Den er entydig identifiserbar: §7 fører `oppdrag_kansellert`
+            # med oppdragets id på nøyaktig den saken nei-et ble gitt på.
+            # Finner vi den ikke (en kansellering fra en vei uten spor),
+            # faller vi tilbake på selve tilbakekoblingen, og først om
+            # INGEN sak finnes gjelder 038 §5-veien under.
+            sak_nei = conn.execute(
+                "SELECT h.unntak_id FROM unntak_historikk h"
+                " WHERE h.tenant=%s AND h.hendelse='oppdrag_kansellert'"
+                "   AND (h.detalj->>'oppdrag_id')::bigint = %s"
+                " ORDER BY h.id DESC LIMIT 1",
+                (tenant, oppdrag_id)).fetchone()
+            if sak_nei is None:
+                sak_nei = conn.execute(
+                    "SELECT u.id FROM unntak u"
+                    " WHERE u.tenant=%s AND u.oppdrag_id=%s"
+                    " ORDER BY u.id LIMIT 1",
+                    (tenant, oppdrag_id)).fetchone()
+            if sak_nei is not None:
+                unntak_id = sak_nei[0]
         if unntak_id is None:
             # 038 §5: sen evidens på et beslutningsoppdrag hører til
             # evidensfrist-familien — samme sak reaperen fant/fødte da

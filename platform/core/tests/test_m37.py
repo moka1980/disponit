@@ -2755,6 +2755,127 @@ def test_P1_sakslasen_dekker_beslutningsopphavet(migrator, miljo, token):
 
 
 @pg
+def test_P1_nei_et_foder_ingen_falsk_evidensfristsak(migrator, miljo, token):
+    """043 (Gate 14b), Codex P1 runde 7: saken som SA NEI eier evidensen.
+
+    For et BESLUTNINGSoppdrag er `unntak_id` NULL med vilje — saken peker
+    tilbake gjennom `unntak.oppdrag_id`. Sen-evidensveien falt derfor rett
+    ned i `sikre_sak_for_oppdrag(... 'evidensfrist' ...)`, og den ga ikke
+    saken tilbake: mennesket har nettopp satt den `avvist`, altså TERMINAL,
+    og gjenbruksveien (038) tar aldri en terminal sak.
+
+    Resultatet var en helt ny, ÅPEN evidensfrist-sak — en påstand om at
+    fristen løp ut, for en kvittering som kom i TIDE — og for
+    `kompenserende` deretter enda en sak ved siden av. En operatør som
+    nettopp har sagt nei fikk altså to nye saker, hvorav den ene lyver om
+    hvorfor den finnes.
+
+    Målingen trenger ingen tråder: nei-et committer FØRST (ekte
+    `avvis_med_opplosning` + saken satt `avvist`), og kvitteringen kommer
+    etterpå — men fortsatt innenfor evidensfristen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `menneskelig_nei`-grenen i
+    sen-evidensveien, så `sikre_sak_for_oppdrag(...'evidensfrist')` igjen
+    er første utvei når `unntak_id` er NULL.
+    """
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+
+    sak, logg = _lag_sak(migrator, TENANT)
+    opp, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+    sak_b, _ = _lag_sak(migrator, TENANT)
+
+    app = lag_app(DSN)
+    try:
+        with TestClient(app) as c:
+            tok, _ = token(rolle="eiermodul:reinnsending",
+                           scopes=("orders:execute:purring.",))
+            h = {"authorization": f"Bearer {tok}"}
+            a = c.post("/v1/oppdrag/claim", json={}, headers=h).json()
+            assert a["oppdrag_id"] == opp, a
+
+            modul = "m-" + secrets.token_hex(4)
+            kh = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET ROLE disponit_modul_eier")
+            migrator.execute(
+                "INSERT INTO modulkontrakt (modul_id, kontraktversjon,"
+                " kontrakt_hash, payload_schema_hash, kvittering_schema_hash,"
+                " sideeffektklasse, reversibilitet)"
+                " VALUES (%s,1,%s,'p','k','ekstern_lesing','kompenserende')",
+                (modul, kh))
+            migrator.execute("RESET ROLE")
+            migrator.execute("ALTER TABLE oppdrag DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE oppdrag SET modul_id=%s, kontraktversjon=1,"
+                " kontrakt_hash=%s, unntak_id=NULL, opprinnelse='beslutning',"
+                " repair_operation_id=NULL, loggpost_id=NULL"
+                " WHERE tenant=%s AND id=%s", (modul, kh, TENANT, opp))
+            migrator.execute("ALTER TABLE oppdrag ENABLE TRIGGER USER")
+            migrator.execute("ALTER TABLE unntak DISABLE TRIGGER USER")
+            migrator.execute(
+                "UPDATE unntak SET oppdrag_id=%s, arsak='evidensfrist',"
+                " sakskilde='oppdrag' WHERE tenant=%s AND id=%s",
+                (opp, TENANT, sak_b))
+            migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            migrator.execute("ALTER TABLE unntak ENABLE TRIGGER USER")
+            migrator.commit()
+
+            # NEI-ET, HELE VEIEN: oppløsningen kjøres, og saken settes
+            # `avvist` — altså terminal, slik operatørveien gjør det.
+            cid = secrets.token_hex(16)
+            _sett_kontekst(migrator, TENANT, "menneske", "r-nei")
+            migrator.execute(
+                "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+                " claim_generation=1, claim_utloper=now()+interval '600 s'"
+                " WHERE tenant=%s AND id=%s", (cid, TENANT, sak_b))
+            migrator.execute("SET ROLE disponit_m37_claimer")
+            res = migrator.execute(
+                "SELECT utfall FROM avvis_med_opplosning(%s,%s,%s,"
+                "'menneske','r-nei')", (TENANT, sak_b, [opp])).fetchall()
+            migrator.execute("RESET ROLE")
+            assert res == [("kansellert",)], res
+            migrator.execute("UPDATE unntak SET status='avvist'"
+                             " WHERE tenant=%s AND id=%s", (TENANT, sak_b))
+            migrator.commit()
+
+            # ... og SÅ kommer den sene kvitteringen — i god tid før
+            # evidensfristen.
+            kropp = _signer_kvittering({
+                "oppdrag_id": opp, "tenant": TENANT,
+                "kvittering_jti": a["kvittering_jti"],
+                "repair_operation_id": a["repair_operation_id"],
+                "owner_claim_id": a["owner_claim_id"],
+                "owner_generation": a["owner_generation"],
+                "resultat": "utfort", "ressurs_id": "fak-1"})
+            r = c.post("/v1/oppdrag/kvittering", json=kropp, headers=h)
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "lagret_uten_statusendring", r.text
+    finally:
+        app.tjeneste.pool.lukk()
+
+    _sett_kontekst(migrator, TENANT)
+    hendelser = dict(migrator.execute(
+        "SELECT hendelse, count(*) FROM unntak_historikk"
+        " WHERE tenant=%s AND unntak_id=%s GROUP BY hendelse",
+        (TENANT, sak_b)).fetchall())
+    saker = dict(migrator.execute(
+        "SELECT arsak, count(*) FROM unntak WHERE tenant=%s AND oppdrag_id=%s"
+        " GROUP BY arsak", (TENANT, opp)).fetchall())
+    migrator.rollback()
+
+    assert hendelser.get("sen_kvittering") == 1, (
+        "den sene evidensen ble ikke ført på saken mennesket avgjorde:"
+        f" {hendelser}")
+    # ÉN evidensfrist-sak: den som alt fantes. Ingen ny, åpen påstand om en
+    # frist som aldri løp ut.
+    assert saker.get("evidensfrist") == 1, (
+        f"nei-et fødte en falsk evidensfrist-sak: {saker}")
+    assert saker.get("kompensasjon_kreves") == 1, (
+        f"kompensasjonssaken uteble eller ble doblet: {saker}")
+
+
+@pg
 def test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist(migrator, miljo, token):
     """043 (Gate 14b), Codex P2 runde 5: køen skal ikke koste kvitteringen
     fristen dens.
