@@ -1518,6 +1518,99 @@ def test_foreldet_konflikt_far_ingen_sak(migrator):
         f"en sak som fulgte skiftet ble meldt som manglende: {res}"
 
 
+@pg
+def test_vakten_revaliderer_plukket_for_den_roper(migrator):
+    """Codex P2: et kappløp er ikke et invariantbrudd.
+
+    Plukket COMMITTER (stempelet er rotasjonen) og slipper radlåsen før
+    vakten rekker å slå opp saken. Tar en TREDJE tenant hostnavnet i det
+    mellomrommet, degraderes den plukkede utfordreren til `tilbakekalt`
+    med ny generasjon (019 §3.2) og den åpne saken revideres til C — og
+    tuppelen vakten fortsatt holder er da historie. Oppslaget på den svarer
+    korrekt nei, men konklusjonen «konflikt uten sak» er feil: konflikten
+    finnes ikke lenger, og den som finnes HAR sin sak. Alarmen ville
+    navngitt en tenant som ikke feiler noe og krevd en operatør for et
+    kappløp — hver syklus, til noen så etter.
+
+    Vakten spør derfor 039s `bekreft_overtakelseskonflikt` under
+    hostnavnets lås før den roper: står status, motpart og generasjon
+    fortsatt som plukket så dem?
+
+    MUTASJONEN SOM DREPER DENNE: fjern revalideringen (eller la den telle
+    `foreldet` OG legge raden i `uten_sak`).
+    """
+    from api import domeneovertakelse as dov
+
+    from .test_pr015_operativt_lag import TREDJE_TENANT
+
+    vert = f"kappl{secrets.token_hex(4)}.example"
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  (TENANT, vert))       # A eier navnet
+        a.commit()
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, vert)).fetchone()[0]   # B utfordrer
+        a.commit()
+    finally:
+        a.close()
+    assert svar == f"konflikt:{TENANT}", svar
+
+    def _c_tar_navnet():
+        """Kappløpet: C overtar mellom det committede plukket og oppslaget."""
+        k = _admin()
+        try:
+            k.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                      (TREDJE_TENANT, vert))
+            k.commit()
+        finally:
+            k.close()
+
+    class _KappPaVart(_Kapplop):
+        """`_Kapplop`, men vinduet er VÅRT hostnavns.
+
+        Basen deles med andre suiters residualer, og plukket sorterer på
+        `konflikt_drenert` — hvilken rad som slås opp først er derfor ikke
+        vår å bestemme. Utløseren leser argumentene, ikke bare SQL-teksten,
+        så kappløpet treffer nøyaktig raden testen måler.
+        """
+
+        def execute(self, sql, args=None):
+            if (not self.kjort and self._naar in sql
+                    and args and vert in args):
+                self.kjort = True
+                self._gjor()
+            return self._c.execute(sql, args)
+
+    rt = _arbeiderkonn()
+    try:
+        kapp = _KappPaVart(rt, "overtakelsessak_finnes", _c_tar_navnet)
+        res = dov.vokt_ventende_overtakelseskonflikter(kapp, grense=500)
+    finally:
+        rt.close()
+    assert kapp.kjort, "kappløpet traff aldri vinduet det måler"
+
+    # B ER foreldet: degraderingen tok raden ut av `avklaring_kreves`.
+    _sett_kontekst(migrator, ANNEN_TENANT)
+    assert migrator.execute(
+        "SELECT status FROM domenekontroll WHERE tenant=%s AND hostname=%s",
+        (ANNEN_TENANT, vert)).fetchone()[0] == "tilbakekalt"
+    migrator.rollback()
+
+    assert [u for u in res["uten_sak"] if u["hostname"] == vert] == [], \
+        f"et kappløp ble meldt som konflikt uten sak: {res}"
+    assert res["foreldet"] >= 1, f"den foreldede tuppelen ble ikke talt: {res}"
+
+    # ...og C, som ER dagens konflikt, har sin sak. Neste syklus plukker den.
+    rt = _arbeiderkonn()
+    try:
+        res2 = dov.vokt_ventende_overtakelseskonflikter(rt, grense=500)
+    finally:
+        rt.close()
+    assert [u for u in res2["uten_sak"] if u["hostname"] == vert] == [], \
+        f"dagens konflikt mangler sak: {res2}"
+
+
 def test_dreneringen_skiller_radfeil_fra_utrullingsfeil(migrator):
     """041-formen: vakten har ingen radfeil igjen å telle (ingen DEK, ingen
     DML) — men utrullingens feil skal fortsatt VELTE den, aldri bli et tall

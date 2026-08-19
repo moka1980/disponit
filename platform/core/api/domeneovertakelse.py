@@ -101,6 +101,27 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
     det finnes ingen python-vei til å lage den (port 37), og en stille
     teller ville vært å flagge et hull uten å lukke det: raden krever en
     operatør, og journalen skal si det hver syklus til den er borte.
+
+    MEN ET FUNN MÅ VÆRE ET FUNN (Codex P2). Plukket COMMITTER (stempelet er
+    rotasjonen), og slipper dermed radlåsen før oppslaget. I mellomrommet
+    kan en tredje tenant ta hostnavnet: den nye overtakelsen reviderer den
+    ÅPNE saken til sin egen utfordrer og generasjon i samme transaksjon,
+    og tuppelen løkka holder er da historie. Et oppslag på den gamle
+    tuppelen svarer nei — korrekt — men konklusjonen «konflikt uten sak»
+    er feil: den konflikten finnes ikke lenger, og den som finnes HAR sin
+    sak. Alarmen ville altså navngitt en tenant og et hostnavn som ikke
+    feiler noe, og krevd en operatør for et kappløp.
+
+    Porten mot det er 039s egen `bekreft_overtakelseskonflikt`, skrevet
+    for nøyaktig dette vinduet i dreneringens tid og etterlatt ubrukt av
+    041: den tar hostnavnets advisory-lås, leser domeneraden på nytt og
+    svarer om status, motpart OG generasjon fortsatt står som plukket så
+    dem. Låsen er transaksjonell, så saksoppslaget som gjøres ETTER den —
+    i samme transaksjon — er atomisk mot enhver overtakelse. Rekkefølgen
+    er derfor: billig oppslag først (normaltilfellet, ingen lås), og bare
+    når det svarer nei eskaleres det til lås + revalidering + et ANDRE,
+    autoritativt oppslag. En foreldet tuppel telles som `foreldet`, ikke
+    som brudd: neste syklus plukker den gjeldende konflikten.
     """
     rader = conn.execute(
         "SELECT tenant, hostname, motpart, generasjon"
@@ -109,7 +130,7 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
     # rotasjonen (039) — uten den okkuperte de første `grense` konfliktene
     # hvert utvalg.
     conn.commit()
-    res = {"funnet": len(rader), "med_sak": 0, "uten_sak": []}
+    res = {"funnet": len(rader), "med_sak": 0, "foreldet": 0, "uten_sak": []}
     for tenant, hostname, motpart, generasjon in rader:
         # `overtakelsessak_finnes` (041 §9.2), ikke et direkte oppslag mot
         # `unntak` (Codex P2). Vakten leste tidligere saken ved å sette
@@ -135,11 +156,33 @@ def vokt_ventende_overtakelseskonflikter(conn, *, grense: int = 100) -> dict:
             "SELECT overtakelsessak_finnes(%s,%s,%s,%s)",
             (hostname, tenant, motpart, int(generasjon))).fetchone()[0]
         conn.rollback()
-        if not har_sak:
+        if har_sak:
+            res["med_sak"] += 1
+            continue
+
+        # Ingen sak på DENNE tuppelen. Før det kalles et brudd: står
+        # konflikten fortsatt slik plukket så den? `bekreft_...` tar
+        # hostnavnets advisory-lås og leser domeneraden på nytt (039), og
+        # låsen holdes ut transaksjonen — så oppslaget under er atomisk mot
+        # enhver overtakelse, ikke bare et smalere vindu.
+        fortsatt = conn.execute(
+            "SELECT bekreft_overtakelseskonflikt(%s,%s,%s,%s)",
+            (tenant, hostname, motpart, int(generasjon))).fetchone()[0]
+        if not fortsatt:
+            conn.rollback()
+            res["foreldet"] += 1
+            continue
+        # Konflikten står. Da er DETTE oppslaget det autoritative: det
+        # første kan ha vært et øyeblikk for tidlig.
+        har_sak = conn.execute(
+            "SELECT overtakelsessak_finnes(%s,%s,%s,%s)",
+            (hostname, tenant, motpart, int(generasjon))).fetchone()[0]
+        conn.rollback()
+        if har_sak:
+            res["med_sak"] += 1
+        else:
             res["uten_sak"].append({"tenant": tenant, "hostname": hostname,
                                     "generasjon": int(generasjon)})
-        else:
-            res["med_sak"] += 1
     return res
 
 
