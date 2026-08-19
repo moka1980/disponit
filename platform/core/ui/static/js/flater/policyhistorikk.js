@@ -145,17 +145,39 @@ function historikkTabell(policyId, versjoner, paaRullbakk) {
 function diffSeksjonFor(policyId, versjoner, ctx, erGyldig) {
   if (versjoner.length < 2) return null;
   const diffUt = el("div", { class: "historikk-diff" });
-  const fra = el("select", { id: "hist-fra" },
+  // DEFAULT-RETNINGEN LESES AV AKTIVERINGENE (Codex P2). Lista er sortert
+  // nyest aktivert først, med de aldri aktiverte bakerst — men å ta indeks
+  // 1 og 0 blindt ville likevel plukket en registrert, aldri ikraftsatt
+  // versjon i en serie med bare én aktivering, og presentert «uaktivert →
+  // aktiv» som om det var kronologien og risikoretningen. Finnes det ikke
+  // to aktiverte versjoner, finnes det ingen sann default, og da skal eier
+  // velge selv i stedet for å bli servert en påstand.
+  const aktiverte = versjoner.filter((v) => v.aktivert !== false);
+  const harDefault = aktiverte.length >= 2;
+  const tomValg = () => (harDefault ? [] : [el("option", {
+    value: "", text: t("ui.historikk.velg_versjon") })]);
+  const fra = el("select", { id: "hist-fra" }, ...tomValg(),
     ...versjoner.map((v) => el("option", { value: v.versjon,
                                            text: v.versjon })));
-  const til = el("select", { id: "hist-til" },
+  const til = el("select", { id: "hist-til" }, ...tomValg(),
     ...versjoner.map((v) => el("option", { value: v.versjon,
                                            text: v.versjon })));
-  fra.value = versjoner[1].versjon;
-  til.value = versjoner[0].versjon;
+  if (harDefault) {
+    fra.value = aktiverte[1].versjon;
+    til.value = aktiverte[0].versjon;
+  } else {
+    fra.value = "";
+    til.value = "";
+  }
   const knapp = el("button", { class: "knapp", type: "button",
     text: t("ui.historikk.vis_diff") });
   knapp.addEventListener("click", () => {
+    if (!fra.value || !til.value) {
+      // `role="alert"` fordi meldingen kommer som SVAR på et klikk.
+      sett(diffUt, el("p", { class: "varsel", role: "alert",
+        text: t("ui.historikk.velg_begge") }));
+      return;
+    }
     sett(diffUt, el("p", { class: "muted", text: t("ui.laster") }));
     hentJson(diffUrl(policyId, fra.value, til.value)).then((d) => {
       if (!erGyldig()) return;

@@ -1008,6 +1008,8 @@
   "ui.historikk.rullbakk_fra": "utkast fra versjon {n}",
   "ui.historikk.rullbakk_fra_borte": "utkast fra versjon {n}, som er slettet siden",
   "ui.historikk.rullbakk_fra_ubundet": "utkast fra versjon {n} (kilden er ikke bundet)",
+  "ui.historikk.velg_versjon": "Velg versjon",
+  "ui.historikk.velg_begge": "Velg både fra- og til-versjon for å se endringene.",
   "ui.historikk.rullbakk": "Rull tilbake",
   "ui.historikk.rullbakk_sperret.policy_id_ugyldig": "Rullbakk er ikke mulig for «{policy}»: identiteten oppfyller ikke kravene til nye utkast (små bokstaver, tall og bindestrek, minst tre tegn). Historikken kan leses, men et nytt utkast må opprettes på en policy med gyldig id.",
   "ui.historikk.rullbakk_sperret.policy_id_for_stor": "Rullbakk er ikke mulig for «{policy}»: identiteten er for lang til at et nytt utkast får plass til et versjonsnummer. Historikken kan leses.",

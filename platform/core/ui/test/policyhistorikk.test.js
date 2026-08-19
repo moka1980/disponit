@@ -329,6 +329,15 @@ test("historikk: en aldri aktivert versjon viser ikke et aktiveringstidspunkt",
     const rader = h.querySelectorAll(".datatabell tbody tr");
     assert.equal(rader.length, 2);
     assert.ok(rader[1].textContent.includes(t("ui.historikk.uaktivert")));
+    // Default-diffen skal ikke bli «uaktivert → aktiv» (Codex P2): med
+    // bare ÉN aktivering finnes det ingen sann retning, og eier velger.
+    assert.equal(h.querySelector("#hist-fra").value, "");
+    assert.equal(h.querySelector("#hist-til").value, "");
+    finn(h, t("ui.historikk.vis_diff"))
+      .dispatchEvent(new window.Event("click"));
+    assert.ok(h.textContent.includes(t("ui.historikk.velg_begge")));
+    // Ingen diff er hentet — meldingen ER svaret på klikket.
+    assert.equal(h.querySelector(".diffliste"), null);
     // Registreringstidspunktet skal ikke stå der som en aktivering: 19.
     // august finnes ikke i raden, verken som dato eller klokkeslett.
     assert.ok(!rader[1].textContent.includes("19"),

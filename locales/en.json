@@ -1008,6 +1008,8 @@
   "ui.historikk.rullbakk_fra": "draft from version {n}",
   "ui.historikk.rullbakk_fra_borte": "draft from version {n}, which has since been deleted",
   "ui.historikk.rullbakk_fra_ubundet": "draft from version {n} (source not bound)",
+  "ui.historikk.velg_versjon": "Select version",
+  "ui.historikk.velg_begge": "Select both a from- and a to-version to see the changes.",
   "ui.historikk.rullbakk": "Roll back",
   "ui.historikk.rullbakk_sperret.policy_id_ugyldig": "Rollback is not possible for “{policy}”: the identity does not meet the requirements for new drafts (lower-case letters, digits and hyphens, at least three characters). The history can be read, but a new draft must be created on a policy with a valid ID.",
   "ui.historikk.rullbakk_sperret.policy_id_for_stor": "Rollback is not possible for “{policy}”: the identity is too long for a new draft to fit a version number. The history can be read.",
