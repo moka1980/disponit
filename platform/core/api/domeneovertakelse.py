@@ -402,6 +402,12 @@ def saker_endepunkt(tjeneste, request):
     (`limit` ≤ 100, standard 50, signert v2-cursor bundet til tenant,
     endepunkt, retning og filtre). Retningen er `asc`: eldste sak først —
     en adjudikatorkø skal tømmes fra bunnen, ikke vise det ferskeste.
+
+    Keysettet er `(saksrevisjon_ts, id)` og ikke `(ts, id)` (Codex P2):
+    A→B→C flytter en ÅPEN sak til en ny utfordrer uten å lage en ny rad,
+    og `ts` er kolonnelåst. «Eldste først» betyr derfor «eldst som DENNE
+    konflikten», ikke «eldst som rad» — ellers kommer arbeidet inn bak en
+    cursor tenanten alt har fått, og blir aldri vist.
     """
     import psycopg
 
@@ -444,7 +450,7 @@ def saker_endepunkt(tjeneste, request):
         conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
         sql = ("SELECT id, hostname_ref, saksrevisjon,"
                "       autorisasjonsgenerasjon, utfordrer_tenant,"
-               "       tapt_tenant, status, ts"
+               "       tapt_tenant, status, ts, saksrevisjon_ts"
                "  FROM unntak"
                " WHERE sakskilde='domeneovertakelse' AND NOT terminal"
                "   AND utfordrer_tenant=%s")
@@ -453,9 +459,21 @@ def saker_endepunkt(tjeneste, request):
             # Ærlig keyset (v4 pkt. 3): ingen duplikater for uendrede rader.
             # En sak som blir avgjort mens noen blar, forsvinner ut av
             # `NOT terminal` — det er køens poeng, ikke et brudd.
-            sql += " AND (ts, id) > (%s, %s)"
+            #
+            # NØKKELEN ER `saksrevisjon_ts`, IKKE `ts` (Codex P2). En sak
+            # kommer inn i DENNE tenantens kø på to måter: den opprettes,
+            # eller A→B→C gir den en ny utfordrer. Den andre veien lager
+            # ingen ny rad — `sikre_overtakelsessak` skifter utfordrer på
+            # den eksisterende, og `ts` er kolonnelåst (§11) og blir
+            # stående. Med `ts` som nøkkel la saken seg da BAK en cursor
+            # den nye utfordreren alt hadde fått utstedt, og forsvant fra
+            # hver gjenstående side — uten noen gang å ha vært på en
+            # tidligere. `saksrevisjon_ts` går fram med skiftet (§6
+            # håndhever det), så saken kommer inn FORAN cursoren, der nytt
+            # arbeid hører hjemme.
+            sql += " AND (saksrevisjon_ts, id) > (%s, %s)"
             args += [etter[0], etter[1]]
-        sql += " ORDER BY ts, id LIMIT %s"
+        sql += " ORDER BY saksrevisjon_ts, id LIMIT %s"
         args.append(grense)
         rader = conn.execute(sql, tuple(args)).fetchall()
         conn.execute("RESET ROLE")
@@ -464,13 +482,18 @@ def saker_endepunkt(tjeneste, request):
                   "saksrevisjon": int(r[2]),
                   "autorisasjonsgenerasjon": int(r[3]),
                   "utfordrer_tenant": r[4], "tapt_tenant": r[5],
-                  "status": r[6], "ts": r[7].isoformat()} for r in rader]
+                  "status": r[6], "ts": r[7].isoformat(),
+                  # Begge tidene, fordi de svarer på hver sin ting: `ts`
+                  # er når saken ble åpnet (alderen), `saksrevisjon_ts` er
+                  # når den ble den konflikten den er nå — og det siste er
+                  # det køen sorteres og pagineres på.
+                  "saksrevisjon_ts": r[8].isoformat()} for r in rader]
         neste = None
         if len(rader) == grense:
             neste = cursormodul.lag_v2(
                 tjeneste.cursorpepper, tenant=auth.tenant,
                 endepunkt="domeneovertakelse_saker", retning="asc",
-                filtre={}, ts=rader[-1][7], rad_id=rader[-1][0])
+                filtre={}, ts=rader[-1][8], rad_id=rader[-1][0])
         return kanonisk_json({"saker": saker, "neste_cursor": neste,
                               "request_id": rid}, 200, {"x-request-id": rid})
     except psycopg.Error as e:

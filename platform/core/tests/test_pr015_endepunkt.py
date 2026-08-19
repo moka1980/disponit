@@ -324,6 +324,99 @@ def test_adjudikatorkoen_er_paginert_og_cursoren_er_tenantbundet(klient):
 
 
 @pg
+def test_saken_som_skifter_til_meg_kommer_foran_cursoren(klient):
+    """Codex P2: en sak kommer inn i MIN kø på to måter — den opprettes,
+    eller A→B→C gir den meg.
+
+    Den andre veien lager ingen ny rad: `sikre_overtakelsessak` skifter
+    utfordrer på den EKSISTERENDE saken, og `ts` er kolonnelåst (§11) og
+    blir stående. Med `(ts, id)` som keyset la saken seg da BAK en cursor
+    jeg alt hadde fått utstedt — og forsvant fra hver gjenstående side, uten
+    noen gang å ha stått på en tidligere. En tvist om mitt eget vertsnavn,
+    usynlig i min egen kø, helt til noen tømte den og begynte forfra.
+
+    Nøkkelen er derfor `saksrevisjon_ts`, som går fram med skiftet (§6
+    håndhever det). «Eldste først» betyr «eldst som DENNE konflikten».
+
+    MUTASJONEN SOM DREPER DENNE: sett keysettet tilbake til `(ts, id)`, eller
+    la `sikre_overtakelsessak` beholde `saksrevisjon_ts` over et skifte.
+    """
+    from api import sesjon as sesjonmodul
+    h_gammel, h_ny = _host(), _host()
+
+    # 1) En ELDRE sak som tilhører en annen utfordrer enn meg.
+    a = _admin()
+    try:
+        a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                  ("taper-tenant-pr015", h_gammel))
+        a.commit()
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (FREMMED, h_gammel)).fetchone()[0]
+        a.commit()
+        assert svar.startswith("konflikt:"), svar
+
+        # 2) ... og en FERSKERE sak som er min.
+        _overtakelsessak(h_ny)
+
+        egen, _ = _adjudikator_i(TEN, "skifte-cursor")
+        kake = {sesjonmodul.C_SESJON: egen}
+
+        def side(cursor=None):
+            q = "?limit=1" + (f"&cursor={cursor}" if cursor else "")
+            r = klient.get("/v1/domeneovertakelse/saker" + q, cookies=kake)
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        # 3) Jeg blar til jeg har sett den ferske — cursoren står nå ETTER
+        #    den, altså etter alt som er eldre enn den.
+        cursor, funnet = None, False
+        for _ in range(60):
+            d = side(cursor)
+            cursor = d["neste_cursor"]
+            if h_ny in [s["hostname"] for s in d["saker"]]:
+                funnet = True
+                break
+            if cursor is None:
+                break
+        assert funnet and cursor, "fant aldri den ferske saken i egen kø"
+
+        # 4) NÅ tar jeg over det gamle vertsnavnet: A→B→C. Saken skifter
+        #    utfordrer — samme rad, samme `ts`, ny revisjon.
+        svar = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (TEN, h_gammel)).fetchone()[0]
+        a.commit()
+        assert svar.startswith("konflikt:"), svar
+    finally:
+        a.close()
+
+    m = _mig()
+    try:
+        _sett_kontekst(m, "__plattform_domener")
+        rad = m.execute(
+            "SELECT utfordrer_tenant, saksrevisjon, ts < saksrevisjon_ts"
+            "  FROM unntak WHERE hostname_ref=%s"
+            "   AND sakskilde='domeneovertakelse' AND NOT terminal",
+            (h_gammel,)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert rad is not None and rad[0] == TEN, rad
+    assert rad[1] >= 1, f"skiftet ga ingen ny revisjon: {rad}"
+    assert rad[2] is True, "saksrevisjon_ts fulgte ikke skiftet"
+
+    # 5) ... og den kommer FORAN cursoren jeg alt hadde fått.
+    sett, c = [], cursor
+    for _ in range(60):
+        d = side(c)
+        sett += [s["hostname"] for s in d["saker"]]
+        c = d["neste_cursor"]
+        if c is None:
+            break
+    assert h_gammel in sett, \
+        f"saken som skiftet til meg lå bak cursoren og ble aldri vist: {sett}"
+
+
+@pg
 def test_attestasjon_pa_fremmed_sak_er_ikke_funnet(klient):
     """Samme rot i attestasjonsveien: sak-id-rommet er ikke et orakel.
 

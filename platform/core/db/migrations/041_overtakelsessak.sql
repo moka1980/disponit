@@ -115,6 +115,17 @@ ALTER TABLE unntak
   ADD COLUMN IF NOT EXISTS tapt_tenant TEXT,
   ADD COLUMN IF NOT EXISTS autorisasjonsgenerasjon BIGINT,
   ADD COLUMN IF NOT EXISTS saksrevisjon BIGINT NOT NULL DEFAULT 0,
+  -- NÅR BLE SAKEN DEN KONFLIKTEN DEN ER NÅ (Codex P2). `ts` er
+  -- kolonnelåst (§11) og betyr «saken ble åpnet» — den skal ikke flytte
+  -- seg. Men A→B→C gir saken en NY utfordrer uten en ny rad, og for C er
+  -- det ferskt arbeid som dukker opp i køen med et gammelt `ts`. Blar C
+  -- allerede, ligger raden BAK cursoren, og C ser den aldri — heller ikke
+  -- på noen senere side, for den var aldri på en tidligere. Denne
+  -- kolonnen er derfor pagineringsnøkkelen: den følger `saksrevisjon`,
+  -- ikke opprettelsen. Formen speiler `saksrevisjon` over — NOT NULL med
+  -- default for alle rader, ikke et ledd i sakskilde-CHECKen.
+  ADD COLUMN IF NOT EXISTS saksrevisjon_ts TIMESTAMPTZ NOT NULL
+      DEFAULT now(),
   ADD COLUMN IF NOT EXISTS hendelse_a BIGINT,
   ADD COLUMN IF NOT EXISTS hendelse_b BIGINT;
 
@@ -163,6 +174,12 @@ END $$;
 -- så predikatet her dekker nøyaktig plattformens åpne saker.
 CREATE UNIQUE INDEX IF NOT EXISTS en_apen_overtakelsessak_per_hostname
   ON unntak (hostname_ref)
+  WHERE sakskilde = 'domeneovertakelse' AND NOT terminal;
+
+-- Adjudikatorkøens egen sti: utfordrerens åpne saker, i pagineringens
+-- rekkefølge. Uten den er hver side en seq scan over `unntak`.
+CREATE INDEX IF NOT EXISTS overtakelseskoe_utfordrer_revisjon
+  ON unntak (utfordrer_tenant, saksrevisjon_ts, id)
   WHERE sakskilde = 'domeneovertakelse' AND NOT terminal;
 
 -- ------------------------------------------------------------
@@ -437,8 +454,23 @@ BEGIN
         RAISE EXCEPTION 'utfordrer/generasjon endret uten saksrevisjon+1 (% -> %)',
           OLD.saksrevisjon, NEW.saksrevisjon;
       END IF;
+      -- ... OG PAGINERINGSNØKKELEN FØLGER MED (Codex P2). Skiftet gir
+      -- saken en ny utfordrer, altså ferskt arbeid i en ny kø. Ble
+      -- `saksrevisjon_ts` stående, ville saken lagt seg bak en cursor
+      -- den nye utfordreren alt hadde fått utstedt — og aldri blitt
+      -- vist. Nøkkelen er bare til å stole på hvis den ikke KAN stå
+      -- stille over et skifte.
+      IF NEW.saksrevisjon_ts <= OLD.saksrevisjon_ts THEN
+        RAISE EXCEPTION 'skifte uten at saksrevisjon_ts går fram (% -> %)',
+          OLD.saksrevisjon_ts, NEW.saksrevisjon_ts;
+      END IF;
     ELSIF NEW.saksrevisjon IS DISTINCT FROM OLD.saksrevisjon THEN
       RAISE EXCEPTION 'saksrevisjon endret uten utfordrer-/generasjonsskifte';
+    ELSIF NEW.saksrevisjon_ts IS DISTINCT FROM OLD.saksrevisjon_ts THEN
+      -- Motsatt vei: nøkkelen flytter seg KUN med skiftet. Ellers ville
+      -- en statusoppdatering kunne skyve saken framover i køen — eller,
+      -- verre, bakover, forbi en utstedt cursor.
+      RAISE EXCEPTION 'saksrevisjon_ts endret uten utfordrer-/generasjonsskifte';
     END IF;
     IF NEW.hostname_ref IS DISTINCT FROM OLD.hostname_ref THEN
       RAISE EXCEPTION 'saksidentitet kan ikke endres';
@@ -469,6 +501,7 @@ BEGIN
     OR (NEW.tapt_tenant            IS DISTINCT FROM OLD.tapt_tenant)
     OR (NEW.autorisasjonsgenerasjon IS DISTINCT FROM OLD.autorisasjonsgenerasjon)
     OR (NEW.saksrevisjon           IS DISTINCT FROM OLD.saksrevisjon)
+    OR (NEW.saksrevisjon_ts        IS DISTINCT FROM OLD.saksrevisjon_ts)
     OR (NEW.hendelse_a             IS DISTINCT FROM OLD.hendelse_a)
     OR (NEW.hendelse_b             IS DISTINCT FROM OLD.hendelse_b)
     OR (NEW.referansepayload       IS DISTINCT FROM OLD.referansepayload)
@@ -885,6 +918,16 @@ BEGIN
                autorisasjonsgenerasjon = p_generasjon,
                hendelse_a = p_hendelse_a, hendelse_b = p_hendelse_b,
                saksrevisjon = saksrevisjon + 1,
+               -- Pagineringsnøkkelen følger revisjonen (Codex P2): for
+               -- den NYE utfordreren er dette ferskt arbeid, og en rad
+               -- som beholdt sitt gamle `ts` ville dukket opp bak en
+               -- cursor hen alt hadde fått. `GREATEST(...)` og ikke bare
+               -- `clock_timestamp()`: §6 krever at nøkkelen går FRAM, og
+               -- to skifter i samme mikrosekund skal ikke kunne felle en
+               -- ekte overtakelse.
+               saksrevisjon_ts = GREATEST(
+                   clock_timestamp(),
+                   saksrevisjon_ts + interval '1 microsecond'),
                loggpost_id = v_logg,
                referansepayload = v_payload
          WHERE id = v_sak;
