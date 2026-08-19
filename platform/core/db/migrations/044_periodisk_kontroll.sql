@@ -694,9 +694,14 @@ BEGIN
 END $$;
 
 -- Aggregert nedetidshendelse (§5): lengre nedetid gir ÉN rad, ikke tusen.
+-- `til` er ikke pynt: neste kandidatsøk leser den som «dekket hit», og
+-- det er nettopp den lesingen som gjør at ett avbrudd gir ÉN hendelse og
+-- ikke én per sveip. `avkortet` sier om avbruddet er eldre enn
+-- enumereringstaket — en avkorting skal SES, aldri antas.
 CREATE OR REPLACE FUNCTION plan_nedetid_aggregert(
     p_tenant TEXT, p_plan UUID, p_fra TIMESTAMPTZ, p_til TIMESTAMPTZ,
-    p_antall INT, p_aktor TEXT, p_request_id TEXT)
+    p_antall INT, p_aktor TEXT, p_request_id TEXT,
+    p_avkortet BOOLEAN DEFAULT false)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 BEGIN
@@ -704,7 +709,8 @@ BEGIN
         (plan_id, tenant, hendelse, aktor, request_id, detalj)
     VALUES (p_plan, p_tenant, 'nedetid_aggregert', p_aktor, p_request_id,
             jsonb_build_object('fra', p_fra, 'til', p_til,
-                               'vinduer', p_antall));
+                               'vinduer', p_antall,
+                               'avkortet', coalesce(p_avkortet, false)));
 END $$;
 
 -- Lesefunksjoner for API-et (runtime har ingen bordtilgang).
@@ -1011,25 +1017,127 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
      LIMIT greatest(p_grense, 0)
 $$;
 
-CREATE OR REPLACE FUNCTION plan_nedetid_kandidater(p_dager INT)
+-- Nedetidsaggregatet leses fra RYTMEN, ikke bare fra radene (Codex P2).
+--
+-- En vindusrad fødes først når noen har noe å gjøre med den, og
+-- `utlopte_planvinduer` materialiserer bare tilbakeblikket (30 døgn). Et
+-- 60-døgns avbrudd etterlot derfor INGEN rad for døgn 60→30: aggregatet,
+-- som bare grupperte eksisterende rader, meldte enten ingenting eller kun
+-- grenseraden. Løftet i §5 er ÉN hendelse som forteller SANT om
+-- avbruddet; da må den telle forekomstene planen skulle hatt.
+--
+-- Søket starter ved `dekket_til` — det seneste av (a) siste vindusrad før
+-- tilbakeblikket, (b) `til` fra forrige aggregerte nedetidshendelse og
+-- (c) takets grense. (b) er dempingen: uten den ville en plan uten rader
+-- fått en ny hendelse i HVERT sveip, altså nettopp tusen hendelser i
+-- stedet for én. En frisk plan har en rad rett før tilbakeblikket, så
+-- søket blir tomt og koster ingenting.
+--
+-- `vinduer` er fortsatt BARE radene som finnes: kun de kan termineres
+-- (FK-en krever en vindusrad). `fra`, `til` og `antall` dekker hele
+-- avbruddet, materialisert eller ei.
+--
+-- Avkortingen er eksplisitt, aldri stille: er avbruddet eldre enn
+-- `p_maks_dogn`, sier `avkortet` det, og hendelsen bærer flagget videre.
+-- Et ubundet generate_series per plan er en spørring ingen tar igjen.
+CREATE OR REPLACE FUNCTION plan_nedetid_kandidater(
+    p_dager INT, p_maks_dogn INT)
 RETURNS TABLE(plan_id UUID, tenant TEXT, fra TIMESTAMPTZ, til TIMESTAMPTZ,
-              antall BIGINT, vinduer TIMESTAMPTZ[])
+              antall BIGINT, vinduer TIMESTAMPTZ[], avkortet BOOLEAN)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT w.plan_id, w.tenant, min(w.vindu_start), max(w.vindu_start),
-           count(*), array_agg(w.vindu_start ORDER BY w.vindu_start)
-      FROM public.bestillingsplan_vindu w
-     WHERE w.tilstand <> 'terminal'
-       AND w.vindu_start < now() - make_interval(days =>
-                                                 greatest(p_dager, 0))
-     GROUP BY w.plan_id, w.tenant
+    WITH g AS (
+        SELECT now() - make_interval(days => greatest(p_dager, 0))
+                   AS eldre_enn,
+               least(greatest(p_maks_dogn, 1), 3650) AS tak
+    ), eksisterende AS (
+        SELECT w.plan_id, w.tenant, min(w.vindu_start) AS fra,
+               max(w.vindu_start) AS til, count(*) AS antall,
+               array_agg(w.vindu_start ORDER BY w.vindu_start) AS vinduer
+          FROM public.bestillingsplan_vindu w, g
+         WHERE w.tilstand <> 'terminal' AND w.vindu_start < g.eldre_enn
+         GROUP BY w.plan_id, w.tenant
+    ), planer AS (
+        SELECT p.plan_id, p.tenant, p.rytme, p.ukedag, p.manedsdag,
+               p.time_lokal, p.tidssone, g.eldre_enn, g.tak,
+               greatest(
+                   coalesce((SELECT max(bv.vindu_start)
+                               FROM public.bestillingsplan_vindu bv
+                              WHERE bv.plan_id = p.plan_id
+                                AND bv.vindu_start < g.eldre_enn),
+                            (SELECT min(ap.fra_ts)
+                               FROM public.bestillingsplan_aktiv_periode ap
+                              WHERE ap.plan_id = p.plan_id)),
+                   coalesce((SELECT max((h.detalj->>'til')::timestamptz)
+                               FROM public.bestillingsplan_hendelse h
+                              WHERE h.plan_id = p.plan_id
+                                AND h.hendelse = 'nedetid_aggregert'),
+                            '-infinity'::timestamptz)) AS dekket_til
+          FROM public.bestillingsplan p, g
+         WHERE p.status <> 'stanset'
+           AND EXISTS (SELECT 1 FROM public.bestillingsplan_aktiv_periode a
+                        WHERE a.plan_id = p.plan_id)
+    ), soek AS (
+        SELECT pl.*,
+               greatest(pl.dekket_til,
+                        now() - make_interval(days => pl.tak)) AS fra_soek,
+               pl.dekket_til < now() - make_interval(days => pl.tak)
+                   AS avkortet
+          FROM planer pl
+    ), treff AS (
+        SELECT s.plan_id, s.tenant, s.avkortet, s.fra_soek, s.eldre_enn,
+               (date_trunc('day', (s.eldre_enn AT TIME ZONE s.tidssone)
+                                  - make_interval(days => d.o))
+                + make_interval(hours => s.time_lokal))
+                 AT TIME ZONE s.tidssone AS start
+          FROM soek s
+          CROSS JOIN LATERAL generate_series(0, least(greatest(
+                  ceil(extract(epoch FROM (s.eldre_enn - s.fra_soek))
+                       / 86400)::int, 0) + 1, s.tak)) AS d(o)
+         WHERE (   s.rytme = 'daglig'
+                OR (s.rytme = 'ukentlig' AND extract(isodow FROM
+                       (s.eldre_enn AT TIME ZONE s.tidssone)
+                       - make_interval(days => d.o))::int = s.ukedag)
+                OR (s.rytme = 'manedlig' AND extract(day FROM
+                       (s.eldre_enn AT TIME ZONE s.tidssone)
+                       - make_interval(days => d.o))::int = s.manedsdag))
+    ), savnet AS (
+        SELECT t.plan_id, t.tenant, t.avkortet, t.start
+          FROM treff t
+         WHERE t.start > t.fra_soek AND t.start < t.eldre_enn
+           -- Samme kvalifiseringsregel som plukket: FORFALLET i en aktiv
+           -- periode. Et vindu planen aldri var aktiv for er ikke nedetid.
+           AND EXISTS (SELECT 1 FROM public.bestillingsplan_aktiv_periode pr
+                        WHERE pr.plan_id = t.plan_id
+                          AND pr.fra_ts <= t.start
+                               + public.plan_forfallsminutt(t.plan_id)
+                                 * interval '1 minute'
+                          AND (pr.til_ts IS NULL OR pr.til_ts > t.start
+                               + public.plan_forfallsminutt(t.plan_id)
+                                 * interval '1 minute'))
+           AND NOT EXISTS (SELECT 1 FROM public.bestillingsplan_vindu bv
+                            WHERE bv.plan_id = t.plan_id
+                              AND bv.vindu_start = t.start)
+    ), manglende AS (
+        SELECT sv.plan_id, sv.tenant, min(sv.start) AS fra,
+               max(sv.start) AS til, count(*) AS antall,
+               bool_or(sv.avkortet) AS avkortet
+          FROM savnet sv GROUP BY sv.plan_id, sv.tenant
+    )
+    SELECT coalesce(e.plan_id, m.plan_id), coalesce(e.tenant, m.tenant),
+           least(e.fra, m.fra), greatest(e.til, m.til),
+           coalesce(e.antall, 0) + coalesce(m.antall, 0),
+           coalesce(e.vinduer, ARRAY[]::TIMESTAMPTZ[]),
+           coalesce(m.avkortet, false)
+      FROM eksisterende e
+      FULL JOIN manglende m ON m.plan_id = e.plan_id
 $$;
 
 REVOKE ALL ON FUNCTION planvinduer_til_klassifisering(INT, INT)
     FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION planvinduer_til_klassifisering(INT, INT)
     TO disponit;
-REVOKE ALL ON FUNCTION plan_nedetid_kandidater(INT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT) TO disponit;
+REVOKE ALL ON FUNCTION plan_nedetid_kandidater(INT, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT, INT) TO disponit;
 
 -- Deploy-portens lesevei (port 1): runtime har ingen bordtilgang (port
 -- 7), så tellingen per bestillingstype går gjennom claimerens definer —
@@ -1067,7 +1175,7 @@ REVOKE ALL ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID)
 REVOKE ALL ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ,
     UUID, TEXT, TEXT, BIGINT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ,
-    TIMESTAMPTZ, INT, TEXT, TEXT) FROM PUBLIC;
+    TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 REVOKE ALL ON FUNCTION hent_planer(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION hent_plan_tick(TEXT, UUID, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION hent_plan_hendelser(TEXT, UUID, INT) FROM PUBLIC;
@@ -1090,7 +1198,7 @@ GRANT EXECUTE ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID)
 GRANT EXECUTE ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ,
     UUID, TEXT, TEXT, BIGINT, JSONB) TO disponit;
 GRANT EXECUTE ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ,
-    TIMESTAMPTZ, INT, TEXT, TEXT) TO disponit;
+    TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) TO disponit;
 GRANT EXECUTE ON FUNCTION hent_planer(TEXT) TO disponit;
 GRANT EXECUTE ON FUNCTION hent_plan_tick(TEXT, UUID, INT) TO disponit;
 GRANT EXECUTE ON FUNCTION hent_plan_hendelser(TEXT, UUID, INT)

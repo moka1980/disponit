@@ -891,6 +891,43 @@ def test_nedetid_over_30_dogn_aggregeres(migrator):
         " tilbakeblikket"
 
 
+@pg
+def test_langt_avbrudd_telles_fra_rytmen(migrator):
+    """Codex P2: aggregatet må telle FOREKOMSTER, ikke bare rader.
+
+    Et 90-døgns avbrudd etterlater INGEN vindusrad for døgn 90→30:
+    `utlopte_planvinduer` enumererer kun tilbakeblikket. Et aggregat som
+    bare grupperte eksisterende rader meldte derfor enten ingenting eller
+    kun grenseraden — og §5s løfte om ÉN hendelse som forteller sant om
+    avbruddet var ikke innfridd. Og fortsatt ÉN: ikke én per sveip."""
+    from plan.klassifiser import klassifiser_vinduer
+    rt = _rt()
+    try:
+        pid = _plan(rt, host="p35b.example", aktiver=False)
+        _aktiver_i_fortid(migrator, pid, dager=90)
+        klassifiser_vinduer(rt)
+        _sett_kontekst(migrator, TENANT)
+        agg = migrator.execute(
+            "SELECT detalj FROM bestillingsplan_hendelse WHERE plan_id=%s"
+            " AND hendelse='nedetid_aggregert'", (pid,)).fetchall()
+        migrator.rollback()
+        assert len(agg) == 1, agg
+        detalj = agg[0][0]
+        # Døgn 90→30 er ~60 daglige forekomster, ingen av dem materialisert.
+        assert detalj["vinduer"] >= 50, detalj
+        assert detalj["avkortet"] is False, detalj
+        # ... og neste sveip melder INGENTING nytt: `til` er dempingen.
+        klassifiser_vinduer(rt)
+        _sett_kontekst(migrator, TENANT)
+        antall = migrator.execute(
+            "SELECT count(*) FROM bestillingsplan_hendelse WHERE plan_id=%s"
+            " AND hendelse='nedetid_aggregert'", (pid,)).fetchone()[0]
+        migrator.rollback()
+        assert antall == 1, "avbruddet ble meldt på nytt i neste sveip"
+    finally:
+        rt.close()
+
+
 def test_klassifisereren_har_ingen_bestillingsvei():
     """Port 34 (statisk AST): klassifisereren importerer verken
     HTTP-klienter eller bestillingsveien — heller ikke inne i funksjoner,

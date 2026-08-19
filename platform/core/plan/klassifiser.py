@@ -26,6 +26,12 @@ from datetime import timedelta
 
 TILBAKEBLIKK_DOGN = 30
 
+#: Hvor langt bakover nedetidsaggregatet enumererer rytmens forekomster.
+#: Et lengre avbrudd enn dette er ikke et avbrudd — det er en forlatt plan
+#: — og et ubundet søk per plan er en spørring ingen tar igjen. Avkortingen
+#: står i hendelsen (`avkortet`), aldri som en stille utelatelse.
+NEDETID_TAK_DOGN = 365
+
 
 def _nokkel(plan_id, vindu_start) -> str:
     # Samme avledning som materialiseringen — men uten å importere den:
@@ -97,21 +103,25 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
             res["hoppet_over"] += 1
 
     # Aggregert nedetidshendelse: vinduer ELDRE enn tilbakeblikket får
-    # aldri rader — men planen får ÉN hendelse som sier det.
+    # aldri rader — men planen får ÉN hendelse som sier det. Kandidaten
+    # telles fra RYTMEN, ikke fra radene: et langt avbrudd etterlot ingen
+    # rad i det hele tatt, og et aggregat som bare grupperte rader ville
+    # meldt enten ingenting eller kun grenseraden (Codex P2). `vinduer`
+    # er derfor bare de radene som FINNES — kun de kan termineres.
     gamle = conn.execute(
-        "SELECT plan_id, tenant, fra, til, antall, vinduer"
-        "  FROM plan_nedetid_kandidater(%s)",
-        (TILBAKEBLIKK_DOGN,)).fetchall()
+        "SELECT plan_id, tenant, fra, til, antall, vinduer, avkortet"
+        "  FROM plan_nedetid_kandidater(%s,%s)",
+        (TILBAKEBLIKK_DOGN, NEDETID_TAK_DOGN)).fetchall()
     conn.rollback()
-    for plan_id, tenant, fra, til, antall, vinduer in gamle:
+    for plan_id, tenant, fra, til, antall, vinduer, avkortet in gamle:
         rid = f"planklass-{str(plan_id)[:8]}"
         sett_kontekst(conn, tenant, "planklassifisering", rid)
         conn.execute("SELECT plan_nedetid_aggregert(%s,%s,%s,%s,%s,"
-                     "'planklassifisering',%s)",
-                     (tenant, plan_id, fra, til, antall, rid))
+                     "'planklassifisering',%s,%s)",
+                     (tenant, plan_id, fra, til, antall, rid, avkortet))
         # Vinduene terminaliseres som hoppet_over uten enkelthendelser —
         # aggregatet er sporet.
-        for vs in vinduer:
+        for vs in (vinduer or ()):
             conn.execute(
                 "SELECT terminaliser_planvindu(%s,%s,%s,NULL,%s,"
                 "'hoppet_over',NULL,%s)",
@@ -119,7 +129,8 @@ def klassifiser_vinduer(conn, *, grense: int = 200) -> dict:
                  json.dumps({"kilde": "nedetid_aggregert"})))
         conn.commit()
         res.setdefault("aggregert", []).append(
-            {"plan": str(plan_id), "vinduer": antall})
+            {"plan": str(plan_id), "vinduer": antall,
+             "avkortet": bool(avkortet)})
 
     if any(res.get(k) for k in ("hoppet_over", "fra_idempotens", "avvik",
                                 "aggregert")):
