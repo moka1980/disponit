@@ -97,15 +97,17 @@ def _ekte_bruker(sub):
     return bid
 
 
-def _aktiver_i_fortid(m, pid, *, dager=0, timer=0):
+def _aktiver_i_fortid(m, pid, *, dager=0, timer=0, aktor="test:plan"):
     """Aktivering med fortidig `fra_ts`. Perioderadene er immutable også
     for migratorrollen (identiteten inkluderer fra_ts), så fortiden
     KONSTRUERES ved innsetting — aldri ved å flytte en eksisterende rad.
-    Speiler nøyaktig det aktiver_plan skriver, minus hendelsen."""
+    Speiler nøyaktig det aktiver_plan skriver, minus hendelsen —
+    `aktivert_av` inkludert: varselveien finner mottakeren i nettopp den
+    kolonnen, så en hardkodet aktør ville gjort planen mottakerløs."""
     _sett_kontekst(m, TENANT)
     m.execute("UPDATE bestillingsplan SET status='aktiv',"
-              " aktivert_av='test:plan'"
-              " WHERE plan_id=%s AND status='utkast'", (pid,))
+              " aktivert_av=%s"
+              " WHERE plan_id=%s AND status='utkast'", (aktor, pid))
     m.execute("INSERT INTO bestillingsplan_aktiv_periode"
               " (plan_id, tenant, fra_ts) VALUES"
               " (%s,%s, now() - make_interval(days => %s, hours => %s))",
@@ -116,9 +118,16 @@ def _aktiver_i_fortid(m, pid, *, dager=0, timer=0):
 def _plan_forfalt(rt, m, *, host, aktiver_dager=1, **kw):
     """Aktiv plan hvis dagens vindu ER kvalifisert: aktiveringen legges i
     går, ellers ville fra_ts > forfall gjort planen til port
-    32-tilfellet (aktivert etter forfall = ingen rad)."""
+    32-tilfellet (aktivert etter forfall = ingen rad).
+
+    Den samme konstruksjonen er nødvendig for ALT syntetisk tick-arkiv:
+    sveipene måler tickets periodetilhørighet på FORFALLET, og et vindu
+    som forfalt før planen noensinne var aktiv kunne uansett aldri blitt
+    claimet (port 32) — altså heller aldri fått et tick. `aktiver_dager`
+    må derfor dekke det ELDSTE syntetiske vinduet i testen."""
     pid = _plan(rt, host=host, aktiver=False, **kw)
-    _aktiver_i_fortid(m, pid, dager=aktiver_dager)
+    _aktiver_i_fortid(m, pid, dager=aktiver_dager,
+                      aktor=kw.get("aktor", "test:plan"))
     return pid
 
 
@@ -1608,7 +1617,8 @@ def test_stopp_uten_pause_gjenopprettes(migrator):
     from plan.materialiser import pausesveip
     rt = _rt()
     try:
-        pid = _plan(rt, host="p19b.example")
+        pid = _plan_forfalt(rt, migrator, host="p19b.example",
+                            aktiver_dager=3)
         vs = _syntetisk_vindu(migrator, pid, start_h=-30, slutt_h=-26)
         _sett_kontekst(migrator, TENANT)
         nokkel = "t-" + secrets.token_hex(8)
@@ -1909,7 +1919,8 @@ def test_gjentatt_uten_resultat(migrator):
     from plan.materialiser import pausesveip
     rt = _rt()
     try:
-        pid = _plan(rt, host="p22.example")
+        pid = _plan_forfalt(rt, migrator, host="p22.example",
+                            aktiver_dager=5)
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -1947,7 +1958,8 @@ def test_uten_resultat_revalideres_under_planlaasen(migrator):
     blokk = koble(MIGRATOR_DSN)
     svar = {}
     try:
-        pid = _plan(rt, host="p22c.example")
+        pid = _plan_forfalt(rt, migrator, host="p22c.example",
+                            aktiver_dager=5)
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -2051,7 +2063,8 @@ def test_promoteringen_og_predikatet_deler_laasen(migrator, app):
         key_id, _dek = kryptering.hent_eller_opprett_aktiv_dek(
             migrator, TENANT)
         migrator.commit()
-        pid = _plan(rt, host="p22d.example")
+        pid = _plan_forfalt(rt, migrator, host="p22d.example",
+                            aktiver_dager=5)
         oids = []
         for i in range(3):
             oid, _logg = _beslutningsoppdrag(rt, migrator)
@@ -2139,7 +2152,8 @@ def test_et_brudd_bryter_stripen_uten_resultat(migrator):
     from plan.materialiser import pausesveip
     rt = _rt()
     try:
-        pid = _plan(rt, host="p22b.example")
+        pid = _plan_forfalt(rt, migrator, host="p22b.example",
+                            aktiver_dager=3)
         # Eldst → nyest: tillat, tillat, brudd, tillat.
         for i, utfall in enumerate(("tillat", "tillat", "brudd", "tillat")):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 + 4 * i,
@@ -2229,7 +2243,8 @@ def test_planvarslene_respekterer_kun_portal(migrator):
         assert status == [("ikke_aktuelt",)], status
 
         # 2. Bruddvarselet, samme vei.
-        pid2 = _plan(rt, host="p-kanal2.example", aktor=f"bruker:{bid}")
+        pid2 = _plan_forfalt(rt, migrator, host="p-kanal2.example",
+                             aktiver_dager=5, aktor=f"bruker:{bid}")
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid2, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -2283,7 +2298,8 @@ def test_tre_brudd_varsles_men_pauser_aldri(migrator):
     bid = _ekte_bruker("p21-eier")
     rt = _rt()
     try:
-        pid = _plan(rt, host="p21.example", aktor=f"bruker:{bid}")
+        pid = _plan_forfalt(rt, migrator, host="p21.example",
+                            aktiver_dager=5, aktor=f"bruker:{bid}")
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -2343,7 +2359,8 @@ def test_dempingen_leses_under_planlaasen(migrator):
     blokk = koble(MIGRATOR_DSN)
     svar = {}
     try:
-        pid = _plan(rt, host="p-demping.example", aktor=f"bruker:{bid}")
+        pid = _plan_forfalt(rt, migrator, host="p-demping.example",
+                            aktiver_dager=5, aktor=f"bruker:{bid}")
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -2410,7 +2427,8 @@ def test_andre_bruddstripe_varsles_uten_a_velte_sveipen(migrator):
     bid = _ekte_bruker("p21b-eier")
     rt = _rt()
     try:
-        pid = _plan(rt, host="p21b.example", aktor=f"bruker:{bid}")
+        pid = _plan_forfalt(rt, migrator, host="p21b.example",
+                            aktiver_dager=5, aktor=f"bruker:{bid}")
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -2451,7 +2469,8 @@ def test_gjenopptak_krever_scope_og_nullstiller(migrator, klient):
     from plan.materialiser import pausesveip
     rt = _rt()
     try:
-        pid = _plan(rt, host="p23.example")
+        pid = _plan_forfalt(rt, migrator, host="p23.example",
+                            aktiver_dager=5)
         for i in range(3):
             vs = _syntetisk_vindu(migrator, pid, start_h=-30 - 24 * i,
                                   slutt_h=-26 - 24 * i)
@@ -2488,6 +2507,59 @@ def test_gjenopptak_krever_scope_og_nullstiller(migrator, klient):
     assert status == ("aktiv", None)
     assert perioder == [(False,), (True,)], "gjenopptaket åpnet ikke en" \
         " ny periode"
+
+
+@pg
+def test_sen_gjenoppretting_hoerer_til_forfallets_periode(migrator):
+    """Codex P2: tickets periode er FORFALLETS, ikke `registrert`s.
+
+    `registrert` er tidspunktet TERMINALISERINGEN skjedde, og
+    klassifisererens gjenoppretting skriver ticket lenge etter at
+    arbeideren bestilte. Rekkefølgen «tre `tillat` bestilt i gammel
+    periode → arbeideren dør før terminaliseringen → planen pauses og
+    gjenopptas → klassifisereren gjenoppretter de tre» ga tre ferske
+    `registrert` INNENFOR den nye perioden, og sveipen pauset den nettopp
+    gjenopptatte planen som `gjentatt_uten_resultat` — en pause bare et
+    menneske kan oppheve. Løftet om at gjenopptaket nullstiller tellerne
+    var altså brutt av sen evidens alene.
+
+    Måles som en DIFFERANSE i ett og samme sveip: to identiske planer med
+    identiske vinduer og tick, den ene gjenopptatt etter at vinduene
+    forfalt, den andre ikke. Bare gjenopptaket skiller dem."""
+    from plan.materialiser import pausesveip
+    rt = _rt()
+    try:
+        sen = _plan_forfalt(rt, migrator, host="p44-sen.example",
+                            aktiver_dager=5)
+        kontroll = _plan_forfalt(rt, migrator, host="p44-kontroll.example",
+                                 aktiver_dager=5)
+        # Vinduene forfalt i den FØRSTE perioden, men står uten tick:
+        # arbeideren rakk å bestille, ikke å terminalisere.
+        vinduer = {p: [_syntetisk_vindu(migrator, p, start_h=-30 - 24 * i,
+                                        slutt_h=-26 - 24 * i)
+                       for i in range(3)]
+                   for p in (sen, kontroll)}
+        # Pause og gjenopptak FØR gjenopprettingen rekker fram.
+        _sett_kontekst(rt, TENANT)
+        assert rt.execute(
+            "SELECT pause_plan(%s,%s,'policy_stopper','test','r-sen',NULL)",
+            (TENANT, sen)).fetchone()[0]
+        rt.execute("SELECT gjenoppta_plan(%s,%s,'test:x','r-sen2')",
+                   (TENANT, sen))
+        rt.commit()
+        # ... og FØRST NÅ skrives evidensen, med fersk `registrert`.
+        for p, vs_er in vinduer.items():
+            for i, vs in enumerate(vs_er):
+                _syntetisk_tick(migrator, p, vs, "tillat",
+                                oppdrag_id=970000 + i
+                                + (0 if p == sen else 100))
+        sveip = pausesveip(rt)
+    finally:
+        rt.close()
+    assert (str(kontroll), "gjentatt_uten_resultat") in sveip, \
+        f"kontrollplanen ble ikke pauset i det hele tatt: {sveip}"
+    assert (str(sen), "gjentatt_uten_resultat") not in sveip, \
+        "sen gjenoppretting flyttet gamle tick inn i den nye perioden"
 
 
 @pg

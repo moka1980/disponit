@@ -1049,6 +1049,48 @@ REVOKE ALL ON FUNCTION utlopte_planvinduer(INT, INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO disponit;
 
 
+-- TICKETS PERIODETILHØRIGHET (Codex P2). Tre sveip spør «hører dette
+-- ticket til den GJELDENDE åpne aktiveringsperioden?», og alle tre målte
+-- det på `registrert` — tidspunktet TERMINALISERINGEN skjedde. Det er
+-- ikke når kjøringen var bestilt til å skje, og forskjellen er ikke
+-- teoretisk: `terminaliser_planvindu` gjenoppretter et vindu hvis
+-- arbeideren committet bestillingen og så døde før ticket, og den
+-- gjenopprettingen kan komme minutter eller timer senere. Rekkefølgen
+-- «tre `tillat` bestilt i gammel periode → arbeideren dør → planen
+-- pauses og gjenopptas → klassifisereren gjenoppretter de tre» ga tre
+-- ferske `registrert` innenfor den NYE perioden, og
+-- `planer_gjentatt_uten_resultat` pauset den nettopp gjenopptatte planen
+-- som `gjentatt_uten_resultat` — den pausen kan bare et menneske oppheve.
+-- Løftet om at et gjenopptak nullstiller tellerne var dermed brutt av
+-- sen evidens alene.
+--
+-- Målet er FORFALLET, som overalt ellers på denne flaten: `utlopte_-`/
+-- `forfalte_planvinduer` kvalifiserer på `pr.fra_ts <= forfall`, og
+-- `claim_planvindu` revaliderer på nøyaktig samme uttrykk. Ticket bærer
+-- `vindu_start` i sin egen primærnøkkel, og forfallet er en ren funksjon
+-- av det og planen — så tilhørigheten er avledbar av evidensen selv, og
+-- kan ikke flyttes av når noen rakk å skrive den.
+--
+-- `til_ts IS NULL` framfor `max(fra_ts)`: den åpne perioden er den
+-- gjeldende (`en_apen_periode_per_plan` gjør den entydig), og kallerne
+-- ser uansett bare planer med status `aktiv`. Ingen øvre grense trengs —
+-- perioden er åpen. Vanlig funksjon, ikke definer: kallerne er definere
+-- og har alt bordtilgangen, mens et direkte kall utenfra måles mot
+-- kallerens egen RLS som før.
+CREATE OR REPLACE FUNCTION tick_i_apen_periode(
+    p_plan UUID, p_vindu TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.bestillingsplan_aktiv_periode ap
+         WHERE ap.plan_id = p_plan
+           AND ap.til_ts IS NULL
+           AND ap.fra_ts <= p_vindu + public.plan_forfallsminutt(p_plan)
+                                      * interval '1 minute')
+$$;
+-- Intet grant til runtime: hjelperen har ingen kaller utenfor definerne
+-- i denne filen, og eieren beholder EXECUTE uansett revoke.
+REVOKE ALL ON FUNCTION tick_i_apen_periode(UUID, TIMESTAMPTZ) FROM PUBLIC;
+
 -- Pausesveipets tilbakeblikk: tre `tillat`-tick på rad i GJELDENDE åpne
 -- periode uten promotert artefakt. Definer-funksjon fordi kalleren
 -- (runtime) ikke har bordtilgang, og fordi artefakt-lesingen hører til
@@ -1074,9 +1116,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
           FROM public.bestillingsplan_tick t
           JOIN public.bestillingsplan p
             ON p.plan_id = t.plan_id AND p.status = 'aktiv'
-         WHERE t.registrert >= (SELECT max(ap.fra_ts)
-                  FROM public.bestillingsplan_aktiv_periode ap
-                 WHERE ap.plan_id = t.plan_id)
+         WHERE public.tick_i_apen_periode(t.plan_id, t.vindu_start)
     )
     SELECT s.plan_id, s.tenant FROM siste s
      WHERE s.rn <= 3
@@ -1181,9 +1221,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
       JOIN public.bestillingsplan p
         ON p.plan_id = t.plan_id AND p.tenant = t.tenant
      WHERE t.utfall = 'stopp' AND p.status = 'aktiv'
-       AND t.registrert >= (SELECT max(ap.fra_ts)
-              FROM public.bestillingsplan_aktiv_periode ap
-             WHERE ap.plan_id = t.plan_id)
+       AND public.tick_i_apen_periode(t.plan_id, t.vindu_start)
        AND NOT EXISTS (
              SELECT 1 FROM public.bestillingsplan_hendelse h
               WHERE h.plan_id = t.plan_id AND h.tenant = t.tenant
@@ -1209,9 +1247,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
           FROM public.bestillingsplan_tick t
           JOIN public.bestillingsplan p
             ON p.plan_id = t.plan_id AND p.status = 'aktiv'
-         WHERE t.registrert >= (SELECT max(ap.fra_ts)
-                  FROM public.bestillingsplan_aktiv_periode ap
-                 WHERE ap.plan_id = t.plan_id)
+         WHERE public.tick_i_apen_periode(t.plan_id, t.vindu_start)
     ), striper AS (
         SELECT s.plan_id, s.tenant, min(s.registrert) AS stripe_fra
           FROM siste s WHERE s.rn <= 3
