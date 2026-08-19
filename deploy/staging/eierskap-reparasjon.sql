@@ -251,10 +251,19 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'arkivmerk_pre041_overtakelsessaker(text,text)',      'disponit_m37_claimer'),
     -- 041 §9.2 (Codex P2): vaktbikkjas ene spoersmaal. Claimer-eid av samme
     -- grunn som de to vaktene over — 9.1s RESTRICTIVE policy lukker den
-    -- reserverte tenanten for alle andre enn claimer, adjudikator og eier,
-    -- og en SECURITY DEFINER-funksjon ser radene som SIN EIER. Arbeideren
-    -- faar EXECUTE, ikke leseflate
+    -- reserverte tenanten for alle andre enn claimer og eier, og en
+    -- SECURITY DEFINER-funksjon ser radene som SIN EIER. Arbeideren faar
+    -- EXECUTE, ikke leseflate
     ('FUNCTION', 'overtakelsessak_finnes(text,text,text,bigint)',      'disponit_m37_claimer'),
+    -- 042 (Codex P1): adjudikasjonens to lesninger. Samme form og samme
+    -- grunn som vakten over — de avloeser adjudikatorrollens uavgrensede
+    -- SELECT paa unntak, og de MAA vaere claimer-eide for aa se
+    -- plattformraden gjennom 9.1s allowlist. Eierskapet er ikke en detalj
+    -- her: flyttes det, mister de synligheten og hver adjudikasjon svarer
+    -- tomt — fail-closed, men stille. Omfanget leses av disponit.tenant,
+    -- aldri av et argument
+    ('FUNCTION', 'overtakelsessak_for_utfordrer(bigint)',              'disponit_m37_claimer'),
+    ('FUNCTION', 'overtakelsessaker_for_utfordrer(timestamp with time zone,bigint,integer)', 'disponit_m37_claimer'),
     -- 039 (Codex P1): konflikter som venter paa sin M-37-sak. Kryss-tenant
     -- LESING, ingen p_tenant a velge — M-37-arbeideren drenerer dem.
     ('FUNCTION', 'ventende_overtakelseskonflikter(integer)',            'disponit_domene_eier'),

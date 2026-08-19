@@ -192,41 +192,49 @@ def slaa_opp_sak(conn, unntak_id: int,
 
     041: saken bor på `__plattform_domener` og bærer feltene sine som
     KOLONNER (`payload_type='referanse'`) — hostnavnet og generasjonen leses
-    derfor rett av raden, ikke lenger ut av en idempotensnøkkel. Synligheten
-    er adjudikatorens: lesingen skjer under `SET LOCAL ROLE
-    disponit_domains_adjudicator`, som RLS-policyen i 041 §9 avgrenser til
-    nøyaktig `sakskilde='domeneovertakelse'`. Ingen tenantkontekst — en
-    kundesesjons RLS-snitt ser aldri saken, og skal ikke det (port 33).
+    derfor rett av raden, ikke lenger ut av en idempotensnøkkel.
 
-    `SET LOCAL` + `rollback` hos kalleren: rollen forlates med
-    transaksjonen, så ingen senere spørring på samme forbindelse arver den.
+    042 (Codex P1): SYNLIGHETEN ER IKKE LENGER EN ROLLE. Oppslaget gikk før
+    under `SET LOCAL ROLE disponit_domains_adjudicator`, og tenant-
+    avgrensningen sto som `utfordrer_tenant=%s` HER, i applikasjonen. Rollen
+    ser hver overtakelsessak i klyngen, runtime-rollen har `SET`-medlemskap i
+    den, og et WHERE-ledd i Python er ikke en grense mot noen som kan skrive
+    SQL: én injeksjon gjorde `SET ROLE`, utelot leddet og fikk hele
+    saksflaten. Avgrensningen er derfor FLYTTET INN i databasen —
+    `overtakelsessak_for_utfordrer` er claimer-eid, SECURITY DEFINER, og
+    leser omfanget sitt av `disponit.tenant` i stedet for av kallet. Den tar
+    ingen tenant som argument, nettopp fordi et argument er like fritt som
+    predikatet det skulle erstatte.
+
+    `sett_tenant` + `rollback` hos kalleren: GUC-en er `SET LOCAL` og
+    forlates med transaksjonen, så ingen senere spørring på samme forbindelse
+    arver snittet. Er den ikke satt, gir `NULLIF(...)` NULL inne i
+    funksjonen og oppslaget svarer tomt — fail-closed.
+
     TERMINALE saker returneres OGSÅ: adjudikatoren skal få vite at saken
     er avgjort (`avgi` avviser den med attestasjon_avvist), ikke at den
     «ikke finnes» — et 404 på en sak man nettopp avgjorde er stillhet
     der svaret finnes.
 
     `utfordrer_tenant` er den AUTENTISERTE tenanten, og den er et FILTER,
-    ikke et etterpå-sjekket felt (Codex P1). Adjudikatorrollen ser hver
-    eneste overtakelsessak i klyngen, mens `avgi_overtakelse_attestasjon`
-    kun autoriserer et medlem av UTFORDRERENS tenant — et oppslag uten
+    ikke et etterpå-sjekket felt (Codex P1). `avgi_overtakelse_attestasjon`
+    autoriserer kun et medlem av UTFORDRERENS tenant — et oppslag uten
     filteret gjorde derfor sak-id-rommet til et orakel: en adjudikator hos
     A kunne skille «finnes ikke» fra «finnes, men er ikke din» på Bs og Cs
     saker, og lese ut vertsnavn og parter for tvister hen aldri kunne
-    røre. Filteret i WHERE gir samme svar for begge: `None`.
+    røre. Filteret gir samme svar for begge: `None`.
 
     `saksrevisjon` leses MED (Codex P1): den er «hvilken konflikt saken
     bærer nå», og kalleren skal kunne holde den mot revisjonen klienten
     faktisk fikk vist før stemmen sendes videre.
     """
-    conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
+    from db.pg import sett_tenant
+    sett_tenant(conn, utfordrer_tenant)
     rad = conn.execute(
         "SELECT hostname_ref, autorisasjonsgenerasjon, utfordrer_tenant,"
         "       saksrevisjon"
-        "  FROM unntak"
-        " WHERE id=%s AND sakskilde='domeneovertakelse'"
-        "   AND utfordrer_tenant=%s",
-        (unntak_id, utfordrer_tenant)).fetchone()
-    conn.execute("RESET ROLE")
+        "  FROM overtakelsessak_for_utfordrer(%s)",
+        (unntak_id,)).fetchone()
     if rad is None or any(v is None for v in rad):
         return None
     return rad[0], int(rad[1]), rad[2], int(rad[3])
@@ -311,8 +319,9 @@ def attester_endepunkt(tjeneste, request, unntak_id: int):
             return _feilsvar("csrf_ugyldig", rid)
         bruker_id = rad[1]
 
-        # 041: saken leses under adjudikatorrollen (den bor på
-        # `__plattform_domener`); rollback forlater rollen med transaksjonen.
+        # 042: saken leses tenantbundet i databasegrensen (den bor på
+        # `__plattform_domener`, men snittet er utfordrerens); `SET LOCAL`
+        # gjør at rollback forlater tenantkonteksten med transaksjonen.
         sak = slaa_opp_sak(conn, unntak_id, auth.tenant)
         conn.rollback()
         if sak is None:
@@ -505,39 +514,41 @@ def saker_endepunkt(tjeneste, request):
                 tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
                 return _feilsvar("cursor_ugyldig", rid)
 
-        # Rollen gir SYNLIGHETEN (saken bor på plattformtenanten); filteret
-        # gir OMFANGET. Begge trengs: uten rollen ser en kundesesjon ingen
-        # sak i det hele tatt, uten filteret ser den alles.
-        conn.execute("SET LOCAL ROLE disponit_domains_adjudicator")
-        sql = ("SELECT id, hostname_ref, saksrevisjon,"
-               "       autorisasjonsgenerasjon, utfordrer_tenant,"
-               "       tapt_tenant, status, ts, saksrevisjon_ts"
-               "  FROM unntak"
-               " WHERE sakskilde='domeneovertakelse' AND NOT terminal"
-               "   AND utfordrer_tenant=%s")
-        args: list = [auth.tenant]
-        if etter is not None:
-            # Ærlig keyset (v4 pkt. 3): ingen duplikater for uendrede rader.
-            # En sak som blir avgjort mens noen blar, forsvinner ut av
-            # `NOT terminal` — det er køens poeng, ikke et brudd.
-            #
-            # NØKKELEN ER `saksrevisjon_ts`, IKKE `ts` (Codex P2). En sak
-            # kommer inn i DENNE tenantens kø på to måter: den opprettes,
-            # eller A→B→C gir den en ny utfordrer. Den andre veien lager
-            # ingen ny rad — `sikre_overtakelsessak` skifter utfordrer på
-            # den eksisterende, og `ts` er kolonnelåst (§11) og blir
-            # stående. Med `ts` som nøkkel la saken seg da BAK en cursor
-            # den nye utfordreren alt hadde fått utstedt, og forsvant fra
-            # hver gjenstående side — uten noen gang å ha vært på en
-            # tidligere. `saksrevisjon_ts` går fram med skiftet (§6
-            # håndhever det), så saken kommer inn FORAN cursoren, der nytt
-            # arbeid hører hjemme.
-            sql += " AND (saksrevisjon_ts, id) > (%s, %s)"
-            args += [etter[0], etter[1]]
-        sql += " ORDER BY saksrevisjon_ts, id LIMIT %s"
-        args.append(grense)
-        rader = conn.execute(sql, tuple(args)).fetchall()
-        conn.execute("RESET ROLE")
+        # 042 (Codex P1): OMFANGET ER IKKE LENGER ET WHERE-LEDD HER.
+        #
+        # Formen var «rollen gir SYNLIGHETEN, filteret gir OMFANGET»: køen
+        # gjorde `SET LOCAL ROLE disponit_domains_adjudicator` og la
+        # `utfordrer_tenant=%s` på i applikasjonens SQL. Rollen ser hver
+        # overtakelsessak i klyngen, og runtime-rollen har `SET`-medlemskap i
+        # den — så avgrensningen holdt bare så lenge denne strengen var den
+        # eneste SQL-en som ble kjørt. Én injeksjon skiftet rolle, droppet
+        # leddet og fikk alle kunders saker i ett svar.
+        #
+        # Begge deler ligger nå i `overtakelsessaker_for_utfordrer` (042 §1.2):
+        # claimer-eid, SECURITY DEFINER, og den leser tenanten sin av
+        # `disponit.tenant` — ikke av et argument, som ville vært like fritt
+        # som leddet det erstattet. KEYSETTET FULGTE MED INN, med sin egen
+        # begrunnelse: nøkkelen er `saksrevisjon_ts` og ikke `ts` (Codex P2),
+        # fordi A→B→C skifter utfordrer på den EKSISTERENDE raden mens `ts`
+        # er kolonnelåst (§11) — med `ts` la saken seg BAK en cursor den nye
+        # utfordreren alt hadde fått utstedt, og forsvant fra hver gjenstående
+        # side uten noen gang å ha vært på en tidligere. Filteret og nøkkelen
+        # svarer på samme spørsmål; blir de liggende hver sin side av
+        # grensen, kan de drive fra hverandre.
+        #
+        # Ærlig keyset (v4 pkt. 3): ingen duplikater for uendrede rader. En
+        # sak som blir avgjort mens noen blar, forsvinner ut av `NOT terminal`
+        # — det er køens poeng, ikke et brudd.
+        from db.pg import sett_tenant
+        sett_tenant(conn, auth.tenant)
+        rader = conn.execute(
+            "SELECT id, hostname_ref, saksrevisjon,"
+            "       autorisasjonsgenerasjon, utfordrer_tenant,"
+            "       tapt_tenant, status, ts, saksrevisjon_ts"
+            "  FROM overtakelsessaker_for_utfordrer(%s,%s,%s)",
+            (etter[0] if etter is not None else None,
+             etter[1] if etter is not None else None,
+             grense)).fetchall()
         conn.rollback()
         saker = [{"unntak_id": int(r[0]), "hostname": r[1],
                   "saksrevisjon": int(r[2]),
