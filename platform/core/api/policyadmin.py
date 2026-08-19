@@ -2420,6 +2420,35 @@ def _idempotent_start(conn, tenant: str, idempotency_key: str,
     return ("ny", None)
 
 
+def idempotent_svar(conn, tenant: str, idempotency_key: str, input_hash: str):
+    """Se på en idempotensnøkkel UTEN å claime den.
+    -> ("replay", dict) · ("konflikt", None) · ("ukjent", None).
+
+    `_idempotent_start` claimer, og claimet hører hjemme i selve
+    operasjonens transaksjon. Men noen ruter må gjøre arbeid FØR den —
+    rullbakkopprettelsen henter kildeversjonen for å bygge innholdet — og
+    det arbeidet kan feile av grunner som ikke lenger er sanne for et
+    forsøk som ALT har lyktes: kilden kan være arkivert siden. Da skal
+    retryen få det lagrede svaret, ikke en 404 på et utkast som finnes
+    (047, Codex P2).
+
+    Ren lesing: ingen advisory-lås, ingen rad skrives. Er svaret ikke
+    ferdig ennå, faller kalleren tilbake til den vanlige veien, og
+    `_idempotent_start` avgjør som før — der ligger serialiseringen."""
+    rad = conn.execute(
+        "SELECT input_hash, status, respons FROM idempotens"
+        " WHERE tenant=%s AND nokkel=%s",
+        (tenant, idempotency_key)).fetchone()
+    if rad is None:
+        return ("ukjent", None)
+    lagret_hash, istatus, respons = rad
+    if lagret_hash != input_hash:
+        return ("konflikt", None)
+    if istatus == "ferdig":
+        return ("replay", {**respons, "replay": True})
+    return ("ukjent", None)
+
+
 def _fullfor(conn, tenant, idempotency_key, res: dict) -> dict:
     """Lagre den idempotente responsen og commit. Replay med samme nøkkel og
     input får NØYAKTIG denne responsen — aldri en ny operasjon."""

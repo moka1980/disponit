@@ -124,9 +124,23 @@ def opprett_input_hash(tenant, bid, policy_id, innhold, rollback_av, idem) -> st
     (Codex R2/R3): en rullbakk og en ordinær opprettelse med samme nøkkel er
     ULIKE operasjoner og MÅ gi konflikt, ikke replay. Egen funksjon så bindingen
     er direkte testbar. `rollback_av` JSON-kodes så `null` og `""` gir ULIKE
-    representasjoner (Codex R4: `str(None)`/`str("")` kolliderte ikke lenger)."""
+    representasjoner (Codex R4: `str(None)`/`str("")` kolliderte ikke lenger).
+
+    For en RULLBAKK inngår IKKE innholdet (047, Codex P2). Det er ikke et
+    tap av presisjon: innholdet er ikke klientens, det er en KOPI serveren
+    henter fra versjonen selv, og en versjons innhold er immutabelt.
+    Operasjonens identitet er derfor uttømt av `(policy_id,
+    rollback_av_versjon)`. Klientens eventuelle `innhold` er en påstand
+    serveren kontrollerer, ikke en del av bestillingen.
+
+    Poenget er at hashen da kan REGNES UT FØR kildeversjonen slås opp — og
+    dermed kan en retry replaye et alt opprettet utkast selv om kilden er
+    arkivert i mellomtiden. Med innholdet i hashen var den rekkefølgen
+    umulig: nøkkelen krevde innholdet, innholdet krevde kilden, og en
+    arkivert kilde ga 404 på en operasjon som for lengst hadde lyktes."""
     return _input_hash(tenant, bid, "opprett", policy_id,
-                       json.dumps(innhold, sort_keys=True),
+                       "rullbakk" if rollback_av is not None
+                       else json.dumps(innhold, sort_keys=True),
                        json.dumps(rollback_av), idem)
 
 
@@ -253,6 +267,27 @@ def opprett_utkast_endepunkt(tjeneste, request):
             if not isinstance(policy_id, str) or not policy_id.strip() \
                     or not isinstance(rollback_av, str):
                 return _feil("request_feilformet", rid)
+            # REPLAY FØR KILDEOPPSLAG (047, Codex P2). Lyktes det første
+            # forsøket og svaret gikk tapt på veien, finnes utkastet — og
+            # da skal retryen få id-en tilbake, ikke en 404 fordi den
+            # inaktive kildeversjonen er arkivert i mellomtiden. Hashen kan
+            # regnes ut her nettopp fordi den ikke inneholder innholdet;
+            # se `opprett_input_hash`.
+            #
+            # Ingen `rollback()` når vi faller gjennom: `sett_kontekst` er
+            # `SET LOCAL`, og `policyversjon_innhold` under er en definer
+            # som KREVER `disponit.tenant`. Å rulle tilbake her ville tatt
+            # konteksten med seg og gjort oppslaget til en 403.
+            tilstand, lagret = policyadmin.idempotent_svar(
+                conn, tenant,
+                idem, opprett_input_hash(tenant, bid, policy_id, None,
+                                         rollback_av, idem))
+            if tilstand == "replay":
+                conn.rollback()
+                return _ok(lagret, rid, 201)
+            if tilstand == "konflikt":
+                conn.rollback()
+                return _feil("idempotenskonflikt", rid)
             try:
                 hentet = conn.execute(
                     "SELECT policyversjon_innhold(%s, %s, %s)",
