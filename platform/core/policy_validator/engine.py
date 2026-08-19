@@ -336,7 +336,7 @@ def _evaluer(policy: dict, context: EvaluationContext | None, event: dict,
                         effekt=effekt)
 
     # 2) Modus
-    if h.get("modus", "alltid_stopp") == "alltid_stopp":
+    if h.get("modus", MODUS_UTEN_LOFTBARE_UTFALL) == MODUS_UTEN_LOFTBARE_UTFALL:
         return blokker("regelkonflikt", Grunn("modus_alltid_stopp"))
 
     # 3) Rolle — fra autentisert kontekst, aldri fra event
@@ -584,6 +584,19 @@ LOFTBARE_GRUNNKODER: dict[str, str] = {
     "belop_over_grense": "belop_maks",
     "valuta_ikke_tillatt": "valuta",
 }
+
+#: Modusen `_evaluer` feller handlingen på i STEG 2 — altså før enhver kontroll
+#: en kode i `LOFTBARE_GRUNNKODER` kan komme fra (beløp er steg 4, valuta steg
+#: 5). En handling med denne modusen gir `modus_alltid_stopp` og aldri noen av
+#: de løftbare kodene, så en `godkjennbare`-oppføring festet på den er
+#: uanvendelig UANSETT grunnkode og verdi — løftet hever en grense
+#: evalueringen aldri rekker fram til (Codex P1).
+#:
+#: Konstanten er delt med innføringskontrakten
+#: (`schema._loftet_flytter_noe`) nettopp fordi det er ETT faktum om motoren,
+#: ikke to. `test_ingen_loftbar_grunnkode_naas_ved_alltid_stopp` er vakten:
+#: flyttes modussjekken bak grensene, ryker den.
+MODUS_UTEN_LOFTBARE_UTFALL = "alltid_stopp"
 
 
 def _loft_policy(policy: dict, handling_id: str, grunnkode: str,

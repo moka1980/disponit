@@ -194,6 +194,88 @@ def test_motoren_stopper_faktisk_den_avviste_formen():
         assert d.beslutning == STOPP, (belop, d.to_dict())
 
 
+# --- handlingen må i det hele tatt NÅ kontrollen (Codex P1, runde 8) ------
+
+#: Hvordan hver løftbar grunnkode utløses for `_HANDLING` (`belop_maks`
+#: 25000.00, `valuta` ["NOK"]). Brukes til å BEVISE at `alltid_stopp` feller
+#: handlingen før kontrollen koden kommer fra. En ny kode uten en oppskrift
+#: her stopper `test_ingen_loftbar_grunnkode_naas_ved_alltid_stopp`.
+_UTLOSER = {"belop_over_grense": {"belop": "99999.00", "valuta": "NOK"},
+            "valuta_ikke_tillatt": {"belop": "100.00", "valuta": "EUR"}}
+
+
+def _med_modus(modus, handling_id=_HANDLING):
+    p = copy.deepcopy(_BASE)
+    for h in p["handlinger"]:
+        if h["id"] == handling_id:
+            h["modus"] = modus
+    return p
+
+
+def test_ingen_loftbar_grunnkode_naas_ved_alltid_stopp():
+    """Vakten under påstanden. Motoren feller `alltid_stopp` i steg 2, altså
+    FØR beløp (steg 4) og valuta (steg 5) vurderes: en hendelse som ellers
+    ville gitt en løftbar grunnkode gir `modus_alltid_stopp` i stedet.
+
+    Flyttes modussjekken bak grensene, ryker denne — og da er avvisningen i
+    `_loftet_flytter_noe` ikke lenger sann."""
+    from datetime import datetime, timezone
+
+    from policy_validator.engine import (MODUS_UTEN_LOFTBARE_UTFALL,
+                                         EvaluationContext, evaluate)
+    assert set(_UTLOSER) == set(LOFTBARE_GRUNNKODER), (
+        "en løftbar grunnkode uten en oppskrift her er ubevist")
+    naa = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
+    ctx = EvaluationContext(tenant_id="t1", aktor_rolle="agent",
+                            autentisert=True, kilde="api_token")
+    pol = _med_modus(MODUS_UTEN_LOFTBARE_UTFALL)
+    for gk, hendelse in _UTLOSER.items():
+        d = evaluate(pol, ctx, {"handling": _HANDLING, "ressurs_id": "r-1",
+                                **hendelse}, naa=naa)
+        koder = {g.kode for g in d.begrunnelse}
+        assert "modus_alltid_stopp" in koder, (gk, d.to_dict())
+        assert gk not in koder, (
+            f"{gk} nås likevel — avvisningen i _loftet_flytter_noe er feil")
+
+
+def test_overstyring_paa_alltid_stopp_handling_avvises():
+    """Selve funnet: grensene på handlingen kan være aldri så velegnet — når
+    modusen feller den før de vurderes, kan overstyringen aldri anvendes."""
+    from policy_validator.engine import MODUS_UTEN_LOFTBARE_UTFALL
+    for gk, felt in LOFTBARE_GRUNNKODER.items():
+        p = _med_modus(MODUS_UTEN_LOFTBARE_UTFALL)
+        p["menneskelig_overstyring"] = {
+            "godkjennbare": [_oppforing(gk, **_VIRKSOMME[felt])],
+            "krever_rolle": "daglig_leder"}
+        feil = valider_ny_policy(p)
+        assert feil, f"{gk} kan aldri oppstå for en alltid_stopp-handling"
+        assert any(_HANDLING in f and MODUS_UTEN_LOFTBARE_UTFALL in f
+                   for f in feil), feil
+
+
+def test_de_andre_modusene_slipper_overstyringen_gjennom():
+    # Innstrammingen skal treffe NØYAKTIG den modusen som kortslutter.
+    for modus in ("auto", "auto_med_vilkaar"):
+        for gk, felt in LOFTBARE_GRUNNKODER.items():
+            p = _med_modus(modus)
+            p["menneskelig_overstyring"] = {
+                "godkjennbare": [_oppforing(gk, **_VIRKSOMME[felt])],
+                "krever_rolle": "daglig_leder"}
+            assert valider_ny_policy(p) == [], (modus, gk)
+
+
+def test_lastekontrakten_slipper_alltid_stopp_overstyringen():
+    """Framoverrettet som resten: en alt aktiv policy med en slik oppføring
+    har aldri løftet noe, og skal ikke bli korrupt ved lasting."""
+    from policy_validator.engine import MODUS_UTEN_LOFTBARE_UTFALL
+    p = _med_modus(MODUS_UTEN_LOFTBARE_UTFALL)
+    p["menneskelig_overstyring"] = {
+        "godkjennbare": [_oppforing("belop_over_grense",
+                                    **_VIRKSOMME["belop_maks"])],
+        "krever_rolle": "daglig_leder"}
+    assert valider_policy(p) == []
+
+
 def test_hver_loftbar_grunnkode_maales_mot_handlingen():
     """Vakten mot stille fail-open. En ny kode i `LOFTBARE_GRUNNKODER` uten
     en gren i `_loftet_flytter_noe` ville sluppet gjennom nøyaktig de

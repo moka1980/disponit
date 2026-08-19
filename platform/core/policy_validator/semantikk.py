@@ -121,7 +121,15 @@ def kildechecksum() -> str:
 #: former. Det som endrer seg er at policyen ikke lenger kan aktiveres med et
 #: løfte den ikke kan holde. Kravet står i INNFØRINGSkontrakten, så en alt
 #: aktiv policy med en slik oppføring virker som før.)
-MOTOR_SEMANTIKKVERSJON = "0c0be9aa583f47721a6b2e850c069eae34abc4940e478ab5ab62258f2fbe733f"
+#: (Codex P1 på #111, runde 8: en handling med `modus: "alltid_stopp"` felles i
+#: STEG 2, altså før beløps- og valutagrensene i det hele tatt vurderes. Ingen
+#: løftbar grunnkode kan da oppstå for den, og innføringskontrakten avviser
+#: oppføringen uansett hvor velegnet verdien er. Modusen er navngitt ÉN gang
+#: (`engine.MODUS_UTEN_LOFTBARE_UTFALL`) og lest av begge, så rekkefølgen i
+#: motoren og påstanden i kontrakten ikke kan komme fra hverandre. Motorens
+#: dommer er uendret — konstanten har samme verdi som literalen den erstattet
+#: — men `engine.py` og `schema.py` er manifestfiler, så pinnen følger med.)
+MOTOR_SEMANTIKKVERSJON = "6c8380e4d7e8445687b0d9450caf12697471037e8a141e5bb1904746d11b5b3a"
 
 
 # ---------------------------------------------------------------------------

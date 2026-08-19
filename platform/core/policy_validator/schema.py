@@ -378,12 +378,24 @@ def _loftet_flytter_noe(i: int, gk: str, e: dict, h: dict | None) -> list[str]:
     Det samme gjelder en uleselig grense: `belop_ugyldig`/
     `policy_belopsgrense_ugyldig` er andres dom, og en verdi vi ikke kan
     lese kan vi ikke påstå noe om.
+
+    Rekkefølgen i `_evaluer` teller: en handling motoren feller på MODUS
+    (steg 2) rekker aldri fram til grensene de løftbare kodene kommer fra,
+    så da er oppføringen uanvendelig uansett grunnkode og verdi. Den
+    sjekken gjelder ALLE koder og står derfor foran grendelingen — en ny
+    løftbar kode arver den uten at noen må huske det.
     """
-    from .engine import parse_belop
+    from .engine import MODUS_UTEN_LOFTBARE_UTFALL, parse_belop
     if h is None:
         return []
     grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) else {}
     hid = h["id"]
+    if h.get("modus", MODUS_UTEN_LOFTBARE_UTFALL) == MODUS_UTEN_LOFTBARE_UTFALL:
+        return [f"menneskelig_overstyring[{i}]: handling '{hid}' har modus"
+                f" '{MODUS_UTEN_LOFTBARE_UTFALL}' og felles på"
+                " 'modus_alltid_stopp' før noen grense i det hele tatt"
+                f" vurderes, så '{gk}' kan aldri oppstå for den —"
+                " godkjenningen ender i STOPP uansett verdi"]
     feil: list[str] = []
     if gk == "belop_over_grense":
         hgrense = grenser.get("belop_maks")
